@@ -14,10 +14,33 @@ function session() {
     "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
     "src/a.ts": "x",
   });
-  const ctx = hookContext({ session_id: "s", cwd: root }, testEnv());
+  const env = testEnv();
+  const ctx = hookContext({ session_id: "s", cwd: root }, env);
   onSessionStart(ctx);
-  return { root, ctx };
+  return { root, ctx, env };
 }
+
+test("C4: a new session that starts on unproven changes has no baseline, so they count", () => {
+  const { root, ctx, env } = session();
+  createWork(ctx.paths, "fix");
+  write(root, "src/a.ts", "changed");
+  const next = hookContext({ session_id: "s2", cwd: root }, env);
+  onSessionStart(next, { source: "startup" });
+  expect(loadState(next.paths).sessions.s2?.baseline).toBeNull();
+  expect(onStop(next).decision).toBe("block");
+});
+
+test("C4: a resumed session keeps its baseline", () => {
+  const { root, ctx } = session();
+  const before = loadState(ctx.paths).sessions.s?.baseline;
+  expect(before).toMatch(/^sha256:/);
+  write(root, "src/a.ts", "changed");
+  onSessionStart(ctx, { source: "resume" });
+  expect(loadState(ctx.paths).sessions.s?.baseline).toBe(before);
+  expect(onStop(ctx).decision).toBe("block");
+  onSessionStart(ctx, { source: "compact" });
+  expect(loadState(ctx.paths).sessions.s?.baseline).toBe(before);
+});
 
 test("case 1: nothing changed, the turn ends", () => {
   const { ctx } = session();

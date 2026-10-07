@@ -31,7 +31,7 @@ export function handleHook(
     }
     switch (event) {
       case "session-start":
-        return onSessionStart(ctx);
+        return onSessionStart(ctx, payload);
       case "prompt":
         return onPrompt(ctx);
       case "pre-tool-use":
