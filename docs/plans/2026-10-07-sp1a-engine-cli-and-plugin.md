@@ -4704,7 +4704,7 @@ git commit -m "feat(engine): the crew command" -m "Co-Authored-By: Claude Fable 
 
 **Files:**
 - Create: `scripts/build.ts`, `plugins/core/.claude-plugin/plugin.json`, `plugins/core/hooks/hooks.json`, `plugins/core/bin/crew`
-- Modify: `.gitignore` (remove the `dist/` line so `plugins/core/dist/crew.mjs` is committed), `README.md`
+- Modify: `README.md`
 
 **Interfaces:**
 - Produces: `bun run build` → `plugins/core/dist/crew.mjs`; the plugin loads with `claude --plugin-dir plugins/core`.
@@ -4794,13 +4794,7 @@ fi
 exec node "$root/dist/crew.mjs" "$@"
 ```
 
-Run `chmod +x plugins/core/bin/crew`. Replace the `.gitignore` content with:
-
-```
-node_modules/
-.DS_Store
-*.log
-```
+Run `chmod +x plugins/core/bin/crew`. The root `.gitignore` does not list `dist/`, so `plugins/core/dist/crew.mjs` is committed.
 
 Append to `README.md`, under the status paragraph:
 
@@ -4831,7 +4825,7 @@ If `claude plugin validate --strict` reports a warning, fix the cause; do not dr
 - [ ] **Step 3: Commit**
 
 ```bash
-git add .gitignore README.md scripts/build.ts plugins/core
+git add README.md scripts/build.ts plugins/core
 git commit -m "feat(plugin): package the engine as a Claude Code plugin" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
 
