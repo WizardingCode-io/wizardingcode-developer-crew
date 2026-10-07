@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    { "name": "fast-route-overhead", "arms": { "with": [{ "costUsd": 0.2 }, { "costUsd": 0.4 }], "without": [{ "costUsd": 0.25 }, { "costUsd": 0.25 }] } },
+    { "name": "false-done", "arms": { "with": [{ "costUsd": 0.9 }] } }
+  ]
+}
