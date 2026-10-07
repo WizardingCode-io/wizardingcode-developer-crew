@@ -84,7 +84,7 @@ export function computeVerdict(input: VerdictInput): {
   return { verdict: unproven.length === 0 ? "proven" : "unproven", unproven };
 }
 
-function tddSummary(
+export function tddSummary(
   work: WorkItem,
   evidence: Evidence,
   criterionId: string,

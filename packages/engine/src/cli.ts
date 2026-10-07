@@ -3,7 +3,7 @@ import { join, resolve } from "node:path";
 import { AnswerError, type Answers, computeRoute, validateAnswers } from "./classify.ts";
 import { loadConfig, saveConfig, setConfigValue } from "./config.ts";
 import { detectProfile, missingTestCommands } from "./detect/index.ts";
-import { loadEvidence, renderReport, saveEvidence } from "./evidence.ts";
+import { loadEvidence, renderReport, saveEvidence, tddSummary } from "./evidence.ts";
 import { ensureDir, nowIso, readText, writeText } from "./fs.ts";
 import { assess, runGates } from "./gates.ts";
 import { handleHook } from "./hooks/index.ts";
@@ -27,6 +27,7 @@ import {
   createWork,
   type GuardContext,
   loadWork,
+  PHASES_BY_ROUTE,
   saveWork,
 } from "./work.ts";
 
@@ -567,12 +568,32 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         env.tampered || active.tampered,
       );
       const text = `${active.work.id} "${active.work.title}"\n  phase ${active.work.phase}, route ${active.work.route}${active.work.awaiting ? ", waiting for the user" : ""}\n${gateSummary(active.work, result.verdict, result.unproven, result.evidence.runs)}`;
+      const work = active.work;
       return ok(text, {
-        active: active.work.id,
-        phase: active.work.phase,
-        route: active.work.route,
+        active: work.id,
+        title: work.title,
+        type: work.type,
+        phase: work.phase,
+        route: work.route,
+        awaiting: work.awaiting,
+        baseCommit: work.baseCommit,
+        phases: PHASES_BY_ROUTE[work.route],
         verdict: result.verdict,
         unproven: result.unproven,
+        criteria: work.criteria.map((c) => ({
+          id: c.id,
+          kind: c.kind,
+          text: c.text,
+          tdd: tddSummary(work, result.evidence, c.id, c.kind),
+        })),
+        runs: result.evidence.runs.map((r) => ({
+          gate: r.gate,
+          target: r.target,
+          status: r.status,
+          durationMs: r.durationMs,
+          ...(r.reason ? { reason: r.reason } : {}),
+        })),
+        skips: work.skips.map((s) => ({ step: s.step, reason: s.reason })),
       });
     }
     default:

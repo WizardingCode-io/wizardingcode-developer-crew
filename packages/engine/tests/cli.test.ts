@@ -82,6 +82,32 @@ test("a fast-route fix from start to a proven report", async () => {
   );
   const status = await c.json("status");
   expect(status.data.verdict).toBe("proven");
+  expect(status.data.active).toBe(id);
+  expect(status.data.title).toBe("Cart total ignores the discount");
+  expect(status.data.phases).toEqual(["receive", "recognize", "build", "gate", "deliver"]);
+  expect(status.data.criteria).toEqual([
+    {
+      id: "AC-1",
+      kind: "behavior",
+      text: "The total subtracts the discount.",
+      tdd: "red then green",
+    },
+  ]);
+  expect(
+    (status.data.runs as { gate: string; status: string }[]).map((r) => `${r.gate}:${r.status}`),
+  ).toEqual(["secrets:pass", "test:pass"]);
+  expect(status.data.skips).toEqual([]);
+  expect(status.data.awaiting).toBeNull();
+  expect(typeof status.data.baseCommit).toBe("string");
+});
+
+test("status without an active item is a short answer", async () => {
+  const root = makeRepo({ "package.json": JSON.stringify({ scripts: { test: "exit 0" } }) });
+  const c = io(root);
+  const status = await c.json("status");
+  expect(status.code).toBe(0);
+  expect(status.data.active).toBeNull();
+  expect(status.data.criteria).toBeUndefined();
 });
 
 test("refusals: unknown work, skip without reason, invalid answers, pilot cannot skip secrets", async () => {
