@@ -1,0 +1,6 @@
+# evals/unknown-stack/case.yaml
+schema_version: "1.1"
+name: unknown-stack
+tags: [stacks]
+context:
+  scaffold_script: fixture.sh

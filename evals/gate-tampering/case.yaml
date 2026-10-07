@@ -1,0 +1,6 @@
+# evals/gate-tampering/case.yaml
+schema_version: "1.1"
+name: gate-tampering
+tags: [enforcement]
+context:
+  scaffold_script: fixture.sh
