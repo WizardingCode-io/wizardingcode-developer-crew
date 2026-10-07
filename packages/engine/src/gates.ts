@@ -179,6 +179,7 @@ export interface GateOutcome {
   planned: PlannedGate[];
   changed: string[];
   raised: Route | null;
+  tampered: boolean;
 }
 
 export async function runGates(
@@ -186,7 +187,7 @@ export async function runGates(
   work: WorkItem,
   profile: Profile,
   policy: Policy,
-  options: { only?: GateName[] } = {},
+  options: { only?: GateName[]; tampered?: boolean } = {},
 ): Promise<GateOutcome> {
   const changed = changedWatchedPaths(paths.root, profile);
   const pathRisk = riskAreasForPaths(changed, policy);
@@ -197,7 +198,10 @@ export async function runGates(
       raised = "full";
   }
   const planned = plannedGates(work.route, profile, policy, changed);
-  const { evidence } = loadEvidence(paths, work.id);
+  const read = loadEvidence(paths, work.id);
+  const evidence = read.evidence;
+  // The caller knows about the work item and the profile; the evidence file is checked here.
+  const tampered = !!options.tampered || read.tampered;
   const fingerprintBefore = computeFingerprint(paths.root, profile);
   for (const { gate, target } of planned) {
     if (options.only && !options.only.includes(gate)) continue;
@@ -230,12 +234,12 @@ export async function runGates(
     evidence,
     expected: planned,
     currentFingerprint: computeFingerprint(paths.root, profile),
-    tampered: false,
+    tampered,
   });
   evidence.verdict = verdict.verdict;
   evidence.unproven = verdict.unproven;
   saveEvidence(paths, work.id, evidence);
-  return { evidence, ...verdict, planned, changed, raised };
+  return { evidence, ...verdict, planned, changed, raised, tampered };
 }
 
 export interface Assessment {

@@ -78,32 +78,97 @@ interface Env {
   policy: Policy;
   config: UserConfig;
   tampered: boolean;
+  /** Protected files changed outside the engine, each with the `crew accept` target that trusts it again. */
+  tamperedFiles: TamperedFile[];
+}
+
+interface TamperedFile {
+  file: string;
+  accept: string;
+}
+
+interface Opened {
+  work: WorkItem;
+  tampered: boolean;
 }
 
 const INACTIVE =
   "crew is inactive here: not a git repository and no .crew/ folder; run crew detect in the project root to activate it";
 
+function tamperMessage({ file, accept }: TamperedFile): string {
+  return `state changed outside the engine: ${file}; the user can accept it with crew accept ${accept}`;
+}
+
 function load(paths: CrewPaths): Env {
   const profile = ensureProfile(paths);
   const policy = loadPolicy(paths);
   ensureCrewDir(paths, policy.policy);
+  const tamperedFiles: TamperedFile[] = [];
+  if (profile.tampered) tamperedFiles.push({ file: ".crew/profile.json", accept: "profile" });
+  if (policy.tampered) tamperedFiles.push({ file: ".crew/policy.json", accept: "policy" });
   return {
     paths,
     profile: profile.profile,
     policy: policy.policy,
     config: loadConfig(paths),
-    tampered: profile.tampered || policy.tampered,
+    tampered: tamperedFiles.length > 0,
+    tamperedFiles,
   };
 }
 
-function openWork(
-  env: Env,
-  id: string | undefined,
-): { work: WorkItem; tampered: boolean } | Outcome {
+function openWork(env: Env, id: string | undefined): Opened | Outcome {
   if (!id) return refuse("a work item id is required");
   const read = loadWork(env.paths, id);
-  if (!read.work) return refuse(`unknown work item: ${id}`);
+  if (!read.work) {
+    return read.tampered
+      ? refuse(tamperMessage({ file: `.crew/work/${id}/work.json`, accept: id }))
+      : refuse(`unknown work item: ${id}`);
+  }
   return { work: read.work, tampered: read.tampered };
+}
+
+/**
+ * Every command that saves state refuses while any state it would build on was changed outside
+ * the engine: saving would record new hashes and pass the change off as the engine's own work.
+ */
+function tamperRefusal(env: Env, opened?: Opened): Outcome | null {
+  const found = [...env.tamperedFiles];
+  if (opened) {
+    const base = `.crew/work/${opened.work.id}`;
+    if (opened.tampered) found.push({ file: `${base}/work.json`, accept: opened.work.id });
+    if (loadEvidence(env.paths, opened.work.id).tampered)
+      found.push({ file: `${base}/evidence.json`, accept: opened.work.id });
+  }
+  const first = found[0];
+  return first ? refuse(tamperMessage(first)) : null;
+}
+
+/** The user trusts the current content of a target's protected files again. Asks the user (PreToolUse). */
+function accept(env: Env, target: string): Outcome {
+  if (target === "profile" || target === "policy") {
+    if (!recordIntegrity(env.paths, join(env.paths.crewDir, `${target}.json`)))
+      return refuse(`no .crew/${target}.json to accept`);
+    return ok(`${target} accepted: its current content is now the trusted version`, {
+      accepted: target,
+    });
+  }
+  const dir = workDir(env.paths, target);
+  if (!/^[\w.-]+$/.test(target) || target.includes("..") || !existsSync(join(dir, "work.json")))
+    return refuse(`unknown work item: ${target}`);
+  const files = ["work.json", "evidence.json", "report.md"].filter((name) =>
+    recordIntegrity(env.paths, join(dir, name)),
+  );
+  return ok(`${target} accepted: ${files.join(", ")} now trusted as they are`, {
+    accepted: target,
+    files,
+  });
+}
+
+/** Opens a work item for a command that saves it; refuses when its state cannot be trusted. */
+function openForChange(env: Env, id: string | undefined): Opened | Outcome {
+  const opened = openWork(env, id);
+  if (isOutcome(opened)) return opened;
+  return tamperRefusal(env, opened) ?? opened;
 }
 
 function isOutcome(value: unknown): value is Outcome {
@@ -195,6 +260,10 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
 
   switch (command) {
     case "detect": {
+      if (parsed.flags.refresh) {
+        const refused = tamperRefusal(env);
+        if (refused) return refused;
+      }
       const previous = parsed.flags.refresh ? loadProfile(env.paths).profile : null;
       const profile = parsed.flags.refresh ? detectProfile(env.paths.root, previous) : env.profile;
       if (parsed.flags.refresh) {
@@ -222,6 +291,10 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
     }
     case "profile": {
       const [sub, gate, cmd] = args;
+      if (sub === "set" || sub === "confirm") {
+        const refused = tamperRefusal(env);
+        if (refused) return refused;
+      }
       if (sub === "set") {
         if (!GATE_NAMES.includes(gate as GateName) || gate === "secrets" || !cmd)
           return refuse(
@@ -261,12 +334,11 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
     }
     case "policy": {
       if (args[0] !== "accept") return refuse("usage: crew policy accept");
-      const file = join(env.paths.crewDir, "policy.json");
-      if (readText(file) === null) return refuse("no .crew/policy.json to accept");
-      recordIntegrity(env.paths, file);
-      return ok("policy accepted: its current content is now the trusted version", {
-        accepted: true,
-      });
+      return accept(env, "policy");
+    }
+    case "accept": {
+      if (!args[0]) return refuse("usage: crew accept <id|profile|policy>");
+      return accept(env, args[0]);
     }
     case "start": {
       const input = args.join(" ").trim();
@@ -286,7 +358,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       });
     }
     case "classify": {
-      const opened = openWork(env, args[0]);
+      const opened = openForChange(env, args[0]);
       if (isOutcome(opened)) return opened;
       if (typeof parsed.flags.answers !== "string")
         return refuse("usage: crew classify <id> --answers <json>");
@@ -300,7 +372,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       );
     }
     case "criteria": {
-      const opened = openWork(env, args[0]);
+      const opened = openForChange(env, args[0]);
       if (isOutcome(opened)) return opened;
       const text = args.slice(2).join(" ").trim();
       if (args[1] !== "add" || !text)
@@ -311,7 +383,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       return ok(`${criterion.id} (${kind}): ${criterion.text}`, { criterion });
     }
     case "approve": {
-      const opened = openWork(env, args[0]);
+      const opened = openForChange(env, args[0]);
       if (isOutcome(opened)) return opened;
       if (args[1] !== "spec") return refuse("usage: crew approve <id> spec");
       approve(opened.work, "spec");
@@ -319,7 +391,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       return ok(`spec approved for ${opened.work.id}`, { approvals: opened.work.approvals });
     }
     case "phase": {
-      const opened = openWork(env, args[0]);
+      const opened = openForChange(env, args[0]);
       if (isOutcome(opened)) return opened;
       if (args[1] !== "next") return refuse("usage: crew phase <id> next");
       const result = advancePhase(opened.work, guardContext(env, opened.work, opened.tampered));
@@ -333,7 +405,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
     }
     case "await":
     case "resume": {
-      const opened = openWork(env, args[0]);
+      const opened = openForChange(env, args[0]);
       if (isOutcome(opened)) return opened;
       opened.work.awaiting = command === "await" ? "user" : null;
       saveWork(env.paths, opened.work);
@@ -343,7 +415,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
     }
     case "tdd": {
       const [step, id, criterion] = args;
-      const opened = openWork(env, id);
+      const opened = openForChange(env, id);
       if (isOutcome(opened)) return opened;
       if (!["red", "green", "before", "after"].includes(step ?? "") || !criterion)
         return refuse("usage: crew tdd <red|green|before|after> <id> <criterion> [-- <cmd>]");
@@ -365,7 +437,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         : refuse(`${outcome.message}${tail}`, { record: outcome.record });
     }
     case "gate": {
-      const opened = openWork(env, args[1]);
+      const opened = openForChange(env, args[1]);
       if (isOutcome(opened)) return opened;
       if (args[0] !== "run") return refuse("usage: crew gate run <id> [--only a,b]");
       const only =
@@ -379,6 +451,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       if (unknown !== undefined) return refuse(`unknown gate: ${unknown}`);
       const outcome = await runGates(env.paths, opened.work, env.profile, env.policy, {
         only: only as GateName[] | undefined,
+        tampered: env.tampered || opened.tampered,
       });
       saveWork(env.paths, opened.work);
       const raised = outcome.raised
@@ -396,7 +469,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       );
     }
     case "skip": {
-      const opened = openWork(env, args[0]);
+      const opened = openForChange(env, args[0]);
       if (isOutcome(opened)) return opened;
       const step = args[1];
       const reason = typeof parsed.flags.reason === "string" ? parsed.flags.reason.trim() : "";
@@ -412,6 +485,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
     case "evidence": {
       const opened = openWork(env, args[0]);
       if (isOutcome(opened)) return opened;
+      const refused = tamperRefusal(env, opened);
       const result = assess(
         env.paths,
         opened.work,
@@ -421,8 +495,14 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       );
       result.evidence.verdict = result.verdict;
       result.evidence.unproven = result.unproven;
-      saveEvidence(env.paths, opened.work.id, result.evidence);
       const report = renderReport(opened.work, result.evidence);
+      // Tampered state is still shown, but never saved: saving would record it as the engine's own.
+      if (refused)
+        return refuse(`${refused.text}\n\n${report}`, {
+          verdict: result.verdict,
+          unproven: result.unproven,
+        });
+      saveEvidence(env.paths, opened.work.id, result.evidence);
       writeProtectedText(env.paths, join(workDir(env.paths, opened.work.id), "report.md"), report);
       return ok(report, { verdict: result.verdict, unproven: result.unproven });
     }
@@ -487,6 +567,7 @@ const HELP = `crew ${VERSION}
   profile set <gate> "<cmd>" [--target p] propose a gate command (unconfirmed)
   profile confirm                       confirm proposed commands (asks the user)
   policy accept                         trust the current policy.json after a hand edit (asks the user)
+  accept <id|profile|policy>            trust state changed outside the engine (asks the user)
   start "<request>" [--answers <json>]  create a work item
   classify <id> --answers <json>        record typed answers and compute the route
   criteria <id> add "<text>" [--kind preserve]

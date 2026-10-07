@@ -22,6 +22,9 @@ export function ensureProfile(paths: CrewPaths): { profile: Profile; tampered: b
   const existing = loadProfile(paths);
   if (existing.profile) return { profile: existing.profile, tampered: existing.tampered };
   const profile = detectProfile(paths.root);
+  // A profile that exists but does not parse was changed outside the engine: overwriting it would
+  // hide that, so the fresh detection is used in memory only and the state stays tampered.
+  if (existing.tampered) return { profile, tampered: true };
   saveProfile(paths, profile);
   return { profile, tampered: false };
 }

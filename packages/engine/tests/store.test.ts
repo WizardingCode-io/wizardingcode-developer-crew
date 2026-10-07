@@ -24,6 +24,31 @@ test("a protected file changed outside the engine is reported as tampered", () =
   expect(read.data?.verdict).toBe("proven");
 });
 
+test("C2: an integrity file that does not parse marks every protected file as tampered", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const profile = join(paths.crewDir, "profile.json");
+  const policy = join(paths.crewDir, "policy.json");
+  writeProtectedJson(paths, profile, { version: 1 });
+  writeFileSync(policy, '{"minimumRoute":"standard"}');
+  writeFileSync(paths.integrityFile, "{ not json");
+  expect(readProtectedJson(paths, profile).tampered).toBe(true);
+  expect(readProtectedJson(paths, policy).tampered).toBe(true);
+});
+
+test("C2: a protected file the engine never wrote is tampered once other hashes exist", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const handWritten = join(paths.crewDir, "work", "w9", "evidence.json");
+  mkdirSync(join(paths.crewDir, "work", "w9"), { recursive: true });
+  writeFileSync(handWritten, JSON.stringify({ verdict: "proven" }));
+  // True first use: nothing is recorded yet, so there is nothing to compare with.
+  expect(readProtectedJson(paths, handWritten).tampered).toBe(false);
+  writeProtectedJson(paths, join(paths.crewDir, "profile.json"), { version: 1 });
+  expect(readProtectedJson(paths, handWritten).tampered).toBe(true);
+  const policy = join(paths.crewDir, "policy.json");
+  writeFileSync(policy, '{"minimumRoute":"standard"}');
+  expect(readProtectedJson(paths, policy).tampered).toBe(false);
+});
+
 test("recordIntegrity accepts a hand-written file, and a missing file is not tampered", () => {
   const paths = repoPaths(makeRepo(), testEnv());
   const file = join(paths.crewDir, "policy.json");

@@ -1,4 +1,6 @@
 import { expect, test } from "bun:test";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   assess,
   depsAuditCommand,
@@ -104,6 +106,27 @@ test("C1: --only never launders runs recorded on older code", async () => {
   expect(partial.verdict).toBe("unproven");
   expect(partial.unproven).toEqual(["gate test not run on the current code"]);
   expect(partial.evidence.runs.every((r) => typeof r.fingerprint === "string")).toBe(true);
+});
+
+test("C2: runGates carries the real tampered flag into the verdict it writes", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const paths = repoPaths(root, testEnv());
+  const { profile } = ensureProfile(paths);
+  const work = createWork(paths, "fix");
+  work.route = "fast";
+  const flagged = await runGates(paths, work, profile, DEFAULT_POLICY, { tampered: true });
+  expect(flagged.tampered).toBe(true);
+  expect(flagged.unproven).toContain("state changed outside the engine");
+  writeFileSync(
+    join(paths.crewDir, "work", work.id, "evidence.json"),
+    JSON.stringify({ ...flagged.evidence, verdict: "proven" }),
+  );
+  const fromEvidence = await runGates(paths, work, profile, DEFAULT_POLICY);
+  expect(fromEvidence.tampered).toBe(true);
+  expect(fromEvidence.evidence.unproven).toContain("state changed outside the engine");
 });
 
 test("a diff that touches a risk path raises the route to full", async () => {

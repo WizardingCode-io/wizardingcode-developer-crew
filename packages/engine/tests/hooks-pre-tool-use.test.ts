@@ -63,6 +63,8 @@ test("bash: user-only decisions ask, writes to engine files are denied, everythi
   expect(decision(bash("crew approve w1 spec"))).toBe("ask");
   expect(decision(bash("crew profile confirm"))).toBe("ask");
   expect(decision(bash("crew policy accept"))).toBe("ask");
+  expect(decision(bash("crew accept 2026-10-07-001-thing"))).toBe("ask");
+  expect(decision(bash("crew accept profile"))).toBe("ask");
   expect(decision(bash("echo '{\"targets\":[]}' > .crew/profile.json"))).toBe("deny");
   expect(decision(bash('sed -i "s/fail/pass/" .crew/work/w1/evidence.json'))).toBe("deny");
   expect(decision(bash("rm -rf ~/.shibaox/crew/integrity"))).toBe("deny");

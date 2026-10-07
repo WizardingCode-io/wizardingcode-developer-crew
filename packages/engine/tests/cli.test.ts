@@ -149,6 +149,59 @@ test("C3: crew is inactive in a plain folder until crew detect activates it", as
   expect((await c.json("status")).data.active).toBeNull();
 });
 
+test("C2: a hand-edited work item blocks every saving command until the user accepts it", async () => {
+  const root = makeRepo({ "package.json": JSON.stringify({ scripts: { test: "exit 0" } }) });
+  const c = io(root);
+  const id = (await c.json("start", "Thing", "--answers", answers)).data.id as string;
+  const file = join(root, ".crew", "work", id, "work.json");
+  const work = JSON.parse(readFileSync(file, "utf8"));
+  work.skips.push({ step: "gate:test", reason: "agent", at: "t" });
+  writeFileSync(file, JSON.stringify(work));
+  const message = `state changed outside the engine: .crew/work/${id}/work.json; the user can accept it with crew accept ${id}`;
+  const refused = await c.run("criteria", id, "add", "x");
+  expect(refused.code).toBe(1);
+  expect(refused.err.trim()).toBe(message);
+  for (const argv of [
+    ["gate", "run", id],
+    ["await", id, "user"],
+    ["skip", id, "gate:lint", "--reason", "x"],
+    ["phase", id, "next"],
+  ]) {
+    expect((await c.run(...argv)).err.trim()).toBe(message);
+  }
+  const status = await c.json("status");
+  expect(status.code).toBe(0);
+  expect(status.data.unproven).toContain("state changed outside the engine");
+  const rendered = await c.run("evidence", id);
+  expect(rendered.code).toBe(1);
+  expect(rendered.err).toStartWith(message);
+  expect(rendered.err).toContain("# Report: Thing");
+  expect(existsSync(join(root, ".crew", "work", id, "report.md"))).toBe(false);
+  expect((await c.run("accept", id)).code).toBe(0);
+  expect((await c.run("criteria", id, "add", "x")).code).toBe(0);
+  expect((await c.run("accept", "nope")).code).toBe(1);
+});
+
+test("C2: a corrupt integrity file is reported, and accept re-records profile and policy", async () => {
+  const root = makeRepo({ "package.json": JSON.stringify({ scripts: { test: "exit 0" } }) });
+  const c = io(root);
+  const paths = repoPaths(root, c.env);
+  const id = (await c.json("start", "Thing", "--answers", answers)).data.id as string;
+  writeFileSync(paths.integrityFile, "garbage");
+  const status = await c.json("status");
+  expect(status.data.unproven).toContain("state changed outside the engine");
+  const refused = await c.run("profile", "set", "lint", "make lint");
+  expect(refused.err.trim()).toBe(
+    "state changed outside the engine: .crew/profile.json; the user can accept it with crew accept profile",
+  );
+  expect((await c.run("accept", "profile")).code).toBe(0);
+  expect((await c.run("profile", "set", "lint", "make lint")).code).toBe(0);
+  expect((await c.run("criteria", id, "add", "x")).code).toBe(1);
+  expect((await c.run("accept", id)).code).toBe(0);
+  expect((await c.run("criteria", id, "add", "x")).code).toBe(0);
+  expect((await c.run("accept", "policy")).code).toBe(1);
+});
+
 test("hook: malformed or empty stdin answers {} and exits 0", async () => {
   const root = makeRepo();
   expect(await io(root, testEnv(), "").run("hook", "stop")).toMatchObject({ code: 0, out: "{}\n" });
@@ -175,8 +228,13 @@ test("detect --refresh never re-blesses a tampered policy; policy accept does", 
   expect((await c.run("detect", "--refresh")).code).toBe(0);
   expect(readProtectedJson(paths, file).tampered).toBe(false);
   writeFileSync(file, '{"minimumRoute":"fast"}');
-  expect((await c.run("detect", "--refresh")).code).toBe(0);
+  const refused = await c.run("detect", "--refresh");
+  expect(refused.code).toBe(1);
+  expect(refused.err.trim()).toBe(
+    "state changed outside the engine: .crew/policy.json; the user can accept it with crew accept policy",
+  );
   expect(readProtectedJson(paths, file).tampered).toBe(true);
+  expect((await c.run("detect")).code).toBe(0);
   expect((await c.run("policy", "accept")).code).toBe(0);
   expect(readProtectedJson(paths, file).tampered).toBe(false);
   expect((await c.run("policy", "other")).code).toBe(1);
