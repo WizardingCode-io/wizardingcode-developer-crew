@@ -47,6 +47,23 @@ export function register(on) {
     await refresh($)
     return { text: statusText() }
   })
+
+  on('turn.complete', async ($, e, next) => {
+    await refresh($)
+    if (!hasWork()) return next(e)
+    return { text: verdictLine() }
+  })
+
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    // Other mods draw here too; their tree stays below ours
+    const theirs = await next(e)
+    if (!hasWork()) return theirs
+    const { Box, Text } = $.ui.resolve(e)
+    return Box({
+      flexDirection: 'column',
+      children: [Text({ dimColor: true, wrap: 'truncate-end', children: [stripText()] }), theirs],
+    })
+  })
 }
 
 // Runs the bundled CLI in the session's folder and returns its JSON answer.

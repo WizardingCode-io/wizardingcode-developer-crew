@@ -107,3 +107,57 @@ test("/crew mode forwards to the engine", async ($, on) => {
   expect(last[1]).toMatch(/\/plugins\/core\/dist\/crew\.mjs$/);
   expect(last.slice(2)).toEqual(["mode", "pilot", "--json"]);
 });
+
+// What Claude Code passes to a ui.render hook for the strip above the prompt
+const STRIP = {
+  plugin: "shibaox-developer-crew",
+  component: "AbovePrompt",
+  requestId: "above-prompt",
+  viewport: { columns: 120, rows: 40 },
+  props: { hasSurvey: false, isWorking: false, maxRows: 6, bodyColumns: 100, scroll: { offset: 0, bodyRows: 6 }, view: {} },
+} as const;
+
+test("the strip shows the item, phase, route, gates and verdict, and keeps other mods' content", async ($, on) => {
+  stubs(on, () => ({ exitCode: 0, stdout: JSON.stringify(PROVEN), stderr: "" }));
+  on("ui.render", () => ({ type: "Text", props: {}, children: ["drawn by Claude Code"] }));
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  const ui = await $.ui.mount({ ...STRIP, surface: "terminal" });
+  expect(await ui.find({ type: "Text", text: "crew 2026-10-07-001-fix-total · deliver · fast · secrets ✓ test ✓ · proven" })).toBeDefined();
+  expect(await ui.find({ type: "Text", text: "drawn by Claude Code" })).toBeDefined();
+  await ui.unmount();
+});
+
+test("the strip stays out of the way without an active item", async ($, on) => {
+  stubs(on, () => ({ exitCode: 0, stdout: JSON.stringify(NONE), stderr: "" }));
+  on("ui.render", () => ({ type: "Text", props: {}, children: ["drawn by Claude Code"] }));
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  const ui = await $.ui.mount({ ...STRIP, surface: "terminal" });
+  expect(await ui.find({ type: "Text", text: /^crew / })).toBeUndefined();
+  expect(await ui.find({ type: "Text", text: "drawn by Claude Code" })).toBeDefined();
+  await ui.unmount();
+});
+
+test("an item whose gates have not run reads as not proven, not as success", async ($, on) => {
+  const fresh = { ...PROVEN, phase: "build", verdict: "unproven", unproven: ["gates have not run", "test-first record missing for AC-1"], runs: [], criteria: [{ ...PROVEN.criteria[0], tdd: "missing" }] };
+  stubs(on, () => ({ exitCode: 0, stdout: JSON.stringify(fresh), stderr: "" }));
+  on("ui.render", () => ({ type: "Text", props: {}, children: [] }));
+  on("turn.complete", () => ({ text: "" }));
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  const ui = await $.ui.mount({ ...STRIP, surface: "terminal" });
+  expect(await ui.find({ type: "Text", text: "crew 2026-10-07-001-fix-total · build · fast · not proven" })).toBeDefined();
+  await ui.unmount();
+  const line = await $.turn.complete({ turnId: "t1", answer: "done", durationMs: 10, isAborted: false, usage: null });
+  expect(line.text).toBe("Not proven: gates have not run");
+});
+
+test("the line under a proven answer names the gates, and no item means no line", async ($, on) => {
+  let proven = true;
+  stubs(on, () => ({ exitCode: 0, stdout: JSON.stringify(proven ? PROVEN : NONE), stderr: "" }));
+  on("turn.complete", () => ({ text: "" }));
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  const line = await $.turn.complete({ turnId: "t1", answer: "done", durationMs: 10, isAborted: false, usage: null });
+  expect(line.text).toBe("Proven: secrets, test");
+  proven = false;
+  const none = await $.turn.complete({ turnId: "t2", answer: "done", durationMs: 10, isAborted: false, usage: null });
+  expect(none.text).toBe("");
+});
