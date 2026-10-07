@@ -2362,6 +2362,7 @@ ${gateSummary(active.work, result.verdict, result.unproven, result.evidence.runs
         phases: PHASES_BY_ROUTE[work.route],
         verdict: result.verdict,
         unproven: result.unproven,
+        expected: [...new Set(result.expected.map((p) => p.gate))],
         criteria: work.criteria.map((c) => ({
           id: c.id,
           kind: c.kind,

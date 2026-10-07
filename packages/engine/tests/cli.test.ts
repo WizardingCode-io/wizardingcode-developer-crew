@@ -96,6 +96,7 @@ test("a fast-route fix from start to a proven report", async () => {
   expect(
     (status.data.runs as { gate: string; status: string }[]).map((r) => `${r.gate}:${r.status}`),
   ).toEqual(["secrets:pass", "test:pass"]);
+  expect(status.data.expected).toEqual(["secrets", "test"]);
   expect(status.data.skips).toEqual([]);
   expect(status.data.awaiting).toBeNull();
   expect(typeof status.data.baseCommit).toBe("string");

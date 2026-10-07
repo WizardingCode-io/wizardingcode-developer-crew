@@ -580,6 +580,8 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         phases: PHASES_BY_ROUTE[work.route],
         verdict: result.verdict,
         unproven: result.unproven,
+        // One name per gate, so the strip can draw a planned gate that has not run yet.
+        expected: [...new Set(result.expected.map((p) => p.gate))],
         criteria: work.criteria.map((c) => ({
           id: c.id,
           kind: c.kind,
