@@ -178,7 +178,6 @@ test("the panel lists phases, criteria, gates and the verdict, and its buttons w
     return { exitCode: 0, stdout: JSON.stringify(PROVEN), stderr: "" };
   });
   on("ui.open", () => ({ value: { isPlaced: true } }));
-  on("ui.toast", () => ({ value: undefined }));
   on("ui.close", ($, e) => {
     closed.push(e.id);
     return { value: undefined };
@@ -198,6 +197,41 @@ test("the panel lists phases, criteria, gates and the verdict, and its buttons w
   await ui.press({ key: "close" });
   expect(closed).toEqual(["crew"]);
   await ui.unmount();
+});
+
+test("a pane that cannot open is a toast, not a failure", async ($, on) => {
+  const toasts: string[] = [];
+  stubs(on, () => ({ exitCode: 0, stdout: JSON.stringify(PROVEN), stderr: "" }));
+  on("ui.open", () => ({ deny: "no pane here" }));
+  on("ui.toast", ($, e) => {
+    toasts.push(e.text);
+    return { value: undefined };
+  });
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  const answer = await $.command.run({ command: "crew", args: "panel" });
+  expect(answer.text).toBeUndefined();
+  // A denied call rejects with the host's message, which prefixes the plugin and the call
+  expect(toasts).toEqual(["Crew: the panel could not open: shibaox-developer-crew: $.ui.open: no pane here"]);
+});
+
+test("a pane that is not placed says it waits for a wider terminal", async ($, on) => {
+  const toasts: string[] = [];
+  stubs(on, () => ({ exitCode: 0, stdout: JSON.stringify(PROVEN), stderr: "" }));
+  on("ui.open", () => ({ value: { isPlaced: false, reason: "too narrow" } }));
+  on("ui.toast", ($, e) => {
+    toasts.push(e.text);
+    return { value: undefined };
+  });
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  await $.command.run({ command: "crew", args: "panel" });
+  expect(toasts).toEqual(["Crew: the panel waits for a wider terminal: too narrow"]);
+});
+
+test("/crew mode with an answer that has no message still says something", async ($, on) => {
+  stubs(on, () => ({ exitCode: 0, stdout: JSON.stringify({ ok: true }), stderr: "" }));
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  const answer = await $.command.run({ command: "crew", args: "mode pilot" });
+  expect(answer.text).toBe("Crew: crew gave no answer");
 });
 
 test("the panel explains an inactive engine instead of drawing an empty view", async ($, on) => {

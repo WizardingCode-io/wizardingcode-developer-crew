@@ -41,11 +41,19 @@ export function register(on) {
       try {
         placed = await $.ui.open({ id: PANE, title: 'Crew', focus: true, closeOnEscape: true })
       } catch (err) {
-        $.ui.toast('Crew: the panel could not open: ' + reasonOf(err))
+        try {
+          await $.ui.toast('Crew: the panel could not open: ' + reasonOf(err))
+        } catch {
+          /* a toast that fails must not take the command with it */
+        }
         return {}
       }
       if (placed && placed.isPlaced === false) {
-        $.ui.toast('Crew: the panel waits for a wider terminal' + (placed.reason ? ': ' + placed.reason : ''))
+        try {
+          await $.ui.toast('Crew: the panel waits for a wider terminal' + (placed.reason ? ': ' + placed.reason : ''))
+        } catch {
+          /* a toast that fails must not take the command with it */
+        }
       }
       return {}
     }
