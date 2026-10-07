@@ -3,10 +3,11 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { runGates } from "../src/gates.ts";
 import { handleHook } from "../src/hooks/index.ts";
+import { onPrompt } from "../src/hooks/prompt.ts";
 import { onSessionStart } from "../src/hooks/session-start.ts";
 import { MAX_STOP_BLOCKS, onStop } from "../src/hooks/stop.ts";
 import { loadState } from "../src/state.ts";
-import { addCriterion, addSkip, createWork, saveWork } from "../src/work.ts";
+import { addCriterion, addSkip, createWork, loadWork, saveWork } from "../src/work.ts";
 import { hookContext, makeRepo, tempDir, testEnv, write } from "./helpers.ts";
 
 function session() {
@@ -28,6 +29,21 @@ test("C4: a new session that starts on unproven changes has no baseline, so they
   onSessionStart(next, { source: "startup" });
   expect(loadState(next.paths).sessions.s2?.baseline).toBeNull();
   expect(onStop(next).decision).toBe("block");
+});
+
+test("I3: the user's next prompt ends the wait and re-arms the Stop rule", () => {
+  const { root, ctx } = session();
+  const work = createWork(ctx.paths, "fix");
+  write(root, "src/a.ts", "changed");
+  for (let i = 1; i <= MAX_STOP_BLOCKS; i++) expect(onStop(ctx).decision).toBe("block");
+  expect(onStop(ctx).decision).toBeUndefined();
+  work.awaiting = "user";
+  saveWork(ctx.paths, work);
+  expect(onStop(ctx).decision).toBeUndefined();
+  onPrompt(ctx);
+  expect(loadWork(ctx.paths, work.id).work?.awaiting).toBeNull();
+  expect(loadState(ctx.paths).sessions.s?.stopBlocks).toBe(0);
+  expect(onStop(ctx).decision).toBe("block");
 });
 
 test("C4: a resumed session keeps its baseline", () => {

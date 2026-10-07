@@ -65,6 +65,15 @@ test("bash: user-only decisions ask, writes to engine files are denied, everythi
   expect(decision(bash("crew policy accept"))).toBe("ask");
   expect(decision(bash("crew accept 2026-10-07-001-thing"))).toBe("ask");
   expect(decision(bash("crew accept profile"))).toBe("ask");
+  expect(decision(bash('crew "skip" w1 gate:lint --reason x'))).toBe("ask");
+  expect(decision(bash("crew sk''ip w1 gate:lint --reason x"))).toBe("ask");
+  expect(decision(bash("c\\rew approve w1 spec"))).toBe("ask");
+  expect(decision(bash("node /x/dist/crew.mjs skip w1 gate:lint --reason x"))).toBe("ask");
+  expect(decision(bash("cd /repo && ./crew.mjs profile confirm"))).toBe("ask");
+  expect(decision(bash('crew profile set test "true" --force'))).toBe("ask");
+  expect(decision(bash("crew profile set test true --target api --force"))).toBe("ask");
+  expect(bash("crew status && echo skip")).toEqual({});
+  expect(bash("screw skip")).toEqual({});
   expect(decision(bash("echo '{\"targets\":[]}' > .crew/profile.json"))).toBe("deny");
   expect(decision(bash('sed -i "s/fail/pass/" .crew/work/w1/evidence.json'))).toBe("deny");
   expect(decision(bash("rm -rf ~/.shibaox/crew/integrity"))).toBe("deny");

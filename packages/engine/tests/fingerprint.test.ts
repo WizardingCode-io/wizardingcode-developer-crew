@@ -41,6 +41,21 @@ test("gitChangedPaths lists both sides of a rename", () => {
   expect(gitChangedPaths(root)).toEqual(["src/new.ts", "src/old.ts"]);
 });
 
+test("I1: from a base commit, committing the change neither hides it nor moves the fingerprint", () => {
+  const root = makeRepo({ "src/a.ts": "x" });
+  const profile = detectProfile(root);
+  const base = git(root, "rev-parse", "HEAD");
+  write(root, "src/a.ts", "y");
+  write(root, "src/b.ts", "new");
+  const before = computeFingerprint(root, profile, base);
+  expect(changedWatchedPaths(root, profile, base)).toEqual(["src/a.ts", "src/b.ts"]);
+  git(root, "add", "-A");
+  git(root, "commit", "-q", "-m", "work");
+  expect(changedWatchedPaths(root, profile, base)).toEqual(["src/a.ts", "src/b.ts"]);
+  expect(computeFingerprint(root, profile, base)).toBe(before);
+  expect(changedWatchedPaths(root, profile)).toEqual([]);
+});
+
 test("C3: the walk without git never follows symlinks, so a cycle is harmless", () => {
   const root = tempDir();
   write(root, "src/a.py", "a = 1\n");

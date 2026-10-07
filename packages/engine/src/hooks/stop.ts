@@ -14,9 +14,9 @@ export const MAX_STOP_BLOCKS = 3;
 export function onStop(ctx: HookContext): HookResponse {
   const state = loadState(ctx.paths);
   const session = sessionState(state, ctx.sessionId);
-  const current = computeFingerprint(ctx.paths.root, ctx.profile);
   const active = activeWork(ctx.paths);
   const work = active?.work ?? null;
+  const current = computeFingerprint(ctx.paths.root, ctx.profile, work?.baseCommit);
   const result = work
     ? assess(ctx.paths, work, ctx.profile, ctx.policy, ctx.tampered || !!active?.tampered)
     : null;

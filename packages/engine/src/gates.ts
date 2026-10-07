@@ -1,9 +1,9 @@
-import { spawnSync } from "node:child_process";
-import { basename, join } from "node:path";
+import { accessSync, constants } from "node:fs";
+import { basename, delimiter, join } from "node:path";
 import { riskAreasForPaths } from "./classify.ts";
 import { computeVerdict, loadEvidence, type PlannedGate, saveEvidence } from "./evidence.ts";
 import { changedWatchedPaths, computeFingerprint } from "./fingerprint.ts";
-import { nowIso } from "./fs.ts";
+import { exists, nowIso } from "./fs.ts";
 import { type CrewPaths, workDir } from "./paths.ts";
 import { runCommand } from "./run.ts";
 import { scanSecrets } from "./secrets.ts";
@@ -40,25 +40,74 @@ export function manifestChanged(changed: string[]): boolean {
   );
 }
 
-function onPath(binary: string): boolean {
-  const result = spawnSync(process.platform === "win32" ? "where" : "which", [binary], {
-    stdio: "ignore",
-  });
-  return result.status === 0;
+/** Looks the program up on PATH without starting a process, so planning stays fast enough for a hook. */
+function onPath(binary: string, env: NodeJS.ProcessEnv): boolean {
+  const extensions =
+    process.platform === "win32" ? ["", ...(env.PATHEXT ?? ".EXE;.CMD;.BAT").split(";")] : [""];
+  for (const dir of (env.PATH ?? "").split(delimiter)) {
+    if (!dir) continue;
+    for (const extension of extensions) {
+      try {
+        accessSync(join(dir, binary + extension), constants.X_OK);
+        return true;
+      } catch {
+        // Not here; keep looking.
+      }
+    }
+  }
+  return false;
 }
 
-const NODE_AUDIT: Record<string, string> = {
-  npm: "npm audit --audit-level=high",
-  pnpm: "pnpm audit --audit-level=high",
-  yarn: "yarn audit --level high",
-  bun: "bun audit",
+interface AuditTool {
+  binary: string;
+  command: string;
+  lockfiles: string[];
+}
+
+const NODE_AUDIT: Record<string, AuditTool> = {
+  npm: {
+    binary: "npm",
+    command: "npm audit --audit-level=high",
+    lockfiles: ["package-lock.json", "npm-shrinkwrap.json"],
+  },
+  pnpm: { binary: "pnpm", command: "pnpm audit --audit-level=high", lockfiles: ["pnpm-lock.yaml"] },
+  yarn: { binary: "yarn", command: "yarn audit --level high", lockfiles: ["yarn.lock"] },
+  bun: { binary: "bun", command: "bun audit", lockfiles: ["bun.lock", "bun.lockb"] },
 };
 
-export function depsAuditCommand(target: Target): string | null {
-  if (target.stack === "node") return NODE_AUDIT[target.packageManager] ?? null;
-  if (target.stack === "php") return "composer audit";
-  if (target.stack === "python") return onPath("pip-audit") ? "pip-audit" : null;
-  return null;
+// The same runner prefix the Python detector uses for the other gates.
+const PYTHON_AUDIT: Record<string, string> = {
+  uv: "uv run pip-audit",
+  poetry: "poetry run pip-audit",
+  pip: "python -m pip_audit",
+};
+
+export type AuditCommand = { command: string } | { reason: string };
+
+/** The audit for a target, or why it cannot run: an audit without a lockfile or a tool proves nothing. */
+export function depsAuditCommand(
+  target: Target,
+  root: string,
+  env: NodeJS.ProcessEnv = process.env,
+): AuditCommand {
+  const dir = join(root, target.path);
+  if (target.stack === "python") {
+    if (!onPath("pip-audit", env)) return { reason: "pip-audit not on PATH" };
+    return { command: PYTHON_AUDIT[target.packageManager] ?? PYTHON_AUDIT.pip ?? "pip-audit" };
+  }
+  let tool: AuditTool | undefined;
+  if (target.stack === "node") {
+    tool = NODE_AUDIT[target.packageManager];
+    // Yarn Berry dropped `yarn audit`; its audit lives under `yarn npm`.
+    if (tool && target.packageManager === "yarn" && exists(join(dir, ".yarnrc.yml")))
+      tool = { ...tool, command: "yarn npm audit --severity high" };
+  } else if (target.stack === "php") {
+    tool = { binary: "composer", command: "composer audit", lockfiles: ["composer.lock"] };
+  }
+  if (!tool) return { reason: `no audit tool for ${target.packageManager}` };
+  if (!tool.lockfiles.some((name) => exists(join(dir, name)))) return { reason: "no lockfile" };
+  if (!onPath(tool.binary, env)) return { reason: `${tool.binary} not on PATH` };
+  return { command: tool.command };
 }
 
 /** The gate table from the spec, section 12. Secrets is planned separately, once per repository. */
@@ -85,6 +134,7 @@ export function plannedGates(
   profile: Profile,
   policy: Policy,
   changed: string[],
+  root: string,
 ): PlannedGate[] {
   const planned: PlannedGate[] = [{ gate: "secrets", target: "." }];
   const touched = profile.targets.filter(
@@ -96,7 +146,8 @@ export function plannedGates(
   for (const target of touched) {
     for (const gate of gatesForTarget(route, target, policy, changed)) {
       // On the standard route the audit is required only when a tool exists; on the full route it must be skipped explicitly.
-      if (gate === "deps" && route === "standard" && !depsAuditCommand(target)) continue;
+      if (gate === "deps" && route === "standard" && "reason" in depsAuditCommand(target, root))
+        continue;
       planned.push({ gate, target: target.path });
     }
   }
@@ -128,7 +179,7 @@ async function runOne(
   };
   if (gate === "secrets") {
     const started = Date.now();
-    const scan = await scanSecrets(paths.root, profile);
+    const scan = await scanSecrets(paths.root, profile, work.baseCommit);
     return {
       ...base,
       command: scan.usedGitleaks ? "built-in secret scan + gitleaks" : "built-in secret scan",
@@ -143,8 +194,9 @@ async function runOne(
   let command: string | null;
   let source: GateRun["commandSource"] = "detected";
   if (gate === "deps") {
-    command = depsAuditCommand(target);
-    if (!command) return { ...base, reason: `no audit tool for ${target.packageManager}` };
+    const audit = depsAuditCommand(target, paths.root);
+    if ("reason" in audit) return { ...base, reason: audit.reason };
+    command = audit.command;
   } else {
     const configured = target.gates[gate];
     if (!configured) return { ...base, reason: "no command" };
@@ -189,7 +241,8 @@ export async function runGates(
   policy: Policy,
   options: { only?: GateName[]; tampered?: boolean } = {},
 ): Promise<GateOutcome> {
-  const changed = changedWatchedPaths(paths.root, profile);
+  const base = work.baseCommit ?? null;
+  const changed = changedWatchedPaths(paths.root, profile, base);
   const pathRisk = riskAreasForPaths(changed, policy);
   let raised: Route | null = null;
   if (pathRisk.length) {
@@ -197,12 +250,12 @@ export async function runGates(
     if (raiseRoute(work, "full", `the change touches ${pathRisk.join(", ")} paths`))
       raised = "full";
   }
-  const planned = plannedGates(work.route, profile, policy, changed);
+  const planned = plannedGates(work.route, profile, policy, changed, paths.root);
   const read = loadEvidence(paths, work.id);
   const evidence = read.evidence;
   // The caller knows about the work item and the profile; the evidence file is checked here.
   const tampered = !!options.tampered || read.tampered;
-  const fingerprintBefore = computeFingerprint(paths.root, profile);
+  const fingerprintBefore = computeFingerprint(paths.root, profile, base);
   for (const { gate, target } of planned) {
     if (options.only && !options.only.includes(gate)) continue;
     evidence.runs = evidence.runs.filter((r) => !(r.gate === gate && r.target === target));
@@ -233,7 +286,7 @@ export async function runGates(
     work,
     evidence,
     expected: planned,
-    currentFingerprint: computeFingerprint(paths.root, profile),
+    currentFingerprint: computeFingerprint(paths.root, profile, base),
     tampered,
   });
   evidence.verdict = verdict.verdict;
@@ -258,14 +311,15 @@ export function assess(
   policy: Policy,
   tampered = false,
 ): Assessment {
-  const changed = changedWatchedPaths(paths.root, profile);
-  const expected = plannedGates(work.route, profile, policy, changed);
+  const base = work.baseCommit ?? null;
+  const changed = changedWatchedPaths(paths.root, profile, base);
+  const expected = plannedGates(work.route, profile, policy, changed, paths.root);
   const read = loadEvidence(paths, work.id);
   const verdict = computeVerdict({
     work,
     evidence: read.evidence,
     expected,
-    currentFingerprint: computeFingerprint(paths.root, profile),
+    currentFingerprint: computeFingerprint(paths.root, profile, base),
     tampered: tampered || read.tampered,
   });
   return { evidence: read.evidence, ...verdict, expected, changed };

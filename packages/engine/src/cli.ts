@@ -14,8 +14,8 @@ import { ensureProfile, loadProfile, saveProfile } from "./profile.ts";
 import { ensureCrewDir } from "./state.ts";
 import { integrityOf, recordIntegrity, writeProtectedText } from "./store.ts";
 import { recordTdd, type TddStep } from "./tdd.ts";
-import type { GateName, Policy, Profile, UserConfig, WorkItem } from "./types.ts";
-import { GATE_NAMES } from "./types.ts";
+import type { GateName, Phase, Policy, Profile, UserConfig, WorkItem } from "./types.ts";
+import { GATE_NAMES, PHASE_ORDER } from "./types.ts";
 import { VERSION } from "./version.ts";
 import {
   activeWork,
@@ -44,6 +44,9 @@ interface Parsed {
   rest: string[];
 }
 
+// Flags that never take a value, so a word after them stays a positional argument.
+const BOOLEAN_FLAGS = new Set(["json", "refresh", "force"]);
+
 function parse(argv: string[]): Parsed {
   const parsed: Parsed = { positional: [], flags: {}, rest: [] };
   for (let i = 0; i < argv.length; i++) {
@@ -55,7 +58,7 @@ function parse(argv: string[]): Parsed {
     if (arg.startsWith("--")) {
       const key = arg.slice(2);
       const next = argv[i + 1];
-      if (next !== undefined && !next.startsWith("--") && key !== "json" && key !== "refresh") {
+      if (next !== undefined && !next.startsWith("--") && !BOOLEAN_FLAGS.has(key)) {
         parsed.flags[key] = next;
         i++;
       } else parsed.flags[key] = true;
@@ -141,6 +144,22 @@ function tamperRefusal(env: Env, opened?: Opened): Outcome | null {
   }
   const first = found[0];
   return first ? refuse(tamperMessage(first)) : null;
+}
+
+/**
+ * The step names a skip can carry, so the report and the verdict agree on what was skipped:
+ * `lint` is `gate:lint`, `AC-1` is `tdd:AC-1`, and a phase is its own name. A bare `build` is the
+ * build gate, since skipping the build phase itself is not a thing.
+ */
+function skipStep(work: WorkItem, raw: string): string | null {
+  const isGate = (name: string) => GATE_NAMES.includes(name as GateName);
+  const isCriterion = (id: string) => work.criteria.some((c) => c.id === id);
+  if (isGate(raw)) return `gate:${raw}`;
+  if (isCriterion(raw)) return `tdd:${raw}`;
+  if (raw.startsWith("gate:") && isGate(raw.slice(5))) return raw;
+  if (raw.startsWith("tdd:") && isCriterion(raw.slice(4))) return raw;
+  if (PHASE_ORDER.includes(raw as Phase)) return raw;
+  return null;
 }
 
 /** The user trusts the current content of a target's protected files again. Asks the user (PreToolUse). */
@@ -312,6 +331,12 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           };
           env.profile.targets.push(target);
         }
+        const current = target.gates[gate as GateName];
+        // A detected or confirmed command is the project's own; replacing it is the user's call.
+        if (current && current.source !== "proposed" && !parsed.flags.force)
+          return refuse(
+            `${gate} for ${targetPath} already has a ${current.source} command (${current.command}); replacing it needs the user: crew profile set ${gate} "<cmd>" --force`,
+          );
         target.gates[gate as GateName] = { command: cmd, source: "proposed" };
         saveProfile(env.paths, env.profile);
         return ok(
@@ -320,15 +345,21 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         );
       }
       if (sub === "confirm") {
-        let count = 0;
+        if (gate !== undefined && !GATE_NAMES.includes(gate as GateName))
+          return refuse("usage: crew profile confirm [<gate>]");
+        // The user sees exactly what they are trusting.
+        const confirmed: string[] = [];
         for (const target of env.profile.targets)
-          for (const command of Object.values(target.gates))
-            if (command.source === "proposed") {
+          for (const [name, command] of Object.entries(target.gates))
+            if (command.source === "proposed" && (gate === undefined || name === gate)) {
               command.source = "confirmed";
-              count++;
+              confirmed.push(`${name}: ${command.command}`);
             }
         saveProfile(env.paths, env.profile);
-        return ok(`confirmed ${count} command(s)`, { confirmed: count });
+        return ok([`confirmed ${confirmed.length} command(s)`, ...confirmed].join("\n  "), {
+          confirmed: confirmed.length,
+          commands: confirmed,
+        });
       }
       return refuse("usage: crew profile set|confirm");
     }
@@ -342,20 +373,37 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
     }
     case "start": {
       const input = args.join(" ").trim();
-      if (!input) return refuse('usage: crew start "<request>" [--answers <json>]');
+      if (!input) return refuse(`usage: crew start "<request>" --answers '<json>'`);
+      // The route comes from the typed answers; without them every item would sit on a default route.
+      if (typeof parsed.flags.answers !== "string")
+        return refuse(
+          "answers are required: answer the nine typed questions from the crew skill (references/receive.md) and pass them with --answers",
+        );
       // Validate before creating anything, so a bad answer set leaves no half-made work item behind.
-      const answers =
-        typeof parsed.flags.answers === "string" ? parseAnswers(parsed.flags.answers) : null;
+      const answers = parseAnswers(parsed.flags.answers);
       if (isOutcome(answers)) return answers;
+      if (answers.work_type === "question")
+        return ok("question: answer the user; no work item is created", { id: null });
+      const previous = activeWork(env.paths);
+      const warning =
+        previous?.work &&
+        assess(env.paths, previous.work, env.profile, env.policy, env.tampered || previous.tampered)
+          .verdict !== "proven"
+          ? `warning: ${previous.work.id} is not proven and is no longer the active work item\n`
+          : "";
       const work = createWork(env.paths, input);
-      if (answers) classify(env, work, answers);
+      classify(env, work, answers);
       saveWork(env.paths, work);
-      return ok(`started ${work.id} (route ${work.route}: ${work.routeReasons.join("; ")})`, {
-        id: work.id,
-        route: work.route,
-        phase: work.phase,
-        routeReasons: work.routeReasons,
-      });
+      return ok(
+        `${warning}started ${work.id} (route ${work.route}: ${work.routeReasons.join("; ")})`,
+        {
+          id: work.id,
+          route: work.route,
+          phase: work.phase,
+          routeReasons: work.routeReasons,
+          replaced: warning ? previous?.work?.id : null,
+        },
+      );
     }
     case "classify": {
       const opened = openForChange(env, args[0]);
@@ -471,9 +519,11 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
     case "skip": {
       const opened = openForChange(env, args[0]);
       if (isOutcome(opened)) return opened;
-      const step = args[1];
+      const raw = args[1];
       const reason = typeof parsed.flags.reason === "string" ? parsed.flags.reason.trim() : "";
-      if (!step || !reason) return refuse('usage: crew skip <id> <step> --reason "<text>"');
+      if (!raw || !reason) return refuse('usage: crew skip <id> <step> --reason "<text>"');
+      const step = skipStep(opened.work, raw);
+      if (!step) return refuse(`unknown step: ${raw}`);
       if (!skipAllowed(env.policy, step))
         return refuse(`the team policy does not allow skipping ${step}`);
       if (env.config.mode === "pilot" && (step === "gate:secrets" || step === "gate:deps"))
@@ -565,10 +615,11 @@ function settings(command: "mode" | "config", args: string[], user: { userDir: s
 const HELP = `crew ${VERSION}
   detect [--refresh]                    build or refresh the project profile
   profile set <gate> "<cmd>" [--target p] propose a gate command (unconfirmed)
-  profile confirm                       confirm proposed commands (asks the user)
+  profile set <gate> "<cmd>" --force    replace a detected or confirmed command (asks the user)
+  profile confirm [<gate>]              confirm proposed commands (asks the user)
   policy accept                         trust the current policy.json after a hand edit (asks the user)
   accept <id|profile|policy>            trust state changed outside the engine (asks the user)
-  start "<request>" [--answers <json>]  create a work item
+  start "<request>" --answers <json>    create a work item from the typed answers
   classify <id> --answers <json>        record typed answers and compute the route
   criteria <id> add "<text>" [--kind preserve]
   approve <id> spec                     record the user's approval (asks the user)

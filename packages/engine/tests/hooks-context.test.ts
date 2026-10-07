@@ -24,8 +24,9 @@ test("session start detects the profile, records the baseline and describes the 
   expect(session?.baseline).toMatch(/^sha256:/);
   expect(session?.stopBlocks).toBe(0);
   const text = (response.hookSpecificOutput as { additionalContext: string }).additionalContext;
-  expect(text).toContain("crew start");
-  expect(text).toContain("No work item is active");
+  expect(text).toContain(
+    "No work item is active. A code change starts by answering the crew skill's nine typed questions, then crew start \"<request>\" --answers '<json>'.",
+  );
   expect(text.length).toBeLessThan(900);
 });
 

@@ -99,6 +99,8 @@ export interface WorkItem {
   criteria: Criterion[];
   approvals: Approval[];
   skips: Skip[];
+  /** HEAD when the item started; the change is everything since. Null outside git or with no commits. */
+  baseCommit: string | null;
   createdAt: string;
   updatedAt: string;
 }

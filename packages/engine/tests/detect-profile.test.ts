@@ -1,5 +1,10 @@
 import { expect, test } from "bun:test";
-import { detectProfile, missingTestCommands } from "../src/detect/index.ts";
+import {
+  detectProfile,
+  detectTargets,
+  mergeProfile,
+  missingTestCommands,
+} from "../src/detect/index.ts";
 import type { Profile } from "../src/types.ts";
 import { tempDir, write } from "./helpers.ts";
 
@@ -31,6 +36,20 @@ test("re-detection keeps proposed and confirmed commands and timeouts", () => {
   expect(fresh.targets[0]?.gates.lint).toEqual({ command: "make lint", source: "confirmed" });
   expect(fresh.targets[0]?.gates.test).toEqual({ command: "make test", source: "proposed" });
   expect(fresh.targets[0]?.timeoutMs).toBe(1234);
+});
+
+test("mergeProfile leaves the targets it is given untouched", () => {
+  const dir = monorepo();
+  const previous = detectProfile(dir);
+  const root = previous.targets[0];
+  if (!root) throw new Error("no target");
+  root.gates.test = { command: "make test", source: "proposed" };
+  root.timeoutMs = 1234;
+  const targets = detectTargets(dir);
+  const snapshot = JSON.stringify(targets);
+  const merged = mergeProfile(previous, targets);
+  expect(merged.targets[0]?.gates.test?.command).toBe("make test");
+  expect(JSON.stringify(targets)).toBe(snapshot);
 });
 
 test("a path with no test command anywhere is reported, and an empty folder reports the root", () => {

@@ -94,7 +94,16 @@ export async function recordTdd(
         record,
       };
     }
-    record.changedTests = changedWatchedPaths(paths.root, profile).filter((p) =>
+    // A timeout, a command the shell could not find (127) or could not run (126) failed before any
+    // test ran, so it says nothing about the missing behaviour.
+    if (result.timedOut || result.exit === null || result.exit === 126 || result.exit === 127) {
+      return {
+        ok: false,
+        message: `the red run did not fail for the right reason (exit ${result.exit ?? "none"}${result.timedOut ? ", timed out" : ""}): fix the command before recording`,
+        record,
+      };
+    }
+    record.changedTests = changedWatchedPaths(paths.root, profile, work.baseCommit).filter((p) =>
       matchesAny(p, TEST_PATTERNS),
     );
     entry.red = record;

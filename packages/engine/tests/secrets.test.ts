@@ -41,7 +41,17 @@ test("scanSecrets fails on a leaked key in an untracked file and passes when cle
   expect(result.status).toBe("fail");
   expect(result.findings[0]).toMatchObject({ source: ".env.local", rule: "Stripe key" });
   expect(result.tail).toContain(".env.local:1");
+});
+
+test("I1: a leak committed during the work is still found from the work item's base", async () => {
+  const root = makeRepo({ "src/a.ts": "const a = 1;\n" });
+  const profile = detectProfile(root);
+  const base = git(root, "rev-parse", "HEAD");
+  write(root, "src/a.ts", 'const a = 1;\nconst key = "sk_live_abcdefghijklmnop1234";\n');
+  write(root, ".env.local", "AWS=AKIAIOSFODNN7EXAMPLE1\n");
   git(root, "add", "-A");
   git(root, "commit", "-q", "-m", "leak");
-  expect((await scanSecrets(root, profile)).status).toBe("pass");
+  const result = await scanSecrets(root, profile, base);
+  expect(result.status).toBe("fail");
+  expect(result.findings.map((f) => f.rule).sort()).toEqual(["AWS access key", "Stripe key"]);
 });

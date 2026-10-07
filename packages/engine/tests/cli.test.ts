@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type CliIo, main } from "../src/cli.ts";
+import { loadProfile } from "../src/profile.ts";
 import { readProtectedJson } from "../src/store.ts";
 import { makeRepo, repoPaths, tempDir, testEnv, write } from "./helpers.ts";
 
@@ -88,7 +89,7 @@ test("refusals: unknown work, skip without reason, invalid answers, pilot cannot
   const c = io(root);
   expect((await c.run("phase", "nope", "next")).code).toBe(1);
   expect((await c.run("start", "x", "--answers", '{"work_type":"bug"}')).code).toBe(1);
-  const start = await c.json("start", "Thing");
+  const start = await c.json("start", "Thing", "--answers", answers);
   const id = start.data.id as string;
   expect((await c.run("skip", id, "gate:lint")).code).toBe(1);
   expect((await c.run("skip", id, "gate:lint", "--reason", "legacy")).code).toBe(0);
@@ -106,7 +107,7 @@ test("profile set and confirm: proposed commands stay unconfirmed until confirme
   const detect = await c.json("detect");
   expect(detect.data.missing).toEqual([{ target: ".", gate: "test" }]);
   expect((await c.run("profile", "set", "test", "make test")).code).toBe(0);
-  const start = await c.json("start", "fix");
+  const start = await c.json("start", "fix", "--answers", answers);
   const id = start.data.id as string;
   await c.run("criteria", id, "add", "x");
   await c.run("skip", id, "tdd:AC-1", "--reason", "manual");
@@ -200,6 +201,79 @@ test("C2: a corrupt integrity file is reported, and accept re-records profile an
   expect((await c.run("accept", id)).code).toBe(0);
   expect((await c.run("criteria", id, "add", "x")).code).toBe(0);
   expect((await c.run("accept", "policy")).code).toBe(1);
+});
+
+test("I5: profile set keeps detected commands unless forced; confirm names what it confirms", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0", lint: "exit 0" } }),
+  });
+  const c = io(root);
+  const paths = repoPaths(root, c.env);
+  const gates = () => loadProfile(paths).profile?.targets[0]?.gates;
+  const refused = await c.run("profile", "set", "test", "true");
+  expect(refused.code).toBe(1);
+  expect(refused.err.trim()).toBe(
+    'test for . already has a detected command (npm run test); replacing it needs the user: crew profile set test "<cmd>" --force',
+  );
+  expect(gates()?.test).toEqual({ command: "npm run test", source: "detected" });
+  expect((await c.run("profile", "set", "test", "true", "--force")).code).toBe(0);
+  expect(gates()?.test).toEqual({ command: "true", source: "proposed" });
+  expect((await c.run("profile", "set", "build", "make")).code).toBe(0);
+  const one = await c.json("profile", "confirm", "test");
+  expect(one.data.message).toBe("confirmed 1 command(s)\n  test: true");
+  expect(gates()?.build?.source).toBe("proposed");
+  expect((await c.run("profile", "confirm")).out).toContain("  build: make");
+  expect(gates()?.build?.source).toBe("confirmed");
+  expect((await c.run("profile", "set", "build", "x")).code).toBe(1);
+  expect((await c.run("profile", "confirm", "bogus")).code).toBe(1);
+});
+
+test("I6: skip steps are normalised, and anything else is refused", async () => {
+  const root = makeRepo({ "package.json": JSON.stringify({ scripts: { test: "exit 0" } }) });
+  const c = io(root);
+  const id = (await c.json("start", "Thing", "--answers", answers)).data.id as string;
+  await c.run("criteria", id, "add", "x");
+  const step = async (raw: string) => {
+    const result = await c.json("skip", id, raw, "--reason", "r");
+    return result.code === 0
+      ? (result.data.skips as { step: string }[]).at(-1)?.step
+      : (result.data.message as string);
+  };
+  expect(await step("lint")).toBe("gate:lint");
+  expect(await step("AC-1")).toBe("tdd:AC-1");
+  expect(await step("gate:deps")).toBe("gate:deps");
+  expect(await step("tdd:AC-1")).toBe("tdd:AC-1");
+  expect(await step("specify")).toBe("specify");
+  expect(await step("tdd:AC-9")).toBe("unknown step: tdd:AC-9");
+  expect(await step("gate:bogus")).toBe("unknown step: gate:bogus");
+  expect(await step("the tests")).toBe("unknown step: the tests");
+});
+
+test("I10: start needs the typed answers, and a question creates no work item", async () => {
+  const root = makeRepo({ "package.json": JSON.stringify({ scripts: { test: "exit 0" } }) });
+  const c = io(root);
+  const bare = await c.run("start", "Fix the cart");
+  expect(bare.code).toBe(1);
+  expect(bare.err.trim()).toBe(
+    "answers are required: answer the nine typed questions from the crew skill (references/receive.md) and pass them with --answers",
+  );
+  const question = JSON.stringify({ ...JSON.parse(answers), work_type: "question" });
+  const asked = await c.run("start", "What does add do?", "--answers", question);
+  expect(asked.code).toBe(0);
+  expect(asked.out.trim()).toBe("question: answer the user; no work item is created");
+  expect(existsSync(join(root, ".crew", "work"))).toBe(false);
+  expect((await c.json("status")).data.active).toBeNull();
+});
+
+test("starting a new item while another is active and unproven warns which one it replaces", async () => {
+  const root = makeRepo({ "package.json": JSON.stringify({ scripts: { test: "exit 0" } }) });
+  const c = io(root);
+  const first = (await c.json("start", "First", "--answers", answers)).data.id as string;
+  const second = await c.run("start", "Second", "--answers", answers);
+  expect(second.code).toBe(0);
+  expect(second.out.split("\n")[0]).toBe(
+    `warning: ${first} is not proven and is no longer the active work item`,
+  );
 });
 
 test("hook: malformed or empty stdin answers {} and exits 0", async () => {

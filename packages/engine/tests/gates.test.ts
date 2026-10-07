@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { writeFileSync } from "node:fs";
+import { chmodSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   assess,
@@ -13,7 +13,7 @@ import { DEFAULT_POLICY } from "../src/policy.ts";
 import { ensureProfile, loadProfile } from "../src/profile.ts";
 import type { Target } from "../src/types.ts";
 import { addCriterion, addSkip, createWork } from "../src/work.ts";
-import { makeRepo, repoPaths, testEnv, write } from "./helpers.ts";
+import { git, makeRepo, repoPaths, tempDir, testEnv, write } from "./helpers.ts";
 
 const target: Target = {
   path: ".",
@@ -35,24 +35,106 @@ test("planned gates follow the route table", () => {
     gatesForTarget("fast", target, { ...DEFAULT_POLICY, requiredGates: ["typecheck"] }, []),
   ).toEqual(["test", "lint", "typecheck"]);
   expect(manifestChanged(["a/requirements-dev.txt"])).toBe(true);
-  expect(depsAuditCommand(target)).toBe("pnpm audit --audit-level=high");
-  expect(depsAuditCommand({ ...target, stack: "php", packageManager: "composer" })).toBe(
-    "composer audit",
-  );
   const profile = {
     version: 1 as const,
     detectedAt: "",
     targets: [target, { ...target, path: "apps/api" }],
     watch: { exclude: [] },
   };
-  expect(plannedGates("fast", profile, DEFAULT_POLICY, ["src/a.ts"])).toEqual([
+  const root = tempDir();
+  expect(plannedGates("fast", profile, DEFAULT_POLICY, ["src/a.ts"], root)).toEqual([
     { gate: "secrets", target: "." },
     { gate: "test", target: "." },
     { gate: "lint", target: "." },
   ]);
   expect(
-    plannedGates("fast", profile, DEFAULT_POLICY, ["apps/api/x.php"]).map((g) => g.target),
+    plannedGates("fast", profile, DEFAULT_POLICY, ["apps/api/x.php"], root).map((g) => g.target),
   ).toEqual([".", ".", ".", "apps/api", "apps/api"]);
+});
+
+/** A PATH that holds exactly these programs. */
+function pathWith(...names: string[]): NodeJS.ProcessEnv {
+  const dir = tempDir("bin-");
+  for (const name of names) {
+    write(dir, name, "#!/bin/sh\nexit 0\n");
+    chmodSync(join(dir, name), 0o755);
+  }
+  return { ...process.env, PATH: dir };
+}
+
+test("I9: the dependency audit says why it cannot run: no lockfile, no binary", () => {
+  const npm: Target = { ...target, packageManager: "npm" };
+  const dir = tempDir();
+  expect(depsAuditCommand(npm, dir, pathWith("npm"))).toEqual({ reason: "no lockfile" });
+  write(dir, "npm-shrinkwrap.json", "{}");
+  expect(depsAuditCommand(npm, dir, pathWith("npm"))).toEqual({
+    command: "npm audit --audit-level=high",
+  });
+  expect(depsAuditCommand(npm, dir, pathWith())).toEqual({ reason: "npm not on PATH" });
+  const nested: Target = { ...target, path: "apps/web" };
+  write(dir, "apps/web/pnpm-lock.yaml", "");
+  expect(depsAuditCommand(nested, dir, pathWith("pnpm"))).toEqual({
+    command: "pnpm audit --audit-level=high",
+  });
+  const php: Target = { ...target, stack: "php", packageManager: "composer" };
+  const app = tempDir();
+  expect(depsAuditCommand(php, app, pathWith("composer"))).toEqual({ reason: "no lockfile" });
+  write(app, "composer.lock", "{}");
+  expect(depsAuditCommand(php, app, pathWith("composer"))).toEqual({ command: "composer audit" });
+});
+
+test("I9: Yarn Berry audits with yarn npm audit; classic Yarn with yarn audit", () => {
+  const yarn: Target = { ...target, packageManager: "yarn" };
+  const dir = tempDir();
+  write(dir, "yarn.lock", "");
+  expect(depsAuditCommand(yarn, dir, pathWith("yarn"))).toEqual({
+    command: "yarn audit --level high",
+  });
+  write(dir, ".yarnrc.yml", "nodeLinker: node-modules\n");
+  expect(depsAuditCommand(yarn, dir, pathWith("yarn"))).toEqual({
+    command: "yarn npm audit --severity high",
+  });
+});
+
+test("I9: Python audits through the detector's prefix, only when pip-audit exists", () => {
+  const dir = tempDir();
+  const python = (packageManager: string): Target => ({
+    ...target,
+    stack: "python",
+    packageManager,
+  });
+  expect(depsAuditCommand(python("uv"), dir, pathWith())).toEqual({
+    reason: "pip-audit not on PATH",
+  });
+  expect(depsAuditCommand(python("uv"), dir, pathWith("pip-audit"))).toEqual({
+    command: "uv run pip-audit",
+  });
+  expect(depsAuditCommand(python("poetry"), dir, pathWith("pip-audit"))).toEqual({
+    command: "poetry run pip-audit",
+  });
+  expect(depsAuditCommand(python("pip"), dir, pathWith("pip-audit"))).toEqual({
+    command: "python -m pip_audit",
+  });
+});
+
+test("I9: standard plans no audit it cannot run; full records it unavailable with the reason", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const paths = repoPaths(root, testEnv());
+  const { profile } = ensureProfile(paths);
+  expect(
+    plannedGates("standard", profile, DEFAULT_POLICY, ["src/a.ts"], root).map((g) => g.gate),
+  ).toEqual(["secrets", "test"]);
+  const work = createWork(paths, "feature");
+  work.route = "full";
+  write(root, "src/a.ts", "y");
+  const outcome = await runGates(paths, work, profile, DEFAULT_POLICY, { only: ["deps"] });
+  expect(outcome.evidence.runs.find((r) => r.gate === "deps")).toMatchObject({
+    status: "unavailable",
+    reason: "no lockfile",
+  });
 });
 
 test("runGates records results, replaces old runs and computes the verdict", async () => {
@@ -127,6 +209,23 @@ test("C2: runGates carries the real tampered flag into the verdict it writes", a
   const fromEvidence = await runGates(paths, work, profile, DEFAULT_POLICY);
   expect(fromEvidence.tampered).toBe(true);
   expect(fromEvidence.evidence.unproven).toContain("state changed outside the engine");
+});
+
+test("I1: a risk path committed before the gate run still raises the route", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "app/Auth/Guard.ts": "x",
+  });
+  const paths = repoPaths(root, testEnv());
+  const { profile } = ensureProfile(paths);
+  const work = createWork(paths, "fix");
+  expect(work.baseCommit).toBe(git(root, "rev-parse", "HEAD"));
+  work.route = "fast";
+  write(root, "app/Auth/Guard.ts", "y");
+  git(root, "commit", "-q", "-am", "work");
+  const outcome = await runGates(paths, work, profile, DEFAULT_POLICY, { only: ["test"] });
+  expect(outcome.changed).toEqual(["app/Auth/Guard.ts"]);
+  expect(outcome.raised).toBe("full");
 });
 
 test("a diff that touches a risk path raises the route to full", async () => {

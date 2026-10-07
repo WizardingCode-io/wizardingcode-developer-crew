@@ -19,12 +19,13 @@ export function onSessionStart(ctx: HookContext, payload: HookPayload = {}): Hoo
     const work = active?.work ?? null;
     // Unproven changes left by an earlier session are not this session's starting point: with no
     // baseline the Stop rule counts them as changed.
+    const base = work?.baseCommit;
     const inherited =
       work !== null &&
-      changedWatchedPaths(ctx.paths.root, ctx.profile).length > 0 &&
+      changedWatchedPaths(ctx.paths.root, ctx.profile, base).length > 0 &&
       assess(ctx.paths, work, ctx.profile, ctx.policy, ctx.tampered || !!active?.tampered)
         .verdict !== "proven";
-    session.baseline = inherited ? null : computeFingerprint(ctx.paths.root, ctx.profile);
+    session.baseline = inherited ? null : computeFingerprint(ctx.paths.root, ctx.profile, base);
     session.stopBlocks = 0;
     saveState(ctx.paths, state);
   }
@@ -36,7 +37,10 @@ export function onSessionStart(ctx: HookContext, payload: HookPayload = {}): Hoo
     lines.push(
       statusLine(ctx, active.work, active.tampered).replace(/^Crew: work/, "Work in progress:"),
     );
-  else lines.push('No work item is active. A code change starts with `crew start "<request>"`.');
+  else
+    lines.push(
+      "No work item is active. A code change starts by answering the crew skill's nine typed questions, then crew start \"<request>\" --answers '<json>'.",
+    );
   const missing = missingTestCommands(ctx.profile);
   if (missing.length) {
     lines.push(

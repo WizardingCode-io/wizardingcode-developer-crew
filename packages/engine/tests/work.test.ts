@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { workDir } from "../src/paths.ts";
 import { loadState } from "../src/state.ts";
@@ -19,7 +19,7 @@ import {
   raiseRoute,
   saveWork,
 } from "../src/work.ts";
-import { makeRepo, repoPaths, testEnv } from "./helpers.ts";
+import { git, makeRepo, repoPaths, tempDir, testEnv } from "./helpers.ts";
 
 const run: RunRecord = {
   command: "x",
@@ -88,6 +88,8 @@ test("guards: build needs criteria, then spec, approval and plan by route", () =
 test("guards: gate needs test-first records per criterion kind, deliver needs proof", () => {
   const paths = repoPaths(makeRepo(), testEnv());
   const work = createWork(paths, "refactor");
+  // The fast route has no spec, so only the test-first records and the proof are guarded here.
+  work.route = "fast";
   const behaviour = addCriterion(work, "x");
   const preserve = addCriterion(work, "keep", "preserve");
   expect(guardFor(work, "gate", empty)).toEqual([
@@ -113,6 +115,62 @@ test("guards: gate needs test-first records per criterion kind, deliver needs pr
     "not proven: gate test failing",
   ]);
   expect(guardFor(work, "deliver", { ...empty, proven: true })).toEqual([]);
+});
+
+test("I2: a route raised during build is felt at the gate and at delivery", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const work = createWork(paths, "fix");
+  applyClassification(work, "fix", { route: "fast", reasons: ["r"], riskAreas: [] });
+  const criterion = addCriterion(work, "x");
+  expect(advancePhase(work, empty)).toEqual({ ok: true, phase: "build" });
+  raiseRoute(work, "full", "the change touches auth paths");
+  const evidence: Evidence = {
+    fingerprint: "f",
+    tdd: [{ criterion: criterion.id, red: run, green: run }],
+    runs: [],
+    verdict: "proven",
+    unproven: [],
+  };
+  const atGate = advancePhase(work, { ...empty, evidence });
+  expect(atGate).toEqual({
+    ok: false,
+    missing: [
+      "spec.md in the work folder",
+      "the user's approval of the spec (crew approve <id> spec)",
+      "plan.md in the work folder",
+    ],
+  });
+  expect(guardFor(work, "deliver", { ...empty, evidence, proven: true })).toContain(
+    "spec.md in the work folder",
+  );
+  approve(work, "spec");
+  const ready = { ...empty, evidence, specText: "## Acceptance criteria\n- x\n", planExists: true };
+  expect(advancePhase(work, ready)).toEqual({ ok: true, phase: "gate" });
+  expect(guardFor(work, "deliver", { ...ready, proven: true })).toEqual([]);
+});
+
+test("I2: classifying again never lowers the route and keeps every risk area", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const work = createWork(paths, "fix");
+  applyClassification(work, "fix", { route: "full", reasons: ["risk"], riskAreas: ["auth"] });
+  applyClassification(work, "fix", { route: "fast", reasons: ["calm"], riskAreas: [] });
+  expect(work.route).toBe("full");
+  expect(work.riskAreas).toEqual(["auth"]);
+  applyClassification(work, "fix", {
+    route: "full",
+    reasons: ["payments"],
+    riskAreas: ["payments"],
+  });
+  expect(work.riskAreas).toEqual(["auth", "payments"]);
+});
+
+test("I1: a work item records the commit its change is measured from", () => {
+  const root = makeRepo();
+  const paths = repoPaths(root, testEnv());
+  expect(createWork(paths, "x").baseCommit).toBe(git(root, "rev-parse", "HEAD"));
+  const plain = tempDir();
+  mkdirSync(join(plain, ".crew"));
+  expect(createWork(repoPaths(plain, testEnv()), "y").baseCommit).toBeNull();
 });
 
 test("advancePhase follows the route and stops at a failing guard", () => {

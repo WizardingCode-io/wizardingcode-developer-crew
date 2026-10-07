@@ -58,7 +58,8 @@ export function detectTargets(root: string): Target[] {
 }
 
 /** Fresh detection never discards what a person proposed or confirmed. */
-export function mergeProfile(previous: Profile | null, targets: Target[]): Profile {
+export function mergeProfile(previous: Profile | null, detected: Target[]): Profile {
+  const targets = detected.map((t) => ({ ...t, gates: { ...t.gates } }));
   if (previous) {
     for (const target of targets) {
       const old = previous.targets.find((t) => t.path === target.path && t.stack === target.stack);

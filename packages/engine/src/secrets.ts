@@ -1,7 +1,7 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { allWatchedFiles, isGitRepo, isWatched } from "./fingerprint.ts";
+import { allWatchedFiles, isGitRepo, isWatched, untrackedPaths } from "./fingerprint.ts";
 import type { Profile } from "./types.ts";
 
 export interface Finding {
@@ -70,23 +70,11 @@ function fileSource(root: string, path: string): ScanSource | null {
   return { source: path, text: buffer.toString("utf8") };
 }
 
-function untrackedPaths(root: string): string[] {
-  try {
-    return execFileSync("git", ["ls-files", "--others", "--exclude-standard", "-z"], {
-      cwd: root,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    })
-      .split("\0")
-      .filter(Boolean)
-      .sort();
-  } catch {
-    return [];
-  }
-}
-
-/** Only what this change adds is scanned: added lines of tracked files, and untracked files whole. */
-export function changedText(root: string, profile: Profile): ScanSource[] {
+/**
+ * Only what this change adds is scanned: added lines of tracked files, and untracked files whole.
+ * With a base commit the change starts there, so a secret committed during the work is still found.
+ */
+export function changedText(root: string, profile: Profile, base?: string | null): ScanSource[] {
   const sources: ScanSource[] = [];
   if (!isGitRepo(root)) {
     // Above the walk's cap there is nothing to scan; the verdict already says the fingerprint is unavailable.
@@ -96,9 +84,10 @@ export function changedText(root: string, profile: Profile): ScanSource[] {
     }
     return sources;
   }
+  const from = base ?? "HEAD";
   let diff = "";
   try {
-    diff = execFileSync("git", ["diff", "HEAD", "--unified=0", "--no-color", "--", "."], {
+    diff = execFileSync("git", ["diff", from, "--unified=0", "--no-color", "--", "."], {
       cwd: root,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
@@ -112,8 +101,12 @@ export function changedText(root: string, profile: Profile): ScanSource[] {
     .filter((l) => l.startsWith("+") && !l.startsWith("+++"))
     .map((l) => l.slice(1))
     .join("\n");
-  if (added) sources.push({ source: "git diff HEAD (added lines)", text: added });
-  for (const path of untrackedPaths(root)) {
+  if (added)
+    sources.push({
+      source: `git diff ${base ? base.slice(0, 12) : "HEAD"} (added lines)`,
+      text: added,
+    });
+  for (const path of untrackedPaths(root).sort()) {
     if (!isWatched(path, profile)) continue;
     const source = fileSource(root, path);
     if (source) sources.push(source);
@@ -141,8 +134,9 @@ function gitleaks(text: string): { ran: boolean; leaked: boolean; tail: string }
 export async function scanSecrets(
   root: string,
   profile: Profile,
+  base?: string | null,
 ): Promise<{ status: "pass" | "fail"; findings: Finding[]; tail: string; usedGitleaks: boolean }> {
-  const sources = changedText(root, profile);
+  const sources = changedText(root, profile, base);
   const findings = sources.flatMap((s) => scanText(s.text, s.source));
   const lines = findings.map((f) => `${f.source}:${f.line}: ${f.rule}`);
   const extra = gitleaks(sources.map((s) => s.text).join("\n"));

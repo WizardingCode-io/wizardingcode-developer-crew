@@ -1,7 +1,8 @@
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import type { RouteDecision } from "./classify.ts";
-import { routeRank } from "./classify.ts";
+import { higherRoute, routeRank } from "./classify.ts";
+import { baseCommitOf } from "./fingerprint.ts";
 import { nowIso, writeText } from "./fs.ts";
 import { type CrewPaths, workDir } from "./paths.ts";
 import { loadState, saveState } from "./state.ts";
@@ -66,6 +67,7 @@ export function createWork(paths: CrewPaths, input: string): WorkItem {
     criteria: [],
     approvals: [],
     skips: [],
+    baseCommit: baseCommitOf(paths.root),
     createdAt: at,
     updatedAt: at,
   };
@@ -99,11 +101,30 @@ export function activeWork(paths: CrewPaths): { work: WorkItem | null; tampered:
   return loadWork(paths, id);
 }
 
+/**
+ * The first classification sets the route; a later one can only raise it, and risk areas only
+ * accumulate, so calmer answers never undo a raise.
+ */
 export function applyClassification(work: WorkItem, type: WorkType, decision: RouteDecision): void {
+  // An item still in receive has only the default route, which is not a decision to keep.
+  const first = work.phase === "receive";
   work.type = type;
-  work.route = decision.route;
-  work.routeReasons = [...decision.reasons];
-  work.riskAreas = [...decision.riskAreas];
+  if (first) {
+    work.route = decision.route;
+    work.routeReasons = [...decision.reasons];
+    work.riskAreas = [...decision.riskAreas];
+  } else {
+    const route = higherRoute(work.route, decision.route);
+    if (route !== work.route) {
+      work.routeReasons.push(`raised to ${route}: ${decision.reasons.join("; ")}`);
+    } else if (decision.route !== work.route) {
+      work.routeReasons.push(
+        `reclassified as ${decision.route}; kept ${work.route}: a route is never lowered`,
+      );
+    }
+    work.route = route;
+    work.riskAreas = [...new Set([...work.riskAreas, ...decision.riskAreas])];
+  }
   if (work.phase === "receive") work.phase = "recognize";
 }
 
@@ -166,25 +187,33 @@ export function tddDone(record: TddRecord | undefined, kind: CriterionKind): boo
   return kind === "behavior" ? !!record.red && !!record.green : !!record.before && !!record.after;
 }
 
+/** What the current route asks for before code: checked again later, so a raise mid-build is felt. */
+function routeDocuments(work: WorkItem, ctx: GuardContext): string[] {
+  const missing: string[] = [];
+  if (work.route !== "fast") {
+    if (ctx.specText === null) missing.push("spec.md in the work folder");
+    else if (!hasAcceptanceSection(ctx.specText)) {
+      missing.push('an "Acceptance criteria" section with content in spec.md');
+    }
+  }
+  if (work.route === "full") {
+    if (!work.approvals.some((a) => a.what === "spec")) {
+      missing.push("the user's approval of the spec (crew approve <id> spec)");
+    }
+    if (!ctx.planExists) missing.push("plan.md in the work folder");
+  }
+  return missing;
+}
+
 export function guardFor(work: WorkItem, next: Phase, ctx: GuardContext): string[] {
   const missing: string[] = [];
   if (next === "build") {
     if (work.criteria.length === 0) {
       missing.push('at least one acceptance criterion (crew criteria <id> add "...")');
     }
-    if (work.route !== "fast") {
-      if (ctx.specText === null) missing.push("spec.md in the work folder");
-      else if (!hasAcceptanceSection(ctx.specText)) {
-        missing.push('an "Acceptance criteria" section with content in spec.md');
-      }
-    }
-    if (work.route === "full") {
-      if (!work.approvals.some((a) => a.what === "spec")) {
-        missing.push("the user's approval of the spec (crew approve <id> spec)");
-      }
-      if (!ctx.planExists) missing.push("plan.md in the work folder");
-    }
+    missing.push(...routeDocuments(work, ctx));
   } else if (next === "gate") {
+    missing.push(...routeDocuments(work, ctx));
     for (const criterion of work.criteria) {
       if (isSkipped(work, `tdd:${criterion.id}`)) continue;
       const record = ctx.evidence?.tdd.find((t) => t.criterion === criterion.id);
@@ -193,9 +222,12 @@ export function guardFor(work: WorkItem, next: Phase, ctx: GuardContext): string
         missing.push(`test-first record for ${criterion.id} (crew tdd ${how})`);
       }
     }
-  } else if (next === "deliver" && !ctx.proven) {
-    missing.push(...ctx.unproven.map((reason) => `not proven: ${reason}`));
-    if (missing.length === 0) missing.push("not proven: run crew gate run <id>");
+  } else if (next === "deliver") {
+    missing.push(...routeDocuments(work, ctx));
+    if (!ctx.proven) {
+      const reasons = ctx.unproven.map((reason) => `not proven: ${reason}`);
+      missing.push(...(reasons.length ? reasons : ["not proven: run crew gate run <id>"]));
+    }
   }
   return missing;
 }

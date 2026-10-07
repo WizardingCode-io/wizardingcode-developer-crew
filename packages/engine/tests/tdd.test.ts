@@ -34,6 +34,48 @@ test("red must fail, green must pass after red, and test files are recorded", as
   expect(s.evidence.tdd[0]?.green?.exit).toBe(0);
 });
 
+test("I7: a red run that could not run (missing command, timeout) is not a red", async () => {
+  const s = setup();
+  const missing = await recordTdd(
+    s.paths,
+    s.work,
+    s.evidence,
+    s.profile,
+    s.behaviour.id,
+    "red",
+    "exit 127",
+  );
+  expect(missing.ok).toBe(false);
+  expect(missing.message).toBe(
+    "the red run did not fail for the right reason (exit 127): fix the command before recording",
+  );
+  const denied = await recordTdd(
+    s.paths,
+    s.work,
+    s.evidence,
+    s.profile,
+    s.behaviour.id,
+    "red",
+    "exit 126",
+  );
+  expect(denied.ok).toBe(false);
+  const target = s.profile.targets[0];
+  if (!target) throw new Error("no target");
+  target.timeoutMs = 300;
+  const slow = await recordTdd(
+    s.paths,
+    s.work,
+    s.evidence,
+    s.profile,
+    s.behaviour.id,
+    "red",
+    "sleep 5",
+  );
+  expect(slow.ok).toBe(false);
+  expect(slow.message).toStartWith("the red run did not fail for the right reason (exit ");
+  expect(s.evidence.tdd[0]?.red).toBeUndefined();
+});
+
 test("a passing red run is rejected and green needs an earlier red", async () => {
   const s = setup();
   write(s.root, "run-tests.sh", "exit 0\n");
