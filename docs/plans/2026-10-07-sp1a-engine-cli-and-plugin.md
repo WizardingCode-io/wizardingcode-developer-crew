@@ -20,7 +20,6 @@
 - Hooks answer with JSON on stdout and **exit 0**; a hook that cannot decide answers `{}`. A hook never throws.
 - Always-on context (skill description plus SessionStart lines) stays under **300 tokens**.
 - All code, comments, tests and documents are in English. Comments explain why, not what.
-- Every commit message ends with the line `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`.
 
 ## Review Focus
 
@@ -199,7 +198,7 @@ Expected: 1 pass; `tsc` and `biome` exit 0.
 
 ```bash
 git add package.json bun.lock tsconfig.json biome.json packages/engine
-git commit -m "chore: scaffold bun workspace and engine package" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+git commit -m "chore: scaffold bun workspace and engine package"
 ```
 
 ---
@@ -478,7 +477,7 @@ Expected: 3 pass; tsc exit 0.
 
 ```bash
 git add packages/engine/src/types.ts packages/engine/src/fs.ts packages/engine/tests/fs.test.ts
-git commit -m "feat(engine): shared types and file helpers" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+git commit -m "feat(engine): shared types and file helpers"
 ```
 
 ---
@@ -570,7 +569,7 @@ Expected: 3 pass.
 
 ```bash
 git add packages/engine/src/glob.ts packages/engine/tests/glob.test.ts
-git commit -m "feat(engine): glob matching" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+git commit -m "feat(engine): glob matching"
 ```
 
 ---
@@ -764,7 +763,7 @@ Expected: 4 pass.
 
 ```bash
 git add packages/engine/src/paths.ts packages/engine/tests/helpers.ts packages/engine/tests/paths.test.ts
-git commit -m "feat(engine): path resolution and protected-path rule" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+git commit -m "feat(engine): path resolution and protected-path rule"
 ```
 
 ---
@@ -898,7 +897,7 @@ Expected: 3 pass.
 
 ```bash
 git add packages/engine/src/store.ts packages/engine/tests/store.test.ts
-git commit -m "feat(engine): protected files with integrity hashes" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+git commit -m "feat(engine): protected files with integrity hashes"
 ```
 
 ---
@@ -1056,7 +1055,7 @@ Expected: 4 pass.
 
 ```bash
 git add packages/engine/src/detect packages/engine/tests/detect-node.test.ts
-git commit -m "feat(engine): node and typescript detector" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+git commit -m "feat(engine): node and typescript detector"
 ```
 
 ---
@@ -1211,7 +1210,7 @@ Expected: 4 pass.
 
 ```bash
 git add packages/engine/src/detect packages/engine/tests/detect-php-python.test.ts
-git commit -m "feat(engine): php and python detectors" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+git commit -m "feat(engine): php and python detectors"
 ```
 
 ---
@@ -1405,7 +1404,7 @@ Expected: 3 pass.
 
 ```bash
 git add packages/engine/src/detect/index.ts packages/engine/tests/detect-profile.test.ts
-git commit -m "feat(engine): profile detection across targets" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+git commit -m "feat(engine): profile detection across targets"
 ```
 
 ---
@@ -1608,7 +1607,7 @@ Expected: 4 pass.
 
 ```bash
 git add packages/engine/src/fingerprint.ts packages/engine/tests/fingerprint.test.ts
-git commit -m "feat(engine): watched files and fingerprints" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+git commit -m "feat(engine): watched files and fingerprints"
 ```
 
 ---
@@ -1926,7 +1925,7 @@ Expected: 4 pass.
 
 ```bash
 git add packages/engine/src/classify.ts packages/engine/tests/classify.test.ts
-git commit -m "feat(engine): typed questions, answers and route computation" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+git commit -m "feat(engine): typed questions, answers and route computation"
 ```
 
 ---
@@ -2176,7 +2175,7 @@ Expected: 7 pass.
 
 ```bash
 git add packages/engine/src/policy.ts packages/engine/src/config.ts packages/engine/src/state.ts packages/engine/tests/policy-config-state.test.ts
-git commit -m "feat(engine): team policy, user config and local state" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+git commit -m "feat(engine): team policy, user config and local state"
 ```
 
 ---
@@ -2538,7 +2537,7 @@ Expected: 5 pass.
 
 ```bash
 git add packages/engine/src/work.ts packages/engine/tests/work.test.ts
-git commit -m "feat(engine): work items, phases and guards" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+git commit -m "feat(engine): work items, phases and guards"
 ```
 
 ---
@@ -2705,7 +2704,7 @@ Expected: 3 pass, the second within a few hundred milliseconds.
 
 ```bash
 git add packages/engine/src/run.ts packages/engine/tests/run.test.ts
-git commit -m "feat(engine): command runner with timeout and log" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+git commit -m "feat(engine): command runner with timeout and log"
 ```
 
 ---
@@ -2928,7 +2927,7 @@ Expected: 4 pass.
 
 ```bash
 git add packages/engine/src/evidence.ts packages/engine/tests/evidence.test.ts
-git commit -m "feat(engine): evidence, verdict and report" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+git commit -m "feat(engine): evidence, verdict and report"
 ```
 
 ---
@@ -3119,7 +3118,7 @@ Expected: 4 pass.
 
 ```bash
 git add packages/engine/src/tdd.ts packages/engine/tests/tdd.test.ts
-git commit -m "feat(engine): proven test-first records" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+git commit -m "feat(engine): proven test-first records"
 ```
 
 ---
@@ -3327,7 +3326,7 @@ Expected: 3 pass. If `gitleaks` is installed on the machine, the untracked `.env
 
 ```bash
 git add packages/engine/src/secrets.ts packages/engine/tests/secrets.test.ts
-git commit -m "feat(engine): built-in secret scan of the change" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+git commit -m "feat(engine): built-in secret scan of the change"
 ```
 
 ---
@@ -3620,7 +3619,7 @@ Expected: 3 pass.
 
 ```bash
 git add packages/engine/src/profile.ts packages/engine/src/gates.ts packages/engine/tests/gates.test.ts
-git commit -m "feat(engine): deterministic gates and assessment" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+git commit -m "feat(engine): deterministic gates and assessment"
 ```
 
 ---
@@ -3816,7 +3815,7 @@ Expected: 3 pass.
 
 ```bash
 git add packages/engine/src/hooks packages/engine/tests/hooks-context.test.ts
-git commit -m "feat(engine): hook context, session start and prompt hooks" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+git commit -m "feat(engine): hook context, session start and prompt hooks"
 ```
 
 ---
@@ -3973,7 +3972,7 @@ Expected: 3 pass.
 
 ```bash
 git add packages/engine/src/hooks/pre-tool-use.ts packages/engine/tests/hooks-pre-tool-use.test.ts
-git commit -m "feat(engine): pre-tool-use hook" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+git commit -m "feat(engine): pre-tool-use hook"
 ```
 
 ---
@@ -4163,7 +4162,7 @@ Expected: 5 pass.
 
 ```bash
 git add packages/engine/src/hooks/stop.ts packages/engine/src/hooks/index.ts packages/engine/tests/hooks-stop.test.ts
-git commit -m "feat(engine): stop hook and hook dispatcher" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+git commit -m "feat(engine): stop hook and hook dispatcher"
 ```
 
 ---
@@ -4695,7 +4694,7 @@ Expected: 4 pass; typecheck, lint and all tests green.
 
 ```bash
 git add packages/engine/src/cli.ts packages/engine/src/crew.ts packages/engine/src/index.ts packages/engine/tests/cli.test.ts
-git commit -m "feat(engine): the crew command" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+git commit -m "feat(engine): the crew command"
 ```
 
 ---
@@ -4826,7 +4825,7 @@ If `claude plugin validate --strict` reports a warning, fix the cause; do not dr
 
 ```bash
 git add README.md scripts/build.ts plugins/core
-git commit -m "feat(plugin): package the engine as a Claude Code plugin" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+git commit -m "feat(plugin): package the engine as a Claude Code plugin"
 ```
 
 ---
@@ -5136,7 +5135,7 @@ Expected: `Validation passed`; the details output reports the always-on cost. Th
 
 ```bash
 git add plugins/core/skills
-git commit -m "feat(plugin): the crew skill and its phase references" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+git commit -m "feat(plugin): the crew skill and its phase references"
 ```
 
 ---
@@ -5200,7 +5199,7 @@ Write `docs/plans/2026-10-07-sp1a-e2e-results.md` with: the date, the Claude Cod
 
 ```bash
 git add docs/plans/2026-10-07-sp1a-e2e-results.md
-git commit -m "docs: record the SP1a end-to-end check" -m "Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+git commit -m "docs: record the SP1a end-to-end check"
 ```
 
 ---
