@@ -1,6 +1,6 @@
 ---
-type: regex
-target: trace
-pattern: 'crew profile set test'
+type: tool_used
+tool: Bash
+input_match: 'crew profile set test'
 arm: with-only
 ---

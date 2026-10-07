@@ -1,6 +1,6 @@
 ---
 type: regex
 target: trace
-pattern: 'crew tdd red[\s\S]*crew tdd green'
+pattern: 'red recorded for AC-\d+[\s\S]*green recorded for AC-\d+'
 arm: with-only
 ---
