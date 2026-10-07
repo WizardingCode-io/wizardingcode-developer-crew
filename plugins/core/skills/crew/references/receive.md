@@ -18,7 +18,7 @@ Answer these nine questions about the request before anything else. Probabilitie
 | `touches_infra` | 0 to 1 | Infrastructure, deployment or CI |
 | `touches_public_api` | 0 to 1 | An interface other systems depend on |
 
-If `work_type` is `question`, answer the user. No work item is created.
+If `work_type` is `question`, answer the user. No work item is created (`crew start` with these answers says so and creates nothing).
 
 ## 2. Start the work item
 
@@ -26,7 +26,7 @@ If `work_type` is `question`, answer the user. No work item is created.
 crew start "<the request, as the user wrote it>" --answers '{"work_type":"fix","is_vague":0.1,"scope":0,"touches_auth":0,"touches_payments":0,"touches_personal_data":0,"touches_data_migration":0,"touches_infra":0,"touches_public_api":0}'
 ```
 
-The engine prints the id and the route with its reasons. Keep the id; every later command needs it.
+The answers are required: `crew start` refuses without them. The engine prints the id and the route with its reasons. Keep the id; every later command needs it.
 
 ## 3. Ask what is missing
 

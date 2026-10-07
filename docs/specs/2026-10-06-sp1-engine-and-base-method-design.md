@@ -127,12 +127,15 @@ Work artefacts are committed by default, so a pull request carries its own proof
   ],
   "approvals": [],
   "skips": [],
+  "baseCommit": "9c41e07d2b8f5a3c6e1d0f4b7a2c9e8d1f3b5a70",
   "createdAt": "2026-10-06T10:12:00Z",
   "updatedAt": "2026-10-06T10:19:41Z"
 }
 ```
 
 `awaiting` is `"user"` while the agent waits for an answer. See section 12.
+
+`baseCommit` is `HEAD` when the work item starts, or `null` outside git or before the first commit. **The change** of a work item is the diff from its base commit to the working tree, plus untracked watched files. Committing during the work does not shrink it: the secret scan, the risk paths, the dependency trigger and the fingerprint all see everything since the base.
 
 ### `evidence.json`
 
@@ -164,7 +167,9 @@ Gate `status` is one of `pass`, `fail`, `skipped` (by the user, with a reason) o
 
 Watched files are every tracked file and every untracked file that git does not ignore, except `**/*.md`, `docs/**` and `.crew/**`. The profile can change the list.
 
-In a git repository the fingerprint hashes the `HEAD` commit, the diff of tracked watched files against `HEAD`, and the content of untracked watched files. Outside git it hashes the content of the watched files. Evidence is valid only for the fingerprint it was recorded against: any later change to a watched file makes the work unproven again.
+In a git repository the fingerprint hashes the active work item's base commit (`HEAD` when there is none) and the content of every watched path changed since that commit, untracked files included. Outside git it hashes the content of the watched files, without following symlinks and skipping dependency and build folders; above 20 000 files the fingerprint is unavailable and nothing is proven there. Evidence is valid only for the fingerprint it was recorded against: each gate run records the fingerprint it vouches for, and a run recorded against other code counts as not run. Any later change to a watched file makes the work unproven again.
+
+Crew is active in a git repository, or in a folder without git that already holds `.crew/` (`crew detect` creates it). Anywhere else the hooks stay silent and write nothing, and the commands that need a project refuse.
 
 ## 7. Engine commands
 
@@ -173,19 +178,20 @@ Every command prints a short human summary. `--json` prints the machine form.
 | Command | Does |
 | :- | :- |
 | `crew detect [--refresh]` | Builds or refreshes the profile |
-| `crew profile set <gate> "<cmd>" [--target <path>]` | Proposes a gate command. It is recorded as unconfirmed |
-| `crew profile confirm` | Confirms proposed commands. Requires the user's approval |
-| `crew start "<input>"` | Creates a work item and returns its id |
+| `crew profile set <gate> "<cmd>" [--target <path>]` | Proposes a gate command. It is recorded as unconfirmed. Replacing a detected or confirmed command needs `--force`, which requires the user's approval |
+| `crew profile confirm [<gate>]` | Confirms proposed commands, or only the named gate's, and lists each one it confirmed. Requires the user's approval |
+| `crew start "<input>" --answers '<json>'` | Creates a work item from the typed answers and returns its id. A `question` creates nothing |
 | `crew classify <id> --answers '<json>'` | Records the typed answers, applies the rules, computes the route |
 | `crew criteria <id> add "<text>"` | Adds an acceptance criterion |
 | `crew approve <id> spec` | Records the user's approval of the spec. Requires the user's approval |
 | `crew phase <id> next` | Advances the phase if the guard for the next phase holds |
-| `crew await <id> user` and `crew resume <id>` | Marks and clears "waiting for the user" |
+| `crew await <id> user` and `crew resume <id>` | Marks and clears "waiting for the user". The user's next prompt also clears it |
 | `crew tdd red <id> <criterion> [-- <cmd>]` | Runs the test command. It must fail. Records the red run |
 | `crew tdd green <id> <criterion> [-- <cmd>]` | Runs the test command. It must pass, and a red run must exist |
 | `crew gate run <id> [--only <gates>]` | Runs the gates the route requires and records the results |
 | `crew skip <id> <step> --reason "<text>"` | Records a skip. Requires the user's approval |
 | `crew policy accept` | Records the current policy as trusted after a hand edit. Requires the user's approval |
+| `crew accept <id\|profile\|policy>` | Records the current content of that target's protected files as trusted after a change outside the engine (`policy` is the same as `crew policy accept`). Requires the user's approval |
 | `crew evidence <id>` | Writes and prints the delivery report |
 | `crew status` | Active item, phase, route, gates, proven or not |
 | `crew mode [partner\|guide\|pilot]` | Shows or sets the user's mode |
@@ -235,6 +241,8 @@ The entry skill asks the session's model the typed questions in section 14 and p
 
 A work type of `question` creates no work item. The agent answers.
 
+A later classification of the same item can raise its route but never lowers it, and its risk areas only accumulate.
+
 ### Risk paths
 
 The engine holds a default list of path patterns per risk area: authentication, payments, personal data, migrations and schema, infrastructure and CI, public API surface, and secrets and environment files. The team policy can add to it.
@@ -263,10 +271,10 @@ Phases are data: an ordered list per route. SP2 inserts the conclave between Spe
 | Entering | Requires |
 | :- | :- |
 | Build | At least one criterion. Standard and full: `spec.md` with an acceptance-criteria section. Full: the user's approval of the spec |
-| Gate | For each criterion, the test-first record its kind requires (section 11), or a skip approved by the user |
-| Deliver | Proven: evidence matches the current fingerprint, and each required gate passed or was skipped by the user |
+| Gate | The route's documents from the Build guard (spec on standard and full; approval and `plan.md` on full). For each criterion, the test-first record its kind requires (section 11), or a skip approved by the user |
+| Deliver | The route's documents from the Build guard. Proven: evidence matches the current fingerprint, and each required gate passed or was skipped by the user |
 
-When the route is raised mid-work, the guards of the new route apply from then on. The engine lists what is now missing.
+When the route is raised mid-work, the guards of the new route apply from then on, including at the gate and deliver phases. The engine lists what is now missing.
 
 ## 10. Spec scaling
 
@@ -297,8 +305,9 @@ The engine checks structure only: the file exists and has a non-empty acceptance
 | Secret scan of the diff | Required | Required | Required |
 | Dependency audit | Only if a manifest or lockfile changed | Required if a tool is available | Required. If unavailable, the user must skip it |
 
-- The secret scan is built in: known formats (private keys, cloud and payment provider keys, common token formats) checked against the diff. If `gitleaks` is installed the engine uses it as well.
-- The dependency audit uses the ecosystem's own tool: `npm audit`, `pnpm audit`, `composer audit`, `pip-audit`.
+- Gates look at **the change**: the diff from the work item's base commit to the working tree, plus untracked watched files (section 6). A commit made before `crew gate run` does not hide anything.
+- The secret scan is built in: known formats (private keys, cloud and payment provider keys, common token formats) checked against the lines the change adds. If `gitleaks` is installed the engine uses it as well.
+- The dependency audit uses the ecosystem's own tool: `npm audit`, `pnpm audit`, `yarn audit` (`yarn npm audit` on Yarn Berry), `bun audit`, `composer audit`, `pip-audit` through the project's runner. It is unavailable, with the reason, when the lockfile is missing or the tool is not on `PATH`; on the standard route it is then not required.
 - Each gate has a timeout taken from the profile. The default is 10 minutes.
 
 ### Hooks in Claude Code
@@ -307,19 +316,21 @@ All hooks call `crew hook <event>`. The engine decides; the hook configuration c
 
 | Event | What the engine does |
 | :- | :- |
-| SessionStart | Records the session's baseline fingerprint. Injects a few lines: the system is active, the state of any work in progress, and a pointer to the skill |
-| UserPromptSubmit | Injects one line with the current state when a work item is active. Nothing otherwise |
+| SessionStart | Records the session's baseline fingerprint. Injects a few lines: the system is active, the state of any work in progress, and a pointer to the skill. Where crew is inactive, one line that says so |
+| UserPromptSubmit | Ends any wait for the user and resets the session's block counter. Injects one line with the current state when a work item is active. Nothing otherwise |
 | PreToolUse, file-writing tools | Denies writes to protected files. Denies writes to watched files while a standard or full work item is before the Build phase |
-| PreToolUse, Bash | Answers `ask` for `crew skip`, `crew approve` and `crew profile confirm`. Denies commands that write to protected files |
+| PreToolUse, Bash | Answers `ask` for `crew skip`, `crew approve`, `crew accept`, `crew profile confirm`, `crew policy accept` and `crew profile set … --force`, however the command is quoted and whether it calls `crew` or the bundle `crew.mjs`. Denies commands that write to protected files |
 | Stop | See below |
 
 ### The Stop rule
 
 1. No watched file changed since the baseline or since the last proven fingerprint: allow.
 2. Changes exist and the work is proven: allow.
-3. Changes exist, not proven, and the work item is waiting for the user: allow, with a notice to the user that the work is in progress and not proven.
+3. Changes exist, not proven, and the work item is waiting for the user: allow, with a notice to the user that the work is in progress and not proven. `await` holds until the user's next prompt.
 4. Changes exist, not proven, not waiting: block, and tell the agent what is missing.
 5. After three consecutive blocks in a session: allow, with a notice to the user: "Not proven", followed by the failing or missing gates.
+
+The baseline is kept across a resume, and a session that starts with an unproven item and uncommitted changes has no baseline, so those changes count.
 
 The Stop hook only compares fingerprints and reads evidence, which takes milliseconds. It never runs the gates itself. The agent runs them with `crew gate run`.
 
@@ -327,7 +338,7 @@ Rule 3 exists because a turn also ends when the agent asks the user a question. 
 
 ### Tamper evidence
 
-Hooks deny direct writes to the protected files listed in section 6 and to `~/.shibaox/crew/`. As a second line, the engine stores a hash of each protected file it writes in `~/.shibaox/crew/integrity/`. If a file no longer matches, the engine invalidates the evidence and reports that state was changed outside the engine. A person who edits `policy.json` by hand runs `crew policy accept` to record the new hash; the command asks the user through the permission prompt, and `crew detect --refresh` only records a hash for a policy that has none yet.
+Hooks deny direct writes to the protected files listed in section 6 and to `~/.shibaox/crew/`. As a second line, the engine stores a hash of each protected file it writes in `~/.shibaox/crew/integrity/`. If a file no longer matches, the engine invalidates the evidence and reports that state was changed outside the engine. An integrity file that does not parse makes every protected file tampered, and so does a protected file the engine never recorded while it has recorded others (only `policy.json` and true first use are trusted without a hash). While anything a command builds on is tampered, every command that saves state refuses, naming the file; read-only commands keep working and keep reporting it. The user trusts the current content again with `crew accept <id|profile|policy>`, which asks through the permission prompt; a person who edits `policy.json` by hand runs `crew policy accept` (the same as `crew accept policy`), and `crew detect --refresh` only records a hash for a policy that has none yet.
 
 This makes tampering evident. It does not make it impossible: the agent and the engine run as the same user.
 

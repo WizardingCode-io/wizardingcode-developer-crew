@@ -5153,7 +5153,7 @@ This task runs the plugin in a real Claude Code session on a throwaway project. 
 rm -rf /tmp/crew-sandbox && mkdir -p /tmp/crew-sandbox/src /tmp/crew-sandbox/tests && cd /tmp/crew-sandbox
 git init -q -b main
 cat > package.json <<'EOF'
-{ "name": "sandbox", "private": true, "type": "module", "scripts": { "test": "node --test tests/" } }
+{ "name": "sandbox", "private": true, "type": "module", "scripts": { "test": "node --test" } }
 EOF
 cat > src/math.mjs <<'EOF'
 export function add(a, b) { return a - b; }
