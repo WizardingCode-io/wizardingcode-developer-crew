@@ -31,9 +31,11 @@ bun run plugin:check      # validate --strict and the mod tests
 
 Open the session inside a git repository and ask for a code change; the crew skill takes it from there. `node plugins/core/dist/crew.mjs status` shows where the work stands.
 
+Development note: `bun run check` runs the engine tests under `packages/`; the mod's tests need the plugin runtime and run only through `bun run plugin:check`.
+
 ## What is next
 
-SP1b adds the mod (a status strip and a `/crew` panel inside Claude Code) and the eval suite that measures the method on fixture projects.
+The eval suite (`evals/`) measures the method on fixture projects; its recorded run (`docs/evals/`) is pending the first full run.
 
 ## Documents
 
