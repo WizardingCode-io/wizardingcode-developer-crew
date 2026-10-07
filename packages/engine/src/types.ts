@@ -138,6 +138,8 @@ export interface GateRun {
   log: string | null;
   tail: string;
   reason?: string;
+  /** The fingerprint of the code this run vouches for; a run on other code counts as not run. */
+  fingerprint: string;
 }
 
 export interface Evidence {

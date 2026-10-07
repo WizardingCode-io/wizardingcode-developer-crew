@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { resolvePaths, workDir } from "../src/paths.ts";
+import { workDir } from "../src/paths.ts";
 import { loadState } from "../src/state.ts";
 import type { Evidence, RunRecord } from "../src/types.ts";
 import {
@@ -19,7 +19,7 @@ import {
   raiseRoute,
   saveWork,
 } from "../src/work.ts";
-import { makeRepo, testEnv } from "./helpers.ts";
+import { makeRepo, repoPaths, testEnv } from "./helpers.ts";
 
 const run: RunRecord = {
   command: "x",
@@ -39,7 +39,7 @@ const empty: GuardContext = {
 };
 
 test("createWork writes the item and the brief and makes it active", () => {
-  const paths = resolvePaths(makeRepo(), testEnv());
+  const paths = repoPaths(makeRepo(), testEnv());
   const work = createWork(paths, "The cart total ignores the discount\n\nSteps: add a coupon.");
   expect(work.id).toMatch(/^\d{4}-\d{2}-\d{2}-001-the-cart-total-ignores-the-discount$/);
   expect(work.title).toBe("The cart total ignores the discount");
@@ -52,7 +52,7 @@ test("createWork writes the item and the brief and makes it active", () => {
 });
 
 test("classification sets type, route and risk, and routes only go up", () => {
-  const paths = resolvePaths(makeRepo(), testEnv());
+  const paths = repoPaths(makeRepo(), testEnv());
   const work = createWork(paths, "fix");
   applyClassification(work, "fix", { route: "fast", reasons: ["r"], riskAreas: [] });
   expect(work).toMatchObject({ type: "fix", route: "fast", phase: "recognize" });
@@ -64,7 +64,7 @@ test("classification sets type, route and risk, and routes only go up", () => {
 });
 
 test("guards: build needs criteria, then spec, approval and plan by route", () => {
-  const paths = resolvePaths(makeRepo(), testEnv());
+  const paths = repoPaths(makeRepo(), testEnv());
   const work = createWork(paths, "feature");
   applyClassification(work, "feature", { route: "fast", reasons: [], riskAreas: [] });
   expect(guardFor(work, "build", empty)).toEqual([
@@ -86,7 +86,7 @@ test("guards: build needs criteria, then spec, approval and plan by route", () =
 });
 
 test("guards: gate needs test-first records per criterion kind, deliver needs proof", () => {
-  const paths = resolvePaths(makeRepo(), testEnv());
+  const paths = repoPaths(makeRepo(), testEnv());
   const work = createWork(paths, "refactor");
   const behaviour = addCriterion(work, "x");
   const preserve = addCriterion(work, "keep", "preserve");
@@ -116,7 +116,7 @@ test("guards: gate needs test-first records per criterion kind, deliver needs pr
 });
 
 test("advancePhase follows the route and stops at a failing guard", () => {
-  const paths = resolvePaths(makeRepo(), testEnv());
+  const paths = repoPaths(makeRepo(), testEnv());
   const work = createWork(paths, "fix");
   applyClassification(work, "fix", { route: "fast", reasons: [], riskAreas: [] });
   expect(advancePhase(work, empty)).toEqual({

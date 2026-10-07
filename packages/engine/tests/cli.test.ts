@@ -2,9 +2,8 @@ import { expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type CliIo, main } from "../src/cli.ts";
-import { resolvePaths } from "../src/paths.ts";
 import { readProtectedJson } from "../src/store.ts";
-import { makeRepo, testEnv, write } from "./helpers.ts";
+import { makeRepo, repoPaths, testEnv, write } from "./helpers.ts";
 
 function io(cwd: string, env = testEnv(), stdin = "") {
   const out: string[] = [];
@@ -121,6 +120,15 @@ test("profile set and confirm: proposed commands stay unconfirmed until confirme
   expect(second.data.verdict).toBe("proven");
 });
 
+test("C1: gate run --only refuses an unknown gate name", async () => {
+  const root = makeRepo({ "package.json": JSON.stringify({ scripts: { test: "exit 0" } }) });
+  const c = io(root);
+  const id = (await c.json("start", "Thing", "--answers", answers)).data.id as string;
+  const refused = await c.run("gate", "run", id, "--only", "secrets,bogus");
+  expect(refused.code).toBe(1);
+  expect(refused.err.trim()).toBe("unknown gate: bogus");
+});
+
 test("hook: malformed or empty stdin answers {} and exits 0", async () => {
   const root = makeRepo();
   expect(await io(root, testEnv(), "").run("hook", "stop")).toMatchObject({ code: 0, out: "{}\n" });
@@ -139,7 +147,7 @@ test("hook: malformed or empty stdin answers {} and exits 0", async () => {
 test("detect --refresh never re-blesses a tampered policy; policy accept does", async () => {
   const root = makeRepo({ "package.json": JSON.stringify({ scripts: { test: "exit 0" } }) });
   const c = io(root);
-  const paths = resolvePaths(root, c.env);
+  const paths = repoPaths(root, c.env);
   const file = join(root, ".crew", "policy.json");
   expect((await c.run("policy", "accept")).code).toBe(1);
   mkdirSync(join(root, ".crew"), { recursive: true });

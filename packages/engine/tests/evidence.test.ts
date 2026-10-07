@@ -6,10 +6,9 @@ import {
   renderReport,
   saveEvidence,
 } from "../src/evidence.ts";
-import { resolvePaths } from "../src/paths.ts";
 import type { Evidence, GateRun, RunRecord, WorkItem } from "../src/types.ts";
 import { addCriterion, addSkip, createWork } from "../src/work.ts";
-import { makeRepo, testEnv } from "./helpers.ts";
+import { makeRepo, repoPaths, testEnv } from "./helpers.ts";
 
 const run: RunRecord = {
   command: "npm run test",
@@ -37,17 +36,18 @@ function gate(
     at: "t",
     log: null,
     tail: "",
+    fingerprint: "f",
     ...extra,
   };
 }
-function workWith(paths: ReturnType<typeof resolvePaths>): WorkItem {
+function workWith(paths: ReturnType<typeof repoPaths>): WorkItem {
   const work = createWork(paths, "fix");
   addCriterion(work, "x");
   return work;
 }
 
 test("evidence loads empty and round-trips", () => {
-  const paths = resolvePaths(makeRepo(), testEnv());
+  const paths = repoPaths(makeRepo(), testEnv());
   const work = workWith(paths);
   expect(loadEvidence(paths, work.id)).toEqual({ evidence: emptyEvidence(), tampered: false });
   const evidence: Evidence = { ...emptyEvidence(), fingerprint: "f" };
@@ -56,7 +56,7 @@ test("evidence loads empty and round-trips", () => {
 });
 
 test("the verdict names every reason the work is not proven", () => {
-  const paths = resolvePaths(makeRepo(), testEnv());
+  const paths = repoPaths(makeRepo(), testEnv());
   const work = workWith(paths);
   const expected = [
     { gate: "secrets" as const, target: "." },
@@ -89,7 +89,7 @@ test("the verdict names every reason the work is not proven", () => {
 });
 
 test("skips, unconfirmed commands and a matching fingerprint", () => {
-  const paths = resolvePaths(makeRepo(), testEnv());
+  const paths = repoPaths(makeRepo(), testEnv());
   const work = workWith(paths);
   addSkip(work, "gate:lint", "legacy code");
   addSkip(work, "tdd:AC-1", "manual");
@@ -124,7 +124,7 @@ test("skips, unconfirmed commands and a matching fingerprint", () => {
 });
 
 test("the report says what was proven and what was not", () => {
-  const paths = resolvePaths(makeRepo(), testEnv());
+  const paths = repoPaths(makeRepo(), testEnv());
   const work = workWith(paths);
   addSkip(work, "gate:lint", "legacy code");
   const evidence: Evidence = {

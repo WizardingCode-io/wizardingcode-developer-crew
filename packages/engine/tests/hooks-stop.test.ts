@@ -1,19 +1,18 @@
 import { expect, test } from "bun:test";
 import { runGates } from "../src/gates.ts";
-import { buildContext } from "../src/hooks/context.ts";
 import { handleHook } from "../src/hooks/index.ts";
 import { onSessionStart } from "../src/hooks/session-start.ts";
 import { MAX_STOP_BLOCKS, onStop } from "../src/hooks/stop.ts";
 import { loadState } from "../src/state.ts";
 import { addCriterion, addSkip, createWork, saveWork } from "../src/work.ts";
-import { makeRepo, testEnv, write } from "./helpers.ts";
+import { hookContext, makeRepo, testEnv, write } from "./helpers.ts";
 
 function session() {
   const root = makeRepo({
     "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
     "src/a.ts": "x",
   });
-  const ctx = buildContext({ session_id: "s", cwd: root }, testEnv());
+  const ctx = hookContext({ session_id: "s", cwd: root }, testEnv());
   onSessionStart(ctx);
   return { root, ctx };
 }

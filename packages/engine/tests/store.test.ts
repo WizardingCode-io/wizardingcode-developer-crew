@@ -1,12 +1,11 @@
 import { expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { resolvePaths } from "../src/paths.ts";
 import { readProtectedJson, recordIntegrity, writeProtectedJson } from "../src/store.ts";
-import { makeRepo, testEnv } from "./helpers.ts";
+import { makeRepo, repoPaths, testEnv } from "./helpers.ts";
 
 test("a protected file written by the engine reads back untampered", () => {
-  const paths = resolvePaths(makeRepo(), testEnv());
+  const paths = repoPaths(makeRepo(), testEnv());
   const file = join(paths.crewDir, "profile.json");
   writeProtectedJson(paths, file, { version: 1 });
   expect(readProtectedJson<{ version: number }>(paths, file)).toEqual({
@@ -16,7 +15,7 @@ test("a protected file written by the engine reads back untampered", () => {
 });
 
 test("a protected file changed outside the engine is reported as tampered", () => {
-  const paths = resolvePaths(makeRepo(), testEnv());
+  const paths = repoPaths(makeRepo(), testEnv());
   const file = join(paths.crewDir, "work", "w1", "evidence.json");
   writeProtectedJson(paths, file, { verdict: "unproven" });
   writeFileSync(file, JSON.stringify({ verdict: "proven" }));
@@ -26,7 +25,7 @@ test("a protected file changed outside the engine is reported as tampered", () =
 });
 
 test("recordIntegrity accepts a hand-written file, and a missing file is not tampered", () => {
-  const paths = resolvePaths(makeRepo(), testEnv());
+  const paths = repoPaths(makeRepo(), testEnv());
   const file = join(paths.crewDir, "policy.json");
   expect(readProtectedJson(paths, file)).toEqual({ data: null, tampered: false });
   mkdirSync(paths.crewDir, { recursive: true });

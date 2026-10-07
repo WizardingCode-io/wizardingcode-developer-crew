@@ -50,15 +50,21 @@ export function computeVerdict(input: VerdictInput): {
   const { work, evidence, expected, currentFingerprint, tampered } = input;
   const unproven: string[] = [];
   if (tampered) unproven.push("state changed outside the engine");
+  // When no run vouches for the current code, one reason says it all; otherwise each stale gate is named.
+  const stale =
+    evidence.fingerprint !== null &&
+    evidence.fingerprint !== currentFingerprint &&
+    !evidence.runs.some((r) => r.fingerprint === currentFingerprint);
   if (evidence.fingerprint === null) unproven.push("gates have not run");
-  else if (evidence.fingerprint !== currentFingerprint)
-    unproven.push("code changed since the last gate run");
+  else if (stale) unproven.push("code changed since the last gate run");
   const multiTarget = new Set(expected.map((e) => e.target)).size > 1;
   for (const { gate, target } of expected) {
     if (isSkipped(work, `gate:${gate}`)) continue;
     const label = multiTarget && target !== "." ? `${gate} (${target})` : gate;
     const run = evidence.runs.find((r) => r.gate === gate && r.target === target);
     if (!run) unproven.push(`gate ${label} not run`);
+    else if (run.fingerprint !== currentFingerprint && !stale)
+      unproven.push(`gate ${label} not run on the current code`);
     else if (run.status === "fail") unproven.push(`gate ${label} failing`);
     else if (run.status === "unavailable")
       unproven.push(`gate ${label} unavailable: ${run.reason ?? "no command"}`);

@@ -1,9 +1,8 @@
 import { expect, test } from "bun:test";
 import { join } from "node:path";
-import { buildContext } from "../src/hooks/context.ts";
 import { onPreToolUse } from "../src/hooks/pre-tool-use.ts";
 import { createWork, saveWork } from "../src/work.ts";
-import { makeRepo, testEnv } from "./helpers.ts";
+import { hookContext, makeRepo, testEnv } from "./helpers.ts";
 
 function decision(response: Record<string, unknown>): string | undefined {
   return (response.hookSpecificOutput as { permissionDecision?: string } | undefined)
@@ -15,7 +14,7 @@ function setup() {
     "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
     "src/a.ts": "x",
   });
-  return { root, ctx: buildContext({ session_id: "s", cwd: root }, testEnv()) };
+  return { root, ctx: hookContext({ session_id: "s", cwd: root }, testEnv()) };
 }
 
 test("writes to engine-owned files are denied; files outside the repo get no opinion", () => {

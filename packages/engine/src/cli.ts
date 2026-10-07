@@ -359,9 +359,16 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       if (args[0] !== "run") return refuse("usage: crew gate run <id> [--only a,b]");
       const only =
         typeof parsed.flags.only === "string"
-          ? (parsed.flags.only.split(",") as GateName[])
+          ? parsed.flags.only
+              .split(",")
+              .map((g) => g.trim())
+              .filter(Boolean)
           : undefined;
-      const outcome = await runGates(env.paths, opened.work, env.profile, env.policy, { only });
+      const unknown = only?.find((g) => !GATE_NAMES.includes(g as GateName));
+      if (unknown !== undefined) return refuse(`unknown gate: ${unknown}`);
+      const outcome = await runGates(env.paths, opened.work, env.profile, env.policy, {
+        only: only as GateName[] | undefined,
+      });
       saveWork(env.paths, opened.work);
       const raised = outcome.raised
         ? `Route raised to ${outcome.raised}: ${opened.work.routeReasons.at(-1)}\n`

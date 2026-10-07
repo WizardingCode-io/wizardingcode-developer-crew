@@ -1,17 +1,16 @@
 import { expect, test } from "bun:test";
 import { detectProfile } from "../src/detect/index.ts";
 import { emptyEvidence } from "../src/evidence.ts";
-import { resolvePaths } from "../src/paths.ts";
 import { recordTdd } from "../src/tdd.ts";
 import { addCriterion, createWork } from "../src/work.ts";
-import { makeRepo, testEnv, write } from "./helpers.ts";
+import { makeRepo, repoPaths, testEnv, write } from "./helpers.ts";
 
 function setup() {
   const root = makeRepo({
     "package.json": JSON.stringify({ scripts: { test: "sh run-tests.sh" } }),
     "run-tests.sh": "exit 1\n",
   });
-  const paths = resolvePaths(root, testEnv());
+  const paths = repoPaths(root, testEnv());
   const profile = detectProfile(root);
   const work = createWork(paths, "fix");
   const behaviour = addCriterion(work, "x");

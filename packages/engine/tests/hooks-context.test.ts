@@ -1,15 +1,14 @@
 import { expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { buildContext } from "../src/hooks/context.ts";
 import { onPrompt } from "../src/hooks/prompt.ts";
 import { onSessionStart } from "../src/hooks/session-start.ts";
 import { loadState } from "../src/state.ts";
 import { addCriterion, createWork, saveWork } from "../src/work.ts";
-import { makeRepo, testEnv } from "./helpers.ts";
+import { hookContext, makeRepo, testEnv } from "./helpers.ts";
 
 function context(root: string, env = testEnv()) {
-  return buildContext({ session_id: "s1", cwd: join(root, "src") }, env);
+  return hookContext({ session_id: "s1", cwd: join(root, "src") }, env);
 }
 
 test("session start detects the profile, records the baseline and describes the state", () => {

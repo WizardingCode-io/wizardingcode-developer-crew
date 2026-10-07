@@ -109,6 +109,7 @@ async function runOne(
   profile: Profile,
   gate: GateName,
   targetPath: string,
+  fingerprint: string,
 ): Promise<GateRun> {
   const at = nowIso();
   const base: GateRun = {
@@ -123,6 +124,7 @@ async function runOne(
     at,
     log: null,
     tail: "",
+    fingerprint,
   };
   if (gate === "secrets") {
     const started = Date.now();
@@ -215,10 +217,11 @@ export async function runGates(
         log: null,
         tail: "",
         reason: skip?.reason,
+        fingerprint: fingerprintBefore,
       });
       continue;
     }
-    evidence.runs.push(await runOne(paths, work, profile, gate, target));
+    evidence.runs.push(await runOne(paths, work, profile, gate, target, fingerprintBefore));
   }
   // The fingerprint from before the runs is what the evidence vouches for; a gate that edits files shows up as a change.
   evidence.fingerprint = fingerprintBefore;

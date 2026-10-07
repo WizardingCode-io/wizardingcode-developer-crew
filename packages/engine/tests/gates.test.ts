@@ -7,12 +7,11 @@ import {
   plannedGates,
   runGates,
 } from "../src/gates.ts";
-import { resolvePaths } from "../src/paths.ts";
 import { DEFAULT_POLICY } from "../src/policy.ts";
 import { ensureProfile, loadProfile } from "../src/profile.ts";
 import type { Target } from "../src/types.ts";
 import { addCriterion, addSkip, createWork } from "../src/work.ts";
-import { makeRepo, testEnv, write } from "./helpers.ts";
+import { makeRepo, repoPaths, testEnv, write } from "./helpers.ts";
 
 const target: Target = {
   path: ".",
@@ -59,7 +58,7 @@ test("runGates records results, replaces old runs and computes the verdict", asy
     "package.json": JSON.stringify({ scripts: { test: "exit 0", lint: "exit 1" } }),
     "src/a.ts": "x",
   });
-  const paths = resolvePaths(root, testEnv());
+  const paths = repoPaths(root, testEnv());
   const { profile } = ensureProfile(paths);
   expect(loadProfile(paths).profile?.targets[0]?.gates.test?.command).toBe("npm run test");
   const work = createWork(paths, "fix");
@@ -86,12 +85,33 @@ test("runGates records results, replaces old runs and computes the verdict", asy
   ]);
 });
 
+test("C1: --only never launders runs recorded on older code", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const paths = repoPaths(root, testEnv());
+  const { profile } = ensureProfile(paths);
+  const work = createWork(paths, "fix");
+  work.route = "fast";
+  addCriterion(work, "x");
+  addSkip(work, "tdd:AC-1", "manual");
+  write(root, "src/a.ts", "y");
+  const full = await runGates(paths, work, profile, DEFAULT_POLICY);
+  expect(full.verdict).toBe("proven");
+  write(root, "src/a.ts", "broken");
+  const partial = await runGates(paths, work, profile, DEFAULT_POLICY, { only: ["secrets"] });
+  expect(partial.verdict).toBe("unproven");
+  expect(partial.unproven).toEqual(["gate test not run on the current code"]);
+  expect(partial.evidence.runs.every((r) => typeof r.fingerprint === "string")).toBe(true);
+});
+
 test("a diff that touches a risk path raises the route to full", async () => {
   const root = makeRepo({
     "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
     "app/Auth/Guard.ts": "x",
   });
-  const paths = resolvePaths(root, testEnv());
+  const paths = repoPaths(root, testEnv());
   const { profile } = ensureProfile(paths);
   const work = createWork(paths, "fix");
   work.route = "fast";

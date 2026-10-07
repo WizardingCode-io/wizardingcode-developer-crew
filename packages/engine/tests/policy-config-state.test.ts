@@ -2,13 +2,12 @@ import { expect, test } from "bun:test";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadConfig, saveConfig, setConfigValue } from "../src/config.ts";
-import { resolvePaths } from "../src/paths.ts";
 import { DEFAULT_POLICY, loadPolicy, skipAllowed } from "../src/policy.ts";
 import { ensureCrewDir, loadState, saveState, sessionState } from "../src/state.ts";
-import { makeRepo, testEnv } from "./helpers.ts";
+import { makeRepo, repoPaths, testEnv } from "./helpers.ts";
 
 test("policy: defaults when absent, validated when present, unknown values ignored", () => {
-  const paths = resolvePaths(makeRepo(), testEnv());
+  const paths = repoPaths(makeRepo(), testEnv());
   expect(loadPolicy(paths)).toEqual({ policy: DEFAULT_POLICY, tampered: false });
   mkdirSync(paths.crewDir, { recursive: true });
   writeFileSync(
@@ -31,7 +30,7 @@ test("policy: defaults when absent, validated when present, unknown values ignor
 });
 
 test("config: defaults, set values, reject unknown keys and values", () => {
-  const paths = resolvePaths(makeRepo(), testEnv());
+  const paths = repoPaths(makeRepo(), testEnv());
   expect(loadConfig(paths)).toEqual({ mode: "partner", decisions: { log: true } });
   const next = setConfigValue(loadConfig(paths), "decisions.log", "false");
   saveConfig(paths, setConfigValue(next, "mode", "pilot"));
@@ -41,7 +40,7 @@ test("config: defaults, set values, reject unknown keys and values", () => {
 });
 
 test("state: per-session entries and the .crew/.gitignore", () => {
-  const paths = resolvePaths(makeRepo(), testEnv());
+  const paths = repoPaths(makeRepo(), testEnv());
   ensureCrewDir(paths, DEFAULT_POLICY);
   expect(readFileSync(join(paths.crewDir, ".gitignore"), "utf8")).toBe("local/\nwork/*/logs/\n");
   ensureCrewDir(paths, { ...DEFAULT_POLICY, artifacts: "local" });
