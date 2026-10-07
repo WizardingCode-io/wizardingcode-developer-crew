@@ -21,7 +21,10 @@ const PROVEN = {
     { gate: "test", target: ".", status: "pass", durationMs: 812 },
   ],
   skips: [],
+  expected: ["secrets", "test"],
 };
+// An item in build whose planned gates have not run, with no reason given yet
+const PENDING = { ...PROVEN, phase: "build", verdict: "unproven", unproven: [], runs: [], expected: ["secrets", "test"] };
 const NONE = { ok: true, message: "no active work item", active: null };
 
 // The stubs every test needs: where the plugin lives, the session folder, and the CLI's answer
@@ -101,11 +104,23 @@ test("/crew mode forwards to the engine", async ($, on) => {
   await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
   const answer = await $.command.run({ command: "crew", args: "mode pilot" });
   expect(answer.text).toBe("Crew: mode: pilot");
+  // session.start refreshed first, through the same bundled CLI
+  const first = argv[0] ?? [];
+  expect(first[0]).toBe("node");
+  expect(first[1]).toMatch(/\/plugins\/core\/dist\/crew\.mjs$/);
+  expect(first.slice(2)).toEqual(["status", "--json"]);
   const last = argv.at(-1) ?? [];
   expect(last[0]).toBe("node");
   // The test host loads the real plugin folder, so the root is the checkout's, not a stub
   expect(last[1]).toMatch(/\/plugins\/core\/dist\/crew\.mjs$/);
   expect(last.slice(2)).toEqual(["mode", "pilot", "--json"]);
+});
+
+test("/crew with an unknown verb says how to use it", async ($, on) => {
+  stubs(on, () => ({ exitCode: 0, stdout: JSON.stringify(PROVEN), stderr: "" }));
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  const answer = await $.command.run({ command: "crew", args: "frobnicate" });
+  expect(answer.text).toBe("Crew: unknown verb; use /crew [status|panel|mode <partner|guide|pilot>]");
 });
 
 // What Claude Code passes to a ui.render hook for the strip above the prompt
@@ -117,12 +132,12 @@ const STRIP = {
   props: { hasSurvey: false, isWorking: false, maxRows: 6, bodyColumns: 100, scroll: { offset: 0, bodyRows: 6 }, view: {} },
 } as const;
 
-test("the strip shows the item, phase, route, gates and verdict, and keeps other mods' content", async ($, on) => {
+test("the strip shows the item, phase, route, verdict and gates, and keeps other mods' content", async ($, on) => {
   stubs(on, () => ({ exitCode: 0, stdout: JSON.stringify(PROVEN), stderr: "" }));
   on("ui.render", () => ({ type: "Text", props: {}, children: ["drawn by Claude Code"] }));
   await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
   const ui = await $.ui.mount({ ...STRIP, surface: "terminal" });
-  expect(await ui.find({ type: "Text", text: "crew 2026-10-07-001-fix-total · deliver · fast · secrets ✓ test ✓ · proven" })).toBeDefined();
+  expect(await ui.find({ type: "Text", text: "crew 2026-10-07-001-fix-total · deliver · fast · proven · secrets ✓ test ✓" })).toBeDefined();
   expect(await ui.find({ type: "Text", text: "drawn by Claude Code" })).toBeDefined();
   await ui.unmount();
 });
@@ -144,22 +159,38 @@ test("an item whose gates have not run reads as not proven, not as success", asy
   on("turn.complete", () => ({ text: "" }));
   await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
   const ui = await $.ui.mount({ ...STRIP, surface: "terminal" });
-  expect(await ui.find({ type: "Text", text: "crew 2026-10-07-001-fix-total · build · fast · not proven" })).toBeDefined();
+  expect(await ui.find({ type: "Text", text: "crew 2026-10-07-001-fix-total · build · fast · not proven (gates have not run) · secrets … test …" })).toBeDefined();
   await ui.unmount();
   const line = await $.turn.complete({ turnId: "t1", answer: "done", durationMs: 10, isAborted: false, usage: null });
   expect(line.text).toBe("Not proven: gates have not run");
 });
 
+test("the strip draws planned gates that have not run and the first unproven reason", async ($, on) => {
+  let answer: Record<string, unknown> = PENDING;
+  stubs(on, () => ({ exitCode: 0, stdout: JSON.stringify(answer), stderr: "" }));
+  on("ui.render", () => ({ type: "Text", props: {}, children: [] }));
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  const pending = await $.ui.mount({ ...STRIP, surface: "terminal" });
+  expect(await pending.find({ type: "Text", text: "crew 2026-10-07-001-fix-total · build · fast · not proven (gates have not run) · secrets … test …" })).toBeDefined();
+  await pending.unmount();
+  answer = { ...PENDING, phase: "gate", unproven: ["gate test failing"], runs: [{ gate: "secrets", target: ".", status: "pass", durationMs: 12 }, { gate: "test", target: ".", status: "fail", durationMs: 812 }], awaiting: "user" };
+  await $.command.run({ command: "crew", args: "status" });
+  const failing = await $.ui.mount({ ...STRIP, surface: "terminal" });
+  expect(await failing.find({ type: "Text", text: "crew 2026-10-07-001-fix-total · gate · fast · not proven (gate test failing) · secrets ✓ test ✗ · waiting for the user" })).toBeDefined();
+  await failing.unmount();
+});
+
 test("the line under a proven answer names the gates, and no item means no line", async ($, on) => {
   let proven = true;
   stubs(on, () => ({ exitCode: 0, stdout: JSON.stringify(proven ? PROVEN : NONE), stderr: "" }));
-  on("turn.complete", () => ({ text: "" }));
+  // A sentinel, so the test tells next(e) apart from an empty line of the mod's own
+  on("turn.complete", () => ({ text: "theirs" }));
   await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
   const line = await $.turn.complete({ turnId: "t1", answer: "done", durationMs: 10, isAborted: false, usage: null });
   expect(line.text).toBe("Proven: secrets, test");
   proven = false;
   const none = await $.turn.complete({ turnId: "t2", answer: "done", durationMs: 10, isAborted: false, usage: null });
-  expect(none.text).toBe("");
+  expect(none.text).toBe("theirs");
 });
 
 const PANE = {

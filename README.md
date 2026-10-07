@@ -8,7 +8,7 @@ Give your coding agent one input and get guided to a result that is proven done:
 - **The `crew` command**: the engine's interface, bundled into one file, `plugins/core/dist/crew.mjs`. `crew help` lists the commands.
 - **Hooks**: a Claude Code plugin (`plugins/core`) wires SessionStart, UserPromptSubmit, PreToolUse and Stop to `crew hook <event>`. A turn cannot end while watched source files have unproven changes, the agent cannot write the engine's files, and decisions that belong to the user (skips, approvals, accepting changed state) go through a permission prompt.
 - **The crew skill** (`plugins/core/skills/crew`): the method the agent follows, phase by phase.
-- **The mod** (`plugins/core/hooks/register.js`, Claude Code 2.1.287 or later): a status strip above the prompt (`crew <id> · phase · route · gates · proven`), a line under each answer (`Proven: ...` or `Not proven: ...`), and `/crew` with `status`, `panel` and `mode <partner|guide|pilot>`. It only shows the engine's state; the hooks and the command carry the guarantee, so disabling the mod changes nothing about what is enforced.
+- **The mod** (`plugins/core/hooks/register.js`, Claude Code 2.1.287 or later): a status strip above the prompt (`crew <id> · phase · route · proven · gates`, or `not proven (<first reason>)` in place of `proven`; a planned gate that has not run shows as `…`), a line under each answer (`Proven: ...` or `Not proven: ...`), and `/crew` with `status`, `panel` and `mode <partner|guide|pilot>`. It only shows the engine's state; the hooks and the command carry the guarantee, so disabling the mod changes nothing about what is enforced.
 
 Requirement: Node.js 20 or later on `PATH` (the hooks and the `crew` command run on it). Development uses Bun.
 
