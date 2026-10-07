@@ -15,5 +15,6 @@
     "Stop": [
       { "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/dist/crew.mjs", "hook", "stop"], "timeout": 10 }] }
     ]
-  }
+  },
+  "modules": ["./register.js"]
 }

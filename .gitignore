@@ -4,3 +4,5 @@ node_modules/
 .idea/
 .claude/worktrees/
 .crew/
+plugins/core/.claude-plugin/types/
+plugins/core/tsconfig.json
