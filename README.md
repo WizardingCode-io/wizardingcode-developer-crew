@@ -8,4 +8,11 @@ Give your coding agent one input and get guided to a result that is proven done:
 - [SP1 design](docs/specs/2026-10-06-sp1-engine-and-base-method-design.md): the first subproject, the engine and the base method.
 - [SP1a implementation plan](docs/plans/2026-10-07-sp1a-engine-cli-and-plugin.md): engine, `crew` command, hooks, skill and plugin packaging, task by task.
 
+## Try the engine (development)
+
+```bash
+bun install && bun run build
+claude --plugin-dir ./plugins/core      # loads the plugin for one session
+```
+
 Part of the Shibaox family by WizardingCode. MIT licensed.
