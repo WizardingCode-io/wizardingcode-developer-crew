@@ -161,3 +161,59 @@ test("the line under a proven answer names the gates, and no item means no line"
   const none = await $.turn.complete({ turnId: "t2", answer: "done", durationMs: 10, isAborted: false, usage: null });
   expect(none.text).toBe("");
 });
+
+const PANE = {
+  plugin: "shibaox-developer-crew",
+  component: "Pane",
+  requestId: "crew",
+  viewport: { columns: 120, rows: 40 },
+  props: { title: "Crew", isFocused: true, bodyColumns: 80, placement: "inline", scroll: { offset: 0, bodyRows: 20 }, view: {} },
+} as const;
+
+test("the panel lists phases, criteria, gates and the verdict, and its buttons work", async ($, on) => {
+  let runs = 0;
+  const closed: string[] = [];
+  stubs(on, () => {
+    runs += 1;
+    return { exitCode: 0, stdout: JSON.stringify(PROVEN), stderr: "" };
+  });
+  on("ui.open", () => ({ value: { isPlaced: true } }));
+  on("ui.toast", () => ({ value: undefined }));
+  on("ui.close", ($, e) => {
+    closed.push(e.id);
+    return { value: undefined };
+  });
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  const opened = await $.command.run({ command: "crew", args: "panel" });
+  expect(opened.text).toBeUndefined();
+  const ui = await $.ui.mount({ ...PANE, surface: "terminal" });
+  expect(await ui.find({ type: "Text", text: '2026-10-07-001-fix-total "Fix total"' })).toBeDefined();
+  expect(await ui.find({ type: "Text", text: "receive › recognize › build › gate › [deliver]" })).toBeDefined();
+  expect(await ui.find({ type: "Text", text: "AC-1 behavior · red then green · The total subtracts the discount." })).toBeDefined();
+  expect(await ui.find({ type: "Text", text: "test (.): pass in 0.8s" })).toBeDefined();
+  expect(await ui.find({ type: "Text", text: "Proven: secrets, test" })).toBeDefined();
+  const before = runs;
+  await ui.press({ key: "refresh" });
+  expect(runs).toBe(before + 1);
+  await ui.press({ key: "close" });
+  expect(closed).toEqual(["crew"]);
+  await ui.unmount();
+});
+
+test("the panel explains an inactive engine instead of drawing an empty view", async ($, on) => {
+  stubs(on, () => ({ exitCode: 1, stdout: JSON.stringify({ ok: false, message: "crew is inactive here: not a git repository and no .crew/ folder" }), stderr: "" }));
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  const ui = await $.ui.mount({ ...PANE, surface: "terminal" });
+  expect(await ui.find({ type: "Text", text: "crew is inactive here: not a git repository and no .crew/ folder" })).toBeDefined();
+  await ui.unmount();
+});
+
+test("the panel lists what is not proven and the user's skips", async ($, on) => {
+  const partial = { ...PROVEN, phase: "gate", verdict: "unproven", unproven: ["gate lint failing"], runs: [...PROVEN.runs, { gate: "lint", target: ".", status: "fail", durationMs: 300 }], skips: [{ step: "tdd:AC-1", reason: "manual check" }] };
+  stubs(on, () => ({ exitCode: 0, stdout: JSON.stringify(partial), stderr: "" }));
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  const ui = await $.ui.mount({ ...PANE, surface: "terminal" });
+  expect(await ui.find({ type: "Text", text: "✗ gate lint failing" })).toBeDefined();
+  expect(await ui.find({ type: "Text", text: "skipped tdd:AC-1: manual check" })).toBeDefined();
+  await ui.unmount();
+});

@@ -37,12 +37,21 @@ export function register(on) {
     const verb = words[0] || 'status'
     if (verb === 'panel') {
       await refresh($)
-      await $.ui.open({ id: PANE, title: 'Crew', focus: true, closeOnEscape: true })
+      let placed
+      try {
+        placed = await $.ui.open({ id: PANE, title: 'Crew', focus: true, closeOnEscape: true })
+      } catch (err) {
+        $.ui.toast('Crew: the panel could not open: ' + reasonOf(err))
+        return {}
+      }
+      if (placed && placed.isPlaced === false) {
+        $.ui.toast('Crew: the panel waits for a wider terminal' + (placed.reason ? ': ' + placed.reason : ''))
+      }
       return {}
     }
     if (verb === 'mode') {
       const answer = await runCrew($, ['mode', ...words.slice(1)])
-      return { text: 'Crew: ' + answer.message }
+      return { text: 'Crew: ' + ((answer && answer.message) ? answer.message : 'crew gave no answer') }
     }
     await refresh($)
     return { text: statusText() }
@@ -64,6 +73,73 @@ export function register(on) {
       children: [Text({ dimColor: true, wrap: 'truncate-end', children: [stripText()] }), theirs],
     })
   })
+
+  on('ui.render', { component: 'Pane' }, async ($, e, next) => {
+    if (e.requestId !== PANE) return next(e)
+    return paneTree($, e)
+  })
+}
+
+// The whole pane, built from the last status each time Claude Code asks for it
+function paneTree($, e) {
+  const { Box, Text, Button } = $.ui.resolve(e)
+  const redraw = () => $.ui.invalidate('ui.render')
+  const buttons = Box({
+    flexDirection: 'row',
+    columnGap: 3,
+    children: [
+      Button({
+        key: 'refresh',
+        label: 'Refresh',
+        hotkey: 'r',
+        plain: true,
+        onPress: async () => {
+          await refresh($)
+          redraw()
+        },
+      }),
+      Button({
+        key: 'close',
+        label: 'Close',
+        hotkey: 'q',
+        plain: true,
+        onPress: async () => {
+          await $.ui.close({ id: PANE })
+        },
+      }),
+    ],
+  })
+  const lines = []
+  if (error) {
+    lines.push(Text({ children: [error] }))
+  } else if (!hasWork()) {
+    lines.push(Text({ children: ['No active work item. A change starts with the crew skill.'] }))
+  } else {
+    lines.push(Text({ bold: true, children: [status.active + ' "' + status.title + '"'] }))
+    lines.push(Text({ dimColor: true, children: [phasesText()] }))
+    lines.push(Text({ children: [' '] }))
+    for (const c of status.criteria || []) {
+      lines.push(Text({ children: [c.id + ' ' + c.kind + ' · ' + c.tdd + ' · ' + c.text] }))
+    }
+    lines.push(Text({ children: [' '] }))
+    for (const r of status.runs || []) {
+      lines.push(Text({ children: [r.gate + ' (' + r.target + '): ' + r.status + ' in ' + (r.durationMs / 1000).toFixed(1) + 's' + (r.reason ? ' (' + r.reason + ')' : '')] }))
+    }
+    for (const reason of status.unproven || []) {
+      lines.push(Text({ color: 'red', children: ['✗ ' + reason] }))
+    }
+    for (const s of status.skips || []) {
+      lines.push(Text({ dimColor: true, children: ['skipped ' + s.step + ': ' + s.reason] }))
+    }
+    lines.push(Text({ children: [' '] }))
+    lines.push(Text({ bold: true, children: [verdictLine()] }))
+  }
+  return Box({ flexDirection: 'column', children: [...lines, Text({ children: [' '] }), buttons] })
+}
+
+// "receive › recognize › [build] › gate › deliver", the current phase in brackets
+function phasesText() {
+  return (status.phases || []).map((p) => (p === status.phase ? '[' + p + ']' : p)).join(' › ')
 }
 
 // Runs the bundled CLI in the session's folder and returns its JSON answer.
