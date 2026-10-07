@@ -313,3 +313,36 @@ test("detect --refresh never re-blesses a tampered policy; policy accept does", 
   expect(readProtectedJson(paths, file).tampered).toBe(false);
   expect((await c.run("policy", "other")).code).toBe(1);
 });
+
+test("the command comes first, so user-only verbs cannot hide behind a leading flag", async () => {
+  const root = makeRepo({ "package.json": JSON.stringify({ scripts: { test: "exit 0" } }) });
+  const c = io(root);
+  const id = (await c.json("start", "Thing", "--answers", answers)).data.id as string;
+  const file = join(root, ".crew", "work", id, "work.json");
+  const work = JSON.parse(readFileSync(file, "utf8"));
+  work.skips.push({ step: "gate:test", reason: "agent", at: "t" });
+  writeFileSync(file, JSON.stringify(work));
+  const integrity = repoPaths(root, c.env).integrityFile;
+  const before = readFileSync(integrity, "utf8");
+  const message = "the command comes first: crew <command> [arguments] [--flags]";
+
+  const lines = [
+    ["--json", "accept", id],
+    ["--json", "skip", id, "gate:lint", "--reason", "x"],
+    ["--reason", "x", "--json", "skip", id, "gate:lint"],
+    ["--json", "approve", id, "spec"],
+    ["profile", "--force", "--json", "set", "test", "true"],
+  ];
+  for (const argv of lines) {
+    const result = await c.run(...argv);
+    expect(result.code).toBe(1);
+    expect((JSON.parse(result.out) as { message: string }).message).toBe(message);
+  }
+  expect(readFileSync(integrity, "utf8")).toBe(before);
+  expect(JSON.parse(readFileSync(file, "utf8")).skips).toEqual(work.skips);
+
+  const plain = await c.run("--reason", "x", "skip", id, "gate:lint");
+  expect(plain.code).toBe(1);
+  expect(plain.err.trim()).toBe(message);
+  expect((await c.run("status", "--json")).code).toBe(0);
+});

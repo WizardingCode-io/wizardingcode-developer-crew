@@ -636,7 +636,15 @@ export async function main(argv: string[], io: CliIo): Promise<number> {
   const parsed = parse(argv);
   let outcome: Outcome;
   try {
-    outcome = await dispatch(parsed, io);
+    // The PreToolUse hook recognises user-only verbs by `crew <verb>`; a flag ahead of the command
+    // (or ahead of the verb of profile/policy) would run them without the hook asking.
+    const first = argv[0] ?? "";
+    const leadingFlag =
+      (first.startsWith("--") && first !== "--version") ||
+      ((first === "profile" || first === "policy") && (argv[1] ?? "").startsWith("--"));
+    outcome = leadingFlag
+      ? refuse("the command comes first: crew <command> [arguments] [--flags]")
+      : await dispatch(parsed, io);
   } catch (error) {
     if (parsed.positional[0] === "hook") {
       io.stdout("{}\n");

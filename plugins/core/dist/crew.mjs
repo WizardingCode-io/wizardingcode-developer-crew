@@ -2415,7 +2415,9 @@ async function main(argv, io) {
   const parsed = parse(argv);
   let outcome;
   try {
-    outcome = await dispatch(parsed, io);
+    const first = argv[0] ?? "";
+    const leadingFlag = first.startsWith("--") && first !== "--version" || (first === "profile" || first === "policy") && (argv[1] ?? "").startsWith("--");
+    outcome = leadingFlag ? refuse("the command comes first: crew <command> [arguments] [--flags]") : await dispatch(parsed, io);
   } catch (error) {
     if (parsed.positional[0] === "hook") {
       io.stdout(`{}
