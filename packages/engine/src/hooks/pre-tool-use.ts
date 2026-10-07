@@ -59,7 +59,8 @@ export function onPreToolUse(ctx: HookContext, payload: HookPayload): HookRespon
     if (USER_ONLY.test(command)) {
       return answer("ask", "Crew: this command records a decision that only the user can take");
     }
-    if (ENGINE_FILES.test(command) && WRITE_SHAPE.test(command) && !/^\s*crew\b/.test(command)) {
+    // No exemption for crew command lines: a crew prefix would let `crew x; echo > .crew/...` through, and no crew command names a protected path.
+    if (ENGINE_FILES.test(command) && WRITE_SHAPE.test(command)) {
       return answer(
         "deny",
         "Crew: files under .crew/ and ~/.shibaox/crew that the engine owns are written only by the crew command",
