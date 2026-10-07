@@ -10,9 +10,10 @@
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
     "format": "biome check --write .",
-    "test": "bun test",
+    "test": "bun test packages",
     "build": "bun scripts/build.ts",
-    "check": "bun run typecheck && bun run lint && bun run test"
+    "check": "bun run typecheck && bun run lint && bun run test",
+    "plugin:check": "claude plugin validate plugins/core --strict && claude plugin test plugins/core"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.15",

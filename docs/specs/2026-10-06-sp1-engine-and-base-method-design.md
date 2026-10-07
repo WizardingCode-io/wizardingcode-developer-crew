@@ -419,8 +419,9 @@ The mod is the experience, not the guarantee. Everything in section 12 works wit
 | Panel, opened with `/crew` | The phases of the route, the criteria and their red and green runs, gate results with durations, what is not proven, skips |
 | Line under each answer | "Proven: build, test, lint, types" or "Not proven: test failing" |
 | `/crew` command | `status`, `mode`, and opening the panel |
+| `/crew panel` | Opens the panel; `/crew mode <m>` forwards to `crew mode` |
 
-The mod calls the engine library in-process. It keeps other mods' content in the shared strip, and it has tests that run with `claude plugin test`.
+The mod reaches the engine by running the bundled `crew` command with `$.process.run`; the hooks module runtime has no Node APIs, so the library cannot be imported in-process. It keeps other mods' content in the shared strip, and it has tests that run with `claude plugin test`.
 
 Mods need Claude Code 2.1.287 or later. On older versions, in untrusted folders, or where an organization blocks user mods, the plugin's skill and hooks still load.
 

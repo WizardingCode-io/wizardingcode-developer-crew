@@ -2,12 +2,13 @@
 
 Give your coding agent one input and get guided to a result that is proven done: the engine, not the model, says when work is finished.
 
-## What exists today (SP1a)
+## What exists today
 
 - **The engine** (`packages/engine`): dependency-free TypeScript that detects the project's build, test, lint and type-check commands (Node and TypeScript, PHP and Laravel, Python), routes each request (fast, standard or full), records test-first runs, runs the gates and writes the evidence.
 - **The `crew` command**: the engine's interface, bundled into one file, `plugins/core/dist/crew.mjs`. `crew help` lists the commands.
 - **Hooks**: a Claude Code plugin (`plugins/core`) wires SessionStart, UserPromptSubmit, PreToolUse and Stop to `crew hook <event>`. A turn cannot end while watched source files have unproven changes, the agent cannot write the engine's files, and decisions that belong to the user (skips, approvals, accepting changed state) go through a permission prompt.
 - **The crew skill** (`plugins/core/skills/crew`): the method the agent follows, phase by phase.
+- **The mod** (`plugins/core/hooks/register.js`, Claude Code 2.1.287 or later): a status strip above the prompt (`crew <id> · phase · route · gates · proven`), a line under each answer (`Proven: ...` or `Not proven: ...`), and `/crew` with `status`, `panel` and `mode <partner|guide|pilot>`. It only shows the engine's state; the hooks and the command carry the guarantee, so disabling the mod changes nothing about what is enforced.
 
 Requirement: Node.js 20 or later on `PATH` (the hooks and the `crew` command run on it). Development uses Bun.
 
@@ -25,6 +26,7 @@ Requirement: Node.js 20 or later on `PATH` (the hooks and the `crew` command run
 ```bash
 bun install && bun run build
 claude --plugin-dir ./plugins/core      # loads the plugin for one session
+bun run plugin:check      # validate --strict and the mod tests
 ```
 
 Open the session inside a git repository and ask for a code change; the crew skill takes it from there. `node plugins/core/dist/crew.mjs status` shows where the work stands.
