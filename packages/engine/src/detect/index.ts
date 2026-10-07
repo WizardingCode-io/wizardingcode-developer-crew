@@ -1,6 +1,7 @@
 import { readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { nowIso } from "../fs.ts";
+import { SKIP_DIRS } from "../skip-dirs.ts";
 import type { GateCommand, GateName, Profile, Target } from "../types.ts";
 import { nodeDetector } from "./node.ts";
 import { phpDetector } from "./php.ts";
@@ -11,18 +12,6 @@ export const DETECTORS: readonly Detector[] = [nodeDetector, phpDetector, python
 export const DEFAULT_WATCH_EXCLUDE = ["**/*.md", "docs/**", ".crew/**"];
 export const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 const MAX_DEPTH = 3;
-const SKIP_DIRS = new Set([
-  "node_modules",
-  "vendor",
-  "dist",
-  "build",
-  "coverage",
-  "storage",
-  "target",
-  ".venv",
-  "venv",
-  "__pycache__",
-]);
 
 function* folders(root: string, depth = 0): Generator<string> {
   yield root;

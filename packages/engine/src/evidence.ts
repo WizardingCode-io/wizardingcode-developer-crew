@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { UNAVAILABLE } from "./fingerprint.ts";
 import { type CrewPaths, workDir } from "./paths.ts";
 import { readProtectedJson, writeProtectedJson } from "./store.ts";
 import type { CriterionKind, Evidence, GateName, WorkItem } from "./types.ts";
@@ -50,6 +51,8 @@ export function computeVerdict(input: VerdictInput): {
   const { work, evidence, expected, currentFingerprint, tampered } = input;
   const unproven: string[] = [];
   if (tampered) unproven.push("state changed outside the engine");
+  if (currentFingerprint === UNAVAILABLE)
+    unproven.push("fingerprint unavailable: too many files to watch without git");
   // When no run vouches for the current code, one reason says it all; otherwise each stale gate is named.
   const stale =
     evidence.fingerprint !== null &&

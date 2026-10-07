@@ -11,21 +11,31 @@ export interface CrewPaths {
   repoId: string;
 }
 
-/** The nearest ancestor (or the folder itself) that holds `.crew` or `.git`. */
-export function findRoot(cwd: string): string {
-  let dir = resolve(cwd);
+/**
+ * The project root: the nearest ancestor (or the folder itself) that holds `.git`, else the folder
+ * itself when it already holds `.crew/` (activated by `crew detect`), else null: crew is inactive.
+ */
+export function findRoot(cwd: string): string | null {
+  const start = resolve(cwd);
+  let dir = start;
   for (;;) {
-    if (exists(join(dir, ".crew")) || exists(join(dir, ".git"))) return dir;
+    if (exists(join(dir, ".git"))) return dir;
     const parent = dirname(dir);
-    if (parent === dir) return resolve(cwd);
+    if (parent === dir) break;
     dir = parent;
   }
+  return exists(join(start, ".crew")) ? start : null;
 }
 
-export function resolvePaths(cwd: string, env: NodeJS.ProcessEnv = process.env): CrewPaths {
+/** Where the user's own state lives; it does not depend on any project. */
+export function userDirOf(env: NodeJS.ProcessEnv = process.env): string {
+  return join(env.SHIBAOX_HOME ?? join(homedir(), ".shibaox"), "crew");
+}
+
+export function resolvePaths(cwd: string, env: NodeJS.ProcessEnv = process.env): CrewPaths | null {
   const root = findRoot(cwd);
-  const home = env.SHIBAOX_HOME ?? join(homedir(), ".shibaox");
-  const userDir = join(home, "crew");
+  if (root === null) return null;
+  const userDir = userDirOf(env);
   const repoId = sha256(root).slice(0, 16);
   return {
     root,

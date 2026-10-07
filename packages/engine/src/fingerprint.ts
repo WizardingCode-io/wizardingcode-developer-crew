@@ -1,19 +1,14 @@
 import { execFileSync } from "node:child_process";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { type Dirent, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { exists, sha256 } from "./fs.ts";
 import { matchesAny } from "./glob.ts";
+import { SKIP_DIRS } from "./skip-dirs.ts";
 import type { Profile } from "./types.ts";
 
-const SKIP_DIRS = new Set([
-  ".git",
-  ".crew",
-  "node_modules",
-  "vendor",
-  ".venv",
-  "venv",
-  "__pycache__",
-]);
+/** Above this many files a folder without git is too big to hash on every hook. */
+export const MAX_WATCHED_FILES = 20_000;
+export const UNAVAILABLE = "unavailable";
 
 export function isGitRepo(root: string): boolean {
   return exists(join(root, ".git"));
@@ -34,6 +29,13 @@ export function gitHead(root: string): string {
   } catch {
     return "none";
   }
+}
+
+/** The commit a work item's change is measured from: HEAD when it starts, or null without history. */
+export function baseCommitOf(root: string): string | null {
+  if (!isGitRepo(root)) return null;
+  const head = gitHead(root);
+  return head === "none" ? null : head;
 }
 
 /** Paths that differ from HEAD: modified, added, deleted, renamed and untracked (not ignored). */
@@ -59,41 +61,79 @@ export function gitChangedPaths(root: string): string[] {
   return [...paths].sort();
 }
 
+export function untrackedPaths(root: string): string[] {
+  try {
+    return gitOut(root, ["ls-files", "--others", "--exclude-standard", "-z"])
+      .split("\0")
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+/** Paths that differ from a base commit, committed since or not, plus untracked files. */
+export function gitChangedSince(root: string, base: string): string[] {
+  let diffed: string[];
+  try {
+    diffed = gitOut(root, ["diff", "--name-only", "--no-renames", "-z", base, "--"])
+      .split("\0")
+      .filter(Boolean);
+  } catch {
+    diffed = [];
+  }
+  return [...new Set([...diffed, ...untrackedPaths(root)])].sort();
+}
+
 export function isWatched(path: string, profile: Profile): boolean {
   return !matchesAny(path, profile.watch.exclude);
 }
 
-export function allWatchedFiles(root: string, profile: Profile): string[] {
+/**
+ * Every watched file outside git, or null above `maxFiles`. Symlinks are never followed, so a
+ * link back up the tree cannot loop, and dependency and build folders are skipped.
+ */
+export function allWatchedFiles(
+  root: string,
+  profile: Profile,
+  maxFiles = MAX_WATCHED_FILES,
+): string[] | null {
   const files: string[] = [];
-  const walk = (dir: string, rel: string): void => {
-    let names: string[];
+  let seen = 0;
+  const walk = (dir: string, rel: string): boolean => {
+    let entries: Dirent[];
     try {
-      names = readdirSync(dir);
+      entries = readdirSync(dir, { withFileTypes: true });
     } catch {
-      return;
+      return true;
     }
-    for (const name of names) {
-      if (SKIP_DIRS.has(name)) continue;
-      const abs = join(dir, name);
-      const path = rel ? `${rel}/${name}` : name;
-      let isDir = false;
-      try {
-        isDir = statSync(abs).isDirectory();
-      } catch {
-        continue;
+    for (const entry of entries) {
+      if (entry.isSymbolicLink() || SKIP_DIRS.has(entry.name)) continue;
+      const path = rel ? `${rel}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) {
+        if (!walk(join(dir, entry.name), path)) return false;
+      } else if (entry.isFile()) {
+        if (++seen > maxFiles) return false;
+        if (isWatched(path, profile)) files.push(path);
       }
-      if (isDir) walk(abs, path);
-      else if (isWatched(path, profile)) files.push(path);
     }
+    return true;
   };
-  walk(root, "");
-  return files.sort();
+  return walk(root, "") ? files.sort() : null;
 }
 
-/** Without history there is nothing to diff against, so every watched file counts as changed. */
-export function changedWatchedPaths(root: string, profile: Profile): string[] {
-  if (!isGitRepo(root)) return allWatchedFiles(root, profile);
-  return gitChangedPaths(root).filter((path) => isWatched(path, profile));
+/**
+ * Watched paths the change touches. With a base commit, the change is everything since that
+ * commit, so committing mid-work does not hide it. Without history every watched file counts.
+ */
+export function changedWatchedPaths(
+  root: string,
+  profile: Profile,
+  base?: string | null,
+  maxFiles = MAX_WATCHED_FILES,
+): string[] {
+  if (!isGitRepo(root)) return allWatchedFiles(root, profile, maxFiles) ?? [];
+  const paths = base ? gitChangedSince(root, base) : gitChangedPaths(root);
+  return paths.filter((path) => isWatched(path, profile));
 }
 
 function hashFile(abs: string): string {
@@ -104,17 +144,27 @@ function hashFile(abs: string): string {
   }
 }
 
-export function computeFingerprint(root: string, profile: Profile): string {
+/**
+ * Names the state of the watched code. In git: the commit the change is measured from and the
+ * content of each changed path. Without git: the content of every watched file, or `unavailable`
+ * when there are too many to hash.
+ */
+export function computeFingerprint(
+  root: string,
+  profile: Profile,
+  base?: string | null,
+  maxFiles = MAX_WATCHED_FILES,
+): string {
   const parts: string[] = [];
   if (isGitRepo(root)) {
-    parts.push(`head:${gitHead(root)}`);
-    for (const path of changedWatchedPaths(root, profile)) {
+    parts.push(`base:${base ?? gitHead(root)}`);
+    for (const path of changedWatchedPaths(root, profile, base)) {
       parts.push(`${path}:${hashFile(join(root, path))}`);
     }
   } else {
-    for (const path of allWatchedFiles(root, profile)) {
-      parts.push(`${path}:${hashFile(join(root, path))}`);
-    }
+    const files = allWatchedFiles(root, profile, maxFiles);
+    if (files === null) return UNAVAILABLE;
+    for (const path of files) parts.push(`${path}:${hashFile(join(root, path))}`);
   }
   return `sha256:${sha256(parts.join("\n"))}`;
 }

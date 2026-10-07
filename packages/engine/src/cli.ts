@@ -1,14 +1,14 @@
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { AnswerError, type Answers, computeRoute, validateAnswers } from "./classify.ts";
 import { loadConfig, saveConfig, setConfigValue } from "./config.ts";
 import { detectProfile, missingTestCommands } from "./detect/index.ts";
 import { loadEvidence, renderReport, saveEvidence } from "./evidence.ts";
-import { nowIso, readText, writeText } from "./fs.ts";
+import { ensureDir, nowIso, readText, writeText } from "./fs.ts";
 import { assess, runGates } from "./gates.ts";
 import { handleHook } from "./hooks/index.ts";
 import type { HookPayload } from "./hooks/types.ts";
-import { type CrewPaths, resolvePaths, workDir } from "./paths.ts";
+import { type CrewPaths, resolvePaths, userDirOf, workDir } from "./paths.ts";
 import { loadPolicy, skipAllowed } from "./policy.ts";
 import { ensureProfile, loadProfile, saveProfile } from "./profile.ts";
 import { ensureCrewDir } from "./state.ts";
@@ -80,8 +80,10 @@ interface Env {
   tampered: boolean;
 }
 
-function load(io: CliIo): Env {
-  const paths = resolvePaths(io.cwd, io.env);
+const INACTIVE =
+  "crew is inactive here: not a git repository and no .crew/ folder; run crew detect in the project root to activate it";
+
+function load(paths: CrewPaths): Env {
   const profile = ensureProfile(paths);
   const policy = loadPolicy(paths);
   ensureCrewDir(paths, policy.policy);
@@ -180,7 +182,16 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
     });
   }
   if (!command || command === "help") return ok(HELP);
-  const env = load(io);
+  if (command === "mode" || command === "config")
+    return settings(command, args, { userDir: userDirOf(io.env) });
+  let paths = resolvePaths(io.cwd, io.env);
+  if (!paths && command === "detect") {
+    // `crew detect` is how a folder without git becomes a crew project.
+    ensureDir(join(resolve(io.cwd), ".crew"));
+    paths = resolvePaths(io.cwd, io.env);
+  }
+  if (!paths) return refuse(INACTIVE);
+  const env = load(paths);
 
   switch (command) {
     case "detect": {
@@ -434,42 +445,41 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         unproven: result.unproven,
       });
     }
-    case "mode": {
-      if (!args[0]) return ok(env.config.mode, { mode: env.config.mode });
-      try {
-        saveConfig(env.paths, setConfigValue(env.config, "mode", args[0]));
-      } catch (error) {
-        return refuse((error as Error).message);
-      }
-      return ok(`mode: ${args[0]}`, { mode: args[0] });
-    }
-    case "config": {
-      const [key, value] = args;
-      if (!key) return ok(JSON.stringify(env.config), { config: env.config });
-      if (value === undefined) {
-        const current =
-          key === "mode"
-            ? env.config.mode
-            : key === "decisions.log"
-              ? env.config.decisions.log
-              : undefined;
-        return current === undefined
-          ? refuse(`unknown setting: ${key}`)
-          : ok(String(current), { key, value: current });
-      }
-      try {
-        saveConfig(env.paths, setConfigValue(env.config, key, value));
-      } catch (error) {
-        return refuse((error as Error).message);
-      }
-      return ok(`${key}: ${value}`, {
-        key,
-        value: key === "decisions.log" ? value === "true" : value,
-      });
-    }
     default:
       return refuse(`unknown command: ${command}\n${HELP}`);
   }
+}
+
+/** The user's settings live in their home folder, so these work in any folder. */
+function settings(command: "mode" | "config", args: string[], user: { userDir: string }): Outcome {
+  const config = loadConfig(user);
+  if (command === "mode") {
+    if (!args[0]) return ok(config.mode, { mode: config.mode });
+    try {
+      saveConfig(user, setConfigValue(config, "mode", args[0]));
+    } catch (error) {
+      return refuse((error as Error).message);
+    }
+    return ok(`mode: ${args[0]}`, { mode: args[0] });
+  }
+  const [key, value] = args;
+  if (!key) return ok(JSON.stringify(config), { config });
+  if (value === undefined) {
+    const current =
+      key === "mode" ? config.mode : key === "decisions.log" ? config.decisions.log : undefined;
+    return current === undefined
+      ? refuse(`unknown setting: ${key}`)
+      : ok(String(current), { key, value: current });
+  }
+  try {
+    saveConfig(user, setConfigValue(config, key, value));
+  } catch (error) {
+    return refuse((error as Error).message);
+  }
+  return ok(`${key}: ${value}`, {
+    key,
+    value: key === "decisions.log" ? value === "true" : value,
+  });
 }
 
 const HELP = `crew ${VERSION}

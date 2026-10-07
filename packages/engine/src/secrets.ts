@@ -89,7 +89,8 @@ function untrackedPaths(root: string): string[] {
 export function changedText(root: string, profile: Profile): ScanSource[] {
   const sources: ScanSource[] = [];
   if (!isGitRepo(root)) {
-    for (const path of allWatchedFiles(root, profile)) {
+    // Above the walk's cap there is nothing to scan; the verdict already says the fingerprint is unavailable.
+    for (const path of allWatchedFiles(root, profile) ?? []) {
       const source = fileSource(root, path);
       if (source) sources.push(source);
     }

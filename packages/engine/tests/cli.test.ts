@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type CliIo, main } from "../src/cli.ts";
 import { readProtectedJson } from "../src/store.ts";
-import { makeRepo, repoPaths, testEnv, write } from "./helpers.ts";
+import { makeRepo, repoPaths, tempDir, testEnv, write } from "./helpers.ts";
 
 function io(cwd: string, env = testEnv(), stdin = "") {
   const out: string[] = [];
@@ -127,6 +127,26 @@ test("C1: gate run --only refuses an unknown gate name", async () => {
   const refused = await c.run("gate", "run", id, "--only", "secrets,bogus");
   expect(refused.code).toBe(1);
   expect(refused.err.trim()).toBe("unknown gate: bogus");
+});
+
+test("C3: crew is inactive in a plain folder until crew detect activates it", async () => {
+  const dir = tempDir();
+  write(dir, "src/a.py", "a = 1\n");
+  const c = io(dir);
+  const inactive =
+    "crew is inactive here: not a git repository and no .crew/ folder; run crew detect in the project root to activate it";
+  const status = await c.run("status");
+  expect(status.code).toBe(1);
+  expect(status.err.trim()).toBe(inactive);
+  expect((await c.run("start", "x", "--answers", answers)).err.trim()).toBe(inactive);
+  expect(existsSync(join(dir, ".crew"))).toBe(false);
+  expect((await c.run("mode")).code).toBe(0);
+  expect((await c.run("config")).code).toBe(0);
+  expect((await c.run("help")).code).toBe(0);
+  expect(existsSync(join(dir, ".crew"))).toBe(false);
+  expect((await c.run("detect")).code).toBe(0);
+  expect(existsSync(join(dir, ".crew", "profile.json"))).toBe(true);
+  expect((await c.json("status")).data.active).toBeNull();
 });
 
 test("hook: malformed or empty stdin answers {} and exits 0", async () => {

@@ -1,11 +1,13 @@
 import { expect, test } from "bun:test";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { runGates } from "../src/gates.ts";
 import { handleHook } from "../src/hooks/index.ts";
 import { onSessionStart } from "../src/hooks/session-start.ts";
 import { MAX_STOP_BLOCKS, onStop } from "../src/hooks/stop.ts";
 import { loadState } from "../src/state.ts";
 import { addCriterion, addSkip, createWork, saveWork } from "../src/work.ts";
-import { hookContext, makeRepo, testEnv, write } from "./helpers.ts";
+import { hookContext, makeRepo, tempDir, testEnv, write } from "./helpers.ts";
 
 function session() {
   const root = makeRepo({
@@ -65,6 +67,28 @@ test("case 2: proven work ends the turn, and a later edit blocks again", async (
   expect(loadState(ctx.paths).sessions.s?.stopBlocks).toBe(0);
   write(root, "src/a.ts", "changed again");
   expect(String(onStop(ctx).reason)).toContain("code changed since the last gate run");
+});
+
+test("C3: in a plain folder the hooks stay silent and write nothing", () => {
+  const dir = tempDir();
+  write(dir, "src/a.ts", "x");
+  expect(handleHook("stop", { session_id: "s", cwd: dir }, testEnv())).toEqual({});
+  expect(handleHook("prompt", { session_id: "s", cwd: dir }, testEnv())).toEqual({});
+  expect(
+    handleHook(
+      "pre-tool-use",
+      { session_id: "s", cwd: dir, tool_name: "Bash", tool_input: { command: "crew skip x lint" } },
+      testEnv(),
+    ),
+  ).toEqual({});
+  expect(handleHook("session-start", { session_id: "s", cwd: dir }, testEnv())).toEqual({
+    hookSpecificOutput: {
+      hookEventName: "SessionStart",
+      additionalContext:
+        "Crew is inactive here: not a git repository and no .crew/ folder. Run crew detect in a project root to activate it.",
+    },
+  });
+  expect(existsSync(join(dir, ".crew"))).toBe(false);
 });
 
 test("handleHook dispatches by event and never throws", () => {

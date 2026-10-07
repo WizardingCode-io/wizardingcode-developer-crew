@@ -3,11 +3,13 @@ import { loadPolicy } from "../policy.ts";
 import { ensureProfile } from "../profile.ts";
 import type { HookContext, HookPayload } from "./types.ts";
 
+/** Null where crew is inactive (no git repository and no `.crew/`); nothing is written then. */
 export function buildContext(
   payload: HookPayload,
   env: NodeJS.ProcessEnv = process.env,
-): HookContext {
+): HookContext | null {
   const paths = resolvePaths(payload.cwd ?? process.cwd(), env);
+  if (!paths) return null;
   const profile = ensureProfile(paths);
   const policy = loadPolicy(paths);
   return {

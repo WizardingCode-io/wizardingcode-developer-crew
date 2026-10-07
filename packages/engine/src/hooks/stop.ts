@@ -1,4 +1,4 @@
-import { computeFingerprint } from "../fingerprint.ts";
+import { computeFingerprint, UNAVAILABLE } from "../fingerprint.ts";
 import { assess } from "../gates.ts";
 import { loadState, saveState, sessionState } from "../state.ts";
 import { activeWork } from "../work.ts";
@@ -21,9 +21,12 @@ export function onStop(ctx: HookContext): HookResponse {
     ? assess(ctx.paths, work, ctx.profile, ctx.policy, ctx.tampered || !!active?.tampered)
     : null;
   const proven = result?.verdict === "proven";
-  // Without a baseline (the plugin was enabled mid-session) only an unproven work item counts as a change.
+  // Without a usable baseline (the plugin was enabled mid-session, or the folder is too big to
+  // fingerprint) only an unproven work item counts as a change.
   const changed =
-    session.baseline !== null ? current !== session.baseline : work !== null && !proven;
+    session.baseline !== null && current !== UNAVAILABLE
+      ? current !== session.baseline
+      : work !== null && !proven;
   const done = (response: HookResponse): HookResponse => {
     saveState(ctx.paths, state);
     return response;

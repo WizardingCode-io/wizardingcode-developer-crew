@@ -1,6 +1,15 @@
 import { expect, test } from "bun:test";
+import { symlinkSync } from "node:fs";
+import { join } from "node:path";
 import { detectProfile } from "../src/detect/index.ts";
-import { changedWatchedPaths, computeFingerprint, gitChangedPaths } from "../src/fingerprint.ts";
+import { computeVerdict, emptyEvidence } from "../src/evidence.ts";
+import {
+  changedWatchedPaths,
+  computeFingerprint,
+  gitChangedPaths,
+  MAX_WATCHED_FILES,
+} from "../src/fingerprint.ts";
+import type { WorkItem } from "../src/types.ts";
 import { git, makeRepo, tempDir, write } from "./helpers.ts";
 
 test("the fingerprint is stable and changes when a watched file changes", () => {
@@ -30,6 +39,39 @@ test("gitChangedPaths lists both sides of a rename", () => {
   const root = makeRepo({ "src/old.ts": "x" });
   git(root, "mv", "src/old.ts", "src/new.ts");
   expect(gitChangedPaths(root)).toEqual(["src/new.ts", "src/old.ts"]);
+});
+
+test("C3: the walk without git never follows symlinks, so a cycle is harmless", () => {
+  const root = tempDir();
+  write(root, "src/a.py", "a = 1\n");
+  symlinkSync(root, join(root, "src", "loop"));
+  write(root, "node_modules/x/index.js", "skipped");
+  const profile = detectProfile(root);
+  expect(changedWatchedPaths(root, profile)).toEqual(["src/a.py"]);
+  expect(computeFingerprint(root, profile)).toMatch(/^sha256:/);
+});
+
+test("C3: above the file cap the fingerprint is unavailable and never proven", () => {
+  const root = tempDir();
+  write(root, "src/a.py", "a = 1\n");
+  write(root, "src/b.py", "b = 1\n");
+  write(root, "src/c.py", "c = 1\n");
+  const profile = detectProfile(root);
+  expect(MAX_WATCHED_FILES).toBe(20_000);
+  expect(computeFingerprint(root, profile, null, 3)).toMatch(/^sha256:/);
+  expect(computeFingerprint(root, profile, null, 2)).toBe("unavailable");
+  expect(changedWatchedPaths(root, profile, null, 2)).toEqual([]);
+  const work = { criteria: [], skips: [] } as unknown as WorkItem;
+  const evidence = { ...emptyEvidence(), fingerprint: "unavailable" };
+  expect(
+    computeVerdict({
+      work,
+      evidence,
+      expected: [],
+      currentFingerprint: "unavailable",
+      tampered: false,
+    }).unproven,
+  ).toEqual(["fingerprint unavailable: too many files to watch without git"]);
 });
 
 test("a folder without git falls back to hashing every watched file", () => {

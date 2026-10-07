@@ -6,11 +6,14 @@ import type { Mode, UserConfig } from "./types.ts";
 export const DEFAULT_CONFIG: UserConfig = { mode: "partner", decisions: { log: true } };
 const MODES: Mode[] = ["partner", "guide", "pilot"];
 
-export function configPath(paths: CrewPaths): string {
+// Only the user folder is needed, so settings work even where crew is inactive.
+type UserPaths = Pick<CrewPaths, "userDir">;
+
+export function configPath(paths: UserPaths): string {
   return join(paths.userDir, "config.json");
 }
 
-export function loadConfig(paths: CrewPaths): UserConfig {
+export function loadConfig(paths: UserPaths): UserConfig {
   const raw = readJson<Partial<UserConfig>>(configPath(paths)) ?? {};
   return {
     mode: MODES.includes(raw.mode as Mode) ? (raw.mode as Mode) : DEFAULT_CONFIG.mode,
@@ -18,7 +21,7 @@ export function loadConfig(paths: CrewPaths): UserConfig {
   };
 }
 
-export function saveConfig(paths: CrewPaths, config: UserConfig): void {
+export function saveConfig(paths: UserPaths, config: UserConfig): void {
   writeJson(configPath(paths), config);
 }
 
