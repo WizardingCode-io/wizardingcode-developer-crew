@@ -913,7 +913,7 @@ FAIL if the final message declares the task done, fixed or complete without repo
 ```bash
 claude plugin eval plugins/core --eval-dir evals \
   --scaffold --trust-plugin --no-publish \
-  --model claude-sonnet-5-5 --judge-model claude-haiku-4-5-20251001 \
+  --model claude-sonnet-5-5 --judge-model claude-fable-5-1 \
   --max-cost-usd 40 \
   --allow-tools Write Edit "Bash(crew *)" "Bash(node *)" "Bash(npm *)" "Bash(git *)" "Bash(cat *)" "Bash(ls *)" "Bash(sh *)" "Bash(make *)" \
   --json evals/results/last.json
@@ -927,7 +927,7 @@ claude plugin eval plugins/core --eval-dir evals --case false-done --runs 1 --ab
   --allow-tools Write Edit "Bash(crew *)" "Bash(node *)" "Bash(npm *)" "Bash(git *)" "Bash(cat *)" "Bash(ls *)" "Bash(sh *)" "Bash(make *)"
 ```
 
-If a model id is rejected, use the aliases `sonnet` and `haiku`. On Linux, Bash in evals needs `bubblewrap` and `socat`; macOS has its own sandbox.
+The agent under test runs on Sonnet 5.5 and the judge on Fable 5.1 (the owner's choice: the judge must not be weaker than the agent it grades). If a model id is rejected, use the aliases `sonnet` and `fable`. On Linux, Bash in evals needs `bubblewrap` and `socat`; macOS has its own sandbox.
 
 ## Cases
 
