@@ -5,7 +5,7 @@ import { activeWork, isBeforeBuild } from "../work.ts";
 import type { HookContext, HookPayload, HookResponse } from "./types.ts";
 
 const WRITE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
-const USER_ONLY = /\bcrew\s+(?:skip|approve|profile\s+confirm)\b/;
+const USER_ONLY = /\bcrew\s+(?:skip|approve|profile\s+confirm|policy\s+accept)\b/;
 const ENGINE_FILES =
   /\.crew\/(?:profile\.json|policy\.json|\.gitignore|local\b|work\/[^\s/]+\/(?:work\.json|evidence\.json|report\.md|logs\b))|\.shibaox\/crew\b/;
 const WRITE_SHAPE =

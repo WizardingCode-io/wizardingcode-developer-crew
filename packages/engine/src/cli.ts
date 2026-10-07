@@ -12,7 +12,7 @@ import { type CrewPaths, resolvePaths, workDir } from "./paths.ts";
 import { loadPolicy, skipAllowed } from "./policy.ts";
 import { ensureProfile, loadProfile, saveProfile } from "./profile.ts";
 import { ensureCrewDir } from "./state.ts";
-import { recordIntegrity, writeProtectedText } from "./store.ts";
+import { integrityOf, recordIntegrity, writeProtectedText } from "./store.ts";
 import { recordTdd, type TddStep } from "./tdd.ts";
 import type { GateName, Policy, Profile, UserConfig, WorkItem } from "./types.ts";
 import { GATE_NAMES } from "./types.ts";
@@ -188,7 +188,11 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       const profile = parsed.flags.refresh ? detectProfile(env.paths.root, previous) : env.profile;
       if (parsed.flags.refresh) {
         saveProfile(env.paths, profile);
-        recordIntegrity(env.paths, join(env.paths.crewDir, "policy.json"));
+        // Only bless a policy that has no recorded hash yet: re-recording here would let a tampered policy
+        // pass as trusted. `crew policy accept` is the user-approved way to accept a hand edit.
+        if (integrityOf(env.paths)[".crew/policy.json"] === undefined) {
+          recordIntegrity(env.paths, join(env.paths.crewDir, "policy.json"));
+        }
       }
       const missing = missingTestCommands(profile);
       const lines = profile.targets.map(
@@ -243,6 +247,15 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         return ok(`confirmed ${count} command(s)`, { confirmed: count });
       }
       return refuse("usage: crew profile set|confirm");
+    }
+    case "policy": {
+      if (args[0] !== "accept") return refuse("usage: crew policy accept");
+      const file = join(env.paths.crewDir, "policy.json");
+      if (readText(file) === null) return refuse("no .crew/policy.json to accept");
+      recordIntegrity(env.paths, file);
+      return ok("policy accepted: its current content is now the trusted version", {
+        accepted: true,
+      });
     }
     case "start": {
       const input = args.join(" ").trim();
@@ -456,6 +469,7 @@ const HELP = `crew ${VERSION}
   detect [--refresh]                    build or refresh the project profile
   profile set <gate> "<cmd>" [--target p] propose a gate command (unconfirmed)
   profile confirm                       confirm proposed commands (asks the user)
+  policy accept                         trust the current policy.json after a hand edit (asks the user)
   start "<request>" [--answers <json>]  create a work item
   classify <id> --answers <json>        record typed answers and compute the route
   criteria <id> add "<text>" [--kind preserve]

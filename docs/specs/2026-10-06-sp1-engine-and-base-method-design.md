@@ -185,6 +185,7 @@ Every command prints a short human summary. `--json` prints the machine form.
 | `crew tdd green <id> <criterion> [-- <cmd>]` | Runs the test command. It must pass, and a red run must exist |
 | `crew gate run <id> [--only <gates>]` | Runs the gates the route requires and records the results |
 | `crew skip <id> <step> --reason "<text>"` | Records a skip. Requires the user's approval |
+| `crew policy accept` | Records the current policy as trusted after a hand edit. Requires the user's approval |
 | `crew evidence <id>` | Writes and prints the delivery report |
 | `crew status` | Active item, phase, route, gates, proven or not |
 | `crew mode [partner\|guide\|pilot]` | Shows or sets the user's mode |
@@ -326,7 +327,7 @@ Rule 3 exists because a turn also ends when the agent asks the user a question. 
 
 ### Tamper evidence
 
-Hooks deny direct writes to the protected files listed in section 6 and to `~/.shibaox/crew/`. As a second line, the engine stores a hash of each protected file it writes in `~/.shibaox/crew/integrity/`. If a file no longer matches, the engine invalidates the evidence and reports that state was changed outside the engine. A person who edits `policy.json` by hand runs `crew detect --refresh` to record the new hash.
+Hooks deny direct writes to the protected files listed in section 6 and to `~/.shibaox/crew/`. As a second line, the engine stores a hash of each protected file it writes in `~/.shibaox/crew/integrity/`. If a file no longer matches, the engine invalidates the evidence and reports that state was changed outside the engine. A person who edits `policy.json` by hand runs `crew policy accept` to record the new hash; the command asks the user through the permission prompt, and `crew detect --refresh` only records a hash for a policy that has none yet.
 
 This makes tampering evident. It does not make it impossible: the agent and the engine run as the same user.
 

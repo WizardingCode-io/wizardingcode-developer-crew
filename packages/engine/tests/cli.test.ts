@@ -1,7 +1,9 @@
 import { expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type CliIo, main } from "../src/cli.ts";
+import { resolvePaths } from "../src/paths.ts";
+import { readProtectedJson } from "../src/store.ts";
 import { makeRepo, testEnv, write } from "./helpers.ts";
 
 function io(cwd: string, env = testEnv(), stdin = "") {
@@ -132,4 +134,22 @@ test("hook: malformed or empty stdin answers {} and exits 0", async () => {
   );
   expect(ok.code).toBe(0);
   expect(JSON.parse(ok.out)).toHaveProperty("hookSpecificOutput");
+});
+
+test("detect --refresh never re-blesses a tampered policy; policy accept does", async () => {
+  const root = makeRepo({ "package.json": JSON.stringify({ scripts: { test: "exit 0" } }) });
+  const c = io(root);
+  const paths = resolvePaths(root, c.env);
+  const file = join(root, ".crew", "policy.json");
+  expect((await c.run("policy", "accept")).code).toBe(1);
+  mkdirSync(join(root, ".crew"), { recursive: true });
+  writeFileSync(file, '{"minimumRoute":"standard"}');
+  expect((await c.run("detect", "--refresh")).code).toBe(0);
+  expect(readProtectedJson(paths, file).tampered).toBe(false);
+  writeFileSync(file, '{"minimumRoute":"fast"}');
+  expect((await c.run("detect", "--refresh")).code).toBe(0);
+  expect(readProtectedJson(paths, file).tampered).toBe(true);
+  expect((await c.run("policy", "accept")).code).toBe(0);
+  expect(readProtectedJson(paths, file).tampered).toBe(false);
+  expect((await c.run("policy", "other")).code).toBe(1);
 });
