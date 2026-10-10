@@ -1,11 +1,11 @@
-# Shibaox Developer Crew: Vision
+# WizardingCode Developer Crew: Vision
 
 > **Status:** design. Nothing in this document is implemented yet.
-> **Date:** 2026-10-06. **Owner:** WizardingCode (Shibaox). **License:** MIT.
+> **Date:** 2026-10-06. **Owner:** WizardingCode. **License:** MIT.
 
 ## 1. What it is
 
-Shibaox Developer Crew is an open-source system for coding agents. You give it one input, it guides the work from that input to a delivered change, and it does not report the work as done until a deterministic engine has proven it: the build runs, the tests pass, the checks are clean, and the evidence is on disk.
+WizardingCode Developer Crew is an open-source system for coding agents. You give it one input, it guides the work from that input to a delivered change, and it does not report the work as done until a deterministic engine has proven it: the build runs, the tests pass, the checks are clean, and the evidence is on disk.
 
 It installs as a plugin in Claude Code and as skills plus hooks in other agent runtimes.
 
@@ -34,7 +34,7 @@ Three findings from the research behind this design (October 2026) shape everyth
 
 Skill collections have a related problem. The reference collection that inspired this project ships 67 skills with no behavioural tests, version-stale content, about 29,000 characters of always-on descriptions, and no executable checks.
 
-Shibaox Developer Crew is a complete method of its own, built to avoid the abandonment causes, with a proof layer that nobody else has.
+WizardingCode Developer Crew is a complete method of its own, built to avoid the abandonment causes, with a proof layer that nobody else has.
 
 ## 3. Principles
 
@@ -253,8 +253,8 @@ Skills are written once and used unchanged everywhere. They name actions, not to
 ## 14. Packaging
 
 - A small core plugin, plus packs that install separately.
-- Published through the `shibaox-plugins` marketplace, from a subfolder, already bundled. The installed plugin contains no `node_modules`.
-- When `shibaox-mem` is installed, the system uses it. It is not a dependency.
+- Published through the `wizardingcode-plugins` marketplace, from a subfolder, already bundled. The installed plugin contains no `node_modules`.
+- When `wizardingcode-mem` is installed, the system uses it. It is not a dependency.
 
 ## 15. Proof
 

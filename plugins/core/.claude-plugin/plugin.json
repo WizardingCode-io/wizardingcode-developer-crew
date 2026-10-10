@@ -1,11 +1,11 @@
 {
-  "name": "shibaox-developer-crew",
-  "displayName": "Shibaox Developer Crew",
+  "name": "wizardingcode-developer-crew",
+  "displayName": "WizardingCode Developer Crew",
   "version": "0.1.0",
   "description": "Guided delivery where done is proven: the crew engine detects your project, records test-first, runs the real build, tests and checks, and holds the turn until the evidence says the work is done.",
   "author": { "name": "WizardingCode", "url": "https://wizardingcode.io" },
-  "homepage": "https://github.com/WizardingCode-io/shibaox-developer-crew",
-  "repository": "https://github.com/WizardingCode-io/shibaox-developer-crew",
+  "homepage": "https://github.com/WizardingCode-io/wizardingcode-developer-crew",
+  "repository": "https://github.com/WizardingCode-io/wizardingcode-developer-crew",
   "license": "MIT",
-  "keywords": ["shibaox", "delivery", "tdd", "quality-gates", "evidence", "spec-driven"]
+  "keywords": ["wizardingcode", "delivery", "tdd", "quality-gates", "evidence", "spec-driven"]
 }

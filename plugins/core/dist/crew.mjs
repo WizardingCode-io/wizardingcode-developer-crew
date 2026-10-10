@@ -673,7 +673,7 @@ function findRoot(cwd) {
   return exists(join8(start, ".crew")) ? start : null;
 }
 function userDirOf(env = process.env) {
-  return join8(env.SHIBAOX_HOME ?? join8(homedir(), ".shibaox"), "crew");
+  return join8(env.WIZARDINGCODE_HOME ?? join8(homedir(), ".wizardingcode"), "crew");
 }
 function resolvePaths(cwd, env = process.env) {
   const root = findRoot(cwd);
@@ -1638,7 +1638,7 @@ function buildContext(payload, env = process.env) {
 import { isAbsolute, join as join16, relative as relative4, resolve as resolve2 } from "node:path";
 var WRITE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
 var USER_ONLY = /(?:^|[\s/;&|(])crew(?:\.mjs)?\s+(?:skip|approve|accept|profile\s+confirm|policy\s+accept|profile\s+set\b[^;&|]*--force)\b/;
-var ENGINE_FILES = /\.crew\/(?:profile\.json|policy\.json|\.gitignore|local\b|work\/[^\s/]+\/(?:work\.json|evidence\.json|report\.md|logs\b))|\.shibaox\/crew\b/;
+var ENGINE_FILES = /\.crew\/(?:profile\.json|policy\.json|\.gitignore|local\b|work\/[^\s/]+\/(?:work\.json|evidence\.json|report\.md|logs\b))|\.wizardingcode\/crew\b/;
 var WRITE_SHAPE = /(?:^|[\s;&|(])(?:rm|mv|cp|tee|truncate|chmod|touch|dd|install)\b|sed\s+-i|>{1,2}\s*\S/;
 function answer(permissionDecision, reason) {
   return {
@@ -1684,7 +1684,7 @@ function onPreToolUse(ctx, payload) {
       return answer("ask", "Crew: this command records a decision that only the user can take");
     }
     if (ENGINE_FILES.test(command) && WRITE_SHAPE.test(command)) {
-      return answer("deny", "Crew: files under .crew/ and ~/.shibaox/crew that the engine owns are written only by the crew command");
+      return answer("deny", "Crew: files under .crew/ and ~/.wizardingcode/crew that the engine owns are written only by the crew command");
     }
   }
   return {};
@@ -1732,7 +1732,7 @@ function onSessionStart(ctx, payload = {}) {
     saveState(ctx.paths, state);
   }
   const lines = [
-    "Shibaox Developer Crew is active in this repository. Work is proven by the `crew` command and the crew skill, and a turn cannot end while watched source files have unproven changes."
+    "WizardingCode Developer Crew is active in this repository. Work is proven by the `crew` command and the crew skill, and a turn cannot end while watched source files have unproven changes."
   ];
   if (active?.work)
     lines.push(statusLine(ctx, active.work, active.tampered).replace(/^Crew: work/, "Work in progress:"));

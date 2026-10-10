@@ -29,7 +29,7 @@ export function findRoot(cwd: string): string | null {
 
 /** Where the user's own state lives; it does not depend on any project. */
 export function userDirOf(env: NodeJS.ProcessEnv = process.env): string {
-  return join(env.SHIBAOX_HOME ?? join(homedir(), ".shibaox"), "crew");
+  return join(env.WIZARDINGCODE_HOME ?? join(homedir(), ".wizardingcode"), "crew");
 }
 
 export function resolvePaths(cwd: string, env: NodeJS.ProcessEnv = process.env): CrewPaths | null {

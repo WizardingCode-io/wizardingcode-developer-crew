@@ -125,7 +125,7 @@ test("/crew with an unknown verb says how to use it", async ($, on) => {
 
 // What Claude Code passes to a ui.render hook for the strip above the prompt
 const STRIP = {
-  plugin: "shibaox-developer-crew",
+  plugin: "wizardingcode-developer-crew",
   component: "AbovePrompt",
   requestId: "above-prompt",
   viewport: { columns: 120, rows: 40 },
@@ -194,7 +194,7 @@ test("the line under a proven answer names the gates, and no item means no line"
 });
 
 const PANE = {
-  plugin: "shibaox-developer-crew",
+  plugin: "wizardingcode-developer-crew",
   component: "Pane",
   requestId: "crew",
   viewport: { columns: 120, rows: 40 },
@@ -242,7 +242,7 @@ test("a pane that cannot open is a toast, not a failure", async ($, on) => {
   const answer = await $.command.run({ command: "crew", args: "panel" });
   expect(answer.text).toBeUndefined();
   // A denied call rejects with the host's message, which prefixes the plugin and the call
-  expect(toasts).toEqual(["Crew: the panel could not open: shibaox-developer-crew: $.ui.open: no pane here"]);
+  expect(toasts).toEqual(["Crew: the panel could not open: wizardingcode-developer-crew: $.ui.open: no pane here"]);
 });
 
 test("a pane that is not placed says it waits for a wider terminal", async ($, on) => {
