@@ -10,7 +10,7 @@ const WRITE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
 const USER_ONLY =
   /(?:^|[\s/;&|(])crew(?:\.mjs)?\s+(?:skip|approve|accept|profile\s+confirm|policy\s+accept|profile\s+set\b[^;&|]*--force)\b/;
 const ENGINE_FILES =
-  /\.crew\/(?:profile\.json|policy\.json|\.gitignore|local\b|work\/[^\s/]+\/(?:work\.json|evidence\.json|report\.md|logs\b))|\.shibaox\/crew\b/;
+  /\.crew\/(?:profile\.json|policy\.json|\.gitignore|local\b|work\/[^\s/]+\/(?:work\.json|evidence\.json|report\.md|logs\b))|\.wizardingcode\/crew\b/;
 const WRITE_SHAPE =
   /(?:^|[\s;&|(])(?:rm|mv|cp|tee|truncate|chmod|touch|dd|install)\b|sed\s+-i|>{1,2}\s*\S/;
 
@@ -66,7 +66,7 @@ export function onPreToolUse(ctx: HookContext, payload: HookPayload): HookRespon
     if (ENGINE_FILES.test(command) && WRITE_SHAPE.test(command)) {
       return answer(
         "deny",
-        "Crew: files under .crew/ and ~/.shibaox/crew that the engine owns are written only by the crew command",
+        "Crew: files under .crew/ and ~/.wizardingcode/crew that the engine owns are written only by the crew command",
       );
     }
   }

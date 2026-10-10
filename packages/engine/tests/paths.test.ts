@@ -20,12 +20,12 @@ test("C3: outside a repository only a folder that already holds .crew/ is a root
   expect(findRoot(join(dir, "sub"))).toBeNull();
 });
 
-test("resolvePaths honours SHIBAOX_HOME and derives a stable repo id", () => {
+test("resolvePaths honours WIZARDINGCODE_HOME and derives a stable repo id", () => {
   const root = makeRepo();
   const env = testEnv();
   const paths = repoPaths(root, env);
   expect(paths.crewDir).toBe(join(root, ".crew"));
-  expect(paths.userDir).toBe(join(env.SHIBAOX_HOME as string, "crew"));
+  expect(paths.userDir).toBe(join(env.WIZARDINGCODE_HOME as string, "crew"));
   expect(paths.integrityFile.endsWith(`${paths.repoId}.json`)).toBe(true);
   expect(repoPaths(root, env).repoId).toBe(paths.repoId);
   expect(workDir(paths, "w1")).toBe(join(root, ".crew", "work", "w1"));

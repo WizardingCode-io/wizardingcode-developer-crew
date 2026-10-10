@@ -1,4 +1,4 @@
-# Shibaox Developer Crew
+# WizardingCode Developer Crew
 
 Give your coding agent one input and get guided to a result that is proven done: the engine, not the model, says when work is finished.
 
@@ -19,7 +19,7 @@ Requirement: Node.js 20 or later on `PATH` (the hooks and the `crew` command run
   - `policy.json` (optional): the team policy, written by a person.
   - `work/<id>/`: one folder per work item, with `work.json` (state), `brief.md`, `spec.md`, `plan.md`, `evidence.json` (test-first records and gate runs), `report.md` (the delivery report) and `logs/` (full command output, ignored).
   - `local/`: per-machine state such as the session baselines (ignored).
-- **`~/.shibaox/crew/` for the user**: `config.json` (mode and settings) and `integrity/`, the hashes the engine uses to notice state changed outside it.
+- **`~/.wizardingcode/crew/` for the user**: `config.json` (mode and settings) and `integrity/`, the hashes the engine uses to notice state changed outside it.
 
 ## Try it
 
@@ -44,4 +44,4 @@ The eval suite (`evals/`) measures the method on fixture projects; its recorded 
 - [SP1a implementation plan](docs/plans/2026-10-07-sp1a-engine-cli-and-plugin.md): engine, `crew` command, hooks, skill and plugin packaging, task by task.
 - [SP1b implementation plan](docs/plans/2026-10-07-sp1b-mod-and-evals.md): the mod and the eval suite.
 
-Part of the Shibaox family by WizardingCode. MIT licensed.
+Part of WizardingCode's tools for coding agents. MIT licensed.

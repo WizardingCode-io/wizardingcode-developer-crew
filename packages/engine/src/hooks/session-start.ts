@@ -31,7 +31,7 @@ export function onSessionStart(ctx: HookContext, payload: HookPayload = {}): Hoo
   }
 
   const lines = [
-    "Shibaox Developer Crew is active in this repository. Work is proven by the `crew` command and the crew skill, and a turn cannot end while watched source files have unproven changes.",
+    "WizardingCode Developer Crew is active in this repository. Work is proven by the `crew` command and the crew skill, and a turn cannot end while watched source files have unproven changes.",
   ];
   if (active?.work)
     lines.push(

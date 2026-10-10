@@ -80,7 +80,7 @@ Rules:
 - The installed plugin contains built files only. No `node_modules`. Target size: under 2 MB.
 - The engine has no runtime dependencies beyond the JavaScript runtime it runs on.
 - No process stays running between commands.
-- Development uses TypeScript, Bun (tests and bundling) and Biome, the same as `shibaox-mem`. The bundle targets Node 20 or later.
+- Development uses TypeScript, Bun (tests and bundling) and Biome, the same as `wizardingcode-mem`. The bundle targets Node 20 or later.
 
 ## 6. State and evidence
 
@@ -106,7 +106,7 @@ Rules:
 
 Work artefacts are committed by default, so a pull request carries its own proof. A team can set `artifacts: "local"` in the policy to keep them out of the repository.
 
-### On the user's machine: `~/.shibaox/crew/`
+### On the user's machine: `~/.wizardingcode/crew/`
 
 - `config.json`: the user's mode and optional features.
 - `integrity/<repo-id>.json`: hashes of engine-owned files, used to detect changes made outside the engine.
@@ -338,7 +338,7 @@ Rule 3 exists because a turn also ends when the agent asks the user a question. 
 
 ### Tamper evidence
 
-Hooks deny direct writes to the protected files listed in section 6 and to `~/.shibaox/crew/`. As a second line, the engine stores a hash of each protected file it writes in `~/.shibaox/crew/integrity/`. If a file no longer matches, the engine invalidates the evidence and reports that state was changed outside the engine. An integrity file that does not parse makes every protected file tampered, and so does a protected file the engine never recorded while it has recorded others (only `policy.json` and true first use are trusted without a hash). While anything a command builds on is tampered, every command that saves state refuses, naming the file; read-only commands keep working and keep reporting it. The user trusts the current content again with `crew accept <id|profile|policy>`, which asks through the permission prompt; a person who edits `policy.json` by hand runs `crew policy accept` (the same as `crew accept policy`), and `crew detect --refresh` only records a hash for a policy that has none yet.
+Hooks deny direct writes to the protected files listed in section 6 and to `~/.wizardingcode/crew/`. As a second line, the engine stores a hash of each protected file it writes in `~/.wizardingcode/crew/integrity/`. If a file no longer matches, the engine invalidates the evidence and reports that state was changed outside the engine. An integrity file that does not parse makes every protected file tampered, and so does a protected file the engine never recorded while it has recorded others (only `policy.json` and true first use are trusted without a hash). While anything a command builds on is tampered, every command that saves state refuses, naming the file; read-only commands keep working and keep reporting it. The user trusts the current content again with `crew accept <id|profile|policy>`, which asks through the permission prompt; a person who edits `policy.json` by hand runs `crew policy accept` (the same as `crew accept policy`), and `crew detect --refresh` only records a hash for a policy that has none yet.
 
 This makes tampering evident. It does not make it impossible: the agent and the engine run as the same user.
 
@@ -393,7 +393,7 @@ When the request is vague, the skill asks the user the questions that would chan
 
 ## 15. Modes and team policy
 
-**Mode** is stored in `~/.shibaox/crew/config.json` and defaults to Partner. The first session asks once. The skill reads the mode and changes how it talks and how much it decides. The engine enforces one rule: in Pilot mode the secret scan and the dependency audit cannot be skipped.
+**Mode** is stored in `~/.wizardingcode/crew/config.json` and defaults to Partner. The first session asks once. The skill reads the mode and changes how it talks and how much it decides. The engine enforces one rule: in Pilot mode the secret scan and the dependency audit cannot be skipped.
 
 **Team policy** is `.crew/policy.json`:
 

@@ -44,7 +44,7 @@ export function makeRepo(files: Record<string, string> = { "README.md": "# test\
 
 /** An environment whose user state lives in a fresh temporary home. */
 export function testEnv(): NodeJS.ProcessEnv {
-  return { ...process.env, SHIBAOX_HOME: tempDir("crew-home-") };
+  return { ...process.env, WIZARDINGCODE_HOME: tempDir("crew-home-") };
 }
 
 /** Paths of a folder the test knows to be active (a git repository or one holding .crew/). */
