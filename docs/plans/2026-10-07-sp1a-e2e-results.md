@@ -175,7 +175,7 @@ Prompt (resumed): `Change src/math.mjs to export a multiply function too, but do
 ### Observations
 
 1. The Stop hook now blocks in a live session (twice in this run), which the first run could not show.
-2. In step 2 the block was caused by item 001's proven but uncommitted changes, not by an edit for item 002: item 002's base commit is the same `HEAD`, so its change includes 001's working-tree edits, and 002 is unproven. The agent explained this itself. It is a consequence of measuring each item's change from `HEAD` at `crew start` while an earlier item's work is uncommitted; this wave makes no further engine change for it. A later fix could start the new item's base from the previous item's proven state, or warn at `crew start` that uncommitted changes will belong to the new item.
+2. In step 2 the block was caused by item 001's proven but uncommitted changes, not by an edit for item 002: item 002's base commit is the same `HEAD`, so its change includes 001's working-tree edits, and 002 is unproven. The agent explained this itself. It is a consequence of measuring each item's change from `HEAD` at `crew start` while an earlier item's work is uncommitted; this wave makes no further engine change for it. A later fix could start the new item's base from the previous item's proven state, or warn at `crew start` that uncommitted changes will belong to the new item. Closed in 0.1.1: a new item starts from the previous item's proven state (`baseFiles` in the work item; spec section 6).
 
 ## Re-run of steps 3, 4 and 5 (2026-10-12)
 
@@ -255,7 +255,7 @@ Prompt (resumed): `Skip the test gate for the current work item.` (the sandbox p
 
 A `PermissionRequest` hook in the sandbox's `.claude/settings.json` (matcher `Bash`, answering `{"decision":{"behavior":"allow"}}` for a command starting with `crew skip`) was tried with the same prompt, twice: the second time the hook script appended its stdin to a log file first. The log stayed empty and the stream has no `PermissionRequest` event, so the hook never ran in the resumed headless session (the docs say these hooks run where no prompt can be shown; whether `--resume` or the project-level settings file is the reason is not determined). The skip was denied again and `skips` stayed `[]`. The documented way to answer a prompt headlessly did not apply here; the "user accepts the skip, and the skip appears in the report" path (criterion 6, second half) is left to the interactive session below.
 
-Side observation: creating `.claude/settings.json` made `crew status` say `Not proven: code changed since the last gate run`; the agent re-ran the gates and the item was proven again; deleting the file had the same effect. The default watch list covers everything but `**/*.md`, `docs/**` and `.crew/**`, so a settings file counts as a watched change. Safe, but noisy; whether `.claude/**` should be excluded by default is an open question, not a bug.
+Side observation: creating `.claude/settings.json` made `crew status` say `Not proven: code changed since the last gate run`; the agent re-ran the gates and the item was proven again; deleting the file had the same effect. The default watch list covers everything but `**/*.md`, `docs/**` and `.crew/**`, so a settings file counts as a watched change. Safe, but noisy; whether `.claude/**` should be excluded by default is an open question, not a bug. Closed in 0.1.1: `.claude/**` is unwatched by default.
 
 ### Step 5: the hooks alone, without the mod
 
@@ -279,6 +279,30 @@ Prompt: `Change src/math.mjs to export a multiply function too, but do not run a
 
 ### Left for an interactive session
 
+Closed by the interactive check below (2026-10-12), except item 3, which was not needed.
+
 1. Accept the `crew skip` prompt and see the skip in `/crew panel` and `report.md`.
 2. The mod itself: `/crew`, `/crew panel`, the `r` and `q` keys, the strip above the prompt and the line under an answer (SP1b Task 5, step 2).
 3. Optionally, `/plugin` on the mod-free copy to confirm "no mod active".
+
+## Interactive check (2026-10-12)
+
+- Date: 2026-10-12. Claude Code 2.1.296, Node 22. Bundle: `plugins/core/dist/crew.mjs` built from the working tree after the SP1c tasks 1 to 5 (`docs/plans/2026-10-12-sp1c-loose-ends.md`).
+- Sandbox: `/private/tmp/crew-sandbox`, rebuilt as Task 24 Step 1 (`"test": "node --test"`), commit `310da69`.
+- Method: a real interactive session (`claude --plugin-dir <repo>/plugins/core --model sonnet`) driven inside `tmux` from the development session (`send-keys`, `capture-pane`), in manual permission mode so every prompt is answered by hand (Enter on "Yes"). The screens quoted below are the captured panes.
+
+### Summary
+
+| Step | Expected | Outcome |
+| :- | :- | :- |
+| 1 fast-route fix | strip above the prompt, line under the answer | Met: `crew 2026-10-12-001-… · deliver · fast · proven · secrets ✓ test ✓   [-]`; under the answer `Proven: secrets, test` |
+| 2 accept the `crew skip` prompt | the prompt names the hook's reason; the skip is recorded | Met: `Crew: this command records a decision that only the user can take` on the prompt; accepted; `report.md` has `test \| . \| skipped: checked by hand` in the Gates table and `## Skipped by the user` with `gate:test: checked by hand` |
+| 2b the skip in the strip and under the answer | `–` for the skipped gate | Met after `crew gate run`: strip `secrets ✓ test –`; under the answer `Proven: secrets` (a skipped gate is not listed as passed) |
+| 3 `/crew` | the status text | **Not met at first:** `/crew` and `/crew panel` ran the plugin's skill (`/wizardingcode-developer-crew:crew panel`) and the mod had logged `could not register /crew: it is taken by another plugin` at session start. Met after the fix below |
+| 3b `/crew panel`, `r`, `q` | the pane with phases, criteria, runs, skips; refresh; close | Met after the fix: pane with `receive › recognize › build › gate › [deliver]`, `AC-1 behavior · red then green · add(2, 3) returns 5`, `secrets (.): pass in 0.2s`, `test (.): skipped in 0.0s (checked by hand)`, `skipped gate:test: checked by hand`, `Proven: secrets`, `r: Refresh   q: Close`; `r` redrew the same state; `q` closed the pane |
+
+### What the check found: the skill took `/crew` from the mod
+
+A plugin skill claims the bare `/<name>` as well as `/<plugin>:<name>` (Claude Code docs, "How a skill gets its command name"). The skill was named `crew`, so `/crew` belonged to the skill before the mod's `session.start` hook ran, and `$.command.register({ name: "crew" })` was refused with "taken by another plugin": the plugin's own skill. The mod's tests stub that refusal and only check that the rest of the hook still runs, so no test could see it; the mod's `/crew` had never worked in a real session. Tried and rejected: `user-invocable: false` on the skill hides it from the menu but the skill still owns the name (`/crew panel` then answers "This skill can only be invoked by Claude"). Fix: the skill's frontmatter `name` is `crew-method` (the folder stays `skills/crew`); the Skill tool id becomes `wizardingcode-developer-crew:crew-method`, which nothing in the repository referenced by its old form. Verified live: the session starts without the refusal, `/crew` prints the status and `/crew panel` opens the pane.
+
+Two side observations. With the plugin installed at user scope and `--plugin-dir` pointing at the working tree, both copies load their hooks and the first mod to register `/crew` wins (the installed copy was disabled for the check and enabled again after it). And on this repository the gate run raised the item's route to full, "the change touches auth paths": a risk-path pattern matched an engine source file; proven anyway, a false positive worth a look when the risk paths are revisited.

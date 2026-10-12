@@ -350,6 +350,8 @@ If the JavaScript runtime is missing, hooks do not block the user's work. The se
 
 ## 13. The skill
 
+The skill's command name is `crew-method`, not `crew`: a skill claims the bare `/<name>` as well as `/<plugin>:<name>`, so a skill named `crew` takes `/crew` from the mod (found by the interactive check of 2026-10-12). The folder stays `skills/crew`.
+
 One skill, `crew`, with one short description. Its `SKILL.md` is a router: when to start a work item, the order of the phases, and a table that says which reference to load for each phase.
 
 ```

@@ -29,7 +29,7 @@
 - **The engine** (`packages/engine`): dependency-free TypeScript that detects the project's build, test, lint and type-check commands (Node and TypeScript, PHP and Laravel, Python), routes each request (fast, standard or full), records test-first runs, runs the gates and writes the evidence.
 - **The `crew` command**: the engine's interface, bundled into one file, `plugins/core/dist/crew.mjs`. `crew help` lists the commands.
 - **Hooks**: a Claude Code plugin (`plugins/core`) wires SessionStart, UserPromptSubmit, PreToolUse and Stop to `crew hook <event>`. A turn cannot end while watched source files have unproven changes, the agent cannot write the engine's files, and decisions that belong to the user (skips, approvals, accepting changed state) go through a permission prompt.
-- **The crew skill** (`plugins/core/skills/crew`): the method the agent follows, phase by phase.
+- **The crew skill** (`plugins/core/skills/crew`, command name `crew-method`: a skill claims the bare `/<name>`, and `/crew` belongs to the mod): the method the agent follows, phase by phase.
 - **The mod** (`plugins/core/hooks/register.js`, Claude Code 2.1.287 or later): a status strip above the prompt (`crew <id> · phase · route · proven · gates`, or `not proven (<first reason>)` in place of `proven`; a planned gate that has not run shows as `…`), a line under each answer (`Proven: ...` or `Not proven: ...`), and `/crew` with `status`, `panel` and `mode <partner|guide|pilot>`. It only shows the engine's state; the hooks and the command carry the guarantee, so disabling the mod changes nothing about what is enforced.
 
 Requirement: Node.js 20 or later on `PATH` (the hooks and the `crew` command run on it). Development uses Bun.
@@ -65,6 +65,8 @@ Development note: `bun run check` runs the engine tests under `packages/`; the m
 ## What is next
 
 The eval suite (`plugins/core/evals/`) measures the method on fixture projects against plain Claude Code. Its first runs are recorded in [`docs/evals/2026-10-12-sp1b-results.md`](docs/evals/2026-10-12-sp1b-results.md): every case passes with the plugin, including the one that stops at the spec approval the full route reserves for the user, and a trivial fix on the fast route costs about 1.7–1.9× the baseline after the fast route was cut to three calls, from 2.3× on the first run. The 1.2× the design hoped for is below the floor of a method that records red, green and the gates; the record says what is left to take out.
+
+Release 0.1.1 (2026-10-12) closed what SP1 left open: a workspace member package is covered by the package that lists it, so a monorepo (this repository included) can be proven; `.claude/**` is unwatched by default; a new work item starts from the previous item's proven state instead of inheriting its uncommitted files; a read of an engine file with stderr silenced is no longer denied; `bun scripts/eval.ts` runs the eval suite; and the interactive check of the mod found and fixed `/crew` being taken by the plugin's own skill ([record](docs/plans/2026-10-07-sp1a-e2e-results.md), "Interactive check").
 
 ## Documents
 

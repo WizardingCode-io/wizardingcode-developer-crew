@@ -1,5 +1,5 @@
 ---
-name: crew
+name: crew-method
 description: Use when the user asks for a code change in this repository: a fix, a feature, a refactor, a chore or a new product. Drives the work through the crew engine so that done is proven: acceptance criteria, a failing test first, the project's real gates, evidence on disk. Not for questions that need no change.
 ---
 
