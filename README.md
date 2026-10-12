@@ -43,15 +43,22 @@ Requirement: Node.js 20 or later on `PATH` (the hooks and the `crew` command run
   - `local/`: per-machine state such as the session baselines (ignored).
 - **`~/.wizardingcode/crew/` for the user**: `config.json` (mode and settings) and `integrity/`, the hashes the engine uses to notice state changed outside it.
 
-## Try it
+## Install
+
+```sh
+claude plugin marketplace add WizardingCode-io/wizardingcode-plugins
+claude plugin install wizardingcode-developer-crew@wizardingcode-plugins
+```
+
+Open a session inside a git repository and ask for a code change; the crew skill takes it from there. `crew status` shows where the work stands. The marketplace points at a released version; `claude plugin update wizardingcode-developer-crew` moves to the next one.
+
+## Develop
 
 ```bash
 bun install && bun run build
-claude --plugin-dir ./plugins/core      # loads the plugin for one session
+claude --plugin-dir ./plugins/core      # loads the plugin for one session, instead of the installed one
 bun run plugin:check      # validate --strict and the mod tests
 ```
-
-Open the session inside a git repository and ask for a code change; the crew skill takes it from there. `node plugins/core/dist/crew.mjs status` shows where the work stands.
 
 Development note: `bun run check` runs the engine tests under `packages/`; the mod's tests need the plugin runtime and run only through `bun run plugin:check`.
 

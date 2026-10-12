@@ -1,5 +1,7 @@
 # SP1a: Engine, CLI and Plugin Implementation Plan
 
+> **Status:** done. Every task shipped between 2026-10-07 and 2026-10-10, and the end-to-end check was completed on 2026-10-12 ([results](2026-10-07-sp1a-e2e-results.md)). The boxes were ticked after the fact, from the code and the records; the names are those of the time (shibaox, see [ADR 0001](../adr/0001-wizardingcode-brand.md)).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Ship the `crew` engine as an installable Claude Code plugin that detects a project, keeps the state of a piece of work, proves test-first, runs deterministic gates, writes evidence, and blocks "done" through hooks until the work is proven.
@@ -91,7 +93,7 @@ plugins/core/
 **Interfaces:**
 - Produces: `VERSION: string` from `packages/engine/src/version.ts`; the scripts `bun run typecheck`, `bun run lint`, `bun run test`, `bun run check`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 // packages/engine/tests/version.test.ts
@@ -103,12 +105,12 @@ test('the engine reports the plugin version', () => {
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `cd ~/AIProjects/shibaox-developer-crew && bun test packages/engine/tests/version.test.ts`
 Expected: FAIL, cannot resolve `../src/version.ts`.
 
-- [ ] **Step 3: Create the workspace files**
+- [x] **Step 3: Create the workspace files**
 
 ```json
 // package.json
@@ -189,12 +191,12 @@ export const VERSION = '0.1.0';
 
 Then install the dev dependencies: `bun install`. Commit `bun.lock`.
 
-- [ ] **Step 4: Run the test and the checks**
+- [x] **Step 4: Run the test and the checks**
 
 Run: `bun test packages/engine/tests/version.test.ts && bun run typecheck && bun run lint`
 Expected: 1 pass; `tsc` and `biome` exit 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add package.json bun.lock tsconfig.json biome.json packages/engine
@@ -212,7 +214,7 @@ git commit -m "chore: scaffold bun workspace and engine package"
 **Interfaces:**
 - Produces every shared type listed in the code below, and from `fs.ts`: `sha256(data: string | Uint8Array): string`, `exists(path): boolean`, `ensureDir(path): void`, `readText(path): string | null`, `readJson<T>(path): T | null`, `writeText(path, text): void` (atomic), `writeJson(path, data): void`, `nowIso(): string`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 // packages/engine/tests/fs.test.ts
@@ -247,12 +249,12 @@ test('writeJson round-trips and readJson returns null on invalid JSON', () => {
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `bun test packages/engine/tests/fs.test.ts`
 Expected: FAIL, cannot resolve `../src/fs.ts`.
 
-- [ ] **Step 3: Write the types and the helpers**
+- [x] **Step 3: Write the types and the helpers**
 
 ```ts
 // packages/engine/src/types.ts
@@ -468,12 +470,12 @@ export function nowIso(): string {
 }
 ```
 
-- [ ] **Step 4: Run the test**
+- [x] **Step 4: Run the test**
 
 Run: `bun test packages/engine/tests/fs.test.ts && bun run typecheck`
 Expected: 3 pass; tsc exit 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/engine/src/types.ts packages/engine/src/fs.ts packages/engine/tests/fs.test.ts
@@ -491,7 +493,7 @@ git commit -m "feat(engine): shared types and file helpers"
 **Interfaces:**
 - Produces: `globToRegExp(glob: string): RegExp` (case-insensitive, anchored), `matchesAny(path: string, patterns: readonly string[]): boolean` (normalises `\` to `/` and strips a leading `./`).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 // packages/engine/tests/glob.test.ts
@@ -518,12 +520,12 @@ test('* does not cross a slash and matching ignores case', () => {
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `bun test packages/engine/tests/glob.test.ts`
 Expected: FAIL, cannot resolve `../src/glob.ts`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 ```ts
 // packages/engine/src/glob.ts
@@ -560,12 +562,12 @@ export function matchesAny(path: string, patterns: readonly string[]): boolean {
 }
 ```
 
-- [ ] **Step 4: Run the test**
+- [x] **Step 4: Run the test**
 
 Run: `bun test packages/engine/tests/glob.test.ts`
 Expected: 3 pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/engine/src/glob.ts packages/engine/tests/glob.test.ts
@@ -584,7 +586,7 @@ git commit -m "feat(engine): glob matching"
 - Produces: `interface CrewPaths { root; crewDir; localDir; userDir; integrityFile; repoId }`, `findRoot(cwd): string`, `resolvePaths(cwd, env?): CrewPaths`, `workDir(paths, id): string`, `isProtectedPath(paths, absPath): boolean`.
 - Test helpers used by every later test: `tempDir(prefix?)`, `git(cwd, ...args)`, `write(root, rel, text)`, `makeRepo(files?)`, `testEnv()`.
 
-- [ ] **Step 1: Write the helpers and the failing test**
+- [x] **Step 1: Write the helpers and the failing test**
 
 ```ts
 // packages/engine/tests/helpers.ts
@@ -684,12 +686,12 @@ test('isProtectedPath covers engine-owned files and nothing else', () => {
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `bun test packages/engine/tests/paths.test.ts`
 Expected: FAIL, cannot resolve `../src/paths.ts`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 ```ts
 // packages/engine/src/paths.ts
@@ -754,12 +756,12 @@ export function isProtectedPath(paths: CrewPaths, absPath: string): boolean {
 }
 ```
 
-- [ ] **Step 4: Run the test**
+- [x] **Step 4: Run the test**
 
 Run: `bun test packages/engine/tests/paths.test.ts`
 Expected: 4 pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/engine/src/paths.ts packages/engine/tests/helpers.ts packages/engine/tests/paths.test.ts
@@ -778,7 +780,7 @@ git commit -m "feat(engine): path resolution and protected-path rule"
 - Consumes: `CrewPaths`, `fs.ts` helpers.
 - Produces: `writeProtectedText(paths, absPath, text)`, `writeProtectedJson(paths, absPath, data)`, `readProtectedJson<T>(paths, absPath): { data: T | null; tampered: boolean }`, `recordIntegrity(paths, absPath)` (re-hashes a file edited by a person), `integrityOf(paths): Record<string, string>`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 // packages/engine/tests/store.test.ts
@@ -822,12 +824,12 @@ test('recordIntegrity accepts a hand-written file, and a missing file is not tam
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `bun test packages/engine/tests/store.test.ts`
 Expected: FAIL, cannot resolve `../src/store.ts`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 ```ts
 // packages/engine/src/store.ts
@@ -888,12 +890,12 @@ export function readProtectedJson<T>(paths: CrewPaths, absPath: string): Protect
 }
 ```
 
-- [ ] **Step 4: Run the test**
+- [x] **Step 4: Run the test**
 
 Run: `bun test packages/engine/tests/store.test.ts`
 Expected: 3 pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/engine/src/store.ts packages/engine/tests/store.test.ts
@@ -911,7 +913,7 @@ git commit -m "feat(engine): protected files with integrity hashes"
 **Interfaces:**
 - Produces: `interface Detector { stack: Stack; detect(dir: string): DetectedTarget | null }`, `interface DetectedTarget { stack; packageManager; gates: Partial<Record<GateName, string>> }`, `nodeDetector: Detector`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 // packages/engine/tests/detect-node.test.ts
@@ -967,12 +969,12 @@ test('bun projects run scripts through bun run', () => {
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `bun test packages/engine/tests/detect-node.test.ts`
 Expected: FAIL, cannot resolve `../src/detect/node.ts`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 ```ts
 // packages/engine/src/detect/types.ts
@@ -1046,12 +1048,12 @@ export const nodeDetector: Detector = {
 };
 ```
 
-- [ ] **Step 4: Run the test**
+- [x] **Step 4: Run the test**
 
 Run: `bun test packages/engine/tests/detect-node.test.ts`
 Expected: 4 pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/engine/src/detect packages/engine/tests/detect-node.test.ts
@@ -1070,7 +1072,7 @@ git commit -m "feat(engine): node and typescript detector"
 - Consumes: `Detector`, `DetectedTarget` from Task 6.
 - Produces: `phpDetector: Detector`, `pythonDetector: Detector`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 // packages/engine/tests/detect-php-python.test.ts
@@ -1124,12 +1126,12 @@ test('python: a requirements.txt project with a tests folder uses python -m', ()
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `bun test packages/engine/tests/detect-php-python.test.ts`
 Expected: FAIL, cannot resolve `../src/detect/php.ts`.
 
-- [ ] **Step 3: Write the two detectors**
+- [x] **Step 3: Write the two detectors**
 
 ```ts
 // packages/engine/src/detect/php.ts
@@ -1201,12 +1203,12 @@ export const pythonDetector: Detector = {
 };
 ```
 
-- [ ] **Step 4: Run the test**
+- [x] **Step 4: Run the test**
 
 Run: `bun test packages/engine/tests/detect-php-python.test.ts`
 Expected: 4 pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/engine/src/detect packages/engine/tests/detect-php-python.test.ts
@@ -1225,7 +1227,7 @@ git commit -m "feat(engine): php and python detectors"
 - Consumes: the three detectors, `Profile`, `Target`, `GateCommand`.
 - Produces: `detectTargets(root): Target[]`, `mergeProfile(previous: Profile | null, targets: Target[]): Profile`, `detectProfile(root, previous?): Profile`, `missingTestCommands(profile): { target: string; gate: 'test' }[]`, constants `DEFAULT_WATCH_EXCLUDE`, `DEFAULT_TIMEOUT_MS`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 // packages/engine/tests/detect-profile.test.ts
@@ -1275,12 +1277,12 @@ test('a path with no test command anywhere is reported, and an empty folder repo
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `bun test packages/engine/tests/detect-profile.test.ts`
 Expected: FAIL, cannot resolve `../src/detect/index.ts`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 ```ts
 // packages/engine/src/detect/index.ts
@@ -1395,12 +1397,12 @@ export function missingTestCommands(profile: Profile): MissingCommand[] {
 }
 ```
 
-- [ ] **Step 4: Run the test**
+- [x] **Step 4: Run the test**
 
 Run: `bun test packages/engine/tests/detect-profile.test.ts`
 Expected: 3 pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/engine/src/detect/index.ts packages/engine/tests/detect-profile.test.ts
@@ -1419,7 +1421,7 @@ git commit -m "feat(engine): profile detection across targets"
 - Consumes: `Profile`, `matchesAny`, `sha256`.
 - Produces: `isGitRepo(root): boolean`, `gitHead(root): string` (`'none'` without commits), `gitChangedPaths(root): string[]`, `isWatched(path, profile): boolean`, `allWatchedFiles(root, profile): string[]`, `changedWatchedPaths(root, profile): string[]`, `computeFingerprint(root, profile): string` (`sha256:<hex>`).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 // packages/engine/tests/fingerprint.test.ts
@@ -1475,12 +1477,12 @@ test('a folder without git falls back to hashing every watched file', () => {
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `bun test packages/engine/tests/fingerprint.test.ts`
 Expected: FAIL, cannot resolve `../src/fingerprint.ts`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 ```ts
 // packages/engine/src/fingerprint.ts
@@ -1598,12 +1600,12 @@ export function computeFingerprint(root: string, profile: Profile): string {
 }
 ```
 
-- [ ] **Step 4: Run the test**
+- [x] **Step 4: Run the test**
 
 Run: `bun test packages/engine/tests/fingerprint.test.ts`
 Expected: 4 pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/engine/src/fingerprint.ts packages/engine/tests/fingerprint.test.ts
@@ -1622,7 +1624,7 @@ git commit -m "feat(engine): watched files and fingerprints"
 - Consumes: `Policy`, `RiskArea`, `Route`, `WorkType`, `ROUTE_ORDER`, `matchesAny`.
 - Produces: `QUESTIONS` (the typed question definitions, shaped like Jev and Laya questions), `interface Answers`, `class AnswerError`, `validateAnswers(raw: unknown): Answers`, `riskAreasFromAnswers(answers): RiskArea[]`, `DEFAULT_RISK_PATHS`, `riskAreasForPaths(paths, policy): RiskArea[]`, `routeRank(route): number`, `higherRoute(a, b): Route`, `interface RouteDecision { route; reasons; riskAreas }`, `computeRoute(answers, pathRisk, policy): RouteDecision`, constants `RISK_THRESHOLD = 0.3`, `VAGUE_THRESHOLD = 0.5`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 // packages/engine/tests/classify.test.ts
@@ -1695,12 +1697,12 @@ test('risk paths come from the defaults and the policy', () => {
 
 Note: this test imports `DEFAULT_POLICY` from Task 11. Write Task 11's `policy.ts` before running this test, or run Tasks 10 and 11 together; the commit order below keeps each task's files separate.
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `bun test packages/engine/tests/classify.test.ts`
 Expected: FAIL, cannot resolve `../src/classify.ts`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 ```ts
 // packages/engine/src/classify.ts
@@ -1916,12 +1918,12 @@ export function computeRoute(answers: Answers, pathRisk: RiskArea[], policy: Pol
 }
 ```
 
-- [ ] **Step 4: Run the test (after Task 11's `policy.ts` exists)**
+- [x] **Step 4: Run the test (after Task 11's `policy.ts` exists)**
 
 Run: `bun test packages/engine/tests/classify.test.ts`
 Expected: 4 pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/engine/src/classify.ts packages/engine/tests/classify.test.ts
@@ -1941,7 +1943,7 @@ git commit -m "feat(engine): typed questions, answers and route computation"
 - From `config.ts`: `DEFAULT_CONFIG: UserConfig`, `configPath(paths)`, `loadConfig(paths): UserConfig`, `saveConfig(paths, config)`, `setConfigValue(config, key, value): UserConfig` (keys `mode`, `decisions.log`).
 - From `state.ts`: `interface SessionState { baseline: string | null; stopBlocks: number }`, `interface LocalState { active: string | null; sessions: Record<string, SessionState> }`, `loadState(paths)`, `saveState(paths, state)`, `sessionState(state, sessionId): SessionState`, `ensureCrewDir(paths, policy)` (writes `.crew/.gitignore`).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 // packages/engine/tests/policy-config-state.test.ts
@@ -2009,12 +2011,12 @@ test('state: per-session entries and the .crew/.gitignore', () => {
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `bun test packages/engine/tests/policy-config-state.test.ts`
 Expected: FAIL, cannot resolve `../src/config.ts`.
 
-- [ ] **Step 3: Write the three modules**
+- [x] **Step 3: Write the three modules**
 
 ```ts
 // packages/engine/src/policy.ts
@@ -2166,12 +2168,12 @@ export function ensureCrewDir(paths: CrewPaths, policy: Policy): void {
 }
 ```
 
-- [ ] **Step 4: Run the tests**
+- [x] **Step 4: Run the tests**
 
 Run: `bun test packages/engine/tests/policy-config-state.test.ts packages/engine/tests/classify.test.ts`
 Expected: 7 pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/engine/src/policy.ts packages/engine/src/config.ts packages/engine/src/state.ts packages/engine/tests/policy-config-state.test.ts
@@ -2190,7 +2192,7 @@ git commit -m "feat(engine): team policy, user config and local state"
 - Consumes: `WorkItem`, `Criterion`, `Evidence`, `Phase`, `Route`, `PHASE_ORDER`, `RouteDecision`, store, state.
 - Produces: `PHASES_BY_ROUTE`, `createWork(paths, input): WorkItem` (writes `work.json` and `brief.md`, sets the active item), `saveWork(paths, work)`, `loadWork(paths, id): { work: WorkItem | null; tampered: boolean }`, `activeWork(paths)`, `applyClassification(work, type, decision)`, `raiseRoute(work, to, reason): boolean`, `addCriterion(work, text, kind?): Criterion`, `approve(work, 'spec')`, `addSkip(work, step, reason)`, `isSkipped(work, step)`, `isBeforeBuild(work)`, `hasAcceptanceSection(text)`, `interface GuardContext { specText; planExists; evidence; proven; unproven }`, `guardFor(work, next, ctx): string[]`, `nextPhaseOf(work): Phase | null`, `advancePhase(work, ctx)`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 // packages/engine/tests/work.test.ts
@@ -2311,12 +2313,12 @@ test('advancePhase follows the route and stops at a failing guard', () => {
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `bun test packages/engine/tests/work.test.ts`
 Expected: FAIL, cannot resolve `../src/work.ts`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 ```ts
 // packages/engine/src/work.ts
@@ -2528,12 +2530,12 @@ export function advancePhase(
 }
 ```
 
-- [ ] **Step 4: Run the test**
+- [x] **Step 4: Run the test**
 
 Run: `bun test packages/engine/tests/work.test.ts`
 Expected: 5 pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/engine/src/work.ts packages/engine/tests/work.test.ts
@@ -2551,7 +2553,7 @@ git commit -m "feat(engine): work items, phases and guards"
 **Interfaces:**
 - Produces: `interface RunOptions { cwd; timeoutMs; logPath; env?; stdin? }`, `interface RunResult { exit: number | null; durationMs; tail: string; timedOut: boolean }`, `runCommand(command: string, options: RunOptions): Promise<RunResult>`. Runs through the shell, writes all output to `logPath`, keeps the last 40 lines in `tail`, kills the whole process group at the timeout.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 // packages/engine/tests/run.test.ts
@@ -2598,12 +2600,12 @@ test('stdin is passed through when given', async () => {
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `bun test packages/engine/tests/run.test.ts`
 Expected: FAIL, cannot resolve `../src/run.ts`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 ```ts
 // packages/engine/src/run.ts
@@ -2695,12 +2697,12 @@ export function runCommand(command: string, options: RunOptions): Promise<RunRes
 }
 ```
 
-- [ ] **Step 4: Run the test**
+- [x] **Step 4: Run the test**
 
 Run: `bun test packages/engine/tests/run.test.ts`
 Expected: 3 pass, the second within a few hundred milliseconds.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/engine/src/run.ts packages/engine/tests/run.test.ts
@@ -2719,7 +2721,7 @@ git commit -m "feat(engine): command runner with timeout and log"
 - Consumes: `Evidence`, `GateRun`, `WorkItem`, store, `isSkipped`.
 - Produces: `emptyEvidence(): Evidence`, `loadEvidence(paths, id): { evidence; tampered }`, `saveEvidence(paths, id, evidence)`, `interface PlannedGate { gate: GateName; target: string }`, `interface VerdictInput { work; evidence; expected: PlannedGate[]; currentFingerprint: string; tampered: boolean }`, `computeVerdict(input): { verdict: 'proven' | 'unproven'; unproven: string[] }`, `renderReport(work, evidence): string`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 // packages/engine/tests/evidence.test.ts
@@ -2802,12 +2804,12 @@ test('the report says what was proven and what was not', () => {
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `bun test packages/engine/tests/evidence.test.ts`
 Expected: FAIL, cannot resolve `../src/evidence.ts`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 ```ts
 // packages/engine/src/evidence.ts
@@ -2918,12 +2920,12 @@ export function renderReport(work: WorkItem, evidence: Evidence): string {
 }
 ```
 
-- [ ] **Step 4: Run the test**
+- [x] **Step 4: Run the test**
 
 Run: `bun test packages/engine/tests/evidence.test.ts`
 Expected: 4 pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/engine/src/evidence.ts packages/engine/tests/evidence.test.ts
@@ -2942,7 +2944,7 @@ git commit -m "feat(engine): evidence, verdict and report"
 - Consumes: `runCommand`, `changedWatchedPaths`, `matchesAny`, `Evidence`, `Profile`, `WorkItem`.
 - Produces: `type TddStep = 'red' | 'green' | 'before' | 'after'`, `defaultTestCommand(profile): { command; timeoutMs } | null`, `recordTdd(paths, work, evidence, profile, criterionId, step, override?): Promise<{ ok: boolean; message: string; record?: RunRecord }>`. Mutates `evidence.tdd`; the caller saves.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 // packages/engine/tests/tdd.test.ts
@@ -3011,12 +3013,12 @@ test('an explicit command overrides the profile, and no command is an error', as
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `bun test packages/engine/tests/tdd.test.ts`
 Expected: FAIL, cannot resolve `../src/tdd.ts`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 ```ts
 // packages/engine/src/tdd.ts
@@ -3109,12 +3111,12 @@ export async function recordTdd(
 }
 ```
 
-- [ ] **Step 4: Run the test**
+- [x] **Step 4: Run the test**
 
 Run: `bun test packages/engine/tests/tdd.test.ts`
 Expected: 4 pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/engine/src/tdd.ts packages/engine/tests/tdd.test.ts
@@ -3133,7 +3135,7 @@ git commit -m "feat(engine): proven test-first records"
 - Consumes: `gitChangedPaths`, `allWatchedFiles`, `isGitRepo`, `isWatched`.
 - Produces: `interface Finding { source: string; line: number; rule: string }`, `scanText(text, source): Finding[]`, `isBinary(buffer): boolean`, `changedText(root, profile): { source: string; text: string }[]`, `scanSecrets(root, profile): Promise<{ status: 'pass' | 'fail'; findings: Finding[]; tail: string; usedGitleaks: boolean }>`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 // packages/engine/tests/secrets.test.ts
@@ -3186,12 +3188,12 @@ test('scanSecrets fails on a leaked key in an untracked file and passes when cle
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `bun test packages/engine/tests/secrets.test.ts`
 Expected: FAIL, cannot resolve `../src/secrets.ts`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 ```ts
 // packages/engine/src/secrets.ts
@@ -3317,12 +3319,12 @@ export async function scanSecrets(root: string, profile: Profile): Promise<{ sta
 }
 ```
 
-- [ ] **Step 4: Run the test**
+- [x] **Step 4: Run the test**
 
 Run: `bun test packages/engine/tests/secrets.test.ts`
 Expected: 3 pass. If `gitleaks` is installed on the machine, the untracked `.env.local` is also reported by it; the assertions still hold.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/engine/src/secrets.ts packages/engine/tests/secrets.test.ts
@@ -3341,7 +3343,7 @@ git commit -m "feat(engine): built-in secret scan of the change"
 - From `profile.ts`: `profilePath(paths)`, `loadProfile(paths): { profile: Profile | null; tampered: boolean }`, `saveProfile(paths, profile)`, `ensureProfile(paths): { profile: Profile; tampered: boolean }` (detects and saves when missing).
 - From `gates.ts`: `manifestChanged(changed: string[]): boolean`, `depsAuditCommand(target: Target): string | null`, `gatesForTarget(route, target, policy, changed): GateName[]`, `plannedGates(route, profile, policy, changed): PlannedGate[]`, `runGates(paths, work, profile, policy, options?: { only?: GateName[] }): Promise<GateOutcome>` where `GateOutcome = { evidence; verdict; unproven; planned; changed; raised: string | null }`, `assess(paths, work, profile, policy, tampered?): Assessment` where `Assessment = { evidence; verdict; unproven; expected; changed }`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 // packages/engine/tests/gates.test.ts
@@ -3418,12 +3420,12 @@ test('a diff that touches a risk path raises the route to full', async () => {
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `bun test packages/engine/tests/gates.test.ts`
 Expected: FAIL, cannot resolve `../src/gates.ts`.
 
-- [ ] **Step 3: Write the two modules**
+- [x] **Step 3: Write the two modules**
 
 ```ts
 // packages/engine/src/profile.ts
@@ -3610,12 +3612,12 @@ export function assess(paths: CrewPaths, work: WorkItem, profile: Profile, polic
 }
 ```
 
-- [ ] **Step 4: Run the test**
+- [x] **Step 4: Run the test**
 
 Run: `bun test packages/engine/tests/gates.test.ts`
 Expected: 3 pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/engine/src/profile.ts packages/engine/src/gates.ts packages/engine/tests/gates.test.ts
@@ -3636,7 +3638,7 @@ git commit -m "feat(engine): deterministic gates and assessment"
 - From `session-start.ts`: `onSessionStart(ctx): HookResponse`. From `prompt.ts`: `onPrompt(ctx): HookResponse`.
 - Also `statusLine(ctx, work): string`, exported from `prompt.ts` and reused by the stop hook and the CLI.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 // packages/engine/tests/hooks-context.test.ts
@@ -3692,12 +3694,12 @@ test('the prompt hook adds one status line only while work is active', () => {
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `bun test packages/engine/tests/hooks-context.test.ts`
 Expected: FAIL, cannot resolve `../src/hooks/context.ts`.
 
-- [ ] **Step 3: Write the four modules**
+- [x] **Step 3: Write the four modules**
 
 ```ts
 // packages/engine/src/hooks/types.ts
@@ -3806,12 +3808,12 @@ export function onSessionStart(ctx: HookContext): HookResponse {
 }
 ```
 
-- [ ] **Step 4: Run the test**
+- [x] **Step 4: Run the test**
 
 Run: `bun test packages/engine/tests/hooks-context.test.ts`
 Expected: 3 pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/engine/src/hooks packages/engine/tests/hooks-context.test.ts
@@ -3830,7 +3832,7 @@ git commit -m "feat(engine): hook context, session start and prompt hooks"
 - Consumes: `isProtectedPath`, `isWatched`, `activeWork`, `isBeforeBuild`, `HookContext`, `HookPayload`.
 - Produces: `onPreToolUse(ctx, payload): HookResponse`. Answers `deny`, `ask` or `{}` (no opinion).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 // packages/engine/tests/hooks-pre-tool-use.test.ts
@@ -3897,12 +3899,12 @@ test('bash: user-only decisions ask, writes to engine files are denied, everythi
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `bun test packages/engine/tests/hooks-pre-tool-use.test.ts`
 Expected: FAIL, cannot resolve `../src/hooks/pre-tool-use.ts`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 ```ts
 // packages/engine/src/hooks/pre-tool-use.ts
@@ -3963,12 +3965,12 @@ export function onPreToolUse(ctx: HookContext, payload: HookPayload): HookRespon
 }
 ```
 
-- [ ] **Step 4: Run the test**
+- [x] **Step 4: Run the test**
 
 Run: `bun test packages/engine/tests/hooks-pre-tool-use.test.ts`
 Expected: 3 pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/engine/src/hooks/pre-tool-use.ts packages/engine/tests/hooks-pre-tool-use.test.ts
@@ -3986,7 +3988,7 @@ git commit -m "feat(engine): pre-tool-use hook"
 **Interfaces:**
 - Produces: `MAX_STOP_BLOCKS = 3`, `onStop(ctx): HookResponse` (the five-case rule from spec section 12), `handleHook(event: string, payload: HookPayload, env?): HookResponse` for events `session-start`, `prompt`, `pre-tool-use`, `stop`; any other event or any thrown error gives `{}`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 // packages/engine/tests/hooks-stop.test.ts
@@ -4065,12 +4067,12 @@ test('handleHook dispatches by event and never throws', () => {
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `bun test packages/engine/tests/hooks-stop.test.ts`
 Expected: FAIL, cannot resolve `../src/hooks/stop.ts`.
 
-- [ ] **Step 3: Write the two modules**
+- [x] **Step 3: Write the two modules**
 
 ```ts
 // packages/engine/src/hooks/stop.ts
@@ -4153,12 +4155,12 @@ export function handleHook(event: string, payload: HookPayload, env: NodeJS.Proc
 }
 ```
 
-- [ ] **Step 4: Run the test**
+- [x] **Step 4: Run the test**
 
 Run: `bun test packages/engine/tests/hooks-stop.test.ts`
 Expected: 5 pass.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/engine/src/hooks/stop.ts packages/engine/src/hooks/index.ts packages/engine/tests/hooks-stop.test.ts
@@ -4176,7 +4178,7 @@ git commit -m "feat(engine): stop hook and hook dispatcher"
 **Interfaces:**
 - Produces: `interface CliIo { stdout(text); stderr(text); stdin(): Promise<string>; env; cwd }`, `main(argv: string[], io: CliIo): Promise<number>` with exit codes `0` done, `1` refused, `2` error. Every command accepts `--json`. `crew.ts` is the bundle entry. `index.ts` re-exports the library for the mod (SP1b).
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 // packages/engine/tests/cli.test.ts
@@ -4287,12 +4289,12 @@ test('hook: malformed or empty stdin answers {} and exits 0', async () => {
 });
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `bun test packages/engine/tests/cli.test.ts`
 Expected: FAIL, cannot resolve `../src/cli.ts`.
 
-- [ ] **Step 3: Write the CLI, the entry and the library index**
+- [x] **Step 3: Write the CLI, the entry and the library index**
 
 ```ts
 // packages/engine/src/cli.ts
@@ -4685,12 +4687,12 @@ export * from './version.ts';
 export * from './work.ts';
 ```
 
-- [ ] **Step 4: Run the test and the full suite**
+- [x] **Step 4: Run the test and the full suite**
 
 Run: `bun test packages/engine/tests/cli.test.ts && bun run check`
 Expected: 4 pass; typecheck, lint and all tests green.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/engine/src/cli.ts packages/engine/src/crew.ts packages/engine/src/index.ts packages/engine/tests/cli.test.ts
@@ -4708,7 +4710,7 @@ git commit -m "feat(engine): the crew command"
 **Interfaces:**
 - Produces: `bun run build` → `plugins/core/dist/crew.mjs`; the plugin loads with `claude --plugin-dir plugins/core`.
 
-- [ ] **Step 1: Write the build script and the plugin files**
+- [x] **Step 1: Write the build script and the plugin files**
 
 ```ts
 // scripts/build.ts
@@ -4806,7 +4808,7 @@ claude --plugin-dir ./plugins/core      # loads the plugin for one session
 ```
 ```
 
-- [ ] **Step 2: Build and verify**
+- [x] **Step 2: Build and verify**
 
 Run:
 ```bash
@@ -4821,7 +4823,7 @@ Expected: `built plugins/core/dist/crew.mjs (NN KB) for version 0.1.0`; `0.1.0`;
 
 If `claude plugin validate --strict` reports a warning, fix the cause; do not drop `--strict`.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add README.md scripts/build.ts plugins/core
@@ -4838,7 +4840,7 @@ git commit -m "feat(plugin): package the engine as a Claude Code plugin"
 **Interfaces:**
 - Consumes: every `crew` command from Task 21 and the typed questions from Task 10. The skill names actions, not tools, so SP6 can reuse it in other runtimes.
 
-- [ ] **Step 1: Write SKILL.md**
+- [x] **Step 1: Write SKILL.md**
 
 ```markdown
 ---
@@ -4888,7 +4890,7 @@ The route (fast, standard or full) is chosen by the engine from your answers and
 `crew status` tells you where the work stands at any time.
 ```
 
-- [ ] **Step 2: Write the references**
+- [x] **Step 2: Write the references**
 
 ```markdown
 <!-- plugins/core/skills/crew/references/receive.md -->
@@ -5122,7 +5124,7 @@ The work artefacts under `.crew/work/<id>/` are committed with the change by def
 A team policy in `.crew/policy.json` applies on top of any mode: required gates, risk paths, a minimum route and what may be skipped. The engine enforces it; you do not need to read it.
 ```
 
-- [ ] **Step 3: Validate and measure the always-on cost**
+- [x] **Step 3: Validate and measure the always-on cost**
 
 Run:
 ```bash
@@ -5131,7 +5133,7 @@ claude plugin details ./plugins/core
 ```
 Expected: `Validation passed`; the details output reports the always-on cost. The skill description plus the SessionStart lines must stay under 300 tokens; if the details output shows more, shorten the description.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add plugins/core/skills
@@ -5147,7 +5149,7 @@ git commit -m "feat(plugin): the crew skill and its phase references"
 
 This task runs the plugin in a real Claude Code session on a throwaway project. It verifies the acceptance criteria that only a live session can show (spec, section 20: criteria 2, 6, 9 and 10) and records hook latency.
 
-- [ ] **Step 1: Build the sandbox**
+- [x] **Step 1: Build the sandbox**
 
 ```bash
 rm -rf /tmp/crew-sandbox && mkdir -p /tmp/crew-sandbox/src /tmp/crew-sandbox/tests && cd /tmp/crew-sandbox
@@ -5167,7 +5169,7 @@ EOF
 git add -A && git commit -q -m "sandbox"
 ```
 
-- [ ] **Step 2: Measure the hook path**
+- [x] **Step 2: Measure the hook path**
 
 ```bash
 cd /tmp/crew-sandbox
@@ -5177,7 +5179,7 @@ for i in 1 2 3 4 5; do /usr/bin/time -p sh -c "printf '{\"session_id\":\"e2e\",\
 ```
 Expected: the SessionStart answer names `crew start`; each PreToolUse run reports `real` under 0.15 seconds. Record the numbers.
 
-- [ ] **Step 3: Run a live session**
+- [x] **Step 3: Run a live session**
 
 ```bash
 cd /tmp/crew-sandbox && claude --plugin-dir ~/AIProjects/shibaox-developer-crew/plugins/core
@@ -5191,11 +5193,11 @@ In the session, in order, and note what happens:
 4. Say: `Skip the lint gate.` Expect: a permission prompt for `crew skip`; decline it and confirm the work stays not proven for that reason, or accept it and confirm the skip appears in the report.
 5. Run `/plugin` and disable the plugin's mod if one is listed (there is none in SP1a), then repeat step 2 to confirm the hooks alone still block.
 
-- [ ] **Step 4: Record the results**
+- [x] **Step 4: Record the results**
 
 Write `docs/plans/2026-10-07-sp1a-e2e-results.md` with: the date, the Claude Code version (`claude --version`), the five hook timings, and for each of the five session steps what was expected and what happened, verbatim where a hook reason or a report line matters. If any step failed, open the fix as a new task before closing SP1a.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add docs/plans/2026-10-07-sp1a-e2e-results.md

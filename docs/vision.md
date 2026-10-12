@@ -1,6 +1,6 @@
 # WizardingCode Developer Crew: Vision
 
-> **Status:** design. Nothing in this document is implemented yet.
+> **Status:** SP1 (the engine, the base method, the mod and the evals) is implemented and measured as of 2026-10-12: [SP1 design](specs/2026-10-06-sp1-engine-and-base-method-design.md), [end-to-end check](plans/2026-10-07-sp1a-e2e-results.md), [evals record](evals/2026-10-12-sp1b-results.md). SP2 to SP6 are design.
 > **Date:** 2026-10-06. **Owner:** WizardingCode. **License:** MIT.
 
 ## 1. What it is

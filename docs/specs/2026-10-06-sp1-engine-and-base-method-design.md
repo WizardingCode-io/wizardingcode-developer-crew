@@ -1,6 +1,6 @@
 # SP1: Engine and base method (design)
 
-> **Status:** draft for review. **Date:** 2026-10-06.
+> **Status:** implemented. SP1a (engine, `crew`, hooks, skill, plugin) and SP1b (mod, evals) shipped between 2026-10-07 and 2026-10-12; the live sessions are in the [end-to-end check](../plans/2026-10-07-sp1a-e2e-results.md) and the measurements in the [evals record](../evals/2026-10-12-sp1b-results.md). Written 2026-10-06 as a draft for review; dated revisions mark where the measurements changed the design. **Date:** 2026-10-06.
 > **Parent:** [Vision](../vision.md). **Subproject:** 1 of 6.
 
 ## 1. Summary
@@ -63,16 +63,16 @@ The engine is a library first. Three thin faces sit on top of it.
 
 ```
 packages/engine      TypeScript library: detection, state, gates, evidence, phases, hooks logic
-  └─ cli             `crew` command: every engine operation, plus `crew hook <event>`
-packages/mod         Claude Code mod: panel, status strip, /crew command (uses the library in-process)
+  └─ cli.ts          `crew` command: every engine operation, plus `crew hook <event>`
 plugins/core         The installable plugin: built files only
   ├─ .claude-plugin/plugin.json
   ├─ skills/crew/    One skill with references per phase
-  ├─ hooks/hooks.json   Command hooks, and the mod's hooks module
+  ├─ hooks/hooks.json   Command hooks, and the mod as its hooks module
+  ├─ hooks/register.js  The mod: status strip, /crew command, panel (runs the crew command; section 16)
   ├─ bin/crew        Launcher on the Bash tool's PATH
-  └─ dist/           Bundled engine and mod
-evals/               Eval cases and fixture projects
-docs/                Vision, specs, decisions
+  ├─ dist/crew.mjs   The bundled engine
+  └─ evals/          Eval cases and fixture projects (inside the plugin, where `claude plugin eval` looks)
+docs/                Vision, specs, plans, decisions, the evals records
 ```
 
 Rules:
@@ -483,7 +483,7 @@ Fixture projects: Node with TypeScript, Python, and a Makefile-only project. PHP
 
 | Risk | Mitigation |
 | :- | :- |
-| A hook on every file write and shell command adds latency | Keep the hook path minimal and measure it. Target: under 150 ms at the 95th percentile. If needed, the mod can answer in-process while hooks remain the fallback |
+| A hook on every file write and shell command adds latency | Keep the hook path minimal and measure it. Target: under 150 ms at the 95th percentile. If needed, the hooks' own work can be cut further; the mod cannot take it over, since its runtime has no Node APIs (section 16). Measured 2026-10-12: 0.03 s per PreToolUse |
 | The Stop rule blocks a legitimate pause | The "waiting for the user" state, and the limit of three blocks |
 | Slow test suites make every change expensive | Test-first runs can target one test. The full suite runs once at the gate. Timeouts come from the profile |
 | Two sessions share one working tree | SP1 assumes one active work item per working tree and says so. SP5 uses separate branches |
