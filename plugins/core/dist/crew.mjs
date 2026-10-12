@@ -1753,10 +1753,48 @@ function buildContext(payload, env = process.env) {
 
 // packages/engine/src/hooks/pre-tool-use.ts
 import { isAbsolute, join as join16, relative as relative4 } from "node:path";
+
+// packages/engine/src/hooks/shell.ts
+function simpleCommands(command) {
+  const pieces = [];
+  for (const line of command.replace(/\\\r?\n/g, " ").split(/\r?\n/)) {
+    let piece = "";
+    let quote = null;
+    for (let i = 0;i < line.length; i++) {
+      const ch = line.charAt(i);
+      if (quote !== null) {
+        piece += ch;
+        if (ch === "\\" && quote === '"' && i + 1 < line.length)
+          piece += line.charAt(++i);
+        else if (ch === quote)
+          quote = null;
+      } else if (ch === "\\" && i + 1 < line.length) {
+        piece += ch + line.charAt(++i);
+      } else if (ch === '"' || ch === "'") {
+        quote = ch;
+        piece += ch;
+      } else if (ch === ";" || (ch === "|" || ch === "&") && !isRedirectPart(line, i)) {
+        pieces.push(piece);
+        piece = "";
+      } else {
+        piece += ch;
+      }
+    }
+    pieces.push(piece);
+  }
+  return pieces.map((piece) => piece.trim()).filter((piece) => piece !== "");
+}
+function isRedirectPart(line, i) {
+  const before = line.charAt(i - 1);
+  return before === ">" || before === "<" || line.charAt(i) === "&" && line.charAt(i + 1) === ">";
+}
+
+// packages/engine/src/hooks/pre-tool-use.ts
 var WRITE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
 var USER_ONLY = /(?:^|[\s/;&|(])crew(?:\.mjs)?\s+(?:skip|approve|accept|profile\s+confirm|policy\s+accept|profile\s+set\b[^;&|]*--force)\b/;
 var ENGINE_FILES = /\.crew\/(?:profile\.json|policy\.json|\.gitignore|local\b|work\/[^\s/]+\/(?:work\.json|evidence\.json|report\.md|logs\b))|\.wizardingcode\/crew\b/;
-var WRITE_SHAPE = /(?:^|[\s;&|(])(?:rm|mv|cp|tee|truncate|chmod|touch|dd|install)\b|sed\s+-i|>{1,2}\|?\s*(?:["']?\S*(?:\.crew\/|\.wizardingcode\/crew\b)|["']?[$`])/;
+var WRITE_SHAPE = /(?:^|[\s;&|("'])(?:rm|mv|cp|tee|truncate|chmod|touch|dd|install)\b|sed\s+-i|>{1,2}\|?\s*["']?\S*(?:\.crew\/|\.wizardingcode\/crew\b)/;
+var OPAQUE_REDIRECT = />{1,2}\|?\s*["']?[$`]/;
 var UNATTENDED_MODES2 = new Set(["auto", "bypassPermissions", "dontAsk"]);
 var MODE_FLAG = /--mode(?:=|\s+)(\S+)/;
 function userOnlyDecision(cleaned, permissionMode) {
@@ -1765,14 +1803,23 @@ function userOnlyDecision(cleaned, permissionMode) {
     if (flagged === permissionMode)
       return null;
     if (flagged === undefined) {
-      return answer("deny", `Crew: no person is watching this session (${permissionMode} mode) and this command records a decision that only the user can take. Run it again with --mode ${permissionMode}, so the record says the agent decided and in which mode.`);
+      return [
+        "deny",
+        `Crew: no person is watching this session (${permissionMode} mode) and this command records a decision that only the user can take. Run it again with --mode ${permissionMode}, so the record says the agent decided and in which mode.`
+      ];
     }
-    return answer("deny", `Crew: this session is in ${permissionMode} mode, not ${flagged}; run the command with --mode ${permissionMode}`);
+    return [
+      "deny",
+      `Crew: this session is in ${permissionMode} mode, not ${flagged}; run the command with --mode ${permissionMode}`
+    ];
   }
   if (flagged !== undefined) {
-    return answer("deny", `Crew: a person is present (${permissionMode ?? "default"} mode); run the command without --mode so they are asked`);
+    return [
+      "deny",
+      `Crew: a person is present (${permissionMode ?? "default"} mode); run the command without --mode so they are asked`
+    ];
   }
-  return answer("ask", "Crew: this command records a decision that only the user can take");
+  return ["ask", "Crew: this command records a decision that only the user can take"];
 }
 function answer(permissionDecision, reason) {
   return {
@@ -1814,15 +1861,21 @@ function onPreToolUse(ctx, payload) {
   }
   if (tool === "Bash") {
     const command = typeof input.command === "string" ? input.command : "";
-    const cleaned = command.replace(/["'\\]/g, "");
-    if (USER_ONLY.test(cleaned)) {
-      const decided = userOnlyDecision(cleaned, payload.permission_mode);
-      if (decided)
-        return decided;
+    let asked = null;
+    for (const piece of simpleCommands(command)) {
+      const cleaned = piece.replace(/["'\\]/g, "");
+      if (USER_ONLY.test(cleaned)) {
+        const decided = userOnlyDecision(cleaned, payload.permission_mode);
+        if (decided?.[0] === "deny")
+          return answer(...decided);
+        asked ??= decided;
+      }
+      if (ENGINE_FILES.test(piece) && WRITE_SHAPE.test(piece) || OPAQUE_REDIRECT.test(piece) && ENGINE_FILES.test(command)) {
+        return answer("deny", "Crew: files under .crew/ and ~/.wizardingcode/crew that the engine owns are written only by the crew command");
+      }
     }
-    if (ENGINE_FILES.test(command) && WRITE_SHAPE.test(command)) {
-      return answer("deny", "Crew: files under .crew/ and ~/.wizardingcode/crew that the engine owns are written only by the crew command");
-    }
+    if (asked)
+      return answer(...asked);
   }
   return {};
 }
@@ -2042,7 +2095,7 @@ async function recordTdd(paths, work, evidence, profile, criterionId, step, over
 }
 
 // packages/engine/src/version.ts
-var VERSION = "0.1.2";
+var VERSION = "0.1.3";
 
 // packages/engine/src/cli.ts
 var BOOLEAN_FLAGS = new Set(["json", "refresh", "force"]);

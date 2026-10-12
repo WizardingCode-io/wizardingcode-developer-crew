@@ -142,6 +142,76 @@ test("bash: with a person present, a user-only decision is asked and --mode cann
   }
 });
 
+test("bash: each simple command is judged on its own; a deny in one wins over an ask in another", () => {
+  const { ctx } = setup();
+  const bash = (command: string, permission_mode?: string) =>
+    onPreToolUse(ctx, { tool_name: "Bash", tool_input: { command }, permission_mode });
+  // Finding 2: a document that names an engine file, then a write verb on another file.
+  const docs = [
+    "cat > docs/real-use/findings.md <<'EOF'",
+    "# Findings",
+    "- Evidence: `.crew/work/2026-10-12-001-thing/work.json` (`routeReasons`).",
+    "EOF",
+    "sed -i '' 's/old/new/' CLAUDE.md",
+  ].join("\n");
+  expect(bash(docs)).toEqual({});
+  expect(bash('echo "see .crew/work/w1/work.json" > docs/notes.md && rm docs/draft.md')).toEqual(
+    {},
+  );
+  expect(bash("grep -n fail .crew/work/w1/report.md | tee /tmp/out.txt")).toEqual({});
+  expect(decision(bash("cat docs/notes.md; rm .crew/work/w1/logs/test.txt"))).toBe("deny");
+  expect(decision(bash("echo x | tee .crew/profile.json"))).toBe("deny");
+  expect(decision(bash('bash -c "rm .crew/profile.json"'))).toBe("deny");
+  expect(decision(bash("crew approve w1 spec; echo x > .crew/profile.json", "default"))).toBe(
+    "deny",
+  );
+});
+
+test("bash: the user-only rule and --mode are read from the same simple command", () => {
+  const { ctx } = setup();
+  const bash = (command: string, permission_mode?: string) =>
+    onPreToolUse(ctx, { tool_name: "Bash", tool_input: { command }, permission_mode });
+  // Finding 5: a read-only probe whose payload names the command, after an echo that says --mode.
+  const probe = [
+    'echo "probe: the bare command, --mode in auto, through the installed bundle"',
+    `printf '%s' '{"permission_mode":"auto","tool_input":{"command":"node plugins/core/dist/crew.mjs approve w1 spec"}}' | node dist/crew.mjs hook pre-tool-use`,
+  ].join("; ");
+  expect(decision(bash(probe, "plan"))).toBe("ask");
+  expect(bash('crew skip w1 gate:lint --reason "a; b && c" --mode auto', "auto")).toEqual({});
+  expect(decision(bash('crew skip w1 gate:lint --reason "a; b"', "default"))).toBe("ask");
+  expect(decision(bash('crew skip w1 gate:lint --reason "a; b" --mode auto', "default"))).toBe(
+    "deny",
+  );
+  // The flag must sit on the crew command itself.
+  expect(decision(bash("echo --mode auto; crew approve w1 spec", "auto"))).toBe("deny");
+  expect(decision(bash("crew approve w1 spec; echo --mode auto", "auto"))).toBe("deny");
+});
+
+test("bash: a heredoc body line is judged like a simple command", () => {
+  const { ctx } = setup();
+  const bash = (command: string) =>
+    onPreToolUse(ctx, { tool_name: "Bash", tool_input: { command } });
+  expect(decision(bash("bash <<'EOF'\nrm .crew/profile.json\nEOF"))).toBe("deny");
+  expect(decision(bash("cat <<'EOF' | sh\ncp x .crew/work/w1/evidence.json\nEOF"))).toBe("deny");
+  const notes = [
+    "cat > docs/notes.md <<'EOF'",
+    "The evidence is in .crew/work/w1/work.json and the profile in .crew/profile.json.",
+    "Drafts are removed with rm docs/draft.md.",
+    "EOF",
+  ].join("\n");
+  expect(bash(notes)).toEqual({});
+});
+
+test("bash: an opaque redirect target fails closed over the whole command", () => {
+  const { ctx } = setup();
+  const bash = (command: string) =>
+    onPreToolUse(ctx, { tool_name: "Bash", tool_input: { command } });
+  expect(decision(bash("F=.crew/profile.json; echo x > $F"))).toBe("deny");
+  expect(decision(bash("F=.crew/work/w1/work.json\ncat x >> $F"))).toBe("deny");
+  expect(decision(bash("echo x > `echo .crew/profile.json`"))).toBe("deny");
+  expect(bash("F=docs/notes.md; echo x > $F")).toEqual({});
+});
+
 test("a write through a symlinked alias of the repository is judged like the real path", () => {
   const { root, ctx } = setup();
   const alias = join(tempDir(), "alias");
