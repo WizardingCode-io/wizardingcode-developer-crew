@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
-import { writeFileSync } from "node:fs";
+import { chmodSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { detectProfile } from "../src/detect/index.ts";
 import { changedText, isBinary, scanSecrets, scanText } from "../src/secrets.ts";
-import { git, makeRepo, write } from "./helpers.ts";
+import { git, makeRepo, tempDir, write } from "./helpers.ts";
 
 test("scanText finds known key formats and ignores placeholders", () => {
   const text = [
@@ -54,4 +54,20 @@ test("I1: a leak committed during the work is still found from the work item's b
   const result = await scanSecrets(root, profile, base);
   expect(result.status).toBe("fail");
   expect(result.findings.map((f) => f.rule).sort()).toEqual(["AWS access key", "Stripe key"]);
+});
+
+test("when git cannot run, every watched file is scanned, as without git", () => {
+  const root = makeRepo({ "src/k.ts": "const k = 1;\n", "README.md": "# r\n" });
+  const profile = detectProfile(root);
+  expect(changedText(root, profile)).toEqual([]);
+  const bin = tempDir("bin-");
+  write(bin, "git", "#!/bin/sh\nexit 1\n");
+  chmodSync(join(bin, "git"), 0o755);
+  const saved = process.env.PATH;
+  process.env.PATH = bin;
+  try {
+    expect(changedText(root, profile).map((s) => s.source)).toEqual(["src/k.ts"]);
+  } finally {
+    process.env.PATH = saved;
+  }
 });

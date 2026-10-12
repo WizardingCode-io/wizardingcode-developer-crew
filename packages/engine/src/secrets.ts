@@ -76,26 +76,31 @@ function fileSource(root: string, path: string): ScanSource | null {
  */
 export function changedText(root: string, profile: Profile, base?: string | null): ScanSource[] {
   const sources: ScanSource[] = [];
-  if (!isGitRepo(root)) {
-    // Above the walk's cap there is nothing to scan; the verdict already says the fingerprint is unavailable.
+  // Above the walk's cap there is nothing to scan; the verdict already says the fingerprint is unavailable.
+  const everything = () => {
     for (const path of allWatchedFiles(root, profile) ?? []) {
       const source = fileSource(root, path);
       if (source) sources.push(source);
     }
     return sources;
-  }
+  };
+  if (!isGitRepo(root)) return everything();
   const from = base ?? "HEAD";
-  let diff = "";
+  let diff: string | null;
   try {
     diff = execFileSync("git", ["diff", from, "--unified=0", "--no-color", "--", "."], {
       cwd: root,
+      env: process.env,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
       maxBuffer: 64 * 1024 * 1024,
     });
   } catch {
-    diff = "";
+    diff = null;
   }
+  const untracked = untrackedPaths(root);
+  // Where git cannot run, the whole tree is the change, as in a folder without git.
+  if (diff === null || untracked === null) return everything();
   const added = diff
     .split("\n")
     .filter((l) => l.startsWith("+") && !l.startsWith("+++"))
@@ -106,7 +111,7 @@ export function changedText(root: string, profile: Profile, base?: string | null
       source: `git diff ${base ? base.slice(0, 12) : "HEAD"} (added lines)`,
       text: added,
     });
-  for (const path of untrackedPaths(root).sort()) {
+  for (const path of untracked.sort()) {
     if (!isWatched(path, profile)) continue;
     const source = fileSource(root, path);
     if (source) sources.push(source);

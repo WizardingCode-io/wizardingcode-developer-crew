@@ -2,7 +2,12 @@ import { accessSync, constants } from "node:fs";
 import { basename, delimiter, join } from "node:path";
 import { riskAreasForPaths } from "./classify.ts";
 import { computeVerdict, loadEvidence, type PlannedGate, saveEvidence } from "./evidence.ts";
-import { changedWatchedPaths, computeFingerprint } from "./fingerprint.ts";
+import {
+  changedWatchedPaths,
+  computeFingerprint,
+  fingerprintMethod,
+  MAX_WATCHED_FILES,
+} from "./fingerprint.ts";
 import { exists, nowIso } from "./fs.ts";
 import { type CrewPaths, workDir } from "./paths.ts";
 import { runCommand } from "./run.ts";
@@ -286,7 +291,13 @@ export async function runGates(
     work,
     evidence,
     expected: planned,
-    currentFingerprint: computeFingerprint(paths.root, profile, base),
+    currentFingerprint: computeFingerprint(
+      paths.root,
+      profile,
+      base,
+      MAX_WATCHED_FILES,
+      fingerprintMethod(fingerprintBefore),
+    ),
     tampered,
   });
   evidence.verdict = verdict.verdict;
@@ -315,11 +326,19 @@ export function assess(
   const changed = changedWatchedPaths(paths.root, profile, base);
   const expected = plannedGates(work.route, profile, policy, changed, paths.root);
   const read = loadEvidence(paths, work.id);
+  // Judged with the method the evidence was made with: a walk fingerprint from a process where
+  // git could not run is compared to the walk here, not to git's name for the same code.
   const verdict = computeVerdict({
     work,
     evidence: read.evidence,
     expected,
-    currentFingerprint: computeFingerprint(paths.root, profile, base),
+    currentFingerprint: computeFingerprint(
+      paths.root,
+      profile,
+      base,
+      MAX_WATCHED_FILES,
+      fingerprintMethod(read.evidence.fingerprint),
+    ),
     tampered: tampered || read.tampered,
   });
   return { evidence: read.evidence, ...verdict, expected, changed };

@@ -1,11 +1,12 @@
 import { expect, test } from "bun:test";
-import { symlinkSync } from "node:fs";
+import { chmodSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { detectProfile } from "../src/detect/index.ts";
 import { computeVerdict, emptyEvidence } from "../src/evidence.ts";
 import {
   changedWatchedPaths,
   computeFingerprint,
+  fingerprintMethod,
   gitChangedPaths,
   MAX_WATCHED_FILES,
 } from "../src/fingerprint.ts";
@@ -63,7 +64,7 @@ test("C3: the walk without git never follows symlinks, so a cycle is harmless", 
   write(root, "node_modules/x/index.js", "skipped");
   const profile = detectProfile(root);
   expect(changedWatchedPaths(root, profile)).toEqual(["src/a.py"]);
-  expect(computeFingerprint(root, profile)).toMatch(/^sha256:/);
+  expect(computeFingerprint(root, profile)).toMatch(/^walk:/);
 });
 
 test("C3: above the file cap the fingerprint is unavailable and never proven", () => {
@@ -73,7 +74,7 @@ test("C3: above the file cap the fingerprint is unavailable and never proven", (
   write(root, "src/c.py", "c = 1\n");
   const profile = detectProfile(root);
   expect(MAX_WATCHED_FILES).toBe(20_000);
-  expect(computeFingerprint(root, profile, null, 3)).toMatch(/^sha256:/);
+  expect(computeFingerprint(root, profile, null, 3)).toMatch(/^walk:/);
   expect(computeFingerprint(root, profile, null, 2)).toBe("unavailable");
   expect(changedWatchedPaths(root, profile, null, 2)).toEqual([]);
   const work = { criteria: [], skips: [] } as unknown as WorkItem;
@@ -100,4 +101,29 @@ test("a folder without git falls back to hashing every watched file", () => {
   expect(computeFingerprint(root, profile)).toBe(before);
   write(root, "src/a.py", "a = 2\n");
   expect(computeFingerprint(root, profile)).not.toBe(before);
+});
+
+test("when git cannot run in a repository, the walk takes over and names itself", () => {
+  const root = makeRepo({ "src/a.ts": "x", "README.md": "# r\n" });
+  const profile = detectProfile(root);
+  const withGit = computeFingerprint(root, profile);
+  expect(withGit).toMatch(/^sha256:/);
+  const walk = computeFingerprint(root, profile, null, MAX_WATCHED_FILES, "walk");
+  expect(walk).toMatch(/^walk:[0-9a-f]{64}$/);
+  expect(fingerprintMethod(walk)).toBe("walk");
+  expect(fingerprintMethod(withGit)).toBeUndefined();
+  expect(fingerprintMethod(null)).toBeUndefined();
+  // A git that cannot run (a broken shim, a sandbox) is not "no changes".
+  const bin = tempDir("bin-");
+  write(bin, "git", "#!/bin/sh\nexit 1\n");
+  chmodSync(join(bin, "git"), 0o755);
+  const saved = process.env.PATH;
+  process.env.PATH = bin;
+  try {
+    expect(gitChangedPaths(root)).toBeNull();
+    expect(changedWatchedPaths(root, profile)).toEqual(["src/a.ts"]);
+    expect(computeFingerprint(root, profile)).toBe(walk);
+  } finally {
+    process.env.PATH = saved;
+  }
 });

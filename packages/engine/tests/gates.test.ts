@@ -245,3 +245,40 @@ test("a diff that touches a risk path raises the route to full", async () => {
   expect(work.riskAreas).toEqual(["auth"]);
   expect(work.routeReasons.at(-1)).toBe("raised to full: the change touches auth paths");
 });
+
+test("evidence recorded while git could not run is judged the same way once it can", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const paths = repoPaths(root, testEnv());
+  const { profile } = ensureProfile(paths);
+  // The walk counts every watched file as the change, the manifest included, which plans the
+  // deps audit (unavailable here: no lockfile). That is a folder without git's behaviour, not
+  // this test's subject.
+  profile.watch.exclude.push("package.json");
+  const work = createWork(paths, "fix");
+  work.route = "fast";
+  addCriterion(work, "x");
+  addSkip(work, "tdd:AC-1", "manual");
+  write(root, "src/a.ts", "y");
+  const bin = tempDir("bin-");
+  write(bin, "git", "#!/bin/sh\nexit 1\n");
+  chmodSync(join(bin, "git"), 0o755);
+  const saved = process.env.PATH;
+  process.env.PATH = `${bin}:${saved}`;
+  let outcome: Awaited<ReturnType<typeof runGates>>;
+  try {
+    outcome = await runGates(paths, work, profile, DEFAULT_POLICY);
+  } finally {
+    process.env.PATH = saved;
+  }
+  expect(outcome.verdict).toBe("proven");
+  expect(outcome.evidence.fingerprint).toMatch(/^walk:/);
+  // The hook runs where git works: the same evidence still vouches for the same code.
+  expect(assess(paths, work, profile, DEFAULT_POLICY).verdict).toBe("proven");
+  write(root, "src/a.ts", "z");
+  expect(assess(paths, work, profile, DEFAULT_POLICY).unproven).toEqual([
+    "code changed since the last gate run",
+  ]);
+});

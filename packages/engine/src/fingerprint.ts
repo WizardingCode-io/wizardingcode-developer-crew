@@ -9,26 +9,37 @@ import type { Profile } from "./types.ts";
 /** Above this many files a folder without git is too big to hash on every hook. */
 export const MAX_WATCHED_FILES = 20_000;
 export const UNAVAILABLE = "unavailable";
+/** A fingerprint made by hashing every watched file, as a folder without git gets. */
+export const WALK_PREFIX = "walk:";
+export type FingerprintMethod = "git" | "walk";
 
 export function isGitRepo(root: string): boolean {
   return exists(join(root, ".git"));
 }
 
 function gitOut(root: string, args: string[]): string {
+  // The live environment, so the git found is the one on the PATH of this moment (Bun resolves
+  // the file from the env it is given, not from a snapshot).
   return execFileSync("git", args, {
     cwd: root,
+    env: process.env,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "ignore"],
     maxBuffer: 64 * 1024 * 1024,
   });
 }
 
-export function gitHead(root: string): string {
+/** Null when git itself could not run: not on PATH, a broken shim, a sandbox. Never "no output". */
+function gitTry(root: string, args: string[]): string | null {
   try {
-    return gitOut(root, ["rev-parse", "HEAD"]).trim();
+    return gitOut(root, args);
   } catch {
-    return "none";
+    return null;
   }
+}
+
+export function gitHead(root: string): string {
+  return gitTry(root, ["rev-parse", "HEAD"])?.trim() ?? "none";
 }
 
 /** The commit a work item's change is measured from: HEAD when it starts, or null without history. */
@@ -38,14 +49,13 @@ export function baseCommitOf(root: string): string | null {
   return head === "none" ? null : head;
 }
 
-/** Paths that differ from HEAD: modified, added, deleted, renamed and untracked (not ignored). */
-export function gitChangedPaths(root: string): string[] {
-  let out: string;
-  try {
-    out = gitOut(root, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
-  } catch {
-    return [];
-  }
+/**
+ * Paths that differ from HEAD: modified, added, deleted, renamed and untracked (not ignored).
+ * Null when git could not run; a caller must not take that for "nothing changed".
+ */
+export function gitChangedPaths(root: string): string[] | null {
+  const out = gitTry(root, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
+  if (out === null) return null;
   const entries = out.split("\0");
   const paths = new Set<string>();
   for (let i = 0; i < entries.length; i++) {
@@ -61,27 +71,18 @@ export function gitChangedPaths(root: string): string[] {
   return [...paths].sort();
 }
 
-export function untrackedPaths(root: string): string[] {
-  try {
-    return gitOut(root, ["ls-files", "--others", "--exclude-standard", "-z"])
-      .split("\0")
-      .filter(Boolean);
-  } catch {
-    return [];
-  }
+/** Null when git could not run. */
+export function untrackedPaths(root: string): string[] | null {
+  const out = gitTry(root, ["ls-files", "--others", "--exclude-standard", "-z"]);
+  return out === null ? null : out.split("\0").filter(Boolean);
 }
 
-/** Paths that differ from a base commit, committed since or not, plus untracked files. */
-export function gitChangedSince(root: string, base: string): string[] {
-  let diffed: string[];
-  try {
-    diffed = gitOut(root, ["diff", "--name-only", "--no-renames", "-z", base, "--"])
-      .split("\0")
-      .filter(Boolean);
-  } catch {
-    diffed = [];
-  }
-  return [...new Set([...diffed, ...untrackedPaths(root)])].sort();
+/** Paths that differ from a base commit, committed since or not, plus untracked files. Null when git could not run. */
+export function gitChangedSince(root: string, base: string): string[] | null {
+  const diff = gitTry(root, ["diff", "--name-only", "--no-renames", "-z", base, "--"]);
+  const untracked = untrackedPaths(root);
+  if (diff === null || untracked === null) return null;
+  return [...new Set([...diff.split("\0").filter(Boolean), ...untracked])].sort();
 }
 
 export function isWatched(path: string, profile: Profile): boolean {
@@ -123,7 +124,8 @@ export function allWatchedFiles(
 
 /**
  * Watched paths the change touches. With a base commit, the change is everything since that
- * commit, so committing mid-work does not hide it. Without history every watched file counts.
+ * commit, so committing mid-work does not hide it. Without history, or where git cannot run,
+ * every watched file counts.
  */
 export function changedWatchedPaths(
   root: string,
@@ -131,9 +133,16 @@ export function changedWatchedPaths(
   base?: string | null,
   maxFiles = MAX_WATCHED_FILES,
 ): string[] {
-  if (!isGitRepo(root)) return allWatchedFiles(root, profile, maxFiles) ?? [];
-  const paths = base ? gitChangedSince(root, base) : gitChangedPaths(root);
-  return paths.filter((path) => isWatched(path, profile));
+  if (isGitRepo(root)) {
+    const paths = base ? gitChangedSince(root, base) : gitChangedPaths(root);
+    if (paths !== null) return paths.filter((path) => isWatched(path, profile));
+  }
+  return allWatchedFiles(root, profile, maxFiles) ?? [];
+}
+
+/** The method a fingerprint was made with, so the same evidence is judged the same way everywhere. */
+export function fingerprintMethod(fingerprint: string | null): FingerprintMethod | undefined {
+  return fingerprint?.startsWith(WALK_PREFIX) ? "walk" : undefined;
 }
 
 function hashFile(abs: string): string {
@@ -146,25 +155,30 @@ function hashFile(abs: string): string {
 
 /**
  * Names the state of the watched code. In git: the commit the change is measured from and the
- * content of each changed path. Without git: the content of every watched file, or `unavailable`
- * when there are too many to hash.
+ * content of each changed path (`sha256:`). Without git, or where git cannot run, or when asked
+ * for the walk: the content of every watched file (`walk:`), or `unavailable` when there are too
+ * many to hash. The walk gives the same name whether git works or not, so evidence written where
+ * git was broken is still judged where it works.
  */
 export function computeFingerprint(
   root: string,
   profile: Profile,
   base?: string | null,
   maxFiles = MAX_WATCHED_FILES,
+  method?: FingerprintMethod,
 ): string {
-  const parts: string[] = [];
-  if (isGitRepo(root)) {
-    parts.push(`base:${base ?? gitHead(root)}`);
-    for (const path of changedWatchedPaths(root, profile, base)) {
-      parts.push(`${path}:${hashFile(join(root, path))}`);
+  if (method !== "walk" && isGitRepo(root)) {
+    const changed = base ? gitChangedSince(root, base) : gitChangedPaths(root);
+    if (changed !== null) {
+      const parts = [`base:${base ?? gitHead(root)}`];
+      for (const path of changed.filter((p) => isWatched(p, profile))) {
+        parts.push(`${path}:${hashFile(join(root, path))}`);
+      }
+      return `sha256:${sha256(parts.join("\n"))}`;
     }
-  } else {
-    const files = allWatchedFiles(root, profile, maxFiles);
-    if (files === null) return UNAVAILABLE;
-    for (const path of files) parts.push(`${path}:${hashFile(join(root, path))}`);
   }
-  return `sha256:${sha256(parts.join("\n"))}`;
+  const files = allWatchedFiles(root, profile, maxFiles);
+  if (files === null) return UNAVAILABLE;
+  const parts = files.map((path) => `${path}:${hashFile(join(root, path))}`);
+  return `${WALK_PREFIX}${sha256(parts.join("\n"))}`;
 }

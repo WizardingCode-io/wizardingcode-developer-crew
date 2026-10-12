@@ -532,23 +532,28 @@ import { readdirSync as readdirSync2, readFileSync as readFileSync2 } from "node
 import { join as join7 } from "node:path";
 var MAX_WATCHED_FILES = 20000;
 var UNAVAILABLE = "unavailable";
+var WALK_PREFIX = "walk:";
 function isGitRepo(root) {
   return exists(join7(root, ".git"));
 }
 function gitOut(root, args) {
   return execFileSync("git", args, {
     cwd: root,
+    env: process.env,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "ignore"],
     maxBuffer: 64 * 1024 * 1024
   });
 }
-function gitHead(root) {
+function gitTry(root, args) {
   try {
-    return gitOut(root, ["rev-parse", "HEAD"]).trim();
+    return gitOut(root, args);
   } catch {
-    return "none";
+    return null;
   }
+}
+function gitHead(root) {
+  return gitTry(root, ["rev-parse", "HEAD"])?.trim() ?? "none";
 }
 function baseCommitOf(root) {
   if (!isGitRepo(root))
@@ -557,12 +562,9 @@ function baseCommitOf(root) {
   return head === "none" ? null : head;
 }
 function gitChangedPaths(root) {
-  let out;
-  try {
-    out = gitOut(root, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
-  } catch {
-    return [];
-  }
+  const out = gitTry(root, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
+  if (out === null)
+    return null;
   const entries = out.split("\x00");
   const paths = new Set;
   for (let i = 0;i < entries.length; i++) {
@@ -579,20 +581,15 @@ function gitChangedPaths(root) {
   return [...paths].sort();
 }
 function untrackedPaths(root) {
-  try {
-    return gitOut(root, ["ls-files", "--others", "--exclude-standard", "-z"]).split("\x00").filter(Boolean);
-  } catch {
-    return [];
-  }
+  const out = gitTry(root, ["ls-files", "--others", "--exclude-standard", "-z"]);
+  return out === null ? null : out.split("\x00").filter(Boolean);
 }
 function gitChangedSince(root, base) {
-  let diffed;
-  try {
-    diffed = gitOut(root, ["diff", "--name-only", "--no-renames", "-z", base, "--"]).split("\x00").filter(Boolean);
-  } catch {
-    diffed = [];
-  }
-  return [...new Set([...diffed, ...untrackedPaths(root)])].sort();
+  const diff = gitTry(root, ["diff", "--name-only", "--no-renames", "-z", base, "--"]);
+  const untracked = untrackedPaths(root);
+  if (diff === null || untracked === null)
+    return null;
+  return [...new Set([...diff.split("\x00").filter(Boolean), ...untracked])].sort();
 }
 function isWatched(path, profile) {
   return !matchesAny(path, profile.watch.exclude);
@@ -626,10 +623,15 @@ function allWatchedFiles(root, profile, maxFiles = MAX_WATCHED_FILES) {
   return walk(root, "") ? files.sort() : null;
 }
 function changedWatchedPaths(root, profile, base, maxFiles = MAX_WATCHED_FILES) {
-  if (!isGitRepo(root))
-    return allWatchedFiles(root, profile, maxFiles) ?? [];
-  const paths = base ? gitChangedSince(root, base) : gitChangedPaths(root);
-  return paths.filter((path) => isWatched(path, profile));
+  if (isGitRepo(root)) {
+    const paths = base ? gitChangedSince(root, base) : gitChangedPaths(root);
+    if (paths !== null)
+      return paths.filter((path) => isWatched(path, profile));
+  }
+  return allWatchedFiles(root, profile, maxFiles) ?? [];
+}
+function fingerprintMethod(fingerprint) {
+  return fingerprint?.startsWith(WALK_PREFIX) ? "walk" : undefined;
 }
 function hashFile(abs) {
   try {
@@ -638,21 +640,23 @@ function hashFile(abs) {
     return "DELETED";
   }
 }
-function computeFingerprint(root, profile, base, maxFiles = MAX_WATCHED_FILES) {
-  const parts = [];
-  if (isGitRepo(root)) {
-    parts.push(`base:${base ?? gitHead(root)}`);
-    for (const path of changedWatchedPaths(root, profile, base)) {
-      parts.push(`${path}:${hashFile(join7(root, path))}`);
+function computeFingerprint(root, profile, base, maxFiles = MAX_WATCHED_FILES, method) {
+  if (method !== "walk" && isGitRepo(root)) {
+    const changed = base ? gitChangedSince(root, base) : gitChangedPaths(root);
+    if (changed !== null) {
+      const parts2 = [`base:${base ?? gitHead(root)}`];
+      for (const path of changed.filter((p) => isWatched(p, profile))) {
+        parts2.push(`${path}:${hashFile(join7(root, path))}`);
+      }
+      return `sha256:${sha256(parts2.join(`
+`))}`;
     }
-  } else {
-    const files = allWatchedFiles(root, profile, maxFiles);
-    if (files === null)
-      return UNAVAILABLE;
-    for (const path of files)
-      parts.push(`${path}:${hashFile(join7(root, path))}`);
   }
-  return `sha256:${sha256(parts.join(`
+  const files = allWatchedFiles(root, profile, maxFiles);
+  if (files === null)
+    return UNAVAILABLE;
+  const parts = files.map((path) => `${path}:${hashFile(join7(root, path))}`);
+  return `${WALK_PREFIX}${sha256(parts.join(`
 `))}`;
 }
 
@@ -1256,26 +1260,32 @@ function fileSource(root, path) {
 }
 function changedText(root, profile, base) {
   const sources = [];
-  if (!isGitRepo(root)) {
+  const everything = () => {
     for (const path of allWatchedFiles(root, profile) ?? []) {
       const source = fileSource(root, path);
       if (source)
         sources.push(source);
     }
     return sources;
-  }
+  };
+  if (!isGitRepo(root))
+    return everything();
   const from = base ?? "HEAD";
-  let diff = "";
+  let diff;
   try {
     diff = execFileSync2("git", ["diff", from, "--unified=0", "--no-color", "--", "."], {
       cwd: root,
+      env: process.env,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
       maxBuffer: 64 * 1024 * 1024
     });
   } catch {
-    diff = "";
+    diff = null;
   }
+  const untracked = untrackedPaths(root);
+  if (diff === null || untracked === null)
+    return everything();
   const added = diff.split(`
 `).filter((l) => l.startsWith("+") && !l.startsWith("+++")).map((l) => l.slice(1)).join(`
 `);
@@ -1284,7 +1294,7 @@ function changedText(root, profile, base) {
       source: `git diff ${base ? base.slice(0, 12) : "HEAD"} (added lines)`,
       text: added
     });
-  for (const path of untrackedPaths(root).sort()) {
+  for (const path of untracked.sort()) {
     if (!isWatched(path, profile))
       continue;
     const source = fileSource(root, path);
@@ -1540,7 +1550,7 @@ async function runGates(paths, work, profile, policy, options = {}) {
     work,
     evidence,
     expected: planned,
-    currentFingerprint: computeFingerprint(paths.root, profile, base),
+    currentFingerprint: computeFingerprint(paths.root, profile, base, MAX_WATCHED_FILES, fingerprintMethod(fingerprintBefore)),
     tampered
   });
   evidence.verdict = verdict.verdict;
@@ -1557,7 +1567,7 @@ function assess(paths, work, profile, policy, tampered = false) {
     work,
     evidence: read.evidence,
     expected,
-    currentFingerprint: computeFingerprint(paths.root, profile, base),
+    currentFingerprint: computeFingerprint(paths.root, profile, base, MAX_WATCHED_FILES, fingerprintMethod(read.evidence.fingerprint)),
     tampered: tampered || read.tampered
   });
   return { evidence: read.evidence, ...verdict, expected, changed };
