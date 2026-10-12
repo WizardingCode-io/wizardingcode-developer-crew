@@ -6,7 +6,7 @@
   "costUsd": 3.4801144999999996,
   "partial": false,
   "suite": {
-    "root": "/Users/andreagroferreira/AIProjects/shibaox-developer-crew/plugins/core",
+    "root": "<repo>/plugins/core",
     "ablation": "with-without",
     "modelOverride": "claude-sonnet-5-5",
     "judgeModel": "claude-fable-5-1",
@@ -16,7 +16,7 @@
       {
         "name": "wizardingcode-developer-crew",
         "version": "0.1.0",
-        "path": "/Users/andreagroferreira/AIProjects/shibaox-developer-crew/plugins/core"
+        "path": "<repo>/plugins/core"
       }
     ]
   },
