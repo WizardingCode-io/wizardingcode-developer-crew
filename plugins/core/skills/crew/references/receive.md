@@ -4,21 +4,7 @@ Goal: turn the request into a brief the engine can route, and ask only what chan
 
 ## 1. Answer the typed questions
 
-Answer these nine questions about the request before anything else. Probabilities are honest estimates, not wishes; a guess of 0.3 or more on a risk question sends the work to the full route, which is the safe side.
-
-| Id | Type | Question |
-| :- | :- | :- |
-| `work_type` | choice | `fix`, `feature`, `refactor`, `chore`, `new-product`, `question` |
-| `is_vague` | 0 to 1 | Is information missing without which two competent engineers would build different things? |
-| `scope` | 0 to 3 | 0 one spot, 1 one module, 2 several modules, 3 the whole system |
-| `touches_auth` | 0 to 1 | Authentication, authorization or sessions |
-| `touches_payments` | 0 to 1 | Payments, billing or pricing |
-| `touches_personal_data` | 0 to 1 | Reads, stores or exposes personal data |
-| `touches_data_migration` | 0 to 1 | A schema change or a data migration |
-| `touches_infra` | 0 to 1 | Infrastructure, deployment or CI |
-| `touches_public_api` | 0 to 1 | An interface other systems depend on |
-
-If `work_type` is `question`, answer the user. No work item is created (`crew start` with these answers says so and creates nothing).
+The nine questions are on the skill page (`SKILL.md`, "The nine typed questions"); answer them before anything else.
 
 ## 2. Start the work item
 
@@ -26,7 +12,7 @@ If `work_type` is `question`, answer the user. No work item is created (`crew st
 crew start "<the request, as the user wrote it>" --answers '{"work_type":"fix","is_vague":0.1,"scope":0,"touches_auth":0,"touches_payments":0,"touches_personal_data":0,"touches_data_migration":0,"touches_infra":0,"touches_public_api":0}'
 ```
 
-The answers are required: `crew start` refuses without them. The engine prints the id and the route with its reasons. Keep the id; every later command needs it.
+The answers are required: `crew start` refuses without them. The engine prints the id and the route with its reasons. Keep the id; every later command needs it. `--criterion "<text>"` (repeatable) records acceptance criteria at the start; on the fast route that is the whole Specify phase.
 
 ## 3. Ask what is missing
 

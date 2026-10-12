@@ -11,4 +11,4 @@ The engine runs what the route requires: the project's build, tests, lint and ty
 - **The route was raised:** the diff touched a risk path. The engine says which. The guards of the new route now apply; `crew phase <id> next` lists what is missing.
 - **Unconfirmed command:** a proposed command ran. Ask the user to confirm it with `crew profile confirm`; until then the work is not proven.
 
-`crew gate run <id> --only test` runs a subset while you iterate; the verdict still needs every gate. When the verdict is proven: `crew phase <id> next` to deliver.
+`crew gate run <id> --only test` runs a subset while you iterate; the verdict still needs every gate. A gate run that proves the work writes the report and moves the item to the deliver phase.

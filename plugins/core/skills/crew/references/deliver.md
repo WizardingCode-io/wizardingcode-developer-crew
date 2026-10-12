@@ -1,10 +1,6 @@
 # Deliver
 
-```
-crew evidence <id>
-```
-
-The engine writes `.crew/work/<id>/report.md` and prints it. Tell the user, in this order and on one screen:
+The gate run that proved the work already wrote `.crew/work/<id>/report.md`; `crew evidence <id>` prints it (and rewrites it from the evidence as it stands). Tell the user, in this order and on one screen:
 
 1. What changed, in two or three sentences.
 2. What is proven: the gates that passed, the criteria with red then green.

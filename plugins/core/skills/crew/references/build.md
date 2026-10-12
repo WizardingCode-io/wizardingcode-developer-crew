@@ -22,4 +22,4 @@ For a `preserve` criterion: `crew tdd before <id> <criterion>` with the tests pa
 
 When a criterion cannot be tested automatically, say so and let the user decide: `crew skip <id> tdd:<criterion> --reason "<why>"`. The skip appears in the report.
 
-When the work is ready: `crew phase <id> next` to enter the gate phase.
+When the work is ready, `crew gate run <id>`: the gate run moves the item into the gate phase itself (and to deliver when it proves the work).
