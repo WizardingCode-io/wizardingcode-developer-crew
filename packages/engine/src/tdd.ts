@@ -103,7 +103,7 @@ export async function recordTdd(
         record,
       };
     }
-    record.changedTests = changedWatchedPaths(paths.root, profile, work.baseCommit).filter((p) =>
+    record.changedTests = changedWatchedPaths(paths.root, profile, work).filter((p) =>
       matchesAny(p, TEST_PATTERNS),
     );
     entry.red = record;

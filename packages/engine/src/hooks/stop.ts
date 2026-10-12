@@ -16,7 +16,7 @@ export function onStop(ctx: HookContext): HookResponse {
   const session = sessionState(state, ctx.sessionId);
   const active = activeWork(ctx.paths);
   const work = active?.work ?? null;
-  const current = computeFingerprint(ctx.paths.root, ctx.profile, work?.baseCommit);
+  const current = computeFingerprint(ctx.paths.root, ctx.profile, work);
   const result = work
     ? assess(ctx.paths, work, ctx.profile, ctx.policy, ctx.tampered || !!active?.tampered)
     : null;

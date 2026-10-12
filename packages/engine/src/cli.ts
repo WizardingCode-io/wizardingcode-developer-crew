@@ -4,7 +4,7 @@ import { AnswerError, type Answers, computeRoute, validateAnswers } from "./clas
 import { loadConfig, saveConfig, setConfigValue } from "./config.ts";
 import { detectProfile, missingTestCommands } from "./detect/index.ts";
 import { loadEvidence, renderReport, saveEvidence, tddSummary } from "./evidence.ts";
-import { changedWatchedPaths } from "./fingerprint.ts";
+import { changedWatchedPaths, hashPaths, isGitRepo } from "./fingerprint.ts";
 import { ensureDir, nowIso, readText, writeText } from "./fs.ts";
 import { assess, runGates } from "./gates.ts";
 import { handleHook } from "./hooks/index.ts";
@@ -393,18 +393,29 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       if (answers.work_type === "question")
         return ok("question: answer the user; no work item is created", { id: null });
       const previous = activeWork(env.paths);
-      const warning =
-        previous?.work &&
+      const previousProven =
+        !!previous?.work &&
         assess(env.paths, previous.work, env.profile, env.policy, env.tampered || previous.tampered)
-          .verdict !== "proven"
+          .verdict === "proven";
+      const warning =
+        previous?.work && !previousProven
           ? `warning: ${previous.work.id} is not proven and is no longer the active work item\n`
           : "";
-      // The item's change is measured from HEAD, so whatever is uncommitted now is measured with it.
-      const inherited = changedWatchedPaths(env.paths.root, env.profile);
+      // The change is measured from HEAD, so whatever is uncommitted now is measured with it,
+      // unless an earlier item proved it: then the new item starts from that proven state.
+      const uncommitted = isGitRepo(env.paths.root)
+        ? changedWatchedPaths(env.paths.root, env.profile)
+        : [];
+      const baseFiles = previousProven ? hashPaths(env.paths.root, uncommitted) : {};
+      const inherited = previousProven ? [] : uncommitted;
       const inheritedWarning = inherited.length
         ? `warning: uncommitted changes in ${inherited.join(", ")} count as this item's change; commit them first if they are not\n`
         : "";
-      const work = createWork(env.paths, input);
+      const provenNote =
+        previousProven && uncommitted.length && previous?.work
+          ? `note: uncommitted changes in ${uncommitted.join(", ")} are ${previous.work.id}'s proven work and not this item's\n`
+          : "";
+      const work = createWork(env.paths, input, baseFiles);
       classify(env, work, answers);
       const criteria = (parsed.multi.criterion ?? []).map((text) => addCriterion(work, text));
       // On the fast route the criteria are all that stands before build; with them given, go there.
@@ -413,7 +424,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       saveWork(env.paths, work);
       const lines = criteria.map((c) => `\n  ${c.id} (${c.kind}): ${c.text}`).join("");
       return ok(
-        `${warning}${inheritedWarning}started ${work.id} (route ${work.route}: ${work.routeReasons.join("; ")})${lines}`,
+        `${warning}${inheritedWarning}${provenNote}started ${work.id} (route ${work.route}: ${work.routeReasons.join("; ")})${lines}`,
         {
           id: work.id,
           route: work.route,
@@ -422,6 +433,8 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           replaced: warning ? previous?.work?.id : null,
           criteria,
           inherited,
+          proven:
+            previousProven && previous?.work ? { of: previous.work.id, paths: uncommitted } : null,
         },
       );
     }

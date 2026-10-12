@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { chmodSync, symlinkSync } from "node:fs";
+import { chmodSync, rmSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { detectProfile } from "../src/detect/index.ts";
 import { computeVerdict, emptyEvidence } from "../src/evidence.ts";
@@ -8,6 +8,7 @@ import {
   computeFingerprint,
   fingerprintMethod,
   gitChangedPaths,
+  hashPaths,
   MAX_WATCHED_FILES,
 } from "../src/fingerprint.ts";
 import type { WorkItem } from "../src/types.ts";
@@ -47,7 +48,7 @@ test("gitChangedPaths lists both sides of a rename", () => {
 test("I1: from a base commit, committing the change neither hides it nor moves the fingerprint", () => {
   const root = makeRepo({ "src/a.ts": "x" });
   const profile = detectProfile(root);
-  const base = git(root, "rev-parse", "HEAD");
+  const base = { baseCommit: git(root, "rev-parse", "HEAD") };
   write(root, "src/a.ts", "y");
   write(root, "src/b.ts", "new");
   const before = computeFingerprint(root, profile, base);
@@ -130,4 +131,21 @@ test("when git cannot run in a repository, the walk takes over and names itself"
   } finally {
     process.env.PATH = saved;
   }
+});
+
+test("the proven files of an earlier item are not the next item's change until they change again", () => {
+  const root = makeRepo({ "src/a.ts": "x", "src/b.ts": "y" });
+  const profile = detectProfile(root);
+  const baseCommit = git(root, "rev-parse", "HEAD");
+  write(root, "src/a.ts", "proven by the first item");
+  const base = { baseCommit, baseFiles: hashPaths(root, ["src/a.ts"]) };
+  expect(changedWatchedPaths(root, profile, base)).toEqual([]);
+  const clean = computeFingerprint(root, profile, base);
+  write(root, "src/b.ts", "the second item's work");
+  expect(changedWatchedPaths(root, profile, base)).toEqual(["src/b.ts"]);
+  expect(computeFingerprint(root, profile, base)).not.toBe(clean);
+  write(root, "src/a.ts", "touched again by the second item");
+  expect(changedWatchedPaths(root, profile, base)).toEqual(["src/a.ts", "src/b.ts"]);
+  rmSync(join(root, "src/a.ts"));
+  expect(changedWatchedPaths(root, profile, base)).toEqual(["src/a.ts", "src/b.ts"]);
 });

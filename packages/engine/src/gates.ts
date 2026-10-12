@@ -251,7 +251,7 @@ export async function runGates(
   policy: Policy,
   options: { only?: GateName[]; tampered?: boolean } = {},
 ): Promise<GateOutcome> {
-  const base = work.baseCommit ?? null;
+  const base = work;
   const changed = changedWatchedPaths(paths.root, profile, base);
   const pathRisk = riskAreasForPaths(changed, policy);
   let raised: Route | null = null;
@@ -327,7 +327,7 @@ export function assess(
   policy: Policy,
   tampered = false,
 ): Assessment {
-  const base = work.baseCommit ?? null;
+  const base = work;
   const changed = changedWatchedPaths(paths.root, profile, base);
   const expected = plannedGates(work.route, profile, policy, changed, paths.root);
   const read = loadEvidence(paths, work.id);

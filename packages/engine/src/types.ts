@@ -103,6 +103,12 @@ export interface WorkItem {
   skips: Skip[];
   /** HEAD when the item started; the change is everything since. Null outside git or with no commits. */
   baseCommit: string | null;
+  /**
+   * Content hashes of the watched paths that already differed from baseCommit when the item
+   * started: the proven work of an earlier item, left uncommitted. A path whose content still
+   * matches is not this item's change.
+   */
+  baseFiles?: Record<string, string>;
   createdAt: string;
   updatedAt: string;
 }

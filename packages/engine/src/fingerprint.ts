@@ -4,7 +4,10 @@ import { join } from "node:path";
 import { exists, sha256 } from "./fs.ts";
 import { matchesAny } from "./glob.ts";
 import { SKIP_DIRS } from "./skip-dirs.ts";
-import type { Profile } from "./types.ts";
+import type { Profile, WorkItem } from "./types.ts";
+
+/** What a work item's change is measured from: a commit, and the proven files of an earlier item that were still uncommitted. */
+export type ChangeBase = Pick<WorkItem, "baseCommit" | "baseFiles">;
 
 /** Above this many files a folder without git is too big to hash on every hook. */
 export const MAX_WATCHED_FILES = 20_000;
@@ -122,20 +125,51 @@ export function allWatchedFiles(
   return walk(root, "") ? files.sort() : null;
 }
 
+function hashFile(abs: string): string {
+  try {
+    return sha256(readFileSync(abs));
+  } catch {
+    return "DELETED";
+  }
+}
+
+/** The content hashes of these paths now; a missing file hashes as DELETED. */
+export function hashPaths(root: string, paths: string[]): Record<string, string> {
+  const hashes: Record<string, string> = {};
+  for (const path of paths) hashes[path] = hashFile(join(root, path));
+  return hashes;
+}
+
+/** Drops the paths whose content is still what an earlier item proved. */
+function ownChanges(root: string, paths: string[], base?: ChangeBase | null): string[] {
+  const files = base?.baseFiles;
+  if (!files) return paths;
+  return paths.filter(
+    (path) => files[path] === undefined || hashFile(join(root, path)) !== files[path],
+  );
+}
+
 /**
  * Watched paths the change touches. With a base commit, the change is everything since that
- * commit, so committing mid-work does not hide it. Without history, or where git cannot run,
- * every watched file counts.
+ * commit, so committing mid-work does not hide it, less what an earlier item proved and left
+ * uncommitted. Without history, or where git cannot run, every watched file counts.
  */
 export function changedWatchedPaths(
   root: string,
   profile: Profile,
-  base?: string | null,
+  base?: ChangeBase | null,
   maxFiles = MAX_WATCHED_FILES,
 ): string[] {
   if (isGitRepo(root)) {
-    const paths = base ? gitChangedSince(root, base) : gitChangedPaths(root);
-    if (paths !== null) return paths.filter((path) => isWatched(path, profile));
+    const commit = base?.baseCommit ?? null;
+    const paths = commit ? gitChangedSince(root, commit) : gitChangedPaths(root);
+    if (paths !== null) {
+      return ownChanges(
+        root,
+        paths.filter((path) => isWatched(path, profile)),
+        base,
+      );
+    }
   }
   return allWatchedFiles(root, profile, maxFiles) ?? [];
 }
@@ -143,14 +177,6 @@ export function changedWatchedPaths(
 /** The method a fingerprint was made with, so the same evidence is judged the same way everywhere. */
 export function fingerprintMethod(fingerprint: string | null): FingerprintMethod | undefined {
   return fingerprint?.startsWith(WALK_PREFIX) ? "walk" : undefined;
-}
-
-function hashFile(abs: string): string {
-  try {
-    return sha256(readFileSync(abs));
-  } catch {
-    return "DELETED";
-  }
 }
 
 /**
@@ -163,15 +189,17 @@ function hashFile(abs: string): string {
 export function computeFingerprint(
   root: string,
   profile: Profile,
-  base?: string | null,
+  base?: ChangeBase | null,
   maxFiles = MAX_WATCHED_FILES,
   method?: FingerprintMethod,
 ): string {
   if (method !== "walk" && isGitRepo(root)) {
-    const changed = base ? gitChangedSince(root, base) : gitChangedPaths(root);
+    const commit = base?.baseCommit ?? null;
+    const changed = commit ? gitChangedSince(root, commit) : gitChangedPaths(root);
     if (changed !== null) {
-      const parts = [`base:${base ?? gitHead(root)}`];
-      for (const path of changed.filter((p) => isWatched(p, profile))) {
+      const parts = [`base:${commit ?? gitHead(root)}`];
+      const watched = changed.filter((p) => isWatched(p, profile));
+      for (const path of ownChanges(root, watched, base)) {
         parts.push(`${path}:${hashFile(join(root, path))}`);
       }
       return `sha256:${sha256(parts.join("\n"))}`;

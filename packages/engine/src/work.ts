@@ -51,7 +51,11 @@ export function newWorkId(paths: CrewPaths, title: string): string {
   return `${date}-${seq}-${slug(title).slice(0, 40).replace(/-$/, "")}`;
 }
 
-export function createWork(paths: CrewPaths, input: string): WorkItem {
+export function createWork(
+  paths: CrewPaths,
+  input: string,
+  baseFiles?: Record<string, string>,
+): WorkItem {
   const title = (input.split("\n").find((line) => line.trim()) ?? "untitled").trim().slice(0, 80);
   const at = nowIso();
   const work: WorkItem = {
@@ -68,6 +72,7 @@ export function createWork(paths: CrewPaths, input: string): WorkItem {
     approvals: [],
     skips: [],
     baseCommit: baseCommitOf(paths.root),
+    ...(baseFiles && Object.keys(baseFiles).length > 0 ? { baseFiles } : {}),
     createdAt: at,
     updatedAt: at,
   };

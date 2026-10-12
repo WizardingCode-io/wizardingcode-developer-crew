@@ -655,17 +655,6 @@ function allWatchedFiles(root, profile, maxFiles = MAX_WATCHED_FILES) {
   };
   return walk(root, "") ? files.sort() : null;
 }
-function changedWatchedPaths(root, profile, base, maxFiles = MAX_WATCHED_FILES) {
-  if (isGitRepo(root)) {
-    const paths = base ? gitChangedSince(root, base) : gitChangedPaths(root);
-    if (paths !== null)
-      return paths.filter((path) => isWatched(path, profile));
-  }
-  return allWatchedFiles(root, profile, maxFiles) ?? [];
-}
-function fingerprintMethod(fingerprint) {
-  return fingerprint?.startsWith(WALK_PREFIX) ? "walk" : undefined;
-}
 function hashFile(abs) {
   try {
     return sha256(readFileSync2(abs));
@@ -673,12 +662,39 @@ function hashFile(abs) {
     return "DELETED";
   }
 }
+function hashPaths(root, paths) {
+  const hashes = {};
+  for (const path of paths)
+    hashes[path] = hashFile(join7(root, path));
+  return hashes;
+}
+function ownChanges(root, paths, base) {
+  const files = base?.baseFiles;
+  if (!files)
+    return paths;
+  return paths.filter((path) => files[path] === undefined || hashFile(join7(root, path)) !== files[path]);
+}
+function changedWatchedPaths(root, profile, base, maxFiles = MAX_WATCHED_FILES) {
+  if (isGitRepo(root)) {
+    const commit = base?.baseCommit ?? null;
+    const paths = commit ? gitChangedSince(root, commit) : gitChangedPaths(root);
+    if (paths !== null) {
+      return ownChanges(root, paths.filter((path) => isWatched(path, profile)), base);
+    }
+  }
+  return allWatchedFiles(root, profile, maxFiles) ?? [];
+}
+function fingerprintMethod(fingerprint) {
+  return fingerprint?.startsWith(WALK_PREFIX) ? "walk" : undefined;
+}
 function computeFingerprint(root, profile, base, maxFiles = MAX_WATCHED_FILES, method) {
   if (method !== "walk" && isGitRepo(root)) {
-    const changed = base ? gitChangedSince(root, base) : gitChangedPaths(root);
+    const commit = base?.baseCommit ?? null;
+    const changed = commit ? gitChangedSince(root, commit) : gitChangedPaths(root);
     if (changed !== null) {
-      const parts2 = [`base:${base ?? gitHead(root)}`];
-      for (const path of changed.filter((p) => isWatched(p, profile))) {
+      const parts2 = [`base:${commit ?? gitHead(root)}`];
+      const watched = changed.filter((p) => isWatched(p, profile));
+      for (const path of ownChanges(root, watched, base)) {
         parts2.push(`${path}:${hashFile(join7(root, path))}`);
       }
       return `sha256:${sha256(parts2.join(`
@@ -884,7 +900,7 @@ function newWorkId(paths, title) {
   const seq = String(existing + 1).padStart(3, "0");
   return `${date}-${seq}-${slug(title).slice(0, 40).replace(/-$/, "")}`;
 }
-function createWork(paths, input) {
+function createWork(paths, input, baseFiles) {
   const title = (input.split(`
 `).find((line) => line.trim()) ?? "untitled").trim().slice(0, 80);
   const at = nowIso();
@@ -902,6 +918,7 @@ function createWork(paths, input) {
     approvals: [],
     skips: [],
     baseCommit: baseCommitOf(paths.root),
+    ...baseFiles && Object.keys(baseFiles).length > 0 ? { baseFiles } : {},
     createdAt: at,
     updatedAt: at
   };
@@ -1542,7 +1559,7 @@ async function runOne(paths, work, profile, gate, targetPath, fingerprint) {
   };
 }
 async function runGates(paths, work, profile, policy, options = {}) {
-  const base = work.baseCommit ?? null;
+  const base = work;
   const changed = changedWatchedPaths(paths.root, profile, base);
   const pathRisk = riskAreasForPaths(changed, policy);
   let raised = null;
@@ -1597,7 +1614,7 @@ async function runGates(paths, work, profile, policy, options = {}) {
   return { evidence, ...verdict, planned, changed, raised, tampered };
 }
 function assess(paths, work, profile, policy, tampered = false) {
-  const base = work.baseCommit ?? null;
+  const base = work;
   const changed = changedWatchedPaths(paths.root, profile, base);
   const expected = plannedGates(work.route, profile, policy, changed, paths.root);
   const read = loadEvidence(paths, work.id);
@@ -1790,7 +1807,7 @@ function onSessionStart(ctx, payload = {}) {
   if (!continues) {
     const session = sessionState(state, ctx.sessionId);
     const work = active?.work ?? null;
-    const base = work?.baseCommit;
+    const base = work;
     const inherited = work !== null && changedWatchedPaths(ctx.paths.root, ctx.profile, base).length > 0 && assess(ctx.paths, work, ctx.profile, ctx.policy, ctx.tampered || !!active?.tampered).verdict !== "proven";
     session.baseline = inherited ? null : computeFingerprint(ctx.paths.root, ctx.profile, base);
     session.stopBlocks = 0;
@@ -1819,7 +1836,7 @@ function onStop(ctx) {
   const session = sessionState(state, ctx.sessionId);
   const active = activeWork(ctx.paths);
   const work = active?.work ?? null;
-  const current = computeFingerprint(ctx.paths.root, ctx.profile, work?.baseCommit);
+  const current = computeFingerprint(ctx.paths.root, ctx.profile, work);
   const result = work ? assess(ctx.paths, work, ctx.profile, ctx.policy, ctx.tampered || !!active?.tampered) : null;
   const proven = result?.verdict === "proven";
   const changed = session.baseline !== null && current !== UNAVAILABLE ? current !== session.baseline : work !== null && !proven;
@@ -1951,7 +1968,7 @@ async function recordTdd(paths, work, evidence, profile, criterionId, step, over
         record
       };
     }
-    record.changedTests = changedWatchedPaths(paths.root, profile, work.baseCommit).filter((p) => matchesAny(p, TEST_PATTERNS));
+    record.changedTests = changedWatchedPaths(paths.root, profile, work).filter((p) => matchesAny(p, TEST_PATTERNS));
     entry.red = record;
     return { ok: true, message: `red recorded for ${criterionId} (exit ${result.exit})`, record };
   }
@@ -2254,12 +2271,17 @@ async function dispatch(parsed, io) {
       if (answers.work_type === "question")
         return ok("question: answer the user; no work item is created", { id: null });
       const previous = activeWork(env.paths);
-      const warning = previous?.work && assess(env.paths, previous.work, env.profile, env.policy, env.tampered || previous.tampered).verdict !== "proven" ? `warning: ${previous.work.id} is not proven and is no longer the active work item
+      const previousProven = !!previous?.work && assess(env.paths, previous.work, env.profile, env.policy, env.tampered || previous.tampered).verdict === "proven";
+      const warning = previous?.work && !previousProven ? `warning: ${previous.work.id} is not proven and is no longer the active work item
 ` : "";
-      const inherited = changedWatchedPaths(env.paths.root, env.profile);
+      const uncommitted = isGitRepo(env.paths.root) ? changedWatchedPaths(env.paths.root, env.profile) : [];
+      const baseFiles = previousProven ? hashPaths(env.paths.root, uncommitted) : {};
+      const inherited = previousProven ? [] : uncommitted;
       const inheritedWarning = inherited.length ? `warning: uncommitted changes in ${inherited.join(", ")} count as this item's change; commit them first if they are not
 ` : "";
-      const work = createWork(env.paths, input);
+      const provenNote = previousProven && uncommitted.length && previous?.work ? `note: uncommitted changes in ${uncommitted.join(", ")} are ${previous.work.id}'s proven work and not this item's
+` : "";
+      const work = createWork(env.paths, input, baseFiles);
       classify(env, work, answers);
       const criteria = (parsed.multi.criterion ?? []).map((text) => addCriterion(work, text));
       if (work.route === "fast" && criteria.length > 0)
@@ -2267,14 +2289,15 @@ async function dispatch(parsed, io) {
       saveWork(env.paths, work);
       const lines = criteria.map((c) => `
   ${c.id} (${c.kind}): ${c.text}`).join("");
-      return ok(`${warning}${inheritedWarning}started ${work.id} (route ${work.route}: ${work.routeReasons.join("; ")})${lines}`, {
+      return ok(`${warning}${inheritedWarning}${provenNote}started ${work.id} (route ${work.route}: ${work.routeReasons.join("; ")})${lines}`, {
         id: work.id,
         route: work.route,
         phase: work.phase,
         routeReasons: work.routeReasons,
         replaced: warning ? previous?.work?.id : null,
         criteria,
-        inherited
+        inherited,
+        proven: previousProven && previous?.work ? { of: previous.work.id, paths: uncommitted } : null
       });
     }
     case "classify": {

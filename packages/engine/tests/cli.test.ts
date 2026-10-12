@@ -412,3 +412,27 @@ test("start takes --criterion, repeatable, and warns about uncommitted changes i
   );
   expect(text.out).toContain("  AC-1 (behavior): c");
 });
+
+test("a new item after a proven, uncommitted one starts with no change of its own", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const c = io(root);
+  const first = (await c.json("start", "First", "--answers", answers, "--criterion", "a")).data
+    .id as string;
+  write(root, "src/a.ts", "the first item's work");
+  expect((await c.run("tdd", "red", first, "AC-1", "--", "exit 1")).code).toBe(0);
+  expect((await c.run("tdd", "green", first, "AC-1", "--", "exit 0")).code).toBe(0);
+  expect((await c.json("gate", "run", first)).data.verdict).toBe("proven");
+  const second = await c.json("start", "Second", "--answers", answers, "--criterion", "b");
+  const secondId = second.data.id as string;
+  expect(second.data.replaced).toBeNull();
+  expect(second.data.inherited).toEqual([]);
+  expect(second.data.proven).toEqual({ of: first, paths: ["src/a.ts"] });
+  // With no change of its own, only the second item's own proof stands between it and proven.
+  const gates = await c.json("gate", "run", secondId);
+  expect(gates.data.unproven).toEqual(["test-first record missing for AC-1"]);
+  write(root, "src/a.ts", "the second item touches it too");
+  expect((await c.json("status")).data.unproven).toContain("code changed since the last gate run");
+});

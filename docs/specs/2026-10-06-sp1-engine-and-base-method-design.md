@@ -169,6 +169,8 @@ Watched files are every tracked file and every untracked file that git does not 
 
 In a git repository the fingerprint hashes the active work item's base commit (`HEAD` when there is none) and the content of every watched path changed since that commit, untracked files included. Outside git it hashes the content of the watched files, without following symlinks and skipping dependency and build folders; above 20 000 files the fingerprint is unavailable and nothing is proven there. Evidence is valid only for the fingerprint it was recorded against: each gate run records the fingerprint it vouches for, and a run recorded against other code counts as not run. Any later change to a watched file makes the work unproven again.
 
+When an item starts while the previous item is proven and its work uncommitted, the new item records the content hashes of those paths (`baseFiles`); a path whose content still matches is not the new item's change, so a new item does not inherit proven work and the Stop rule does not block a turn in which nothing of its own changed. An unproven previous item gets no such courtesy: its changes are measured as the new item's, with a warning at `crew start`.
+
 Crew is active in a git repository, or in a folder without git that already holds `.crew/` (`crew detect` creates it). Anywhere else the hooks stay silent and write nothing, and the commands that need a project refuse.
 
 ## 7. Engine commands

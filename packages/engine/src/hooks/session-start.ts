@@ -19,7 +19,7 @@ export function onSessionStart(ctx: HookContext, payload: HookPayload = {}): Hoo
     const work = active?.work ?? null;
     // Unproven changes left by an earlier session are not this session's starting point: with no
     // baseline the Stop rule counts them as changed.
-    const base = work?.baseCommit;
+    const base = work;
     const inherited =
       work !== null &&
       changedWatchedPaths(ctx.paths.root, ctx.profile, base).length > 0 &&
