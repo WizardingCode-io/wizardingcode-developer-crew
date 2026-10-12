@@ -423,6 +423,74 @@ test("approve and skip record who decided: the user, or the agent in an unattend
   expect(read().skips).toHaveLength(2);
 });
 
+test("criteria remove takes out a criterion with no record and keeps the removal in the record", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const c = io(root);
+  const start = await c.json(
+    "start",
+    "Two criteria",
+    "--answers",
+    answers,
+    "--criterion",
+    "a",
+    "--criterion",
+    "b",
+  );
+  const id = start.data.id as string;
+  const removed = await c.json("criteria", id, "remove", "AC-1");
+  expect(removed.code).toBe(0);
+  expect(removed.data.removed).toMatchObject({ id: "AC-1", kind: "behavior", text: "a" });
+  expect(typeof (removed.data.removed as { at: unknown }).at).toBe("string");
+  const status = await c.json("status");
+  expect((status.data.criteria as { id: string }[]).map((cr) => cr.id)).toEqual(["AC-2"]);
+  const work = JSON.parse(readFileSync(join(root, ".crew", "work", id, "work.json"), "utf8"));
+  expect(work.removedCriteria.map((r: { id: string }) => r.id)).toEqual(["AC-1"]);
+  expect((await c.run("evidence", id)).code).toBe(0);
+  const report = readFileSync(join(root, ".crew", "work", id, "report.md"), "utf8");
+  expect(report).toContain("## Decisions");
+  expect(report).toContain("- AC-1 (behavior) removed");
+  expect(report).toContain(": a");
+});
+
+test("criteria remove refuses a criterion with a test-first record, one with a skip, and an unknown id", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "sh t.sh" } }),
+    "t.sh": "exit 1\n",
+    "src/a.ts": "x",
+  });
+  const c = io(root);
+  const start = await c.json(
+    "start",
+    "Three criteria",
+    "--answers",
+    answers,
+    "--criterion",
+    "a",
+    "--criterion",
+    "b",
+    "--criterion",
+    "c",
+  );
+  const id = start.data.id as string;
+  expect((await c.run("tdd", "red", id, "AC-1")).code).toBe(0);
+  expect((await c.run("skip", id, "AC-2", "--reason", "manual check")).code).toBe(0);
+  const file = join(root, ".crew", "work", id, "work.json");
+  const before = readFileSync(file, "utf8");
+  const recorded = await c.run("criteria", id, "remove", "AC-1");
+  expect(recorded.code).toBe(1);
+  expect(recorded.err).toContain("AC-1 has a test-first record");
+  const skipped = await c.run("criteria", id, "remove", "AC-2");
+  expect(skipped.code).toBe(1);
+  expect(skipped.err).toContain("AC-2 has a skip");
+  const unknown = await c.run("criteria", id, "remove", "AC-9");
+  expect(unknown.code).toBe(1);
+  expect(unknown.err).toContain("unknown criterion: AC-9");
+  expect(readFileSync(file, "utf8")).toBe(before);
+});
+
 test("start takes --criterion, repeatable, and warns about uncommitted changes it will measure", async () => {
   const root = makeRepo({
     "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),

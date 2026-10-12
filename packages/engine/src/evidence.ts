@@ -169,7 +169,8 @@ export function renderReport(work: WorkItem, evidence: Evidence, policy: Policy)
       `| ${r.gate} | ${r.target} | ${status} | ${r.command ? `\`${r.command}\`` : ""} | ${r.durationMs} ms | ${r.log ?? ""} |`,
     );
   }
-  if (work.approvals.length || work.skips.length) {
+  const removed = work.removedCriteria ?? [];
+  if (work.approvals.length || work.skips.length || removed.length) {
     lines.push("", "## Decisions", "");
     for (const a of work.approvals) {
       lines.push(`- ${a.what} approved ${decidedBy(a)} (${a.at})${countedNote(policy, a)}`);
@@ -179,6 +180,7 @@ export function renderReport(work: WorkItem, evidence: Evidence, policy: Policy)
         `- \`${s.step}\` skipped ${decidedBy(s)}: ${s.reason} (${s.at})${countedNote(policy, s)}`,
       );
     }
+    for (const r of removed) lines.push(`- ${r.id} (${r.kind}) removed (${r.at}): ${r.text}`);
   }
   lines.push("", `Fingerprint: ${evidence.fingerprint ?? "none"}`, "");
   return lines.join("\n");

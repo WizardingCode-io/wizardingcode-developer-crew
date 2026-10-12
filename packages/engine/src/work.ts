@@ -15,6 +15,7 @@ import type {
   Evidence,
   Phase,
   Policy,
+  RemovedCriterion,
   Route,
   TddRecord,
   WorkItem,
@@ -148,9 +149,37 @@ export function addCriterion(
   text: string,
   kind: CriterionKind = "behavior",
 ): Criterion {
-  const criterion: Criterion = { id: `AC-${work.criteria.length + 1}`, kind, text: text.trim() };
+  // A number is taken for good, by a present or a removed criterion, so an id names one thing.
+  const taken = [...work.criteria, ...(work.removedCriteria ?? [])]
+    .map((c) => Number(c.id.slice("AC-".length)))
+    .filter((n) => Number.isFinite(n));
+  const next = taken.length ? Math.max(...taken) + 1 : 1;
+  const criterion: Criterion = { id: `AC-${next}`, kind, text: text.trim() };
   work.criteria.push(criterion);
   return criterion;
+}
+
+/**
+ * Takes a criterion out while nothing names it. A test-first record or a skip is evidence about
+ * that criterion, and evidence is never dropped; the removal itself stays in the record.
+ */
+export function removeCriterion(
+  work: WorkItem,
+  evidence: Evidence,
+  id: string,
+): { removed: RemovedCriterion } | { refused: string } {
+  const index = work.criteria.findIndex((c) => c.id === id);
+  if (index === -1) return { refused: `unknown criterion: ${id}` };
+  if (evidence.tdd.some((t) => t.criterion === id)) {
+    return { refused: `${id} has a test-first record; it stays` };
+  }
+  if (work.skips.some((s) => s.step === `tdd:${id}`)) {
+    return { refused: `${id} has a skip; it stays` };
+  }
+  const [criterion] = work.criteria.splice(index, 1) as [Criterion];
+  const removed: RemovedCriterion = { ...criterion, at: nowIso() };
+  work.removedCriteria = [...(work.removedCriteria ?? []), removed];
+  return { removed };
 }
 
 const USER: Decision = { by: "user" };

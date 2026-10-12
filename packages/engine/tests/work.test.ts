@@ -18,6 +18,7 @@ import {
   hasAcceptanceSection,
   loadWork,
   raiseRoute,
+  removeCriterion,
   saveWork,
 } from "../src/work.ts";
 import { git, makeRepo, repoPaths, tempDir, testEnv } from "./helpers.ts";
@@ -63,6 +64,29 @@ test("classification sets type, route and risk, and routes only go up", () => {
   expect(raiseRoute(work, "standard", "x")).toBe(false);
   saveWork(paths, work);
   expect(loadWork(paths, work.id).work?.route).toBe("full");
+});
+
+test("criteria ids are never reused: a removed criterion keeps its number", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const work = createWork(paths, "fix");
+  addCriterion(work, "a");
+  addCriterion(work, "b");
+  const evidence: Evidence = {
+    fingerprint: null,
+    tdd: [],
+    runs: [],
+    verdict: "unproven",
+    unproven: [],
+  };
+  expect(removeCriterion(work, evidence, "AC-2")).toMatchObject({
+    removed: { id: "AC-2", kind: "behavior", text: "b" },
+  });
+  expect(work.criteria.map((c) => c.id)).toEqual(["AC-1"]);
+  expect(work.removedCriteria?.map((r) => r.id)).toEqual(["AC-2"]);
+  expect(addCriterion(work, "c").id).toBe("AC-3");
+  expect(removeCriterion(work, evidence, "AC-2")).toEqual({
+    refused: "unknown criterion: AC-2",
+  });
 });
 
 test("guards: build needs criteria, then spec, approval and plan by route", () => {

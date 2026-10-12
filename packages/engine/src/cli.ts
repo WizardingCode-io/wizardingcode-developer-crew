@@ -37,6 +37,7 @@ import {
   loadWork,
   nextPhaseOf,
   PHASES_BY_ROUTE,
+  removeCriterion,
   saveWork,
 } from "./work.ts";
 
@@ -484,9 +485,19 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
     case "criteria": {
       const opened = openForChange(env, args[0]);
       if (isOutcome(opened)) return opened;
+      if (args[1] === "remove" && args[2]) {
+        const { evidence } = loadEvidence(env.paths, opened.work.id);
+        const outcome = removeCriterion(opened.work, evidence, args[2]);
+        if ("refused" in outcome) return refuse(outcome.refused);
+        saveWork(env.paths, opened.work);
+        const { removed } = outcome;
+        return ok(`${removed.id} (${removed.kind}) removed: ${removed.text}`, { removed });
+      }
       const text = args.slice(2).join(" ").trim();
       if (args[1] !== "add" || !text)
-        return refuse('usage: crew criteria <id> add "<criterion>" [--kind preserve]');
+        return refuse(
+          'usage: crew criteria <id> add "<criterion>" [--kind preserve] | crew criteria <id> remove <AC-n>',
+        );
       const kind = parsed.flags.kind === "preserve" ? "preserve" : "behavior";
       const criterion = addCriterion(opened.work, text, kind);
       saveWork(env.paths, opened.work);
@@ -729,6 +740,7 @@ const HELP = `crew ${VERSION}
   start "<request>" --answers <json>    create a work item from the typed answers
   classify <id> --answers <json>        record typed answers and compute the route
   criteria <id> add "<text>" [--kind preserve]
+  criteria <id> remove <AC-n>           take out a criterion no test-first record or skip names
   approve <id> spec                     record the user's approval (asks the user)
       --mode auto|bypassPermissions|dontAsk   no person watching: recorded as the agent's decision
   phase <id> next                       advance when the guard holds

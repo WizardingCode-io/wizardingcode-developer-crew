@@ -1043,9 +1043,26 @@ function raiseRoute(work, to, reason) {
   return true;
 }
 function addCriterion(work, text, kind = "behavior") {
-  const criterion = { id: `AC-${work.criteria.length + 1}`, kind, text: text.trim() };
+  const taken = [...work.criteria, ...work.removedCriteria ?? []].map((c) => Number(c.id.slice("AC-".length))).filter((n) => Number.isFinite(n));
+  const next = taken.length ? Math.max(...taken) + 1 : 1;
+  const criterion = { id: `AC-${next}`, kind, text: text.trim() };
   work.criteria.push(criterion);
   return criterion;
+}
+function removeCriterion(work, evidence, id) {
+  const index = work.criteria.findIndex((c) => c.id === id);
+  if (index === -1)
+    return { refused: `unknown criterion: ${id}` };
+  if (evidence.tdd.some((t) => t.criterion === id)) {
+    return { refused: `${id} has a test-first record; it stays` };
+  }
+  if (work.skips.some((s) => s.step === `tdd:${id}`)) {
+    return { refused: `${id} has a skip; it stays` };
+  }
+  const [criterion] = work.criteria.splice(index, 1);
+  const removed = { ...criterion, at: nowIso() };
+  work.removedCriteria = [...work.removedCriteria ?? [], removed];
+  return { removed };
 }
 var USER = { by: "user" };
 function approve(work, what, decision = USER) {
@@ -1242,7 +1259,8 @@ function renderReport(work, evidence, policy) {
     const status = r.status === "skipped" || r.status === "unavailable" ? `${r.status}${r.reason ? `: ${r.reason}` : ""}` : r.status;
     lines.push(`| ${r.gate} | ${r.target} | ${status} | ${r.command ? `\`${r.command}\`` : ""} | ${r.durationMs} ms | ${r.log ?? ""} |`);
   }
-  if (work.approvals.length || work.skips.length) {
+  const removed = work.removedCriteria ?? [];
+  if (work.approvals.length || work.skips.length || removed.length) {
     lines.push("", "## Decisions", "");
     for (const a of work.approvals) {
       lines.push(`- ${a.what} approved ${decidedBy(a)} (${a.at})${countedNote(policy, a)}`);
@@ -1250,6 +1268,8 @@ function renderReport(work, evidence, policy) {
     for (const s of work.skips) {
       lines.push(`- \`${s.step}\` skipped ${decidedBy(s)}: ${s.reason} (${s.at})${countedNote(policy, s)}`);
     }
+    for (const r of removed)
+      lines.push(`- ${r.id} (${r.kind}) removed (${r.at}): ${r.text}`);
   }
   lines.push("", `Fingerprint: ${evidence.fingerprint ?? "none"}`, "");
   return lines.join(`
@@ -2442,9 +2462,18 @@ async function dispatch(parsed, io) {
       const opened = openForChange(env, args[0]);
       if (isOutcome(opened))
         return opened;
+      if (args[1] === "remove" && args[2]) {
+        const { evidence } = loadEvidence(env.paths, opened.work.id);
+        const outcome = removeCriterion(opened.work, evidence, args[2]);
+        if ("refused" in outcome)
+          return refuse(outcome.refused);
+        saveWork(env.paths, opened.work);
+        const { removed } = outcome;
+        return ok(`${removed.id} (${removed.kind}) removed: ${removed.text}`, { removed });
+      }
       const text = args.slice(2).join(" ").trim();
       if (args[1] !== "add" || !text)
-        return refuse('usage: crew criteria <id> add "<criterion>" [--kind preserve]');
+        return refuse('usage: crew criteria <id> add "<criterion>" [--kind preserve] | crew criteria <id> remove <AC-n>');
       const kind = parsed.flags.kind === "preserve" ? "preserve" : "behavior";
       const criterion = addCriterion(opened.work, text, kind);
       saveWork(env.paths, opened.work);
@@ -2666,6 +2695,7 @@ var HELP = `crew ${VERSION}
   start "<request>" --answers <json>    create a work item from the typed answers
   classify <id> --answers <json>        record typed answers and compute the route
   criteria <id> add "<text>" [--kind preserve]
+  criteria <id> remove <AC-n>           take out a criterion no test-first record or skip names
   approve <id> spec                     record the user's approval (asks the user)
       --mode auto|bypassPermissions|dontAsk   no person watching: recorded as the agent's decision
   phase <id> next                       advance when the guard holds
