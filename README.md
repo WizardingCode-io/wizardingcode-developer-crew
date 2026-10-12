@@ -1,6 +1,28 @@
-# WizardingCode Developer Crew
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/brand/wizardingcode-lockup-reverse.svg">
+    <img src="docs/brand/wizardingcode-lockup.svg" alt="wizardingcode" width="280">
+  </picture>
+</p>
 
-Give your coding agent one input and get guided to a result that is proven done: the engine, not the model, says when work is finished.
+<h1 align="center">WizardingCode Developer Crew</h1>
+
+<p align="center">
+  <strong>Done is proven, not claimed.</strong><br>
+  Give your coding agent one input and get guided to a result that is proven done: the engine, not the model, says when work is finished.
+</p>
+
+<p align="center">
+  <a href="LICENSE"><img alt="MIT" src="https://img.shields.io/badge/licence-MIT-6B35E0?labelColor=100E0D"></a>
+  <img alt="Claude Code plugin" src="https://img.shields.io/badge/Claude%20Code-plugin-6B35E0?labelColor=100E0D">
+  <img alt="Node.js 20 or later" src="https://img.shields.io/badge/Node.js-20%2B-6B35E0?labelColor=100E0D">
+</p>
+
+<p align="center">
+  One engine · the project's real build, tests and checks · evidence on disk · a turn cannot end unproven
+</p>
+
+---
 
 ## What exists today
 
@@ -43,5 +65,15 @@ The eval suite (`evals/`) measures the method on fixture projects; its recorded 
 - [SP1 design](docs/specs/2026-10-06-sp1-engine-and-base-method-design.md): the first subproject, the engine and the base method.
 - [SP1a implementation plan](docs/plans/2026-10-07-sp1a-engine-cli-and-plugin.md): engine, `crew` command, hooks, skill and plugin packaging, task by task.
 - [SP1b implementation plan](docs/plans/2026-10-07-sp1b-mod-and-evals.md): the mod and the eval suite.
+- [ADR 0001](docs/adr/0001-wizardingcode-brand.md): the shibaox brand is retired; the names, the paths and the convention for the brand's products.
 
-Part of WizardingCode's tools for coding agents. MIT licensed.
+---
+
+<p align="center">
+  <img src="docs/brand/wizardingcode-mark.svg" alt="" width="48">
+</p>
+
+<p align="center">
+  A <a href="https://wizardingcode.io">WizardingCode</a> product · MIT · © 2026 WizardingCode<br>
+  <sub>Tools for the agents you already use. More on the way.</sub>
+</p>
