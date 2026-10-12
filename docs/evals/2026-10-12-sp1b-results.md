@@ -86,4 +86,4 @@ The per-run cost field is `costUsd` (with `judgeCostUsd` beside it), so `scripts
 1. The fast route sits at 1.7–1.9×, at the revised target's edge: the skill's own load and one orientation read are what is left to take out; beyond that the floor is the method.
 2. `false-done` and `risk-escalation` no longer discriminate against a model that is honest on its own; they measure the method's behaviour in its two hardest spots (the user declines the proof; the route reserves a decision for the user). A case that discriminates would need a baseline that claims proof it does not have, which Sonnet 5.5 does not do here.
 3. The `stopped-for-approval` indicator matches two phrasings; a third run said it in other words. An indicator, not a score, so left as is.
-4. An eval run on macOS still needs the real git and the plugin's `bin/` on PATH by hand (`plugins/core/evals/README.md`); nothing in the tool does it.
+4. An eval run on macOS still needs the real git and the plugin's `bin/` on PATH by hand (`plugins/core/evals/README.md`); nothing in the tool does it. Closed in 0.1.1: `bun scripts/eval.ts [--case <name>]` sets the PATH and runs the suite.

@@ -2,14 +2,20 @@
 
 `claude plugin eval` runs each case in an isolated session with only this plugin loaded, once with the plugin and once without, and reports the difference. Every case scaffolds its own git repository (`fixture.sh`), because the engine is inactive outside a repository.
 
-The suite lives inside the plugin (`plugins/core/evals/`) because `claude plugin eval` only accepts an eval directory below the plugin root. Two things differ from a normal session and are handled by the run command below:
+The suite lives inside the plugin (`plugins/core/evals/`) because `claude plugin eval` only accepts an eval directory below the plugin root. Two things differ from a normal session and are handled by the runner, `scripts/eval.ts`:
 
-- The plugin's `bin/` is not on the Bash tool's PATH inside an eval run, so `crew` must be put there by hand.
-- On macOS `/usr/bin/git` is a shim that cannot write its `xcrun` cache inside the eval sandbox, so every git call fails there. The engine then counts every watched file as the change (its no-git behaviour), which is honest but makes the deps audit a planned gate; put the real git first on PATH instead.
+- The plugin's `bin/` is not on the Bash tool's PATH inside an eval run, so `crew` must be put there.
+- On macOS `/usr/bin/git` is a shim that cannot write its `xcrun` cache inside the eval sandbox, so every git call fails there. The engine then counts every watched file as the change (its no-git behaviour), which is honest but makes the deps audit a planned gate; the runner puts the real git (`xcrun --find git`) first on PATH instead, and refuses to run when `xcrun` cannot say where it is.
 
 ## Run the suite
 
 From the repository root:
+
+```bash
+bun scripts/eval.ts
+```
+
+It prints the `claude plugin eval` command it runs, which is:
 
 ```bash
 PATH="$PWD/plugins/core/bin:$(dirname "$(xcrun --find git)"):$PATH" claude plugin eval plugins/core \
@@ -20,14 +26,12 @@ PATH="$PWD/plugins/core/bin:$(dirname "$(xcrun --find git)"):$PATH" claude plugi
   --report plugins/core/evals/results/report.html --json plugins/core/evals/results/last.json
 ```
 
-On Linux drop the `xcrun` part. `--keep-temp` keeps each run's scaffold and `out/trace.jsonl` under the system temp directory (sealed read-only; `chmod 700` to inspect, delete when done). Each grant covers one command: a Bash call joining several with `;` or `|` needs every one of them granted, or it is denied.
+On Linux the PATH has no `xcrun` part. `--keep-temp` keeps each run's scaffold and `out/trace.jsonl` under the system temp directory (sealed read-only; `chmod 700` to inspect, delete when done). Each grant covers one command: a Bash call joining several with `;` or `|` needs every one of them granted, or it is denied.
 
-One case while iterating (one run, no baseline):
+One case while iterating (one run, no baseline, no judge, a 5 USD ceiling):
 
 ```bash
-PATH="$PWD/plugins/core/bin:$(dirname "$(xcrun --find git)"):$PATH" claude plugin eval plugins/core --case false-done --runs 1 --ablation none \
-  --scaffold --trust-plugin --no-publish --model claude-sonnet-5-5 --max-cost-usd 5 \
-  --allow-tools Write Edit "Bash(crew *)" "Bash(node *)" "Bash(npm *)" "Bash(git *)" "Bash(cat *)" "Bash(ls *)" "Bash(sh *)" "Bash(make *)" "Bash(sed *)" "Bash(head *)" "Bash(echo *)" "Bash(which *)"
+bun scripts/eval.ts --case false-done
 ```
 
 The agent under test runs on Sonnet 5.5 and the judge on Fable 5.1 (the owner's choice: the judge must not be weaker than the agent it grades). If a model id is rejected, use the aliases `sonnet` and `fable`. On Linux, Bash in evals needs `bubblewrap` and `socat`; macOS has its own sandbox.

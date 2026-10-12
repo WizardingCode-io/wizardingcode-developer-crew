@@ -20,6 +20,7 @@ Brand conventions: products, plugins and skills are called `wizardingcode-<thing
 - `bun run build` — bundles the `crew` command into `plugins/core/dist/crew.mjs`
 - `bun run format` — formats and fixes lint
 - `bun run plugin:check` — `claude plugin validate --strict` and the mod's tests (they need the plugin runtime; `bun run check` does not run them)
+- `bun scripts/eval.ts [--case <name>]` — runs the eval suite with the PATH it needs (about 3.5 USD and five minutes for the six cases; one case is about 0.2 USD)
 - `claude --plugin-dir ./plugins/core` — loads the plugin for one session
 - `node plugins/core/dist/crew.mjs status` — where the work stands (`crew help` lists the commands)
 
