@@ -50,6 +50,8 @@ A clear request, one spot, no risk area: the engine answers `route fast`. Everyt
 
 No `crew status` between steps, no brief, no spec and no plan on the fast route.
 
+Two habits that keep the calls from being refused where Bash is restricted: write and change files with the Edit and Write tools, never with a heredoc or `sed` through Bash; and spell the id out in each `crew` command rather than keeping it in a shell variable (a leading `ID=…;` or a redirect stops a command from matching its permission).
+
 ## The other routes
 
 Read the reference for the current phase before acting in it:
