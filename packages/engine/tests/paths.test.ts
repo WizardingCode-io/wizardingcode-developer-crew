@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { findRoot, isProtectedPath, resolvePaths, workDir } from "../src/paths.ts";
 import { makeRepo, repoPaths, tempDir, testEnv } from "./helpers.ts";
@@ -47,4 +47,19 @@ test("isProtectedPath covers engine-owned files and nothing else", () => {
   expect(p("src/app.ts")).toBe(false);
   expect(isProtectedPath(paths, join(paths.userDir, "config.json"))).toBe(true);
   expect(isProtectedPath(paths, "/tmp/elsewhere/.crew/profile.json")).toBe(false);
+});
+
+test("a symlinked alias of the root gives the same root, repo id and protection", () => {
+  const root = makeRepo();
+  const alias = join(tempDir(), "alias");
+  symlinkSync(root, alias);
+  expect(findRoot(alias)).toBe(root);
+  expect(findRoot(join(alias, "src", "deep"))).toBe(root);
+  const env = testEnv();
+  const paths = repoPaths(root, env);
+  expect(repoPaths(alias, env).repoId).toBe(paths.repoId);
+  expect(repoPaths(alias, env).root).toBe(root);
+  expect(isProtectedPath(paths, join(alias, ".crew", "profile.json"))).toBe(true);
+  expect(isProtectedPath(paths, join(alias, ".crew", "work", "w1", "work.json"))).toBe(true);
+  expect(isProtectedPath(paths, join(alias, "src", "app.ts"))).toBe(false);
 });

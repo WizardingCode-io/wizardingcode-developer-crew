@@ -1,8 +1,9 @@
 import { expect, test } from "bun:test";
+import { symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { onPreToolUse } from "../src/hooks/pre-tool-use.ts";
 import { createWork, saveWork } from "../src/work.ts";
-import { hookContext, makeRepo, testEnv } from "./helpers.ts";
+import { hookContext, makeRepo, tempDir, testEnv } from "./helpers.ts";
 
 function decision(response: Record<string, unknown>): string | undefined {
   return (response.hookSpecificOutput as { permissionDecision?: string } | undefined)
@@ -84,4 +85,20 @@ test("bash: user-only decisions ask, writes to engine files are denied, everythi
   expect(
     onPreToolUse(ctx, { tool_name: "Read", tool_input: { file_path: ".crew/profile.json" } }),
   ).toEqual({});
+});
+
+test("a write through a symlinked alias of the repository is judged like the real path", () => {
+  const { root, ctx } = setup();
+  const alias = join(tempDir(), "alias");
+  symlinkSync(root, alias);
+  const edit = (file_path: string) =>
+    onPreToolUse(ctx, { tool_name: "Edit", tool_input: { file_path } });
+  expect(decision(edit(join(alias, ".crew", "profile.json")))).toBe("deny");
+  expect(decision(edit(join(alias, ".crew", "work", "w1", "evidence.json")))).toBe("deny");
+  expect(edit(join(alias, "README.md"))).toEqual({});
+  const work = createWork(ctx.paths, "feature");
+  work.route = "standard";
+  work.phase = "specify";
+  saveWork(ctx.paths, work);
+  expect(decision(edit(join(alias, "src", "a.ts")))).toBe("deny");
 });

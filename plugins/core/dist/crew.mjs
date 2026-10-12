@@ -1,6 +1,6 @@
 // packages/engine/src/cli.ts
 import { existsSync as existsSync3 } from "node:fs";
-import { join as join18, resolve as resolve3 } from "node:path";
+import { join as join18, resolve as resolve2 } from "node:path";
 
 // packages/engine/src/glob.ts
 var SPECIAL = /[.+^${}()|[\]\\]/g;
@@ -657,10 +657,27 @@ function computeFingerprint(root, profile, base, maxFiles = MAX_WATCHED_FILES) {
 }
 
 // packages/engine/src/paths.ts
+import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname as dirname2, join as join8, relative as relative2, resolve, sep } from "node:path";
+import { basename, dirname as dirname2, join as join8, relative as relative2, resolve, sep } from "node:path";
+function canonical(path) {
+  const abs = resolve(path);
+  const tail = [];
+  let dir = abs;
+  for (;; ) {
+    try {
+      return join8(realpathSync(dir), ...tail);
+    } catch {
+      const parent = dirname2(dir);
+      if (parent === dir)
+        return abs;
+      tail.unshift(basename(dir));
+      dir = parent;
+    }
+  }
+}
 function findRoot(cwd) {
-  const start = resolve(cwd);
+  const start = canonical(cwd);
   let dir = start;
   for (;; ) {
     if (exists(join8(dir, ".git")))
@@ -679,7 +696,7 @@ function resolvePaths(cwd, env = process.env) {
   const root = findRoot(cwd);
   if (root === null)
     return null;
-  const userDir = userDirOf(env);
+  const userDir = canonical(userDirOf(env));
   const repoId = sha256(root).slice(0, 16);
   return {
     root,
@@ -696,7 +713,7 @@ function workDir(paths, id) {
 var PROTECTED_TOP = new Set([".crew/profile.json", ".crew/policy.json", ".crew/.gitignore"]);
 var PROTECTED_IN_WORK = new Set(["work.json", "evidence.json", "report.md"]);
 function isProtectedPath(paths, absPath) {
-  const abs = resolve(absPath);
+  const abs = canonical(absPath);
   if (abs === paths.userDir || abs.startsWith(paths.userDir + sep))
     return true;
   const rel = relative2(paths.root, abs).replace(/\\/g, "/");
@@ -1103,7 +1120,7 @@ function renderReport(work, evidence) {
 
 // packages/engine/src/gates.ts
 import { accessSync, constants } from "node:fs";
-import { basename, delimiter, join as join13 } from "node:path";
+import { basename as basename2, delimiter, join as join13 } from "node:path";
 
 // packages/engine/src/run.ts
 import { spawn } from "node:child_process";
@@ -1328,7 +1345,7 @@ var MANIFESTS = new Set([
   "requirements.txt"
 ]);
 function manifestChanged(changed) {
-  return changed.some((p) => MANIFESTS.has(basename(p)) || /^requirements.*\.txt$/.test(basename(p)));
+  return changed.some((p) => MANIFESTS.has(basename2(p)) || /^requirements.*\.txt$/.test(basename2(p)));
 }
 function onPath(binary, env) {
   const extensions = process.platform === "win32" ? ["", ...(env.PATHEXT ?? ".EXE;.CMD;.BAT").split(";")] : [""];
@@ -1635,7 +1652,7 @@ function buildContext(payload, env = process.env) {
 }
 
 // packages/engine/src/hooks/pre-tool-use.ts
-import { isAbsolute, join as join16, relative as relative4, resolve as resolve2 } from "node:path";
+import { isAbsolute, join as join16, relative as relative4 } from "node:path";
 var WRITE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
 var USER_ONLY = /(?:^|[\s/;&|(])crew(?:\.mjs)?\s+(?:skip|approve|accept|profile\s+confirm|policy\s+accept|profile\s+set\b[^;&|]*--force)\b/;
 var ENGINE_FILES = /\.crew\/(?:profile\.json|policy\.json|\.gitignore|local\b|work\/[^\s/]+\/(?:work\.json|evidence\.json|report\.md|logs\b))|\.wizardingcode\/crew\b/;
@@ -1664,7 +1681,7 @@ function onPreToolUse(ctx, payload) {
     const filePath = pathFromInput(input);
     if (!filePath)
       return {};
-    const abs = resolve2(isAbsolute(filePath) ? filePath : join16(ctx.paths.root, filePath));
+    const abs = canonical(isAbsolute(filePath) ? filePath : join16(ctx.paths.root, filePath));
     if (isProtectedPath(ctx.paths, abs)) {
       return answer("deny", `Crew: ${filePath} is maintained by the engine and is changed through the crew command`);
     }
@@ -2088,7 +2105,7 @@ async function dispatch(parsed, io) {
     return settings(command, args, { userDir: userDirOf(io.env) });
   let paths = resolvePaths(io.cwd, io.env);
   if (!paths && command === "detect") {
-    ensureDir(join18(resolve3(io.cwd), ".crew"));
+    ensureDir(join18(resolve2(io.cwd), ".crew"));
     paths = resolvePaths(io.cwd, io.env);
   }
   if (!paths)

@@ -1,6 +1,6 @@
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { isAbsolute, join, relative } from "node:path";
 import { isWatched } from "../fingerprint.ts";
-import { isProtectedPath } from "../paths.ts";
+import { canonical, isProtectedPath } from "../paths.ts";
 import { activeWork, isBeforeBuild } from "../work.ts";
 import type { HookContext, HookPayload, HookResponse } from "./types.ts";
 
@@ -38,7 +38,7 @@ export function onPreToolUse(ctx: HookContext, payload: HookPayload): HookRespon
   if (WRITE_TOOLS.has(tool)) {
     const filePath = pathFromInput(input);
     if (!filePath) return {};
-    const abs = resolve(isAbsolute(filePath) ? filePath : join(ctx.paths.root, filePath));
+    const abs = canonical(isAbsolute(filePath) ? filePath : join(ctx.paths.root, filePath));
     if (isProtectedPath(ctx.paths, abs)) {
       return answer(
         "deny",

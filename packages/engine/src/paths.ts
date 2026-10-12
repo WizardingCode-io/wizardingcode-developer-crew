@@ -1,5 +1,6 @@
+import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { exists, sha256 } from "./fs.ts";
 
 export interface CrewPaths {
@@ -12,11 +13,32 @@ export interface CrewPaths {
 }
 
 /**
+ * The absolute path with every symbolic link resolved, so that a folder has one name whatever
+ * alias it was reached by (on macOS `/tmp` is `/private/tmp`). A part that does not exist yet is
+ * kept as written under its nearest existing ancestor.
+ */
+export function canonical(path: string): string {
+  const abs = resolve(path);
+  const tail: string[] = [];
+  let dir = abs;
+  for (;;) {
+    try {
+      return join(realpathSync(dir), ...tail);
+    } catch {
+      const parent = dirname(dir);
+      if (parent === dir) return abs;
+      tail.unshift(basename(dir));
+      dir = parent;
+    }
+  }
+}
+
+/**
  * The project root: the nearest ancestor (or the folder itself) that holds `.git`, else the folder
  * itself when it already holds `.crew/` (activated by `crew detect`), else null: crew is inactive.
  */
 export function findRoot(cwd: string): string | null {
-  const start = resolve(cwd);
+  const start = canonical(cwd);
   let dir = start;
   for (;;) {
     if (exists(join(dir, ".git"))) return dir;
@@ -35,7 +57,7 @@ export function userDirOf(env: NodeJS.ProcessEnv = process.env): string {
 export function resolvePaths(cwd: string, env: NodeJS.ProcessEnv = process.env): CrewPaths | null {
   const root = findRoot(cwd);
   if (root === null) return null;
-  const userDir = userDirOf(env);
+  const userDir = canonical(userDirOf(env));
   const repoId = sha256(root).slice(0, 16);
   return {
     root,
@@ -56,7 +78,7 @@ const PROTECTED_IN_WORK = new Set(["work.json", "evidence.json", "report.md"]);
 
 /** Files only the engine writes. The agent is denied direct writes to them. */
 export function isProtectedPath(paths: CrewPaths, absPath: string): boolean {
-  const abs = resolve(absPath);
+  const abs = canonical(absPath);
   if (abs === paths.userDir || abs.startsWith(paths.userDir + sep)) return true;
   const rel = relative(paths.root, abs).replace(/\\/g, "/");
   if (rel.startsWith("..") || rel === "") return false;

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { buildContext } from "../src/hooks/context.ts";
@@ -13,8 +13,9 @@ const GIT_ENV = {
   GIT_COMMITTER_EMAIL: "crew@test.invalid",
 };
 
+/** Canonical (symlinks resolved), as the engine names every root: on macOS the temp dir is an alias. */
 export function tempDir(prefix = "crew-"): string {
-  return mkdtempSync(join(tmpdir(), prefix));
+  return realpathSync(mkdtempSync(join(tmpdir(), prefix)));
 }
 
 export function git(cwd: string, ...args: string[]): string {
