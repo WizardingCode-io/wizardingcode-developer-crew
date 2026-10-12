@@ -12,6 +12,7 @@ Brand conventions: products, plugins and skills are called `wizardingcode-<thing
 - The engine: `packages/engine` (dependency-free TypeScript; `src/hooks/` is what each Claude Code event runs, `src/cli.ts` the `crew` command)
 - The plugin: `plugins/core` (`dist/crew.mjs` is the bundled `crew` command, `hooks/` the hook wiring and the mod, `skills/crew` the method)
 - The eval suite: `plugins/core/evals/` (inside the plugin, where `claude plugin eval` looks for it; `results/` there is ignored, the recorded runs live in `docs/evals/`)
+- The real-use phase between subprojects: `docs/real-use/` (the plan of the phase, the findings, the corpus of real requests)
 - The brand's lockup and mark, as the README uses them: `docs/brand/` (not covered by the MIT licence)
 
 ## Commands

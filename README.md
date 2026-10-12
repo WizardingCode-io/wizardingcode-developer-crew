@@ -28,7 +28,7 @@
 
 - **The engine** (`packages/engine`): dependency-free TypeScript that detects the project's build, test, lint and type-check commands (Node and TypeScript, PHP and Laravel, Python), routes each request (fast, standard or full), records test-first runs, runs the gates and writes the evidence.
 - **The `crew` command**: the engine's interface, bundled into one file, `plugins/core/dist/crew.mjs`. `crew help` lists the commands.
-- **Hooks**: a Claude Code plugin (`plugins/core`) wires SessionStart, UserPromptSubmit, PreToolUse and Stop to `crew hook <event>`. A turn cannot end while watched source files have unproven changes, the agent cannot write the engine's files, and decisions that belong to the user (skips, approvals, accepting changed state) go through a permission prompt.
+- **Hooks**: a Claude Code plugin (`plugins/core`) wires SessionStart, UserPromptSubmit, PreToolUse and Stop to `crew hook <event>`. A turn cannot end while watched source files have unproven changes, the agent cannot write the engine's files, and decisions that belong to the user (skips, approvals, accepting changed state) go through a permission prompt. When no person is watching (auto, bypassPermissions or dontAsk mode) the prompt is no signature, so the hook requires `--mode <mode>` on those commands: the record says the agent decided, and the decision counts for the proof only if the team's policy says so.
 - **The crew skill** (`plugins/core/skills/crew`, command name `crew-method`: a skill claims the bare `/<name>`, and `/crew` belongs to the mod): the method the agent follows, phase by phase.
 - **The mod** (`plugins/core/hooks/register.js`, Claude Code 2.1.287 or later): a status strip above the prompt (`crew <id> · phase · route · proven · gates`, or `not proven (<first reason>)` in place of `proven`; a planned gate that has not run shows as `…`), a line under each answer (`Proven: ...` or `Not proven: ...`), and `/crew` with `status`, `panel` and `mode <partner|guide|pilot>`. It only shows the engine's state; the hooks and the command carry the guarantee, so disabling the mod changes nothing about what is enforced.
 
@@ -38,7 +38,7 @@ Requirement: Node.js 20 or later on `PATH` (the hooks and the `crew` command run
 
 - **`.crew/` in the repository.** Crew is active in a git repository, or in a folder that already holds `.crew/` (`crew detect` creates it); anywhere else it stays silent.
   - `profile.json`: the detected project profile and gate commands.
-  - `policy.json` (optional): the team policy, written by a person.
+  - `policy.json` (optional): the team policy, written by a person. `unattendedDecisions` (`wait`, the default, or `count`) says whether an approval or skip the agent recorded with no person watching counts for the proof.
   - `work/<id>/`: one folder per work item, with `work.json` (state), `brief.md`, `spec.md`, `plan.md`, `evidence.json` (test-first records and gate runs), `report.md` (the delivery report) and `logs/` (full command output, ignored).
   - `local/`: per-machine state such as the session baselines (ignored).
 - **`~/.wizardingcode/crew/` for the user**: `config.json` (mode and settings) and `integrity/`, the hashes the engine uses to notice state changed outside it.

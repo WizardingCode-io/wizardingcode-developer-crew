@@ -76,9 +76,26 @@ export interface Criterion {
   text: string;
 }
 
+/** Claude Code modes in which no person answers a prompt, so a decision there is the agent's. */
+export type UnattendedMode = "auto" | "bypassPermissions" | "dontAsk";
+export const UNATTENDED_MODES: readonly UnattendedMode[] = ["auto", "bypassPermissions", "dontAsk"];
+export function isUnattendedMode(value: unknown): value is UnattendedMode {
+  return UNATTENDED_MODES.includes(value as UnattendedMode);
+}
+
+export type DecidedBy = "user" | "agent";
+/** Who took a user-only decision; `mode` is set when the agent took it with no person watching. */
+export interface Decision {
+  by: DecidedBy;
+  mode?: UnattendedMode;
+}
+
 export interface Approval {
   what: "spec";
   at: string;
+  /** Absent in records written before 0.1.2, which read as the user's. */
+  by?: DecidedBy;
+  mode?: UnattendedMode;
 }
 
 export interface Skip {
@@ -86,6 +103,8 @@ export interface Skip {
   step: string;
   reason: string;
   at: string;
+  by?: DecidedBy;
+  mode?: UnattendedMode;
 }
 
 export interface WorkItem {
@@ -167,6 +186,11 @@ export interface Policy {
   /** Steps the user may skip. `['*']` means any. */
   allowSkips: string[];
   artifacts: "commit" | "local";
+  /**
+   * What an approval or skip taken by the agent with no person watching is worth: `wait` records
+   * it but the guard and the verdict still wait for a person; `count` lets it count.
+   */
+  unattendedDecisions: "wait" | "count";
 }
 
 export type Mode = "partner" | "guide" | "pilot";

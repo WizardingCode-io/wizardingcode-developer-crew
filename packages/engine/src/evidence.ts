@@ -1,9 +1,33 @@
 import { join } from "node:path";
 import { UNAVAILABLE } from "./fingerprint.ts";
 import { type CrewPaths, workDir } from "./paths.ts";
+import { decisionCounts } from "./policy.ts";
 import { readProtectedJson, writeProtectedJson } from "./store.ts";
-import type { CriterionKind, Evidence, GateName, WorkItem } from "./types.ts";
+import type {
+  CriterionKind,
+  DecidedBy,
+  Evidence,
+  GateName,
+  Policy,
+  UnattendedMode,
+  WorkItem,
+} from "./types.ts";
 import { isSkipped, tddDone } from "./work.ts";
+
+type Decided = { by?: DecidedBy; mode?: UnattendedMode };
+
+/** "by the user" or "by the agent in <mode> mode": the record says who decided, never less. */
+export function decidedBy(decision: Decided): string {
+  return decision.by === "agent" ? `by the agent in ${decision.mode} mode` : "by the user";
+}
+
+/** What the agent's decision is worth under the policy; a person's decision needs no note. */
+export function countedNote(policy: Policy, decision: Decided): string {
+  if (decision.by !== "agent") return "";
+  return decisionCounts(policy, decision)
+    ? ": counted by policy"
+    : ": not counted, the policy waits for a person";
+}
 
 export function emptyEvidence(): Evidence {
   return {
@@ -42,13 +66,15 @@ export interface VerdictInput {
   expected: PlannedGate[];
   currentFingerprint: string;
   tampered: boolean;
+  /** Decides whether a skip the agent recorded with no person watching counts. */
+  policy: Policy;
 }
 
 export function computeVerdict(input: VerdictInput): {
   verdict: "proven" | "unproven";
   unproven: string[];
 } {
-  const { work, evidence, expected, currentFingerprint, tampered } = input;
+  const { work, evidence, expected, currentFingerprint, tampered, policy } = input;
   const unproven: string[] = [];
   if (tampered) unproven.push("state changed outside the engine");
   if (currentFingerprint === UNAVAILABLE)
@@ -62,7 +88,7 @@ export function computeVerdict(input: VerdictInput): {
   else if (stale) unproven.push("code changed since the last gate run");
   const multiTarget = new Set(expected.map((e) => e.target)).size > 1;
   for (const { gate, target } of expected) {
-    if (isSkipped(work, `gate:${gate}`)) continue;
+    if (isSkipped(work, `gate:${gate}`, policy)) continue;
     const label = multiTarget && target !== "." ? `${gate} (${target})` : gate;
     const run = evidence.runs.find((r) => r.gate === gate && r.target === target);
     if (!run) unproven.push(`gate ${label} not run`);
@@ -79,7 +105,7 @@ export function computeVerdict(input: VerdictInput): {
   if (work.criteria.length === 0)
     unproven.push('no acceptance criteria (crew criteria <id> add "...")');
   for (const criterion of work.criteria) {
-    if (isSkipped(work, `tdd:${criterion.id}`)) continue;
+    if (isSkipped(work, `tdd:${criterion.id}`, policy)) continue;
     const record = evidence.tdd.find((t) => t.criterion === criterion.id);
     if (!tddDone(record, criterion.kind))
       unproven.push(`test-first record missing for ${criterion.id}`);
@@ -92,8 +118,9 @@ export function tddSummary(
   evidence: Evidence,
   criterionId: string,
   kind: CriterionKind,
+  policy: Policy,
 ): string {
-  if (isSkipped(work, `tdd:${criterionId}`)) {
+  if (isSkipped(work, `tdd:${criterionId}`, policy)) {
     const skip = work.skips.find((s) => s.step === `tdd:${criterionId}`);
     return `skipped: ${skip?.reason ?? ""}`;
   }
@@ -104,7 +131,7 @@ export function tddSummary(
   return "missing";
 }
 
-export function renderReport(work: WorkItem, evidence: Evidence): string {
+export function renderReport(work: WorkItem, evidence: Evidence, policy: Policy): string {
   const lines: string[] = [];
   lines.push(`# Report: ${work.title}`, "");
   lines.push(`- Work: \`${work.id}\``);
@@ -123,7 +150,7 @@ export function renderReport(work: WorkItem, evidence: Evidence): string {
   );
   for (const c of work.criteria) {
     lines.push(
-      `| ${c.id} | ${c.kind} | ${c.text.replace(/\|/g, "\\|")} | ${tddSummary(work, evidence, c.id, c.kind)} |`,
+      `| ${c.id} | ${c.kind} | ${c.text.replace(/\|/g, "\\|")} | ${tddSummary(work, evidence, c.id, c.kind, policy)} |`,
     );
   }
   lines.push(
@@ -142,9 +169,16 @@ export function renderReport(work: WorkItem, evidence: Evidence): string {
       `| ${r.gate} | ${r.target} | ${status} | ${r.command ? `\`${r.command}\`` : ""} | ${r.durationMs} ms | ${r.log ?? ""} |`,
     );
   }
-  if (work.skips.length) {
-    lines.push("", "## Skipped by the user", "");
-    for (const s of work.skips) lines.push(`- \`${s.step}\`: ${s.reason} (${s.at})`);
+  if (work.approvals.length || work.skips.length) {
+    lines.push("", "## Decisions", "");
+    for (const a of work.approvals) {
+      lines.push(`- ${a.what} approved ${decidedBy(a)} (${a.at})${countedNote(policy, a)}`);
+    }
+    for (const s of work.skips) {
+      lines.push(
+        `- \`${s.step}\` skipped ${decidedBy(s)}: ${s.reason} (${s.at})${countedNote(policy, s)}`,
+      );
+    }
   }
   lines.push("", `Fingerprint: ${evidence.fingerprint ?? "none"}`, "");
   return lines.join("\n");

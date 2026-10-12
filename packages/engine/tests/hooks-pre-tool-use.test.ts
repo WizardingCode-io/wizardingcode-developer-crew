@@ -98,6 +98,50 @@ test("bash: user-only decisions ask, writes to engine files are denied, everythi
   ).toEqual({});
 });
 
+function reason(response: Record<string, unknown>): string | undefined {
+  return (response.hookSpecificOutput as { permissionDecisionReason?: string } | undefined)
+    ?.permissionDecisionReason;
+}
+
+test("bash: with no person watching, a user-only decision must name its mode to be recorded as the agent's", () => {
+  const { ctx } = setup();
+  const bash = (command: string, permission_mode: string) =>
+    onPreToolUse(ctx, { tool_name: "Bash", tool_input: { command }, permission_mode });
+  for (const mode of ["auto", "bypassPermissions", "dontAsk"]) {
+    const bare = bash("crew approve w1 spec", mode);
+    expect(decision(bare)).toBe("deny");
+    expect(reason(bare)).toContain(`--mode ${mode}`);
+    expect(decision(bash('crew skip w1 gate:lint --reason "legacy"', mode))).toBe("deny");
+    expect(bash(`crew approve w1 spec --mode ${mode}`, mode)).toEqual({});
+    expect(bash(`node /x/dist/crew.mjs skip w1 gate:lint --reason x --mode ${mode}`, mode)).toEqual(
+      {},
+    );
+    expect(bash(`cd /repo && ./crew.mjs profile confirm --mode ${mode}`, mode)).toEqual({});
+    const other = mode === "auto" ? "dontAsk" : "auto";
+    const wrong = bash(`crew approve w1 spec --mode ${other}`, mode);
+    expect(decision(wrong)).toBe("deny");
+    expect(reason(wrong)).toContain(mode);
+  }
+  // The flag does not open the engine's files: the write rule still applies after it.
+  expect(
+    decision(bash("crew approve w1 spec --mode auto; echo x > .crew/profile.json", "auto")),
+  ).toBe("deny");
+});
+
+test("bash: with a person present, a user-only decision is asked and --mode cannot dodge the prompt", () => {
+  const { ctx } = setup();
+  const bash = (command: string, permission_mode?: string) =>
+    onPreToolUse(ctx, { tool_name: "Bash", tool_input: { command }, permission_mode });
+  for (const mode of ["default", "acceptEdits", "plan", undefined]) {
+    expect(decision(bash("crew approve w1 spec", mode))).toBe("ask");
+    expect(decision(bash('crew skip w1 gate:lint --reason "legacy"', mode))).toBe("ask");
+    const flagged = bash("crew approve w1 spec --mode auto", mode);
+    expect(decision(flagged)).toBe("deny");
+    expect(reason(flagged)).toContain("without --mode");
+    expect(decision(bash("crew skip w1 gate:lint --reason x --mode=dontAsk", mode))).toBe("deny");
+  }
+});
+
 test("a write through a symlinked alias of the repository is judged like the real path", () => {
   const { root, ctx } = setup();
   const alias = join(tempDir(), "alias");

@@ -6,8 +6,9 @@ import {
   renderReport,
   saveEvidence,
 } from "../src/evidence.ts";
+import { DEFAULT_POLICY } from "../src/policy.ts";
 import type { Evidence, GateRun, RunRecord, WorkItem } from "../src/types.ts";
-import { addCriterion, addSkip, createWork } from "../src/work.ts";
+import { addCriterion, addSkip, approve, createWork } from "../src/work.ts";
 import { makeRepo, repoPaths, testEnv } from "./helpers.ts";
 
 const run: RunRecord = {
@@ -75,7 +76,14 @@ test("the verdict names every reason the work is not proven", () => {
     unproven: [],
   };
   expect(
-    computeVerdict({ work, evidence, expected, currentFingerprint: "new", tampered: true }),
+    computeVerdict({
+      work,
+      evidence,
+      expected,
+      currentFingerprint: "new",
+      tampered: true,
+      policy: DEFAULT_POLICY,
+    }),
   ).toEqual({
     verdict: "unproven",
     unproven: [
@@ -105,7 +113,14 @@ test("skips, unconfirmed commands and a matching fingerprint", () => {
     unproven: [],
   };
   expect(
-    computeVerdict({ work, evidence, expected, currentFingerprint: "f", tampered: false }).unproven,
+    computeVerdict({
+      work,
+      evidence,
+      expected,
+      currentFingerprint: "f",
+      tampered: false,
+      policy: DEFAULT_POLICY,
+    }).unproven,
   ).toEqual(["gate test ran an unconfirmed command (crew profile confirm)"]);
   const confirmed: Evidence = {
     ...evidence,
@@ -119,6 +134,7 @@ test("skips, unconfirmed commands and a matching fingerprint", () => {
       expected,
       currentFingerprint: "f",
       tampered: false,
+      policy: DEFAULT_POLICY,
     }),
   ).toEqual({ verdict: "proven", unproven: [] });
 });
@@ -134,7 +150,7 @@ test("the report says what was proven and what was not", () => {
     verdict: "unproven",
     unproven: ["gate deps failing"],
   };
-  const report = renderReport(work, evidence);
+  const report = renderReport(work, evidence, DEFAULT_POLICY);
   expect(report).toContain("# Report: fix");
   expect(report).toContain("**Not proven**");
   expect(report).toContain("gate deps failing");
@@ -142,6 +158,57 @@ test("the report says what was proven and what was not", () => {
   expect(report).toContain("| test | . | pass |");
   expect(report).toContain("gate:lint");
   expect(report).toContain("legacy code");
+});
+
+test("a gate skipped by the agent is still expected unless the policy counts unattended decisions", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const work = workWith(paths);
+  addSkip(work, "gate:test", "slow", { by: "agent", mode: "auto" });
+  const expected = [{ gate: "test" as const, target: "." }];
+  const evidence: Evidence = {
+    fingerprint: "f",
+    tdd: [{ criterion: "AC-1", red: run, green: run }],
+    runs: [],
+    verdict: "unproven",
+    unproven: [],
+  };
+  const input = { work, evidence, expected, currentFingerprint: "f", tampered: false };
+  expect(computeVerdict({ ...input, policy: DEFAULT_POLICY }).unproven).toEqual([
+    "gate test not run",
+  ]);
+  expect(
+    computeVerdict({ ...input, policy: { ...DEFAULT_POLICY, unattendedDecisions: "count" } })
+      .verdict,
+  ).toBe("proven");
+});
+
+test("the report says who took each decision, in which mode, and whether it counted", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const work = workWith(paths);
+  approve(work, "spec");
+  approve(work, "spec", { by: "agent", mode: "auto" });
+  addSkip(work, "gate:lint", "legacy");
+  addSkip(work, "gate:deps", "offline", { by: "agent", mode: "bypassPermissions" });
+  const evidence: Evidence = { ...emptyEvidence(), fingerprint: "f" };
+
+  const waiting = renderReport(work, evidence, DEFAULT_POLICY);
+  expect(waiting).toContain("## Decisions");
+  expect(waiting).not.toContain("Skipped by the user");
+  expect(waiting).toContain("- spec approved by the user (");
+  expect(waiting).toContain("- spec approved by the agent in auto mode (");
+  expect(waiting).toContain("- `gate:lint` skipped by the user: legacy (");
+  expect(waiting).toContain(
+    "- `gate:deps` skipped by the agent in bypassPermissions mode: offline (",
+  );
+  expect(waiting.match(/\): not counted, the policy waits for a person/g)).toHaveLength(2);
+  expect(waiting).not.toContain("counted by policy");
+
+  const counting = renderReport(work, evidence, {
+    ...DEFAULT_POLICY,
+    unattendedDecisions: "count",
+  });
+  expect(counting.match(/\): counted by policy/g)).toHaveLength(2);
+  expect(counting).not.toContain("not counted");
 });
 
 test("an item with no criteria is never proven, whatever the gates say", () => {
@@ -156,7 +223,14 @@ test("an item with no criteria is never proven, whatever the gates say", () => {
     unproven: [],
   };
   expect(
-    computeVerdict({ work, evidence, expected, currentFingerprint: "f", tampered: false }),
+    computeVerdict({
+      work,
+      evidence,
+      expected,
+      currentFingerprint: "f",
+      tampered: false,
+      policy: DEFAULT_POLICY,
+    }),
   ).toEqual({
     verdict: "unproven",
     unproven: ['no acceptance criteria (crew criteria <id> add "...")'],

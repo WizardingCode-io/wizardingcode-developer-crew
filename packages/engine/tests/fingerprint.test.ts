@@ -11,6 +11,7 @@ import {
   hashPaths,
   MAX_WATCHED_FILES,
 } from "../src/fingerprint.ts";
+import { DEFAULT_POLICY } from "../src/policy.ts";
 import type { WorkItem } from "../src/types.ts";
 import { addCriterion, addSkip } from "../src/work.ts";
 import { git, makeRepo, tempDir, write } from "./helpers.ts";
@@ -91,6 +92,7 @@ test("C3: above the file cap the fingerprint is unavailable and never proven", (
       expected: [],
       currentFingerprint: "unavailable",
       tampered: false,
+      policy: DEFAULT_POLICY,
     }).unproven,
   ).toEqual(["fingerprint unavailable: too many files to watch without git"]);
 });

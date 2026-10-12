@@ -3,7 +3,14 @@ import { join, resolve } from "node:path";
 import { AnswerError, type Answers, computeRoute, validateAnswers } from "./classify.ts";
 import { loadConfig, saveConfig, setConfigValue } from "./config.ts";
 import { detectProfile, missingTestCommands } from "./detect/index.ts";
-import { loadEvidence, renderReport, saveEvidence, tddSummary } from "./evidence.ts";
+import {
+  countedNote,
+  decidedBy,
+  loadEvidence,
+  renderReport,
+  saveEvidence,
+  tddSummary,
+} from "./evidence.ts";
 import { changedWatchedPaths, hashPaths, isGitRepo } from "./fingerprint.ts";
 import { ensureDir, nowIso, readText, writeText } from "./fs.ts";
 import { assess, runGates } from "./gates.ts";
@@ -15,8 +22,8 @@ import { ensureProfile, loadProfile, saveProfile } from "./profile.ts";
 import { ensureCrewDir } from "./state.ts";
 import { integrityOf, recordIntegrity, writeProtectedText } from "./store.ts";
 import { recordTdd, type TddStep } from "./tdd.ts";
-import type { GateName, Phase, Policy, Profile, UserConfig, WorkItem } from "./types.ts";
-import { GATE_NAMES, PHASE_ORDER } from "./types.ts";
+import type { Decision, GateName, Phase, Policy, Profile, UserConfig, WorkItem } from "./types.ts";
+import { GATE_NAMES, isUnattendedMode, PHASE_ORDER, UNATTENDED_MODES } from "./types.ts";
 import { VERSION } from "./version.ts";
 import {
   activeWork,
@@ -202,6 +209,27 @@ function isOutcome(value: unknown): value is Outcome {
   return typeof value === "object" && value !== null && "code" in value && "text" in value;
 }
 
+/**
+ * Who takes a user-only decision. Without `--mode` a person answered the prompt; with it, the
+ * PreToolUse hook found no person watching and the agent decided in that mode.
+ */
+function decisionFlag(parsed: Parsed): Decision | Outcome {
+  const mode = parsed.flags.mode;
+  if (mode === undefined) return { by: "user" };
+  if (!isUnattendedMode(mode)) {
+    return refuse(
+      `--mode names the permission mode of a session with no person watching: ${UNATTENDED_MODES.slice(0, -1).join(", ")} or ${UNATTENDED_MODES.at(-1)}`,
+    );
+  }
+  return { by: "agent", mode };
+}
+
+/** The decision as the report will show it: who, and whether the policy counts it. */
+function decisionText(policy: Policy, decision: Decision): string {
+  const note = countedNote(policy, decision);
+  return `${decidedBy(decision)}${note ? ` (${note.slice(2)})` : ""}`;
+}
+
 function guardContext(env: Env, work: WorkItem, tampered: boolean): GuardContext {
   const dir = workDir(env.paths, work.id);
   const result = assess(env.paths, work, env.profile, env.policy, env.tampered || tampered);
@@ -211,6 +239,7 @@ function guardContext(env: Env, work: WorkItem, tampered: boolean): GuardContext
     evidence: result.evidence,
     proven: result.verdict === "proven",
     unproven: result.unproven,
+    policy: env.policy,
   };
 }
 
@@ -466,10 +495,14 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
     case "approve": {
       const opened = openForChange(env, args[0]);
       if (isOutcome(opened)) return opened;
-      if (args[1] !== "spec") return refuse("usage: crew approve <id> spec");
-      approve(opened.work, "spec");
+      if (args[1] !== "spec") return refuse("usage: crew approve <id> spec [--mode <mode>]");
+      const decision = decisionFlag(parsed);
+      if (isOutcome(decision)) return decision;
+      approve(opened.work, "spec", decision);
       saveWork(env.paths, opened.work);
-      return ok(`spec approved for ${opened.work.id}`, { approvals: opened.work.approvals });
+      return ok(`spec approved for ${opened.work.id} ${decisionText(env.policy, decision)}`, {
+        approvals: opened.work.approvals,
+      });
     }
     case "phase": {
       const opened = openForChange(env, args[0]);
@@ -545,7 +578,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       writeProtectedText(
         env.paths,
         join(workDir(env.paths, opened.work.id), "report.md"),
-        renderReport(opened.work, outcome.evidence),
+        renderReport(opened.work, outcome.evidence, env.policy),
       );
       const raised = outcome.raised
         ? `Route raised to ${outcome.raised}: ${opened.work.routeReasons.at(-1)}\n`
@@ -573,9 +606,16 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         return refuse(`the team policy does not allow skipping ${step}`);
       if (env.config.mode === "pilot" && (step === "gate:secrets" || step === "gate:deps"))
         return refuse(`in pilot mode the ${step.slice(5)} gate cannot be skipped`);
-      addSkip(opened.work, step, reason);
+      const decision = decisionFlag(parsed);
+      if (isOutcome(decision)) return decision;
+      addSkip(opened.work, step, reason, decision);
       saveWork(env.paths, opened.work);
-      return ok(`skipped ${step} on ${opened.work.id}: ${reason}`, { skips: opened.work.skips });
+      return ok(
+        `skipped ${step} on ${opened.work.id} ${decisionText(env.policy, decision)}: ${reason}`,
+        {
+          skips: opened.work.skips,
+        },
+      );
     }
     case "evidence": {
       const opened = openWork(env, args[0]);
@@ -590,7 +630,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       );
       result.evidence.verdict = result.verdict;
       result.evidence.unproven = result.unproven;
-      const report = renderReport(opened.work, result.evidence);
+      const report = renderReport(opened.work, result.evidence, env.policy);
       // Tampered state is still shown, but never saved: saving would record it as the engine's own.
       if (refused)
         return refuse(`${refused.text}\n\n${report}`, {
@@ -630,7 +670,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           id: c.id,
           kind: c.kind,
           text: c.text,
-          tdd: tddSummary(work, result.evidence, c.id, c.kind),
+          tdd: tddSummary(work, result.evidence, c.id, c.kind, env.policy),
         })),
         runs: result.evidence.runs.map((r) => ({
           gate: r.gate,
@@ -690,11 +730,12 @@ const HELP = `crew ${VERSION}
   classify <id> --answers <json>        record typed answers and compute the route
   criteria <id> add "<text>" [--kind preserve]
   approve <id> spec                     record the user's approval (asks the user)
+      --mode auto|bypassPermissions|dontAsk   no person watching: recorded as the agent's decision
   phase <id> next                       advance when the guard holds
   await <id> user | resume <id>         mark or clear waiting for the user
   tdd <red|green|before|after> <id> <criterion> [-- <cmd>]
   gate run <id> [--only a,b]            run the gates the route requires
-  skip <id> <step> --reason "<text>"    record a skip (asks the user)
+  skip <id> <step> --reason "<text>"    record a skip (asks the user; --mode as for approve)
   evidence <id>                         write and print the report
   status | mode [m] | config <key> [v]  state and settings
   --json on any command prints the machine form`;

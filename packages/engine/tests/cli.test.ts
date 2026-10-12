@@ -48,7 +48,7 @@ test("a fast-route fix from start to a proven report", async () => {
     "src/a.ts": "x",
   });
   const c = io(root);
-  expect((await c.run("--version")).out.trim()).toBe("0.1.1");
+  expect((await c.run("--version")).out.trim()).toBe("0.1.2");
   const detect = await c.json("detect");
   expect(detect.code).toBe(0);
   expect((detect.data.profile as { targets: unknown[] }).targets).toHaveLength(1);
@@ -376,6 +376,51 @@ test("the command comes first, so user-only verbs cannot hide behind a leading f
   expect(plain.code).toBe(1);
   expect(plain.err.trim()).toBe(message);
   expect((await c.run("status", "--json")).code).toBe(0);
+});
+
+test("approve and skip record who decided: the user, or the agent in an unattended mode", async () => {
+  const root = makeRepo({ "package.json": JSON.stringify({ scripts: { test: "exit 0" } }) });
+  const c = io(root);
+  const id = (await c.json("start", "Thing", "--answers", answers)).data.id as string;
+  const file = join(root, ".crew", "work", id, "work.json");
+  const read = () => JSON.parse(readFileSync(file, "utf8"));
+
+  expect((await c.json("approve", id, "spec")).code).toBe(0);
+  expect(read().approvals).toEqual([{ what: "spec", at: expect.any(String), by: "user" }]);
+  const agent = await c.json("approve", id, "spec", "--mode", "auto");
+  expect(agent.code).toBe(0);
+  expect(agent.data.message).toContain("by the agent in auto mode");
+  expect(read().approvals[1]).toEqual({
+    what: "spec",
+    at: expect.any(String),
+    by: "agent",
+    mode: "auto",
+  });
+
+  expect(
+    (await c.json("skip", id, "gate:lint", "--reason", "x", "--mode", "bypassPermissions")).code,
+  ).toBe(0);
+  expect(read().skips).toEqual([
+    {
+      step: "gate:lint",
+      reason: "x",
+      at: expect.any(String),
+      by: "agent",
+      mode: "bypassPermissions",
+    },
+  ]);
+  expect((await c.json("skip", id, "gate:test", "--reason", "y")).code).toBe(0);
+  expect(read().skips[1]).toMatchObject({ step: "gate:test", by: "user" });
+
+  const bad = await c.json("approve", id, "spec", "--mode", "default");
+  expect(bad.code).toBe(1);
+  expect(bad.data.message).toContain("auto, bypassPermissions or dontAsk");
+  expect((await c.json("skip", id, "gate:typecheck", "--reason", "z", "--mode", "yes")).code).toBe(
+    1,
+  );
+  expect((await c.json("approve", id, "spec", "--mode")).code).toBe(1);
+  expect(read().approvals).toHaveLength(2);
+  expect(read().skips).toHaveLength(2);
 });
 
 test("start takes --criterion, repeatable, and warns about uncommitted changes it will measure", async () => {

@@ -36,6 +36,6 @@ What this change does not do.
 
 ## Full route: the complete spec, approved
 
-Same file, with these sections: Problem, Design (the chosen approach and the alternatives rejected, with the reason), Acceptance criteria, Risks and rollback, Out of scope. Present it to the user, mark the work as waiting, and when the user agrees run `crew approve <id> spec`; the permission prompt is their signature.
+Same file, with these sections: Problem, Design (the chosen approach and the alternatives rejected, with the reason), Acceptance criteria, Risks and rollback, Out of scope. Present it to the user, mark the work as waiting, and when the user agrees run `crew approve <id> spec`; the permission prompt is their signature. With no person watching, the hook asks for `--mode <mode>`: the approval is recorded as the agent's and satisfies the full route only if `policy.json` sets `unattendedDecisions` to `count`.
 
 The engine checks that `spec.md` exists and has a non-empty "Acceptance criteria" section before the build phase; the quality of the spec is your responsibility.

@@ -269,7 +269,7 @@ export async function runGates(
   for (const { gate, target } of planned) {
     if (options.only && !options.only.includes(gate)) continue;
     evidence.runs = evidence.runs.filter((r) => !(r.gate === gate && r.target === target));
-    if (isSkipped(work, `gate:${gate}`)) {
+    if (isSkipped(work, `gate:${gate}`, policy)) {
       const skip = work.skips.find((s) => s.step === `gate:${gate}`);
       evidence.runs.push({
         gate,
@@ -296,6 +296,7 @@ export async function runGates(
     work,
     evidence,
     expected: planned,
+    policy,
     currentFingerprint: computeFingerprint(
       paths.root,
       profile,
@@ -345,6 +346,7 @@ export function assess(
       fingerprintMethod(read.evidence.fingerprint),
     ),
     tampered: tampered || read.tampered,
+    policy,
   });
   return { evidence: read.evidence, ...verdict, expected, changed };
 }

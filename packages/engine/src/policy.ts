@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import type { CrewPaths } from "./paths.ts";
 import { readProtectedJson } from "./store.ts";
-import type { GateName, Policy, RiskArea, Route } from "./types.ts";
+import type { DecidedBy, GateName, Policy, RiskArea, Route } from "./types.ts";
 import { GATE_NAMES, ROUTE_ORDER } from "./types.ts";
 
 export const DEFAULT_POLICY: Policy = {
@@ -10,7 +10,13 @@ export const DEFAULT_POLICY: Policy = {
   minimumRoute: "fast",
   allowSkips: ["*"],
   artifacts: "commit",
+  unattendedDecisions: "wait",
 };
+
+/** Whether a recorded decision counts: a person's always does, the agent's only when the policy says so. */
+export function decisionCounts(policy: Policy, decision: { by?: DecidedBy }): boolean {
+  return decision.by !== "agent" || policy.unattendedDecisions === "count";
+}
 
 const RISK_AREAS: RiskArea[] = [
   "auth",
@@ -54,6 +60,7 @@ export function loadPolicy(paths: CrewPaths): { policy: Policy; tampered: boolea
       minimumRoute,
       allowSkips,
       artifacts: raw.artifacts === "local" ? "local" : "commit",
+      unattendedDecisions: raw.unattendedDecisions === "count" ? "count" : "wait",
     },
     tampered: read.tampered,
   };

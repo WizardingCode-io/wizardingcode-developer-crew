@@ -5,13 +5,16 @@ import { higherRoute, routeRank } from "./classify.ts";
 import { baseCommitOf } from "./fingerprint.ts";
 import { nowIso, writeText } from "./fs.ts";
 import { type CrewPaths, workDir } from "./paths.ts";
+import { decisionCounts } from "./policy.ts";
 import { loadState, saveState } from "./state.ts";
 import { readProtectedJson, writeProtectedJson } from "./store.ts";
 import type {
   Criterion,
   CriterionKind,
+  Decision,
   Evidence,
   Phase,
+  Policy,
   Route,
   TddRecord,
   WorkItem,
@@ -150,16 +153,24 @@ export function addCriterion(
   return criterion;
 }
 
-export function approve(work: WorkItem, what: "spec"): void {
-  work.approvals.push({ what, at: nowIso() });
+const USER: Decision = { by: "user" };
+
+export function approve(work: WorkItem, what: "spec", decision: Decision = USER): void {
+  work.approvals.push({ what, at: nowIso(), ...decision });
 }
 
-export function addSkip(work: WorkItem, step: string, reason: string): void {
-  work.skips.push({ step, reason, at: nowIso() });
+export function addSkip(
+  work: WorkItem,
+  step: string,
+  reason: string,
+  decision: Decision = USER,
+): void {
+  work.skips.push({ step, reason, at: nowIso(), ...decision });
 }
 
-export function isSkipped(work: WorkItem, step: string): boolean {
-  return work.skips.some((s) => s.step === step);
+/** A step is skipped when a skip for it counts: a person's always does, the agent's per the policy. */
+export function isSkipped(work: WorkItem, step: string, policy: Policy): boolean {
+  return work.skips.some((s) => s.step === step && decisionCounts(policy, s));
 }
 
 export function phaseIndex(phase: Phase): number {
@@ -184,6 +195,7 @@ export interface GuardContext {
   evidence: Evidence | null;
   proven: boolean;
   unproven: string[];
+  policy: Policy;
 }
 
 // Shared with evidence.ts so both agree on what a complete test-first record is.
@@ -202,8 +214,14 @@ function routeDocuments(work: WorkItem, ctx: GuardContext): string[] {
     }
   }
   if (work.route === "full") {
-    if (!work.approvals.some((a) => a.what === "spec")) {
-      missing.push("the user's approval of the spec (crew approve <id> spec)");
+    const approvals = work.approvals.filter((a) => a.what === "spec");
+    if (!approvals.some((a) => decisionCounts(ctx.policy, a))) {
+      const agent = approvals.find((a) => a.by === "agent");
+      missing.push(
+        agent
+          ? `the user's approval of the spec: recorded by the agent in ${agent.mode} mode and not counted (a person runs crew approve <id> spec, or policy.json sets unattendedDecisions to "count")`
+          : "the user's approval of the spec (crew approve <id> spec)",
+      );
     }
     if (!ctx.planExists) missing.push("plan.md in the work folder");
   }
@@ -220,7 +238,7 @@ export function guardFor(work: WorkItem, next: Phase, ctx: GuardContext): string
   } else if (next === "gate") {
     missing.push(...routeDocuments(work, ctx));
     for (const criterion of work.criteria) {
-      if (isSkipped(work, `tdd:${criterion.id}`)) continue;
+      if (isSkipped(work, `tdd:${criterion.id}`, ctx.policy)) continue;
       const record = ctx.evidence?.tdd.find((t) => t.criterion === criterion.id);
       if (!tddDone(record, criterion.kind)) {
         const how = criterion.kind === "behavior" ? "red/green" : "before/after";

@@ -53,6 +53,10 @@ var PHASE_ORDER = [
   "gate",
   "deliver"
 ];
+var UNATTENDED_MODES = ["auto", "bypassPermissions", "dontAsk"];
+function isUnattendedMode(value) {
+  return UNATTENDED_MODES.includes(value);
+}
 
 // packages/engine/src/classify.ts
 var WORK_TYPES = {
@@ -559,7 +563,7 @@ function missingTestCommands(profile) {
 }
 
 // packages/engine/src/evidence.ts
-import { join as join11 } from "node:path";
+import { join as join12 } from "node:path";
 
 // packages/engine/src/fingerprint.ts
 import { execFileSync } from "node:child_process";
@@ -790,6 +794,9 @@ function isProtectedPath(paths, absPath) {
   return PROTECTED_IN_WORK.has(inner) || inner.startsWith("logs/");
 }
 
+// packages/engine/src/policy.ts
+import { join as join9 } from "node:path";
+
 // packages/engine/src/store.ts
 import { relative as relative3 } from "node:path";
 var HAND_WRITTEN = ".crew/policy.json";
@@ -847,14 +854,67 @@ function readProtectedJson(paths, absPath) {
   }
 }
 
+// packages/engine/src/policy.ts
+var DEFAULT_POLICY = {
+  requiredGates: [],
+  riskPaths: {},
+  minimumRoute: "fast",
+  allowSkips: ["*"],
+  artifacts: "commit",
+  unattendedDecisions: "wait"
+};
+function decisionCounts(policy, decision) {
+  return decision.by !== "agent" || policy.unattendedDecisions === "count";
+}
+var RISK_AREAS = [
+  "auth",
+  "payments",
+  "personal-data",
+  "data-migration",
+  "infra",
+  "public-api",
+  "secrets"
+];
+function strings(value) {
+  return Array.isArray(value) ? value.filter((v) => typeof v === "string") : [];
+}
+function loadPolicy(paths) {
+  const read = readProtectedJson(paths, join9(paths.crewDir, "policy.json"));
+  const raw = read.data ?? {};
+  const riskPaths = {};
+  const rawRisk = raw.riskPaths ?? {};
+  for (const area of RISK_AREAS) {
+    const patterns = strings(rawRisk[area]);
+    if (patterns.length)
+      riskPaths[area] = patterns;
+  }
+  const minimumRoute = ROUTE_ORDER.includes(raw.minimumRoute) ? raw.minimumRoute : DEFAULT_POLICY.minimumRoute;
+  const allowSkips = Array.isArray(raw.allowSkips) ? strings(raw.allowSkips) : DEFAULT_POLICY.allowSkips;
+  return {
+    policy: {
+      requiredGates: strings(raw.requiredGates).filter((g) => GATE_NAMES.includes(g)),
+      riskPaths,
+      minimumRoute,
+      allowSkips,
+      artifacts: raw.artifacts === "local" ? "local" : "commit",
+      unattendedDecisions: raw.unattendedDecisions === "count" ? "count" : "wait"
+    },
+    tampered: read.tampered
+  };
+}
+function skipAllowed(policy, step) {
+  const bare = step.replace(/^(gate|tdd):/, "");
+  return policy.allowSkips.some((s) => s === "*" || s === step || s === bare);
+}
+
 // packages/engine/src/work.ts
 import { existsSync as existsSync2, readdirSync as readdirSync3 } from "node:fs";
-import { join as join10 } from "node:path";
+import { join as join11 } from "node:path";
 
 // packages/engine/src/state.ts
-import { join as join9 } from "node:path";
+import { join as join10 } from "node:path";
 function statePath(paths) {
-  return join9(paths.localDir, "state.json");
+  return join10(paths.localDir, "state.json");
 }
 function loadState(paths) {
   const raw = readJson(statePath(paths)) ?? {};
@@ -879,7 +939,7 @@ function ensureCrewDir(paths, policy) {
 work/*/logs/
 ${policy.artifacts === "local" ? `work/
 ` : ""}`;
-  const file = join9(paths.crewDir, ".gitignore");
+  const file = join10(paths.crewDir, ".gitignore");
   if (readText(file) !== wanted)
     writeProtectedText(paths, file, wanted);
 }
@@ -894,13 +954,13 @@ function slug(text) {
   return text.toLowerCase().normalize("NFKD").replace(/[^\w\s-]/g, "").trim().replace(/[\s_]+/g, "-").replace(/-+/g, "-");
 }
 function workJson(paths, id) {
-  return join10(workDir(paths, id), "work.json");
+  return join11(workDir(paths, id), "work.json");
 }
 function newWorkId(paths, title) {
   const date = nowIso().slice(0, 10);
   let existing = 0;
   try {
-    existing = readdirSync3(join10(paths.crewDir, "work")).filter((n) => n.startsWith(date)).length;
+    existing = readdirSync3(join11(paths.crewDir, "work")).filter((n) => n.startsWith(date)).length;
   } catch {
     existing = 0;
   }
@@ -930,7 +990,7 @@ function createWork(paths, input, baseFiles) {
     updatedAt: at
   };
   writeProtectedJson(paths, workJson(paths, work.id), work);
-  writeText(join10(workDir(paths, work.id), "brief.md"), `# Brief
+  writeText(join11(workDir(paths, work.id), "brief.md"), `# Brief
 
 ## Request
 
@@ -987,14 +1047,15 @@ function addCriterion(work, text, kind = "behavior") {
   work.criteria.push(criterion);
   return criterion;
 }
-function approve(work, what) {
-  work.approvals.push({ what, at: nowIso() });
+var USER = { by: "user" };
+function approve(work, what, decision = USER) {
+  work.approvals.push({ what, at: nowIso(), ...decision });
 }
-function addSkip(work, step, reason) {
-  work.skips.push({ step, reason, at: nowIso() });
+function addSkip(work, step, reason, decision = USER) {
+  work.skips.push({ step, reason, at: nowIso(), ...decision });
 }
-function isSkipped(work, step) {
-  return work.skips.some((s) => s.step === step);
+function isSkipped(work, step, policy) {
+  return work.skips.some((s) => s.step === step && decisionCounts(policy, s));
 }
 function phaseIndex(phase) {
   return PHASE_ORDER.indexOf(phase);
@@ -1025,8 +1086,10 @@ function routeDocuments(work, ctx) {
     }
   }
   if (work.route === "full") {
-    if (!work.approvals.some((a) => a.what === "spec")) {
-      missing.push("the user's approval of the spec (crew approve <id> spec)");
+    const approvals = work.approvals.filter((a) => a.what === "spec");
+    if (!approvals.some((a) => decisionCounts(ctx.policy, a))) {
+      const agent = approvals.find((a) => a.by === "agent");
+      missing.push(agent ? `the user's approval of the spec: recorded by the agent in ${agent.mode} mode and not counted (a person runs crew approve <id> spec, or policy.json sets unattendedDecisions to "count")` : "the user's approval of the spec (crew approve <id> spec)");
     }
     if (!ctx.planExists)
       missing.push("plan.md in the work folder");
@@ -1043,7 +1106,7 @@ function guardFor(work, next, ctx) {
   } else if (next === "gate") {
     missing.push(...routeDocuments(work, ctx));
     for (const criterion of work.criteria) {
-      if (isSkipped(work, `tdd:${criterion.id}`))
+      if (isSkipped(work, `tdd:${criterion.id}`, ctx.policy))
         continue;
       const record = ctx.evidence?.tdd.find((t) => t.criterion === criterion.id);
       if (!tddDone(record, criterion.kind)) {
@@ -1078,6 +1141,14 @@ function advancePhase(work, ctx) {
 }
 
 // packages/engine/src/evidence.ts
+function decidedBy(decision) {
+  return decision.by === "agent" ? `by the agent in ${decision.mode} mode` : "by the user";
+}
+function countedNote(policy, decision) {
+  if (decision.by !== "agent")
+    return "";
+  return decisionCounts(policy, decision) ? ": counted by policy" : ": not counted, the policy waits for a person";
+}
 function emptyEvidence() {
   return {
     fingerprint: null,
@@ -1088,7 +1159,7 @@ function emptyEvidence() {
   };
 }
 function evidencePath(paths, id) {
-  return join11(workDir(paths, id), "evidence.json");
+  return join12(workDir(paths, id), "evidence.json");
 }
 function loadEvidence(paths, id) {
   const read = readProtectedJson(paths, evidencePath(paths, id));
@@ -1098,7 +1169,7 @@ function saveEvidence(paths, id, evidence) {
   writeProtectedJson(paths, evidencePath(paths, id), evidence);
 }
 function computeVerdict(input) {
-  const { work, evidence, expected, currentFingerprint, tampered } = input;
+  const { work, evidence, expected, currentFingerprint, tampered, policy } = input;
   const unproven = [];
   if (tampered)
     unproven.push("state changed outside the engine");
@@ -1111,7 +1182,7 @@ function computeVerdict(input) {
     unproven.push("code changed since the last gate run");
   const multiTarget = new Set(expected.map((e) => e.target)).size > 1;
   for (const { gate, target } of expected) {
-    if (isSkipped(work, `gate:${gate}`))
+    if (isSkipped(work, `gate:${gate}`, policy))
       continue;
     const label = multiTarget && target !== "." ? `${gate} (${target})` : gate;
     const run = evidence.runs.find((r) => r.gate === gate && r.target === target);
@@ -1130,7 +1201,7 @@ function computeVerdict(input) {
   if (work.criteria.length === 0)
     unproven.push('no acceptance criteria (crew criteria <id> add "...")');
   for (const criterion of work.criteria) {
-    if (isSkipped(work, `tdd:${criterion.id}`))
+    if (isSkipped(work, `tdd:${criterion.id}`, policy))
       continue;
     const record = evidence.tdd.find((t) => t.criterion === criterion.id);
     if (!tddDone(record, criterion.kind))
@@ -1138,8 +1209,8 @@ function computeVerdict(input) {
   }
   return { verdict: unproven.length === 0 ? "proven" : "unproven", unproven };
 }
-function tddSummary(work, evidence, criterionId, kind) {
-  if (isSkipped(work, `tdd:${criterionId}`)) {
+function tddSummary(work, evidence, criterionId, kind, policy) {
+  if (isSkipped(work, `tdd:${criterionId}`, policy)) {
     const skip = work.skips.find((s) => s.step === `tdd:${criterionId}`);
     return `skipped: ${skip?.reason ?? ""}`;
   }
@@ -1150,7 +1221,7 @@ function tddSummary(work, evidence, criterionId, kind) {
     return kind === "behavior" ? "red only" : "before only";
   return "missing";
 }
-function renderReport(work, evidence) {
+function renderReport(work, evidence, policy) {
   const lines = [];
   lines.push(`# Report: ${work.title}`, "");
   lines.push(`- Work: \`${work.id}\``);
@@ -1164,17 +1235,21 @@ function renderReport(work, evidence) {
   }
   lines.push("## Acceptance criteria", "", "| Id | Kind | Criterion | Test-first |", "| :- | :- | :- | :- |");
   for (const c of work.criteria) {
-    lines.push(`| ${c.id} | ${c.kind} | ${c.text.replace(/\|/g, "\\|")} | ${tddSummary(work, evidence, c.id, c.kind)} |`);
+    lines.push(`| ${c.id} | ${c.kind} | ${c.text.replace(/\|/g, "\\|")} | ${tddSummary(work, evidence, c.id, c.kind, policy)} |`);
   }
   lines.push("", "## Gates", "", "| Gate | Target | Status | Command | Duration | Log |", "| :- | :- | :- | :- | -: | :- |");
   for (const r of evidence.runs) {
     const status = r.status === "skipped" || r.status === "unavailable" ? `${r.status}${r.reason ? `: ${r.reason}` : ""}` : r.status;
     lines.push(`| ${r.gate} | ${r.target} | ${status} | ${r.command ? `\`${r.command}\`` : ""} | ${r.durationMs} ms | ${r.log ?? ""} |`);
   }
-  if (work.skips.length) {
-    lines.push("", "## Skipped by the user", "");
-    for (const s of work.skips)
-      lines.push(`- \`${s.step}\`: ${s.reason} (${s.at})`);
+  if (work.approvals.length || work.skips.length) {
+    lines.push("", "## Decisions", "");
+    for (const a of work.approvals) {
+      lines.push(`- ${a.what} approved ${decidedBy(a)} (${a.at})${countedNote(policy, a)}`);
+    }
+    for (const s of work.skips) {
+      lines.push(`- \`${s.step}\` skipped ${decidedBy(s)}: ${s.reason} (${s.at})${countedNote(policy, s)}`);
+    }
   }
   lines.push("", `Fingerprint: ${evidence.fingerprint ?? "none"}`, "");
   return lines.join(`
@@ -1183,7 +1258,7 @@ function renderReport(work, evidence) {
 
 // packages/engine/src/gates.ts
 import { accessSync, constants } from "node:fs";
-import { basename as basename2, delimiter, join as join13 } from "node:path";
+import { basename as basename2, delimiter, join as join14 } from "node:path";
 
 // packages/engine/src/run.ts
 import { spawn } from "node:child_process";
@@ -1264,7 +1339,7 @@ function runCommand(command, options) {
 // packages/engine/src/secrets.ts
 import { execFileSync as execFileSync2, spawnSync } from "node:child_process";
 import { readFileSync as readFileSync3 } from "node:fs";
-import { join as join12 } from "node:path";
+import { join as join13 } from "node:path";
 var RULES = [
   {
     rule: "private key",
@@ -1309,7 +1384,7 @@ function isBinary(buffer) {
 function fileSource(root, path) {
   let buffer;
   try {
-    buffer = readFileSync3(join12(root, path));
+    buffer = readFileSync3(join13(root, path));
   } catch {
     return null;
   }
@@ -1423,7 +1498,7 @@ function onPath(binary, env) {
       continue;
     for (const extension of extensions) {
       try {
-        accessSync(join13(dir, binary + extension), constants.X_OK);
+        accessSync(join14(dir, binary + extension), constants.X_OK);
         return true;
       } catch {}
     }
@@ -1446,7 +1521,7 @@ var PYTHON_AUDIT = {
   pip: "python -m pip_audit"
 };
 function depsAuditCommand(target, root, env = process.env) {
-  const dir = join13(root, target.path);
+  const dir = join14(root, target.path);
   if (target.stack === "python") {
     if (!onPath("pip-audit", env))
       return { reason: "pip-audit not on PATH" };
@@ -1455,14 +1530,14 @@ function depsAuditCommand(target, root, env = process.env) {
   let tool;
   if (target.stack === "node") {
     tool = NODE_AUDIT[target.packageManager];
-    if (tool && target.packageManager === "yarn" && exists(join13(dir, ".yarnrc.yml")))
+    if (tool && target.packageManager === "yarn" && exists(join14(dir, ".yarnrc.yml")))
       tool = { ...tool, command: "yarn npm audit --severity high" };
   } else if (target.stack === "php") {
     tool = { binary: "composer", command: "composer audit", lockfiles: ["composer.lock"] };
   }
   if (!tool)
     return { reason: `no audit tool for ${target.packageManager}` };
-  if (!tool.lockfiles.some((name) => exists(join13(dir, name))))
+  if (!tool.lockfiles.some((name) => exists(join14(dir, name))))
     return { reason: "no lockfile" };
   if (!onPath(tool.binary, env))
     return { reason: `${tool.binary} not on PATH` };
@@ -1547,9 +1622,9 @@ async function runOne(paths, work, profile, gate, targetPath, fingerprint) {
   }
   const log = `logs/${gate}-${targetPath.replace(/[^a-z0-9]+/gi, "_")}-${Date.now()}.txt`;
   const result = await runCommand(command, {
-    cwd: join13(paths.root, targetPath),
+    cwd: join14(paths.root, targetPath),
     timeoutMs: target.timeoutMs,
-    logPath: join13(workDir(paths, work.id), log)
+    logPath: join14(workDir(paths, work.id), log)
   });
   const passed = result.exit === 0 && !result.timedOut;
   return {
@@ -1586,7 +1661,7 @@ async function runGates(paths, work, profile, policy, options = {}) {
     if (options.only && !options.only.includes(gate))
       continue;
     evidence.runs = evidence.runs.filter((r) => !(r.gate === gate && r.target === target));
-    if (isSkipped(work, `gate:${gate}`)) {
+    if (isSkipped(work, `gate:${gate}`, policy)) {
       const skip = work.skips.find((s) => s.step === `gate:${gate}`);
       evidence.runs.push({
         gate,
@@ -1612,6 +1687,7 @@ async function runGates(paths, work, profile, policy, options = {}) {
     work,
     evidence,
     expected: planned,
+    policy,
     currentFingerprint: computeFingerprint(paths.root, profile, base, MAX_WATCHED_FILES, fingerprintMethod(fingerprintBefore)),
     tampered
   });
@@ -1630,58 +1706,10 @@ function assess(paths, work, profile, policy, tampered = false) {
     evidence: read.evidence,
     expected,
     currentFingerprint: computeFingerprint(paths.root, profile, base, MAX_WATCHED_FILES, fingerprintMethod(read.evidence.fingerprint)),
-    tampered: tampered || read.tampered
+    tampered: tampered || read.tampered,
+    policy
   });
   return { evidence: read.evidence, ...verdict, expected, changed };
-}
-
-// packages/engine/src/policy.ts
-import { join as join14 } from "node:path";
-var DEFAULT_POLICY = {
-  requiredGates: [],
-  riskPaths: {},
-  minimumRoute: "fast",
-  allowSkips: ["*"],
-  artifacts: "commit"
-};
-var RISK_AREAS = [
-  "auth",
-  "payments",
-  "personal-data",
-  "data-migration",
-  "infra",
-  "public-api",
-  "secrets"
-];
-function strings(value) {
-  return Array.isArray(value) ? value.filter((v) => typeof v === "string") : [];
-}
-function loadPolicy(paths) {
-  const read = readProtectedJson(paths, join14(paths.crewDir, "policy.json"));
-  const raw = read.data ?? {};
-  const riskPaths = {};
-  const rawRisk = raw.riskPaths ?? {};
-  for (const area of RISK_AREAS) {
-    const patterns = strings(rawRisk[area]);
-    if (patterns.length)
-      riskPaths[area] = patterns;
-  }
-  const minimumRoute = ROUTE_ORDER.includes(raw.minimumRoute) ? raw.minimumRoute : DEFAULT_POLICY.minimumRoute;
-  const allowSkips = Array.isArray(raw.allowSkips) ? strings(raw.allowSkips) : DEFAULT_POLICY.allowSkips;
-  return {
-    policy: {
-      requiredGates: strings(raw.requiredGates).filter((g) => GATE_NAMES.includes(g)),
-      riskPaths,
-      minimumRoute,
-      allowSkips,
-      artifacts: raw.artifacts === "local" ? "local" : "commit"
-    },
-    tampered: read.tampered
-  };
-}
-function skipAllowed(policy, step) {
-  const bare = step.replace(/^(gate|tdd):/, "");
-  return policy.allowSkips.some((s) => s === "*" || s === step || s === bare);
 }
 
 // packages/engine/src/profile.ts
@@ -1729,6 +1757,23 @@ var WRITE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
 var USER_ONLY = /(?:^|[\s/;&|(])crew(?:\.mjs)?\s+(?:skip|approve|accept|profile\s+confirm|policy\s+accept|profile\s+set\b[^;&|]*--force)\b/;
 var ENGINE_FILES = /\.crew\/(?:profile\.json|policy\.json|\.gitignore|local\b|work\/[^\s/]+\/(?:work\.json|evidence\.json|report\.md|logs\b))|\.wizardingcode\/crew\b/;
 var WRITE_SHAPE = /(?:^|[\s;&|(])(?:rm|mv|cp|tee|truncate|chmod|touch|dd|install)\b|sed\s+-i|>{1,2}\|?\s*(?:["']?\S*(?:\.crew\/|\.wizardingcode\/crew\b)|["']?[$`])/;
+var UNATTENDED_MODES2 = new Set(["auto", "bypassPermissions", "dontAsk"]);
+var MODE_FLAG = /--mode(?:=|\s+)(\S+)/;
+function userOnlyDecision(cleaned, permissionMode) {
+  const flagged = MODE_FLAG.exec(cleaned)?.[1];
+  if (permissionMode !== undefined && UNATTENDED_MODES2.has(permissionMode)) {
+    if (flagged === permissionMode)
+      return null;
+    if (flagged === undefined) {
+      return answer("deny", `Crew: no person is watching this session (${permissionMode} mode) and this command records a decision that only the user can take. Run it again with --mode ${permissionMode}, so the record says the agent decided and in which mode.`);
+    }
+    return answer("deny", `Crew: this session is in ${permissionMode} mode, not ${flagged}; run the command with --mode ${permissionMode}`);
+  }
+  if (flagged !== undefined) {
+    return answer("deny", `Crew: a person is present (${permissionMode ?? "default"} mode); run the command without --mode so they are asked`);
+  }
+  return answer("ask", "Crew: this command records a decision that only the user can take");
+}
 function answer(permissionDecision, reason) {
   return {
     hookSpecificOutput: {
@@ -1769,8 +1814,11 @@ function onPreToolUse(ctx, payload) {
   }
   if (tool === "Bash") {
     const command = typeof input.command === "string" ? input.command : "";
-    if (USER_ONLY.test(command.replace(/["'\\]/g, ""))) {
-      return answer("ask", "Crew: this command records a decision that only the user can take");
+    const cleaned = command.replace(/["'\\]/g, "");
+    if (USER_ONLY.test(cleaned)) {
+      const decided = userOnlyDecision(cleaned, payload.permission_mode);
+      if (decided)
+        return decided;
     }
     if (ENGINE_FILES.test(command) && WRITE_SHAPE.test(command)) {
       return answer("deny", "Crew: files under .crew/ and ~/.wizardingcode/crew that the engine owns are written only by the crew command");
@@ -1994,7 +2042,7 @@ async function recordTdd(paths, work, evidence, profile, criterionId, step, over
 }
 
 // packages/engine/src/version.ts
-var VERSION = "0.1.1";
+var VERSION = "0.1.2";
 
 // packages/engine/src/cli.ts
 var BOOLEAN_FLAGS = new Set(["json", "refresh", "force"]);
@@ -2112,6 +2160,19 @@ function openForChange(env, id) {
 function isOutcome(value) {
   return typeof value === "object" && value !== null && "code" in value && "text" in value;
 }
+function decisionFlag(parsed) {
+  const mode = parsed.flags.mode;
+  if (mode === undefined)
+    return { by: "user" };
+  if (!isUnattendedMode(mode)) {
+    return refuse(`--mode names the permission mode of a session with no person watching: ${UNATTENDED_MODES.slice(0, -1).join(", ")} or ${UNATTENDED_MODES.at(-1)}`);
+  }
+  return { by: "agent", mode };
+}
+function decisionText(policy, decision) {
+  const note = countedNote(policy, decision);
+  return `${decidedBy(decision)}${note ? ` (${note.slice(2)})` : ""}`;
+}
 function guardContext(env, work, tampered) {
   const dir = workDir(env.paths, work.id);
   const result = assess(env.paths, work, env.profile, env.policy, env.tampered || tampered);
@@ -2120,7 +2181,8 @@ function guardContext(env, work, tampered) {
     planExists: existsSync3(join18(dir, "plan.md")),
     evidence: result.evidence,
     proven: result.verdict === "proven",
-    unproven: result.unproven
+    unproven: result.unproven,
+    policy: env.policy
   };
 }
 function logDecision(env, work, answers) {
@@ -2340,10 +2402,15 @@ async function dispatch(parsed, io) {
       if (isOutcome(opened))
         return opened;
       if (args[1] !== "spec")
-        return refuse("usage: crew approve <id> spec");
-      approve(opened.work, "spec");
+        return refuse("usage: crew approve <id> spec [--mode <mode>]");
+      const decision = decisionFlag(parsed);
+      if (isOutcome(decision))
+        return decision;
+      approve(opened.work, "spec", decision);
       saveWork(env.paths, opened.work);
-      return ok(`spec approved for ${opened.work.id}`, { approvals: opened.work.approvals });
+      return ok(`spec approved for ${opened.work.id} ${decisionText(env.policy, decision)}`, {
+        approvals: opened.work.approvals
+      });
     }
     case "phase": {
       const opened = openForChange(env, args[0]);
@@ -2410,7 +2477,7 @@ ${outcome.record.tail}` : "";
           break;
       }
       saveWork(env.paths, opened.work);
-      writeProtectedText(env.paths, join18(workDir(env.paths, opened.work.id), "report.md"), renderReport(opened.work, outcome.evidence));
+      writeProtectedText(env.paths, join18(workDir(env.paths, opened.work.id), "report.md"), renderReport(opened.work, outcome.evidence, env.policy));
       const raised = outcome.raised ? `Route raised to ${outcome.raised}: ${opened.work.routeReasons.at(-1)}
 ` : "";
       return ok(raised + gateSummary(opened.work, outcome.verdict, outcome.unproven, outcome.evidence.runs), {
@@ -2436,9 +2503,14 @@ ${outcome.record.tail}` : "";
         return refuse(`the team policy does not allow skipping ${step}`);
       if (env.config.mode === "pilot" && (step === "gate:secrets" || step === "gate:deps"))
         return refuse(`in pilot mode the ${step.slice(5)} gate cannot be skipped`);
-      addSkip(opened.work, step, reason);
+      const decision = decisionFlag(parsed);
+      if (isOutcome(decision))
+        return decision;
+      addSkip(opened.work, step, reason, decision);
       saveWork(env.paths, opened.work);
-      return ok(`skipped ${step} on ${opened.work.id}: ${reason}`, { skips: opened.work.skips });
+      return ok(`skipped ${step} on ${opened.work.id} ${decisionText(env.policy, decision)}: ${reason}`, {
+        skips: opened.work.skips
+      });
     }
     case "evidence": {
       const opened = openWork(env, args[0]);
@@ -2448,7 +2520,7 @@ ${outcome.record.tail}` : "";
       const result = assess(env.paths, opened.work, env.profile, env.policy, env.tampered || opened.tampered);
       result.evidence.verdict = result.verdict;
       result.evidence.unproven = result.unproven;
-      const report = renderReport(opened.work, result.evidence);
+      const report = renderReport(opened.work, result.evidence, env.policy);
       if (refused)
         return refuse(`${refused.text}
 
@@ -2485,7 +2557,7 @@ ${gateSummary(active.work, result.verdict, result.unproven, result.evidence.runs
           id: c.id,
           kind: c.kind,
           text: c.text,
-          tdd: tddSummary(work, result.evidence, c.id, c.kind)
+          tdd: tddSummary(work, result.evidence, c.id, c.kind, env.policy)
         })),
         runs: result.evidence.runs.map((r) => ({
           gate: r.gate,
@@ -2542,11 +2614,12 @@ var HELP = `crew ${VERSION}
   classify <id> --answers <json>        record typed answers and compute the route
   criteria <id> add "<text>" [--kind preserve]
   approve <id> spec                     record the user's approval (asks the user)
+      --mode auto|bypassPermissions|dontAsk   no person watching: recorded as the agent's decision
   phase <id> next                       advance when the guard holds
   await <id> user | resume <id>         mark or clear waiting for the user
   tdd <red|green|before|after> <id> <criterion> [-- <cmd>]
   gate run <id> [--only a,b]            run the gates the route requires
-  skip <id> <step> --reason "<text>"    record a skip (asks the user)
+  skip <id> <step> --reason "<text>"    record a skip (asks the user; --mode as for approve)
   evidence <id>                         write and print the report
   status | mode [m] | config <key> [v]  state and settings
   --json on any command prints the machine form`;

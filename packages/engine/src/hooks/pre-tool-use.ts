@@ -16,6 +16,42 @@ const ENGINE_FILES =
 const WRITE_SHAPE =
   /(?:^|[\s;&|(])(?:rm|mv|cp|tee|truncate|chmod|touch|dd|install)\b|sed\s+-i|>{1,2}\|?\s*(?:["']?\S*(?:\.crew\/|\.wizardingcode\/crew\b)|["']?[$`])/;
 
+// Modes in which Claude Code shows no prompt a person answers, so a hook's "ask" is no signature.
+const UNATTENDED_MODES = new Set(["auto", "bypassPermissions", "dontAsk"]);
+const MODE_FLAG = /--mode(?:=|\s+)(\S+)/;
+
+/**
+ * A user-only command in a session with no person watching must say so with `--mode <mode>`, so
+ * the engine records the agent's decision as the agent's. Null means the command may go on to the
+ * write rule and, with a person present, to the prompt.
+ */
+function userOnlyDecision(
+  cleaned: string,
+  permissionMode: string | undefined,
+): HookResponse | null {
+  const flagged = MODE_FLAG.exec(cleaned)?.[1];
+  if (permissionMode !== undefined && UNATTENDED_MODES.has(permissionMode)) {
+    if (flagged === permissionMode) return null;
+    if (flagged === undefined) {
+      return answer(
+        "deny",
+        `Crew: no person is watching this session (${permissionMode} mode) and this command records a decision that only the user can take. Run it again with --mode ${permissionMode}, so the record says the agent decided and in which mode.`,
+      );
+    }
+    return answer(
+      "deny",
+      `Crew: this session is in ${permissionMode} mode, not ${flagged}; run the command with --mode ${permissionMode}`,
+    );
+  }
+  if (flagged !== undefined) {
+    return answer(
+      "deny",
+      `Crew: a person is present (${permissionMode ?? "default"} mode); run the command without --mode so they are asked`,
+    );
+  }
+  return answer("ask", "Crew: this command records a decision that only the user can take");
+}
+
 function answer(permissionDecision: "deny" | "ask", reason: string): HookResponse {
   return {
     hookSpecificOutput: {
@@ -61,8 +97,10 @@ export function onPreToolUse(ctx: HookContext, payload: HookPayload): HookRespon
   }
   if (tool === "Bash") {
     const command = typeof input.command === "string" ? input.command : "";
-    if (USER_ONLY.test(command.replace(/["'\\]/g, ""))) {
-      return answer("ask", "Crew: this command records a decision that only the user can take");
+    const cleaned = command.replace(/["'\\]/g, "");
+    if (USER_ONLY.test(cleaned)) {
+      const decided = userOnlyDecision(cleaned, payload.permission_mode);
+      if (decided) return decided;
     }
     // No exemption for crew command lines: a crew prefix would let `crew x; echo > .crew/...` through, and no crew command names a protected path.
     if (ENGINE_FILES.test(command) && WRITE_SHAPE.test(command)) {

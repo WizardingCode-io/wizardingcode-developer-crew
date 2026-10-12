@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { workDir } from "../src/paths.ts";
+import { DEFAULT_POLICY } from "../src/policy.ts";
 import { loadState } from "../src/state.ts";
 import type { Evidence, RunRecord } from "../src/types.ts";
 import {
@@ -36,6 +37,7 @@ const empty: GuardContext = {
   evidence: null,
   proven: false,
   unproven: [],
+  policy: DEFAULT_POLICY,
 };
 
 test("createWork writes the item and the brief and makes it active", () => {
@@ -115,6 +117,32 @@ test("guards: gate needs test-first records per criterion kind, deliver needs pr
     "not proven: gate test failing",
   ]);
   expect(guardFor(work, "deliver", { ...empty, proven: true })).toEqual([]);
+});
+
+test("guards: an agent's approval or skip counts only when the policy says so", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const work = createWork(paths, "feature");
+  const criterion = addCriterion(work, "x");
+  work.route = "full";
+  const ready: GuardContext = {
+    ...empty,
+    specText: "## Acceptance criteria\n- x\n",
+    planExists: true,
+  };
+  approve(work, "spec", { by: "agent", mode: "auto" });
+  expect(guardFor(work, "build", ready)).toEqual([
+    'the user\'s approval of the spec: recorded by the agent in auto mode and not counted (a person runs crew approve <id> spec, or policy.json sets unattendedDecisions to "count")',
+  ]);
+  const counting: GuardContext = {
+    ...ready,
+    policy: { ...DEFAULT_POLICY, unattendedDecisions: "count" },
+  };
+  expect(guardFor(work, "build", counting)).toEqual([]);
+  addSkip(work, `tdd:${criterion.id}`, "no test", { by: "agent", mode: "dontAsk" });
+  expect(guardFor(work, "gate", ready)).toContain(
+    `test-first record for ${criterion.id} (crew tdd red/green)`,
+  );
+  expect(guardFor(work, "gate", counting)).toEqual([]);
 });
 
 test("I2: a route raised during build is felt at the gate and at delivery", () => {
