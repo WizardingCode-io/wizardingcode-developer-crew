@@ -140,13 +140,21 @@ export function hashPaths(root: string, paths: string[]): Record<string, string>
   return hashes;
 }
 
-/** Drops the paths whose content is still what an earlier item proved. */
+/**
+ * The item's own changes: the paths git lists, less those whose content is still what an earlier
+ * item proved, plus any base file git no longer lists (reverted to the commit, or an untracked
+ * file deleted) whose content left the proven state.
+ */
 function ownChanges(root: string, paths: string[], base?: ChangeBase | null): string[] {
   const files = base?.baseFiles;
   if (!files) return paths;
-  return paths.filter(
-    (path) => files[path] === undefined || hashFile(join(root, path)) !== files[path],
+  const own = new Set(
+    paths.filter((path) => files[path] === undefined || hashFile(join(root, path)) !== files[path]),
   );
+  for (const [path, hash] of Object.entries(files)) {
+    if (!paths.includes(path) && hashFile(join(root, path)) !== hash) own.add(path);
+  }
+  return [...own].sort();
 }
 
 /**

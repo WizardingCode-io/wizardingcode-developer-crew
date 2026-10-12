@@ -456,12 +456,14 @@ var DEFAULT_WATCH_EXCLUDE = ["**/*.md", "docs/**", ".crew/**", ".claude/**"];
 var DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 var FORMER_WATCH_EXCLUDES = [["**/*.md", "docs/**", ".crew/**"]];
 var MAX_DEPTH = 3;
+function isFormerWatchDefault(profile) {
+  const saved = JSON.stringify(profile.watch.exclude);
+  return FORMER_WATCH_EXCLUDES.some((list) => JSON.stringify(list) === saved);
+}
 function watchOf(previous) {
   if (!previous)
     return { exclude: [...DEFAULT_WATCH_EXCLUDE] };
-  const saved = JSON.stringify(previous.watch.exclude);
-  const former = FORMER_WATCH_EXCLUDES.some((list) => JSON.stringify(list) === saved);
-  return former ? { exclude: [...DEFAULT_WATCH_EXCLUDE] } : previous.watch;
+  return isFormerWatchDefault(previous) ? { exclude: [...DEFAULT_WATCH_EXCLUDE] } : previous.watch;
 }
 function* folders(root, depth = 0) {
   yield root;
@@ -672,7 +674,12 @@ function ownChanges(root, paths, base) {
   const files = base?.baseFiles;
   if (!files)
     return paths;
-  return paths.filter((path) => files[path] === undefined || hashFile(join7(root, path)) !== files[path]);
+  const own = new Set(paths.filter((path) => files[path] === undefined || hashFile(join7(root, path)) !== files[path]));
+  for (const [path, hash] of Object.entries(files)) {
+    if (!paths.includes(path) && hashFile(join7(root, path)) !== hash)
+      own.add(path);
+  }
+  return [...own].sort();
 }
 function changedWatchedPaths(root, profile, base, maxFiles = MAX_WATCHED_FILES) {
   if (isGitRepo(root)) {
@@ -1721,7 +1728,7 @@ import { isAbsolute, join as join16, relative as relative4 } from "node:path";
 var WRITE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
 var USER_ONLY = /(?:^|[\s/;&|(])crew(?:\.mjs)?\s+(?:skip|approve|accept|profile\s+confirm|policy\s+accept|profile\s+set\b[^;&|]*--force)\b/;
 var ENGINE_FILES = /\.crew\/(?:profile\.json|policy\.json|\.gitignore|local\b|work\/[^\s/]+\/(?:work\.json|evidence\.json|report\.md|logs\b))|\.wizardingcode\/crew\b/;
-var WRITE_SHAPE = /(?:^|[\s;&|(])(?:rm|mv|cp|tee|truncate|chmod|touch|dd|install)\b|sed\s+-i|>{1,2}\s*["']?\S*(?:\.crew\/|\.wizardingcode\/crew\b)/;
+var WRITE_SHAPE = /(?:^|[\s;&|(])(?:rm|mv|cp|tee|truncate|chmod|touch|dd|install)\b|sed\s+-i|>{1,2}\|?\s*(?:["']?\S*(?:\.crew\/|\.wizardingcode\/crew\b)|["']?[$`])/;
 function answer(permissionDecision, reason) {
   return {
     hookSpecificOutput: {
@@ -1823,6 +1830,9 @@ function onSessionStart(ctx, payload = {}) {
   const missing = missingTestCommands(ctx.profile);
   if (missing.length) {
     lines.push(`No test command is known for: ${missing.map((m) => m.target).join(", ")}. One is proposed with \`crew profile set test "<cmd>"\`.`);
+  }
+  if (isFormerWatchDefault(ctx.profile)) {
+    lines.push("The profile predates this release: run `crew detect --refresh` once to pick up the current defaults.");
   }
   return {
     hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: lines.join(" ") }

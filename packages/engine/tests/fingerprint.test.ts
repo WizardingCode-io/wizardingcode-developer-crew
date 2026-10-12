@@ -149,3 +149,20 @@ test("the proven files of an earlier item are not the next item's change until t
   rmSync(join(root, "src/a.ts"));
   expect(changedWatchedPaths(root, profile, base)).toEqual(["src/a.ts", "src/b.ts"]);
 });
+
+test("a base file reverted to its committed content, or an untracked base file deleted, is the item's change", () => {
+  const root = makeRepo({ "src/a.ts": "x" });
+  const profile = detectProfile(root);
+  const baseCommit = git(root, "rev-parse", "HEAD");
+  write(root, "src/a.ts", "proven by the first item");
+  write(root, "src/new.ts", "also proven, still untracked");
+  const base = { baseCommit, baseFiles: hashPaths(root, ["src/a.ts", "src/new.ts"]) };
+  expect(changedWatchedPaths(root, profile, base)).toEqual([]);
+  const clean = computeFingerprint(root, profile, base);
+  // Back to the committed content: git no longer lists it, but the proven state is gone.
+  write(root, "src/a.ts", "x");
+  expect(changedWatchedPaths(root, profile, base)).toEqual(["src/a.ts"]);
+  expect(computeFingerprint(root, profile, base)).not.toBe(clean);
+  rmSync(join(root, "src/new.ts"));
+  expect(changedWatchedPaths(root, profile, base)).toEqual(["src/a.ts", "src/new.ts"]);
+});

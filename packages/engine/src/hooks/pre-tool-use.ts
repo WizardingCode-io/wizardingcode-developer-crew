@@ -11,9 +11,10 @@ const USER_ONLY =
   /(?:^|[\s/;&|(])crew(?:\.mjs)?\s+(?:skip|approve|accept|profile\s+confirm|policy\s+accept|profile\s+set\b[^;&|]*--force)\b/;
 const ENGINE_FILES =
   /\.crew\/(?:profile\.json|policy\.json|\.gitignore|local\b|work\/[^\s/]+\/(?:work\.json|evidence\.json|report\.md|logs\b))|\.wizardingcode\/crew\b/;
-// A redirect is a write only when its target is an engine file: the `2>` of `2>/dev/null` after a read is not.
+// A redirect is a write only when its target is an engine file (the `2>` of `2>/dev/null` after a
+// read is not) or cannot be read from the text (`$F`, `$(...)`, a backtick): a deny rule fails closed.
 const WRITE_SHAPE =
-  /(?:^|[\s;&|(])(?:rm|mv|cp|tee|truncate|chmod|touch|dd|install)\b|sed\s+-i|>{1,2}\s*["']?\S*(?:\.crew\/|\.wizardingcode\/crew\b)/;
+  /(?:^|[\s;&|(])(?:rm|mv|cp|tee|truncate|chmod|touch|dd|install)\b|sed\s+-i|>{1,2}\|?\s*(?:["']?\S*(?:\.crew\/|\.wizardingcode\/crew\b)|["']?[$`])/;
 
 function answer(permissionDecision: "deny" | "ask", reason: string): HookResponse {
   return {

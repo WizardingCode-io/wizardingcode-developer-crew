@@ -1,4 +1,4 @@
-import { missingTestCommands } from "../detect/index.ts";
+import { isFormerWatchDefault, missingTestCommands } from "../detect/index.ts";
 import { changedWatchedPaths, computeFingerprint } from "../fingerprint.ts";
 import { assess } from "../gates.ts";
 import { ensureCrewDir, loadState, saveState, sessionState } from "../state.ts";
@@ -45,6 +45,12 @@ export function onSessionStart(ctx: HookContext, payload: HookPayload = {}): Hoo
   if (missing.length) {
     lines.push(
       `No test command is known for: ${missing.map((m) => m.target).join(", ")}. One is proposed with \`crew profile set test "<cmd>"\`.`,
+    );
+  }
+  // A profile written by an earlier release keeps its watch list and knows no workspaces until re-detected.
+  if (isFormerWatchDefault(ctx.profile)) {
+    lines.push(
+      "The profile predates this release: run `crew detect --refresh` once to pick up the current defaults.",
     );
   }
   return {

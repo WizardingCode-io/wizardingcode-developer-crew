@@ -53,3 +53,16 @@ test("the prompt hook adds one status line only while work is active", () => {
   expect(text).toMatch(/^Crew: work \S+ "Thing", phase receive, route standard, not proven/);
   expect(text.split("\n")).toHaveLength(1);
 });
+
+test("session start asks for one refresh when the profile's watch list is an earlier default", () => {
+  const root = makeRepo({ "package.json": JSON.stringify({ scripts: { test: "exit 0" } }) });
+  const ctx = context(root);
+  ctx.profile.watch.exclude = ["**/*.md", "docs/**", ".crew/**"];
+  const text = (onSessionStart(ctx).hookSpecificOutput as { additionalContext: string })
+    .additionalContext;
+  expect(text).toContain("run `crew detect --refresh` once");
+  ctx.profile.watch.exclude = ["**/*.md", "generated/**"];
+  const custom = (onSessionStart(ctx).hookSpecificOutput as { additionalContext: string })
+    .additionalContext;
+  expect(custom).not.toContain("crew detect --refresh");
+});

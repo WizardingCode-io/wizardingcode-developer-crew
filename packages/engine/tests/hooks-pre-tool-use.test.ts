@@ -86,6 +86,11 @@ test("bash: user-only decisions ask, writes to engine files are denied, everythi
   expect(decision(bash("echo x > .crew/profile.json 2>/dev/null"))).toBe("deny");
   expect(decision(bash('cat x >> ".crew/work/w1/work.json"'))).toBe("deny");
   expect(decision(bash("echo x > ~/.wizardingcode/crew/integrity/x"))).toBe("deny");
+  // An opaque target may be an engine file: a deny rule fails closed on it.
+  expect(decision(bash("echo x >| .crew/profile.json"))).toBe("deny");
+  expect(decision(bash("F=.crew/profile.json; echo x > $F"))).toBe("deny");
+  expect(decision(bash('F=.crew/profile.json; echo x > "$F"'))).toBe("deny");
+  expect(decision(bash("echo x > $(echo .crew/profile.json)"))).toBe("deny");
   expect(bash('crew profile set test "make test"')).toEqual({});
   expect(bash("npm test")).toEqual({});
   expect(

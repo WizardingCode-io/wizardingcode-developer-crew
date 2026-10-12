@@ -16,11 +16,15 @@ export const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 const FORMER_WATCH_EXCLUDES: readonly (readonly string[])[] = [["**/*.md", "docs/**", ".crew/**"]];
 const MAX_DEPTH = 3;
 
+/** True when the saved watch list is the default of an earlier release, so a refresh would move it. */
+export function isFormerWatchDefault(profile: Profile): boolean {
+  const saved = JSON.stringify(profile.watch.exclude);
+  return FORMER_WATCH_EXCLUDES.some((list) => JSON.stringify(list) === saved);
+}
+
 function watchOf(previous: Profile | null): Profile["watch"] {
   if (!previous) return { exclude: [...DEFAULT_WATCH_EXCLUDE] };
-  const saved = JSON.stringify(previous.watch.exclude);
-  const former = FORMER_WATCH_EXCLUDES.some((list) => JSON.stringify(list) === saved);
-  return former ? { exclude: [...DEFAULT_WATCH_EXCLUDE] } : previous.watch;
+  return isFormerWatchDefault(previous) ? { exclude: [...DEFAULT_WATCH_EXCLUDE] } : previous.watch;
 }
 
 function* folders(root: string, depth = 0): Generator<string> {
