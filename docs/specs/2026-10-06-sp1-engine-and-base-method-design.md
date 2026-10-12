@@ -187,7 +187,7 @@ Every command prints a short human summary. `--json` prints the machine form.
 | `crew criteria <id> add "<text>"` | Adds an acceptance criterion |
 | `crew approve <id> spec` | Records the user's approval of the spec. Requires the user's approval |
 | `crew phase <id> next` | Advances the phase if the guard for the next phase holds |
-| `crew await <id> user` and `crew resume <id>` | Marks and clears "waiting for the user". The user's next prompt also clears it |
+| `crew await <id> user` and `crew resume <id>` | Marks and clears "waiting for the user". The Stop that lets the turn end spends the mark: one `await`, one released turn (0.1.4; until then the user's next prompt cleared it, which a prompt queued mid-turn did too early) |
 | `crew tdd red <id> <criterion> [-- <cmd>]` | Runs the test command. It must fail. Records the red run |
 | `crew tdd green <id> <criterion> [-- <cmd>]` | Runs the test command. It must pass, and a red run must exist |
 | `crew gate run <id> [--only <gates>]` | Runs the gates the route requires and records the results |
@@ -328,7 +328,7 @@ All hooks call `crew hook <event>`. The engine decides; the hook configuration c
 
 1. No watched file changed since the baseline or since the last proven fingerprint: allow.
 2. Changes exist and the work is proven: allow.
-3. Changes exist, not proven, and the work item is waiting for the user: allow, with a notice to the user that the work is in progress and not proven. `await` holds until the user's next prompt.
+3. Changes exist, not proven, and the work item is waiting for the user: allow, with a notice to the user that the work is in progress and not proven. The Stop that lets the turn end spends the mark and records the pause: one `await`, one released turn.
 4. Changes exist, not proven, not waiting: block, and tell the agent what is missing.
 5. After three consecutive blocks in a session: allow, with a notice to the user: "Not proven", followed by the failing or missing gates.
 

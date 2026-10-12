@@ -1,7 +1,7 @@
 import { assess } from "../gates.ts";
 import { loadState, saveState, sessionState } from "../state.ts";
 import type { WorkItem } from "../types.ts";
-import { activeWork, saveWork } from "../work.ts";
+import { activeWork } from "../work.ts";
 import type { HookContext, HookResponse } from "./types.ts";
 
 /** One line, written as a fact: the state of the active work item. */
@@ -16,8 +16,9 @@ export function statusLine(ctx: HookContext, work: WorkItem, tampered = false): 
 }
 
 /**
- * The user has answered: the wait is over and the Stop rule starts counting blocks afresh.
- * A tampered item is left as it is, since saving it would record the change as the engine's own.
+ * The user has spoken: the Stop rule starts counting blocks afresh. The wait for the user is not
+ * ended here. A prompt can be queued while the agent still works, and Claude Code runs this hook as
+ * soon as it is typed, so only the Stop that lets the turn end spends the wait.
  */
 export function onPrompt(ctx: HookContext): HookResponse {
   const state = loadState(ctx.paths);
@@ -25,10 +26,6 @@ export function onPrompt(ctx: HookContext): HookResponse {
   saveState(ctx.paths, state);
   const active = activeWork(ctx.paths);
   if (!active?.work) return {};
-  if (active.work.awaiting !== null && !active.tampered) {
-    active.work.awaiting = null;
-    saveWork(ctx.paths, active.work);
-  }
   return {
     hookSpecificOutput: {
       hookEventName: "UserPromptSubmit",

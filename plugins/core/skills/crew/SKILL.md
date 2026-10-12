@@ -73,7 +73,7 @@ Read the reference for the current phase before acting in it:
 2. **Never weaken a gate.** Do not change a gate command, a test or a profile to make a check pass. If a gate cannot run, say so and let the user decide to skip it.
 3. **Test first, recorded.** `crew tdd red` before the code exists, `crew tdd green` after. A green with no red is rejected.
 4. **Some commands ask the user:** `crew skip`, `crew approve`, `crew accept`, `crew profile confirm`, `crew policy accept` and `crew profile set ... --force`. Run them when the user has decided; the permission prompt is the user's signature. When no person is watching (auto, bypassPermissions or dontAsk mode) the hook refuses the bare command and tells you to add `--mode <mode>`: the record then says the agent decided, in which mode, and the decision counts for the proof only if the team's `policy.json` sets `unattendedDecisions` to `count`. Never add `--mode` when a person is present; the hook refuses that too.
-5. **When you need the user,** mark the work with `crew await <id> user` and ask. `await` holds until the user's next prompt; `crew resume <id>` clears it sooner.
+5. **When you need the user,** mark the work with `crew await <id> user` and ask. `await` lets the turn end once, with a notice that the work is not proven; the turn that ends spends it. `crew resume <id>` clears it without ending the turn.
 6. **Start every change with `crew start "<request>" --answers '<json>'`.** The answers are required; changes without a work item cannot be proven, and an item without a criterion is never proven.
 7. **State changed outside the engine** stops every command that saves. Tell the user which file the engine names; only they can run `crew accept`.
 

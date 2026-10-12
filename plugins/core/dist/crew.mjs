@@ -1260,7 +1260,8 @@ function renderReport(work, evidence, policy) {
     lines.push(`| ${r.gate} | ${r.target} | ${status} | ${r.command ? `\`${r.command}\`` : ""} | ${r.durationMs} ms | ${r.log ?? ""} |`);
   }
   const removed = work.removedCriteria ?? [];
-  if (work.approvals.length || work.skips.length || removed.length) {
+  const pauses = work.pauses ?? [];
+  if (work.approvals.length || work.skips.length || removed.length || pauses.length) {
     lines.push("", "## Decisions", "");
     for (const a of work.approvals) {
       lines.push(`- ${a.what} approved ${decidedBy(a)} (${a.at})${countedNote(policy, a)}`);
@@ -1270,6 +1271,8 @@ function renderReport(work, evidence, policy) {
     }
     for (const r of removed)
       lines.push(`- ${r.id} (${r.kind}) removed (${r.at}): ${r.text}`);
+    for (const p of pauses)
+      lines.push(`- paused for the user (${p.at}), not proven: ${p.reason}`);
   }
   lines.push("", `Fingerprint: ${evidence.fingerprint ?? "none"}`, "");
   return lines.join(`
@@ -1914,10 +1917,6 @@ function onPrompt(ctx) {
   const active = activeWork(ctx.paths);
   if (!active?.work)
     return {};
-  if (active.work.awaiting !== null && !active.tampered) {
-    active.work.awaiting = null;
-    saveWork(ctx.paths, active.work);
-  }
   return {
     hookSpecificOutput: {
       hookEventName: "UserPromptSubmit",
@@ -1975,16 +1974,26 @@ function onStop(ctx) {
     saveState(ctx.paths, state);
     return response;
   };
+  const release = (response, pause) => {
+    if (work && work.awaiting !== null && !active?.tampered) {
+      work.awaiting = null;
+      if (pause !== undefined)
+        work.pauses = [...work.pauses ?? [], { at: nowIso(), reason: pause }];
+      saveWork(ctx.paths, work);
+    }
+    return done(response);
+  };
   if (!changed || proven) {
     session.stopBlocks = 0;
-    return done({});
+    return release({});
   }
   const missing = result ? result.unproven : ['no work item: start one with crew start "<request>"'];
   if (work?.awaiting === "user") {
     session.stopBlocks = 0;
-    return done({
-      systemMessage: `Crew: work ${work.id} is waiting for the user and is not proven (${missing[0]}).`
-    });
+    const reason = missing[0] ?? "not proven";
+    return release({
+      systemMessage: `Crew: work ${work.id} ends this turn waiting for the user and is not proven (${reason}). The next turn is held to the Stop rule again.`
+    }, reason);
   }
   if (session.stopBlocks >= MAX_STOP_BLOCKS) {
     return done({

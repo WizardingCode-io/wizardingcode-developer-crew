@@ -81,6 +81,12 @@ export interface RemovedCriterion extends Criterion {
   at: string;
 }
 
+/** A turn that ended waiting for the user while the work was not proven, and the first reason why. */
+export interface Pause {
+  at: string;
+  reason: string;
+}
+
 /** Claude Code modes in which no person answers a prompt, so a decision there is the agent's. */
 export type UnattendedMode = "auto" | "bypassPermissions" | "dontAsk";
 export const UNATTENDED_MODES: readonly UnattendedMode[] = ["auto", "bypassPermissions", "dontAsk"];
@@ -125,6 +131,8 @@ export interface WorkItem {
   criteria: Criterion[];
   /** Absent in records written before 0.1.4. */
   removedCriteria?: RemovedCriterion[];
+  /** Turns that ended waiting for the user while the work was not proven. Absent before 0.1.4. */
+  pauses?: Pause[];
   approvals: Approval[];
   skips: Skip[];
   /** HEAD when the item started; the change is everything since. Null outside git or with no commits. */

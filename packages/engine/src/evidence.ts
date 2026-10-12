@@ -170,7 +170,8 @@ export function renderReport(work: WorkItem, evidence: Evidence, policy: Policy)
     );
   }
   const removed = work.removedCriteria ?? [];
-  if (work.approvals.length || work.skips.length || removed.length) {
+  const pauses = work.pauses ?? [];
+  if (work.approvals.length || work.skips.length || removed.length || pauses.length) {
     lines.push("", "## Decisions", "");
     for (const a of work.approvals) {
       lines.push(`- ${a.what} approved ${decidedBy(a)} (${a.at})${countedNote(policy, a)}`);
@@ -181,6 +182,7 @@ export function renderReport(work: WorkItem, evidence: Evidence, policy: Policy)
       );
     }
     for (const r of removed) lines.push(`- ${r.id} (${r.kind}) removed (${r.at}): ${r.text}`);
+    for (const p of pauses) lines.push(`- paused for the user (${p.at}), not proven: ${p.reason}`);
   }
   lines.push("", `Fingerprint: ${evidence.fingerprint ?? "none"}`, "");
   return lines.join("\n");

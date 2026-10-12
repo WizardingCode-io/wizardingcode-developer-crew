@@ -16,7 +16,7 @@ The answers are required: `crew start` refuses without them. The engine prints t
 
 ## 3. Ask what is missing
 
-When `is_vague` was 0.5 or more, mark the work as waiting (`crew await <id> user`), ask the questions whose answers would change what you build, and nothing else. Fit the questions on one screen. When the answers come, `crew resume <id>` and rewrite `.crew/work/<id>/brief.md`:
+When `is_vague` was 0.5 or more, mark the work as waiting (`crew await <id> user`), ask the questions whose answers would change what you build, and nothing else. Fit the questions on one screen. When the answers come, rewrite `.crew/work/<id>/brief.md`:
 
 ```markdown
 # Brief

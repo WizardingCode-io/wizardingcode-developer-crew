@@ -1,12 +1,14 @@
 import { expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { loadEvidence, renderReport } from "../src/evidence.ts";
 import { runGates } from "../src/gates.ts";
 import { handleHook } from "../src/hooks/index.ts";
 import { onPrompt } from "../src/hooks/prompt.ts";
 import { onSessionStart } from "../src/hooks/session-start.ts";
 import { MAX_STOP_BLOCKS, onStop } from "../src/hooks/stop.ts";
 import { loadState } from "../src/state.ts";
+import type { WorkItem } from "../src/types.ts";
 import { addCriterion, addSkip, createWork, loadWork, saveWork } from "../src/work.ts";
 import { hookContext, makeRepo, tempDir, testEnv, write } from "./helpers.ts";
 
@@ -31,7 +33,7 @@ test("C4: a new session that starts on unproven changes has no baseline, so they
   expect(onStop(next).decision).toBe("block");
 });
 
-test("I3: the user's next prompt ends the wait and re-arms the Stop rule", () => {
+test("I3: a prompt re-arms the Stop rule and leaves the wait to the Stop that ends the turn", () => {
   const { root, ctx } = session();
   const work = createWork(ctx.paths, "fix");
   write(root, "src/a.ts", "changed");
@@ -39,10 +41,11 @@ test("I3: the user's next prompt ends the wait and re-arms the Stop rule", () =>
   expect(onStop(ctx).decision).toBeUndefined();
   work.awaiting = "user";
   saveWork(ctx.paths, work);
-  expect(onStop(ctx).decision).toBeUndefined();
   onPrompt(ctx);
-  expect(loadWork(ctx.paths, work.id).work?.awaiting).toBeNull();
+  expect(loadWork(ctx.paths, work.id).work?.awaiting).toBe("user");
   expect(loadState(ctx.paths).sessions.s?.stopBlocks).toBe(0);
+  expect(onStop(ctx).decision).toBeUndefined();
+  expect(loadWork(ctx.paths, work.id).work?.awaiting).toBeNull();
   expect(onStop(ctx).decision).toBe("block");
 });
 
@@ -88,6 +91,70 @@ test("case 3: a work item waiting for the user lets the turn end with a notice",
   expect(response.decision).toBeUndefined();
   expect(String(response.systemMessage)).toContain(work.id);
   expect(loadState(ctx.paths).sessions.s?.stopBlocks).toBe(0);
+  // The turn that ends spends the wait and leaves the pause in the record.
+  const saved = loadWork(ctx.paths, work.id).work;
+  expect(saved?.awaiting).toBeNull();
+  expect(saved?.pauses).toHaveLength(1);
+  expect(typeof saved?.pauses?.[0]?.reason).toBe("string");
+  const report = renderReport(
+    saved as WorkItem,
+    loadEvidence(ctx.paths, work.id).evidence,
+    ctx.policy,
+  );
+  expect(report).toContain("## Decisions");
+  expect(report).toContain("paused for the user");
+  expect(onStop(ctx).decision).toBe("block");
+});
+
+test("case 3: a prompt queued during the turn does not end the wait before the Stop honours it", () => {
+  const { root, ctx } = session();
+  const work = createWork(ctx.paths, "fix");
+  write(root, "src/a.ts", "changed");
+  work.awaiting = "user";
+  saveWork(ctx.paths, work);
+  // The user typed while the agent was still working: Claude Code runs the prompt hook at once.
+  const prompt = onPrompt(ctx);
+  const context = (prompt.hookSpecificOutput as { additionalContext?: string } | undefined)
+    ?.additionalContext;
+  expect(String(context)).toContain("waiting for the user");
+  const response = onStop(ctx);
+  expect(response.decision).toBeUndefined();
+  expect(String(response.systemMessage)).toContain(work.id);
+  expect(String(response.systemMessage)).toContain("not proven");
+  expect(loadWork(ctx.paths, work.id).work?.awaiting).toBeNull();
+  expect(onStop(ctx).decision).toBe("block");
+});
+
+test("case 2: a wait on proven work is spent when the turn ends", async () => {
+  const { root, ctx } = session();
+  const work = createWork(ctx.paths, "fix");
+  work.route = "fast";
+  addCriterion(work, "x");
+  addSkip(work, "tdd:AC-1", "manual");
+  write(root, "src/a.ts", "changed");
+  await runGates(ctx.paths, work, ctx.profile, ctx.policy);
+  work.awaiting = "user";
+  saveWork(ctx.paths, work);
+  expect(onStop(ctx)).toEqual({});
+  const saved = loadWork(ctx.paths, work.id).work;
+  expect(saved?.awaiting).toBeNull();
+  expect(saved?.pauses ?? []).toEqual([]);
+});
+
+test("C4: a session after a released wait starts without a baseline and blocks again", () => {
+  const { root, ctx, env } = session();
+  const work = createWork(ctx.paths, "fix");
+  write(root, "src/a.ts", "changed");
+  work.awaiting = "user";
+  saveWork(ctx.paths, work);
+  expect(onStop(ctx).decision).toBeUndefined();
+  const next = hookContext({ session_id: "s2", cwd: root }, env);
+  const started = onSessionStart(next, { source: "startup" });
+  const context = (started.hookSpecificOutput as { additionalContext?: string } | undefined)
+    ?.additionalContext;
+  expect(String(context)).toMatch(/not proven/);
+  expect(loadState(next.paths).sessions.s2?.baseline).toBeNull();
+  expect(onStop(next).decision).toBe("block");
 });
 
 test("case 2: proven work ends the turn, and a later edit blocks again", async () => {
