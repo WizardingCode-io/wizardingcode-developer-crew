@@ -333,6 +333,10 @@ var SKIP_DIRS = new Set([
 
 // packages/engine/src/detect/node.ts
 import { join as join3 } from "node:path";
+function workspaceGlobs(pkg) {
+  const raw = Array.isArray(pkg.workspaces) ? pkg.workspaces : pkg.workspaces?.packages;
+  return (raw ?? []).filter((glob) => typeof glob === "string").map((glob) => glob.replace(/^\.\//, "").replace(/\/$/, ""));
+}
 var SCRIPT_CANDIDATES = {
   build: ["build"],
   test: ["test", "test:unit", "unit"],
@@ -374,7 +378,13 @@ var nodeDetector = {
     if (!gates.typecheck && exists(join3(dir, "tsconfig.json"))) {
       gates.typecheck = TSC_BY_MANAGER[manager];
     }
-    return { stack: "node", packageManager: manager, gates };
+    const workspaces = workspaceGlobs(pkg);
+    return {
+      stack: "node",
+      packageManager: manager,
+      gates,
+      ...workspaces.length ? { workspaces } : {}
+    };
   }
 };
 
@@ -470,6 +480,7 @@ function* folders(root, depth = 0) {
 }
 function detectTargets(root) {
   const targets = [];
+  const workspaces = new Map;
   for (const dir of folders(root)) {
     for (const detector of DETECTORS) {
       const found = detector.detect(dir);
@@ -480,13 +491,25 @@ function detectTargets(root) {
         gates[gate] = { command, source: "detected" };
       }
       const rel = relative(root, dir).replace(/\\/g, "/");
-      targets.push({
+      const target = {
         path: rel === "" ? "." : rel,
         stack: found.stack,
         packageManager: found.packageManager,
         gates,
         timeoutMs: DEFAULT_TIMEOUT_MS
-      });
+      };
+      targets.push(target);
+      if (found.workspaces)
+        workspaces.set(target, found.workspaces);
+    }
+  }
+  for (const [parent, globs] of workspaces) {
+    const prefix = parent.path === "." ? "" : `${parent.path}/`;
+    for (const child of targets) {
+      if (child === parent || child.stack !== parent.stack || !child.path.startsWith(prefix))
+        continue;
+      if (matchesAny(child.path.slice(prefix.length), globs))
+        child.workspaceOf = parent.path;
     }
   }
   return targets;
@@ -518,7 +541,9 @@ function detectProfile(root, previous = null) {
 function missingTestCommands(profile) {
   if (profile.targets.length === 0)
     return [{ target: ".", gate: "test" }];
-  const covered = new Set(profile.targets.filter((t) => t.gates.test).map((t) => t.path));
+  const byPath = new Map(profile.targets.map((t) => [t.path, t]));
+  const hasTest = (t) => !!t.gates.test || t.workspaceOf !== undefined && !!byPath.get(t.workspaceOf)?.gates.test;
+  const covered = new Set(profile.targets.filter(hasTest).map((t) => t.path));
   const paths = [...new Set(profile.targets.map((t) => t.path))];
   return paths.filter((p) => !covered.has(p)).map((target) => ({ target, gate: "test" }));
 }
@@ -1432,7 +1457,10 @@ function plannedGates(route, profile, policy, changed, root) {
   const planned = [{ gate: "secrets", target: "." }];
   const touched = profile.targets.filter((t) => t.path === "." || changed.length === 0 || changed.some((p) => p === t.path || p.startsWith(`${t.path}/`)));
   for (const target of touched) {
+    const member = target.workspaceOf !== undefined && profile.targets.some((t) => t.path === target.workspaceOf);
     for (const gate of gatesForTarget(route, target, policy, changed)) {
+      if (member && !target.gates[gate])
+        continue;
       if (gate === "deps" && route === "standard" && "reason" in depsAuditCommand(target, root))
         continue;
       planned.push({ gate, target: target.path });
@@ -2142,7 +2170,7 @@ async function dispatch(parsed, io) {
         }
       }
       const missing = missingTestCommands(profile);
-      const lines = profile.targets.map((t) => `  ${t.path} (${t.stack}, ${t.packageManager}): ${Object.entries(t.gates).map(([g, c]) => `${g}=${c.command}${c.source === "proposed" ? " [proposed]" : ""}`).join(", ") || "no commands"}`);
+      const lines = profile.targets.map((t) => `  ${t.path} (${t.stack}, ${t.packageManager}${t.workspaceOf ? `, workspace of ${t.workspaceOf}` : ""}): ${Object.entries(t.gates).map(([g, c]) => `${g}=${c.command}${c.source === "proposed" ? " [proposed]" : ""}`).join(", ") || "no commands"}`);
       if (missing.length)
         lines.push(`No test command for: ${missing.map((m) => m.target).join(", ")}. Propose one: crew profile set test "<cmd>" [--target <path>]`);
       return ok(lines.join(`

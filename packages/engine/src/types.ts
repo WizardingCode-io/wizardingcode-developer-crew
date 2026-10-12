@@ -24,6 +24,8 @@ export interface Target {
   packageManager: string;
   gates: Partial<Record<GateName, GateCommand>>;
   timeoutMs: number;
+  /** The target whose manifest lists this folder as a workspace; its gates cover the ones this target does not define. */
+  workspaceOf?: string;
 }
 
 export interface Profile {

@@ -1,6 +1,7 @@
 import { readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { nowIso } from "../fs.ts";
+import { matchesAny } from "../glob.ts";
 import { SKIP_DIRS } from "../skip-dirs.ts";
 import type { GateCommand, GateName, Profile, Target } from "../types.ts";
 import { nodeDetector } from "./node.ts";
@@ -36,6 +37,7 @@ function* folders(root: string, depth = 0): Generator<string> {
 
 export function detectTargets(root: string): Target[] {
   const targets: Target[] = [];
+  const workspaces = new Map<Target, string[]>();
   for (const dir of folders(root)) {
     for (const detector of DETECTORS) {
       const found = detector.detect(dir);
@@ -45,13 +47,24 @@ export function detectTargets(root: string): Target[] {
         gates[gate] = { command, source: "detected" };
       }
       const rel = relative(root, dir).replace(/\\/g, "/");
-      targets.push({
+      const target: Target = {
         path: rel === "" ? "." : rel,
         stack: found.stack,
         packageManager: found.packageManager,
         gates,
         timeoutMs: DEFAULT_TIMEOUT_MS,
-      });
+      };
+      targets.push(target);
+      if (found.workspaces) workspaces.set(target, found.workspaces);
+    }
+  }
+  // A member runs under the package that lists it, so that package's gates cover what the member leaves undefined.
+  for (const [parent, globs] of workspaces) {
+    const prefix = parent.path === "." ? "" : `${parent.path}/`;
+    for (const child of targets) {
+      if (child === parent || child.stack !== parent.stack || !child.path.startsWith(prefix))
+        continue;
+      if (matchesAny(child.path.slice(prefix.length), globs)) child.workspaceOf = parent.path;
     }
   }
   return targets;
@@ -93,7 +106,10 @@ export interface MissingCommand {
  */
 export function missingTestCommands(profile: Profile): MissingCommand[] {
   if (profile.targets.length === 0) return [{ target: ".", gate: "test" }];
-  const covered = new Set(profile.targets.filter((t) => t.gates.test).map((t) => t.path));
+  const byPath = new Map(profile.targets.map((t) => [t.path, t]));
+  const hasTest = (t: Target): boolean =>
+    !!t.gates.test || (t.workspaceOf !== undefined && !!byPath.get(t.workspaceOf)?.gates.test);
+  const covered = new Set(profile.targets.filter(hasTest).map((t) => t.path));
   const paths = [...new Set(profile.targets.map((t) => t.path))];
   return paths.filter((p) => !covered.has(p)).map((target) => ({ target, gate: "test" }));
 }

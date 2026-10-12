@@ -4,6 +4,8 @@ export interface DetectedTarget {
   stack: Stack;
   packageManager: string;
   gates: Partial<Record<GateName, string>>;
+  /** Globs of the folders this manifest lists as workspaces, relative to its folder. */
+  workspaces?: string[];
 }
 
 export interface Detector {

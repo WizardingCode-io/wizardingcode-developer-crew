@@ -304,7 +304,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       const missing = missingTestCommands(profile);
       const lines = profile.targets.map(
         (t) =>
-          `  ${t.path} (${t.stack}, ${t.packageManager}): ${
+          `  ${t.path} (${t.stack}, ${t.packageManager}${t.workspaceOf ? `, workspace of ${t.workspaceOf}` : ""}): ${
             Object.entries(t.gates)
               .map(([g, c]) => `${g}=${c.command}${c.source === "proposed" ? " [proposed]" : ""}`)
               .join(", ") || "no commands"

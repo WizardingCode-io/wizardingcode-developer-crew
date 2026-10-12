@@ -5,6 +5,15 @@ import type { DetectedTarget, Detector } from "./types.ts";
 
 interface PackageJson {
   scripts?: Record<string, string>;
+  workspaces?: string[] | { packages?: string[] };
+}
+
+/** npm, yarn and bun list workspaces as an array; yarn also accepts an object with `packages`. */
+function workspaceGlobs(pkg: PackageJson): string[] {
+  const raw = Array.isArray(pkg.workspaces) ? pkg.workspaces : pkg.workspaces?.packages;
+  return (raw ?? [])
+    .filter((glob): glob is string => typeof glob === "string")
+    .map((glob) => glob.replace(/^\.\//, "").replace(/\/$/, ""));
 }
 
 const SCRIPT_CANDIDATES: Record<Exclude<GateName, "secrets" | "deps">, string[]> = {
@@ -46,6 +55,12 @@ export const nodeDetector: Detector = {
     if (!gates.typecheck && exists(join(dir, "tsconfig.json"))) {
       gates.typecheck = TSC_BY_MANAGER[manager];
     }
-    return { stack: "node", packageManager: manager, gates };
+    const workspaces = workspaceGlobs(pkg);
+    return {
+      stack: "node",
+      packageManager: manager,
+      gates,
+      ...(workspaces.length ? { workspaces } : {}),
+    };
   },
 };

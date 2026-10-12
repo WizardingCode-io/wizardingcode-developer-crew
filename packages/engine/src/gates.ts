@@ -149,7 +149,12 @@ export function plannedGates(
       changed.some((p) => p === t.path || p.startsWith(`${t.path}/`)),
   );
   for (const target of touched) {
+    const member =
+      target.workspaceOf !== undefined &&
+      profile.targets.some((t) => t.path === target.workspaceOf);
     for (const gate of gatesForTarget(route, target, policy, changed)) {
+      // A workspace member runs only the gates it defines; the package that lists it runs the rest once.
+      if (member && !target.gates[gate]) continue;
       // On the standard route the audit is required only when a tool exists; on the full route it must be skipped explicitly.
       if (gate === "deps" && route === "standard" && "reason" in depsAuditCommand(target, root))
         continue;

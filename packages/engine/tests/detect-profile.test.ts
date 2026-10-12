@@ -61,3 +61,28 @@ test("a path with no test command anywhere is reported, and an empty folder repo
   expect(missingTestCommands(detectProfile(dir))).toEqual([{ target: ".", gate: "test" }]);
   expect(missingTestCommands(detectProfile(tempDir()))).toEqual([{ target: ".", gate: "test" }]);
 });
+
+test("a workspace member without scripts is covered by the package that lists it", () => {
+  const dir = tempDir();
+  write(
+    dir,
+    "package.json",
+    JSON.stringify({ workspaces: ["packages/*"], scripts: { test: "bun test packages" } }),
+  );
+  write(dir, "bun.lock", "");
+  write(dir, "packages/engine/package.json", JSON.stringify({ name: "engine" }));
+  write(dir, "packages/web/package.json", JSON.stringify({ scripts: { test: "vitest" } }));
+  const profile = detectProfile(dir);
+  const byPath = Object.fromEntries(profile.targets.map((t) => [t.path, t]));
+  expect(byPath["packages/engine"]?.workspaceOf).toBe(".");
+  expect(byPath["packages/web"]?.workspaceOf).toBe(".");
+  expect(byPath["."]?.workspaceOf).toBeUndefined();
+  expect(missingTestCommands(profile)).toEqual([]);
+});
+
+test("a workspace root without a test script is still missing one; its members do not cover it", () => {
+  const dir = tempDir();
+  write(dir, "package.json", JSON.stringify({ workspaces: { packages: ["packages/*"] } }));
+  write(dir, "packages/web/package.json", JSON.stringify({ scripts: { test: "vitest" } }));
+  expect(missingTestCommands(detectProfile(dir))).toEqual([{ target: ".", gate: "test" }]);
+});

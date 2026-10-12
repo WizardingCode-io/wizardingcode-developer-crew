@@ -282,3 +282,35 @@ test("evidence recorded while git could not run is judged the same way once it c
     "code changed since the last gate run",
   ]);
 });
+
+test("a workspace member plans only the gates it defines; the rest run once, at the package that lists it", () => {
+  const rootTarget: Target = {
+    ...target,
+    gates: {
+      test: { command: "bun test packages", source: "detected" },
+      lint: { command: "l", source: "detected" },
+    },
+  };
+  const profile = {
+    version: 1 as const,
+    detectedAt: "",
+    targets: [
+      rootTarget,
+      { ...target, path: "packages/engine", gates: {}, workspaceOf: "." },
+      {
+        ...target,
+        path: "packages/web",
+        gates: { test: { command: "vitest", source: "detected" as const } },
+        workspaceOf: ".",
+      },
+    ],
+    watch: { exclude: [] },
+  };
+  const changed = ["packages/engine/src/a.ts", "packages/web/src/b.ts"];
+  expect(plannedGates("fast", profile, DEFAULT_POLICY, changed, tempDir())).toEqual([
+    { gate: "secrets", target: "." },
+    { gate: "test", target: "." },
+    { gate: "lint", target: "." },
+    { gate: "test", target: "packages/web" },
+  ]);
+});
