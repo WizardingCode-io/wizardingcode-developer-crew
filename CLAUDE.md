@@ -28,7 +28,7 @@ Node.js 20 or later on `PATH` runs the hooks and the command; development uses B
 
 ## Releasing
 
-The plugin installs from the `WizardingCode-io/wizardingcode-plugins` marketplace, whose entry points at this repository's `plugins/core` at a tag (`git-subdir`, `ref: vX.Y.Z`). A release is: the same version in `package.json`, `packages/engine/package.json`, `packages/engine/src/version.ts` and `plugins/core/.claude-plugin/plugin.json`; `bun run build` and `bun run check && bun run plugin:check`; commit; `git tag -a vX.Y.Z` and push it; `gh release create vX.Y.Z`; then, in the marketplace repository, the entry's `version` and `ref` and the `metadata.version`, committed as `wizardingcode-developer-crew X.Y.Z`. The repository must stay public for the install to work. Nothing is built on install: `dist/crew.mjs` is committed.
+The plugin installs from the `WizardingCode-io/wizardingcode-plugins` marketplace, whose entry points at this repository's `plugins/core` at a tag (`git-subdir`, `ref: vX.Y.Z`). A release is: the same version in `package.json`, `packages/engine/package.json`, `packages/engine/src/version.ts`, `plugins/core/.claude-plugin/plugin.json` and the two tests that assert it (`packages/engine/tests/version.test.ts`, the `--version` line in `cli.test.ts`); `bun run build` and `bun run check && bun run plugin:check`; commit; `git tag -a vX.Y.Z` and push it; `gh release create vX.Y.Z`; then, in the marketplace repository, the entry's `version` and `ref` and the `metadata.version`, committed as `wizardingcode-developer-crew X.Y.Z`. The repository must stay public for the install to work. Nothing is built on install: `dist/crew.mjs` is committed.
 
 ## Conventions
 

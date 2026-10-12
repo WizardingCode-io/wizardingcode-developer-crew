@@ -1984,7 +1984,7 @@ async function recordTdd(paths, work, evidence, profile, criterionId, step, over
 }
 
 // packages/engine/src/version.ts
-var VERSION = "0.1.0";
+var VERSION = "0.1.1";
 
 // packages/engine/src/cli.ts
 var BOOLEAN_FLAGS = new Set(["json", "refresh", "force"]);
