@@ -11,6 +11,7 @@ import {
   MAX_WATCHED_FILES,
 } from "../src/fingerprint.ts";
 import type { WorkItem } from "../src/types.ts";
+import { addCriterion, addSkip } from "../src/work.ts";
 import { git, makeRepo, tempDir, write } from "./helpers.ts";
 
 test("the fingerprint is stable and changes when a watched file changes", () => {
@@ -78,6 +79,8 @@ test("C3: above the file cap the fingerprint is unavailable and never proven", (
   expect(computeFingerprint(root, profile, null, 2)).toBe("unavailable");
   expect(changedWatchedPaths(root, profile, null, 2)).toEqual([]);
   const work = { criteria: [], skips: [] } as unknown as WorkItem;
+  addCriterion(work, "x");
+  addSkip(work, "tdd:AC-1", "manual");
   const evidence = { ...emptyEvidence(), fingerprint: "unavailable" };
   expect(
     computeVerdict({

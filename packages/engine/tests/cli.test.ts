@@ -67,12 +67,16 @@ test("a fast-route fix from start to a proven report", async () => {
   write(root, "t.sh", "exit 0\n");
   write(root, "src/a.ts", "fixed");
   expect((await c.run("tdd", "green", id, "AC-1")).code).toBe(0);
-  expect((await c.json("phase", id, "next")).data.phase).toBe("gate");
 
   const gates = await c.json("gate", "run", id);
   expect(gates.code).toBe(0);
   expect(gates.data.verdict).toBe("proven");
-  expect((await c.json("phase", id, "next")).data.phase).toBe("deliver");
+  // The gate run is the fast route's delivery: the report is on disk without a further command.
+  expect(readFileSync(join(root, ".crew", "work", id, "report.md"), "utf8")).toContain(
+    "**Proven**",
+  );
+  // ...and the item is in the deliver phase without a further command.
+  expect((await c.json("status")).data.phase).toBe("deliver");
 
   const report = await c.run("evidence", id);
   expect(report.code).toBe(0);
@@ -372,4 +376,39 @@ test("the command comes first, so user-only verbs cannot hide behind a leading f
   expect(plain.code).toBe(1);
   expect(plain.err.trim()).toBe(message);
   expect((await c.run("status", "--json")).code).toBe(0);
+});
+
+test("start takes --criterion, repeatable, and warns about uncommitted changes it will measure", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const c = io(root);
+  write(root, "src/a.ts", "left over from earlier work");
+  const start = await c.json(
+    "start",
+    "Second thing",
+    "--answers",
+    answers,
+    "--criterion",
+    "a happens",
+    "--criterion",
+    "b stays",
+  );
+  expect(start.code).toBe(0);
+  expect(start.data.criteria).toEqual([
+    { id: "AC-1", kind: "behavior", text: "a happens" },
+    { id: "AC-2", kind: "behavior", text: "b stays" },
+  ]);
+  expect(start.data.inherited).toEqual(["src/a.ts"]);
+  // A fast-route item with its criteria has nothing left before build.
+  expect(start.data.phase).toBe("build");
+  const status = await c.json("status");
+  expect((status.data.criteria as { id: string }[]).map((cr) => cr.id)).toEqual(["AC-1", "AC-2"]);
+  const text = await c.run("start", "Third thing", "--answers", answers, "--criterion", "c");
+  expect(text.code).toBe(0);
+  expect(text.out).toContain(
+    "warning: uncommitted changes in src/a.ts count as this item's change; commit them first if they are not",
+  );
+  expect(text.out).toContain("  AC-1 (behavior): c");
 });

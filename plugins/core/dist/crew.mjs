@@ -1070,6 +1070,8 @@ function computeVerdict(input) {
       unproven.push(`gate ${label} ran an unconfirmed command (crew profile confirm)`);
     }
   }
+  if (work.criteria.length === 0)
+    unproven.push('no acceptance criteria (crew criteria <id> add "...")');
   for (const criterion of work.criteria) {
     if (isSkipped(work, `tdd:${criterion.id}`))
       continue;
@@ -1934,7 +1936,7 @@ var VERSION = "0.1.0";
 // packages/engine/src/cli.ts
 var BOOLEAN_FLAGS = new Set(["json", "refresh", "force"]);
 function parse(argv) {
-  const parsed = { positional: [], flags: {}, rest: [] };
+  const parsed = { positional: [], flags: {}, multi: {}, rest: [] };
   for (let i = 0;i < argv.length; i++) {
     const arg = argv[i] ?? "";
     if (arg === "--") {
@@ -1946,6 +1948,9 @@ function parse(argv) {
       const next = argv[i + 1];
       if (next !== undefined && !next.startsWith("--") && !BOOLEAN_FLAGS.has(key)) {
         parsed.flags[key] = next;
+        const values = parsed.multi[key] ?? [];
+        values.push(next);
+        parsed.multi[key] = values;
         i++;
       } else
         parsed.flags[key] = true;
@@ -2215,15 +2220,25 @@ async function dispatch(parsed, io) {
       const previous = activeWork(env.paths);
       const warning = previous?.work && assess(env.paths, previous.work, env.profile, env.policy, env.tampered || previous.tampered).verdict !== "proven" ? `warning: ${previous.work.id} is not proven and is no longer the active work item
 ` : "";
+      const inherited = changedWatchedPaths(env.paths.root, env.profile);
+      const inheritedWarning = inherited.length ? `warning: uncommitted changes in ${inherited.join(", ")} count as this item's change; commit them first if they are not
+` : "";
       const work = createWork(env.paths, input);
       classify(env, work, answers);
+      const criteria = (parsed.multi.criterion ?? []).map((text) => addCriterion(work, text));
+      if (work.route === "fast" && criteria.length > 0)
+        advancePhase(work, guardContext(env, work, false));
       saveWork(env.paths, work);
-      return ok(`${warning}started ${work.id} (route ${work.route}: ${work.routeReasons.join("; ")})`, {
+      const lines = criteria.map((c) => `
+  ${c.id} (${c.kind}): ${c.text}`).join("");
+      return ok(`${warning}${inheritedWarning}started ${work.id} (route ${work.route}: ${work.routeReasons.join("; ")})${lines}`, {
         id: work.id,
         route: work.route,
         phase: work.phase,
         routeReasons: work.routeReasons,
-        replaced: warning ? previous?.work?.id : null
+        replaced: warning ? previous?.work?.id : null,
+        criteria,
+        inherited
       });
     }
     case "classify": {
@@ -2319,7 +2334,14 @@ ${outcome.record.tail}` : "";
         only,
         tampered: env.tampered || opened.tampered
       });
+      for (const target of ["gate", "deliver"]) {
+        if (nextPhaseOf(opened.work) !== target)
+          break;
+        if (!advancePhase(opened.work, guardContext(env, opened.work, opened.tampered)).ok)
+          break;
+      }
       saveWork(env.paths, opened.work);
+      writeProtectedText(env.paths, join18(workDir(env.paths, opened.work.id), "report.md"), renderReport(opened.work, outcome.evidence));
       const raised = outcome.raised ? `Route raised to ${outcome.raised}: ${opened.work.routeReasons.at(-1)}
 ` : "";
       return ok(raised + gateSummary(opened.work, outcome.verdict, outcome.unproven, outcome.evidence.runs), {

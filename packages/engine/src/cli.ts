@@ -4,6 +4,7 @@ import { AnswerError, type Answers, computeRoute, validateAnswers } from "./clas
 import { loadConfig, saveConfig, setConfigValue } from "./config.ts";
 import { detectProfile, missingTestCommands } from "./detect/index.ts";
 import { loadEvidence, renderReport, saveEvidence, tddSummary } from "./evidence.ts";
+import { changedWatchedPaths } from "./fingerprint.ts";
 import { ensureDir, nowIso, readText, writeText } from "./fs.ts";
 import { assess, runGates } from "./gates.ts";
 import { handleHook } from "./hooks/index.ts";
@@ -27,6 +28,7 @@ import {
   createWork,
   type GuardContext,
   loadWork,
+  nextPhaseOf,
   PHASES_BY_ROUTE,
   saveWork,
 } from "./work.ts";
@@ -42,6 +44,8 @@ export interface CliIo {
 interface Parsed {
   positional: string[];
   flags: Record<string, string | true>;
+  /** Every value a flag was given, in order, for flags that may repeat (`--criterion a --criterion b`). */
+  multi: Record<string, string[]>;
   rest: string[];
 }
 
@@ -49,7 +53,7 @@ interface Parsed {
 const BOOLEAN_FLAGS = new Set(["json", "refresh", "force"]);
 
 function parse(argv: string[]): Parsed {
-  const parsed: Parsed = { positional: [], flags: {}, rest: [] };
+  const parsed: Parsed = { positional: [], flags: {}, multi: {}, rest: [] };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i] ?? "";
     if (arg === "--") {
@@ -61,6 +65,9 @@ function parse(argv: string[]): Parsed {
       const next = argv[i + 1];
       if (next !== undefined && !next.startsWith("--") && !BOOLEAN_FLAGS.has(key)) {
         parsed.flags[key] = next;
+        const values = parsed.multi[key] ?? [];
+        values.push(next);
+        parsed.multi[key] = values;
         i++;
       } else parsed.flags[key] = true;
     } else parsed.positional.push(arg);
@@ -392,17 +399,29 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           .verdict !== "proven"
           ? `warning: ${previous.work.id} is not proven and is no longer the active work item\n`
           : "";
+      // The item's change is measured from HEAD, so whatever is uncommitted now is measured with it.
+      const inherited = changedWatchedPaths(env.paths.root, env.profile);
+      const inheritedWarning = inherited.length
+        ? `warning: uncommitted changes in ${inherited.join(", ")} count as this item's change; commit them first if they are not\n`
+        : "";
       const work = createWork(env.paths, input);
       classify(env, work, answers);
+      const criteria = (parsed.multi.criterion ?? []).map((text) => addCriterion(work, text));
+      // On the fast route the criteria are all that stands before build; with them given, go there.
+      if (work.route === "fast" && criteria.length > 0)
+        advancePhase(work, guardContext(env, work, false));
       saveWork(env.paths, work);
+      const lines = criteria.map((c) => `\n  ${c.id} (${c.kind}): ${c.text}`).join("");
       return ok(
-        `${warning}started ${work.id} (route ${work.route}: ${work.routeReasons.join("; ")})`,
+        `${warning}${inheritedWarning}started ${work.id} (route ${work.route}: ${work.routeReasons.join("; ")})${lines}`,
         {
           id: work.id,
           route: work.route,
           phase: work.phase,
           routeReasons: work.routeReasons,
           replaced: warning ? previous?.work?.id : null,
+          criteria,
+          inherited,
         },
       );
     }
@@ -502,7 +521,19 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         only: only as GateName[] | undefined,
         tampered: env.tampered || opened.tampered,
       });
+      // A gate run is the work entering its gate phase, and its delivery when it proves the work;
+      // the guards still decide, so a missing record or document keeps the phase where it is.
+      for (const target of ["gate", "deliver"] as const) {
+        if (nextPhaseOf(opened.work) !== target) break;
+        if (!advancePhase(opened.work, guardContext(env, opened.work, opened.tampered)).ok) break;
+      }
       saveWork(env.paths, opened.work);
+      // The report is written here too, so a gate run that proves the work is also its delivery.
+      writeProtectedText(
+        env.paths,
+        join(workDir(env.paths, opened.work.id), "report.md"),
+        renderReport(opened.work, outcome.evidence),
+      );
       const raised = outcome.raised
         ? `Route raised to ${outcome.raised}: ${opened.work.routeReasons.at(-1)}\n`
         : "";

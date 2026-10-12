@@ -75,6 +75,9 @@ export function computeVerdict(input: VerdictInput): {
       unproven.push(`gate ${label} ran an unconfirmed command (crew profile confirm)`);
     }
   }
+  // Test-first is proved per criterion, so an item with none would be proven by the gates alone.
+  if (work.criteria.length === 0)
+    unproven.push('no acceptance criteria (crew criteria <id> add "...")');
   for (const criterion of work.criteria) {
     if (isSkipped(work, `tdd:${criterion.id}`)) continue;
     const record = evidence.tdd.find((t) => t.criterion === criterion.id);

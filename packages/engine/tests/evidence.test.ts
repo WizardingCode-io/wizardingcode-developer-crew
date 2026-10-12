@@ -143,3 +143,22 @@ test("the report says what was proven and what was not", () => {
   expect(report).toContain("gate:lint");
   expect(report).toContain("legacy code");
 });
+
+test("an item with no criteria is never proven, whatever the gates say", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const work = createWork(paths, "fix");
+  const expected = [{ gate: "test" as const, target: "." }];
+  const evidence: Evidence = {
+    fingerprint: "f",
+    tdd: [],
+    runs: [gate("test", "pass")],
+    verdict: "unproven",
+    unproven: [],
+  };
+  expect(
+    computeVerdict({ work, evidence, expected, currentFingerprint: "f", tampered: false }),
+  ).toEqual({
+    verdict: "unproven",
+    unproven: ['no acceptance criteria (crew criteria <id> add "...")'],
+  });
+});
