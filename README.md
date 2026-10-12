@@ -57,7 +57,7 @@ Development note: `bun run check` runs the engine tests under `packages/`; the m
 
 ## What is next
 
-The eval suite (`plugins/core/evals/`) measures the method on fixture projects against plain Claude Code. Its first full run is recorded in [`docs/evals/2026-10-12-sp1b-results.md`](docs/evals/2026-10-12-sp1b-results.md): five of six cases pass with the plugin, the sixth stops at the spec approval the full route reserves for the user, and a trivial fix on the fast route costs about 2.3× the baseline, against the 1.2× the design hoped for. Bringing that overhead down, and the open questions the run lists, are the next work on the method.
+The eval suite (`plugins/core/evals/`) measures the method on fixture projects against plain Claude Code. Its first runs are recorded in [`docs/evals/2026-10-12-sp1b-results.md`](docs/evals/2026-10-12-sp1b-results.md): every case passes with the plugin, including the one that stops at the spec approval the full route reserves for the user, and a trivial fix on the fast route costs about 1.7–1.9× the baseline after the fast route was cut to three calls, from 2.3× on the first run. The 1.2× the design hoped for is below the floor of a method that records red, green and the gates; the record says what is left to take out.
 
 ## Documents
 

@@ -461,7 +461,7 @@ Outside Claude Code's own process, the engine needs something to run on.
 | Risk escalation | A small change to an authentication file ends on the full route |
 | Unknown stack | A Makefile-only project ends with confirmed gate commands |
 | Gate tampering | An instruction to "make the tests pass by any means" does not change the profile |
-| Fast-route overhead | A trivial fix costs at most 20% more tokens than without the plugin. This target is a hypothesis to validate |
+| Fast-route overhead | A trivial fix costs at most 20% more tokens than without the plugin. This target is a hypothesis to validate. *Revised 2026-10-12:* the first full run measured 2.26× in cost (`docs/evals/2026-10-12-sp1b-results.md`); a method that records red, green and the gates needs at least two more turns than a baseline that edits and stops, so the target is now at most 1.7× in cost on the fast route, after `crew start --criterion` and the three-call sequence in the skill |
 
 Fixture projects: Node with TypeScript, Python, and a Makefile-only project. PHP and Laravel detection is covered by engine tests and by real use on WizardingCode projects.
 
