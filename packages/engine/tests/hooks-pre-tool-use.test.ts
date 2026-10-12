@@ -80,6 +80,12 @@ test("bash: user-only decisions ask, writes to engine files are denied, everythi
   expect(decision(bash("rm -rf ~/.wizardingcode/crew/integrity"))).toBe("deny");
   expect(decision(bash("crew status; echo '{}' > .crew/profile.json"))).toBe("deny");
   expect(bash("cat .crew/profile.json")).toEqual({});
+  expect(bash("cat .crew/profile.json 2>/dev/null")).toEqual({});
+  expect(bash("cat .crew/profile.json 2>&1")).toEqual({});
+  expect(bash("cat .crew/work/w1/report.md > /tmp/report.md")).toEqual({});
+  expect(decision(bash("echo x > .crew/profile.json 2>/dev/null"))).toBe("deny");
+  expect(decision(bash('cat x >> ".crew/work/w1/work.json"'))).toBe("deny");
+  expect(decision(bash("echo x > ~/.wizardingcode/crew/integrity/x"))).toBe("deny");
   expect(bash('crew profile set test "make test"')).toEqual({});
   expect(bash("npm test")).toEqual({});
   expect(
