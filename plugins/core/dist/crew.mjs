@@ -452,9 +452,17 @@ var pythonDetector = {
 
 // packages/engine/src/detect/index.ts
 var DETECTORS = [nodeDetector, phpDetector, pythonDetector];
-var DEFAULT_WATCH_EXCLUDE = ["**/*.md", "docs/**", ".crew/**"];
+var DEFAULT_WATCH_EXCLUDE = ["**/*.md", "docs/**", ".crew/**", ".claude/**"];
 var DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
+var FORMER_WATCH_EXCLUDES = [["**/*.md", "docs/**", ".crew/**"]];
 var MAX_DEPTH = 3;
+function watchOf(previous) {
+  if (!previous)
+    return { exclude: [...DEFAULT_WATCH_EXCLUDE] };
+  const saved = JSON.stringify(previous.watch.exclude);
+  const former = FORMER_WATCH_EXCLUDES.some((list) => JSON.stringify(list) === saved);
+  return former ? { exclude: [...DEFAULT_WATCH_EXCLUDE] } : previous.watch;
+}
 function* folders(root, depth = 0) {
   yield root;
   if (depth >= MAX_DEPTH)
@@ -532,7 +540,7 @@ function mergeProfile(previous, detected) {
     version: 1,
     detectedAt: nowIso(),
     targets,
-    watch: previous?.watch ?? { exclude: [...DEFAULT_WATCH_EXCLUDE] }
+    watch: watchOf(previous)
   };
 }
 function detectProfile(root, previous = null) {

@@ -165,7 +165,7 @@ Gate `status` is one of `pass`, `fail`, `skipped` (by the user, with a reason) o
 
 ### Watched files and fingerprint
 
-Watched files are every tracked file and every untracked file that git does not ignore, except `**/*.md`, `docs/**` and `.crew/**`. The profile can change the list.
+Watched files are every tracked file and every untracked file that git does not ignore, except `**/*.md`, `docs/**`, `.crew/**` and `.claude/**` (the agent's own configuration is not source). The profile can change the list; a profile whose list is still an earlier default follows the current one on `crew detect --refresh`.
 
 In a git repository the fingerprint hashes the active work item's base commit (`HEAD` when there is none) and the content of every watched path changed since that commit, untracked files included. Outside git it hashes the content of the watched files, without following symlinks and skipping dependency and build folders; above 20 000 files the fingerprint is unavailable and nothing is proven there. Evidence is valid only for the fingerprint it was recorded against: each gate run records the fingerprint it vouches for, and a run recorded against other code counts as not run. Any later change to a watched file makes the work unproven again.
 

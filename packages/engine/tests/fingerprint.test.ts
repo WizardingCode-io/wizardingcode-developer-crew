@@ -30,6 +30,7 @@ test("markdown and docs are not watched; untracked source files are", () => {
   const before = computeFingerprint(root, profile);
   write(root, "README.md", "# changed\n");
   write(root, "docs/guide.txt", "notes");
+  write(root, ".claude/settings.json", "{}");
   expect(changedWatchedPaths(root, profile)).toEqual([]);
   expect(computeFingerprint(root, profile)).toBe(before);
   write(root, "src/new.ts", "y");

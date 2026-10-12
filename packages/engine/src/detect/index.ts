@@ -10,9 +10,18 @@ import { pythonDetector } from "./python.ts";
 import type { Detector } from "./types.ts";
 
 export const DETECTORS: readonly Detector[] = [nodeDetector, phpDetector, pythonDetector];
-export const DEFAULT_WATCH_EXCLUDE = ["**/*.md", "docs/**", ".crew/**"];
+export const DEFAULT_WATCH_EXCLUDE = ["**/*.md", "docs/**", ".crew/**", ".claude/**"];
 export const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
+/** Defaults of earlier releases. A saved list equal to one of them was never the user's choice, so it follows the current default. */
+const FORMER_WATCH_EXCLUDES: readonly (readonly string[])[] = [["**/*.md", "docs/**", ".crew/**"]];
 const MAX_DEPTH = 3;
+
+function watchOf(previous: Profile | null): Profile["watch"] {
+  if (!previous) return { exclude: [...DEFAULT_WATCH_EXCLUDE] };
+  const saved = JSON.stringify(previous.watch.exclude);
+  const former = FORMER_WATCH_EXCLUDES.some((list) => JSON.stringify(list) === saved);
+  return former ? { exclude: [...DEFAULT_WATCH_EXCLUDE] } : previous.watch;
+}
 
 function* folders(root: string, depth = 0): Generator<string> {
   yield root;
@@ -87,7 +96,7 @@ export function mergeProfile(previous: Profile | null, detected: Target[]): Prof
     version: 1,
     detectedAt: nowIso(),
     targets,
-    watch: previous?.watch ?? { exclude: [...DEFAULT_WATCH_EXCLUDE] },
+    watch: watchOf(previous),
   };
 }
 

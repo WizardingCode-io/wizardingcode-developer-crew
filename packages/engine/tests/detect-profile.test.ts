@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import {
+  DEFAULT_WATCH_EXCLUDE,
   detectProfile,
   detectTargets,
   mergeProfile,
@@ -21,7 +22,7 @@ test("finds targets up to three levels deep and skips dependency folders", () =>
   const profile = detectProfile(monorepo());
   expect(profile.targets.map((t) => `${t.path}:${t.stack}`)).toEqual([".:node", "apps/api:php"]);
   expect(profile.targets[0]?.gates.test).toEqual({ command: "npm run test", source: "detected" });
-  expect(profile.watch.exclude).toEqual(["**/*.md", "docs/**", ".crew/**"]);
+  expect(profile.watch.exclude).toEqual(["**/*.md", "docs/**", ".crew/**", ".claude/**"]);
 });
 
 test("re-detection keeps proposed and confirmed commands and timeouts", () => {
@@ -85,4 +86,18 @@ test("a workspace root without a test script is still missing one; its members d
   write(dir, "package.json", JSON.stringify({ workspaces: { packages: ["packages/*"] } }));
   write(dir, "packages/web/package.json", JSON.stringify({ scripts: { test: "vitest" } }));
   expect(missingTestCommands(detectProfile(dir))).toEqual([{ target: ".", gate: "test" }]);
+});
+
+test("re-detection upgrades a watch list that is still an earlier default and keeps one the user changed", () => {
+  const dir = monorepo();
+  const stale: Profile = {
+    ...detectProfile(dir),
+    watch: { exclude: ["**/*.md", "docs/**", ".crew/**"] },
+  };
+  expect(detectProfile(dir, stale).watch.exclude).toEqual(DEFAULT_WATCH_EXCLUDE);
+  const custom: Profile = {
+    ...detectProfile(dir),
+    watch: { exclude: ["**/*.md", "generated/**"] },
+  };
+  expect(detectProfile(dir, custom).watch.exclude).toEqual(["**/*.md", "generated/**"]);
 });
