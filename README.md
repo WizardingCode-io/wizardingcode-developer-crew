@@ -57,7 +57,7 @@ Development note: `bun run check` runs the engine tests under `packages/`; the m
 
 ## What is next
 
-The eval suite (`evals/`) measures the method on fixture projects; its recorded run (`docs/evals/`) is pending the first full run.
+The eval suite (`plugins/core/evals/`) measures the method on fixture projects against plain Claude Code. Its first full run is recorded in [`docs/evals/2026-10-12-sp1b-results.md`](docs/evals/2026-10-12-sp1b-results.md): five of six cases pass with the plugin, the sixth stops at the spec approval the full route reserves for the user, and a trivial fix on the fast route costs about 2.3× the baseline, against the 1.2× the design hoped for. Bringing that overhead down, and the open questions the run lists, are the next work on the method.
 
 ## Documents
 
@@ -66,6 +66,8 @@ The eval suite (`evals/`) measures the method on fixture projects; its recorded 
 - [SP1a implementation plan](docs/plans/2026-10-07-sp1a-engine-cli-and-plugin.md): engine, `crew` command, hooks, skill and plugin packaging, task by task.
 - [SP1b implementation plan](docs/plans/2026-10-07-sp1b-mod-and-evals.md): the mod and the eval suite.
 - [ADR 0001](docs/adr/0001-wizardingcode-brand.md): the shibaox brand is retired; the names, the paths and the convention for the brand's products.
+- [Evals, first full run](docs/evals/2026-10-12-sp1b-results.md): the six cases with and without the plugin, the fast-route overhead, and what the run opened.
+- [SP1a end-to-end check](docs/plans/2026-10-07-sp1a-e2e-results.md): the live sessions behind the acceptance criteria, including the re-run of 2026-10-12.
 
 ---
 

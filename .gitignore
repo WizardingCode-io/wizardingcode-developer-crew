@@ -6,4 +6,4 @@ node_modules/
 .crew/
 plugins/core/.claude-plugin/types/
 plugins/core/tsconfig.json
-evals/results/
+plugins/core/evals/results/
