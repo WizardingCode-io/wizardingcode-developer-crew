@@ -80,6 +80,18 @@ test("case 4 then 5: unproven changes block, and the third block is the last", (
   expect(String(notice.systemMessage)).toMatch(/not proven after 3 attempts/);
 });
 
+test("finding 11: the block names crew await as the way to end a turn with a question", () => {
+  const { root, ctx } = session();
+  write(root, "src/a.ts", "changed");
+  expect(String(onStop(ctx).reason)).not.toContain("crew await");
+  const work = createWork(ctx.paths, "fix");
+  const response = onStop(ctx);
+  expect(response.decision).toBe("block");
+  expect(String(response.reason)).toContain(
+    `To end the turn with a question for the user, run crew await ${work.id} user first.`,
+  );
+});
+
 test("case 3: a work item waiting for the user lets the turn end with a notice", () => {
   const { root, ctx } = session();
   const work = createWork(ctx.paths, "fix");

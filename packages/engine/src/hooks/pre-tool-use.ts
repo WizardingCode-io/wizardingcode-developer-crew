@@ -7,10 +7,15 @@ import type { HookContext, HookPayload, HookResponse } from "./types.ts";
 
 const WRITE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
 // The Bash rules read one simple command at a time (`simpleCommands`). This one is matched after
-// quotes and backslashes are removed, after any token ending in `crew` or `crew.mjs` (the bundle
-// run through node), so quoting a word or calling the bundle by path changes nothing.
-const USER_ONLY =
-  /(?:^|[\s/;&|(])crew(?:\.mjs)?\s+(?:skip|approve|accept|profile\s+confirm|policy\s+accept|profile\s+set\b[^;&|]*--force)\b/;
+// quotes and backslashes are removed, at the command position only: `crew` or a path ending in
+// `/crew.mjs` (the bundle run through node) as the first word, or after runners, wrappers, env
+// assignments and options. Quoting a word or calling the bundle by path changes nothing; the same
+// words inside another program's argument (`grep 'crew accept'`) are text, not the command
+// (finding 16 of the real-use phase).
+const RUNNER = String.raw`(?:[A-Za-z_][A-Za-z0-9_]*=\S*|-\S*|node|bun|bunx|npx|sh|bash|zsh|eval|exec|env|time|nohup|xargs|sudo|command)`;
+const USER_ONLY = new RegExp(
+  String.raw`^[\s({]*(?:${RUNNER}\s+)*(?:\S*/)?crew(?:\.mjs)?\s+(?:skip|approve|accept|profile\s+confirm|policy\s+accept|profile\s+set\b[^;&|]*--force)\b`,
+);
 const ENGINE_FILES =
   /\.crew\/(?:profile\.json|policy\.json|\.gitignore|local\b|work\/[^\s/]+\/(?:work\.json|evidence\.json|report\.md|logs\b))|\.wizardingcode\/crew\b/;
 // A verb may follow a quote (`bash -c "rm ..."`). A redirect is a write only when its target is an

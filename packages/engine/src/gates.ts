@@ -115,13 +115,8 @@ export function depsAuditCommand(
   return { command: tool.command };
 }
 
-/** The gate table from the spec, section 12. Secrets is planned separately, once per repository. */
-export function gatesForTarget(
-  route: Route,
-  target: Target,
-  policy: Policy,
-  changed: string[],
-): GateName[] {
+/** The gate table from the spec, section 12, the same on every route since ADR 0002. Secrets is planned separately, once per repository. */
+export function gatesForTarget(target: Target, policy: Policy, changed: string[]): GateName[] {
   const has = (gate: GateName): boolean => !!target.gates[gate];
   const gates: GateName[] = [];
   if (has("build")) gates.push("build");
@@ -158,7 +153,7 @@ export function plannedGates(
       target.workspaceOf !== undefined &&
       profile.targets.some((t) => t.path === target.workspaceOf);
     const shared = (atPath.get(target.path) ?? 0) > 1;
-    for (const gate of gatesForTarget(route, target, policy, changed)) {
+    for (const gate of gatesForTarget(target, policy, changed)) {
       // A workspace member runs only the gates it defines; the package that lists it runs the rest once.
       if (member && !target.gates[gate]) continue;
       // On the standard route the audit is required only when a tool exists; on the full route it must be skipped explicitly.

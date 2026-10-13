@@ -172,11 +172,12 @@ test("bash: the user-only rule and --mode are read from the same simple command"
   const bash = (command: string, permission_mode?: string) =>
     onPreToolUse(ctx, { tool_name: "Bash", tool_input: { command }, permission_mode });
   // Finding 5: a read-only probe whose payload names the command, after an echo that says --mode.
+  // Since finding 16 the payload is text, not the command: the probe gets no opinion at all.
   const probe = [
     'echo "probe: the bare command, --mode in auto, through the installed bundle"',
     `printf '%s' '{"permission_mode":"auto","tool_input":{"command":"node plugins/core/dist/crew.mjs approve w1 spec"}}' | node dist/crew.mjs hook pre-tool-use`,
   ].join("; ");
-  expect(decision(bash(probe, "plan"))).toBe("ask");
+  expect(bash(probe, "plan")).toEqual({});
   expect(bash('crew skip w1 gate:lint --reason "a; b && c" --mode auto', "auto")).toEqual({});
   expect(decision(bash('crew skip w1 gate:lint --reason "a; b"', "default"))).toBe("ask");
   expect(decision(bash('crew skip w1 gate:lint --reason "a; b" --mode auto', "default"))).toBe(
@@ -185,6 +186,34 @@ test("bash: the user-only rule and --mode are read from the same simple command"
   // The flag must sit on the crew command itself.
   expect(decision(bash("echo --mode auto; crew approve w1 spec", "auto"))).toBe("deny");
   expect(decision(bash("crew approve w1 spec; echo --mode auto", "auto"))).toBe("deny");
+});
+
+test("finding 16: a user-only verb counts only at the command position of a simple command", () => {
+  const { ctx } = setup();
+  const bash = (command: string, permission_mode?: string) =>
+    onPreToolUse(ctx, { tool_name: "Bash", tool_input: { command }, permission_mode });
+  // Words inside another program's argument are text, whatever the mode.
+  expect(
+    bash(
+      `cat transcripts.jsonl | grep -oE '"command":"[^"]{0,40}crew accept[^"]{0,40}' | sort | uniq -c`,
+      "auto",
+    ),
+  ).toEqual({});
+  expect(bash("echo 'then run crew approve w1 spec'", "auto")).toEqual({});
+  expect(bash('printf "%s" "crew skip w1 gate:lint --reason x"', "default")).toEqual({});
+  expect(bash("cat notes.md | grep 'crew profile confirm'", "plan")).toEqual({});
+  // The command itself, in every spelling, is still the command.
+  expect(decision(bash("FOO=1 node /x/dist/crew.mjs skip w1 gate:lint --reason x"))).toBe("ask");
+  expect(decision(bash('bash -c "crew approve w1 spec"'))).toBe("ask");
+  expect(decision(bash("env FOO=1 crew approve w1 spec"))).toBe("ask");
+  expect(decision(bash("(crew approve w1 spec)"))).toBe("ask");
+  expect(decision(bash("time crew policy accept"))).toBe("ask");
+  expect(decision(bash("xargs -0 crew accept profile"))).toBe("ask");
+  // biome-ignore lint/suspicious/noTemplateCurlyInString: the hook sees the placeholder as written in hooks.json
+  expect(decision(bash("node ${CLAUDE_PLUGIN_ROOT}/dist/crew.mjs profile confirm"))).toBe("ask");
+  expect(decision(bash("cd /repo && ./crew.mjs profile confirm"))).toBe("ask");
+  expect(decision(bash("crew approve w1 spec", "auto"))).toBe("deny");
+  expect(bash("screw skip w1")).toEqual({});
 });
 
 test("bash: a heredoc body line is judged like a simple command", () => {

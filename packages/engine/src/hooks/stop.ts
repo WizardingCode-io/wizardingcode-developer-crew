@@ -70,8 +70,13 @@ export function onStop(ctx: HookContext): HookResponse {
   }
   session.stopBlocks += 1;
   const gate = work ? `crew gate run ${work.id}` : 'crew start "<request>"';
+  // The way out that costs no gate run is named here, where the agent reads when blocked
+  // (finding 11 of the real-use phase: a third of the blocks were turns ending to ask or report).
+  const wait = work
+    ? ` To end the turn with a question for the user, run crew await ${work.id} user first.`
+    : "";
   return done({
     decision: "block",
-    reason: `Crew: watched source files changed and the work is not proven. Missing: ${missing.join("; ")}. Run ${gate}, fix what fails, or ask the user to skip a step with crew skip.`,
+    reason: `Crew: watched source files changed and the work is not proven. Missing: ${missing.join("; ")}. Run ${gate}, fix what fails, or ask the user to skip a step with crew skip.${wait}`,
   });
 }

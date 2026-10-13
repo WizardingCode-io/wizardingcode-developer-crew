@@ -25,21 +25,23 @@ const target: Target = {
 };
 
 test("planned gates follow the route table", () => {
-  expect(gatesForTarget("fast", target, DEFAULT_POLICY, ["src/a.ts"])).toEqual(["test", "lint"]);
-  expect(gatesForTarget("fast", target, DEFAULT_POLICY, ["package.json"])).toEqual([
+  expect(gatesForTarget(target, DEFAULT_POLICY, ["src/a.ts"])).toEqual(["test", "lint"]);
+  expect(gatesForTarget(target, DEFAULT_POLICY, ["package.json"])).toEqual([
     "test",
     "lint",
     "deps",
   ]);
-  expect(gatesForTarget("full", target, DEFAULT_POLICY, [])).toEqual(["test", "lint"]);
-  expect(gatesForTarget("full", target, DEFAULT_POLICY, ["composer.lock"])).toEqual([
+  expect(gatesForTarget(target, DEFAULT_POLICY, [])).toEqual(["test", "lint"]);
+  expect(gatesForTarget(target, DEFAULT_POLICY, ["composer.lock"])).toEqual([
     "test",
     "lint",
     "deps",
   ]);
-  expect(
-    gatesForTarget("fast", target, { ...DEFAULT_POLICY, requiredGates: ["typecheck"] }, []),
-  ).toEqual(["test", "lint", "typecheck"]);
+  expect(gatesForTarget(target, { ...DEFAULT_POLICY, requiredGates: ["typecheck"] }, [])).toEqual([
+    "test",
+    "lint",
+    "typecheck",
+  ]);
   expect(manifestChanged(["a/requirements-dev.txt"])).toBe(true);
   const profile = {
     version: 1 as const,
@@ -144,16 +146,25 @@ test("I9: standard plans no audit it cannot run; full records it unavailable wit
 });
 
 test("finding 10: on every route the audit is planned only when the change touches a dependency", () => {
+  expect(gatesForTarget(target, DEFAULT_POLICY, ["src/a.ts"])).toEqual(["test", "lint"]);
+  expect(gatesForTarget(target, DEFAULT_POLICY, ["src/a.ts", "pnpm-lock.yaml"])).toEqual([
+    "test",
+    "lint",
+    "deps",
+  ]);
+  expect(
+    gatesForTarget(target, { ...DEFAULT_POLICY, requiredGates: ["deps"] }, ["src/a.ts"]),
+  ).toEqual(["test", "lint", "deps"]);
+  const profile = {
+    version: 1 as const,
+    detectedAt: "",
+    targets: [target],
+    watch: { exclude: [] },
+  };
   for (const route of ["fast", "standard", "full"] as const) {
-    expect(gatesForTarget(route, target, DEFAULT_POLICY, ["src/a.ts"])).toEqual(["test", "lint"]);
-    expect(gatesForTarget(route, target, DEFAULT_POLICY, ["src/a.ts", "pnpm-lock.yaml"])).toEqual([
-      "test",
-      "lint",
-      "deps",
-    ]);
     expect(
-      gatesForTarget(route, target, { ...DEFAULT_POLICY, requiredGates: ["deps"] }, ["src/a.ts"]),
-    ).toEqual(["test", "lint", "deps"]);
+      plannedGates(route, profile, DEFAULT_POLICY, ["src/a.ts"], tempDir()).map((g) => g.gate),
+    ).toEqual(["secrets", "test", "lint"]);
   }
 });
 

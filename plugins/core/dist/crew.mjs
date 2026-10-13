@@ -353,14 +353,19 @@ var TSC_BY_MANAGER = {
   yarn: "yarn tsc --noEmit",
   bun: "bunx tsc --noEmit"
 };
-function packageManager(dir) {
-  if (exists(join3(dir, "bun.lock")) || exists(join3(dir, "bun.lockb")))
-    return "bun";
-  if (exists(join3(dir, "pnpm-lock.yaml")))
-    return "pnpm";
-  if (exists(join3(dir, "yarn.lock")))
-    return "yarn";
-  return "npm";
+var MANAGERS = ["npm", "pnpm", "yarn", "bun"];
+var LOCKFILES = [
+  ["bun", ["bun.lock", "bun.lockb"]],
+  ["pnpm", ["pnpm-lock.yaml"]],
+  ["yarn", ["yarn.lock"]],
+  ["npm", ["package-lock.json", "npm-shrinkwrap.json"]]
+];
+function packageManager(dir, pkg) {
+  const declared = typeof pkg.packageManager === "string" ? pkg.packageManager.split("@")[0] : "";
+  if (declared && MANAGERS.includes(declared))
+    return { manager: declared, sure: true };
+  const present = LOCKFILES.filter(([, files]) => files.some((f) => exists(join3(dir, f)))).map(([manager]) => manager);
+  return { manager: present[0] ?? "npm", sure: present.length <= 1 };
 }
 var nodeDetector = {
   stack: "node",
@@ -368,7 +373,7 @@ var nodeDetector = {
     const pkg = readJson(join3(dir, "package.json"));
     if (!pkg)
       return null;
-    const manager = packageManager(dir);
+    const { manager, sure } = packageManager(dir, pkg);
     const scripts = pkg.scripts ?? {};
     const gates = {};
     for (const [gate, names] of Object.entries(SCRIPT_CANDIDATES)) {
@@ -387,7 +392,8 @@ var nodeDetector = {
       stack: "node",
       packageManager: manager,
       gates,
-      ...workspaces.length ? { workspaces } : {}
+      ...workspaces.length ? { workspaces } : {},
+      ...sure ? {} : { proposed: true }
     };
   }
 };
@@ -502,7 +508,7 @@ function detectTargets(root) {
         continue;
       const gates = {};
       for (const [gate, command] of Object.entries(found.gates)) {
-        gates[gate] = { command, source: "detected" };
+        gates[gate] = { command, source: found.proposed ? "proposed" : "detected" };
       }
       const rel = relative(root, dir).replace(/\\/g, "/");
       const target = {
@@ -1185,6 +1191,17 @@ function loadEvidence(paths, id) {
 function saveEvidence(paths, id, evidence) {
   writeProtectedJson(paths, evidencePath(paths, id), evidence);
 }
+function runMatches(run, planned) {
+  return run.gate === planned.gate && run.target === planned.target && (run.stack ?? null) === (planned.stack ?? null);
+}
+function gateLabel(planned, multiTarget) {
+  const parts = [];
+  if (multiTarget && planned.target !== ".")
+    parts.push(planned.target);
+  if (planned.stack)
+    parts.push(planned.stack);
+  return parts.length ? `${planned.gate} (${parts.join(", ")})` : planned.gate;
+}
 function computeVerdict(input) {
   const { work, evidence, expected, currentFingerprint, tampered, policy } = input;
   const unproven = [];
@@ -1198,11 +1215,12 @@ function computeVerdict(input) {
   else if (stale)
     unproven.push("code changed since the last gate run");
   const multiTarget = new Set(expected.map((e) => e.target)).size > 1;
-  for (const { gate, target } of expected) {
+  for (const planned of expected) {
+    const { gate } = planned;
     if (isSkipped(work, `gate:${gate}`, policy))
       continue;
-    const label = multiTarget && target !== "." ? `${gate} (${target})` : gate;
-    const run = evidence.runs.find((r) => r.gate === gate && r.target === target);
+    const label = gateLabel(planned, multiTarget);
+    const run = evidence.runs.find((r) => runMatches(r, planned));
     if (!run)
       unproven.push(`gate ${label} not run`);
     else if (run.fingerprint !== currentFingerprint && !stale)
@@ -1257,7 +1275,8 @@ function renderReport(work, evidence, policy) {
   lines.push("", "## Gates", "", "| Gate | Target | Status | Command | Duration | Log |", "| :- | :- | :- | :- | -: | :- |");
   for (const r of evidence.runs) {
     const status = r.status === "skipped" || r.status === "unavailable" ? `${r.status}${r.reason ? `: ${r.reason}` : ""}` : r.status;
-    lines.push(`| ${r.gate} | ${r.target} | ${status} | ${r.command ? `\`${r.command}\`` : ""} | ${r.durationMs} ms | ${r.log ?? ""} |`);
+    const target = r.stack ? `${r.target} (${r.stack})` : r.target;
+    lines.push(`| ${r.gate} | ${target} | ${status} | ${r.command ? `\`${r.command}\`` : ""} | ${r.durationMs} ms | ${r.log ?? ""} |`);
   }
   const removed = work.removedCriteria ?? [];
   const pauses = work.pauses ?? [];
@@ -1566,7 +1585,7 @@ function depsAuditCommand(target, root, env = process.env) {
     return { reason: `${tool.binary} not on PATH` };
   return { command: tool.command };
 }
-function gatesForTarget(route, target, policy, changed) {
+function gatesForTarget(target, policy, changed) {
   const has = (gate) => !!target.gates[gate];
   const gates = [];
   if (has("build"))
@@ -1576,7 +1595,7 @@ function gatesForTarget(route, target, policy, changed) {
     gates.push("lint");
   if (has("typecheck"))
     gates.push("typecheck");
-  if (route === "fast" ? manifestChanged(changed) : true)
+  if (manifestChanged(changed))
     gates.push("deps");
   for (const gate of policy.requiredGates)
     if (gate !== "secrets" && !gates.includes(gate))
@@ -1586,23 +1605,35 @@ function gatesForTarget(route, target, policy, changed) {
 function plannedGates(route, profile, policy, changed, root) {
   const planned = [{ gate: "secrets", target: "." }];
   const touched = profile.targets.filter((t) => t.path === "." || changed.length === 0 || changed.some((p) => p === t.path || p.startsWith(`${t.path}/`)));
+  const atPath = new Map;
+  for (const t of profile.targets)
+    atPath.set(t.path, (atPath.get(t.path) ?? 0) + 1);
   for (const target of touched) {
     const member = target.workspaceOf !== undefined && profile.targets.some((t) => t.path === target.workspaceOf);
-    for (const gate of gatesForTarget(route, target, policy, changed)) {
+    const shared = (atPath.get(target.path) ?? 0) > 1;
+    for (const gate of gatesForTarget(target, policy, changed)) {
       if (member && !target.gates[gate])
         continue;
       if (gate === "deps" && route === "standard" && "reason" in depsAuditCommand(target, root))
         continue;
-      planned.push({ gate, target: target.path });
+      planned.push({ gate, target: target.path, ...shared ? { stack: target.stack } : {} });
     }
   }
   return planned;
 }
-async function runOne(paths, work, profile, gate, targetPath, fingerprint) {
+function targetOf(profile, planned) {
+  return profile.targets.find((t) => t.path === planned.target && (planned.stack === undefined || t.stack === planned.stack));
+}
+function superseded(run, planned) {
+  return run.gate === planned.gate && run.target === planned.target && (planned.stack === undefined || run.stack === undefined || run.stack === planned.stack);
+}
+async function runOne(paths, work, profile, planned, fingerprint) {
+  const { gate, target: targetPath } = planned;
   const at = nowIso();
   const base = {
     gate,
     target: targetPath,
+    ...planned.stack ? { stack: planned.stack } : {},
     command: null,
     commandSource: null,
     confirmed: true,
@@ -1626,7 +1657,7 @@ async function runOne(paths, work, profile, gate, targetPath, fingerprint) {
       tail: scan.tail
     };
   }
-  const target = profile.targets.find((t) => t.path === targetPath);
+  const target = targetOf(profile, planned);
   if (!target)
     return { ...base, reason: "target not in profile" };
   let command;
@@ -1643,7 +1674,8 @@ async function runOne(paths, work, profile, gate, targetPath, fingerprint) {
     command = configured.command;
     source = configured.source;
   }
-  const log = `logs/${gate}-${targetPath.replace(/[^a-z0-9]+/gi, "_")}-${Date.now()}.txt`;
+  const where = targetPath.replace(/[^a-z0-9]+/gi, "_") + (planned.stack ? `-${planned.stack}` : "");
+  const log = `logs/${gate}-${where}-${Date.now()}.txt`;
   const result = await runCommand(command, {
     cwd: join14(paths.root, targetPath),
     timeoutMs: target.timeoutMs,
@@ -1680,15 +1712,17 @@ async function runGates(paths, work, profile, policy, options = {}) {
   const evidence = read.evidence;
   const tampered = !!options.tampered || read.tampered;
   const fingerprintBefore = computeFingerprint(paths.root, profile, base);
-  for (const { gate, target } of planned) {
+  for (const one of planned) {
+    const { gate, target } = one;
     if (options.only && !options.only.includes(gate))
       continue;
-    evidence.runs = evidence.runs.filter((r) => !(r.gate === gate && r.target === target));
+    evidence.runs = evidence.runs.filter((r) => !superseded(r, one));
     if (isSkipped(work, `gate:${gate}`, policy)) {
       const skip = work.skips.find((s) => s.step === `gate:${gate}`);
       evidence.runs.push({
         gate,
         target,
+        ...one.stack ? { stack: one.stack } : {},
         command: null,
         commandSource: null,
         confirmed: true,
@@ -1703,7 +1737,7 @@ async function runGates(paths, work, profile, policy, options = {}) {
       });
       continue;
     }
-    evidence.runs.push(await runOne(paths, work, profile, gate, target, fingerprintBefore));
+    evidence.runs.push(await runOne(paths, work, profile, one, fingerprintBefore));
   }
   evidence.fingerprint = fingerprintBefore;
   const verdict = computeVerdict({
@@ -1814,7 +1848,8 @@ function isRedirectPart(line, i) {
 
 // packages/engine/src/hooks/pre-tool-use.ts
 var WRITE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
-var USER_ONLY = /(?:^|[\s/;&|(])crew(?:\.mjs)?\s+(?:skip|approve|accept|profile\s+confirm|policy\s+accept|profile\s+set\b[^;&|]*--force)\b/;
+var RUNNER = String.raw`(?:[A-Za-z_][A-Za-z0-9_]*=\S*|-\S*|node|bun|bunx|npx|sh|bash|zsh|eval|exec|env|time|nohup|xargs|sudo|command)`;
+var USER_ONLY = new RegExp(String.raw`^[\s({]*(?:${RUNNER}\s+)*(?:\S*/)?crew(?:\.mjs)?\s+(?:skip|approve|accept|profile\s+confirm|policy\s+accept|profile\s+set\b[^;&|]*--force)\b`);
 var ENGINE_FILES = /\.crew\/(?:profile\.json|policy\.json|\.gitignore|local\b|work\/[^\s/]+\/(?:work\.json|evidence\.json|report\.md|logs\b))|\.wizardingcode\/crew\b/;
 var WRITE_SHAPE = /(?:^|[\s;&|("'])(?:rm|mv|cp|tee|truncate|chmod|touch|dd|install)\b|sed\s+-i|>{1,2}\|?\s*["']?\S*(?:\.crew\/|\.wizardingcode\/crew\b)/;
 var OPAQUE_REDIRECT = />{1,2}\|?\s*["']?[$`]/;
@@ -1928,6 +1963,12 @@ function onPrompt(ctx) {
 // packages/engine/src/hooks/session-start.ts
 function onSessionStart(ctx, payload = {}) {
   ensureCrewDir(ctx.paths, ctx.policy);
+  const former = isFormerWatchDefault(ctx.profile);
+  const moved = former && !ctx.tampered;
+  if (moved) {
+    ctx.profile.watch.exclude = [...DEFAULT_WATCH_EXCLUDE];
+    saveProfile(ctx.paths, ctx.profile);
+  }
   const state = loadState(ctx.paths);
   const active = activeWork(ctx.paths);
   const continues = (payload.source === "resume" || payload.source === "compact") && state.sessions[ctx.sessionId] !== undefined;
@@ -1951,7 +1992,9 @@ function onSessionStart(ctx, payload = {}) {
   if (missing.length) {
     lines.push(`No test command is known for: ${missing.map((m) => m.target).join(", ")}. One is proposed with \`crew profile set test "<cmd>"\`.`);
   }
-  if (isFormerWatchDefault(ctx.profile)) {
+  if (moved) {
+    lines.push(`The profile's watch list predated this release and now follows the current default (${DEFAULT_WATCH_EXCLUDE.join(", ")}).`);
+  } else if (former) {
     lines.push("The profile predates this release: run `crew detect --refresh` once to pick up the current defaults.");
   }
   return {
@@ -2002,9 +2045,10 @@ function onStop(ctx) {
   }
   session.stopBlocks += 1;
   const gate = work ? `crew gate run ${work.id}` : 'crew start "<request>"';
+  const wait = work ? ` To end the turn with a question for the user, run crew await ${work.id} user first.` : "";
   return done({
     decision: "block",
-    reason: `Crew: watched source files changed and the work is not proven. Missing: ${missing.join("; ")}. Run ${gate}, fix what fails, or ask the user to skip a step with crew skip.`
+    reason: `Crew: watched source files changed and the work is not proven. Missing: ${missing.join("; ")}. Run ${gate}, fix what fails, or ask the user to skip a step with crew skip.${wait}`
   });
 }
 
@@ -2124,7 +2168,7 @@ async function recordTdd(paths, work, evidence, profile, criterionId, step, over
 }
 
 // packages/engine/src/version.ts
-var VERSION = "0.1.4";
+var VERSION = "0.1.5";
 
 // packages/engine/src/cli.ts
 var BOOLEAN_FLAGS = new Set(["json", "refresh", "force"]);
@@ -2297,7 +2341,7 @@ function classify(env, work, answers) {
   logDecision(env, work, answers);
 }
 function gateSummary(work, verdict, unproven, runs) {
-  const lines = runs.map((r) => `  ${r.gate} (${r.target}): ${r.status} in ${(r.durationMs / 1000).toFixed(1)}s`);
+  const lines = runs.map((r) => `  ${r.gate} (${r.target}${r.stack ? `, ${r.stack}` : ""}): ${r.status} in ${(r.durationMs / 1000).toFixed(1)}s`);
   lines.push(verdict === "proven" ? `Proven: ${work.id}` : `Not proven: ${unproven.join("; ")}`);
   return lines.join(`
 `);
@@ -2366,23 +2410,38 @@ async function dispatch(parsed, io) {
         if (!GATE_NAMES.includes(gate) || gate === "secrets" || !cmd)
           return refuse('usage: crew profile set <build|test|lint|typecheck|deps> "<cmd>" [--target <path>]');
         const targetPath = typeof parsed.flags.target === "string" ? parsed.flags.target : ".";
-        let target = env.profile.targets.find((t) => t.path === targetPath);
+        const stackFlag = parsed.flags.stack;
+        if (stackFlag !== undefined && !STACKS.includes(stackFlag))
+          return refuse(`usage: crew profile set <gate> "<cmd>" --stack <${STACKS.join("|")}>`);
+        const stack = stackFlag;
+        const atPath = env.profile.targets.filter((t) => t.path === targetPath);
+        if (stack === undefined && atPath.length > 1) {
+          const stacks = atPath.map((t) => t.stack);
+          return refuse(`two targets at ${targetPath} (${stacks.join(", ")}): say which one with --stack <${stacks.join("|")}>`);
+        }
+        let target = stack === undefined ? atPath[0] : atPath.find((t) => t.stack === stack);
         if (!target) {
           target = {
             path: targetPath,
-            stack: "other",
+            stack: stack ?? "other",
             packageManager: "unknown",
             gates: {},
             timeoutMs: 10 * 60 * 1000
           };
           env.profile.targets.push(target);
         }
+        const where = stack === undefined ? targetPath : `${targetPath} (${stack})`;
         const current = target.gates[gate];
         if (current && current.source !== "proposed" && !parsed.flags.force)
-          return refuse(`${gate} for ${targetPath} already has a ${current.source} command (${current.command}); replacing it needs the user: crew profile set ${gate} "<cmd>" --force`);
+          return refuse(`${gate} for ${where} already has a ${current.source} command (${current.command}); replacing it needs the user: crew profile set ${gate} "<cmd>" --force`);
         target.gates[gate] = { command: cmd, source: "proposed" };
         saveProfile(env.paths, env.profile);
-        return ok(`proposed ${gate} for ${targetPath}: ${cmd} (unconfirmed until crew profile confirm)`, { target: targetPath, gate, command: cmd });
+        return ok(`proposed ${gate} for ${where}: ${cmd} (unconfirmed until crew profile confirm)`, {
+          target: targetPath,
+          ...stack ? { stack } : {},
+          gate,
+          command: cmd
+        });
       }
       if (sub === "confirm") {
         if (gate !== undefined && !GATE_NAMES.includes(gate))
@@ -2653,6 +2712,7 @@ ${gateSummary(active.work, result.verdict, result.unproven, result.evidence.runs
         runs: result.evidence.runs.map((r) => ({
           gate: r.gate,
           target: r.target,
+          ...r.stack ? { stack: r.stack } : {},
           status: r.status,
           durationMs: r.durationMs,
           ...r.reason ? { reason: r.reason } : {}
@@ -2694,9 +2754,10 @@ function settings(command, args, user) {
     value: key === "decisions.log" ? value === "true" : value
   });
 }
+var STACKS = ["node", "php", "python", "other"];
 var HELP = `crew ${VERSION}
   detect [--refresh]                    build or refresh the project profile
-  profile set <gate> "<cmd>" [--target p] propose a gate command (unconfirmed)
+  profile set <gate> "<cmd>" [--target p] [--stack s]  propose a gate command (unconfirmed)
   profile set <gate> "<cmd>" --force    replace a detected or confirmed command (asks the user)
   profile confirm [<gate>]              confirm proposed commands (asks the user)
   policy accept                         trust the current policy.json after a hand edit (asks the user)
