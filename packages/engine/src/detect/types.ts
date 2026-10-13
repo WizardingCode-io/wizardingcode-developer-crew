@@ -6,6 +6,8 @@ export interface DetectedTarget {
   gates: Partial<Record<GateName, string>>;
   /** Globs of the folders this manifest lists as workspaces, relative to its folder. */
   workspaces?: string[];
+  /** True when the detector had to guess (several lockfiles, no declared package manager): the commands are proposed, not detected, so the first session is asked to confirm them. */
+  proposed?: boolean;
 }
 
 export interface Detector {

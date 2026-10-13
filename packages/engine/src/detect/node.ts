@@ -6,6 +6,8 @@ import type { DetectedTarget, Detector } from "./types.ts";
 interface PackageJson {
   scripts?: Record<string, string>;
   workspaces?: string[] | { packages?: string[] };
+  /** `pnpm@9.1.0`: the manager the project declares, which Corepack honours. */
+  packageManager?: string;
 }
 
 /** npm, yarn and bun list workspaces as an array; yarn also accepts an object with `packages`. */
@@ -30,11 +32,26 @@ const TSC_BY_MANAGER: Record<string, string> = {
   bun: "bunx tsc --noEmit",
 };
 
-function packageManager(dir: string): string {
-  if (exists(join(dir, "bun.lock")) || exists(join(dir, "bun.lockb"))) return "bun";
-  if (exists(join(dir, "pnpm-lock.yaml"))) return "pnpm";
-  if (exists(join(dir, "yarn.lock"))) return "yarn";
-  return "npm";
+const MANAGERS = ["npm", "pnpm", "yarn", "bun"];
+const LOCKFILES: [string, string[]][] = [
+  ["bun", ["bun.lock", "bun.lockb"]],
+  ["pnpm", ["pnpm-lock.yaml"]],
+  ["yarn", ["yarn.lock"]],
+  ["npm", ["package-lock.json", "npm-shrinkwrap.json"]],
+];
+
+/**
+ * The declared `packageManager` field wins. Otherwise the lockfile says; with more than one
+ * lockfile the first wins but the guess is marked, so the commands are proposed rather than
+ * detected (finding 13 of the real-use phase: a pnpm project with a stale bun.lock).
+ */
+function packageManager(dir: string, pkg: PackageJson): { manager: string; sure: boolean } {
+  const declared = typeof pkg.packageManager === "string" ? pkg.packageManager.split("@")[0] : "";
+  if (declared && MANAGERS.includes(declared)) return { manager: declared, sure: true };
+  const present = LOCKFILES.filter(([, files]) => files.some((f) => exists(join(dir, f)))).map(
+    ([manager]) => manager,
+  );
+  return { manager: present[0] ?? "npm", sure: present.length <= 1 };
 }
 
 export const nodeDetector: Detector = {
@@ -42,7 +59,7 @@ export const nodeDetector: Detector = {
   detect(dir: string): DetectedTarget | null {
     const pkg = readJson<PackageJson>(join(dir, "package.json"));
     if (!pkg) return null;
-    const manager = packageManager(dir);
+    const { manager, sure } = packageManager(dir, pkg);
     const scripts = pkg.scripts ?? {};
     const gates: Partial<Record<GateName, string>> = {};
     for (const [gate, names] of Object.entries(SCRIPT_CANDIDATES) as [GateName, string[]][]) {
@@ -61,6 +78,7 @@ export const nodeDetector: Detector = {
       packageManager: manager,
       gates,
       ...(workspaces.length ? { workspaces } : {}),
+      ...(sure ? {} : { proposed: true }),
     };
   },
 };

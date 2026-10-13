@@ -57,7 +57,7 @@ export function detectTargets(root: string): Target[] {
       if (!found) continue;
       const gates: Target["gates"] = {};
       for (const [gate, command] of Object.entries(found.gates) as [GateName, string][]) {
-        gates[gate] = { command, source: "detected" };
+        gates[gate] = { command, source: found.proposed ? "proposed" : "detected" };
       }
       const rel = relative(root, dir).replace(/\\/g, "/");
       const target: Target = {
