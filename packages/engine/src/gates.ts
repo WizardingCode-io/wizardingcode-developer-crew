@@ -128,7 +128,8 @@ export function gatesForTarget(
   gates.push("test");
   if (has("lint")) gates.push("lint");
   if (has("typecheck")) gates.push("typecheck");
-  if (route === "fast" ? manifestChanged(changed) : true) gates.push("deps");
+  // On every route the audit looks at the change: dependencies the item did not touch are the owner's standing debt (ADR 0002).
+  if (manifestChanged(changed)) gates.push("deps");
   for (const gate of policy.requiredGates)
     if (gate !== "secrets" && !gates.includes(gate)) gates.push(gate);
   return gates;

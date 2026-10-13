@@ -305,9 +305,10 @@ The engine checks structure only: the file exists and has a non-empty acceptance
 | Lint | If a command exists | Required if a command exists | Required if a command exists |
 | Type check | If a command exists | If a command exists | If a command exists |
 | Secret scan of the diff | Required | Required | Required |
-| Dependency audit | Only if a manifest or lockfile changed | Required if a tool is available | Required. If unavailable, the user must skip it |
+| Dependency audit | Only if a manifest or lockfile changed | Only if a manifest or lockfile changed; required then if a tool is available | Only if a manifest or lockfile changed; required then, and if unavailable the user must skip it |
 
 - Gates look at **the change**: the diff from the work item's base commit to the working tree, plus untracked watched files (section 6). A commit made before `crew gate run` does not hide anything.
+- The dependency audit follows the same rule on every route since 0.1.5 (ADR 0002): it runs when the change touches a manifest or a lockfile, or when the policy lists it in `requiredGates`. Until then the standard and full routes audited on every item, which failed every item of a project with standing advisories for debt the change did not add.
 - The secret scan is built in: known formats (private keys, cloud and payment provider keys, common token formats) checked against the lines the change adds. If `gitleaks` is installed the engine uses it as well.
 - The dependency audit uses the ecosystem's own tool: `npm audit`, `pnpm audit`, `yarn audit` (`yarn npm audit` on Yarn Berry), `bun audit`, `composer audit`, `pip-audit` through the project's runner. It is unavailable, with the reason, when the lockfile is missing or the tool is not on `PATH`; on the standard route it is then not required.
 - Each gate has a timeout taken from the profile. The default is 10 minutes.

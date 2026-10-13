@@ -31,7 +31,12 @@ test("planned gates follow the route table", () => {
     "lint",
     "deps",
   ]);
-  expect(gatesForTarget("full", target, DEFAULT_POLICY, [])).toEqual(["test", "lint", "deps"]);
+  expect(gatesForTarget("full", target, DEFAULT_POLICY, [])).toEqual(["test", "lint"]);
+  expect(gatesForTarget("full", target, DEFAULT_POLICY, ["composer.lock"])).toEqual([
+    "test",
+    "lint",
+    "deps",
+  ]);
   expect(
     gatesForTarget("fast", target, { ...DEFAULT_POLICY, requiredGates: ["typecheck"] }, []),
   ).toEqual(["test", "lint", "typecheck"]);
@@ -130,12 +135,26 @@ test("I9: standard plans no audit it cannot run; full records it unavailable wit
   ).toEqual(["secrets", "test"]);
   const work = createWork(paths, "feature");
   work.route = "full";
-  write(root, "src/a.ts", "y");
+  write(root, "package.json", JSON.stringify({ name: "x", scripts: { test: "exit 0" } }));
   const outcome = await runGates(paths, work, profile, DEFAULT_POLICY, { only: ["deps"] });
   expect(outcome.evidence.runs.find((r) => r.gate === "deps")).toMatchObject({
     status: "unavailable",
     reason: "no lockfile",
   });
+});
+
+test("finding 10: on every route the audit is planned only when the change touches a dependency", () => {
+  for (const route of ["fast", "standard", "full"] as const) {
+    expect(gatesForTarget(route, target, DEFAULT_POLICY, ["src/a.ts"])).toEqual(["test", "lint"]);
+    expect(gatesForTarget(route, target, DEFAULT_POLICY, ["src/a.ts", "pnpm-lock.yaml"])).toEqual([
+      "test",
+      "lint",
+      "deps",
+    ]);
+    expect(
+      gatesForTarget(route, target, { ...DEFAULT_POLICY, requiredGates: ["deps"] }, ["src/a.ts"]),
+    ).toEqual(["test", "lint", "deps"]);
+  }
 });
 
 test("runGates records results, replaces old runs and computes the verdict", async () => {
