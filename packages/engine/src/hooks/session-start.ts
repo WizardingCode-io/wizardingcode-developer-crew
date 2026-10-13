@@ -1,6 +1,11 @@
-import { isFormerWatchDefault, missingTestCommands } from "../detect/index.ts";
+import {
+  DEFAULT_WATCH_EXCLUDE,
+  isFormerWatchDefault,
+  missingTestCommands,
+} from "../detect/index.ts";
 import { changedWatchedPaths, computeFingerprint } from "../fingerprint.ts";
 import { assess } from "../gates.ts";
+import { saveProfile } from "../profile.ts";
 import { ensureCrewDir, loadState, saveState, sessionState } from "../state.ts";
 import { activeWork } from "../work.ts";
 import { statusLine } from "./prompt.ts";
@@ -8,6 +13,16 @@ import type { HookContext, HookPayload, HookResponse } from "./types.ts";
 
 export function onSessionStart(ctx: HookContext, payload: HookPayload = {}): HookResponse {
   ensureCrewDir(ctx.paths, ctx.policy);
+  // A watch list equal to an earlier release's default was never the user's choice, so it follows
+  // the current default here, before the baseline is taken with it (finding 12 of the real-use
+  // phase: a hint asking the agent to refresh was shown at every start and never acted on). A
+  // profile changed outside the engine is left as it is, with the hint.
+  const former = isFormerWatchDefault(ctx.profile);
+  const moved = former && !ctx.tampered;
+  if (moved) {
+    ctx.profile.watch.exclude = [...DEFAULT_WATCH_EXCLUDE];
+    saveProfile(ctx.paths, ctx.profile);
+  }
   const state = loadState(ctx.paths);
   const active = activeWork(ctx.paths);
   // A resume or a compaction continues the same session: its baseline still says where it began.
@@ -47,8 +62,12 @@ export function onSessionStart(ctx: HookContext, payload: HookPayload = {}): Hoo
       `No test command is known for: ${missing.map((m) => m.target).join(", ")}. One is proposed with \`crew profile set test "<cmd>"\`.`,
     );
   }
-  // A profile written by an earlier release keeps its watch list and knows no workspaces until re-detected.
-  if (isFormerWatchDefault(ctx.profile)) {
+  if (moved) {
+    lines.push(
+      `The profile's watch list predated this release and now follows the current default (${DEFAULT_WATCH_EXCLUDE.join(", ")}).`,
+    );
+  } else if (former) {
+    // A profile written by an earlier release keeps its watch list and knows no workspaces until re-detected.
     lines.push(
       "The profile predates this release: run `crew detect --refresh` once to pick up the current defaults.",
     );

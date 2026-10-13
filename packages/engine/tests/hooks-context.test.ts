@@ -1,8 +1,10 @@
 import { expect, test } from "bun:test";
-import { existsSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { DEFAULT_WATCH_EXCLUDE } from "../src/detect/index.ts";
 import { onPrompt } from "../src/hooks/prompt.ts";
 import { onSessionStart } from "../src/hooks/session-start.ts";
+import { loadProfile, saveProfile } from "../src/profile.ts";
 import { loadState } from "../src/state.ts";
 import { addCriterion, createWork, saveWork } from "../src/work.ts";
 import { hookContext, makeRepo, testEnv } from "./helpers.ts";
@@ -54,15 +56,38 @@ test("the prompt hook adds one status line only while work is active", () => {
   expect(text.split("\n")).toHaveLength(1);
 });
 
-test("session start asks for one refresh when the profile's watch list is an earlier default", () => {
+test("finding 12: a watch list left by an earlier release follows the current default at session start", () => {
   const root = makeRepo({ "package.json": JSON.stringify({ scripts: { test: "exit 0" } }) });
-  const ctx = context(root);
-  ctx.profile.watch.exclude = ["**/*.md", "docs/**", ".crew/**"];
+  const env = testEnv();
+  const former = ["**/*.md", "docs/**", ".crew/**"];
+  const first = context(root, env);
+  saveProfile(first.paths, { ...first.profile, watch: { exclude: [...former] } });
+  const ctx = context(root, env);
+  expect(ctx.profile.watch.exclude).toEqual(former);
   const text = (onSessionStart(ctx).hookSpecificOutput as { additionalContext: string })
     .additionalContext;
-  expect(text).toContain("run `crew detect --refresh` once");
-  ctx.profile.watch.exclude = ["**/*.md", "generated/**"];
-  const custom = (onSessionStart(ctx).hookSpecificOutput as { additionalContext: string })
+  expect(text).toContain(
+    "The profile's watch list predated this release and now follows the current default",
+  );
+  expect(text).not.toContain("crew detect --refresh");
+  expect(loadProfile(ctx.paths).profile?.watch.exclude).toEqual(DEFAULT_WATCH_EXCLUDE);
+  expect(ctx.profile.watch.exclude).toEqual(DEFAULT_WATCH_EXCLUDE);
+  // A list the user chose is theirs.
+  saveProfile(ctx.paths, { ...ctx.profile, watch: { exclude: ["**/*.md", "generated/**"] } });
+  const custom = context(root, env);
+  const kept = (onSessionStart(custom).hookSpecificOutput as { additionalContext: string })
     .additionalContext;
-  expect(custom).not.toContain("crew detect --refresh");
+  expect(kept).not.toContain("watch list");
+  expect(loadProfile(custom.paths).profile?.watch.exclude).toEqual(["**/*.md", "generated/**"]);
+  // A profile changed outside the engine is left as it is, with the hint to refresh it.
+  writeFileSync(
+    join(root, ".crew", "profile.json"),
+    JSON.stringify({ ...ctx.profile, watch: { exclude: former } }),
+  );
+  const tampered = context(root, env);
+  expect(tampered.tampered).toBe(true);
+  const hint = (onSessionStart(tampered).hookSpecificOutput as { additionalContext: string })
+    .additionalContext;
+  expect(hint).toContain("run `crew detect --refresh` once");
+  expect(loadProfile(tampered.paths).profile?.watch.exclude).toEqual(former);
 });
