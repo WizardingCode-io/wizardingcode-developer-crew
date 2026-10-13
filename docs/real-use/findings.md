@@ -65,4 +65,84 @@ Severity: `high` blocks work or proves falsely; `medium` costs a step or a decis
 - What happened: `crew start … --criterion "The existing criteria tests keep passing" --kind preserve` created four `behavior` criteria. `--kind` is read only by `crew criteria <id> add`; `start` ignored it without a word, and the criterion then demanded a red run that cannot honestly exist for "existing tests keep passing". The agent took it out with the new `remove` command and relied on the `test` gate, which is what the criterion restated.
 - Expected: `start` takes the kind per criterion (for example a repeatable `--preserve "<text>"`), or refuses a flag it does not know. The fast route's "start with the criteria" cannot express a preserve criterion today.
 - Evidence: `.crew/work/2026-10-12-004-crew-criteria-id-remove-ac-n-removes-an/report.md`, Decisions.
-- Outcome: open. Workaround: `crew criteria <id> add "<text>" --kind preserve` after `start`, before the `before` run.
+- Outcome: open. Workaround: `crew criteria <id> add "<text>" --kind preserve` after `start`, before the `before` run. Bit four more times in the Laravel project on 2026-10-12 and 13 (#15); severity raised to medium.
+
+### 8. Two stacks at one path: the PHP target's gates never ran, and every item says Proven
+
+- Date: 2026-10-12 to 2026-10-13. Project: the Laravel project. Items: all thirteen (`2026-10-12-001-mcp-w0-…` to `2026-10-13-008-ticket-7-…`). Category: `false-proof`. Severity: high.
+- What happened: the repository has `composer.json` and `package.json` at the root (Laravel with a Bun-built front end). `crew detect` wrote two targets with the same path `.`: a Node one (`bun run build`, `bun run lint`, `bun run typecheck`, and a `test` the user confirmed as a Pest subset with an environment variable) and a PHP one (`vendor/bin/pest`, `vendor/bin/pint --test`, both `detected`). `plannedGates` (`packages/engine/src/gates.ts`) plans gates for both targets, but `runOne` resolves the command with `profile.targets.find((t) => t.path === targetPath)`, which is always the first target. So the PHP `test`, `lint` and `deps` ran as the Node commands a second time, Pint never ran, the full Pest suite never ran and `composer audit` never ran. `evidence.json` holds one row per gate at `.`; the Stop message lists the duplicate ("gate deps failing; gate deps failing"). Eleven items are Proven with a profile whose PHP gates were never executed.
+- Expected: one target per manifest, keyed by path and stack, with the gates of each run and recorded under their own name; or the two detections merged into one target whose `test` and `lint` run both commands. Either way the report names which command ran. A plan that lists the same gate twice at the same path is a bug the planner can see.
+- Evidence: `.crew/profile.json` in the project (two targets at `.`, `detectedAt` 2026-10-12T14:13); `.crew/work/2026-10-12-001-mcp-w0-endurecimento-do-servidor-mcp-ada/evidence.json` (one row per gate, all Node commands); the Stop hook's message in the session transcripts.
+- Outcome: open. First `false-proof` of the phase: it opens a work item here, released as 0.1.5.
+
+### 9. Several agent sessions on one checkout: the neighbour's edits block the Stop and invalidate the proof
+
+- Date: 2026-10-12 to 2026-10-13. Project: the Laravel project. Items: `2026-10-12-003-mcp-w2-…`, `2026-10-12-005-mcp-w3-…`, `2026-10-13-001-mcp-w4-…`, `2026-10-13-003-mcp-w6-…`, `2026-10-13-007-warehouse-report-…` and their neighbours. Category: `blocks`. Severity: high.
+- What happened: the user ran two or three Claude Code sessions at once ("lanes") on the same checkout and branch, each with its own work item. The engine assumes one agent per checkout: the fingerprint and the Stop rule cover every watched file, so a lane's edit makes the other lane's item "code changed since the last gate run" and blocks its turn end, and a gate run in one lane proves the tree with the other lane's half-written code in it. The briefs record the workaround as a constraint: "warn the neighbouring lane before `crew gate run`; only in a quiet window", and `git add` by explicit path. Across the three overlapping sessions the Stop hook blocked 92 turn ends (#11); the share caused by the neighbour cannot be separated from the share caused by the lane itself, which is the point.
+- Expected: either the method says one checkout per lane (a worktree per item, which the skill could set up), or the proof scope is the item's own files plus their tests. The second is SP2 and SP3 material; the first is a line in the skill and a check in `crew start` when the tree already holds another active item's uncommitted changes.
+- Evidence: the briefs' constraints (quoted above), session transcripts `10562e3c…`, `e22e037c…` and `5cf6b8bc…` in `~/.claude/projects/-Users-andreagroferreira-Herd-the-burrow-hub/`, overlapping between 2026-10-12T14:13Z and 2026-10-13T23:17Z.
+- Outcome: open. Deferred to SP2 for the proof scope; the worktree advice goes in the skill with 0.1.5.
+
+### 10. The `deps` gate fails on every item for advisories the item did not add
+
+- Date: 2026-10-12 to 2026-10-13. Project: the Laravel project. Items: twelve of thirteen. Category: `friction`. Severity: high.
+- What happened: `bun audit` reports 18 advisories (1 critical, 9 high, 5 moderate, 3 low) in packages no item touched; the lockfile did not change in any of them. The user skipped the gate on twelve items, each time with a paragraph of justification ("the same 18 as yesterday, signed by the owner"), and two items were left Not proven because of it (`2026-10-13-005-content-squad-…`, `2026-10-13-007-warehouse-report-…`, the latter committed as "code gates passing, not proven by deps"). On the full route the skip is mandatory and user-only, so in auto mode it also cost a `--mode auto` record each time.
+- Expected: an audit that fails only on what the item added. The engine knows `baseCommit`; advisories present at the base are the owner's standing debt, reported but not failing, and a new one fails. Alternatively an accepted list in `policy.json` with a date and a reason, signed once.
+- Evidence: the `Skipped by the user` section of every report in `.crew/work/` of the project; `2026-10-13-007-…/work.json` (`pauses`: "gate deps failing").
+- Outcome: open. Cheap; 0.1.5 candidate.
+
+### 11. The Stop hook blocked 93 turn ends in four sessions, and each release costs a full gate run
+
+- Date: 2026-10-12 to 2026-10-13. Projects: the Laravel project (92) and the storefront (1). Category: `friction`. Severity: high.
+- What happened: by reason, 32 "gates have not run", 39 "code changed since the last gate run", 13 "gate deps failing", 7 "no work item: start one with crew start", 2 "gate test failing". A gate run in the Laravel project takes 2.5 to 4 minutes (build 29 to 35 s, typecheck 28 to 57 s, the Pest subset 44 to 145 s, lint 15 to 25 s), so the agent paid that to be allowed to end a turn, often only to report or to ask. The 32 "gates have not run" are turns the agent tried to end before any gate, which `crew await <id> user` would have released; the skill names it in one line, and the transcripts mention it 12, 12 and 52 times in the three sessions, mostly after a block. To understand the messages the agent read the installed bundle's source (`dist/crew.mjs`) more than once. The Pest subset grew from 44 s to 145 s while the neighbouring lane built.
+- Expected: the block is the design; the cost is not. A turn that ends with a question to the user is the `await` case and the skill should say so where the agent looks when blocked, that is in the Stop message itself. The "no work item" blocks are edits made before `crew start`, which the method forbids; the message is right.
+- Evidence: the `hookErrors` entries in the four transcripts named in #9 and `8c018123…` in `~/.claude/projects/-Users-andreagroferreira-Work-cf-ecommerce-v2/`; the gate durations in every `report.md`.
+- Outcome: open. The Stop message names `await` with 0.1.5; the rest is SP2 material (what a proof must re-run after a change).
+
+### 12. The session start said "run `crew detect --refresh`" at every start and nobody did
+
+- Date: 2026-10-12 to 2026-10-13. Project: the Laravel project. Category: `silent`. Severity: low.
+- What happened: the profile was written by 0.1.0 (watch list without `.claude/**`). From 0.1.1 the session start says "The profile predates this release: run `crew detect --refresh` once to pick up the current defaults". It said so at every session start, resume and compaction of the two long sessions; the command was never run and the profile is still the old one. The engine's own comment on `FORMER_WATCH_EXCLUDES` says a saved list equal to a former default "was never the user's choice".
+- Expected: a list the engine knows was not chosen is moved by the engine, at session start, with one line saying so. A hint that asks the agent to run a command is a request to a reader who is busy with something else.
+- Evidence: `.crew/profile.json` (`watch.exclude` with three entries); the SessionStart outputs in the transcripts named in #9.
+- Outcome: open. Cheap; 0.1.5 candidate.
+
+### 13. Two lockfiles: a pnpm project was detected as Bun and every gate was set by hand
+
+- Date: 2026-10-13. Project: the storefront (a client's Nuxt application; not named here). Item: `2026-10-13-001-criar-as-paginas-de-chegada-…`. Category: `detect`. Severity: medium.
+- What happened: the repository has both `bun.lock` and `pnpm-lock.yaml`; `packageManager()` in `packages/engine/src/detect/node.ts` checks `bun.lock` first, so the profile said Bun and proposed `bun run …`. The project runs with pnpm (its scripts, CI and the team's habit). The user set all four gates by hand (`pnpm run build`, a two-part Vitest and server test command, `pnpm lint`, `pnpm exec nuxt typecheck`) and each was confirmed with `crew profile confirm <gate> --mode auto` under a policy that counts the agent's decisions.
+- Expected: with more than one lockfile, read `packageManager` in `package.json`, then the CI configuration, and otherwise write the commands as `proposed` rather than `detected`, so the first session is asked instead of corrected.
+- Evidence: `.crew/profile.json` in the project (four `confirmed` gates, `packageManager: bun`); the session transcript `8c018123…` (2026-10-13T19:09Z to 23:17Z).
+- Outcome: open. Cheap; 0.1.5 candidate.
+
+### 14. The full route fired on nine of thirteen Laravel items and on four static storefront pages
+
+- Date: 2026-10-12 to 2026-10-13. Projects: the Laravel project, the storefront. Category: `route`. Severity: medium.
+- What happened: the measurement #1 asked for. In the Laravel project (a CRM) the risk areas `auth`, `personal-data`, `public-api`, `payments`, `data-migration` and `infra` fired on nine items; four went standard; none fast, because no change to a CRM avoids a customer, a permission or an API route. In the storefront, four static landing pages with no call to any API took the full route for `public-api`. Whether the user agreed with each route is not in the records; the briefs show the full route's spec and plan were written every time, so the cost was paid every time.
+- Expected: the user says, per item, whether the route was right; that is the input the SP3 replay needs. A per-repository exclusion in `policy.json` (the fix sketched in #1) would have let the storefront's `pages/` out.
+- Evidence: `routeReasons` in every `work.json` of both projects.
+- Outcome: open, same as #1. The user annotates the fourteen corpus entries with "route agreed: yes/no" when convenient.
+
+### 15. A preserve criterion written as behaviour needs a red run that cannot exist, four times
+
+- Date: 2026-10-12 to 2026-10-13. Project: the Laravel project. Items: `2026-10-12-004-…` (AC-9), `2026-10-13-005-…` (AC-4), `2026-10-13-006-…` (AC-4), `2026-10-13-008-…` (AC-3). Category: `friction`. Severity: medium.
+- What happened: same as #7, in the wild. Four criteria of the form "the existing tests of X stay green" or "lint, typecheck and the suite pass" were created as `behavior`, demanded a red run, and were skipped by the user with a justification each ("it is a preservation criterion, proven by the existing tests"). One of them (`2026-10-13-005`, AC-4) is an end-to-end criterion whose red is impossible because the dev server stubs the backend; that one is not a kind problem but a criterion the method cannot prove by test-first at all.
+- Expected: the skill tells the agent that "stays green" is `preserve` and how to add it on every route; `crew start` accepts it (#7). For an e2e criterion with no red, the method needs a kind whose proof is "passes after" plus a reason, recorded as such and not as a skip.
+- Evidence: the `Skipped by the user` sections of the four reports.
+- Outcome: open; #7 raised to medium. The e2e kind is SP2 material.
+
+### 16. A `grep` whose pattern names a user-only command is taken for the command
+
+- Date: 2026-10-14. Project: this repository, in auto mode, while writing these records. Category: `blocks`. Severity: low.
+- What happened: a read-only pipeline over session transcripts, `… | grep -oE '"command":"[^"]{0,40}crew accept[^"]{0,40}' | sort | uniq -c`, was denied: "no person is watching this session (auto mode) and this command records a decision that only the user can take. Run it again with --mode auto". `USER_ONLY` matched `crew accept` inside the quoted pattern. Nothing in the command ran `crew`. The same batch had earlier been denied for an opaque redirect target (`$S/file`) in one simple command and an engine path in another, which is the fail-closed branch #2's fix kept on purpose.
+- Expected: the user-only rule reads the command position of a simple command (`crew <verb>` or `node …/crew.mjs <verb>` as the first words), not any quoted text. The fail-closed redirect branch stays.
+- Evidence: this session, 2026-10-14, the hook's message quoted above.
+- Outcome: open. Cheap; 0.1.5 candidate.
+
+### 17. Every real-use session ran in auto mode, so every user-only decision was taken without a prompt
+
+- Date: 2026-10-12 to 2026-10-13. Projects: the Laravel project, the storefront. Category: `friction`. Severity: medium.
+- What happened: all seven sessions with crew activity ran with `permissionMode: auto` (plan mode in between). Sixteen skips and the storefront's four `profile confirm` were recorded as the agent's with `--mode auto`, or as the owner's decision typed in the chat and executed by the agent, or, in the storefront, run by the user with the `!` prefix. The storefront's `policy.json` says `unattendedDecisions: count`, so there the agent's own confirmations count for the proof. In the same storefront session, Claude Code's auto-mode classifier denied `crew status` (a read) as "Irreversible Local Destruction"; the agent worked around it with simpler commands.
+- Expected: this is the requirement the plan carries into SP2 (a validator for user-only decisions when no person is watching), now with numbers: about twenty such decisions in two days of use. The classifier's denial of `crew status` is outside the engine; the skill can say the command is read-only.
+- Evidence: `permissionMode` in the transcripts named in #9, #11 and #13; `.crew/policy.json` of the storefront; the `Skipped by the user` sections.
+- Outcome: deferred to SP2 (the validator). The classifier part: won't fix here; noted for the skill's wording.

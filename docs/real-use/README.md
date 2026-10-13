@@ -1,7 +1,7 @@
 # Real use of SP1, before SP2
 
 - Started: 2026-10-13. Closes by 2026-10-26, or earlier when the exit criterion below is met.
-- Plugin under use: `wizardingcode-developer-crew` 0.1.4 (0.1.2 to 0.1.4 were released on 2026-10-12, before the first session), installed at user scope from the marketplace. The working tree's copy is not loaded in the other projects (two copies load both their hooks, and the first mod to register `/crew` wins).
+- Plugin under use: `wizardingcode-developer-crew` 0.1.4, installed at user scope from the marketplace. The user started using the plugin in the other projects on 2026-10-12, the day it was released, so the sessions of that day ran 0.1.0 to 0.1.3 as each was installed and the sessions of 2026-10-13 ran 0.1.4. The working tree's copy is not loaded in the other projects (two copies load both their hooks, and the first mod to register `/crew` wins).
 - Records in this folder: this plan, [`findings.md`](findings.md) (what got in the way, was wrong, or stayed silent) and [`corpus.md`](corpus.md) (the real requests and the gaps a good engineer would have raised). A closing summary joins them when the phase ends.
 
 ## Why
@@ -16,9 +16,10 @@ The roadmap (`docs/vision.md` §16) says each subproject is used on real project
 | Project | Stack | Why it is here |
 | :- | :- | :- |
 | ai-mem | Node, Bun, a Claude Code plugin | The sibling plugin, the most frequently touched repository. Closest in shape to this one, so it brings less new information but the most items |
-| A Laravel application (a client's; not named here) | PHP, Composer, Laravel | The SP1 design (`docs/specs/2026-10-06-sp1-engine-and-base-method-design.md`, the proof section) says PHP and Laravel are validated "by real use on WizardingCode projects". No record shows that it happened |
+| A Laravel application (a client's; not named here) | PHP, Composer, Laravel, with a Bun-built front end in the same repository | The SP1 design (`docs/specs/2026-10-06-sp1-engine-and-base-method-design.md`, the proof section) says PHP and Laravel are validated "by real use on WizardingCode projects". No record shows that it happened |
+| A storefront (a client's; not named here) | Node, pnpm, Nuxt, Vitest | Joined on 2026-10-13 by the user's own choice, when a CRM fix (C-13) needed pages on the storefront side (C-14). A Node project unlike this one: two lockfiles, a two-part test command |
 
-This repository is public. The client's project is called "the Laravel project" in every record, its requests are paraphrased with the domain replaced, and no path, name or data of the client is copied.
+This repository is public. The clients' projects are called "the Laravel project" and "the storefront" in every record, their requests are paraphrased with the domain replaced, and no path, name or data of the clients is copied.
 
 ## What the SP1 records admit is not validated
 
