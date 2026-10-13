@@ -172,6 +172,8 @@ export type GateStatus = "pass" | "fail" | "skipped" | "unavailable";
 export interface GateRun {
   gate: GateName;
   target: string;
+  /** Set when the target's path holds more than one target; the stack then names which one ran. */
+  stack?: Stack;
   command: string | null;
   commandSource: CommandSource | null;
   confirmed: boolean;

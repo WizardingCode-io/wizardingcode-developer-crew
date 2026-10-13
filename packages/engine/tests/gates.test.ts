@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { chmodSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { emptyEvidence, renderReport, saveEvidence } from "../src/evidence.ts";
 import {
   assess,
   depsAuditCommand,
@@ -10,7 +11,7 @@ import {
   runGates,
 } from "../src/gates.ts";
 import { DEFAULT_POLICY } from "../src/policy.ts";
-import { ensureProfile, loadProfile } from "../src/profile.ts";
+import { ensureProfile, loadProfile, saveProfile } from "../src/profile.ts";
 import type { Target } from "../src/types.ts";
 import { addCriterion, addSkip, createWork } from "../src/work.ts";
 import { git, makeRepo, repoPaths, tempDir, testEnv, write } from "./helpers.ts";
@@ -313,4 +314,106 @@ test("a workspace member plans only the gates it defines; the rest run once, at 
     { gate: "lint", target: "." },
     { gate: "test", target: "packages/web" },
   ]);
+});
+
+const php: Target = {
+  path: ".",
+  stack: "php",
+  packageManager: "composer",
+  gates: {
+    test: { command: "sh pest.sh", source: "detected" },
+    lint: { command: "sh pint.sh", source: "detected" },
+  },
+  timeoutMs: 1000,
+};
+
+test("finding 8: two targets at one path plan each target's gates once, keyed by stack", () => {
+  const profile = {
+    version: 1 as const,
+    detectedAt: "",
+    targets: [target, php],
+    watch: { exclude: [] },
+  };
+  const planned = plannedGates("fast", profile, DEFAULT_POLICY, ["src/a.ts"], tempDir());
+  expect(planned).toEqual([
+    { gate: "secrets", target: "." },
+    { gate: "test", target: ".", stack: "node" },
+    { gate: "lint", target: ".", stack: "node" },
+    { gate: "test", target: ".", stack: "php" },
+    { gate: "lint", target: ".", stack: "php" },
+  ]);
+  const keys = planned.map((g) => `${g.gate}@${g.target}@${g.stack ?? ""}`);
+  expect(new Set(keys).size).toBe(keys.length);
+  // A path with one target is named by its path alone, as before.
+  const alone = { ...profile, targets: [target, { ...php, path: "api" }] };
+  expect(plannedGates("fast", alone, DEFAULT_POLICY, ["api/x.php"], tempDir())).toEqual([
+    { gate: "secrets", target: "." },
+    { gate: "test", target: "." },
+    { gate: "lint", target: "." },
+    { gate: "test", target: "api" },
+    { gate: "lint", target: "api" },
+  ]);
+});
+
+test("finding 8: each target at a shared path runs its own command, recorded and labelled by stack", async () => {
+  const root = makeRepo({
+    "src/a.ts": "x",
+    "node.sh": "exit 0\n",
+    "pest.sh": "exit 0\n",
+    "pint.sh": "exit 1\n",
+  });
+  const paths = repoPaths(root, testEnv());
+  const node: Target = {
+    ...target,
+    packageManager: "bun",
+    gates: {
+      test: { command: "sh node.sh", source: "detected" },
+      lint: { command: "sh node.sh", source: "detected" },
+    },
+  };
+  const profile = {
+    version: 1 as const,
+    detectedAt: "",
+    targets: [node, php],
+    watch: { exclude: [".crew/**"] },
+  };
+  saveProfile(paths, profile);
+  const work = createWork(paths, "fix");
+  work.route = "fast";
+  addCriterion(work, "x");
+  addSkip(work, "tdd:AC-1", "manual");
+  // A row written by an earlier release names no stack: at a shared path it is replaced, never matched.
+  const legacy = {
+    gate: "test" as const,
+    target: ".",
+    command: "old",
+    commandSource: "detected" as const,
+    confirmed: true,
+    exit: 0,
+    status: "pass" as const,
+    durationMs: 1,
+    at: "t",
+    log: null,
+    tail: "",
+    fingerprint: "f",
+  };
+  saveEvidence(paths, work.id, { ...emptyEvidence(), fingerprint: "f", runs: [legacy] });
+  write(root, "src/a.ts", "y");
+  const outcome = await runGates(paths, work, profile, DEFAULT_POLICY);
+  expect(
+    outcome.evidence.runs.map((r) => `${r.gate}@${r.stack ?? "-"}:${r.command}:${r.status}`),
+  ).toEqual([
+    "secrets@-:built-in secret scan:pass",
+    "test@node:sh node.sh:pass",
+    "lint@node:sh node.sh:pass",
+    "test@php:sh pest.sh:pass",
+    "lint@php:sh pint.sh:fail",
+  ]);
+  const pint = outcome.evidence.runs.find((r) => r.gate === "lint" && r.stack === "php");
+  expect(pint?.log).toMatch(/^logs\/lint-_-php-\d+\.txt$/);
+  expect(outcome.unproven).toEqual(["gate lint (php) failing"]);
+  const report = renderReport(work, outcome.evidence, DEFAULT_POLICY);
+  expect(report).toContain("| test | . (node) | pass | `sh node.sh` |");
+  expect(report).toContain("| lint | . (php) | fail | `sh pint.sh` |");
+  expect(report).toContain("| secrets | . | pass |");
 });

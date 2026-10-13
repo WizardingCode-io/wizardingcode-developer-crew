@@ -22,7 +22,16 @@ import { ensureProfile, loadProfile, saveProfile } from "./profile.ts";
 import { ensureCrewDir } from "./state.ts";
 import { integrityOf, recordIntegrity, writeProtectedText } from "./store.ts";
 import { recordTdd, type TddStep } from "./tdd.ts";
-import type { Decision, GateName, Phase, Policy, Profile, UserConfig, WorkItem } from "./types.ts";
+import type {
+  Decision,
+  GateName,
+  Phase,
+  Policy,
+  Profile,
+  Stack,
+  UserConfig,
+  WorkItem,
+} from "./types.ts";
 import { GATE_NAMES, isUnattendedMode, PHASE_ORDER, UNATTENDED_MODES } from "./types.ts";
 import { VERSION } from "./version.ts";
 import {
@@ -277,10 +286,11 @@ function gateSummary(
   work: WorkItem,
   verdict: string,
   unproven: string[],
-  runs: { gate: string; target: string; status: string; durationMs: number }[],
+  runs: { gate: string; target: string; stack?: string; status: string; durationMs: number }[],
 ): string {
   const lines = runs.map(
-    (r) => `  ${r.gate} (${r.target}): ${r.status} in ${(r.durationMs / 1000).toFixed(1)}s`,
+    (r) =>
+      `  ${r.gate} (${r.target}${r.stack ? `, ${r.stack}` : ""}): ${r.status} in ${(r.durationMs / 1000).toFixed(1)}s`,
   );
   lines.push(verdict === "proven" ? `Proven: ${work.id}` : `Not proven: ${unproven.join("; ")}`);
   return lines.join("\n");
@@ -358,28 +368,46 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
             'usage: crew profile set <build|test|lint|typecheck|deps> "<cmd>" [--target <path>]',
           );
         const targetPath = typeof parsed.flags.target === "string" ? parsed.flags.target : ".";
-        let target = env.profile.targets.find((t) => t.path === targetPath);
+        const stackFlag = parsed.flags.stack;
+        if (stackFlag !== undefined && !STACKS.includes(stackFlag as Stack))
+          return refuse(`usage: crew profile set <gate> "<cmd>" --stack <${STACKS.join("|")}>`);
+        const stack = stackFlag as Stack | undefined;
+        // Two manifests in one folder are two targets at one path; the stack says which one is meant.
+        const atPath = env.profile.targets.filter((t) => t.path === targetPath);
+        if (stack === undefined && atPath.length > 1) {
+          const stacks = atPath.map((t) => t.stack);
+          return refuse(
+            `two targets at ${targetPath} (${stacks.join(", ")}): say which one with --stack <${stacks.join("|")}>`,
+          );
+        }
+        let target = stack === undefined ? atPath[0] : atPath.find((t) => t.stack === stack);
         if (!target) {
           target = {
             path: targetPath,
-            stack: "other",
+            stack: stack ?? "other",
             packageManager: "unknown",
             gates: {},
             timeoutMs: 10 * 60 * 1000,
           };
           env.profile.targets.push(target);
         }
+        const where = stack === undefined ? targetPath : `${targetPath} (${stack})`;
         const current = target.gates[gate as GateName];
         // A detected or confirmed command is the project's own; replacing it is the user's call.
         if (current && current.source !== "proposed" && !parsed.flags.force)
           return refuse(
-            `${gate} for ${targetPath} already has a ${current.source} command (${current.command}); replacing it needs the user: crew profile set ${gate} "<cmd>" --force`,
+            `${gate} for ${where} already has a ${current.source} command (${current.command}); replacing it needs the user: crew profile set ${gate} "<cmd>" --force`,
           );
         target.gates[gate as GateName] = { command: cmd, source: "proposed" };
         saveProfile(env.paths, env.profile);
         return ok(
-          `proposed ${gate} for ${targetPath}: ${cmd} (unconfirmed until crew profile confirm)`,
-          { target: targetPath, gate, command: cmd },
+          `proposed ${gate} for ${where}: ${cmd} (unconfirmed until crew profile confirm)`,
+          {
+            target: targetPath,
+            ...(stack ? { stack } : {}),
+            gate,
+            command: cmd,
+          },
         );
       }
       if (sub === "confirm") {
@@ -686,6 +714,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         runs: result.evidence.runs.map((r) => ({
           gate: r.gate,
           target: r.target,
+          ...(r.stack ? { stack: r.stack } : {}),
           status: r.status,
           durationMs: r.durationMs,
           ...(r.reason ? { reason: r.reason } : {}),
@@ -730,9 +759,11 @@ function settings(command: "mode" | "config", args: string[], user: { userDir: s
   });
 }
 
+const STACKS: readonly Stack[] = ["node", "php", "python", "other"];
+
 const HELP = `crew ${VERSION}
   detect [--refresh]                    build or refresh the project profile
-  profile set <gate> "<cmd>" [--target p] propose a gate command (unconfirmed)
+  profile set <gate> "<cmd>" [--target p] [--stack s]  propose a gate command (unconfirmed)
   profile set <gate> "<cmd>" --force    replace a detected or confirmed command (asks the user)
   profile confirm [<gate>]              confirm proposed commands (asks the user)
   policy accept                         trust the current policy.json after a hand edit (asks the user)

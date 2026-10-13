@@ -8,7 +8,9 @@ import type {
   DecidedBy,
   Evidence,
   GateName,
+  GateRun,
   Policy,
+  Stack,
   UnattendedMode,
   WorkItem,
 } from "./types.ts";
@@ -58,6 +60,29 @@ export function saveEvidence(paths: CrewPaths, id: string, evidence: Evidence): 
 export interface PlannedGate {
   gate: GateName;
   target: string;
+  /** Named when the path holds more than one target (a Laravel app with a package.json beside it). */
+  stack?: Stack;
+}
+
+/**
+ * The run that vouches for a planned gate: the same gate and path, and the same stack where the
+ * plan names one. A row with no stack vouches only for a plan that names none, so a row written
+ * before the stack was recorded never stands in for a second target at the same path.
+ */
+export function runMatches(run: GateRun, planned: PlannedGate): boolean {
+  return (
+    run.gate === planned.gate &&
+    run.target === planned.target &&
+    (run.stack ?? null) === (planned.stack ?? null)
+  );
+}
+
+/** `test`, `test (api)`, `test (php)` or `test (api, php)`: the path when several differ, the stack when the plan names one. */
+function gateLabel(planned: PlannedGate, multiTarget: boolean): string {
+  const parts: string[] = [];
+  if (multiTarget && planned.target !== ".") parts.push(planned.target);
+  if (planned.stack) parts.push(planned.stack);
+  return parts.length ? `${planned.gate} (${parts.join(", ")})` : planned.gate;
 }
 
 export interface VerdictInput {
@@ -87,10 +112,11 @@ export function computeVerdict(input: VerdictInput): {
   if (evidence.fingerprint === null) unproven.push("gates have not run");
   else if (stale) unproven.push("code changed since the last gate run");
   const multiTarget = new Set(expected.map((e) => e.target)).size > 1;
-  for (const { gate, target } of expected) {
+  for (const planned of expected) {
+    const { gate } = planned;
     if (isSkipped(work, `gate:${gate}`, policy)) continue;
-    const label = multiTarget && target !== "." ? `${gate} (${target})` : gate;
-    const run = evidence.runs.find((r) => r.gate === gate && r.target === target);
+    const label = gateLabel(planned, multiTarget);
+    const run = evidence.runs.find((r) => runMatches(r, planned));
     if (!run) unproven.push(`gate ${label} not run`);
     else if (run.fingerprint !== currentFingerprint && !stale)
       unproven.push(`gate ${label} not run on the current code`);
@@ -165,8 +191,9 @@ export function renderReport(work: WorkItem, evidence: Evidence, policy: Policy)
       r.status === "skipped" || r.status === "unavailable"
         ? `${r.status}${r.reason ? `: ${r.reason}` : ""}`
         : r.status;
+    const target = r.stack ? `${r.target} (${r.stack})` : r.target;
     lines.push(
-      `| ${r.gate} | ${r.target} | ${status} | ${r.command ? `\`${r.command}\`` : ""} | ${r.durationMs} ms | ${r.log ?? ""} |`,
+      `| ${r.gate} | ${target} | ${status} | ${r.command ? `\`${r.command}\`` : ""} | ${r.durationMs} ms | ${r.log ?? ""} |`,
     );
   }
   const removed = work.removedCriteria ?? [];

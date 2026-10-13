@@ -259,6 +259,35 @@ test("I5: profile set keeps detected commands unless forced; confirm names what 
   expect((await c.run("profile", "confirm", "bogus")).code).toBe(1);
 });
 
+test("finding 8: profile set names the target by stack when two share a path", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "composer.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+  });
+  const c = io(root);
+  const paths = repoPaths(root, c.env);
+  const detect = await c.json("detect");
+  expect(
+    (detect.data.profile as { targets: { stack: string }[] }).targets.map((t) => t.stack),
+  ).toEqual(["node", "php"]);
+  const refused = await c.run("profile", "set", "lint", "pint");
+  expect(refused.code).toBe(1);
+  expect(refused.err.trim()).toBe(
+    "two targets at . (node, php): say which one with --stack <node|php>",
+  );
+  expect((await c.run("profile", "set", "lint", "pint", "--stack", "php")).code).toBe(0);
+  const targets = loadProfile(paths).profile?.targets ?? [];
+  expect(targets.find((t) => t.stack === "php")?.gates.lint).toEqual({
+    command: "pint",
+    source: "proposed",
+  });
+  expect(targets.find((t) => t.stack === "node")?.gates.lint).toBeUndefined();
+  expect((await c.run("profile", "set", "lint", "x", "--stack", "ruby")).code).toBe(1);
+  // A path with one target needs no flag; a new path gets a target of its own.
+  expect((await c.run("profile", "set", "test", "make test", "--target", "tools")).code).toBe(0);
+  expect(loadProfile(paths).profile?.targets.find((t) => t.path === "tools")?.stack).toBe("other");
+});
+
 test("I6: skip steps are normalised, and anything else is refused", async () => {
   const root = makeRepo({ "package.json": JSON.stringify({ scripts: { test: "exit 0" } }) });
   const c = io(root);

@@ -236,3 +236,37 @@ test("an item with no criteria is never proven, whatever the gates say", () => {
     unproven: ['no acceptance criteria (crew criteria <id> add "...")'],
   });
 });
+
+test("finding 8: a gate expected for a stack is matched and named by that stack", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const work = workWith(paths);
+  addSkip(work, "tdd:AC-1", "manual");
+  const expected = [
+    { gate: "test" as const, target: ".", stack: "node" as const },
+    { gate: "test" as const, target: ".", stack: "php" as const },
+    { gate: "lint" as const, target: "apps/api", stack: "php" as const },
+  ];
+  const evidence: Evidence = {
+    fingerprint: "f",
+    tdd: [],
+    runs: [gate("test", "pass", { stack: "node" }), gate("test", "pass")],
+    verdict: "unproven",
+    unproven: [],
+  };
+  const input = { work, evidence, expected, currentFingerprint: "f", tampered: false };
+  expect(computeVerdict({ ...input, policy: DEFAULT_POLICY }).unproven).toEqual([
+    "gate test (php) not run",
+    "gate lint (apps/api, php) not run",
+  ]);
+  const complete: Evidence = {
+    ...evidence,
+    runs: [
+      gate("test", "pass", { stack: "node" }),
+      gate("test", "pass", { stack: "php" }),
+      gate("lint", "pass", { target: "apps/api", stack: "php" }),
+    ],
+  };
+  expect(computeVerdict({ ...input, evidence: complete, policy: DEFAULT_POLICY }).verdict).toBe(
+    "proven",
+  );
+});

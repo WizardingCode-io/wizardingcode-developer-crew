@@ -148,34 +148,56 @@ export function plannedGates(
       changed.length === 0 ||
       changed.some((p) => p === t.path || p.startsWith(`${t.path}/`)),
   );
+  // Two manifests in one folder (composer.json beside package.json) are two targets at one path;
+  // the stack then names which one a gate belongs to (finding 8 of the real-use phase).
+  const atPath = new Map<string, number>();
+  for (const t of profile.targets) atPath.set(t.path, (atPath.get(t.path) ?? 0) + 1);
   for (const target of touched) {
     const member =
       target.workspaceOf !== undefined &&
       profile.targets.some((t) => t.path === target.workspaceOf);
+    const shared = (atPath.get(target.path) ?? 0) > 1;
     for (const gate of gatesForTarget(route, target, policy, changed)) {
       // A workspace member runs only the gates it defines; the package that lists it runs the rest once.
       if (member && !target.gates[gate]) continue;
       // On the standard route the audit is required only when a tool exists; on the full route it must be skipped explicitly.
       if (gate === "deps" && route === "standard" && "reason" in depsAuditCommand(target, root))
         continue;
-      planned.push({ gate, target: target.path });
+      planned.push({ gate, target: target.path, ...(shared ? { stack: target.stack } : {}) });
     }
   }
   return planned;
+}
+
+/** The target a planned gate belongs to: by path, and by stack where the plan names one. */
+function targetOf(profile: Profile, planned: PlannedGate): Target | undefined {
+  return profile.targets.find(
+    (t) => t.path === planned.target && (planned.stack === undefined || t.stack === planned.stack),
+  );
+}
+
+/** A run of the same gate at the same path that this plan supersedes: its own stack, a row from before stacks were recorded, or any row when the plan names no stack. */
+function superseded(run: GateRun, planned: PlannedGate): boolean {
+  return (
+    run.gate === planned.gate &&
+    run.target === planned.target &&
+    (planned.stack === undefined || run.stack === undefined || run.stack === planned.stack)
+  );
 }
 
 async function runOne(
   paths: CrewPaths,
   work: WorkItem,
   profile: Profile,
-  gate: GateName,
-  targetPath: string,
+  planned: PlannedGate,
   fingerprint: string,
 ): Promise<GateRun> {
+  const { gate, target: targetPath } = planned;
   const at = nowIso();
   const base: GateRun = {
     gate,
     target: targetPath,
+    ...(planned.stack ? { stack: planned.stack } : {}),
     command: null,
     commandSource: null,
     confirmed: true,
@@ -199,7 +221,7 @@ async function runOne(
       tail: scan.tail,
     };
   }
-  const target = profile.targets.find((t) => t.path === targetPath);
+  const target = targetOf(profile, planned);
   if (!target) return { ...base, reason: "target not in profile" };
   let command: string | null;
   let source: GateRun["commandSource"] = "detected";
@@ -213,7 +235,9 @@ async function runOne(
     command = configured.command;
     source = configured.source;
   }
-  const log = `logs/${gate}-${targetPath.replace(/[^a-z0-9]+/gi, "_")}-${Date.now()}.txt`;
+  const where =
+    targetPath.replace(/[^a-z0-9]+/gi, "_") + (planned.stack ? `-${planned.stack}` : "");
+  const log = `logs/${gate}-${where}-${Date.now()}.txt`;
   const result = await runCommand(command, {
     cwd: join(paths.root, targetPath),
     timeoutMs: target.timeoutMs,
@@ -266,14 +290,16 @@ export async function runGates(
   // The caller knows about the work item and the profile; the evidence file is checked here.
   const tampered = !!options.tampered || read.tampered;
   const fingerprintBefore = computeFingerprint(paths.root, profile, base);
-  for (const { gate, target } of planned) {
+  for (const one of planned) {
+    const { gate, target } = one;
     if (options.only && !options.only.includes(gate)) continue;
-    evidence.runs = evidence.runs.filter((r) => !(r.gate === gate && r.target === target));
+    evidence.runs = evidence.runs.filter((r) => !superseded(r, one));
     if (isSkipped(work, `gate:${gate}`, policy)) {
       const skip = work.skips.find((s) => s.step === `gate:${gate}`);
       evidence.runs.push({
         gate,
         target,
+        ...(one.stack ? { stack: one.stack } : {}),
         command: null,
         commandSource: null,
         confirmed: true,
@@ -288,7 +314,7 @@ export async function runGates(
       });
       continue;
     }
-    evidence.runs.push(await runOne(paths, work, profile, gate, target, fingerprintBefore));
+    evidence.runs.push(await runOne(paths, work, profile, one, fingerprintBefore));
   }
   // The fingerprint from before the runs is what the evidence vouches for; a gate that edits files shows up as a change.
   evidence.fingerprint = fingerprintBefore;
