@@ -280,6 +280,8 @@ export interface GateRun {
    * run found, how many the base already had, the new ones, and whether the base could be audited.
    */
   advisories?: { current: number; known: number; fresh: string[]; baselined: boolean };
+  /** A lint or typecheck run read for the files it names (ADR 0006): the ones the item changed, and how many untouched files have problems. */
+  problems?: { touched: string[]; untouched: number };
 }
 
 export interface Evidence {

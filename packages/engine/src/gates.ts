@@ -13,6 +13,7 @@ import {
 import { exists, nowIso, readText } from "./fs.ts";
 import { loadLedger } from "./objections.ts";
 import { type CrewPaths, workDir } from "./paths.ts";
+import { namedFiles } from "./problems.ts";
 import { runCommand } from "./run.ts";
 import { scanSecrets } from "./secrets.ts";
 import type {
@@ -307,6 +308,7 @@ async function runOne(
   profile: Profile,
   planned: PlannedGate,
   fingerprint: string,
+  changed: string[],
 ): Promise<GateRun> {
   const { gate, target: targetPath } = planned;
   const at = nowIso();
@@ -375,8 +377,45 @@ async function runOne(
     ...(result.timedOut ? { reason: "timed out" } : {}),
   };
   // The audit is judged against the item's base commit, not by its exit code alone (ADR 0006).
-  if (!audit || result.timedOut) return run;
-  return judgeAudit(run, audit, paths, work, target, where);
+  if (result.timedOut) return run;
+  if (audit) return judgeAudit(run, audit, paths, work, target, where);
+  // Lint and typecheck are judged by the files they name (ADR 0006).
+  if ((gate === "lint" || gate === "typecheck") && run.status === "fail")
+    return judgeProblems(run, paths, work, targetPath, changed);
+  return run;
+}
+
+/**
+ * A failing lint or typecheck read for the files it names: problems only in files the item never
+ * changed are the repository's standing debt, counted and not failing; a problem in a file the item
+ * changed fails, named. A run that names no file is judged by its exit code as before.
+ */
+function judgeProblems(
+  run: GateRun,
+  paths: CrewPaths,
+  work: WorkItem,
+  targetPath: string,
+  changed: string[],
+): GateRun {
+  const text = (run.log && readText(join(workDir(paths, work.id), run.log))) || run.tail;
+  const named = namedFiles(text, [join(paths.root, targetPath), paths.root], paths.root);
+  if (named.length === 0) return run;
+  const touched = named.filter((file) => changed.includes(file));
+  const untouched = named.length - touched.length;
+  const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+  if (touched.length === 0) {
+    return {
+      ...run,
+      status: "pass",
+      reason: `${plural(named.length, "file")} with problems, none changed by this item (pre-existing)`,
+      problems: { touched, untouched },
+    };
+  }
+  return {
+    ...run,
+    reason: `problems in files this item changed: ${touched.join(", ")}${untouched ? `; ${plural(untouched, "untouched file")} also` : ""}`,
+    problems: { touched, untouched },
+  };
 }
 
 export interface GateOutcome {
@@ -440,7 +479,7 @@ export async function runGates(
       });
       continue;
     }
-    evidence.runs.push(await runOne(paths, work, profile, one, fingerprintBefore));
+    evidence.runs.push(await runOne(paths, work, profile, one, fingerprintBefore, changed));
   }
   // The fingerprint from before the runs is what the evidence vouches for; a gate that edits files shows up as a change.
   evidence.fingerprint = fingerprintBefore;

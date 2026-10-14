@@ -12,6 +12,7 @@ import {
   runGates,
 } from "../src/gates.ts";
 import { DEFAULT_POLICY } from "../src/policy.ts";
+import { namedFiles } from "../src/problems.ts";
 import { ensureProfile, loadProfile, saveProfile } from "../src/profile.ts";
 import type { Target } from "../src/types.ts";
 import { addCriterion, addSkip, createWork } from "../src/work.ts";
@@ -343,6 +344,81 @@ test("0.3.0: the deps gate fails only on advisories absent from the base commit,
   } finally {
     process.env.PATH = savedPath;
   }
+});
+
+test("0.3.0: lint and typecheck judge the files the item changed; a tool that names none is judged by its exit code", async () => {
+  const lint = [
+    "#!/bin/sh",
+    'case "$CREW_TEST_LINT" in',
+    '  old) echo "src/old.ts:1:1 error no-unused-vars"; echo "$PWD/src/old.ts"; echo "  3:5  error  x"; echo "src/old.ts(3,5): error TS2322: y"; exit 1;;',
+    '  touched) echo "src/old.ts:1:1 error x"; echo "src/a.ts:2:3 error y"; exit 1;;',
+    '  none) echo "3 errors"; exit 1;;',
+    "esac",
+    "exit 0",
+  ].join("\n");
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "lint.sh": lint,
+    "src/a.ts": "x",
+    "src/old.ts": "x",
+  });
+  const paths = repoPaths(root, testEnv());
+  const { profile } = ensureProfile(paths);
+  const node = profile.targets[0];
+  if (!node) throw new Error("no target");
+  node.gates.lint = { command: "sh lint.sh", source: "confirmed" };
+  node.gates.typecheck = { command: "sh lint.sh", source: "confirmed" };
+  saveProfile(paths, profile);
+  const work = createWork(paths, "fix");
+  write(root, "src/a.ts", "y");
+  const run = async (mode: string, gate: "lint" | "typecheck") => {
+    process.env.CREW_TEST_LINT = mode;
+    try {
+      const outcome = await runGates(paths, work, profile, DEFAULT_POLICY, { only: [gate] });
+      return { outcome, run: outcome.evidence.runs.find((r) => r.gate === gate) };
+    } finally {
+      delete process.env.CREW_TEST_LINT;
+    }
+  };
+  // Problems only in a file the item never touched, named in three formats: debt, not failure.
+  const old = await run("old", "lint");
+  expect(old.run).toMatchObject({ status: "pass", problems: { touched: [], untouched: 1 } });
+  expect(old.run?.reason).toBe("1 file with problems, none changed by this item (pre-existing)");
+  expect(old.outcome.unproven).not.toContain("gate lint failing");
+  expect(renderReport(work, old.outcome.evidence, DEFAULT_POLICY)).toContain(
+    "| lint | . | pass: 1 untouched file with problems, none of the item's |",
+  );
+  // The same judgement for typecheck.
+  expect((await run("old", "typecheck")).run).toMatchObject({
+    status: "pass",
+    problems: { touched: [], untouched: 1 },
+  });
+  // A problem in a file the item changed fails, named; the untouched ones are counted apart.
+  const touched = await run("touched", "lint");
+  expect(touched.run).toMatchObject({
+    status: "fail",
+    problems: { touched: ["src/a.ts"], untouched: 1 },
+  });
+  expect(touched.run?.reason).toBe(
+    "problems in files this item changed: src/a.ts; 1 untouched file also",
+  );
+  expect(touched.outcome.unproven).toContain("gate lint failing");
+  expect(renderReport(work, touched.outcome.evidence, DEFAULT_POLICY)).toContain(
+    "| lint | . | fail: problems in src/a.ts (1 untouched file also) |",
+  );
+  // No file named: the exit code decides, as before.
+  const none = await run("none", "lint");
+  expect(none.run).toMatchObject({ status: "fail" });
+  expect(none.run?.problems).toBeUndefined();
+  expect(none.run?.reason).toBeUndefined();
+  // namedFiles reads the formats and ignores what is not a file on disk.
+  expect(
+    namedFiles(
+      "src/old.ts:1:1 x\nhttps://example.com/a.ts\nrule no-x.ts\nsrc/missing.ts:1 y\n",
+      [root],
+      root,
+    ),
+  ).toEqual(["src/old.ts"]);
 });
 
 test("finding 10: on every route the audit is planned only when the change touches a dependency", () => {

@@ -1,6 +1,6 @@
 // packages/engine/src/cli.ts
 import { existsSync as existsSync3 } from "node:fs";
-import { join as join20, resolve as resolve2 } from "node:path";
+import { join as join21, resolve as resolve2 } from "node:path";
 
 // packages/engine/src/glob.ts
 var SPECIAL = /[.+^${}()|[\]\\]/g;
@@ -1641,6 +1641,12 @@ function auditStatus(status, a) {
     return `fail: ${a.fresh.length} new (${a.fresh.join(", ")})${known}${base}`;
   return a.known ? `pass: ${a.known} known before, none new` : status;
 }
+function problemStatus(status, p) {
+  const untouched = `${p.untouched} untouched file${p.untouched === 1 ? "" : "s"}`;
+  if (status === "fail")
+    return `fail: problems in ${p.touched.join(", ")}${p.untouched ? ` (${untouched} also)` : ""}`;
+  return `pass: ${untouched} with problems, none of the item's`;
+}
 function renderReport(work, evidence, policy, ledger) {
   const lines = [];
   lines.push(`# Report: ${work.title}`, "");
@@ -1667,7 +1673,7 @@ function renderReport(work, evidence, policy, ledger) {
   }
   lines.push("", "## Gates", "", "| Gate | Target | Status | Command | Duration | Log |", "| :- | :- | :- | :- | -: | :- |");
   for (const r of evidence.runs) {
-    const status = r.status === "skipped" || r.status === "unavailable" ? `${r.status}${r.reason ? `: ${r.reason}` : ""}` : r.advisories ? auditStatus(r.status, r.advisories) : r.status === "fail" && r.reason ? `fail: ${r.reason}` : r.status;
+    const status = r.status === "skipped" || r.status === "unavailable" ? `${r.status}${r.reason ? `: ${r.reason}` : ""}` : r.advisories ? auditStatus(r.status, r.advisories) : r.problems ? problemStatus(r.status, r.problems) : r.status === "fail" && r.reason ? `fail: ${r.reason}` : r.status;
     const target = r.stack ? `${r.target} (${r.stack})` : r.target;
     lines.push(`| ${r.gate} | ${target} | ${status} | ${r.command ? `\`${r.command}\`` : ""} | ${r.durationMs} ms | ${r.log ?? ""} |`);
   }
@@ -1721,7 +1727,7 @@ function renderReport(work, evidence, policy, ledger) {
 
 // packages/engine/src/gates.ts
 import { accessSync, constants, mkdirSync as mkdirSync3, rmSync, writeFileSync as writeFileSync2 } from "node:fs";
-import { basename as basename2, delimiter, join as join16 } from "node:path";
+import { basename as basename2, delimiter, join as join17 } from "node:path";
 
 // packages/engine/src/audit.ts
 var NAMED_ID = /\b(GHSA-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{4}|CVE-\d{4}-\d{4,}|PKSA-[0-9a-z]{4}(?:-[0-9a-z]{4}){1,2}|PYSEC-\d{4}-\d+)\b/i;
@@ -1808,6 +1814,39 @@ function parseAudit(tool, text) {
   return { readable: true, advisories: [...ids], abandoned };
 }
 
+// packages/engine/src/problems.ts
+import { statSync as statSync3 } from "node:fs";
+import { isAbsolute, join as join15, relative as relative4 } from "node:path";
+var SOURCE_FILE = /^(?:\.{0,2}\/)?[\w@./-]+\.(?:ts|tsx|js|jsx|mjs|cjs|vue|svelte|astro|php|py|rb|go|rs|kt|java|cs|json|css|scss|html)$/;
+function isFile(path) {
+  try {
+    return statSync3(path).isFile();
+  } catch {
+    return false;
+  }
+}
+function namedFiles(text, dirs, root) {
+  const found = [];
+  const seen = new Set;
+  for (const raw of text.split(/\s+/)) {
+    const token = (raw.replace(/^[("'`[]+/, "").split(/[:(]/)[0] ?? "").replace(/[,;)\]"'`]+$/, "");
+    if (!SOURCE_FILE.test(token))
+      continue;
+    const candidates = isAbsolute(token) ? [token] : dirs.map((dir) => join15(dir, token));
+    for (const abs of candidates) {
+      if (!isFile(abs))
+        continue;
+      const rel2 = relative4(root, abs).replace(/\\/g, "/");
+      if (!rel2.startsWith("..") && !seen.has(rel2)) {
+        seen.add(rel2);
+        found.push(rel2);
+      }
+      break;
+    }
+  }
+  return found;
+}
+
 // packages/engine/src/run.ts
 import { spawn } from "node:child_process";
 import { createWriteStream, mkdirSync as mkdirSync2 } from "node:fs";
@@ -1887,7 +1926,7 @@ function runCommand(command, options) {
 // packages/engine/src/secrets.ts
 import { execFileSync as execFileSync2, spawnSync } from "node:child_process";
 import { readFileSync as readFileSync3 } from "node:fs";
-import { join as join15 } from "node:path";
+import { join as join16 } from "node:path";
 var RULES = [
   {
     rule: "private key",
@@ -1932,7 +1971,7 @@ function isBinary(buffer) {
 function fileSource(root, path) {
   let buffer;
   try {
-    buffer = readFileSync3(join15(root, path));
+    buffer = readFileSync3(join16(root, path));
   } catch {
     return null;
   }
@@ -2046,7 +2085,7 @@ function onPath(binary, env) {
       continue;
     for (const extension of extensions) {
       try {
-        accessSync(join16(dir, binary + extension), constants.X_OK);
+        accessSync(join17(dir, binary + extension), constants.X_OK);
         return true;
       } catch {}
     }
@@ -2089,7 +2128,7 @@ var PYTHON_AUDIT = {
   pip: "python -m pip_audit"
 };
 function depsAuditCommand(target, root, env = process.env) {
-  const dir = join16(root, target.path);
+  const dir = join17(root, target.path);
   if (target.stack === "python") {
     if (!onPath("pip-audit", env))
       return { reason: "pip-audit not on PATH" };
@@ -2099,7 +2138,7 @@ function depsAuditCommand(target, root, env = process.env) {
   let tool;
   if (target.stack === "node") {
     tool = NODE_AUDIT[target.packageManager];
-    if (tool && target.packageManager === "yarn" && exists(join16(dir, ".yarnrc.yml")))
+    if (tool && target.packageManager === "yarn" && exists(join17(dir, ".yarnrc.yml")))
       tool = { ...tool, command: "yarn npm audit --severity high --json" };
   } else if (target.stack === "php") {
     tool = {
@@ -2112,7 +2151,7 @@ function depsAuditCommand(target, root, env = process.env) {
   }
   if (!tool)
     return { reason: `no audit tool for ${target.packageManager}` };
-  const present = tool.lockfiles.filter((name) => exists(join16(dir, name)));
+  const present = tool.lockfiles.filter((name) => exists(join17(dir, name)));
   if (present.length === 0)
     return { reason: "no lockfile" };
   if (!onPath(tool.binary, env))
@@ -2122,7 +2161,7 @@ function depsAuditCommand(target, root, env = process.env) {
 async function baselineAdvisories(paths, work, target, audit, where) {
   if (!work.baseCommit || audit.files.length === 0)
     return { readable: false, advisories: [] };
-  const scratch = join16(paths.crewDir, "local", "audit-base", work.id, where || "root");
+  const scratch = join17(paths.crewDir, "local", "audit-base", work.id, where || "root");
   rmSync(scratch, { recursive: true, force: true });
   mkdirSync3(scratch, { recursive: true });
   let lockfiles = 0;
@@ -2131,13 +2170,13 @@ async function baselineAdvisories(paths, work, target, audit, where) {
     const text = gitShowFile(paths.root, work.baseCommit, rel2);
     if (text === null)
       continue;
-    writeFileSync2(join16(scratch, file), text);
+    writeFileSync2(join17(scratch, file), text);
     if (index > 0)
       lockfiles += 1;
   }
   if (lockfiles === 0)
     return { readable: true, advisories: [] };
-  const log = join16(workDir(paths, work.id), "logs", `deps-base-${where}-${Date.now()}.txt`);
+  const log = join17(workDir(paths, work.id), "logs", `deps-base-${where}-${Date.now()}.txt`);
   const result = await runCommand(audit.command, {
     cwd: scratch,
     timeoutMs: target.timeoutMs,
@@ -2147,7 +2186,7 @@ async function baselineAdvisories(paths, work, target, audit, where) {
   return { readable: report.readable && !result.timedOut, advisories: report.advisories };
 }
 async function judgeAudit(run, audit, paths, work, target, where) {
-  const text = run.log && readText(join16(workDir(paths, work.id), run.log)) || run.tail;
+  const text = run.log && readText(join17(workDir(paths, work.id), run.log)) || run.tail;
   const report = parseAudit(audit.tool, text);
   if (!report.readable)
     return { ...run, reason: "audit report unreadable; judged by exit code" };
@@ -2212,7 +2251,7 @@ function targetOf(profile, planned) {
 function superseded(run, planned) {
   return run.gate === planned.gate && run.target === planned.target && (planned.stack === undefined || run.stack === undefined || run.stack === planned.stack);
 }
-async function runOne(paths, work, profile, planned, fingerprint) {
+async function runOne(paths, work, profile, planned, fingerprint, changed) {
   const { gate, target: targetPath } = planned;
   const at = nowIso();
   const base = {
@@ -2264,9 +2303,9 @@ async function runOne(paths, work, profile, planned, fingerprint) {
   const where = targetPath.replace(/[^a-z0-9]+/gi, "_") + (planned.stack ? `-${planned.stack}` : "");
   const log = `logs/${gate}-${where}-${Date.now()}.txt`;
   const result = await runCommand(command, {
-    cwd: join16(paths.root, targetPath),
+    cwd: join17(paths.root, targetPath),
     timeoutMs: target.timeoutMs,
-    logPath: join16(workDir(paths, work.id), log)
+    logPath: join17(workDir(paths, work.id), log)
   });
   const passed = result.exit === 0 && !result.timedOut;
   const run = {
@@ -2281,9 +2320,35 @@ async function runOne(paths, work, profile, planned, fingerprint) {
     tail: result.tail,
     ...result.timedOut ? { reason: "timed out" } : {}
   };
-  if (!audit || result.timedOut)
+  if (result.timedOut)
     return run;
-  return judgeAudit(run, audit, paths, work, target, where);
+  if (audit)
+    return judgeAudit(run, audit, paths, work, target, where);
+  if ((gate === "lint" || gate === "typecheck") && run.status === "fail")
+    return judgeProblems(run, paths, work, targetPath, changed);
+  return run;
+}
+function judgeProblems(run, paths, work, targetPath, changed) {
+  const text = run.log && readText(join17(workDir(paths, work.id), run.log)) || run.tail;
+  const named2 = namedFiles(text, [join17(paths.root, targetPath), paths.root], paths.root);
+  if (named2.length === 0)
+    return run;
+  const touched = named2.filter((file) => changed.includes(file));
+  const untouched = named2.length - touched.length;
+  const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+  if (touched.length === 0) {
+    return {
+      ...run,
+      status: "pass",
+      reason: `${plural(named2.length, "file")} with problems, none changed by this item (pre-existing)`,
+      problems: { touched, untouched }
+    };
+  }
+  return {
+    ...run,
+    reason: `problems in files this item changed: ${touched.join(", ")}${untouched ? `; ${plural(untouched, "untouched file")} also` : ""}`,
+    problems: { touched, untouched }
+  };
 }
 async function runGates(paths, work, profile, policy, options = {}) {
   const base = work;
@@ -2331,7 +2396,7 @@ async function runGates(paths, work, profile, policy, options = {}) {
       });
       continue;
     }
-    evidence.runs.push(await runOne(paths, work, profile, one, fingerprintBefore));
+    evidence.runs.push(await runOne(paths, work, profile, one, fingerprintBefore, changed));
   }
   evidence.fingerprint = fingerprintBefore;
   const verdict = computeVerdict({
@@ -2366,9 +2431,9 @@ function assess(paths, work, profile, policy, tampered = false) {
 }
 
 // packages/engine/src/profile.ts
-import { join as join17 } from "node:path";
+import { join as join18 } from "node:path";
 function profilePath(paths) {
-  return join17(paths.crewDir, "profile.json");
+  return join18(paths.crewDir, "profile.json");
 }
 function loadProfile(paths) {
   const read = readProtectedJson(paths, profilePath(paths));
@@ -2416,7 +2481,7 @@ function buildContext(payload, env = process.env) {
 }
 
 // packages/engine/src/hooks/pre-tool-use.ts
-import { isAbsolute, join as join18, relative as relative4 } from "node:path";
+import { isAbsolute as isAbsolute2, join as join19, relative as relative5 } from "node:path";
 
 // packages/engine/src/hooks/shell.ts
 function simpleCommands(command) {
@@ -2520,11 +2585,11 @@ function onPreToolUse(ctx, payload) {
     const filePath = pathFromInput(input);
     if (!filePath)
       return {};
-    const abs = canonical(isAbsolute(filePath) ? filePath : join18(ctx.paths.root, filePath));
+    const abs = canonical(isAbsolute2(filePath) ? filePath : join19(ctx.paths.root, filePath));
     if (isProtectedPath(ctx.paths, abs)) {
       return answer("deny", `Crew: ${filePath} is maintained by the engine and is changed through the crew command`);
     }
-    const rel2 = relative4(ctx.paths.root, abs).replace(/\\/g, "/");
+    const rel2 = relative5(ctx.paths.root, abs).replace(/\\/g, "/");
     if (rel2 === "" || rel2.startsWith("..") || !isWatched(rel2, ctx.profile))
       return {};
     const active = activeWork(ctx.paths);
@@ -2718,7 +2783,7 @@ function handleHook(event, payload, env = process.env) {
 }
 
 // packages/engine/src/tdd.ts
-import { join as join19 } from "node:path";
+import { join as join20 } from "node:path";
 var STEPS_BY_KIND = {
   behavior: { steps: ["red", "green"], how: "record red, then green" },
   preserve: { steps: ["before", "after"], how: "record before, then after" },
@@ -2770,7 +2835,7 @@ async function recordTdd(paths, work, evidence, profile, criterionId, step, over
   const result = await runCommand(command, {
     cwd: paths.root,
     timeoutMs: fallback?.timeoutMs ?? 10 * 60 * 1000,
-    logPath: join19(workDir(paths, work.id), log)
+    logPath: join20(workDir(paths, work.id), log)
   });
   const record = {
     command,
@@ -2948,16 +3013,16 @@ function skipStep(work, raw) {
 }
 function accept(env, target) {
   if (target === "profile" || target === "policy") {
-    if (!recordIntegrity(env.paths, join20(env.paths.crewDir, `${target}.json`)))
+    if (!recordIntegrity(env.paths, join21(env.paths.crewDir, `${target}.json`)))
       return refuse(`no .crew/${target}.json to accept`);
     return ok(`${target} accepted: its current content is now the trusted version`, {
       accepted: target
     });
   }
   const dir = workDir(env.paths, target);
-  if (!/^[\w.-]+$/.test(target) || target.includes("..") || !existsSync3(join20(dir, "work.json")))
+  if (!/^[\w.-]+$/.test(target) || target.includes("..") || !existsSync3(join21(dir, "work.json")))
     return refuse(`unknown work item: ${target}`);
-  const files = ["work.json", "evidence.json", "report.md", "objections.json"].filter((name) => recordIntegrity(env.paths, join20(dir, name)));
+  const files = ["work.json", "evidence.json", "report.md", "objections.json"].filter((name) => recordIntegrity(env.paths, join21(dir, name)));
   return ok(`${target} accepted: ${files.join(", ")} now trusted as they are`, {
     accepted: target,
     files
@@ -3006,10 +3071,10 @@ function guardContext(env, work, tampered) {
   const dir = workDir(env.paths, work.id);
   const result = assess(env.paths, work, env.profile, env.policy, env.tampered || tampered);
   return {
-    specText: readText(join20(dir, "spec.md")),
-    conclaveText: readText(join20(dir, "conclave.md")),
+    specText: readText(join21(dir, "spec.md")),
+    conclaveText: readText(join21(dir, "conclave.md")),
     ledger: loadLedger(env.paths, work.id).ledger,
-    planExists: existsSync3(join20(dir, "plan.md")),
+    planExists: existsSync3(join21(dir, "plan.md")),
     evidence: result.evidence,
     proven: result.verdict === "proven",
     unproven: result.unproven,
@@ -3027,7 +3092,7 @@ function logDecision(env, work, answers) {
     route: work.route,
     reasons: work.routeReasons
   });
-  const file = join20(env.paths.localDir, "decisions.jsonl");
+  const file = join21(env.paths.localDir, "decisions.jsonl");
   writeText(file, `${readText(file) ?? ""}${line}
 `);
 }
@@ -3079,7 +3144,7 @@ async function dispatch(parsed, io) {
     return settings(command, args, { userDir: userDirOf(io.env) });
   let paths = resolvePaths(io.cwd, io.env);
   if (!paths && command === "detect") {
-    ensureDir(join20(resolve2(io.cwd), ".crew"));
+    ensureDir(join21(resolve2(io.cwd), ".crew"));
     paths = resolvePaths(io.cwd, io.env);
   }
   if (!paths)
@@ -3097,7 +3162,7 @@ async function dispatch(parsed, io) {
       if (parsed.flags.refresh) {
         saveProfile(env.paths, profile);
         if (integrityOf(env.paths)[".crew/policy.json"] === undefined) {
-          recordIntegrity(env.paths, join20(env.paths.crewDir, "policy.json"));
+          recordIntegrity(env.paths, join21(env.paths.crewDir, "policy.json"));
         }
       }
       const missing = missingTestCommands(profile);
@@ -3445,7 +3510,7 @@ ${outcome.record.tail}` : "";
           break;
       }
       saveWork(env.paths, opened.work);
-      writeProtectedText(env.paths, join20(workDir(env.paths, opened.work.id), "report.md"), renderReport(opened.work, outcome.evidence, env.policy, loadLedger(env.paths, opened.work.id).ledger));
+      writeProtectedText(env.paths, join21(workDir(env.paths, opened.work.id), "report.md"), renderReport(opened.work, outcome.evidence, env.policy, loadLedger(env.paths, opened.work.id).ledger));
       const raised = outcome.raised ? `Route raised to ${outcome.raised}: ${opened.work.routeReasons.at(-1)}
 ` : "";
       const picked = refreshed.changed.length ? `profile refreshed: ${refreshed.changed.join("; ")}
@@ -3506,7 +3571,7 @@ ${report}`, {
           unproven: result.unproven
         });
       saveEvidence(env.paths, opened.work.id, result.evidence);
-      writeProtectedText(env.paths, join20(workDir(env.paths, opened.work.id), "report.md"), report);
+      writeProtectedText(env.paths, join21(workDir(env.paths, opened.work.id), "report.md"), report);
       return ok(report, { verdict: result.verdict, unproven: result.unproven });
     }
     case "status": {

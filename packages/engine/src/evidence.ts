@@ -195,6 +195,14 @@ function auditStatus(status: GateRun["status"], a: NonNullable<GateRun["advisori
   return a.known ? `pass: ${a.known} known before, none new` : status;
 }
 
+/** A lint or typecheck judged by the files it named: the item's files that fail, and the untouched ones that are debt (ADR 0006). */
+function problemStatus(status: GateRun["status"], p: NonNullable<GateRun["problems"]>): string {
+  const untouched = `${p.untouched} untouched file${p.untouched === 1 ? "" : "s"}`;
+  if (status === "fail")
+    return `fail: problems in ${p.touched.join(", ")}${p.untouched ? ` (${untouched} also)` : ""}`;
+  return `pass: ${untouched} with problems, none of the item's`;
+}
+
 export function renderReport(
   work: WorkItem,
   evidence: Evidence,
@@ -252,9 +260,11 @@ export function renderReport(
         ? `${r.status}${r.reason ? `: ${r.reason}` : ""}`
         : r.advisories
           ? auditStatus(r.status, r.advisories)
-          : r.status === "fail" && r.reason
-            ? `fail: ${r.reason}`
-            : r.status;
+          : r.problems
+            ? problemStatus(r.status, r.problems)
+            : r.status === "fail" && r.reason
+              ? `fail: ${r.reason}`
+              : r.status;
     const target = r.stack ? `${r.target} (${r.stack})` : r.target;
     lines.push(
       `| ${r.gate} | ${target} | ${status} | ${r.command ? `\`${r.command}\`` : ""} | ${r.durationMs} ms | ${r.log ?? ""} |`,
