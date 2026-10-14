@@ -201,6 +201,84 @@ const PANE = {
   props: { title: "Crew", isFocused: true, bodyColumns: 80, placement: "inline", scroll: { offset: 0, bodyRows: 20 }, view: {} },
 } as const;
 
+// A standard-route item in its gate phase: the deterministic gates passed, the judgement gates in every state
+const JUDGED = {
+  ...PROVEN,
+  active: "2026-10-15-002-delete-accounts",
+  title: "Delete accounts",
+  phase: "gate",
+  route: "standard",
+  phases: ["receive", "recognize", "understand", "specify", "conclave", "plan", "build", "gate", "deliver"],
+  verdict: "unproven",
+  unproven: ["judgement gate test-quality not proven"],
+  decisions: [
+    { id: "D-1", question: "Erasure or deactivation?", answer: "deactivation", by: "user" },
+    { id: "D-2", question: "Who holds the delete permission?" },
+  ],
+  objections: [{ id: "O-1", severity: "blocking", status: "open", text: "A support ticket's delete may be an erasure request" }],
+  judgement: [
+    { gate: "code-quality", status: "proven", planned: "standard route", findings: 0 },
+    { gate: "test-quality", status: "not-proven", planned: "standard route", findings: 3 },
+    { gate: "ui-ux", status: "not-run", planned: "interface files: resources/views/account.blade.php", findings: 0, reason: "no browser" },
+    { gate: "security", status: "planned", planned: "risk area personal-data", findings: 0 },
+    { gate: "risk", status: "skipped", planned: "policy", findings: 0, reason: "no production yet" },
+  ],
+  debate: "open",
+};
+
+test("the strip appends one mark per judgement gate after the gate marks", async ($, on) => {
+  stubs(on, () => ({ exitCode: 0, stdout: JSON.stringify(JUDGED), stderr: "" }));
+  on("ui.render", () => ({ type: "Text", props: {}, children: [] }));
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  const ui = await $.ui.mount({ ...STRIP, surface: "terminal" });
+  expect(
+    await ui.find({
+      type: "Text",
+      text: "crew 2026-10-15-002-delete-accounts · gate · standard · not proven (judgement gate test-quality not proven) · secrets ✓ test ✓ code-quality ✓ test-quality ✗ ui-ux ? security … risk –",
+    }),
+  ).toBeDefined();
+  await ui.unmount();
+});
+
+test("the panel lists decisions with their answers, objections with their text, the debate and the judgement gates", async ($, on) => {
+  stubs(on, () => ({ exitCode: 0, stdout: JSON.stringify(JUDGED), stderr: "" }));
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  const ui = await $.ui.mount({ ...PANE, surface: "terminal" });
+  expect(await ui.find({ type: "Text", text: "receive › recognize › understand › specify › conclave › plan › build › [gate] › deliver" })).toBeDefined();
+  expect(await ui.find({ type: "Text", text: "D-1 Erasure or deactivation? → deactivation (by user)" })).toBeDefined();
+  expect(await ui.find({ type: "Text", text: "D-2 Who holds the delete permission? → unanswered" })).toBeDefined();
+  expect(await ui.find({ type: "Text", text: "O-1 blocking open · A support ticket's delete may be an erasure request" })).toBeDefined();
+  expect(await ui.find({ type: "Text", text: "debate open" })).toBeDefined();
+  expect(await ui.find({ type: "Text", text: "code-quality: proven (0 findings)" })).toBeDefined();
+  expect(await ui.find({ type: "Text", text: "test-quality: not proven (3 findings)" })).toBeDefined();
+  expect(await ui.find({ type: "Text", text: "ui-ux: not run (no browser)" })).toBeDefined();
+  expect(await ui.find({ type: "Text", text: "security: planned" })).toBeDefined();
+  expect(await ui.find({ type: "Text", text: "risk: skipped (no production yet)" })).toBeDefined();
+  await ui.unmount();
+});
+
+test("/crew status prints the conclave's counts and one row per judgement gate", async ($, on) => {
+  stubs(on, () => ({ exitCode: 0, stdout: JSON.stringify(JUDGED), stderr: "" }));
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  const answer = await $.command.run({ command: "crew", args: "status" });
+  expect(answer.text).toContain("  decisions 2 (1 unanswered) · objections 1 (1 blocking open) · debate open");
+  expect(answer.text).toContain("  code-quality: proven (0 findings)");
+  expect(answer.text).toContain("  test-quality: not proven (3 findings)");
+  expect(answer.text).toContain("  ui-ux: not run (no browser)");
+  expect(answer.text).toContain("  security: planned");
+  expect(answer.text).toContain("  risk: skipped (no production yet)");
+  expect(answer.text).toContain("Not proven: judgement gate test-quality not proven");
+});
+
+test("a proven item's verdict line names the judgement gates it proved", async ($, on) => {
+  const judged = { ...PROVEN, judgement: [{ gate: "code-quality", status: "proven", planned: "policy", findings: 0 }], decisions: [], objections: [], debate: "none" };
+  stubs(on, () => ({ exitCode: 0, stdout: JSON.stringify(judged), stderr: "" }));
+  on("turn.complete", () => ({ text: "theirs" }));
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  const line = await $.turn.complete({ turnId: "t1", answer: "done", durationMs: 10, isAborted: false, usage: null });
+  expect(line.text).toBe("Proven: secrets, test, code-quality");
+});
+
 test("the panel lists phases, criteria, gates and the verdict, and its buttons work", async ($, on) => {
   let runs = 0;
   const closed: string[] = [];

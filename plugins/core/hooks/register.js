@@ -141,9 +141,22 @@ function paneTree($, e) {
     for (const c of status.criteria || []) {
       lines.push(Text({ children: [c.id + ' ' + c.kind + ' · ' + c.tdd + ' · ' + c.text] }))
     }
+    for (const d of status.decisions || []) {
+      lines.push(Text({ children: [decisionText(d)] }))
+    }
+    for (const o of status.objections || []) {
+      const open = o.severity === 'blocking' && o.status === 'open'
+      lines.push(open ? Text({ color: 'red', children: [objectionText(o)] }) : Text({ children: [objectionText(o)] }))
+    }
+    if (status.debate && status.debate !== 'none') {
+      lines.push(Text({ dimColor: true, children: ['debate ' + status.debate] }))
+    }
     lines.push(Text({ children: [' '] }))
     for (const r of status.runs || []) {
       lines.push(Text({ children: [r.gate + ' (' + r.target + '): ' + r.status + ' in ' + (r.durationMs / 1000).toFixed(1) + 's' + (r.reason ? ' (' + r.reason + ')' : '')] }))
+    }
+    for (const j of status.judgement || []) {
+      lines.push(Text({ children: [judgementText(j)] }))
     }
     for (const reason of status.unproven || []) {
       lines.push(Text({ color: 'red', children: ['✗ ' + reason] }))
@@ -160,6 +173,38 @@ function paneTree($, e) {
 // "receive › recognize › [build] › gate › deliver", the current phase in brackets
 function phasesText() {
   return (status.phases || []).map((p) => (p === status.phase ? '[' + p + ']' : p)).join(' › ')
+}
+
+// "D-1 Erasure or deactivation? → deactivation (by user)", or "→ unanswered"
+function decisionText(d) {
+  const answer = d.answer ? d.answer + (d.by ? ' (by ' + d.by + ')' : '') : 'unanswered'
+  return d.id + ' ' + d.question + ' → ' + answer
+}
+
+// "O-1 blocking open · <text>"; an engine before SP2b sends no text
+function objectionText(o) {
+  return o.id + ' ' + o.severity + ' ' + o.status + (o.text ? ' · ' + o.text : '')
+}
+
+const JUDGEMENT_WORDS = { planned: 'planned', proven: 'proven', 'not-proven': 'not proven', 'not-run': 'not run', stale: 'stale', skipped: 'skipped' }
+
+// "code-quality: proven (0 findings)", "ui-ux: not run (no browser)", "security: planned"
+function judgementText(j) {
+  const word = JUDGEMENT_WORDS[j.status] || j.status
+  if (j.status === 'planned') return j.gate + ': ' + word
+  if (j.status === 'not-run' || j.status === 'stale' || j.status === 'skipped') return j.gate + ': ' + word + (j.reason ? ' (' + j.reason + ')' : '')
+  return j.gate + ': ' + word + ' (' + (j.findings || 0) + ' findings)'
+}
+
+// "decisions 2 (1 unanswered) · objections 1 (1 blocking open) · debate open", or '' when the item has none
+function conclaveText() {
+  const decisions = status.decisions || []
+  const objections = status.objections || []
+  const parts = []
+  if (decisions.length) parts.push('decisions ' + decisions.length + ' (' + decisions.filter((d) => !d.answer).length + ' unanswered)')
+  if (objections.length) parts.push('objections ' + objections.length + ' (' + objections.filter((o) => o.severity === 'blocking' && o.status === 'open').length + ' blocking open)')
+  if (status.debate && status.debate !== 'none') parts.push('debate ' + status.debate)
+  return parts.join(' · ')
 }
 
 // Runs the bundled CLI in the session's folder and returns its JSON answer.
@@ -212,7 +257,8 @@ function hasWork() {
   return !!(status && status.active)
 }
 
-// The gates as one short list: "secrets ✓ test ✗ lint …", a planned gate with no run yet as "…"
+// The gates as one short list: "secrets ✓ test ✗ lint …", a planned gate with no run yet as "…";
+// the judgement gates follow with the same marks, "?" for not run, "…" for planned or stale
 function gatesText() {
   const marks = { pass: '✓', fail: '✗', skipped: '–', unavailable: '?' }
   const runs = status.runs || []
@@ -223,6 +269,8 @@ function gatesText() {
     if (ran.length === 0) parts.push(name + ' …')
     for (const r of ran) parts.push(r.gate + ' ' + (marks[r.status] || '?'))
   }
+  const judged = { proven: '✓', 'not-proven': '✗', 'not-run': '?', planned: '…', stale: '…', skipped: '–' }
+  for (const j of status.judgement || []) parts.push(j.gate + ' ' + (judged[j.status] || '?'))
   return parts.join(' ')
 }
 
@@ -231,7 +279,9 @@ function verdictLine() {
   if (!hasWork()) return ''
   if (status.verdict === 'proven') {
     const passed = (status.runs || []).filter((r) => r.status === 'pass').map((r) => r.gate)
-    return 'Proven: ' + (passed.length ? passed.join(', ') : 'nothing to run')
+    const judged = (status.judgement || []).filter((j) => j.status === 'proven').map((j) => j.gate)
+    const names = [...passed, ...judged]
+    return 'Proven: ' + (names.length ? names.join(', ') : 'nothing to run')
   }
   return 'Not proven: ' + (status.unproven && status.unproven[0] ? status.unproven[0] : 'gates have not run')
 }
@@ -253,9 +303,12 @@ function statusText() {
     status.active + ' "' + status.title + '"',
     '  phase ' + status.phase + ', route ' + status.route + (status.awaiting === 'user' ? ', waiting for the user' : ''),
   ]
+  const conclave = conclaveText()
+  if (conclave) lines.push('  ' + conclave)
   for (const r of status.runs || []) {
     lines.push('  ' + r.gate + ' (' + r.target + '): ' + r.status + ' in ' + (r.durationMs / 1000).toFixed(1) + 's' + (r.reason ? ' (' + r.reason + ')' : ''))
   }
+  for (const j of status.judgement || []) lines.push('  ' + judgementText(j))
   lines.push(verdictLine())
   return lines.join('\n')
 }
