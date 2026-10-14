@@ -296,6 +296,8 @@ The engine checks structure only: the file exists and has a non-empty acceptance
 
 ## 12. Deterministic gates and enforcement
 
+*Amended 2026-10-14 (0.3.0, [ADR 0006](../adr/0006-gates-judge-the-item.md)):* the gates judge the item, not the repository's standing debt. The dependency audit is compared with the item's base commit and fails only on new advisories; lint and typecheck fail only on problems in files the item changed; the known debt is counted on every report. Gates are mandatory: `allowSkips` defaults to `tdd`. The stamp the evidence vouches for is taken after the build gate, so a build that rewrites committed output proves in one run. The profile follows the manifests at every gate run and session start.
+
 ### Gates
 
 | Gate | Fast | Standard | Full |
