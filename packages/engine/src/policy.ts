@@ -2,10 +2,11 @@ import { join } from "node:path";
 import type { CrewPaths } from "./paths.ts";
 import { readProtectedJson, writeProtectedJson } from "./store.ts";
 import type { DecidedBy, GateName, PermissionMode, Policy, RiskArea, Route } from "./types.ts";
-import { GATE_NAMES, ROUTE_ORDER } from "./types.ts";
+import { GATE_NAMES, isJudgementGateName, ROUTE_ORDER } from "./types.ts";
 
 export const DEFAULT_POLICY: Policy = {
   requiredGates: [],
+  judgementGates: [],
   riskPaths: {},
   riskPathExclusions: [],
   minimumRoute: "fast",
@@ -105,6 +106,7 @@ export function loadPolicy(paths: CrewPaths): { policy: Policy; tampered: boolea
       requiredGates: strings(raw.requiredGates).filter((g): g is GateName =>
         GATE_NAMES.includes(g as GateName),
       ),
+      judgementGates: strings(raw.judgementGates).filter(isJudgementGateName),
       riskPaths,
       riskPathExclusions: strings(raw.riskPathExclusions),
       minimumRoute,

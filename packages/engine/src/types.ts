@@ -8,6 +8,28 @@ export const GATE_NAMES: readonly GateName[] = [
   "deps",
 ];
 
+/**
+ * A gate whose verdict is a reviewer's ruling against a rubric and a judge's decision, not an exit
+ * code (SP2 §10). Kept apart from `GateName`: the engine runs those, the session's roles run these.
+ */
+export type JudgementGateName = "code-quality" | "test-quality" | "security" | "ui-ux" | "risk";
+export const JUDGEMENT_GATES: readonly JudgementGateName[] = [
+  "code-quality",
+  "test-quality",
+  "security",
+  "ui-ux",
+  "risk",
+];
+export function isJudgementGateName(value: unknown): value is JudgementGateName {
+  return JUDGEMENT_GATES.includes(value as JudgementGateName);
+}
+
+/** A judgement gate the item needs, and why: "standard route", "risk area auth", "interface files: a.vue", "policy". */
+export interface PlannedJudgement {
+  gate: JudgementGateName;
+  reason: string;
+}
+
 export type CommandSource = "detected" | "proposed" | "confirmed";
 export interface GateCommand {
   command: string;
@@ -288,16 +310,45 @@ export interface GateRun {
   wrote?: string[];
 }
 
+export type JudgementVerdict = "proven" | "not-proven" | "not-run";
+export type FindingSeverity = "defect" | "advisory";
+/** One finding of a reviewer, tied to a file; `outside` when the file is not part of the item's change (ADR 0006: reported, never failed on). */
+export interface JudgementFinding {
+  file: string;
+  line?: number;
+  text: string;
+  severity: FindingSeverity;
+  outside?: boolean;
+}
+/** A judgement gate's ruling as recorded: the judge's verdict, the reviewer's findings, stamped with when and on which code. */
+export interface JudgementRecord {
+  gate: JudgementGateName;
+  verdict: JudgementVerdict;
+  reviewer?: string;
+  judge?: string;
+  findings: JudgementFinding[];
+  tokens?: number;
+  /** For `not-run`: why the gate could not run. */
+  reason?: string;
+  at: string;
+  /** The fingerprint of the code the ruling vouches for; a ruling on other code counts as not run. */
+  fingerprint: string;
+}
+
 export interface Evidence {
   fingerprint: string | null;
   tdd: TddRecord[];
   runs: GateRun[];
   verdict: "proven" | "unproven";
   unproven: string[];
+  /** One ruling per judgement gate, the latest for each. Absent before 0.4.0. */
+  judgement?: JudgementRecord[];
 }
 
 export interface Policy {
   requiredGates: GateName[];
+  /** Judgement gates the team requires on every item beyond the route's own (SP2 §10). */
+  judgementGates: JudgementGateName[];
   riskPaths: Partial<Record<RiskArea, string[]>>;
   /**
    * Globs of changed paths that never raise a risk area, default or added (findings 1 and 14).

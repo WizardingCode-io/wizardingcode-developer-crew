@@ -6,6 +6,18 @@ import { DEFAULT_POLICY, decisionCounts, loadPolicy, skipAllowed } from "../src/
 import { ensureCrewDir, loadState, saveState, sessionState } from "../src/state.ts";
 import { makeRepo, repoPaths, testEnv } from "./helpers.ts";
 
+test("SP2b: judgementGates lists the judgement gates a team requires, empty by default, unknown names dropped", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  expect(DEFAULT_POLICY.judgementGates).toEqual([]);
+  expect(loadPolicy(paths).policy.judgementGates).toEqual([]);
+  mkdirSync(paths.crewDir, { recursive: true });
+  const file = join(paths.crewDir, "policy.json");
+  writeFileSync(file, JSON.stringify({ judgementGates: ["security", "lint", "ui-ux", 3] }));
+  expect(loadPolicy(paths).policy.judgementGates).toEqual(["security", "ui-ux"]);
+  writeFileSync(file, JSON.stringify({ judgementGates: "security" }));
+  expect(loadPolicy(paths).policy.judgementGates).toEqual([]);
+});
+
 test("policy: defaults when absent, validated when present, unknown values ignored", () => {
   const paths = repoPaths(makeRepo(), testEnv());
   expect(loadPolicy(paths)).toEqual({ policy: DEFAULT_POLICY, tampered: false });

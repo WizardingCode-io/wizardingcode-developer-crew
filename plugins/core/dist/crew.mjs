@@ -42,6 +42,16 @@ var GATE_NAMES = [
   "secrets",
   "deps"
 ];
+var JUDGEMENT_GATES = [
+  "code-quality",
+  "test-quality",
+  "security",
+  "ui-ux",
+  "risk"
+];
+function isJudgementGateName(value) {
+  return JUDGEMENT_GATES.includes(value);
+}
 var ROUTE_ORDER = ["fast", "standard", "full"];
 var PHASE_ORDER = [
   "receive",
@@ -993,6 +1003,7 @@ function readProtectedJson(paths, absPath) {
 // packages/engine/src/policy.ts
 var DEFAULT_POLICY = {
   requiredGates: [],
+  judgementGates: [],
   riskPaths: {},
   riskPathExclusions: [],
   minimumRoute: "fast",
@@ -1056,6 +1067,7 @@ function loadPolicy(paths) {
   return {
     policy: {
       requiredGates: strings(raw.requiredGates).filter((g) => GATE_NAMES.includes(g)),
+      judgementGates: strings(raw.judgementGates).filter(isJudgementGateName),
       riskPaths,
       riskPathExclusions: strings(raw.riskPathExclusions),
       minimumRoute,
