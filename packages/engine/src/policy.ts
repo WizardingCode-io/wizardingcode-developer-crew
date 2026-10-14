@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import type { CrewPaths } from "./paths.ts";
-import { readProtectedJson } from "./store.ts";
+import { readProtectedJson, writeProtectedJson } from "./store.ts";
 import type { DecidedBy, GateName, Policy, RiskArea, Route } from "./types.ts";
 import { GATE_NAMES, ROUTE_ORDER } from "./types.ts";
 
@@ -12,7 +12,44 @@ export const DEFAULT_POLICY: Policy = {
   allowSkips: ["*"],
   artifacts: "commit",
   unattendedDecisions: "wait",
+  attendedDecisions: "prompt",
 };
+
+/** The scalar keys `crew policy set` writes, with their values; the rest of the policy is hand-written. */
+export const SETTABLE_POLICY_KEYS = {
+  attendedDecisions: ["prompt", "relay"],
+  unattendedDecisions: ["wait", "count", "validator"],
+} as const satisfies Partial<Record<keyof Policy, readonly string[]>>;
+
+function policyPath(paths: CrewPaths): string {
+  return join(paths.crewDir, "policy.json");
+}
+
+/**
+ * Writes one settable key of `policy.json` through the engine: the file keeps everything else as
+ * written and stays trusted. A file changed outside the engine is refused until a person accepts it.
+ */
+export function setPolicyValue(
+  paths: CrewPaths,
+  key: string,
+  value: string,
+): { key: string; value: string } | { refused: string } {
+  const keys = Object.keys(SETTABLE_POLICY_KEYS);
+  if (!(key in SETTABLE_POLICY_KEYS))
+    return { refused: `unknown policy key: ${key} (crew policy set writes ${keys.join(", ")})` };
+  const allowed: readonly string[] = SETTABLE_POLICY_KEYS[key as keyof typeof SETTABLE_POLICY_KEYS];
+  if (!allowed.includes(value))
+    return { refused: `${key} is one of ${allowed.join(", ")}, not ${value}` };
+  const read = readProtectedJson<Record<string, unknown>>(paths, policyPath(paths));
+  if (read.tampered) {
+    return {
+      refused:
+        "state changed outside the engine: .crew/policy.json; the user can accept it with crew policy accept",
+    };
+  }
+  writeProtectedJson(paths, policyPath(paths), { ...(read.data ?? {}), [key]: value });
+  return { key, value };
+}
 
 /** Whether a recorded decision counts: a person's always, the agent's or the validator's as the policy says. */
 export function decisionCounts(policy: Policy, decision: { by?: DecidedBy }): boolean {
@@ -39,10 +76,7 @@ function strings(value: unknown): string[] {
  * patterns (ADR 0003). Anything it does not say falls back to the default.
  */
 export function loadPolicy(paths: CrewPaths): { policy: Policy; tampered: boolean } {
-  const read = readProtectedJson<Record<string, unknown>>(
-    paths,
-    join(paths.crewDir, "policy.json"),
-  );
+  const read = readProtectedJson<Record<string, unknown>>(paths, policyPath(paths));
   const raw = read.data ?? {};
   const riskPaths: Policy["riskPaths"] = {};
   const rawRisk = (raw.riskPaths ?? {}) as Record<string, unknown>;
@@ -70,6 +104,7 @@ export function loadPolicy(paths: CrewPaths): { policy: Policy; tampered: boolea
         raw.unattendedDecisions === "count" || raw.unattendedDecisions === "validator"
           ? raw.unattendedDecisions
           : "wait",
+      attendedDecisions: raw.attendedDecisions === "relay" ? "relay" : "prompt",
     },
     tampered: read.tampered,
   };

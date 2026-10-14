@@ -133,11 +133,16 @@ export function isValidatorRule(value: unknown): value is ValidatorRule {
   return VALIDATOR_RULES.includes(value as ValidatorRule);
 }
 
-/** Who took a user-only decision; `mode` when no person was watching; `rule` when the validator took it. */
+/**
+ * Who took a user-only decision; `mode` when no person was watching; `rule` when the validator took
+ * it; `relayed` when a person's yes came through the agent from the conversation, with no prompt,
+ * under the policy's `attendedDecisions: relay` (ADR 0005).
+ */
 export interface Decision {
   by: DecidedBy;
   mode?: PermissionMode;
   rule?: ValidatorRule;
+  relayed?: boolean;
 }
 
 export interface Approval {
@@ -147,6 +152,7 @@ export interface Approval {
   by?: DecidedBy;
   mode?: PermissionMode;
   rule?: ValidatorRule;
+  relayed?: boolean;
 }
 
 /** A decision only the user can make, found by the gap round; answered by a person or, under a rule, by the validator. */
@@ -159,6 +165,7 @@ export interface GapDecision {
   by?: DecidedBy;
   mode?: PermissionMode;
   rule?: ValidatorRule;
+  relayed?: boolean;
 }
 
 export type ObjectionSeverity = "blocking" | "advisory";
@@ -167,6 +174,7 @@ export interface Waiver {
   at: string;
   by: DecidedBy;
   mode?: PermissionMode;
+  relayed?: boolean;
 }
 /** A dated statement that the work must not proceed as proposed; bound to a criterion, or waived by the user. */
 export interface Objection {
@@ -189,6 +197,7 @@ export interface Skip {
   at: string;
   by?: DecidedBy;
   mode?: PermissionMode;
+  relayed?: boolean;
 }
 
 export interface WorkItem {
@@ -294,6 +303,13 @@ export interface Policy {
    * `validator` lets a decision the validator took under a rule count, and the agent's not.
    */
   unattendedDecisions: "wait" | "count" | "validator";
+  /**
+   * How the user signs a decision with a person present: `prompt`, the permission prompt the
+   * agent's command raises; `relay`, the agent relaying the user's yes from the conversation with no
+   * prompt, recorded as "by the user, relayed by the agent" (ADR 0005). The policy's own commands
+   * are always asked.
+   */
+  attendedDecisions: "prompt" | "relay";
 }
 
 export type Mode = "partner" | "guide" | "pilot";

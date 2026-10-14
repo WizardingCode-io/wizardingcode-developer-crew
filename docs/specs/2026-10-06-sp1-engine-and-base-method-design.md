@@ -412,7 +412,7 @@ When the request is vague, the skill asks the user the questions that would chan
 }
 ```
 
-The policy can only tighten: it adds required gates and risk paths, raises the minimum route, and narrows what may be skipped. *Amended 2026-10-14 (0.1.7, [ADR 0003](../adr/0003-risk-path-exclusions.md)):* `riskPathExclusions` is the one exception, globs of paths that never raise the route, decided by a person and named in the work's record when they applied.
+The policy can only tighten: it adds required gates and risk paths, raises the minimum route, and narrows what may be skipped. *Amended 2026-10-14 (0.1.7, [ADR 0003](../adr/0003-risk-path-exclusions.md)):* `riskPathExclusions` is the one exception, globs of paths that never raise the route, decided by a person and named in the work's record when they applied. *Amended 2026-10-14 (0.2.0, [ADR 0005](../adr/0005-attended-decisions-by-relay.md)):* `attendedDecisions` (`prompt`, the default, or `relay`) says whether a user-only decision with a person present is signed by the permission prompt or relayed by the agent from the conversation, recorded as "by the user, relayed by the agent"; `crew policy set` writes it and `unattendedDecisions` through the engine and is itself always asked.
 
 ## 16. The mod
 

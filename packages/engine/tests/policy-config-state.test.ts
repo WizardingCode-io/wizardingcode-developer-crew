@@ -82,6 +82,22 @@ test("policy: unattendedDecisions accepts validator, and decisionCounts follows 
   ]);
 });
 
+test("ADR 0005: attendedDecisions is prompt by default and accepts relay; anything else reads as prompt", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  expect(DEFAULT_POLICY.attendedDecisions).toBe("prompt");
+  expect(loadPolicy(paths).policy.attendedDecisions).toBe("prompt");
+  mkdirSync(paths.crewDir, { recursive: true });
+  const file = join(paths.crewDir, "policy.json");
+  writeFileSync(file, JSON.stringify({ attendedDecisions: "relay" }));
+  expect(loadPolicy(paths).policy.attendedDecisions).toBe("relay");
+  writeFileSync(file, JSON.stringify({ attendedDecisions: "trust" }));
+  expect(loadPolicy(paths).policy.attendedDecisions).toBe("prompt");
+  // A relayed decision is a person's: it counts under every unattended setting.
+  const relayed = { by: "user" as const, relayed: true };
+  for (const u of ["wait", "count", "validator"] as const)
+    expect(decisionCounts({ ...DEFAULT_POLICY, unattendedDecisions: u }, relayed)).toBe(true);
+});
+
 test("config: defaults, set values, reject unknown keys and values", () => {
   const paths = repoPaths(makeRepo(), testEnv());
   expect(loadConfig(paths)).toEqual({ mode: "partner", decisions: { log: true } });

@@ -25,7 +25,7 @@ import {
   waiveObjection,
 } from "./objections.ts";
 import { type CrewPaths, resolvePaths, userDirOf, workDir } from "./paths.ts";
-import { loadPolicy, skipAllowed } from "./policy.ts";
+import { loadPolicy, SETTABLE_POLICY_KEYS, setPolicyValue, skipAllowed } from "./policy.ts";
 import { ensureProfile, loadProfile, saveProfile } from "./profile.ts";
 import { ensureCrewDir } from "./state.ts";
 import { integrityOf, recordIntegrity, writeProtectedText } from "./store.ts";
@@ -288,13 +288,16 @@ function isOutcome(value: unknown): value is Outcome {
 }
 
 /**
- * Who takes a user-only decision. Without `--mode` a person answered the prompt; with it, the
- * PreToolUse hook found no person watching (a headless session, or a mode that shows no prompt)
- * and the agent decided in that mode.
+ * Who takes a user-only decision. Without `--mode` a person decided: through the prompt, or, under
+ * the policy's `attendedDecisions: relay`, in the conversation with the agent relaying it (the hook
+ * let the command through with no prompt, reading the same policy). With `--mode`, the hook found no
+ * person watching (a headless session, or a mode that shows no prompt) and the agent decided in
+ * that mode.
  */
-function decisionFlag(parsed: Parsed): Decision | Outcome {
+function decisionFlag(parsed: Parsed, policy: Policy): Decision | Outcome {
   const mode = parsed.flags.mode;
-  if (mode === undefined) return { by: "user" };
+  if (mode === undefined)
+    return policy.attendedDecisions === "relay" ? { by: "user", relayed: true } : { by: "user" };
   if (!isPermissionMode(mode)) {
     return refuse(
       `--mode names the permission mode of a session with no person watching: ${PERMISSION_MODES.slice(0, -1).join(", ")} or ${PERMISSION_MODES.at(-1)}`,
@@ -307,14 +310,14 @@ function decisionFlag(parsed: Parsed): Decision | Outcome {
  * A decision the validator takes: only with `--mode` (no person watching) and a known rule. Without
  * `--validator` the flag logic of `decisionFlag` applies unchanged.
  */
-function validatorFlag(parsed: Parsed): Decision | Outcome {
+function validatorFlag(parsed: Parsed, policy: Policy): Decision | Outcome {
   const rule = parsed.flags.validator;
-  if (rule === undefined) return decisionFlag(parsed);
+  if (rule === undefined) return decisionFlag(parsed, policy);
   if (parsed.flags.mode === undefined)
     return refuse("the validator acts only where no person is watching: add --mode <mode>");
   if (!isValidatorRule(rule))
     return refuse(`unknown validator rule: ${String(rule)} (${VALIDATOR_RULES.join(", ")})`);
-  const base = decisionFlag(parsed);
+  const base = decisionFlag(parsed, policy);
   if (isOutcome(base)) return base;
   return { by: "validator", mode: base.mode, rule };
 }
@@ -519,8 +522,20 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       return refuse("usage: crew profile set|confirm");
     }
     case "policy": {
-      if (args[0] !== "accept") return refuse("usage: crew policy accept");
-      return accept(env, "policy");
+      if (args[0] === "accept") return accept(env, "policy");
+      if (args[0] === "set") {
+        const [, key, value] = args;
+        if (!key || value === undefined) {
+          return refuse(
+            `usage: crew policy set <${Object.keys(SETTABLE_POLICY_KEYS).join("|")}> <value>`,
+          );
+        }
+        // Asked even under relay (PreToolUse): the policy that governs signatures is signed by a prompt.
+        const result = setPolicyValue(env.paths, key, value);
+        if ("refused" in result) return refuse(result.refused);
+        return ok(`policy ${key}: ${value}`, result);
+      }
+      return refuse("usage: crew policy accept | crew policy set <key> <value>");
     }
     case "accept": {
       if (!args[0]) return refuse("usage: crew accept <id|profile|policy>");
@@ -671,7 +686,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       if (args[1] === "waive" && args[2]) {
         const reason = typeof parsed.flags.reason === "string" ? parsed.flags.reason.trim() : "";
         if (!reason) return refuse(usage);
-        const decision = decisionFlag(parsed);
+        const decision = decisionFlag(parsed, env.policy);
         if (isOutcome(decision)) return decision;
         const result = waiveObjection(ledger, args[2], reason, decision);
         if ("refused" in result) return refuse(result.refused);
@@ -705,7 +720,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         return refuse(
           'usage: crew decide <id> D-n "<answer>" [--mode <mode> --validator stated-default]',
         );
-      const who = validatorFlag(parsed);
+      const who = validatorFlag(parsed, env.policy);
       if (isOutcome(who)) return who;
       const answer = args.slice(2).join(" ").trim() || undefined;
       const result = answerDecision(opened.work, id, answer, who);
@@ -722,7 +737,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         return refuse(
           "usage: crew approve <id> spec [--mode <mode> [--validator complete-gap-round]]",
         );
-      const decision = validatorFlag(parsed);
+      const decision = validatorFlag(parsed, env.policy);
       if (isOutcome(decision)) return decision;
       if (decision.by === "validator") {
         // The engine checks the rule's mechanical part before anything is recorded (SP2 §9).
@@ -864,7 +879,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         return refuse(`the team policy does not allow skipping ${step}`);
       if (env.config.mode === "pilot" && (step === "gate:secrets" || step === "gate:deps"))
         return refuse(`in pilot mode the ${step.slice(5)} gate cannot be skipped`);
-      const decision = decisionFlag(parsed);
+      const decision = decisionFlag(parsed, env.policy);
       if (isOutcome(decision)) return decision;
       addSkip(opened.work, step, reason, decision);
       saveWork(env.paths, opened.work);
@@ -996,6 +1011,7 @@ const HELP = `crew ${VERSION}
   profile set <gate> "<cmd>" --force    replace a detected or confirmed command (asks the user)
   profile confirm [<gate>]              confirm proposed commands (asks the user)
   policy accept                         trust the current policy.json after a hand edit (asks the user)
+  policy set <key> <value>              attendedDecisions prompt|relay, unattendedDecisions wait|count|validator (asks the user)
   accept <id|profile|policy>            trust state changed outside the engine (asks the user)
   start "<request>" --answers <json>    create a work item from the typed answers
       [--criterion "<text>"] [--preserve "<text>"]   criteria, repeatable; preserve: existing tests stay green

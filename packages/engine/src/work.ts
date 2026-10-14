@@ -290,6 +290,8 @@ export function answerDecision(
   else delete found.mode;
   if (decision.rule) found.rule = decision.rule;
   else delete found.rule;
+  if (decision.relayed) found.relayed = true;
+  else delete found.relayed;
   return found;
 }
 

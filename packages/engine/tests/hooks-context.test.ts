@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DEFAULT_WATCH_EXCLUDE } from "../src/detect/index.ts";
 import { onPrompt } from "../src/hooks/prompt.ts";
@@ -22,6 +22,21 @@ test("finding 22: the session context says who runs crew commands and how the us
     .additionalContext;
   expect(text).toContain("You run every crew command; the user never types one");
   expect(text).toContain("signed by the permission prompt");
+});
+
+test("ADR 0005: under relay the session context says the user's yes in the conversation is the signature", () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  mkdirSync(join(root, ".crew"), { recursive: true });
+  writeFileSync(join(root, ".crew", "policy.json"), JSON.stringify({ attendedDecisions: "relay" }));
+  const text = (onSessionStart(context(root)).hookSpecificOutput as { additionalContext: string })
+    .additionalContext;
+  expect(text).toContain("You run every crew command; the user never types one");
+  expect(text).toContain("relayed by you from the conversation");
+  expect(text).toContain("no prompt");
+  expect(text).not.toContain("signed by the permission prompt");
 });
 
 test("session start detects the profile, records the baseline and describes the state", () => {

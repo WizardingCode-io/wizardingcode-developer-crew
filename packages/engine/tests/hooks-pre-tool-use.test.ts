@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { symlinkSync } from "node:fs";
+import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { onPreToolUse } from "../src/hooks/pre-tool-use.ts";
 import { createWork, saveWork } from "../src/work.ts";
@@ -113,6 +113,63 @@ test("finding 22: a --help lookup on a user-only verb is not asked, since the co
   expect(bash("node /x/dist/crew.mjs objection w1 waive O-1 --help")).toEqual({});
   expect(decision(bash("crew approve w1 spec --reason --helpful"))).toBe("ask");
   expect(decision(bash("crew approve w1 spec"))).toBe("ask");
+});
+
+test("ADR 0005: under attendedDecisions relay a user-only command passes with no prompt, except the policy's own commands", () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  mkdirSync(join(root, ".crew"), { recursive: true });
+  writeFileSync(join(root, ".crew", "policy.json"), JSON.stringify({ attendedDecisions: "relay" }));
+  const ctx = hookContext({ session_id: "s", cwd: root }, testEnv());
+  const bash = (command: string, permission_mode?: string) =>
+    onPreToolUse(ctx, { tool_name: "Bash", tool_input: { command }, permission_mode });
+  for (const mode of ["default", "acceptEdits", "plan", "auto", undefined]) {
+    expect(bash("crew approve w1 spec", mode)).toEqual({});
+    expect(bash('crew skip w1 gate:lint --reason "legacy"', mode)).toEqual({});
+    expect(bash("crew decide w1 D-1 yes", mode)).toEqual({});
+    expect(bash("crew objection w1 waive O-1 --reason x", mode)).toEqual({});
+    expect(bash("crew accept w1", mode)).toEqual({});
+    expect(bash("crew profile confirm", mode)).toEqual({});
+    expect(bash("node /x/dist/crew.mjs --json approve w1 spec", mode)).toEqual({});
+    // The policy that governs signatures is itself signed by a prompt.
+    expect(decision(bash("crew policy set attendedDecisions prompt", mode))).toBe("ask");
+    expect(decision(bash("crew --json policy set unattendedDecisions count", mode))).toBe("ask");
+    expect(decision(bash("crew policy accept", mode))).toBe("ask");
+    expect(decision(bash("crew accept policy", mode))).toBe("ask");
+    // --mode still has no place with a person present.
+    expect(decision(bash(`crew approve w1 spec --mode ${mode ?? "default"}`, mode))).toBe("deny");
+  }
+  // Where no person is watching nothing changes.
+  for (const mode of ["bypassPermissions", "dontAsk"]) {
+    expect(decision(bash("crew approve w1 spec", mode))).toBe("deny");
+    expect(bash(`crew approve w1 spec --mode ${mode}`, mode)).toEqual({});
+  }
+  const headless = hookContext(
+    { session_id: "s", cwd: root },
+    { ...testEnv(), CLAUDE_CODE_SESSION_ATTENDED: "0" },
+  );
+  expect(
+    decision(
+      onPreToolUse(headless, {
+        tool_name: "Bash",
+        tool_input: { command: "crew approve w1 spec" },
+        permission_mode: "auto",
+      }),
+    ),
+  ).toBe("deny");
+  // The write rule still applies beside a relayed command.
+  expect(decision(bash("crew approve w1 spec; echo x > .crew/profile.json", "auto"))).toBe("deny");
+  // Under the default policy, policy set is asked like the other user-only commands.
+  expect(
+    decision(
+      onPreToolUse(setup().ctx, {
+        tool_name: "Bash",
+        tool_input: { command: "crew policy set attendedDecisions relay" },
+      }),
+    ),
+  ).toBe("ask");
 });
 
 test("bash: in a mode that shows no prompt, a user-only decision must name its mode to be recorded as the agent's", () => {

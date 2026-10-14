@@ -93,6 +93,7 @@ export function waiveObjection(
     at: nowIso(),
     by: decision.by,
     ...(decision.mode ? { mode: decision.mode } : {}),
+    ...(decision.relayed ? { relayed: true } : {}),
   };
   return objection;
 }

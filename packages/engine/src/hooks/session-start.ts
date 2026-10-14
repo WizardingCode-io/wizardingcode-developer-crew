@@ -48,7 +48,9 @@ export function onSessionStart(ctx: HookContext, payload: HookPayload = {}): Hoo
   const lines = [
     "WizardingCode Developer Crew is active in this repository. Work is proven by the `crew` command and the crew skill, and a turn cannot end while watched source files have unproven changes.",
     // Where every session reads it, not only in the skill: a stale note once beat rule 4 (finding 22).
-    "You run every crew command; the user never types one: a decision that is theirs (crew approve, skip, decide, accept, profile confirm) is signed by the permission prompt your command raises, in auto mode too.",
+    ctx.policy.attendedDecisions === "relay"
+      ? "You run every crew command; the user never types one: a decision that is theirs (crew approve, skip, decide, accept, profile confirm) is relayed by you from the conversation under this repository's policy (attendedDecisions: relay), so run the command once the user has said yes, with no prompt; the record says relayed by the agent."
+      : "You run every crew command; the user never types one: a decision that is theirs (crew approve, skip, decide, accept, profile confirm) is signed by the permission prompt your command raises, in auto mode too.",
   ];
   if (active?.work)
     lines.push(

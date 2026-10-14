@@ -19,15 +19,22 @@ import type {
 } from "./types.ts";
 import { isSkipped, tddDone } from "./work.ts";
 
-type Decided = { by?: DecidedBy; mode?: PermissionMode; rule?: ValidatorRule };
+type Decided = {
+  by?: DecidedBy;
+  mode?: PermissionMode;
+  rule?: ValidatorRule;
+  relayed?: boolean;
+};
 
 /**
- * "by the user", "by the agent in <mode> mode" or "by the validator (rule: <rule>)": the record says
- * who decided, never less, and never "by the user" for a decision a person did not take.
+ * "by the user", "by the user, relayed by the agent", "by the agent in <mode> mode" or "by the
+ * validator (rule: <rule>)": the record says who decided, never less, never "by the user" for a
+ * decision a person did not take, and never a prompt where the agent relayed a yes (ADR 0005).
  */
 export function decidedBy(decision: Decided): string {
   if (decision.by === "validator") return `by the validator (rule: ${decision.rule ?? "unnamed"})`;
-  return decision.by === "agent" ? `by the agent in ${decision.mode} mode` : "by the user";
+  if (decision.by === "agent") return `by the agent in ${decision.mode} mode`;
+  return decision.relayed ? "by the user, relayed by the agent" : "by the user";
 }
 
 /** What a decision not taken by a person is worth under the policy; a person's needs no note. */

@@ -374,6 +374,107 @@ test("detect --refresh never re-blesses a tampered policy; policy accept does", 
   expect((await c.run("policy", "other")).code).toBe(1);
 });
 
+test("ADR 0005: crew policy set writes the two decision keys through the engine and refuses the rest", async () => {
+  const root = makeRepo({ "package.json": JSON.stringify({ scripts: { test: "exit 0" } }) });
+  const c = io(root);
+  const paths = repoPaths(root, c.env);
+  const file = join(root, ".crew", "policy.json");
+  mkdirSync(join(root, ".crew"), { recursive: true });
+  writeFileSync(file, '{"minimumRoute":"standard"}');
+  // A hand-written policy with no hash yet is trusted; set keeps what it says and records a hash.
+  const set = await c.json("policy", "set", "attendedDecisions", "relay");
+  expect(set.code).toBe(0);
+  expect(set.data).toMatchObject({ key: "attendedDecisions", value: "relay" });
+  expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({
+    minimumRoute: "standard",
+    attendedDecisions: "relay",
+  });
+  expect(readProtectedJson(paths, file).tampered).toBe(false);
+  expect((await c.run("policy", "set", "unattendedDecisions", "count")).code).toBe(0);
+  expect(JSON.parse(readFileSync(file, "utf8")).unattendedDecisions).toBe("count");
+  expect(readProtectedJson(paths, file).tampered).toBe(false);
+  const badValue = await c.run("policy", "set", "attendedDecisions", "trust");
+  expect(badValue.code).toBe(1);
+  expect(badValue.err).toContain("prompt, relay");
+  const badKey = await c.run("policy", "set", "minimumRoute", "full");
+  expect(badKey.code).toBe(1);
+  expect(badKey.err).toContain("attendedDecisions, unattendedDecisions");
+  expect((await c.run("policy", "set", "attendedDecisions")).code).toBe(1);
+  // A hand edit after the engine wrote the file is refused until a person accepts it.
+  writeFileSync(file, '{"minimumRoute":"fast"}');
+  const tampered = await c.run("policy", "set", "attendedDecisions", "prompt");
+  expect(tampered.code).toBe(1);
+  expect(tampered.err).toContain("state changed outside the engine: .crew/policy.json");
+  expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({ minimumRoute: "fast" });
+  expect((await c.run("policy", "accept")).code).toBe(0);
+  expect((await c.run("policy", "set", "attendedDecisions", "prompt")).code).toBe(0);
+  expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({
+    minimumRoute: "fast",
+    attendedDecisions: "prompt",
+  });
+  // No --mode: the policy changes only when a person clicks.
+  const flagged = await c.run("policy", "set", "attendedDecisions", "relay", "--mode", "dontAsk");
+  expect(flagged.code).toBe(1);
+  expect(flagged.err).toContain("unknown flag --mode");
+  // With no policy file at all, set creates one.
+  const bare = io(makeRepo({ "package.json": JSON.stringify({ scripts: { test: "exit 0" } }) }));
+  expect((await bare.run("policy", "set", "attendedDecisions", "relay")).code).toBe(0);
+  expect((await bare.json("status")).code).toBe(0);
+});
+
+test("ADR 0005: under relay a decision without --mode is the user's, relayed by the agent, in the record and the output", async () => {
+  const root = makeRepo({ "package.json": JSON.stringify({ scripts: { test: "exit 0" } }) });
+  const c = io(root);
+  expect((await c.run("policy", "set", "attendedDecisions", "relay")).code).toBe(0);
+  const id = (await c.json("start", "Thing", "--answers", answers, "--criterion", "x")).data
+    .id as string;
+  const file = join(root, ".crew", "work", id, "work.json");
+  const read = () => JSON.parse(readFileSync(file, "utf8"));
+  const approved = await c.json("approve", id, "spec");
+  expect(approved.code).toBe(0);
+  expect(approved.data.message).toContain("by the user, relayed by the agent");
+  expect(read().approvals).toEqual([
+    { what: "spec", at: expect.any(String), by: "user", relayed: true },
+  ]);
+  const skipped = await c.json("skip", id, "gate:lint", "--reason", "legacy");
+  expect(skipped.data.message).toContain("by the user, relayed by the agent");
+  expect(skipped.data.message).not.toContain("counted");
+  expect(read().skips[0]).toMatchObject({ by: "user", relayed: true });
+  await c.run("decision", id, "add", "Which?");
+  const decided = await c.json("decide", id, "D-1", "this");
+  expect(decided.code).toBe(0);
+  expect(decided.data.message).toContain("by the user, relayed by the agent");
+  expect(read().decisions[0]).toMatchObject({ answer: "this", by: "user", relayed: true });
+  await c.run("objection", id, "add", "no", "--by", "critic", "--severity", "advisory");
+  const waived = await c.json("objection", id, "waive", "O-1", "--reason", "fine");
+  expect(waived.code).toBe(0);
+  expect(waived.data.message).toContain("waived by the user, relayed by the agent");
+  const ledger = JSON.parse(
+    readFileSync(join(root, ".crew", "work", id, "objections.json"), "utf8"),
+  );
+  expect(ledger.objections[0].waived).toMatchObject({ by: "user", relayed: true });
+  // Where no person is watching, nothing is relayed.
+  const agent = await c.json("approve", id, "spec", "--mode", "dontAsk");
+  expect(agent.data.message).not.toContain("relayed");
+  expect(read().approvals[1]).toEqual({
+    what: "spec",
+    at: expect.any(String),
+    by: "agent",
+    mode: "dontAsk",
+  });
+  // Under the default policy nothing is relayed either.
+  expect((await c.run("policy", "set", "attendedDecisions", "prompt")).code).toBe(0);
+  expect((await c.json("skip", id, "gate:test", "--reason", "y")).data.message).not.toContain(
+    "relayed",
+  );
+  expect(read().skips[1]).toEqual({
+    step: "gate:test",
+    reason: "y",
+    at: expect.any(String),
+    by: "user",
+  });
+});
+
 test("the command comes first, so user-only verbs cannot hide behind a leading flag", async () => {
   const root = makeRepo({ "package.json": JSON.stringify({ scripts: { test: "exit 0" } }) });
   const c = io(root);

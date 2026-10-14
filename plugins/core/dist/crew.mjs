@@ -905,8 +905,32 @@ var DEFAULT_POLICY = {
   minimumRoute: "fast",
   allowSkips: ["*"],
   artifacts: "commit",
-  unattendedDecisions: "wait"
+  unattendedDecisions: "wait",
+  attendedDecisions: "prompt"
 };
+var SETTABLE_POLICY_KEYS = {
+  attendedDecisions: ["prompt", "relay"],
+  unattendedDecisions: ["wait", "count", "validator"]
+};
+function policyPath(paths) {
+  return join9(paths.crewDir, "policy.json");
+}
+function setPolicyValue(paths, key, value) {
+  const keys = Object.keys(SETTABLE_POLICY_KEYS);
+  if (!(key in SETTABLE_POLICY_KEYS))
+    return { refused: `unknown policy key: ${key} (crew policy set writes ${keys.join(", ")})` };
+  const allowed = SETTABLE_POLICY_KEYS[key];
+  if (!allowed.includes(value))
+    return { refused: `${key} is one of ${allowed.join(", ")}, not ${value}` };
+  const read = readProtectedJson(paths, policyPath(paths));
+  if (read.tampered) {
+    return {
+      refused: "state changed outside the engine: .crew/policy.json; the user can accept it with crew policy accept"
+    };
+  }
+  writeProtectedJson(paths, policyPath(paths), { ...read.data ?? {}, [key]: value });
+  return { key, value };
+}
 function decisionCounts(policy, decision) {
   if (decision.by === "validator")
     return policy.unattendedDecisions === "validator";
@@ -925,7 +949,7 @@ function strings(value) {
   return Array.isArray(value) ? value.filter((v) => typeof v === "string") : [];
 }
 function loadPolicy(paths) {
-  const read = readProtectedJson(paths, join9(paths.crewDir, "policy.json"));
+  const read = readProtectedJson(paths, policyPath(paths));
   const raw = read.data ?? {};
   const riskPaths = {};
   const rawRisk = raw.riskPaths ?? {};
@@ -944,7 +968,8 @@ function loadPolicy(paths) {
       minimumRoute,
       allowSkips,
       artifacts: raw.artifacts === "local" ? "local" : "commit",
-      unattendedDecisions: raw.unattendedDecisions === "count" || raw.unattendedDecisions === "validator" ? raw.unattendedDecisions : "wait"
+      unattendedDecisions: raw.unattendedDecisions === "count" || raw.unattendedDecisions === "validator" ? raw.unattendedDecisions : "wait",
+      attendedDecisions: raw.attendedDecisions === "relay" ? "relay" : "prompt"
     },
     tampered: read.tampered
   };
@@ -1006,7 +1031,8 @@ function waiveObjection(ledger, id, reason, decision) {
     reason: reason.trim(),
     at: nowIso(),
     by: decision.by,
-    ...decision.mode ? { mode: decision.mode } : {}
+    ...decision.mode ? { mode: decision.mode } : {},
+    ...decision.relayed ? { relayed: true } : {}
   };
   return objection;
 }
@@ -1267,6 +1293,10 @@ function answerDecision(work, id, answer, decision) {
     found.rule = decision.rule;
   else
     delete found.rule;
+  if (decision.relayed)
+    found.relayed = true;
+  else
+    delete found.relayed;
   return found;
 }
 function unansweredDecisions(work, policy) {
@@ -1407,7 +1437,9 @@ function advancePhase(work, ctx) {
 function decidedBy(decision) {
   if (decision.by === "validator")
     return `by the validator (rule: ${decision.rule ?? "unnamed"})`;
-  return decision.by === "agent" ? `by the agent in ${decision.mode} mode` : "by the user";
+  if (decision.by === "agent")
+    return `by the agent in ${decision.mode} mode`;
+  return decision.relayed ? "by the user, relayed by the agent" : "by the user";
 }
 function countedNote(policy, decision) {
   if (!decision.by || decision.by === "user")
@@ -2144,14 +2176,15 @@ function isRedirectPart(line, i) {
 var WRITE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
 var RUNNER = String.raw`(?:[A-Za-z_][A-Za-z0-9_]*=\S*|-\S*|node|bun|bunx|npx|sh|bash|zsh|eval|exec|env|time|nohup|xargs|sudo|command)`;
 var OPTS = String.raw`(?:--[\w-]+(?:[= ]\S+)?\s+)*`;
-var USER_ONLY = new RegExp(String.raw`^[\s({]*(?:${RUNNER}\s+)*(?:\S*/)?crew(?:\.mjs)?\s+${OPTS}(?:skip|approve|accept|decide|objection\b[^;&|]*\bwaive\b|profile\s+${OPTS}confirm|policy\s+${OPTS}accept|profile\s+set\b[^;&|]*--force)\b`);
+var USER_ONLY = new RegExp(String.raw`^[\s({]*(?:${RUNNER}\s+)*(?:\S*/)?crew(?:\.mjs)?\s+${OPTS}(?:skip|approve|accept|decide|objection\b[^;&|]*\bwaive\b|profile\s+${OPTS}confirm|policy\s+${OPTS}(?:accept|set)|profile\s+set\b[^;&|]*--force)\b`);
+var POLICY_COMMAND = new RegExp(String.raw`^[\s({]*(?:${RUNNER}\s+)*(?:\S*/)?crew(?:\.mjs)?\s+${OPTS}(?:policy\b|accept\s+${OPTS}policy\b)`);
 var ENGINE_FILES = /\.crew\/(?:profile\.json|policy\.json|\.gitignore|local\b|work\/[^\s/]+\/(?:work\.json|evidence\.json|objections\.json|report\.md|logs\b))|\.wizardingcode\/crew\b/;
 var WRITE_SHAPE = /(?:^|[\s;&|("'])(?:rm|mv|cp|tee|truncate|chmod|touch|dd|install)\b|sed\s+-i|>{1,2}\|?\s*["']?\S*(?:\.crew\/|\.wizardingcode\/crew\b)/;
 var OPAQUE_REDIRECT = />{1,2}\|?\s*["']?[$`]/;
 var PROMPTLESS_MODES = new Set(["bypassPermissions", "dontAsk"]);
 var MODE_FLAG = /--mode(?:=|\s+)(\S+)/;
 var HELP_FLAG = /(?:^|\s)(?:--help|-h)(?=\s|$)/;
-function userOnlyDecision(cleaned, permissionMode, headless) {
+function userOnlyDecision(cleaned, permissionMode, headless, policy) {
   const flagged = MODE_FLAG.exec(cleaned)?.[1];
   const mode = permissionMode ?? "default";
   if (headless || PROMPTLESS_MODES.has(mode)) {
@@ -2175,6 +2208,8 @@ function userOnlyDecision(cleaned, permissionMode, headless) {
       `Crew: a person is present (${mode} mode); run the command without --mode so they are asked`
     ];
   }
+  if (policy.attendedDecisions === "relay" && !POLICY_COMMAND.test(cleaned))
+    return null;
   return ["ask", "Crew: this command records a decision that only the user can take"];
 }
 function answer(permissionDecision, reason) {
@@ -2221,7 +2256,7 @@ function onPreToolUse(ctx, payload) {
     for (const piece of simpleCommands(command)) {
       const cleaned = piece.replace(/["'\\]/g, "");
       if (USER_ONLY.test(cleaned) && !HELP_FLAG.test(cleaned)) {
-        const decided = userOnlyDecision(cleaned, payload.permission_mode, ctx.headless);
+        const decided = userOnlyDecision(cleaned, payload.permission_mode, ctx.headless, ctx.policy);
         if (decided?.[0] === "deny")
           return answer(...decided);
         asked ??= decided;
@@ -2281,7 +2316,7 @@ function onSessionStart(ctx, payload = {}) {
   }
   const lines = [
     "WizardingCode Developer Crew is active in this repository. Work is proven by the `crew` command and the crew skill, and a turn cannot end while watched source files have unproven changes.",
-    "You run every crew command; the user never types one: a decision that is theirs (crew approve, skip, decide, accept, profile confirm) is signed by the permission prompt your command raises, in auto mode too."
+    ctx.policy.attendedDecisions === "relay" ? "You run every crew command; the user never types one: a decision that is theirs (crew approve, skip, decide, accept, profile confirm) is relayed by you from the conversation under this repository's policy (attendedDecisions: relay), so run the command once the user has said yes, with no prompt; the record says relayed by the agent." : "You run every crew command; the user never types one: a decision that is theirs (crew approve, skip, decide, accept, profile confirm) is signed by the permission prompt your command raises, in auto mode too."
   ];
   if (active?.work)
     lines.push(statusLine(ctx, active.work, active.tampered).replace(/^Crew: work/, "Work in progress:"));
@@ -2649,24 +2684,24 @@ function openForChange(env, id) {
 function isOutcome(value) {
   return typeof value === "object" && value !== null && "code" in value && "text" in value;
 }
-function decisionFlag(parsed) {
+function decisionFlag(parsed, policy) {
   const mode = parsed.flags.mode;
   if (mode === undefined)
-    return { by: "user" };
+    return policy.attendedDecisions === "relay" ? { by: "user", relayed: true } : { by: "user" };
   if (!isPermissionMode(mode)) {
     return refuse(`--mode names the permission mode of a session with no person watching: ${PERMISSION_MODES.slice(0, -1).join(", ")} or ${PERMISSION_MODES.at(-1)}`);
   }
   return { by: "agent", mode };
 }
-function validatorFlag(parsed) {
+function validatorFlag(parsed, policy) {
   const rule = parsed.flags.validator;
   if (rule === undefined)
-    return decisionFlag(parsed);
+    return decisionFlag(parsed, policy);
   if (parsed.flags.mode === undefined)
     return refuse("the validator acts only where no person is watching: add --mode <mode>");
   if (!isValidatorRule(rule))
     return refuse(`unknown validator rule: ${String(rule)} (${VALIDATOR_RULES.join(", ")})`);
-  const base = decisionFlag(parsed);
+  const base = decisionFlag(parsed, policy);
   if (isOutcome(base))
     return base;
   return { by: "validator", mode: base.mode, rule };
@@ -2844,9 +2879,19 @@ async function dispatch(parsed, io) {
       return refuse("usage: crew profile set|confirm");
     }
     case "policy": {
-      if (args[0] !== "accept")
-        return refuse("usage: crew policy accept");
-      return accept(env, "policy");
+      if (args[0] === "accept")
+        return accept(env, "policy");
+      if (args[0] === "set") {
+        const [, key, value] = args;
+        if (!key || value === undefined) {
+          return refuse(`usage: crew policy set <${Object.keys(SETTABLE_POLICY_KEYS).join("|")}> <value>`);
+        }
+        const result = setPolicyValue(env.paths, key, value);
+        if ("refused" in result)
+          return refuse(result.refused);
+        return ok(`policy ${key}: ${value}`, result);
+      }
+      return refuse("usage: crew policy accept | crew policy set <key> <value>");
     }
     case "accept": {
       if (!args[0])
@@ -2969,7 +3014,7 @@ async function dispatch(parsed, io) {
         const reason = typeof parsed.flags.reason === "string" ? parsed.flags.reason.trim() : "";
         if (!reason)
           return refuse(usage);
-        const decision = decisionFlag(parsed);
+        const decision = decisionFlag(parsed, env.policy);
         if (isOutcome(decision))
           return decision;
         const result = waiveObjection(ledger, args[2], reason, decision);
@@ -3002,7 +3047,7 @@ async function dispatch(parsed, io) {
       const id = args[1];
       if (!id)
         return refuse('usage: crew decide <id> D-n "<answer>" [--mode <mode> --validator stated-default]');
-      const who = validatorFlag(parsed);
+      const who = validatorFlag(parsed, env.policy);
       if (isOutcome(who))
         return who;
       const answer2 = args.slice(2).join(" ").trim() || undefined;
@@ -3020,7 +3065,7 @@ async function dispatch(parsed, io) {
         return opened;
       if (args[1] !== "spec")
         return refuse("usage: crew approve <id> spec [--mode <mode> [--validator complete-gap-round]]");
-      const decision = validatorFlag(parsed);
+      const decision = validatorFlag(parsed, env.policy);
       if (isOutcome(decision))
         return decision;
       if (decision.by === "validator") {
@@ -3135,7 +3180,7 @@ ${outcome.record.tail}` : "";
         return refuse(`the team policy does not allow skipping ${step}`);
       if (env.config.mode === "pilot" && (step === "gate:secrets" || step === "gate:deps"))
         return refuse(`in pilot mode the ${step.slice(5)} gate cannot be skipped`);
-      const decision = decisionFlag(parsed);
+      const decision = decisionFlag(parsed, env.policy);
       if (isOutcome(decision))
         return decision;
       addSkip(opened.work, step, reason, decision);
@@ -3248,6 +3293,7 @@ var HELP = `crew ${VERSION}
   profile set <gate> "<cmd>" --force    replace a detected or confirmed command (asks the user)
   profile confirm [<gate>]              confirm proposed commands (asks the user)
   policy accept                         trust the current policy.json after a hand edit (asks the user)
+  policy set <key> <value>              attendedDecisions prompt|relay, unattendedDecisions wait|count|validator (asks the user)
   accept <id|profile|policy>            trust state changed outside the engine (asks the user)
   start "<request>" --answers <json>    create a work item from the typed answers
       [--criterion "<text>"] [--preserve "<text>"]   criteria, repeatable; preserve: existing tests stay green

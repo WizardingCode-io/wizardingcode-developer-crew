@@ -16,6 +16,8 @@ import {
   answerDecision,
   approve,
   createWork,
+  isSkipped,
+  unansweredDecisions,
 } from "../src/work.ts";
 import { makeRepo, repoPaths, testEnv } from "./helpers.ts";
 
@@ -303,6 +305,43 @@ test("SP2a: a blocking objection keeps the item unproven until resolved or waive
   expect(report).toContain(
     "- O-2 (blocking, raised by gap-round) waived by the user: soft delete chosen knowingly (",
   );
+});
+
+test("ADR 0005: a relayed decision reads by the user, relayed by the agent, everywhere, and counts as a person's", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const work = workWith(paths);
+  const relayed = { by: "user" as const, relayed: true };
+  approve(work, "spec", relayed);
+  addSkip(work, "gate:lint", "legacy", relayed);
+  addDecision(work, "Which?");
+  answerDecision(work, "D-1", "this", relayed);
+  const ledger: ObjectionLedger = { objections: [] };
+  const o1 = addObjection(ledger, "re-subscribes everyone", "fault-finder", "blocking");
+  waiveObjection(ledger, o1.id, "chosen knowingly", relayed);
+  expect(ledger.objections[0]?.waived).toMatchObject({ by: "user", relayed: true });
+  const evidence: Evidence = {
+    ...emptyEvidence(),
+    fingerprint: "f",
+    verdict: "proven",
+    unproven: [],
+  };
+  const report = renderReport(work, evidence, DEFAULT_POLICY, ledger);
+  expect(report).toContain(
+    "- Verdict: **Proven**, with 1 objection waived by the user, relayed by the agent\n",
+  );
+  expect(report).toContain("- spec approved by the user, relayed by the agent (");
+  expect(report).toContain("- `gate:lint` skipped by the user, relayed by the agent: legacy (");
+  expect(report).toContain("- D-1: Which? → this, by the user, relayed by the agent");
+  expect(report).toContain(
+    "- O-1 (blocking, raised by fault-finder) waived by the user, relayed by the agent: chosen knowingly (",
+  );
+  expect(report).not.toContain("counted");
+  // A relayed decision is a person's: it holds under every unattended setting.
+  for (const u of ["wait", "count", "validator"] as const) {
+    const policy = { ...DEFAULT_POLICY, unattendedDecisions: u };
+    expect(isSkipped(work, "gate:lint", policy)).toBe(true);
+    expect(unansweredDecisions(work, policy)).toEqual([]);
+  }
 });
 
 test("SP2a: the report names the validator's approval and whether the policy counted it", () => {

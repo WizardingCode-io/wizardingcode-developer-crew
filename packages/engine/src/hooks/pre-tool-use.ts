@@ -1,6 +1,7 @@
 import { isAbsolute, join, relative } from "node:path";
 import { isWatched } from "../fingerprint.ts";
 import { canonical, isProtectedPath } from "../paths.ts";
+import type { Policy } from "../types.ts";
 import { activeWork, isBeforeBuild } from "../work.ts";
 import { simpleCommands } from "./shell.ts";
 import type { HookContext, HookPayload, HookResponse } from "./types.ts";
@@ -18,7 +19,12 @@ const RUNNER = String.raw`(?:[A-Za-z_][A-Za-z0-9_]*=\S*|-\S*|node|bun|bunx|npx|s
 // between, since the id and the flags may come in any order (SP2a review, finding C1).
 const OPTS = String.raw`(?:--[\w-]+(?:[= ]\S+)?\s+)*`;
 const USER_ONLY = new RegExp(
-  String.raw`^[\s({]*(?:${RUNNER}\s+)*(?:\S*/)?crew(?:\.mjs)?\s+${OPTS}(?:skip|approve|accept|decide|objection\b[^;&|]*\bwaive\b|profile\s+${OPTS}confirm|policy\s+${OPTS}accept|profile\s+set\b[^;&|]*--force)\b`,
+  String.raw`^[\s({]*(?:${RUNNER}\s+)*(?:\S*/)?crew(?:\.mjs)?\s+${OPTS}(?:skip|approve|accept|decide|objection\b[^;&|]*\bwaive\b|profile\s+${OPTS}confirm|policy\s+${OPTS}(?:accept|set)|profile\s+set\b[^;&|]*--force)\b`,
+);
+// The commands that change or accept the policy: asked even where the policy relays the rest, since
+// the policy that governs signatures is itself signed by a prompt (ADR 0005).
+const POLICY_COMMAND = new RegExp(
+  String.raw`^[\s({]*(?:${RUNNER}\s+)*(?:\S*/)?crew(?:\.mjs)?\s+${OPTS}(?:policy\b|accept\s+${OPTS}policy\b)`,
 );
 const ENGINE_FILES =
   /\.crew\/(?:profile\.json|policy\.json|\.gitignore|local\b|work\/[^\s/]+\/(?:work\.json|evidence\.json|objections\.json|report\.md|logs\b))|\.wizardingcode\/crew\b/;
@@ -47,12 +53,14 @@ type Decision = ["deny" | "ask", string];
  * mode that shows no prompt) must say so with `--mode <mode>`, so the engine records the agent's
  * decision as the agent's. The flag is read from the same simple command as the crew command,
  * never from another. Null means the command may go on to the write rule and, with a person
- * present, to the prompt, which is the user's signature.
+ * present, to the prompt, which is the user's signature; or, under the policy's
+ * `attendedDecisions: relay`, to run with no prompt, the agent relaying the user's yes (ADR 0005).
  */
 function userOnlyDecision(
   cleaned: string,
   permissionMode: string | undefined,
   headless: boolean,
+  policy: Policy,
 ): Decision | null {
   const flagged = MODE_FLAG.exec(cleaned)?.[1];
   const mode = permissionMode ?? "default";
@@ -76,6 +84,7 @@ function userOnlyDecision(
       `Crew: a person is present (${mode} mode); run the command without --mode so they are asked`,
     ];
   }
+  if (policy.attendedDecisions === "relay" && !POLICY_COMMAND.test(cleaned)) return null;
   return ["ask", "Crew: this command records a decision that only the user can take"];
 }
 
@@ -130,7 +139,12 @@ export function onPreToolUse(ctx: HookContext, payload: HookPayload): HookRespon
     for (const piece of simpleCommands(command)) {
       const cleaned = piece.replace(/["'\\]/g, "");
       if (USER_ONLY.test(cleaned) && !HELP_FLAG.test(cleaned)) {
-        const decided = userOnlyDecision(cleaned, payload.permission_mode, ctx.headless);
+        const decided = userOnlyDecision(
+          cleaned,
+          payload.permission_mode,
+          ctx.headless,
+          ctx.policy,
+        );
         if (decided?.[0] === "deny") return answer(...decided);
         asked ??= decided;
       }
