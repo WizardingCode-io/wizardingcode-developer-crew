@@ -710,6 +710,9 @@ function gitTry(root, args) {
     return null;
   }
 }
+function gitShowFile(root, commit, rel) {
+  return gitTry(root, ["show", `${commit}:${rel}`]);
+}
 function gitHead(root) {
   return gitTry(root, ["rev-parse", "HEAD"])?.trim() ?? "none";
 }
@@ -1631,6 +1634,13 @@ function tddSummary(work, evidence, criterionId, kind, policy) {
     return kind === "behavior" ? "red only" : "before only";
   return "missing";
 }
+function auditStatus(status, a) {
+  const known = a.known ? `, ${a.known} known before` : "";
+  const base = a.baselined ? "" : ", base not audited";
+  if (status === "fail")
+    return `fail: ${a.fresh.length} new (${a.fresh.join(", ")})${known}${base}`;
+  return a.known ? `pass: ${a.known} known before, none new` : status;
+}
 function renderReport(work, evidence, policy, ledger) {
   const lines = [];
   lines.push(`# Report: ${work.title}`, "");
@@ -1657,7 +1667,7 @@ function renderReport(work, evidence, policy, ledger) {
   }
   lines.push("", "## Gates", "", "| Gate | Target | Status | Command | Duration | Log |", "| :- | :- | :- | :- | -: | :- |");
   for (const r of evidence.runs) {
-    const status = r.status === "skipped" || r.status === "unavailable" ? `${r.status}${r.reason ? `: ${r.reason}` : ""}` : r.status;
+    const status = r.status === "skipped" || r.status === "unavailable" ? `${r.status}${r.reason ? `: ${r.reason}` : ""}` : r.advisories ? auditStatus(r.status, r.advisories) : r.status === "fail" && r.reason ? `fail: ${r.reason}` : r.status;
     const target = r.stack ? `${r.target} (${r.stack})` : r.target;
     lines.push(`| ${r.gate} | ${target} | ${status} | ${r.command ? `\`${r.command}\`` : ""} | ${r.durationMs} ms | ${r.log ?? ""} |`);
   }
@@ -1710,8 +1720,93 @@ function renderReport(work, evidence, policy, ledger) {
 }
 
 // packages/engine/src/gates.ts
-import { accessSync, constants } from "node:fs";
+import { accessSync, constants, mkdirSync as mkdirSync3, rmSync, writeFileSync as writeFileSync2 } from "node:fs";
 import { basename as basename2, delimiter, join as join16 } from "node:path";
+
+// packages/engine/src/audit.ts
+var NAMED_ID = /\b(GHSA-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{4}|CVE-\d{4}-\d{4,}|PKSA-[0-9a-z]{4}(?:-[0-9a-z]{4}){1,2}|PYSEC-\d{4}-\d+)\b/i;
+function named(value) {
+  if (typeof value !== "string")
+    return null;
+  const id = NAMED_ID.exec(value)?.[1];
+  if (!id)
+    return null;
+  const dash = id.indexOf("-");
+  return `${id.slice(0, dash).toUpperCase()}${id.slice(dash).toLowerCase()}`;
+}
+function isObject(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function advisoryId(o) {
+  const byName = named(o.advisoryId) ?? named(o.github_advisory_id) ?? named(o.url) ?? named(o.id) ?? named(o.cve);
+  if (byName)
+    return byName;
+  const numeric = typeof o.source === "number" ? o.source : typeof o.id === "number" ? o.id : null;
+  return numeric === null ? null : `npm-${numeric}`;
+}
+function collect(value, into, skipKey) {
+  if (Array.isArray(value)) {
+    for (const item of value)
+      collect(item, into);
+    return;
+  }
+  if (!isObject(value))
+    return;
+  const id = advisoryId(value);
+  if (id) {
+    into.add(id);
+    return;
+  }
+  for (const [key, child] of Object.entries(value)) {
+    if (key === skipKey)
+      continue;
+    collect(child, into);
+  }
+}
+function abandonedOf(root) {
+  if (!isObject(root))
+    return [];
+  const list = root.abandoned;
+  if (Array.isArray(list))
+    return list.filter((v) => typeof v === "string");
+  if (isObject(list))
+    return Object.keys(list);
+  return [];
+}
+function parseJson(text) {
+  const whole = tryParse(text);
+  if (whole !== undefined)
+    return [whole];
+  const start = text.search(/[{[]/);
+  if (start >= 0) {
+    const fromBrace = tryParse(text.slice(start));
+    if (fromBrace !== undefined)
+      return [fromBrace];
+  }
+  const lines = text.split(`
+`).map((l) => l.trim()).filter((l) => l.startsWith("{")).map(tryParse).filter((v) => v !== undefined);
+  return lines.length ? lines : null;
+}
+function tryParse(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return;
+  }
+}
+function parseAudit(tool, text) {
+  const documents = parseJson(text);
+  if (!documents)
+    return { readable: false, advisories: [], abandoned: [] };
+  const ids = new Set;
+  const abandoned = [];
+  for (const doc of documents) {
+    collect(doc, ids, tool === "composer" ? "abandoned" : undefined);
+    if (tool === "composer")
+      abandoned.push(...abandonedOf(doc));
+  }
+  return { readable: true, advisories: [...ids], abandoned };
+}
 
 // packages/engine/src/run.ts
 import { spawn } from "node:child_process";
@@ -1961,12 +2056,32 @@ function onPath(binary, env) {
 var NODE_AUDIT = {
   npm: {
     binary: "npm",
-    command: "npm audit --audit-level=high",
-    lockfiles: ["package-lock.json", "npm-shrinkwrap.json"]
+    command: "npm audit --audit-level=high --json",
+    lockfiles: ["package-lock.json", "npm-shrinkwrap.json"],
+    tool: "npm",
+    manifest: "package.json"
   },
-  pnpm: { binary: "pnpm", command: "pnpm audit --audit-level=high", lockfiles: ["pnpm-lock.yaml"] },
-  yarn: { binary: "yarn", command: "yarn audit --level high", lockfiles: ["yarn.lock"] },
-  bun: { binary: "bun", command: "bun audit", lockfiles: ["bun.lock", "bun.lockb"] }
+  pnpm: {
+    binary: "pnpm",
+    command: "pnpm audit --audit-level=high --json",
+    lockfiles: ["pnpm-lock.yaml"],
+    tool: "pnpm",
+    manifest: "package.json"
+  },
+  yarn: {
+    binary: "yarn",
+    command: "yarn audit --level high --json",
+    lockfiles: ["yarn.lock"],
+    tool: "yarn",
+    manifest: "package.json"
+  },
+  bun: {
+    binary: "bun",
+    command: "bun audit --json",
+    lockfiles: ["bun.lock", "bun.lockb"],
+    tool: "bun",
+    manifest: "package.json"
+  }
 };
 var PYTHON_AUDIT = {
   uv: "uv run pip-audit",
@@ -1978,23 +2093,82 @@ function depsAuditCommand(target, root, env = process.env) {
   if (target.stack === "python") {
     if (!onPath("pip-audit", env))
       return { reason: "pip-audit not on PATH" };
-    return { command: PYTHON_AUDIT[target.packageManager] ?? PYTHON_AUDIT.pip ?? "pip-audit" };
+    const prefix = PYTHON_AUDIT[target.packageManager] ?? PYTHON_AUDIT.pip ?? "pip-audit";
+    return { command: `${prefix} --format=json`, tool: "pip-audit", files: [] };
   }
   let tool;
   if (target.stack === "node") {
     tool = NODE_AUDIT[target.packageManager];
     if (tool && target.packageManager === "yarn" && exists(join16(dir, ".yarnrc.yml")))
-      tool = { ...tool, command: "yarn npm audit --severity high" };
+      tool = { ...tool, command: "yarn npm audit --severity high --json" };
   } else if (target.stack === "php") {
-    tool = { binary: "composer", command: "composer audit", lockfiles: ["composer.lock"] };
+    tool = {
+      binary: "composer",
+      command: "composer audit --format=json --abandoned=report",
+      lockfiles: ["composer.lock"],
+      tool: "composer",
+      manifest: "composer.json"
+    };
   }
   if (!tool)
     return { reason: `no audit tool for ${target.packageManager}` };
-  if (!tool.lockfiles.some((name) => exists(join16(dir, name))))
+  const present = tool.lockfiles.filter((name) => exists(join16(dir, name)));
+  if (present.length === 0)
     return { reason: "no lockfile" };
   if (!onPath(tool.binary, env))
     return { reason: `${tool.binary} not on PATH` };
-  return { command: tool.command };
+  return { command: tool.command, tool: tool.tool, files: [tool.manifest, ...present] };
+}
+async function baselineAdvisories(paths, work, target, audit, where) {
+  if (!work.baseCommit || audit.files.length === 0)
+    return { readable: false, advisories: [] };
+  const scratch = join16(paths.crewDir, "local", "audit-base", work.id, where || "root");
+  rmSync(scratch, { recursive: true, force: true });
+  mkdirSync3(scratch, { recursive: true });
+  let lockfiles = 0;
+  for (const [index, file] of audit.files.entries()) {
+    const rel2 = target.path === "." ? file : `${target.path}/${file}`;
+    const text = gitShowFile(paths.root, work.baseCommit, rel2);
+    if (text === null)
+      continue;
+    writeFileSync2(join16(scratch, file), text);
+    if (index > 0)
+      lockfiles += 1;
+  }
+  if (lockfiles === 0)
+    return { readable: true, advisories: [] };
+  const log = join16(workDir(paths, work.id), "logs", `deps-base-${where}-${Date.now()}.txt`);
+  const result = await runCommand(audit.command, {
+    cwd: scratch,
+    timeoutMs: target.timeoutMs,
+    logPath: log
+  });
+  const report = parseAudit(audit.tool, readText(log) ?? result.tail);
+  return { readable: report.readable && !result.timedOut, advisories: report.advisories };
+}
+async function judgeAudit(run, audit, paths, work, target, where) {
+  const text = run.log && readText(join16(workDir(paths, work.id), run.log)) || run.tail;
+  const report = parseAudit(audit.tool, text);
+  if (!report.readable)
+    return { ...run, reason: "audit report unreadable; judged by exit code" };
+  const started = Date.now();
+  const baseline = await baselineAdvisories(paths, work, target, audit, where);
+  const known = baseline.readable ? report.advisories.filter((a) => baseline.advisories.includes(a)) : [];
+  const fresh = baseline.readable ? report.advisories.filter((a) => !baseline.advisories.includes(a)) : report.advisories;
+  const unbaselined = baseline.readable ? "" : "; the base commit could not be audited, so every advisory counts";
+  const reason = fresh.length ? `${fresh.length} new: ${fresh.join(", ")}${known.length ? `; ${known.length} known before` : ""}${unbaselined}` : known.length ? `${known.length} known before this item, none introduced` : undefined;
+  return {
+    ...run,
+    status: fresh.length ? "fail" : "pass",
+    durationMs: run.durationMs + (Date.now() - started),
+    ...reason ? { reason } : {},
+    advisories: {
+      current: report.advisories.length,
+      known: known.length,
+      fresh,
+      baselined: baseline.readable
+    }
+  };
 }
 function gatesForTarget(target, policy, changed) {
   const has = (gate) => !!target.gates[gate];
@@ -2073,11 +2247,13 @@ async function runOne(paths, work, profile, planned, fingerprint) {
     return { ...base, reason: "target not in profile" };
   let command;
   let source = "detected";
+  let audit = null;
   if (gate === "deps") {
-    const audit = depsAuditCommand(target, paths.root);
-    if ("reason" in audit)
-      return { ...base, reason: audit.reason };
-    command = audit.command;
+    const found = depsAuditCommand(target, paths.root);
+    if ("reason" in found)
+      return { ...base, reason: found.reason };
+    audit = found;
+    command = found.command;
   } else {
     const configured = target.gates[gate];
     if (!configured)
@@ -2093,7 +2269,7 @@ async function runOne(paths, work, profile, planned, fingerprint) {
     logPath: join16(workDir(paths, work.id), log)
   });
   const passed = result.exit === 0 && !result.timedOut;
-  return {
+  const run = {
     ...base,
     command,
     commandSource: source,
@@ -2105,6 +2281,9 @@ async function runOne(paths, work, profile, planned, fingerprint) {
     tail: result.tail,
     ...result.timedOut ? { reason: "timed out" } : {}
   };
+  if (!audit || result.timedOut)
+    return run;
+  return judgeAudit(run, audit, paths, work, target, where);
 }
 async function runGates(paths, work, profile, policy, options = {}) {
   const base = work;

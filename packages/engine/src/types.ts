@@ -275,6 +275,11 @@ export interface GateRun {
   reason?: string;
   /** The fingerprint of the code this run vouches for; a run on other code counts as not run. */
   fingerprint: string;
+  /**
+   * The dependency audit, judged against the item's base commit (ADR 0006): how many advisories the
+   * run found, how many the base already had, the new ones, and whether the base could be audited.
+   */
+  advisories?: { current: number; known: number; fresh: string[]; baselined: boolean };
 }
 
 export interface Evidence {

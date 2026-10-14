@@ -87,7 +87,11 @@ test("0.3.0: refreshProfile follows the manifests; a person's commands and targe
     source: "confirmed",
   });
   if (!dot) throw new Error("no root target");
-  expect(depsAuditCommand(dot, root, process.env)).toEqual({ command: "bun audit" });
+  expect(depsAuditCommand(dot, root, process.env)).toEqual({
+    command: "bun audit --json",
+    tool: "bun",
+    files: ["package.json", "bun.lock"],
+  });
   // Nothing changed since: nothing reported, detectedAt untouched.
   const again = refreshProfile(paths, saved as Profile);
   expect(again.changed).toEqual([]);

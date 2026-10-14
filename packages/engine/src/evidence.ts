@@ -186,6 +186,15 @@ export function tddSummary(
   return "missing";
 }
 
+/** The deps gate's status with what it judged: the new advisories, and the known ones that are the repository's standing debt (ADR 0006). */
+function auditStatus(status: GateRun["status"], a: NonNullable<GateRun["advisories"]>): string {
+  const known = a.known ? `, ${a.known} known before` : "";
+  const base = a.baselined ? "" : ", base not audited";
+  if (status === "fail")
+    return `fail: ${a.fresh.length} new (${a.fresh.join(", ")})${known}${base}`;
+  return a.known ? `pass: ${a.known} known before, none new` : status;
+}
+
 export function renderReport(
   work: WorkItem,
   evidence: Evidence,
@@ -241,7 +250,11 @@ export function renderReport(
     const status =
       r.status === "skipped" || r.status === "unavailable"
         ? `${r.status}${r.reason ? `: ${r.reason}` : ""}`
-        : r.status;
+        : r.advisories
+          ? auditStatus(r.status, r.advisories)
+          : r.status === "fail" && r.reason
+            ? `fail: ${r.reason}`
+            : r.status;
     const target = r.stack ? `${r.target} (${r.stack})` : r.target;
     lines.push(
       `| ${r.gate} | ${target} | ${status} | ${r.command ? `\`${r.command}\`` : ""} | ${r.durationMs} ms | ${r.log ?? ""} |`,

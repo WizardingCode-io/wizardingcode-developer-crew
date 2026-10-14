@@ -1,14 +1,16 @@
-import { accessSync, constants } from "node:fs";
+import { accessSync, constants, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { basename, delimiter, join } from "node:path";
+import { type AuditToolName, parseAudit } from "./audit.ts";
 import { excludedRiskPaths, riskAreasForPaths } from "./classify.ts";
 import { computeVerdict, loadEvidence, type PlannedGate, saveEvidence } from "./evidence.ts";
 import {
   changedWatchedPaths,
   computeFingerprint,
   fingerprintMethod,
+  gitShowFile,
   MAX_WATCHED_FILES,
 } from "./fingerprint.ts";
-import { exists, nowIso } from "./fs.ts";
+import { exists, nowIso, readText } from "./fs.ts";
 import { loadLedger } from "./objections.ts";
 import { type CrewPaths, workDir } from "./paths.ts";
 import { runCommand } from "./run.ts";
@@ -66,19 +68,43 @@ function onPath(binary: string, env: NodeJS.ProcessEnv): boolean {
 
 interface AuditTool {
   binary: string;
+  /** In the tool's JSON, so the advisories can be read and compared with the base commit (ADR 0006). */
   command: string;
   lockfiles: string[];
+  tool: AuditToolName;
+  /** The manifest the baseline needs beside the lockfile. */
+  manifest: string;
 }
 
 const NODE_AUDIT: Record<string, AuditTool> = {
   npm: {
     binary: "npm",
-    command: "npm audit --audit-level=high",
+    command: "npm audit --audit-level=high --json",
     lockfiles: ["package-lock.json", "npm-shrinkwrap.json"],
+    tool: "npm",
+    manifest: "package.json",
   },
-  pnpm: { binary: "pnpm", command: "pnpm audit --audit-level=high", lockfiles: ["pnpm-lock.yaml"] },
-  yarn: { binary: "yarn", command: "yarn audit --level high", lockfiles: ["yarn.lock"] },
-  bun: { binary: "bun", command: "bun audit", lockfiles: ["bun.lock", "bun.lockb"] },
+  pnpm: {
+    binary: "pnpm",
+    command: "pnpm audit --audit-level=high --json",
+    lockfiles: ["pnpm-lock.yaml"],
+    tool: "pnpm",
+    manifest: "package.json",
+  },
+  yarn: {
+    binary: "yarn",
+    command: "yarn audit --level high --json",
+    lockfiles: ["yarn.lock"],
+    tool: "yarn",
+    manifest: "package.json",
+  },
+  bun: {
+    binary: "bun",
+    command: "bun audit --json",
+    lockfiles: ["bun.lock", "bun.lockb"],
+    tool: "bun",
+    manifest: "package.json",
+  },
 };
 
 // The same runner prefix the Python detector uses for the other gates.
@@ -88,7 +114,13 @@ const PYTHON_AUDIT: Record<string, string> = {
   pip: "python -m pip_audit",
 };
 
-export type AuditCommand = { command: string } | { reason: string };
+/** An audit that can run: its command, its tool, and the manifest and lockfile a baseline at the base commit needs (none for pip-audit, which audits an environment). */
+export interface ResolvedAudit {
+  command: string;
+  tool: AuditToolName;
+  files: string[];
+}
+export type AuditCommand = ResolvedAudit | { reason: string };
 
 /** The audit for a target, or why it cannot run: an audit without a lockfile or a tool proves nothing. */
 export function depsAuditCommand(
@@ -99,21 +131,108 @@ export function depsAuditCommand(
   const dir = join(root, target.path);
   if (target.stack === "python") {
     if (!onPath("pip-audit", env)) return { reason: "pip-audit not on PATH" };
-    return { command: PYTHON_AUDIT[target.packageManager] ?? PYTHON_AUDIT.pip ?? "pip-audit" };
+    const prefix = PYTHON_AUDIT[target.packageManager] ?? PYTHON_AUDIT.pip ?? "pip-audit";
+    return { command: `${prefix} --format=json`, tool: "pip-audit", files: [] };
   }
   let tool: AuditTool | undefined;
   if (target.stack === "node") {
     tool = NODE_AUDIT[target.packageManager];
     // Yarn Berry dropped `yarn audit`; its audit lives under `yarn npm`.
     if (tool && target.packageManager === "yarn" && exists(join(dir, ".yarnrc.yml")))
-      tool = { ...tool, command: "yarn npm audit --severity high" };
+      tool = { ...tool, command: "yarn npm audit --severity high --json" };
   } else if (target.stack === "php") {
-    tool = { binary: "composer", command: "composer audit", lockfiles: ["composer.lock"] };
+    // An abandoned package is reported, never a failure (finding 23).
+    tool = {
+      binary: "composer",
+      command: "composer audit --format=json --abandoned=report",
+      lockfiles: ["composer.lock"],
+      tool: "composer",
+      manifest: "composer.json",
+    };
   }
   if (!tool) return { reason: `no audit tool for ${target.packageManager}` };
-  if (!tool.lockfiles.some((name) => exists(join(dir, name)))) return { reason: "no lockfile" };
+  const present = tool.lockfiles.filter((name) => exists(join(dir, name)));
+  if (present.length === 0) return { reason: "no lockfile" };
   if (!onPath(tool.binary, env)) return { reason: `${tool.binary} not on PATH` };
-  return { command: tool.command };
+  return { command: tool.command, tool: tool.tool, files: [tool.manifest, ...present] };
+}
+
+/**
+ * The advisories the item's base commit already had (ADR 0006): the manifest and the lockfile at
+ * `baseCommit` are audited in a scratch folder under `.crew/local/`. No lockfile at the base means
+ * nothing was locked, so every advisory is the item's; a base that cannot be read or audited is
+ * unreadable, and the caller counts every advisory and says why.
+ */
+async function baselineAdvisories(
+  paths: CrewPaths,
+  work: WorkItem,
+  target: Target,
+  audit: ResolvedAudit,
+  where: string,
+): Promise<{ readable: boolean; advisories: string[] }> {
+  if (!work.baseCommit || audit.files.length === 0) return { readable: false, advisories: [] };
+  const scratch = join(paths.crewDir, "local", "audit-base", work.id, where || "root");
+  rmSync(scratch, { recursive: true, force: true });
+  mkdirSync(scratch, { recursive: true });
+  let lockfiles = 0;
+  for (const [index, file] of audit.files.entries()) {
+    const rel = target.path === "." ? file : `${target.path}/${file}`;
+    const text = gitShowFile(paths.root, work.baseCommit, rel);
+    if (text === null) continue;
+    writeFileSync(join(scratch, file), text);
+    if (index > 0) lockfiles += 1;
+  }
+  if (lockfiles === 0) return { readable: true, advisories: [] };
+  const log = join(workDir(paths, work.id), "logs", `deps-base-${where}-${Date.now()}.txt`);
+  const result = await runCommand(audit.command, {
+    cwd: scratch,
+    timeoutMs: target.timeoutMs,
+    logPath: log,
+  });
+  const report = parseAudit(audit.tool, readText(log) ?? result.tail);
+  return { readable: report.readable && !result.timedOut, advisories: report.advisories };
+}
+
+/** The deps gate judged against the base commit: new advisories fail, known ones are named, an unreadable report falls back to the exit code. */
+async function judgeAudit(
+  run: GateRun,
+  audit: ResolvedAudit,
+  paths: CrewPaths,
+  work: WorkItem,
+  target: Target,
+  where: string,
+): Promise<GateRun> {
+  const text = (run.log && readText(join(workDir(paths, work.id), run.log))) || run.tail;
+  const report = parseAudit(audit.tool, text);
+  if (!report.readable) return { ...run, reason: "audit report unreadable; judged by exit code" };
+  const started = Date.now();
+  const baseline = await baselineAdvisories(paths, work, target, audit, where);
+  const known = baseline.readable
+    ? report.advisories.filter((a) => baseline.advisories.includes(a))
+    : [];
+  const fresh = baseline.readable
+    ? report.advisories.filter((a) => !baseline.advisories.includes(a))
+    : report.advisories;
+  const unbaselined = baseline.readable
+    ? ""
+    : "; the base commit could not be audited, so every advisory counts";
+  const reason = fresh.length
+    ? `${fresh.length} new: ${fresh.join(", ")}${known.length ? `; ${known.length} known before` : ""}${unbaselined}`
+    : known.length
+      ? `${known.length} known before this item, none introduced`
+      : undefined;
+  return {
+    ...run,
+    status: fresh.length ? "fail" : "pass",
+    durationMs: run.durationMs + (Date.now() - started),
+    ...(reason ? { reason } : {}),
+    advisories: {
+      current: report.advisories.length,
+      known: known.length,
+      fresh,
+      baselined: baseline.readable,
+    },
+  };
 }
 
 /** The gate table from the spec, section 12, the same on every route since ADR 0002. Secrets is planned separately, once per repository. */
@@ -222,10 +341,12 @@ async function runOne(
   if (!target) return { ...base, reason: "target not in profile" };
   let command: string | null;
   let source: GateRun["commandSource"] = "detected";
+  let audit: ResolvedAudit | null = null;
   if (gate === "deps") {
-    const audit = depsAuditCommand(target, paths.root);
-    if ("reason" in audit) return { ...base, reason: audit.reason };
-    command = audit.command;
+    const found = depsAuditCommand(target, paths.root);
+    if ("reason" in found) return { ...base, reason: found.reason };
+    audit = found;
+    command = found.command;
   } else {
     const configured = target.gates[gate];
     if (!configured) return { ...base, reason: "no command" };
@@ -241,7 +362,7 @@ async function runOne(
     logPath: join(workDir(paths, work.id), log),
   });
   const passed = result.exit === 0 && !result.timedOut;
-  return {
+  const run: GateRun = {
     ...base,
     command,
     commandSource: source,
@@ -253,6 +374,9 @@ async function runOne(
     tail: result.tail,
     ...(result.timedOut ? { reason: "timed out" } : {}),
   };
+  // The audit is judged against the item's base commit, not by its exit code alone (ADR 0006).
+  if (!audit || result.timedOut) return run;
+  return judgeAudit(run, audit, paths, work, target, where);
 }
 
 export interface GateOutcome {

@@ -41,6 +41,11 @@ function gitTry(root: string, args: string[]): string | null {
   }
 }
 
+/** A file's content at a commit, or null when the commit or the path is not there. */
+export function gitShowFile(root: string, commit: string, rel: string): string | null {
+  return gitTry(root, ["show", `${commit}:${rel}`]);
+}
+
 export function gitHead(root: string): string {
   return gitTry(root, ["rev-parse", "HEAD"])?.trim() ?? "none";
 }

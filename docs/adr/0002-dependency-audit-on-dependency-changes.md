@@ -1,6 +1,6 @@
 # ADR 0002 — The dependency audit runs when the change touches a dependency
 
-Date: 2026-10-14 · Status: accepted.
+Date: 2026-10-14 · Status: accepted. Amended the same day by [ADR 0006](0006-gates-judge-the-item.md) (0.3.0): the baseline this decision postponed exists; the audit is judged against the item's base commit, so only advisories the item introduced fail the gate, and the known ones are counted on every report.
 
 ## Context
 

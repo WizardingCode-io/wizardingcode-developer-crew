@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { chmodSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { parseAudit } from "../src/audit.ts";
 import { emptyEvidence, renderReport, saveEvidence } from "../src/evidence.ts";
 import {
   assess,
@@ -75,32 +76,43 @@ test("I9: the dependency audit says why it cannot run: no lockfile, no binary", 
   const dir = tempDir();
   expect(depsAuditCommand(npm, dir, pathWith("npm"))).toEqual({ reason: "no lockfile" });
   write(dir, "npm-shrinkwrap.json", "{}");
+  // The audit runs in JSON so its advisories can be read, and names the files a baseline needs (0.3.0).
   expect(depsAuditCommand(npm, dir, pathWith("npm"))).toEqual({
-    command: "npm audit --audit-level=high",
+    command: "npm audit --audit-level=high --json",
+    tool: "npm",
+    files: ["package.json", "npm-shrinkwrap.json"],
   });
   expect(depsAuditCommand(npm, dir, pathWith())).toEqual({ reason: "npm not on PATH" });
   const nested: Target = { ...target, path: "apps/web" };
   write(dir, "apps/web/pnpm-lock.yaml", "");
   expect(depsAuditCommand(nested, dir, pathWith("pnpm"))).toEqual({
-    command: "pnpm audit --audit-level=high",
+    command: "pnpm audit --audit-level=high --json",
+    tool: "pnpm",
+    files: ["package.json", "pnpm-lock.yaml"],
   });
   const php: Target = { ...target, stack: "php", packageManager: "composer" };
   const app = tempDir();
   expect(depsAuditCommand(php, app, pathWith("composer"))).toEqual({ reason: "no lockfile" });
   write(app, "composer.lock", "{}");
-  expect(depsAuditCommand(php, app, pathWith("composer"))).toEqual({ command: "composer audit" });
+  expect(depsAuditCommand(php, app, pathWith("composer"))).toEqual({
+    command: "composer audit --format=json --abandoned=report",
+    tool: "composer",
+    files: ["composer.json", "composer.lock"],
+  });
 });
 
 test("I9: Yarn Berry audits with yarn npm audit; classic Yarn with yarn audit", () => {
   const yarn: Target = { ...target, packageManager: "yarn" };
   const dir = tempDir();
   write(dir, "yarn.lock", "");
-  expect(depsAuditCommand(yarn, dir, pathWith("yarn"))).toEqual({
-    command: "yarn audit --level high",
+  expect(depsAuditCommand(yarn, dir, pathWith("yarn"))).toMatchObject({
+    command: "yarn audit --level high --json",
+    tool: "yarn",
   });
   write(dir, ".yarnrc.yml", "nodeLinker: node-modules\n");
-  expect(depsAuditCommand(yarn, dir, pathWith("yarn"))).toEqual({
-    command: "yarn npm audit --severity high",
+  expect(depsAuditCommand(yarn, dir, pathWith("yarn"))).toMatchObject({
+    command: "yarn npm audit --severity high --json",
+    tool: "yarn",
   });
 });
 
@@ -114,14 +126,17 @@ test("I9: Python audits through the detector's prefix, only when pip-audit exist
   expect(depsAuditCommand(python("uv"), dir, pathWith())).toEqual({
     reason: "pip-audit not on PATH",
   });
-  expect(depsAuditCommand(python("uv"), dir, pathWith("pip-audit"))).toEqual({
-    command: "uv run pip-audit",
+  expect(depsAuditCommand(python("uv"), dir, pathWith("pip-audit"))).toMatchObject({
+    command: "uv run pip-audit --format=json",
+    tool: "pip-audit",
   });
-  expect(depsAuditCommand(python("poetry"), dir, pathWith("pip-audit"))).toEqual({
-    command: "poetry run pip-audit",
+  expect(depsAuditCommand(python("poetry"), dir, pathWith("pip-audit"))).toMatchObject({
+    command: "poetry run pip-audit --format=json",
+    tool: "pip-audit",
   });
-  expect(depsAuditCommand(python("pip"), dir, pathWith("pip-audit"))).toEqual({
-    command: "python -m pip_audit",
+  expect(depsAuditCommand(python("pip"), dir, pathWith("pip-audit"))).toMatchObject({
+    command: "python -m pip_audit --format=json",
+    tool: "pip-audit",
   });
 });
 
@@ -143,6 +158,191 @@ test("I9: standard plans no audit it cannot run; full records it unavailable wit
     status: "unavailable",
     reason: "no lockfile",
   });
+});
+
+test("0.3.0: parseAudit reads the advisories of each tool's JSON and says when it cannot", () => {
+  const ghsa = "GHSA-p6mc-m468-83gw";
+  const npm7 = JSON.stringify({
+    vulnerabilities: {
+      lodash: {
+        severity: "high",
+        via: [{ source: 1523, url: `https://github.com/advisories/${ghsa}`, title: "x" }, "other"],
+      },
+      other: { via: ["lodash"] },
+    },
+  });
+  expect(parseAudit("npm", npm7)).toEqual({ readable: true, advisories: [ghsa], abandoned: [] });
+  // npm 6 and pnpm: advisories by id, the GitHub id when it is there.
+  const pnpm = JSON.stringify({
+    advisories: {
+      "1523": { id: 1523, url: "https://npmjs.com/advisories/1523", github_advisory_id: ghsa },
+    },
+  });
+  expect(parseAudit("pnpm", pnpm).advisories).toEqual([ghsa]);
+  const numeric = JSON.stringify({
+    advisories: { "77": { id: 77, url: "https://npmjs.com/advisories/77" } },
+  });
+  expect(parseAudit("pnpm", numeric).advisories).toEqual(["npm-77"]);
+  // yarn classic: one JSON object per line.
+  const yarn = `{"type":"auditAdvisory","data":{"advisory":{"id":1523,"url":"https://github.com/advisories/${ghsa}"}}}\n{"type":"auditSummary","data":{"vulnerabilities":{"high":1}}}\n`;
+  expect(parseAudit("yarn", yarn).advisories).toEqual([ghsa]);
+  // bun: the registry's bulk format, advisories by package.
+  const bun = JSON.stringify({
+    lodash: [{ id: 1523, url: `https://github.com/advisories/${ghsa}`, severity: "high" }],
+  });
+  expect(parseAudit("bun", bun).advisories).toEqual([ghsa]);
+  // composer: advisories by package, abandoned packages apart.
+  const composer = JSON.stringify({
+    advisories: { "a/b": [{ advisoryId: "PKSA-abcd-1234", cve: "CVE-2024-1", title: "t" }] },
+    abandoned: { "symplify/x": null },
+  });
+  expect(parseAudit("composer", composer)).toEqual({
+    readable: true,
+    advisories: ["PKSA-abcd-1234"],
+    abandoned: ["symplify/x"],
+  });
+  expect(
+    parseAudit("composer", JSON.stringify({ advisories: [], abandoned: { "x/y": "z/w" } })),
+  ).toEqual({ readable: true, advisories: [], abandoned: ["x/y"] });
+  // pip-audit.
+  const pip = JSON.stringify({
+    dependencies: [
+      { name: "requests", version: "2.0", vulns: [{ id: "PYSEC-2023-74", fix_versions: [] }] },
+      { name: "ok", version: "1", vulns: [] },
+    ],
+  });
+  expect(parseAudit("pip-audit", pip).advisories).toEqual(["PYSEC-2023-74"]);
+  // Not the tool's JSON: unreadable. A warning line before the JSON is tolerated.
+  expect(parseAudit("npm", "npm ERR! network\n")).toEqual({
+    readable: false,
+    advisories: [],
+    abandoned: [],
+  });
+  expect(parseAudit("composer", `Deprecated: x\n${composer}`).advisories).toEqual([
+    "PKSA-abcd-1234",
+  ]);
+});
+
+test("0.3.0: the deps gate fails only on advisories absent from the base commit, reports an abandoned package, and falls back to the exit code", async () => {
+  const bin = tempDir("bin-");
+  // A fake npm whose audit report is the lockfile itself, so the base and the tree can differ.
+  write(
+    bin,
+    "npm",
+    "#!/bin/sh\ncat package-lock.json\ngrep -q GHSA package-lock.json && exit 1\nexit 0\n",
+  );
+  write(
+    bin,
+    "composer",
+    `#!/bin/sh\necho '{"advisories":[],"abandoned":{"symplify/x":null}}'\nexit 2\n`,
+  );
+  write(bin, "pnpm", "#!/bin/sh\necho garbage\nexit 1\n");
+  for (const name of ["npm", "composer", "pnpm"]) chmodSync(join(bin, name), 0o755);
+  const savedPath = process.env.PATH;
+  process.env.PATH = `${bin}:${savedPath}`;
+  try {
+    const old = "GHSA-old0-0000-0000";
+    const fresh = "GHSA-new0-0000-0000";
+    const known = JSON.stringify({
+      vulnerabilities: { a: { via: [{ source: 1, url: `https://github.com/advisories/${old}` }] } },
+    });
+    const root = makeRepo({
+      "package.json": JSON.stringify({ name: "x", scripts: { test: "exit 0" } }),
+      "package-lock.json": known,
+      "src/a.ts": "x",
+    });
+    const paths = repoPaths(root, testEnv());
+    const { profile } = ensureProfile(paths);
+    const work = createWork(paths, "chore");
+    work.route = "full";
+    // The item touches the lockfile and introduces nothing: the known advisory is debt, not failure.
+    write(root, "package-lock.json", `${known}\n`);
+    let outcome = await runGates(paths, work, profile, DEFAULT_POLICY, { only: ["deps"] });
+    let run = outcome.evidence.runs.find((r) => r.gate === "deps");
+    expect(run).toMatchObject({
+      status: "pass",
+      command: "npm audit --audit-level=high --json",
+      advisories: { current: 1, known: 1, fresh: [], baselined: true },
+    });
+    expect(run?.reason).toBe("1 known before this item, none introduced");
+    expect(outcome.unproven).not.toContain("gate deps failing");
+    // A new advisory fails the gate and is named.
+    const more = JSON.stringify({
+      vulnerabilities: {
+        a: { via: [{ source: 1, url: `https://github.com/advisories/${old}` }] },
+        b: { via: [{ source: 2, url: `https://github.com/advisories/${fresh}` }] },
+      },
+    });
+    write(root, "package-lock.json", more);
+    outcome = await runGates(paths, work, profile, DEFAULT_POLICY, { only: ["deps"] });
+    run = outcome.evidence.runs.find((r) => r.gate === "deps");
+    expect(run).toMatchObject({
+      status: "fail",
+      advisories: { current: 2, known: 1, fresh: [fresh], baselined: true },
+    });
+    expect(run?.reason).toBe(`1 new: ${fresh}; 1 known before`);
+    expect(outcome.unproven).toContain("gate deps failing");
+    const report = renderReport(work, outcome.evidence, DEFAULT_POLICY);
+    expect(report).toContain(`| deps | . | fail: 1 new (${fresh}), 1 known before |`);
+    // No lockfile at the base commit: the baseline is empty and every advisory is new.
+    const young = makeRepo({
+      "package.json": JSON.stringify({ name: "y", scripts: { test: "exit 0" } }),
+      "src/a.ts": "x",
+    });
+    const ypaths = repoPaths(young, testEnv());
+    const yprofile = ensureProfile(ypaths).profile;
+    const ywork = createWork(ypaths, "chore");
+    ywork.route = "full";
+    write(young, "package-lock.json", known);
+    const first = (
+      await runGates(ypaths, ywork, yprofile, DEFAULT_POLICY, { only: ["deps"] })
+    ).evidence.runs.find((r) => r.gate === "deps");
+    expect(first).toMatchObject({
+      status: "fail",
+      advisories: { current: 1, known: 0, fresh: [old], baselined: true },
+    });
+    // composer: an abandoned package is reported in the log and never fails the gate.
+    const php = makeRepo({
+      "composer.json": JSON.stringify({ scripts: { test: "true" } }),
+      "composer.lock": "{}",
+      "app/a.php": "<?php",
+    });
+    const ppaths = repoPaths(php, testEnv());
+    const pprofile = ensureProfile(ppaths).profile;
+    const pwork = createWork(ppaths, "chore");
+    pwork.route = "full";
+    write(php, "composer.lock", "{ }");
+    const audit = (
+      await runGates(ppaths, pwork, pprofile, DEFAULT_POLICY, { only: ["deps"] })
+    ).evidence.runs.find((r) => r.gate === "deps");
+    expect(audit).toMatchObject({
+      status: "pass",
+      command: "composer audit --format=json --abandoned=report",
+      advisories: { current: 0, known: 0, fresh: [], baselined: true },
+    });
+    expect(audit?.tail).toContain("symplify/x");
+    // A report that is not the tool's JSON: judged by the exit code, and the record says so.
+    const bad = makeRepo({
+      "package.json": JSON.stringify({ name: "z", scripts: { test: "exit 0" } }),
+      "pnpm-lock.yaml": "",
+      "src/a.ts": "x",
+    });
+    const bpaths = repoPaths(bad, testEnv());
+    const bprofile = ensureProfile(bpaths).profile;
+    const bwork = createWork(bpaths, "chore");
+    bwork.route = "full";
+    write(bad, "pnpm-lock.yaml", "x");
+    const unreadable = (
+      await runGates(bpaths, bwork, bprofile, DEFAULT_POLICY, { only: ["deps"] })
+    ).evidence.runs.find((r) => r.gate === "deps");
+    expect(unreadable).toMatchObject({
+      status: "fail",
+      reason: "audit report unreadable; judged by exit code",
+    });
+    expect(unreadable?.advisories).toBeUndefined();
+  } finally {
+    process.env.PATH = savedPath;
+  }
 });
 
 test("finding 10: on every route the audit is planned only when the change touches a dependency", () => {
