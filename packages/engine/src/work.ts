@@ -111,8 +111,10 @@ export function activeWork(paths: CrewPaths): { work: WorkItem | null; tampered:
 }
 
 /**
- * The checkout's items still before deliver, in id order. An item in deliver, proven or not, is no
- * longer worked on, so it is not a neighbour another session could be editing beside (finding 9).
+ * The checkout's items still being worked on, in id order: before deliver, and with no gate run
+ * that proved them. An item in deliver, or proven and left in its gate phase, is no longer edited,
+ * so it is not a neighbour another session could be working beside (finding 9). The verdict read
+ * is the one recorded at the item's last gate run, so the check costs a file read per item.
  */
 export function openItems(paths: CrewPaths, except?: string): WorkItem[] {
   let ids: string[] = [];
@@ -125,7 +127,10 @@ export function openItems(paths: CrewPaths, except?: string): WorkItem[] {
   for (const id of ids) {
     if (id === except || !existsSync(workJson(paths, id))) continue;
     const { work } = loadWork(paths, id);
-    if (work && work.phase !== "deliver") open.push(work);
+    if (!work || work.phase === "deliver") continue;
+    const evidence = readProtectedJson<Evidence>(paths, join(workDir(paths, id), "evidence.json"));
+    if (evidence.data?.verdict === "proven") continue;
+    open.push(work);
   }
   return open;
 }

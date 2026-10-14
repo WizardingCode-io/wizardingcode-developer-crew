@@ -1053,8 +1053,12 @@ function openItems(paths, except) {
     if (id === except || !existsSync2(workJson(paths, id)))
       continue;
     const { work } = loadWork(paths, id);
-    if (work && work.phase !== "deliver")
-      open.push(work);
+    if (!work || work.phase === "deliver")
+      continue;
+    const evidence = readProtectedJson(paths, join11(workDir(paths, id), "evidence.json"));
+    if (evidence.data?.verdict === "proven")
+      continue;
+    open.push(work);
   }
   return open;
 }
@@ -2713,7 +2717,7 @@ ${outcome.record.tail}` : "";
       });
       for (const target of ["gate", "deliver"]) {
         if (nextPhaseOf(opened.work) !== target)
-          break;
+          continue;
         if (!advancePhase(opened.work, guardContext(env, opened.work, opened.tampered)).ok)
           break;
       }

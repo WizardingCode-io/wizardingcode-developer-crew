@@ -667,9 +667,11 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         tampered: env.tampered || opened.tampered,
       });
       // A gate run is the work entering its gate phase, and its delivery when it proves the work;
-      // the guards still decide, so a missing record or document keeps the phase where it is.
+      // the guards still decide, so a missing record or document keeps the phase where it is. An
+      // item already in gate (the usual case after a build gate rewrote a watched file, finding 18)
+      // is delivered by the run that proves it, so a phase that is not the next one is passed over.
       for (const target of ["gate", "deliver"] as const) {
-        if (nextPhaseOf(opened.work) !== target) break;
+        if (nextPhaseOf(opened.work) !== target) continue;
         if (!advancePhase(opened.work, guardContext(env, opened.work, opened.tampered)).ok) break;
       }
       saveWork(env.paths, opened.work);

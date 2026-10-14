@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { join } from "node:path";
 import { type CliIo, main } from "../src/cli.ts";
 import { loadProfile } from "../src/profile.ts";
-import { readProtectedJson } from "../src/store.ts";
+import { readProtectedJson, writeProtectedJson } from "../src/store.ts";
 import { git, makeRepo, repoPaths, tempDir, testEnv, write } from "./helpers.ts";
 
 function io(cwd: string, env = testEnv(), stdin = "") {
@@ -746,4 +746,55 @@ test("start records no shared checkout without a neighbour or without a change (
   const after = await c.json("start", "After", "--answers", answers, "--criterion", "c");
   expect((after.data.shared as { with: string[] }).with).toEqual([aloneId]);
   expect((after.data.shared as { paths: string[] }).paths).toEqual(["src/a.ts"]);
+});
+
+test("a proven item is not an open neighbour, whatever its phase; an unproven one in gate is", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const c = io(root);
+  const paths = repoPaths(root, c.env);
+  // Proven, then put back in its gate phase as items proven before 0.1.7 were left.
+  const proven = (await c.json("start", "Proven", "--answers", answers, "--criterion", "a")).data
+    .id as string;
+  write(root, "src/a.ts", "proven's work");
+  expect((await c.run("tdd", "red", proven, "AC-1", "--", "exit 1")).code).toBe(0);
+  expect((await c.run("tdd", "green", proven, "AC-1", "--", "exit 0")).code).toBe(0);
+  expect((await c.json("gate", "run", proven)).data.verdict).toBe("proven");
+  const file = join(root, ".crew", "work", proven, "work.json");
+  const record = readProtectedJson<{ phase: string }>(paths, file).data;
+  writeProtectedJson(paths, file, { ...record, phase: "gate" });
+  // Unproven and in gate: a gate run that proved nothing leaves it there, still being worked on.
+  const open = (await c.json("start", "Open", "--answers", answers, "--criterion", "b")).data
+    .id as string;
+  expect((await c.run("tdd", "red", open, "AC-1", "--", "exit 1")).code).toBe(0);
+  expect((await c.run("tdd", "green", open, "AC-1", "--", "exit 0")).code).toBe(0);
+  expect((await c.json("gate", "run", open, "--only", "test")).data.verdict).toBe("unproven");
+  expect((await c.json("status")).data.phase).toBe("gate");
+  write(root, "src/a.ts", "open's half-written work");
+  const next = await c.json("start", "Next", "--answers", answers, "--criterion", "c");
+  expect((next.data.shared as { with: string[] }).with).toEqual([open]);
+});
+
+test("a gate run that proves an item already in the gate phase delivers it", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const c = io(root);
+  const id = (await c.json("start", "Twice", "--answers", answers, "--criterion", "a")).data
+    .id as string;
+  write(root, "src/a.ts", "y");
+  expect((await c.run("tdd", "red", id, "AC-1", "--", "exit 1")).code).toBe(0);
+  expect((await c.run("tdd", "green", id, "AC-1", "--", "exit 0")).code).toBe(0);
+  // A partial run proves nothing and moves the item from build to gate.
+  const partial = await c.json("gate", "run", id, "--only", "secrets");
+  expect(partial.data.verdict).toBe("unproven");
+  expect((await c.json("status")).data.phase).toBe("gate");
+  // A second partial run leaves it there; the proving run delivers it.
+  expect((await c.json("gate", "run", id, "--only", "secrets")).data.verdict).toBe("unproven");
+  expect((await c.json("status")).data.phase).toBe("gate");
+  expect((await c.json("gate", "run", id)).data.verdict).toBe("proven");
+  expect((await c.json("status")).data.phase).toBe("deliver");
 });
