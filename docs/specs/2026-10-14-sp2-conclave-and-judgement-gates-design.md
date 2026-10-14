@@ -1,6 +1,6 @@
 # SP2: Conclave and judgement gates (design)
 
-> **Status:** design, awaiting its plan. Written on 2026-10-14, the day the [real-use phase](../real-use/README.md) closed; the [closing summary](../real-use/2026-10-14-summary.md) is absorbed in sections 4, 15 and 18. Nothing here is implemented.
+> **Status:** the engine half (SP2a: the conclave phase and its guard, the gap round's decisions, the objection ledger, the observed criterion kind, the validator under its two rules) is implemented by the [SP2a plan](../plans/2026-10-14-sp2a-conclave-in-the-engine.md) and shipped in 0.2.0 on 2026-10-14; the roles as plugin agents, the checklists, the judgement gates, the mod's panel (SP2b) and the evals and hardening (SP2c) await their plans. Written on 2026-10-14, the day the [real-use phase](../real-use/README.md) closed; the [closing summary](../real-use/2026-10-14-summary.md) is absorbed in sections 4, 15 and 18. [ADR 0005](../adr/0005-attended-decisions-by-relay.md) (attended decisions by relay) was decided alongside and is not part of this design.
 > **Parent:** [Vision](../vision.md) §6, §7, §15. **Subproject:** 2 of 6. **Depends on:** SP1 ([design](2026-10-06-sp1-engine-and-base-method-design.md), released as 0.1.x).
 
 ## 1. Summary
