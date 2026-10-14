@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { exists, readJson } from "../fs.ts";
 import type { GateName } from "../types.ts";
+import { hasTestFiles, testScripts } from "./scripts.ts";
 import type { DetectedTarget, Detector } from "./types.ts";
 
 interface PackageJson {
@@ -18,9 +19,10 @@ function workspaceGlobs(pkg: PackageJson): string[] {
     .map((glob) => glob.replace(/^\.\//, "").replace(/\/$/, ""));
 }
 
+// `test:*` scripts are read by the convention in scripts.ts, so only the plain names sit here.
 const SCRIPT_CANDIDATES: Record<Exclude<GateName, "secrets" | "deps">, string[]> = {
   build: ["build"],
-  test: ["test", "test:unit", "unit"],
+  test: ["test", "unit"],
   lint: ["lint", "lint:check", "eslint", "biome"],
   typecheck: ["typecheck", "type-check", "types", "tsc"],
 };
@@ -68,6 +70,18 @@ export const nodeDetector: Detector = {
       // `npm init` leaves a test script that only prints an error; it is not a test runner.
       if (gate === "test" && /no test specified/.test(scripts[name] ?? "")) continue;
       gates[gate] = `${manager} run ${name}`;
+    }
+    // The team's `test:*` convention (finding 23): the check forms win for lint and typecheck, and
+    // without a `test` script the remaining `test:*` scripts compose the test gate; a bun project
+    // with test files and no script at all runs `bun test`.
+    const convention = testScripts(scripts);
+    if (convention.lint) gates.lint = `${manager} run ${convention.lint}`;
+    if (convention.types) gates.typecheck = `${manager} run ${convention.types}`;
+    if (!gates.test) {
+      if (convention.rest.length)
+        gates.test = convention.rest.map((n) => `${manager} run ${n}`).join(" && ");
+      else if (manager === "bun" && (exists(join(dir, "bunfig.toml")) || hasTestFiles(dir)))
+        gates.test = "bun test";
     }
     if (!gates.typecheck && exists(join(dir, "tsconfig.json"))) {
       gates.typecheck = TSC_BY_MANAGER[manager];

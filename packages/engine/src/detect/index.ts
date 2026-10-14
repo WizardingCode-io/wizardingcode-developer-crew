@@ -83,7 +83,10 @@ export function detectTargets(root: string): Target[] {
   return targets;
 }
 
-/** Fresh detection never discards what a person proposed or confirmed. */
+/**
+ * Fresh detection never discards what a person proposed or confirmed: their commands stay on a
+ * re-detected target, and a target no detector finds (a Makefile folder set by hand) stays whole.
+ */
 export function mergeProfile(previous: Profile | null, detected: Target[]): Profile {
   const targets = detected.map((t) => ({ ...t, gates: { ...t.gates } }));
   if (previous) {
@@ -94,6 +97,11 @@ export function mergeProfile(previous: Profile | null, detected: Target[]): Prof
       for (const [gate, command] of Object.entries(old.gates) as [GateName, GateCommand][]) {
         if (command.source !== "detected") target.gates[gate] = command;
       }
+    }
+    for (const old of previous.targets) {
+      const found = targets.some((t) => t.path === old.path && t.stack === old.stack);
+      const theirs = Object.values(old.gates).some((g) => g.source !== "detected");
+      if (!found && theirs) targets.push({ ...old, gates: { ...old.gates } });
     }
   }
   return {
@@ -106,6 +114,39 @@ export function mergeProfile(previous: Profile | null, detected: Target[]): Prof
 
 export function detectProfile(root: string, previous: Profile | null = null): Profile {
   return mergeProfile(previous, detectTargets(root));
+}
+
+/**
+ * What a re-detection changed, one line each ("test (.): bun run test", "packageManager (.): bun"),
+ * so the gate run and the session say what the profile picked up (finding 23). The watch list and
+ * `detectedAt` are not changes.
+ */
+export function profileChanges(previous: Profile, next: Profile): string[] {
+  const lines: string[] = [];
+  const same = (a: Target, b: Target) => a.path === b.path && a.stack === b.stack;
+  for (const target of next.targets) {
+    const old = previous.targets.find((t) => same(t, target));
+    if (!old) {
+      const gates = Object.entries(target.gates)
+        .map(([g, c]) => `${g}=${c.command}`)
+        .join(", ");
+      lines.push(`target (${target.path}, ${target.stack}): ${gates || "no gates"}`);
+      continue;
+    }
+    if (old.packageManager !== target.packageManager)
+      lines.push(`packageManager (${target.path}): ${target.packageManager}`);
+    for (const [gate, command] of Object.entries(target.gates) as [GateName, GateCommand][]) {
+      const before = old.gates[gate];
+      if (before?.command !== command.command || before.source !== command.source)
+        lines.push(`${gate} (${target.path}): ${command.command}`);
+    }
+    for (const gate of Object.keys(old.gates) as GateName[])
+      if (!target.gates[gate]) lines.push(`${gate} (${target.path}): removed`);
+  }
+  for (const old of previous.targets)
+    if (!next.targets.some((t) => same(t, old)))
+      lines.push(`target (${old.path}, ${old.stack}): removed`);
+  return lines;
 }
 
 export interface MissingCommand {

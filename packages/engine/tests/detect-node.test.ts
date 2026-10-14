@@ -55,6 +55,59 @@ test("bun projects run scripts through bun run", () => {
   expect(nodeDetector.detect(dir)?.gates.test).toBe("bun run test");
 });
 
+test("0.3.0: node test:* scripts: test:lint is the lint gate over a fixing lint, test:types the typecheck gate, and bun test is detected without a test script", () => {
+  const dir = tempDir();
+  write(
+    dir,
+    "package.json",
+    JSON.stringify({
+      scripts: {
+        lint: "vp lint --fix",
+        "test:lint": "vp lint",
+        "test:types": "vue-tsc --noEmit",
+        test: "vitest run",
+        "test:watch": "vitest",
+      },
+    }),
+  );
+  write(dir, "bun.lock", "");
+  expect(nodeDetector.detect(dir)?.gates).toEqual({
+    lint: "bun run test:lint",
+    typecheck: "bun run test:types",
+    test: "bun run test",
+  });
+  // No test script, bun and a bunfig.toml: bun test.
+  const bun = tempDir();
+  write(bun, "package.json", JSON.stringify({ scripts: { build: "vp build" } }));
+  write(bun, "bun.lock", "");
+  write(bun, "bunfig.toml", "[test]\n");
+  expect(nodeDetector.detect(bun)?.gates.test).toBe("bun test");
+  // No test script and nothing that says bun test: no test gate, as before.
+  const none = tempDir();
+  write(none, "package.json", JSON.stringify({ scripts: { build: "vp build" } }));
+  write(none, "bun.lock", "");
+  expect(nodeDetector.detect(none)?.gates.test).toBeUndefined();
+  // Without a test script the other test:* scripts compose the test gate; watch, ui, e2e stay out.
+  const composed = tempDir();
+  write(
+    composed,
+    "package.json",
+    JSON.stringify({
+      scripts: {
+        "test:unit": "vitest run",
+        "test:integration": "vitest run --dir tests/integration",
+        "test:e2e": "playwright test",
+        "test:ui": "vitest --ui",
+        "test:watch": "vitest",
+      },
+    }),
+  );
+  write(composed, "package-lock.json", "");
+  expect(nodeDetector.detect(composed)?.gates.test).toBe(
+    "npm run test:unit && npm run test:integration",
+  );
+});
+
 test("finding 13: the packageManager field wins; several lockfiles without it make the commands proposed", () => {
   const declared = tempDir();
   write(

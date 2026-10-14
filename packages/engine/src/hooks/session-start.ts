@@ -5,7 +5,7 @@ import {
 } from "../detect/index.ts";
 import { changedWatchedPaths, computeFingerprint } from "../fingerprint.ts";
 import { assess } from "../gates.ts";
-import { saveProfile } from "../profile.ts";
+import { refreshProfile, saveProfile } from "../profile.ts";
 import { ensureCrewDir, loadState, saveState, sessionState } from "../state.ts";
 import { activeWork } from "../work.ts";
 import { statusLine } from "./prompt.ts";
@@ -23,6 +23,10 @@ export function onSessionStart(ctx: HookContext, payload: HookPayload = {}): Hoo
     ctx.profile.watch.exclude = [...DEFAULT_WATCH_EXCLUDE];
     saveProfile(ctx.paths, ctx.profile);
   }
+  // The profile follows the manifests: a script or a lockfile added since the last detection is
+  // picked up here and at every gate run, never by hand (finding 23).
+  const refreshed = refreshProfile(ctx.paths, ctx.profile, ctx.tampered);
+  ctx.profile = refreshed.profile;
   const state = loadState(ctx.paths);
   const active = activeWork(ctx.paths);
   // A resume or a compaction continues the same session: its baseline still says where it began.
@@ -60,6 +64,7 @@ export function onSessionStart(ctx: HookContext, payload: HookPayload = {}): Hoo
     lines.push(
       "No work item is active. A code change starts by answering the crew skill's nine typed questions, then crew start \"<request>\" --answers '<json>'.",
     );
+  if (refreshed.changed.length) lines.push(`profile refreshed: ${refreshed.changed.join("; ")}.`);
   const missing = missingTestCommands(ctx.profile);
   if (missing.length) {
     lines.push(

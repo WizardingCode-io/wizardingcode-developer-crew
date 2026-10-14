@@ -19,7 +19,7 @@ const RUNNER = String.raw`(?:[A-Za-z_][A-Za-z0-9_]*=\S*|-\S*|node|bun|bunx|npx|s
 // between, since the id and the flags may come in any order (SP2a review, finding C1).
 const OPTS = String.raw`(?:--[\w-]+(?:[= ]\S+)?\s+)*`;
 const USER_ONLY = new RegExp(
-  String.raw`^[\s({]*(?:${RUNNER}\s+)*(?:\S*/)?crew(?:\.mjs)?\s+${OPTS}(?:skip|approve|accept|decide|objection\b[^;&|]*\bwaive\b|profile\s+${OPTS}confirm|policy\s+${OPTS}(?:accept|set)|profile\s+set\b[^;&|]*--force)\b`,
+  String.raw`^[\s({]*(?:${RUNNER}\s+)*(?:\S*/)?crew(?:\.mjs)?\s+${OPTS}(?:skip|approve|accept|decide|objection\b[^;&|]*\bwaive\b|profile\s+${OPTS}(?:confirm|set)|policy\s+${OPTS}(?:accept|set))\b`,
 );
 // The commands that change or accept the policy: asked even where the policy relays the rest, since
 // the policy that governs signatures is itself signed by a prompt (ADR 0005).

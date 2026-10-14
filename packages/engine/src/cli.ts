@@ -26,7 +26,7 @@ import {
 } from "./objections.ts";
 import { type CrewPaths, resolvePaths, userDirOf, workDir } from "./paths.ts";
 import { loadPolicy, SETTABLE_POLICY_KEYS, setPolicyValue, skipAllowed } from "./policy.ts";
-import { ensureProfile, loadProfile, saveProfile } from "./profile.ts";
+import { ensureProfile, loadProfile, refreshProfile, saveProfile } from "./profile.ts";
 import { ensureCrewDir } from "./state.ts";
 import { integrityOf, recordIntegrity, writeProtectedText } from "./store.ts";
 import { recordTdd, type TddStep } from "./tdd.ts";
@@ -493,22 +493,20 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         }
         const where = stack === undefined ? targetPath : `${targetPath} (${stack})`;
         const current = target.gates[gate as GateName];
-        // A detected or confirmed command is the project's own; replacing it is the user's call.
-        if (current && current.source !== "proposed" && !parsed.flags.force)
+        // One step, one decision (0.3.0): the command is the user's and confirmed as it is set. A
+        // command a person already confirmed is replaced only on purpose.
+        if (current?.source === "confirmed" && !parsed.flags.force)
           return refuse(
-            `${gate} for ${where} already has a ${current.source} command (${current.command}); replacing it needs the user: crew profile set ${gate} "<cmd>" --force`,
+            `${gate} for ${where} already has a confirmed command (${current.command}); replacing it needs --force: crew profile set ${gate} "<cmd>" --force`,
           );
-        target.gates[gate as GateName] = { command: cmd, source: "proposed" };
+        target.gates[gate as GateName] = { command: cmd, source: "confirmed" };
         saveProfile(env.paths, env.profile);
-        return ok(
-          `proposed ${gate} for ${where}: ${cmd} (unconfirmed until crew profile confirm)`,
-          {
-            target: targetPath,
-            ...(stack ? { stack } : {}),
-            gate,
-            command: cmd,
-          },
-        );
+        return ok(`${gate} for ${where} set and confirmed: ${cmd}`, {
+          target: targetPath,
+          ...(stack ? { stack } : {}),
+          gate,
+          command: cmd,
+        });
       }
       if (sub === "confirm") {
         if (gate !== undefined && !GATE_NAMES.includes(gate as GateName))
@@ -835,6 +833,10 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           : undefined;
       const unknown = only?.find((g) => !GATE_NAMES.includes(g as GateName));
       if (unknown !== undefined) return refuse(`unknown gate: ${unknown}`);
+      // The profile follows the manifests before the gates are planned: a script or a lockfile the
+      // work added is picked up here, with no detect --refresh and no profile set (finding 23).
+      const refreshed = refreshProfile(env.paths, env.profile, env.tampered);
+      env.profile = refreshed.profile;
       const outcome = await runGates(env.paths, opened.work, env.profile, env.policy, {
         only: only as GateName[] | undefined,
         tampered: env.tampered || opened.tampered,
@@ -864,10 +866,14 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         : "";
       // The summary is the result either way; the exit code says whether the work is proven, so a
       // command chain stops at "Not proven" instead of going on to commit (finding 18).
+      const picked = refreshed.changed.length
+        ? `profile refreshed: ${refreshed.changed.join("; ")}\n`
+        : "";
       return {
         code: outcome.verdict === "proven" ? 0 : 1,
         stdout: true,
         text:
+          picked +
           raised +
           gateSummary(opened.work, outcome.verdict, outcome.unproven, outcome.evidence.runs),
         data: {
@@ -876,6 +882,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           runs: outcome.evidence.runs,
           raised: outcome.raised,
           route: opened.work.route,
+          refreshed: refreshed.changed,
         },
       };
     }
@@ -1024,9 +1031,9 @@ const STACKS: readonly Stack[] = ["node", "php", "python", "other"];
 
 const HELP = `crew ${VERSION}
   detect [--refresh]                    build or refresh the project profile
-  profile set <gate> "<cmd>" [--target p] [--stack s]  propose a gate command (unconfirmed)
-  profile set <gate> "<cmd>" --force    replace a detected or confirmed command (asks the user)
-  profile confirm [<gate>]              confirm proposed commands (asks the user)
+  profile set <gate> "<cmd>" [--target p] [--stack s]  set a gate command, confirmed in one step (asks the user)
+  profile set <gate> "<cmd>" --force    replace a command a person already confirmed (asks the user)
+  profile confirm [<gate>]              confirm commands the detector only guessed (asks the user)
   policy accept                         trust the current policy.json after a hand edit (asks the user)
   policy set <key> <value>              attendedDecisions prompt|relay, unattendedDecisions wait|count|validator (asks the user)
   accept <id|profile|policy>            trust state changed outside the engine (asks the user)

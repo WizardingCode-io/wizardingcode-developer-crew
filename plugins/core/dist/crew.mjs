@@ -1,6 +1,6 @@
 // packages/engine/src/cli.ts
 import { existsSync as existsSync3 } from "node:fs";
-import { join as join19, resolve as resolve2 } from "node:path";
+import { join as join20, resolve as resolve2 } from "node:path";
 
 // packages/engine/src/glob.ts
 var SPECIAL = /[.+^${}()|[\]\\]/g;
@@ -339,8 +339,8 @@ function setConfigValue(config, key, value) {
 }
 
 // packages/engine/src/detect/index.ts
-import { readdirSync, statSync } from "node:fs";
-import { join as join6, relative } from "node:path";
+import { readdirSync as readdirSync2, statSync as statSync2 } from "node:fs";
+import { join as join7, relative } from "node:path";
 
 // packages/engine/src/skip-dirs.ts
 var SKIP_DIRS = new Set([
@@ -359,14 +359,53 @@ var SKIP_DIRS = new Set([
 ]);
 
 // packages/engine/src/detect/node.ts
+import { join as join4 } from "node:path";
+
+// packages/engine/src/detect/scripts.ts
+import { readdirSync, statSync } from "node:fs";
 import { join as join3 } from "node:path";
+var NEVER_A_GATE = /^test:(watch|ui|dev|debug|e2e|browser|visual)(?:[:-]|$)/;
+function testScripts(scripts) {
+  const names = Object.keys(scripts).filter((n) => n.startsWith("test:"));
+  const lint = names.find((n) => n === "test:lint");
+  const types = names.find((n) => n === "test:types" || n === "test:typecheck");
+  const rest = names.filter((n) => n !== lint && n !== types && !NEVER_A_GATE.test(n));
+  return { ...lint ? { lint } : {}, ...types ? { types } : {}, rest };
+}
+var TEST_FILE = /\.(test|spec)\.[cm]?[jt]sx?$/;
+function hasTestFiles(dir, depth = 0) {
+  let names;
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return false;
+  }
+  for (const name of names) {
+    if (name.startsWith(".") || SKIP_DIRS.has(name))
+      continue;
+    const path = join3(dir, name);
+    let isDir = false;
+    try {
+      isDir = statSync(path).isDirectory();
+    } catch {
+      continue;
+    }
+    if (!isDir && TEST_FILE.test(name))
+      return true;
+    if (isDir && depth < 2 && hasTestFiles(path, depth + 1))
+      return true;
+  }
+  return false;
+}
+
+// packages/engine/src/detect/node.ts
 function workspaceGlobs(pkg) {
   const raw = Array.isArray(pkg.workspaces) ? pkg.workspaces : pkg.workspaces?.packages;
   return (raw ?? []).filter((glob) => typeof glob === "string").map((glob) => glob.replace(/^\.\//, "").replace(/\/$/, ""));
 }
 var SCRIPT_CANDIDATES = {
   build: ["build"],
-  test: ["test", "test:unit", "unit"],
+  test: ["test", "unit"],
   lint: ["lint", "lint:check", "eslint", "biome"],
   typecheck: ["typecheck", "type-check", "types", "tsc"]
 };
@@ -387,13 +426,13 @@ function packageManager(dir, pkg) {
   const declared = typeof pkg.packageManager === "string" ? pkg.packageManager.split("@")[0] : "";
   if (declared && MANAGERS.includes(declared))
     return { manager: declared, sure: true };
-  const present = LOCKFILES.filter(([, files]) => files.some((f) => exists(join3(dir, f)))).map(([manager]) => manager);
+  const present = LOCKFILES.filter(([, files]) => files.some((f) => exists(join4(dir, f)))).map(([manager]) => manager);
   return { manager: present[0] ?? "npm", sure: present.length <= 1 };
 }
 var nodeDetector = {
   stack: "node",
   detect(dir) {
-    const pkg = readJson(join3(dir, "package.json"));
+    const pkg = readJson(join4(dir, "package.json"));
     if (!pkg)
       return null;
     const { manager, sure } = packageManager(dir, pkg);
@@ -407,7 +446,18 @@ var nodeDetector = {
         continue;
       gates[gate] = `${manager} run ${name}`;
     }
-    if (!gates.typecheck && exists(join3(dir, "tsconfig.json"))) {
+    const convention = testScripts(scripts);
+    if (convention.lint)
+      gates.lint = `${manager} run ${convention.lint}`;
+    if (convention.types)
+      gates.typecheck = `${manager} run ${convention.types}`;
+    if (!gates.test) {
+      if (convention.rest.length)
+        gates.test = convention.rest.map((n) => `${manager} run ${n}`).join(" && ");
+      else if (manager === "bun" && (exists(join4(dir, "bunfig.toml")) || hasTestFiles(dir)))
+        gates.test = "bun test";
+    }
+    if (!gates.typecheck && exists(join4(dir, "tsconfig.json"))) {
       gates.typecheck = TSC_BY_MANAGER[manager];
     }
     const workspaces = workspaceGlobs(pkg);
@@ -422,30 +472,38 @@ var nodeDetector = {
 };
 
 // packages/engine/src/detect/php.ts
-import { join as join4 } from "node:path";
+import { join as join5 } from "node:path";
 var phpDetector = {
   stack: "php",
   detect(dir) {
-    const composer = readJson(join4(dir, "composer.json"));
+    const composer = readJson(join5(dir, "composer.json"));
     if (!composer)
       return null;
     const scripts = composer.scripts ?? {};
-    const installed = (tool) => exists(join4(dir, "vendor", "bin", tool));
+    const installed = (tool) => exists(join5(dir, "vendor", "bin", tool));
+    const run = (name) => `composer run ${name}`;
+    const convention = testScripts(scripts);
     const gates = {};
+    const runner = installed("pest") ? "vendor/bin/pest" : installed("phpunit") ? "vendor/bin/phpunit" : undefined;
     if ("test" in scripts)
-      gates.test = "composer run test";
-    else if (installed("pest"))
-      gates.test = "vendor/bin/pest";
-    else if (installed("phpunit"))
-      gates.test = "vendor/bin/phpunit";
-    if ("lint" in scripts)
-      gates.lint = "composer run lint";
+      gates.test = run("test");
+    else {
+      const parts = [...convention.rest.map(run), ...runner ? [runner] : []];
+      if (parts.length)
+        gates.test = parts.join(" && ");
+    }
+    if (convention.lint)
+      gates.lint = run(convention.lint);
+    else if ("lint" in scripts)
+      gates.lint = run("lint");
     else if (installed("pint"))
       gates.lint = "vendor/bin/pint --test";
-    if ("analyse" in scripts)
-      gates.typecheck = "composer run analyse";
+    if (convention.types)
+      gates.typecheck = run(convention.types);
+    else if ("analyse" in scripts)
+      gates.typecheck = run("analyse");
     else if ("analyze" in scripts)
-      gates.typecheck = "composer run analyze";
+      gates.typecheck = run("analyze");
     else if (installed("phpstan"))
       gates.typecheck = "vendor/bin/phpstan analyse --no-progress";
     return { stack: "php", packageManager: "composer", gates };
@@ -453,7 +511,7 @@ var phpDetector = {
 };
 
 // packages/engine/src/detect/python.ts
-import { join as join5 } from "node:path";
+import { join as join6 } from "node:path";
 var PREFIX = {
   uv: "uv run ",
   poetry: "poetry run ",
@@ -462,17 +520,17 @@ var PREFIX = {
 var pythonDetector = {
   stack: "python",
   detect(dir) {
-    const pyproject = readText(join5(dir, "pyproject.toml"));
-    if (pyproject === null && !exists(join5(dir, "requirements.txt")))
+    const pyproject = readText(join6(dir, "pyproject.toml"));
+    if (pyproject === null && !exists(join6(dir, "requirements.txt")))
       return null;
-    const manager = exists(join5(dir, "uv.lock")) ? "uv" : exists(join5(dir, "poetry.lock")) ? "poetry" : "pip";
+    const manager = exists(join6(dir, "uv.lock")) ? "uv" : exists(join6(dir, "poetry.lock")) ? "poetry" : "pip";
     const prefix = PREFIX[manager] ?? "";
     const text = pyproject ?? "";
     const gates = {};
-    const hasPytest = /\[tool\.pytest/.test(text) || exists(join5(dir, "pytest.ini")) || exists(join5(dir, "conftest.py")) || exists(join5(dir, "tests"));
+    const hasPytest = /\[tool\.pytest/.test(text) || exists(join6(dir, "pytest.ini")) || exists(join6(dir, "conftest.py")) || exists(join6(dir, "tests"));
     if (hasPytest)
       gates.test = `${prefix}pytest`;
-    if (/\[tool\.ruff/.test(text) || exists(join5(dir, "ruff.toml"))) {
+    if (/\[tool\.ruff/.test(text) || exists(join6(dir, "ruff.toml"))) {
       gates.lint = `${prefix}ruff check .`;
     }
     if (/\[tool\.mypy/.test(text))
@@ -504,16 +562,16 @@ function* folders(root, depth = 0) {
     return;
   let names;
   try {
-    names = readdirSync(root).sort();
+    names = readdirSync2(root).sort();
   } catch {
     return;
   }
   for (const name of names) {
     if (name.startsWith(".") || SKIP_DIRS.has(name))
       continue;
-    const path = join6(root, name);
+    const path = join7(root, name);
     try {
-      if (!statSync(path).isDirectory())
+      if (!statSync2(path).isDirectory())
         continue;
     } catch {
       continue;
@@ -570,6 +628,12 @@ function mergeProfile(previous, detected) {
           target.gates[gate] = command;
       }
     }
+    for (const old of previous.targets) {
+      const found = targets.some((t) => t.path === old.path && t.stack === old.stack);
+      const theirs = Object.values(old.gates).some((g) => g.source !== "detected");
+      if (!found && theirs)
+        targets.push({ ...old, gates: { ...old.gates } });
+    }
   }
   return {
     version: 1,
@@ -580,6 +644,32 @@ function mergeProfile(previous, detected) {
 }
 function detectProfile(root, previous = null) {
   return mergeProfile(previous, detectTargets(root));
+}
+function profileChanges(previous, next) {
+  const lines = [];
+  const same = (a, b) => a.path === b.path && a.stack === b.stack;
+  for (const target of next.targets) {
+    const old = previous.targets.find((t) => same(t, target));
+    if (!old) {
+      const gates = Object.entries(target.gates).map(([g, c]) => `${g}=${c.command}`).join(", ");
+      lines.push(`target (${target.path}, ${target.stack}): ${gates || "no gates"}`);
+      continue;
+    }
+    if (old.packageManager !== target.packageManager)
+      lines.push(`packageManager (${target.path}): ${target.packageManager}`);
+    for (const [gate, command] of Object.entries(target.gates)) {
+      const before = old.gates[gate];
+      if (before?.command !== command.command || before.source !== command.source)
+        lines.push(`${gate} (${target.path}): ${command.command}`);
+    }
+    for (const gate of Object.keys(old.gates))
+      if (!target.gates[gate])
+        lines.push(`${gate} (${target.path}): removed`);
+  }
+  for (const old of previous.targets)
+    if (!next.targets.some((t) => same(t, old)))
+      lines.push(`target (${old.path}, ${old.stack}): removed`);
+  return lines;
 }
 function missingTestCommands(profile) {
   if (profile.targets.length === 0)
@@ -592,17 +682,17 @@ function missingTestCommands(profile) {
 }
 
 // packages/engine/src/evidence.ts
-import { join as join13 } from "node:path";
+import { join as join14 } from "node:path";
 
 // packages/engine/src/fingerprint.ts
 import { execFileSync } from "node:child_process";
-import { readdirSync as readdirSync2, readFileSync as readFileSync2 } from "node:fs";
-import { join as join7 } from "node:path";
+import { readdirSync as readdirSync3, readFileSync as readFileSync2 } from "node:fs";
+import { join as join8 } from "node:path";
 var MAX_WATCHED_FILES = 20000;
 var UNAVAILABLE = "unavailable";
 var WALK_PREFIX = "walk:";
 function isGitRepo(root) {
-  return exists(join7(root, ".git"));
+  return exists(join8(root, ".git"));
 }
 function gitOut(root, args) {
   return execFileSync("git", args, {
@@ -668,7 +758,7 @@ function allWatchedFiles(root, profile, maxFiles = MAX_WATCHED_FILES) {
   const walk = (dir, rel) => {
     let entries;
     try {
-      entries = readdirSync2(dir, { withFileTypes: true });
+      entries = readdirSync3(dir, { withFileTypes: true });
     } catch {
       return true;
     }
@@ -677,7 +767,7 @@ function allWatchedFiles(root, profile, maxFiles = MAX_WATCHED_FILES) {
         continue;
       const path = rel ? `${rel}/${entry.name}` : entry.name;
       if (entry.isDirectory()) {
-        if (!walk(join7(dir, entry.name), path))
+        if (!walk(join8(dir, entry.name), path))
           return false;
       } else if (entry.isFile()) {
         if (++seen > maxFiles)
@@ -700,16 +790,16 @@ function hashFile(abs) {
 function hashPaths(root, paths) {
   const hashes = {};
   for (const path of paths)
-    hashes[path] = hashFile(join7(root, path));
+    hashes[path] = hashFile(join8(root, path));
   return hashes;
 }
 function ownChanges(root, paths, base) {
   const files = base?.baseFiles;
   if (!files)
     return paths;
-  const own = new Set(paths.filter((path) => files[path] === undefined || hashFile(join7(root, path)) !== files[path]));
+  const own = new Set(paths.filter((path) => files[path] === undefined || hashFile(join8(root, path)) !== files[path]));
   for (const [path, hash] of Object.entries(files)) {
-    if (!paths.includes(path) && hashFile(join7(root, path)) !== hash)
+    if (!paths.includes(path) && hashFile(join8(root, path)) !== hash)
       own.add(path);
   }
   return [...own].sort();
@@ -735,7 +825,7 @@ function computeFingerprint(root, profile, base, maxFiles = MAX_WATCHED_FILES, m
       const parts2 = [`base:${commit ?? gitHead(root)}`];
       const watched = changed.filter((p) => isWatched(p, profile));
       for (const path of ownChanges(root, watched, base)) {
-        parts2.push(`${path}:${hashFile(join7(root, path))}`);
+        parts2.push(`${path}:${hashFile(join8(root, path))}`);
       }
       return `sha256:${sha256(parts2.join(`
 `))}`;
@@ -744,13 +834,13 @@ function computeFingerprint(root, profile, base, maxFiles = MAX_WATCHED_FILES, m
   const files = allWatchedFiles(root, profile, maxFiles);
   if (files === null)
     return UNAVAILABLE;
-  const parts = files.map((path) => `${path}:${hashFile(join7(root, path))}`);
+  const parts = files.map((path) => `${path}:${hashFile(join8(root, path))}`);
   return `${WALK_PREFIX}${sha256(parts.join(`
 `))}`;
 }
 
 // packages/engine/src/objections.ts
-import { join as join10 } from "node:path";
+import { join as join11 } from "node:path";
 
 // packages/engine/src/criteria.ts
 function tddDone(record, kind) {
@@ -766,14 +856,14 @@ function tddDone(record, kind) {
 // packages/engine/src/paths.ts
 import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename, dirname as dirname2, join as join8, relative as relative2, resolve, sep } from "node:path";
+import { basename, dirname as dirname2, join as join9, relative as relative2, resolve, sep } from "node:path";
 function canonical(path) {
   const abs = resolve(path);
   const tail = [];
   let dir = abs;
   for (;; ) {
     try {
-      return join8(realpathSync(dir), ...tail);
+      return join9(realpathSync(dir), ...tail);
     } catch {
       const parent = dirname2(dir);
       if (parent === dir)
@@ -787,17 +877,17 @@ function findRoot(cwd) {
   const start = canonical(cwd);
   let dir = start;
   for (;; ) {
-    if (exists(join8(dir, ".git")))
+    if (exists(join9(dir, ".git")))
       return dir;
     const parent = dirname2(dir);
     if (parent === dir)
       break;
     dir = parent;
   }
-  return exists(join8(start, ".crew")) ? start : null;
+  return exists(join9(start, ".crew")) ? start : null;
 }
 function userDirOf(env = process.env) {
-  return join8(env.WIZARDINGCODE_HOME ?? join8(homedir(), ".wizardingcode"), "crew");
+  return join9(env.WIZARDINGCODE_HOME ?? join9(homedir(), ".wizardingcode"), "crew");
 }
 function resolvePaths(cwd, env = process.env) {
   const root = findRoot(cwd);
@@ -807,15 +897,15 @@ function resolvePaths(cwd, env = process.env) {
   const repoId = sha256(root).slice(0, 16);
   return {
     root,
-    crewDir: join8(root, ".crew"),
-    localDir: join8(root, ".crew", "local"),
+    crewDir: join9(root, ".crew"),
+    localDir: join9(root, ".crew", "local"),
     userDir,
-    integrityFile: join8(userDir, "integrity", `${repoId}.json`),
+    integrityFile: join9(userDir, "integrity", `${repoId}.json`),
     repoId
   };
 }
 function workDir(paths, id) {
-  return join8(paths.crewDir, "work", id);
+  return join9(paths.crewDir, "work", id);
 }
 var PROTECTED_TOP = new Set([".crew/profile.json", ".crew/policy.json", ".crew/.gitignore"]);
 var PROTECTED_IN_WORK = new Set(["work.json", "evidence.json", "report.md", "objections.json"]);
@@ -838,7 +928,7 @@ function isProtectedPath(paths, absPath) {
 }
 
 // packages/engine/src/policy.ts
-import { join as join9 } from "node:path";
+import { join as join10 } from "node:path";
 
 // packages/engine/src/store.ts
 import { relative as relative3 } from "node:path";
@@ -913,7 +1003,7 @@ var SETTABLE_POLICY_KEYS = {
   unattendedDecisions: ["wait", "count", "validator"]
 };
 function policyPath(paths) {
-  return join9(paths.crewDir, "policy.json");
+  return join10(paths.crewDir, "policy.json");
 }
 function setPolicyValue(paths, key, value) {
   const keys = Object.keys(SETTABLE_POLICY_KEYS);
@@ -981,7 +1071,7 @@ function skipAllowed(policy, step) {
 
 // packages/engine/src/objections.ts
 function ledgerPath(paths, id) {
-  return join10(workDir(paths, id), "objections.json");
+  return join11(workDir(paths, id), "objections.json");
 }
 function emptyLedger() {
   return { objections: [] };
@@ -1051,13 +1141,13 @@ function blockingObjections(ledger, work, evidence, policy, statuses) {
 }
 
 // packages/engine/src/work.ts
-import { existsSync as existsSync2, readdirSync as readdirSync3 } from "node:fs";
-import { join as join12 } from "node:path";
+import { existsSync as existsSync2, readdirSync as readdirSync4 } from "node:fs";
+import { join as join13 } from "node:path";
 
 // packages/engine/src/state.ts
-import { join as join11 } from "node:path";
+import { join as join12 } from "node:path";
 function statePath(paths) {
-  return join11(paths.localDir, "state.json");
+  return join12(paths.localDir, "state.json");
 }
 function loadState(paths) {
   const raw = readJson(statePath(paths)) ?? {};
@@ -1082,7 +1172,7 @@ function ensureCrewDir(paths, policy) {
 work/*/logs/
 ${policy.artifacts === "local" ? `work/
 ` : ""}`;
-  const file = join11(paths.crewDir, ".gitignore");
+  const file = join12(paths.crewDir, ".gitignore");
   if (readText(file) !== wanted)
     writeProtectedText(paths, file, wanted);
 }
@@ -1114,13 +1204,13 @@ function slug(text) {
   return text.toLowerCase().normalize("NFKD").replace(/[^\w\s-]/g, "").trim().replace(/[\s_]+/g, "-").replace(/-+/g, "-");
 }
 function workJson(paths, id) {
-  return join12(workDir(paths, id), "work.json");
+  return join13(workDir(paths, id), "work.json");
 }
 function newWorkId(paths, title) {
   const date = nowIso().slice(0, 10);
   let existing = 0;
   try {
-    existing = readdirSync3(join12(paths.crewDir, "work")).filter((n) => n.startsWith(date)).length;
+    existing = readdirSync4(join13(paths.crewDir, "work")).filter((n) => n.startsWith(date)).length;
   } catch {
     existing = 0;
   }
@@ -1150,7 +1240,7 @@ function createWork(paths, input, baseFiles) {
     updatedAt: at
   };
   writeProtectedJson(paths, workJson(paths, work.id), work);
-  writeText(join12(workDir(paths, work.id), "brief.md"), `# Brief
+  writeText(join13(workDir(paths, work.id), "brief.md"), `# Brief
 
 ## Request
 
@@ -1178,7 +1268,7 @@ function activeWork(paths) {
 function openItems(paths, except) {
   let ids = [];
   try {
-    ids = readdirSync3(join12(paths.crewDir, "work")).sort();
+    ids = readdirSync4(join13(paths.crewDir, "work")).sort();
   } catch {
     return [];
   }
@@ -1189,7 +1279,7 @@ function openItems(paths, except) {
     const { work } = loadWork(paths, id);
     if (!work || work.phase === "deliver")
       continue;
-    const evidence = readProtectedJson(paths, join12(workDir(paths, id), "evidence.json"));
+    const evidence = readProtectedJson(paths, join13(workDir(paths, id), "evidence.json"));
     if (evidence.data?.verdict === "proven")
       continue;
     open.push(work);
@@ -1458,7 +1548,7 @@ function emptyEvidence() {
   };
 }
 function evidencePath(paths, id) {
-  return join13(workDir(paths, id), "evidence.json");
+  return join14(workDir(paths, id), "evidence.json");
 }
 function loadEvidence(paths, id) {
   const read = readProtectedJson(paths, evidencePath(paths, id));
@@ -1621,7 +1711,7 @@ function renderReport(work, evidence, policy, ledger) {
 
 // packages/engine/src/gates.ts
 import { accessSync, constants } from "node:fs";
-import { basename as basename2, delimiter, join as join15 } from "node:path";
+import { basename as basename2, delimiter, join as join16 } from "node:path";
 
 // packages/engine/src/run.ts
 import { spawn } from "node:child_process";
@@ -1702,7 +1792,7 @@ function runCommand(command, options) {
 // packages/engine/src/secrets.ts
 import { execFileSync as execFileSync2, spawnSync } from "node:child_process";
 import { readFileSync as readFileSync3 } from "node:fs";
-import { join as join14 } from "node:path";
+import { join as join15 } from "node:path";
 var RULES = [
   {
     rule: "private key",
@@ -1747,7 +1837,7 @@ function isBinary(buffer) {
 function fileSource(root, path) {
   let buffer;
   try {
-    buffer = readFileSync3(join14(root, path));
+    buffer = readFileSync3(join15(root, path));
   } catch {
     return null;
   }
@@ -1861,7 +1951,7 @@ function onPath(binary, env) {
       continue;
     for (const extension of extensions) {
       try {
-        accessSync(join15(dir, binary + extension), constants.X_OK);
+        accessSync(join16(dir, binary + extension), constants.X_OK);
         return true;
       } catch {}
     }
@@ -1884,7 +1974,7 @@ var PYTHON_AUDIT = {
   pip: "python -m pip_audit"
 };
 function depsAuditCommand(target, root, env = process.env) {
-  const dir = join15(root, target.path);
+  const dir = join16(root, target.path);
   if (target.stack === "python") {
     if (!onPath("pip-audit", env))
       return { reason: "pip-audit not on PATH" };
@@ -1893,14 +1983,14 @@ function depsAuditCommand(target, root, env = process.env) {
   let tool;
   if (target.stack === "node") {
     tool = NODE_AUDIT[target.packageManager];
-    if (tool && target.packageManager === "yarn" && exists(join15(dir, ".yarnrc.yml")))
+    if (tool && target.packageManager === "yarn" && exists(join16(dir, ".yarnrc.yml")))
       tool = { ...tool, command: "yarn npm audit --severity high" };
   } else if (target.stack === "php") {
     tool = { binary: "composer", command: "composer audit", lockfiles: ["composer.lock"] };
   }
   if (!tool)
     return { reason: `no audit tool for ${target.packageManager}` };
-  if (!tool.lockfiles.some((name) => exists(join15(dir, name))))
+  if (!tool.lockfiles.some((name) => exists(join16(dir, name))))
     return { reason: "no lockfile" };
   if (!onPath(tool.binary, env))
     return { reason: `${tool.binary} not on PATH` };
@@ -1998,9 +2088,9 @@ async function runOne(paths, work, profile, planned, fingerprint) {
   const where = targetPath.replace(/[^a-z0-9]+/gi, "_") + (planned.stack ? `-${planned.stack}` : "");
   const log = `logs/${gate}-${where}-${Date.now()}.txt`;
   const result = await runCommand(command, {
-    cwd: join15(paths.root, targetPath),
+    cwd: join16(paths.root, targetPath),
     timeoutMs: target.timeoutMs,
-    logPath: join15(workDir(paths, work.id), log)
+    logPath: join16(workDir(paths, work.id), log)
   });
   const passed = result.exit === 0 && !result.timedOut;
   return {
@@ -2097,9 +2187,9 @@ function assess(paths, work, profile, policy, tampered = false) {
 }
 
 // packages/engine/src/profile.ts
-import { join as join16 } from "node:path";
+import { join as join17 } from "node:path";
 function profilePath(paths) {
-  return join16(paths.crewDir, "profile.json");
+  return join17(paths.crewDir, "profile.json");
 }
 function loadProfile(paths) {
   const read = readProtectedJson(paths, profilePath(paths));
@@ -2107,6 +2197,16 @@ function loadProfile(paths) {
 }
 function saveProfile(paths, profile) {
   writeProtectedJson(paths, profilePath(paths), profile);
+}
+function refreshProfile(paths, current, tampered = false) {
+  if (tampered)
+    return { profile: current, changed: [] };
+  const next = detectProfile(paths.root, current);
+  const changed = profileChanges(current, next);
+  if (changed.length === 0)
+    return { profile: current, changed };
+  saveProfile(paths, next);
+  return { profile: next, changed };
 }
 function ensureProfile(paths) {
   const existing = loadProfile(paths);
@@ -2137,7 +2237,7 @@ function buildContext(payload, env = process.env) {
 }
 
 // packages/engine/src/hooks/pre-tool-use.ts
-import { isAbsolute, join as join17, relative as relative4 } from "node:path";
+import { isAbsolute, join as join18, relative as relative4 } from "node:path";
 
 // packages/engine/src/hooks/shell.ts
 function simpleCommands(command) {
@@ -2178,7 +2278,7 @@ function isRedirectPart(line, i) {
 var WRITE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
 var RUNNER = String.raw`(?:[A-Za-z_][A-Za-z0-9_]*=\S*|-\S*|node|bun|bunx|npx|sh|bash|zsh|eval|exec|env|time|nohup|xargs|sudo|command)`;
 var OPTS = String.raw`(?:--[\w-]+(?:[= ]\S+)?\s+)*`;
-var USER_ONLY = new RegExp(String.raw`^[\s({]*(?:${RUNNER}\s+)*(?:\S*/)?crew(?:\.mjs)?\s+${OPTS}(?:skip|approve|accept|decide|objection\b[^;&|]*\bwaive\b|profile\s+${OPTS}confirm|policy\s+${OPTS}(?:accept|set)|profile\s+set\b[^;&|]*--force)\b`);
+var USER_ONLY = new RegExp(String.raw`^[\s({]*(?:${RUNNER}\s+)*(?:\S*/)?crew(?:\.mjs)?\s+${OPTS}(?:skip|approve|accept|decide|objection\b[^;&|]*\bwaive\b|profile\s+${OPTS}(?:confirm|set)|policy\s+${OPTS}(?:accept|set))\b`);
 var POLICY_COMMAND = new RegExp(String.raw`^[\s({]*(?:${RUNNER}\s+)*(?:\S*/)?crew(?:\.mjs)?\s+${OPTS}(?:policy\b|accept\s+${OPTS}policy\b)`);
 var ENGINE_FILES = /\.crew\/(?:profile\.json|policy\.json|\.gitignore|local\b|work\/[^\s/]+\/(?:work\.json|evidence\.json|objections\.json|report\.md|logs\b))|\.wizardingcode\/crew\b/;
 var WRITE_SHAPE = /(?:^|[\s;&|("'])(?:rm|mv|cp|tee|truncate|chmod|touch|dd|install)\b|sed\s+-i|>{1,2}\|?\s*["']?\S*(?:\.crew\/|\.wizardingcode\/crew\b)/;
@@ -2241,7 +2341,7 @@ function onPreToolUse(ctx, payload) {
     const filePath = pathFromInput(input);
     if (!filePath)
       return {};
-    const abs = canonical(isAbsolute(filePath) ? filePath : join17(ctx.paths.root, filePath));
+    const abs = canonical(isAbsolute(filePath) ? filePath : join18(ctx.paths.root, filePath));
     if (isProtectedPath(ctx.paths, abs)) {
       return answer("deny", `Crew: ${filePath} is maintained by the engine and is changed through the crew command`);
     }
@@ -2307,6 +2407,8 @@ function onSessionStart(ctx, payload = {}) {
     ctx.profile.watch.exclude = [...DEFAULT_WATCH_EXCLUDE];
     saveProfile(ctx.paths, ctx.profile);
   }
+  const refreshed = refreshProfile(ctx.paths, ctx.profile, ctx.tampered);
+  ctx.profile = refreshed.profile;
   const state = loadState(ctx.paths);
   const active = activeWork(ctx.paths);
   const continues = (payload.source === "resume" || payload.source === "compact") && state.sessions[ctx.sessionId] !== undefined;
@@ -2327,6 +2429,8 @@ function onSessionStart(ctx, payload = {}) {
     lines.push(statusLine(ctx, active.work, active.tampered).replace(/^Crew: work/, "Work in progress:"));
   else
     lines.push(`No work item is active. A code change starts by answering the crew skill's nine typed questions, then crew start "<request>" --answers '<json>'.`);
+  if (refreshed.changed.length)
+    lines.push(`profile refreshed: ${refreshed.changed.join("; ")}.`);
   const missing = missingTestCommands(ctx.profile);
   if (missing.length) {
     lines.push(`No test command is known for: ${missing.map((m) => m.target).join(", ")}. One is proposed with \`crew profile set test "<cmd>"\`.`);
@@ -2435,7 +2539,7 @@ function handleHook(event, payload, env = process.env) {
 }
 
 // packages/engine/src/tdd.ts
-import { join as join18 } from "node:path";
+import { join as join19 } from "node:path";
 var STEPS_BY_KIND = {
   behavior: { steps: ["red", "green"], how: "record red, then green" },
   preserve: { steps: ["before", "after"], how: "record before, then after" },
@@ -2487,7 +2591,7 @@ async function recordTdd(paths, work, evidence, profile, criterionId, step, over
   const result = await runCommand(command, {
     cwd: paths.root,
     timeoutMs: fallback?.timeoutMs ?? 10 * 60 * 1000,
-    logPath: join18(workDir(paths, work.id), log)
+    logPath: join19(workDir(paths, work.id), log)
   });
   const record = {
     command,
@@ -2665,16 +2769,16 @@ function skipStep(work, raw) {
 }
 function accept(env, target) {
   if (target === "profile" || target === "policy") {
-    if (!recordIntegrity(env.paths, join19(env.paths.crewDir, `${target}.json`)))
+    if (!recordIntegrity(env.paths, join20(env.paths.crewDir, `${target}.json`)))
       return refuse(`no .crew/${target}.json to accept`);
     return ok(`${target} accepted: its current content is now the trusted version`, {
       accepted: target
     });
   }
   const dir = workDir(env.paths, target);
-  if (!/^[\w.-]+$/.test(target) || target.includes("..") || !existsSync3(join19(dir, "work.json")))
+  if (!/^[\w.-]+$/.test(target) || target.includes("..") || !existsSync3(join20(dir, "work.json")))
     return refuse(`unknown work item: ${target}`);
-  const files = ["work.json", "evidence.json", "report.md", "objections.json"].filter((name) => recordIntegrity(env.paths, join19(dir, name)));
+  const files = ["work.json", "evidence.json", "report.md", "objections.json"].filter((name) => recordIntegrity(env.paths, join20(dir, name)));
   return ok(`${target} accepted: ${files.join(", ")} now trusted as they are`, {
     accepted: target,
     files
@@ -2723,10 +2827,10 @@ function guardContext(env, work, tampered) {
   const dir = workDir(env.paths, work.id);
   const result = assess(env.paths, work, env.profile, env.policy, env.tampered || tampered);
   return {
-    specText: readText(join19(dir, "spec.md")),
-    conclaveText: readText(join19(dir, "conclave.md")),
+    specText: readText(join20(dir, "spec.md")),
+    conclaveText: readText(join20(dir, "conclave.md")),
     ledger: loadLedger(env.paths, work.id).ledger,
-    planExists: existsSync3(join19(dir, "plan.md")),
+    planExists: existsSync3(join20(dir, "plan.md")),
     evidence: result.evidence,
     proven: result.verdict === "proven",
     unproven: result.unproven,
@@ -2744,7 +2848,7 @@ function logDecision(env, work, answers) {
     route: work.route,
     reasons: work.routeReasons
   });
-  const file = join19(env.paths.localDir, "decisions.jsonl");
+  const file = join20(env.paths.localDir, "decisions.jsonl");
   writeText(file, `${readText(file) ?? ""}${line}
 `);
 }
@@ -2796,7 +2900,7 @@ async function dispatch(parsed, io) {
     return settings(command, args, { userDir: userDirOf(io.env) });
   let paths = resolvePaths(io.cwd, io.env);
   if (!paths && command === "detect") {
-    ensureDir(join19(resolve2(io.cwd), ".crew"));
+    ensureDir(join20(resolve2(io.cwd), ".crew"));
     paths = resolvePaths(io.cwd, io.env);
   }
   if (!paths)
@@ -2814,7 +2918,7 @@ async function dispatch(parsed, io) {
       if (parsed.flags.refresh) {
         saveProfile(env.paths, profile);
         if (integrityOf(env.paths)[".crew/policy.json"] === undefined) {
-          recordIntegrity(env.paths, join19(env.paths.crewDir, "policy.json"));
+          recordIntegrity(env.paths, join20(env.paths.crewDir, "policy.json"));
         }
       }
       const missing = missingTestCommands(profile);
@@ -2857,11 +2961,11 @@ async function dispatch(parsed, io) {
         }
         const where = stack === undefined ? targetPath : `${targetPath} (${stack})`;
         const current = target.gates[gate];
-        if (current && current.source !== "proposed" && !parsed.flags.force)
-          return refuse(`${gate} for ${where} already has a ${current.source} command (${current.command}); replacing it needs the user: crew profile set ${gate} "<cmd>" --force`);
-        target.gates[gate] = { command: cmd, source: "proposed" };
+        if (current?.source === "confirmed" && !parsed.flags.force)
+          return refuse(`${gate} for ${where} already has a confirmed command (${current.command}); replacing it needs --force: crew profile set ${gate} "<cmd>" --force`);
+        target.gates[gate] = { command: cmd, source: "confirmed" };
         saveProfile(env.paths, env.profile);
-        return ok(`proposed ${gate} for ${where}: ${cmd} (unconfirmed until crew profile confirm)`, {
+        return ok(`${gate} for ${where} set and confirmed: ${cmd}`, {
           target: targetPath,
           ...stack ? { stack } : {},
           gate,
@@ -3149,6 +3253,8 @@ ${outcome.record.tail}` : "";
       const unknown = only?.find((g) => !GATE_NAMES.includes(g));
       if (unknown !== undefined)
         return refuse(`unknown gate: ${unknown}`);
+      const refreshed = refreshProfile(env.paths, env.profile, env.tampered);
+      env.profile = refreshed.profile;
       const outcome = await runGates(env.paths, opened.work, env.profile, env.policy, {
         only,
         tampered: env.tampered || opened.tampered
@@ -3160,19 +3266,22 @@ ${outcome.record.tail}` : "";
           break;
       }
       saveWork(env.paths, opened.work);
-      writeProtectedText(env.paths, join19(workDir(env.paths, opened.work.id), "report.md"), renderReport(opened.work, outcome.evidence, env.policy, loadLedger(env.paths, opened.work.id).ledger));
+      writeProtectedText(env.paths, join20(workDir(env.paths, opened.work.id), "report.md"), renderReport(opened.work, outcome.evidence, env.policy, loadLedger(env.paths, opened.work.id).ledger));
       const raised = outcome.raised ? `Route raised to ${outcome.raised}: ${opened.work.routeReasons.at(-1)}
+` : "";
+      const picked = refreshed.changed.length ? `profile refreshed: ${refreshed.changed.join("; ")}
 ` : "";
       return {
         code: outcome.verdict === "proven" ? 0 : 1,
         stdout: true,
-        text: raised + gateSummary(opened.work, outcome.verdict, outcome.unproven, outcome.evidence.runs),
+        text: picked + raised + gateSummary(opened.work, outcome.verdict, outcome.unproven, outcome.evidence.runs),
         data: {
           verdict: outcome.verdict,
           unproven: outcome.unproven,
           runs: outcome.evidence.runs,
           raised: outcome.raised,
-          route: opened.work.route
+          route: opened.work.route,
+          refreshed: refreshed.changed
         }
       };
     }
@@ -3218,7 +3327,7 @@ ${report}`, {
           unproven: result.unproven
         });
       saveEvidence(env.paths, opened.work.id, result.evidence);
-      writeProtectedText(env.paths, join19(workDir(env.paths, opened.work.id), "report.md"), report);
+      writeProtectedText(env.paths, join20(workDir(env.paths, opened.work.id), "report.md"), report);
       return ok(report, { verdict: result.verdict, unproven: result.unproven });
     }
     case "status": {
@@ -3301,9 +3410,9 @@ function settings(command, args, user) {
 var STACKS = ["node", "php", "python", "other"];
 var HELP = `crew ${VERSION}
   detect [--refresh]                    build or refresh the project profile
-  profile set <gate> "<cmd>" [--target p] [--stack s]  propose a gate command (unconfirmed)
-  profile set <gate> "<cmd>" --force    replace a detected or confirmed command (asks the user)
-  profile confirm [<gate>]              confirm proposed commands (asks the user)
+  profile set <gate> "<cmd>" [--target p] [--stack s]  set a gate command, confirmed in one step (asks the user)
+  profile set <gate> "<cmd>" --force    replace a command a person already confirmed (asks the user)
+  profile confirm [<gate>]              confirm commands the detector only guessed (asks the user)
   policy accept                         trust the current policy.json after a hand edit (asks the user)
   policy set <key> <value>              attendedDecisions prompt|relay, unattendedDecisions wait|count|validator (asks the user)
   accept <id|profile|policy>            trust state changed outside the engine (asks the user)

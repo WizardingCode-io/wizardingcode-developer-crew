@@ -133,7 +133,9 @@ test("bash: user-only decisions ask, writes to engine files are denied, everythi
   expect(decision(bash("F=.crew/profile.json; echo x > $F"))).toBe("deny");
   expect(decision(bash('F=.crew/profile.json; echo x > "$F"'))).toBe("deny");
   expect(decision(bash("echo x > $(echo .crew/profile.json)"))).toBe("deny");
-  expect(bash('crew profile set test "make test"')).toEqual({});
+  // Since 0.3.0 profile set confirms in one step, so it is the user's decision with or without --force.
+  expect(decision(bash('crew profile set test "make test"'))).toBe("ask");
+  expect(decision(bash("crew --json profile set test true --stack php"))).toBe("ask");
   expect(bash("npm test")).toEqual({});
   expect(
     onPreToolUse(ctx, { tool_name: "Read", tool_input: { file_path: ".crew/profile.json" } }),

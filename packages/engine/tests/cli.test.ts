@@ -142,24 +142,84 @@ test("refusals: unknown work, skip without reason, invalid answers, pilot cannot
   expect((await c.json("config", "decisions.log")).data.value).toBe(false);
 });
 
-test("profile set and confirm: proposed commands stay unconfirmed until confirmed", async () => {
+test("profile set confirms in one step; a detector's guess stays proposed until confirmed", async () => {
   const root = makeRepo({ Makefile: "test:\n\ttrue\n", "src/a.c": "x" });
   const c = io(root);
   const detect = await c.json("detect");
   expect(detect.data.missing).toEqual([{ target: ".", gate: "test" }]);
-  expect((await c.run("profile", "set", "test", "make test")).code).toBe(0);
+  const set = await c.json("profile", "set", "test", "make test");
+  expect(set.code).toBe(0);
+  expect(set.data.message).toContain("confirmed");
   const start = await c.json("start", "fix", "--answers", answers);
   const id = start.data.id as string;
   await c.run("criteria", id, "add", "x");
   await c.run("skip", id, "tdd:AC-1", "--reason", "manual");
   write(root, "src/a.c", "y");
   const first = await c.json("gate", "run", id);
-  expect(first.data.unproven).toEqual([
-    "gate test ran an unconfirmed command (crew profile confirm)",
-  ]);
+  expect(first.data.verdict).toBe("proven");
+  // Replacing a confirmed command is the user's call.
+  const refused = await c.run("profile", "set", "test", "make check");
+  expect(refused.code).toBe(1);
+  expect(refused.err).toContain("--force");
+  expect((await c.run("profile", "set", "test", "make check", "--force")).code).toBe(0);
   expect((await c.run("profile", "confirm")).code).toBe(0);
-  const second = await c.json("gate", "run", id);
-  expect(second.data.verdict).toBe("proven");
+  expect(loadProfile(repoPaths(root, c.env)).profile?.targets[0]?.gates.test).toEqual({
+    command: "make check",
+    source: "confirmed",
+  });
+
+  // Two lockfiles and no packageManager field: the detector guesses, and the guess is proposed until confirmed (finding 13).
+  const guessed = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "bun.lock": "",
+    "pnpm-lock.yaml": "",
+    "src/a.ts": "x",
+  });
+  const g = io(guessed);
+  const gid = (await g.json("start", "fix", "--answers", answers, "--criterion", "x")).data
+    .id as string;
+  await g.run("skip", gid, "tdd:AC-1", "--reason", "manual");
+  write(guessed, "src/a.ts", "y");
+  expect((await g.json("gate", "run", gid)).data.unproven).toContain(
+    "gate test ran an unconfirmed command (crew profile confirm)",
+  );
+  expect((await g.run("profile", "confirm", "test")).code).toBe(0);
+  expect((await g.json("gate", "run", gid)).data.verdict).toBe("proven");
+});
+
+test("0.3.0: crew gate run follows the manifests and never replaces a confirmed command", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { build: "true" } }),
+    "src/a.ts": "x",
+  });
+  const c = io(root);
+  const paths = repoPaths(root, c.env);
+  const id = (await c.json("start", "Thing", "--answers", answers, "--criterion", "x")).data
+    .id as string;
+  await c.run("skip", id, "tdd:AC-1", "--reason", "manual");
+  expect(loadProfile(paths).profile?.targets[0]?.gates.test).toBeUndefined();
+  // The work adds the test script and a lockfile; the gate run notices without crew detect --refresh.
+  write(root, "package.json", JSON.stringify({ scripts: { build: "true", test: "exit 0" } }));
+  write(root, "package-lock.json", "{}");
+  write(root, "src/a.ts", "y");
+  const run = await c.json("gate", "run", id);
+  expect(run.data.refreshed).toEqual(expect.arrayContaining(["test (.): npm run test"]));
+  expect(JSON.stringify(run.data.unproven)).not.toContain("no command");
+  expect(loadProfile(paths).profile?.targets[0]?.gates.test).toEqual({
+    command: "npm run test",
+    source: "detected",
+  });
+  const plain = await c.run("gate", "run", id);
+  expect(plain.out).not.toContain("profile refreshed");
+  // A command a person set is never replaced by a refresh.
+  expect((await c.run("profile", "set", "test", "exit 0 # mine", "--force")).code).toBe(0);
+  write(root, "package.json", JSON.stringify({ scripts: { build: "true", test: "exit 1" } }));
+  const after = await c.run("gate", "run", id);
+  expect(after.out).not.toContain("profile refreshed");
+  expect(loadProfile(paths).profile?.targets[0]?.gates.test).toEqual({
+    command: "exit 0 # mine",
+    source: "confirmed",
+  });
 });
 
 test("C1: gate run --only refuses an unknown gate name", async () => {
@@ -244,28 +304,34 @@ test("C2: a corrupt integrity file is reported, and accept re-records profile an
   expect((await c.run("accept", "policy")).code).toBe(1);
 });
 
-test("I5: profile set keeps detected commands unless forced; confirm names what it confirms", async () => {
+test("I5 (0.3.0): profile set replaces a detected command in one confirmed step; a confirmed one only with --force", async () => {
   const root = makeRepo({
     "package.json": JSON.stringify({ scripts: { test: "exit 0", lint: "exit 0" } }),
   });
   const c = io(root);
   const paths = repoPaths(root, c.env);
   const gates = () => loadProfile(paths).profile?.targets[0]?.gates;
-  const refused = await c.run("profile", "set", "test", "true");
+  expect((await c.run("detect")).code).toBe(0);
+  expect(gates()?.test).toEqual({ command: "npm run test", source: "detected" });
+  // The user's command is the user's decision (the hook asks or relays): set once, confirmed.
+  const set = await c.run("profile", "set", "test", "true");
+  expect(set.code).toBe(0);
+  expect(set.out.trim()).toBe("test for . set and confirmed: true");
+  expect(gates()?.test).toEqual({ command: "true", source: "confirmed" });
+  expect((await c.run("profile", "set", "build", "make")).code).toBe(0);
+  expect(gates()?.build).toEqual({ command: "make", source: "confirmed" });
+  // Replacing what a person confirmed is on purpose only.
+  const refused = await c.run("profile", "set", "build", "x");
   expect(refused.code).toBe(1);
   expect(refused.err.trim()).toBe(
-    'test for . already has a detected command (npm run test); replacing it needs the user: crew profile set test "<cmd>" --force',
+    'build for . already has a confirmed command (make); replacing it needs --force: crew profile set build "<cmd>" --force',
   );
-  expect(gates()?.test).toEqual({ command: "npm run test", source: "detected" });
-  expect((await c.run("profile", "set", "test", "true", "--force")).code).toBe(0);
-  expect(gates()?.test).toEqual({ command: "true", source: "proposed" });
-  expect((await c.run("profile", "set", "build", "make")).code).toBe(0);
-  const one = await c.json("profile", "confirm", "test");
-  expect(one.data.message).toBe("confirmed 1 command(s)\n  test: true");
-  expect(gates()?.build?.source).toBe("proposed");
-  expect((await c.run("profile", "confirm")).out).toContain("  build: make");
-  expect(gates()?.build?.source).toBe("confirmed");
-  expect((await c.run("profile", "set", "build", "x")).code).toBe(1);
+  expect((await c.run("profile", "set", "build", "x", "--force")).code).toBe(0);
+  expect(gates()?.build).toEqual({ command: "x", source: "confirmed" });
+  // Nothing left to confirm: accepted, no effect.
+  const none = await c.json("profile", "confirm");
+  expect(none.code).toBe(0);
+  expect(none.data.confirmed).toBe(0);
   expect((await c.run("profile", "confirm", "bogus")).code).toBe(1);
 });
 
@@ -289,7 +355,7 @@ test("finding 8: profile set names the target by stack when two share a path", a
   const targets = loadProfile(paths).profile?.targets ?? [];
   expect(targets.find((t) => t.stack === "php")?.gates.lint).toEqual({
     command: "pint",
-    source: "proposed",
+    source: "confirmed",
   });
   expect(targets.find((t) => t.stack === "node")?.gates.lint).toBeUndefined();
   expect((await c.run("profile", "set", "lint", "x", "--stack", "ruby")).code).toBe(1);

@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { detectProfile } from "./detect/index.ts";
+import { detectProfile, profileChanges } from "./detect/index.ts";
 import type { CrewPaths } from "./paths.ts";
 import { readProtectedJson, writeProtectedJson } from "./store.ts";
 import type { Profile } from "./types.ts";
@@ -15,6 +15,25 @@ export function loadProfile(paths: CrewPaths): { profile: Profile | null; tamper
 
 export function saveProfile(paths: CrewPaths, profile: Profile): void {
   writeProtectedJson(paths, profilePath(paths), profile);
+}
+
+/**
+ * The profile follows the manifests (finding 23): detection runs again, a person's commands and
+ * targets stay (`mergeProfile`), and when a target, a package manager or a detected command changed
+ * the new profile is saved and the changes returned, one line each. Nothing is written when nothing
+ * changed, and a profile changed outside the engine is left for the user to accept.
+ */
+export function refreshProfile(
+  paths: CrewPaths,
+  current: Profile,
+  tampered = false,
+): { profile: Profile; changed: string[] } {
+  if (tampered) return { profile: current, changed: [] };
+  const next = detectProfile(paths.root, current);
+  const changed = profileChanges(current, next);
+  if (changed.length === 0) return { profile: current, changed };
+  saveProfile(paths, next);
+  return { profile: next, changed };
 }
 
 /** Detection is file reads only, so a missing profile is built on the spot. */

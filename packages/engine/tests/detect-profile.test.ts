@@ -6,8 +6,10 @@ import {
   mergeProfile,
   missingTestCommands,
 } from "../src/detect/index.ts";
-import type { Profile } from "../src/types.ts";
-import { tempDir, write } from "./helpers.ts";
+import { depsAuditCommand } from "../src/gates.ts";
+import { ensureProfile, loadProfile, refreshProfile, saveProfile } from "../src/profile.ts";
+import type { Profile, Target } from "../src/types.ts";
+import { makeRepo, repoPaths, tempDir, testEnv, write } from "./helpers.ts";
 
 function monorepo(): string {
   const dir = tempDir();
@@ -37,6 +39,69 @@ test("re-detection keeps proposed and confirmed commands and timeouts", () => {
   expect(fresh.targets[0]?.gates.lint).toEqual({ command: "make lint", source: "confirmed" });
   expect(fresh.targets[0]?.gates.test).toEqual({ command: "make test", source: "proposed" });
   expect(fresh.targets[0]?.timeoutMs).toBe(1234);
+});
+
+test("0.3.0: refreshProfile follows the manifests; a person's commands and targets survive; a tampered profile is left alone", () => {
+  const root = makeRepo({ "package.json": JSON.stringify({ scripts: { build: "vp build" } }) });
+  const paths = repoPaths(root, testEnv());
+  const first = ensureProfile(paths).profile;
+  const node = first.targets[0];
+  if (!node) throw new Error("no target");
+  expect(node.packageManager).toBe("npm");
+  expect(node.gates.test).toBeUndefined();
+  // A person sets lint by hand and adds a target no detector knows.
+  node.gates.lint = { command: "make lint", source: "confirmed" };
+  const tools: Target = {
+    path: "tools",
+    stack: "other",
+    packageManager: "unknown",
+    gates: { test: { command: "make test", source: "confirmed" } },
+    timeoutMs: 1000,
+  };
+  first.targets.push(tools);
+  saveProfile(paths, first);
+  // The work writes the scripts and the bun lockfile the first detection never saw.
+  write(
+    root,
+    "package.json",
+    JSON.stringify({ scripts: { build: "vp build", test: "vitest run" } }),
+  );
+  write(root, "bun.lock", "");
+  const current = loadProfile(paths).profile;
+  if (!current) throw new Error("no profile");
+  const refreshed = refreshProfile(paths, current);
+  expect(refreshed.changed).toEqual(
+    expect.arrayContaining([
+      "packageManager (.): bun",
+      "build (.): bun run build",
+      "test (.): bun run test",
+    ]),
+  );
+  const saved = loadProfile(paths).profile;
+  const dot = saved?.targets.find((t) => t.path === ".");
+  expect(dot?.packageManager).toBe("bun");
+  expect(dot?.gates.test).toEqual({ command: "bun run test", source: "detected" });
+  expect(dot?.gates.lint).toEqual({ command: "make lint", source: "confirmed" });
+  expect(saved?.targets.find((t) => t.path === "tools")?.gates.test).toEqual({
+    command: "make test",
+    source: "confirmed",
+  });
+  if (!dot) throw new Error("no root target");
+  expect(depsAuditCommand(dot, root, process.env)).toEqual({ command: "bun audit" });
+  // Nothing changed since: nothing reported, detectedAt untouched.
+  const again = refreshProfile(paths, saved as Profile);
+  expect(again.changed).toEqual([]);
+  expect(loadProfile(paths).profile?.detectedAt).toBe(saved?.detectedAt);
+  // A profile changed outside the engine is left as it is.
+  write(
+    root,
+    ".crew/profile.json",
+    JSON.stringify({ ...saved, detectedAt: "2020-01-01T00:00:00Z" }),
+  );
+  const tampered = loadProfile(paths);
+  expect(tampered.tampered).toBe(true);
+  expect(refreshProfile(paths, tampered.profile as Profile, tampered.tampered).changed).toEqual([]);
+  expect(loadProfile(paths).profile?.detectedAt).toBe("2020-01-01T00:00:00Z");
 });
 
 test("mergeProfile leaves the targets it is given untouched", () => {

@@ -30,6 +30,40 @@ test("finding 22: the session context says who runs crew commands and how the us
   expect(text).toContain("signed by the permission prompt");
 });
 
+test("0.3.0: a session start follows the manifests and says what the profile picked up", () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { build: "true" } }),
+    "src/a.ts": "x",
+  });
+  const first = context(root);
+  onSessionStart(first);
+  expect(loadProfile(first.paths).profile?.targets[0]?.gates.test).toBeUndefined();
+  // The project gained a test script between sessions.
+  writeFileSync(
+    join(root, "package.json"),
+    JSON.stringify({ scripts: { build: "true", test: "exit 0" } }),
+  );
+  const next = hookContext({ session_id: "s2", cwd: root }, testEnv());
+  const text = (
+    onSessionStart(next, { source: "startup" }).hookSpecificOutput as {
+      additionalContext: string;
+    }
+  ).additionalContext;
+  expect(text).toContain("profile refreshed: test (.): npm run test");
+  expect(loadProfile(next.paths).profile?.targets[0]?.gates.test).toEqual({
+    command: "npm run test",
+    source: "detected",
+  });
+  expect(next.profile.targets[0]?.gates.test?.command).toBe("npm run test");
+  // Nothing new: nothing said.
+  const quiet = (
+    onSessionStart(hookContext({ session_id: "s3", cwd: root }, testEnv()), {
+      source: "startup",
+    }).hookSpecificOutput as { additionalContext: string }
+  ).additionalContext;
+  expect(quiet).not.toContain("profile refreshed");
+});
+
 test("ADR 0005: under relay the session context says the user's yes in the conversation is the signature", () => {
   const root = makeRepo({
     "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
