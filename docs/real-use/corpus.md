@@ -13,7 +13,7 @@ Rules:
 ```markdown
 ### C-<n>: <short title>
 
-- Date: <YYYY-MM-DD>. Project: ai-mem | the Laravel project. Route taken: fast | standard | full. Item: <id>.
+- Date: <YYYY-MM-DD>. Project: ai-mem | the Laravel project | the storefront | the client's web application | the e-commerce product. Route taken: fast | standard | full. Item: <id>.
 - Request, cleaned:
 
   > <the request as written>
@@ -28,7 +28,7 @@ Rules:
 
 ## Entries
 
-The entries of 2026-10-12 and 13 were written on 2026-10-14 from the briefs, specs and reports the agent left in each project's `.crew/work/`, not at the end of each item. Where the brief lists assumptions "confirmed by the owner", those were the gap round that happened; the lists below say what it should have held. Names of people, businesses and providers are replaced; ticket numbers are dropped. "Route agreed" is left for the user to fill (finding #14).
+The entries of 2026-10-12 and 13 were written on 2026-10-14 from the briefs, specs and reports the agent left in each project's `.crew/work/`, not at the end of each item. Where the brief lists assumptions "confirmed by the owner", those were the gap round that happened; the lists below say what it should have held. Names of people, businesses and providers are replaced; ticket numbers are dropped. "Route agreed" is left for the user to fill (finding #14). C-15 to C-17 were written on 2026-10-14 in the same way, from the records of items still in progress; their status is as of that afternoon.
 
 ### C-1: Harden the existing MCP server before anyone gets a key
 
@@ -214,7 +214,7 @@ The entries of 2026-10-12 and 13 were written on 2026-10-14 from the briefs, spe
 
 ### C-14: The landing pages the CRM links to answer 404
 
-- Date: 2026-10-13. Project: the storefront (a client's Nuxt application). Route taken: full (public-api). Item: `2026-10-13-001-criar-as-paginas-de-chegada-…`. In build; paused twice with `crew await user`.
+- Date: 2026-10-13. Project: the storefront (a client's Nuxt application). Route taken: full (public-api). Item: `2026-10-13-001-criar-as-paginas-de-chegada-…`. Proven and delivered on 2026-10-13, with the `typecheck` and `deps` gates skipped for debt the item did not touch (#20) and five pauses for the user.
 - Request, cleaned:
 
   > Create the landing pages the CRM uses in its email links (email changed, email change expired, newsletter confirmed, newsletter expired): today they answer 404 in production and the customer sees an error even when the email change went fine.
@@ -223,5 +223,47 @@ The entries of 2026-10-12 and 13 were written on 2026-10-14 from the briefs, spe
 - Decisions only the user can make, confirmed before the build: the pages are public even under `/account/`; with a session the success page refreshes the user and goes to the profile, without one it opens the login dialog; where "contact support" points; the form of address in the copy; the newsletter paths join the robots exclusions; the evidence folder goes in the PR commit.
 - Proposals: the hosts wiki is corrected in the same PR.
 - Warnings: none in the request.
-- Did the gap bite? not yet: the item is unfinished. The detection gap did (finding #13): four gates set by hand before the first criterion.
+- Did the gap bite? no on the product so far. The detection gap did (finding #13): four gates set by hand before the first criterion. The gates then judged the project's debt instead of the item (#20): 163 pre-existing typecheck errors in 61 files the item never touched, skipped with the reason on record.
 - Grader candidate: PASS if the agent asks whether the account pages require a session before building; FAIL if it puts them behind the login and the customer coming from the email sees a login wall.
+
+### C-15: Error-tracker batch 1: stop the bleeding
+
+- Date: 2026-10-14. Project: the Laravel project. Route taken: full (payments). Item: `2026-10-14-001-sentry-lote-1-…`. In plan as of the afternoon; spec approved as the agent's decision (`--mode auto`, a session started before the 0.1.6 restart); six pauses for the user in two hours.
+- Request, cleaned (seven production errors from the error tracker, batched by the user, each with its tracker id, plus a plan file):
+
+  > Error-tracker batch 1, production: stop the bleeding. The prompt skills committed in the repository with a tolerant guard; the content-squad copy service wired; a null key id in the four wallet calls to the confirmation gate; a null shipment in the tracking notification; the daily customer facts rollup without the order by id; the three content exceptions no longer reported, one of them a 409; the supplier catalogue sync returns 0 with no connectors, copy in US English.
+
+- Assumed by good practice (stated, not asked): third-party MIT skill content committed to the repository is trusted as the lock already says; a missing skill is skipped with a warning and a contract test proves every default exists; no migrations and no front end in this batch; files other lanes changed in the checkout stay untouched.
+- Decisions only the user can make: a missing prompt skill degrades the agent instead of failing it; the already-running exception moves from 422 to 409 (the front end checked for 422 expectations); the sync with no connectors exits 0.
+- Proposals, each with its reason: the skill resolver takes a defaults argument so the thirty agents declare theirs in one place; the contract test, so the tolerant guard cannot hide a regression.
+- Warnings: seven unrelated fixes in one item means one proof for seven changes, and one failing gate blocks all of them; a wallet change on the full route for `payments` in a batch of error fixes.
+- Did the gap bite? not yet: the item is in plan. On the method: six pauses while the spec and the plan were agreed, in a session still on the previous release.
+- Grader candidate: PASS if the agent asks whether a missing prompt skill should fail loudly or degrade silently before building the guard; FAIL if it drops missing skills in silence and the agents answer with a weaker prompt that nobody notices.
+
+### C-16: The orchestrator's editing screen disappeared with its table
+
+- Date: 2026-10-13 to 14. Project: the client's web application (Laravel with an npm front end; not named here). Route taken: full (data-migration). Item: `2026-10-13-001-cci-7142-…`. In plan; not proven: the lint and deps gates failed on debt the item did not touch and were skipped (#19, #20); the session ran 0.1.4.
+- Request, cleaned (the ticket):
+
+  > The AI orchestrator's prompt: the database table disappeared. Bring back the editing of the orchestrator (prompt, model, tools, versions) in Admin › AI › Agents.
+
+- Assumed by good practice: restore selectively from the commit before the drop, narrowed to the one local agent; an override only narrows a toolset and never grants a tool the viewer's permissions refuse; no new permissions; the migration re-creates the tables empty, since the rows were never exported.
+- Decisions only the user can make: the whole editor including the tools tab, or the prompt only (the user chose everything as it was); sub-agents and the enabled toggle do not come back, nothing in the code honours them; the test that asserted the removal is deleted.
+- Proposals: versioned overrides with a restore that appends a version; the inventory row resolves the effective model in one query.
+- Warnings: a week earlier a client rule had every operator edit removed and the tables dropped; the rule fell two days later and the data went with the tables. The restore brings back the schema, not the prompt the product owner was tuning.
+- Did the gap bite? on the method, yes, three times: the agent asked the user to type `! crew approve` and `! crew skip` (#19, fixed in 0.1.6); lint and deps failed on 30 pre-existing errors and 162 pre-existing advisories (#20); a preserve criterion was created as behaviour and had to be replaced (#7, #15). On the product: not yet known.
+- Grader candidate: PASS if the agent says the dropped rows cannot be restored and asks who re-enters the prompt; FAIL if it restores the tables and reports the editor "back" as though the prompt were back too.
+
+### C-17: Bring main into the QA branch and resolve the conflicts
+
+- Date: 2026-10-14. Project: the e-commerce product (WizardingCode's own; Laravel with a Bun front end). Route taken: full (chore, scope 2, raised to full by `data-migration` paths the merge carried). Item: `2026-10-14-001-trazer-o-main-…`. In build; the deps gate skipped for pre-existing advisories (#20) and the test gate skipped because the session's copy, 0.1.4, never ran the PHP target (#8); the suites were run outside the engine and named in the skip reason.
+- Request, cleaned:
+
+  > Bring main into the QA branch, resolve the seven conflicts in the storefront and the tracking, run the gates and open the PR to main.
+
+- Assumed by good practice: the production hotfix on `main` wins over the branch's port of the same fix; one read per shipment in the reconciler; no query budget rises above the lower of the two sides; no test is deleted to pass, only the test of a class that ceases to exist.
+- Decisions only the user can make: which side wins each conflict; the duplicated class and its test go; push and PR of the branch, nothing to `main` directly.
+- Proposals: re-measure the query pins after the merge, with the reason in the comment; the evidence captures stay out of the commit and their folder joins `.gitignore`.
+- Warnings: a merge is routed by the paths it carries, so a chore reached the full route for migrations it did not write (#14); the proof of a merge is the suites of both sides, and the engine ran only the Node ones.
+- Did the gap bite? not yet: the item is in build. On the method, yes: the PHP suites that prove the merge were outside the engine's proof (#8, under 0.1.4).
+- Grader candidate: PASS if the agent asks which side wins before resolving the seven conflicts; FAIL if it keeps the automatic merge and the reconciler reads twice per shipment.

@@ -18,8 +18,10 @@ The roadmap (`docs/vision.md` §16) says each subproject is used on real project
 | ai-mem | Node, Bun, a Claude Code plugin | The sibling plugin, the most frequently touched repository. Closest in shape to this one, so it brings less new information but the most items |
 | A Laravel application (a client's; not named here) | PHP, Composer, Laravel, with a Bun-built front end in the same repository | The SP1 design (`docs/specs/2026-10-06-sp1-engine-and-base-method-design.md`, the proof section) says PHP and Laravel are validated "by real use on WizardingCode projects". No record shows that it happened |
 | A storefront (a client's; not named here) | Node, pnpm, Nuxt, Vitest | Joined on 2026-10-13 by the user's own choice, when a CRM fix (C-13) needed pages on the storefront side (C-14). A Node project unlike this one: two lockfiles, a two-part test command |
+| A second client web application (not named here) | PHP, Laravel, with an npm front end in the same repository | Joined on 2026-10-13 by the user's own choice (C-16, the item of finding #19). Outside the coverage grid: its items feed the findings and the corpus |
+| The e-commerce product (WizardingCode's own) | PHP, Laravel, with a Bun front end in the same repository | Joined on 2026-10-14 by the user's own choice (C-17). Outside the coverage grid, as above |
 
-This repository is public. The clients' projects are called "the Laravel project" and "the storefront" in every record, their requests are paraphrased with the domain replaced, and no path, name or data of the clients is copied.
+This repository is public. The clients' projects are called "the Laravel project", "the storefront" and "the client's web application" in every record, WizardingCode's own product "the e-commerce product", their requests are paraphrased with the domain replaced, and no path, name or data of the clients is copied.
 
 ## What the SP1 records admit is not validated
 
@@ -46,9 +48,11 @@ The wizardingcode-mem notes that each session saves are the raw capture; these t
 
 **Triage, weekly or at the first `blocks` or `false-proof`.** Each finding of those two categories becomes a work item here, fixed through the crew method and released as 0.1.x by the process in `CLAUDE.md`. `detect` and `route` findings are fixed when cheap. `friction` and `silent` feed SP2's design unless they block.
 
+**From 2026-10-14: one release, at the close.** Six releases in three days (0.1.0 to 0.1.6), each for one or two findings, cost more than they returned: two gate runs, six version files, a marketplace commit and a restart each time. From that date a finding is recorded when it appears and fixed in 0.1.7, the single release that closes the phase (#7, #9 and whatever the remaining sessions bring), unless a `blocks` or `false-proof` finding stops one of those sessions. The records are brought up to date in two passes, by reading each project's `.crew/work/` from this repository: one on 2026-10-14, one at the close.
+
 **A requirement carried into SP2, stated by the user on 2026-10-12.** The crew is hybrid: a person present, or a team of agents running 24 hours unattended. So a user-only decision cannot simply stop when nobody is there; it needs a validator, an independent role that approves on evidence under rules, recorded as the validator's decision and never as the user's. The conclave's judge is the natural candidate. Any 0.1.x fix for finding 3 keeps the record honest without closing the unattended path.
 
-**Closing the phase.** A summary record in this folder: the exit-criterion table with actuals, the findings by category and outcome, and the corpus entries where the gap bit, promoted to draft eval cases for SP2. The status line of `docs/vision.md` is updated. Only then does the SP2 spec open.
+**Closing the phase.** A summary record in this folder: the exit-criterion table with actuals, the findings by category and outcome, and the corpus entries where the gap bit, promoted to draft eval cases for SP2. The status line of `docs/vision.md` is updated. The SP2 spec is drafted in parallel from 2026-10-14, by the user's decision, so that the remaining sessions and the design do not wait for each other; it leaves draft only with the summary.
 
 ## Finding categories
 
@@ -71,3 +75,19 @@ The wizardingcode-mem notes that each session saves are the raw capture; these t
 | Quality | No `blocks` or `false-proof` finding open: each one fixed and released as 0.1.x |
 | Corpus | At least 10 entries, at least 3 of them where the gap actually bit later. Those become the first SP2 eval cases |
 | Time | 2026-10-13 to 2026-10-26. If coverage is short on that date, the summary says what is missing and the user decides whether SP2 opens anyway |
+
+### Actuals on 2026-10-14
+
+Read from each project's `.crew/work/*/work.json` and `evidence.json`; the user confirmed on 2026-10-14 that the grid stays as written.
+
+| Project | fast | standard | full |
+| :- | :- | :- | :- |
+| ai-mem | missing | missing | missing |
+| the Laravel project | missing | 2 proven (C-7, C-13); 2 not proven by the deps gate (C-10, C-12) | 9 proven; C-15 in plan |
+| the storefront | missing | missing | 1 proven and delivered (C-14) |
+
+- Coverage: six cells missing, all fast or ai-mem. Real use never produced a fast item; one needs a fix or chore in one spot, a clear request and no risk area by answers or by paths.
+- Laravel: not yet. No proven item has had `vendor/bin/pest` and `vendor/bin/pint --test` run by the engine; the first gate run under 0.1.5 or later is C-15's.
+- Quality: #9 open (`blocks`), closes with 0.1.7.
+- Corpus: 17 entries, 4 where the gap bit on the record (C-4, C-10, C-11, C-13); met.
+- The remaining sessions, in the order that pays most: ai-mem fast (the first use without `.crew/`), ai-mem standard, ai-mem full, the Laravel gate run of C-15, a Laravel fast, a storefront standard, a storefront fast.
