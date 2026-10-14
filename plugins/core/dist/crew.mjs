@@ -48,6 +48,7 @@ var PHASE_ORDER = [
   "recognize",
   "understand",
   "specify",
+  "conclave",
   "plan",
   "build",
   "gate",
@@ -889,6 +890,8 @@ var DEFAULT_POLICY = {
   unattendedDecisions: "wait"
 };
 function decisionCounts(policy, decision) {
+  if (decision.by === "validator")
+    return policy.unattendedDecisions === "validator";
   return decision.by !== "agent" || policy.unattendedDecisions === "count";
 }
 var RISK_AREAS = [
@@ -923,7 +926,7 @@ function loadPolicy(paths) {
       minimumRoute,
       allowSkips,
       artifacts: raw.artifacts === "local" ? "local" : "commit",
-      unattendedDecisions: raw.unattendedDecisions === "count" ? "count" : "wait"
+      unattendedDecisions: raw.unattendedDecisions === "count" || raw.unattendedDecisions === "validator" ? raw.unattendedDecisions : "wait"
     },
     tampered: read.tampered
   };

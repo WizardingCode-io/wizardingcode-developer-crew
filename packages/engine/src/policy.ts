@@ -14,8 +14,9 @@ export const DEFAULT_POLICY: Policy = {
   unattendedDecisions: "wait",
 };
 
-/** Whether a recorded decision counts: a person's always does, the agent's only when the policy says so. */
+/** Whether a recorded decision counts: a person's always, the agent's or the validator's as the policy says. */
 export function decisionCounts(policy: Policy, decision: { by?: DecidedBy }): boolean {
+  if (decision.by === "validator") return policy.unattendedDecisions === "validator";
   return decision.by !== "agent" || policy.unattendedDecisions === "count";
 }
 
@@ -65,7 +66,10 @@ export function loadPolicy(paths: CrewPaths): { policy: Policy; tampered: boolea
       minimumRoute,
       allowSkips,
       artifacts: raw.artifacts === "local" ? "local" : "commit",
-      unattendedDecisions: raw.unattendedDecisions === "count" ? "count" : "wait",
+      unattendedDecisions:
+        raw.unattendedDecisions === "count" || raw.unattendedDecisions === "validator"
+          ? raw.unattendedDecisions
+          : "wait",
     },
     tampered: read.tampered,
   };

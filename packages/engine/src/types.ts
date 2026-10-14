@@ -45,6 +45,7 @@ export type Phase =
   | "recognize"
   | "understand"
   | "specify"
+  | "conclave"
   | "plan"
   | "build"
   | "gate"
@@ -54,6 +55,7 @@ export const PHASE_ORDER: readonly Phase[] = [
   "recognize",
   "understand",
   "specify",
+  "conclave",
   "plan",
   "build",
   "gate",
@@ -69,7 +71,8 @@ export type RiskArea =
   | "public-api"
   | "secrets";
 
-export type CriterionKind = "behavior" | "preserve";
+/** `observed`: proven by a passing run after the change plus the reason no red run can exist (SP2 §11). */
+export type CriterionKind = "behavior" | "preserve" | "observed";
 export interface Criterion {
   id: string;
   kind: CriterionKind;
@@ -121,11 +124,20 @@ export function isPermissionMode(value: unknown): value is PermissionMode {
   return PERMISSION_MODES.includes(value as PermissionMode);
 }
 
-export type DecidedBy = "user" | "agent";
-/** Who took a user-only decision; `mode` is set when the agent took it with no person watching. */
+export type DecidedBy = "user" | "agent" | "validator";
+
+/** The rules under which the validator may take a user-only decision in an unattended session (SP2 §9). */
+export type ValidatorRule = "complete-gap-round" | "stated-default";
+export const VALIDATOR_RULES: readonly ValidatorRule[] = ["complete-gap-round", "stated-default"];
+export function isValidatorRule(value: unknown): value is ValidatorRule {
+  return VALIDATOR_RULES.includes(value as ValidatorRule);
+}
+
+/** Who took a user-only decision; `mode` when no person was watching; `rule` when the validator took it. */
 export interface Decision {
   by: DecidedBy;
   mode?: PermissionMode;
+  rule?: ValidatorRule;
 }
 
 export interface Approval {
@@ -134,6 +146,40 @@ export interface Approval {
   /** Absent in records written before 0.1.2, which read as the user's. */
   by?: DecidedBy;
   mode?: PermissionMode;
+  rule?: ValidatorRule;
+}
+
+/** A decision only the user can make, found by the gap round; answered by a person or, under a rule, by the validator. */
+export interface GapDecision {
+  id: string;
+  question: string;
+  default?: string;
+  answer?: string;
+  at?: string;
+  by?: DecidedBy;
+  mode?: PermissionMode;
+  rule?: ValidatorRule;
+}
+
+export type ObjectionSeverity = "blocking" | "advisory";
+export interface Waiver {
+  reason: string;
+  at: string;
+  by: DecidedBy;
+  mode?: PermissionMode;
+}
+/** A dated statement that the work must not proceed as proposed; bound to a criterion, or waived by the user. */
+export interface Objection {
+  id: string;
+  raisedBy: string;
+  severity: ObjectionSeverity;
+  text: string;
+  raisedAt: string;
+  criterion?: string;
+  waived?: Waiver;
+}
+export interface ObjectionLedger {
+  objections: Objection[];
 }
 
 export interface Skip {
@@ -162,6 +208,8 @@ export interface WorkItem {
   pauses?: Pause[];
   /** Set when the item started beside other open items with uncommitted changes. Absent before 0.1.7. */
   sharedCheckout?: SharedCheckout;
+  /** The gap round's decisions only the user can make, and their answers. Absent before 0.2.0. */
+  decisions?: GapDecision[];
   approvals: Approval[];
   skips: Skip[];
   /** HEAD when the item started; the change is everything since. Null outside git or with no commits. */
@@ -194,6 +242,9 @@ export interface TddRecord {
   green?: RunRecord;
   before?: RunRecord;
   after?: RunRecord;
+  observed?: RunRecord;
+  /** For an observed criterion: why no red run can exist. */
+  reason?: string;
 }
 
 export type GateStatus = "pass" | "fail" | "skipped" | "unavailable";
@@ -238,10 +289,11 @@ export interface Policy {
   allowSkips: string[];
   artifacts: "commit" | "local";
   /**
-   * What an approval or skip taken by the agent with no person watching is worth: `wait` records
-   * it but the guard and the verdict still wait for a person; `count` lets it count.
+   * What a user-only decision taken with no person watching is worth: `wait` records it and the
+   * guard and the verdict still wait for a person; `count` lets the agent's own word count;
+   * `validator` lets a decision the validator took under a rule count, and the agent's not.
    */
-  unattendedDecisions: "wait" | "count";
+  unattendedDecisions: "wait" | "count" | "validator";
 }
 
 export type Mode = "partner" | "guide" | "pilot";

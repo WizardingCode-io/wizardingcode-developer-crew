@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadConfig, saveConfig, setConfigValue } from "../src/config.ts";
-import { DEFAULT_POLICY, loadPolicy, skipAllowed } from "../src/policy.ts";
+import { DEFAULT_POLICY, decisionCounts, loadPolicy, skipAllowed } from "../src/policy.ts";
 import { ensureCrewDir, loadState, saveState, sessionState } from "../src/state.ts";
 import { makeRepo, repoPaths, testEnv } from "./helpers.ts";
 
@@ -44,6 +44,42 @@ test("policy: riskPathExclusions is a list of globs, empty by default, non-strin
   ]);
   writeFileSync(join(paths.crewDir, "policy.json"), JSON.stringify({ riskPathExclusions: "x" }));
   expect(loadPolicy(paths).policy.riskPathExclusions).toEqual([]);
+});
+
+test("policy: unattendedDecisions accepts validator, and decisionCounts follows the policy per decider", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  mkdirSync(paths.crewDir, { recursive: true });
+  const file = join(paths.crewDir, "policy.json");
+  writeFileSync(file, JSON.stringify({ unattendedDecisions: "validator" }));
+  expect(loadPolicy(paths).policy.unattendedDecisions).toBe("validator");
+  writeFileSync(file, JSON.stringify({ unattendedDecisions: "judge" }));
+  expect(loadPolicy(paths).policy.unattendedDecisions).toBe("wait");
+
+  const wait = { ...DEFAULT_POLICY, unattendedDecisions: "wait" as const };
+  const count = { ...DEFAULT_POLICY, unattendedDecisions: "count" as const };
+  const validator = { ...DEFAULT_POLICY, unattendedDecisions: "validator" as const };
+  const person = { by: "user" as const };
+  const agent = { by: "agent" as const, mode: "dontAsk" as const };
+  const judge = {
+    by: "validator" as const,
+    mode: "dontAsk" as const,
+    rule: "complete-gap-round" as const,
+  };
+  expect([wait, count, validator].map((p) => decisionCounts(p, person))).toEqual([
+    true,
+    true,
+    true,
+  ]);
+  expect([wait, count, validator].map((p) => decisionCounts(p, agent))).toEqual([
+    false,
+    true,
+    false,
+  ]);
+  expect([wait, count, validator].map((p) => decisionCounts(p, judge))).toEqual([
+    false,
+    false,
+    true,
+  ]);
 });
 
 test("config: defaults, set values, reject unknown keys and values", () => {
