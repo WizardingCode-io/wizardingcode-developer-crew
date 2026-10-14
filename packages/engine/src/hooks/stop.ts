@@ -3,9 +3,19 @@ import { nowIso } from "../fs.ts";
 import { assess } from "../gates.ts";
 import { loadState, saveState, sessionState } from "../state.ts";
 import { activeWork, saveWork } from "../work.ts";
-import type { HookContext, HookResponse } from "./types.ts";
+import type { HookContext, HookPayload, HookResponse } from "./types.ts";
 
 export const MAX_STOP_BLOCKS = 3;
+
+// A `!` that would make a crew line run in the user's terminal: at a line start or inline (in
+// backticks, after a quote or a bracket), with or without a space, with or without a runner. Not a
+// `!` that ends a sentence before the word crew, since the character before it must not be a word.
+const TYPED_CREW = /(?:^|[^\w!])!\s?(?:(?:node|bun)\s+)?(?:\S*\/)?crew(?:\.mjs)?\s+[a-z]/m;
+
+/** Whether the agent's last message tells the user to type a crew command (finding 22 of the real-use phase). */
+export function asksUserToTypeCrew(message: string | undefined): boolean {
+  return message !== undefined && TYPED_CREW.test(message);
+}
 
 /**
  * The Stop rule (spec, section 12). It compares fingerprints and reads evidence; it never runs gates.
@@ -15,9 +25,22 @@ export const MAX_STOP_BLOCKS = 3;
  * it. The prompt hook does not: a prompt can be queued while the agent still works, and that prompt
  * must not end a wait the Stop has not honoured yet.
  */
-export function onStop(ctx: HookContext): HookResponse {
+export function onStop(ctx: HookContext, payload: HookPayload = {}): HookResponse {
   const state = loadState(ctx.paths);
   const session = sessionState(state, ctx.sessionId);
+  // A message that tells the user to type a crew command is a turn that must not end: the user
+  // never runs crew, the agent does, and the permission prompt is the signature (finding 22: a
+  // stale memory beat rule 4 of the skill). It shares the cap, so a repeated ask cannot loop the
+  // session, and it spends no wait, since the user was asked for the wrong thing.
+  if (asksUserToTypeCrew(payload.last_assistant_message) && session.stopBlocks < MAX_STOP_BLOCKS) {
+    session.stopBlocks += 1;
+    saveState(ctx.paths, state);
+    return {
+      decision: "block",
+      reason:
+        "Crew: the last message tells the user to type a crew command. The user never types one: you run every crew command, and the permission prompt is the user's signature, in auto mode too (a note saying otherwise predates 0.1.6). Run the command now, without --mode, and tell the user what it recorded.",
+    };
+  }
   const active = activeWork(ctx.paths);
   const work = active?.work ?? null;
   const current = computeFingerprint(ctx.paths.root, ctx.profile, work);

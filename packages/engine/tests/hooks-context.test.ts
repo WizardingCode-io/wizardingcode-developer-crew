@@ -13,6 +13,17 @@ function context(root: string, env = testEnv()) {
   return hookContext({ session_id: "s1", cwd: join(root, "src") }, env);
 }
 
+test("finding 22: the session context says who runs crew commands and how the user signs", () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const text = (onSessionStart(context(root)).hookSpecificOutput as { additionalContext: string })
+    .additionalContext;
+  expect(text).toContain("You run every crew command; the user never types one");
+  expect(text).toContain("signed by the permission prompt");
+});
+
 test("session start detects the profile, records the baseline and describes the state", () => {
   const root = makeRepo({
     "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),

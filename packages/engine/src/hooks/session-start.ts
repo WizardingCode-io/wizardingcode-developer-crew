@@ -47,6 +47,8 @@ export function onSessionStart(ctx: HookContext, payload: HookPayload = {}): Hoo
 
   const lines = [
     "WizardingCode Developer Crew is active in this repository. Work is proven by the `crew` command and the crew skill, and a turn cannot end while watched source files have unproven changes.",
+    // Where every session reads it, not only in the skill: a stale note once beat rule 4 (finding 22).
+    "You run every crew command; the user never types one: a decision that is theirs (crew approve, skip, decide, accept, profile confirm) is signed by the permission prompt your command raises, in auto mode too.",
   ];
   if (active?.work)
     lines.push(

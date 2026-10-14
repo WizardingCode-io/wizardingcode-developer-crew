@@ -103,6 +103,18 @@ function reason(response: Record<string, unknown>): string | undefined {
     ?.permissionDecisionReason;
 }
 
+test("finding 22: a --help lookup on a user-only verb is not asked, since the command records nothing", () => {
+  const { ctx } = setup();
+  const bash = (command: string) =>
+    onPreToolUse(ctx, { tool_name: "Bash", tool_input: { command } });
+  expect(bash("crew approve --help")).toEqual({});
+  expect(bash("crew skip -h 2>&1 | head -20")).toEqual({});
+  expect(bash("crew approve w1 spec --help")).toEqual({});
+  expect(bash("node /x/dist/crew.mjs objection w1 waive O-1 --help")).toEqual({});
+  expect(decision(bash("crew approve w1 spec --reason --helpful"))).toBe("ask");
+  expect(decision(bash("crew approve w1 spec"))).toBe("ask");
+});
+
 test("bash: in a mode that shows no prompt, a user-only decision must name its mode to be recorded as the agent's", () => {
   const { ctx } = setup();
   const bash = (command: string, permission_mode: string) =>

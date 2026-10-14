@@ -2150,6 +2150,7 @@ var WRITE_SHAPE = /(?:^|[\s;&|("'])(?:rm|mv|cp|tee|truncate|chmod|touch|dd|insta
 var OPAQUE_REDIRECT = />{1,2}\|?\s*["']?[$`]/;
 var PROMPTLESS_MODES = new Set(["bypassPermissions", "dontAsk"]);
 var MODE_FLAG = /--mode(?:=|\s+)(\S+)/;
+var HELP_FLAG = /(?:^|\s)(?:--help|-h)(?=\s|$)/;
 function userOnlyDecision(cleaned, permissionMode, headless) {
   const flagged = MODE_FLAG.exec(cleaned)?.[1];
   const mode = permissionMode ?? "default";
@@ -2219,7 +2220,7 @@ function onPreToolUse(ctx, payload) {
     let asked = null;
     for (const piece of simpleCommands(command)) {
       const cleaned = piece.replace(/["'\\]/g, "");
-      if (USER_ONLY.test(cleaned)) {
+      if (USER_ONLY.test(cleaned) && !HELP_FLAG.test(cleaned)) {
         const decided = userOnlyDecision(cleaned, payload.permission_mode, ctx.headless);
         if (decided?.[0] === "deny")
           return answer(...decided);
@@ -2279,7 +2280,8 @@ function onSessionStart(ctx, payload = {}) {
     saveState(ctx.paths, state);
   }
   const lines = [
-    "WizardingCode Developer Crew is active in this repository. Work is proven by the `crew` command and the crew skill, and a turn cannot end while watched source files have unproven changes."
+    "WizardingCode Developer Crew is active in this repository. Work is proven by the `crew` command and the crew skill, and a turn cannot end while watched source files have unproven changes.",
+    "You run every crew command; the user never types one: a decision that is theirs (crew approve, skip, decide, accept, profile confirm) is signed by the permission prompt your command raises, in auto mode too."
   ];
   if (active?.work)
     lines.push(statusLine(ctx, active.work, active.tampered).replace(/^Crew: work/, "Work in progress:"));
@@ -2301,9 +2303,21 @@ function onSessionStart(ctx, payload = {}) {
 
 // packages/engine/src/hooks/stop.ts
 var MAX_STOP_BLOCKS = 3;
-function onStop(ctx) {
+var TYPED_CREW = /(?:^|[^\w!])!\s?(?:(?:node|bun)\s+)?(?:\S*\/)?crew(?:\.mjs)?\s+[a-z]/m;
+function asksUserToTypeCrew(message) {
+  return message !== undefined && TYPED_CREW.test(message);
+}
+function onStop(ctx, payload = {}) {
   const state = loadState(ctx.paths);
   const session = sessionState(state, ctx.sessionId);
+  if (asksUserToTypeCrew(payload.last_assistant_message) && session.stopBlocks < MAX_STOP_BLOCKS) {
+    session.stopBlocks += 1;
+    saveState(ctx.paths, state);
+    return {
+      decision: "block",
+      reason: "Crew: the last message tells the user to type a crew command. The user never types one: you run every crew command, and the permission prompt is the user's signature, in auto mode too (a note saying otherwise predates 0.1.6). Run the command now, without --mode, and tell the user what it recorded."
+    };
+  }
   const active = activeWork(ctx.paths);
   const work = active?.work ?? null;
   const current = computeFingerprint(ctx.paths.root, ctx.profile, work);
@@ -2373,7 +2387,7 @@ function handleHook(event, payload, env = process.env) {
       case "pre-tool-use":
         return onPreToolUse(ctx, payload);
       default:
-        return onStop(ctx);
+        return onStop(ctx, payload);
     }
   } catch {
     return {};

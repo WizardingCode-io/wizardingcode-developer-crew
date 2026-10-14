@@ -37,7 +37,7 @@ export function handleHook(
       case "pre-tool-use":
         return onPreToolUse(ctx, payload);
       default:
-        return onStop(ctx);
+        return onStop(ctx, payload);
     }
   } catch {
     return {};

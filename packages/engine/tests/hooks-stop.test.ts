@@ -187,6 +187,45 @@ test("case 2: proven work ends the turn, and a later edit blocks again", async (
   expect(String(onStop(ctx).reason)).toContain("code changed since the last gate run");
 });
 
+test("finding 22: a message that tells the user to type a crew command cannot end the turn", () => {
+  const { ctx } = session();
+  const asks = (last_assistant_message: string) => onStop(ctx, { last_assistant_message });
+  // Nothing changed in the tree, so the proof rule alone would let the turn end.
+  const blocked = asks(
+    "Cola esta linha tal como está, com o `!`:\n\n```\n! crew approve w1 spec\n```\n",
+  );
+  expect(blocked.decision).toBe("block");
+  expect(String(blocked.reason)).toContain("the permission prompt is the user's signature");
+  expect(String(blocked.reason)).toContain("never");
+  expect(loadState(ctx.paths).sessions.s?.stopBlocks).toBe(1);
+  // A sentence ending with ! before the word crew is prose; the agent's own commands are not asks.
+  // Each of these ends the turn as before, which also resets the block count.
+  expect(asks("The hook refused it! crew approve ran again and the prompt appeared.")).toEqual({});
+  expect(asks("I ran `crew approve w1 spec`; the record says by the user.")).toEqual({});
+  expect(asks("")).toEqual({});
+  expect(onStop(ctx)).toEqual({});
+  expect(loadState(ctx.paths).sessions.s?.stopBlocks).toBe(0);
+  expect(asks("Paste `! crew skip w1 gate:test --reason x` to close it.").decision).toBe("block");
+  expect(asks("Run `!crew accept w1` in your terminal.").decision).toBe("block");
+  expect(asks("Then: `! node /x/dist/crew.mjs approve w1 spec`").decision).toBe("block");
+  expect(loadState(ctx.paths).sessions.s?.stopBlocks).toBe(MAX_STOP_BLOCKS);
+});
+
+test("finding 22: the guard counts toward the three-block cap and does not spend a wait", () => {
+  const { ctx } = session();
+  const work = createWork(ctx.paths, "fix");
+  work.awaiting = "user";
+  saveWork(ctx.paths, work);
+  const payload = { last_assistant_message: "! crew approve w1 spec" };
+  for (let i = 1; i <= MAX_STOP_BLOCKS; i++) {
+    expect(onStop(ctx, payload).decision).toBe("block");
+    expect(loadState(ctx.paths).sessions.s?.stopBlocks).toBe(i);
+  }
+  expect(loadWork(ctx.paths, work.id).work?.awaiting).toBe("user");
+  // After the cap the ordinary rules decide, so the session cannot loop.
+  expect(onStop(ctx, payload).decision).toBeUndefined();
+});
+
 test("C3: in a plain folder the hooks stay silent and write nothing", () => {
   const dir = tempDir();
   write(dir, "src/a.ts", "x");

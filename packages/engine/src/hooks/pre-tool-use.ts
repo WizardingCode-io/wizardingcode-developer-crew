@@ -37,6 +37,8 @@ const OPAQUE_REDIRECT = />{1,2}\|?\s*["']?[$`]/;
 // approve the call in silence (finding 3 revisited, finding 19 of the real-use phase).
 const PROMPTLESS_MODES = new Set(["bypassPermissions", "dontAsk"]);
 const MODE_FLAG = /--mode(?:=|\s+)(\S+)/;
+// A help lookup records nothing (the command refuses the flag), so there is no decision to sign.
+const HELP_FLAG = /(?:^|\s)(?:--help|-h)(?=\s|$)/;
 
 type Decision = ["deny" | "ask", string];
 
@@ -127,7 +129,7 @@ export function onPreToolUse(ctx: HookContext, payload: HookPayload): HookRespon
     let asked: Decision | null = null;
     for (const piece of simpleCommands(command)) {
       const cleaned = piece.replace(/["'\\]/g, "");
-      if (USER_ONLY.test(cleaned)) {
+      if (USER_ONLY.test(cleaned) && !HELP_FLAG.test(cleaned)) {
         const decided = userOnlyDecision(cleaned, payload.permission_mode, ctx.headless);
         if (decided?.[0] === "deny") return answer(...decided);
         asked ??= decided;
