@@ -134,6 +134,8 @@ test("SP2b: judgement rulings are recorded from a file, judged by the verdict, s
   ]);
   const again = await c.json("gate", "run", id);
   expect(again.data.unproven).toEqual(["judgement gate ui-ux not run on the current code"]);
+  // The inputs were rewritten for other code: the old ruling and findings are gone with them.
+  expect(existsSync(file)).toBe(false);
   expect((await c.run("gate", "run", id)).out).toContain(
     "Judgement gates to run: ui-ux (interface files: src/App.vue)",
   );
@@ -159,6 +161,46 @@ test("SP2b: judgement rulings are recorded from a file, judged by the verdict, s
   const evidenceFile = join(root, ".crew", "work", id, "evidence.json");
   writeFileSync(evidenceFile, readFileSync(evidenceFile, "utf8").replace('"not-run"', '"proven"'));
   expect((await c.json("status")).data.unproven).toContain("state changed outside the engine");
+});
+
+test("SP2b review: a ruling is accepted only while the review inputs describe the current code", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/App.vue": "<template/>",
+  });
+  const c = io(root);
+  const id = (await c.json("start", "Empty state", "--answers", answers, "--criterion", "a")).data
+    .id as string;
+  write(root, "src/App.vue", "<template>empty</template>");
+  await c.run("tdd", "red", id, "AC-1", "--", "exit 1");
+  await c.run("tdd", "green", id, "AC-1", "--", "exit 0");
+  const review = join(root, ".crew", "work", id, "review");
+  const file = join(review, "ruling.json");
+  const proven = JSON.stringify({ rulings: [{ gate: "ui-ux", verdict: "proven", findings: [] }] });
+  // No gate run yet: no inputs, so no ruling can be about them.
+  mkdirSync(review, { recursive: true });
+  writeFileSync(file, proven);
+  expect((await c.run("judgement", id, "record", "--ruling", file)).err.trim()).toBe(
+    `no review inputs for this item: run crew gate run ${id} first, then the reviewers and the judge`,
+  );
+  await c.run("gate", "run", id);
+  writeFileSync(join(review, "ui-ux.findings.md"), "# ui-ux findings\n");
+  writeFileSync(file, proven);
+  // The code changes after the judge looked and before the record: the inputs describe other code.
+  write(root, "src/App.vue", "<template>empty, again</template>");
+  expect((await c.run("judgement", id, "record", "--ruling", file)).err.trim()).toBe(
+    `the review inputs describe other code than the current one: run crew gate run ${id}, then the reviewers and the judge again`,
+  );
+  // The next gate run rewrites the inputs for the new code and removes what was written for the old.
+  await c.run("gate", "run", id);
+  expect(existsSync(file)).toBe(false);
+  expect(existsSync(join(review, "ui-ux.findings.md"))).toBe(false);
+  expect(existsSync(join(review, "inputs.json"))).toBe(true);
+  // Rewritten for the same code, the inputs keep the session's files.
+  writeFileSync(file, proven);
+  await c.run("gate", "run", id, "--only", "ui-ux");
+  expect(existsSync(file)).toBe(true);
+  expect((await c.json("judgement", id, "record", "--ruling", file)).data.verdict).toBe("proven");
 });
 
 test("SP2b: a judgement gate is skipped only when the policy lists it, and the verdict then passes over it", async () => {

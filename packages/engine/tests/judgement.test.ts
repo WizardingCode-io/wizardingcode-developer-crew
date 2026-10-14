@@ -85,6 +85,12 @@ test("SP2b: an interface file is known by its extension or by living under resou
     "views/a.txt",
     "docs/a.md",
     "src/Views.ts",
+    // A test of an interface file is not an interface file (review of SP2b, finding 3).
+    "src/a.test.tsx",
+    "src/b.spec.jsx",
+    "src/C.stories.tsx",
+    "src/__tests__/d.tsx",
+    "resources/views/__tests__/e.blade.php",
   ])
     expect(isInterfacePath(path)).toBe(false);
 });
@@ -195,19 +201,39 @@ test("SP2b: a ruling is stamped with the code it judged, its findings outside th
       { file: "src/legacy.ts", text: "duplicated", severity: "defect" as const },
     ],
   };
-  const record = stampRuling(ruling, "f1", ["src/a.ts"]);
+  const record = stampRuling(ruling, "f1", ["src/a.ts"], "w1");
   expect(record).toMatchObject({ gate: "code-quality", verdict: "not-proven", fingerprint: "f1" });
   expect(typeof record.at).toBe("string");
   expect(record.findings).toEqual([
     { file: "src/a.ts", line: 1, text: "dead path", severity: "defect" },
     { file: "src/legacy.ts", text: "duplicated", severity: "defect", outside: true },
   ]);
+  // The item's own spec and plan are part of the change: a risk finding on them is not debt (review of SP2b, finding 4).
+  const onSpec = stampRuling(
+    {
+      gate: "risk",
+      verdict: "not-proven",
+      findings: [
+        { file: ".crew/work/w1/spec.md", line: 9, text: "no rollback stated", severity: "defect" },
+        {
+          file: ".crew/work/w1/plan.md",
+          text: "no owner for the manual step",
+          severity: "advisory",
+        },
+        { file: ".crew/work/other/spec.md", text: "another item's spec", severity: "advisory" },
+      ],
+    },
+    "f1",
+    ["src/a.ts"],
+    "w1",
+  );
+  expect(onSpec.findings.map((f) => f.outside ?? false)).toEqual([false, false, true]);
   const evidence: Evidence = emptyEvidence();
   recordJudgement(evidence, record);
   recordJudgement(evidence, notRunRecord("ui-ux", "no browser", "f1"));
   recordJudgement(
     evidence,
-    stampRuling({ ...ruling, verdict: "proven", findings: [] }, "f2", ["src/a.ts"]),
+    stampRuling({ ...ruling, verdict: "proven", findings: [] }, "f2", ["src/a.ts"], "w1"),
   );
   expect(evidence.judgement?.map((j) => `${j.gate}:${j.verdict}:${j.fingerprint}`)).toEqual([
     "ui-ux:not-run:f1",

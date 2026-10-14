@@ -40,7 +40,9 @@ export function sessionState(state: LocalState, sessionId: string): SessionState
 
 /** Keeps machine-local state and logs out of the repository; work artefacts too when the policy says so. */
 export function ensureCrewDir(paths: CrewPaths, policy: Policy): void {
-  const wanted = `local/\nwork/*/logs/\n${policy.artifacts === "local" ? "work/\n" : ""}`;
+  // UI captures are binaries that grow the repository per item; the findings, the ruling and the
+  // diff are evidence and stay (review of SP2b, finding 5; the merge checklist keeps captures out).
+  const wanted = `local/\nwork/*/logs/\nwork/*/review/ui/\n${policy.artifacts === "local" ? "work/\n" : ""}`;
   const file = join(paths.crewDir, ".gitignore");
   if (readText(file) !== wanted) writeProtectedText(paths, file, wanted);
 }

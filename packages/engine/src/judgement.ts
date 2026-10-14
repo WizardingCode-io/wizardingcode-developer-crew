@@ -1,6 +1,7 @@
+import { readdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { gitDiffSince } from "./fingerprint.ts";
-import { nowIso, writeText } from "./fs.ts";
+import { nowIso, readJson, writeText } from "./fs.ts";
 import { type CrewPaths, workDir } from "./paths.ts";
 import type {
   Evidence,
@@ -29,9 +30,15 @@ const INTERFACE_EXTENSIONS = [
   ".less",
 ];
 
-/** A file the user sees: a component, a template, a stylesheet, or anything under resources/views/. */
+/**
+ * A file the user sees: a component, a template, a stylesheet, or anything under resources/views/.
+ * A test, a spec or a story of one is not one: nobody expects a UI review of a test file.
+ */
 export function isInterfacePath(rel: string): boolean {
   const lower = rel.toLowerCase();
+  if (/(?:^|\/)__tests__\//.test(lower)) return false;
+  const name = lower.slice(lower.lastIndexOf("/") + 1);
+  if (/\.(?:test|spec|stories)\./.test(name)) return false;
   if (/(?:^|\/)resources\/views\//.test(lower)) return true;
   return INTERFACE_EXTENSIONS.some((ext) => lower.endsWith(ext));
 }
@@ -75,20 +82,53 @@ export function reviewDir(paths: CrewPaths, id: string): string {
   return join(workDir(paths, id), "review");
 }
 
+/** What the review inputs describe: the fingerprint of the code the diff was cut from, and when. */
+export interface ReviewInputs {
+  fingerprint: string;
+  at: string;
+}
+
+export function readReviewInputs(paths: CrewPaths, id: string): ReviewInputs | null {
+  const raw = readJson<Partial<ReviewInputs>>(join(reviewDir(paths, id), "inputs.json"));
+  return raw && typeof raw.fingerprint === "string" && typeof raw.at === "string"
+    ? { fingerprint: raw.fingerprint, at: raw.at }
+    : null;
+}
+
 /**
  * What a reviewer receives, and nothing else (SP2 §10, finding 20): the diff of the item's change
- * since its base commit, untracked files as additions, and the list of changed watched paths.
- * Plain files, rewritten at every gate run; the session writes its rulings beside them.
+ * since its base commit, untracked files as additions, and the list of changed watched paths, with
+ * `inputs.json` naming the fingerprint they describe. Plain files, rewritten at every gate run; the
+ * session writes its findings and its ruling beside them. When the inputs are rewritten for other
+ * code, the findings and the ruling written for the old code go with them: a ruling the judge gave
+ * on code that no longer exists must not be recorded against the new (review of SP2b, finding 1).
  */
 export function writeReviewInputs(
   paths: CrewPaths,
   work: WorkItem,
   changed: readonly string[],
+  fingerprint: string,
 ): string {
   const dir = reviewDir(paths, work.id);
+  const previous = readReviewInputs(paths, work.id);
+  if (previous && previous.fingerprint !== fingerprint) {
+    let names: string[] = [];
+    try {
+      names = readdirSync(dir);
+    } catch {
+      names = [];
+    }
+    for (const name of names) {
+      if (name === "ruling.json" || name.endsWith(".findings.md")) unlinkSync(join(dir, name));
+    }
+  }
   const patch = work.baseCommit ? gitDiffSince(paths.root, work.baseCommit, changed) : "";
   writeText(join(dir, "diff.patch"), patch);
   writeText(join(dir, "files.txt"), changed.length ? `${changed.join("\n")}\n` : "");
+  writeText(
+    join(dir, "inputs.json"),
+    `${JSON.stringify({ fingerprint, at: nowIso() }, null, 2)}\n`,
+  );
   return dir;
 }
 
@@ -233,20 +273,23 @@ export function parseRulings(
 /**
  * The record the engine keeps: the ruling as given, stamped with when and on which code, each
  * finding on a file outside the change marked (ADR 0006: debt is reported, not failed on; the
- * verdict stays the judge's).
+ * verdict stays the judge's). The item's own documents (`.crew/work/<id>/spec.md`, `plan.md`) are
+ * part of the change: a risk finding on them is the item's, never debt.
  */
 export function stampRuling(
   ruling: Ruling,
   fingerprint: string,
   changed: readonly string[],
+  workId: string,
 ): JudgementRecord {
+  const own = `.crew/work/${workId}/`;
   return {
     gate: ruling.gate,
     verdict: ruling.verdict,
     ...(ruling.reviewer ? { reviewer: ruling.reviewer } : {}),
     ...(ruling.judge ? { judge: ruling.judge } : {}),
     findings: ruling.findings.map((f) =>
-      changed.includes(f.file) ? { ...f } : { ...f, outside: true },
+      changed.includes(f.file) || f.file.startsWith(own) ? { ...f } : { ...f, outside: true },
     ),
     ...(ruling.tokens !== undefined ? { tokens: ruling.tokens } : {}),
     at: nowIso(),

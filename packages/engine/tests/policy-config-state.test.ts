@@ -143,10 +143,12 @@ test("config: defaults, set values, reject unknown keys and values", () => {
 test("state: per-session entries and the .crew/.gitignore", () => {
   const paths = repoPaths(makeRepo(), testEnv());
   ensureCrewDir(paths, DEFAULT_POLICY);
-  expect(readFileSync(join(paths.crewDir, ".gitignore"), "utf8")).toBe("local/\nwork/*/logs/\n");
+  expect(readFileSync(join(paths.crewDir, ".gitignore"), "utf8")).toBe(
+    "local/\nwork/*/logs/\nwork/*/review/ui/\n",
+  );
   ensureCrewDir(paths, { ...DEFAULT_POLICY, artifacts: "local" });
   expect(readFileSync(join(paths.crewDir, ".gitignore"), "utf8")).toBe(
-    "local/\nwork/*/logs/\nwork/\n",
+    "local/\nwork/*/logs/\nwork/*/review/ui/\nwork/\n",
   );
   const state = loadState(paths);
   expect(state).toEqual({ active: null, sessions: {} });

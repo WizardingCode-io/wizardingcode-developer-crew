@@ -24,6 +24,20 @@ function session() {
   return { root, ctx, env };
 }
 
+test("SP2b review: a block whose missing reason is a judgement gate names the judgement path, not only the gate run", () => {
+  const { root, ctx } = session();
+  const work = createWork(ctx.paths, "fix");
+  addCriterion(work, "x");
+  saveWork(ctx.paths, work);
+  write(root, "src/App.vue", "<template>empty</template>");
+  const response = onStop(ctx) as { decision?: string; reason?: string };
+  expect(response.decision).toBe("block");
+  expect(response.reason).toContain("judgement gate ui-ux not run");
+  expect(response.reason).toContain(
+    `A judgement gate is cleared by its roles, not by the gate run: run the planned reviewers and the judge, then crew judgement ${work.id} record --ruling .crew/work/${work.id}/review/ruling.json.`,
+  );
+});
+
 test("C4: a new session that starts on unproven changes has no baseline, so they count", () => {
   const { root, ctx, env } = session();
   createWork(ctx.paths, "fix");

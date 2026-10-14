@@ -21,6 +21,7 @@ import {
   notRunRecord,
   parseRulings,
   plannedNote,
+  readReviewInputs,
   recordJudgement,
   stampRuling,
 } from "./judgement.ts";
@@ -996,6 +997,17 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         records.push(notRunRecord(gate, reason, before.currentFingerprint));
       } else {
         if (typeof parsed.flags.ruling !== "string") return refuse(usage);
+        // A ruling is about the inputs the judge saw: none, or inputs cut from other code, and the
+        // file cannot be recorded against the code as it is now (review of SP2b, finding 1).
+        const inputs = readReviewInputs(env.paths, opened.work.id);
+        if (!inputs)
+          return refuse(
+            `no review inputs for this item: run crew gate run ${opened.work.id} first, then the reviewers and the judge`,
+          );
+        if (inputs.fingerprint !== before.currentFingerprint)
+          return refuse(
+            `the review inputs describe other code than the current one: run crew gate run ${opened.work.id}, then the reviewers and the judge again`,
+          );
         const text = readText(resolve(env.paths.root, parsed.flags.ruling));
         if (text === null) return refuse(`no ruling file at ${parsed.flags.ruling}`);
         let raw: unknown;
@@ -1007,7 +1019,9 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         const parsedRulings = parseRulings(raw, planned);
         if ("refused" in parsedRulings) return refuse(parsedRulings.refused);
         for (const ruling of parsedRulings.rulings)
-          records.push(stampRuling(ruling, before.currentFingerprint, before.changed));
+          records.push(
+            stampRuling(ruling, before.currentFingerprint, before.changed, opened.work.id),
+          );
       }
       const { evidence } = loadEvidence(env.paths, opened.work.id);
       for (const record of records) recordJudgement(evidence, record);

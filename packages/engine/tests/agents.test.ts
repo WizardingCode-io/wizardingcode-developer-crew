@@ -88,6 +88,8 @@ test("SP2b: the judge rules the gates, rules the debate and acts as validator, o
   expect(body).toContain("stated-default");
   expect(body).toMatch(/never waive/);
   expect(body).toContain('never "by the user"');
+  // For the risk gate, the item's own spec and plan are inside the change (review of SP2b, finding 4).
+  expect(body).toMatch(/spec\.md[^\n]*inside the change/);
 });
 
 test("SP2b: the debate roles run on opus; the devil's advocate and the fault-finder read the proposals file only", () => {

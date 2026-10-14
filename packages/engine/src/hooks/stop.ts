@@ -98,8 +98,14 @@ export function onStop(ctx: HookContext, payload: HookPayload = {}): HookRespons
   const wait = work
     ? ` To end the turn with a question for the user, run crew await ${work.id} user first.`
     : "";
+  // A judgement reason is not cleared by another gate run, and a judgement gate is not skipped by
+  // default: the way out is the roles and the record (review of SP2b, finding 2).
+  const judgement =
+    work && missing.some((m) => m.startsWith("judgement gate"))
+      ? ` A judgement gate is cleared by its roles, not by the gate run: run the planned reviewers and the judge, then crew judgement ${work.id} record --ruling .crew/work/${work.id}/review/ruling.json.`
+      : "";
   return done({
     decision: "block",
-    reason: `Crew: watched source files changed and the work is not proven. Missing: ${missing.join("; ")}. Run ${gate}, fix what fails, or ask the user to skip a step with crew skip.${wait}`,
+    reason: `Crew: watched source files changed and the work is not proven. Missing: ${missing.join("; ")}. Run ${gate}, fix what fails, or ask the user to skip a step with crew skip.${judgement}${wait}`,
   });
 }

@@ -527,7 +527,7 @@ export async function runGates(
   evidence.fingerprint = stamp;
   // Planned after the route may have been raised, so a risk area the diff touched plans the security gate.
   const judgement = plannedJudgementGates(work.route, work.riskAreas, changed, policy);
-  const review = judgement.length ? writeReviewInputs(paths, work, changed) : null;
+  const review = judgement.length ? writeReviewInputs(paths, work, changed, stamp) : null;
   const verdict = computeVerdict({
     work,
     evidence,

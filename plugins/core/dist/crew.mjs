@@ -1231,6 +1231,7 @@ function sessionState(state, sessionId) {
 function ensureCrewDir(paths, policy) {
   const wanted = `local/
 work/*/logs/
+work/*/review/ui/
 ${policy.artifacts === "local" ? `work/
 ` : ""}`;
   const file = join12(paths.crewDir, ".gitignore");
@@ -1933,6 +1934,7 @@ function parseAudit(tool, text) {
 }
 
 // packages/engine/src/judgement.ts
+import { readdirSync as readdirSync5, unlinkSync } from "node:fs";
 import { join as join15 } from "node:path";
 var INTERFACE_EXTENSIONS = [
   ".vue",
@@ -1948,6 +1950,11 @@ var INTERFACE_EXTENSIONS = [
 ];
 function isInterfacePath(rel2) {
   const lower = rel2.toLowerCase();
+  if (/(?:^|\/)__tests__\//.test(lower))
+    return false;
+  const name = lower.slice(lower.lastIndexOf("/") + 1);
+  if (/\.(?:test|spec|stories)\./.test(name))
+    return false;
   if (/(?:^|\/)resources\/views\//.test(lower))
     return true;
   return INTERFACE_EXTENSIONS.some((ext) => lower.endsWith(ext));
@@ -1981,13 +1988,32 @@ function plannedJudgementGates(route, riskAreas, changed, policy) {
 function reviewDir(paths, id) {
   return join15(workDir(paths, id), "review");
 }
-function writeReviewInputs(paths, work, changed) {
+function readReviewInputs(paths, id) {
+  const raw = readJson(join15(reviewDir(paths, id), "inputs.json"));
+  return raw && typeof raw.fingerprint === "string" && typeof raw.at === "string" ? { fingerprint: raw.fingerprint, at: raw.at } : null;
+}
+function writeReviewInputs(paths, work, changed, fingerprint) {
   const dir = reviewDir(paths, work.id);
+  const previous = readReviewInputs(paths, work.id);
+  if (previous && previous.fingerprint !== fingerprint) {
+    let names = [];
+    try {
+      names = readdirSync5(dir);
+    } catch {
+      names = [];
+    }
+    for (const name of names) {
+      if (name === "ruling.json" || name.endsWith(".findings.md"))
+        unlinkSync(join15(dir, name));
+    }
+  }
   const patch = work.baseCommit ? gitDiffSince(paths.root, work.baseCommit, changed) : "";
   writeText(join15(dir, "diff.patch"), patch);
   writeText(join15(dir, "files.txt"), changed.length ? `${changed.join(`
 `)}
 ` : "");
+  writeText(join15(dir, "inputs.json"), `${JSON.stringify({ fingerprint, at: nowIso() }, null, 2)}
+`);
   return dir;
 }
 function judgementRows(work, evidence, planned, currentFingerprint, policy) {
@@ -2089,13 +2115,14 @@ function parseRulings(raw, planned) {
   }
   return { rulings };
 }
-function stampRuling(ruling, fingerprint, changed) {
+function stampRuling(ruling, fingerprint, changed, workId) {
+  const own = `.crew/work/${workId}/`;
   return {
     gate: ruling.gate,
     verdict: ruling.verdict,
     ...ruling.reviewer ? { reviewer: ruling.reviewer } : {},
     ...ruling.judge ? { judge: ruling.judge } : {},
-    findings: ruling.findings.map((f) => changed.includes(f.file) ? { ...f } : { ...f, outside: true }),
+    findings: ruling.findings.map((f) => changed.includes(f.file) || f.file.startsWith(own) ? { ...f } : { ...f, outside: true }),
     ...ruling.tokens !== undefined ? { tokens: ruling.tokens } : {},
     at: nowIso(),
     fingerprint
@@ -2728,7 +2755,7 @@ async function runGates(paths, work, profile, policy, options = {}) {
   }
   evidence.fingerprint = stamp;
   const judgement = plannedJudgementGates(work.route, work.riskAreas, changed, policy);
-  const review = judgement.length ? writeReviewInputs(paths, work, changed) : null;
+  const review = judgement.length ? writeReviewInputs(paths, work, changed, stamp) : null;
   const verdict = computeVerdict({
     work,
     evidence,
@@ -3079,9 +3106,10 @@ function onStop(ctx, payload = {}) {
   session.stopBlocks += 1;
   const gate = work ? `crew gate run ${work.id}` : 'crew start "<request>"';
   const wait = work ? ` To end the turn with a question for the user, run crew await ${work.id} user first.` : "";
+  const judgement = work && missing.some((m) => m.startsWith("judgement gate")) ? ` A judgement gate is cleared by its roles, not by the gate run: run the planned reviewers and the judge, then crew judgement ${work.id} record --ruling .crew/work/${work.id}/review/ruling.json.` : "";
   return done({
     decision: "block",
-    reason: `Crew: watched source files changed and the work is not proven. Missing: ${missing.join("; ")}. Run ${gate}, fix what fails, or ask the user to skip a step with crew skip.${wait}`
+    reason: `Crew: watched source files changed and the work is not proven. Missing: ${missing.join("; ")}. Run ${gate}, fix what fails, or ask the user to skip a step with crew skip.${judgement}${wait}`
   });
 }
 
@@ -3936,6 +3964,11 @@ Judgement gates to run: ${pending.map((j) => `${j.gate} (${j.reason})`).join(", 
       } else {
         if (typeof parsed.flags.ruling !== "string")
           return refuse(usage);
+        const inputs = readReviewInputs(env.paths, opened.work.id);
+        if (!inputs)
+          return refuse(`no review inputs for this item: run crew gate run ${opened.work.id} first, then the reviewers and the judge`);
+        if (inputs.fingerprint !== before.currentFingerprint)
+          return refuse(`the review inputs describe other code than the current one: run crew gate run ${opened.work.id}, then the reviewers and the judge again`);
         const text = readText(resolve2(env.paths.root, parsed.flags.ruling));
         if (text === null)
           return refuse(`no ruling file at ${parsed.flags.ruling}`);
@@ -3949,7 +3982,7 @@ Judgement gates to run: ${pending.map((j) => `${j.gate} (${j.reason})`).join(", 
         if ("refused" in parsedRulings)
           return refuse(parsedRulings.refused);
         for (const ruling of parsedRulings.rulings)
-          records.push(stampRuling(ruling, before.currentFingerprint, before.changed));
+          records.push(stampRuling(ruling, before.currentFingerprint, before.changed, opened.work.id));
       }
       const { evidence } = loadEvidence(env.paths, opened.work.id);
       for (const record of records)
