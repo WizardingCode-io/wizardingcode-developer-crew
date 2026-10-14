@@ -265,6 +265,13 @@ export function answerDecision(
   const found = (work.decisions ?? []).find((d) => d.id === id);
   if (!found) return { refused: `unknown decision: ${id}` };
   if (decision.by === "validator") {
+    // A recorded answer stands, whoever gave it; the validator fills a blank, never a decision.
+    if (found.answer !== undefined) {
+      const who = found.by === "validator" ? "the validator" : `the ${found.by ?? "user"}`;
+      return {
+        refused: `${id} is already answered by ${who}; the validator never overwrites an answer`,
+      };
+    }
     if (found.default === undefined) {
       return { refused: `${id} has no stated default; a person answers it` };
     }
@@ -317,22 +324,35 @@ export function isBeforeBuild(work: WorkItem): boolean {
   return phaseIndex(work.phase) < phaseIndex("build");
 }
 
-/** The text under a heading, up to the next heading; null when the heading is absent. */
-function sectionBody(text: string, heading: string): string | null {
+/**
+ * The content under each occurrence of a heading, up to the next heading of the same or a higher
+ * level, with sub-heading lines taken out: a sub-heading with nothing under it is not content, what
+ * is written under it is (SP2a review, finding I3).
+ */
+function sectionBodies(text: string, heading: string): string[] {
   const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const match = new RegExp(`^#{1,6}\\s*${escaped}\\s*$`, "im").exec(text);
-  if (!match) return null;
-  const rest = text.slice(match.index + match[0].length);
-  return rest.split(/^#{1,6}\s/m)[0] ?? "";
+  const bodies: string[] = [];
+  for (const match of text.matchAll(new RegExp(`^(#{1,6})\\s*${escaped}\\s*$`, "gim"))) {
+    const level = (match[1] ?? "#").length;
+    const rest = text.slice((match.index ?? 0) + match[0].length);
+    const next = new RegExp(`^#{1,${level}}\\s`, "m").exec(rest);
+    const body = next ? rest.slice(0, next.index) : rest;
+    bodies.push(body.replace(/^#{1,6}\s.*$/gm, "").trim());
+  }
+  return bodies;
+}
+
+function hasSection(text: string, heading: string): boolean {
+  return sectionBodies(text, heading).some((body) => body.length > 0);
 }
 
 export function hasAcceptanceSection(text: string): boolean {
-  return (sectionBody(text, "acceptance criteria") ?? "").trim().length > 0;
+  return hasSection(text, "acceptance criteria");
 }
 
 /** The sections of the gap round that are absent or empty; "none" under a heading is content. */
 export function missingConclaveSections(text: string): string[] {
-  return CONCLAVE_SECTIONS.filter((name) => !(sectionBody(text, name) ?? "").trim());
+  return CONCLAVE_SECTIONS.filter((name) => !hasSection(text, name));
 }
 
 export interface GuardContext {

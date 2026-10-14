@@ -289,8 +289,8 @@ export async function runGates(
   const planned = plannedGates(work.route, profile, policy, changed, paths.root);
   const read = loadEvidence(paths, work.id);
   const evidence = read.evidence;
-  // The caller knows about the work item and the profile; the evidence file is checked here.
-  const tampered = !!options.tampered || read.tampered;
+  // The caller knows about the work item and the profile; the evidence and the ledger are checked here.
+  const tampered = !!options.tampered || read.tampered || loadLedger(paths, work.id).tampered;
   const fingerprintBefore = computeFingerprint(paths.root, profile, base);
   for (const one of planned) {
     const { gate, target } = one;
@@ -375,7 +375,7 @@ export function assess(
       MAX_WATCHED_FILES,
       fingerprintMethod(read.evidence.fingerprint),
     ),
-    tampered: tampered || read.tampered,
+    tampered: tampered || read.tampered || loadLedger(paths, work.id).tampered,
     policy,
   });
   return { evidence: read.evidence, ...verdict, expected, changed };

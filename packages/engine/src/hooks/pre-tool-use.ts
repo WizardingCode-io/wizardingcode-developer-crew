@@ -13,8 +13,12 @@ const WRITE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
 // words inside another program's argument (`grep 'crew accept'`) are text, not the command
 // (finding 16 of the real-use phase).
 const RUNNER = String.raw`(?:[A-Za-z_][A-Za-z0-9_]*=\S*|-\S*|node|bun|bunx|npx|sh|bash|zsh|eval|exec|env|time|nohup|xargs|sudo|command)`;
+// Options may sit before the verb (`crew --json approve …`) or between the words of a two-word
+// verb (`profile --json confirm`); `objection … waive` tolerates anything but a command separator in
+// between, since the id and the flags may come in any order (SP2a review, finding C1).
+const OPTS = String.raw`(?:--[\w-]+(?:[= ]\S+)?\s+)*`;
 const USER_ONLY = new RegExp(
-  String.raw`^[\s({]*(?:${RUNNER}\s+)*(?:\S*/)?crew(?:\.mjs)?\s+(?:skip|approve|accept|decide|objection\s+\S+\s+waive|profile\s+confirm|policy\s+accept|profile\s+set\b[^;&|]*--force)\b`,
+  String.raw`^[\s({]*(?:${RUNNER}\s+)*(?:\S*/)?crew(?:\.mjs)?\s+${OPTS}(?:skip|approve|accept|decide|objection\b[^;&|]*\bwaive\b|profile\s+${OPTS}confirm|policy\s+${OPTS}accept|profile\s+set\b[^;&|]*--force)\b`,
 );
 const ENGINE_FILES =
   /\.crew\/(?:profile\.json|policy\.json|\.gitignore|local\b|work\/[^\s/]+\/(?:work\.json|evidence\.json|objections\.json|report\.md|logs\b))|\.wizardingcode\/crew\b/;

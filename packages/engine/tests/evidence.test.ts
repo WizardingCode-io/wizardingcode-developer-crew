@@ -318,6 +318,31 @@ test("SP2a: the report names the validator's approval and whether the policy cou
   ).toContain("): counted by policy");
 });
 
+test("SP2a review: the verdict line names who waived, and a not-counted waiver reads as open with who recorded it", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const work = workWith(paths);
+  const ledger: ObjectionLedger = { objections: [] };
+  const o1 = addObjection(ledger, "re-subscribes everyone", "fault-finder", "blocking");
+  waiveObjection(ledger, o1.id, "no time", { by: "agent", mode: "dontAsk" });
+  const evidence: Evidence = { ...emptyEvidence(), fingerprint: "f" };
+  const waiting = renderReport(work, evidence, DEFAULT_POLICY, ledger);
+  expect(waiting).toContain("- Verdict: **Not proven**\n");
+  expect(waiting).not.toContain("waived by the user");
+  expect(waiting).toContain(
+    "- O-1 (blocking, raised by fault-finder) open (waiver by the agent in dontAsk mode not counted): re-subscribes everyone",
+  );
+  const counting = renderReport(
+    work,
+    { ...evidence, verdict: "proven" },
+    { ...DEFAULT_POLICY, unattendedDecisions: "count" },
+    ledger,
+  );
+  expect(counting).toContain(
+    "- Verdict: **Proven**, with 1 objection waived by the agent in dontAsk mode (counted by policy)",
+  );
+  expect(counting).not.toContain("waived by the user");
+});
+
 test("an item with no criteria is never proven, whatever the gates say", () => {
   const paths = repoPaths(makeRepo(), testEnv());
   const work = createWork(paths, "fix");

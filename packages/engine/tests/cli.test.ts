@@ -1010,3 +1010,39 @@ test("SP2a: the validator's approval is refused until the rule holds, then count
   expect((await c.run("policy", "accept")).code).toBe(0);
   expect((await c.json("phase", id, "next")).data.phase).toBe("build");
 });
+
+test("SP2a review: a hand-edited ledger reaches the verdict, not only the saving commands", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const c = io(root);
+  const id = (await c.json("start", "Gated sync", "--answers", answers, "--criterion", "a")).data
+    .id as string;
+  await c.json(
+    "objection",
+    id,
+    "add",
+    "re-subscribes everyone",
+    "--by",
+    "fault-finder",
+    "--severity",
+    "blocking",
+  );
+  write(root, "src/a.ts", "y");
+  expect((await c.run("tdd", "red", id, "AC-1", "--", "exit 1")).code).toBe(0);
+  expect((await c.run("tdd", "green", id, "AC-1", "--", "exit 0")).code).toBe(0);
+  expect((await c.json("gate", "run", id)).data.unproven).toEqual([
+    "blocking objection O-1 open: re-subscribes everyone",
+  ]);
+  // Emptying the ledger by hand must not turn the item proven.
+  writeFileSync(
+    join(root, ".crew", "work", id, "objections.json"),
+    JSON.stringify({ objections: [] }),
+  );
+  const status = await c.json("status");
+  expect(status.data.verdict).toBe("unproven");
+  expect(status.data.unproven).toContain("state changed outside the engine");
+  expect((await c.run("accept", id)).code).toBe(0);
+  expect((await c.json("status")).data.unproven).not.toContain("state changed outside the engine");
+});

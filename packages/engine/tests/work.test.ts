@@ -398,6 +398,44 @@ test("SP2a: the complete-gap-round rule holds only with the four sections, defau
   expect(validatorPreconditions("stated-default", work, empty)).toEqual([]);
 });
 
+test("SP2a review: the validator never overwrites an answer; a person may change theirs", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const work = createWork(paths, "feature");
+  addDecision(work, "Which roles?", "admins only");
+  expect(answerDecision(work, "D-1", "everyone", { by: "user" })).toMatchObject({
+    answer: "everyone",
+  });
+  expect(
+    answerDecision(work, "D-1", undefined, {
+      by: "validator",
+      mode: "dontAsk",
+      rule: "stated-default",
+    }),
+  ).toEqual({
+    refused: "D-1 is already answered by the user; the validator never overwrites an answer",
+  });
+  expect(work.decisions?.[0]).toMatchObject({ answer: "everyone", by: "user" });
+  expect(answerDecision(work, "D-1", "admins only", { by: "user" })).toMatchObject({
+    answer: "admins only",
+    by: "user",
+  });
+});
+
+test("SP2a review: a section body runs to the next heading of the same or higher level, and any filled occurrence counts", () => {
+  const nested =
+    "# Gap round\n\n## Assumed by good practice\n### Auth\n- the endpoint is authenticated\n\n## Decisions only the user can make\n### D-1 Which roles?\n- admins only\n\n## Proposals\nnone\n\n## Warnings\nnone\n";
+  expect(missingConclaveSections(nested)).toEqual([]);
+  const duplicated =
+    "## Assumed by good practice\nnone\n## Decisions only the user can make\n\n## Proposals\nnone\n## Warnings\nnone\n\n## Decisions only the user can make\n- D-1 which roles\n";
+  expect(missingConclaveSections(duplicated)).toEqual([]);
+  const emptyNested =
+    "## Assumed by good practice\n### Auth\n\n## Decisions only the user can make\nnone\n## Proposals\nnone\n## Warnings\nnone\n";
+  expect(missingConclaveSections(emptyNested)).toEqual(["Assumed by good practice"]);
+  expect(hasAcceptanceSection("## Acceptance criteria\n### Behaviour\n- AC-1 x\n## Risks\n")).toBe(
+    true,
+  );
+});
+
 test("advancePhase follows the route and stops at a failing guard", () => {
   const paths = repoPaths(makeRepo(), testEnv());
   const work = createWork(paths, "fix");

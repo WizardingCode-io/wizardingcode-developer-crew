@@ -187,11 +187,18 @@ export function renderReport(
   lines.push(`- Work: \`${work.id}\``);
   lines.push(`- Type: ${work.type}. Route: ${work.route} (${work.routeReasons.join("; ")})`);
   // A waived objection is named with the verdict, so a report that says Proven with a waiver says so first.
-  const waived = (ledger?.objections ?? []).filter(
-    (o) => o.waived && decisionCounts(policy, o.waived),
-  );
-  const waivedNote = waived.length
-    ? `, with ${waived.length} objection${waived.length === 1 ? "" : "s"} waived by the user`
+  // Grouped by who waived, rendered through decidedBy: never "by the user" for a decision a
+  // person did not take (SP2a review, finding I1).
+  const byDecider = new Map<string, number>();
+  for (const o of ledger?.objections ?? []) {
+    if (!o.waived || !decisionCounts(policy, o.waived)) continue;
+    const who = `${decidedBy(o.waived)}${o.waived.by === "user" ? "" : " (counted by policy)"}`;
+    byDecider.set(who, (byDecider.get(who) ?? 0) + 1);
+  }
+  const waivedNote = byDecider.size
+    ? `, with ${[...byDecider]
+        .map(([who, n]) => `${n} objection${n === 1 ? "" : "s"} waived ${who}`)
+        .join(" and ")}`
     : "";
   lines.push(
     `- Verdict: **${evidence.verdict === "proven" ? "Proven" : "Not proven"}**${waivedNote}`,

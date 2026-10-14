@@ -310,6 +310,39 @@ test("SP2a: objections.json is engine-owned and waive is user-only", () => {
   expect(decision(bash("echo x > .crew/work/w1/objections.json"))).toBe("deny");
 });
 
+test("SP2a review: a flag before the verb, or between objection and waive, does not dodge the user-only rule", () => {
+  const { ctx } = setup();
+  const bash = (command: string, permission_mode?: string) =>
+    onPreToolUse(ctx, { tool_name: "Bash", tool_input: { command }, permission_mode });
+  const asked = [
+    'crew objection w1 --reason "x" waive O-1',
+    "crew objection --json w1 waive O-1 --reason x",
+    'crew --json decide w1 D-1 "x"',
+    "crew --json approve w1 spec",
+    "node plugins/core/dist/crew.mjs --json skip w1 gate:lint --reason x",
+    "crew profile --json confirm",
+  ];
+  for (const command of asked) expect(decision(bash(command, "auto"))).toBe("ask");
+  // With a person present, --mode in those shapes is denied, not passed.
+  const denied = [
+    "crew objection w1 --mode dontAsk waive O-1 --reason x",
+    "crew --json decide w1 D-1 --mode dontAsk --validator stated-default",
+    "crew --json approve w1 spec --mode auto",
+  ];
+  for (const command of denied) {
+    const response = bash(command, "auto");
+    expect(decision(response)).toBe("deny");
+    expect(reason(response)).toContain("without --mode");
+  }
+  // Not user-only: the same words as arguments of another command, or no waive at all.
+  expect(
+    decision(bash('crew objection w1 add "x" --by expert --severity advisory', "auto")),
+  ).toBeUndefined();
+  expect(
+    decision(bash('crew decision w1 add "Which roles?" --default admins', "auto")),
+  ).toBeUndefined();
+});
+
 test("a write through a symlinked alias of the repository is judged like the real path", () => {
   const { root, ctx } = setup();
   const alias = join(tempDir(), "alias");

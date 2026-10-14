@@ -1239,6 +1239,12 @@ function answerDecision(work, id, answer, decision) {
   if (!found)
     return { refused: `unknown decision: ${id}` };
   if (decision.by === "validator") {
+    if (found.answer !== undefined) {
+      const who = found.by === "validator" ? "the validator" : `the ${found.by ?? "user"}`;
+      return {
+        refused: `${id} is already answered by ${who}; the validator never overwrites an answer`
+      };
+    }
     if (found.default === undefined) {
       return { refused: `${id} has no stated default; a person answers it` };
     }
@@ -1281,19 +1287,26 @@ function phaseIndex(phase) {
 function isBeforeBuild(work) {
   return phaseIndex(work.phase) < phaseIndex("build");
 }
-function sectionBody(text, heading) {
+function sectionBodies(text, heading) {
   const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const match = new RegExp(`^#{1,6}\\s*${escaped}\\s*$`, "im").exec(text);
-  if (!match)
-    return null;
-  const rest = text.slice(match.index + match[0].length);
-  return rest.split(/^#{1,6}\s/m)[0] ?? "";
+  const bodies = [];
+  for (const match of text.matchAll(new RegExp(`^(#{1,6})\\s*${escaped}\\s*$`, "gim"))) {
+    const level = (match[1] ?? "#").length;
+    const rest = text.slice((match.index ?? 0) + match[0].length);
+    const next = new RegExp(`^#{1,${level}}\\s`, "m").exec(rest);
+    const body = next ? rest.slice(0, next.index) : rest;
+    bodies.push(body.replace(/^#{1,6}\s.*$/gm, "").trim());
+  }
+  return bodies;
+}
+function hasSection(text, heading) {
+  return sectionBodies(text, heading).some((body) => body.length > 0);
 }
 function hasAcceptanceSection(text) {
-  return (sectionBody(text, "acceptance criteria") ?? "").trim().length > 0;
+  return hasSection(text, "acceptance criteria");
 }
 function missingConclaveSections(text) {
-  return CONCLAVE_SECTIONS.filter((name) => !(sectionBody(text, name) ?? "").trim());
+  return CONCLAVE_SECTIONS.filter((name) => !hasSection(text, name));
 }
 function routeDocuments(work, ctx) {
   const missing = [];
@@ -1499,8 +1512,14 @@ function renderReport(work, evidence, policy, ledger) {
   lines.push(`# Report: ${work.title}`, "");
   lines.push(`- Work: \`${work.id}\``);
   lines.push(`- Type: ${work.type}. Route: ${work.route} (${work.routeReasons.join("; ")})`);
-  const waived = (ledger?.objections ?? []).filter((o) => o.waived && decisionCounts(policy, o.waived));
-  const waivedNote = waived.length ? `, with ${waived.length} objection${waived.length === 1 ? "" : "s"} waived by the user` : "";
+  const byDecider = new Map;
+  for (const o of ledger?.objections ?? []) {
+    if (!o.waived || !decisionCounts(policy, o.waived))
+      continue;
+    const who = `${decidedBy(o.waived)}${o.waived.by === "user" ? "" : " (counted by policy)"}`;
+    byDecider.set(who, (byDecider.get(who) ?? 0) + 1);
+  }
+  const waivedNote = byDecider.size ? `, with ${[...byDecider].map(([who, n]) => `${n} objection${n === 1 ? "" : "s"} waived ${who}`).join(" and ")}` : "";
   lines.push(`- Verdict: **${evidence.verdict === "proven" ? "Proven" : "Not proven"}**${waivedNote}`, "");
   if (evidence.unproven.length) {
     lines.push("## Not proven", "");
@@ -1982,7 +2001,7 @@ async function runGates(paths, work, profile, policy, options = {}) {
   const planned = plannedGates(work.route, profile, policy, changed, paths.root);
   const read = loadEvidence(paths, work.id);
   const evidence = read.evidence;
-  const tampered = !!options.tampered || read.tampered;
+  const tampered = !!options.tampered || read.tampered || loadLedger(paths, work.id).tampered;
   const fingerprintBefore = computeFingerprint(paths.root, profile, base);
   for (const one of planned) {
     const { gate, target } = one;
@@ -2037,7 +2056,7 @@ function assess(paths, work, profile, policy, tampered = false) {
     expected,
     ledger: loadLedger(paths, work.id).ledger,
     currentFingerprint: computeFingerprint(paths.root, profile, base, MAX_WATCHED_FILES, fingerprintMethod(read.evidence.fingerprint)),
-    tampered: tampered || read.tampered,
+    tampered: tampered || read.tampered || loadLedger(paths, work.id).tampered,
     policy
   });
   return { evidence: read.evidence, ...verdict, expected, changed };
@@ -2124,7 +2143,8 @@ function isRedirectPart(line, i) {
 // packages/engine/src/hooks/pre-tool-use.ts
 var WRITE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
 var RUNNER = String.raw`(?:[A-Za-z_][A-Za-z0-9_]*=\S*|-\S*|node|bun|bunx|npx|sh|bash|zsh|eval|exec|env|time|nohup|xargs|sudo|command)`;
-var USER_ONLY = new RegExp(String.raw`^[\s({]*(?:${RUNNER}\s+)*(?:\S*/)?crew(?:\.mjs)?\s+(?:skip|approve|accept|decide|objection\s+\S+\s+waive|profile\s+confirm|policy\s+accept|profile\s+set\b[^;&|]*--force)\b`);
+var OPTS = String.raw`(?:--[\w-]+(?:[= ]\S+)?\s+)*`;
+var USER_ONLY = new RegExp(String.raw`^[\s({]*(?:${RUNNER}\s+)*(?:\S*/)?crew(?:\.mjs)?\s+${OPTS}(?:skip|approve|accept|decide|objection\b[^;&|]*\bwaive\b|profile\s+${OPTS}confirm|policy\s+${OPTS}accept|profile\s+set\b[^;&|]*--force)\b`);
 var ENGINE_FILES = /\.crew\/(?:profile\.json|policy\.json|\.gitignore|local\b|work\/[^\s/]+\/(?:work\.json|evidence\.json|objections\.json|report\.md|logs\b))|\.wizardingcode\/crew\b/;
 var WRITE_SHAPE = /(?:^|[\s;&|("'])(?:rm|mv|cp|tee|truncate|chmod|touch|dd|install)\b|sed\s+-i|>{1,2}\|?\s*["']?\S*(?:\.crew\/|\.wizardingcode\/crew\b)/;
 var OPAQUE_REDIRECT = />{1,2}\|?\s*["']?[$`]/;
