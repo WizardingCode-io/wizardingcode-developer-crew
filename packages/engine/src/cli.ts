@@ -63,14 +63,42 @@ interface Parsed {
   flags: Record<string, string | true>;
   /** Every value a flag was given, in order, for flags that may repeat (`--criterion a --criterion b`). */
   multi: Record<string, string[]>;
+  /** Every valued flag in command-line order, so two repeatable flags keep their relative order. */
+  ordered: { key: string; value: string }[];
   rest: string[];
 }
 
 // Flags that never take a value, so a word after them stays a positional argument.
 const BOOLEAN_FLAGS = new Set(["json", "refresh", "force"]);
 
+// The flags each command knows, besides the global --json. A flag outside the list is refused, so
+// a misspelt or misplaced one never passes in silence (finding 7: `start --kind` created
+// behaviour criteria). `hook` is not here: Claude Code calls it, and its payload is on stdin.
+const KNOWN_FLAGS: Record<string, readonly string[]> = {
+  detect: ["refresh"],
+  profile: ["target", "stack", "force"],
+  policy: [],
+  accept: [],
+  start: ["answers", "criterion", "preserve"],
+  classify: ["answers"],
+  criteria: ["kind"],
+  approve: ["mode"],
+  phase: [],
+  await: [],
+  resume: [],
+  tdd: [],
+  gate: ["only"],
+  skip: ["reason", "mode"],
+  evidence: [],
+  status: [],
+  mode: [],
+  config: [],
+  version: [],
+  help: [],
+};
+
 function parse(argv: string[]): Parsed {
-  const parsed: Parsed = { positional: [], flags: {}, multi: {}, rest: [] };
+  const parsed: Parsed = { positional: [], flags: {}, multi: {}, ordered: [], rest: [] };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i] ?? "";
     if (arg === "--") {
@@ -85,11 +113,26 @@ function parse(argv: string[]): Parsed {
         const values = parsed.multi[key] ?? [];
         values.push(next);
         parsed.multi[key] = values;
+        parsed.ordered.push({ key, value: next });
         i++;
       } else parsed.flags[key] = true;
     } else parsed.positional.push(arg);
   }
   return parsed;
+}
+
+/** The first flag the command does not know, as a refusal, or null when every flag is known. */
+function unknownFlag(command: string, parsed: Parsed): Outcome | null {
+  const known = KNOWN_FLAGS[command];
+  if (!known) return null;
+  const unknown = Object.keys(parsed.flags).find((k) => k !== "json" && !known.includes(k));
+  if (unknown === undefined) return null;
+  const takes = [...known, "json"].map((k) => `--${k}`).join(", ");
+  const hint =
+    command === "start" && unknown === "kind"
+      ? '; for a criterion that existing tests keep green use --preserve "<text>"'
+      : "";
+  return refuse(`unknown flag --${unknown} for ${command} (it takes ${takes})${hint}`);
 }
 
 /** `stdout` prints the text on stdout even when the code is not 0: the text is a result, not an error. */
@@ -315,6 +358,8 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       hookEvent: event,
     });
   }
+  const badFlag = unknownFlag(command ?? "help", parsed);
+  if (badFlag) return badFlag;
   if (!command || command === "help") return ok(HELP);
   if (command === "mode" || command === "config")
     return settings(command, args, { userDir: userDirOf(io.env) });
@@ -477,7 +522,10 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           : "";
       const work = createWork(env.paths, input, baseFiles);
       classify(env, work, answers);
-      const criteria = (parsed.multi.criterion ?? []).map((text) => addCriterion(work, text));
+      // Both flags repeat and keep their command-line order, so the numbers read as typed.
+      const criteria = parsed.ordered
+        .filter((f) => f.key === "criterion" || f.key === "preserve")
+        .map((f) => addCriterion(work, f.value, f.key === "preserve" ? "preserve" : "behavior"));
       // On the fast route the criteria are all that stands before build; with them given, go there.
       if (work.route === "fast" && criteria.length > 0)
         advancePhase(work, guardContext(env, work, false));
@@ -777,6 +825,7 @@ const HELP = `crew ${VERSION}
   policy accept                         trust the current policy.json after a hand edit (asks the user)
   accept <id|profile|policy>            trust state changed outside the engine (asks the user)
   start "<request>" --answers <json>    create a work item from the typed answers
+      [--criterion "<text>"] [--preserve "<text>"]   criteria, repeatable; preserve: existing tests stay green
   classify <id> --answers <json>        record typed answers and compute the route
   criteria <id> add "<text>" [--kind preserve]
   criteria <id> remove <AC-n>           take out a criterion no test-first record or skip names

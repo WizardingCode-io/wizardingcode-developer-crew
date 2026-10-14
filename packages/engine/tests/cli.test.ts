@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type CliIo, main } from "../src/cli.ts";
 import { loadProfile } from "../src/profile.ts";
@@ -604,4 +604,88 @@ test("a new item after a proven, uncommitted one starts with no change of its ow
   expect(gates.data.unproven).toEqual(["test-first record missing for AC-1"]);
   write(root, "src/a.ts", "the second item touches it too");
   expect((await c.json("status")).data.unproven).toContain("code changed since the last gate run");
+});
+
+test("start takes --preserve beside --criterion, numbered in command-line order (finding 7)", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const c = io(root);
+  const start = await c.json(
+    "start",
+    "Mixed criteria",
+    "--answers",
+    answers,
+    "--criterion",
+    "a",
+    "--preserve",
+    "b",
+    "--criterion",
+    "c",
+  );
+  expect(start.code).toBe(0);
+  expect(start.data.phase).toBe("build");
+  expect(start.data.criteria).toEqual([
+    { id: "AC-1", kind: "behavior", text: "a" },
+    { id: "AC-2", kind: "preserve", text: "b" },
+    { id: "AC-3", kind: "behavior", text: "c" },
+  ]);
+  const only = await c.run(
+    "start",
+    "Only preserve",
+    "--answers",
+    answers,
+    "--preserve",
+    "the existing tests keep passing",
+  );
+  expect(only.code).toBe(0);
+  expect(only.out).toContain("  AC-1 (preserve): the existing tests keep passing");
+});
+
+test("start refuses --kind, points to --preserve, and creates nothing (finding 7)", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const c = io(root);
+  const refused = await c.run(
+    "start",
+    "Nope",
+    "--answers",
+    answers,
+    "--criterion",
+    "a",
+    "--kind",
+    "preserve",
+  );
+  expect(refused.code).toBe(1);
+  expect(refused.err).toContain("unknown flag --kind");
+  expect(refused.err).toContain("--preserve");
+  expect((await c.json("status")).data.active).toBeNull();
+  const workDir = join(root, ".crew", "work");
+  expect(existsSync(workDir) ? readdirSync(workDir) : []).toEqual([]);
+});
+
+test("every command but hook refuses a flag it does not know and keeps its known ones", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const c = io(root);
+  const id = (await c.json("start", "Flags", "--answers", answers, "--criterion", "a")).data
+    .id as string;
+  const gate = await c.run("gate", "run", id, "--olny", "test");
+  expect(gate.code).toBe(1);
+  expect(gate.err.trim()).toBe("unknown flag --olny for gate (it takes --only, --json)");
+  const status = await c.run("status", "--verbose");
+  expect(status.code).toBe(1);
+  expect(status.err.trim()).toBe("unknown flag --verbose for status (it takes --json)");
+  expect((await c.run("detect", "--fresh")).code).toBe(1);
+  // Known flags, including the global --json and --version, keep working.
+  expect((await c.run("detect", "--refresh")).code).toBe(0);
+  expect((await c.json("status")).data.active).toBe(id);
+  expect((await c.run("--version")).code).toBe(0);
+  // The hook reads its payload from stdin and is called by Claude Code, not by the agent.
+  expect((await c.run("hook", "SessionStart", "--anything")).code).toBe(0);
 });

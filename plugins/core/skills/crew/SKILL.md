@@ -44,7 +44,7 @@ Answer them about the request before anything else; they go to `crew start` as `
 
 A clear request, one spot, no risk area: the engine answers `route fast`. Everything you need is on this page; read no reference, and batch the commands, because every turn costs the user the whole context again.
 
-1. **Start with the criteria.** `crew start "<request>" --answers '<json>' --criterion "<observable result>"` (repeat `--criterion` for each). The output has the id; with its criteria a fast-route item is already in the build phase. If the route is not fast, follow the method table and the references from here.
+1. **Start with the criteria.** `crew start "<request>" --answers '<json>' --criterion "<observable result>"` (repeat `--criterion` for each; `--preserve "<text>"` for a criterion that existing tests keep green, proven with `tdd before` and `tdd after` instead of red and green). The output has the id; with its criteria a fast-route item is already in the build phase. If the route is not fast, follow the method table and the references from here.
 2. **Test, then red.** Write the test that expresses the criterion, then `crew tdd red <id> AC-1` (it must fail; `-- <command>` runs one file).
 3. **Code, then green and the gates in one call.** Write the smallest code that passes, then `crew tdd green <id> AC-1 && crew gate run <id>`. The gate run moves the item on, writes the report and prints the verdict. Tell the user what it says: proven, or not proven and why. `crew evidence <id>` prints the report again when they ask for it.
 

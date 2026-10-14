@@ -14,6 +14,7 @@ A refactor or a chore changes no behaviour. Its criterion preserves behaviour an
 
 ```
 crew criteria <id> add "Existing cart tests keep passing." --kind preserve
+crew start "<request>" --answers '<json>' --preserve "Existing cart tests keep passing."
 ```
 
 ## Standard route: a short spec

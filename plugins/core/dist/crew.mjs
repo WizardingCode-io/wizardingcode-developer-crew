@@ -2182,8 +2182,30 @@ var VERSION = "0.1.6";
 
 // packages/engine/src/cli.ts
 var BOOLEAN_FLAGS = new Set(["json", "refresh", "force"]);
+var KNOWN_FLAGS = {
+  detect: ["refresh"],
+  profile: ["target", "stack", "force"],
+  policy: [],
+  accept: [],
+  start: ["answers", "criterion", "preserve"],
+  classify: ["answers"],
+  criteria: ["kind"],
+  approve: ["mode"],
+  phase: [],
+  await: [],
+  resume: [],
+  tdd: [],
+  gate: ["only"],
+  skip: ["reason", "mode"],
+  evidence: [],
+  status: [],
+  mode: [],
+  config: [],
+  version: [],
+  help: []
+};
 function parse(argv) {
-  const parsed = { positional: [], flags: {}, multi: {}, rest: [] };
+  const parsed = { positional: [], flags: {}, multi: {}, ordered: [], rest: [] };
   for (let i = 0;i < argv.length; i++) {
     const arg = argv[i] ?? "";
     if (arg === "--") {
@@ -2198,6 +2220,7 @@ function parse(argv) {
         const values = parsed.multi[key] ?? [];
         values.push(next);
         parsed.multi[key] = values;
+        parsed.ordered.push({ key, value: next });
         i++;
       } else
         parsed.flags[key] = true;
@@ -2205,6 +2228,17 @@ function parse(argv) {
       parsed.positional.push(arg);
   }
   return parsed;
+}
+function unknownFlag(command, parsed) {
+  const known = KNOWN_FLAGS[command];
+  if (!known)
+    return null;
+  const unknown = Object.keys(parsed.flags).find((k) => k !== "json" && !known.includes(k));
+  if (unknown === undefined)
+    return null;
+  const takes = [...known, "json"].map((k) => `--${k}`).join(", ");
+  const hint = command === "start" && unknown === "kind" ? '; for a criterion that existing tests keep green use --preserve "<text>"' : "";
+  return refuse(`unknown flag --${unknown} for ${command} (it takes ${takes})${hint}`);
 }
 var ok = (text, data = {}) => ({ code: 0, text, data });
 var refuse = (text, data = {}) => ({
@@ -2375,6 +2409,9 @@ async function dispatch(parsed, io) {
       hookEvent: event
     });
   }
+  const badFlag = unknownFlag(command ?? "help", parsed);
+  if (badFlag)
+    return badFlag;
   if (!command || command === "help")
     return ok(HELP);
   if (command === "mode" || command === "config")
@@ -2506,7 +2543,7 @@ async function dispatch(parsed, io) {
 ` : "";
       const work = createWork(env.paths, input, baseFiles);
       classify(env, work, answers);
-      const criteria = (parsed.multi.criterion ?? []).map((text) => addCriterion(work, text));
+      const criteria = parsed.ordered.filter((f) => f.key === "criterion" || f.key === "preserve").map((f) => addCriterion(work, f.value, f.key === "preserve" ? "preserve" : "behavior"));
       if (work.route === "fast" && criteria.length > 0)
         advancePhase(work, guardContext(env, work, false));
       saveWork(env.paths, work);
@@ -2778,6 +2815,7 @@ var HELP = `crew ${VERSION}
   policy accept                         trust the current policy.json after a hand edit (asks the user)
   accept <id|profile|policy>            trust state changed outside the engine (asks the user)
   start "<request>" --answers <json>    create a work item from the typed answers
+      [--criterion "<text>"] [--preserve "<text>"]   criteria, repeatable; preserve: existing tests stay green
   classify <id> --answers <json>        record typed answers and compute the route
   criteria <id> add "<text>" [--kind preserve]
   criteria <id> remove <AC-n>           take out a criterion no test-first record or skip names
