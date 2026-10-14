@@ -974,11 +974,28 @@ ${policy.artifacts === "local" ? `work/
 }
 
 // packages/engine/src/work.ts
+var DELIBERATE = [
+  "receive",
+  "recognize",
+  "understand",
+  "specify",
+  "conclave",
+  "plan",
+  "build",
+  "gate",
+  "deliver"
+];
 var PHASES_BY_ROUTE = {
   fast: ["receive", "recognize", "build", "gate", "deliver"],
-  standard: ["receive", "recognize", "understand", "specify", "plan", "build", "gate", "deliver"],
-  full: ["receive", "recognize", "understand", "specify", "plan", "build", "gate", "deliver"]
+  standard: [...DELIBERATE],
+  full: [...DELIBERATE]
 };
+var CONCLAVE_SECTIONS = [
+  "Assumed by good practice",
+  "Decisions only the user can make",
+  "Proposals",
+  "Warnings"
+];
 function slug(text) {
   return text.toLowerCase().normalize("NFKD").replace(/[^\w\s-]/g, "").trim().replace(/[\s_]+/g, "-").replace(/-+/g, "-");
 }
@@ -1130,13 +1147,19 @@ function phaseIndex(phase) {
 function isBeforeBuild(work) {
   return phaseIndex(work.phase) < phaseIndex("build");
 }
-function hasAcceptanceSection(text) {
-  const match = /^#{1,6}\s*acceptance criteria\s*$/im.exec(text);
+function sectionBody(text, heading) {
+  const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = new RegExp(`^#{1,6}\\s*${escaped}\\s*$`, "im").exec(text);
   if (!match)
-    return false;
+    return null;
   const rest = text.slice(match.index + match[0].length);
-  const body = rest.split(/^#{1,6}\s/m)[0] ?? "";
-  return body.trim().length > 0;
+  return rest.split(/^#{1,6}\s/m)[0] ?? "";
+}
+function hasAcceptanceSection(text) {
+  return (sectionBody(text, "acceptance criteria") ?? "").trim().length > 0;
+}
+function missingConclaveSections(text) {
+  return CONCLAVE_SECTIONS.filter((name) => !(sectionBody(text, name) ?? "").trim());
 }
 function tddDone(record, kind) {
   if (!record)
@@ -1163,9 +1186,19 @@ function routeDocuments(work, ctx) {
   }
   return missing;
 }
+function conclaveDocument(work, ctx) {
+  if (work.route === "fast")
+    return [];
+  if (ctx.conclaveText === null) {
+    return ["conclave.md in the work folder (the gap round: four sections)"];
+  }
+  return missingConclaveSections(ctx.conclaveText).map((name) => `a "${name}" section with content in conclave.md (write "none" when there is nothing)`);
+}
 function guardFor(work, next, ctx) {
   const missing = [];
-  if (next === "build") {
+  if (next === "plan") {
+    missing.push(...conclaveDocument(work, ctx));
+  } else if (next === "build") {
     if (work.criteria.length === 0) {
       missing.push('at least one acceptance criterion (crew criteria <id> add "...")');
     }
@@ -2393,6 +2426,7 @@ function guardContext(env, work, tampered) {
   const result = assess(env.paths, work, env.profile, env.policy, env.tampered || tampered);
   return {
     specText: readText(join18(dir, "spec.md")),
+    conclaveText: readText(join18(dir, "conclave.md")),
     planExists: existsSync3(join18(dir, "plan.md")),
     evidence: result.evidence,
     proven: result.verdict === "proven",

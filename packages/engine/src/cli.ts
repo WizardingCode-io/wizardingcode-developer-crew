@@ -291,6 +291,7 @@ function guardContext(env: Env, work: WorkItem, tampered: boolean): GuardContext
   const result = assess(env.paths, work, env.profile, env.policy, env.tampered || tampered);
   return {
     specText: readText(join(dir, "spec.md")),
+    conclaveText: readText(join(dir, "conclave.md")),
     planExists: existsSync(join(dir, "plan.md")),
     evidence: result.evidence,
     proven: result.verdict === "proven",

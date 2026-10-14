@@ -23,11 +23,31 @@ import type {
 } from "./types.ts";
 import { PHASE_ORDER } from "./types.ts";
 
+// The conclave sits between specify and plan (SP2 §6): the gap round happens before a plan exists.
+const DELIBERATE: Phase[] = [
+  "receive",
+  "recognize",
+  "understand",
+  "specify",
+  "conclave",
+  "plan",
+  "build",
+  "gate",
+  "deliver",
+];
 export const PHASES_BY_ROUTE: Record<Route, Phase[]> = {
   fast: ["receive", "recognize", "build", "gate", "deliver"],
-  standard: ["receive", "recognize", "understand", "specify", "plan", "build", "gate", "deliver"],
-  full: ["receive", "recognize", "understand", "specify", "plan", "build", "gate", "deliver"],
+  standard: [...DELIBERATE],
+  full: [...DELIBERATE],
 };
+
+/** The four lists of the gap round, as headings of `conclave.md` (SP2 §6). */
+export const CONCLAVE_SECTIONS = [
+  "Assumed by good practice",
+  "Decisions only the user can make",
+  "Proposals",
+  "Warnings",
+] as const;
 
 export function slug(text: string): string {
   return text
@@ -235,16 +255,27 @@ export function isBeforeBuild(work: WorkItem): boolean {
   return phaseIndex(work.phase) < phaseIndex("build");
 }
 
-export function hasAcceptanceSection(text: string): boolean {
-  const match = /^#{1,6}\s*acceptance criteria\s*$/im.exec(text);
-  if (!match) return false;
+/** The text under a heading, up to the next heading; null when the heading is absent. */
+function sectionBody(text: string, heading: string): string | null {
+  const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = new RegExp(`^#{1,6}\\s*${escaped}\\s*$`, "im").exec(text);
+  if (!match) return null;
   const rest = text.slice(match.index + match[0].length);
-  const body = rest.split(/^#{1,6}\s/m)[0] ?? "";
-  return body.trim().length > 0;
+  return rest.split(/^#{1,6}\s/m)[0] ?? "";
+}
+
+export function hasAcceptanceSection(text: string): boolean {
+  return (sectionBody(text, "acceptance criteria") ?? "").trim().length > 0;
+}
+
+/** The sections of the gap round that are absent or empty; "none" under a heading is content. */
+export function missingConclaveSections(text: string): string[] {
+  return CONCLAVE_SECTIONS.filter((name) => !(sectionBody(text, name) ?? "").trim());
 }
 
 export interface GuardContext {
   specText: string | null;
+  conclaveText: string | null;
   planExists: boolean;
   evidence: Evidence | null;
   proven: boolean;
@@ -282,9 +313,23 @@ function routeDocuments(work: WorkItem, ctx: GuardContext): string[] {
   return missing;
 }
 
+/** The gap round's record, asked for once, on the way into Plan (SP2 §6). */
+function conclaveDocument(work: WorkItem, ctx: GuardContext): string[] {
+  if (work.route === "fast") return [];
+  if (ctx.conclaveText === null) {
+    return ["conclave.md in the work folder (the gap round: four sections)"];
+  }
+  return missingConclaveSections(ctx.conclaveText).map(
+    (name) =>
+      `a "${name}" section with content in conclave.md (write "none" when there is nothing)`,
+  );
+}
+
 export function guardFor(work: WorkItem, next: Phase, ctx: GuardContext): string[] {
   const missing: string[] = [];
-  if (next === "build") {
+  if (next === "plan") {
+    missing.push(...conclaveDocument(work, ctx));
+  } else if (next === "build") {
     if (work.criteria.length === 0) {
       missing.push('at least one acceptance criterion (crew criteria <id> add "...")');
     }

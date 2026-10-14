@@ -798,3 +798,26 @@ test("a gate run that proves an item already in the gate phase delivers it", asy
   expect((await c.json("gate", "run", id)).data.verdict).toBe("proven");
   expect((await c.json("status")).data.phase).toBe("deliver");
 });
+
+test("SP2a: an item in specify moves to conclave, and plan asks for conclave.md by name", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const c = io(root);
+  const standard = JSON.stringify({ ...JSON.parse(answers), scope: 1 });
+  const id = (await c.json("start", "Templates open empty", "--answers", standard)).data
+    .id as string;
+  expect((await c.json("phase", id, "next")).data.phase).toBe("understand");
+  expect((await c.json("phase", id, "next")).data.phase).toBe("specify");
+  expect((await c.json("phase", id, "next")).data.phase).toBe("conclave");
+  const refused = await c.run("phase", id, "next");
+  expect(refused.code).toBe(1);
+  expect(refused.err).toContain("conclave.md in the work folder (the gap round: four sections)");
+  write(
+    root,
+    `.crew/work/${id}/conclave.md`,
+    "# Gap round\n\n## Assumed by good practice\nnone\n\n## Decisions only the user can make\nnone\n\n## Proposals\nnone\n\n## Warnings\nnone\n",
+  );
+  expect((await c.json("phase", id, "next")).data.phase).toBe("plan");
+});

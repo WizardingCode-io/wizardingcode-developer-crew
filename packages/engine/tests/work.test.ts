@@ -17,6 +17,8 @@ import {
   guardFor,
   hasAcceptanceSection,
   loadWork,
+  missingConclaveSections,
+  PHASES_BY_ROUTE,
   raiseRoute,
   removeCriterion,
   saveWork,
@@ -34,6 +36,7 @@ const run: RunRecord = {
 };
 const empty: GuardContext = {
   specText: null,
+  conclaveText: null,
   planExists: false,
   evidence: null,
   proven: false,
@@ -223,6 +226,48 @@ test("I1: a work item records the commit its change is measured from", () => {
   const plain = tempDir();
   mkdirSync(join(plain, ".crew"));
   expect(createWork(repoPaths(plain, testEnv()), "y").baseCommit).toBeNull();
+});
+
+test("SP2a: the conclave sits between specify and plan on standard and full, not on fast", () => {
+  expect(PHASES_BY_ROUTE.fast).toEqual(["receive", "recognize", "build", "gate", "deliver"]);
+  expect(PHASES_BY_ROUTE.standard).toEqual([
+    "receive",
+    "recognize",
+    "understand",
+    "specify",
+    "conclave",
+    "plan",
+    "build",
+    "gate",
+    "deliver",
+  ]);
+  expect(PHASES_BY_ROUTE.full).toEqual(PHASES_BY_ROUTE.standard);
+});
+
+test("SP2a: plan needs conclave.md with content under the four headings; 'none' is content", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const work = createWork(paths, "feature");
+  applyClassification(work, "feature", { route: "standard", reasons: [], riskAreas: [] });
+  work.phase = "conclave";
+  expect(guardFor(work, "plan", empty)).toEqual([
+    "conclave.md in the work folder (the gap round: four sections)",
+  ]);
+  const partial =
+    "# Gap round\n\n## Assumed by good practice\n- auth\n\n## Decisions only the user can make\n\n## Proposals\nnone\n";
+  expect(missingConclaveSections(partial)).toEqual([
+    "Decisions only the user can make",
+    "Warnings",
+  ]);
+  expect(guardFor(work, "plan", { ...empty, conclaveText: partial })).toEqual([
+    'a "Decisions only the user can make" section with content in conclave.md (write "none" when there is nothing)',
+    'a "Warnings" section with content in conclave.md (write "none" when there is nothing)',
+  ]);
+  const full =
+    "# Gap round\n\n## Assumed by good practice\n- auth\n\n## Decisions only the user can make\n- D-1 which roles\n\n## Proposals\nnone\n\n## Warnings\nnone\n";
+  expect(missingConclaveSections(full)).toEqual([]);
+  expect(guardFor(work, "plan", { ...empty, conclaveText: full })).toEqual([]);
+  work.route = "fast";
+  expect(guardFor(work, "plan", empty)).toEqual([]);
 });
 
 test("advancePhase follows the route and stops at a failing guard", () => {
