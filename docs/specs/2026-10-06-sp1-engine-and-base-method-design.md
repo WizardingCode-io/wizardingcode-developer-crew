@@ -412,7 +412,7 @@ When the request is vague, the skill asks the user the questions that would chan
 }
 ```
 
-The policy can only tighten: it adds required gates and risk paths, raises the minimum route, and narrows what may be skipped.
+The policy can only tighten: it adds required gates and risk paths, raises the minimum route, and narrows what may be skipped. *Amended 2026-10-14 (0.1.7, [ADR 0003](../adr/0003-risk-path-exclusions.md)):* `riskPathExclusions` is the one exception, globs of paths that never raise the route, decided by a person and named in the work's record when they applied.
 
 ## 16. The mod
 

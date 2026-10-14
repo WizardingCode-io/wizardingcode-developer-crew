@@ -38,7 +38,7 @@ Requirement: Node.js 20 or later on `PATH` (the hooks and the `crew` command run
 
 - **`.crew/` in the repository.** Crew is active in a git repository, or in a folder that already holds `.crew/` (`crew detect` creates it); anywhere else it stays silent.
   - `profile.json`: the detected project profile and gate commands.
-  - `policy.json` (optional): the team policy, written by a person. `unattendedDecisions` (`wait`, the default, or `count`) says whether an approval or skip the agent recorded with no person watching counts for the proof.
+  - `policy.json` (optional): the team policy, written by a person. `unattendedDecisions` (`wait`, the default, or `count`) says whether an approval or skip the agent recorded with no person watching counts for the proof. `riskPathExclusions` lists globs of paths that never raise the route (ADR 0003); the report names them when they applied.
   - `work/<id>/`: one folder per work item, with `work.json` (state), `brief.md`, `spec.md`, `plan.md`, `evidence.json` (test-first records and gate runs), `report.md` (the delivery report) and `logs/` (full command output, ignored).
   - `local/`: per-machine state such as the session baselines (ignored).
 - **`~/.wizardingcode/crew/` for the user**: `config.json` (mode and settings) and `integrity/`, the hashes the engine uses to notice state changed outside it.

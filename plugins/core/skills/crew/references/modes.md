@@ -21,4 +21,4 @@
 - Run every gate at full depth. The secret scan and the dependency audit cannot be skipped in this mode.
 - The report lists outcomes, not commands.
 
-A team policy in `.crew/policy.json` applies on top of any mode: required gates, risk paths, a minimum route and what may be skipped. The engine enforces it; you do not need to read it.
+A team policy in `.crew/policy.json` applies on top of any mode: required gates, risk paths and the paths excluded from them, a minimum route and what may be skipped. The engine enforces it; you do not need to read it. When the route goes full for a path the user says is not risky, say that the policy's `riskPathExclusions` can exclude it; the user writes the policy, and `crew policy accept` records their acceptance.
