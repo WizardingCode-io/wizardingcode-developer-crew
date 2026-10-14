@@ -76,5 +76,6 @@ Read the reference for the current phase before acting in it:
 5. **When you need the user,** mark the work with `crew await <id> user` and ask. `await` lets the turn end once, with a notice that the work is not proven; the turn that ends spends it. `crew resume <id>` clears it without ending the turn.
 6. **Start every change with `crew start "<request>" --answers '<json>'`.** The answers are required; changes without a work item cannot be proven, and an item without a criterion is never proven.
 7. **State changed outside the engine** stops every command that saves. Tell the user which file the engine names; only they can run `crew accept`.
+8. **One checkout per session.** The proof covers every watched file in the tree, so a second session on the same checkout blocks this one's turn ends with its edits and proves its half-written code. Before starting an item while another session works in the checkout, make a worktree and work there: `git worktree add ../<name> -b <branch>`.
 
 `crew status` tells you where the work stands at any time.
