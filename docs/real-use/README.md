@@ -1,7 +1,7 @@
 # Real use of SP1, before SP2
 
 - Started: 2026-10-13. Closes by 2026-10-26, or earlier when the exit criterion below is met.
-- Plugin under use: `wizardingcode-developer-crew` 0.1.5 since 2026-10-14, installed at user scope from the marketplace. The user started using the plugin in the other projects on 2026-10-12, the day it was released, so the sessions of that day ran 0.1.0 to 0.1.3 as each was installed and the sessions of 2026-10-13 ran 0.1.4. The working tree's copy is not loaded in the other projects (two copies load both their hooks, and the first mod to register `/crew` wins).
+- Plugin under use: `wizardingcode-developer-crew` 0.1.6 since 2026-10-14 (0.1.5 earlier the same day), installed at user scope from the marketplace. The user started using the plugin in the other projects on 2026-10-12, the day it was released, so the sessions of that day ran 0.1.0 to 0.1.3 as each was installed and the sessions of 2026-10-13 ran 0.1.4. The working tree's copy is not loaded in the other projects (two copies load both their hooks, and the first mod to register `/crew` wins).
 - Records in this folder: this plan, [`findings.md`](findings.md) (what got in the way, was wrong, or stayed silent) and [`corpus.md`](corpus.md) (the real requests and the gaps a good engineer would have raised). A closing summary joins them when the phase ends.
 
 ## Why
