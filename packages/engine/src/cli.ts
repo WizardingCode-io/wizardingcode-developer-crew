@@ -32,7 +32,7 @@ import type {
   UserConfig,
   WorkItem,
 } from "./types.ts";
-import { GATE_NAMES, isUnattendedMode, PHASE_ORDER, UNATTENDED_MODES } from "./types.ts";
+import { GATE_NAMES, isPermissionMode, PERMISSION_MODES, PHASE_ORDER } from "./types.ts";
 import { VERSION } from "./version.ts";
 import {
   activeWork,
@@ -92,7 +92,8 @@ function parse(argv: string[]): Parsed {
   return parsed;
 }
 
-type Outcome = { code: number; text: string; data?: Record<string, unknown> };
+/** `stdout` prints the text on stdout even when the code is not 0: the text is a result, not an error. */
+type Outcome = { code: number; text: string; data?: Record<string, unknown>; stdout?: boolean };
 const ok = (text: string, data: Record<string, unknown> = {}): Outcome => ({ code: 0, text, data });
 const refuse = (text: string, data: Record<string, unknown> = {}): Outcome => ({
   code: 1,
@@ -221,14 +222,15 @@ function isOutcome(value: unknown): value is Outcome {
 
 /**
  * Who takes a user-only decision. Without `--mode` a person answered the prompt; with it, the
- * PreToolUse hook found no person watching and the agent decided in that mode.
+ * PreToolUse hook found no person watching (a headless session, or a mode that shows no prompt)
+ * and the agent decided in that mode.
  */
 function decisionFlag(parsed: Parsed): Decision | Outcome {
   const mode = parsed.flags.mode;
   if (mode === undefined) return { by: "user" };
-  if (!isUnattendedMode(mode)) {
+  if (!isPermissionMode(mode)) {
     return refuse(
-      `--mode names the permission mode of a session with no person watching: ${UNATTENDED_MODES.slice(0, -1).join(", ")} or ${UNATTENDED_MODES.at(-1)}`,
+      `--mode names the permission mode of a session with no person watching: ${PERMISSION_MODES.slice(0, -1).join(", ")} or ${PERMISSION_MODES.at(-1)}`,
     );
   }
   return { by: "agent", mode };
@@ -622,16 +624,22 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       const raised = outcome.raised
         ? `Route raised to ${outcome.raised}: ${opened.work.routeReasons.at(-1)}\n`
         : "";
-      return ok(
-        raised + gateSummary(opened.work, outcome.verdict, outcome.unproven, outcome.evidence.runs),
-        {
+      // The summary is the result either way; the exit code says whether the work is proven, so a
+      // command chain stops at "Not proven" instead of going on to commit (finding 18).
+      return {
+        code: outcome.verdict === "proven" ? 0 : 1,
+        stdout: true,
+        text:
+          raised +
+          gateSummary(opened.work, outcome.verdict, outcome.unproven, outcome.evidence.runs),
+        data: {
           verdict: outcome.verdict,
           unproven: outcome.unproven,
           runs: outcome.evidence.runs,
           raised: outcome.raised,
           route: opened.work.route,
         },
-      );
+      };
     }
     case "skip": {
       const opened = openForChange(env, args[0]);
@@ -812,7 +820,7 @@ export async function main(argv: string[], io: CliIo): Promise<number> {
     io.stdout(
       `${JSON.stringify({ ok: outcome.code === 0, message: outcome.text, ...outcome.data })}\n`,
     );
-  else if (outcome.code === 0) io.stdout(`${outcome.text}\n`);
+  else if (outcome.code === 0 || outcome.stdout) io.stdout(`${outcome.text}\n`);
   else io.stderr(`${outcome.text}\n`);
   return outcome.code;
 }

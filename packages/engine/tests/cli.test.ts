@@ -48,7 +48,7 @@ test("a fast-route fix from start to a proven report", async () => {
     "src/a.ts": "x",
   });
   const c = io(root);
-  expect((await c.run("--version")).out.trim()).toBe("0.1.5");
+  expect((await c.run("--version")).out.trim()).toBe("0.1.6");
   const detect = await c.json("detect");
   expect(detect.code).toBe(0);
   expect((detect.data.profile as { targets: unknown[] }).targets).toHaveLength(1);
@@ -441,15 +441,42 @@ test("approve and skip record who decided: the user, or the agent in an unattend
   expect((await c.json("skip", id, "gate:test", "--reason", "y")).code).toBe(0);
   expect(read().skips[1]).toMatchObject({ step: "gate:test", by: "user" });
 
-  const bad = await c.json("approve", id, "spec", "--mode", "default");
+  // A headless session is unattended in any mode, so the flag may name any of the six (0.1.6).
+  const headless = await c.json("approve", id, "spec", "--mode", "default");
+  expect(headless.code).toBe(0);
+  expect(read().approvals[2]).toMatchObject({ by: "agent", mode: "default" });
+  const bad = await c.json("approve", id, "spec", "--mode", "yes");
   expect(bad.code).toBe(1);
-  expect(bad.data.message).toContain("auto, bypassPermissions or dontAsk");
+  expect(bad.data.message).toContain(
+    "default, acceptEdits, plan, auto, bypassPermissions or dontAsk",
+  );
   expect((await c.json("skip", id, "gate:typecheck", "--reason", "z", "--mode", "yes")).code).toBe(
     1,
   );
   expect((await c.json("approve", id, "spec", "--mode")).code).toBe(1);
-  expect(read().approvals).toHaveLength(2);
+  expect(read().approvals).toHaveLength(3);
   expect(read().skips).toHaveLength(2);
+});
+
+test("gate run exits 1 while the work is not proven and 0 once it is (finding 18)", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "sh t.sh" } }),
+    "t.sh": "exit 1\n",
+    "src/a.ts": "x",
+  });
+  const c = io(root);
+  const id = (await c.json("start", "Thing", "--answers", answers)).data.id as string;
+  await c.run("criteria", id, "add", "x");
+  await c.run("skip", id, "tdd:AC-1", "--reason", "manual");
+  const failing = await c.json("gate", "run", id);
+  expect(failing.code).toBe(1);
+  expect(failing.data.verdict).toBe("unproven");
+  expect(failing.data.unproven).toContain("gate test failing");
+  expect((await c.run("gate", "run", id)).out).toContain("Not proven: ");
+  write(root, "t.sh", "exit 0\n");
+  const proven = await c.json("gate", "run", id);
+  expect(proven.code).toBe(0);
+  expect(proven.data.verdict).toBe("proven");
 });
 
 test("criteria remove takes out a criterion with no record and keeps the removal in the record", async () => {

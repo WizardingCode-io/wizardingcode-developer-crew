@@ -87,18 +87,35 @@ export interface Pause {
   reason: string;
 }
 
-/** Claude Code modes in which no person answers a prompt, so a decision there is the agent's. */
-export type UnattendedMode = "auto" | "bypassPermissions" | "dontAsk";
-export const UNATTENDED_MODES: readonly UnattendedMode[] = ["auto", "bypassPermissions", "dontAsk"];
-export function isUnattendedMode(value: unknown): value is UnattendedMode {
-  return UNATTENDED_MODES.includes(value as UnattendedMode);
+/**
+ * Claude Code's permission modes. A user-only decision the agent takes with no person watching
+ * (a headless session in any mode, or `bypassPermissions` and `dontAsk`, which show no prompt)
+ * records the mode it was taken in.
+ */
+export type PermissionMode =
+  | "default"
+  | "acceptEdits"
+  | "plan"
+  | "auto"
+  | "bypassPermissions"
+  | "dontAsk";
+export const PERMISSION_MODES: readonly PermissionMode[] = [
+  "default",
+  "acceptEdits",
+  "plan",
+  "auto",
+  "bypassPermissions",
+  "dontAsk",
+];
+export function isPermissionMode(value: unknown): value is PermissionMode {
+  return PERMISSION_MODES.includes(value as PermissionMode);
 }
 
 export type DecidedBy = "user" | "agent";
 /** Who took a user-only decision; `mode` is set when the agent took it with no person watching. */
 export interface Decision {
   by: DecidedBy;
-  mode?: UnattendedMode;
+  mode?: PermissionMode;
 }
 
 export interface Approval {
@@ -106,7 +123,7 @@ export interface Approval {
   at: string;
   /** Absent in records written before 0.1.2, which read as the user's. */
   by?: DecidedBy;
-  mode?: UnattendedMode;
+  mode?: PermissionMode;
 }
 
 export interface Skip {
@@ -115,7 +132,7 @@ export interface Skip {
   reason: string;
   at: string;
   by?: DecidedBy;
-  mode?: UnattendedMode;
+  mode?: PermissionMode;
 }
 
 export interface WorkItem {

@@ -103,11 +103,11 @@ function reason(response: Record<string, unknown>): string | undefined {
     ?.permissionDecisionReason;
 }
 
-test("bash: with no person watching, a user-only decision must name its mode to be recorded as the agent's", () => {
+test("bash: in a mode that shows no prompt, a user-only decision must name its mode to be recorded as the agent's", () => {
   const { ctx } = setup();
   const bash = (command: string, permission_mode: string) =>
     onPreToolUse(ctx, { tool_name: "Bash", tool_input: { command }, permission_mode });
-  for (const mode of ["auto", "bypassPermissions", "dontAsk"]) {
+  for (const mode of ["bypassPermissions", "dontAsk"]) {
     const bare = bash("crew approve w1 spec", mode);
     expect(decision(bare)).toBe("deny");
     expect(reason(bare)).toContain(`--mode ${mode}`);
@@ -117,29 +117,70 @@ test("bash: with no person watching, a user-only decision must name its mode to 
       {},
     );
     expect(bash(`cd /repo && ./crew.mjs profile confirm --mode ${mode}`, mode)).toEqual({});
-    const other = mode === "auto" ? "dontAsk" : "auto";
+    const other = mode === "dontAsk" ? "bypassPermissions" : "dontAsk";
     const wrong = bash(`crew approve w1 spec --mode ${other}`, mode);
     expect(decision(wrong)).toBe("deny");
     expect(reason(wrong)).toContain(mode);
   }
   // The flag does not open the engine's files: the write rule still applies after it.
   expect(
-    decision(bash("crew approve w1 spec --mode auto; echo x > .crew/profile.json", "auto")),
+    decision(
+      bash(
+        "crew approve w1 spec --mode bypassPermissions; echo x > .crew/profile.json",
+        "bypassPermissions",
+      ),
+    ),
   ).toBe("deny");
 });
 
-test("bash: with a person present, a user-only decision is asked and --mode cannot dodge the prompt", () => {
+test("bash: with a person present, auto mode included, a user-only decision is asked and --mode cannot dodge the prompt", () => {
   const { ctx } = setup();
   const bash = (command: string, permission_mode?: string) =>
     onPreToolUse(ctx, { tool_name: "Bash", tool_input: { command }, permission_mode });
-  for (const mode of ["default", "acceptEdits", "plan", undefined]) {
+  // Auto mode shows the prompt a hook asks for (finding 3 revisited, finding 19): attended.
+  for (const mode of ["default", "acceptEdits", "plan", "auto", undefined]) {
     expect(decision(bash("crew approve w1 spec", mode))).toBe("ask");
     expect(decision(bash('crew skip w1 gate:lint --reason "legacy"', mode))).toBe("ask");
-    const flagged = bash("crew approve w1 spec --mode auto", mode);
+    const flagged = bash(`crew approve w1 spec --mode ${mode ?? "default"}`, mode);
     expect(decision(flagged)).toBe("deny");
     expect(reason(flagged)).toContain("without --mode");
     expect(decision(bash("crew skip w1 gate:lint --reason x --mode=dontAsk", mode))).toBe("deny");
   }
+});
+
+test("bash: a headless session is unattended in every mode, and the flag names the session's mode", () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const headless = hookContext(
+    { session_id: "s", cwd: root },
+    { ...testEnv(), CLAUDE_CODE_SESSION_ATTENDED: "0" },
+  );
+  const bash = (command: string, permission_mode?: string) =>
+    onPreToolUse(headless, { tool_name: "Bash", tool_input: { command }, permission_mode });
+  for (const mode of ["default", "acceptEdits", "plan", "auto", "bypassPermissions", "dontAsk"]) {
+    const bare = bash("crew approve w1 spec", mode);
+    expect(decision(bare)).toBe("deny");
+    expect(reason(bare)).toContain("headless");
+    expect(reason(bare)).toContain(`--mode ${mode}`);
+    expect(bash(`crew approve w1 spec --mode ${mode}`, mode)).toEqual({});
+    const other = mode === "auto" ? "default" : "auto";
+    expect(decision(bash(`crew approve w1 spec --mode ${other}`, mode))).toBe("deny");
+  }
+  // No mode in the payload: the session is in default mode.
+  expect(decision(bash("crew approve w1 spec"))).toBe("deny");
+  expect(bash("crew approve w1 spec --mode default")).toEqual({});
+  // The variable at 1 is an attended session: the modes alone decide.
+  const attended = hookContext(
+    { session_id: "s", cwd: root },
+    { ...testEnv(), CLAUDE_CODE_SESSION_ATTENDED: "1" },
+  );
+  const seen = (command: string, permission_mode: string) =>
+    onPreToolUse(attended, { tool_name: "Bash", tool_input: { command }, permission_mode });
+  expect(decision(seen("crew approve w1 spec", "auto"))).toBe("ask");
+  expect(decision(seen("crew approve w1 spec", "dontAsk"))).toBe("deny");
+  expect(seen("crew approve w1 spec --mode dontAsk", "dontAsk")).toEqual({});
 });
 
 test("bash: each simple command is judged on its own; a deny in one wins over an ask in another", () => {
@@ -178,14 +219,14 @@ test("bash: the user-only rule and --mode are read from the same simple command"
     `printf '%s' '{"permission_mode":"auto","tool_input":{"command":"node plugins/core/dist/crew.mjs approve w1 spec"}}' | node dist/crew.mjs hook pre-tool-use`,
   ].join("; ");
   expect(bash(probe, "plan")).toEqual({});
-  expect(bash('crew skip w1 gate:lint --reason "a; b && c" --mode auto', "auto")).toEqual({});
+  expect(bash('crew skip w1 gate:lint --reason "a; b && c" --mode dontAsk', "dontAsk")).toEqual({});
   expect(decision(bash('crew skip w1 gate:lint --reason "a; b"', "default"))).toBe("ask");
   expect(decision(bash('crew skip w1 gate:lint --reason "a; b" --mode auto', "default"))).toBe(
     "deny",
   );
   // The flag must sit on the crew command itself.
-  expect(decision(bash("echo --mode auto; crew approve w1 spec", "auto"))).toBe("deny");
-  expect(decision(bash("crew approve w1 spec; echo --mode auto", "auto"))).toBe("deny");
+  expect(decision(bash("echo --mode dontAsk; crew approve w1 spec", "dontAsk"))).toBe("deny");
+  expect(decision(bash("crew approve w1 spec; echo --mode dontAsk", "dontAsk"))).toBe("deny");
 });
 
 test("finding 16: a user-only verb counts only at the command position of a simple command", () => {
@@ -212,7 +253,8 @@ test("finding 16: a user-only verb counts only at the command position of a simp
   // biome-ignore lint/suspicious/noTemplateCurlyInString: the hook sees the placeholder as written in hooks.json
   expect(decision(bash("node ${CLAUDE_PLUGIN_ROOT}/dist/crew.mjs profile confirm"))).toBe("ask");
   expect(decision(bash("cd /repo && ./crew.mjs profile confirm"))).toBe("ask");
-  expect(decision(bash("crew approve w1 spec", "auto"))).toBe("deny");
+  expect(decision(bash("crew approve w1 spec", "auto"))).toBe("ask");
+  expect(decision(bash("crew approve w1 spec", "dontAsk"))).toBe("deny");
   expect(bash("screw skip w1")).toEqual({});
 });
 

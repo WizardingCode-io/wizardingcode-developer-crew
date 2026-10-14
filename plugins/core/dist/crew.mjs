@@ -53,9 +53,16 @@ var PHASE_ORDER = [
   "gate",
   "deliver"
 ];
-var UNATTENDED_MODES = ["auto", "bypassPermissions", "dontAsk"];
-function isUnattendedMode(value) {
-  return UNATTENDED_MODES.includes(value);
+var PERMISSION_MODES = [
+  "default",
+  "acceptEdits",
+  "plan",
+  "auto",
+  "bypassPermissions",
+  "dontAsk"
+];
+function isPermissionMode(value) {
+  return PERMISSION_MODES.includes(value);
 }
 
 // packages/engine/src/classify.ts
@@ -1804,7 +1811,8 @@ function buildContext(payload, env = process.env) {
     sessionId: payload.session_id ?? "default",
     profile: profile.profile,
     policy: policy.policy,
-    tampered: profile.tampered || policy.tampered
+    tampered: profile.tampered || policy.tampered,
+    headless: env.CLAUDE_CODE_SESSION_ATTENDED === "0"
   };
 }
 
@@ -1853,28 +1861,30 @@ var USER_ONLY = new RegExp(String.raw`^[\s({]*(?:${RUNNER}\s+)*(?:\S*/)?crew(?:\
 var ENGINE_FILES = /\.crew\/(?:profile\.json|policy\.json|\.gitignore|local\b|work\/[^\s/]+\/(?:work\.json|evidence\.json|report\.md|logs\b))|\.wizardingcode\/crew\b/;
 var WRITE_SHAPE = /(?:^|[\s;&|("'])(?:rm|mv|cp|tee|truncate|chmod|touch|dd|install)\b|sed\s+-i|>{1,2}\|?\s*["']?\S*(?:\.crew\/|\.wizardingcode\/crew\b)/;
 var OPAQUE_REDIRECT = />{1,2}\|?\s*["']?[$`]/;
-var UNATTENDED_MODES2 = new Set(["auto", "bypassPermissions", "dontAsk"]);
+var PROMPTLESS_MODES = new Set(["bypassPermissions", "dontAsk"]);
 var MODE_FLAG = /--mode(?:=|\s+)(\S+)/;
-function userOnlyDecision(cleaned, permissionMode) {
+function userOnlyDecision(cleaned, permissionMode, headless) {
   const flagged = MODE_FLAG.exec(cleaned)?.[1];
-  if (permissionMode !== undefined && UNATTENDED_MODES2.has(permissionMode)) {
-    if (flagged === permissionMode)
+  const mode = permissionMode ?? "default";
+  if (headless || PROMPTLESS_MODES.has(mode)) {
+    if (flagged === mode)
       return null;
+    const where = headless ? `a headless session in ${mode} mode` : `${mode} mode`;
     if (flagged === undefined) {
       return [
         "deny",
-        `Crew: no person is watching this session (${permissionMode} mode) and this command records a decision that only the user can take. Run it again with --mode ${permissionMode}, so the record says the agent decided and in which mode.`
+        `Crew: no person is watching this session (${where}) and this command records a decision that only the user can take. Run it again with --mode ${mode}, so the record says the agent decided and in which mode.`
       ];
     }
     return [
       "deny",
-      `Crew: this session is in ${permissionMode} mode, not ${flagged}; run the command with --mode ${permissionMode}`
+      `Crew: this session is ${where}, not ${flagged}; run the command with --mode ${mode}`
     ];
   }
   if (flagged !== undefined) {
     return [
       "deny",
-      `Crew: a person is present (${permissionMode ?? "default"} mode); run the command without --mode so they are asked`
+      `Crew: a person is present (${mode} mode); run the command without --mode so they are asked`
     ];
   }
   return ["ask", "Crew: this command records a decision that only the user can take"];
@@ -1923,7 +1933,7 @@ function onPreToolUse(ctx, payload) {
     for (const piece of simpleCommands(command)) {
       const cleaned = piece.replace(/["'\\]/g, "");
       if (USER_ONLY.test(cleaned)) {
-        const decided = userOnlyDecision(cleaned, payload.permission_mode);
+        const decided = userOnlyDecision(cleaned, payload.permission_mode, ctx.headless);
         if (decided?.[0] === "deny")
           return answer(...decided);
         asked ??= decided;
@@ -2168,7 +2178,7 @@ async function recordTdd(paths, work, evidence, profile, criterionId, step, over
 }
 
 // packages/engine/src/version.ts
-var VERSION = "0.1.5";
+var VERSION = "0.1.6";
 
 // packages/engine/src/cli.ts
 var BOOLEAN_FLAGS = new Set(["json", "refresh", "force"]);
@@ -2290,8 +2300,8 @@ function decisionFlag(parsed) {
   const mode = parsed.flags.mode;
   if (mode === undefined)
     return { by: "user" };
-  if (!isUnattendedMode(mode)) {
-    return refuse(`--mode names the permission mode of a session with no person watching: ${UNATTENDED_MODES.slice(0, -1).join(", ")} or ${UNATTENDED_MODES.at(-1)}`);
+  if (!isPermissionMode(mode)) {
+    return refuse(`--mode names the permission mode of a session with no person watching: ${PERMISSION_MODES.slice(0, -1).join(", ")} or ${PERMISSION_MODES.at(-1)}`);
   }
   return { by: "agent", mode };
 }
@@ -2630,13 +2640,18 @@ ${outcome.record.tail}` : "";
       writeProtectedText(env.paths, join18(workDir(env.paths, opened.work.id), "report.md"), renderReport(opened.work, outcome.evidence, env.policy));
       const raised = outcome.raised ? `Route raised to ${outcome.raised}: ${opened.work.routeReasons.at(-1)}
 ` : "";
-      return ok(raised + gateSummary(opened.work, outcome.verdict, outcome.unproven, outcome.evidence.runs), {
-        verdict: outcome.verdict,
-        unproven: outcome.unproven,
-        runs: outcome.evidence.runs,
-        raised: outcome.raised,
-        route: opened.work.route
-      });
+      return {
+        code: outcome.verdict === "proven" ? 0 : 1,
+        stdout: true,
+        text: raised + gateSummary(opened.work, outcome.verdict, outcome.unproven, outcome.evidence.runs),
+        data: {
+          verdict: outcome.verdict,
+          unproven: outcome.unproven,
+          runs: outcome.evidence.runs,
+          raised: outcome.raised,
+          route: opened.work.route
+        }
+      };
     }
     case "skip": {
       const opened = openForChange(env, args[0]);
@@ -2801,7 +2816,7 @@ async function main(argv, io) {
   if (parsed.flags.json)
     io.stdout(`${JSON.stringify({ ok: outcome.code === 0, message: outcome.text, ...outcome.data })}
 `);
-  else if (outcome.code === 0)
+  else if (outcome.code === 0 || outcome.stdout)
     io.stdout(`${outcome.text}
 `);
   else

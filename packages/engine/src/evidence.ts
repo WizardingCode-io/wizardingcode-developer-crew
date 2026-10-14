@@ -9,14 +9,14 @@ import type {
   Evidence,
   GateName,
   GateRun,
+  PermissionMode,
   Policy,
   Stack,
-  UnattendedMode,
   WorkItem,
 } from "./types.ts";
 import { isSkipped, tddDone } from "./work.ts";
 
-type Decided = { by?: DecidedBy; mode?: UnattendedMode };
+type Decided = { by?: DecidedBy; mode?: PermissionMode };
 
 /** "by the user" or "by the agent in <mode> mode": the record says who decided, never less. */
 export function decidedBy(decision: Decided): string {

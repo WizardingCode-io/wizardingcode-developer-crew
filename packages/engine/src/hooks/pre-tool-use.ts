@@ -27,37 +27,47 @@ const WRITE_SHAPE =
 // whenever the whole command names one.
 const OPAQUE_REDIRECT = />{1,2}\|?\s*["']?[$`]/;
 
-// Modes in which Claude Code shows no prompt a person answers, so a hook's "ask" is no signature.
-const UNATTENDED_MODES = new Set(["auto", "bypassPermissions", "dontAsk"]);
+// Modes that show no prompt a person answers, even with a person present: `dontAsk` auto-denies
+// anything that would prompt, and nothing documents that `bypassPermissions` shows a hook's "ask".
+// Auto mode is not one of them: a hook's "ask" forces the prompt there and the classifier cannot
+// approve the call in silence (finding 3 revisited, finding 19 of the real-use phase).
+const PROMPTLESS_MODES = new Set(["bypassPermissions", "dontAsk"]);
 const MODE_FLAG = /--mode(?:=|\s+)(\S+)/;
 
 type Decision = ["deny" | "ask", string];
 
 /**
- * A user-only command in a session with no person watching must say so with `--mode <mode>`, so
- * the engine records the agent's decision as the agent's. The flag is read from the same simple
- * command as the crew command, never from another. Null means the command may go on to the
- * write rule and, with a person present, to the prompt.
+ * A user-only command in a session with no person watching (a headless session in any mode, or a
+ * mode that shows no prompt) must say so with `--mode <mode>`, so the engine records the agent's
+ * decision as the agent's. The flag is read from the same simple command as the crew command,
+ * never from another. Null means the command may go on to the write rule and, with a person
+ * present, to the prompt, which is the user's signature.
  */
-function userOnlyDecision(cleaned: string, permissionMode: string | undefined): Decision | null {
+function userOnlyDecision(
+  cleaned: string,
+  permissionMode: string | undefined,
+  headless: boolean,
+): Decision | null {
   const flagged = MODE_FLAG.exec(cleaned)?.[1];
-  if (permissionMode !== undefined && UNATTENDED_MODES.has(permissionMode)) {
-    if (flagged === permissionMode) return null;
+  const mode = permissionMode ?? "default";
+  if (headless || PROMPTLESS_MODES.has(mode)) {
+    if (flagged === mode) return null;
+    const where = headless ? `a headless session in ${mode} mode` : `${mode} mode`;
     if (flagged === undefined) {
       return [
         "deny",
-        `Crew: no person is watching this session (${permissionMode} mode) and this command records a decision that only the user can take. Run it again with --mode ${permissionMode}, so the record says the agent decided and in which mode.`,
+        `Crew: no person is watching this session (${where}) and this command records a decision that only the user can take. Run it again with --mode ${mode}, so the record says the agent decided and in which mode.`,
       ];
     }
     return [
       "deny",
-      `Crew: this session is in ${permissionMode} mode, not ${flagged}; run the command with --mode ${permissionMode}`,
+      `Crew: this session is ${where}, not ${flagged}; run the command with --mode ${mode}`,
     ];
   }
   if (flagged !== undefined) {
     return [
       "deny",
-      `Crew: a person is present (${permissionMode ?? "default"} mode); run the command without --mode so they are asked`,
+      `Crew: a person is present (${mode} mode); run the command without --mode so they are asked`,
     ];
   }
   return ["ask", "Crew: this command records a decision that only the user can take"];
@@ -114,7 +124,7 @@ export function onPreToolUse(ctx: HookContext, payload: HookPayload): HookRespon
     for (const piece of simpleCommands(command)) {
       const cleaned = piece.replace(/["'\\]/g, "");
       if (USER_ONLY.test(cleaned)) {
-        const decided = userOnlyDecision(cleaned, payload.permission_mode);
+        const decided = userOnlyDecision(cleaned, payload.permission_mode, ctx.headless);
         if (decided?.[0] === "deny") return answer(...decided);
         asked ??= decided;
       }

@@ -18,5 +18,6 @@ export function buildContext(
     profile: profile.profile,
     policy: policy.policy,
     tampered: profile.tampered || policy.tampered,
+    headless: env.CLAUDE_CODE_SESSION_ATTENDED === "0",
   };
 }

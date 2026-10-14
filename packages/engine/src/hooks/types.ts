@@ -23,4 +23,6 @@ export interface HookContext {
   profile: Profile;
   policy: Policy;
   tampered: boolean;
+  /** A headless session (`CLAUDE_CODE_SESSION_ATTENDED=0`, as `claude -p` sets it): no prompt reaches a person. */
+  headless: boolean;
 }
