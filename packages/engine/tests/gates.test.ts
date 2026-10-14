@@ -3,10 +3,12 @@ import { chmodSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseAudit } from "../src/audit.ts";
 import { emptyEvidence, renderReport, saveEvidence } from "../src/evidence.ts";
+import { computeFingerprint } from "../src/fingerprint.ts";
 import {
   assess,
   depsAuditCommand,
   gatesForTarget,
+  gateTimeoutMs,
   manifestChanged,
   plannedGates,
   runGates,
@@ -419,6 +421,71 @@ test("0.3.0: lint and typecheck judge the files the item changed; a tool that na
       root,
     ),
   ).toEqual(["src/old.ts"]);
+});
+
+test("0.3.0: a build that rewrites watched files proves in one run: the stamp is taken after the build and the run records what it wrote", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "build.sh": '#!/bin/sh\nmkdir -p dist\necho "built $(cat src/a.ts)" > dist/out.js\n',
+    "src/a.ts": "x",
+    "dist/out.js": "built x\n",
+  });
+  const paths = repoPaths(root, testEnv());
+  const { profile } = ensureProfile(paths);
+  const node = profile.targets[0];
+  if (!node) throw new Error("no target");
+  node.gates.build = { command: "sh build.sh", source: "confirmed" };
+  saveProfile(paths, profile);
+  const work = createWork(paths, "fix");
+  work.route = "fast";
+  addCriterion(work, "x");
+  addSkip(work, "tdd:AC-1", "manual");
+  write(root, "src/a.ts", "y");
+  const outcome = await runGates(paths, work, profile, DEFAULT_POLICY);
+  expect(outcome.unproven).not.toContain("code changed since the last gate run");
+  expect(outcome.verdict).toBe("proven");
+  const build = outcome.evidence.runs.find((r) => r.gate === "build");
+  expect(build).toMatchObject({ status: "pass", wrote: ["dist/out.js"] });
+  // Every run of this gate run carries the post-build stamp, which is the tree as it is now.
+  const now = computeFingerprint(root, profile, work);
+  expect(outcome.evidence.fingerprint).toBe(now);
+  for (const r of outcome.evidence.runs) expect(r.fingerprint).toBe(now);
+  // A later edit still counts as a change.
+  write(root, "src/a.ts", "z");
+  expect(assess(paths, work, profile, DEFAULT_POLICY).unproven).toContain(
+    "code changed since the last gate run",
+  );
+});
+
+test("0.3.0: the test gate has twenty minutes by default, a gate may carry its own timeout, and the runner honours it", async () => {
+  const t: Target = { ...target, timeoutMs: 600_000 };
+  expect(gateTimeoutMs(t, "test")).toBe(20 * 60 * 1000);
+  expect(gateTimeoutMs(t, "lint")).toBe(600_000);
+  expect(gateTimeoutMs({ ...t, timeoutMs: 30 * 60 * 1000 }, "test")).toBe(30 * 60 * 1000);
+  expect(
+    gateTimeoutMs(
+      { ...t, gates: { ...t.gates, test: { command: "t", source: "detected", timeoutMs: 50 } } },
+      "test",
+    ),
+  ).toBe(50);
+  // Honoured: a test gate with its own 100 ms times out on a two-second command.
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "sleep 2" } }),
+    "src/a.ts": "x",
+  });
+  const paths = repoPaths(root, testEnv());
+  const { profile } = ensureProfile(paths);
+  const node = profile.targets[0];
+  if (!node) throw new Error("no target");
+  node.gates.test = { command: "sleep 2", source: "confirmed", timeoutMs: 100 };
+  saveProfile(paths, profile);
+  const work = createWork(paths, "fix");
+  write(root, "src/a.ts", "y");
+  const outcome = await runGates(paths, work, profile, DEFAULT_POLICY, { only: ["test"] });
+  expect(outcome.evidence.runs.find((r) => r.gate === "test")).toMatchObject({
+    status: "fail",
+    reason: "timed out",
+  });
 });
 
 test("finding 10: on every route the audit is planned only when the change touches a dependency", () => {

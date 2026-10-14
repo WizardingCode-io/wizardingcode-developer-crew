@@ -7,6 +7,7 @@ import { handleHook } from "../src/hooks/index.ts";
 import { onPrompt } from "../src/hooks/prompt.ts";
 import { onSessionStart } from "../src/hooks/session-start.ts";
 import { MAX_STOP_BLOCKS, onStop } from "../src/hooks/stop.ts";
+import { saveProfile } from "../src/profile.ts";
 import { loadState } from "../src/state.ts";
 import type { WorkItem } from "../src/types.ts";
 import { addCriterion, addSkip, createWork, loadWork, saveWork } from "../src/work.ts";
@@ -185,6 +186,33 @@ test("case 2: proven work ends the turn, and a later edit blocks again", async (
   expect(loadState(ctx.paths).sessions.s?.stopBlocks).toBe(0);
   write(root, "src/a.ts", "changed again");
   expect(String(onStop(ctx).reason)).toContain("code changed since the last gate run");
+});
+
+test("0.3.0: a build that rewrites a watched file proves in one run, and the turn ends", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "build.sh": "#!/bin/sh\nmkdir -p dist\necho built > dist/out.js\n",
+    "dist/out.js": "old\n",
+    "src/a.ts": "x",
+  });
+  const ctx = hookContext({ session_id: "s", cwd: root }, testEnv());
+  onSessionStart(ctx);
+  const node = ctx.profile.targets[0];
+  if (!node) throw new Error("no target");
+  node.gates.build = { command: "sh build.sh", source: "confirmed" };
+  saveProfile(ctx.paths, ctx.profile);
+  const work = createWork(ctx.paths, "fix");
+  work.route = "fast";
+  addCriterion(work, "x");
+  addSkip(work, "tdd:AC-1", "manual");
+  write(root, "src/a.ts", "changed");
+  saveWork(ctx.paths, work);
+  expect(onStop(ctx).decision).toBe("block");
+  const outcome = await runGates(ctx.paths, work, ctx.profile, ctx.policy);
+  saveWork(ctx.paths, work);
+  expect(outcome.verdict).toBe("proven");
+  expect(outcome.evidence.runs.find((r) => r.gate === "build")?.wrote).toEqual(["dist/out.js"]);
+  expect(onStop(ctx)).toEqual({});
 });
 
 test("finding 22: a message that tells the user to type a crew command cannot end the turn", () => {

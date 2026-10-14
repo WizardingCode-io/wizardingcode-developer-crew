@@ -95,7 +95,7 @@ const BOOLEAN_FLAGS = new Set(["json", "refresh", "force"]);
 // behaviour criteria). `hook` is not here: Claude Code calls it, and its payload is on stdin.
 const KNOWN_FLAGS: Record<string, readonly string[]> = {
   detect: ["refresh"],
-  profile: ["target", "stack", "force"],
+  profile: ["target", "stack", "force", "timeout"],
   policy: [],
   accept: [],
   start: ["answers", "criterion", "preserve"],
@@ -472,6 +472,16 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         if (stackFlag !== undefined && !STACKS.includes(stackFlag as Stack))
           return refuse(`usage: crew profile set <gate> "<cmd>" --stack <${STACKS.join("|")}>`);
         const stack = stackFlag as Stack | undefined;
+        // The person says minutes; the profile keeps milliseconds (finding 23: a flow may take twenty).
+        const timeoutFlag = parsed.flags.timeout;
+        const minutes = typeof timeoutFlag === "string" ? Number(timeoutFlag) : undefined;
+        if (
+          timeoutFlag !== undefined &&
+          !(minutes !== undefined && minutes > 0 && Number.isFinite(minutes))
+        )
+          return refuse(
+            'usage: crew profile set <gate> "<cmd>" --timeout <minutes> (a positive number)',
+          );
         // Two manifests in one folder are two targets at one path; the stack says which one is meant.
         const atPath = env.profile.targets.filter((t) => t.path === targetPath);
         if (stack === undefined && atPath.length > 1) {
@@ -499,7 +509,11 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           return refuse(
             `${gate} for ${where} already has a confirmed command (${current.command}); replacing it needs --force: crew profile set ${gate} "<cmd>" --force`,
           );
-        target.gates[gate as GateName] = { command: cmd, source: "confirmed" };
+        target.gates[gate as GateName] = {
+          command: cmd,
+          source: "confirmed",
+          ...(minutes ? { timeoutMs: Math.round(minutes * 60 * 1000) } : {}),
+        };
         saveProfile(env.paths, env.profile);
         return ok(`${gate} for ${where} set and confirmed: ${cmd}`, {
           target: targetPath,
@@ -1031,7 +1045,7 @@ const STACKS: readonly Stack[] = ["node", "php", "python", "other"];
 
 const HELP = `crew ${VERSION}
   detect [--refresh]                    build or refresh the project profile
-  profile set <gate> "<cmd>" [--target p] [--stack s]  set a gate command, confirmed in one step (asks the user)
+  profile set <gate> "<cmd>" [--target p] [--stack s] [--timeout m]  set a gate command, confirmed in one step (asks the user); m minutes
   profile set <gate> "<cmd>" --force    replace a command a person already confirmed (asks the user)
   profile confirm [<gate>]              confirm commands the detector only guessed (asks the user)
   policy accept                         trust the current policy.json after a hand edit (asks the user)

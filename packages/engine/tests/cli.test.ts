@@ -553,6 +553,22 @@ test("ADR 0005: under relay a decision without --mode is the user's, relayed by 
   });
 });
 
+test("0.3.0: profile set --timeout stores a gate's own timeout, in minutes", async () => {
+  const root = makeRepo({ "package.json": JSON.stringify({ scripts: { test: "exit 0" } }) });
+  const c = io(root);
+  expect((await c.run("profile", "set", "test", "exit 0", "--timeout", "30")).code).toBe(0);
+  expect(loadProfile(repoPaths(root, c.env)).profile?.targets[0]?.gates.test).toEqual({
+    command: "exit 0",
+    source: "confirmed",
+    timeoutMs: 30 * 60 * 1000,
+  });
+  const bad = await c.run("profile", "set", "lint", "x", "--timeout", "abc");
+  expect(bad.code).toBe(1);
+  expect(bad.err).toContain("--timeout");
+  expect((await c.run("profile", "set", "lint", "x", "--timeout", "0")).code).toBe(1);
+  expect(loadProfile(repoPaths(root, c.env)).profile?.targets[0]?.gates.lint).toBeUndefined();
+});
+
 test("the command comes first, so user-only verbs cannot hide behind a leading flag", async () => {
   const root = makeRepo({ "package.json": JSON.stringify({ scripts: { test: "exit 0" } }) });
   const c = io(root);

@@ -2127,6 +2127,13 @@ var PYTHON_AUDIT = {
   poetry: "poetry run pip-audit",
   pip: "python -m pip_audit"
 };
+var TEST_TIMEOUT_MS = 20 * 60 * 1000;
+function gateTimeoutMs(target, gate) {
+  const own = target.gates[gate]?.timeoutMs;
+  if (own !== undefined)
+    return own;
+  return gate === "test" ? Math.max(target.timeoutMs, TEST_TIMEOUT_MS) : target.timeoutMs;
+}
 function depsAuditCommand(target, root, env = process.env) {
   const dir = join17(root, target.path);
   if (target.stack === "python") {
@@ -2179,7 +2186,7 @@ async function baselineAdvisories(paths, work, target, audit, where) {
   const log = join17(workDir(paths, work.id), "logs", `deps-base-${where}-${Date.now()}.txt`);
   const result = await runCommand(audit.command, {
     cwd: scratch,
-    timeoutMs: target.timeoutMs,
+    timeoutMs: gateTimeoutMs(target, "deps"),
     logPath: log
   });
   const report = parseAudit(audit.tool, readText(log) ?? result.tail);
@@ -2304,7 +2311,7 @@ async function runOne(paths, work, profile, planned, fingerprint, changed) {
   const log = `logs/${gate}-${where}-${Date.now()}.txt`;
   const result = await runCommand(command, {
     cwd: join17(paths.root, targetPath),
-    timeoutMs: target.timeoutMs,
+    timeoutMs: gateTimeoutMs(target, gate),
     logPath: join17(workDir(paths, work.id), log)
   });
   const passed = result.exit === 0 && !result.timedOut;
@@ -2371,6 +2378,7 @@ async function runGates(paths, work, profile, policy, options = {}) {
   const evidence = read.evidence;
   const tampered = !!options.tampered || read.tampered || loadLedger(paths, work.id).tampered;
   const fingerprintBefore = computeFingerprint(paths.root, profile, base);
+  let stamp = fingerprintBefore;
   for (const one of planned) {
     const { gate, target } = one;
     if (options.only && !options.only.includes(gate))
@@ -2392,13 +2400,28 @@ async function runGates(paths, work, profile, policy, options = {}) {
         log: null,
         tail: "",
         reason: skip?.reason,
-        fingerprint: fingerprintBefore
+        fingerprint: stamp
       });
       continue;
     }
-    evidence.runs.push(await runOne(paths, work, profile, one, fingerprintBefore, changed));
+    const run = await runOne(paths, work, profile, one, stamp, changed);
+    if (gate === "build" && run.status === "pass") {
+      const after = computeFingerprint(paths.root, profile, base, MAX_WATCHED_FILES, fingerprintMethod(fingerprintBefore));
+      if (after !== stamp) {
+        const now = changedWatchedPaths(paths.root, profile, base);
+        run.wrote = now.filter((p) => !changed.includes(p));
+        run.fingerprint = after;
+        stamp = after;
+      }
+    }
+    evidence.runs.push(run);
   }
-  evidence.fingerprint = fingerprintBefore;
+  if (stamp !== fingerprintBefore) {
+    for (const r of evidence.runs)
+      if (r.fingerprint === fingerprintBefore)
+        r.fingerprint = stamp;
+  }
+  evidence.fingerprint = stamp;
   const verdict = computeVerdict({
     work,
     evidence,
@@ -2886,7 +2909,7 @@ var VERSION = "0.2.0";
 var BOOLEAN_FLAGS = new Set(["json", "refresh", "force"]);
 var KNOWN_FLAGS = {
   detect: ["refresh"],
-  profile: ["target", "stack", "force"],
+  profile: ["target", "stack", "force", "timeout"],
   policy: [],
   accept: [],
   start: ["answers", "criterion", "preserve"],
@@ -3187,6 +3210,10 @@ async function dispatch(parsed, io) {
         if (stackFlag !== undefined && !STACKS.includes(stackFlag))
           return refuse(`usage: crew profile set <gate> "<cmd>" --stack <${STACKS.join("|")}>`);
         const stack = stackFlag;
+        const timeoutFlag = parsed.flags.timeout;
+        const minutes = typeof timeoutFlag === "string" ? Number(timeoutFlag) : undefined;
+        if (timeoutFlag !== undefined && !(minutes !== undefined && minutes > 0 && Number.isFinite(minutes)))
+          return refuse('usage: crew profile set <gate> "<cmd>" --timeout <minutes> (a positive number)');
         const atPath = env.profile.targets.filter((t) => t.path === targetPath);
         if (stack === undefined && atPath.length > 1) {
           const stacks = atPath.map((t) => t.stack);
@@ -3207,7 +3234,11 @@ async function dispatch(parsed, io) {
         const current = target.gates[gate];
         if (current?.source === "confirmed" && !parsed.flags.force)
           return refuse(`${gate} for ${where} already has a confirmed command (${current.command}); replacing it needs --force: crew profile set ${gate} "<cmd>" --force`);
-        target.gates[gate] = { command: cmd, source: "confirmed" };
+        target.gates[gate] = {
+          command: cmd,
+          source: "confirmed",
+          ...minutes ? { timeoutMs: Math.round(minutes * 60 * 1000) } : {}
+        };
         saveProfile(env.paths, env.profile);
         return ok(`${gate} for ${where} set and confirmed: ${cmd}`, {
           target: targetPath,
@@ -3654,7 +3685,7 @@ function settings(command, args, user) {
 var STACKS = ["node", "php", "python", "other"];
 var HELP = `crew ${VERSION}
   detect [--refresh]                    build or refresh the project profile
-  profile set <gate> "<cmd>" [--target p] [--stack s]  set a gate command, confirmed in one step (asks the user)
+  profile set <gate> "<cmd>" [--target p] [--stack s] [--timeout m]  set a gate command, confirmed in one step (asks the user); m minutes
   profile set <gate> "<cmd>" --force    replace a command a person already confirmed (asks the user)
   profile confirm [<gate>]              confirm commands the detector only guessed (asks the user)
   policy accept                         trust the current policy.json after a hand edit (asks the user)

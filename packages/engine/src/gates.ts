@@ -115,6 +115,16 @@ const PYTHON_AUDIT: Record<string, string> = {
   pip: "python -m pip_audit",
 };
 
+/** A team's test flow may take this long before it is a problem (the user's figure, 2026-10-14). */
+export const TEST_TIMEOUT_MS = 20 * 60 * 1000;
+
+/** The gate's own limit when the profile gives one; else the target's, with the twenty-minute floor for the test gate. */
+export function gateTimeoutMs(target: Target, gate: GateName): number {
+  const own = target.gates[gate]?.timeoutMs;
+  if (own !== undefined) return own;
+  return gate === "test" ? Math.max(target.timeoutMs, TEST_TIMEOUT_MS) : target.timeoutMs;
+}
+
 /** An audit that can run: its command, its tool, and the manifest and lockfile a baseline at the base commit needs (none for pip-audit, which audits an environment). */
 export interface ResolvedAudit {
   command: string;
@@ -187,7 +197,7 @@ async function baselineAdvisories(
   const log = join(workDir(paths, work.id), "logs", `deps-base-${where}-${Date.now()}.txt`);
   const result = await runCommand(audit.command, {
     cwd: scratch,
-    timeoutMs: target.timeoutMs,
+    timeoutMs: gateTimeoutMs(target, "deps"),
     logPath: log,
   });
   const report = parseAudit(audit.tool, readText(log) ?? result.tail);
@@ -360,7 +370,7 @@ async function runOne(
   const log = `logs/${gate}-${where}-${Date.now()}.txt`;
   const result = await runCommand(command, {
     cwd: join(paths.root, targetPath),
-    timeoutMs: target.timeoutMs,
+    timeoutMs: gateTimeoutMs(target, gate),
     logPath: join(workDir(paths, work.id), log),
   });
   const passed = result.exit === 0 && !result.timedOut;
@@ -455,6 +465,8 @@ export async function runGates(
   // The caller knows about the work item and the profile; the evidence and the ledger are checked here.
   const tampered = !!options.tampered || read.tampered || loadLedger(paths, work.id).tampered;
   const fingerprintBefore = computeFingerprint(paths.root, profile, base);
+  // The stamp the runs carry: the tree before them, or as the build gate left it (finding 18).
+  let stamp = fingerprintBefore;
   for (const one of planned) {
     const { gate, target } = one;
     if (options.only && !options.only.includes(gate)) continue;
@@ -475,14 +487,34 @@ export async function runGates(
         log: null,
         tail: "",
         reason: skip?.reason,
-        fingerprint: fingerprintBefore,
+        fingerprint: stamp,
       });
       continue;
     }
-    evidence.runs.push(await runOne(paths, work, profile, one, fingerprintBefore, changed));
+    const run = await runOne(paths, work, profile, one, stamp, changed);
+    // A build that rewrote watched files is part of the proof, not a change against it: the stamp
+    // moves to the tree as the build left it, and the run says what it wrote (finding 18).
+    if (gate === "build" && run.status === "pass") {
+      const after = computeFingerprint(
+        paths.root,
+        profile,
+        base,
+        MAX_WATCHED_FILES,
+        fingerprintMethod(fingerprintBefore),
+      );
+      if (after !== stamp) {
+        const now = changedWatchedPaths(paths.root, profile, base);
+        run.wrote = now.filter((p) => !changed.includes(p));
+        run.fingerprint = after;
+        stamp = after;
+      }
+    }
+    evidence.runs.push(run);
   }
-  // The fingerprint from before the runs is what the evidence vouches for; a gate that edits files shows up as a change.
-  evidence.fingerprint = fingerprintBefore;
+  // Every run of this gate run carries the stamp; any other gate that edits files shows up as a change.
+  if (stamp !== fingerprintBefore)
+    for (const r of evidence.runs) if (r.fingerprint === fingerprintBefore) r.fingerprint = stamp;
+  evidence.fingerprint = stamp;
   const verdict = computeVerdict({
     work,
     evidence,

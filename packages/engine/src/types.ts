@@ -12,6 +12,8 @@ export type CommandSource = "detected" | "proposed" | "confirmed";
 export interface GateCommand {
   command: string;
   source: CommandSource;
+  /** This gate's own time limit; without it the target's applies, with a twenty-minute floor for `test`. */
+  timeoutMs?: number;
 }
 
 /** 'other' is a target a person configured by hand, on a stack no detector knows. */
@@ -282,6 +284,8 @@ export interface GateRun {
   advisories?: { current: number; known: number; fresh: string[]; baselined: boolean };
   /** A lint or typecheck run read for the files it names (ADR 0006): the ones the item changed, and how many untouched files have problems. */
   problems?: { touched: string[]; untouched: number };
+  /** The watched files a build gate rewrote; the stamp of the gate run was taken after it (finding 18). */
+  wrote?: string[];
 }
 
 export interface Evidence {
