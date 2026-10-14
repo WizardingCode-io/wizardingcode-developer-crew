@@ -821,3 +821,44 @@ test("SP2a: an item in specify moves to conclave, and plan asks for conclave.md 
   );
   expect((await c.json("phase", id, "next")).data.phase).toBe("plan");
 });
+
+test("SP2a: decision add and decide, as the user and as the validator", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const c = io(root);
+  const standard = JSON.stringify({ ...JSON.parse(answers), scope: 1 });
+  const id = (await c.json("start", "Keys in the profile", "--answers", standard)).data
+    .id as string;
+  const added = await c.json(
+    "decision",
+    id,
+    "add",
+    "Who gets the create permission by default?",
+    "--default",
+    "admins only",
+  );
+  expect(added.code).toBe(0);
+  expect(added.data.decision).toMatchObject({ id: "D-1", default: "admins only" });
+  expect((await c.run("decide", id, "D-1", "--validator", "stated-default")).err).toContain(
+    "the validator acts only where no person is watching: add --mode <mode>",
+  );
+  const byValidator = await c.json(
+    "decide",
+    id,
+    "D-1",
+    "--mode",
+    "dontAsk",
+    "--validator",
+    "stated-default",
+  );
+  expect(byValidator.data.decision).toMatchObject({
+    answer: "admins only",
+    by: "validator",
+    rule: "stated-default",
+  });
+  const byUser = await c.json("decide", id, "D-1", "everyone with a team");
+  expect(byUser.data.decision).toMatchObject({ answer: "everyone with a team", by: "user" });
+  expect((await c.run("decide", id, "D-1", "--mode", "auto", "--validator", "judge")).code).toBe(1);
+});

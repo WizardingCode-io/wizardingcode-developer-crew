@@ -283,6 +283,14 @@ test("bash: an opaque redirect target fails closed over the whole command", () =
   expect(bash("F=docs/notes.md; echo x > $F")).toEqual({});
 });
 
+test("SP2a: decide is a user-only command; decision add is not", () => {
+  const { ctx } = setup();
+  const bash = (command: string) =>
+    onPreToolUse(ctx, { tool_name: "Bash", tool_input: { command } });
+  expect(decision(bash('crew decide w1 D-1 "admins only"'))).toBe("ask");
+  expect(decision(bash('crew decision w1 add "Which roles?"'))).toBeUndefined();
+});
+
 test("a write through a symlinked alias of the repository is judged like the real path", () => {
   const { root, ctx } = setup();
   const alias = join(tempDir(), "alias");

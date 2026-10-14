@@ -65,6 +65,10 @@ var PERMISSION_MODES = [
 function isPermissionMode(value) {
   return PERMISSION_MODES.includes(value);
 }
+var VALIDATOR_RULES = ["complete-gap-round", "stated-default"];
+function isValidatorRule(value) {
+  return VALIDATOR_RULES.includes(value);
+}
 
 // packages/engine/src/classify.ts
 var WORK_TYPES = {
@@ -1132,6 +1136,49 @@ function removeCriterion(work, evidence, id) {
   return { removed };
 }
 var USER = { by: "user" };
+function addDecision(work, question, dflt) {
+  const taken = (work.decisions ?? []).map((d) => Number(d.id.slice("D-".length))).filter(Number.isFinite);
+  const next = taken.length ? Math.max(...taken) + 1 : 1;
+  const decision = {
+    id: `D-${next}`,
+    question: question.trim(),
+    ...dflt?.trim() ? { default: dflt.trim() } : {}
+  };
+  work.decisions = [...work.decisions ?? [], decision];
+  return decision;
+}
+function answerDecision(work, id, answer, decision) {
+  const found = (work.decisions ?? []).find((d) => d.id === id);
+  if (!found)
+    return { refused: `unknown decision: ${id}` };
+  if (decision.by === "validator") {
+    if (found.default === undefined) {
+      return { refused: `${id} has no stated default; a person answers it` };
+    }
+    if (answer !== undefined && answer.trim() !== found.default) {
+      return {
+        refused: `the validator may only take the stated default of ${id} (${found.default})`
+      };
+    }
+  } else if (!answer?.trim()) {
+    return { refused: `an answer is required: crew decide <id> ${id} "<answer>"` };
+  }
+  found.answer = (answer ?? found.default ?? "").trim();
+  found.at = nowIso();
+  found.by = decision.by;
+  if (decision.mode)
+    found.mode = decision.mode;
+  else
+    delete found.mode;
+  if (decision.rule)
+    found.rule = decision.rule;
+  else
+    delete found.rule;
+  return found;
+}
+function unansweredDecisions(work, policy) {
+  return (work.decisions ?? []).filter((d) => d.answer === undefined || !decisionCounts(policy, d));
+}
 function approve(work, what, decision = USER) {
   work.approvals.push({ what, at: nowIso(), ...decision });
 }
@@ -1198,6 +1245,8 @@ function guardFor(work, next, ctx) {
   const missing = [];
   if (next === "plan") {
     missing.push(...conclaveDocument(work, ctx));
+    for (const d of unansweredDecisions(work, ctx.policy))
+      missing.push(`an answer to ${d.id} (crew decide <id> ${d.id} "<answer>")`);
   } else if (next === "build") {
     if (work.criteria.length === 0) {
       missing.push('at least one acceptance criterion (crew criteria <id> add "...")');
@@ -1242,10 +1291,12 @@ function advancePhase(work, ctx) {
 
 // packages/engine/src/evidence.ts
 function decidedBy(decision) {
+  if (decision.by === "validator")
+    return `by the validator (rule: ${decision.rule ?? "unnamed"})`;
   return decision.by === "agent" ? `by the agent in ${decision.mode} mode` : "by the user";
 }
 function countedNote(policy, decision) {
-  if (decision.by !== "agent")
+  if (!decision.by || decision.by === "user")
     return "";
   return decisionCounts(policy, decision) ? ": counted by policy" : ": not counted, the policy waits for a person";
 }
@@ -1354,6 +1405,14 @@ function renderReport(work, evidence, policy) {
     const status = r.status === "skipped" || r.status === "unavailable" ? `${r.status}${r.reason ? `: ${r.reason}` : ""}` : r.status;
     const target = r.stack ? `${r.target} (${r.stack})` : r.target;
     lines.push(`| ${r.gate} | ${target} | ${status} | ${r.command ? `\`${r.command}\`` : ""} | ${r.durationMs} ms | ${r.log ?? ""} |`);
+  }
+  const decisions = work.decisions ?? [];
+  if (decisions.length) {
+    lines.push("", "## Gap round", "");
+    for (const d of decisions) {
+      const answer = d.answer === undefined ? "no answer yet" : `${d.answer}, ${decidedBy(d)}${countedNote(policy, d)}`;
+      lines.push(`- ${d.id}: ${d.question} → ${answer}`);
+    }
   }
   const removed = work.removedCriteria ?? [];
   const pauses = work.pauses ?? [];
@@ -1935,7 +1994,7 @@ function isRedirectPart(line, i) {
 // packages/engine/src/hooks/pre-tool-use.ts
 var WRITE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
 var RUNNER = String.raw`(?:[A-Za-z_][A-Za-z0-9_]*=\S*|-\S*|node|bun|bunx|npx|sh|bash|zsh|eval|exec|env|time|nohup|xargs|sudo|command)`;
-var USER_ONLY = new RegExp(String.raw`^[\s({]*(?:${RUNNER}\s+)*(?:\S*/)?crew(?:\.mjs)?\s+(?:skip|approve|accept|profile\s+confirm|policy\s+accept|profile\s+set\b[^;&|]*--force)\b`);
+var USER_ONLY = new RegExp(String.raw`^[\s({]*(?:${RUNNER}\s+)*(?:\S*/)?crew(?:\.mjs)?\s+(?:skip|approve|accept|decide|profile\s+confirm|policy\s+accept|profile\s+set\b[^;&|]*--force)\b`);
 var ENGINE_FILES = /\.crew\/(?:profile\.json|policy\.json|\.gitignore|local\b|work\/[^\s/]+\/(?:work\.json|evidence\.json|report\.md|logs\b))|\.wizardingcode\/crew\b/;
 var WRITE_SHAPE = /(?:^|[\s;&|("'])(?:rm|mv|cp|tee|truncate|chmod|touch|dd|install)\b|sed\s+-i|>{1,2}\|?\s*["']?\S*(?:\.crew\/|\.wizardingcode\/crew\b)/;
 var OPAQUE_REDIRECT = />{1,2}\|?\s*["']?[$`]/;
@@ -2268,6 +2327,8 @@ var KNOWN_FLAGS = {
   start: ["answers", "criterion", "preserve"],
   classify: ["answers"],
   criteria: ["kind"],
+  decision: ["default"],
+  decide: ["mode", "validator"],
   approve: ["mode"],
   phase: [],
   await: [],
@@ -2416,6 +2477,19 @@ function decisionFlag(parsed) {
     return refuse(`--mode names the permission mode of a session with no person watching: ${PERMISSION_MODES.slice(0, -1).join(", ")} or ${PERMISSION_MODES.at(-1)}`);
   }
   return { by: "agent", mode };
+}
+function validatorFlag(parsed) {
+  const rule = parsed.flags.validator;
+  if (rule === undefined)
+    return decisionFlag(parsed);
+  if (parsed.flags.mode === undefined)
+    return refuse("the validator acts only where no person is watching: add --mode <mode>");
+  if (!isValidatorRule(rule))
+    return refuse(`unknown validator rule: ${String(rule)} (${VALIDATOR_RULES.join(", ")})`);
+  const base = decisionFlag(parsed);
+  if (isOutcome(base))
+    return base;
+  return { by: "validator", mode: base.mode, rule };
 }
 function decisionText(policy, decision) {
   const note = countedNote(policy, decision);
@@ -2679,6 +2753,39 @@ async function dispatch(parsed, io) {
       saveWork(env.paths, opened.work);
       return ok(`${criterion.id} (${kind}): ${criterion.text}`, { criterion });
     }
+    case "decision": {
+      const opened = openForChange(env, args[0]);
+      if (isOutcome(opened))
+        return opened;
+      const question = args.slice(2).join(" ").trim();
+      if (args[1] !== "add" || !question)
+        return refuse('usage: crew decision <id> add "<question>" [--default "<answer>"]');
+      const dflt = typeof parsed.flags.default === "string" ? parsed.flags.default : undefined;
+      const decision = addDecision(opened.work, question, dflt);
+      saveWork(env.paths, opened.work);
+      return ok(`${decision.id}: ${decision.question}${dflt ? ` (default: ${dflt})` : ""}`, {
+        decision
+      });
+    }
+    case "decide": {
+      const opened = openForChange(env, args[0]);
+      if (isOutcome(opened))
+        return opened;
+      const id = args[1];
+      if (!id)
+        return refuse('usage: crew decide <id> D-n "<answer>" [--mode <mode> --validator stated-default]');
+      const who = validatorFlag(parsed);
+      if (isOutcome(who))
+        return who;
+      const answer2 = args.slice(2).join(" ").trim() || undefined;
+      const result = answerDecision(opened.work, id, answer2, who);
+      if ("refused" in result)
+        return refuse(result.refused);
+      saveWork(env.paths, opened.work);
+      return ok(`${result.id} answered ${decidedBy(result)}: ${result.answer}`, {
+        decision: result
+      });
+    }
     case "approve": {
       const opened = openForChange(env, args[0]);
       if (isOutcome(opened))
@@ -2904,6 +3011,9 @@ var HELP = `crew ${VERSION}
   classify <id> --answers <json>        record typed answers and compute the route
   criteria <id> add "<text>" [--kind preserve]
   criteria <id> remove <AC-n>           take out a criterion no test-first record or skip names
+  decision <id> add "<question>" [--default "<answer>"]   a decision only the user can make (gap round)
+  decide <id> D-n "<answer>"            record the user's answer (asks the user)
+      --mode <mode> --validator stated-default   no person watching: the validator takes the default
   approve <id> spec                     record the user's approval (asks the user)
       --mode auto|bypassPermissions|dontAsk   no person watching: recorded as the agent's decision
   phase <id> next                       advance when the guard holds

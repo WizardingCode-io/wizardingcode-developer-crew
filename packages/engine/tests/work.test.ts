@@ -8,8 +8,10 @@ import type { Evidence, RunRecord } from "../src/types.ts";
 import {
   activeWork,
   addCriterion,
+  addDecision,
   addSkip,
   advancePhase,
+  answerDecision,
   applyClassification,
   approve,
   createWork,
@@ -268,6 +270,59 @@ test("SP2a: plan needs conclave.md with content under the four headings; 'none' 
   expect(guardFor(work, "plan", { ...empty, conclaveText: full })).toEqual([]);
   work.route = "fast";
   expect(guardFor(work, "plan", empty)).toEqual([]);
+});
+
+test("SP2a: decisions are numbered once, answered by the user or by the validator's default, and guard plan", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const work = createWork(paths, "feature");
+  applyClassification(work, "feature", { route: "standard", reasons: [], riskAreas: [] });
+  work.phase = "conclave";
+  const conclave =
+    "## Assumed by good practice\nnone\n## Decisions only the user can make\nD-1\n## Proposals\nnone\n## Warnings\nnone\n";
+  const ctx = { ...empty, conclaveText: conclave };
+  const d1 = addDecision(work, "Which roles get the create permission?", "admins only");
+  const d2 = addDecision(work, "Remove the legacy route now?");
+  expect([d1.id, d2.id]).toEqual(["D-1", "D-2"]);
+  expect(guardFor(work, "plan", ctx)).toEqual([
+    'an answer to D-1 (crew decide <id> D-1 "<answer>")',
+    'an answer to D-2 (crew decide <id> D-2 "<answer>")',
+  ]);
+  // The validator takes only a stated default, under its rule; another answer, or no default, is refused.
+  const validator = {
+    by: "validator" as const,
+    mode: "dontAsk" as const,
+    rule: "stated-default" as const,
+  };
+  expect(answerDecision(work, "D-1", "everyone", validator)).toEqual({
+    refused: "the validator may only take the stated default of D-1 (admins only)",
+  });
+  expect(answerDecision(work, "D-2", undefined, validator)).toEqual({
+    refused: "D-2 has no stated default; a person answers it",
+  });
+  expect(answerDecision(work, "D-1", undefined, validator)).toMatchObject({
+    answer: "admins only",
+    by: "validator",
+  });
+  // Under policy wait the validator's answer does not count; under validator it does.
+  expect(guardFor(work, "plan", ctx)).toEqual([
+    'an answer to D-1 (crew decide <id> D-1 "<answer>")',
+    'an answer to D-2 (crew decide <id> D-2 "<answer>")',
+  ]);
+  const counting = {
+    ...ctx,
+    policy: { ...DEFAULT_POLICY, unattendedDecisions: "validator" as const },
+  };
+  expect(guardFor(work, "plan", counting)).toEqual([
+    'an answer to D-2 (crew decide <id> D-2 "<answer>")',
+  ]);
+  expect(answerDecision(work, "D-2", "yes, 410", { by: "user" })).toMatchObject({
+    answer: "yes, 410",
+    by: "user",
+  });
+  expect(guardFor(work, "plan", counting)).toEqual([]);
+  expect(answerDecision(work, "D-9", "x", { by: "user" })).toEqual({
+    refused: "unknown decision: D-9",
+  });
 });
 
 test("advancePhase follows the route and stops at a failing guard", () => {

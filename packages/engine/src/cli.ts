@@ -32,13 +32,22 @@ import type {
   UserConfig,
   WorkItem,
 } from "./types.ts";
-import { GATE_NAMES, isPermissionMode, PERMISSION_MODES, PHASE_ORDER } from "./types.ts";
+import {
+  GATE_NAMES,
+  isPermissionMode,
+  isValidatorRule,
+  PERMISSION_MODES,
+  PHASE_ORDER,
+  VALIDATOR_RULES,
+} from "./types.ts";
 import { VERSION } from "./version.ts";
 import {
   activeWork,
   addCriterion,
+  addDecision,
   addSkip,
   advancePhase,
+  answerDecision,
   applyClassification,
   approve,
   createWork,
@@ -83,6 +92,8 @@ const KNOWN_FLAGS: Record<string, readonly string[]> = {
   start: ["answers", "criterion", "preserve"],
   classify: ["answers"],
   criteria: ["kind"],
+  decision: ["default"],
+  decide: ["mode", "validator"],
   approve: ["mode"],
   phase: [],
   await: [],
@@ -278,6 +289,22 @@ function decisionFlag(parsed: Parsed): Decision | Outcome {
     );
   }
   return { by: "agent", mode };
+}
+
+/**
+ * A decision the validator takes: only with `--mode` (no person watching) and a known rule. Without
+ * `--validator` the flag logic of `decisionFlag` applies unchanged.
+ */
+function validatorFlag(parsed: Parsed): Decision | Outcome {
+  const rule = parsed.flags.validator;
+  if (rule === undefined) return decisionFlag(parsed);
+  if (parsed.flags.mode === undefined)
+    return refuse("the validator acts only where no person is watching: add --mode <mode>");
+  if (!isValidatorRule(rule))
+    return refuse(`unknown validator rule: ${String(rule)} (${VALIDATOR_RULES.join(", ")})`);
+  const base = decisionFlag(parsed);
+  if (isOutcome(base)) return base;
+  return { by: "validator", mode: base.mode, rule };
 }
 
 /** The decision as the report will show it: who, and whether the policy counts it. */
@@ -592,6 +619,37 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       saveWork(env.paths, opened.work);
       return ok(`${criterion.id} (${kind}): ${criterion.text}`, { criterion });
     }
+    case "decision": {
+      const opened = openForChange(env, args[0]);
+      if (isOutcome(opened)) return opened;
+      const question = args.slice(2).join(" ").trim();
+      if (args[1] !== "add" || !question)
+        return refuse('usage: crew decision <id> add "<question>" [--default "<answer>"]');
+      const dflt = typeof parsed.flags.default === "string" ? parsed.flags.default : undefined;
+      const decision = addDecision(opened.work, question, dflt);
+      saveWork(env.paths, opened.work);
+      return ok(`${decision.id}: ${decision.question}${dflt ? ` (default: ${dflt})` : ""}`, {
+        decision,
+      });
+    }
+    case "decide": {
+      const opened = openForChange(env, args[0]);
+      if (isOutcome(opened)) return opened;
+      const id = args[1];
+      if (!id)
+        return refuse(
+          'usage: crew decide <id> D-n "<answer>" [--mode <mode> --validator stated-default]',
+        );
+      const who = validatorFlag(parsed);
+      if (isOutcome(who)) return who;
+      const answer = args.slice(2).join(" ").trim() || undefined;
+      const result = answerDecision(opened.work, id, answer, who);
+      if ("refused" in result) return refuse(result.refused);
+      saveWork(env.paths, opened.work);
+      return ok(`${result.id} answered ${decidedBy(result)}: ${result.answer}`, {
+        decision: result,
+      });
+    }
     case "approve": {
       const opened = openForChange(env, args[0]);
       if (isOutcome(opened)) return opened;
@@ -842,6 +900,9 @@ const HELP = `crew ${VERSION}
   classify <id> --answers <json>        record typed answers and compute the route
   criteria <id> add "<text>" [--kind preserve]
   criteria <id> remove <AC-n>           take out a criterion no test-first record or skip names
+  decision <id> add "<question>" [--default "<answer>"]   a decision only the user can make (gap round)
+  decide <id> D-n "<answer>"            record the user's answer (asks the user)
+      --mode <mode> --validator stated-default   no person watching: the validator takes the default
   approve <id> spec                     record the user's approval (asks the user)
       --mode auto|bypassPermissions|dontAsk   no person watching: recorded as the agent's decision
   phase <id> next                       advance when the guard holds

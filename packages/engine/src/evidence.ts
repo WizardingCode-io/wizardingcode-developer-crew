@@ -12,20 +12,25 @@ import type {
   PermissionMode,
   Policy,
   Stack,
+  ValidatorRule,
   WorkItem,
 } from "./types.ts";
 import { isSkipped, tddDone } from "./work.ts";
 
-type Decided = { by?: DecidedBy; mode?: PermissionMode };
+type Decided = { by?: DecidedBy; mode?: PermissionMode; rule?: ValidatorRule };
 
-/** "by the user" or "by the agent in <mode> mode": the record says who decided, never less. */
+/**
+ * "by the user", "by the agent in <mode> mode" or "by the validator (rule: <rule>)": the record says
+ * who decided, never less, and never "by the user" for a decision a person did not take.
+ */
 export function decidedBy(decision: Decided): string {
+  if (decision.by === "validator") return `by the validator (rule: ${decision.rule ?? "unnamed"})`;
   return decision.by === "agent" ? `by the agent in ${decision.mode} mode` : "by the user";
 }
 
-/** What the agent's decision is worth under the policy; a person's decision needs no note. */
+/** What a decision not taken by a person is worth under the policy; a person's needs no note. */
 export function countedNote(policy: Policy, decision: Decided): string {
-  if (decision.by !== "agent") return "";
+  if (!decision.by || decision.by === "user") return "";
   return decisionCounts(policy, decision)
     ? ": counted by policy"
     : ": not counted, the policy waits for a person";
@@ -195,6 +200,17 @@ export function renderReport(work: WorkItem, evidence: Evidence, policy: Policy)
     lines.push(
       `| ${r.gate} | ${target} | ${status} | ${r.command ? `\`${r.command}\`` : ""} | ${r.durationMs} ms | ${r.log ?? ""} |`,
     );
+  }
+  const decisions = work.decisions ?? [];
+  if (decisions.length) {
+    lines.push("", "## Gap round", "");
+    for (const d of decisions) {
+      const answer =
+        d.answer === undefined
+          ? "no answer yet"
+          : `${d.answer}, ${decidedBy(d)}${countedNote(policy, d)}`;
+      lines.push(`- ${d.id}: ${d.question} → ${answer}`);
+    }
   }
   const removed = work.removedCriteria ?? [];
   const pauses = work.pauses ?? [];

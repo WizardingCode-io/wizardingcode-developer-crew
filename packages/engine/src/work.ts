@@ -13,6 +13,7 @@ import type {
   CriterionKind,
   Decision,
   Evidence,
+  GapDecision,
   Phase,
   Policy,
   RemovedCriterion,
@@ -229,6 +230,60 @@ export function removeCriterion(
 
 const USER: Decision = { by: "user" };
 
+/** A decision only the user can make, found by the gap round; `D-n`, a number taken for good. */
+export function addDecision(work: WorkItem, question: string, dflt?: string): GapDecision {
+  const taken = (work.decisions ?? [])
+    .map((d) => Number(d.id.slice("D-".length)))
+    .filter(Number.isFinite);
+  const next = taken.length ? Math.max(...taken) + 1 : 1;
+  const decision: GapDecision = {
+    id: `D-${next}`,
+    question: question.trim(),
+    ...(dflt?.trim() ? { default: dflt.trim() } : {}),
+  };
+  work.decisions = [...(work.decisions ?? []), decision];
+  return decision;
+}
+
+/**
+ * Records an answer. A person answers anything; the validator takes only the stated default, under
+ * the rule that says so, and the record names it (SP2 §9).
+ */
+export function answerDecision(
+  work: WorkItem,
+  id: string,
+  answer: string | undefined,
+  decision: Decision,
+): GapDecision | { refused: string } {
+  const found = (work.decisions ?? []).find((d) => d.id === id);
+  if (!found) return { refused: `unknown decision: ${id}` };
+  if (decision.by === "validator") {
+    if (found.default === undefined) {
+      return { refused: `${id} has no stated default; a person answers it` };
+    }
+    if (answer !== undefined && answer.trim() !== found.default) {
+      return {
+        refused: `the validator may only take the stated default of ${id} (${found.default})`,
+      };
+    }
+  } else if (!answer?.trim()) {
+    return { refused: `an answer is required: crew decide <id> ${id} "<answer>"` };
+  }
+  found.answer = (answer ?? found.default ?? "").trim();
+  found.at = nowIso();
+  found.by = decision.by;
+  if (decision.mode) found.mode = decision.mode;
+  else delete found.mode;
+  if (decision.rule) found.rule = decision.rule;
+  else delete found.rule;
+  return found;
+}
+
+/** The decisions without an answer that counts: a person's always, the validator's or the agent's per the policy. */
+export function unansweredDecisions(work: WorkItem, policy: Policy): GapDecision[] {
+  return (work.decisions ?? []).filter((d) => d.answer === undefined || !decisionCounts(policy, d));
+}
+
 export function approve(work: WorkItem, what: "spec", decision: Decision = USER): void {
   work.approvals.push({ what, at: nowIso(), ...decision });
 }
@@ -329,6 +384,8 @@ export function guardFor(work: WorkItem, next: Phase, ctx: GuardContext): string
   const missing: string[] = [];
   if (next === "plan") {
     missing.push(...conclaveDocument(work, ctx));
+    for (const d of unansweredDecisions(work, ctx.policy))
+      missing.push(`an answer to ${d.id} (crew decide <id> ${d.id} "<answer>")`);
   } else if (next === "build") {
     if (work.criteria.length === 0) {
       missing.push('at least one acceptance criterion (crew criteria <id> add "...")');

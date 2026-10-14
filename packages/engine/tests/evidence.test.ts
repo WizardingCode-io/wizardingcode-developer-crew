@@ -8,7 +8,14 @@ import {
 } from "../src/evidence.ts";
 import { DEFAULT_POLICY } from "../src/policy.ts";
 import type { Evidence, GateRun, RunRecord, WorkItem } from "../src/types.ts";
-import { addCriterion, addSkip, approve, createWork } from "../src/work.ts";
+import {
+  addCriterion,
+  addDecision,
+  addSkip,
+  answerDecision,
+  approve,
+  createWork,
+} from "../src/work.ts";
 import { makeRepo, repoPaths, testEnv } from "./helpers.ts";
 
 const run: RunRecord = {
@@ -226,6 +233,29 @@ test("the report says when the item started in a checkout shared with an open it
   expect(report).toContain(
     "- started in a checkout shared with 2026-10-13-001-lane-a, 2026-10-13-002-lane-b, open with uncommitted changes in src/a.ts, src/b.ts (2026-10-14T10:00:00.000Z)",
   );
+});
+
+test("SP2a: the report lists the gap round's decisions and who took each", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const work = workWith(paths);
+  const evidence: Evidence = { ...emptyEvidence(), fingerprint: "f" };
+  addDecision(work, "Erasure or deactivation?", "deactivation");
+  addDecision(work, "Delete the provider profile too?");
+  answerDecision(work, "D-1", undefined, {
+    by: "validator",
+    mode: "dontAsk",
+    rule: "stated-default",
+  });
+  answerDecision(work, "D-2", "yes", { by: "user" });
+  const report = renderReport(work, evidence, {
+    ...DEFAULT_POLICY,
+    unattendedDecisions: "validator",
+  });
+  expect(report).toContain("## Gap round");
+  expect(report).toContain(
+    "- D-1: Erasure or deactivation? → deactivation, by the validator (rule: stated-default): counted by policy",
+  );
+  expect(report).toContain("- D-2: Delete the provider profile too? → yes, by the user");
 });
 
 test("an item with no criteria is never proven, whatever the gates say", () => {
