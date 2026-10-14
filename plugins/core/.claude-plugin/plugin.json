@@ -1,7 +1,7 @@
 {
   "name": "wizardingcode-developer-crew",
   "displayName": "WizardingCode Developer Crew",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Guided delivery where done is proven: the crew engine detects your project, records test-first, runs the real build, tests and checks, and holds the turn until the evidence says the work is done.",
   "author": { "name": "WizardingCode", "url": "https://wizardingcode.io" },
   "homepage": "https://github.com/WizardingCode-io/wizardingcode-developer-crew",
