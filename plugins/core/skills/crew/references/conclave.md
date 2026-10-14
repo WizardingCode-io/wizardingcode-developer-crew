@@ -12,7 +12,7 @@ What you will do without asking, stated so the user can refuse: "The endpoint is
 
 ## Decisions only the user can make
 
-What two competent engineers would build differently. Record each one as you find it: `crew decision <id> add "<question>" --default "<the conservative answer>"`. Ask the user on one screen (mark the work with `crew await <id> user` when the answers need a turn); record each answer with `crew decide <id> D-n "<answer>"`; the permission prompt is the user's signature. A decision without a counted answer blocks Plan. In an unattended session (headless, bypassPermissions or dontAsk), and only when `policy.json` sets `unattendedDecisions` to `validator`, the validator takes the stated default: `crew decide <id> D-n --mode <mode> --validator stated-default`. No default, no validator: the item waits for a person.
+What two competent engineers would build differently. Record each one as you find it: `crew decision <id> add "<question>" --default "<the conservative answer>"`. Present them on one screen, each with what is being decided, why, the facts, the evidence and the default you propose (mark the work with `crew await <id> user` when the answers need a turn). The user's positive word is the signature: record each answer with `crew decide <id> D-n "<answer>"` yourself; under the default policy no prompt appears and the record says "by the user, relayed by the agent". A decision without a counted answer blocks Plan. In an unattended session (headless, bypassPermissions or dontAsk), and only when `policy.json` sets `unattendedDecisions` to `validator`, the validator takes the stated default: `crew decide <id> D-n --mode <mode> --validator stated-default`. No default, no validator: the item waits for a person.
 
 ## Proposals
 
@@ -28,7 +28,7 @@ The debate opens on consequences, never on the route alone: a blocking objection
 
 ## The validator
 
-The validator decides only what a rule covers: a spec approval under `complete-gap-round` (`crew approve <id> spec --mode <mode> --validator complete-gap-round`, refused by the engine while a section, a default or a binding is missing) and a decision's stated default. The validator never waives an objection and never skips a gate or a test-first record. Its decisions count only under policy `validator`, and the record always says "by the validator (rule: …)", never "by the user".
+The validator decides only what a rule covers: a spec approval under `complete-gap-round` and, where no person watches, a decision's stated default. With a person present, when the round found nothing to decide, you approve under the rule yourself: `crew approve <id> spec --validator complete-gap-round`, refused by the engine while a section, a default or a binding is missing, and counted because the person is there to object. Where no person watches, the same with `--mode <mode>`, counted only under policy `validator`. The validator never waives an objection and never skips a gate or a test-first record. The record always says "by the validator (rule: …)", never "by the user".
 
 ## Then
 

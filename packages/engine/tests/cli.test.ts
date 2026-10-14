@@ -115,8 +115,18 @@ test("status without an active item is a short answer", async () => {
   expect(status.data.criteria).toBeUndefined();
 });
 
+/** A team policy that allows every skip, as the default did before 0.3.0; trusted on first use. */
+function allowAllSkips(root: string, extra: Record<string, unknown> = {}): void {
+  mkdirSync(join(root, ".crew"), { recursive: true });
+  writeFileSync(
+    join(root, ".crew", "policy.json"),
+    JSON.stringify({ allowSkips: ["*"], ...extra }),
+  );
+}
+
 test("refusals: unknown work, skip without reason, invalid answers, pilot cannot skip secrets", async () => {
   const root = makeRepo({ "package.json": JSON.stringify({ scripts: { test: "exit 0" } }) });
+  allowAllSkips(root);
   const c = io(root);
   expect((await c.run("phase", "nope", "next")).code).toBe(1);
   expect((await c.run("start", "x", "--answers", '{"work_type":"bug"}')).code).toBe(1);
@@ -290,6 +300,7 @@ test("finding 8: profile set names the target by stack when two share a path", a
 
 test("I6: skip steps are normalised, and anything else is refused", async () => {
   const root = makeRepo({ "package.json": JSON.stringify({ scripts: { test: "exit 0" } }) });
+  allowAllSkips(root);
   const c = io(root);
   const id = (await c.json("start", "Thing", "--answers", answers)).data.id as string;
   await c.run("criteria", id, "add", "x");
@@ -424,6 +435,7 @@ test("ADR 0005: crew policy set writes the two decision keys through the engine 
 
 test("ADR 0005: under relay a decision without --mode is the user's, relayed by the agent, in the record and the output", async () => {
   const root = makeRepo({ "package.json": JSON.stringify({ scripts: { test: "exit 0" } }) });
+  allowAllSkips(root);
   const c = io(root);
   expect((await c.run("policy", "set", "attendedDecisions", "relay")).code).toBe(0);
   const id = (await c.json("start", "Thing", "--answers", answers, "--criterion", "x")).data
@@ -510,6 +522,7 @@ test("the command comes first, so user-only verbs cannot hide behind a leading f
 
 test("approve and skip record who decided: the user, or the agent in an unattended mode", async () => {
   const root = makeRepo({ "package.json": JSON.stringify({ scripts: { test: "exit 0" } }) });
+  allowAllSkips(root, { attendedDecisions: "prompt" });
   const c = io(root);
   const id = (await c.json("start", "Thing", "--answers", answers)).data.id as string;
   const file = join(root, ".crew", "work", id, "work.json");
@@ -942,8 +955,9 @@ test("SP2a: decision add and decide, as the user and as the validator", async ()
   );
   expect(added.code).toBe(0);
   expect(added.data.decision).toMatchObject({ id: "D-1", default: "admins only" });
+  // With a person present the person answers; the validator takes a default only where no person watches.
   expect((await c.run("decide", id, "D-1", "--validator", "stated-default")).err).toContain(
-    "the validator acts only where no person is watching: add --mode <mode>",
+    "a person answers",
   );
   const byValidator = await c.json(
     "decide",
@@ -1054,6 +1068,82 @@ test("SP2a: an observed criterion through the command, and in the report", async
   expect(report).toContain(
     "| AC-2 | observed | the stubbed e2e passes | observed: passes after (the dev server stubs the backend) |",
   );
+});
+
+test("0.3.0: with a person present the spec is approved under the complete-gap-round rule when nothing is pending", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "app/Auth/Guard.ts": "x",
+  });
+  const c = io(root);
+  const full = JSON.stringify({ ...JSON.parse(answers), touches_auth: 0.9 });
+  const id = (await c.json("start", "Keys in the profile", "--answers", full)).data.id as string;
+  const workFile = join(root, ".crew", "work", id, "work.json");
+  write(root, `.crew/work/${id}/spec.md`, "# Spec\n\n## Acceptance criteria\n- AC-1 x\n");
+  write(root, `.crew/work/${id}/plan.md`, "# Plan\n1. AC-1\n");
+  expect((await c.run("criteria", id, "add", "x")).code).toBe(0);
+  // The rule does not hold yet: refused, nothing recorded.
+  const refused = await c.run("approve", id, "spec", "--validator", "complete-gap-round");
+  expect(refused.code).toBe(1);
+  expect(refused.err).toContain("conclave.md in the work folder");
+  expect(JSON.parse(readFileSync(workFile, "utf8")).approvals).toEqual([]);
+  write(
+    root,
+    `.crew/work/${id}/conclave.md`,
+    "## Assumed by good practice\nnone\n## Decisions only the user can make\nnone\n## Proposals\nnone\n## Warnings\nnone\n",
+  );
+  const approved = await c.json("approve", id, "spec", "--validator", "complete-gap-round");
+  expect(approved.code).toBe(0);
+  expect(approved.data.message).toContain("by the validator (rule: complete-gap-round)");
+  expect(approved.data.message).toContain("a person was present");
+  expect((approved.data.approvals as unknown[])[0]).toEqual({
+    what: "spec",
+    at: expect.any(String),
+    by: "validator",
+    rule: "complete-gap-round",
+  });
+  // It counts under the default policy, so the full route reaches build with no question asked.
+  for (let i = 0; i < 5; i++) expect((await c.run("phase", id, "next")).code).toBe(0);
+  expect(JSON.parse(readFileSync(workFile, "utf8")).phase).toBe("build");
+  // A pending decision keeps the rule from holding; the person answers it, in words, relayed.
+  const second = (await c.json("start", "Keys again", "--answers", full)).data.id as string;
+  write(root, `.crew/work/${second}/spec.md`, "# Spec\n\n## Acceptance criteria\n- AC-1 x\n");
+  write(
+    root,
+    `.crew/work/${second}/conclave.md`,
+    "## Assumed by good practice\nnone\n## Decisions only the user can make\n- D-1\n## Proposals\nnone\n## Warnings\nnone\n",
+  );
+  await c.run("decision", second, "add", "Who gets the permission?");
+  const pending = await c.run("approve", second, "spec", "--validator", "complete-gap-round");
+  expect(pending.code).toBe(1);
+  expect(pending.err).toContain("a stated default or an answer for D-1");
+  expect((await c.run("decide", second, "D-1", "--validator", "stated-default")).err).toContain(
+    "a person answers",
+  );
+  const answered = await c.json("decide", second, "D-1", "admins only");
+  expect(answered.data.message).toContain("by the user, relayed by the agent");
+  expect((await c.run("approve", second, "spec", "--validator", "complete-gap-round")).code).toBe(
+    0,
+  );
+});
+
+test("0.3.0: a gate skip is refused by default and names the honest paths; a tdd skip and a listed gate pass", async () => {
+  const root = makeRepo({ "package.json": JSON.stringify({ scripts: { test: "exit 0" } }) });
+  const c = io(root);
+  const id = (await c.json("start", "Thing", "--answers", answers, "--criterion", "x")).data
+    .id as string;
+  const refused = await c.run("skip", id, "gate:lint", "--reason", "legacy");
+  expect(refused.code).toBe(1);
+  expect(refused.err).toContain(
+    "the team policy does not allow skipping gate:lint: gates are mandatory",
+  );
+  expect(refused.err).toContain("crew profile set");
+  expect(refused.err).toContain("allowSkips");
+  expect((await c.run("skip", id, "tdd:AC-1", "--reason", "manual")).code).toBe(0);
+  write(root, ".crew/policy.json", JSON.stringify({ allowSkips: ["gate:lint"] }));
+  expect((await c.run("policy", "accept")).code).toBe(0);
+  expect((await c.run("skip", id, "gate:lint", "--reason", "legacy")).code).toBe(0);
+  expect((await c.run("skip", id, "gate:test", "--reason", "slow")).code).toBe(1);
 });
 
 test("SP2a: the validator's approval is refused until the rule holds, then counts only under policy validator", async () => {

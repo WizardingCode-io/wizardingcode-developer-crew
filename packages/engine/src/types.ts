@@ -294,7 +294,7 @@ export interface Policy {
    */
   riskPathExclusions: string[];
   minimumRoute: Route;
-  /** Steps the user may skip. `['*']` means any. */
+  /** Steps that may be skipped: `tdd` (the default) any test-first step, `*` any step, a gate by name. Gates are mandatory unless listed. */
   allowSkips: string[];
   artifacts: "commit" | "local";
   /**

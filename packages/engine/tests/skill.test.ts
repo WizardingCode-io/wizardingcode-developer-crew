@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const skill = readFileSync(
@@ -28,6 +28,25 @@ function readReference(name: string): string {
     "utf8",
   );
 }
+
+test("0.3.0: a decision is presented in words and the user's positive word is the signature; approval by rule when nothing is pending", () => {
+  const rules = skill.slice(skill.indexOf("## Rules that do not bend"));
+  expect(rules).toMatch(/positive word is the signature/);
+  expect(rules).toMatch(/what is being decided, why, the facts, the evidence/);
+  expect(rules).toContain("--validator complete-gap-round");
+  const conclave = readReference("conclave.md");
+  expect(conclave).toMatch(/positive word/);
+  expect(conclave).toMatch(/what is being decided, why, the facts, the evidence/);
+  expect(conclave).toContain("crew approve <id> spec --validator complete-gap-round");
+  expect(readReference("specify.md")).toContain("--validator complete-gap-round");
+  expect(readReference("specify.md")).not.toContain("the permission prompt is their signature");
+  // The full-route eval grades the approval by rule, not a stop at a prompt.
+  const graders = fileURLToPath(
+    new URL("../../../plugins/core/evals/risk-escalation/graders/", import.meta.url),
+  );
+  expect(existsSync(`${graders}stopped-for-approval.md`)).toBe(false);
+  expect(readFileSync(`${graders}approved-by-rule.md`, "utf8")).toContain("complete-gap-round");
+});
 
 test("SP2a: the skill drives the conclave phase", () => {
   const method = skill.slice(skill.indexOf("## The method"), skill.indexOf("## The nine typed"));

@@ -26,7 +26,7 @@ test("policy: defaults when absent, validated when present, unknown values ignor
   expect(policy.artifacts).toBe("local");
   expect(skipAllowed(policy, "gate:lint")).toBe(true);
   expect(skipAllowed(policy, "gate:test")).toBe(false);
-  expect(skipAllowed(DEFAULT_POLICY, "anything")).toBe(true);
+  expect(skipAllowed({ ...DEFAULT_POLICY, allowSkips: ["*"] }, "anything")).toBe(true);
 });
 
 test("policy: riskPathExclusions is a list of globs, empty by default, non-strings ignored", () => {
@@ -82,20 +82,40 @@ test("policy: unattendedDecisions accepts validator, and decisionCounts follows 
   ]);
 });
 
-test("ADR 0005: attendedDecisions is prompt by default and accepts relay; anything else reads as prompt", () => {
+test("ADR 0005 (0.3.0): attendedDecisions is relay by default, prompt is the opt-in, anything else reads as relay", () => {
   const paths = repoPaths(makeRepo(), testEnv());
-  expect(DEFAULT_POLICY.attendedDecisions).toBe("prompt");
-  expect(loadPolicy(paths).policy.attendedDecisions).toBe("prompt");
+  expect(DEFAULT_POLICY.attendedDecisions).toBe("relay");
+  expect(loadPolicy(paths).policy.attendedDecisions).toBe("relay");
   mkdirSync(paths.crewDir, { recursive: true });
   const file = join(paths.crewDir, "policy.json");
-  writeFileSync(file, JSON.stringify({ attendedDecisions: "relay" }));
-  expect(loadPolicy(paths).policy.attendedDecisions).toBe("relay");
-  writeFileSync(file, JSON.stringify({ attendedDecisions: "trust" }));
+  writeFileSync(file, JSON.stringify({ attendedDecisions: "prompt" }));
   expect(loadPolicy(paths).policy.attendedDecisions).toBe("prompt");
+  writeFileSync(file, JSON.stringify({ attendedDecisions: "trust" }));
+  expect(loadPolicy(paths).policy.attendedDecisions).toBe("relay");
   // A relayed decision is a person's: it counts under every unattended setting.
   const relayed = { by: "user" as const, relayed: true };
   for (const u of ["wait", "count", "validator"] as const)
     expect(decisionCounts({ ...DEFAULT_POLICY, unattendedDecisions: u }, relayed)).toBe(true);
+});
+
+test("gates are mandatory: allowSkips defaults to tdd, so a tdd step may be skipped and a gate only when listed", () => {
+  expect(DEFAULT_POLICY.allowSkips).toEqual(["tdd"]);
+  expect(skipAllowed(DEFAULT_POLICY, "tdd:AC-1")).toBe(true);
+  expect(skipAllowed(DEFAULT_POLICY, "gate:lint")).toBe(false);
+  expect(skipAllowed(DEFAULT_POLICY, "gate:test")).toBe(false);
+  expect(skipAllowed({ ...DEFAULT_POLICY, allowSkips: ["gate:lint"] }, "gate:lint")).toBe(true);
+  expect(skipAllowed({ ...DEFAULT_POLICY, allowSkips: ["lint"] }, "gate:lint")).toBe(true);
+  expect(skipAllowed({ ...DEFAULT_POLICY, allowSkips: ["lint"] }, "gate:test")).toBe(false);
+  expect(skipAllowed({ ...DEFAULT_POLICY, allowSkips: ["*"] }, "gate:test")).toBe(true);
+  expect(skipAllowed({ ...DEFAULT_POLICY, allowSkips: [] }, "tdd:AC-1")).toBe(false);
+  // A validator decision with no mode was taken with a person present: it counts under every policy.
+  const attended = { by: "validator" as const, rule: "complete-gap-round" as const };
+  for (const u of ["wait", "count", "validator"] as const)
+    expect(decisionCounts({ ...DEFAULT_POLICY, unattendedDecisions: u }, attended)).toBe(true);
+  const unattended = { ...attended, mode: "dontAsk" as const };
+  expect(decisionCounts({ ...DEFAULT_POLICY, unattendedDecisions: "wait" }, unattended)).toBe(
+    false,
+  );
 });
 
 test("config: defaults, set values, reject unknown keys and values", () => {

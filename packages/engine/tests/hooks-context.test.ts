@@ -18,6 +18,12 @@ test("finding 22: the session context says who runs crew commands and how the us
     "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
     "src/a.ts": "x",
   });
+  // Under the policy that prompts; the default relays (ADR 0005, 0.3.0) and is tested below.
+  mkdirSync(join(root, ".crew"), { recursive: true });
+  writeFileSync(
+    join(root, ".crew", "policy.json"),
+    JSON.stringify({ attendedDecisions: "prompt" }),
+  );
   const text = (onSessionStart(context(root)).hookSpecificOutput as { additionalContext: string })
     .additionalContext;
   expect(text).toContain("You run every crew command; the user never types one");

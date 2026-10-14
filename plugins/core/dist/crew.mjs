@@ -903,10 +903,10 @@ var DEFAULT_POLICY = {
   riskPaths: {},
   riskPathExclusions: [],
   minimumRoute: "fast",
-  allowSkips: ["*"],
+  allowSkips: ["tdd"],
   artifacts: "commit",
   unattendedDecisions: "wait",
-  attendedDecisions: "prompt"
+  attendedDecisions: "relay"
 };
 var SETTABLE_POLICY_KEYS = {
   attendedDecisions: ["prompt", "relay"],
@@ -933,7 +933,7 @@ function setPolicyValue(paths, key, value) {
 }
 function decisionCounts(policy, decision) {
   if (decision.by === "validator")
-    return policy.unattendedDecisions === "validator";
+    return decision.mode === undefined || policy.unattendedDecisions === "validator";
   return decision.by !== "agent" || policy.unattendedDecisions === "count";
 }
 var RISK_AREAS = [
@@ -969,14 +969,14 @@ function loadPolicy(paths) {
       allowSkips,
       artifacts: raw.artifacts === "local" ? "local" : "commit",
       unattendedDecisions: raw.unattendedDecisions === "count" || raw.unattendedDecisions === "validator" ? raw.unattendedDecisions : "wait",
-      attendedDecisions: raw.attendedDecisions === "relay" ? "relay" : "prompt"
+      attendedDecisions: raw.attendedDecisions === "prompt" ? "prompt" : "relay"
     },
     tampered: read.tampered
   };
 }
 function skipAllowed(policy, step) {
   const bare = step.replace(/^(gate|tdd):/, "");
-  return policy.allowSkips.some((s) => s === "*" || s === step || s === bare);
+  return policy.allowSkips.some((s) => s === "*" || s === step || s === bare || s === "tdd" && step.startsWith("tdd:"));
 }
 
 // packages/engine/src/objections.ts
@@ -1444,6 +1444,8 @@ function decidedBy(decision) {
 function countedNote(policy, decision) {
   if (!decision.by || decision.by === "user")
     return "";
+  if (decision.by === "validator" && decision.mode === undefined)
+    return ": counted, a person was present";
   return decisionCounts(policy, decision) ? ": counted by policy" : ": not counted, the policy waits for a person";
 }
 function emptyEvidence() {
@@ -2183,6 +2185,7 @@ var WRITE_SHAPE = /(?:^|[\s;&|("'])(?:rm|mv|cp|tee|truncate|chmod|touch|dd|insta
 var OPAQUE_REDIRECT = />{1,2}\|?\s*["']?[$`]/;
 var PROMPTLESS_MODES = new Set(["bypassPermissions", "dontAsk"]);
 var MODE_FLAG = /--mode(?:=|\s+)(\S+)/;
+var VALIDATOR_FLAG = /--validator(?:=|\s+)\S+/;
 var HELP_FLAG = /(?:^|\s)(?:--help|-h)(?=\s|$)/;
 function userOnlyDecision(cleaned, permissionMode, headless, policy) {
   const flagged = MODE_FLAG.exec(cleaned)?.[1];
@@ -2208,6 +2211,8 @@ function userOnlyDecision(cleaned, permissionMode, headless, policy) {
       `Crew: a person is present (${mode} mode); run the command without --mode so they are asked`
     ];
   }
+  if (VALIDATOR_FLAG.test(cleaned))
+    return null;
   if (policy.attendedDecisions === "relay" && !POLICY_COMMAND.test(cleaned))
     return null;
   return ["ask", "Crew: this command records a decision that only the user can take"];
@@ -2697,10 +2702,14 @@ function validatorFlag(parsed, policy) {
   const rule = parsed.flags.validator;
   if (rule === undefined)
     return decisionFlag(parsed, policy);
-  if (parsed.flags.mode === undefined)
-    return refuse("the validator acts only where no person is watching: add --mode <mode>");
   if (!isValidatorRule(rule))
     return refuse(`unknown validator rule: ${String(rule)} (${VALIDATOR_RULES.join(", ")})`);
+  if (parsed.flags.mode === undefined) {
+    if (rule !== "complete-gap-round") {
+      return refuse("with a person present, a person answers: the validator takes a stated default only where no person is watching (add --mode <mode>)");
+    }
+    return { by: "validator", rule };
+  }
   const base = decisionFlag(parsed, policy);
   if (isOutcome(base))
     return base;
@@ -3050,6 +3059,8 @@ async function dispatch(parsed, io) {
       const who = validatorFlag(parsed, env.policy);
       if (isOutcome(who))
         return who;
+      if (who.by === "validator" && who.rule !== "stated-default")
+        return refuse("a decision's default is taken by the validator under the stated-default rule");
       const answer2 = args.slice(2).join(" ").trim() || undefined;
       const result = answerDecision(opened.work, id, answer2, who);
       if ("refused" in result)
@@ -3176,8 +3187,9 @@ ${outcome.record.tail}` : "";
       const step = skipStep(opened.work, raw);
       if (!step)
         return refuse(`unknown step: ${raw}`);
-      if (!skipAllowed(env.policy, step))
-        return refuse(`the team policy does not allow skipping ${step}`);
+      if (!skipAllowed(env.policy, step)) {
+        return refuse(step.startsWith("gate:") ? `the team policy does not allow skipping ${step}: gates are mandatory. Fix what fails, set the gate's command to the team's own flow (crew profile set ${step.slice(5)} "<cmd>"), or have a person list the gate in policy.json allowSkips.` : `the team policy does not allow skipping ${step}`);
+      }
       if (env.config.mode === "pilot" && (step === "gate:secrets" || step === "gate:deps"))
         return refuse(`in pilot mode the ${step.slice(5)} gate cannot be skipped`);
       const decision = decisionFlag(parsed, env.policy);

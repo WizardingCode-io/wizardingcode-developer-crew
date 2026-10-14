@@ -45,6 +45,11 @@ What this change does not do.
 
 ## Full route: the complete spec, approved
 
-Same file, with these sections: Problem, Design (the chosen approach and the alternatives rejected, with the reason), Acceptance criteria, Risks and rollback, Out of scope. Present it to the user, mark the work as waiting, and when the user agrees run `crew approve <id> spec` yourself; the permission prompt is their signature, in auto mode too. Only in a headless session, or in bypassPermissions or dontAsk mode, the hook asks for `--mode <mode>`: the approval is recorded as the agent's and satisfies the full route only if `policy.json` sets `unattendedDecisions` to `count`.
+Same file, with these sections: Problem, Design (the chosen approach and the alternatives rejected, with the reason), Acceptance criteria, Risks and rollback, Out of scope. The approval follows the gap round (`references/conclave.md`), not a ritual:
+
+- The round found nothing to decide (every decision answered or with a stated default, no blocking objection open): approve under the rule yourself, `crew approve <id> spec --validator complete-gap-round`. The engine checks the four sections, the defaults and the bindings, refuses while one is missing, and records "by the validator (rule: complete-gap-round)". No question to the user.
+- The round found a decision: present it in one message (what is being decided, why, the facts, the evidence, the default you propose), wait for the user's positive word, record it with `crew decide`, then `crew approve <id> spec` yourself. Under the default policy no prompt appears and the record says "by the user, relayed by the agent".
+
+Only in a headless session, or in bypassPermissions or dontAsk mode, the hook asks for `--mode <mode>`: the approval is recorded as the agent's or the validator's and satisfies the full route only if `policy.json` sets `unattendedDecisions` to `count` or `validator`.
 
 The engine checks that `spec.md` exists and has a non-empty "Acceptance criteria" section before the build phase; the quality of the spec is your responsibility.

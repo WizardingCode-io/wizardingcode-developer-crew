@@ -313,10 +313,18 @@ function decisionFlag(parsed: Parsed, policy: Policy): Decision | Outcome {
 function validatorFlag(parsed: Parsed, policy: Policy): Decision | Outcome {
   const rule = parsed.flags.validator;
   if (rule === undefined) return decisionFlag(parsed, policy);
-  if (parsed.flags.mode === undefined)
-    return refuse("the validator acts only where no person is watching: add --mode <mode>");
   if (!isValidatorRule(rule))
     return refuse(`unknown validator rule: ${String(rule)} (${VALIDATOR_RULES.join(", ")})`);
+  if (parsed.flags.mode === undefined) {
+    // With a person present only the mechanical rule applies, and the engine checks it: when the gap
+    // round is complete there is no question to ask (0.3.0). Everything else, the person answers.
+    if (rule !== "complete-gap-round") {
+      return refuse(
+        "with a person present, a person answers: the validator takes a stated default only where no person is watching (add --mode <mode>)",
+      );
+    }
+    return { by: "validator", rule };
+  }
   const base = decisionFlag(parsed, policy);
   if (isOutcome(base)) return base;
   return { by: "validator", mode: base.mode, rule };
@@ -722,6 +730,10 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         );
       const who = validatorFlag(parsed, env.policy);
       if (isOutcome(who)) return who;
+      if (who.by === "validator" && who.rule !== "stated-default")
+        return refuse(
+          "a decision's default is taken by the validator under the stated-default rule",
+        );
       const answer = args.slice(2).join(" ").trim() || undefined;
       const result = answerDecision(opened.work, id, answer, who);
       if ("refused" in result) return refuse(result.refused);
@@ -875,8 +887,13 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       if (!raw || !reason) return refuse('usage: crew skip <id> <step> --reason "<text>"');
       const step = skipStep(opened.work, raw);
       if (!step) return refuse(`unknown step: ${raw}`);
-      if (!skipAllowed(env.policy, step))
-        return refuse(`the team policy does not allow skipping ${step}`);
+      if (!skipAllowed(env.policy, step)) {
+        return refuse(
+          step.startsWith("gate:")
+            ? `the team policy does not allow skipping ${step}: gates are mandatory. Fix what fails, set the gate's command to the team's own flow (crew profile set ${step.slice(5)} "<cmd>"), or have a person list the gate in policy.json allowSkips.`
+            : `the team policy does not allow skipping ${step}`,
+        );
+      }
       if (env.config.mode === "pilot" && (step === "gate:secrets" || step === "gate:deps"))
         return refuse(`in pilot mode the ${step.slice(5)} gate cannot be skipped`);
       const decision = decisionFlag(parsed, env.policy);

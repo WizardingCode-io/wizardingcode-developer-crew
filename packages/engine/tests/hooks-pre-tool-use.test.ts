@@ -10,13 +10,55 @@ function decision(response: Record<string, unknown>): string | undefined {
     ?.permissionDecision;
 }
 
-function setup() {
+// The prompt rules are tested under the policy that prompts; since 0.3.0 the default relays (ADR 0005).
+function setup(policy: Record<string, unknown> | null = { attendedDecisions: "prompt" }) {
   const root = makeRepo({
     "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
     "src/a.ts": "x",
   });
+  if (policy) {
+    mkdirSync(join(root, ".crew"), { recursive: true });
+    writeFileSync(join(root, ".crew", "policy.json"), JSON.stringify(policy));
+  }
   return { root, ctx: hookContext({ session_id: "s", cwd: root }, testEnv()) };
 }
+
+test("0.3.0: with no policy file the default relays, and a validator rule is never asked with a person present", () => {
+  const relay = setup(null);
+  const bash = (ctx: typeof relay.ctx, command: string, permission_mode?: string) =>
+    onPreToolUse(ctx, { tool_name: "Bash", tool_input: { command }, permission_mode });
+  expect(bash(relay.ctx, "crew approve w1 spec", "auto")).toEqual({});
+  expect(bash(relay.ctx, 'crew skip w1 tdd:AC-1 --reason "manual"', "default")).toEqual({});
+  expect(decision(bash(relay.ctx, "crew policy set attendedDecisions prompt", "auto"))).toBe("ask");
+  // Under prompt, a user-only command carrying --validator is the rule's decision, checked by the
+  // engine, not the person's: nothing to sign, so no prompt.
+  const prompt = setup();
+  for (const mode of ["default", "auto", undefined]) {
+    expect(bash(prompt.ctx, "crew approve w1 spec", mode)).not.toEqual({});
+    expect(bash(prompt.ctx, "crew approve w1 spec --validator complete-gap-round", mode)).toEqual(
+      {},
+    );
+    expect(
+      bash(
+        prompt.ctx,
+        "node /x/dist/crew.mjs --json approve w1 spec --validator complete-gap-round",
+        mode,
+      ),
+    ).toEqual({});
+  }
+  // No person watching: the --mode path is unchanged, with or without a rule.
+  expect(decision(bash(prompt.ctx, "crew approve w1 spec", "dontAsk"))).toBe("deny");
+  expect(
+    decision(bash(prompt.ctx, "crew approve w1 spec --validator complete-gap-round", "dontAsk")),
+  ).toBe("deny");
+  expect(
+    bash(
+      prompt.ctx,
+      "crew approve w1 spec --mode dontAsk --validator complete-gap-round",
+      "dontAsk",
+    ),
+  ).toEqual({});
+});
 
 test("writes to engine-owned files are denied; files outside the repo get no opinion", () => {
   const { root, ctx } = setup();
@@ -240,7 +282,12 @@ test("bash: a headless session is unattended in every mode, and the flag names t
   // No mode in the payload: the session is in default mode.
   expect(decision(bash("crew approve w1 spec"))).toBe("deny");
   expect(bash("crew approve w1 spec --mode default")).toEqual({});
-  // The variable at 1 is an attended session: the modes alone decide.
+  // The variable at 1 is an attended session: the modes alone decide (under the policy that prompts).
+  mkdirSync(join(root, ".crew"), { recursive: true });
+  writeFileSync(
+    join(root, ".crew", "policy.json"),
+    JSON.stringify({ attendedDecisions: "prompt" }),
+  );
   const attended = hookContext(
     { session_id: "s", cwd: root },
     { ...testEnv(), CLAUDE_CODE_SESSION_ATTENDED: "1" },

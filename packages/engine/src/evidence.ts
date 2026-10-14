@@ -40,6 +40,9 @@ export function decidedBy(decision: Decided): string {
 /** What a decision not taken by a person is worth under the policy; a person's needs no note. */
 export function countedNote(policy: Policy, decision: Decided): string {
   if (!decision.by || decision.by === "user") return "";
+  // A rule the validator applied with a person present: the person was there to object.
+  if (decision.by === "validator" && decision.mode === undefined)
+    return ": counted, a person was present";
   return decisionCounts(policy, decision)
     ? ": counted by policy"
     : ": not counted, the policy waits for a person";

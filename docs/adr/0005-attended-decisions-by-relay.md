@@ -1,6 +1,6 @@
 # ADR 0005: With a person present, the team policy may let the agent relay the user's yes
 
-- Status: accepted, 2026-10-14. Ships in 0.2.0.
+- Status: accepted, 2026-10-14. Shipped in 0.2.0 as an opt-in; **amended the same day: `relay` is the default since 0.3.0**, `prompt` the opt-in, by the user's decision ("if there are decisions, show them in detail with the why, the facts and the evidence, and I say approved"). In the same release the approval of a spec with nothing pending is taken under the validator's `complete-gap-round` rule with a person present, so a full-route item asks the user nothing unless the gap round found a decision; and gates are mandatory (`allowSkips` defaults to `tdd`).
 - Context: findings 3, 17, 19 and 22 of the real-use phase (`docs/real-use/findings.md`); the hybrid validator requirement (`docs/real-use/README.md`).
 
 ## Context

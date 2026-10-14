@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import type { CrewPaths } from "./paths.ts";
 import { readProtectedJson, writeProtectedJson } from "./store.ts";
-import type { DecidedBy, GateName, Policy, RiskArea, Route } from "./types.ts";
+import type { DecidedBy, GateName, PermissionMode, Policy, RiskArea, Route } from "./types.ts";
 import { GATE_NAMES, ROUTE_ORDER } from "./types.ts";
 
 export const DEFAULT_POLICY: Policy = {
@@ -9,10 +9,12 @@ export const DEFAULT_POLICY: Policy = {
   riskPaths: {},
   riskPathExclusions: [],
   minimumRoute: "fast",
-  allowSkips: ["*"],
+  // Gates are mandatory: a tdd step may be skipped (the observed kind is the better path), a gate
+  // only when a person lists it here (0.3.0; finding 20).
+  allowSkips: ["tdd"],
   artifacts: "commit",
   unattendedDecisions: "wait",
-  attendedDecisions: "prompt",
+  attendedDecisions: "relay",
 };
 
 /** The scalar keys `crew policy set` writes, with their values; the rest of the policy is hand-written. */
@@ -51,9 +53,17 @@ export function setPolicyValue(
   return { key, value };
 }
 
-/** Whether a recorded decision counts: a person's always, the agent's or the validator's as the policy says. */
-export function decisionCounts(policy: Policy, decision: { by?: DecidedBy }): boolean {
-  if (decision.by === "validator") return policy.unattendedDecisions === "validator";
+/**
+ * Whether a recorded decision counts: a person's always; the validator's when a person was present
+ * (no mode: the person was there to object) or, with no person watching, as the policy says; the
+ * agent's as the policy says.
+ */
+export function decisionCounts(
+  policy: Policy,
+  decision: { by?: DecidedBy; mode?: PermissionMode },
+): boolean {
+  if (decision.by === "validator")
+    return decision.mode === undefined || policy.unattendedDecisions === "validator";
   return decision.by !== "agent" || policy.unattendedDecisions === "count";
 }
 
@@ -104,13 +114,16 @@ export function loadPolicy(paths: CrewPaths): { policy: Policy; tampered: boolea
         raw.unattendedDecisions === "count" || raw.unattendedDecisions === "validator"
           ? raw.unattendedDecisions
           : "wait",
-      attendedDecisions: raw.attendedDecisions === "relay" ? "relay" : "prompt",
+      attendedDecisions: raw.attendedDecisions === "prompt" ? "prompt" : "relay",
     },
     tampered: read.tampered,
   };
 }
 
+/** `*` any step; `tdd` any test-first step; otherwise the step itself (`gate:lint`) or its bare name (`lint`). */
 export function skipAllowed(policy: Policy, step: string): boolean {
   const bare = step.replace(/^(gate|tdd):/, "");
-  return policy.allowSkips.some((s) => s === "*" || s === step || s === bare);
+  return policy.allowSkips.some(
+    (s) => s === "*" || s === step || s === bare || (s === "tdd" && step.startsWith("tdd:")),
+  );
 }

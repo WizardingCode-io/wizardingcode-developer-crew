@@ -43,6 +43,9 @@ const OPAQUE_REDIRECT = />{1,2}\|?\s*["']?[$`]/;
 // approve the call in silence (finding 3 revisited, finding 19 of the real-use phase).
 const PROMPTLESS_MODES = new Set(["bypassPermissions", "dontAsk"]);
 const MODE_FLAG = /--mode(?:=|\s+)(\S+)/;
+// A decision the validator takes under a rule: the engine checks the rule and refuses when it does
+// not hold, so with a person present there is nothing for them to sign (0.3.0).
+const VALIDATOR_FLAG = /--validator(?:=|\s+)\S+/;
 // A help lookup records nothing (the command refuses the flag), so there is no decision to sign.
 const HELP_FLAG = /(?:^|\s)(?:--help|-h)(?=\s|$)/;
 
@@ -84,6 +87,7 @@ function userOnlyDecision(
       `Crew: a person is present (${mode} mode); run the command without --mode so they are asked`,
     ];
   }
+  if (VALIDATOR_FLAG.test(cleaned)) return null;
   if (policy.attendedDecisions === "relay" && !POLICY_COMMAND.test(cleaned)) return null;
   return ["ask", "Crew: this command records a decision that only the user can take"];
 }
