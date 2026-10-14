@@ -7,6 +7,7 @@ import { GATE_NAMES, ROUTE_ORDER } from "./types.ts";
 export const DEFAULT_POLICY: Policy = {
   requiredGates: [],
   riskPaths: {},
+  riskPathExclusions: [],
   minimumRoute: "fast",
   allowSkips: ["*"],
   artifacts: "commit",
@@ -32,7 +33,10 @@ function strings(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : [];
 }
 
-/** A policy can only tighten; anything it does not say falls back to the default. */
+/**
+ * A policy can only tighten, with one exception: `riskPathExclusions` takes paths out of the risk
+ * patterns (ADR 0003). Anything it does not say falls back to the default.
+ */
 export function loadPolicy(paths: CrewPaths): { policy: Policy; tampered: boolean } {
   const read = readProtectedJson<Record<string, unknown>>(
     paths,
@@ -57,6 +61,7 @@ export function loadPolicy(paths: CrewPaths): { policy: Policy; tampered: boolea
         GATE_NAMES.includes(g as GateName),
       ),
       riskPaths,
+      riskPathExclusions: strings(raw.riskPathExclusions),
       minimumRoute,
       allowSkips,
       artifacts: raw.artifacts === "local" ? "local" : "commit",

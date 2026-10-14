@@ -206,14 +206,25 @@ var DEFAULT_RISK_PATHS = {
   ],
   secrets: [".env*", "**/.env*", "**/secrets*", "**/*.pem", "**/*.key", "**/credentials*"]
 };
+function riskPatterns(area, policy) {
+  return [...DEFAULT_RISK_PATHS[area], ...policy.riskPaths[area] ?? []];
+}
+function isExcluded(path, policy) {
+  return matchesAny(path, policy.riskPathExclusions);
+}
 function riskAreasForPaths(paths, policy) {
+  const kept = paths.filter((path) => !isExcluded(path, policy));
   const areas = [];
   for (const area of Object.keys(DEFAULT_RISK_PATHS)) {
-    const patterns = [...DEFAULT_RISK_PATHS[area], ...policy.riskPaths[area] ?? []];
-    if (paths.some((path) => matchesAny(path, patterns)))
+    const patterns = riskPatterns(area, policy);
+    if (kept.some((path) => matchesAny(path, patterns)))
       areas.push(area);
   }
   return areas;
+}
+function excludedRiskPaths(paths, policy) {
+  const areas = Object.keys(DEFAULT_RISK_PATHS);
+  return paths.filter((path) => isExcluded(path, policy) && areas.some((area) => matchesAny(path, riskPatterns(area, policy))));
 }
 function routeRank(route) {
   return ROUTE_ORDER.indexOf(route);
@@ -871,6 +882,7 @@ function readProtectedJson(paths, absPath) {
 var DEFAULT_POLICY = {
   requiredGates: [],
   riskPaths: {},
+  riskPathExclusions: [],
   minimumRoute: "fast",
   allowSkips: ["*"],
   artifacts: "commit",
@@ -907,6 +919,7 @@ function loadPolicy(paths) {
     policy: {
       requiredGates: strings(raw.requiredGates).filter((g) => GATE_NAMES.includes(g)),
       riskPaths,
+      riskPathExclusions: strings(raw.riskPathExclusions),
       minimumRoute,
       allowSkips,
       artifacts: raw.artifacts === "local" ? "local" : "commit",
@@ -1727,6 +1740,10 @@ async function runGates(paths, work, profile, policy, options = {}) {
   const base = work;
   const changed = changedWatchedPaths(paths.root, profile, base);
   const pathRisk = riskAreasForPaths(changed, policy);
+  const excluded = excludedRiskPaths(changed, policy);
+  const excludedNote = "risk paths excluded by the team policy: ";
+  if (excluded.length && !work.routeReasons.some((r) => r.startsWith(excludedNote)))
+    work.routeReasons.push(`${excludedNote}${excluded.join(", ")}`);
   let raised = null;
   if (pathRisk.length) {
     for (const area of pathRisk)

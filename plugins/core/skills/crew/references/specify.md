@@ -10,7 +10,7 @@ One or more criteria, each a single sentence that a test can check:
 crew criteria <id> add "The cart total subtracts an active discount."
 ```
 
-A refactor or a chore changes no behaviour. Its criterion preserves behaviour and is recorded as such:
+A refactor or a chore changes no behaviour. Its criterion preserves behaviour and is recorded as such. The same goes for any criterion that says "stays green", "keeps passing" or "the suite passes" on any route: it has no red run, so it is `preserve`, never `behavior`. The gates themselves (lint, typecheck, the full suite) are never a criterion; they run anyway.
 
 ```
 crew criteria <id> add "Existing cart tests keep passing." --kind preserve

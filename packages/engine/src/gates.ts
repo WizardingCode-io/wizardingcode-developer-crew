@@ -1,6 +1,6 @@
 import { accessSync, constants } from "node:fs";
 import { basename, delimiter, join } from "node:path";
-import { riskAreasForPaths } from "./classify.ts";
+import { excludedRiskPaths, riskAreasForPaths } from "./classify.ts";
 import { computeVerdict, loadEvidence, type PlannedGate, saveEvidence } from "./evidence.ts";
 import {
   changedWatchedPaths,
@@ -274,6 +274,11 @@ export async function runGates(
   const base = work;
   const changed = changedWatchedPaths(paths.root, profile, base);
   const pathRisk = riskAreasForPaths(changed, policy);
+  // A path the policy kept from raising the route is named once, so the loosening is on record.
+  const excluded = excludedRiskPaths(changed, policy);
+  const excludedNote = "risk paths excluded by the team policy: ";
+  if (excluded.length && !work.routeReasons.some((r) => r.startsWith(excludedNote)))
+    work.routeReasons.push(`${excludedNote}${excluded.join(", ")}`);
   let raised: Route | null = null;
   if (pathRisk.length) {
     for (const area of pathRisk) if (!work.riskAreas.includes(area)) work.riskAreas.push(area);

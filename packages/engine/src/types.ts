@@ -228,6 +228,11 @@ export interface Evidence {
 export interface Policy {
   requiredGates: GateName[];
   riskPaths: Partial<Record<RiskArea, string[]>>;
+  /**
+   * Globs of changed paths that never raise a risk area, default or added (findings 1 and 14).
+   * The one way a policy loosens a default: decided by a person, named in the work's record.
+   */
+  riskPathExclusions: string[];
   minimumRoute: Route;
   /** Steps the user may skip. `['*']` means any. */
   allowSkips: string[];

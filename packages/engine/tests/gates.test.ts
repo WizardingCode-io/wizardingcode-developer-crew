@@ -277,6 +277,39 @@ test("a diff that touches a risk path raises the route to full", async () => {
   expect(work.routeReasons.at(-1)).toBe("raised to full: the change touches auth paths");
 });
 
+test("findings 1 and 14: an excluded risk path raises nothing, and the record says so once", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "plugins/core/hooks/session-start.ts": "x",
+    "app/Auth/Guard.ts": "x",
+  });
+  const paths = repoPaths(root, testEnv());
+  const { profile } = ensureProfile(paths);
+  const policy = { ...DEFAULT_POLICY, riskPathExclusions: ["plugins/core/hooks/session-*.ts"] };
+  const work = createWork(paths, "fix");
+  work.route = "fast";
+  write(root, "plugins/core/hooks/session-start.ts", "y");
+  const first = await runGates(paths, work, profile, policy, { only: ["test"] });
+  expect(first.raised).toBeNull();
+  expect(work.route as string).toBe("fast");
+  expect(work.riskAreas).toEqual([]);
+  expect(work.routeReasons.at(-1)).toBe(
+    "risk paths excluded by the team policy: plugins/core/hooks/session-start.ts",
+  );
+  // A second run does not repeat the line; the report shows it with the route.
+  await runGates(paths, work, profile, policy, { only: ["test"] });
+  expect(work.routeReasons.filter((r) => r.startsWith("risk paths excluded"))).toHaveLength(1);
+  const report = renderReport(work, first.evidence, policy);
+  expect(report).toContain(
+    "risk paths excluded by the team policy: plugins/core/hooks/session-start.ts",
+  );
+  // Another changed path that is not excluded still raises the route.
+  write(root, "app/Auth/Guard.ts", "y");
+  const third = await runGates(paths, work, profile, policy, { only: ["test"] });
+  expect(third.raised).toBe("full");
+  expect(work.riskAreas).toEqual(["auth"]);
+});
+
 test("evidence recorded while git could not run is judged the same way once it can", async () => {
   const root = makeRepo({
     "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),

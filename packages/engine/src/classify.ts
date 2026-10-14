@@ -171,13 +171,36 @@ export const DEFAULT_RISK_PATHS: Record<RiskArea, string[]> = {
   secrets: [".env*", "**/.env*", "**/secrets*", "**/*.pem", "**/*.key", "**/credentials*"],
 };
 
+function riskPatterns(area: RiskArea, policy: Policy): string[] {
+  return [...DEFAULT_RISK_PATHS[area], ...(policy.riskPaths[area] ?? [])];
+}
+
+function isExcluded(path: string, policy: Policy): boolean {
+  return matchesAny(path, policy.riskPathExclusions);
+}
+
+/** The risk areas the changed paths touch, less the paths the team policy excludes (ADR 0003). */
 export function riskAreasForPaths(paths: readonly string[], policy: Policy): RiskArea[] {
+  const kept = paths.filter((path) => !isExcluded(path, policy));
   const areas: RiskArea[] = [];
   for (const area of Object.keys(DEFAULT_RISK_PATHS) as RiskArea[]) {
-    const patterns = [...DEFAULT_RISK_PATHS[area], ...(policy.riskPaths[area] ?? [])];
-    if (paths.some((path) => matchesAny(path, patterns))) areas.push(area);
+    const patterns = riskPatterns(area, policy);
+    if (kept.some((path) => matchesAny(path, patterns))) areas.push(area);
   }
   return areas;
+}
+
+/**
+ * The changed paths an exclusion kept from raising a risk area: excluded, and matching a risk
+ * pattern. The record names them, so the loosening is never silent.
+ */
+export function excludedRiskPaths(paths: readonly string[], policy: Policy): string[] {
+  const areas = Object.keys(DEFAULT_RISK_PATHS) as RiskArea[];
+  return paths.filter(
+    (path) =>
+      isExcluded(path, policy) &&
+      areas.some((area) => matchesAny(path, riskPatterns(area, policy))),
+  );
 }
 
 export function routeRank(route: Route): number {

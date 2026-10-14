@@ -29,6 +29,23 @@ test("policy: defaults when absent, validated when present, unknown values ignor
   expect(skipAllowed(DEFAULT_POLICY, "anything")).toBe(true);
 });
 
+test("policy: riskPathExclusions is a list of globs, empty by default, non-strings ignored", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  expect(DEFAULT_POLICY.riskPathExclusions).toEqual([]);
+  expect(loadPolicy(paths).policy.riskPathExclusions).toEqual([]);
+  mkdirSync(paths.crewDir, { recursive: true });
+  writeFileSync(
+    join(paths.crewDir, "policy.json"),
+    JSON.stringify({ riskPathExclusions: ["plugins/core/hooks/session-*.ts", 7, null, "docs/**"] }),
+  );
+  expect(loadPolicy(paths).policy.riskPathExclusions).toEqual([
+    "plugins/core/hooks/session-*.ts",
+    "docs/**",
+  ]);
+  writeFileSync(join(paths.crewDir, "policy.json"), JSON.stringify({ riskPathExclusions: "x" }));
+  expect(loadPolicy(paths).policy.riskPathExclusions).toEqual([]);
+});
+
 test("config: defaults, set values, reject unknown keys and values", () => {
   const paths = repoPaths(makeRepo(), testEnv());
   expect(loadConfig(paths)).toEqual({ mode: "partner", decisions: { log: true } });

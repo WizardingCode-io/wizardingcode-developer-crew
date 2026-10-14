@@ -3,6 +3,7 @@ import {
   AnswerError,
   type Answers,
   computeRoute,
+  excludedRiskPaths,
   riskAreasForPaths,
   validateAnswers,
 } from "../src/classify.ts";
@@ -62,4 +63,31 @@ test("risk paths come from the defaults and the policy", () => {
   expect(riskAreasForPaths(["src/cart/total.ts"], DEFAULT_POLICY)).toEqual([]);
   const policy = { ...DEFAULT_POLICY, riskPaths: { payments: ["app/Billing/**"] } };
   expect(riskAreasForPaths(["app/Billing/Invoice.php"], policy)).toEqual(["payments"]);
+});
+
+test("findings 1 and 14: a path the policy excludes raises nothing, and the exclusion is named", () => {
+  const policy = {
+    ...DEFAULT_POLICY,
+    riskPaths: { payments: ["app/Billing/**"] },
+    riskPathExclusions: ["plugins/core/hooks/session-*.ts", "app/Billing/Invoice.php"],
+  };
+  // A default pattern (`**/session*`) and an added one, both kept out by the exclusions.
+  expect(riskAreasForPaths(["plugins/core/hooks/session-start.ts"], policy)).toEqual([]);
+  expect(riskAreasForPaths(["app/Billing/Invoice.php"], policy)).toEqual([]);
+  // Other paths keep raising, with or without an excluded neighbour in the change.
+  expect(
+    riskAreasForPaths(["plugins/core/hooks/session-start.ts", "app/Auth/Guard.ts"], policy),
+  ).toEqual(["auth"]);
+  expect(riskAreasForPaths(["plugins/core/hooks/session-start.ts"], DEFAULT_POLICY)).toEqual([
+    "auth",
+  ]);
+  // The paths an exclusion kept from raising, so the record can say so; a path that would not
+  // have raised anything is not one of them.
+  expect(
+    excludedRiskPaths(
+      ["plugins/core/hooks/session-start.ts", "app/Billing/Invoice.php", "src/cart/total.ts"],
+      { ...policy, riskPathExclusions: [...policy.riskPathExclusions, "src/**"] },
+    ),
+  ).toEqual(["plugins/core/hooks/session-start.ts", "app/Billing/Invoice.php"]);
+  expect(excludedRiskPaths(["app/Auth/Guard.ts"], policy)).toEqual([]);
 });
