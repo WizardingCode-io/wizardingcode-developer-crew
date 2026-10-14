@@ -408,7 +408,12 @@ export function guardFor(work: WorkItem, next: Phase, ctx: GuardContext): string
       if (isSkipped(work, `tdd:${criterion.id}`, ctx.policy)) continue;
       const record = ctx.evidence?.tdd.find((t) => t.criterion === criterion.id);
       if (!tddDone(record, criterion.kind)) {
-        const how = criterion.kind === "behavior" ? "red/green" : "before/after";
+        const how =
+          criterion.kind === "behavior"
+            ? "red/green"
+            : criterion.kind === "preserve"
+              ? "before/after"
+              : "observed --reason";
         missing.push(`test-first record for ${criterion.id} (crew tdd ${how})`);
       }
     }

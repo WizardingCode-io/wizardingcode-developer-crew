@@ -361,6 +361,16 @@ test("SP2a: plan needs every blocking objection bound or waived; a bound criteri
   });
 });
 
+test("SP2a: the gate guard names the observed step for an observed criterion", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const work = createWork(paths, "e2e");
+  work.route = "fast";
+  const observed = addCriterion(work, "stubbed e2e", "observed");
+  expect(guardFor(work, "gate", empty)).toEqual([
+    `test-first record for ${observed.id} (crew tdd observed --reason)`,
+  ]);
+});
+
 test("advancePhase follows the route and stops at a failing guard", () => {
   const paths = repoPaths(makeRepo(), testEnv());
   const work = createWork(paths, "fix");

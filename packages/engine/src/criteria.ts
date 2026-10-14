@@ -7,5 +7,7 @@ import type { CriterionKind, TddRecord } from "./types.ts";
  */
 export function tddDone(record: TddRecord | undefined, kind: CriterionKind): boolean {
   if (!record) return false;
-  return kind === "behavior" ? !!record.red && !!record.green : !!record.before && !!record.after;
+  if (kind === "behavior") return !!record.red && !!record.green;
+  if (kind === "preserve") return !!record.before && !!record.after;
+  return !!record.observed;
 }

@@ -107,7 +107,7 @@ const KNOWN_FLAGS: Record<string, readonly string[]> = {
   phase: [],
   await: [],
   resume: [],
-  tdd: [],
+  tdd: ["reason"],
   gate: ["only"],
   skip: ["reason", "mode"],
   evidence: [],
@@ -629,9 +629,12 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       const text = args.slice(2).join(" ").trim();
       if (args[1] !== "add" || !text)
         return refuse(
-          'usage: crew criteria <id> add "<criterion>" [--kind preserve] | crew criteria <id> remove <AC-n>',
+          'usage: crew criteria <id> add "<criterion>" [--kind preserve|observed] | crew criteria <id> remove <AC-n>',
         );
-      const kind = parsed.flags.kind === "preserve" ? "preserve" : "behavior";
+      const kind =
+        parsed.flags.kind === "preserve" || parsed.flags.kind === "observed"
+          ? parsed.flags.kind
+          : "behavior";
       const criterion = addCriterion(opened.work, text, kind);
       saveWork(env.paths, opened.work);
       return ok(`${criterion.id} (${kind}): ${criterion.text}`, { criterion });
@@ -750,10 +753,13 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       const [step, id, criterion] = args;
       const opened = openForChange(env, id);
       if (isOutcome(opened)) return opened;
-      if (!["red", "green", "before", "after"].includes(step ?? "") || !criterion)
-        return refuse("usage: crew tdd <red|green|before|after> <id> <criterion> [-- <cmd>]");
+      if (!["red", "green", "before", "after", "observed"].includes(step ?? "") || !criterion)
+        return refuse(
+          'usage: crew tdd <red|green|before|after|observed> <id> <criterion> [--reason "<why>"] [-- <cmd>]',
+        );
       const { evidence } = loadEvidence(env.paths, opened.work.id);
       const override = parsed.rest.length ? parsed.rest.join(" ") : undefined;
+      const reason = typeof parsed.flags.reason === "string" ? parsed.flags.reason : undefined;
       const outcome = await recordTdd(
         env.paths,
         opened.work,
@@ -762,6 +768,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         criterion,
         step as TddStep,
         override,
+        reason,
       );
       if (outcome.ok) saveEvidence(env.paths, opened.work.id, evidence);
       const tail = outcome.record?.tail ? `\n${outcome.record.tail}` : "";
@@ -974,7 +981,7 @@ const HELP = `crew ${VERSION}
   start "<request>" --answers <json>    create a work item from the typed answers
       [--criterion "<text>"] [--preserve "<text>"]   criteria, repeatable; preserve: existing tests stay green
   classify <id> --answers <json>        record typed answers and compute the route
-  criteria <id> add "<text>" [--kind preserve]
+  criteria <id> add "<text>" [--kind preserve|observed]
   criteria <id> remove <AC-n>           take out a criterion no test-first record or skip names
   decision <id> add "<question>" [--default "<answer>"]   a decision only the user can make (gap round)
   decide <id> D-n "<answer>"            record the user's answer (asks the user)
@@ -986,7 +993,7 @@ const HELP = `crew ${VERSION}
       --mode auto|bypassPermissions|dontAsk   no person watching: recorded as the agent's decision
   phase <id> next                       advance when the guard holds
   await <id> user | resume <id>         mark or clear waiting for the user
-  tdd <red|green|before|after> <id> <criterion> [-- <cmd>]
+  tdd <red|green|before|after|observed> <id> <criterion> [--reason "<why>"] [-- <cmd>]
   gate run <id> [--only a,b]            run the gates the route requires
   skip <id> <step> --reason "<text>"    record a skip (asks the user; --mode as for approve)
   evidence <id>                         write and print the report

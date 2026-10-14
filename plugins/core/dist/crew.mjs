@@ -756,7 +756,11 @@ import { join as join10 } from "node:path";
 function tddDone(record, kind) {
   if (!record)
     return false;
-  return kind === "behavior" ? !!record.red && !!record.green : !!record.before && !!record.after;
+  if (kind === "behavior")
+    return !!record.red && !!record.green;
+  if (kind === "preserve")
+    return !!record.before && !!record.after;
+  return !!record.observed;
 }
 
 // packages/engine/src/paths.ts
@@ -1341,7 +1345,7 @@ function guardFor(work, next, ctx) {
         continue;
       const record = ctx.evidence?.tdd.find((t) => t.criterion === criterion.id);
       if (!tddDone(record, criterion.kind)) {
-        const how = criterion.kind === "behavior" ? "red/green" : "before/after";
+        const how = criterion.kind === "behavior" ? "red/green" : criterion.kind === "preserve" ? "before/after" : "observed --reason";
         missing.push(`test-first record for ${criterion.id} (crew tdd ${how})`);
       }
     }
@@ -1464,8 +1468,13 @@ function tddSummary(work, evidence, criterionId, kind, policy) {
     return `skipped: ${skip?.reason ?? ""}`;
   }
   const record = evidence.tdd.find((t) => t.criterion === criterionId);
-  if (tddDone(record, kind))
-    return kind === "behavior" ? "red then green" : "passing before and after";
+  if (tddDone(record, kind)) {
+    if (kind === "behavior")
+      return "red then green";
+    if (kind === "preserve")
+      return "passing before and after";
+    return `observed: passes after (${record?.reason ?? "no reason given"})`;
+  }
   if (record?.red || record?.before)
     return kind === "behavior" ? "red only" : "before only";
   return "missing";
@@ -2338,21 +2347,32 @@ function handleHook(event, payload, env = process.env) {
 
 // packages/engine/src/tdd.ts
 import { join as join18 } from "node:path";
+var STEPS_BY_KIND = {
+  behavior: { steps: ["red", "green"], how: "record red, then green" },
+  preserve: { steps: ["before", "after"], how: "record before, then after" },
+  observed: { steps: ["observed"], how: "record observed, with --reason" }
+};
+function article(kind) {
+  return /^[aeiou]/.test(kind) ? "an" : "a";
+}
 var TEST_PATTERNS = ["**/*test*", "**/*spec*", "tests/**", "test/**", "**/__tests__/**"];
 function defaultTestCommand(profile) {
   const target = profile.targets.find((t) => t.path === "." && t.gates.test) ?? profile.targets.find((t) => t.gates.test);
   return target?.gates.test ? { command: target.gates.test.command, timeoutMs: target.timeoutMs } : null;
 }
-async function recordTdd(paths, work, evidence, profile, criterionId, step, override) {
+async function recordTdd(paths, work, evidence, profile, criterionId, step, override, reason) {
   const criterion = work.criteria.find((c) => c.id === criterionId);
   if (!criterion)
     return { ok: false, message: `unknown criterion ${criterionId}` };
-  const behaviourStep = step === "red" || step === "green";
-  if (behaviourStep !== (criterion.kind === "behavior")) {
+  const expected = STEPS_BY_KIND[criterion.kind];
+  if (!expected.steps.includes(step)) {
     return {
       ok: false,
-      message: criterion.kind === "behavior" ? `${criterionId} is a behavior criterion: record red, then green` : `${criterionId} is a preserve criterion: record before, then after`
+      message: `${criterionId} is ${article(criterion.kind)} ${criterion.kind} criterion: ${expected.how}`
     };
+  }
+  if (step === "observed" && !reason?.trim()) {
+    return { ok: false, message: "an observed run needs --reason: why no red run can exist" };
   }
   const fallback = defaultTestCommand(profile);
   const command = override ?? fallback?.command;
@@ -2417,6 +2437,8 @@ async function recordTdd(paths, work, evidence, profile, criterionId, step, over
     };
   }
   entry[step] = record;
+  if (step === "observed" && reason)
+    entry.reason = reason.trim();
   return { ok: true, message: `${step} recorded for ${criterionId}`, record };
 }
 
@@ -2440,7 +2462,7 @@ var KNOWN_FLAGS = {
   phase: [],
   await: [],
   resume: [],
-  tdd: [],
+  tdd: ["reason"],
   gate: ["only"],
   skip: ["reason", "mode"],
   evidence: [],
@@ -2857,8 +2879,8 @@ async function dispatch(parsed, io) {
       }
       const text = args.slice(2).join(" ").trim();
       if (args[1] !== "add" || !text)
-        return refuse('usage: crew criteria <id> add "<criterion>" [--kind preserve] | crew criteria <id> remove <AC-n>');
-      const kind = parsed.flags.kind === "preserve" ? "preserve" : "behavior";
+        return refuse('usage: crew criteria <id> add "<criterion>" [--kind preserve|observed] | crew criteria <id> remove <AC-n>');
+      const kind = parsed.flags.kind === "preserve" || parsed.flags.kind === "observed" ? parsed.flags.kind : "behavior";
       const criterion = addCriterion(opened.work, text, kind);
       saveWork(env.paths, opened.work);
       return ok(`${criterion.id} (${kind}): ${criterion.text}`, { criterion });
@@ -2991,11 +3013,12 @@ async function dispatch(parsed, io) {
       const opened = openForChange(env, id);
       if (isOutcome(opened))
         return opened;
-      if (!["red", "green", "before", "after"].includes(step ?? "") || !criterion)
-        return refuse("usage: crew tdd <red|green|before|after> <id> <criterion> [-- <cmd>]");
+      if (!["red", "green", "before", "after", "observed"].includes(step ?? "") || !criterion)
+        return refuse('usage: crew tdd <red|green|before|after|observed> <id> <criterion> [--reason "<why>"] [-- <cmd>]');
       const { evidence } = loadEvidence(env.paths, opened.work.id);
       const override = parsed.rest.length ? parsed.rest.join(" ") : undefined;
-      const outcome = await recordTdd(env.paths, opened.work, evidence, env.profile, criterion, step, override);
+      const reason = typeof parsed.flags.reason === "string" ? parsed.flags.reason : undefined;
+      const outcome = await recordTdd(env.paths, opened.work, evidence, env.profile, criterion, step, override, reason);
       if (outcome.ok)
         saveEvidence(env.paths, opened.work.id, evidence);
       const tail = outcome.record?.tail ? `
@@ -3171,7 +3194,7 @@ var HELP = `crew ${VERSION}
   start "<request>" --answers <json>    create a work item from the typed answers
       [--criterion "<text>"] [--preserve "<text>"]   criteria, repeatable; preserve: existing tests stay green
   classify <id> --answers <json>        record typed answers and compute the route
-  criteria <id> add "<text>" [--kind preserve]
+  criteria <id> add "<text>" [--kind preserve|observed]
   criteria <id> remove <AC-n>           take out a criterion no test-first record or skip names
   decision <id> add "<question>" [--default "<answer>"]   a decision only the user can make (gap round)
   decide <id> D-n "<answer>"            record the user's answer (asks the user)
@@ -3183,7 +3206,7 @@ var HELP = `crew ${VERSION}
       --mode auto|bypassPermissions|dontAsk   no person watching: recorded as the agent's decision
   phase <id> next                       advance when the guard holds
   await <id> user | resume <id>         mark or clear waiting for the user
-  tdd <red|green|before|after> <id> <criterion> [-- <cmd>]
+  tdd <red|green|before|after|observed> <id> <criterion> [--reason "<why>"] [-- <cmd>]
   gate run <id> [--only a,b]            run the gates the route requires
   skip <id> <step> --reason "<text>"    record a skip (asks the user; --mode as for approve)
   evidence <id>                         write and print the report

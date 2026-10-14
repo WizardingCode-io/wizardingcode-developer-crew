@@ -4,9 +4,19 @@ import { nowIso } from "./fs.ts";
 import { matchesAny } from "./glob.ts";
 import { type CrewPaths, workDir } from "./paths.ts";
 import { runCommand } from "./run.ts";
-import type { Evidence, Profile, RunRecord, WorkItem } from "./types.ts";
+import type { CriterionKind, Evidence, Profile, RunRecord, WorkItem } from "./types.ts";
 
-export type TddStep = "red" | "green" | "before" | "after";
+export type TddStep = "red" | "green" | "before" | "after" | "observed";
+
+const STEPS_BY_KIND: Record<CriterionKind, { steps: TddStep[]; how: string }> = {
+  behavior: { steps: ["red", "green"], how: "record red, then green" },
+  preserve: { steps: ["before", "after"], how: "record before, then after" },
+  observed: { steps: ["observed"], how: "record observed, with --reason" },
+};
+
+function article(kind: string): string {
+  return /^[aeiou]/.test(kind) ? "an" : "a";
+}
 
 const TEST_PATTERNS = ["**/*test*", "**/*spec*", "tests/**", "test/**", "**/__tests__/**"];
 
@@ -35,18 +45,19 @@ export async function recordTdd(
   criterionId: string,
   step: TddStep,
   override?: string,
+  reason?: string,
 ): Promise<TddOutcome> {
   const criterion = work.criteria.find((c) => c.id === criterionId);
   if (!criterion) return { ok: false, message: `unknown criterion ${criterionId}` };
-  const behaviourStep = step === "red" || step === "green";
-  if (behaviourStep !== (criterion.kind === "behavior")) {
+  const expected = STEPS_BY_KIND[criterion.kind];
+  if (!expected.steps.includes(step)) {
     return {
       ok: false,
-      message:
-        criterion.kind === "behavior"
-          ? `${criterionId} is a behavior criterion: record red, then green`
-          : `${criterionId} is a preserve criterion: record before, then after`,
+      message: `${criterionId} is ${article(criterion.kind)} ${criterion.kind} criterion: ${expected.how}`,
     };
+  }
+  if (step === "observed" && !reason?.trim()) {
+    return { ok: false, message: "an observed run needs --reason: why no red run can exist" };
   }
   const fallback = defaultTestCommand(profile);
   const command = override ?? fallback?.command;
@@ -117,5 +128,6 @@ export async function recordTdd(
     };
   }
   entry[step] = record;
+  if (step === "observed" && reason) entry.reason = reason.trim();
   return { ok: true, message: `${step} recorded for ${criterionId}`, record };
 }

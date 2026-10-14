@@ -167,8 +167,11 @@ export function tddSummary(
     return `skipped: ${skip?.reason ?? ""}`;
   }
   const record = evidence.tdd.find((t) => t.criterion === criterionId);
-  if (tddDone(record, kind))
-    return kind === "behavior" ? "red then green" : "passing before and after";
+  if (tddDone(record, kind)) {
+    if (kind === "behavior") return "red then green";
+    if (kind === "preserve") return "passing before and after";
+    return `observed: passes after (${record?.reason ?? "no reason given"})`;
+  }
   if (record?.red || record?.before) return kind === "behavior" ? "red only" : "before only";
   return "missing";
 }

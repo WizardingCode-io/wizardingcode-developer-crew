@@ -918,3 +918,39 @@ test("SP2a: objection add, resolve and waive through the command; a hand edit is
   expect((await c.run("accept", id)).out).toContain("objections.json");
   expect((await c.run("objection", id, "waive", "O-1", "--reason", "done by hand")).code).toBe(0);
 });
+
+test("SP2a: an observed criterion through the command, and in the report", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const c = io(root);
+  const id = (await c.json("start", "Stubbed e2e", "--answers", answers, "--criterion", "a")).data
+    .id as string;
+  expect(
+    (await c.run("criteria", id, "add", "the stubbed e2e passes", "--kind", "observed")).out,
+  ).toContain("AC-2 (observed)");
+  expect((await c.run("tdd", "observed", id, "AC-2")).err).toContain("needs --reason");
+  expect(
+    (
+      await c.run(
+        "tdd",
+        "observed",
+        id,
+        "AC-2",
+        "--reason",
+        "the dev server stubs the backend",
+        "--",
+        "exit 0",
+      )
+    ).code,
+  ).toBe(0);
+  write(root, "src/a.ts", "y");
+  expect((await c.run("tdd", "red", id, "AC-1", "--", "exit 1")).code).toBe(0);
+  expect((await c.run("tdd", "green", id, "AC-1", "--", "exit 0")).code).toBe(0);
+  expect((await c.json("gate", "run", id)).data.verdict).toBe("proven");
+  const report = readFileSync(join(root, ".crew", "work", id, "report.md"), "utf8");
+  expect(report).toContain(
+    "| AC-2 | observed | the stubbed e2e passes | observed: passes after (the dev server stubs the backend) |",
+  );
+});

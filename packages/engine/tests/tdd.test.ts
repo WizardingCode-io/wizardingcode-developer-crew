@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { tddDone } from "../src/criteria.ts";
 import { detectProfile } from "../src/detect/index.ts";
 import { emptyEvidence } from "../src/evidence.ts";
 import { recordTdd } from "../src/tdd.ts";
@@ -102,6 +103,58 @@ test("preserve criteria use before and after, and kinds are enforced", async () 
   expect((await recordTdd(s.paths, s.work, s.evidence, s.profile, s.preserve.id, "after")).ok).toBe(
     true,
   );
+});
+
+test("SP2a: observed records a passing run with a reason, and refuses the other steps for that kind", async () => {
+  const s = setup();
+  const observed = addCriterion(s.work, "the stubbed e2e passes", "observed");
+  expect(
+    (await recordTdd(s.paths, s.work, s.evidence, s.profile, observed.id, "red", "exit 1")).message,
+  ).toBe(`${observed.id} is an observed criterion: record observed, with --reason`);
+  expect(
+    (await recordTdd(s.paths, s.work, s.evidence, s.profile, observed.id, "observed", "exit 0"))
+      .message,
+  ).toBe("an observed run needs --reason: why no red run can exist");
+  const failing = await recordTdd(
+    s.paths,
+    s.work,
+    s.evidence,
+    s.profile,
+    observed.id,
+    "observed",
+    "exit 1",
+    "the dev server stubs the backend",
+  );
+  expect(failing.ok).toBe(false);
+  const ok = await recordTdd(
+    s.paths,
+    s.work,
+    s.evidence,
+    s.profile,
+    observed.id,
+    "observed",
+    "exit 0",
+    "the dev server stubs the backend",
+  );
+  expect(ok.ok).toBe(true);
+  const record = s.evidence.tdd.find((t) => t.criterion === observed.id);
+  expect(record).toMatchObject({ reason: "the dev server stubs the backend" });
+  expect(record?.observed?.exit).toBe(0);
+  expect(tddDone(record, "observed")).toBe(true);
+  expect(
+    (
+      await recordTdd(
+        s.paths,
+        s.work,
+        s.evidence,
+        s.profile,
+        s.behaviour.id,
+        "observed",
+        "exit 0",
+        "x",
+      )
+    ).message,
+  ).toBe(`${s.behaviour.id} is a behavior criterion: record red, then green`);
 });
 
 test("an explicit command overrides the profile, and no command is an error", async () => {
