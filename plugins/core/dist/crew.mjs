@@ -1660,6 +1660,20 @@ function computeVerdict(input) {
       unproven.push(`gate ${label} ran an unconfirmed command (crew profile confirm)`);
     }
   }
+  for (const { gate } of input.expectedJudgement ?? []) {
+    if (isSkipped(work, `gate:${gate}`, policy))
+      continue;
+    const record = (evidence.judgement ?? []).find((j) => j.gate === gate);
+    if (!record)
+      unproven.push(`judgement gate ${gate} not run`);
+    else if (record.fingerprint !== currentFingerprint && !stale)
+      unproven.push(`judgement gate ${gate} not run on the current code`);
+    else if (record.verdict === "not-proven") {
+      const n = record.findings.length;
+      unproven.push(`judgement gate ${gate} not proven (${n} finding${n === 1 ? "" : "s"})`);
+    } else if (record.verdict === "not-run")
+      unproven.push(`judgement gate ${gate} not run: ${record.reason ?? "no reason given"}`);
+  }
   if (input.ledger) {
     for (const o of blockingObjections(input.ledger, work, evidence, policy, ["open", "bound"]))
       unproven.push(`blocking objection ${o.id} ${objectionStatus(o, work, evidence, policy)}: ${o.text}`);
@@ -1734,6 +1748,20 @@ function renderReport(work, evidence, policy, ledger) {
     const status = r.status === "skipped" || r.status === "unavailable" ? `${r.status}${r.reason ? `: ${r.reason}` : ""}` : r.advisories ? auditStatus(r.status, r.advisories) : r.problems ? problemStatus(r.status, r.problems) : r.status === "fail" && r.reason ? `fail: ${r.reason}` : r.status;
     const target = r.stack ? `${r.target} (${r.stack})` : r.target;
     lines.push(`| ${r.gate} | ${target} | ${status} | ${r.command ? `\`${r.command}\`` : ""} | ${r.durationMs} ms | ${r.log ?? ""} |`);
+  }
+  const judgement = evidence.judgement ?? [];
+  if (judgement.length) {
+    lines.push("", "## Judgement gates", "", "| Gate | Verdict | Reviewer | Findings | Tokens |", "| :- | :- | :- | -: | -: |");
+    for (const j of judgement) {
+      const verdict = j.verdict === "not-run" ? `not run: ${j.reason ?? "no reason given"}` : j.verdict === "not-proven" ? "not proven" : "proven";
+      lines.push(`| ${j.gate} | ${verdict} | ${j.reviewer ?? ""} | ${j.findings.length} | ${j.tokens ?? ""} |`);
+    }
+    const findings = judgement.flatMap((j) => j.findings.map((f) => ({ gate: j.gate, ...f })));
+    if (findings.length)
+      lines.push("");
+    for (const f of findings) {
+      lines.push(`- ${f.gate}: ${f.file}${f.line ? `:${f.line}` : ""} ${f.text} (${f.severity}${f.outside ? ", outside the change" : ""})`);
+    }
   }
   const decisions = work.decisions ?? [];
   if (decisions.length) {
@@ -1956,6 +1984,106 @@ function judgementRows(work, evidence, planned, currentFingerprint, policy) {
       ...record.reason ? { reason: record.reason } : {}
     };
   });
+}
+function isRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function plannedNote(planned) {
+  return planned.length ? ` (planned: ${planned.join(", ")})` : " (none is planned)";
+}
+function parseRulings(raw, planned) {
+  if (!isRecord(raw) || !Array.isArray(raw.rulings))
+    return { refused: 'the ruling file is a JSON object with a "rulings" list' };
+  if (raw.rulings.length === 0)
+    return { refused: "the ruling file has no rulings" };
+  const rulings = [];
+  for (const [index, entry] of raw.rulings.entries()) {
+    const where = `ruling ${index + 1}`;
+    if (!isRecord(entry))
+      return { refused: `${where}: not an object` };
+    const gate = entry.gate;
+    if (!isJudgementGateName(gate))
+      return {
+        refused: `${where}: unknown judgement gate: ${String(gate)} (${JUDGEMENT_GATES.join(", ")})`
+      };
+    if (!planned.includes(gate))
+      return { refused: `${where}: ${gate} is not planned for this item${plannedNote(planned)}` };
+    const verdict = entry.verdict;
+    if (verdict !== "proven" && verdict !== "not-proven")
+      return {
+        refused: `${where} (${gate}): verdict is proven or not-proven, not ${String(verdict)}; a gate that could not run is recorded with crew judgement <id> record ${gate} --not-run --reason "<why>"`
+      };
+    const rawFindings = entry.findings ?? [];
+    if (!Array.isArray(rawFindings))
+      return { refused: `${where} (${gate}): findings is a list` };
+    const findings = [];
+    for (const [n, f] of rawFindings.entries()) {
+      const at = `finding ${n + 1} of ${gate}`;
+      if (!isRecord(f))
+        return { refused: `${at}: not an object` };
+      if (typeof f.file !== "string" || !f.file.trim())
+        return { refused: `${at}: needs a file` };
+      if (typeof f.text !== "string" || !f.text.trim())
+        return { refused: `${at}: needs a text` };
+      if (f.severity !== "defect" && f.severity !== "advisory")
+        return { refused: `${at}: severity is defect or advisory` };
+      const line = f.line;
+      if (line !== undefined && !(typeof line === "number" && Number.isInteger(line) && line > 0))
+        return { refused: `${at}: line is a positive integer` };
+      findings.push({
+        file: f.file.trim().replace(/^\.\//, ""),
+        ...typeof line === "number" ? { line } : {},
+        text: f.text.trim(),
+        severity: f.severity
+      });
+    }
+    if (verdict === "not-proven" && !findings.some((f) => f.severity === "defect"))
+      return {
+        refused: `${where} (${gate}): not proven with no defect finding; the judge rules not proven on defects, or rules proven`
+      };
+    const tokens = entry.tokens;
+    if (tokens !== undefined && !(typeof tokens === "number" && Number.isFinite(tokens) && tokens >= 0))
+      return { refused: `${where} (${gate}): tokens is a number` };
+    if (rulings.some((r) => r.gate === gate))
+      return { refused: `two rulings for ${gate} in one file` };
+    rulings.push({
+      gate,
+      verdict,
+      ...typeof entry.reviewer === "string" ? { reviewer: entry.reviewer } : {},
+      ...typeof entry.judge === "string" ? { judge: entry.judge } : {},
+      findings,
+      ...typeof tokens === "number" ? { tokens } : {}
+    });
+  }
+  return { rulings };
+}
+function stampRuling(ruling, fingerprint, changed) {
+  return {
+    gate: ruling.gate,
+    verdict: ruling.verdict,
+    ...ruling.reviewer ? { reviewer: ruling.reviewer } : {},
+    ...ruling.judge ? { judge: ruling.judge } : {},
+    findings: ruling.findings.map((f) => changed.includes(f.file) ? { ...f } : { ...f, outside: true }),
+    ...ruling.tokens !== undefined ? { tokens: ruling.tokens } : {},
+    at: nowIso(),
+    fingerprint
+  };
+}
+function notRunRecord(gate, reason, fingerprint) {
+  return {
+    gate,
+    verdict: "not-run",
+    reason: reason.trim(),
+    findings: [],
+    at: nowIso(),
+    fingerprint
+  };
+}
+function recordJudgement(evidence, record) {
+  evidence.judgement = [
+    ...(evidence.judgement ?? []).filter((j) => j.gate !== record.gate),
+    record
+  ];
 }
 
 // packages/engine/src/problems.ts
@@ -2573,6 +2701,7 @@ async function runGates(paths, work, profile, policy, options = {}) {
     work,
     evidence,
     expected: planned,
+    expectedJudgement: judgement,
     policy,
     ledger: loadLedger(paths, work.id).ledger,
     currentFingerprint: computeFingerprint(paths.root, profile, base, MAX_WATCHED_FILES, fingerprintMethod(fingerprintBefore)),
@@ -2594,6 +2723,7 @@ function assess(paths, work, profile, policy, tampered = false) {
     work,
     evidence: read.evidence,
     expected,
+    expectedJudgement: judgement,
     ledger: loadLedger(paths, work.id).ledger,
     currentFingerprint,
     tampered: tampered || read.tampered || loadLedger(paths, work.id).tampered,
@@ -3055,7 +3185,7 @@ async function recordTdd(paths, work, evidence, profile, criterionId, step, over
 var VERSION = "0.3.0";
 
 // packages/engine/src/cli.ts
-var BOOLEAN_FLAGS = new Set(["json", "refresh", "force"]);
+var BOOLEAN_FLAGS = new Set(["json", "refresh", "force", "not-run"]);
 var KNOWN_FLAGS = {
   detect: ["refresh"],
   profile: ["target", "stack", "force", "timeout"],
@@ -3073,6 +3203,7 @@ var KNOWN_FLAGS = {
   resume: [],
   tdd: ["reason"],
   gate: ["only"],
+  judgement: ["ruling", "not-run", "reason"],
   skip: ["reason", "mode"],
   evidence: [],
   status: [],
@@ -3169,7 +3300,7 @@ function tamperRefusal(env, opened) {
   return first ? refuse(tamperMessage(first)) : null;
 }
 function skipStep(work, raw) {
-  const isGate = (name) => GATE_NAMES.includes(name);
+  const isGate = (name) => GATE_NAMES.includes(name) || isJudgementGateName(name);
   const isCriterion = (id) => work.criteria.some((c) => c.id === id);
   if (isGate(raw))
     return `gate:${raw}`;
@@ -3252,6 +3383,16 @@ function guardContext(env, work, tampered) {
     unproven: result.unproven,
     policy: env.policy
   };
+}
+function deliver(env, opened, evidence) {
+  for (const target of ["gate", "deliver"]) {
+    if (nextPhaseOf(opened.work) !== target)
+      continue;
+    if (!advancePhase(opened.work, guardContext(env, opened.work, opened.tampered)).ok)
+      break;
+  }
+  saveWork(env.paths, opened.work);
+  writeProtectedText(env.paths, join22(workDir(env.paths, opened.work.id), "report.md"), renderReport(opened.work, evidence, env.policy, loadLedger(env.paths, opened.work.id).ledger));
 }
 function logDecision(env, work, answers) {
   if (!env.config.decisions.log)
@@ -3683,14 +3824,7 @@ ${outcome.record.tail}` : "";
         only,
         tampered: env.tampered || opened.tampered
       });
-      for (const target of ["gate", "deliver"]) {
-        if (nextPhaseOf(opened.work) !== target)
-          continue;
-        if (!advancePhase(opened.work, guardContext(env, opened.work, opened.tampered)).ok)
-          break;
-      }
-      saveWork(env.paths, opened.work);
-      writeProtectedText(env.paths, join22(workDir(env.paths, opened.work.id), "report.md"), renderReport(opened.work, outcome.evidence, env.policy, loadLedger(env.paths, opened.work.id).ledger));
+      deliver(env, opened, outcome.evidence);
       const raised = outcome.raised ? `Route raised to ${outcome.raised}: ${opened.work.routeReasons.at(-1)}
 ` : "";
       const picked = refreshed.changed.length ? `profile refreshed: ${refreshed.changed.join("; ")}
@@ -3716,6 +3850,68 @@ Judgement gates to run: ${pending.map((j) => `${j.gate} (${j.reason})`).join(", 
           judgement: outcome.judgement,
           review
         }
+      };
+    }
+    case "judgement": {
+      const opened = openForChange(env, args[0]);
+      if (isOutcome(opened))
+        return opened;
+      const usage = 'usage: crew judgement <id> record --ruling <file> | crew judgement <id> record <gate> --not-run --reason "<why>"';
+      if (args[1] !== "record")
+        return refuse(usage);
+      const before = assess(env.paths, opened.work, env.profile, env.policy, env.tampered || opened.tampered);
+      const planned = before.judgement.map((j) => j.gate);
+      const records = [];
+      if (parsed.flags["not-run"]) {
+        const gate = args[2];
+        const reason = typeof parsed.flags.reason === "string" ? parsed.flags.reason.trim() : "";
+        if (!gate || !reason)
+          return refuse(usage);
+        if (!isJudgementGateName(gate))
+          return refuse(`unknown judgement gate: ${gate} (${JUDGEMENT_GATES.join(", ")})`);
+        if (!planned.includes(gate))
+          return refuse(`${gate} is not planned for this item${plannedNote(planned)}`);
+        records.push(notRunRecord(gate, reason, before.currentFingerprint));
+      } else {
+        if (typeof parsed.flags.ruling !== "string")
+          return refuse(usage);
+        const text = readText(resolve2(env.paths.root, parsed.flags.ruling));
+        if (text === null)
+          return refuse(`no ruling file at ${parsed.flags.ruling}`);
+        let raw;
+        try {
+          raw = JSON.parse(text);
+        } catch {
+          return refuse(`the ruling file is not valid JSON: ${parsed.flags.ruling}`);
+        }
+        const parsedRulings = parseRulings(raw, planned);
+        if ("refused" in parsedRulings)
+          return refuse(parsedRulings.refused);
+        for (const ruling of parsedRulings.rulings)
+          records.push(stampRuling(ruling, before.currentFingerprint, before.changed));
+      }
+      const { evidence } = loadEvidence(env.paths, opened.work.id);
+      for (const record of records)
+        recordJudgement(evidence, record);
+      saveEvidence(env.paths, opened.work.id, evidence);
+      const result = assess(env.paths, opened.work, env.profile, env.policy, env.tampered || opened.tampered);
+      result.evidence.verdict = result.verdict;
+      result.evidence.unproven = result.unproven;
+      saveEvidence(env.paths, opened.work.id, result.evidence);
+      deliver(env, opened, result.evidence);
+      const lines = records.map((r) => {
+        const outside = r.findings.filter((f) => f.outside).length;
+        const detail = r.verdict === "not-run" ? `: ${r.reason}` : ` (${r.findings.length} finding${r.findings.length === 1 ? "" : "s"}${outside ? `, ${outside} outside the change` : ""})`;
+        const word = r.verdict === "not-proven" ? "not proven" : r.verdict === "not-run" ? "not run" : "proven";
+        return `  ${r.gate}: ${word}${detail}`;
+      });
+      lines.push(result.verdict === "proven" ? `Proven: ${opened.work.id}` : `Not proven: ${result.unproven.join("; ")}`);
+      return {
+        code: result.verdict === "proven" ? 0 : 1,
+        stdout: true,
+        text: lines.join(`
+`),
+        data: { records, verdict: result.verdict, unproven: result.unproven }
       };
     }
     case "skip": {
@@ -3874,7 +4070,9 @@ var HELP = `crew ${VERSION}
   await <id> user | resume <id>         mark or clear waiting for the user
   tdd <red|green|before|after|observed> <id> <criterion> [--reason "<why>"] [-- <cmd>]
   gate run <id> [--only a,b]            run the gates the route requires; plans the judgement gates and writes their inputs to .crew/work/<id>/review/
-  skip <id> <step> --reason "<text>"    record a skip (asks the user; --mode as for approve)
+  judgement <id> record --ruling <file>  record the rulings of a review file ({"rulings":[{gate,verdict,reviewer,judge,findings,tokens}]}); exit 0 once proven
+  judgement <id> record <gate> --not-run --reason "<why>"   a judgement gate that could not run, never passed by default
+  skip <id> <step> --reason "<text>"    record a skip of a tdd step, a gate or a judgement gate (asks the user; --mode as for approve)
   evidence <id>                         write and print the report
   status | mode [m] | config <key> [v]  state and settings
   --json on any command prints the machine form`;

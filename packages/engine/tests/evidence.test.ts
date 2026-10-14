@@ -8,7 +8,14 @@ import {
 } from "../src/evidence.ts";
 import { addObjection, bindObjection, waiveObjection } from "../src/objections.ts";
 import { DEFAULT_POLICY } from "../src/policy.ts";
-import type { Evidence, GateRun, ObjectionLedger, RunRecord, WorkItem } from "../src/types.ts";
+import type {
+  Evidence,
+  GateRun,
+  JudgementRecord,
+  ObjectionLedger,
+  RunRecord,
+  WorkItem,
+} from "../src/types.ts";
 import {
   addCriterion,
   addDecision,
@@ -56,6 +63,103 @@ function workWith(paths: ReturnType<typeof repoPaths>): WorkItem {
   addCriterion(work, "x");
   return work;
 }
+const ruling = (
+  gate: JudgementRecord["gate"],
+  verdict: JudgementRecord["verdict"],
+  extra: Partial<JudgementRecord> = {},
+): JudgementRecord => ({ gate, verdict, findings: [], at: "t", fingerprint: "f", ...extra });
+
+test("SP2b: a planned judgement gate is named until a current ruling proves it, and the report shows the rulings and their findings", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const work = workWith(paths);
+  const expectedJudgement = [
+    { gate: "code-quality" as const, reason: "standard route" },
+    { gate: "test-quality" as const, reason: "standard route" },
+    { gate: "security" as const, reason: "risk area auth" },
+    { gate: "ui-ux" as const, reason: "interface files: a.vue" },
+  ];
+  const base: Evidence = {
+    ...emptyEvidence(),
+    fingerprint: "f",
+    tdd: [{ criterion: "AC-1", red: run, green: run }],
+    runs: [gate("test", "pass")],
+  };
+  const input = {
+    work,
+    evidence: base,
+    expected: [{ gate: "test" as const, target: "." }],
+    expectedJudgement,
+    currentFingerprint: "f",
+    tampered: false,
+    policy: DEFAULT_POLICY,
+  };
+  expect(computeVerdict(input).unproven).toEqual([
+    "judgement gate code-quality not run",
+    "judgement gate test-quality not run",
+    "judgement gate security not run",
+    "judgement gate ui-ux not run",
+  ]);
+  const defect = {
+    file: "src/a.ts",
+    line: 12,
+    text: "two reasons to change",
+    severity: "defect" as const,
+  };
+  const judged: Evidence = {
+    ...base,
+    judgement: [
+      ruling("code-quality", "proven", { reviewer: "code-quality", judge: "judge", tokens: 1200 }),
+      ruling("test-quality", "not-proven", {
+        findings: [defect, { ...defect, file: "src/b.ts", severity: "advisory", outside: true }],
+      }),
+      ruling("security", "proven", { fingerprint: "old" }),
+      ruling("ui-ux", "not-run", { reason: "no browser" }),
+    ],
+  };
+  expect(computeVerdict({ ...input, evidence: judged }).unproven).toEqual([
+    "judgement gate test-quality not proven (2 findings)",
+    "judgement gate security not run on the current code",
+    "judgement gate ui-ux not run: no browser",
+  ]);
+  // Code changed since the last gate run: that one reason stands for every ruling on older code.
+  expect(computeVerdict({ ...input, evidence: judged, currentFingerprint: "g" }).unproven).toEqual([
+    "code changed since the last gate run",
+    "judgement gate test-quality not proven (2 findings)",
+    "judgement gate ui-ux not run: no browser",
+  ]);
+  // A person's skip takes a gate out; a current proven ruling on the rest proves the item.
+  addSkip(work, "gate:ui-ux", "no browser in this session");
+  const fixed: Evidence = {
+    ...judged,
+    judgement: [
+      ruling("code-quality", "proven"),
+      ruling("test-quality", "proven", { findings: [{ ...defect, severity: "advisory" }] }),
+      ruling("security", "proven"),
+      ruling("ui-ux", "not-run", { reason: "no browser" }),
+    ],
+  };
+  expect(computeVerdict({ ...input, evidence: fixed })).toEqual({
+    verdict: "proven",
+    unproven: [],
+  });
+
+  const report = renderReport(
+    work,
+    { ...judged, verdict: "unproven", unproven: [] },
+    DEFAULT_POLICY,
+  );
+  expect(report).toContain("## Judgement gates");
+  expect(report).toContain("| Gate | Verdict | Reviewer | Findings | Tokens |");
+  expect(report).toContain("| code-quality | proven | code-quality | 0 | 1200 |");
+  expect(report).toContain("| test-quality | not proven |  | 2 |  |");
+  expect(report).toContain("| ui-ux | not run: no browser |  | 0 |  |");
+  expect(report).toContain("- test-quality: src/a.ts:12 two reasons to change (defect)");
+  expect(report).toContain(
+    "- test-quality: src/b.ts:12 two reasons to change (advisory, outside the change)",
+  );
+  expect(report.indexOf("## Gates")).toBeLessThan(report.indexOf("## Judgement gates"));
+  expect(renderReport(work, base, DEFAULT_POLICY)).not.toContain("## Judgement gates");
+});
 
 test("evidence loads empty and round-trips", () => {
   const paths = repoPaths(makeRepo(), testEnv());

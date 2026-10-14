@@ -12,6 +12,7 @@ import type {
   GateRun,
   ObjectionLedger,
   PermissionMode,
+  PlannedJudgement,
   Policy,
   Stack,
   ValidatorRule,
@@ -112,6 +113,8 @@ export interface VerdictInput {
   policy: Policy;
   /** The objection ledger; a blocking objection open or bound to an unproven criterion keeps the work unproven. */
   ledger?: ObjectionLedger;
+  /** The judgement gates planned for the item; each is a reason until a current ruling says proven (SP2 §10). */
+  expectedJudgement?: PlannedJudgement[];
 }
 
 export function computeVerdict(input: VerdictInput): {
@@ -145,6 +148,20 @@ export function computeVerdict(input: VerdictInput): {
     else if (run.status === "pass" && !run.confirmed) {
       unproven.push(`gate ${label} ran an unconfirmed command (crew profile confirm)`);
     }
+  }
+  // A judgement gate is proven by a ruling on this code, never by default (SP2 §10): each planned
+  // one not skipped is named until a current ruling says proven.
+  for (const { gate } of input.expectedJudgement ?? []) {
+    if (isSkipped(work, `gate:${gate}`, policy)) continue;
+    const record = (evidence.judgement ?? []).find((j) => j.gate === gate);
+    if (!record) unproven.push(`judgement gate ${gate} not run`);
+    else if (record.fingerprint !== currentFingerprint && !stale)
+      unproven.push(`judgement gate ${gate} not run on the current code`);
+    else if (record.verdict === "not-proven") {
+      const n = record.findings.length;
+      unproven.push(`judgement gate ${gate} not proven (${n} finding${n === 1 ? "" : "s"})`);
+    } else if (record.verdict === "not-run")
+      unproven.push(`judgement gate ${gate} not run: ${record.reason ?? "no reason given"}`);
   }
   // A blocking objection is a reason of its own: open, or bound to a criterion not yet proven (SP2 §8).
   if (input.ledger) {
@@ -269,6 +286,35 @@ export function renderReport(
     lines.push(
       `| ${r.gate} | ${target} | ${status} | ${r.command ? `\`${r.command}\`` : ""} | ${r.durationMs} ms | ${r.log ?? ""} |`,
     );
+  }
+  // The rulings as the judge gave them; a finding outside the change is named as such, never hidden (ADR 0006).
+  const judgement = evidence.judgement ?? [];
+  if (judgement.length) {
+    lines.push(
+      "",
+      "## Judgement gates",
+      "",
+      "| Gate | Verdict | Reviewer | Findings | Tokens |",
+      "| :- | :- | :- | -: | -: |",
+    );
+    for (const j of judgement) {
+      const verdict =
+        j.verdict === "not-run"
+          ? `not run: ${j.reason ?? "no reason given"}`
+          : j.verdict === "not-proven"
+            ? "not proven"
+            : "proven";
+      lines.push(
+        `| ${j.gate} | ${verdict} | ${j.reviewer ?? ""} | ${j.findings.length} | ${j.tokens ?? ""} |`,
+      );
+    }
+    const findings = judgement.flatMap((j) => j.findings.map((f) => ({ gate: j.gate, ...f })));
+    if (findings.length) lines.push("");
+    for (const f of findings) {
+      lines.push(
+        `- ${f.gate}: ${f.file}${f.line ? `:${f.line}` : ""} ${f.text} (${f.severity}${f.outside ? ", outside the change" : ""})`,
+      );
+    }
   }
   const decisions = work.decisions ?? [];
   if (decisions.length) {

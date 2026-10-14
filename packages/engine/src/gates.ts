@@ -532,6 +532,7 @@ export async function runGates(
     work,
     evidence,
     expected: planned,
+    expectedJudgement: judgement,
     policy,
     ledger: loadLedger(paths, work.id).ledger,
     currentFingerprint: computeFingerprint(
@@ -587,6 +588,7 @@ export function assess(
     work,
     evidence: read.evidence,
     expected,
+    expectedJudgement: judgement,
     ledger: loadLedger(paths, work.id).ledger,
     currentFingerprint,
     tampered: tampered || read.tampered || loadLedger(paths, work.id).tampered,

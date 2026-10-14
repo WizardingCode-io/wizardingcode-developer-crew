@@ -16,7 +16,14 @@ import { ensureDir, nowIso, readText, writeText } from "./fs.ts";
 import { assess, runGates } from "./gates.ts";
 import { handleHook } from "./hooks/index.ts";
 import type { HookPayload } from "./hooks/types.ts";
-import { judgementRows } from "./judgement.ts";
+import {
+  judgementRows,
+  notRunRecord,
+  parseRulings,
+  plannedNote,
+  recordJudgement,
+  stampRuling,
+} from "./judgement.ts";
 import {
   addObjection,
   bindObjection,
@@ -33,8 +40,10 @@ import { integrityOf, recordIntegrity, writeProtectedText } from "./store.ts";
 import { recordTdd, type TddStep } from "./tdd.ts";
 import type {
   Decision,
+  Evidence,
   GateName,
   JudgementGateName,
+  JudgementRecord,
   Phase,
   Policy,
   Profile,
@@ -47,6 +56,7 @@ import {
   isJudgementGateName,
   isPermissionMode,
   isValidatorRule,
+  JUDGEMENT_GATES,
   PERMISSION_MODES,
   PHASE_ORDER,
   VALIDATOR_RULES,
@@ -92,7 +102,7 @@ interface Parsed {
 }
 
 // Flags that never take a value, so a word after them stays a positional argument.
-const BOOLEAN_FLAGS = new Set(["json", "refresh", "force"]);
+const BOOLEAN_FLAGS = new Set(["json", "refresh", "force", "not-run"]);
 
 // The flags each command knows, besides the global --json. A flag outside the list is refused, so
 // a misspelt or misplaced one never passes in silence (finding 7: `start --kind` created
@@ -114,6 +124,7 @@ const KNOWN_FLAGS: Record<string, readonly string[]> = {
   resume: [],
   tdd: ["reason"],
   gate: ["only"],
+  judgement: ["ruling", "not-run", "reason"],
   skip: ["reason", "mode"],
   evidence: [],
   status: [],
@@ -249,7 +260,8 @@ function tamperRefusal(env: Env, opened?: Opened): Outcome | null {
  * build gate, since skipping the build phase itself is not a thing.
  */
 function skipStep(work: WorkItem, raw: string): string | null {
-  const isGate = (name: string) => GATE_NAMES.includes(name as GateName);
+  const isGate = (name: string) =>
+    GATE_NAMES.includes(name as GateName) || isJudgementGateName(name);
   const isCriterion = (id: string) => work.criteria.some((c) => c.id === id);
   if (isGate(raw)) return `gate:${raw}`;
   if (isCriterion(raw)) return `tdd:${raw}`;
@@ -353,6 +365,24 @@ function guardContext(env: Env, work: WorkItem, tampered: boolean): GuardContext
     unproven: result.unproven,
     policy: env.policy,
   };
+}
+
+/**
+ * A proving step is also the work's delivery: the phase moves as far as the guards allow (a gate run
+ * is the work entering its gate phase; an item already in gate is delivered by the step that proves
+ * it, finding 18) and the report is written. Shared by the gate run and the judgement record.
+ */
+function deliver(env: Env, opened: Opened, evidence: Evidence): void {
+  for (const target of ["gate", "deliver"] as const) {
+    if (nextPhaseOf(opened.work) !== target) continue;
+    if (!advancePhase(opened.work, guardContext(env, opened.work, opened.tampered)).ok) break;
+  }
+  saveWork(env.paths, opened.work);
+  writeProtectedText(
+    env.paths,
+    join(workDir(env.paths, opened.work.id), "report.md"),
+    renderReport(opened.work, evidence, env.policy, loadLedger(env.paths, opened.work.id).ledger),
+  );
 }
 
 function logDecision(env: Env, work: WorkItem, answers: Answers): void {
@@ -862,25 +892,8 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         tampered: env.tampered || opened.tampered,
       });
       // A gate run is the work entering its gate phase, and its delivery when it proves the work;
-      // the guards still decide, so a missing record or document keeps the phase where it is. An
-      // item already in gate (the usual case after a build gate rewrote a watched file, finding 18)
-      // is delivered by the run that proves it, so a phase that is not the next one is passed over.
-      for (const target of ["gate", "deliver"] as const) {
-        if (nextPhaseOf(opened.work) !== target) continue;
-        if (!advancePhase(opened.work, guardContext(env, opened.work, opened.tampered)).ok) break;
-      }
-      saveWork(env.paths, opened.work);
-      // The report is written here too, so a gate run that proves the work is also its delivery.
-      writeProtectedText(
-        env.paths,
-        join(workDir(env.paths, opened.work.id), "report.md"),
-        renderReport(
-          opened.work,
-          outcome.evidence,
-          env.policy,
-          loadLedger(env.paths, opened.work.id).ledger,
-        ),
-      );
+      // the guards still decide, so a missing record or document keeps the phase where it is.
+      deliver(env, opened, outcome.evidence);
       const raised = outcome.raised
         ? `Route raised to ${outcome.raised}: ${opened.work.routeReasons.at(-1)}\n`
         : "";
@@ -922,6 +935,87 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           judgement: outcome.judgement,
           review,
         },
+      };
+    }
+    case "judgement": {
+      const opened = openForChange(env, args[0]);
+      if (isOutcome(opened)) return opened;
+      const usage =
+        'usage: crew judgement <id> record --ruling <file> | crew judgement <id> record <gate> --not-run --reason "<why>"';
+      if (args[1] !== "record") return refuse(usage);
+      const before = assess(
+        env.paths,
+        opened.work,
+        env.profile,
+        env.policy,
+        env.tampered || opened.tampered,
+      );
+      const planned = before.judgement.map((j) => j.gate);
+      const records: JudgementRecord[] = [];
+      if (parsed.flags["not-run"]) {
+        const gate = args[2];
+        const reason = typeof parsed.flags.reason === "string" ? parsed.flags.reason.trim() : "";
+        if (!gate || !reason) return refuse(usage);
+        if (!isJudgementGateName(gate))
+          return refuse(`unknown judgement gate: ${gate} (${JUDGEMENT_GATES.join(", ")})`);
+        if (!planned.includes(gate))
+          return refuse(`${gate} is not planned for this item${plannedNote(planned)}`);
+        records.push(notRunRecord(gate, reason, before.currentFingerprint));
+      } else {
+        if (typeof parsed.flags.ruling !== "string") return refuse(usage);
+        const text = readText(resolve(env.paths.root, parsed.flags.ruling));
+        if (text === null) return refuse(`no ruling file at ${parsed.flags.ruling}`);
+        let raw: unknown;
+        try {
+          raw = JSON.parse(text);
+        } catch {
+          return refuse(`the ruling file is not valid JSON: ${parsed.flags.ruling}`);
+        }
+        const parsedRulings = parseRulings(raw, planned);
+        if ("refused" in parsedRulings) return refuse(parsedRulings.refused);
+        for (const ruling of parsedRulings.rulings)
+          records.push(stampRuling(ruling, before.currentFingerprint, before.changed));
+      }
+      const { evidence } = loadEvidence(env.paths, opened.work.id);
+      for (const record of records) recordJudgement(evidence, record);
+      saveEvidence(env.paths, opened.work.id, evidence);
+      // The verdict as it stands with the rulings in; a record that proves the work delivers it.
+      const result = assess(
+        env.paths,
+        opened.work,
+        env.profile,
+        env.policy,
+        env.tampered || opened.tampered,
+      );
+      result.evidence.verdict = result.verdict;
+      result.evidence.unproven = result.unproven;
+      saveEvidence(env.paths, opened.work.id, result.evidence);
+      deliver(env, opened, result.evidence);
+      const lines = records.map((r) => {
+        const outside = r.findings.filter((f) => f.outside).length;
+        const detail =
+          r.verdict === "not-run"
+            ? `: ${r.reason}`
+            : ` (${r.findings.length} finding${r.findings.length === 1 ? "" : "s"}${outside ? `, ${outside} outside the change` : ""})`;
+        const word =
+          r.verdict === "not-proven"
+            ? "not proven"
+            : r.verdict === "not-run"
+              ? "not run"
+              : "proven";
+        return `  ${r.gate}: ${word}${detail}`;
+      });
+      lines.push(
+        result.verdict === "proven"
+          ? `Proven: ${opened.work.id}`
+          : `Not proven: ${result.unproven.join("; ")}`,
+      );
+      // Like gate run: the exit code says whether the work is proven, so a chain stops at "Not proven".
+      return {
+        code: result.verdict === "proven" ? 0 : 1,
+        stdout: true,
+        text: lines.join("\n"),
+        data: { records, verdict: result.verdict, unproven: result.unproven },
       };
     }
     case "skip": {
@@ -1106,7 +1200,9 @@ const HELP = `crew ${VERSION}
   await <id> user | resume <id>         mark or clear waiting for the user
   tdd <red|green|before|after|observed> <id> <criterion> [--reason "<why>"] [-- <cmd>]
   gate run <id> [--only a,b]            run the gates the route requires; plans the judgement gates and writes their inputs to .crew/work/<id>/review/
-  skip <id> <step> --reason "<text>"    record a skip (asks the user; --mode as for approve)
+  judgement <id> record --ruling <file>  record the rulings of a review file ({"rulings":[{gate,verdict,reviewer,judge,findings,tokens}]}); exit 0 once proven
+  judgement <id> record <gate> --not-run --reason "<why>"   a judgement gate that could not run, never passed by default
+  skip <id> <step> --reason "<text>"    record a skip of a tdd step, a gate or a judgement gate (asks the user; --mode as for approve)
   evidence <id>                         write and print the report
   status | mode [m] | config <key> [v]  state and settings
   --json on any command prints the machine form`;

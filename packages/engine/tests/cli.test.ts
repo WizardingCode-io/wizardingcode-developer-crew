@@ -6,6 +6,161 @@ import { loadProfile } from "../src/profile.ts";
 import { readProtectedJson, writeProtectedJson } from "../src/store.ts";
 import { git, makeRepo, repoPaths, tempDir, testEnv, write } from "./helpers.ts";
 
+test("SP2b: judgement rulings are recorded from a file, judged by the verdict, shown in the report, and go stale with the code", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/App.vue": "<template/>",
+  });
+  const c = io(root);
+  const id = (await c.json("start", "Empty state", "--answers", answers, "--criterion", "a")).data
+    .id as string;
+  write(root, "src/App.vue", "<template>empty</template>");
+  expect((await c.run("tdd", "red", id, "AC-1", "--", "exit 1")).code).toBe(0);
+  expect((await c.run("tdd", "green", id, "AC-1", "--", "exit 0")).code).toBe(0);
+  const first = await c.json("gate", "run", id);
+  expect(first.code).toBe(1);
+  expect(first.data.unproven).toEqual(["judgement gate ui-ux not run"]);
+  expect((await c.json("status")).data.phase).toBe("gate");
+  const file = join(root, ".crew", "work", id, "review", "ruling.json");
+  const ruling = (rulings: unknown[]) => writeFileSync(file, JSON.stringify({ rulings }));
+  // A gate not planned for this item, and a malformed file, are refused with the reason.
+  ruling([{ gate: "code-quality", verdict: "proven" }]);
+  expect((await c.run("judgement", id, "record", "--ruling", file)).err.trim()).toBe(
+    "ruling 1: code-quality is not planned for this item (planned: ui-ux)",
+  );
+  writeFileSync(file, "{not json");
+  expect((await c.run("judgement", id, "record", "--ruling", file)).err.trim()).toBe(
+    `the ruling file is not valid JSON: ${file}`,
+  );
+  const missing = join(root, "nope.json");
+  expect((await c.run("judgement", id, "record", "--ruling", missing)).err.trim()).toBe(
+    `no ruling file at ${missing}`,
+  );
+  ruling([
+    {
+      gate: "ui-ux",
+      verdict: "not-proven",
+      findings: [{ file: "src/App.vue", text: "no loading state", severity: "advisory" }],
+    },
+  ]);
+  expect((await c.run("judgement", id, "record", "--ruling", file)).err).toContain(
+    "not proven with no defect finding",
+  );
+  // Not proven, with a finding outside the change: recorded as the judge ruled, the finding marked.
+  ruling([
+    {
+      gate: "ui-ux",
+      verdict: "not-proven",
+      reviewer: "ui-ux",
+      judge: "judge",
+      tokens: 800,
+      findings: [
+        { file: "src/App.vue", line: 1, text: "no empty-state copy", severity: "defect" },
+        { file: "src/legacy.vue", text: "unlabelled button", severity: "advisory" },
+      ],
+    },
+  ]);
+  const notProven = await c.json("judgement", id, "record", "--ruling", file);
+  expect(notProven.code).toBe(1);
+  expect(notProven.data.unproven).toEqual(["judgement gate ui-ux not proven (2 findings)"]);
+  const records = notProven.data.records as { findings: { outside?: boolean }[] }[];
+  expect(records[0]?.findings.map((f) => f.outside ?? false)).toEqual([false, true]);
+  const report = () => readFileSync(join(root, ".crew", "work", id, "report.md"), "utf8");
+  expect(report()).toContain("| ui-ux | not proven | ui-ux | 2 | 800 |");
+  expect(report()).toContain(
+    "- ui-ux: src/legacy.vue unlabelled button (advisory, outside the change)",
+  );
+  expect((await c.json("status")).data.judgement).toEqual([
+    { gate: "ui-ux", status: "not-proven", planned: "interface files: src/App.vue", findings: 2 },
+  ]);
+  // The judge rules proven on a second look: the record that proves the work delivers it.
+  ruling([
+    {
+      gate: "ui-ux",
+      verdict: "proven",
+      reviewer: "ui-ux",
+      judge: "judge",
+      tokens: 400,
+      findings: [],
+    },
+  ]);
+  const proven = await c.json("judgement", id, "record", "--ruling", file);
+  expect(proven.code).toBe(0);
+  expect(proven.data.verdict).toBe("proven");
+  expect((await c.json("status")).data.phase).toBe("deliver");
+  expect(report()).toContain("**Proven**");
+  // The code changes: the ruling is on other code until the roles look again.
+  write(root, "src/App.vue", "<template>empty, again</template>");
+  expect((await c.json("status")).data.unproven).toEqual(["code changed since the last gate run"]);
+  expect((await c.json("status")).data.judgement).toEqual([
+    { gate: "ui-ux", status: "stale", planned: "interface files: src/App.vue", findings: 0 },
+  ]);
+  const again = await c.json("gate", "run", id);
+  expect(again.data.unproven).toEqual(["judgement gate ui-ux not run on the current code"]);
+  expect((await c.run("gate", "run", id)).out).toContain(
+    "Judgement gates to run: ui-ux (interface files: src/App.vue)",
+  );
+  // A gate that could not run is not run, with the reason, never passed.
+  const notRun = await c.json(
+    "judgement",
+    id,
+    "record",
+    "ui-ux",
+    "--not-run",
+    "--reason",
+    "no browser in this session",
+  );
+  expect(notRun.code).toBe(1);
+  expect(notRun.data.unproven).toEqual([
+    "judgement gate ui-ux not run: no browser in this session",
+  ]);
+  expect(report()).toContain("| ui-ux | not run: no browser in this session |  | 0 |  |");
+  expect(
+    (await c.run("judgement", id, "record", "risk", "--not-run", "--reason", "x")).err.trim(),
+  ).toBe("risk is not planned for this item (planned: ui-ux)");
+  // A hand edit of the evidence is caught, as for any engine-owned file.
+  const evidenceFile = join(root, ".crew", "work", id, "evidence.json");
+  writeFileSync(evidenceFile, readFileSync(evidenceFile, "utf8").replace('"not-run"', '"proven"'));
+  expect((await c.json("status")).data.unproven).toContain("state changed outside the engine");
+});
+
+test("SP2b: a judgement gate is skipped only when the policy lists it, and the verdict then passes over it", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/App.vue": "<template/>",
+  });
+  const c = io(root);
+  const id = (await c.json("start", "Empty state", "--answers", answers, "--criterion", "a")).data
+    .id as string;
+  write(root, "src/App.vue", "<template>empty</template>");
+  await c.run("tdd", "red", id, "AC-1", "--", "exit 1");
+  await c.run("tdd", "green", id, "AC-1", "--", "exit 0");
+  const refused = await c.run("skip", id, "gate:ui-ux", "--reason", "no browser");
+  expect(refused.code).toBe(1);
+  expect(refused.err).toContain(
+    "the team policy does not allow skipping gate:ui-ux: gates are mandatory",
+  );
+  expect((await c.run("skip", id, "ui-ux", "--reason", "no browser")).code).toBe(1);
+  expect((await c.run("skip", id, "gate:nope", "--reason", "x")).err.trim()).toBe(
+    "unknown step: gate:nope",
+  );
+  write(root, ".crew/policy.json", JSON.stringify({ allowSkips: ["tdd", "ui-ux"] }));
+  expect((await c.run("policy", "accept")).code).toBe(0);
+  const skipped = await c.json("skip", id, "ui-ux", "--reason", "no browser");
+  expect((skipped.data.skips as { step: string }[]).at(-1)?.step).toBe("gate:ui-ux");
+  expect((await c.json("gate", "run", id)).data.verdict).toBe("proven");
+  expect((await c.run("gate", "run", id)).out).not.toContain("Judgement gates to run");
+  expect((await c.json("status")).data.judgement).toEqual([
+    {
+      gate: "ui-ux",
+      status: "skipped",
+      planned: "interface files: src/App.vue",
+      findings: 0,
+      reason: "no browser",
+    },
+  ]);
+});
+
 test("SP2b: gate run names the judgement gates to run, accepts their names in --only, and status shows the plan, the decisions and the objections' text", async () => {
   const root = makeRepo({
     "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
