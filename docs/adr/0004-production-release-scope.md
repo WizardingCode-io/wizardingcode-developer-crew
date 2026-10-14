@@ -1,6 +1,6 @@
 # ADR 0004: The production release is SP1 hardened plus SP2; SP3 to SP6 follow as 1.x
 
-- Status: proposed, 2026-10-14. Awaiting the user's yes or no.
+- Status: accepted by the user on 2026-10-14 ("sim força").
 - Context: the user's goal stated on 2026-10-14, "terminar o plugin e passar para prod"; the vision's roadmap (`docs/vision.md` §16).
 
 ## Context

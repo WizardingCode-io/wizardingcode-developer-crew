@@ -264,7 +264,7 @@ Skills are written once and used unchanged everywhere. They name actions, not to
 
 ## 16. Roadmap
 
-Six subprojects, built in dependency order. Each has its own spec, plan and release. Each is used on real projects before the next begins. The first public release includes all six.
+Six subprojects, built in dependency order. Each has its own spec, plan and release. Each is used on real projects before the next begins. The first public release, 1.0, includes subprojects 1 and 2; 3 to 6 follow as 1.x releases ([ADR 0004](adr/0004-production-release-scope.md), 2026-10-14).
 
 | # | Subproject | Depends on |
 | :- | :- | :- |
