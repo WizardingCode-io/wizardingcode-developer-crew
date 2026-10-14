@@ -68,6 +68,52 @@ function readReference(name: string): string {
   );
 }
 
+test("SP2b: the skill drives the debate through the roles and the judgement gates through the reviewers and the judge", () => {
+  const method = skill.slice(skill.indexOf("## The method"), skill.indexOf("## The nine typed"));
+  expect(method).toMatch(
+    /\| Conclave \|[^\n]*checklists\/<kind>\.md[^\n]*conclave\.md[^\n]*judge[^\n]*\| `crew decision <id> add`/,
+  );
+  expect(method).toMatch(
+    /\| Gate \|[^\n]*judgement gates[^\n]*never passed by default[^\n]*\| `crew gate run <id>`, `crew judgement <id> record` \|/,
+  );
+  expect(skill.slice(skill.indexOf("## Rules that do not bend"))).toMatch(
+    /never edit a findings file or a ruling/,
+  );
+
+  const conclave = readReference("conclave.md");
+  expect(conclave).toContain("checklists/<kind>.md");
+  for (const role of ["researcher", "expert", "devils-advocate", "fault-finder", "judge"])
+    expect(conclave).toContain(`wizardingcode-developer-crew:${role}`);
+  expect(conclave).toContain("## The debate, step by step");
+  expect(conclave).toContain('crew debate <id> open --reason "<the consequence>"');
+  expect(conclave).toContain("crew debate <id> close --tokens");
+  expect(conclave).toContain("conclave/proposals.md");
+  expect(conclave).toContain("`## Proposal` section only");
+  expect(conclave).toContain("--by fault-finder");
+  expect(conclave).toMatch(/one screen/i);
+  expect(conclave).toMatch(/One revision/);
+  expect(conclave).toContain('"as validator"');
+  expect(conclave).toContain("conclave/validator-<rule>.md");
+  expect(conclave).toContain("crew await <id> user");
+  expect(conclave).toContain(
+    "The validator never waives an objection and never skips a gate or a test-first record",
+  );
+
+  const gate = readReference("gate.md");
+  expect(gate).toContain("## Judgement gates");
+  expect(gate).toContain("Judgement gates to run:");
+  for (const g of ["code-quality", "test-quality", "security", "ui-ux", "risk"])
+    expect(gate).toContain(`wizardingcode-developer-crew:review-${g}`);
+  expect(gate).toContain("`model: opus`");
+  expect(gate).toContain("wizardingcode-developer-crew:judge");
+  expect(gate).toContain("review/<gate>.findings.md");
+  expect(gate).toContain("review/ruling.json");
+  expect(gate).toContain("crew judgement <id> record --ruling .crew/work/<id>/review/ruling.json");
+  expect(gate).toContain('crew judgement <id> record <gate> --not-run --reason "<why>"');
+  expect(gate).toContain("review/ui/<page>-<state>.png");
+  expect(gate).toMatch(/never passed by default/);
+});
+
 test("0.3.0: a decision is presented in words and the user's positive word is the signature; approval by rule when nothing is pending", () => {
   const rules = skill.slice(skill.indexOf("## Rules that do not bend"));
   expect(rules).toMatch(/positive word is the signature/);
@@ -105,7 +151,7 @@ test("SP2a: the skill drives the conclave phase", () => {
   ])
     expect(conclave).toContain(`## ${heading}`);
   expect(conclave).toContain("The debate opens");
-  expect(conclave).toContain("SP2b");
+  expect(conclave).not.toContain("you run the round yourself");
   expect(conclave).toContain(
     "The validator never waives an objection and never skips a gate or a test-first record",
   );

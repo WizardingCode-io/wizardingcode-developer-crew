@@ -1,10 +1,10 @@
 # Conclave
 
-Standard and full routes, after the spec. Goal: say what the request leaves out before a line is written, and let the user decide what only they can.
+Standard and full routes, after the spec. Goal: say what the request leaves out before a line is written, and let the user decide what only they can. The gap round is yours, in this context, from the checklists; the debate, when it opens, runs in roles with their own contexts.
 
 ## The gap round, always
 
-Write `.crew/work/<id>/conclave.md` with the four headings below, each with content or the word "none". The engine refuses `crew phase <id> next` into Plan until all four have content, until every decision has a counted answer, and until every blocking objection is bound to a criterion or waived.
+Pick the checklists for the kind of change, `checklists/<kind>.md` in this skill's folder (beside `references/`): `endpoint`, `auth` (a login or a permission), `payment` (a checkout or a payment), `upload`, `migration-or-restore`, `sync` (a third party), `link-target` (a redirect or a link), `deletion`, `merge`, `screen`. A change is often two kinds (a deletion behind a permission: `deletion` and `auth`); read each. Then write `.crew/work/<id>/conclave.md` with the four headings below, each with content or the word "none", answering the checklists' questions for this request. The engine refuses `crew phase <id> next` into Plan until all four have content, until every decision has a counted answer, and until every blocking objection is bound to a criterion or waived.
 
 ## Assumed by good practice
 
@@ -12,7 +12,7 @@ What you will do without asking, stated so the user can refuse: "The endpoint is
 
 ## Decisions only the user can make
 
-What two competent engineers would build differently. Record each one as you find it: `crew decision <id> add "<question>" --default "<the conservative answer>"`. Present them on one screen, each with what is being decided, why, the facts, the evidence and the default you propose (mark the work with `crew await <id> user` when the answers need a turn). The user's positive word is the signature: record each answer with `crew decide <id> D-n "<answer>"` yourself; under the default policy no prompt appears and the record says "by the user, relayed by the agent". A decision without a counted answer blocks Plan. In an unattended session (headless, bypassPermissions or dontAsk), and only when `policy.json` sets `unattendedDecisions` to `validator`, the validator takes the stated default: `crew decide <id> D-n --mode <mode> --validator stated-default`. No default, no validator: the item waits for a person.
+What two competent engineers would build differently. Record each one as you find it: `crew decision <id> add "<question>" --default "<the conservative answer>"`. Present them on one screen, each with what is being decided, why, the facts, the evidence and the default you propose (mark the work with `crew await <id> user` when the answers need a turn). The user's positive word is the signature: record each answer with `crew decide <id> D-n "<answer>"` yourself; under the default policy no prompt appears and the record says "by the user, relayed by the agent". A decision without a counted answer blocks Plan. In an unattended session (headless, bypassPermissions or dontAsk), and only when `policy.json` sets `unattendedDecisions` to `validator`, the validator takes the stated default (see The validator): `crew decide <id> D-n --mode <mode> --validator stated-default`. No default, no validator: the item waits for a person.
 
 ## Proposals
 
@@ -24,11 +24,23 @@ What the request asks for that goes against good practice, and why. Each one is 
 
 ## When the debate opens
 
-The debate opens on consequences, never on the route alone: a blocking objection from the round, a warning the user wants to build anyway on a risk area, a decision whose answer changes a risk area (who holds a permission, what is hard-deleted, which side of a conflict wins), or the user asking for it. Until SP2b ships the roles (researcher, experts, devil's advocate, fault-finder, judge), you run the round yourself in this context and record its outcome through the commands above; say so in the brief under `## Assumptions`.
+The debate opens on consequences, never on the route alone: a blocking objection from the round, a warning the user wants to build anyway on a risk area, a decision whose answer changes a risk area (who holds a permission, what is hard-deleted, which side of a conflict wins), or the user asking for it. Say why in one line: `crew debate <id> open --reason "<the consequence>"`. It is capped: one research pass, at most three experts, one revision.
+
+## The debate, step by step
+
+Each role is a subagent of this plugin with a clean context and read-only tools. Launch it with the Agent tool by its scoped name; pass paths and questions, never transcripts; save its answer verbatim with the Write tool (the files under `.crew/work/<id>/conclave/` are yours to write; the ledger is not). Add up the token usage the Agent tool reports for each call.
+
+1. **Researcher**, `wizardingcode-developer-crew:researcher`: the id, the paths of `brief.md`, `spec.md` and `conclave.md`, the open decisions (D-n and question). Save as `conclave/researcher.md`.
+2. **Experts**, `wizardingcode-developer-crew:expert`, in parallel in one message, one per open decision with consequences, at most three: the same paths, `conclave/researcher.md`, and its one decision. Save as `conclave/expert-<n>.md`. Then write `conclave/proposals.md`: each expert's `## Proposal` section only, headed `## P-<n> (D-<n>)`; never its `## Reasoning`.
+3. **Devil's advocate**, `wizardingcode-developer-crew:devils-advocate`, and **fault-finder**, `wizardingcode-developer-crew:fault-finder`, in parallel, each given one path, `conclave/proposals.md`, and nothing else. Save as `conclave/devils-advocate.md` and `conclave/fault-finder.md`. File each of the fault-finder's lines: `crew objection <id> add "<text>" --by fault-finder --severity blocking|advisory`.
+4. **Judge**, `wizardingcode-developer-crew:judge`, "as judge of the debate": `conclave/proposals.md`, `objections.json`, `conclave/researcher.md`, `conclave/devils-advocate.md`, and the decisions with the answers given so far (from `crew status --json`). Save as `conclave/judge.md`.
+5. **One screen to the user**: the proposals in a line each, the objections with their severity, the ruling, what it leaves open. Each decision in the form rule 4 asks (what is being decided, why, the facts, the evidence, the default you propose); their positive word is the signature, `crew decide <id> D-n "<answer>"`. The user may decide against the ruling: `crew objection <id> waive O-n --reason "<their words>"`, which asks them, and the report says "decided by the user".
+6. **One revision**: when an answer changes a proposal, the judge once more, with the user's answers in the prompt, on the same files; it replaces `conclave/judge.md`. No second round of experts.
+7. **Close**: `crew debate <id> close --tokens <the sum>`. Amend `spec.md` from the ruling (Design, criteria); add each criterion it names (`crew criteria <id> add "<text>" --kind <kind>`); bind each blocking objection (`crew objection <id> resolve O-n --criterion AC-k`). What the judge left open stays a decision: answered, or `crew await <id> user`.
 
 ## The validator
 
-The validator decides only what a rule covers: a spec approval under `complete-gap-round` and, where no person watches, a decision's stated default. With a person present, when the round found nothing to decide, you approve under the rule yourself: `crew approve <id> spec --validator complete-gap-round`, refused by the engine while a section, a default or a binding is missing, and counted because the person is there to object. Where no person watches, the same with `--mode <mode>`, counted only under policy `validator`. The validator never waives an objection and never skips a gate or a test-first record. The record always says "by the validator (rule: …)", never "by the user".
+The validator decides only what a rule covers: a spec approval under `complete-gap-round` and, where no person watches, a decision's stated default. With a person present, when the round found nothing to decide, you approve under the rule yourself: `crew approve <id> spec --validator complete-gap-round`, refused by the engine while a section, a default or a binding is missing, and counted because the person is there to object; the judge does not run. Where no person watches (headless, bypassPermissions or dontAsk) and `policy.json` sets `unattendedDecisions` to `validator`, the judge reads the rule first: launch `wizardingcode-developer-crew:judge` "as validator" with `spec.md`, `conclave.md`, `objections.json` and the rule's name; save the answer as `conclave/validator-<rule>.md`. "holds": run the command with `--mode <mode> --validator <rule>` (`crew approve <id> spec …` or `crew decide <id> D-n …`). "does not hold": do what its "Missing" names when it is yours to do (a section, a default), otherwise `crew await <id> user`. Under policy `wait` or `count`, as before. The validator never waives an objection and never skips a gate or a test-first record. The record always says "by the validator (rule: …)", never "by the user".
 
 ## Then
 
