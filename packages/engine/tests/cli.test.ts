@@ -6,6 +6,43 @@ import { loadProfile } from "../src/profile.ts";
 import { readProtectedJson, writeProtectedJson } from "../src/store.ts";
 import { git, makeRepo, repoPaths, tempDir, testEnv, write } from "./helpers.ts";
 
+test("SP2b: debate open and close through the command; plan waits while the debate is open; status says so", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const c = io(root);
+  const standard = JSON.stringify({ ...JSON.parse(answers), scope: 1 });
+  const id = (await c.json("start", "Delete accounts", "--answers", standard)).data.id as string;
+  write(root, `.crew/work/${id}/spec.md`, "# Spec\n\n## Acceptance criteria\n- AC-1 x\n");
+  for (let i = 0; i < 3; i++) await c.run("phase", id, "next");
+  expect((await c.json("status")).data.phase).toBe("conclave");
+  write(
+    root,
+    `.crew/work/${id}/conclave.md`,
+    "# Gap round\n\n## Assumed by good practice\nnone\n\n## Decisions only the user can make\nnone\n\n## Proposals\nnone\n\n## Warnings\nnone\n",
+  );
+  expect((await c.json("status")).data.debate).toBe("none");
+  expect((await c.run("debate", id, "open")).code).toBe(1);
+  const opened = await c.json("debate", id, "open", "--reason", "erasure or deactivation");
+  expect(opened.code).toBe(0);
+  expect(opened.data.debate).toMatchObject({ reason: "erasure or deactivation" });
+  expect((await c.json("status")).data.debate).toBe("open");
+  const refused = await c.run("phase", id, "next");
+  expect(refused.code).toBe(1);
+  expect(refused.err).toContain("the debate is open (erasure or deactivation)");
+  expect((await c.run("debate", id, "close", "--tokens", "lots")).err.trim()).toBe(
+    "--tokens is a number",
+  );
+  const closed = await c.json("debate", id, "close", "--tokens", "5400");
+  expect(closed.data.debate).toMatchObject({ reason: "erasure or deactivation", tokens: 5400 });
+  expect((await c.json("status")).data.debate).toBe("closed");
+  expect((await c.json("phase", id, "next")).data.phase).toBe("plan");
+  expect((await c.run("debate", id, "open", "--reason", "again")).err.trim()).toBe(
+    "the debate is closed; it opens once per item",
+  );
+});
+
 test("SP2b: judgement rulings are recorded from a file, judged by the verdict, shown in the report, and go stale with the code", async () => {
   const root = makeRepo({
     "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),

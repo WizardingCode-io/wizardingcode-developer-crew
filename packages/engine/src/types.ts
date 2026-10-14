@@ -224,6 +224,14 @@ export interface Skip {
   relayed?: boolean;
 }
 
+/** The debate of the conclave (SP2 §7): when it opened and why, when it closed, and what it cost. */
+export interface Debate {
+  openedAt: string;
+  reason: string;
+  closedAt?: string;
+  tokens?: number;
+}
+
 export interface WorkItem {
   id: string;
   title: string;
@@ -243,6 +251,8 @@ export interface WorkItem {
   sharedCheckout?: SharedCheckout;
   /** The gap round's decisions only the user can make, and their answers. Absent before 0.2.0. */
   decisions?: GapDecision[];
+  /** The debate, when the gap round found a decision with consequences. Absent before 0.4.0 and when none opened. */
+  debate?: Debate;
   approvals: Approval[];
   skips: Skip[];
   /** HEAD when the item started; the change is everything since. Null outside git or with no commits. */

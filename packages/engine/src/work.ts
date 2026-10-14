@@ -13,6 +13,7 @@ import { readProtectedJson, writeProtectedJson } from "./store.ts";
 import type {
   Criterion,
   CriterionKind,
+  Debate,
   Decision,
   Evidence,
   GapDecision,
@@ -300,6 +301,39 @@ export function unansweredDecisions(work: WorkItem, policy: Policy): GapDecision
   return (work.decisions ?? []).filter((d) => d.answer === undefined || !decisionCounts(policy, d));
 }
 
+export type DebateState = "none" | "open" | "closed";
+
+export function debateState(work: WorkItem): DebateState {
+  if (!work.debate) return "none";
+  return work.debate.closedAt ? "closed" : "open";
+}
+
+/** Opens the debate, once per item: a decision with consequences is the reason, never the route (SP2 §7). */
+export function openDebate(work: WorkItem, reason: string): Debate | { refused: string } {
+  const current = work.debate;
+  if (current) {
+    return {
+      refused: current.closedAt
+        ? "the debate is closed; it opens once per item"
+        : `the debate is already open (${current.openedAt}): ${current.reason}`,
+    };
+  }
+  if (!reason.trim())
+    return { refused: "a debate opens for a reason: the decision with consequences" };
+  work.debate = { openedAt: nowIso(), reason: reason.trim() };
+  return work.debate;
+}
+
+/** Closes the debate once the judge has ruled, keeping what the round cost when known, so the eval can report it. */
+export function closeDebate(work: WorkItem, tokens?: number): Debate | { refused: string } {
+  const debate = work.debate;
+  if (!debate) return { refused: 'no debate is open (crew debate <id> open --reason "<why>")' };
+  if (debate.closedAt) return { refused: "the debate is already closed" };
+  debate.closedAt = nowIso();
+  if (tokens !== undefined) debate.tokens = tokens;
+  return debate;
+}
+
 export function approve(work: WorkItem, what: "spec", decision: Decision = USER): void {
   work.approvals.push({ what, at: nowIso(), ...decision });
 }
@@ -443,6 +477,11 @@ export function guardFor(work: WorkItem, next: Phase, ctx: GuardContext): string
           `a criterion bound to blocking objection ${o.id}, or the user's waiver (crew objection <id> resolve ${o.id} --criterion AC-k | waive ${o.id} --reason "<why>")`,
         );
     }
+    // The judge's ruling comes before the plan: an open debate is a decision still being taken (SP2 §7).
+    if (debateState(work) === "open")
+      missing.push(
+        `the debate is open (${work.debate?.reason ?? ""}); close it with the judge's ruling (crew debate <id> close [--tokens n])`,
+      );
   } else if (next === "build") {
     if (work.criteria.length === 0) {
       missing.push('at least one acceptance criterion (crew criteria <id> add "...")');

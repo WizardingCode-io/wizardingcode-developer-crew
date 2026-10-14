@@ -71,11 +71,14 @@ import {
   answerDecision,
   applyClassification,
   approve,
+  closeDebate,
   createWork,
+  debateState,
   type GuardContext,
   isSkipped,
   loadWork,
   nextPhaseOf,
+  openDebate,
   openItems,
   PHASES_BY_ROUTE,
   removeCriterion,
@@ -116,6 +119,7 @@ const KNOWN_FLAGS: Record<string, readonly string[]> = {
   classify: ["answers"],
   criteria: ["kind"],
   decision: ["default"],
+  debate: ["reason", "tokens"],
   decide: ["mode", "validator"],
   objection: ["by", "severity", "criterion", "reason", "mode"],
   approve: ["mode", "validator"],
@@ -766,6 +770,35 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         decision,
       });
     }
+    case "debate": {
+      const opened = openForChange(env, args[0]);
+      if (isOutcome(opened)) return opened;
+      const usage =
+        'usage: crew debate <id> open --reason "<why>" | crew debate <id> close [--tokens n]';
+      if (args[1] === "open") {
+        const reason = typeof parsed.flags.reason === "string" ? parsed.flags.reason.trim() : "";
+        if (!reason) return refuse(usage);
+        const result = openDebate(opened.work, reason);
+        if ("refused" in result) return refuse(result.refused);
+        saveWork(env.paths, opened.work);
+        return ok(`debate open on ${opened.work.id}: ${result.reason}`, { debate: result });
+      }
+      if (args[1] === "close") {
+        const flag = parsed.flags.tokens;
+        const tokens =
+          flag === undefined ? undefined : typeof flag === "string" ? Number(flag) : Number.NaN;
+        if (tokens !== undefined && !(Number.isFinite(tokens) && tokens >= 0))
+          return refuse("--tokens is a number");
+        const result = closeDebate(opened.work, tokens);
+        if ("refused" in result) return refuse(result.refused);
+        saveWork(env.paths, opened.work);
+        return ok(
+          `debate closed on ${opened.work.id}${tokens !== undefined ? ` (${tokens} tokens)` : ""}`,
+          { debate: result },
+        );
+      }
+      return refuse(usage);
+    }
     case "decide": {
       const opened = openForChange(env, args[0]);
       if (isOutcome(opened)) return opened;
@@ -1094,6 +1127,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         phase: work.phase,
         route: work.route,
         awaiting: work.awaiting,
+        debate: debateState(work),
         baseCommit: work.baseCommit,
         phases: PHASES_BY_ROUTE[work.route],
         verdict: result.verdict,
@@ -1194,6 +1228,8 @@ const HELP = `crew ${VERSION}
   objection <id> add "<text>" --by <role> --severity blocking|advisory   file an objection (ledger)
   objection <id> resolve O-n --criterion AC-k   resolved when that criterion is proven
   objection <id> waive O-n --reason "<why>"     the user decides against it (asks the user)
+  debate <id> open --reason "<why>"     the conclave's debate opens on a decision with consequences (once per item)
+  debate <id> close [--tokens n]        the judge has ruled; plan is held while the debate is open
   approve <id> spec                     record the user's approval (asks the user)
       --mode auto|bypassPermissions|dontAsk   no person watching: recorded as the agent's decision
   phase <id> next                       advance when the guard holds

@@ -22,8 +22,10 @@ import {
   addSkip,
   answerDecision,
   approve,
+  closeDebate,
   createWork,
   isSkipped,
+  openDebate,
   unansweredDecisions,
 } from "../src/work.ts";
 import { makeRepo, repoPaths, testEnv } from "./helpers.ts";
@@ -63,6 +65,29 @@ function workWith(paths: ReturnType<typeof repoPaths>): WorkItem {
   addCriterion(work, "x");
   return work;
 }
+
+test("SP2b: the gap round section says whether the debate opened, why, and whether it closed", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const work = workWith(paths);
+  const evidence: Evidence = { ...emptyEvidence(), fingerprint: "f" };
+  expect(renderReport(work, evidence, DEFAULT_POLICY)).not.toContain("## Gap round");
+  addDecision(work, "Erasure or deactivation?", "deactivation");
+  expect(renderReport(work, evidence, DEFAULT_POLICY)).toContain("- Debate: none");
+  openDebate(work, "erasure or deactivation changes what is deleted");
+  expect(renderReport(work, evidence, DEFAULT_POLICY)).toContain(
+    "- Debate: opened (erasure or deactivation changes what is deleted), open",
+  );
+  closeDebate(work, 5400);
+  const report = renderReport(work, evidence, DEFAULT_POLICY);
+  expect(report).toContain(
+    "- Debate: opened (erasure or deactivation changes what is deleted), closed, 5400 tokens",
+  );
+  expect(report.indexOf("- D-1:")).toBeLessThan(report.indexOf("- Debate:"));
+  // A debate with no decision recorded still shows the section.
+  const other = workWith(paths);
+  openDebate(other, "the user asked for it");
+  expect(renderReport(other, evidence, DEFAULT_POLICY)).toContain("## Gap round");
+});
 const ruling = (
   gate: JudgementRecord["gate"],
   verdict: JudgementRecord["verdict"],

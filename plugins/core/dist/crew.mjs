@@ -1453,6 +1453,34 @@ function answerDecision(work, id, answer, decision) {
 function unansweredDecisions(work, policy) {
   return (work.decisions ?? []).filter((d) => d.answer === undefined || !decisionCounts(policy, d));
 }
+function debateState(work) {
+  if (!work.debate)
+    return "none";
+  return work.debate.closedAt ? "closed" : "open";
+}
+function openDebate(work, reason) {
+  const current = work.debate;
+  if (current) {
+    return {
+      refused: current.closedAt ? "the debate is closed; it opens once per item" : `the debate is already open (${current.openedAt}): ${current.reason}`
+    };
+  }
+  if (!reason.trim())
+    return { refused: "a debate opens for a reason: the decision with consequences" };
+  work.debate = { openedAt: nowIso(), reason: reason.trim() };
+  return work.debate;
+}
+function closeDebate(work, tokens) {
+  const debate = work.debate;
+  if (!debate)
+    return { refused: 'no debate is open (crew debate <id> open --reason "<why>")' };
+  if (debate.closedAt)
+    return { refused: "the debate is already closed" };
+  debate.closedAt = nowIso();
+  if (tokens !== undefined)
+    debate.tokens = tokens;
+  return debate;
+}
 function approve(work, what, decision = USER) {
   work.approvals.push({ what, at: nowIso(), ...decision });
 }
@@ -1542,6 +1570,8 @@ function guardFor(work, next, ctx) {
       for (const o of blockingObjections(ctx.ledger, work, ctx.evidence, ctx.policy, ["open"]))
         missing.push(`a criterion bound to blocking objection ${o.id}, or the user's waiver (crew objection <id> resolve ${o.id} --criterion AC-k | waive ${o.id} --reason "<why>")`);
     }
+    if (debateState(work) === "open")
+      missing.push(`the debate is open (${work.debate?.reason ?? ""}); close it with the judge's ruling (crew debate <id> close [--tokens n])`);
   } else if (next === "build") {
     if (work.criteria.length === 0) {
       missing.push('at least one acceptance criterion (crew criteria <id> add "...")');
@@ -1764,12 +1794,14 @@ function renderReport(work, evidence, policy, ledger) {
     }
   }
   const decisions = work.decisions ?? [];
-  if (decisions.length) {
+  if (decisions.length || work.debate) {
     lines.push("", "## Gap round", "");
     for (const d of decisions) {
       const answer = d.answer === undefined ? "no answer yet" : `${d.answer}, ${decidedBy(d)}${countedNote(policy, d)}`;
       lines.push(`- ${d.id}: ${d.question} → ${answer}`);
     }
+    const debate = work.debate;
+    lines.push(debate ? `- Debate: opened (${debate.reason}), ${debate.closedAt ? "closed" : "open"}${debate.tokens !== undefined ? `, ${debate.tokens} tokens` : ""}` : "- Debate: none");
   }
   const removed = work.removedCriteria ?? [];
   const pauses = work.pauses ?? [];
@@ -3195,6 +3227,7 @@ var KNOWN_FLAGS = {
   classify: ["answers"],
   criteria: ["kind"],
   decision: ["default"],
+  debate: ["reason", "tokens"],
   decide: ["mode", "validator"],
   objection: ["by", "severity", "criterion", "reason", "mode"],
   approve: ["mode", "validator"],
@@ -3718,6 +3751,34 @@ async function dispatch(parsed, io) {
         decision
       });
     }
+    case "debate": {
+      const opened = openForChange(env, args[0]);
+      if (isOutcome(opened))
+        return opened;
+      const usage = 'usage: crew debate <id> open --reason "<why>" | crew debate <id> close [--tokens n]';
+      if (args[1] === "open") {
+        const reason = typeof parsed.flags.reason === "string" ? parsed.flags.reason.trim() : "";
+        if (!reason)
+          return refuse(usage);
+        const result = openDebate(opened.work, reason);
+        if ("refused" in result)
+          return refuse(result.refused);
+        saveWork(env.paths, opened.work);
+        return ok(`debate open on ${opened.work.id}: ${result.reason}`, { debate: result });
+      }
+      if (args[1] === "close") {
+        const flag = parsed.flags.tokens;
+        const tokens = flag === undefined ? undefined : typeof flag === "string" ? Number(flag) : Number.NaN;
+        if (tokens !== undefined && !(Number.isFinite(tokens) && tokens >= 0))
+          return refuse("--tokens is a number");
+        const result = closeDebate(opened.work, tokens);
+        if ("refused" in result)
+          return refuse(result.refused);
+        saveWork(env.paths, opened.work);
+        return ok(`debate closed on ${opened.work.id}${tokens !== undefined ? ` (${tokens} tokens)` : ""}`, { debate: result });
+      }
+      return refuse(usage);
+    }
     case "decide": {
       const opened = openForChange(env, args[0]);
       if (isOutcome(opened))
@@ -3975,6 +4036,7 @@ ${gateSummary(active.work, result.verdict, result.unproven, result.evidence.runs
         phase: work.phase,
         route: work.route,
         awaiting: work.awaiting,
+        debate: debateState(work),
         baseCommit: work.baseCommit,
         phases: PHASES_BY_ROUTE[work.route],
         verdict: result.verdict,
@@ -4064,6 +4126,8 @@ var HELP = `crew ${VERSION}
   objection <id> add "<text>" --by <role> --severity blocking|advisory   file an objection (ledger)
   objection <id> resolve O-n --criterion AC-k   resolved when that criterion is proven
   objection <id> waive O-n --reason "<why>"     the user decides against it (asks the user)
+  debate <id> open --reason "<why>"     the conclave's debate opens on a decision with consequences (once per item)
+  debate <id> close [--tokens n]        the judge has ruled; plan is held while the debate is open
   approve <id> spec                     record the user's approval (asks the user)
       --mode auto|bypassPermissions|dontAsk   no person watching: recorded as the agent's decision
   phase <id> next                       advance when the guard holds

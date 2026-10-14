@@ -15,12 +15,15 @@ import {
   answerDecision,
   applyClassification,
   approve,
+  closeDebate,
   createWork,
+  debateState,
   type GuardContext,
   guardFor,
   hasAcceptanceSection,
   loadWork,
   missingConclaveSections,
+  openDebate,
   PHASES_BY_ROUTE,
   raiseRoute,
   removeCriterion,
@@ -48,6 +51,47 @@ const empty: GuardContext = {
   unproven: [],
   policy: DEFAULT_POLICY,
 };
+
+test("SP2b: the debate opens once with a reason, closes with its cost, and holds the plan while open", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const work = createWork(paths, "feature");
+  applyClassification(work, "feature", { route: "standard", reasons: [], riskAreas: [] });
+  work.phase = "conclave";
+  const conclave =
+    "## Assumed by good practice\nnone\n## Decisions only the user can make\nnone\n## Proposals\nnone\n## Warnings\nnone\n";
+  const ctx = { ...empty, conclaveText: conclave };
+  expect(debateState(work)).toBe("none");
+  expect(guardFor(work, "plan", ctx)).toEqual([]);
+  expect(openDebate(work, "  ")).toEqual({
+    refused: "a debate opens for a reason: the decision with consequences",
+  });
+  expect(openDebate(work, "which models are hard-deleted")).toMatchObject({
+    reason: "which models are hard-deleted",
+  });
+  expect(debateState(work)).toBe("open");
+  expect(guardFor(work, "plan", ctx)).toEqual([
+    "the debate is open (which models are hard-deleted); close it with the judge's ruling (crew debate <id> close [--tokens n])",
+  ]);
+  expect(openDebate(work, "again")).toMatchObject({
+    refused: expect.stringContaining("the debate is already open"),
+  });
+  expect(closeDebate(work, 5400)).toMatchObject({ tokens: 5400 });
+  expect(typeof work.debate?.closedAt).toBe("string");
+  expect(debateState(work)).toBe("closed");
+  expect(guardFor(work, "plan", ctx)).toEqual([]);
+  expect(closeDebate(work)).toEqual({ refused: "the debate is already closed" });
+  expect(openDebate(work, "once more")).toEqual({
+    refused: "the debate is closed; it opens once per item",
+  });
+  expect(closeDebate(createWork(paths, "other"))).toEqual({
+    refused: 'no debate is open (crew debate <id> open --reason "<why>")',
+  });
+  saveWork(paths, work);
+  expect(loadWork(paths, work.id).work?.debate).toMatchObject({
+    reason: "which models are hard-deleted",
+    tokens: 5400,
+  });
+});
 
 test("createWork writes the item and the brief and makes it active", () => {
   const paths = repoPaths(makeRepo(), testEnv());

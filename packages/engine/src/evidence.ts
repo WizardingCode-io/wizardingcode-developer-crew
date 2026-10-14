@@ -317,7 +317,7 @@ export function renderReport(
     }
   }
   const decisions = work.decisions ?? [];
-  if (decisions.length) {
+  if (decisions.length || work.debate) {
     lines.push("", "## Gap round", "");
     for (const d of decisions) {
       const answer =
@@ -326,6 +326,13 @@ export function renderReport(
           : `${d.answer}, ${decidedBy(d)}${countedNote(policy, d)}`;
       lines.push(`- ${d.id}: ${d.question} → ${answer}`);
     }
+    // Whether the round found a decision with consequences (SP2 §7): the debate, its reason, its close.
+    const debate = work.debate;
+    lines.push(
+      debate
+        ? `- Debate: opened (${debate.reason}), ${debate.closedAt ? "closed" : "open"}${debate.tokens !== undefined ? `, ${debate.tokens} tokens` : ""}`
+        : "- Debate: none",
+    );
   }
   const removed = work.removedCriteria ?? [];
   const pauses = work.pauses ?? [];
