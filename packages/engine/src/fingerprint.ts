@@ -93,6 +93,43 @@ export function gitChangedSince(root: string, base: string): string[] | null {
   return [...new Set([...diff.split("\0").filter(Boolean), ...untracked])].sort();
 }
 
+/** A new file as a patch, the way `git diff` shows an addition, so untracked files join the diff of the tracked ones. */
+function additionPatch(root: string, path: string): string {
+  let buffer: Buffer;
+  try {
+    buffer = readFileSync(join(root, path));
+  } catch {
+    return "";
+  }
+  const header = `diff --git a/${path} b/${path}\nnew file mode 100644\n--- /dev/null\n+++ b/${path}\n`;
+  if (buffer.subarray(0, 8000).includes(0))
+    return `${header}Binary files /dev/null and b/${path} differ\n`;
+  const text = buffer.toString("utf8");
+  if (text === "") return header;
+  const lines = text.split("\n");
+  const newlineAtEnd = lines.at(-1) === "";
+  if (newlineAtEnd) lines.pop();
+  const body = lines.map((line) => `+${line}`).join("\n");
+  return `${header}@@ -0,0 +1,${lines.length} @@\n${body}\n${newlineAtEnd ? "" : "\\ No newline at end of file\n"}`;
+}
+
+/**
+ * The unified diff of these paths since a base commit, the untracked ones as additions: what a
+ * reviewer receives, the item's change and nothing else (SP2 §10). Empty where git cannot run.
+ */
+export function gitDiffSince(root: string, base: string, paths: readonly string[]): string {
+  if (paths.length === 0) return "";
+  const untracked = new Set(untrackedPaths(root) ?? []);
+  const tracked = paths.filter((p) => !untracked.has(p));
+  const parts: string[] = [];
+  if (tracked.length) {
+    const diff = gitTry(root, ["diff", "--no-renames", "--no-color", base, "--", ...tracked]);
+    if (diff) parts.push(diff);
+  }
+  for (const path of paths) if (untracked.has(path)) parts.push(additionPatch(root, path));
+  return parts.join("");
+}
+
 export function isWatched(path: string, profile: Profile): boolean {
   return !matchesAny(path, profile.watch.exclude);
 }

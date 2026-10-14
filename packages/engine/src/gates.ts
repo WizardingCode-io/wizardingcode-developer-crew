@@ -11,6 +11,7 @@ import {
   MAX_WATCHED_FILES,
 } from "./fingerprint.ts";
 import { exists, nowIso, readText } from "./fs.ts";
+import { plannedJudgementGates, writeReviewInputs } from "./judgement.ts";
 import { loadLedger } from "./objections.ts";
 import { type CrewPaths, workDir } from "./paths.ts";
 import { namedFiles } from "./problems.ts";
@@ -20,12 +21,15 @@ import type {
   Evidence,
   GateName,
   GateRun,
+  JudgementGateName,
+  PlannedJudgement,
   Policy,
   Profile,
   Route,
   Target,
   WorkItem,
 } from "./types.ts";
+import { GATE_NAMES } from "./types.ts";
 import { isSkipped, raiseRoute } from "./work.ts";
 
 const MANIFESTS = new Set([
@@ -436,6 +440,10 @@ export interface GateOutcome {
   changed: string[];
   raised: Route | null;
   tampered: boolean;
+  /** The judgement gates the item needs, printed before the roles run them (SP2 §10). */
+  judgement: PlannedJudgement[];
+  /** The review folder, written when a judgement gate is planned; null when none is. */
+  review: string | null;
 }
 
 export async function runGates(
@@ -443,7 +451,7 @@ export async function runGates(
   work: WorkItem,
   profile: Profile,
   policy: Policy,
-  options: { only?: GateName[]; tampered?: boolean } = {},
+  options: { only?: readonly (GateName | JudgementGateName)[]; tampered?: boolean } = {},
 ): Promise<GateOutcome> {
   const base = work;
   const changed = changedWatchedPaths(paths.root, profile, base);
@@ -467,9 +475,11 @@ export async function runGates(
   const fingerprintBefore = computeFingerprint(paths.root, profile, base);
   // The stamp the runs carry: the tree before them, or as the build gate left it (finding 18).
   let stamp = fingerprintBefore;
+  // `--only` with judgement names alone runs no deterministic gate: the inputs are rewritten and the plan stands.
+  const onlyGates = options.only?.filter((g): g is GateName => GATE_NAMES.includes(g as GateName));
   for (const one of planned) {
     const { gate, target } = one;
-    if (options.only && !options.only.includes(gate)) continue;
+    if (onlyGates !== undefined && !onlyGates.includes(gate)) continue;
     evidence.runs = evidence.runs.filter((r) => !superseded(r, one));
     if (isSkipped(work, `gate:${gate}`, policy)) {
       const skip = work.skips.find((s) => s.step === `gate:${gate}`);
@@ -515,6 +525,9 @@ export async function runGates(
   if (stamp !== fingerprintBefore)
     for (const r of evidence.runs) if (r.fingerprint === fingerprintBefore) r.fingerprint = stamp;
   evidence.fingerprint = stamp;
+  // Planned after the route may have been raised, so a risk area the diff touched plans the security gate.
+  const judgement = plannedJudgementGates(work.route, work.riskAreas, changed, policy);
+  const review = judgement.length ? writeReviewInputs(paths, work, changed) : null;
   const verdict = computeVerdict({
     work,
     evidence,
@@ -533,7 +546,7 @@ export async function runGates(
   evidence.verdict = verdict.verdict;
   evidence.unproven = verdict.unproven;
   saveEvidence(paths, work.id, evidence);
-  return { evidence, ...verdict, planned, changed, raised, tampered };
+  return { evidence, ...verdict, planned, changed, raised, tampered, judgement, review };
 }
 
 export interface Assessment {
@@ -542,6 +555,10 @@ export interface Assessment {
   unproven: string[];
   expected: PlannedGate[];
   changed: string[];
+  /** The judgement gates planned for the item as it stands (SP2 §10). */
+  judgement: PlannedJudgement[];
+  /** The fingerprint of the code as it is now, by the method the evidence was made with. */
+  currentFingerprint: string;
 }
 
 /** Read-only: what the evidence says about the code as it is right now. Fast enough for a hook. */
@@ -555,23 +572,25 @@ export function assess(
   const base = work;
   const changed = changedWatchedPaths(paths.root, profile, base);
   const expected = plannedGates(work.route, profile, policy, changed, paths.root);
+  const judgement = plannedJudgementGates(work.route, work.riskAreas, changed, policy);
   const read = loadEvidence(paths, work.id);
   // Judged with the method the evidence was made with: a walk fingerprint from a process where
   // git could not run is compared to the walk here, not to git's name for the same code.
+  const currentFingerprint = computeFingerprint(
+    paths.root,
+    profile,
+    base,
+    MAX_WATCHED_FILES,
+    fingerprintMethod(read.evidence.fingerprint),
+  );
   const verdict = computeVerdict({
     work,
     evidence: read.evidence,
     expected,
     ledger: loadLedger(paths, work.id).ledger,
-    currentFingerprint: computeFingerprint(
-      paths.root,
-      profile,
-      base,
-      MAX_WATCHED_FILES,
-      fingerprintMethod(read.evidence.fingerprint),
-    ),
+    currentFingerprint,
     tampered: tampered || read.tampered || loadLedger(paths, work.id).tampered,
     policy,
   });
-  return { evidence: read.evidence, ...verdict, expected, changed };
+  return { evidence: read.evidence, ...verdict, expected, changed, judgement, currentFingerprint };
 }

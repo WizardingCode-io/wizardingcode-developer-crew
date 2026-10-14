@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { AnswerError, type Answers, computeRoute, validateAnswers } from "./classify.ts";
 import { loadConfig, saveConfig, setConfigValue } from "./config.ts";
 import { detectProfile, missingTestCommands } from "./detect/index.ts";
@@ -16,6 +16,7 @@ import { ensureDir, nowIso, readText, writeText } from "./fs.ts";
 import { assess, runGates } from "./gates.ts";
 import { handleHook } from "./hooks/index.ts";
 import type { HookPayload } from "./hooks/types.ts";
+import { judgementRows } from "./judgement.ts";
 import {
   addObjection,
   bindObjection,
@@ -33,6 +34,7 @@ import { recordTdd, type TddStep } from "./tdd.ts";
 import type {
   Decision,
   GateName,
+  JudgementGateName,
   Phase,
   Policy,
   Profile,
@@ -42,6 +44,7 @@ import type {
 } from "./types.ts";
 import {
   GATE_NAMES,
+  isJudgementGateName,
   isPermissionMode,
   isValidatorRule,
   PERMISSION_MODES,
@@ -60,6 +63,7 @@ import {
   approve,
   createWork,
   type GuardContext,
+  isSkipped,
   loadWork,
   nextPhaseOf,
   openItems,
@@ -845,14 +849,16 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
               .map((g) => g.trim())
               .filter(Boolean)
           : undefined;
-      const unknown = only?.find((g) => !GATE_NAMES.includes(g as GateName));
+      const unknown = only?.find(
+        (g) => !GATE_NAMES.includes(g as GateName) && !isJudgementGateName(g),
+      );
       if (unknown !== undefined) return refuse(`unknown gate: ${unknown}`);
       // The profile follows the manifests before the gates are planned: a script or a lockfile the
       // work added is picked up here, with no detect --refresh and no profile set (finding 23).
       const refreshed = refreshProfile(env.paths, env.profile, env.tampered);
       env.profile = refreshed.profile;
       const outcome = await runGates(env.paths, opened.work, env.profile, env.policy, {
-        only: only as GateName[] | undefined,
+        only: only as (GateName | JudgementGateName)[] | undefined,
         tampered: env.tampered || opened.tampered,
       });
       // A gate run is the work entering its gate phase, and its delivery when it proves the work;
@@ -883,13 +889,29 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       const picked = refreshed.changed.length
         ? `profile refreshed: ${refreshed.changed.join("; ")}\n`
         : "";
+      const review = outcome.review
+        ? relative(env.paths.root, outcome.review).replace(/\\/g, "/")
+        : null;
+      // The judgement gates still to run, each with why it is planned: the cost is printed before
+      // the roles run (SP2 §10). A current ruling or a counted skip takes a gate off the list.
+      const pending = outcome.judgement.filter((j) => {
+        const record = (outcome.evidence.judgement ?? []).find((r) => r.gate === j.gate);
+        return (
+          !isSkipped(opened.work, `gate:${j.gate}`, env.policy) &&
+          (!record || record.fingerprint !== outcome.evidence.fingerprint)
+        );
+      });
+      const judgementNote = pending.length
+        ? `\nJudgement gates to run: ${pending.map((j) => `${j.gate} (${j.reason})`).join(", ")}; inputs in ${review}/ (diff.patch, files.txt); record each with crew judgement ${opened.work.id} record --ruling <file>`
+        : "";
       return {
         code: outcome.verdict === "proven" ? 0 : 1,
         stdout: true,
         text:
           picked +
           raised +
-          gateSummary(opened.work, outcome.verdict, outcome.unproven, outcome.evidence.runs),
+          gateSummary(opened.work, outcome.verdict, outcome.unproven, outcome.evidence.runs) +
+          judgementNote,
         data: {
           verdict: outcome.verdict,
           unproven: outcome.unproven,
@@ -897,6 +919,8 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           raised: outcome.raised,
           route: opened.work.route,
           refreshed: refreshed.changed,
+          judgement: outcome.judgement,
+          review,
         },
       };
     }
@@ -997,10 +1021,24 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           ...(r.reason ? { reason: r.reason } : {}),
         })),
         skips: work.skips.map((s) => ({ step: s.step, reason: s.reason })),
+        judgement: judgementRows(
+          work,
+          result.evidence,
+          result.judgement,
+          result.currentFingerprint,
+          env.policy,
+        ),
+        decisions: (work.decisions ?? []).map((d) => ({
+          id: d.id,
+          question: d.question,
+          ...(d.answer !== undefined ? { answer: d.answer } : {}),
+          ...(d.by ? { by: d.by } : {}),
+        })),
         objections: loadLedger(env.paths, work.id).ledger.objections.map((o) => ({
           id: o.id,
           severity: o.severity,
           status: objectionStatus(o, work, result.evidence, env.policy),
+          text: o.text,
         })),
       });
     }
@@ -1067,7 +1105,7 @@ const HELP = `crew ${VERSION}
   phase <id> next                       advance when the guard holds
   await <id> user | resume <id>         mark or clear waiting for the user
   tdd <red|green|before|after|observed> <id> <criterion> [--reason "<why>"] [-- <cmd>]
-  gate run <id> [--only a,b]            run the gates the route requires
+  gate run <id> [--only a,b]            run the gates the route requires; plans the judgement gates and writes their inputs to .crew/work/<id>/review/
   skip <id> <step> --reason "<text>"    record a skip (asks the user; --mode as for approve)
   evidence <id>                         write and print the report
   status | mode [m] | config <key> [v]  state and settings

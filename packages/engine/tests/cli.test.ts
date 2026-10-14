@@ -6,6 +6,60 @@ import { loadProfile } from "../src/profile.ts";
 import { readProtectedJson, writeProtectedJson } from "../src/store.ts";
 import { git, makeRepo, repoPaths, tempDir, testEnv, write } from "./helpers.ts";
 
+test("SP2b: gate run names the judgement gates to run, accepts their names in --only, and status shows the plan, the decisions and the objections' text", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/App.vue": "<template/>",
+  });
+  const c = io(root);
+  const id = (await c.json("start", "Empty state", "--answers", answers, "--criterion", "a")).data
+    .id as string;
+  write(root, "src/App.vue", "<template>empty</template>");
+  expect((await c.run("tdd", "red", id, "AC-1", "--", "exit 1")).code).toBe(0);
+  expect((await c.run("tdd", "green", id, "AC-1", "--", "exit 0")).code).toBe(0);
+  const run = await c.run("gate", "run", id);
+  expect(run.out).toContain(
+    `Judgement gates to run: ui-ux (interface files: src/App.vue); inputs in .crew/work/${id}/review/ (diff.patch, files.txt); record each with crew judgement ${id} record --ruling <file>`,
+  );
+  expect(existsSync(join(root, ".crew", "work", id, "review", "diff.patch"))).toBe(true);
+  const json = await c.json("gate", "run", id, "--only", "ui-ux");
+  expect(json.data.judgement).toEqual([{ gate: "ui-ux", reason: "interface files: src/App.vue" }]);
+  expect(json.data.review).toBe(`.crew/work/${id}/review`);
+  expect((json.data.runs as unknown[]).length).toBe(2);
+  expect((await c.run("gate", "run", id, "--only", "ui-ux,bogus")).err.trim()).toBe(
+    "unknown gate: bogus",
+  );
+  const status = await c.json("status");
+  expect(status.data.judgement).toEqual([
+    { gate: "ui-ux", status: "planned", planned: "interface files: src/App.vue", findings: 0 },
+  ]);
+  expect(status.data.decisions).toEqual([]);
+  await c.run("decision", id, "add", "Which empty-state copy?", "--default", "the product's voice");
+  await c.run("decide", id, "D-1", "the product's voice");
+  await c.run(
+    "objection",
+    id,
+    "add",
+    "the empty state hides the primary action",
+    "--by",
+    "fault-finder",
+    "--severity",
+    "advisory",
+  );
+  const after = await c.json("status");
+  expect(after.data.decisions).toEqual([
+    { id: "D-1", question: "Which empty-state copy?", answer: "the product's voice", by: "user" },
+  ]);
+  expect(after.data.objections).toEqual([
+    {
+      id: "O-1",
+      severity: "advisory",
+      status: "open",
+      text: "the empty state hides the primary action",
+    },
+  ]);
+});
+
 function io(cwd: string, env = testEnv(), stdin = "") {
   const out: string[] = [];
   const err: string[] = [];
@@ -1088,7 +1142,14 @@ test("SP2a: objection add, resolve and waive through the command; a hand edit is
     (await c.run("objection", id, "add", "x", "--by", "expert", "--severity", "huge")).err,
   ).toContain("severity is blocking or advisory");
   const status = await c.json("status");
-  expect(status.data.objections).toEqual([{ id: "O-1", severity: "blocking", status: "open" }]);
+  expect(status.data.objections).toEqual([
+    {
+      id: "O-1",
+      severity: "blocking",
+      status: "open",
+      text: "the full sync would re-subscribe everyone",
+    },
+  ]);
   expect((await c.json("gate", "run", id)).data.unproven).toContain(
     "blocking objection O-1 open: the full sync would re-subscribe everyone",
   );

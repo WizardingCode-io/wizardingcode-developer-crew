@@ -8,6 +8,7 @@ import {
   computeFingerprint,
   fingerprintMethod,
   gitChangedPaths,
+  gitDiffSince,
   hashPaths,
   MAX_WATCHED_FILES,
 } from "../src/fingerprint.ts";
@@ -15,6 +16,27 @@ import { DEFAULT_POLICY } from "../src/policy.ts";
 import type { WorkItem } from "../src/types.ts";
 import { addCriterion, addSkip } from "../src/work.ts";
 import { git, makeRepo, tempDir, write } from "./helpers.ts";
+
+test("SP2b: gitDiffSince is the change of the named paths since the base: tracked as a diff, untracked as additions, nothing else", () => {
+  const root = makeRepo({ "src/a.ts": "const a = 1;\n", "src/keep.ts": "keep\n" });
+  const base = git(root, "rev-parse", "HEAD");
+  write(root, "src/a.ts", "const a = 2;\n");
+  write(root, "src/new.ts", "fresh\n");
+  write(root, "src/keep.ts", "changed but not asked for\n");
+  const patch = gitDiffSince(root, base, ["src/a.ts", "src/new.ts"]);
+  expect(patch).toContain("diff --git a/src/a.ts b/src/a.ts");
+  expect(patch).toContain("-const a = 1;");
+  expect(patch).toContain("+const a = 2;");
+  expect(patch).toContain(
+    "diff --git a/src/new.ts b/src/new.ts\nnew file mode 100644\n--- /dev/null\n+++ b/src/new.ts\n@@ -0,0 +1,1 @@\n+fresh\n",
+  );
+  expect(patch).not.toContain("src/keep.ts");
+  // Committing mid-work hides nothing: the base is the same commit.
+  git(root, "add", "-A");
+  git(root, "commit", "-q", "-m", "work");
+  expect(gitDiffSince(root, base, ["src/a.ts", "src/new.ts"])).toContain("+fresh");
+  expect(gitDiffSince(root, base, [])).toBe("");
+});
 
 test("the fingerprint is stable and changes when a watched file changes", () => {
   const root = makeRepo({ "src/a.ts": "export const a = 1;\n", "README.md": "# r\n" });

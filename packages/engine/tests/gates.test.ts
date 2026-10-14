@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { chmodSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseAudit } from "../src/audit.ts";
 import { emptyEvidence, renderReport, saveEvidence } from "../src/evidence.ts";
@@ -19,6 +19,65 @@ import { ensureProfile, loadProfile, saveProfile } from "../src/profile.ts";
 import type { Target } from "../src/types.ts";
 import { addCriterion, addSkip, createWork } from "../src/work.ts";
 import { git, makeRepo, repoPaths, tempDir, testEnv, write } from "./helpers.ts";
+
+test("SP2b: a gate run writes the review inputs when a judgement gate is planned, and nothing on a fast item without an interface file", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+    "src/App.vue": "<template/>",
+  });
+  const paths = repoPaths(root, testEnv());
+  const { profile } = ensureProfile(paths);
+  const work = createWork(paths, "fix");
+  work.route = "fast";
+  addCriterion(work, "x");
+  write(root, "src/a.ts", "y");
+  const plain = await runGates(paths, work, profile, DEFAULT_POLICY);
+  expect(plain.judgement).toEqual([]);
+  expect(plain.review).toBeNull();
+  expect(existsSync(join(paths.crewDir, "work", work.id, "review"))).toBe(false);
+  write(root, "src/App.vue", "<template>hi</template>");
+  write(root, "src/new.ts", "new");
+  const withUi = await runGates(paths, work, profile, DEFAULT_POLICY);
+  expect(withUi.judgement).toEqual([{ gate: "ui-ux", reason: "interface files: src/App.vue" }]);
+  expect(withUi.review).toBe(join(paths.crewDir, "work", work.id, "review"));
+  const review = withUi.review ?? "";
+  expect(readFileSync(join(review, "files.txt"), "utf8")).toBe(
+    "src/App.vue\nsrc/a.ts\nsrc/new.ts\n",
+  );
+  const patch = readFileSync(join(review, "diff.patch"), "utf8");
+  expect(patch).toContain("+++ b/src/App.vue");
+  expect(patch).toContain("+<template>hi</template>");
+  expect(patch).toContain("new file mode 100644\n--- /dev/null\n+++ b/src/new.ts");
+  // The review folder is the session's, not the engine's: it moves neither the fingerprint nor the plan.
+  const after = assess(paths, work, profile, DEFAULT_POLICY);
+  expect(after.unproven).not.toContain("code changed since the last gate run");
+  expect(after.judgement).toEqual(withUi.judgement);
+});
+
+test("SP2b: --only with judgement names alone runs no deterministic gate and rewrites the review inputs", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/App.vue": "<template/>",
+  });
+  const paths = repoPaths(root, testEnv());
+  const { profile } = ensureProfile(paths);
+  const work = createWork(paths, "fix");
+  work.route = "fast";
+  addCriterion(work, "x");
+  addSkip(work, "tdd:AC-1", "manual");
+  write(root, "src/App.vue", "<template>a</template>");
+  const only = await runGates(paths, work, profile, DEFAULT_POLICY, { only: ["ui-ux"] });
+  expect(only.evidence.runs).toEqual([]);
+  expect(only.judgement.map((j) => j.gate)).toEqual(["ui-ux"]);
+  expect(readFileSync(join(only.review ?? "", "files.txt"), "utf8")).toBe("src/App.vue\n");
+  expect(only.unproven.slice(0, 2)).toEqual(["gate secrets not run", "gate test not run"]);
+  // A deterministic name beside a judgement name runs that gate alone.
+  const mixed = await runGates(paths, work, profile, DEFAULT_POLICY, {
+    only: ["secrets", "ui-ux"],
+  });
+  expect(mixed.evidence.runs.map((r) => r.gate)).toEqual(["secrets"]);
+});
 
 const target: Target = {
   path: ".",

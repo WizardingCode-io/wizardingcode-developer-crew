@@ -5,6 +5,23 @@ import { onPreToolUse } from "../src/hooks/pre-tool-use.ts";
 import { createWork, saveWork } from "../src/work.ts";
 import { hookContext, makeRepo, tempDir, testEnv } from "./helpers.ts";
 
+test("SP2b: the review folder is the session's to write, and judgement and debate are not user-only", () => {
+  const { root, ctx } = setup();
+  const work = createWork(ctx.paths, "feature");
+  work.route = "standard";
+  work.phase = "gate";
+  saveWork(ctx.paths, work);
+  const review = join(root, ".crew", "work", work.id, "review", "ruling.json");
+  expect(onPreToolUse(ctx, { tool_name: "Write", tool_input: { file_path: review } })).toEqual({});
+  const bash = (command: string) =>
+    onPreToolUse(ctx, { tool_name: "Bash", tool_input: { command }, permission_mode: "default" });
+  expect(
+    bash(`crew judgement ${work.id} record --ruling .crew/work/${work.id}/review/ruling.json`),
+  ).toEqual({});
+  expect(bash(`crew debate ${work.id} open --reason "who holds the permission"`)).toEqual({});
+  expect(decision(bash(`echo x > .crew/work/${work.id}/evidence.json`))).toBe("deny");
+});
+
 function decision(response: Record<string, unknown>): string | undefined {
   return (response.hookSpecificOutput as { permissionDecision?: string } | undefined)
     ?.permissionDecision;
