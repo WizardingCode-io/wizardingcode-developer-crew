@@ -172,3 +172,11 @@ Severity: `high` blocks work or proves falsely; `medium` costs a step or a decis
 - Expected: a gate that judges the item's change, not the tree's debt. For lint and typecheck, fail only on problems in the files the item touched, or run the tool on those files when it takes paths (ESLint and Pint do, `vue-tsc` does not); for deps, only on advisories the item introduced (the baseline ADR 0002 rejected "for now"). Short of that, the skill tells the agent to narrow the command to the touched files when the tool allows, and the report says the gate ran narrowed.
 - Evidence: the Decisions sections of the three reports; the `skips` in each `work.json`.
 - Outcome: open. This is the proof scope by item, an engine design question with #9, #11 and #18, not conclave material. A cheap first step, the skill's wording on narrowing, is a candidate for 0.1.7 if the remaining sessions do not bring anything more urgent.
+
+### 21. A flag before a user-only verb dodged the hook's prompt
+
+- Date: 2026-10-14. Project: this repository, found by the fresh review of SP2a. Category: `false-proof`. Severity: high.
+- What happened: the PreToolUse rule that asks the user for `crew approve`, `crew skip` and the others required the verb right after `crew`, while the command parser takes a flag from any position. `crew --json approve w1 spec` ran with no prompt and recorded the approval as the user's; since 0.1.0. SP2a added `crew decide` and `crew objection … waive` behind the same shape, where `crew objection w1 --reason x waive O-1` recorded a waiver "by the user" with nobody asked, and the item read Proven "with 1 objection waived by the user".
+- Expected: the prompt is the user's signature; any shape of the command that the parser accepts must reach the hook's rule.
+- Evidence: the reviewer's probe, recorded in `.superpowers/sdd/2026-10-14-sp2a-conclave-in-the-engine/progress.md` (final review).
+- Outcome: fixed in the SP2a review pass (work item `2026-10-14-015-sp2a-review-fixes-the-user-only-hook-rul`, proven; ships with 0.2.0): the rule tolerates options before the verb and between the words of a two-word verb, and `objection … waive` anything but a command separator in between. An `objection add` whose text contains the word "waive" is asked; an acceptable false positive.
