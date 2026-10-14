@@ -8,8 +8,7 @@ const RUBRICS = fileURLToPath(
 );
 
 const REVIEWERS = ["code-quality", "test-quality", "security", "ui-ux", "risk"];
-// Task 6 adds the debate roles here
-const DEBATE_ROLES: string[] = [];
+const DEBATE_ROLES = ["researcher", "expert", "devils-advocate", "fault-finder"];
 const NEVER = ["Write", "Edit", "MultiEdit", "NotebookEdit", "Bash", "Agent", "Task"];
 const LISTS = [
   "## What the reviewer receives",
@@ -89,6 +88,34 @@ test("SP2b: the judge rules the gates, rules the debate and acts as validator, o
   expect(body).toContain("stated-default");
   expect(body).toMatch(/never waive/);
   expect(body).toContain('never "by the user"');
+});
+
+test("SP2b: the debate roles run on opus; the devil's advocate and the fault-finder read the proposals file only", () => {
+  for (const role of DEBATE_ROLES) expect(agent(role).meta.model).toBe("opus");
+  expect(tools(agent("researcher").meta)).toEqual([
+    "Read",
+    "Grep",
+    "Glob",
+    "WebFetch",
+    "WebSearch",
+  ]);
+  expect(tools(agent("expert").meta)).toEqual(["Read", "Grep", "Glob"]);
+  for (const role of ["devils-advocate", "fault-finder"]) {
+    const { meta, body } = agent(role);
+    expect(tools(meta)).toEqual(["Read"]);
+    expect(body).toContain("conclave/proposals.md");
+    expect(body).toMatch(/nothing else/);
+    expect(body).toMatch(/reasoning/);
+  }
+  const expert = agent("expert").body;
+  expect(expert).toContain("## Proposal");
+  expect(expert).toContain("## Reasoning");
+  expect(expert).toMatch(/Nothing in "Proposal" refers to "Reasoning"/);
+  const finder = agent("fault-finder").body;
+  expect(finder).toContain("- blocking · P-n ·");
+  expect(finder).toContain("- advisory · P-n ·");
+  expect(finder).toContain("--by fault-finder");
+  expect(agent("researcher").body).toContain("## What the facts do not settle");
 });
 
 test("SP2b: one rubric per judgement gate, each judging the change and never the repository", () => {

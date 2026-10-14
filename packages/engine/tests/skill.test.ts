@@ -1,6 +1,45 @@
 import { expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+
+const KINDS = [
+  "endpoint",
+  "auth",
+  "payment",
+  "upload",
+  "migration-or-restore",
+  "sync",
+  "link-target",
+  "deletion",
+  "merge",
+  "screen",
+];
+const CASES: Record<string, string[]> = {
+  deletion: ["C-5", "C-11"],
+  sync: ["C-9"],
+  "link-target": ["C-13", "C-14"],
+  "migration-or-restore": ["C-16"],
+  merge: ["C-17"],
+};
+
+test("SP2b: one checklist per kind of change, each with the four lists and its corpus cases", () => {
+  const dir = fileURLToPath(
+    new URL("../../../plugins/core/skills/crew/checklists/", import.meta.url),
+  );
+  expect(readdirSync(dir).sort()).toEqual(KINDS.map((k) => `${k}.md`).sort());
+  for (const kind of KINDS) {
+    const text = readFileSync(`${dir}${kind}.md`, "utf8");
+    for (const heading of [
+      "Assumed by good practice",
+      "Decisions only the user can make",
+      "Proposals",
+      "Warnings",
+    ])
+      expect(text).toContain(`## ${heading}`);
+    for (const c of CASES[kind] ?? []) expect(text).toContain(c);
+    expect(text.trimEnd().split("\n").length).toBeLessThanOrEqual(24);
+  }
+});
 
 const skill = readFileSync(
   fileURLToPath(new URL("../../../plugins/core/skills/crew/SKILL.md", import.meta.url)),
