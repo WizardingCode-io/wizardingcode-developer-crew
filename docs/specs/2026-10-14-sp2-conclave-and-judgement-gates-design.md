@@ -1,6 +1,6 @@
 # SP2: Conclave and judgement gates (design)
 
-> **Status:** draft. Written from 2026-10-14, in parallel with the last sessions of the [real-use phase](../real-use/README.md), by the user's decision of that day. It leaves draft when the phase's closing summary exists and this document has absorbed it. Nothing here is implemented.
+> **Status:** design, awaiting its plan. Written on 2026-10-14, the day the [real-use phase](../real-use/README.md) closed; the [closing summary](../real-use/2026-10-14-summary.md) is absorbed in sections 4, 15 and 18. Nothing here is implemented.
 > **Parent:** [Vision](../vision.md) §6, §7, §15. **Subproject:** 2 of 6. **Depends on:** SP1 ([design](2026-10-06-sp1-engine-and-base-method-design.md), released as 0.1.x).
 
 ## 1. Summary
@@ -264,15 +264,17 @@ Each case runs with and without the plugin as the SP1 cases do; the gap cases ar
 | A judgement gate reviews the repository instead of the change | Each gate receives the diff and its files only, by construction |
 | Latency in attended sessions | The gap round is one pass in the main context; only the debate and the gates spawn roles |
 
-## 18. Open questions for the summary
+## 18. What the phase answered, and what SP2's plan still has to measure
 
-To be answered by the phase's closing summary, from the sessions still to run, before this leaves draft:
+The phase closed on 2026-10-14 by the user's decision, before the sessions that would have answered some of these. From the records:
 
-1. How often would the debate have opened on the seventeen corpus entries under the rule in section 7, and would the user have agreed each time? ("Route agreed" and a new "debate warranted" field on each entry.)
-2. On the fast route, did the typed answers at Receive catch what a gap round would have, on the three fast items the grid still needs?
-3. What did the first Laravel gate run under 0.1.5 or later show for Pint and the full Pest suite, and does it change what the code-quality gate should receive?
-4. How many user-only decisions came up in the attended sessions under 0.1.6, and how many of them fall under a validator rule in section 9?
-5. Does the ai-mem first use change the checklists' kinds (a plugin, an MCP interface, stored memories as personal data)?
+1. **How often would the debate open?** On the seventeen corpus entries, under the rule in section 7: three times (C-5, which models are hard-deleted; C-9, the sync that would re-subscribe everyone; C-11, erasure or deactivation). The gap round alone covers C-13 and C-16. The user's agreement with each ("route agreed", "debate warranted") is not recorded yet; the plan adds both fields to the corpus and asks once.
+2. **Does the fast route need the gap round?** Not measured outside this repository: real use produced no fast item in a client project. The seven fast items here (0.1.4 to 0.1.7) had no gap that bit. The plan keeps the fast route out of the conclave and measures it with the fast-route-overhead case.
+3. **What do Pint and the full Pest suite show under the engine?** Not yet seen: the first such gate run is C-15's, still in plan at the close. Whatever it shows is recorded against 0.1.7; if Pint fails on the project's debt, that is #20 again and the code-quality gate's rule (the diff, never the tree) stands confirmed.
+4. **How many user-only decisions fall under a validator rule?** Of the roughly thirty decisions in three days: every spec approval on the full route would (the gap round was done in the brief each time); none of the sixteen skips would, by design. Under 0.1.6 and 0.1.7, where auto mode prompts, no session with crew activity has run yet; the first ones calibrate section 9's table.
+5. **Does the ai-mem first use change the checklist kinds?** Not run. The kinds a plugin brings (a hook, an MCP interface as `public-api`, stored memories as personal data) are added to the list in section 6 on the first ai-mem item.
+
+Open for the plan, then: the two "agreed" fields on the corpus, the Laravel gate run, the first attended sessions under 0.1.7, and the first ai-mem item. None of them changes the design; each sets a number the design now states as an estimate.
 
 ## 19. Decisions for the reviewer
 

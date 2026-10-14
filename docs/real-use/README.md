@@ -1,7 +1,7 @@
 # Real use of SP1, before SP2
 
-- Started: 2026-10-13. Closes by 2026-10-26, or earlier when the exit criterion below is met.
-- Plugin under use: `wizardingcode-developer-crew` 0.1.6 since 2026-10-14 (0.1.5 earlier the same day), installed at user scope from the marketplace. The user started using the plugin in the other projects on 2026-10-12, the day it was released, so the sessions of that day ran 0.1.0 to 0.1.3 as each was installed and the sessions of 2026-10-13 ran 0.1.4. The working tree's copy is not loaded in the other projects (two copies load both their hooks, and the first mod to register `/crew` wins).
+- Started: 2026-10-13. Closed on 2026-10-14 by the user's decision, with the coverage line of the exit criterion short: [the summary](2026-10-14-summary.md) says what was met, what was not, and what carries into SP2.
+- Plugin under use: `wizardingcode-developer-crew` 0.1.7 since 2026-10-14 (0.1.5 and 0.1.6 earlier the same day), installed at user scope from the marketplace. The user started using the plugin in the other projects on 2026-10-12, the day it was released, so the sessions of that day ran 0.1.0 to 0.1.3 as each was installed and the sessions of 2026-10-13 ran 0.1.4. The working tree's copy is not loaded in the other projects (two copies load both their hooks, and the first mod to register `/crew` wins).
 - Records in this folder: this plan, [`findings.md`](findings.md) (what got in the way, was wrong, or stayed silent) and [`corpus.md`](corpus.md) (the real requests and the gaps a good engineer would have raised). A closing summary joins them when the phase ends.
 
 ## Why
@@ -88,6 +88,6 @@ Read from each project's `.crew/work/*/work.json` and `evidence.json`; the user 
 
 - Coverage: six cells missing, all fast or ai-mem. Real use never produced a fast item; one needs a fix or chore in one spot, a clear request and no risk area by answers or by paths.
 - Laravel: not yet. No proven item has had `vendor/bin/pest` and `vendor/bin/pint --test` run by the engine; the first gate run under 0.1.5 or later is C-15's.
-- Quality: #9 open (`blocks`), closes with 0.1.7.
+- Quality: met with 0.1.7 (#9 fixed; #1, #7 and #14 with it).
 - Corpus: 17 entries, 4 where the gap bit on the record (C-4, C-10, C-11, C-13); met.
 - The remaining sessions, in the order that pays most: ai-mem fast (the first use without `.crew/`), ai-mem standard, ai-mem full, the Laravel gate run of C-15, a Laravel fast, a storefront standard, a storefront fast.
