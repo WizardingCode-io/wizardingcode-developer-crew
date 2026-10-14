@@ -88,6 +88,16 @@ export interface Pause {
 }
 
 /**
+ * The item started while other items of the checkout were open and watched files had uncommitted
+ * changes: a second session on one checkout (finding 9). The proof still covers the whole tree.
+ */
+export interface SharedCheckout {
+  with: string[];
+  paths: string[];
+  at: string;
+}
+
+/**
  * Claude Code's permission modes. A user-only decision the agent takes with no person watching
  * (a headless session in any mode, or `bypassPermissions` and `dontAsk`, which show no prompt)
  * records the mode it was taken in.
@@ -150,6 +160,8 @@ export interface WorkItem {
   removedCriteria?: RemovedCriterion[];
   /** Turns that ended waiting for the user while the work was not proven. Absent before 0.1.4. */
   pauses?: Pause[];
+  /** Set when the item started beside other open items with uncommitted changes. Absent before 0.1.7. */
+  sharedCheckout?: SharedCheckout;
   approvals: Approval[];
   skips: Skip[];
   /** HEAD when the item started; the change is everything since. Null outside git or with no commits. */

@@ -111,6 +111,26 @@ export function activeWork(paths: CrewPaths): { work: WorkItem | null; tampered:
 }
 
 /**
+ * The checkout's items still before deliver, in id order. An item in deliver, proven or not, is no
+ * longer worked on, so it is not a neighbour another session could be editing beside (finding 9).
+ */
+export function openItems(paths: CrewPaths, except?: string): WorkItem[] {
+  let ids: string[] = [];
+  try {
+    ids = readdirSync(join(paths.crewDir, "work")).sort();
+  } catch {
+    return [];
+  }
+  const open: WorkItem[] = [];
+  for (const id of ids) {
+    if (id === except || !existsSync(workJson(paths, id))) continue;
+    const { work } = loadWork(paths, id);
+    if (work && work.phase !== "deliver") open.push(work);
+  }
+  return open;
+}
+
+/**
  * The first classification sets the route; a later one can only raise it, and risk areas only
  * accumulate, so calmer answers never undo a raise.
  */

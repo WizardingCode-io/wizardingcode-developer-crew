@@ -1028,6 +1028,23 @@ function activeWork(paths) {
     return null;
   return loadWork(paths, id);
 }
+function openItems(paths, except) {
+  let ids = [];
+  try {
+    ids = readdirSync3(join11(paths.crewDir, "work")).sort();
+  } catch {
+    return [];
+  }
+  const open = [];
+  for (const id of ids) {
+    if (id === except || !existsSync2(workJson(paths, id)))
+      continue;
+    const { work } = loadWork(paths, id);
+    if (work && work.phase !== "deliver")
+      open.push(work);
+  }
+  return open;
+}
 function applyClassification(work, type, decision) {
   const first = work.phase === "receive";
   work.type = type;
@@ -1287,8 +1304,12 @@ function renderReport(work, evidence, policy) {
   }
   const removed = work.removedCriteria ?? [];
   const pauses = work.pauses ?? [];
-  if (work.approvals.length || work.skips.length || removed.length || pauses.length) {
+  const shared = work.sharedCheckout;
+  if (work.approvals.length || work.skips.length || removed.length || pauses.length || shared) {
     lines.push("", "## Decisions", "");
+    if (shared) {
+      lines.push(`- started in a checkout shared with ${shared.with.join(", ")}, open with uncommitted changes in ${shared.paths.join(", ")} (${shared.at})`);
+    }
     for (const a of work.approvals) {
       lines.push(`- ${a.what} approved ${decidedBy(a)} (${a.at})${countedNote(policy, a)}`);
     }
@@ -2541,7 +2562,12 @@ async function dispatch(parsed, io) {
 ` : "";
       const provenNote = previousProven && uncommitted.length && previous?.work ? `note: uncommitted changes in ${uncommitted.join(", ")} are ${previous.work.id}'s proven work and not this item's
 ` : "";
+      const neighbours = uncommitted.length ? openItems(env.paths).map((w) => w.id) : [];
       const work = createWork(env.paths, input, baseFiles);
+      if (neighbours.length)
+        work.sharedCheckout = { with: neighbours, paths: uncommitted, at: work.createdAt };
+      const sharedWarning = neighbours.length ? `warning: this checkout is shared with ${neighbours.join(", ")}, which ${neighbours.length === 1 ? "is" : "are"} open with uncommitted changes in ${uncommitted.join(", ")}; a second session on one checkout blocks turn ends and proves half-written code: work in a worktree (git worktree add ../<name> -b <branch>)
+` : "";
       classify(env, work, answers);
       const criteria = parsed.ordered.filter((f) => f.key === "criterion" || f.key === "preserve").map((f) => addCriterion(work, f.value, f.key === "preserve" ? "preserve" : "behavior"));
       if (work.route === "fast" && criteria.length > 0)
@@ -2549,7 +2575,7 @@ async function dispatch(parsed, io) {
       saveWork(env.paths, work);
       const lines = criteria.map((c) => `
   ${c.id} (${c.kind}): ${c.text}`).join("");
-      return ok(`${warning}${inheritedWarning}${provenNote}started ${work.id} (route ${work.route}: ${work.routeReasons.join("; ")})${lines}`, {
+      return ok(`${warning}${sharedWarning}${inheritedWarning}${provenNote}started ${work.id} (route ${work.route}: ${work.routeReasons.join("; ")})${lines}`, {
         id: work.id,
         route: work.route,
         phase: work.phase,
@@ -2557,6 +2583,7 @@ async function dispatch(parsed, io) {
         replaced: warning ? previous?.work?.id : null,
         criteria,
         inherited,
+        shared: work.sharedCheckout ?? null,
         proven: previousProven && previous?.work ? { of: previous.work.id, paths: uncommitted } : null
       });
     }

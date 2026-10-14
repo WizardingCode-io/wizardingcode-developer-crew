@@ -45,6 +45,7 @@ import {
   type GuardContext,
   loadWork,
   nextPhaseOf,
+  openItems,
   PHASES_BY_ROUTE,
   removeCriterion,
   saveWork,
@@ -520,7 +521,15 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         previousProven && uncommitted.length && previous?.work
           ? `note: uncommitted changes in ${uncommitted.join(", ")} are ${previous.work.id}'s proven work and not this item's\n`
           : "";
+      // Other items still being worked on, while the tree holds uncommitted changes: a second
+      // session on one checkout (finding 9). The proof covers the whole tree, so the record says so.
+      const neighbours = uncommitted.length ? openItems(env.paths).map((w) => w.id) : [];
       const work = createWork(env.paths, input, baseFiles);
+      if (neighbours.length)
+        work.sharedCheckout = { with: neighbours, paths: uncommitted, at: work.createdAt };
+      const sharedWarning = neighbours.length
+        ? `warning: this checkout is shared with ${neighbours.join(", ")}, which ${neighbours.length === 1 ? "is" : "are"} open with uncommitted changes in ${uncommitted.join(", ")}; a second session on one checkout blocks turn ends and proves half-written code: work in a worktree (git worktree add ../<name> -b <branch>)\n`
+        : "";
       classify(env, work, answers);
       // Both flags repeat and keep their command-line order, so the numbers read as typed.
       const criteria = parsed.ordered
@@ -532,7 +541,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       saveWork(env.paths, work);
       const lines = criteria.map((c) => `\n  ${c.id} (${c.kind}): ${c.text}`).join("");
       return ok(
-        `${warning}${inheritedWarning}${provenNote}started ${work.id} (route ${work.route}: ${work.routeReasons.join("; ")})${lines}`,
+        `${warning}${sharedWarning}${inheritedWarning}${provenNote}started ${work.id} (route ${work.route}: ${work.routeReasons.join("; ")})${lines}`,
         {
           id: work.id,
           route: work.route,
@@ -541,6 +550,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           replaced: warning ? previous?.work?.id : null,
           criteria,
           inherited,
+          shared: work.sharedCheckout ?? null,
           proven:
             previousProven && previous?.work ? { of: previous.work.id, paths: uncommitted } : null,
         },

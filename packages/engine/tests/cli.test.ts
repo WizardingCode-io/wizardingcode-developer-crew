@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { type CliIo, main } from "../src/cli.ts";
 import { loadProfile } from "../src/profile.ts";
 import { readProtectedJson } from "../src/store.ts";
-import { makeRepo, repoPaths, tempDir, testEnv, write } from "./helpers.ts";
+import { git, makeRepo, repoPaths, tempDir, testEnv, write } from "./helpers.ts";
 
 function io(cwd: string, env = testEnv(), stdin = "") {
   const out: string[] = [];
@@ -688,4 +688,62 @@ test("every command but hook refuses a flag it does not know and keeps its known
   expect((await c.run("--version")).code).toBe(0);
   // The hook reads its payload from stdin and is called by Claude Code, not by the agent.
   expect((await c.run("hook", "SessionStart", "--anything")).code).toBe(0);
+});
+
+test("start records a shared checkout when another item is open with uncommitted changes (finding 9)", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+    "src/b.ts": "y",
+  });
+  const c = io(root);
+  const first = (await c.json("start", "Lane A", "--answers", answers, "--criterion", "a")).data
+    .id as string;
+  write(root, "src/a.ts", "lane A, half-written");
+  const second = await c.run("start", "Lane B", "--answers", answers, "--criterion", "b");
+  expect(second.code).toBe(0);
+  expect(second.out).toContain(
+    `warning: this checkout is shared with ${first}, which is open with uncommitted changes in src/a.ts; a second session on one checkout blocks turn ends and proves half-written code: work in a worktree (git worktree add ../<name> -b <branch>)`,
+  );
+  const status = await c.json("status");
+  const secondId = status.data.active as string;
+  const record = readProtectedJson<{
+    sharedCheckout?: { with: string[]; paths: string[]; at: string };
+  }>(repoPaths(root, c.env), join(root, ".crew", "work", secondId, "work.json")).data;
+  expect(record?.sharedCheckout?.with).toEqual([first]);
+  expect(record?.sharedCheckout?.paths).toEqual(["src/a.ts"]);
+  expect(typeof record?.sharedCheckout?.at).toBe("string");
+  // A third lane names both open items.
+  write(root, "src/b.ts", "lane B, half-written");
+  const third = await c.json("start", "Lane C", "--answers", answers, "--criterion", "c");
+  expect((third.data.shared as { with: string[] }).with).toEqual([first, secondId]);
+  expect((third.data.shared as { paths: string[] }).paths).toEqual(["src/a.ts", "src/b.ts"]);
+});
+
+test("start records no shared checkout without a neighbour or without a change (finding 9)", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const c = io(root);
+  // Alone in the checkout, with an uncommitted change: measured as this item's, not shared.
+  write(root, "src/a.ts", "mine");
+  const alone = await c.json("start", "Alone", "--answers", answers, "--criterion", "a");
+  expect(alone.data.shared).toBeNull();
+  const aloneId = alone.data.id as string;
+  expect(alone.data.inherited).toEqual(["src/a.ts"]);
+  // A neighbour that is open, but a clean tree: nothing to share.
+  git(root, "add", "-A");
+  git(root, "commit", "-q", "-m", "alone's work, committed");
+  const clean = await c.json("start", "Clean", "--answers", answers, "--criterion", "b");
+  expect(clean.data.shared).toBeNull();
+  const cleanId = clean.data.id as string;
+  // A proven, delivered neighbour with its work still uncommitted is not open; an open one is.
+  write(root, "src/a.ts", "clean's work");
+  expect((await c.run("tdd", "red", cleanId, "AC-1", "--", "exit 1")).code).toBe(0);
+  expect((await c.run("tdd", "green", cleanId, "AC-1", "--", "exit 0")).code).toBe(0);
+  expect((await c.json("gate", "run", cleanId)).data.verdict).toBe("proven");
+  const after = await c.json("start", "After", "--answers", answers, "--criterion", "c");
+  expect((after.data.shared as { with: string[] }).with).toEqual([aloneId]);
+  expect((after.data.shared as { paths: string[] }).paths).toEqual(["src/a.ts"]);
 });

@@ -211,6 +211,23 @@ test("the report says who took each decision, in which mode, and whether it coun
   expect(counting).not.toContain("not counted");
 });
 
+test("the report says when the item started in a checkout shared with an open item (finding 9)", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const work = workWith(paths);
+  const evidence: Evidence = { ...emptyEvidence(), fingerprint: "f" };
+  expect(renderReport(work, evidence, DEFAULT_POLICY)).not.toContain("## Decisions");
+  work.sharedCheckout = {
+    with: ["2026-10-13-001-lane-a", "2026-10-13-002-lane-b"],
+    paths: ["src/a.ts", "src/b.ts"],
+    at: "2026-10-14T10:00:00.000Z",
+  };
+  const report = renderReport(work, evidence, DEFAULT_POLICY);
+  expect(report).toContain("## Decisions");
+  expect(report).toContain(
+    "- started in a checkout shared with 2026-10-13-001-lane-a, 2026-10-13-002-lane-b, open with uncommitted changes in src/a.ts, src/b.ts (2026-10-14T10:00:00.000Z)",
+  );
+});
+
 test("an item with no criteria is never proven, whatever the gates say", () => {
   const paths = repoPaths(makeRepo(), testEnv());
   const work = createWork(paths, "fix");

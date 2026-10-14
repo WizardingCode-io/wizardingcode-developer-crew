@@ -198,8 +198,14 @@ export function renderReport(work: WorkItem, evidence: Evidence, policy: Policy)
   }
   const removed = work.removedCriteria ?? [];
   const pauses = work.pauses ?? [];
-  if (work.approvals.length || work.skips.length || removed.length || pauses.length) {
+  const shared = work.sharedCheckout;
+  if (work.approvals.length || work.skips.length || removed.length || pauses.length || shared) {
     lines.push("", "## Decisions", "");
+    if (shared) {
+      lines.push(
+        `- started in a checkout shared with ${shared.with.join(", ")}, open with uncommitted changes in ${shared.paths.join(", ")} (${shared.at})`,
+      );
+    }
     for (const a of work.approvals) {
       lines.push(`- ${a.what} approved ${decidedBy(a)} (${a.at})${countedNote(policy, a)}`);
     }
