@@ -305,6 +305,19 @@ test("SP2a: a blocking objection keeps the item unproven until resolved or waive
   );
 });
 
+test("SP2a: the report names the validator's approval and whether the policy counted it", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const work = workWith(paths);
+  approve(work, "spec", { by: "validator", mode: "dontAsk", rule: "complete-gap-round" });
+  const evidence: Evidence = { ...emptyEvidence(), fingerprint: "f" };
+  const waiting = renderReport(work, evidence, DEFAULT_POLICY);
+  expect(waiting).toContain("- spec approved by the validator (rule: complete-gap-round) (");
+  expect(waiting).toContain("): not counted, the policy waits for a person");
+  expect(
+    renderReport(work, evidence, { ...DEFAULT_POLICY, unattendedDecisions: "validator" }),
+  ).toContain("): counted by policy");
+});
+
 test("an item with no criteria is never proven, whatever the gates say", () => {
   const paths = repoPaths(makeRepo(), testEnv());
   const work = createWork(paths, "fix");

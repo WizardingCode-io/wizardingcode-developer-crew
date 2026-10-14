@@ -1307,8 +1307,8 @@ function routeDocuments(work, ctx) {
   if (work.route === "full") {
     const approvals = work.approvals.filter((a) => a.what === "spec");
     if (!approvals.some((a) => decisionCounts(ctx.policy, a))) {
-      const agent = approvals.find((a) => a.by === "agent");
-      missing.push(agent ? `the user's approval of the spec: recorded by the agent in ${agent.mode} mode and not counted (a person runs crew approve <id> spec, or policy.json sets unattendedDecisions to "count")` : "the user's approval of the spec (crew approve <id> spec)");
+      const uncounted = approvals.find((a) => a.by && a.by !== "user");
+      missing.push(uncounted ? `the user's approval of the spec: recorded by the ${uncounted.by} in ${uncounted.mode} mode and not counted (a person runs crew approve <id> spec, or policy.json sets unattendedDecisions to "${uncounted.by === "validator" ? "validator" : "count"}")` : "the user's approval of the spec (crew approve <id> spec)");
     }
     if (!ctx.planExists)
       missing.push("plan.md in the work folder");
@@ -1322,6 +1322,21 @@ function conclaveDocument(work, ctx) {
     return ["conclave.md in the work folder (the gap round: four sections)"];
   }
   return missingConclaveSections(ctx.conclaveText).map((name) => `a "${name}" section with content in conclave.md (write "none" when there is nothing)`);
+}
+function validatorPreconditions(rule, work, ctx) {
+  if (rule !== "complete-gap-round")
+    return [];
+  const missing = conclaveDocument(work, ctx);
+  for (const d of work.decisions ?? []) {
+    const answered = d.answer !== undefined && decisionCounts(ctx.policy, d);
+    if (!answered && d.default === undefined)
+      missing.push(`a stated default or an answer for ${d.id}`);
+  }
+  if (ctx.ledger) {
+    for (const o of blockingObjections(ctx.ledger, work, ctx.evidence, ctx.policy, ["open"]))
+      missing.push(`blocking objection ${o.id} bound to a criterion or waived by a person`);
+  }
+  return missing;
 }
 function guardFor(work, next, ctx) {
   const missing = [];
@@ -2458,7 +2473,7 @@ var KNOWN_FLAGS = {
   decision: ["default"],
   decide: ["mode", "validator"],
   objection: ["by", "severity", "criterion", "reason", "mode"],
-  approve: ["mode"],
+  approve: ["mode", "validator"],
   phase: [],
   await: [],
   resume: [],
@@ -2970,10 +2985,19 @@ async function dispatch(parsed, io) {
       if (isOutcome(opened))
         return opened;
       if (args[1] !== "spec")
-        return refuse("usage: crew approve <id> spec [--mode <mode>]");
-      const decision = decisionFlag(parsed);
+        return refuse("usage: crew approve <id> spec [--mode <mode> [--validator complete-gap-round]]");
+      const decision = validatorFlag(parsed);
       if (isOutcome(decision))
         return decision;
+      if (decision.by === "validator") {
+        if (decision.rule !== "complete-gap-round")
+          return refuse("a spec is approved by the validator under the complete-gap-round rule");
+        const missing = validatorPreconditions(decision.rule, opened.work, guardContext(env, opened.work, opened.tampered));
+        if (missing.length)
+          return refuse(`the complete-gap-round rule does not hold; missing:
+  ${missing.join(`
+  `)}`, { missing });
+      }
       approve(opened.work, "spec", decision);
       saveWork(env.paths, opened.work);
       return ok(`spec approved for ${opened.work.id} ${decisionText(env.policy, decision)}`, {

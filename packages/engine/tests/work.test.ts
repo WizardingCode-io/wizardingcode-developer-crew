@@ -25,6 +25,7 @@ import {
   raiseRoute,
   removeCriterion,
   saveWork,
+  validatorPreconditions,
 } from "../src/work.ts";
 import { git, makeRepo, repoPaths, tempDir, testEnv } from "./helpers.ts";
 
@@ -369,6 +370,32 @@ test("SP2a: the gate guard names the observed step for an observed criterion", (
   expect(guardFor(work, "gate", empty)).toEqual([
     `test-first record for ${observed.id} (crew tdd observed --reason)`,
   ]);
+});
+
+test("SP2a: the complete-gap-round rule holds only with the four sections, defaults or answers, and no open blocking objection", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const work = createWork(paths, "feature");
+  applyClassification(work, "feature", { route: "full", reasons: [], riskAreas: ["auth"] });
+  const ac = addCriterion(work, "x");
+  const ledger: ObjectionLedger = { objections: [] };
+  const o1 = addObjection(ledger, "re-subscribes everyone", "fault-finder", "blocking");
+  addDecision(work, "Which roles?");
+  const partial =
+    "## Assumed by good practice\nnone\n## Decisions only the user can make\nD-1\n## Proposals\nnone\n";
+  expect(
+    validatorPreconditions("complete-gap-round", work, { ...empty, conclaveText: partial, ledger }),
+  ).toEqual([
+    'a "Warnings" section with content in conclave.md (write "none" when there is nothing)',
+    "a stated default or an answer for D-1",
+    "blocking objection O-1 bound to a criterion or waived by a person",
+  ]);
+  const full = `${partial}## Warnings\nnone\n`;
+  answerDecision(work, "D-1", "admins", { by: "user" });
+  bindObjection(ledger, work, o1.id, ac.id);
+  expect(
+    validatorPreconditions("complete-gap-round", work, { ...empty, conclaveText: full, ledger }),
+  ).toEqual([]);
+  expect(validatorPreconditions("stated-default", work, empty)).toEqual([]);
 });
 
 test("advancePhase follows the route and stops at a failing guard", () => {

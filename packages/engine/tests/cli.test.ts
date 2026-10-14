@@ -954,3 +954,59 @@ test("SP2a: an observed criterion through the command, and in the report", async
     "| AC-2 | observed | the stubbed e2e passes | observed: passes after (the dev server stubs the backend) |",
   );
 });
+
+test("SP2a: the validator's approval is refused until the rule holds, then counts only under policy validator", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "app/Auth/Guard.ts": "x",
+  });
+  const c = io(root);
+  const full = JSON.stringify({ ...JSON.parse(answers), touches_auth: 0.9 });
+  const id = (await c.json("start", "Keys in the profile", "--answers", full)).data.id as string;
+  write(root, `.crew/work/${id}/spec.md`, "# Spec\n\n## Acceptance criteria\n- AC-1 x\n");
+  write(root, `.crew/work/${id}/plan.md`, "# Plan\n1. AC-1\n");
+  expect((await c.run("criteria", id, "add", "x")).code).toBe(0);
+  const refused = await c.run(
+    "approve",
+    id,
+    "spec",
+    "--mode",
+    "dontAsk",
+    "--validator",
+    "complete-gap-round",
+  );
+  expect(refused.code).toBe(1);
+  expect(refused.err).toContain("conclave.md in the work folder (the gap round: four sections)");
+  expect(
+    (await c.run("approve", id, "spec", "--mode", "dontAsk", "--validator", "stated-default")).err,
+  ).toContain("a spec is approved by the validator under the complete-gap-round rule");
+  write(
+    root,
+    `.crew/work/${id}/conclave.md`,
+    "## Assumed by good practice\nnone\n## Decisions only the user can make\nnone\n## Proposals\nnone\n## Warnings\nnone\n",
+  );
+  const approved = await c.json(
+    "approve",
+    id,
+    "spec",
+    "--mode",
+    "dontAsk",
+    "--validator",
+    "complete-gap-round",
+  );
+  expect(approved.code).toBe(0);
+  expect((approved.data.approvals as unknown[])[0]).toMatchObject({
+    by: "validator",
+    mode: "dontAsk",
+    rule: "complete-gap-round",
+  });
+  // Under the default policy the guard still waits for a person.
+  for (let i = 0; i < 5; i++) await c.run("phase", id, "next");
+  const waiting = await c.run("phase", id, "next");
+  expect(waiting.err).toContain(
+    "the user's approval of the spec: recorded by the validator in dontAsk mode and not counted",
+  );
+  write(root, ".crew/policy.json", JSON.stringify({ unattendedDecisions: "validator" }));
+  expect((await c.run("policy", "accept")).code).toBe(0);
+  expect((await c.json("phase", id, "next")).data.phase).toBe("build");
+});

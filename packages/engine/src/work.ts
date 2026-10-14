@@ -21,7 +21,7 @@ import type {
   Policy,
   RemovedCriterion,
   Route,
-  TddRecord,
+  ValidatorRule,
   WorkItem,
   WorkType,
 } from "./types.ts";
@@ -361,10 +361,10 @@ function routeDocuments(work: WorkItem, ctx: GuardContext): string[] {
   if (work.route === "full") {
     const approvals = work.approvals.filter((a) => a.what === "spec");
     if (!approvals.some((a) => decisionCounts(ctx.policy, a))) {
-      const agent = approvals.find((a) => a.by === "agent");
+      const uncounted = approvals.find((a) => a.by && a.by !== "user");
       missing.push(
-        agent
-          ? `the user's approval of the spec: recorded by the agent in ${agent.mode} mode and not counted (a person runs crew approve <id> spec, or policy.json sets unattendedDecisions to "count")`
+        uncounted
+          ? `the user's approval of the spec: recorded by the ${uncounted.by} in ${uncounted.mode} mode and not counted (a person runs crew approve <id> spec, or policy.json sets unattendedDecisions to "${uncounted.by === "validator" ? "validator" : "count"}")`
           : "the user's approval of the spec (crew approve <id> spec)",
       );
     }
@@ -383,6 +383,30 @@ function conclaveDocument(work: WorkItem, ctx: GuardContext): string[] {
     (name) =>
       `a "${name}" section with content in conclave.md (write "none" when there is nothing)`,
   );
+}
+
+/**
+ * What must hold before the validator may take a decision under a rule (SP2 §9). The engine checks
+ * the mechanical part; the role that reads the documents is SP2b's. `stated-default` is checked
+ * where the decision is answered.
+ */
+export function validatorPreconditions(
+  rule: ValidatorRule,
+  work: WorkItem,
+  ctx: GuardContext,
+): string[] {
+  if (rule !== "complete-gap-round") return [];
+  const missing = conclaveDocument(work, ctx);
+  for (const d of work.decisions ?? []) {
+    const answered = d.answer !== undefined && decisionCounts(ctx.policy, d);
+    if (!answered && d.default === undefined)
+      missing.push(`a stated default or an answer for ${d.id}`);
+  }
+  if (ctx.ledger) {
+    for (const o of blockingObjections(ctx.ledger, work, ctx.evidence, ctx.policy, ["open"]))
+      missing.push(`blocking objection ${o.id} bound to a criterion or waived by a person`);
+  }
+  return missing;
 }
 
 export function guardFor(work: WorkItem, next: Phase, ctx: GuardContext): string[] {

@@ -66,6 +66,7 @@ import {
   PHASES_BY_ROUTE,
   removeCriterion,
   saveWork,
+  validatorPreconditions,
 } from "./work.ts";
 
 export interface CliIo {
@@ -103,7 +104,7 @@ const KNOWN_FLAGS: Record<string, readonly string[]> = {
   decision: ["default"],
   decide: ["mode", "validator"],
   objection: ["by", "severity", "criterion", "reason", "mode"],
-  approve: ["mode"],
+  approve: ["mode", "validator"],
   phase: [],
   await: [],
   resume: [],
@@ -717,9 +718,27 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
     case "approve": {
       const opened = openForChange(env, args[0]);
       if (isOutcome(opened)) return opened;
-      if (args[1] !== "spec") return refuse("usage: crew approve <id> spec [--mode <mode>]");
-      const decision = decisionFlag(parsed);
+      if (args[1] !== "spec")
+        return refuse(
+          "usage: crew approve <id> spec [--mode <mode> [--validator complete-gap-round]]",
+        );
+      const decision = validatorFlag(parsed);
       if (isOutcome(decision)) return decision;
+      if (decision.by === "validator") {
+        // The engine checks the rule's mechanical part before anything is recorded (SP2 §9).
+        if (decision.rule !== "complete-gap-round")
+          return refuse("a spec is approved by the validator under the complete-gap-round rule");
+        const missing = validatorPreconditions(
+          decision.rule,
+          opened.work,
+          guardContext(env, opened.work, opened.tampered),
+        );
+        if (missing.length)
+          return refuse(
+            `the complete-gap-round rule does not hold; missing:\n  ${missing.join("\n  ")}`,
+            { missing },
+          );
+      }
       approve(opened.work, "spec", decision);
       saveWork(env.paths, opened.work);
       return ok(`spec approved for ${opened.work.id} ${decisionText(env.policy, decision)}`, {
