@@ -12,3 +12,5 @@ The engine runs what the route requires: the project's build, tests, lint and ty
 - **Unconfirmed command:** a proposed command ran. Ask the user to confirm it with `crew profile confirm`; until then the work is not proven.
 
 `crew gate run <id> --only test` runs a subset while you iterate; the verdict still needs every gate. A gate run that proves the work writes the report and moves the item to the deliver phase.
+
+- **A blocking objection is open or bound to an unproven criterion:** the verdict says "blocking objection O-n open" or "bound". Prove the criterion it is bound to, bind it (`crew objection <id> resolve O-n --criterion AC-k`), or let the user waive it (`crew objection <id> waive O-n --reason "<why>"`, which asks them). The verdict line of the report then says how many were waived.

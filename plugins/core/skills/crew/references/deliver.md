@@ -5,6 +5,7 @@ The gate run that proved the work already wrote `.crew/work/<id>/report.md`; `cr
 1. What changed, in two or three sentences.
 2. What is proven: the gates that passed, the criteria with red then green.
 3. What is not proven: skipped steps with their reasons, gates that could not run.
+   The report's "Gap round" section lists each decision and who took it; its "Objections" section lists each objection with its status, and a waiver is named in the verdict line ("Proven, with 1 objection waived by the user"). Say both to the user: a waiver is a decision they made, and the report never hides it.
 4. What the user should do next: review the diff, commit, open a pull request.
 
 Say "proven" only when the report says so. If the report says not proven, the first line of your message says not proven and why. Never soften it.

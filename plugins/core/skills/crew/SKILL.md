@@ -15,6 +15,7 @@ The `crew` command is the engine. It knows the project's build, test and check c
 | Recognize | Read the profile; propose a test command when none is known | `crew detect`, `crew profile set` |
 | Understand | State the problem and the assumptions; the user confirms them (standard and full routes) | |
 | Specify | Write the acceptance criteria; a spec on standard and full routes | `crew criteria <id> add "<text>"`, `spec.md` |
+| Conclave | The gap round: write the four lists in `conclave.md`, ask each decision only the user can make, file what goes against good practice as an objection; debate when a decision has consequences (standard and full routes) | `crew decision <id> add`, `crew decide <id> D-n`, `crew objection <id> add|resolve|waive`, `crew phase <id> next` |
 | Plan | Tasks tied to criteria (`plan.md` on the full route) | `crew phase <id> next` |
 | Build | For each criterion: failing test, red run, code, green run | `crew tdd red`, `crew tdd green` |
 | Gate | Run the gates; fix what fails | `crew gate run <id>` |
@@ -61,6 +62,7 @@ Read the reference for the current phase before acting in it:
 | Receive | `references/receive.md` |
 | Understand | `references/understand.md` |
 | Specify | `references/specify.md` |
+| Conclave | `references/conclave.md` |
 | Plan | `references/plan.md` |
 | Build | `references/build.md` |
 | Gate | `references/gate.md` |
@@ -72,7 +74,7 @@ Read the reference for the current phase before acting in it:
 1. **Never say done.** Say what the report says: proven, or not proven and why.
 2. **Never weaken a gate.** Do not change a gate command, a test or a profile to make a check pass. If a gate cannot run, say so and let the user decide to skip it.
 3. **Test first, recorded.** `crew tdd red` before the code exists, `crew tdd green` after. A green with no red is rejected.
-4. **Some commands ask the user:** `crew skip`, `crew approve`, `crew accept`, `crew profile confirm`, `crew policy accept` and `crew profile set ... --force`. You run them, when the user has decided; the permission prompt is the user's signature, in auto mode as in default mode. Never ask the user to run a `crew` command, with the `!` prefix or otherwise: running commands is your job, the user's is to say yes or no. Only when no person can answer a prompt, in a headless session (`claude -p`) in any mode or in bypassPermissions or dontAsk mode, the hook refuses the bare command and tells you to add `--mode <mode>`: the record then says the agent decided, in which mode, and the decision counts for the proof only if the team's `policy.json` sets `unattendedDecisions` to `count`. Never add `--mode` when a person is present; the hook refuses that too.
+4. **Some commands ask the user:** `crew skip`, `crew approve`, `crew decide`, `crew objection <id> waive`, `crew accept`, `crew profile confirm`, `crew policy accept` and `crew profile set ... --force`. You run them, when the user has decided; the permission prompt is the user's signature, in auto mode as in default mode. Never ask the user to run a `crew` command, with the `!` prefix or otherwise: running commands is your job, the user's is to say yes or no. Only when no person can answer a prompt, in a headless session (`claude -p`) in any mode or in bypassPermissions or dontAsk mode, the hook refuses the bare command and tells you to add `--mode <mode>`: the record then says the agent decided, in which mode, and the decision counts for the proof only if the team's `policy.json` sets `unattendedDecisions` to `count`. Never add `--mode` when a person is present; the hook refuses that too.
 5. **When you need the user,** mark the work with `crew await <id> user` and ask. `await` lets the turn end once, with a notice that the work is not proven; the turn that ends spends it. `crew resume <id>` clears it without ending the turn.
 6. **Start every change with `crew start "<request>" --answers '<json>'`.** The answers are required; changes without a work item cannot be proven, and an item without a criterion is never proven.
 7. **State changed outside the engine** stops every command that saves. Tell the user which file the engine names; only they can run `crew accept`.

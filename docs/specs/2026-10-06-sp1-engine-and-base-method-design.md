@@ -264,7 +264,7 @@ The patterns are applied at classification and again at every gate run against t
 | Gate | Yes | Yes | Yes |
 | Deliver | Yes | Yes | Yes |
 
-Phases are data: an ordered list per route. SP2 inserts the conclave between Specify and Plan, and SP4 adds Learn, without changing the engine's state machine.
+Phases are data: an ordered list per route. SP2 inserts the conclave between Specify and Plan, and SP4 adds Learn, without changing the engine's state machine. *Amended 2026-10-14 (SP2a):* the conclave phase is in, on the standard and full routes, guarded by `conclave.md`, the decisions and the objection ledger ([SP2 design](2026-10-14-sp2-conclave-and-judgement-gates-design.md), sections 6, 8 and 13).
 
 ### Guards
 

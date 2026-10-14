@@ -17,6 +17,14 @@ crew criteria <id> add "Existing cart tests keep passing." --kind preserve
 crew start "<request>" --answers '<json>' --preserve "Existing cart tests keep passing."
 ```
 
+A criterion that passes after the change but can have no red run (an end-to-end test against a stubbed server, a check the environment cannot fail on purpose) is `observed`, not a skip:
+
+```
+crew criteria <id> add "The stubbed checkout flow passes end to end." --kind observed
+```
+
+It is proven with `crew tdd observed <id> AC-n --reason "<why no red run can exist>"`, and the report shows the reason apart from skips.
+
 ## Standard route: a short spec
 
 Write `.crew/work/<id>/spec.md` and add each criterion with `crew criteria`:

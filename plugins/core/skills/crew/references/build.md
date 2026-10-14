@@ -12,6 +12,8 @@ Use `-- <command>` after the criterion to run a single test file instead of the 
 
 For a `preserve` criterion: `crew tdd before <id> <criterion>` with the tests passing, make the change, `crew tdd after <id> <criterion>`.
 
+For an `observed` criterion: make the change, then `crew tdd observed <id> <criterion> --reason "<why no red run can exist>"` with the run passing. The reason is in the record and the report; a missing reason is refused.
+
 ## Design rules
 
 - **Single responsibility.** A function or a class does one thing; a file holds things that change together.

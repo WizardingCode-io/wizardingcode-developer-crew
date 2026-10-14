@@ -38,8 +38,8 @@ Requirement: Node.js 20 or later on `PATH` (the hooks and the `crew` command run
 
 - **`.crew/` in the repository.** Crew is active in a git repository, or in a folder that already holds `.crew/` (`crew detect` creates it); anywhere else it stays silent.
   - `profile.json`: the detected project profile and gate commands.
-  - `policy.json` (optional): the team policy, written by a person. `unattendedDecisions` (`wait`, the default, or `count`) says whether an approval or skip the agent recorded with no person watching counts for the proof. `riskPathExclusions` lists globs of paths that never raise the route (ADR 0003); the report names them when they applied.
-  - `work/<id>/`: one folder per work item, with `work.json` (state), `brief.md`, `spec.md`, `plan.md`, `evidence.json` (test-first records and gate runs), `report.md` (the delivery report) and `logs/` (full command output, ignored).
+  - `policy.json` (optional): the team policy, written by a person. `unattendedDecisions` (`wait`, the default, `count`, or `validator`) says what a user-only decision taken with no person watching is worth: nothing until a person decides, the agent's own word, or the validator's decision under a rule (a spec approval with a complete gap round, a decision's stated default); the validator never waives an objection or skips a gate. `riskPathExclusions` lists globs of paths that never raise the route (ADR 0003); the report names them when they applied.
+  - `work/<id>/`: one folder per work item, with `work.json` (state, including the gap round's decisions), `brief.md`, `spec.md`, `conclave.md` (the gap round's four lists, written by the agent and checked for structure), `plan.md`, `objections.json` (the objection ledger, engine-owned), `evidence.json` (test-first records and gate runs), `report.md` (the delivery report) and `logs/` (full command output, ignored).
   - `local/`: per-machine state such as the session baselines (ignored).
 - **`~/.wizardingcode/crew/` for the user**: `config.json` (mode and settings) and `integrity/`, the hashes the engine uses to notice state changed outside it.
 
