@@ -9,6 +9,7 @@ import {
   MAX_WATCHED_FILES,
 } from "./fingerprint.ts";
 import { exists, nowIso } from "./fs.ts";
+import { loadLedger } from "./objections.ts";
 import { type CrewPaths, workDir } from "./paths.ts";
 import { runCommand } from "./run.ts";
 import { scanSecrets } from "./secrets.ts";
@@ -324,6 +325,7 @@ export async function runGates(
     evidence,
     expected: planned,
     policy,
+    ledger: loadLedger(paths, work.id).ledger,
     currentFingerprint: computeFingerprint(
       paths.root,
       profile,
@@ -365,6 +367,7 @@ export function assess(
     work,
     evidence: read.evidence,
     expected,
+    ledger: loadLedger(paths, work.id).ledger,
     currentFingerprint: computeFingerprint(
       paths.root,
       profile,

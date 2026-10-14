@@ -2,8 +2,10 @@ import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import type { RouteDecision } from "./classify.ts";
 import { higherRoute, routeRank } from "./classify.ts";
+import { tddDone } from "./criteria.ts";
 import { baseCommitOf } from "./fingerprint.ts";
 import { nowIso, writeText } from "./fs.ts";
+import { blockingObjections } from "./objections.ts";
 import { type CrewPaths, workDir } from "./paths.ts";
 import { decisionCounts } from "./policy.ts";
 import { loadState, saveState } from "./state.ts";
@@ -14,6 +16,7 @@ import type {
   Decision,
   Evidence,
   GapDecision,
+  ObjectionLedger,
   Phase,
   Policy,
   RemovedCriterion,
@@ -213,9 +216,13 @@ export function removeCriterion(
   work: WorkItem,
   evidence: Evidence,
   id: string,
+  ledger?: ObjectionLedger,
 ): { removed: RemovedCriterion } | { refused: string } {
   const index = work.criteria.findIndex((c) => c.id === id);
   if (index === -1) return { refused: `unknown criterion: ${id}` };
+  // An objection bound to the criterion would be silently unresolved by the removal.
+  const bound = ledger?.objections.find((o) => o.criterion === id && !o.waived);
+  if (bound) return { refused: `${id} is bound to objection ${bound.id}; it stays` };
   if (evidence.tdd.some((t) => t.criterion === id)) {
     return { refused: `${id} has a test-first record; it stays` };
   }
@@ -331,6 +338,7 @@ export function missingConclaveSections(text: string): string[] {
 export interface GuardContext {
   specText: string | null;
   conclaveText: string | null;
+  ledger: ObjectionLedger | null;
   planExists: boolean;
   evidence: Evidence | null;
   proven: boolean;
@@ -338,11 +346,8 @@ export interface GuardContext {
   policy: Policy;
 }
 
-// Shared with evidence.ts so both agree on what a complete test-first record is.
-export function tddDone(record: TddRecord | undefined, kind: CriterionKind): boolean {
-  if (!record) return false;
-  return kind === "behavior" ? !!record.red && !!record.green : !!record.before && !!record.after;
-}
+// Shared with evidence.ts and objections.ts so all agree on what a complete test-first record is.
+export { tddDone } from "./criteria.ts";
 
 /** What the current route asks for before code: checked again later, so a raise mid-build is felt. */
 function routeDocuments(work: WorkItem, ctx: GuardContext): string[] {
@@ -386,6 +391,12 @@ export function guardFor(work: WorkItem, next: Phase, ctx: GuardContext): string
     missing.push(...conclaveDocument(work, ctx));
     for (const d of unansweredDecisions(work, ctx.policy))
       missing.push(`an answer to ${d.id} (crew decide <id> ${d.id} "<answer>")`);
+    if (ctx.ledger) {
+      for (const o of blockingObjections(ctx.ledger, work, ctx.evidence, ctx.policy, ["open"]))
+        missing.push(
+          `a criterion bound to blocking objection ${o.id}, or the user's waiver (crew objection <id> resolve ${o.id} --criterion AC-k | waive ${o.id} --reason "<why>")`,
+        );
+    }
   } else if (next === "build") {
     if (work.criteria.length === 0) {
       missing.push('at least one acceptance criterion (crew criteria <id> add "...")');

@@ -16,6 +16,14 @@ import { ensureDir, nowIso, readText, writeText } from "./fs.ts";
 import { assess, runGates } from "./gates.ts";
 import { handleHook } from "./hooks/index.ts";
 import type { HookPayload } from "./hooks/types.ts";
+import {
+  addObjection,
+  bindObjection,
+  loadLedger,
+  objectionStatus,
+  saveLedger,
+  waiveObjection,
+} from "./objections.ts";
 import { type CrewPaths, resolvePaths, userDirOf, workDir } from "./paths.ts";
 import { loadPolicy, skipAllowed } from "./policy.ts";
 import { ensureProfile, loadProfile, saveProfile } from "./profile.ts";
@@ -94,6 +102,7 @@ const KNOWN_FLAGS: Record<string, readonly string[]> = {
   criteria: ["kind"],
   decision: ["default"],
   decide: ["mode", "validator"],
+  objection: ["by", "severity", "criterion", "reason", "mode"],
   approve: ["mode"],
   phase: [],
   await: [],
@@ -222,6 +231,8 @@ function tamperRefusal(env: Env, opened?: Opened): Outcome | null {
     if (opened.tampered) found.push({ file: `${base}/work.json`, accept: opened.work.id });
     if (loadEvidence(env.paths, opened.work.id).tampered)
       found.push({ file: `${base}/evidence.json`, accept: opened.work.id });
+    if (loadLedger(env.paths, opened.work.id).tampered)
+      found.push({ file: `${base}/objections.json`, accept: opened.work.id });
   }
   const first = found[0];
   return first ? refuse(tamperMessage(first)) : null;
@@ -255,7 +266,7 @@ function accept(env: Env, target: string): Outcome {
   const dir = workDir(env.paths, target);
   if (!/^[\w.-]+$/.test(target) || target.includes("..") || !existsSync(join(dir, "work.json")))
     return refuse(`unknown work item: ${target}`);
-  const files = ["work.json", "evidence.json", "report.md"].filter((name) =>
+  const files = ["work.json", "evidence.json", "report.md", "objections.json"].filter((name) =>
     recordIntegrity(env.paths, join(dir, name)),
   );
   return ok(`${target} accepted: ${files.join(", ")} now trusted as they are`, {
@@ -319,6 +330,7 @@ function guardContext(env: Env, work: WorkItem, tampered: boolean): GuardContext
   return {
     specText: readText(join(dir, "spec.md")),
     conclaveText: readText(join(dir, "conclave.md")),
+    ledger: loadLedger(env.paths, work.id).ledger,
     planExists: existsSync(join(dir, "plan.md")),
     evidence: result.evidence,
     proven: result.verdict === "proven",
@@ -603,7 +615,12 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       if (isOutcome(opened)) return opened;
       if (args[1] === "remove" && args[2]) {
         const { evidence } = loadEvidence(env.paths, opened.work.id);
-        const outcome = removeCriterion(opened.work, evidence, args[2]);
+        const outcome = removeCriterion(
+          opened.work,
+          evidence,
+          args[2],
+          loadLedger(env.paths, opened.work.id).ledger,
+        );
         if ("refused" in outcome) return refuse(outcome.refused);
         saveWork(env.paths, opened.work);
         const { removed } = outcome;
@@ -618,6 +635,50 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       const criterion = addCriterion(opened.work, text, kind);
       saveWork(env.paths, opened.work);
       return ok(`${criterion.id} (${kind}): ${criterion.text}`, { criterion });
+    }
+    case "objection": {
+      const opened = openForChange(env, args[0]);
+      if (isOutcome(opened)) return opened;
+      const { ledger } = loadLedger(env.paths, opened.work.id);
+      const usage =
+        'usage: crew objection <id> add "<text>" --by <role> --severity blocking|advisory | resolve O-n --criterion AC-k | waive O-n --reason "<why>" [--mode <mode>]';
+      if (args[1] === "add") {
+        const text = args.slice(2).join(" ").trim();
+        const by = typeof parsed.flags.by === "string" ? parsed.flags.by.trim() : "";
+        const severity = parsed.flags.severity;
+        if (!text || !by) return refuse(usage);
+        if (severity !== "blocking" && severity !== "advisory")
+          return refuse("severity is blocking or advisory");
+        const objection = addObjection(ledger, text, by, severity);
+        saveLedger(env.paths, opened.work.id, ledger);
+        return ok(`${objection.id} (${severity}, raised by ${by}): ${objection.text}`, {
+          objection,
+        });
+      }
+      if (args[1] === "resolve" && args[2]) {
+        if (typeof parsed.flags.criterion !== "string") return refuse(usage);
+        const result = bindObjection(ledger, opened.work, args[2], parsed.flags.criterion);
+        if ("refused" in result) return refuse(result.refused);
+        saveLedger(env.paths, opened.work.id, ledger);
+        return ok(`${result.id} is resolved when ${result.criterion} is proven`, {
+          objection: result,
+        });
+      }
+      if (args[1] === "waive" && args[2]) {
+        const reason = typeof parsed.flags.reason === "string" ? parsed.flags.reason.trim() : "";
+        if (!reason) return refuse(usage);
+        const decision = decisionFlag(parsed);
+        if (isOutcome(decision)) return decision;
+        const result = waiveObjection(ledger, args[2], reason, decision);
+        if ("refused" in result) return refuse(result.refused);
+        saveLedger(env.paths, opened.work.id, ledger);
+        const waiver = result.waived ?? { by: "user" as const };
+        return ok(
+          `${result.id} waived ${decidedBy(waiver)}${countedNote(env.policy, waiver)}: ${reason}`,
+          { objection: result },
+        );
+      }
+      return refuse(usage);
     }
     case "decision": {
       const opened = openForChange(env, args[0]);
@@ -738,7 +799,12 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       writeProtectedText(
         env.paths,
         join(workDir(env.paths, opened.work.id), "report.md"),
-        renderReport(opened.work, outcome.evidence, env.policy),
+        renderReport(
+          opened.work,
+          outcome.evidence,
+          env.policy,
+          loadLedger(env.paths, opened.work.id).ledger,
+        ),
       );
       const raised = outcome.raised
         ? `Route raised to ${outcome.raised}: ${opened.work.routeReasons.at(-1)}\n`
@@ -796,7 +862,12 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       );
       result.evidence.verdict = result.verdict;
       result.evidence.unproven = result.unproven;
-      const report = renderReport(opened.work, result.evidence, env.policy);
+      const report = renderReport(
+        opened.work,
+        result.evidence,
+        env.policy,
+        loadLedger(env.paths, opened.work.id).ledger,
+      );
       // Tampered state is still shown, but never saved: saving would record it as the engine's own.
       if (refused)
         return refuse(`${refused.text}\n\n${report}`, {
@@ -847,6 +918,11 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           ...(r.reason ? { reason: r.reason } : {}),
         })),
         skips: work.skips.map((s) => ({ step: s.step, reason: s.reason })),
+        objections: loadLedger(env.paths, work.id).ledger.objections.map((o) => ({
+          id: o.id,
+          severity: o.severity,
+          status: objectionStatus(o, work, result.evidence, env.policy),
+        })),
       });
     }
     default:
@@ -903,6 +979,9 @@ const HELP = `crew ${VERSION}
   decision <id> add "<question>" [--default "<answer>"]   a decision only the user can make (gap round)
   decide <id> D-n "<answer>"            record the user's answer (asks the user)
       --mode <mode> --validator stated-default   no person watching: the validator takes the default
+  objection <id> add "<text>" --by <role> --severity blocking|advisory   file an objection (ledger)
+  objection <id> resolve O-n --criterion AC-k   resolved when that criterion is proven
+  objection <id> waive O-n --reason "<why>"     the user decides against it (asks the user)
   approve <id> spec                     record the user's approval (asks the user)
       --mode auto|bypassPermissions|dontAsk   no person watching: recorded as the agent's decision
   phase <id> next                       advance when the guard holds

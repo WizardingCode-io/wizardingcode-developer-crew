@@ -14,10 +14,10 @@ const WRITE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
 // (finding 16 of the real-use phase).
 const RUNNER = String.raw`(?:[A-Za-z_][A-Za-z0-9_]*=\S*|-\S*|node|bun|bunx|npx|sh|bash|zsh|eval|exec|env|time|nohup|xargs|sudo|command)`;
 const USER_ONLY = new RegExp(
-  String.raw`^[\s({]*(?:${RUNNER}\s+)*(?:\S*/)?crew(?:\.mjs)?\s+(?:skip|approve|accept|decide|profile\s+confirm|policy\s+accept|profile\s+set\b[^;&|]*--force)\b`,
+  String.raw`^[\s({]*(?:${RUNNER}\s+)*(?:\S*/)?crew(?:\.mjs)?\s+(?:skip|approve|accept|decide|objection\s+\S+\s+waive|profile\s+confirm|policy\s+accept|profile\s+set\b[^;&|]*--force)\b`,
 );
 const ENGINE_FILES =
-  /\.crew\/(?:profile\.json|policy\.json|\.gitignore|local\b|work\/[^\s/]+\/(?:work\.json|evidence\.json|report\.md|logs\b))|\.wizardingcode\/crew\b/;
+  /\.crew\/(?:profile\.json|policy\.json|\.gitignore|local\b|work\/[^\s/]+\/(?:work\.json|evidence\.json|objections\.json|report\.md|logs\b))|\.wizardingcode\/crew\b/;
 // A verb may follow a quote (`bash -c "rm ..."`). A redirect is a write only when its target is an
 // engine file (the `2>` of `2>/dev/null` after a read is not).
 const WRITE_SHAPE =

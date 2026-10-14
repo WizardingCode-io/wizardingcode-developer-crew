@@ -74,7 +74,7 @@ export function workDir(paths: CrewPaths, id: string): string {
 }
 
 const PROTECTED_TOP = new Set([".crew/profile.json", ".crew/policy.json", ".crew/.gitignore"]);
-const PROTECTED_IN_WORK = new Set(["work.json", "evidence.json", "report.md"]);
+const PROTECTED_IN_WORK = new Set(["work.json", "evidence.json", "report.md", "objections.json"]);
 
 /** Files only the engine writes. The agent is denied direct writes to them. */
 export function isProtectedPath(paths: CrewPaths, absPath: string): boolean {

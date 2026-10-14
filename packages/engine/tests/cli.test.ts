@@ -862,3 +862,59 @@ test("SP2a: decision add and decide, as the user and as the validator", async ()
   expect(byUser.data.decision).toMatchObject({ answer: "everyone with a team", by: "user" });
   expect((await c.run("decide", id, "D-1", "--mode", "auto", "--validator", "judge")).code).toBe(1);
 });
+
+test("SP2a: objection add, resolve and waive through the command; a hand edit is caught", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const c = io(root);
+  const id = (
+    await c.json("start", "Gated sync", "--answers", answers, "--criterion", "the sync is gated")
+  ).data.id as string;
+  const added = await c.json(
+    "objection",
+    id,
+    "add",
+    "the full sync would re-subscribe everyone",
+    "--by",
+    "fault-finder",
+    "--severity",
+    "blocking",
+  );
+  expect(added.data.objection).toMatchObject({
+    id: "O-1",
+    severity: "blocking",
+    raisedBy: "fault-finder",
+  });
+  expect(
+    (await c.run("objection", id, "add", "x", "--by", "expert", "--severity", "huge")).err,
+  ).toContain("severity is blocking or advisory");
+  const status = await c.json("status");
+  expect(status.data.objections).toEqual([{ id: "O-1", severity: "blocking", status: "open" }]);
+  expect((await c.json("gate", "run", id)).data.unproven).toContain(
+    "blocking objection O-1 open: the full sync would re-subscribe everyone",
+  );
+  expect((await c.json("objection", id, "resolve", "O-1", "--criterion", "AC-1")).code).toBe(0);
+  expect((await c.run("criteria", id, "remove", "AC-1")).err.trim()).toBe(
+    "AC-1 is bound to objection O-1; it stays",
+  );
+  // A hand edit of the ledger stops every saving command until the user accepts it.
+  const file = join(root, ".crew", "work", id, "objections.json");
+  writeFileSync(file, readFileSync(file, "utf8").replace("blocking", "advisory"));
+  const refused = await c.run(
+    "objection",
+    id,
+    "add",
+    "another",
+    "--by",
+    "expert",
+    "--severity",
+    "advisory",
+  );
+  expect(refused.err).toContain(
+    `state changed outside the engine: .crew/work/${id}/objections.json`,
+  );
+  expect((await c.run("accept", id)).out).toContain("objections.json");
+  expect((await c.run("objection", id, "waive", "O-1", "--reason", "done by hand")).code).toBe(0);
+});

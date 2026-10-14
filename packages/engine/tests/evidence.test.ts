@@ -6,8 +6,9 @@ import {
   renderReport,
   saveEvidence,
 } from "../src/evidence.ts";
+import { addObjection, bindObjection, waiveObjection } from "../src/objections.ts";
 import { DEFAULT_POLICY } from "../src/policy.ts";
-import type { Evidence, GateRun, RunRecord, WorkItem } from "../src/types.ts";
+import type { Evidence, GateRun, ObjectionLedger, RunRecord, WorkItem } from "../src/types.ts";
 import {
   addCriterion,
   addDecision,
@@ -256,6 +257,52 @@ test("SP2a: the report lists the gap round's decisions and who took each", () =>
     "- D-1: Erasure or deactivation? → deactivation, by the validator (rule: stated-default): counted by policy",
   );
   expect(report).toContain("- D-2: Delete the provider profile too? → yes, by the user");
+});
+
+test("SP2a: a blocking objection keeps the item unproven until resolved or waived, and the report says so", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const work = workWith(paths);
+  const ledger: ObjectionLedger = { objections: [] };
+  const o1 = addObjection(
+    ledger,
+    "the sync would re-subscribe everyone",
+    "fault-finder",
+    "blocking",
+  );
+  const o2 = addObjection(ledger, "erasure, not deactivation?", "gap-round", "blocking");
+  const evidence: Evidence = {
+    ...emptyEvidence(),
+    fingerprint: "f",
+    tdd: [{ criterion: "AC-1", red: run, green: run }],
+    runs: [gate("secrets", "pass"), gate("test", "pass")],
+  };
+  const input = {
+    work,
+    evidence,
+    expected: [
+      { gate: "secrets" as const, target: "." },
+      { gate: "test" as const, target: "." },
+    ],
+    currentFingerprint: "f",
+    tampered: false,
+    policy: DEFAULT_POLICY,
+  };
+  expect(computeVerdict({ ...input, ledger }).unproven).toEqual([
+    "blocking objection O-1 open: the sync would re-subscribe everyone",
+    "blocking objection O-2 open: erasure, not deactivation?",
+  ]);
+  bindObjection(ledger, work, o1.id, "AC-1");
+  waiveObjection(ledger, o2.id, "soft delete chosen knowingly", { by: "user" });
+  expect(computeVerdict({ ...input, ledger }).verdict).toBe("proven");
+  const report = renderReport(work, { ...evidence, verdict: "proven" }, DEFAULT_POLICY, ledger);
+  expect(report).toContain("- Verdict: **Proven**, with 1 objection waived by the user");
+  expect(report).toContain("## Objections");
+  expect(report).toContain(
+    "- O-1 (blocking, raised by fault-finder) resolved by AC-1: the sync would re-subscribe everyone",
+  );
+  expect(report).toContain(
+    "- O-2 (blocking, raised by gap-round) waived by the user: soft delete chosen knowingly (",
+  );
 });
 
 test("an item with no criteria is never proven, whatever the gates say", () => {

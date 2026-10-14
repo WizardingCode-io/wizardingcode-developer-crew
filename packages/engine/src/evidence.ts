@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { UNAVAILABLE } from "./fingerprint.ts";
+import { blockingObjections, objectionStatus } from "./objections.ts";
 import { type CrewPaths, workDir } from "./paths.ts";
 import { decisionCounts } from "./policy.ts";
 import { readProtectedJson, writeProtectedJson } from "./store.ts";
@@ -9,6 +10,7 @@ import type {
   Evidence,
   GateName,
   GateRun,
+  ObjectionLedger,
   PermissionMode,
   Policy,
   Stack,
@@ -98,6 +100,8 @@ export interface VerdictInput {
   tampered: boolean;
   /** Decides whether a skip the agent recorded with no person watching counts. */
   policy: Policy;
+  /** The objection ledger; a blocking objection open or bound to an unproven criterion keeps the work unproven. */
+  ledger?: ObjectionLedger;
 }
 
 export function computeVerdict(input: VerdictInput): {
@@ -132,6 +136,13 @@ export function computeVerdict(input: VerdictInput): {
       unproven.push(`gate ${label} ran an unconfirmed command (crew profile confirm)`);
     }
   }
+  // A blocking objection is a reason of its own: open, or bound to a criterion not yet proven (SP2 §8).
+  if (input.ledger) {
+    for (const o of blockingObjections(input.ledger, work, evidence, policy, ["open", "bound"]))
+      unproven.push(
+        `blocking objection ${o.id} ${objectionStatus(o, work, evidence, policy)}: ${o.text}`,
+      );
+  }
   // Test-first is proved per criterion, so an item with none would be proven by the gates alone.
   if (work.criteria.length === 0)
     unproven.push('no acceptance criteria (crew criteria <id> add "...")');
@@ -162,12 +173,27 @@ export function tddSummary(
   return "missing";
 }
 
-export function renderReport(work: WorkItem, evidence: Evidence, policy: Policy): string {
+export function renderReport(
+  work: WorkItem,
+  evidence: Evidence,
+  policy: Policy,
+  ledger?: ObjectionLedger,
+): string {
   const lines: string[] = [];
   lines.push(`# Report: ${work.title}`, "");
   lines.push(`- Work: \`${work.id}\``);
   lines.push(`- Type: ${work.type}. Route: ${work.route} (${work.routeReasons.join("; ")})`);
-  lines.push(`- Verdict: **${evidence.verdict === "proven" ? "Proven" : "Not proven"}**`, "");
+  // A waived objection is named with the verdict, so a report that says Proven with a waiver says so first.
+  const waived = (ledger?.objections ?? []).filter(
+    (o) => o.waived && decisionCounts(policy, o.waived),
+  );
+  const waivedNote = waived.length
+    ? `, with ${waived.length} objection${waived.length === 1 ? "" : "s"} waived by the user`
+    : "";
+  lines.push(
+    `- Verdict: **${evidence.verdict === "proven" ? "Proven" : "Not proven"}**${waivedNote}`,
+    "",
+  );
   if (evidence.unproven.length) {
     lines.push("## Not proven", "");
     for (const reason of evidence.unproven) lines.push(`- ${reason}`);
@@ -232,6 +258,19 @@ export function renderReport(work: WorkItem, evidence: Evidence, policy: Policy)
     }
     for (const r of removed) lines.push(`- ${r.id} (${r.kind}) removed (${r.at}): ${r.text}`);
     for (const p of pauses) lines.push(`- paused for the user (${p.at}), not proven: ${p.reason}`);
+  }
+  if (ledger?.objections.length) {
+    lines.push("", "## Objections", "");
+    for (const o of ledger.objections) {
+      const status = objectionStatus(o, work, evidence, policy);
+      let how = "open";
+      if (status === "waived" && o.waived) {
+        how = `waived ${decidedBy(o.waived)}: ${o.waived.reason} (${o.waived.at})`;
+      } else if (status === "resolved") how = `resolved by ${o.criterion}`;
+      else if (status === "bound") how = `bound to ${o.criterion}, not yet proven`;
+      else if (o.waived) how = `open (waiver ${decidedBy(o.waived)} not counted)`;
+      lines.push(`- ${o.id} (${o.severity}, raised by ${o.raisedBy}) ${how}: ${o.text}`);
+    }
   }
   lines.push("", `Fingerprint: ${evidence.fingerprint ?? "none"}`, "");
   return lines.join("\n");

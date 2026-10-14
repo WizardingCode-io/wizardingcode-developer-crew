@@ -1,6 +1,6 @@
 // packages/engine/src/cli.ts
 import { existsSync as existsSync3 } from "node:fs";
-import { join as join18, resolve as resolve2 } from "node:path";
+import { join as join19, resolve as resolve2 } from "node:path";
 
 // packages/engine/src/glob.ts
 var SPECIAL = /[.+^${}()|[\]\\]/g;
@@ -592,7 +592,7 @@ function missingTestCommands(profile) {
 }
 
 // packages/engine/src/evidence.ts
-import { join as join12 } from "node:path";
+import { join as join13 } from "node:path";
 
 // packages/engine/src/fingerprint.ts
 import { execFileSync } from "node:child_process";
@@ -749,6 +749,16 @@ function computeFingerprint(root, profile, base, maxFiles = MAX_WATCHED_FILES, m
 `))}`;
 }
 
+// packages/engine/src/objections.ts
+import { join as join10 } from "node:path";
+
+// packages/engine/src/criteria.ts
+function tddDone(record, kind) {
+  if (!record)
+    return false;
+  return kind === "behavior" ? !!record.red && !!record.green : !!record.before && !!record.after;
+}
+
 // packages/engine/src/paths.ts
 import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
@@ -804,7 +814,7 @@ function workDir(paths, id) {
   return join8(paths.crewDir, "work", id);
 }
 var PROTECTED_TOP = new Set([".crew/profile.json", ".crew/policy.json", ".crew/.gitignore"]);
-var PROTECTED_IN_WORK = new Set(["work.json", "evidence.json", "report.md"]);
+var PROTECTED_IN_WORK = new Set(["work.json", "evidence.json", "report.md", "objections.json"]);
 function isProtectedPath(paths, absPath) {
   const abs = canonical(absPath);
   if (abs === paths.userDir || abs.startsWith(paths.userDir + sep))
@@ -940,14 +950,84 @@ function skipAllowed(policy, step) {
   return policy.allowSkips.some((s) => s === "*" || s === step || s === bare);
 }
 
+// packages/engine/src/objections.ts
+function ledgerPath(paths, id) {
+  return join10(workDir(paths, id), "objections.json");
+}
+function emptyLedger() {
+  return { objections: [] };
+}
+function loadLedger(paths, id) {
+  const read = readProtectedJson(paths, ledgerPath(paths, id));
+  return { ledger: read.data ?? emptyLedger(), tampered: read.tampered };
+}
+function saveLedger(paths, id, ledger) {
+  writeProtectedJson(paths, ledgerPath(paths, id), ledger);
+}
+function addObjection(ledger, text, raisedBy, severity) {
+  const taken = ledger.objections.map((o) => Number(o.id.slice("O-".length))).filter(Number.isFinite);
+  const next = taken.length ? Math.max(...taken) + 1 : 1;
+  const objection = {
+    id: `O-${next}`,
+    raisedBy,
+    severity,
+    text: text.trim(),
+    raisedAt: nowIso()
+  };
+  ledger.objections.push(objection);
+  return objection;
+}
+function bindObjection(ledger, work, id, criterion) {
+  const objection = ledger.objections.find((o) => o.id === id);
+  if (!objection)
+    return { refused: `unknown objection: ${id}` };
+  if (objection.waived)
+    return { refused: `${id} is waived; it stays waived` };
+  if (!work.criteria.some((c) => c.id === criterion)) {
+    return { refused: `unknown criterion: ${criterion}` };
+  }
+  objection.criterion = criterion;
+  return objection;
+}
+function waiveObjection(ledger, id, reason, decision) {
+  const objection = ledger.objections.find((o) => o.id === id);
+  if (!objection)
+    return { refused: `unknown objection: ${id}` };
+  if (decision.by === "validator") {
+    return {
+      refused: "the validator never waives an objection; a person does, or it is bound to a criterion"
+    };
+  }
+  objection.waived = {
+    reason: reason.trim(),
+    at: nowIso(),
+    by: decision.by,
+    ...decision.mode ? { mode: decision.mode } : {}
+  };
+  return objection;
+}
+function objectionStatus(objection, work, evidence, policy) {
+  if (objection.waived && decisionCounts(policy, objection.waived))
+    return "waived";
+  if (objection.criterion) {
+    const criterion = work.criteria.find((c) => c.id === objection.criterion);
+    const record = evidence?.tdd.find((t) => t.criterion === objection.criterion);
+    return criterion && tddDone(record, criterion.kind) ? "resolved" : "bound";
+  }
+  return "open";
+}
+function blockingObjections(ledger, work, evidence, policy, statuses) {
+  return ledger.objections.filter((o) => o.severity === "blocking" && statuses.includes(objectionStatus(o, work, evidence, policy)));
+}
+
 // packages/engine/src/work.ts
 import { existsSync as existsSync2, readdirSync as readdirSync3 } from "node:fs";
-import { join as join11 } from "node:path";
+import { join as join12 } from "node:path";
 
 // packages/engine/src/state.ts
-import { join as join10 } from "node:path";
+import { join as join11 } from "node:path";
 function statePath(paths) {
-  return join10(paths.localDir, "state.json");
+  return join11(paths.localDir, "state.json");
 }
 function loadState(paths) {
   const raw = readJson(statePath(paths)) ?? {};
@@ -972,7 +1052,7 @@ function ensureCrewDir(paths, policy) {
 work/*/logs/
 ${policy.artifacts === "local" ? `work/
 ` : ""}`;
-  const file = join10(paths.crewDir, ".gitignore");
+  const file = join11(paths.crewDir, ".gitignore");
   if (readText(file) !== wanted)
     writeProtectedText(paths, file, wanted);
 }
@@ -1004,13 +1084,13 @@ function slug(text) {
   return text.toLowerCase().normalize("NFKD").replace(/[^\w\s-]/g, "").trim().replace(/[\s_]+/g, "-").replace(/-+/g, "-");
 }
 function workJson(paths, id) {
-  return join11(workDir(paths, id), "work.json");
+  return join12(workDir(paths, id), "work.json");
 }
 function newWorkId(paths, title) {
   const date = nowIso().slice(0, 10);
   let existing = 0;
   try {
-    existing = readdirSync3(join11(paths.crewDir, "work")).filter((n) => n.startsWith(date)).length;
+    existing = readdirSync3(join12(paths.crewDir, "work")).filter((n) => n.startsWith(date)).length;
   } catch {
     existing = 0;
   }
@@ -1040,7 +1120,7 @@ function createWork(paths, input, baseFiles) {
     updatedAt: at
   };
   writeProtectedJson(paths, workJson(paths, work.id), work);
-  writeText(join11(workDir(paths, work.id), "brief.md"), `# Brief
+  writeText(join12(workDir(paths, work.id), "brief.md"), `# Brief
 
 ## Request
 
@@ -1068,7 +1148,7 @@ function activeWork(paths) {
 function openItems(paths, except) {
   let ids = [];
   try {
-    ids = readdirSync3(join11(paths.crewDir, "work")).sort();
+    ids = readdirSync3(join12(paths.crewDir, "work")).sort();
   } catch {
     return [];
   }
@@ -1079,7 +1159,7 @@ function openItems(paths, except) {
     const { work } = loadWork(paths, id);
     if (!work || work.phase === "deliver")
       continue;
-    const evidence = readProtectedJson(paths, join11(workDir(paths, id), "evidence.json"));
+    const evidence = readProtectedJson(paths, join12(workDir(paths, id), "evidence.json"));
     if (evidence.data?.verdict === "proven")
       continue;
     open.push(work);
@@ -1120,10 +1200,13 @@ function addCriterion(work, text, kind = "behavior") {
   work.criteria.push(criterion);
   return criterion;
 }
-function removeCriterion(work, evidence, id) {
+function removeCriterion(work, evidence, id, ledger) {
   const index = work.criteria.findIndex((c) => c.id === id);
   if (index === -1)
     return { refused: `unknown criterion: ${id}` };
+  const bound = ledger?.objections.find((o) => o.criterion === id && !o.waived);
+  if (bound)
+    return { refused: `${id} is bound to objection ${bound.id}; it stays` };
   if (evidence.tdd.some((t) => t.criterion === id)) {
     return { refused: `${id} has a test-first record; it stays` };
   }
@@ -1208,11 +1291,6 @@ function hasAcceptanceSection(text) {
 function missingConclaveSections(text) {
   return CONCLAVE_SECTIONS.filter((name) => !(sectionBody(text, name) ?? "").trim());
 }
-function tddDone(record, kind) {
-  if (!record)
-    return false;
-  return kind === "behavior" ? !!record.red && !!record.green : !!record.before && !!record.after;
-}
 function routeDocuments(work, ctx) {
   const missing = [];
   if (work.route !== "fast") {
@@ -1247,6 +1325,10 @@ function guardFor(work, next, ctx) {
     missing.push(...conclaveDocument(work, ctx));
     for (const d of unansweredDecisions(work, ctx.policy))
       missing.push(`an answer to ${d.id} (crew decide <id> ${d.id} "<answer>")`);
+    if (ctx.ledger) {
+      for (const o of blockingObjections(ctx.ledger, work, ctx.evidence, ctx.policy, ["open"]))
+        missing.push(`a criterion bound to blocking objection ${o.id}, or the user's waiver (crew objection <id> resolve ${o.id} --criterion AC-k | waive ${o.id} --reason "<why>")`);
+    }
   } else if (next === "build") {
     if (work.criteria.length === 0) {
       missing.push('at least one acceptance criterion (crew criteria <id> add "...")');
@@ -1310,7 +1392,7 @@ function emptyEvidence() {
   };
 }
 function evidencePath(paths, id) {
-  return join12(workDir(paths, id), "evidence.json");
+  return join13(workDir(paths, id), "evidence.json");
 }
 function loadEvidence(paths, id) {
   const read = readProtectedJson(paths, evidencePath(paths, id));
@@ -1361,6 +1443,10 @@ function computeVerdict(input) {
       unproven.push(`gate ${label} ran an unconfirmed command (crew profile confirm)`);
     }
   }
+  if (input.ledger) {
+    for (const o of blockingObjections(input.ledger, work, evidence, policy, ["open", "bound"]))
+      unproven.push(`blocking objection ${o.id} ${objectionStatus(o, work, evidence, policy)}: ${o.text}`);
+  }
   if (work.criteria.length === 0)
     unproven.push('no acceptance criteria (crew criteria <id> add "...")');
   for (const criterion of work.criteria) {
@@ -1384,12 +1470,14 @@ function tddSummary(work, evidence, criterionId, kind, policy) {
     return kind === "behavior" ? "red only" : "before only";
   return "missing";
 }
-function renderReport(work, evidence, policy) {
+function renderReport(work, evidence, policy, ledger) {
   const lines = [];
   lines.push(`# Report: ${work.title}`, "");
   lines.push(`- Work: \`${work.id}\``);
   lines.push(`- Type: ${work.type}. Route: ${work.route} (${work.routeReasons.join("; ")})`);
-  lines.push(`- Verdict: **${evidence.verdict === "proven" ? "Proven" : "Not proven"}**`, "");
+  const waived = (ledger?.objections ?? []).filter((o) => o.waived && decisionCounts(policy, o.waived));
+  const waivedNote = waived.length ? `, with ${waived.length} objection${waived.length === 1 ? "" : "s"} waived by the user` : "";
+  lines.push(`- Verdict: **${evidence.verdict === "proven" ? "Proven" : "Not proven"}**${waivedNote}`, "");
   if (evidence.unproven.length) {
     lines.push("## Not proven", "");
     for (const reason of evidence.unproven)
@@ -1433,6 +1521,22 @@ function renderReport(work, evidence, policy) {
     for (const p of pauses)
       lines.push(`- paused for the user (${p.at}), not proven: ${p.reason}`);
   }
+  if (ledger?.objections.length) {
+    lines.push("", "## Objections", "");
+    for (const o of ledger.objections) {
+      const status = objectionStatus(o, work, evidence, policy);
+      let how = "open";
+      if (status === "waived" && o.waived) {
+        how = `waived ${decidedBy(o.waived)}: ${o.waived.reason} (${o.waived.at})`;
+      } else if (status === "resolved")
+        how = `resolved by ${o.criterion}`;
+      else if (status === "bound")
+        how = `bound to ${o.criterion}, not yet proven`;
+      else if (o.waived)
+        how = `open (waiver ${decidedBy(o.waived)} not counted)`;
+      lines.push(`- ${o.id} (${o.severity}, raised by ${o.raisedBy}) ${how}: ${o.text}`);
+    }
+  }
   lines.push("", `Fingerprint: ${evidence.fingerprint ?? "none"}`, "");
   return lines.join(`
 `);
@@ -1440,7 +1544,7 @@ function renderReport(work, evidence, policy) {
 
 // packages/engine/src/gates.ts
 import { accessSync, constants } from "node:fs";
-import { basename as basename2, delimiter, join as join14 } from "node:path";
+import { basename as basename2, delimiter, join as join15 } from "node:path";
 
 // packages/engine/src/run.ts
 import { spawn } from "node:child_process";
@@ -1521,7 +1625,7 @@ function runCommand(command, options) {
 // packages/engine/src/secrets.ts
 import { execFileSync as execFileSync2, spawnSync } from "node:child_process";
 import { readFileSync as readFileSync3 } from "node:fs";
-import { join as join13 } from "node:path";
+import { join as join14 } from "node:path";
 var RULES = [
   {
     rule: "private key",
@@ -1566,7 +1670,7 @@ function isBinary(buffer) {
 function fileSource(root, path) {
   let buffer;
   try {
-    buffer = readFileSync3(join13(root, path));
+    buffer = readFileSync3(join14(root, path));
   } catch {
     return null;
   }
@@ -1680,7 +1784,7 @@ function onPath(binary, env) {
       continue;
     for (const extension of extensions) {
       try {
-        accessSync(join14(dir, binary + extension), constants.X_OK);
+        accessSync(join15(dir, binary + extension), constants.X_OK);
         return true;
       } catch {}
     }
@@ -1703,7 +1807,7 @@ var PYTHON_AUDIT = {
   pip: "python -m pip_audit"
 };
 function depsAuditCommand(target, root, env = process.env) {
-  const dir = join14(root, target.path);
+  const dir = join15(root, target.path);
   if (target.stack === "python") {
     if (!onPath("pip-audit", env))
       return { reason: "pip-audit not on PATH" };
@@ -1712,14 +1816,14 @@ function depsAuditCommand(target, root, env = process.env) {
   let tool;
   if (target.stack === "node") {
     tool = NODE_AUDIT[target.packageManager];
-    if (tool && target.packageManager === "yarn" && exists(join14(dir, ".yarnrc.yml")))
+    if (tool && target.packageManager === "yarn" && exists(join15(dir, ".yarnrc.yml")))
       tool = { ...tool, command: "yarn npm audit --severity high" };
   } else if (target.stack === "php") {
     tool = { binary: "composer", command: "composer audit", lockfiles: ["composer.lock"] };
   }
   if (!tool)
     return { reason: `no audit tool for ${target.packageManager}` };
-  if (!tool.lockfiles.some((name) => exists(join14(dir, name))))
+  if (!tool.lockfiles.some((name) => exists(join15(dir, name))))
     return { reason: "no lockfile" };
   if (!onPath(tool.binary, env))
     return { reason: `${tool.binary} not on PATH` };
@@ -1817,9 +1921,9 @@ async function runOne(paths, work, profile, planned, fingerprint) {
   const where = targetPath.replace(/[^a-z0-9]+/gi, "_") + (planned.stack ? `-${planned.stack}` : "");
   const log = `logs/${gate}-${where}-${Date.now()}.txt`;
   const result = await runCommand(command, {
-    cwd: join14(paths.root, targetPath),
+    cwd: join15(paths.root, targetPath),
     timeoutMs: target.timeoutMs,
-    logPath: join14(workDir(paths, work.id), log)
+    logPath: join15(workDir(paths, work.id), log)
   });
   const passed = result.exit === 0 && !result.timedOut;
   return {
@@ -1889,6 +1993,7 @@ async function runGates(paths, work, profile, policy, options = {}) {
     evidence,
     expected: planned,
     policy,
+    ledger: loadLedger(paths, work.id).ledger,
     currentFingerprint: computeFingerprint(paths.root, profile, base, MAX_WATCHED_FILES, fingerprintMethod(fingerprintBefore)),
     tampered
   });
@@ -1906,6 +2011,7 @@ function assess(paths, work, profile, policy, tampered = false) {
     work,
     evidence: read.evidence,
     expected,
+    ledger: loadLedger(paths, work.id).ledger,
     currentFingerprint: computeFingerprint(paths.root, profile, base, MAX_WATCHED_FILES, fingerprintMethod(read.evidence.fingerprint)),
     tampered: tampered || read.tampered,
     policy
@@ -1914,9 +2020,9 @@ function assess(paths, work, profile, policy, tampered = false) {
 }
 
 // packages/engine/src/profile.ts
-import { join as join15 } from "node:path";
+import { join as join16 } from "node:path";
 function profilePath(paths) {
-  return join15(paths.crewDir, "profile.json");
+  return join16(paths.crewDir, "profile.json");
 }
 function loadProfile(paths) {
   const read = readProtectedJson(paths, profilePath(paths));
@@ -1954,7 +2060,7 @@ function buildContext(payload, env = process.env) {
 }
 
 // packages/engine/src/hooks/pre-tool-use.ts
-import { isAbsolute, join as join16, relative as relative4 } from "node:path";
+import { isAbsolute, join as join17, relative as relative4 } from "node:path";
 
 // packages/engine/src/hooks/shell.ts
 function simpleCommands(command) {
@@ -1994,8 +2100,8 @@ function isRedirectPart(line, i) {
 // packages/engine/src/hooks/pre-tool-use.ts
 var WRITE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
 var RUNNER = String.raw`(?:[A-Za-z_][A-Za-z0-9_]*=\S*|-\S*|node|bun|bunx|npx|sh|bash|zsh|eval|exec|env|time|nohup|xargs|sudo|command)`;
-var USER_ONLY = new RegExp(String.raw`^[\s({]*(?:${RUNNER}\s+)*(?:\S*/)?crew(?:\.mjs)?\s+(?:skip|approve|accept|decide|profile\s+confirm|policy\s+accept|profile\s+set\b[^;&|]*--force)\b`);
-var ENGINE_FILES = /\.crew\/(?:profile\.json|policy\.json|\.gitignore|local\b|work\/[^\s/]+\/(?:work\.json|evidence\.json|report\.md|logs\b))|\.wizardingcode\/crew\b/;
+var USER_ONLY = new RegExp(String.raw`^[\s({]*(?:${RUNNER}\s+)*(?:\S*/)?crew(?:\.mjs)?\s+(?:skip|approve|accept|decide|objection\s+\S+\s+waive|profile\s+confirm|policy\s+accept|profile\s+set\b[^;&|]*--force)\b`);
+var ENGINE_FILES = /\.crew\/(?:profile\.json|policy\.json|\.gitignore|local\b|work\/[^\s/]+\/(?:work\.json|evidence\.json|objections\.json|report\.md|logs\b))|\.wizardingcode\/crew\b/;
 var WRITE_SHAPE = /(?:^|[\s;&|("'])(?:rm|mv|cp|tee|truncate|chmod|touch|dd|install)\b|sed\s+-i|>{1,2}\|?\s*["']?\S*(?:\.crew\/|\.wizardingcode\/crew\b)/;
 var OPAQUE_REDIRECT = />{1,2}\|?\s*["']?[$`]/;
 var PROMPTLESS_MODES = new Set(["bypassPermissions", "dontAsk"]);
@@ -2050,7 +2156,7 @@ function onPreToolUse(ctx, payload) {
     const filePath = pathFromInput(input);
     if (!filePath)
       return {};
-    const abs = canonical(isAbsolute(filePath) ? filePath : join16(ctx.paths.root, filePath));
+    const abs = canonical(isAbsolute(filePath) ? filePath : join17(ctx.paths.root, filePath));
     if (isProtectedPath(ctx.paths, abs)) {
       return answer("deny", `Crew: ${filePath} is maintained by the engine and is changed through the crew command`);
     }
@@ -2231,7 +2337,7 @@ function handleHook(event, payload, env = process.env) {
 }
 
 // packages/engine/src/tdd.ts
-import { join as join17 } from "node:path";
+import { join as join18 } from "node:path";
 var TEST_PATTERNS = ["**/*test*", "**/*spec*", "tests/**", "test/**", "**/__tests__/**"];
 function defaultTestCommand(profile) {
   const target = profile.targets.find((t) => t.path === "." && t.gates.test) ?? profile.targets.find((t) => t.gates.test);
@@ -2272,7 +2378,7 @@ async function recordTdd(paths, work, evidence, profile, criterionId, step, over
   const result = await runCommand(command, {
     cwd: paths.root,
     timeoutMs: fallback?.timeoutMs ?? 10 * 60 * 1000,
-    logPath: join17(workDir(paths, work.id), log)
+    logPath: join18(workDir(paths, work.id), log)
   });
   const record = {
     command,
@@ -2329,6 +2435,7 @@ var KNOWN_FLAGS = {
   criteria: ["kind"],
   decision: ["default"],
   decide: ["mode", "validator"],
+  objection: ["by", "severity", "criterion", "reason", "mode"],
   approve: ["mode"],
   phase: [],
   await: [],
@@ -2424,6 +2531,8 @@ function tamperRefusal(env, opened) {
       found.push({ file: `${base}/work.json`, accept: opened.work.id });
     if (loadEvidence(env.paths, opened.work.id).tampered)
       found.push({ file: `${base}/evidence.json`, accept: opened.work.id });
+    if (loadLedger(env.paths, opened.work.id).tampered)
+      found.push({ file: `${base}/objections.json`, accept: opened.work.id });
   }
   const first = found[0];
   return first ? refuse(tamperMessage(first)) : null;
@@ -2445,16 +2554,16 @@ function skipStep(work, raw) {
 }
 function accept(env, target) {
   if (target === "profile" || target === "policy") {
-    if (!recordIntegrity(env.paths, join18(env.paths.crewDir, `${target}.json`)))
+    if (!recordIntegrity(env.paths, join19(env.paths.crewDir, `${target}.json`)))
       return refuse(`no .crew/${target}.json to accept`);
     return ok(`${target} accepted: its current content is now the trusted version`, {
       accepted: target
     });
   }
   const dir = workDir(env.paths, target);
-  if (!/^[\w.-]+$/.test(target) || target.includes("..") || !existsSync3(join18(dir, "work.json")))
+  if (!/^[\w.-]+$/.test(target) || target.includes("..") || !existsSync3(join19(dir, "work.json")))
     return refuse(`unknown work item: ${target}`);
-  const files = ["work.json", "evidence.json", "report.md"].filter((name) => recordIntegrity(env.paths, join18(dir, name)));
+  const files = ["work.json", "evidence.json", "report.md", "objections.json"].filter((name) => recordIntegrity(env.paths, join19(dir, name)));
   return ok(`${target} accepted: ${files.join(", ")} now trusted as they are`, {
     accepted: target,
     files
@@ -2499,9 +2608,10 @@ function guardContext(env, work, tampered) {
   const dir = workDir(env.paths, work.id);
   const result = assess(env.paths, work, env.profile, env.policy, env.tampered || tampered);
   return {
-    specText: readText(join18(dir, "spec.md")),
-    conclaveText: readText(join18(dir, "conclave.md")),
-    planExists: existsSync3(join18(dir, "plan.md")),
+    specText: readText(join19(dir, "spec.md")),
+    conclaveText: readText(join19(dir, "conclave.md")),
+    ledger: loadLedger(env.paths, work.id).ledger,
+    planExists: existsSync3(join19(dir, "plan.md")),
     evidence: result.evidence,
     proven: result.verdict === "proven",
     unproven: result.unproven,
@@ -2519,7 +2629,7 @@ function logDecision(env, work, answers) {
     route: work.route,
     reasons: work.routeReasons
   });
-  const file = join18(env.paths.localDir, "decisions.jsonl");
+  const file = join19(env.paths.localDir, "decisions.jsonl");
   writeText(file, `${readText(file) ?? ""}${line}
 `);
 }
@@ -2571,7 +2681,7 @@ async function dispatch(parsed, io) {
     return settings(command, args, { userDir: userDirOf(io.env) });
   let paths = resolvePaths(io.cwd, io.env);
   if (!paths && command === "detect") {
-    ensureDir(join18(resolve2(io.cwd), ".crew"));
+    ensureDir(join19(resolve2(io.cwd), ".crew"));
     paths = resolvePaths(io.cwd, io.env);
   }
   if (!paths)
@@ -2589,7 +2699,7 @@ async function dispatch(parsed, io) {
       if (parsed.flags.refresh) {
         saveProfile(env.paths, profile);
         if (integrityOf(env.paths)[".crew/policy.json"] === undefined) {
-          recordIntegrity(env.paths, join18(env.paths.crewDir, "policy.json"));
+          recordIntegrity(env.paths, join19(env.paths.crewDir, "policy.json"));
         }
       }
       const missing = missingTestCommands(profile);
@@ -2738,7 +2848,7 @@ async function dispatch(parsed, io) {
         return opened;
       if (args[1] === "remove" && args[2]) {
         const { evidence } = loadEvidence(env.paths, opened.work.id);
-        const outcome = removeCriterion(opened.work, evidence, args[2]);
+        const outcome = removeCriterion(opened.work, evidence, args[2], loadLedger(env.paths, opened.work.id).ledger);
         if ("refused" in outcome)
           return refuse(outcome.refused);
         saveWork(env.paths, opened.work);
@@ -2752,6 +2862,53 @@ async function dispatch(parsed, io) {
       const criterion = addCriterion(opened.work, text, kind);
       saveWork(env.paths, opened.work);
       return ok(`${criterion.id} (${kind}): ${criterion.text}`, { criterion });
+    }
+    case "objection": {
+      const opened = openForChange(env, args[0]);
+      if (isOutcome(opened))
+        return opened;
+      const { ledger } = loadLedger(env.paths, opened.work.id);
+      const usage = 'usage: crew objection <id> add "<text>" --by <role> --severity blocking|advisory | resolve O-n --criterion AC-k | waive O-n --reason "<why>" [--mode <mode>]';
+      if (args[1] === "add") {
+        const text = args.slice(2).join(" ").trim();
+        const by = typeof parsed.flags.by === "string" ? parsed.flags.by.trim() : "";
+        const severity = parsed.flags.severity;
+        if (!text || !by)
+          return refuse(usage);
+        if (severity !== "blocking" && severity !== "advisory")
+          return refuse("severity is blocking or advisory");
+        const objection = addObjection(ledger, text, by, severity);
+        saveLedger(env.paths, opened.work.id, ledger);
+        return ok(`${objection.id} (${severity}, raised by ${by}): ${objection.text}`, {
+          objection
+        });
+      }
+      if (args[1] === "resolve" && args[2]) {
+        if (typeof parsed.flags.criterion !== "string")
+          return refuse(usage);
+        const result = bindObjection(ledger, opened.work, args[2], parsed.flags.criterion);
+        if ("refused" in result)
+          return refuse(result.refused);
+        saveLedger(env.paths, opened.work.id, ledger);
+        return ok(`${result.id} is resolved when ${result.criterion} is proven`, {
+          objection: result
+        });
+      }
+      if (args[1] === "waive" && args[2]) {
+        const reason = typeof parsed.flags.reason === "string" ? parsed.flags.reason.trim() : "";
+        if (!reason)
+          return refuse(usage);
+        const decision = decisionFlag(parsed);
+        if (isOutcome(decision))
+          return decision;
+        const result = waiveObjection(ledger, args[2], reason, decision);
+        if ("refused" in result)
+          return refuse(result.refused);
+        saveLedger(env.paths, opened.work.id, ledger);
+        const waiver = result.waived ?? { by: "user" };
+        return ok(`${result.id} waived ${decidedBy(waiver)}${countedNote(env.policy, waiver)}: ${reason}`, { objection: result });
+      }
+      return refuse(usage);
     }
     case "decision": {
       const opened = openForChange(env, args[0]);
@@ -2866,7 +3023,7 @@ ${outcome.record.tail}` : "";
           break;
       }
       saveWork(env.paths, opened.work);
-      writeProtectedText(env.paths, join18(workDir(env.paths, opened.work.id), "report.md"), renderReport(opened.work, outcome.evidence, env.policy));
+      writeProtectedText(env.paths, join19(workDir(env.paths, opened.work.id), "report.md"), renderReport(opened.work, outcome.evidence, env.policy, loadLedger(env.paths, opened.work.id).ledger));
       const raised = outcome.raised ? `Route raised to ${outcome.raised}: ${opened.work.routeReasons.at(-1)}
 ` : "";
       return {
@@ -2914,7 +3071,7 @@ ${outcome.record.tail}` : "";
       const result = assess(env.paths, opened.work, env.profile, env.policy, env.tampered || opened.tampered);
       result.evidence.verdict = result.verdict;
       result.evidence.unproven = result.unproven;
-      const report = renderReport(opened.work, result.evidence, env.policy);
+      const report = renderReport(opened.work, result.evidence, env.policy, loadLedger(env.paths, opened.work.id).ledger);
       if (refused)
         return refuse(`${refused.text}
 
@@ -2923,7 +3080,7 @@ ${report}`, {
           unproven: result.unproven
         });
       saveEvidence(env.paths, opened.work.id, result.evidence);
-      writeProtectedText(env.paths, join18(workDir(env.paths, opened.work.id), "report.md"), report);
+      writeProtectedText(env.paths, join19(workDir(env.paths, opened.work.id), "report.md"), report);
       return ok(report, { verdict: result.verdict, unproven: result.unproven });
     }
     case "status": {
@@ -2961,7 +3118,12 @@ ${gateSummary(active.work, result.verdict, result.unproven, result.evidence.runs
           durationMs: r.durationMs,
           ...r.reason ? { reason: r.reason } : {}
         })),
-        skips: work.skips.map((s) => ({ step: s.step, reason: s.reason }))
+        skips: work.skips.map((s) => ({ step: s.step, reason: s.reason })),
+        objections: loadLedger(env.paths, work.id).ledger.objections.map((o) => ({
+          id: o.id,
+          severity: o.severity,
+          status: objectionStatus(o, work, result.evidence, env.policy)
+        }))
       });
     }
     default:
@@ -3014,6 +3176,9 @@ var HELP = `crew ${VERSION}
   decision <id> add "<question>" [--default "<answer>"]   a decision only the user can make (gap round)
   decide <id> D-n "<answer>"            record the user's answer (asks the user)
       --mode <mode> --validator stated-default   no person watching: the validator takes the default
+  objection <id> add "<text>" --by <role> --severity blocking|advisory   file an objection (ledger)
+  objection <id> resolve O-n --criterion AC-k   resolved when that criterion is proven
+  objection <id> waive O-n --reason "<why>"     the user decides against it (asks the user)
   approve <id> spec                     record the user's approval (asks the user)
       --mode auto|bypassPermissions|dontAsk   no person watching: recorded as the agent's decision
   phase <id> next                       advance when the guard holds

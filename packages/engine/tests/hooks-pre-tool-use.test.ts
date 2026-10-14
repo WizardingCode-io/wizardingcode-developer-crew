@@ -291,6 +291,25 @@ test("SP2a: decide is a user-only command; decision add is not", () => {
   expect(decision(bash('crew decision w1 add "Which roles?"'))).toBeUndefined();
 });
 
+test("SP2a: objections.json is engine-owned and waive is user-only", () => {
+  const { root, ctx } = setup();
+  expect(
+    decision(
+      onPreToolUse(ctx, {
+        tool_name: "Edit",
+        tool_input: { file_path: join(root, ".crew", "work", "w1", "objections.json") },
+      }),
+    ),
+  ).toBe("deny");
+  const bash = (command: string) =>
+    onPreToolUse(ctx, { tool_name: "Bash", tool_input: { command } });
+  expect(decision(bash('crew objection w1 waive O-1 --reason "known"'))).toBe("ask");
+  expect(
+    decision(bash('crew objection w1 add "x" --by expert --severity advisory')),
+  ).toBeUndefined();
+  expect(decision(bash("echo x > .crew/work/w1/objections.json"))).toBe("deny");
+});
+
 test("a write through a symlinked alias of the repository is judged like the real path", () => {
   const { root, ctx } = setup();
   const alias = join(tempDir(), "alias");

@@ -1,10 +1,11 @@
 import { expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { addObjection, bindObjection } from "../src/objections.ts";
 import { workDir } from "../src/paths.ts";
 import { DEFAULT_POLICY } from "../src/policy.ts";
 import { loadState } from "../src/state.ts";
-import type { Evidence, RunRecord } from "../src/types.ts";
+import type { Evidence, ObjectionLedger, RunRecord } from "../src/types.ts";
 import {
   activeWork,
   addCriterion,
@@ -39,6 +40,7 @@ const run: RunRecord = {
 const empty: GuardContext = {
   specText: null,
   conclaveText: null,
+  ledger: null,
   planExists: false,
   evidence: null,
   proven: false,
@@ -322,6 +324,40 @@ test("SP2a: decisions are numbered once, answered by the user or by the validato
   expect(guardFor(work, "plan", counting)).toEqual([]);
   expect(answerDecision(work, "D-9", "x", { by: "user" })).toEqual({
     refused: "unknown decision: D-9",
+  });
+});
+
+test("SP2a: plan needs every blocking objection bound or waived; a bound criterion cannot be removed", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const work = createWork(paths, "feature");
+  applyClassification(work, "feature", { route: "standard", reasons: [], riskAreas: [] });
+  work.phase = "conclave";
+  const ac = addCriterion(work, "the sync is gated");
+  const conclave =
+    "## Assumed by good practice\nnone\n## Decisions only the user can make\nnone\n## Proposals\nnone\n## Warnings\nnone\n";
+  const ledger: ObjectionLedger = { objections: [] };
+  const o1 = addObjection(
+    ledger,
+    "the sync would re-subscribe everyone",
+    "fault-finder",
+    "blocking",
+  );
+  addObjection(ledger, "consider a webhook", "expert", "advisory");
+  const ctx = { ...empty, conclaveText: conclave, ledger };
+  expect(guardFor(work, "plan", ctx)).toEqual([
+    'a criterion bound to blocking objection O-1, or the user\'s waiver (crew objection <id> resolve O-1 --criterion AC-k | waive O-1 --reason "<why>")',
+  ]);
+  bindObjection(ledger, work, o1.id, ac.id);
+  expect(guardFor(work, "plan", ctx)).toEqual([]);
+  const evidence: Evidence = {
+    fingerprint: "f",
+    tdd: [],
+    runs: [],
+    verdict: "unproven",
+    unproven: [],
+  };
+  expect(removeCriterion(work, evidence, ac.id, ledger)).toEqual({
+    refused: `${ac.id} is bound to objection O-1; it stays`,
   });
 });
 
