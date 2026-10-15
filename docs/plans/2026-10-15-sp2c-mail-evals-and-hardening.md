@@ -65,7 +65,7 @@ Three more, cheaper, folded into their tasks: a worktree folder or a branch that
 - Consumes: nothing of this plan.
 - Produces: eight answers (A1 to A8) the later tasks read as constants. Each later task names the answer it depends on and what to do on each outcome. What the documentation already says is written beside each question, so the spike confirms rather than discovers: `-p` loads installed plugins and runs the settings hooks unless `--bare` (headless documentation); the SubagentStop payload carries `agent_id`, `agent_type`, `agent_transcript_path`, `last_assistant_message` beside the common fields (hooks documentation); `agent_type` of a plugin agent is `plugin-name:agent-name`; the agent transcript is `~/.claude/projects/<project>/<sessionId>/subagents/agent-<agentId>.jsonl`, its usage fields undocumented; the eval sandbox runs with a temporary HOME, writes confined to the workspace, network limited to granted domains (plugin-evals documentation), so a nested `claude -p` inside it is in doubt.
 
-- [ ] **Step 1: Open the work item** (fast route: a chore in one spot, no risk area; one observed criterion, decision 9)
+- [x] **Step 1: Open the work item** (fast route: a chore in one spot, no risk area; one observed criterion, decision 9)
 
 ```bash
 crew start "SP2c task 1: spike. The engine's opener (claude -p with the plugin loaded), the SubagentStop payload and the eval sandbox, answered in docs/plans/2026-10-15-sp2c-spike-results.md" --answers '{"work_type":"chore","is_vague":0.05,"scope":0,"touches_auth":0,"touches_payments":0,"touches_personal_data":0,"touches_data_migration":0,"touches_infra":0,"touches_public_api":0}'
@@ -75,7 +75,7 @@ crew phase <id> next
 
 (A fast item with no criterion on `crew start` stays in recognize; the criterion and `phase next` take it to build.)
 
-- [ ] **Step 2: Question 1, the opener outside a session.** In the scratchpad: `git init -q -b main scratch-a && cd scratch-a && git commit --allow-empty -qm init`. With the user-scope plugin installed (0.4.0), run from a plain terminal shell (the `!` prefix is not for this: it would run inside this session; the agent runs it through Bash with the two variables unset):
+- [x] **Step 2: Question 1, the opener outside a session.** In the scratchpad: `git init -q -b main scratch-a && cd scratch-a && git commit --allow-empty -qm init`. With the user-scope plugin installed (0.4.0), run from a plain terminal shell (the `!` prefix is not for this: it would run inside this session; the agent runs it through Bash with the two variables unset):
 
 ```bash
 env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT -u CLAUDE_CODE_CHILD_SESSION claude -p "Reply with the single word pong and nothing else." --permission-mode dontAsk --max-turns 1 --output-format json
@@ -83,9 +83,9 @@ env -u CLAUDECODE -u CLAUDE_CODE_ENTRYPOINT -u CLAUDE_CODE_CHILD_SESSION claude 
 
 Record: the exit code; the JSON keys (`result`, `session_id`, `total_cost_usd`, `usage`, `num_turns`, `duration_ms`); whether `scratch-a/.crew/local/state.json` appeared (the plugin's SessionStart hook ran, so the user-scope plugin loads in `-p` without a flag, as the documentation says). Then the same with `--plugin-dir /Users/andreagroferreira/AIProjects/wizardingcode-developer-crew/plugins/core` added: record whether the plugin loads twice (two SessionStart contexts in a `--output-format stream-json --verbose` run) or errors. **Answer A1:** does `claude -p` load the user-scope plugin without a flag (yes/no), and does `--plugin-dir` beside it conflict (yes/no).
 
-- [ ] **Step 3: Question 2, the opener from inside a session.** From this session's Bash tool (which has `CLAUDECODE=1`), run the same command without `env -u` and with it. **Answer A2:** does a nested `claude -p` run from a Claude Code session with `CLAUDECODE` set, or does it refuse (quote the error), and does unsetting `CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT` and `CLAUDE_CODE_CHILD_SESSION` make it run.
+- [x] **Step 3: Question 2, the opener from inside a session.** From this session's Bash tool (which has `CLAUDECODE=1`), run the same command without `env -u` and with it. **Answer A2:** does a nested `claude -p` run from a Claude Code session with `CLAUDECODE` set, or does it refuse (quote the error), and does unsetting `CLAUDECODE`, `CLAUDE_CODE_ENTRYPOINT` and `CLAUDE_CODE_CHILD_SESSION` make it run.
 
-- [ ] **Step 4: Question 3, the read-only tool set.** In `scratch-a`:
+- [x] **Step 4: Question 3, the read-only tool set.** In `scratch-a`:
 
 ```bash
 claude -p "List the files of this folder and reply with their names." --permission-mode dontAsk --max-turns 3 --output-format json --allowedTools Read Glob Grep "Bash(crew *)" --disallowedTools Write Edit MultiEdit NotebookEdit
@@ -95,7 +95,7 @@ ls x.txt
 
 **Answer A3:** the flag spellings accepted (the CLI reference lists `--allowedTools`/`--allowed-tools` and `--disallowedTools`/`--disallowed-tools`, space-separated or comma-separated rules), and whether the second run creates `x.txt` (it must not; if `Bash(crew *)` lets a `Bash(echo hi > x.txt)` through, record it: the rule is a prefix match on the command text, so it should not).
 
-- [ ] **Step 5: Question 4, the SubagentStop payload.** In `scratch-a` write `.claude/settings.local.json` (the scratchpad path spelled out in full in place of `<scratchpad>`):
+- [x] **Step 5: Question 4, the SubagentStop payload.** In `scratch-a` write `.claude/settings.local.json` (the scratchpad path spelled out in full in place of `<scratchpad>`):
 
 ```json
 {
@@ -112,9 +112,9 @@ ls x.txt
 
 Run `claude -p "Use the Agent tool with subagent_type wizardingcode-developer-crew:researcher and the prompt 'Reply with the word pong and the number 42 on one line; read nothing.' Then reply with what it returned." --permission-mode dontAsk --max-turns 6 --output-format json`. Read both JSONL files. **Answer A4:** the fields of the SubagentStop payload as received (expected `session_id`, `transcript_path`, `cwd`, `permission_mode`, `hook_event_name`, `stop_hook_active`, `agent_id`, `agent_type`, `agent_transcript_path`, `last_assistant_message`, plus `prompt_id`, `scratchpad_dir`, `effort`), the exact string `agent_type` carries for a plugin agent (expected `wizardingcode-developer-crew:researcher`), whether `last_assistant_message` is the subagent's whole final text or the closing line of a `SubagentHandback` (then the report is that call's `message` input in the transcript), and the fields of SubagentStart.
 
-- [ ] **Step 6: Question 5, tokens in the agent transcript.** Open the file `agent_transcript_path` named. **Answer A5:** which lines carry usage (expected: lines with `"type":"assistant"`, under `message.usage` with `input_tokens`, `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens`), and whether the sum over the assistant lines of the four fields is within 5 percent of what the parent's transcript reports for that Agent call. Also: where the last `SubagentHandback` tool call sits in the transcript (`type: assistant`, `message.content[].type: tool_use`, `name: SubagentHandback`, `input.message`).
+- [x] **Step 6: Question 5, tokens in the agent transcript.** Open the file `agent_transcript_path` named. **Answer A5:** which lines carry usage (expected: lines with `"type":"assistant"`, under `message.usage` with `input_tokens`, `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens`), and whether the sum over the assistant lines of the four fields is within 5 percent of what the parent's transcript reports for that Agent call. Also: where the last `SubagentHandback` tool call sits in the transcript (`type: assistant`, `message.content[].type: tool_use`, `name: SubagentHandback`, `input.message`).
 
-- [ ] **Step 7: Question 6, the nested opener inside the eval sandbox.** Create a throwaway case:
+- [x] **Step 7: Question 6, the nested opener inside the eval sandbox.** Create a throwaway case:
 
 `plugins/core/evals/spike-nested-claude/case.yaml`:
 ```yaml
@@ -158,11 +158,11 @@ arm: with-only
 
 Add `"Bash(env *)"` and `"Bash(claude *)"` to `ALLOW_TOOLS` in `scripts/eval.ts` for this run only, then `bun scripts/eval.ts --case spike-nested-claude` (about 0.2 USD; the `crew mail status` line fails under 0.4.0 and is there only to show the engine ran inside the sandbox). **Answer A6:** does the nested `claude -p` run inside the eval sandbox (the trace holds `"result":"pong"`), or what refuses it (quote the error: the sandbox, the network proxy, the nesting). Delete the case folder and revert `scripts/eval.ts` (`git checkout -- scripts/eval.ts`).
 
-- [ ] **Step 8: Question 7, the doorbell.** From this session, `ListAgents` and note how another live local session is named; in `scratch-a` start `claude -p "Wait for a message; when one arrives, reply with its text." --name crew-spike --max-turns 3 --output-format json &` and `ListAgents` again. **Answer A7:** whether a `-p` session appears, under the `--name` given or an auto-generated one, and whether `session_id` from the hook payload is a different string (then the registry records the session id from the hook and the name the opener gave, and the doorbell line prints the name).
+- [x] **Step 8: Question 7, the doorbell.** From this session, `ListAgents` and note how another live local session is named; in `scratch-a` start `claude -p "Wait for a message; when one arrives, reply with its text." --name crew-spike --max-turns 3 --output-format json &` and `ListAgents` again. **Answer A7:** whether a `-p` session appears, under the `--name` given or an auto-generated one, and whether `session_id` from the hook payload is a different string (then the registry records the session id from the hook and the name the opener gave, and the doorbell line prints the name).
 
-- [ ] **Step 9: Question 8, the harness variables in `-p`.** In `scratch-a`, with `.claude/settings.local.json` extended by a `SessionStart` hook `env | grep -i CLAUDE | tee -a <scratchpad>/spike/env.txt > /dev/null`, run `claude -p "Reply pong." --max-turns 1 --output-format json`. **Answer A8:** `CLAUDE_CODE_SESSION_ATTENDED` is `0` in a `-p` session on 2.1.300 (finding #19 saw it on 2.1.299), and the list of `CLAUDE*` variables a hook sees, so the opener knows which to strip (A2) and which to leave.
+- [x] **Step 9: Question 8, the harness variables in `-p`.** In `scratch-a`, with `.claude/settings.local.json` extended by a `SessionStart` hook `env | grep -i CLAUDE | tee -a <scratchpad>/spike/env.txt > /dev/null`, run `claude -p "Reply pong." --max-turns 1 --output-format json`. **Answer A8:** `CLAUDE_CODE_SESSION_ATTENDED` is `0` in a `-p` session on 2.1.300 (finding #19 saw it on 2.1.299), and the list of `CLAUDE*` variables a hook sees, so the opener knows which to strip (A2) and which to leave.
 
-- [ ] **Step 10: Write the note.** `docs/plans/2026-10-15-sp2c-spike-results.md`, in this shape (eight `## A<n>.` sections, each ending with one `- Answer:` line; the closing section says what the plan does with each answer):
+- [x] **Step 10: Write the note.** `docs/plans/2026-10-15-sp2c-spike-results.md`, in this shape (eight `## A<n>.` sections, each ending with one `- Answer:` line; the closing section says what the plan does with each answer):
 
 ```markdown
 # SP2c spike: the opener, the plugin in `claude -p`, SubagentStop, the eval sandbox
@@ -206,7 +206,7 @@ Add `"Bash(env *)"` and `"Bash(claude *)"` to `ALLOW_TOOLS` in `scripts/eval.ts`
 - A8: the variables the opener strips or sets.
 ```
 
-- [ ] **Step 11: Observed run, gate, commit**
+- [x] **Step 11: Observed run, gate, commit**
 
 ```bash
 crew tdd observed <id> AC-1 --reason "a spike's result is a document: no test can fail before the note is written" -- sh -c 'test "$(grep -c "^- Answer: ." docs/plans/2026-10-15-sp2c-spike-results.md)" -eq 8'
