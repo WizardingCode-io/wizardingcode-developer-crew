@@ -177,6 +177,8 @@ test("SP2b: a planned judgement gate is named until a current ruling proves it, 
   expect(report).toContain("| Gate | Verdict | Reviewer | Findings | Tokens |");
   expect(report).toContain("| code-quality | proven | code-quality | 0 | 1200 |");
   expect(report).toContain("| test-quality | not proven |  | 2 |  |");
+  // A ruling on other code than the evidence's never reads as a proof of this code (review of SP2b, finding 7).
+  expect(report).toContain("| security | proven (earlier code) |  | 0 |  |");
   expect(report).toContain("| ui-ux | not run: no browser |  | 0 |  |");
   expect(report).toContain("- test-quality: src/a.ts:12 two reasons to change (defect)");
   expect(report).toContain(

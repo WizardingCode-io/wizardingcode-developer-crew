@@ -1,6 +1,6 @@
 import { readdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { gitDiffSince } from "./fingerprint.ts";
+import { reviewPatch } from "./fingerprint.ts";
 import { nowIso, readJson, writeText } from "./fs.ts";
 import { type CrewPaths, workDir } from "./paths.ts";
 import type {
@@ -108,7 +108,7 @@ export function writeReviewInputs(
   work: WorkItem,
   changed: readonly string[],
   fingerprint: string,
-): string {
+): { dir: string; note: string | null } {
   const dir = reviewDir(paths, work.id);
   const previous = readReviewInputs(paths, work.id);
   if (previous && previous.fingerprint !== fingerprint) {
@@ -122,14 +122,14 @@ export function writeReviewInputs(
       if (name === "ruling.json" || name.endsWith(".findings.md")) unlinkSync(join(dir, name));
     }
   }
-  const patch = work.baseCommit ? gitDiffSince(paths.root, work.baseCommit, changed) : "";
-  writeText(join(dir, "diff.patch"), patch);
+  const cut = reviewPatch(paths.root, work.baseCommit, changed);
+  writeText(join(dir, "diff.patch"), cut.patch);
   writeText(join(dir, "files.txt"), changed.length ? `${changed.join("\n")}\n` : "");
   writeText(
     join(dir, "inputs.json"),
     `${JSON.stringify({ fingerprint, at: nowIso() }, null, 2)}\n`,
   );
-  return dir;
+  return { dir, note: cut.note };
 }
 
 export type JudgementState = "planned" | "proven" | "not-proven" | "not-run" | "stale" | "skipped";
@@ -139,7 +139,7 @@ export interface JudgementRow {
   /** Why the gate is planned for this item. */
   planned: string;
   findings: number;
-  /** For not-run, the reviewer's reason; for skipped, the skip's. */
+  /** For not-run, the reviewer's reason; for skipped, the skip's; for stale, "ruling on earlier code". */
   reason?: string;
 }
 
@@ -165,8 +165,15 @@ export function judgementRows(
       };
     }
     if (!record) return { gate: p.gate, status: "planned", planned: p.reason, findings: 0 };
+    // The reason the panel prints beside "stale" (review of SP2b, finding 13).
     if (record.fingerprint !== currentFingerprint)
-      return { gate: p.gate, status: "stale", planned: p.reason, findings };
+      return {
+        gate: p.gate,
+        status: "stale",
+        planned: p.reason,
+        findings,
+        reason: "ruling on earlier code",
+      };
     return {
       gate: p.gate,
       status: record.verdict,
@@ -295,6 +302,20 @@ export function stampRuling(
     at: nowIso(),
     fingerprint,
   };
+}
+
+/**
+ * A ruling the judge's own rule forbids: proven with a defect on a line of the change (judge.md:
+ * "not-proven when at least one finding you uphold is a defect on a line of the diff"). The engine
+ * never changes a verdict; it refuses to record a contradictory one, as it refuses "not proven
+ * with no defect" (review of SP2b, finding 12). Null when the ruling is consistent.
+ */
+export function contradiction(record: JudgementRecord): string | null {
+  if (record.verdict !== "proven") return null;
+  const defect = record.findings.find((f) => f.severity === "defect" && !f.outside);
+  if (!defect) return null;
+  const where = defect.line ? `${defect.file}:${defect.line}` : defect.file;
+  return `${record.gate}: proven with a defect on ${where}; the judge rules not proven on a defect inside the change, or lowers it to advisory`;
 }
 
 /** A gate that could not run: not run, with the reason, never passed by default (SP2 §10). */

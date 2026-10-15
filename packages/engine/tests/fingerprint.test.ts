@@ -8,22 +8,23 @@ import {
   computeFingerprint,
   fingerprintMethod,
   gitChangedPaths,
-  gitDiffSince,
   hashPaths,
   MAX_WATCHED_FILES,
+  reviewPatch,
 } from "../src/fingerprint.ts";
 import { DEFAULT_POLICY } from "../src/policy.ts";
 import type { WorkItem } from "../src/types.ts";
 import { addCriterion, addSkip } from "../src/work.ts";
 import { git, makeRepo, tempDir, write } from "./helpers.ts";
 
-test("SP2b: gitDiffSince is the change of the named paths since the base: tracked as a diff, untracked as additions, nothing else", () => {
+test("SP2b: reviewPatch is the change of the named paths since the base: tracked as a diff, untracked as additions, nothing else", () => {
   const root = makeRepo({ "src/a.ts": "const a = 1;\n", "src/keep.ts": "keep\n" });
   const base = git(root, "rev-parse", "HEAD");
   write(root, "src/a.ts", "const a = 2;\n");
   write(root, "src/new.ts", "fresh\n");
   write(root, "src/keep.ts", "changed but not asked for\n");
-  const patch = gitDiffSince(root, base, ["src/a.ts", "src/new.ts"]);
+  const { patch, note } = reviewPatch(root, base, ["src/a.ts", "src/new.ts"]);
+  expect(note).toBeNull();
   expect(patch).toContain("diff --git a/src/a.ts b/src/a.ts");
   expect(patch).toContain("-const a = 1;");
   expect(patch).toContain("+const a = 2;");
@@ -34,8 +35,69 @@ test("SP2b: gitDiffSince is the change of the named paths since the base: tracke
   // Committing mid-work hides nothing: the base is the same commit.
   git(root, "add", "-A");
   git(root, "commit", "-q", "-m", "work");
-  expect(gitDiffSince(root, base, ["src/a.ts", "src/new.ts"])).toContain("+fresh");
-  expect(gitDiffSince(root, base, [])).toBe("");
+  expect(reviewPatch(root, base, ["src/a.ts", "src/new.ts"]).patch).toContain("+fresh");
+  expect(reviewPatch(root, base, [])).toEqual({
+    patch: "# no changed files\n",
+    note: "no changed files",
+  });
+});
+
+test("SP2b minors: git receives file names, never patterns: a[1].ts is diffed and a1.ts is not pulled in", () => {
+  const root = makeRepo({ "src/a1.ts": "one\n", "src/a[1].ts": "bracket\n" });
+  const base = git(root, "rev-parse", "HEAD");
+  write(root, "src/a1.ts", "one, changed\n");
+  write(root, "src/a[1].ts", "bracket, changed\n");
+  const { patch } = reviewPatch(root, base, ["src/a[1].ts"]);
+  expect(patch).toContain("diff --git a/src/a[1].ts b/src/a[1].ts");
+  expect(patch).toContain("+bracket, changed");
+  expect(patch).not.toContain("src/a1.ts");
+});
+
+test("SP2b minors: a diff git could not produce says so in the patch, never an empty file beside a full files.txt", () => {
+  const root = makeRepo({ "src/a.ts": "const a = 1;\n" });
+  write(root, "src/a.ts", "const a = 2;\n");
+  write(root, "src/new.ts", "fresh\n");
+  // A base git does not know: the tracked diff fails; the untracked addition still follows the note.
+  const { patch, note } = reviewPatch(root, "nope", ["src/a.ts", "src/new.ts"]);
+  expect(note).toBe("git could not produce the diff of 1 tracked file since nope");
+  expect(patch).toBe(
+    "# git could not produce the diff of 1 tracked file since nope\ndiff --git a/src/new.ts b/src/new.ts\nnew file mode 100644\n--- /dev/null\n+++ b/src/new.ts\n@@ -0,0 +1,1 @@\n+fresh\n",
+  );
+});
+
+test("SP2b minors: with no base commit the untracked files are shown as additions, and the patch says what it cannot show", () => {
+  const root = tempDir();
+  git(root, "init", "-q", "-b", "main");
+  write(root, "src/new.ts", "fresh\n");
+  expect(reviewPatch(root, null, ["src/new.ts"])).toEqual({
+    patch:
+      "diff --git a/src/new.ts b/src/new.ts\nnew file mode 100644\n--- /dev/null\n+++ b/src/new.ts\n@@ -0,0 +1,1 @@\n+fresh\n",
+    note: null,
+  });
+  // A file staged before any commit is tracked: with no base there is no diff of it, and the patch says so.
+  git(root, "add", "src/new.ts");
+  write(root, "src/b.ts", "b\n");
+  const staged = reviewPatch(root, null, ["src/new.ts", "src/b.ts"]);
+  expect(staged.note).toBe("no base commit: 1 tracked file not shown, untracked ones as additions");
+  expect(staged.patch).toBe(
+    "# no base commit: 1 tracked file not shown, untracked ones as additions\ndiff --git a/src/b.ts b/src/b.ts\nnew file mode 100644\n--- /dev/null\n+++ b/src/b.ts\n@@ -0,0 +1,1 @@\n+b\n",
+  );
+  // Outside git nothing can be cut, and the patch says that too.
+  const plain = tempDir();
+  write(plain, "src/a.ts", "x\n");
+  expect(reviewPatch(plain, null, ["src/a.ts"])).toEqual({
+    patch: "# outside git, no diff can be cut\n",
+    note: "outside git, no diff can be cut",
+  });
+});
+
+test("SP2b minors: a tracked file named as changed but equal to the base has no diff content, and the patch says so", () => {
+  const root = makeRepo({ "src/a.ts": "x\n" });
+  const base = git(root, "rev-parse", "HEAD");
+  expect(reviewPatch(root, base, ["src/a.ts"])).toEqual({
+    patch: "# the change has no diff content\n",
+    note: "the change has no diff content",
+  });
 });
 
 test("the fingerprint is stable and changes when a watched file changes", () => {

@@ -13,10 +13,11 @@ import {
 } from "./evidence.ts";
 import { changedWatchedPaths, hashPaths, isGitRepo } from "./fingerprint.ts";
 import { ensureDir, nowIso, readText, writeText } from "./fs.ts";
-import { assess, runGates } from "./gates.ts";
+import { assess, reassess, runGates } from "./gates.ts";
 import { handleHook } from "./hooks/index.ts";
 import type { HookPayload } from "./hooks/types.ts";
 import {
+  contradiction,
   judgementRows,
   notRunRecord,
   parseRulings,
@@ -76,7 +77,6 @@ import {
   createWork,
   debateState,
   type GuardContext,
-  isSkipped,
   loadWork,
   nextPhaseOf,
   openDebate,
@@ -940,17 +940,21 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         ? relative(env.paths.root, outcome.review).replace(/\\/g, "/")
         : null;
       // The judgement gates still to run, each with why it is planned: the cost is printed before
-      // the roles run (SP2 §10). A current ruling or a counted skip takes a gate off the list.
-      const pending = outcome.judgement.filter((j) => {
-        const record = (outcome.evidence.judgement ?? []).find((r) => r.gate === j.gate);
-        return (
-          !isSkipped(opened.work, `gate:${j.gate}`, env.policy) &&
-          (!record || record.fingerprint !== outcome.evidence.fingerprint)
-        );
-      });
+      // the roles run (SP2 §10). The rows the status and the panel show decide: a current ruling
+      // or a counted skip takes a gate off the list, a ruling on earlier code keeps it on.
+      const pending = judgementRows(
+        opened.work,
+        outcome.evidence,
+        outcome.judgement,
+        outcome.evidence.fingerprint ?? "",
+        env.policy,
+      ).filter((r) => r.status === "planned" || r.status === "stale");
       const judgementNote = pending.length
-        ? `\nJudgement gates to run: ${pending.map((j) => `${j.gate} (${j.reason})`).join(", ")}; inputs in ${review}/ (diff.patch, files.txt); record each with crew judgement ${opened.work.id} record --ruling <file>`
+        ? `\nJudgement gates to run: ${pending.map((r) => `${r.gate} (${r.planned})`).join(", ")}; inputs in ${review}/ (diff.patch, files.txt); record each with crew judgement ${opened.work.id} record --ruling <file>`
         : "";
+      // What the reviewers' patch lacks is said here too, never found out from an empty file
+      // (review of SP2b, findings 9 and 10).
+      const reviewLine = outcome.reviewNote ? `\ndiff.patch: ${outcome.reviewNote}` : "";
       return {
         code: outcome.verdict === "proven" ? 0 : 1,
         stdout: true,
@@ -958,7 +962,8 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           picked +
           raised +
           gateSummary(opened.work, outcome.verdict, outcome.unproven, outcome.evidence.runs) +
-          judgementNote,
+          judgementNote +
+          reviewLine,
         data: {
           verdict: outcome.verdict,
           unproven: outcome.unproven,
@@ -968,6 +973,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           refreshed: refreshed.changed,
           judgement: outcome.judgement,
           review,
+          reviewNote: outcome.reviewNote,
         },
       };
     }
@@ -986,6 +992,11 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       );
       const planned = before.judgement.map((j) => j.gate);
       const records: JudgementRecord[] = [];
+      // One or the other: a gate that could not run has no ruling file to record (review of SP2b, finding 11).
+      if (parsed.flags["not-run"] && typeof parsed.flags.ruling === "string")
+        return refuse(
+          "--not-run and --ruling do not go together: a gate that could not run has no ruling; give one or the other",
+        );
       if (parsed.flags["not-run"]) {
         const gate = args[2];
         const reason = typeof parsed.flags.reason === "string" ? parsed.flags.reason.trim() : "";
@@ -1008,13 +1019,17 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           return refuse(
             `the review inputs describe other code than the current one: run crew gate run ${opened.work.id}, then the reviewers and the judge again`,
           );
-        const text = readText(resolve(env.paths.root, parsed.flags.ruling));
-        if (text === null) return refuse(`no ruling file at ${parsed.flags.ruling}`);
+        // A relative path is from the repository root, like every path the skill names (D-1 of
+        // the SP2b minors, 2026-10-15); the refusal prints the path as resolved, so a path given
+        // from a subfolder is refused for where it was looked for (review of SP2b, finding 6).
+        const rulingPath = resolve(env.paths.root, parsed.flags.ruling);
+        const text = readText(rulingPath);
+        if (text === null) return refuse(`no ruling file at ${rulingPath}`);
         let raw: unknown;
         try {
           raw = JSON.parse(text);
         } catch {
-          return refuse(`the ruling file is not valid JSON: ${parsed.flags.ruling}`);
+          return refuse(`the ruling file is not valid JSON: ${rulingPath}`);
         }
         const parsedRulings = parseRulings(raw, planned);
         if ("refused" in parsedRulings) return refuse(parsedRulings.refused);
@@ -1022,18 +1037,18 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           records.push(
             stampRuling(ruling, before.currentFingerprint, before.changed, opened.work.id),
           );
+        // Checked once every ruling is stamped (a defect is inside or outside the change only then),
+        // and before anything is recorded: one contradiction refuses the whole file.
+        for (const record of records) {
+          const why = contradiction(record);
+          if (why) return refuse(why);
+        }
       }
-      const { evidence } = loadEvidence(env.paths, opened.work.id);
-      for (const record of records) recordJudgement(evidence, record);
-      saveEvidence(env.paths, opened.work.id, evidence);
-      // The verdict as it stands with the rulings in; a record that proves the work delivers it.
-      const result = assess(
-        env.paths,
-        opened.work,
-        env.profile,
-        env.policy,
-        env.tampered || opened.tampered,
-      );
+      // The rulings go into the evidence the assessment read, the verdict is computed on it, and
+      // the file is written once, with the verdict: no reader sees new records beside a stale
+      // verdict (review of SP2b, finding 8). A record that proves the work delivers it.
+      for (const record of records) recordJudgement(before.evidence, record);
+      const result = reassess(before, opened.work, env.policy);
       result.evidence.verdict = result.verdict;
       result.evidence.unproven = result.unproven;
       saveEvidence(env.paths, opened.work.id, result.evidence);

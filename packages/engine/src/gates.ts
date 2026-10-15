@@ -22,6 +22,7 @@ import type {
   GateName,
   GateRun,
   JudgementGateName,
+  ObjectionLedger,
   PlannedJudgement,
   Policy,
   Profile,
@@ -444,6 +445,8 @@ export interface GateOutcome {
   judgement: PlannedJudgement[];
   /** The review folder, written when a judgement gate is planned; null when none is. */
   review: string | null;
+  /** What the review's patch lacks, when something could not be cut (review of SP2b, findings 9 and 10). */
+  reviewNote: string | null;
 }
 
 export async function runGates(
@@ -527,7 +530,7 @@ export async function runGates(
   evidence.fingerprint = stamp;
   // Planned after the route may have been raised, so a risk area the diff touched plans the security gate.
   const judgement = plannedJudgementGates(work.route, work.riskAreas, changed, policy);
-  const review = judgement.length ? writeReviewInputs(paths, work, changed, stamp) : null;
+  const cut = judgement.length ? writeReviewInputs(paths, work, changed, stamp) : null;
   const verdict = computeVerdict({
     work,
     evidence,
@@ -547,7 +550,17 @@ export async function runGates(
   evidence.verdict = verdict.verdict;
   evidence.unproven = verdict.unproven;
   saveEvidence(paths, work.id, evidence);
-  return { evidence, ...verdict, planned, changed, raised, tampered, judgement, review };
+  return {
+    evidence,
+    ...verdict,
+    planned,
+    changed,
+    raised,
+    tampered,
+    judgement,
+    review: cut?.dir ?? null,
+    reviewNote: cut?.note ?? null,
+  };
 }
 
 export interface Assessment {
@@ -560,6 +573,10 @@ export interface Assessment {
   judgement: PlannedJudgement[];
   /** The fingerprint of the code as it is now, by the method the evidence was made with. */
   currentFingerprint: string;
+  /** The objection ledger as read, so a reassessment needs no second read. */
+  ledger: ObjectionLedger;
+  /** Whether any engine-owned file of the item was changed outside the engine. */
+  tampered: boolean;
 }
 
 /** Read-only: what the evidence says about the code as it is right now. Fast enough for a hook. */
@@ -584,15 +601,40 @@ export function assess(
     MAX_WATCHED_FILES,
     fingerprintMethod(read.evidence.fingerprint),
   );
+  const led = loadLedger(paths, work.id);
+  return reassess(
+    {
+      evidence: read.evidence,
+      expected,
+      changed,
+      judgement,
+      currentFingerprint,
+      ledger: led.ledger,
+      tampered: tampered || read.tampered || led.tampered,
+    },
+    work,
+    policy,
+  );
+}
+
+/** What an assessment is judged from: everything but the verdict. */
+export type AssessmentInputs = Omit<Assessment, "verdict" | "unproven">;
+
+/**
+ * The verdict from inputs already read: the first time, and again after the evidence changed in
+ * memory (a ruling recorded), so a command reads once and writes once, with the verdict
+ * (review of SP2b, finding 8).
+ */
+export function reassess(a: AssessmentInputs, work: WorkItem, policy: Policy): Assessment {
   const verdict = computeVerdict({
     work,
-    evidence: read.evidence,
-    expected,
-    expectedJudgement: judgement,
-    ledger: loadLedger(paths, work.id).ledger,
-    currentFingerprint,
-    tampered: tampered || read.tampered || loadLedger(paths, work.id).tampered,
+    evidence: a.evidence,
+    expected: a.expected,
+    expectedJudgement: a.judgement,
+    ledger: a.ledger,
+    currentFingerprint: a.currentFingerprint,
+    tampered: a.tampered,
     policy,
   });
-  return { evidence: read.evidence, ...verdict, expected, changed, judgement, currentFingerprint };
+  return { ...a, ...verdict };
 }

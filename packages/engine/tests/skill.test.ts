@@ -108,6 +108,8 @@ test("SP2b: the skill drives the debate through the roles and the judgement gate
   expect(gate).toContain("wizardingcode-developer-crew:judge");
   expect(gate).toContain("review/<gate>.findings.md");
   expect(gate).toContain("review/ruling.json");
+  // tokens is the only field of a ruling the session fills; rule 2's "never edit a ruling" covers the rest (review of SP2b, finding 13).
+  expect(gate).toContain("the only field of a ruling the session fills");
   expect(gate).toContain("crew judgement <id> record --ruling .crew/work/<id>/review/ruling.json");
   expect(gate).toContain('crew judgement <id> record <gate> --not-run --reason "<why>"');
   expect(gate).toContain("review/ui/<page>-<state>.png");

@@ -217,7 +217,7 @@ const JUDGED = {
   ],
   objections: [{ id: "O-1", severity: "blocking", status: "open", text: "A support ticket's delete may be an erasure request" }],
   judgement: [
-    { gate: "code-quality", status: "proven", planned: "standard route", findings: 0 },
+    { gate: "code-quality", status: "proven", planned: "standard route", findings: 1 },
     { gate: "test-quality", status: "not-proven", planned: "standard route", findings: 3 },
     { gate: "ui-ux", status: "not-run", planned: "interface files: resources/views/account.blade.php", findings: 0, reason: "no browser" },
     { gate: "security", status: "planned", planned: "risk area personal-data", findings: 0 },
@@ -249,7 +249,7 @@ test("the panel lists decisions with their answers, objections with their text, 
   expect(await ui.find({ type: "Text", text: "D-2 Who holds the delete permission? → unanswered" })).toBeDefined();
   expect(await ui.find({ type: "Text", text: "O-1 blocking open · A support ticket's delete may be an erasure request" })).toBeDefined();
   expect(await ui.find({ type: "Text", text: "debate open" })).toBeDefined();
-  expect(await ui.find({ type: "Text", text: "code-quality: proven (0 findings)" })).toBeDefined();
+  expect(await ui.find({ type: "Text", text: "code-quality: proven (1 finding)" })).toBeDefined();
   expect(await ui.find({ type: "Text", text: "test-quality: not proven (3 findings)" })).toBeDefined();
   expect(await ui.find({ type: "Text", text: "ui-ux: not run (no browser)" })).toBeDefined();
   expect(await ui.find({ type: "Text", text: "security: planned" })).toBeDefined();
@@ -262,12 +262,23 @@ test("/crew status prints the conclave's counts and one row per judgement gate",
   await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
   const answer = await $.command.run({ command: "crew", args: "status" });
   expect(answer.text).toContain("  decisions 2 (1 unanswered) · objections 1 (1 blocking open) · debate open");
-  expect(answer.text).toContain("  code-quality: proven (0 findings)");
+  expect(answer.text).toContain("  code-quality: proven (1 finding)");
   expect(answer.text).toContain("  test-quality: not proven (3 findings)");
   expect(answer.text).toContain("  ui-ux: not run (no browser)");
   expect(answer.text).toContain("  security: planned");
   expect(answer.text).toContain("  risk: skipped (no production yet)");
   expect(answer.text).toContain("Not proven: judgement gate test-quality not proven");
+});
+
+test("the panel and /crew status print a stale ruling with its reason (AC-10 of the SP2b minors)", async ($, on) => {
+  const stale = { ...JUDGED, judgement: [{ gate: "code-quality", status: "stale", planned: "standard route", findings: 0, reason: "ruling on earlier code" }] };
+  stubs(on, () => ({ exitCode: 0, stdout: JSON.stringify(stale), stderr: "" }));
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  const ui = await $.ui.mount({ ...PANE, surface: "terminal" });
+  expect(await ui.find({ type: "Text", text: "code-quality: stale (ruling on earlier code)" })).toBeDefined();
+  await ui.unmount();
+  const answer = await $.command.run({ command: "crew", args: "status" });
+  expect(answer.text).toContain("  code-quality: stale (ruling on earlier code)");
 });
 
 test("a proven item's verdict line names the judgement gates it proved", async ($, on) => {

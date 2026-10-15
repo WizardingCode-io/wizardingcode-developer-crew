@@ -193,7 +193,8 @@ function judgementText(j) {
   const word = JUDGEMENT_WORDS[j.status] || j.status
   if (j.status === 'planned') return j.gate + ': ' + word
   if (j.status === 'not-run' || j.status === 'stale' || j.status === 'skipped') return j.gate + ': ' + word + (j.reason ? ' (' + j.reason + ')' : '')
-  return j.gate + ': ' + word + ' (' + (j.findings || 0) + ' findings)'
+  const n = j.findings || 0
+  return j.gate + ': ' + word + ' (' + n + (n === 1 ? ' finding)' : ' findings)')
 }
 
 // "decisions 2 (1 unanswered) · objections 1 (1 blocking open) · debate open", or '' when the item has none

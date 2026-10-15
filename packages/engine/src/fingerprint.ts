@@ -113,21 +113,52 @@ function additionPatch(root: string, path: string): string {
   return `${header}@@ -0,0 +1,${lines.length} @@\n${body}\n${newlineAtEnd ? "" : "\\ No newline at end of file\n"}`;
 }
 
+/** The patch the reviewers receive, and what it lacks when something could not be cut (null when nothing). */
+export interface ReviewPatch {
+  patch: string;
+  note: string | null;
+}
+
 /**
  * The unified diff of these paths since a base commit, the untracked ones as additions: what a
- * reviewer receives, the item's change and nothing else (SP2 §10). Empty where git cannot run.
+ * reviewer receives, the item's change and nothing else (SP2 §10). What cannot be cut is said in
+ * the patch's first line and in the note, never left as an empty file beside a full files.txt
+ * (review of SP2b, findings 9 and 10): outside git; no base commit (tracked files have no diff,
+ * untracked ones are still additions); a diff git could not produce (a bad base, a buffer overrun).
  */
-export function gitDiffSince(root: string, base: string, paths: readonly string[]): string {
-  if (paths.length === 0) return "";
+export function reviewPatch(
+  root: string,
+  base: string | null,
+  paths: readonly string[],
+): ReviewPatch {
+  const said = (note: string, body = ""): ReviewPatch => ({ patch: `# ${note}\n${body}`, note });
+  if (paths.length === 0) return said("no changed files");
+  if (!isGitRepo(root)) return said("outside git, no diff can be cut");
   const untracked = new Set(untrackedPaths(root) ?? []);
   const tracked = paths.filter((p) => !untracked.has(p));
-  const parts: string[] = [];
-  if (tracked.length) {
-    const diff = gitTry(root, ["diff", "--no-renames", "--no-color", base, "--", ...tracked]);
-    if (diff) parts.push(diff);
-  }
-  for (const path of paths) if (untracked.has(path)) parts.push(additionPatch(root, path));
-  return parts.join("");
+  const additions = paths
+    .filter((p) => untracked.has(p))
+    .map((p) => additionPatch(root, p))
+    .join("");
+  if (tracked.length === 0) return { patch: additions, note: null };
+  const files = `${tracked.length} tracked file${tracked.length === 1 ? "" : "s"}`;
+  if (base === null)
+    return said(`no base commit: ${files} not shown, untracked ones as additions`, additions);
+  // File names, never patterns: without it `a[1].ts` is a character class that pulls `a1.ts` into
+  // the reviewers' diff (review of SP2b, finding 9).
+  const diff = gitTry(root, [
+    "--literal-pathspecs",
+    "diff",
+    "--no-renames",
+    "--no-color",
+    base,
+    "--",
+    ...tracked,
+  ]);
+  if (diff === null)
+    return said(`git could not produce the diff of ${files} since ${base}`, additions);
+  if (diff === "" && additions === "") return said("the change has no diff content");
+  return { patch: diff + additions, note: null };
 }
 
 export function isWatched(path: string, profile: Profile): boolean {

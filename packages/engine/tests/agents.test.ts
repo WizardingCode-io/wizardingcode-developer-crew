@@ -90,6 +90,8 @@ test("SP2b: the judge rules the gates, rules the debate and acts as validator, o
   expect(body).toContain('never "by the user"');
   // For the risk gate, the item's own spec and plan are inside the change (review of SP2b, finding 4).
   expect(body).toMatch(/spec\.md[^\n]*inside the change/);
+  // The session fills tokens and nothing else of a ruling; SKILL.md rule 2 says the rest is the judge's (review of SP2b, finding 13).
+  expect(body).toContain("the only field of a ruling the session fills");
 });
 
 test("SP2b: the debate roles run on opus; the devil's advocate and the fault-finder read the proposals file only", () => {

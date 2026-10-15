@@ -298,12 +298,15 @@ export function renderReport(
       "| :- | :- | :- | -: | -: |",
     );
     for (const j of judgement) {
-      const verdict =
+      const word =
         j.verdict === "not-run"
           ? `not run: ${j.reason ?? "no reason given"}`
           : j.verdict === "not-proven"
             ? "not proven"
             : "proven";
+      // A ruling on other code than the evidence's is said so where its verdict is shown, never
+      // read as a proof of this code (review of SP2b, finding 7).
+      const verdict = j.fingerprint === evidence.fingerprint ? word : `${word} (earlier code)`;
       lines.push(
         `| ${j.gate} | ${verdict} | ${j.reviewer ?? ""} | ${j.findings.length} | ${j.tokens ?? ""} |`,
       );

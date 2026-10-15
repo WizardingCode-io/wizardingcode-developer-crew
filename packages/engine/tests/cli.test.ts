@@ -130,7 +130,13 @@ test("SP2b: judgement rulings are recorded from a file, judged by the verdict, s
   write(root, "src/App.vue", "<template>empty, again</template>");
   expect((await c.json("status")).data.unproven).toEqual(["code changed since the last gate run"]);
   expect((await c.json("status")).data.judgement).toEqual([
-    { gate: "ui-ux", status: "stale", planned: "interface files: src/App.vue", findings: 0 },
+    {
+      gate: "ui-ux",
+      status: "stale",
+      planned: "interface files: src/App.vue",
+      findings: 0,
+      reason: "ruling on earlier code",
+    },
   ]);
   const again = await c.json("gate", "run", id);
   expect(again.data.unproven).toEqual(["judgement gate ui-ux not run on the current code"]);
@@ -201,6 +207,109 @@ test("SP2b review: a ruling is accepted only while the review inputs describe th
   await c.run("gate", "run", id, "--only", "ui-ux");
   expect(existsSync(file)).toBe(true);
   expect((await c.json("judgement", id, "record", "--ruling", file)).data.verdict).toBe("proven");
+});
+
+test("SP2b minors: a relative --ruling path resolves from the repository root and the refusal prints the resolved path (D-1)", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/App.vue": "<template/>",
+  });
+  const c = io(root);
+  const id = (await c.json("start", "Empty state", "--answers", answers, "--criterion", "a")).data
+    .id as string;
+  write(root, "src/App.vue", "<template>empty</template>");
+  await c.run("tdd", "red", id, "AC-1", "--", "exit 1");
+  await c.run("tdd", "green", id, "AC-1", "--", "exit 0");
+  await c.run("gate", "run", id);
+  // From a subfolder, the same relative path names the same file: the one under the root.
+  mkdirSync(join(root, "sub"));
+  const fromSub = io(join(root, "sub"), c.env);
+  expect(
+    (await fromSub.run("judgement", id, "record", "--ruling", "review/nowhere.json")).err.trim(),
+  ).toBe(`no ruling file at ${join(root, "review/nowhere.json")}`);
+});
+
+test("SP2b minors: --not-run with --ruling is refused for giving both", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/App.vue": "<template/>",
+  });
+  const c = io(root);
+  const id = (await c.json("start", "Empty state", "--answers", answers, "--criterion", "a")).data
+    .id as string;
+  const both = await c.run(
+    "judgement",
+    id,
+    "record",
+    "ui-ux",
+    "--not-run",
+    "--reason",
+    "no browser",
+    "--ruling",
+    "review/ruling.json",
+  );
+  expect(both.code).toBe(1);
+  expect(both.err.trim()).toBe(
+    "--not-run and --ruling do not go together: a gate that could not run has no ruling; give one or the other",
+  );
+});
+
+test("SP2b minors: a proven ruling with a defect inside the change is refused and nothing is recorded", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/App.vue": "<template/>",
+  });
+  const c = io(root);
+  const id = (await c.json("start", "Empty state", "--answers", answers, "--criterion", "a")).data
+    .id as string;
+  write(root, "src/App.vue", "<template>empty</template>");
+  await c.run("tdd", "red", id, "AC-1", "--", "exit 1");
+  await c.run("tdd", "green", id, "AC-1", "--", "exit 0");
+  await c.run("gate", "run", id);
+  const file = join(root, ".crew", "work", id, "review", "ruling.json");
+  const ruling = (findings: unknown[]) =>
+    writeFileSync(
+      file,
+      JSON.stringify({ rulings: [{ gate: "ui-ux", verdict: "proven", findings }] }),
+    );
+  ruling([
+    { file: "src/legacy.vue", line: 1, text: "unlabelled button", severity: "defect" },
+    { file: "src/App.vue", line: 3, text: "no empty state", severity: "defect" },
+  ]);
+  const refused = await c.run("judgement", id, "record", "--ruling", file);
+  expect(refused.code).toBe(1);
+  expect(refused.err.trim()).toBe(
+    "ui-ux: proven with a defect on src/App.vue:3; the judge rules not proven on a defect inside the change, or lowers it to advisory",
+  );
+  expect((await c.json("status")).data.judgement).toEqual([
+    { gate: "ui-ux", status: "planned", planned: "interface files: src/App.vue", findings: 0 },
+  ]);
+  // A defect outside the change is debt, named and never a failure (ADR 0006): proven stands.
+  ruling([{ file: "src/legacy.vue", line: 1, text: "unlabelled button", severity: "defect" }]);
+  expect((await c.json("judgement", id, "record", "--ruling", file)).data.verdict).toBe("proven");
+});
+
+test("SP2b minors: a gate run whose patch has no diff content says so, with the reason", async () => {
+  // A folder without git: active once crew detect has written .crew/, the change measured by the walk.
+  const root = tempDir();
+  write(root, "package.json", JSON.stringify({ scripts: { test: "exit 0" } }));
+  write(root, "src/App.vue", "<template/>");
+  const c = io(root);
+  expect((await c.run("detect")).code).toBe(0);
+  const id = (await c.json("start", "Empty state", "--answers", answers, "--criterion", "a")).data
+    .id as string;
+  write(root, "src/App.vue", "<template>empty</template>");
+  await c.run("tdd", "red", id, "AC-1", "--", "exit 1");
+  await c.run("tdd", "green", id, "AC-1", "--", "exit 0");
+  const run = await c.json("gate", "run", id);
+  expect(run.data.judgement).toEqual([{ gate: "ui-ux", reason: "interface files: src/App.vue" }]);
+  expect(run.data.reviewNote).toBe("outside git, no diff can be cut");
+  expect((await c.run("gate", "run", id)).out).toContain(
+    "\ndiff.patch: outside git, no diff can be cut",
+  );
+  expect(readFileSync(join(root, ".crew", "work", id, "review", "diff.patch"), "utf8")).toBe(
+    "# outside git, no diff can be cut\n",
+  );
 });
 
 test("SP2b: a judgement gate is skipped only when the policy lists it, and the verdict then passes over it", async () => {

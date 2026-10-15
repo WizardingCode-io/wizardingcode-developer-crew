@@ -792,21 +792,35 @@ ${body}
 ${newlineAtEnd ? "" : `\\ No newline at end of file
 `}`;
 }
-function gitDiffSince(root, base, paths) {
+function reviewPatch(root, base, paths) {
+  const said = (note, body = "") => ({ patch: `# ${note}
+${body}`, note });
   if (paths.length === 0)
-    return "";
+    return said("no changed files");
+  if (!isGitRepo(root))
+    return said("outside git, no diff can be cut");
   const untracked = new Set(untrackedPaths(root) ?? []);
   const tracked = paths.filter((p) => !untracked.has(p));
-  const parts = [];
-  if (tracked.length) {
-    const diff = gitTry(root, ["diff", "--no-renames", "--no-color", base, "--", ...tracked]);
-    if (diff)
-      parts.push(diff);
-  }
-  for (const path of paths)
-    if (untracked.has(path))
-      parts.push(additionPatch(root, path));
-  return parts.join("");
+  const additions = paths.filter((p) => untracked.has(p)).map((p) => additionPatch(root, p)).join("");
+  if (tracked.length === 0)
+    return { patch: additions, note: null };
+  const files = `${tracked.length} tracked file${tracked.length === 1 ? "" : "s"}`;
+  if (base === null)
+    return said(`no base commit: ${files} not shown, untracked ones as additions`, additions);
+  const diff = gitTry(root, [
+    "--literal-pathspecs",
+    "diff",
+    "--no-renames",
+    "--no-color",
+    base,
+    "--",
+    ...tracked
+  ]);
+  if (diff === null)
+    return said(`git could not produce the diff of ${files} since ${base}`, additions);
+  if (diff === "" && additions === "")
+    return said("the change has no diff content");
+  return { patch: diff + additions, note: null };
 }
 function isWatched(path, profile) {
   return !matchesAny(path, profile.watch.exclude);
@@ -1784,7 +1798,8 @@ function renderReport(work, evidence, policy, ledger) {
   if (judgement.length) {
     lines.push("", "## Judgement gates", "", "| Gate | Verdict | Reviewer | Findings | Tokens |", "| :- | :- | :- | -: | -: |");
     for (const j of judgement) {
-      const verdict = j.verdict === "not-run" ? `not run: ${j.reason ?? "no reason given"}` : j.verdict === "not-proven" ? "not proven" : "proven";
+      const word = j.verdict === "not-run" ? `not run: ${j.reason ?? "no reason given"}` : j.verdict === "not-proven" ? "not proven" : "proven";
+      const verdict = j.fingerprint === evidence.fingerprint ? word : `${word} (earlier code)`;
       lines.push(`| ${j.gate} | ${verdict} | ${j.reviewer ?? ""} | ${j.findings.length} | ${j.tokens ?? ""} |`);
     }
     const findings = judgement.flatMap((j) => j.findings.map((f) => ({ gate: j.gate, ...f })));
@@ -2007,14 +2022,14 @@ function writeReviewInputs(paths, work, changed, fingerprint) {
         unlinkSync(join15(dir, name));
     }
   }
-  const patch = work.baseCommit ? gitDiffSince(paths.root, work.baseCommit, changed) : "";
-  writeText(join15(dir, "diff.patch"), patch);
+  const cut = reviewPatch(paths.root, work.baseCommit, changed);
+  writeText(join15(dir, "diff.patch"), cut.patch);
   writeText(join15(dir, "files.txt"), changed.length ? `${changed.join(`
 `)}
 ` : "");
   writeText(join15(dir, "inputs.json"), `${JSON.stringify({ fingerprint, at: nowIso() }, null, 2)}
 `);
-  return dir;
+  return { dir, note: cut.note };
 }
 function judgementRows(work, evidence, planned, currentFingerprint, policy) {
   return planned.map((p) => {
@@ -2033,7 +2048,13 @@ function judgementRows(work, evidence, planned, currentFingerprint, policy) {
     if (!record)
       return { gate: p.gate, status: "planned", planned: p.reason, findings: 0 };
     if (record.fingerprint !== currentFingerprint)
-      return { gate: p.gate, status: "stale", planned: p.reason, findings };
+      return {
+        gate: p.gate,
+        status: "stale",
+        planned: p.reason,
+        findings,
+        reason: "ruling on earlier code"
+      };
     return {
       gate: p.gate,
       status: record.verdict,
@@ -2127,6 +2148,15 @@ function stampRuling(ruling, fingerprint, changed, workId) {
     at: nowIso(),
     fingerprint
   };
+}
+function contradiction(record) {
+  if (record.verdict !== "proven")
+    return null;
+  const defect = record.findings.find((f) => f.severity === "defect" && !f.outside);
+  if (!defect)
+    return null;
+  const where = defect.line ? `${defect.file}:${defect.line}` : defect.file;
+  return `${record.gate}: proven with a defect on ${where}; the judge rules not proven on a defect inside the change, or lowers it to advisory`;
 }
 function notRunRecord(gate, reason, fingerprint) {
   return {
@@ -2755,7 +2785,7 @@ async function runGates(paths, work, profile, policy, options = {}) {
   }
   evidence.fingerprint = stamp;
   const judgement = plannedJudgementGates(work.route, work.riskAreas, changed, policy);
-  const review = judgement.length ? writeReviewInputs(paths, work, changed, stamp) : null;
+  const cut = judgement.length ? writeReviewInputs(paths, work, changed, stamp) : null;
   const verdict = computeVerdict({
     work,
     evidence,
@@ -2769,7 +2799,17 @@ async function runGates(paths, work, profile, policy, options = {}) {
   evidence.verdict = verdict.verdict;
   evidence.unproven = verdict.unproven;
   saveEvidence(paths, work.id, evidence);
-  return { evidence, ...verdict, planned, changed, raised, tampered, judgement, review };
+  return {
+    evidence,
+    ...verdict,
+    planned,
+    changed,
+    raised,
+    tampered,
+    judgement,
+    review: cut?.dir ?? null,
+    reviewNote: cut?.note ?? null
+  };
 }
 function assess(paths, work, profile, policy, tampered = false) {
   const base = work;
@@ -2778,17 +2818,29 @@ function assess(paths, work, profile, policy, tampered = false) {
   const judgement = plannedJudgementGates(work.route, work.riskAreas, changed, policy);
   const read = loadEvidence(paths, work.id);
   const currentFingerprint = computeFingerprint(paths.root, profile, base, MAX_WATCHED_FILES, fingerprintMethod(read.evidence.fingerprint));
-  const verdict = computeVerdict({
-    work,
+  const led = loadLedger(paths, work.id);
+  return reassess({
     evidence: read.evidence,
     expected,
-    expectedJudgement: judgement,
-    ledger: loadLedger(paths, work.id).ledger,
+    changed,
+    judgement,
     currentFingerprint,
-    tampered: tampered || read.tampered || loadLedger(paths, work.id).tampered,
+    ledger: led.ledger,
+    tampered: tampered || read.tampered || led.tampered
+  }, work, policy);
+}
+function reassess(a, work, policy) {
+  const verdict = computeVerdict({
+    work,
+    evidence: a.evidence,
+    expected: a.expected,
+    expectedJudgement: a.judgement,
+    ledger: a.ledger,
+    currentFingerprint: a.currentFingerprint,
+    tampered: a.tampered,
     policy
   });
-  return { evidence: read.evidence, ...verdict, expected, changed, judgement, currentFingerprint };
+  return { ...a, ...verdict };
 }
 
 // packages/engine/src/profile.ts
@@ -3919,16 +3971,15 @@ ${outcome.record.tail}` : "";
       const picked = refreshed.changed.length ? `profile refreshed: ${refreshed.changed.join("; ")}
 ` : "";
       const review = outcome.review ? relative6(env.paths.root, outcome.review).replace(/\\/g, "/") : null;
-      const pending = outcome.judgement.filter((j) => {
-        const record = (outcome.evidence.judgement ?? []).find((r) => r.gate === j.gate);
-        return !isSkipped(opened.work, `gate:${j.gate}`, env.policy) && (!record || record.fingerprint !== outcome.evidence.fingerprint);
-      });
+      const pending = judgementRows(opened.work, outcome.evidence, outcome.judgement, outcome.evidence.fingerprint ?? "", env.policy).filter((r) => r.status === "planned" || r.status === "stale");
       const judgementNote = pending.length ? `
-Judgement gates to run: ${pending.map((j) => `${j.gate} (${j.reason})`).join(", ")}; inputs in ${review}/ (diff.patch, files.txt); record each with crew judgement ${opened.work.id} record --ruling <file>` : "";
+Judgement gates to run: ${pending.map((r) => `${r.gate} (${r.planned})`).join(", ")}; inputs in ${review}/ (diff.patch, files.txt); record each with crew judgement ${opened.work.id} record --ruling <file>` : "";
+      const reviewLine = outcome.reviewNote ? `
+diff.patch: ${outcome.reviewNote}` : "";
       return {
         code: outcome.verdict === "proven" ? 0 : 1,
         stdout: true,
-        text: picked + raised + gateSummary(opened.work, outcome.verdict, outcome.unproven, outcome.evidence.runs) + judgementNote,
+        text: picked + raised + gateSummary(opened.work, outcome.verdict, outcome.unproven, outcome.evidence.runs) + judgementNote + reviewLine,
         data: {
           verdict: outcome.verdict,
           unproven: outcome.unproven,
@@ -3937,7 +3988,8 @@ Judgement gates to run: ${pending.map((j) => `${j.gate} (${j.reason})`).join(", 
           route: opened.work.route,
           refreshed: refreshed.changed,
           judgement: outcome.judgement,
-          review
+          review,
+          reviewNote: outcome.reviewNote
         }
       };
     }
@@ -3951,6 +4003,8 @@ Judgement gates to run: ${pending.map((j) => `${j.gate} (${j.reason})`).join(", 
       const before = assess(env.paths, opened.work, env.profile, env.policy, env.tampered || opened.tampered);
       const planned = before.judgement.map((j) => j.gate);
       const records = [];
+      if (parsed.flags["not-run"] && typeof parsed.flags.ruling === "string")
+        return refuse("--not-run and --ruling do not go together: a gate that could not run has no ruling; give one or the other");
       if (parsed.flags["not-run"]) {
         const gate = args[2];
         const reason = typeof parsed.flags.reason === "string" ? parsed.flags.reason.trim() : "";
@@ -3969,26 +4023,30 @@ Judgement gates to run: ${pending.map((j) => `${j.gate} (${j.reason})`).join(", 
           return refuse(`no review inputs for this item: run crew gate run ${opened.work.id} first, then the reviewers and the judge`);
         if (inputs.fingerprint !== before.currentFingerprint)
           return refuse(`the review inputs describe other code than the current one: run crew gate run ${opened.work.id}, then the reviewers and the judge again`);
-        const text = readText(resolve2(env.paths.root, parsed.flags.ruling));
+        const rulingPath = resolve2(env.paths.root, parsed.flags.ruling);
+        const text = readText(rulingPath);
         if (text === null)
-          return refuse(`no ruling file at ${parsed.flags.ruling}`);
+          return refuse(`no ruling file at ${rulingPath}`);
         let raw;
         try {
           raw = JSON.parse(text);
         } catch {
-          return refuse(`the ruling file is not valid JSON: ${parsed.flags.ruling}`);
+          return refuse(`the ruling file is not valid JSON: ${rulingPath}`);
         }
         const parsedRulings = parseRulings(raw, planned);
         if ("refused" in parsedRulings)
           return refuse(parsedRulings.refused);
         for (const ruling of parsedRulings.rulings)
           records.push(stampRuling(ruling, before.currentFingerprint, before.changed, opened.work.id));
+        for (const record of records) {
+          const why = contradiction(record);
+          if (why)
+            return refuse(why);
+        }
       }
-      const { evidence } = loadEvidence(env.paths, opened.work.id);
       for (const record of records)
-        recordJudgement(evidence, record);
-      saveEvidence(env.paths, opened.work.id, evidence);
-      const result = assess(env.paths, opened.work, env.profile, env.policy, env.tampered || opened.tampered);
+        recordJudgement(before.evidence, record);
+      const result = reassess(before, opened.work, env.policy);
       result.evidence.verdict = result.verdict;
       result.evidence.unproven = result.unproven;
       saveEvidence(env.paths, opened.work.id, result.evidence);

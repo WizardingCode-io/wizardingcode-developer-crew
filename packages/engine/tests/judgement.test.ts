@@ -1,7 +1,9 @@
 import { expect, test } from "bun:test";
 import { emptyEvidence } from "../src/evidence.ts";
 import {
+  contradiction,
   isInterfacePath,
+  judgementRows,
   notRunRecord,
   parseRulings,
   plannedJudgementGates,
@@ -10,6 +12,8 @@ import {
 } from "../src/judgement.ts";
 import { DEFAULT_POLICY } from "../src/policy.ts";
 import type { Evidence, JudgementGateName, Policy } from "../src/types.ts";
+import { createWork } from "../src/work.ts";
+import { makeRepo, repoPaths, testEnv } from "./helpers.ts";
 
 const names = (planned: { gate: string }[]) => planned.map((p) => p.gate);
 
@@ -240,4 +244,68 @@ test("SP2b: a ruling is stamped with the code it judged, its findings outside th
     "code-quality:proven:f2",
   ]);
   expect(evidence.judgement?.[0]).toMatchObject({ reason: "no browser", findings: [] });
+});
+
+test("SP2b minors: proven with a defect inside the change contradicts the judge's own rule; debt and advisories do not", () => {
+  const inside = stampRuling(
+    {
+      gate: "code-quality",
+      verdict: "proven",
+      findings: [
+        { file: "src/legacy.ts", line: 4, text: "duplicated", severity: "defect" },
+        { file: "src/a.ts", line: 12, text: "two reasons to change", severity: "defect" },
+      ],
+    },
+    "f1",
+    ["src/a.ts"],
+    "w1",
+  );
+  expect(contradiction(inside)).toBe(
+    "code-quality: proven with a defect on src/a.ts:12; the judge rules not proven on a defect inside the change, or lowers it to advisory",
+  );
+  const consistent = stampRuling(
+    {
+      gate: "code-quality",
+      verdict: "proven",
+      findings: [
+        { file: "src/legacy.ts", text: "duplicated", severity: "defect" },
+        { file: "src/a.ts", line: 12, text: "long function", severity: "advisory" },
+      ],
+    },
+    "f1",
+    ["src/a.ts"],
+    "w1",
+  );
+  expect(contradiction(consistent)).toBeNull();
+  // Not proven on a defect inside the change is the rule itself; a gate not run has no findings.
+  expect(contradiction({ ...inside, verdict: "not-proven" })).toBeNull();
+  expect(contradiction(notRunRecord("ui-ux", "no browser", "f1"))).toBeNull();
+});
+
+test("SP2b minors: a stale row says why, so the panel can print it: ruling on earlier code", () => {
+  const work = createWork(repoPaths(makeRepo(), testEnv()), "fix");
+  const evidence: Evidence = emptyEvidence();
+  recordJudgement(
+    evidence,
+    stampRuling(
+      { gate: "code-quality", verdict: "proven", findings: [] },
+      "f1",
+      ["src/a.ts"],
+      work.id,
+    ),
+  );
+  const planned = [{ gate: "code-quality" as const, reason: "standard route" }];
+  expect(judgementRows(work, evidence, planned, "f2", DEFAULT_POLICY)).toEqual([
+    {
+      gate: "code-quality",
+      status: "stale",
+      planned: "standard route",
+      findings: 0,
+      reason: "ruling on earlier code",
+    },
+  ]);
+  // On the code it judged, the row is the verdict and carries no reason.
+  expect(judgementRows(work, evidence, planned, "f1", DEFAULT_POLICY)).toEqual([
+    { gate: "code-quality", status: "proven", planned: "standard route", findings: 0 },
+  ]);
 });
