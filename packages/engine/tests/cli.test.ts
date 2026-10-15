@@ -1723,3 +1723,260 @@ test("SP2a review: a hand-edited ledger reaches the verdict, not only the saving
   expect((await c.run("accept", id)).code).toBe(0);
   expect((await c.json("status")).data.unproven).not.toContain("state changed outside the engine");
 });
+
+/** Two registered projects of one workspace, with the second's policy accepting what the test needs. */
+function mailRepos(accept = ["question", "notice"]) {
+  const env = testEnv();
+  delete env.CLAUDE_CODE_SESSION_ID; // the registry records "cli" for a command run outside a hook
+  const a = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const b = makeRepo({ "README.md": "# crm\n" });
+  write(a, ".crew/policy.json", JSON.stringify({ mail: { workspace: "w", name: "storefront" } }));
+  write(b, ".crew/policy.json", JSON.stringify({ mail: { workspace: "w", name: "crm", accept } }));
+  const ca = io(a, env);
+  const cb = io(b, env);
+  return { env, a, b, ca, cb };
+}
+
+test("SP2c AC-9: crew mail send, inbox, read, reply and refuse through the command; status --json has mail; the report has a Mail section", async () => {
+  const { a, ca, cb } = mailRepos();
+  await ca.run("detect"); // registers storefront
+  await cb.run("detect"); // registers crm
+  const id = (await ca.json("start", "Loyalty tier", "--answers", answers, "--criterion", "a")).data
+    .id as string;
+  const sent = await ca.run(
+    "mail",
+    "send",
+    "--to",
+    "crm",
+    "--type",
+    "question",
+    "Does POST /customers accept loyalty_tier?",
+  );
+  expect(sent.code).toBe(0);
+  expect(sent.out).toMatch(
+    /^sent M-\d{4}-\d{2}-\d{2}-001-storefront to crm \(workspace w\); live session \(session cli\): ring it if your harness lists it\n$/,
+  );
+  const mid = /sent (M-\S+) /.exec(sent.out)?.[1] as string;
+  const refused = await ca.run(
+    "mail",
+    "send",
+    "--to",
+    "crm",
+    "--type",
+    "change-request",
+    "Add the field",
+  );
+  expect(refused.code).toBe(1);
+  expect(refused.err.trim()).toBe(
+    "refused: crm does not accept change-request (its policy accepts question, notice); recorded in the outbox as refused",
+  );
+  const inbox = await cb.run("mail", "inbox");
+  expect(inbox.out).toBe(
+    `Mail (w/crm, as session): 1 unread, 0 answered\n  ${mid} · question · from storefront · Does POST /customers accept loyalty_tier? · sent\n`,
+  );
+  const read = await cb.run("mail", "read", mid);
+  expect(read.out).toContain(
+    `id: ${mid}\nfrom: storefront (session)\nto: crm\ntype: question\nsubject: Does POST /customers accept loyalty_tier?\nstatus: read\n`,
+  );
+  expect(read.out).toContain("\n\nDoes POST /customers accept loyalty_tier?\n");
+  const replied = await cb.run("mail", "reply", mid, "Yes: gold, silver, none.");
+  expect(replied.code).toBe(0);
+  expect(replied.out).toMatch(
+    new RegExp(`^replied to ${mid}: M-\\S+-001-crm to storefront; ${mid} answered\\n$`),
+  );
+  // The sender sees the answer in its inbox and in the item's record.
+  const theirs = await ca.run("mail", "inbox");
+  expect(theirs.out).toContain("· Re: Does POST /customers accept loyalty_tier? · sent");
+  const status = await ca.json("status");
+  expect(status.data.mail).toEqual({ unread: 0, answered: 1, waiting: 0 });
+  const mail = readProtectedJson<{ messages: { id: string; status: string }[] }>(
+    repoPaths(a, ca.env),
+    join(a, ".crew", "work", id, "mail.json"),
+  );
+  expect(mail.tampered).toBe(false);
+  expect(
+    mail.data?.messages.map((m) => [m.id.endsWith("-storefront") ? "sent" : "reply", m.status]),
+  ).toEqual([
+    ["sent", "answered"],
+    ["sent", "refused"],
+    ["reply", "sent"],
+  ]);
+  // A body over 2 KB lives beside the inbox; `read` prints the whole of it, not the preview.
+  const longBody = "L".repeat(2100);
+  const longSent = await ca.run(
+    "mail",
+    "send",
+    "--to",
+    "crm",
+    "--type",
+    "question",
+    "--subject",
+    "Long one",
+    longBody,
+  );
+  const longId = /sent (M-\S+) /.exec(longSent.out)?.[1] as string;
+  const longRead = await cb.run("mail", "read", longId);
+  expect(longRead.out).toContain(`\n\n${longBody}\n`);
+  expect(longRead.out).not.toContain(`${"L".repeat(200)}...`);
+  // `crew mail status` prunes a registered root that is gone.
+  const registryFile = join(ca.env.WIZARDINGCODE_HOME as string, "crew", "projects.json");
+  const registry = JSON.parse(readFileSync(registryFile, "utf8")) as {
+    projects: Record<string, unknown>[];
+  };
+  registry.projects.push({
+    root: "/nowhere/warehouse",
+    name: "warehouse",
+    workspace: "w",
+    lastSeen: "2026-10-15T00:00:00.000Z",
+    sessionId: "s",
+  });
+  writeFileSync(registryFile, JSON.stringify(registry));
+  const mailStatus = await ca.json("mail", "status");
+  expect(mailStatus.data.pruned).toEqual(["/nowhere/warehouse"]);
+  expect(mailStatus.data.message).toContain("registry pruned: /nowhere/warehouse");
+  expect(JSON.parse(readFileSync(registryFile, "utf8")).projects).toHaveLength(2);
+  // Refuse the second question; the report lists every message with its status.
+  const second = /sent (M-\S+) /.exec(
+    (await ca.run("mail", "send", "--to", "crm", "--type", "question", "Second")).out,
+  )?.[1] as string;
+  // (a pipe in the reason: the report's table escapes it)
+  expect(
+    (await cb.run("mail", "refuse", second, "--reason", "not this sprint | maybe next")).out,
+  ).toBe(`${second} refused: not this sprint | maybe next\n`);
+  const report = (await ca.run("evidence", id)).out;
+  expect(report).toContain(
+    "## Mail\n\n| Message | At | Direction | With | Type | Subject | Status |\n",
+  );
+  expect(report).toContain(`| ${mid} | `);
+  expect(report).toContain(
+    "| sent | crm | question | Does POST /customers accept loyalty_tier? | answered |",
+  );
+  expect(report).toContain(`| ${second} | `);
+  expect(report).toContain(
+    "| sent | crm | question | Second | refused: not this sprint \\| maybe next |",
+  );
+  expect(report).toContain(
+    "| received | crm | question | Re: Does POST /customers accept loyalty_tier? | sent |",
+  );
+  // Usage and unknown flags.
+  expect((await ca.run("mail")).err).toContain(
+    "usage: crew mail send --to <project|.> --type question|change-request|notice|blocker",
+  );
+  expect((await ca.run("mail", "send", "--to", "crm", "hi")).err.trim()).toBe(
+    'usage: crew mail send --to <project|.> --type question|change-request|notice|blocker [--agent <session|T-n|role>] [--item <id>] [--reply-to <mid>] [--subject <text>] "<text>" [--file <path>]',
+  );
+  // A hand edit of the item's mail.json is tampering, and `crew accept <id>` re-trusts it like every other protected file of the item.
+  const mailFile = join(a, ".crew", "work", id, "mail.json");
+  writeFileSync(mailFile, JSON.stringify({ version: 1, messages: [] }));
+  expect(readProtectedJson(repoPaths(a, ca.env), mailFile).tampered).toBe(true);
+  // The report says so instead of rendering the hand-edited box as the engine's own.
+  const tamperedReport = (await ca.run("evidence", id)).out;
+  expect(tamperedReport).toContain(
+    `## Mail\n\nmail.json changed outside the engine; the user accepts it with crew accept ${id}.`,
+  );
+  expect(tamperedReport).not.toContain("| Message | At |");
+  const accepted = await ca.json("accept", id);
+  expect(accepted.code).toBe(0);
+  expect(accepted.data.files).toContain("mail.json");
+  expect(readProtectedJson(repoPaths(a, ca.env), mailFile).tampered).toBe(false);
+});
+
+test("SP2c AC-9: crew start --origin answers a message of the inbox and refuses one in an inbox a hand changed", async () => {
+  const { b, ca, cb } = mailRepos();
+  await ca.run("detect");
+  await cb.run("detect");
+  const first = /sent (M-\S+) /.exec(
+    (await ca.run("mail", "send", "--to", "crm", "--type", "question", "Which values?")).out,
+  )?.[1] as string;
+  expect((await cb.run("start", "x", "--answers", answers, "--origin", "M-nope")).err.trim()).toBe(
+    "no message M-nope addressed to this session",
+  );
+  const started = await cb.json(
+    "start",
+    "Answer the values",
+    "--answers",
+    answers,
+    "--origin",
+    first,
+  );
+  expect(started.code).toBe(0);
+  const child = started.data.id as string;
+  const work = readProtectedJson<{ origin?: { mail: string } }>(
+    repoPaths(b, cb.env),
+    join(b, ".crew", "work", child, "work.json"),
+  );
+  expect(work.data?.origin).toEqual({ mail: first });
+  expect((await cb.run("mail", "inbox")).out).toContain(
+    `${first} · question · from storefront · Which values? · read`,
+  );
+  const copy = readProtectedJson<{ messages: { id: string; status: string }[] }>(
+    repoPaths(b, cb.env),
+    join(b, ".crew", "work", child, "mail.json"),
+  );
+  expect(copy.data?.messages.map((m) => [m.id, m.status])).toEqual([[first, "read"]]);
+  // The inbox hand-edited: the second message is not trusted, and no item is created for it.
+  const second = /sent (M-\S+) /.exec(
+    (await ca.run("mail", "send", "--to", "crm", "--type", "question", "And the default?")).out,
+  )?.[1] as string;
+  const inboxFile = join(
+    cb.env.WIZARDINGCODE_HOME as string,
+    "crew",
+    "mail",
+    "w",
+    "crm",
+    "inbox.json",
+  );
+  const inbox = JSON.parse(readFileSync(inboxFile, "utf8")) as { messages: { subject: string }[] };
+  (inbox.messages[1] as { subject: string }).subject = "FORGED";
+  writeFileSync(inboxFile, JSON.stringify(inbox));
+  const refused = await cb.run(
+    "start",
+    "Answer the default",
+    "--answers",
+    answers,
+    "--origin",
+    second,
+  );
+  expect(refused.code).toBe(1);
+  expect(refused.err.trim()).toBe(
+    "crm's inbox changed outside the engine; files under the user's crew directory are written only by the crew command",
+  );
+  expect(readdirSync(join(b, ".crew", "work"))).toEqual([child]);
+});
+
+test("SP2c AC-9: crew await <id> role and mail record the wait and the message; status says so", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const c = io(root);
+  const id = (await c.json("start", "x", "--answers", answers, "--criterion", "a")).data
+    .id as string;
+  // (the JSON form carries `ok` and `message` beside the data, hence toMatchObject)
+  expect((await c.json("await", id, "role")).data).toMatchObject({
+    awaiting: "role",
+    awaitingMessage: null,
+  });
+  expect((await c.run("status")).out).toContain("waiting for the roles");
+  expect((await c.run("await", id, "mail")).err.trim()).toBe(
+    "usage: crew await <id> user | role | mail <message id>",
+  );
+  expect((await c.json("await", id, "mail", "M-2026-10-15-001-crm")).data).toMatchObject({
+    awaiting: "mail",
+    awaitingMessage: "M-2026-10-15-001-crm",
+  });
+  const status = await c.json("status");
+  expect(status.data.awaiting).toBe("mail");
+  expect(status.data.awaitingMessage).toBe("M-2026-10-15-001-crm");
+  expect((await c.run("status")).out).toContain("waiting for a reply to M-2026-10-15-001-crm");
+  expect((await c.json("resume", id)).data).toMatchObject({
+    awaiting: null,
+    awaitingMessage: null,
+  });
+  expect((await c.run("await", id, "judge")).err.trim()).toBe(
+    "usage: crew await <id> user | role | mail <message id>",
+  );
+});

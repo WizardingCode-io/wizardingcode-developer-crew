@@ -73,8 +73,26 @@ export function workDir(paths: CrewPaths, id: string): string {
   return join(paths.crewDir, "work", id);
 }
 
+/** The projects the engine has seen, for mail (SP2c §6). */
+export function registryPath(userDir: string): string {
+  return join(userDir, "projects.json");
+}
+
+/** A project's mailbox: its inbox, its outbox, the long bodies and the opened sessions' logs. */
+export function mailboxDir(userDir: string, workspace: string | null, project: string): string {
+  return join(userDir, "mail", workspace ?? "_alone", project);
+}
+
 const PROTECTED_TOP = new Set([".crew/profile.json", ".crew/policy.json", ".crew/.gitignore"]);
-const PROTECTED_IN_WORK = new Set(["work.json", "evidence.json", "report.md", "objections.json"]);
+/** The files of a work folder only the engine writes; `crew accept <id>` re-trusts the same set. */
+export const PROTECTED_WORK_FILES: readonly string[] = [
+  "work.json",
+  "evidence.json",
+  "report.md",
+  "objections.json",
+  "mail.json",
+];
+const PROTECTED_IN_WORK = new Set(PROTECTED_WORK_FILES);
 
 /** Files only the engine writes. The agent is denied direct writes to them. */
 export function isProtectedPath(paths: CrewPaths, absPath: string): boolean {

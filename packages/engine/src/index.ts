@@ -6,6 +6,7 @@ export * from "./fingerprint.ts";
 export * from "./gates.ts";
 export * from "./hooks/index.ts";
 export * from "./judgement.ts";
+export * from "./mail.ts";
 export * from "./paths.ts";
 export * from "./policy.ts";
 export * from "./profile.ts";

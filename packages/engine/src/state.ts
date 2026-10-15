@@ -42,7 +42,8 @@ export function sessionState(state: LocalState, sessionId: string): SessionState
 export function ensureCrewDir(paths: CrewPaths, policy: Policy): void {
   // UI captures are binaries that grow the repository per item; the findings, the ruling and the
   // diff are evidence and stay (review of SP2b, finding 5; the merge checklist keeps captures out).
-  const wanted = `local/\nwork/*/logs/\nwork/*/review/ui/\n${policy.artifacts === "local" ? "work/\n" : ""}`;
+  // Task worktrees go under .crew/ when the policy's mail.worktrees says so (plan decision 12).
+  const wanted = `local/\nwork/*/logs/\nwork/*/review/ui/\nworktrees/\n${policy.artifacts === "local" ? "work/\n" : ""}`;
   const file = join(paths.crewDir, ".gitignore");
   if (readText(file) !== wanted) writeProtectedText(paths, file, wanted);
 }

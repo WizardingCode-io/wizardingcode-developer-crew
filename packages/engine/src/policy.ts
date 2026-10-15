@@ -1,8 +1,32 @@
 import { join } from "node:path";
 import type { CrewPaths } from "./paths.ts";
 import { readProtectedJson, writeProtectedJson } from "./store.ts";
-import type { DecidedBy, GateName, PermissionMode, Policy, RiskArea, Route } from "./types.ts";
-import { GATE_NAMES, isJudgementGateName, ROUTE_ORDER } from "./types.ts";
+import type {
+  DecidedBy,
+  GateName,
+  MailPolicy,
+  PermissionMode,
+  Policy,
+  RiskArea,
+  Route,
+} from "./types.ts";
+import { GATE_NAMES, isJudgementGateName, isMailType, ROUTE_ORDER } from "./types.ts";
+
+export const MAIL_NAME = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+/** `..` or a relative path of plain segments: where task worktrees go (plan decision 12). */
+export const WORKTREES = /^(\.\.|[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)*)$/;
+
+export const DEFAULT_MAIL_POLICY: MailPolicy = {
+  workspace: null,
+  name: null,
+  accept: ["question", "notice"],
+  open: "read-only",
+  maxConcurrent: 2,
+  maxHops: 2,
+  maxTurns: 40,
+  maxMinutes: 30,
+  worktrees: "..",
+};
 
 export const DEFAULT_POLICY: Policy = {
   requiredGates: [],
@@ -16,33 +40,85 @@ export const DEFAULT_POLICY: Policy = {
   artifacts: "commit",
   unattendedDecisions: "wait",
   attendedDecisions: "relay",
+  mail: DEFAULT_MAIL_POLICY,
 };
 
-/** The scalar keys `crew policy set` writes, with their values; the rest of the policy is hand-written. */
-export const SETTABLE_POLICY_KEYS = {
-  attendedDecisions: ["prompt", "relay"],
-  unattendedDecisions: ["wait", "count", "validator"],
-} as const satisfies Partial<Record<keyof Policy, readonly string[]>>;
+/** How `crew policy set` checks a value: one of a list, a name, or a whole number in a range. */
+type Settable =
+  | { values: readonly string[] }
+  | { pattern: RegExp; hint: string }
+  | { integer: { min: number; max: number } };
+
+const NAME_HINT =
+  "a lowercase name of letters, digits, dot, dash and underscore, up to 64 characters";
+
+type Range = { min: number; max: number };
+
+/** The whole-number limits of the mail policy, named once for the settable table and the reader. */
+const RANGES = {
+  maxConcurrent: { min: 1, max: 10 },
+  maxHops: { min: 1, max: 10 },
+  maxTurns: { min: 1, max: 500 },
+  maxMinutes: { min: 1, max: 600 },
+} as const satisfies Record<string, Range>;
+
+/** The scalar keys `crew policy set` writes; the lists (`mail.accept`, `allowSkips`, …) are hand-written and accepted. */
+export const SETTABLE_POLICY_KEYS: Record<string, Settable> = {
+  attendedDecisions: { values: ["prompt", "relay"] },
+  unattendedDecisions: { values: ["wait", "count", "validator"] },
+  "mail.workspace": { pattern: MAIL_NAME, hint: NAME_HINT },
+  "mail.name": { pattern: MAIL_NAME, hint: NAME_HINT },
+  "mail.open": { values: ["read-only", "branch"] },
+  "mail.maxConcurrent": { integer: RANGES.maxConcurrent },
+  "mail.maxHops": { integer: RANGES.maxHops },
+  "mail.maxTurns": { integer: RANGES.maxTurns },
+  "mail.maxMinutes": { integer: RANGES.maxMinutes },
+  "mail.worktrees": {
+    pattern: WORKTREES,
+    hint: "a relative path with no spaces (.. for the folder beside the root)",
+  },
+};
 
 function policyPath(paths: CrewPaths): string {
   return join(paths.crewDir, "policy.json");
 }
 
+function checkSettable(
+  key: string,
+  rule: Settable,
+  value: string,
+): string | number | { refused: string } {
+  if ("values" in rule)
+    return rule.values.includes(value)
+      ? value
+      : { refused: `${key} is one of ${rule.values.join(", ")}, not ${value}` };
+  if ("pattern" in rule)
+    return rule.pattern.test(value) ? value : { refused: `${key} is ${rule.hint}, not ${value}` };
+  const n = Number(value);
+  const { min, max } = rule.integer;
+  return /^\d+$/.test(value) && n >= min && n <= max
+    ? n
+    : { refused: `${key} is a whole number from ${min} to ${max}, not ${value}` };
+}
+
 /**
  * Writes one settable key of `policy.json` through the engine: the file keeps everything else as
  * written and stays trusted. A file changed outside the engine is refused until a person accepts it.
+ * A dotted key (`mail.workspace`) is written nested, inside its block.
  */
 export function setPolicyValue(
   paths: CrewPaths,
   key: string,
   value: string,
 ): { key: string; value: string } | { refused: string } {
-  const keys = Object.keys(SETTABLE_POLICY_KEYS);
-  if (!(key in SETTABLE_POLICY_KEYS))
-    return { refused: `unknown policy key: ${key} (crew policy set writes ${keys.join(", ")})` };
-  const allowed: readonly string[] = SETTABLE_POLICY_KEYS[key as keyof typeof SETTABLE_POLICY_KEYS];
-  if (!allowed.includes(value))
-    return { refused: `${key} is one of ${allowed.join(", ")}, not ${value}` };
+  const rule = SETTABLE_POLICY_KEYS[key];
+  if (!rule) {
+    return {
+      refused: `unknown policy key: ${key} (crew policy set writes ${Object.keys(SETTABLE_POLICY_KEYS).join(", ")})`,
+    };
+  }
+  const checked = checkSettable(key, rule, value);
+  if (typeof checked === "object") return checked;
   const read = readProtectedJson<Record<string, unknown>>(paths, policyPath(paths));
   if (read.tampered) {
     return {
@@ -50,8 +126,58 @@ export function setPolicyValue(
         "state changed outside the engine: .crew/policy.json; the user can accept it with crew policy accept",
     };
   }
-  writeProtectedJson(paths, policyPath(paths), { ...(read.data ?? {}), [key]: value });
+  const raw = { ...(read.data ?? {}) };
+  const dot = key.indexOf(".");
+  if (dot === -1) raw[key] = checked;
+  else {
+    const block = raw[key.slice(0, dot)];
+    raw[key.slice(0, dot)] = {
+      ...(typeof block === "object" && block !== null && !Array.isArray(block) ? block : {}),
+      [key.slice(dot + 1)]: checked,
+    };
+  }
+  writeProtectedJson(paths, policyPath(paths), raw);
   return { key, value };
+}
+
+function mailName(value: unknown): string | null {
+  return typeof value === "string" && MAIL_NAME.test(value) ? value : null;
+}
+
+/** A whole number inside its range; the fallback for anything else (a string, a fraction, out of range). */
+function bounded(value: unknown, range: Range, fallback: number): number {
+  return typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= range.min &&
+    value <= range.max
+    ? value
+    : fallback;
+}
+
+/** The `mail` block, validated value by value: a name the mailbox folder cannot take is dropped, not folded. */
+function loadMailPolicy(raw: unknown): MailPolicy {
+  const m = (typeof raw === "object" && raw !== null && !Array.isArray(raw) ? raw : {}) as Record<
+    string,
+    unknown
+  >;
+  return {
+    workspace: mailName(m.workspace),
+    name: mailName(m.name),
+    accept: Array.isArray(m.accept) ? m.accept.filter(isMailType) : [...DEFAULT_MAIL_POLICY.accept],
+    open: m.open === "branch" ? "branch" : "read-only",
+    maxConcurrent: bounded(
+      m.maxConcurrent,
+      RANGES.maxConcurrent,
+      DEFAULT_MAIL_POLICY.maxConcurrent,
+    ),
+    maxHops: bounded(m.maxHops, RANGES.maxHops, DEFAULT_MAIL_POLICY.maxHops),
+    maxTurns: bounded(m.maxTurns, RANGES.maxTurns, DEFAULT_MAIL_POLICY.maxTurns),
+    maxMinutes: bounded(m.maxMinutes, RANGES.maxMinutes, DEFAULT_MAIL_POLICY.maxMinutes),
+    worktrees:
+      typeof m.worktrees === "string" && WORKTREES.test(m.worktrees)
+        ? m.worktrees
+        : DEFAULT_MAIL_POLICY.worktrees,
+  };
 }
 
 /**
@@ -117,6 +243,7 @@ export function loadPolicy(paths: CrewPaths): { policy: Policy; tampered: boolea
           ? raw.unattendedDecisions
           : "wait",
       attendedDecisions: raw.attendedDecisions === "prompt" ? "prompt" : "relay",
+      mail: loadMailPolicy(raw.mail),
     },
     tampered: read.tampered,
   };

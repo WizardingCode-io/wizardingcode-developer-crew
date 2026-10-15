@@ -530,7 +530,7 @@ export async function runGates(
   evidence.fingerprint = stamp;
   // Planned after the route may have been raised, so a risk area the diff touched plans the security gate.
   const judgement = plannedJudgementGates(work.route, work.riskAreas, changed, policy);
-  const cut = judgement.length ? writeReviewInputs(paths, work, changed, stamp) : null;
+  const reviewInputs = judgement.length ? writeReviewInputs(paths, work, changed, stamp) : null;
   const verdict = computeVerdict({
     work,
     evidence,
@@ -558,8 +558,8 @@ export async function runGates(
     raised,
     tampered,
     judgement,
-    review: cut?.dir ?? null,
-    reviewNote: cut?.note ?? null,
+    review: reviewInputs?.dir ?? null,
+    reviewNote: reviewInputs?.note ?? null,
   };
 }
 

@@ -532,3 +532,12 @@ export function advancePhase(
   work.phase = next;
   return { ok: true, phase: next };
 }
+
+/** ", waiting for the user" / ", waiting for the roles" / ", waiting for a reply to M-…" / "" (SP2c §9). */
+export function waitingText(work: WorkItem): string {
+  if (work.awaiting === "user") return ", waiting for the user";
+  if (work.awaiting === "role") return ", waiting for the roles";
+  if (work.awaiting === "mail")
+    return `, waiting for a reply to ${work.awaitingMessage ?? "a message"}`;
+  return "";
+}

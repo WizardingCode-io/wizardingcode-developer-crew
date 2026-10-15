@@ -1,8 +1,14 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { readProtectedJson, recordIntegrity, writeProtectedJson } from "../src/store.ts";
-import { makeRepo, repoPaths, testEnv } from "./helpers.ts";
+import {
+  readProtectedJson,
+  readProtectedJsonAt,
+  recordIntegrity,
+  writeProtectedJson,
+  writeProtectedJsonAt,
+} from "../src/store.ts";
+import { makeRepo, repoPaths, tempDir, testEnv } from "./helpers.ts";
 
 test("a protected file written by the engine reads back untampered", () => {
   const paths = repoPaths(makeRepo(), testEnv());
@@ -59,4 +65,23 @@ test("recordIntegrity accepts a hand-written file, and a missing file is not tam
   recordIntegrity(paths, file);
   writeFileSync(file, '{"minimumRoute":"fast"}');
   expect(readProtectedJson(paths, file).tampered).toBe(true);
+});
+
+test("SP2c: a protected file outside a repository has its own integrity file, keyed by file name", () => {
+  const dir = tempDir("crew-mailbox-");
+  const integrity = join(dir, "integrity.json");
+  const inbox = join(dir, "inbox.json");
+  expect(readProtectedJsonAt(integrity, inbox)).toEqual({ data: null, tampered: false });
+  writeProtectedJsonAt(integrity, inbox, { version: 1, messages: [] });
+  expect(readProtectedJsonAt(integrity, inbox)).toEqual({
+    data: { version: 1, messages: [] },
+    tampered: false,
+  });
+  // (the array form: a dotted string would be read as a path, `inbox` then `json`)
+  expect(JSON.parse(readFileSync(integrity, "utf8"))).toHaveProperty(["inbox.json"]);
+  writeFileSync(inbox, JSON.stringify({ version: 1, messages: [{ id: "forged" }] }));
+  expect(readProtectedJsonAt(integrity, inbox).tampered).toBe(true);
+  // A second file in the same folder that the engine never recorded, while it recorded others, is not trusted.
+  writeFileSync(join(dir, "outbox.json"), "{}");
+  expect(readProtectedJsonAt(integrity, join(dir, "outbox.json")).tampered).toBe(true);
 });

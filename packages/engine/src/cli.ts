@@ -27,6 +27,25 @@ import {
   stampRuling,
 } from "./judgement.ts";
 import {
+  inboxSummary,
+  loadItemMail,
+  type MailContext,
+  mailContext,
+  markRead,
+  openSessions,
+  ownInbox,
+  pruneRegistry,
+  recordInItem,
+  refuseMail,
+  registerProject,
+  reply as replyMail,
+  send,
+  syncMail,
+  TASK_AGENT,
+  tamperedBox,
+  worktreeMainRoot,
+} from "./mail.ts";
+import {
   addObjection,
   bindObjection,
   loadLedger,
@@ -34,7 +53,7 @@ import {
   saveLedger,
   waiveObjection,
 } from "./objections.ts";
-import { type CrewPaths, resolvePaths, userDirOf, workDir } from "./paths.ts";
+import { type CrewPaths, PROTECTED_WORK_FILES, resolvePaths, userDirOf, workDir } from "./paths.ts";
 import { loadPolicy, SETTABLE_POLICY_KEYS, setPolicyValue, skipAllowed } from "./policy.ts";
 import { ensureProfile, loadProfile, refreshProfile, saveProfile } from "./profile.ts";
 import { ensureCrewDir } from "./state.ts";
@@ -49,6 +68,7 @@ import type {
   Phase,
   Policy,
   Profile,
+  ProjectEntry,
   Stack,
   UserConfig,
   WorkItem,
@@ -56,11 +76,13 @@ import type {
 import {
   GATE_NAMES,
   isJudgementGateName,
+  isMailType,
   isPermissionMode,
   isValidatorRule,
   JUDGEMENT_GATES,
   PERMISSION_MODES,
   PHASE_ORDER,
+  partyLabel,
   VALIDATOR_RULES,
 } from "./types.ts";
 import { VERSION } from "./version.ts";
@@ -85,6 +107,7 @@ import {
   removeCriterion,
   saveWork,
   validatorPreconditions,
+  waitingText,
 } from "./work.ts";
 
 export interface CliIo {
@@ -106,7 +129,7 @@ interface Parsed {
 }
 
 // Flags that never take a value, so a word after them stays a positional argument.
-const BOOLEAN_FLAGS = new Set(["json", "refresh", "force", "not-run"]);
+const BOOLEAN_FLAGS = new Set(["json", "refresh", "force", "not-run", "all"]);
 
 // The flags each command knows, besides the global --json. A flag outside the list is refused, so
 // a misspelt or misplaced one never passes in silence (finding 7: `start --kind` created
@@ -116,7 +139,7 @@ const KNOWN_FLAGS: Record<string, readonly string[]> = {
   profile: ["target", "stack", "force", "timeout"],
   policy: [],
   accept: [],
-  start: ["answers", "criterion", "preserve"],
+  start: ["answers", "criterion", "preserve", "origin"],
   classify: ["answers"],
   criteria: ["kind"],
   decision: ["default"],
@@ -133,6 +156,19 @@ const KNOWN_FLAGS: Record<string, readonly string[]> = {
   skip: ["reason", "mode"],
   evidence: [],
   status: [],
+  mail: [
+    "to",
+    "type",
+    "agent",
+    "item",
+    "reply-to",
+    "subject",
+    "file",
+    "reason",
+    "branch",
+    "as",
+    "all",
+  ],
   mode: [],
   config: [],
   version: [],
@@ -194,6 +230,10 @@ interface Env {
   tampered: boolean;
   /** Protected files changed outside the engine, each with the `crew accept` target that trusts it again. */
   tamperedFiles: TamperedFile[];
+  /** Who this project is in the mail (SP2c §6), for every command that reads or writes the mailbox. */
+  mail: MailContext;
+  /** This project's registry entry, refreshed by this command (plan decision 3). */
+  registered: ProjectEntry;
 }
 
 interface TamperedFile {
@@ -213,13 +253,18 @@ function tamperMessage({ file, accept }: TamperedFile): string {
   return `state changed outside the engine: ${file}; the user can accept it with crew accept ${accept}`;
 }
 
-function load(paths: CrewPaths): Env {
+function load(paths: CrewPaths, processEnv: NodeJS.ProcessEnv): Env {
   const profile = ensureProfile(paths);
   const policy = loadPolicy(paths);
   ensureCrewDir(paths, policy.policy);
   const tamperedFiles: TamperedFile[] = [];
   if (profile.tampered) tamperedFiles.push({ file: ".crew/profile.json", accept: "profile" });
   if (policy.tampered) tamperedFiles.push({ file: ".crew/policy.json", accept: "policy" });
+  // Every command refreshes the project's registry entry, at most once in two minutes (plan decision 3).
+  const mail = mailContext(paths, policy.policy, processEnv);
+  const registered = registerProject(mail, processEnv.CLAUDE_CODE_SESSION_ID ?? "cli", {
+    minIntervalMs: 2 * 60 * 1000,
+  });
   return {
     paths,
     profile: profile.profile,
@@ -227,6 +272,8 @@ function load(paths: CrewPaths): Env {
     config: loadConfig(paths),
     tampered: tamperedFiles.length > 0,
     tamperedFiles,
+    mail,
+    registered,
   };
 }
 
@@ -288,9 +335,7 @@ function accept(env: Env, target: string): Outcome {
   const dir = workDir(env.paths, target);
   if (!/^[\w.-]+$/.test(target) || target.includes("..") || !existsSync(join(dir, "work.json")))
     return refuse(`unknown work item: ${target}`);
-  const files = ["work.json", "evidence.json", "report.md", "objections.json"].filter((name) =>
-    recordIntegrity(env.paths, join(dir, name)),
-  );
+  const files = PROTECTED_WORK_FILES.filter((name) => recordIntegrity(env.paths, join(dir, name)));
   return ok(`${target} accepted: ${files.join(", ")} now trusted as they are`, {
     accepted: target,
     files,
@@ -386,7 +431,19 @@ function deliver(env: Env, opened: Opened, evidence: Evidence): void {
   writeProtectedText(
     env.paths,
     join(workDir(env.paths, opened.work.id), "report.md"),
-    renderReport(opened.work, evidence, env.policy, loadLedger(env.paths, opened.work.id).ledger),
+    reportOf(env, opened.work, evidence),
+  );
+}
+
+/** The item's report: its evidence, its objections, its mail and the name this project carries in the mail. */
+function reportOf(env: Env, work: WorkItem, evidence: Evidence): string {
+  return renderReport(
+    work,
+    evidence,
+    env.policy,
+    loadLedger(env.paths, work.id).ledger,
+    loadItemMail(env.paths, work.id),
+    env.mail.self.project,
   );
 }
 
@@ -462,7 +519,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
     paths = resolvePaths(io.cwd, io.env);
   }
   if (!paths) return refuse(INACTIVE);
-  const env = load(paths);
+  const env = load(paths, io.env);
 
   switch (command) {
     case "detect": {
@@ -493,7 +550,11 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         lines.push(
           `No test command for: ${missing.map((m) => m.target).join(", ")}. Propose one: crew profile set test "<cmd>" [--target <path>]`,
         );
-      return ok(lines.join("\n"), { profile, missing });
+      // A project the fixtures scaffold is known to the mail before any session runs in it: this
+      // command registered it on its way in (`load`), and says so.
+      const entry = env.registered;
+      lines.push(`registered ${entry.name} (workspace ${entry.workspace ?? "none"})`);
+      return ok(lines.join("\n"), { profile, missing, registered: entry });
     }
     case "profile": {
       const [sub, gate, cmd] = args;
@@ -613,6 +674,13 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       if (isOutcome(answers)) return answers;
       if (answers.work_type === "question")
         return ok("question: answer the user; no work item is created", { id: null });
+      // An item that answers a message (a session opened by mail, SP2c §7, §8): the message must be
+      // in this project's inbox and addressed to this agent, checked before anything is created.
+      const originId = typeof parsed.flags.origin === "string" ? parsed.flags.origin : null;
+      const inbox = originId ? ownInbox(env.mail) : null;
+      if (inbox?.tampered) return refuse(tamperedBox(env.mail.self.project, "inbox"));
+      const origin = inbox?.messages.find((m) => m.id === originId) ?? null;
+      if (originId && !origin) return refuse(`no message ${originId} addressed to this session`);
       const previous = activeWork(env.paths);
       const previousProven =
         !!previous?.work &&
@@ -646,6 +714,24 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         ? `warning: this checkout is shared with ${neighbours.join(", ")}, which ${neighbours.length === 1 ? "is" : "are"} open with uncommitted changes in ${uncommitted.join(", ")}; a second session on one checkout blocks turn ends and proves half-written code: work in a worktree (git worktree add ../<name> -b <branch>)\n`
         : "";
       classify(env, work, answers);
+      if (origin) {
+        work.origin = { mail: origin.id };
+        // A change request from this project to one of its tasks: the item is an implementer's child.
+        if (
+          origin.type === "change-request" &&
+          origin.from.project === env.mail.self.project &&
+          origin.from.item &&
+          origin.to.agent &&
+          TASK_AGENT.test(origin.to.agent)
+        ) {
+          work.parent = {
+            project: origin.from.project,
+            item: origin.from.item,
+            task: origin.to.agent,
+            root: worktreeMainRoot(env.paths.root) ?? env.paths.root,
+          };
+        }
+      }
       // Both flags repeat and keep their command-line order, so the numbers read as typed.
       const criteria = parsed.ordered
         .filter((f) => f.key === "criterion" || f.key === "preserve")
@@ -654,6 +740,11 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       if (work.route === "fast" && criteria.length > 0)
         advancePhase(work, guardContext(env, work, false));
       saveWork(env.paths, work);
+      if (origin) {
+        // The message is read, and the new item keeps its copy as it now stands.
+        const read = markRead(env.mail, origin.id);
+        recordInItem(env.paths, work.id, "refused" in read ? origin : read);
+      }
       const lines = criteria.map((c) => `\n  ${c.id} (${c.kind}): ${c.text}`).join("");
       return ok(
         `${warning}${sharedWarning}${inheritedWarning}${provenNote}started ${work.id} (route ${work.route}: ${work.routeReasons.join("; ")})${lines}`,
@@ -869,10 +960,24 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
     case "resume": {
       const opened = openForChange(env, args[0]);
       if (isOutcome(opened)) return opened;
-      opened.work.awaiting = command === "await" ? "user" : null;
+      const usage = "usage: crew await <id> user | role | mail <message id>";
+      if (command === "resume") {
+        opened.work.awaiting = null;
+        delete opened.work.awaitingMessage;
+        saveWork(env.paths, opened.work);
+        return ok(`${opened.work.id}: resumed`, { awaiting: null, awaitingMessage: null });
+      }
+      // The three waits a turn may end on (SP2c §9): the user, the roles, a reply to a message.
+      const kind = args[1];
+      if (kind !== "user" && kind !== "role" && kind !== "mail") return refuse(usage);
+      if (kind === "mail" && !args[2]) return refuse(usage);
+      opened.work.awaiting = kind;
+      if (kind === "mail") opened.work.awaitingMessage = args[2];
+      else delete opened.work.awaitingMessage;
       saveWork(env.paths, opened.work);
-      return ok(`${opened.work.id}: ${command === "await" ? "waiting for the user" : "resumed"}`, {
-        awaiting: opened.work.awaiting,
+      return ok(`${opened.work.id}: ${waitingText(opened.work).slice(2)}`, {
+        awaiting: kind,
+        awaitingMessage: opened.work.awaitingMessage ?? null,
       });
     }
     case "tdd": {
@@ -1037,12 +1142,13 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           records.push(
             stampRuling(ruling, before.currentFingerprint, before.changed, opened.work.id),
           );
-        // Checked once every ruling is stamped (a defect is inside or outside the change only then),
-        // and before anything is recorded: one contradiction refuses the whole file.
-        for (const record of records) {
-          const why = contradiction(record);
-          if (why) return refuse(why);
-        }
+      }
+      // Checked once every record is stamped (a defect is inside or outside the change only then),
+      // and before anything is recorded: one contradiction refuses the whole command. Every record
+      // goes through it, a not-run one too (review of item 2026-10-15-001, advisory).
+      for (const record of records) {
+        const why = contradiction(record);
+        if (why) return refuse(why);
       }
       // The rulings go into the evidence the assessment read, the verdict is computed on it, and
       // the file is written once, with the verdict: no reader sees new records beside a stale
@@ -1121,12 +1227,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       );
       result.evidence.verdict = result.verdict;
       result.evidence.unproven = result.unproven;
-      const report = renderReport(
-        opened.work,
-        result.evidence,
-        env.policy,
-        loadLedger(env.paths, opened.work.id).ledger,
-      );
+      const report = reportOf(env, opened.work, result.evidence);
       // Tampered state is still shown, but never saved: saving would record it as the engine's own.
       if (refused)
         return refuse(`${refused.text}\n\n${report}`, {
@@ -1147,8 +1248,10 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         env.policy,
         env.tampered || active.tampered,
       );
-      const text = `${active.work.id} "${active.work.title}"\n  phase ${active.work.phase}, route ${active.work.route}${active.work.awaiting ? ", waiting for the user" : ""}\n${gateSummary(active.work, result.verdict, result.unproven, result.evidence.runs)}`;
+      const text = `${active.work.id} "${active.work.title}"\n  phase ${active.work.phase}, route ${active.work.route}${waitingText(active.work)}\n${gateSummary(active.work, result.verdict, result.unproven, result.evidence.runs)}`;
       const work = active.work;
+      syncMail(env.mail, env.paths);
+      const inbox = inboxSummary(env.mail);
       return ok(text, {
         active: work.id,
         title: work.title,
@@ -1156,6 +1259,8 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         phase: work.phase,
         route: work.route,
         awaiting: work.awaiting,
+        awaitingMessage: work.awaitingMessage ?? null,
+        mail: { unread: inbox.unread, answered: inbox.answered, waiting: inbox.waiting },
         debate: debateState(work),
         baseCommit: work.baseCommit,
         phases: PHASES_BY_ROUTE[work.route],
@@ -1198,6 +1303,146 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           text: o.text,
         })),
       });
+    }
+    case "mail": {
+      const sendUsage =
+        'usage: crew mail send --to <project|.> --type question|change-request|notice|blocker [--agent <session|T-n|role>] [--item <id>] [--reply-to <mid>] [--subject <text>] "<text>" [--file <path>]';
+      const usage = `${sendUsage} | inbox [--all] | read <mid> | reply <mid> "<text>" [--branch <b>] [--item <child id>] [--as <role>] [--file <path>] | refuse <mid> --reason "<why>" | status | stop <mid>`;
+      const ctx = env.mail;
+      const verb = args[0];
+      if (verb === "send") {
+        const to = parsed.flags.to;
+        const type = parsed.flags.type;
+        const text = args.slice(1).join(" ");
+        if (typeof to !== "string" || !isMailType(type)) return refuse(sendUsage);
+        const item = typeof parsed.flags.item === "string" ? parsed.flags.item : undefined;
+        const work = item
+          ? (loadWork(env.paths, item).work ?? null)
+          : (activeWork(env.paths)?.work ?? null);
+        if (item && !work) return refuse(`unknown work item: ${item}`);
+        const out = send(
+          ctx,
+          {
+            to,
+            type,
+            text,
+            ...(typeof parsed.flags.agent === "string" ? { agent: parsed.flags.agent } : {}),
+            ...(typeof parsed.flags.subject === "string" ? { subject: parsed.flags.subject } : {}),
+            ...(typeof parsed.flags.file === "string" ? { filePath: parsed.flags.file } : {}),
+            ...(item ? { item } : {}),
+            ...(typeof parsed.flags["reply-to"] === "string"
+              ? { replyTo: parsed.flags["reply-to"] }
+              : {}),
+          },
+          work,
+        );
+        if ("refused" in out)
+          return refuse(
+            `refused: ${out.refused}${out.message ? "; recorded in the outbox as refused" : ""}`,
+            { refused: out.refused, message: out.message },
+          );
+        const { message, delivery } = out;
+        const where = `to ${message.to.project} (workspace ${message.to.workspace})`;
+        let next: string;
+        if (delivery.kind === "self") next = `to ${message.to.agent ?? "session"} of this project`;
+        else if (delivery.kind === "live")
+          next = `live session (session ${delivery.entry.sessionId}): ring it if your harness lists it`;
+        else if (delivery.kind === "queued") next = `queued; ${delivery.reason}`;
+        // Task 4 of the SP2c plan replaces this branch with the opener.
+        else next = `queued; no live session: a ${delivery.mode} session is to open`;
+        const note = work
+          ? ""
+          : "\nnote: no active work item, so no item keeps a copy of this message";
+        return ok(`sent ${message.id} ${where}; ${next}${note}`, {
+          message,
+          delivery: delivery.kind,
+          ...(delivery.kind === "open" ? { mode: delivery.mode } : {}),
+        });
+      }
+      if (verb === "inbox") {
+        syncMail(ctx, env.paths);
+        const { messages, tampered } = ownInbox(ctx);
+        if (tampered) return refuse(tamperedBox(ctx.self.project, "inbox"));
+        const shown = parsed.flags.all
+          ? messages
+          : messages.filter(
+              (m) =>
+                m.status === "sent" ||
+                m.status === "read" ||
+                (m.status === "answered" && !m.replyTo),
+            );
+        const summary = inboxSummary(ctx);
+        const lines = shown.map(
+          (m) =>
+            `  ${m.id} · ${m.type} · from ${partyLabel(m.from)} · ${m.subject} · ${m.status}${m.reason ? `: ${m.reason}` : ""}`,
+        );
+        return ok(
+          `Mail (${ctx.self.workspace ?? "alone"}/${ctx.self.project}, as ${ctx.self.agent}): ${summary.unread} unread, ${summary.answered} answered${lines.length ? `\n${lines.join("\n")}` : ""}`,
+          { messages: shown, ...summary },
+        );
+      }
+      if (verb === "read") {
+        if (!args[1]) return refuse(usage);
+        syncMail(ctx, env.paths);
+        const result = markRead(ctx, args[1]);
+        if ("refused" in result) return refuse(result.refused);
+        const body = result.bodyFile ? (readText(result.bodyFile) ?? result.body) : result.body;
+        const head = [
+          `id: ${result.id}`,
+          `from: ${result.from.project} (${result.from.agent})`,
+          `to: ${result.to.project}${result.to.agent ? ` (${result.to.agent})` : ""}`,
+          `type: ${result.type}`,
+          `subject: ${result.subject}`,
+          `status: ${result.status}${result.reason ? `: ${result.reason}` : ""}`,
+          `at: ${result.at}`,
+          ...(result.from.item ? [`from item: ${result.from.item}`] : []),
+          ...(result.replyTo ? [`reply to: ${result.replyTo}`] : []),
+          ...(result.branch ? [`branch: ${result.branch}`] : []),
+          ...(result.item
+            ? [`item: ${result.item}${result.verdict ? ` (${result.verdict})` : ""}`]
+            : []),
+        ];
+        return ok(`${head.join("\n")}\n\n${body}`, { message: result, body });
+      }
+      if (verb === "reply") {
+        const text = args.slice(2).join(" ");
+        if (!args[1]) return refuse(usage);
+        const result = replyMail(ctx, args[1], text, {
+          ...(typeof parsed.flags.file === "string" ? { filePath: parsed.flags.file } : {}),
+          ...(typeof parsed.flags.branch === "string" ? { branch: parsed.flags.branch } : {}),
+          ...(typeof parsed.flags.item === "string" ? { item: parsed.flags.item } : {}),
+          ...(typeof parsed.flags.as === "string" ? { as: parsed.flags.as } : {}),
+        });
+        if ("refused" in result) return refuse(result.refused);
+        return ok(
+          `replied to ${args[1]}: ${result.reply.id} to ${result.reply.to.project}; ${args[1]} answered`,
+          { reply: result.reply, original: result.original },
+        );
+      }
+      if (verb === "refuse") {
+        const reason = typeof parsed.flags.reason === "string" ? parsed.flags.reason : "";
+        if (!args[1] || !reason.trim()) return refuse(usage);
+        const result = refuseMail(ctx, args[1], reason);
+        if ("refused" in result) return refuse(result.refused);
+        return ok(`${args[1]} refused: ${reason.trim()}`, { message: result });
+      }
+      if (verb === "status") {
+        const pruned = pruneRegistry(env.paths.userDir);
+        // Task 4 of the SP2c plan adds the sweep of the opened sessions (expired, ended) before this line.
+        const sessions = openSessions(ctx);
+        const lines = sessions.map(
+          (m) =>
+            `  ${m.id} → ${m.to.project}: ${m.opened?.mode} session ${m.opened?.name} (pid ${m.opened?.pid ?? "none"}), since ${m.opened?.startedAt}, ${m.opened?.maxTurns} turns and ${m.opened?.maxMinutes} minutes allowed`,
+        );
+        const summary = inboxSummary(ctx);
+        return ok(
+          `${summary.line ?? `Mail (${ctx.self.workspace ?? "alone"}): inbox empty`}\nopen sessions: ${sessions.length ? `\n${lines.join("\n")}` : "none"}${pruned.length ? `\nregistry pruned: ${pruned.join(", ")}` : ""}`,
+          { sessions, pruned, ...summary },
+        );
+      }
+      // Task 4 of the SP2c plan replaces this branch with the kill of an opened session.
+      if (verb === "stop") return refuse("no session to stop: this engine has not opened one");
+      return refuse(usage);
     }
     default:
       return refuse(`unknown command: ${command}\n${HELP}`);
@@ -1244,10 +1489,11 @@ const HELP = `crew ${VERSION}
   profile set <gate> "<cmd>" --force    replace a command a person already confirmed (asks the user)
   profile confirm [<gate>]              confirm commands the detector only guessed (asks the user)
   policy accept                         trust the current policy.json after a hand edit (asks the user)
-  policy set <key> <value>              attendedDecisions prompt|relay, unattendedDecisions wait|count|validator (asks the user)
+  policy set <key> <value>              attendedDecisions prompt|relay, unattendedDecisions wait|count|validator, mail.workspace|name|open|maxConcurrent|maxHops|maxTurns|maxMinutes|worktrees (asks the user)
   accept <id|profile|policy>            trust state changed outside the engine (asks the user)
   start "<request>" --answers <json>    create a work item from the typed answers
       [--criterion "<text>"] [--preserve "<text>"]   criteria, repeatable; preserve: existing tests stay green
+      [--origin <message id>]           the item answers a message of this project's inbox (a session opened by mail)
   classify <id> --answers <json>        record typed answers and compute the route
   criteria <id> add "<text>" [--kind preserve|observed]
   criteria <id> remove <AC-n>           take out a criterion no test-first record or skip names
@@ -1262,7 +1508,12 @@ const HELP = `crew ${VERSION}
   approve <id> spec                     record the user's approval (asks the user)
       --mode auto|bypassPermissions|dontAsk   no person watching: recorded as the agent's decision
   phase <id> next                       advance when the guard holds
-  await <id> user | resume <id>         mark or clear waiting for the user
+  await <id> user | role | mail <mid>   mark the turn's wait: for the user, for the roles, or for a reply to a message
+  resume <id>                           clear the wait
+  mail send --to <project|.> --type question|change-request|notice|blocker "<text>"   send mail inside the workspace
+      [--agent <session|T-n|role>] [--item <id>] [--reply-to <mid>] [--subject <text>] [--file <path>]
+  mail inbox [--all] | read <mid> | reply <mid> "<text>" [--branch <b>] [--item <child>] [--as <role>] [--file <path>]
+  mail refuse <mid> --reason "<why>" | status | stop <mid>   this project's mail and the sessions it opened
   tdd <red|green|before|after|observed> <id> <criterion> [--reason "<why>"] [-- <cmd>]
   gate run <id> [--only a,b]            run the gates the route requires; plans the judgement gates and writes their inputs to .crew/work/<id>/review/
   judgement <id> record --ruling <file>  record the rulings of a review file ({"rulings":[{gate,verdict,reviewer,judge,findings,tokens}]}); exit 0 once proven

@@ -572,3 +572,34 @@ test("finding 8: a gate expected for a stack is matched and named by that stack"
     "proven",
   );
 });
+
+test("SP2c: the report's Roles section lists each role's end with its tokens and the file the engine saved", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const work = createWork(paths, "fix");
+  const evidence: Evidence = {
+    ...emptyEvidence(),
+    roles: [
+      {
+        agent: "review-code-quality",
+        agentId: "a1",
+        at: "2026-10-15T11:20:00.000Z",
+        tokens: 39912,
+        tokensFrom: "transcript",
+        file: "review/code-quality.findings.md",
+      },
+      {
+        agent: "judge",
+        at: "2026-10-15T11:25:00.000Z",
+        tokens: 0,
+        tokensFrom: "none",
+        file: "review/ruling.json",
+      },
+    ],
+  };
+  const report = renderReport(work, evidence, DEFAULT_POLICY);
+  expect(report).toContain("## Roles\n\n| Role | At | Tokens | Answer |\n| :- | :- | -: | :- |\n");
+  expect(report).toContain(
+    "| review-code-quality | 2026-10-15T11:20:00.000Z | 39912 | review/code-quality.findings.md |",
+  );
+  expect(report).toContain("| judge | 2026-10-15T11:25:00.000Z | not read | review/ruling.json |");
+});

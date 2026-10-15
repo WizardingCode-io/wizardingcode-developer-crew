@@ -1,6 +1,6 @@
 // packages/engine/src/cli.ts
-import { existsSync as existsSync3 } from "node:fs";
-import { join as join22, relative as relative6, resolve as resolve2 } from "node:path";
+import { existsSync as existsSync4 } from "node:fs";
+import { join as join23, relative as relative6, resolve as resolve3 } from "node:path";
 
 // packages/engine/src/glob.ts
 var SPECIAL = /[.+^${}()|[\]\\]/g;
@@ -53,6 +53,14 @@ function isJudgementGateName(value) {
   return JUDGEMENT_GATES.includes(value);
 }
 var ROUTE_ORDER = ["fast", "standard", "full"];
+var MAIL_TYPES = ["question", "change-request", "notice", "blocker"];
+function isMailType(value) {
+  return MAIL_TYPES.includes(value);
+}
+function partyLabel(party) {
+  const agent = party.agent ?? "session";
+  return agent === "session" ? party.project : `${party.project}/${agent}`;
+}
 var PHASE_ORDER = [
   "receive",
   "recognize",
@@ -980,8 +988,21 @@ function resolvePaths(cwd, env = process.env) {
 function workDir(paths, id) {
   return join9(paths.crewDir, "work", id);
 }
+function registryPath(userDir) {
+  return join9(userDir, "projects.json");
+}
+function mailboxDir(userDir, workspace, project) {
+  return join9(userDir, "mail", workspace ?? "_alone", project);
+}
 var PROTECTED_TOP = new Set([".crew/profile.json", ".crew/policy.json", ".crew/.gitignore"]);
-var PROTECTED_IN_WORK = new Set(["work.json", "evidence.json", "report.md", "objections.json"]);
+var PROTECTED_WORK_FILES = [
+  "work.json",
+  "evidence.json",
+  "report.md",
+  "objections.json",
+  "mail.json"
+];
+var PROTECTED_IN_WORK = new Set(PROTECTED_WORK_FILES);
 function isProtectedPath(paths, absPath) {
   const abs = canonical(absPath);
   if (abs === paths.userDir || abs.startsWith(paths.userDir + sep))
@@ -1004,13 +1025,13 @@ function isProtectedPath(paths, absPath) {
 import { join as join10 } from "node:path";
 
 // packages/engine/src/store.ts
-import { relative as relative3 } from "node:path";
+import { basename as basename2, relative as relative3 } from "node:path";
 var HAND_WRITTEN = ".crew/policy.json";
 function rel(paths, absPath) {
   return relative3(paths.root, absPath).replace(/\\/g, "/");
 }
-function readIntegrity(paths) {
-  const text = readText(paths.integrityFile);
+function readIntegrityFile(file) {
+  const text = readText(file);
   if (text === null)
     return { map: {}, corrupt: false };
   try {
@@ -1023,12 +1044,15 @@ function readIntegrity(paths) {
   }
 }
 function integrityOf(paths) {
-  return readIntegrity(paths).map;
+  return readIntegrityFile(paths.integrityFile).map;
+}
+function rememberIn(file, key, text) {
+  const integrity = readIntegrityFile(file).map;
+  integrity[key] = sha256(text);
+  writeJson(file, integrity);
 }
 function remember(paths, absPath, text) {
-  const integrity = integrityOf(paths);
-  integrity[rel(paths, absPath)] = sha256(text);
-  writeJson(paths.integrityFile, integrity);
+  rememberIn(paths.integrityFile, rel(paths, absPath), text);
 }
 function writeProtectedText(paths, absPath, text) {
   writeText(absPath, text);
@@ -1045,22 +1069,47 @@ function recordIntegrity(paths, absPath) {
   remember(paths, absPath, text);
   return true;
 }
-function readProtectedJson(paths, absPath) {
+function readProtected(integrityFile, key, absPath, handWritten) {
   const text = readText(absPath);
   if (text === null)
     return { data: null, tampered: false };
-  const { map, corrupt } = readIntegrity(paths);
-  const key = rel(paths, absPath);
+  const { map, corrupt } = readIntegrityFile(integrityFile);
   const expected = map[key];
-  const tampered = corrupt ? true : expected === undefined ? key !== HAND_WRITTEN && Object.keys(map).length > 0 : expected !== sha256(text);
+  const tampered = corrupt ? true : expected === undefined ? !handWritten && Object.keys(map).length > 0 : expected !== sha256(text);
   try {
     return { data: JSON.parse(text), tampered };
   } catch {
     return { data: null, tampered: true };
   }
 }
+function readProtectedJson(paths, absPath) {
+  const key = rel(paths, absPath);
+  return readProtected(paths.integrityFile, key, absPath, key === HAND_WRITTEN);
+}
+function writeProtectedJsonAt(integrityFile, absPath, data) {
+  const text = `${JSON.stringify(data, null, 2)}
+`;
+  writeText(absPath, text);
+  rememberIn(integrityFile, basename2(absPath), text);
+}
+function readProtectedJsonAt(integrityFile, absPath) {
+  return readProtected(integrityFile, basename2(absPath), absPath, false);
+}
 
 // packages/engine/src/policy.ts
+var MAIL_NAME = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+var WORKTREES = /^(\.\.|[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)*)$/;
+var DEFAULT_MAIL_POLICY = {
+  workspace: null,
+  name: null,
+  accept: ["question", "notice"],
+  open: "read-only",
+  maxConcurrent: 2,
+  maxHops: 2,
+  maxTurns: 40,
+  maxMinutes: 30,
+  worktrees: ".."
+};
 var DEFAULT_POLICY = {
   requiredGates: [],
   judgementGates: [],
@@ -1070,30 +1119,92 @@ var DEFAULT_POLICY = {
   allowSkips: ["tdd"],
   artifacts: "commit",
   unattendedDecisions: "wait",
-  attendedDecisions: "relay"
+  attendedDecisions: "relay",
+  mail: DEFAULT_MAIL_POLICY
+};
+var NAME_HINT = "a lowercase name of letters, digits, dot, dash and underscore, up to 64 characters";
+var RANGES = {
+  maxConcurrent: { min: 1, max: 10 },
+  maxHops: { min: 1, max: 10 },
+  maxTurns: { min: 1, max: 500 },
+  maxMinutes: { min: 1, max: 600 }
 };
 var SETTABLE_POLICY_KEYS = {
-  attendedDecisions: ["prompt", "relay"],
-  unattendedDecisions: ["wait", "count", "validator"]
+  attendedDecisions: { values: ["prompt", "relay"] },
+  unattendedDecisions: { values: ["wait", "count", "validator"] },
+  "mail.workspace": { pattern: MAIL_NAME, hint: NAME_HINT },
+  "mail.name": { pattern: MAIL_NAME, hint: NAME_HINT },
+  "mail.open": { values: ["read-only", "branch"] },
+  "mail.maxConcurrent": { integer: RANGES.maxConcurrent },
+  "mail.maxHops": { integer: RANGES.maxHops },
+  "mail.maxTurns": { integer: RANGES.maxTurns },
+  "mail.maxMinutes": { integer: RANGES.maxMinutes },
+  "mail.worktrees": {
+    pattern: WORKTREES,
+    hint: "a relative path with no spaces (.. for the folder beside the root)"
+  }
 };
 function policyPath(paths) {
   return join10(paths.crewDir, "policy.json");
 }
+function checkSettable(key, rule, value) {
+  if ("values" in rule)
+    return rule.values.includes(value) ? value : { refused: `${key} is one of ${rule.values.join(", ")}, not ${value}` };
+  if ("pattern" in rule)
+    return rule.pattern.test(value) ? value : { refused: `${key} is ${rule.hint}, not ${value}` };
+  const n = Number(value);
+  const { min, max } = rule.integer;
+  return /^\d+$/.test(value) && n >= min && n <= max ? n : { refused: `${key} is a whole number from ${min} to ${max}, not ${value}` };
+}
 function setPolicyValue(paths, key, value) {
-  const keys = Object.keys(SETTABLE_POLICY_KEYS);
-  if (!(key in SETTABLE_POLICY_KEYS))
-    return { refused: `unknown policy key: ${key} (crew policy set writes ${keys.join(", ")})` };
-  const allowed = SETTABLE_POLICY_KEYS[key];
-  if (!allowed.includes(value))
-    return { refused: `${key} is one of ${allowed.join(", ")}, not ${value}` };
+  const rule = SETTABLE_POLICY_KEYS[key];
+  if (!rule) {
+    return {
+      refused: `unknown policy key: ${key} (crew policy set writes ${Object.keys(SETTABLE_POLICY_KEYS).join(", ")})`
+    };
+  }
+  const checked = checkSettable(key, rule, value);
+  if (typeof checked === "object")
+    return checked;
   const read = readProtectedJson(paths, policyPath(paths));
   if (read.tampered) {
     return {
       refused: "state changed outside the engine: .crew/policy.json; the user can accept it with crew policy accept"
     };
   }
-  writeProtectedJson(paths, policyPath(paths), { ...read.data ?? {}, [key]: value });
+  const raw = { ...read.data ?? {} };
+  const dot = key.indexOf(".");
+  if (dot === -1)
+    raw[key] = checked;
+  else {
+    const block = raw[key.slice(0, dot)];
+    raw[key.slice(0, dot)] = {
+      ...typeof block === "object" && block !== null && !Array.isArray(block) ? block : {},
+      [key.slice(dot + 1)]: checked
+    };
+  }
+  writeProtectedJson(paths, policyPath(paths), raw);
   return { key, value };
+}
+function mailName(value) {
+  return typeof value === "string" && MAIL_NAME.test(value) ? value : null;
+}
+function bounded(value, range, fallback) {
+  return typeof value === "number" && Number.isInteger(value) && value >= range.min && value <= range.max ? value : fallback;
+}
+function loadMailPolicy(raw) {
+  const m = typeof raw === "object" && raw !== null && !Array.isArray(raw) ? raw : {};
+  return {
+    workspace: mailName(m.workspace),
+    name: mailName(m.name),
+    accept: Array.isArray(m.accept) ? m.accept.filter(isMailType) : [...DEFAULT_MAIL_POLICY.accept],
+    open: m.open === "branch" ? "branch" : "read-only",
+    maxConcurrent: bounded(m.maxConcurrent, RANGES.maxConcurrent, DEFAULT_MAIL_POLICY.maxConcurrent),
+    maxHops: bounded(m.maxHops, RANGES.maxHops, DEFAULT_MAIL_POLICY.maxHops),
+    maxTurns: bounded(m.maxTurns, RANGES.maxTurns, DEFAULT_MAIL_POLICY.maxTurns),
+    maxMinutes: bounded(m.maxMinutes, RANGES.maxMinutes, DEFAULT_MAIL_POLICY.maxMinutes),
+    worktrees: typeof m.worktrees === "string" && WORKTREES.test(m.worktrees) ? m.worktrees : DEFAULT_MAIL_POLICY.worktrees
+  };
 }
 function decisionCounts(policy, decision) {
   if (decision.by === "validator")
@@ -1134,7 +1245,8 @@ function loadPolicy(paths) {
       allowSkips,
       artifacts: raw.artifacts === "local" ? "local" : "commit",
       unattendedDecisions: raw.unattendedDecisions === "count" || raw.unattendedDecisions === "validator" ? raw.unattendedDecisions : "wait",
-      attendedDecisions: raw.attendedDecisions === "prompt" ? "prompt" : "relay"
+      attendedDecisions: raw.attendedDecisions === "prompt" ? "prompt" : "relay",
+      mail: loadMailPolicy(raw.mail)
     },
     tampered: read.tampered
   };
@@ -1246,6 +1358,7 @@ function ensureCrewDir(paths, policy) {
   const wanted = `local/
 work/*/logs/
 work/*/review/ui/
+worktrees/
 ${policy.artifacts === "local" ? `work/
 ` : ""}`;
   const file = join12(paths.crewDir, ".gitignore");
@@ -1628,6 +1741,15 @@ function advancePhase(work, ctx) {
   work.phase = next;
   return { ok: true, phase: next };
 }
+function waitingText(work) {
+  if (work.awaiting === "user")
+    return ", waiting for the user";
+  if (work.awaiting === "role")
+    return ", waiting for the roles";
+  if (work.awaiting === "mail")
+    return `, waiting for a reply to ${work.awaitingMessage ?? "a message"}`;
+  return "";
+}
 
 // packages/engine/src/evidence.ts
 function decidedBy(decision) {
@@ -1764,7 +1886,7 @@ function problemStatus(status, p) {
     return `fail: problems in ${p.touched.join(", ")}${p.untouched ? ` (${untouched} also)` : ""}`;
   return `pass: ${untouched} with problems, none of the item's`;
 }
-function renderReport(work, evidence, policy, ledger) {
+function renderReport(work, evidence, policy, ledger, mail, selfName) {
   const lines = [];
   lines.push(`# Report: ${work.title}`, "");
   lines.push(`- Work: \`${work.id}\``);
@@ -1819,6 +1941,29 @@ function renderReport(work, evidence, policy, ledger) {
     const debate = work.debate;
     lines.push(debate ? `- Debate: opened (${debate.reason}), ${debate.closedAt ? "closed" : "open"}${debate.tokens !== undefined ? `, ${debate.tokens} tokens` : ""}` : "- Debate: none");
   }
+  if (mail?.tampered) {
+    lines.push("", "## Mail", "", `mail.json changed outside the engine; the user accepts it with crew accept ${work.id}.`);
+  } else if (mail?.box.messages.length) {
+    lines.push("", "## Mail", "", "| Message | At | Direction | With | Type | Subject | Status |", "| :- | :- | :- | :- | :- | :- | :- |");
+    for (const m of mail.box.messages) {
+      const sent = m.from.item === work.id && m.from.project === selfName;
+      const direction = sent ? "sent" : "received";
+      const other = partyLabel(sent ? m.to : m.from);
+      const cell = (text) => text.replace(/\|/g, "\\|");
+      const status = cell(`${m.status}${m.reason ? `: ${m.reason}` : ""}${m.verdict ? ` (${m.verdict}${m.branch ? `, ${m.branch}` : ""})` : ""}${m.relayed ? ", relayed" : ""}`);
+      lines.push(`| ${m.id} | ${m.at} | ${direction} | ${other} | ${m.type} | ${cell(m.subject)} | ${status} |`);
+    }
+  }
+  if (evidence.roles?.length) {
+    lines.push("", "## Roles", "", "| Role | At | Tokens | Answer |", "| :- | :- | -: | :- |");
+    for (const r of evidence.roles)
+      lines.push(`| ${r.agent} | ${r.at} | ${r.tokensFrom === "none" ? "not read" : r.tokens} | ${r.file ?? "not saved"} |`);
+  }
+  if (work.tasks?.length) {
+    lines.push("", "## Tasks", "", "| Task | Criteria | Branch | Child | Verdict | Merged | Report |", "| :- | :- | :- | :- | :- | :- | :- |");
+    for (const t of work.tasks)
+      lines.push(`| ${t.task} | ${t.criteria.join(", ")} | ${t.branch} | ${t.child ?? ""} | ${t.verdict ?? "no reply yet"} | ${t.mergedAt ? `${t.mergeCommit?.slice(0, 7) ?? ""}${t.forced ? " (forced by the user)" : ""}` : "no"} | ${t.child ? `.crew/work/${t.child}/report.md` : ""} |`);
+  }
   const removed = work.removedCriteria ?? [];
   const pauses = work.pauses ?? [];
   const shared = work.sharedCheckout;
@@ -1861,7 +2006,7 @@ function renderReport(work, evidence, policy, ledger) {
 
 // packages/engine/src/gates.ts
 import { accessSync, constants, mkdirSync as mkdirSync3, rmSync, writeFileSync as writeFileSync2 } from "node:fs";
-import { basename as basename2, delimiter, join as join18 } from "node:path";
+import { basename as basename3, delimiter, join as join18 } from "node:path";
 
 // packages/engine/src/audit.ts
 var NAMED_ID = /\b(GHSA-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{4}|CVE-\d{4}-\d{4,}|PKSA-[0-9a-z]{4}(?:-[0-9a-z]{4}){1,2}|PYSEC-\d{4}-\d+)\b/i;
@@ -2437,7 +2582,7 @@ var MANIFESTS = new Set([
   "requirements.txt"
 ]);
 function manifestChanged(changed) {
-  return changed.some((p) => MANIFESTS.has(basename2(p)) || /^requirements.*\.txt$/.test(basename2(p)));
+  return changed.some((p) => MANIFESTS.has(basename3(p)) || /^requirements.*\.txt$/.test(basename3(p)));
 }
 function onPath(binary, env) {
   const extensions = process.platform === "win32" ? ["", ...(env.PATHEXT ?? ".EXE;.CMD;.BAT").split(";")] : [""];
@@ -2785,7 +2930,7 @@ async function runGates(paths, work, profile, policy, options = {}) {
   }
   evidence.fingerprint = stamp;
   const judgement = plannedJudgementGates(work.route, work.riskAreas, changed, policy);
-  const cut = judgement.length ? writeReviewInputs(paths, work, changed, stamp) : null;
+  const reviewInputs = judgement.length ? writeReviewInputs(paths, work, changed, stamp) : null;
   const verdict = computeVerdict({
     work,
     evidence,
@@ -2807,8 +2952,8 @@ async function runGates(paths, work, profile, policy, options = {}) {
     raised,
     tampered,
     judgement,
-    review: cut?.dir ?? null,
-    reviewNote: cut?.note ?? null
+    review: reviewInputs?.dir ?? null,
+    reviewNote: reviewInputs?.note ?? null
   };
 }
 function assess(paths, work, profile, policy, tampered = false) {
@@ -2937,7 +3082,7 @@ var RUNNER = String.raw`(?:[A-Za-z_][A-Za-z0-9_]*=\S*|-\S*|node|bun|bunx|npx|sh|
 var OPTS = String.raw`(?:--[\w-]+(?:[= ]\S+)?\s+)*`;
 var USER_ONLY = new RegExp(String.raw`^[\s({]*(?:${RUNNER}\s+)*(?:\S*/)?crew(?:\.mjs)?\s+${OPTS}(?:skip|approve|accept|decide|objection\b[^;&|]*\bwaive\b|profile\s+${OPTS}(?:confirm|set)|policy\s+${OPTS}(?:accept|set))\b`);
 var POLICY_COMMAND = new RegExp(String.raw`^[\s({]*(?:${RUNNER}\s+)*(?:\S*/)?crew(?:\.mjs)?\s+${OPTS}(?:policy\b|accept\s+${OPTS}policy\b)`);
-var ENGINE_FILES = /\.crew\/(?:profile\.json|policy\.json|\.gitignore|local\b|work\/[^\s/]+\/(?:work\.json|evidence\.json|objections\.json|report\.md|logs\b))|\.wizardingcode\/crew\b/;
+var ENGINE_FILES = /\.crew\/(?:profile\.json|policy\.json|\.gitignore|local\b|work\/[^\s/]+\/(?:work\.json|evidence\.json|objections\.json|mail\.json|report\.md|logs\b))|\.wizardingcode\/crew\b/;
 var WRITE_SHAPE = /(?:^|[\s;&|("'])(?:rm|mv|cp|tee|truncate|chmod|touch|dd|install)\b|sed\s+-i|>{1,2}\|?\s*["']?\S*(?:\.crew\/|\.wizardingcode\/crew\b)/;
 var OPAQUE_REDIRECT = />{1,2}\|?\s*["']?[$`]/;
 var PROMPTLESS_MODES = new Set(["bypassPermissions", "dontAsk"]);
@@ -3037,8 +3182,7 @@ function onPreToolUse(ctx, payload) {
 function statusLine(ctx, work, tampered = false) {
   const result = assess(ctx.paths, work, ctx.profile, ctx.policy, ctx.tampered || tampered);
   const state = result.verdict === "proven" ? "proven" : `not proven (${result.unproven[0] ?? "gates have not run"})`;
-  const waiting = work.awaiting === "user" ? ", waiting for the user" : "";
-  return `Crew: work ${work.id} "${work.title}", phase ${work.phase}, route ${work.route}, ${state}${waiting}.`;
+  return `Crew: work ${work.id} "${work.title}", phase ${work.phase}, route ${work.route}, ${state}${waitingText(work)}.`;
 }
 function onPrompt(ctx) {
   const state = loadState(ctx.paths);
@@ -3196,8 +3340,668 @@ function handleHook(event, payload, env = process.env) {
   }
 }
 
+// packages/engine/src/mail.ts
+import { existsSync as existsSync3, mkdirSync as mkdirSync4, rmdirSync, statSync as statSync4 } from "node:fs";
+import { basename as basename4, isAbsolute as isAbsolute3, join as join21, resolve as resolve2 } from "node:path";
+var LIVE_MS = 10 * 60 * 1000;
+var INLINE_BODY_LIMIT = 2048;
+var PREVIEW_CHARS = 200;
+var SUBJECT_CHARS = 80;
+var LOCK_STALE_MS = 1e4;
+var LOCK_WAIT_MS = 2000;
+var ROLE_AGENT = /^(judge|researcher|expert-\d+|devils-advocate|fault-finder|review-(code-quality|test-quality|security|ui-ux|risk))$/;
+var TASK_AGENT = /^T-\d+$/;
+var CRITICS = new Set(["devils-advocate", "fault-finder"]);
+function worktreeMainRoot(root) {
+  const gitFile = join21(root, ".git");
+  try {
+    if (!statSync4(gitFile).isFile())
+      return null;
+  } catch {
+    return null;
+  }
+  const line = readText(gitFile)?.trim() ?? "";
+  const match = /^gitdir:\s*(.+?)\/\.git\/worktrees\/[^/]+\/?$/.exec(line);
+  return match?.[1] ? canonical(isAbsolute3(match[1]) ? match[1] : join21(root, match[1])) : null;
+}
+function effectiveMailPolicy(root, policy, env) {
+  const main = worktreeMainRoot(root);
+  let mail = policy.mail;
+  if (main && (mail.name === null || mail.workspace === null)) {
+    const mainPaths = resolvePaths(main, env);
+    const theirs = mainPaths ? loadPolicy(mainPaths).policy.mail : null;
+    if (theirs)
+      mail = {
+        ...mail,
+        name: mail.name ?? theirs.name,
+        workspace: mail.workspace ?? theirs.workspace
+      };
+  }
+  return { mail, main };
+}
+function mailSelf(paths, policy, env) {
+  const hops = Number(env.WIZARDINGCODE_CREW_MAIL_HOPS ?? "0");
+  const { mail, main } = effectiveMailPolicy(paths.root, policy, env);
+  return {
+    workspace: mail.workspace,
+    project: mail.name ?? basename4(main ?? paths.root),
+    agent: env.WIZARDINGCODE_CREW_MAIL_AGENT?.trim() || "session",
+    hops: Number.isInteger(hops) && hops >= 0 ? hops : 0,
+    openedBy: env.WIZARDINGCODE_CREW_MAIL_ID?.trim() || null
+  };
+}
+function mailContext(paths, policy, env) {
+  return { paths, policy, env, self: mailSelf(paths, policy, env) };
+}
+function loadRegistry(userDir) {
+  const raw = readJson(registryPath(userDir));
+  const projects = Array.isArray(raw?.projects) ? raw.projects.filter((p) => typeof p === "object" && p !== null && typeof p.root === "string" && typeof p.name === "string") : [];
+  return { version: 1, projects };
+}
+function saveRegistry(userDir, registry) {
+  writeJson(registryPath(userDir), registry);
+}
+function projectEntry(registry, workspace, name) {
+  const ws = workspace === "_alone" ? null : workspace;
+  return registry.projects.find((p) => p.name === name && p.workspace === ws && !p.worktreeOf);
+}
+function isLive(entry, now = Date.now()) {
+  const seen = Date.parse(entry.lastSeen);
+  return Number.isFinite(seen) && now - seen <= LIVE_MS;
+}
+function registerProject(ctx, sessionId, options = {}) {
+  const registry = loadRegistry(ctx.paths.userDir);
+  const existing = registry.projects.find((p) => p.root === ctx.paths.root);
+  if (existing && options.minIntervalMs !== undefined && Date.now() - Date.parse(existing.lastSeen) < options.minIntervalMs && existing.sessionId === sessionId)
+    return existing;
+  const main = worktreeMainRoot(ctx.paths.root);
+  const entry = {
+    root: ctx.paths.root,
+    name: ctx.self.project,
+    workspace: ctx.self.workspace,
+    lastSeen: nowIso(),
+    sessionId,
+    ...main ? { worktreeOf: main } : {},
+    ...ctx.self.openedBy ? { mail: ctx.self.openedBy } : {}
+  };
+  registry.projects = [...registry.projects.filter((p) => p.root !== entry.root), entry];
+  saveRegistry(ctx.paths.userDir, registry);
+  return entry;
+}
+function pruneRegistry(userDir) {
+  const registry = loadRegistry(userDir);
+  const gone = registry.projects.filter((p) => !existsSync3(p.root)).map((p) => p.root);
+  if (gone.length) {
+    registry.projects = registry.projects.filter((p) => existsSync3(p.root));
+    saveRegistry(userDir, registry);
+  }
+  return gone;
+}
+function resolveProject(ctx, to) {
+  const registry = loadRegistry(ctx.paths.userDir);
+  const main = worktreeMainRoot(ctx.paths.root) ?? ctx.paths.root;
+  if (to === "." || to === ctx.self.project) {
+    const own = registry.projects.find((p) => p.root === main) ?? {
+      root: main,
+      name: ctx.self.project,
+      workspace: ctx.self.workspace,
+      lastSeen: nowIso(),
+      sessionId: ""
+    };
+    return { entry: own };
+  }
+  if (ctx.self.workspace === null) {
+    return {
+      refused: "this project has no workspace (crew policy set mail.workspace <name>); it can only mail itself (--to .)"
+    };
+  }
+  const candidates = registry.projects.filter((p) => p.name === to && !p.worktreeOf);
+  const inWorkspace = candidates.filter((p) => p.workspace === ctx.self.workspace);
+  const alive = inWorkspace.filter((p) => existsSync3(p.root));
+  if (alive.length) {
+    alive.sort((a, b) => b.lastSeen.localeCompare(a.lastSeen));
+    return { entry: alive[0] };
+  }
+  const where = `in workspace ${ctx.self.workspace}`;
+  if (inWorkspace.length) {
+    return {
+      refused: `no project named ${to} ${where}; the registry knew one at ${inWorkspace[0]?.root}, which is gone`
+    };
+  }
+  const elsewhere = candidates.find((p) => p.workspace !== null);
+  if (elsewhere) {
+    return {
+      refused: `${to} is not in workspace ${ctx.self.workspace} (it is in ${elsewhere.workspace}); mail never leaves the workspace`
+    };
+  }
+  if (candidates.length) {
+    return {
+      refused: `${to} is not in workspace ${ctx.self.workspace} (it has no workspace); mail never leaves the workspace`
+    };
+  }
+  const known = [
+    ...new Set(registry.projects.filter((p) => p.workspace === ctx.self.workspace && !p.worktreeOf).map((p) => p.name))
+  ].sort();
+  return { refused: `no project named ${to} ${where} (known: ${known.join(", ") || "none"})` };
+}
+function mailbox(userDir, workspace, project) {
+  return { dir: mailboxDir(userDir, workspace, project) };
+}
+function boxFile(dir, name) {
+  return join21(dir, `${name}.json`);
+}
+function readBox(dir, which) {
+  const read = readProtectedJsonAt(boxFile(dir, "integrity"), boxFile(dir, which));
+  const box = read.data && Array.isArray(read.data.messages) ? read.data : { version: 1, messages: [] };
+  return { box, tampered: read.tampered };
+}
+function writeBox(dir, which, box) {
+  writeProtectedJsonAt(boxFile(dir, "integrity"), boxFile(dir, which), box);
+}
+function sleep(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+function withMailLock(dir, fn, options = {}) {
+  mkdirSync4(dir, { recursive: true });
+  const lock = join21(dir, ".lock");
+  const waitMs = options.waitMs ?? LOCK_WAIT_MS;
+  const started = Date.now();
+  for (;; ) {
+    try {
+      mkdirSync4(lock);
+      break;
+    } catch (error) {
+      if (error.code !== "EEXIST")
+        throw error;
+    }
+    let age = null;
+    try {
+      age = Date.now() - statSync4(lock).mtimeMs;
+    } catch {}
+    if (age !== null && age > LOCK_STALE_MS) {
+      try {
+        rmdirSync(lock);
+      } catch {}
+      continue;
+    }
+    if (Date.now() - started >= waitMs)
+      throw new Error(`mailbox busy: ${lock} held for more than ${waitMs} ms`);
+    if (age !== null)
+      sleep(20);
+  }
+  try {
+    return fn();
+  } finally {
+    try {
+      rmdirSync(lock);
+    } catch {}
+  }
+}
+function newMessageId(outbox, project, at) {
+  const day = at.slice(0, 10);
+  const taken = outbox.messages.filter((m) => m.at.slice(0, 10) === day).map((m) => Number(/^M-\d{4}-\d{2}-\d{2}-(\d{3})-/.exec(m.id)?.[1])).filter(Number.isFinite);
+  const next = taken.length ? Math.max(...taken) + 1 : 1;
+  return `M-${day}-${String(next).padStart(3, "0")}-${project}`;
+}
+function itemMailPath(paths, id) {
+  return join21(workDir(paths, id), "mail.json");
+}
+function loadItemMail(paths, id) {
+  const read = readProtectedJson(paths, itemMailPath(paths, id));
+  return { box: read.data ?? { version: 1, messages: [] }, tampered: read.tampered };
+}
+function recordInItem(paths, id, message) {
+  if (!existsSync3(join21(workDir(paths, id), "work.json")))
+    return;
+  const { box, tampered } = loadItemMail(paths, id);
+  if (tampered)
+    return;
+  box.messages = [...box.messages.filter((m) => m.id !== message.id), message].sort((a, b) => a.at.localeCompare(b.at));
+  writeProtectedJson(paths, itemMailPath(paths, id), box);
+}
+function subjectOf(request) {
+  if (request.subject?.trim())
+    return request.subject.trim().slice(0, SUBJECT_CHARS);
+  const first = request.text.split(`
+`).find((l) => l.trim()) ?? "";
+  return first.length > SUBJECT_CHARS - 3 ? `${first.slice(0, SUBJECT_CHARS - 3)}...` : first;
+}
+function destinationPolicy(entry, env) {
+  const paths = resolvePaths(entry.root, env);
+  return paths ? loadPolicy(paths) : null;
+}
+function openIn(userDir, workspace, project) {
+  const { box } = readBox(mailbox(userDir, workspace, project).dir, "inbox");
+  return box.messages.filter((m) => m.opened && !m.opened.endedAt).length;
+}
+function placeBody(dir, id, text) {
+  if (Buffer.byteLength(text, "utf8") <= INLINE_BODY_LIMIT)
+    return { body: text };
+  const file = join21(dir, `${id}.md`);
+  writeText(file, text);
+  return { body: `${text.slice(0, PREVIEW_CHARS)}...`, bodyFile: file };
+}
+function party(self, item) {
+  return { workspace: self.workspace ?? "_alone", project: self.project, item, agent: self.agent };
+}
+function attachFile(root, text, filePath) {
+  if (!filePath)
+    return { text };
+  const abs = isAbsolute3(filePath) ? filePath : resolve2(root, filePath);
+  const content = readText(abs);
+  if (content === null)
+    return { refused: `no file at ${abs}` };
+  return { text: text.trim() ? `${text.trim()}
+
+${content}` : content };
+}
+function tamperedBox(owner, which) {
+  return `${owner}'s ${which} changed outside the engine; files under the user's crew directory are written only by the crew command`;
+}
+function appendToBox(dir, which, owner, build) {
+  return withMailLock(dir, () => {
+    const { box, tampered } = readBox(dir, which);
+    if (tampered)
+      return { refused: tamperedBox(owner, which) };
+    const message = build(box);
+    box.messages.push(message);
+    writeBox(dir, which, box);
+    return message;
+  });
+}
+function send(ctx, request, work) {
+  const at = nowIso();
+  const self = ctx.self;
+  const own = mailbox(ctx.paths.userDir, self.workspace, self.project);
+  const itemId = request.item ?? work?.id ?? null;
+  const attached = attachFile(ctx.paths.root, request.text, request.filePath);
+  if ("refused" in attached)
+    return { refused: attached.refused, message: null };
+  const text = attached.text;
+  if (!text.trim())
+    return { refused: "a message needs a text (or --file)", message: null };
+  const resolved = resolveProject(ctx, request.to);
+  const refuse = (reason, to2) => {
+    const written = appendToBox(own.dir, "outbox", self.project, (box) => ({
+      id: newMessageId(box, self.project, at),
+      at,
+      from: party(self, itemId),
+      to: to2,
+      type: request.type,
+      subject: subjectOf({ subject: request.subject, text }),
+      body: text.slice(0, PREVIEW_CHARS),
+      replyTo: request.replyTo ?? null,
+      hops: self.hops,
+      status: "refused",
+      reason,
+      opened: null
+    }));
+    if ("refused" in written)
+      return { refused: written.refused, message: null };
+    if (itemId)
+      recordInItem(ctx.paths, itemId, written);
+    return { refused: reason, message: written };
+  };
+  const unknownTo = {
+    workspace: self.workspace ?? "_alone",
+    project: request.to,
+    item: null,
+    agent: request.agent ?? null
+  };
+  if ("refused" in resolved)
+    return refuse(resolved.refused, unknownTo);
+  const entry = resolved.entry;
+  const toSelf = entry.root === (worktreeMainRoot(ctx.paths.root) ?? ctx.paths.root);
+  const to = {
+    workspace: self.workspace ?? "_alone",
+    project: entry.name,
+    item: null,
+    agent: request.agent ?? null
+  };
+  let relayed = false;
+  if (request.agent) {
+    if (!toSelf)
+      return refuse(`--agent addresses a role or a task of this project; ${entry.name} is another project`, to);
+    if (ROLE_AGENT.test(request.agent)) {
+      relayed = true;
+      if (request.agent === "judge" && self.agent !== "session")
+        return refuse(`a message to the judge comes from the lead (session), not from ${self.agent}`, to);
+      if (CRITICS.has(request.agent)) {
+        const proposals = itemId ? `.crew/work/${itemId}/conclave/proposals.md` : null;
+        const given = request.filePath ? canonical(resolve2(ctx.paths.root, request.filePath)) : null;
+        if (!proposals || !given || given !== canonical(join21(ctx.paths.root, proposals)) || request.text.trim())
+          return refuse(`a message to ${request.agent} carries ${proposals ?? ".crew/work/<id>/conclave/proposals.md"} (--file) and nothing else`, to);
+      }
+    } else if (TASK_AGENT.test(request.agent)) {
+      if (!(work?.tasks ?? []).some((t) => t.task === request.agent))
+        return refuse(`${request.agent} is not a task of ${work?.id ?? "the active item"} (crew task <id> open ${request.agent} …)`, to);
+    } else if (request.agent !== "session") {
+      return refuse(`--agent is session, a task (T-n) or a role, not ${request.agent}`, to);
+    }
+  }
+  const destination = destinationPolicy(entry, ctx.env);
+  if (!destination)
+    return refuse(`${entry.name} at ${entry.root} is not a crew project any more`, to);
+  if (destination.tampered)
+    return refuse(`${entry.name}'s policy changed outside the engine; its user accepts it with crew policy accept`, to);
+  const rules = destination.policy.mail;
+  if (!toSelf && !rules.accept.includes(request.type))
+    return refuse(`${entry.name} does not accept ${request.type} (its policy accepts ${rules.accept.join(", ")})`, to);
+  if (!request.replyTo && self.hops >= rules.maxHops && self.openedBy)
+    return refuse(`this session is ${self.hops} hops from the first message and ${entry.name} allows ${rules.maxHops} (mail.maxHops); only a reply may go out`, to);
+  const dest = mailbox(ctx.paths.userDir, entry.workspace, entry.name);
+  if (readBox(dest.dir, "inbox").tampered)
+    return refuse(tamperedBox(entry.name, "inbox"), to);
+  let delivery;
+  if (toSelf)
+    delivery = { kind: "self" };
+  else if (isLive(entry))
+    delivery = { kind: "live", entry };
+  else if (request.type === "notice")
+    delivery = { kind: "queued", reason: "a notice waits in the inbox" };
+  else if (request.type === "change-request" && rules.open !== "branch")
+    delivery = {
+      kind: "queued",
+      reason: `${entry.name} accepts change requests only with a person present (mail.open is read-only)`
+    };
+  else {
+    const mode = request.type === "question" ? "read-only" : rules.open;
+    const open = openIn(ctx.paths.userDir, entry.workspace, entry.name);
+    if (open >= rules.maxConcurrent)
+      return refuse(`${entry.name} has ${open} session${open === 1 ? "" : "s"} open (mail.maxConcurrent ${rules.maxConcurrent}); try again when one ends`, to);
+    delivery = { kind: "open", mode, entry };
+  }
+  const message = appendToBox(own.dir, "outbox", self.project, (outbox) => {
+    const id = newMessageId(outbox, self.project, at);
+    return {
+      id,
+      at,
+      from: party(self, itemId),
+      to,
+      type: request.type,
+      subject: subjectOf({ subject: request.subject, text }),
+      ...placeBody(dest.dir, id, text),
+      replyTo: request.replyTo ?? null,
+      hops: self.hops,
+      status: "sent",
+      ...relayed ? { relayed: true } : {},
+      opened: null
+    };
+  });
+  if ("refused" in message)
+    return { refused: message.refused, message: null };
+  const failed = deliver(ctx, dest.dir, entry.name, message);
+  if (failed)
+    return {
+      refused: failed.refused,
+      message: { ...message, status: "refused", reason: failed.refused }
+    };
+  if (itemId)
+    recordInItem(ctx.paths, itemId, message);
+  return { message, delivery };
+}
+function deliver(ctx, dir, owner, message) {
+  const delivered = appendToBox(dir, "inbox", owner, () => message);
+  if (!("refused" in delivered))
+    return null;
+  const reason = delivered.refused;
+  updateEverywhere(ctx, message.id, (m) => ({ ...m, status: "refused", reason }));
+  return { refused: reason };
+}
+function updateEverywhere(ctx, id, change) {
+  let result = null;
+  const registry = loadRegistry(ctx.paths.userDir);
+  const boxes = new Set;
+  for (const p of registry.projects) {
+    if (!p.worktreeOf)
+      boxes.add(mailbox(ctx.paths.userDir, p.workspace, p.name).dir);
+  }
+  boxes.add(mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project).dir);
+  for (const dir of boxes) {
+    for (const which of ["inbox", "outbox"]) {
+      if (!existsSync3(boxFile(dir, which)))
+        continue;
+      withMailLock(dir, () => {
+        const { box, tampered } = readBox(dir, which);
+        const index = box.messages.findIndex((m) => m.id === id);
+        if (index === -1 || tampered)
+          return;
+        const changed = change(box.messages[index]);
+        box.messages[index] = changed;
+        writeBox(dir, which, box);
+        result = result ?? changed;
+      });
+    }
+  }
+  if (result) {
+    const m = result;
+    for (const item of [m.from.item, m.to.item]) {
+      if (!item)
+        continue;
+      recordInItem(ctx.paths, item, m);
+      const senderRoot = projectEntry(registry, m.from.workspace, m.from.project)?.root;
+      const senderPaths = senderRoot ? resolvePaths(senderRoot, ctx.env) : null;
+      if (senderPaths && senderPaths.root !== ctx.paths.root)
+        recordInItem(senderPaths, item, m);
+    }
+  }
+  return result;
+}
+function ownInbox(ctx) {
+  const { box, tampered } = readBox(mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project).dir, "inbox");
+  const mine = box.messages.filter((m) => (m.to.agent ?? "session") === ctx.self.agent);
+  return { messages: mine.sort((a, b) => a.at.localeCompare(b.at)), tampered };
+}
+function addressed(ctx, m) {
+  if (m.to.project !== ctx.self.project)
+    return `${m.id} is addressed to ${m.to.project}, not to ${ctx.self.project}`;
+  const agent = m.to.agent ?? "session";
+  if (agent !== ctx.self.agent && !(ctx.self.agent === "session" && ROLE_AGENT.test(agent)))
+    return `${m.id} is addressed to ${agent}, not to ${ctx.self.agent}`;
+  return null;
+}
+function ownMessage(ctx, id) {
+  const { messages, tampered } = ownInbox(ctx);
+  if (tampered)
+    return { refused: tamperedBox(ctx.self.project, "inbox") };
+  const found = messages.find((m) => m.id === id);
+  return found ? { found } : { refused: `no message ${id} in this inbox` };
+}
+function notUpdated(id) {
+  return { refused: `${id} could not be updated: its mailbox changed while it was being written` };
+}
+function markRead(ctx, id) {
+  const own = ownMessage(ctx, id);
+  if ("refused" in own)
+    return own;
+  if (own.found.status !== "sent")
+    return own.found;
+  return updateEverywhere(ctx, id, (m) => ({ ...m, status: "read", readAt: nowIso() })) ?? notUpdated(id);
+}
+function refuseMail(ctx, id, reason) {
+  const own = ownMessage(ctx, id);
+  if ("refused" in own)
+    return own;
+  if (own.found.status !== "sent" && own.found.status !== "read")
+    return { refused: `${id} is ${own.found.status}; nothing to refuse` };
+  if (!reason.trim())
+    return { refused: 'a refusal needs --reason "<why>"' };
+  return updateEverywhere(ctx, id, (m) => ({ ...m, status: "refused", reason: reason.trim() })) ?? notUpdated(id);
+}
+function reply(ctx, id, text, options) {
+  const ownDir = mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project).dir;
+  const inbox = readBox(ownDir, "inbox");
+  if (inbox.tampered)
+    return { refused: tamperedBox(ctx.self.project, "inbox") };
+  const original = inbox.box.messages.find((m) => m.id === id) ?? readBox(ownDir, "outbox").box.messages.find((m) => m.id === id);
+  if (!original)
+    return { refused: `no message ${id} in this inbox` };
+  const wrong = addressed(ctx, original);
+  if (wrong)
+    return { refused: wrong };
+  if (original.status === "answered")
+    return { refused: `${id} is answered; a second answer is a new message` };
+  if (original.status === "refused")
+    return { refused: `${id} is refused; it has no answer` };
+  if (original.status === "expired" || original.status === "stopped")
+    return { refused: `${id} is ${original.status}; its session is over` };
+  if (options.as !== undefined && !ROLE_AGENT.test(options.as))
+    return {
+      refused: "--as names a role: judge, researcher, expert-<n>, devils-advocate, fault-finder or review-<gate>"
+    };
+  if (options.as && (original.to.agent ?? "session") !== options.as)
+    return {
+      refused: `${id} is addressed to ${original.to.agent ?? "session"}, not to ${options.as}`
+    };
+  if (options.item && !loadWork(ctx.paths, options.item).work)
+    return { refused: `unknown work item: ${options.item}` };
+  const verdict = options.item ? loadEvidence(ctx.paths, options.item).evidence.verdict : undefined;
+  const attached = attachFile(ctx.paths.root, text, options.filePath);
+  if ("refused" in attached)
+    return { refused: attached.refused };
+  const body = attached.text;
+  if (!body.trim())
+    return { refused: "a reply needs a text (or --file)" };
+  const at = nowIso();
+  const own = mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project);
+  const dest = mailbox(ctx.paths.userDir, original.from.workspace === "_alone" ? null : original.from.workspace, original.from.project);
+  const from = options.as ? { ...party(ctx.self, original.to.item ?? original.from.item), agent: options.as } : party(ctx.self, original.to.item);
+  if (readBox(dest.dir, "inbox").tampered)
+    return { refused: tamperedBox(original.from.project, "inbox") };
+  const replyMessage = appendToBox(own.dir, "outbox", ctx.self.project, (outbox) => {
+    const replyId = newMessageId(outbox, ctx.self.project, at);
+    return {
+      id: replyId,
+      at,
+      from,
+      to: {
+        workspace: original.from.workspace,
+        project: original.from.project,
+        item: original.from.item,
+        agent: original.from.agent
+      },
+      type: original.type,
+      subject: original.subject.startsWith("Re: ") ? original.subject : `Re: ${original.subject}`,
+      ...placeBody(dest.dir, replyId, body),
+      replyTo: original.id,
+      hops: ctx.self.hops,
+      status: "sent",
+      ...options.as || original.relayed ? { relayed: true } : {},
+      opened: null,
+      ...options.branch ? { branch: options.branch } : {},
+      ...options.item ? { item: options.item } : {},
+      ...verdict ? { verdict } : {}
+    };
+  });
+  if ("refused" in replyMessage)
+    return { refused: replyMessage.refused };
+  const failed = deliver(ctx, dest.dir, original.from.project, replyMessage);
+  if (failed)
+    return failed;
+  const answered = updateEverywhere(ctx, id, (m) => ({
+    ...m,
+    status: "answered",
+    answeredAt: at,
+    ...options.branch ? { branch: options.branch } : {},
+    ...options.item ? { item: options.item } : {},
+    ...verdict ? { verdict } : {}
+  }));
+  if (!answered)
+    return {
+      refused: `${replyMessage.id} was delivered, but ${id} could not be marked answered: its mailbox changed while it was being written`
+    };
+  for (const item of [replyMessage.to.item, replyMessage.from.item])
+    if (item)
+      recordInItem(ctx.paths, item, replyMessage);
+  return { reply: replyMessage, original: answered };
+}
+function syncMail(ctx, paths) {
+  const own = mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project);
+  const registry = loadRegistry(ctx.paths.userDir);
+  let updated = 0;
+  withMailLock(own.dir, () => {
+    const { box: outbox, tampered } = readBox(own.dir, "outbox");
+    if (tampered)
+      return;
+    for (const sent of outbox.messages) {
+      if (sent.status === "refused")
+        continue;
+      const entry = projectEntry(registry, sent.to.workspace, sent.to.project);
+      const theirsDir = entry ? mailbox(ctx.paths.userDir, entry.workspace, entry.name).dir : own.dir;
+      const inbox2 = readBox(theirsDir, "inbox");
+      if (inbox2.tampered)
+        continue;
+      const theirs = inbox2.box.messages.find((m) => m.id === sent.id);
+      if (theirs && JSON.stringify(theirs) !== JSON.stringify(sent)) {
+        Object.assign(sent, theirs);
+        updated += 1;
+        if (sent.from.item)
+          recordInItem(paths, sent.from.item, sent);
+      }
+    }
+    if (updated)
+      writeBox(own.dir, "outbox", outbox);
+  });
+  const inbox = ownInbox(ctx);
+  if (inbox.tampered)
+    return { newMail: [], newReplies: [], updated, tampered: true };
+  const marker = join21(own.dir, `synced-${ctx.self.agent}.json`);
+  const seen = new Set(readJson(marker) ?? []);
+  const newMail = [];
+  for (const m of inbox.messages) {
+    if (m.to.item)
+      recordInItem(paths, m.to.item, m);
+    if (!seen.has(m.id))
+      newMail.push(m);
+    seen.add(m.id);
+  }
+  writeJson(marker, [...seen]);
+  return {
+    newMail,
+    newReplies: newMail.filter((m) => m.replyTo !== null),
+    updated,
+    tampered: false
+  };
+}
+function inboxSummary(ctx) {
+  const { messages, tampered } = ownInbox(ctx);
+  const empty = { unread: 0, answered: 0, waiting: 0, blockers: [] };
+  if (tampered)
+    return { ...empty, tampered, line: tamperedBox(ctx.self.project, "inbox") };
+  const unread = messages.filter((m) => m.status === "sent" && !m.replyTo);
+  const answered = messages.filter((m) => m.replyTo && m.status === "sent");
+  const waiting = messages.filter((m) => m.status === "waiting-for-person");
+  const blockers = unread.filter((m) => m.type === "blocker");
+  if (!messages.length)
+    return { ...empty, tampered, line: null };
+  const byType = new Map;
+  for (const m of unread)
+    byType.set(m.type, (byType.get(m.type) ?? 0) + 1);
+  const senders = [...new Set(unread.map((m) => m.from.project))].join(", ");
+  const parts = [];
+  if (unread.length)
+    parts.push(`${unread.length} unread ${[...byType].map(([t, n]) => `${t}${n === 1 ? "" : "s"}`).join(" and ")} from ${senders}`);
+  if (answered.length)
+    parts.push(`${answered.length} answered`);
+  if (waiting.length)
+    parts.push(`${waiting.length} waiting for a person`);
+  const where = ctx.self.workspace ?? "alone";
+  return {
+    unread: unread.length,
+    answered: answered.length,
+    waiting: waiting.length,
+    blockers,
+    tampered,
+    line: parts.length ? `Mail (${where}): ${parts.join(", ")}` : null
+  };
+}
+function openSessions(ctx) {
+  const { box, tampered } = readBox(mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project).dir, "outbox");
+  return tampered ? [] : box.messages.filter((m) => m.opened && !m.opened.endedAt);
+}
+
 // packages/engine/src/tdd.ts
-import { join as join21 } from "node:path";
+import { join as join22 } from "node:path";
 var STEPS_BY_KIND = {
   behavior: { steps: ["red", "green"], how: "record red, then green" },
   preserve: { steps: ["before", "after"], how: "record before, then after" },
@@ -3249,7 +4053,7 @@ async function recordTdd(paths, work, evidence, profile, criterionId, step, over
   const result = await runCommand(command, {
     cwd: paths.root,
     timeoutMs: fallback?.timeoutMs ?? 10 * 60 * 1000,
-    logPath: join21(workDir(paths, work.id), log)
+    logPath: join22(workDir(paths, work.id), log)
   });
   const record = {
     command,
@@ -3297,13 +4101,13 @@ async function recordTdd(paths, work, evidence, profile, criterionId, step, over
 var VERSION = "0.4.0";
 
 // packages/engine/src/cli.ts
-var BOOLEAN_FLAGS = new Set(["json", "refresh", "force", "not-run"]);
+var BOOLEAN_FLAGS = new Set(["json", "refresh", "force", "not-run", "all"]);
 var KNOWN_FLAGS = {
   detect: ["refresh"],
   profile: ["target", "stack", "force", "timeout"],
   policy: [],
   accept: [],
-  start: ["answers", "criterion", "preserve"],
+  start: ["answers", "criterion", "preserve", "origin"],
   classify: ["answers"],
   criteria: ["kind"],
   decision: ["default"],
@@ -3320,6 +4124,19 @@ var KNOWN_FLAGS = {
   skip: ["reason", "mode"],
   evidence: [],
   status: [],
+  mail: [
+    "to",
+    "type",
+    "agent",
+    "item",
+    "reply-to",
+    "subject",
+    "file",
+    "reason",
+    "branch",
+    "as",
+    "all"
+  ],
   mode: [],
   config: [],
   version: [],
@@ -3371,7 +4188,7 @@ var INACTIVE = "crew is inactive here: not a git repository and no .crew/ folder
 function tamperMessage({ file, accept }) {
   return `state changed outside the engine: ${file}; the user can accept it with crew accept ${accept}`;
 }
-function load(paths) {
+function load(paths, processEnv) {
   const profile = ensureProfile(paths);
   const policy = loadPolicy(paths);
   ensureCrewDir(paths, policy.policy);
@@ -3380,13 +4197,19 @@ function load(paths) {
     tamperedFiles.push({ file: ".crew/profile.json", accept: "profile" });
   if (policy.tampered)
     tamperedFiles.push({ file: ".crew/policy.json", accept: "policy" });
+  const mail = mailContext(paths, policy.policy, processEnv);
+  const registered = registerProject(mail, processEnv.CLAUDE_CODE_SESSION_ID ?? "cli", {
+    minIntervalMs: 2 * 60 * 1000
+  });
   return {
     paths,
     profile: profile.profile,
     policy: policy.policy,
     config: loadConfig(paths),
     tampered: tamperedFiles.length > 0,
-    tamperedFiles
+    tamperedFiles,
+    mail,
+    registered
   };
 }
 function openWork(env, id) {
@@ -3429,16 +4252,16 @@ function skipStep(work, raw) {
 }
 function accept(env, target) {
   if (target === "profile" || target === "policy") {
-    if (!recordIntegrity(env.paths, join22(env.paths.crewDir, `${target}.json`)))
+    if (!recordIntegrity(env.paths, join23(env.paths.crewDir, `${target}.json`)))
       return refuse(`no .crew/${target}.json to accept`);
     return ok(`${target} accepted: its current content is now the trusted version`, {
       accepted: target
     });
   }
   const dir = workDir(env.paths, target);
-  if (!/^[\w.-]+$/.test(target) || target.includes("..") || !existsSync3(join22(dir, "work.json")))
+  if (!/^[\w.-]+$/.test(target) || target.includes("..") || !existsSync4(join23(dir, "work.json")))
     return refuse(`unknown work item: ${target}`);
-  const files = ["work.json", "evidence.json", "report.md", "objections.json"].filter((name) => recordIntegrity(env.paths, join22(dir, name)));
+  const files = PROTECTED_WORK_FILES.filter((name) => recordIntegrity(env.paths, join23(dir, name)));
   return ok(`${target} accepted: ${files.join(", ")} now trusted as they are`, {
     accepted: target,
     files
@@ -3487,17 +4310,17 @@ function guardContext(env, work, tampered) {
   const dir = workDir(env.paths, work.id);
   const result = assess(env.paths, work, env.profile, env.policy, env.tampered || tampered);
   return {
-    specText: readText(join22(dir, "spec.md")),
-    conclaveText: readText(join22(dir, "conclave.md")),
+    specText: readText(join23(dir, "spec.md")),
+    conclaveText: readText(join23(dir, "conclave.md")),
     ledger: loadLedger(env.paths, work.id).ledger,
-    planExists: existsSync3(join22(dir, "plan.md")),
+    planExists: existsSync4(join23(dir, "plan.md")),
     evidence: result.evidence,
     proven: result.verdict === "proven",
     unproven: result.unproven,
     policy: env.policy
   };
 }
-function deliver(env, opened, evidence) {
+function deliver2(env, opened, evidence) {
   for (const target of ["gate", "deliver"]) {
     if (nextPhaseOf(opened.work) !== target)
       continue;
@@ -3505,7 +4328,10 @@ function deliver(env, opened, evidence) {
       break;
   }
   saveWork(env.paths, opened.work);
-  writeProtectedText(env.paths, join22(workDir(env.paths, opened.work.id), "report.md"), renderReport(opened.work, evidence, env.policy, loadLedger(env.paths, opened.work.id).ledger));
+  writeProtectedText(env.paths, join23(workDir(env.paths, opened.work.id), "report.md"), reportOf(env, opened.work, evidence));
+}
+function reportOf(env, work, evidence) {
+  return renderReport(work, evidence, env.policy, loadLedger(env.paths, work.id).ledger, loadItemMail(env.paths, work.id), env.mail.self.project);
 }
 function logDecision(env, work, answers) {
   if (!env.config.decisions.log)
@@ -3518,7 +4344,7 @@ function logDecision(env, work, answers) {
     route: work.route,
     reasons: work.routeReasons
   });
-  const file = join22(env.paths.localDir, "decisions.jsonl");
+  const file = join23(env.paths.localDir, "decisions.jsonl");
   writeText(file, `${readText(file) ?? ""}${line}
 `);
 }
@@ -3570,12 +4396,12 @@ async function dispatch(parsed, io) {
     return settings(command, args, { userDir: userDirOf(io.env) });
   let paths = resolvePaths(io.cwd, io.env);
   if (!paths && command === "detect") {
-    ensureDir(join22(resolve2(io.cwd), ".crew"));
+    ensureDir(join23(resolve3(io.cwd), ".crew"));
     paths = resolvePaths(io.cwd, io.env);
   }
   if (!paths)
     return refuse(INACTIVE);
-  const env = load(paths);
+  const env = load(paths, io.env);
   switch (command) {
     case "detect": {
       if (parsed.flags.refresh) {
@@ -3588,15 +4414,17 @@ async function dispatch(parsed, io) {
       if (parsed.flags.refresh) {
         saveProfile(env.paths, profile);
         if (integrityOf(env.paths)[".crew/policy.json"] === undefined) {
-          recordIntegrity(env.paths, join22(env.paths.crewDir, "policy.json"));
+          recordIntegrity(env.paths, join23(env.paths.crewDir, "policy.json"));
         }
       }
       const missing = missingTestCommands(profile);
       const lines = profile.targets.map((t) => `  ${t.path} (${t.stack}, ${t.packageManager}${t.workspaceOf ? `, workspace of ${t.workspaceOf}` : ""}): ${Object.entries(t.gates).map(([g, c]) => `${g}=${c.command}${c.source === "proposed" ? " [proposed]" : ""}`).join(", ") || "no commands"}`);
       if (missing.length)
         lines.push(`No test command for: ${missing.map((m) => m.target).join(", ")}. Propose one: crew profile set test "<cmd>" [--target <path>]`);
+      const entry = env.registered;
+      lines.push(`registered ${entry.name} (workspace ${entry.workspace ?? "none"})`);
       return ok(lines.join(`
-`), { profile, missing });
+`), { profile, missing, registered: entry });
     }
     case "profile": {
       const [sub, gate, cmd] = args;
@@ -3700,6 +4528,13 @@ async function dispatch(parsed, io) {
         return answers;
       if (answers.work_type === "question")
         return ok("question: answer the user; no work item is created", { id: null });
+      const originId = typeof parsed.flags.origin === "string" ? parsed.flags.origin : null;
+      const inbox = originId ? ownInbox(env.mail) : null;
+      if (inbox?.tampered)
+        return refuse(tamperedBox(env.mail.self.project, "inbox"));
+      const origin = inbox?.messages.find((m) => m.id === originId) ?? null;
+      if (originId && !origin)
+        return refuse(`no message ${originId} addressed to this session`);
       const previous = activeWork(env.paths);
       const previousProven = !!previous?.work && assess(env.paths, previous.work, env.profile, env.policy, env.tampered || previous.tampered).verdict === "proven";
       const warning = previous?.work && !previousProven ? `warning: ${previous.work.id} is not proven and is no longer the active work item
@@ -3718,10 +4553,25 @@ async function dispatch(parsed, io) {
       const sharedWarning = neighbours.length ? `warning: this checkout is shared with ${neighbours.join(", ")}, which ${neighbours.length === 1 ? "is" : "are"} open with uncommitted changes in ${uncommitted.join(", ")}; a second session on one checkout blocks turn ends and proves half-written code: work in a worktree (git worktree add ../<name> -b <branch>)
 ` : "";
       classify(env, work, answers);
+      if (origin) {
+        work.origin = { mail: origin.id };
+        if (origin.type === "change-request" && origin.from.project === env.mail.self.project && origin.from.item && origin.to.agent && TASK_AGENT.test(origin.to.agent)) {
+          work.parent = {
+            project: origin.from.project,
+            item: origin.from.item,
+            task: origin.to.agent,
+            root: worktreeMainRoot(env.paths.root) ?? env.paths.root
+          };
+        }
+      }
       const criteria = parsed.ordered.filter((f) => f.key === "criterion" || f.key === "preserve").map((f) => addCriterion(work, f.value, f.key === "preserve" ? "preserve" : "behavior"));
       if (work.route === "fast" && criteria.length > 0)
         advancePhase(work, guardContext(env, work, false));
       saveWork(env.paths, work);
+      if (origin) {
+        const read = markRead(env.mail, origin.id);
+        recordInItem(env.paths, work.id, "refused" in read ? origin : read);
+      }
       const lines = criteria.map((c) => `
   ${c.id} (${c.kind}): ${c.text}`).join("");
       return ok(`${warning}${sharedWarning}${inheritedWarning}${provenNote}started ${work.id} (route ${work.route}: ${work.routeReasons.join("; ")})${lines}`, {
@@ -3926,10 +4776,27 @@ async function dispatch(parsed, io) {
       const opened = openForChange(env, args[0]);
       if (isOutcome(opened))
         return opened;
-      opened.work.awaiting = command === "await" ? "user" : null;
+      const usage = "usage: crew await <id> user | role | mail <message id>";
+      if (command === "resume") {
+        opened.work.awaiting = null;
+        delete opened.work.awaitingMessage;
+        saveWork(env.paths, opened.work);
+        return ok(`${opened.work.id}: resumed`, { awaiting: null, awaitingMessage: null });
+      }
+      const kind = args[1];
+      if (kind !== "user" && kind !== "role" && kind !== "mail")
+        return refuse(usage);
+      if (kind === "mail" && !args[2])
+        return refuse(usage);
+      opened.work.awaiting = kind;
+      if (kind === "mail")
+        opened.work.awaitingMessage = args[2];
+      else
+        delete opened.work.awaitingMessage;
       saveWork(env.paths, opened.work);
-      return ok(`${opened.work.id}: ${command === "await" ? "waiting for the user" : "resumed"}`, {
-        awaiting: opened.work.awaiting
+      return ok(`${opened.work.id}: ${waitingText(opened.work).slice(2)}`, {
+        awaiting: kind,
+        awaitingMessage: opened.work.awaitingMessage ?? null
       });
     }
     case "tdd": {
@@ -3965,7 +4832,7 @@ ${outcome.record.tail}` : "";
         only,
         tampered: env.tampered || opened.tampered
       });
-      deliver(env, opened, outcome.evidence);
+      deliver2(env, opened, outcome.evidence);
       const raised = outcome.raised ? `Route raised to ${outcome.raised}: ${opened.work.routeReasons.at(-1)}
 ` : "";
       const picked = refreshed.changed.length ? `profile refreshed: ${refreshed.changed.join("; ")}
@@ -4023,7 +4890,7 @@ diff.patch: ${outcome.reviewNote}` : "";
           return refuse(`no review inputs for this item: run crew gate run ${opened.work.id} first, then the reviewers and the judge`);
         if (inputs.fingerprint !== before.currentFingerprint)
           return refuse(`the review inputs describe other code than the current one: run crew gate run ${opened.work.id}, then the reviewers and the judge again`);
-        const rulingPath = resolve2(env.paths.root, parsed.flags.ruling);
+        const rulingPath = resolve3(env.paths.root, parsed.flags.ruling);
         const text = readText(rulingPath);
         if (text === null)
           return refuse(`no ruling file at ${rulingPath}`);
@@ -4038,11 +4905,11 @@ diff.patch: ${outcome.reviewNote}` : "";
           return refuse(parsedRulings.refused);
         for (const ruling of parsedRulings.rulings)
           records.push(stampRuling(ruling, before.currentFingerprint, before.changed, opened.work.id));
-        for (const record of records) {
-          const why = contradiction(record);
-          if (why)
-            return refuse(why);
-        }
+      }
+      for (const record of records) {
+        const why = contradiction(record);
+        if (why)
+          return refuse(why);
       }
       for (const record of records)
         recordJudgement(before.evidence, record);
@@ -4050,7 +4917,7 @@ diff.patch: ${outcome.reviewNote}` : "";
       result.evidence.verdict = result.verdict;
       result.evidence.unproven = result.unproven;
       saveEvidence(env.paths, opened.work.id, result.evidence);
-      deliver(env, opened, result.evidence);
+      deliver2(env, opened, result.evidence);
       const lines = records.map((r) => {
         const outside = r.findings.filter((f) => f.outside).length;
         const detail = r.verdict === "not-run" ? `: ${r.reason}` : ` (${r.findings.length} finding${r.findings.length === 1 ? "" : "s"}${outside ? `, ${outside} outside the change` : ""})`;
@@ -4099,7 +4966,7 @@ diff.patch: ${outcome.reviewNote}` : "";
       const result = assess(env.paths, opened.work, env.profile, env.policy, env.tampered || opened.tampered);
       result.evidence.verdict = result.verdict;
       result.evidence.unproven = result.unproven;
-      const report = renderReport(opened.work, result.evidence, env.policy, loadLedger(env.paths, opened.work.id).ledger);
+      const report = reportOf(env, opened.work, result.evidence);
       if (refused)
         return refuse(`${refused.text}
 
@@ -4108,7 +4975,7 @@ ${report}`, {
           unproven: result.unproven
         });
       saveEvidence(env.paths, opened.work.id, result.evidence);
-      writeProtectedText(env.paths, join22(workDir(env.paths, opened.work.id), "report.md"), report);
+      writeProtectedText(env.paths, join23(workDir(env.paths, opened.work.id), "report.md"), report);
       return ok(report, { verdict: result.verdict, unproven: result.unproven });
     }
     case "status": {
@@ -4117,9 +4984,11 @@ ${report}`, {
         return ok("no active work item", { active: null });
       const result = assess(env.paths, active.work, env.profile, env.policy, env.tampered || active.tampered);
       const text = `${active.work.id} "${active.work.title}"
-  phase ${active.work.phase}, route ${active.work.route}${active.work.awaiting ? ", waiting for the user" : ""}
+  phase ${active.work.phase}, route ${active.work.route}${waitingText(active.work)}
 ${gateSummary(active.work, result.verdict, result.unproven, result.evidence.runs)}`;
       const work = active.work;
+      syncMail(env.mail, env.paths);
+      const inbox = inboxSummary(env.mail);
       return ok(text, {
         active: work.id,
         title: work.title,
@@ -4127,6 +4996,8 @@ ${gateSummary(active.work, result.verdict, result.unproven, result.evidence.runs
         phase: work.phase,
         route: work.route,
         awaiting: work.awaiting,
+        awaitingMessage: work.awaitingMessage ?? null,
+        mail: { unread: inbox.unread, answered: inbox.answered, waiting: inbox.waiting },
         debate: debateState(work),
         baseCommit: work.baseCommit,
         phases: PHASES_BY_ROUTE[work.route],
@@ -4162,6 +5033,128 @@ ${gateSummary(active.work, result.verdict, result.unproven, result.evidence.runs
           text: o.text
         }))
       });
+    }
+    case "mail": {
+      const sendUsage = 'usage: crew mail send --to <project|.> --type question|change-request|notice|blocker [--agent <session|T-n|role>] [--item <id>] [--reply-to <mid>] [--subject <text>] "<text>" [--file <path>]';
+      const usage = `${sendUsage} | inbox [--all] | read <mid> | reply <mid> "<text>" [--branch <b>] [--item <child id>] [--as <role>] [--file <path>] | refuse <mid> --reason "<why>" | status | stop <mid>`;
+      const ctx = env.mail;
+      const verb = args[0];
+      if (verb === "send") {
+        const to = parsed.flags.to;
+        const type = parsed.flags.type;
+        const text = args.slice(1).join(" ");
+        if (typeof to !== "string" || !isMailType(type))
+          return refuse(sendUsage);
+        const item = typeof parsed.flags.item === "string" ? parsed.flags.item : undefined;
+        const work = item ? loadWork(env.paths, item).work ?? null : activeWork(env.paths)?.work ?? null;
+        if (item && !work)
+          return refuse(`unknown work item: ${item}`);
+        const out = send(ctx, {
+          to,
+          type,
+          text,
+          ...typeof parsed.flags.agent === "string" ? { agent: parsed.flags.agent } : {},
+          ...typeof parsed.flags.subject === "string" ? { subject: parsed.flags.subject } : {},
+          ...typeof parsed.flags.file === "string" ? { filePath: parsed.flags.file } : {},
+          ...item ? { item } : {},
+          ...typeof parsed.flags["reply-to"] === "string" ? { replyTo: parsed.flags["reply-to"] } : {}
+        }, work);
+        if ("refused" in out)
+          return refuse(`refused: ${out.refused}${out.message ? "; recorded in the outbox as refused" : ""}`, { refused: out.refused, message: out.message });
+        const { message, delivery } = out;
+        const where = `to ${message.to.project} (workspace ${message.to.workspace})`;
+        let next;
+        if (delivery.kind === "self")
+          next = `to ${message.to.agent ?? "session"} of this project`;
+        else if (delivery.kind === "live")
+          next = `live session (session ${delivery.entry.sessionId}): ring it if your harness lists it`;
+        else if (delivery.kind === "queued")
+          next = `queued; ${delivery.reason}`;
+        else
+          next = `queued; no live session: a ${delivery.mode} session is to open`;
+        const note = work ? "" : `
+note: no active work item, so no item keeps a copy of this message`;
+        return ok(`sent ${message.id} ${where}; ${next}${note}`, {
+          message,
+          delivery: delivery.kind,
+          ...delivery.kind === "open" ? { mode: delivery.mode } : {}
+        });
+      }
+      if (verb === "inbox") {
+        syncMail(ctx, env.paths);
+        const { messages, tampered } = ownInbox(ctx);
+        if (tampered)
+          return refuse(tamperedBox(ctx.self.project, "inbox"));
+        const shown = parsed.flags.all ? messages : messages.filter((m) => m.status === "sent" || m.status === "read" || m.status === "answered" && !m.replyTo);
+        const summary = inboxSummary(ctx);
+        const lines = shown.map((m) => `  ${m.id} · ${m.type} · from ${partyLabel(m.from)} · ${m.subject} · ${m.status}${m.reason ? `: ${m.reason}` : ""}`);
+        return ok(`Mail (${ctx.self.workspace ?? "alone"}/${ctx.self.project}, as ${ctx.self.agent}): ${summary.unread} unread, ${summary.answered} answered${lines.length ? `
+${lines.join(`
+`)}` : ""}`, { messages: shown, ...summary });
+      }
+      if (verb === "read") {
+        if (!args[1])
+          return refuse(usage);
+        syncMail(ctx, env.paths);
+        const result = markRead(ctx, args[1]);
+        if ("refused" in result)
+          return refuse(result.refused);
+        const body = result.bodyFile ? readText(result.bodyFile) ?? result.body : result.body;
+        const head = [
+          `id: ${result.id}`,
+          `from: ${result.from.project} (${result.from.agent})`,
+          `to: ${result.to.project}${result.to.agent ? ` (${result.to.agent})` : ""}`,
+          `type: ${result.type}`,
+          `subject: ${result.subject}`,
+          `status: ${result.status}${result.reason ? `: ${result.reason}` : ""}`,
+          `at: ${result.at}`,
+          ...result.from.item ? [`from item: ${result.from.item}`] : [],
+          ...result.replyTo ? [`reply to: ${result.replyTo}`] : [],
+          ...result.branch ? [`branch: ${result.branch}`] : [],
+          ...result.item ? [`item: ${result.item}${result.verdict ? ` (${result.verdict})` : ""}`] : []
+        ];
+        return ok(`${head.join(`
+`)}
+
+${body}`, { message: result, body });
+      }
+      if (verb === "reply") {
+        const text = args.slice(2).join(" ");
+        if (!args[1])
+          return refuse(usage);
+        const result = reply(ctx, args[1], text, {
+          ...typeof parsed.flags.file === "string" ? { filePath: parsed.flags.file } : {},
+          ...typeof parsed.flags.branch === "string" ? { branch: parsed.flags.branch } : {},
+          ...typeof parsed.flags.item === "string" ? { item: parsed.flags.item } : {},
+          ...typeof parsed.flags.as === "string" ? { as: parsed.flags.as } : {}
+        });
+        if ("refused" in result)
+          return refuse(result.refused);
+        return ok(`replied to ${args[1]}: ${result.reply.id} to ${result.reply.to.project}; ${args[1]} answered`, { reply: result.reply, original: result.original });
+      }
+      if (verb === "refuse") {
+        const reason = typeof parsed.flags.reason === "string" ? parsed.flags.reason : "";
+        if (!args[1] || !reason.trim())
+          return refuse(usage);
+        const result = refuseMail(ctx, args[1], reason);
+        if ("refused" in result)
+          return refuse(result.refused);
+        return ok(`${args[1]} refused: ${reason.trim()}`, { message: result });
+      }
+      if (verb === "status") {
+        const pruned = pruneRegistry(env.paths.userDir);
+        const sessions = openSessions(ctx);
+        const lines = sessions.map((m) => `  ${m.id} → ${m.to.project}: ${m.opened?.mode} session ${m.opened?.name} (pid ${m.opened?.pid ?? "none"}), since ${m.opened?.startedAt}, ${m.opened?.maxTurns} turns and ${m.opened?.maxMinutes} minutes allowed`);
+        const summary = inboxSummary(ctx);
+        return ok(`${summary.line ?? `Mail (${ctx.self.workspace ?? "alone"}): inbox empty`}
+open sessions: ${sessions.length ? `
+${lines.join(`
+`)}` : "none"}${pruned.length ? `
+registry pruned: ${pruned.join(", ")}` : ""}`, { sessions, pruned, ...summary });
+      }
+      if (verb === "stop")
+        return refuse("no session to stop: this engine has not opened one");
+      return refuse(usage);
     }
     default:
       return refuse(`unknown command: ${command}
@@ -4204,10 +5197,11 @@ var HELP = `crew ${VERSION}
   profile set <gate> "<cmd>" --force    replace a command a person already confirmed (asks the user)
   profile confirm [<gate>]              confirm commands the detector only guessed (asks the user)
   policy accept                         trust the current policy.json after a hand edit (asks the user)
-  policy set <key> <value>              attendedDecisions prompt|relay, unattendedDecisions wait|count|validator (asks the user)
+  policy set <key> <value>              attendedDecisions prompt|relay, unattendedDecisions wait|count|validator, mail.workspace|name|open|maxConcurrent|maxHops|maxTurns|maxMinutes|worktrees (asks the user)
   accept <id|profile|policy>            trust state changed outside the engine (asks the user)
   start "<request>" --answers <json>    create a work item from the typed answers
       [--criterion "<text>"] [--preserve "<text>"]   criteria, repeatable; preserve: existing tests stay green
+      [--origin <message id>]           the item answers a message of this project's inbox (a session opened by mail)
   classify <id> --answers <json>        record typed answers and compute the route
   criteria <id> add "<text>" [--kind preserve|observed]
   criteria <id> remove <AC-n>           take out a criterion no test-first record or skip names
@@ -4222,7 +5216,12 @@ var HELP = `crew ${VERSION}
   approve <id> spec                     record the user's approval (asks the user)
       --mode auto|bypassPermissions|dontAsk   no person watching: recorded as the agent's decision
   phase <id> next                       advance when the guard holds
-  await <id> user | resume <id>         mark or clear waiting for the user
+  await <id> user | role | mail <mid>   mark the turn's wait: for the user, for the roles, or for a reply to a message
+  resume <id>                           clear the wait
+  mail send --to <project|.> --type question|change-request|notice|blocker "<text>"   send mail inside the workspace
+      [--agent <session|T-n|role>] [--item <id>] [--reply-to <mid>] [--subject <text>] [--file <path>]
+  mail inbox [--all] | read <mid> | reply <mid> "<text>" [--branch <b>] [--item <child>] [--as <role>] [--file <path>]
+  mail refuse <mid> --reason "<why>" | status | stop <mid>   this project's mail and the sessions it opened
   tdd <red|green|before|after|observed> <id> <criterion> [--reason "<why>"] [-- <cmd>]
   gate run <id> [--only a,b]            run the gates the route requires; plans the judgement gates and writes their inputs to .crew/work/<id>/review/
   judgement <id> record --ruling <file>  record the rulings of a review file ({"rulings":[{gate,verdict,reviewer,judge,findings,tokens}]}); exit 0 once proven

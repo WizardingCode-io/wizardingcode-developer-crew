@@ -27,7 +27,7 @@ const POLICY_COMMAND = new RegExp(
   String.raw`^[\s({]*(?:${RUNNER}\s+)*(?:\S*/)?crew(?:\.mjs)?\s+${OPTS}(?:policy\b|accept\s+${OPTS}policy\b)`,
 );
 const ENGINE_FILES =
-  /\.crew\/(?:profile\.json|policy\.json|\.gitignore|local\b|work\/[^\s/]+\/(?:work\.json|evidence\.json|objections\.json|report\.md|logs\b))|\.wizardingcode\/crew\b/;
+  /\.crew\/(?:profile\.json|policy\.json|\.gitignore|local\b|work\/[^\s/]+\/(?:work\.json|evidence\.json|objections\.json|mail\.json|report\.md|logs\b))|\.wizardingcode\/crew\b/;
 // A verb may follow a quote (`bash -c "rm ..."`). A redirect is a write only when its target is an
 // engine file (the `2>` of `2>/dev/null` after a read is not).
 const WRITE_SHAPE =

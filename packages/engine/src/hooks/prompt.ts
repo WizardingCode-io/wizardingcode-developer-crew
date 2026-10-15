@@ -1,7 +1,7 @@
 import { assess } from "../gates.ts";
 import { loadState, saveState, sessionState } from "../state.ts";
 import type { WorkItem } from "../types.ts";
-import { activeWork } from "../work.ts";
+import { activeWork, waitingText } from "../work.ts";
 import type { HookContext, HookResponse } from "./types.ts";
 
 /** One line, written as a fact: the state of the active work item. */
@@ -11,8 +11,7 @@ export function statusLine(ctx: HookContext, work: WorkItem, tampered = false): 
     result.verdict === "proven"
       ? "proven"
       : `not proven (${result.unproven[0] ?? "gates have not run"})`;
-  const waiting = work.awaiting === "user" ? ", waiting for the user" : "";
-  return `Crew: work ${work.id} "${work.title}", phase ${work.phase}, route ${work.route}, ${state}${waiting}.`;
+  return `Crew: work ${work.id} "${work.title}", phase ${work.phase}, route ${work.route}, ${state}${waitingText(work)}.`;
 }
 
 /**

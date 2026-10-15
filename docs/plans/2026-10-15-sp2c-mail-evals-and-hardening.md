@@ -280,7 +280,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 - Produces, in `cli.ts`: the commands below; `HELP` lines for each.
 - Consumes: `readProtectedJson`, `writeProtectedJson`, `readJson`, `writeJson`, `writeText`, `readText`, `nowIso`, `sha256`, `canonical`, `resolvePaths`, `loadPolicy`, `loadEvidence`, `activeWork`, `loadWork`, `saveWork`, `workDir`.
 
-- [ ] **Step 1: Open the work item**
+- [x] **Step 1: Open the work item**
 
 ```bash
 crew start "SP2c task 2: the mailbox in the engine. Protected inbox and outbox per project under the user's crew directory, a registry of projects, the workspace boundary and the receiving policy as refusals, crew mail send|inbox|read|reply|refuse|status, the item's mail.json, the Mail and Roles sections of the report, policy.mail with crew policy set mail.<key>, and the two engine advisories of item 2026-10-15-001" --answers '{"work_type":"feature","is_vague":0.05,"scope":2,"touches_auth":0,"touches_payments":0,"touches_personal_data":0,"touches_data_migration":0,"touches_infra":0,"touches_public_api":0}' --criterion "A message to a project outside the sender's workspace, or to a name the workspace does not know, is refused with the reason, recorded in the sender's outbox as refused, and never written to any inbox" --criterion "A message the destination's policy accepts is written to its inbox, to the sender's outbox and to the item's mail.json, and the send prints what happened: live session, session to open, or queued with the reason" --criterion "A type the destination's policy does not list, a hop count at the destination's maxHops, a destination with its sessions at maxConcurrent, and a destination whose policy changed outside the engine are refused with their reasons; a reply passes the hop rule" --criterion "crew mail inbox lists this project's mail with id, type, sender, subject and status; read marks a message read and prints the whole body, from the file beside the inbox when the body was over 2 KB; reply writes a reply into the sender's inbox, marks the original answered and carries --branch, --item and the child's verdict; refuse marks it refused with the reason; a second reply, a reply by a non-addressee and a reply to a refused message are refused" --criterion "A message to the judge from an agent other than session, and a message to devils-advocate or fault-finder carrying anything but conclave/proposals.md, are refused; a message to a role is recorded relayed" --criterion "The mailbox write takes the directory lock, a stale lock is taken over, and two processes sending twenty messages each leave forty in the inbox" --criterion "The registry records root, name, workspace, lastSeen, sessionId and worktreeOf; a project is live within ten minutes; a root that no longer exists is skipped in resolution with the reason and pruned by crew mail status" --criterion "policy.mail has its defaults when absent, is read with its values validated, and crew policy set writes mail.workspace, mail.name, mail.open, mail.maxConcurrent, mail.maxHops, mail.maxTurns and mail.maxMinutes with each value checked" --criterion "crew await <id> role and crew await <id> mail <mid> record the wait and the message id; the report has a Mail section listing every message of the item and a Roles section; status --json has mail with unread, answered and waiting and the awaitingMessage" --preserve "Every existing engine test keeps passing (store, policy, paths, cli, evidence, hooks)"
@@ -291,7 +291,7 @@ AC-1 to AC-9 are behaviour, AC-10 preserve, AC-11 observed (the two advisories o
 
 Standard route: `spec.md` (the criteria above under "## Acceptance criteria", a "## Design" section naming the files), `conclave.md` with the four sections (checklist kinds: none fits an engine change; write "none" where there is nothing; one decision only the user can make is the message id prefix, decision 1 of this plan, already taken: record it as answered by the user, relayed), `crew approve <id> spec --validator complete-gap-round` when nothing is pending, `crew phase <id> next` through understand, specify, conclave, plan and build. Then `crew tdd before <id> AC-10 -- bun test packages/engine/tests/store.test.ts packages/engine/tests/policy-config-state.test.ts packages/engine/tests/paths.test.ts packages/engine/tests/cli.test.ts packages/engine/tests/evidence.test.ts packages/engine/tests/hooks-pre-tool-use.test.ts`.
 
-- [ ] **Step 2: Types** (no test of their own; the tests of the steps below compile against them)
+- [x] **Step 2: Types** (no test of their own; the tests of the steps below compile against them)
 
 In `packages/engine/src/types.ts`, after `Policy`'s imports section (anywhere after `Route`), add:
 
@@ -461,7 +461,7 @@ In `Pause`: add `kind?: Awaiting;` after `reason`. In `WorkItem`: `awaiting: Awa
 
 In `Evidence`, after `judgement`: `/** Each role's end as SubagentStop recorded it. Absent before 0.5.0. */ roles?: RoleRecord[];`. In `Policy`, after `attendedDecisions`: `/** The mailbox: the workspace, the name, what is accepted, what may open and the limits (SP2c §6). */ mail: MailPolicy;`.
 
-- [ ] **Step 3: Write the failing tests for the policy and the store** (AC-8, part of AC-7)
+- [x] **Step 3: Write the failing tests for the policy and the store** (AC-8, part of AC-7)
 
 Append to `packages/engine/tests/policy-config-state.test.ts` (it imports `DEFAULT_POLICY`, `loadPolicy`, `repoPaths`, `makeRepo`, `testEnv`, `mkdirSync`, `writeFileSync`, `join`; add `setPolicyValue`, `DEFAULT_MAIL_POLICY` and `readFileSync` to the imports):
 
@@ -579,7 +579,7 @@ test("SP2c: the registry and the mailboxes live under the user's crew directory;
 
 (`paths.test.ts` imports `isProtectedPath`, `repoPaths`, `makeRepo`, `testEnv`, `join` already; add `registryPath` and `mailboxDir`.)
 
-- [ ] **Step 4: Red**
+- [x] **Step 4: Red**
 
 ```bash
 crew tdd red <id> AC-8 -- bun test packages/engine/tests/policy-config-state.test.ts
@@ -588,7 +588,7 @@ crew tdd red <id> AC-7 -- bun test packages/engine/tests/store.test.ts packages/
 
 Expected: AC-8 fails on `mail` undefined and `setPolicyValue` refusing `mail.workspace` as unknown; AC-7 on the missing exports.
 
-- [ ] **Step 5: The policy**
+- [x] **Step 5: The policy**
 
 In `packages/engine/src/policy.ts`, replace `SETTABLE_POLICY_KEYS` and `setPolicyValue`, add the mail defaults and reading:
 
@@ -718,7 +718,7 @@ In `packages/engine/src/state.ts`, `ensureCrewDir`'s `wanted` gains `worktrees/\
 
 and in `loadPolicy`'s returned policy add `mail: loadMailPolicy(raw.mail),`. Import `isMailType` and `MailPolicy` from `./types.ts`. In `cli.ts` the `policy set` usage line already prints `Object.keys(SETTABLE_POLICY_KEYS)`; keep it.
 
-- [ ] **Step 6: The store and the paths**
+- [x] **Step 6: The store and the paths**
 
 In `packages/engine/src/store.ts`, generalise: `readIntegrity(paths)` becomes `readIntegrityFile(file: string)` with the same body on `readText(file)`; `remember(paths, absPath, text)` becomes `rememberIn(file: string, key: string, text: string)`. The existing exports call them with `paths.integrityFile` and `rel(paths, absPath)`. Add:
 
@@ -769,7 +769,7 @@ export function mailboxDir(userDir: string, workspace: string | null, project: s
 
 In `packages/engine/src/hooks/pre-tool-use.ts`, `ENGINE_FILES` lists `mail\.json` beside `objections\.json`.
 
-- [ ] **Step 7: Green for AC-7 (store, paths) and AC-8**
+- [x] **Step 7: Green for AC-7 (store, paths) and AC-8**
 
 ```bash
 crew tdd green <id> AC-8 -- bun test packages/engine/tests/policy-config-state.test.ts
@@ -778,7 +778,7 @@ crew tdd green <id> AC-7 -- bun test packages/engine/tests/store.test.ts package
 
 (AC-7's registry half is tested in Step 8 and run again at Step 11; the record keeps the last green.)
 
-- [ ] **Step 8: Write the failing tests of the mailbox** (AC-1 to AC-7)
+- [x] **Step 8: Write the failing tests of the mailbox** (AC-1 to AC-7)
 
 Create `packages/engine/tests/mail.test.ts`:
 
@@ -1115,7 +1115,7 @@ test("SP2c AC-7: the registry knows root, name, workspace, liveness and worktree
 
 One note for the executor: in AC-6 the two writers both send from `w.a.root` on purpose (the second argument differs only to label the messages); `Bun.spawn` is fine in a test file (the constraint on Bun APIs is for `src/`).
 
-- [ ] **Step 9: Red**
+- [x] **Step 9: Red**
 
 ```bash
 crew tdd red <id> AC-1 -- bun test packages/engine/tests/mail.test.ts
@@ -1129,7 +1129,7 @@ crew tdd red <id> AC-7 -- bun test packages/engine/tests/mail.test.ts packages/e
 
 Expected: every run fails on the missing module `../src/mail.ts`.
 
-- [ ] **Step 10: `mail.ts`**
+- [x] **Step 10: `mail.ts`**
 
 Create `packages/engine/src/mail.ts`:
 
@@ -1889,7 +1889,7 @@ export function expertNumber(agent: string): number | null {
 
 The first import line of the file is `import { existsSync, mkdirSync, rmdirSync, statSync } from "node:fs";` and the second `import { basename, isAbsolute, join, resolve } from "node:path";` (nothing else from those two modules is used). Export `mail.ts` from `packages/engine/src/index.ts`.
 
-- [ ] **Step 11: Green for AC-1 to AC-7**
+- [x] **Step 11: Green for AC-1 to AC-7**
 
 ```bash
 crew tdd green <id> AC-1 -- bun test packages/engine/tests/mail.test.ts
@@ -1903,7 +1903,7 @@ crew tdd green <id> AC-7 -- bun test packages/engine/tests/mail.test.ts packages
 
 Fix what the tests find in `mail.ts` until all pass; a test whose expectation turns out wrong against the spec is corrected in the test with the reason in the commit message, never loosened to pass.
 
-- [ ] **Step 12: Write the failing tests of the commands, the waits, the report and the status** (AC-9)
+- [x] **Step 12: Write the failing tests of the commands, the waits, the report and the status** (AC-9)
 
 Append to `packages/engine/tests/cli.test.ts` (it has `io(root, env?)`, `answers`, `makeRepo`, `repoPaths`, `write`, `readProtectedJson`, `join`, `existsSync`, `readFileSync`, `writeFileSync`):
 
@@ -2006,7 +2006,7 @@ test("SP2c: the report's Roles section lists each role's end with its tokens and
 
 (If `evidence.test.ts` has no `baseWork()` helper, build the `WorkItem` as the file's other tests do; the name above stands for "the file's way of making a work item".)
 
-- [ ] **Step 13: Red**
+- [x] **Step 13: Red**
 
 ```bash
 crew tdd red <id> AC-9 -- bun test packages/engine/tests/cli.test.ts packages/engine/tests/evidence.test.ts
@@ -2014,7 +2014,7 @@ crew tdd red <id> AC-9 -- bun test packages/engine/tests/cli.test.ts packages/en
 
 Expected: fails on `unknown command: mail`, the `await` usage and the missing "## Roles" section.
 
-- [ ] **Step 14: The commands, the waits, the report, the status, the advisories**
+- [x] **Step 14: The commands, the waits, the report, the status, the advisories**
 
 In `packages/engine/src/cli.ts`:
 
@@ -2195,7 +2195,7 @@ The `mail` command:
 
 The two advisories: in `gates.ts` rename `cut` to `reviewInputs` (three lines); in `cli.ts` move the `for (const record of records) { const why = contradiction(record); if (why) return refuse(why); }` loop out of the `else` branch to just before `for (const record of records) recordJudgement(…)`, so every record goes through it. `judgement.test.ts` keeps passing (a not-run record has no findings).
 
-- [ ] **Step 15: Green, the observed record, the preserve after, the gate run, the judgement gates, the commit**
+- [x] **Step 15: Green, the observed record, the preserve after, the gate run, the judgement gates, the commit**
 
 ```bash
 crew tdd green <id> AC-9 -- bun test packages/engine/tests/cli.test.ts packages/engine/tests/evidence.test.ts

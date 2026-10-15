@@ -10,6 +10,7 @@ import type {
   Evidence,
   GateName,
   GateRun,
+  Mailbox,
   ObjectionLedger,
   PermissionMode,
   PlannedJudgement,
@@ -18,6 +19,7 @@ import type {
   ValidatorRule,
   WorkItem,
 } from "./types.ts";
+import { partyLabel } from "./types.ts";
 import { isSkipped, tddDone } from "./work.ts";
 
 type Decided = {
@@ -220,11 +222,17 @@ function problemStatus(status: GateRun["status"], p: NonNullable<GateRun["proble
   return `pass: ${untouched} with problems, none of the item's`;
 }
 
+/**
+ * The report. `mail` is the item's copy of its messages (`mail.json`) and `selfName` the project's
+ * name in the mail, so a message this item sent reads as sent and the rest as received.
+ */
 export function renderReport(
   work: WorkItem,
   evidence: Evidence,
   policy: Policy,
   ledger?: ObjectionLedger,
+  mail?: { box: Mailbox; tampered: boolean },
+  selfName?: string,
 ): string {
   const lines: string[] = [];
   lines.push(`# Report: ${work.title}`, "");
@@ -336,6 +344,64 @@ export function renderReport(
         ? `- Debate: opened (${debate.reason}), ${debate.closedAt ? "closed" : "open"}${debate.tokens !== undefined ? `, ${debate.tokens} tokens` : ""}`
         : "- Debate: none",
     );
+  }
+  // The item's mail (SP2c §6): what it sent and what reached it, as the engine last recorded each.
+  if (mail?.tampered) {
+    lines.push(
+      "",
+      "## Mail",
+      "",
+      `mail.json changed outside the engine; the user accepts it with crew accept ${work.id}.`,
+    );
+  } else if (mail?.box.messages.length) {
+    lines.push(
+      "",
+      "## Mail",
+      "",
+      "| Message | At | Direction | With | Type | Subject | Status |",
+      "| :- | :- | :- | :- | :- | :- | :- |",
+    );
+    for (const m of mail.box.messages) {
+      const sent = m.from.item === work.id && m.from.project === selfName;
+      const direction = sent ? "sent" : "received";
+      const other = partyLabel(sent ? m.to : m.from);
+      // Every cell a person typed (the subject, a reason, a branch) has its pipes escaped.
+      const cell = (text: string) => text.replace(/\|/g, "\\|");
+      const status = cell(
+        `${m.status}${m.reason ? `: ${m.reason}` : ""}${
+          m.verdict ? ` (${m.verdict}${m.branch ? `, ${m.branch}` : ""})` : ""
+        }${m.relayed ? ", relayed" : ""}`,
+      );
+      lines.push(
+        `| ${m.id} | ${m.at} | ${direction} | ${other} | ${m.type} | ${cell(m.subject)} | ${status} |`,
+      );
+    }
+  }
+  // Each role's end as the SubagentStop hook recorded it (SP2c §11).
+  if (evidence.roles?.length) {
+    lines.push("", "## Roles", "", "| Role | At | Tokens | Answer |", "| :- | :- | -: | :- |");
+    for (const r of evidence.roles)
+      lines.push(
+        `| ${r.agent} | ${r.at} | ${r.tokensFrom === "none" ? "not read" : r.tokens} | ${r.file ?? "not saved"} |`,
+      );
+  }
+  // The tasks handed to implementers (SP2c §7), filled by `crew task`.
+  if (work.tasks?.length) {
+    lines.push(
+      "",
+      "## Tasks",
+      "",
+      "| Task | Criteria | Branch | Child | Verdict | Merged | Report |",
+      "| :- | :- | :- | :- | :- | :- | :- |",
+    );
+    for (const t of work.tasks)
+      lines.push(
+        `| ${t.task} | ${t.criteria.join(", ")} | ${t.branch} | ${t.child ?? ""} | ${t.verdict ?? "no reply yet"} | ${
+          t.mergedAt
+            ? `${t.mergeCommit?.slice(0, 7) ?? ""}${t.forced ? " (forced by the user)" : ""}`
+            : "no"
+        } | ${t.child ? `.crew/work/${t.child}/report.md` : ""} |`,
+      );
   }
   const removed = work.removedCriteria ?? [];
   const pauses = work.pauses ?? [];

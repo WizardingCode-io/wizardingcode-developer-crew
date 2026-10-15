@@ -1,7 +1,14 @@
 import { expect, test } from "bun:test";
 import { mkdirSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
-import { findRoot, isProtectedPath, resolvePaths, workDir } from "../src/paths.ts";
+import {
+  findRoot,
+  isProtectedPath,
+  mailboxDir,
+  registryPath,
+  resolvePaths,
+  workDir,
+} from "../src/paths.ts";
 import { makeRepo, repoPaths, tempDir, testEnv } from "./helpers.ts";
 
 test("findRoot walks up to the folder that holds .git", () => {
@@ -62,4 +69,19 @@ test("a symlinked alias of the root gives the same root, repo id and protection"
   expect(isProtectedPath(paths, join(alias, ".crew", "profile.json"))).toBe(true);
   expect(isProtectedPath(paths, join(alias, ".crew", "work", "w1", "work.json"))).toBe(true);
   expect(isProtectedPath(paths, join(alias, "src", "app.ts"))).toBe(false);
+});
+
+test("SP2c: the registry and the mailboxes live under the user's crew directory; mail.json is engine-owned in a work folder", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  expect(registryPath(paths.userDir)).toBe(join(paths.userDir, "projects.json"));
+  expect(mailboxDir(paths.userDir, "clubefashion", "crm")).toBe(
+    join(paths.userDir, "mail", "clubefashion", "crm"),
+  );
+  expect(mailboxDir(paths.userDir, null, "solo")).toBe(
+    join(paths.userDir, "mail", "_alone", "solo"),
+  );
+  expect(isProtectedPath(paths, join(paths.root, ".crew", "work", "w1", "mail.json"))).toBe(true);
+  expect(
+    isProtectedPath(paths, join(paths.userDir, "mail", "clubefashion", "crm", "inbox.json")),
+  ).toBe(true);
 });

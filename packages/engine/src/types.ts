@@ -62,6 +62,161 @@ export interface Profile {
 export type Route = "fast" | "standard" | "full";
 export const ROUTE_ORDER: readonly Route[] = ["fast", "standard", "full"];
 
+/** The four kinds of mail (vision §10). */
+export type MailType = "question" | "change-request" | "notice" | "blocker";
+export const MAIL_TYPES: readonly MailType[] = ["question", "change-request", "notice", "blocker"];
+export function isMailType(value: unknown): value is MailType {
+  return MAIL_TYPES.includes(value as MailType);
+}
+
+/** What happened to a message, as the receiving engine last recorded it. */
+export type MailStatus =
+  | "sent"
+  | "read"
+  | "answered"
+  | "refused"
+  | "waiting-for-person"
+  | "expired"
+  | "stopped";
+
+/** How a session the engine opens may act in a project: read and reply, or build on a branch. */
+export type OpenMode = "read-only" | "branch";
+
+/** Who sent a message: the project, the item it was sent from, and the agent (`session`, a task `T-n`, or a role). */
+export interface MailParty {
+  workspace: string;
+  project: string;
+  item: string | null;
+  agent: string;
+}
+/** Where a message goes: a project, and within it an agent and an item when the sender knows them. */
+export interface MailAddressee {
+  workspace: string;
+  project: string;
+  item: string | null;
+  agent: string | null;
+}
+
+/** The session the engine started for a message, and how it was bounded (SP2c §10). */
+export interface OpenedSession {
+  mode: OpenMode;
+  cwd: string;
+  branch: string | null;
+  pid: number | null;
+  /** The `--name` the session was given, for the doorbell. */
+  name: string;
+  maxTurns: number;
+  maxMinutes: number;
+  startedAt: string;
+  /** Path of the session's output log, beside the sender's outbox. */
+  log: string;
+  endedAt?: string;
+  outcome?: "ended" | "expired" | "stopped" | "failed";
+  turns?: number;
+  costUsd?: number;
+}
+
+export interface Message {
+  id: string;
+  at: string;
+  from: MailParty;
+  to: MailAddressee;
+  type: MailType;
+  subject: string;
+  /** The body when it is under 2 KB; a preview otherwise, with the whole text at `bodyFile`. */
+  body: string;
+  bodyFile?: string;
+  replyTo: string | null;
+  hops: number;
+  status: MailStatus;
+  /** For `refused`, `expired` and `stopped`: why. */
+  reason?: string;
+  /** A message to or from a role, carried by the lead on the role's behalf (SP2c §7). */
+  relayed?: boolean;
+  opened: OpenedSession | null;
+  readAt?: string;
+  answeredAt?: string;
+  /** A reply to a change request ends with the branch, the child item and its verdict. */
+  branch?: string;
+  item?: string;
+  verdict?: "proven" | "unproven";
+  /** A blocker the Stop hook has named once. */
+  noticedAt?: string;
+}
+
+export interface Mailbox {
+  version: 1;
+  messages: Message[];
+}
+
+/** How a party is named in a line or a table: the project, then `/agent` unless the agent is the session. */
+export function partyLabel(party: { project: string; agent: string | null }): string {
+  const agent = party.agent ?? "session";
+  return agent === "session" ? party.project : `${party.project}/${agent}`;
+}
+
+/** The `mail` block of `policy.json` (SP2c §6). A project without a workspace is alone. */
+export interface MailPolicy {
+  workspace: string | null;
+  name: string | null;
+  accept: MailType[];
+  open: OpenMode;
+  maxConcurrent: number;
+  maxHops: number;
+  maxTurns: number;
+  maxMinutes: number;
+  /** Where task worktrees are made: `..` (beside the root) or a path relative to the root, for sandboxes that confine writes. */
+  worktrees: string;
+}
+
+/** What a turn may end waiting for: the user, the roles still answering, or a reply to a message (SP2c §9). */
+export type Awaiting = "user" | "role" | "mail";
+
+/** A task of the plan handed to an implementer: the message, the worktree, the branch, the child and the merge (SP2c §7). */
+export interface TaskRecord {
+  task: string;
+  message: string;
+  criteria: string[];
+  text: string;
+  branch: string;
+  worktree: string;
+  openedAt: string;
+  child?: string;
+  verdict?: "proven" | "unproven";
+  repliedAt?: string;
+  mergedAt?: string;
+  mergeCommit?: string;
+  forced?: boolean;
+}
+
+/** A role's end as the SubagentStop hook recorded it: its tokens from its transcript, and the file its answer was saved to. */
+export interface RoleRecord {
+  agent: string;
+  agentId?: string;
+  at: string;
+  tokens: number;
+  tokensFrom: "transcript" | "none";
+  /** Relative to the work folder, or null when the answer matched no known shape. */
+  file: string | null;
+}
+
+/** A project the engine has seen (`~/.wizardingcode/crew/projects.json`). */
+export interface ProjectEntry {
+  root: string;
+  name: string;
+  workspace: string | null;
+  lastSeen: string;
+  sessionId: string;
+  /** The main checkout, when this root is a git worktree of it. */
+  worktreeOf?: string;
+  /** The message that opened the session running in this root. */
+  mail?: string;
+}
+export interface Registry {
+  version: 1;
+  projects: ProjectEntry[];
+}
+
 export type WorkType = "fix" | "feature" | "refactor" | "chore" | "new-product" | "question";
 
 export type Phase =
@@ -112,6 +267,7 @@ export interface RemovedCriterion extends Criterion {
 export interface Pause {
   at: string;
   reason: string;
+  kind?: Awaiting;
 }
 
 /**
@@ -241,7 +397,15 @@ export interface WorkItem {
   routeReasons: string[];
   riskAreas: RiskArea[];
   phase: Phase;
-  awaiting: "user" | null;
+  awaiting: Awaiting | null;
+  /** For `awaiting: "mail"`: the message whose reply the item waits for. */
+  awaitingMessage?: string;
+  /** The message that started this item, when mail did (SP2c §7, §8). */
+  origin?: { mail: string };
+  /** The lead's item and task, when this item is an implementer's child. */
+  parent?: { project: string; item: string; task: string; root: string };
+  /** The tasks this item handed to implementers. Absent before 0.5.0 and when none was opened. */
+  tasks?: TaskRecord[];
   criteria: Criterion[];
   /** Absent in records written before 0.1.4. */
   removedCriteria?: RemovedCriterion[];
@@ -353,6 +517,8 @@ export interface Evidence {
   unproven: string[];
   /** One ruling per judgement gate, the latest for each. Absent before 0.4.0. */
   judgement?: JudgementRecord[];
+  /** Each role's end as SubagentStop recorded it. Absent before 0.5.0. */
+  roles?: RoleRecord[];
 }
 
 export interface Policy {
@@ -382,6 +548,8 @@ export interface Policy {
    * are always asked.
    */
   attendedDecisions: "prompt" | "relay";
+  /** The mailbox: the workspace, the name, what is accepted, what may open and the limits (SP2c §6). */
+  mail: MailPolicy;
 }
 
 export type Mode = "partner" | "guide" | "pilot";
