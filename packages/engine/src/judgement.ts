@@ -11,6 +11,7 @@ import type {
   PlannedJudgement,
   Policy,
   RiskArea,
+  RoleRecord,
   Route,
   WorkItem,
 } from "./types.ts";
@@ -302,6 +303,29 @@ export function stampRuling(
     at: nowIso(),
     fingerprint,
   };
+}
+
+/**
+ * The engine's own count of what the roles spent, for a ruling the session left at 0 (SP2c §14):
+ * the gate's reviewer (its latest record read from a transcript) plus the judge's share across the
+ * rulings recorded together that the judge ruled (a not-run gate takes none, and a number the
+ * session gave stands but still counts as one of the judge's rulings). Only the records of this
+ * round count: those at or after `since`, the moment the gate run cut the diff the judge saw; an
+ * earlier round's record never stands in for a role that did not go through the hook, and with no
+ * cut known nothing does. Without a record the tokens stay at 0.
+ */
+export function fillTokens(records: JudgementRecord[], roles: RoleRecord[], since?: string): void {
+  const thisRound = since ? roles.filter((r) => r.at >= since) : [];
+  const latest = (agent: string) =>
+    [...thisRound].reverse().find((r) => r.agent === agent && r.tokensFrom === "transcript");
+  const judge = latest("judge");
+  const ruled = records.filter((r) => r.verdict !== "not-run");
+  for (const record of ruled) {
+    if ((record.tokens ?? 0) !== 0) continue;
+    const reviewer = latest(`review-${record.gate}`);
+    if (reviewer || judge)
+      record.tokens = (reviewer?.tokens ?? 0) + Math.round((judge?.tokens ?? 0) / ruled.length);
+  }
 }
 
 /**

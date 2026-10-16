@@ -2,12 +2,15 @@ import { expect, test } from "bun:test";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DEFAULT_WATCH_EXCLUDE } from "../src/detect/index.ts";
+import { handleHook } from "../src/hooks/index.ts";
 import { onPrompt } from "../src/hooks/prompt.ts";
 import { onSessionStart } from "../src/hooks/session-start.ts";
+import { loadRegistry, mailContext, send } from "../src/mail.ts";
+import { loadPolicy } from "../src/policy.ts";
 import { loadProfile, saveProfile } from "../src/profile.ts";
 import { loadState } from "../src/state.ts";
 import { addCriterion, createWork, saveWork } from "../src/work.ts";
-import { hookContext, makeRepo, testEnv } from "./helpers.ts";
+import { hookContext, makeRepo, repoPaths, testEnv, write } from "./helpers.ts";
 
 function context(root: string, env = testEnv()) {
   return hookContext({ session_id: "s1", cwd: join(root, "src") }, env);
@@ -156,4 +159,158 @@ test("finding 12: a watch list left by an earlier release follows the current de
     .additionalContext;
   expect(hint).toContain("run `crew detect --refresh` once");
   expect(loadProfile(tampered.paths).profile?.watch.exclude).toEqual(former);
+});
+
+test("SP2c AC-1: SessionStart registers the project and prints the inbox line, blockers first; the prompt names what arrived", () => {
+  const env = testEnv();
+  const a = makeRepo({ "README.md": "# storefront\n" });
+  const b = makeRepo({ "README.md": "# crm\n" });
+  write(a, ".crew/policy.json", JSON.stringify({ mail: { workspace: "w", name: "storefront" } }));
+  write(
+    b,
+    ".crew/policy.json",
+    JSON.stringify({
+      mail: { workspace: "w", name: "crm", accept: ["question", "notice", "blocker"] },
+    }),
+  );
+  const ctxA = hookContext({ session_id: "sa", cwd: a }, env);
+  const startA = onSessionStart(ctxA, { source: "startup" }) as {
+    hookSpecificOutput: { additionalContext: string };
+  };
+  expect(startA.hookSpecificOutput.additionalContext).not.toContain("Mail (");
+  expect(loadRegistry(ctxA.paths.userDir).projects.map((p) => [p.name, p.sessionId])).toEqual([
+    ["storefront", "sa"],
+  ]);
+  const ctxB = hookContext({ session_id: "sb", cwd: b }, env);
+  onSessionStart(ctxB, { source: "startup" });
+  const pa = repoPaths(a, env);
+  const mailA = mailContext(pa, loadPolicy(pa).policy, env);
+  send(
+    mailA,
+    { to: "crm", type: "question", text: "Does POST /customers accept loyalty_tier?" },
+    null,
+  );
+  send(mailA, { to: "crm", type: "blocker", text: "Checkout is down since the CRM deploy" }, null);
+  const startB = onSessionStart(hookContext({ session_id: "sb2", cwd: b }, env), {
+    source: "startup",
+  }) as { hookSpecificOutput: { additionalContext: string } };
+  const text = startB.hookSpecificOutput.additionalContext;
+  expect(text).toContain("Mail (w): 2 unread question and blocker from storefront.");
+  expect(text).toMatch(
+    /Blocker M-\S+ from storefront: "Checkout is down since the CRM deploy" \(crew mail read M-\S+\)\./,
+  );
+  expect(text.indexOf("Blocker")).toBeLessThan(text.indexOf("Mail (w)"));
+  expect(text).toContain("crew mail inbox lists it");
+  // The prompt hook: the first prompt after the arrival names it, the next one does not.
+  const prompt = onPrompt(hookContext({ session_id: "sb2", cwd: b }, env)) as {
+    hookSpecificOutput?: { additionalContext: string };
+  };
+  expect(prompt.hookSpecificOutput?.additionalContext ?? "").not.toContain("Mail:"); // SessionStart already told this agent
+  send(mailA, { to: "crm", type: "notice", text: "Release tonight" }, null);
+  const next = onPrompt(hookContext({ session_id: "sb2", cwd: b }, env)) as {
+    hookSpecificOutput: { additionalContext: string };
+  };
+  expect(next.hookSpecificOutput.additionalContext).toMatch(
+    /Mail: 1 new: M-\S+ notice from storefront "Release tonight" \(crew mail inbox\)\./,
+  );
+  // Named once: the prompt after that is quiet again.
+  const third = onPrompt(hookContext({ session_id: "sb2", cwd: b }, env)) as {
+    hookSpecificOutput?: { additionalContext: string };
+  };
+  expect(third.hookSpecificOutput?.additionalContext ?? "").not.toContain("Mail:");
+});
+
+test("SP2c AC-1: a mailbox the hook cannot use costs the session its mail line, never its context", () => {
+  const env = testEnv();
+  const root = makeRepo({ "README.md": "# storefront\n" });
+  write(
+    root,
+    ".crew/policy.json",
+    JSON.stringify({ mail: { workspace: "w", name: "storefront" } }),
+  );
+  mkdirSync(join(env.WIZARDINGCODE_HOME as string, "crew", "mail", "w", "storefront", ".lock"), {
+    recursive: true,
+  });
+  const start = handleHook(
+    "session-start",
+    { session_id: "s", cwd: root, source: "startup" },
+    env,
+  ) as {
+    hookSpecificOutput?: { additionalContext: string };
+  };
+  const text = start.hookSpecificOutput?.additionalContext ?? "";
+  expect(text).toContain("WizardingCode Developer Crew is active in this repository.");
+  expect(text).toContain("Mail is off for this session start: mailbox busy");
+});
+
+test("SP2c AC-1: a session opened by mail is told which message opened it and what it may do", () => {
+  const env = testEnv();
+  const a = makeRepo({ "README.md": "# storefront\n" });
+  const b = makeRepo({ "README.md": "# crm\n" });
+  write(a, ".crew/policy.json", JSON.stringify({ mail: { workspace: "w", name: "storefront" } }));
+  write(
+    b,
+    ".crew/policy.json",
+    JSON.stringify({
+      mail: { workspace: "w", name: "crm", open: "branch", accept: ["question", "change-request"] },
+    }),
+  );
+  onSessionStart(hookContext({ session_id: "sa", cwd: a }, env), { source: "startup" });
+  onSessionStart(hookContext({ session_id: "sb", cwd: b }, env), { source: "startup" });
+  const pa = repoPaths(a, env);
+  const sent = send(
+    mailContext(pa, loadPolicy(pa).policy, env),
+    { to: "crm", type: "change-request", text: "Add loyalty_tier to POST /customers" },
+    null,
+  );
+  if ("refused" in sent) throw new Error(sent.refused);
+  const opened = hookContext(
+    { session_id: "so", cwd: b },
+    {
+      ...env,
+      WIZARDINGCODE_CREW_MAIL_ID: sent.message.id,
+      WIZARDINGCODE_CREW_MAIL_HOPS: "1",
+      CLAUDE_CODE_SESSION_ATTENDED: "0",
+    },
+  );
+  expect(opened.openedBy).toBe(sent.message.id);
+  const start = onSessionStart(opened, { source: "startup" }) as {
+    hookSpecificOutput: { additionalContext: string };
+  };
+  const text = start.hookSpecificOutput.additionalContext;
+  expect(text).toContain(
+    `This session was opened by mail ${sent.message.id} from storefront (change-request): read it with crew mail read ${sent.message.id}.`,
+  );
+  expect(text).toContain(
+    `A change request: run the method on this branch as a work item started with --origin ${sent.message.id} (the opener pinned no branch: every push is denied), commit on it,`,
+  );
+  expect(text).toContain(
+    `end with crew mail reply ${sent.message.id} --branch <branch> --item <child id>`,
+  );
+  expect(text).toContain(
+    "Never merge, push to another branch or deploy; a full-route spec waits for a person (crew await <id> user).",
+  );
+  expect(
+    loadRegistry(opened.paths.userDir).projects.find((p) => p.sessionId === "so"),
+  ).toMatchObject({ name: "crm", mail: sent.message.id });
+  // The branch the opener pinned is the one named, whatever HEAD says.
+  const pinned = hookContext(
+    { session_id: "sp", cwd: b },
+    {
+      ...env,
+      WIZARDINGCODE_CREW_MAIL_ID: sent.message.id,
+      WIZARDINGCODE_CREW_MAIL_BRANCH: "crew/2026-10-15-001/T-1",
+      WIZARDINGCODE_CREW_MAIL_HOPS: "1",
+      CLAUDE_CODE_SESSION_ATTENDED: "0",
+    },
+  );
+  const pinnedText = (
+    onSessionStart(pinned, { source: "startup" }) as {
+      hookSpecificOutput: { additionalContext: string };
+    }
+  ).hookSpecificOutput.additionalContext;
+  expect(pinnedText).toContain(
+    `started with --origin ${sent.message.id} (branch crew/2026-10-15-001/T-1), commit on it,`,
+  );
+  expect(pinnedText).not.toContain("every push is denied");
 });

@@ -1,17 +1,19 @@
 import { expect, test } from "bun:test";
-import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, rmdirSync } from "node:fs";
+import { basename, join } from "node:path";
 import { loadEvidence, renderReport } from "../src/evidence.ts";
 import { runGates } from "../src/gates.ts";
 import { handleHook } from "../src/hooks/index.ts";
 import { onPrompt } from "../src/hooks/prompt.ts";
 import { onSessionStart } from "../src/hooks/session-start.ts";
 import { MAX_STOP_BLOCKS, onStop } from "../src/hooks/stop.ts";
+import { mailbox, mailContext, reply, send } from "../src/mail.ts";
+import { loadPolicy } from "../src/policy.ts";
 import { saveProfile } from "../src/profile.ts";
 import { loadState } from "../src/state.ts";
 import type { WorkItem } from "../src/types.ts";
 import { addCriterion, addSkip, createWork, loadWork, saveWork } from "../src/work.ts";
-import { hookContext, makeRepo, tempDir, testEnv, write } from "./helpers.ts";
+import { hookContext, makeRepo, repoPaths, tempDir, testEnv, write } from "./helpers.ts";
 
 function session() {
   const root = makeRepo({
@@ -103,7 +105,7 @@ test("finding 11: the block names crew await as the way to end a turn with a que
   const response = onStop(ctx);
   expect(response.decision).toBe("block");
   expect(String(response.reason)).toContain(
-    `To end the turn with a question for the user, run crew await ${work.id} user first.`,
+    `To end the turn with a question for the user, run crew await ${work.id} user first; while the roles answer, crew await ${work.id} role; while a reply is due, crew await ${work.id} mail <message id>.`,
   );
 });
 
@@ -116,12 +118,15 @@ test("case 3: a work item waiting for the user lets the turn end with a notice",
   saveWork(ctx.paths, work);
   const response = onStop(ctx);
   expect(response.decision).toBeUndefined();
-  expect(String(response.systemMessage)).toContain(work.id);
+  expect(String(response.systemMessage)).toBe(
+    `Crew: work ${work.id} ends this turn waiting for the user and is not proven (gates have not run). The next turn is held to the Stop rule again.`,
+  );
   expect(loadState(ctx.paths).sessions.s?.stopBlocks).toBe(0);
-  // The turn that ends spends the wait and leaves the pause in the record.
+  // The turn that ends spends the wait and leaves the pause in the record, with its kind.
   const saved = loadWork(ctx.paths, work.id).work;
   expect(saved?.awaiting).toBeNull();
   expect(saved?.pauses).toHaveLength(1);
+  expect(saved?.pauses?.[0]).toMatchObject({ kind: "user", reason: "gates have not run" });
   expect(typeof saved?.pauses?.[0]?.reason).toBe("string");
   const report = renderReport(
     saved as WorkItem,
@@ -296,3 +301,136 @@ test("handleHook dispatches by event and never throws", () => {
   expect(handleHook("nonsense", { cwd: root }, testEnv())).toEqual({});
   expect(handleHook("prompt", { cwd: "/nonexistent/path/for/crew" }, testEnv())).toEqual({});
 });
+
+test("SP2c AC-2: await role and await mail each let the turn end once with their own notice, and the pause says which", () => {
+  const { root, ctx } = session();
+  const work = createWork(ctx.paths, "fix");
+  addCriterion(work, "x");
+  work.awaiting = "role";
+  saveWork(ctx.paths, work);
+  write(root, "src/a.ts", "changed");
+  const roleEnd = onStop(ctx) as { systemMessage?: string; decision?: string };
+  expect(roleEnd.decision).toBeUndefined();
+  expect(roleEnd.systemMessage).toBe(
+    `Crew: work ${work.id} ends this turn waiting for the roles and is not proven (gates have not run). The next turn is held to the Stop rule again.`,
+  );
+  let saved = loadWork(ctx.paths, work.id).work;
+  expect(saved?.awaiting).toBeNull();
+  expect(saved?.pauses).toEqual([
+    { at: expect.any(String), reason: "gates have not run", kind: "role" },
+  ]);
+  expect(onStop(ctx).decision).toBe("block");
+  saved = loadWork(ctx.paths, work.id).work as WorkItem;
+  saved.awaiting = "mail";
+  saved.awaitingMessage = "M-2026-10-15-001-storefront";
+  saveWork(ctx.paths, saved);
+  const mailEnd = onStop(ctx) as { systemMessage?: string };
+  expect(mailEnd.systemMessage).toBe(
+    `Crew: work ${work.id} ends this turn waiting for a reply to M-2026-10-15-001-storefront and is not proven (gates have not run). The next turn is held to the Stop rule again.`,
+  );
+  expect(loadWork(ctx.paths, work.id).work?.pauses?.[1]).toMatchObject({
+    kind: "mail",
+    reason: "gates have not run",
+  });
+});
+
+test("SP2c AC-2: a mail wait whose reply has landed is cleared and the turn is held so the reply is read", () => {
+  const env = testEnv();
+  const a = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const b = makeRepo({ "README.md": "# crm\n" });
+  write(a, ".crew/policy.json", JSON.stringify({ mail: { workspace: "w", name: "storefront" } }));
+  write(b, ".crew/policy.json", JSON.stringify({ mail: { workspace: "w", name: "crm" } }));
+  const ctx = hookContext({ session_id: "s", cwd: a }, env);
+  onSessionStart(ctx);
+  onSessionStart(hookContext({ session_id: "sb", cwd: b }, env));
+  const work = createWork(ctx.paths, "Loyalty tier");
+  addCriterion(work, "x");
+  const sent = send(ctx.mail, { to: "crm", type: "question", text: "Which values?" }, work);
+  if ("refused" in sent) throw new Error(sent.refused);
+  const fresh = loadWork(ctx.paths, work.id).work as WorkItem;
+  fresh.awaiting = "mail";
+  fresh.awaitingMessage = sent.message.id;
+  saveWork(ctx.paths, fresh);
+  write(a, "src/a.ts", "changed");
+  const pb = repoPaths(b, env);
+  const answered = reply(
+    mailContext(pb, loadPolicy(pb).policy, env),
+    sent.message.id,
+    "gold, silver, none",
+    {},
+  );
+  if ("refused" in answered) throw new Error(answered.refused);
+  const held = onStop(ctx) as { decision?: string; reason?: string };
+  expect(held.decision).toBe("block");
+  expect(held.reason).toContain(
+    `Crew: the reply to ${sent.message.id} has landed (${answered.reply.id} from crm): read it with crew mail read ${answered.reply.id} and go on; the wait is over.`,
+  );
+  expect(loadWork(ctx.paths, work.id).work?.awaiting).toBeNull();
+});
+
+test("SP2c AC-2: an unread blocker interrupts the end of the turn once", () => {
+  const env = testEnv();
+  const a = makeRepo({ "README.md": "# storefront\n" });
+  const b = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/b.ts": "x",
+  });
+  write(a, ".crew/policy.json", JSON.stringify({ mail: { workspace: "w", name: "storefront" } }));
+  write(
+    b,
+    ".crew/policy.json",
+    JSON.stringify({
+      mail: { workspace: "w", name: "crm", accept: ["question", "notice", "blocker"] },
+    }),
+  );
+  onSessionStart(hookContext({ session_id: "sa", cwd: a }, env));
+  const ctx = hookContext({ session_id: "sb", cwd: b }, env);
+  onSessionStart(ctx);
+  const pa = repoPaths(a, env);
+  const sent = send(
+    mailContext(pa, loadPolicy(pa).policy, env),
+    { to: "crm", type: "blocker", text: "Checkout is down" },
+    null,
+  );
+  if ("refused" in sent) throw new Error(sent.refused);
+  const first = onStop(ctx) as { decision?: string; reason?: string };
+  expect(first.decision).toBe("block");
+  // The subject is data in quotes, not the engine's voice: another project wrote it.
+  expect(first.reason).toBe(
+    `Crew: blocker ${sent.message.id} from storefront: "Checkout is down". Read it (crew mail read ${sent.message.id}) and say it to the user before anything else.`,
+  );
+  expect(onStop(ctx)).toEqual({});
+});
+
+test("SP2c AC-2: a mailbox the hook cannot use never switches the Stop rule off", () => {
+  const { root, ctx, env } = session();
+  const work = createWork(ctx.paths, "fix");
+  addCriterion(work, "x");
+  saveWork(ctx.paths, work);
+  write(root, "src/a.ts", "changed");
+  // Another process holds this project's mailbox lock for longer than the hook waits.
+  const dir = mailbox(ctx.paths.userDir, null, basename(root)).dir;
+  mkdirSync(join(dir, ".lock"), { recursive: true });
+  const response = handleHook("stop", { session_id: "s", cwd: root }, env) as {
+    decision?: string;
+    reason?: string;
+  };
+  expect(response.decision).toBe("block");
+  expect(response.reason).toContain("watched source files changed and the work is not proven");
+  expect(response.reason).toContain("mail is off for this turn: mailbox busy");
+  // The cap after three blocks names the mail too, like every other response of this run.
+  handleHook("stop", { session_id: "s", cwd: root }, env);
+  handleHook("stop", { session_id: "s", cwd: root }, env);
+  const capped = handleHook("stop", { session_id: "s", cwd: root }, env) as {
+    decision?: string;
+    systemMessage?: string;
+  };
+  expect(capped.decision).toBeUndefined();
+  expect(capped.systemMessage).toContain("Crew: not proven after 3 attempts.");
+  expect(capped.systemMessage).toContain("(mail is off for this turn: mailbox busy");
+  rmdirSync(join(dir, ".lock"));
+  // Four Stops, each waiting the lock's two seconds.
+}, 15_000);

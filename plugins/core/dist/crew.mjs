@@ -1,6 +1,6 @@
 // packages/engine/src/cli.ts
 import { existsSync as existsSync4 } from "node:fs";
-import { join as join23, relative as relative6, resolve as resolve3 } from "node:path";
+import { join as join25, relative as relative6, resolve as resolve3 } from "node:path";
 
 // packages/engine/src/glob.ts
 var SPECIAL = /[.+^${}()|[\]\\]/g;
@@ -700,7 +700,7 @@ function missingTestCommands(profile) {
 }
 
 // packages/engine/src/evidence.ts
-import { join as join14 } from "node:path";
+import { join as join15 } from "node:path";
 
 // packages/engine/src/fingerprint.ts
 import { execFileSync } from "node:child_process";
@@ -1329,12 +1329,62 @@ function blockingObjections(ledger, work, evidence, policy, statuses) {
 
 // packages/engine/src/work.ts
 import { existsSync as existsSync2, readdirSync as readdirSync4 } from "node:fs";
-import { join as join13 } from "node:path";
+import { join as join14 } from "node:path";
 
 // packages/engine/src/state.ts
+import { join as join13 } from "node:path";
+
+// packages/engine/src/lock.ts
+import { mkdirSync as mkdirSync2, rmdirSync, statSync as statSync3 } from "node:fs";
 import { join as join12 } from "node:path";
+var LOCK_STALE_MS = 1e4;
+var LOCK_WAIT_MS = 2000;
+function sleep(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+class LockBusy extends Error {
+}
+function withLock(dir, fn, options = {}) {
+  mkdirSync2(dir, { recursive: true });
+  const lock = join12(dir, ".lock");
+  const waitMs = options.waitMs ?? LOCK_WAIT_MS;
+  const started = Date.now();
+  for (;; ) {
+    try {
+      mkdirSync2(lock);
+      break;
+    } catch (error) {
+      if (error.code !== "EEXIST")
+        throw error;
+    }
+    let age = null;
+    try {
+      age = Date.now() - statSync3(lock).mtimeMs;
+    } catch {}
+    if (age !== null && age > LOCK_STALE_MS) {
+      try {
+        rmdirSync(lock);
+      } catch {}
+      continue;
+    }
+    if (Date.now() - started >= waitMs)
+      throw new LockBusy(`${options.what ?? "folder"} busy: ${lock} held for more than ${waitMs} ms`);
+    if (age !== null)
+      sleep(20);
+  }
+  try {
+    return fn();
+  } finally {
+    try {
+      rmdirSync(lock);
+    } catch {}
+  }
+}
+
+// packages/engine/src/state.ts
 function statePath(paths) {
-  return join12(paths.localDir, "state.json");
+  return join13(paths.localDir, "state.json");
 }
 function loadState(paths) {
   const raw = readJson(statePath(paths)) ?? {};
@@ -1354,6 +1404,25 @@ function sessionState(state, sessionId) {
   state.sessions[sessionId] = created;
   return created;
 }
+var STATE_LOCK_WAIT_MS = 500;
+function updateState(paths, change) {
+  const run = () => {
+    const state = loadState(paths);
+    const result = change(state);
+    saveState(paths, state);
+    return result;
+  };
+  try {
+    return withLock(paths.localDir, run, { what: "session state", waitMs: STATE_LOCK_WAIT_MS });
+  } catch (error) {
+    if (!(error instanceof LockBusy))
+      throw error;
+    return run();
+  }
+}
+function updateSession(paths, sessionId, change) {
+  return updateState(paths, (state) => change(sessionState(state, sessionId)));
+}
 function ensureCrewDir(paths, policy) {
   const wanted = `local/
 work/*/logs/
@@ -1361,7 +1430,7 @@ work/*/review/ui/
 worktrees/
 ${policy.artifacts === "local" ? `work/
 ` : ""}`;
-  const file = join12(paths.crewDir, ".gitignore");
+  const file = join13(paths.crewDir, ".gitignore");
   if (readText(file) !== wanted)
     writeProtectedText(paths, file, wanted);
 }
@@ -1393,13 +1462,13 @@ function slug(text) {
   return text.toLowerCase().normalize("NFKD").replace(/[^\w\s-]/g, "").trim().replace(/[\s_]+/g, "-").replace(/-+/g, "-");
 }
 function workJson(paths, id) {
-  return join13(workDir(paths, id), "work.json");
+  return join14(workDir(paths, id), "work.json");
 }
 function newWorkId(paths, title) {
   const date = nowIso().slice(0, 10);
   let existing = 0;
   try {
-    existing = readdirSync4(join13(paths.crewDir, "work")).filter((n) => n.startsWith(date)).length;
+    existing = readdirSync4(join14(paths.crewDir, "work")).filter((n) => n.startsWith(date)).length;
   } catch {
     existing = 0;
   }
@@ -1429,15 +1498,15 @@ function createWork(paths, input, baseFiles) {
     updatedAt: at
   };
   writeProtectedJson(paths, workJson(paths, work.id), work);
-  writeText(join13(workDir(paths, work.id), "brief.md"), `# Brief
+  writeText(join14(workDir(paths, work.id), "brief.md"), `# Brief
 
 ## Request
 
 ${input.trim()}
 `);
-  const state = loadState(paths);
-  state.active = work.id;
-  saveState(paths, state);
+  updateState(paths, (state) => {
+    state.active = work.id;
+  });
   return work;
 }
 function saveWork(paths, work) {
@@ -1457,7 +1526,7 @@ function activeWork(paths) {
 function openItems(paths, except) {
   let ids = [];
   try {
-    ids = readdirSync4(join13(paths.crewDir, "work")).sort();
+    ids = readdirSync4(join14(paths.crewDir, "work")).sort();
   } catch {
     return [];
   }
@@ -1468,7 +1537,7 @@ function openItems(paths, except) {
     const { work } = loadWork(paths, id);
     if (!work || work.phase === "deliver")
       continue;
-    const evidence = readProtectedJson(paths, join13(workDir(paths, id), "evidence.json"));
+    const evidence = readProtectedJson(paths, join14(workDir(paths, id), "evidence.json"));
     if (evidence.data?.verdict === "proven")
       continue;
     open.push(work);
@@ -1742,13 +1811,17 @@ function advancePhase(work, ctx) {
   return { ok: true, phase: next };
 }
 function waitingText(work) {
+  const phrase = waitingPhrase(work);
+  return phrase ? `, ${phrase}` : "";
+}
+function waitingPhrase(work) {
   if (work.awaiting === "user")
-    return ", waiting for the user";
+    return "waiting for the user";
   if (work.awaiting === "role")
-    return ", waiting for the roles";
+    return "waiting for the roles";
   if (work.awaiting === "mail")
-    return `, waiting for a reply to ${work.awaitingMessage ?? "a message"}`;
-  return "";
+    return `waiting for a reply to ${work.awaitingMessage ?? "a message"}`;
+  return null;
 }
 
 // packages/engine/src/evidence.ts
@@ -1776,7 +1849,7 @@ function emptyEvidence() {
   };
 }
 function evidencePath(paths, id) {
-  return join14(workDir(paths, id), "evidence.json");
+  return join15(workDir(paths, id), "evidence.json");
 }
 function loadEvidence(paths, id) {
   const read = readProtectedJson(paths, evidencePath(paths, id));
@@ -2005,8 +2078,8 @@ function renderReport(work, evidence, policy, ledger, mail, selfName) {
 }
 
 // packages/engine/src/gates.ts
-import { accessSync, constants, mkdirSync as mkdirSync3, rmSync, writeFileSync as writeFileSync2 } from "node:fs";
-import { basename as basename3, delimiter, join as join18 } from "node:path";
+import { accessSync, constants, mkdirSync as mkdirSync4, rmSync, writeFileSync as writeFileSync2 } from "node:fs";
+import { basename as basename3, delimiter, join as join19 } from "node:path";
 
 // packages/engine/src/audit.ts
 var NAMED_ID = /\b(GHSA-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{4}|CVE-\d{4}-\d{4,}|PKSA-[0-9a-z]{4}(?:-[0-9a-z]{4}){1,2}|PYSEC-\d{4}-\d+)\b/i;
@@ -2095,7 +2168,7 @@ function parseAudit(tool, text) {
 
 // packages/engine/src/judgement.ts
 import { readdirSync as readdirSync5, unlinkSync } from "node:fs";
-import { join as join15 } from "node:path";
+import { join as join16 } from "node:path";
 var INTERFACE_EXTENSIONS = [
   ".vue",
   ".svelte",
@@ -2146,10 +2219,10 @@ function plannedJudgementGates(route, riskAreas, changed, policy) {
   return planned;
 }
 function reviewDir(paths, id) {
-  return join15(workDir(paths, id), "review");
+  return join16(workDir(paths, id), "review");
 }
 function readReviewInputs(paths, id) {
-  const raw = readJson(join15(reviewDir(paths, id), "inputs.json"));
+  const raw = readJson(join16(reviewDir(paths, id), "inputs.json"));
   return raw && typeof raw.fingerprint === "string" && typeof raw.at === "string" ? { fingerprint: raw.fingerprint, at: raw.at } : null;
 }
 function writeReviewInputs(paths, work, changed, fingerprint) {
@@ -2164,15 +2237,15 @@ function writeReviewInputs(paths, work, changed, fingerprint) {
     }
     for (const name of names) {
       if (name === "ruling.json" || name.endsWith(".findings.md"))
-        unlinkSync(join15(dir, name));
+        unlinkSync(join16(dir, name));
     }
   }
   const cut = reviewPatch(paths.root, work.baseCommit, changed);
-  writeText(join15(dir, "diff.patch"), cut.patch);
-  writeText(join15(dir, "files.txt"), changed.length ? `${changed.join(`
+  writeText(join16(dir, "diff.patch"), cut.patch);
+  writeText(join16(dir, "files.txt"), changed.length ? `${changed.join(`
 `)}
 ` : "");
-  writeText(join15(dir, "inputs.json"), `${JSON.stringify({ fingerprint, at: nowIso() }, null, 2)}
+  writeText(join16(dir, "inputs.json"), `${JSON.stringify({ fingerprint, at: nowIso() }, null, 2)}
 `);
   return { dir, note: cut.note };
 }
@@ -2294,6 +2367,19 @@ function stampRuling(ruling, fingerprint, changed, workId) {
     fingerprint
   };
 }
+function fillTokens(records, roles, since) {
+  const thisRound = since ? roles.filter((r) => r.at >= since) : [];
+  const latest = (agent) => [...thisRound].reverse().find((r) => r.agent === agent && r.tokensFrom === "transcript");
+  const judge = latest("judge");
+  const ruled = records.filter((r) => r.verdict !== "not-run");
+  for (const record of ruled) {
+    if ((record.tokens ?? 0) !== 0)
+      continue;
+    const reviewer = latest(`review-${record.gate}`);
+    if (reviewer || judge)
+      record.tokens = (reviewer?.tokens ?? 0) + Math.round((judge?.tokens ?? 0) / ruled.length);
+  }
+}
 function contradiction(record) {
   if (record.verdict !== "proven")
     return null;
@@ -2321,12 +2407,12 @@ function recordJudgement(evidence, record) {
 }
 
 // packages/engine/src/problems.ts
-import { statSync as statSync3 } from "node:fs";
-import { isAbsolute, join as join16, relative as relative4 } from "node:path";
+import { statSync as statSync4 } from "node:fs";
+import { isAbsolute, join as join17, relative as relative4 } from "node:path";
 var SOURCE_FILE = /^(?:\.{0,2}\/)?[\w@./-]+\.(?:ts|tsx|js|jsx|mjs|cjs|vue|svelte|astro|php|py|rb|go|rs|kt|java|cs|json|css|scss|html)$/;
 function isFile(path) {
   try {
-    return statSync3(path).isFile();
+    return statSync4(path).isFile();
   } catch {
     return false;
   }
@@ -2338,7 +2424,7 @@ function namedFiles(text, dirs, root) {
     const token = (raw.replace(/^[("'`[]+/, "").split(/[:(]/)[0] ?? "").replace(/[,;)\]"'`]+$/, "");
     if (!SOURCE_FILE.test(token))
       continue;
-    const candidates = isAbsolute(token) ? [token] : dirs.map((dir) => join16(dir, token));
+    const candidates = isAbsolute(token) ? [token] : dirs.map((dir) => join17(dir, token));
     for (const abs of candidates) {
       if (!isFile(abs))
         continue;
@@ -2355,7 +2441,7 @@ function namedFiles(text, dirs, root) {
 
 // packages/engine/src/run.ts
 import { spawn } from "node:child_process";
-import { createWriteStream, mkdirSync as mkdirSync2 } from "node:fs";
+import { createWriteStream, mkdirSync as mkdirSync3 } from "node:fs";
 import { dirname as dirname3 } from "node:path";
 var TAIL_LINES = 40;
 function killTree(pid) {
@@ -2373,7 +2459,7 @@ function killTree(pid) {
   }
 }
 function runCommand(command, options) {
-  mkdirSync2(dirname3(options.logPath), { recursive: true });
+  mkdirSync3(dirname3(options.logPath), { recursive: true });
   const log = createWriteStream(options.logPath);
   const lines = [];
   let partial = "";
@@ -2432,7 +2518,7 @@ function runCommand(command, options) {
 // packages/engine/src/secrets.ts
 import { execFileSync as execFileSync2, spawnSync } from "node:child_process";
 import { readFileSync as readFileSync3 } from "node:fs";
-import { join as join17 } from "node:path";
+import { join as join18 } from "node:path";
 var RULES = [
   {
     rule: "private key",
@@ -2477,7 +2563,7 @@ function isBinary(buffer) {
 function fileSource(root, path) {
   let buffer;
   try {
-    buffer = readFileSync3(join17(root, path));
+    buffer = readFileSync3(join18(root, path));
   } catch {
     return null;
   }
@@ -2591,7 +2677,7 @@ function onPath(binary, env) {
       continue;
     for (const extension of extensions) {
       try {
-        accessSync(join18(dir, binary + extension), constants.X_OK);
+        accessSync(join19(dir, binary + extension), constants.X_OK);
         return true;
       } catch {}
     }
@@ -2641,7 +2727,7 @@ function gateTimeoutMs(target, gate) {
   return gate === "test" ? Math.max(target.timeoutMs, TEST_TIMEOUT_MS) : target.timeoutMs;
 }
 function depsAuditCommand(target, root, env = process.env) {
-  const dir = join18(root, target.path);
+  const dir = join19(root, target.path);
   if (target.stack === "python") {
     if (!onPath("pip-audit", env))
       return { reason: "pip-audit not on PATH" };
@@ -2651,7 +2737,7 @@ function depsAuditCommand(target, root, env = process.env) {
   let tool;
   if (target.stack === "node") {
     tool = NODE_AUDIT[target.packageManager];
-    if (tool && target.packageManager === "yarn" && exists(join18(dir, ".yarnrc.yml")))
+    if (tool && target.packageManager === "yarn" && exists(join19(dir, ".yarnrc.yml")))
       tool = { ...tool, command: "yarn npm audit --severity high --json" };
   } else if (target.stack === "php") {
     tool = {
@@ -2664,7 +2750,7 @@ function depsAuditCommand(target, root, env = process.env) {
   }
   if (!tool)
     return { reason: `no audit tool for ${target.packageManager}` };
-  const present = tool.lockfiles.filter((name) => exists(join18(dir, name)));
+  const present = tool.lockfiles.filter((name) => exists(join19(dir, name)));
   if (present.length === 0)
     return { reason: "no lockfile" };
   if (!onPath(tool.binary, env))
@@ -2674,22 +2760,22 @@ function depsAuditCommand(target, root, env = process.env) {
 async function baselineAdvisories(paths, work, target, audit, where) {
   if (!work.baseCommit || audit.files.length === 0)
     return { readable: false, advisories: [] };
-  const scratch = join18(paths.crewDir, "local", "audit-base", work.id, where || "root");
+  const scratch = join19(paths.crewDir, "local", "audit-base", work.id, where || "root");
   rmSync(scratch, { recursive: true, force: true });
-  mkdirSync3(scratch, { recursive: true });
+  mkdirSync4(scratch, { recursive: true });
   let lockfiles = 0;
   for (const [index, file] of audit.files.entries()) {
     const rel2 = target.path === "." ? file : `${target.path}/${file}`;
     const text = gitShowFile(paths.root, work.baseCommit, rel2);
     if (text === null)
       continue;
-    writeFileSync2(join18(scratch, file), text);
+    writeFileSync2(join19(scratch, file), text);
     if (index > 0)
       lockfiles += 1;
   }
   if (lockfiles === 0)
     return { readable: true, advisories: [] };
-  const log = join18(workDir(paths, work.id), "logs", `deps-base-${where}-${Date.now()}.txt`);
+  const log = join19(workDir(paths, work.id), "logs", `deps-base-${where}-${Date.now()}.txt`);
   const result = await runCommand(audit.command, {
     cwd: scratch,
     timeoutMs: gateTimeoutMs(target, "deps"),
@@ -2699,7 +2785,7 @@ async function baselineAdvisories(paths, work, target, audit, where) {
   return { readable: report.readable && !result.timedOut, advisories: report.advisories };
 }
 async function judgeAudit(run, audit, paths, work, target, where) {
-  const text = run.log && readText(join18(workDir(paths, work.id), run.log)) || run.tail;
+  const text = run.log && readText(join19(workDir(paths, work.id), run.log)) || run.tail;
   const report = parseAudit(audit.tool, text);
   if (!report.readable)
     return { ...run, reason: "audit report unreadable; judged by exit code" };
@@ -2816,9 +2902,9 @@ async function runOne(paths, work, profile, planned, fingerprint, changed) {
   const where = targetPath.replace(/[^a-z0-9]+/gi, "_") + (planned.stack ? `-${planned.stack}` : "");
   const log = `logs/${gate}-${where}-${Date.now()}.txt`;
   const result = await runCommand(command, {
-    cwd: join18(paths.root, targetPath),
+    cwd: join19(paths.root, targetPath),
     timeoutMs: gateTimeoutMs(target, gate),
-    logPath: join18(workDir(paths, work.id), log)
+    logPath: join19(workDir(paths, work.id), log)
   });
   const passed = result.exit === 0 && !result.timedOut;
   const run = {
@@ -2842,8 +2928,8 @@ async function runOne(paths, work, profile, planned, fingerprint, changed) {
   return run;
 }
 function judgeProblems(run, paths, work, targetPath, changed) {
-  const text = run.log && readText(join18(workDir(paths, work.id), run.log)) || run.tail;
-  const named2 = namedFiles(text, [join18(paths.root, targetPath), paths.root], paths.root);
+  const text = run.log && readText(join19(workDir(paths, work.id), run.log)) || run.tail;
+  const named2 = namedFiles(text, [join19(paths.root, targetPath), paths.root], paths.root);
   if (named2.length === 0)
     return run;
   const touched = named2.filter((file) => changed.includes(file));
@@ -2988,381 +3074,27 @@ function reassess(a, work, policy) {
   return { ...a, ...verdict };
 }
 
-// packages/engine/src/profile.ts
-import { join as join19 } from "node:path";
-function profilePath(paths) {
-  return join19(paths.crewDir, "profile.json");
-}
-function loadProfile(paths) {
-  const read = readProtectedJson(paths, profilePath(paths));
-  return { profile: read.data, tampered: read.tampered };
-}
-function saveProfile(paths, profile) {
-  writeProtectedJson(paths, profilePath(paths), profile);
-}
-function refreshProfile(paths, current, tampered = false) {
-  if (tampered)
-    return { profile: current, changed: [] };
-  const next = detectProfile(paths.root, current);
-  const changed = profileChanges(current, next);
-  if (changed.length === 0)
-    return { profile: current, changed };
-  saveProfile(paths, next);
-  return { profile: next, changed };
-}
-function ensureProfile(paths) {
-  const existing = loadProfile(paths);
-  if (existing.profile)
-    return { profile: existing.profile, tampered: existing.tampered };
-  const profile = detectProfile(paths.root);
-  if (existing.tampered)
-    return { profile, tampered: true };
-  saveProfile(paths, profile);
-  return { profile, tampered: false };
-}
-
-// packages/engine/src/hooks/context.ts
-function buildContext(payload, env = process.env) {
-  const paths = resolvePaths(payload.cwd ?? process.cwd(), env);
-  if (!paths)
-    return null;
-  const profile = ensureProfile(paths);
-  const policy = loadPolicy(paths);
-  return {
-    paths,
-    sessionId: payload.session_id ?? "default",
-    profile: profile.profile,
-    policy: policy.policy,
-    tampered: profile.tampered || policy.tampered,
-    headless: env.CLAUDE_CODE_SESSION_ATTENDED === "0"
-  };
-}
-
-// packages/engine/src/hooks/pre-tool-use.ts
-import { isAbsolute as isAbsolute2, join as join20, relative as relative5 } from "node:path";
-
-// packages/engine/src/hooks/shell.ts
-function simpleCommands(command) {
-  const pieces = [];
-  for (const line of command.replace(/\\\r?\n/g, " ").split(/\r?\n/)) {
-    let piece = "";
-    let quote = null;
-    for (let i = 0;i < line.length; i++) {
-      const ch = line.charAt(i);
-      if (quote !== null) {
-        piece += ch;
-        if (ch === "\\" && quote === '"' && i + 1 < line.length)
-          piece += line.charAt(++i);
-        else if (ch === quote)
-          quote = null;
-      } else if (ch === "\\" && i + 1 < line.length) {
-        piece += ch + line.charAt(++i);
-      } else if (ch === '"' || ch === "'") {
-        quote = ch;
-        piece += ch;
-      } else if (ch === ";" || (ch === "|" || ch === "&") && !isRedirectPart(line, i)) {
-        pieces.push(piece);
-        piece = "";
-      } else {
-        piece += ch;
-      }
-    }
-    pieces.push(piece);
-  }
-  return pieces.map((piece) => piece.trim()).filter((piece) => piece !== "");
-}
-function isRedirectPart(line, i) {
-  const before = line.charAt(i - 1);
-  return before === ">" || before === "<" || line.charAt(i) === "&" && line.charAt(i + 1) === ">";
-}
-
-// packages/engine/src/hooks/pre-tool-use.ts
-var WRITE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
-var RUNNER = String.raw`(?:[A-Za-z_][A-Za-z0-9_]*=\S*|-\S*|node|bun|bunx|npx|sh|bash|zsh|eval|exec|env|time|nohup|xargs|sudo|command)`;
-var OPTS = String.raw`(?:--[\w-]+(?:[= ]\S+)?\s+)*`;
-var USER_ONLY = new RegExp(String.raw`^[\s({]*(?:${RUNNER}\s+)*(?:\S*/)?crew(?:\.mjs)?\s+${OPTS}(?:skip|approve|accept|decide|objection\b[^;&|]*\bwaive\b|profile\s+${OPTS}(?:confirm|set)|policy\s+${OPTS}(?:accept|set))\b`);
-var POLICY_COMMAND = new RegExp(String.raw`^[\s({]*(?:${RUNNER}\s+)*(?:\S*/)?crew(?:\.mjs)?\s+${OPTS}(?:policy\b|accept\s+${OPTS}policy\b)`);
-var ENGINE_FILES = /\.crew\/(?:profile\.json|policy\.json|\.gitignore|local\b|work\/[^\s/]+\/(?:work\.json|evidence\.json|objections\.json|mail\.json|report\.md|logs\b))|\.wizardingcode\/crew\b/;
-var WRITE_SHAPE = /(?:^|[\s;&|("'])(?:rm|mv|cp|tee|truncate|chmod|touch|dd|install)\b|sed\s+-i|>{1,2}\|?\s*["']?\S*(?:\.crew\/|\.wizardingcode\/crew\b)/;
-var OPAQUE_REDIRECT = />{1,2}\|?\s*["']?[$`]/;
-var PROMPTLESS_MODES = new Set(["bypassPermissions", "dontAsk"]);
-var MODE_FLAG = /--mode(?:=|\s+)(\S+)/;
-var VALIDATOR_FLAG = /--validator(?:=|\s+)\S+/;
-var HELP_FLAG = /(?:^|\s)(?:--help|-h)(?=\s|$)/;
-function userOnlyDecision(cleaned, permissionMode, headless, policy) {
-  const flagged = MODE_FLAG.exec(cleaned)?.[1];
-  const mode = permissionMode ?? "default";
-  if (headless || PROMPTLESS_MODES.has(mode)) {
-    if (flagged === mode)
-      return null;
-    const where = headless ? `a headless session in ${mode} mode` : `${mode} mode`;
-    if (flagged === undefined) {
-      return [
-        "deny",
-        `Crew: no person is watching this session (${where}) and this command records a decision that only the user can take. Run it again with --mode ${mode}, so the record says the agent decided and in which mode.`
-      ];
-    }
-    return [
-      "deny",
-      `Crew: this session is ${where}, not ${flagged}; run the command with --mode ${mode}`
-    ];
-  }
-  if (flagged !== undefined) {
-    return [
-      "deny",
-      `Crew: a person is present (${mode} mode); run the command without --mode so they are asked`
-    ];
-  }
-  if (VALIDATOR_FLAG.test(cleaned))
-    return null;
-  if (policy.attendedDecisions === "relay" && !POLICY_COMMAND.test(cleaned))
-    return null;
-  return ["ask", "Crew: this command records a decision that only the user can take"];
-}
-function answer(permissionDecision, reason) {
-  return {
-    hookSpecificOutput: {
-      hookEventName: "PreToolUse",
-      permissionDecision,
-      permissionDecisionReason: reason
-    }
-  };
-}
-function pathFromInput(input) {
-  for (const key of ["file_path", "notebook_path", "path"]) {
-    const value = input[key];
-    if (typeof value === "string" && value)
-      return value;
-  }
-  return null;
-}
-function onPreToolUse(ctx, payload) {
-  const tool = payload.tool_name ?? "";
-  const input = payload.tool_input ?? {};
-  if (WRITE_TOOLS.has(tool)) {
-    const filePath = pathFromInput(input);
-    if (!filePath)
-      return {};
-    const abs = canonical(isAbsolute2(filePath) ? filePath : join20(ctx.paths.root, filePath));
-    if (isProtectedPath(ctx.paths, abs)) {
-      return answer("deny", `Crew: ${filePath} is maintained by the engine and is changed through the crew command`);
-    }
-    const rel2 = relative5(ctx.paths.root, abs).replace(/\\/g, "/");
-    if (rel2 === "" || rel2.startsWith("..") || !isWatched(rel2, ctx.profile))
-      return {};
-    const active = activeWork(ctx.paths);
-    const work = active?.work;
-    if (work && work.route !== "fast" && isBeforeBuild(work)) {
-      return answer("deny", `Crew: work ${work.id} is in phase ${work.phase} on the ${work.route} route; source files change in the build phase (crew phase ${work.id} next)`);
-    }
-    return {};
-  }
-  if (tool === "Bash") {
-    const command = typeof input.command === "string" ? input.command : "";
-    let asked = null;
-    for (const piece of simpleCommands(command)) {
-      const cleaned = piece.replace(/["'\\]/g, "");
-      if (USER_ONLY.test(cleaned) && !HELP_FLAG.test(cleaned)) {
-        const decided = userOnlyDecision(cleaned, payload.permission_mode, ctx.headless, ctx.policy);
-        if (decided?.[0] === "deny")
-          return answer(...decided);
-        asked ??= decided;
-      }
-      if (ENGINE_FILES.test(piece) && WRITE_SHAPE.test(piece) || OPAQUE_REDIRECT.test(piece) && ENGINE_FILES.test(command)) {
-        return answer("deny", "Crew: files under .crew/ and ~/.wizardingcode/crew that the engine owns are written only by the crew command");
-      }
-    }
-    if (asked)
-      return answer(...asked);
-  }
-  return {};
-}
-
-// packages/engine/src/hooks/prompt.ts
-function statusLine(ctx, work, tampered = false) {
-  const result = assess(ctx.paths, work, ctx.profile, ctx.policy, ctx.tampered || tampered);
-  const state = result.verdict === "proven" ? "proven" : `not proven (${result.unproven[0] ?? "gates have not run"})`;
-  return `Crew: work ${work.id} "${work.title}", phase ${work.phase}, route ${work.route}, ${state}${waitingText(work)}.`;
-}
-function onPrompt(ctx) {
-  const state = loadState(ctx.paths);
-  sessionState(state, ctx.sessionId).stopBlocks = 0;
-  saveState(ctx.paths, state);
-  const active = activeWork(ctx.paths);
-  if (!active?.work)
-    return {};
-  return {
-    hookSpecificOutput: {
-      hookEventName: "UserPromptSubmit",
-      additionalContext: statusLine(ctx, active.work, active.tampered)
-    }
-  };
-}
-
-// packages/engine/src/hooks/session-start.ts
-function onSessionStart(ctx, payload = {}) {
-  ensureCrewDir(ctx.paths, ctx.policy);
-  const former = isFormerWatchDefault(ctx.profile);
-  const moved = former && !ctx.tampered;
-  if (moved) {
-    ctx.profile.watch.exclude = [...DEFAULT_WATCH_EXCLUDE];
-    saveProfile(ctx.paths, ctx.profile);
-  }
-  const refreshed = refreshProfile(ctx.paths, ctx.profile, ctx.tampered);
-  ctx.profile = refreshed.profile;
-  const state = loadState(ctx.paths);
-  const active = activeWork(ctx.paths);
-  const continues = (payload.source === "resume" || payload.source === "compact") && state.sessions[ctx.sessionId] !== undefined;
-  if (!continues) {
-    const session = sessionState(state, ctx.sessionId);
-    const work = active?.work ?? null;
-    const base = work;
-    const inherited = work !== null && changedWatchedPaths(ctx.paths.root, ctx.profile, base).length > 0 && assess(ctx.paths, work, ctx.profile, ctx.policy, ctx.tampered || !!active?.tampered).verdict !== "proven";
-    session.baseline = inherited ? null : computeFingerprint(ctx.paths.root, ctx.profile, base);
-    session.stopBlocks = 0;
-    saveState(ctx.paths, state);
-  }
-  const lines = [
-    "WizardingCode Developer Crew is active in this repository. Work is proven by the `crew` command and the crew skill, and a turn cannot end while watched source files have unproven changes.",
-    ctx.policy.attendedDecisions === "relay" ? "You run every crew command; the user never types one: a decision that is theirs (crew approve, skip, decide, accept, profile confirm) is relayed by you from the conversation under this repository's policy (attendedDecisions: relay), so run the command once the user has said yes, with no prompt; the record says relayed by the agent." : "You run every crew command; the user never types one: a decision that is theirs (crew approve, skip, decide, accept, profile confirm) is signed by the permission prompt your command raises, in auto mode too."
-  ];
-  if (active?.work)
-    lines.push(statusLine(ctx, active.work, active.tampered).replace(/^Crew: work/, "Work in progress:"));
-  else
-    lines.push(`No work item is active. A code change starts by answering the crew skill's nine typed questions, then crew start "<request>" --answers '<json>'.`);
-  if (refreshed.changed.length)
-    lines.push(`profile refreshed: ${refreshed.changed.join("; ")}.`);
-  const missing = missingTestCommands(ctx.profile);
-  if (missing.length) {
-    lines.push(`No test command is known for: ${missing.map((m) => m.target).join(", ")}. One is proposed with \`crew profile set test "<cmd>"\`.`);
-  }
-  if (moved) {
-    lines.push(`The profile's watch list predated this release and now follows the current default (${DEFAULT_WATCH_EXCLUDE.join(", ")}).`);
-  } else if (former) {
-    lines.push("The profile predates this release: run `crew detect --refresh` once to pick up the current defaults.");
-  }
-  return {
-    hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: lines.join(" ") }
-  };
-}
-
-// packages/engine/src/hooks/stop.ts
-var MAX_STOP_BLOCKS = 3;
-var TYPED_CREW = /(?:^|[^\w!])!\s?(?:(?:node|bun)\s+)?(?:\S*\/)?crew(?:\.mjs)?\s+[a-z]/m;
-function asksUserToTypeCrew(message) {
-  return message !== undefined && TYPED_CREW.test(message);
-}
-function onStop(ctx, payload = {}) {
-  const state = loadState(ctx.paths);
-  const session = sessionState(state, ctx.sessionId);
-  if (asksUserToTypeCrew(payload.last_assistant_message) && session.stopBlocks < MAX_STOP_BLOCKS) {
-    session.stopBlocks += 1;
-    saveState(ctx.paths, state);
-    return {
-      decision: "block",
-      reason: "Crew: the last message tells the user to type a crew command. The user never types one: you run every crew command, and the permission prompt is the user's signature, in auto mode too (a note saying otherwise predates 0.1.6). Run the command now, without --mode, and tell the user what it recorded."
-    };
-  }
-  const active = activeWork(ctx.paths);
-  const work = active?.work ?? null;
-  const current = computeFingerprint(ctx.paths.root, ctx.profile, work);
-  const result = work ? assess(ctx.paths, work, ctx.profile, ctx.policy, ctx.tampered || !!active?.tampered) : null;
-  const proven = result?.verdict === "proven";
-  const changed = session.baseline !== null && current !== UNAVAILABLE ? current !== session.baseline : work !== null && !proven;
-  const done = (response) => {
-    saveState(ctx.paths, state);
-    return response;
-  };
-  const release = (response, pause) => {
-    if (work && work.awaiting !== null && !active?.tampered) {
-      work.awaiting = null;
-      if (pause !== undefined)
-        work.pauses = [...work.pauses ?? [], { at: nowIso(), reason: pause }];
-      saveWork(ctx.paths, work);
-    }
-    return done(response);
-  };
-  if (!changed || proven) {
-    session.stopBlocks = 0;
-    return release({});
-  }
-  const missing = result ? result.unproven : ['no work item: start one with crew start "<request>"'];
-  if (work?.awaiting === "user") {
-    session.stopBlocks = 0;
-    const reason = missing[0] ?? "not proven";
-    return release({
-      systemMessage: `Crew: work ${work.id} ends this turn waiting for the user and is not proven (${reason}). The next turn is held to the Stop rule again.`
-    }, reason);
-  }
-  if (session.stopBlocks >= MAX_STOP_BLOCKS) {
-    return done({
-      systemMessage: `Crew: not proven after ${MAX_STOP_BLOCKS} attempts. ${missing.join("; ")}.`
-    });
-  }
-  session.stopBlocks += 1;
-  const gate = work ? `crew gate run ${work.id}` : 'crew start "<request>"';
-  const wait = work ? ` To end the turn with a question for the user, run crew await ${work.id} user first.` : "";
-  const judgement = work && missing.some((m) => m.startsWith("judgement gate")) ? ` A judgement gate is cleared by its roles, not by the gate run: run the planned reviewers and the judge, then crew judgement ${work.id} record --ruling .crew/work/${work.id}/review/ruling.json.` : "";
-  return done({
-    decision: "block",
-    reason: `Crew: watched source files changed and the work is not proven. Missing: ${missing.join("; ")}. Run ${gate}, fix what fails, or ask the user to skip a step with crew skip.${judgement}${wait}`
-  });
-}
-
-// packages/engine/src/hooks/index.ts
-var EVENTS = new Set(["session-start", "prompt", "pre-tool-use", "stop"]);
-var INACTIVE_CONTEXT = "Crew is inactive here: not a git repository and no .crew/ folder. Run crew detect in a project root to activate it.";
-function handleHook(event, payload, env = process.env) {
-  if (!EVENTS.has(event))
-    return {};
-  try {
-    const ctx = buildContext(payload, env);
-    if (!ctx) {
-      return event === "session-start" ? {
-        hookSpecificOutput: {
-          hookEventName: "SessionStart",
-          additionalContext: INACTIVE_CONTEXT
-        }
-      } : {};
-    }
-    switch (event) {
-      case "session-start":
-        return onSessionStart(ctx, payload);
-      case "prompt":
-        return onPrompt(ctx);
-      case "pre-tool-use":
-        return onPreToolUse(ctx, payload);
-      default:
-        return onStop(ctx, payload);
-    }
-  } catch {
-    return {};
-  }
-}
-
 // packages/engine/src/mail.ts
-import { existsSync as existsSync3, mkdirSync as mkdirSync4, rmdirSync, statSync as statSync4 } from "node:fs";
-import { basename as basename4, isAbsolute as isAbsolute3, join as join21, resolve as resolve2 } from "node:path";
+import { existsSync as existsSync3, statSync as statSync5 } from "node:fs";
+import { basename as basename4, isAbsolute as isAbsolute2, join as join20, resolve as resolve2 } from "node:path";
 var LIVE_MS = 10 * 60 * 1000;
 var INLINE_BODY_LIMIT = 2048;
 var PREVIEW_CHARS = 200;
 var SUBJECT_CHARS = 80;
-var LOCK_STALE_MS = 1e4;
-var LOCK_WAIT_MS = 2000;
 var ROLE_AGENT = /^(judge|researcher|expert-\d+|devils-advocate|fault-finder|review-(code-quality|test-quality|security|ui-ux|risk))$/;
 var TASK_AGENT = /^T-\d+$/;
 var CRITICS = new Set(["devils-advocate", "fault-finder"]);
 function worktreeMainRoot(root) {
-  const gitFile = join21(root, ".git");
+  const gitFile = join20(root, ".git");
   try {
-    if (!statSync4(gitFile).isFile())
+    if (!statSync5(gitFile).isFile())
       return null;
   } catch {
     return null;
   }
   const line = readText(gitFile)?.trim() ?? "";
   const match = /^gitdir:\s*(.+?)\/\.git\/worktrees\/[^/]+\/?$/.exec(line);
-  return match?.[1] ? canonical(isAbsolute3(match[1]) ? match[1] : join21(root, match[1])) : null;
+  return match?.[1] ? canonical(isAbsolute2(match[1]) ? match[1] : join20(root, match[1])) : null;
 }
 function effectiveMailPolicy(root, policy, env) {
   const main = worktreeMainRoot(root);
@@ -3378,6 +3110,9 @@ function effectiveMailPolicy(root, policy, env) {
       };
   }
   return { mail, main };
+}
+function subjectQuoted(subject) {
+  return JSON.stringify(subject.replace(/\p{Cc}+/gu, " ").trim());
 }
 function mailSelf(paths, policy, env) {
   const hops = Number(env.WIZARDINGCODE_CREW_MAIL_HOPS ?? "0");
@@ -3488,7 +3223,7 @@ function mailbox(userDir, workspace, project) {
   return { dir: mailboxDir(userDir, workspace, project) };
 }
 function boxFile(dir, name) {
-  return join21(dir, `${name}.json`);
+  return join20(dir, `${name}.json`);
 }
 function readBox(dir, which) {
   const read = readProtectedJsonAt(boxFile(dir, "integrity"), boxFile(dir, which));
@@ -3498,44 +3233,8 @@ function readBox(dir, which) {
 function writeBox(dir, which, box) {
   writeProtectedJsonAt(boxFile(dir, "integrity"), boxFile(dir, which), box);
 }
-function sleep(ms) {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-}
 function withMailLock(dir, fn, options = {}) {
-  mkdirSync4(dir, { recursive: true });
-  const lock = join21(dir, ".lock");
-  const waitMs = options.waitMs ?? LOCK_WAIT_MS;
-  const started = Date.now();
-  for (;; ) {
-    try {
-      mkdirSync4(lock);
-      break;
-    } catch (error) {
-      if (error.code !== "EEXIST")
-        throw error;
-    }
-    let age = null;
-    try {
-      age = Date.now() - statSync4(lock).mtimeMs;
-    } catch {}
-    if (age !== null && age > LOCK_STALE_MS) {
-      try {
-        rmdirSync(lock);
-      } catch {}
-      continue;
-    }
-    if (Date.now() - started >= waitMs)
-      throw new Error(`mailbox busy: ${lock} held for more than ${waitMs} ms`);
-    if (age !== null)
-      sleep(20);
-  }
-  try {
-    return fn();
-  } finally {
-    try {
-      rmdirSync(lock);
-    } catch {}
-  }
+  return withLock(dir, fn, { ...options, what: "mailbox" });
 }
 function newMessageId(outbox, project, at) {
   const day = at.slice(0, 10);
@@ -3544,14 +3243,14 @@ function newMessageId(outbox, project, at) {
   return `M-${day}-${String(next).padStart(3, "0")}-${project}`;
 }
 function itemMailPath(paths, id) {
-  return join21(workDir(paths, id), "mail.json");
+  return join20(workDir(paths, id), "mail.json");
 }
 function loadItemMail(paths, id) {
   const read = readProtectedJson(paths, itemMailPath(paths, id));
   return { box: read.data ?? { version: 1, messages: [] }, tampered: read.tampered };
 }
 function recordInItem(paths, id, message) {
-  if (!existsSync3(join21(workDir(paths, id), "work.json")))
+  if (!existsSync3(join20(workDir(paths, id), "work.json")))
     return;
   const { box, tampered } = loadItemMail(paths, id);
   if (tampered)
@@ -3560,8 +3259,9 @@ function recordInItem(paths, id, message) {
   writeProtectedJson(paths, itemMailPath(paths, id), box);
 }
 function subjectOf(request) {
-  if (request.subject?.trim())
-    return request.subject.trim().slice(0, SUBJECT_CHARS);
+  const given = request.subject?.replace(/\s+/g, " ").trim();
+  if (given)
+    return given.slice(0, SUBJECT_CHARS);
   const first = request.text.split(`
 `).find((l) => l.trim()) ?? "";
   return first.length > SUBJECT_CHARS - 3 ? `${first.slice(0, SUBJECT_CHARS - 3)}...` : first;
@@ -3577,7 +3277,7 @@ function openIn(userDir, workspace, project) {
 function placeBody(dir, id, text) {
   if (Buffer.byteLength(text, "utf8") <= INLINE_BODY_LIMIT)
     return { body: text };
-  const file = join21(dir, `${id}.md`);
+  const file = join20(dir, `${id}.md`);
   writeText(file, text);
   return { body: `${text.slice(0, PREVIEW_CHARS)}...`, bodyFile: file };
 }
@@ -3587,7 +3287,7 @@ function party(self, item) {
 function attachFile(root, text, filePath) {
   if (!filePath)
     return { text };
-  const abs = isAbsolute3(filePath) ? filePath : resolve2(root, filePath);
+  const abs = isAbsolute2(filePath) ? filePath : resolve2(root, filePath);
   const content = readText(abs);
   if (content === null)
     return { refused: `no file at ${abs}` };
@@ -3669,7 +3369,7 @@ function send(ctx, request, work) {
       if (CRITICS.has(request.agent)) {
         const proposals = itemId ? `.crew/work/${itemId}/conclave/proposals.md` : null;
         const given = request.filePath ? canonical(resolve2(ctx.paths.root, request.filePath)) : null;
-        if (!proposals || !given || given !== canonical(join21(ctx.paths.root, proposals)) || request.text.trim())
+        if (!proposals || !given || given !== canonical(join20(ctx.paths.root, proposals)) || request.text.trim())
           return refuse(`a message to ${request.agent} carries ${proposals ?? ".crew/work/<id>/conclave/proposals.md"} (--file) and nothing else`, to);
       }
     } else if (TASK_AGENT.test(request.agent)) {
@@ -3910,70 +3610,85 @@ function reply(ctx, id, text, options) {
     return {
       refused: `${replyMessage.id} was delivered, but ${id} could not be marked answered: its mailbox changed while it was being written`
     };
-  for (const item of [replyMessage.to.item, replyMessage.from.item])
-    if (item)
-      recordInItem(ctx.paths, item, replyMessage);
+  withMailLock(ownDir, () => {
+    for (const item of [replyMessage.to.item, replyMessage.from.item])
+      if (item)
+        recordInItem(ctx.paths, item, replyMessage);
+  });
   return { reply: replyMessage, original: answered };
 }
 function syncMail(ctx, paths) {
   const own = mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project);
   const registry = loadRegistry(ctx.paths.userDir);
-  let updated = 0;
-  withMailLock(own.dir, () => {
+  return withMailLock(own.dir, () => {
+    let updated = 0;
     const { box: outbox, tampered } = readBox(own.dir, "outbox");
-    if (tampered)
-      return;
-    for (const sent of outbox.messages) {
-      if (sent.status === "refused")
-        continue;
-      const entry = projectEntry(registry, sent.to.workspace, sent.to.project);
-      const theirsDir = entry ? mailbox(ctx.paths.userDir, entry.workspace, entry.name).dir : own.dir;
-      const inbox2 = readBox(theirsDir, "inbox");
-      if (inbox2.tampered)
-        continue;
-      const theirs = inbox2.box.messages.find((m) => m.id === sent.id);
-      if (theirs && JSON.stringify(theirs) !== JSON.stringify(sent)) {
-        Object.assign(sent, theirs);
-        updated += 1;
-        if (sent.from.item)
-          recordInItem(paths, sent.from.item, sent);
+    if (!tampered) {
+      for (const sent of outbox.messages) {
+        if (sent.status === "refused")
+          continue;
+        const entry = projectEntry(registry, sent.to.workspace, sent.to.project);
+        const theirsDir = entry ? mailbox(ctx.paths.userDir, entry.workspace, entry.name).dir : own.dir;
+        const inbox2 = readBox(theirsDir, "inbox");
+        if (inbox2.tampered)
+          continue;
+        const theirs = inbox2.box.messages.find((m) => m.id === sent.id);
+        if (theirs && JSON.stringify(theirs) !== JSON.stringify(sent)) {
+          Object.assign(sent, theirs);
+          updated += 1;
+          if (sent.from.item)
+            recordInItem(paths, sent.from.item, sent);
+        }
       }
+      if (updated)
+        writeBox(own.dir, "outbox", outbox);
     }
-    if (updated)
-      writeBox(own.dir, "outbox", outbox);
+    const inbox = ownInbox(ctx);
+    if (inbox.tampered)
+      return { newMail: [], newReplies: [], updated, tampered: true };
+    const marker = join20(own.dir, `synced-${ctx.self.agent}.json`);
+    const seen = new Set(readJson(marker) ?? []);
+    const newMail = [];
+    for (const m of inbox.messages) {
+      if (m.to.item)
+        recordInItem(paths, m.to.item, m);
+      if (!seen.has(m.id))
+        newMail.push(m);
+      seen.add(m.id);
+    }
+    writeJson(marker, [...seen]);
+    return {
+      newMail,
+      newReplies: newMail.filter((m) => m.replyTo !== null),
+      updated,
+      tampered: false
+    };
   });
-  const inbox = ownInbox(ctx);
-  if (inbox.tampered)
-    return { newMail: [], newReplies: [], updated, tampered: true };
-  const marker = join21(own.dir, `synced-${ctx.self.agent}.json`);
-  const seen = new Set(readJson(marker) ?? []);
-  const newMail = [];
-  for (const m of inbox.messages) {
-    if (m.to.item)
-      recordInItem(paths, m.to.item, m);
-    if (!seen.has(m.id))
-      newMail.push(m);
-    seen.add(m.id);
-  }
-  writeJson(marker, [...seen]);
+}
+function markNoticed(ctx, id) {
+  updateEverywhere(ctx, id, (m) => ({ ...m, noticedAt: nowIso() }));
+}
+function emptyInboxSummary() {
   return {
-    newMail,
-    newReplies: newMail.filter((m) => m.replyTo !== null),
-    updated,
-    tampered: false
+    messages: [],
+    unread: 0,
+    answered: 0,
+    waiting: 0,
+    blockers: [],
+    tampered: false,
+    line: null
   };
 }
 function inboxSummary(ctx) {
   const { messages, tampered } = ownInbox(ctx);
-  const empty = { unread: 0, answered: 0, waiting: 0, blockers: [] };
   if (tampered)
-    return { ...empty, tampered, line: tamperedBox(ctx.self.project, "inbox") };
+    return { ...emptyInboxSummary(), tampered, line: tamperedBox(ctx.self.project, "inbox") };
   const unread = messages.filter((m) => m.status === "sent" && !m.replyTo);
   const answered = messages.filter((m) => m.replyTo && m.status === "sent");
   const waiting = messages.filter((m) => m.status === "waiting-for-person");
   const blockers = unread.filter((m) => m.type === "blocker");
   if (!messages.length)
-    return { ...empty, tampered, line: null };
+    return emptyInboxSummary();
   const byType = new Map;
   for (const m of unread)
     byType.set(m.type, (byType.get(m.type) ?? 0) + 1);
@@ -3987,6 +3702,7 @@ function inboxSummary(ctx) {
     parts.push(`${waiting.length} waiting for a person`);
   const where = ctx.self.workspace ?? "alone";
   return {
+    messages,
     unread: unread.length,
     answered: answered.length,
     waiting: waiting.length,
@@ -4000,8 +3716,902 @@ function openSessions(ctx) {
   return tampered ? [] : box.messages.filter((m) => m.opened && !m.opened.endedAt);
 }
 
+// packages/engine/src/profile.ts
+import { join as join21 } from "node:path";
+function profilePath(paths) {
+  return join21(paths.crewDir, "profile.json");
+}
+function loadProfile(paths) {
+  const read = readProtectedJson(paths, profilePath(paths));
+  return { profile: read.data, tampered: read.tampered };
+}
+function saveProfile(paths, profile) {
+  writeProtectedJson(paths, profilePath(paths), profile);
+}
+function refreshProfile(paths, current, tampered = false) {
+  if (tampered)
+    return { profile: current, changed: [] };
+  const next = detectProfile(paths.root, current);
+  const changed = profileChanges(current, next);
+  if (changed.length === 0)
+    return { profile: current, changed };
+  saveProfile(paths, next);
+  return { profile: next, changed };
+}
+function ensureProfile(paths) {
+  const existing = loadProfile(paths);
+  if (existing.profile)
+    return { profile: existing.profile, tampered: existing.tampered };
+  const profile = detectProfile(paths.root);
+  if (existing.tampered)
+    return { profile, tampered: true };
+  saveProfile(paths, profile);
+  return { profile, tampered: false };
+}
+
+// packages/engine/src/hooks/context.ts
+function refreshMail(ctx) {
+  try {
+    registerProject(ctx.mail, ctx.sessionId, { minIntervalMs: 2 * 60 * 1000 });
+    return { newMail: syncMail(ctx.mail, ctx.paths).newMail, failed: null };
+  } catch (error) {
+    return { newMail: [], failed: error.message };
+  }
+}
+function mailQuietly(read, fallback) {
+  try {
+    return read();
+  } catch {
+    return fallback;
+  }
+}
+function buildContext(payload, env = process.env) {
+  const paths = resolvePaths(payload.cwd ?? process.cwd(), env);
+  if (!paths)
+    return null;
+  const profile = ensureProfile(paths);
+  const policy = loadPolicy(paths);
+  return {
+    paths,
+    sessionId: payload.session_id ?? "default",
+    profile: profile.profile,
+    policy: policy.policy,
+    tampered: profile.tampered || policy.tampered,
+    headless: env.CLAUDE_CODE_SESSION_ATTENDED === "0",
+    mail: mailContext(paths, policy.policy, env),
+    openedBy: env.WIZARDINGCODE_CREW_MAIL_ID?.trim() || null,
+    openedBranch: env.WIZARDINGCODE_CREW_MAIL_BRANCH?.trim() || null
+  };
+}
+
+// packages/engine/src/hooks/notices.ts
+function leaveNotice(ctx, text) {
+  try {
+    updateSession(ctx.paths, ctx.sessionId, (session) => {
+      session.notices = [...session.notices ?? [], text];
+    });
+  } catch {}
+}
+function takeNotices(session) {
+  const notices = session.notices ?? [];
+  session.notices = [];
+  return notices;
+}
+
+// packages/engine/src/hooks/post-tool-use.ts
+function onPostToolUse(ctx, payload = {}) {
+  if (payload.agent_id)
+    return {};
+  if (!sessionState(loadState(ctx.paths), ctx.sessionId).notices?.length)
+    return {};
+  const notices = updateSession(ctx.paths, ctx.sessionId, takeNotices);
+  if (!notices.length)
+    return {};
+  return {
+    hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: notices.join(" ") }
+  };
+}
+
+// packages/engine/src/hooks/pre-tool-use.ts
+import { isAbsolute as isAbsolute3, join as join22, relative as relative5 } from "node:path";
+
+// packages/engine/src/hooks/shell.ts
+function simpleCommands(command) {
+  const pieces = [];
+  for (const line of command.replace(/\\\r?\n/g, " ").split(/\r?\n/)) {
+    let piece = "";
+    let quote = null;
+    for (let i = 0;i < line.length; i++) {
+      const ch = line.charAt(i);
+      if (quote !== null) {
+        piece += ch;
+        if (ch === "\\" && quote === '"' && i + 1 < line.length)
+          piece += line.charAt(++i);
+        else if (ch === quote)
+          quote = null;
+      } else if (ch === "\\" && i + 1 < line.length) {
+        piece += ch + line.charAt(++i);
+      } else if (ch === '"' || ch === "'") {
+        quote = ch;
+        piece += ch;
+      } else if (ch === ";" || (ch === "|" || ch === "&") && !isRedirectPart(line, i)) {
+        pieces.push(piece);
+        piece = "";
+      } else {
+        piece += ch;
+      }
+    }
+    pieces.push(piece);
+  }
+  return pieces.map((piece) => piece.trim()).filter((piece) => piece !== "");
+}
+function isRedirectPart(line, i) {
+  const before = line.charAt(i - 1);
+  return before === ">" || before === "<" || line.charAt(i) === "&" && line.charAt(i + 1) === ">";
+}
+
+// packages/engine/src/hooks/pre-tool-use.ts
+var WRITE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
+var SHELLS = String.raw`(?:sh|bash|zsh|dash|ksh|fish)`;
+var RUNNER_NO_SHELL = String.raw`(?:[A-Za-z_][A-Za-z0-9_]*=\S*|-\S*|node|bun|bunx|npx|eval|exec|env|time|nohup|xargs|sudo|command|trap)`;
+var RUNNER = String.raw`(?:${RUNNER_NO_SHELL}|${SHELLS})`;
+var OPTS = String.raw`(?:--[\w-]+(?:[= ]\S+)?\s+)*`;
+var USER_ONLY = new RegExp(String.raw`^[\s({]*(?:${RUNNER}\s+)*(?:\S*/)?crew(?:\.mjs)?\s+${OPTS}(?:skip|approve|accept|decide|objection\b[^;&|]*\bwaive\b|profile\s+${OPTS}(?:confirm|set)|policy\s+${OPTS}(?:accept|set))\b`);
+var POLICY_COMMAND = new RegExp(String.raw`^[\s({]*(?:${RUNNER}\s+)*(?:\S*/)?crew(?:\.mjs)?\s+${OPTS}(?:policy\b|accept\s+${OPTS}policy\b)`);
+var ENGINE_FILES = /\.crew\/(?:profile\.json|policy\.json|\.gitignore|local\b|work\/[^\s/]+\/(?:work\.json|evidence\.json|objections\.json|mail\.json|report\.md|logs\b))|\.wizardingcode\/crew\b/;
+var WRITE_SHAPE = /(?:^|[\s;&|("'])(?:rm|mv|cp|tee|truncate|chmod|touch|dd|install)\b|sed\s+-i|>{1,2}\|?\s*["']?\S*(?:\.crew\/|\.wizardingcode\/crew\b)/;
+var OPAQUE_REDIRECT = />{1,2}\|?\s*["']?[$`]/;
+var PROMPTLESS_MODES = new Set(["bypassPermissions", "dontAsk"]);
+var MODE_FLAG = /--mode(?:=|\s+)(\S+)/;
+var VALIDATOR_FLAG = /--validator(?:=|\s+)\S+/;
+var HELP_FLAG = /(?:^|\s)(?:--help|-h)(?=\s|$)/;
+var BIN = String.raw`^(?:\S*/)?`;
+var verbEntry = (re, what) => ({
+  re: new RegExp(`${BIN}${re}`),
+  what
+});
+var EXPANSION_CHARS = String.raw`$\x60`;
+var PATTERN_CHARS = String.raw`{[(*?`;
+var UNREADABLE_WORD = String.raw`\S*[${EXPANSION_CHARS}${PATTERN_CHARS}]`;
+var GIT_CMD = String.raw`${BIN}git\s+`;
+var GIT_OPTS = String.raw`(?:-\S+(?:\s+\S+)?\s+)`;
+var GIT = `${GIT_CMD}${GIT_OPTS}*`;
+var SETTING = String.raw`(?:alias\.|push\.followTags|remote\.[^\s=]+\.(?:push|mirror)|url\.[^\s=]+\.(?:push)?insteadOf)`;
+var GIT_CONFIG_ENV = /(?:^|\s)GIT_CONFIG_(?:COUNT|KEY_\d+|VALUE_\d+|PARAMETERS)=/;
+var OPENED_VERBS = [
+  { re: new RegExp(`${GIT_CMD}${GIT_OPTS}*?-C\\s`), what: "git -C" },
+  { re: new RegExp(`${GIT_CMD}${GIT_OPTS}*?--git-dir(?:=|\\s)`), what: "git --git-dir" },
+  { re: new RegExp(`${GIT_CMD}${GIT_OPTS}*?--work-tree(?:=|\\s)`), what: "git --work-tree" },
+  { re: new RegExp(`${GIT}merge(?![\\w-])`), what: "git merge" },
+  { re: new RegExp(`${GIT}pull\\b`), what: "git pull" },
+  {
+    re: new RegExp(`${GIT_CMD}${GIT_OPTS}*?${UNREADABLE_WORD}`),
+    what: "git with an expansion or a pattern as its verb"
+  },
+  verbEntry(String.raw`(?:gh|npm|docker|netlify|fly|kubectl|terraform|aws|gcloud|serverless|sam|cap|crew(?:\.mjs)?)\s+(?:-\S+\s+)*${UNREADABLE_WORD}`, "a verb that is an expansion or a pattern"),
+  { re: new RegExp(`${GIT_CMD}${GIT_OPTS}*?-c\\s*${SETTING}`, "i"), what: "git -c" },
+  { re: new RegExp(`${GIT_CMD}${GIT_OPTS}*?--config-env\\b`), what: "git --config-env" },
+  { re: new RegExp(`${GIT}config\\b.*\\b${SETTING}`, "i"), what: "git config" },
+  { re: new RegExp(`${GIT}subtree\\s+push\\b`), what: "git subtree push" },
+  { re: new RegExp(`${GIT}send-pack\\b`), what: "git send-pack" },
+  { re: new RegExp(`${GIT}http-push\\b`), what: "git http-push" },
+  { re: new RegExp(`${GIT}svn\\s+dcommit\\b`), what: "git svn dcommit" },
+  { re: new RegExp(`${GIT}p4\\s+submit\\b`), what: "git p4 submit" },
+  verbEntry(String.raw`gh\s+release\b`, "gh release"),
+  verbEntry(String.raw`gh\s+pr\s+merge\b`, "gh pr merge"),
+  verbEntry(String.raw`gh\s+repo\s+sync\b`, "gh repo sync"),
+  verbEntry(String.raw`gh\s+alias\s+(?:set|import|delete)\b`, "gh alias"),
+  verbEntry(String.raw`gh\s+api\s(?:.*\s)?(?:(?:-X\s*|--method(?:=|\s+))(?!GET\b)\S|-[fF]|--(?:field|raw-field|input)(?:=|\s))`, "gh api write"),
+  verbEntry(String.raw`gh\s+workflow\s+run\b`, "gh workflow run"),
+  verbEntry(String.raw`npm\s+publish\b`, "npm publish"),
+  verbEntry(String.raw`docker\s+push\b`, "docker push"),
+  verbEntry(String.raw`vercel\b`, "vercel"),
+  verbEntry(String.raw`netlify\s+deploy\b`, "netlify deploy"),
+  verbEntry(String.raw`fly\s+deploy\b`, "fly deploy"),
+  verbEntry(String.raw`kubectl\s+(?:apply|rollout)\b`, "kubectl"),
+  verbEntry(String.raw`terraform\s+apply\b`, "terraform apply"),
+  verbEntry(String.raw`aws\s+deploy\b`, "aws deploy"),
+  verbEntry(String.raw`gcloud\s+.*\bdeploy\b`, "gcloud deploy"),
+  verbEntry(String.raw`heroku\b`, "heroku"),
+  verbEntry(String.raw`ansible-playbook\b`, "ansible-playbook"),
+  verbEntry(String.raw`cap\s+\S+\s+deploy\b`, "cap deploy"),
+  verbEntry(String.raw`serverless\s+deploy\b`, "serverless deploy"),
+  verbEntry(String.raw`sam\s+deploy\b`, "sam deploy"),
+  verbEntry(String.raw`crew(?:\.mjs)?\s+${OPTS}task\s+\S+\s+${OPTS}merge\b`, "crew task merge")
+];
+var PUSH = new RegExp(`${GIT}push\\b(.*)$`);
+var PUSH_WIDE = [
+  "--all",
+  "--mirror",
+  "--delete",
+  "--prune",
+  "--branches",
+  "--tags",
+  "--follow-tags",
+  "--recurse-submodules"
+];
+function widensPush(word) {
+  if (!word.startsWith("--"))
+    return /^-[A-Za-z]*d/.test(word);
+  const [name, value] = word.split("=", 2);
+  if (!name || name.length <= 2 || !PUSH_WIDE.some((o) => o.startsWith(name)))
+    return false;
+  return !("--recurse-submodules".startsWith(name) && value === "no");
+}
+var SHELL_WORDS = String.raw`(?:if|then|else|elif|do|while|until|!|nice(?:\s+-n\s*\S+)?|timeout(?:\s+-[sk]\s+\S+|\s+-\S+)*\s+\S+|stdbuf(?:\s+-\S+)*|flock(?:\s+-w\s+\S+|\s+-[a-zA-Z]+)*\s+\S+|sudo(?:\s+-[ugpCh]\s+\S+|\s+-\S+)*|env(?:\s+-[uCS]\s+\S+|\s+-\S+|\s+\w+=\S*)*|exec(?:\s+-a\s+\S+|\s+-\S+)*|xargs(?:\s+-[nILPdEs]\s*\S+|\s+-\S+)*|doas|caffeinate(?:\s+-\S+)*|ionice(?:\s+-\S+(?:\s+\S+)?)*|coproc(?:\s+\w+(?=\s*\{))?|noglob|nocorrect)`;
+var SHELL_LEAD = String.raw`(?:\S+\s*\(\s*\)\s*\{|function\s+\S+\s*\{|case\s+\S+\s+in(?:\s+[^\s()$\x60]+\))?|[^\s()$\x60]+\))`;
+var LEAD_CHARS = String.raw`(?:[\s(|&;]|\{(?=\s))*`;
+var LEADING = new RegExp(String.raw`^${LEAD_CHARS}(?:(?:${SHELL_LEAD}|${SHELL_WORDS}|${RUNNER})\s+)*`);
+var BEFORE_INTERPRETER = new RegExp(String.raw`^${LEAD_CHARS}(?:(?:${SHELL_LEAD}|${SHELL_WORDS}|${RUNNER_NO_SHELL})\s+)*`);
+var INTERPRETER_STDIN = new RegExp(String.raw`^(?:\S*/)?${SHELLS}(?:\s+-{1,2}[A-Za-z]*)*$`);
+var REDIRECT = /(?:^|\s)(?:\d+|&)?[<>]{1,2}(?![<>(])(?:[&|]?(?![$<>]\()[^\s()\x60;&|]+|\s+(?![$<>]\()[^\s()\x60;&|]+)/g;
+var HERE_STRING = /<<<\s*/g;
+function stripRedirects(text) {
+  return text.replace(REDIRECT, " ");
+}
+var SUBSTITUTION = /\$\(\(([^()]*)\)\)|[$<>]\(([^()]*)\)|`([^`]*)`/g;
+var OPENER = /[$<>]\(|`/;
+var UNREADABLE = "a substitution the guard cannot read";
+var CASE_ARM = /(?:\bcase\s+\S+\s+in|;(?:;&?|&))\s*\(?(?!esac\b)[^\s()$\x60|]+(?:\|[^\s()$\x60|]+)*\)/g;
+function withoutCaseArms(text) {
+  return text.replace(CASE_ARM, " ");
+}
+function unbalanced(text) {
+  let depth = 0;
+  for (const ch of text) {
+    if (ch === "(")
+      depth += 1;
+    else if (ch === ")") {
+      depth -= 1;
+      if (depth < 0)
+        return true;
+    }
+  }
+  return depth !== 0 || (text.match(/`/g)?.length ?? 0) % 2 === 1;
+}
+var LEADING_SUBSTITUTION = /^(?:\$\([^()]*\)|`[^`]*`)\S*/;
+var VAR_ROOT_PATH = new RegExp(String.raw`^(?:\$\([^()]*\)|\x60[^\x60]*\x60|\$\{[^}]*\}|\$\w+)(?:/[^\s${EXPANSION_CHARS}${PATTERN_CHARS}}\])]+)+$`);
+var EXPANSION = new RegExp(`[${EXPANSION_CHARS}]`);
+var PATTERN = new RegExp(`[${PATTERN_CHARS}]`);
+function commandWordDenial(head) {
+  const word = (LEADING_SUBSTITUTION.exec(head) ?? /^\S*/.exec(head))?.[0] ?? "";
+  if (!word || VAR_ROOT_PATH.test(word) || /^\[\[?$/.test(word))
+    return null;
+  if (EXPANSION.test(word))
+    return "an expansion in the command position";
+  if (PATTERN.test(word))
+    return "a pattern in the command position";
+  return null;
+}
+var REMOTE_PATH = new RegExp(String.raw`[:/@${EXPANSION_CHARS}${PATTERN_CHARS}}\]]|^\.\.?$`);
+function normalizeTool(command) {
+  return command.replace(/^\S+/, (word) => word.toLowerCase()).replace(/^(\S*\/)?git-(?=[a-z])/, "$1git ");
+}
+function unwrapSubstitutions(text) {
+  const inner = [];
+  let rest = text;
+  for (;; ) {
+    const found = [];
+    const next = rest.replace(SUBSTITUTION, (_, a, b, c) => {
+      found.push(a ?? b ?? c ?? "");
+      return " ";
+    });
+    if (!found.length)
+      return { inner, rest };
+    inner.push(...found);
+    rest = next;
+  }
+}
+function behindTheShell(text, lead = LEADING) {
+  return text.replace(lead, "").replace(/^[\s|&;]+/, "").replace(lead, "").trim();
+}
+function judgeCommand(command, branch) {
+  for (const { re, what } of OPENED_VERBS)
+    if (re.test(command))
+      return what;
+  const push = PUSH.exec(command);
+  if (!push)
+    return null;
+  if (!branch)
+    return "git push";
+  const words = (push[1] ?? "").trim().split(/\s+/).filter(Boolean);
+  if (words.some(widensPush))
+    return "git push";
+  const [remote, ...refspecs] = words.filter((w) => !w.startsWith("-"));
+  if (!remote || REMOTE_PATH.test(remote))
+    return "git push";
+  const own = new Set([branch, `HEAD:${branch}`, `${branch}:${branch}`]);
+  if (refspecs.length === 0 || refspecs.some((r) => !own.has(r)))
+    return "git push";
+  return null;
+}
+function openedSessionDenial(cleaned, branch) {
+  const bare = withoutCaseArms(cleaned.replace(HERE_STRING, " "));
+  if (OPENER.test(bare) && unbalanced(bare))
+    return UNREADABLE;
+  const text = stripRedirects(bare);
+  if (GIT_CONFIG_ENV.test(text))
+    return "GIT_CONFIG_* in the environment";
+  const unreadableWord = commandWordDenial(behindTheShell(text));
+  if (unreadableWord)
+    return unreadableWord;
+  const { inner, rest } = unwrapSubstitutions(text);
+  if (OPENER.test(rest))
+    return UNREADABLE;
+  for (const piece of inner) {
+    const denied = openedSessionDenial(piece, branch);
+    if (denied)
+      return denied;
+  }
+  const head = behindTheShell(rest);
+  const parts = simpleCommands(head);
+  if (parts.length > 1) {
+    for (const part of parts) {
+      const denied = openedSessionDenial(part, branch);
+      if (denied)
+        return denied;
+    }
+    return null;
+  }
+  if (INTERPRETER_STDIN.test(normalizeTool(behindTheShell(rest, BEFORE_INTERPRETER))))
+    return "an interpreter reading its script from its input";
+  return judgeCommand(normalizeTool(head), branch);
+}
+function userOnlyDecision(cleaned, permissionMode, headless, policy) {
+  const flagged = MODE_FLAG.exec(cleaned)?.[1];
+  const mode = permissionMode ?? "default";
+  if (headless || PROMPTLESS_MODES.has(mode)) {
+    if (flagged === mode)
+      return null;
+    const where = headless ? `a headless session in ${mode} mode` : `${mode} mode`;
+    if (flagged === undefined) {
+      return [
+        "deny",
+        `Crew: no person is watching this session (${where}) and this command records a decision that only the user can take. Run it again with --mode ${mode}, so the record says the agent decided and in which mode.`
+      ];
+    }
+    return [
+      "deny",
+      `Crew: this session is ${where}, not ${flagged}; run the command with --mode ${mode}`
+    ];
+  }
+  if (flagged !== undefined) {
+    return [
+      "deny",
+      `Crew: a person is present (${mode} mode); run the command without --mode so they are asked`
+    ];
+  }
+  if (VALIDATOR_FLAG.test(cleaned))
+    return null;
+  if (policy.attendedDecisions === "relay" && !POLICY_COMMAND.test(cleaned))
+    return null;
+  return ["ask", "Crew: this command records a decision that only the user can take"];
+}
+function answer(permissionDecision, reason) {
+  return {
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision,
+      permissionDecisionReason: reason
+    }
+  };
+}
+function pathFromInput(input) {
+  for (const key of ["file_path", "notebook_path", "path"]) {
+    const value = input[key];
+    if (typeof value === "string" && value)
+      return value;
+  }
+  return null;
+}
+function onPreToolUse(ctx, payload) {
+  const tool = payload.tool_name ?? "";
+  const input = payload.tool_input ?? {};
+  if (WRITE_TOOLS.has(tool)) {
+    const filePath = pathFromInput(input);
+    if (!filePath)
+      return {};
+    const abs = canonical(isAbsolute3(filePath) ? filePath : join22(ctx.paths.root, filePath));
+    if (isProtectedPath(ctx.paths, abs)) {
+      return answer("deny", `Crew: ${filePath} is maintained by the engine and is changed through the crew command`);
+    }
+    const rel2 = relative5(ctx.paths.root, abs).replace(/\\/g, "/");
+    if (rel2 === "" || rel2.startsWith("..") || !isWatched(rel2, ctx.profile))
+      return {};
+    const active = activeWork(ctx.paths);
+    const work = active?.work;
+    if (work && work.route !== "fast" && isBeforeBuild(work)) {
+      return answer("deny", `Crew: work ${work.id} is in phase ${work.phase} on the ${work.route} route; source files change in the build phase (crew phase ${work.id} next)`);
+    }
+    return {};
+  }
+  if (tool === "Bash") {
+    const command = typeof input.command === "string" ? input.command : "";
+    if (ctx.openedBy) {
+      const denied = openedSessionDenial(command.replace(/["'\\]/g, ""), ctx.openedBranch);
+      if (denied)
+        return answer("deny", `Crew: this session was opened by mail (${ctx.openedBy}) and never merges, pushes to another branch, releases or deploys: ${denied} is denied; it ends with crew mail reply ${ctx.openedBy} --branch ${ctx.openedBranch ?? "<branch>"} --item <child id>`);
+    }
+    let asked = null;
+    for (const piece of simpleCommands(command)) {
+      const cleaned = piece.replace(/["'\\]/g, "");
+      if (USER_ONLY.test(cleaned) && !HELP_FLAG.test(cleaned)) {
+        const decided = userOnlyDecision(cleaned, payload.permission_mode, ctx.headless, ctx.policy);
+        if (decided?.[0] === "deny")
+          return answer(...decided);
+        asked ??= decided;
+      }
+      if (ENGINE_FILES.test(piece) && WRITE_SHAPE.test(piece) || OPAQUE_REDIRECT.test(piece) && ENGINE_FILES.test(command)) {
+        return answer("deny", "Crew: files under .crew/ and ~/.wizardingcode/crew that the engine owns are written only by the crew command");
+      }
+    }
+    if (asked)
+      return answer(...asked);
+  }
+  return {};
+}
+
+// packages/engine/src/hooks/prompt.ts
+function statusLine(ctx, work, tampered = false) {
+  const result = assess(ctx.paths, work, ctx.profile, ctx.policy, ctx.tampered || tampered);
+  const state = result.verdict === "proven" ? "proven" : `not proven (${result.unproven[0] ?? "gates have not run"})`;
+  return `Crew: work ${work.id} "${work.title}", phase ${work.phase}, route ${work.route}, ${state}${waitingText(work)}.`;
+}
+function onPrompt(ctx) {
+  const notices = updateSession(ctx.paths, ctx.sessionId, (session) => {
+    session.stopBlocks = 0;
+    return takeNotices(session);
+  });
+  const mail = refreshMail(ctx);
+  const active = activeWork(ctx.paths);
+  const lines = [];
+  if (active?.work)
+    lines.push(statusLine(ctx, active.work, active.tampered));
+  lines.push(...notices);
+  if (mail.failed)
+    lines.push(`Mail is off for this prompt: ${mail.failed}.`);
+  else if (mail.newMail.length)
+    lines.push(`Mail: ${mail.newMail.length} new: ${mail.newMail.map((m) => `${m.id} ${m.type} from ${m.from.project} ${subjectQuoted(m.subject)}`).join("; ")} (crew mail inbox).`);
+  if (!lines.length)
+    return {};
+  return {
+    hookSpecificOutput: {
+      hookEventName: "UserPromptSubmit",
+      additionalContext: lines.join(" ")
+    }
+  };
+}
+
+// packages/engine/src/hooks/session-start.ts
+function onSessionStart(ctx, payload = {}) {
+  ensureCrewDir(ctx.paths, ctx.policy);
+  const mail = refreshMail(ctx);
+  const former = isFormerWatchDefault(ctx.profile);
+  const moved = former && !ctx.tampered;
+  if (moved) {
+    ctx.profile.watch.exclude = [...DEFAULT_WATCH_EXCLUDE];
+    saveProfile(ctx.paths, ctx.profile);
+  }
+  const refreshed = refreshProfile(ctx.paths, ctx.profile, ctx.tampered);
+  ctx.profile = refreshed.profile;
+  const active = activeWork(ctx.paths);
+  const continues = (payload.source === "resume" || payload.source === "compact") && loadState(ctx.paths).sessions[ctx.sessionId] !== undefined;
+  if (!continues) {
+    const work = active?.work ?? null;
+    const base = work;
+    const inherited = work !== null && changedWatchedPaths(ctx.paths.root, ctx.profile, base).length > 0 && assess(ctx.paths, work, ctx.profile, ctx.policy, ctx.tampered || !!active?.tampered).verdict !== "proven";
+    const baseline = inherited ? null : computeFingerprint(ctx.paths.root, ctx.profile, base);
+    updateSession(ctx.paths, ctx.sessionId, (session) => {
+      session.baseline = baseline;
+      session.stopBlocks = 0;
+    });
+  }
+  const lines = [
+    "WizardingCode Developer Crew is active in this repository. Work is proven by the `crew` command and the crew skill, and a turn cannot end while watched source files have unproven changes.",
+    ctx.policy.attendedDecisions === "relay" ? "You run every crew command; the user never types one: a decision that is theirs (crew approve, skip, decide, accept, profile confirm) is relayed by you from the conversation under this repository's policy (attendedDecisions: relay), so run the command once the user has said yes, with no prompt; the record says relayed by the agent." : "You run every crew command; the user never types one: a decision that is theirs (crew approve, skip, decide, accept, profile confirm) is signed by the permission prompt your command raises, in auto mode too."
+  ];
+  if (active?.work)
+    lines.push(statusLine(ctx, active.work, active.tampered).replace(/^Crew: work/, "Work in progress:"));
+  else
+    lines.push(`No work item is active. A code change starts by answering the crew skill's nine typed questions, then crew start "<request>" --answers '<json>'.`);
+  if (refreshed.changed.length)
+    lines.push(`profile refreshed: ${refreshed.changed.join("; ")}.`);
+  const missing = missingTestCommands(ctx.profile);
+  if (missing.length) {
+    lines.push(`No test command is known for: ${missing.map((m) => m.target).join(", ")}. One is proposed with \`crew profile set test "<cmd>"\`.`);
+  }
+  if (moved) {
+    lines.push(`The profile's watch list predated this release and now follows the current default (${DEFAULT_WATCH_EXCLUDE.join(", ")}).`);
+  } else if (former) {
+    lines.push("The profile predates this release: run `crew detect --refresh` once to pick up the current defaults.");
+  }
+  const summary = mail.failed ? emptyInboxSummary() : mailQuietly(() => inboxSummary(ctx.mail), emptyInboxSummary());
+  const blockers = summary.blockers.map((b) => `Blocker ${b.id} from ${b.from.project}: ${subjectQuoted(b.subject)} (crew mail read ${b.id}).`);
+  if (mail.failed)
+    lines.push(`Mail is off for this session start: ${mail.failed}.`);
+  else if (summary.tampered && summary.line)
+    lines.push(`${summary.line}.`);
+  else if (summary.line)
+    lines.push(`${summary.line}. crew mail inbox lists it; a question is answered from the code with crew mail reply, a change request waits for the user's yes and starts an item with --origin <id>, a notice is said.`);
+  if (ctx.openedBy) {
+    const opener = summary.messages.find((m) => m.id === ctx.openedBy);
+    const branch = ctx.openedBranch ? ` (branch ${ctx.openedBranch})` : " (the opener pinned no branch: every push is denied)";
+    lines.push(`This session was opened by mail ${ctx.openedBy}${opener ? ` from ${opener.from.project} (${opener.type})` : ""}: read it with crew mail read ${ctx.openedBy}. A question: answer from the code and crew mail reply ${ctx.openedBy} "<text>". A change request: run the method on this branch as a work item started with --origin ${ctx.openedBy}${branch}, commit on it, and end with crew mail reply ${ctx.openedBy} --branch <branch> --item <child id>. Never merge, push to another branch or deploy; a full-route spec waits for a person (crew await <id> user).`);
+  }
+  lines.unshift(...blockers);
+  return {
+    hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: lines.join(" ") }
+  };
+}
+
+// packages/engine/src/hooks/stop.ts
+var MAX_STOP_BLOCKS = 3;
+var TYPED_CREW = /(?:^|[^\w!])!\s?(?:(?:node|bun)\s+)?(?:\S*\/)?crew(?:\.mjs)?\s+[a-z]/m;
+function asksUserToTypeCrew(message) {
+  return message !== undefined && TYPED_CREW.test(message);
+}
+function onStop(ctx, payload = {}) {
+  const session = sessionState(loadState(ctx.paths), ctx.sessionId);
+  const done = (response, withNotices = false) => updateSession(ctx.paths, ctx.sessionId, (fresh) => {
+    fresh.stopBlocks = session.stopBlocks;
+    if (!withNotices)
+      return response;
+    const notices = takeNotices(fresh).map((n) => ` ${n}`).join("");
+    return { ...response, reason: `${response.reason}${notices}` };
+  });
+  if (asksUserToTypeCrew(payload.last_assistant_message) && session.stopBlocks < MAX_STOP_BLOCKS) {
+    session.stopBlocks += 1;
+    return done({
+      decision: "block",
+      reason: "Crew: the last message tells the user to type a crew command. The user never types one: you run every crew command, and the permission prompt is the user's signature, in auto mode too (a note saying otherwise predates 0.1.6). Run the command now, without --mode, and tell the user what it recorded."
+    });
+  }
+  const mail = refreshMail(ctx);
+  const mailOff = mail.failed ? `mail is off for this turn: ${mail.failed}` : null;
+  const mailNote = mailOff ? ` (${mailOff})` : "";
+  const active = activeWork(ctx.paths);
+  const work = active?.work ?? null;
+  const clearWait = (pause) => {
+    if (!work || work.awaiting === null || active?.tampered)
+      return;
+    const kind = work.awaiting;
+    work.awaiting = null;
+    delete work.awaitingMessage;
+    if (pause !== undefined)
+      work.pauses = [...work.pauses ?? [], { at: nowIso(), reason: pause, kind }];
+    saveWork(ctx.paths, work);
+  };
+  const release = (response, pause) => {
+    clearWait(pause);
+    return done(response);
+  };
+  const hold = (reason) => {
+    session.stopBlocks += 1;
+    return done({ decision: "block", reason }, true);
+  };
+  if (!mail.failed && session.stopBlocks < MAX_STOP_BLOCKS) {
+    const inbox = mailQuietly(() => inboxSummary(ctx.mail), emptyInboxSummary());
+    if (work && work.awaiting === "mail" && work.awaitingMessage && !active?.tampered) {
+      const landed = inbox.messages.find((m) => m.replyTo === work.awaitingMessage);
+      if (landed) {
+        clearWait();
+        return hold(`Crew: the reply to ${landed.replyTo} has landed (${landed.id} from ${landed.from.project}): read it with crew mail read ${landed.id} and go on; the wait is over.`);
+      }
+    }
+    const blocker = inbox.blockers.find((b) => !b.noticedAt);
+    if (blocker) {
+      mailQuietly(() => markNoticed(ctx.mail, blocker.id), undefined);
+      return hold(`Crew: blocker ${blocker.id} from ${blocker.from.project}: ${subjectQuoted(blocker.subject)}. Read it (crew mail read ${blocker.id}) and say it to the user before anything else.`);
+    }
+  }
+  const current = computeFingerprint(ctx.paths.root, ctx.profile, work);
+  const result = work ? assess(ctx.paths, work, ctx.profile, ctx.policy, ctx.tampered || !!active?.tampered) : null;
+  const proven = result?.verdict === "proven";
+  const changed = session.baseline !== null && current !== UNAVAILABLE ? current !== session.baseline : work !== null && !proven;
+  if (!changed || proven) {
+    session.stopBlocks = 0;
+    return release(mailOff ? { systemMessage: `Crew: ${mailOff}.` } : {});
+  }
+  const missing = result ? result.unproven : ['no work item: start one with crew start "<request>"'];
+  const what = work ? waitingPhrase(work) : null;
+  if (work && what) {
+    session.stopBlocks = 0;
+    const reason = missing[0] ?? "not proven";
+    return release({
+      systemMessage: `Crew: work ${work.id} ends this turn ${what} and is not proven (${reason}). The next turn is held to the Stop rule again.${mailNote}`
+    }, reason);
+  }
+  if (session.stopBlocks >= MAX_STOP_BLOCKS) {
+    return done({
+      systemMessage: `Crew: not proven after ${MAX_STOP_BLOCKS} attempts. ${missing.join("; ")}.${mailNote}`
+    });
+  }
+  session.stopBlocks += 1;
+  const gate = work ? `crew gate run ${work.id}` : 'crew start "<request>"';
+  const wait = work ? ` To end the turn with a question for the user, run crew await ${work.id} user first; while the roles answer, crew await ${work.id} role; while a reply is due, crew await ${work.id} mail <message id>.` : "";
+  const judgement = work && missing.some((m) => m.startsWith("judgement gate")) ? ` A judgement gate is cleared by its roles, not by the gate run: run the planned reviewers and the judge, then crew judgement ${work.id} record --ruling .crew/work/${work.id}/review/ruling.json.` : "";
+  return done({
+    decision: "block",
+    reason: `Crew: watched source files changed and the work is not proven. Missing: ${missing.join("; ")}. Run ${gate}, fix what fails, or ask the user to skip a step with crew skip.${judgement}${wait}${mailNote}`
+  }, true);
+}
+
+// packages/engine/src/hooks/subagent-stop.ts
+import { join as join23 } from "node:path";
+var PLUGIN_PREFIX = "wizardingcode-developer-crew:";
+var BARE_ROLE = /^(judge|researcher|expert|devils-advocate|fault-finder|review-(code-quality|test-quality|security|ui-ux|risk))$/;
+function roleOf(agentType) {
+  if (!agentType?.startsWith(PLUGIN_PREFIX))
+    return null;
+  const name = agentType.slice(PLUGIN_PREFIX.length);
+  return BARE_ROLE.test(name) ? name : null;
+}
+function lines(transcriptPath) {
+  const text = transcriptPath ? readText(transcriptPath) : null;
+  if (text === null)
+    return [];
+  const out = [];
+  for (const raw of text.split(`
+`)) {
+    if (!raw.trim())
+      continue;
+    try {
+      out.push(JSON.parse(raw));
+    } catch {}
+  }
+  return out;
+}
+function roleAnswer(transcriptPath, lastMessage) {
+  let handback = null;
+  for (const line of lines(transcriptPath)) {
+    if (line.type !== "assistant" || !Array.isArray(line.message?.content))
+      continue;
+    for (const part of line.message.content) {
+      if (part.type === "tool_use" && part.name === "SubagentHandback" && typeof part.input?.message === "string")
+        handback = part.input.message;
+    }
+  }
+  return (handback ?? lastMessage ?? "").trim();
+}
+var SPENT = ["input_tokens", "output_tokens", "cache_creation_input_tokens"];
+function roleTokens(transcriptPath) {
+  const perRequest = new Map;
+  let unnamed = 0;
+  for (const line of lines(transcriptPath)) {
+    const usage = line.type === "assistant" ? line.message?.usage : undefined;
+    if (!usage)
+      continue;
+    const key = typeof line.requestId === "string" ? line.requestId : `line-${unnamed++}`;
+    if (perRequest.has(key))
+      continue;
+    let spent = 0;
+    for (const field of SPENT)
+      if (typeof usage[field] === "number")
+        spent += usage[field];
+    perRequest.set(key, spent);
+  }
+  if (!perRequest.size)
+    return { tokens: 0, from: "none" };
+  return { tokens: [...perRequest.values()].reduce((a, b) => a + b, 0), from: "transcript" };
+}
+function unfenced(text) {
+  const fence = /^```(?:json)?\s*\n([\s\S]*?)\n```\s*$/.exec(text.trim());
+  return fence?.[1] ?? text.trim();
+}
+function answerFile(agent, answer2) {
+  if (agent.startsWith("review-"))
+    return `review/${agent.slice("review-".length)}.findings.md`;
+  if (agent === "judge") {
+    const body = unfenced(answer2);
+    try {
+      const parsed = JSON.parse(body);
+      if (typeof parsed === "object" && parsed !== null && Array.isArray(parsed.rulings))
+        return "review/ruling.json";
+    } catch {}
+    const validator = /^# Validator, ([a-z-]+)/.exec(body);
+    return validator ? `conclave/validator-${validator[1]}.md` : "conclave/judge.md";
+  }
+  return `conclave/${agent}.md`;
+}
+function agentName(role, roles) {
+  if (role !== "expert")
+    return role;
+  const experts = new Set(roles.map((r) => r.agent).filter((a) => /^expert-\d+$/.test(a)));
+  return `expert-${experts.size + 1}`;
+}
+function sendByHand(workId, mid, agent, file) {
+  return `crew mail reply ${mid} "<text>" --as ${agent}${file ? ` --file .crew/work/${workId}/${file}` : ""}`;
+}
+function whereSaved(saved) {
+  return saved.file ? `is saved at ${saved.file}` : "is in its transcript";
+}
+function savedAndUnsentPhrases(workId, saved, pending) {
+  return {
+    where: whereSaved(saved),
+    unsent: pending ? `; the reply to ${pending} was not sent: send it with ${sendByHand(workId, pending, saved.agent, saved.file)}.` : "."
+  };
+}
+function onSubagentStop(ctx, payload) {
+  const role = roleOf(payload.agent_type);
+  if (!role)
+    return {};
+  const tell = (text) => {
+    leaveNotice(ctx, text);
+    return { systemMessage: text };
+  };
+  const active = activeWork(ctx.paths);
+  if (!active?.work)
+    return tell(`Crew: ${role} stopped with no active work item: its answer was not recorded.`);
+  const id = active.work.id;
+  const transcriptNote = payload.agent_transcript_path ? ` (${payload.agent_transcript_path})` : "";
+  const nothingSaved = (reason) => tell(`Crew: ${role} stopped but nothing was saved for ${id} (${reason}): save its answer from the transcript${transcriptNote} by hand, or run the role again.`);
+  if (active.tampered)
+    return nothingSaved(tamperedItem(id));
+  const progress = { saved: null, recorded: false, pending: null, reply: null };
+  try {
+    let note = withLock(workDir(ctx.paths, id), () => recordStop(ctx, id, role, payload, transcriptNote, progress), { what: "work folder" });
+    if (progress.pending && progress.reply && progress.saved) {
+      const question = progress.pending;
+      const { agent, file } = progress.saved;
+      const refused = relay(ctx, question, progress.reply, agent);
+      progress.pending = null;
+      if (refused)
+        note = `Crew: ${agent}'s answer to ${question} ${whereSaved(progress.saved)} but the reply was not sent: ${refused}. Once that is cleared, send it with ${sendByHand(id, question, agent, file)}.`;
+    }
+    return note ? tell(note) : {};
+  } catch (error) {
+    const why = error.message;
+    if (!progress.saved)
+      return nothingSaved(why);
+    const { agent } = progress.saved;
+    const { where, unsent } = savedAndUnsentPhrases(id, progress.saved, progress.pending);
+    if (!progress.recorded)
+      return tell(`Crew: ${agent}'s answer ${where} but its end and tokens are not recorded (${why})${unsent}`);
+    return tell(`Crew: ${agent}'s answer ${where} and its end is recorded, but the role wait was not cleared (${why}): crew resume ${id} clears it${unsent}`);
+  }
+}
+function tamperedItem(id) {
+  return `work.json changed outside the engine; crew accept ${id}`;
+}
+function recordStop(ctx, id, role, payload, transcriptNote, progress) {
+  const dir = workDir(ctx.paths, id);
+  const item = loadWork(ctx.paths, id);
+  const work = item.work;
+  if (!work)
+    throw new Error(`work.json of ${id} could not be read`);
+  if (item.tampered)
+    throw new Error(tamperedItem(id));
+  const read = loadEvidence(ctx.paths, id);
+  const evidence = read.evidence;
+  const roles = evidence.roles ?? [];
+  const answer2 = roleAnswer(payload.agent_transcript_path, payload.last_assistant_message);
+  const { tokens, from } = roleTokens(payload.agent_transcript_path);
+  const earlier = payload.agent_id ? roles.find((r) => r.agentId === payload.agent_id) : undefined;
+  const agent = earlier?.agent ?? agentName(role, roles);
+  let saved;
+  let note = null;
+  if (!answer2) {
+    saved = { file: null, agent };
+    note = `Crew: ${agent} stopped with no answer (no hand-back and an empty last message): its end is recorded with no file; an earlier file of this role, if any, is not this round's answer. Run the role again or save its answer from the transcript${transcriptNote}.`;
+  } else if (earlier?.file) {
+    saved = { file: joinEarlierFile(dir, agent, answer2), agent };
+  } else {
+    const file = answerFile(agent, answer2);
+    writeText(join23(dir, file), file.endsWith(".json") ? `${unfenced(answer2)}
+` : `${answer2}
+`);
+    saved = { file, agent };
+  }
+  progress.saved = saved;
+  const pending = earlier && answer2 ? pendingQuestion(ctx, id, agent) : undefined;
+  progress.pending = pending?.id ?? null;
+  if (read.tampered) {
+    const tampered = `evidence.json of ${id} changed outside the engine (crew accept ${id})`;
+    if (!answer2)
+      return `Crew: ${agent} stopped with no answer (no hand-back and an empty last message) and its end is not recorded: ${tampered}. Run the role again or save its answer from the transcript${transcriptNote}.`;
+    const { where, unsent } = savedAndUnsentPhrases(id, saved, pending?.id ?? null);
+    return `Crew: ${agent}'s answer ${where} but its end and tokens are not recorded: ${tampered}${unsent}`;
+  }
+  evidence.roles = [
+    ...roles,
+    {
+      agent: saved.agent,
+      ...payload.agent_id ? { agentId: payload.agent_id } : {},
+      at: nowIso(),
+      tokens,
+      tokensFrom: from,
+      file: saved.file
+    }
+  ];
+  saveEvidence(ctx.paths, id, evidence);
+  progress.recorded = true;
+  if (role === "judge" && work.awaiting === "role") {
+    work.awaiting = null;
+    saveWork(ctx.paths, work);
+  }
+  if (pending)
+    progress.reply = answer2;
+  return note;
+}
+function pendingQuestion(ctx, workId, agent) {
+  return loadItemMail(ctx.paths, workId).box.messages.find((m) => m.relayed && m.to.agent === agent && (m.status === "sent" || m.status === "read") && !m.replyTo);
+}
+function joinEarlierFile(dir, agent, answer2) {
+  if (agent.startsWith("review-")) {
+    const file2 = answerFile(agent, answer2);
+    const current2 = (readText(join23(dir, file2)) ?? "").trimEnd();
+    const heading = `
+## Clarifications`;
+    const body = current2.includes(heading) ? current2 : `${current2}
+${heading}`;
+    writeText(join23(dir, file2), `${body}
+- ${answer2.replace(/\n/g, `
+  `)}
+`);
+    return file2;
+  }
+  const file = `conclave/${agent}-reply.md`;
+  const current = readText(join23(dir, file));
+  writeText(join23(dir, file), current ? `${current.trimEnd()}
+
+${answer2}
+` : `${answer2}
+`);
+  return file;
+}
+function relay(ctx, questionId, answer2, agent) {
+  try {
+    const sent = reply(ctx.mail, questionId, answer2, { as: agent });
+    return "refused" in sent ? sent.refused : null;
+  } catch (error) {
+    return error.message;
+  }
+}
+
+// packages/engine/src/hooks/index.ts
+var EVENTS = new Set([
+  "session-start",
+  "prompt",
+  "pre-tool-use",
+  "post-tool-use",
+  "stop",
+  "subagent-stop"
+]);
+var INACTIVE_CONTEXT = "Crew is inactive here: not a git repository and no .crew/ folder. Run crew detect in a project root to activate it.";
+function handleHook(event, payload, env = process.env) {
+  if (!EVENTS.has(event))
+    return {};
+  try {
+    const ctx = buildContext(payload, env);
+    if (!ctx) {
+      return event === "session-start" ? {
+        hookSpecificOutput: {
+          hookEventName: "SessionStart",
+          additionalContext: INACTIVE_CONTEXT
+        }
+      } : {};
+    }
+    switch (event) {
+      case "session-start":
+        return onSessionStart(ctx, payload);
+      case "prompt":
+        return onPrompt(ctx);
+      case "pre-tool-use":
+        return onPreToolUse(ctx, payload);
+      case "post-tool-use":
+        return onPostToolUse(ctx, payload);
+      case "subagent-stop":
+        return onSubagentStop(ctx, payload);
+      default:
+        return onStop(ctx, payload);
+    }
+  } catch {
+    return {};
+  }
+}
+
 // packages/engine/src/tdd.ts
-import { join as join22 } from "node:path";
+import { join as join24 } from "node:path";
 var STEPS_BY_KIND = {
   behavior: { steps: ["red", "green"], how: "record red, then green" },
   preserve: { steps: ["before", "after"], how: "record before, then after" },
@@ -4053,7 +4663,7 @@ async function recordTdd(paths, work, evidence, profile, criterionId, step, over
   const result = await runCommand(command, {
     cwd: paths.root,
     timeoutMs: fallback?.timeoutMs ?? 10 * 60 * 1000,
-    logPath: join22(workDir(paths, work.id), log)
+    logPath: join24(workDir(paths, work.id), log)
   });
   const record = {
     command,
@@ -4252,16 +4862,16 @@ function skipStep(work, raw) {
 }
 function accept(env, target) {
   if (target === "profile" || target === "policy") {
-    if (!recordIntegrity(env.paths, join23(env.paths.crewDir, `${target}.json`)))
+    if (!recordIntegrity(env.paths, join25(env.paths.crewDir, `${target}.json`)))
       return refuse(`no .crew/${target}.json to accept`);
     return ok(`${target} accepted: its current content is now the trusted version`, {
       accepted: target
     });
   }
   const dir = workDir(env.paths, target);
-  if (!/^[\w.-]+$/.test(target) || target.includes("..") || !existsSync4(join23(dir, "work.json")))
+  if (!/^[\w.-]+$/.test(target) || target.includes("..") || !existsSync4(join25(dir, "work.json")))
     return refuse(`unknown work item: ${target}`);
-  const files = PROTECTED_WORK_FILES.filter((name) => recordIntegrity(env.paths, join23(dir, name)));
+  const files = PROTECTED_WORK_FILES.filter((name) => recordIntegrity(env.paths, join25(dir, name)));
   return ok(`${target} accepted: ${files.join(", ")} now trusted as they are`, {
     accepted: target,
     files
@@ -4310,10 +4920,10 @@ function guardContext(env, work, tampered) {
   const dir = workDir(env.paths, work.id);
   const result = assess(env.paths, work, env.profile, env.policy, env.tampered || tampered);
   return {
-    specText: readText(join23(dir, "spec.md")),
-    conclaveText: readText(join23(dir, "conclave.md")),
+    specText: readText(join25(dir, "spec.md")),
+    conclaveText: readText(join25(dir, "conclave.md")),
     ledger: loadLedger(env.paths, work.id).ledger,
-    planExists: existsSync4(join23(dir, "plan.md")),
+    planExists: existsSync4(join25(dir, "plan.md")),
     evidence: result.evidence,
     proven: result.verdict === "proven",
     unproven: result.unproven,
@@ -4328,7 +4938,7 @@ function deliver2(env, opened, evidence) {
       break;
   }
   saveWork(env.paths, opened.work);
-  writeProtectedText(env.paths, join23(workDir(env.paths, opened.work.id), "report.md"), reportOf(env, opened.work, evidence));
+  writeProtectedText(env.paths, join25(workDir(env.paths, opened.work.id), "report.md"), reportOf(env, opened.work, evidence));
 }
 function reportOf(env, work, evidence) {
   return renderReport(work, evidence, env.policy, loadLedger(env.paths, work.id).ledger, loadItemMail(env.paths, work.id), env.mail.self.project);
@@ -4344,7 +4954,7 @@ function logDecision(env, work, answers) {
     route: work.route,
     reasons: work.routeReasons
   });
-  const file = join23(env.paths.localDir, "decisions.jsonl");
+  const file = join25(env.paths.localDir, "decisions.jsonl");
   writeText(file, `${readText(file) ?? ""}${line}
 `);
 }
@@ -4363,9 +4973,9 @@ function classify(env, work, answers) {
   logDecision(env, work, answers);
 }
 function gateSummary(work, verdict, unproven, runs) {
-  const lines = runs.map((r) => `  ${r.gate} (${r.target}${r.stack ? `, ${r.stack}` : ""}): ${r.status} in ${(r.durationMs / 1000).toFixed(1)}s`);
-  lines.push(verdict === "proven" ? `Proven: ${work.id}` : `Not proven: ${unproven.join("; ")}`);
-  return lines.join(`
+  const lines2 = runs.map((r) => `  ${r.gate} (${r.target}${r.stack ? `, ${r.stack}` : ""}): ${r.status} in ${(r.durationMs / 1000).toFixed(1)}s`);
+  lines2.push(verdict === "proven" ? `Proven: ${work.id}` : `Not proven: ${unproven.join("; ")}`);
+  return lines2.join(`
 `);
 }
 async function dispatch(parsed, io) {
@@ -4396,7 +5006,7 @@ async function dispatch(parsed, io) {
     return settings(command, args, { userDir: userDirOf(io.env) });
   let paths = resolvePaths(io.cwd, io.env);
   if (!paths && command === "detect") {
-    ensureDir(join23(resolve3(io.cwd), ".crew"));
+    ensureDir(join25(resolve3(io.cwd), ".crew"));
     paths = resolvePaths(io.cwd, io.env);
   }
   if (!paths)
@@ -4414,16 +5024,16 @@ async function dispatch(parsed, io) {
       if (parsed.flags.refresh) {
         saveProfile(env.paths, profile);
         if (integrityOf(env.paths)[".crew/policy.json"] === undefined) {
-          recordIntegrity(env.paths, join23(env.paths.crewDir, "policy.json"));
+          recordIntegrity(env.paths, join25(env.paths.crewDir, "policy.json"));
         }
       }
       const missing = missingTestCommands(profile);
-      const lines = profile.targets.map((t) => `  ${t.path} (${t.stack}, ${t.packageManager}${t.workspaceOf ? `, workspace of ${t.workspaceOf}` : ""}): ${Object.entries(t.gates).map(([g, c]) => `${g}=${c.command}${c.source === "proposed" ? " [proposed]" : ""}`).join(", ") || "no commands"}`);
+      const lines2 = profile.targets.map((t) => `  ${t.path} (${t.stack}, ${t.packageManager}${t.workspaceOf ? `, workspace of ${t.workspaceOf}` : ""}): ${Object.entries(t.gates).map(([g, c]) => `${g}=${c.command}${c.source === "proposed" ? " [proposed]" : ""}`).join(", ") || "no commands"}`);
       if (missing.length)
-        lines.push(`No test command for: ${missing.map((m) => m.target).join(", ")}. Propose one: crew profile set test "<cmd>" [--target <path>]`);
+        lines2.push(`No test command for: ${missing.map((m) => m.target).join(", ")}. Propose one: crew profile set test "<cmd>" [--target <path>]`);
       const entry = env.registered;
-      lines.push(`registered ${entry.name} (workspace ${entry.workspace ?? "none"})`);
-      return ok(lines.join(`
+      lines2.push(`registered ${entry.name} (workspace ${entry.workspace ?? "none"})`);
+      return ok(lines2.join(`
 `), { profile, missing, registered: entry });
     }
     case "profile": {
@@ -4572,9 +5182,9 @@ async function dispatch(parsed, io) {
         const read = markRead(env.mail, origin.id);
         recordInItem(env.paths, work.id, "refused" in read ? origin : read);
       }
-      const lines = criteria.map((c) => `
+      const lines2 = criteria.map((c) => `
   ${c.id} (${c.kind}): ${c.text}`).join("");
-      return ok(`${warning}${sharedWarning}${inheritedWarning}${provenNote}started ${work.id} (route ${work.route}: ${work.routeReasons.join("; ")})${lines}`, {
+      return ok(`${warning}${sharedWarning}${inheritedWarning}${provenNote}started ${work.id} (route ${work.route}: ${work.routeReasons.join("; ")})${lines2}`, {
         id: work.id,
         route: work.route,
         phase: work.phase,
@@ -4911,6 +5521,7 @@ diff.patch: ${outcome.reviewNote}` : "";
         if (why)
           return refuse(why);
       }
+      fillTokens(records, before.evidence.roles ?? [], readReviewInputs(env.paths, opened.work.id)?.at);
       for (const record of records)
         recordJudgement(before.evidence, record);
       const result = reassess(before, opened.work, env.policy);
@@ -4918,17 +5529,17 @@ diff.patch: ${outcome.reviewNote}` : "";
       result.evidence.unproven = result.unproven;
       saveEvidence(env.paths, opened.work.id, result.evidence);
       deliver2(env, opened, result.evidence);
-      const lines = records.map((r) => {
+      const lines2 = records.map((r) => {
         const outside = r.findings.filter((f) => f.outside).length;
         const detail = r.verdict === "not-run" ? `: ${r.reason}` : ` (${r.findings.length} finding${r.findings.length === 1 ? "" : "s"}${outside ? `, ${outside} outside the change` : ""})`;
         const word = r.verdict === "not-proven" ? "not proven" : r.verdict === "not-run" ? "not run" : "proven";
         return `  ${r.gate}: ${word}${detail}`;
       });
-      lines.push(result.verdict === "proven" ? `Proven: ${opened.work.id}` : `Not proven: ${result.unproven.join("; ")}`);
+      lines2.push(result.verdict === "proven" ? `Proven: ${opened.work.id}` : `Not proven: ${result.unproven.join("; ")}`);
       return {
         code: result.verdict === "proven" ? 0 : 1,
         stdout: true,
-        text: lines.join(`
+        text: lines2.join(`
 `),
         data: { records, verdict: result.verdict, unproven: result.unproven }
       };
@@ -4975,7 +5586,7 @@ ${report}`, {
           unproven: result.unproven
         });
       saveEvidence(env.paths, opened.work.id, result.evidence);
-      writeProtectedText(env.paths, join23(workDir(env.paths, opened.work.id), "report.md"), report);
+      writeProtectedText(env.paths, join25(workDir(env.paths, opened.work.id), "report.md"), report);
       return ok(report, { verdict: result.verdict, unproven: result.unproven });
     }
     case "status": {
@@ -5087,10 +5698,10 @@ note: no active work item, so no item keeps a copy of this message`;
           return refuse(tamperedBox(ctx.self.project, "inbox"));
         const shown = parsed.flags.all ? messages : messages.filter((m) => m.status === "sent" || m.status === "read" || m.status === "answered" && !m.replyTo);
         const summary = inboxSummary(ctx);
-        const lines = shown.map((m) => `  ${m.id} · ${m.type} · from ${partyLabel(m.from)} · ${m.subject} · ${m.status}${m.reason ? `: ${m.reason}` : ""}`);
-        return ok(`Mail (${ctx.self.workspace ?? "alone"}/${ctx.self.project}, as ${ctx.self.agent}): ${summary.unread} unread, ${summary.answered} answered${lines.length ? `
-${lines.join(`
-`)}` : ""}`, { messages: shown, ...summary });
+        const lines2 = shown.map((m) => `  ${m.id} · ${m.type} · from ${partyLabel(m.from)} · ${m.subject} · ${m.status}${m.reason ? `: ${m.reason}` : ""}`);
+        return ok(`Mail (${ctx.self.workspace ?? "alone"}/${ctx.self.project}, as ${ctx.self.agent}): ${summary.unread} unread, ${summary.answered} answered${lines2.length ? `
+${lines2.join(`
+`)}` : ""}`, { ...summary, messages: shown });
       }
       if (verb === "read") {
         if (!args[1])
@@ -5144,11 +5755,11 @@ ${body}`, { message: result, body });
       if (verb === "status") {
         const pruned = pruneRegistry(env.paths.userDir);
         const sessions = openSessions(ctx);
-        const lines = sessions.map((m) => `  ${m.id} → ${m.to.project}: ${m.opened?.mode} session ${m.opened?.name} (pid ${m.opened?.pid ?? "none"}), since ${m.opened?.startedAt}, ${m.opened?.maxTurns} turns and ${m.opened?.maxMinutes} minutes allowed`);
+        const lines2 = sessions.map((m) => `  ${m.id} → ${m.to.project}: ${m.opened?.mode} session ${m.opened?.name} (pid ${m.opened?.pid ?? "none"}), since ${m.opened?.startedAt}, ${m.opened?.maxTurns} turns and ${m.opened?.maxMinutes} minutes allowed`);
         const summary = inboxSummary(ctx);
         return ok(`${summary.line ?? `Mail (${ctx.self.workspace ?? "alone"}): inbox empty`}
 open sessions: ${sessions.length ? `
-${lines.join(`
+${lines2.join(`
 `)}` : "none"}${pruned.length ? `
 registry pruned: ${pruned.join(", ")}` : ""}`, { sessions, pruned, ...summary });
       }

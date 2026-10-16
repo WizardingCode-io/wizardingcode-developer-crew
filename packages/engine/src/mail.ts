@@ -1,7 +1,8 @@
-import { existsSync, mkdirSync, rmdirSync, statSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { basename, isAbsolute, join, resolve } from "node:path";
 import { loadEvidence } from "./evidence.ts";
 import { nowIso, readJson, readText, writeJson, writeText } from "./fs.ts";
+import { withLock } from "./lock.ts";
 import {
   type CrewPaths,
   canonical,
@@ -39,8 +40,6 @@ export const LIVE_MS = 10 * 60 * 1000;
 export const INLINE_BODY_LIMIT = 2048;
 const PREVIEW_CHARS = 200;
 const SUBJECT_CHARS = 80;
-const LOCK_STALE_MS = 10_000;
-const LOCK_WAIT_MS = 2_000;
 export const ROLE_AGENT =
   /^(judge|researcher|expert-\d+|devils-advocate|fault-finder|review-(code-quality|test-quality|security|ui-ux|risk))$/;
 export const TASK_AGENT = /^T-\d+$/;
@@ -99,6 +98,11 @@ function effectiveMailPolicy(
       };
   }
   return { mail, main };
+}
+
+/** A subject as data in a line the agent reads: control characters gone, in quotes, so another project's words are never the engine's voice. */
+export function subjectQuoted(subject: string): string {
+  return JSON.stringify(subject.replace(/\p{Cc}+/gu, " ").trim());
 }
 
 /** Who this checkout is in the mail. The project's name is the governing policy's `mail.name`, else the folder's (the main checkout's, for a worktree): the one naming rule, read everywhere through `ctx.self.project`. */
@@ -296,56 +300,9 @@ export function writeBox(dir: string, which: "inbox" | "outbox", box: Mailbox): 
   writeProtectedJsonAt(boxFile(dir, "integrity"), boxFile(dir, which), box);
 }
 
-function sleep(ms: number): void {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-}
-
-/**
- * One writer at a time per mailbox: the lock is a folder, created atomically, held for the
- * duration of `fn`. A lock older than ten seconds was left by a process that died and is taken;
- * a lock still fresh after the wait is reported, never broken (review focus 1).
- */
+/** The mailbox's lock: `withLock` on the mailbox folder, reported as the mailbox. */
 export function withMailLock<T>(dir: string, fn: () => T, options: { waitMs?: number } = {}): T {
-  mkdirSync(dir, { recursive: true });
-  const lock = join(dir, ".lock");
-  const waitMs = options.waitMs ?? LOCK_WAIT_MS;
-  const started = Date.now();
-  for (;;) {
-    try {
-      mkdirSync(lock);
-      break;
-    } catch (error) {
-      // Only another holder is contention; anything else (no permission, no space) is thrown, as
-      // the neighbours throw it.
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-    }
-    let age: number | null = null;
-    try {
-      age = Date.now() - statSync(lock).mtimeMs;
-    } catch {
-      // gone between the two calls: taken again below, within the same wait
-    }
-    if (age !== null && age > LOCK_STALE_MS) {
-      try {
-        rmdirSync(lock);
-      } catch {
-        // another process took it first
-      }
-      continue;
-    }
-    if (Date.now() - started >= waitMs)
-      throw new Error(`mailbox busy: ${lock} held for more than ${waitMs} ms`);
-    if (age !== null) sleep(20);
-  }
-  try {
-    return fn();
-  } finally {
-    try {
-      rmdirSync(lock);
-    } catch {
-      // already released
-    }
-  }
+  return withLock(dir, fn, { ...options, what: "mailbox" });
 }
 
 /** `M-<day>-<nnn>-<project>`: the sequence counts the sender's messages of that day (plan decision 1). */
@@ -402,8 +359,10 @@ export type Delivery =
   | { kind: "queued"; reason: string }
   | { kind: "self" };
 
+/** One line of at most SUBJECT_CHARS: a given subject, else the text's first line; whitespace runs folded, never a newline. */
 function subjectOf(request: { subject?: string; text: string }): string {
-  if (request.subject?.trim()) return request.subject.trim().slice(0, SUBJECT_CHARS);
+  const given = request.subject?.replace(/\s+/g, " ").trim();
+  if (given) return given.slice(0, SUBJECT_CHARS);
   const first = request.text.split("\n").find((l) => l.trim()) ?? "";
   return first.length > SUBJECT_CHARS - 3 ? `${first.slice(0, SUBJECT_CHARS - 3)}...` : first;
 }
@@ -871,8 +830,13 @@ export function reply(
     return {
       refused: `${replyMessage.id} was delivered, but ${id} could not be marked answered: its mailbox changed while it was being written`,
     };
-  for (const item of [replyMessage.to.item, replyMessage.from.item])
-    if (item) recordInItem(ctx.paths, item, replyMessage);
+  // The item's record is written under the own mailbox's lock, the lock the sync writes it under
+  // too, so a reply from a role's stop and the lead's sync never interleave on it (risk review of
+  // SP2c task 3, round 13).
+  withMailLock(ownDir, () => {
+    for (const item of [replyMessage.to.item, replyMessage.from.item])
+      if (item) recordInItem(ctx.paths, item, replyMessage);
+  });
   return { reply: replyMessage, original: answered };
 }
 
@@ -887,46 +851,50 @@ export function syncMail(
 ): { newMail: Message[]; newReplies: Message[]; updated: number; tampered: boolean } {
   const own = mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project);
   const registry = loadRegistry(ctx.paths.userDir);
-  let updated = 0;
-  withMailLock(own.dir, () => {
+  // Under the own mailbox's lock throughout: the statuses the receivers recorded and the mail that
+  // arrived go into the items' mail.json, the file a reply writes under the same lock, and the
+  // marker of what this agent was told about is written under it too (risk review, rounds 13 and 14).
+  return withMailLock(own.dir, () => {
+    let updated = 0;
     const { box: outbox, tampered } = readBox(own.dir, "outbox");
-    if (tampered) return;
-    for (const sent of outbox.messages) {
-      if (sent.status === "refused") continue;
-      // The receiver's record of the message; a box a hand changed is not read as the engine's.
-      const entry = projectEntry(registry, sent.to.workspace, sent.to.project);
-      const theirsDir = entry
-        ? mailbox(ctx.paths.userDir, entry.workspace, entry.name).dir
-        : own.dir;
-      const inbox = readBox(theirsDir, "inbox");
-      if (inbox.tampered) continue;
-      const theirs = inbox.box.messages.find((m) => m.id === sent.id);
-      if (theirs && JSON.stringify(theirs) !== JSON.stringify(sent)) {
-        Object.assign(sent, theirs);
-        updated += 1;
-        if (sent.from.item) recordInItem(paths, sent.from.item, sent);
+    if (!tampered) {
+      for (const sent of outbox.messages) {
+        if (sent.status === "refused") continue;
+        // The receiver's record of the message; a box a hand changed is not read as the engine's.
+        const entry = projectEntry(registry, sent.to.workspace, sent.to.project);
+        const theirsDir = entry
+          ? mailbox(ctx.paths.userDir, entry.workspace, entry.name).dir
+          : own.dir;
+        const inbox = readBox(theirsDir, "inbox");
+        if (inbox.tampered) continue;
+        const theirs = inbox.box.messages.find((m) => m.id === sent.id);
+        if (theirs && JSON.stringify(theirs) !== JSON.stringify(sent)) {
+          Object.assign(sent, theirs);
+          updated += 1;
+          if (sent.from.item) recordInItem(paths, sent.from.item, sent);
+        }
       }
+      if (updated) writeBox(own.dir, "outbox", outbox);
     }
-    if (updated) writeBox(own.dir, "outbox", outbox);
+    const inbox = ownInbox(ctx);
+    if (inbox.tampered) return { newMail: [], newReplies: [], updated, tampered: true };
+    // What this agent has already been told about, so a hook names each arrival once.
+    const marker = join(own.dir, `synced-${ctx.self.agent}.json`);
+    const seen = new Set(readJson<string[]>(marker) ?? []);
+    const newMail: Message[] = [];
+    for (const m of inbox.messages) {
+      if (m.to.item) recordInItem(paths, m.to.item, m);
+      if (!seen.has(m.id)) newMail.push(m);
+      seen.add(m.id);
+    }
+    writeJson(marker, [...seen]);
+    return {
+      newMail,
+      newReplies: newMail.filter((m) => m.replyTo !== null),
+      updated,
+      tampered: false,
+    };
   });
-  const inbox = ownInbox(ctx);
-  if (inbox.tampered) return { newMail: [], newReplies: [], updated, tampered: true };
-  // What this agent has already been told about, so a hook names each arrival once.
-  const marker = join(own.dir, `synced-${ctx.self.agent}.json`);
-  const seen = new Set(readJson<string[]>(marker) ?? []);
-  const newMail: Message[] = [];
-  for (const m of inbox.messages) {
-    if (m.to.item) recordInItem(paths, m.to.item, m);
-    if (!seen.has(m.id)) newMail.push(m);
-    seen.add(m.id);
-  }
-  writeJson(marker, [...seen]);
-  return {
-    newMail,
-    newReplies: newMail.filter((m) => m.replyTo !== null),
-    updated,
-    tampered: false,
-  };
 }
 
 /** A blocker the Stop hook has named to the session, so it interrupts once (SP2c §6). */
@@ -949,7 +917,9 @@ export function updateStatusEverywhere(
 }
 
 /** What the inbox holds for this project, and the one line the hooks print about it. */
-export function inboxSummary(ctx: MailContext): {
+export interface InboxSummary {
+  /** The session's messages, as read once for this summary (none when tampered). */
+  messages: Message[];
   unread: number;
   answered: number;
   waiting: number;
@@ -957,15 +927,30 @@ export function inboxSummary(ctx: MailContext): {
   /** The inbox changed outside the engine: nothing in it counts, and `line` says so. */
   tampered: boolean;
   line: string | null;
-} {
+}
+
+/** The summary of an empty inbox, and what a hook reports when it could not read the inbox. */
+export function emptyInboxSummary(): InboxSummary {
+  return {
+    messages: [],
+    unread: 0,
+    answered: 0,
+    waiting: 0,
+    blockers: [],
+    tampered: false,
+    line: null,
+  };
+}
+
+export function inboxSummary(ctx: MailContext): InboxSummary {
   const { messages, tampered } = ownInbox(ctx);
-  const empty = { unread: 0, answered: 0, waiting: 0, blockers: [] };
-  if (tampered) return { ...empty, tampered, line: tamperedBox(ctx.self.project, "inbox") };
+  if (tampered)
+    return { ...emptyInboxSummary(), tampered, line: tamperedBox(ctx.self.project, "inbox") };
   const unread = messages.filter((m) => m.status === "sent" && !m.replyTo);
   const answered = messages.filter((m) => m.replyTo && m.status === "sent");
   const waiting = messages.filter((m) => m.status === "waiting-for-person");
   const blockers = unread.filter((m) => m.type === "blocker");
-  if (!messages.length) return { ...empty, tampered, line: null };
+  if (!messages.length) return emptyInboxSummary();
   const byType = new Map<string, number>();
   for (const m of unread) byType.set(m.type, (byType.get(m.type) ?? 0) + 1);
   const senders = [...new Set(unread.map((m) => m.from.project))].join(", ");
@@ -978,6 +963,7 @@ export function inboxSummary(ctx: MailContext): {
   if (waiting.length) parts.push(`${waiting.length} waiting for a person`);
   const where = ctx.self.workspace ?? "alone";
   return {
+    messages,
     unread: unread.length,
     answered: answered.length,
     waiting: waiting.length,

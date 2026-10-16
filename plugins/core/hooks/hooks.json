@@ -12,8 +12,20 @@
         "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/dist/crew.mjs", "hook", "pre-tool-use"], "timeout": 5 }]
       }
     ],
+    "PostToolUse": [
+      {
+        "matcher": "Agent|Bash|Write|Edit",
+        "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/dist/crew.mjs", "hook", "post-tool-use"], "timeout": 5 }]
+      }
+    ],
     "Stop": [
       { "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/dist/crew.mjs", "hook", "stop"], "timeout": 10 }] }
+    ],
+    "SubagentStop": [
+      {
+        "matcher": "^wizardingcode-developer-crew:(judge|researcher|expert|devils-advocate|fault-finder|review-(code-quality|test-quality|security|ui-ux|risk))$",
+        "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/dist/crew.mjs", "hook", "subagent-stop"], "timeout": 10 }]
+      }
     ]
   },
   "modules": ["./register.js"]

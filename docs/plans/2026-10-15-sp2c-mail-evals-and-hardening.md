@@ -2234,7 +2234,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 - Produces, in `hooks/stop.ts`: the three waits; `onStop` names a blocker once.
 - The payload fields follow A4 of the spike; the names below are the documentation's.
 
-- [ ] **Step 1: Open the work item**
+- [x] **Step 1: Open the work item**
 
 ```bash
 crew start "SP2c task 3: the hooks. SessionStart and the prompt register the project and print the inbox line, Stop honours a wait for the user, for the roles or for a reply and names a blocker once, SubagentStop records each role's end, its tokens and its answer into the active item and clears the role wait, PreToolUse denies merge, push to another branch and deploy in a session opened by mail, and crew judgement record takes tokens from the engine's record" --answers '{"work_type":"feature","is_vague":0.05,"scope":2,"touches_auth":0,"touches_payments":0,"touches_personal_data":0,"touches_data_migration":0,"touches_infra":0,"touches_public_api":0}' --criterion "SessionStart registers the project, prints the inbox line when the inbox is not empty with blockers first, and in a session opened by mail says which message opened it and what the session may do; the prompt hook prints what arrived since the last prompt" --criterion "The Stop hook lets a turn end once under await user, await role and await mail, each with its own notice, records the pause with its kind, clears a mail wait whose reply has landed and holds the turn so the reply is read, and names an unread blocker once by blocking the turn" --criterion "SubagentStop records the role's end with its tokens from the transcript and saves the answer where its type says (findings, ruling, conclave files); a judge's stop clears the role wait; a resumed role whose question is pending has its answer saved as the reply file and recorded as a relayed reply; any other agent type is ignored" --criterion "In a session opened by mail, Bash commands that merge, push to a branch other than the session's own, release or deploy, and crew task merge, are denied with a reason that names the message; outside such a session they pass" --criterion "crew judgement record fills a ruling's tokens from the engine's role records when the ruling leaves them at 0: the reviewer's tokens plus the judge's share" --preserve "Every existing hook, context and CLI test keeps passing"
@@ -2242,7 +2242,7 @@ crew start "SP2c task 3: the hooks. SessionStart and the prompt register the pro
 
 Standard route as in Task 2 (spec, conclave with "none" where nothing, approval under the rule, phases). `crew tdd before <id> AC-6 -- bun test packages/engine/tests/hooks-stop.test.ts packages/engine/tests/hooks-context.test.ts packages/engine/tests/hooks-pre-tool-use.test.ts packages/engine/tests/cli.test.ts`.
 
-- [ ] **Step 2: Write the failing tests for SessionStart and the prompt** (AC-1)
+- [x] **Step 2: Write the failing tests for SessionStart and the prompt** (AC-1)
 
 Append to `packages/engine/tests/hooks-context.test.ts` (it imports `hookContext`, `makeRepo`, `testEnv`, `write`, `join`; add `onSessionStart`, `onPrompt`, `loadRegistry`, `mailContext`, `send`, `loadPolicy`, `repoPaths`):
 
@@ -2300,7 +2300,7 @@ test("SP2c AC-1: a session opened by mail is told which message opened it and wh
 });
 ```
 
-- [ ] **Step 3: Red**
+- [x] **Step 3: Red**
 
 ```bash
 crew tdd red <id> AC-1 -- bun test packages/engine/tests/hooks-context.test.ts
@@ -2308,7 +2308,7 @@ crew tdd red <id> AC-1 -- bun test packages/engine/tests/hooks-context.test.ts
 
 Expected: fails on the missing exports and `openedBy` undefined.
 
-- [ ] **Step 4: Context, SessionStart, prompt**
+- [x] **Step 4: Context, SessionStart, prompt**
 
 `packages/engine/src/hooks/types.ts`:
 
@@ -2356,13 +2356,13 @@ export interface HookContext {
 
 `hooks/prompt.ts`: `onPrompt` calls `registerProject(ctx.mail, ctx.sessionId)` and `const { newMail } = syncMail(ctx.mail, ctx.paths)`; when `newMail.length`, the context gains, after the status line (or alone when no item is active): `Mail: ${n} new: ${newMail.map((m) => `${m.id} ${m.type} from ${m.from.project} "${m.subject}"`).join("; ")} (crew mail inbox).`. `statusLine` uses `waitingText(work)` in place of the `awaiting === "user"` ternary.
 
-- [ ] **Step 5: Green**
+- [x] **Step 5: Green**
 
 ```bash
 crew tdd green <id> AC-1 -- bun test packages/engine/tests/hooks-context.test.ts
 ```
 
-- [ ] **Step 6: Write the failing tests of the Stop hook** (AC-2)
+- [x] **Step 6: Write the failing tests of the Stop hook** (AC-2)
 
 Append to `packages/engine/tests/hooks-stop.test.ts` (has `session()`, `onStop`, `createWork`, `addCriterion`, `saveWork`, `loadWork`, `write`, `hookContext`, `makeRepo`, `testEnv`; add `mailContext`, `send`, `reply`, `loadPolicy`, `repoPaths`):
 
@@ -2438,7 +2438,7 @@ test("SP2c AC-2: an unread blocker interrupts the end of the turn once", () => {
 
 (`WorkItem` is imported in the file already; `onSessionStart` too.)
 
-- [ ] **Step 7: Red**
+- [x] **Step 7: Red**
 
 ```bash
 crew tdd red <id> AC-2 -- bun test packages/engine/tests/hooks-stop.test.ts
@@ -2446,7 +2446,7 @@ crew tdd red <id> AC-2 -- bun test packages/engine/tests/hooks-stop.test.ts
 
 Expected: the three new tests fail (the notice says "waiting for the user" for every kind, no `kind` in the pause, no block on a reply or a blocker).
 
-- [ ] **Step 8: The Stop hook**
+- [x] **Step 8: The Stop hook**
 
 In `packages/engine/src/hooks/stop.ts`, after the typed-crew block and before `activeWork`:
 
@@ -2500,7 +2500,7 @@ In `packages/engine/src/hooks/stop.ts`, after the typed-crew block and before `a
 
 and `release` reads `const kind = work.awaiting; … work.pauses = [...(work.pauses ?? []), { at: nowIso(), reason: pause, ...(kind ? { kind } : {}) }]` before setting `awaiting` to null and deleting `awaitingMessage`. The block message's last sentence gains the two other waits: "To end the turn with a question for the user, run crew await ${id} user first; while the roles answer, crew await ${id} role; while a reply is due, crew await ${id} mail <message id>."
 
-- [ ] **Step 9: Green**
+- [x] **Step 9: Green**
 
 ```bash
 crew tdd green <id> AC-2 -- bun test packages/engine/tests/hooks-stop.test.ts
@@ -2508,7 +2508,7 @@ crew tdd green <id> AC-2 -- bun test packages/engine/tests/hooks-stop.test.ts
 
 Existing Stop tests that assert the exact block message need the new last sentence; update their expectation strings.
 
-- [ ] **Step 10: Write the failing tests of SubagentStop** (AC-3)
+- [x] **Step 10: Write the failing tests of SubagentStop** (AC-3)
 
 Create `packages/engine/tests/hooks-subagent-stop.test.ts`:
 
@@ -2637,7 +2637,7 @@ test("SP2c AC-3: a resumed role whose question is pending has its answer saved a
 });
 ```
 
-- [ ] **Step 11: Red**
+- [x] **Step 11: Red**
 
 ```bash
 crew tdd red <id> AC-3 -- bun test packages/engine/tests/hooks-subagent-stop.test.ts
@@ -2645,7 +2645,7 @@ crew tdd red <id> AC-3 -- bun test packages/engine/tests/hooks-subagent-stop.tes
 
 Expected: fails on the missing module.
 
-- [ ] **Step 12: SubagentStop**
+- [x] **Step 12: SubagentStop**
 
 Create `packages/engine/src/hooks/subagent-stop.ts`:
 
@@ -2815,13 +2815,13 @@ In `plugins/core/hooks/hooks.json`, after `Stop`:
 
 If A4 says `agent_type` is the bare name for a plugin's own agents, the matcher becomes `^(wizardingcode-developer-crew:)?(judge|…)$`; `roleOf` accepts both already.
 
-- [ ] **Step 13: Green**
+- [x] **Step 13: Green**
 
 ```bash
 crew tdd green <id> AC-3 -- bun test packages/engine/tests/hooks-subagent-stop.test.ts
 ```
 
-- [ ] **Step 14: Write the failing tests of the denials and the tokens** (AC-4, AC-5)
+- [x] **Step 14: Write the failing tests of the denials and the tokens** (AC-4, AC-5)
 
 Append to `packages/engine/tests/hooks-pre-tool-use.test.ts` (has `setup()`, `decision()`, `onPreToolUse`, `hookContext`, `makeRepo`, `testEnv`, `git`, `join`; add `currentBranch`, `openedSessionDenial`):
 
@@ -2904,14 +2904,14 @@ test("SP2c AC-5: crew judgement record fills tokens from the engine's role recor
 
 (`loadEvidence`, `saveEvidence` imported from `../src/evidence.ts`.)
 
-- [ ] **Step 15: Red**
+- [x] **Step 15: Red**
 
 ```bash
 crew tdd red <id> AC-4 -- bun test packages/engine/tests/hooks-pre-tool-use.test.ts
 crew tdd red <id> AC-5 -- bun test packages/engine/tests/cli.test.ts
 ```
 
-- [ ] **Step 16: The denials and the tokens**
+- [x] **Step 16: The denials and the tokens**
 
 In `packages/engine/src/hooks/pre-tool-use.ts`:
 
@@ -2995,7 +2995,7 @@ In `cli.ts`'s `judgement` case, after the contradiction loop and before `recordJ
       }
 ```
 
-- [ ] **Step 17: Green, after, build, gate, judgement, commit**
+- [x] **Step 17: Green, after, build, gate, judgement, commit**
 
 ```bash
 crew tdd green <id> AC-4 -- bun test packages/engine/tests/hooks-pre-tool-use.test.ts

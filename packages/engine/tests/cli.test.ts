@@ -2,6 +2,8 @@ import { expect, test } from "bun:test";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type CliIo, main } from "../src/cli.ts";
+import { loadEvidence, saveEvidence } from "../src/evidence.ts";
+import { readReviewInputs } from "../src/judgement.ts";
 import { loadProfile } from "../src/profile.ts";
 import { readProtectedJson, writeProtectedJson } from "../src/store.ts";
 import { git, makeRepo, repoPaths, tempDir, testEnv, write } from "./helpers.ts";
@@ -1979,4 +1981,139 @@ test("SP2c AC-9: crew await <id> role and mail record the wait and the message; 
   expect((await c.run("await", id, "judge")).err.trim()).toBe(
     "usage: crew await <id> user | role | mail <message id>",
   );
+});
+
+test("SP2c AC-5: crew judgement record fills tokens from the engine's role records when the ruling leaves them at 0", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/App.vue": "<template/>",
+  });
+  // Two judgement gates on this item: ui-ux from the interface file, code-quality from the policy.
+  write(root, ".crew/policy.json", JSON.stringify({ judgementGates: ["code-quality"] }));
+  const c = io(root);
+  const id = (await c.json("start", "Empty state", "--answers", answers, "--criterion", "a")).data
+    .id as string;
+  write(root, "src/App.vue", "<template>empty</template>");
+  await c.run("tdd", "red", id, "AC-1", "--", "exit 1");
+  await c.run("tdd", "green", id, "AC-1", "--", "exit 0");
+  await c.run("gate", "run", id);
+  const paths = repoPaths(root, c.env);
+  const { evidence } = loadEvidence(paths, id);
+  // The roles of this round stopped after the gate run cut the diff; a record from before the cut
+  // belongs to an earlier round and counts for nothing, however recent it looks in the list.
+  const cut = readReviewInputs(paths, id)?.at ?? "";
+  const after = (s: number) => new Date(Date.parse(cut) + s * 1000).toISOString();
+  const before = (s: number) => new Date(Date.parse(cut) - s * 1000).toISOString();
+  const record = (
+    agent: string,
+    agentId: string,
+    at: string,
+    tokens: number,
+    tokensFrom: "transcript" | "none" = "transcript",
+  ) => ({
+    agent,
+    agentId,
+    at,
+    tokens,
+    tokensFrom,
+    file: agent === "judge" ? "review/ruling.json" : `review/${agent.slice(7)}.findings.md`,
+  });
+  evidence.roles = [
+    record("review-ui-ux", "r1", after(1), 40000),
+    record("review-code-quality", "r2", after(2), 30000),
+    // A record whose tokens were never read counts for nothing: the read one before it stands.
+    record("review-code-quality", "r3", after(3), 0, "none"),
+    record("judge", "j", after(5), 70000),
+    record("review-ui-ux", "r0", before(600), 999999),
+  ];
+  saveEvidence(paths, id, evidence);
+  const file = join(root, ".crew", "work", id, "review", "ruling.json");
+  const ruling = (gate: string, reviewer: string) => ({
+    gate,
+    verdict: "proven",
+    reviewer,
+    judge: "judge",
+    findings: [],
+    tokens: 0,
+  });
+  writeFileSync(
+    file,
+    JSON.stringify({
+      rulings: [ruling("ui-ux", "review-ui-ux"), ruling("code-quality", "review-code-quality")],
+    }),
+  );
+  // The judge's 70000 is shared by the two rulings recorded together: 35000 each.
+  const recorded = await c.json("judgement", id, "record", "--ruling", file);
+  expect(recorded.data.records).toMatchObject([
+    { gate: "ui-ux", tokens: 75000 },
+    { gate: "code-quality", tokens: 65000 },
+  ]);
+  const report = (await c.run("evidence", id)).out;
+  expect(report).toContain("| ui-ux | proven | review-ui-ux | 0 | 75000 |");
+  expect(report).toContain("| code-quality | proven | review-code-quality | 0 | 65000 |");
+  // The judge ruled both gates, so its share is over both even when the session gave one gate's
+  // number itself, which stands; an odd total rounds (test-quality review, round 2).
+  const again = loadEvidence(paths, id).evidence;
+  again.roles = [...(again.roles ?? []), record("judge", "j2", after(6), 70001)];
+  saveEvidence(paths, id, again);
+  writeFileSync(
+    file,
+    JSON.stringify({
+      rulings: [
+        { ...ruling("ui-ux", "review-ui-ux"), tokens: 500 },
+        ruling("code-quality", "review-code-quality"),
+      ],
+    }),
+  );
+  expect((await c.json("judgement", id, "record", "--ruling", file)).data.records).toMatchObject([
+    { gate: "ui-ux", tokens: 500 },
+    { gate: "code-quality", tokens: 65001 },
+  ]);
+  // No role record at all: the tokens stay at 0 rather than being invented.
+  const none = loadEvidence(paths, id).evidence;
+  none.roles = [];
+  saveEvidence(paths, id, none);
+  writeFileSync(
+    file,
+    JSON.stringify({
+      rulings: [ruling("ui-ux", "review-ui-ux"), ruling("code-quality", "review-code-quality")],
+    }),
+  );
+  expect((await c.json("judgement", id, "record", "--ruling", file)).data.records).toMatchObject([
+    { gate: "ui-ux", tokens: 0 },
+    { gate: "code-quality", tokens: 0 },
+  ]);
+  // Only the judge went through the hook: its share alone is recorded.
+  const judgeOnly = loadEvidence(paths, id).evidence;
+  judgeOnly.roles = [record("judge", "j3", after(7), 70001)];
+  saveEvidence(paths, id, judgeOnly);
+  expect((await c.json("judgement", id, "record", "--ruling", file)).data.records).toMatchObject([
+    { gate: "ui-ux", tokens: 35001 },
+    { gate: "code-quality", tokens: 35001 },
+  ]);
+  // A gate that could not run takes no tokens, with records to take from; a number the session gave stands.
+  const full = loadEvidence(paths, id).evidence;
+  full.roles = [
+    record("review-ui-ux", "r4", after(8), 40000),
+    record("judge", "j4", after(9), 70000),
+  ];
+  saveEvidence(paths, id, full);
+  const notRun = await c.json(
+    "judgement",
+    id,
+    "record",
+    "ui-ux",
+    "--not-run",
+    "--reason",
+    "no browser",
+  );
+  expect(notRun.data.records).toMatchObject([{ gate: "ui-ux", verdict: "not-run" }]);
+  expect((notRun.data.records as { tokens?: number }[])[0]?.tokens ?? 0).toBe(0);
+  writeFileSync(
+    file,
+    JSON.stringify({ rulings: [{ gate: "ui-ux", verdict: "proven", findings: [], tokens: 123 }] }),
+  );
+  expect((await c.json("judgement", id, "record", "--ruling", file)).data.records).toMatchObject([
+    { tokens: 123 },
+  ]);
 });

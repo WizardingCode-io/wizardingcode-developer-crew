@@ -1,7 +1,10 @@
 import { assess } from "../gates.ts";
-import { loadState, saveState, sessionState } from "../state.ts";
+import { subjectQuoted } from "../mail.ts";
+import { updateSession } from "../state.ts";
 import type { WorkItem } from "../types.ts";
 import { activeWork, waitingText } from "../work.ts";
+import { refreshMail } from "./context.ts";
+import { takeNotices } from "./notices.ts";
 import type { HookContext, HookResponse } from "./types.ts";
 
 /** One line, written as a fact: the state of the active work item. */
@@ -20,15 +23,28 @@ export function statusLine(ctx: HookContext, work: WorkItem, tampered = false): 
  * soon as it is typed, so only the Stop that lets the turn end spends the wait.
  */
 export function onPrompt(ctx: HookContext): HookResponse {
-  const state = loadState(ctx.paths);
-  sessionState(state, ctx.sessionId).stopBlocks = 0;
-  saveState(ctx.paths, state);
+  // The count starts afresh, and what a role's stop could not save is taken, if no tool call
+  // printed it yet; under the lock every writer of the state takes.
+  const notices = updateSession(ctx.paths, ctx.sessionId, (session) => {
+    session.stopBlocks = 0;
+    return takeNotices(session);
+  });
+  // The project's registry entry is refreshed, and what arrived since the last prompt is named once.
+  const mail = refreshMail(ctx);
   const active = activeWork(ctx.paths);
-  if (!active?.work) return {};
+  const lines: string[] = [];
+  if (active?.work) lines.push(statusLine(ctx, active.work, active.tampered));
+  lines.push(...notices);
+  if (mail.failed) lines.push(`Mail is off for this prompt: ${mail.failed}.`);
+  else if (mail.newMail.length)
+    lines.push(
+      `Mail: ${mail.newMail.length} new: ${mail.newMail.map((m) => `${m.id} ${m.type} from ${m.from.project} ${subjectQuoted(m.subject)}`).join("; ")} (crew mail inbox).`,
+    );
+  if (!lines.length) return {};
   return {
     hookSpecificOutput: {
       hookEventName: "UserPromptSubmit",
-      additionalContext: statusLine(ctx, active.work, active.tampered),
+      additionalContext: lines.join(" "),
     },
   };
 }

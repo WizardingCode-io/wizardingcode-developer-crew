@@ -5,14 +5,20 @@ import {
 } from "../detect/index.ts";
 import { changedWatchedPaths, computeFingerprint } from "../fingerprint.ts";
 import { assess } from "../gates.ts";
+import { emptyInboxSummary, inboxSummary, subjectQuoted } from "../mail.ts";
 import { refreshProfile, saveProfile } from "../profile.ts";
-import { ensureCrewDir, loadState, saveState, sessionState } from "../state.ts";
+import { ensureCrewDir, loadState, updateSession } from "../state.ts";
 import { activeWork } from "../work.ts";
+import { mailQuietly, refreshMail } from "./context.ts";
 import { statusLine } from "./prompt.ts";
 import type { HookContext, HookPayload, HookResponse } from "./types.ts";
 
 export function onSessionStart(ctx: HookContext, payload: HookPayload = {}): HookResponse {
   ensureCrewDir(ctx.paths, ctx.policy);
+  // The project is known to the mail from its first moment; what the sync marks as seen is what
+  // the prompt hook will not repeat (SP2c §6; plan decision 3). A mailbox this run cannot use
+  // costs the session its mail lines, never its context.
+  const mail = refreshMail(ctx);
   // A watch list equal to an earlier release's default was never the user's choice, so it follows
   // the current default here, before the baseline is taken with it (finding 12 of the real-use
   // phase: a hint asking the agent to refresh was shown at every start and never acted on). A
@@ -27,14 +33,12 @@ export function onSessionStart(ctx: HookContext, payload: HookPayload = {}): Hoo
   // picked up here and at every gate run, never by hand (finding 23).
   const refreshed = refreshProfile(ctx.paths, ctx.profile, ctx.tampered);
   ctx.profile = refreshed.profile;
-  const state = loadState(ctx.paths);
   const active = activeWork(ctx.paths);
   // A resume or a compaction continues the same session: its baseline still says where it began.
   const continues =
     (payload.source === "resume" || payload.source === "compact") &&
-    state.sessions[ctx.sessionId] !== undefined;
+    loadState(ctx.paths).sessions[ctx.sessionId] !== undefined;
   if (!continues) {
-    const session = sessionState(state, ctx.sessionId);
     const work = active?.work ?? null;
     // Unproven changes left by an earlier session are not this session's starting point: with no
     // baseline the Stop rule counts them as changed.
@@ -44,9 +48,12 @@ export function onSessionStart(ctx: HookContext, payload: HookPayload = {}): Hoo
       changedWatchedPaths(ctx.paths.root, ctx.profile, base).length > 0 &&
       assess(ctx.paths, work, ctx.profile, ctx.policy, ctx.tampered || !!active?.tampered)
         .verdict !== "proven";
-    session.baseline = inherited ? null : computeFingerprint(ctx.paths.root, ctx.profile, base);
-    session.stopBlocks = 0;
-    saveState(ctx.paths, state);
+    const baseline = inherited ? null : computeFingerprint(ctx.paths.root, ctx.profile, base);
+    // Under the lock every writer of the state takes (`updateSession`).
+    updateSession(ctx.paths, ctx.sessionId, (session) => {
+      session.baseline = baseline;
+      session.stopBlocks = 0;
+    });
   }
 
   const lines = [
@@ -81,6 +88,31 @@ export function onSessionStart(ctx: HookContext, payload: HookPayload = {}): Hoo
       "The profile predates this release: run `crew detect --refresh` once to pick up the current defaults.",
     );
   }
+  // The mail: blockers first, then the inbox in one line, then what a session opened by mail may do.
+  const summary = mail.failed
+    ? emptyInboxSummary()
+    : mailQuietly(() => inboxSummary(ctx.mail), emptyInboxSummary());
+  const blockers = summary.blockers.map(
+    (b) =>
+      `Blocker ${b.id} from ${b.from.project}: ${subjectQuoted(b.subject)} (crew mail read ${b.id}).`,
+  );
+  if (mail.failed) lines.push(`Mail is off for this session start: ${mail.failed}.`);
+  else if (summary.tampered && summary.line) lines.push(`${summary.line}.`);
+  else if (summary.line)
+    lines.push(
+      `${summary.line}. crew mail inbox lists it; a question is answered from the code with crew mail reply, a change request waits for the user's yes and starts an item with --origin <id>, a notice is said.`,
+    );
+  if (ctx.openedBy) {
+    const opener = summary.messages.find((m) => m.id === ctx.openedBy);
+    // The branch is the one the opener pinned; HEAD never stands in for it (the agent can move HEAD).
+    const branch = ctx.openedBranch
+      ? ` (branch ${ctx.openedBranch})`
+      : " (the opener pinned no branch: every push is denied)";
+    lines.push(
+      `This session was opened by mail ${ctx.openedBy}${opener ? ` from ${opener.from.project} (${opener.type})` : ""}: read it with crew mail read ${ctx.openedBy}. A question: answer from the code and crew mail reply ${ctx.openedBy} "<text>". A change request: run the method on this branch as a work item started with --origin ${ctx.openedBy}${branch}, commit on it, and end with crew mail reply ${ctx.openedBy} --branch <branch> --item <child id>. Never merge, push to another branch or deploy; a full-route spec waits for a person (crew await <id> user).`,
+    );
+  }
+  lines.unshift(...blockers);
   return {
     hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: lines.join(" ") },
   };

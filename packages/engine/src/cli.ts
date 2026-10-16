@@ -18,6 +18,7 @@ import { handleHook } from "./hooks/index.ts";
 import type { HookPayload } from "./hooks/types.ts";
 import {
   contradiction,
+  fillTokens,
   judgementRows,
   notRunRecord,
   parseRulings,
@@ -1150,6 +1151,11 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         const why = contradiction(record);
         if (why) return refuse(why);
       }
+      fillTokens(
+        records,
+        before.evidence.roles ?? [],
+        readReviewInputs(env.paths, opened.work.id)?.at,
+      );
       // The rulings go into the evidence the assessment read, the verdict is computed on it, and
       // the file is written once, with the verdict: no reader sees new records beside a stale
       // verdict (review of SP2b, finding 8). A record that proves the work delivers it.
@@ -1378,7 +1384,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         );
         return ok(
           `Mail (${ctx.self.workspace ?? "alone"}/${ctx.self.project}, as ${ctx.self.agent}): ${summary.unread} unread, ${summary.answered} answered${lines.length ? `\n${lines.join("\n")}` : ""}`,
-          { messages: shown, ...summary },
+          { ...summary, messages: shown },
         );
       }
       if (verb === "read") {

@@ -730,6 +730,7 @@ test("SP2c AC-7: syncMail copies nothing from an inbox a hand changed, a receive
   expect(synced.tampered).toBe(true);
   expect(readFileSync(join(ownDir, "inbox.json"), "utf8")).toBe(forged);
   expect(inboxSummary(w.a.ctx)).toEqual({
+    messages: [],
     unread: 0,
     answered: 0,
     waiting: 0,

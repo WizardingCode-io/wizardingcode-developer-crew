@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { emptyEvidence } from "../src/evidence.ts";
 import {
   contradiction,
+  fillTokens,
   isInterfacePath,
   judgementRows,
   notRunRecord,
@@ -308,4 +309,42 @@ test("SP2b minors: a stale row says why, so the panel can print it: ruling on ea
   expect(judgementRows(work, evidence, planned, "f1", DEFAULT_POLICY)).toEqual([
     { gate: "code-quality", status: "proven", planned: "standard route", findings: 0 },
   ]);
+});
+
+test("SP2c AC-5: fillTokens counts only the records of this round, and none when the round's cut is unknown", () => {
+  const record = (
+    agent: string,
+    at: string,
+    tokens: number,
+  ): Parameters<typeof fillTokens>[1][number] => ({
+    agent,
+    agentId: agent,
+    at,
+    tokens,
+    tokensFrom: "transcript",
+    file: null,
+  });
+  // An earlier round's records sit last in the list, so only the cut keeps them out.
+  const roles = [
+    record("review-code-quality", "2026-10-15T12:00:00.000Z", 30000),
+    record("judge", "2026-10-15T12:05:00.000Z", 70000),
+    record("review-code-quality", "2026-10-15T10:00:00.000Z", 999),
+    record("judge", "2026-10-15T10:01:00.000Z", 999),
+  ];
+  // A ruling the session left at 0, as the judge's answer always is.
+  const ruling = () =>
+    stampRuling(
+      { gate: "code-quality", verdict: "proven", findings: [], tokens: 0 },
+      "f1",
+      [],
+      "w",
+    );
+  // The records after the cut count; the earlier round's do not.
+  const thisRound = [ruling()];
+  fillTokens(thisRound, roles, "2026-10-15T11:00:00.000Z");
+  expect(thisRound[0]?.tokens).toBe(100000);
+  // No cut known (no review inputs): nothing stands in, the tokens stay at 0 rather than borrowed.
+  const unknown = [ruling()];
+  fillTokens(unknown, roles);
+  expect(unknown[0]?.tokens).toBe(0);
 });

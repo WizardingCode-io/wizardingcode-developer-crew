@@ -8,7 +8,7 @@ import { nowIso, writeText } from "./fs.ts";
 import { blockingObjections } from "./objections.ts";
 import { type CrewPaths, workDir } from "./paths.ts";
 import { decisionCounts } from "./policy.ts";
-import { loadState, saveState } from "./state.ts";
+import { loadState, updateState } from "./state.ts";
 import { readProtectedJson, writeProtectedJson } from "./store.ts";
 import type {
   Criterion,
@@ -110,9 +110,10 @@ export function createWork(
     join(workDir(paths, work.id), "brief.md"),
     `# Brief\n\n## Request\n\n${input.trim()}\n`,
   );
-  const state = loadState(paths);
-  state.active = work.id;
-  saveState(paths, state);
+  // Under the lock every writer of the state takes, so a notice a role's stop leaves meanwhile stays.
+  updateState(paths, (state) => {
+    state.active = work.id;
+  });
   return work;
 }
 
@@ -535,9 +536,15 @@ export function advancePhase(
 
 /** ", waiting for the user" / ", waiting for the roles" / ", waiting for a reply to M-…" / "" (SP2c §9). */
 export function waitingText(work: WorkItem): string {
-  if (work.awaiting === "user") return ", waiting for the user";
-  if (work.awaiting === "role") return ", waiting for the roles";
+  const phrase = waitingPhrase(work);
+  return phrase ? `, ${phrase}` : "";
+}
+
+/** "waiting for the user" / "waiting for the roles" / "waiting for a reply to M-…" / null: the wait as a phrase of its own. */
+export function waitingPhrase(work: WorkItem): string | null {
+  if (work.awaiting === "user") return "waiting for the user";
+  if (work.awaiting === "role") return "waiting for the roles";
   if (work.awaiting === "mail")
-    return `, waiting for a reply to ${work.awaitingMessage ?? "a message"}`;
-  return "";
+    return `waiting for a reply to ${work.awaitingMessage ?? "a message"}`;
+  return null;
 }
