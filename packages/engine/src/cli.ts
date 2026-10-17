@@ -3,6 +3,13 @@ import { join, relative, resolve } from "node:path";
 import { type Parsed, parse } from "./argv.ts";
 import { AnswerError, type Answers, computeRoute, validateAnswers } from "./classify.ts";
 import { loadConfig, saveConfig, setConfigValue } from "./config.ts";
+import {
+  appendDecision,
+  decisionLine,
+  decisionsCount,
+  listDecisions,
+  registerTampered,
+} from "./decisions.ts";
 import { detectProfile, missingTestCommands } from "./detect/index.ts";
 import {
   countedNote,
@@ -306,6 +313,9 @@ function openWork(env: Env, id: string | undefined): Opened | Outcome {
  */
 function tamperRefusal(env: Env, opened?: Opened): Outcome | null {
   const found = [...env.tamperedFiles];
+  // The project's decision register is the engine's too (SP7 §6.6).
+  if (registerTampered(env.paths))
+    found.push({ file: ".crew/decisions.json", accept: "decisions" });
   if (opened) {
     const base = `.crew/work/${opened.work.id}`;
     if (opened.tampered) found.push({ file: `${base}/work.json`, accept: opened.work.id });
@@ -337,7 +347,7 @@ function skipStep(work: WorkItem, raw: string): string | null {
 
 /** The user trusts the current content of a target's protected files again. Asks the user (PreToolUse). */
 function accept(env: Env, target: string): Outcome {
-  if (target === "profile" || target === "policy") {
+  if (target === "profile" || target === "policy" || target === "decisions") {
     if (!recordIntegrity(env.paths, join(env.paths.crewDir, `${target}.json`)))
       return refuse(`no .crew/${target}.json to accept`);
     return ok(`${target} accepted: its current content is now the trusted version`, {
@@ -412,6 +422,11 @@ function validatorFlag(parsed: Parsed, policy: Policy): Decision | Outcome {
 function decisionText(policy: Policy, decision: Decision): string {
   const note = countedNote(policy, decision);
   return `${decidedBy(decision)}${note ? ` (${note.slice(2)})` : ""}`;
+}
+
+/** Who took a decision, as the register names them: `decidedBy` without its leading "by ". */
+function whoDecided(decision: Parameters<typeof decidedBy>[0]): string {
+  return decidedBy(decision).replace(/^by /, "");
 }
 
 function guardContext(env: Env, work: WorkItem, tampered: boolean): GuardContext {
@@ -670,7 +685,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       return refuse("usage: crew policy accept | crew policy set <key> <value>");
     }
     case "accept": {
-      if (!args[0]) return refuse("usage: crew accept <id|profile|policy>");
+      if (!args[0]) return refuse("usage: crew accept <id|profile|policy|decisions>");
       return accept(env, args[0]);
     }
     case "start": {
@@ -769,8 +784,13 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       const teamLine = work.seats?.length
         ? `\n  team: ${work.seats.length} seats (crew team ${work.id})`
         : "";
+      // What this project decided before (SP7 §6.6): the lead reads it in Understand.
+      const registered = decisionsCount(env.paths);
+      const registerLine = registered
+        ? `\n  decision register: ${registered} entr${registered === 1 ? "y" : "ies"} (crew decisions)`
+        : "";
       return ok(
-        `${warning}${sharedWarning}${inheritedWarning}${provenNote}started ${work.id} (route ${work.route}: ${work.routeReasons.join("; ")})${lines}${teamLine}${originNotes.length ? `\n${originNotes.join("\n")}` : ""}`,
+        `${warning}${sharedWarning}${inheritedWarning}${provenNote}started ${work.id} (route ${work.route}: ${work.routeReasons.join("; ")})${lines}${teamLine}${registerLine}${originNotes.length ? `\n${originNotes.join("\n")}` : ""}`,
         {
           id: work.id,
           route: work.route,
@@ -852,6 +872,15 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         const result = bindObjection(ledger, opened.work, args[2], parsed.flags.criterion);
         if ("refused" in result) return refuse(result.refused);
         saveLedger(env.paths, opened.work.id, ledger);
+        appendDecision(env.paths, {
+          at: nowIso(),
+          item: opened.work.id,
+          kind: "objection",
+          id: result.id,
+          text: result.text,
+          answer: `resolved by ${result.criterion}`,
+          by: "the engine",
+        });
         return ok(`${result.id} is resolved when ${result.criterion} is proven`, {
           objection: result,
         });
@@ -865,6 +894,15 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         if ("refused" in result) return refuse(result.refused);
         saveLedger(env.paths, opened.work.id, ledger);
         const waiver = result.waived ?? { by: "user" as const };
+        appendDecision(env.paths, {
+          at: nowIso(),
+          item: opened.work.id,
+          kind: "objection",
+          id: result.id,
+          text: result.text,
+          answer: `waived: ${reason}`,
+          by: whoDecided(waiver),
+        });
         return ok(
           `${result.id} waived ${decidedBy(waiver)}${countedNote(env.policy, waiver)}: ${reason}`,
           { objection: result },
@@ -932,6 +970,15 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       const result = answerDecision(opened.work, id, answer, who);
       if ("refused" in result) return refuse(result.refused);
       saveWork(env.paths, opened.work);
+      appendDecision(env.paths, {
+        at: nowIso(),
+        item: opened.work.id,
+        kind: "decision",
+        id: result.id,
+        text: result.question,
+        ...(result.answer ? { answer: result.answer } : {}),
+        by: whoDecided(result),
+      });
       return ok(`${result.id} answered ${decidedBy(result)}: ${result.answer}`, {
         decision: result,
       });
@@ -975,6 +1022,13 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           );
       }
       approve(opened.work, "spec", decision);
+      appendDecision(env.paths, {
+        at: nowIso(),
+        item: opened.work.id,
+        kind: "approval",
+        text: "spec approved",
+        by: whoDecided(decision),
+      });
       saveWork(env.paths, opened.work);
       return ok(`spec approved for ${opened.work.id} ${decisionText(env.policy, decision)}`, {
         approvals: opened.work.approvals,
@@ -1221,6 +1275,25 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           judgementCode: before.currentFingerprint,
         };
       saveWork(env.paths, opened.work);
+      // Each upheld defect inside the change is a decision the judge took about this code (SP7 §6.6).
+      const rulingFile =
+        typeof parsed.flags.ruling === "string"
+          ? relative(env.paths.root, resolve(env.paths.root, parsed.flags.ruling)).replace(
+              /\\/g,
+              "/",
+            )
+          : undefined;
+      for (const record of records)
+        for (const f of record.findings)
+          if (record.verdict === "not-proven" && f.severity === "defect" && !f.outside)
+            appendDecision(env.paths, {
+              at: nowIso(),
+              item: opened.work.id,
+              kind: "ruling",
+              text: `${record.gate} defect: ${f.file}${f.line ? `:${f.line}` : ""} ${f.text}`,
+              by: "the judge",
+              ...(rulingFile ? { file: rulingFile } : {}),
+            });
       deliver(env, opened, result.evidence);
       const lines = records.map((r) => {
         const outside = r.findings.filter((f) => f.outside).length;
@@ -1391,6 +1464,19 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       }
       return refuse(usage);
     }
+    case "decisions": {
+      // The project's register (SP7 §6.6): what every item decided, newest first; the engine's file.
+      const tampered = tamperRefusal(env);
+      if (tampered) return tampered;
+      const grep = typeof parsed.flags.grep === "string" ? parsed.flags.grep : undefined;
+      const entries = listDecisions(env.paths, grep);
+      const text = entries.length
+        ? entries.map(decisionLine).join("\n")
+        : grep
+          ? `no entry matches ${grep}`
+          : "the register is empty";
+      return ok(text, { entries });
+    }
     case "team": {
       // The seats the route plans for the item, printed before anything runs and recorded (SP7 §6.2, §6.6).
       const opened = openForChange(env, args[0]);
@@ -1475,6 +1561,17 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       if (what === "spec" && newRound)
         work.rounds = { ...rounds, validation: rounds.validation + 1 };
       saveWork(env.paths, work);
+      // A return is a decision of the lead about the item (SP7 §6.6); a validated verdict is the plan's own record.
+      const recorded = work.validations[work.validations.length - 1];
+      if (verdict.verdict === "returned" && recorded)
+        appendDecision(env.paths, {
+          at: recorded.at,
+          item: work.id,
+          kind: "validation",
+          text: `${what} returned by ${by}: ${verdict.returns} return${verdict.returns === 1 ? "" : "s"}`,
+          by,
+          file: recorded.file,
+        });
       const said =
         verdict.verdict === "validated"
           ? `validated (round ${round})`
@@ -1540,6 +1637,13 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         { what, ...(task ? { task } : {}), by: decision, at: nowIso() },
       ];
       saveWork(env.paths, opened.work);
+      appendDecision(env.paths, {
+        at: nowIso(),
+        item: opened.work.id,
+        kind: "continue",
+        text: `${what} continued for one more round`,
+        by: whoDecided(decision),
+      });
       const subject =
         what === "gate" ? `gate of ${task} of ${opened.work.id}` : `${what} of ${opened.work.id}`;
       return ok(`${subject} continued for one more round ${decisionText(env.policy, decision)}`, {
@@ -1897,6 +2001,7 @@ const HELP = `crew ${VERSION}
   team <id>                   the seats the route plans for the item, with their reasons, recorded
   validation <id> record --what spec|plan|delivery --by lead-<team> --file <path>   a lead's verdict from its file; a contradiction is refused
   continue <id> judgement|validation|gate T-n   one more round past the policy's cap (the user's decision)
+  decisions [--grep <text>]   the project's decision register, newest first; the engine appends at every decision
   metrics [--workspace <ws>]  the figures of this project, or of the workspace's registered projects, from the records
   cto record --workspace <ws> --file <plan.md>   file the CTO's plan under the user's crew directory
   skip <id> <step> --reason "<text>"    record a skip of a tdd step, a gate or a judgement gate (asks the user; --mode as for approve)

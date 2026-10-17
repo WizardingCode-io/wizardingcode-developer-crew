@@ -292,6 +292,17 @@ test("SP2c debt: the gap round asks whether the target exists in this repository
   expect(Buffer.byteLength(skill, "utf8")).toBeLessThanOrEqual(9254);
 });
 
+test("SP7a AC-3 (Task 5): the understand reference reads the project's decision register before assuming, and the receive reference says start counts it", () => {
+  const understand = readReference("understand.md");
+  expect(understand).toContain("**Earlier decisions**");
+  expect(understand).toContain("`crew decisions`");
+  expect(understand).toMatch(/a decision changed is a new decision/);
+  expect(understand).toMatch(/never a silent deviation/);
+  const receive = readReference("receive.md");
+  expect(receive).toMatch(/decision register/);
+  expect(receive).toContain("crew decisions");
+});
+
 test("SP7a AC-5 (Task 4): the conclave reference launches the leads to validate the spec before the plan, and the deliver reference the delivery", () => {
   const conclave = readReference("conclave.md");
   expect(conclave).toContain("## The leads' validation");

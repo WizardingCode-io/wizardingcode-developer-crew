@@ -22,6 +22,23 @@ test("SP2b: the review folder is the session's to write, and judgement and debat
   expect(decision(bash(`echo x > .crew/work/${work.id}/evidence.json`))).toBe("deny");
 });
 
+test("SP7a-Task5 AC-2: the project's decision register is the engine's; a direct write is denied, as the ledger's would be", () => {
+  const { root, ctx } = setup(null);
+  const file = join(root, ".crew", "decisions.json");
+  expect(decision(onPreToolUse(ctx, { tool_name: "Write", tool_input: { file_path: file } }))).toBe(
+    "deny",
+  );
+  expect(
+    decision(
+      onPreToolUse(ctx, { tool_name: "Edit", tool_input: { file_path: ".crew/decisions.json" } }),
+    ),
+  ).toBe("deny");
+  const bash = (command: string) =>
+    onPreToolUse(ctx, { tool_name: "Bash", tool_input: { command }, permission_mode: "default" });
+  expect(decision(bash("echo x > .crew/decisions.json"))).toBe("deny");
+  expect(bash("crew decisions --grep erasure")).toEqual({});
+});
+
 test("SP7a AC-5: crew continue is user-only, like skip: asked under prompt, relayed with no prompt under relay", () => {
   const relay = setup(null);
   const bash = (ctx: typeof relay.ctx, command: string, permission_mode?: string) =>

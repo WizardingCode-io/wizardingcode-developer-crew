@@ -87,7 +87,13 @@ export function mailboxDir(userDir: string, workspace: string | null, project: s
   return join(userDir, "mail", workspace ?? "_alone", project);
 }
 
-const PROTECTED_TOP = new Set([".crew/profile.json", ".crew/policy.json", ".crew/.gitignore"]);
+const PROTECTED_TOP = new Set([
+  ".crew/profile.json",
+  ".crew/policy.json",
+  ".crew/.gitignore",
+  // The project's decision register (SP7 §6.6): appended by the engine at every decision.
+  ".crew/decisions.json",
+]);
 /** The files of a work folder only the engine writes; `crew accept <id>` re-trusts the same set. */
 export const PROTECTED_WORK_FILES: readonly string[] = [
   "work.json",

@@ -2326,6 +2326,151 @@ async function validateLeads(c: ReturnType<typeof io>, root: string, id: string)
   }
 }
 
+test("SP7a-Task5 AC-2: every decision taken or recorded lands in the project's register; crew decisions lists it; crew start counts it; the file is protected", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const env = testEnv();
+  const c = io(root, env);
+  expect((await c.run("decisions")).out.trim()).toBe("the register is empty");
+  const id = (
+    await c.json(
+      "start",
+      "Refactor the module",
+      "--answers",
+      JSON.stringify({ ...JSON.parse(answers), scope: 1 }),
+      "--criterion",
+      "a",
+    )
+  ).data.id as string;
+  await c.run("decision", id, "add", "Erasure or deactivation?", "--default", "deactivation");
+  expect((await c.run("decide", id, "D-1", "deactivation")).code).toBe(0);
+  await c.run(
+    "objection",
+    id,
+    "add",
+    "No index on the new column",
+    "--by",
+    "fault-finder",
+    "--severity",
+    "advisory",
+  );
+  await c.run(
+    "objection",
+    id,
+    "add",
+    "Rows lost on restore",
+    "--by",
+    "fault-finder",
+    "--severity",
+    "blocking",
+  );
+  expect(
+    (await c.run("objection", id, "waive", "O-1", "--reason", "the table is small")).code,
+  ).toBe(0);
+  expect((await c.run("objection", id, "resolve", "O-2", "--criterion", "AC-1")).code).toBe(0);
+  write(root, `.crew/work/${id}/spec.md`, "# Spec\n\n## Acceptance criteria\n- AC-1 a\n");
+  write(
+    root,
+    `.crew/work/${id}/conclave.md`,
+    "# Gap round\n\n## Assumed by good practice\n- none\n\n## Decisions only the user can make\n- D-1\n\n## Proposals\n- none\n\n## Warnings\n- none\n",
+  );
+  for (let i = 0; i < 3; i++) await c.run("phase", id, "next");
+  expect((await c.run("approve", id, "spec", "--validator", "complete-gap-round")).code).toBe(0);
+  const returned = `# security lead's validation of ${id}: spec\nverdict: returned\n## Returns\n- R-1 · spec.md:4 · AC-1 is not observable\n## Notes\n- none\n`;
+  expect(
+    (
+      await c.run(
+        "validation",
+        id,
+        "record",
+        "--what",
+        "spec",
+        "--by",
+        "lead-security",
+        "--file",
+        leadFile(root, id, "lead-security", returned),
+      )
+    ).code,
+  ).toBe(0);
+  expect((await c.run("continue", id, "validation")).code).toBe(0);
+  write(root, "src/a.ts", "y");
+  await c.run("gate", "run", id);
+  const rulingFile = `.crew/work/${id}/review/ruling.json`;
+  write(
+    root,
+    rulingFile,
+    JSON.stringify({
+      rulings: [
+        {
+          gate: "code-quality",
+          verdict: "not-proven",
+          findings: [
+            { file: "src/a.ts", line: 1, text: "a magic value", severity: "defect" },
+            { file: "src/a.ts", line: 2, text: "a long name", severity: "advisory" },
+            { file: "src/elsewhere.ts", line: 9, text: "old debt", severity: "defect" },
+          ],
+          tokens: 1,
+        },
+        { gate: "test-quality", verdict: "proven", findings: [], tokens: 1 },
+      ],
+    }),
+  );
+  await c.run("judgement", id, "record", "--ruling", rulingFile);
+  const listed = await c.run("decisions");
+  const lines = listed.out.split("\n").filter((l) => l.includes(" · "));
+  expect(lines.length).toBe(7);
+  // Newest first: the ruling's defect inside the change, and nothing for its advisory or its debt outside.
+  expect(lines[0]).toBe(
+    `${new Date().toISOString().slice(0, 10)} · ${id} · ruling · code-quality defect: src/a.ts:1 a magic value (by the judge)`,
+  );
+  expect(listed.out).toContain(
+    `${id} · decision · D-1 Erasure or deactivation? → deactivation (by the user, relayed by the agent)`,
+  );
+  expect(listed.out).toContain(
+    `${id} · objection · O-1 No index on the new column → waived: the table is small (by the user, relayed by the agent)`,
+  );
+  expect(listed.out).toContain(
+    `${id} · objection · O-2 Rows lost on restore → resolved by AC-1 (by the engine)`,
+  );
+  expect(listed.out).toContain(
+    `${id} · approval · spec approved (by the validator (rule: complete-gap-round))`,
+  );
+  expect(listed.out).toContain(
+    `${id} · validation · spec returned by lead-security: 1 return (by lead-security)`,
+  );
+  expect(listed.out).toContain(
+    `${id} · continue · validation continued for one more round (by the user, relayed by the agent)`,
+  );
+  expect(
+    (await c.run("decisions", "--grep", "index")).out.split("\n").filter((l) => l.includes(" · "))
+      .length,
+  ).toBe(1);
+  expect((await c.run("decisions", "--grep", "zzz")).out.trim()).toBe("no entry matches zzz");
+  const entries = (await c.json("decisions", "--json")).data.entries as {
+    kind: string;
+    file?: string;
+  }[];
+  expect(entries.length).toBe(7);
+  // The ruling's entry carries the ruling's file, the returned validation's the lead's file.
+  expect(entries.find((e) => e.kind === "ruling")?.file).toBe(
+    `.crew/work/${id}/review/ruling.json`,
+  );
+  expect(entries.find((e) => e.kind === "validation")?.file).toBe("conclave/lead-security.md");
+  expect(entries.find((e) => e.kind === "decision")?.file).toBeUndefined();
+  const second = await c.run("start", "Another change", "--answers", answers, "--criterion", "b");
+  expect(second.out).toContain("decision register: 7 entries (crew decisions)");
+  // The register is the engine's: a hand edit is refused until the user accepts it.
+  write(root, ".crew/decisions.json", JSON.stringify({ version: 1, entries: [] }));
+  const tampered = await c.run("decisions");
+  expect(tampered.code).toBe(1);
+  expect(tampered.err).toContain("decisions.json");
+  expect(tampered.err).toContain("crew accept decisions");
+  expect((await c.run("accept", "decisions")).code).toBe(0);
+  expect((await c.run("decisions")).out.trim()).toBe("the register is empty");
+});
+
 test("SP7a AC-3: crew validation record parses the lead's file, refuses a lead not seated and a contradiction, caps the rounds, and the plan waits for it", async () => {
   const root = makeRepo({
     "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),

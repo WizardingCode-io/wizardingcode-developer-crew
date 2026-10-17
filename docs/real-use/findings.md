@@ -453,3 +453,19 @@ Verdicts agree at every effort. Upheld findings: `high` reproduced Task 6's and 
 - Expected: taken in Task 8's close or the first hardening item of SP7a, red first.
 - Evidence: the item's `review/ruling.round1.json` and the round-2 ruling in its evidence.
 - Outcome: open.
+
+### 54. Debt of SP7a Task 5 (`2026-10-17-013`): the judge's advisories
+
+- Date: 2026-10-17. Project: this repository. Category: `docs`. Severity: low.
+- What happened: the item that brought the project's decision register went through two judgement rounds (two defects of test coverage in the first: the answer grep used a word also in the text, and the entries' `file` fields were never read; fixed in the second) and left eight advisories, recorded here under the user's bounded-round rule. Code quality: the ruling-to-entries loop sits inline in `case "judgement"` (a `rulingDecisions` helper would carry it); the `appendDecision({ at, item, … })` block is repeated at the seven appends (a thin wrapper would carry `at` and `item`); the `--ruling` path normalisation repeats an expression `cli.ts` and `store.ts`'s private `rel()` already have; `whoDecided` strips `decidedBy`'s "by " prefix with a regex (have `decidedBy` return the bare name); the help line of `crew decisions` does not say what `--grep` matches (id, text, answer; not the item or who). Test quality: `crew start`'s empty-register case and the singular "1 entry" form are unpinned; an approval by the user and a ruling under a proven verdict are not covered as entries; the `receive.md` pin does not say that start prints the count.
+- Expected: taken in Task 8's close or the first hardening item of SP7a, red first.
+- Evidence: the item's `review/ruling.round1.json` and the round-2 ruling in its evidence.
+- Outcome: open.
+
+### 55. The SP2c lock test fails once in a while with ENOENT on the lock file
+
+- Date: 2026-10-17. Project: this repository. Item: `2026-10-17-013`. Category: `friction`. Severity: low.
+- What happened: one run of `bun run check` during Task 5 failed on "SP2c AC-3: every writer of the session's state takes the local folder's lock, waits half a second for one held, and then goes on rather than fail open" (`hooks-post-tool-use.test.ts`) with `ENOENT: no such file or directory, utimensat '…/.crew/local/.lock'` after 10.8 s; the next run passed, as did the gate runs before and after. The test holds a lock file and touches it while the writers wait; a writer that took and released the lock between the test's check and its `utimensat` removes the file under it.
+- Expected: the test touches the lock through a path that tolerates its removal (or holds it for the whole wait), in a hardening item.
+- Evidence: the item's log `tdd-AC-4-after-*.txt` of the first after run.
+- Outcome: open.
