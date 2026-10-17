@@ -102,8 +102,21 @@ test("SP2b: the skill drives the debate through the roles and the judgement gate
   const gate = readReference("gate.md");
   expect(gate).toContain("## Judgement gates");
   expect(gate).toContain("Judgement gates to run:");
-  for (const g of ["code-quality", "test-quality", "security", "ui-ux", "risk"])
+  for (const g of [
+    "code-quality",
+    "test-quality",
+    "security",
+    "ui-ux",
+    "risk",
+    "architecture",
+    "data",
+    "infra",
+  ])
     expect(gate).toContain(`wizardingcode-developer-crew:review-${g}`);
+  // SP7a AC-3: the three new gates say when they run, and the lead launches the seats the engine planned.
+  expect(gate).toMatch(/architecture on full[^\n]*data when[^\n]*data migration[^\n]*infra when/);
+  expect(gate).toContain("`crew team <id>` prints every seat the engine planned");
+  expect(gate).toMatch(/launch exactly those/);
   expect(gate).toContain("`model: opus`");
   expect(gate).toContain("wizardingcode-developer-crew:judge");
   expect(gate).toContain("review/<gate>.findings.md");

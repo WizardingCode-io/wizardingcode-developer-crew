@@ -429,3 +429,11 @@ Verdicts agree at every effort. Upheld findings: `high` reproduced Task 6's and 
 - Expected: the value replaced by a neutral name (`w`) in the next hardening item; the rule added to the test-quality rubric's "what the reviewer checks" so a reviewer flags it.
 - Evidence: the `mail.workspace` fixture values in the two test files (`mailboxDir`, `isProtectedPath` and `setPolicyValue` cases); the name is not repeated here.
 - Outcome: open.
+
+### 51. Debt of SP7a Task 2 (`2026-10-17-009`): the judge's advisories
+
+- Date: 2026-10-17. Project: this repository. Category: `docs`. Severity: low.
+- What happened: the item that brought the architecture, data and infra reviewers with their rubrics was proven in one judgement round with six advisories, recorded here under the user's bounded-round rule. Code quality: `references/gate.md`'s per-gate prompt list does not say what the lead passes to the three new reviewers (architecture: the spec's path and where the base lives; data and infra: their risk areas and the paths that raised them), so data and infra would open without their risk areas; the descriptions of `review-data.md` and `review-infra.md` (and the first paragraph of `rubrics/data.md` and `rubrics/infra.md`) say "when the change touches a data migration / infrastructure" without "on the full route", which the registry enforces; the "drift the diff did not introduce is debt" sentence recurs across the three agents, their templates and the rubric (boilerplate, no fix owed). Test quality: the architecture body's `/data model|contracts|integrations/` is an alternation (three assertions instead); the test's name says "never the repository" but no assertion pins the agents' "the diff, not the repository" sentence; the gate.md pin does not cover what triggers infra nor "on full" for data and infra.
+- Expected: the gate.md prompt inputs and the two descriptions fixed in Task 8's close or the first hardening item of SP7a, with the test pins sharpened, red first.
+- Evidence: the item's `review/ruling.json`.
+- Outcome: open.

@@ -7,7 +7,16 @@ const RUBRICS = fileURLToPath(
   new URL("../../../plugins/core/skills/crew/rubrics/", import.meta.url),
 );
 
-const REVIEWERS = ["code-quality", "test-quality", "security", "ui-ux", "risk"];
+const REVIEWERS = [
+  "code-quality",
+  "test-quality",
+  "security",
+  "ui-ux",
+  "risk",
+  "architecture",
+  "data",
+  "infra",
+];
 const DEBATE_ROLES = ["researcher", "expert", "devils-advocate", "fault-finder"];
 const NEVER = ["Write", "Edit", "MultiEdit", "NotebookEdit", "Bash", "Agent", "Task"];
 const LISTS = [
@@ -120,6 +129,24 @@ test("SP2b: the debate roles run on opus; the devil's advocate and the fault-fin
   expect(finder).toContain("- advisory · P-n ·");
   expect(finder).toContain("--by fault-finder");
   expect(agent("researcher").body).toContain("## What the facts do not settle");
+});
+
+test("SP7a AC-1, AC-2: the architecture, data and infra reviewers judge the change against the project's own base, never the repository, with a rubric each", () => {
+  const architecture = agent("review-architecture");
+  expect(architecture.meta.model).toBe("sonnet");
+  expect(architecture.body).toMatch(/drift[^\n]*defect/i);
+  expect(architecture.body).toMatch(/data model|contracts|integrations/);
+  const data = agent("review-data");
+  expect(data.body).toMatch(/ORM/);
+  expect(data.body).toMatch(/migration/);
+  const infra = agent("review-infra");
+  expect(infra.body).toMatch(/pipeline/);
+  expect(infra.body).toMatch(/rollback/);
+  for (const gate of ["architecture", "data", "infra"]) {
+    const rubric = readFileSync(`${RUBRICS}${gate}.md`, "utf8");
+    for (const heading of LISTS) expect(rubric).toContain(heading);
+    expect(rubric).toMatch(/A \*\*defect\*\*/);
+  }
 });
 
 test("SP2b: one rubric per judgement gate, each judging the change and never the repository", () => {
