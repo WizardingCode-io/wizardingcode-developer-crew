@@ -33,6 +33,12 @@ export const pythonDetector: Detector = {
     }
     if (/\[tool\.mypy/.test(text)) gates.typecheck = `${prefix}mypy .`;
     else if (/\[tool\.pyright/.test(text)) gates.typecheck = `${prefix}pyright`;
-    return { stack: "python", packageManager: manager, gates };
+    return {
+      stack: "python",
+      packageManager: manager,
+      gates,
+      // pytest takes the files to run: a todo's gate runs the tests of its own files (SP7 §8.1).
+      ...(hasPytest ? { testScoped: `${prefix}pytest {files}` } : {}),
+    };
   },
 };

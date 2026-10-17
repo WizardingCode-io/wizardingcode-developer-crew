@@ -2326,6 +2326,26 @@ async function validateLeads(c: ReturnType<typeof io>, root: string, id: string)
   }
 }
 
+test("SP7a-Task6 AC-1: crew profile set testScoped stores a confirmed scoped test template and refuses one without {files}", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const env = testEnv();
+  const c = io(root, env);
+  await c.run("detect");
+  expect((await c.run("profile", "set", "testScoped", "vitest related --run")).err.trim()).toBe(
+    "a scoped test command names where the files go: {files}",
+  );
+  const set = await c.run("profile", "set", "testScoped", "vitest related {files} --run");
+  expect(set.code).toBe(0);
+  expect(set.out.trim()).toBe("testScoped for . set and confirmed: vitest related {files} --run");
+  expect(loadProfile(repoPaths(root, env)).profile?.targets[0]?.testScoped).toEqual({
+    command: "vitest related {files} --run",
+    source: "confirmed",
+  });
+});
+
 test("SP7a-Task5 AC-2: every decision taken or recorded lands in the project's register; crew decisions lists it; crew start counts it; the file is protected", async () => {
   const root = makeRepo({
     "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),

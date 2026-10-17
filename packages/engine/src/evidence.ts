@@ -425,16 +425,20 @@ export function renderReport(
       "",
       "## Tasks",
       "",
-      "| Task | Criteria | Branch | Child | Verdict | Merged | Report |",
-      "| :- | :- | :- | :- | :- | :- | :- |",
+      "| Task | Criteria | Branch | Child | Verdict | Merged | Report | State | Gate |",
+      "| :- | :- | :- | :- | :- | :- | :- | :- | :- |",
     );
     for (const t of work.tasks)
       lines.push(
-        `| ${t.task} | ${t.criteria.join(", ")} | ${t.branch} | ${t.child ?? ""} | ${t.verdict ?? "no reply yet"} | ${
+        `| ${t.task} | ${t.criteria.join(", ")} | ${t.inline ? "inline" : t.branch} | ${t.child ?? ""} | ${t.verdict ?? (t.inline ? "" : "no reply yet")} | ${
           t.mergedAt
             ? `${t.mergeCommit?.slice(0, 7) ?? ""}${t.forcedBy ? " (forced by the user)" : ""}`
-            : "no"
-        } | ${t.child ? `.crew/work/${t.child}/report.md` : ""} |`,
+            : t.inline
+              ? "inline"
+              : "no"
+        } | ${t.child ? `.crew/work/${t.child}/report.md` : ""} | ${t.state ?? "open"} | ${
+          t.gate ? `${t.gate.status} (round ${t.gate.round})` : "-"
+        } |`,
       );
   }
   const removed = work.removedCriteria ?? [];

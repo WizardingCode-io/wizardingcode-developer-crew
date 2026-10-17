@@ -292,6 +292,20 @@ test("SP2c debt: the gap round asks whether the target exists in this repository
   expect(Buffer.byteLength(skill, "utf8")).toBeLessThanOrEqual(9254);
 });
 
+test("SP7a AC-4 (Task 6): the plan and build references describe the todo loop: note or merge, gate, brief, two failing rounds wait for a person", () => {
+  const plan = readReference("plan.md");
+  expect(plan).toContain("## The todo loop");
+  expect(plan).toContain("crew task <id> gate T-n");
+  expect(plan).toContain("crew task <id> brief T-n");
+  expect(plan).toContain("crew task <id> note T-n --criteria AC-k --scope");
+  expect(plan).toMatch(/team\.maxGateRounds|Two failing rounds wait for a person/);
+  expect(plan).toContain("crew profile set testScoped");
+  expect(plan).toMatch(/the leads read the briefs at delivery/);
+  const build = readReference("build.md");
+  expect(build).toContain("crew task <id> gate T-n");
+  expect(build).toContain("crew task <id> brief T-n");
+});
+
 test("SP7a AC-3 (Task 5): the understand reference reads the project's decision register before assuming, and the receive reference says start counts it", () => {
   const understand = readReference("understand.md");
   expect(understand).toContain("**Earlier decisions**");

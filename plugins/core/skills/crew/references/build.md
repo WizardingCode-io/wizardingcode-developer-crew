@@ -24,4 +24,6 @@ For an `observed` criterion: make the change, then `crew tdd observed <id> <crit
 
 When a criterion cannot be tested automatically, say so and let the user decide: `crew skip <id> tdd:<criterion> --reason "<why>"`. The skip appears in the report.
 
+When a todo of the plan is done (a handed-out task merged, or an inline todo committed and noted with `crew task <id> note T-n --criteria AC-k --scope <path>`), close it: `crew task <id> gate T-n` runs the deterministic gates on the files it touched, then `crew task <id> brief T-n` writes what changed, what was proven and what is left (`references/plan.md`, "The todo loop"). Two failing gate rounds wait for a person.
+
 When the work is ready, `crew gate run <id>`: the gate run moves the item into the gate phase itself (and to deliver when it proves the work).

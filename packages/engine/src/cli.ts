@@ -21,7 +21,7 @@ import {
 } from "./evidence.ts";
 import { changedWatchedPaths, hashPaths, isGitRepo } from "./fingerprint.ts";
 import { ensureDir, nowIso, readText, writeText } from "./fs.ts";
-import { assess, reassess, runGates } from "./gates.ts";
+import { assess, reassess, runGates, runTaskGate } from "./gates.ts";
 import { handleHook } from "./hooks/index.ts";
 import type { HookPayload } from "./hooks/types.ts";
 import {
@@ -94,7 +94,16 @@ import {
 import { ensureProfile, loadProfile, refreshProfile, saveProfile } from "./profile.ts";
 import { ensureCrewDir } from "./state.ts";
 import { integrityOf, recordIntegrity, writeProtectedText } from "./store.ts";
-import { listTasks, mergeTask, openTask, takeReplies } from "./tasks.ts";
+import {
+  listTasks,
+  mergeTask,
+  noteTask,
+  openTask,
+  takeReplies,
+  taskScope,
+  taskText,
+  writeBrief,
+} from "./tasks.ts";
 import { recordTdd, type TddStep } from "./tdd.ts";
 import { plannedSeats, primaryTeam } from "./team.ts";
 import type {
@@ -183,7 +192,7 @@ const KNOWN_FLAGS: Record<string, readonly string[]> = {
   skip: ["reason", "mode"],
   evidence: [],
   status: [],
-  task: ["criteria", "text", "force", "mode"],
+  task: ["criteria", "text", "scope", "force", "mode"],
   mail: [
     "to",
     "type",
@@ -588,6 +597,24 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       if (sub === "set" || sub === "confirm") {
         const refused = tamperRefusal(env);
         if (refused) return refused;
+      }
+      if (sub === "set" && gate === "testScoped") {
+        // The scoped test template of a target (SP7 §8.1): the user's, confirmed as it is set.
+        if (!cmd)
+          return refuse(
+            'usage: crew profile set testScoped "<cmd with {files}>" [--target <path>]',
+          );
+        if (!cmd.includes("{files}"))
+          return refuse("a scoped test command names where the files go: {files}");
+        const targetPath = typeof parsed.flags.target === "string" ? parsed.flags.target : ".";
+        const target = env.profile.targets.find((t) => t.path === targetPath);
+        if (!target) return refuse(`no target at ${targetPath} in the profile (crew detect)`);
+        target.testScoped = { command: cmd, source: "confirmed" };
+        saveProfile(env.paths, env.profile);
+        return ok(`testScoped for ${targetPath} set and confirmed: ${cmd}`, {
+          target: targetPath,
+          testScoped: cmd,
+        });
       }
       if (sub === "set") {
         if (!GATE_NAMES.includes(gate as GateName) || gate === "secrets" || !cmd)
@@ -1378,7 +1405,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       const opened = openForChange(env, args[0]);
       if (isOutcome(opened)) return opened;
       const usage =
-        'usage: crew task <id> open T-n --criteria AC-1,AC-2 [--text "<task text>"] | list | merge T-n [--force]';
+        'usage: crew task <id> open T-n --criteria AC-1,AC-2 [--text "<task text>"] | note T-n --criteria AC-k --scope <path>[,<path>] [--text "<todo>"] | list | merge T-n [--force] | gate T-n [--scope <path>[,<path>]] | brief T-n';
       const ctx = env.mail;
       if (args[1] === "open") {
         const task = args[2];
@@ -1410,6 +1437,99 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           { task: out.record, message: out.message, opened: out.opened, notes: out.notes },
         );
       }
+      const list = (flag: unknown): string[] =>
+        typeof flag === "string"
+          ? flag
+              .split(",")
+              .map((s) => s.trim())
+              .filter(Boolean)
+          : [];
+      if (args[1] === "note") {
+        // A todo the lead does inline (SP7 §8.1): no worktree, no message; its scope names its files.
+        const task = args[2];
+        const criteria = list(parsed.flags.criteria);
+        const scope = list(parsed.flags.scope);
+        if (!task || !criteria.length) return refuse(usage);
+        const planText = readText(join(workDir(env.paths, opened.work.id), "plan.md"));
+        const out = noteTask(
+          opened.work,
+          task,
+          criteria,
+          scope,
+          typeof parsed.flags.text === "string" ? parsed.flags.text : taskText(planText, task),
+        );
+        if ("refused" in out) return refuse(out.refused);
+        saveWork(env.paths, opened.work);
+        return ok(`${task} noted: inline, ${criteria.join(",")}, scope ${scope.join(",")}`, {
+          task: out.record,
+        });
+      }
+      if (args[1] === "gate") {
+        // The todo's own gate on the files it touched (SP7 §8.1), bounded by team.maxGateRounds.
+        const task = args[2];
+        const record = (opened.work.tasks ?? []).find((t) => t.task === task);
+        if (!task || !record)
+          return refuse(task ? `${task} is not a task of ${opened.work.id}` : usage);
+        // What the gate would run on comes first: a todo with nothing in this checkout is refused
+        // for that, not for its rounds, which a continuation would not mend.
+        const flagScope = parsed.flags.scope === undefined ? undefined : list(parsed.flags.scope);
+        const scoped = taskScope(env.paths.root, env.profile, record, flagScope);
+        if ("refused" in scoped) return refuse(scoped.refused);
+        const grants = (opened.work.continued ?? []).filter(
+          (c) => c.what === "gate" && c.task === task && decisionCounts(env.policy, c.by),
+        ).length;
+        const round = record.gate?.round ?? 0;
+        if (round >= env.policy.team.maxGateRounds + grants)
+          return refuse(
+            `gate round ${round + 1} of ${task}: the policy allows ${env.policy.team.maxGateRounds} (team.maxGateRounds); the user continues it once with crew continue ${opened.work.id} gate ${task}, or decides`,
+          );
+        const result = await runTaskGate(
+          env.paths,
+          opened.work,
+          env.profile,
+          env.policy,
+          scoped.scope,
+        );
+        record.gate = {
+          round: round + 1,
+          at: nowIso(),
+          status: result.status,
+          runs: result.runs,
+          scope: scoped.scope,
+        };
+        // The state ladder only climbs: a gate re-run after the brief keeps the todo briefed (the brief
+        // is rewritten with crew task brief when the lead wants the new runs in it).
+        if (result.status === "pass" && record.state !== "briefed") record.state = "gated";
+        saveWork(env.paths, opened.work);
+        const lines = result.runs.map(
+          (r) =>
+            `  ${r.gate} (${r.target}): ${r.status} in ${(r.durationMs / 1000).toFixed(1)}s${r.reason ? ` (${r.reason})` : ""}`,
+        );
+        return {
+          code: result.status === "pass" ? 0 : 1,
+          stdout: true,
+          text: `${lines.join("\n")}\n${task} gate round ${round + 1}: ${result.status}`,
+          data: { task: record, gate: record.gate },
+        };
+      }
+      if (args[1] === "brief") {
+        // What the todo changed, proved and left, from the records (SP7 §8.1); the leads read it at delivery.
+        const task = args[2];
+        const record = (opened.work.tasks ?? []).find((t) => t.task === task);
+        if (!task || !record)
+          return refuse(task ? `${task} is not a task of ${opened.work.id}` : usage);
+        if (record.gate?.status !== "pass")
+          return refuse(`${task} has no passing gate yet (crew task <id> gate ${task})`);
+        const text = writeBrief(
+          env.paths,
+          opened.work,
+          record,
+          loadEvidence(env.paths, opened.work.id).evidence,
+          env.policy,
+        );
+        saveWork(env.paths, opened.work);
+        return ok(text, { task: record, brief: text });
+      }
       if (args[1] === "list") {
         // What became of the implementers first, so the listing says what the mailbox knows now
         // (risk review of SP2c task 4, round 13).
@@ -1423,9 +1543,10 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         const listedTasks = guarded("the tasks were not listed", () => {
           rows = listTasks(ctx, opened.work);
         });
-        const lines = rows.map(
-          ({ task: t, status, verdict, implementer }) =>
-            `  ${t.task} · ${t.criteria.join(",")} · ${t.branch} · ${t.message} ${status} · ${t.child ?? "no child yet"} · ${verdict}${implementer ? ` · ${implementer}` : ""}${t.mergedAt ? ` · merged ${t.mergeCommit?.slice(0, 7)}` : ""}`,
+        const lines = rows.map(({ task: t, status, verdict, implementer }) =>
+          t.inline
+            ? `  ${t.task} · ${t.criteria.join(",")} · inline · ${t.state ?? "merged"}`
+            : `  ${t.task} · ${t.criteria.join(",")} · ${t.branch} · ${t.message} ${status} · ${t.child ?? "no child yet"} · ${verdict}${implementer ? ` · ${implementer}` : ""}${t.mergedAt ? ` · merged ${t.mergeCommit?.slice(0, 7)}` : ""} · ${t.state ?? "open"}`,
         );
         return ok(
           `${[swept, taken, listedTasks].filter(Boolean).join("\n")}${swept || taken || listedTasks ? "\n" : ""}Tasks of ${opened.work.id}:${listedTasks ? " not listed" : lines.length ? `\n${lines.join("\n")}` : " none"}`,

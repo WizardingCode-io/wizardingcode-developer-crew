@@ -6,6 +6,8 @@ import type { DetectedTarget, Detector } from "./types.ts";
 
 interface PackageJson {
   scripts?: Record<string, string>;
+  dependencies?: Record<string, string>;
+  devDependencies?: Record<string, string>;
   workspaces?: string[] | { packages?: string[] };
   /** `pnpm@9.1.0`: the manager the project declares, which Corepack honours. */
   packageManager?: string;
@@ -87,10 +89,19 @@ export const nodeDetector: Detector = {
       gates.typecheck = TSC_BY_MANAGER[manager];
     }
     const workspaces = workspaceGlobs(pkg);
+    // A runner that takes the files to test gives a todo's gate its scoped command (SP7 §8.1).
+    const deps = { ...(pkg.dependencies ?? {}), ...(pkg.devDependencies ?? {}) };
+    const testScoped =
+      "vitest" in deps
+        ? "vitest related {files} --run"
+        : "jest" in deps
+          ? "jest --findRelatedTests {files}"
+          : undefined;
     return {
       stack: "node",
       packageManager: manager,
       gates,
+      ...(testScoped ? { testScoped } : {}),
       ...(workspaces.length ? { workspaces } : {}),
       ...(sure ? {} : { proposed: true }),
     };

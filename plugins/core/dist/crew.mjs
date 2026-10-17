@@ -617,10 +617,13 @@ var nodeDetector = {
       gates.typecheck = TSC_BY_MANAGER[manager];
     }
     const workspaces = workspaceGlobs(pkg);
+    const deps = { ...pkg.dependencies ?? {}, ...pkg.devDependencies ?? {} };
+    const testScoped = "vitest" in deps ? "vitest related {files} --run" : ("jest" in deps) ? "jest --findRelatedTests {files}" : undefined;
     return {
       stack: "node",
       packageManager: manager,
       gates,
+      ...testScoped ? { testScoped } : {},
       ...workspaces.length ? { workspaces } : {},
       ...sure ? {} : { proposed: true }
     };
@@ -693,7 +696,12 @@ var pythonDetector = {
       gates.typecheck = `${prefix}mypy .`;
     else if (/\[tool\.pyright/.test(text))
       gates.typecheck = `${prefix}pyright`;
-    return { stack: "python", packageManager: manager, gates };
+    return {
+      stack: "python",
+      packageManager: manager,
+      gates,
+      ...hasPytest ? { testScoped: `${prefix}pytest {files}` } : {}
+    };
   }
 };
 
@@ -753,7 +761,13 @@ function detectTargets(root) {
         stack: found.stack,
         packageManager: found.packageManager,
         gates,
-        timeoutMs: DEFAULT_TIMEOUT_MS
+        timeoutMs: DEFAULT_TIMEOUT_MS,
+        ...found.testScoped ? {
+          testScoped: {
+            command: found.testScoped,
+            source: found.proposed ? "proposed" : "detected"
+          }
+        } : {}
       };
       targets.push(target);
       if (found.workspaces)
@@ -783,6 +797,8 @@ function mergeProfile(previous, detected) {
         if (command.source !== "detected")
           target.gates[gate] = command;
       }
+      if (old.testScoped && old.testScoped.source !== "detected")
+        target.testScoped = old.testScoped;
     }
     for (const old of previous.targets) {
       const found = targets.some((t) => t.path === old.path && t.stack === old.stack);
@@ -2226,9 +2242,9 @@ function renderReport(work, evidence, policy, ledger, mail, selfName) {
       lines.push(`| ${r.agent} | ${r.personality ?? "-"} | ${r.at} | ${r.tokensFrom === "none" ? "not read" : r.tokens} | ${r.file ?? "not saved"} |`);
   }
   if (work.tasks?.length) {
-    lines.push("", "## Tasks", "", "| Task | Criteria | Branch | Child | Verdict | Merged | Report |", "| :- | :- | :- | :- | :- | :- | :- |");
+    lines.push("", "## Tasks", "", "| Task | Criteria | Branch | Child | Verdict | Merged | Report | State | Gate |", "| :- | :- | :- | :- | :- | :- | :- | :- | :- |");
     for (const t of work.tasks)
-      lines.push(`| ${t.task} | ${t.criteria.join(", ")} | ${t.branch} | ${t.child ?? ""} | ${t.verdict ?? "no reply yet"} | ${t.mergedAt ? `${t.mergeCommit?.slice(0, 7) ?? ""}${t.forcedBy ? " (forced by the user)" : ""}` : "no"} | ${t.child ? `.crew/work/${t.child}/report.md` : ""} |`);
+      lines.push(`| ${t.task} | ${t.criteria.join(", ")} | ${t.inline ? "inline" : t.branch} | ${t.child ?? ""} | ${t.verdict ?? (t.inline ? "" : "no reply yet")} | ${t.mergedAt ? `${t.mergeCommit?.slice(0, 7) ?? ""}${t.forcedBy ? " (forced by the user)" : ""}` : t.inline ? "inline" : "no"} | ${t.child ? `.crew/work/${t.child}/report.md` : ""} | ${t.state ?? "open"} | ${t.gate ? `${t.gate.status} (round ${t.gate.round})` : "-"} |`);
   }
   const removed = work.removedCriteria ?? [];
   const pauses = work.pauses ?? [];
@@ -3194,7 +3210,29 @@ function targetOf(profile, planned) {
 function superseded(run, planned) {
   return run.gate === planned.gate && run.target === planned.target && (planned.stack === undefined || run.stack === undefined || run.stack === planned.stack);
 }
-async function runOne(paths, work, profile, planned, fingerprint, changed) {
+var SOURCE_EXTENSIONS = /\.(?:[cm]?[jt]sx?|vue|svelte|astro|php|py|rb|go|rs|java|kt|cs)$/i;
+function shellWord(path) {
+  return /^[A-Za-z0-9_./-]+$/.test(path) ? path : `'${path.replace(/'/g, "'\\''")}'`;
+}
+function scopedTestCommand(target, scope) {
+  const whole = target.gates.test?.command ?? null;
+  if (!target.testScoped)
+    return whole;
+  const prefix = target.path === "." ? "" : `${target.path}/`;
+  const files = scope.filter((p) => (prefix ? p.startsWith(prefix) : true) && SOURCE_EXTENSIONS.test(p)).map((p) => prefix ? p.slice(prefix.length) : p);
+  if (!files.length)
+    return whole;
+  return target.testScoped.command.replace("{files}", () => files.map(shellWord).join(" "));
+}
+async function runTaskGate(paths, work, profile, policy, scope) {
+  const planned = plannedGates(work.route, profile, policy, scope, paths.root).filter((p) => p.gate !== "secrets");
+  const stamp = gitHead(paths.root) ?? "none";
+  const runs = [];
+  for (const p of planned)
+    runs.push(await runOne(paths, work, profile, p, stamp, scope, scope));
+  return { status: runs.length && runs.every((r) => r.status === "pass") ? "pass" : "fail", runs };
+}
+async function runOne(paths, work, profile, planned, fingerprint, changed, scope) {
   const { gate, target: targetPath } = planned;
   const at = nowIso();
   const base = {
@@ -3243,7 +3281,7 @@ async function runOne(paths, work, profile, planned, fingerprint, changed) {
     const configured = target.gates[gate];
     if (!configured)
       return { ...base, reason: "no command" };
-    command = configured.command;
+    command = gate === "test" && scope ? scopedTestCommand(target, scope) ?? configured.command : configured.command;
     source = configured.source;
   }
   const where = targetPath.replace(/[^a-z0-9]+/gi, "_") + (planned.stack ? `-${planned.stack}` : "");
@@ -6047,7 +6085,8 @@ function openTask(ctx, env, work, task, criteria, text) {
     text: body,
     branch: names.branch,
     worktree: names.worktree,
-    openedAt: nowIso()
+    openedAt: nowIso(),
+    state: "handed"
   };
   work.tasks = [...work.tasks ?? [], record];
   const sent = send(ctx, {
@@ -6088,6 +6127,90 @@ Criteria: ${criteria.map((c) => `${c} ${work.criteria.find((k) => k.id === c)?.t
     log: sessionLog(ctx, sent.message.id)
   }, notes);
   return { record, message: sent.message, opened, notes };
+}
+function noteTask(work, task, criteria, scope, text) {
+  if (!/^T-\d+$/.test(task))
+    return { refused: `a task is named T-n, not ${task}` };
+  if ((work.tasks ?? []).some((t) => t.task === task))
+    return { refused: `${task} is already a task of this item` };
+  const unknown = criteria.find((c) => !work.criteria.some((k) => k.id === c));
+  if (unknown)
+    return { refused: `unknown criterion: ${unknown}` };
+  if (!scope.length)
+    return { refused: "a scope names at least one file (--scope <path>[,<path>])" };
+  const escaped = scopeRefusal(scope);
+  if (escaped)
+    return { refused: escaped };
+  if (!text)
+    return { refused: `plan.md names no task ${task}; give its text with --text "<todo>"` };
+  const record = {
+    task,
+    message: "",
+    criteria,
+    text,
+    branch: "",
+    worktree: "",
+    openedAt: nowIso(),
+    inline: true,
+    scope,
+    state: "merged"
+  };
+  work.tasks = [...work.tasks ?? [], record];
+  return { record };
+}
+function scopeRefusal(scope) {
+  const outside = scope.find((p) => p.startsWith("/") || /^[A-Za-z]:[\\/]/.test(p) || p.split(/[\\/]/).includes("..") || /[\n\r\0]/.test(p));
+  return outside === undefined ? null : `a scope path stays inside the repository: ${JSON.stringify(outside)}`;
+}
+function taskScope(root, profile, record, flagScope) {
+  const escaped = flagScope?.length ? scopeRefusal(flagScope) : null;
+  if (escaped)
+    return { refused: escaped };
+  if (record.inline)
+    return { scope: flagScope?.length ? flagScope : record.scope ?? [] };
+  if (!record.mergedAt || !record.mergeCommit)
+    return { refused: `${record.task} is not merged yet (crew task <id> merge ${record.task})` };
+  const commit = record.mergeCommit;
+  try {
+    gitRun(root, "merge-base", "--is-ancestor", commit, "HEAD");
+  } catch {
+    return {
+      refused: `merge commit ${commit.slice(0, 7)} of ${record.task} is not in this checkout's history; restore it or note the todo again`
+    };
+  }
+  const changed = gitRun(root, "diff", "--name-only", `${commit}^1`, commit).split(`
+`).map((p) => p.trim()).filter((p) => p && isWatched(p, profile));
+  return { scope: flagScope?.length ? flagScope : changed };
+}
+function writeBrief(paths, work, record, evidence, policy) {
+  const gate = record.gate;
+  const proven = [
+    ...(gate?.runs ?? []).map((r) => `- ${r.gate} (${r.target}): ${r.status} in ${(r.durationMs / 1000).toFixed(1)}s`),
+    ...record.criteria.map((id) => {
+      const criterion = work.criteria.find((c) => c.id === id);
+      return `- ${id}: ${criterion ? tddSummary(work, evidence, id, criterion.kind, policy) : "unknown criterion"}`;
+    })
+  ];
+  const left = (work.validations ?? []).filter((v) => v.what === "delivery" && v.verdict === "returned").map((v) => `- ${v.by} returned ${v.returns} return${v.returns === 1 ? "" : "s"} (${v.file})`);
+  const text = [
+    `# Brief: ${record.task} of ${work.id}`,
+    "",
+    "## Changed",
+    ...gate?.scope.length ? gate.scope.map((p) => `- ${p}`) : ["- nothing recorded"],
+    "",
+    "## Proven",
+    ...proven.length ? proven : ["- nothing yet"],
+    "",
+    "## Left",
+    ...left.length ? left : ["- none"],
+    ""
+  ].join(`
+`);
+  const file = `tasks/${record.task}.brief.md`;
+  writeText(join26(workDir(paths, work.id), file), text);
+  record.brief = file;
+  record.state = "briefed";
+  return text;
 }
 function listTasks(ctx, work) {
   const inbox = readBox(mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project).dir, "inbox").box.messages;
@@ -6185,6 +6308,7 @@ function mergeTask(ctx, env, work, task, options = {}) {
   const commit = gitHead(env.paths.root);
   record.mergedAt = nowIso();
   record.mergeCommit = commit;
+  record.state = "merged";
   if (options.forcedBy)
     record.forcedBy = options.forcedBy;
   saveWork(env.paths, work);
@@ -7037,7 +7161,7 @@ var KNOWN_FLAGS = {
   skip: ["reason", "mode"],
   evidence: [],
   status: [],
-  task: ["criteria", "text", "force", "mode"],
+  task: ["criteria", "text", "scope", "force", "mode"],
   mail: [
     "to",
     "type",
@@ -7341,6 +7465,22 @@ async function dispatch(parsed, io) {
         const refused = tamperRefusal(env);
         if (refused)
           return refused;
+      }
+      if (sub === "set" && gate === "testScoped") {
+        if (!cmd)
+          return refuse('usage: crew profile set testScoped "<cmd with {files}>" [--target <path>]');
+        if (!cmd.includes("{files}"))
+          return refuse("a scoped test command names where the files go: {files}");
+        const targetPath = typeof parsed.flags.target === "string" ? parsed.flags.target : ".";
+        const target = env.profile.targets.find((t) => t.path === targetPath);
+        if (!target)
+          return refuse(`no target at ${targetPath} in the profile (crew detect)`);
+        target.testScoped = { command: cmd, source: "confirmed" };
+        saveProfile(env.paths, env.profile);
+        return ok(`testScoped for ${targetPath} set and confirmed: ${cmd}`, {
+          target: targetPath,
+          testScoped: cmd
+        });
       }
       if (sub === "set") {
         if (!GATE_NAMES.includes(gate) || gate === "secrets" || !cmd)
@@ -7971,7 +8111,7 @@ ${report}`, {
       const opened = openForChange(env, args[0]);
       if (isOutcome(opened))
         return opened;
-      const usage = 'usage: crew task <id> open T-n --criteria AC-1,AC-2 [--text "<task text>"] | list | merge T-n [--force]';
+      const usage = 'usage: crew task <id> open T-n --criteria AC-1,AC-2 [--text "<task text>"] | note T-n --criteria AC-k --scope <path>[,<path>] [--text "<todo>"] | list | merge T-n [--force] | gate T-n [--scope <path>[,<path>]] | brief T-n';
       const ctx = env.mail;
       if (args[1] === "open") {
         const task = args[2];
@@ -7986,6 +8126,67 @@ ${report}`, {
 ${out.notes.join(`
 `)}` : ""}`, { task: out.record, message: out.message, opened: out.opened, notes: out.notes });
       }
+      const list = (flag) => typeof flag === "string" ? flag.split(",").map((s) => s.trim()).filter(Boolean) : [];
+      if (args[1] === "note") {
+        const task = args[2];
+        const criteria = list(parsed.flags.criteria);
+        const scope = list(parsed.flags.scope);
+        if (!task || !criteria.length)
+          return refuse(usage);
+        const planText = readText(join30(workDir(env.paths, opened.work.id), "plan.md"));
+        const out = noteTask(opened.work, task, criteria, scope, typeof parsed.flags.text === "string" ? parsed.flags.text : taskText(planText, task));
+        if ("refused" in out)
+          return refuse(out.refused);
+        saveWork(env.paths, opened.work);
+        return ok(`${task} noted: inline, ${criteria.join(",")}, scope ${scope.join(",")}`, {
+          task: out.record
+        });
+      }
+      if (args[1] === "gate") {
+        const task = args[2];
+        const record = (opened.work.tasks ?? []).find((t) => t.task === task);
+        if (!task || !record)
+          return refuse(task ? `${task} is not a task of ${opened.work.id}` : usage);
+        const flagScope = parsed.flags.scope === undefined ? undefined : list(parsed.flags.scope);
+        const scoped = taskScope(env.paths.root, env.profile, record, flagScope);
+        if ("refused" in scoped)
+          return refuse(scoped.refused);
+        const grants = (opened.work.continued ?? []).filter((c) => c.what === "gate" && c.task === task && decisionCounts(env.policy, c.by)).length;
+        const round = record.gate?.round ?? 0;
+        if (round >= env.policy.team.maxGateRounds + grants)
+          return refuse(`gate round ${round + 1} of ${task}: the policy allows ${env.policy.team.maxGateRounds} (team.maxGateRounds); the user continues it once with crew continue ${opened.work.id} gate ${task}, or decides`);
+        const result = await runTaskGate(env.paths, opened.work, env.profile, env.policy, scoped.scope);
+        record.gate = {
+          round: round + 1,
+          at: nowIso(),
+          status: result.status,
+          runs: result.runs,
+          scope: scoped.scope
+        };
+        if (result.status === "pass" && record.state !== "briefed")
+          record.state = "gated";
+        saveWork(env.paths, opened.work);
+        const lines2 = result.runs.map((r) => `  ${r.gate} (${r.target}): ${r.status} in ${(r.durationMs / 1000).toFixed(1)}s${r.reason ? ` (${r.reason})` : ""}`);
+        return {
+          code: result.status === "pass" ? 0 : 1,
+          stdout: true,
+          text: `${lines2.join(`
+`)}
+${task} gate round ${round + 1}: ${result.status}`,
+          data: { task: record, gate: record.gate }
+        };
+      }
+      if (args[1] === "brief") {
+        const task = args[2];
+        const record = (opened.work.tasks ?? []).find((t) => t.task === task);
+        if (!task || !record)
+          return refuse(task ? `${task} is not a task of ${opened.work.id}` : usage);
+        if (record.gate?.status !== "pass")
+          return refuse(`${task} has no passing gate yet (crew task <id> gate ${task})`);
+        const text = writeBrief(env.paths, opened.work, record, loadEvidence(env.paths, opened.work.id).evidence, env.policy);
+        saveWork(env.paths, opened.work);
+        return ok(text, { task: record, brief: text });
+      }
       if (args[1] === "list") {
         const swept = sweptText(sweepSafely(ctx));
         const taken = guarded("the replies were not taken", () => takeReplies(ctx, env.paths, opened));
@@ -7993,7 +8194,7 @@ ${out.notes.join(`
         const listedTasks = guarded("the tasks were not listed", () => {
           rows = listTasks(ctx, opened.work);
         });
-        const lines2 = rows.map(({ task: t, status, verdict, implementer }) => `  ${t.task} · ${t.criteria.join(",")} · ${t.branch} · ${t.message} ${status} · ${t.child ?? "no child yet"} · ${verdict}${implementer ? ` · ${implementer}` : ""}${t.mergedAt ? ` · merged ${t.mergeCommit?.slice(0, 7)}` : ""}`);
+        const lines2 = rows.map(({ task: t, status, verdict, implementer }) => t.inline ? `  ${t.task} · ${t.criteria.join(",")} · inline · ${t.state ?? "merged"}` : `  ${t.task} · ${t.criteria.join(",")} · ${t.branch} · ${t.message} ${status} · ${t.child ?? "no child yet"} · ${verdict}${implementer ? ` · ${implementer}` : ""}${t.mergedAt ? ` · merged ${t.mergeCommit?.slice(0, 7)}` : ""} · ${t.state ?? "open"}`);
         return ok(`${[swept, taken, listedTasks].filter(Boolean).join(`
 `)}${swept || taken || listedTasks ? `
 ` : ""}Tasks of ${opened.work.id}:${listedTasks ? " not listed" : lines2.length ? `

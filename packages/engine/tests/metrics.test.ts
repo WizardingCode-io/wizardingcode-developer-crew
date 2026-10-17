@@ -60,8 +60,16 @@ test("SP7a AC-4 (round 2): computeMetrics counts every figure from the records o
     openedAt: at(0),
   });
   one.tasks = [
-    { ...task("T-1"), verdict: "proven", gate: { round: 2 } },
-    { ...task("T-2"), verdict: "unproven", gate: { round: 1 } },
+    {
+      ...task("T-1"),
+      verdict: "proven",
+      gate: { round: 2, at: at(20), status: "pass", runs: [], scope: [] },
+    },
+    {
+      ...task("T-2"),
+      verdict: "unproven",
+      gate: { round: 1, at: at(20), status: "fail", runs: [], scope: [] },
+    },
     task("T-3"),
   ];
   one.decisions = [

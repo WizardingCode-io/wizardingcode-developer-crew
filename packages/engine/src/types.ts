@@ -114,6 +114,8 @@ export interface Target {
   timeoutMs: number;
   /** The target whose manifest lists this folder as a workspace; its gates cover the ones this target does not define. */
   workspaceOf?: string;
+  /** A test command narrowed to a todo's files (SP7 §8.1): a template with `{files}`, detected or set by the user. */
+  testScoped?: GateCommand;
 }
 
 export interface Profile {
@@ -247,8 +249,15 @@ export interface TaskRecord {
   task: string;
   message: string;
   criteria: string[];
-  /** The todo's own gate (SP7 §8.1; SP7a Task 6 fills it); the metrics read its round. */
-  gate?: { round: number };
+  /** Where the todo stands (SP7 §8.1): open (no reply), handed (an implementer runs), merged, gated (its gate passed), briefed. */
+  state?: "open" | "handed" | "merged" | "gated" | "briefed";
+  /** The todo's own gate, run on the files its diff touched; its runs are the todo's, never the item's evidence. */
+  gate?: { round: number; at: string; status: "pass" | "fail"; runs: GateRun[]; scope: string[] };
+  /** The brief's path, relative to the work folder. */
+  brief?: string;
+  /** A todo done inline by the lead: no worktree, no message; its scope names its files. */
+  inline?: true;
+  scope?: string[];
   text: string;
   branch: string;
   worktree: string;

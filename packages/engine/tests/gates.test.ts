@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseAudit } from "../src/audit.ts";
-import { emptyEvidence, renderReport, saveEvidence } from "../src/evidence.ts";
+import { emptyEvidence, loadEvidence, renderReport, saveEvidence } from "../src/evidence.ts";
 import { computeFingerprint } from "../src/fingerprint.ts";
 import {
   assess,
@@ -12,6 +12,8 @@ import {
   manifestChanged,
   plannedGates,
   runGates,
+  runTaskGate,
+  scopedTestCommand,
 } from "../src/gates.ts";
 import { DEFAULT_POLICY } from "../src/policy.ts";
 import { namedFiles } from "../src/problems.ts";
@@ -86,6 +88,33 @@ const target: Target = {
   gates: { test: { command: "t", source: "detected" }, lint: { command: "l", source: "detected" } },
   timeoutMs: 1000,
 };
+
+test("SP7a AC-2 (Task 6): the scoped test command takes the todo's source files under the target; without a template or a source file the target's test command runs whole", () => {
+  const scoped: Target = {
+    ...target,
+    testScoped: { command: "vitest related {files} --run", source: "detected" },
+  };
+  expect(scopedTestCommand(scoped, ["src/a.ts", "src/b.ts", "docs/x.md"])).toBe(
+    "vitest related src/a.ts src/b.ts --run",
+  );
+  expect(scopedTestCommand(target, ["src/a.ts"])).toBe("t");
+  const api: Target = { ...scoped, path: "apps/api" };
+  expect(scopedTestCommand(api, ["apps/api/src/a.ts", "web/b.ts"])).toBe(
+    "vitest related src/a.ts --run",
+  );
+  // Only source files are passed: a Markdown file or a lockfile is never a test's subject.
+  expect(scopedTestCommand(scoped, ["README.md", "pnpm-lock.yaml"])).toBe("t");
+  // No test command at all: nothing to run.
+  expect(scopedTestCommand({ ...target, gates: {} }, ["src/a.ts"])).toBeNull();
+  // A file name the shell would read as syntax is one quoted word, so an implementer's branch cannot
+  // smuggle a command into the lead's gate (the security lead's return R-1 of SP7a Task 6).
+  // A `$` sequence a replacement string would read (`$&`, `$'`) stays the file's own characters.
+  expect(
+    scopedTestCommand(scoped, ["src/a b;touch X.ts", "src/ok.ts", "src/it's.ts", "src/a$&b$'c.ts"]),
+  ).toBe(
+    "vitest related 'src/a b;touch X.ts' src/ok.ts 'src/it'\\''s.ts' 'src/a$&b$'\\''c.ts' --run",
+  );
+});
 
 test("planned gates follow the route table", () => {
   expect(gatesForTarget(target, DEFAULT_POLICY, ["src/a.ts"])).toEqual(["test", "lint"]);
@@ -918,4 +947,43 @@ test("SP2c 8a AC-1: a profile with no target, or a change no target covers, plan
   expect(outcome.unproven).toContain(
     'gate test unavailable: no test command (crew profile set test "<cmd>")',
   );
+});
+
+test("SP7a AC-3 (Task 6): runTaskGate runs the todo's files through the scoped template, never the secrets scan, fails the todo on a failing or unavailable test gate, and writes nothing to the item's evidence", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+    "src/fail.ts": "y",
+  });
+  const paths = repoPaths(root, testEnv());
+  const { profile } = ensureProfile(paths);
+  const target = profile.targets[0];
+  if (!target) throw new Error("no target detected");
+  const template = `node -e "process.exit(process.argv[1].includes('fail') ? 1 : 0)" {files}`;
+  target.testScoped = { command: template, source: "confirmed" };
+  const work = createWork(paths, "feature");
+  work.route = "standard";
+  addCriterion(work, "x");
+  const passed = await runTaskGate(paths, work, profile, DEFAULT_POLICY, ["src/a.ts"]);
+  expect(passed.status).toBe("pass");
+  expect(passed.runs.map((r) => r.gate)).toEqual(["test"]);
+  expect(passed.runs[0]).toMatchObject({
+    status: "pass",
+    command: template.replace("{files}", "src/a.ts"),
+  });
+  const failed = await runTaskGate(paths, work, profile, DEFAULT_POLICY, ["src/fail.ts"]);
+  expect(failed.status).toBe("fail");
+  expect(failed.runs[0]).toMatchObject({ gate: "test", status: "fail", exit: 1 });
+  const bare = {
+    ...profile,
+    targets: [{ ...target, gates: { ...target.gates, test: undefined } }],
+  };
+  const unavailable = await runTaskGate(paths, work, bare, DEFAULT_POLICY, ["src/a.ts"]);
+  expect(unavailable.status).toBe("fail");
+  expect(unavailable.runs[0]).toMatchObject({
+    gate: "test",
+    status: "unavailable",
+    reason: "no command",
+  });
+  expect(loadEvidence(paths, work.id).evidence.runs).toEqual([]);
 });

@@ -1,8 +1,8 @@
 import { cpSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import { loadEvidence, saveEvidence } from "./evidence.ts";
+import { loadEvidence, saveEvidence, tddSummary } from "./evidence.ts";
 import { gitChangedPaths, gitHead, isGitRepo, isWatched } from "./fingerprint.ts";
-import { nowIso, readText } from "./fs.ts";
+import { nowIso, readText, writeText } from "./fs.ts";
 import {
   type MailContext,
   mailbox,
@@ -19,6 +19,7 @@ import { type CrewPaths, resolvePaths, workDir } from "./paths.ts";
 import { recordIntegrity } from "./store.ts";
 import type {
   Decision,
+  Evidence,
   MailStatus,
   Message,
   OpenedSession,
@@ -155,6 +156,7 @@ export function openTask(
     branch: names.branch,
     worktree: names.worktree,
     openedAt: nowIso(),
+    state: "handed",
   };
   // The record goes in before the message: `send` admits a task's message only for a task of the item.
   work.tasks = [...(work.tasks ?? []), record];
@@ -208,6 +210,140 @@ export function openTask(
 }
 
 /** Each task with the message's status as the mailbox has it, and the child's verdict from the reply or the worktree. */
+/**
+ * A todo the lead does inline (SP7 §8.1): no worktree and no message, its work already in the
+ * checkout, its scope the files it touched, so its gate and its brief run like a handed-out task's.
+ */
+export function noteTask(
+  work: WorkItem,
+  task: string,
+  criteria: string[],
+  scope: string[],
+  text: string | null,
+): { record: TaskRecord } | { refused: string } {
+  if (!/^T-\d+$/.test(task)) return { refused: `a task is named T-n, not ${task}` };
+  if ((work.tasks ?? []).some((t) => t.task === task))
+    return { refused: `${task} is already a task of this item` };
+  const unknown = criteria.find((c) => !work.criteria.some((k) => k.id === c));
+  if (unknown) return { refused: `unknown criterion: ${unknown}` };
+  if (!scope.length)
+    return { refused: "a scope names at least one file (--scope <path>[,<path>])" };
+  const escaped = scopeRefusal(scope);
+  if (escaped) return { refused: escaped };
+  if (!text)
+    return { refused: `plan.md names no task ${task}; give its text with --text "<todo>"` };
+  const record: TaskRecord = {
+    task,
+    message: "",
+    criteria,
+    text,
+    branch: "",
+    worktree: "",
+    openedAt: nowIso(),
+    inline: true,
+    scope,
+    state: "merged",
+  };
+  work.tasks = [...(work.tasks ?? []), record];
+  return { record };
+}
+
+/**
+ * A scope path names a file of this repository: relative, with no `..` segment, on one line. The
+ * merge commit's diff cannot name anything else; the `--scope` flag could, and is refused.
+ */
+export function scopeRefusal(scope: readonly string[]): string | null {
+  const outside = scope.find(
+    (p) =>
+      p.startsWith("/") ||
+      /^[A-Za-z]:[\\/]/.test(p) ||
+      p.split(/[\\/]/).includes("..") ||
+      /[\n\r\0]/.test(p),
+  );
+  return outside === undefined
+    ? null
+    : `a scope path stays inside the repository: ${JSON.stringify(outside)}`;
+}
+
+/**
+ * The files a todo's gate runs on (SP7 §8.1): the declared scope of an inline todo (or the flag's),
+ * or the watched files its merge commit changed against the main parent. A merge commit rewritten
+ * away refuses rather than guesses; a task not merged has nothing in this checkout yet.
+ */
+export function taskScope(
+  root: string,
+  profile: Profile,
+  record: TaskRecord,
+  flagScope?: string[],
+): { scope: string[] } | { refused: string } {
+  const escaped = flagScope?.length ? scopeRefusal(flagScope) : null;
+  if (escaped) return { refused: escaped };
+  if (record.inline) return { scope: flagScope?.length ? flagScope : (record.scope ?? []) };
+  if (!record.mergedAt || !record.mergeCommit)
+    return { refused: `${record.task} is not merged yet (crew task <id> merge ${record.task})` };
+  const commit = record.mergeCommit;
+  // The todo's files are in this checkout only while its merge commit is in HEAD's history; a
+  // commit rewritten away (a reset, a rebase) still sits in the object store, so reachability is
+  // the test, not existence.
+  try {
+    gitRun(root, "merge-base", "--is-ancestor", commit, "HEAD");
+  } catch {
+    return {
+      refused: `merge commit ${commit.slice(0, 7)} of ${record.task} is not in this checkout's history; restore it or note the todo again`,
+    };
+  }
+  const changed = gitRun(root, "diff", "--name-only", `${commit}^1`, commit)
+    .split("\n")
+    .map((p) => p.trim())
+    .filter((p) => p && isWatched(p, profile));
+  return { scope: flagScope?.length ? flagScope : changed };
+}
+
+/**
+ * The todo's brief (SP7 §8.1), from the records alone: what changed (its scope), what was proven
+ * (its gate's runs and its criteria's test-first summaries) and what is left (the open returns of
+ * the leads' delivery validations). Written as `tasks/<task>.brief.md`; the record points at it.
+ */
+export function writeBrief(
+  paths: CrewPaths,
+  work: WorkItem,
+  record: TaskRecord,
+  evidence: Evidence,
+  policy: Policy,
+): string {
+  const gate = record.gate;
+  const proven = [
+    ...(gate?.runs ?? []).map(
+      (r) => `- ${r.gate} (${r.target}): ${r.status} in ${(r.durationMs / 1000).toFixed(1)}s`,
+    ),
+    ...record.criteria.map((id) => {
+      const criterion = work.criteria.find((c) => c.id === id);
+      return `- ${id}: ${criterion ? tddSummary(work, evidence, id, criterion.kind, policy) : "unknown criterion"}`;
+    }),
+  ];
+  const left = (work.validations ?? [])
+    .filter((v) => v.what === "delivery" && v.verdict === "returned")
+    .map((v) => `- ${v.by} returned ${v.returns} return${v.returns === 1 ? "" : "s"} (${v.file})`);
+  const text = [
+    `# Brief: ${record.task} of ${work.id}`,
+    "",
+    "## Changed",
+    ...(gate?.scope.length ? gate.scope.map((p) => `- ${p}`) : ["- nothing recorded"]),
+    "",
+    "## Proven",
+    ...(proven.length ? proven : ["- nothing yet"]),
+    "",
+    "## Left",
+    ...(left.length ? left : ["- none"]),
+    "",
+  ].join("\n");
+  const file = `tasks/${record.task}.brief.md`;
+  writeText(join(workDir(paths, work.id), file), text);
+  record.brief = file;
+  record.state = "briefed";
+  return text;
+}
+
 export function listTasks(
   ctx: MailContext,
   work: WorkItem,
@@ -365,6 +501,7 @@ export function mergeTask(
   const commit = gitHead(env.paths.root);
   record.mergedAt = nowIso();
   record.mergeCommit = commit;
+  record.state = "merged";
   if (options.forcedBy) record.forcedBy = options.forcedBy;
   saveWork(env.paths, work);
   // The child's proof is the parent's for the criteria the task covered: one record per criterion

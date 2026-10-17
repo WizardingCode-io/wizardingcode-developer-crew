@@ -7,6 +7,31 @@ test("returns null without a package.json", () => {
   expect(nodeDetector.detect(tempDir())).toBeNull();
 });
 
+test("SP7a AC-1 (Task 6): a project with vitest or jest gets a scoped test template; one with neither gets none", () => {
+  const vitest = tempDir();
+  write(
+    vitest,
+    "package.json",
+    JSON.stringify({ scripts: { test: "vitest run" }, devDependencies: { vitest: "^2" } }),
+  );
+  expect(nodeDetector.detect(vitest)?.testScoped).toBe("vitest related {files} --run");
+  expect(detectProfile(vitest).targets[0]?.testScoped).toEqual({
+    command: "vitest related {files} --run",
+    source: "detected",
+  });
+  const jest = tempDir();
+  write(
+    jest,
+    "package.json",
+    JSON.stringify({ scripts: { test: "jest" }, dependencies: { jest: "^29" } }),
+  );
+  expect(nodeDetector.detect(jest)?.testScoped).toBe("jest --findRelatedTests {files}");
+  const plain = tempDir();
+  write(plain, "package.json", JSON.stringify({ scripts: { test: "node --test" } }));
+  expect(nodeDetector.detect(plain)?.testScoped).toBeUndefined();
+  expect(detectProfile(plain).targets[0]?.testScoped).toBeUndefined();
+});
+
 test("maps npm scripts to gates and picks the package manager from the lockfile", () => {
   const dir = tempDir();
   write(

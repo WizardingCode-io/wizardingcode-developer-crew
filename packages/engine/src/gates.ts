@@ -7,6 +7,7 @@ import {
   changedWatchedPaths,
   computeFingerprint,
   fingerprintMethod,
+  gitHead,
   gitShowFile,
   MAX_WATCHED_FILES,
 } from "./fingerprint.ts";
@@ -328,6 +329,55 @@ function superseded(run: GateRun, planned: PlannedGate): boolean {
   );
 }
 
+const SOURCE_EXTENSIONS = /\.(?:[cm]?[jt]sx?|vue|svelte|astro|php|py|rb|go|rs|java|kt|cs)$/i;
+
+/**
+ * A path as one shell word: as it is when it has only safe characters, in POSIX single quotes
+ * otherwise, so a file name on an implementer's branch adds no command to the lead's gate.
+ */
+function shellWord(path: string): string {
+  return /^[A-Za-z0-9_./-]+$/.test(path) ? path : `'${path.replace(/'/g, "'\\''")}'`;
+}
+
+/**
+ * The test command of a todo (SP7 §8.1): the target's scoped template with the todo's source files
+ * under the target substituted for `{files}`, or the target's whole test command when the profile
+ * has no template or the todo touched no source file of the target; null with no test command.
+ */
+export function scopedTestCommand(target: Target, scope: readonly string[]): string | null {
+  const whole = target.gates.test?.command ?? null;
+  if (!target.testScoped) return whole;
+  const prefix = target.path === "." ? "" : `${target.path}/`;
+  const files = scope
+    .filter((p) => (prefix ? p.startsWith(prefix) : true) && SOURCE_EXTENSIONS.test(p))
+    .map((p) => (prefix ? p.slice(prefix.length) : p));
+  if (!files.length) return whole;
+  // A function replacer: a replacement string would read `$&`, `$'` or `$`+backtick inside a file name.
+  return target.testScoped.command.replace("{files}", () => files.map(shellWord).join(" "));
+}
+
+/**
+ * A todo's own gate (SP7 §8.1): the deterministic gates the todo's files plan, without the secrets
+ * scan (the item's gate run scans the whole change), the test command scoped to those files. The
+ * runs are returned to the todo's record, never written to the item's evidence; an `unavailable`
+ * test gate fails the todo, since a todo with nothing to test is not proven.
+ */
+export async function runTaskGate(
+  paths: CrewPaths,
+  work: WorkItem,
+  profile: Profile,
+  policy: Policy,
+  scope: string[],
+): Promise<{ status: "pass" | "fail"; runs: GateRun[] }> {
+  const planned = plannedGates(work.route, profile, policy, scope, paths.root).filter(
+    (p) => p.gate !== "secrets",
+  );
+  const stamp = gitHead(paths.root) ?? "none";
+  const runs: GateRun[] = [];
+  for (const p of planned) runs.push(await runOne(paths, work, profile, p, stamp, scope, scope));
+  return { status: runs.length && runs.every((r) => r.status === "pass") ? "pass" : "fail", runs };
+}
+
 async function runOne(
   paths: CrewPaths,
   work: WorkItem,
@@ -335,6 +385,7 @@ async function runOne(
   planned: PlannedGate,
   fingerprint: string,
   changed: string[],
+  scope?: readonly string[],
 ): Promise<GateRun> {
   const { gate, target: targetPath } = planned;
   const at = nowIso();
@@ -385,7 +436,11 @@ async function runOne(
   } else {
     const configured = target.gates[gate];
     if (!configured) return { ...base, reason: "no command" };
-    command = configured.command;
+    // A todo's gate runs the test command narrowed to the todo's files where the profile knows how (SP7 §8.1).
+    command =
+      gate === "test" && scope
+        ? (scopedTestCommand(target, scope) ?? configured.command)
+        : configured.command;
     source = configured.source;
   }
   const where =

@@ -66,6 +66,14 @@ export function detectTargets(root: string): Target[] {
         packageManager: found.packageManager,
         gates,
         timeoutMs: DEFAULT_TIMEOUT_MS,
+        ...(found.testScoped
+          ? {
+              testScoped: {
+                command: found.testScoped,
+                source: found.proposed ? "proposed" : "detected",
+              },
+            }
+          : {}),
       };
       targets.push(target);
       if (found.workspaces) workspaces.set(target, found.workspaces);
@@ -97,6 +105,9 @@ export function mergeProfile(previous: Profile | null, detected: Target[]): Prof
       for (const [gate, command] of Object.entries(old.gates) as [GateName, GateCommand][]) {
         if (command.source !== "detected") target.gates[gate] = command;
       }
+      // A scoped test template the user set outlives the detection, like a confirmed gate.
+      if (old.testScoped && old.testScoped.source !== "detected")
+        target.testScoped = old.testScoped;
     }
     for (const old of previous.targets) {
       const found = targets.some((t) => t.path === old.path && t.stack === old.stack);

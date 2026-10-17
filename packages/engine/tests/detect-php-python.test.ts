@@ -71,7 +71,18 @@ test("python: uv projects run tools through uv run", () => {
     stack: "python",
     packageManager: "uv",
     gates: { test: "uv run pytest", lint: "uv run ruff check .", typecheck: "uv run mypy ." },
+    testScoped: "uv run pytest {files}",
   });
+});
+
+test("SP7a AC-1 (Task 6): a pytest project gets a scoped test template through its runner; a project without pytest gets none", () => {
+  const uv = tempDir();
+  write(uv, "pyproject.toml", "[tool.pytest.ini_options]\n");
+  write(uv, "uv.lock", "");
+  expect(pythonDetector.detect(uv)?.testScoped).toBe("uv run pytest {files}");
+  const bare = tempDir();
+  write(bare, "pyproject.toml", "[project]\nname = 'x'\n");
+  expect(pythonDetector.detect(bare)?.testScoped).toBeUndefined();
 });
 
 test("python: a requirements.txt project with a tests folder uses python -m", () => {
