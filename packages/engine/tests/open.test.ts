@@ -41,6 +41,7 @@ import {
 } from "../src/open.ts";
 import { openedMarkerFile, openedMarkerPath } from "../src/opened.ts";
 import { loadPolicy } from "../src/policy.ts";
+import { saveProfile } from "../src/profile.ts";
 import type { Message, OpenedSession } from "../src/types.ts";
 import { git, hookContext, makeRepo, repoPaths, tempDir, testEnv, write } from "./helpers.ts";
 
@@ -227,9 +228,52 @@ test("SP2c AC-1: the opener's arguments, environment and record", async () => {
     "json",
   ];
   expect(openerArgs(request, { pluginDir: null })).toEqual([...base, ...READ_ONLY]);
+  // A branch session gets the tools the method needs, and a grant for the first word of each gate
+  // command of the project's profile (SP2c 8a AC-4).
+  const BRANCH = [
+    "--allowedTools",
+    "Read",
+    "Glob",
+    "Grep",
+    "Write",
+    "Edit",
+    "MultiEdit",
+    "NotebookEdit",
+    "Skill",
+    "Agent",
+    "Bash(crew *)",
+    "Bash(git *)",
+  ];
   expect(
-    openerArgs({ ...request, mode: "branch", branch: "crew/x/T-1" }, { pluginDir: "/plug" }),
-  ).toEqual([...base, "--plugin-dir", "/plug"]);
+    openerArgs(
+      { ...request, mode: "branch", branch: "crew/x/T-1" },
+      { pluginDir: "/plug", profile: null },
+    ),
+  ).toEqual([...base, "--plugin-dir", "/plug", ...BRANCH]);
+  const profile = {
+    version: 1 as const,
+    detectedAt: "",
+    watch: { exclude: [] },
+    targets: [
+      {
+        path: ".",
+        stack: "node" as const,
+        packageManager: "npm",
+        timeoutMs: 1000,
+        gates: {
+          test: { command: "npm run test", source: "detected" as const },
+          lint: { command: "npx biome check .", source: "detected" as const },
+          build: { command: "npm run build", source: "detected" as const },
+        },
+      },
+    ],
+  };
+  expect(
+    openerArgs(
+      { ...request, mode: "branch", branch: "crew/x/T-1" },
+      { pluginDir: "/plug", profile },
+    ),
+  ).toEqual([...base, "--plugin-dir", "/plug", ...BRANCH, "Bash(npm *)", "Bash(npx *)"]);
   // A read-only session, started by the fake: what it saw of its environment and its arguments.
   const record = join(tempDir("crew-rec-"), "rec.txt");
   const { env, pa, pb, ctxA } = pair({
@@ -314,6 +358,24 @@ test("SP2c AC-1: the opener's arguments, environment and record", async () => {
   expect(argv).toContain("--plugin-dir");
   expect(argv[argv.indexOf("--plugin-dir") + 1]).toBe("/plug");
   expect(argv).toContain("Bash(crew *)");
+  // The sender and the destination have different test commands: a branch session's grants are
+  // the destination's, where it works (SP2c 8a AC-4, round 2).
+  const profileOf = (command: string) => ({
+    version: 1 as const,
+    detectedAt: "",
+    watch: { exclude: [] },
+    targets: [
+      {
+        path: ".",
+        stack: "node" as const,
+        packageManager: "npm",
+        timeoutMs: 1000,
+        gates: { test: { command, source: "detected" as const } },
+      },
+    ],
+  });
+  saveProfile(pa, profileOf("npm run test"));
+  saveProfile(pb, profileOf("pnpm test"));
   // A session on a branch has that branch pinned for the hook's push rule (Task 3's ruling), and no read-only flags.
   const branchRecord = join(tempDir("crew-rec-"), "rec.txt");
   const onBranch = openSession(
@@ -337,7 +399,12 @@ test("SP2c AC-1: the opener's arguments, environment and record", async () => {
     "WIZARDINGCODE_CREW_MAIL_BRANCH=crew/mail/M-2026-10-15-002-storefront\n",
   );
   expect(seenBranch).toContain("WIZARDINGCODE_CREW_MAIL_MODE=branch\n");
-  expect(seenBranch).not.toContain("--allowedTools");
+  expect(seenBranch).toContain("--allowedTools");
+  expect(seenBranch).toContain("Bash(git *)");
+  // The grants come from the project whose code the session works on (the destination, crm), never
+  // from the sender's profile (SP2c 8a AC-4, round 2).
+  expect(seenBranch).toContain("Bash(pnpm *)");
+  expect(seenBranch).not.toContain("Bash(npm *)");
   expect(questionPrompt(message(), "crm")).toContain(
     "You are answering mail M-2026-10-15-001-storefront from storefront in project crm",
   );

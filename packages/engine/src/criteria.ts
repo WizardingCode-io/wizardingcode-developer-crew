@@ -7,6 +7,8 @@ import type { CriterionKind, TddRecord } from "./types.ts";
  */
 export function tddDone(record: TddRecord | undefined, kind: CriterionKind): boolean {
   if (!record) return false;
+  // A task merged from a proven child: the proof is the child's, named by the record.
+  if (record.merged) return true;
   if (kind === "behavior") return !!record.red && !!record.green;
   if (kind === "preserve") return !!record.before && !!record.after;
   return !!record.observed;

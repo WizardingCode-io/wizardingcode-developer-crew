@@ -218,6 +218,8 @@ export interface ProjectEntry {
   worktreeOf?: string;
   /** The message that opened the session running in this root. */
   mail?: string;
+  /** When a session's hook last ran here; liveness reads this, never a command's registration (SP2c 8a). */
+  lastHook?: string;
 }
 export interface Registry {
   version: 1;
@@ -459,6 +461,8 @@ export interface TddRecord {
   observed?: RunRecord;
   /** For an observed criterion: why no red run can exist. */
   reason?: string;
+  /** The proof is a merged task's child item: its red and green stand in the child's record (SP2c 8a). */
+  merged?: { task: string; child: string; commit: string; at: string };
 }
 
 export type GateStatus = "pass" | "fail" | "skipped" | "unavailable";

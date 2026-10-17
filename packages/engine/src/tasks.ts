@@ -1,6 +1,6 @@
 import { cpSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import { loadEvidence } from "./evidence.ts";
+import { loadEvidence, saveEvidence } from "./evidence.ts";
 import { gitChangedPaths, gitHead, isGitRepo, isWatched } from "./fingerprint.ts";
 import { nowIso, readText } from "./fs.ts";
 import {
@@ -296,7 +296,16 @@ export function mergeTask(
   task: string,
   options: { forcedBy?: Decision } = {},
 ):
-  | { record: TaskRecord; commit: string; swept: string[]; worktreeKept?: string }
+  | {
+      record: TaskRecord;
+      commit: string;
+      swept: string[];
+      worktreeKept?: string;
+      /** The parent's criteria whose proof is now the child's (SP2c 8a). */
+      credited: string[];
+      /** Why none was, when none was. */
+      uncredited: string | null;
+    }
   | { refused: string } {
   if (ctx.self.openedBy)
     return { refused: `a session opened by mail (${ctx.self.openedBy}) never merges` };
@@ -358,6 +367,9 @@ export function mergeTask(
   record.mergeCommit = commit;
   if (options.forcedBy) record.forcedBy = options.forcedBy;
   saveWork(env.paths, work);
+  // The child's proof is the parent's for the criteria the task covered: one record per criterion
+  // names the task, the child and the commit, so the report leads to the child's own red and green.
+  const credit = creditChild(env.paths, work, record, options.forcedBy !== undefined);
   // The child's record, where the merge did not bring it (an item kept local, the logs), then trusted here as the engine's own.
   const childDir = workDir(env.paths, child);
   if (existsSync(workDir(childPaths, child)))
@@ -374,7 +386,47 @@ export function mergeTask(
   // worktree's own canonical root is the record's key.
   if (!kept) dropOpenedMarker(ctx.paths.userDir, childPaths.root);
   // What the merge's own sweep settled or could not, said with the merge: the hooks do not say it again.
-  return { record, commit, swept: swept.lines, ...(kept ? { worktreeKept: kept.kept } : {}) };
+  return {
+    record,
+    commit,
+    swept: swept.lines,
+    ...(kept ? { worktreeKept: kept.kept } : {}),
+    ...credit,
+  };
+}
+
+/**
+ * Credits a merged task's criteria with the child's proof (finding #41): a `merged` record per
+ * criterion, keeping any red or green the lead recorded itself. A forced merge credits nothing,
+ * since the child was not proven; an evidence file changed outside the engine is left as it is.
+ */
+function creditChild(
+  paths: CrewPaths,
+  work: WorkItem,
+  record: TaskRecord,
+  forced: boolean,
+): { credited: string[]; uncredited: string | null } {
+  if (forced)
+    return { credited: [], uncredited: "a forced merge of an unproven child credits nothing" };
+  const loaded = loadEvidence(paths, work.id);
+  if (loaded.tampered)
+    return {
+      credited: [],
+      uncredited: `evidence.json of ${work.id} changed outside the engine (crew accept ${work.id}); nothing credited`,
+    };
+  const merged = {
+    task: record.task,
+    child: record.child ?? "",
+    commit: record.mergeCommit ?? "",
+    at: record.mergedAt ?? nowIso(),
+  };
+  const tdd = loaded.evidence.tdd.map((t) =>
+    record.criteria.includes(t.criterion) ? { ...t, merged } : t,
+  );
+  for (const criterion of record.criteria)
+    if (!tdd.some((t) => t.criterion === criterion)) tdd.push({ criterion, merged });
+  saveEvidence(paths, work.id, { ...loaded.evidence, tdd });
+  return { credited: [...record.criteria], uncredited: null };
 }
 
 /**

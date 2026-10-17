@@ -14,7 +14,7 @@ import type { HookContext, HookPayload } from "./types.ts";
  */
 export function refreshMail(ctx: HookContext): { newMail: Message[]; failed: string | null } {
   try {
-    registerProject(ctx.mail, ctx.sessionId, { minIntervalMs: 2 * 60 * 1000 });
+    registerProject(ctx.mail, ctx.sessionId, { minIntervalMs: 2 * 60 * 1000, hook: true });
     return { newMail: syncMail(ctx.mail, ctx.paths).newMail, failed: null };
   } catch (error) {
     return { newMail: [], failed: (error as Error).message };

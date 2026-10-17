@@ -23,6 +23,8 @@ Inside an item, `--to . --agent T-n` reaches an implementer of this item, `--to 
 
 When no session is live at the destination, the engine opens one: read-only for a question (it reads and replies), on a branch for a change request when the destination's policy allows it (`mail.open: branch`), and it is bounded: `mail.maxTurns`, `mail.maxMinutes`, `mail.maxConcurrent`, `mail.maxHops`. Such a session never merges, pushes to another branch or deploys (the hook denies it), never approves a full-route spec (the item waits for a person and the message says `waiting-for-person`), and ends with its reply: `crew mail reply <id> --branch <branch> --item <work id>`. `crew mail status` lists the sessions this project opened, with their turns and minutes; `crew mail stop <message id>` ends one. A session's own mail is refused past the hop limit, except its reply.
 
+A lead waiting for a task's reply runs `crew await <id> mail <message id>` once; `await user` is for a decision only a person can make. The reply clears the wait, and the inbox line at the next prompt names it.
+
 ## The policy
 
 `policy.json` `mail`: `workspace`, `name`, `accept` (default `question` and `notice`; a hand edit plus `crew policy accept` adds `change-request` or `blocker`), `open` (`read-only` or `branch`), `maxConcurrent` 2, `maxHops` 2, `maxTurns` 40, `maxMinutes` 30. The scalar keys are set with `crew policy set mail.<key> <value>`, always the user's decision. A project that lets mail build in it also sets `unattendedDecisions` to `validator`, or the opened session waits for a person at its first decision.

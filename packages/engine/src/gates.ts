@@ -298,6 +298,16 @@ export function plannedGates(
       planned.push({ gate, target: target.path, ...(shared ? { stack: target.stack } : {}) });
     }
   }
+  // A profile with no target, or a changed file no target covers, plans the test gate at the root
+  // anyway: it ends unavailable until a command is set, so an item is never proven by the secrets
+  // gate alone (finding #36 of the real-use phase).
+  const covers = (t: Target, path: string) =>
+    t.path === "." || path === t.path || path.startsWith(`${t.path}/`);
+  const uncovered =
+    profile.targets.length === 0 ||
+    changed.some((path) => !profile.targets.some((t) => covers(t, path)));
+  if (uncovered && !planned.some((g) => g.gate === "test" && g.target === "."))
+    planned.push({ gate: "test", target: "." });
   return planned;
 }
 
@@ -355,7 +365,14 @@ async function runOne(
     };
   }
   const target = targetOf(profile, planned);
-  if (!target) return { ...base, reason: "target not in profile" };
+  if (!target)
+    return {
+      ...base,
+      reason:
+        gate === "test"
+          ? 'no test command (crew profile set test "<cmd>")'
+          : "target not in profile",
+    };
   let command: string | null;
   let source: GateRun["commandSource"] = "detected";
   let audit: ResolvedAudit | null = null;

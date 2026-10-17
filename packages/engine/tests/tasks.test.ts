@@ -644,6 +644,25 @@ test("SP2c AC-4: the child records origin and parent, its reply fills the task, 
     `Merge T-2 of ${id} (crew/${short}/T-2): ${childId}, proven`,
   );
   expect(readFileSync(join(root, "src", "b.ts"), "utf8")).toBe("export const B = 1;\n");
+  // The child's proof of AC-2 is credited to the lead's criterion: the record names the task, the
+  // child and the commit; the report, the status and the merge line follow (SP2c 8a AC-2).
+  expect(merged.data.credited).toEqual(["AC-2"]);
+  expect(String(merged.data.message)).toContain(
+    `test-first of AC-2 credited to T-2 (child ${childId})`,
+  );
+  expect(loadEvidence(lp, id).evidence.tdd.find((t) => t.criterion === "AC-2")).toMatchObject({
+    merged: {
+      task: "T-2",
+      child: childId,
+      commit: (merged.data.task as { mergeCommit: string }).mergeCommit,
+    },
+  });
+  expect((await c.run("evidence", id)).out).toContain(
+    `| proven by T-2 (child ${childId}, merged ${commit}) |`,
+  );
+  expect((await c.json("status")).data.unproven).not.toContain(
+    "test-first record missing for AC-2",
+  );
   expect(existsSync(worktree)).toBe(false);
   // The sweep (the listing's above, or the merge's own) settled the implementer's session and took
   // the engine's record of what opened it.
@@ -685,6 +704,14 @@ test("SP2c AC-4: --force merges an unproven child and records who forced it; a f
     forcedBy: { by: "user", relayed: true },
   });
   expect(forcedRecord.forced).toBeUndefined();
+  // A forced merge credits nothing: the child was not proven (SP2c 8a AC-2).
+  expect(forced.data.credited).toEqual([]);
+  expect(String(forced.data.message)).toContain(
+    "test-first not credited: a forced merge of an unproven child credits nothing",
+  );
+  expect(
+    loadEvidence(repoPaths(root, env), id).evidence.tdd.find((t) => t.criterion === "AC-1")?.merged,
+  ).toBeUndefined();
   expect((await c.run("evidence", id)).out).toContain("(forced by the user)");
   // T-2: the child's evidence written by hand in its worktree says proven; the record is not the engine's.
   const t2 = await open("T-2", "AC-2");

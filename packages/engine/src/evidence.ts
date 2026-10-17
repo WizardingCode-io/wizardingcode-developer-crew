@@ -196,6 +196,8 @@ export function tddSummary(
     return `skipped: ${skip?.reason ?? ""}`;
   }
   const record = evidence.tdd.find((t) => t.criterion === criterionId);
+  if (record?.merged)
+    return `proven by ${record.merged.task} (child ${record.merged.child}, merged ${record.merged.commit.slice(0, 7)})`;
   if (tddDone(record, kind)) {
     if (kind === "behavior") return "red then green";
     if (kind === "preserve") return "passing before and after";

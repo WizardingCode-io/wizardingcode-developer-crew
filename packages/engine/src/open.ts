@@ -9,15 +9,18 @@ import {
   readOpenSessions,
   recordOpened,
   updateEverywhere,
+  worktreeMainRoot,
 } from "./mail.ts";
 import { dropOpenedMarker, writeOpenedMarker } from "./opened.ts";
 import { resolvePaths } from "./paths.ts";
+import { loadProfile } from "./profile.ts";
 import type {
   MailStatus,
   Message,
   OpenedSession,
   OpenMode,
   Policy,
+  Profile,
   ProjectEntry,
   TaskRecord,
   WorkItem,
@@ -55,6 +58,44 @@ export const READ_ONLY_FLAGS: readonly string[] = [
   "NotebookEdit",
 ];
 
+/**
+ * A branch session runs the method on a task, so it gets the tools the method needs and nothing
+ * broader (SP2c 8a, finding #42): git stays bounded by the hook (the pinned branch, no merge, no
+ * deploy), and the project's own commands come from its profile (`commandGrants`).
+ */
+export const BRANCH_FLAGS: readonly string[] = [
+  "--allowedTools",
+  "Read",
+  "Glob",
+  "Grep",
+  "Write",
+  "Edit",
+  "MultiEdit",
+  "NotebookEdit",
+  "Skill",
+  "Agent",
+  "Bash(crew *)",
+  "Bash(git *)",
+];
+
+/**
+ * One `Bash(<word> *)` per distinct first word of the profile's gate commands, in profile order:
+ * the test runner, the linter, the builder a branch session runs. A leading assignment
+ * (`CI=1 npm test`) is skipped to the command word.
+ */
+export function commandGrants(profile: Profile | null | undefined): string[] {
+  const words: string[] = [];
+  for (const target of profile?.targets ?? [])
+    for (const gate of Object.values(target.gates)) {
+      const word = gate?.command
+        .trim()
+        .split(/\s+/)
+        .find((w) => !w.includes("="));
+      if (word && !words.includes(word)) words.push(word);
+    }
+  return words.map((w) => `Bash(${w} *)`);
+}
+
 /** The binary the opener starts: `claude`, or what `WIZARDINGCODE_CREW_CLAUDE` names (the tests use a fake). */
 export function claudeBinary(env: NodeJS.ProcessEnv): string {
   return env.WIZARDINGCODE_CREW_CLAUDE?.trim() || "claude";
@@ -87,7 +128,10 @@ export interface OpenRequest {
  * The `claude -p` arguments of a session (SP2c §10): named first, so the name is read early in a
  * process listing; unattended, bounded, read-only when the message is a question.
  */
-export function openerArgs(request: OpenRequest, options: { pluginDir: string | null }): string[] {
+export function openerArgs(
+  request: OpenRequest,
+  options: { pluginDir: string | null; profile?: Profile | null },
+): string[] {
   const args = [
     "--name",
     `crew-${request.message.id}`,
@@ -102,6 +146,7 @@ export function openerArgs(request: OpenRequest, options: { pluginDir: string | 
   ];
   if (options.pluginDir) args.push("--plugin-dir", options.pluginDir);
   if (request.mode === "read-only") args.push(...READ_ONLY_FLAGS);
+  else args.push(...BRANCH_FLAGS, ...commandGrants(options.profile));
   return args;
 }
 
@@ -168,7 +213,15 @@ export function openSession(
   // The child takes its own copy of the log's descriptor at the spawn; the parent's is closed then.
   let child: ChildProcess;
   try {
-    child = spawn(claudeBinary(ctx.env), openerArgs(request, { pluginDir: pluginDirOf(ctx.env) }), {
+    // The project whose code the session works on gives the grants: the main checkout of the
+    // session's own folder (the lead's for a task, the destination's for a change request), never
+    // the sender's.
+    const projectPaths = resolvePaths(worktreeMainRoot(request.cwd) ?? request.cwd, ctx.env);
+    const args = openerArgs(request, {
+      pluginDir: pluginDirOf(ctx.env),
+      profile: projectPaths ? loadProfile(projectPaths).profile : null,
+    });
+    child = spawn(claudeBinary(ctx.env), args, {
       cwd: request.cwd,
       env,
       detached: true,

@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { type CliIo, main } from "../src/cli.ts";
 import { loadEvidence, saveEvidence } from "../src/evidence.ts";
 import { readReviewInputs } from "../src/judgement.ts";
+import { mailContext, registerProject } from "../src/mail.ts";
+import { loadPolicy } from "../src/policy.ts";
 import { loadProfile } from "../src/profile.ts";
 import { readProtectedJson, writeProtectedJson } from "../src/store.ts";
 import { git, makeRepo, repoPaths, tempDir, testEnv, write } from "./helpers.ts";
@@ -1743,9 +1745,12 @@ function mailRepos(accept = ["question", "notice"]) {
 }
 
 test("SP2c AC-9: crew mail send, inbox, read, reply and refuse through the command; status --json has mail; the report has a Mail section", async () => {
-  const { a, ca, cb } = mailRepos();
+  const { a, b, env, ca, cb } = mailRepos();
   await ca.run("detect"); // registers storefront
   await cb.run("detect"); // registers crm
+  // crm is live only when a session's hook registered it; a command's registration is not a session (SP2c 8a AC-3).
+  const pb = repoPaths(b, env);
+  registerProject(mailContext(pb, loadPolicy(pb).policy, env), "cli", { hook: true });
   const id = (await ca.json("start", "Loyalty tier", "--answers", answers, "--criterion", "a")).data
     .id as string;
   const sent = await ca.run(

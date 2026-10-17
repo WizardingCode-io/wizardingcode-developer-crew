@@ -1324,9 +1324,21 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         const kept = out.worktreeKept
           ? `; worktree ${out.record.worktree} kept: ${out.worktreeKept}`
           : "";
+        // What the parent's criteria gained from the child, or why nothing (SP2c 8a).
+        const credited = out.credited.length
+          ? `\ntest-first of ${out.credited.join(", ")} credited to ${args[2]} (child ${out.record.child})`
+          : out.uncredited
+            ? `\ntest-first not credited: ${out.uncredited}`
+            : "";
         return ok(
-          `${out.swept.length ? `${out.swept.join("\n")}\n` : ""}merged ${args[2]} of ${opened.work.id}: ${out.commit.slice(0, 7)} (${out.record.branch}, child ${out.record.child}, ${out.record.verdict})${forced}${kept}`,
-          { task: out.record, commit: out.commit, swept: out.swept },
+          `${out.swept.length ? `${out.swept.join("\n")}\n` : ""}merged ${args[2]} of ${opened.work.id}: ${out.commit.slice(0, 7)} (${out.record.branch}, child ${out.record.child}, ${out.record.verdict})${forced}${kept}${credited}`,
+          {
+            task: out.record,
+            commit: out.commit,
+            swept: out.swept,
+            credited: out.credited,
+            uncredited: out.uncredited,
+          },
         );
       }
       return refuse(usage);

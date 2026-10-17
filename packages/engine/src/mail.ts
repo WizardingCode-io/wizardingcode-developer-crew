@@ -162,8 +162,9 @@ function projectEntry(
   return registry.projects.find((p) => p.name === name && p.workspace === ws && !p.worktreeOf);
 }
 
+/** Live means a session's hook ran here within `LIVE_MS`; a command's registration never counts (SP2c 8a, finding #39). */
 export function isLive(entry: ProjectEntry, now = Date.now()): boolean {
-  const seen = Date.parse(entry.lastSeen);
+  const seen = entry.lastHook === undefined ? Number.NaN : Date.parse(entry.lastHook);
   return Number.isFinite(seen) && now - seen <= LIVE_MS;
 }
 
@@ -171,29 +172,38 @@ export function isLive(entry: ProjectEntry, now = Date.now()): boolean {
  * Records this project in the registry: its root, its name, its workspace, when it was last seen
  * and by which session; a worktree names its main checkout and the message that opened it. With
  * `minIntervalMs`, an entry seen more recently than that is left as it is (a tool call does not
- * pay a write each time; decision 3 of the plan).
+ * pay a write each time; decision 3 of the plan). `hook` marks the entry as live: only a session's
+ * hook gives it, so a command typed in a project (`crew detect` included) never makes it live, and
+ * a hook's first mark is written even within the interval.
  */
 export function registerProject(
   ctx: MailContext,
   sessionId: string,
-  options: { minIntervalMs?: number } = {},
+  options: { minIntervalMs?: number; hook?: boolean } = {},
 ): ProjectEntry {
   const registry = loadRegistry(ctx.paths.userDir);
   const existing = registry.projects.find((p) => p.root === ctx.paths.root);
+  const recent = (at: string | undefined): boolean =>
+    at !== undefined &&
+    options.minIntervalMs !== undefined &&
+    Date.now() - Date.parse(at) < options.minIntervalMs;
   if (
     existing &&
-    options.minIntervalMs !== undefined &&
-    Date.now() - Date.parse(existing.lastSeen) < options.minIntervalMs &&
-    existing.sessionId === sessionId
+    recent(existing.lastSeen) &&
+    existing.sessionId === sessionId &&
+    (!options.hook || recent(existing.lastHook))
   )
     return existing;
   const main = worktreeMainRoot(ctx.paths.root);
+  const now = nowIso();
+  const lastHook = options.hook ? now : existing?.lastHook;
   const entry: ProjectEntry = {
     root: ctx.paths.root,
     name: ctx.self.project,
     workspace: ctx.self.workspace,
-    lastSeen: nowIso(),
+    lastSeen: now,
     sessionId,
+    ...(lastHook ? { lastHook } : {}),
     ...(main ? { worktreeOf: main } : {}),
     ...(ctx.self.openedBy ? { mail: ctx.self.openedBy } : {}),
   };

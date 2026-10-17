@@ -2,10 +2,11 @@ import { expect, test } from "bun:test";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DEFAULT_WATCH_EXCLUDE } from "../src/detect/index.ts";
+import { refreshMail } from "../src/hooks/context.ts";
 import { handleHook } from "../src/hooks/index.ts";
 import { onPrompt } from "../src/hooks/prompt.ts";
 import { onSessionStart } from "../src/hooks/session-start.ts";
-import { loadRegistry, mailContext, send } from "../src/mail.ts";
+import { isLive, loadRegistry, mailContext, send } from "../src/mail.ts";
 import { loadPolicy } from "../src/policy.ts";
 import { loadProfile, saveProfile } from "../src/profile.ts";
 import { loadState } from "../src/state.ts";
@@ -313,4 +314,18 @@ test("SP2c AC-1: a session opened by mail is told which message opened it and wh
     `started with --origin ${sent.message.id} (branch crew/2026-10-15-001/T-1), commit on it,`,
   );
   expect(pinnedText).not.toContain("every push is denied");
+});
+
+test("SP2c 8a AC-3: a hook's registration marks the project live; the context's build leaves no mark", () => {
+  const root = makeRepo({ "src/a.ts": "x" });
+  write(root, ".crew/policy.json", JSON.stringify({ mail: { workspace: "w", name: "lead" } }));
+  const ctx = context(root);
+  const entryOf = () =>
+    loadRegistry(ctx.paths.userDir).projects.find((p) => p.root === ctx.paths.root);
+  // Building the context registers nothing; a command would register without the mark.
+  expect(entryOf()?.lastHook).toBeUndefined();
+  expect(refreshMail(ctx).failed).toBeNull();
+  const entry = entryOf();
+  expect(typeof entry?.lastHook).toBe("string");
+  expect(entry !== undefined && isLive(entry)).toBe(true);
 });

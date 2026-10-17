@@ -232,6 +232,11 @@ test("SP2c AC-2: the sentences of the references the engine relies on are pinned
   expect(mail).toContain("`waiting-for-person`");
   expect(mail).toContain("`crew mail reply <id> --branch <branch> --item <work id>`");
   expect(mail).toContain("past the hop limit, except its reply");
+  // The wait for a task's reply is the mail wait, once; `await user` is a person's decision (SP2c 8a AC-5).
+  const taskWait =
+    "A lead waiting for a task's reply runs `crew await <id> mail <message id>` once";
+  expect(mail).toContain(taskWait);
+  expect(readReference("plan.md")).toContain(taskWait);
 
   const conclave = readReference("conclave.md");
   expect(conclave).toMatch(/The engine saves each role's answer[^\n]*SubagentStop/);

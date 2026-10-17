@@ -955,6 +955,8 @@ import { join as join11 } from "node:path";
 function tddDone(record, kind) {
   if (!record)
     return false;
+  if (record.merged)
+    return true;
   if (kind === "behavior")
     return !!record.red && !!record.green;
   if (kind === "preserve")
@@ -1963,6 +1965,8 @@ function tddSummary(work, evidence, criterionId, kind, policy) {
     return `skipped: ${skip?.reason ?? ""}`;
   }
   const record = evidence.tdd.find((t) => t.criterion === criterionId);
+  if (record?.merged)
+    return `proven by ${record.merged.task} (child ${record.merged.child}, merged ${record.merged.commit.slice(0, 7)})`;
   if (tddDone(record, kind)) {
     if (kind === "behavior")
       return "red then green";
@@ -2870,6 +2874,10 @@ function plannedGates(route, profile, policy, changed, root) {
       planned.push({ gate, target: target.path, ...shared ? { stack: target.stack } : {} });
     }
   }
+  const covers = (t, path) => t.path === "." || path === t.path || path.startsWith(`${t.path}/`);
+  const uncovered = profile.targets.length === 0 || changed.some((path) => !profile.targets.some((t) => covers(t, path)));
+  if (uncovered && !planned.some((g) => g.gate === "test" && g.target === "."))
+    planned.push({ gate: "test", target: "." });
   return planned;
 }
 function targetOf(profile, planned) {
@@ -2910,7 +2918,10 @@ async function runOne(paths, work, profile, planned, fingerprint, changed) {
   }
   const target = targetOf(profile, planned);
   if (!target)
-    return { ...base, reason: "target not in profile" };
+    return {
+      ...base,
+      reason: gate === "test" ? 'no test command (crew profile set test "<cmd>")' : "target not in profile"
+    };
   let command;
   let source = "detected";
   let audit = null;
@@ -3221,21 +3232,25 @@ function projectEntry(registry, workspace, name) {
   return registry.projects.find((p) => p.name === name && p.workspace === ws && !p.worktreeOf);
 }
 function isLive(entry, now = Date.now()) {
-  const seen = Date.parse(entry.lastSeen);
+  const seen = entry.lastHook === undefined ? Number.NaN : Date.parse(entry.lastHook);
   return Number.isFinite(seen) && now - seen <= LIVE_MS;
 }
 function registerProject(ctx, sessionId, options = {}) {
   const registry = loadRegistry(ctx.paths.userDir);
   const existing = registry.projects.find((p) => p.root === ctx.paths.root);
-  if (existing && options.minIntervalMs !== undefined && Date.now() - Date.parse(existing.lastSeen) < options.minIntervalMs && existing.sessionId === sessionId)
+  const recent = (at) => at !== undefined && options.minIntervalMs !== undefined && Date.now() - Date.parse(at) < options.minIntervalMs;
+  if (existing && recent(existing.lastSeen) && existing.sessionId === sessionId && (!options.hook || recent(existing.lastHook)))
     return existing;
   const main = worktreeMainRoot(ctx.paths.root);
+  const now = nowIso();
+  const lastHook = options.hook ? now : existing?.lastHook;
   const entry = {
     root: ctx.paths.root,
     name: ctx.self.project,
     workspace: ctx.self.workspace,
-    lastSeen: nowIso(),
+    lastSeen: now,
     sessionId,
+    ...lastHook ? { lastHook } : {},
     ...main ? { worktreeOf: main } : {},
     ...ctx.self.openedBy ? { mail: ctx.self.openedBy } : {}
   };
@@ -3852,7 +3867,40 @@ function readOpenSessions(ctx) {
 // packages/engine/src/open.ts
 import { execFileSync as execFileSync4, spawn as spawn2 } from "node:child_process";
 import { closeSync, mkdirSync as mkdirSync5, openSync } from "node:fs";
-import { dirname as dirname4, join as join22 } from "node:path";
+import { dirname as dirname4, join as join23 } from "node:path";
+
+// packages/engine/src/profile.ts
+import { join as join22 } from "node:path";
+function profilePath(paths) {
+  return join22(paths.crewDir, "profile.json");
+}
+function loadProfile(paths) {
+  const read = readProtectedJson(paths, profilePath(paths));
+  return { profile: read.data, tampered: read.tampered };
+}
+function saveProfile(paths, profile) {
+  writeProtectedJson(paths, profilePath(paths), profile);
+}
+function refreshProfile(paths, current, tampered = false) {
+  if (tampered)
+    return { profile: current, changed: [] };
+  const next = detectProfile(paths.root, current);
+  const changed = profileChanges(current, next);
+  if (changed.length === 0)
+    return { profile: current, changed };
+  saveProfile(paths, next);
+  return { profile: next, changed };
+}
+function ensureProfile(paths) {
+  const existing = loadProfile(paths);
+  if (existing.profile)
+    return { profile: existing.profile, tampered: existing.tampered };
+  const profile = detectProfile(paths.root);
+  if (existing.tampered)
+    return { profile, tampered: true };
+  saveProfile(paths, profile);
+  return { profile, tampered: false };
+}
 
 // packages/engine/src/worktree.ts
 import { execFileSync as execFileSync3 } from "node:child_process";
@@ -3919,6 +3967,30 @@ var READ_ONLY_FLAGS = [
   "MultiEdit",
   "NotebookEdit"
 ];
+var BRANCH_FLAGS = [
+  "--allowedTools",
+  "Read",
+  "Glob",
+  "Grep",
+  "Write",
+  "Edit",
+  "MultiEdit",
+  "NotebookEdit",
+  "Skill",
+  "Agent",
+  "Bash(crew *)",
+  "Bash(git *)"
+];
+function commandGrants(profile) {
+  const words = [];
+  for (const target of profile?.targets ?? [])
+    for (const gate of Object.values(target.gates)) {
+      const word = gate?.command.trim().split(/\s+/).find((w) => !w.includes("="));
+      if (word && !words.includes(word))
+        words.push(word);
+    }
+  return words.map((w) => `Bash(${w} *)`);
+}
 function claudeBinary(env) {
   return env.WIZARDINGCODE_CREW_CLAUDE?.trim() || "claude";
 }
@@ -3942,10 +4014,12 @@ function openerArgs(request, options) {
     args.push("--plugin-dir", options.pluginDir);
   if (request.mode === "read-only")
     args.push(...READ_ONLY_FLAGS);
+  else
+    args.push(...BRANCH_FLAGS, ...commandGrants(options.profile));
   return args;
 }
 function sessionLog(ctx, id) {
-  return join22(mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project).dir, "opened", `${id}.log`);
+  return join23(mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project).dir, "opened", `${id}.log`);
 }
 function openSession(ctx, request, notes = []) {
   const env = { ...ctx.env };
@@ -3989,7 +4063,12 @@ function openSession(ctx, request, notes = []) {
   }
   let child;
   try {
-    child = spawn2(claudeBinary(ctx.env), openerArgs(request, { pluginDir: pluginDirOf(ctx.env) }), {
+    const projectPaths = resolvePaths(worktreeMainRoot(request.cwd) ?? request.cwd, ctx.env);
+    const args = openerArgs(request, {
+      pluginDir: pluginDirOf(ctx.env),
+      profile: projectPaths ? loadProfile(projectPaths).profile : null
+    });
+    child = spawn2(claudeBinary(ctx.env), args, {
       cwd: request.cwd,
       env,
       detached: true,
@@ -4302,43 +4381,10 @@ function openForMail(ctx, fallback, message, delivery) {
   return delivery.mode === "read-only" ? `read-only session opened (${opened.name}, pid ${opened.pid}, ${bounds})${skipped}` : `session opened on branch ${branch} (${opened.name}, pid ${opened.pid}, ${bounds})${skipped}`;
 }
 
-// packages/engine/src/profile.ts
-import { join as join23 } from "node:path";
-function profilePath(paths) {
-  return join23(paths.crewDir, "profile.json");
-}
-function loadProfile(paths) {
-  const read = readProtectedJson(paths, profilePath(paths));
-  return { profile: read.data, tampered: read.tampered };
-}
-function saveProfile(paths, profile) {
-  writeProtectedJson(paths, profilePath(paths), profile);
-}
-function refreshProfile(paths, current, tampered = false) {
-  if (tampered)
-    return { profile: current, changed: [] };
-  const next = detectProfile(paths.root, current);
-  const changed = profileChanges(current, next);
-  if (changed.length === 0)
-    return { profile: current, changed };
-  saveProfile(paths, next);
-  return { profile: next, changed };
-}
-function ensureProfile(paths) {
-  const existing = loadProfile(paths);
-  if (existing.profile)
-    return { profile: existing.profile, tampered: existing.tampered };
-  const profile = detectProfile(paths.root);
-  if (existing.tampered)
-    return { profile, tampered: true };
-  saveProfile(paths, profile);
-  return { profile, tampered: false };
-}
-
 // packages/engine/src/hooks/context.ts
 function refreshMail(ctx) {
   try {
-    registerProject(ctx.mail, ctx.sessionId, { minIntervalMs: 2 * 60 * 1000 });
+    registerProject(ctx.mail, ctx.sessionId, { minIntervalMs: 2 * 60 * 1000, hook: true });
     return { newMail: syncMail(ctx.mail, ctx.paths).newMail, failed: null };
   } catch (error) {
     return { newMail: [], failed: error.message };
@@ -5813,6 +5859,7 @@ function mergeTask(ctx, env, work, task, options = {}) {
   if (options.forcedBy)
     record.forcedBy = options.forcedBy;
   saveWork(env.paths, work);
+  const credit = creditChild(env.paths, work, record, options.forcedBy !== undefined);
   const childDir = workDir(env.paths, child);
   if (existsSync5(workDir(childPaths, child)))
     cpSync(workDir(childPaths, child), childDir, {
@@ -5825,7 +5872,35 @@ function mergeTask(ctx, env, work, task, options = {}) {
   const kept = removeWorktree(env.paths.root, record.worktree);
   if (!kept)
     dropOpenedMarker(ctx.paths.userDir, childPaths.root);
-  return { record, commit, swept: swept.lines, ...kept ? { worktreeKept: kept.kept } : {} };
+  return {
+    record,
+    commit,
+    swept: swept.lines,
+    ...kept ? { worktreeKept: kept.kept } : {},
+    ...credit
+  };
+}
+function creditChild(paths, work, record, forced) {
+  if (forced)
+    return { credited: [], uncredited: "a forced merge of an unproven child credits nothing" };
+  const loaded = loadEvidence(paths, work.id);
+  if (loaded.tampered)
+    return {
+      credited: [],
+      uncredited: `evidence.json of ${work.id} changed outside the engine (crew accept ${work.id}); nothing credited`
+    };
+  const merged = {
+    task: record.task,
+    child: record.child ?? "",
+    commit: record.mergeCommit ?? "",
+    at: record.mergedAt ?? nowIso()
+  };
+  const tdd = loaded.evidence.tdd.map((t) => record.criteria.includes(t.criterion) ? { ...t, merged } : t);
+  for (const criterion of record.criteria)
+    if (!tdd.some((t) => t.criterion === criterion))
+      tdd.push({ criterion, merged });
+  saveEvidence(paths, work.id, { ...loaded.evidence, tdd });
+  return { credited: [...record.criteria], uncredited: null };
 }
 function childRecordVerdict(record, child, childPaths) {
   const item = loadWork(childPaths, child);
@@ -7368,9 +7443,18 @@ ${lines2.join(`
           return refuse(out.refused);
         const forced = forcedBy ? ` forced ${decisionText(env.policy, forcedBy)}` : "";
         const kept = out.worktreeKept ? `; worktree ${out.record.worktree} kept: ${out.worktreeKept}` : "";
+        const credited = out.credited.length ? `
+test-first of ${out.credited.join(", ")} credited to ${args[2]} (child ${out.record.child})` : out.uncredited ? `
+test-first not credited: ${out.uncredited}` : "";
         return ok(`${out.swept.length ? `${out.swept.join(`
 `)}
-` : ""}merged ${args[2]} of ${opened.work.id}: ${out.commit.slice(0, 7)} (${out.record.branch}, child ${out.record.child}, ${out.record.verdict})${forced}${kept}`, { task: out.record, commit: out.commit, swept: out.swept });
+` : ""}merged ${args[2]} of ${opened.work.id}: ${out.commit.slice(0, 7)} (${out.record.branch}, child ${out.record.child}, ${out.record.verdict})${forced}${kept}${credited}`, {
+          task: out.record,
+          commit: out.commit,
+          swept: out.swept,
+          credited: out.credited,
+          uncredited: out.uncredited
+        });
       }
       return refuse(usage);
     }

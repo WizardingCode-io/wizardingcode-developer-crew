@@ -41,7 +41,7 @@ function workspace(env = testEnv()) {
     );
     const policy = loadPolicy(paths).policy;
     const ctx = mailContext(paths, policy, env);
-    registerProject(ctx, `session-${name}`);
+    registerProject(ctx, `session-${name}`, { hook: true });
     return { root, paths, policy, ctx };
   };
   return {
@@ -137,7 +137,7 @@ test("SP2c AC-2: an accepted message reaches the inbox, the outbox and the item'
   expect(itemCopy.data?.messages.map((m) => m.id)).toEqual([out.message.id]);
   // crm not live: a question opens a read-only session; a change request is queued (crm does not open on a branch).
   const registry = loadRegistry(w.a.paths.userDir);
-  for (const p of registry.projects) if (p.name === "crm") p.lastSeen = "2020-01-01T00:00:00.000Z";
+  for (const p of registry.projects) if (p.name === "crm") p.lastHook = "2020-01-01T00:00:00.000Z";
   writeFileSync(join(w.a.paths.userDir, "projects.json"), JSON.stringify(registry));
   const second = send(w.a.ctx, question("Second"), work);
   if ("refused" in second) throw new Error(second.refused);
@@ -187,7 +187,7 @@ test("SP2c AC-3: the receiving policy, the hops, the concurrency and a tampered 
   });
   // Concurrency: two sessions already open in crm, and crm not live.
   const registry = loadRegistry(w.a.paths.userDir);
-  for (const p of registry.projects) if (p.name === "crm") p.lastSeen = "2020-01-01T00:00:00.000Z";
+  for (const p of registry.projects) if (p.name === "crm") p.lastHook = "2020-01-01T00:00:00.000Z";
   writeFileSync(join(w.a.paths.userDir, "projects.json"), JSON.stringify(registry));
   const crmBox = mailbox(w.b.paths.userDir, "clubefashion", "crm");
   const inbox = readBox(crmBox.dir, "inbox").box;
@@ -506,7 +506,7 @@ test("SP2c AC-7: the registry knows root, name, workspace, liveness and worktree
   ]);
   const crm = entries[1] as (typeof entries)[number];
   expect(isLive(crm)).toBe(true);
-  expect(isLive({ ...crm, lastSeen: new Date(Date.now() - 11 * 60_000).toISOString() })).toBe(
+  expect(isLive({ ...crm, lastHook: new Date(Date.now() - 11 * 60_000).toISOString() })).toBe(
     false,
   );
   // A folder's name when the policy names none.
@@ -745,4 +745,23 @@ test("SP2c AC-7: syncMail copies nothing from an inbox a hand changed, a receive
     tampered: true,
     line: "storefront's inbox changed outside the engine; files under the user's crew directory are written only by the crew command",
   });
+});
+
+test("SP2c 8a AC-3: a command's registration never makes a project live; a hook's does, and a later command keeps the hook's mark", () => {
+  const w = workspace();
+  const plain = repoPaths(makeRepo(), w.env);
+  const ctx = mailContext(plain, loadPolicy(plain).policy, w.env);
+  // `crew detect`, or any command: registered, listed, not live.
+  const byCommand = registerProject(ctx, "cli");
+  expect(byCommand.lastHook).toBeUndefined();
+  expect(isLive(byCommand)).toBe(false);
+  // A hook marks the entry even within the interval when it has no mark yet; the mark ages out.
+  const byHook = registerProject(ctx, "cli", { minIntervalMs: 60_000, hook: true });
+  expect(typeof byHook.lastHook).toBe("string");
+  expect(isLive(byHook)).toBe(true);
+  expect(isLive({ ...byHook, lastHook: new Date(Date.now() - 11 * 60_000).toISOString() })).toBe(
+    false,
+  );
+  // A command after the hook keeps the hook's mark.
+  expect(registerProject(ctx, "cli").lastHook).toBe(byHook.lastHook);
 });

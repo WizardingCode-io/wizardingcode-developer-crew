@@ -882,3 +882,40 @@ test("finding 8: each target at a shared path runs its own command, recorded and
   expect(report).toContain("| lint | . (php) | fail | `sh pint.sh` |");
   expect(report).toContain("| secrets | . | pass |");
 });
+
+test("SP2c 8a AC-1: a profile with no target, or a change no target covers, plans a root test gate that ends unavailable with the proposal, and the verdict names it", async () => {
+  const none = { version: 1 as const, detectedAt: "", targets: [], watch: { exclude: [] } };
+  const root = tempDir();
+  expect(plannedGates("fast", none, DEFAULT_POLICY, ["src/greet.sh"], root)).toEqual([
+    { gate: "secrets", target: "." },
+    { gate: "test", target: "." },
+  ]);
+  const api = { ...none, targets: [{ ...target, path: "apps/api" }] };
+  expect(plannedGates("fast", api, DEFAULT_POLICY, ["scripts/x.sh"], root)).toEqual([
+    { gate: "secrets", target: "." },
+    { gate: "test", target: "." },
+  ]);
+  // A change inside the target plans that target's gates and no root gate.
+  expect(
+    plannedGates("fast", api, DEFAULT_POLICY, ["apps/api/x.ts"], root).map((g) => g.target),
+  ).toEqual([".", "apps/api", "apps/api"]);
+  // A Makefile-only project: the engine detects no target, so the test gate at the root is
+  // unavailable until a command is set, and the item is never proven by the secrets gate alone.
+  const repo = makeRepo({ Makefile: "test:\n\tsh tests/run.sh\n", "src/greet.sh": "echo hi\n" });
+  const paths = repoPaths(repo, testEnv());
+  const { profile } = ensureProfile(paths);
+  expect(profile.targets).toEqual([]);
+  const work = createWork(paths, "fix the greeting");
+  addCriterion(work, "greets");
+  write(repo, "src/greet.sh", "echo hello\n");
+  const outcome = await runGates(paths, work, profile, DEFAULT_POLICY);
+  expect(outcome.evidence.runs.find((r) => r.gate === "test")).toMatchObject({
+    target: ".",
+    status: "unavailable",
+    reason: 'no test command (crew profile set test "<cmd>")',
+  });
+  expect(outcome.verdict).toBe("unproven");
+  expect(outcome.unproven).toContain(
+    'gate test unavailable: no test command (crew profile set test "<cmd>")',
+  );
+});
