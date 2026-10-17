@@ -9,7 +9,7 @@ function versionOf(rel: string): string {
 }
 
 test("the engine reports the plugin version", () => {
-  expect(VERSION).toBe("0.5.0");
+  expect(VERSION).toBe("0.5.1");
 });
 
 test("the version fields of the root package, the engine package and the plugin manifest agree", () => {
