@@ -29,3 +29,4 @@ SP3 to SP6 keep their place in the vision and ship as 1.x, each after its own re
 - The vision's §16 is amended: "The first public release includes subprojects 1 and 2; 3 to 6 follow as 1.x releases."
 - The SP2 plan is the critical path. It is written next, task by task, from the SP2 design.
 - The hardening items are planned beside SP2, not after it, since each one costs every SP2 item a second gate run or a skipped gate.
+- The Laravel full-suite run under the engine is real-use material of the second phase (the real use this ADR asks for before 1.0), not code of SP2c (0.5.0).

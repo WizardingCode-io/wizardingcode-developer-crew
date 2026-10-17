@@ -4680,25 +4680,25 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 - Consumes: every task above on `main`; the Agent tool's per-call `effort` (2.1.292+, sub-agents documentation) for the measurement.
 - Produces: tag `v0.5.0`, the GitHub release, the marketplace entry (`WizardingCode-io/wizardingcode-plugins`: `version`, `ref: v0.5.0`, `metadata.version`, committed as `wizardingcode-developer-crew 0.5.0`).
 
-- [ ] **Step 1: The judge's effort, measured** (§14; finding #26 asked for it)
+- [x] **Step 1: The judge's effort, measured** (§14; finding #26 asked for it)
 
 On the review inputs of Task 7's item (the last judged item; its `review/` holds the two findings files and the ruling the judge gave at the session's effort), launch the judge twice more on the same files, "as judge of the gates", one Agent call each: `effort: "high"` and `effort: "medium"` (the session already ran it at its default, `xhigh` in this repository's sessions: that ruling is the baseline). Save nothing to `review/` (the SubagentStop hook of 0.4.0 does not exist; under 0.5.0 it would overwrite `ruling.json`: run this step before installing 0.5.0, or launch the judge from a scratch folder with copies of the files). Record in `docs/real-use/findings.md` as **#27** (category `friction`, severity low): per effort, the seconds, the tokens, the verdicts and the number and the text of the findings; whether the rulings agree. **Decision rule:** the judge's file keeps no `effort` key unless `high` reproduced the baseline's verdicts and findings on both items measured (this one and one earlier judged item, re-judged the same way); then `judge.md` gains `effort: high` and `agents.test.ts` pins it (`expect(agent("judge").meta.effort).toBe("high")`). `medium` is recorded, never adopted on one item's evidence.
 
-- [ ] **Step 2: The findings' outcomes**
+- [x] **Step 2: The findings' outcomes**
 
 In `docs/real-use/findings.md`: #24 "Outcome: fixed in 0.5.0: `references/deliver.md` names `docs/real-use/findings.md` as where deferred and advisory findings go; the plan's review step says the same (plan `2026-10-15-sp2c-…`, Global Constraints)." #25 "Outcome: fixed in 0.5.0: `crew await <id> role` and `crew await <id> mail <message id>` (Task 3); the Stop hook lets the turn end once with the notice, the SubagentStop hook clears the role wait when the judge answers, the inbox clears the mail wait." #26 "Outcome: tokens per role are the engine's from the SubagentStop hook (0.5.0); the judge's effort is #27; a second round after a fix pass still re-runs every gate (by design of SP2b review finding 1), left as it is." `docs/real-use/README.md`'s second-phase section gains a paragraph "SP2c in real use (0.5.0, from the restart)": the first mail between two of the user's projects in one workspace, the first task handed to an implementer, what to record (the opener's start time, the sessions' turns and minutes, the doorbell's use or absence, every refusal and its reason).
 
-- [ ] **Step 3: Open the release item** (fast route, as 0.4.0's was)
+- [x] **Step 3: Open the release item** (fast route, as 0.4.0's was)
 
 ```bash
 crew start "0.5.0: version 0.5.0 in package.json, packages/engine/package.json, src/version.ts and plugin.json, and the two tests that assert it" --answers '{"work_type":"chore","is_vague":0.02,"scope":0,"touches_auth":0,"touches_payments":0,"touches_personal_data":0,"touches_data_migration":0,"touches_infra":0,"touches_public_api":0}' --criterion "crew --version prints 0.5.0 and package.json, packages/engine/package.json and plugins/core/.claude-plugin/plugin.json say 0.5.0"
 ```
 
-- [ ] **Step 4: Red.** Edit the two tests to expect `0.5.0`, then `crew tdd red <id> AC-1 -- bun test packages/engine/tests/version.test.ts` (fails: `Received: "0.4.0"`).
+- [x] **Step 4: Red.** Edit the two tests to expect `0.5.0`, then `crew tdd red <id> AC-1 -- bun test packages/engine/tests/version.test.ts` (fails: `Received: "0.4.0"`).
 
-- [ ] **Step 5: Bump.** The four files to `0.5.0`; `bun run build`; the README paragraph; the vision's status line and §10 note; the SP2c spec's status line; the ADR 0004 line.
+- [x] **Step 5: Bump.** The four files to `0.5.0`; `bun run build`; the README paragraph; the vision's status line and §10 note; the SP2c spec's status line; the ADR 0004 line.
 
-- [ ] **Step 6: Green, gate, commit, tag, release**
+- [x] **Step 6: Green, gate, commit, tag, release**
 
 ```bash
 crew tdd green <id> AC-1 -- bun test packages/engine/tests/version.test.ts

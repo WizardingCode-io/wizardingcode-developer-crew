@@ -1,6 +1,6 @@
 # SP2c: mail between agents, the team of an item, the evals and the hardening
 
-> **Status:** design, approved by the user on 2026-10-15; its plan is `docs/plans/2026-10-15-sp2c-mail-evals-and-hardening.md` (eight tasks, release 0.5.0). It brings SP5 (session mail, vision §10) forward into SP2c because the user set it as the point of the product on 2026-10-15: "the agents must have a messaging system where they converse with each other". Builds on the SP2 design (`2026-10-14-sp2-conclave-and-judgement-gates-design.md`) and on the first real use of 0.4.0 (`docs/real-use/findings.md` #24 to #26). Releases as 0.5.0 at the close.
+> **Status:** implemented in 0.5.0 (2026-10-17), with the eval run and the findings recorded in `docs/evals/2026-10-17-sp2c-results.md`; approved by the user on 2026-10-15; its plan is `docs/plans/2026-10-15-sp2c-mail-evals-and-hardening.md` (eight tasks, release 0.5.0). It brings SP5 (session mail, vision §10) forward into SP2c because the user set it as the point of the product on 2026-10-15: "the agents must have a messaging system where they converse with each other". Builds on the SP2 design (`2026-10-14-sp2-conclave-and-judgement-gates-design.md`) and on the first real use of 0.4.0 (`docs/real-use/findings.md` #24 to #26). Releases as 0.5.0 at the close.
 
 ## 1. Summary
 
