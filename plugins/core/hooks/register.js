@@ -10,6 +10,8 @@ const PANE = 'crew'
 let status = null
 // The last reason a refresh produced no status, or null
 let error = null
+// The last answer of `crew mail inbox --json`, fetched for the panel alone, or null
+let inbox = null
 
 export function register(on) {
   on('session.start', async ($, e, next) => {
@@ -19,7 +21,7 @@ export function register(on) {
       await $.command.register({
         name: 'crew',
         description: 'Crew: the state of the active work item, the panel, or the mode',
-        argumentHint: '[status|panel|mode <partner|guide|pilot>]',
+        argumentHint: '[status|panel|mail|mode <partner|guide|pilot>]',
       })
     } catch {
       try {
@@ -44,11 +46,12 @@ export function register(on) {
   on('command.run', { command: 'crew' }, async ($, e) => {
     const words = (e.args || '').trim().split(/\s+/).filter(Boolean)
     const verb = words[0] || 'status'
-    if (verb !== 'status' && verb !== 'panel' && verb !== 'mode') {
-      return { text: 'Crew: unknown verb; use /crew [status|panel|mode <partner|guide|pilot>]' }
+    if (verb !== 'status' && verb !== 'panel' && verb !== 'mail' && verb !== 'mode') {
+      return { text: 'Crew: unknown verb; use /crew [status|panel|mail|mode <partner|guide|pilot>]' }
     }
     if (verb === 'panel') {
       await refresh($)
+      await refreshInbox($)
       let placed
       try {
         placed = await $.ui.open({ id: PANE, title: 'Crew', focus: true, closeOnEscape: true })
@@ -68,6 +71,10 @@ export function register(on) {
         }
       }
       return {}
+    }
+    if (verb === 'mail') {
+      const answer = await runCrew($, ['mail', 'inbox'])
+      return { text: 'Crew: ' + ((answer && answer.message) ? answer.message : 'crew gave no answer') }
     }
     if (verb === 'mode') {
       const answer = await runCrew($, ['mode', ...words.slice(1)])
@@ -115,6 +122,7 @@ function paneTree($, e) {
         plain: true,
         onPress: async () => {
           await refresh($)
+          await refreshInbox($)
           redraw()
         },
       }),
@@ -158,6 +166,18 @@ function paneTree($, e) {
     for (const j of status.judgement || []) {
       lines.push(Text({ children: [judgementText(j)] }))
     }
+    // The team of the item and its mail, from an engine that prints them (0.5.0); an older engine's
+    // status has neither field and draws as before
+    if (status.tasks && status.tasks.length) {
+      lines.push(Text({ dimColor: true, children: ['Tasks'] }))
+      for (const t of status.tasks) lines.push(Text({ children: [taskText(t)] }))
+    }
+    if (status.mail) {
+      lines.push(Text({ children: ['Mail: ' + status.mail.unread + ' unread, ' + status.mail.answered + ' answered'] }))
+      if (inbox && inbox.message) {
+        for (const line of String(inbox.message).split('\n').slice(1)) lines.push(Text({ children: [line.trim()] }))
+      }
+    }
     for (const reason of status.unproven || []) {
       lines.push(Text({ color: 'red', children: ['✗ ' + reason] }))
     }
@@ -168,6 +188,21 @@ function paneTree($, e) {
     lines.push(Text({ bold: true, children: [verdictLine()] }))
   }
   return Box({ flexDirection: 'column', children: [...lines, Text({ children: [' '] }), buttons] })
+}
+
+// "T-2 · AC-2 · crew/<short>/T-2 · <child> · proven · merged abc1234"; a task with no reply yet has no child
+function taskText(t) {
+  const task = t.task || {}
+  return task.task + ' · ' + (task.criteria || []).join(',') + ' · ' + task.branch + ' · ' + (task.child || 'no child yet') + ' · ' + t.verdict + (task.mergedAt ? ' · merged ' + String(task.mergeCommit || '').slice(0, 7) : '')
+}
+
+// " · waiting for the user", " · waiting for the roles", " · waiting for a reply to M-…", or '' when the item waits for nothing
+function waitingText() {
+  if (!status) return ''
+  if (status.awaiting === 'user') return ' · waiting for the user'
+  if (status.awaiting === 'role') return ' · waiting for the roles'
+  if (status.awaiting === 'mail') return ' · waiting for a reply to ' + (status.awaitingMessage || 'a message')
+  return ''
 }
 
 // "receive › recognize › [build] › gate › deliver", the current phase in brackets
@@ -254,6 +289,17 @@ async function refresh($) {
   }
 }
 
+// The inbox, for the panel alone: fetched when the panel opens or refreshes, and only from an engine
+// that prints a mail summary (0.5.0); an answer that is not ok draws no inbox lines
+async function refreshInbox($) {
+  if (!(status && status.mail)) {
+    inbox = null
+    return
+  }
+  const answer = await runCrew($, ['mail', 'inbox'])
+  inbox = answer && answer.ok ? answer : null
+}
+
 function hasWork() {
   return !!(status && status.active)
 }
@@ -290,10 +336,11 @@ function verdictLine() {
 // The one line the strip shows; the unproven reason reads as the prompt hook writes it
 function stripText() {
   if (!hasWork()) return ''
-  const waiting = status.awaiting === 'user' ? ' · waiting for the user' : ''
+  const unread = status.mail && status.mail.unread ? ' · mail ' + status.mail.unread + ' unread' : ''
+  const waiting = waitingText()
   const verdict = status.verdict === 'proven' ? 'proven' : 'not proven (' + (status.unproven && status.unproven[0] ? status.unproven[0] : 'gates have not run') + ')'
   const gates = gatesText()
-  return 'crew ' + status.active + ' · ' + status.phase + ' · ' + status.route + ' · ' + verdict + (gates ? ' · ' + gates : '') + waiting
+  return 'crew ' + status.active + ' · ' + status.phase + ' · ' + status.route + ' · ' + verdict + (gates ? ' · ' + gates : '') + unread + waiting
 }
 
 // The text /crew prints in the transcript
@@ -302,8 +349,9 @@ function statusText() {
   if (!hasWork()) return 'Crew: no active work item. A change starts with the crew skill.'
   const lines = [
     status.active + ' "' + status.title + '"',
-    '  phase ' + status.phase + ', route ' + status.route + (status.awaiting === 'user' ? ', waiting for the user' : ''),
+    '  phase ' + status.phase + ', route ' + status.route + (waitingText() ? ', ' + waitingText().slice(3) : ''),
   ]
+  if (status.mail && status.mail.unread) lines.push('  mail: ' + status.mail.unread + ' unread')
   const conclave = conclaveText()
   if (conclave) lines.push('  ' + conclave)
   for (const r of status.runs || []) {

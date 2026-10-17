@@ -4194,7 +4194,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 - Consumes: `crew status --json` fields from Tasks 2 and 4: `mail: { unread, answered, waiting }`, `awaiting: "user" | "role" | "mail" | null`, `awaitingMessage`, `tasks: [{ task: { task, criteria, branch, child, verdict, mergedAt }, status, verdict }]`; `crew mail inbox --json` (`messages`, `unread`, `answered`).
 - Produces: the strip's ` · mail 1 unread`, the panel's "Mail" and "Tasks" blocks, `/crew mail` printing the inbox, the three waiting words.
 
-- [ ] **Step 1: Open the work item**
+- [x] **Step 1: Open the work item**
 
 ```bash
 crew start "SP2c task 6: the mod shows unread mail in the strip, the inbox and the tasks in the panel, /crew mail prints the inbox, and the strip says which wait the item is in; the mod tests keep a (0 findings) assertion" --answers '{"work_type":"feature","is_vague":0.05,"scope":1,"touches_auth":0,"touches_payments":0,"touches_personal_data":0,"touches_data_migration":0,"touches_infra":0,"touches_public_api":0}' --criterion "The strip shows mail <n> unread when the inbox has unread mail and nothing about mail otherwise, and says waiting for the user, waiting for the roles or waiting for a reply to <id> by the item's wait" --criterion "The panel lists the inbox (id, type, sender, subject, status) and the tasks (task, criteria, branch, child, verdict, merged) when the status has them, and renders unchanged for a status from an engine before 0.5.0" --criterion "/crew mail prints the inbox as crew mail inbox prints it, and an unknown verb's message names mail" --criterion "A proven judgement row with no findings renders as (0 findings)" --preserve "Every existing mod test keeps passing"
@@ -4202,7 +4202,7 @@ crew start "SP2c task 6: the mod shows unread mail in the strip, the inbox and t
 
 Standard route as before (the kind `screen` checklist applies: read it for the panel). `crew tdd before <id> AC-5 -- claude plugin test plugins/core`.
 
-- [ ] **Step 2: Write the failing tests**
+- [x] **Step 2: Write the failing tests**
 
 In `plugins/core/tests/crew-mod.test.ts`, add fixtures after `JUDGED`:
 
@@ -4298,7 +4298,7 @@ test("SP2c (advisory of 2026-10-15-001): a proven row with no findings reads (0 
 
 (The file's existing tests show how the pane is rendered and found; follow their shape where this differs. The stubbed `process.run` answers in order; the counts above assume `session.start` refreshes once and `panel` refreshes once before asking for the inbox.)
 
-- [ ] **Step 3: Red**
+- [x] **Step 3: Red**
 
 ```bash
 crew tdd red <id> AC-1 -- claude plugin test plugins/core
@@ -4309,7 +4309,7 @@ crew tdd red <id> AC-4 -- claude plugin test plugins/core
 
 (AC-4's red fails only if `judgementText` has drifted; if it passes, the criterion is already met by the code and the test pins it: record AC-4 as `observed` instead, `--reason "the branch already prints (0 findings); the test pins it against a future mutant"`.)
 
-- [ ] **Step 4: `register.js`**
+- [x] **Step 4: `register.js`**
 
 - `/crew` registration: `argumentHint: '[status|panel|mail|mode <partner|guide|pilot>]'`; the unknown-verb text names `mail`. The `mail` verb: `const answer = await runCrew($, ['mail', 'inbox']); return { text: 'Crew: ' + ((answer && answer.message) ? answer.message : 'crew gave no answer') }`.
 - `let inbox = null` beside `status`; `refresh($)` also runs `crew mail inbox --json` when the panel is open or about to open (`refreshInbox($)`, called by the `panel` verb and the Refresh button), storing `inbox = answer.ok ? answer : null`.
@@ -4318,7 +4318,7 @@ crew tdd red <id> AC-4 -- claude plugin test plugins/core
 - `paneTree`: after the judgement rows and before the unproven reasons, when `status.tasks && status.tasks.length`: a dim `Text('Tasks')` then one `Text(taskText(t))` per entry: `t.task.task + ' · ' + (t.task.criteria || []).join(',') + ' · ' + t.task.branch + ' · ' + (t.task.child || 'no child yet') + ' · ' + t.verdict + (t.task.mergedAt ? ' · merged ' + String(t.task.mergeCommit || '').slice(0, 7) : '')`. Then, when `status.mail`: `Text('Mail: ' + status.mail.unread + ' unread, ' + status.mail.answered + ' answered')` and, when `inbox && inbox.message`, one `Text` per line of `inbox.message` after its first.
 - `statusText()` gains the same waiting text and, when `status.mail && status.mail.unread`, a line `'  mail: ' + status.mail.unread + ' unread'`.
 
-- [ ] **Step 5: Green, after, plugin check, gate, judgement, commit**
+- [x] **Step 5: Green, after, plugin check, gate, judgement, commit**
 
 ```bash
 crew tdd green <id> AC-1 -- claude plugin test plugins/core

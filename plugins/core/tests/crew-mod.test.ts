@@ -120,7 +120,7 @@ test("/crew with an unknown verb says how to use it", async ($, on) => {
   stubs(on, () => ({ exitCode: 0, stdout: JSON.stringify(PROVEN), stderr: "" }));
   await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
   const answer = await $.command.run({ command: "crew", args: "frobnicate" });
-  expect(answer.text).toBe("Crew: unknown verb; use /crew [status|panel|mode <partner|guide|pilot>]");
+  expect(answer.text).toBe("Crew: unknown verb; use /crew [status|panel|mail|mode <partner|guide|pilot>]");
 });
 
 // What Claude Code passes to a ui.render hook for the strip above the prompt
@@ -370,4 +370,149 @@ test("the panel lists what is not proven and the user's skips", async ($, on) =>
   expect(await ui.find({ type: "Text", text: "✗ gate lint failing" })).toBeDefined();
   expect(await ui.find({ type: "Text", text: "skipped tdd:AC-1: manual check" })).toBeDefined();
   await ui.unmount();
+});
+
+// A status from a 0.5.0 engine: an item waiting for a reply, two unread messages, two tasks
+const MAILED = {
+  ...PROVEN,
+  awaiting: "mail",
+  awaitingMessage: "M-2026-10-15-001-storefront",
+  mail: { unread: 2, answered: 1, waiting: 0 },
+  tasks: [
+    {
+      task: { task: "T-2", criteria: ["AC-2"], branch: "crew/2026-10-15-042/T-2", child: "2026-10-15-001-t-2", verdict: "proven", mergedAt: "2026-10-15T15:00:00.000Z", mergeCommit: "abc1234def" },
+      status: "answered",
+      verdict: "proven",
+    },
+    { task: { task: "T-3", criteria: ["AC-3"], branch: "crew/2026-10-15-042/T-3" }, status: "sent", verdict: "no reply yet" },
+  ],
+};
+// What `crew mail inbox --json` prints for that item
+const INBOX = {
+  ok: true,
+  message: "Mail (w/crm, as session): 2 unread, 1 answered\n  M-2026-10-15-001-storefront · question · from storefront · loyalty_tier on POST /customers · sent\n  M-2026-10-15-002-storefront · blocker · from storefront · Checkout is down · sent",
+  messages: [],
+  unread: 2,
+  answered: 1,
+  waiting: 0,
+};
+
+test("SP2c: the strip shows unread mail and which wait the item is in", async ($, on) => {
+  stubs(on, () => ({ exitCode: 0, stdout: JSON.stringify(MAILED), stderr: "" }));
+  on("ui.render", () => ({ type: "Text", props: {}, children: [] }));
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  const ui = await $.ui.mount({ ...STRIP, surface: "terminal" });
+  expect(await ui.find({ type: "Text", text: / · mail 2 unread · waiting for a reply to M-2026-10-15-001-storefront$/ })).toBeDefined();
+  await ui.unmount();
+});
+
+test("SP2c: the strip says waiting for the roles, and nothing about mail when the inbox is clean", async ($, on) => {
+  stubs(on, () => ({ exitCode: 0, stdout: JSON.stringify({ ...PROVEN, awaiting: "role", mail: { unread: 0, answered: 0, waiting: 0 } }), stderr: "" }));
+  on("ui.render", () => ({ type: "Text", props: {}, children: [] }));
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  const ui = await $.ui.mount({ ...STRIP, surface: "terminal" });
+  expect(await ui.find({ type: "Text", text: /^crew .* · waiting for the roles$/ })).toBeDefined();
+  expect(await ui.find({ type: "Text", text: /mail/ })).toBeUndefined();
+  await ui.unmount();
+});
+
+test("SP2c: the panel lists the inbox and the tasks", async ($, on) => {
+  let calls = 0;
+  stubs(on, () => {
+    calls += 1;
+    // the status at the session's start, the status when the panel opens, then the inbox for it
+    return { exitCode: 0, stdout: JSON.stringify(calls === 3 ? INBOX : MAILED), stderr: "" };
+  });
+  on("ui.open", () => ({ value: { isPlaced: true } }));
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  await $.command.run({ command: "crew", args: "panel" });
+  expect(calls).toBe(3);
+  const ui = await $.ui.mount({ ...PANE, surface: "terminal" });
+  expect(await ui.find({ type: "Text", text: "Tasks" })).toBeDefined();
+  expect(await ui.find({ type: "Text", text: "T-2 · AC-2 · crew/2026-10-15-042/T-2 · 2026-10-15-001-t-2 · proven · merged abc1234" })).toBeDefined();
+  expect(await ui.find({ type: "Text", text: "T-3 · AC-3 · crew/2026-10-15-042/T-3 · no child yet · no reply yet" })).toBeDefined();
+  expect(await ui.find({ type: "Text", text: "Mail: 2 unread, 1 answered" })).toBeDefined();
+  expect(await ui.find({ type: "Text", text: "M-2026-10-15-002-storefront · blocker · from storefront · Checkout is down · sent" })).toBeDefined();
+  await ui.unmount();
+});
+
+test("SP2c: the panel renders for an engine before 0.5.0 (no mail, no tasks, awaiting user)", async ($, on) => {
+  stubs(on, () => ({ exitCode: 0, stdout: JSON.stringify({ ...PROVEN, awaiting: "user" }), stderr: "" }));
+  on("ui.open", () => ({ value: { isPlaced: true } }));
+  on("ui.render", () => ({ type: "Text", props: {}, children: [] }));
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  await $.command.run({ command: "crew", args: "panel" });
+  const pane = await $.ui.mount({ ...PANE, surface: "terminal" });
+  expect(await pane.find({ type: "Text", text: "Proven: secrets, test" })).toBeDefined();
+  expect(await pane.find({ type: "Text", text: "Tasks" })).toBeUndefined();
+  expect(await pane.find({ type: "Text", text: /^Mail:/ })).toBeUndefined();
+  await pane.unmount();
+  const strip = await $.ui.mount({ ...STRIP, surface: "terminal" });
+  expect(await strip.find({ type: "Text", text: /^crew .* · waiting for the user$/ })).toBeDefined();
+  await strip.unmount();
+});
+
+test("SP2c: /crew mail prints the inbox; an unknown verb names it", async ($, on) => {
+  let calls = 0;
+  stubs(on, () => {
+    calls += 1;
+    return { exitCode: 0, stdout: JSON.stringify(calls === 1 ? MAILED : INBOX), stderr: "" };
+  });
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  const answer = await $.command.run({ command: "crew", args: "mail" });
+  expect(answer.text).toBe(`Crew: ${INBOX.message}`);
+  const unknown = await $.command.run({ command: "crew", args: "fly" });
+  expect(unknown.text).toBe("Crew: unknown verb; use /crew [status|panel|mail|mode <partner|guide|pilot>]");
+});
+
+test("SP2c (advisory of 2026-10-15-001): a proven row with no findings reads (0 findings)", async ($, on) => {
+  const zero = { ...JUDGED, judgement: [{ gate: "test-quality", status: "proven", planned: "standard route", findings: 0 }] };
+  stubs(on, () => ({ exitCode: 0, stdout: JSON.stringify(zero), stderr: "" }));
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  const answer = await $.command.run({ command: "crew", args: "status" });
+  expect(answer.text).toContain("  test-quality: proven (0 findings)");
+});
+
+test("SP2c: /crew status says which wait the item is in and how much mail is unread", async ($, on) => {
+  let answer: Record<string, unknown> = { ...MAILED };
+  stubs(on, () => ({ exitCode: 0, stdout: JSON.stringify(answer), stderr: "" }));
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  const mailed = await $.command.run({ command: "crew", args: "status" });
+  expect(mailed.text).toContain("  phase deliver, route fast, waiting for a reply to M-2026-10-15-001-storefront");
+  expect(mailed.text).toContain("\n  mail: 2 unread\n");
+  answer = { ...PROVEN, awaiting: "role", mail: { unread: 0, answered: 0, waiting: 0 } };
+  const roles = await $.command.run({ command: "crew", args: "status" });
+  expect(roles.text).toContain("  phase deliver, route fast, waiting for the roles");
+  expect(roles.text).not.toContain("mail:");
+  answer = { ...PROVEN, awaiting: "user" };
+  const user = await $.command.run({ command: "crew", args: "status" });
+  expect(user.text).toContain("  phase deliver, route fast, waiting for the user");
+  answer = { ...PROVEN };
+  const none = await $.command.run({ command: "crew", args: "status" });
+  expect(none.text).toContain("  phase deliver, route fast\n");
+});
+
+test("SP2c: /crew mail and the panel run crew mail inbox --json, once each", async ($, on) => {
+  const argv: string[][] = [];
+  on("session.cwd", () => ({ value: "/work" }));
+  on("process.run", ($, e) => {
+    argv.push(e.argv);
+    const inbox = e.argv[2] === "mail";
+    return { value: { exitCode: 0, stdout: JSON.stringify(inbox ? INBOX : MAILED), stderr: "" } };
+  });
+  on("command.register", () => ({ value: undefined }));
+  on("session.start", () => ({ cwd: "/work" }));
+  on("ui.open", () => ({ value: { isPlaced: true } }));
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  const before = argv.length;
+  const answer = await $.command.run({ command: "crew", args: "mail" });
+  expect(answer.text).toBe(`Crew: ${INBOX.message}`);
+  expect(argv.length).toBe(before + 1);
+  expect((argv.at(-1) ?? []).slice(2)).toEqual(["mail", "inbox", "--json"]);
+  await $.command.run({ command: "crew", args: "panel" });
+  // the status for the panel, then the inbox for it
+  expect(argv.slice(before + 1).map((a) => a.slice(2))).toEqual([
+    ["status", "--json"],
+    ["mail", "inbox", "--json"],
+  ]);
 });
