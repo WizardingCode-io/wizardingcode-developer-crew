@@ -55,6 +55,220 @@ test("0.3.0: with no policy file the default relays, and a validator rule is nev
     expect(bash(prompt.ctx, "crew approve w1 spec --validator complete-gap-round", mode)).toEqual(
       {},
     );
+    // Merging an unproven child by force is the user's; the plain merge is the engine's rule.
+    expect(decision(bash(prompt.ctx, "crew task w1 merge T-2 --force", mode))).toBe("ask");
+    // The parser takes flags from any position, so the hook reads --force anywhere in the command.
+    expect(decision(bash(prompt.ctx, "crew task w1 --force merge T-2", mode))).toBe("ask");
+    expect(decision(bash(prompt.ctx, "crew --json task w1 merge T-2 --force", mode))).toBe("ask");
+    expect(decision(bash(prompt.ctx, "crew --force task w1 merge T-2", mode))).toBe("ask");
+    // Behind a wrapper the regexes never listed, and inside a substitution: the command is read
+    // as the CLI parses it, wherever it stands.
+    expect(decision(bash(prompt.ctx, "nice crew task w1 merge T-2 --force", mode))).toBe("ask");
+    expect(decision(bash(prompt.ctx, "echo $(crew approve w1 spec)", mode))).toBe("ask");
+    // A wrapper's long option with a value, node's own options before the bundle, a coprocess's
+    // name before its block: the command behind them is read.
+    expect(decision(bash(prompt.ctx, "env --unset X crew approve w1 spec", mode))).toBe("ask");
+    expect(decision(bash(prompt.ctx, "timeout --signal KILL 5 crew approve w1 spec", mode))).toBe(
+      "ask",
+    );
+    expect(decision(bash(prompt.ctx, "sudo --user me crew approve w1 spec", mode))).toBe("ask");
+    expect(
+      decision(bash(prompt.ctx, "node -r ./a.js /x/dist/crew.mjs approve w1 spec", mode)),
+    ).toBe("ask");
+    expect(decision(bash(prompt.ctx, 'bash -c "coproc X { crew approve w1 spec; }"', mode))).toBe(
+      "ask",
+    );
+    // Crew with its words on xargs' input cannot be read, in any session, whatever words stand on
+    // the line, and the reason says so.
+    const xargsReason =
+      "Crew: a crew command whose words come from xargs' input cannot be read; write the command out";
+    const reasonOf = (response: Record<string, unknown>) =>
+      (response as { hookSpecificOutput?: { permissionDecisionReason?: string } })
+        .hookSpecificOutput?.permissionDecisionReason;
+    expect(reasonOf(bash(prompt.ctx, "echo approve w1 spec | xargs crew", mode))).toBe(xargsReason);
+    expect(reasonOf(bash(prompt.ctx, "echo merge T-1 --force | xargs crew task w1", mode))).toBe(
+      xargsReason,
+    );
+    expect(reasonOf(bash(prompt.ctx, "echo waive | xargs crew objection w1 O-1", mode))).toBe(
+      xargsReason,
+    );
+    // A command given as a string to a runner that takes one: trap's handler, env's split string,
+    // flock's and script's -c, find's -exec, and crew behind npx or bunx.
+    expect(decision(bash(prompt.ctx, "trap 'crew approve w1 spec' EXIT", mode))).toBe("ask");
+    expect(decision(bash(prompt.ctx, 'env -S "crew approve w1 spec"', mode))).toBe("ask");
+    expect(decision(bash(prompt.ctx, 'env --split-string="crew approve w1 spec"', mode))).toBe(
+      "ask",
+    );
+    expect(decision(bash(prompt.ctx, 'flock /tmp/l -c "crew approve w1 spec"', mode))).toBe("ask");
+    expect(decision(bash(prompt.ctx, 'script -q -c "crew approve w1 spec" /dev/null', mode))).toBe(
+      "ask",
+    );
+    expect(decision(bash(prompt.ctx, "find . -name x -exec crew approve w1 spec \\;", mode))).toBe(
+      "ask",
+    );
+    expect(decision(bash(prompt.ctx, "npx crew approve w1 spec", mode))).toBe("ask");
+    expect(decision(bash(prompt.ctx, "bunx --bun crew approve w1 spec", mode))).toBe("ask");
+    // The string option written attached or in a cluster, npx's own -c, a shell's valued option
+    // before its -c, script with the command as trailing words, su and watch.
+    expect(decision(bash(prompt.ctx, "env -S'crew approve w1 spec'", mode))).toBe("ask");
+    expect(decision(bash(prompt.ctx, "env -vS 'crew approve w1 spec'", mode))).toBe("ask");
+    expect(decision(bash(prompt.ctx, "flock /tmp/l -c'crew approve w1 spec'", mode))).toBe("ask");
+    expect(decision(bash(prompt.ctx, 'npx -c "crew approve w1 spec"', mode))).toBe("ask");
+    expect(decision(bash(prompt.ctx, 'bash -o pipefail -c "crew approve w1 spec"', mode))).toBe(
+      "ask",
+    );
+    expect(decision(bash(prompt.ctx, "script -q out.txt crew approve w1 spec", mode))).toBe("ask");
+    expect(decision(bash(prompt.ctx, "su -c 'crew approve w1 spec'", mode))).toBe("ask");
+    expect(decision(bash(prompt.ctx, "watch -n 1 'crew approve w1 spec'", mode))).toBe("ask");
+    // A verb the hook cannot read is treated as one only the user may give.
+    expect(decision(bash(prompt.ctx, "crew $V w1 spec", mode))).toBe("ask");
+    expect(decision(bash(prompt.ctx, "crew policy $S k v", mode))).toBe("ask");
+    // A redirect before the command and a case arm's head leave the crew command readable.
+    expect(decision(bash(prompt.ctx, ">/dev/null crew approve w1 spec", mode))).toBe("ask");
+    expect(decision(bash(prompt.ctx, "case x in x) crew approve w1 spec;; esac", mode))).toBe(
+      "ask",
+    );
+    // A quoted operator is a word, not a redirect, so the command behind the wrapper's value is
+    // read; a named-descriptor redirect and one with a glued target are redirects.
+    expect(decision(bash(prompt.ctx, "env -u '>' crew approve w1 spec", mode))).toBe("ask");
+    expect(decision(bash(prompt.ctx, "{fd}>/dev/null crew approve w1 spec", mode))).toBe("ask");
+    expect(decision(bash(prompt.ctx, "<&3 crew approve w1 spec", mode))).toBe("ask");
+    // The shell's $'…' quoting is read as the shell reads it, its escapes decoded, so the word is
+    // the one that runs; a backslash inside double quotes stays unless it escapes one of the five
+    // characters it may, so "cr\ew" is not crew.
+    expect(decision(bash(prompt.ctx, "$'crew' approve w1 spec", mode))).toBe("ask");
+    expect(decision(bash(prompt.ctx, "$'cr\\x65w' $'appr\\157ve' w1 spec", mode))).toBe("ask");
+    expect(decision(bash(prompt.ctx, "$'cr\\145w' approve w1 spec", mode))).toBe("ask");
+    expect(bash(prompt.ctx, "$'cre\\w' approve w1 spec", mode)).toEqual({});
+    expect(bash(prompt.ctx, '"cr\\ew" approve w1 spec', mode)).toEqual({});
+    // The reader decides where a quote ends before anything else is read: a quote stays open
+    // across a newline, a substitution's opener or a case arm's closer inside quotes is text, a
+    // comment runs to the end of its line, and a here-string may carry a descriptor.
+    expect(decision(bash(prompt.ctx, "echo 'a\n'; crew approve w1 spec", mode))).toBe("ask");
+    expect(decision(bash(prompt.ctx, "echo '$('; crew approve w1 spec; echo ')'", mode))).toBe(
+      "ask",
+    );
+    expect(decision(bash(prompt.ctx, "echo ';;'x\\); crew approve w1 spec", mode))).toBe("ask");
+    expect(decision(bash(prompt.ctx, "case 'a b' in a) crew approve w1 spec;; esac", mode))).toBe(
+      "ask",
+    );
+    expect(decision(bash(prompt.ctx, "bash 0<<<'crew approve w1 spec'", mode))).toBe("ask");
+    expect(bash(prompt.ctx, "crew status # x; crew approve w1 spec", mode)).toEqual({});
+    // The reader's rules, each pinned where a wrong reading would hide the decision: a `&>` glued
+    // to the verb ends the word; a bare newline separates; a backslash before a newline joins; a
+    // `#` inside a word is no comment; a case after a keyword inside a substitution; a heredoc's
+    // body is data, so a `)` or an apostrophe in it closes nothing.
+    expect(decision(bash(prompt.ctx, "crew approve&>/dev/null w1 spec", mode))).toBe("ask");
+    expect(decision(bash(prompt.ctx, "echo x\ncrew approve w1 spec", mode))).toBe("ask");
+    expect(decision(bash(prompt.ctx, "crew appr\\\nove w1 spec", mode))).toBe("ask");
+    expect(decision(bash(prompt.ctx, "echo $#; crew approve w1 spec", mode))).toBe("ask");
+    expect(
+      decision(
+        bash(
+          prompt.ctx,
+          'echo "$(if :; then case x in a) :;; esac; crew approve w1 spec; fi)"',
+          mode,
+        ),
+      ),
+    ).toBe("ask");
+    expect(
+      decision(bash(prompt.ctx, "echo \"$(cat <<'E'\n)\nE\ncrew approve w1 spec)\"", mode)),
+    ).toBe("ask");
+    expect(
+      decision(
+        bash(
+          prompt.ctx,
+          "git commit -m \"$(cat <<'EOF'\ndon't\nEOF\n)\"; crew approve w1 spec",
+          mode,
+        ),
+      ),
+    ).toBe("ask");
+    // A substitution inside a `${…}` operand or inside an unquoted heredoc body runs; a `case` is
+    // only a case at the command position; an escaped operator is a word; the delimiter may stand
+    // in the next word or after `<<-`; `<<` inside arithmetic opens no heredoc; a line the reader
+    // could not close that names crew is asked, never allowed.
+    expect(decision(bash(prompt.ctx, "echo ${x:-$(crew approve w1 spec)}", mode))).toBe("ask");
+    expect(decision(bash(prompt.ctx, "cat <<EOF\n$(crew approve w1 spec)\nEOF", mode))).toBe("ask");
+    expect(decision(bash(prompt.ctx, "echo case x in foo | crew approve w1 spec", mode))).toBe(
+      "ask",
+    );
+    expect(decision(bash(prompt.ctx, "echo \\>& crew approve w1 spec", mode))).toBe("ask");
+    expect(decision(bash(prompt.ctx, "cat << EOF\nEOF\ncrew approve w1 spec", mode))).toBe("ask");
+    expect(decision(bash(prompt.ctx, "cat <<-EOF\n\tEOF\ncrew approve w1 spec", mode))).toBe("ask");
+    expect(decision(bash(prompt.ctx, "(( x = 1<<2 ))\ncrew approve w1 spec", mode))).toBe("ask");
+    expect(bash(prompt.ctx, 'echo ${X:-"}; crew approve w1 spec;"}', mode)).toEqual({});
+    // Round 17: the hidden command after an operand holding `)` inside the substitution; a quoted
+    // substitution inside an operand; parentheses that do not close as a pair are a substitution,
+    // not arithmetic; the next-word delimiter leaves the body expanding; a line the reader could
+    // not close is a person's to allow whatever its text says, and is denied where no person is.
+    expect(decision(bash(prompt.ctx, 'echo "$(echo ${X:-)}; crew approve w1 spec)"', mode))).toBe(
+      "ask",
+    );
+    expect(
+      reasonOf(bash(prompt.ctx, 'echo "$(echo ${X:-)}; crew approve w1 spec)"', mode)),
+    ).not.toContain("the guard cannot read");
+    expect(decision(bash(prompt.ctx, 'echo ${x:-"$(crew approve w1 spec)"}', mode))).toBe("ask");
+    expect(decision(bash(prompt.ctx, "echo $((crew approve w1 spec); :)", mode))).toBe("ask");
+    expect(decision(bash(prompt.ctx, "echo $((echo a); (crew approve w1 spec))", mode))).toBe(
+      "ask",
+    );
+    // A subshell inside a substitution is counted, so the substitution closes at its own `)`, in
+    // double quotes and in an operand too; an arithmetic expansion inside an operand that is no
+    // pair is a substitution.
+    expect(decision(bash(prompt.ctx, 'echo "$( (true); crew approve w1 spec )"', mode))).toBe(
+      "ask",
+    );
+    expect(decision(bash(prompt.ctx, "echo ${x:-$((echo a); (crew approve w1 spec))}", mode))).toBe(
+      "ask",
+    );
+    // A `case` the reader does not take for one (a nested case at the head of an arm, a newline
+    // before `in`, a wrapper before `case`) cannot close a substitution early: the line is asked as
+    // one the guard cannot read, in double quotes, in an operand and in a heredoc body.
+    for (const cmd of [
+      'echo "$(case x in x) case y in y) crew approve w1 spec;; esac;; esac)"',
+      "echo ${x:-$(case x\nin x) crew approve w1 spec;; esac)}",
+      "cat <<EOF\n$(time case x in x) crew approve w1 spec;; esac)\nEOF",
+      'echo "$(time case esac in b) crew approve w1 spec;; esac)"',
+    ]) {
+      expect(decision(bash(prompt.ctx, cmd, mode))).toBe("ask");
+      expect(reasonOf(bash(prompt.ctx, cmd, mode))).toContain("a case the guard cannot read");
+    }
+    // A deny of another rule wins over the unreadable line's ask: crew on xargs' input, an engine
+    // file written.
+    expect(reasonOf(bash(prompt.ctx, "echo approve w1 spec | xargs crew; echo 'x", mode))).toBe(
+      xargsReason,
+    );
+    expect(reasonOf(bash(prompt.ctx, "echo x > .crew/profile.json; echo 'x", mode))).toBe(
+      "Crew: files under .crew/ and ~/.wizardingcode/crew that the engine owns are written only by the crew command",
+    );
+    expect(decision(bash(prompt.ctx, "cat << EOF\n$(crew approve w1 spec)\nEOF", mode))).toBe(
+      "ask",
+    );
+    expect(decision(bash(prompt.ctx, "echo 'x", mode))).toBe("ask");
+    expect(decision(bash(prompt.ctx, "echo 'x", "dontAsk"))).toBe("deny");
+    expect(reasonOf(bash(prompt.ctx, "echo 'x", "dontAsk"))).toContain(
+      "no person is watching this session (dontAsk mode)",
+    );
+    const deep = `echo ${"$(".repeat(33)}crew approve w1 spec${")".repeat(33)}`;
+    expect(decision(bash(prompt.ctx, deep, mode))).toBe("ask");
+    expect(reasonOf(bash(prompt.ctx, deep, mode))).toBe(
+      "Crew: a substitution the guard cannot read: the shell refuses such a line or runs what the hook could not see, so a person decides",
+    );
+    // The cut reads $'…' as the word reader does, so an escaped quote inside it hides no command
+    // behind the separator; a here-string before the program or the verb is a redirect, not a word;
+    // a case's subject is read; an operator glued to the program ends its word.
+    expect(decision(bash(prompt.ctx, "echo $'\\'';crew approve w1 spec", mode))).toBe("ask");
+    expect(decision(bash(prompt.ctx, "<<<x crew approve w1 spec", mode))).toBe("ask");
+    expect(decision(bash(prompt.ctx, "crew <<<x approve w1 spec", mode))).toBe("ask");
+    expect(decision(bash(prompt.ctx, "case $(crew approve w1 spec) in a) :;; esac", mode))).toBe(
+      "ask",
+    );
+    expect(decision(bash(prompt.ctx, "crew>/dev/null approve w1 spec", mode))).toBe("ask");
+    // xargs' input reaches a crew command inside the shell's script too.
+    expect(
+      reasonOf(bash(prompt.ctx, "echo approve w1 spec | xargs sh -c 'crew \"$@\"' _", mode)),
+    ).toBe(xargsReason);
+    expect(bash(prompt.ctx, "crew task w1 merge T-2", mode)).toEqual({});
     expect(
       bash(
         prompt.ctx,
@@ -194,6 +408,13 @@ test("ADR 0005: under attendedDecisions relay a user-only command passes with no
     expect(bash("crew accept w1", mode)).toEqual({});
     expect(bash("crew profile confirm", mode)).toEqual({});
     expect(bash("node /x/dist/crew.mjs --json approve w1 spec", mode)).toEqual({});
+    expect(bash("crew task w1 merge T-2 --force", mode)).toEqual({});
+    expect(bash("crew task w1 --force merge T-2", mode)).toEqual({});
+    expect(bash("crew --force task w1 merge T-2", mode)).toEqual({});
+    expect(bash("nice crew task w1 merge T-2 --force", mode)).toEqual({});
+    expect(bash("env --unset X crew approve w1 spec", mode)).toEqual({});
+    expect(bash("trap 'crew approve w1 spec' EXIT", mode)).toEqual({});
+    expect(bash("npx crew approve w1 spec", mode)).toEqual({});
     // The policy that governs signatures is itself signed by a prompt.
     expect(decision(bash("crew policy set attendedDecisions prompt", mode))).toBe("ask");
     expect(decision(bash("crew --json policy set unattendedDecisions count", mode))).toBe("ask");
@@ -301,6 +522,9 @@ test("bash: a headless session is unattended in every mode, and the flag names t
   // No mode in the payload: the session is in default mode.
   expect(decision(bash("crew approve w1 spec"))).toBe("deny");
   expect(bash("crew approve w1 spec --mode default")).toEqual({});
+  // A line the reader could not close is denied where nobody watches, in a prompting mode too.
+  expect(decision(bash("echo 'x", "default"))).toBe("deny");
+  expect(reason(bash("echo 'x", "default"))).toContain("a headless session in default mode");
   // The variable at 1 is an attended session: the modes alone decide (under the policy that prompts).
   mkdirSync(join(root, ".crew"), { recursive: true });
   writeFileSync(
@@ -384,7 +608,16 @@ test("finding 16: a user-only verb counts only at the command position of a simp
   expect(decision(bash("env FOO=1 crew approve w1 spec"))).toBe("ask");
   expect(decision(bash("(crew approve w1 spec)"))).toBe("ask");
   expect(decision(bash("time crew policy accept"))).toBe("ask");
-  expect(decision(bash("xargs -0 crew accept profile"))).toBe("ask");
+  // Crew behind xargs takes words from its input, which the hook cannot read: denied, not asked.
+  expect(
+    (
+      bash("xargs -0 crew accept profile") as {
+        hookSpecificOutput?: { permissionDecisionReason?: string };
+      }
+    ).hookSpecificOutput?.permissionDecisionReason,
+  ).toBe(
+    "Crew: a crew command whose words come from xargs' input cannot be read; write the command out",
+  );
   // biome-ignore lint/suspicious/noTemplateCurlyInString: the hook sees the placeholder as written in hooks.json
   expect(decision(bash("node ${CLAUDE_PLUGIN_ROOT}/dist/crew.mjs profile confirm"))).toBe("ask");
   expect(decision(bash("cd /repo && ./crew.mjs profile confirm"))).toBe("ask");
@@ -628,6 +861,108 @@ test("SP2c AC-4: a session opened by mail never merges, pushes to another branch
     ["timeout 60 git push origin main", "git push"],
     ["nice -n 5 gh pr merge 5", "gh pr merge"],
     ["stdbuf -oL git push origin main", "git push"],
+    // One reading of the line for every rule: a wrapper's string option, a wrapper's positional
+    // before its options, an option cluster, the command lines find -exec and watch hand on, a
+    // function's body (code-quality review of SP2c task 4, round 8).
+    ['script -q -c "git merge main" /dev/null', "git merge"],
+    ["su -c 'git merge main'", "git merge"],
+    ["flock /tmp/l -c 'git merge main'", "git merge"],
+    ["env -vu VAR git merge main", "git merge"],
+    ["find . -exec git merge main \\;", "git merge"],
+    ["watch git push origin main", "git push"],
+    ["script -q out.txt git merge main", "git merge"],
+    ["function f { git merge main; }", "git merge"],
+    // A redirect before the lead, a case arm's head, and the table's short options that take a
+    // value (code-quality review, round 9).
+    [">/dev/null env git merge main", "git merge"],
+    ["2>/dev/null sudo git push origin main", "git push"],
+    ["> /dev/null A=1 git merge main", "git merge"],
+    ["case 1 in 1) crew task 2026-10-15-042-x merge T-2;; esac", "crew task merge"],
+    ["command time -o f git merge main", "git merge"],
+    ["env -P /usr/bin git merge main", "git merge"],
+    // A literal that looks like a redirect operator, quoted or escaped, is a word (here a wrapper's
+    // option value), not a redirect; a named-descriptor redirect and the forms with a glued target
+    // are redirects (security review, round 10).
+    ["env -u '>' git merge main", "git merge"],
+    ["exec -a '>' git merge main", "git merge"],
+    ["env -u \\> git push origin main", "git push"],
+    ["{fd}>/dev/null git merge main", "git merge"],
+    ["2>&- git merge main", "git merge"],
+    ["<&3 git merge main", "git merge"],
+    ["2>&1- git merge main", "git merge"],
+    ["$'git' merge main", "git merge"],
+    ["git merge main>x", "git merge"],
+    ["echo $'\\'';git merge main", "git merge"],
+    ["<<<x git merge main", "git merge"],
+    ["git <<<x merge main", "git merge"],
+    ["case $(git merge main) in a) :;; esac", "git merge"],
+    // The reader decides where a quote ends before anything else is read (security review, round
+    // 13): a quote open across a newline, a substitution's opener or a case arm's closer inside
+    // quotes, a comment to the end of its line, a double-quote escape before a separator, an
+    // operator with a descriptor and more operator characters, a here-string with a descriptor.
+    ["echo 'a\n'; git merge main", "git merge"],
+    ["echo '$('; git merge main; echo ')'", "git merge"],
+    ["echo '`'; git merge main; echo '`'", "git merge"],
+    ["echo ';;'x\\); git merge main", "git merge"],
+    [": #'\\`\n`git merge main`", "git merge"],
+    ['echo "\\""; git merge main', "git merge"],
+    ['case "a b" in a) git merge main;; esac', "git merge"],
+    ["2>> out git push origin main", "git push"],
+    ['bash 0<<< "git merge main"', "git merge"],
+    ['<<<"git merge main" bash', "git merge"],
+    // Each rule of the reader pinned where a wrong reading would hide the verb (test-quality
+    // review, round 14): `&>` glued to a word, a bare newline, a backslash before a newline, a `#`
+    // inside a word, a backtick closing while a quote is open inside it, `esac` closing the case, a
+    // spaced function head, a case after a keyword inside a substitution, a heredoc body with a `)`.
+    ["git merge main&>/dev/null", "git merge"],
+    ["echo x\ngit merge main", "git merge"],
+    ["git mer\\\nge main", "git merge"],
+    ["echo a#b; git merge main", "git merge"],
+    ["echo `echo '`; git merge main; echo '`", "a quote the guard cannot read"],
+    ["case x in a) :;; esac && (git merge main)", "git merge"],
+    ["f () git merge main", "git merge"],
+    ['echo "$(if :; then case x in a) :;; esac; git merge main; fi)"', "git merge"],
+    ["echo \"$(cat <<'E'\n)\nE\ngit merge main)\"", "git merge"],
+    ["bash <<'EOF'\ngit merge main\nEOF", "git merge"],
+    // Round 16: a substitution inside a `${…}` operand or an unquoted heredoc body; `case` only at
+    // the command position; an escaped operator; the delimiter in the next word and after `<<-`;
+    // `<<` inside arithmetic; a quote or a `)` inside an operand; the depth cap at its boundary.
+    ["echo ${x:-$(git push origin main)}", "git push"],
+    ["cat <<EOF\n$(git merge main)\nEOF", "git merge"],
+    ["echo case x in foo | git merge main", "git merge"],
+    ["echo \\>& git merge main", "git merge"],
+    ["cat << EOF\nEOF\ngit merge main", "git merge"],
+    ["cat <<-EOF\n\tEOF\ngit merge main", "git merge"],
+    ["(( x = 1<<2 ))\ngit merge main", "git merge"],
+    ["echo $[1<<2]\ngit merge main", "git merge"],
+    ["echo ${X:-'}'}; git merge main", "git merge"],
+    ['echo "$(echo ${X:-)})"; git merge main', "git merge"],
+    ["git&>/dev/null merge main", "git merge"],
+    [`echo ${"$(".repeat(32)}git merge main${")".repeat(32)}`, "git merge"],
+    [
+      `echo ${"$(".repeat(33)}git merge main${")".repeat(33)}`,
+      "a substitution the guard cannot read",
+    ],
+    // Round 17: parentheses that do not close as a pair are a subshell or a substitution, read; the
+    // hidden command after an operand holding `)`; a quoted substitution inside an operand; the
+    // next-word delimiter leaves the body expanding; two heredocs take their bodies in order.
+    ["((git push origin main); :)", "git push"],
+    ["echo $((git merge main); :)", "git merge"],
+    ["((echo a); (git merge main))", "git merge"],
+    ["((echo '))'; git merge main; echo '' ) )", "git merge"],
+    ['echo "$( (true); git merge main )"', "git merge"],
+    [
+      'echo "$(case x in x) case y in y) git merge main;; esac;; esac)"',
+      "a case the guard cannot read",
+    ],
+    ["echo ${x:-$(case x\nin x) git merge main;; esac)}", "a case the guard cannot read"],
+    ["cat <<EOF\n$(time case x in x) git merge main;; esac)\nEOF", "a case the guard cannot read"],
+    ["echo ${x:-$(time case x in b|esac) git merge main;; esac)}", "a case the guard cannot read"],
+    ["cat <<EOF\n$((git merge main); :)\nEOF", "git merge"],
+    ['echo "$(echo ${X:-)}; git merge main)"', "git merge"],
+    ['echo ${x:-"$(git merge main)"}', "git merge"],
+    ["cat << EOF\n$(git merge main)\nEOF", "git merge"],
+    ["cat <<A <<B\nx\nA\ny\nB\ngit merge main", "git merge"],
     // Every shell keyword and wrapper the strip names, and every wide push option (test-quality review).
     ["if true; then git merge main; fi", "git merge"],
     ["if false; then :; else git push origin main; fi", "git push"],
@@ -725,10 +1060,11 @@ test("SP2c AC-4: a session opened by mail never merges, pushes to another branch
     ["echo $(case x in (x) git push origin main;; esac)", "git push"],
     ["case $V in a|b) git merge main;; esac", "git merge"],
     ["echo $(( $(git push origin main) ))", "git push"],
-    ["echo $( (git push origin main) )", "a substitution the guard cannot read"],
-    ["echo $(f() { git merge feature; }; f)", "a substitution the guard cannot read"],
+    ["echo $( (git push origin main) )", "git push"],
+    ["echo $(f() { git merge feature; }; f)", "git merge"],
     ["echo `echo $(git push origin main`)", "a substitution the guard cannot read"],
-    ["echo $(( (1+2) ))", "a substitution the guard cannot read"],
+    ["echo $(git push origin main", "a substitution the guard cannot read"],
+    ["echo 'a; git merge main", "a quote the guard cannot read"],
     // The command word must be readable: an expansion in it (`${X}git`, `gi$X`), a brace expansion
     // or a glob the shell expands (`{git,merge}`, `gi[t]`, `gi?`), a function head without braces
     // (`f() git …`, zsh) are denied as such, as is the same in a tool's verb or a remote that is
@@ -742,7 +1078,7 @@ test("SP2c AC-4: a session opened by mail never merges, pushes to another branch
     ["gi{t,} merge main", "a pattern in the command position"],
     ["/usr/bin/gi[t] merge main", "a pattern in the command position"],
     ["/usr/bin/gi? push origin other", "a pattern in the command position"],
-    ["f() git merge main", "a pattern in the command position"],
+    ["f() git merge main", "git merge"],
     ["git {merge,} main", "git with an expansion or a pattern as its verb"],
     ["git mer[g]e main", "git with an expansion or a pattern as its verb"],
     ["git -c x=y pu[s]h origin other", "git with an expansion or a pattern as its verb"],
@@ -832,6 +1168,41 @@ test("SP2c AC-4: a session opened by mail never merges, pushes to another branch
     "git checkout main",
     "crew mail reply M-2026-10-15-001-storefront done",
     "crew task 2026-10-15-042-x list",
+    // The table's valued options skipped, the command behind them read; the redirect forms dropped.
+    "command time -o f npm test",
+    "env -P /usr/bin git status",
+    "2>&- npm test",
+    "{fd}>/dev/null npm test",
+    "<&3 npm test",
+    "2>&1- npm test",
+    "env -u '>' npm test",
+    "exec -a '>' npm test",
+    "<<<x npm test",
+    "git push origin crew/2026-10-15-042/T-2>log",
+    // The same reading in the allowed direction: a quoted subject, a redirect with a descriptor and
+    // more operator characters, a comment, text that only looks like an opener.
+    'case "a b" in a) npm test;; esac',
+    "2>> log npm test",
+    "npm test # don't",
+    "# don't\nnpm test",
+    "echo '$('; npm test; echo ')'",
+    "echo $(( (1+2) ))",
+    // A heredoc's body is data to the program that reads it: the implementer's commit form, an
+    // apostrophe and a `)` in the message, and a body that only looks like a merge; a `${…}`
+    // operand is one word to its matching brace.
+    "git commit -m \"$(cat <<'EOF'\nFix (x): don't\nEOF\n)\"",
+    "cat <<EOF\ngit merge main\nEOF",
+    "echo ${X:-;git merge main}",
+    // Two heredocs on one line take their bodies in order; a body with no delimiter line runs to
+    // the end; a quoted delimiter keeps a substitution in the body as text.
+    "cat <<A <<B\nx\nA\ngit merge main\nB",
+    "cat <<EOF\ngit merge main",
+    "cat <<'EOF'\n$(git merge main)\nEOF",
+    "cat << 'EOF'\n$(git merge main)\nEOF",
+    "echo ${x:-$((1+2))}",
+    'echo "$( (true) )"',
+    'echo "$(case x in x) echo a;; esac)"',
+    'echo "$(case x in (x) echo a;; esac)"',
   ])
     expect(bash(cmd)).toEqual({});
   // The branch the opener pinned is the one the session may push, whatever HEAD says now.

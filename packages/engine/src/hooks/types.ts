@@ -1,6 +1,6 @@
 import type { MailContext } from "../mail.ts";
 import type { CrewPaths } from "../paths.ts";
-import type { Policy, Profile } from "../types.ts";
+import type { OpenMode, Policy, Profile } from "../types.ts";
 
 export interface HookPayload {
   session_id?: string;
@@ -37,4 +37,6 @@ export interface HookContext {
   openedBy: string | null;
   /** The branch the opener made for this session (`WIZARDINGCODE_CREW_MAIL_BRANCH`): the one branch it may push, whatever HEAD says now. */
   openedBranch: string | null;
+  /** How the opener let the session act (`WIZARDINGCODE_CREW_MAIL_MODE`): read-only sessions read and reply, nothing else. */
+  openedMode: OpenMode | null;
 }

@@ -398,7 +398,7 @@ export function renderReport(
       lines.push(
         `| ${t.task} | ${t.criteria.join(", ")} | ${t.branch} | ${t.child ?? ""} | ${t.verdict ?? "no reply yet"} | ${
           t.mergedAt
-            ? `${t.mergeCommit?.slice(0, 7) ?? ""}${t.forced ? " (forced by the user)" : ""}`
+            ? `${t.mergeCommit?.slice(0, 7) ?? ""}${t.forcedBy ? " (forced by the user)" : ""}`
             : "no"
         } | ${t.child ? `.crew/work/${t.child}/report.md` : ""} |`,
       );

@@ -3,8 +3,9 @@ import { nowIso } from "../fs.ts";
 import { assess } from "../gates.ts";
 import { emptyInboxSummary, inboxSummary, markNoticed, subjectQuoted } from "../mail.ts";
 import { loadState, sessionState, updateSession } from "../state.ts";
+import { takeReplies } from "../tasks.ts";
 import { activeWork, saveWork, waitingPhrase } from "../work.ts";
-import { mailQuietly, refreshMail } from "./context.ts";
+import { mailQuietly, refreshMail, sweepLines } from "./context.ts";
 import { takeNotices } from "./notices.ts";
 import type { HookContext, HookPayload, HookResponse } from "./types.ts";
 
@@ -59,10 +60,16 @@ export function onStop(ctx: HookContext, payload: HookPayload = {}): HookRespons
   // The mail is read before the rule and never in its way: a mailbox this run cannot use is
   // named in the response, and the Stop rule below runs as if there were no mail.
   const mail = refreshMail(ctx);
-  const mailOff = mail.failed ? `mail is off for this turn: ${mail.failed}` : null;
-  const mailNote = mailOff ? ` (${mailOff})` : "";
+  // What the turn end has to say about the mail: the mailbox off, or what the sweep of the sessions
+  // this project opened settled (SP2c §10).
+  const notes = mail.failed ? [`mail is off for this turn: ${mail.failed}`] : sweepLines(ctx);
+  // Read when a line is built: the noticed pass below adds to the notes (round 19 ruling).
+  const mailNote = () => (notes.length ? ` (${notes.join("; ")})` : "");
   const active = activeWork(ctx.paths);
   const work = active?.work ?? null;
+  // A task's reply that landed fills the lead's record (SP2c §7).
+  if (active?.work && !mail.failed)
+    mailQuietly(() => takeReplies(ctx.mail, ctx.paths, active), undefined);
   // The wait, if any, is spent, and an unproven pause is kept in the record. A hand-edited item is
   // left as it is, since saving it would record the edit as the engine's own.
   const clearWait = (pause?: string): void => {
@@ -83,7 +90,7 @@ export function onStop(ctx: HookContext, payload: HookPayload = {}): HookRespons
   // A blocked turn end like the rule's, so the notices go with it (`done`).
   const hold = (reason: string): HookResponse => {
     session.stopBlocks += 1;
-    return done({ decision: "block", reason }, true);
+    return done({ decision: "block", reason: `${reason}${mailNote()}` }, true);
   };
   if (!mail.failed && session.stopBlocks < MAX_STOP_BLOCKS) {
     // One read of the inbox serves the landed reply and the blockers.
@@ -102,7 +109,7 @@ export function onStop(ctx: HookContext, payload: HookPayload = {}): HookRespons
     // A blocker interrupts the end of the turn, once (SP2c §6: the doorbell, then the Stop hook names it).
     const blocker = inbox.blockers.find((b) => !b.noticedAt);
     if (blocker) {
-      mailQuietly(() => markNoticed(ctx.mail, blocker.id), undefined);
+      mailQuietly(() => markNoticed(ctx.mail, blocker.id, notes), undefined);
       return hold(
         `Crew: blocker ${blocker.id} from ${blocker.from.project}: ${subjectQuoted(blocker.subject)}. Read it (crew mail read ${blocker.id}) and say it to the user before anything else.`,
       );
@@ -121,7 +128,7 @@ export function onStop(ctx: HookContext, payload: HookPayload = {}): HookRespons
       : work !== null && !proven;
   if (!changed || proven) {
     session.stopBlocks = 0;
-    return release(mailOff ? { systemMessage: `Crew: ${mailOff}.` } : {});
+    return release(notes.length ? { systemMessage: `Crew: ${notes.join("; ")}.` } : {});
   }
   const missing = result
     ? result.unproven
@@ -133,14 +140,14 @@ export function onStop(ctx: HookContext, payload: HookPayload = {}): HookRespons
     const reason = missing[0] ?? "not proven";
     return release(
       {
-        systemMessage: `Crew: work ${work.id} ends this turn ${what} and is not proven (${reason}). The next turn is held to the Stop rule again.${mailNote}`,
+        systemMessage: `Crew: work ${work.id} ends this turn ${what} and is not proven (${reason}). The next turn is held to the Stop rule again.${mailNote()}`,
       },
       reason,
     );
   }
   if (session.stopBlocks >= MAX_STOP_BLOCKS) {
     return done({
-      systemMessage: `Crew: not proven after ${MAX_STOP_BLOCKS} attempts. ${missing.join("; ")}.${mailNote}`,
+      systemMessage: `Crew: not proven after ${MAX_STOP_BLOCKS} attempts. ${missing.join("; ")}.${mailNote()}`,
     });
   }
   session.stopBlocks += 1;
@@ -160,7 +167,7 @@ export function onStop(ctx: HookContext, payload: HookPayload = {}): HookRespons
   return done(
     {
       decision: "block",
-      reason: `Crew: watched source files changed and the work is not proven. Missing: ${missing.join("; ")}. Run ${gate}, fix what fails, or ask the user to skip a step with crew skip.${judgement}${wait}${mailNote}`,
+      reason: `Crew: watched source files changed and the work is not proven. Missing: ${missing.join("; ")}. Run ${gate}, fix what fails, or ask the user to skip a step with crew skip.${judgement}${wait}${mailNote()}`,
     },
     true,
   );

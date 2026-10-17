@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
+import { type Parsed, parse } from "./argv.ts";
 import { AnswerError, type Answers, computeRoute, validateAnswers } from "./classify.ts";
 import { loadConfig, saveConfig, setConfigValue } from "./config.ts";
 import { detectProfile, missingTestCommands } from "./detect/index.ts";
@@ -28,14 +29,15 @@ import {
   stampRuling,
 } from "./judgement.ts";
 import {
+  emptyInboxSummary,
   inboxSummary,
   loadItemMail,
   type MailContext,
   mailContext,
   markRead,
-  openSessions,
   ownInbox,
   pruneRegistry,
+  readOpenSessions,
   recordInItem,
   refuseMail,
   registerProject,
@@ -44,6 +46,7 @@ import {
   syncMail,
   TASK_AGENT,
   tamperedBox,
+  updateStatusEverywhere,
   worktreeMainRoot,
 } from "./mail.ts";
 import {
@@ -54,11 +57,21 @@ import {
   saveLedger,
   waiveObjection,
 } from "./objections.ts";
+import {
+  minutesRun,
+  minutesText,
+  openForMail,
+  pidState,
+  type SweepResult,
+  stopSession,
+  sweepSafely,
+} from "./open.ts";
 import { type CrewPaths, PROTECTED_WORK_FILES, resolvePaths, userDirOf, workDir } from "./paths.ts";
 import { loadPolicy, SETTABLE_POLICY_KEYS, setPolicyValue, skipAllowed } from "./policy.ts";
 import { ensureProfile, loadProfile, refreshProfile, saveProfile } from "./profile.ts";
 import { ensureCrewDir } from "./state.ts";
 import { integrityOf, recordIntegrity, writeProtectedText } from "./store.ts";
+import { listTasks, mergeTask, openTask, takeReplies } from "./tasks.ts";
 import { recordTdd, type TddStep } from "./tdd.ts";
 import type {
   Decision,
@@ -66,6 +79,7 @@ import type {
   GateName,
   JudgementGateName,
   JudgementRecord,
+  OpenedSession,
   Phase,
   Policy,
   Profile,
@@ -119,19 +133,6 @@ export interface CliIo {
   cwd: string;
 }
 
-interface Parsed {
-  positional: string[];
-  flags: Record<string, string | true>;
-  /** Every value a flag was given, in order, for flags that may repeat (`--criterion a --criterion b`). */
-  multi: Record<string, string[]>;
-  /** Every valued flag in command-line order, so two repeatable flags keep their relative order. */
-  ordered: { key: string; value: string }[];
-  rest: string[];
-}
-
-// Flags that never take a value, so a word after them stays a positional argument.
-const BOOLEAN_FLAGS = new Set(["json", "refresh", "force", "not-run", "all"]);
-
 // The flags each command knows, besides the global --json. A flag outside the list is refused, so
 // a misspelt or misplaced one never passes in silence (finding 7: `start --kind` created
 // behaviour criteria). `hook` is not here: Claude Code calls it, and its payload is on stdin.
@@ -157,6 +158,7 @@ const KNOWN_FLAGS: Record<string, readonly string[]> = {
   skip: ["reason", "mode"],
   evidence: [],
   status: [],
+  task: ["criteria", "text", "force", "mode"],
   mail: [
     "to",
     "type",
@@ -175,30 +177,6 @@ const KNOWN_FLAGS: Record<string, readonly string[]> = {
   version: [],
   help: [],
 };
-
-function parse(argv: string[]): Parsed {
-  const parsed: Parsed = { positional: [], flags: {}, multi: {}, ordered: [], rest: [] };
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i] ?? "";
-    if (arg === "--") {
-      parsed.rest = argv.slice(i + 1);
-      break;
-    }
-    if (arg.startsWith("--")) {
-      const key = arg.slice(2);
-      const next = argv[i + 1];
-      if (next !== undefined && !next.startsWith("--") && !BOOLEAN_FLAGS.has(key)) {
-        parsed.flags[key] = next;
-        const values = parsed.multi[key] ?? [];
-        values.push(next);
-        parsed.multi[key] = values;
-        parsed.ordered.push({ key, value: next });
-        i++;
-      } else parsed.flags[key] = true;
-    } else parsed.positional.push(arg);
-  }
-  return parsed;
-}
 
 /** The first flag the command does not know, as a refusal, or null when every flag is known. */
 function unknownFlag(command: string, parsed: Parsed): Outcome | null {
@@ -222,6 +200,21 @@ const refuse = (text: string, data: Record<string, unknown> = {}): Outcome => ({
   text,
   data,
 });
+/** A step a command goes on without (the mail synced, the replies taken into the record): its failure as one line under `label`, or an empty string. */
+function guarded(label: string, step: () => void): string {
+  try {
+    step();
+    return "";
+  } catch (error) {
+    return `${label}: ${(error as Error).message.split("\n")[0]}`;
+  }
+}
+/** What a sweep did, for a command's output: the count of what ended and expired with each line, or the sweep's own lines (a failure among them), or nothing. */
+function sweptText(swept: SweepResult): string {
+  if (swept.ended.length || swept.expired.length)
+    return `swept: ${swept.ended.length} ended, ${swept.expired.length} expired (${swept.lines.join("; ")})`;
+  return swept.lines.join("\n");
+}
 
 interface Env {
   paths: CrewPaths;
@@ -681,7 +674,8 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       const inbox = originId ? ownInbox(env.mail) : null;
       if (inbox?.tampered) return refuse(tamperedBox(env.mail.self.project, "inbox"));
       const origin = inbox?.messages.find((m) => m.id === originId) ?? null;
-      if (originId && !origin) return refuse(`no message ${originId} addressed to this session`);
+      if (originId && !origin)
+        return refuse(`no message ${originId} addressed to this session (crew mail inbox)`);
       const previous = activeWork(env.paths);
       const previousProven =
         !!previous?.work &&
@@ -741,14 +735,15 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       if (work.route === "fast" && criteria.length > 0)
         advancePhase(work, guardContext(env, work, false));
       saveWork(env.paths, work);
+      const originNotes: string[] = [];
       if (origin) {
         // The message is read, and the new item keeps its copy as it now stands.
-        const read = markRead(env.mail, origin.id);
+        const read = markRead(env.mail, origin.id, originNotes);
         recordInItem(env.paths, work.id, "refused" in read ? origin : read);
       }
       const lines = criteria.map((c) => `\n  ${c.id} (${c.kind}): ${c.text}`).join("");
       return ok(
-        `${warning}${sharedWarning}${inheritedWarning}${provenNote}started ${work.id} (route ${work.route}: ${work.routeReasons.join("; ")})${lines}`,
+        `${warning}${sharedWarning}${inheritedWarning}${provenNote}started ${work.id} (route ${work.route}: ${work.routeReasons.join("; ")})${lines}${originNotes.length ? `\n${originNotes.join("\n")}` : ""}`,
         {
           id: work.id,
           route: work.route,
@@ -921,6 +916,20 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         return refuse(
           "usage: crew approve <id> spec [--mode <mode> [--validator complete-gap-round]]",
         );
+      // Nothing of the full route goes past the spec in a session opened by mail (SP2c §8, §10):
+      // the item waits for a person, and the message says so to whoever sent it.
+      const openedBy = env.mail.self.openedBy;
+      if (openedBy && opened.work.route === "full") {
+        opened.work.awaiting = "user";
+        saveWork(env.paths, opened.work);
+        // The opener's id comes from the session's variables or the engine's record of the checkout: only a message this inbox holds is marked.
+        const notes: string[] = [];
+        if (ownInbox(env.mail).messages.some((m) => m.id === openedBy))
+          updateStatusEverywhere(env.mail, openedBy, "waiting-for-person", undefined, notes);
+        return refuse(
+          `a full-route item opened by mail (${openedBy}) waits for a person at its spec; the item is marked waiting for the user and the message waiting-for-person${notes.length ? `; ${notes.join("; ")}` : ""}`,
+        );
+      }
       const decision = validatorFlag(parsed, env.policy);
       if (isOutcome(decision)) return decision;
       if (decision.by === "validator") {
@@ -1244,6 +1253,84 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       writeProtectedText(env.paths, join(workDir(env.paths, opened.work.id), "report.md"), report);
       return ok(report, { verdict: result.verdict, unproven: result.unproven });
     }
+    case "task": {
+      const opened = openForChange(env, args[0]);
+      if (isOutcome(opened)) return opened;
+      const usage =
+        'usage: crew task <id> open T-n --criteria AC-1,AC-2 [--text "<task text>"] | list | merge T-n [--force]';
+      const ctx = env.mail;
+      if (args[1] === "open") {
+        const task = args[2];
+        const criteria =
+          typeof parsed.flags.criteria === "string"
+            ? parsed.flags.criteria
+                .split(",")
+                .map((c) => c.trim())
+                .filter(Boolean)
+            : [];
+        if (!task || !criteria.length) return refuse(usage);
+        const out = openTask(
+          ctx,
+          env,
+          opened.work,
+          task,
+          criteria,
+          typeof parsed.flags.text === "string" ? parsed.flags.text : undefined,
+        );
+        if ("refused" in out) return refuse(out.refused);
+        // A task whose implementer did not start, or started and was stopped, keeps its record, its
+        // worktree and its branch (a crew task drop is the hardening task's): the line says what to do.
+        const session =
+          "failed" in out.opened
+            ? `the implementer ${out.opened.stopped ? "was started and stopped" : "did not start"}: ${out.opened.failed}; the task keeps its record, the worktree ${out.record.worktree} and the branch ${out.record.branch}: open the implementer by hand there (a session opened by hand is watched by no sweep and no merge check), or drop them (git worktree remove ${out.record.worktree}; git branch -D ${out.record.branch})`
+            : `implementer started (${out.opened.name}, pid ${out.opened.pid}, ${out.opened.maxTurns} turns, ${minutesText(out.opened.maxMinutes)})`;
+        return ok(
+          `${task} opened: message ${out.message.id}, worktree ${out.record.worktree}, branch ${out.record.branch}; ${session}${out.notes.length ? `\n${out.notes.join("\n")}` : ""}`,
+          { task: out.record, message: out.message, opened: out.opened, notes: out.notes },
+        );
+      }
+      if (args[1] === "list") {
+        // What became of the implementers first, so the listing says what the mailbox knows now
+        // (risk review of SP2c task 4, round 13).
+        const swept = sweptText(sweepSafely(ctx));
+        // The replies that landed, taken into the record; a failure there (a held lock, a refused
+        // write) costs the taking, not the listing, and is named in one line.
+        const taken = guarded("the replies were not taken", () =>
+          takeReplies(ctx, env.paths, opened),
+        );
+        let rows: ReturnType<typeof listTasks> = [];
+        const listedTasks = guarded("the tasks were not listed", () => {
+          rows = listTasks(ctx, opened.work);
+        });
+        const lines = rows.map(
+          ({ task: t, status, verdict, implementer }) =>
+            `  ${t.task} · ${t.criteria.join(",")} · ${t.branch} · ${t.message} ${status} · ${t.child ?? "no child yet"} · ${verdict}${implementer ? ` · ${implementer}` : ""}${t.mergedAt ? ` · merged ${t.mergeCommit?.slice(0, 7)}` : ""}`,
+        );
+        return ok(
+          `${[swept, taken, listedTasks].filter(Boolean).join("\n")}${swept || taken || listedTasks ? "\n" : ""}Tasks of ${opened.work.id}:${listedTasks ? " not listed" : lines.length ? `\n${lines.join("\n")}` : " none"}`,
+          {
+            tasks: rows,
+          },
+        );
+      }
+      if (args[1] === "merge") {
+        if (!args[2]) return refuse(usage);
+        // `--force` merges an unproven child: the user's decision, taken as every user-only command is.
+        const forcedBy = parsed.flags.force ? decisionFlag(parsed, env.policy) : undefined;
+        if (isOutcome(forcedBy)) return forcedBy;
+        const out = mergeTask(ctx, env, opened.work, args[2], forcedBy ? { forcedBy } : {});
+        if ("refused" in out) return refuse(out.refused);
+        const forced = forcedBy ? ` forced ${decisionText(env.policy, forcedBy)}` : "";
+        const kept = out.worktreeKept
+          ? `; worktree ${out.record.worktree} kept: ${out.worktreeKept}`
+          : "";
+        return ok(
+          `${out.swept.length ? `${out.swept.join("\n")}\n` : ""}merged ${args[2]} of ${opened.work.id}: ${out.commit.slice(0, 7)} (${out.record.branch}, child ${out.record.child}, ${out.record.verdict})${forced}${kept}`,
+          { task: out.record, commit: out.commit, swept: out.swept },
+        );
+      }
+      return refuse(usage);
+    }
     case "status": {
       const active = activeWork(env.paths);
       if (!active?.work) return ok("no active work item", { active: null });
@@ -1256,9 +1343,23 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       );
       const text = `${active.work.id} "${active.work.title}"\n  phase ${active.work.phase}, route ${active.work.route}${waitingText(active.work)}\n${gateSummary(active.work, result.verdict, result.unproven, result.evidence.runs)}`;
       const work = active.work;
-      syncMail(env.mail, env.paths);
-      const inbox = inboxSummary(env.mail);
-      return ok(text, {
+      // The mail synced and a task's reply that landed taken into the lead's record (SP2c §7): a
+      // failure in either (a held lock, a folder that cannot be written) is one line under the
+      // status, never the status lost.
+      const synced = guarded("the mail was not synced", () => syncMail(env.mail, env.paths));
+      let inbox = emptyInboxSummary();
+      const summarised = guarded("the inbox was not read", () => {
+        inbox = inboxSummary(env.mail);
+      });
+      const taken = guarded("the replies were not taken", () =>
+        takeReplies(env.mail, env.paths, active),
+      );
+      let tasks: ReturnType<typeof listTasks> = [];
+      const listed = guarded("the tasks were not listed", () => {
+        tasks = listTasks(env.mail, work);
+      });
+      const notes = [synced, summarised, taken, listed].filter(Boolean);
+      return ok(notes.length ? `${text}\n${notes.join("\n")}` : text, {
         active: work.id,
         title: work.title,
         type: work.type,
@@ -1267,6 +1368,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         awaiting: work.awaiting,
         awaitingMessage: work.awaitingMessage ?? null,
         mail: { unread: inbox.unread, answered: inbox.answered, waiting: inbox.waiting },
+        tasks,
         debate: debateState(work),
         baseCommit: work.baseCommit,
         phases: PHASES_BY_ROUTE[work.route],
@@ -1354,8 +1456,8 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         else if (delivery.kind === "live")
           next = `live session (session ${delivery.entry.sessionId}): ring it if your harness lists it`;
         else if (delivery.kind === "queued") next = `queued; ${delivery.reason}`;
-        // Task 4 of the SP2c plan replaces this branch with the opener.
-        else next = `queued; no live session: a ${delivery.mode} session is to open`;
+        // No live session: the engine opens one for the message (SP2c §10).
+        else next = openForMail(ctx, env.policy, message, delivery);
         const note = work
           ? ""
           : "\nnote: no active work item, so no item keeps a copy of this message";
@@ -1390,10 +1492,12 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       if (verb === "read") {
         if (!args[1]) return refuse(usage);
         syncMail(ctx, env.paths);
-        const result = markRead(ctx, args[1]);
+        const notes: string[] = [];
+        const result = markRead(ctx, args[1], notes);
         if ("refused" in result) return refuse(result.refused);
         const body = result.bodyFile ? (readText(result.bodyFile) ?? result.body) : result.body;
         const head = [
+          ...notes,
           `id: ${result.id}`,
           `from: ${result.from.project} (${result.from.agent})`,
           `to: ${result.to.project}${result.to.agent ? ` (${result.to.agent})` : ""}`,
@@ -1413,41 +1517,83 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       if (verb === "reply") {
         const text = args.slice(2).join(" ");
         if (!args[1]) return refuse(usage);
-        const result = replyMail(ctx, args[1], text, {
-          ...(typeof parsed.flags.file === "string" ? { filePath: parsed.flags.file } : {}),
-          ...(typeof parsed.flags.branch === "string" ? { branch: parsed.flags.branch } : {}),
-          ...(typeof parsed.flags.item === "string" ? { item: parsed.flags.item } : {}),
-          ...(typeof parsed.flags.as === "string" ? { as: parsed.flags.as } : {}),
-        });
+        const notes: string[] = [];
+        const result = replyMail(
+          ctx,
+          args[1],
+          text,
+          {
+            ...(typeof parsed.flags.file === "string" ? { filePath: parsed.flags.file } : {}),
+            ...(typeof parsed.flags.branch === "string" ? { branch: parsed.flags.branch } : {}),
+            ...(typeof parsed.flags.item === "string" ? { item: parsed.flags.item } : {}),
+            ...(typeof parsed.flags.as === "string" ? { as: parsed.flags.as } : {}),
+          },
+          notes,
+        );
         if ("refused" in result) return refuse(result.refused);
         return ok(
-          `replied to ${args[1]}: ${result.reply.id} to ${result.reply.to.project}; ${args[1]} answered`,
-          { reply: result.reply, original: result.original },
+          `replied to ${args[1]}: ${result.reply.id} to ${result.reply.to.project}; ${args[1]} answered${notes.length ? `\n${notes.join("\n")}` : ""}`,
+          { reply: result.reply, original: result.original, notes },
         );
       }
       if (verb === "refuse") {
         const reason = typeof parsed.flags.reason === "string" ? parsed.flags.reason : "";
         if (!args[1] || !reason.trim()) return refuse(usage);
-        const result = refuseMail(ctx, args[1], reason);
+        const notes: string[] = [];
+        const result = refuseMail(ctx, args[1], reason, notes);
         if ("refused" in result) return refuse(result.refused);
-        return ok(`${args[1]} refused: ${reason.trim()}`, { message: result });
+        return ok(
+          `${args[1]} refused: ${reason.trim()}${notes.length ? `\n${notes.join("\n")}` : ""}`,
+          { message: result, notes },
+        );
       }
       if (verb === "status") {
         const pruned = pruneRegistry(env.paths.userDir);
-        // Task 4 of the SP2c plan adds the sweep of the opened sessions (expired, ended) before this line.
-        const sessions = openSessions(ctx);
-        const lines = sessions.map(
-          (m) =>
-            `  ${m.id} → ${m.to.project}: ${m.opened?.mode} session ${m.opened?.name} (pid ${m.opened?.pid ?? "none"}), since ${m.opened?.startedAt}, ${m.opened?.maxTurns} turns and ${m.opened?.maxMinutes} minutes allowed`,
-        );
-        const summary = inboxSummary(ctx);
+        // What became of the sessions this project opened, before they are listed (SP2c §10).
+        const swept = sweepSafely(ctx);
+        const { messages: sessions, tampered, untrusted } = readOpenSessions(ctx);
+        const sessionLine = (m: (typeof sessions)[number]) => {
+          const opened = m.opened as OpenedSession;
+          return `  ${m.id} → ${m.to.project}: ${opened.mode} session ${opened.name} (pid ${opened.pid ?? "none"}), since ${opened.startedAt}, ${Math.floor(minutesRun(opened))} of ${opened.maxMinutes} minutes used, ${opened.maxTurns} turns allowed`;
+        };
+        const sweptLine = sweptText(swept);
+        // With the outbox changed outside the engine (named once: by the sweep's line above, or here
+        // where the sweep said nothing, inside a session opened by mail), what it records is listed
+        // all the same, marked, with the commands that stop a session's whole process group (the
+        // request, then the kill a member that ignored it needs), its log, and whether its pid is
+        // still the session, gone, or another process's by now (the rollback's first step).
+        const untrustedLine = (m: (typeof sessions)[number]) => {
+          const opened = m.opened as OpenedSession;
+          const state = pidState(opened);
+          const marked =
+            state === "session" ? "" : state === "gone" ? " (gone)" : " (pid now another process)";
+          return `${sessionLine(m)}, log ${opened.log}${marked}`;
+        };
+        const named = tampered && !swept.lines.includes(tampered) ? `${tampered}\n` : "";
+        const listed = tampered
+          ? `${named}open sessions as the outbox records them (not trusted; stop one with kill -TERM -- -<pid>, then kill -KILL -- -<pid> after a second; read its log): ${untrusted.length ? `\n${untrusted.map(untrustedLine).join("\n")}` : "none"}`
+          : `open sessions: ${sessions.length ? `\n${sessions.map(sessionLine).join("\n")}` : "none"}`;
+        // The inbox read guarded as `crew status` reads it: the sweep's lines and the outbox's
+        // sessions stand whether or not the inbox can be read.
+        let summary = emptyInboxSummary();
+        const summarised = guarded("the inbox was not read", () => {
+          summary = inboxSummary(ctx);
+        });
         return ok(
-          `${summary.line ?? `Mail (${ctx.self.workspace ?? "alone"}): inbox empty`}\nopen sessions: ${sessions.length ? `\n${lines.join("\n")}` : "none"}${pruned.length ? `\nregistry pruned: ${pruned.join(", ")}` : ""}`,
-          { sessions, pruned, ...summary },
+          `${summarised || (summary.line ?? `Mail (${ctx.self.workspace ?? "alone"}): inbox empty`)}${sweptLine ? `\n${sweptLine}` : ""}\n${listed}${pruned.length ? `\nregistry pruned: ${pruned.join(", ")}` : ""}`,
+          { sessions, untrusted, swept, pruned, ...summary },
         );
       }
-      // Task 4 of the SP2c plan replaces this branch with the kill of an opened session.
-      if (verb === "stop") return refuse("no session to stop: this engine has not opened one");
+      if (verb === "stop") {
+        if (!args[1]) return refuse(usage);
+        const notes: string[] = [];
+        const stopped = stopSession(ctx, args[1], notes);
+        if ("refused" in stopped) return refuse(stopped.refused);
+        return ok(
+          `${stopped.id} stopped (session ${stopped.opened?.name}, pid ${stopped.opened?.pid})${notes.length ? `\n${notes.join("\n")}` : ""}`,
+          { message: stopped, notes },
+        );
+      }
       return refuse(usage);
     }
     default:
@@ -1519,7 +1665,9 @@ const HELP = `crew ${VERSION}
   mail send --to <project|.> --type question|change-request|notice|blocker "<text>"   send mail inside the workspace
       [--agent <session|T-n|role>] [--item <id>] [--reply-to <mid>] [--subject <text>] [--file <path>]
   mail inbox [--all] | read <mid> | reply <mid> "<text>" [--branch <b>] [--item <child>] [--as <role>] [--file <path>]
-  mail refuse <mid> --reason "<why>" | status | stop <mid>   this project's mail and the sessions it opened
+  mail refuse <mid> --reason "<why>" | status | stop <mid>   this project's mail and the sessions it opened (status sweeps them; stop kills one)
+  task <id> open T-n --criteria AC-1,AC-2 [--text "<task text>"]   hand a task of the plan to an implementer: a message, a worktree, a branch, a session
+  task <id> list | merge T-n [--force]   the tasks and their children; merge a proven child's branch (--force merges an unproven one: asks the user)
   tdd <red|green|before|after|observed> <id> <criterion> [--reason "<why>"] [-- <cmd>]
   gate run <id> [--only a,b]            run the gates the route requires; plans the judgement gates and writes their inputs to .crew/work/<id>/review/
   judgement <id> record --ruling <file>  record the rulings of a review file ({"rulings":[{gate,verdict,reviewer,judge,findings,tokens}]}); exit 0 once proven

@@ -3050,7 +3050,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
   - `mergeTask(ctx, env, work, task: string, options: { force: boolean; decision: Decision }): { record: TaskRecord; commit: string } | { refused: string }`
 - Produces, in `cli.ts`: `crew task <id> open T-n --criteria AC-1,AC-2 [--text "<task text>"]`, `crew task <id> list`, `crew task <id> merge T-n [--force]`, `crew mail stop <mid>`; `crew mail status` with the sweep.
 
-- [ ] **Step 1: Open the work item**
+- [x] **Step 1: Open the work item**
 
 ```bash
 crew start "SP2c task 4: opened sessions and the team of an item. The engine starts claude -p for a question or a change request with the limits recorded in the message, sweeps the sessions it opened (ended, minutes over, dead), stops one on command, hands a task of the plan to an implementer in a worktree on a branch with a headless child item, lists the tasks, merges a proven child's branch and refuses an unproven one unless the user forces it, and a full-route child opened by mail stops after the spec" --answers '{"work_type":"feature","is_vague":0.1,"scope":2,"touches_auth":0,"touches_payments":0,"touches_personal_data":0,"touches_data_migration":0,"touches_infra":0,"touches_public_api":0}' --criterion "The opener builds the claude -p arguments from the message (dontAsk, the turns, json output, the read-only tool flags for a question, the name crew-<id>), strips the parent session's variables and sets WIZARDINGCODE_CREW_MAIL_ID, _AGENT and _HOPS, starts the session detached with its output in a log beside the outbox, and records pid, name, limits and start in the message's opened" --criterion "The sweep marks a session whose log has its final JSON as ended with its turns and cost, kills one past its minutes and marks it expired, marks a dead one without an end as expired with the reason, and never trusts a pid alone; crew mail status runs the sweep and lists the open sessions; crew mail stop kills one and records stopped" --criterion "crew task open refuses with uncommitted watched changes, outside git, for a task already opened, or when the worktree or the branch exists; otherwise it records a change request to this project with agent T-n, makes the worktree and the branch from HEAD, opens the implementer with a prompt built from the brief, the task, the criteria, the parent and the message, and records the task; crew task list shows each task with its message status, child, branch and verdict" --criterion "A child started with --origin records origin and parent, and a reply from it carries the branch, the child and its verdict into the lead's task record; crew task merge refuses an unproven child and a dirty checkout, merges a proven branch with --no-ff, records the merge, trusts the child's merged record and removes the worktree; --force is the user's and recorded as such" --criterion "In a session opened by mail, crew approve on the full route is refused, the item waits for a person and the message's status becomes waiting-for-person; crew task merge is refused there too" --preserve "Every existing engine test keeps passing"
@@ -3058,7 +3058,7 @@ crew start "SP2c task 4: opened sessions and the team of an item. The engine sta
 
 Standard route as before. `crew tdd before <id> AC-6 -- bun test packages/engine/tests/cli.test.ts packages/engine/tests/hooks-pre-tool-use.test.ts packages/engine/tests/hooks-stop.test.ts packages/engine/tests/mail.test.ts`.
 
-- [ ] **Step 2: The fake opener** (a fixture, written before the tests that use it)
+- [x] **Step 2: The fake opener** (a fixture, written before the tests that use it)
 
 `packages/engine/tests/fixtures/fake-claude.sh` (`chmod +x`):
 
@@ -3079,7 +3079,7 @@ printf '{"type":"result","subtype":"success","is_error":false,"result":"pong","s
 exit "${FAKE_CLAUDE_EXIT:-0}"
 ```
 
-- [ ] **Step 3: Write the failing tests of the opener and the sweep** (AC-1, AC-2)
+- [x] **Step 3: Write the failing tests of the opener and the sweep** (AC-1, AC-2)
 
 Create `packages/engine/tests/open.test.ts`:
 
@@ -3217,14 +3217,14 @@ test("SP2c AC-2: the sweep reads the log before the pid, kills past the minutes,
 
 Executor note: the `as { mode: "read-only"; entry: never }` casts narrow `Delivery` to its `open` member; write a small type guard (`function opening(d: Delivery): d is Extract<Delivery, { kind: "open" }>`) instead if the compiler objects.
 
-- [ ] **Step 4: Red**
+- [x] **Step 4: Red**
 
 ```bash
 crew tdd red <id> AC-1 -- bun test packages/engine/tests/open.test.ts
 crew tdd red <id> AC-2 -- bun test packages/engine/tests/open.test.ts
 ```
 
-- [ ] **Step 5: `open.ts`**
+- [x] **Step 5: `open.ts`**
 
 Create `packages/engine/src/open.ts`:
 
@@ -3518,14 +3518,14 @@ Two helpers this file needs, written in it: `loadDestinationPolicy(entry, env)` 
 
 In `cli.ts`: `mail send`'s `open` branch becomes `next = openForMail(ctx, env, message, delivery, work);`; `mail status` calls `sweepOpened(ctx)` before listing and prints `swept: <n> ended, <m> expired` when either is not zero; `mail stop <mid>` calls `stopSession` and prints `<id> stopped (session <name>, pid <pid>)` or the refusal. The SessionStart and Stop hooks call `sweepOpened(ctx.mail)` (inside their try: a sweep that throws must not block the session). `index.ts` exports `open.ts`.
 
-- [ ] **Step 6: Green**
+- [x] **Step 6: Green**
 
 ```bash
 crew tdd green <id> AC-1 -- bun test packages/engine/tests/open.test.ts
 crew tdd green <id> AC-2 -- bun test packages/engine/tests/open.test.ts
 ```
 
-- [ ] **Step 7: Write the failing tests of the tasks** (AC-3, AC-4, AC-5)
+- [x] **Step 7: Write the failing tests of the tasks** (AC-3, AC-4, AC-5)
 
 Create `packages/engine/tests/tasks.test.ts`:
 
@@ -3689,7 +3689,7 @@ test("SP2c AC-5: a full-route child opened by mail waits for a person at the spe
 });
 ```
 
-- [ ] **Step 8: Red**
+- [x] **Step 8: Red**
 
 ```bash
 crew tdd red <id> AC-3 -- bun test packages/engine/tests/tasks.test.ts
@@ -3697,7 +3697,7 @@ crew tdd red <id> AC-4 -- bun test packages/engine/tests/tasks.test.ts
 crew tdd red <id> AC-5 -- bun test packages/engine/tests/tasks.test.ts
 ```
 
-- [ ] **Step 9: `tasks.ts` and the commands**
+- [x] **Step 9: `tasks.ts` and the commands**
 
 Create `packages/engine/src/tasks.ts`:
 
@@ -3940,7 +3940,7 @@ In `cli.ts`:
 - `HELP` gains the `task` lines and `mail stop`.
 - `hooks/pre-tool-use.ts`: `USER_ONLY` gains `task\s+\S+\s+${OPTS}merge\b[^;&|]*--force` (the alternative list, beside `objection … waive`); a test line in `hooks-pre-tool-use.test.ts`: `expect(decision(bash("crew task w1 merge T-2 --force"))).toBe("ask")` with the policy at `prompt`, and `{}` under relay (as the other user-only verbs are tested).
 
-- [ ] **Step 10: Green, after, build, gate, judgement, commit**
+- [x] **Step 10: Green, after, build, gate, judgement, commit**
 
 ```bash
 crew tdd green <id> AC-3 -- bun test packages/engine/tests/tasks.test.ts

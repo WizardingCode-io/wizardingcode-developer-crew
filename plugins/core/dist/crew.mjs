@@ -1,6 +1,34 @@
 // packages/engine/src/cli.ts
-import { existsSync as existsSync4 } from "node:fs";
-import { join as join25, relative as relative6, resolve as resolve3 } from "node:path";
+import { existsSync as existsSync6 } from "node:fs";
+import { join as join28, relative as relative6, resolve as resolve4 } from "node:path";
+
+// packages/engine/src/argv.ts
+var BOOLEAN_FLAGS = new Set(["json", "refresh", "force", "not-run", "all"]);
+function parse(argv) {
+  const parsed = { positional: [], flags: {}, multi: {}, ordered: [], rest: [] };
+  for (let i = 0;i < argv.length; i++) {
+    const arg = argv[i] ?? "";
+    if (arg === "--") {
+      parsed.rest = argv.slice(i + 1);
+      break;
+    }
+    if (arg.startsWith("--")) {
+      const key = arg.slice(2);
+      const next = argv[i + 1];
+      if (next !== undefined && !next.startsWith("--") && !BOOLEAN_FLAGS.has(key)) {
+        parsed.flags[key] = next;
+        const values = parsed.multi[key] ?? [];
+        values.push(next);
+        parsed.multi[key] = values;
+        parsed.ordered.push({ key, value: next });
+        i++;
+      } else
+        parsed.flags[key] = true;
+    } else
+      parsed.positional.push(arg);
+  }
+  return parsed;
+}
 
 // packages/engine/src/glob.ts
 var SPECIAL = /[.+^${}()|[\]\\]/g;
@@ -2035,7 +2063,7 @@ function renderReport(work, evidence, policy, ledger, mail, selfName) {
   if (work.tasks?.length) {
     lines.push("", "## Tasks", "", "| Task | Criteria | Branch | Child | Verdict | Merged | Report |", "| :- | :- | :- | :- | :- | :- | :- |");
     for (const t of work.tasks)
-      lines.push(`| ${t.task} | ${t.criteria.join(", ")} | ${t.branch} | ${t.child ?? ""} | ${t.verdict ?? "no reply yet"} | ${t.mergedAt ? `${t.mergeCommit?.slice(0, 7) ?? ""}${t.forced ? " (forced by the user)" : ""}` : "no"} | ${t.child ? `.crew/work/${t.child}/report.md` : ""} |`);
+      lines.push(`| ${t.task} | ${t.criteria.join(", ")} | ${t.branch} | ${t.child ?? ""} | ${t.verdict ?? "no reply yet"} | ${t.mergedAt ? `${t.mergeCommit?.slice(0, 7) ?? ""}${t.forcedBy ? " (forced by the user)" : ""}` : "no"} | ${t.child ? `.crew/work/${t.child}/report.md` : ""} |`);
   }
   const removed = work.removedCriteria ?? [];
   const pauses = work.pauses ?? [];
@@ -3075,8 +3103,58 @@ function reassess(a, work, policy) {
 }
 
 // packages/engine/src/mail.ts
-import { existsSync as existsSync3, statSync as statSync5 } from "node:fs";
-import { basename as basename4, isAbsolute as isAbsolute2, join as join20, resolve as resolve2 } from "node:path";
+import { accessSync as accessSync2, constants as constants2, existsSync as existsSync4, statSync as statSync5 } from "node:fs";
+import { basename as basename4, isAbsolute as isAbsolute2, join as join21, resolve as resolve2 } from "node:path";
+
+// packages/engine/src/opened.ts
+import { existsSync as existsSync3, rmSync as rmSync2 } from "node:fs";
+import { join as join20 } from "node:path";
+function openedMarkerFile(userDir, root) {
+  return join20(userDir, "opened", `${sha256(canonical(root)).slice(0, 16)}.json`);
+}
+function openedMarkerPath(paths) {
+  return openedMarkerFile(paths.userDir, paths.root);
+}
+function writeOpenedMarker(paths, marker) {
+  writeJson(openedMarkerPath(paths), marker);
+}
+function dropOpenedMarker(userDir, root) {
+  rmSync2(openedMarkerFile(userDir, root), { force: true });
+}
+function readOpenedMarker(paths) {
+  const file = openedMarkerPath(paths);
+  if (!existsSync3(file))
+    return null;
+  const parsed = readJson(file);
+  if (!parsed || typeof parsed.mail !== "string" || !parsed.mail)
+    return null;
+  return {
+    mail: parsed.mail,
+    agent: typeof parsed.agent === "string" && parsed.agent ? parsed.agent : "session",
+    hops: typeof parsed.hops === "number" && Number.isInteger(parsed.hops) && parsed.hops >= 0 ? parsed.hops : 0
+  };
+}
+function modeOf(value) {
+  return value === "read-only" || value === "branch" ? value : null;
+}
+function resolveOpener(paths, env) {
+  const marker = readOpenedMarker(paths);
+  const headless = env.CLAUDE_CODE_SESSION_ATTENDED === "0";
+  const fromEnv = env.WIZARDINGCODE_CREW_MAIL_ID?.trim() || null;
+  const fromMarker = headless && marker ? marker : null;
+  const mail = fromEnv ?? fromMarker?.mail ?? null;
+  const envHops = Number(env.WIZARDINGCODE_CREW_MAIL_HOPS ?? "0");
+  const hops = Number.isInteger(envHops) && envHops >= 0 ? envHops : 0;
+  return {
+    mail,
+    agent: env.WIZARDINGCODE_CREW_MAIL_AGENT?.trim() || (mail ? fromMarker?.agent : null) || "session",
+    hops: mail ? Math.max(hops, fromMarker?.hops ?? 0) : hops,
+    mode: modeOf(env.WIZARDINGCODE_CREW_MAIL_MODE) ?? (fromEnv || !fromMarker ? null : "branch"),
+    branch: env.WIZARDINGCODE_CREW_MAIL_BRANCH?.trim() || null
+  };
+}
+
+// packages/engine/src/mail.ts
 var LIVE_MS = 10 * 60 * 1000;
 var INLINE_BODY_LIMIT = 2048;
 var PREVIEW_CHARS = 200;
@@ -3085,7 +3163,7 @@ var ROLE_AGENT = /^(judge|researcher|expert-\d+|devils-advocate|fault-finder|rev
 var TASK_AGENT = /^T-\d+$/;
 var CRITICS = new Set(["devils-advocate", "fault-finder"]);
 function worktreeMainRoot(root) {
-  const gitFile = join20(root, ".git");
+  const gitFile = join21(root, ".git");
   try {
     if (!statSync5(gitFile).isFile())
       return null;
@@ -3094,7 +3172,7 @@ function worktreeMainRoot(root) {
   }
   const line = readText(gitFile)?.trim() ?? "";
   const match = /^gitdir:\s*(.+?)\/\.git\/worktrees\/[^/]+\/?$/.exec(line);
-  return match?.[1] ? canonical(isAbsolute2(match[1]) ? match[1] : join20(root, match[1])) : null;
+  return match?.[1] ? canonical(isAbsolute2(match[1]) ? match[1] : join21(root, match[1])) : null;
 }
 function effectiveMailPolicy(root, policy, env) {
   const main = worktreeMainRoot(root);
@@ -3115,14 +3193,16 @@ function subjectQuoted(subject) {
   return JSON.stringify(subject.replace(/\p{Cc}+/gu, " ").trim());
 }
 function mailSelf(paths, policy, env) {
-  const hops = Number(env.WIZARDINGCODE_CREW_MAIL_HOPS ?? "0");
+  const opener = resolveOpener(paths, env);
   const { mail, main } = effectiveMailPolicy(paths.root, policy, env);
   return {
     workspace: mail.workspace,
     project: mail.name ?? basename4(main ?? paths.root),
-    agent: env.WIZARDINGCODE_CREW_MAIL_AGENT?.trim() || "session",
-    hops: Number.isInteger(hops) && hops >= 0 ? hops : 0,
-    openedBy: env.WIZARDINGCODE_CREW_MAIL_ID?.trim() || null
+    agent: opener.agent,
+    hops: opener.hops,
+    openedBy: opener.mail,
+    openedMode: opener.mode,
+    openedBranch: opener.branch
   };
 }
 function mailContext(paths, policy, env) {
@@ -3165,9 +3245,9 @@ function registerProject(ctx, sessionId, options = {}) {
 }
 function pruneRegistry(userDir) {
   const registry = loadRegistry(userDir);
-  const gone = registry.projects.filter((p) => !existsSync3(p.root)).map((p) => p.root);
+  const gone = registry.projects.filter((p) => !existsSync4(p.root)).map((p) => p.root);
   if (gone.length) {
-    registry.projects = registry.projects.filter((p) => existsSync3(p.root));
+    registry.projects = registry.projects.filter((p) => existsSync4(p.root));
     saveRegistry(userDir, registry);
   }
   return gone;
@@ -3192,7 +3272,7 @@ function resolveProject(ctx, to) {
   }
   const candidates = registry.projects.filter((p) => p.name === to && !p.worktreeOf);
   const inWorkspace = candidates.filter((p) => p.workspace === ctx.self.workspace);
-  const alive = inWorkspace.filter((p) => existsSync3(p.root));
+  const alive = inWorkspace.filter((p) => existsSync4(p.root));
   if (alive.length) {
     alive.sort((a, b) => b.lastSeen.localeCompare(a.lastSeen));
     return { entry: alive[0] };
@@ -3223,10 +3303,13 @@ function mailbox(userDir, workspace, project) {
   return { dir: mailboxDir(userDir, workspace, project) };
 }
 function boxFile(dir, name) {
-  return join20(dir, `${name}.json`);
+  return join21(dir, `${name}.json`);
 }
 function readBox(dir, which) {
-  const read = readProtectedJsonAt(boxFile(dir, "integrity"), boxFile(dir, which));
+  const file = boxFile(dir, which);
+  if (existsSync4(file))
+    accessSync2(file, constants2.R_OK);
+  const read = readProtectedJsonAt(boxFile(dir, "integrity"), file);
   const box = read.data && Array.isArray(read.data.messages) ? read.data : { version: 1, messages: [] };
   return { box, tampered: read.tampered };
 }
@@ -3243,20 +3326,42 @@ function newMessageId(outbox, project, at) {
   return `M-${day}-${String(next).padStart(3, "0")}-${project}`;
 }
 function itemMailPath(paths, id) {
-  return join20(workDir(paths, id), "mail.json");
+  return join21(workDir(paths, id), "mail.json");
 }
 function loadItemMail(paths, id) {
   const read = readProtectedJson(paths, itemMailPath(paths, id));
   return { box: read.data ?? { version: 1, messages: [] }, tampered: read.tampered };
 }
 function recordInItem(paths, id, message) {
-  if (!existsSync3(join20(workDir(paths, id), "work.json")))
+  if (!existsSync4(join21(workDir(paths, id), "work.json")))
     return;
   const { box, tampered } = loadItemMail(paths, id);
   if (tampered)
     return;
   box.messages = [...box.messages.filter((m) => m.id !== message.id), message].sort((a, b) => a.at.localeCompare(b.at));
   writeProtectedJson(paths, itemMailPath(paths, id), box);
+}
+function itemHome(ctx, registry, party, item, here) {
+  const root = projectEntry(registry, party.workspace, party.project)?.root;
+  const registered = root ? resolvePaths(root, ctx.env) : null;
+  for (const paths of [registered, here]) {
+    if (paths && existsSync4(join21(workDir(paths, item), "work.json")))
+      return paths;
+  }
+  return null;
+}
+function recordForParties(ctx, registry, m, here = ctx.paths) {
+  const copies = [
+    [m.from.item, m.from],
+    [m.to.item, m.to]
+  ];
+  for (const [item, party] of copies) {
+    if (!item)
+      continue;
+    const home = itemHome(ctx, registry, party, item, here);
+    if (home)
+      recordInItem(home, item, m);
+  }
 }
 function subjectOf(request) {
   const given = request.subject?.replace(/\s+/g, " ").trim();
@@ -3277,7 +3382,7 @@ function openIn(userDir, workspace, project) {
 function placeBody(dir, id, text) {
   if (Buffer.byteLength(text, "utf8") <= INLINE_BODY_LIMIT)
     return { body: text };
-  const file = join20(dir, `${id}.md`);
+  const file = join21(dir, `${id}.md`);
   writeText(file, text);
   return { body: `${text.slice(0, PREVIEW_CHARS)}...`, bodyFile: file };
 }
@@ -3369,7 +3474,7 @@ function send(ctx, request, work) {
       if (CRITICS.has(request.agent)) {
         const proposals = itemId ? `.crew/work/${itemId}/conclave/proposals.md` : null;
         const given = request.filePath ? canonical(resolve2(ctx.paths.root, request.filePath)) : null;
-        if (!proposals || !given || given !== canonical(join20(ctx.paths.root, proposals)) || request.text.trim())
+        if (!proposals || !given || given !== canonical(join21(ctx.paths.root, proposals)) || request.text.trim())
           return refuse(`a message to ${request.agent} carries ${proposals ?? ".crew/work/<id>/conclave/proposals.md"} (--file) and nothing else`, to);
       }
     } else if (TASK_AGENT.test(request.agent)) {
@@ -3445,10 +3550,19 @@ function deliver(ctx, dir, owner, message) {
   if (!("refused" in delivered))
     return null;
   const reason = delivered.refused;
-  updateEverywhere(ctx, message.id, (m) => ({ ...m, status: "refused", reason }));
-  return { refused: reason };
+  const skipped = [];
+  updateEverywhere(ctx, message.id, (m) => ({ ...m, status: "refused", reason }), (w) => skipped.push(w));
+  return {
+    refused: skipped.length ? `${reason}; a copy was not marked: ${skipped.join(", ")}` : reason
+  };
 }
-function updateEverywhere(ctx, id, change) {
+function recordOpened(ctx, id, opened, skipped) {
+  const result = updateEverywhere(ctx, id, (m) => ({ ...m, opened }), skipped);
+  const own = readBox(mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project).dir, "outbox");
+  const copy = own.box.messages.find((m) => m.id === id);
+  return result && !own.tampered && copy?.opened?.pid === opened.pid ? result : null;
+}
+function updateEverywhere(ctx, id, change, skipped) {
   let result = null;
   const registry = loadRegistry(ctx.paths.userDir);
   const boxes = new Set;
@@ -3457,34 +3571,46 @@ function updateEverywhere(ctx, id, change) {
       boxes.add(mailbox(ctx.paths.userDir, p.workspace, p.name).dir);
   }
   boxes.add(mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project).dir);
+  const holding = [];
   for (const dir of boxes) {
     for (const which of ["inbox", "outbox"]) {
-      if (!existsSync3(boxFile(dir, which)))
+      if (!existsSync4(boxFile(dir, which)))
         continue;
-      withMailLock(dir, () => {
-        const { box, tampered } = readBox(dir, which);
-        const index = box.messages.findIndex((m) => m.id === id);
-        if (index === -1 || tampered)
-          return;
-        const changed = change(box.messages[index]);
-        box.messages[index] = changed;
-        writeBox(dir, which, box);
-        result = result ?? changed;
-      });
+      try {
+        if (readBox(dir, which).box.messages.some((m) => m.id === id))
+          holding.push([dir, which]);
+      } catch (error) {
+        skipped(`${boxFile(dir, which)} (${error.message.split(`
+`)[0]})`);
+      }
     }
   }
-  if (result) {
-    const m = result;
-    for (const item of [m.from.item, m.to.item]) {
-      if (!item)
-        continue;
-      recordInItem(ctx.paths, item, m);
-      const senderRoot = projectEntry(registry, m.from.workspace, m.from.project)?.root;
-      const senderPaths = senderRoot ? resolvePaths(senderRoot, ctx.env) : null;
-      if (senderPaths && senderPaths.root !== ctx.paths.root)
-        recordInItem(senderPaths, item, m);
-    }
+  for (const [dir, which] of holding) {
+    withMailLock(dir, () => {
+      let read;
+      try {
+        read = readBox(dir, which);
+      } catch (error) {
+        skipped(`${boxFile(dir, which)} (${error.message.split(`
+`)[0]})`);
+        return;
+      }
+      const { box, tampered } = read;
+      if (tampered) {
+        skipped(`${boxFile(dir, which)} (changed outside the engine)`);
+        return;
+      }
+      const index = box.messages.findIndex((m) => m.id === id);
+      if (index === -1)
+        return;
+      const changed = change(box.messages[index]);
+      box.messages[index] = changed;
+      writeBox(dir, which, box);
+      result = result ?? changed;
+    });
   }
+  if (result)
+    recordForParties(ctx, registry, result);
   return result;
 }
 function ownInbox(ctx) {
@@ -3510,15 +3636,18 @@ function ownMessage(ctx, id) {
 function notUpdated(id) {
   return { refused: `${id} could not be updated: its mailbox changed while it was being written` };
 }
-function markRead(ctx, id) {
+function skippedLine(id) {
+  return (what) => `a copy of ${id} was not changed: ${what}`;
+}
+function markRead(ctx, id, notes) {
   const own = ownMessage(ctx, id);
   if ("refused" in own)
     return own;
   if (own.found.status !== "sent")
     return own.found;
-  return updateEverywhere(ctx, id, (m) => ({ ...m, status: "read", readAt: nowIso() })) ?? notUpdated(id);
+  return updateEverywhere(ctx, id, (m) => ({ ...m, status: "read", readAt: nowIso() }), (w) => notes.push(skippedLine(id)(w))) ?? notUpdated(id);
 }
-function refuseMail(ctx, id, reason) {
+function refuseMail(ctx, id, reason, notes) {
   const own = ownMessage(ctx, id);
   if ("refused" in own)
     return own;
@@ -3526,9 +3655,9 @@ function refuseMail(ctx, id, reason) {
     return { refused: `${id} is ${own.found.status}; nothing to refuse` };
   if (!reason.trim())
     return { refused: 'a refusal needs --reason "<why>"' };
-  return updateEverywhere(ctx, id, (m) => ({ ...m, status: "refused", reason: reason.trim() })) ?? notUpdated(id);
+  return updateEverywhere(ctx, id, (m) => ({ ...m, status: "refused", reason: reason.trim() }), (w) => notes.push(skippedLine(id)(w))) ?? notUpdated(id);
 }
-function reply(ctx, id, text, options) {
+function reply(ctx, id, text, options, notes) {
   const ownDir = mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project).dir;
   const inbox = readBox(ownDir, "inbox");
   if (inbox.tampered)
@@ -3605,15 +3734,13 @@ function reply(ctx, id, text, options) {
     ...options.branch ? { branch: options.branch } : {},
     ...options.item ? { item: options.item } : {},
     ...verdict ? { verdict } : {}
-  }));
+  }), (w) => notes.push(skippedLine(id)(w)));
   if (!answered)
     return {
       refused: `${replyMessage.id} was delivered, but ${id} could not be marked answered: its mailbox changed while it was being written`
     };
   withMailLock(ownDir, () => {
-    for (const item of [replyMessage.to.item, replyMessage.from.item])
-      if (item)
-        recordInItem(ctx.paths, item, replyMessage);
+    recordForParties(ctx, loadRegistry(ctx.paths.userDir), replyMessage);
   });
   return { reply: replyMessage, original: answered };
 }
@@ -3636,8 +3763,7 @@ function syncMail(ctx, paths) {
         if (theirs && JSON.stringify(theirs) !== JSON.stringify(sent)) {
           Object.assign(sent, theirs);
           updated += 1;
-          if (sent.from.item)
-            recordInItem(paths, sent.from.item, sent);
+          recordForParties(ctx, registry, sent, paths);
         }
       }
       if (updated)
@@ -3646,12 +3772,11 @@ function syncMail(ctx, paths) {
     const inbox = ownInbox(ctx);
     if (inbox.tampered)
       return { newMail: [], newReplies: [], updated, tampered: true };
-    const marker = join20(own.dir, `synced-${ctx.self.agent}.json`);
+    const marker = join21(own.dir, `synced-${ctx.self.agent}.json`);
     const seen = new Set(readJson(marker) ?? []);
     const newMail = [];
     for (const m of inbox.messages) {
-      if (m.to.item)
-        recordInItem(paths, m.to.item, m);
+      recordForParties(ctx, registry, m, paths);
       if (!seen.has(m.id))
         newMail.push(m);
       seen.add(m.id);
@@ -3665,8 +3790,15 @@ function syncMail(ctx, paths) {
     };
   });
 }
-function markNoticed(ctx, id) {
-  updateEverywhere(ctx, id, (m) => ({ ...m, noticedAt: nowIso() }));
+function markNoticed(ctx, id, notes) {
+  updateEverywhere(ctx, id, (m) => ({ ...m, noticedAt: nowIso() }), (w) => notes.push(skippedLine(id)(w)));
+}
+function updateStatusEverywhere(ctx, id, status, reason, notes) {
+  updateEverywhere(ctx, id, (m) => ({
+    ...m,
+    status,
+    ...reason !== undefined ? { reason } : {}
+  }), (w) => notes.push(skippedLine(id)(w)));
 }
 function emptyInboxSummary() {
   return {
@@ -3711,15 +3843,469 @@ function inboxSummary(ctx) {
     line: parts.length ? `Mail (${where}): ${parts.join(", ")}` : null
   };
 }
-function openSessions(ctx) {
+function readOpenSessions(ctx) {
   const { box, tampered } = readBox(mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project).dir, "outbox");
-  return tampered ? [] : box.messages.filter((m) => m.opened && !m.opened.endedAt);
+  const open = box.messages.filter((m) => m.opened && !m.opened.endedAt);
+  return tampered ? { messages: [], tampered: tamperedBox(ctx.self.project, "outbox"), untrusted: open } : { messages: open, tampered: null, untrusted: [] };
+}
+
+// packages/engine/src/open.ts
+import { execFileSync as execFileSync4, spawn as spawn2 } from "node:child_process";
+import { closeSync, mkdirSync as mkdirSync5, openSync } from "node:fs";
+import { dirname as dirname4, join as join22 } from "node:path";
+
+// packages/engine/src/worktree.ts
+import { execFileSync as execFileSync3 } from "node:child_process";
+import { basename as basename5, resolve as resolve3 } from "node:path";
+function gitRun(cwd, ...args) {
+  return execFileSync3("git", args, {
+    cwd,
+    encoding: "utf8",
+    env: { ...process.env, LC_ALL: "C" },
+    stdio: ["ignore", "pipe", "pipe"]
+  }).trim();
+}
+function gitError(error) {
+  const failed = error;
+  const stderr = failed.stderr?.toString().trim().split(`
+`)[0];
+  return stderr || (failed.message.split(`
+`)[0] ?? "");
+}
+function worktreePath(root, worktrees, name) {
+  return resolve3(root, worktrees, `${basename5(root)}-${name}`);
+}
+function addWorktree(root, branch, path) {
+  try {
+    gitRun(root, "worktree", "add", "-q", "-b", branch, path, "HEAD");
+    return null;
+  } catch (error) {
+    return { failed: `git worktree add failed in ${root}: ${gitError(error)}` };
+  }
+}
+function dropBranch(root, branch) {
+  try {
+    gitRun(root, "branch", "-D", branch);
+  } catch {}
+}
+function removeWorktree(root, path) {
+  try {
+    gitRun(root, "worktree", "remove", path);
+    return null;
+  } catch (error) {
+    return { kept: gitError(error) };
+  }
+}
+
+// packages/engine/src/open.ts
+var OPENER_STRIPS = [
+  "CLAUDECODE",
+  "CLAUDE_CODE_ENTRYPOINT",
+  "CLAUDE_CODE_CHILD_SESSION",
+  "CLAUDE_CODE_SESSION_ID",
+  "CLAUDE_CODE_SESSION_ATTENDED",
+  "CLAUDE_CODE_MESSAGING_SOCKET",
+  "CLAUDE_CODE_MESSAGING_TOKEN"
+];
+var READ_ONLY_FLAGS = [
+  "--allowedTools",
+  "Read",
+  "Glob",
+  "Grep",
+  "Bash(crew *)",
+  "--disallowedTools",
+  "Write",
+  "Edit",
+  "MultiEdit",
+  "NotebookEdit"
+];
+function claudeBinary(env) {
+  return env.WIZARDINGCODE_CREW_CLAUDE?.trim() || "claude";
+}
+function pluginDirOf(env) {
+  return env.WIZARDINGCODE_CREW_PLUGIN_DIR?.trim() || null;
+}
+function openerArgs(request, options) {
+  const args = [
+    "--name",
+    `crew-${request.message.id}`,
+    "-p",
+    request.prompt,
+    "--permission-mode",
+    "dontAsk",
+    "--max-turns",
+    String(request.maxTurns),
+    "--output-format",
+    "json"
+  ];
+  if (options.pluginDir)
+    args.push("--plugin-dir", options.pluginDir);
+  if (request.mode === "read-only")
+    args.push(...READ_ONLY_FLAGS);
+  return args;
+}
+function sessionLog(ctx, id) {
+  return join22(mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project).dir, "opened", `${id}.log`);
+}
+function openSession(ctx, request, notes = []) {
+  const env = { ...ctx.env };
+  for (const key of OPENER_STRIPS)
+    delete env[key];
+  env.WIZARDINGCODE_CREW_MAIL_ID = request.message.id;
+  env.WIZARDINGCODE_CREW_MAIL_AGENT = request.agent;
+  env.WIZARDINGCODE_CREW_MAIL_HOPS = String(request.hops);
+  env.WIZARDINGCODE_CREW_MAIL_MODE = request.mode;
+  if (request.branch)
+    env.WIZARDINGCODE_CREW_MAIL_BRANCH = request.branch;
+  else
+    delete env.WIZARDINGCODE_CREW_MAIL_BRANCH;
+  const paths = request.mode === "branch" ? resolvePaths(request.cwd, ctx.env) : null;
+  if (request.mode === "branch") {
+    if (!paths)
+      return { failed: `${request.cwd} is not a checkout the engine can read` };
+    try {
+      writeOpenedMarker(paths, {
+        mail: request.message.id,
+        agent: request.agent,
+        hops: request.hops
+      });
+    } catch (error) {
+      return {
+        failed: `could not record the opener of ${request.cwd}: ${error.message}`
+      };
+    }
+  }
+  const undone = (failed, stopped) => {
+    if (paths)
+      dropOpenedMarker(paths.userDir, paths.root);
+    return stopped ? { failed, stopped } : { failed };
+  };
+  let fd;
+  try {
+    mkdirSync5(dirname4(request.log), { recursive: true });
+    fd = openSync(request.log, "a");
+  } catch (error) {
+    return undone(`could not open the log ${request.log}: ${error.message}`);
+  }
+  let child;
+  try {
+    child = spawn2(claudeBinary(ctx.env), openerArgs(request, { pluginDir: pluginDirOf(ctx.env) }), {
+      cwd: request.cwd,
+      env,
+      detached: true,
+      stdio: ["ignore", fd, fd]
+    });
+    child.on("error", () => {});
+    child.unref();
+  } catch (error) {
+    closeSync(fd);
+    return undone(`could not start ${claudeBinary(ctx.env)}: ${error.message}`);
+  }
+  closeSync(fd);
+  if (child.pid === undefined)
+    return undone("the session did not start (no pid)");
+  const opened = {
+    mode: request.mode,
+    cwd: request.cwd,
+    branch: request.branch,
+    pid: child.pid,
+    name: `crew-${request.message.id}`,
+    processStart: processStart(child.pid),
+    maxTurns: request.maxTurns,
+    maxMinutes: request.maxMinutes,
+    startedAt: nowIso(),
+    log: request.log
+  };
+  let cause = null;
+  try {
+    if (!recordOpened(ctx, request.message.id, opened, (what) => notes.push(`a copy of ${request.message.id} was not changed: ${what}`)))
+      cause = "a mailbox changed outside the engine";
+  } catch (error) {
+    cause = error.message;
+  }
+  if (cause) {
+    killGroup(child.pid);
+    const at = nowIso();
+    try {
+      updateEverywhere(ctx, request.message.id, (m) => ({
+        ...m,
+        reason: UNRECORDED,
+        opened: ended(opened, "stopped", at)
+      }), () => {});
+    } catch {}
+    return undone(`the session started but the outbox could not record it (${cause}), so it was stopped`, true);
+  }
+  return opened;
+}
+function ended(opened, outcome, at) {
+  return { ...opened, endedAt: at, outcome };
+}
+var UNRECORDED = "a session was started and stopped: the opener's outbox could not record it";
+var RULES2 = "Rules of a session opened by mail: you never merge, push to another branch, release or deploy; you never approve a full-route spec (crew await <id> user instead); you may send mail with crew mail send only within the hop limit; you end with the reply, nothing after it.";
+function questionPrompt(message, projectName) {
+  return [
+    `You are answering mail ${message.id} from ${message.from.project} in project ${projectName}, as its engineer, through the WizardingCode Developer Crew plugin.`,
+    `Read the message first: crew mail read ${message.id}. Read the code; change nothing. Answer the question from what the code and the documentation of this repository say, with file paths and lines where they help, and say plainly what you could not find.`,
+    `Then reply with crew mail reply ${message.id} "<your answer>" (or --file <path> for a long answer). ${RULES2}`
+  ].join(`
+
+`);
+}
+function changePrompt(message, projectName, branch) {
+  return [
+    `You are building mail ${message.id} from ${message.from.project} in project ${projectName}, on branch ${branch}, through the WizardingCode Developer Crew plugin and its crew skill.`,
+    `Read the message first: crew mail read ${message.id}. Then run the method: answer the nine typed questions and start a work item with crew start "<the request>" --answers '<json>' --origin ${message.id}; follow the route the engine gives (criteria, red, green, gates, the judgement gates); commit on this branch.`,
+    `End with crew mail reply ${message.id} --branch ${branch} --item <the work item id> "<what is proven and what is not>". ${RULES2}`
+  ].join(`
+
+`);
+}
+function taskPrompt(parent, task, message, briefText, branch) {
+  return [
+    `You are the implementer of task ${task.task} of work item ${parent.id} ("${parent.title}"), in a worktree on branch ${branch}, through the WizardingCode Developer Crew plugin and its crew skill. The lead opened this task as mail ${message.id}.`,
+    `The task: ${task.text}`,
+    `Its criteria, from the lead's item: ${task.criteria.join(", ")}. The lead's brief follows between the lines.
+---
+${briefText?.trim() ?? "(no brief)"}
+---`,
+    `Start with crew start "${task.task} of ${parent.id}: ${task.text.split(`
+`)[0]}" --answers '<json>' --origin ${message.id} and one --criterion per criterion the task covers, in the lead's words; follow the route the engine gives; commit on this branch; touch only the files the task names.`,
+    `A question to the lead: crew mail send --to . --agent session --type question "<question>" then crew await <id> mail <message id>. A question to another task: --agent T-n. A question only the user can answer: crew await <id> user.`,
+    `End with crew mail reply ${message.id} --branch ${branch} --item <your work item id> "<what is proven and what is not>". ${RULES2}`
+  ].join(`
+
+`);
+}
+function isAlive(pid) {
+  if (!pid)
+    return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+function psColumn(pid, column) {
+  try {
+    return execFileSync4("ps", ["-o", column, "-p", String(pid)], {
+      encoding: "utf8",
+      env: { ...process.env, LC_ALL: "C", TZ: "UTC" },
+      stdio: ["ignore", "pipe", "ignore"]
+    }).trim();
+  } catch {
+    return "";
+  }
+}
+function processStart(pid) {
+  return psColumn(pid, "lstart=");
+}
+function pidState(opened) {
+  if (opened.pid === null || processGone(opened.pid))
+    return "gone";
+  const start = processStart(opened.pid);
+  return !start || !opened.processStart || start === opened.processStart ? "session" : "another";
+}
+function isSession(opened) {
+  return pidState(opened) === "session";
+}
+function processGone(pid) {
+  return !isAlive(pid) || psColumn(pid, "stat=").startsWith("Z");
+}
+function readOutcome(log) {
+  const text = readText(log);
+  if (!text)
+    return { ended: false };
+  for (const line of text.trim().split(`
+`).reverse()) {
+    try {
+      const parsed = JSON.parse(line);
+      if (!("result" in parsed) && !("session_id" in parsed))
+        continue;
+      const failed = parsed.is_error === true || typeof parsed.subtype === "string" && parsed.subtype !== "success";
+      const reason = typeof parsed.subtype === "string" && parsed.subtype !== "success" ? parsed.subtype : typeof parsed.result === "string" && parsed.result.trim() ? parsed.result.trim().split(`
+`)[0] : "an error result";
+      return {
+        ended: true,
+        ...typeof parsed.num_turns === "number" ? { turns: parsed.num_turns } : {},
+        ...typeof parsed.total_cost_usd === "number" ? { costUsd: parsed.total_cost_usd } : {},
+        ...failed ? { error: reason } : {}
+      };
+    } catch {}
+  }
+  return { ended: false };
+}
+var KILL_WAIT_MS = 1000;
+var KILL_STEP_MS = 50;
+function killGroup(pid) {
+  const signal = (name) => {
+    try {
+      process.kill(-pid, name);
+    } catch {}
+  };
+  signal("SIGTERM");
+  const until = Date.now() + KILL_WAIT_MS;
+  while (!processGone(pid) && Date.now() < until)
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, KILL_STEP_MS);
+  signal("SIGKILL");
+}
+function minutesRun(opened, now = Date.now()) {
+  return (now - Date.parse(opened.startedAt)) / 60000;
+}
+function minutesText(minutes) {
+  return `${minutes} minute${minutes === 1 ? "" : "s"}`;
+}
+function unanswered(status) {
+  return status === "sent" || status === "read";
+}
+function sweepOne(ctx, m, now, result) {
+  const opened = m.opened;
+  const at = new Date(now).toISOString();
+  const settle = (kind, end, reason, line) => {
+    const recorded = updateEverywhere(ctx, m.id, (x) => ({
+      ...x,
+      ...reason && unanswered(x.status) ? { status: "expired", reason } : {},
+      opened: { ...ended(opened, end.outcome, at), ...end }
+    }), (what) => result.lines.push(`the record of ${m.id} skipped a box it could not read: ${what}`));
+    if (recorded === null) {
+      result.lines.push(`the sweep could not record ${m.id}: no copy of the message was written`);
+      return;
+    }
+    if (opened.mode === "branch")
+      dropOpenedMarker(ctx.paths.userDir, opened.cwd);
+    result[kind].push(m.id);
+    result.lines.push(line);
+  };
+  const state = pidState(opened);
+  if (state === "session") {
+    if (minutesRun(opened, now) > opened.maxMinutes) {
+      killGroup(opened.pid);
+      const limit = minutesText(opened.maxMinutes);
+      settle("expired", { outcome: "expired" }, `the session ran past ${limit} (mail.maxMinutes) and was stopped`, `${m.id} ran past ${limit} and was stopped (expired)`);
+    }
+    return;
+  }
+  const outcome = readOutcome(opened.log);
+  const measured = {
+    ...outcome.turns !== undefined ? { turns: outcome.turns } : {},
+    ...outcome.costUsd !== undefined ? { costUsd: outcome.costUsd } : {}
+  };
+  if (outcome.ended && outcome.error) {
+    settle("expired", { ...measured, outcome: "failed" }, `the session ended with ${outcome.error}`, `${m.id} ended with ${outcome.error} (expired)`);
+    return;
+  }
+  if (outcome.ended) {
+    const replied = !unanswered(m.status);
+    settle("ended", { ...measured, outcome: "ended" }, replied ? null : "the session ended without a reply", replied ? `${m.id} ended (${outcome.turns ?? "?"} turns, ${outcome.costUsd ?? "?"} USD)` : `${m.id} ended without a reply (expired)`);
+    return;
+  }
+  const remains = state === "another" ? "its pid is now another process's, and nothing of the session remains in its group" : `a member of its process group may remain (ps -g ${opened.pid})`;
+  settle("expired", { outcome: "failed" }, "the session ended without a reply", `${m.id} is gone without a reply (expired); ${remains}`);
+}
+function sweepOpened(ctx, now = Date.now()) {
+  const result = { ended: [], expired: [], lines: [] };
+  if (ctx.self.openedBy)
+    return result;
+  const { messages, tampered } = readOpenSessions(ctx);
+  if (tampered)
+    result.lines.push(tampered);
+  for (const m of messages) {
+    try {
+      sweepOne(ctx, m, now, result);
+    } catch (error) {
+      result.lines.push(`the sweep of ${m.id} failed: ${error.message.split(`
+`)[0]}`);
+    }
+  }
+  return result;
+}
+function sweepSafely(ctx, now = Date.now()) {
+  try {
+    return sweepOpened(ctx, now);
+  } catch (error) {
+    return {
+      ended: [],
+      expired: [],
+      lines: [`the sweep failed: ${error.message.split(`
+`)[0]}`]
+    };
+  }
+}
+function stopSession(ctx, id, notes) {
+  if (ctx.self.openedBy)
+    return { refused: `a session opened by mail (${ctx.self.openedBy}) stops no sessions` };
+  const { messages, tampered } = readOpenSessions(ctx);
+  if (tampered)
+    return { refused: tampered };
+  const m = messages.find((x) => x.id === id);
+  if (!m?.opened)
+    return { refused: `${id} has no session running` };
+  if (!isSession(m.opened)) {
+    const swept = { ended: [], expired: [], lines: [] };
+    sweepOne(ctx, m, Date.now(), swept);
+    return {
+      refused: `${id} has no session running: it ${readOutcome(m.opened.log).ended ? "ended" : "is gone"}${swept.lines.length ? ` (${swept.lines.join("; ")})` : ""}`
+    };
+  }
+  killGroup(m.opened.pid);
+  if (m.opened.mode === "branch")
+    dropOpenedMarker(ctx.paths.userDir, m.opened.cwd);
+  const at = nowIso();
+  return updateEverywhere(ctx, id, (x) => ({
+    ...x,
+    ...unanswered(x.status) ? { status: "stopped", reason: "stopped by crew mail stop" } : {},
+    opened: ended(x.opened, "stopped", at)
+  }), (what) => notes.push(`a copy of ${id} was not changed: ${what}`)) ?? {
+    refused: `${id} was stopped but could not be updated: its mailbox changed while it was being written`
+  };
+}
+function openForMail(ctx, fallback, message, delivery) {
+  const dest = delivery.entry;
+  const limits = (destinationPolicy(dest, ctx.env)?.policy ?? fallback).mail;
+  let cwd = dest.root;
+  let branch = null;
+  let prompt = questionPrompt(message, dest.name);
+  if (delivery.mode === "branch") {
+    branch = `crew/mail/${message.id}`;
+    cwd = worktreePath(dest.root, limits.worktrees, `mail-${message.id}`);
+    const made = addWorktree(dest.root, branch, cwd);
+    if (made) {
+      dropBranch(dest.root, branch);
+      return `could not open a session: ${made.failed}; queued`;
+    }
+    prompt = changePrompt(message, dest.name, branch);
+  }
+  const notes = [];
+  const opened = openSession(ctx, {
+    message,
+    mode: delivery.mode,
+    cwd,
+    branch,
+    prompt,
+    maxTurns: limits.maxTurns,
+    maxMinutes: limits.maxMinutes,
+    hops: ctx.self.hops + 1,
+    agent: "session",
+    log: sessionLog(ctx, message.id)
+  }, notes);
+  const skipped = notes.length ? `; ${notes.join("; ")}` : "";
+  if ("failed" in opened) {
+    if (branch) {
+      const kept = removeWorktree(dest.root, cwd);
+      if (kept)
+        return `could not open a session: ${opened.failed}; queued; the worktree ${cwd} is kept, with its branch ${branch}: ${kept.kept.replace(/,?\s*use --force[^.]*\.?$/, "")}${skipped}`;
+      dropBranch(dest.root, branch);
+    }
+    return `could not open a session: ${opened.failed}; queued${skipped}`;
+  }
+  const bounds = `${opened.maxTurns} turns, ${minutesText(opened.maxMinutes)}`;
+  return delivery.mode === "read-only" ? `read-only session opened (${opened.name}, pid ${opened.pid}, ${bounds})${skipped}` : `session opened on branch ${branch} (${opened.name}, pid ${opened.pid}, ${bounds})${skipped}`;
 }
 
 // packages/engine/src/profile.ts
-import { join as join21 } from "node:path";
+import { join as join23 } from "node:path";
 function profilePath(paths) {
-  return join21(paths.crewDir, "profile.json");
+  return join23(paths.crewDir, "profile.json");
 }
 function loadProfile(paths) {
   const read = readProtectedJson(paths, profilePath(paths));
@@ -3765,12 +4351,16 @@ function mailQuietly(read, fallback) {
     return fallback;
   }
 }
+function sweepLines(ctx) {
+  return sweepSafely(ctx.mail).lines;
+}
 function buildContext(payload, env = process.env) {
   const paths = resolvePaths(payload.cwd ?? process.cwd(), env);
   if (!paths)
     return null;
   const profile = ensureProfile(paths);
   const policy = loadPolicy(paths);
+  const mail = mailContext(paths, policy.policy, env);
   return {
     paths,
     sessionId: payload.session_id ?? "default",
@@ -3778,9 +4368,10 @@ function buildContext(payload, env = process.env) {
     policy: policy.policy,
     tampered: profile.tampered || policy.tampered,
     headless: env.CLAUDE_CODE_SESSION_ATTENDED === "0",
-    mail: mailContext(paths, policy.policy, env),
-    openedBy: env.WIZARDINGCODE_CREW_MAIL_ID?.trim() || null,
-    openedBranch: env.WIZARDINGCODE_CREW_MAIL_BRANCH?.trim() || null
+    mail,
+    openedBy: mail.self.openedBy,
+    openedBranch: mail.self.openedBranch,
+    openedMode: mail.self.openedMode
   };
 }
 
@@ -3813,58 +4404,853 @@ function onPostToolUse(ctx, payload = {}) {
 }
 
 // packages/engine/src/hooks/pre-tool-use.ts
-import { isAbsolute as isAbsolute3, join as join22, relative as relative5 } from "node:path";
+import { isAbsolute as isAbsolute3, join as join24, relative as relative5 } from "node:path";
 
 // packages/engine/src/hooks/shell.ts
-function simpleCommands(command) {
+var SUBSTITUTED = "${…}";
+var DESCRIPTOR = String.raw`\d+|\{\w+\}`;
+var OPERATOR_PREFIX = `(?:${DESCRIPTOR}|&)?`;
+var DOUBLE_QUOTE_ESCAPES = '$`"\\';
+var OPERATOR_OWN = new RegExp(`^${OPERATOR_PREFIX}[<>]*$`);
+var HEREDOC_OPERATOR = new RegExp(`^(?:${DESCRIPTOR})?<<(-?)(?!<)`);
+var LEADING_KEYWORDS = ["if", "then", "else", "elif", "do", "while", "until", "!"];
+var KEYWORDS_BEFORE = new Set([...LEADING_KEYWORDS, "{"]);
+var COMMAND_LEADS = new Set([...KEYWORDS_BEFORE, "time", "coproc"]);
+var MAX_DEPTH2 = 32;
+var ANSI_ESCAPES = {
+  a: "\x07",
+  b: "\b",
+  e: "\x1B",
+  E: "\x1B",
+  f: "\f",
+  n: `
+`,
+  r: "\r",
+  t: "\t",
+  v: "\v",
+  "\\": "\\",
+  "'": "'",
+  '"': '"',
+  "?": "?"
+};
+function ansiEscape(text, at) {
+  const rest = text.slice(at);
+  const fixed = ANSI_ESCAPES[rest.charAt(0)];
+  if (fixed !== undefined)
+    return { value: fixed, length: 1 };
+  const code = /^x([0-9A-Fa-f]{1,2})|^u([0-9A-Fa-f]{1,4})|^U([0-9A-Fa-f]{1,8})|^([0-7]{1,3})/.exec(rest);
+  if (code) {
+    const digits = code[1] ?? code[2] ?? code[3] ?? code[4] ?? "0";
+    const point = Number.parseInt(digits, code[4] !== undefined ? 8 : 16);
+    if (point <= 1114111)
+      return { value: String.fromCodePoint(point), length: code[0].length };
+  }
+  const control = /^c(.)/s.exec(rest);
+  if (control)
+    return {
+      value: String.fromCharCode((control[1] ?? "@").toUpperCase().charCodeAt(0) ^ 64),
+      length: 2
+    };
+  return { value: `\\${rest.charAt(0)}`, length: 1 };
+}
+function bracketEnd(text, open, close) {
+  const opener = text.charAt(open);
+  let depth = 1;
+  let quote = null;
+  for (let i = open + 1;i < text.length; i++) {
+    const ch = text.charAt(i);
+    if (quote !== null) {
+      if (ch === "\\" && quote === '"')
+        i++;
+      else if (ch === quote)
+        quote = null;
+    } else if (ch === "\\")
+      i++;
+    else if (ch === "'" || ch === '"')
+      quote = ch;
+    else if (ch === opener)
+      depth++;
+    else if (ch === close && --depth === 0)
+      return i + 1;
+  }
+  return -1;
+}
+function arithmeticEnd(text, open) {
+  let depth = 0;
+  for (let i = open;i < text.length; i++) {
+    const ch = text.charAt(i);
+    if (ch === "\\")
+      i++;
+    else if (ch === "'" || ch === '"')
+      return -1;
+    else if (ch === "(")
+      depth++;
+    else if (ch === ")" && --depth === 1)
+      return text.charAt(i + 1) === ")" ? i + 2 : -1;
+  }
+  return -1;
+}
+function read(text, start, closer, depth) {
   const pieces = [];
-  for (const line of command.replace(/\\\r?\n/g, " ").split(/\r?\n/)) {
-    let piece = "";
-    let quote = null;
-    for (let i = 0;i < line.length; i++) {
-      const ch = line.charAt(i);
-      if (quote !== null) {
-        piece += ch;
-        if (ch === "\\" && quote === '"' && i + 1 < line.length)
-          piece += line.charAt(++i);
-        else if (ch === quote)
-          quote = null;
-      } else if (ch === "\\" && i + 1 < line.length) {
-        piece += ch + line.charAt(++i);
-      } else if (ch === '"' || ch === "'") {
-        quote = ch;
-        piece += ch;
-      } else if (ch === ";" || (ch === "|" || ch === "&") && !isRedirectPart(line, i)) {
-        pieces.push(piece);
-        piece = "";
-      } else {
-        piece += ch;
+  let unclosed = null;
+  let tokens = [];
+  let inner = [];
+  let word = "";
+  let from = 0;
+  let started = false;
+  let expands = false;
+  let quote = null;
+  let arm = "none";
+  let armStart = 0;
+  let subshells = 0;
+  let cases = 0;
+  let commandAt = 0;
+  let piped = false;
+  const heredocs = [];
+  const begin = (i) => {
+    if (started)
+      return;
+    started = true;
+    from = i;
+    word = "";
+    expands = false;
+  };
+  const endWord = (i) => {
+    if (!started)
+      return;
+    started = false;
+    const raw = text.slice(from, i);
+    tokens.push({ word, raw, from, to: i, expands });
+    const lead = tokens.slice(commandAt, -1).every((t) => COMMAND_LEADS.has(t.raw));
+    if (raw === "case" && lead)
+      cases++;
+    else if (raw === "esac" && cases > 0 && (lead && !piped || arm === "pattern" && tokens.length - 1 === armStart))
+      cases--;
+    const operator = HEREDOC_OPERATOR.exec(raw);
+    const pending = heredocs[heredocs.length - 1];
+    if (operator) {
+      const delimiter2 = word.slice(operator[0].length);
+      heredocs.push({
+        delimiter: delimiter2 || null,
+        strip: operator[1] === "-",
+        expand: raw.slice(operator[0].length) === delimiter2,
+        owner: tokens
+      });
+    } else if (pending && pending.delimiter === null) {
+      pending.delimiter = word;
+      pending.expand = raw === word;
+    }
+    const third = tokens[tokens.length - 3];
+    if (raw === "in" && third?.raw === "case" && tokens.slice(0, -3).every((t) => KEYWORDS_BEFORE.has(t.raw))) {
+      arm = "pattern";
+      armStart = tokens.length;
+    } else if (raw === "esac" && arm === "pattern")
+      arm = "none";
+  };
+  const endPiece = (i) => {
+    endWord(i);
+    const first = tokens[0];
+    const last = tokens[tokens.length - 1];
+    if (first && last)
+      pieces.push({ text: text.slice(first.from, last.to), tokens, inner, heredocs: [] });
+    tokens = [];
+    inner = [];
+    armStart = 0;
+    commandAt = 0;
+    piped = false;
+  };
+  const readInside = (at, inside, into) => {
+    if (depth >= MAX_DEPTH2) {
+      unclosed ??= "a substitution";
+      return text.length;
+    }
+    const frame = read(text, at, inside, depth + 1);
+    into.push(...frame.pieces);
+    unclosed ??= frame.unclosed;
+    return frame.end;
+  };
+  const scanSubstitutions = (from2, to, into, nested = depth) => {
+    for (let k = from2;k < to; k++) {
+      const ch = text.charAt(k);
+      const next = text.charAt(k + 1);
+      if (ch === "\\")
+        k++;
+      else if (ch === "$" && next === "(") {
+        const end = arithmeticAt(k + 1);
+        if (end === -1)
+          k = readInside(k + 2, ")", into) - 1;
+        else if (nested >= MAX_DEPTH2) {
+          unclosed ??= "a substitution";
+          return;
+        } else {
+          scanSubstitutions(k + 3, end - 2, into, nested + 1);
+          k = end - 1;
+        }
+      } else if ((ch === "<" || ch === ">") && next === "(")
+        k = readInside(k + 2, ")", into) - 1;
+      else if (ch === "`")
+        k = readInside(k + 1, "`", into) - 1;
+    }
+  };
+  const arithmeticAt = (open) => text.charAt(open) === "(" && text.charAt(open + 1) === "(" ? arithmeticEnd(text, open) : -1;
+  const bodies = (at) => {
+    let j = at;
+    for (const { delimiter: delimiter2, strip, expand, owner } of heredocs.splice(0)) {
+      const bodyFrom = j;
+      let bodyTo = j;
+      let body = "";
+      while (j < text.length) {
+        const lineEnd = text.indexOf(`
+`, j);
+        const line = text.slice(j, lineEnd === -1 ? text.length : lineEnd);
+        const lineStart = j;
+        j = lineEnd === -1 ? text.length : lineEnd + 1;
+        if ((strip ? line.replace(/^\t+/, "") : line) === (delimiter2 ?? ""))
+          break;
+        body += `${line}
+`;
+        bodyTo = lineStart + line.length;
+      }
+      const piece = pieces.find((p) => p.tokens === owner);
+      if (!piece)
+        continue;
+      piece.heredocs.push(body);
+      if (expand)
+        scanSubstitutions(bodyFrom, bodyTo, piece.inner);
+    }
+    return j;
+  };
+  const close = (i) => {
+    endPiece(i);
+    if (cases > 0)
+      unclosed ??= "a case";
+    return { pieces, end: i + 1, unclosed };
+  };
+  const openWord = (i) => started ? text.slice(from, i) : "";
+  const endOperand = (i) => {
+    if (started && !OPERATOR_OWN.test(openWord(i)))
+      endWord(i);
+  };
+  const continuesOperator = (i) => {
+    const open = openWord(i);
+    return /[<>]$/.test(open) && OPERATOR_OWN.test(open);
+  };
+  const substitution = (i, opener, inside) => {
+    begin(i);
+    word += SUBSTITUTED;
+    expands = true;
+    return readInside(i + opener, inside, inner) - 1;
+  };
+  const expansion = (i, close2) => {
+    begin(i);
+    expands = true;
+    const end = bracketEnd(text, i + 1, close2);
+    if (end === -1) {
+      unclosed ??= "an expansion";
+      word += text.slice(i);
+      return text.length - 1;
+    }
+    word += text.slice(i, end);
+    scanSubstitutions(i + 2, end - 1, inner);
+    return end - 1;
+  };
+  const arithmetic = (i, open, end) => {
+    begin(i);
+    expands = true;
+    word += text.slice(i, end);
+    scanSubstitutions(open + 2, end - 2, inner);
+    return end - 1;
+  };
+  const expansionAt = (i) => {
+    const next = text.charAt(i + 1);
+    if (text.charAt(i) === "`")
+      return substitution(i, 1, "`");
+    if (next === "(") {
+      const end = arithmeticAt(i + 1);
+      return end !== -1 ? arithmetic(i, i + 1, end) : substitution(i, 2, ")");
+    }
+    if (next === "{")
+      return expansion(i, "}");
+    if (next === "[")
+      return expansion(i, "]");
+    return -1;
+  };
+  for (let i = start;i < text.length; i++) {
+    const ch = text.charAt(i);
+    const next = text.charAt(i + 1);
+    if (closer === "`") {
+      if (ch === "\\" && next === "`") {
+        begin(i);
+        word += "`";
+        i++;
+        continue;
+      }
+      if (ch === "`") {
+        if (quote !== null)
+          unclosed ??= "a quote";
+        return close(i);
       }
     }
-    pieces.push(piece);
+    if (quote === "$'") {
+      if (ch === "'")
+        quote = null;
+      else if (ch === "\\" && i + 1 < text.length) {
+        const decoded = ansiEscape(text, i + 1);
+        word += decoded.value;
+        i += decoded.length;
+      } else
+        word += ch;
+    } else if (quote === "'") {
+      if (ch === "'")
+        quote = null;
+      else
+        word += ch;
+    } else if (quote === '"') {
+      if (ch === '"')
+        quote = null;
+      else if (ch === "\\" && next === `
+`)
+        i++;
+      else if (ch === "\\" && i + 1 < text.length && DOUBLE_QUOTE_ESCAPES.includes(next))
+        word += text.charAt(++i);
+      else if (ch === "$" || ch === "`") {
+        const opened = expansionAt(i);
+        if (opened !== -1)
+          i = opened;
+        else {
+          expands = true;
+          word += ch;
+        }
+      } else
+        word += ch;
+    } else if (ch === "\\" && next === `
+`) {
+      i++;
+    } else if (ch === "\\" && i + 1 < text.length) {
+      begin(i);
+      word += next;
+      i++;
+    } else if (ch === "'" || ch === '"') {
+      begin(i);
+      quote = ch;
+    } else if (ch === "$" && next === "'") {
+      begin(i);
+      quote = "$'";
+      i++;
+    } else if (ch === "$" || ch === "`") {
+      const opened = expansionAt(i);
+      if (opened !== -1)
+        i = opened;
+      else {
+        begin(i);
+        expands = true;
+        word += ch;
+      }
+    } else if ((ch === "<" || ch === ">") && next === "(") {
+      endOperand(i);
+      i = substitution(i, 2, ")");
+    } else if (ch === "#" && !started) {
+      while (i + 1 < text.length && text.charAt(i + 1) !== `
+`)
+        i++;
+    } else if (ch === `
+`) {
+      endPiece(i);
+      if (heredocs.length)
+        i = bodies(i + 1) - 1;
+    } else if (/\s/.test(ch)) {
+      endWord(i);
+    } else if (ch === ";") {
+      endPiece(i);
+      if (next === ";" || next === "&" || next === "|") {
+        i++;
+        arm = "pattern";
+      } else
+        arm = "none";
+    } else if (ch === "|" || ch === "&") {
+      if (ch === "&" && next === ">") {
+        endWord(i);
+        begin(i);
+        word += ch;
+      } else if (continuesOperator(i))
+        word += ch;
+      else if (arm === "pattern" && ch === "|")
+        endWord(i);
+      else {
+        endPiece(i);
+        piped = true;
+      }
+    } else if (ch === "(" && next === ")") {
+      if (started)
+        started = false;
+      else
+        tokens.pop();
+      i++;
+    } else if (ch === "(" && !started && arm !== "pattern" && arithmeticAt(i) !== -1) {
+      const end = arithmeticAt(i);
+      i = arithmetic(i, i, end);
+      endWord(end);
+    } else if (ch === "(") {
+      if (!(arm === "pattern" && !started && tokens.length === armStart)) {
+        endPiece(i);
+        subshells++;
+      }
+    } else if (ch === ")") {
+      endWord(i);
+      if (arm === "pattern") {
+        tokens.length = armStart;
+        commandAt = armStart;
+        arm = "none";
+      } else if (subshells > 0) {
+        subshells--;
+        endPiece(i);
+      } else if (closer === ")")
+        return close(i);
+      else
+        endPiece(i);
+    } else if (ch === "<" || ch === ">") {
+      endOperand(i);
+      begin(i);
+      word += ch;
+    } else {
+      begin(i);
+      word += ch;
+    }
   }
-  return pieces.map((piece) => piece.trim()).filter((piece) => piece !== "");
+  if (quote !== null)
+    unclosed ??= "a quote";
+  if (closer !== null)
+    unclosed ??= "a substitution";
+  endPiece(text.length);
+  if (cases > 0)
+    unclosed ??= "a case";
+  if (heredocs.length)
+    bodies(text.length);
+  return { pieces, end: text.length, unclosed };
 }
-function isRedirectPart(line, i) {
-  const before = line.charAt(i - 1);
-  return before === ">" || before === "<" || line.charAt(i) === "&" && line.charAt(i + 1) === ">";
+function readCommand(command) {
+  const { pieces, unclosed } = read(command, 0, null, 0);
+  return { pieces, unclosed };
+}
+function simpleCommands(command) {
+  return readCommand(command).pieces.flatMap((p) => [
+    p.text,
+    ...p.heredocs.flatMap((body) => body.split(`
+`).filter((line) => line !== ""))
+  ]);
 }
 
 // packages/engine/src/hooks/pre-tool-use.ts
 var WRITE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
-var SHELLS = String.raw`(?:sh|bash|zsh|dash|ksh|fish)`;
-var RUNNER_NO_SHELL = String.raw`(?:[A-Za-z_][A-Za-z0-9_]*=\S*|-\S*|node|bun|bunx|npx|eval|exec|env|time|nohup|xargs|sudo|command|trap)`;
-var RUNNER = String.raw`(?:${RUNNER_NO_SHELL}|${SHELLS})`;
-var OPTS = String.raw`(?:--[\w-]+(?:[= ]\S+)?\s+)*`;
-var USER_ONLY = new RegExp(String.raw`^[\s({]*(?:${RUNNER}\s+)*(?:\S*/)?crew(?:\.mjs)?\s+${OPTS}(?:skip|approve|accept|decide|objection\b[^;&|]*\bwaive\b|profile\s+${OPTS}(?:confirm|set)|policy\s+${OPTS}(?:accept|set))\b`);
-var POLICY_COMMAND = new RegExp(String.raw`^[\s({]*(?:${RUNNER}\s+)*(?:\S*/)?crew(?:\.mjs)?\s+${OPTS}(?:policy\b|accept\s+${OPTS}policy\b)`);
+var SHELL_NAMES = ["sh", "bash", "zsh", "dash", "ksh", "fish"];
+var SHELLS = `(?:${SHELL_NAMES.join("|")})`;
 var ENGINE_FILES = /\.crew\/(?:profile\.json|policy\.json|\.gitignore|local\b|work\/[^\s/]+\/(?:work\.json|evidence\.json|objections\.json|mail\.json|report\.md|logs\b))|\.wizardingcode\/crew\b/;
 var WRITE_SHAPE = /(?:^|[\s;&|("'])(?:rm|mv|cp|tee|truncate|chmod|touch|dd|install)\b|sed\s+-i|>{1,2}\|?\s*["']?\S*(?:\.crew\/|\.wizardingcode\/crew\b)/;
 var OPAQUE_REDIRECT = />{1,2}\|?\s*["']?[$`]/;
 var PROMPTLESS_MODES = new Set(["bypassPermissions", "dontAsk"]);
-var MODE_FLAG = /--mode(?:=|\s+)(\S+)/;
-var VALIDATOR_FLAG = /--validator(?:=|\s+)\S+/;
-var HELP_FLAG = /(?:^|\s)(?:--help|-h)(?=\s|$)/;
+var CREW_COMMAND = /^(?:\S*\/)?crew(?:\.mjs)?$/;
+var CREW_BUNDLE = /^(?:\S*\/)?crew\.mjs$/;
+var JS_RUNNER = /^(?:\S*\/)?(?:node|bun)$/;
+var READ_ONLY_VERBS = new Set(["status", "help"]);
+var READ_ONLY_MAIL = new Set(["read", "inbox", "reply", "status"]);
+var OPENER_VAR = /WIZARDINGCODE_\w+|CLAUDE_CODE_SESSION_ATTENDED/;
+var UNSET = /(?:^|[\s;&|({])unset(?:\s+-\S+)*((?:\s+[^\s;&|]+)*)/;
+var PLUS_X = /(?:^|[\s;&|({])(?:declare|typeset|export|readonly|local)\s+(?:[-+]\S+\s+)*\+\S*x\b((?:\s+[^\s;&|]+)*)/;
+var SETTER = /(?:^|[\s;&|({])(?:(?:export|declare|typeset|readonly|local)(?:\s+-\S+)*|read(?:\s+-\S+)*|printf\s+-v)((?:\s+[^\s;&|]+)*)/;
+var UNREADABLE_ASSIGNMENT = /(?:^|[\s;&|({])[^\s=;&|$\x60{*?[]*[$\x60{*?[][^\s=;&|]*=/;
+var UNREADABLE_NAME = /^$|[$\x60{(*?[\]]/;
+var CLEARED_ENVIRONMENT = /(?:^|[\s;&|({])(?:env(?:\s+-\S+)*\s+(?:-[A-Za-z]*[iS][A-Za-z]*|--ignore-environment|--split-string(?:=\S*)?|-)(?=\s|$)|exec\s+(?:-\S+\s+)*-[A-Za-z]*c\b)/;
+function unreadablePath(word) {
+  const lead = /^(?:~|\$\w+|\$\{[^}]*\})(?=\/|$)/.exec(word)?.[0] ?? (word.startsWith("/") ? "/" : "");
+  if (!lead && !/(?:^|\/)\.\.(?:\/|$)/.test(word))
+    return false;
+  return /[*?[{$\x60]/.test(word.slice(lead.length));
+}
+function unreadableNames(words, allowEmpty = false) {
+  const names = words.trim().split(/\s+/).filter(Boolean).map((n) => n.split("=")[0] ?? "");
+  return !allowEmpty && !names.length || names.some((n) => UNREADABLE_NAME.test(n));
+}
+function variableDenial(cleaned) {
+  if (CLEARED_ENVIRONMENT.test(cleaned))
+    return "a cleared environment";
+  const unset = UNSET.exec(cleaned);
+  if (unset && unreadableNames(unset[1] ?? ""))
+    return "unset";
+  const plusX = PLUS_X.exec(cleaned);
+  if (plusX && unreadableNames(plusX[1] ?? ""))
+    return "declare +x";
+  const setter = SETTER.exec(cleaned);
+  if (setter && unreadableNames(setter[1] ?? "", true)) {
+    const word = setter[0].trim().split(/\s+/)[0] ?? "";
+    return word === "read" ? "read" : word === "printf" ? "printf -v" : "export";
+  }
+  if (UNREADABLE_ASSIGNMENT.test(cleaned))
+    return "an assignment";
+  return null;
+}
+var KEYWORDS = [...LEADING_KEYWORDS, "fi", "done", "in", "esac"];
+var WRAPPERS = [
+  { name: "function", valued: "", longValued: [], positionals: 1 },
+  { name: "case", valued: "", longValued: [], positionals: 1 },
+  { name: "nice", valued: "n", longValued: ["--adjustment"], positionals: 0 },
+  {
+    name: "timeout",
+    valued: "sk",
+    longValued: ["--signal", "--kill-after"],
+    positionals: 1
+  },
+  { name: "stdbuf", valued: "ioe", longValued: ["--input", "--output", "--error"], positionals: 0 },
+  {
+    name: "flock",
+    valued: "w",
+    longValued: ["--wait", "--timeout", "--conflict-exit-code"],
+    positionals: 1,
+    scriptOptions: ["-c", "--command"]
+  },
+  {
+    name: "script",
+    valued: "FtEBIOomT",
+    longValued: [
+      "--echo",
+      "--log-in",
+      "--log-out",
+      "--log-io",
+      "--log-timing",
+      "--logging-format",
+      "--output-limit"
+    ],
+    positionals: 1,
+    scriptOptions: ["-c", "--command"]
+  },
+  {
+    name: "su",
+    valued: "gGsw",
+    longValued: ["--group", "--supp-group", "--shell", "--whitelist-environment"],
+    positionals: 1,
+    scriptOptions: ["-c", "--command", "--session-command"]
+  },
+  {
+    name: "sudo",
+    valued: "ugpChDTrt",
+    longValued: [
+      "--user",
+      "--group",
+      "--prompt",
+      "--close-from",
+      "--host",
+      "--chdir",
+      "--command-timeout",
+      "--role",
+      "--type",
+      "--other-user"
+    ],
+    positionals: 0
+  },
+  { name: "doas", valued: "uC", longValued: [], positionals: 0 },
+  {
+    name: "env",
+    valued: "uCPLU",
+    longValued: ["--unset", "--chdir", "--block-signal", "--default-signal", "--ignore-signal"],
+    positionals: 0,
+    assignments: true,
+    scriptOptions: ["-S", "--split-string"],
+    unsetOptions: ["-u", "--unset"]
+  },
+  { name: "exec", valued: "a", longValued: [], positionals: 0 },
+  {
+    name: "xargs",
+    valued: "nILPdEsa",
+    longValued: [
+      "--max-args",
+      "--replace",
+      "--max-lines",
+      "--max-procs",
+      "--delimiter",
+      "--eof",
+      "--max-chars",
+      "--arg-file",
+      "--process-slot-var"
+    ],
+    positionals: 0
+  },
+  { name: "nohup", valued: "", longValued: [], positionals: 0 },
+  { name: "time", valued: "fo", longValued: ["--format", "--output"], positionals: 0 },
+  { name: "command", valued: "", longValued: [], positionals: 0 },
+  { name: "builtin", valued: "", longValued: [], positionals: 0 },
+  { name: "caffeinate", valued: "tw", longValued: [], positionals: 0 },
+  {
+    name: "ionice",
+    valued: "cnp",
+    longValued: ["--class", "--classdata", "--pid"],
+    positionals: 0
+  },
+  { name: "noglob", valued: "", longValued: [], positionals: 0 },
+  { name: "nocorrect", valued: "", longValued: [], positionals: 0 },
+  { name: "coproc", valued: "", longValued: [], positionals: 0, namedBlock: true }
+];
+var WRAPPER_BY_NAME = new Map(WRAPPERS.map((w) => [w.name, w]));
+var JS_RUNNER_VALUED = new Set([
+  "-r",
+  "--require",
+  "--import",
+  "--loader",
+  "--experimental-loader",
+  "-e",
+  "--eval",
+  "-p",
+  "--print",
+  "--env-file",
+  "--conditions",
+  "-C",
+  "--input-type",
+  "--max-old-space-size",
+  "--title",
+  "--inspect-port",
+  "--cwd",
+  "--preload",
+  "--define",
+  "-d",
+  "--port",
+  "--config",
+  "-c"
+]);
+var ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*\+?=/;
+var BRACKETS = ["{", "}"];
+function takesNext(wrapper, option) {
+  if (option.includes("="))
+    return false;
+  if (option.startsWith("--"))
+    return wrapper.longValued.includes(option);
+  for (let i = 1;i < option.length; i++)
+    if (wrapper.valued.includes(option.charAt(i)))
+      return i === option.length - 1;
+  return false;
+}
+function optionValue(wrapper, names, option, next) {
+  if (!names.length || option === "-" || option === "--")
+    return null;
+  if (option.startsWith("--")) {
+    const [name, attached] = option.split(/=(.*)/s, 2);
+    return names.includes(name ?? "") ? attached ?? next ?? "" : null;
+  }
+  for (let i = 1;i < option.length; i++) {
+    const letter = option.charAt(i);
+    if (names.includes(`-${letter}`))
+      return option.slice(i + 1) || next || "";
+    if (wrapper.valued.includes(letter))
+      return null;
+  }
+  return null;
+}
+function withoutLead(words) {
+  let i = 0;
+  let viaXargs = false;
+  let firstWrapper;
+  const unsets = [];
+  while (i < words.length) {
+    const w = words[i] ?? "";
+    const wrapper = WRAPPER_BY_NAME.get(w.replace(/^.*\//, ""));
+    if (ASSIGNMENT.test(w) || KEYWORDS.includes(w) || BRACKETS.includes(w))
+      i++;
+    else if (wrapper) {
+      viaXargs ||= wrapper.name === "xargs";
+      firstWrapper ??= wrapper.name;
+      i++;
+      let positionals = wrapper.positionals;
+      for (;; ) {
+        const word = words[i] ?? "";
+        if (i < words.length && word.startsWith("-")) {
+          const script = optionValue(wrapper, wrapper.scriptOptions ?? [], word, words[i + 1]);
+          if (script !== null)
+            return { words: [], viaXargs, unsets, firstWrapper, script };
+          const unset = optionValue(wrapper, wrapper.unsetOptions ?? [], word, words[i + 1]);
+          if (unset !== null)
+            unsets.push(unset);
+          i++;
+          if (takesNext(wrapper, word))
+            i++;
+        } else if (i < words.length && wrapper.assignments && ASSIGNMENT.test(word))
+          i++;
+        else if (i < words.length && positionals > 0) {
+          positionals--;
+          i++;
+        } else
+          break;
+      }
+      if (wrapper.namedBlock && /^\w+$/.test(words[i] ?? "") && (words[i + 1] ?? "").startsWith("{"))
+        i++;
+    } else
+      break;
+  }
+  const rest = words.slice(i);
+  if (rest.length) {
+    const last = rest.length - 1;
+    rest[last] = (rest[last] ?? "").replace(/}+$/, "") || (rest[last] ?? "");
+  }
+  return { words: rest, viaXargs, unsets, firstWrapper };
+}
+var REDIRECT_OPERATOR = new RegExp(`^${OPERATOR_PREFIX}[<>]{1,2}(?![<>])[&|]?`);
+var HERE_STRING_OPERATOR = new RegExp(`^${OPERATOR_PREFIX}<<<`);
+var PROCESS_SUBSTITUTION = /^[<>]\(/;
+function redirectOperator(raw) {
+  if (PROCESS_SUBSTITUTION.test(raw))
+    return;
+  return (HERE_STRING_OPERATOR.exec(raw) ?? REDIRECT_OPERATOR.exec(raw))?.[0];
+}
+function withoutRedirects(tokens) {
+  const kept = [];
+  for (let i = 0;i < tokens.length; i++) {
+    const { word, raw } = tokens[i] ?? { word: "", raw: "" };
+    if (raw.startsWith("(("))
+      continue;
+    const operator = redirectOperator(raw);
+    if (operator === undefined)
+      kept.push(word);
+    else if (raw.length <= operator.length)
+      i++;
+  }
+  return kept;
+}
+var NPX_RUNNER = /^(?:\S*\/)?(?:npx|bunx)$/;
+var NPX_CALL = ["-c", "--call"];
+var NPX_VALUED = new Set(["-p", "--package", ...NPX_CALL, "--shell", "--loglevel"]);
+var RUNNER_VALUED = { js: JS_RUNNER_VALUED, npx: NPX_VALUED };
+function runnerOptions(words, kind) {
+  const valued = RUNNER_VALUED[kind];
+  let call = null;
+  let i = 1;
+  for (;i < words.length && (words[i] ?? "").startsWith("-"); i++) {
+    const option = words[i] ?? "";
+    const [name, attached] = option.split(/=(.*)/s, 2);
+    if (kind === "npx" && NPX_CALL.includes(name ?? ""))
+      call ??= attached ?? words[i + 1] ?? "";
+    if (attached === undefined && valued.has(option))
+      i++;
+  }
+  return { end: i, call };
+}
+function crewArgs(words) {
+  const [first] = words;
+  if (first === undefined)
+    return null;
+  if (CREW_COMMAND.test(first))
+    return words.slice(1);
+  const kind = JS_RUNNER.test(first) ? "js" : NPX_RUNNER.test(first) ? "npx" : null;
+  if (kind) {
+    const { end } = runnerOptions(words, kind);
+    const target = words[end] ?? "";
+    if (kind === "js" ? CREW_BUNDLE.test(target) : target === "crew")
+      return words.slice(end + 1);
+  }
+  return null;
+}
+function commandOf({ text, tokens, inner, heredocs }) {
+  const lead = withoutLead(withoutRedirects(tokens));
+  const args = crewArgs(lead.words);
+  return {
+    ...lead,
+    piece: text,
+    tokens,
+    inner,
+    heredocs,
+    program: (lead.words[0] ?? "").replace(/^.*\//, ""),
+    args: args ? args.flatMap(splitFlagValue) : null
+  };
+}
+var SHELL_VALUED = new Set(["-o", "+o", "-O", "+O", "--rcfile", "--init-file"]);
+function shellScript(program, words) {
+  if (!SHELL_NAMES.includes(program) || !words.some((w) => /^-[A-Za-z]*c[A-Za-z]*$/.test(w)))
+    return null;
+  for (let i = 1;i < words.length; i++) {
+    const w = words[i] ?? "";
+    if (w === "--")
+      return words[i + 1] ?? "";
+    if (!/^[-+]/.test(w))
+      return w;
+    if (SHELL_VALUED.has(w))
+      i++;
+  }
+  return "";
+}
+var WATCH_VALUED = new Set(["-n", "--interval"]);
+function handedOn({ program, words, script, tokens, heredocs }) {
+  if (script !== undefined)
+    return script;
+  const shell = shellScript(program, words);
+  if (shell !== null)
+    return shell;
+  if (SHELL_NAMES.includes(program)) {
+    const here = tokens.findIndex((t) => HERE_STRING_OPERATOR.test(t.raw));
+    const operator = HERE_STRING_OPERATOR.exec(tokens[here]?.raw ?? "")?.[0];
+    if (operator !== undefined)
+      return tokens.slice(here).map((t) => t.word).join(" ").slice(operator.length).trim();
+    if (heredocs.length)
+      return heredocs.join(`
+`);
+  }
+  if (program === "eval")
+    return words.slice(1).join(" ");
+  if (program === "trap")
+    return words.slice(1).find((w) => !w.startsWith("-")) ?? "";
+  const exec = words.findIndex((w) => /^-(?:exec|execdir|ok|okdir)$/.test(w));
+  if (program === "find" && exec !== -1)
+    return words.slice(exec + 1).filter((w) => w !== ";" && w !== "+").join(" ");
+  if (NPX_RUNNER.test(program))
+    return runnerOptions(words, "npx").call;
+  if (program === "watch") {
+    let i = 1;
+    for (;i < words.length && (words[i] ?? "").startsWith("-"); i++)
+      if (WATCH_VALUED.has(words[i] ?? ""))
+        i++;
+    return words.slice(i).join(" ");
+  }
+  return null;
+}
+function walk(command) {
+  const found = [];
+  let unreadable = null;
+  const pieces = (text) => {
+    const reading = readCommand(text);
+    unreadable ??= reading.unclosed;
+    return reading.pieces;
+  };
+  const visit = (read2, inherited) => {
+    for (const piece of read2) {
+      const command2 = commandOf(piece);
+      const viaXargs = inherited || command2.viaXargs;
+      const handed = handedOn(command2);
+      found.push({ ...command2, viaXargs, handed });
+      visit(piece.inner, viaXargs);
+      if (handed !== null)
+        visit(pieces(handed), viaXargs);
+    }
+  };
+  visit(pieces(command), false);
+  return { found, unreadable };
+}
+function crewCommandsOf(found) {
+  return found.flatMap((c) => c.args ? [{ args: c.args, viaXargs: c.viaXargs }] : []);
+}
+function splitFlagValue(word) {
+  const match = /^(--[\w-]+)=(.*)$/.exec(word);
+  return match ? [match[1] ?? "", match[2] ?? ""] : [word];
+}
+var UNREADABLE_VERB = /[$\x60*?[{]/;
+function userOnlyCommand(args) {
+  const parsed = parse(args);
+  if (parsed.flags.help === true || parsed.positional.includes("-h"))
+    return null;
+  const [verb, second] = parsed.positional;
+  const unreadable = (word) => word !== undefined && UNREADABLE_VERB.test(word);
+  const userOnly = unreadable(verb) || (verb === "profile" || verb === "policy") && unreadable(second) || verb === "skip" || verb === "approve" || verb === "accept" || verb === "decide" || verb === "objection" && parsed.positional.includes("waive") || verb === "profile" && (second === "confirm" || second === "set") || verb === "policy" && (second === "accept" || second === "set") || verb === "task" && parsed.positional.includes("merge") && parsed.flags.force === true;
+  if (!userOnly)
+    return null;
+  return {
+    parsed,
+    policyCommand: verb === "policy" || verb === "accept" && second === "policy"
+  };
+}
+var QUOTES = /["'\\]/g;
 var BIN = String.raw`^(?:\S*/)?`;
 var verbEntry = (re, what) => ({
   re: new RegExp(`${BIN}${re}`),
@@ -3884,6 +5270,7 @@ var OPENED_VERBS = [
   { re: new RegExp(`${GIT_CMD}${GIT_OPTS}*?--work-tree(?:=|\\s)`), what: "git --work-tree" },
   { re: new RegExp(`${GIT}merge(?![\\w-])`), what: "git merge" },
   { re: new RegExp(`${GIT}pull\\b`), what: "git pull" },
+  { re: new RegExp(`${GIT}clean\\b`), what: "git clean" },
   {
     re: new RegExp(`${GIT_CMD}${GIT_OPTS}*?${UNREADABLE_WORD}`),
     what: "git with an expansion or a pattern as its verb"
@@ -3916,8 +5303,7 @@ var OPENED_VERBS = [
   verbEntry(String.raw`ansible-playbook\b`, "ansible-playbook"),
   verbEntry(String.raw`cap\s+\S+\s+deploy\b`, "cap deploy"),
   verbEntry(String.raw`serverless\s+deploy\b`, "serverless deploy"),
-  verbEntry(String.raw`sam\s+deploy\b`, "sam deploy"),
-  verbEntry(String.raw`crew(?:\.mjs)?\s+${OPTS}task\s+\S+\s+${OPTS}merge\b`, "crew task merge")
+  verbEntry(String.raw`sam\s+deploy\b`, "sam deploy")
 ];
 var PUSH = new RegExp(`${GIT}push\\b(.*)$`);
 var PUSH_WIDE = [
@@ -3938,43 +5324,13 @@ function widensPush(word) {
     return false;
   return !("--recurse-submodules".startsWith(name) && value === "no");
 }
-var SHELL_WORDS = String.raw`(?:if|then|else|elif|do|while|until|!|nice(?:\s+-n\s*\S+)?|timeout(?:\s+-[sk]\s+\S+|\s+-\S+)*\s+\S+|stdbuf(?:\s+-\S+)*|flock(?:\s+-w\s+\S+|\s+-[a-zA-Z]+)*\s+\S+|sudo(?:\s+-[ugpCh]\s+\S+|\s+-\S+)*|env(?:\s+-[uCS]\s+\S+|\s+-\S+|\s+\w+=\S*)*|exec(?:\s+-a\s+\S+|\s+-\S+)*|xargs(?:\s+-[nILPdEs]\s*\S+|\s+-\S+)*|doas|caffeinate(?:\s+-\S+)*|ionice(?:\s+-\S+(?:\s+\S+)?)*|coproc(?:\s+\w+(?=\s*\{))?|noglob|nocorrect)`;
-var SHELL_LEAD = String.raw`(?:\S+\s*\(\s*\)\s*\{|function\s+\S+\s*\{|case\s+\S+\s+in(?:\s+[^\s()$\x60]+\))?|[^\s()$\x60]+\))`;
-var LEAD_CHARS = String.raw`(?:[\s(|&;]|\{(?=\s))*`;
-var LEADING = new RegExp(String.raw`^${LEAD_CHARS}(?:(?:${SHELL_LEAD}|${SHELL_WORDS}|${RUNNER})\s+)*`);
-var BEFORE_INTERPRETER = new RegExp(String.raw`^${LEAD_CHARS}(?:(?:${SHELL_LEAD}|${SHELL_WORDS}|${RUNNER_NO_SHELL})\s+)*`);
 var INTERPRETER_STDIN = new RegExp(String.raw`^(?:\S*/)?${SHELLS}(?:\s+-{1,2}[A-Za-z]*)*$`);
-var REDIRECT = /(?:^|\s)(?:\d+|&)?[<>]{1,2}(?![<>(])(?:[&|]?(?![$<>]\()[^\s()\x60;&|]+|\s+(?![$<>]\()[^\s()\x60;&|]+)/g;
-var HERE_STRING = /<<<\s*/g;
-function stripRedirects(text) {
-  return text.replace(REDIRECT, " ");
-}
-var SUBSTITUTION = /\$\(\(([^()]*)\)\)|[$<>]\(([^()]*)\)|`([^`]*)`/g;
-var OPENER = /[$<>]\(|`/;
-var UNREADABLE = "a substitution the guard cannot read";
-var CASE_ARM = /(?:\bcase\s+\S+\s+in|;(?:;&?|&))\s*\(?(?!esac\b)[^\s()$\x60|]+(?:\|[^\s()$\x60|]+)*\)/g;
-function withoutCaseArms(text) {
-  return text.replace(CASE_ARM, " ");
-}
-function unbalanced(text) {
-  let depth = 0;
-  for (const ch of text) {
-    if (ch === "(")
-      depth += 1;
-    else if (ch === ")") {
-      depth -= 1;
-      if (depth < 0)
-        return true;
-    }
-  }
-  return depth !== 0 || (text.match(/`/g)?.length ?? 0) % 2 === 1;
-}
-var LEADING_SUBSTITUTION = /^(?:\$\([^()]*\)|`[^`]*`)\S*/;
-var VAR_ROOT_PATH = new RegExp(String.raw`^(?:\$\([^()]*\)|\x60[^\x60]*\x60|\$\{[^}]*\}|\$\w+)(?:/[^\s${EXPANSION_CHARS}${PATTERN_CHARS}}\])]+)+$`);
+var UNREADABLE = "the guard cannot read";
+var VAR_ROOT_PATH = new RegExp(String.raw`^(?:\$\{[^}]*\}|\$\w+)(?:/[^\s${EXPANSION_CHARS}${PATTERN_CHARS}}\])]+)+$`);
 var EXPANSION = new RegExp(`[${EXPANSION_CHARS}]`);
 var PATTERN = new RegExp(`[${PATTERN_CHARS}]`);
 function commandWordDenial(head) {
-  const word = (LEADING_SUBSTITUTION.exec(head) ?? /^\S*/.exec(head))?.[0] ?? "";
+  const word = /^\S*/.exec(head)?.[0] ?? "";
   if (!word || VAR_ROOT_PATH.test(word) || /^\[\[?$/.test(word))
     return null;
   if (EXPANSION.test(word))
@@ -3987,23 +5343,16 @@ var REMOTE_PATH = new RegExp(String.raw`[:/@${EXPANSION_CHARS}${PATTERN_CHARS}}\
 function normalizeTool(command) {
   return command.replace(/^\S+/, (word) => word.toLowerCase()).replace(/^(\S*\/)?git-(?=[a-z])/, "$1git ");
 }
-function unwrapSubstitutions(text) {
-  const inner = [];
-  let rest = text;
-  for (;; ) {
-    const found = [];
-    const next = rest.replace(SUBSTITUTION, (_, a, b, c) => {
-      found.push(a ?? b ?? c ?? "");
-      return " ";
-    });
-    if (!found.length)
-      return { inner, rest };
-    inner.push(...found);
-    rest = next;
-  }
-}
-function behindTheShell(text, lead = LEADING) {
-  return text.replace(lead, "").replace(/^[\s|&;]+/, "").replace(lead, "").trim();
+function readOnlyShapeDenial({ inner, tokens }, withExpansions = true) {
+  if (inner.length)
+    return "a substitution";
+  if (tokens.some((t) => HERE_STRING_OPERATOR.test(t.raw)))
+    return "a here-string";
+  if (tokens.some((t) => redirectOperator(t.raw) !== undefined))
+    return "a redirect";
+  if (withExpansions && tokens.some((t) => t.expands))
+    return "an expansion";
+  return null;
 }
 function judgeCommand(command, branch) {
   for (const { re, what } of OPENED_VERBS)
@@ -4025,45 +5374,45 @@ function judgeCommand(command, branch) {
     return "git push";
   return null;
 }
-function openedSessionDenial(cleaned, branch) {
-  const bare = withoutCaseArms(cleaned.replace(HERE_STRING, " "));
-  if (OPENER.test(bare) && unbalanced(bare))
-    return UNREADABLE;
-  const text = stripRedirects(bare);
-  if (GIT_CONFIG_ENV.test(text))
+function openedSessionDenial(command, branch, walked = walk(command)) {
+  if (walked.unreadable)
+    return `${walked.unreadable} ${UNREADABLE}`;
+  if (GIT_CONFIG_ENV.test(command.replace(QUOTES, "")))
     return "GIT_CONFIG_* in the environment";
-  const unreadableWord = commandWordDenial(behindTheShell(text));
-  if (unreadableWord)
-    return unreadableWord;
-  const { inner, rest } = unwrapSubstitutions(text);
-  if (OPENER.test(rest))
-    return UNREADABLE;
-  for (const piece of inner) {
-    const denied = openedSessionDenial(piece, branch);
+  const pieces = walked.found.map(({ words, handed }) => ({
+    text: normalizeTool(words.join(" ")),
+    handed
+  }));
+  for (const { text, handed } of pieces) {
+    if (!text)
+      continue;
+    if (handed === null && INTERPRETER_STDIN.test(text))
+      return "an interpreter reading its script from its input";
+    const denied = judgeCommand(text, branch);
     if (denied)
       return denied;
   }
-  const head = behindTheShell(rest);
-  const parts = simpleCommands(head);
-  if (parts.length > 1) {
-    for (const part of parts) {
-      const denied = openedSessionDenial(part, branch);
-      if (denied)
-        return denied;
-    }
-    return null;
+  for (const { text } of pieces) {
+    const unreadableWord = text ? commandWordDenial(text) : null;
+    if (unreadableWord)
+      return unreadableWord;
   }
-  if (INTERPRETER_STDIN.test(normalizeTool(behindTheShell(rest, BEFORE_INTERPRETER))))
-    return "an interpreter reading its script from its input";
-  return judgeCommand(normalizeTool(head), branch);
+  return null;
 }
-function userOnlyDecision(cleaned, permissionMode, headless, policy) {
-  const flagged = MODE_FLAG.exec(cleaned)?.[1];
+function unwatched(headless, permissionMode) {
   const mode = permissionMode ?? "default";
-  if (headless || PROMPTLESS_MODES.has(mode)) {
+  if (headless)
+    return `a headless session in ${mode} mode`;
+  return PROMPTLESS_MODES.has(mode) ? `${mode} mode` : null;
+}
+function userOnlyDecision(command, permissionMode, headless, policy) {
+  const { parsed, policyCommand } = command;
+  const flagged = typeof parsed.flags.mode === "string" ? parsed.flags.mode : undefined;
+  const mode = permissionMode ?? "default";
+  const where = unwatched(headless, permissionMode);
+  if (where) {
     if (flagged === mode)
       return null;
-    const where = headless ? `a headless session in ${mode} mode` : `${mode} mode`;
     if (flagged === undefined) {
       return [
         "deny",
@@ -4081,9 +5430,9 @@ function userOnlyDecision(cleaned, permissionMode, headless, policy) {
       `Crew: a person is present (${mode} mode); run the command without --mode so they are asked`
     ];
   }
-  if (VALIDATOR_FLAG.test(cleaned))
+  if (typeof parsed.flags.validator === "string")
     return null;
-  if (policy.attendedDecisions === "relay" && !POLICY_COMMAND.test(cleaned))
+  if (policy.attendedDecisions === "relay" && !policyCommand)
     return null;
   return ["ask", "Crew: this command records a decision that only the user can take"];
 }
@@ -4111,7 +5460,7 @@ function onPreToolUse(ctx, payload) {
     const filePath = pathFromInput(input);
     if (!filePath)
       return {};
-    const abs = canonical(isAbsolute3(filePath) ? filePath : join22(ctx.paths.root, filePath));
+    const abs = canonical(isAbsolute3(filePath) ? filePath : join24(ctx.paths.root, filePath));
     if (isProtectedPath(ctx.paths, abs)) {
       return answer("deny", `Crew: ${filePath} is maintained by the engine and is changed through the crew command`);
     }
@@ -4127,28 +5476,400 @@ function onPreToolUse(ctx, payload) {
   }
   if (tool === "Bash") {
     const command = typeof input.command === "string" ? input.command : "";
+    const walked = walk(command);
+    const { found } = walked;
+    const crewCommands = crewCommandsOf(found);
     if (ctx.openedBy) {
-      const denied = openedSessionDenial(command.replace(/["'\\]/g, ""), ctx.openedBranch);
+      const cleanedCommand = command.replace(QUOTES, "");
+      const opened = `Crew: this session was opened by mail (${ctx.openedBy})`;
+      const never = `${opened} and never merges, pushes to another branch, releases or deploys`;
+      const ending = `it ends with crew mail reply ${ctx.openedBy} --branch ${ctx.openedBranch ?? "<branch>"} --item <child id>`;
+      const variables = `${opened} and the opener's variables are not its to change`;
+      const named2 = OPENER_VAR.exec(cleanedCommand)?.[0];
+      if (named2)
+        return answer("deny", `${variables}: ${named2} is denied`);
+      for (const { piece, unsets } of found) {
+        const what = variableDenial(piece.replace(QUOTES, "")) ?? (unsets.length && unreadableNames(unsets.join(" ")) ? "env -u" : null);
+        if (what)
+          return answer("deny", `${variables}: ${what} is denied`);
+      }
+      const denied = openedSessionDenial(command, ctx.openedBranch, walked);
       if (denied)
-        return answer("deny", `Crew: this session was opened by mail (${ctx.openedBy}) and never merges, pushes to another branch, releases or deploys: ${denied} is denied; it ends with crew mail reply ${ctx.openedBy} --branch ${ctx.openedBranch ?? "<branch>"} --item <child id>`);
+        return answer("deny", `${never}: ${denied} is denied; ${ending}`);
+      const stays = `${opened} and stays in its checkout`;
+      for (const { program, words, handed, tokens } of found) {
+        if (program === "cd" || program === "pushd") {
+          const target = words.slice(1).find((w) => !w.startsWith("-")) ?? "";
+          if (!target || /^[/~$`-]|^\.\.(?:\/|$)|\.\.\//.test(target) || /[*?[{(]/.test(target))
+            return answer("deny", `${stays}: ${[program, ...words.slice(1)].join(" ")} is denied`);
+        }
+        if (tokens.some((t) => /^CDPATH\+?=/.test(t.word)))
+          return answer("deny", `${stays}: CDPATH is denied`);
+        const named3 = tokens.filter((t) => handed === null || t.word !== handed && !HERE_STRING_OPERATOR.test(t.raw)).map((t) => t.word).flatMap((w) => ASSIGNMENT.test(w) ? [w, w.slice(w.indexOf("=") + 1)] : [w]);
+        for (const w of named3) {
+          if (w.includes(ctx.paths.userDir) || /(?:^|\/)\.wizardingcode(?:\/|$)/.test(w))
+            return answer("deny", `${stays}: the engine's folder ${w} is denied`);
+          if (unreadablePath(w))
+            return answer("deny", `${stays}: ${w} cannot be read and may reach the engine's folder; it is denied`);
+        }
+      }
+      for (const { args } of crewCommands) {
+        const { positional } = parse(args);
+        const verb = positional[0];
+        if (verb === "task" && positional.includes("merge"))
+          return answer("deny", `${never}: crew task merge is denied; ${ending}`);
+        if (verb === "task" && positional.includes("open"))
+          return answer("deny", `${opened} and opens no tasks of its own: crew task open is denied`);
+        if (verb === "mail" && positional[1] === "stop")
+          return answer("deny", `${opened} and stops no sessions: crew mail stop is denied`);
+        if (verb === "approve") {
+          const id = positional[1];
+          if (id && loadWork(ctx.paths, id).work?.route === "full")
+            return answer("deny", `${opened} and a full-route spec waits for a person: crew approve ${id} is denied; run crew await ${id} user and end the turn`);
+        }
+      }
+      if (ctx.openedMode === "read-only") {
+        const readOnly = `Crew: this read-only session was opened by mail (${ctx.openedBy})`;
+        const reads = `it reads with the Read, Grep and Glob tools and ends with crew mail reply ${ctx.openedBy} "<text>"`;
+        const runsNo = `${readOnly} and runs no shell command but crew`;
+        for (const current of found) {
+          const { program, args, firstWrapper } = current;
+          if (!args) {
+            const lead = program || firstWrapper;
+            const bare = lead ? null : readOnlyShapeDenial(current, false);
+            if (bare)
+              return answer("deny", `${runsNo}: ${bare} is denied; ${reads}`);
+            if (!lead)
+              continue;
+            return answer("deny", `${runsNo}: ${lead} is denied; ${reads}`);
+          }
+          const shape = readOnlyShapeDenial(current);
+          if (shape)
+            return answer("deny", `${runsNo}: ${shape} is denied; ${reads}`);
+          const [verb, second] = parse(args).positional;
+          const allowed = !verb || READ_ONLY_VERBS.has(verb) || verb === "mail" && (!second || READ_ONLY_MAIL.has(second));
+          if (!allowed)
+            return answer("deny", `${readOnly} and may only read and reply: crew ${verb}${verb === "mail" && second ? ` ${second}` : ""} is denied; it ends with crew mail reply ${ctx.openedBy} "<text>"`);
+        }
+      }
     }
     let asked = null;
+    for (const { args, viaXargs } of crewCommands) {
+      if (viaXargs)
+        return answer("deny", "Crew: a crew command whose words come from xargs' input cannot be read; write the command out");
+      const userOnly = userOnlyCommand(args);
+      if (!userOnly)
+        continue;
+      const decided = userOnlyDecision(userOnly, payload.permission_mode, ctx.headless, ctx.policy);
+      if (decided?.[0] === "deny")
+        return answer(...decided);
+      asked ??= decided;
+    }
     for (const piece of simpleCommands(command)) {
-      const cleaned = piece.replace(/["'\\]/g, "");
-      if (USER_ONLY.test(cleaned) && !HELP_FLAG.test(cleaned)) {
-        const decided = userOnlyDecision(cleaned, payload.permission_mode, ctx.headless, ctx.policy);
-        if (decided?.[0] === "deny")
-          return answer(...decided);
-        asked ??= decided;
-      }
       if (ENGINE_FILES.test(piece) && WRITE_SHAPE.test(piece) || OPAQUE_REDIRECT.test(piece) && ENGINE_FILES.test(command)) {
         return answer("deny", "Crew: files under .crew/ and ~/.wizardingcode/crew that the engine owns are written only by the crew command");
       }
+    }
+    if (walked.unreadable) {
+      const what = `${walked.unreadable} ${UNREADABLE}: the shell refuses such a line or runs what the hook could not see`;
+      const where = unwatched(ctx.headless, payload.permission_mode);
+      if (where)
+        return answer("deny", `Crew: ${what}, and no person is watching this session (${where}); write the command so that the hook can read it`);
+      return answer("ask", `Crew: ${what}, so a person decides`);
     }
     if (asked)
       return answer(...asked);
   }
   return {};
+}
+
+// packages/engine/src/tasks.ts
+import { cpSync, existsSync as existsSync5 } from "node:fs";
+import { join as join25 } from "node:path";
+function shortId(workId) {
+  return workId.slice(0, 14);
+}
+function taskNames(workId, repoRoot, task, worktrees) {
+  const short = shortId(workId);
+  return {
+    branch: `crew/${short}/${task}`,
+    worktree: worktreePath(repoRoot, worktrees, `${short}-${task}`)
+  };
+}
+function taskText(planText, task) {
+  if (!planText)
+    return null;
+  const n = task.slice(2);
+  const lines = planText.split(`
+`);
+  for (let i = 0;i < lines.length; i++) {
+    const line = lines[i] ?? "";
+    const numbered = new RegExp(`^${n}\\.\\s+(.*)$`).exec(line);
+    if (numbered) {
+      const parts = [numbered[1] ?? ""];
+      for (let j = i + 1;j < lines.length && /^\s+\S/.test(lines[j] ?? ""); j++)
+        parts.push((lines[j] ?? "").trim());
+      return parts.join(`
+`).trim();
+    }
+    if (new RegExp(`^#{1,6}\\s*(?:T-${n}|Task ${n})\\b`).test(line)) {
+      const parts = [];
+      for (let j = i + 1;j < lines.length && !/^#{1,6}\s/.test(lines[j] ?? ""); j++)
+        parts.push(lines[j] ?? "");
+      return parts.join(`
+`).trim() || null;
+    }
+  }
+  return null;
+}
+function dirtyWatched(root, profile) {
+  return (gitChangedPaths(root) ?? []).filter((p) => isWatched(p, profile));
+}
+function openTask(ctx, env, work, task, criteria, text) {
+  if (ctx.self.openedBy)
+    return { refused: `a session opened by mail (${ctx.self.openedBy}) opens no tasks of its own` };
+  if (!isGitRepo(env.paths.root) || gitHead(env.paths.root) === "none")
+    return { refused: "a task needs a git repository with a commit to branch from" };
+  if (!/^T-\d+$/.test(task))
+    return { refused: `a task is named T-n, not ${task}` };
+  const unknown = criteria.find((c) => !work.criteria.some((k) => k.id === c));
+  if (unknown)
+    return { refused: `unknown criterion: ${unknown}` };
+  const existing = (work.tasks ?? []).find((t) => t.task === task);
+  if (existing)
+    return {
+      refused: `${task} is already open (message ${existing.message}, branch ${existing.branch})`
+    };
+  const open = openIn(ctx.paths.userDir, ctx.self.workspace, ctx.self.project);
+  const max = env.policy.mail.maxConcurrent;
+  if (open >= max)
+    return {
+      refused: `${open} session${open === 1 ? "" : "s"} open in ${ctx.self.project} (mail.maxConcurrent ${max}); wait for ${open === 1 ? "it" : "one"} to end, or stop ${open === 1 ? "it" : "one"} with crew mail stop`
+    };
+  const dirty = dirtyWatched(env.paths.root, env.profile);
+  if (dirty.length)
+    return {
+      refused: `uncommitted changes in ${dirty.join(", ")}; commit what the implementer must see, then open the task`
+    };
+  const body = text?.trim() || taskText(readText(join25(workDir(env.paths, work.id), "plan.md")), task);
+  if (!body)
+    return { refused: `plan.md names no task ${task}; give its text with --text "<task>"` };
+  const names = taskNames(work.id, env.paths.root, task, env.policy.mail.worktrees);
+  if (existsSync5(names.worktree))
+    return { refused: `${names.worktree} exists; remove it or pick another task number` };
+  let branches;
+  try {
+    branches = gitRun(env.paths.root, "branch", "--list", names.branch);
+  } catch (error) {
+    return { refused: `the branches of ${env.paths.root} cannot be read: ${gitError(error)}` };
+  }
+  if (branches)
+    return { refused: `branch ${names.branch} exists; delete it or pick another task number` };
+  const record = {
+    task,
+    message: "",
+    criteria,
+    text: body,
+    branch: names.branch,
+    worktree: names.worktree,
+    openedAt: nowIso()
+  };
+  work.tasks = [...work.tasks ?? [], record];
+  const sent = send(ctx, {
+    to: ".",
+    agent: task,
+    type: "change-request",
+    subject: `${task} of ${work.id}`,
+    text: `${body}
+
+Criteria: ${criteria.map((c) => `${c} ${work.criteria.find((k) => k.id === c)?.text ?? ""}`).join("; ")}`
+  }, work);
+  if ("refused" in sent) {
+    work.tasks = work.tasks.filter((t) => t !== record);
+    return { refused: sent.refused };
+  }
+  record.message = sent.message.id;
+  const made = addWorktree(env.paths.root, names.branch, names.worktree);
+  if (made) {
+    work.tasks = work.tasks.filter((t) => t !== record);
+    const notes2 = [];
+    updateStatusEverywhere(ctx, sent.message.id, "refused", made.failed, notes2);
+    dropBranch(env.paths.root, names.branch);
+    return { refused: notes2.length ? `${made.failed}; ${notes2.join("; ")}` : made.failed };
+  }
+  saveWork(env.paths, work);
+  const brief = readText(join25(workDir(env.paths, work.id), "brief.md"));
+  const notes = [];
+  const opened = openSession(ctx, {
+    message: sent.message,
+    mode: "branch",
+    cwd: names.worktree,
+    branch: names.branch,
+    prompt: taskPrompt(work, record, sent.message, brief, names.branch),
+    maxTurns: env.policy.mail.maxTurns,
+    maxMinutes: env.policy.mail.maxMinutes,
+    hops: ctx.self.hops + 1,
+    agent: task,
+    log: sessionLog(ctx, sent.message.id)
+  }, notes);
+  return { record, message: sent.message, opened, notes };
+}
+function listTasks(ctx, work) {
+  const inbox = readBox(mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project).dir, "inbox").box.messages;
+  return (work.tasks ?? []).map((t) => {
+    const m = inbox.find((x) => x.id === t.message);
+    const implementer = t.child ? null : !m?.opened ? "no implementer" : m.opened.endedAt ? `implementer ${m.opened.outcome ?? "ended"}${m.reason ? `: ${m.reason}` : ""}` : null;
+    return {
+      task: t,
+      status: m?.status ?? "sent",
+      verdict: t.verdict ?? m?.verdict ?? "no reply yet",
+      implementer
+    };
+  });
+}
+function takeReplies(ctx, paths, active) {
+  const work = active.work;
+  if (work && !active.tampered && absorbReplies(ctx, work))
+    saveWork(paths, work);
+}
+function absorbReplies(ctx, work) {
+  const inbox = ownInbox(ctx).messages;
+  let changed = false;
+  for (const t of work.tasks ?? []) {
+    if (t.child)
+      continue;
+    const r = inbox.find((m) => m.replyTo === t.message);
+    if (!r?.item)
+      continue;
+    t.child = r.item;
+    t.verdict = r.verdict ?? "unproven";
+    t.repliedAt = r.at;
+    changed = true;
+  }
+  return changed;
+}
+var CHILD_RECORD_FILES = [
+  "work.json",
+  "evidence.json",
+  "report.md",
+  "objections.json",
+  "mail.json"
+];
+function mergeTask(ctx, env, work, task, options = {}) {
+  if (ctx.self.openedBy)
+    return { refused: `a session opened by mail (${ctx.self.openedBy}) never merges` };
+  const record = (work.tasks ?? []).find((t) => t.task === task);
+  if (!record)
+    return { refused: `${task} is not a task of ${work.id}` };
+  if (record.mergedAt)
+    return { refused: `${task} is already merged` };
+  absorbReplies(ctx, work);
+  const child = record.child;
+  if (!child)
+    return {
+      refused: `${task} has no reply yet (message ${record.message}); the implementer ends with crew mail reply`
+    };
+  const childPaths = existsSync5(record.worktree) ? resolvePaths(record.worktree, ctx.env) : null;
+  if (!childPaths)
+    return {
+      refused: `${task}'s worktree ${record.worktree} is gone; restore it with git worktree add ${record.worktree} ${record.branch}, then merge`
+    };
+  const checked = childRecordVerdict(record, child, childPaths);
+  if ("refused" in checked)
+    return checked;
+  record.verdict = checked.verdict;
+  if (record.verdict !== "proven" && !options.forcedBy)
+    return {
+      refused: `${task}'s child ${child} is not proven; the user may merge it anyway with crew task ${work.id} merge ${task} --force`
+    };
+  const dirty = dirtyWatched(env.paths.root, env.profile);
+  if (dirty.length)
+    return {
+      refused: `uncommitted changes in ${dirty.join(", ")}; commit or stash them, then merge`
+    };
+  const swept = sweepSafely(ctx);
+  const withSwept = (refused) => {
+    const lines = swept.lines.filter((l) => l !== refused);
+    return { refused: lines.length ? `${refused} (${lines.join("; ")})` : refused };
+  };
+  const sessions = readOpenSessions(ctx);
+  if (sessions.tampered)
+    return withSwept(sessions.tampered);
+  const running = sessions.messages.find((m) => m.id === record.message);
+  if (running)
+    return withSwept(`${task}'s implementer is still running (pid ${running.opened?.pid}); wait for it to end, or stop it with crew mail stop ${record.message}`);
+  const branch = branchContentRefusal(record, child, env.paths.root);
+  if (branch)
+    return withSwept(branch.refused);
+  const subject = `Merge ${task} of ${work.id} (${record.branch}): ${child}, ${record.verdict ?? "unproven"}${options.forcedBy ? ", forced by the user" : ""}`;
+  try {
+    gitRun(env.paths.root, "merge", "--no-ff", "-m", subject, record.branch);
+  } catch (error) {
+    return withSwept(`git merge failed: ${gitError(error)}; resolve it by hand (or git merge --abort) and run the merge again`);
+  }
+  const commit = gitHead(env.paths.root);
+  record.mergedAt = nowIso();
+  record.mergeCommit = commit;
+  if (options.forcedBy)
+    record.forcedBy = options.forcedBy;
+  saveWork(env.paths, work);
+  const childDir = workDir(env.paths, child);
+  if (existsSync5(workDir(childPaths, child)))
+    cpSync(workDir(childPaths, child), childDir, {
+      recursive: true,
+      force: false,
+      errorOnExist: false
+    });
+  for (const name of CHILD_RECORD_FILES)
+    recordIntegrity(env.paths, join25(childDir, name));
+  const kept = removeWorktree(env.paths.root, record.worktree);
+  if (!kept)
+    dropOpenedMarker(ctx.paths.userDir, childPaths.root);
+  return { record, commit, swept: swept.lines, ...kept ? { worktreeKept: kept.kept } : {} };
+}
+function childRecordVerdict(record, child, childPaths) {
+  const item = loadWork(childPaths, child);
+  if (item.work?.origin?.mail !== record.message)
+    return {
+      refused: `${record.task}'s reply names ${child} as its child, but that item did not start from message ${record.message}`
+    };
+  const evidence = loadEvidence(childPaths, child);
+  const changedFile = item.tampered ? "work.json" : evidence.tampered ? "evidence.json" : null;
+  if (changedFile)
+    return {
+      refused: `${record.task}'s child ${child} changed outside the engine in ${record.worktree} (${changedFile}); crew accept ${child} there, then merge`
+    };
+  return { verdict: evidence.evidence.verdict };
+}
+function branchContentRefusal(record, child, root) {
+  const unreadable = (error) => ({
+    refused: `the branch ${record.branch} cannot be compared with HEAD: ${gitError(error)}; restore the branch, then merge`
+  });
+  const own = `.crew/work/${child}/`;
+  let changed;
+  try {
+    changed = gitRun(root, "diff", "--no-renames", "--name-only", `HEAD...${record.branch}`).split(`
+`).filter(Boolean);
+  } catch (error) {
+    return unreadable(error);
+  }
+  const foreign = changed.find((p) => p.startsWith(".crew/") && !p.startsWith(own));
+  if (foreign)
+    return {
+      refused: `the branch ${record.branch} changes ${foreign}, which is not the record of ${record.task}'s child; not merged`
+    };
+  let differs;
+  try {
+    differs = gitRun(record.worktree, "diff", "--no-renames", "--name-only", record.branch, "--", own).split(`
+`).filter(Boolean)[0];
+  } catch (error) {
+    return unreadable(error);
+  }
+  if (differs)
+    return {
+      refused: `${record.task}'s child ${child} differs between the branch ${record.branch} and its worktree ${record.worktree} (${differs.slice(own.length)}); commit the record in the worktree, then merge`
+    };
+  return null;
 }
 
 // packages/engine/src/hooks/prompt.ts
@@ -4164,6 +5885,8 @@ function onPrompt(ctx) {
   });
   const mail = refreshMail(ctx);
   const active = activeWork(ctx.paths);
+  if (active?.work && !mail.failed)
+    mailQuietly(() => takeReplies(ctx.mail, ctx.paths, active), undefined);
   const lines = [];
   if (active?.work)
     lines.push(statusLine(ctx, active.work, active.tampered));
@@ -4186,6 +5909,7 @@ function onPrompt(ctx) {
 function onSessionStart(ctx, payload = {}) {
   ensureCrewDir(ctx.paths, ctx.policy);
   const mail = refreshMail(ctx);
+  const swept = mail.failed ? [] : sweepLines(ctx);
   const former = isFormerWatchDefault(ctx.profile);
   const moved = former && !ctx.tampered;
   if (moved) {
@@ -4238,6 +5962,8 @@ function onSessionStart(ctx, payload = {}) {
     const branch = ctx.openedBranch ? ` (branch ${ctx.openedBranch})` : " (the opener pinned no branch: every push is denied)";
     lines.push(`This session was opened by mail ${ctx.openedBy}${opener ? ` from ${opener.from.project} (${opener.type})` : ""}: read it with crew mail read ${ctx.openedBy}. A question: answer from the code and crew mail reply ${ctx.openedBy} "<text>". A change request: run the method on this branch as a work item started with --origin ${ctx.openedBy}${branch}, commit on it, and end with crew mail reply ${ctx.openedBy} --branch <branch> --item <child id>. Never merge, push to another branch or deploy; a full-route spec waits for a person (crew await <id> user).`);
   }
+  if (swept.length)
+    lines.push(`Swept: ${swept.join("; ")}.`);
   lines.unshift(...blockers);
   return {
     hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: lines.join(" ") }
@@ -4267,10 +5993,12 @@ function onStop(ctx, payload = {}) {
     });
   }
   const mail = refreshMail(ctx);
-  const mailOff = mail.failed ? `mail is off for this turn: ${mail.failed}` : null;
-  const mailNote = mailOff ? ` (${mailOff})` : "";
+  const notes = mail.failed ? [`mail is off for this turn: ${mail.failed}`] : sweepLines(ctx);
+  const mailNote = () => notes.length ? ` (${notes.join("; ")})` : "";
   const active = activeWork(ctx.paths);
   const work = active?.work ?? null;
+  if (active?.work && !mail.failed)
+    mailQuietly(() => takeReplies(ctx.mail, ctx.paths, active), undefined);
   const clearWait = (pause) => {
     if (!work || work.awaiting === null || active?.tampered)
       return;
@@ -4287,7 +6015,7 @@ function onStop(ctx, payload = {}) {
   };
   const hold = (reason) => {
     session.stopBlocks += 1;
-    return done({ decision: "block", reason }, true);
+    return done({ decision: "block", reason: `${reason}${mailNote()}` }, true);
   };
   if (!mail.failed && session.stopBlocks < MAX_STOP_BLOCKS) {
     const inbox = mailQuietly(() => inboxSummary(ctx.mail), emptyInboxSummary());
@@ -4300,7 +6028,7 @@ function onStop(ctx, payload = {}) {
     }
     const blocker = inbox.blockers.find((b) => !b.noticedAt);
     if (blocker) {
-      mailQuietly(() => markNoticed(ctx.mail, blocker.id), undefined);
+      mailQuietly(() => markNoticed(ctx.mail, blocker.id, notes), undefined);
       return hold(`Crew: blocker ${blocker.id} from ${blocker.from.project}: ${subjectQuoted(blocker.subject)}. Read it (crew mail read ${blocker.id}) and say it to the user before anything else.`);
     }
   }
@@ -4310,7 +6038,7 @@ function onStop(ctx, payload = {}) {
   const changed = session.baseline !== null && current !== UNAVAILABLE ? current !== session.baseline : work !== null && !proven;
   if (!changed || proven) {
     session.stopBlocks = 0;
-    return release(mailOff ? { systemMessage: `Crew: ${mailOff}.` } : {});
+    return release(notes.length ? { systemMessage: `Crew: ${notes.join("; ")}.` } : {});
   }
   const missing = result ? result.unproven : ['no work item: start one with crew start "<request>"'];
   const what = work ? waitingPhrase(work) : null;
@@ -4318,12 +6046,12 @@ function onStop(ctx, payload = {}) {
     session.stopBlocks = 0;
     const reason = missing[0] ?? "not proven";
     return release({
-      systemMessage: `Crew: work ${work.id} ends this turn ${what} and is not proven (${reason}). The next turn is held to the Stop rule again.${mailNote}`
+      systemMessage: `Crew: work ${work.id} ends this turn ${what} and is not proven (${reason}). The next turn is held to the Stop rule again.${mailNote()}`
     }, reason);
   }
   if (session.stopBlocks >= MAX_STOP_BLOCKS) {
     return done({
-      systemMessage: `Crew: not proven after ${MAX_STOP_BLOCKS} attempts. ${missing.join("; ")}.${mailNote}`
+      systemMessage: `Crew: not proven after ${MAX_STOP_BLOCKS} attempts. ${missing.join("; ")}.${mailNote()}`
     });
   }
   session.stopBlocks += 1;
@@ -4332,12 +6060,12 @@ function onStop(ctx, payload = {}) {
   const judgement = work && missing.some((m) => m.startsWith("judgement gate")) ? ` A judgement gate is cleared by its roles, not by the gate run: run the planned reviewers and the judge, then crew judgement ${work.id} record --ruling .crew/work/${work.id}/review/ruling.json.` : "";
   return done({
     decision: "block",
-    reason: `Crew: watched source files changed and the work is not proven. Missing: ${missing.join("; ")}. Run ${gate}, fix what fails, or ask the user to skip a step with crew skip.${judgement}${wait}${mailNote}`
+    reason: `Crew: watched source files changed and the work is not proven. Missing: ${missing.join("; ")}. Run ${gate}, fix what fails, or ask the user to skip a step with crew skip.${judgement}${wait}${mailNote()}`
   }, true);
 }
 
 // packages/engine/src/hooks/subagent-stop.ts
-import { join as join23 } from "node:path";
+import { join as join26 } from "node:path";
 var PLUGIN_PREFIX = "wizardingcode-developer-crew:";
 var BARE_ROLE = /^(judge|researcher|expert|devils-advocate|fault-finder|review-(code-quality|test-quality|security|ui-ux|risk))$/;
 function roleOf(agentType) {
@@ -4453,10 +6181,12 @@ function onSubagentStop(ctx, payload) {
     if (progress.pending && progress.reply && progress.saved) {
       const question = progress.pending;
       const { agent, file } = progress.saved;
-      const refused = relay(ctx, question, progress.reply, agent);
+      const relayed = relay(ctx, question, progress.reply, agent);
       progress.pending = null;
-      if (refused)
-        note = `Crew: ${agent}'s answer to ${question} ${whereSaved(progress.saved)} but the reply was not sent: ${refused}. Once that is cleared, send it with ${sendByHand(id, question, agent, file)}.`;
+      if ("refused" in relayed)
+        note = `Crew: ${agent}'s answer to ${question} ${whereSaved(progress.saved)} but the reply was not sent: ${relayed.refused}. Once that is cleared, send it with ${sendByHand(id, question, agent, file)}.`;
+      else if (relayed.notes.length)
+        note = `Crew: ${agent}'s answer to ${question} was sent, but ${relayed.notes.join("; ")}.`;
     }
     return note ? tell(note) : {};
   } catch (error) {
@@ -4481,8 +6211,8 @@ function recordStop(ctx, id, role, payload, transcriptNote, progress) {
     throw new Error(`work.json of ${id} could not be read`);
   if (item.tampered)
     throw new Error(tamperedItem(id));
-  const read = loadEvidence(ctx.paths, id);
-  const evidence = read.evidence;
+  const read2 = loadEvidence(ctx.paths, id);
+  const evidence = read2.evidence;
   const roles = evidence.roles ?? [];
   const answer2 = roleAnswer(payload.agent_transcript_path, payload.last_assistant_message);
   const { tokens, from } = roleTokens(payload.agent_transcript_path);
@@ -4497,7 +6227,7 @@ function recordStop(ctx, id, role, payload, transcriptNote, progress) {
     saved = { file: joinEarlierFile(dir, agent, answer2), agent };
   } else {
     const file = answerFile(agent, answer2);
-    writeText(join23(dir, file), file.endsWith(".json") ? `${unfenced(answer2)}
+    writeText(join26(dir, file), file.endsWith(".json") ? `${unfenced(answer2)}
 ` : `${answer2}
 `);
     saved = { file, agent };
@@ -4505,7 +6235,7 @@ function recordStop(ctx, id, role, payload, transcriptNote, progress) {
   progress.saved = saved;
   const pending = earlier && answer2 ? pendingQuestion(ctx, id, agent) : undefined;
   progress.pending = pending?.id ?? null;
-  if (read.tampered) {
+  if (read2.tampered) {
     const tampered = `evidence.json of ${id} changed outside the engine (crew accept ${id})`;
     if (!answer2)
       return `Crew: ${agent} stopped with no answer (no hand-back and an empty last message) and its end is not recorded: ${tampered}. Run the role again or save its answer from the transcript${transcriptNote}.`;
@@ -4539,20 +6269,20 @@ function pendingQuestion(ctx, workId, agent) {
 function joinEarlierFile(dir, agent, answer2) {
   if (agent.startsWith("review-")) {
     const file2 = answerFile(agent, answer2);
-    const current2 = (readText(join23(dir, file2)) ?? "").trimEnd();
+    const current2 = (readText(join26(dir, file2)) ?? "").trimEnd();
     const heading = `
 ## Clarifications`;
     const body = current2.includes(heading) ? current2 : `${current2}
 ${heading}`;
-    writeText(join23(dir, file2), `${body}
+    writeText(join26(dir, file2), `${body}
 - ${answer2.replace(/\n/g, `
   `)}
 `);
     return file2;
   }
   const file = `conclave/${agent}-reply.md`;
-  const current = readText(join23(dir, file));
-  writeText(join23(dir, file), current ? `${current.trimEnd()}
+  const current = readText(join26(dir, file));
+  writeText(join26(dir, file), current ? `${current.trimEnd()}
 
 ${answer2}
 ` : `${answer2}
@@ -4560,11 +6290,12 @@ ${answer2}
   return file;
 }
 function relay(ctx, questionId, answer2, agent) {
+  const notes = [];
   try {
-    const sent = reply(ctx.mail, questionId, answer2, { as: agent });
-    return "refused" in sent ? sent.refused : null;
+    const sent = reply(ctx.mail, questionId, answer2, { as: agent }, notes);
+    return "refused" in sent ? { refused: sent.refused } : { notes };
   } catch (error) {
-    return error.message;
+    return { refused: error.message };
   }
 }
 
@@ -4611,7 +6342,7 @@ function handleHook(event, payload, env = process.env) {
 }
 
 // packages/engine/src/tdd.ts
-import { join as join24 } from "node:path";
+import { join as join27 } from "node:path";
 var STEPS_BY_KIND = {
   behavior: { steps: ["red", "green"], how: "record red, then green" },
   preserve: { steps: ["before", "after"], how: "record before, then after" },
@@ -4663,7 +6394,7 @@ async function recordTdd(paths, work, evidence, profile, criterionId, step, over
   const result = await runCommand(command, {
     cwd: paths.root,
     timeoutMs: fallback?.timeoutMs ?? 10 * 60 * 1000,
-    logPath: join24(workDir(paths, work.id), log)
+    logPath: join27(workDir(paths, work.id), log)
   });
   const record = {
     command,
@@ -4711,7 +6442,6 @@ async function recordTdd(paths, work, evidence, profile, criterionId, step, over
 var VERSION = "0.4.0";
 
 // packages/engine/src/cli.ts
-var BOOLEAN_FLAGS = new Set(["json", "refresh", "force", "not-run", "all"]);
 var KNOWN_FLAGS = {
   detect: ["refresh"],
   profile: ["target", "stack", "force", "timeout"],
@@ -4734,6 +6464,7 @@ var KNOWN_FLAGS = {
   skip: ["reason", "mode"],
   evidence: [],
   status: [],
+  task: ["criteria", "text", "force", "mode"],
   mail: [
     "to",
     "type",
@@ -4752,31 +6483,6 @@ var KNOWN_FLAGS = {
   version: [],
   help: []
 };
-function parse(argv) {
-  const parsed = { positional: [], flags: {}, multi: {}, ordered: [], rest: [] };
-  for (let i = 0;i < argv.length; i++) {
-    const arg = argv[i] ?? "";
-    if (arg === "--") {
-      parsed.rest = argv.slice(i + 1);
-      break;
-    }
-    if (arg.startsWith("--")) {
-      const key = arg.slice(2);
-      const next = argv[i + 1];
-      if (next !== undefined && !next.startsWith("--") && !BOOLEAN_FLAGS.has(key)) {
-        parsed.flags[key] = next;
-        const values = parsed.multi[key] ?? [];
-        values.push(next);
-        parsed.multi[key] = values;
-        parsed.ordered.push({ key, value: next });
-        i++;
-      } else
-        parsed.flags[key] = true;
-    } else
-      parsed.positional.push(arg);
-  }
-  return parsed;
-}
 function unknownFlag(command, parsed) {
   const known = KNOWN_FLAGS[command];
   if (!known)
@@ -4794,6 +6500,21 @@ var refuse = (text, data = {}) => ({
   text,
   data
 });
+function guarded(label, step) {
+  try {
+    step();
+    return "";
+  } catch (error) {
+    return `${label}: ${error.message.split(`
+`)[0]}`;
+  }
+}
+function sweptText(swept) {
+  if (swept.ended.length || swept.expired.length)
+    return `swept: ${swept.ended.length} ended, ${swept.expired.length} expired (${swept.lines.join("; ")})`;
+  return swept.lines.join(`
+`);
+}
 var INACTIVE = "crew is inactive here: not a git repository and no .crew/ folder; run crew detect in the project root to activate it";
 function tamperMessage({ file, accept }) {
   return `state changed outside the engine: ${file}; the user can accept it with crew accept ${accept}`;
@@ -4825,11 +6546,11 @@ function load(paths, processEnv) {
 function openWork(env, id) {
   if (!id)
     return refuse("a work item id is required");
-  const read = loadWork(env.paths, id);
-  if (!read.work) {
-    return read.tampered ? refuse(tamperMessage({ file: `.crew/work/${id}/work.json`, accept: id })) : refuse(`unknown work item: ${id}`);
+  const read2 = loadWork(env.paths, id);
+  if (!read2.work) {
+    return read2.tampered ? refuse(tamperMessage({ file: `.crew/work/${id}/work.json`, accept: id })) : refuse(`unknown work item: ${id}`);
   }
-  return { work: read.work, tampered: read.tampered };
+  return { work: read2.work, tampered: read2.tampered };
 }
 function tamperRefusal(env, opened) {
   const found = [...env.tamperedFiles];
@@ -4862,16 +6583,16 @@ function skipStep(work, raw) {
 }
 function accept(env, target) {
   if (target === "profile" || target === "policy") {
-    if (!recordIntegrity(env.paths, join25(env.paths.crewDir, `${target}.json`)))
+    if (!recordIntegrity(env.paths, join28(env.paths.crewDir, `${target}.json`)))
       return refuse(`no .crew/${target}.json to accept`);
     return ok(`${target} accepted: its current content is now the trusted version`, {
       accepted: target
     });
   }
   const dir = workDir(env.paths, target);
-  if (!/^[\w.-]+$/.test(target) || target.includes("..") || !existsSync4(join25(dir, "work.json")))
+  if (!/^[\w.-]+$/.test(target) || target.includes("..") || !existsSync6(join28(dir, "work.json")))
     return refuse(`unknown work item: ${target}`);
-  const files = PROTECTED_WORK_FILES.filter((name) => recordIntegrity(env.paths, join25(dir, name)));
+  const files = PROTECTED_WORK_FILES.filter((name) => recordIntegrity(env.paths, join28(dir, name)));
   return ok(`${target} accepted: ${files.join(", ")} now trusted as they are`, {
     accepted: target,
     files
@@ -4920,10 +6641,10 @@ function guardContext(env, work, tampered) {
   const dir = workDir(env.paths, work.id);
   const result = assess(env.paths, work, env.profile, env.policy, env.tampered || tampered);
   return {
-    specText: readText(join25(dir, "spec.md")),
-    conclaveText: readText(join25(dir, "conclave.md")),
+    specText: readText(join28(dir, "spec.md")),
+    conclaveText: readText(join28(dir, "conclave.md")),
     ledger: loadLedger(env.paths, work.id).ledger,
-    planExists: existsSync4(join25(dir, "plan.md")),
+    planExists: existsSync6(join28(dir, "plan.md")),
     evidence: result.evidence,
     proven: result.verdict === "proven",
     unproven: result.unproven,
@@ -4938,7 +6659,7 @@ function deliver2(env, opened, evidence) {
       break;
   }
   saveWork(env.paths, opened.work);
-  writeProtectedText(env.paths, join25(workDir(env.paths, opened.work.id), "report.md"), reportOf(env, opened.work, evidence));
+  writeProtectedText(env.paths, join28(workDir(env.paths, opened.work.id), "report.md"), reportOf(env, opened.work, evidence));
 }
 function reportOf(env, work, evidence) {
   return renderReport(work, evidence, env.policy, loadLedger(env.paths, work.id).ledger, loadItemMail(env.paths, work.id), env.mail.self.project);
@@ -4954,7 +6675,7 @@ function logDecision(env, work, answers) {
     route: work.route,
     reasons: work.routeReasons
   });
-  const file = join25(env.paths.localDir, "decisions.jsonl");
+  const file = join28(env.paths.localDir, "decisions.jsonl");
   writeText(file, `${readText(file) ?? ""}${line}
 `);
 }
@@ -5006,7 +6727,7 @@ async function dispatch(parsed, io) {
     return settings(command, args, { userDir: userDirOf(io.env) });
   let paths = resolvePaths(io.cwd, io.env);
   if (!paths && command === "detect") {
-    ensureDir(join25(resolve3(io.cwd), ".crew"));
+    ensureDir(join28(resolve4(io.cwd), ".crew"));
     paths = resolvePaths(io.cwd, io.env);
   }
   if (!paths)
@@ -5024,7 +6745,7 @@ async function dispatch(parsed, io) {
       if (parsed.flags.refresh) {
         saveProfile(env.paths, profile);
         if (integrityOf(env.paths)[".crew/policy.json"] === undefined) {
-          recordIntegrity(env.paths, join25(env.paths.crewDir, "policy.json"));
+          recordIntegrity(env.paths, join28(env.paths.crewDir, "policy.json"));
         }
       }
       const missing = missingTestCommands(profile);
@@ -5144,7 +6865,7 @@ async function dispatch(parsed, io) {
         return refuse(tamperedBox(env.mail.self.project, "inbox"));
       const origin = inbox?.messages.find((m) => m.id === originId) ?? null;
       if (originId && !origin)
-        return refuse(`no message ${originId} addressed to this session`);
+        return refuse(`no message ${originId} addressed to this session (crew mail inbox)`);
       const previous = activeWork(env.paths);
       const previousProven = !!previous?.work && assess(env.paths, previous.work, env.profile, env.policy, env.tampered || previous.tampered).verdict === "proven";
       const warning = previous?.work && !previousProven ? `warning: ${previous.work.id} is not proven and is no longer the active work item
@@ -5178,13 +6899,16 @@ async function dispatch(parsed, io) {
       if (work.route === "fast" && criteria.length > 0)
         advancePhase(work, guardContext(env, work, false));
       saveWork(env.paths, work);
+      const originNotes = [];
       if (origin) {
-        const read = markRead(env.mail, origin.id);
-        recordInItem(env.paths, work.id, "refused" in read ? origin : read);
+        const read2 = markRead(env.mail, origin.id, originNotes);
+        recordInItem(env.paths, work.id, "refused" in read2 ? origin : read2);
       }
       const lines2 = criteria.map((c) => `
   ${c.id} (${c.kind}): ${c.text}`).join("");
-      return ok(`${warning}${sharedWarning}${inheritedWarning}${provenNote}started ${work.id} (route ${work.route}: ${work.routeReasons.join("; ")})${lines2}`, {
+      return ok(`${warning}${sharedWarning}${inheritedWarning}${provenNote}started ${work.id} (route ${work.route}: ${work.routeReasons.join("; ")})${lines2}${originNotes.length ? `
+${originNotes.join(`
+`)}` : ""}`, {
         id: work.id,
         route: work.route,
         phase: work.phase,
@@ -5346,6 +7070,15 @@ async function dispatch(parsed, io) {
         return opened;
       if (args[1] !== "spec")
         return refuse("usage: crew approve <id> spec [--mode <mode> [--validator complete-gap-round]]");
+      const openedBy = env.mail.self.openedBy;
+      if (openedBy && opened.work.route === "full") {
+        opened.work.awaiting = "user";
+        saveWork(env.paths, opened.work);
+        const notes = [];
+        if (ownInbox(env.mail).messages.some((m) => m.id === openedBy))
+          updateStatusEverywhere(env.mail, openedBy, "waiting-for-person", undefined, notes);
+        return refuse(`a full-route item opened by mail (${openedBy}) waits for a person at its spec; the item is marked waiting for the user and the message waiting-for-person${notes.length ? `; ${notes.join("; ")}` : ""}`);
+      }
       const decision = validatorFlag(parsed, env.policy);
       if (isOutcome(decision))
         return decision;
@@ -5500,7 +7233,7 @@ diff.patch: ${outcome.reviewNote}` : "";
           return refuse(`no review inputs for this item: run crew gate run ${opened.work.id} first, then the reviewers and the judge`);
         if (inputs.fingerprint !== before.currentFingerprint)
           return refuse(`the review inputs describe other code than the current one: run crew gate run ${opened.work.id}, then the reviewers and the judge again`);
-        const rulingPath = resolve3(env.paths.root, parsed.flags.ruling);
+        const rulingPath = resolve4(env.paths.root, parsed.flags.ruling);
         const text = readText(rulingPath);
         if (text === null)
           return refuse(`no ruling file at ${rulingPath}`);
@@ -5586,8 +7319,60 @@ ${report}`, {
           unproven: result.unproven
         });
       saveEvidence(env.paths, opened.work.id, result.evidence);
-      writeProtectedText(env.paths, join25(workDir(env.paths, opened.work.id), "report.md"), report);
+      writeProtectedText(env.paths, join28(workDir(env.paths, opened.work.id), "report.md"), report);
       return ok(report, { verdict: result.verdict, unproven: result.unproven });
+    }
+    case "task": {
+      const opened = openForChange(env, args[0]);
+      if (isOutcome(opened))
+        return opened;
+      const usage = 'usage: crew task <id> open T-n --criteria AC-1,AC-2 [--text "<task text>"] | list | merge T-n [--force]';
+      const ctx = env.mail;
+      if (args[1] === "open") {
+        const task = args[2];
+        const criteria = typeof parsed.flags.criteria === "string" ? parsed.flags.criteria.split(",").map((c) => c.trim()).filter(Boolean) : [];
+        if (!task || !criteria.length)
+          return refuse(usage);
+        const out = openTask(ctx, env, opened.work, task, criteria, typeof parsed.flags.text === "string" ? parsed.flags.text : undefined);
+        if ("refused" in out)
+          return refuse(out.refused);
+        const session = "failed" in out.opened ? `the implementer ${out.opened.stopped ? "was started and stopped" : "did not start"}: ${out.opened.failed}; the task keeps its record, the worktree ${out.record.worktree} and the branch ${out.record.branch}: open the implementer by hand there (a session opened by hand is watched by no sweep and no merge check), or drop them (git worktree remove ${out.record.worktree}; git branch -D ${out.record.branch})` : `implementer started (${out.opened.name}, pid ${out.opened.pid}, ${out.opened.maxTurns} turns, ${minutesText(out.opened.maxMinutes)})`;
+        return ok(`${task} opened: message ${out.message.id}, worktree ${out.record.worktree}, branch ${out.record.branch}; ${session}${out.notes.length ? `
+${out.notes.join(`
+`)}` : ""}`, { task: out.record, message: out.message, opened: out.opened, notes: out.notes });
+      }
+      if (args[1] === "list") {
+        const swept = sweptText(sweepSafely(ctx));
+        const taken = guarded("the replies were not taken", () => takeReplies(ctx, env.paths, opened));
+        let rows = [];
+        const listedTasks = guarded("the tasks were not listed", () => {
+          rows = listTasks(ctx, opened.work);
+        });
+        const lines2 = rows.map(({ task: t, status, verdict, implementer }) => `  ${t.task} · ${t.criteria.join(",")} · ${t.branch} · ${t.message} ${status} · ${t.child ?? "no child yet"} · ${verdict}${implementer ? ` · ${implementer}` : ""}${t.mergedAt ? ` · merged ${t.mergeCommit?.slice(0, 7)}` : ""}`);
+        return ok(`${[swept, taken, listedTasks].filter(Boolean).join(`
+`)}${swept || taken || listedTasks ? `
+` : ""}Tasks of ${opened.work.id}:${listedTasks ? " not listed" : lines2.length ? `
+${lines2.join(`
+`)}` : " none"}`, {
+          tasks: rows
+        });
+      }
+      if (args[1] === "merge") {
+        if (!args[2])
+          return refuse(usage);
+        const forcedBy = parsed.flags.force ? decisionFlag(parsed, env.policy) : undefined;
+        if (isOutcome(forcedBy))
+          return forcedBy;
+        const out = mergeTask(ctx, env, opened.work, args[2], forcedBy ? { forcedBy } : {});
+        if ("refused" in out)
+          return refuse(out.refused);
+        const forced = forcedBy ? ` forced ${decisionText(env.policy, forcedBy)}` : "";
+        const kept = out.worktreeKept ? `; worktree ${out.record.worktree} kept: ${out.worktreeKept}` : "";
+        return ok(`${out.swept.length ? `${out.swept.join(`
+`)}
+` : ""}merged ${args[2]} of ${opened.work.id}: ${out.commit.slice(0, 7)} (${out.record.branch}, child ${out.record.child}, ${out.record.verdict})${forced}${kept}`, { task: out.record, commit: out.commit, swept: out.swept });
+      }
+      return refuse(usage);
     }
     case "status": {
       const active = activeWork(env.paths);
@@ -5598,9 +7383,20 @@ ${report}`, {
   phase ${active.work.phase}, route ${active.work.route}${waitingText(active.work)}
 ${gateSummary(active.work, result.verdict, result.unproven, result.evidence.runs)}`;
       const work = active.work;
-      syncMail(env.mail, env.paths);
-      const inbox = inboxSummary(env.mail);
-      return ok(text, {
+      const synced = guarded("the mail was not synced", () => syncMail(env.mail, env.paths));
+      let inbox = emptyInboxSummary();
+      const summarised = guarded("the inbox was not read", () => {
+        inbox = inboxSummary(env.mail);
+      });
+      const taken = guarded("the replies were not taken", () => takeReplies(env.mail, env.paths, active));
+      let tasks = [];
+      const listed = guarded("the tasks were not listed", () => {
+        tasks = listTasks(env.mail, work);
+      });
+      const notes = [synced, summarised, taken, listed].filter(Boolean);
+      return ok(notes.length ? `${text}
+${notes.join(`
+`)}` : text, {
         active: work.id,
         title: work.title,
         type: work.type,
@@ -5609,6 +7405,7 @@ ${gateSummary(active.work, result.verdict, result.unproven, result.evidence.runs
         awaiting: work.awaiting,
         awaitingMessage: work.awaitingMessage ?? null,
         mail: { unread: inbox.unread, answered: inbox.answered, waiting: inbox.waiting },
+        tasks,
         debate: debateState(work),
         baseCommit: work.baseCommit,
         phases: PHASES_BY_ROUTE[work.route],
@@ -5682,7 +7479,7 @@ ${gateSummary(active.work, result.verdict, result.unproven, result.evidence.runs
         else if (delivery.kind === "queued")
           next = `queued; ${delivery.reason}`;
         else
-          next = `queued; no live session: a ${delivery.mode} session is to open`;
+          next = openForMail(ctx, env.policy, message, delivery);
         const note = work ? "" : `
 note: no active work item, so no item keeps a copy of this message`;
         return ok(`sent ${message.id} ${where}; ${next}${note}`, {
@@ -5707,11 +7504,13 @@ ${lines2.join(`
         if (!args[1])
           return refuse(usage);
         syncMail(ctx, env.paths);
-        const result = markRead(ctx, args[1]);
+        const notes = [];
+        const result = markRead(ctx, args[1], notes);
         if ("refused" in result)
           return refuse(result.refused);
         const body = result.bodyFile ? readText(result.bodyFile) ?? result.body : result.body;
         const head = [
+          ...notes,
           `id: ${result.id}`,
           `from: ${result.from.project} (${result.from.agent})`,
           `to: ${result.to.project}${result.to.agent ? ` (${result.to.agent})` : ""}`,
@@ -5733,38 +7532,73 @@ ${body}`, { message: result, body });
         const text = args.slice(2).join(" ");
         if (!args[1])
           return refuse(usage);
+        const notes = [];
         const result = reply(ctx, args[1], text, {
           ...typeof parsed.flags.file === "string" ? { filePath: parsed.flags.file } : {},
           ...typeof parsed.flags.branch === "string" ? { branch: parsed.flags.branch } : {},
           ...typeof parsed.flags.item === "string" ? { item: parsed.flags.item } : {},
           ...typeof parsed.flags.as === "string" ? { as: parsed.flags.as } : {}
-        });
+        }, notes);
         if ("refused" in result)
           return refuse(result.refused);
-        return ok(`replied to ${args[1]}: ${result.reply.id} to ${result.reply.to.project}; ${args[1]} answered`, { reply: result.reply, original: result.original });
+        return ok(`replied to ${args[1]}: ${result.reply.id} to ${result.reply.to.project}; ${args[1]} answered${notes.length ? `
+${notes.join(`
+`)}` : ""}`, { reply: result.reply, original: result.original, notes });
       }
       if (verb === "refuse") {
         const reason = typeof parsed.flags.reason === "string" ? parsed.flags.reason : "";
         if (!args[1] || !reason.trim())
           return refuse(usage);
-        const result = refuseMail(ctx, args[1], reason);
+        const notes = [];
+        const result = refuseMail(ctx, args[1], reason, notes);
         if ("refused" in result)
           return refuse(result.refused);
-        return ok(`${args[1]} refused: ${reason.trim()}`, { message: result });
+        return ok(`${args[1]} refused: ${reason.trim()}${notes.length ? `
+${notes.join(`
+`)}` : ""}`, { message: result, notes });
       }
       if (verb === "status") {
         const pruned = pruneRegistry(env.paths.userDir);
-        const sessions = openSessions(ctx);
-        const lines2 = sessions.map((m) => `  ${m.id} → ${m.to.project}: ${m.opened?.mode} session ${m.opened?.name} (pid ${m.opened?.pid ?? "none"}), since ${m.opened?.startedAt}, ${m.opened?.maxTurns} turns and ${m.opened?.maxMinutes} minutes allowed`);
-        const summary = inboxSummary(ctx);
-        return ok(`${summary.line ?? `Mail (${ctx.self.workspace ?? "alone"}): inbox empty`}
-open sessions: ${sessions.length ? `
-${lines2.join(`
-`)}` : "none"}${pruned.length ? `
-registry pruned: ${pruned.join(", ")}` : ""}`, { sessions, pruned, ...summary });
+        const swept = sweepSafely(ctx);
+        const { messages: sessions, tampered, untrusted } = readOpenSessions(ctx);
+        const sessionLine = (m) => {
+          const opened = m.opened;
+          return `  ${m.id} → ${m.to.project}: ${opened.mode} session ${opened.name} (pid ${opened.pid ?? "none"}), since ${opened.startedAt}, ${Math.floor(minutesRun(opened))} of ${opened.maxMinutes} minutes used, ${opened.maxTurns} turns allowed`;
+        };
+        const sweptLine = sweptText(swept);
+        const untrustedLine = (m) => {
+          const opened = m.opened;
+          const state = pidState(opened);
+          const marked = state === "session" ? "" : state === "gone" ? " (gone)" : " (pid now another process)";
+          return `${sessionLine(m)}, log ${opened.log}${marked}`;
+        };
+        const named2 = tampered && !swept.lines.includes(tampered) ? `${tampered}
+` : "";
+        const listed = tampered ? `${named2}open sessions as the outbox records them (not trusted; stop one with kill -TERM -- -<pid>, then kill -KILL -- -<pid> after a second; read its log): ${untrusted.length ? `
+${untrusted.map(untrustedLine).join(`
+`)}` : "none"}` : `open sessions: ${sessions.length ? `
+${sessions.map(sessionLine).join(`
+`)}` : "none"}`;
+        let summary = emptyInboxSummary();
+        const summarised = guarded("the inbox was not read", () => {
+          summary = inboxSummary(ctx);
+        });
+        return ok(`${summarised || (summary.line ?? `Mail (${ctx.self.workspace ?? "alone"}): inbox empty`)}${sweptLine ? `
+${sweptLine}` : ""}
+${listed}${pruned.length ? `
+registry pruned: ${pruned.join(", ")}` : ""}`, { sessions, untrusted, swept, pruned, ...summary });
       }
-      if (verb === "stop")
-        return refuse("no session to stop: this engine has not opened one");
+      if (verb === "stop") {
+        if (!args[1])
+          return refuse(usage);
+        const notes = [];
+        const stopped = stopSession(ctx, args[1], notes);
+        if ("refused" in stopped)
+          return refuse(stopped.refused);
+        return ok(`${stopped.id} stopped (session ${stopped.opened?.name}, pid ${stopped.opened?.pid})${notes.length ? `
+${notes.join(`
+`)}` : ""}`, { message: stopped, notes });
+      }
       return refuse(usage);
     }
     default:
@@ -5832,7 +7666,9 @@ var HELP = `crew ${VERSION}
   mail send --to <project|.> --type question|change-request|notice|blocker "<text>"   send mail inside the workspace
       [--agent <session|T-n|role>] [--item <id>] [--reply-to <mid>] [--subject <text>] [--file <path>]
   mail inbox [--all] | read <mid> | reply <mid> "<text>" [--branch <b>] [--item <child>] [--as <role>] [--file <path>]
-  mail refuse <mid> --reason "<why>" | status | stop <mid>   this project's mail and the sessions it opened
+  mail refuse <mid> --reason "<why>" | status | stop <mid>   this project's mail and the sessions it opened (status sweeps them; stop kills one)
+  task <id> open T-n --criteria AC-1,AC-2 [--text "<task text>"]   hand a task of the plan to an implementer: a message, a worktree, a branch, a session
+  task <id> list | merge T-n [--force]   the tasks and their children; merge a proven child's branch (--force merges an unproven one: asks the user)
   tdd <red|green|before|after|observed> <id> <criterion> [--reason "<why>"] [-- <cmd>]
   gate run <id> [--only a,b]            run the gates the route requires; plans the judgement gates and writes their inputs to .crew/work/<id>/review/
   judgement <id> record --ruling <file>  record the rulings of a review file ({"rulings":[{gate,verdict,reviewer,judge,findings,tokens}]}); exit 0 once proven

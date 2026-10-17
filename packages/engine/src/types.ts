@@ -105,6 +105,12 @@ export interface OpenedSession {
   pid: number | null;
   /** The `--name` the session was given, for the doorbell. */
   name: string;
+  /**
+   * The process's start time as `ps` prints it, read when it was started: with the pid, what tells
+   * the session from another process that took its pid later (the real binary shows no arguments
+   * in a process listing, so the name cannot).
+   */
+  processStart?: string;
   maxTurns: number;
   maxMinutes: number;
   startedAt: string;
@@ -186,7 +192,8 @@ export interface TaskRecord {
   repliedAt?: string;
   mergedAt?: string;
   mergeCommit?: string;
-  forced?: boolean;
+  /** Who forced the merge of an unproven child, as the command recorded the decision; absent for a merge of a proven child. */
+  forcedBy?: Decision;
 }
 
 /** A role's end as the SubagentStop hook recorded it: its tokens from its transcript, and the file its answer was saved to. */

@@ -1,9 +1,10 @@
 import { assess } from "../gates.ts";
 import { subjectQuoted } from "../mail.ts";
 import { updateSession } from "../state.ts";
+import { takeReplies } from "../tasks.ts";
 import type { WorkItem } from "../types.ts";
 import { activeWork, waitingText } from "../work.ts";
-import { refreshMail } from "./context.ts";
+import { mailQuietly, refreshMail } from "./context.ts";
 import { takeNotices } from "./notices.ts";
 import type { HookContext, HookResponse } from "./types.ts";
 
@@ -32,6 +33,9 @@ export function onPrompt(ctx: HookContext): HookResponse {
   // The project's registry entry is refreshed, and what arrived since the last prompt is named once.
   const mail = refreshMail(ctx);
   const active = activeWork(ctx.paths);
+  // A task's reply that landed fills the lead's record (SP2c §7).
+  if (active?.work && !mail.failed)
+    mailQuietly(() => takeReplies(ctx.mail, ctx.paths, active), undefined);
   const lines: string[] = [];
   if (active?.work) lines.push(statusLine(ctx, active.work, active.tampered));
   lines.push(...notices);

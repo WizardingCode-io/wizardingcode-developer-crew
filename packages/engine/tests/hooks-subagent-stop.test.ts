@@ -755,3 +755,61 @@ test("SP2c AC-3: a resumed role whose question is pending has its answer saved a
     file: "review/test-quality.findings.md",
   });
 });
+
+test.skipIf(process.getuid?.() === 0)(
+  "SP2c AC-3: a relayed answer names a copy of the question the answered pass could not change",
+  () => {
+    const env = testEnv();
+    const root = makeRepo({
+      "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+      "src/a.ts": "x",
+    });
+    const other = makeRepo({ "README.md": "# crm\n" });
+    write(root, ".crew/policy.json", JSON.stringify({ mail: { workspace: "w", name: "lead" } }));
+    write(
+      other,
+      ".crew/policy.json",
+      JSON.stringify({ mail: { workspace: "w", name: "crm", accept: ["notice"] } }),
+    );
+    onSessionStart(hookContext({ session_id: "sc", cwd: other }, env));
+    const ctx = hookContext({ session_id: "s", cwd: root }, env);
+    onSessionStart(ctx);
+    const work = createWork(ctx.paths, "Delete accounts");
+    addCriterion(work, "x");
+    saveWork(ctx.paths, work);
+    // A notice gives crm an inbox file; the registry lists crm beside the lead.
+    const notice = send(ctx.mail, { to: "crm", type: "notice", text: "A copy to skip" }, null);
+    if ("refused" in notice) throw new Error(notice.refused);
+    onSubagentStop(ctx, {
+      agent_id: "r1",
+      agent_type: `${PLUGIN}:review-risk`,
+      last_assistant_message: "# risk findings\n## Findings\n- none\n",
+    });
+    const asked = send(
+      ctx.mail,
+      { to: ".", agent: "review-risk", type: "question", text: "Which line?" },
+      work,
+    );
+    if ("refused" in asked) throw new Error(asked.refused);
+    // crm's inbox cannot be read while the role answers: the answered pass skips it, the reply is
+    // sent all the same, and the hook's line says which copy was not changed.
+    const crmInbox = join(mailbox(ctx.paths.userDir, "w", "crm").dir, "inbox.json");
+    chmodSync(crmInbox, 0o000);
+    try {
+      const stop = onSubagentStop(ctx, {
+        agent_id: "r1",
+        agent_type: `${PLUGIN}:review-risk`,
+        last_assistant_message: "Line 12.",
+      }) as { systemMessage?: string };
+      expect(stop.systemMessage).toContain(
+        `a copy of ${asked.message.id} was not changed: ${crmInbox} (`,
+      );
+      expect(
+        loadItemMail(ctx.paths, work.id).box.messages.find((m) => m.id === asked.message.id)
+          ?.status,
+      ).toBe("answered");
+    } finally {
+      chmodSync(crmInbox, 0o644);
+    }
+  },
+);

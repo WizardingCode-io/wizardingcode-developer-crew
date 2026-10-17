@@ -1,8 +1,9 @@
-import { existsSync, statSync } from "node:fs";
+import { accessSync, constants, existsSync, statSync } from "node:fs";
 import { basename, isAbsolute, join, resolve } from "node:path";
 import { loadEvidence } from "./evidence.ts";
 import { nowIso, readJson, readText, writeJson, writeText } from "./fs.ts";
 import { withLock } from "./lock.ts";
+import { resolveOpener } from "./opened.ts";
 import {
   type CrewPaths,
   canonical,
@@ -51,8 +52,12 @@ export interface MailSelf {
   project: string;
   agent: string;
   hops: number;
-  /** The message that opened this session, when one did (`WIZARDINGCODE_CREW_MAIL_ID`). */
+  /** The message that opened this session, when one did (`resolveOpener`: the variables, narrowed by the engine's record). */
   openedBy: string | null;
+  /** How the opener let the session act, when one did. */
+  openedMode: OpenMode | null;
+  /** The one branch the opener let the session push, from the hook's variables alone. */
+  openedBranch: string | null;
 }
 
 export interface MailContext {
@@ -107,14 +112,18 @@ export function subjectQuoted(subject: string): string {
 
 /** Who this checkout is in the mail. The project's name is the governing policy's `mail.name`, else the folder's (the main checkout's, for a worktree): the one naming rule, read everywhere through `ctx.self.project`. */
 export function mailSelf(paths: CrewPaths, policy: Policy, env: NodeJS.ProcessEnv): MailSelf {
-  const hops = Number(env.WIZARDINGCODE_CREW_MAIL_HOPS ?? "0");
+  // What opened this session: the variables, narrowed by the engine's record of the checkout
+  // (security review of SP2c task 4, rounds 4 and 5; `resolveOpener` says the rule once).
+  const opener = resolveOpener(paths, env);
   const { mail, main } = effectiveMailPolicy(paths.root, policy, env);
   return {
     workspace: mail.workspace,
     project: mail.name ?? basename(main ?? paths.root),
-    agent: env.WIZARDINGCODE_CREW_MAIL_AGENT?.trim() || "session",
-    hops: Number.isInteger(hops) && hops >= 0 ? hops : 0,
-    openedBy: env.WIZARDINGCODE_CREW_MAIL_ID?.trim() || null,
+    agent: opener.agent,
+    hops: opener.hops,
+    openedBy: opener.mail,
+    openedMode: opener.mode,
+    openedBranch: opener.branch,
   };
 }
 
@@ -290,7 +299,11 @@ export function readBox(
   dir: string,
   which: "inbox" | "outbox",
 ): { box: Mailbox; tampered: boolean } {
-  const read = readProtectedJsonAt<Mailbox>(boxFile(dir, "integrity"), boxFile(dir, which));
+  // A box that exists and cannot be read is an error, never an empty box: nothing is counted,
+  // swept or allowed from what could not be read (test-quality review of SP2c task 4, round 16).
+  const file = boxFile(dir, which);
+  if (existsSync(file)) accessSync(file, constants.R_OK);
+  const read = readProtectedJsonAt<Mailbox>(boxFile(dir, "integrity"), file);
   const box: Mailbox =
     read.data && Array.isArray(read.data.messages) ? read.data : { version: 1, messages: [] };
   return { box, tampered: read.tampered };
@@ -339,6 +352,45 @@ export function recordInItem(paths: CrewPaths, id: string, message: Message): vo
   writeProtectedJson(paths, itemMailPath(paths, id), box);
 }
 
+/**
+ * Where an item of a party lives: the party's project root as the registry names it when the item
+ * is there, else this checkout (`here`), else nowhere. A task's child runs in a worktree of the
+ * lead's project: the lead's item is at the project's root and the child's own in the worktree, so
+ * the child's commits carry nothing of the lead's record to the merge (SP2c §7).
+ */
+function itemHome(
+  ctx: MailContext,
+  registry: Registry,
+  party: { workspace: string; project: string },
+  item: string,
+  here: CrewPaths,
+): CrewPaths | null {
+  const root = projectEntry(registry, party.workspace, party.project)?.root;
+  const registered = root ? resolvePaths(root, ctx.env) : null;
+  for (const paths of [registered, here]) {
+    if (paths && existsSync(join(workDir(paths, item), "work.json"))) return paths;
+  }
+  return null;
+}
+
+/** A message's copy in each item it names, each where that item lives. */
+function recordForParties(
+  ctx: MailContext,
+  registry: Registry,
+  m: Message,
+  here: CrewPaths = ctx.paths,
+): void {
+  const copies: [string | null, { workspace: string; project: string }][] = [
+    [m.from.item, m.from],
+    [m.to.item, m.to],
+  ];
+  for (const [item, party] of copies) {
+    if (!item) continue;
+    const home = itemHome(ctx, registry, party, item, here);
+    if (home) recordInItem(home, item, m);
+  }
+}
+
 // ---------------------------------------------------------------------------------------------
 // Sending
 
@@ -368,7 +420,7 @@ function subjectOf(request: { subject?: string; text: string }): string {
 }
 
 /** The destination's policy, read as its engine would; null when the root is not a crew project. */
-function destinationPolicy(
+export function destinationPolicy(
   entry: ProjectEntry,
   env: NodeJS.ProcessEnv,
 ): { policy: Policy; tampered: boolean } | null {
@@ -376,8 +428,8 @@ function destinationPolicy(
   return paths ? loadPolicy(paths) : null;
 }
 
-/** The sessions open in a destination: messages in its inbox with a session started and not ended. */
-function openIn(userDir: string, workspace: string | null, project: string): number {
+/** The sessions open in a destination: messages in its inbox with a session started and not ended (the tasks it opened for itself included). */
+export function openIn(userDir: string, workspace: string | null, project: string): number {
   const { box } = readBox(mailbox(userDir, workspace, project).dir, "inbox");
   return box.messages.filter((m) => m.opened && !m.opened.endedAt).length;
 }
@@ -619,20 +671,48 @@ function deliver(
   const delivered = appendToBox(dir, "inbox", owner, () => message);
   if (!("refused" in delivered)) return null;
   const reason = delivered.refused;
-  updateEverywhere(ctx, message.id, (m) => ({ ...m, status: "refused", reason }));
-  return { refused: reason };
+  const skipped: string[] = [];
+  updateEverywhere(
+    ctx,
+    message.id,
+    (m) => ({ ...m, status: "refused", reason }),
+    (w) => skipped.push(w),
+  );
+  return {
+    refused: skipped.length ? `${reason}; a copy was not marked: ${skipped.join(", ")}` : reason,
+  };
 }
 
-/** Records the session the engine opened for a message: in the receiver's inbox, the sender's outbox and the item's copy. */
-export function recordOpened(ctx: MailContext, id: string, opened: OpenedSession): void {
-  updateEverywhere(ctx, id, (m) => ({ ...m, opened }));
+/**
+ * Records the session a message opened on every copy of it. Returns the message, or null when the
+ * opener's own outbox did not take the record (it changed outside the engine): the sweep, the stop
+ * and the listing read that copy, so a session it does not carry would run unseen by them.
+ */
+export function recordOpened(
+  ctx: MailContext,
+  id: string,
+  opened: OpenedSession,
+  skipped: (what: string) => void,
+): Message | null {
+  const result = updateEverywhere(ctx, id, (m) => ({ ...m, opened }), skipped);
+  const own = readBox(
+    mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project).dir,
+    "outbox",
+  );
+  const copy = own.box.messages.find((m) => m.id === id);
+  return result && !own.tampered && copy?.opened?.pid === opened.pid ? result : null;
 }
 
-/** The one place a message's state changes: the inbox it sits in, the outbox it left, the item that sent or received it. */
-function updateEverywhere(
+/**
+ * The one place a message's state changes: the inbox it sits in, the outbox it left, the item that
+ * sent or received it. Each copy is changed under its box's lock from its own state, which the
+ * engine keeps equal across the copies (every change goes through here).
+ */
+export function updateEverywhere(
   ctx: MailContext,
   id: string,
   change: (m: Message) => Message,
+  skipped: (what: string) => void,
 ): Message | null {
   let result = null as Message | null;
   const registry = loadRegistry(ctx.paths.userDir);
@@ -641,31 +721,45 @@ function updateEverywhere(
     if (!p.worktreeOf) boxes.add(mailbox(ctx.paths.userDir, p.workspace, p.name).dir);
   }
   boxes.add(mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project).dir);
+  // The boxes that hold a copy, found first without a lock: a box that cannot be read is skipped
+  // and named to the caller, never a reason to stop the pass before the other copies (risk review
+  // of SP2c task 4, round 17), and a box that holds no copy is never locked.
+  const holding: [string, "inbox" | "outbox"][] = [];
   for (const dir of boxes) {
     for (const which of ["inbox", "outbox"] as const) {
       if (!existsSync(boxFile(dir, which))) continue;
-      withMailLock(dir, () => {
-        const { box, tampered } = readBox(dir, which);
-        const index = box.messages.findIndex((m) => m.id === id);
-        if (index === -1 || tampered) return;
-        const changed = change(box.messages[index] as Message);
-        box.messages[index] = changed;
-        writeBox(dir, which, box);
-        result = result ?? changed;
-      });
+      try {
+        if (readBox(dir, which).box.messages.some((m) => m.id === id)) holding.push([dir, which]);
+      } catch (error) {
+        skipped(`${boxFile(dir, which)} (${(error as Error).message.split("\n")[0]})`);
+      }
     }
   }
-  if (result) {
-    const m: Message = result;
-    for (const item of [m.from.item, m.to.item]) {
-      if (!item) continue;
-      // The copy is the item's where the item lives: the sender's root for `from`, this root for `to`.
-      recordInItem(ctx.paths, item, m);
-      const senderRoot = projectEntry(registry, m.from.workspace, m.from.project)?.root;
-      const senderPaths = senderRoot ? resolvePaths(senderRoot, ctx.env) : null;
-      if (senderPaths && senderPaths.root !== ctx.paths.root) recordInItem(senderPaths, item, m);
-    }
+  // Each holding copy under its box's lock, re-read there: a box that changed outside the engine
+  // or cannot be read by then is skipped and named like the others, never written over.
+  for (const [dir, which] of holding) {
+    withMailLock(dir, () => {
+      let read: ReturnType<typeof readBox>;
+      try {
+        read = readBox(dir, which);
+      } catch (error) {
+        skipped(`${boxFile(dir, which)} (${(error as Error).message.split("\n")[0]})`);
+        return;
+      }
+      const { box, tampered } = read;
+      if (tampered) {
+        skipped(`${boxFile(dir, which)} (changed outside the engine)`);
+        return;
+      }
+      const index = box.messages.findIndex((m) => m.id === id);
+      if (index === -1) return;
+      const changed = change(box.messages[index] as Message);
+      box.messages[index] = changed;
+      writeBox(dir, which, box);
+      result = result ?? changed;
+    });
   }
+  if (result) recordForParties(ctx, registry, result);
   return result;
 }
 
@@ -705,12 +799,26 @@ function notUpdated(id: string): { refused: string } {
   return { refused: `${id} could not be updated: its mailbox changed while it was being written` };
 }
 
-export function markRead(ctx: MailContext, id: string): Message | { refused: string } {
+/** A copy of a message the record pass could not change, as a line for the command's output. */
+function skippedLine(id: string): (what: string) => string {
+  return (what) => `a copy of ${id} was not changed: ${what}`;
+}
+
+export function markRead(
+  ctx: MailContext,
+  id: string,
+  notes: string[],
+): Message | { refused: string } {
   const own = ownMessage(ctx, id);
   if ("refused" in own) return own;
   if (own.found.status !== "sent") return own.found;
   return (
-    updateEverywhere(ctx, id, (m) => ({ ...m, status: "read", readAt: nowIso() })) ?? notUpdated(id)
+    updateEverywhere(
+      ctx,
+      id,
+      (m) => ({ ...m, status: "read", readAt: nowIso() }),
+      (w) => notes.push(skippedLine(id)(w)),
+    ) ?? notUpdated(id)
   );
 }
 
@@ -718,6 +826,7 @@ export function refuseMail(
   ctx: MailContext,
   id: string,
   reason: string,
+  notes: string[],
 ): Message | { refused: string } {
   const own = ownMessage(ctx, id);
   if ("refused" in own) return own;
@@ -725,8 +834,12 @@ export function refuseMail(
     return { refused: `${id} is ${own.found.status}; nothing to refuse` };
   if (!reason.trim()) return { refused: 'a refusal needs --reason "<why>"' };
   return (
-    updateEverywhere(ctx, id, (m) => ({ ...m, status: "refused", reason: reason.trim() })) ??
-    notUpdated(id)
+    updateEverywhere(
+      ctx,
+      id,
+      (m) => ({ ...m, status: "refused", reason: reason.trim() }),
+      (w) => notes.push(skippedLine(id)(w)),
+    ) ?? notUpdated(id)
   );
 }
 
@@ -741,6 +854,8 @@ export function reply(
   id: string,
   text: string,
   options: { filePath?: string; branch?: string; item?: string; as?: string },
+  // Where a copy the record pass could not change is named: the command's or the hook's output.
+  notes: string[],
 ): { reply: Message; original: Message } | { refused: string } {
   const ownDir = mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project).dir;
   const inbox = readBox(ownDir, "inbox");
@@ -816,14 +931,19 @@ export function reply(
   if ("refused" in replyMessage) return { refused: replyMessage.refused };
   const failed = deliver(ctx, dest.dir, original.from.project, replyMessage);
   if (failed) return failed;
-  const answered = updateEverywhere(ctx, id, (m) => ({
-    ...m,
-    status: "answered",
-    answeredAt: at,
-    ...(options.branch ? { branch: options.branch } : {}),
-    ...(options.item ? { item: options.item } : {}),
-    ...(verdict ? { verdict } : {}),
-  }));
+  const answered = updateEverywhere(
+    ctx,
+    id,
+    (m) => ({
+      ...m,
+      status: "answered",
+      answeredAt: at,
+      ...(options.branch ? { branch: options.branch } : {}),
+      ...(options.item ? { item: options.item } : {}),
+      ...(verdict ? { verdict } : {}),
+    }),
+    (w) => notes.push(skippedLine(id)(w)),
+  );
   // The reply is delivered by now; a box that changed meanwhile leaves the original unmarked, and the
   // refusal says so rather than passing the stale copy off as answered.
   if (!answered)
@@ -834,8 +954,7 @@ export function reply(
   // too, so a reply from a role's stop and the lead's sync never interleave on it (risk review of
   // SP2c task 3, round 13).
   withMailLock(ownDir, () => {
-    for (const item of [replyMessage.to.item, replyMessage.from.item])
-      if (item) recordInItem(ctx.paths, item, replyMessage);
+    recordForParties(ctx, loadRegistry(ctx.paths.userDir), replyMessage);
   });
   return { reply: replyMessage, original: answered };
 }
@@ -871,7 +990,7 @@ export function syncMail(
         if (theirs && JSON.stringify(theirs) !== JSON.stringify(sent)) {
           Object.assign(sent, theirs);
           updated += 1;
-          if (sent.from.item) recordInItem(paths, sent.from.item, sent);
+          recordForParties(ctx, registry, sent, paths);
         }
       }
       if (updated) writeBox(own.dir, "outbox", outbox);
@@ -883,7 +1002,7 @@ export function syncMail(
     const seen = new Set(readJson<string[]>(marker) ?? []);
     const newMail: Message[] = [];
     for (const m of inbox.messages) {
-      if (m.to.item) recordInItem(paths, m.to.item, m);
+      recordForParties(ctx, registry, m, paths);
       if (!seen.has(m.id)) newMail.push(m);
       seen.add(m.id);
     }
@@ -897,23 +1016,34 @@ export function syncMail(
   });
 }
 
-/** A blocker the Stop hook has named to the session, so it interrupts once (SP2c §6). */
-export function markNoticed(ctx: MailContext, id: string): void {
-  updateEverywhere(ctx, id, (m) => ({ ...m, noticedAt: nowIso() }));
+/** A blocker the Stop hook has named to the session, so it interrupts once (SP2c §6); a copy the pass could not change is a line for the hook. */
+export function markNoticed(ctx: MailContext, id: string, notes: string[]): void {
+  updateEverywhere(
+    ctx,
+    id,
+    (m) => ({ ...m, noticedAt: nowIso() }),
+    (w) => notes.push(skippedLine(id)(w)),
+  );
 }
 
-/** A message's status set wherever the message is recorded; the opener and `approve` use it. */
+/** A message's status set wherever the message is recorded; the opener and `approve` use it. A copy the pass could not change is a line for the caller's output. */
 export function updateStatusEverywhere(
   ctx: MailContext,
   id: string,
   status: Message["status"],
-  reason?: string,
+  reason: string | undefined,
+  notes: string[],
 ): void {
-  updateEverywhere(ctx, id, (m) => ({
-    ...m,
-    status,
-    ...(reason !== undefined ? { reason } : {}),
-  }));
+  updateEverywhere(
+    ctx,
+    id,
+    (m) => ({
+      ...m,
+      status,
+      ...(reason !== undefined ? { reason } : {}),
+    }),
+    (w) => notes.push(skippedLine(id)(w)),
+  );
 }
 
 /** What the inbox holds for this project, and the one line the hooks print about it. */
@@ -973,13 +1103,25 @@ export function inboxSummary(ctx: MailContext): InboxSummary {
   };
 }
 
-/** The sessions this project opened that have not ended, as its outbox records them. */
-export function openSessions(ctx: MailContext): Message[] {
+/**
+ * The sessions this project opened that have not ended, as its outbox records them. When the outbox
+ * changed outside the engine nothing in it counts: `messages` is empty, `tampered` is the refusal
+ * the caller says, and `untrusted` holds what the outbox records as still open, for a person to
+ * stop by its pid or read by its log.
+ */
+export function readOpenSessions(ctx: MailContext): {
+  messages: Message[];
+  tampered: string | null;
+  untrusted: Message[];
+} {
   const { box, tampered } = readBox(
     mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project).dir,
     "outbox",
   );
-  return tampered ? [] : box.messages.filter((m) => m.opened && !m.opened.endedAt);
+  const open = box.messages.filter((m) => m.opened && !m.opened.endedAt);
+  return tampered
+    ? { messages: [], tampered: tamperedBox(ctx.self.project, "outbox"), untrusted: open }
+    : { messages: open, tampered: null, untrusted: [] };
 }
 
 /** `expert-3` → 3; null for any other agent. */

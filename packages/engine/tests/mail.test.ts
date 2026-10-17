@@ -180,7 +180,7 @@ test("SP2c AC-3: the receiving policy, the hops, the concurrency and a tampered 
     null,
   );
   if ("refused" in first) throw new Error(first.refused);
-  const answered = reply(hopped, first.message.id, "gold, silver, none", {});
+  const answered = reply(hopped, first.message.id, "gold, silver, none", {}, []);
   expect(answered).toMatchObject({
     reply: { replyTo: first.message.id, hops: 2 },
     original: { status: "answered" },
@@ -257,12 +257,12 @@ test("SP2c AC-4: inbox, read, reply, refuse; a long body lives beside the inbox;
   expect(readFileSync(sent.message.bodyFile ?? "", "utf8")).toBe(long);
   const inbox = ownInbox(w.b.ctx);
   expect(inbox.messages.map((m) => [m.id, m.status])).toEqual([[sent.message.id, "sent"]]);
-  const read = markRead(w.b.ctx, sent.message.id);
+  const read = markRead(w.b.ctx, sent.message.id, []);
   expect(read).toMatchObject({ status: "read" });
-  expect(reply(w.a.ctx, sent.message.id, "I am not the addressee", {})).toEqual({
+  expect(reply(w.a.ctx, sent.message.id, "I am not the addressee", {}, [])).toEqual({
     refused: `${sent.message.id} is addressed to crm, not to storefront`,
   });
-  const answered = reply(w.b.ctx, sent.message.id, "Yes: gold, silver, none.", {});
+  const answered = reply(w.b.ctx, sent.message.id, "Yes: gold, silver, none.", {}, []);
   if ("refused" in answered) throw new Error(answered.refused);
   expect(answered.reply).toMatchObject({
     from: { project: "crm", agent: "session" },
@@ -274,7 +274,7 @@ test("SP2c AC-4: inbox, read, reply, refuse; a long body lives beside the inbox;
   });
   expect(answered.original.status).toBe("answered");
   expect(ownInbox(w.a.ctx).messages.map((m) => m.replyTo)).toEqual([sent.message.id]);
-  expect(reply(w.b.ctx, sent.message.id, "again", {})).toEqual({
+  expect(reply(w.b.ctx, sent.message.id, "again", {}, [])).toEqual({
     refused: `${sent.message.id} is answered; a second answer is a new message`,
   });
   // The sender's outbox learns the status at the next sync.
@@ -287,11 +287,11 @@ test("SP2c AC-4: inbox, read, reply, refuse; a long body lives beside the inbox;
   // Refuse, and a reply to a refused message.
   const second = send(w.a.ctx, question("Second"), null);
   if ("refused" in second) throw new Error(second.refused);
-  expect(refuseMail(w.b.ctx, second.message.id, "not this week")).toMatchObject({
+  expect(refuseMail(w.b.ctx, second.message.id, "not this week", [])).toMatchObject({
     status: "refused",
     reason: "not this week",
   });
-  expect(reply(w.b.ctx, second.message.id, "x", {})).toEqual({
+  expect(reply(w.b.ctx, second.message.id, "x", {}, [])).toEqual({
     refused: `${second.message.id} is refused; it has no answer`,
   });
   // A reply to a change request carries the branch, the child and its verdict.
@@ -321,13 +321,19 @@ test("SP2c AC-4: inbox, read, reply, refuse; a long body lives beside the inbox;
   ev.verdict = "proven";
   saveEvidence(w.b.paths, child.id, ev);
   // (checked before the answer: an answered message meets the "answered" rule first)
-  expect(reply(bCtx, change.message.id, "x", { item: "nope" })).toEqual({
+  expect(reply(bCtx, change.message.id, "x", { item: "nope" }, [])).toEqual({
     refused: "unknown work item: nope",
   });
-  const done = reply(bCtx, change.message.id, "Built on the branch.", {
-    branch: "crew/x/T-1",
-    item: child.id,
-  });
+  const done = reply(
+    bCtx,
+    change.message.id,
+    "Built on the branch.",
+    {
+      branch: "crew/x/T-1",
+      item: child.id,
+    },
+    [],
+  );
   expect(done).toMatchObject({
     reply: { branch: "crew/x/T-1", item: child.id, verdict: "proven" },
   });
@@ -427,11 +433,12 @@ test("SP2c AC-5: a message to the judge comes from the lead only, the critics re
     toExpert.message.id,
     "The objections do not touch the proposal's answer.",
     { as: "expert-1" },
+    [],
   );
   expect(answered).toMatchObject({
     reply: { from: { agent: "expert-1" }, relayed: true, to: { agent: "session" } },
   });
-  expect(reply(w.a.ctx, toJudge.message.id, "x", { as: "nobody" })).toEqual({
+  expect(reply(w.a.ctx, toJudge.message.id, "x", { as: "nobody" }, [])).toEqual({
     refused:
       "--as names a role: judge, researcher, expert-<n>, devils-advocate, fault-finder or review-<gate>",
   });
@@ -612,7 +619,7 @@ test("SP2c AC-2: a mailbox changed outside the engine is never written; the send
   // A reply into that inbox is refused too, and the original is left as it was.
   const theirs = send(w.b.ctx, { to: "storefront", type: "question", text: "Hello?" }, null);
   if ("refused" in theirs) throw new Error(theirs.refused);
-  expect(reply(w.a.ctx, theirs.message.id, "Hi.", {})).toEqual({
+  expect(reply(w.a.ctx, theirs.message.id, "Hi.", {}, [])).toEqual({
     refused:
       "crm's inbox changed outside the engine; files under the user's crew directory are written only by the crew command",
   });
@@ -650,9 +657,9 @@ test("SP2c AC-4: an inbox a hand changed is refused by read, refuse and reply, a
     refused:
       "crm's inbox changed outside the engine; files under the user's crew directory are written only by the crew command",
   };
-  expect(markRead(w.b.ctx, sent.message.id)).toEqual(refusal);
-  expect(refuseMail(w.b.ctx, sent.message.id, "no")).toEqual(refusal);
-  expect(reply(w.b.ctx, sent.message.id, "yes", {})).toEqual(refusal);
+  expect(markRead(w.b.ctx, sent.message.id, [])).toEqual(refusal);
+  expect(refuseMail(w.b.ctx, sent.message.id, "no", [])).toEqual(refusal);
+  expect(reply(w.b.ctx, sent.message.id, "yes", {}, [])).toEqual(refusal);
   expect(readFileSync(join(crmDir, "inbox.json"), "utf8")).toBe(forged);
   // Nothing was recorded anywhere: the sender's outbox still says sent.
   const outbox = readBox(mailbox(w.a.paths.userDir, "clubefashion", "storefront").dir, "outbox");
@@ -689,7 +696,7 @@ test("SP2c AC-7: two projects of one name in two workspaces are told apart by th
   const without = loadRegistry(w.a.paths.userDir);
   without.projects = without.projects.filter((p) => p.root !== w.a.root);
   writeFileSync(join(w.a.paths.userDir, "projects.json"), JSON.stringify(without));
-  const answered = reply(w.b.ctx, sent.message.id, "This one.", {});
+  const answered = reply(w.b.ctx, sent.message.id, "This one.", {}, []);
   if ("refused" in answered) throw new Error(answered.refused);
   const before = readBox(mailbox(w.a.paths.userDir, "clubefashion", "storefront").dir, "outbox");
   expect(before.box.messages.find((m) => m.id === sent.message.id)?.status).toBe("sent");
@@ -707,7 +714,7 @@ test("SP2c AC-7: syncMail copies nothing from an inbox a hand changed, a receive
   const without = loadRegistry(w.a.paths.userDir);
   without.projects = without.projects.filter((p) => p.root !== w.a.root);
   writeFileSync(join(w.a.paths.userDir, "projects.json"), JSON.stringify(without));
-  const answered = reply(w.b.ctx, sent.message.id, "Yes.", {});
+  const answered = reply(w.b.ctx, sent.message.id, "Yes.", {}, []);
   if ("refused" in answered) throw new Error(answered.refused);
   registerProject(w.a.ctx, "session-storefront");
   // crm's inbox hand-edited after the answer: the sync copies nothing from it.

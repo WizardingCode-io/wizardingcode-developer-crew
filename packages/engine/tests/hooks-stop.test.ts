@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { existsSync, mkdirSync, rmdirSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, rmdirSync } from "node:fs";
 import { basename, join } from "node:path";
 import { loadEvidence, renderReport } from "../src/evidence.ts";
 import { runGates } from "../src/gates.ts";
@@ -361,6 +361,7 @@ test("SP2c AC-2: a mail wait whose reply has landed is cleared and the turn is h
     sent.message.id,
     "gold, silver, none",
     {},
+    [],
   );
   if ("refused" in answered) throw new Error(answered.refused);
   const held = onStop(ctx) as { decision?: string; reason?: string };
@@ -404,6 +405,48 @@ test("SP2c AC-2: an unread blocker interrupts the end of the turn once", () => {
   );
   expect(onStop(ctx)).toEqual({});
 });
+
+test.skipIf(process.getuid?.() === 0)(
+  "SP2c AC-2: the blocker's interruption names a copy the noticed pass could not change",
+  () => {
+    const env = testEnv();
+    const a = makeRepo({ "README.md": "# storefront\n" });
+    const b = makeRepo({
+      "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+      "src/b.ts": "x",
+    });
+    write(a, ".crew/policy.json", JSON.stringify({ mail: { workspace: "w", name: "storefront" } }));
+    write(
+      b,
+      ".crew/policy.json",
+      JSON.stringify({
+        mail: { workspace: "w", name: "crm", accept: ["question", "notice", "blocker"] },
+      }),
+    );
+    onSessionStart(hookContext({ session_id: "sa", cwd: a }, env));
+    const ctx = hookContext({ session_id: "sb", cwd: b }, env);
+    onSessionStart(ctx);
+    const pa = repoPaths(a, env);
+    const sent = send(
+      mailContext(pa, loadPolicy(pa).policy, env),
+      { to: "crm", type: "blocker", text: "Checkout is down" },
+      null,
+    );
+    if ("refused" in sent) throw new Error(sent.refused);
+    // The sender's outbox cannot be read: the noticed pass skips that copy, and the hook's one
+    // line says so beside the blocker.
+    const outbox = join(mailbox(pa.userDir, "w", "storefront").dir, "outbox.json");
+    chmodSync(outbox, 0o000);
+    try {
+      const first = onStop(ctx) as { decision?: string; reason?: string };
+      expect(first.decision).toBe("block");
+      expect(first.reason).toContain(`Crew: blocker ${sent.message.id} from storefront`);
+      expect(first.reason).toContain(`a copy of ${sent.message.id} was not changed: ${outbox} (`);
+    } finally {
+      chmodSync(outbox, 0o644);
+    }
+  },
+);
 
 test("SP2c AC-2: a mailbox the hook cannot use never switches the Stop rule off", () => {
   const { root, ctx, env } = session();

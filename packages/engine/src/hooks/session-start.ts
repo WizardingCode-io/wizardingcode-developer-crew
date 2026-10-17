@@ -9,7 +9,7 @@ import { emptyInboxSummary, inboxSummary, subjectQuoted } from "../mail.ts";
 import { refreshProfile, saveProfile } from "../profile.ts";
 import { ensureCrewDir, loadState, updateSession } from "../state.ts";
 import { activeWork } from "../work.ts";
-import { mailQuietly, refreshMail } from "./context.ts";
+import { mailQuietly, refreshMail, sweepLines } from "./context.ts";
 import { statusLine } from "./prompt.ts";
 import type { HookContext, HookPayload, HookResponse } from "./types.ts";
 
@@ -19,6 +19,8 @@ export function onSessionStart(ctx: HookContext, payload: HookPayload = {}): Hoo
   // the prompt hook will not repeat (SP2c §6; plan decision 3). A mailbox this run cannot use
   // costs the session its mail lines, never its context.
   const mail = refreshMail(ctx);
+  // The sessions this project opened are swept here and at Stop (SP2c §10).
+  const swept = mail.failed ? [] : sweepLines(ctx);
   // A watch list equal to an earlier release's default was never the user's choice, so it follows
   // the current default here, before the baseline is taken with it (finding 12 of the real-use
   // phase: a hint asking the agent to refresh was shown at every start and never acted on). A
@@ -112,6 +114,8 @@ export function onSessionStart(ctx: HookContext, payload: HookPayload = {}): Hoo
       `This session was opened by mail ${ctx.openedBy}${opener ? ` from ${opener.from.project} (${opener.type})` : ""}: read it with crew mail read ${ctx.openedBy}. A question: answer from the code and crew mail reply ${ctx.openedBy} "<text>". A change request: run the method on this branch as a work item started with --origin ${ctx.openedBy}${branch}, commit on it, and end with crew mail reply ${ctx.openedBy} --branch <branch> --item <child id>. Never merge, push to another branch or deploy; a full-route spec waits for a person (crew await <id> user).`,
     );
   }
+  // What the sweep settled: a session that ended without a reply, failed, or was stopped past its minutes.
+  if (swept.length) lines.push(`Swept: ${swept.join("; ")}.`);
   lines.unshift(...blockers);
   return {
     hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: lines.join(" ") },

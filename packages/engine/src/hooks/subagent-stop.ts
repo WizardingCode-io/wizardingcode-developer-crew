@@ -204,10 +204,12 @@ export function onSubagentStop(ctx: HookContext, payload: HookPayload): HookResp
     if (progress.pending && progress.reply && progress.saved) {
       const question = progress.pending;
       const { agent, file } = progress.saved;
-      const refused = relay(ctx, question, progress.reply, agent);
+      const relayed = relay(ctx, question, progress.reply, agent);
       progress.pending = null;
-      if (refused)
-        note = `Crew: ${agent}'s answer to ${question} ${whereSaved(progress.saved)} but the reply was not sent: ${refused}. Once that is cleared, send it with ${sendByHand(id, question, agent, file)}.`;
+      if ("refused" in relayed)
+        note = `Crew: ${agent}'s answer to ${question} ${whereSaved(progress.saved)} but the reply was not sent: ${relayed.refused}. Once that is cleared, send it with ${sendByHand(id, question, agent, file)}.`;
+      else if (relayed.notes.length)
+        note = `Crew: ${agent}'s answer to ${question} was sent, but ${relayed.notes.join("; ")}.`;
     }
     return note ? tell(note) : {};
   } catch (error) {
@@ -351,14 +353,21 @@ function joinEarlierFile(dir: string, agent: string, answer: string): string {
 }
 
 /**
- * The answer recorded in the mail as the role's reply, relayed by the lead (SP2c §7). Null when
- * sent; else why not, a refusal or a mailbox that could not be written, for the session to read.
+ * The answer recorded in the mail as the role's reply, relayed by the lead (SP2c §7). When sent, the
+ * notes of the answered pass (a copy of the question it could not change, named for the session to
+ * read); else why not, a refusal or a mailbox that could not be written.
  */
-function relay(ctx: HookContext, questionId: string, answer: string, agent: string): string | null {
+function relay(
+  ctx: HookContext,
+  questionId: string,
+  answer: string,
+  agent: string,
+): { refused: string } | { notes: string[] } {
+  const notes: string[] = [];
   try {
-    const sent = reply(ctx.mail, questionId, answer, { as: agent });
-    return "refused" in sent ? sent.refused : null;
+    const sent = reply(ctx.mail, questionId, answer, { as: agent }, notes);
+    return "refused" in sent ? { refused: sent.refused } : { notes };
   } catch (error) {
-    return (error as Error).message;
+    return { refused: (error as Error).message };
   }
 }

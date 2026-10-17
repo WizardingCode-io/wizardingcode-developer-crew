@@ -1894,7 +1894,7 @@ test("SP2c AC-9: crew start --origin answers a message of the inbox and refuses 
     (await ca.run("mail", "send", "--to", "crm", "--type", "question", "Which values?")).out,
   )?.[1] as string;
   expect((await cb.run("start", "x", "--answers", answers, "--origin", "M-nope")).err.trim()).toBe(
-    "no message M-nope addressed to this session",
+    "no message M-nope addressed to this session (crew mail inbox)",
   );
   const started = await cb.json(
     "start",

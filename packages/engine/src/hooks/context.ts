@@ -1,4 +1,5 @@
 import { mailContext, registerProject, syncMail } from "../mail.ts";
+import { sweepSafely } from "../open.ts";
 import { resolvePaths } from "../paths.ts";
 import { loadPolicy } from "../policy.ts";
 import { ensureProfile } from "../profile.ts";
@@ -29,6 +30,11 @@ export function mailQuietly<T>(read: () => T, fallback: T): T {
   }
 }
 
+/** The lines of `sweepSafely` for the hook to say, at a session start and at every turn end, since the engine has no daemon (SP2c §10). */
+export function sweepLines(ctx: HookContext): string[] {
+  return sweepSafely(ctx.mail).lines;
+}
+
 /** Null where crew is inactive (no git repository and no `.crew/`); nothing is written then. */
 export function buildContext(
   payload: HookPayload,
@@ -38,6 +44,9 @@ export function buildContext(
   if (!paths) return null;
   const profile = ensureProfile(paths);
   const policy = loadPolicy(paths);
+  // What opened this session: the variables, narrowed by the engine's record (`resolveOpener`, the
+  // one place the rule is written, read once through `mailSelf`).
+  const mail = mailContext(paths, policy.policy, env);
   return {
     paths,
     sessionId: payload.session_id ?? "default",
@@ -45,8 +54,9 @@ export function buildContext(
     policy: policy.policy,
     tampered: profile.tampered || policy.tampered,
     headless: env.CLAUDE_CODE_SESSION_ATTENDED === "0",
-    mail: mailContext(paths, policy.policy, env),
-    openedBy: env.WIZARDINGCODE_CREW_MAIL_ID?.trim() || null,
-    openedBranch: env.WIZARDINGCODE_CREW_MAIL_BRANCH?.trim() || null,
+    mail,
+    openedBy: mail.self.openedBy,
+    openedBranch: mail.self.openedBranch,
+    openedMode: mail.self.openedMode,
   };
 }
