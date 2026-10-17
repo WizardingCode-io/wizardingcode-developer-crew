@@ -33,6 +33,7 @@ You receive `conclave/proposals.md`, `objections.json`, `conclave/researcher.md`
 
 ```
 # Ruling, <id>
+personality: professional
 ## Which proposal
 P-n, as written | with these changes: <sentences>
 ## Objections
@@ -53,6 +54,7 @@ You receive `spec.md`, `conclave.md`, `objections.json` and the name of one rule
 
 ```
 # Validator, <rule>, <id>
+personality: professional
 verdict: holds | does not hold
 ## Reasons
 - <one line per condition of the rule, with what you read>

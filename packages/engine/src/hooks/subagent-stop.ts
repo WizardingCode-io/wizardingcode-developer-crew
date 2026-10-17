@@ -4,8 +4,8 @@ import { nowIso, readText, writeText } from "../fs.ts";
 import { withLock } from "../lock.ts";
 import { loadItemMail, reply } from "../mail.ts";
 import { workDir } from "../paths.ts";
-import { ROLE_NAMES } from "../team.ts";
-import type { Message, RoleRecord } from "../types.ts";
+import { PERSONALITIES, ROLE_NAMES, TEAMS, type TeamDef } from "../team.ts";
+import type { Message, Personality, RoleRecord, TeamName } from "../types.ts";
 import { activeWork, loadWork, saveWork } from "../work.ts";
 import { leaveNotice } from "./notices.ts";
 import type { HookContext, HookPayload, HookResponse } from "./types.ts";
@@ -23,6 +23,24 @@ export function roleOf(agentType: string | undefined): string | null {
   if (!agentType?.startsWith(PLUGIN_PREFIX)) return null;
   const name = agentType.slice(PLUGIN_PREFIX.length);
   return BARE_ROLE.test(name) ? name : null;
+}
+
+/** The lens a debate role declares on its second line (`personality: <name>`, SP7 §6.3): one of the five, `unknown` for another word, nothing when absent (a reviewer). */
+export function personalityOf(answer: string): Personality | "unknown" | null {
+  const line = answer
+    .split("\n")
+    .slice(0, 3)
+    .find((l) => /^personality:\s*\S/.test(l.trim()));
+  if (!line) return null;
+  const name = line.trim().slice("personality:".length).trim().toLowerCase();
+  return (PERSONALITIES as readonly string[]).includes(name) ? (name as Personality) : "unknown";
+}
+
+/** The team a role belongs to in the registry (its lead or one of its members); null for the judge, the CTO and the debate roles. */
+export function teamOf(agent: string): TeamName | null {
+  for (const [name, def] of Object.entries(TEAMS) as [TeamName, TeamDef][])
+    if (def.lead === agent || def.members.includes(agent)) return name;
+  return null;
 }
 
 type Line = {
@@ -340,6 +358,9 @@ function recordStop(
     const { where, unsent } = savedAndUnsentPhrases(id, saved, pending?.id ?? null);
     return `Crew: ${agent}'s answer ${where} but its end and tokens are not recorded: ${tampered}${unsent}`;
   }
+  // The lens the role declared and the team the registry gives it (SP7 §6.3), when either exists.
+  const personality = personalityOf(answer);
+  const team = teamOf(saved.agent);
   evidence.roles = [
     ...roles,
     {
@@ -349,6 +370,8 @@ function recordStop(
       tokens,
       tokensFrom: from,
       file: saved.file,
+      ...(personality ? { personality } : {}),
+      ...(team ? { team } : {}),
     },
   ];
   saveEvidence(ctx.paths, id, evidence);

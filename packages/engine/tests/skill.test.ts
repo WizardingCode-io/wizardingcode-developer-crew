@@ -291,3 +291,28 @@ test("SP2c debt: the gap round asks whether the target exists in this repository
   // that grows past it is trimmed where the fast route does not read (finding #33).
   expect(Buffer.byteLength(skill, "utf8")).toBeLessThanOrEqual(9254);
 });
+
+test("SP7a AC-1 (Task 3): five personalities, one file each, assigned to the debate's seats by the conclave reference", () => {
+  const dir = fileURLToPath(
+    new URL("../../../plugins/core/skills/crew/personalities/", import.meta.url),
+  );
+  expect(readdirSync(dir).sort()).toEqual([
+    "adventurous.md",
+    "conservative.md",
+    "creative.md",
+    "professional.md",
+    "sceptical.md",
+  ]);
+  for (const file of readdirSync(dir)) {
+    const text = readFileSync(`${dir}${file}`, "utf8");
+    expect(text).toMatch(/## Looks for/);
+    expect(text).toMatch(/## Refuses to accept/);
+    expect(text).toMatch(/## Demands as proof/);
+    expect(text.trimEnd().split("\n").length).toBeLessThanOrEqual(16);
+  }
+  const conclave = readReference("conclave.md");
+  expect(conclave).toContain("personalities/<name>.md");
+  expect(conclave).toMatch(/conservative[^\n]*creative[^\n]*adventurous/);
+  expect(conclave).toContain("personality: <name>");
+  expect(conclave).toMatch(/fault-finder is sceptical[^\n]*judge professional/);
+});

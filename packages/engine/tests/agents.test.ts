@@ -149,6 +149,20 @@ test("SP7a AC-1, AC-2: the architecture, data and infra reviewers judge the chan
   }
 });
 
+test("SP7a AC-2 (Task 3): the expert takes a personality, the fault-finder is sceptical and the judge professional by their files", () => {
+  const expert = agent("expert").body;
+  expect(expert).toContain("personality: <name>");
+  expect(expert).toMatch(/personalities\/<name>\.md/);
+  // The header is the second line of the proposal, right after its title.
+  expect(expert).toMatch(/# Proposal for <id>, D-n\npersonality: <name>\n/);
+  expect(agent("fault-finder").body).toMatch(/# Defects, <id>\npersonality: sceptical\n/);
+  const judge = agent("judge").body;
+  expect(judge).toMatch(/# Ruling, <id>\npersonality: professional\n/);
+  expect(judge).toMatch(/# Validator, <rule>, <id>\npersonality: professional\n/);
+  // The gates' answer stays the JSON object alone: no header there.
+  expect(judge).toMatch(/JSON object alone/);
+});
+
 test("SP2b: one rubric per judgement gate, each judging the change and never the repository", () => {
   expect(readdirSync(RUBRICS).sort()).toEqual(REVIEWERS.map((g) => `${g}.md`).sort());
   for (const gate of REVIEWERS) {

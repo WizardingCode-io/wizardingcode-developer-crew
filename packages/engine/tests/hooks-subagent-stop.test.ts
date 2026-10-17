@@ -17,9 +17,11 @@ import {
   agentName,
   answerFile,
   onSubagentStop,
+  personalityOf,
   roleAnswer,
   roleOf,
   roleTokens,
+  teamOf,
 } from "../src/hooks/subagent-stop.ts";
 import { loadItemMail, mailbox, ROLE_AGENT, send } from "../src/mail.ts";
 import { ROLE_NAMES } from "../src/team.ts";
@@ -215,6 +217,40 @@ test("SP2c AC-3, SP7a: the SubagentStop matcher in hooks.json, roleOf, the mail 
   }
 });
 
+test("SP7a AC-3 (Task 3): the hook records the personality a debate role declares, its team from the registry, and unknown for a name the registry lacks", () => {
+  const { ctx, work } = session();
+  work.route = "standard";
+  work.phase = "conclave";
+  saveWork(ctx.paths, work);
+  const dir = tempDir("crew-transcript-");
+  const stop = (id: string, role: string, answer: string) =>
+    onSubagentStop(ctx, {
+      agent_id: id,
+      agent_type: `${PLUGIN}:${role}`,
+      agent_transcript_path: transcript(dir, answer, [[100, 10, 0, 0]]),
+      last_assistant_message: "Done.",
+    });
+  stop("e1", "expert", "# Proposal for w, D-1\npersonality: creative\n## Proposal\nAnswer: yes\n");
+  stop("e2", "expert", "# Proposal for w, D-2\npersonality: cheerful\n## Proposal\nAnswer: no\n");
+  stop("r1", "review-test-quality", "# test-quality findings for w\n## Findings\n- none\n");
+  stop("j1", "judge", "# Ruling, w\npersonality: professional\n## Which proposal\nP-1\n");
+  const roles = loadEvidence(ctx.paths, work.id).evidence.roles ?? [];
+  expect(roles.find((r) => r.agent === "expert-1")).toMatchObject({ personality: "creative" });
+  expect(roles.find((r) => r.agent === "expert-1")?.team).toBeUndefined();
+  expect(roles.find((r) => r.agent === "expert-2")).toMatchObject({ personality: "unknown" });
+  const reviewer = roles.find((r) => r.agent === "review-test-quality");
+  expect(reviewer).toMatchObject({ team: "qa" });
+  expect(reviewer?.personality).toBeUndefined();
+  expect(roles.find((r) => r.agent === "judge")).toMatchObject({ personality: "professional" });
+  expect(personalityOf("# Proposal\npersonality: Conservative\n")).toBe("conservative");
+  // The header is read in the first three lines (a blank line after the title is allowed), not below.
+  expect(personalityOf("# Proposal\n\npersonality: creative\n")).toBe("creative");
+  expect(personalityOf("# Proposal\n\n## Proposal\npersonality: creative\n")).toBeNull();
+  expect(teamOf("review-security")).toBe("security");
+  expect(teamOf("lead-etl")).toBe("etl");
+  expect(teamOf("cto")).toBeNull();
+});
+
 test("SP2c AC-3: SubagentStop saves the answer, records the role and its tokens, and the judge clears the role wait", () => {
   const { root, ctx, work } = session();
   const dir = tempDir("crew-transcript-");
@@ -269,6 +305,8 @@ test("SP2c AC-3: SubagentStop saves the answer, records the role and its tokens,
       tokens: 110,
       tokensFrom: "transcript",
       file: "review/code-quality.findings.md",
+      // SP7a: the registry's team of the reviewer travels with the record.
+      team: "backend",
     },
     {
       agent: "judge",

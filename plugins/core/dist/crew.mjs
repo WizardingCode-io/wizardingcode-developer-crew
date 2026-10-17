@@ -2119,9 +2119,9 @@ function renderReport(work, evidence, policy, ledger, mail, selfName) {
     }
   }
   if (evidence.roles?.length) {
-    lines.push("", "## Roles", "", "| Role | At | Tokens | Answer |", "| :- | :- | -: | :- |");
+    lines.push("", "## Roles", "", "| Role | Personality | At | Tokens | Answer |", "| :- | :- | :- | -: | :- |");
     for (const r of evidence.roles)
-      lines.push(`| ${r.agent} | ${r.at} | ${r.tokensFrom === "none" ? "not read" : r.tokens} | ${r.file ?? "not saved"} |`);
+      lines.push(`| ${r.agent} | ${r.personality ?? "-"} | ${r.at} | ${r.tokensFrom === "none" ? "not read" : r.tokens} | ${r.file ?? "not saved"} |`);
   }
   if (work.tasks?.length) {
     lines.push("", "## Tasks", "", "| Task | Criteria | Branch | Child | Verdict | Merged | Report |", "| :- | :- | :- | :- | :- | :- | :- |");
@@ -2352,6 +2352,13 @@ var TEAMS = {
     validates: false
   }
 };
+var PERSONALITIES = [
+  "adventurous",
+  "creative",
+  "conservative",
+  "sceptical",
+  "professional"
+];
 var DEBATE_ROLES = ["researcher", "expert", "devils-advocate", "fault-finder"];
 var REVIEW_ROLES = [
   "review-code-quality",
@@ -6368,6 +6375,20 @@ function roleOf(agentType) {
   const name = agentType.slice(PLUGIN_PREFIX.length);
   return BARE_ROLE.test(name) ? name : null;
 }
+function personalityOf(answer2) {
+  const line = answer2.split(`
+`).slice(0, 3).find((l) => /^personality:\s*\S/.test(l.trim()));
+  if (!line)
+    return null;
+  const name = line.trim().slice("personality:".length).trim().toLowerCase();
+  return PERSONALITIES.includes(name) ? name : "unknown";
+}
+function teamOf(agent) {
+  for (const [name, def] of Object.entries(TEAMS))
+    if (def.lead === agent || def.members.includes(agent))
+      return name;
+  return null;
+}
 function lines(transcriptPath) {
   const text = transcriptPath ? readText(transcriptPath) : null;
   if (text === null)
@@ -6572,6 +6593,8 @@ function recordStop(ctx, id, role, payload, transcriptNote, progress) {
     const { where, unsent } = savedAndUnsentPhrases(id, saved, pending?.id ?? null);
     return `Crew: ${agent}'s answer ${where} but its end and tokens are not recorded: ${tampered}${unsent}`;
   }
+  const personality = personalityOf(answer2);
+  const team = teamOf(saved.agent);
   evidence.roles = [
     ...roles,
     {
@@ -6580,7 +6603,9 @@ function recordStop(ctx, id, role, payload, transcriptNote, progress) {
       at: nowIso(),
       tokens,
       tokensFrom: from,
-      file: saved.file
+      file: saved.file,
+      ...personality ? { personality } : {},
+      ...team ? { team } : {}
     }
   ];
   saveEvidence(ctx.paths, id, evidence);

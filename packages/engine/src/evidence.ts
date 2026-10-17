@@ -395,10 +395,16 @@ export function renderReport(
   }
   // Each role's end as the SubagentStop hook recorded it (SP2c §11).
   if (evidence.roles?.length) {
-    lines.push("", "## Roles", "", "| Role | At | Tokens | Answer |", "| :- | :- | -: | :- |");
+    lines.push(
+      "",
+      "## Roles",
+      "",
+      "| Role | Personality | At | Tokens | Answer |",
+      "| :- | :- | :- | -: | :- |",
+    );
     for (const r of evidence.roles)
       lines.push(
-        `| ${r.agent} | ${r.at} | ${r.tokensFrom === "none" ? "not read" : r.tokens} | ${r.file ?? "not saved"} |`,
+        `| ${r.agent} | ${r.personality ?? "-"} | ${r.at} | ${r.tokensFrom === "none" ? "not read" : r.tokens} | ${r.file ?? "not saved"} |`,
       );
   }
   // The tasks handed to implementers (SP2c §7), filled by `crew task`.

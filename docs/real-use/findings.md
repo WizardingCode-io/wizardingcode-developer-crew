@@ -437,3 +437,11 @@ Verdicts agree at every effort. Upheld findings: `high` reproduced Task 6's and 
 - Expected: the gate.md prompt inputs and the two descriptions fixed in Task 8's close or the first hardening item of SP7a, with the test pins sharpened, red first.
 - Evidence: the item's `review/ruling.json`.
 - Outcome: open.
+
+### 52. Debt of SP7a Task 3 (`2026-10-17-010`): the judge's advisories
+
+- Date: 2026-10-17. Project: this repository. Category: `docs`. Severity: low.
+- What happened: the item that brought the five personalities, the experts' rotation and the header the hook records went through two judgement rounds (one defect in the first: the report's Personality column was tested only through its `-` fallback; fixed with a fixture role that carries a lens) and left two advisories, recorded here under the user's bounded-round rule. Test quality: the personality files' heading checks in `skill.test.ts` are unanchored regexes (a heading named in prose would pass; anchor with `^## Looks for$` and the `m` flag); the fault-finder's own sentence that it is sceptical by its file is pinned only through `conclave.md`'s mirror, not in `agents.test.ts`.
+- Expected: taken in Task 8's close or the first hardening item of SP7a, red first.
+- Evidence: the item's `review/ruling.round1.json` and the round-2 ruling in its evidence.
+- Outcome: open.

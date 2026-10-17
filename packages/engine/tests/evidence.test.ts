@@ -594,12 +594,29 @@ test("SP2c: the report's Roles section lists each role's end with its tokens and
         tokensFrom: "none",
         file: "review/ruling.json",
       },
+      // SP7a: a debate role carries the lens it argued from, shown in its own column.
+      {
+        agent: "expert-1",
+        agentId: "e1",
+        at: "2026-10-15T11:10:00.000Z",
+        tokens: 5000,
+        tokensFrom: "transcript",
+        file: "conclave/expert-1.md",
+        personality: "creative",
+      },
     ],
   };
   const report = renderReport(work, evidence, DEFAULT_POLICY);
-  expect(report).toContain("## Roles\n\n| Role | At | Tokens | Answer |\n| :- | :- | -: | :- |\n");
   expect(report).toContain(
-    "| review-code-quality | 2026-10-15T11:20:00.000Z | 39912 | review/code-quality.findings.md |",
+    "## Roles\n\n| Role | Personality | At | Tokens | Answer |\n| :- | :- | :- | -: | :- |\n",
   );
-  expect(report).toContain("| judge | 2026-10-15T11:25:00.000Z | not read | review/ruling.json |");
+  expect(report).toContain(
+    "| review-code-quality | - | 2026-10-15T11:20:00.000Z | 39912 | review/code-quality.findings.md |",
+  );
+  expect(report).toContain(
+    "| judge | - | 2026-10-15T11:25:00.000Z | not read | review/ruling.json |",
+  );
+  expect(report).toContain(
+    "| expert-1 | creative | 2026-10-15T11:10:00.000Z | 5000 | conclave/expert-1.md |",
+  );
 });

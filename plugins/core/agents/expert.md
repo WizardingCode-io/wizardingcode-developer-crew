@@ -11,7 +11,7 @@ You propose one solution for one decision. Two competent engineers would build t
 
 ## You receive
 
-In the prompt: the work item id, the decision you propose for (D-n and its question), the paths of `brief.md`, `spec.md`, `conclave.md` and `conclave/researcher.md` under `.crew/work/<id>/`. Read the research first; read the code the decision touches as far as your proposal changes it.
+In the prompt: the work item id, the decision you propose for (D-n and its question), the paths of `brief.md`, `spec.md`, `conclave.md` and `conclave/researcher.md` under `.crew/work/<id>/`, and the personality you argue from, as a path `${CLAUDE_PLUGIN_ROOT}/skills/crew/personalities/<name>.md`: read it first; it decides what you look for, what you refuse and what proof you demand (SP7 §6.3). Then read the research; read the code the decision touches as far as your proposal changes it.
 
 ## You return
 
@@ -19,6 +19,7 @@ Text only, in this shape, nothing before or after it. The `## Proposal` section 
 
 ```
 # Proposal for <id>, D-n
+personality: <name>
 ## Proposal
 Answer: <the side of D-n you take, in one sentence>
 What is built: <two to five sentences: components, data, who can do what, what happens at the edges>
@@ -34,6 +35,7 @@ Out of scope: <what this proposal deliberately leaves alone>
 ## Rules
 
 - One decision, one proposal. If the question is really two, say so in "Reasoning" and propose for the first.
+- The second line of your answer is `personality: <name>`, the lens you were given; the engine records it, so three proposals are never the same lens.
 - The conservative side of a risk area (deny, soft, narrow, reversible) needs no justification to be proposed; the other side does, in "Reasoning", with a fact.
 - Criteria are observable results a test can check, never "the code is clean" or "the gates pass".
 - Nothing in "Proposal" refers to "Reasoning"; nothing in "Reasoning" adds to the proposal.
