@@ -259,3 +259,22 @@ test("SP2c AC-2: the sentences of the references the engine relies on are pinned
   expect(plan).toContain("your own `crew gate run <id>` proves the merged tree");
   expect(plan).toContain("`crew task <id> merge T-n`");
 });
+
+test("SP2c debt: the gap round asks whether the target exists in this repository (#34), and the skill page is no larger than in 0.4.0 (#33)", () => {
+  const dir = fileURLToPath(
+    new URL("../../../plugins/core/skills/crew/checklists/", import.meta.url),
+  );
+  const exists = "a target nobody serves is a decision for the user, never an assumption";
+  for (const kind of ["endpoint", "link-target"]) {
+    const text = readFileSync(`${dir}${kind}.md`, "utf8");
+    expect(text).toContain(exists);
+    expect(text).toMatch(/read where the routes or pages are listed/);
+  }
+  expect(readReference("understand.md")).toContain("**What the request points at**");
+  expect(readReference("understand.md")).toContain(
+    "what does not exist is a decision for the user, never an assumption",
+  );
+  // Every fast-route turn re-reads this page: 0.4.0's size (9254 bytes) is the ceiling, and a page
+  // that grows past it is trimmed where the fast route does not read (finding #33).
+  expect(Buffer.byteLength(skill, "utf8")).toBeLessThanOrEqual(9254);
+});

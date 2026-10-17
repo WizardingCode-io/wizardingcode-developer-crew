@@ -126,6 +126,13 @@ test("SP2c AC-3: the role of an agent type, the answer from the hand-back, the t
   expect(agentName("expert", one)).toBe("expert-2");
   expect(answerFile("review-security", "…")).toBe("review/security.findings.md");
   expect(answerFile("judge", '```json\n{"rulings":[]}\n```')).toBe("review/ruling.json");
+  // A judge that explains before or after its JSON still hands in the gates' ruling (finding #44).
+  expect(
+    answerFile(
+      "judge",
+      'Both reviewers reported no findings, and I have checked each.\n\n{"rulings":[{"gate":"code-quality","verdict":"proven","findings":[],"tokens":0}]}\n\nDropped: nothing.',
+    ),
+  ).toBe("review/ruling.json");
   expect(answerFile("judge", "# Ruling, w1\n## Which proposal\nP-1")).toBe("conclave/judge.md");
   expect(answerFile("judge", "# Validator, complete-gap-round, w1\nverdict: holds")).toBe(
     "conclave/validator-complete-gap-round.md",
@@ -217,9 +224,10 @@ test("SP2c AC-3: SubagentStop saves the answer, records the role and its tokens,
     ),
   ).toBe("# code-quality findings for w\n## Findings\n- none\n");
   expect(loadWork(ctx.paths, work.id).work?.awaiting).toBe("role");
+  // The judge explained first and dropped a finding after: the file holds the JSON alone (finding #44).
   const ruling = transcript(
     dir,
-    '{"rulings":[{"gate":"code-quality","verdict":"proven","findings":[],"tokens":0}]}',
+    'Both reviewers reported no findings, and I have checked each against the diff.\n\n{"rulings":[{"gate":"code-quality","verdict":"proven","findings":[],"tokens":0}]}\n\nDropped: F-1, the claim does not hold against the diff.',
     [
       [500, 40, 0, 0],
       [600, 60, 0, 0],

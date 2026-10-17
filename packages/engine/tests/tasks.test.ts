@@ -837,10 +837,18 @@ test("SP2c AC-4: the merge waits for the implementer's session, keeps the child'
     agent: "T-1",
     hops: 1,
   });
+  // The engine refreshed the worktree's profile after the implementer's last commit: its own file,
+  // not the implementer's work, so the worktree still goes (finding #43).
+  write(
+    t1.worktree,
+    ".crew/profile.json",
+    `${readFileSync(join(t1.worktree, ".crew", "profile.json"), "utf8")}\n`,
+  );
   const merged = await c.json("task", id, "merge", "T-1");
   if (merged.code !== 0) throw new Error(`merge refused: ${String(merged.data.message)}`);
   // The child's record was never committed (artifacts local): copied into the lead's checkout before the worktree went.
   expect(existsSync(t1.worktree)).toBe(false);
+  expect(String(merged.data.message)).not.toContain("kept:");
   expect(existsSync(openedMarkerFile(repoPaths(root, env).userDir, t1.worktree))).toBe(false);
   expect(existsSync(join(root, ".crew", "work", c1.childId, "evidence.json"))).toBe(true);
   expect(loadEvidence(repoPaths(root, env), c1.childId)).toMatchObject({

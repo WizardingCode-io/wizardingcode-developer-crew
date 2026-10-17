@@ -3,7 +3,7 @@
 A redirect, a link in an email, a callback URL, a return page: something the user lands on after leaving a flow.
 
 ## Assumed by good practice
-- The target exists in production, not only locally, in every language the link is sent in; an error on a link (expired, too many attempts) lands on a page, never on raw JSON.
+- The target exists in this repository (read where the routes or pages are listed before assuming; a target nobody serves is a decision for the user, never an assumption, C-13) and in production, not only locally, in every language the link is sent in; an error on a link (expired, too many attempts) lands on a page, never on raw JSON.
 - Tokens are per link; limits are per token, never per IP (a mail scanner or a shared proxy exhausts a per-IP limit for everyone behind it).
 
 ## Decisions only the user can make

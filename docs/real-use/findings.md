@@ -291,7 +291,7 @@ Verdicts agree at every effort. Upheld findings: `high` reproduced Task 6's and 
 - What happened: the SP2c suite run (`docs/evals/2026-10-17-sp2c-results.md`) measured `fast-route-overhead` at 1.99× (0.090 against 0.045 USD per run, 10–11 turns against 3–4); SP1b's last run gave 1.86×. The plan's criterion was that the ratio does not rise.
 - Expected: a fast-route fix that costs the same share of the baseline as before, or less; the skill's growth (the Mail row, the three waits, `references/mail.md`) is read on every turn.
 - Evidence: `docs/evals/2026-10-17-sp2c-aggregate-result.json`, `bun scripts/eval-overhead.ts` on it.
-- Outcome: open. Task 8 measures again after the skill's fast-route page is trimmed to what a fast item needs, and the mail and task rows move behind a reference where the fast route does not read them.
+- Outcome: measured in the debt item `2026-10-17-006` (2026-10-17): `SKILL.md` trimmed from 10423 to 9253 bytes with every pinned sentence kept and a test that holds it under its 0.4.0 size; the case re-run gave 2.03× and the same cost per run (0.0897 → 0.0899 USD), so the page is not where the cost is. The trace: six model requests against the baseline's three (the method's own calls), a first request 1630 tokens larger (the plugin's ten agents and skill in the system prompt, the SessionStart context) and the skill page (3334 tokens) from the second request on, both re-read from the cache at every later request. The ratio is the method's floor at this context size; the lever left is the fixed context the plugin adds to every session, the agents' descriptions first. Open as a measurement, with the ceiling as the guard.
 
 ### 34. The gap round did not ask whether the redirect's target exists
 
@@ -299,7 +299,7 @@ Verdicts agree at every effort. Upheld findings: `high` reproduced Task 6's and 
 - What happened: in `gap-redirect-target` the agent with the plugin listed assumptions, asked about the status code and, in all three runs, assumed that `/slow-down` "exists or will exist elsewhere"; `src/routes.mjs` lists every page the app serves and it is not there. The baseline named the missing route once in three. The case scored 0.00 with the plugin.
 - Expected: the gap round reads what the change points at (a route, a page, a table) and asks when it is not there (C-13 of the SP2 design).
 - Evidence: the results note, the kept traces of `results/2026-10-17T02-21-44-729Z`.
-- Outcome: open. The next iteration adds "does the target exist in this repository" to the `endpoint` and `link-target` checklists and to the Understand step of the skill.
+- Outcome: fixed in the debt item `2026-10-17-006` (2026-10-17): the `endpoint` and `link-target` checklists and `references/understand.md` ask whether the target of a redirect, a link or a call exists in this repository (read where the routes or pages are listed; a target nobody serves is a decision for the user, never an assumption), pinned by `skill.test.ts`. The case re-run once with the plugin scored 1.00 (the agent read `src/routes.mjs` and named the gap) where the suite run had 0 of 3.
 
 ### 35. The judgement-gate-not-run case's prompt did not say nobody was present
 
@@ -371,7 +371,7 @@ Verdicts agree at every effort. Upheld findings: `high` reproduced Task 6's and 
 - What happened: after the merge of T-2 the worktree stayed, because the engine had refreshed the worktree's `profile.json` and the implementer had left that change out of its commit, so the sweep saw uncommitted files and kept the worktree.
 - Expected: files the engine owns do not count as the implementer's uncommitted work; a merged task's worktree is removed when nothing else is dirty.
 - Evidence: the lead's ending and `git worktree list` in the scaffold after the run.
-- Outcome: open; seen again in the re-run of 2026-10-17 (03:27 UTC). Debt of the real-use phase: the sweep ignores the engine's own files when it decides whether a worktree is dirty.
+- Outcome: fixed in the debt item `2026-10-17-006` (2026-10-17): `removeWorktree` reads `git status --porcelain` when the plain removal is refused and, when every dirty path is under the engine's folder, removes the worktree with `--force`; any other file keeps it, with git's reason, as before. A probe found that `gitRun` trims the output and ate the first status column; the parser reads the columns by a pattern.
 
 ### 44. In an opened implementer session the SubagentStop hook filed the judge's ruling as the debate's answer
 
@@ -379,7 +379,7 @@ Verdicts agree at every effort. Upheld findings: `high` reproduced Task 6's and 
 - What happened: in the child session the engine opened for T-2, the hook recorded the three roles with their tokens from the transcripts, saved the two reviewers' findings under `review/`, and saved the judge's answer as `conclave/judge.md`, the debate ruling's place, instead of `review/ruling.json`: the judge had answered in prose ("Both reviewers reported no findings, and I have checked each against the diff and its rubric…") with the JSON after it, and the hook matches the gates' shape only on an answer that is the JSON. The implementer noticed the missing file, wrote the judge's JSON verbatim as `review/ruling.json` and recorded it, as `references/gate.md` says to do only when the hook could not. In the lead's own session the same hook filed the judge's answer as `review/ruling.json`. Finding #40 saw the ruling unfiled inside the eval sandbox; this is outside it.
 - Expected: a judge's answer in the gates' JSON shape is saved as `review/ruling.json` wherever the session runs, worktree or not.
 - Evidence: the child's `evidence.json` roles rows (`judge … conclave/judge.md`) and the lead's (`judge … review/ruling.json`) in the scratch scaffold of the re-run; `packages/engine/src/hooks/subagent-stop.ts` (the shape match).
-- Outcome: open. Next: the hook finds the gates' JSON inside an answer that carries text around it (the judge's instructions ask for the JSON alone, and a judge on a clean diff tends to explain first), pinned with a test on the hook; `agents/judge.md` restates "nothing before or after it" for the gates' job.
+- Outcome: fixed in the debt item `2026-10-17-006` (2026-10-17): the SubagentStop hook finds the gates' JSON inside a judge's answer (whole, fenced, or embedded in text around it) and saves `review/ruling.json` holding the JSON alone; `agents/judge.md` says the gates' answer is the JSON object alone, pinned by `agents.test.ts`.
 
 ### 45. Debt of the hardening item (SP2c Task 8, item `2026-10-17-004`): the judge's advisories
 
@@ -387,4 +387,12 @@ Verdicts agree at every effort. Upheld findings: `high` reproduced Task 6's and 
 - What happened: the judgement gates of the item left eight advisories, recorded as debt under the user's bounded-round rule. Code quality: `creditChild` narrows `record.child` and `record.mergeCommit` with `??` where both are set (pass them in); the `recent` closure in `registerProject` repeats the "age under a bound" expression `isLive` has; `plannedGates` writes the "path under target" predicate twice (`covers` and the `touched` filter). Test quality: the `tampered` branch of `creditChild` is reached by no test (the command's `tamperRefusal` refuses a merge over a hand-edited parent evidence before the credit, so the branch is unreachable through the CLI: test it through `mergeTask` directly or remove it); "keeping any red or green the lead recorded itself" untested; the skip of a leading assignment in `commandGrants` has no case; the interval short-cut for a hook mark already recent is not asserted; the AC-1 test's name carries four assertions and has no root-target case; the profile resolution of a branch session is tested with a main-checkout cwd only, not with a worktree cwd whose main checkout's profile differs (round 2's F-8).
 - Expected: each taken in a hardening item of the real-use phase, red first.
 - Evidence: the item's `review/ruling.json` of round 1 (the tokens and the texts), the plan's ledger.
+- Outcome: open.
+
+### 46. Debt of the debt item (`2026-10-17-006`): the judge's advisories
+
+- Date: 2026-10-17. Project: this repository. Category: `docs`. Severity: low.
+- What happened: the item that closed #34, #43 and #44 and measured #33 was proven in one judgement round with six advisories, recorded here under the user's bounded-round rule. Code quality: the `?? unfenced(answer)` operand in the SubagentStop writer never evaluates (`answerFile` already needs the gates' JSON for a `.json` file; return the file and the ruling together, or drop the fallback); `removeWorktree` does its three steps inline (an `onlyEngineDirt(path)` helper would read better); the `!` in the porcelain status class never matches without `--ignored`. Test quality: `closingBrace`'s string and escape skipping, an object that never closes and a debate ruling whose prose says "rulings" have no `answerFile` case; a worktree dirty both under `.crew/` and elsewhere is untested (`every` changed to `some` would survive); one test holds AC-3 and AC-4 and its name does not say which broke.
+- Expected: each taken in a hardening item of the real-use phase, red first.
+- Evidence: the item's `review/ruling.json`, the plan's ledger.
 - Outcome: open.

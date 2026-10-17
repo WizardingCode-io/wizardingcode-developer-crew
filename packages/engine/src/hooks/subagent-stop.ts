@@ -105,23 +105,56 @@ function unfenced(text: string): string {
   return fence?.[1] ?? text.trim();
 }
 
-/** Where an agent's first answer is saved, by the agent (`review-<gate>`, `judge`, `expert-<n>`, a critic) and the shape of the answer. */
-export function answerFile(agent: string, answer: string): string {
-  if (agent.startsWith("review-")) return `review/${agent.slice("review-".length)}.findings.md`;
-  if (agent === "judge") {
-    const body = unfenced(answer);
+/** The end of the JSON object that opens at `open`, strings and their escapes skipped; -1 when it never closes. */
+function closingBrace(text: string, open: number): number {
+  let depth = 0;
+  let quoted = false;
+  for (let i = open; i < text.length; i++) {
+    const c = text.charAt(i);
+    if (quoted) {
+      if (c === "\\") i++;
+      else if (c === '"') quoted = false;
+    } else if (c === '"') quoted = true;
+    else if (c === "{") depth++;
+    else if (c === "}" && --depth === 0) return i;
+  }
+  return -1;
+}
+
+/**
+ * The gates' ruling in a judge's answer: the whole answer, a fenced block, or the object that
+ * carries `"rulings"` inside text the judge wrote around it (a judge on a clean diff tends to
+ * explain first; finding #44). Null when the answer holds no such object.
+ */
+export function gatesRuling(answer: string): string | null {
+  const body = unfenced(answer);
+  const candidates = [body];
+  const at = body.indexOf('"rulings"');
+  const open = at >= 0 ? body.lastIndexOf("{", at) : -1;
+  const close = open >= 0 ? closingBrace(body, open) : -1;
+  if (close > open) candidates.push(body.slice(open, close + 1));
+  for (const text of candidates) {
     try {
-      const parsed: unknown = JSON.parse(body);
+      const parsed: unknown = JSON.parse(text);
       if (
         typeof parsed === "object" &&
         parsed !== null &&
         Array.isArray((parsed as { rulings?: unknown }).rulings)
       )
-        return "review/ruling.json";
+        return text;
     } catch {
       // not the gates' JSON
     }
-    const validator = /^# Validator, ([a-z-]+)/.exec(body);
+  }
+  return null;
+}
+
+/** Where an agent's first answer is saved, by the agent (`review-<gate>`, `judge`, `expert-<n>`, a critic) and the shape of the answer. */
+export function answerFile(agent: string, answer: string): string {
+  if (agent.startsWith("review-")) return `review/${agent.slice("review-".length)}.findings.md`;
+  if (agent === "judge") {
+    if (gatesRuling(answer)) return "review/ruling.json";
+    const validator = /^# Validator, ([a-z-]+)/.exec(unfenced(answer));
     return validator ? `conclave/validator-${validator[1]}.md` : "conclave/judge.md";
   }
   return `conclave/${agent}.md`;
@@ -282,7 +315,11 @@ function recordStop(
   } else {
     // The first answer: the role's own, or a resumed role's whose earlier stop left no file.
     const file = answerFile(agent, answer);
-    writeText(join(dir, file), file.endsWith(".json") ? `${unfenced(answer)}\n` : `${answer}\n`);
+    // A ruling file holds the JSON alone, so `crew judgement record --ruling` reads it as it is.
+    writeText(
+      join(dir, file),
+      file.endsWith(".json") ? `${gatesRuling(answer) ?? unfenced(answer)}\n` : `${answer}\n`,
+    );
     saved = { file, agent };
   }
   progress.saved = saved;

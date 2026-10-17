@@ -5,6 +5,7 @@ A route, action, query or command another program or screen calls. The kind wher
 ## Assumed by good practice
 - Authenticated, and authorised the way the resource's other endpoints are; a list is paginated and bounded; input validated at the boundary in the module's own shape.
 - Errors in the project's error shape, never a stack or a raw exception; the same rate limit as the neighbours.
+- The target of a redirect, a link or a call the change names exists in this repository or is named as another project's: read where the routes or pages are listed (the router, the route table, the pages folder) before assuming it does; a target nobody serves is a decision for the user, never an assumption (C-13).
 
 ## Decisions only the user can make
 - Who may call it: which permission or role, and whether existing users have it today.

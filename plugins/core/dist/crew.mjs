@@ -3936,12 +3936,31 @@ function dropBranch(root, branch) {
     gitRun(root, "branch", "-D", branch);
   } catch {}
 }
+var ENGINE_DIR = ".crew/";
+function dirtyPaths(path) {
+  return gitRun(path, "status", "--porcelain", "--untracked-files=all").split(`
+`).map((line) => /^\s*[MADRCU?!]{0,2}\s+(.+)$/.exec(line)?.[1] ?? "").filter((p) => p.length > 0).flatMap((p) => p.split(" -> "));
+}
 function removeWorktree(root, path) {
   try {
     gitRun(root, "worktree", "remove", path);
     return null;
   } catch (error) {
-    return { kept: gitError(error) };
+    let onlyEngine;
+    try {
+      const dirty = dirtyPaths(path);
+      onlyEngine = dirty.length > 0 && dirty.every((p) => p.startsWith(ENGINE_DIR));
+    } catch {
+      onlyEngine = false;
+    }
+    if (!onlyEngine)
+      return { kept: gitError(error) };
+    try {
+      gitRun(root, "worktree", "remove", "--force", path);
+      return null;
+    } catch (forced) {
+      return { kept: gitError(forced) };
+    }
   }
 }
 
@@ -6201,17 +6220,49 @@ function unfenced(text) {
   const fence = /^```(?:json)?\s*\n([\s\S]*?)\n```\s*$/.exec(text.trim());
   return fence?.[1] ?? text.trim();
 }
+function closingBrace(text, open) {
+  let depth = 0;
+  let quoted = false;
+  for (let i = open;i < text.length; i++) {
+    const c = text.charAt(i);
+    if (quoted) {
+      if (c === "\\")
+        i++;
+      else if (c === '"')
+        quoted = false;
+    } else if (c === '"')
+      quoted = true;
+    else if (c === "{")
+      depth++;
+    else if (c === "}" && --depth === 0)
+      return i;
+  }
+  return -1;
+}
+function gatesRuling(answer2) {
+  const body = unfenced(answer2);
+  const candidates = [body];
+  const at = body.indexOf('"rulings"');
+  const open = at >= 0 ? body.lastIndexOf("{", at) : -1;
+  const close = open >= 0 ? closingBrace(body, open) : -1;
+  if (close > open)
+    candidates.push(body.slice(open, close + 1));
+  for (const text of candidates) {
+    try {
+      const parsed = JSON.parse(text);
+      if (typeof parsed === "object" && parsed !== null && Array.isArray(parsed.rulings))
+        return text;
+    } catch {}
+  }
+  return null;
+}
 function answerFile(agent, answer2) {
   if (agent.startsWith("review-"))
     return `review/${agent.slice("review-".length)}.findings.md`;
   if (agent === "judge") {
-    const body = unfenced(answer2);
-    try {
-      const parsed = JSON.parse(body);
-      if (typeof parsed === "object" && parsed !== null && Array.isArray(parsed.rulings))
-        return "review/ruling.json";
-    } catch {}
-    const validator = /^# Validator, ([a-z-]+)/.exec(body);
+    if (gatesRuling(answer2))
+      return "review/ruling.json";
+    const validator = /^# Validator, ([a-z-]+)/.exec(unfenced(answer2));
     return validator ? `conclave/validator-${validator[1]}.md` : "conclave/judge.md";
   }
   return `conclave/${agent}.md`;
@@ -6302,7 +6353,7 @@ function recordStop(ctx, id, role, payload, transcriptNote, progress) {
     saved = { file: joinEarlierFile(dir, agent, answer2), agent };
   } else {
     const file = answerFile(agent, answer2);
-    writeText(join26(dir, file), file.endsWith(".json") ? `${unfenced(answer2)}
+    writeText(join26(dir, file), file.endsWith(".json") ? `${gatesRuling(answer2) ?? unfenced(answer2)}
 ` : `${answer2}
 `);
     saved = { file, agent };

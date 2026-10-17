@@ -139,6 +139,8 @@ test("SP2c: the expert answers the objections once, the judge asks one question 
   const judge = agent("judge").body;
   expect(judge).toMatch(/ask the lead to have one reviewer point to a line, once/);
   expect(judge).toMatch(/never receive the conversation/);
+  // The gates' answer is the JSON alone; the hook files prose around it as the debate's ruling (finding #44).
+  expect(judge).toContain("the JSON object alone: no sentence before it, none after it");
   // The debate judge's inputs match conclave.md's step 4: the replies, when the round ran.
   expect(judge).toContain("`conclave/replies.md`");
   for (const file of readdirSync(AGENTS).filter((f) => f.endsWith(".md"))) {

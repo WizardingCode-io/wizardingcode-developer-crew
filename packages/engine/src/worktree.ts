@@ -45,15 +45,46 @@ export function dropBranch(root: string, branch: string): void {
   }
 }
 
+/** The engine's own folder in a checkout: what it writes there (the profile, its ignore file, the records) is its own, never the implementer's work. */
+const ENGINE_DIR = ".crew/";
+
 /**
- * Removes a worktree, never by force: one that holds uncommitted or untracked files is kept, and
- * the reason says so, since a forced removal would take work nothing can bring back.
+ * The paths `git status` lists as changed or untracked in a worktree (a rename names both sides).
+ * The two status columns are read by a pattern, since `gitRun` trims the output and a leading
+ * space in the first column would otherwise shift the first path.
+ */
+function dirtyPaths(path: string): string[] {
+  return gitRun(path, "status", "--porcelain", "--untracked-files=all")
+    .split("\n")
+    .map((line) => /^\s*[MADRCU?!]{0,2}\s+(.+)$/.exec(line)?.[1] ?? "")
+    .filter((p) => p.length > 0)
+    .flatMap((p) => p.split(" -> "));
+}
+
+/**
+ * Removes a worktree. One that holds uncommitted or untracked files of the implementer's is kept,
+ * and the reason says so, since a forced removal would take work nothing can bring back; one dirty
+ * only under the engine's own folder (the profile it refreshed after the last commit, its ignore
+ * file, records the merge has already copied) goes anyway (finding #43).
  */
 export function removeWorktree(root: string, path: string): { kept: string } | null {
   try {
     gitRun(root, "worktree", "remove", path);
     return null;
   } catch (error) {
-    return { kept: gitError(error) };
+    let onlyEngine: boolean;
+    try {
+      const dirty = dirtyPaths(path);
+      onlyEngine = dirty.length > 0 && dirty.every((p) => p.startsWith(ENGINE_DIR));
+    } catch {
+      onlyEngine = false;
+    }
+    if (!onlyEngine) return { kept: gitError(error) };
+    try {
+      gitRun(root, "worktree", "remove", "--force", path);
+      return null;
+    } catch (forced) {
+      return { kept: gitError(forced) };
+    }
   }
 }
