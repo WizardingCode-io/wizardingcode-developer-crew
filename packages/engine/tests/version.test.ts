@@ -12,6 +12,15 @@ test("the engine reports the plugin version", () => {
   expect(VERSION).toBe("0.5.1");
 });
 
+test("#47: the root test script gives bun test a 30-second per-test timeout, so a test slowed by load is slow, not red", () => {
+  const scripts = (
+    JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as {
+      scripts: Record<string, string>;
+    }
+  ).scripts;
+  expect(scripts.test).toBe("bun test --timeout 30000 packages");
+});
+
 test("the version fields of the root package, the engine package and the plugin manifest agree", () => {
   expect(versionOf("package.json")).toBe(VERSION);
   expect(versionOf("packages/engine/package.json")).toBe(VERSION);
