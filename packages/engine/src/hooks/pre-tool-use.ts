@@ -598,6 +598,8 @@ function userOnlyCommand(args: string[]): { parsed: Parsed; policyCommand: boole
     verb === "approve" ||
     verb === "accept" ||
     verb === "decide" ||
+    // One more round past a cap is the user's to grant (SP7 §6.1).
+    verb === "continue" ||
     (verb === "objection" && parsed.positional.includes("waive")) ||
     (verb === "profile" && (second === "confirm" || second === "set")) ||
     (verb === "policy" && (second === "accept" || second === "set")) ||

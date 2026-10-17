@@ -4,14 +4,15 @@ import { nowIso, readText, writeText } from "../fs.ts";
 import { withLock } from "../lock.ts";
 import { loadItemMail, reply } from "../mail.ts";
 import { workDir } from "../paths.ts";
+import { ROLE_NAMES } from "../team.ts";
 import type { Message, RoleRecord } from "../types.ts";
 import { activeWork, loadWork, saveWork } from "../work.ts";
 import { leaveNotice } from "./notices.ts";
 import type { HookContext, HookPayload, HookResponse } from "./types.ts";
 
 const PLUGIN_PREFIX = "wizardingcode-developer-crew:";
-const BARE_ROLE =
-  /^(judge|researcher|expert|devils-advocate|fault-finder|review-(code-quality|test-quality|security|ui-ux|risk))$/;
+// The registry's names (SP7a): the mail's pattern and the hooks.json matcher derive from the same list.
+const BARE_ROLE = new RegExp(`^(${ROLE_NAMES.join("|")})$`);
 
 /**
  * The role behind an agent type: ours, with the plugin's prefix, as the SubagentStop matcher in
@@ -152,6 +153,9 @@ export function gatesRuling(answer: string): string | null {
 /** Where an agent's first answer is saved, by the agent (`review-<gate>`, `judge`, `expert-<n>`, a critic) and the shape of the answer. */
 export function answerFile(agent: string, answer: string): string {
   if (agent.startsWith("review-")) return `review/${agent.slice("review-".length)}.findings.md`;
+  // A lead's validation and the CTO's plan sit beside the debate's files (SP7 §6.4, §6.5).
+  if (agent.startsWith("lead-")) return `conclave/${agent}.md`;
+  if (agent === "cto") return "conclave/cto.md";
   if (agent === "judge") {
     if (gatesRuling(answer)) return "review/ruling.json";
     const validator = /^# Validator, ([a-z-]+)/.exec(unfenced(answer));

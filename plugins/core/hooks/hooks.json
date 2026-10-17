@@ -23,7 +23,7 @@
     ],
     "SubagentStop": [
       {
-        "matcher": "^wizardingcode-developer-crew:(judge|researcher|expert|devils-advocate|fault-finder|review-(code-quality|test-quality|security|ui-ux|risk))$",
+        "matcher": "^wizardingcode-developer-crew:(judge|cto|researcher|expert|devils-advocate|fault-finder|review-code-quality|review-test-quality|review-security|review-ui-ux|review-risk|review-architecture|review-data|review-infra|lead-researchers|lead-qa|lead-security|lead-architects|lead-etl|lead-devops|lead-backend|lead-frontend|lead-agentic-os)$",
         "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/dist/crew.mjs", "hook", "subagent-stop"], "timeout": 10 }]
       }
     ]

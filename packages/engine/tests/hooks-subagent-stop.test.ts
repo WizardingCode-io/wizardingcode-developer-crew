@@ -22,6 +22,7 @@ import {
   roleTokens,
 } from "../src/hooks/subagent-stop.ts";
 import { loadItemMail, mailbox, ROLE_AGENT, send } from "../src/mail.ts";
+import { ROLE_NAMES } from "../src/team.ts";
 import type { RoleRecord } from "../src/types.ts";
 import { addCriterion, createWork, loadWork, saveWork } from "../src/work.ts";
 import { hookContext, makeRepo, tempDir, testEnv, write } from "./helpers.ts";
@@ -142,7 +143,7 @@ test("SP2c AC-3: the role of an agent type, the answer from the hand-back, the t
   expect(answerFile("devils-advocate", "…")).toBe("conclave/devils-advocate.md");
 });
 
-test("SP2c AC-3: the SubagentStop matcher in hooks.json, roleOf and the plugin's agents name the same ten roles", () => {
+test("SP2c AC-3, SP7a: the SubagentStop matcher in hooks.json, roleOf, the mail and the plugin's agents name the roles the registry names", () => {
   const plugin = join(import.meta.dir, "..", "..", "..", "plugins", "core");
   const hooks = JSON.parse(readFileSync(join(plugin, "hooks", "hooks.json"), "utf8")) as {
     hooks: {
@@ -180,6 +181,19 @@ test("SP2c AC-3: the SubagentStop matcher in hooks.json, roleOf and the plugin's
     // The mail knows the same roles as agents a message can name (an expert by its number).
     expect(ROLE_AGENT.test(role === "expert" ? "expert-1" : role)).toBe(true);
   }
+  // SP7a: the registry is the one source; every role it names is accepted by the matcher, by roleOf
+  // and by the mail, the ones with no agent file yet (the leads, the CTO, the three reviewers) too.
+  expect(ROLE_NAMES).toContain("lead-devops");
+  expect(ROLE_NAMES).toContain("cto");
+  for (const role of ROLE_NAMES) {
+    expect(matcher.test(`${PLUGIN}:${role}`)).toBe(true);
+    expect(roleOf(`${PLUGIN}:${role}`)).toBe(role);
+    expect(ROLE_AGENT.test(role === "expert" ? "expert-1" : role)).toBe(true);
+  }
+  expect(roleOf(`${PLUGIN}:lead-devops`)).toBe("lead-devops");
+  expect(roleOf(`${PLUGIN}:cto`)).toBe("cto");
+  expect(answerFile("lead-qa", "# qa lead's validation")).toBe("conclave/lead-qa.md");
+  expect(answerFile("cto", "# CTO plan")).toBe("conclave/cto.md");
   expect(ROLE_AGENT.test("expert")).toBe(false);
   expect(ROLE_AGENT.test("crew")).toBe(false);
   // Neither accepts a bare name, another plugin's agent, a near miss or the skill's own name.

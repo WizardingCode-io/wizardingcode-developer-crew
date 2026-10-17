@@ -3,6 +3,8 @@ import { join } from "node:path";
 import { reviewPatch } from "./fingerprint.ts";
 import { nowIso, readJson, writeText } from "./fs.ts";
 import { type CrewPaths, workDir } from "./paths.ts";
+import { isInterfacePath } from "./paths-kind.ts";
+import { plannedSeats } from "./team.ts";
 import type {
   Evidence,
   JudgementFinding,
@@ -13,42 +15,20 @@ import type {
   RiskArea,
   RoleRecord,
   Route,
+  Seat,
   WorkItem,
 } from "./types.ts";
 import { isJudgementGateName, JUDGEMENT_GATES } from "./types.ts";
 import { isSkipped } from "./work.ts";
 
-const INTERFACE_EXTENSIONS = [
-  ".vue",
-  ".svelte",
-  ".tsx",
-  ".jsx",
-  ".astro",
-  ".blade.php",
-  ".html",
-  ".css",
-  ".scss",
-  ".less",
-];
+// The interface-file reading lives in paths-kind.ts since SP7a (the registry asks it too); the name
+// stays exported from here for its callers.
+export { isInterfacePath };
 
 /**
- * A file the user sees: a component, a template, a stylesheet, or anything under resources/views/.
- * A test, a spec or a story of one is not one: nobody expects a UI review of a test file.
- */
-export function isInterfacePath(rel: string): boolean {
-  const lower = rel.toLowerCase();
-  if (/(?:^|\/)__tests__\//.test(lower)) return false;
-  const name = lower.slice(lower.lastIndexOf("/") + 1);
-  if (/\.(?:test|spec|stories)\./.test(name)) return false;
-  if (/(?:^|\/)resources\/views\//.test(lower)) return true;
-  return INTERFACE_EXTENSIONS.some((ext) => lower.endsWith(ext));
-}
-
-/**
- * The judgement gates an item needs, from the route, the risk areas and the diff (SP2 §10): code and
- * test quality on standard and full; security on full, or on standard when a risk area is touched;
- * UI/UX on any route when the change touches an interface file; risk on full; and whatever the team
- * policy requires. A fast item with no interface file plans none, so the fast route costs nothing more.
+ * The judgement gates an item needs (SP2 §10), as a view of the seats the registry plans (SP7 §6.2):
+ * the `gate` seats, in the order they are planned. A fast item with no interface file plans none, so
+ * the fast route costs nothing more.
  */
 export function plannedJudgementGates(
   route: Route,
@@ -56,26 +36,11 @@ export function plannedJudgementGates(
   changed: readonly string[],
   policy: Policy,
 ): PlannedJudgement[] {
-  const planned: PlannedJudgement[] = [];
-  const plan = (gate: JudgementGateName, reason: string): void => {
-    if (!planned.some((p) => p.gate === gate)) planned.push({ gate, reason });
-  };
-  if (route !== "fast") {
-    plan("code-quality", `${route} route`);
-    plan("test-quality", `${route} route`);
-  }
-  if (route === "full") plan("security", "full route");
-  else if (route === "standard" && riskAreas.length)
-    plan("security", `risk area${riskAreas.length === 1 ? "" : "s"} ${riskAreas.join(", ")}`);
-  const interfaces = changed.filter(isInterfacePath);
-  if (interfaces.length) {
-    const shown = interfaces.slice(0, 3).join(", ");
-    const more = interfaces.length > 3 ? `, +${interfaces.length - 3} more` : "";
-    plan("ui-ux", `interface files: ${shown}${more}`);
-  }
-  if (route === "full") plan("risk", "full route");
-  for (const gate of policy.judgementGates) plan(gate, "policy");
-  return planned;
+  return plannedSeats(route, riskAreas, changed, policy)
+    .filter(
+      (s): s is Seat & { gate: JudgementGateName } => s.kind === "gate" && s.gate !== undefined,
+    )
+    .map((s) => ({ gate: s.gate, reason: s.reason }));
 }
 
 /** Where the review of an item lives: the engine's inputs, and the roles' answers the session saves beside them. Not engine-owned. */

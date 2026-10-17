@@ -404,3 +404,28 @@ Verdicts agree at every effort. Upheld findings: `high` reproduced Task 6's and 
 - Expected: the CLI tests that spawn several processes declare their own timeout (the tasks and open tests already do), so load makes them slow, not red; a release stops at the first red run and says so.
 - Evidence: the gate run's log of item `2026-10-17-006` (`test-packages_engine-*.txt`), the ledger of the SP2c plan, the quiet-machine run after the release (335 pass).
 - Outcome: open. Next: a timeout on the CLI tests that run `crew` more than a few times (15 s, as the tasks tests have), and the release step's checks run once, before the commit, with the commit refused on any failure.
+
+### 48. Debt of SP7a Task 1 (`2026-10-17-008`): the judge's advisories and the rulings taken at execution
+
+- Date: 2026-10-17. Project: this repository. Category: `docs`. Severity: low.
+- What happened: the item that brought the team registry (`team.ts`), `plannedSeats`, the policy's `team` block and `crew team` and `crew continue` went through two judgement rounds (five defects in the first, fixed in the second) and left six advisories, recorded here under the user's bounded-round rule. Code quality: `plannedSeats` restates the gate-to-team mapping by hand (code-quality→backend, test-quality→qa, security→security, ui-ux→qa, risk→architects) while `TEAMS` holds each team's gates (look the team up from `TEAMS` by gate); `TEAM_NAMES` in `policy.ts` is a third list of the nine teams beside the `TeamName` union and the keys of `TEAMS` (filter on `Object.keys(TEAMS)`); `isInterfacePath` is re-exported from `judgement.ts` for its callers instead of pointing them at `paths-kind.ts`. Test quality: `crew continue <id> validation` and `gate T-n` and the recorded `task` field are untested beyond the usage refusal (their consumers come with Tasks 4 and 6); a `--not-run` record on the same code as a ruling is claimed as the same round by a comment but not exercised; the fall-back of `maxExperts` and `maxValidationRounds` to their defaults is not shown (only `maxJudgementRounds` and `maxGateRounds` are).
+- Two readings of the plan settled at execution, recorded in the item's spec and in the plan's decision 3: the judge is seated on the fast route when an interface file plans `ui-ux` (SP2b already launched it to rule that gate); a judgement round is the records against one state of the code (`rounds.judgementCode`), not every record, because the SP2b tests re-file rulings on the same code to test tokens and staleness, and a not-run beside a ruling is one round.
+- Expected: each advisory taken in a hardening item of SP7a (Task 8's close or the real-use phase), red first.
+- Evidence: the item's `review/ruling.round1.json`, the round-2 ruling in its evidence, the plan's decision 3 as amended.
+- Outcome: open.
+
+### 49. The session that executes SP7a runs the 0.4.0 plugin: the hooks file no role answer and `crew await role` reads as a user wait
+
+- Date: 2026-10-17. Project: this repository. Item: `2026-10-17-008`. Category: `friction`. Severity: low.
+- What happened: 0.5.1 is released and installed, but this session started before the restart, so `crew --version` on PATH says 0.4.0 and the hooks are 0.4.0's: the SubagentStop hook filed none of the reviewers' or the judge's answers (the session wrote them verbatim into `review/` and recorded the ruling by hand), the role records and tokens of this item are missing from its evidence, and `crew await <id> role` was taken as `user`. The first gate run's engine test gate also failed on one CLI test that timed out at 5 s while `plugin:check` ran beside it (#47 again), and passed on a run alone.
+- Expected: the SP7a items after the restart run under 0.5.1 (the hook files the answers and records tokens); #47's timeouts are taken in the hardening item.
+- Evidence: the item's `review/` folder (the files written by the session), its `evidence.json` without `roles`, the first gate run's log `test-packages_engine-*.txt`.
+- Outcome: open until the restart; nothing to fix in the engine.
+
+### 50. A client's name sits in two engine tests
+
+- Date: 2026-10-17. Project: this repository. Category: `convention`. Severity: low.
+- What happened: `packages/engine/tests/paths.test.ts` and `packages/engine/tests/policy-config-state.test.ts` use a client's workspace name as a fixture value for `mail.workspace`, against the rule that no client project name enters the repository (fixtures use `a`, `b`, `storefront`, `crm`, `lead`).
+- Expected: the value replaced by a neutral name (`w`) in the next hardening item; the rule added to the test-quality rubric's "what the reviewer checks" so a reviewer flags it.
+- Evidence: the `mail.workspace` fixture values in the two test files (`mailboxDir`, `isProtectedPath` and `setPolicyValue` cases); the name is not repeated here.
+- Outcome: open.

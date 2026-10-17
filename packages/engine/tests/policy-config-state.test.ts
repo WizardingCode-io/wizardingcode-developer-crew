@@ -299,6 +299,62 @@ test("SP2c: crew policy set writes the scalar mail keys, each value checked, and
   });
   expect(setPolicyValue(paths, "mail.accept", "question")).toEqual({
     refused:
-      "unknown policy key: mail.accept (crew policy set writes attendedDecisions, unattendedDecisions, mail.workspace, mail.name, mail.open, mail.maxConcurrent, mail.maxHops, mail.maxTurns, mail.maxMinutes, mail.worktrees)",
+      "unknown policy key: mail.accept (crew policy set writes attendedDecisions, unattendedDecisions, mail.workspace, mail.name, mail.open, mail.maxConcurrent, mail.maxHops, mail.maxTurns, mail.maxMinutes, mail.worktrees, team.template, team.maxExperts, team.maxValidationRounds, team.maxJudgementRounds, team.maxGateRounds)",
   });
+});
+
+test("SP7a AC-3: policy.team has its defaults when absent, only tightens when present, and its scalar keys are settable", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  expect(DEFAULT_POLICY.team).toEqual({
+    template: "core",
+    always: [],
+    specialists: [],
+    maxExperts: 3,
+    maxValidationRounds: 2,
+    maxJudgementRounds: 2,
+    maxGateRounds: 2,
+  });
+  expect(loadPolicy(paths).policy.team).toEqual(DEFAULT_POLICY.team);
+  mkdirSync(paths.crewDir, { recursive: true });
+  writeFileSync(
+    join(paths.crewDir, "policy.json"),
+    JSON.stringify({
+      team: {
+        template: "packs",
+        always: ["etl", "sales", 3],
+        specialists: ["laravel", 7],
+        maxExperts: 2,
+        maxValidationRounds: 1,
+        maxJudgementRounds: 3,
+        maxGateRounds: 0,
+      },
+    }),
+  );
+  // A cap above its default, or below one, falls back to the default: a policy only tightens.
+  expect(loadPolicy(paths).policy.team).toEqual({
+    template: "core",
+    always: ["etl"],
+    specialists: ["laravel"],
+    maxExperts: 2,
+    maxValidationRounds: 1,
+    maxJudgementRounds: 2,
+    maxGateRounds: 2,
+  });
+  const fresh = repoPaths(makeRepo(), testEnv());
+  expect(setPolicyValue(fresh, "team.maxJudgementRounds", "1")).toEqual({
+    key: "team.maxJudgementRounds",
+    value: "1",
+  });
+  expect(setPolicyValue(fresh, "team.maxExperts", "2")).toEqual({
+    key: "team.maxExperts",
+    value: "2",
+  });
+  expect(loadPolicy(fresh).policy.team).toMatchObject({ maxJudgementRounds: 1, maxExperts: 2 });
+  expect(setPolicyValue(fresh, "team.maxJudgementRounds", "3")).toHaveProperty("refused");
+  expect(setPolicyValue(fresh, "team.template", "packs")).toHaveProperty("refused");
+  expect(setPolicyValue(fresh, "team.template", "core")).toEqual({
+    key: "team.template",
+    value: "core",
+  });
+  expect(setPolicyValue(fresh, "team.always", "etl")).toHaveProperty("refused");
 });

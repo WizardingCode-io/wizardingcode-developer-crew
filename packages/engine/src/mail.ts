@@ -19,6 +19,7 @@ import {
   writeProtectedJson,
   writeProtectedJsonAt,
 } from "./store.ts";
+import { rolePattern } from "./team.ts";
 import type {
   MailAddressee,
   Mailbox,
@@ -41,8 +42,8 @@ export const LIVE_MS = 10 * 60 * 1000;
 export const INLINE_BODY_LIMIT = 2048;
 const PREVIEW_CHARS = 200;
 const SUBJECT_CHARS = 80;
-export const ROLE_AGENT =
-  /^(judge|researcher|expert-\d+|devils-advocate|fault-finder|review-(code-quality|test-quality|security|ui-ux|risk))$/;
+/** A role of the plugin as a message names it, from the registry (`expert-<n>` numbered); one source with the hook and hooks.json (SP7a). */
+export const ROLE_AGENT = rolePattern();
 export const TASK_AGENT = /^T-\d+$/;
 const CRITICS = new Set(["devils-advocate", "fault-finder"]);
 

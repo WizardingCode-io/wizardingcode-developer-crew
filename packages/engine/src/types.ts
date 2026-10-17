@@ -12,16 +12,66 @@ export const GATE_NAMES: readonly GateName[] = [
  * A gate whose verdict is a reviewer's ruling against a rubric and a judge's decision, not an exit
  * code (SP2 §10). Kept apart from `GateName`: the engine runs those, the session's roles run these.
  */
-export type JudgementGateName = "code-quality" | "test-quality" | "security" | "ui-ux" | "risk";
+export type JudgementGateName =
+  | "code-quality"
+  | "test-quality"
+  | "security"
+  | "ui-ux"
+  | "risk"
+  | "architecture"
+  | "data"
+  | "infra";
 export const JUDGEMENT_GATES: readonly JudgementGateName[] = [
   "code-quality",
   "test-quality",
   "security",
   "ui-ux",
   "risk",
+  "architecture",
+  "data",
+  "infra",
 ];
 export function isJudgementGateName(value: unknown): value is JudgementGateName {
   return JUDGEMENT_GATES.includes(value as JudgementGateName);
+}
+
+/** The nine areas of the organization (SP7 §6). */
+export type TeamName =
+  | "architects"
+  | "researchers"
+  | "etl"
+  | "security"
+  | "devops"
+  | "qa"
+  | "backend"
+  | "frontend"
+  | "agentic-os";
+
+/** One role the engine plans for an item, with the reason it runs (SP7 §3, §6.1). */
+export interface Seat {
+  role: string;
+  team: TeamName | null;
+  kind: "gate" | "debate" | "lead" | "cto";
+  gate?: JudgementGateName;
+  reason: string;
+}
+
+export type Personality =
+  | "adventurous"
+  | "creative"
+  | "conservative"
+  | "sceptical"
+  | "professional";
+
+/** The `team` block of `policy.json` (SP7 §6.1): a template, teams added beyond the route, and caps that only tighten. */
+export interface TeamPolicy {
+  template: "core";
+  always: TeamName[];
+  specialists: string[];
+  maxExperts: number;
+  maxValidationRounds: number;
+  maxJudgementRounds: number;
+  maxGateRounds: number;
 }
 
 /** A judgement gate the item needs, and why: "standard route", "risk area auth", "interface files: a.vue", "policy". */
@@ -205,6 +255,10 @@ export interface RoleRecord {
   tokensFrom: "transcript" | "none";
   /** Relative to the work folder, or null when the answer matched no known shape. */
   file: string | null;
+  /** The lens the role was given (SP7 §6.3), read from its answer's `personality:` line; `unknown` for a name the registry does not have. */
+  personality?: Personality | "unknown";
+  /** The team the role sits in, from the registry; absent for the judge and the debate's critics. */
+  team?: TeamName;
 }
 
 /** A project the engine has seen (`~/.wizardingcode/crew/projects.json`). */
@@ -436,6 +490,24 @@ export interface WorkItem {
    * matches is not this item's change.
    */
   baseFiles?: Record<string, string>;
+  /** The seats planned for the item, with their reasons; written by `crew team` and the gate run (SP7 §6.6). */
+  seats?: Seat[];
+  /** The team whose lead the session is: frontend when the change touches interface files, backend otherwise. */
+  primaryTeam?: "backend" | "frontend";
+  /**
+   * Rounds recorded so far; the policy's caps are checked against them (SP7 §6.1). A judgement
+   * round is the records against one state of the code: `judgementCode` is the fingerprint the
+   * last counted round vouched for, so a ruling recorded again on the same code, or a not-run
+   * beside it, is the same round, and a record against new code opens the next.
+   */
+  rounds?: { judgement: number; validation: number; judgementCode?: string | null };
+  /** One more round the user granted past a cap (`crew continue`), recorded as theirs. */
+  continued?: {
+    what: "judgement" | "validation" | "gate";
+    task?: string;
+    by: Decision;
+    at: string;
+  }[];
   createdAt: string;
   updatedAt: string;
 }
@@ -561,6 +633,8 @@ export interface Policy {
   attendedDecisions: "prompt" | "relay";
   /** The mailbox: the workspace, the name, what is accepted, what may open and the limits (SP2c §6). */
   mail: MailPolicy;
+  /** The team: a template, teams added beyond the route, and the caps on experts and rounds (SP7 §6.1). */
+  team: TeamPolicy;
 }
 
 export type Mode = "partner" | "guide" | "pilot";

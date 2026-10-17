@@ -9,6 +9,8 @@ import type {
   Policy,
   RiskArea,
   Route,
+  TeamName,
+  TeamPolicy,
 } from "./types.ts";
 import { GATE_NAMES, isJudgementGateName, isMailType, ROUTE_ORDER } from "./types.ts";
 
@@ -28,6 +30,17 @@ export const DEFAULT_MAIL_POLICY: MailPolicy = {
   worktrees: "..",
 };
 
+/** The team block's defaults (SP7 §6.1): the core template, no team beyond the route, the caps at their ceilings. */
+export const DEFAULT_TEAM_POLICY: TeamPolicy = {
+  template: "core",
+  always: [],
+  specialists: [],
+  maxExperts: 3,
+  maxValidationRounds: 2,
+  maxJudgementRounds: 2,
+  maxGateRounds: 2,
+};
+
 export const DEFAULT_POLICY: Policy = {
   requiredGates: [],
   judgementGates: [],
@@ -41,6 +54,7 @@ export const DEFAULT_POLICY: Policy = {
   unattendedDecisions: "wait",
   attendedDecisions: "relay",
   mail: DEFAULT_MAIL_POLICY,
+  team: DEFAULT_TEAM_POLICY,
 };
 
 /** How `crew policy set` checks a value: one of a list, a name, or a whole number in a range. */
@@ -60,6 +74,11 @@ const RANGES = {
   maxHops: { min: 1, max: 10 },
   maxTurns: { min: 1, max: 500 },
   maxMinutes: { min: 1, max: 600 },
+  // The team's caps end at their defaults: a policy can only tighten them (SP7 §6.1).
+  maxExperts: { min: 1, max: 3 },
+  maxValidationRounds: { min: 1, max: 2 },
+  maxJudgementRounds: { min: 1, max: 2 },
+  maxGateRounds: { min: 1, max: 2 },
 } as const satisfies Record<string, Range>;
 
 /** The scalar keys `crew policy set` writes; the lists (`mail.accept`, `allowSkips`, …) are hand-written and accepted. */
@@ -77,6 +96,11 @@ export const SETTABLE_POLICY_KEYS: Record<string, Settable> = {
     pattern: WORKTREES,
     hint: "a relative path with no spaces (.. for the folder beside the root)",
   },
+  "team.template": { values: ["core"] },
+  "team.maxExperts": { integer: RANGES.maxExperts },
+  "team.maxValidationRounds": { integer: RANGES.maxValidationRounds },
+  "team.maxJudgementRounds": { integer: RANGES.maxJudgementRounds },
+  "team.maxGateRounds": { integer: RANGES.maxGateRounds },
 };
 
 function policyPath(paths: CrewPaths): string {
@@ -208,6 +232,47 @@ function strings(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : [];
 }
 
+const TEAM_NAMES: readonly TeamName[] = [
+  "architects",
+  "researchers",
+  "etl",
+  "security",
+  "devops",
+  "qa",
+  "backend",
+  "frontend",
+  "agentic-os",
+];
+
+/** The team block as written, each value checked: an unknown team dropped, a cap outside its range at its default (SP7 §6.1). */
+function loadTeamPolicy(raw: unknown): TeamPolicy {
+  const t = (typeof raw === "object" && raw !== null && !Array.isArray(raw) ? raw : {}) as Record<
+    string,
+    unknown
+  >;
+  return {
+    template: "core",
+    always: strings(t.always).filter((n): n is TeamName => TEAM_NAMES.includes(n as TeamName)),
+    specialists: strings(t.specialists),
+    maxExperts: bounded(t.maxExperts, RANGES.maxExperts, DEFAULT_TEAM_POLICY.maxExperts),
+    maxValidationRounds: bounded(
+      t.maxValidationRounds,
+      RANGES.maxValidationRounds,
+      DEFAULT_TEAM_POLICY.maxValidationRounds,
+    ),
+    maxJudgementRounds: bounded(
+      t.maxJudgementRounds,
+      RANGES.maxJudgementRounds,
+      DEFAULT_TEAM_POLICY.maxJudgementRounds,
+    ),
+    maxGateRounds: bounded(
+      t.maxGateRounds,
+      RANGES.maxGateRounds,
+      DEFAULT_TEAM_POLICY.maxGateRounds,
+    ),
+  };
+}
+
 /**
  * A policy can only tighten, with one exception: `riskPathExclusions` takes paths out of the risk
  * patterns (ADR 0003). Anything it does not say falls back to the default.
@@ -244,6 +309,7 @@ export function loadPolicy(paths: CrewPaths): { policy: Policy; tampered: boolea
           : "wait",
       attendedDecisions: raw.attendedDecisions === "prompt" ? "prompt" : "relay",
       mail: loadMailPolicy(raw.mail),
+      team: loadTeamPolicy(raw.team),
     },
     tampered: read.tampered,
   };

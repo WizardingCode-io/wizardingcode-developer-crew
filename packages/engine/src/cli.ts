@@ -67,12 +67,19 @@ import {
   sweepSafely,
 } from "./open.ts";
 import { type CrewPaths, PROTECTED_WORK_FILES, resolvePaths, userDirOf, workDir } from "./paths.ts";
-import { loadPolicy, SETTABLE_POLICY_KEYS, setPolicyValue, skipAllowed } from "./policy.ts";
+import {
+  decisionCounts,
+  loadPolicy,
+  SETTABLE_POLICY_KEYS,
+  setPolicyValue,
+  skipAllowed,
+} from "./policy.ts";
 import { ensureProfile, loadProfile, refreshProfile, saveProfile } from "./profile.ts";
 import { ensureCrewDir } from "./state.ts";
 import { integrityOf, recordIntegrity, writeProtectedText } from "./store.ts";
 import { listTasks, mergeTask, openTask, takeReplies } from "./tasks.ts";
 import { recordTdd, type TddStep } from "./tdd.ts";
+import { plannedSeats, primaryTeam } from "./team.ts";
 import type {
   Decision,
   Evidence,
@@ -1106,6 +1113,19 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         env.tampered || opened.tampered,
       );
       const planned = before.judgement.map((j) => j.gate);
+      // The rounds' cap (SP7 §6.1): a round is the records against one state of the code, so a
+      // record on the code the last round vouched for joins it, and a record on new code opens the
+      // next. Past the policy's cap plus the rounds the user granted, the command refuses before
+      // reading anything, and the user decides.
+      const rounds = opened.work.rounds ?? { judgement: 0, validation: 0 };
+      const newRound = rounds.judgementCode !== before.currentFingerprint;
+      const grants = (opened.work.continued ?? []).filter(
+        (c) => c.what === "judgement" && decisionCounts(env.policy, c.by),
+      ).length;
+      if (newRound && rounds.judgement >= env.policy.team.maxJudgementRounds + grants)
+        return refuse(
+          `judgement round ${rounds.judgement + 1} of ${opened.work.id}: the policy allows ${env.policy.team.maxJudgementRounds} (team.maxJudgementRounds); the user continues it once with crew continue ${opened.work.id} judgement, or decides (crew skip <id> gate:<gate> where policy.json allows it)`,
+        );
       const records: JudgementRecord[] = [];
       // One or the other: a gate that could not run has no ruling file to record (review of SP2b, finding 11).
       if (parsed.flags["not-run"] && typeof parsed.flags.ruling === "string")
@@ -1173,6 +1193,14 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       result.evidence.verdict = result.verdict;
       result.evidence.unproven = result.unproven;
       saveEvidence(env.paths, opened.work.id, result.evidence);
+      // The round spent, counted at the first record against this code (plan decision 3 of SP7a).
+      if (newRound)
+        opened.work.rounds = {
+          ...rounds,
+          judgement: rounds.judgement + 1,
+          judgementCode: before.currentFingerprint,
+        };
+      saveWork(env.paths, opened.work);
       deliver(env, opened, result.evidence);
       const lines = records.map((r) => {
         const outside = r.findings.filter((f) => f.outside).length;
@@ -1343,6 +1371,44 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       }
       return refuse(usage);
     }
+    case "team": {
+      // The seats the route plans for the item, printed before anything runs and recorded (SP7 §6.2, §6.6).
+      const opened = openForChange(env, args[0]);
+      if (isOutcome(opened)) return opened;
+      const changed = changedWatchedPaths(env.paths.root, env.profile, opened.work);
+      const seats = plannedSeats(opened.work.route, opened.work.riskAreas, changed, env.policy);
+      const primary = primaryTeam(changed);
+      opened.work.seats = seats;
+      opened.work.primaryTeam = primary;
+      saveWork(env.paths, opened.work);
+      const text = seats.length
+        ? `Team of ${opened.work.id} (primary ${primary}): ${seats.map((s) => `${s.role} (${s.reason})`).join("; ")}`
+        : `Team of ${opened.work.id}: no seat (fast route)`;
+      return ok(text, { seats, primaryTeam: primary });
+    }
+    case "continue": {
+      // One more round past a cap, the user's to grant (SP7 §6.1): recorded as theirs, like a skip.
+      const opened = openForChange(env, args[0]);
+      if (isOutcome(opened)) return opened;
+      const usage =
+        "usage: crew continue <id> judgement | crew continue <id> validation | crew continue <id> gate T-n";
+      const what = args[1];
+      if (what !== "judgement" && what !== "validation" && what !== "gate") return refuse(usage);
+      const task = what === "gate" ? args[2] : undefined;
+      if (what === "gate" && !/^T-\d+$/.test(task ?? "")) return refuse(usage);
+      const decision = decisionFlag(parsed, env.policy);
+      if (isOutcome(decision)) return decision;
+      opened.work.continued = [
+        ...(opened.work.continued ?? []),
+        { what, ...(task ? { task } : {}), by: decision, at: nowIso() },
+      ];
+      saveWork(env.paths, opened.work);
+      const subject =
+        what === "gate" ? `gate of ${task} of ${opened.work.id}` : `${what} of ${opened.work.id}`;
+      return ok(`${subject} continued for one more round ${decisionText(env.policy, decision)}`, {
+        continued: opened.work.continued,
+      });
+    }
     case "status": {
       const active = activeWork(env.paths);
       if (!active?.work) return ok("no active work item", { active: null });
@@ -1381,6 +1447,13 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         awaitingMessage: work.awaitingMessage ?? null,
         mail: { unread: inbox.unread, answered: inbox.answered, waiting: inbox.waiting },
         tasks,
+        // The team of the item (SP7 §14): the seats, the session's team, the rounds spent.
+        team: work.seats ?? [],
+        primaryTeam: work.primaryTeam ?? null,
+        rounds: {
+          judgement: work.rounds?.judgement ?? 0,
+          validation: work.rounds?.validation ?? 0,
+        },
         debate: debateState(work),
         baseCommit: work.baseCommit,
         phases: PHASES_BY_ROUTE[work.route],
@@ -1684,6 +1757,8 @@ const HELP = `crew ${VERSION}
   gate run <id> [--only a,b]            run the gates the route requires; plans the judgement gates and writes their inputs to .crew/work/<id>/review/
   judgement <id> record --ruling <file>  record the rulings of a review file ({"rulings":[{gate,verdict,reviewer,judge,findings,tokens}]}); exit 0 once proven
   judgement <id> record <gate> --not-run --reason "<why>"   a judgement gate that could not run, never passed by default
+  team <id>                   the seats the route plans for the item, with their reasons, recorded
+  continue <id> judgement|validation|gate T-n   one more round past the policy's cap (the user's decision)
   skip <id> <step> --reason "<text>"    record a skip of a tdd step, a gate or a judgement gate (asks the user; --mode as for approve)
   evidence <id>                         write and print the report
   status | mode [m] | config <key> [v]  state and settings

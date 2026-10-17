@@ -8,6 +8,7 @@ import { mailContext, registerProject } from "../src/mail.ts";
 import { loadPolicy } from "../src/policy.ts";
 import { loadProfile } from "../src/profile.ts";
 import { readProtectedJson, writeProtectedJson } from "../src/store.ts";
+import { loadWork } from "../src/work.ts";
 import { git, makeRepo, repoPaths, tempDir, testEnv, write } from "./helpers.ts";
 
 test("SP2b: debate open and close through the command; plan waits while the debate is open; status says so", async () => {
@@ -2121,4 +2122,171 @@ test("SP2c AC-5: crew judgement record fills tokens from the engine's role recor
   expect((await c.json("judgement", id, "record", "--ruling", file)).data.records).toMatchObject([
     { tokens: 123 },
   ]);
+});
+
+test("SP7a AC-4: crew team prints the seats with their reasons and records them; the gate run and the status carry them; the report has the Team table", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const env = testEnv();
+  const c = io(root, env);
+  const id = (
+    await c.json(
+      "start",
+      "Refactor the module",
+      "--answers",
+      JSON.stringify({ ...JSON.parse(answers), scope: 1 }),
+      "--criterion",
+      "a",
+    )
+  ).data.id as string;
+  const team = await c.run("team", id);
+  expect(team.code).toBe(0);
+  expect(team.out).toContain(`Team of ${id} (primary backend):`);
+  expect(team.out).toContain("researcher (standard route)");
+  expect(team.out).toContain("lead-qa (standard route)");
+  expect(team.out).toContain("judge (a gate is planned)");
+  expect(team.out).not.toContain("review-architecture");
+  expect(loadWork(repoPaths(root, env), id).work?.seats?.map((s) => s.role)).toEqual([
+    "researcher",
+    "review-code-quality",
+    "review-test-quality",
+    "lead-qa",
+    "lead-security",
+    "judge",
+  ]);
+  expect(loadWork(repoPaths(root, env), id).work?.primaryTeam).toBe("backend");
+  const status = await c.json("status");
+  expect((status.data.team as { role: string }[]).map((s) => s.role)).toContain("lead-security");
+  expect(status.data.primaryTeam).toBe("backend");
+  expect(status.data.rounds).toEqual({ judgement: 0, validation: 0 });
+  // The gate run records the seats too, from the paths the change touched.
+  write(root, "src/App.vue", "<template />");
+  await c.run("gate", "run", id);
+  const after = loadWork(repoPaths(root, env), id).work;
+  expect(after?.seats?.map((s) => s.role)).toContain("review-ui-ux");
+  expect(after?.primaryTeam).toBe("frontend");
+  const report = (await c.run("evidence", id)).out;
+  expect(report).toContain("## Team");
+  expect(report).toContain("| Seat | Team | Reason |");
+  expect(report).toContain("| lead-qa | qa | standard route |");
+  expect(report).toContain("- Rounds: judgement 0 of 2, validation 0 of 2");
+  // A fast item with no change yet seats nobody, and says so (the earlier change committed first).
+  git(root, "add", "-A");
+  git(root, "commit", "-q", "-m", "the interface file");
+  const fast = (await c.json("start", "Fix a", "--answers", answers, "--criterion", "a")).data
+    .id as string;
+  expect((await c.run("team", fast)).out.trim()).toBe(`Team of ${fast}: no seat (fast route)`);
+});
+
+test("SP7a AC-5: a third judgement round is refused; the user continues it once and the record says so; the cap only tightens", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+    ".crew/policy.json": JSON.stringify({ team: { maxJudgementRounds: 3 } }),
+  });
+  const env = testEnv();
+  const c = io(root, env);
+  // 3 is above the default: the policy only tightens, so the cap reads 2.
+  expect(loadPolicy(repoPaths(root, env)).policy.team.maxJudgementRounds).toBe(2);
+  const id = (
+    await c.json(
+      "start",
+      "Refactor the module",
+      "--answers",
+      JSON.stringify({ ...JSON.parse(answers), scope: 1 }),
+      "--criterion",
+      "a",
+    )
+  ).data.id as string;
+  write(root, "src/a.ts", "y");
+  await c.run("gate", "run", id);
+  const file = `.crew/work/${id}/review/ruling.json`;
+  const ruling = (verdict: "proven" | "not-proven") =>
+    JSON.stringify({
+      rulings: [
+        {
+          gate: "code-quality",
+          verdict,
+          findings:
+            verdict === "proven"
+              ? []
+              : [{ file: "src/a.ts", line: 1, text: "a magic value", severity: "defect" }],
+          tokens: 1,
+        },
+        { gate: "test-quality", verdict: "proven", findings: [], tokens: 1 },
+      ],
+    });
+  write(root, file, ruling("not-proven"));
+  expect((await c.run("judgement", id, "record", "--ruling", file)).out).toContain(
+    "code-quality: not proven (1 finding)",
+  );
+  // A record on the same code is the same round: a not-run beside a ruling, or a ruling re-filed.
+  expect((await c.run("judgement", id, "record", "--ruling", file)).code).toBe(1);
+  expect(loadWork(repoPaths(root, env), id).work?.rounds).toMatchObject({
+    judgement: 1,
+    validation: 0,
+  });
+  // The code changes after the first round's defects: the second round.
+  write(root, "src/a.ts", "y2");
+  await c.run("gate", "run", id);
+  write(root, file, ruling("not-proven"));
+  expect((await c.run("judgement", id, "record", "--ruling", file)).out).toContain(
+    "code-quality: not proven (1 finding)",
+  );
+  expect(loadWork(repoPaths(root, env), id).work?.rounds).toMatchObject({
+    judgement: 2,
+    validation: 0,
+  });
+  // A third state of the code: the third round is refused, and nothing is recorded.
+  write(root, "src/a.ts", "y3");
+  await c.run("gate", "run", id);
+  write(root, file, ruling("proven"));
+  const third = await c.run("judgement", id, "record", "--ruling", file);
+  expect(third.code).toBe(1);
+  expect(third.err.trim()).toBe(
+    `judgement round 3 of ${id}: the policy allows 2 (team.maxJudgementRounds); the user continues it once with crew continue ${id} judgement, or decides (crew skip <id> gate:<gate> where policy.json allows it)`,
+  );
+  expect(loadWork(repoPaths(root, env), id).work?.rounds).toMatchObject({
+    judgement: 2,
+    validation: 0,
+  });
+  // The user's continuation, relayed: one more round, recorded as theirs.
+  const granted = await c.run("continue", id, "judgement");
+  expect(granted.code).toBe(0);
+  expect(granted.out.trim()).toBe(
+    `judgement of ${id} continued for one more round by the user, relayed by the agent`,
+  );
+  expect(loadWork(repoPaths(root, env), id).work?.continued?.[0]).toMatchObject({
+    what: "judgement",
+    by: { by: "user", relayed: true },
+  });
+  expect((await c.run("judgement", id, "record", "--ruling", file)).out).toContain(
+    "code-quality: proven (0 findings)",
+  );
+  expect(loadWork(repoPaths(root, env), id).work?.rounds).toMatchObject({
+    judgement: 3,
+    validation: 0,
+  });
+  // The continuation bought one round, not the cap: a fourth state of the code is refused again.
+  write(root, "src/a.ts", "y4");
+  await c.run("gate", "run", id);
+  write(root, file, ruling("proven"));
+  const fourth = await c.run("judgement", id, "record", "--ruling", file);
+  expect(fourth.code).toBe(1);
+  expect(fourth.err.trim()).toBe(
+    `judgement round 4 of ${id}: the policy allows 2 (team.maxJudgementRounds); the user continues it once with crew continue ${id} judgement, or decides (crew skip <id> gate:<gate> where policy.json allows it)`,
+  );
+  expect(loadWork(repoPaths(root, env), id).work?.rounds).toMatchObject({
+    judgement: 3,
+    validation: 0,
+  });
+  expect((await c.run("evidence", id)).out).toContain(
+    "- Rounds: judgement 3 of 2, validation 0 of 2",
+  );
+  // A continuation of something else, or with no item, is refused with the usage.
+  expect((await c.run("continue", id, "rounds")).err.trim()).toBe(
+    "usage: crew continue <id> judgement | crew continue <id> validation | crew continue <id> gate T-n",
+  );
 });

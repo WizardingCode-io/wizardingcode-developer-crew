@@ -49,6 +49,8 @@ test("SP2b: judgement gates are planned from the route, the risk areas, the diff
     { gate: "security", reason: "full route" },
     { gate: "ui-ux", reason: "interface files: resources/views/home.blade.php" },
     { gate: "risk", reason: "full route" },
+    // SP7a: the registry seats the architects on the full route (Task 1 ruling).
+    { gate: "architecture", reason: "full route" },
   ]);
   // The policy adds what the route does not; a gate already planned keeps its first reason.
   const policy: Policy = { ...DEFAULT_POLICY, judgementGates: ["security", "code-quality"] };
@@ -109,7 +111,7 @@ test("SP2b: a ruling file is checked before anything is recorded", () => {
   expect(parse([])).toEqual({ refused: "the ruling file has no rulings" });
   expect(parse([{ gate: "style", verdict: "proven" }])).toEqual({
     refused:
-      "ruling 1: unknown judgement gate: style (code-quality, test-quality, security, ui-ux, risk)",
+      "ruling 1: unknown judgement gate: style (code-quality, test-quality, security, ui-ux, risk, architecture, data, infra)",
   });
   expect(parse([{ gate: "ui-ux", verdict: "proven" }])).toEqual({
     refused: "ruling 1: ui-ux is not planned for this item (planned: code-quality, test-quality)",

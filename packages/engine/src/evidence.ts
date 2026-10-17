@@ -329,6 +329,20 @@ export function renderReport(
       );
     }
   }
+  // The seats the route planned, with their reasons, and the rounds spent against the caps (SP7 §6.6).
+  if (work.seats?.length || work.rounds) {
+    lines.push("", "## Team", "");
+    if (work.primaryTeam) lines.push(`- Primary team: ${work.primaryTeam} (the session)`, "");
+    if (work.seats?.length) {
+      lines.push("| Seat | Team | Reason |", "| :- | :- | :- |");
+      for (const s of work.seats) lines.push(`| ${s.role} | ${s.team ?? ""} | ${s.reason} |`);
+      lines.push("");
+    }
+    const rounds = work.rounds ?? { judgement: 0, validation: 0 };
+    lines.push(
+      `- Rounds: judgement ${rounds.judgement} of ${policy.team.maxJudgementRounds}, validation ${rounds.validation} of ${policy.team.maxValidationRounds}`,
+    );
+  }
   const decisions = work.decisions ?? [];
   if (decisions.length || work.debate) {
     lines.push("", "## Gap round", "");

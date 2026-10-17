@@ -22,6 +22,19 @@ test("SP2b: the review folder is the session's to write, and judgement and debat
   expect(decision(bash(`echo x > .crew/work/${work.id}/evidence.json`))).toBe("deny");
 });
 
+test("SP7a AC-5: crew continue is user-only, like skip: asked under prompt, relayed with no prompt under relay", () => {
+  const relay = setup(null);
+  const bash = (ctx: typeof relay.ctx, command: string, permission_mode?: string) =>
+    onPreToolUse(ctx, { tool_name: "Bash", tool_input: { command }, permission_mode });
+  expect(bash(relay.ctx, "crew continue w1 judgement", "auto")).toEqual({});
+  expect(bash(relay.ctx, "crew continue w1 gate T-2", "default")).toEqual({});
+  const prompt = setup();
+  expect(decision(bash(prompt.ctx, "crew continue w1 judgement", "default"))).toBe("ask");
+  expect(decision(bash(prompt.ctx, "crew continue w1 validation", "auto"))).toBe("ask");
+  // The flag before the verb does not dodge the prompt (finding 21).
+  expect(decision(bash(prompt.ctx, "crew --json continue w1 judgement", "default"))).toBe("ask");
+});
+
 function decision(response: Record<string, unknown>): string | undefined {
   return (response.hookSpecificOutput as { permissionDecision?: string } | undefined)
     ?.permissionDecision;

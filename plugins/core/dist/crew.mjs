@@ -75,7 +75,10 @@ var JUDGEMENT_GATES = [
   "test-quality",
   "security",
   "ui-ux",
-  "risk"
+  "risk",
+  "architecture",
+  "data",
+  "infra"
 ];
 function isJudgementGateName(value) {
   return JUDGEMENT_GATES.includes(value);
@@ -1140,6 +1143,15 @@ var DEFAULT_MAIL_POLICY = {
   maxMinutes: 30,
   worktrees: ".."
 };
+var DEFAULT_TEAM_POLICY = {
+  template: "core",
+  always: [],
+  specialists: [],
+  maxExperts: 3,
+  maxValidationRounds: 2,
+  maxJudgementRounds: 2,
+  maxGateRounds: 2
+};
 var DEFAULT_POLICY = {
   requiredGates: [],
   judgementGates: [],
@@ -1150,14 +1162,19 @@ var DEFAULT_POLICY = {
   artifacts: "commit",
   unattendedDecisions: "wait",
   attendedDecisions: "relay",
-  mail: DEFAULT_MAIL_POLICY
+  mail: DEFAULT_MAIL_POLICY,
+  team: DEFAULT_TEAM_POLICY
 };
 var NAME_HINT = "a lowercase name of letters, digits, dot, dash and underscore, up to 64 characters";
 var RANGES = {
   maxConcurrent: { min: 1, max: 10 },
   maxHops: { min: 1, max: 10 },
   maxTurns: { min: 1, max: 500 },
-  maxMinutes: { min: 1, max: 600 }
+  maxMinutes: { min: 1, max: 600 },
+  maxExperts: { min: 1, max: 3 },
+  maxValidationRounds: { min: 1, max: 2 },
+  maxJudgementRounds: { min: 1, max: 2 },
+  maxGateRounds: { min: 1, max: 2 }
 };
 var SETTABLE_POLICY_KEYS = {
   attendedDecisions: { values: ["prompt", "relay"] },
@@ -1172,7 +1189,12 @@ var SETTABLE_POLICY_KEYS = {
   "mail.worktrees": {
     pattern: WORKTREES,
     hint: "a relative path with no spaces (.. for the folder beside the root)"
-  }
+  },
+  "team.template": { values: ["core"] },
+  "team.maxExperts": { integer: RANGES.maxExperts },
+  "team.maxValidationRounds": { integer: RANGES.maxValidationRounds },
+  "team.maxJudgementRounds": { integer: RANGES.maxJudgementRounds },
+  "team.maxGateRounds": { integer: RANGES.maxGateRounds }
 };
 function policyPath(paths) {
   return join10(paths.crewDir, "policy.json");
@@ -1253,6 +1275,29 @@ var RISK_AREAS = [
 function strings(value) {
   return Array.isArray(value) ? value.filter((v) => typeof v === "string") : [];
 }
+var TEAM_NAMES = [
+  "architects",
+  "researchers",
+  "etl",
+  "security",
+  "devops",
+  "qa",
+  "backend",
+  "frontend",
+  "agentic-os"
+];
+function loadTeamPolicy(raw) {
+  const t = typeof raw === "object" && raw !== null && !Array.isArray(raw) ? raw : {};
+  return {
+    template: "core",
+    always: strings(t.always).filter((n) => TEAM_NAMES.includes(n)),
+    specialists: strings(t.specialists),
+    maxExperts: bounded(t.maxExperts, RANGES.maxExperts, DEFAULT_TEAM_POLICY.maxExperts),
+    maxValidationRounds: bounded(t.maxValidationRounds, RANGES.maxValidationRounds, DEFAULT_TEAM_POLICY.maxValidationRounds),
+    maxJudgementRounds: bounded(t.maxJudgementRounds, RANGES.maxJudgementRounds, DEFAULT_TEAM_POLICY.maxJudgementRounds),
+    maxGateRounds: bounded(t.maxGateRounds, RANGES.maxGateRounds, DEFAULT_TEAM_POLICY.maxGateRounds)
+  };
+}
 function loadPolicy(paths) {
   const read = readProtectedJson(paths, policyPath(paths));
   const raw = read.data ?? {};
@@ -1276,7 +1321,8 @@ function loadPolicy(paths) {
       artifacts: raw.artifacts === "local" ? "local" : "commit",
       unattendedDecisions: raw.unattendedDecisions === "count" || raw.unattendedDecisions === "validator" ? raw.unattendedDecisions : "wait",
       attendedDecisions: raw.attendedDecisions === "prompt" ? "prompt" : "relay",
-      mail: loadMailPolicy(raw.mail)
+      mail: loadMailPolicy(raw.mail),
+      team: loadTeamPolicy(raw.team)
     },
     tampered: read.tampered
   };
@@ -2036,6 +2082,19 @@ function renderReport(work, evidence, policy, ledger, mail, selfName) {
       lines.push(`- ${f.gate}: ${f.file}${f.line ? `:${f.line}` : ""} ${f.text} (${f.severity}${f.outside ? ", outside the change" : ""})`);
     }
   }
+  if (work.seats?.length || work.rounds) {
+    lines.push("", "## Team", "");
+    if (work.primaryTeam)
+      lines.push(`- Primary team: ${work.primaryTeam} (the session)`, "");
+    if (work.seats?.length) {
+      lines.push("| Seat | Team | Reason |", "| :- | :- | :- |");
+      for (const s of work.seats)
+        lines.push(`| ${s.role} | ${s.team ?? ""} | ${s.reason} |`);
+      lines.push("");
+    }
+    const rounds = work.rounds ?? { judgement: 0, validation: 0 };
+    lines.push(`- Rounds: judgement ${rounds.judgement} of ${policy.team.maxJudgementRounds}, validation ${rounds.validation} of ${policy.team.maxValidationRounds}`);
+  }
   const decisions = work.decisions ?? [];
   if (decisions.length || work.debate) {
     lines.push("", "## Gap round", "");
@@ -2201,6 +2260,8 @@ function parseAudit(tool, text) {
 // packages/engine/src/judgement.ts
 import { readdirSync as readdirSync5, unlinkSync } from "node:fs";
 import { join as join16 } from "node:path";
+
+// packages/engine/src/paths-kind.ts
 var INTERFACE_EXTENSIONS = [
   ".vue",
   ".svelte",
@@ -2224,31 +2285,168 @@ function isInterfacePath(rel2) {
     return true;
   return INTERFACE_EXTENSIONS.some((ext) => lower.endsWith(ext));
 }
-function plannedJudgementGates(route, riskAreas, changed, policy) {
-  const planned = [];
-  const plan = (gate, reason) => {
-    if (!planned.some((p) => p.gate === gate))
-      planned.push({ gate, reason });
+
+// packages/engine/src/team.ts
+var TEAMS = {
+  researchers: {
+    lead: "lead-researchers",
+    members: ["researcher"],
+    gates: [],
+    mandatory: { kind: "always" },
+    validates: false
+  },
+  qa: {
+    lead: "lead-qa",
+    members: ["review-test-quality", "review-ui-ux"],
+    gates: ["test-quality", "ui-ux"],
+    mandatory: { kind: "always" },
+    validates: true
+  },
+  security: {
+    lead: "lead-security",
+    members: ["review-security"],
+    gates: ["security"],
+    mandatory: { kind: "always" },
+    validates: true
+  },
+  architects: {
+    lead: "lead-architects",
+    members: ["review-architecture"],
+    gates: ["architecture"],
+    mandatory: { kind: "route", route: "full" },
+    validates: true
+  },
+  etl: {
+    lead: "lead-etl",
+    members: ["review-data"],
+    gates: ["data"],
+    mandatory: { kind: "risk-area", area: "data-migration" },
+    validates: true
+  },
+  devops: {
+    lead: "lead-devops",
+    members: ["review-infra"],
+    gates: ["infra"],
+    mandatory: { kind: "risk-area", area: "infra" },
+    validates: true
+  },
+  backend: {
+    lead: "lead-backend",
+    members: ["review-code-quality"],
+    gates: ["code-quality"],
+    mandatory: { kind: "always" },
+    validates: false
+  },
+  frontend: {
+    lead: "lead-frontend",
+    members: [],
+    gates: [],
+    mandatory: { kind: "paths" },
+    validates: false
+  },
+  "agentic-os": {
+    lead: "lead-agentic-os",
+    members: [],
+    gates: [],
+    mandatory: { kind: "paths" },
+    validates: false
+  }
+};
+var DEBATE_ROLES = ["researcher", "expert", "devils-advocate", "fault-finder"];
+var REVIEW_ROLES = [
+  "review-code-quality",
+  "review-test-quality",
+  "review-security",
+  "review-ui-ux",
+  "review-risk",
+  "review-architecture",
+  "review-data",
+  "review-infra"
+];
+var LEAD_ROLES = Object.values(TEAMS).map((t) => t.lead);
+var ROLE_NAMES = [
+  "judge",
+  "cto",
+  ...DEBATE_ROLES,
+  ...REVIEW_ROLES,
+  ...LEAD_ROLES
+];
+function rolePattern() {
+  const names = ROLE_NAMES.map((n) => n === "expert" ? "expert-\\d+" : n.replace(/-/g, "\\-"));
+  return new RegExp(`^(${names.join("|")})$`);
+}
+function primaryTeam(changed) {
+  return changed.some(isInterfacePath) ? "frontend" : "backend";
+}
+function seated(team, def, route, riskAreas, policy) {
+  if (policy.team.always.includes(team))
+    return "policy team.always";
+  if (route === "fast")
+    return null;
+  const rule = def.mandatory;
+  if (rule.kind === "always")
+    return `${route} route`;
+  if (rule.kind === "route")
+    return route === rule.route ? `${route} route` : null;
+  if (rule.kind === "risk-area")
+    return route === "full" && riskAreas.includes(rule.area) ? `risk area ${rule.area}` : null;
+  return null;
+}
+function plannedSeats(route, riskAreas, changed, policy) {
+  const seats = [];
+  const plan = (seat) => {
+    if (!seats.some((s) => s.role === seat.role))
+      seats.push(seat);
   };
+  if (route !== "fast")
+    plan({ role: "researcher", team: "researchers", kind: "debate", reason: `${route} route` });
+  const gate = (name, team, reason) => plan({ role: `review-${name}`, team, kind: "gate", gate: name, reason });
   if (route !== "fast") {
-    plan("code-quality", `${route} route`);
-    plan("test-quality", `${route} route`);
+    gate("code-quality", "backend", `${route} route`);
+    gate("test-quality", "qa", `${route} route`);
   }
   if (route === "full")
-    plan("security", "full route");
+    gate("security", "security", "full route");
   else if (route === "standard" && riskAreas.length)
-    plan("security", `risk area${riskAreas.length === 1 ? "" : "s"} ${riskAreas.join(", ")}`);
+    gate("security", "security", `risk area${riskAreas.length === 1 ? "" : "s"} ${riskAreas.join(", ")}`);
   const interfaces = changed.filter(isInterfacePath);
   if (interfaces.length) {
     const shown = interfaces.slice(0, 3).join(", ");
     const more = interfaces.length > 3 ? `, +${interfaces.length - 3} more` : "";
-    plan("ui-ux", `interface files: ${shown}${more}`);
+    gate("ui-ux", "qa", `interface files: ${shown}${more}`);
   }
-  if (route === "full")
-    plan("risk", "full route");
-  for (const gate of policy.judgementGates)
-    plan(gate, "policy");
-  return planned;
+  if (route === "full") {
+    gate("risk", "architects", "full route");
+    gate("architecture", "architects", "full route");
+  }
+  for (const team of policy.team.always)
+    for (const g of TEAMS[team].gates)
+      gate(g, team, "policy team.always");
+  for (const team of ["etl", "devops"]) {
+    const reason = seated(team, TEAMS[team], route, riskAreas, policy);
+    if (reason)
+      for (const g of TEAMS[team].gates)
+        gate(g, team, reason);
+  }
+  for (const g of policy.judgementGates) {
+    const team = Object.entries(TEAMS).find(([, t]) => t.gates.includes(g))?.[0] ?? null;
+    plan({ role: `review-${g}`, team, kind: "gate", gate: g, reason: "policy" });
+  }
+  for (const [name, def] of Object.entries(TEAMS)) {
+    if (!def.validates)
+      continue;
+    const reason = seated(name, def, route, riskAreas, policy);
+    if (reason)
+      plan({ role: def.lead, team: name, kind: "lead", reason });
+  }
+  if (seats.some((s) => s.kind === "gate"))
+    plan({ role: "judge", team: null, kind: "debate", reason: "a gate is planned" });
+  return seats;
+}
+
+// packages/engine/src/judgement.ts
+function plannedJudgementGates(route, riskAreas, changed, policy) {
+  return plannedSeats(route, riskAreas, changed, policy).filter((s) => s.kind === "gate" && s.gate !== undefined).map((s) => ({ gate: s.gate, reason: s.reason }));
 }
 function reviewDir(paths, id) {
   return join16(workDir(paths, id), "review");
@@ -3055,6 +3253,8 @@ async function runGates(paths, work, profile, policy, options = {}) {
   }
   evidence.fingerprint = stamp;
   const judgement = plannedJudgementGates(work.route, work.riskAreas, changed, policy);
+  work.seats = plannedSeats(work.route, work.riskAreas, changed, policy);
+  work.primaryTeam = primaryTeam(changed);
   const reviewInputs = judgement.length ? writeReviewInputs(paths, work, changed, stamp) : null;
   const verdict = computeVerdict({
     work,
@@ -3170,7 +3370,7 @@ var LIVE_MS = 10 * 60 * 1000;
 var INLINE_BODY_LIMIT = 2048;
 var PREVIEW_CHARS = 200;
 var SUBJECT_CHARS = 80;
-var ROLE_AGENT = /^(judge|researcher|expert-\d+|devils-advocate|fault-finder|review-(code-quality|test-quality|security|ui-ux|risk))$/;
+var ROLE_AGENT = rolePattern();
 var TASK_AGENT = /^T-\d+$/;
 var CRITICS = new Set(["devils-advocate", "fault-finder"]);
 function worktreeMainRoot(root) {
@@ -5307,7 +5507,7 @@ function userOnlyCommand(args) {
     return null;
   const [verb, second] = parsed.positional;
   const unreadable = (word) => word !== undefined && UNREADABLE_VERB.test(word);
-  const userOnly = unreadable(verb) || (verb === "profile" || verb === "policy") && unreadable(second) || verb === "skip" || verb === "approve" || verb === "accept" || verb === "decide" || verb === "objection" && parsed.positional.includes("waive") || verb === "profile" && (second === "confirm" || second === "set") || verb === "policy" && (second === "accept" || second === "set") || verb === "task" && parsed.positional.includes("merge") && parsed.flags.force === true;
+  const userOnly = unreadable(verb) || (verb === "profile" || verb === "policy") && unreadable(second) || verb === "skip" || verb === "approve" || verb === "accept" || verb === "decide" || verb === "continue" || verb === "objection" && parsed.positional.includes("waive") || verb === "profile" && (second === "confirm" || second === "set") || verb === "policy" && (second === "accept" || second === "set") || verb === "task" && parsed.positional.includes("merge") && parsed.flags.force === true;
   if (!userOnly)
     return null;
   return {
@@ -6161,7 +6361,7 @@ function onStop(ctx, payload = {}) {
 // packages/engine/src/hooks/subagent-stop.ts
 import { join as join26 } from "node:path";
 var PLUGIN_PREFIX = "wizardingcode-developer-crew:";
-var BARE_ROLE = /^(judge|researcher|expert|devils-advocate|fault-finder|review-(code-quality|test-quality|security|ui-ux|risk))$/;
+var BARE_ROLE = new RegExp(`^(${ROLE_NAMES.join("|")})$`);
 function roleOf(agentType) {
   if (!agentType?.startsWith(PLUGIN_PREFIX))
     return null;
@@ -6259,6 +6459,10 @@ function gatesRuling(answer2) {
 function answerFile(agent, answer2) {
   if (agent.startsWith("review-"))
     return `review/${agent.slice("review-".length)}.findings.md`;
+  if (agent.startsWith("lead-"))
+    return `conclave/${agent}.md`;
+  if (agent === "cto")
+    return "conclave/cto.md";
   if (agent === "judge") {
     if (gatesRuling(answer2))
       return "review/ruling.json";
@@ -7338,6 +7542,11 @@ diff.patch: ${outcome.reviewNote}` : "";
         return refuse(usage);
       const before = assess(env.paths, opened.work, env.profile, env.policy, env.tampered || opened.tampered);
       const planned = before.judgement.map((j) => j.gate);
+      const rounds = opened.work.rounds ?? { judgement: 0, validation: 0 };
+      const newRound = rounds.judgementCode !== before.currentFingerprint;
+      const grants = (opened.work.continued ?? []).filter((c) => c.what === "judgement" && decisionCounts(env.policy, c.by)).length;
+      if (newRound && rounds.judgement >= env.policy.team.maxJudgementRounds + grants)
+        return refuse(`judgement round ${rounds.judgement + 1} of ${opened.work.id}: the policy allows ${env.policy.team.maxJudgementRounds} (team.maxJudgementRounds); the user continues it once with crew continue ${opened.work.id} judgement, or decides (crew skip <id> gate:<gate> where policy.json allows it)`);
       const records = [];
       if (parsed.flags["not-run"] && typeof parsed.flags.ruling === "string")
         return refuse("--not-run and --ruling do not go together: a gate that could not run has no ruling; give one or the other");
@@ -7387,6 +7596,13 @@ diff.patch: ${outcome.reviewNote}` : "";
       result.evidence.verdict = result.verdict;
       result.evidence.unproven = result.unproven;
       saveEvidence(env.paths, opened.work.id, result.evidence);
+      if (newRound)
+        opened.work.rounds = {
+          ...rounds,
+          judgement: rounds.judgement + 1,
+          judgementCode: before.currentFingerprint
+        };
+      saveWork(env.paths, opened.work);
       deliver2(env, opened, result.evidence);
       const lines2 = records.map((r) => {
         const outside = r.findings.filter((f) => f.outside).length;
@@ -7509,6 +7725,43 @@ test-first not credited: ${out.uncredited}` : "";
       }
       return refuse(usage);
     }
+    case "team": {
+      const opened = openForChange(env, args[0]);
+      if (isOutcome(opened))
+        return opened;
+      const changed = changedWatchedPaths(env.paths.root, env.profile, opened.work);
+      const seats = plannedSeats(opened.work.route, opened.work.riskAreas, changed, env.policy);
+      const primary = primaryTeam(changed);
+      opened.work.seats = seats;
+      opened.work.primaryTeam = primary;
+      saveWork(env.paths, opened.work);
+      const text = seats.length ? `Team of ${opened.work.id} (primary ${primary}): ${seats.map((s) => `${s.role} (${s.reason})`).join("; ")}` : `Team of ${opened.work.id}: no seat (fast route)`;
+      return ok(text, { seats, primaryTeam: primary });
+    }
+    case "continue": {
+      const opened = openForChange(env, args[0]);
+      if (isOutcome(opened))
+        return opened;
+      const usage = "usage: crew continue <id> judgement | crew continue <id> validation | crew continue <id> gate T-n";
+      const what = args[1];
+      if (what !== "judgement" && what !== "validation" && what !== "gate")
+        return refuse(usage);
+      const task = what === "gate" ? args[2] : undefined;
+      if (what === "gate" && !/^T-\d+$/.test(task ?? ""))
+        return refuse(usage);
+      const decision = decisionFlag(parsed, env.policy);
+      if (isOutcome(decision))
+        return decision;
+      opened.work.continued = [
+        ...opened.work.continued ?? [],
+        { what, ...task ? { task } : {}, by: decision, at: nowIso() }
+      ];
+      saveWork(env.paths, opened.work);
+      const subject = what === "gate" ? `gate of ${task} of ${opened.work.id}` : `${what} of ${opened.work.id}`;
+      return ok(`${subject} continued for one more round ${decisionText(env.policy, decision)}`, {
+        continued: opened.work.continued
+      });
+    }
     case "status": {
       const active = activeWork(env.paths);
       if (!active?.work)
@@ -7541,6 +7794,12 @@ ${notes.join(`
         awaitingMessage: work.awaitingMessage ?? null,
         mail: { unread: inbox.unread, answered: inbox.answered, waiting: inbox.waiting },
         tasks,
+        team: work.seats ?? [],
+        primaryTeam: work.primaryTeam ?? null,
+        rounds: {
+          judgement: work.rounds?.judgement ?? 0,
+          validation: work.rounds?.validation ?? 0
+        },
         debate: debateState(work),
         baseCommit: work.baseCommit,
         phases: PHASES_BY_ROUTE[work.route],
@@ -7808,6 +8067,8 @@ var HELP = `crew ${VERSION}
   gate run <id> [--only a,b]            run the gates the route requires; plans the judgement gates and writes their inputs to .crew/work/<id>/review/
   judgement <id> record --ruling <file>  record the rulings of a review file ({"rulings":[{gate,verdict,reviewer,judge,findings,tokens}]}); exit 0 once proven
   judgement <id> record <gate> --not-run --reason "<why>"   a judgement gate that could not run, never passed by default
+  team <id>                   the seats the route plans for the item, with their reasons, recorded
+  continue <id> judgement|validation|gate T-n   one more round past the policy's cap (the user's decision)
   skip <id> <step> --reason "<text>"    record a skip of a tdd step, a gate or a judgement gate (asks the user; --mode as for approve)
   evidence <id>                         write and print the report
   status | mode [m] | config <key> [v]  state and settings

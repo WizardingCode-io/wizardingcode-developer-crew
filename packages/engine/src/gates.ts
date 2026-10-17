@@ -17,6 +17,7 @@ import { type CrewPaths, workDir } from "./paths.ts";
 import { namedFiles } from "./problems.ts";
 import { runCommand } from "./run.ts";
 import { scanSecrets } from "./secrets.ts";
+import { plannedSeats, primaryTeam } from "./team.ts";
 import type {
   Evidence,
   GateName,
@@ -547,6 +548,10 @@ export async function runGates(
   evidence.fingerprint = stamp;
   // Planned after the route may have been raised, so a risk area the diff touched plans the security gate.
   const judgement = plannedJudgementGates(work.route, work.riskAreas, changed, policy);
+  // The seats the route plans, recorded with the paths the change touched (SP7 §6.6); the caller
+  // saves the work, as it does for the risk areas.
+  work.seats = plannedSeats(work.route, work.riskAreas, changed, policy);
+  work.primaryTeam = primaryTeam(changed);
   const reviewInputs = judgement.length ? writeReviewInputs(paths, work, changed, stamp) : null;
   const verdict = computeVerdict({
     work,
