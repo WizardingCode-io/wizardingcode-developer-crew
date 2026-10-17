@@ -396,3 +396,11 @@ Verdicts agree at every effort. Upheld findings: `high` reproduced Task 6's and 
 - Expected: each taken in a hardening item of the real-use phase, red first.
 - Evidence: the item's `review/ruling.json`, the plan's ledger.
 - Outcome: open.
+
+### 47. CLI tests time out at 5 s when the machine is loaded, and a release guard re-ran the suite instead of stopping
+
+- Date: 2026-10-17. Project: this repository. Items: `2026-10-17-006` and `2026-10-17-007`. Category: `friction`. Severity: medium.
+- What happened: twice in one morning a full engine test run failed on tests that spawn the `crew` command many times, each at bun's default 5 s timeout: once in a gate run (`crew judgement record fills tokens from the engine's role records`, 6.1 s) while two eval runs loaded the machine, and once in the release's `bun run check` (2 failures) run straight after another full suite run. Each passed on the next run on a quiet machine (335 pass). The release command then re-ran the check as its guard and committed on the second, green run instead of stopping at the first failure; the released commit was verified green afterwards.
+- Expected: the CLI tests that spawn several processes declare their own timeout (the tasks and open tests already do), so load makes them slow, not red; a release stops at the first red run and says so.
+- Evidence: the gate run's log of item `2026-10-17-006` (`test-packages_engine-*.txt`), the ledger of the SP2c plan, the quiet-machine run after the release (335 pass).
+- Outcome: open. Next: a timeout on the CLI tests that run `crew` more than a few times (15 s, as the tasks tests have), and the release step's checks run once, before the commit, with the commit refused on any failure.
