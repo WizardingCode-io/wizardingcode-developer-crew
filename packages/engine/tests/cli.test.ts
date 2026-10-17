@@ -42,6 +42,7 @@ test("SP2b: debate open and close through the command; plan waits while the deba
   const closed = await c.json("debate", id, "close", "--tokens", "5400");
   expect(closed.data.debate).toMatchObject({ reason: "erasure or deactivation", tokens: 5400 });
   expect((await c.json("status")).data.debate).toBe("closed");
+  await validateLeads(c, root, id);
   expect((await c.json("phase", id, "next")).data.phase).toBe("plan");
   expect((await c.run("debate", id, "open", "--reason", "again")).err.trim()).toBe(
     "the debate is closed; it opens once per item",
@@ -1417,6 +1418,10 @@ test("SP2a: an item in specify moves to conclave, and plan asks for conclave.md 
     `.crew/work/${id}/conclave.md`,
     "# Gap round\n\n## Assumed by good practice\nnone\n\n## Decisions only the user can make\nnone\n\n## Proposals\nnone\n\n## Warnings\nnone\n",
   );
+  // SP7a: the plan also waits for the leads' validation of the spec.
+  const blockedByLeads = await c.run("phase", id, "next");
+  expect(blockedByLeads.err).toContain("validation of spec by lead-qa");
+  await validateLeads(c, root, id);
   expect((await c.json("phase", id, "next")).data.phase).toBe("plan");
 });
 
@@ -1594,6 +1599,7 @@ test("0.3.0: with a person present the spec is approved under the complete-gap-r
     rule: "complete-gap-round",
   });
   // It counts under the default policy, so the full route reaches build with no question asked.
+  await validateLeads(c, root, id);
   for (let i = 0; i < 5; i++) expect((await c.run("phase", id, "next")).code).toBe(0);
   expect(JSON.parse(readFileSync(workFile, "utf8")).phase).toBe("build");
   // A pending decision keeps the rule from holding; the person answers it, in words, relayed.
@@ -1683,6 +1689,7 @@ test("SP2a: the validator's approval is refused until the rule holds, then count
     rule: "complete-gap-round",
   });
   // Under the default policy the guard still waits for a person.
+  await validateLeads(c, root, id);
   for (let i = 0; i < 5; i++) await c.run("phase", id, "next");
   const waiting = await c.run("phase", id, "next");
   expect(waiting.err).toContain(
@@ -2289,4 +2296,377 @@ test("SP7a AC-5: a third judgement round is refused; the user continues it once 
   expect((await c.run("continue", id, "rounds")).err.trim()).toBe(
     "usage: crew continue <id> judgement | crew continue <id> validation | crew continue <id> gate T-n",
   );
+});
+
+/** A lead's `validated` file for the item, written where the hook would save it. */
+function leadFile(root: string, id: string, lead: string, body?: string): string {
+  const text =
+    body ??
+    `# ${lead} validation of ${id}: spec\nverdict: validated\n## Returns\n- none\n## Notes\n- holds\n`;
+  write(root, `.crew/work/${id}/conclave/${lead}.md`, text);
+  return `.crew/work/${id}/conclave/${lead}.md`;
+}
+
+/** Records every lead seat's validation of the spec, as the method asks before the plan (SP7a). */
+async function validateLeads(c: ReturnType<typeof io>, root: string, id: string): Promise<void> {
+  const seats = (await c.json("team", id)).data.seats as { role: string; kind: string }[];
+  for (const seat of seats.filter((s) => s.kind === "lead")) {
+    const recorded = await c.run(
+      "validation",
+      id,
+      "record",
+      "--what",
+      "spec",
+      "--by",
+      seat.role,
+      "--file",
+      leadFile(root, id, seat.role),
+    );
+    if (recorded.code !== 0) throw new Error(recorded.err || recorded.out);
+  }
+}
+
+test("SP7a AC-3: crew validation record parses the lead's file, refuses a lead not seated and a contradiction, caps the rounds, and the plan waits for it", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const env = testEnv();
+  const c = io(root, env);
+  const id = (
+    await c.json(
+      "start",
+      "Refactor the module",
+      "--answers",
+      JSON.stringify({ ...JSON.parse(answers), scope: 1 }),
+      "--criterion",
+      "a",
+    )
+  ).data.id as string;
+  // crew start on standard and full records the seats, so the guard can name the leads.
+  expect(loadWork(repoPaths(root, env), id).work?.seats?.map((s) => s.role)).toContain("lead-qa");
+  write(root, `.crew/work/${id}/spec.md`, "# Spec\n\n## Acceptance criteria\n- AC-1 a\n");
+  write(
+    root,
+    `.crew/work/${id}/conclave.md`,
+    "# Gap round\n\n## Assumed by good practice\n- none\n\n## Decisions only the user can make\n- none\n\n## Proposals\n- none\n\n## Warnings\n- none\n",
+  );
+  await c.run("phase", id, "next"); // understand
+  await c.run("phase", id, "next"); // specify
+  await c.run("phase", id, "next"); // conclave
+  await c.run("approve", id, "spec", "--validator", "complete-gap-round");
+  const blocked = await c.run("phase", id, "next");
+  expect(blocked.code).toBe(1);
+  expect(blocked.err).toContain("validation of spec by lead-qa (crew validation");
+  // A lead the item did not seat.
+  expect(
+    (
+      await c.run(
+        "validation",
+        id,
+        "record",
+        "--what",
+        "spec",
+        "--by",
+        "lead-etl",
+        "--file",
+        leadFile(root, id, "lead-etl"),
+      )
+    ).err.trim(),
+  ).toBe(`lead-etl is not a seat of ${id} (crew team ${id} prints the seats)`);
+  // A missing file, then a contradiction.
+  expect(
+    (
+      await c.run(
+        "validation",
+        id,
+        "record",
+        "--what",
+        "spec",
+        "--by",
+        "lead-qa",
+        "--file",
+        "nowhere.md",
+      )
+    ).err.trim(),
+  ).toBe(`no validation file at ${join(root, "nowhere.md")}`);
+  const bad = leadFile(
+    root,
+    id,
+    "lead-qa",
+    `# lead-qa validation of ${id}: spec\nverdict: validated\n## Returns\n- R-1 · spec.md:3 · unclear\n## Notes\n- none\n`,
+  );
+  const contradiction = await c.run(
+    "validation",
+    id,
+    "record",
+    "--what",
+    "spec",
+    "--by",
+    "lead-qa",
+    "--file",
+    bad,
+  );
+  expect(contradiction.code).toBe(1);
+  expect(contradiction.err).toContain("validated with 1 open return");
+  expect(
+    (
+      await c.run(
+        "validation",
+        id,
+        "record",
+        "--what",
+        "spec",
+        "--by",
+        "lead-qa",
+        "--file",
+        leadFile(root, id, "lead-qa"),
+      )
+    ).out.trim(),
+  ).toBe("validation of spec by lead-qa: validated (round 1)");
+  const returned = `# lead-security validation of ${id}: spec\nverdict: returned\n## Returns\n- R-1 · spec.md:4 · AC-1 is not observable\n## Notes\n- none\n`;
+  expect(
+    (
+      await c.run(
+        "validation",
+        id,
+        "record",
+        "--what",
+        "spec",
+        "--by",
+        "lead-security",
+        "--file",
+        leadFile(root, id, "lead-security", returned),
+      )
+    ).out.trim(),
+  ).toBe("validation of spec by lead-security: returned, 1 return (round 1)");
+  expect((await c.run("phase", id, "next")).err).toContain(
+    "validation of spec by lead-security: returned 1 return",
+  );
+  // The spec revised: round 2; validated by both; the plan opens.
+  write(
+    root,
+    `.crew/work/${id}/spec.md`,
+    "# Spec\n\n## Acceptance criteria\n- AC-1 a, observed as b\n",
+  );
+  expect(
+    (
+      await c.run(
+        "validation",
+        id,
+        "record",
+        "--what",
+        "spec",
+        "--by",
+        "lead-qa",
+        "--file",
+        leadFile(root, id, "lead-qa"),
+      )
+    ).out.trim(),
+  ).toBe("validation of spec by lead-qa: validated (round 2)");
+  expect(
+    (
+      await c.run(
+        "validation",
+        id,
+        "record",
+        "--what",
+        "spec",
+        "--by",
+        "lead-security",
+        "--file",
+        leadFile(root, id, "lead-security"),
+      )
+    ).code,
+  ).toBe(0);
+  expect((await c.run("phase", id, "next")).code).toBe(0);
+  expect(loadWork(repoPaths(root, env), id).work?.rounds).toMatchObject({
+    judgement: 0,
+    validation: 2,
+  });
+  // A third spec version is a third round: refused until the user continues.
+  write(
+    root,
+    `.crew/work/${id}/spec.md`,
+    "# Spec\n\n## Acceptance criteria\n- AC-1 a, observed as c\n",
+  );
+  const third = await c.run(
+    "validation",
+    id,
+    "record",
+    "--what",
+    "spec",
+    "--by",
+    "lead-qa",
+    "--file",
+    leadFile(root, id, "lead-qa"),
+  );
+  expect(third.err.trim()).toBe(
+    `validation round 3 of ${id}: the policy allows 2 (team.maxValidationRounds); the user continues it once with crew continue ${id} validation, or decides`,
+  );
+  expect((await c.run("continue", id, "validation")).code).toBe(0);
+  expect(
+    (
+      await c.run(
+        "validation",
+        id,
+        "record",
+        "--what",
+        "spec",
+        "--by",
+        "lead-qa",
+        "--file",
+        leadFile(root, id, "lead-qa"),
+      )
+    ).out.trim(),
+  ).toBe("validation of spec by lead-qa: validated (round 3)");
+  // Plan and delivery validations carry their own round by hash and spend no spec round.
+  const planFile = (n: number) =>
+    leadFile(
+      root,
+      id,
+      `lead-qa-plan-${n}`,
+      `# qa lead's validation of ${id}: plan\nverdict: validated\n## Returns\n- none\n## Notes\n- holds\n`,
+    );
+  expect(
+    (
+      await c.run(
+        "validation",
+        id,
+        "record",
+        "--what",
+        "plan",
+        "--by",
+        "lead-qa",
+        "--file",
+        planFile(1),
+      )
+    ).out.trim(),
+  ).toBe("validation of plan by lead-qa: validated (round 1)");
+  write(root, `.crew/work/${id}/plan.md`, "# Plan\n\n1. AC-1\n");
+  expect(
+    (
+      await c.run(
+        "validation",
+        id,
+        "record",
+        "--what",
+        "plan",
+        "--by",
+        "lead-qa",
+        "--file",
+        planFile(2),
+      )
+    ).out.trim(),
+  ).toBe("validation of plan by lead-qa: validated (round 2)");
+  const deliveryFile = leadFile(
+    root,
+    id,
+    "lead-qa.delivery",
+    `# qa lead's validation of ${id}: delivery\nverdict: validated\n## Returns\n- none\n## Notes\n- holds\n`,
+  );
+  for (let i = 0; i < 2; i++)
+    expect(
+      (
+        await c.run(
+          "validation",
+          id,
+          "record",
+          "--what",
+          "delivery",
+          "--by",
+          "lead-qa",
+          "--file",
+          deliveryFile,
+        )
+      ).out.trim(),
+    ).toBe("validation of delivery by lead-qa: validated (round 1)");
+  expect(loadWork(repoPaths(root, env), id).work?.rounds).toMatchObject({
+    judgement: 0,
+    validation: 3,
+  });
+  const report = (await c.run("evidence", id)).out;
+  expect(report).toContain("## Validations");
+  expect(report).toContain("| What | By | Verdict | Returns | Round | File |");
+  expect(report).toContain("| plan | lead-qa | validated | 0 | 2 | conclave/lead-qa-plan-2.md |");
+  expect(report).toContain(
+    "| delivery | lead-qa | validated | 0 | 1 | conclave/lead-qa.delivery.md |",
+  );
+  expect(report).toContain(
+    "| spec | lead-security | returned | 1 | 1 | conclave/lead-security.md |",
+  );
+  expect(
+    (
+      await c.run("validation", id, "record", "--what", "brief", "--by", "lead-qa", "--file", "x")
+    ).err.trim(),
+  ).toBe(
+    "usage: crew validation <id> record --what spec|plan|delivery --by lead-<team> --file <path>",
+  );
+});
+
+test("SP7a AC-4: crew metrics counts the records of a project and of a workspace, and cto record files the plan under the workspace", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+    ".crew/policy.json": JSON.stringify({ mail: { workspace: "w", name: "a" } }),
+  });
+  const env = testEnv();
+  const c = io(root, env);
+  await c.run("detect");
+  const id = (await c.json("start", "Fix a", "--answers", answers, "--criterion", "a")).data
+    .id as string;
+  write(root, "src/a.ts", "y");
+  await c.run("tdd", "red", id, "AC-1", "--", "exit 1");
+  await c.run("tdd", "green", id, "AC-1", "--", "exit 0");
+  expect((await c.run("gate", "run", id)).code).toBe(0);
+  const metrics = await c.json("metrics");
+  expect(metrics.code).toBe(0);
+  expect(metrics.data.items).toMatchObject({ total: 1, byRoute: { fast: 1 }, byType: { fix: 1 } });
+  expect(metrics.data.rounds).toEqual({ judgement: 0, validation: 0, gate: 0 });
+  expect(metrics.data.gates).toMatchObject({ notRun: 0, skipped: 0 });
+  expect(metrics.data.decisions).toEqual({ total: 0, byUser: 0, byValidator: 0, byAgent: 0 });
+  expect(typeof (metrics.data.phaseMinutes as Record<string, number>).build).toBe("number");
+  expect((await c.run("metrics")).out).toContain("items: 1 (fast 1)");
+  // A worktree of a registered project is not a project of its own: the workspace counts it once.
+  const registryFile = join(repoPaths(root, env).userDir, "projects.json");
+  const registry = JSON.parse(readFileSync(registryFile, "utf8")) as { projects: unknown[] };
+  registry.projects.push({
+    root: `${root}-wt`,
+    name: "a",
+    workspace: "w",
+    lastSeen: new Date().toISOString(),
+    sessionId: "s2",
+    worktreeOf: root,
+  });
+  writeFileSync(registryFile, JSON.stringify(registry));
+  const byWorkspace = await c.json("metrics", "--workspace", "w");
+  expect(byWorkspace.data.projects).toEqual([root]);
+  expect((await c.run("metrics", "--workspace", "nope")).err.trim()).toBe(
+    "no project of workspace nope is registered (crew detect in each project)",
+  );
+  write(
+    root,
+    "cto-plan.md",
+    "# CTO plan for w, 2026-10-17\n## Keep\n- the fast route\n## Change\n- nothing yet\n## Measure\n- cost per item\n",
+  );
+  const filed = await c.run("cto", "record", "--workspace", "w", "--file", "cto-plan.md");
+  expect(filed.code).toBe(0);
+  expect(filed.out.trim()).toMatch(
+    /^CTO plan of w filed: .*\/crew\/cto\/w\/\d{4}-\d{2}-\d{2}-plan\.md$/,
+  );
+  const filedPath = filed.out.trim().replace("CTO plan of w filed: ", "");
+  expect(readFileSync(filedPath, "utf8")).toContain("## Change");
+  expect((await c.run("cto", "record", "--file", "cto-plan.md")).err.trim()).toBe(
+    "usage: crew cto record --workspace <ws> --file <plan.md>",
+  );
+  expect(
+    (await c.run("cto", "record", "--workspace", "w", "--file", "missing.md")).err.trim(),
+  ).toBe(`no plan file at ${join(root, "missing.md")}`);
+  // The workspace names a folder under the user's crew directory: a name that is not a name is refused.
+  for (const bad of ["../x", "a/b", "Club Fashion"])
+    expect(
+      (await c.run("cto", "record", "--workspace", bad, "--file", "cto-plan.md")).err.trim(),
+    ).toBe(
+      `a workspace is a lowercase name of letters, digits, dot, dash and underscore, up to 64 characters, not ${bad}`,
+    );
 });

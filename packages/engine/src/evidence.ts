@@ -343,6 +343,18 @@ export function renderReport(
       `- Rounds: judgement ${rounds.judgement} of ${policy.team.maxJudgementRounds}, validation ${rounds.validation} of ${policy.team.maxValidationRounds}`,
     );
   }
+  // The leads' verdicts on the spec, the plan and the delivery (SP7 §6.4), every round kept.
+  if (work.validations?.length) {
+    lines.push(
+      "",
+      "## Validations",
+      "",
+      "| What | By | Verdict | Returns | Round | File |",
+      "| :- | :- | :- | -: | -: | :- |",
+    );
+    for (const v of work.validations)
+      lines.push(`| ${v.what} | ${v.by} | ${v.verdict} | ${v.returns} | ${v.round} | ${v.file} |`);
+  }
   const decisions = work.decisions ?? [];
   if (decisions.length || work.debate) {
     lines.push("", "## Gap round", "");

@@ -63,6 +63,20 @@ export type Personality =
   | "sceptical"
   | "professional";
 
+/** A tech lead's verdict on the spec, the plan or the delivery (SP7 §6.4), recorded from the lead's file. */
+export interface Validation {
+  what: "spec" | "plan" | "delivery";
+  by: string;
+  verdict: "validated" | "returned";
+  returns: number;
+  round: number;
+  /** The lead's file, relative to the work folder. */
+  file: string;
+  /** The content the verdict is about: the spec's or the plan's hash, the evidence fingerprint for a delivery. */
+  hash: string;
+  at: string;
+}
+
 /** The `team` block of `policy.json` (SP7 §6.1): a template, teams added beyond the route, and caps that only tighten. */
 export interface TeamPolicy {
   template: "core";
@@ -233,6 +247,8 @@ export interface TaskRecord {
   task: string;
   message: string;
   criteria: string[];
+  /** The todo's own gate (SP7 §8.1; SP7a Task 6 fills it); the metrics read its round. */
+  gate?: { round: number };
   text: string;
   branch: string;
   worktree: string;
@@ -501,6 +517,10 @@ export interface WorkItem {
    * beside it, is the same round, and a record against new code opens the next.
    */
   rounds?: { judgement: number; validation: number; judgementCode?: string | null };
+  /** The leads' verdicts on the spec, the plan and the delivery (SP7 §6.4), recorded by `crew validation`. */
+  validations?: Validation[];
+  /** When each phase was entered; the minutes per phase of `crew metrics` come from it. */
+  phaseAt?: Partial<Record<Phase, string>>;
   /** One more round the user granted past a cap (`crew continue`), recorded as theirs. */
   continued?: {
     what: "judgement" | "validation" | "gate";

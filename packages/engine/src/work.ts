@@ -27,6 +27,7 @@ import type {
   WorkType,
 } from "./types.ts";
 import { PHASE_ORDER } from "./types.ts";
+import { leadsMissing } from "./validation.ts";
 
 // The conclave sits between specify and plan (SP2 §6): the gap round happens before a plan exists.
 const DELIBERATE: Phase[] = [
@@ -483,6 +484,8 @@ export function guardFor(work: WorkItem, next: Phase, ctx: GuardContext): string
       missing.push(
         `the debate is open (${work.debate?.reason ?? ""}); close it with the judge's ruling (crew debate <id> close [--tokens n])`,
       );
+    // The mandatory teams' leads validate the spec before the plan (SP7 §6.4).
+    missing.push(...leadsMissing(work, ctx, "spec"));
   } else if (next === "build") {
     if (work.criteria.length === 0) {
       missing.push('at least one acceptance criterion (crew criteria <id> add "...")');
@@ -509,6 +512,8 @@ export function guardFor(work: WorkItem, next: Phase, ctx: GuardContext): string
       const reasons = ctx.unproven.map((reason) => `not proven: ${reason}`);
       missing.push(...(reasons.length ? reasons : ["not proven: run crew gate run <id>"]));
     }
+    // The leads validate the delivery against the evidence the report vouches for (SP7 §6.4).
+    missing.push(...leadsMissing(work, ctx, "delivery"));
   }
   return missing;
 }
@@ -531,6 +536,8 @@ export function advancePhase(
   const missing = guardFor(work, next, ctx);
   if (missing.length) return { ok: false, missing };
   work.phase = next;
+  // When the phase was entered: the minutes per phase of `crew metrics` read these stamps (SP7 §6.5).
+  work.phaseAt = { ...(work.phaseAt ?? {}), [next]: nowIso() };
   return { ok: true, phase: next };
 }
 

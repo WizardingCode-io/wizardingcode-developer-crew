@@ -2,6 +2,7 @@
 
 The gate run that proved the work already wrote `.crew/work/<id>/report.md`; `crew evidence <id>` prints it (and rewrites it from the evidence as it stands). Tell the user, in this order and on one screen:
 
+0. On standard and full, the leads validate the delivery before the report leaves: launch every `lead-<team>` seat again (`wizardingcode-developer-crew:tech-lead`, the team and `--what delivery` in the prompt) with the report's path and the task briefs; the hook saves `conclave/lead-<team>.delivery.md`; record each with `crew validation <id> record --what delivery --by lead-<team> --file .crew/work/<id>/conclave/lead-<team>.delivery.md`. Deliver waits for them; a `returned` names what to fix first.
 1. What changed, in two or three sentences.
 2. What is proven: the gates that passed, the criteria with red then green.
 3. What is not proven: skipped steps with their reasons, gates that could not run.

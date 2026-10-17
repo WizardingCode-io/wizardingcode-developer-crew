@@ -121,6 +121,8 @@ const LEAD_ROLES = Object.values(TEAMS).map((t) => t.lead);
 export const ROLE_NAMES: readonly string[] = [
   "judge",
   "cto",
+  // One agent for the five validating teams; the team is read from its answer's first line.
+  "tech-lead",
   ...DEBATE_ROLES,
   ...REVIEW_ROLES,
   ...LEAD_ROLES,

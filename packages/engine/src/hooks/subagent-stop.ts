@@ -36,6 +36,18 @@ export function personalityOf(answer: string): Personality | "unknown" | null {
   return (PERSONALITIES as readonly string[]).includes(name) ? (name as Personality) : "unknown";
 }
 
+/** The team and the subject a tech lead's answer names on its first line (`# <team> lead's validation of <id>: <spec|delivery>`), or null. */
+export function leadAnswer(
+  answer: string,
+): { team: TeamName; what: "spec" | "plan" | "delivery" } | null {
+  const match =
+    /^# (qa|security|architects|etl|devops) lead's validation of \S+: (spec|plan|delivery)\b/.exec(
+      unfenced(answer),
+    );
+  if (!match) return null;
+  return { team: match[1] as TeamName, what: match[2] as "spec" | "plan" | "delivery" };
+}
+
 /** The team a role belongs to in the registry (its lead or one of its members); null for the judge, the CTO and the debate roles. */
 export function teamOf(agent: string): TeamName | null {
   for (const [name, def] of Object.entries(TEAMS) as [TeamName, TeamDef][])
@@ -171,7 +183,14 @@ export function gatesRuling(answer: string): string | null {
 /** Where an agent's first answer is saved, by the agent (`review-<gate>`, `judge`, `expert-<n>`, a critic) and the shape of the answer. */
 export function answerFile(agent: string, answer: string): string {
   if (agent.startsWith("review-")) return `review/${agent.slice("review-".length)}.findings.md`;
-  // A lead's validation and the CTO's plan sit beside the debate's files (SP7 §6.4, §6.5).
+  // A lead's validation and the CTO's plan sit beside the debate's files (SP7 §6.4, §6.5). The tech
+  // lead is one agent for five teams: its answer's first line names the team and what it validated.
+  if (agent === "tech-lead") {
+    const lead = leadAnswer(answer);
+    return lead
+      ? `conclave/lead-${lead.team}${lead.what === "delivery" ? ".delivery" : ""}.md`
+      : "conclave/tech-lead.md";
+  }
   if (agent.startsWith("lead-")) return `conclave/${agent}.md`;
   if (agent === "cto") return "conclave/cto.md";
   if (agent === "judge") {
@@ -360,7 +379,8 @@ function recordStop(
   }
   // The lens the role declared and the team the registry gives it (SP7 §6.3), when either exists.
   const personality = personalityOf(answer);
-  const team = teamOf(saved.agent);
+  const team =
+    saved.agent === "tech-lead" ? (leadAnswer(answer)?.team ?? null) : teamOf(saved.agent);
   evidence.roles = [
     ...roles,
     {

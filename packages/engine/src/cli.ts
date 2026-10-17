@@ -32,6 +32,7 @@ import {
   emptyInboxSummary,
   inboxSummary,
   loadItemMail,
+  loadRegistry,
   type MailContext,
   mailContext,
   markRead,
@@ -49,6 +50,7 @@ import {
   updateStatusEverywhere,
   worktreeMainRoot,
 } from "./mail.ts";
+import { computeMetrics, metricsText } from "./metrics.ts";
 import {
   addObjection,
   bindObjection,
@@ -66,10 +68,18 @@ import {
   stopSession,
   sweepSafely,
 } from "./open.ts";
-import { type CrewPaths, PROTECTED_WORK_FILES, resolvePaths, userDirOf, workDir } from "./paths.ts";
+import {
+  type CrewPaths,
+  PROTECTED_WORK_FILES,
+  pathsFor,
+  resolvePaths,
+  userDirOf,
+  workDir,
+} from "./paths.ts";
 import {
   decisionCounts,
   loadPolicy,
+  MAIL_NAME,
   SETTABLE_POLICY_KEYS,
   setPolicyValue,
   skipAllowed,
@@ -107,6 +117,7 @@ import {
   partyLabel,
   VALIDATOR_RULES,
 } from "./types.ts";
+import { parseValidation, validationHash } from "./validation.ts";
 import { VERSION } from "./version.ts";
 import {
   activeWork,
@@ -716,6 +727,12 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         ? `warning: this checkout is shared with ${neighbours.join(", ")}, which ${neighbours.length === 1 ? "is" : "are"} open with uncommitted changes in ${uncommitted.join(", ")}; a second session on one checkout blocks turn ends and proves half-written code: work in a worktree (git worktree add ../<name> -b <branch>)\n`
         : "";
       classify(env, work, answers);
+      // The seats the route plans, before any path is known (SP7 §6.2): the leads' validation guard
+      // names them from here; the gate run rewrites them with the paths the change touched.
+      if (work.route !== "fast") {
+        work.seats = plannedSeats(work.route, work.riskAreas, [], env.policy);
+        work.primaryTeam = "backend";
+      }
       if (origin) {
         work.origin = { mail: origin.id };
         // A change request from this project to one of its tasks: the item is an implementer's child.
@@ -749,8 +766,11 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         recordInItem(env.paths, work.id, "refused" in read ? origin : read);
       }
       const lines = criteria.map((c) => `\n  ${c.id} (${c.kind}): ${c.text}`).join("");
+      const teamLine = work.seats?.length
+        ? `\n  team: ${work.seats.length} seats (crew team ${work.id})`
+        : "";
       return ok(
-        `${warning}${sharedWarning}${inheritedWarning}${provenNote}started ${work.id} (route ${work.route}: ${work.routeReasons.join("; ")})${lines}${originNotes.length ? `\n${originNotes.join("\n")}` : ""}`,
+        `${warning}${sharedWarning}${inheritedWarning}${provenNote}started ${work.id} (route ${work.route}: ${work.routeReasons.join("; ")})${lines}${teamLine}${originNotes.length ? `\n${originNotes.join("\n")}` : ""}`,
         {
           id: work.id,
           route: work.route,
@@ -1386,6 +1406,123 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         : `Team of ${opened.work.id}: no seat (fast route)`;
       return ok(text, { seats, primaryTeam: primary });
     }
+    case "validation": {
+      // A lead's verdict on the spec, the plan or the delivery, recorded from its file (SP7 §6.4): the
+      // engine parses the verdict, refuses a contradiction, and counts a round per state of the spec.
+      const opened = openForChange(env, args[0]);
+      if (isOutcome(opened)) return opened;
+      const usage =
+        "usage: crew validation <id> record --what spec|plan|delivery --by lead-<team> --file <path>";
+      const what = parsed.flags.what;
+      const by = parsed.flags.by;
+      const file = parsed.flags.file;
+      if (
+        args[1] !== "record" ||
+        (what !== "spec" && what !== "plan" && what !== "delivery") ||
+        typeof by !== "string" ||
+        typeof file !== "string"
+      )
+        return refuse(usage);
+      const work = opened.work;
+      if (!(work.seats ?? []).some((s) => s.kind === "lead" && s.role === by))
+        return refuse(`${by} is not a seat of ${work.id} (crew team ${work.id} prints the seats)`);
+      const path = resolve(env.paths.root, file);
+      const text = readText(path);
+      if (text === null) return refuse(`no validation file at ${path}`);
+      const verdict = parseValidation(text);
+      if ("refused" in verdict) return refuse(verdict.refused);
+      const dir = workDir(env.paths, work.id);
+      const evidence = loadEvidence(env.paths, work.id).evidence;
+      const hash = validationHash(
+        what,
+        readText(join(dir, "spec.md")),
+        readText(join(dir, "plan.md")),
+        evidence.fingerprint ?? "",
+      );
+      // A round is the records against one state of the spec; the delivery's and the plan's records
+      // carry their own count by hash and spend no round (the gate rounds bound a delivery).
+      const same = (work.validations ?? []).filter((v) => v.what === what);
+      const last = same[same.length - 1];
+      const newRound = !last || last.hash !== hash;
+      const rounds = work.rounds ?? { judgement: 0, validation: 0 };
+      const grants = (work.continued ?? []).filter(
+        (c) => c.what === "validation" && decisionCounts(env.policy, c.by),
+      ).length;
+      if (
+        what === "spec" &&
+        newRound &&
+        rounds.validation >= env.policy.team.maxValidationRounds + grants
+      )
+        return refuse(
+          `validation round ${rounds.validation + 1} of ${work.id}: the policy allows ${env.policy.team.maxValidationRounds} (team.maxValidationRounds); the user continues it once with crew continue ${work.id} validation, or decides`,
+        );
+      const round = newRound
+        ? (what === "spec" ? rounds.validation : (last?.round ?? 0)) + 1
+        : (last?.round ?? 1);
+      work.validations = [
+        ...(work.validations ?? []),
+        {
+          what,
+          by,
+          verdict: verdict.verdict,
+          returns: verdict.returns,
+          round,
+          file: relative(dir, path).replace(/\\/g, "/"),
+          hash,
+          at: nowIso(),
+        },
+      ];
+      if (what === "spec" && newRound)
+        work.rounds = { ...rounds, validation: rounds.validation + 1 };
+      saveWork(env.paths, work);
+      const said =
+        verdict.verdict === "validated"
+          ? `validated (round ${round})`
+          : `returned, ${verdict.returns} return${verdict.returns === 1 ? "" : "s"} (round ${round})`;
+      return ok(`validation of ${what} by ${by}: ${said}`, {
+        validation: work.validations[work.validations.length - 1],
+        rounds: work.rounds ?? rounds,
+      });
+    }
+    case "metrics": {
+      // The figures of this project, or of every registered project of a workspace (SP7 §6.5), from
+      // the records alone; the CTO reads them, never a transcript.
+      const ws = typeof parsed.flags.workspace === "string" ? parsed.flags.workspace : null;
+      let roots = [env.paths.root];
+      if (ws) {
+        roots = loadRegistry(env.paths.userDir)
+          .projects.filter((p) => p.workspace === ws && !p.worktreeOf)
+          .map((p) => p.root);
+        if (!roots.length)
+          return refuse(
+            `no project of workspace ${ws} is registered (crew detect in each project)`,
+          );
+      }
+      const metrics = computeMetrics(roots.map((root) => pathsFor(root, env.paths.userDir)));
+      return ok(metricsText(metrics), { ...metrics });
+    }
+    case "cto": {
+      // The CTO's plan filed per workspace (SP7 §6.5); the plan itself is the agent's, read from its file.
+      const usage = "usage: crew cto record --workspace <ws> --file <plan.md>";
+      const ws = parsed.flags.workspace;
+      const file = parsed.flags.file;
+      if (args[0] !== "record" || typeof ws !== "string" || typeof file !== "string")
+        return refuse(usage);
+      // The workspace names a folder under the user's crew directory: the same name rule as the
+      // mail's workspace, so nothing reaches outside it (code-quality review, round 1).
+      if (!MAIL_NAME.test(ws))
+        return refuse(
+          `a workspace is a lowercase name of letters, digits, dot, dash and underscore, up to 64 characters, not ${ws}`,
+        );
+      const path = resolve(env.paths.root, file);
+      const text = readText(path);
+      if (text === null) return refuse(`no plan file at ${path}`);
+      const dir = join(env.paths.userDir, "cto", ws);
+      ensureDir(dir);
+      const target = join(dir, `${nowIso().slice(0, 10)}-plan.md`);
+      writeText(target, text);
+      return ok(`CTO plan of ${ws} filed: ${target}`, { path: target });
+    }
     case "continue": {
       // One more round past a cap, the user's to grant (SP7 §6.1): recorded as theirs, like a skip.
       const opened = openForChange(env, args[0]);
@@ -1758,7 +1895,10 @@ const HELP = `crew ${VERSION}
   judgement <id> record --ruling <file>  record the rulings of a review file ({"rulings":[{gate,verdict,reviewer,judge,findings,tokens}]}); exit 0 once proven
   judgement <id> record <gate> --not-run --reason "<why>"   a judgement gate that could not run, never passed by default
   team <id>                   the seats the route plans for the item, with their reasons, recorded
+  validation <id> record --what spec|plan|delivery --by lead-<team> --file <path>   a lead's verdict from its file; a contradiction is refused
   continue <id> judgement|validation|gate T-n   one more round past the policy's cap (the user's decision)
+  metrics [--workspace <ws>]  the figures of this project, or of the workspace's registered projects, from the records
+  cto record --workspace <ws> --file <plan.md>   file the CTO's plan under the user's crew directory
   skip <id> <step> --reason "<text>"    record a skip of a tdd step, a gate or a judgement gate (asks the user; --mode as for approve)
   evidence <id>                         write and print the report
   status | mode [m] | config <key> [v]  state and settings

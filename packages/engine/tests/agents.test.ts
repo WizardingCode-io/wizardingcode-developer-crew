@@ -49,7 +49,13 @@ test("SP2b: every agent is a read-only role that says what it receives and retur
   const files = readdirSync(AGENTS)
     .filter((f) => f.endsWith(".md"))
     .sort();
-  const expected = ["judge", ...REVIEWERS.map((g) => `review-${g}`), ...DEBATE_ROLES]
+  const expected = [
+    "judge",
+    "tech-lead",
+    "cto",
+    ...REVIEWERS.map((g) => `review-${g}`),
+    ...DEBATE_ROLES,
+  ]
     .map((n) => `${n}.md`)
     .sort();
   expect(files).toEqual(expected);
@@ -161,6 +167,24 @@ test("SP7a AC-2 (Task 3): the expert takes a personality, the fault-finder is sc
   expect(judge).toMatch(/# Validator, <rule>, <id>\npersonality: professional\n/);
   // The gates' answer stays the JSON object alone: no header there.
   expect(judge).toMatch(/JSON object alone/);
+});
+
+test("SP7a AC-5 (Task 4): the tech lead validates with a verdict and numbered returns on sonnet; the CTO plans from the figures on opus; neither writes", () => {
+  const lead = agent("tech-lead");
+  expect(lead.meta.model).toBe("sonnet");
+  expect(tools(lead.meta)).toEqual(["Read", "Grep", "Glob"]);
+  expect(lead.body).toContain("verdict: validated | returned");
+  expect(lead.body).toContain("## Returns");
+  expect(lead.body).toMatch(/R-n · <repo-relative file>:<line>/);
+  expect(lead.body).toMatch(/not a yes-man/i);
+  expect(lead.body).toMatch(/qa|security|architects|etl|devops/);
+  const cto = agent("cto");
+  expect(cto.meta.model).toBe("opus");
+  expect(tools(cto.meta)).toEqual(["Read", "Grep", "Glob"]);
+  for (const heading of ["## What the figures say", "## Keep", "## Change", "## Measure"])
+    expect(cto.body).toContain(heading);
+  expect(cto.body).toMatch(/crew metrics --json/);
+  expect(cto.body).toMatch(/never transcripts/);
 });
 
 test("SP2b: one rubric per judgement gate, each judging the change and never the repository", () => {

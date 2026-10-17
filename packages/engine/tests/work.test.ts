@@ -1,11 +1,14 @@
 import { expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { emptyEvidence } from "../src/evidence.ts";
 import { addObjection, bindObjection } from "../src/objections.ts";
 import { workDir } from "../src/paths.ts";
 import { DEFAULT_POLICY } from "../src/policy.ts";
 import { loadState } from "../src/state.ts";
+import { plannedSeats } from "../src/team.ts";
 import type { Evidence, ObjectionLedger, RunRecord } from "../src/types.ts";
+import { validationHash } from "../src/validation.ts";
 import {
   activeWork,
   addCriterion,
@@ -440,6 +443,129 @@ test("SP2a: the complete-gap-round rule holds only with the four sections, defau
     validatorPreconditions("complete-gap-round", work, { ...empty, conclaveText: full, ledger }),
   ).toEqual([]);
   expect(validatorPreconditions("stated-default", work, empty)).toEqual([]);
+});
+
+test("SP7a AC-2: on standard and full the plan waits for the mandatory leads' validation of the spec, a changed spec makes it stale, and the phases are stamped", () => {
+  const paths = repoPaths(makeRepo({ "src/a.ts": "x" }), testEnv());
+  const work = createWork(paths, "Validate me");
+  work.route = "standard";
+  work.phase = "conclave";
+  work.seats = plannedSeats("standard", [], ["src/a.ts"], DEFAULT_POLICY);
+  addCriterion(work, "a");
+  const spec = "# Spec\n\n## Acceptance criteria\n- AC-1 a\n";
+  const conclave =
+    "# Conclave: gap round\n\n## Assumed by good practice\n- a\n\n## Decisions only the user can make\n- none\n\n## Proposals\n- none\n\n## Warnings\n- none\n";
+  const ctx: GuardContext = { ...empty, specText: spec, conclaveText: conclave };
+  const first = advancePhase(work, ctx);
+  expect(first.ok).toBe(false);
+  if (!first.ok)
+    expect(first.missing).toEqual([
+      "validation of spec by lead-qa (crew validation <id> record --what spec --by lead-qa --file conclave/lead-qa.md)",
+      "validation of spec by lead-security (crew validation <id> record --what spec --by lead-security --file conclave/lead-security.md)",
+    ]);
+  const hash = validationHash("spec", spec, null, "");
+  const at = "2026-10-17T00:00:00.000Z";
+  work.validations = [
+    {
+      what: "spec",
+      by: "lead-qa",
+      verdict: "validated",
+      returns: 0,
+      round: 1,
+      file: "conclave/lead-qa.md",
+      hash,
+      at,
+    },
+    {
+      what: "spec",
+      by: "lead-security",
+      verdict: "returned",
+      returns: 1,
+      round: 1,
+      file: "conclave/lead-security.md",
+      hash,
+      at,
+    },
+  ];
+  const second = advancePhase(work, ctx);
+  expect(second.ok).toBe(false);
+  if (!second.ok)
+    expect(second.missing).toEqual([
+      "validation of spec by lead-security: returned 1 return (conclave/lead-security.md); revise the spec and record the lead again",
+    ]);
+  const security = work.validations[1];
+  if (security) work.validations[1] = { ...security, verdict: "validated", returns: 0 };
+  expect(advancePhase(work, ctx)).toEqual({ ok: true, phase: "plan" });
+  expect(typeof work.phaseAt?.plan).toBe("string");
+  // The spec changed after the validations: stale, asked again.
+  work.phase = "conclave";
+  const stale = advancePhase(work, { ...ctx, specText: `${spec}- AC-2 b\n` });
+  expect(stale.ok).toBe(false);
+  if (!stale.ok)
+    expect(stale.missing[0]).toBe(
+      "validation of spec by lead-qa: stale (spec changed); record the lead again",
+    );
+  // The delivery waits for the leads too, against the evidence fingerprint.
+  work.phase = "gate";
+  const evidence = { ...emptyEvidence(), fingerprint: "sha256:feed", verdict: "proven" as const };
+  const toDeliver = advancePhase(work, { ...ctx, evidence, proven: true });
+  expect(toDeliver.ok).toBe(false);
+  if (!toDeliver.ok)
+    expect(toDeliver.missing).toEqual([
+      "validation of delivery by lead-qa (crew validation <id> record --what delivery --by lead-qa --file conclave/lead-qa.delivery.md)",
+      "validation of delivery by lead-security (crew validation <id> record --what delivery --by lead-security --file conclave/lead-security.delivery.md)",
+    ]);
+  // Delivery validations against the evidence fingerprint open Deliver; another fingerprint is stale.
+  const delivery = (by: string, verdict: "validated" | "returned", h: string) => ({
+    what: "delivery" as const,
+    by,
+    verdict,
+    returns: verdict === "returned" ? 2 : 0,
+    round: 1,
+    file: `conclave/${by}.delivery.md`,
+    hash: h,
+    at,
+  });
+  const specValidations = work.validations ?? [];
+  work.validations = [
+    ...specValidations,
+    delivery("lead-qa", "validated", "sha256:feed"),
+    delivery("lead-security", "validated", "sha256:feed"),
+  ];
+  expect(advancePhase(work, { ...ctx, evidence, proven: true })).toEqual({
+    ok: true,
+    phase: "deliver",
+  });
+  work.phase = "gate";
+  const changed = { ...evidence, fingerprint: "sha256:other" };
+  const staleDelivery = advancePhase(work, { ...ctx, evidence: changed, proven: true });
+  expect(staleDelivery.ok).toBe(false);
+  if (!staleDelivery.ok)
+    expect(staleDelivery.missing).toEqual([
+      "validation of delivery by lead-qa: stale (the evidence changed); record the lead again",
+      "validation of delivery by lead-security: stale (the evidence changed); record the lead again",
+    ]);
+  work.validations = [
+    ...specValidations,
+    delivery("lead-qa", "validated", "sha256:feed"),
+    delivery("lead-security", "returned", "sha256:feed"),
+  ];
+  const returnedDelivery = advancePhase(work, { ...ctx, evidence, proven: true });
+  expect(returnedDelivery.ok).toBe(false);
+  if (!returnedDelivery.ok)
+    expect(returnedDelivery.missing).toEqual([
+      "validation of delivery by lead-security: returned 2 returns (conclave/lead-security.delivery.md); revise the delivery and record the lead again",
+    ]);
+  // A fast item, and a standard item with no seats recorded, ask for no validation.
+  const fast = createWork(paths, "Fast");
+  addCriterion(fast, "a");
+  fast.phase = "recognize";
+  expect(advancePhase(fast, empty).ok).toBe(true);
+  const unseated = createWork(paths, "Old standard item");
+  unseated.route = "standard";
+  unseated.phase = "conclave";
+  addCriterion(unseated, "a");
+  expect(advancePhase(unseated, ctx)).toEqual({ ok: true, phase: "plan" });
 });
 
 test("SP2a review: the validator never overwrites an answer; a person may change theirs", () => {

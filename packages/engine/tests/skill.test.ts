@@ -292,6 +292,18 @@ test("SP2c debt: the gap round asks whether the target exists in this repository
   expect(Buffer.byteLength(skill, "utf8")).toBeLessThanOrEqual(9254);
 });
 
+test("SP7a AC-5 (Task 4): the conclave reference launches the leads to validate the spec before the plan, and the deliver reference the delivery", () => {
+  const conclave = readReference("conclave.md");
+  expect(conclave).toContain("## The leads' validation");
+  expect(conclave).toContain("wizardingcode-developer-crew:tech-lead");
+  expect(conclave).toContain("crew validation <id> record --what spec");
+  expect(conclave).toMatch(/team\.maxValidationRounds/);
+  expect(conclave).toMatch(/The plan waits for every lead's `validated`/);
+  const deliver = readReference("deliver.md");
+  expect(deliver).toContain("--what delivery");
+  expect(deliver).toContain("crew validation <id> record");
+});
+
 test("SP7a AC-1 (Task 3): five personalities, one file each, assigned to the debate's seats by the conclave reference", () => {
   const dir = fileURLToPath(
     new URL("../../../plugins/core/skills/crew/personalities/", import.meta.url),

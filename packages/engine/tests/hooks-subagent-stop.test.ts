@@ -166,6 +166,7 @@ test("SP2c AC-3, SP7a: the SubagentStop matcher in hooks.json, roleOf, the mail 
     .map((f) => f.slice(0, -".md".length))
     .sort();
   expect(agents).toEqual([
+    "cto",
     "devils-advocate",
     "expert",
     "fault-finder",
@@ -179,6 +180,7 @@ test("SP2c AC-3, SP7a: the SubagentStop matcher in hooks.json, roleOf, the mail 
     "review-security",
     "review-test-quality",
     "review-ui-ux",
+    "tech-lead",
   ]);
   for (const role of agents) {
     expect(matcher.test(`${PLUGIN}:${role}`)).toBe(true);
@@ -199,6 +201,15 @@ test("SP2c AC-3, SP7a: the SubagentStop matcher in hooks.json, roleOf, the mail 
   expect(roleOf(`${PLUGIN}:cto`)).toBe("cto");
   expect(answerFile("lead-qa", "# qa lead's validation")).toBe("conclave/lead-qa.md");
   expect(answerFile("cto", "# CTO plan")).toBe("conclave/cto.md");
+  // The tech lead is one agent for five teams: the file follows the team its first line names.
+  expect(ROLE_NAMES).toContain("tech-lead");
+  expect(answerFile("tech-lead", "# qa lead's validation of w: spec\nverdict: validated\n")).toBe(
+    "conclave/lead-qa.md",
+  );
+  expect(
+    answerFile("tech-lead", "# etl lead's validation of w: delivery\nverdict: returned\n"),
+  ).toBe("conclave/lead-etl.delivery.md");
+  expect(answerFile("tech-lead", "hello")).toBe("conclave/tech-lead.md");
   expect(ROLE_AGENT.test("expert")).toBe(false);
   expect(ROLE_AGENT.test("crew")).toBe(false);
   // Neither accepts a bare name, another plugin's agent, a near miss or the skill's own name.
@@ -215,6 +226,37 @@ test("SP2c AC-3, SP7a: the SubagentStop matcher in hooks.json, roleOf, the mail 
     expect(matcher.test(other)).toBe(false);
     expect(roleOf(other)).toBeNull();
   }
+});
+
+test("SP7a AC-5 (Task 4): a tech lead's stop is filed under the team its first line names, with that team on the record; an answer with no team goes to the agent's own file", () => {
+  const { root, ctx, work } = session();
+  work.route = "full";
+  work.phase = "conclave";
+  saveWork(ctx.paths, work);
+  const dir = tempDir("crew-transcript-");
+  const stop = (id: string, answer: string) =>
+    onSubagentStop(ctx, {
+      agent_id: id,
+      agent_type: `${PLUGIN}:tech-lead`,
+      agent_transcript_path: transcript(dir, answer, [[100, 10, 0, 0]]),
+      last_assistant_message: "Done.",
+    });
+  stop(
+    "l1",
+    `# etl lead's validation of ${work.id}: delivery\nverdict: validated\n## Returns\n- none\n## Notes\n- holds\n`,
+  );
+  stop("l2", "A validation with no header the hook can read.\n");
+  const folder = join(root, ".crew", "work", work.id, "conclave");
+  expect(readFileSync(join(folder, "lead-etl.delivery.md"), "utf8")).toContain(
+    "verdict: validated",
+  );
+  expect(readFileSync(join(folder, "tech-lead.md"), "utf8")).toContain("no header");
+  const roles = loadEvidence(ctx.paths, work.id).evidence.roles ?? [];
+  const filed = roles.filter((r) => r.agent === "tech-lead");
+  expect(filed.map((r) => [r.file, r.team])).toEqual([
+    ["conclave/lead-etl.delivery.md", "etl"],
+    ["conclave/tech-lead.md", undefined],
+  ]);
 });
 
 test("SP7a AC-3 (Task 3): the hook records the personality a debate role declares, its team from the registry, and unknown for a name the registry lacks", () => {

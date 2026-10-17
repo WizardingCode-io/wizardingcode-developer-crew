@@ -57,7 +57,11 @@ export function userDirOf(env: NodeJS.ProcessEnv = process.env): string {
 export function resolvePaths(cwd: string, env: NodeJS.ProcessEnv = process.env): CrewPaths | null {
   const root = findRoot(cwd);
   if (root === null) return null;
-  const userDir = canonical(userDirOf(env));
+  return pathsFor(root, canonical(userDirOf(env)));
+}
+
+/** The paths of a project root already known (a registered project read from another one), under the same user directory. */
+export function pathsFor(root: string, userDir: string): CrewPaths {
   const repoId = sha256(root).slice(0, 16);
   return {
     root,
