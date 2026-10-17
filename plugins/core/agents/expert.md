@@ -38,3 +38,4 @@ Out of scope: <what this proposal deliberately leaves alone>
 - Criteria are observable results a test can check, never "the code is clean" or "the gates pass".
 - Nothing in "Proposal" refers to "Reasoning"; nothing in "Reasoning" adds to the proposal.
 - You never write files or run commands; the session saves your answer as `.crew/work/<id>/conclave/expert-<n>.md`. You see nothing of the conversation.
+- You may be asked once to answer the objections to your proposal (the devil's advocate's case and the fault-finder's objections, given as paths): answer the objections, do not restate the proposal, and say which objection changes your answer, if any.

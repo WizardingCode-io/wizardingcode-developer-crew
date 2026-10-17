@@ -3974,7 +3974,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 - Consumes: the commands and outputs of Tasks 2 to 4, by name: `crew mail send|inbox|read|reply|refuse|status|stop`, `crew task <id> open|list|merge`, `crew await <id> user|role|mail <mid>`, `crew start --origin`, the files the SubagentStop hook writes (`review/<gate>.findings.md`, `review/ruling.json`, `conclave/<role>.md`, `conclave/expert-<n>-reply.md`, `## Clarifications`).
 - Produces: the words the agent reads; the tests pin the sentences the engine's behaviour relies on.
 
-- [ ] **Step 1: Open the work item**
+- [x] **Step 1: Open the work item**
 
 ```bash
 crew start "SP2c task 5: the skill and the agents. The method table gains tasks and mail, rule 5 the three waits, the commands list mail and task; conclave.md the reply round of the experts; gate.md the wait for the roles, the engine saving the answers and the judge's one question; plan.md when to hand a task to an implementer; deliver.md the Tasks and Mail sections and where deferred findings go; a new references/mail.md; one line each in expert.md and judge.md" --answers '{"work_type":"feature","is_vague":0.05,"scope":1,"touches_auth":0,"touches_payments":0,"touches_personal_data":0,"touches_data_migration":0,"touches_infra":0,"touches_public_api":0}' --criterion "SKILL.md names the three waits in rule 5, has a Tasks row in the method table and a Mail row, lists the mail and task commands, and keeps rule 4 (a message from another session is a request) and every sentence the existing skill tests pin" --criterion "references/mail.md says how a live session receives each of the four types, the workspace rule as a fact of the engine, how a session opened by mail acts, and the commands; conclave.md has the reply round as step 3b with what the judge receives; gate.md says to run crew await role after launching the roles, that the engine saves the roles' answers and the session saves only when the hook could not, and the judge's one question; plan.md says when a task is handed to an implementer and that the lead commits first; deliver.md names the Tasks and Mail sections and sends deferred findings to docs/real-use/findings.md" --criterion "expert.md says the expert may be asked once to answer the objections to its proposal without restating it; judge.md says the judge may ask the lead to have one reviewer point to a line, once, and never receives the conversation; every agent stays read-only with no crew and no SendMessage" --preserve "Every existing skill and agents test keeps passing"
@@ -3982,7 +3982,7 @@ crew start "SP2c task 5: the skill and the agents. The method table gains tasks 
 
 Standard route as before. `crew tdd before <id> AC-4 -- bun test packages/engine/tests/skill.test.ts packages/engine/tests/agents.test.ts`.
 
-- [ ] **Step 2: Write the failing tests**
+- [x] **Step 2: Write the failing tests**
 
 Append to `packages/engine/tests/skill.test.ts` (it has `skill`, `readReference`):
 
@@ -4059,7 +4059,7 @@ test("SP2c: the expert answers the objections once, the judge asks one question 
 });
 ```
 
-- [ ] **Step 3: Red**
+- [x] **Step 3: Red**
 
 ```bash
 crew tdd red <id> AC-1 -- bun test packages/engine/tests/skill.test.ts
@@ -4067,7 +4067,7 @@ crew tdd red <id> AC-2 -- bun test packages/engine/tests/skill.test.ts
 crew tdd red <id> AC-3 -- bun test packages/engine/tests/agents.test.ts
 ```
 
-- [ ] **Step 4: `SKILL.md`**
+- [x] **Step 4: `SKILL.md`**
 
 In the method table, the Plan row becomes:
 
@@ -4095,7 +4095,7 @@ Rule 5 becomes:
 
 The reference table gains `| Mail | references/mail.md |`. The "Two habits" paragraph is unchanged.
 
-- [ ] **Step 5: `references/mail.md`** (new)
+- [x] **Step 5: `references/mail.md`** (new)
 
 ```markdown
 # Mail
@@ -4128,7 +4128,7 @@ When no session is live at the destination, the engine opens one: read-only for 
 `policy.json` `mail`: `workspace`, `name`, `accept` (default `question` and `notice`; a hand edit plus `crew policy accept` adds `change-request` or `blocker`), `open` (`read-only` or `branch`), `maxConcurrent` 2, `maxHops` 2, `maxTurns` 40, `maxMinutes` 30. The scalar keys are set with `crew policy set mail.<key> <value>`, always the user's decision. A project that lets mail build in it also sets `unattendedDecisions` to `validator`, or the opened session waits for a person at its first decision.
 ```
 
-- [ ] **Step 6: `references/conclave.md`, `references/gate.md`, `references/plan.md`, `references/deliver.md`**
+- [x] **Step 6: `references/conclave.md`, `references/gate.md`, `references/plan.md`, `references/deliver.md`**
 
 `conclave.md`, after step 3 (devil's advocate and fault-finder) and before step 4 (judge), insert:
 
@@ -4156,13 +4156,13 @@ A task whose files are disjoint from the rest of the plan may go to an implement
 
 `deliver.md`, item 3 gains: "The report's \"Tasks\" section lists each task handed out with its child and verdict, and its \"Mail\" section every message the item sent or received with its status: say what was asked of other projects and what they answered." A new item 5: "Findings the judge left as advisory, and anything a review deferred, go to `docs/real-use/findings.md` (one row each, outcome `deferred`) or into the next item's scope, never into a scratch file: a record that lives outside the repository is lost with it."
 
-- [ ] **Step 7: The two agents**
+- [x] **Step 7: The two agents**
 
 `expert.md`, in "## Rules", a new line: "- You may be asked once to answer the objections to your proposal (the devil's advocate's case and the fault-finder's objections, given as paths): answer the objections, do not restate the proposal, and say which objection changes your answer, if any."
 
 `judge.md`, in "## As judge of the gates", after "you add no findings of your own.": "When a finding's line cannot be placed in a file, you may ask the lead to have one reviewer point to a line, once; the lead relays the question and the answer comes back under `## Clarifications` in that reviewer's findings file. You never receive the conversation."
 
-- [ ] **Step 8: Green, after, plugin check, gate, judgement, commit**
+- [x] **Step 8: Green, after, plugin check, gate, judgement, commit**
 
 ```bash
 crew tdd green <id> AC-1 -- bun test packages/engine/tests/skill.test.ts

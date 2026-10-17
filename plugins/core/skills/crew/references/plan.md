@@ -14,3 +14,7 @@ Each task names the criterion it serves and ends with something the engine can c
 ```
 
 Keep tasks small enough that each has its own red and green. Then `crew phase <id> next` to enter the build phase.
+
+## Tasks for implementers
+
+A task whose files are disjoint from the rest of the plan may go to an implementer: a headless session in a worktree on its own branch, running the method on the task as its own item (`references/mail.md`). A task is handed out from a commit: commit before you open one, since the child branches from HEAD and the engine refuses `crew task <id> open` while watched files are uncommitted. Then `crew task <id> open T-n --criteria AC-k,AC-m` (the text comes from `plan.md`'s line `n.`, or `--text "<task>"`). Up to `mail.maxConcurrent` tasks at once; pick the ones whose files do not touch. `crew task <id> list` shows each task's message status, child and verdict; `crew await <id> mail <message id>` when you have nothing else to do. A reply that says proven: `crew task <id> merge T-n` (refused for an unproven child; `--force` is the user's decision, recorded as such), then your own `crew gate run <id>` proves the merged tree and the judgement gates see the whole diff. The report's "Tasks" section lists each task, its child and the child's report.

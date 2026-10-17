@@ -131,3 +131,19 @@ test("SP2b: one rubric per judgement gate, each judging the change and never the
     expect(rubric).toMatch(/\n1\. /);
   }
 });
+
+test("SP2c: the expert answers the objections once, the judge asks one question through the lead, and no role gains a tool", () => {
+  const expert = agent("expert").body;
+  expect(expert).toMatch(/asked once to answer the objections to your proposal/);
+  expect(expert).toMatch(/answer the objections, do not restate the proposal/);
+  const judge = agent("judge").body;
+  expect(judge).toMatch(/ask the lead to have one reviewer point to a line, once/);
+  expect(judge).toMatch(/never receive the conversation/);
+  // The debate judge's inputs match conclave.md's step 4: the replies, when the round ran.
+  expect(judge).toContain("`conclave/replies.md`");
+  for (const file of readdirSync(AGENTS).filter((f) => f.endsWith(".md"))) {
+    const { meta, body } = agent(file.replace(/\.md$/, ""));
+    expect(tools(meta)).not.toContain("SendMessage");
+    expect(body).not.toMatch(/\bcrew mail\b/);
+  }
+});
