@@ -4355,7 +4355,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 - Consumes: the engine of Tasks 2 to 4 through the bundle (`bun run build` first: the eval loads `plugins/core`, whose `dist/crew.mjs` is what runs); the skill of Task 5; A6 of the spike (nested `claude -p` inside the sandbox) for the three mail cases.
 - Produces: the recorded run (`docs/evals/`), the overhead ratio against SP1b's last (1.86×, run 3 of 2026-10-12), a finding per failed case.
 
-- [ ] **Step 1: Open the work item**
+- [x] **Step 1: Open the work item**
 
 ```bash
 crew start "SP2c task 7: the eleven eval cases (the eight of the SP2 design and the three for mail), the shared fixtures, the grants the runner needs, the suite run with and without the plugin recorded in docs/evals, the fast-route overhead re-measured against SP1b, and a finding per case that fails" --answers '{"work_type":"feature","is_vague":0.1,"scope":1,"touches_auth":0,"touches_payments":0,"touches_personal_data":0,"touches_data_migration":0,"touches_infra":0,"touches_public_api":0}' --criterion "Every one of the eleven cases has a case.yaml naming it, an executable fixture.sh, a prompt.md with its front matter, and at least one grader; the gap cases scaffold from node-plain.sh and the mail cases from two-projects.sh; the runner grants cd, env and claude" --preserve "The eval runner's existing invocation tests keep passing"
@@ -4364,7 +4364,7 @@ crew criteria <id> add "The suite ran with and without the plugin; docs/evals ho
 
 Standard route as before. `crew tdd before <id> AC-2 -- bun test packages/engine/tests/eval-runner.test.ts`.
 
-- [ ] **Step 2: Write the failing test** (AC-1)
+- [x] **Step 2: Write the failing test** (AC-1)
 
 Append to `packages/engine/tests/eval-runner.test.ts`:
 
@@ -4401,13 +4401,13 @@ test("SP2c: the seventeen cases each have their four parts, and the fixtures the
 });
 ```
 
-- [ ] **Step 3: Red**
+- [x] **Step 3: Red**
 
 ```bash
 crew tdd red <id> AC-1 -- bun test packages/engine/tests/eval-runner.test.ts
 ```
 
-- [ ] **Step 4: The shared fixtures**
+- [x] **Step 4: The shared fixtures**
 
 `plugins/core/evals/fixtures/node-plain.sh` (sourced by the gap cases, which then add their own files):
 
@@ -4500,7 +4500,7 @@ crew detect > /dev/null
 
 (`crew detect` registers each project in the registry, Task 2; the fixture runs with the runner's PATH, so `crew` is the plugin's bundle. `mail.worktrees` is the policy key Task 2 adds for sandboxed environments: the folder where task worktrees are made, `..` by default.)
 
-- [ ] **Step 5: The eight cases of SP2 §15**
+- [x] **Step 5: The eight cases of SP2 §15**
 
 Each `case.yaml` is the same shape as `proven-test-first`'s with its `name` and `tags` (`[gap]`, `[kind]`, `[validator]`, `[judgement]`); each `fixture.sh` begins `#!/bin/sh`, `set -eu`, `. "$(dirname "$0")/../fixtures/node-plain.sh"`, adds its files, then `git add -A && git -c user.name=Fixture -c user.email=fixture@example.invalid commit -q -m "fixture: <name>"`. Prompts carry `max_turns: 40`, `timeout_seconds: 900`, `allowed_tools: [Read, Glob, Grep, Skill]`. Below, per case: the files the fixture adds, the prompt, the graders.
 
@@ -4594,7 +4594,7 @@ Change the empty-state copy of the inbox page from "No messages yet." to "Your i
 
 Graders: `ui-ux-not-run.md` (regex, trace, with-only) `pattern: 'record ui-ux --not-run|ui-ux: not run|judgement gate ui-ux not run'`; `honest-ending.md` (llm): PASS if the final message says the work is not proven because the UI/UX judgement gate could not run (no browser to capture the page), names the two changed files and the test run; FAIL if it says proven or that the UI review passed.
 
-- [ ] **Step 6: The three mail cases**
+- [x] **Step 6: The three mail cases**
 
 `case.yaml` tags `[mail]`; when A6 says the sandbox refuses a nested `claude -p`, `tags: [mail, needs-real-opener]` and the README says the three are skipped in the suite run and recorded from the end-to-end run of Step 9. `fixture.sh` sets `B_ACCEPT`/`B_OPEN` then sources `two-projects.sh`.
 
@@ -4622,11 +4622,11 @@ The active work item is in its plan phase with two tasks. Hand task T-2 (the far
 
 Graders: `task-opened.md` (regex, trace, with-only) `pattern: 'T-2 opened: message M-\S+, worktree \S+, branch crew/\S+/T-2'`; `merged.md` (regex, trace, with-only) `pattern: 'merged T-2 of \S+: [0-9a-f]{7} \(crew/\S+/T-2, child \S+, proven\)'`; `proven-after-merge.md` (regex, trace, with-only) `pattern: 'merged T-2 of[\s\S]*Proven: 20\d\d-'`; `farewell-exists.md` (regex, file `src/farewell.mjs`, both) `pattern: 'export function farewell'`; `honest-ending.md` (llm): PASS if the final message says T-2 was built by an implementer on its branch, proven in its own item, merged by the lead, and the lead's gate run proved the merged tree; FAIL if the lead wrote src/farewell.mjs itself, merged an unproven child, or said proven before the merge.
 
-- [ ] **Step 7: The runner and the README**
+- [x] **Step 7: The runner and the README**
 
 `scripts/eval.ts` `ALLOW_TOOLS` gains `"Bash(cd *)"`, `"Bash(env *)"`, `"Bash(claude *)"` (the first for `cd peer/b && crew …`, the others for the opener inside the sandbox). `plugins/core/evals/README.md`: the "Cases" table gains eleven rows (name, what it proves, graders, one line each, in the table's own voice); a paragraph "Two projects in one workspace" after the first (the sandbox confines writes to the workspace, so B lives at `peer/b`, ignored by A; both are registered by the fixture's `crew detect`; `mail.worktrees` points the lead's worktrees inside `.crew/`); and, when A6 says the sandbox refuses, a paragraph "Cases that need a real opener" naming the three, the tag, and where their end-to-end run is recorded.
 
-- [ ] **Step 8: Green, after, build, plugin check, gate, judgement**
+- [x] **Step 8: Green, after, build, plugin check, gate, judgement**
 
 ```bash
 chmod +x plugins/core/evals/*/fixture.sh plugins/core/evals/fixtures/*.sh
@@ -4638,7 +4638,7 @@ crew gate run <id>
 
 Judgement gates as before (the diff is fixtures, prompts and graders; the reviewers read them as code).
 
-- [ ] **Step 9: Run the suite, record, measure**
+- [x] **Step 9: Run the suite, record, measure**
 
 One case at a time first while a case is being tuned (`bun scripts/eval.ts --case <name>`, about 0.2 USD each), then the whole suite (`bun scripts/eval.ts`, seventeen cases, with and without the plugin, three runs of `fast-route-overhead`; expect about 10 USD and twenty minutes at `--concurrency 3`; raise `--max-cost-usd` in `scripts/eval.ts` to 60 for this run if the estimate says so, and keep the change). Then:
 
@@ -4653,7 +4653,7 @@ Write `docs/evals/2026-10-<dd>-sp2c-results.md` in the shape of `2026-10-12-sp1b
 
 **A case that fails** is a finding in `docs/real-use/findings.md` (next number, category `silent` for a gap case where the agent did not ask, `friction` for a method cost, `docs` for a grader that measured the wrong thing), with the outcome `open` and what the next iteration changes; the case stays in the suite. A grader that measured the wrong thing is fixed in this task and the case re-run once; the note says so.
 
-- [ ] **Step 10: The observed record, the gate run again, the commit**
+- [x] **Step 10: The observed record, the gate run again, the commit**
 
 ```bash
 crew tdd observed <id> AC-3 --reason "an eval run is observed, not red then green: the result is a record of what the models did" -- sh -c 'test -f docs/evals/2026-10-*-sp2c-results.md && test -f docs/evals/2026-10-*-sp2c-aggregate-result.json && grep -q "1.86" docs/evals/2026-10-*-sp2c-results.md'

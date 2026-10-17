@@ -1,0 +1,6 @@
+# evals/task-implementer-worktree/case.yaml
+schema_version: "1.1"
+name: task-implementer-worktree
+tags: [mail, needs-real-opener]
+context:
+  scaffold_script: fixture.sh

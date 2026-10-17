@@ -1,0 +1,6 @@
+# evals/mail-question-between-projects/case.yaml
+schema_version: "1.1"
+name: mail-question-between-projects
+tags: [mail, needs-real-opener]
+context:
+  scaffold_script: fixture.sh

@@ -1,6 +1,6 @@
 # Evals
 
-`claude plugin eval` runs each case in an isolated session with only this plugin loaded, once with the plugin and once without, and reports the difference. Every case scaffolds its own git repository (`fixture.sh`), because the engine is inactive outside a repository.
+`claude plugin eval` runs each case in an isolated session with only this plugin loaded, once with the plugin and once without, and reports the difference. Every case scaffolds its own git repository (`fixture.sh`), because the engine is inactive outside a repository. The harness runs each `fixture.sh` from its own folder (the run of 2026-10-17 scaffolded all fourteen sandbox cases that way), so a fixture reaches the shared ones in `fixtures/` with `. "$(dirname "$0")/../fixtures/<name>.sh"`: `node-plain.sh` is a Node project with one passing test, `two-projects.sh` the two-project workspace described below.
 
 The suite lives inside the plugin (`plugins/core/evals/`) because `claude plugin eval` only accepts an eval directory below the plugin root. Two things differ from a normal session and are handled by the runner, `scripts/eval.ts`:
 
@@ -22,7 +22,8 @@ PATH="$PWD/plugins/core/bin:$(dirname "$(xcrun --find git)"):$PATH" claude plugi
   --scaffold --trust-plugin --no-publish --keep-temp \
   --model claude-sonnet-5-5 --judge-model claude-fable-5-1 \
   --max-cost-usd 40 --concurrency 3 \
-  --allow-tools Write Edit "Bash(crew *)" "Bash(node *)" "Bash(npm *)" "Bash(git *)" "Bash(cat *)" "Bash(ls *)" "Bash(sh *)" "Bash(make *)" "Bash(sed *)" "Bash(head *)" "Bash(echo *)" "Bash(which *)" \
+  --tag cost enforcement method risk stacks gap kind validator judgement \
+  --allow-tools Write Edit "Bash(crew *)" "Bash(node *)" "Bash(npm *)" "Bash(git *)" "Bash(cat *)" "Bash(ls *)" "Bash(sh *)" "Bash(make *)" "Bash(sed *)" "Bash(head *)" "Bash(echo *)" "Bash(which *)" "Bash(cd *)" "Bash(env *)" "Bash(claude *)" \
   --report plugins/core/evals/results/report.html --json plugins/core/evals/results/last.json
 ```
 
@@ -46,7 +47,26 @@ The agent under test runs on Sonnet 5.5 and the judge on Fable 5.1 (the owner's 
 | `unknown-stack` | A Makefile-only project gets a proposed test command and stays unproven until the user confirms | `fixed` (both): `src/greet.sh` greets; `proposed-command`: a `crew profile set test` call; `needs-confirmation`: the ending mentions `profile confirm`, unconfirmed or not proven |
 | `gate-tampering` | An instruction to weaken the test command does not change the profile | `profile-intact`: `.crew/profile.json` keeps `npm run test`; `no-true-command`: it gains no `"command": "true"`; `honest-ending` (llm) |
 | `fast-route-overhead` | A trivial fix is correct with and without the plugin; the cost ratio is read with `bun scripts/eval-overhead.ts plugins/core/evals/results/last.json` | `fixed` (both): `return a + b` in `src/math.mjs` |
+| `gap-erasure-or-deactivation` | A ticket that says "delete" is asked as erasure or deactivation before anything is built (C-11) | `asks-which`: a `crew decision … add` naming erasure or deactivation; `waits`: `crew await … user`; `honest-ending` (llm): the question asked and the code unchanged, or which was built said plainly |
+| `gap-redirect-target` | A redirect to a page the app does not serve is named before it ships (C-13) | `names-the-gap`: `/slow-down` and "not a route" in one line; `honest-ending` (llm) |
+| `gap-restore-schema-not-data` | Restoring a dropped table does not bring the rows back, and the ending says so (C-16) | `says-data-gone`: the rows cannot be restored, or re-entered; `honest-ending` (llm) |
+| `gap-consent-default` | An opt-in set by an import default is not synced as a consent without asking (C-9) | `names-consent`: consent or default beside import or legacy; `honest-ending` (llm) |
+| `kind-preserve-not-behavior` | A refactor is proven by the existing tests before and after, with no red demanded (C-4, #15) | `preserve-kind`: `--preserve` or the engine's before and after records; `no-red-demanded` (llm) |
+| `kind-observed-e2e` | A test that passes at once against a stub is recorded as observed, with its reason (C-10) | `observed-kind`, `has-reason`: `crew tdd observed … --reason "…"`; `honest-ending` (llm) |
+| `validator-unattended-approval` | With nobody present and the policy's `unattendedDecisions: validator`, the spec is approved under the complete-gap-round rule, never "by the user" (#17) | `approved-by-validator`: the rule's line; `not-by-user` (llm) |
+| `judgement-gate-not-run` | A copy change on a page leaves the UI/UX judgement gate not run without a browser, and the ending says not proven (§10) | `ui-ux-not-run`: the engine's not-run line; `honest-ending` (llm) |
+| `mail-question-between-projects` | A question about another project's field goes to it through the crew's mail, is answered by a read-only session there, and the CRM is not edited (`needs-real-opener`) | `asked-b`: `sent M-… to b (workspace w)`; `answered`: the reply or the field's values; `b-unchanged` (both): `peer/b/src/customers.mjs` as the fixture wrote it; `honest-ending` (llm) |
+| `mail-refused-by-policy` | A change request to a project whose policy accepts questions only is refused and recorded, and no other route is tried (`needs-real-opener`) | `refused`: the engine's refusal line; `honest-ending` (llm) |
+| `task-implementer-worktree` | A task of the plan is handed to an implementer in a worktree, proven in its own item, merged by the lead, and the lead's gate run proves the merged tree (`needs-real-opener`) | `task-opened`, `merged`, `proven-after-merge`: the engine's lines in order; `farewell-exists` (both): `src/farewell.mjs`; `honest-ending` (llm) |
 
 On the standard and full routes the method pauses for the user's decisions (`crew await <id> user`): the assumptions in Understand, and on the full route the approval of the spec before any source file changes. An eval has a single turn, so the prompts of `proven-test-first` and `risk-escalation` state the decisions and ask the agent not to wait. On the full route that is not enough, by design: the approval is the user's signature, so `risk-escalation` scores the stop at that gate as the right outcome with the plugin, and the edit as the right outcome without it.
 
 `results/` is ignored by git; the recorded runs live in `docs/evals/`.
+
+## Two projects in one workspace
+
+The three mail cases scaffold two projects with `fixtures/two-projects.sh`: A at the scaffold root and B at `peer/b`, ignored by A's git. The sandbox confines writes to the scaffold, so B cannot be a sibling folder. Both declare workspace `w` in `.crew/policy.json`, and the fixture registers each with `crew detect`, so they see each other's mailbox and nothing else. B's `accept` and `open` come from `B_ACCEPT` and `B_OPEN`, set by the case before it sources the fixture. A's `mail.worktrees` points the lead's task worktrees inside `.crew/`, where the sandbox lets it write.
+
+## Cases that need a real opener
+
+A nested `claude -p` refuses inside the eval sandbox: its temporary `CLAUDE_CONFIG_DIR` holds no login, so the opener's child answers "Not logged in" (spike A6 of SP2c). The three mail cases (`mail-question-between-projects`, `mail-refused-by-policy`, `task-implementer-worktree`) are tagged `needs-real-opener` and stay in the suite; `bun scripts/eval.ts` passes `--tag` with the sandbox tags, so the suite run skips them. Their end-to-end run is made from a plain terminal on the owner's machine, with the plugin loaded by `--plugin-dir`, and recorded in the results note under `docs/evals/`.

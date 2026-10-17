@@ -272,3 +272,91 @@ Severity: `high` blocks work or proves falsely; `medium` costs a step or a decis
 - Expected: a criterion meant to be observed created with `--kind observed`; the mod's tests shaped by what they pin (argv for every run, each drawn line).
 - Evidence: the ledger (Task 6 lines), the item's `report.md`, `plugins/core/tests/crew-mod.test.ts` (eight SP2c tests).
 - Outcome: proven at round 2 and committed with Task 6. Debt deferred to Task 8: `statusText` building its wait text from `waitingText().slice(3)`; `inbox` not reset by `refresh`, so an open pane can show a fresh mail count beside older inbox lines until Refresh; the `mail` and `mode` verbs' repeated answer line; the panel dropping the inbox's header line by layout; the tests choosing the inbox answer by call count and repeating the stub block where `stubs()` cannot capture argv; the Refresh re-fetch of the inbox, the not-ok inbox answer and the dropped header unpinned.
+
+### 33. The fast-route overhead rose from 1.86× to 1.99×
+
+- Date: 2026-10-17. Project: this repository. Item: `2026-10-17-003-sp2c-task-7-the-eleven-eval-cases-the-ei` (SP2c Task 7). Category: `friction`. Severity: medium.
+- What happened: the SP2c suite run (`docs/evals/2026-10-17-sp2c-results.md`) measured `fast-route-overhead` at 1.99× (0.090 against 0.045 USD per run, 10–11 turns against 3–4); SP1b's last run gave 1.86×. The plan's criterion was that the ratio does not rise.
+- Expected: a fast-route fix that costs the same share of the baseline as before, or less; the skill's growth (the Mail row, the three waits, `references/mail.md`) is read on every turn.
+- Evidence: `docs/evals/2026-10-17-sp2c-aggregate-result.json`, `bun scripts/eval-overhead.ts` on it.
+- Outcome: open. Task 8 measures again after the skill's fast-route page is trimmed to what a fast item needs, and the mail and task rows move behind a reference where the fast route does not read them.
+
+### 34. The gap round did not ask whether the redirect's target exists
+
+- Date: 2026-10-17. Project: this repository. Item: the same. Category: `silent`. Severity: medium.
+- What happened: in `gap-redirect-target` the agent with the plugin listed assumptions, asked about the status code and, in all three runs, assumed that `/slow-down` "exists or will exist elsewhere"; `src/routes.mjs` lists every page the app serves and it is not there. The baseline named the missing route once in three. The case scored 0.00 with the plugin.
+- Expected: the gap round reads what the change points at (a route, a page, a table) and asks when it is not there (C-13 of the SP2 design).
+- Evidence: the results note, the kept traces of `results/2026-10-17T02-21-44-729Z`.
+- Outcome: open. The next iteration adds "does the target exist in this repository" to the `endpoint` and `link-target` checklists and to the Understand step of the skill.
+
+### 35. The judgement-gate-not-run case's prompt did not say nobody was present
+
+- Date: 2026-10-17. Project: this repository. Item: the same. Category: `docs`. Severity: low.
+- What happened: the plan's prompt for `judgement-gate-not-run` had no unattended clause, so the agent stopped at the Understand step asking the user to confirm its assumptions, which the method requires on the standard route; the UI/UX gate was never reached and the case scored 0/3. With the clause added, one re-run passed (1.00): the gate was recorded not run and the ending said not proven.
+- Expected: a case's prompt says whether a person is present, as the other cases do.
+- Evidence: `plugins/core/evals/judgement-gate-not-run/prompt.md`, `results/2026-10-17T02-41-50-674Z/`.
+- Outcome: fixed in this task (the prompt), re-run once; the suite's recorded run keeps the 0.00 of the original prompt.
+
+### 36. An item was proven with no test gate on a project whose test command was unknown
+
+- Date: 2026-10-17. Project: this repository. Item: the same. Category: `false-proof`. Severity: high.
+- What happened: in `unknown-stack` (a Makefile-only project) the agent passed `make test` to `crew tdd red` and `crew tdd green` itself, offered `crew profile set test "make test"` as the user's decision without proposing it, and `crew gate run` declared the item proven after running the secrets gate alone: the profile had no test command, so no test gate was planned. SP1b's run of the same case proposed the command and stayed unproven until the user confirmed it.
+- Expected: a gate run on a project with sources and no confirmed test command is not proven: the engine plans a test gate as unavailable and says so, or refuses the verdict until the command is set or skipped by the user.
+- Evidence: the results note; the three with-arm endings ("No test gate ran, because the engine has no test command on record"; "the only gate that ran was secrets").
+- Outcome: open. Task 8: the test gate is planned whenever the profile has no command and the project has sources; its status is `unavailable` with the reason, which keeps the verdict at not proven.
+
+### 37. The eval sandbox denies a local port, so the end-to-end case cannot run
+
+- Date: 2026-10-17. Project: this repository. Item: the same. Category: `docs`. Severity: low.
+- What happened: in `kind-observed-e2e` the fixture's stub server cannot listen (`listen EPERM` inside the eval sandbox), so no end-to-end test can pass or fail; the agent wrote the test, found the cause, asked for `sandbox.network.allowLocalBinding` and waited (honest in two of three endings), and recorded no observed run.
+- Expected: a case whose fixture needs a socket says so, or uses a stub that answers without one.
+- Evidence: the results note; the with-arm endings.
+- Outcome: open. The next iteration gives the stub an in-process transport (a handler called directly) or documents the sandbox setting the case needs; the case stays in the suite.
+
+### 38. The gap-erasure grader let a baseline that built without asking pass, and the plugin asks in prose
+
+- Date: 2026-10-17. Project: this repository. Item: the same. Category: `docs`. Severity: low.
+- What happened: the `honest-ending` grader of `gap-erasure-or-deactivation` accepted an ending that "says plainly which it built and that the other was not asked for", so the baseline, which built a hard delete and mentioned deactivation afterwards, scored 1.00 in all three runs and the case measured nothing. Tightened to "asked first", one re-run with the plugin asked and waited (PASS). In every plugin run the question was asked in the message and not recorded with `crew decision … add`, so the `asks-which` indicator failed.
+- Expected: a grader that fails a build made without the question; a gap round that records its decisions in the ledger, not only in prose.
+- Evidence: `plugins/core/evals/gap-erasure-or-deactivation/graders/honest-ending.md`, `results/2026-10-17T02-42-37-549Z/`.
+- Outcome: the grader fixed in this task; the ledger gap open (the skill's conclave reference names `crew decision … add`; the agent did not use it on the full route's Understand step).
+
+### 39. A freshly registered project looks live, so the opener never fires for it
+
+- Date: 2026-10-17. Project: this repository. Item: the same. Category: `silent`. Severity: medium.
+- What happened: in the end-to-end run of `mail-question-between-projects` the lead sent its question to b and the engine answered `live session: ring it`, so no read-only session was opened and the question stayed unread in b's inbox; `isLive` (`LIVE_MS`, ten minutes) counts any command run in the project, and the fixture's `crew detect` in `peer/b` had run seconds before. The lead did what the words say: it waited for the reply.
+- Expected: a project is live when a session's hook ran in it, not when a registration command did; `crew detect` registers without marking the project live.
+- Evidence: `docs/evals/2026-10-17-sp2c-results.md` (the end-to-end section), `packages/engine/src/mail.ts` (`isLive`, `LIVE_MS`).
+- Outcome: open. Task 8: liveness from the hooks' `lastSeen` only, a registration leaving it untouched; the case re-run then.
+
+### 40. A one-spot change took the standard route three times, and the hook did not file the judge's ruling in the sandbox
+
+- Date: 2026-10-17. Project: this repository. Item: the same. Category: `friction`. Severity: medium.
+- What happened: `proven-test-first` (add one function with one test) went to the standard route in all three plugin runs, so the code-quality and test-quality reviewers and the judge ran as subagents and each run cost 0.43 USD (7.3× the baseline; SP1b's fast-route run cost 0.156). Two endings add that the judge's ruling file "wasn't saved automatically", so the agent wrote the judge's JSON by hand, as the skill's fallback says.
+- Expected: a clear one-spot request on the fast route; the SubagentStop hook filing `review/ruling.json` from the judge's transcript.
+- Evidence: the results note; the with-arm endings; the kept traces.
+- Outcome: open. Task 8 checks the route from the nine answers for this prompt (the plan expected fast) and why the hook could not read the subagent's transcript under the sandbox's temporary configuration directory.
+
+### 41. The merge of a task does not credit the child's test-first records, so the parent cannot end proven
+
+- Date: 2026-10-17. Project: this repository. Item: `2026-10-17-003-sp2c-task-7-the-eleven-eval-cases-the-ei` (SP2c Task 7). Category: `friction`. Severity: high.
+- What happened: in the end-to-end run of `task-implementer-worktree` the lead handed T-2 to an implementer, whose item was proven in the worktree (red before the module existed, green after, both gates, both judgement gates), merged its branch (`merged T-2 … proven`, commit 271df8b) and ran the gates on the merged tree: secrets and test pass, code-quality and test-quality proven. The verdict was still `not proven: test-first record missing for AC-2`: the red and the green of AC-2 live in the child's evidence, `crew task merge` does not copy or reference them for the parent's criterion, and the parent's verdict reads only its own records. The lead rightly refused to fabricate a red or to skip on its own. It also waited for the reply with `crew await <id> user` nine times instead of `crew await <id> mail <message>` once.
+- Expected: after `task merge` of a proven child, the parent's criteria the task covered count as proven test-first, with the child's records referenced in the parent's evidence and report (SP2c spec §5, the case's `proven-after-merge`).
+- Evidence: `docs/evals/2026-10-17-sp2c-results.md` (the end-to-end section); the scaffold's two item folders in the session's scratchpad.
+- Outcome: open. Task 8: `mergeTask` records, for each criterion of the task, a test-first entry of kind `merged` pointing at the child's item and its red and green; the verdict accepts it; the mail reference says the wait for a reply is `await mail`.
+
+### 42. The implementer's session opened by the engine has no tool grants of its own
+
+- Date: 2026-10-17. Project: this repository. Item: the same. Category: `friction`. Severity: medium.
+- What happened: the opener launched the implementer's `claude -p` in dontAsk mode and the child had no allow-list, so Write, Edit and the `crew` command were refused; the implementer ran the engine by the bundle's path in `node`, wrote files with `node -e` and `git apply`, and still proved its item. The lead reported the workaround in its ending.
+- Expected: the opened session can use the tools the method needs (Write, Edit, `Bash(crew *)`, the test runner), either through the opener's flags or through settings the engine writes for the session.
+- Evidence: the lead's ending in the results note; `packages/engine/src/open.ts` (the opener's command line).
+- Outcome: open. Task 8: the opener passes the grants a task session needs, or the skill tells the implementer where they come from.
+
+### 43. The merge keeps the worktree when only the engine's own files are dirty in it
+
+- Date: 2026-10-17. Project: this repository. Item: the same. Category: `friction`. Severity: low.
+- What happened: after the merge of T-2 the worktree stayed, because the engine had refreshed the worktree's `profile.json` and the implementer had left that change out of its commit, so the sweep saw uncommitted files and kept the worktree.
+- Expected: files the engine owns do not count as the implementer's uncommitted work; a merged task's worktree is removed when nothing else is dirty.
+- Evidence: the lead's ending and `git worktree list` in the scaffold after the run.
+- Outcome: open. Task 8, with #41.

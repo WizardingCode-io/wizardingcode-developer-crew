@@ -27,6 +27,23 @@ const ALLOW_TOOLS = [
   "Bash(head *)",
   "Bash(echo *)",
   "Bash(which *)",
+  // SP2c: a case may change into peer/b, and the opener runs claude with its environment
+  "Bash(cd *)",
+  "Bash(env *)",
+  "Bash(claude *)",
+];
+// The tags the sandbox can run: the three mail cases are tagged needs-real-opener (spike A6, the
+// sandbox's temporary config holds no login) and are recorded from an end-to-end run instead.
+const SANDBOX_TAGS = [
+  "cost",
+  "enforcement",
+  "method",
+  "risk",
+  "stacks",
+  "gap",
+  "kind",
+  "validator",
+  "judgement",
 ];
 const COMMON = [
   "plugin",
@@ -57,6 +74,8 @@ export function evalInvocation(options: EvalOptions): { path: string; args: stri
       ]
     : [
         ...COMMON,
+        "--tag",
+        ...SANDBOX_TAGS,
         "--keep-temp",
         "--judge-model",
         "claude-fable-5-1",
