@@ -21,7 +21,7 @@ export function register(on) {
       await $.command.register({
         name: 'crew',
         description: 'Crew: the state of the active work item, the panel, or the mode',
-        argumentHint: '[status|panel|mail|mode <partner|guide|pilot>]',
+        argumentHint: '[status|panel|mail|todo|team|mode <partner|guide|pilot>]',
       })
     } catch {
       try {
@@ -46,8 +46,8 @@ export function register(on) {
   on('command.run', { command: 'crew' }, async ($, e) => {
     const words = (e.args || '').trim().split(/\s+/).filter(Boolean)
     const verb = words[0] || 'status'
-    if (verb !== 'status' && verb !== 'panel' && verb !== 'mail' && verb !== 'mode') {
-      return { text: 'Crew: unknown verb; use /crew [status|panel|mail|mode <partner|guide|pilot>]' }
+    if (verb !== 'status' && verb !== 'panel' && verb !== 'mail' && verb !== 'todo' && verb !== 'team' && verb !== 'mode') {
+      return { text: 'Crew: unknown verb; use /crew [status|panel|mail|todo|team|mode <partner|guide|pilot>]' }
     }
     if (verb === 'panel') {
       await refresh($)
@@ -71,6 +71,14 @@ export function register(on) {
         }
       }
       return {}
+    }
+    if (verb === 'todo') {
+      await refresh($)
+      return { text: todoText() }
+    }
+    if (verb === 'team') {
+      await refresh($)
+      return { text: teamText() }
     }
     if (verb === 'mail') {
       const answer = await runCrew($, ['mail', 'inbox'])
@@ -145,6 +153,8 @@ function paneTree($, e) {
   } else {
     lines.push(Text({ bold: true, children: [status.active + ' "' + status.title + '"'] }))
     lines.push(Text({ dimColor: true, children: [phasesText()] }))
+    // The checkout's branch, from an engine that prints it (0.6.0)
+    if (status.branch) lines.push(Text({ dimColor: true, children: ['Branch: ' + status.branch] }))
     lines.push(Text({ children: [' '] }))
     for (const c of status.criteria || []) {
       lines.push(Text({ children: [c.id + ' ' + c.kind + ' · ' + c.tdd + ' · ' + c.text] }))
@@ -166,7 +176,18 @@ function paneTree($, e) {
     for (const j of status.judgement || []) {
       lines.push(Text({ children: [judgementText(j)] }))
     }
-    // The team of the item and its mail, from an engine that prints them (0.5.0); an older engine's
+    // The seats, the todo with its checks and the roles working, from an engine that prints them
+    // (0.6.0, SP7 §14); an older engine's status has none of the fields and draws as before
+    if (status.team && status.team.length) {
+      lines.push(Text({ dimColor: true, children: ['Team (primary ' + status.primaryTeam + ')'] }))
+      for (const s of status.team) lines.push(Text({ children: [s.role + ' · ' + s.reason] }))
+    }
+    if (status.todo && status.todo.total) {
+      lines.push(Text({ dimColor: true, children: ['Todo ' + status.todo.done + '/' + status.todo.total] }))
+      for (const t of status.todo.items) lines.push(Text({ children: [todoRow(t)] }))
+    }
+    if (status.working && status.working.length) lines.push(Text({ children: ['Working: ' + workingNames()] }))
+    // The tasks of the item and its mail, from an engine that prints them (0.5.0); an older engine's
     // status has neither field and draws as before
     if (status.tasks && status.tasks.length) {
       lines.push(Text({ dimColor: true, children: ['Tasks'] }))
@@ -194,6 +215,44 @@ function paneTree($, e) {
 function taskText(t) {
   const task = t.task || {}
   return task.task + ' · ' + (task.criteria || []).join(',') + ' · ' + task.branch + ' · ' + (task.child || 'no child yet') + ' · ' + t.verdict + (task.mergedAt ? ' · merged ' + String(task.mergeCommit || '').slice(0, 7) : '')
+}
+
+// "✓ T-1 · AC-1 · briefed · inline" or "○ T-2 · AC-2 · handed"
+function todoRow(t) {
+  return (t.state === 'briefed' ? '✓ ' : '○ ') + t.task + ' · ' + (t.criteria || []).join(',') + ' · ' + t.state + (t.inline ? ' · inline' : '')
+}
+
+// The text /crew todo prints: the todo of the active item, or why there is none
+function todoText() {
+  if (error) return 'Crew: ' + error
+  if (!hasWork()) return 'Crew: no active work item. A change starts with the crew skill.'
+  if (!status.todo) return 'Crew: this engine prints no todo (0.6.0 or later does)'
+  if (!status.todo.total) return 'Crew: no todo yet for ' + status.active + " (the plan's tasks appear here)"
+  return ['Crew: todo ' + status.todo.done + '/' + status.todo.total + ' of ' + status.active, ...status.todo.items.map((t) => '  ' + todoRow(t))].join('\n')
+}
+
+// The text /crew team prints: every seat with its reason
+function teamText() {
+  if (error) return 'Crew: ' + error
+  if (!hasWork()) return 'Crew: no active work item. A change starts with the crew skill.'
+  if (!status.team) return 'Crew: this engine prints no team (0.6.0 or later does)'
+  if (!status.team.length) return 'Crew: team of ' + status.active + ': no seat (fast route)'
+  return 'Crew: team of ' + status.active + ' (primary ' + status.primaryTeam + '): ' + status.team.map((s) => s.role + ' (' + s.reason + ')').join(', ')
+}
+
+// " · todo 1/2" or ''
+function todoPart() {
+  return status.todo && status.todo.total ? ' · todo ' + status.todo.done + '/' + status.todo.total : ''
+}
+
+// " · working review-code-quality, judge" or ''
+function workingPart() {
+  return status.working && status.working.length ? ' · working ' + status.working.map((w) => w.agent).join(', ') : ''
+}
+
+// "review-code-quality (Review the diff), judge"
+function workingNames() {
+  return (status.working || []).map((w) => (w.description ? w.agent + ' (' + w.description + ')' : w.agent)).join(', ')
 }
 
 // " · waiting for the user", " · waiting for the roles", " · waiting for a reply to M-…", or '' when the item waits for nothing
@@ -340,7 +399,7 @@ function stripText() {
   const waiting = waitingText()
   const verdict = status.verdict === 'proven' ? 'proven' : 'not proven (' + (status.unproven && status.unproven[0] ? status.unproven[0] : 'gates have not run') + ')'
   const gates = gatesText()
-  return 'crew ' + status.active + ' · ' + status.phase + ' · ' + status.route + ' · ' + verdict + (gates ? ' · ' + gates : '') + unread + waiting
+  return 'crew ' + status.active + ' · ' + status.phase + ' · ' + status.route + ' · ' + verdict + (gates ? ' · ' + gates : '') + todoPart() + workingPart() + unread + waiting
 }
 
 // The text /crew prints in the transcript
@@ -351,6 +410,11 @@ function statusText() {
     status.active + ' "' + status.title + '"',
     '  phase ' + status.phase + ', route ' + status.route + (waitingText() ? ', ' + waitingText().slice(3) : ''),
   ]
+  if (status.branch) lines.push('  branch ' + status.branch)
+  if (status.team && status.team.length) lines.push('  team: ' + status.team.map((s) => s.role).join(', ') + ' (primary ' + status.primaryTeam + ')')
+  if ((status.todo && status.todo.total) || (status.working && status.working.length)) {
+    lines.push('  ' + [status.todo && status.todo.total ? 'todo ' + status.todo.done + '/' + status.todo.total : null, status.working && status.working.length ? 'working: ' + status.working.map((w) => w.agent).join(', ') : null].filter(Boolean).join(' · '))
+  }
   if (status.mail && status.mail.unread) lines.push('  mail: ' + status.mail.unread + ' unread')
   const conclave = conclaveText()
   if (conclave) lines.push('  ' + conclave)

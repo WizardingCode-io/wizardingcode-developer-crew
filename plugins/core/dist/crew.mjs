@@ -1514,7 +1514,253 @@ function withLock(dir, fn, options = {}) {
   }
 }
 
+// packages/engine/src/paths-kind.ts
+var INTERFACE_EXTENSIONS = [
+  ".vue",
+  ".svelte",
+  ".tsx",
+  ".jsx",
+  ".astro",
+  ".blade.php",
+  ".html",
+  ".css",
+  ".scss",
+  ".less"
+];
+function isInterfacePath(rel2) {
+  const lower = rel2.toLowerCase();
+  if (/(?:^|\/)__tests__\//.test(lower))
+    return false;
+  const name = lower.slice(lower.lastIndexOf("/") + 1);
+  if (/\.(?:test|spec|stories)\./.test(name))
+    return false;
+  if (/(?:^|\/)resources\/views\//.test(lower))
+    return true;
+  return INTERFACE_EXTENSIONS.some((ext) => lower.endsWith(ext));
+}
+
+// packages/engine/src/team.ts
+var TEAMS = {
+  researchers: {
+    lead: "lead-researchers",
+    members: ["researcher"],
+    gates: [],
+    mandatory: { kind: "always" },
+    validates: false
+  },
+  qa: {
+    lead: "lead-qa",
+    members: ["review-test-quality", "review-ui-ux"],
+    gates: ["test-quality", "ui-ux"],
+    mandatory: { kind: "always" },
+    validates: true
+  },
+  security: {
+    lead: "lead-security",
+    members: ["review-security"],
+    gates: ["security"],
+    mandatory: { kind: "always" },
+    validates: true
+  },
+  architects: {
+    lead: "lead-architects",
+    members: ["review-architecture"],
+    gates: ["architecture"],
+    mandatory: { kind: "route", route: "full" },
+    validates: true
+  },
+  etl: {
+    lead: "lead-etl",
+    members: ["review-data"],
+    gates: ["data"],
+    mandatory: { kind: "risk-area", area: "data-migration" },
+    validates: true
+  },
+  devops: {
+    lead: "lead-devops",
+    members: ["review-infra"],
+    gates: ["infra"],
+    mandatory: { kind: "risk-area", area: "infra" },
+    validates: true
+  },
+  backend: {
+    lead: "lead-backend",
+    members: ["review-code-quality"],
+    gates: ["code-quality"],
+    mandatory: { kind: "always" },
+    validates: false
+  },
+  frontend: {
+    lead: "lead-frontend",
+    members: [],
+    gates: [],
+    mandatory: { kind: "paths" },
+    validates: false
+  },
+  "agentic-os": {
+    lead: "lead-agentic-os",
+    members: [],
+    gates: [],
+    mandatory: { kind: "paths" },
+    validates: false
+  }
+};
+var PERSONALITIES = [
+  "adventurous",
+  "creative",
+  "conservative",
+  "sceptical",
+  "professional"
+];
+var DEBATE_ROLES = ["researcher", "expert", "devils-advocate", "fault-finder"];
+var REVIEW_ROLES = [
+  "review-code-quality",
+  "review-test-quality",
+  "review-security",
+  "review-ui-ux",
+  "review-risk",
+  "review-architecture",
+  "review-data",
+  "review-infra"
+];
+var LEAD_ROLES = Object.values(TEAMS).map((t) => t.lead);
+var ROLE_NAMES = [
+  "judge",
+  "cto",
+  "tech-lead",
+  ...DEBATE_ROLES,
+  ...REVIEW_ROLES,
+  ...LEAD_ROLES
+];
+function rolePattern() {
+  const names = ROLE_NAMES.map((n) => n === "expert" ? "expert-\\d+" : n.replace(/-/g, "\\-"));
+  return new RegExp(`^(${names.join("|")})$`);
+}
+function primaryTeam(changed) {
+  return changed.some(isInterfacePath) ? "frontend" : "backend";
+}
+function seated(team, def, route, riskAreas, policy) {
+  if (policy.team.always.includes(team))
+    return "policy team.always";
+  if (route === "fast")
+    return null;
+  const rule = def.mandatory;
+  if (rule.kind === "always")
+    return `${route} route`;
+  if (rule.kind === "route")
+    return route === rule.route ? `${route} route` : null;
+  if (rule.kind === "risk-area")
+    return route === "full" && riskAreas.includes(rule.area) ? `risk area ${rule.area}` : null;
+  return null;
+}
+function plannedSeats(route, riskAreas, changed, policy) {
+  const seats = [];
+  const plan = (seat) => {
+    if (!seats.some((s) => s.role === seat.role))
+      seats.push(seat);
+  };
+  if (route !== "fast")
+    plan({ role: "researcher", team: "researchers", kind: "debate", reason: `${route} route` });
+  const gate = (name, team, reason) => plan({ role: `review-${name}`, team, kind: "gate", gate: name, reason });
+  if (route !== "fast") {
+    gate("code-quality", "backend", `${route} route`);
+    gate("test-quality", "qa", `${route} route`);
+  }
+  if (route === "full")
+    gate("security", "security", "full route");
+  else if (route === "standard" && riskAreas.length)
+    gate("security", "security", `risk area${riskAreas.length === 1 ? "" : "s"} ${riskAreas.join(", ")}`);
+  const interfaces = changed.filter(isInterfacePath);
+  if (interfaces.length) {
+    const shown = interfaces.slice(0, 3).join(", ");
+    const more = interfaces.length > 3 ? `, +${interfaces.length - 3} more` : "";
+    gate("ui-ux", "qa", `interface files: ${shown}${more}`);
+  }
+  if (route === "full") {
+    gate("risk", "architects", "full route");
+    gate("architecture", "architects", "full route");
+  }
+  for (const team of policy.team.always)
+    for (const g of TEAMS[team].gates)
+      gate(g, team, "policy team.always");
+  for (const team of ["etl", "devops"]) {
+    const reason = seated(team, TEAMS[team], route, riskAreas, policy);
+    if (reason)
+      for (const g of TEAMS[team].gates)
+        gate(g, team, reason);
+  }
+  for (const g of policy.judgementGates) {
+    const team = Object.entries(TEAMS).find(([, t]) => t.gates.includes(g))?.[0] ?? null;
+    plan({ role: `review-${g}`, team, kind: "gate", gate: g, reason: "policy" });
+  }
+  for (const [name, def] of Object.entries(TEAMS)) {
+    if (!def.validates)
+      continue;
+    const reason = seated(name, def, route, riskAreas, policy);
+    if (reason)
+      plan({ role: def.lead, team: name, kind: "lead", reason });
+  }
+  if (seats.some((s) => s.kind === "gate"))
+    plan({ role: "judge", team: null, kind: "debate", reason: "a gate is planned" });
+  return seats;
+}
+
 // packages/engine/src/state.ts
+var WORKING_TTL_MS = 3600000;
+var WORKING_MAX = 50;
+var DESCRIPTION_MAX = 120;
+function oneLine(text) {
+  const line = text.replace(/(?:\x1b\[|\x9b)[0-?]*[ -/]*[@-~]/g, "").replace(/[\x00-\x1f\x7f-\x9f]+/g, " ").replace(/\s+/g, " ").trim();
+  return line.length > DESCRIPTION_MAX ? `${line.slice(0, DESCRIPTION_MAX - 1)}…` : line;
+}
+function wellShaped(raw) {
+  if (!Array.isArray(raw))
+    return [];
+  const kept = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== "object")
+      continue;
+    const w = entry;
+    if (typeof w.agent !== "string" || typeof w.since !== "string")
+      continue;
+    if (w.team !== null && !(typeof w.team === "string" && Object.hasOwn(TEAMS, w.team)))
+      continue;
+    kept.push({
+      agent: w.agent,
+      team: w.team,
+      since: w.since,
+      sessionId: typeof w.sessionId === "string" ? w.sessionId : "",
+      ...typeof w.description === "string" ? { description: w.description } : {}
+    });
+  }
+  return kept.slice(-WORKING_MAX);
+}
+function live(working, now) {
+  return (working ?? []).filter((w) => now - Date.parse(w.since) < WORKING_TTL_MS);
+}
+function recordWorking(paths, role) {
+  const entry = {
+    ...role,
+    ...role.description === undefined ? {} : { description: oneLine(role.description) }
+  };
+  if (entry.description === "")
+    delete entry.description;
+  updateState(paths, (state) => {
+    state.working = [...live(state.working, Date.parse(role.since)), entry].slice(-WORKING_MAX);
+  });
+}
+function clearWorking(paths, agent) {
+  updateState(paths, (state) => {
+    const working = live(state.working, Date.now());
+    const index = working.findIndex((w) => w.agent === agent);
+    if (index !== -1)
+      working.splice(index, 1);
+    state.working = working;
+  });
+}
+function workingRoles(paths, now = Date.now()) {
+  return live(loadState(paths).working, now);
+}
 function statePath(paths) {
   return join14(paths.localDir, "state.json");
 }
@@ -1522,7 +1768,8 @@ function loadState(paths) {
   const raw = readJson(statePath(paths)) ?? {};
   return {
     active: typeof raw.active === "string" ? raw.active : null,
-    sessions: raw.sessions ?? {}
+    sessions: raw.sessions ?? {},
+    ...Array.isArray(raw.working) ? { working: wellShaped(raw.working) } : {}
   };
 }
 function saveState(paths, state) {
@@ -2378,199 +2625,6 @@ function parseAudit(tool, text) {
 // packages/engine/src/judgement.ts
 import { readdirSync as readdirSync5, unlinkSync } from "node:fs";
 import { join as join17 } from "node:path";
-
-// packages/engine/src/paths-kind.ts
-var INTERFACE_EXTENSIONS = [
-  ".vue",
-  ".svelte",
-  ".tsx",
-  ".jsx",
-  ".astro",
-  ".blade.php",
-  ".html",
-  ".css",
-  ".scss",
-  ".less"
-];
-function isInterfacePath(rel2) {
-  const lower = rel2.toLowerCase();
-  if (/(?:^|\/)__tests__\//.test(lower))
-    return false;
-  const name = lower.slice(lower.lastIndexOf("/") + 1);
-  if (/\.(?:test|spec|stories)\./.test(name))
-    return false;
-  if (/(?:^|\/)resources\/views\//.test(lower))
-    return true;
-  return INTERFACE_EXTENSIONS.some((ext) => lower.endsWith(ext));
-}
-
-// packages/engine/src/team.ts
-var TEAMS = {
-  researchers: {
-    lead: "lead-researchers",
-    members: ["researcher"],
-    gates: [],
-    mandatory: { kind: "always" },
-    validates: false
-  },
-  qa: {
-    lead: "lead-qa",
-    members: ["review-test-quality", "review-ui-ux"],
-    gates: ["test-quality", "ui-ux"],
-    mandatory: { kind: "always" },
-    validates: true
-  },
-  security: {
-    lead: "lead-security",
-    members: ["review-security"],
-    gates: ["security"],
-    mandatory: { kind: "always" },
-    validates: true
-  },
-  architects: {
-    lead: "lead-architects",
-    members: ["review-architecture"],
-    gates: ["architecture"],
-    mandatory: { kind: "route", route: "full" },
-    validates: true
-  },
-  etl: {
-    lead: "lead-etl",
-    members: ["review-data"],
-    gates: ["data"],
-    mandatory: { kind: "risk-area", area: "data-migration" },
-    validates: true
-  },
-  devops: {
-    lead: "lead-devops",
-    members: ["review-infra"],
-    gates: ["infra"],
-    mandatory: { kind: "risk-area", area: "infra" },
-    validates: true
-  },
-  backend: {
-    lead: "lead-backend",
-    members: ["review-code-quality"],
-    gates: ["code-quality"],
-    mandatory: { kind: "always" },
-    validates: false
-  },
-  frontend: {
-    lead: "lead-frontend",
-    members: [],
-    gates: [],
-    mandatory: { kind: "paths" },
-    validates: false
-  },
-  "agentic-os": {
-    lead: "lead-agentic-os",
-    members: [],
-    gates: [],
-    mandatory: { kind: "paths" },
-    validates: false
-  }
-};
-var PERSONALITIES = [
-  "adventurous",
-  "creative",
-  "conservative",
-  "sceptical",
-  "professional"
-];
-var DEBATE_ROLES = ["researcher", "expert", "devils-advocate", "fault-finder"];
-var REVIEW_ROLES = [
-  "review-code-quality",
-  "review-test-quality",
-  "review-security",
-  "review-ui-ux",
-  "review-risk",
-  "review-architecture",
-  "review-data",
-  "review-infra"
-];
-var LEAD_ROLES = Object.values(TEAMS).map((t) => t.lead);
-var ROLE_NAMES = [
-  "judge",
-  "cto",
-  "tech-lead",
-  ...DEBATE_ROLES,
-  ...REVIEW_ROLES,
-  ...LEAD_ROLES
-];
-function rolePattern() {
-  const names = ROLE_NAMES.map((n) => n === "expert" ? "expert-\\d+" : n.replace(/-/g, "\\-"));
-  return new RegExp(`^(${names.join("|")})$`);
-}
-function primaryTeam(changed) {
-  return changed.some(isInterfacePath) ? "frontend" : "backend";
-}
-function seated(team, def, route, riskAreas, policy) {
-  if (policy.team.always.includes(team))
-    return "policy team.always";
-  if (route === "fast")
-    return null;
-  const rule = def.mandatory;
-  if (rule.kind === "always")
-    return `${route} route`;
-  if (rule.kind === "route")
-    return route === rule.route ? `${route} route` : null;
-  if (rule.kind === "risk-area")
-    return route === "full" && riskAreas.includes(rule.area) ? `risk area ${rule.area}` : null;
-  return null;
-}
-function plannedSeats(route, riskAreas, changed, policy) {
-  const seats = [];
-  const plan = (seat) => {
-    if (!seats.some((s) => s.role === seat.role))
-      seats.push(seat);
-  };
-  if (route !== "fast")
-    plan({ role: "researcher", team: "researchers", kind: "debate", reason: `${route} route` });
-  const gate = (name, team, reason) => plan({ role: `review-${name}`, team, kind: "gate", gate: name, reason });
-  if (route !== "fast") {
-    gate("code-quality", "backend", `${route} route`);
-    gate("test-quality", "qa", `${route} route`);
-  }
-  if (route === "full")
-    gate("security", "security", "full route");
-  else if (route === "standard" && riskAreas.length)
-    gate("security", "security", `risk area${riskAreas.length === 1 ? "" : "s"} ${riskAreas.join(", ")}`);
-  const interfaces = changed.filter(isInterfacePath);
-  if (interfaces.length) {
-    const shown = interfaces.slice(0, 3).join(", ");
-    const more = interfaces.length > 3 ? `, +${interfaces.length - 3} more` : "";
-    gate("ui-ux", "qa", `interface files: ${shown}${more}`);
-  }
-  if (route === "full") {
-    gate("risk", "architects", "full route");
-    gate("architecture", "architects", "full route");
-  }
-  for (const team of policy.team.always)
-    for (const g of TEAMS[team].gates)
-      gate(g, team, "policy team.always");
-  for (const team of ["etl", "devops"]) {
-    const reason = seated(team, TEAMS[team], route, riskAreas, policy);
-    if (reason)
-      for (const g of TEAMS[team].gates)
-        gate(g, team, reason);
-  }
-  for (const g of policy.judgementGates) {
-    const team = Object.entries(TEAMS).find(([, t]) => t.gates.includes(g))?.[0] ?? null;
-    plan({ role: `review-${g}`, team, kind: "gate", gate: g, reason: "policy" });
-  }
-  for (const [name, def] of Object.entries(TEAMS)) {
-    if (!def.validates)
-      continue;
-    const reason = seated(name, def, route, riskAreas, policy);
-    if (reason)
-      plan({ role: def.lead, team: name, kind: "lead", reason });
-  }
-  if (seats.some((s) => s.kind === "gate"))
-    plan({ role: "judge", team: null, kind: "debate", reason: "a gate is planned" });
-  return seats;
-}
-
-// packages/engine/src/judgement.ts
 function plannedJudgementGates(route, riskAreas, changed, policy) {
   return plannedSeats(route, riskAreas, changed, policy).filter((s) => s.kind === "gate" && s.gate !== undefined).map((s) => ({ gate: s.gate, reason: s.reason }));
 }
@@ -4817,7 +4871,7 @@ function onPostToolUse(ctx, payload = {}) {
 }
 
 // packages/engine/src/hooks/pre-tool-use.ts
-import { isAbsolute as isAbsolute3, join as join25, relative as relative5 } from "node:path";
+import { isAbsolute as isAbsolute3, join as join26, relative as relative5 } from "node:path";
 
 // packages/engine/src/hooks/shell.ts
 var SUBSTITUTED = "${…}";
@@ -5251,6 +5305,306 @@ function simpleCommands(command) {
     ...p.heredocs.flatMap((body) => body.split(`
 `).filter((line) => line !== ""))
   ]);
+}
+
+// packages/engine/src/hooks/subagent-stop.ts
+import { join as join25 } from "node:path";
+var PLUGIN_PREFIX = "wizardingcode-developer-crew:";
+var BARE_ROLE = new RegExp(`^(${ROLE_NAMES.join("|")})$`);
+function roleOf(agentType) {
+  if (!agentType?.startsWith(PLUGIN_PREFIX))
+    return null;
+  const name = agentType.slice(PLUGIN_PREFIX.length);
+  return BARE_ROLE.test(name) ? name : null;
+}
+function personalityOf(answer) {
+  const line = answer.split(`
+`).slice(0, 3).find((l) => /^personality:\s*\S/.test(l.trim()));
+  if (!line)
+    return null;
+  const name = line.trim().slice("personality:".length).trim().toLowerCase();
+  return PERSONALITIES.includes(name) ? name : "unknown";
+}
+function leadAnswer(answer) {
+  const match = /^# (qa|security|architects|etl|devops) lead's validation of \S+: (spec|plan|delivery)\b/.exec(unfenced(answer));
+  if (!match)
+    return null;
+  return { team: match[1], what: match[2] };
+}
+function teamOf(agent) {
+  for (const [name, def] of Object.entries(TEAMS))
+    if (def.lead === agent || def.members.includes(agent))
+      return name;
+  return null;
+}
+function lines(transcriptPath) {
+  const text = transcriptPath ? readText(transcriptPath) : null;
+  if (text === null)
+    return [];
+  const out = [];
+  for (const raw of text.split(`
+`)) {
+    if (!raw.trim())
+      continue;
+    try {
+      out.push(JSON.parse(raw));
+    } catch {}
+  }
+  return out;
+}
+function roleAnswer(transcriptPath, lastMessage) {
+  let handback = null;
+  for (const line of lines(transcriptPath)) {
+    if (line.type !== "assistant" || !Array.isArray(line.message?.content))
+      continue;
+    for (const part of line.message.content) {
+      if (part.type === "tool_use" && part.name === "SubagentHandback" && typeof part.input?.message === "string")
+        handback = part.input.message;
+    }
+  }
+  return (handback ?? lastMessage ?? "").trim();
+}
+var SPENT = ["input_tokens", "output_tokens", "cache_creation_input_tokens"];
+function roleTokens(transcriptPath) {
+  const perRequest = new Map;
+  let unnamed = 0;
+  for (const line of lines(transcriptPath)) {
+    const usage = line.type === "assistant" ? line.message?.usage : undefined;
+    if (!usage)
+      continue;
+    const key = typeof line.requestId === "string" ? line.requestId : `line-${unnamed++}`;
+    if (perRequest.has(key))
+      continue;
+    let spent = 0;
+    for (const field of SPENT)
+      if (typeof usage[field] === "number")
+        spent += usage[field];
+    perRequest.set(key, spent);
+  }
+  if (!perRequest.size)
+    return { tokens: 0, from: "none" };
+  return { tokens: [...perRequest.values()].reduce((a, b) => a + b, 0), from: "transcript" };
+}
+function unfenced(text) {
+  const fence = /^```(?:json)?\s*\n([\s\S]*?)\n```\s*$/.exec(text.trim());
+  return fence?.[1] ?? text.trim();
+}
+function closingBrace(text, open) {
+  let depth = 0;
+  let quoted = false;
+  for (let i = open;i < text.length; i++) {
+    const c = text.charAt(i);
+    if (quoted) {
+      if (c === "\\")
+        i++;
+      else if (c === '"')
+        quoted = false;
+    } else if (c === '"')
+      quoted = true;
+    else if (c === "{")
+      depth++;
+    else if (c === "}" && --depth === 0)
+      return i;
+  }
+  return -1;
+}
+function gatesRuling(answer) {
+  const body = unfenced(answer);
+  const candidates = [body];
+  const at = body.indexOf('"rulings"');
+  const open = at >= 0 ? body.lastIndexOf("{", at) : -1;
+  const close = open >= 0 ? closingBrace(body, open) : -1;
+  if (close > open)
+    candidates.push(body.slice(open, close + 1));
+  for (const text of candidates) {
+    try {
+      const parsed = JSON.parse(text);
+      if (typeof parsed === "object" && parsed !== null && Array.isArray(parsed.rulings))
+        return text;
+    } catch {}
+  }
+  return null;
+}
+function answerFile(agent, answer) {
+  if (agent.startsWith("review-"))
+    return `review/${agent.slice("review-".length)}.findings.md`;
+  if (agent === "tech-lead") {
+    const lead = leadAnswer(answer);
+    return lead ? `conclave/lead-${lead.team}${lead.what === "delivery" ? ".delivery" : ""}.md` : "conclave/tech-lead.md";
+  }
+  if (agent.startsWith("lead-"))
+    return `conclave/${agent}.md`;
+  if (agent === "cto")
+    return "conclave/cto.md";
+  if (agent === "judge") {
+    if (gatesRuling(answer))
+      return "review/ruling.json";
+    const validator = /^# Validator, ([a-z-]+)/.exec(unfenced(answer));
+    return validator ? `conclave/validator-${validator[1]}.md` : "conclave/judge.md";
+  }
+  return `conclave/${agent}.md`;
+}
+function agentName(role, roles) {
+  if (role !== "expert")
+    return role;
+  const experts = new Set(roles.map((r) => r.agent).filter((a) => /^expert-\d+$/.test(a)));
+  return `expert-${experts.size + 1}`;
+}
+function sendByHand(workId, mid, agent, file) {
+  return `crew mail reply ${mid} "<text>" --as ${agent}${file ? ` --file .crew/work/${workId}/${file}` : ""}`;
+}
+function whereSaved(saved) {
+  return saved.file ? `is saved at ${saved.file}` : "is in its transcript";
+}
+function savedAndUnsentPhrases(workId, saved, pending) {
+  return {
+    where: whereSaved(saved),
+    unsent: pending ? `; the reply to ${pending} was not sent: send it with ${sendByHand(workId, pending, saved.agent, saved.file)}.` : "."
+  };
+}
+function onSubagentStop(ctx, payload) {
+  const role = roleOf(payload.agent_type);
+  if (!role)
+    return {};
+  clearWorking(ctx.paths, role);
+  const tell = (text) => {
+    leaveNotice(ctx, text);
+    return { systemMessage: text };
+  };
+  const active = activeWork(ctx.paths);
+  if (!active?.work)
+    return tell(`Crew: ${role} stopped with no active work item: its answer was not recorded.`);
+  const id = active.work.id;
+  const transcriptNote = payload.agent_transcript_path ? ` (${payload.agent_transcript_path})` : "";
+  const nothingSaved = (reason) => tell(`Crew: ${role} stopped but nothing was saved for ${id} (${reason}): save its answer from the transcript${transcriptNote} by hand, or run the role again.`);
+  if (active.tampered)
+    return nothingSaved(tamperedItem(id));
+  const progress = { saved: null, recorded: false, pending: null, reply: null };
+  try {
+    let note = withLock(workDir(ctx.paths, id), () => recordStop(ctx, id, role, payload, transcriptNote, progress), { what: "work folder" });
+    if (progress.pending && progress.reply && progress.saved) {
+      const question = progress.pending;
+      const { agent, file } = progress.saved;
+      const relayed = relay(ctx, question, progress.reply, agent);
+      progress.pending = null;
+      if ("refused" in relayed)
+        note = `Crew: ${agent}'s answer to ${question} ${whereSaved(progress.saved)} but the reply was not sent: ${relayed.refused}. Once that is cleared, send it with ${sendByHand(id, question, agent, file)}.`;
+      else if (relayed.notes.length)
+        note = `Crew: ${agent}'s answer to ${question} was sent, but ${relayed.notes.join("; ")}.`;
+    }
+    return note ? tell(note) : {};
+  } catch (error) {
+    const why = error.message;
+    if (!progress.saved)
+      return nothingSaved(why);
+    const { agent } = progress.saved;
+    const { where, unsent } = savedAndUnsentPhrases(id, progress.saved, progress.pending);
+    if (!progress.recorded)
+      return tell(`Crew: ${agent}'s answer ${where} but its end and tokens are not recorded (${why})${unsent}`);
+    return tell(`Crew: ${agent}'s answer ${where} and its end is recorded, but the role wait was not cleared (${why}): crew resume ${id} clears it${unsent}`);
+  }
+}
+function tamperedItem(id) {
+  return `work.json changed outside the engine; crew accept ${id}`;
+}
+function recordStop(ctx, id, role, payload, transcriptNote, progress) {
+  const dir = workDir(ctx.paths, id);
+  const item = loadWork(ctx.paths, id);
+  const work = item.work;
+  if (!work)
+    throw new Error(`work.json of ${id} could not be read`);
+  if (item.tampered)
+    throw new Error(tamperedItem(id));
+  const read2 = loadEvidence(ctx.paths, id);
+  const evidence = read2.evidence;
+  const roles = evidence.roles ?? [];
+  const answer = roleAnswer(payload.agent_transcript_path, payload.last_assistant_message);
+  const { tokens, from } = roleTokens(payload.agent_transcript_path);
+  const earlier = payload.agent_id ? roles.find((r) => r.agentId === payload.agent_id) : undefined;
+  const agent = earlier?.agent ?? agentName(role, roles);
+  let saved;
+  let note = null;
+  if (!answer) {
+    saved = { file: null, agent };
+    note = `Crew: ${agent} stopped with no answer (no hand-back and an empty last message): its end is recorded with no file; an earlier file of this role, if any, is not this round's answer. Run the role again or save its answer from the transcript${transcriptNote}.`;
+  } else if (earlier?.file) {
+    saved = { file: joinEarlierFile(dir, agent, answer), agent };
+  } else {
+    const file = answerFile(agent, answer);
+    writeText(join25(dir, file), file.endsWith(".json") ? `${gatesRuling(answer) ?? unfenced(answer)}
+` : `${answer}
+`);
+    saved = { file, agent };
+  }
+  progress.saved = saved;
+  const pending = earlier && answer ? pendingQuestion(ctx, id, agent) : undefined;
+  progress.pending = pending?.id ?? null;
+  if (read2.tampered) {
+    const tampered = `evidence.json of ${id} changed outside the engine (crew accept ${id})`;
+    if (!answer)
+      return `Crew: ${agent} stopped with no answer (no hand-back and an empty last message) and its end is not recorded: ${tampered}. Run the role again or save its answer from the transcript${transcriptNote}.`;
+    const { where, unsent } = savedAndUnsentPhrases(id, saved, pending?.id ?? null);
+    return `Crew: ${agent}'s answer ${where} but its end and tokens are not recorded: ${tampered}${unsent}`;
+  }
+  const personality = personalityOf(answer);
+  const team = saved.agent === "tech-lead" ? leadAnswer(answer)?.team ?? null : teamOf(saved.agent);
+  evidence.roles = [
+    ...roles,
+    {
+      agent: saved.agent,
+      ...payload.agent_id ? { agentId: payload.agent_id } : {},
+      at: nowIso(),
+      tokens,
+      tokensFrom: from,
+      file: saved.file,
+      ...personality ? { personality } : {},
+      ...team ? { team } : {}
+    }
+  ];
+  saveEvidence(ctx.paths, id, evidence);
+  progress.recorded = true;
+  if (role === "judge" && work.awaiting === "role") {
+    work.awaiting = null;
+    saveWork(ctx.paths, work);
+  }
+  if (pending)
+    progress.reply = answer;
+  return note;
+}
+function pendingQuestion(ctx, workId, agent) {
+  return loadItemMail(ctx.paths, workId).box.messages.find((m) => m.relayed && m.to.agent === agent && (m.status === "sent" || m.status === "read") && !m.replyTo);
+}
+function joinEarlierFile(dir, agent, answer) {
+  if (agent.startsWith("review-")) {
+    const file2 = answerFile(agent, answer);
+    const current2 = (readText(join25(dir, file2)) ?? "").trimEnd();
+    const heading = `
+## Clarifications`;
+    const body = current2.includes(heading) ? current2 : `${current2}
+${heading}`;
+    writeText(join25(dir, file2), `${body}
+- ${answer.replace(/\n/g, `
+  `)}
+`);
+    return file2;
+  }
+  const file = `conclave/${agent}-reply.md`;
+  const current = readText(join25(dir, file));
+  writeText(join25(dir, file), current ? `${current.trimEnd()}
+
+${answer}
+` : `${answer}
+`);
+  return file;
+}
+function relay(ctx, questionId, answer, agent) {
+  const notes = [];
+  try {
+    const sent = reply(ctx.mail, questionId, answer, { as: agent }, notes);
+    return "refused" in sent ? { refused: sent.refused } : { notes };
+  } catch (error) {
+    return { refused: error.message };
+  }
 }
 
 // packages/engine/src/hooks/pre-tool-use.ts
@@ -5869,11 +6223,25 @@ function pathFromInput(input) {
 function onPreToolUse(ctx, payload) {
   const tool = payload.tool_name ?? "";
   const input = payload.tool_input ?? {};
+  if (tool === "Agent") {
+    const role = roleOf(typeof input.subagent_type === "string" ? input.subagent_type : undefined);
+    if (!role)
+      return {};
+    const description = typeof input.description === "string" ? input.description : undefined;
+    recordWorking(ctx.paths, {
+      agent: role,
+      team: teamOf(role),
+      since: nowIso(),
+      sessionId: ctx.sessionId,
+      ...description === undefined ? {} : { description }
+    });
+    return {};
+  }
   if (WRITE_TOOLS.has(tool)) {
     const filePath = pathFromInput(input);
     if (!filePath)
       return {};
-    const abs = canonical(isAbsolute3(filePath) ? filePath : join25(ctx.paths.root, filePath));
+    const abs = canonical(isAbsolute3(filePath) ? filePath : join26(ctx.paths.root, filePath));
     if (isProtectedPath(ctx.paths, abs)) {
       return answer("deny", `Crew: ${filePath} is maintained by the engine and is changed through the crew command`);
     }
@@ -5998,7 +6366,7 @@ function onPreToolUse(ctx, payload) {
 
 // packages/engine/src/tasks.ts
 import { cpSync, existsSync as existsSync5 } from "node:fs";
-import { join as join26 } from "node:path";
+import { join as join27 } from "node:path";
 function shortId(workId) {
   return workId.slice(0, 14);
 }
@@ -6013,22 +6381,22 @@ function taskText(planText, task) {
   if (!planText)
     return null;
   const n = task.slice(2);
-  const lines = planText.split(`
+  const lines2 = planText.split(`
 `);
-  for (let i = 0;i < lines.length; i++) {
-    const line = lines[i] ?? "";
+  for (let i = 0;i < lines2.length; i++) {
+    const line = lines2[i] ?? "";
     const numbered = new RegExp(`^${n}\\.\\s+(.*)$`).exec(line);
     if (numbered) {
       const parts = [numbered[1] ?? ""];
-      for (let j = i + 1;j < lines.length && /^\s+\S/.test(lines[j] ?? ""); j++)
-        parts.push((lines[j] ?? "").trim());
+      for (let j = i + 1;j < lines2.length && /^\s+\S/.test(lines2[j] ?? ""); j++)
+        parts.push((lines2[j] ?? "").trim());
       return parts.join(`
 `).trim();
     }
     if (new RegExp(`^#{1,6}\\s*(?:T-${n}|Task ${n})\\b`).test(line)) {
       const parts = [];
-      for (let j = i + 1;j < lines.length && !/^#{1,6}\s/.test(lines[j] ?? ""); j++)
-        parts.push(lines[j] ?? "");
+      for (let j = i + 1;j < lines2.length && !/^#{1,6}\s/.test(lines2[j] ?? ""); j++)
+        parts.push(lines2[j] ?? "");
       return parts.join(`
 `).trim() || null;
     }
@@ -6064,7 +6432,7 @@ function openTask(ctx, env, work, task, criteria, text) {
     return {
       refused: `uncommitted changes in ${dirty.join(", ")}; commit what the implementer must see, then open the task`
     };
-  const body = text?.trim() || taskText(readText(join26(workDir(env.paths, work.id), "plan.md")), task);
+  const body = text?.trim() || taskText(readText(join27(workDir(env.paths, work.id), "plan.md")), task);
   if (!body)
     return { refused: `plan.md names no task ${task}; give its text with --text "<task>"` };
   const names = taskNames(work.id, env.paths.root, task, env.policy.mail.worktrees);
@@ -6112,7 +6480,7 @@ Criteria: ${criteria.map((c) => `${c} ${work.criteria.find((k) => k.id === c)?.t
     return { refused: notes2.length ? `${made.failed}; ${notes2.join("; ")}` : made.failed };
   }
   saveWork(env.paths, work);
-  const brief = readText(join26(workDir(env.paths, work.id), "brief.md"));
+  const brief = readText(join27(workDir(env.paths, work.id), "brief.md"));
   const notes = [];
   const opened = openSession(ctx, {
     message: sent.message,
@@ -6207,7 +6575,7 @@ function writeBrief(paths, work, record, evidence, policy) {
   ].join(`
 `);
   const file = `tasks/${record.task}.brief.md`;
-  writeText(join26(workDir(paths, work.id), file), text);
+  writeText(join27(workDir(paths, work.id), file), text);
   record.brief = file;
   record.state = "briefed";
   return text;
@@ -6287,8 +6655,8 @@ function mergeTask(ctx, env, work, task, options = {}) {
     };
   const swept = sweepSafely(ctx);
   const withSwept = (refused) => {
-    const lines = swept.lines.filter((l) => l !== refused);
-    return { refused: lines.length ? `${refused} (${lines.join("; ")})` : refused };
+    const lines2 = swept.lines.filter((l) => l !== refused);
+    return { refused: lines2.length ? `${refused} (${lines2.join("; ")})` : refused };
   };
   const sessions = readOpenSessions(ctx);
   if (sessions.tampered)
@@ -6321,7 +6689,7 @@ function mergeTask(ctx, env, work, task, options = {}) {
       errorOnExist: false
     });
   for (const name of CHILD_RECORD_FILES)
-    recordIntegrity(env.paths, join26(childDir, name));
+    recordIntegrity(env.paths, join27(childDir, name));
   const kept = removeWorktree(env.paths.root, record.worktree);
   if (!kept)
     dropOpenedMarker(ctx.paths.userDir, childPaths.root);
@@ -6415,20 +6783,20 @@ function onPrompt(ctx) {
   const active = activeWork(ctx.paths);
   if (active?.work && !mail.failed)
     mailQuietly(() => takeReplies(ctx.mail, ctx.paths, active), undefined);
-  const lines = [];
+  const lines2 = [];
   if (active?.work)
-    lines.push(statusLine(ctx, active.work, active.tampered));
-  lines.push(...notices);
+    lines2.push(statusLine(ctx, active.work, active.tampered));
+  lines2.push(...notices);
   if (mail.failed)
-    lines.push(`Mail is off for this prompt: ${mail.failed}.`);
+    lines2.push(`Mail is off for this prompt: ${mail.failed}.`);
   else if (mail.newMail.length)
-    lines.push(`Mail: ${mail.newMail.length} new: ${mail.newMail.map((m) => `${m.id} ${m.type} from ${m.from.project} ${subjectQuoted(m.subject)}`).join("; ")} (crew mail inbox).`);
-  if (!lines.length)
+    lines2.push(`Mail: ${mail.newMail.length} new: ${mail.newMail.map((m) => `${m.id} ${m.type} from ${m.from.project} ${subjectQuoted(m.subject)}`).join("; ")} (crew mail inbox).`);
+  if (!lines2.length)
     return {};
   return {
     hookSpecificOutput: {
       hookEventName: "UserPromptSubmit",
-      additionalContext: lines.join(" ")
+      additionalContext: lines2.join(" ")
     }
   };
 }
@@ -6458,43 +6826,43 @@ function onSessionStart(ctx, payload = {}) {
       session.stopBlocks = 0;
     });
   }
-  const lines = [
+  const lines2 = [
     "WizardingCode Developer Crew is active in this repository. Work is proven by the `crew` command and the crew skill, and a turn cannot end while watched source files have unproven changes.",
     ctx.policy.attendedDecisions === "relay" ? "You run every crew command; the user never types one: a decision that is theirs (crew approve, skip, decide, accept, profile confirm) is relayed by you from the conversation under this repository's policy (attendedDecisions: relay), so run the command once the user has said yes, with no prompt; the record says relayed by the agent." : "You run every crew command; the user never types one: a decision that is theirs (crew approve, skip, decide, accept, profile confirm) is signed by the permission prompt your command raises, in auto mode too."
   ];
   if (active?.work)
-    lines.push(statusLine(ctx, active.work, active.tampered).replace(/^Crew: work/, "Work in progress:"));
+    lines2.push(statusLine(ctx, active.work, active.tampered).replace(/^Crew: work/, "Work in progress:"));
   else
-    lines.push(`No work item is active. A code change starts by answering the crew skill's nine typed questions, then crew start "<request>" --answers '<json>'.`);
+    lines2.push(`No work item is active. A code change starts by answering the crew skill's nine typed questions, then crew start "<request>" --answers '<json>'.`);
   if (refreshed.changed.length)
-    lines.push(`profile refreshed: ${refreshed.changed.join("; ")}.`);
+    lines2.push(`profile refreshed: ${refreshed.changed.join("; ")}.`);
   const missing = missingTestCommands(ctx.profile);
   if (missing.length) {
-    lines.push(`No test command is known for: ${missing.map((m) => m.target).join(", ")}. One is proposed with \`crew profile set test "<cmd>"\`.`);
+    lines2.push(`No test command is known for: ${missing.map((m) => m.target).join(", ")}. One is proposed with \`crew profile set test "<cmd>"\`.`);
   }
   if (moved) {
-    lines.push(`The profile's watch list predated this release and now follows the current default (${DEFAULT_WATCH_EXCLUDE.join(", ")}).`);
+    lines2.push(`The profile's watch list predated this release and now follows the current default (${DEFAULT_WATCH_EXCLUDE.join(", ")}).`);
   } else if (former) {
-    lines.push("The profile predates this release: run `crew detect --refresh` once to pick up the current defaults.");
+    lines2.push("The profile predates this release: run `crew detect --refresh` once to pick up the current defaults.");
   }
   const summary = mail.failed ? emptyInboxSummary() : mailQuietly(() => inboxSummary(ctx.mail), emptyInboxSummary());
   const blockers = summary.blockers.map((b) => `Blocker ${b.id} from ${b.from.project}: ${subjectQuoted(b.subject)} (crew mail read ${b.id}).`);
   if (mail.failed)
-    lines.push(`Mail is off for this session start: ${mail.failed}.`);
+    lines2.push(`Mail is off for this session start: ${mail.failed}.`);
   else if (summary.tampered && summary.line)
-    lines.push(`${summary.line}.`);
+    lines2.push(`${summary.line}.`);
   else if (summary.line)
-    lines.push(`${summary.line}. crew mail inbox lists it; a question is answered from the code with crew mail reply, a change request waits for the user's yes and starts an item with --origin <id>, a notice is said.`);
+    lines2.push(`${summary.line}. crew mail inbox lists it; a question is answered from the code with crew mail reply, a change request waits for the user's yes and starts an item with --origin <id>, a notice is said.`);
   if (ctx.openedBy) {
     const opener = summary.messages.find((m) => m.id === ctx.openedBy);
     const branch = ctx.openedBranch ? ` (branch ${ctx.openedBranch})` : " (the opener pinned no branch: every push is denied)";
-    lines.push(`This session was opened by mail ${ctx.openedBy}${opener ? ` from ${opener.from.project} (${opener.type})` : ""}: read it with crew mail read ${ctx.openedBy}. A question: answer from the code and crew mail reply ${ctx.openedBy} "<text>". A change request: run the method on this branch as a work item started with --origin ${ctx.openedBy}${branch}, commit on it, and end with crew mail reply ${ctx.openedBy} --branch <branch> --item <child id>. Never merge, push to another branch or deploy; a full-route spec waits for a person (crew await <id> user).`);
+    lines2.push(`This session was opened by mail ${ctx.openedBy}${opener ? ` from ${opener.from.project} (${opener.type})` : ""}: read it with crew mail read ${ctx.openedBy}. A question: answer from the code and crew mail reply ${ctx.openedBy} "<text>". A change request: run the method on this branch as a work item started with --origin ${ctx.openedBy}${branch}, commit on it, and end with crew mail reply ${ctx.openedBy} --branch <branch> --item <child id>. Never merge, push to another branch or deploy; a full-route spec waits for a person (crew await <id> user).`);
   }
   if (swept.length)
-    lines.push(`Swept: ${swept.join("; ")}.`);
-  lines.unshift(...blockers);
+    lines2.push(`Swept: ${swept.join("; ")}.`);
+  lines2.unshift(...blockers);
   return {
-    hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: lines.join(" ") }
+    hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: lines2.join(" ") }
   };
 }
 
@@ -6590,305 +6958,6 @@ function onStop(ctx, payload = {}) {
     decision: "block",
     reason: `Crew: watched source files changed and the work is not proven. Missing: ${missing.join("; ")}. Run ${gate}, fix what fails, or ask the user to skip a step with crew skip.${judgement}${wait}${mailNote()}`
   }, true);
-}
-
-// packages/engine/src/hooks/subagent-stop.ts
-import { join as join27 } from "node:path";
-var PLUGIN_PREFIX = "wizardingcode-developer-crew:";
-var BARE_ROLE = new RegExp(`^(${ROLE_NAMES.join("|")})$`);
-function roleOf(agentType) {
-  if (!agentType?.startsWith(PLUGIN_PREFIX))
-    return null;
-  const name = agentType.slice(PLUGIN_PREFIX.length);
-  return BARE_ROLE.test(name) ? name : null;
-}
-function personalityOf(answer2) {
-  const line = answer2.split(`
-`).slice(0, 3).find((l) => /^personality:\s*\S/.test(l.trim()));
-  if (!line)
-    return null;
-  const name = line.trim().slice("personality:".length).trim().toLowerCase();
-  return PERSONALITIES.includes(name) ? name : "unknown";
-}
-function leadAnswer(answer2) {
-  const match = /^# (qa|security|architects|etl|devops) lead's validation of \S+: (spec|plan|delivery)\b/.exec(unfenced(answer2));
-  if (!match)
-    return null;
-  return { team: match[1], what: match[2] };
-}
-function teamOf(agent) {
-  for (const [name, def] of Object.entries(TEAMS))
-    if (def.lead === agent || def.members.includes(agent))
-      return name;
-  return null;
-}
-function lines(transcriptPath) {
-  const text = transcriptPath ? readText(transcriptPath) : null;
-  if (text === null)
-    return [];
-  const out = [];
-  for (const raw of text.split(`
-`)) {
-    if (!raw.trim())
-      continue;
-    try {
-      out.push(JSON.parse(raw));
-    } catch {}
-  }
-  return out;
-}
-function roleAnswer(transcriptPath, lastMessage) {
-  let handback = null;
-  for (const line of lines(transcriptPath)) {
-    if (line.type !== "assistant" || !Array.isArray(line.message?.content))
-      continue;
-    for (const part of line.message.content) {
-      if (part.type === "tool_use" && part.name === "SubagentHandback" && typeof part.input?.message === "string")
-        handback = part.input.message;
-    }
-  }
-  return (handback ?? lastMessage ?? "").trim();
-}
-var SPENT = ["input_tokens", "output_tokens", "cache_creation_input_tokens"];
-function roleTokens(transcriptPath) {
-  const perRequest = new Map;
-  let unnamed = 0;
-  for (const line of lines(transcriptPath)) {
-    const usage = line.type === "assistant" ? line.message?.usage : undefined;
-    if (!usage)
-      continue;
-    const key = typeof line.requestId === "string" ? line.requestId : `line-${unnamed++}`;
-    if (perRequest.has(key))
-      continue;
-    let spent = 0;
-    for (const field of SPENT)
-      if (typeof usage[field] === "number")
-        spent += usage[field];
-    perRequest.set(key, spent);
-  }
-  if (!perRequest.size)
-    return { tokens: 0, from: "none" };
-  return { tokens: [...perRequest.values()].reduce((a, b) => a + b, 0), from: "transcript" };
-}
-function unfenced(text) {
-  const fence = /^```(?:json)?\s*\n([\s\S]*?)\n```\s*$/.exec(text.trim());
-  return fence?.[1] ?? text.trim();
-}
-function closingBrace(text, open) {
-  let depth = 0;
-  let quoted = false;
-  for (let i = open;i < text.length; i++) {
-    const c = text.charAt(i);
-    if (quoted) {
-      if (c === "\\")
-        i++;
-      else if (c === '"')
-        quoted = false;
-    } else if (c === '"')
-      quoted = true;
-    else if (c === "{")
-      depth++;
-    else if (c === "}" && --depth === 0)
-      return i;
-  }
-  return -1;
-}
-function gatesRuling(answer2) {
-  const body = unfenced(answer2);
-  const candidates = [body];
-  const at = body.indexOf('"rulings"');
-  const open = at >= 0 ? body.lastIndexOf("{", at) : -1;
-  const close = open >= 0 ? closingBrace(body, open) : -1;
-  if (close > open)
-    candidates.push(body.slice(open, close + 1));
-  for (const text of candidates) {
-    try {
-      const parsed = JSON.parse(text);
-      if (typeof parsed === "object" && parsed !== null && Array.isArray(parsed.rulings))
-        return text;
-    } catch {}
-  }
-  return null;
-}
-function answerFile(agent, answer2) {
-  if (agent.startsWith("review-"))
-    return `review/${agent.slice("review-".length)}.findings.md`;
-  if (agent === "tech-lead") {
-    const lead = leadAnswer(answer2);
-    return lead ? `conclave/lead-${lead.team}${lead.what === "delivery" ? ".delivery" : ""}.md` : "conclave/tech-lead.md";
-  }
-  if (agent.startsWith("lead-"))
-    return `conclave/${agent}.md`;
-  if (agent === "cto")
-    return "conclave/cto.md";
-  if (agent === "judge") {
-    if (gatesRuling(answer2))
-      return "review/ruling.json";
-    const validator = /^# Validator, ([a-z-]+)/.exec(unfenced(answer2));
-    return validator ? `conclave/validator-${validator[1]}.md` : "conclave/judge.md";
-  }
-  return `conclave/${agent}.md`;
-}
-function agentName(role, roles) {
-  if (role !== "expert")
-    return role;
-  const experts = new Set(roles.map((r) => r.agent).filter((a) => /^expert-\d+$/.test(a)));
-  return `expert-${experts.size + 1}`;
-}
-function sendByHand(workId, mid, agent, file) {
-  return `crew mail reply ${mid} "<text>" --as ${agent}${file ? ` --file .crew/work/${workId}/${file}` : ""}`;
-}
-function whereSaved(saved) {
-  return saved.file ? `is saved at ${saved.file}` : "is in its transcript";
-}
-function savedAndUnsentPhrases(workId, saved, pending) {
-  return {
-    where: whereSaved(saved),
-    unsent: pending ? `; the reply to ${pending} was not sent: send it with ${sendByHand(workId, pending, saved.agent, saved.file)}.` : "."
-  };
-}
-function onSubagentStop(ctx, payload) {
-  const role = roleOf(payload.agent_type);
-  if (!role)
-    return {};
-  const tell = (text) => {
-    leaveNotice(ctx, text);
-    return { systemMessage: text };
-  };
-  const active = activeWork(ctx.paths);
-  if (!active?.work)
-    return tell(`Crew: ${role} stopped with no active work item: its answer was not recorded.`);
-  const id = active.work.id;
-  const transcriptNote = payload.agent_transcript_path ? ` (${payload.agent_transcript_path})` : "";
-  const nothingSaved = (reason) => tell(`Crew: ${role} stopped but nothing was saved for ${id} (${reason}): save its answer from the transcript${transcriptNote} by hand, or run the role again.`);
-  if (active.tampered)
-    return nothingSaved(tamperedItem(id));
-  const progress = { saved: null, recorded: false, pending: null, reply: null };
-  try {
-    let note = withLock(workDir(ctx.paths, id), () => recordStop(ctx, id, role, payload, transcriptNote, progress), { what: "work folder" });
-    if (progress.pending && progress.reply && progress.saved) {
-      const question = progress.pending;
-      const { agent, file } = progress.saved;
-      const relayed = relay(ctx, question, progress.reply, agent);
-      progress.pending = null;
-      if ("refused" in relayed)
-        note = `Crew: ${agent}'s answer to ${question} ${whereSaved(progress.saved)} but the reply was not sent: ${relayed.refused}. Once that is cleared, send it with ${sendByHand(id, question, agent, file)}.`;
-      else if (relayed.notes.length)
-        note = `Crew: ${agent}'s answer to ${question} was sent, but ${relayed.notes.join("; ")}.`;
-    }
-    return note ? tell(note) : {};
-  } catch (error) {
-    const why = error.message;
-    if (!progress.saved)
-      return nothingSaved(why);
-    const { agent } = progress.saved;
-    const { where, unsent } = savedAndUnsentPhrases(id, progress.saved, progress.pending);
-    if (!progress.recorded)
-      return tell(`Crew: ${agent}'s answer ${where} but its end and tokens are not recorded (${why})${unsent}`);
-    return tell(`Crew: ${agent}'s answer ${where} and its end is recorded, but the role wait was not cleared (${why}): crew resume ${id} clears it${unsent}`);
-  }
-}
-function tamperedItem(id) {
-  return `work.json changed outside the engine; crew accept ${id}`;
-}
-function recordStop(ctx, id, role, payload, transcriptNote, progress) {
-  const dir = workDir(ctx.paths, id);
-  const item = loadWork(ctx.paths, id);
-  const work = item.work;
-  if (!work)
-    throw new Error(`work.json of ${id} could not be read`);
-  if (item.tampered)
-    throw new Error(tamperedItem(id));
-  const read2 = loadEvidence(ctx.paths, id);
-  const evidence = read2.evidence;
-  const roles = evidence.roles ?? [];
-  const answer2 = roleAnswer(payload.agent_transcript_path, payload.last_assistant_message);
-  const { tokens, from } = roleTokens(payload.agent_transcript_path);
-  const earlier = payload.agent_id ? roles.find((r) => r.agentId === payload.agent_id) : undefined;
-  const agent = earlier?.agent ?? agentName(role, roles);
-  let saved;
-  let note = null;
-  if (!answer2) {
-    saved = { file: null, agent };
-    note = `Crew: ${agent} stopped with no answer (no hand-back and an empty last message): its end is recorded with no file; an earlier file of this role, if any, is not this round's answer. Run the role again or save its answer from the transcript${transcriptNote}.`;
-  } else if (earlier?.file) {
-    saved = { file: joinEarlierFile(dir, agent, answer2), agent };
-  } else {
-    const file = answerFile(agent, answer2);
-    writeText(join27(dir, file), file.endsWith(".json") ? `${gatesRuling(answer2) ?? unfenced(answer2)}
-` : `${answer2}
-`);
-    saved = { file, agent };
-  }
-  progress.saved = saved;
-  const pending = earlier && answer2 ? pendingQuestion(ctx, id, agent) : undefined;
-  progress.pending = pending?.id ?? null;
-  if (read2.tampered) {
-    const tampered = `evidence.json of ${id} changed outside the engine (crew accept ${id})`;
-    if (!answer2)
-      return `Crew: ${agent} stopped with no answer (no hand-back and an empty last message) and its end is not recorded: ${tampered}. Run the role again or save its answer from the transcript${transcriptNote}.`;
-    const { where, unsent } = savedAndUnsentPhrases(id, saved, pending?.id ?? null);
-    return `Crew: ${agent}'s answer ${where} but its end and tokens are not recorded: ${tampered}${unsent}`;
-  }
-  const personality = personalityOf(answer2);
-  const team = saved.agent === "tech-lead" ? leadAnswer(answer2)?.team ?? null : teamOf(saved.agent);
-  evidence.roles = [
-    ...roles,
-    {
-      agent: saved.agent,
-      ...payload.agent_id ? { agentId: payload.agent_id } : {},
-      at: nowIso(),
-      tokens,
-      tokensFrom: from,
-      file: saved.file,
-      ...personality ? { personality } : {},
-      ...team ? { team } : {}
-    }
-  ];
-  saveEvidence(ctx.paths, id, evidence);
-  progress.recorded = true;
-  if (role === "judge" && work.awaiting === "role") {
-    work.awaiting = null;
-    saveWork(ctx.paths, work);
-  }
-  if (pending)
-    progress.reply = answer2;
-  return note;
-}
-function pendingQuestion(ctx, workId, agent) {
-  return loadItemMail(ctx.paths, workId).box.messages.find((m) => m.relayed && m.to.agent === agent && (m.status === "sent" || m.status === "read") && !m.replyTo);
-}
-function joinEarlierFile(dir, agent, answer2) {
-  if (agent.startsWith("review-")) {
-    const file2 = answerFile(agent, answer2);
-    const current2 = (readText(join27(dir, file2)) ?? "").trimEnd();
-    const heading = `
-## Clarifications`;
-    const body = current2.includes(heading) ? current2 : `${current2}
-${heading}`;
-    writeText(join27(dir, file2), `${body}
-- ${answer2.replace(/\n/g, `
-  `)}
-`);
-    return file2;
-  }
-  const file = `conclave/${agent}-reply.md`;
-  const current = readText(join27(dir, file));
-  writeText(join27(dir, file), current ? `${current.trimEnd()}
-
-${answer2}
-` : `${answer2}
-`);
-  return file;
-}
-function relay(ctx, questionId, answer2, agent) {
-  const notes = [];
-  try {
-    const sent = reply(ctx.mail, questionId, answer2, { as: agent }, notes);
-    return "refused" in sent ? { refused: sent.refused } : { notes };
-  } catch (error) {
-    return { refused: error.message };
-  }
 }
 
 // packages/engine/src/hooks/index.ts
@@ -8380,10 +8449,41 @@ test-first not credited: ${out.uncredited}` : "";
       if (!active?.work)
         return ok("no active work item", { active: null });
       const result = assess(env.paths, active.work, env.profile, env.policy, env.tampered || active.tampered);
-      const text = `${active.work.id} "${active.work.title}"
-  phase ${active.work.phase}, route ${active.work.route}${waitingText(active.work)}
-${gateSummary(active.work, result.verdict, result.unproven, result.evidence.runs)}`;
       const work = active.work;
+      let branch = null;
+      try {
+        const name = gitRun(env.paths.root, "rev-parse", "--abbrev-ref", "HEAD").trim();
+        branch = name ? name.length > 120 ? `${name.slice(0, 119)}…` : name : null;
+      } catch {
+        branch = null;
+      }
+      const todoItems = (work.tasks ?? []).map((t) => ({
+        task: t.task,
+        criteria: t.criteria,
+        state: t.state ?? "open",
+        inline: t.inline === true
+      }));
+      const todo = {
+        done: todoItems.filter((t) => t.state === "briefed").length,
+        total: todoItems.length,
+        items: todoItems
+      };
+      const working = workingRoles(env.paths).map((w) => ({
+        agent: w.agent,
+        team: w.team,
+        since: w.since,
+        ...w.description ? { description: w.description } : {}
+      }));
+      const extra = [
+        branch ? `  branch ${branch}` : null,
+        todo.total ? `  todo ${todo.done}/${todo.total} briefed (${todoItems.map((t) => `${t.task} ${t.state}`).join(", ")})` : null,
+        working.length ? `  working: ${working.map((w) => w.description ? `${w.agent} (${w.description})` : w.agent).join(", ")}` : null
+      ].filter((l) => l !== null);
+      const text = `${work.id} "${work.title}"
+  phase ${work.phase}, route ${work.route}${waitingText(work)}
+${extra.length ? `${extra.join(`
+`)}
+` : ""}${gateSummary(work, result.verdict, result.unproven, result.evidence.runs)}`;
       const synced = guarded("the mail was not synced", () => syncMail(env.mail, env.paths));
       let inbox = emptyInboxSummary();
       const summarised = guarded("the inbox was not read", () => {
@@ -8407,6 +8507,9 @@ ${notes.join(`
         awaitingMessage: work.awaitingMessage ?? null,
         mail: { unread: inbox.unread, answered: inbox.answered, waiting: inbox.waiting },
         tasks,
+        branch,
+        todo,
+        working,
         team: work.seats ?? [],
         primaryTeam: work.primaryTeam ?? null,
         rounds: {

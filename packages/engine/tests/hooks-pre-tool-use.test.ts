@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { onPreToolUse, openedSessionDenial } from "../src/hooks/pre-tool-use.ts";
+import { workingRoles } from "../src/state.ts";
 import { createWork, saveWork } from "../src/work.ts";
 import { git, hookContext, makeRepo, tempDir, testEnv } from "./helpers.ts";
 
@@ -1336,4 +1337,46 @@ test("SP2c AC-4: a session opened by mail never merges, pushes to another branch
   expect(
     openedSessionDenial("git -c push.followTags=true push origin crew/x/T-1", "crew/x/T-1"),
   ).toBe("git -c");
+});
+
+test("SP7a AC-7 (Task 7): an Agent call on one of the plugin's roles is recorded as working; other agents are not; the description is one clean line; hooks.json wires the event", () => {
+  const { ctx } = setup(null);
+  const launch = (subagent_type: string, description?: string) =>
+    onPreToolUse(ctx, {
+      tool_name: "Agent",
+      tool_input: {
+        subagent_type,
+        ...(description === undefined ? {} : { description }),
+        prompt: "…",
+      },
+    });
+  expect(launch("wizardingcode-developer-crew:review-security", "Review the diff")).toEqual({});
+  expect(launch("wizardingcode-developer-crew:lead-qa")).toEqual({});
+  expect(launch("Explore", "x")).toEqual({});
+  expect(launch("other-plugin:review-security", "x")).toEqual({});
+  const working = workingRoles(ctx.paths);
+  expect(working.map((w) => [w.agent, w.team, w.description])).toEqual([
+    ["review-security", "security", "Review the diff"],
+    ["lead-qa", "qa", undefined],
+  ]);
+  expect(working[0]?.sessionId).toBe("s");
+  // An entry older than an hour is a role that never stopped: dropped on read, never shown as working.
+  expect(workingRoles(ctx.paths, Date.now() + 3_600_001)).toEqual([]);
+  // A hostile description (a terminal escape, a forged status line, ten thousand characters) is one
+  // printable line of at most 120 characters when recorded.
+  // ESC and the 8-bit CSI (0x9b) with their sequences, BEL, NUL, DEL, a C1 byte, newlines: all gone.
+  const hostile = `\x1b[31mred\x07\x00\x7f\x85\x9b31m\n  branch evil\n${"a".repeat(10_000)}`;
+  expect(launch("wizardingcode-developer-crew:judge", hostile)).toEqual({});
+  const judge = workingRoles(ctx.paths).find((w) => w.agent === "judge");
+  expect(judge?.description).toMatch(/^red branch evil a+…$/);
+  expect(judge?.description?.length).toBe(120);
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: the control characters are the subject
+  expect(judge?.description).not.toMatch(/[\x00-\x1f\x7f-\x9f]/);
+  const hooks = JSON.parse(
+    readFileSync(
+      join(import.meta.dir, "..", "..", "..", "plugins", "core", "hooks", "hooks.json"),
+      "utf8",
+    ),
+  ) as { hooks: { PreToolUse?: { matcher: string }[] } };
+  expect(hooks.hooks.PreToolUse?.[0]?.matcher).toBe("Write|Edit|MultiEdit|NotebookEdit|Bash|Agent");
 });

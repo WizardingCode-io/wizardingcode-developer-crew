@@ -92,7 +92,7 @@ import {
   skipAllowed,
 } from "./policy.ts";
 import { ensureProfile, loadProfile, refreshProfile, saveProfile } from "./profile.ts";
-import { ensureCrewDir } from "./state.ts";
+import { ensureCrewDir, workingRoles } from "./state.ts";
 import { integrityOf, recordIntegrity, writeProtectedText } from "./store.ts";
 import {
   listTasks,
@@ -158,6 +158,7 @@ import {
   validatorPreconditions,
   waitingText,
 } from "./work.ts";
+import { gitRun } from "./worktree.ts";
 
 export interface CliIo {
   stdout(text: string): void;
@@ -1781,8 +1782,43 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         env.policy,
         env.tampered || active.tampered,
       );
-      const text = `${active.work.id} "${active.work.title}"\n  phase ${active.work.phase}, route ${active.work.route}${waitingText(active.work)}\n${gateSummary(active.work, result.verdict, result.unproven, result.evidence.runs)}`;
       const work = active.work;
+      // The checkout's branch, the plan's todo and the roles working (SP7 §14): the person's view of
+      // who does what now. A branch name is cut at 120 characters; none outside a git repository.
+      let branch: string | null = null;
+      try {
+        const name = gitRun(env.paths.root, "rev-parse", "--abbrev-ref", "HEAD").trim();
+        branch = name ? (name.length > 120 ? `${name.slice(0, 119)}…` : name) : null;
+      } catch {
+        branch = null;
+      }
+      const todoItems = (work.tasks ?? []).map((t) => ({
+        task: t.task,
+        criteria: t.criteria,
+        state: t.state ?? "open",
+        inline: t.inline === true,
+      }));
+      const todo = {
+        done: todoItems.filter((t) => t.state === "briefed").length,
+        total: todoItems.length,
+        items: todoItems,
+      };
+      const working = workingRoles(env.paths).map((w) => ({
+        agent: w.agent,
+        team: w.team,
+        since: w.since,
+        ...(w.description ? { description: w.description } : {}),
+      }));
+      const extra = [
+        branch ? `  branch ${branch}` : null,
+        todo.total
+          ? `  todo ${todo.done}/${todo.total} briefed (${todoItems.map((t) => `${t.task} ${t.state}`).join(", ")})`
+          : null,
+        working.length
+          ? `  working: ${working.map((w) => (w.description ? `${w.agent} (${w.description})` : w.agent)).join(", ")}`
+          : null,
+      ].filter((l): l is string => l !== null);
+      const text = `${work.id} "${work.title}"\n  phase ${work.phase}, route ${work.route}${waitingText(work)}\n${extra.length ? `${extra.join("\n")}\n` : ""}${gateSummary(work, result.verdict, result.unproven, result.evidence.runs)}`;
       // The mail synced and a task's reply that landed taken into the lead's record (SP2c §7): a
       // failure in either (a held lock, a folder that cannot be written) is one line under the
       // status, never the status lost.
@@ -1809,7 +1845,11 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         awaitingMessage: work.awaitingMessage ?? null,
         mail: { unread: inbox.unread, answered: inbox.answered, waiting: inbox.waiting },
         tasks,
-        // The team of the item (SP7 §14): the seats, the session's team, the rounds spent.
+        // The team of the item (SP7 §14): the seats, the session's team, the rounds spent, the
+        // branch, the todo and the roles working.
+        branch,
+        todo,
+        working,
         team: work.seats ?? [],
         primaryTeam: work.primaryTeam ?? null,
         rounds: {

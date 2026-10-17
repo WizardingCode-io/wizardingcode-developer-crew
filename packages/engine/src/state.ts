@@ -3,7 +3,8 @@ import { readJson, readText, writeJson } from "./fs.ts";
 import { LockBusy, withLock } from "./lock.ts";
 import type { CrewPaths } from "./paths.ts";
 import { writeProtectedText } from "./store.ts";
-import type { Policy } from "./types.ts";
+import { TEAMS } from "./team.ts";
+import type { Policy, TeamName } from "./types.ts";
 
 export interface SessionState {
   baseline: string | null;
@@ -12,9 +13,90 @@ export interface SessionState {
   notices?: string[];
 }
 
+/** A role the session launched through the Agent tool and whose stop has not come (SP7 §14): what the mod shows as working. */
+export interface WorkingRole {
+  agent: string;
+  team: TeamName | null;
+  since: string;
+  sessionId: string;
+  description?: string;
+}
+
 export interface LocalState {
   active: string | null;
   sessions: Record<string, SessionState>;
+  working?: WorkingRole[];
+}
+
+/** A role still "working" after an hour never stopped (a killed subagent, a crashed session): dropped on read. */
+export const WORKING_TTL_MS = 3_600_000;
+/** The newest entries kept: a burst of launches in one hour never grows the state file past this. */
+export const WORKING_MAX = 50;
+const DESCRIPTION_MAX = 120;
+
+/**
+ * The description an Agent launch gave, as one printable line (security review of SP7a Task 7): the
+ * text comes from whatever launched the subagent, so a terminal escape, a newline forging a status
+ * line or ten thousand characters are not written and never drawn.
+ */
+export function oneLine(text: string): string {
+  const line = text
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: the escape sequences are the subject
+    .replace(/(?:\x1b\[|\x9b)[0-?]*[ -/]*[@-~]/g, "")
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: C0, DEL and C1 are the subject
+    .replace(/[\x00-\x1f\x7f-\x9f]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return line.length > DESCRIPTION_MAX ? `${line.slice(0, DESCRIPTION_MAX - 1)}…` : line;
+}
+
+/** The entries a state file holds that have the shape the engine writes; anything else is dropped, never thrown on. */
+function wellShaped(raw: unknown): WorkingRole[] {
+  if (!Array.isArray(raw)) return [];
+  const kept: WorkingRole[] = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== "object") continue;
+    const w = entry as Record<string, unknown>;
+    if (typeof w.agent !== "string" || typeof w.since !== "string") continue;
+    if (w.team !== null && !(typeof w.team === "string" && Object.hasOwn(TEAMS, w.team))) continue;
+    kept.push({
+      agent: w.agent,
+      team: w.team as TeamName | null,
+      since: w.since,
+      sessionId: typeof w.sessionId === "string" ? w.sessionId : "",
+      ...(typeof w.description === "string" ? { description: w.description } : {}),
+    });
+  }
+  return kept.slice(-WORKING_MAX);
+}
+
+function live(working: WorkingRole[] | undefined, now: number): WorkingRole[] {
+  return (working ?? []).filter((w) => now - Date.parse(w.since) < WORKING_TTL_MS);
+}
+
+export function recordWorking(paths: CrewPaths, role: WorkingRole): void {
+  const entry: WorkingRole = {
+    ...role,
+    ...(role.description === undefined ? {} : { description: oneLine(role.description) }),
+  };
+  if (entry.description === "") delete entry.description;
+  updateState(paths, (state) => {
+    state.working = [...live(state.working, Date.parse(role.since)), entry].slice(-WORKING_MAX);
+  });
+}
+
+/** The PreToolUse hook knows no agent id, so the name is the key: the oldest entry of that name goes. */
+export function clearWorking(paths: CrewPaths, agent: string): void {
+  updateState(paths, (state) => {
+    const working = live(state.working, Date.now());
+    const index = working.findIndex((w) => w.agent === agent);
+    if (index !== -1) working.splice(index, 1);
+    state.working = working;
+  });
+}
+
+export function workingRoles(paths: CrewPaths, now = Date.now()): WorkingRole[] {
+  return live(loadState(paths).working, now);
 }
 
 function statePath(paths: CrewPaths): string {
@@ -26,6 +108,7 @@ export function loadState(paths: CrewPaths): LocalState {
   return {
     active: typeof raw.active === "string" ? raw.active : null,
     sessions: raw.sessions ?? {},
+    ...(Array.isArray(raw.working) ? { working: wellShaped(raw.working) } : {}),
   };
 }
 

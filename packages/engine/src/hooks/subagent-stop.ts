@@ -4,6 +4,7 @@ import { nowIso, readText, writeText } from "../fs.ts";
 import { withLock } from "../lock.ts";
 import { loadItemMail, reply } from "../mail.ts";
 import { workDir } from "../paths.ts";
+import { clearWorking } from "../state.ts";
 import { PERSONALITIES, ROLE_NAMES, TEAMS, type TeamDef } from "../team.ts";
 import type { Message, Personality, RoleRecord, TeamName } from "../types.ts";
 import { activeWork, loadWork, saveWork } from "../work.ts";
@@ -244,6 +245,9 @@ function savedAndUnsentPhrases(
 export function onSubagentStop(ctx: HookContext, payload: HookPayload): HookResponse {
   const role = roleOf(payload.agent_type);
   if (!role) return {};
+  // The role is no longer working, whatever became of its answer (SP7 §14): cleared before any
+  // check of the item or the transcript, so a stop with nothing to record still clears.
+  clearWorking(ctx.paths, role);
   // What this hook says reaches the person in `systemMessage`; the session's model reads it as a
   // notice at its next tool call, prompt or blocked turn end (hooks/notices.ts).
   const tell = (text: string): HookResponse => {

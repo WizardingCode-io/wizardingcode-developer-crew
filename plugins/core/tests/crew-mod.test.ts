@@ -120,7 +120,7 @@ test("/crew with an unknown verb says how to use it", async ($, on) => {
   stubs(on, () => ({ exitCode: 0, stdout: JSON.stringify(PROVEN), stderr: "" }));
   await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
   const answer = await $.command.run({ command: "crew", args: "frobnicate" });
-  expect(answer.text).toBe("Crew: unknown verb; use /crew [status|panel|mail|mode <partner|guide|pilot>]");
+  expect(answer.text).toBe("Crew: unknown verb; use /crew [status|panel|mail|todo|team|mode <partner|guide|pilot>]");
 });
 
 // What Claude Code passes to a ui.render hook for the strip above the prompt
@@ -462,7 +462,7 @@ test("SP2c: /crew mail prints the inbox; an unknown verb names it", async ($, on
   const answer = await $.command.run({ command: "crew", args: "mail" });
   expect(answer.text).toBe(`Crew: ${INBOX.message}`);
   const unknown = await $.command.run({ command: "crew", args: "fly" });
-  expect(unknown.text).toBe("Crew: unknown verb; use /crew [status|panel|mail|mode <partner|guide|pilot>]");
+  expect(unknown.text).toBe("Crew: unknown verb; use /crew [status|panel|mail|todo|team|mode <partner|guide|pilot>]");
 });
 
 test("SP2c (advisory of 2026-10-15-001): a proven row with no findings reads (0 findings)", async ($, on) => {
@@ -515,4 +515,95 @@ test("SP2c: /crew mail and the panel run crew mail inbox --json, once each", asy
     ["status", "--json"],
     ["mail", "inbox", "--json"],
   ]);
+});
+
+// A standard-route item under 0.6.0: the team, the todo, the roles working and the branch (SP7a Task 7)
+const TEAMED = {
+  ...JUDGED,
+  branch: "main",
+  primaryTeam: "backend",
+  team: [
+    { role: "lead-qa", team: "qa", kind: "lead", reason: "standard route" },
+    { role: "review-code-quality", team: null, kind: "gate", gate: "code-quality", reason: "standard route" },
+    { role: "judge", team: null, kind: "gate", reason: "standard route" },
+  ],
+  todo: {
+    done: 1,
+    total: 2,
+    items: [
+      { task: "T-1", criteria: ["AC-1"], state: "briefed", inline: true },
+      { task: "T-2", criteria: ["AC-2"], state: "handed", inline: false },
+    ],
+  },
+  working: [
+    { agent: "review-code-quality", team: null, since: "2026-10-17T10:00:00.000Z", description: "Review the diff" },
+    { agent: "judge", team: null, since: "2026-10-17T10:01:00.000Z" },
+  ],
+  tasks: [{ task: { task: "T-2", criteria: ["AC-2"], branch: "crew/2026-10-15-002/T-2" }, status: "sent", verdict: "no reply yet" }],
+};
+
+test("SP7a AC-7 (Task 7): the strip shows the todo count and the roles working after the gates, before the mail and the wait", async ($, on) => {
+  stubs(on, () => ({ exitCode: 0, stdout: JSON.stringify({ ...TEAMED, awaiting: "role", mail: { unread: 1, answered: 0, waiting: 0 } }), stderr: "" }));
+  on("ui.render", () => ({ type: "Text", props: {}, children: [] }));
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  const ui = await $.ui.mount({ ...STRIP, surface: "terminal" });
+  expect(
+    await ui.find({
+      type: "Text",
+      text: "crew 2026-10-15-002-delete-accounts · gate · standard · not proven (judgement gate test-quality not proven) · secrets ✓ test ✓ code-quality ✓ test-quality ✗ ui-ux ? security … risk – · todo 1/2 · working review-code-quality, judge · mail 1 unread · waiting for the roles",
+    }),
+  ).toBeDefined();
+  await ui.unmount();
+});
+
+test("SP7a AC-7 (Task 7): the panel shows the branch after the phases, then the team, the todo with its checks and the roles working after the judgement rows, in that order", async ($, on) => {
+  stubs(on, () => ({ exitCode: 0, stdout: JSON.stringify(TEAMED), stderr: "" }));
+  on("ui.open", () => ({ value: { isPlaced: true } }));
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  await $.command.run({ command: "crew", args: "panel" });
+  const ui = await $.ui.mount({ ...PANE, surface: "terminal" });
+  const texts = (await ui.findAll({ type: "Text" })).map((t) => t.text);
+  const phases = texts.indexOf("receive › recognize › understand › specify › conclave › plan › build › [gate] › deliver");
+  expect(phases).toBeGreaterThan(0);
+  expect(texts[phases + 1]).toBe("Branch: main");
+  const lastJudgement = texts.indexOf("risk: skipped (no production yet)");
+  expect(lastJudgement).toBeGreaterThan(phases);
+  expect(texts.slice(lastJudgement + 1, lastJudgement + 9)).toEqual([
+    "Team (primary backend)",
+    "lead-qa · standard route",
+    "review-code-quality · standard route",
+    "judge · standard route",
+    "Todo 1/2",
+    "✓ T-1 · AC-1 · briefed · inline",
+    "○ T-2 · AC-2 · handed",
+    "Working: review-code-quality (Review the diff), judge",
+  ]);
+  // The Tasks block comes right after the Working row.
+  expect(texts.indexOf("Tasks")).toBe(lastJudgement + 9);
+  await ui.unmount();
+});
+
+test("SP7a AC-7 (Task 7): /crew todo and /crew team print the lists, /crew status names the branch, the team and the todo; the command's hint names the verbs; an engine before 0.6.0 is told it prints neither", async ($, on) => {
+  let teamed = true;
+  let registered: { argumentHint?: string } | null = null;
+  on("session.cwd", () => ({ value: "/work" }));
+  on("process.run", () => ({ value: { exitCode: 0, stdout: JSON.stringify(teamed ? TEAMED : JUDGED), stderr: "" } }));
+  on("command.register", ($, e) => {
+    registered = e as { argumentHint?: string };
+    return { value: undefined };
+  });
+  on("session.start", () => ({ cwd: "/work" }));
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  expect(registered?.argumentHint).toBe("[status|panel|mail|todo|team|mode <partner|guide|pilot>]");
+  const todo = await $.command.run({ command: "crew", args: "todo" });
+  expect(todo.text).toBe("Crew: todo 1/2 of 2026-10-15-002-delete-accounts\n  ✓ T-1 · AC-1 · briefed · inline\n  ○ T-2 · AC-2 · handed");
+  const team = await $.command.run({ command: "crew", args: "team" });
+  expect(team.text).toBe("Crew: team of 2026-10-15-002-delete-accounts (primary backend): lead-qa (standard route), review-code-quality (standard route), judge (standard route)");
+  const status = await $.command.run({ command: "crew", args: "status" });
+  expect(status.text).toContain("  branch main");
+  expect(status.text).toContain("  team: lead-qa, review-code-quality, judge (primary backend)");
+  expect(status.text).toContain("  todo 1/2 · working: review-code-quality, judge");
+  teamed = false;
+  expect((await $.command.run({ command: "crew", args: "todo" })).text).toBe("Crew: this engine prints no todo (0.6.0 or later does)");
+  expect((await $.command.run({ command: "crew", args: "team" })).text).toBe("Crew: this engine prints no team (0.6.0 or later does)");
 });

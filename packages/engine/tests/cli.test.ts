@@ -7,8 +7,9 @@ import { readReviewInputs } from "../src/judgement.ts";
 import { mailContext, registerProject } from "../src/mail.ts";
 import { loadPolicy } from "../src/policy.ts";
 import { loadProfile } from "../src/profile.ts";
+import { recordWorking } from "../src/state.ts";
 import { readProtectedJson, writeProtectedJson } from "../src/store.ts";
-import { loadWork } from "../src/work.ts";
+import { loadWork, saveWork } from "../src/work.ts";
 import { git, makeRepo, repoPaths, tempDir, testEnv, write } from "./helpers.ts";
 
 test("SP2b: debate open and close through the command; plan waits while the debate is open; status says so", async () => {
@@ -2834,4 +2835,111 @@ test("SP7a AC-4: crew metrics counts the records of a project and of a workspace
     ).toBe(
       `a workspace is a lowercase name of letters, digits, dot, dash and underscore, up to 64 characters, not ${bad}`,
     );
+});
+
+test("SP7a AC-7 (Task 7): crew status --json carries the todo, the roles working and the branch; the text names them in order; no git repository means no branch; a long branch is cut", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const env = testEnv();
+  const c = io(root, env);
+  const id = (await c.json("start", "Fix a", "--answers", answers, "--criterion", "a")).data
+    .id as string;
+  const branch = git(root, "rev-parse", "--abbrev-ref", "HEAD").trim();
+  const empty = await c.json("status");
+  expect(empty.data.branch).toBe(branch);
+  expect(empty.data.todo).toEqual({ done: 0, total: 0, items: [] });
+  expect(empty.data.working).toEqual([]);
+  const emptyText = (await c.run("status")).out.split("\n");
+  expect(emptyText[2]).toBe(`  branch ${branch}`);
+  expect(emptyText.join("\n")).not.toContain("  todo ");
+  expect(emptyText.join("\n")).not.toContain("  working:");
+  // One todo noted, gated and briefed; one record from 0.5.x, saved without a state.
+  await c.run(
+    "task",
+    id,
+    "note",
+    "T-1",
+    "--criteria",
+    "AC-1",
+    "--scope",
+    "src/a.ts",
+    "--text",
+    "AC-1 inline",
+  );
+  expect((await c.run("task", id, "gate", "T-1")).code).toBe(0);
+  expect((await c.run("task", id, "brief", "T-1")).code).toBe(0);
+  const paths = repoPaths(root, env);
+  const loaded = loadWork(paths, id).work;
+  if (!loaded) throw new Error("no work");
+  loaded.tasks = [
+    ...(loaded.tasks ?? []),
+    {
+      task: "T-2",
+      message: "M-2",
+      criteria: ["AC-1"],
+      text: "an older record",
+      branch: "crew/x/T-2",
+      worktree: "",
+      openedAt: new Date().toISOString(),
+    },
+  ];
+  saveWork(paths, loaded);
+  recordWorking(paths, {
+    agent: "review-security",
+    team: "security",
+    since: new Date().toISOString(),
+    sessionId: "s",
+    description: "Review the diff",
+  });
+  recordWorking(paths, {
+    agent: "judge",
+    team: null,
+    since: new Date().toISOString(),
+    sessionId: "s",
+  });
+  const status = await c.json("status");
+  expect(status.data.todo).toEqual({
+    done: 1,
+    total: 2,
+    items: [
+      { task: "T-1", criteria: ["AC-1"], state: "briefed", inline: true },
+      { task: "T-2", criteria: ["AC-1"], state: "open", inline: false },
+    ],
+  });
+  expect(status.data.working).toEqual([
+    {
+      agent: "review-security",
+      team: "security",
+      since: expect.any(String),
+      description: "Review the diff",
+    },
+    { agent: "judge", team: null, since: expect.any(String) },
+  ]);
+  const lines = (await c.run("status")).out.split("\n");
+  expect(lines.slice(1, 5)).toEqual([
+    "  phase build, route fast",
+    `  branch ${branch}`,
+    "  todo 1/2 briefed (T-1 briefed, T-2 open)",
+    "  working: review-security (Review the diff), judge",
+  ]);
+  // A branch named with 200 characters is cut at 120, in the JSON and in the line alike.
+  git(root, "checkout", "-q", "-b", "b".repeat(200));
+  const long = await c.json("status");
+  expect((long.data.branch as string).length).toBe(120);
+  expect(long.data.branch as string).toMatch(/^b{119}…$/);
+  expect((await c.run("status")).out.split("\n")[2]).toBe(`  branch ${"b".repeat(119)}…`);
+  // No git repository: no branch, and no line about one.
+  const plain = tempDir();
+  write(plain, "package.json", JSON.stringify({ scripts: { test: "exit 0" } }));
+  write(plain, "src/a.ts", "x");
+  write(plain, ".crew/policy.json", "{}");
+  const p = io(plain, env);
+  await p.run("detect");
+  const started = await p.json("start", "Fix a", "--answers", answers, "--criterion", "a");
+  expect(started.code).toBe(0);
+  const bare = await p.json("status");
+  expect(bare.data.branch).toBeNull();
+  expect((await p.run("status")).out).not.toContain("  branch ");
 });

@@ -24,6 +24,7 @@ import {
   teamOf,
 } from "../src/hooks/subagent-stop.ts";
 import { loadItemMail, mailbox, ROLE_AGENT, send } from "../src/mail.ts";
+import { clearWorking, recordWorking, workingRoles } from "../src/state.ts";
 import { ROLE_NAMES } from "../src/team.ts";
 import type { RoleRecord } from "../src/types.ts";
 import { addCriterion, createWork, loadWork, saveWork } from "../src/work.ts";
@@ -918,3 +919,37 @@ test.skipIf(process.getuid?.() === 0)(
     }
   },
 );
+
+test("SP7a AC-7 (Task 7): a role's stop clears the oldest working entry of its name, whatever became of its answer", () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const ctx = hookContext({ session_id: "s", cwd: root }, testEnv());
+  // The entries are seconds old: the TTL (an hour) keeps them, whatever the clock says.
+  const at = (s: number) => new Date(Date.now() - 10_000 + s * 1000).toISOString();
+  recordWorking(ctx.paths, {
+    agent: "review-security",
+    team: "security",
+    since: at(0),
+    sessionId: "s",
+    description: "first",
+  });
+  recordWorking(ctx.paths, { agent: "judge", team: null, since: at(1), sessionId: "s" });
+  recordWorking(ctx.paths, {
+    agent: "review-security",
+    team: "security",
+    since: at(2),
+    sessionId: "s",
+    description: "second",
+  });
+  // No active item and no transcript: the stop has nothing to record, and still clears the entry.
+  onSubagentStop(ctx, { agent_type: `${PLUGIN}:review-security`, agent_id: "a1" });
+  expect(workingRoles(ctx.paths).map((w) => [w.agent, w.description])).toEqual([
+    ["judge", undefined],
+    ["review-security", "second"],
+  ]);
+  clearWorking(ctx.paths, "judge");
+  clearWorking(ctx.paths, "judge");
+  expect(workingRoles(ctx.paths).map((w) => w.agent)).toEqual(["review-security"]);
+});

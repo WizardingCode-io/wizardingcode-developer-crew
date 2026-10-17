@@ -1,7 +1,9 @@
 import { isAbsolute, join, relative } from "node:path";
 import { type Parsed, parse } from "../argv.ts";
 import { isWatched } from "../fingerprint.ts";
+import { nowIso } from "../fs.ts";
 import { canonical, isProtectedPath } from "../paths.ts";
+import { recordWorking } from "../state.ts";
 import type { Policy } from "../types.ts";
 import { activeWork, isBeforeBuild, loadWork } from "../work.ts";
 import {
@@ -12,6 +14,7 @@ import {
   simpleCommands,
   type Token,
 } from "./shell.ts";
+import { roleOf, teamOf } from "./subagent-stop.ts";
 import type { HookContext, HookPayload, HookResponse } from "./types.ts";
 
 const WRITE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
@@ -910,6 +913,21 @@ function pathFromInput(input: Record<string, unknown>): string | null {
 export function onPreToolUse(ctx: HookContext, payload: HookPayload): HookResponse {
   const tool = payload.tool_name ?? "";
   const input = payload.tool_input ?? {};
+  if (tool === "Agent") {
+    // A role of this plugin launched: recorded as working until its SubagentStop (SP7 §14). Nothing
+    // is ever denied here; a record that fails leaves the hook open like every other.
+    const role = roleOf(typeof input.subagent_type === "string" ? input.subagent_type : undefined);
+    if (!role) return {};
+    const description = typeof input.description === "string" ? input.description : undefined;
+    recordWorking(ctx.paths, {
+      agent: role,
+      team: teamOf(role),
+      since: nowIso(),
+      sessionId: ctx.sessionId,
+      ...(description === undefined ? {} : { description }),
+    });
+    return {};
+  }
   if (WRITE_TOOLS.has(tool)) {
     const filePath = pathFromInput(input);
     if (!filePath) return {};

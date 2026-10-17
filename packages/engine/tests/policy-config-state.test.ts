@@ -10,7 +10,14 @@ import {
   setPolicyValue,
   skipAllowed,
 } from "../src/policy.ts";
-import { ensureCrewDir, loadState, saveState, sessionState } from "../src/state.ts";
+import {
+  ensureCrewDir,
+  loadState,
+  saveState,
+  sessionState,
+  WORKING_MAX,
+  workingRoles,
+} from "../src/state.ts";
 import { makeRepo, repoPaths, testEnv } from "./helpers.ts";
 
 test("SP2b: judgementGates lists the judgement gates a team requires, empty by default, unknown names dropped", () => {
@@ -357,4 +364,37 @@ test("SP7a AC-3: policy.team has its defaults when absent, only tightens when pr
     value: "core",
   });
   expect(setPolicyValue(fresh, "team.always", "etl")).toHaveProperty("refused");
+});
+
+test("SP7a AC-7 (Task 7): the working list keeps the newest WORKING_MAX well-shaped entries; a null or malformed element is dropped, never thrown on", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  mkdirSync(paths.localDir, { recursive: true });
+  const since = (i: number) => new Date(Date.UTC(2026, 9, 17, 10, 0, i)).toISOString();
+  const entries: unknown[] = [
+    null,
+    { agent: 1 },
+    { agent: "judge" },
+    { agent: "x", since: since(0), team: "nope", sessionId: "s" },
+  ];
+  for (let i = 0; i < 60; i++)
+    entries.push({
+      agent: `role-${i}`,
+      team: i % 2 ? "qa" : null,
+      since: since(i),
+      sessionId: "s",
+    });
+  // A prototype key is not a team name: `in` would admit it as the newest entry; `Object.hasOwn` does not.
+  entries.push({ agent: "proto", since: since(60), team: "constructor", sessionId: "s" });
+  writeFileSync(
+    join(paths.localDir, "state.json"),
+    JSON.stringify({ active: null, sessions: {}, working: entries }),
+  );
+  expect(WORKING_MAX).toBe(50);
+  const kept = loadState(paths).working ?? [];
+  expect(kept).toHaveLength(50);
+  expect(kept[0]?.agent).toBe("role-10");
+  expect(kept.at(-1)?.agent).toBe("role-59");
+  expect(workingRoles(paths, Date.parse(since(59))).map((w) => w.agent)).toEqual(
+    kept.map((w) => w.agent),
+  );
 });
