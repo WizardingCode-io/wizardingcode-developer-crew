@@ -200,13 +200,19 @@ export function addCriterion(
   work: WorkItem,
   text: string,
   kind: CriterionKind = "behavior",
+  contract?: Criterion["contract"],
 ): Criterion {
   // A number is taken for good, by a present or a removed criterion, so an id names one thing.
   const taken = [...work.criteria, ...(work.removedCriteria ?? [])]
     .map((c) => Number(c.id.slice("AC-".length)))
     .filter((n) => Number.isFinite(n));
   const next = taken.length ? Math.max(...taken) + 1 : 1;
-  const criterion: Criterion = { id: `AC-${next}`, kind, text: text.trim() };
+  const criterion: Criterion = {
+    id: `AC-${next}`,
+    kind,
+    text: text.trim(),
+    ...(contract ? { contract } : {}),
+  };
   work.criteria.push(criterion);
   return criterion;
 }

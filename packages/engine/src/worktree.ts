@@ -11,6 +11,19 @@ export function gitRun(cwd: string, ...args: string[]): string {
   }).trim();
 }
 
+/** The bytes of a file at a branch's tip, or null when the branch or the file is not there; the revision goes after `--end-of-options`, so neither can be read as an option. */
+export function gitShow(cwd: string, branch: string, path: string): Buffer | null {
+  try {
+    return execFileSync("git", ["show", "--end-of-options", `${branch}:${path}`], {
+      cwd,
+      env: { ...process.env, LC_ALL: "C" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  } catch {
+    return null;
+  }
+}
+
 /** The first line git wrote on its error output, the part a person reads; the exception's own line otherwise. */
 export function gitError(error: unknown): string {
   const failed = error as { stderr?: string | Buffer; message: string };

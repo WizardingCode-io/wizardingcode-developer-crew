@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { accessSync, constants, existsSync, statSync } from "node:fs";
 import { basename, isAbsolute, join, resolve } from "node:path";
 import { loadEvidence } from "./evidence.ts";
@@ -5,11 +6,14 @@ import { nowIso, readJson, readText, writeJson, writeText } from "./fs.ts";
 import { withLock } from "./lock.ts";
 import {
   decidedPriority,
+  insidePath,
   MAIL_TRANSITIONS,
   type MappedStatus,
+  MESSAGE_ID,
   mailStatus,
   priorityOf,
   priorityRank,
+  threadOf,
   transition,
 } from "./mail-status.ts";
 import { resolveOpener } from "./opened.ts";
@@ -31,6 +35,9 @@ import {
 } from "./store.ts";
 import { rolePattern } from "./team.ts";
 import {
+  type Contract,
+  type ContractKind,
+  GATE_NAMES,
   isMailPriority,
   MAIL_PRIORITIES,
   type MailAddressee,
@@ -46,16 +53,22 @@ import {
   type PriorityDecision,
   type ProjectEntry,
   type Registry,
+  type ReplyEvidence,
   type WorkItem,
 } from "./types.ts";
 import { loadWork } from "./work.ts";
+import { gitRun, gitShow } from "./worktree.ts";
 
 export {
   decidedPriority,
   MAIL_TRANSITIONS,
   type MappedStatus,
+  MESSAGE_ID,
   mailStatus,
   priorityOf,
+  readContracts,
+  readEvidence,
+  threadOf,
   transition,
 } from "./mail-status.ts";
 
@@ -63,6 +76,144 @@ export {
 const WORK_ID = /^\d{4}-\d{2}-\d{2}-\d{3}-[a-z0-9-]*$/;
 /** How much of a child's unproven reasons a reply carries to the sender. */
 const REASONS_CHARS = 500;
+/** A branch name a contract may be checked at: a conservative ref, never an option, never a range. */
+const BRANCH_NAME = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
+
+/** The parties of a thread: the projects and the tasks of its messages, never a role (SP7 §9). */
+export function threadParties(messages: readonly Message[], root: string): string[] {
+  const parties: string[] = [];
+  const key = (p: { project: string; agent: string | null }) =>
+    p.agent && TASK_AGENT.test(p.agent) ? `${p.project}/${p.agent}` : p.project;
+  for (const m of messages) {
+    if (threadOf(m) !== root) continue;
+    for (const p of [key(m.from), key(m.to)]) if (!parties.includes(p)) parties.push(p);
+  }
+  return parties.sort();
+}
+
+/** Every message this project's two boxes hold, the inbox first; a box a hand changed holds nothing. */
+function heldMessages(ctx: MailContext): Message[] {
+  const dir = mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project).dir;
+  const seen = new Set<string>();
+  const held: Message[] = [];
+  for (const which of ["inbox", "outbox"] as const) {
+    const read = readBox(dir, which);
+    if (read.tampered) continue;
+    for (const m of read.box.messages) {
+      if (seen.has(m.id)) continue;
+      seen.add(m.id);
+      held.push(m);
+    }
+  }
+  return held;
+}
+
+/** The messages of a thread this project holds, oldest first, with its parties; refused for a root no box holds. */
+export function threadMessages(
+  ctx: MailContext,
+  root: string,
+): { messages: Message[]; parties: string[] } | { refused: string } {
+  const held = heldMessages(ctx);
+  if (!MESSAGE_ID.test(root) || !held.some((m) => m.id === root))
+    return { refused: `no message ${root} in this project's mail` };
+  const messages = held
+    .filter((m) => threadOf(m) === root)
+    .sort((a, b) => a.at.localeCompare(b.at));
+  return { messages, parties: threadParties(messages, root) };
+}
+
+/** A `--contract` as typed: `<kind>:<path>[:<summary>]`, or `clause:<summary>`; the first colon after the kind ends the path. */
+interface ParsedContract {
+  kind: ContractKind;
+  path: string | null;
+  summary: string;
+}
+export function parseContract(text: string): ParsedContract | { refused: string } {
+  const match = /^(openapi|types|schema|clause):([\s\S]*)$/.exec(text);
+  if (!match)
+    return {
+      refused: `a contract is openapi:<path>, types:<path>, schema:<path> or clause:<summary>, not ${text}`,
+    };
+  const kind = match[1] as ContractKind;
+  const rest = match[2] ?? "";
+  if (kind === "clause") return { kind, path: null, summary: rest.trim() };
+  const colon = rest.indexOf(":");
+  const path = colon === -1 ? rest : rest.slice(0, colon);
+  const summary = colon === -1 ? "" : rest.slice(colon + 1).trim();
+  if (!insidePath(path))
+    return { refused: `contract ${kind}:${path} names a path outside the project` };
+  return { kind, path, summary };
+}
+
+/**
+ * The contracts of a reply checked from the replying project at the branch's tip (SP7 §9): the
+ * file is read with `git show`, never from the working tree, and its hash recorded; an openapi or
+ * schema file parses or names its format; a types file is in the branch's diff from the child's
+ * base commit; a clause has its section in the body. One failed check refuses the whole reply.
+ */
+export function checkContracts(
+  root: string,
+  branch: string | undefined,
+  base: string | null,
+  contracts: readonly ParsedContract[],
+  body: string,
+): { contracts: Contract[] } | { refused: string } {
+  // A contract with a path is checked at a branch's tip: the branch is named, and it is a branch
+  // name, never an option or a range, before git runs.
+  let tip = "";
+  if (contracts.some((c) => c.path !== null)) {
+    if (!branch)
+      return { refused: "a contract needs --branch <b>: the file is checked at its tip" };
+    if (!BRANCH_NAME.test(branch) || branch.includes(".."))
+      return { refused: `--branch ${branch} is not a branch name` };
+    tip = branch;
+  }
+  const checked: Contract[] = [];
+  let changed: string[] | null = null;
+  for (const c of contracts) {
+    if (c.kind === "clause") {
+      if (!/^## Contracts\s*$/m.test(body))
+        return { refused: 'contract clause needs a "## Contracts" section in the reply' };
+      checked.push({ kind: c.kind, path: null, hash: null, summary: c.summary });
+      continue;
+    }
+    const path = c.path as string;
+    const content = gitShow(root, tip, path);
+    if (content === null)
+      return { refused: `contract ${c.kind}:${path} is not at the tip of ${tip}` };
+    const hash = createHash("sha256").update(content).digest("hex");
+    if (c.kind === "openapi" || c.kind === "schema") {
+      const text = content.toString("utf8");
+      if (path.endsWith(".json")) {
+        try {
+          JSON.parse(text);
+        } catch {
+          return { refused: `contract ${c.kind}:${path} does not parse as JSON` };
+        }
+      } else if (!text.trim() || !/^(openapi|swagger|\$schema)\s*:/m.test(text)) {
+        return { refused: `contract ${c.kind}:${path} has no openapi, swagger or $schema line` };
+      }
+    } else {
+      if (!base)
+        return {
+          refused: `contract types:${path} cannot be checked: the child has no base commit`,
+        };
+      if (changed === null) {
+        try {
+          changed = gitRun(root, "diff", "--name-only", "--end-of-options", base, tip)
+            .split("\n")
+            .filter(Boolean);
+        } catch {
+          changed = [];
+        }
+      }
+      if (!changed.includes(path))
+        return { refused: `contract types:${path} is not in the child's diff` };
+    }
+    checked.push({ kind: c.kind, path, hash, summary: c.summary });
+  }
+  return { contracts: checked };
+}
 
 /** The refusal of a priority that is not one of the four, before any record. */
 export function badPriority(value: unknown): string {
@@ -444,6 +595,8 @@ export interface SendRequest {
   type: MailType;
   /** The sender's proposal (SP7 §9); `normal` when absent, `blocker` for a blocker. */
   priority?: MailPriority;
+  /** The root of the thread this message joins (SP7 §9): a message this project's boxes hold. */
+  thread?: string;
   subject?: string;
   text: string;
   filePath?: string;
@@ -556,6 +709,17 @@ export function send(
   // The message is built here from the request's fields alone: it arrives sent, undecided.
   const priority: MailPriority =
     request.priority ?? (request.type === "blocker" ? "blocker" : "normal");
+  // A thread joins projects and tasks (SP7 §9): the root is a message this project holds, a role
+  // never a party, and the cap is the sender's policy's; a refusal here records nothing.
+  let root: Message | null = null;
+  if (request.thread !== undefined) {
+    if (request.agent && ROLE_AGENT.test(request.agent))
+      return { refused: "a thread joins projects and tasks, never roles", message: null };
+    const held = heldMessages(ctx);
+    root = (MESSAGE_ID.test(request.thread) && held.find((m) => m.id === request.thread)) || null;
+    if (!root)
+      return { refused: `no message ${request.thread} in this project's mail`, message: null };
+  }
   const resolved = resolveProject(ctx, request.to);
   // A refusal is recorded in the sender's outbox; when that outbox is itself tampered, nothing is.
   const refuse = (
@@ -569,7 +733,11 @@ export function send(
       to,
       type: request.type,
       priority,
-      subject: subjectOf({ subject: request.subject, text }),
+      ...(root ? { thread: root.id } : {}),
+      subject: subjectOf({
+        subject: request.subject ?? (root ? subjectQuoted(root.subject) : undefined),
+        text,
+      }),
       body: text.slice(0, PREVIEW_CHARS),
       replyTo: request.replyTo ?? null,
       hops: self.hops,
@@ -589,6 +757,19 @@ export function send(
   };
   if ("refused" in resolved) return refuse(resolved.refused, unknownTo);
   const entry = resolved.entry;
+  if (root) {
+    const parties = threadParties(heldMessages(ctx), root.id);
+    const joining =
+      request.agent && TASK_AGENT.test(request.agent)
+        ? `${entry.name}/${request.agent}`
+        : entry.name;
+    const cap = ctx.policy.mail.maxParties;
+    if (!parties.includes(joining) && parties.length >= cap)
+      return {
+        refused: `thread ${root.id} has ${parties.length} parties (mail.maxParties ${cap}); ${joining} cannot join`,
+        message: null,
+      };
+  }
   const toSelf = entry.root === (worktreeMainRoot(ctx.paths.root) ?? ctx.paths.root);
   const to: MailAddressee = {
     workspace: self.workspace ?? "_alone",
@@ -690,7 +871,11 @@ export function send(
       to,
       type: request.type,
       priority,
-      subject: subjectOf({ subject: request.subject, text }),
+      ...(root ? { thread: root.id } : {}),
+      subject: subjectOf({
+        subject: request.subject ?? (root ? subjectQuoted(root.subject) : undefined),
+        text,
+      }),
       ...placeBody(dest.dir, id, text),
       replyTo: request.replyTo ?? null,
       hops: self.hops,
@@ -993,7 +1178,14 @@ export function reply(
   ctx: MailContext,
   id: string,
   text: string,
-  options: { filePath?: string; branch?: string; item?: string; as?: string },
+  options: {
+    filePath?: string;
+    branch?: string;
+    item?: string;
+    as?: string;
+    /** The `--contract` values as typed, checked at the branch's tip before any record (SP7 §9). */
+    contracts?: string[];
+  },
   // Where a copy the record pass could not change is named: the command's or the hook's output.
   notes: string[],
 ): { reply: Message; original: Message } | { refused: string } {
@@ -1030,6 +1222,28 @@ export function reply(
     return { refused: `unknown work item: ${options.item}` };
   const child = options.item ? loadEvidence(ctx.paths, options.item).evidence : undefined;
   const verdict = child?.verdict;
+  // The contracts as typed, each well-formed, with the branch they are checked at (SP7 §9).
+  const typed: ParsedContract[] = [];
+  for (const text of options.contracts ?? []) {
+    const parsed = parseContract(text);
+    if ("refused" in parsed) return parsed;
+    typed.push(parsed);
+  }
+  if (typed.length && !options.item)
+    return { refused: "a contract comes with the child item (--item)" };
+  // What the reply carries of the child's evidence, read from its records (SP7 §9).
+  const carried: ReplyEvidence | undefined =
+    options.item && child
+      ? {
+          report: existsSync(join(workDir(ctx.paths, options.item), "report.md"))
+            ? `.crew/work/${options.item}/report.md`
+            : null,
+          fingerprint: child.fingerprint,
+          gatesPassed: [
+            ...new Set(child.runs.filter((r) => r.status === "pass").map((r) => r.gate)),
+          ].filter((g) => GATE_NAMES.includes(g)),
+        }
+      : undefined;
   // Where the original lands (SP7 §9): a question or a notice is done by its answer; a request is
   // done only by a proven child, and blocked otherwise, with the reasons the sender will read.
   const closing = original.type === "question" || original.type === "notice";
@@ -1044,6 +1258,14 @@ export function reply(
   if ("refused" in attached) return { refused: attached.refused };
   const body = attached.text;
   if (!body.trim()) return { refused: "a reply needs a text (or --file)" };
+  const checked = checkContracts(
+    ctx.paths.root,
+    options.branch,
+    options.item ? (loadWork(ctx.paths, options.item).work?.baseCommit ?? null) : null,
+    typed,
+    body,
+  );
+  if ("refused" in checked) return checked;
   const at = nowIso();
   const own = mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project);
   const dest = mailbox(
@@ -1081,6 +1303,9 @@ export function reply(
       ...(options.branch ? { branch: options.branch } : {}),
       ...(options.item ? { item: options.item } : {}),
       ...(verdict ? { verdict } : {}),
+      thread: threadOf(original),
+      ...(checked.contracts.length ? { contracts: checked.contracts } : {}),
+      ...(carried ? { evidence: carried } : {}),
     };
   });
   if ("refused" in replyMessage) return { refused: replyMessage.refused };

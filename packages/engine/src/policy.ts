@@ -28,6 +28,7 @@ export const DEFAULT_MAIL_POLICY: MailPolicy = {
   maxTurns: 40,
   maxMinutes: 30,
   worktrees: "..",
+  maxParties: 4,
 };
 
 /** The team block's defaults (SP7 §6.1): the core template, no team beyond the route, the caps at their ceilings. */
@@ -74,6 +75,8 @@ const RANGES = {
   maxHops: { min: 1, max: 10 },
   maxTurns: { min: 1, max: 500 },
   maxMinutes: { min: 1, max: 600 },
+  // A thread's parties: the default is the ceiling (SP7 §18), so the key only tightens.
+  maxParties: { min: 2, max: 4 },
   // The team's caps end at their defaults: a policy can only tighten them (SP7 §6.1).
   maxExperts: { min: 1, max: 3 },
   maxValidationRounds: { min: 1, max: 2 },
@@ -92,6 +95,7 @@ export const SETTABLE_POLICY_KEYS: Record<string, Settable> = {
   "mail.maxHops": { integer: RANGES.maxHops },
   "mail.maxTurns": { integer: RANGES.maxTurns },
   "mail.maxMinutes": { integer: RANGES.maxMinutes },
+  "mail.maxParties": { integer: RANGES.maxParties },
   "mail.worktrees": {
     pattern: WORKTREES,
     hint: "a relative path with no spaces (.. for the folder beside the root)",
@@ -201,6 +205,7 @@ function loadMailPolicy(raw: unknown): MailPolicy {
       typeof m.worktrees === "string" && WORKTREES.test(m.worktrees)
         ? m.worktrees
         : DEFAULT_MAIL_POLICY.worktrees,
+    maxParties: bounded(m.maxParties, RANGES.maxParties, DEFAULT_MAIL_POLICY.maxParties),
   };
 }
 

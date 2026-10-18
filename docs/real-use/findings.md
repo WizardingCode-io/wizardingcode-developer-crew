@@ -578,3 +578,20 @@ Verdicts agree at every effort. Upheld findings: `high` reproduced Task 6's and 
 - Expected: taken in the first hardening item of SP7b (Task 5) or SP3, red first.
 - Evidence: the item's `review/ruling.json`, `review/code-quality.findings.md`, `review/test-quality.findings.md`, `conclave/lead-qa.round1.md`, `conclave/lead-security.round1.md`.
 - Outcome: open.
+
+### 69. Debt of SP7b Task 2 (`2026-10-18-002`): the judge's advisories
+
+- Date: 2026-10-18. Project: this repository. Category: `docs`. Severity: low.
+- What happened: the item that brought threads, contracts and the evidence in a reply went through two judgement rounds: the first upheld one defect per gate (code quality: the rule "a path contract needs a branch, and a branch name" written in `reply` and again as a dead path in `checkContracts`; test quality: no CLI test passed `--thread`), both fixed and closed in the second. The advisories, recorded here under the user's bounded-round rule. Code quality: the subject fallback of a thread's message is computed twice in `send` (one local); a failed `git diff` in `checkContracts` reads as an empty diff, so the contract is refused as not in the child's diff and git's error is not shown (surface `gitError` in the refusal); the doc comment of `parseContract` sits above its interface; the `criteria add --contract` block parses, loads the item's mail and validates the index inside `dispatch` (an extraction beside `readContracts` when a second consumer of a binding appears); a `--branch` typed with no path contract is written as typed, as before this task. Test quality: no test sends into a thread with a task (`T-n`) as a party, so the `<project>/T-n` key of `threadParties` is exercised by nothing; the oldest-first assertion of `crew mail thread` rests on two records' clock values rather than seeded timestamps.
+- Also seen: the spec went through four validation rounds (QA returned twice, security twice, each return right); the two rounds past the cap were continued under the user's standing yes of 2026-10-17 and recorded as the user's, relayed (finding 57 stands: the grant belongs in the policy, SP7b Task 5).
+- Expected: taken in the first hardening item of SP7b (Task 5) or SP3, red first.
+- Evidence: the item's `evidence.json` (`judgement`, both rounds), `review/ruling.json`, the leads' files under `conclave/`.
+- Outcome: open.
+
+### 70. A second gate run deletes the first round's findings files before the second ruling keeps them
+
+- Date: 2026-10-18. Project: this repository. Item: `2026-10-18-002`. Category: `silent`. Severity: low.
+- What happened: after the first ruling was recorded (`crew judgement record`, round 1, both gates not proven), the fixes were made and `crew gate run` cut the diff again. The run's reset of the review folder deleted `code-quality.findings.md`, `test-quality.findings.md` and `ruling.json` of round 1; the `<gate>.round1.md` and `ruling.round1.json` copies that Task 8 of SP7a's folder holds are made only when a later record renames the files, which had not happened yet. The round-2 reviewers were pointed at "review/code-quality.round1.md (if present)" and found nothing; the round-1 findings survive only inside the ruling's `text` fields in `evidence.json` (the judge quotes each finding) and in this session's transcript.
+- Expected: `crew judgement record` keeps the round's files as `<gate>.round<n>.md` and `ruling.round<n>.json` at the time of the record, so a gate run between rounds cannot drop them; or the gate run's reset spares the round copies and renames the current files before deleting.
+- Evidence: the item's `review/` listing after the second gate run (diff.patch, files.txt, inputs.json only); `.crew/work/2026-10-17-016-…/review/` with its round copies for comparison.
+- Outcome: open; a hardening item of SP7b (Task 5) or SP3.

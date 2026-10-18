@@ -144,6 +144,25 @@ export interface PriorityDecision {
   at: string;
 }
 
+/** What a reply to a change request may promise about an interface, checked at the branch's tip (SP7 §9). */
+export type ContractKind = "openapi" | "types" | "schema" | "clause";
+export const CONTRACT_KINDS: readonly ContractKind[] = ["openapi", "types", "schema", "clause"];
+export interface Contract {
+  kind: ContractKind;
+  /** Relative to the replying project; null for a clause, which is a claim of the body. */
+  path: string | null;
+  /** sha256 of the file at the branch's tip when the reply was sent; null for a clause. */
+  hash: string | null;
+  summary: string;
+}
+
+/** What a reply carries of the child item's evidence, read from its records, never typed (SP7 §9). */
+export interface ReplyEvidence {
+  report: string | null;
+  fingerprint: string | null;
+  gatesPassed: GateName[];
+}
+
 /** The four kinds of mail (vision §10). */
 export type MailType = "question" | "change-request" | "notice" | "blocker";
 export const MAIL_TYPES: readonly MailType[] = ["question", "change-request", "notice", "blocker"];
@@ -240,6 +259,12 @@ export interface Message {
   branch?: string;
   item?: string;
   verdict?: "proven" | "unproven";
+  /** The thread's root (SP7 §9): absent on a root and on records before 0.7.0; read through `threadOf()`. */
+  thread?: string;
+  /** The contracts a reply promised, each checked by the replying engine; read through `readContracts()`. */
+  contracts?: Contract[];
+  /** The child item's evidence as the reply carried it; read through `readEvidence()`. */
+  evidence?: ReplyEvidence;
   /** A blocker the Stop hook has named once. */
   noticedAt?: string;
 }
@@ -267,6 +292,8 @@ export interface MailPolicy {
   maxMinutes: number;
   /** Where task worktrees are made: `..` (beside the root) or a path relative to the root, for sandboxes that confine writes. */
   worktrees: string;
+  /** How many parties a thread may join (SP7 §9, §18): 4, tightening to 2. */
+  maxParties: number;
 }
 
 /** What a turn may end waiting for: the user, the roles still answering, or a reply to a message (SP2c §9). */
@@ -372,6 +399,8 @@ export interface Criterion {
   id: string;
   kind: CriterionKind;
   text: string;
+  /** A contract of a reply in the item's mail the criterion is bound to (SP7 §9): the message and the contract's 1-based index. */
+  contract?: { message: string; index: number };
 }
 
 /** A criterion taken out while no test-first record or skip named it. Its number is never reused. */

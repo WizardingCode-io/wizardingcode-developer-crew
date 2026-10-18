@@ -44,6 +44,7 @@ import {
   loadItemMail,
   loadRegistry,
   type MailContext,
+  MESSAGE_ID,
   mailContext,
   mailStatus,
   markRead,
@@ -51,6 +52,8 @@ import {
   ownInbox,
   priorityOf,
   pruneRegistry,
+  readContracts,
+  readEvidence,
   readOpenSessions,
   recordInItem,
   refuseMail,
@@ -60,6 +63,7 @@ import {
   syncMail,
   TASK_AGENT,
   tamperedBox,
+  threadMessages,
   worktreeMainRoot,
 } from "./mail.ts";
 import { computeMetrics, metricsText } from "./metrics.ts";
@@ -97,7 +101,7 @@ import {
   skipAllowed,
 } from "./policy.ts";
 import { ensureProfile, loadProfile, refreshProfile, saveProfile } from "./profile.ts";
-import { ensureCrewDir, workingRoles } from "./state.ts";
+import { ensureCrewDir, oneLine, workingRoles } from "./state.ts";
 import { integrityOf, recordIntegrity, writeProtectedText } from "./store.ts";
 import {
   listTasks,
@@ -112,6 +116,7 @@ import {
 import { recordTdd, type TddStep } from "./tdd.ts";
 import { plannedSeats, primaryTeam } from "./team.ts";
 import type {
+  Criterion,
   Decision,
   Evidence,
   GateName,
@@ -185,7 +190,7 @@ const KNOWN_FLAGS: Record<string, readonly string[]> = {
   accept: [],
   start: ["answers", "criterion", "preserve", "origin", "priority"],
   classify: ["answers"],
-  criteria: ["kind"],
+  criteria: ["kind", "contract"],
   decision: ["default"],
   debate: ["reason", "tokens"],
   decide: ["mode", "validator"],
@@ -214,6 +219,8 @@ const KNOWN_FLAGS: Record<string, readonly string[]> = {
     "as",
     "all",
     "priority",
+    "thread",
+    "contract",
   ],
   mode: [],
   config: [],
@@ -887,7 +894,23 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         parsed.flags.kind === "preserve" || parsed.flags.kind === "observed"
           ? parsed.flags.kind
           : "behavior";
-      const criterion = addCriterion(opened.work, text, kind);
+      // A criterion bound to a contract of a reply in the item's mail (SP7 §9): the message and
+      // the index name a well-formed contract, else nothing is recorded.
+      let contract: Criterion["contract"] | undefined;
+      if (typeof parsed.flags.contract === "string") {
+        const match = /^(\S+):(\d+)$/.exec(parsed.flags.contract);
+        const message = match?.[1] ?? parsed.flags.contract;
+        const index = Number(match?.[2] ?? 0);
+        const held = MESSAGE_ID.test(message)
+          ? loadItemMail(env.paths, opened.work.id).box.messages.find((m) => m.id === message)
+          : undefined;
+        if (!held || index < 1 || readContracts(held).length < index)
+          return refuse(
+            `no contract ${index || parsed.flags.contract} on ${message} in this item's mail`,
+          );
+        contract = { message, index };
+      }
+      const criterion = addCriterion(opened.work, text, kind, contract);
       saveWork(env.paths, opened.work);
       return ok(`${criterion.id} (${kind}): ${criterion.text}`, { criterion });
     }
@@ -1904,6 +1927,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           kind: c.kind,
           text: c.text,
           tdd: tddSummary(work, result.evidence, c.id, c.kind, env.policy),
+          ...(c.contract ? { contract: c.contract } : {}),
         })),
         runs: result.evidence.runs.map((r) => ({
           gate: r.gate,
@@ -1937,8 +1961,8 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
     }
     case "mail": {
       const sendUsage =
-        'usage: crew mail send --to <project|.> --type question|change-request|notice|blocker [--priority blocker|high|normal|low] [--agent <session|T-n|role>] [--item <id>] [--reply-to <mid>] [--subject <text>] "<text>" [--file <path>]';
-      const usage = `${sendUsage} | inbox [--all] | read <mid> | accept <mid> [--priority <p>] [--reason "<why>"] | reply <mid> "<text>" [--branch <b>] [--item <child id>] [--as <role>] [--file <path>] | refuse <mid> --reason "<why>" | status | stop <mid>`;
+        'usage: crew mail send --to <project|.> --type question|change-request|notice|blocker [--priority blocker|high|normal|low] [--thread <root>] [--agent <session|T-n|role>] [--item <id>] [--reply-to <mid>] [--subject <text>] "<text>" [--file <path>]';
+      const usage = `${sendUsage} | inbox [--all] | read <mid> | thread <mid> | accept <mid> [--priority <p>] [--reason "<why>"] | reply <mid> "<text>" [--branch <b>] [--item <child id>] [--contract <kind>:<path>[:<summary>]]… [--as <role>] [--file <path>] | refuse <mid> --reason "<why>" | status | stop <mid>`;
       const ctx = env.mail;
       const verb = args[0];
       if (verb === "send") {
@@ -1961,6 +1985,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
             type,
             text,
             ...(sendPriority ? { priority: sendPriority } : {}),
+            ...(typeof parsed.flags.thread === "string" ? { thread: parsed.flags.thread } : {}),
             ...(typeof parsed.flags.agent === "string" ? { agent: parsed.flags.agent } : {}),
             ...(typeof parsed.flags.subject === "string" ? { subject: parsed.flags.subject } : {}),
             ...(typeof parsed.flags.file === "string" ? { filePath: parsed.flags.file } : {}),
@@ -2032,6 +2057,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           `status: ${mailStatus(result)}${result.reason ? `: ${result.reason}` : ""}`,
           `at: ${result.at}`,
           priorityLine(result),
+          ...evidenceLine(result),
           ...(result.from.item ? [`from item: ${result.from.item}`] : []),
           ...(result.replyTo ? [`reply to: ${result.replyTo}`] : []),
           ...(result.branch ? [`branch: ${result.branch}`] : []),
@@ -2054,6 +2080,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
             ...(typeof parsed.flags.branch === "string" ? { branch: parsed.flags.branch } : {}),
             ...(typeof parsed.flags.item === "string" ? { item: parsed.flags.item } : {}),
             ...(typeof parsed.flags.as === "string" ? { as: parsed.flags.as } : {}),
+            ...(parsed.multi.contract?.length ? { contracts: parsed.multi.contract } : {}),
           },
           notes,
         );
@@ -2061,6 +2088,20 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         return ok(
           `replied to ${args[1]}: ${result.reply.id} to ${result.reply.to.project}; ${args[1]} ${mailStatus(result.original)}${notes.length ? `\n${notes.join("\n")}` : ""}`,
           { reply: result.reply, original: result.original, notes },
+        );
+      }
+      if (verb === "thread") {
+        if (!args[1]) return refuse(usage);
+        syncMail(ctx, env.paths);
+        const result = threadMessages(ctx, args[1]);
+        if ("refused" in result) return refuse(result.refused);
+        const lines = result.messages.map(
+          (m) =>
+            `  ${m.id} · [${decidedPriority(m)}] · ${m.type} · ${partyLabel(m.from)} → ${partyLabel(m.to)} · ${oneLine(m.subject)} · ${mailStatus(m)}`,
+        );
+        return ok(
+          `Thread ${args[1]}: ${result.messages.length} message${result.messages.length === 1 ? "" : "s"}, ${result.parties.length} part${result.parties.length === 1 ? "y" : "ies"} (${result.parties.join(", ")})\n${lines.join("\n")}`,
+          { root: args[1], messages: result.messages, parties: result.parties },
         );
       }
       if (verb === "accept") {
@@ -2164,6 +2205,15 @@ function priorityLine(m: Message): string {
   return `priority: ${level} (proposed ${d.proposed}, ${how}${d.reason ? `: ${d.reason}` : ""})`;
 }
 
+/** The line `crew mail read` prints for the evidence a reply carried, through the validating reader; none when the record carries none. */
+function evidenceLine(m: Message): string[] {
+  const ev = readEvidence(m);
+  if (!ev) return [];
+  return [
+    `evidence: gates passed ${ev.gatesPassed.join(", ") || "none"}; fingerprint ${ev.fingerprint ? oneLine(ev.fingerprint) : "none"}; report ${ev.report ?? "none"}`,
+  ];
+}
+
 /** The user's settings live in their home folder, so these work in any folder. */
 function settings(command: "mode" | "config", args: string[], user: { userDir: string }): Outcome {
   const config = loadConfig(user);
@@ -2204,14 +2254,14 @@ const HELP = `crew ${VERSION}
   profile set <gate> "<cmd>" --force    replace a command a person already confirmed (asks the user)
   profile confirm [<gate>]              confirm commands the detector only guessed (asks the user)
   policy accept                         trust the current policy.json after a hand edit (asks the user)
-  policy set <key> <value>              attendedDecisions prompt|relay, unattendedDecisions wait|count|validator, mail.workspace|name|open|maxConcurrent|maxHops|maxTurns|maxMinutes|worktrees (asks the user)
+  policy set <key> <value>              attendedDecisions prompt|relay, unattendedDecisions wait|count|validator, mail.workspace|name|open|maxConcurrent|maxHops|maxTurns|maxMinutes|maxParties|worktrees (asks the user)
   accept <id|profile|policy>            trust state changed outside the engine (asks the user)
   start "<request>" --answers <json>    create a work item from the typed answers
       [--criterion "<text>"] [--preserve "<text>"]   criteria, repeatable; preserve: existing tests stay green
       [--origin <message id>]           the item answers a message of this project's inbox (a session opened by mail)
       [--priority blocker|high|normal|low]   the item's priority; else its origin's confirmed one, else normal
   classify <id> --answers <json>        record typed answers and compute the route
-  criteria <id> add "<text>" [--kind preserve|observed]
+  criteria <id> add "<text>" [--kind preserve|observed] [--contract <mid>:<n>]   a criterion, bound to a contract of a reply in the item's mail when given
   criteria <id> remove <AC-n>           take out a criterion no test-first record or skip names
   decision <id> add "<question>" [--default "<answer>"]   a decision only the user can make (gap round)
   decide <id> D-n "<answer>"            record the user's answer (asks the user)
@@ -2227,8 +2277,8 @@ const HELP = `crew ${VERSION}
   await <id> user | role | mail <mid>   mark the turn's wait: for the user, for the roles, or for a reply to a message
   resume <id>                           clear the wait
   mail send --to <project|.> --type question|change-request|notice|blocker "<text>"   send mail inside the workspace
-      [--priority blocker|high|normal|low] [--agent <session|T-n|role>] [--item <id>] [--reply-to <mid>] [--subject <text>] [--file <path>]
-  mail inbox [--all] | read <mid> | reply <mid> "<text>" [--branch <b>] [--item <child>] [--as <role>] [--file <path>]
+      [--priority blocker|high|normal|low] [--thread <root>] [--agent <session|T-n|role>] [--item <id>] [--reply-to <mid>] [--subject <text>] [--file <path>]
+  mail inbox [--all] | read <mid> | thread <mid> | reply <mid> "<text>" [--branch <b>] [--item <child>] [--contract <kind>:<path>[:<summary>]]… [--as <role>] [--file <path>]
   mail accept <mid> [--priority <p>] [--reason "<why>"]   confirm a request's priority, or lower it with a reason (never raise)
   mail refuse <mid> --reason "<why>" | status | stop <mid>   this project's mail and the sessions it opened (status sweeps them; stop kills one)
   task <id> open T-n --criteria AC-1,AC-2 [--text "<task text>"]   hand a task of the plan to an implementer: a message, a worktree, a branch, a session

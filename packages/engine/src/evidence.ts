@@ -1,9 +1,10 @@
 import { join } from "node:path";
 import { UNAVAILABLE } from "./fingerprint.ts";
-import { decidedPriority, mailStatus } from "./mail-status.ts";
+import { decidedPriority, mailStatus, readContracts, threadOf } from "./mail-status.ts";
 import { blockingObjections, objectionStatus } from "./objections.ts";
 import { type CrewPaths, workDir } from "./paths.ts";
 import { decisionCounts } from "./policy.ts";
+import { oneLine } from "./state.ts";
 import { readProtectedJson, writeProtectedJson } from "./store.ts";
 import type {
   CriterionKind,
@@ -272,7 +273,7 @@ export function renderReport(
   );
   for (const c of work.criteria) {
     lines.push(
-      `| ${c.id} | ${c.kind} | ${c.text.replace(/\|/g, "\\|")} | ${tddSummary(work, evidence, c.id, c.kind, policy)} |`,
+      `| ${c.id} | ${c.kind} | ${c.text.replace(/\|/g, "\\|")}${c.contract ? ` [contract ${c.contract.message}:${c.contract.index}]` : ""} | ${tddSummary(work, evidence, c.id, c.kind, policy)} |`,
     );
   }
   lines.push(
@@ -387,8 +388,8 @@ export function renderReport(
       "",
       "## Mail",
       "",
-      "| Message | At | Direction | With | Type | Priority | Subject | Status |",
-      "| :- | :- | :- | :- | :- | :- | :- | :- |",
+      "| Message | Thread | At | Direction | With | Type | Priority | Subject | Status | Contracts |",
+      "| :- | :- | :- | :- | :- | :- | :- | :- | :- | :- |",
     );
     for (const m of mail.box.messages) {
       const sent = m.from.item === work.id && m.from.project === selfName;
@@ -407,8 +408,14 @@ export function renderReport(
           m.verdict ? ` (${m.verdict}${m.branch ? `, ${m.branch}` : ""})` : ""
         }${m.relayed ? ", relayed" : ""}`,
       );
+      // The thread and the contracts as another party wrote them, validated and one-lined (SP7 §9).
+      const thread = threadOf(m) === m.id ? "-" : threadOf(m);
+      const contracts =
+        readContracts(m)
+          .map((c) => (c.kind === "clause" ? "clause" : `${c.kind} ${cell(oneLine(c.path ?? ""))}`))
+          .join(", ") || "-";
       lines.push(
-        `| ${m.id} | ${m.at} | ${direction} | ${other} | ${m.type} | ${priority} | ${cell(m.subject)} | ${status} |`,
+        `| ${m.id} | ${thread} | ${m.at} | ${direction} | ${other} | ${m.type} | ${priority} | ${cell(oneLine(m.subject))} | ${status} | ${contracts} |`,
       );
     }
   }

@@ -655,9 +655,69 @@ test("SP7b AC-3: the report's Mail table carries the priority and prints a 0.6.0
     "storefront",
   );
   expect(report).toContain(
-    "| Message | At | Direction | With | Type | Priority | Subject | Status |",
+    "| Message | Thread | At | Direction | With | Type | Priority | Subject | Status | Contracts |",
   );
   expect(report).toContain(
-    "| M-2026-10-18-001-storefront | 2026-10-18T10:00:00.000Z | sent | crm | change-request | normal (proposed high) | Add the field | blocked |",
+    "| M-2026-10-18-001-storefront | - | 2026-10-18T10:00:00.000Z | sent | crm | change-request | normal (proposed high) | Add the field | blocked | - |",
   );
+});
+
+test("SP7b-T2 AC-4: the report's Mail table carries the thread and the contracts, one row each whatever a party wrote", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const work = createWork(paths, "fix");
+  const base = {
+    at: "2026-10-18T10:00:00.000Z",
+    from: { workspace: "w", project: "storefront", item: work.id, agent: "session" },
+    to: { workspace: "w", project: "crm", item: null, agent: "session" },
+    type: "change-request" as const,
+    subject: "Add the field",
+    body: "x",
+    replyTo: null,
+    hops: 0,
+    status: "sent" as const,
+    opened: null,
+  };
+  const root: Message = { ...base, id: "M-2026-10-18-001-storefront" };
+  const answer: Message = {
+    ...base,
+    id: "M-2026-10-18-001-crm",
+    at: "2026-10-18T10:05:00.000Z",
+    from: { workspace: "w", project: "crm", item: null, agent: "session" },
+    to: { workspace: "w", project: "storefront", item: work.id, agent: "session" },
+    replyTo: root.id,
+    thread: root.id,
+    subject: "Re: Add the field",
+    contracts: [
+      { kind: "types", path: "src/types.ts", hash: "a".repeat(64), summary: "the field" },
+      { kind: "clause", path: null, hash: null, summary: "no breaking change" },
+    ],
+  };
+  const forged: Message = {
+    ...answer,
+    id: "M-2026-10-18-002-crm",
+    at: "2026-10-18T10:06:00.000Z",
+    contracts: [
+      { kind: "schema", path: "docs/a|b.yaml", hash: "b".repeat(64), summary: "first\nsecond" },
+    ],
+  };
+  const report = renderReport(
+    work,
+    emptyEvidence(),
+    DEFAULT_POLICY,
+    undefined,
+    { box: { version: 1, messages: [root, answer, forged] }, tampered: false },
+    "storefront",
+  );
+  expect(report).toContain(
+    "| Message | Thread | At | Direction | With | Type | Priority | Subject | Status | Contracts |",
+  );
+  expect(report).toContain(
+    "| M-2026-10-18-001-storefront | - | 2026-10-18T10:00:00.000Z | sent | crm | change-request | normal | Add the field | sent | - |",
+  );
+  expect(report).toContain(
+    "| M-2026-10-18-001-crm | M-2026-10-18-001-storefront | 2026-10-18T10:05:00.000Z | received | crm | change-request | normal | Re: Add the field | sent | types src/types.ts, clause |",
+  );
+  const row = report.split("\n").find((l) => l.startsWith("| M-2026-10-18-002-crm |")) as string;
+  expect(row).toContain("schema docs/a\\|b.yaml");
+  expect(row.split(/(?<!\\)\|/).length - 2).toBe(10);
 });

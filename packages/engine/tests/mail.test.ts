@@ -1,4 +1,6 @@
 import { expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { loadEvidence, saveEvidence } from "../src/evidence.ts";
@@ -20,20 +22,23 @@ import {
   priorityOf,
   pruneRegistry,
   readBox,
+  readEvidence,
   refuseMail,
   registerProject,
   reply,
   resolveProject,
   send,
   syncMail,
+  threadOf,
+  threadParties,
   transition,
   withMailLock,
   writeBox,
 } from "../src/mail.ts";
 import { loadPolicy, setPolicyValue } from "../src/policy.ts";
 import { readProtectedJson, recordIntegrity } from "../src/store.ts";
-import type { Mailbox, MailPriority, Message } from "../src/types.ts";
-import { createWork } from "../src/work.ts";
+import type { GateRun, Mailbox, MailPriority, Message } from "../src/types.ts";
+import { createWork, saveWork } from "../src/work.ts";
 import { git, makeRepo, repoPaths, tempDir, testEnv, write } from "./helpers.ts";
 
 /** Two projects of one workspace and a third outside it, each registered as a session would. */
@@ -1066,4 +1071,286 @@ test("SP7b AC-4: a status moves only along the table; a reply closes a request o
   expect(reply(w.b.ctx, inProgress.id, "x", { item: child.id }, [])).toMatchObject({
     original: { status: "done" },
   });
+});
+
+// ---------------------------------------------------------------------------------------------
+// SP7b Task 2: threads, contracts and the evidence in a reply
+
+/** A fourth project of the receiving workspace, registered live, taking every kind of mail. */
+function warehouse(w: ReturnType<typeof workspace>) {
+  const root = makeRepo({ "README.md": "# warehouse\n" });
+  const paths = repoPaths(root, w.env);
+  mkdirSync(paths.crewDir, { recursive: true });
+  writeFileSync(
+    join(paths.crewDir, "policy.json"),
+    JSON.stringify({
+      mail: {
+        workspace: "clubefashion",
+        name: "warehouse",
+        accept: ["question", "notice", "change-request", "blocker"],
+      },
+    }),
+  );
+  const policy = loadPolicy(paths).policy;
+  const ctx = mailContext(paths, policy, w.env);
+  registerProject(ctx, "session-warehouse", { hook: true });
+  return { root, paths, policy, ctx };
+}
+
+const crmOutbox = (w: ReturnType<typeof workspace>) =>
+  readBox(mailbox(w.b.paths.userDir, "clubefashion", "crm").dir, "outbox").box.messages;
+
+/** A gate run of a child's evidence, with the fields the record needs. */
+function gateRun(gate: string, status: "pass" | "fail"): GateRun {
+  return {
+    gate: gate as GateRun["gate"],
+    target: ".",
+    command: "x",
+    commandSource: "confirmed",
+    confirmed: true,
+    exit: status === "pass" ? 0 : 1,
+    status,
+    durationMs: 1,
+    at: "2026-10-18T10:00:00.000Z",
+    log: null,
+    tail: "",
+    fingerprint: "f",
+  };
+}
+
+test("SP7b-T2 AC-1: a thread is its root's id, inherited by every reply; --thread joins a party up to mail.maxParties, never a role", () => {
+  const w = receiving();
+  warehouse(w);
+  const q = sendOrThrow(w.a.ctx, question("Root Q"));
+  expect(threadOf(q)).toBe(q.id);
+  const answered = reply(w.b.ctx, q.id, "A", {}, []);
+  if ("refused" in answered) throw new Error(answered.refused);
+  expect(answered.reply.thread).toBe(q.id);
+  expect(ownInbox(w.a.ctx).messages.find((m) => m.id === answered.reply.id)?.thread).toBe(q.id);
+  expect(crmOutbox(w).find((m) => m.id === answered.reply.id)?.thread).toBe(q.id);
+  // A thread another engine wrote with a value that is not a message id reads as its own root.
+  const dir = crmInbox(w);
+  const box = readBox(dir, "inbox").box;
+  (box.messages.find((m) => m.id === q.id) as { thread?: string }).thread = "../x";
+  writeBox(dir, "inbox", box);
+  expect(threadOf(ownInbox(w.b.ctx).messages.find((m) => m.id === q.id) as Message)).toBe(q.id);
+  // A third party joins, with the root's subject quoted.
+  const joined = sendOrThrow(w.b.ctx, {
+    to: "warehouse",
+    type: "question",
+    thread: q.id,
+    text: "Can you ship it?",
+  });
+  expect(joined.thread).toBe(q.id);
+  expect(joined.subject).toBe('"Root Q"');
+  const held = [...ownInbox(w.b.ctx).messages, ...crmOutbox(w)];
+  expect(threadParties(held, q.id).sort()).toEqual(["crm", "storefront", "warehouse"]);
+  // The cap, tightened to 2 on the sender: a thread of two parties takes no third; one already in passes.
+  const q2 = sendOrThrow(w.a.ctx, question("Root Q2"));
+  writeFileSync(
+    join(w.b.paths.crewDir, "policy.json"),
+    JSON.stringify({
+      mail: {
+        workspace: "clubefashion",
+        name: "crm",
+        accept: ["question", "notice", "change-request", "blocker"],
+        maxParties: 2,
+      },
+    }),
+  );
+  recordIntegrity(w.b.paths, join(w.b.paths.crewDir, "policy.json"));
+  const bCtx = mailContext(w.b.paths, loadPolicy(w.b.paths).policy, w.env);
+  const before = crmOutbox(w).length;
+  expect(send(bCtx, { to: "warehouse", type: "question", thread: q2.id, text: "x" }, null)).toEqual(
+    {
+      refused: `thread ${q2.id} has 2 parties (mail.maxParties 2); warehouse cannot join`,
+      message: null,
+    },
+  );
+  expect(crmOutbox(w).length).toBe(before);
+  expect(
+    send(bCtx, { to: "storefront", type: "question", thread: q2.id, text: "back to you" }, null),
+  ).toMatchObject({ message: { thread: q2.id } });
+  // Never a role; an unknown root.
+  expect(
+    send(
+      bCtx,
+      { to: ".", agent: "review-code-quality", type: "question", thread: q2.id, text: "x" },
+      null,
+    ),
+  ).toEqual({ refused: "a thread joins projects and tasks, never roles", message: null });
+  expect(
+    send(bCtx, { to: "storefront", type: "question", thread: "M-nope", text: "x" }, null),
+  ).toEqual({ refused: "no message M-nope in this project's mail", message: null });
+});
+
+test("SP7b-T2 AC-2: a contract is checked at the branch's tip, never the working tree, and a failing check refuses the reply before any record", () => {
+  const w = receiving();
+  const root = w.b.root;
+  git(root, "checkout", "-q", "-b", "crew/x/T-1");
+  write(root, "src/types.ts", "export type A = 1;\n");
+  write(root, "docs/plain.txt", "plain\n");
+  git(root, "add", "src/types.ts", "docs/plain.txt");
+  git(root, "commit", "-q", "-m", "first");
+  const child = createWork(w.b.paths, "Add the field");
+  expect(child.baseCommit).toBe(git(root, "rev-parse", "HEAD"));
+  write(root, "src/types.ts", "export type A = 2;\n");
+  write(root, "docs/api.json", '{"openapi":"3.1.0"}\n');
+  write(root, "docs/api.yaml", "openapi: 3.1.0\n");
+  write(root, "docs/bad.json", "{nope\n");
+  git(root, "add", "src/types.ts", "docs/api.json", "docs/api.yaml", "docs/bad.json");
+  git(root, "commit", "-q", "-m", "second");
+  git(root, "checkout", "-q", "main");
+  write(root, "src/wt.ts", "x\n");
+  // The working tree is main's: it holds no src/types.ts at all, and an uncommitted src/wt.ts.
+  expect(existsSync(join(root, "src/types.ts"))).toBe(false);
+  const change = sendOrThrow(w.a.ctx, { to: "crm", type: "change-request", text: "Add the field" });
+  const tip = (path: string) =>
+    createHash("sha256")
+      .update(execFileSync("git", ["show", `crew/x/T-1:${path}`], { cwd: root }))
+      .digest("hex");
+  const before = crmOutbox(w).length;
+  const refused = (
+    contracts: string[],
+    options: { branch?: string; item?: string } = { branch: "crew/x/T-1", item: child.id },
+    text = "Done.\n\n## Contracts\n- as said",
+  ) => {
+    const out = reply(w.b.ctx, change.id, text, { ...options, contracts }, []);
+    expect(crmOutbox(w).length).toBe(before);
+    return out;
+  };
+  expect(refused(["types:docs/plain.txt"])).toEqual({
+    refused: "contract types:docs/plain.txt is not in the child's diff",
+  });
+  expect(refused(["types:src/wt.ts"])).toEqual({
+    refused: "contract types:src/wt.ts is not at the tip of crew/x/T-1",
+  });
+  expect(refused(["openapi:docs/bad.json"])).toEqual({
+    refused: "contract openapi:docs/bad.json does not parse as JSON",
+  });
+  expect(refused(["openapi:docs/missing.yaml"])).toEqual({
+    refused: "contract openapi:docs/missing.yaml is not at the tip of crew/x/T-1",
+  });
+  expect(refused(["schema:docs/plain.txt"])).toEqual({
+    refused: "contract schema:docs/plain.txt has no openapi, swagger or $schema line",
+  });
+  expect(refused(["clause:x"], undefined, "no section")).toEqual({
+    refused: 'contract clause needs a "## Contracts" section in the reply',
+  });
+  expect(refused(["types:../x.ts"])).toEqual({
+    refused: "contract types:../x.ts names a path outside the project",
+  });
+  expect(refused(["types:/etc/passwd"])).toEqual({
+    refused: "contract types:/etc/passwd names a path outside the project",
+  });
+  expect(refused(["bogus:x"])).toEqual({
+    refused:
+      "a contract is openapi:<path>, types:<path>, schema:<path> or clause:<summary>, not bogus:x",
+  });
+  expect(refused(["types:src/types.ts"], { item: child.id })).toEqual({
+    refused: "a contract needs --branch <b>: the file is checked at its tip",
+  });
+  expect(refused(["types:src/types.ts"], { branch: "-x", item: child.id })).toEqual({
+    refused: "--branch -x is not a branch name",
+  });
+  expect(refused(["types:src/types.ts"], { branch: "a..b", item: child.id })).toEqual({
+    refused: "--branch a..b is not a branch name",
+  });
+  expect(refused(["clause:x"], { branch: "crew/x/T-1" })).toEqual({
+    refused: "a contract comes with the child item (--item)",
+  });
+  const orphan = createWork(w.b.paths, "No base");
+  orphan.baseCommit = null;
+  saveWork(w.b.paths, orphan);
+  expect(refused(["types:src/types.ts"], { branch: "crew/x/T-1", item: orphan.id })).toEqual({
+    refused: "contract types:src/types.ts cannot be checked: the child has no base commit",
+  });
+  // The four kinds, checked at the tip.
+  const landed = reply(
+    w.b.ctx,
+    change.id,
+    "Done.\n\n## Contracts\n- no breaking change",
+    {
+      branch: "crew/x/T-1",
+      item: child.id,
+      contracts: [
+        "openapi:docs/api.json",
+        "schema:docs/api.yaml",
+        "types:src/types.ts",
+        "clause:no breaking change",
+      ],
+    },
+    [],
+  );
+  if ("refused" in landed) throw new Error(landed.refused);
+  expect(landed.reply.contracts).toEqual([
+    { kind: "openapi", path: "docs/api.json", hash: tip("docs/api.json"), summary: "" },
+    { kind: "schema", path: "docs/api.yaml", hash: tip("docs/api.yaml"), summary: "" },
+    { kind: "types", path: "src/types.ts", hash: tip("src/types.ts"), summary: "" },
+    { kind: "clause", path: null, hash: null, summary: "no breaking change" },
+  ]);
+  expect(tip("src/types.ts")).toBe(
+    createHash("sha256").update("export type A = 2;\n").digest("hex"),
+  );
+});
+
+test("SP7b-T2 AC-3: a reply carries the child's evidence read from disk, and its reader validates what another party wrote", () => {
+  const w = receiving();
+  const change = sendOrThrow(w.a.ctx, { to: "crm", type: "change-request", text: "Add the field" });
+  const child = createWork(w.b.paths, "Add the field");
+  const ev = loadEvidence(w.b.paths, child.id).evidence;
+  ev.fingerprint = "sha256:abc";
+  ev.runs = [
+    gateRun("test", "pass"),
+    gateRun("lint", "pass"),
+    gateRun("typecheck", "fail"),
+    gateRun("bogus", "pass"),
+  ];
+  saveEvidence(w.b.paths, child.id, ev);
+  const first = reply(w.b.ctx, change.id, "Built", { branch: "crew/x/T-1", item: child.id }, []);
+  if ("refused" in first) throw new Error(first.refused);
+  expect(first.reply.evidence).toEqual({
+    report: null,
+    fingerprint: "sha256:abc",
+    gatesPassed: ["test", "lint"],
+  });
+  writeFileSync(join(w.b.root, ".crew", "work", child.id, "report.md"), "# Report\n");
+  const second = reply(
+    w.b.ctx,
+    change.id,
+    "Built again",
+    { branch: "crew/x/T-1", item: child.id },
+    [],
+  );
+  if ("refused" in second) throw new Error(second.refused);
+  expect(second.reply.evidence).toEqual({
+    report: `.crew/work/${child.id}/report.md`,
+    fingerprint: "sha256:abc",
+    gatesPassed: ["test", "lint"],
+  });
+  const q = sendOrThrow(w.a.ctx, question("Q"));
+  const plain = reply(w.b.ctx, q.id, "A", {}, []);
+  if ("refused" in plain) throw new Error(plain.refused);
+  expect(plain.reply.evidence).toBeUndefined();
+  // The reader, on records another party wrote.
+  const forged = (evidence: unknown) => readEvidence({ ...q, evidence } as unknown as Message);
+  expect(
+    forged({ report: "../../etc/x", fingerprint: 5, gatesPassed: ["test", "bogus", 3] }),
+  ).toEqual({
+    report: null,
+    fingerprint: null,
+    gatesPassed: ["test"],
+  });
+  expect(forged({ report: ".crew/work/../../etc/x", fingerprint: "f", gatesPassed: [] })).toEqual({
+    report: null,
+    fingerprint: "f",
+    gatesPassed: [],
+  });
+  expect(
+    forged({ report: "/abs/.crew/work/x/report.md", fingerprint: "f", gatesPassed: [] }),
+  ).toEqual({ report: null, fingerprint: "f", gatesPassed: [] });
+  expect(
+    forged({ report: ".crew/work/x/report.md", fingerprint: "f", gatesPassed: ["lint"] }),
+  ).toEqual({ report: ".crew/work/x/report.md", fingerprint: "f", gatesPassed: ["lint"] });
+  expect(readEvidence(q)).toBeNull();
 });

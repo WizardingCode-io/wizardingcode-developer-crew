@@ -4,12 +4,12 @@ import { join } from "node:path";
 import { type CliIo, main } from "../src/cli.ts";
 import { loadEvidence, saveEvidence } from "../src/evidence.ts";
 import { readReviewInputs } from "../src/judgement.ts";
-import { mailbox, mailContext, readBox, registerProject, writeBox } from "../src/mail.ts";
+import { mailbox, mailContext, ownInbox, readBox, registerProject, writeBox } from "../src/mail.ts";
 import { loadPolicy } from "../src/policy.ts";
 import { loadProfile } from "../src/profile.ts";
 import { recordWorking } from "../src/state.ts";
 import { readProtectedJson, writeProtectedJson } from "../src/store.ts";
-import type { Message } from "../src/types.ts";
+import type { GateRun, Message } from "../src/types.ts";
 import { loadWork, saveWork } from "../src/work.ts";
 import { git, makeRepo, repoPaths, tempDir, testEnv, write } from "./helpers.ts";
 
@@ -1865,7 +1865,7 @@ test("SP2c AC-9: crew mail send, inbox, read, reply and refuse through the comma
   ).toBe(`${second} refused: not this sprint | maybe next\n`);
   const report = (await ca.run("evidence", id)).out;
   expect(report).toContain(
-    "## Mail\n\n| Message | At | Direction | With | Type | Priority | Subject | Status |\n",
+    "## Mail\n\n| Message | Thread | At | Direction | With | Type | Priority | Subject | Status | Contracts |\n",
   );
   expect(report).toContain(`| ${mid} | `);
   expect(report).toContain(
@@ -1883,7 +1883,7 @@ test("SP2c AC-9: crew mail send, inbox, read, reply and refuse through the comma
     "usage: crew mail send --to <project|.> --type question|change-request|notice|blocker",
   );
   expect((await ca.run("mail", "send", "--to", "crm", "hi")).err.trim()).toBe(
-    'usage: crew mail send --to <project|.> --type question|change-request|notice|blocker [--priority blocker|high|normal|low] [--agent <session|T-n|role>] [--item <id>] [--reply-to <mid>] [--subject <text>] "<text>" [--file <path>]',
+    'usage: crew mail send --to <project|.> --type question|change-request|notice|blocker [--priority blocker|high|normal|low] [--thread <root>] [--agent <session|T-n|role>] [--item <id>] [--reply-to <mid>] [--subject <text>] "<text>" [--file <path>]',
   );
   // A hand edit of the item's mail.json is tampering, and `crew accept <id>` re-trusts it like every other protected file of the item.
   const mailFile = join(a, ".crew", "work", id, "mail.json");
@@ -3124,4 +3124,177 @@ test("SP7b AC-5: an item's priority comes from --priority, else from its origin'
   expect(read(b, fromUnknown).priority).toBe("normal");
   const plain = (await cb.json("start", "Plain", "--answers", answers)).data.id as string;
   expect(read(b, plain).priority).toBe("normal");
+});
+
+// ---------------------------------------------------------------------------------------------
+// SP7b Task 2: threads, contracts and the evidence in a reply
+
+/** A gate run of a child's evidence, with the fields the record needs. */
+function childRun(gate: string, status: "pass" | "fail"): GateRun {
+  return {
+    gate: gate as GateRun["gate"],
+    target: ".",
+    command: "x",
+    commandSource: "confirmed",
+    confirmed: true,
+    exit: status === "pass" ? 0 : 1,
+    status,
+    durationMs: 1,
+    at: "2026-10-18T10:00:00.000Z",
+    log: null,
+    tail: "",
+    fingerprint: "f",
+  };
+}
+
+test("SP7b-T2 AC-1: crew mail thread prints a thread's messages oldest first with its parties; crew mail send --thread joins a third project", async () => {
+  const { env, ca, cb } = mailRepos();
+  await ca.run("detect");
+  await cb.run("detect");
+  const mid = /sent (M-\S+) /.exec(
+    (await ca.run("mail", "send", "--to", "crm", "--type", "question", "Which values?")).out,
+  )?.[1] as string;
+  expect((await cb.run("mail", "reply", mid, "gold, silver")).code).toBe(0);
+  const thread = await cb.run("mail", "thread", mid);
+  expect(thread.code).toBe(0);
+  const lines = thread.out.trimEnd().split("\n");
+  expect(lines[0]).toBe(`Thread ${mid}: 2 messages, 2 parties (crm, storefront)`);
+  expect(lines[1]).toBe(`  ${mid} · [normal] · question · storefront → crm · Which values? · done`);
+  expect(lines[2]).toMatch(
+    /^ {2}M-\S+-001-crm · \[normal\] · question · crm → storefront · Re: Which values\? · sent$/,
+  );
+  const json = await cb.json("mail", "thread", mid);
+  expect((json.data.messages as unknown[]).length).toBe(2);
+  expect(json.data.parties).toEqual(["crm", "storefront"]);
+  expect((await cb.run("mail", "thread", "M-nope")).code).toBe(1);
+  // The flag itself: a send with --thread to a third project of the workspace joins it.
+  const c = makeRepo({ "README.md": "# warehouse\n" });
+  write(c, ".crew/policy.json", JSON.stringify({ mail: { workspace: "w", name: "warehouse" } }));
+  const cc = io(c, env);
+  await cc.run("detect");
+  const joined = await cb.json(
+    "mail",
+    "send",
+    "--to",
+    "warehouse",
+    "--type",
+    "question",
+    "--thread",
+    mid,
+    "Can you ship it?",
+  );
+  expect(joined.code).toBe(0);
+  expect(joined.data.message).toMatchObject({ thread: mid, subject: '"Which values?"' });
+  const three = await cb.json("mail", "thread", mid);
+  expect((three.data.messages as unknown[]).length).toBe(3);
+  expect(three.data.parties).toEqual(["crm", "storefront", "warehouse"]);
+});
+
+test("SP7b-T2 AC-3: crew mail read prints a reply's evidence through the validating reader", async () => {
+  const { env, a, b, ca, cb } = mailRepos(["question", "notice", "change-request", "blocker"]);
+  await ca.run("detect");
+  await cb.run("detect");
+  const mid = /sent (M-\S+) /.exec(
+    (await ca.run("mail", "send", "--to", "crm", "--type", "change-request", "Add the field")).out,
+  )?.[1] as string;
+  const pb = repoPaths(b, env);
+  const child = (await cb.json("start", "Add the field", "--answers", answers, "--origin", mid))
+    .data.id as string;
+  const ev = loadEvidence(pb, child).evidence;
+  ev.fingerprint = "sha256:abc";
+  ev.runs = [childRun("test", "pass"), childRun("lint", "pass"), childRun("typecheck", "fail")];
+  saveEvidence(pb, child, ev);
+  const replied = await cb.run(
+    "mail",
+    "reply",
+    mid,
+    "Built",
+    "--branch",
+    "crew/x/T-1",
+    "--item",
+    child,
+  );
+  expect(replied.code).toBe(0);
+  const rid = /: (M-\S+) to storefront/.exec(replied.out)?.[1] as string;
+  expect((await ca.run("mail", "read", rid)).out).toContain(
+    "evidence: gates passed test, lint; fingerprint sha256:abc; report none\n",
+  );
+  // A record rewritten by another party is read through the validating reader.
+  const dir = mailbox(repoPaths(a, env).userDir, "w", "storefront").dir;
+  const box = readBox(dir, "inbox").box;
+  const copy = box.messages.find((m) => m.id === rid) as { evidence: unknown };
+  copy.evidence = {
+    report: "../../etc/x",
+    fingerprint: "sha256:abc\n# Forged",
+    gatesPassed: ["test", "bogus"],
+  };
+  writeBox(dir, "inbox", box);
+  expect((await ca.run("mail", "read", rid)).out).toContain(
+    "evidence: gates passed test; fingerprint sha256:abc # Forged; report none\n",
+  );
+  copy.evidence = { report: "../../etc/x", fingerprint: 5, gatesPassed: ["test", "bogus"] };
+  writeBox(dir, "inbox", box);
+  expect((await ca.run("mail", "read", rid)).out).toContain(
+    "evidence: gates passed test; fingerprint none; report none\n",
+  );
+  const qid = /sent (M-\S+) /.exec(
+    (await ca.run("mail", "send", "--to", "crm", "--type", "question", "Q")).out,
+  )?.[1] as string;
+  expect((await cb.run("mail", "reply", qid, "A")).code).toBe(0);
+  const pa = repoPaths(a, env);
+  const answer = ownInbox(mailContext(pa, loadPolicy(pa).policy, env)).messages.find(
+    (m) => m.replyTo === qid,
+  ) as Message;
+  expect((await ca.run("mail", "read", answer.id)).out).not.toContain("evidence:");
+});
+
+test("SP7b-T2 AC-4: crew criteria add --contract binds a criterion to a contract of the item's mail; the report shows it", async () => {
+  const { ca, cb } = mailRepos(["question", "notice", "change-request", "blocker"]);
+  await ca.run("detect");
+  await cb.run("detect");
+  const id = (await ca.json("start", "Loyalty tier", "--answers", answers)).data.id as string;
+  const mid = /sent (M-\S+) /.exec(
+    (await ca.run("mail", "send", "--to", "crm", "--type", "change-request", "Add the field")).out,
+  )?.[1] as string;
+  const child = (await cb.json("start", "Add the field", "--answers", answers, "--origin", mid))
+    .data.id as string;
+  const replied = await cb.run(
+    "mail",
+    "reply",
+    mid,
+    "Done.\n\n## Contracts\n- no breaking change",
+    "--branch",
+    "crew/x/T-1",
+    "--item",
+    child,
+    "--contract",
+    "clause:no breaking change",
+  );
+  expect(replied.code).toBe(0);
+  const rid = /: (M-\S+) to storefront/.exec(replied.out)?.[1] as string;
+  await ca.run("mail", "inbox");
+  const bound = await ca.json(
+    "criteria",
+    id,
+    "add",
+    "The field is typed",
+    "--contract",
+    `${rid}:1`,
+  );
+  expect(bound.code).toBe(0);
+  expect(bound.data.criterion).toMatchObject({ id: "AC-1", contract: { message: rid, index: 1 } });
+  expect(
+    (await ca.run("criteria", id, "add", "Another", "--contract", `${rid}:3`)).err.trim(),
+  ).toBe(`no contract 3 on ${rid} in this item's mail`);
+  expect(
+    (await ca.run("criteria", id, "add", "Another", "--contract", "M-nope:1")).err.trim(),
+  ).toBe("no contract 1 on M-nope in this item's mail");
+  expect((await ca.run("evidence", id)).out).toContain(
+    `| AC-1 | behavior | The field is typed [contract ${rid}:1] |`,
+  );
+  const status = await ca.json("status");
+  expect((status.data.criteria as { contract?: unknown }[])[0]?.contract).toEqual({
+    message: rid,
+    index: 1,
+  });
 });

@@ -4,6 +4,7 @@ import { loadEvidence, saveEvidence, tddSummary } from "./evidence.ts";
 import { gitChangedPaths, gitHead, isGitRepo, isWatched } from "./fingerprint.ts";
 import { nowIso, readText, writeText } from "./fs.ts";
 import {
+  loadItemMail,
   type MailContext,
   mailbox,
   openIn,
@@ -13,10 +14,11 @@ import {
   send,
   updateStatusEverywhere,
 } from "./mail.ts";
-import { mailStatus } from "./mail-status.ts";
+import { mailStatus, readContracts } from "./mail-status.ts";
 import { openSession, type StartFailure, sessionLog, sweepSafely, taskPrompt } from "./open.ts";
 import { dropOpenedMarker } from "./opened.ts";
 import { type CrewPaths, resolvePaths, workDir } from "./paths.ts";
+import { oneLine } from "./state.ts";
 import { recordIntegrity } from "./store.ts";
 import type {
   Decision,
@@ -322,6 +324,16 @@ export function writeBrief(
       return `- ${id}: ${criterion ? tddSummary(work, evidence, id, criterion.kind, policy) : "unknown criterion"}`;
     }),
   ];
+  // The contracts the reply to this todo's message carried (SP7 §9), read through the validating
+  // reader and printed one line each; a clause is a claim and says so.
+  const answer = loadItemMail(paths, work.id).box.messages.find(
+    (m) => m.replyTo === record.message,
+  );
+  const contracts = (answer ? readContracts(answer) : []).map((c) =>
+    c.kind === "clause"
+      ? `- clause (claimed): ${oneLine(c.summary)}`
+      : `- ${c.kind} ${oneLine(c.path ?? "")} (${(c.hash ?? "").slice(0, 12)}): ${oneLine(c.summary)}`,
+  );
   const left = (work.validations ?? [])
     .filter((v) => v.what === "delivery" && v.verdict === "returned")
     .map((v) => `- ${v.by} returned ${v.returns} return${v.returns === 1 ? "" : "s"} (${v.file})`);
@@ -333,6 +345,9 @@ export function writeBrief(
     "",
     "## Proven",
     ...(proven.length ? proven : ["- nothing yet"]),
+    "",
+    "## Contracts",
+    ...(contracts.length ? contracts : ["- none"]),
     "",
     "## Left",
     ...(left.length ? left : ["- none"]),

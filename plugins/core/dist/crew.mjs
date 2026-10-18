@@ -88,6 +88,7 @@ var MAIL_PRIORITIES = ["blocker", "high", "normal", "low"];
 function isMailPriority(value) {
   return MAIL_PRIORITIES.includes(value);
 }
+var CONTRACT_KINDS = ["openapi", "types", "schema", "clause"];
 var MAIL_TYPES = ["question", "change-request", "notice", "blocker"];
 function isMailType(value) {
   return MAIL_TYPES.includes(value);
@@ -1119,6 +1120,44 @@ function transition(m, to, extra = {}) {
     return { refused: `${m.id} is ${from}; it cannot become ${to}` };
   return { ...m, ...extra, status: to };
 }
+var MESSAGE_ID = /^M-\d{4}-\d{2}-\d{2}-\d{3}-[A-Za-z0-9._-]+$/;
+var SHA256 = /^[0-9a-f]{64}$/;
+function threadOf(m) {
+  return typeof m.thread === "string" && MESSAGE_ID.test(m.thread) ? m.thread : m.id;
+}
+function insidePath(path) {
+  return typeof path === "string" && path.length > 0 && !path.startsWith("/") && !path.includes("\\") && !path.split("/").includes("..");
+}
+function readContracts(m) {
+  if (!Array.isArray(m.contracts))
+    return [];
+  const kept = [];
+  for (const raw of m.contracts) {
+    if (!raw || typeof raw !== "object")
+      continue;
+    const { kind, path, hash, summary } = raw;
+    if (!CONTRACT_KINDS.includes(kind) || typeof summary !== "string")
+      continue;
+    if (hash !== null && (typeof hash !== "string" || !SHA256.test(hash)))
+      continue;
+    if (kind === "clause" ? path !== null : !insidePath(path))
+      continue;
+    kept.push({ kind, path, hash, summary });
+  }
+  return kept;
+}
+function readEvidence(m) {
+  const raw = m.evidence;
+  if (!raw || typeof raw !== "object")
+    return null;
+  const { report, fingerprint, gatesPassed } = raw;
+  const reportInside = typeof report === "string" && report.startsWith(".crew/work/") && insidePath(report);
+  return {
+    report: reportInside ? report : null,
+    fingerprint: typeof fingerprint === "string" ? fingerprint : null,
+    gatesPassed: Array.isArray(gatesPassed) ? gatesPassed.filter((g) => GATE_NAMES.includes(g)) : []
+  };
+}
 
 // packages/engine/src/objections.ts
 import { join as join12 } from "node:path";
@@ -1243,7 +1282,8 @@ var DEFAULT_MAIL_POLICY = {
   maxHops: 2,
   maxTurns: 40,
   maxMinutes: 30,
-  worktrees: ".."
+  worktrees: "..",
+  maxParties: 4
 };
 var DEFAULT_TEAM_POLICY = {
   template: "core",
@@ -1273,6 +1313,7 @@ var RANGES = {
   maxHops: { min: 1, max: 10 },
   maxTurns: { min: 1, max: 500 },
   maxMinutes: { min: 1, max: 600 },
+  maxParties: { min: 2, max: 4 },
   maxExperts: { min: 1, max: 3 },
   maxValidationRounds: { min: 1, max: 2 },
   maxJudgementRounds: { min: 1, max: 2 },
@@ -1288,6 +1329,7 @@ var SETTABLE_POLICY_KEYS = {
   "mail.maxHops": { integer: RANGES.maxHops },
   "mail.maxTurns": { integer: RANGES.maxTurns },
   "mail.maxMinutes": { integer: RANGES.maxMinutes },
+  "mail.maxParties": { integer: RANGES.maxParties },
   "mail.worktrees": {
     pattern: WORKTREES,
     hint: "a relative path with no spaces (.. for the folder beside the root)"
@@ -1357,7 +1399,8 @@ function loadMailPolicy(raw) {
     maxHops: bounded(m.maxHops, RANGES.maxHops, DEFAULT_MAIL_POLICY.maxHops),
     maxTurns: bounded(m.maxTurns, RANGES.maxTurns, DEFAULT_MAIL_POLICY.maxTurns),
     maxMinutes: bounded(m.maxMinutes, RANGES.maxMinutes, DEFAULT_MAIL_POLICY.maxMinutes),
-    worktrees: typeof m.worktrees === "string" && WORKTREES.test(m.worktrees) ? m.worktrees : DEFAULT_MAIL_POLICY.worktrees
+    worktrees: typeof m.worktrees === "string" && WORKTREES.test(m.worktrees) ? m.worktrees : DEFAULT_MAIL_POLICY.worktrees,
+    maxParties: bounded(m.maxParties, RANGES.maxParties, DEFAULT_MAIL_POLICY.maxParties)
   };
 }
 function decisionCounts(policy, decision) {
@@ -1504,10 +1547,6 @@ function objectionStatus(objection, work, evidence, policy) {
 function blockingObjections(ledger, work, evidence, policy, statuses) {
   return ledger.objections.filter((o) => o.severity === "blocking" && statuses.includes(objectionStatus(o, work, evidence, policy)));
 }
-
-// packages/engine/src/work.ts
-import { existsSync as existsSync2, readdirSync as readdirSync4 } from "node:fs";
-import { join as join15 } from "node:path";
 
 // packages/engine/src/state.ts
 import { join as join14 } from "node:path";
@@ -1860,6 +1899,10 @@ ${policy.artifacts === "local" ? `work/
     writeProtectedText(paths, file, wanted);
 }
 
+// packages/engine/src/work.ts
+import { existsSync as existsSync2, readdirSync as readdirSync4 } from "node:fs";
+import { join as join15 } from "node:path";
+
 // packages/engine/src/validation.ts
 import { createHash as createHash2 } from "node:crypto";
 function parseValidation(text) {
@@ -2050,10 +2093,15 @@ function raiseRoute(work, to, reason) {
   work.routeReasons.push(`raised to ${to}: ${reason}`);
   return true;
 }
-function addCriterion(work, text, kind = "behavior") {
+function addCriterion(work, text, kind = "behavior", contract) {
   const taken = [...work.criteria, ...work.removedCriteria ?? []].map((c) => Number(c.id.slice("AC-".length))).filter((n) => Number.isFinite(n));
   const next = taken.length ? Math.max(...taken) + 1 : 1;
-  const criterion = { id: `AC-${next}`, kind, text: text.trim() };
+  const criterion = {
+    id: `AC-${next}`,
+    kind,
+    text: text.trim(),
+    ...contract ? { contract } : {}
+  };
   work.criteria.push(criterion);
   return criterion;
 }
@@ -2465,7 +2513,7 @@ function renderReport(work, evidence, policy, ledger, mail, selfName) {
   }
   lines.push("## Acceptance criteria", "", "| Id | Kind | Criterion | Test-first |", "| :- | :- | :- | :- |");
   for (const c of work.criteria) {
-    lines.push(`| ${c.id} | ${c.kind} | ${c.text.replace(/\|/g, "\\|")} | ${tddSummary(work, evidence, c.id, c.kind, policy)} |`);
+    lines.push(`| ${c.id} | ${c.kind} | ${c.text.replace(/\|/g, "\\|")}${c.contract ? ` [contract ${c.contract.message}:${c.contract.index}]` : ""} | ${tddSummary(work, evidence, c.id, c.kind, policy)} |`);
   }
   lines.push("", "## Gates", "", "| Gate | Target | Status | Command | Duration | Log |", "| :- | :- | :- | :- | -: | :- |");
   for (const r of evidence.runs) {
@@ -2519,7 +2567,7 @@ function renderReport(work, evidence, policy, ledger, mail, selfName) {
   if (mail?.tampered) {
     lines.push("", "## Mail", "", `mail.json changed outside the engine; the user accepts it with crew accept ${work.id}.`);
   } else if (mail?.box.messages.length) {
-    lines.push("", "## Mail", "", "| Message | At | Direction | With | Type | Priority | Subject | Status |", "| :- | :- | :- | :- | :- | :- | :- | :- |");
+    lines.push("", "## Mail", "", "| Message | Thread | At | Direction | With | Type | Priority | Subject | Status | Contracts |", "| :- | :- | :- | :- | :- | :- | :- | :- | :- | :- |");
     for (const m of mail.box.messages) {
       const sent = m.from.item === work.id && m.from.project === selfName;
       const direction = sent ? "sent" : "received";
@@ -2528,7 +2576,9 @@ function renderReport(work, evidence, policy, ledger, mail, selfName) {
       const decision = m.priorityDecision;
       const priority = decision && decision.confirmed !== decision.proposed ? `${decidedPriority(m)} (proposed ${decision.proposed})` : decidedPriority(m);
       const status = cell(`${mailStatus(m)}${m.reason ? `: ${m.reason}` : ""}${m.verdict ? ` (${m.verdict}${m.branch ? `, ${m.branch}` : ""})` : ""}${m.relayed ? ", relayed" : ""}`);
-      lines.push(`| ${m.id} | ${m.at} | ${direction} | ${other} | ${m.type} | ${priority} | ${cell(m.subject)} | ${status} |`);
+      const thread = threadOf(m) === m.id ? "-" : threadOf(m);
+      const contracts = readContracts(m).map((c) => c.kind === "clause" ? "clause" : `${c.kind} ${cell(oneLine(c.path ?? ""))}`).join(", ") || "-";
+      lines.push(`| ${m.id} | ${thread} | ${m.at} | ${direction} | ${other} | ${m.type} | ${priority} | ${cell(oneLine(m.subject))} | ${status} | ${contracts} |`);
     }
   }
   if (evidence.roles?.length) {
@@ -3564,8 +3614,9 @@ function reassess(a, work, policy) {
 }
 
 // packages/engine/src/mail.ts
+import { createHash as createHash3 } from "node:crypto";
 import { accessSync as accessSync2, constants as constants2, existsSync as existsSync4, statSync as statSync5 } from "node:fs";
-import { basename as basename4, isAbsolute as isAbsolute2, join as join22, resolve as resolve2 } from "node:path";
+import { basename as basename5, isAbsolute as isAbsolute2, join as join22, resolve as resolve3 } from "node:path";
 
 // packages/engine/src/opened.ts
 import { existsSync as existsSync3, rmSync as rmSync2 } from "node:fs";
@@ -3615,9 +3666,190 @@ function resolveOpener(paths, env) {
   };
 }
 
+// packages/engine/src/worktree.ts
+import { execFileSync as execFileSync3 } from "node:child_process";
+import { basename as basename4, resolve as resolve2 } from "node:path";
+function gitRun(cwd, ...args) {
+  return execFileSync3("git", args, {
+    cwd,
+    encoding: "utf8",
+    env: { ...process.env, LC_ALL: "C" },
+    stdio: ["ignore", "pipe", "pipe"]
+  }).trim();
+}
+function gitShow(cwd, branch, path) {
+  try {
+    return execFileSync3("git", ["show", "--end-of-options", `${branch}:${path}`], {
+      cwd,
+      env: { ...process.env, LC_ALL: "C" },
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+  } catch {
+    return null;
+  }
+}
+function gitError(error) {
+  const failed = error;
+  const stderr = failed.stderr?.toString().trim().split(`
+`)[0];
+  return stderr || (failed.message.split(`
+`)[0] ?? "");
+}
+function worktreePath(root, worktrees, name) {
+  return resolve2(root, worktrees, `${basename4(root)}-${name}`);
+}
+function addWorktree(root, branch, path) {
+  try {
+    gitRun(root, "worktree", "add", "-q", "-b", branch, path, "HEAD");
+    return null;
+  } catch (error) {
+    return { failed: `git worktree add failed in ${root}: ${gitError(error)}` };
+  }
+}
+function dropBranch(root, branch) {
+  try {
+    gitRun(root, "branch", "-D", branch);
+  } catch {}
+}
+var ENGINE_DIR = ".crew/";
+function dirtyPaths(path) {
+  return gitRun(path, "status", "--porcelain", "--untracked-files=all").split(`
+`).map((line) => /^\s*[MADRCU?!]{0,2}\s+(.+)$/.exec(line)?.[1] ?? "").filter((p) => p.length > 0).flatMap((p) => p.split(" -> "));
+}
+function removeWorktree(root, path) {
+  try {
+    gitRun(root, "worktree", "remove", path);
+    return null;
+  } catch (error) {
+    let onlyEngine;
+    try {
+      const dirty = dirtyPaths(path);
+      onlyEngine = dirty.length > 0 && dirty.every((p) => p.startsWith(ENGINE_DIR));
+    } catch {
+      onlyEngine = false;
+    }
+    if (!onlyEngine)
+      return { kept: gitError(error) };
+    try {
+      gitRun(root, "worktree", "remove", "--force", path);
+      return null;
+    } catch (forced) {
+      return { kept: gitError(forced) };
+    }
+  }
+}
+
 // packages/engine/src/mail.ts
 var WORK_ID = /^\d{4}-\d{2}-\d{2}-\d{3}-[a-z0-9-]*$/;
 var REASONS_CHARS = 500;
+var BRANCH_NAME = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
+function threadParties(messages, root) {
+  const parties = [];
+  const key = (p) => p.agent && TASK_AGENT.test(p.agent) ? `${p.project}/${p.agent}` : p.project;
+  for (const m of messages) {
+    if (threadOf(m) !== root)
+      continue;
+    for (const p of [key(m.from), key(m.to)])
+      if (!parties.includes(p))
+        parties.push(p);
+  }
+  return parties.sort();
+}
+function heldMessages(ctx) {
+  const dir = mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project).dir;
+  const seen = new Set;
+  const held = [];
+  for (const which of ["inbox", "outbox"]) {
+    const read = readBox(dir, which);
+    if (read.tampered)
+      continue;
+    for (const m of read.box.messages) {
+      if (seen.has(m.id))
+        continue;
+      seen.add(m.id);
+      held.push(m);
+    }
+  }
+  return held;
+}
+function threadMessages(ctx, root) {
+  const held = heldMessages(ctx);
+  if (!MESSAGE_ID.test(root) || !held.some((m) => m.id === root))
+    return { refused: `no message ${root} in this project's mail` };
+  const messages = held.filter((m) => threadOf(m) === root).sort((a, b) => a.at.localeCompare(b.at));
+  return { messages, parties: threadParties(messages, root) };
+}
+function parseContract(text) {
+  const match = /^(openapi|types|schema|clause):([\s\S]*)$/.exec(text);
+  if (!match)
+    return {
+      refused: `a contract is openapi:<path>, types:<path>, schema:<path> or clause:<summary>, not ${text}`
+    };
+  const kind = match[1];
+  const rest = match[2] ?? "";
+  if (kind === "clause")
+    return { kind, path: null, summary: rest.trim() };
+  const colon = rest.indexOf(":");
+  const path = colon === -1 ? rest : rest.slice(0, colon);
+  const summary = colon === -1 ? "" : rest.slice(colon + 1).trim();
+  if (!insidePath(path))
+    return { refused: `contract ${kind}:${path} names a path outside the project` };
+  return { kind, path, summary };
+}
+function checkContracts(root, branch, base, contracts, body) {
+  let tip = "";
+  if (contracts.some((c) => c.path !== null)) {
+    if (!branch)
+      return { refused: "a contract needs --branch <b>: the file is checked at its tip" };
+    if (!BRANCH_NAME.test(branch) || branch.includes(".."))
+      return { refused: `--branch ${branch} is not a branch name` };
+    tip = branch;
+  }
+  const checked = [];
+  let changed = null;
+  for (const c of contracts) {
+    if (c.kind === "clause") {
+      if (!/^## Contracts\s*$/m.test(body))
+        return { refused: 'contract clause needs a "## Contracts" section in the reply' };
+      checked.push({ kind: c.kind, path: null, hash: null, summary: c.summary });
+      continue;
+    }
+    const path = c.path;
+    const content = gitShow(root, tip, path);
+    if (content === null)
+      return { refused: `contract ${c.kind}:${path} is not at the tip of ${tip}` };
+    const hash = createHash3("sha256").update(content).digest("hex");
+    if (c.kind === "openapi" || c.kind === "schema") {
+      const text = content.toString("utf8");
+      if (path.endsWith(".json")) {
+        try {
+          JSON.parse(text);
+        } catch {
+          return { refused: `contract ${c.kind}:${path} does not parse as JSON` };
+        }
+      } else if (!text.trim() || !/^(openapi|swagger|\$schema)\s*:/m.test(text)) {
+        return { refused: `contract ${c.kind}:${path} has no openapi, swagger or $schema line` };
+      }
+    } else {
+      if (!base)
+        return {
+          refused: `contract types:${path} cannot be checked: the child has no base commit`
+        };
+      if (changed === null) {
+        try {
+          changed = gitRun(root, "diff", "--name-only", "--end-of-options", base, tip).split(`
+`).filter(Boolean);
+        } catch {
+          changed = [];
+        }
+      }
+      if (!changed.includes(path))
+        return { refused: `contract types:${path} is not in the child's diff` };
+    }
+    checked.push({ kind: c.kind, path, hash, summary: c.summary });
+  }
+  return { contracts: checked };
+}
 function badPriority(value) {
   return `priority is one of ${MAIL_PRIORITIES.join(", ")}, not ${String(value)}`;
 }
@@ -3663,7 +3895,7 @@ function mailSelf(paths, policy, env) {
   const { mail, main } = effectiveMailPolicy(paths.root, policy, env);
   return {
     workspace: mail.workspace,
-    project: mail.name ?? basename4(main ?? paths.root),
+    project: mail.name ?? basename5(main ?? paths.root),
     agent: opener.agent,
     hops: opener.hops,
     openedBy: opener.mail,
@@ -3862,7 +4094,7 @@ function party(self, item) {
 function attachFile(root, text, filePath) {
   if (!filePath)
     return { text };
-  const abs = isAbsolute2(filePath) ? filePath : resolve2(root, filePath);
+  const abs = isAbsolute2(filePath) ? filePath : resolve3(root, filePath);
   const content = readText(abs);
   if (content === null)
     return { refused: `no file at ${abs}` };
@@ -3898,6 +4130,15 @@ function send(ctx, request, work) {
   if (request.priority !== undefined && !isMailPriority(request.priority))
     return { refused: badPriority(request.priority), message: null };
   const priority = request.priority ?? (request.type === "blocker" ? "blocker" : "normal");
+  let root = null;
+  if (request.thread !== undefined) {
+    if (request.agent && ROLE_AGENT.test(request.agent))
+      return { refused: "a thread joins projects and tasks, never roles", message: null };
+    const held = heldMessages(ctx);
+    root = MESSAGE_ID.test(request.thread) && held.find((m) => m.id === request.thread) || null;
+    if (!root)
+      return { refused: `no message ${request.thread} in this project's mail`, message: null };
+  }
   const resolved = resolveProject(ctx, request.to);
   const refuse = (reason, to2) => {
     const written = appendToBox(own.dir, "outbox", self.project, (box) => ({
@@ -3907,7 +4148,11 @@ function send(ctx, request, work) {
       to: to2,
       type: request.type,
       priority,
-      subject: subjectOf({ subject: request.subject, text }),
+      ...root ? { thread: root.id } : {},
+      subject: subjectOf({
+        subject: request.subject ?? (root ? subjectQuoted(root.subject) : undefined),
+        text
+      }),
       body: text.slice(0, PREVIEW_CHARS),
       replyTo: request.replyTo ?? null,
       hops: self.hops,
@@ -3930,6 +4175,16 @@ function send(ctx, request, work) {
   if ("refused" in resolved)
     return refuse(resolved.refused, unknownTo);
   const entry = resolved.entry;
+  if (root) {
+    const parties = threadParties(heldMessages(ctx), root.id);
+    const joining = request.agent && TASK_AGENT.test(request.agent) ? `${entry.name}/${request.agent}` : entry.name;
+    const cap = ctx.policy.mail.maxParties;
+    if (!parties.includes(joining) && parties.length >= cap)
+      return {
+        refused: `thread ${root.id} has ${parties.length} parties (mail.maxParties ${cap}); ${joining} cannot join`,
+        message: null
+      };
+  }
   const toSelf = entry.root === (worktreeMainRoot(ctx.paths.root) ?? ctx.paths.root);
   const to = {
     workspace: self.workspace ?? "_alone",
@@ -3947,7 +4202,7 @@ function send(ctx, request, work) {
         return refuse(`a message to the judge comes from the lead (session), not from ${self.agent}`, to);
       if (CRITICS.has(request.agent)) {
         const proposals = itemId ? `.crew/work/${itemId}/conclave/proposals.md` : null;
-        const given = request.filePath ? canonical(resolve2(ctx.paths.root, request.filePath)) : null;
+        const given = request.filePath ? canonical(resolve3(ctx.paths.root, request.filePath)) : null;
         if (!proposals || !given || given !== canonical(join22(ctx.paths.root, proposals)) || request.text.trim())
           return refuse(`a message to ${request.agent} carries ${proposals ?? ".crew/work/<id>/conclave/proposals.md"} (--file) and nothing else`, to);
       }
@@ -3999,7 +4254,11 @@ function send(ctx, request, work) {
       to,
       type: request.type,
       priority,
-      subject: subjectOf({ subject: request.subject, text }),
+      ...root ? { thread: root.id } : {},
+      subject: subjectOf({
+        subject: request.subject ?? (root ? subjectQuoted(root.subject) : undefined),
+        text
+      }),
       ...placeBody(dest.dir, id, text),
       replyTo: request.replyTo ?? null,
       hops: self.hops,
@@ -4218,6 +4477,22 @@ function reply(ctx, id, text, options, notes) {
     return { refused: `unknown work item: ${options.item}` };
   const child = options.item ? loadEvidence(ctx.paths, options.item).evidence : undefined;
   const verdict = child?.verdict;
+  const typed = [];
+  for (const text2 of options.contracts ?? []) {
+    const parsed = parseContract(text2);
+    if ("refused" in parsed)
+      return parsed;
+    typed.push(parsed);
+  }
+  if (typed.length && !options.item)
+    return { refused: "a contract comes with the child item (--item)" };
+  const carried = options.item && child ? {
+    report: existsSync4(join22(workDir(ctx.paths, options.item), "report.md")) ? `.crew/work/${options.item}/report.md` : null,
+    fingerprint: child.fingerprint,
+    gatesPassed: [
+      ...new Set(child.runs.filter((r) => r.status === "pass").map((r) => r.gate))
+    ].filter((g) => GATE_NAMES.includes(g))
+  } : undefined;
   const closing = original.type === "question" || original.type === "notice";
   const to = closing || verdict === "proven" ? "done" : "blocked";
   const reason = to === "done" ? undefined : options.item ? `unproven: ${(child?.unproven ?? []).map(oneLine).join("; ")}`.slice(0, REASONS_CHARS) : "the reply names no child item (--item)";
@@ -4227,6 +4502,9 @@ function reply(ctx, id, text, options, notes) {
   const body = attached.text;
   if (!body.trim())
     return { refused: "a reply needs a text (or --file)" };
+  const checked = checkContracts(ctx.paths.root, options.branch, options.item ? loadWork(ctx.paths, options.item).work?.baseCommit ?? null : null, typed, body);
+  if ("refused" in checked)
+    return checked;
   const at = nowIso();
   const own = mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project);
   const dest = mailbox(ctx.paths.userDir, original.from.workspace === "_alone" ? null : original.from.workspace, original.from.project);
@@ -4255,7 +4533,10 @@ function reply(ctx, id, text, options, notes) {
       opened: null,
       ...options.branch ? { branch: options.branch } : {},
       ...options.item ? { item: options.item } : {},
-      ...verdict ? { verdict } : {}
+      ...verdict ? { verdict } : {},
+      thread: threadOf(original),
+      ...checked.contracts.length ? { contracts: checked.contracts } : {},
+      ...carried ? { evidence: carried } : {}
     };
   });
   if ("refused" in replyMessage)
@@ -4425,68 +4706,6 @@ function ensureProfile(paths) {
     return { profile, tampered: true };
   saveProfile(paths, profile);
   return { profile, tampered: false };
-}
-
-// packages/engine/src/worktree.ts
-import { execFileSync as execFileSync3 } from "node:child_process";
-import { basename as basename5, resolve as resolve3 } from "node:path";
-function gitRun(cwd, ...args) {
-  return execFileSync3("git", args, {
-    cwd,
-    encoding: "utf8",
-    env: { ...process.env, LC_ALL: "C" },
-    stdio: ["ignore", "pipe", "pipe"]
-  }).trim();
-}
-function gitError(error) {
-  const failed = error;
-  const stderr = failed.stderr?.toString().trim().split(`
-`)[0];
-  return stderr || (failed.message.split(`
-`)[0] ?? "");
-}
-function worktreePath(root, worktrees, name) {
-  return resolve3(root, worktrees, `${basename5(root)}-${name}`);
-}
-function addWorktree(root, branch, path) {
-  try {
-    gitRun(root, "worktree", "add", "-q", "-b", branch, path, "HEAD");
-    return null;
-  } catch (error) {
-    return { failed: `git worktree add failed in ${root}: ${gitError(error)}` };
-  }
-}
-function dropBranch(root, branch) {
-  try {
-    gitRun(root, "branch", "-D", branch);
-  } catch {}
-}
-var ENGINE_DIR = ".crew/";
-function dirtyPaths(path) {
-  return gitRun(path, "status", "--porcelain", "--untracked-files=all").split(`
-`).map((line) => /^\s*[MADRCU?!]{0,2}\s+(.+)$/.exec(line)?.[1] ?? "").filter((p) => p.length > 0).flatMap((p) => p.split(" -> "));
-}
-function removeWorktree(root, path) {
-  try {
-    gitRun(root, "worktree", "remove", path);
-    return null;
-  } catch (error) {
-    let onlyEngine;
-    try {
-      const dirty = dirtyPaths(path);
-      onlyEngine = dirty.length > 0 && dirty.every((p) => p.startsWith(ENGINE_DIR));
-    } catch {
-      onlyEngine = false;
-    }
-    if (!onlyEngine)
-      return { kept: gitError(error) };
-    try {
-      gitRun(root, "worktree", "remove", "--force", path);
-      return null;
-    } catch (forced) {
-      return { kept: gitError(forced) };
-    }
-  }
 }
 
 // packages/engine/src/open.ts
@@ -6682,6 +6901,8 @@ function writeBrief(paths, work, record, evidence, policy) {
       return `- ${id}: ${criterion ? tddSummary(work, evidence, id, criterion.kind, policy) : "unknown criterion"}`;
     })
   ];
+  const answer2 = loadItemMail(paths, work.id).box.messages.find((m) => m.replyTo === record.message);
+  const contracts = (answer2 ? readContracts(answer2) : []).map((c) => c.kind === "clause" ? `- clause (claimed): ${oneLine(c.summary)}` : `- ${c.kind} ${oneLine(c.path ?? "")} (${(c.hash ?? "").slice(0, 12)}): ${oneLine(c.summary)}`);
   const left = (work.validations ?? []).filter((v) => v.what === "delivery" && v.verdict === "returned").map((v) => `- ${v.by} returned ${v.returns} return${v.returns === 1 ? "" : "s"} (${v.file})`);
   const text = [
     `# Brief: ${record.task} of ${work.id}`,
@@ -6691,6 +6912,9 @@ function writeBrief(paths, work, record, evidence, policy) {
     "",
     "## Proven",
     ...proven.length ? proven : ["- nothing yet"],
+    "",
+    "## Contracts",
+    ...contracts.length ? contracts : ["- none"],
     "",
     "## Left",
     ...left.length ? left : ["- none"],
@@ -7338,7 +7562,7 @@ var KNOWN_FLAGS = {
   accept: [],
   start: ["answers", "criterion", "preserve", "origin", "priority"],
   classify: ["answers"],
-  criteria: ["kind"],
+  criteria: ["kind", "contract"],
   decision: ["default"],
   debate: ["reason", "tokens"],
   decide: ["mode", "validator"],
@@ -7366,7 +7590,9 @@ var KNOWN_FLAGS = {
     "branch",
     "as",
     "all",
-    "priority"
+    "priority",
+    "thread",
+    "contract"
   ],
   mode: [],
   config: [],
@@ -7876,7 +8102,17 @@ ${originNotes.join(`
       if (args[1] !== "add" || !text)
         return refuse('usage: crew criteria <id> add "<criterion>" [--kind preserve|observed] | crew criteria <id> remove <AC-n>');
       const kind = parsed.flags.kind === "preserve" || parsed.flags.kind === "observed" ? parsed.flags.kind : "behavior";
-      const criterion = addCriterion(opened.work, text, kind);
+      let contract;
+      if (typeof parsed.flags.contract === "string") {
+        const match = /^(\S+):(\d+)$/.exec(parsed.flags.contract);
+        const message = match?.[1] ?? parsed.flags.contract;
+        const index = Number(match?.[2] ?? 0);
+        const held = MESSAGE_ID.test(message) ? loadItemMail(env.paths, opened.work.id).box.messages.find((m) => m.id === message) : undefined;
+        if (!held || index < 1 || readContracts(held).length < index)
+          return refuse(`no contract ${index || parsed.flags.contract} on ${message} in this item's mail`);
+        contract = { message, index };
+      }
+      const criterion = addCriterion(opened.work, text, kind, contract);
       saveWork(env.paths, opened.work);
       return ok(`${criterion.id} (${kind}): ${criterion.text}`, { criterion });
     }
@@ -8680,7 +8916,8 @@ ${notes.join(`
           id: c.id,
           kind: c.kind,
           text: c.text,
-          tdd: tddSummary(work, result.evidence, c.id, c.kind, env.policy)
+          tdd: tddSummary(work, result.evidence, c.id, c.kind, env.policy),
+          ...c.contract ? { contract: c.contract } : {}
         })),
         runs: result.evidence.runs.map((r) => ({
           gate: r.gate,
@@ -8707,8 +8944,8 @@ ${notes.join(`
       });
     }
     case "mail": {
-      const sendUsage = 'usage: crew mail send --to <project|.> --type question|change-request|notice|blocker [--priority blocker|high|normal|low] [--agent <session|T-n|role>] [--item <id>] [--reply-to <mid>] [--subject <text>] "<text>" [--file <path>]';
-      const usage = `${sendUsage} | inbox [--all] | read <mid> | accept <mid> [--priority <p>] [--reason "<why>"] | reply <mid> "<text>" [--branch <b>] [--item <child id>] [--as <role>] [--file <path>] | refuse <mid> --reason "<why>" | status | stop <mid>`;
+      const sendUsage = 'usage: crew mail send --to <project|.> --type question|change-request|notice|blocker [--priority blocker|high|normal|low] [--thread <root>] [--agent <session|T-n|role>] [--item <id>] [--reply-to <mid>] [--subject <text>] "<text>" [--file <path>]';
+      const usage = `${sendUsage} | inbox [--all] | read <mid> | thread <mid> | accept <mid> [--priority <p>] [--reason "<why>"] | reply <mid> "<text>" [--branch <b>] [--item <child id>] [--contract <kind>:<path>[:<summary>]]… [--as <role>] [--file <path>] | refuse <mid> --reason "<why>" | status | stop <mid>`;
       const ctx = env.mail;
       const verb = args[0];
       if (verb === "send") {
@@ -8729,6 +8966,7 @@ ${notes.join(`
           type,
           text,
           ...sendPriority ? { priority: sendPriority } : {},
+          ...typeof parsed.flags.thread === "string" ? { thread: parsed.flags.thread } : {},
           ...typeof parsed.flags.agent === "string" ? { agent: parsed.flags.agent } : {},
           ...typeof parsed.flags.subject === "string" ? { subject: parsed.flags.subject } : {},
           ...typeof parsed.flags.file === "string" ? { filePath: parsed.flags.file } : {},
@@ -8790,6 +9028,7 @@ ${lines2.join(`
           `status: ${mailStatus(result)}${result.reason ? `: ${result.reason}` : ""}`,
           `at: ${result.at}`,
           priorityLine(result),
+          ...evidenceLine(result),
           ...result.from.item ? [`from item: ${result.from.item}`] : [],
           ...result.replyTo ? [`reply to: ${result.replyTo}`] : [],
           ...result.branch ? [`branch: ${result.branch}`] : [],
@@ -8809,13 +9048,26 @@ ${body}`, { message: result, body });
           ...typeof parsed.flags.file === "string" ? { filePath: parsed.flags.file } : {},
           ...typeof parsed.flags.branch === "string" ? { branch: parsed.flags.branch } : {},
           ...typeof parsed.flags.item === "string" ? { item: parsed.flags.item } : {},
-          ...typeof parsed.flags.as === "string" ? { as: parsed.flags.as } : {}
+          ...typeof parsed.flags.as === "string" ? { as: parsed.flags.as } : {},
+          ...parsed.multi.contract?.length ? { contracts: parsed.multi.contract } : {}
         }, notes);
         if ("refused" in result)
           return refuse(result.refused);
         return ok(`replied to ${args[1]}: ${result.reply.id} to ${result.reply.to.project}; ${args[1]} ${mailStatus(result.original)}${notes.length ? `
 ${notes.join(`
 `)}` : ""}`, { reply: result.reply, original: result.original, notes });
+      }
+      if (verb === "thread") {
+        if (!args[1])
+          return refuse(usage);
+        syncMail(ctx, env.paths);
+        const result = threadMessages(ctx, args[1]);
+        if ("refused" in result)
+          return refuse(result.refused);
+        const lines2 = result.messages.map((m) => `  ${m.id} · [${decidedPriority(m)}] · ${m.type} · ${partyLabel(m.from)} → ${partyLabel(m.to)} · ${oneLine(m.subject)} · ${mailStatus(m)}`);
+        return ok(`Thread ${args[1]}: ${result.messages.length} message${result.messages.length === 1 ? "" : "s"}, ${result.parties.length} part${result.parties.length === 1 ? "y" : "ies"} (${result.parties.join(", ")})
+${lines2.join(`
+`)}`, { root: args[1], messages: result.messages, parties: result.parties });
       }
       if (verb === "accept") {
         if (!args[1])
@@ -8910,6 +9162,14 @@ function priorityLine(m) {
   const how = d.confirmed === d.proposed ? `confirmed by ${d.by}` : `lowered by ${d.by}`;
   return `priority: ${level} (proposed ${d.proposed}, ${how}${d.reason ? `: ${d.reason}` : ""})`;
 }
+function evidenceLine(m) {
+  const ev = readEvidence(m);
+  if (!ev)
+    return [];
+  return [
+    `evidence: gates passed ${ev.gatesPassed.join(", ") || "none"}; fingerprint ${ev.fingerprint ? oneLine(ev.fingerprint) : "none"}; report ${ev.report ?? "none"}`
+  ];
+}
 function settings(command, args, user) {
   const config = loadConfig(user);
   if (command === "mode") {
@@ -8946,14 +9206,14 @@ var HELP = `crew ${VERSION}
   profile set <gate> "<cmd>" --force    replace a command a person already confirmed (asks the user)
   profile confirm [<gate>]              confirm commands the detector only guessed (asks the user)
   policy accept                         trust the current policy.json after a hand edit (asks the user)
-  policy set <key> <value>              attendedDecisions prompt|relay, unattendedDecisions wait|count|validator, mail.workspace|name|open|maxConcurrent|maxHops|maxTurns|maxMinutes|worktrees (asks the user)
+  policy set <key> <value>              attendedDecisions prompt|relay, unattendedDecisions wait|count|validator, mail.workspace|name|open|maxConcurrent|maxHops|maxTurns|maxMinutes|maxParties|worktrees (asks the user)
   accept <id|profile|policy>            trust state changed outside the engine (asks the user)
   start "<request>" --answers <json>    create a work item from the typed answers
       [--criterion "<text>"] [--preserve "<text>"]   criteria, repeatable; preserve: existing tests stay green
       [--origin <message id>]           the item answers a message of this project's inbox (a session opened by mail)
       [--priority blocker|high|normal|low]   the item's priority; else its origin's confirmed one, else normal
   classify <id> --answers <json>        record typed answers and compute the route
-  criteria <id> add "<text>" [--kind preserve|observed]
+  criteria <id> add "<text>" [--kind preserve|observed] [--contract <mid>:<n>]   a criterion, bound to a contract of a reply in the item's mail when given
   criteria <id> remove <AC-n>           take out a criterion no test-first record or skip names
   decision <id> add "<question>" [--default "<answer>"]   a decision only the user can make (gap round)
   decide <id> D-n "<answer>"            record the user's answer (asks the user)
@@ -8969,8 +9229,8 @@ var HELP = `crew ${VERSION}
   await <id> user | role | mail <mid>   mark the turn's wait: for the user, for the roles, or for a reply to a message
   resume <id>                           clear the wait
   mail send --to <project|.> --type question|change-request|notice|blocker "<text>"   send mail inside the workspace
-      [--priority blocker|high|normal|low] [--agent <session|T-n|role>] [--item <id>] [--reply-to <mid>] [--subject <text>] [--file <path>]
-  mail inbox [--all] | read <mid> | reply <mid> "<text>" [--branch <b>] [--item <child>] [--as <role>] [--file <path>]
+      [--priority blocker|high|normal|low] [--thread <root>] [--agent <session|T-n|role>] [--item <id>] [--reply-to <mid>] [--subject <text>] [--file <path>]
+  mail inbox [--all] | read <mid> | thread <mid> | reply <mid> "<text>" [--branch <b>] [--item <child>] [--contract <kind>:<path>[:<summary>]]… [--as <role>] [--file <path>]
   mail accept <mid> [--priority <p>] [--reason "<why>"]   confirm a request's priority, or lower it with a reason (never raise)
   mail refuse <mid> --reason "<why>" | status | stop <mid>   this project's mail and the sessions it opened (status sweeps them; stop kills one)
   task <id> open T-n --criteria AC-1,AC-2 [--text "<task text>"]   hand a task of the plan to an implementer: a message, a worktree, a branch, a session

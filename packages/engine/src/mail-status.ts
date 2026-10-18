@@ -1,4 +1,15 @@
-import { isMailPriority, MAIL_PRIORITIES, type MailPriority, type Message } from "./types.ts";
+import {
+  CONTRACT_KINDS,
+  type Contract,
+  type ContractKind,
+  GATE_NAMES,
+  type GateName,
+  isMailPriority,
+  MAIL_PRIORITIES,
+  type MailPriority,
+  type Message,
+  type ReplyEvidence,
+} from "./types.ts";
 
 /** The eight statuses a record holds since 0.7.0, each with the ones it may move to (SP7 §9). */
 export type MappedStatus =
@@ -75,4 +86,59 @@ export function transition(
     !(from === "sent" && to === "done" && m.type !== "notice");
   if (!allowed) return { refused: `${m.id} is ${from}; it cannot become ${to}` };
   return { ...m, ...extra, status: to };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Readers of what another party wrote (SP7 §9): a thread, the contracts and the evidence of a
+// record come from another project's engine or from a hand, so each is validated on read.
+
+/** The shape of a message id (`newMessageId`): a day, a sequence and the sender's name. */
+export const MESSAGE_ID = /^M-\d{4}-\d{2}-\d{2}-\d{3}-[A-Za-z0-9._-]+$/;
+const SHA256 = /^[0-9a-f]{64}$/;
+
+/** The thread a message belongs to: its `thread` when it has a message id's shape, else the message itself (a root). */
+export function threadOf(m: Pick<Message, "id" | "thread">): string {
+  return typeof m.thread === "string" && MESSAGE_ID.test(m.thread) ? m.thread : m.id;
+}
+
+/** A path inside the project as written: relative, no `..` segment, no backslash, not empty. */
+export function insidePath(path: unknown): path is string {
+  return (
+    typeof path === "string" &&
+    path.length > 0 &&
+    !path.startsWith("/") &&
+    !path.includes("\\") &&
+    !path.split("/").includes("..")
+  );
+}
+
+/** The well-formed contracts of a record; anything else is dropped, never printed. */
+export function readContracts(m: Pick<Message, "contracts">): Contract[] {
+  if (!Array.isArray(m.contracts)) return [];
+  const kept: Contract[] = [];
+  for (const raw of m.contracts) {
+    if (!raw || typeof raw !== "object") continue;
+    const { kind, path, hash, summary } = raw as unknown as Record<string, unknown>;
+    if (!CONTRACT_KINDS.includes(kind as ContractKind) || typeof summary !== "string") continue;
+    if (hash !== null && (typeof hash !== "string" || !SHA256.test(hash))) continue;
+    if (kind === "clause" ? path !== null : !insidePath(path)) continue;
+    kept.push({ kind: kind as ContractKind, path: path as string | null, hash, summary });
+  }
+  return kept;
+}
+
+/** The evidence a reply carried, each field validated; null when the record carries none. */
+export function readEvidence(m: Pick<Message, "evidence">): ReplyEvidence | null {
+  const raw = m.evidence;
+  if (!raw || typeof raw !== "object") return null;
+  const { report, fingerprint, gatesPassed } = raw as unknown as Record<string, unknown>;
+  const reportInside =
+    typeof report === "string" && report.startsWith(".crew/work/") && insidePath(report);
+  return {
+    report: reportInside ? report : null,
+    fingerprint: typeof fingerprint === "string" ? fingerprint : null,
+    gatesPassed: Array.isArray(gatesPassed)
+      ? gatesPassed.filter((g): g is GateName => GATE_NAMES.includes(g as GateName))
+      : [],
+  };
 }

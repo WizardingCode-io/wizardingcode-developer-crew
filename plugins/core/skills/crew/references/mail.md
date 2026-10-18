@@ -25,6 +25,12 @@ When no session is live at the destination, the engine opens one: read-only for 
 
 A lead waiting for a task's reply runs `crew await <id> mail <message id>` once; `await user` is for a decision only a person can make. The reply clears the wait, and the inbox line at the next prompt names it.
 
+## Threads and contracts
+
+A reply joins its root's thread; `crew mail send --thread <root> --to <project> "<text>"` brings a third project in (the root's subject quoted when none is given), up to `mail.maxParties` (4, tightening to 2); parties are projects and tasks, never roles, and the sender's policy caps them. `crew mail thread <root>` prints what this project holds of a thread, oldest first, with each message's priority and status.
+
+A reply to a change request may carry contracts, checked by the engine at the branch's tip before anything is recorded: `crew mail reply <id> --branch <b> --item <child> --contract openapi:<path> --contract types:<path>[:<summary>] --contract schema:<path> --contract clause:<summary>`. The file must be on the branch (`git show`), its hash is recorded; an openapi or schema file parses as JSON or names its format; a types file is in the child's diff from its base commit; a clause is a claim the body carries under a `## Contracts` heading, and the brief says so. The reply also carries the child's evidence (its report's path, its fingerprint, the gates that passed), read from its records and printed by `crew mail read`. On the requesting side the todo's brief lists the contracts received, and `crew criteria <id> add "<text>" --contract <message id>:<n>` binds a criterion to one.
+
 ## Priorities and statuses
 
 A message's status is where the request stands, moved by the engine alone along its table: `sent` → `read` (`crew mail read`; a notice goes to `done`) → `accepted` or `refused` (the receiving lead, `crew mail accept` or `crew mail refuse`) → `in-progress` (`crew start --origin`) → `blocked` (the item's turn ends waiting: `crew await`; a session opened by mail that needs a person) and back to `in-progress` (`crew resume`) → `done` (a reply; for a change request, only one whose child item is proven: an unproven reply blocks it with the reasons). `expired` is the opener's timer. A typed word never moves a status. Records written by 0.6.0 and earlier read `answered` as `done`, `waiting-for-person` as `blocked` and `stopped` as `refused`, and are never rewritten. The report's Mail table shows each message's priority (with the proposal when it was lowered) and its status.

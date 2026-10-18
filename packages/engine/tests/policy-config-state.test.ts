@@ -190,6 +190,7 @@ test("SP2c: policy.mail has its defaults when absent and its values validated wh
     maxTurns: 40,
     maxMinutes: 30,
     worktrees: "..",
+    maxParties: 4,
   });
   mkdirSync(paths.crewDir, { recursive: true });
   const file = join(paths.crewDir, "policy.json");
@@ -219,6 +220,7 @@ test("SP2c: policy.mail has its defaults when absent and its values validated wh
     maxTurns: 40,
     maxMinutes: 30,
     worktrees: ".crew/worktrees",
+    maxParties: 4,
   });
   writeFileSync(file, JSON.stringify({ mail: { worktrees: "/abs/olute" } }));
   expect(loadPolicy(paths).policy.mail.worktrees).toBe("..");
@@ -306,7 +308,7 @@ test("SP2c: crew policy set writes the scalar mail keys, each value checked, and
   });
   expect(setPolicyValue(paths, "mail.accept", "question")).toEqual({
     refused:
-      "unknown policy key: mail.accept (crew policy set writes attendedDecisions, unattendedDecisions, mail.workspace, mail.name, mail.open, mail.maxConcurrent, mail.maxHops, mail.maxTurns, mail.maxMinutes, mail.worktrees, team.template, team.maxExperts, team.maxValidationRounds, team.maxJudgementRounds, team.maxGateRounds)",
+      "unknown policy key: mail.accept (crew policy set writes attendedDecisions, unattendedDecisions, mail.workspace, mail.name, mail.open, mail.maxConcurrent, mail.maxHops, mail.maxTurns, mail.maxMinutes, mail.maxParties, mail.worktrees, team.template, team.maxExperts, team.maxValidationRounds, team.maxJudgementRounds, team.maxGateRounds)",
   });
 });
 
@@ -397,4 +399,15 @@ test("SP7a AC-7 (Task 7): the working list keeps the newest WORKING_MAX well-sha
   expect(workingRoles(paths, Date.parse(since(59))).map((w) => w.agent)).toEqual(
     kept.map((w) => w.agent),
   );
+});
+
+test("SP7b-T2 AC-1: mail.maxParties defaults to 4 and only tightens, to 2 at the least", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  expect(loadPolicy(paths).policy.mail.maxParties).toBe(4);
+  setPolicyValue(paths, "mail.maxParties", "3");
+  expect(loadPolicy(paths).policy.mail.maxParties).toBe(3);
+  expect(setPolicyValue(paths, "mail.maxParties", "5")).toEqual({
+    refused: "mail.maxParties is a whole number from 2 to 4, not 5",
+  });
+  expect(loadPolicy(paths).policy.mail.maxParties).toBe(3);
 });

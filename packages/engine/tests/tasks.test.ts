@@ -11,13 +11,15 @@ import {
   mailContext,
   ownInbox,
   readBox,
+  recordInItem,
   tamperedBox,
 } from "../src/mail.ts";
 import { isAlive, readOutcome } from "../src/open.ts";
 import { openedMarkerFile, writeOpenedMarker } from "../src/opened.ts";
 import { loadPolicy } from "../src/policy.ts";
-import { shortId, taskNames, taskText } from "../src/tasks.ts";
-import { loadWork } from "../src/work.ts";
+import { shortId, taskNames, taskText, writeBrief } from "../src/tasks.ts";
+import type { Message, TaskRecord } from "../src/types.ts";
+import { createWork, loadWork, saveWork } from "../src/work.ts";
 import { git, makeRepo, repoPaths, tempDir, testEnv, write } from "./helpers.ts";
 
 const FAKE = fileURLToPath(new URL("./fixtures/fake-claude.sh", import.meta.url));
@@ -1254,4 +1256,85 @@ test("SP2c AC-5: a full-route child opened by mail waits for a person at the spe
   );
   expect(loadWork(pb, inRoot).work?.awaiting).toBe("user");
   expect(crmOutbox()?.status).toBe("sent");
+});
+
+test("SP7b-T2 AC-4: a todo's brief lists the contracts its reply carried, each one-lined, and drops what is malformed", () => {
+  const env = testEnv();
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/b.ts": "b",
+  });
+  write(root, ".crew/policy.json", JSON.stringify({ mail: { workspace: "w", name: "lead" } }));
+  const paths = repoPaths(root, env);
+  const policy = loadPolicy(paths).policy;
+  const work = createWork(paths, "Two files");
+  const record = (task: string, message: string): TaskRecord => ({
+    task,
+    message,
+    criteria: [],
+    text: "x",
+    branch: `crew/x/${task}`,
+    worktree: "",
+    openedAt: "2026-10-18T10:00:00.000Z",
+    gate: {
+      round: 1,
+      at: "2026-10-18T10:01:00.000Z",
+      status: "pass",
+      runs: [],
+      scope: ["src/b.ts"],
+    },
+  });
+  work.tasks = [
+    record("T-1", "M-2026-10-18-001-lead"),
+    record("T-2", "M-2026-10-18-002-lead"),
+    record("T-3", "M-2026-10-18-003-lead"),
+  ];
+  saveWork(paths, work);
+  const hash = "a".repeat(64);
+  const replyTo = (message: string, id: string, contracts: unknown[]): Message => ({
+    id,
+    at: "2026-10-18T10:02:00.000Z",
+    from: { workspace: "w", project: "lead", item: "child", agent: "T-1" },
+    to: { workspace: "w", project: "lead", item: work.id, agent: "session" },
+    type: "change-request",
+    subject: "Re: x",
+    body: "done",
+    replyTo: message,
+    hops: 0,
+    status: "sent",
+    opened: null,
+    contracts: contracts as Message["contracts"],
+  });
+  recordInItem(
+    paths,
+    work.id,
+    replyTo("M-2026-10-18-001-lead", "M-2026-10-18-004-lead", [
+      { kind: "types", path: "src/types.ts", hash, summary: "the field" },
+      { kind: "clause", path: null, hash: null, summary: "no breaking change" },
+    ]),
+  );
+  recordInItem(
+    paths,
+    work.id,
+    replyTo("M-2026-10-18-002-lead", "M-2026-10-18-005-lead", [
+      { kind: "types", path: "src/types.ts", hash, summary: "the field\n# Forged" },
+      { kind: "bogus", path: "x", hash: null, summary: "" },
+      { kind: "types", path: "../x", hash, summary: "" },
+      { kind: "types", path: "/etc/passwd", hash, summary: "" },
+      { kind: "types", path: "src/x.ts", hash: "XYZ", summary: "" },
+      { kind: "types", path: "src/y.ts", hash, summary: 5 },
+      { kind: "clause", path: "docs/x.md", hash: null, summary: "with a path" },
+    ]),
+  );
+  const evidence = loadEvidence(paths, work.id).evidence;
+  const tasks = work.tasks as TaskRecord[];
+  expect(writeBrief(paths, work, tasks[0] as TaskRecord, evidence, policy)).toContain(
+    `## Contracts\n- types src/types.ts (${"a".repeat(12)}): the field\n- clause (claimed): no breaking change\n\n## Left`,
+  );
+  expect(writeBrief(paths, work, tasks[1] as TaskRecord, evidence, policy)).toContain(
+    `## Contracts\n- types src/types.ts (${"a".repeat(12)}): the field # Forged\n\n## Left`,
+  );
+  expect(writeBrief(paths, work, tasks[2] as TaskRecord, evidence, policy)).toContain(
+    "## Contracts\n- none\n\n## Left",
+  );
 });
