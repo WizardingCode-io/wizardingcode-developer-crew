@@ -118,11 +118,26 @@ export interface Target {
   testScoped?: GateCommand;
 }
 
+/**
+ * How the project runs for a proof on localhost (SP7 §8.2): detected where the project declares it,
+ * proposed otherwise, confirmed by the user key by key. `logs` is a file or a command the e2e gate
+ * reads; `url` where the application answers.
+ */
+export interface Environment {
+  start: GateCommand;
+  health: GateCommand;
+  stop?: GateCommand;
+  logs?: string;
+  url?: string;
+  timeoutMs: number;
+}
+
 export interface Profile {
   version: 1;
   detectedAt: string;
   targets: Target[];
   watch: { exclude: string[] };
+  environment?: Environment;
 }
 
 export type Route = "fast" | "standard" | "full";

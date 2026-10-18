@@ -1,5 +1,12 @@
 import { expect, test } from "bun:test";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { type CliIo, main } from "../src/cli.ts";
 import { loadEvidence, saveEvidence } from "../src/evidence.ts";
@@ -3297,4 +3304,120 @@ test("SP7b-T2 AC-4: crew criteria add --contract binds a criterion to a contract
     message: rid,
     index: 1,
   });
+});
+
+// ---------------------------------------------------------------------------------------------
+// SP7b Task 3: the environment in the profile and crew env
+
+test("SP7b-T3 AC-2: crew profile set environment.* confirms a block key by key, crew profile confirm environment confirms a detected one, and crew env drives it with a record", async () => {
+  const root = makeRepo({ "package.json": JSON.stringify({ scripts: { test: "exit 0" } }) });
+  const c = io(root);
+  const paths = repoPaths(root, c.env);
+  const block = () => loadProfile(paths).profile?.environment;
+  const set = await c.run(
+    "profile",
+    "set",
+    "environment.start",
+    "sh -c 'touch up.flag; exec sleep 300'",
+  );
+  expect(set.out).toBe(
+    "environment.start set and confirmed: sh -c 'touch up.flag; exec sleep 300'\n",
+  );
+  expect(block()?.start).toEqual({
+    command: "sh -c 'touch up.flag; exec sleep 300'",
+    source: "confirmed",
+  });
+  const needs = 'the environment needs health (crew profile set environment.health "<cmd>")';
+  expect((await c.run("env", "start")).err.trim()).toBe(needs);
+  expect((await c.run("env", "health")).err.trim()).toBe(needs);
+  expect((await c.run("profile", "set", "environment.health", "test -f up.flag")).code).toBe(0);
+  expect((await c.run("profile", "set", "environment.stop", "rm -f up.flag")).code).toBe(0);
+  expect((await c.run("profile", "set", "environment.logs", "var/log/app.log")).out).toBe(
+    "environment.logs set: var/log/app.log\n",
+  );
+  expect((await c.run("profile", "set", "environment.url", "http://localhost:8080")).out).toBe(
+    "environment.url set: http://localhost:8080\n",
+  );
+  expect(block()).toMatchObject({ logs: "var/log/app.log", url: "http://localhost:8080" });
+  expect((await c.run("profile", "set", "environment.timeout", "0")).err.trim()).toBe(
+    "environment.timeout is at least 1 second",
+  );
+  expect((await c.run("profile", "set", "environment.timeout", "2")).out).toBe(
+    "environment.timeout set: 2 s\n",
+  );
+  expect(block()?.timeoutMs).toBe(2000);
+  const started = await c.json("env", "start");
+  expect(started.code).toBe(0);
+  const pid = started.data.pid as number;
+  const log = started.data.log as string;
+  expect(typeof pid).toBe("number");
+  expect(log).toContain(join(root, ".crew", "local", "env"));
+  expect(started.data).toMatchObject({ started: true, managed: true, pid, log });
+  expect(started.data.message).toBe(
+    `environment up (started by the engine, pid ${pid}, log ${log})`,
+  );
+  const status = await c.json("env", "status");
+  const since = status.data.since as string;
+  expect(typeof since).toBe("string");
+  expect(status.data).toMatchObject({ state: "up", managed: true, pid, since });
+  expect(status.data.message).toBe(
+    `environment: up, started by the engine (pid ${pid}, since ${since})`,
+  );
+  const health = await c.json("env", "health");
+  expect(health.code).toBe(0);
+  expect(health.data).toMatchObject({ message: "up", up: true, exit: 0 });
+  const stopped = await c.json("env", "stop");
+  expect(stopped.data).toMatchObject({
+    message: `environment stopped (pid ${pid})`,
+    stopped: true,
+    pid,
+  });
+  const down = await c.run("env", "health");
+  expect(down.code).toBe(1);
+  expect(down.out).toBe("down (exit 1)\n");
+  expect((await c.run("env", "stop")).err.trim()).toBe(
+    "nothing was started by the engine (crew env start)",
+  );
+  // Without an environment in the profile.
+  const bare = io(makeRepo());
+  const none = 'no environment in the profile (crew profile set environment.start "<cmd>")';
+  const noneStatus = await bare.json("env", "status");
+  expect(noneStatus.code).toBe(0);
+  expect(noneStatus.data).toMatchObject({ message: none, state: "none" });
+  expect((await bare.run("env", "start")).err.trim()).toBe(none);
+  // A detected block, confirmed in one step.
+  const composed = makeRepo({
+    "compose.yaml": "services:\n  web:\n    image: x\n",
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+  });
+  const cc = io(composed);
+  await cc.run("detect");
+  expect((await cc.run("profile", "confirm", "environment")).out).toBe(
+    "confirmed 3 command(s)\n  environment.start: docker compose up -d\n  environment.health: curl -fsS http://localhost:3000/\n  environment.stop: docker compose down\n",
+  );
+  const confirmed = loadProfile(repoPaths(composed, cc.env)).profile?.environment;
+  expect(confirmed?.start.source).toBe("confirmed");
+  expect(confirmed?.health.source).toBe("confirmed");
+  expect(confirmed?.stop?.source).toBe("confirmed");
+});
+
+test("SP7b-T3 AC-3: crew env on the user's environment: nothing started, never stopped, down when it dies", async () => {
+  const root = makeRepo();
+  const c = io(root);
+  await c.run("profile", "set", "environment.start", "sh -c 'touch up.flag; exec sleep 300'");
+  await c.run("profile", "set", "environment.health", "test -f up.flag");
+  await c.run("profile", "set", "environment.stop", "rm -f up.flag");
+  write(root, "up.flag", "");
+  const started = await c.json("env", "start");
+  expect(started.data).toMatchObject({
+    message: "environment already up (the user's); nothing started",
+    started: false,
+    managed: false,
+  });
+  expect((await c.run("env", "status")).out).toBe("environment: up (the user's)\n");
+  expect((await c.run("env", "stop")).err.trim()).toBe(
+    "the environment was up before crew env start: it is the user's, and the engine never stops it",
+  );
+  unlinkSync(join(root, "up.flag"));
+  expect((await c.run("env", "status")).out).toBe("environment: down\n");
 });

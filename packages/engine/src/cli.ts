@@ -10,7 +10,15 @@ import {
   listDecisions,
   registerTampered,
 } from "./decisions.ts";
+import { ENVIRONMENT_TIMEOUT_MS } from "./detect/environment.ts";
 import { detectProfile, missingTestCommands } from "./detect/index.ts";
+import {
+  checkHealth,
+  type EnvStatus,
+  envStatus,
+  startEnvironment,
+  stopEnvironment,
+} from "./environment.ts";
 import {
   countedNote,
   decidedBy,
@@ -118,6 +126,7 @@ import { plannedSeats, primaryTeam } from "./team.ts";
 import type {
   Criterion,
   Decision,
+  Environment,
   Evidence,
   GateName,
   JudgementGateName,
@@ -205,6 +214,7 @@ const KNOWN_FLAGS: Record<string, readonly string[]> = {
   skip: ["reason", "mode"],
   evidence: [],
   status: [],
+  env: [],
   task: ["criteria", "text", "scope", "force", "mode"],
   mail: [
     "to",
@@ -613,6 +623,54 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       if (sub === "set" || sub === "confirm") {
         const refused = tamperRefusal(env);
         if (refused) return refused;
+      }
+      if (sub === "set" && gate?.startsWith("environment.")) {
+        // The environment, key by key (SP7 §8.2): a command is confirmed as it is set, a value is
+        // taken as given; a block absent is created around the key, start and health still to come.
+        const key = gate.slice("environment.".length);
+        if (!ENVIRONMENT_KEYS.includes(key as EnvironmentKey) || !cmd)
+          return refuse(
+            'usage: crew profile set environment.<start|health|stop|logs|url|timeout> "<value>"',
+          );
+        const block: Environment = env.profile.environment ?? {
+          start: { command: "", source: "proposed" },
+          health: { command: "", source: "proposed" },
+          timeoutMs: ENVIRONMENT_TIMEOUT_MS,
+        };
+        let printed: string;
+        if (key === "timeout") {
+          const seconds = Number(cmd);
+          if (!Number.isFinite(seconds) || seconds < 1)
+            return refuse("environment.timeout is at least 1 second");
+          block.timeoutMs = Math.round(seconds * 1000);
+          printed = `environment.timeout set: ${seconds} s`;
+        } else if (key === "logs" || key === "url") {
+          block[key] = cmd;
+          printed = `environment.${key} set: ${cmd}`;
+        } else {
+          block[key as "start" | "health" | "stop"] = { command: cmd, source: "confirmed" };
+          printed = `environment.${key} set and confirmed: ${cmd}`;
+        }
+        env.profile.environment = block;
+        saveProfile(env.paths, env.profile);
+        return ok(printed, { environment: block });
+      }
+      if (sub === "confirm" && gate === "environment") {
+        const block = env.profile.environment;
+        if (!block) return refuse(NO_ENVIRONMENT);
+        const confirmed: string[] = [];
+        for (const key of ["start", "health", "stop"] as const) {
+          const command = block[key];
+          if (command?.source === "proposed" && command.command.trim()) {
+            command.source = "confirmed";
+            confirmed.push(`environment.${key}: ${command.command}`);
+          }
+        }
+        saveProfile(env.paths, env.profile);
+        return ok([`confirmed ${confirmed.length} command(s)`, ...confirmed].join("\n  "), {
+          confirmed: confirmed.length,
+          commands: confirmed,
+        });
       }
       if (sub === "set" && gate === "testScoped") {
         // The scoped test template of a target (SP7 §8.1): the user's, confirmed as it is set.
@@ -1830,6 +1888,49 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         continued: opened.work.continued,
       });
     }
+    case "env": {
+      // The project's environment (SP7 §8.2): started, checked, stopped and read by the engine.
+      const verb = args[0];
+      if (verb !== "start" && verb !== "health" && verb !== "stop" && verb !== "status")
+        return refuse("usage: crew env start | health | stop | status");
+      const environment = env.profile.environment;
+      if (!environment)
+        return verb === "status"
+          ? ok(NO_ENVIRONMENT, { state: "none", managed: null, pid: null, since: null })
+          : refuse(NO_ENVIRONMENT);
+      const missing = (["start", "health"] as const).find((k) => !environment[k].command.trim());
+      if (missing)
+        return refuse(
+          `the environment needs ${missing} (crew profile set environment.${missing} "<cmd>")`,
+        );
+      if (verb === "start") {
+        const out = await startEnvironment(env.paths, environment);
+        if ("refused" in out) return refuse(out.refused);
+        return ok(
+          out.started
+            ? `environment up (started by the engine, pid ${out.pid}, log ${out.log})`
+            : "environment already up (the user's); nothing started",
+          { ...out },
+        );
+      }
+      if (verb === "health") {
+        const health = await checkHealth(env.paths, environment);
+        if (health.up) return ok("up", { up: true, exit: health.exit });
+        return {
+          code: 1,
+          text: `down (exit ${health.exit})`,
+          data: { up: false, exit: health.exit },
+          stdout: true,
+        };
+      }
+      if (verb === "stop") {
+        const out = await stopEnvironment(env.paths, environment);
+        if ("refused" in out) return refuse(out.refused);
+        return ok(`environment stopped (pid ${out.pid})`, { ...out });
+      }
+      const status = await envStatus(env.paths, environment);
+      return ok(statusLine(status), { ...status });
+    }
     case "status": {
       const active = activeWork(env.paths);
       if (!active?.work) return ok("no active work item", { active: null });
@@ -2214,6 +2315,18 @@ function evidenceLine(m: Message): string[] {
   ];
 }
 
+/** The line `crew env status` prints: down, or up and who started it. */
+function statusLine(status: EnvStatus): string {
+  if (status.state === "down") return "environment: down";
+  if (status.managed === true)
+    return `environment: up, started by the engine (pid ${status.pid}, since ${status.since})`;
+  return status.managed === false ? "environment: up (the user's)" : "environment: up";
+}
+
+const ENVIRONMENT_KEYS = ["start", "health", "stop", "logs", "url", "timeout"] as const;
+type EnvironmentKey = (typeof ENVIRONMENT_KEYS)[number];
+const NO_ENVIRONMENT = 'no environment in the profile (crew profile set environment.start "<cmd>")';
+
 /** The user's settings live in their home folder, so these work in any folder. */
 function settings(command: "mode" | "config", args: string[], user: { userDir: string }): Outcome {
   const config = loadConfig(user);
@@ -2253,6 +2366,9 @@ const HELP = `crew ${VERSION}
   profile set <gate> "<cmd>" [--target p] [--stack s] [--timeout m]  set a gate command, confirmed in one step (asks the user); m minutes
   profile set <gate> "<cmd>" --force    replace a command a person already confirmed (asks the user)
   profile confirm [<gate>]              confirm commands the detector only guessed (asks the user)
+  profile set environment.<start|health|stop|logs|url|timeout> "<value>"   the project's environment, key by key (asks the user)
+  profile confirm environment           confirm the environment the detector proposed (asks the user)
+  env start | health | stop | status    start the environment (detached, recorded, health awaited), check it, stop what the engine started, say where it stands
   policy accept                         trust the current policy.json after a hand edit (asks the user)
   policy set <key> <value>              attendedDecisions prompt|relay, unattendedDecisions wait|count|validator, mail.workspace|name|open|maxConcurrent|maxHops|maxTurns|maxMinutes|maxParties|worktrees (asks the user)
   accept <id|profile|policy>            trust state changed outside the engine (asks the user)

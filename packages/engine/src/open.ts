@@ -448,7 +448,7 @@ const KILL_STEP_MS = 50;
  * member that ignored the request, a tool's child, goes with it), so "stopped" is true when it is
  * recorded. The wait blocks this process: the command or the hook that stops a session.
  */
-function killGroup(pid: number): void {
+export function killGroup(pid: number): void {
   const signal = (name: NodeJS.Signals): void => {
     try {
       process.kill(-pid, name);

@@ -3,7 +3,8 @@ import { join, relative } from "node:path";
 import { nowIso } from "../fs.ts";
 import { matchesAny } from "../glob.ts";
 import { SKIP_DIRS } from "../skip-dirs.ts";
-import type { GateCommand, GateName, Profile, Target } from "../types.ts";
+import type { Environment, GateCommand, GateName, Profile, Target } from "../types.ts";
+import { confirmedEnvironment, detectEnvironment, environmentChanges } from "./environment.ts";
 import { nodeDetector } from "./node.ts";
 import { phpDetector } from "./php.ts";
 import { pythonDetector } from "./python.ts";
@@ -95,7 +96,11 @@ export function detectTargets(root: string): Target[] {
  * Fresh detection never discards what a person proposed or confirmed: their commands stay on a
  * re-detected target, and a target no detector finds (a Makefile folder set by hand) stays whole.
  */
-export function mergeProfile(previous: Profile | null, detected: Target[]): Profile {
+export function mergeProfile(
+  previous: Profile | null,
+  detected: Target[],
+  environment: Environment | null = null,
+): Profile {
   const targets = detected.map((t) => ({ ...t, gates: { ...t.gates } }));
   if (previous) {
     for (const target of targets) {
@@ -115,16 +120,24 @@ export function mergeProfile(previous: Profile | null, detected: Target[]): Prof
       if (!found && theirs) targets.push({ ...old, gates: { ...old.gates } });
     }
   }
+  // The environment the user confirmed outlives the detection whole, as a confirmed gate does;
+  // a proposed one follows what the project declares now (SP7 §8.2).
+  const kept =
+    previous?.environment && confirmedEnvironment(previous.environment)
+      ? previous.environment
+      : (environment ?? undefined);
   return {
     version: 1,
     detectedAt: nowIso(),
     targets,
     watch: watchOf(previous),
+    ...(kept ? { environment: kept } : {}),
   };
 }
 
 export function detectProfile(root: string, previous: Profile | null = null): Profile {
-  return mergeProfile(previous, detectTargets(root));
+  const targets = detectTargets(root);
+  return mergeProfile(previous, targets, detectEnvironment(root, targets));
 }
 
 /**
@@ -157,6 +170,7 @@ export function profileChanges(previous: Profile, next: Profile): string[] {
   for (const old of previous.targets)
     if (!next.targets.some((t) => same(t, old)))
       lines.push(`target (${old.path}, ${old.stack}): removed`);
+  lines.push(...environmentChanges(previous.environment, next.environment));
   return lines;
 }
 

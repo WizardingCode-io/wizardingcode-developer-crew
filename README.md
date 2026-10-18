@@ -35,6 +35,8 @@
 
 Requirement: Node.js 20 or later on `PATH` (the hooks and the `crew` command run on it). Development uses Bun.
 
+The profile may also hold the project's environment (start, health, stop, logs, url), detected from a compose file, a Laravel `artisan`, a Makefile target or a `package.json` script and proposed for the user to confirm (`crew profile set environment.<key>`, `crew profile confirm environment`); `crew env start | health | stop | status` drive it, and an environment the user already had running is never stopped by the engine.
+
 ## Where state lives
 
 - **`.crew/` in the repository.** Crew is active in a git repository, or in a folder that already holds `.crew/` (`crew detect` creates it); anywhere else it stays silent.

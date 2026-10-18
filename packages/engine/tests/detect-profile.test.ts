@@ -170,3 +170,14 @@ test("re-detection upgrades a watch list that is still an earlier default and ke
   };
   expect(detectProfile(dir, custom).watch.exclude).toEqual(["**/*.md", "generated/**"]);
 });
+
+test("SP7b-T3 AC-1: refreshProfile picks up a compose file as the environment and names the change", () => {
+  const root = makeRepo({ "package.json": JSON.stringify({ scripts: { test: "exit 0" } }) });
+  const paths = repoPaths(root, testEnv());
+  const { profile } = ensureProfile(paths);
+  expect(profile.environment).toBeUndefined();
+  write(root, "compose.yaml", 'services:\n  web:\n    image: x\n    ports:\n      - "8080:80"\n');
+  const refreshed = refreshProfile(paths, profile);
+  expect(refreshed.changed).toContain("environment.start (.): docker compose up -d");
+  expect(loadProfile(paths).profile?.environment?.url).toBe("http://localhost:8080");
+});
