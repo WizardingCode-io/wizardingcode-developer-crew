@@ -44,6 +44,7 @@ const SANDBOX_TAGS = [
   "kind",
   "validator",
   "judgement",
+  "team",
 ];
 const COMMON = [
   "plugin",

@@ -52,9 +52,15 @@ const CASES = [
   "mail-question-between-projects",
   "task-implementer-worktree",
   "mail-refused-by-policy",
+  "team-by-route",
+  "gate-scoped-to-change",
+  "brief-per-todo",
+  "decision-register-reread",
+  "personalities-differ",
+  "rounds-bounded",
 ];
 
-test("SP2c: the seventeen cases each have their four parts, and the fixtures they share exist", () => {
+test("SP2c: the twenty-three cases each have their four parts, and the fixtures they share exist", () => {
   const folders = readdirSync(EVALS)
     .filter((f) => !["README.md", "fixtures", "results"].includes(f))
     .sort();
@@ -91,7 +97,9 @@ test("SP2c: the seventeen cases each have their four parts, and the fixtures the
   for (const grant of ["Bash(cd *)", "Bash(env *)", "Bash(claude *)"])
     expect(args).toContain(grant);
   // The sandbox run skips the cases that need a real opener (spike A6): the suite filters by the sandbox tags.
-  expect(args).toContain("--tag cost enforcement method risk stacks gap kind validator judgement");
+  expect(args).toContain(
+    "--tag cost enforcement method risk stacks gap kind validator judgement team",
+  );
   expect(args).not.toContain("needs-real-opener");
 });
 
@@ -125,3 +133,35 @@ test("SP2c: every fixture scaffolds under sh into a committed repository, with t
     rmSync(home, { recursive: true, force: true });
   }
 }, 120_000);
+
+test("SP7a AC-8 (Task 8): every fixture stays inside the scaffold: no home, no absolute or parent path, no global git config, no network, no package install", () => {
+  // The spec's scope (SP7a Task 8, AC-2): the six team cases and the shared fixture they source. The
+  // older cases source other shared fixtures (two-projects.sh, node-ts.sh, makefile.sh), outside this check.
+  const TEAM_CASES = CASES.slice(-6);
+  const files = [
+    `${EVALS}fixtures/node-plain.sh`,
+    ...TEAM_CASES.map((name) => `${EVALS}${name}/fixture.sh`),
+  ];
+  // The one permitted parent path: sourcing the shared fixture beside the case, inside the evals tree.
+  const sourcing = '. "$(dirname "$0")/../fixtures/node-plain.sh"';
+  const forbidden = [
+    /cd \//,
+    /(^|[\s"'=])~(\/|$|[\s"'])/,
+    /\$HOME/,
+    /git config --global/,
+    /\bcurl\b/,
+    /\bwget\b/,
+    /\bnpm i(nstall)?\b/,
+  ];
+  for (const file of files) {
+    const lines = readFileSync(file, "utf8")
+      .split("\n")
+      .filter((line) => line.trim() !== sourcing);
+    for (const line of lines) {
+      for (const pattern of forbidden) expect(`${file}: ${line}`).not.toMatch(pattern);
+      // A relative import written into the scaffold (`from "../src/x.mjs"`) stays inside the scaffolded project.
+      if (line.includes("../") && !/^\s*import\b.*from ["']\.\.\//.test(line))
+        throw new Error(`${file}: a parent path outside an import: ${line}`);
+    }
+  }
+});

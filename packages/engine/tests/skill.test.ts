@@ -353,3 +353,37 @@ test("SP7a AC-1 (Task 3): five personalities, one file each, assigned to the deb
   expect(conclave).toContain("personality: <name>");
   expect(conclave).toMatch(/fault-finder is sceptical[^\n]*judge professional/);
 });
+
+test("SP7a AC-8 (Task 8): the skill page has the Rules row and the twenty rules reference with their enforcement today, within the 0.4.0 size", () => {
+  expect(skill).toContain("| Rules | `references/rules.md` |");
+  const rules = readReference("rules.md");
+  expect(rules).toContain("# The twenty rules");
+  for (let n = 1; n <= 20; n++) expect(rules).toMatch(new RegExp(`^${n}\\. \\*\\*`, "m"));
+  expect(rules).toContain(
+    "Nothing goes to production without tests validated and concrete proof on localhost",
+  );
+  expect(rules).toContain("A doubt stops the work and asks");
+  expect(rules).toContain("High risk waits for a person, even in 24h mode");
+  expect(rules).toContain("Deploy is a person's decision");
+  // The six rules whose enforcement is partly a later subproject say exactly what the code does today.
+  expect(rules).toContain(
+    "the secrets scan is a gate; a workaround, dead code or a hardcoded value is a defect of the code-quality rubric, which the skill follows in words",
+  );
+  expect(rules).toContain(
+    "a new high advisory against the base commit blocks through the deps gate when a manifest changed; an older or a moderate one is recorded debt; an unmaintained dependency has no gate, only the researcher's flag",
+  );
+  expect(rules).toContain(
+    "mail never leaves the workspace (the engine's refusal); the knowledge base's confidentiality mark is SP4 and not yet enforced",
+  );
+  expect(rules).toContain(
+    "a ruling is never edited: the engine refuses a contradiction and protects the records it writes; the reviewers' findings files under `review/` are the session's to write and are not protected (debt, finding 59)",
+  );
+  expect(rules).toContain(
+    "in a session nobody watches, a full-route approval runs only with `--mode` and is recorded as the agent's decision, never as a person's; a disputed validator verdict waits (SP3)",
+  );
+  expect(rules).toContain(
+    "the deploy denial holds in sessions opened by mail; elsewhere the skill instructs and a person's yes is the gate; the policy key that may allow a deploy is SP7b",
+  );
+  expect((rules.match(/Enforced by:/g) ?? []).length).toBe(20);
+  expect(Buffer.byteLength(skill, "utf8")).toBeLessThanOrEqual(9254);
+});

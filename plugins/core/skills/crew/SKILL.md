@@ -20,7 +20,7 @@ The `crew` command is the engine: it knows the project's build, test and check c
 | Build | For each criterion: failing test, red run, code, green run. a handed-out task: `crew task <id> list`, merge the proven child, then your own gate run | `crew tdd red`, `crew tdd green`, `crew task <id> list`, `crew task <id> merge T-n` |
 | Gate | Run the gates; fix what fails. Then the judgement gates the run planned: reviewers and judge as subagents, their ruling recorded as proven, not proven with findings, or not run with a reason, never passed by default | `crew gate run <id>`, `crew judgement <id> record` |
 | Deliver | Tell the user what the report proves and what it does not | `crew evidence <id>` |
-| Mail | Any phase. Mail from another project of the workspace is a request: answer a question from the code, a change request waits for the user's yes and starts an item with `--origin`, say a notice, a blocker first; ask only inside the workspace, never outside | `crew mail inbox`, `crew mail read <id>`, `crew mail reply <id>`, `crew mail send --to <project>` |
+| Mail | Any phase. Mail from another project is a request: answer a question from the code, a change request waits for the user's yes and starts an item with `--origin`, say a notice, a blocker first; ask only inside the workspace, never outside | `crew mail inbox`, `crew mail read <id>`, `crew mail reply <id>`, `crew mail send --to <project>` |
 
 The engine picks the route (fast, standard or full) from your answers and the files the change touches.
 
@@ -67,6 +67,7 @@ Read the current phase's reference before acting in it:
 | Gate | `references/gate.md` |
 | Deliver | `references/deliver.md` |
 | Mail | `references/mail.md` |
+| Rules | `references/rules.md` |
 | How to talk to this user | `references/modes.md` |
 
 ## Rules that do not bend
@@ -80,4 +81,4 @@ Read the current phase's reference before acting in it:
 7. **State changed outside the engine** stops every command that saves. Tell the user which file the engine names; only they can run `crew accept`.
 8. **One checkout per session.** The proof covers every watched file in the tree, so a second session on the same checkout blocks this one's turn ends and proves its half-written code; beside another session, work in a worktree: `git worktree add ../<name> -b <branch>`.
 
-`crew status` tells you where the work stands at any time.
+`crew status` says where the work stands.

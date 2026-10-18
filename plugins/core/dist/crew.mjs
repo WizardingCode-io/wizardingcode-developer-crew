@@ -7205,7 +7205,7 @@ async function recordTdd(paths, work, evidence, profile, criterionId, step, over
 }
 
 // packages/engine/src/version.ts
-var VERSION = "0.5.1";
+var VERSION = "0.6.0";
 
 // packages/engine/src/cli.ts
 var KNOWN_FLAGS = {

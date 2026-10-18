@@ -496,3 +496,60 @@ Verdicts agree at every effort. Upheld findings: `high` reproduced Task 6's and 
 - Expected: taken in Task 8's close or the first hardening item of SP7a, red first.
 - Evidence: the item's `review/ruling.round1.json`, `review/code-quality.round1.md`, `review/test-quality.round1.md`, `review/ruling.round2.json`, `review/code-quality.round2.md`, `review/test-quality.round2.md`, `conclave/lead-qa.round1.md`, `conclave/lead-qa.round2.md`, `conclave/lead-security.round1.md`.
 - Outcome: open.
+
+### 59. The reviewers' findings files under `review/` are not protected by the engine
+
+- Date: 2026-10-18. Project: this repository. Item: `2026-10-17-016`. Category: `silent`. Severity: medium.
+- What happened: the security lead's validation of the Task 8 spec read `packages/engine/src/paths.ts`: the engine protects `work.json`, `evidence.json` (where the rulings live), `objections.json`, `mail.json`, `report.md`, `logs/` and the project's `decisions.json`, and the PreToolUse hook denies a direct write to them; the reviewers' findings files (`review/<gate>.findings.md`) are not in that list, so a session could edit a reviewer's answer before the judge reads it and nothing would refuse. The skill's rule 2 forbids it in words; the engine does not enforce it. Under the installed 0.4.0 plugin the session writes those files itself (the hook does not file them, #49), which is why the gap is live today.
+- Expected: the SubagentStop hook files the answers (0.5.0 and later) and the engine protects `review/*.findings.md` once written (a hand edit refused like the ledger's, or the judge's ruling recording the files' hashes); the rules reference says today's state exactly (rule 14).
+- Evidence: `conclave/lead-security.round1.md` of the item, R-4; `packages/engine/src/paths.ts`.
+- Outcome: open.
+
+### 60. The fast-route overhead is 2.11× against the 2.03× acceptance
+
+- Date: 2026-10-18. Project: this repository. Item: `2026-10-17-016`. Category: `cost`. Severity: medium.
+- What happened: the SP7a eval run measured the fast-route overhead at 2.11× (with 0.2801 USD, without 0.1330 USD, three runs each; 10–11 turns against 3), above the 2.03× floor of 0.5.1 that SP7a's acceptance said would not rise. The fast item did the same work as before (`no-role-launched` fired 3/3: no role on the fast route) and the skill page stayed at 9253 bytes; what grew is the plugin's fixed context: five agent descriptions joined in SP7a (review-architecture, review-data, review-infra, tech-lead, cto), and every description costs every session (#33).
+- Expected: the agents' descriptions trimmed to their frontmatter minimum, or the pack model of SP6 (the agents a workspace installs, not all of them); measured again in the next run. Nothing of the skill or the agents changed in this item for it (one release at the close).
+- Evidence: `docs/evals/2026-10-18-sp7a-results.md`, the overhead paragraph; `bun scripts/eval-overhead.ts` over the run's `last.json`.
+- Outcome: open.
+
+### 61. The skill page does not lead a two-change request into the todo loop
+
+- Date: 2026-10-18. Project: this repository. Item: `2026-10-17-016`. Category: `silent`. Severity: medium.
+- What happened: `brief-per-todo` asked for two changes "as two todos, one after the other, in this checkout"; all three plugin runs made two work items (`crew start` twice), proved each on its own and never ran `crew task note`, `crew task gate` or `crew task brief` (the three with-only graders 0/3; one run took 54 turns). `gate-scoped-to-change` asked for "one todo" and no todo gate ran there either (its fixture's defect aside). The todo loop lives in `references/plan.md` and `build.md`; the method table on the skill page says nothing of it, and "in this checkout" reads to the agent as "a new item", not "an inline todo of this plan".
+- Expected: the method table's Plan or Build row names the todo loop in one clause (within the 9254-byte ceiling, paid for elsewhere), or the plan reference says when a request's parts are todos of one item and when they are items; the case re-run after the change. Hardening item or SP7b.
+- Evidence: `docs/evals/2026-10-18-sp7a-results.md`, the brief-per-todo row and paragraph.
+- Outcome: open.
+
+### 62. The conclave's debate did not run in the sandbox; the personalities were not exercised
+
+- Date: 2026-10-18. Project: this repository. Item: `2026-10-17-016`. Category: `silent`. Severity: medium.
+- What happened: `personalities-differ` left a storage design to "the team's debate"; of three plugin runs, one recorded `personality: conservative` and none recorded creative or adventurous; one run turned the choice into decision D-1 for the absent user and stopped; two built a design and reported proven with no debate in the ending (`proposals-differ` FAIL). Either the agent did not open the debate (the gap round found "a decision with consequences" and waited for the user instead of debating, as the conclave reference allows), or the debate roles ran and the sandbox's SubagentStop hook filed nothing (#40), so no `personality:` header reached the trace. The personalities of Task 3 are therefore unmeasured by this case.
+- Expected: the conclave reference says that a choice the user left to the team is debated, not asked (the user's words are the decision to debate); the hook's filing in the sandbox checked (#40); the case re-run.
+- Evidence: `docs/evals/2026-10-18-sp7a-results.md`, the personalities-differ row and paragraph.
+- Outcome: open.
+
+### 63. The SP7a suite run cost 38.80 USD against the plan's estimate of about 25
+
+- Date: 2026-10-18. Project: this repository. Item: `2026-10-17-016`. Category: `friction`. Severity: low.
+- What happened: the six team cases run the leads, the reviewers and the judge as subagents at 0.8 to 1.2 USD per plugin run (three runs each, two arms), `brief-per-todo` and `decision-register-reread` open two items per run, and one `brief-per-todo` run spent 54 turns; the suite took 2414 s and 38.80 USD, under the 40 USD cap (`partial: false`) but 1.5× the estimate. The two case re-runs of this item add to it.
+- Expected: the README's cost line says 35 to 40 USD for the twenty cases; the cap is raised to 60 or the team cases run once by default (`runs: 1` in their prompts' frontmatter, as `fast-route-overhead` runs 3 on purpose) when the suite is a check rather than a measurement.
+- Evidence: the run's `aggregate-result.json` (`costUsd`, `durationSeconds`).
+- Outcome: open.
+
+### 64. The eval sandbox denied Bash to some sessions, in both arms
+
+- Date: 2026-10-18. Project: this repository. Item: `2026-10-17-016`. Category: `friction`. Severity: medium.
+- What happened: two plugin runs of `unknown-stack` never called Bash and left the file unfixed with an empty ending (the case passed 1.00 in SP2c with the same files); one `gap-redirect-target` run ended with "the session now denies Bash, and the crew commands need it"; several baseline runs say "Bash was denied in this session (don't-ask mode)" or "git failed on a sandbox restriction". The single re-run of `decision-register-reread` after the suite hit the same denial: ten turns, nothing built, the ending saying Bash was denied. The `--allow-tools` list is the SP2c one; the denial is the sandbox's permission mode in those sessions, not the plugin's. The runs count against the arm they fell in.
+- Expected: the eval runner's grants and the sandbox mode checked against Claude Code 2.1.302 (the version of this run); a run whose session denied Bash is marked in the results note, as here, and excluded from the method's figures.
+- Evidence: `docs/evals/2026-10-18-sp7a-results.md`, the unknown-stack and gap-redirect-target rows; the runs' traces under the kept temp dirs.
+- Outcome: open.
+
+### 65. Debt of SP7a Task 8 (`2026-10-17-016`): the judge's advisories
+
+- Date: 2026-10-18. Project: this repository. Category: `docs`. Severity: low.
+- What happened: the item that brought the rules reference, the six team evals, the eval run's records and the release 0.6.0 went through one judgement round (both gates proven, no defect) and left sixteen advisories, recorded here under the user's bounded-round rule. Code quality: `team-by-route/graders/validators-exist.md` checks `validEmail` only (match both validators as `brief-per-todo`'s `functions-exist` does); `no-role-launched.md` has no recorded positive control (point the pattern without its lookahead at a team case once and record the match); four fixtures are the same five lines apart from the comment (a `commit` helper in `node-plain.sh` when a fifth arrives); `CASES.slice(-6)` couples the fixtures' confinement test to the list's order (an explicit `TEAM_CASES` list); the confinement test mixes `expect` with a thrown error; the `9254` ceiling in `skill.test.ts` is a bare number (name it); `cap-respected.md` accepts the proven-first-ruling outcome as well as the refusal (a regex grader on the refusal line when the cap is what the case measures). Test quality: the team cases' behaviour lives in `with-only` indicators, as the suite's convention has it since SP1b, so `brief-per-todo` and `team-by-route` score on the code check and the ending alone (a scored llm grader on the ending per case would make the behaviour count, a change of the convention to decide with finding 61); `ruling-recorded.md` (`crew judgement … record`) and `register-read.md` (`crew decisions`) match text the references carry too, so they would fire on a read of the reference if tool results enter the trace (anchor on `record --ruling`, on the command as run); `quotes-decision.md` joins two accepted answers; the six rule sentences are pinned anywhere in `rules.md`, not under their numbers; the confinement test has no negative control, covers absolute paths through `cd /` only and does not assert the `git -c` identity.
+- Also seen: the eval kit's llm graders take no `target` key (the plan's `target: trace|last_message` on llm graders was rejected: "Unrecognized key(s) in object: 'target'"), so an llm grader judges the final message only; a trace-level judgement needs a regex grader. The `claude plugin eval --case` run writes its results to a timestamped folder only, not to `last.json`. The engine target's `bun test` flaked once more on the #55 lock test in this item's gate run (17.9 s against 15 s); the rerun passed.
+- Expected: taken in the first hardening item of SP7a or SP7b, red first.
+- Evidence: the item's `review/ruling.round1.json`, `review/code-quality.round1.md`, `review/test-quality.round1.md`.
+- Outcome: open.
