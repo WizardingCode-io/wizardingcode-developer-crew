@@ -12,6 +12,8 @@ let status = null
 let error = null
 // The last answer of `crew mail inbox --json`, fetched for the panel alone, or null
 let inbox = null
+// The last answer of `crew workspace status --json`, fetched for the panel alone, or null (SP7b Task 6)
+let workspace = null
 
 export function register(on) {
   on('session.start', async ($, e, next) => {
@@ -46,12 +48,25 @@ export function register(on) {
   on('command.run', { command: 'crew' }, async ($, e) => {
     const words = (e.args || '').trim().split(/\s+/).filter(Boolean)
     const verb = words[0] || 'status'
-    if (verb !== 'status' && verb !== 'panel' && verb !== 'mail' && verb !== 'todo' && verb !== 'team' && verb !== 'mode') {
-      return { text: 'Crew: unknown verb; use /crew [status|panel|mail|todo|team|mode <partner|guide|pilot>]' }
+    if (!['status', 'panel', 'mail', 'todo', 'team', 'workspace', 'thread', 'brief', 'mode'].includes(verb)) {
+      return { text: 'Crew: unknown verb; use /crew [status|panel|mail|todo|team|workspace|thread <id>|brief T-n|mode <partner|guide|pilot>]' }
+    }
+    // The workspace, a thread and a todo's brief come from the engine's own commands (SP7b Task 6).
+    if (verb === 'workspace') return { text: crewText(await runCrew($, ['workspace', 'status'])) }
+    if (verb === 'thread') {
+      if (!words[1]) return { text: 'Crew: /crew thread needs a message id' }
+      return { text: crewText(await runCrew($, ['mail', 'thread', words[1]])) }
+    }
+    if (verb === 'brief') {
+      if (!words[1]) return { text: 'Crew: /crew brief needs a task (T-n)' }
+      await refresh($)
+      if (!hasWork()) return { text: 'Crew: no active work item. A change starts with the crew skill.' }
+      return { text: crewText(await runCrew($, ['task', status.active, 'brief', words[1], '--print'])) }
     }
     if (verb === 'panel') {
       await refresh($)
       await refreshInbox($)
+      await refreshWorkspace($)
       let placed
       try {
         placed = await $.ui.open({ id: PANE, title: 'Crew', focus: true, closeOnEscape: true })
@@ -80,14 +95,8 @@ export function register(on) {
       await refresh($)
       return { text: teamText() }
     }
-    if (verb === 'mail') {
-      const answer = await runCrew($, ['mail', 'inbox'])
-      return { text: 'Crew: ' + ((answer && answer.message) ? answer.message : 'crew gave no answer') }
-    }
-    if (verb === 'mode') {
-      const answer = await runCrew($, ['mode', ...words.slice(1)])
-      return { text: 'Crew: ' + ((answer && answer.message) ? answer.message : 'crew gave no answer') }
-    }
+    if (verb === 'mail') return { text: crewText(await runCrew($, ['mail', 'inbox'])) }
+    if (verb === 'mode') return { text: crewText(await runCrew($, ['mode', ...words.slice(1)])) }
     await refresh($)
     return { text: statusText() }
   })
@@ -131,6 +140,7 @@ function paneTree($, e) {
         onPress: async () => {
           await refresh($)
           await refreshInbox($)
+          await refreshWorkspace($)
           redraw()
         },
       }),
@@ -193,11 +203,19 @@ function paneTree($, e) {
       lines.push(Text({ dimColor: true, children: ['Tasks'] }))
       for (const t of status.tasks) lines.push(Text({ children: [taskText(t)] }))
     }
-    if (status.mail) {
+    if (Array.isArray(status.threads)) {
+      lines.push(Text({ children: ['Mail: ' + threadsLine()] }))
+      for (const t of status.threads) lines.push(Text({ children: [threadRow(t)] }))
+    } else if (status.mail) {
       lines.push(Text({ children: ['Mail: ' + status.mail.unread + ' unread, ' + status.mail.answered + ' answered'] }))
       if (inbox && inbox.message) {
         for (const line of String(inbox.message).split('\n').slice(1)) lines.push(Text({ children: [line.trim()] }))
       }
+    }
+    // The workspace's projects, from an engine that prints them (0.7.0)
+    if (workspace && workspace.message) {
+      lines.push(Text({ dimColor: true, children: ['Workspace ' + workspace.workspace] }))
+      for (const line of String(workspace.message).split('\n').slice(1)) lines.push(Text({ children: [line.trim()] }))
     }
     for (const reason of status.unproven || []) {
       lines.push(Text({ color: 'red', children: ['✗ ' + reason] }))
@@ -302,6 +320,11 @@ function conclaveText() {
   return parts.join(' · ')
 }
 
+// "Crew: <the engine's message>", or the one line that says the engine gave none
+function crewText(answer) {
+  return 'Crew: ' + ((answer && answer.message) ? answer.message : 'crew gave no answer')
+}
+
 // Runs the bundled CLI in the session's folder and returns its JSON answer.
 // Every failure becomes { ok: false, message } so no hook ever throws because of it.
 async function runCrew($, args) {
@@ -359,6 +382,30 @@ async function refreshInbox($) {
   inbox = answer && answer.ok ? answer : null
 }
 
+// The workspace, for the panel alone: fetched with the inbox, and only from an engine that prints it
+// (0.7.0); an answer that is not ok, or the none case, draws no block
+async function refreshWorkspace($) {
+  if (!status) {
+    workspace = null
+    return
+  }
+  const answer = await runCrew($, ['workspace', 'status'])
+  workspace = answer && answer.ok && answer.workspace ? answer : null
+}
+
+// "2 threads (1 open, 1 unread)" from status.threads
+function threadsLine() {
+  const threads = status.threads || []
+  const open = threads.filter((t) => t.open).length
+  const unread = threads.reduce((sum, t) => sum + (t.unread || 0), 0)
+  return threads.length + ' thread' + (threads.length === 1 ? '' : 's') + ' (' + open + ' open, ' + unread + ' unread)'
+}
+
+// "M-1 · loyalty_tier · 2 messages · 1 unread · open"
+function threadRow(t) {
+  return t.root + ' · ' + t.subject + ' · ' + t.messages + ' message' + (t.messages === 1 ? '' : 's') + ' · ' + t.unread + ' unread · ' + (t.open ? 'open' : 'closed')
+}
+
 function hasWork() {
   return !!(status && status.active)
 }
@@ -399,7 +446,8 @@ function stripText() {
   const waiting = waitingText()
   const verdict = status.verdict === 'proven' ? 'proven' : 'not proven (' + (status.unproven && status.unproven[0] ? status.unproven[0] : 'gates have not run') + ')'
   const gates = gatesText()
-  return 'crew ' + status.active + ' · ' + status.phase + ' · ' + status.route + ' · ' + verdict + (gates ? ' · ' + gates : '') + todoPart() + workingPart() + unread + waiting
+  const priority = status.priority && status.priority !== 'normal' ? ' · priority ' + status.priority : ''
+  return 'crew ' + status.active + ' · ' + status.phase + ' · ' + status.route + priority + ' · ' + verdict + (gates ? ' · ' + gates : '') + todoPart() + workingPart() + unread + waiting
 }
 
 // The text /crew prints in the transcript
@@ -415,7 +463,9 @@ function statusText() {
   if ((status.todo && status.todo.total) || (status.working && status.working.length)) {
     lines.push('  ' + [status.todo && status.todo.total ? 'todo ' + status.todo.done + '/' + status.todo.total : null, status.working && status.working.length ? 'working: ' + status.working.map((w) => w.agent).join(', ') : null].filter(Boolean).join(' · '))
   }
-  if (status.mail && status.mail.unread) lines.push('  mail: ' + status.mail.unread + ' unread')
+  if (Array.isArray(status.threads)) {
+    if (status.threads.length) lines.push('  mail: ' + threadsLine())
+  } else if (status.mail && status.mail.unread) lines.push('  mail: ' + status.mail.unread + ' unread')
   const conclave = conclaveText()
   if (conclave) lines.push('  ' + conclave)
   for (const r of status.runs || []) {

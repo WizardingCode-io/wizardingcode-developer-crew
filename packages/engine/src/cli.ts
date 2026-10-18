@@ -187,6 +187,7 @@ import {
   validatorPreconditions,
   waitingText,
 } from "./work.ts";
+import { environmentState, projectThreads, workspaceStatus } from "./workspace.ts";
 import { gitRun } from "./worktree.ts";
 
 export interface CliIo {
@@ -223,7 +224,8 @@ const KNOWN_FLAGS: Record<string, readonly string[]> = {
   evidence: [],
   status: [],
   env: [],
-  task: ["criteria", "text", "scope", "force", "mode"],
+  task: ["criteria", "text", "scope", "force", "mode", "print"],
+  workspace: [],
   mail: [
     "to",
     "type",
@@ -1933,6 +1935,16 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         const record = (opened.work.tasks ?? []).find((t) => t.task === task);
         if (!task || !record)
           return refuse(task ? `${task} is not a task of ${opened.work.id}` : usage);
+        // --print reads the brief as it is, for the mod; it writes nothing and refuses with none.
+        if (parsed.flags.print) {
+          const brief = record.brief
+            ? readText(join(workDir(env.paths, opened.work.id), record.brief))
+            : null;
+          if (brief === null)
+            return refuse(`${task} has no brief yet (crew task <id> brief ${task})`);
+          // The CLI ends every text with a newline: the file's own is dropped so the bytes match.
+          return ok(brief.endsWith("\n") ? brief.slice(0, -1) : brief, { task, brief });
+        }
         if (record.gate?.status !== "pass")
           return refuse(`${task} has no passing gate yet (crew task <id> gate ${task})`);
         if (taskPending(opened.work, record, env.policy).length)
@@ -2191,6 +2203,20 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         continued: opened.work.continued,
       });
     }
+    case "workspace": {
+      // Every project of the workspace from the records alone (SP7b decision 17): nothing is run.
+      if (args[0] !== "status") return refuse("usage: crew workspace status [--json]");
+      const status = workspaceStatus(env.paths, env.policy, io.env);
+      if ("none" in status) return ok(status.none, { workspace: null, projects: [] });
+      const lines = status.projects.map(
+        (p) =>
+          `  ${p.name} (${p.root}): ${p.gone ? "gone" : p.live ? "live" : "not live"} · items ${p.items} · unread ${p.unread} · threads ${p.threads} open · priorities ${p.priorities} unconfirmed · environment ${p.environment}`,
+      );
+      return ok(
+        `Workspace ${status.workspace}: ${status.projects.length} project${status.projects.length === 1 ? "" : "s"}\n${lines.join("\n")}`,
+        { workspace: status.workspace, projects: status.projects },
+      );
+    }
     case "env": {
       // The project's environment (SP7 §8.2): started, checked, stopped and read by the engine.
       const verb = args[0];
@@ -2296,7 +2322,13 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       const listed = guarded("the tasks were not listed", () => {
         tasks = listTasks(env.mail, work);
       });
-      const notes = [synced, summarised, taken, listed].filter(Boolean);
+      // The project's threads (SP7b decision 18), read like the inbox: a box that cannot be read
+      // costs the threads, not the status, and is named in one line.
+      let threads: ReturnType<typeof projectThreads> = [];
+      const threaded = guarded("the threads were not read", () => {
+        threads = projectThreads(env.mail);
+      });
+      const notes = [synced, summarised, taken, listed, threaded].filter(Boolean);
       return ok(notes.length ? `${text}\n${notes.join("\n")}` : text, {
         active: work.id,
         title: work.title,
@@ -2307,6 +2339,9 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         awaiting: work.awaiting,
         awaitingMessage: work.awaitingMessage ?? null,
         mail: { unread: inbox.unread, answered: inbox.answered, waiting: inbox.waiting },
+        // The project's threads and the environment's record (SP7b decision 18): what the mod draws.
+        threads,
+        environment: environmentState(env.paths),
         tasks,
         // The team of the item (SP7 §14): the seats, the session's team, the rounds spent, the
         // branch, the todo and the roles working.
@@ -2700,6 +2735,7 @@ const HELP = `crew ${VERSION}
   mail inbox [--all] | read <mid> | thread <mid> | reply <mid> "<text>" [--branch <b>] [--item <child>] [--contract <kind>:<path>[:<summary>]]… [--as <role>] [--file <path>]
   mail accept <mid> [--priority <p>] [--reason "<why>"]   confirm a request's priority, or lower it with a reason (never raise)
   mail refuse <mid> --reason "<why>" | status | stop <mid>   this project's mail and the sessions it opened (status sweeps them; stop kills one)
+  workspace status [--json]           every project of the workspace: live, open items, unread, open threads, unconfirmed priorities, environment (reads records, runs nothing)
   task <id> open T-n --criteria AC-1,AC-2 [--text "<task text>"]   hand a task of the plan to an implementer: a message, a worktree, a branch, a session
   task <id> list | merge T-n [--force]   the tasks and their children; merge a proven child's branch (--force merges an unproven one: asks the user)
   tdd <red|green|before|after|observed> <id> <criterion> [--reason "<why>"] [-- <cmd>]

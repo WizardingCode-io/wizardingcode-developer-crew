@@ -92,7 +92,7 @@ export function threadParties(messages: readonly Message[], root: string): strin
 }
 
 /** Every message this project's two boxes hold, the inbox first; a box a hand changed holds nothing. */
-function heldMessages(ctx: MailContext): Message[] {
+export function heldMessages(ctx: MailContext): Message[] {
   const dir = mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project).dir;
   const seen = new Set<string>();
   const held: Message[] = [];
@@ -1460,12 +1460,17 @@ export function emptyInboxSummary(): InboxSummary {
   };
 }
 
+/** A message sent and not yet answered: what an inbox counts as unread (SP2c), and what a thread counts for the project it is addressed to (SP7b Task 6). */
+export function unanswered(m: Message): boolean {
+  return mailStatus(m) === "sent" && !m.replyTo;
+}
+
 export function inboxSummary(ctx: MailContext): InboxSummary {
   const { messages, tampered } = ownInbox(ctx);
   if (tampered)
     return { ...emptyInboxSummary(), tampered, line: tamperedBox(ctx.self.project, "inbox") };
   // Counted through the mapped status, so a record of an earlier engine version counts as what it stands for.
-  const unread = messages.filter((m) => mailStatus(m) === "sent" && !m.replyTo);
+  const unread = messages.filter(unanswered);
   const answered = messages.filter((m) => m.replyTo && mailStatus(m) === "sent");
   const waiting = messages.filter((m) => mailStatus(m) === "blocked");
   const blockers = unread.filter((m) => m.type === "blocker");

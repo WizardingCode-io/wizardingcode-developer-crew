@@ -15,7 +15,7 @@ export interface Parsed {
 }
 
 // Flags that never take a value, so a word after them stays a positional argument.
-export const BOOLEAN_FLAGS = new Set(["json", "refresh", "force", "not-run", "all"]);
+export const BOOLEAN_FLAGS = new Set(["print", "json", "refresh", "force", "not-run", "all"]);
 
 /** `--key value` takes the next word unless the flag is boolean or the next word is a flag; `--` ends the flags. */
 export function parse(argv: string[]): Parsed {

@@ -7,3 +7,6 @@ node_modules/
 plugins/core/.claude-plugin/types/
 plugins/core/tsconfig.json
 plugins/core/evals/results/
+
+# graphify's knowledge graph of the engine (local, rebuilt on demand)
+graphify-out/

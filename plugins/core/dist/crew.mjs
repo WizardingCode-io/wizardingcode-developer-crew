@@ -1,9 +1,9 @@
 // packages/engine/src/cli.ts
-import { existsSync as existsSync10 } from "node:fs";
-import { basename as basename6, join as join34, relative as relative7, resolve as resolve4 } from "node:path";
+import { existsSync as existsSync11 } from "node:fs";
+import { basename as basename6, join as join35, relative as relative7, resolve as resolve4 } from "node:path";
 
 // packages/engine/src/argv.ts
-var BOOLEAN_FLAGS = new Set(["json", "refresh", "force", "not-run", "all"]);
+var BOOLEAN_FLAGS = new Set(["print", "json", "refresh", "force", "not-run", "all"]);
 function parse(argv) {
   const parsed = { positional: [], flags: {}, multi: {}, ordered: [], rest: [] };
   for (let i = 0;i < argv.length; i++) {
@@ -3793,11 +3793,14 @@ function emptyInboxSummary() {
     line: null
   };
 }
+function unanswered(m) {
+  return mailStatus(m) === "sent" && !m.replyTo;
+}
 function inboxSummary(ctx) {
   const { messages, tampered } = ownInbox(ctx);
   if (tampered)
     return { ...emptyInboxSummary(), tampered, line: tamperedBox(ctx.self.project, "inbox") };
-  const unread = messages.filter((m) => mailStatus(m) === "sent" && !m.replyTo);
+  const unread = messages.filter(unanswered);
   const answered = messages.filter((m) => m.replyTo && mailStatus(m) === "sent");
   const waiting = messages.filter((m) => mailStatus(m) === "blocked");
   const blockers = unread.filter((m) => m.type === "blocker");
@@ -4153,7 +4156,7 @@ function minutesRun(opened, now = Date.now()) {
 function minutesText(minutes) {
   return `${minutes} minute${minutes === 1 ? "" : "s"}`;
 }
-function unanswered(status) {
+function unanswered2(status) {
   return status === "sent" || status === "read";
 }
 function sweepOne(ctx, m, now, result) {
@@ -4162,7 +4165,7 @@ function sweepOne(ctx, m, now, result) {
   const settle = (kind, end, reason, line) => {
     const recorded = updateEverywhere(ctx, m.id, (x) => ({
       ...x,
-      ...reason && unanswered(mailStatus(x)) ? { status: "expired", reason } : {},
+      ...reason && unanswered2(mailStatus(x)) ? { status: "expired", reason } : {},
       opened: { ...ended(opened, end.outcome, at), ...end }
     }), (what) => result.lines.push(`the record of ${m.id} skipped a box it could not read: ${what}`));
     if (recorded === null) {
@@ -4193,7 +4196,7 @@ function sweepOne(ctx, m, now, result) {
     return;
   }
   if (outcome.ended) {
-    const replied = !unanswered(mailStatus(m));
+    const replied = !unanswered2(mailStatus(m));
     settle("ended", { ...measured, outcome: "ended" }, replied ? null : "the session ended without a reply", replied ? `${m.id} ended (${outcome.turns ?? "?"} turns, ${outcome.costUsd ?? "?"} USD)` : `${m.id} ended without a reply (expired)`);
     return;
   }
@@ -4251,7 +4254,7 @@ function stopSession(ctx, id, notes) {
   const at = nowIso();
   return updateEverywhere(ctx, id, (x) => ({
     ...x,
-    ...unanswered(mailStatus(x)) ? { status: "refused", reason: "stopped by crew mail stop" } : {},
+    ...unanswered2(mailStatus(x)) ? { status: "refused", reason: "stopped by crew mail stop" } : {},
     opened: ended(x.opened, "stopped", at)
   }), (what) => notes.push(`a copy of ${id} was not changed: ${what}`)) ?? {
     refused: `${id} was stopped but could not be updated: its mailbox changed while it was being written`
@@ -8187,6 +8190,84 @@ async function recordTdd(paths, work, evidence, profile, criterionId, step, over
 // packages/engine/src/version.ts
 var VERSION = "0.6.0";
 
+// packages/engine/src/workspace.ts
+import { existsSync as existsSync10 } from "node:fs";
+import { join as join34 } from "node:path";
+var NO_WORKSPACE = "no workspace in policy.json (mail.workspace): crew workspace status lists the projects of one workspace";
+var CLOSED = new Set(["done", "refused", "expired"]);
+function isOpen(m) {
+  return !CLOSED.has(mailStatus(m));
+}
+function openThreads(messages) {
+  const roots = [];
+  for (const m of messages) {
+    const root = threadOf(m);
+    if (isOpen(m) && !roots.includes(root))
+      roots.push(root);
+  }
+  return roots;
+}
+function unconfirmedPriorities(messages) {
+  return messages.filter((m) => m.priority !== undefined && m.priorityDecision === undefined).length;
+}
+function environmentState(paths) {
+  const record = readEnvRecord(paths);
+  if (!record)
+    return "none";
+  if (record.managed && record.pid !== null && !isAlive(record.pid))
+    return "down";
+  return "up";
+}
+function projectThreads(ctx) {
+  const held = heldMessages(ctx);
+  const byRoot = new Map;
+  for (const m of held) {
+    const root = threadOf(m);
+    byRoot.set(root, [...byRoot.get(root) ?? [], m]);
+  }
+  return [...byRoot.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([root, messages]) => ({
+    root,
+    subject: (messages.find((m) => m.id === root) ?? messages[0])?.subject ?? "",
+    messages: messages.length,
+    unread: messages.filter((m) => m.from.project !== ctx.self.project && unanswered(m)).length,
+    open: messages.some(isOpen)
+  }));
+}
+function workspaceStatus(paths, policy, env) {
+  const self = mailSelf(paths, policy, env);
+  if (self.workspace === null)
+    return { none: NO_WORKSPACE };
+  const userDir = canonical(userDirOf(env));
+  const projects = loadRegistry(paths.userDir).projects.filter((p) => p.workspace === self.workspace && p.worktreeOf === undefined).sort((a, b) => a.name.localeCompare(b.name)).map((entry) => {
+    const root = canonical(entry.root);
+    const live2 = isLive(entry);
+    const empty = {
+      name: entry.name,
+      root,
+      live: live2,
+      items: 0,
+      unread: 0,
+      threads: 0,
+      priorities: 0
+    };
+    if (!existsSync10(join34(root, ".git")))
+      return { ...empty, gone: true, environment: "none" };
+    const projectPaths = pathsFor(root, userDir);
+    const ctx = mailContext(projectPaths, loadPolicy(projectPaths).policy, env);
+    const held = heldMessages(ctx);
+    return {
+      ...empty,
+      gone: false,
+      items: openItems(projectPaths).length,
+      unread: inboxSummary(ctx).unread,
+      threads: openThreads(held).length,
+      priorities: unconfirmedPriorities(held),
+      environment: environmentState(projectPaths)
+    };
+  });
+  return { workspace: self.workspace, projects };
+}
+
 // packages/engine/src/cli.ts
 var KNOWN_FLAGS = {
   detect: ["refresh"],
@@ -8211,7 +8292,8 @@ var KNOWN_FLAGS = {
   evidence: [],
   status: [],
   env: [],
-  task: ["criteria", "text", "scope", "force", "mode"],
+  task: ["criteria", "text", "scope", "force", "mode", "print"],
+  workspace: [],
   mail: [
     "to",
     "type",
@@ -8335,16 +8417,16 @@ function skipStep(work, raw) {
 }
 function accept(env, target) {
   if (target === "profile" || target === "policy" || target === "decisions") {
-    if (!recordIntegrity(env.paths, join34(env.paths.crewDir, `${target}.json`)))
+    if (!recordIntegrity(env.paths, join35(env.paths.crewDir, `${target}.json`)))
       return refuse(`no .crew/${target}.json to accept`);
     return ok(`${target} accepted: its current content is now the trusted version`, {
       accepted: target
     });
   }
   const dir = workDir(env.paths, target);
-  if (!/^[\w.-]+$/.test(target) || target.includes("..") || !existsSync10(join34(dir, "work.json")))
+  if (!/^[\w.-]+$/.test(target) || target.includes("..") || !existsSync11(join35(dir, "work.json")))
     return refuse(`unknown work item: ${target}`);
-  const files = PROTECTED_WORK_FILES.filter((name) => recordIntegrity(env.paths, join34(dir, name)));
+  const files = PROTECTED_WORK_FILES.filter((name) => recordIntegrity(env.paths, join35(dir, name)));
   return ok(`${target} accepted: ${files.join(", ")} now trusted as they are`, {
     accepted: target,
     files
@@ -8544,10 +8626,10 @@ function guardContext(env, work, tampered) {
   const dir = workDir(env.paths, work.id);
   const result = assess(env.paths, work, env.profile, env.policy, env.tampered || tampered);
   return {
-    specText: readText(join34(dir, "spec.md")),
-    conclaveText: readText(join34(dir, "conclave.md")),
+    specText: readText(join35(dir, "spec.md")),
+    conclaveText: readText(join35(dir, "conclave.md")),
     ledger: loadLedger(env.paths, work.id).ledger,
-    planExists: existsSync10(join34(dir, "plan.md")),
+    planExists: existsSync11(join35(dir, "plan.md")),
     evidence: result.evidence,
     proven: result.verdict === "proven",
     unproven: result.unproven,
@@ -8562,7 +8644,7 @@ function deliver2(env, opened, evidence) {
       break;
   }
   saveWork(env.paths, opened.work);
-  writeProtectedText(env.paths, join34(workDir(env.paths, opened.work.id), "report.md"), reportOf(env, opened.work, evidence));
+  writeProtectedText(env.paths, join35(workDir(env.paths, opened.work.id), "report.md"), reportOf(env, opened.work, evidence));
 }
 function reportOf(env, work, evidence) {
   return renderReport(work, evidence, env.policy, loadLedger(env.paths, work.id).ledger, loadItemMail(env.paths, work.id), env.mail.self.project);
@@ -8578,7 +8660,7 @@ function logDecision(env, work, answers) {
     route: work.route,
     reasons: work.routeReasons
   });
-  const file = join34(env.paths.localDir, "decisions.jsonl");
+  const file = join35(env.paths.localDir, "decisions.jsonl");
   writeText(file, `${readText(file) ?? ""}${line}
 `);
 }
@@ -8630,7 +8712,7 @@ async function dispatch(parsed, io) {
     return settings(command, args, { userDir: userDirOf(io.env) });
   let paths = resolvePaths(io.cwd, io.env);
   if (!paths && command === "detect") {
-    ensureDir(join34(resolve4(io.cwd), ".crew"));
+    ensureDir(join35(resolve4(io.cwd), ".crew"));
     paths = resolvePaths(io.cwd, io.env);
   }
   if (!paths)
@@ -8648,7 +8730,7 @@ async function dispatch(parsed, io) {
       if (parsed.flags.refresh) {
         saveProfile(env.paths, profile);
         if (integrityOf(env.paths)[".crew/policy.json"] === undefined) {
-          recordIntegrity(env.paths, join34(env.paths.crewDir, "policy.json"));
+          recordIntegrity(env.paths, join35(env.paths.crewDir, "policy.json"));
         }
       }
       const missing = missingTestCommands(profile);
@@ -9380,7 +9462,7 @@ ${report}`, {
           unproven: result.unproven
         });
       saveEvidence(env.paths, opened.work.id, result.evidence);
-      writeProtectedText(env.paths, join34(workDir(env.paths, opened.work.id), "report.md"), report);
+      writeProtectedText(env.paths, join35(workDir(env.paths, opened.work.id), "report.md"), report);
       return ok(report, { verdict: result.verdict, unproven: result.unproven });
     }
     case "task": {
@@ -9409,7 +9491,7 @@ ${out.notes.join(`
         const scope = list(parsed.flags.scope);
         if (!task || !criteria.length)
           return refuse(usage);
-        const planText = readText(join34(workDir(env.paths, opened.work.id), "plan.md"));
+        const planText = readText(join35(workDir(env.paths, opened.work.id), "plan.md"));
         const out = noteTask(opened.work, task, criteria, scope, typeof parsed.flags.text === "string" ? parsed.flags.text : taskText(planText, task));
         if ("refused" in out)
           return refuse(out.refused);
@@ -9454,6 +9536,13 @@ ${task} gate round ${round + 1}: ${verdict}`,
         const record = (opened.work.tasks ?? []).find((t) => t.task === task);
         if (!task || !record)
           return refuse(task ? `${task} is not a task of ${opened.work.id}` : usage);
+        if (parsed.flags.print) {
+          const brief = record.brief ? readText(join35(workDir(env.paths, opened.work.id), record.brief)) : null;
+          if (brief === null)
+            return refuse(`${task} has no brief yet (crew task <id> brief ${task})`);
+          return ok(brief.endsWith(`
+`) ? brief.slice(0, -1) : brief, { task, brief });
+        }
         if (record.gate?.status !== "pass")
           return refuse(`${task} has no passing gate yet (crew task <id> gate ${task})`);
         if (taskPending(opened.work, record, env.policy).length)
@@ -9549,7 +9638,7 @@ test-first not credited: ${out.uncredited}` : "";
         return refuse(verdict.refused);
       const dir = workDir(env.paths, work.id);
       const evidence = loadEvidence(env.paths, work.id).evidence;
-      const hash = validationHash(what, readText(join34(dir, "spec.md")), readText(join34(dir, "plan.md")), evidence.fingerprint ?? "");
+      const hash = validationHash(what, readText(join35(dir, "spec.md")), readText(join35(dir, "plan.md")), evidence.fingerprint ?? "");
       const same = (work.validations ?? []).filter((v) => v.what === what);
       const last = same[same.length - 1];
       const newRound = !last || last.hash !== hash;
@@ -9615,9 +9704,9 @@ test-first not credited: ${out.uncredited}` : "";
       const text = readText(path);
       if (text === null)
         return refuse(`no plan file at ${path}`);
-      const dir = join34(env.paths.userDir, "cto", ws);
+      const dir = join35(env.paths.userDir, "cto", ws);
       ensureDir(dir);
-      const target = join34(dir, `${nowIso().slice(0, 10)}-plan.md`);
+      const target = join35(dir, `${nowIso().slice(0, 10)}-plan.md`);
       writeText(target, text);
       return ok(`CTO plan of ${ws} filed: ${target}`, { path: target });
     }
@@ -9651,6 +9740,17 @@ test-first not credited: ${out.uncredited}` : "";
       return ok(`${subject} continued for one more round ${decisionText(env.policy, decision)}`, {
         continued: opened.work.continued
       });
+    }
+    case "workspace": {
+      if (args[0] !== "status")
+        return refuse("usage: crew workspace status [--json]");
+      const status = workspaceStatus(env.paths, env.policy, io.env);
+      if ("none" in status)
+        return ok(status.none, { workspace: null, projects: [] });
+      const lines2 = status.projects.map((p) => `  ${p.name} (${p.root}): ${p.gone ? "gone" : p.live ? "live" : "not live"} · items ${p.items} · unread ${p.unread} · threads ${p.threads} open · priorities ${p.priorities} unconfirmed · environment ${p.environment}`);
+      return ok(`Workspace ${status.workspace}: ${status.projects.length} project${status.projects.length === 1 ? "" : "s"}
+${lines2.join(`
+`)}`, { workspace: status.workspace, projects: status.projects });
     }
     case "env": {
       const verb = args[0];
@@ -9738,7 +9838,11 @@ ${extra.length ? `${extra.join(`
       const listed = guarded("the tasks were not listed", () => {
         tasks = listTasks(env.mail, work);
       });
-      const notes = [synced, summarised, taken, listed].filter(Boolean);
+      let threads = [];
+      const threaded = guarded("the threads were not read", () => {
+        threads = projectThreads(env.mail);
+      });
+      const notes = [synced, summarised, taken, listed, threaded].filter(Boolean);
       return ok(notes.length ? `${text}
 ${notes.join(`
 `)}` : text, {
@@ -9751,6 +9855,8 @@ ${notes.join(`
         awaiting: work.awaiting,
         awaitingMessage: work.awaitingMessage ?? null,
         mail: { unread: inbox.unread, answered: inbox.answered, waiting: inbox.waiting },
+        threads,
+        environment: environmentState(env.paths),
         tasks,
         branch,
         todo,
@@ -10100,6 +10206,7 @@ var HELP = `crew ${VERSION}
   mail inbox [--all] | read <mid> | thread <mid> | reply <mid> "<text>" [--branch <b>] [--item <child>] [--contract <kind>:<path>[:<summary>]]… [--as <role>] [--file <path>]
   mail accept <mid> [--priority <p>] [--reason "<why>"]   confirm a request's priority, or lower it with a reason (never raise)
   mail refuse <mid> --reason "<why>" | status | stop <mid>   this project's mail and the sessions it opened (status sweeps them; stop kills one)
+  workspace status [--json]           every project of the workspace: live, open items, unread, open threads, unconfirmed priorities, environment (reads records, runs nothing)
   task <id> open T-n --criteria AC-1,AC-2 [--text "<task text>"]   hand a task of the plan to an implementer: a message, a worktree, a branch, a session
   task <id> list | merge T-n [--force]   the tasks and their children; merge a proven child's branch (--force merges an unproven one: asks the user)
   tdd <red|green|before|after|observed> <id> <criterion> [--reason "<why>"] [-- <cmd>]

@@ -1,15 +1,19 @@
 import { expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
   readdirSync,
   readFileSync,
+  statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
 import { type CliIo, main } from "../src/cli.ts";
+import { envRecordPath } from "../src/environment.ts";
 import { loadEvidence, saveEvidence } from "../src/evidence.ts";
+import { writeJson } from "../src/fs.ts";
 import { readReviewInputs } from "../src/judgement.ts";
 import { mailbox, mailContext, ownInbox, readBox, registerProject, writeBox } from "../src/mail.ts";
 import { loadPolicy } from "../src/policy.ts";
@@ -3766,4 +3770,158 @@ test("SP7b-T5 AC-3: the engine keeps each judgement round's findings and ruling 
   await c.run("judgement", id, "record", "ui-ux", "--not-run", "--reason", "no browser");
   expect(readFileSync(join(review, "ruling.round2.json"), "utf8")).toBe(proven);
   expect(existsSync(join(review, "ruling.round3.json"))).toBe(false);
+});
+
+/** A project of the workspace, registered as a session would. */
+function registered(
+  root: string,
+  env: NodeJS.ProcessEnv,
+  name: string,
+  extra: Record<string, unknown> = {},
+) {
+  const paths = repoPaths(root, env);
+  write(root, ".crew/policy.json", JSON.stringify({ mail: { workspace: "shop", name, ...extra } }));
+  registerProject(mailContext(paths, loadPolicy(paths).policy, env), `session-${name}`, {
+    hook: true,
+  });
+  return paths;
+}
+
+test("SP7b-T6 AC-1: crew workspace status prints the workspace's projects from the records, says so without a workspace, and refuses another verb", async () => {
+  const root = makeRepo({ "package.json": JSON.stringify({ scripts: { test: "exit 0" } }) });
+  const env = testEnv();
+  const c = io(root, env);
+  const none = await c.run("workspace", "status");
+  expect(none.code).toBe(0);
+  expect(none.out.trim()).toBe(
+    "no workspace in policy.json (mail.workspace): crew workspace status lists the projects of one workspace",
+  );
+  const paths = registered(root, env, "crm");
+  const listed = await c.run("workspace", "status");
+  expect(listed.code).toBe(0);
+  expect(listed.out.trim()).toBe(
+    `Workspace shop: 1 project\n  crm (${paths.root}): live · items 0 · unread 0 · threads 0 open · priorities 0 unconfirmed · environment none`,
+  );
+  expect((await c.json("workspace", "status")).data).toMatchObject({
+    workspace: "shop",
+    projects: [
+      {
+        name: "crm",
+        root: paths.root,
+        live: true,
+        gone: false,
+        items: 0,
+        unread: 0,
+        threads: 0,
+        priorities: 0,
+        environment: "none",
+      },
+    ],
+  });
+  expect((await c.run("workspace", "list")).err.trim()).toBe(
+    "usage: crew workspace status [--json]",
+  );
+});
+
+test("SP7b-T6 AC-2: crew status --json carries threads (the project's, with the unread addressed to it), priority and environment", async () => {
+  const env = testEnv();
+  const crmRoot = makeRepo({ "package.json": JSON.stringify({ scripts: { test: "exit 0" } }) });
+  const storefrontRoot = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+  });
+  const crm = registered(crmRoot, env, "crm");
+  registered(storefrontRoot, env, "storefront", { accept: ["question", "notice"] });
+  const c = io(crmRoot, env);
+  await c.json("start", "Thing", "--answers", answers, "--criterion", "a");
+  const before = (await c.json("status")).data;
+  expect(before.threads).toEqual([]);
+  expect(before.environment).toBe("none");
+  expect(before.priority).toBe("normal");
+  const sent = await c.json(
+    "mail",
+    "send",
+    "--to",
+    "storefront",
+    "--type",
+    "question",
+    "loyalty_tier on POST /customers",
+  );
+  expect(sent.code).toBe(0);
+  const root = readBox(mailbox(crm.userDir, "shop", "crm").dir, "outbox").box.messages[0]
+    ?.id as string;
+  expect((await c.json("status")).data.threads).toEqual([
+    { root, subject: "loyalty_tier on POST /customers", messages: 1, unread: 0, open: true },
+  ]);
+  writeJson(envRecordPath(crm), {
+    pid: null,
+    processStart: null,
+    startedAt: "2026-10-18T10:00:00.000Z",
+    managed: false,
+    log: null,
+    command: "x",
+  });
+  expect((await c.json("status")).data.environment).toBe("up");
+  const gone = spawnSync("sh", ["-c", "exit 0"]);
+  writeJson(envRecordPath(crm), {
+    pid: gone.pid,
+    processStart: "gone",
+    startedAt: "2026-10-18T10:00:00.000Z",
+    managed: true,
+    log: null,
+    command: "x",
+  });
+  expect((await c.json("status")).data.environment).toBe("down");
+  // The receiving project sees the same thread with one unread message.
+  const s = io(storefrontRoot, env);
+  await s.json("start", "Answer", "--answers", answers, "--criterion", "a");
+  expect((await s.json("status")).data.threads).toEqual([
+    { root, subject: "loyalty_tier on POST /customers", messages: 1, unread: 1, open: true },
+  ]);
+});
+
+test("SP7b-T6 AC-3: crew task <id> brief T-n --print prints an existing brief as it is and rewrites nothing", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const env = testEnv();
+  const c = io(root, env);
+  const id = (await c.json("start", "Thing", "--answers", answers, "--criterion", "a")).data
+    .id as string;
+  expect(
+    (
+      await c.run(
+        "task",
+        id,
+        "note",
+        "T-5",
+        "--criteria",
+        "AC-1",
+        "--scope",
+        "src/a.ts",
+        "--text",
+        "x",
+      )
+    ).code,
+  ).toBe(0);
+  expect((await c.run("task", id, "gate", "T-5")).code).toBe(0);
+  expect((await c.run("task", id, "brief", "T-5", "--print")).err.trim()).toBe(
+    "T-5 has no brief yet (crew task <id> brief T-5)",
+  );
+  expect((await c.run("task", id, "brief", "T-5")).code).toBe(0);
+  const file = join(root, ".crew", "work", id, "tasks", "T-5.brief.md");
+  const text = readFileSync(file, "utf8");
+  const mtime = statSync(file).mtimeMs;
+  const printed = await c.run("task", id, "brief", "T-5", "--print");
+  expect(printed.code).toBe(0);
+  expect(printed.out).toBe(text);
+  expect(statSync(file).mtimeMs).toBe(mtime);
+  expect((await c.json("task", id, "brief", "T-5", "--print")).data).toMatchObject({
+    task: "T-5",
+    brief: text,
+  });
+  expect(loadWork(repoPaths(root, env), id).work?.tasks?.[0]).toMatchObject({
+    state: "briefed",
+    brief: "tasks/T-5.brief.md",
+  });
 });

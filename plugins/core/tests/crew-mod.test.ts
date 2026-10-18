@@ -120,7 +120,7 @@ test("/crew with an unknown verb says how to use it", async ($, on) => {
   stubs(on, () => ({ exitCode: 0, stdout: JSON.stringify(PROVEN), stderr: "" }));
   await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
   const answer = await $.command.run({ command: "crew", args: "frobnicate" });
-  expect(answer.text).toBe("Crew: unknown verb; use /crew [status|panel|mail|todo|team|mode <partner|guide|pilot>]");
+  expect(answer.text).toBe("Crew: unknown verb; use /crew [status|panel|mail|todo|team|workspace|thread <id>|brief T-n|mode <partner|guide|pilot>]");
 });
 
 // What Claude Code passes to a ui.render hook for the strip above the prompt
@@ -313,7 +313,8 @@ test("the panel lists phases, criteria, gates and the verdict, and its buttons w
   expect(await ui.find({ type: "Text", text: "Proven: secrets, test" })).toBeDefined();
   const before = runs;
   await ui.press({ key: "refresh" });
-  expect(runs).toBe(before + 1);
+  // the status, then the workspace for the panel (SP7b Task 6; no inbox for an item without mail)
+  expect(runs).toBe(before + 2);
   await ui.press({ key: "close" });
   expect(closed).toEqual(["crew"]);
   await ui.unmount();
@@ -426,7 +427,8 @@ test("SP2c: the panel lists the inbox and the tasks", async ($, on) => {
   on("ui.open", () => ({ value: { isPlaced: true } }));
   await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
   await $.command.run({ command: "crew", args: "panel" });
-  expect(calls).toBe(3);
+  // the status at the start, the status for the panel, the inbox and the workspace for it (SP7b Task 6)
+  expect(calls).toBe(4);
   const ui = await $.ui.mount({ ...PANE, surface: "terminal" });
   expect(await ui.find({ type: "Text", text: "Tasks" })).toBeDefined();
   expect(await ui.find({ type: "Text", text: "T-2 · AC-2 · crew/2026-10-15-042/T-2 · 2026-10-15-001-t-2 · proven · merged abc1234" })).toBeDefined();
@@ -462,7 +464,7 @@ test("SP2c: /crew mail prints the inbox; an unknown verb names it", async ($, on
   const answer = await $.command.run({ command: "crew", args: "mail" });
   expect(answer.text).toBe(`Crew: ${INBOX.message}`);
   const unknown = await $.command.run({ command: "crew", args: "fly" });
-  expect(unknown.text).toBe("Crew: unknown verb; use /crew [status|panel|mail|todo|team|mode <partner|guide|pilot>]");
+  expect(unknown.text).toBe("Crew: unknown verb; use /crew [status|panel|mail|todo|team|workspace|thread <id>|brief T-n|mode <partner|guide|pilot>]");
 });
 
 test("SP2c (advisory of 2026-10-15-001): a proven row with no findings reads (0 findings)", async ($, on) => {
@@ -510,10 +512,11 @@ test("SP2c: /crew mail and the panel run crew mail inbox --json, once each", asy
   expect(argv.length).toBe(before + 1);
   expect((argv.at(-1) ?? []).slice(2)).toEqual(["mail", "inbox", "--json"]);
   await $.command.run({ command: "crew", args: "panel" });
-  // the status for the panel, then the inbox for it
+  // the status for the panel, then the inbox and the workspace for it (SP7b Task 6)
   expect(argv.slice(before + 1).map((a) => a.slice(2))).toEqual([
     ["status", "--json"],
     ["mail", "inbox", "--json"],
+    ["workspace", "status", "--json"],
   ]);
 });
 
@@ -606,4 +609,141 @@ test("SP7a AC-7 (Task 7): /crew todo and /crew team print the lists, /crew statu
   teamed = false;
   expect((await $.command.run({ command: "crew", args: "todo" })).text).toBe("Crew: this engine prints no todo (0.6.0 or later does)");
   expect((await $.command.run({ command: "crew", args: "team" })).text).toBe("Crew: this engine prints no team (0.6.0 or later does)");
+});
+
+// A project's threads and the workspace, as the engine prints them since SP7b Task 6
+const THREADS = [
+  { root: "M-1", subject: "loyalty_tier", messages: 2, unread: 1, open: true },
+  { root: "M-2", subject: "checkout", messages: 1, unread: 0, open: false },
+];
+const WORKSPACE = {
+  ok: true,
+  message:
+    "Workspace shop: 2 projects\n  crm (/w/crm): live · items 1 · unread 0 · threads 1 open · priorities 0 unconfirmed · environment up\n  storefront (/w/storefront): not live · items 0 · unread 1 · threads 1 open · priorities 1 unconfirmed · environment none",
+  workspace: "shop",
+  projects: [],
+};
+
+test("SP7b-T6 AC-3: the strip shows a priority that is not normal after the route", async ($, on) => {
+  let answer: Record<string, unknown> = { ...TEAMED, priority: "high" };
+  stubs(on, () => ({ exitCode: 0, stdout: JSON.stringify(answer), stderr: "" }));
+  on("ui.render", () => ({ type: "Text", props: {}, children: ["drawn by Claude Code"] }));
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  const ui = await $.ui.mount({ ...STRIP, surface: "terminal" });
+  const texts = (await ui.findAll({ type: "Text" })).map((t) => t.text);
+  // right after the route (standard for TEAMED), before the verdict
+  expect(texts.some((t) => / · standard · priority high · /.test(t))).toBe(true);
+  await ui.unmount();
+  answer = { ...TEAMED, priority: "normal" };
+  await $.command.run({ command: "crew", args: "status" });
+  const again = await $.ui.mount({ ...STRIP, surface: "terminal" });
+  const plain = (await again.findAll({ type: "Text" })).map((t) => t.text);
+  expect(plain.some((t) => t.includes("priority"))).toBe(false);
+  await again.unmount();
+});
+
+test("SP7b-T6 AC-3: /crew status and the panel show the mail as threads, and the panel shows the workspace", async ($, on) => {
+  const argv: string[][] = [];
+  on("session.cwd", () => ({ value: "/work" }));
+  on("process.run", ($, e) => {
+    argv.push(e.argv);
+    const answer =
+      e.argv[2] === "workspace"
+        ? WORKSPACE
+        : e.argv[2] === "mail"
+          ? INBOX
+          : { ...TEAMED, mail: { unread: 1, answered: 0, waiting: 0 }, threads: THREADS };
+    return { value: { exitCode: 0, stdout: JSON.stringify(answer), stderr: "" } };
+  });
+  on("command.register", () => ({ value: undefined }));
+  on("session.start", () => ({ cwd: "/work" }));
+  on("ui.open", () => ({ value: { isPlaced: true } }));
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  const status = await $.command.run({ command: "crew", args: "status" });
+  expect(status.text).toContain("\n  mail: 2 threads (1 open, 1 unread)\n");
+  expect(status.text).not.toContain("unread\n  mail:");
+  await $.command.run({ command: "crew", args: "panel" });
+  expect(argv.slice(-3).map((a) => a.slice(2))).toEqual([
+    ["status", "--json"],
+    ["mail", "inbox", "--json"],
+    ["workspace", "status", "--json"],
+  ]);
+  const ui = await $.ui.mount({ ...PANE, surface: "terminal" });
+  const texts = (await ui.findAll({ type: "Text" })).map((t) => t.text);
+  const mail = texts.indexOf("Mail: 2 threads (1 open, 1 unread)");
+  expect(mail).toBeGreaterThan(0);
+  expect(texts.slice(mail + 1, mail + 3)).toEqual([
+    "M-1 · loyalty_tier · 2 messages · 1 unread · open",
+    "M-2 · checkout · 1 message · 0 unread · closed",
+  ]);
+  const workspace = texts.indexOf("Workspace shop");
+  expect(workspace).toBe(mail + 3);
+  expect(texts.slice(workspace + 1, workspace + 3)).toEqual([
+    "crm (/w/crm): live · items 1 · unread 0 · threads 1 open · priorities 0 unconfirmed · environment up",
+    "storefront (/w/storefront): not live · items 0 · unread 1 · threads 1 open · priorities 1 unconfirmed · environment none",
+  ]);
+  await ui.unmount();
+});
+
+test("SP7b-T6 AC-3: an engine without the workspace command draws no Workspace block, and empty threads print no mail line", async ($, on) => {
+  on("session.cwd", () => ({ value: "/work" }));
+  on("process.run", ($, e) => {
+    const answer =
+      e.argv[2] === "workspace"
+        ? { ok: false, message: "unknown command: workspace" }
+        : e.argv[2] === "mail"
+          ? INBOX
+          : { ...TEAMED, mail: { unread: 0, answered: 0, waiting: 0 }, threads: [] };
+    return { value: { exitCode: 0, stdout: JSON.stringify(answer), stderr: "" } };
+  });
+  on("command.register", () => ({ value: undefined }));
+  on("session.start", () => ({ cwd: "/work" }));
+  on("ui.open", () => ({ value: { isPlaced: true } }));
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  const status = await $.command.run({ command: "crew", args: "status" });
+  expect(status.text).not.toContain("mail:");
+  await $.command.run({ command: "crew", args: "panel" });
+  const ui = await $.ui.mount({ ...PANE, surface: "terminal" });
+  const texts = (await ui.findAll({ type: "Text" })).map((t) => t.text);
+  expect(texts).toContain("Mail: 0 threads (0 open, 0 unread)");
+  expect(texts.some((t) => t.startsWith("Workspace"))).toBe(false);
+  await ui.unmount();
+});
+
+test("SP7b-T6 AC-3: /crew workspace, /crew thread <id> and /crew brief T-n run the engine's commands and print their message; the hint names the verbs", async ($, on) => {
+  const argv: string[][] = [];
+  let active: Record<string, unknown> = { ...TEAMED };
+  on("session.cwd", () => ({ value: "/work" }));
+  on("process.run", ($, e) => {
+    argv.push(e.argv);
+    const sub = e.argv[2];
+    const answer =
+      sub === "workspace"
+        ? WORKSPACE
+        : sub === "mail"
+          ? { ok: true, message: "Thread M-1: 2 messages, 2 parties (crm, storefront)\n  M-1 · [high] · question · crm → storefront · loyalty_tier · done" }
+          : sub === "task"
+            ? { ok: true, message: "# Brief: T-2 of 2026-10-15-002-delete-accounts\n\n## Changed\n- src/b.ts", task: "T-2", brief: "# Brief" }
+            : active;
+    return { value: { exitCode: 0, stdout: JSON.stringify(answer), stderr: "" } };
+  });
+  on("command.register", () => ({ value: undefined }));
+  on("session.start", () => ({ cwd: "/work" }));
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  const workspace = await $.command.run({ command: "crew", args: "workspace" });
+  expect(workspace.text).toBe(`Crew: ${WORKSPACE.message}`);
+  expect((argv.at(-1) ?? []).slice(2)).toEqual(["workspace", "status", "--json"]);
+  const thread = await $.command.run({ command: "crew", args: "thread M-1" });
+  expect(thread.text).toBe("Crew: Thread M-1: 2 messages, 2 parties (crm, storefront)\n  M-1 · [high] · question · crm → storefront · loyalty_tier · done");
+  expect((argv.at(-1) ?? []).slice(2)).toEqual(["mail", "thread", "M-1", "--json"]);
+  expect((await $.command.run({ command: "crew", args: "thread" })).text).toBe("Crew: /crew thread needs a message id");
+  const brief = await $.command.run({ command: "crew", args: "brief T-2" });
+  expect(brief.text).toBe("Crew: # Brief: T-2 of 2026-10-15-002-delete-accounts\n\n## Changed\n- src/b.ts");
+  expect((argv.at(-1) ?? []).slice(2)).toEqual(["task", "2026-10-15-002-delete-accounts", "brief", "T-2", "--print", "--json"]);
+  expect((await $.command.run({ command: "crew", args: "brief" })).text).toBe("Crew: /crew brief needs a task (T-n)");
+  active = NONE;
+  expect((await $.command.run({ command: "crew", args: "brief T-2" })).text).toBe("Crew: no active work item. A change starts with the crew skill.");
+  expect((await $.command.run({ command: "crew", args: "fly" })).text).toBe(
+    "Crew: unknown verb; use /crew [status|panel|mail|todo|team|workspace|thread <id>|brief T-n|mode <partner|guide|pilot>]",
+  );
 });
