@@ -7,7 +7,7 @@ import { handleHook } from "../src/hooks/index.ts";
 import { onPrompt } from "../src/hooks/prompt.ts";
 import { onSessionStart } from "../src/hooks/session-start.ts";
 import { MAX_STOP_BLOCKS, onStop } from "../src/hooks/stop.ts";
-import { mailbox, mailContext, reply, send } from "../src/mail.ts";
+import { acceptMail, mailbox, mailContext, reply, send } from "../src/mail.ts";
 import { loadPolicy } from "../src/policy.ts";
 import { saveProfile } from "../src/profile.ts";
 import { loadState } from "../src/state.ts";
@@ -403,6 +403,22 @@ test("SP2c AC-2: an unread blocker interrupts the end of the turn once", () => {
   expect(first.reason).toBe(
     `Crew: blocker ${sent.message.id} from storefront: "Checkout is down". Read it (crew mail read ${sent.message.id}) and say it to the user before anything else.`,
   );
+  expect(onStop(ctx)).toEqual({});
+  // SP7b: a blocker the receiver accepted is no longer unread, so it does not interrupt.
+  const second = send(
+    mailContext(pa, loadPolicy(pa).policy, env),
+    { to: "crm", type: "blocker", text: "Payments are down" },
+    null,
+  );
+  if ("refused" in second) throw new Error(second.refused);
+  const pb = repoPaths(b, env);
+  const accepted = acceptMail(
+    mailContext(pb, loadPolicy(pb).policy, env),
+    second.message.id,
+    { by: "session" },
+    [],
+  );
+  if ("refused" in accepted) throw new Error(accepted.refused);
   expect(onStop(ctx)).toEqual({});
 });
 

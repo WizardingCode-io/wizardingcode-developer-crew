@@ -36,14 +36,20 @@ import {
   stampRuling,
 } from "./judgement.ts";
 import {
+  acceptMail,
+  badPriority,
+  decidedPriority,
   emptyInboxSummary,
   inboxSummary,
   loadItemMail,
   loadRegistry,
   type MailContext,
   mailContext,
+  mailStatus,
   markRead,
+  moveMail,
   ownInbox,
+  priorityOf,
   pruneRegistry,
   readOpenSessions,
   recordInItem,
@@ -54,7 +60,6 @@ import {
   syncMail,
   TASK_AGENT,
   tamperedBox,
-  updateStatusEverywhere,
   worktreeMainRoot,
 } from "./mail.ts";
 import { computeMetrics, metricsText } from "./metrics.ts";
@@ -112,6 +117,7 @@ import type {
   GateName,
   JudgementGateName,
   JudgementRecord,
+  Message,
   OpenedSession,
   Phase,
   Policy,
@@ -124,6 +130,7 @@ import type {
 import {
   GATE_NAMES,
   isJudgementGateName,
+  isMailPriority,
   isMailType,
   isPermissionMode,
   isValidatorRule,
@@ -176,7 +183,7 @@ const KNOWN_FLAGS: Record<string, readonly string[]> = {
   profile: ["target", "stack", "force", "timeout"],
   policy: [],
   accept: [],
-  start: ["answers", "criterion", "preserve", "origin"],
+  start: ["answers", "criterion", "preserve", "origin", "priority"],
   classify: ["answers"],
   criteria: ["kind"],
   decision: ["default"],
@@ -206,6 +213,7 @@ const KNOWN_FLAGS: Record<string, readonly string[]> = {
     "branch",
     "as",
     "all",
+    "priority",
   ],
   mode: [],
   config: [],
@@ -737,6 +745,11 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       const origin = inbox?.messages.find((m) => m.id === originId) ?? null;
       if (originId && !origin)
         return refuse(`no message ${originId} addressed to this session (crew mail inbox)`);
+      // The item's priority (SP7 §7.1): given, else the origin's confirmed one, else normal; a value
+      // that is not one of the four is refused before anything is created.
+      const priorityFlag: unknown = parsed.flags.priority;
+      if (priorityFlag !== undefined && !isMailPriority(priorityFlag))
+        return refuse(badPriority(priorityFlag));
       const previous = activeWork(env.paths);
       const previousProven =
         !!previous?.work &&
@@ -770,6 +783,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         ? `warning: this checkout is shared with ${neighbours.join(", ")}, which ${neighbours.length === 1 ? "is" : "are"} open with uncommitted changes in ${uncommitted.join(", ")}; a second session on one checkout blocks turn ends and proves half-written code: work in a worktree (git worktree add ../<name> -b <branch>)\n`
         : "";
       classify(env, work, answers);
+      work.priority = priorityFlag ?? (origin ? decidedPriority(origin) : "normal");
       // The seats the route plans, before any path is known (SP7 §6.2): the leads' validation guard
       // names them from here; the gate run rewrites them with the paths the change touched.
       if (work.route !== "fast") {
@@ -804,9 +818,10 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       saveWork(env.paths, work);
       const originNotes: string[] = [];
       if (origin) {
-        // The message is read, and the new item keeps its copy as it now stands.
-        const read = markRead(env.mail, origin.id, originNotes);
-        recordInItem(env.paths, work.id, "refused" in read ? origin : read);
+        // The message is taken on: in progress on every copy (SP7 §9); the new item keeps its copy as it now stands.
+        const moved = moveMail(env.mail, origin.id, "in-progress", {}, originNotes);
+        if ("refused" in moved) originNotes.push(moved.refused);
+        recordInItem(env.paths, work.id, "refused" in moved ? origin : moved);
       }
       const lines = criteria.map((c) => `\n  ${c.id} (${c.kind}): ${c.text}`).join("");
       const teamLine = work.seats?.length
@@ -1026,10 +1041,12 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         saveWork(env.paths, opened.work);
         // The opener's id comes from the session's variables or the engine's record of the checkout: only a message this inbox holds is marked.
         const notes: string[] = [];
-        if (ownInbox(env.mail).messages.some((m) => m.id === openedBy))
-          updateStatusEverywhere(env.mail, openedBy, "waiting-for-person", undefined, notes);
+        if (ownInbox(env.mail).messages.some((m) => m.id === openedBy)) {
+          const moved = moveMail(env.mail, openedBy, "blocked", {}, notes);
+          if ("refused" in moved) notes.push(moved.refused);
+        }
         return refuse(
-          `a full-route item opened by mail (${openedBy}) waits for a person at its spec; the item is marked waiting for the user and the message waiting-for-person${notes.length ? `; ${notes.join("; ")}` : ""}`,
+          `a full-route item opened by mail (${openedBy}) waits for a person at its spec; the item is marked waiting for the user and the message blocked${notes.length ? `; ${notes.join("; ")}` : ""}`,
         );
       }
       const decision = validatorFlag(parsed, env.policy);
@@ -1080,11 +1097,28 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       const opened = openForChange(env, args[0]);
       if (isOutcome(opened)) return opened;
       const usage = "usage: crew await <id> user | role | mail <message id>";
+      // The request this item answers follows its waits (SP7 §9): blocked while the turn ends on
+      // one, in progress again at the resume; a message past that point (done) is left as it is.
+      const originNotes: string[] = [];
+      const moveOrigin = (to: "blocked" | "in-progress") => {
+        const originId = opened.work.origin?.mail;
+        if (!originId) return;
+        const current = ownInbox(env.mail).messages.find((m) => m.id === originId);
+        if (!current || mailStatus(current) === to) return;
+        const moved = moveMail(env.mail, originId, to, {}, originNotes);
+        if ("refused" in moved) originNotes.push(moved.refused);
+      };
+      const withNotes = (text: string) =>
+        originNotes.length ? `${text}\n${originNotes.join("\n")}` : text;
       if (command === "resume") {
         opened.work.awaiting = null;
         delete opened.work.awaitingMessage;
         saveWork(env.paths, opened.work);
-        return ok(`${opened.work.id}: resumed`, { awaiting: null, awaitingMessage: null });
+        moveOrigin("in-progress");
+        return ok(withNotes(`${opened.work.id}: resumed`), {
+          awaiting: null,
+          awaitingMessage: null,
+        });
       }
       // The three waits a turn may end on (SP2c §9): the user, the roles, a reply to a message.
       const kind = args[1];
@@ -1094,7 +1128,8 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       if (kind === "mail") opened.work.awaitingMessage = args[2];
       else delete opened.work.awaitingMessage;
       saveWork(env.paths, opened.work);
-      return ok(`${opened.work.id}: ${waitingText(opened.work).slice(2)}`, {
+      moveOrigin("blocked");
+      return ok(withNotes(`${opened.work.id}: ${waitingText(opened.work).slice(2)}`), {
         awaiting: kind,
         awaitingMessage: opened.work.awaitingMessage ?? null,
       });
@@ -1818,7 +1853,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           ? `  working: ${working.map((w) => (w.description ? `${w.agent} (${w.description})` : w.agent)).join(", ")}`
           : null,
       ].filter((l): l is string => l !== null);
-      const text = `${work.id} "${work.title}"\n  phase ${work.phase}, route ${work.route}${waitingText(work)}\n${extra.length ? `${extra.join("\n")}\n` : ""}${gateSummary(work, result.verdict, result.unproven, result.evidence.runs)}`;
+      const text = `${work.id} "${work.title}"\n  phase ${work.phase}, route ${work.route}, priority ${work.priority ?? "normal"}${waitingText(work)}\n${extra.length ? `${extra.join("\n")}\n` : ""}${gateSummary(work, result.verdict, result.unproven, result.evidence.runs)}`;
       // The mail synced and a task's reply that landed taken into the lead's record (SP2c §7): a
       // failure in either (a held lock, a folder that cannot be written) is one line under the
       // status, never the status lost.
@@ -1841,6 +1876,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         type: work.type,
         phase: work.phase,
         route: work.route,
+        priority: work.priority ?? "normal",
         awaiting: work.awaiting,
         awaitingMessage: work.awaitingMessage ?? null,
         mail: { unread: inbox.unread, answered: inbox.answered, waiting: inbox.waiting },
@@ -1901,8 +1937,8 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
     }
     case "mail": {
       const sendUsage =
-        'usage: crew mail send --to <project|.> --type question|change-request|notice|blocker [--agent <session|T-n|role>] [--item <id>] [--reply-to <mid>] [--subject <text>] "<text>" [--file <path>]';
-      const usage = `${sendUsage} | inbox [--all] | read <mid> | reply <mid> "<text>" [--branch <b>] [--item <child id>] [--as <role>] [--file <path>] | refuse <mid> --reason "<why>" | status | stop <mid>`;
+        'usage: crew mail send --to <project|.> --type question|change-request|notice|blocker [--priority blocker|high|normal|low] [--agent <session|T-n|role>] [--item <id>] [--reply-to <mid>] [--subject <text>] "<text>" [--file <path>]';
+      const usage = `${sendUsage} | inbox [--all] | read <mid> | accept <mid> [--priority <p>] [--reason "<why>"] | reply <mid> "<text>" [--branch <b>] [--item <child id>] [--as <role>] [--file <path>] | refuse <mid> --reason "<why>" | status | stop <mid>`;
       const ctx = env.mail;
       const verb = args[0];
       if (verb === "send") {
@@ -1910,6 +1946,9 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         const type = parsed.flags.type;
         const text = args.slice(1).join(" ");
         if (typeof to !== "string" || !isMailType(type)) return refuse(sendUsage);
+        const sendPriority: unknown = parsed.flags.priority;
+        if (sendPriority !== undefined && !isMailPriority(sendPriority))
+          return refuse(badPriority(sendPriority));
         const item = typeof parsed.flags.item === "string" ? parsed.flags.item : undefined;
         const work = item
           ? (loadWork(env.paths, item).work ?? null)
@@ -1921,6 +1960,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
             to,
             type,
             text,
+            ...(sendPriority ? { priority: sendPriority } : {}),
             ...(typeof parsed.flags.agent === "string" ? { agent: parsed.flags.agent } : {}),
             ...(typeof parsed.flags.subject === "string" ? { subject: parsed.flags.subject } : {}),
             ...(typeof parsed.flags.file === "string" ? { filePath: parsed.flags.file } : {}),
@@ -1958,18 +1998,17 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         syncMail(ctx, env.paths);
         const { messages, tampered } = ownInbox(ctx);
         if (tampered) return refuse(tamperedBox(ctx.self.project, "inbox"));
+        // What is open, and the requests done (never their replies); --all shows everything (SP7 §9).
         const shown = parsed.flags.all
           ? messages
-          : messages.filter(
-              (m) =>
-                m.status === "sent" ||
-                m.status === "read" ||
-                (m.status === "answered" && !m.replyTo),
-            );
+          : messages.filter((m) => {
+              const status = mailStatus(m);
+              return status === "done" ? !m.replyTo : status !== "refused" && status !== "expired";
+            });
         const summary = inboxSummary(ctx);
         const lines = shown.map(
           (m) =>
-            `  ${m.id} · ${m.type} · from ${partyLabel(m.from)} · ${m.subject} · ${m.status}${m.reason ? `: ${m.reason}` : ""}`,
+            `  ${m.id} · [${decidedPriority(m)}] · ${m.type} · from ${partyLabel(m.from)} · ${m.subject} · ${mailStatus(m)}${m.reason ? `: ${m.reason}` : ""}`,
         );
         return ok(
           `Mail (${ctx.self.workspace ?? "alone"}/${ctx.self.project}, as ${ctx.self.agent}): ${summary.unread} unread, ${summary.answered} answered${lines.length ? `\n${lines.join("\n")}` : ""}`,
@@ -1990,8 +2029,9 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           `to: ${result.to.project}${result.to.agent ? ` (${result.to.agent})` : ""}`,
           `type: ${result.type}`,
           `subject: ${result.subject}`,
-          `status: ${result.status}${result.reason ? `: ${result.reason}` : ""}`,
+          `status: ${mailStatus(result)}${result.reason ? `: ${result.reason}` : ""}`,
           `at: ${result.at}`,
+          priorityLine(result),
           ...(result.from.item ? [`from item: ${result.from.item}`] : []),
           ...(result.replyTo ? [`reply to: ${result.replyTo}`] : []),
           ...(result.branch ? [`branch: ${result.branch}`] : []),
@@ -2019,9 +2059,36 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         );
         if ("refused" in result) return refuse(result.refused);
         return ok(
-          `replied to ${args[1]}: ${result.reply.id} to ${result.reply.to.project}; ${args[1]} answered${notes.length ? `\n${notes.join("\n")}` : ""}`,
+          `replied to ${args[1]}: ${result.reply.id} to ${result.reply.to.project}; ${args[1]} ${mailStatus(result.original)}${notes.length ? `\n${notes.join("\n")}` : ""}`,
           { reply: result.reply, original: result.original, notes },
         );
+      }
+      if (verb === "accept") {
+        if (!args[1]) return refuse(usage);
+        const priority: unknown = parsed.flags.priority;
+        if (priority !== undefined && !isMailPriority(priority))
+          return refuse(badPriority(priority));
+        const reason = typeof parsed.flags.reason === "string" ? parsed.flags.reason : undefined;
+        const notes: string[] = [];
+        const result = acceptMail(
+          ctx,
+          args[1],
+          {
+            ...(priority ? { priority } : {}),
+            ...(reason ? { reason } : {}),
+            by: ctx.self.agent,
+          },
+          notes,
+        );
+        if ("refused" in result) return refuse(result.refused);
+        const d = result.message.priorityDecision;
+        const level = d
+          ? `${d.confirmed}${d.confirmed !== d.proposed ? ` (proposed ${d.proposed})` : ""}${d.reason ? `: ${d.reason}` : ""}`
+          : priorityOf(result.message);
+        return ok(`${args[1]} accepted at ${level}${notes.length ? `\n${notes.join("\n")}` : ""}`, {
+          message: result.message,
+          notes,
+        });
       }
       if (verb === "refuse") {
         const reason = typeof parsed.flags.reason === "string" ? parsed.flags.reason : "";
@@ -2088,6 +2155,15 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
   }
 }
 
+/** The line `crew mail read` prints for a message's priority: the decision when one stands, the proposal otherwise. */
+function priorityLine(m: Message): string {
+  const d = m.priorityDecision;
+  const level = decidedPriority(m);
+  if (!d || !isMailPriority(d.confirmed)) return `priority: ${level} (proposed)`;
+  const how = d.confirmed === d.proposed ? `confirmed by ${d.by}` : `lowered by ${d.by}`;
+  return `priority: ${level} (proposed ${d.proposed}, ${how}${d.reason ? `: ${d.reason}` : ""})`;
+}
+
 /** The user's settings live in their home folder, so these work in any folder. */
 function settings(command: "mode" | "config", args: string[], user: { userDir: string }): Outcome {
   const config = loadConfig(user);
@@ -2133,6 +2209,7 @@ const HELP = `crew ${VERSION}
   start "<request>" --answers <json>    create a work item from the typed answers
       [--criterion "<text>"] [--preserve "<text>"]   criteria, repeatable; preserve: existing tests stay green
       [--origin <message id>]           the item answers a message of this project's inbox (a session opened by mail)
+      [--priority blocker|high|normal|low]   the item's priority; else its origin's confirmed one, else normal
   classify <id> --answers <json>        record typed answers and compute the route
   criteria <id> add "<text>" [--kind preserve|observed]
   criteria <id> remove <AC-n>           take out a criterion no test-first record or skip names
@@ -2150,8 +2227,9 @@ const HELP = `crew ${VERSION}
   await <id> user | role | mail <mid>   mark the turn's wait: for the user, for the roles, or for a reply to a message
   resume <id>                           clear the wait
   mail send --to <project|.> --type question|change-request|notice|blocker "<text>"   send mail inside the workspace
-      [--agent <session|T-n|role>] [--item <id>] [--reply-to <mid>] [--subject <text>] [--file <path>]
+      [--priority blocker|high|normal|low] [--agent <session|T-n|role>] [--item <id>] [--reply-to <mid>] [--subject <text>] [--file <path>]
   mail inbox [--all] | read <mid> | reply <mid> "<text>" [--branch <b>] [--item <child>] [--as <role>] [--file <path>]
+  mail accept <mid> [--priority <p>] [--reason "<why>"]   confirm a request's priority, or lower it with a reason (never raise)
   mail refuse <mid> --reason "<why>" | status | stop <mid>   this project's mail and the sessions it opened (status sweeps them; stop kills one)
   task <id> open T-n --criteria AC-1,AC-2 [--text "<task text>"]   hand a task of the plan to an implementer: a message, a worktree, a branch, a session
   task <id> list | merge T-n [--force]   the tasks and their children; merge a proven child's branch (--force merges an unproven one: asks the user)

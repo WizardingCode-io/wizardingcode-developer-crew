@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { UNAVAILABLE } from "./fingerprint.ts";
+import { decidedPriority, mailStatus } from "./mail-status.ts";
 import { blockingObjections, objectionStatus } from "./objections.ts";
 import { type CrewPaths, workDir } from "./paths.ts";
 import { decisionCounts } from "./policy.ts";
@@ -386,8 +387,8 @@ export function renderReport(
       "",
       "## Mail",
       "",
-      "| Message | At | Direction | With | Type | Subject | Status |",
-      "| :- | :- | :- | :- | :- | :- | :- |",
+      "| Message | At | Direction | With | Type | Priority | Subject | Status |",
+      "| :- | :- | :- | :- | :- | :- | :- | :- |",
     );
     for (const m of mail.box.messages) {
       const sent = m.from.item === work.id && m.from.project === selfName;
@@ -395,13 +396,19 @@ export function renderReport(
       const other = partyLabel(sent ? m.to : m.from);
       // Every cell a person typed (the subject, a reason, a branch) has its pipes escaped.
       const cell = (text: string) => text.replace(/\|/g, "\\|");
+      // The status as the engine reads it (SP7 §9) and the priority with its proposal when lowered.
+      const decision = m.priorityDecision;
+      const priority =
+        decision && decision.confirmed !== decision.proposed
+          ? `${decidedPriority(m)} (proposed ${decision.proposed})`
+          : decidedPriority(m);
       const status = cell(
-        `${m.status}${m.reason ? `: ${m.reason}` : ""}${
+        `${mailStatus(m)}${m.reason ? `: ${m.reason}` : ""}${
           m.verdict ? ` (${m.verdict}${m.branch ? `, ${m.branch}` : ""})` : ""
         }${m.relayed ? ", relayed" : ""}`,
       );
       lines.push(
-        `| ${m.id} | ${m.at} | ${direction} | ${other} | ${m.type} | ${cell(m.subject)} | ${status} |`,
+        `| ${m.id} | ${m.at} | ${direction} | ${other} | ${m.type} | ${priority} | ${cell(m.subject)} | ${status} |`,
       );
     }
   }

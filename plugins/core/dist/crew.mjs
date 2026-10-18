@@ -84,6 +84,10 @@ function isJudgementGateName(value) {
   return JUDGEMENT_GATES.includes(value);
 }
 var ROUTE_ORDER = ["fast", "standard", "full"];
+var MAIL_PRIORITIES = ["blocker", "high", "normal", "low"];
+function isMailPriority(value) {
+  return MAIL_PRIORITIES.includes(value);
+}
 var MAIL_TYPES = ["question", "change-request", "notice", "blocker"];
 function isMailType(value) {
   return MAIL_TYPES.includes(value);
@@ -1072,6 +1076,48 @@ function computeFingerprint(root, profile, base, maxFiles = MAX_WATCHED_FILES, m
   const parts = files.map((path) => `${path}:${hashFile(join9(root, path))}`);
   return `${WALK_PREFIX}${sha256(parts.join(`
 `))}`;
+}
+
+// packages/engine/src/mail-status.ts
+var MAIL_TRANSITIONS = {
+  sent: ["read", "done", "refused", "expired", "in-progress", "blocked"],
+  read: ["accepted", "refused", "in-progress", "done", "blocked", "expired"],
+  accepted: ["in-progress", "blocked", "done", "refused"],
+  "in-progress": ["blocked", "done"],
+  blocked: ["in-progress", "done", "refused", "expired"],
+  done: [],
+  refused: [],
+  expired: []
+};
+var BEFORE_0_7 = {
+  answered: "done",
+  "waiting-for-person": "blocked",
+  stopped: "refused"
+};
+function mailStatus(m) {
+  const raw = m.status;
+  if (Object.hasOwn(MAIL_TRANSITIONS, raw))
+    return raw;
+  return BEFORE_0_7[raw] ?? "sent";
+}
+function priorityOf(m) {
+  if (isMailPriority(m.priority))
+    return m.priority;
+  return m.type === "blocker" ? "blocker" : "normal";
+}
+function decidedPriority(m) {
+  const confirmed = m.priorityDecision?.confirmed;
+  return isMailPriority(confirmed) ? confirmed : priorityOf(m);
+}
+function priorityRank(priority) {
+  return MAIL_PRIORITIES.indexOf(priority);
+}
+function transition(m, to, extra = {}) {
+  const from = mailStatus(m);
+  const allowed = MAIL_TRANSITIONS[from].includes(to) && !(from === "sent" && to === "done" && m.type !== "notice");
+  if (!allowed)
+    return { refused: `${m.id} is ${from}; it cannot become ${to}` };
+  return { ...m, ...extra, status: to };
 }
 
 // packages/engine/src/objections.ts
@@ -2473,14 +2519,16 @@ function renderReport(work, evidence, policy, ledger, mail, selfName) {
   if (mail?.tampered) {
     lines.push("", "## Mail", "", `mail.json changed outside the engine; the user accepts it with crew accept ${work.id}.`);
   } else if (mail?.box.messages.length) {
-    lines.push("", "## Mail", "", "| Message | At | Direction | With | Type | Subject | Status |", "| :- | :- | :- | :- | :- | :- | :- |");
+    lines.push("", "## Mail", "", "| Message | At | Direction | With | Type | Priority | Subject | Status |", "| :- | :- | :- | :- | :- | :- | :- | :- |");
     for (const m of mail.box.messages) {
       const sent = m.from.item === work.id && m.from.project === selfName;
       const direction = sent ? "sent" : "received";
       const other = partyLabel(sent ? m.to : m.from);
       const cell = (text) => text.replace(/\|/g, "\\|");
-      const status = cell(`${m.status}${m.reason ? `: ${m.reason}` : ""}${m.verdict ? ` (${m.verdict}${m.branch ? `, ${m.branch}` : ""})` : ""}${m.relayed ? ", relayed" : ""}`);
-      lines.push(`| ${m.id} | ${m.at} | ${direction} | ${other} | ${m.type} | ${cell(m.subject)} | ${status} |`);
+      const decision = m.priorityDecision;
+      const priority = decision && decision.confirmed !== decision.proposed ? `${decidedPriority(m)} (proposed ${decision.proposed})` : decidedPriority(m);
+      const status = cell(`${mailStatus(m)}${m.reason ? `: ${m.reason}` : ""}${m.verdict ? ` (${m.verdict}${m.branch ? `, ${m.branch}` : ""})` : ""}${m.relayed ? ", relayed" : ""}`);
+      lines.push(`| ${m.id} | ${m.at} | ${direction} | ${other} | ${m.type} | ${priority} | ${cell(m.subject)} | ${status} |`);
     }
   }
   if (evidence.roles?.length) {
@@ -3568,6 +3616,11 @@ function resolveOpener(paths, env) {
 }
 
 // packages/engine/src/mail.ts
+var WORK_ID = /^\d{4}-\d{2}-\d{2}-\d{3}-[a-z0-9-]*$/;
+var REASONS_CHARS = 500;
+function badPriority(value) {
+  return `priority is one of ${MAIL_PRIORITIES.join(", ")}, not ${String(value)}`;
+}
 var LIVE_MS = 10 * 60 * 1000;
 var INLINE_BODY_LIMIT = 2048;
 var PREVIEW_CHARS = 200;
@@ -3842,6 +3895,9 @@ function send(ctx, request, work) {
   const text = attached.text;
   if (!text.trim())
     return { refused: "a message needs a text (or --file)", message: null };
+  if (request.priority !== undefined && !isMailPriority(request.priority))
+    return { refused: badPriority(request.priority), message: null };
+  const priority = request.priority ?? (request.type === "blocker" ? "blocker" : "normal");
   const resolved = resolveProject(ctx, request.to);
   const refuse = (reason, to2) => {
     const written = appendToBox(own.dir, "outbox", self.project, (box) => ({
@@ -3850,6 +3906,7 @@ function send(ctx, request, work) {
       from: party(self, itemId),
       to: to2,
       type: request.type,
+      priority,
       subject: subjectOf({ subject: request.subject, text }),
       body: text.slice(0, PREVIEW_CHARS),
       replyTo: request.replyTo ?? null,
@@ -3941,6 +3998,7 @@ function send(ctx, request, work) {
       from: party(self, itemId),
       to,
       type: request.type,
+      priority,
       subject: subjectOf({ subject: request.subject, text }),
       ...placeBody(dest.dir, id, text),
       replyTo: request.replyTo ?? null,
@@ -4033,7 +4091,10 @@ function updateEverywhere(ctx, id, change, skipped) {
 function ownInbox(ctx) {
   const { box, tampered } = readBox(mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project).dir, "inbox");
   const mine = box.messages.filter((m) => (m.to.agent ?? "session") === ctx.self.agent);
-  return { messages: mine.sort((a, b) => a.at.localeCompare(b.at)), tampered };
+  return {
+    messages: mine.sort((a, b) => priorityRank(decidedPriority(a)) - priorityRank(decidedPriority(b)) || a.at.localeCompare(b.at)),
+    tampered
+  };
 }
 function addressed(ctx, m) {
   if (m.to.project !== ctx.self.project)
@@ -4056,23 +4117,76 @@ function notUpdated(id) {
 function skippedLine(id) {
   return (what) => `a copy of ${id} was not changed: ${what}`;
 }
+function readFirst(m, to, at) {
+  return mailStatus(m) === "sent" && to !== "read" ? { ...m, status: "read", readAt: m.readAt ?? at } : m;
+}
+function withoutReason(m) {
+  const copy = { ...m };
+  delete copy.reason;
+  return copy;
+}
+function moveMail(ctx, id, to, extra, notes) {
+  const own = ownMessage(ctx, id);
+  if ("refused" in own)
+    return own;
+  const at = nowIso();
+  const check = transition(readFirst(own.found, to, at), to, extra);
+  if ("refused" in check)
+    return check;
+  return updateEverywhere(ctx, id, (m) => {
+    const moved = transition(readFirst(m, to, at), to, extra);
+    return "refused" in moved ? m : moved;
+  }, (w) => notes.push(skippedLine(id)(w))) ?? notUpdated(id);
+}
 function markRead(ctx, id, notes) {
   const own = ownMessage(ctx, id);
   if ("refused" in own)
     return own;
-  if (own.found.status !== "sent")
+  if (mailStatus(own.found) !== "sent")
     return own.found;
-  return updateEverywhere(ctx, id, (m) => ({ ...m, status: "read", readAt: nowIso() }), (w) => notes.push(skippedLine(id)(w))) ?? notUpdated(id);
+  return moveMail(ctx, id, own.found.type === "notice" ? "done" : "read", { readAt: nowIso() }, notes);
 }
 function refuseMail(ctx, id, reason, notes) {
   const own = ownMessage(ctx, id);
   if ("refused" in own)
     return own;
-  if (own.found.status !== "sent" && own.found.status !== "read")
-    return { refused: `${id} is ${own.found.status}; nothing to refuse` };
+  const from = mailStatus(own.found);
+  if (!MAIL_TRANSITIONS[from].includes("refused"))
+    return { refused: `${id} is ${from}; nothing to refuse` };
   if (!reason.trim())
     return { refused: 'a refusal needs --reason "<why>"' };
-  return updateEverywhere(ctx, id, (m) => ({ ...m, status: "refused", reason: reason.trim() }), (w) => notes.push(skippedLine(id)(w))) ?? notUpdated(id);
+  return moveMail(ctx, id, "refused", { reason: reason.trim() }, notes);
+}
+function acceptMail(ctx, id, options, notes) {
+  const own = ownMessage(ctx, id);
+  if ("refused" in own)
+    return own;
+  const m = own.found;
+  if (m.type === "question")
+    return {
+      refused: "a question is done by its reply; accept applies to a change request or a blocker"
+    };
+  if (m.type === "notice")
+    return {
+      refused: "a notice is done when read; accept applies to a change request or a blocker"
+    };
+  const from = mailStatus(m);
+  if (from !== "sent" && from !== "read")
+    return { refused: `${id} is ${from}; accept applies to a request still sent or read` };
+  if (options.priority !== undefined && !isMailPriority(options.priority))
+    return { refused: badPriority(options.priority) };
+  const proposed = priorityOf(m);
+  const confirmed = options.priority ?? proposed;
+  if (priorityRank(confirmed) < priorityRank(proposed))
+    return {
+      refused: `${id} was proposed ${proposed}; the receiver confirms or lowers, never raises`
+    };
+  const reason = options.reason?.trim() ? oneLine(options.reason) : null;
+  if (priorityRank(confirmed) > priorityRank(proposed) && !reason)
+    return { refused: 'a lowering needs --reason "<why>"' };
+  const decision = { proposed, confirmed, by: options.by, reason, at: nowIso() };
+  const moved = moveMail(ctx, id, "accepted", { priorityDecision: decision }, notes);
+  return "refused" in moved ? moved : { message: moved };
 }
 function reply(ctx, id, text, options, notes) {
   const ownDir = mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project).dir;
@@ -4085,12 +4199,13 @@ function reply(ctx, id, text, options, notes) {
   const wrong = addressed(ctx, original);
   if (wrong)
     return { refused: wrong };
-  if (original.status === "answered")
-    return { refused: `${id} is answered; a second answer is a new message` };
-  if (original.status === "refused")
+  const standing = mailStatus(original);
+  if (standing === "done")
+    return { refused: `${id} is done; a second answer is a new message` };
+  if (standing === "refused")
     return { refused: `${id} is refused; it has no answer` };
-  if (original.status === "expired" || original.status === "stopped")
-    return { refused: `${id} is ${original.status}; its session is over` };
+  if (standing === "expired")
+    return { refused: `${id} is expired; its session is over` };
   if (options.as !== undefined && !ROLE_AGENT.test(options.as))
     return {
       refused: "--as names a role: judge, researcher, expert-<n>, devils-advocate, fault-finder or review-<gate>"
@@ -4099,9 +4214,13 @@ function reply(ctx, id, text, options, notes) {
     return {
       refused: `${id} is addressed to ${original.to.agent ?? "session"}, not to ${options.as}`
     };
-  if (options.item && !loadWork(ctx.paths, options.item).work)
+  if (options.item !== undefined && (!WORK_ID.test(options.item) || !loadWork(ctx.paths, options.item).work))
     return { refused: `unknown work item: ${options.item}` };
-  const verdict = options.item ? loadEvidence(ctx.paths, options.item).evidence.verdict : undefined;
+  const child = options.item ? loadEvidence(ctx.paths, options.item).evidence : undefined;
+  const verdict = child?.verdict;
+  const closing = original.type === "question" || original.type === "notice";
+  const to = closing || verdict === "proven" ? "done" : "blocked";
+  const reason = to === "done" ? undefined : options.item ? `unproven: ${(child?.unproven ?? []).map(oneLine).join("; ")}`.slice(0, REASONS_CHARS) : "the reply names no child item (--item)";
   const attached = attachFile(ctx.paths.root, text, options.filePath);
   if ("refused" in attached)
     return { refused: attached.refused };
@@ -4144,14 +4263,18 @@ function reply(ctx, id, text, options, notes) {
   const failed = deliver(ctx, dest.dir, original.from.project, replyMessage);
   if (failed)
     return failed;
-  const answered = updateEverywhere(ctx, id, (m) => ({
-    ...m,
-    status: "answered",
-    answeredAt: at,
-    ...options.branch ? { branch: options.branch } : {},
-    ...options.item ? { item: options.item } : {},
-    ...verdict ? { verdict } : {}
-  }), (w) => notes.push(skippedLine(id)(w)));
+  const answered = updateEverywhere(ctx, id, (m) => {
+    const read = readFirst(m, to, at);
+    const extra = {
+      answeredAt: at,
+      ...options.branch ? { branch: options.branch } : {},
+      ...options.item ? { item: options.item } : {},
+      ...verdict ? { verdict } : {},
+      ...reason !== undefined ? { reason } : {}
+    };
+    const moved = to === "blocked" && mailStatus(read) === "blocked" ? { ...read, ...extra } : transition(to === "done" ? withoutReason(read) : read, to, extra);
+    return "refused" in moved ? m : moved;
+  }, (w) => notes.push(skippedLine(id)(w)));
   if (!answered)
     return {
       refused: `${replyMessage.id} was delivered, but ${id} could not be marked answered: its mailbox changed while it was being written`
@@ -4232,9 +4355,9 @@ function inboxSummary(ctx) {
   const { messages, tampered } = ownInbox(ctx);
   if (tampered)
     return { ...emptyInboxSummary(), tampered, line: tamperedBox(ctx.self.project, "inbox") };
-  const unread = messages.filter((m) => m.status === "sent" && !m.replyTo);
-  const answered = messages.filter((m) => m.replyTo && m.status === "sent");
-  const waiting = messages.filter((m) => m.status === "waiting-for-person");
+  const unread = messages.filter((m) => mailStatus(m) === "sent" && !m.replyTo);
+  const answered = messages.filter((m) => m.replyTo && mailStatus(m) === "sent");
+  const waiting = messages.filter((m) => mailStatus(m) === "blocked");
   const blockers = unread.filter((m) => m.type === "blocker");
   if (!messages.length)
     return emptyInboxSummary();
@@ -4664,7 +4787,7 @@ function sweepOne(ctx, m, now, result) {
   const settle = (kind, end, reason, line) => {
     const recorded = updateEverywhere(ctx, m.id, (x) => ({
       ...x,
-      ...reason && unanswered(x.status) ? { status: "expired", reason } : {},
+      ...reason && unanswered(mailStatus(x)) ? { status: "expired", reason } : {},
       opened: { ...ended(opened, end.outcome, at), ...end }
     }), (what) => result.lines.push(`the record of ${m.id} skipped a box it could not read: ${what}`));
     if (recorded === null) {
@@ -4695,7 +4818,7 @@ function sweepOne(ctx, m, now, result) {
     return;
   }
   if (outcome.ended) {
-    const replied = !unanswered(m.status);
+    const replied = !unanswered(mailStatus(m));
     settle("ended", { ...measured, outcome: "ended" }, replied ? null : "the session ended without a reply", replied ? `${m.id} ended (${outcome.turns ?? "?"} turns, ${outcome.costUsd ?? "?"} USD)` : `${m.id} ended without a reply (expired)`);
     return;
   }
@@ -4753,7 +4876,7 @@ function stopSession(ctx, id, notes) {
   const at = nowIso();
   return updateEverywhere(ctx, id, (x) => ({
     ...x,
-    ...unanswered(x.status) ? { status: "stopped", reason: "stopped by crew mail stop" } : {},
+    ...unanswered(mailStatus(x)) ? { status: "refused", reason: "stopped by crew mail stop" } : {},
     opened: ended(x.opened, "stopped", at)
   }), (what) => notes.push(`a copy of ${id} was not changed: ${what}`)) ?? {
     refused: `${id} was stopped but could not be updated: its mailbox changed while it was being written`
@@ -5572,7 +5695,7 @@ function recordStop(ctx, id, role, payload, transcriptNote, progress) {
   return note;
 }
 function pendingQuestion(ctx, workId, agent) {
-  return loadItemMail(ctx.paths, workId).box.messages.find((m) => m.relayed && m.to.agent === agent && (m.status === "sent" || m.status === "read") && !m.replyTo);
+  return loadItemMail(ctx.paths, workId).box.messages.find((m) => m.relayed && m.to.agent === agent && (mailStatus(m) === "sent" || mailStatus(m) === "read") && !m.replyTo);
 }
 function joinEarlierFile(dir, agent, answer) {
   if (agent.startsWith("review-")) {
@@ -6587,7 +6710,7 @@ function listTasks(ctx, work) {
     const implementer = t.child ? null : !m?.opened ? "no implementer" : m.opened.endedAt ? `implementer ${m.opened.outcome ?? "ended"}${m.reason ? `: ${m.reason}` : ""}` : null;
     return {
       task: t,
-      status: m?.status ?? "sent",
+      status: m ? mailStatus(m) : "sent",
       verdict: t.verdict ?? m?.verdict ?? "no reply yet",
       implementer
     };
@@ -7213,7 +7336,7 @@ var KNOWN_FLAGS = {
   profile: ["target", "stack", "force", "timeout"],
   policy: [],
   accept: [],
-  start: ["answers", "criterion", "preserve", "origin"],
+  start: ["answers", "criterion", "preserve", "origin", "priority"],
   classify: ["answers"],
   criteria: ["kind"],
   decision: ["default"],
@@ -7242,7 +7365,8 @@ var KNOWN_FLAGS = {
     "reason",
     "branch",
     "as",
-    "all"
+    "all",
+    "priority"
   ],
   mode: [],
   config: [],
@@ -7653,6 +7777,9 @@ async function dispatch(parsed, io) {
       const origin = inbox?.messages.find((m) => m.id === originId) ?? null;
       if (originId && !origin)
         return refuse(`no message ${originId} addressed to this session (crew mail inbox)`);
+      const priorityFlag = parsed.flags.priority;
+      if (priorityFlag !== undefined && !isMailPriority(priorityFlag))
+        return refuse(badPriority(priorityFlag));
       const previous = activeWork(env.paths);
       const previousProven = !!previous?.work && assess(env.paths, previous.work, env.profile, env.policy, env.tampered || previous.tampered).verdict === "proven";
       const warning = previous?.work && !previousProven ? `warning: ${previous.work.id} is not proven and is no longer the active work item
@@ -7671,6 +7798,7 @@ async function dispatch(parsed, io) {
       const sharedWarning = neighbours.length ? `warning: this checkout is shared with ${neighbours.join(", ")}, which ${neighbours.length === 1 ? "is" : "are"} open with uncommitted changes in ${uncommitted.join(", ")}; a second session on one checkout blocks turn ends and proves half-written code: work in a worktree (git worktree add ../<name> -b <branch>)
 ` : "";
       classify(env, work, answers);
+      work.priority = priorityFlag ?? (origin ? decidedPriority(origin) : "normal");
       if (work.route !== "fast") {
         work.seats = plannedSeats(work.route, work.riskAreas, [], env.policy);
         work.primaryTeam = "backend";
@@ -7692,8 +7820,10 @@ async function dispatch(parsed, io) {
       saveWork(env.paths, work);
       const originNotes = [];
       if (origin) {
-        const read2 = markRead(env.mail, origin.id, originNotes);
-        recordInItem(env.paths, work.id, "refused" in read2 ? origin : read2);
+        const moved = moveMail(env.mail, origin.id, "in-progress", {}, originNotes);
+        if ("refused" in moved)
+          originNotes.push(moved.refused);
+        recordInItem(env.paths, work.id, "refused" in moved ? origin : moved);
       }
       const lines2 = criteria.map((c) => `
   ${c.id} (${c.kind}): ${c.text}`).join("");
@@ -7898,9 +8028,12 @@ ${originNotes.join(`
         opened.work.awaiting = "user";
         saveWork(env.paths, opened.work);
         const notes = [];
-        if (ownInbox(env.mail).messages.some((m) => m.id === openedBy))
-          updateStatusEverywhere(env.mail, openedBy, "waiting-for-person", undefined, notes);
-        return refuse(`a full-route item opened by mail (${openedBy}) waits for a person at its spec; the item is marked waiting for the user and the message waiting-for-person${notes.length ? `; ${notes.join("; ")}` : ""}`);
+        if (ownInbox(env.mail).messages.some((m) => m.id === openedBy)) {
+          const moved = moveMail(env.mail, openedBy, "blocked", {}, notes);
+          if ("refused" in moved)
+            notes.push(moved.refused);
+        }
+        return refuse(`a full-route item opened by mail (${openedBy}) waits for a person at its spec; the item is marked waiting for the user and the message blocked${notes.length ? `; ${notes.join("; ")}` : ""}`);
       }
       const decision = validatorFlag(parsed, env.policy);
       if (isOutcome(decision))
@@ -7950,11 +8083,30 @@ ${originNotes.join(`
       if (isOutcome(opened))
         return opened;
       const usage = "usage: crew await <id> user | role | mail <message id>";
+      const originNotes = [];
+      const moveOrigin = (to) => {
+        const originId = opened.work.origin?.mail;
+        if (!originId)
+          return;
+        const current = ownInbox(env.mail).messages.find((m) => m.id === originId);
+        if (!current || mailStatus(current) === to)
+          return;
+        const moved = moveMail(env.mail, originId, to, {}, originNotes);
+        if ("refused" in moved)
+          originNotes.push(moved.refused);
+      };
+      const withNotes = (text) => originNotes.length ? `${text}
+${originNotes.join(`
+`)}` : text;
       if (command === "resume") {
         opened.work.awaiting = null;
         delete opened.work.awaitingMessage;
         saveWork(env.paths, opened.work);
-        return ok(`${opened.work.id}: resumed`, { awaiting: null, awaitingMessage: null });
+        moveOrigin("in-progress");
+        return ok(withNotes(`${opened.work.id}: resumed`), {
+          awaiting: null,
+          awaitingMessage: null
+        });
       }
       const kind = args[1];
       if (kind !== "user" && kind !== "role" && kind !== "mail")
@@ -7967,7 +8119,8 @@ ${originNotes.join(`
       else
         delete opened.work.awaitingMessage;
       saveWork(env.paths, opened.work);
-      return ok(`${opened.work.id}: ${waitingText(opened.work).slice(2)}`, {
+      moveOrigin("blocked");
+      return ok(withNotes(`${opened.work.id}: ${waitingText(opened.work).slice(2)}`), {
         awaiting: kind,
         awaitingMessage: opened.work.awaitingMessage ?? null
       });
@@ -8480,7 +8633,7 @@ test-first not credited: ${out.uncredited}` : "";
         working.length ? `  working: ${working.map((w) => w.description ? `${w.agent} (${w.description})` : w.agent).join(", ")}` : null
       ].filter((l) => l !== null);
       const text = `${work.id} "${work.title}"
-  phase ${work.phase}, route ${work.route}${waitingText(work)}
+  phase ${work.phase}, route ${work.route}, priority ${work.priority ?? "normal"}${waitingText(work)}
 ${extra.length ? `${extra.join(`
 `)}
 ` : ""}${gateSummary(work, result.verdict, result.unproven, result.evidence.runs)}`;
@@ -8503,6 +8656,7 @@ ${notes.join(`
         type: work.type,
         phase: work.phase,
         route: work.route,
+        priority: work.priority ?? "normal",
         awaiting: work.awaiting,
         awaitingMessage: work.awaitingMessage ?? null,
         mail: { unread: inbox.unread, answered: inbox.answered, waiting: inbox.waiting },
@@ -8553,8 +8707,8 @@ ${notes.join(`
       });
     }
     case "mail": {
-      const sendUsage = 'usage: crew mail send --to <project|.> --type question|change-request|notice|blocker [--agent <session|T-n|role>] [--item <id>] [--reply-to <mid>] [--subject <text>] "<text>" [--file <path>]';
-      const usage = `${sendUsage} | inbox [--all] | read <mid> | reply <mid> "<text>" [--branch <b>] [--item <child id>] [--as <role>] [--file <path>] | refuse <mid> --reason "<why>" | status | stop <mid>`;
+      const sendUsage = 'usage: crew mail send --to <project|.> --type question|change-request|notice|blocker [--priority blocker|high|normal|low] [--agent <session|T-n|role>] [--item <id>] [--reply-to <mid>] [--subject <text>] "<text>" [--file <path>]';
+      const usage = `${sendUsage} | inbox [--all] | read <mid> | accept <mid> [--priority <p>] [--reason "<why>"] | reply <mid> "<text>" [--branch <b>] [--item <child id>] [--as <role>] [--file <path>] | refuse <mid> --reason "<why>" | status | stop <mid>`;
       const ctx = env.mail;
       const verb = args[0];
       if (verb === "send") {
@@ -8563,6 +8717,9 @@ ${notes.join(`
         const text = args.slice(1).join(" ");
         if (typeof to !== "string" || !isMailType(type))
           return refuse(sendUsage);
+        const sendPriority = parsed.flags.priority;
+        if (sendPriority !== undefined && !isMailPriority(sendPriority))
+          return refuse(badPriority(sendPriority));
         const item = typeof parsed.flags.item === "string" ? parsed.flags.item : undefined;
         const work = item ? loadWork(env.paths, item).work ?? null : activeWork(env.paths)?.work ?? null;
         if (item && !work)
@@ -8571,6 +8728,7 @@ ${notes.join(`
           to,
           type,
           text,
+          ...sendPriority ? { priority: sendPriority } : {},
           ...typeof parsed.flags.agent === "string" ? { agent: parsed.flags.agent } : {},
           ...typeof parsed.flags.subject === "string" ? { subject: parsed.flags.subject } : {},
           ...typeof parsed.flags.file === "string" ? { filePath: parsed.flags.file } : {},
@@ -8603,9 +8761,12 @@ note: no active work item, so no item keeps a copy of this message`;
         const { messages, tampered } = ownInbox(ctx);
         if (tampered)
           return refuse(tamperedBox(ctx.self.project, "inbox"));
-        const shown = parsed.flags.all ? messages : messages.filter((m) => m.status === "sent" || m.status === "read" || m.status === "answered" && !m.replyTo);
+        const shown = parsed.flags.all ? messages : messages.filter((m) => {
+          const status = mailStatus(m);
+          return status === "done" ? !m.replyTo : status !== "refused" && status !== "expired";
+        });
         const summary = inboxSummary(ctx);
-        const lines2 = shown.map((m) => `  ${m.id} · ${m.type} · from ${partyLabel(m.from)} · ${m.subject} · ${m.status}${m.reason ? `: ${m.reason}` : ""}`);
+        const lines2 = shown.map((m) => `  ${m.id} · [${decidedPriority(m)}] · ${m.type} · from ${partyLabel(m.from)} · ${m.subject} · ${mailStatus(m)}${m.reason ? `: ${m.reason}` : ""}`);
         return ok(`Mail (${ctx.self.workspace ?? "alone"}/${ctx.self.project}, as ${ctx.self.agent}): ${summary.unread} unread, ${summary.answered} answered${lines2.length ? `
 ${lines2.join(`
 `)}` : ""}`, { ...summary, messages: shown });
@@ -8626,8 +8787,9 @@ ${lines2.join(`
           `to: ${result.to.project}${result.to.agent ? ` (${result.to.agent})` : ""}`,
           `type: ${result.type}`,
           `subject: ${result.subject}`,
-          `status: ${result.status}${result.reason ? `: ${result.reason}` : ""}`,
+          `status: ${mailStatus(result)}${result.reason ? `: ${result.reason}` : ""}`,
           `at: ${result.at}`,
+          priorityLine(result),
           ...result.from.item ? [`from item: ${result.from.item}`] : [],
           ...result.replyTo ? [`reply to: ${result.replyTo}`] : [],
           ...result.branch ? [`branch: ${result.branch}`] : [],
@@ -8651,9 +8813,33 @@ ${body}`, { message: result, body });
         }, notes);
         if ("refused" in result)
           return refuse(result.refused);
-        return ok(`replied to ${args[1]}: ${result.reply.id} to ${result.reply.to.project}; ${args[1]} answered${notes.length ? `
+        return ok(`replied to ${args[1]}: ${result.reply.id} to ${result.reply.to.project}; ${args[1]} ${mailStatus(result.original)}${notes.length ? `
 ${notes.join(`
 `)}` : ""}`, { reply: result.reply, original: result.original, notes });
+      }
+      if (verb === "accept") {
+        if (!args[1])
+          return refuse(usage);
+        const priority = parsed.flags.priority;
+        if (priority !== undefined && !isMailPriority(priority))
+          return refuse(badPriority(priority));
+        const reason = typeof parsed.flags.reason === "string" ? parsed.flags.reason : undefined;
+        const notes = [];
+        const result = acceptMail(ctx, args[1], {
+          ...priority ? { priority } : {},
+          ...reason ? { reason } : {},
+          by: ctx.self.agent
+        }, notes);
+        if ("refused" in result)
+          return refuse(result.refused);
+        const d = result.message.priorityDecision;
+        const level = d ? `${d.confirmed}${d.confirmed !== d.proposed ? ` (proposed ${d.proposed})` : ""}${d.reason ? `: ${d.reason}` : ""}` : priorityOf(result.message);
+        return ok(`${args[1]} accepted at ${level}${notes.length ? `
+${notes.join(`
+`)}` : ""}`, {
+          message: result.message,
+          notes
+        });
       }
       if (verb === "refuse") {
         const reason = typeof parsed.flags.reason === "string" ? parsed.flags.reason : "";
@@ -8716,6 +8902,14 @@ ${notes.join(`
 ${HELP}`);
   }
 }
+function priorityLine(m) {
+  const d = m.priorityDecision;
+  const level = decidedPriority(m);
+  if (!d || !isMailPriority(d.confirmed))
+    return `priority: ${level} (proposed)`;
+  const how = d.confirmed === d.proposed ? `confirmed by ${d.by}` : `lowered by ${d.by}`;
+  return `priority: ${level} (proposed ${d.proposed}, ${how}${d.reason ? `: ${d.reason}` : ""})`;
+}
 function settings(command, args, user) {
   const config = loadConfig(user);
   if (command === "mode") {
@@ -8757,6 +8951,7 @@ var HELP = `crew ${VERSION}
   start "<request>" --answers <json>    create a work item from the typed answers
       [--criterion "<text>"] [--preserve "<text>"]   criteria, repeatable; preserve: existing tests stay green
       [--origin <message id>]           the item answers a message of this project's inbox (a session opened by mail)
+      [--priority blocker|high|normal|low]   the item's priority; else its origin's confirmed one, else normal
   classify <id> --answers <json>        record typed answers and compute the route
   criteria <id> add "<text>" [--kind preserve|observed]
   criteria <id> remove <AC-n>           take out a criterion no test-first record or skip names
@@ -8774,8 +8969,9 @@ var HELP = `crew ${VERSION}
   await <id> user | role | mail <mid>   mark the turn's wait: for the user, for the roles, or for a reply to a message
   resume <id>                           clear the wait
   mail send --to <project|.> --type question|change-request|notice|blocker "<text>"   send mail inside the workspace
-      [--agent <session|T-n|role>] [--item <id>] [--reply-to <mid>] [--subject <text>] [--file <path>]
+      [--priority blocker|high|normal|low] [--agent <session|T-n|role>] [--item <id>] [--reply-to <mid>] [--subject <text>] [--file <path>]
   mail inbox [--all] | read <mid> | reply <mid> "<text>" [--branch <b>] [--item <child>] [--as <role>] [--file <path>]
+  mail accept <mid> [--priority <p>] [--reason "<why>"]   confirm a request's priority, or lower it with a reason (never raise)
   mail refuse <mid> --reason "<why>" | status | stop <mid>   this project's mail and the sessions it opened (status sweeps them; stop kills one)
   task <id> open T-n --criteria AC-1,AC-2 [--text "<task text>"]   hand a task of the plan to an implementer: a message, a worktree, a branch, a session
   task <id> list | merge T-n [--force]   the tasks and their children; merge a proven child's branch (--force merges an unproven one: asks the user)

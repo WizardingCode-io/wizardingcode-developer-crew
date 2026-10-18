@@ -3,6 +3,15 @@ import { basename, isAbsolute, join, resolve } from "node:path";
 import { loadEvidence } from "./evidence.ts";
 import { nowIso, readJson, readText, writeJson, writeText } from "./fs.ts";
 import { withLock } from "./lock.ts";
+import {
+  decidedPriority,
+  MAIL_TRANSITIONS,
+  type MappedStatus,
+  mailStatus,
+  priorityOf,
+  priorityRank,
+  transition,
+} from "./mail-status.ts";
 import { resolveOpener } from "./opened.ts";
 import {
   type CrewPaths,
@@ -13,6 +22,7 @@ import {
   workDir,
 } from "./paths.ts";
 import { loadPolicy } from "./policy.ts";
+import { oneLine } from "./state.ts";
 import {
   readProtectedJson,
   readProtectedJsonAt,
@@ -20,21 +30,44 @@ import {
   writeProtectedJsonAt,
 } from "./store.ts";
 import { rolePattern } from "./team.ts";
-import type {
-  MailAddressee,
-  Mailbox,
-  MailParty,
-  MailPolicy,
-  MailType,
-  Message,
-  OpenedSession,
-  OpenMode,
-  Policy,
-  ProjectEntry,
-  Registry,
-  WorkItem,
+import {
+  isMailPriority,
+  MAIL_PRIORITIES,
+  type MailAddressee,
+  type Mailbox,
+  type MailParty,
+  type MailPolicy,
+  type MailPriority,
+  type MailType,
+  type Message,
+  type OpenedSession,
+  type OpenMode,
+  type Policy,
+  type PriorityDecision,
+  type ProjectEntry,
+  type Registry,
+  type WorkItem,
 } from "./types.ts";
 import { loadWork } from "./work.ts";
+
+export {
+  decidedPriority,
+  MAIL_TRANSITIONS,
+  type MappedStatus,
+  mailStatus,
+  priorityOf,
+  transition,
+} from "./mail-status.ts";
+
+/** The shape of a work id of this project (`newWorkId`): a date, a sequence and a slug, never a path. */
+const WORK_ID = /^\d{4}-\d{2}-\d{2}-\d{3}-[a-z0-9-]*$/;
+/** How much of a child's unproven reasons a reply carries to the sender. */
+const REASONS_CHARS = 500;
+
+/** The refusal of a priority that is not one of the four, before any record. */
+export function badPriority(value: unknown): string {
+  return `priority is one of ${MAIL_PRIORITIES.join(", ")}, not ${String(value)}`;
+}
 
 /** A project is live when a hook or a command ran in it within this long (SP2c §6). */
 export const LIVE_MS = 10 * 60 * 1000;
@@ -409,6 +442,8 @@ export interface SendRequest {
   to: string;
   agent?: string;
   type: MailType;
+  /** The sender's proposal (SP7 §9); `normal` when absent, `blocker` for a blocker. */
+  priority?: MailPriority;
   subject?: string;
   text: string;
   filePath?: string;
@@ -516,6 +551,11 @@ export function send(
   if ("refused" in attached) return { refused: attached.refused, message: null };
   const text = attached.text;
   if (!text.trim()) return { refused: "a message needs a text (or --file)", message: null };
+  if (request.priority !== undefined && !isMailPriority(request.priority))
+    return { refused: badPriority(request.priority), message: null };
+  // The message is built here from the request's fields alone: it arrives sent, undecided.
+  const priority: MailPriority =
+    request.priority ?? (request.type === "blocker" ? "blocker" : "normal");
   const resolved = resolveProject(ctx, request.to);
   // A refusal is recorded in the sender's outbox; when that outbox is itself tampered, nothing is.
   const refuse = (
@@ -528,6 +568,7 @@ export function send(
       from: party(self, itemId),
       to,
       type: request.type,
+      priority,
       subject: subjectOf({ subject: request.subject, text }),
       body: text.slice(0, PREVIEW_CHARS),
       replyTo: request.replyTo ?? null,
@@ -648,6 +689,7 @@ export function send(
       from: party(self, itemId),
       to,
       type: request.type,
+      priority,
       subject: subjectOf({ subject: request.subject, text }),
       ...placeBody(dest.dir, id, text),
       replyTo: request.replyTo ?? null,
@@ -783,9 +825,16 @@ export function ownInbox(ctx: MailContext): { messages: Message[]; tampered: boo
     mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project).dir,
     "inbox",
   );
-  // A message that names no agent is the session's.
+  // A message that names no agent is the session's. By priority, then age (SP7 §9).
   const mine = box.messages.filter((m) => (m.to.agent ?? "session") === ctx.self.agent);
-  return { messages: mine.sort((a, b) => a.at.localeCompare(b.at)), tampered };
+  return {
+    messages: mine.sort(
+      (a, b) =>
+        priorityRank(decidedPriority(a)) - priorityRank(decidedPriority(b)) ||
+        a.at.localeCompare(b.at),
+    ),
+    tampered,
+  };
 }
 
 function addressed(ctx: MailContext, m: Message): string | null {
@@ -815,6 +864,50 @@ function skippedLine(id: string): (what: string) => string {
   return (what) => `a copy of ${id} was not changed: ${what}`;
 }
 
+/** The message read first when it is still `sent`: a request never moves on unread. */
+function readFirst(m: Message, to: MappedStatus, at: string): Message {
+  return mailStatus(m) === "sent" && to !== "read"
+    ? { ...m, status: "read", readAt: m.readAt ?? at }
+    : m;
+}
+
+/** The message without the reason a block left on it, once it moves on. */
+function withoutReason(m: Message): Message {
+  const copy = { ...m };
+  delete copy.reason;
+  return copy;
+}
+
+/**
+ * Moves a message of this agent's inbox along the table (SP7 §9) on every copy, reading it first
+ * when it is still sent: the one way a status changes, so a move the table refuses is refused
+ * before anything is written and nothing rewrites a record it does not move.
+ */
+export function moveMail(
+  ctx: MailContext,
+  id: string,
+  to: MappedStatus,
+  extra: Partial<Message>,
+  notes: string[],
+): Message | { refused: string } {
+  const own = ownMessage(ctx, id);
+  if ("refused" in own) return own;
+  const at = nowIso();
+  const check = transition(readFirst(own.found, to, at), to, extra);
+  if ("refused" in check) return check;
+  return (
+    updateEverywhere(
+      ctx,
+      id,
+      (m) => {
+        const moved = transition(readFirst(m, to, at), to, extra);
+        return "refused" in moved ? m : moved;
+      },
+      (w) => notes.push(skippedLine(id)(w)),
+    ) ?? notUpdated(id)
+  );
+}
+
 export function markRead(
   ctx: MailContext,
   id: string,
@@ -822,14 +915,14 @@ export function markRead(
 ): Message | { refused: string } {
   const own = ownMessage(ctx, id);
   if ("refused" in own) return own;
-  if (own.found.status !== "sent") return own.found;
-  return (
-    updateEverywhere(
-      ctx,
-      id,
-      (m) => ({ ...m, status: "read", readAt: nowIso() }),
-      (w) => notes.push(skippedLine(id)(w)),
-    ) ?? notUpdated(id)
+  if (mailStatus(own.found) !== "sent") return own.found;
+  // A notice is done when read; anything else waits for its answer.
+  return moveMail(
+    ctx,
+    id,
+    own.found.type === "notice" ? "done" : "read",
+    { readAt: nowIso() },
+    notes,
   );
 }
 
@@ -841,17 +934,53 @@ export function refuseMail(
 ): Message | { refused: string } {
   const own = ownMessage(ctx, id);
   if ("refused" in own) return own;
-  if (own.found.status !== "sent" && own.found.status !== "read")
-    return { refused: `${id} is ${own.found.status}; nothing to refuse` };
+  const from = mailStatus(own.found);
+  if (!MAIL_TRANSITIONS[from].includes("refused"))
+    return { refused: `${id} is ${from}; nothing to refuse` };
   if (!reason.trim()) return { refused: 'a refusal needs --reason "<why>"' };
-  return (
-    updateEverywhere(
-      ctx,
-      id,
-      (m) => ({ ...m, status: "refused", reason: reason.trim() }),
-      (w) => notes.push(skippedLine(id)(w)),
-    ) ?? notUpdated(id)
-  );
+  return moveMail(ctx, id, "refused", { reason: reason.trim() }, notes);
+}
+
+/**
+ * The receiver's decision on a request's priority (SP7 §9, §10.2): the sender's proposal confirmed
+ * at the same level, or lowered with a reason, never raised; a change request or a blocker only (a
+ * question is done by its reply, a notice when read). The decision and the move to `accepted` go
+ * to every copy; a refusal records nothing.
+ */
+export function acceptMail(
+  ctx: MailContext,
+  id: string,
+  options: { priority?: MailPriority; reason?: string; by: string },
+  notes: string[],
+): { message: Message } | { refused: string } {
+  const own = ownMessage(ctx, id);
+  if ("refused" in own) return own;
+  const m = own.found;
+  if (m.type === "question")
+    return {
+      refused: "a question is done by its reply; accept applies to a change request or a blocker",
+    };
+  if (m.type === "notice")
+    return {
+      refused: "a notice is done when read; accept applies to a change request or a blocker",
+    };
+  const from = mailStatus(m);
+  if (from !== "sent" && from !== "read")
+    return { refused: `${id} is ${from}; accept applies to a request still sent or read` };
+  if (options.priority !== undefined && !isMailPriority(options.priority))
+    return { refused: badPriority(options.priority) };
+  const proposed = priorityOf(m);
+  const confirmed = options.priority ?? proposed;
+  if (priorityRank(confirmed) < priorityRank(proposed))
+    return {
+      refused: `${id} was proposed ${proposed}; the receiver confirms or lowers, never raises`,
+    };
+  const reason = options.reason?.trim() ? oneLine(options.reason) : null;
+  if (priorityRank(confirmed) > priorityRank(proposed) && !reason)
+    return { refused: 'a lowering needs --reason "<why>"' };
+  const decision: PriorityDecision = { proposed, confirmed, by: options.by, reason, at: nowIso() };
+  const moved = moveMail(ctx, id, "accepted", { priorityDecision: decision }, notes);
+  return "refused" in moved ? moved : { message: moved };
 }
 
 /**
@@ -878,11 +1007,11 @@ export function reply(
   if (!original) return { refused: `no message ${id} in this inbox` };
   const wrong = addressed(ctx, original);
   if (wrong) return { refused: wrong };
-  if (original.status === "answered")
-    return { refused: `${id} is answered; a second answer is a new message` };
-  if (original.status === "refused") return { refused: `${id} is refused; it has no answer` };
-  if (original.status === "expired" || original.status === "stopped")
-    return { refused: `${id} is ${original.status}; its session is over` };
+  // The guards read the mapped status, so a record of an earlier engine version is judged as what it stands for.
+  const standing = mailStatus(original);
+  if (standing === "done") return { refused: `${id} is done; a second answer is a new message` };
+  if (standing === "refused") return { refused: `${id} is refused; it has no answer` };
+  if (standing === "expired") return { refused: `${id} is expired; its session is over` };
   if (options.as !== undefined && !ROLE_AGENT.test(options.as))
     return {
       refused:
@@ -892,10 +1021,25 @@ export function reply(
     return {
       refused: `${id} is addressed to ${original.to.agent ?? "session"}, not to ${options.as}`,
     };
-  // The child's verdict is read from its evidence, never typed (SP2c §7).
-  if (options.item && !loadWork(ctx.paths, options.item).work)
+  // The child's verdict is read from its evidence, never typed (SP2c §7); the id names an item of
+  // this project's own work folder, checked before any file is read (security review, SP7b Task 1).
+  if (
+    options.item !== undefined &&
+    (!WORK_ID.test(options.item) || !loadWork(ctx.paths, options.item).work)
+  )
     return { refused: `unknown work item: ${options.item}` };
-  const verdict = options.item ? loadEvidence(ctx.paths, options.item).evidence.verdict : undefined;
+  const child = options.item ? loadEvidence(ctx.paths, options.item).evidence : undefined;
+  const verdict = child?.verdict;
+  // Where the original lands (SP7 §9): a question or a notice is done by its answer; a request is
+  // done only by a proven child, and blocked otherwise, with the reasons the sender will read.
+  const closing = original.type === "question" || original.type === "notice";
+  const to: MappedStatus = closing || verdict === "proven" ? "done" : "blocked";
+  const reason =
+    to === "done"
+      ? undefined
+      : options.item
+        ? `unproven: ${(child?.unproven ?? []).map(oneLine).join("; ")}`.slice(0, REASONS_CHARS)
+        : "the reply names no child item (--item)";
   const attached = attachFile(ctx.paths.root, text, options.filePath);
   if ("refused" in attached) return { refused: attached.refused };
   const body = attached.text;
@@ -945,14 +1089,22 @@ export function reply(
   const answered = updateEverywhere(
     ctx,
     id,
-    (m) => ({
-      ...m,
-      status: "answered",
-      answeredAt: at,
-      ...(options.branch ? { branch: options.branch } : {}),
-      ...(options.item ? { item: options.item } : {}),
-      ...(verdict ? { verdict } : {}),
-    }),
+    (m) => {
+      const read = readFirst(m, to, at);
+      const extra: Partial<Message> = {
+        answeredAt: at,
+        ...(options.branch ? { branch: options.branch } : {}),
+        ...(options.item ? { item: options.item } : {}),
+        ...(verdict ? { verdict } : {}),
+        ...(reason !== undefined ? { reason } : {}),
+      };
+      // A block renewed by another unproven reply stays a block, with the new reasons.
+      const moved =
+        to === "blocked" && mailStatus(read) === "blocked"
+          ? { ...read, ...extra }
+          : transition(to === "done" ? withoutReason(read) : read, to, extra);
+      return "refused" in moved ? m : moved;
+    },
     (w) => notes.push(skippedLine(id)(w)),
   );
   // The reply is delivered by now; a box that changed meanwhile leaves the original unmarked, and the
@@ -1087,9 +1239,10 @@ export function inboxSummary(ctx: MailContext): InboxSummary {
   const { messages, tampered } = ownInbox(ctx);
   if (tampered)
     return { ...emptyInboxSummary(), tampered, line: tamperedBox(ctx.self.project, "inbox") };
-  const unread = messages.filter((m) => m.status === "sent" && !m.replyTo);
-  const answered = messages.filter((m) => m.replyTo && m.status === "sent");
-  const waiting = messages.filter((m) => m.status === "waiting-for-person");
+  // Counted through the mapped status, so a record of an earlier engine version counts as what it stands for.
+  const unread = messages.filter((m) => mailStatus(m) === "sent" && !m.replyTo);
+  const answered = messages.filter((m) => m.replyTo && mailStatus(m) === "sent");
+  const waiting = messages.filter((m) => mailStatus(m) === "blocked");
   const blockers = unread.filter((m) => m.type === "blocker");
   if (!messages.length) return emptyInboxSummary();
   const byType = new Map<string, number>();

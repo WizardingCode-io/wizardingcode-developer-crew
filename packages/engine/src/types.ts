@@ -128,6 +128,22 @@ export interface Profile {
 export type Route = "fast" | "standard" | "full";
 export const ROUTE_ORDER: readonly Route[] = ["fast", "standard", "full"];
 
+/** The four priorities of a message and of a work item (SP7 §9), in the inbox's order. */
+export type MailPriority = "blocker" | "high" | "normal" | "low";
+export const MAIL_PRIORITIES: readonly MailPriority[] = ["blocker", "high", "normal", "low"];
+export function isMailPriority(value: unknown): value is MailPriority {
+  return MAIL_PRIORITIES.includes(value as MailPriority);
+}
+
+/** The receiver's decision on the sender's proposal: confirmed at the same level, or lowered with a reason; never raised (SP7 §9, §10.2). */
+export interface PriorityDecision {
+  proposed: MailPriority;
+  confirmed: MailPriority;
+  by: string;
+  reason: string | null;
+  at: string;
+}
+
 /** The four kinds of mail (vision §10). */
 export type MailType = "question" | "change-request" | "notice" | "blocker";
 export const MAIL_TYPES: readonly MailType[] = ["question", "change-request", "notice", "blocker"];
@@ -135,14 +151,22 @@ export function isMailType(value: unknown): value is MailType {
   return MAIL_TYPES.includes(value as MailType);
 }
 
-/** What happened to a message, as the receiving engine last recorded it. */
+/**
+ * Where a request stands, as the receiving engine last recorded it (SP7 §9): the seven statuses
+ * plus `expired`. Records written before 0.7.0 hold `answered`, `waiting-for-person` and
+ * `stopped`; `mailStatus()` reads them as `done`, `blocked` and `refused`, and nothing rewrites them.
+ */
 export type MailStatus =
   | "sent"
   | "read"
-  | "answered"
+  | "accepted"
+  | "in-progress"
+  | "blocked"
+  | "done"
   | "refused"
-  | "waiting-for-person"
   | "expired"
+  | "answered"
+  | "waiting-for-person"
   | "stopped";
 
 /** How a session the engine opens may act in a project: read and reply, or build on a branch. */
@@ -194,6 +218,10 @@ export interface Message {
   from: MailParty;
   to: MailAddressee;
   type: MailType;
+  /** The sender's proposal (SP7 §9); absent on records written before 0.7.0, read as `normal` (`blocker` for a blocker). */
+  priority?: MailPriority;
+  /** The receiver's confirmation or lowering, on every copy. */
+  priorityDecision?: PriorityDecision;
   subject: string;
   /** The body when it is under 2 KB; a preview otherwise, with the whole text at `bodyFile`. */
   body: string;
@@ -484,6 +512,8 @@ export interface WorkItem {
   route: Route;
   routeReasons: string[];
   riskAreas: RiskArea[];
+  /** The item's priority (SP7 §7.1): given at start, else its origin message's confirmed one, else normal. Absent before 0.7.0. */
+  priority?: MailPriority;
   phase: Phase;
   awaiting: Awaiting | null;
   /** For `awaiting: "mail"`: the message whose reply the item waits for. */

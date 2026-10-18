@@ -11,6 +11,7 @@ import {
   updateEverywhere,
   worktreeMainRoot,
 } from "./mail.ts";
+import { mailStatus } from "./mail-status.ts";
 import { dropOpenedMarker, writeOpenedMarker } from "./opened.ts";
 import { resolvePaths } from "./paths.ts";
 import { loadProfile } from "./profile.ts";
@@ -511,7 +512,7 @@ function sweepOne(ctx: MailContext, m: Message, now: number, result: SweepResult
       m.id,
       (x) => ({
         ...x,
-        ...(reason && unanswered(x.status) ? { status: "expired", reason } : {}),
+        ...(reason && unanswered(mailStatus(x)) ? { status: "expired", reason } : {}),
         opened: { ...ended(opened, end.outcome, at), ...end },
       }),
       (what) => result.lines.push(`the record of ${m.id} skipped a box it could not read: ${what}`),
@@ -555,7 +556,7 @@ function sweepOne(ctx: MailContext, m: Message, now: number, result: SweepResult
     return;
   }
   if (outcome.ended) {
-    const replied = !unanswered(m.status);
+    const replied = !unanswered(mailStatus(m));
     settle(
       "ended",
       { ...measured, outcome: "ended" },
@@ -655,7 +656,9 @@ export function stopSession(
       id,
       (x) => ({
         ...x,
-        ...(unanswered(x.status) ? { status: "stopped", reason: "stopped by crew mail stop" } : {}),
+        ...(unanswered(mailStatus(x))
+          ? { status: "refused", reason: "stopped by crew mail stop" }
+          : {}),
         opened: ended(x.opened as OpenedSession, "stopped", at),
       }),
       (what) => notes.push(`a copy of ${id} was not changed: ${what}`),

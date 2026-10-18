@@ -572,7 +572,7 @@ test("SP2c AC-3: a role that stops with no answer is recorded with no file, the 
   ]);
   expect(
     loadItemMail(ctx.paths, work.id).box.messages.find((m) => m.id === asked.message.id)?.status,
-  ).toBe("answered");
+  ).toBe("done");
   // An expert keeps its number through an empty stop, and the next expert takes the next one.
   onSubagentStop(ctx, {
     agent_id: "e1",
@@ -762,7 +762,7 @@ test("SP2c AC-3: a resumed role whose question is pending has its answer saved a
     readFileSync(join(root, ".crew", "work", work.id, "conclave", "expert-1-reply.md"), "utf8"),
   ).toContain("The proposal stands.");
   const mail = loadItemMail(ctx.paths, work.id).box.messages;
-  expect(mail.find((m) => m.id === asked.message.id)?.status).toBe("answered");
+  expect(mail.find((m) => m.id === asked.message.id)?.status).toBe("done");
   const replyMessage = mail.find((m) => m.replyTo === asked.message.id);
   expect(replyMessage).toMatchObject({
     from: { agent: "expert-1" },
@@ -913,7 +913,7 @@ test.skipIf(process.getuid?.() === 0)(
       expect(
         loadItemMail(ctx.paths, work.id).box.messages.find((m) => m.id === asked.message.id)
           ?.status,
-      ).toBe("answered");
+      ).toBe("done");
     } finally {
       chmodSync(crmInbox, 0o644);
     }

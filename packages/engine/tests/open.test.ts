@@ -550,7 +550,7 @@ test("SP2c AC-2: the sweep reads the log and the process before the minutes, kil
   const seventh = ask(ctxA, "Seventh");
   const seventhPid = seventh.opened().pid as number;
   expect(stopSession(ctxA, seventh.id, [])).toMatchObject({
-    status: "stopped",
+    status: "refused",
     reason: "stopped by crew mail stop",
     opened: { outcome: "stopped" },
   });
@@ -590,7 +590,7 @@ test("SP2c AC-2: the sweep reads the log and the process before the minutes, kil
   // A session that ignores SIGTERM is killed all the same: the kill escalates, and "stopped" is true.
   const ninth = ask(mailContext(pa, ctxA.policy, { ...env, FAKE_CLAUDE_TRAP: "1" }), "Ninth");
   const ninthPid = ninth.opened().pid as number;
-  expect(stopSession(ctxA, ninth.id, [])).toMatchObject({ status: "stopped" });
+  expect(stopSession(ctxA, ninth.id, [])).toMatchObject({ status: "refused" });
   await waitFor("the trapping fake to die", () => !isAlive(ninthPid));
   // A session opened by mail stops no sessions: the outbox is the project's, shared with the lead.
   const tenth = ask(ctxA, "Tenth");
@@ -606,7 +606,7 @@ test("SP2c AC-2: the sweep reads the log and the process before the minutes, kil
   });
   expect(isAlive(tenth.opened().pid)).toBe(true);
   expect(outboxOf(tenth.id).opened?.endedAt).toBeUndefined();
-  expect(stopSession(ctxA, tenth.id, [])).toMatchObject({ status: "stopped" });
+  expect(stopSession(ctxA, tenth.id, [])).toMatchObject({ status: "refused" });
   // A member of the group that ignores SIGTERM after its leader ended: the whole group is killed,
   // so "stopped" is true of every process the session started.
   const mark = join(tempDir("crew-orphan-"), "mark");
@@ -620,7 +620,7 @@ test("SP2c AC-2: the sweep reads the log and the process before the minutes, kil
   );
   const eleventhPid = eleventh.opened().pid as number;
   await waitFor("the orphan to be started", () => existsSync(mark));
-  expect(stopSession(ctxA, eleventh.id, [])).toMatchObject({ status: "stopped" });
+  expect(stopSession(ctxA, eleventh.id, [])).toMatchObject({ status: "refused" });
   await waitFor("the whole group to die", () => groupGone(eleventhPid));
 }, 90_000);
 

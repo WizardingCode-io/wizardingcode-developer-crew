@@ -196,7 +196,7 @@ test("SP2c AC-1: SessionStart registers the project and prints the inbox line, b
     source: "startup",
   }) as { hookSpecificOutput: { additionalContext: string } };
   const text = startB.hookSpecificOutput.additionalContext;
-  expect(text).toContain("Mail (w): 2 unread question and blocker from storefront.");
+  expect(text).toContain("Mail (w): 2 unread blocker and question from storefront.");
   expect(text).toMatch(
     /Blocker M-\S+ from storefront: "Checkout is down since the CRM deploy" \(crew mail read M-\S+\)\./,
   );

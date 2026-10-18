@@ -3,15 +3,21 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, utimesSync, writeFileSy
 import { basename, join } from "node:path";
 import { loadEvidence, saveEvidence } from "../src/evidence.ts";
 import {
+  acceptMail,
+  decidedPriority,
   INLINE_BODY_LIMIT,
   inboxSummary,
   isLive,
   loadRegistry,
+  MAIL_TRANSITIONS,
+  type MappedStatus,
   mailbox,
   mailContext,
+  mailStatus,
   markRead,
   newMessageId,
   ownInbox,
+  priorityOf,
   pruneRegistry,
   readBox,
   refuseMail,
@@ -20,17 +26,18 @@ import {
   resolveProject,
   send,
   syncMail,
+  transition,
   withMailLock,
   writeBox,
 } from "../src/mail.ts";
 import { loadPolicy, setPolicyValue } from "../src/policy.ts";
 import { readProtectedJson, recordIntegrity } from "../src/store.ts";
-import type { Mailbox, Message } from "../src/types.ts";
+import type { Mailbox, MailPriority, Message } from "../src/types.ts";
 import { createWork } from "../src/work.ts";
 import { git, makeRepo, repoPaths, tempDir, testEnv, write } from "./helpers.ts";
 
 /** Two projects of one workspace and a third outside it, each registered as a session would. */
-function workspace(env = testEnv()) {
+function workspace(env = testEnv(), acceptB: string[] = ["question", "notice"]) {
   const make = (name: string, ws: string | null, extra: Record<string, unknown> = {}) => {
     const root = makeRepo({ "README.md": `# ${name}\n` });
     const paths = repoPaths(root, env);
@@ -47,7 +54,7 @@ function workspace(env = testEnv()) {
   return {
     env,
     a: make("storefront", "clubefashion"),
-    b: make("crm", "clubefashion", { accept: ["question", "notice"] }),
+    b: make("crm", "clubefashion", { accept: acceptB }),
     c: make("wizardingcode-developer-crew", "wizardingcode"),
   };
 }
@@ -183,7 +190,7 @@ test("SP2c AC-3: the receiving policy, the hops, the concurrency and a tampered 
   const answered = reply(hopped, first.message.id, "gold, silver, none", {}, []);
   expect(answered).toMatchObject({
     reply: { replyTo: first.message.id, hops: 2 },
-    original: { status: "answered" },
+    original: { status: "done" },
   });
   // Concurrency: two sessions already open in crm, and crm not live.
   const registry = loadRegistry(w.a.paths.userDir);
@@ -272,10 +279,10 @@ test("SP2c AC-4: inbox, read, reply, refuse; a long body lives beside the inbox;
     replyTo: sent.message.id,
     status: "sent",
   });
-  expect(answered.original.status).toBe("answered");
+  expect(answered.original.status).toBe("done");
   expect(ownInbox(w.a.ctx).messages.map((m) => m.replyTo)).toEqual([sent.message.id]);
   expect(reply(w.b.ctx, sent.message.id, "again", {}, [])).toEqual({
-    refused: `${sent.message.id} is answered; a second answer is a new message`,
+    refused: `${sent.message.id} is done; a second answer is a new message`,
   });
   // The sender's outbox learns the status at the next sync.
   syncMail(w.a.ctx, w.a.paths);
@@ -283,7 +290,7 @@ test("SP2c AC-4: inbox, read, reply, refuse; a long body lives beside the inbox;
     mailbox(w.a.paths.userDir, "clubefashion", "storefront").dir,
     "outbox",
   ).box;
-  expect(outbox.messages.find((m) => m.id === sent.message.id)?.status).toBe("answered");
+  expect(outbox.messages.find((m) => m.id === sent.message.id)?.status).toBe("done");
   // Refuse, and a reply to a refused message.
   const second = send(w.a.ctx, question("Second"), null);
   if ("refused" in second) throw new Error(second.refused);
@@ -703,7 +710,7 @@ test("SP2c AC-7: two projects of one name in two workspaces are told apart by th
   registerProject(w.a.ctx, "session-storefront");
   syncMail(w.a.ctx, w.a.paths);
   const outbox = readBox(mailbox(w.a.paths.userDir, "clubefashion", "storefront").dir, "outbox");
-  expect(outbox.box.messages.find((m) => m.id === sent.message.id)?.status).toBe("answered");
+  expect(outbox.box.messages.find((m) => m.id === sent.message.id)?.status).toBe("done");
 });
 
 test("SP2c AC-7: syncMail copies nothing from an inbox a hand changed, a receiver's or its own, and the summary says so", () => {
@@ -764,4 +771,299 @@ test("SP2c 8a AC-3: a command's registration never makes a project live; a hook'
   );
   // A command after the hook keeps the hook's mark.
   expect(registerProject(ctx, "cli").lastHook).toBe(byHook.lastHook);
+});
+
+// ---------------------------------------------------------------------------------------------
+// SP7b Task 1: priorities and statuses
+
+/** The two projects of one workspace, the receiver taking every kind of mail. */
+function receiving() {
+  return workspace(testEnv(), ["question", "notice", "change-request", "blocker"]);
+}
+
+function sendOrThrow(
+  ctx: ReturnType<typeof workspace>["a"]["ctx"],
+  request: Parameters<typeof send>[1],
+): Message {
+  const out = send(ctx, request, null);
+  if ("refused" in out) throw new Error(out.refused);
+  return out.message;
+}
+
+const crmInbox = (w: ReturnType<typeof workspace>) =>
+  mailbox(w.b.paths.userDir, "clubefashion", "crm").dir;
+const storefrontOutbox = (w: ReturnType<typeof workspace>) =>
+  mailbox(w.a.paths.userDir, "clubefashion", "storefront").dir;
+
+test("SP7b AC-1: a message carries the sender's proposed priority and the receiver's decision; a raise, a lowering without a reason, a question and a notice are refused", () => {
+  const w = receiving();
+  const high = sendOrThrow(w.a.ctx, {
+    to: "crm",
+    type: "change-request",
+    priority: "high",
+    text: "Add loyalty_tier",
+  });
+  expect(high.priority).toBe("high");
+  const copy = (id: string) => ownInbox(w.b.ctx).messages.find((m) => m.id === id);
+  expect(copy(high.id)?.priority).toBe("high");
+  const blocker = sendOrThrow(w.a.ctx, { to: "crm", type: "blocker", text: "Checkout is down" });
+  expect(blocker.priority).toBe("blocker");
+  expect(priorityOf(blocker)).toBe("blocker");
+  const q = sendOrThrow(w.a.ctx, question());
+  expect(priorityOf(q)).toBe("normal");
+  // An invalid value is refused before any record.
+  const outboxCount = () => readBox(storefrontOutbox(w), "outbox").box.messages.length;
+  const before = outboxCount();
+  expect(
+    send(
+      w.a.ctx,
+      { to: "crm", type: "question", priority: "urgent" as MailPriority, text: "x" },
+      null,
+    ),
+  ).toEqual({
+    refused: "priority is one of blocker, high, normal, low, not urgent",
+    message: null,
+  });
+  expect(outboxCount()).toBe(before);
+  // A request carrying a status and a decision beside its fields lands as sent, undecided.
+  const forged = sendOrThrow(w.a.ctx, {
+    to: "crm",
+    type: "change-request",
+    text: "Forged",
+    status: "done",
+    priorityDecision: { proposed: "low", confirmed: "low", by: "x", reason: null, at: "now" },
+  } as Parameters<typeof send>[1]);
+  expect(forged.status).toBe("sent");
+  expect(forged.priorityDecision).toBeUndefined();
+  expect(copy(forged.id)).toMatchObject({ status: "sent" });
+  expect(copy(forged.id)?.priorityDecision).toBeUndefined();
+  // The same level confirms; both copies carry the decision.
+  const confirmed = acceptMail(w.b.ctx, high.id, { priority: "high", by: "session" }, []);
+  expect(confirmed).toMatchObject({
+    message: {
+      status: "accepted",
+      priorityDecision: {
+        proposed: "high",
+        confirmed: "high",
+        by: "session",
+        reason: null,
+        at: expect.any(String),
+      },
+    },
+  });
+  expect(copy(high.id)).toMatchObject({
+    status: "accepted",
+    priorityDecision: { confirmed: "high" },
+  });
+  syncMail(w.a.ctx, w.a.paths);
+  expect(
+    readBox(storefrontOutbox(w), "outbox").box.messages.find((m) => m.id === high.id),
+  ).toMatchObject({
+    status: "accepted",
+    priorityDecision: { proposed: "high", confirmed: "high", by: "session", reason: null },
+  });
+  // A lower level needs a reason, stored as one line.
+  const lowered = acceptMail(
+    w.b.ctx,
+    blocker.id,
+    { priority: "normal", reason: "no client\nflow is down", by: "session" },
+    [],
+  );
+  expect(lowered).toMatchObject({
+    message: {
+      status: "accepted",
+      priorityDecision: {
+        proposed: "blocker",
+        confirmed: "normal",
+        reason: "no client flow is down",
+      },
+    },
+  });
+  // Without a reason, above the proposal, on a question or a notice: refused, the record unchanged.
+  const second = sendOrThrow(w.a.ctx, {
+    to: "crm",
+    type: "change-request",
+    priority: "high",
+    text: "Second",
+  });
+  const record = () => JSON.stringify(copy(second.id));
+  const untouched = record();
+  expect(acceptMail(w.b.ctx, second.id, { priority: "normal", by: "session" }, [])).toEqual({
+    refused: 'a lowering needs --reason "<why>"',
+  });
+  expect(acceptMail(w.b.ctx, second.id, { priority: "blocker", by: "session" }, [])).toEqual({
+    refused: `${second.id} was proposed high; the receiver confirms or lowers, never raises`,
+  });
+  expect(record()).toBe(untouched);
+  expect(acceptMail(w.b.ctx, q.id, { by: "session" }, [])).toEqual({
+    refused: "a question is done by its reply; accept applies to a change request or a blocker",
+  });
+  const notice = sendOrThrow(w.a.ctx, { to: "crm", type: "notice", text: "FYI" });
+  expect(acceptMail(w.b.ctx, notice.id, { by: "session" }, [])).toEqual({
+    refused: "a notice is done when read; accept applies to a change request or a blocker",
+  });
+  // No priority given: the proposal is confirmed as it stands.
+  expect(acceptMail(w.b.ctx, second.id, { by: "session" }, [])).toMatchObject({
+    message: { priorityDecision: { proposed: "high", confirmed: "high" } },
+  });
+  expect(decidedPriority(copy(second.id) as Message)).toBe("high");
+});
+
+test("SP7b AC-2: the inbox is ordered by priority then age; an unknown priority ranks as normal and the record is left as it is", () => {
+  const w = receiving();
+  sendOrThrow(w.a.ctx, { to: "crm", type: "question", text: "normal one" });
+  sendOrThrow(w.a.ctx, { to: "crm", type: "blocker", text: "the blocker" });
+  sendOrThrow(w.a.ctx, { to: "crm", type: "change-request", priority: "high", text: "the high" });
+  sendOrThrow(w.a.ctx, { to: "crm", type: "question", priority: "high", text: "high two" });
+  sendOrThrow(w.a.ctx, { to: "crm", type: "notice", priority: "low", text: "the low" });
+  const subjects = () => ownInbox(w.b.ctx).messages.map((m) => m.subject);
+  expect(subjects()).toEqual(["the blocker", "the high", "high two", "normal one", "the low"]);
+  // A record another engine wrote with a value this one does not know ranks as normal, listed.
+  const dir = crmInbox(w);
+  const box = readBox(dir, "inbox").box;
+  const normal = box.messages.find((m) => m.subject === "normal one") as Message;
+  (normal as { priority?: string }).priority = "urgent";
+  writeBox(dir, "inbox", box);
+  const bytes = readFileSync(join(dir, "inbox.json"));
+  expect(priorityOf(normal)).toBe("normal");
+  expect(subjects()).toEqual(["the blocker", "the high", "high two", "normal one", "the low"]);
+  expect(readFileSync(join(dir, "inbox.json")).equals(bytes)).toBe(true);
+});
+
+test("SP7b AC-3: the statuses are the seven plus expired; old spellings read mapped through mailStatus and are never rewritten; the summary counts through the map", () => {
+  expect(Object.keys(MAIL_TRANSITIONS)).toEqual([
+    "sent",
+    "read",
+    "accepted",
+    "in-progress",
+    "blocked",
+    "done",
+    "refused",
+    "expired",
+  ]);
+  const at = (status: string) => ({ status }) as Message;
+  expect(mailStatus(at("answered"))).toBe("done");
+  expect(mailStatus(at("waiting-for-person"))).toBe("blocked");
+  expect(mailStatus(at("stopped"))).toBe("refused");
+  expect(mailStatus(at("forged"))).toBe("sent");
+  for (const s of Object.keys(MAIL_TRANSITIONS) as MappedStatus[])
+    expect(mailStatus(at(s))).toBe(s);
+  const w = receiving();
+  const oldWait = sendOrThrow(w.a.ctx, { to: "crm", type: "change-request", text: "old wait" });
+  const newBlock = sendOrThrow(w.a.ctx, { to: "crm", type: "change-request", text: "new block" });
+  const notice = sendOrThrow(w.a.ctx, { to: "crm", type: "notice", text: "a notice" });
+  sendOrThrow(w.a.ctx, question("fresh"));
+  const dir = crmInbox(w);
+  const box = readBox(dir, "inbox").box;
+  const set = (id: string, status: string) => {
+    (box.messages.find((m) => m.id === id) as { status: string }).status = status;
+  };
+  set(oldWait.id, "waiting-for-person");
+  set(newBlock.id, "blocked");
+  set(notice.id, "done");
+  writeBox(dir, "inbox", box);
+  const summary = inboxSummary(w.b.ctx);
+  expect(summary.waiting).toBe(2);
+  expect(summary.unread).toBe(1);
+  expect(ownInbox(w.b.ctx).messages.find((m) => m.id === oldWait.id)?.status).toBe(
+    "waiting-for-person",
+  );
+});
+
+test("SP7b AC-4: a status moves only along the table; a reply closes a request only with a proven child; the child id is confined to this project", () => {
+  const w = receiving();
+  const q = sendOrThrow(w.a.ctx, question("Q"));
+  const notice = sendOrThrow(w.a.ctx, { to: "crm", type: "notice", text: "N" });
+  expect(transition(q, "done")).toEqual({ refused: `${q.id} is sent; it cannot become done` });
+  expect(transition(notice, "done")).toMatchObject({ status: "done" });
+  expect(transition({ ...q, status: "done" }, "read")).toEqual({
+    refused: `${q.id} is done; it cannot become read`,
+  });
+  // A 0.6.0 record moves from its mapped status, and only its status changes.
+  const old: Message = { ...q, status: "waiting-for-person" };
+  expect(transition(old, "in-progress")).toEqual({ ...old, status: "in-progress" });
+  // The writers go through the table.
+  expect(markRead(w.b.ctx, notice.id, [])).toMatchObject({
+    status: "done",
+    readAt: expect.any(String),
+  });
+  const answered = reply(w.b.ctx, q.id, "A", {}, []);
+  if ("refused" in answered) throw new Error(answered.refused);
+  expect(answered.original).toMatchObject({ status: "done", answeredAt: expect.any(String) });
+  expect(reply(w.b.ctx, q.id, "again", {}, [])).toEqual({
+    refused: `${q.id} is done; a second answer is a new message`,
+  });
+  // A 0.6.0 record at answered is done.
+  const oldAnswered = sendOrThrow(w.a.ctx, {
+    to: "crm",
+    type: "change-request",
+    text: "Old answered",
+  });
+  const dir = crmInbox(w);
+  const box = readBox(dir, "inbox").box;
+  (box.messages.find((m) => m.id === oldAnswered.id) as { status: string }).status = "answered";
+  writeBox(dir, "inbox", box);
+  expect(reply(w.b.ctx, oldAnswered.id, "x", {}, [])).toEqual({
+    refused: `${oldAnswered.id} is done; a second answer is a new message`,
+  });
+  // A change request: the child's verdict decides, read from its evidence; the id stays in this project.
+  const change = sendOrThrow(w.a.ctx, {
+    to: "crm",
+    type: "change-request",
+    text: "Add loyalty_tier",
+  });
+  const child = createWork(w.b.paths, "Add loyalty_tier");
+  const ev = loadEvidence(w.b.paths, child.id).evidence;
+  ev.verdict = "unproven";
+  ev.unproven = ["gate test failing"];
+  saveEvidence(w.b.paths, child.id, ev);
+  const outboxCount = () =>
+    readBox(mailbox(w.b.paths.userDir, "clubefashion", "crm").dir, "outbox").box.messages.length;
+  const before = outboxCount();
+  expect(reply(w.b.ctx, change.id, "x", { item: "../x" }, [])).toEqual({
+    refused: "unknown work item: ../x",
+  });
+  expect(outboxCount()).toBe(before);
+  const blocked = reply(w.b.ctx, change.id, "Built, not proven", { item: child.id }, []);
+  if ("refused" in blocked) throw new Error(blocked.refused);
+  expect(blocked.original).toMatchObject({
+    status: "blocked",
+    reason: "unproven: gate test failing",
+    verdict: "unproven",
+  });
+  ev.verdict = "proven";
+  ev.unproven = [];
+  saveEvidence(w.b.paths, child.id, ev);
+  const done = reply(w.b.ctx, change.id, "Proven now", { item: child.id }, []);
+  if ("refused" in done) throw new Error(done.refused);
+  expect(done.original).toMatchObject({ status: "done", verdict: "proven" });
+  // No child named: blocked with the reason; accepted and in-progress originals take a reply.
+  const bare = sendOrThrow(w.a.ctx, { to: "crm", type: "change-request", text: "Bare" });
+  const noItem = reply(w.b.ctx, bare.id, "x", {}, []);
+  if ("refused" in noItem) throw new Error(noItem.refused);
+  expect(noItem.original).toMatchObject({
+    status: "blocked",
+    reason: "the reply names no child item (--item)",
+  });
+  const accepted = sendOrThrow(w.a.ctx, {
+    to: "crm",
+    type: "change-request",
+    text: "Accepted one",
+  });
+  acceptMail(w.b.ctx, accepted.id, { by: "session" }, []);
+  expect(reply(w.b.ctx, accepted.id, "x", { item: child.id }, [])).toMatchObject({
+    original: { status: "done" },
+  });
+  const inProgress = sendOrThrow(w.a.ctx, {
+    to: "crm",
+    type: "change-request",
+    text: "In progress one",
+  });
+  const box2 = readBox(dir, "inbox").box;
+  const index = box2.messages.findIndex((m) => m.id === inProgress.id);
+  box2.messages[index] = transition(box2.messages[index] as Message, "in-progress") as Message;
+  writeBox(dir, "inbox", box2);
+  expect(reply(w.b.ctx, inProgress.id, "x", { item: child.id }, [])).toMatchObject({
+    original: { status: "done" },
+  });
 });

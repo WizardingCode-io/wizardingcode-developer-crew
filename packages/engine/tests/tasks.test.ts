@@ -787,7 +787,7 @@ test("SP2c AC-2: crew mail status lists an open session with its minutes used, a
     `${task.message} has no session running`,
   );
   expect((await c.run("task", id, "list")).out).toContain(
-    `${task.message} stopped · no child yet · no reply yet · implementer stopped: stopped by crew mail stop · handed\n`,
+    `${task.message} refused · no child yet · no reply yet · implementer stopped: stopped by crew mail stop · handed\n`,
   );
 }, 20_000);
 
@@ -829,7 +829,7 @@ test("SP2c AC-4: the child records origin and parent, its reply fills the task, 
   );
   expect(landed).toMatchObject({ branch: `crew/${short}/T-2`, item: childId, verdict: "unproven" });
   expect((await c.run("task", id, "list")).out).toContain(
-    `${message} answered · ${childId} · unproven`,
+    `${message} blocked · ${childId} · unproven`,
   );
   expect((await c.run("task", id, "merge", "T-2")).err.trim()).toBe(
     `T-2's child ${childId} is not proven; the user may merge it anyway with crew task ${id} merge T-2 --force`,
@@ -1218,13 +1218,13 @@ test("SP2c AC-5: a full-route child opened by mail waits for a person at the spe
   );
   expect(refused.code).toBe(1);
   expect(refused.err.trim()).toBe(
-    `a full-route item opened by mail (${mid}) waits for a person at its spec; the item is marked waiting for the user and the message waiting-for-person`,
+    `a full-route item opened by mail (${mid}) waits for a person at its spec; the item is marked waiting for the user and the message blocked`,
   );
   expect(loadWork(pw, childId).work?.awaiting).toBe("user");
   const inbox = ownInbox(mailContext(pb, loadPolicy(pb).policy, childEnv)).messages.find(
     (m) => m.id === mid,
   );
-  expect(inbox?.status).toBe("waiting-for-person");
+  expect(inbox?.status).toBe("blocked");
   expect((await w.run("task", childId, "merge", "T-1")).err.trim()).toBe(
     `a session opened by mail (${mid}) never merges`,
   );
@@ -1250,7 +1250,7 @@ test("SP2c AC-5: a full-route child opened by mail waits for a person at the spe
   const refusedBogus = await bogus.run("approve", inRoot, "spec", "--mode", "dontAsk");
   expect(refusedBogus.code).toBe(1);
   expect(refusedBogus.err.trim()).toBe(
-    `a full-route item opened by mail (${other}) waits for a person at its spec; the item is marked waiting for the user and the message waiting-for-person`,
+    `a full-route item opened by mail (${other}) waits for a person at its spec; the item is marked waiting for the user and the message blocked`,
   );
   expect(loadWork(pb, inRoot).work?.awaiting).toBe("user");
   expect(crmOutbox()?.status).toBe("sent");

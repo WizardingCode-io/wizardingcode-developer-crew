@@ -12,7 +12,7 @@ The nine questions are on the skill page (`SKILL.md`, "The nine typed questions"
 crew start "<the request, as the user wrote it>" --answers '{"work_type":"fix","is_vague":0.1,"scope":0,"touches_auth":0,"touches_payments":0,"touches_personal_data":0,"touches_data_migration":0,"touches_infra":0,"touches_public_api":0}'
 ```
 
-The answers are required: `crew start` refuses without them. The engine prints the id and the route with its reasons, and how many entries the project's decision register holds (`crew decisions` lists them; on standard and full, read it in Understand). Keep the id; every later command needs it. `--criterion "<text>"` (repeatable) records acceptance criteria at the start; on the fast route that is the whole Specify phase.
+The answers are required: `crew start` refuses without them. A request that came by mail carries a priority: confirm or lower it on record before the item starts (`crew mail accept <message id> [--priority <p>] --reason "<why>"`, `references/mail.md`), and the item takes the confirmed level; `--priority blocker|high|normal|low` sets an item's own, `normal` otherwise. `crew status` prints it after the route. The engine prints the id and the route with its reasons, and how many entries the project's decision register holds (`crew decisions` lists them; on standard and full, read it in Understand). Keep the id; every later command needs it. `--criterion "<text>"` (repeatable) records acceptance criteria at the start; on the fast route that is the whole Specify phase.
 
 ## 3. Ask what is missing
 

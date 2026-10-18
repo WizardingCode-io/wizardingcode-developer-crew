@@ -13,6 +13,7 @@ import {
   send,
   updateStatusEverywhere,
 } from "./mail.ts";
+import { mailStatus } from "./mail-status.ts";
 import { openSession, type StartFailure, sessionLog, sweepSafely, taskPrompt } from "./open.ts";
 import { dropOpenedMarker } from "./opened.ts";
 import { type CrewPaths, resolvePaths, workDir } from "./paths.ts";
@@ -366,7 +367,7 @@ export function listTasks(
           : null;
     return {
       task: t,
-      status: m?.status ?? "sent",
+      status: m ? mailStatus(m) : "sent",
       verdict: t.verdict ?? m?.verdict ?? "no reply yet",
       implementer,
     };

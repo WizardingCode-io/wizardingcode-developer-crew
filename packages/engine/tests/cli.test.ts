@@ -4,11 +4,12 @@ import { join } from "node:path";
 import { type CliIo, main } from "../src/cli.ts";
 import { loadEvidence, saveEvidence } from "../src/evidence.ts";
 import { readReviewInputs } from "../src/judgement.ts";
-import { mailContext, registerProject } from "../src/mail.ts";
+import { mailbox, mailContext, readBox, registerProject, writeBox } from "../src/mail.ts";
 import { loadPolicy } from "../src/policy.ts";
 import { loadProfile } from "../src/profile.ts";
 import { recordWorking } from "../src/state.ts";
 import { readProtectedJson, writeProtectedJson } from "../src/store.ts";
+import type { Message } from "../src/types.ts";
 import { loadWork, saveWork } from "../src/work.ts";
 import { git, makeRepo, repoPaths, tempDir, testEnv, write } from "./helpers.ts";
 
@@ -1791,7 +1792,7 @@ test("SP2c AC-9: crew mail send, inbox, read, reply and refuse through the comma
   );
   const inbox = await cb.run("mail", "inbox");
   expect(inbox.out).toBe(
-    `Mail (w/crm, as session): 1 unread, 0 answered\n  ${mid} · question · from storefront · Does POST /customers accept loyalty_tier? · sent\n`,
+    `Mail (w/crm, as session): 1 unread, 0 answered\n  ${mid} · [normal] · question · from storefront · Does POST /customers accept loyalty_tier? · sent\n`,
   );
   const read = await cb.run("mail", "read", mid);
   expect(read.out).toContain(
@@ -1801,7 +1802,7 @@ test("SP2c AC-9: crew mail send, inbox, read, reply and refuse through the comma
   const replied = await cb.run("mail", "reply", mid, "Yes: gold, silver, none.");
   expect(replied.code).toBe(0);
   expect(replied.out).toMatch(
-    new RegExp(`^replied to ${mid}: M-\\S+-001-crm to storefront; ${mid} answered\\n$`),
+    new RegExp(`^replied to ${mid}: M-\\S+-001-crm to storefront; ${mid} done\\n$`),
   );
   // The sender sees the answer in its inbox and in the item's record.
   const theirs = await ca.run("mail", "inbox");
@@ -1816,7 +1817,7 @@ test("SP2c AC-9: crew mail send, inbox, read, reply and refuse through the comma
   expect(
     mail.data?.messages.map((m) => [m.id.endsWith("-storefront") ? "sent" : "reply", m.status]),
   ).toEqual([
-    ["sent", "answered"],
+    ["sent", "done"],
     ["sent", "refused"],
     ["reply", "sent"],
   ]);
@@ -1864,25 +1865,25 @@ test("SP2c AC-9: crew mail send, inbox, read, reply and refuse through the comma
   ).toBe(`${second} refused: not this sprint | maybe next\n`);
   const report = (await ca.run("evidence", id)).out;
   expect(report).toContain(
-    "## Mail\n\n| Message | At | Direction | With | Type | Subject | Status |\n",
+    "## Mail\n\n| Message | At | Direction | With | Type | Priority | Subject | Status |\n",
   );
   expect(report).toContain(`| ${mid} | `);
   expect(report).toContain(
-    "| sent | crm | question | Does POST /customers accept loyalty_tier? | answered |",
+    "| sent | crm | question | normal | Does POST /customers accept loyalty_tier? | done |",
   );
   expect(report).toContain(`| ${second} | `);
   expect(report).toContain(
-    "| sent | crm | question | Second | refused: not this sprint \\| maybe next |",
+    "| sent | crm | question | normal | Second | refused: not this sprint \\| maybe next |",
   );
   expect(report).toContain(
-    "| received | crm | question | Re: Does POST /customers accept loyalty_tier? | sent |",
+    "| received | crm | question | normal | Re: Does POST /customers accept loyalty_tier? | sent |",
   );
   // Usage and unknown flags.
   expect((await ca.run("mail")).err).toContain(
     "usage: crew mail send --to <project|.> --type question|change-request|notice|blocker",
   );
   expect((await ca.run("mail", "send", "--to", "crm", "hi")).err.trim()).toBe(
-    'usage: crew mail send --to <project|.> --type question|change-request|notice|blocker [--agent <session|T-n|role>] [--item <id>] [--reply-to <mid>] [--subject <text>] "<text>" [--file <path>]',
+    'usage: crew mail send --to <project|.> --type question|change-request|notice|blocker [--priority blocker|high|normal|low] [--agent <session|T-n|role>] [--item <id>] [--reply-to <mid>] [--subject <text>] "<text>" [--file <path>]',
   );
   // A hand edit of the item's mail.json is tampering, and `crew accept <id>` re-trusts it like every other protected file of the item.
   const mailFile = join(a, ".crew", "work", id, "mail.json");
@@ -1926,13 +1927,13 @@ test("SP2c AC-9: crew start --origin answers a message of the inbox and refuses 
   );
   expect(work.data?.origin).toEqual({ mail: first });
   expect((await cb.run("mail", "inbox")).out).toContain(
-    `${first} · question · from storefront · Which values? · read`,
+    `${first} · [normal] · question · from storefront · Which values? · in-progress`,
   );
   const copy = readProtectedJson<{ messages: { id: string; status: string }[] }>(
     repoPaths(b, cb.env),
     join(b, ".crew", "work", child, "mail.json"),
   );
-  expect(copy.data?.messages.map((m) => [m.id, m.status])).toEqual([[first, "read"]]);
+  expect(copy.data?.messages.map((m) => [m.id, m.status])).toEqual([[first, "in-progress"]]);
   // The inbox hand-edited: the second message is not trusted, and no item is created for it.
   const second = /sent (M-\S+) /.exec(
     (await ca.run("mail", "send", "--to", "crm", "--type", "question", "And the default?")).out,
@@ -2919,7 +2920,7 @@ test("SP7a AC-7 (Task 7): crew status --json carries the todo, the roles working
   ]);
   const lines = (await c.run("status")).out.split("\n");
   expect(lines.slice(1, 5)).toEqual([
-    "  phase build, route fast",
+    "  phase build, route fast, priority normal",
     `  branch ${branch}`,
     "  todo 1/2 briefed (T-1 briefed, T-2 open)",
     "  working: review-security (Review the diff), judge",
@@ -2942,4 +2943,185 @@ test("SP7a AC-7 (Task 7): crew status --json carries the todo, the roles working
   const bare = await p.json("status");
   expect(bare.data.branch).toBeNull();
   expect((await p.run("status")).out).not.toContain("  branch ");
+});
+
+// ---------------------------------------------------------------------------------------------
+// SP7b Task 1: priorities and statuses
+
+function crmInboxDir(env: NodeJS.ProcessEnv): string {
+  return join(env.WIZARDINGCODE_HOME as string, "crew", "mail", "w", "crm");
+}
+
+test("SP7b AC-1: crew mail accept confirms or lowers a priority with a reason, refuses an invalid value before any write, and crew mail read shows the decision", async () => {
+  const { env, ca, cb } = mailRepos(["question", "notice", "change-request", "blocker"]);
+  await ca.run("detect");
+  await cb.run("detect");
+  const mid = /sent (M-\S+) /.exec(
+    (
+      await ca.run(
+        "mail",
+        "send",
+        "--to",
+        "crm",
+        "--type",
+        "change-request",
+        "--priority",
+        "high",
+        "Add the field",
+      )
+    ).out,
+  )?.[1] as string;
+  const file = join(crmInboxDir(env), "inbox.json");
+  const bytes = readFileSync(file);
+  const bad = await cb.run("mail", "accept", mid, "--priority", "urgent");
+  expect(bad.code).toBe(1);
+  expect(bad.err.trim()).toBe("priority is one of blocker, high, normal, low, not urgent");
+  expect(readFileSync(file).equals(bytes)).toBe(true);
+  const lowered = await cb.run(
+    "mail",
+    "accept",
+    mid,
+    "--priority",
+    "normal",
+    "--reason",
+    "no client flow is down",
+  );
+  expect(lowered.code).toBe(0);
+  expect(lowered.out).toBe(`${mid} accepted at normal (proposed high): no client flow is down\n`);
+  const read = await cb.run("mail", "read", mid);
+  expect(read.out).toContain(
+    "priority: normal (proposed high, lowered by session: no client flow is down)\n",
+  );
+  expect(read.out).toContain("status: accepted\n");
+  expect((await cb.run("mail", "inbox")).out).toContain(
+    `${mid} · [normal] · change-request · from storefront · Add the field · accepted`,
+  );
+});
+
+test("SP7b AC-3: the default inbox lists what is open and the originals done, hides a done reply and a refused message, and leaves a 0.6.0 record's bytes alone", async () => {
+  const { env, ca, cb } = mailRepos(["question", "notice", "change-request", "blocker"]);
+  await ca.run("detect");
+  await cb.run("detect");
+  const sendCr = async (text: string) =>
+    /sent (M-\S+) /.exec(
+      (await ca.run("mail", "send", "--to", "crm", "--type", "change-request", text)).out,
+    )?.[1] as string;
+  const m1 = await sendCr("Accepted one");
+  const m2 = await sendCr("In progress one");
+  const m3 = await sendCr("Blocked one");
+  const m4 = await sendCr("Refused one");
+  const q = /sent (M-\S+) /.exec(
+    (await ca.run("mail", "send", "--to", "crm", "--type", "question", "Old answered")).out,
+  )?.[1] as string;
+  expect((await cb.run("mail", "accept", m1)).code).toBe(0);
+  expect((await cb.json("start", "Two", "--answers", answers, "--origin", m2)).code).toBe(0);
+  const third = (await cb.json("start", "Three", "--answers", answers, "--origin", m3)).data
+    .id as string;
+  expect((await cb.run("await", third, "user")).code).toBe(0);
+  expect((await cb.run("mail", "refuse", m4, "--reason", "no")).code).toBe(0);
+  // A 0.6.0 engine's spelling on an original, and a reply at done, written as the engine writes a box.
+  const dir = crmInboxDir(env);
+  const box = readBox(dir, "inbox").box;
+  const original = box.messages.find((m) => m.id === q) as Message;
+  (original as { status: string }).status = "answered";
+  box.messages.push({
+    ...original,
+    id: "M-2026-01-01-009-storefront",
+    subject: "Re: Old answered",
+    replyTo: q,
+    status: "done",
+  });
+  writeBox(dir, "inbox", box);
+  const bytes = readFileSync(join(dir, "inbox.json"));
+  const listed = (await cb.run("mail", "inbox")).out;
+  expect(listed).toContain(
+    `${m1} · [normal] · change-request · from storefront · Accepted one · accepted`,
+  );
+  expect(listed).toContain(
+    `${m2} · [normal] · change-request · from storefront · In progress one · in-progress`,
+  );
+  expect(listed).toContain(
+    `${m3} · [normal] · change-request · from storefront · Blocked one · blocked`,
+  );
+  expect(listed).toContain(`${q} · [normal] · question · from storefront · Old answered · done`);
+  expect(listed).not.toContain("Re: Old answered");
+  expect(listed).not.toContain(m4);
+  const all = (await cb.run("mail", "inbox", "--all")).out;
+  expect(all).toContain("Re: Old answered · done");
+  expect(all).toContain(
+    `${m4} · [normal] · change-request · from storefront · Refused one · refused: no`,
+  );
+  expect(readFileSync(join(dir, "inbox.json")).equals(bytes)).toBe(true);
+});
+
+test("SP7b AC-4: crew start --origin, await and resume move the origin message along the table on both copies", async () => {
+  const { env, a, ca, cb } = mailRepos(["question", "notice", "change-request", "blocker"]);
+  await ca.run("detect");
+  await cb.run("detect");
+  const mid = /sent (M-\S+) /.exec(
+    (await ca.run("mail", "send", "--to", "crm", "--type", "change-request", "Add the field")).out,
+  )?.[1] as string;
+  const pa = repoPaths(a, env);
+  const inboxStatus = () =>
+    readBox(crmInboxDir(env), "inbox").box.messages.find((m) => m.id === mid)?.status;
+  const outboxStatus = () =>
+    readBox(mailbox(pa.userDir, "w", "storefront").dir, "outbox").box.messages.find(
+      (m) => m.id === mid,
+    )?.status;
+  const id = (await cb.json("start", "Add the field", "--answers", answers, "--origin", mid)).data
+    .id as string;
+  expect(inboxStatus()).toBe("in-progress");
+  expect(outboxStatus()).toBe("in-progress");
+  expect((await cb.run("await", id, "user")).code).toBe(0);
+  expect(inboxStatus()).toBe("blocked");
+  expect(outboxStatus()).toBe("blocked");
+  expect((await cb.run("resume", id)).code).toBe(0);
+  expect(inboxStatus()).toBe("in-progress");
+  expect(outboxStatus()).toBe("in-progress");
+});
+
+test("SP7b AC-5: an item's priority comes from --priority, else from its origin's confirmed priority, else normal; status prints it", async () => {
+  const { env, a, b, ca, cb } = mailRepos(["question", "notice", "change-request", "blocker"]);
+  await ca.run("detect");
+  await cb.run("detect");
+  const started = await ca.json("start", "Thing", "--answers", answers, "--priority", "high");
+  const id = started.data.id as string;
+  const read = (root: string, item: string) =>
+    JSON.parse(readFileSync(join(root, ".crew", "work", item, "work.json"), "utf8")) as {
+      priority?: string;
+    };
+  expect(read(a, id).priority).toBe("high");
+  expect((await ca.run("status")).out).toContain("route fast, priority high\n");
+  expect((await ca.json("status")).data.priority).toBe("high");
+  const before = readdirSync(join(a, ".crew", "work")).length;
+  const bad = await ca.run("start", "Thing", "--answers", answers, "--priority", "urgent");
+  expect(bad.code).toBe(1);
+  expect(bad.err.trim()).toBe("priority is one of blocker, high, normal, low, not urgent");
+  expect(readdirSync(join(a, ".crew", "work")).length).toBe(before);
+  // From the origin: the confirmed level, else the proposal, else normal for a value this engine does not know.
+  const sendCr = async (text: string, ...flags: string[]) =>
+    /sent (M-\S+) /.exec(
+      (await ca.run("mail", "send", "--to", "crm", "--type", "change-request", ...flags, text)).out,
+    )?.[1] as string;
+  const lowered = await sendCr("Lowered", "--priority", "high");
+  expect(
+    (await cb.run("mail", "accept", lowered, "--priority", "normal", "--reason", "later")).code,
+  ).toBe(0);
+  const proposed = await sendCr("Proposed", "--priority", "high");
+  const unknown = await sendCr("Unknown");
+  const dir = crmInboxDir(env);
+  const box = readBox(dir, "inbox").box;
+  (box.messages.find((m) => m.id === unknown) as { priority?: string }).priority = "urgent";
+  writeBox(dir, "inbox", box);
+  const fromLowered = (await cb.json("start", "L", "--answers", answers, "--origin", lowered)).data
+    .id as string;
+  expect(read(b, fromLowered).priority).toBe("normal");
+  const fromProposed = (await cb.json("start", "P", "--answers", answers, "--origin", proposed))
+    .data.id as string;
+  expect(read(b, fromProposed).priority).toBe("high");
+  const fromUnknown = (await cb.json("start", "U", "--answers", answers, "--origin", unknown)).data
+    .id as string;
+  expect(read(b, fromUnknown).priority).toBe("normal");
+  const plain = (await cb.json("start", "Plain", "--answers", answers)).data.id as string;
+  expect(read(b, plain).priority).toBe("normal");
 });

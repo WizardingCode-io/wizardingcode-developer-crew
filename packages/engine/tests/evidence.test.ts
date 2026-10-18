@@ -12,6 +12,7 @@ import type {
   Evidence,
   GateRun,
   JudgementRecord,
+  Message,
   ObjectionLedger,
   RunRecord,
   WorkItem,
@@ -618,5 +619,45 @@ test("SP2c: the report's Roles section lists each role's end with its tokens and
   );
   expect(report).toContain(
     "| expert-1 | creative | 2026-10-15T11:10:00.000Z | 5000 | conclave/expert-1.md |",
+  );
+});
+
+test("SP7b AC-3: the report's Mail table carries the priority and prints a 0.6.0 status mapped", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const work = createWork(paths, "fix");
+  const message: Message = {
+    id: "M-2026-10-18-001-storefront",
+    at: "2026-10-18T10:00:00.000Z",
+    from: { workspace: "w", project: "storefront", item: work.id, agent: "session" },
+    to: { workspace: "w", project: "crm", item: null, agent: "session" },
+    type: "change-request",
+    subject: "Add the field",
+    body: "Add the field",
+    replyTo: null,
+    hops: 0,
+    status: "waiting-for-person",
+    opened: null,
+    priority: "high",
+    priorityDecision: {
+      proposed: "high",
+      confirmed: "normal",
+      by: "session",
+      reason: "later",
+      at: "2026-10-18T10:01:00.000Z",
+    },
+  };
+  const report = renderReport(
+    work,
+    emptyEvidence(),
+    DEFAULT_POLICY,
+    undefined,
+    { box: { version: 1, messages: [message] }, tampered: false },
+    "storefront",
+  );
+  expect(report).toContain(
+    "| Message | At | Direction | With | Type | Priority | Subject | Status |",
+  );
+  expect(report).toContain(
+    "| M-2026-10-18-001-storefront | 2026-10-18T10:00:00.000Z | sent | crm | change-request | normal (proposed high) | Add the field | blocked |",
   );
 });

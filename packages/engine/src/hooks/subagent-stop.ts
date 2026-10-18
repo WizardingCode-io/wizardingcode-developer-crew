@@ -3,6 +3,7 @@ import { loadEvidence, saveEvidence } from "../evidence.ts";
 import { nowIso, readText, writeText } from "../fs.ts";
 import { withLock } from "../lock.ts";
 import { loadItemMail, reply } from "../mail.ts";
+import { mailStatus } from "../mail-status.ts";
 import { workDir } from "../paths.ts";
 import { clearWorking } from "../state.ts";
 import { PERSONALITIES, ROLE_NAMES, TEAMS, type TeamDef } from "../team.ts";
@@ -415,7 +416,7 @@ function pendingQuestion(ctx: HookContext, workId: string, agent: string): Messa
     (m) =>
       m.relayed &&
       m.to.agent === agent &&
-      (m.status === "sent" || m.status === "read") &&
+      (mailStatus(m) === "sent" || mailStatus(m) === "read") &&
       !m.replyTo,
   );
 }
