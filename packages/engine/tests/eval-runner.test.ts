@@ -58,9 +58,13 @@ const CASES = [
   "decision-register-reread",
   "personalities-differ",
   "rounds-bounded",
+  "env-observed-proof",
+  "no-environment-cannot-prove",
+  "priority-lowered-with-reason",
+  "thread-with-contracts",
 ];
 
-test("SP2c: the twenty-three cases each have their four parts, and the fixtures they share exist", () => {
+test("SP2c, SP7b-T7 AC-1: the twenty-seven cases each have their four parts, and the fixtures they share exist", () => {
   const folders = readdirSync(EVALS)
     .filter((f) => !["README.md", "fixtures", "results"].includes(f))
     .sort();
@@ -81,12 +85,16 @@ test("SP2c: the twenty-three cases each have their four parts, and the fixtures 
     "kind-observed-e2e",
     "validator-unattended-approval",
     "judgement-gate-not-run",
+    "env-observed-proof",
+    "no-environment-cannot-prove",
   ])
     expect(readFileSync(`${EVALS}${name}/fixture.sh`, "utf8")).toContain("fixtures/node-plain.sh");
   for (const name of [
     "mail-question-between-projects",
     "task-implementer-worktree",
     "mail-refused-by-policy",
+    "priority-lowered-with-reason",
+    "thread-with-contracts",
   ])
     expect(readFileSync(`${EVALS}${name}/fixture.sh`, "utf8")).toContain(
       "fixtures/two-projects.sh",
@@ -97,8 +105,9 @@ test("SP2c: the twenty-three cases each have their four parts, and the fixtures 
   for (const grant of ["Bash(cd *)", "Bash(env *)", "Bash(claude *)"])
     expect(args).toContain(grant);
   // The sandbox run skips the cases that need a real opener (spike A6): the suite filters by the sandbox tags.
+  // The four SP7b cases need none (a change request to a read-only project is queued), so their tags are in.
   expect(args).toContain(
-    "--tag cost enforcement method risk stacks gap kind validator judgement team",
+    "--tag cost enforcement method risk stacks gap kind validator judgement team environment priority contracts",
   );
   expect(args).not.toContain("needs-real-opener");
 });
@@ -134,16 +143,20 @@ test("SP2c: every fixture scaffolds under sh into a committed repository, with t
   }
 }, 120_000);
 
-test("SP7a AC-8 (Task 8): every fixture stays inside the scaffold: no home, no absolute or parent path, no global git config, no network, no package install", () => {
-  // The spec's scope (SP7a Task 8, AC-2): the six team cases and the shared fixture they source. The
-  // older cases source other shared fixtures (two-projects.sh, node-ts.sh, makefile.sh), outside this check.
-  const TEAM_CASES = CASES.slice(-6);
+test("SP7a AC-8 (Task 8), SP7b-T7 AC-1: every fixture stays inside the scaffold: no home, no absolute or parent path, no global git config, no network, no package install", () => {
+  // The scope: the six team cases (SP7a Task 8, AC-2), the four SP7b cases (Task 7) and the two shared
+  // fixtures they source. The older cases source other shared fixtures (node-ts.sh, makefile.sh), outside this check.
+  const CONFINED = CASES.slice(-10);
   const files = [
     `${EVALS}fixtures/node-plain.sh`,
-    ...TEAM_CASES.map((name) => `${EVALS}${name}/fixture.sh`),
+    `${EVALS}fixtures/two-projects.sh`,
+    ...CONFINED.map((name) => `${EVALS}${name}/fixture.sh`),
   ];
-  // The one permitted parent path: sourcing the shared fixture beside the case, inside the evals tree.
-  const sourcing = '. "$(dirname "$0")/../fixtures/node-plain.sh"';
+  // The one permitted parent path: sourcing a shared fixture beside the case, inside the evals tree.
+  const sourcing = [
+    '. "$(dirname "$0")/../fixtures/node-plain.sh"',
+    '. "$(dirname "$0")/../fixtures/two-projects.sh"',
+  ];
   const forbidden = [
     /cd \//,
     /(^|[\s"'=])~(\/|$|[\s"'])/,
@@ -156,7 +169,7 @@ test("SP7a AC-8 (Task 8): every fixture stays inside the scaffold: no home, no a
   for (const file of files) {
     const lines = readFileSync(file, "utf8")
       .split("\n")
-      .filter((line) => line.trim() !== sourcing);
+      .filter((line) => !sourcing.includes(line.trim()));
     for (const line of lines) {
       for (const pattern of forbidden) expect(`${file}: ${line}`).not.toMatch(pattern);
       // A relative import written into the scaffold (`from "../src/x.mjs"`) stays inside the scaffolded project.

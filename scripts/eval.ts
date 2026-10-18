@@ -45,6 +45,10 @@ const SANDBOX_TAGS = [
   "validator",
   "judgement",
   "team",
+  // SP7b: the four cases need no opener (a change request to a read-only project is queued in its inbox).
+  "environment",
+  "priority",
+  "contracts",
 ];
 const COMMON = [
   "plugin",

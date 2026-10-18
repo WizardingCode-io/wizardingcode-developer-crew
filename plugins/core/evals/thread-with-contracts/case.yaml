@@ -1,0 +1,6 @@
+# evals/thread-with-contracts/case.yaml
+schema_version: "1.1"
+name: thread-with-contracts
+tags: [contracts]
+context:
+  scaffold_script: fixture.sh

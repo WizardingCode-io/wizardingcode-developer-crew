@@ -8188,7 +8188,7 @@ async function recordTdd(paths, work, evidence, profile, criterionId, step, over
 }
 
 // packages/engine/src/version.ts
-var VERSION = "0.6.0";
+var VERSION = "0.7.0";
 
 // packages/engine/src/workspace.ts
 import { existsSync as existsSync10 } from "node:fs";

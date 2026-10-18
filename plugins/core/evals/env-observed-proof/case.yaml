@@ -1,0 +1,6 @@
+# evals/env-observed-proof/case.yaml
+schema_version: "1.1"
+name: env-observed-proof
+tags: [environment]
+context:
+  scaffold_script: fixture.sh

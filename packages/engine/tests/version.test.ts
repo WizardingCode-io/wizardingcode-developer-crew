@@ -9,7 +9,7 @@ function versionOf(rel: string): string {
 }
 
 test("the engine reports the plugin version", () => {
-  expect(VERSION).toBe("0.6.0");
+  expect(VERSION).toBe("0.7.0");
 });
 
 test("#47: the root test script gives bun test a 30-second per-test timeout, so a test slowed by load is slow, not red", () => {

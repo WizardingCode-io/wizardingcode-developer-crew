@@ -1,0 +1,6 @@
+# evals/priority-lowered-with-reason/case.yaml
+schema_version: "1.1"
+name: priority-lowered-with-reason
+tags: [priority]
+context:
+  scaffold_script: fixture.sh

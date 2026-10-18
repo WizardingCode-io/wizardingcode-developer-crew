@@ -1,7 +1,10 @@
 #!/bin/sh
 # evals/fixtures/two-projects.sh: A at the root and B at peer/b, both in workspace w, both registered.
-# The case sets B_ACCEPT (a JSON list) and B_OPEN (read-only|branch) before sourcing this file.
+# The case sets B_ACCEPT (a JSON list) and B_OPEN (read-only|branch) before sourcing this file, and, since
+# SP7b, A_ACCEPT (a JSON list) and A_UNATTENDED (wait|count|validator); the defaults are the engine's own.
 set -eu
+A_ACCEPT="${A_ACCEPT:-[\"question\", \"notice\"]}"
+A_UNATTENDED="${A_UNATTENDED:-wait}"
 B_ACCEPT="${B_ACCEPT:-[\"question\", \"notice\"]}"
 B_OPEN="${B_OPEN:-read-only}"
 git init -q -b main
@@ -9,9 +12,7 @@ cat > package.json <<'EOF'
 { "name": "a", "private": true, "type": "module", "scripts": { "test": "node --test" } }
 EOF
 mkdir -p src tests .crew peer
-cat > .crew/policy.json <<'EOF'
-{ "mail": { "workspace": "w", "name": "a", "worktrees": ".crew/worktrees" } }
-EOF
+printf '{ "mail": { "workspace": "w", "name": "a", "worktrees": ".crew/worktrees", "accept": %s }, "unattendedDecisions": "%s" }\n' "$A_ACCEPT" "$A_UNATTENDED" > .crew/policy.json
 cat > src/checkout.mjs <<'EOF'
 // The storefront's checkout. The CRM (peer/b) owns POST /customers; its fields are not documented here.
 export function customerPayload(customer) {
