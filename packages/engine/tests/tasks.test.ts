@@ -1,9 +1,18 @@
 import { expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmdirSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type CliIo, main } from "../src/cli.ts";
 import { loadEvidence, saveEvidence } from "../src/evidence.ts";
+import { scopeHash } from "../src/judgement.ts";
 import {
   loadItemMail,
   loadRegistry,
@@ -1337,4 +1346,154 @@ test("SP7b-T2 AC-4: a todo's brief lists the contracts its reply carried, each o
   expect(writeBrief(paths, work, tasks[2] as TaskRecord, evidence, policy)).toContain(
     "## Contracts\n- none\n\n## Left",
   );
+});
+
+test("SP7b-T5 AC-1: a todo's gate plans the judgement its scope asks for, cuts its inputs under review/T-n, records each ruling with --task, and the todo is gated only when every planned judgement is proven on the current code and scope", async () => {
+  const { env, root, c, id } = await lead({ policy: { allowSkips: ["tdd", "ui-ux", "e2e"] } });
+  write(root, "src/App.vue", "<template/>");
+  git(root, "add", "-A");
+  git(root, "commit", "-q", "-m", "the page");
+  const paths = repoPaths(root, env);
+  const taskOf = (task: string) => loadWork(paths, id).work?.tasks?.find((t) => t.task === task);
+  const judge = `.crew/work/${id}/judge.json`;
+  const ruling = (rulings: unknown[]) => write(root, judge, JSON.stringify({ rulings }));
+  const record = (task: string, ...more: string[]) =>
+    c.run("judgement", id, "record", "--task", task, "--ruling", judge, ...more);
+  const note = (task: string, scope: string, text: string) =>
+    c.run("task", id, "note", task, "--criteria", "AC-1", "--scope", scope, "--text", text);
+  // A backend todo: no judgement, gated as today.
+  expect((await note("T-2", "src/b.ts", "b")).code).toBe(0);
+  const plain = await c.run("task", id, "gate", "T-2");
+  expect(plain.code).toBe(0);
+  expect(plain.out).not.toContain("Judgement gates to run");
+  expect(plain.out.trim().endsWith("T-2 gate round 1: pass")).toBe(true);
+  expect(taskOf("T-2")).toMatchObject({ state: "gated", gate: { status: "pass", planned: [] } });
+  ruling([{ gate: "ui-ux", verdict: "proven", findings: [] }]);
+  expect((await record("T-2")).err.trim()).toBe(
+    `T-2 plans no judgement gate (crew task <id> gate T-2)`,
+  );
+  expect((await record("T-9")).err.trim()).toBe(`T-9 is not a task of ${id}`);
+  // A page todo: ui-ux planned, the inputs cut, the state waits for the ruling.
+  expect((await note("T-5", "src/App.vue", "the page")).code).toBe(0);
+  const first = await c.run("task", id, "gate", "T-5");
+  expect(first.code).toBe(0);
+  expect(first.out).toContain(
+    `Judgement gates to run for T-5: ui-ux (interface files: src/App.vue); inputs in .crew/work/${id}/review/T-5/ (diff.patch, files.txt); record each with crew judgement ${id} record --task T-5 --ruling <file>`,
+  );
+  expect(first.out.trim().endsWith("T-5 gate round 1: pass, judgement pending (ui-ux)")).toBe(true);
+  expect(taskOf("T-5")).toMatchObject({
+    state: "merged",
+    gate: { planned: [{ gate: "ui-ux", reason: "interface files: src/App.vue" }] },
+  });
+  expect(readFileSync(join(root, ".crew", "work", id, "review", "T-5", "files.txt"), "utf8")).toBe(
+    "src/App.vue\n",
+  );
+  expect((await c.run("task", id, "brief", "T-5")).err.trim()).toBe(
+    `T-5 has a judgement gate not proven yet (crew judgement <id> record --task T-5 --ruling <file>)`,
+  );
+  // The inputs refusals, on a second page todo.
+  expect((await note("T-6", "src/App.vue", "six")).code).toBe(0);
+  expect((await record("T-6")).err.trim()).toBe(
+    `T-6 plans no judgement gate (crew task <id> gate T-6)`,
+  );
+  expect((await c.run("task", id, "gate", "T-6")).code).toBe(0);
+  write(
+    root,
+    `.crew/work/${id}/review/T-6/inputs.json`,
+    JSON.stringify({ fingerprint: "other", at: new Date().toISOString(), captures: [] }),
+  );
+  expect((await record("T-6")).err.trim()).toBe(
+    `the review inputs of T-6 describe other code than the current one: run crew task <id> gate T-6, then the reviewers and the judge again`,
+  );
+  rmSync(join(root, ".crew", "work", id, "review", "T-6"), { recursive: true, force: true });
+  expect((await record("T-6")).err.trim()).toBe(
+    `no review inputs for T-6: run crew task <id> gate T-6 first, then the reviewers and the judge`,
+  );
+  // Back on T-5: a gate the todo did not plan, a contradiction, a not-proven ruling with a finding outside the scope.
+  ruling([{ gate: "code-quality", verdict: "proven", findings: [] }]);
+  expect((await record("T-5")).err).toContain("code-quality is not planned for T-5");
+  ruling([
+    {
+      gate: "ui-ux",
+      verdict: "proven",
+      findings: [{ file: "src/App.vue", line: 1, text: "no empty state", severity: "defect" }],
+    },
+  ]);
+  const contradiction = await record("T-5");
+  expect(contradiction.code).toBe(1);
+  expect(contradiction.err).toContain("proven");
+  ruling([
+    {
+      gate: "ui-ux",
+      verdict: "not-proven",
+      findings: [
+        { file: "src/App.vue", line: 1, text: "no empty state", severity: "defect" },
+        { file: "src/other.ts", line: 1, text: "unrelated", severity: "advisory" },
+      ],
+    },
+  ]);
+  const notProven = await record("T-5");
+  expect(notProven.code).toBe(1);
+  expect(notProven.out).toContain("T-5: ui-ux not proven (2 findings)");
+  expect(notProven.out).toContain("T-5: not gated: ui-ux not proven (2 findings)");
+  const recorded = taskOf("T-5")?.gate?.judgement?.[0];
+  expect(recorded).toMatchObject({ gate: "ui-ux", verdict: "not-proven" });
+  expect(recorded?.findings[1]?.outside).toBe(true);
+  expect(recorded?.scope).toBe(scopeHash(["src/App.vue"]));
+  expect((await c.run("task", id, "brief", "T-5")).code).toBe(1);
+  const notRun = await c.run(
+    "judgement",
+    id,
+    "record",
+    "ui-ux",
+    "--not-run",
+    "--reason",
+    "no browser",
+    "--task",
+    "T-5",
+  );
+  expect(notRun.code).toBe(1);
+  expect(notRun.out).toContain("T-5: ui-ux not run: no browser");
+  expect(notRun.out).toContain("T-5: not gated: ui-ux not run");
+  // Proven: gated, the round's files kept by the engine, the brief says so.
+  ruling([{ gate: "ui-ux", verdict: "proven", findings: [] }]);
+  const proven = await record("T-5");
+  expect(proven.code).toBe(0);
+  expect(proven.out).toContain("T-5: ui-ux proven (0 findings)");
+  expect(proven.out).toContain("T-5: gated");
+  expect(taskOf("T-5")?.state).toBe("gated");
+  const reviewT5 = join(root, ".crew", "work", id, "review", "T-5");
+  expect(existsSync(join(reviewT5, "ui-ux.round1.md"))).toBe(false);
+  expect(readFileSync(join(reviewT5, "ruling.round1.json"), "utf8")).toBe(
+    readFileSync(join(root, judge), "utf8"),
+  );
+  expect((await c.run("task", id, "brief", "T-5")).out).toContain("- ui-ux: proven (0 findings)");
+  // The code changes: the ruling was on other code, the todo waits again.
+  write(root, "src/App.vue", "<template>changed</template>");
+  const second = await c.run("task", id, "gate", "T-5");
+  expect(second.out.trim().endsWith("T-5 gate round 2: pass, judgement pending (ui-ux)")).toBe(
+    true,
+  );
+  // The ladder never lowers briefed; the todo's judgement is open again, which the brief refuses to rewrite.
+  expect(taskOf("T-5")).toMatchObject({ state: "briefed", gate: { round: 2, judgement: [] } });
+  expect((await c.run("task", id, "brief", "T-5")).code).toBe(1);
+  expect((await record("T-5")).code).toBe(0);
+  expect((await c.run("task", id, "brief", "T-5")).code).toBe(0);
+  // A narrower --scope cannot un-plan the gate, and a ruling cut for other files counts for nothing.
+  expect((await c.run("continue", id, "gate", "T-5")).code).toBe(0);
+  const narrowed = await c.json("task", id, "gate", "T-5", "--scope", "src/a.ts");
+  expect(narrowed.data.gate).toMatchObject({
+    round: 3,
+    planned: [{ gate: "ui-ux", reason: "interface files: src/App.vue" }],
+    judgement: [],
+  });
+  expect((await c.run("task", id, "brief", "T-5")).code).toBe(1);
+  // A gate skipped on the item holds no todo.
+  expect((await c.run("skip", id, "gate:ui-ux", "--reason", "no browser")).code).toBe(0);
+  expect((await c.run("continue", id, "gate", "T-5")).code).toBe(0);
+  const skipped = await c.run("task", id, "gate", "T-5");
+  expect(skipped.out.trim().endsWith("T-5 gate round 4: pass")).toBe(true);
+  expect(taskOf("T-5")).toMatchObject({ state: "briefed", gate: { round: 4, judgement: [] } });
+  expect((await c.run("task", id, "brief", "T-5")).code).toBe(0);
+  expect(loadWork(paths, id).work?.rounds?.judgement ?? 0).toBe(0);
 });

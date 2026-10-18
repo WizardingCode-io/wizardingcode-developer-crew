@@ -13,7 +13,7 @@ import {
   MAX_WATCHED_FILES,
 } from "./fingerprint.ts";
 import { exists, nowIso, readText } from "./fs.ts";
-import { plannedJudgementGates, writeReviewInputs } from "./judgement.ts";
+import { plannedJudgementGates, plannedTaskJudgement, writeReviewInputs } from "./judgement.ts";
 import { loadLedger } from "./objections.ts";
 import { type CrewPaths, workDir } from "./paths.ts";
 import { isInterfacePath } from "./paths-kind.ts";
@@ -391,14 +391,19 @@ export async function runTaskGate(
   profile: Profile,
   policy: Policy,
   scope: string[],
-): Promise<{ status: "pass" | "fail"; runs: GateRun[] }> {
+): Promise<{ status: "pass" | "fail"; runs: GateRun[]; judgement: PlannedJudgement[] }> {
   const planned = plannedGates(work.route, profile, policy, scope, paths.root).filter(
     (p) => p.gate !== "secrets" && p.gate !== "e2e",
   );
   const stamp = gitHead(paths.root) ?? "none";
   const runs: GateRun[] = [];
   for (const p of planned) runs.push(await runOne(paths, work, profile, p, stamp, scope, scope));
-  return { status: runs.length && runs.every((r) => r.status === "pass") ? "pass" : "fail", runs };
+  // The judgement the scope asks for is planned here and run by the roles, never by the engine (SP7b decision 14).
+  return {
+    status: runs.length && runs.every((r) => r.status === "pass") ? "pass" : "fail",
+    runs,
+    judgement: plannedTaskJudgement(scope, policy),
+  };
 }
 
 async function runOne(

@@ -2,18 +2,11 @@ import { isAbsolute, join, relative } from "node:path";
 import { type Parsed, parse } from "../argv.ts";
 import { isWatched } from "../fingerprint.ts";
 import { nowIso } from "../fs.ts";
-import { canonical, isProtectedPath } from "../paths.ts";
+import { canonical, isProtectedPath, REVIEW_OPEN_SEGMENT } from "../paths.ts";
 import { recordWorking } from "../state.ts";
 import type { Policy } from "../types.ts";
 import { activeWork, isBeforeBuild, loadWork } from "../work.ts";
-import {
-  LEADING_KEYWORDS,
-  OPERATOR_PREFIX,
-  type Piece,
-  readCommand,
-  simpleCommands,
-  type Token,
-} from "./shell.ts";
+import { LEADING_KEYWORDS, OPERATOR_PREFIX, type Piece, readCommand, type Token } from "./shell.ts";
 import { roleOf, teamOf } from "./subagent-stop.ts";
 import type { HookContext, HookPayload, HookResponse } from "./types.ts";
 
@@ -29,8 +22,17 @@ const WRITE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
 // hands it on (`handedOn`), as `eval` and `trap` do (security review of SP2c task 3, round 13).
 const SHELL_NAMES = ["sh", "bash", "zsh", "dash", "ksh", "fish"];
 const SHELLS = `(?:${SHELL_NAMES.join("|")})`;
-const ENGINE_FILES =
-  /\.crew\/(?:profile\.json|policy\.json|decisions\.json|\.gitignore|local\b|work\/[^\s/]+\/(?:work\.json|evidence\.json|objections\.json|mail\.json|report\.md|logs\b))|\.wizardingcode\/crew\b/;
+// The review folder is the engine's except the captures and the e2e folders (SP7b decision 16):
+// `ui` or `e2e` as a whole segment right under `review/` or `review/T-n/`, with a tail of segments
+// none of which is `..`; anything else under `review` is an engine file.
+// Read as: `review`, unless what follows is `/<open segment>` (paths.ts names it) and then only
+// segments none of which is `..`, up to a path's end (whitespace, a quote, a separator or the end).
+const PATH_END = String.raw`[\s"'\x60;&|)]`;
+const NOT_DOTDOT_SEGMENT = String.raw`(?!\.\.(?:\/|${PATH_END}|$))[^\s"'\x60;&|)/]*\/?`;
+const REVIEW_OWNED = String.raw`review(?!\/${REVIEW_OPEN_SEGMENT}(?:\/(?:${NOT_DOTDOT_SEGMENT})*)?(?=${PATH_END}|$))`;
+const ENGINE_FILES = new RegExp(
+  String.raw`\.crew\/(?:profile\.json|policy\.json|decisions\.json|\.gitignore|local\b|work\/[^\s/]+\/(?:work\.json|evidence\.json|objections\.json|mail\.json|report\.md|logs\b|${REVIEW_OWNED}))|\.wizardingcode\/crew\b`,
+);
 // A verb may follow a quote (`bash -c "rm ..."`). A redirect is a write only when its target is an
 // engine file (the `2>` of `2>/dev/null` after a read is not).
 const WRITE_SHAPE =
@@ -452,6 +454,72 @@ interface Command extends Lead {
   program: string;
   args: string[] | null;
 }
+// A here-document is data only when a known reader takes it (SP7b decision 21, finding 67): a
+// program whose stdin can name no path to write, with every piece downstream in its pipe chain on
+// the same list and no process substitution anywhere in the chain. Everything else, an interpreter,
+// a wrapper with nothing behind it, a group, `xargs`, a program the reader cannot name and any
+// piece inside a substitution, keeps its body read as command lines, as before. The list grows by a
+// decision, never by inference.
+const DATA_READERS = new Set([
+  "cat",
+  "tee",
+  "head",
+  "tail",
+  "wc",
+  "sort",
+  "uniq",
+  "grep",
+  "tr",
+  "cut",
+  "fold",
+  "fmt",
+  "diff",
+  "cmp",
+  "md5sum",
+  "shasum",
+  "sha256sum",
+  "base64",
+  "jq",
+  "yq",
+]);
+// git and gh read text on stdin only for these subcommands (a patch or an index listing names the
+// files it rewrites; an alias or a config option runs what it names).
+const GIT_TEXT = new Set([
+  "commit",
+  "tag",
+  "notes",
+  "check-attr",
+  "check-ignore",
+  "stripspace",
+  "interpret-trailers",
+]);
+const GH_TEXT = new Set(["pr", "issue", "release", "gist"]);
+const PROCESS_SUBSTITUTION_ANYWHERE = /[<>]\(/;
+
+/** Whether a piece only reads what it is given: its program, behind its lead, is a listed reader. */
+function readsOnly(piece: Piece): boolean {
+  if (PROCESS_SUBSTITUTION_ANYWHERE.test(piece.text)) return false;
+  const { program, words } = commandOf(piece);
+  if (program === "git") return GIT_TEXT.has(words[1] ?? "");
+  if (program === "gh") return GH_TEXT.has(words[1] ?? "");
+  return DATA_READERS.has(program);
+}
+
+/** The texts the write rules judge: every piece's text, its here-document bodies unless a known reader takes them, and the same inside its substitutions, whose bodies are always judged. */
+function judgedTexts(pieces: Piece[], inner = false): string[] {
+  const texts: string[] = [];
+  pieces.forEach((piece, i) => {
+    texts.push(piece.text);
+    let data = !inner && readsOnly(piece);
+    for (let j = i + 1; data && j < pieces.length && pieces[j]?.piped; j++)
+      data = readsOnly(pieces[j] as Piece);
+    if (!data)
+      texts.push(...piece.heredocs.flatMap((body) => body.split("\n").filter((l) => l !== "")));
+    texts.push(...judgedTexts(piece.inner, true));
+  });
+  return texts;
+}
+
 function commandOf({ text, tokens, inner, heredocs }: Piece): Command {
   const lead = withoutLead(withoutRedirects(tokens));
   const args = crewArgs(lead.words);
@@ -1095,7 +1163,7 @@ export function onPreToolUse(ctx: HookContext, payload: HookPayload): HookRespon
     }
     // Each simple command is judged on its own: an engine file named in one and a write verb in
     // another are not a write (finding 2 of the real-use phase).
-    for (const piece of simpleCommands(command)) {
+    for (const piece of judgedTexts(readCommand(command).pieces)) {
       // No exemption for crew command lines: `crew x; echo > .crew/...` is two simple commands, and no crew command names a protected path.
       if (
         (ENGINE_FILES.test(piece) && WRITE_SHAPE.test(piece)) ||

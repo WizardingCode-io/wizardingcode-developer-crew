@@ -100,3 +100,14 @@ test("SP2c AC-5: a `case` the reader does not take for one cannot close a substi
   expect(readCommand("case x in x) echo a;; esac").unclosed).toBeNull();
   expect(words("grep case src/a.ts")).toEqual([["grep", "case", "src/a.ts"]]);
 });
+
+test("SP7b-T5 AC-3: a piece knows whether it is piped into, and the reading of here-document bodies is unchanged", () => {
+  expect(readCommand("a | b; c && d | e").pieces.map((p) => p.piped)).toEqual([
+    false,
+    true,
+    false,
+    false,
+    true,
+  ]);
+  expect(readCommand("cat <<'EOF' | sh\nrm x\nEOF").pieces[0]?.heredocs).toEqual(["rm x\n"]);
+});

@@ -116,8 +116,11 @@ test("SP2c AC-3: every writer of the session's state takes the local folder's lo
   // stops one, since a hook that failed here would fail open and skip its rule.
   const lock = join(root, ".crew", "local", ".lock");
   mkdirSync(lock);
+  // The lock is dated a minute ahead: a writer that stats it computes a negative age and never takes
+  // it as stale, however long the hook's work before the lock takes under load (finding 55).
+  const ahead = () => new Date(Date.now() + 60_000);
   const timed = (run: () => unknown): number => {
-    utimesSync(lock, new Date(), new Date());
+    utimesSync(lock, ahead(), ahead());
     const started = Date.now();
     run();
     return Date.now() - started;
@@ -137,7 +140,7 @@ test("SP2c AC-3: every writer of the session's state takes the local folder's lo
   mkdirSync(workLock);
   expect(
     timed(() => {
-      utimesSync(workLock, new Date(), new Date());
+      utimesSync(workLock, ahead(), ahead());
       return onSubagentStop(ctx, {
         agent_id: "r1",
         agent_type: `${PLUGIN}:review-risk`,

@@ -55,9 +55,9 @@ Non-goals (unchanged from vision §17):
 
 **A task in this repository.** The lead has item `…-042-…` on a branch `crew/042`, with `plan.md` naming three tasks; T-2 touches only `packages/engine/src/evidence.ts` and its test. `crew task …-042-… open T-2 --criteria AC-3,AC-4` records a change request from this project to itself, makes the worktree `../wizardingcode-developer-crew-042-T-2` on branch `crew/042/T-2` from the lead's last commit, and starts `claude -p` there with the task's brief. The implementer runs the method on its route (fast: criteria, red, green, gates), commits, and ends with `crew mail reply M-… --branch crew/042/T-2 --item …-001-…`. The lead reads "T-2 answered: proven, branch crew/042/T-2", reads the child's report, `crew task …-042-… merge T-2`, and its own gate run proves the merged tree; the judgement gates see the parent's diff, T-2 included. The report's "Mail" section lists the request and the reply; "Tasks" lists T-2 with the child id, the branch and the verdict.
 
-**A question from the storefront to the CRM.** Both projects declare `mail.workspace: clubefashion`. The storefront's session, on its item, runs `crew mail send --to crm --type question "Does POST /customers accept a loyalty_tier field, and which values?"`. The engine writes the message into the CRM's inbox, copies it into the item's `mail.json`, and prints "sent to crm (workspace clubefashion); no live session: opening a read-only session". A `claude -p` session opens at the CRM's root with no write tools, reads the code, answers with `crew mail reply`, and closes. The storefront's SessionStart or its next prompt says "Mail: 1 answered: M-… from crm", `crew mail read` shows the answer, and the item's record and report carry both.
+**A question from the storefront to the CRM.** Both projects declare `mail.workspace: shop`. The storefront's session, on its item, runs `crew mail send --to crm --type question "Does POST /customers accept a loyalty_tier field, and which values?"`. The engine writes the message into the CRM's inbox, copies it into the item's `mail.json`, and prints "sent to crm (workspace shop); no live session: opening a read-only session". A `claude -p` session opens at the CRM's root with no write tools, reads the code, answers with `crew mail reply`, and closes. The storefront's SessionStart or its next prompt says "Mail: 1 answered: M-… from crm", `crew mail read` shows the answer, and the item's record and report carry both.
 
-**A change request across workspaces.** From the storefront, `crew mail send --to wizardingcode-developer-crew --type change-request "…"` is refused: "wizardingcode-developer-crew is not in workspace clubefashion (it is in wizardingcode); mail never leaves the workspace". The refusal is recorded in the sender's outbox with status `refused` and the reason.
+**A change request across workspaces.** From the storefront, `crew mail send --to wizardingcode-developer-crew --type change-request "…"` is refused: "wizardingcode-developer-crew is not in workspace shop (it is in wizardingcode); mail never leaves the workspace". The refusal is recorded in the sender's outbox with status `refused` and the reason.
 
 **A change request to a live session.** The CRM has a session open with its user present. The storefront's change request lands in the CRM's inbox; the storefront's engine says "crm has a live session: ring it (SendMessage to the-burrow-hub-5c)". The CRM's agent receives the doorbell, runs `crew mail inbox`, and presents the request to its user; their yes starts an item with the request as its input and the message as its origin (`work.json` `origin: { mail: "M-…" }`). The reply goes back when that item is delivered.
 
@@ -75,7 +75,7 @@ Non-goals (unchanged from vision §17):
 {
   "id": "2026-10-15-007-storefront",
   "at": "2026-10-15T14:02:11Z",
-  "from": { "workspace": "clubefashion", "project": "storefront", "item": "2026-10-15-003-…", "agent": "session" },
+  "from": { "workspace": "shop", "project": "storefront", "item": "2026-10-15-003-…", "agent": "session" },
   "to": { "project": "crm", "agent": null, "item": null },
   "type": "question",
   "subject": "loyalty_tier on POST /customers",
@@ -104,7 +104,7 @@ Non-goals (unchanged from vision §17):
 
 ```json
 "mail": {
-  "workspace": "clubefashion",
+  "workspace": "shop",
   "name": "crm",
   "accept": ["question", "notice"],
   "open": "read-only",
@@ -135,7 +135,7 @@ Defaults when the block is absent: no workspace (alone), `name` the folder's, `a
 
 The receiver's side: `crew mail inbox` lists unread and answered mail of this project (ids, type, from, subject, status), `crew mail read <id>` prints one and marks it read, `crew mail reply <id> "<text>"`, `crew mail refuse <id> --reason "<why>"`. A live session's agent presents each message to its user in one line and acts on the type: a question is answered from the code and replied; a change request waits for the user's yes, which starts an item with the message as origin; a notice is said; a blocker is said first. A session opened by mail acts the same way with the validator in the person's place, except that nothing of the full route goes past the spec.
 
-The user's view: SessionStart prints "Mail (clubefashion): 1 unread question from storefront, 1 answered"; the mod's strip shows the unread count and the panel the inbox; `/crew mail` prints `crew mail inbox`; the report of an item that sent or received mail has the "Mail" section.
+The user's view: SessionStart prints "Mail (shop): 1 unread question from storefront, 1 answered"; the mod's strip shows the unread count and the panel the inbox; `/crew mail` prints `crew mail inbox`; the report of an item that sent or received mail has the "Mail" section.
 
 ## 9. Waiting
 

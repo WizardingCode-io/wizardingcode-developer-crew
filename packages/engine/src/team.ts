@@ -1,3 +1,4 @@
+import { riskAreasForPaths } from "./classify.ts";
 import { isInterfacePath } from "./paths-kind.ts";
 import type {
   JudgementGateName,
@@ -163,6 +164,43 @@ function seated(
   return null;
 }
 
+/** The reason the registry gives a page reviewer: the first three interface files, then how many more. */
+function interfaceReason(interfaces: readonly string[]): string {
+  const shown = interfaces.slice(0, 3).join(", ");
+  const more = interfaces.length > 3 ? `, +${interfaces.length - 3} more` : "";
+  return `interface files: ${shown}${more}`;
+}
+
+/**
+ * The seats a todo's files ask for (SP7 §8.1, SP7b decision 14): the page reviewer for its
+ * interface files, the security reviewer for its risk paths, and the judge with them; nothing of
+ * the route or the policy, which are the item's and run once on the whole change.
+ */
+function taskSeats(scope: readonly string[], policy: Policy): Seat[] {
+  const seats: Seat[] = [];
+  const interfaces = scope.filter(isInterfacePath);
+  if (interfaces.length)
+    seats.push({
+      role: "review-ui-ux",
+      team: "qa",
+      kind: "gate",
+      gate: "ui-ux",
+      reason: interfaceReason(interfaces),
+    });
+  const areas = riskAreasForPaths(scope, policy);
+  if (areas.length)
+    seats.push({
+      role: "review-security",
+      team: "security",
+      kind: "gate",
+      gate: "security",
+      reason: `risk area${areas.length === 1 ? "" : "s"} ${areas.join(", ")}`,
+    });
+  if (seats.length)
+    seats.push({ role: "judge", team: null, kind: "debate", reason: "a gate is planned" });
+  return seats;
+}
+
 /**
  * Every seat of an item (SP7 §6.2): the researcher from standard up; the reviewers of the seated
  * teams (code and test quality from standard up; security on full or on a risk area; UI/UX on any
@@ -177,7 +215,10 @@ export function plannedSeats(
   riskAreas: readonly RiskArea[],
   changed: readonly string[],
   policy: Policy,
+  scope?: readonly string[],
 ): Seat[] {
+  // A todo's scope plans the todo's seats and nothing else (SP7b decision 14).
+  if (scope !== undefined) return taskSeats(scope, policy);
   const seats: Seat[] = [];
   const plan = (seat: Seat): void => {
     if (!seats.some((s) => s.role === seat.role)) seats.push(seat);
@@ -198,11 +239,7 @@ export function plannedSeats(
       `risk area${riskAreas.length === 1 ? "" : "s"} ${riskAreas.join(", ")}`,
     );
   const interfaces = changed.filter(isInterfacePath);
-  if (interfaces.length) {
-    const shown = interfaces.slice(0, 3).join(", ");
-    const more = interfaces.length > 3 ? `, +${interfaces.length - 3} more` : "";
-    gate("ui-ux", "qa", `interface files: ${shown}${more}`);
-  }
+  if (interfaces.length) gate("ui-ux", "qa", interfaceReason(interfaces));
   if (route === "full") {
     gate("risk", "architects", "full route");
     gate("architecture", "architects", "full route");

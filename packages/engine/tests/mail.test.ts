@@ -58,8 +58,8 @@ function workspace(env = testEnv(), acceptB: string[] = ["question", "notice"]) 
   };
   return {
     env,
-    a: make("storefront", "clubefashion"),
-    b: make("crm", "clubefashion", { accept: acceptB }),
+    a: make("storefront", "shop"),
+    b: make("crm", "shop", { accept: acceptB }),
     c: make("wizardingcode-developer-crew", "wizardingcode"),
   };
 }
@@ -79,12 +79,9 @@ test("SP2c AC-1: mail never leaves the workspace; a refusal is recorded in the s
   );
   expect(out).toMatchObject({
     refused:
-      "wizardingcode-developer-crew is not in workspace clubefashion (it is in wizardingcode); mail never leaves the workspace",
+      "wizardingcode-developer-crew is not in workspace shop (it is in wizardingcode); mail never leaves the workspace",
   });
-  const outbox = readBox(
-    mailbox(w.a.paths.userDir, "clubefashion", "storefront").dir,
-    "outbox",
-  ).box;
+  const outbox = readBox(mailbox(w.a.paths.userDir, "shop", "storefront").dir, "outbox").box;
   expect(outbox.messages).toHaveLength(1);
   expect(outbox.messages[0]).toMatchObject({
     status: "refused",
@@ -104,7 +101,7 @@ test("SP2c AC-1: mail never leaves the workspace; a refusal is recorded in the s
   ).toBe(false);
   // A name the workspace does not know, and a project with no workspace.
   expect(send(w.a.ctx, { to: "warehouse", type: "question", text: "hi" }, null)).toMatchObject({
-    refused: "no project named warehouse in workspace clubefashion (known: crm, storefront)",
+    refused: "no project named warehouse in workspace shop (known: crm, storefront)",
   });
   const alone = repoPaths(makeRepo(), w.env);
   const aloneCtx = mailContext(alone, loadPolicy(alone).policy, w.env);
@@ -125,8 +122,8 @@ test("SP2c AC-2: an accepted message reaches the inbox, the outbox and the item'
   if ("refused" in out) throw new Error(out.refused);
   expect(out.message.id).toMatch(/^M-\d{4}-\d{2}-\d{2}-001-storefront$/);
   expect(out.message).toMatchObject({
-    from: { workspace: "clubefashion", project: "storefront", item: work.id, agent: "session" },
-    to: { workspace: "clubefashion", project: "crm", agent: null, item: null },
+    from: { workspace: "shop", project: "storefront", item: work.id, agent: "session" },
+    to: { workspace: "shop", project: "crm", agent: null, item: null },
     type: "question",
     subject: "Does POST /customers accept loyalty_tier?",
     hops: 0,
@@ -139,7 +136,7 @@ test("SP2c AC-2: an accepted message reaches the inbox, the outbox and the item'
     kind: "live",
     entry: { name: "crm", sessionId: "session-crm" },
   });
-  const inbox = readBox(mailbox(w.b.paths.userDir, "clubefashion", "crm").dir, "inbox").box;
+  const inbox = readBox(mailbox(w.b.paths.userDir, "shop", "crm").dir, "inbox").box;
   expect(inbox.messages.map((m) => m.id)).toEqual([out.message.id]);
   const itemCopy = readProtectedJson<Mailbox>(
     w.a.paths,
@@ -201,7 +198,7 @@ test("SP2c AC-3: the receiving policy, the hops, the concurrency and a tampered 
   const registry = loadRegistry(w.a.paths.userDir);
   for (const p of registry.projects) if (p.name === "crm") p.lastHook = "2020-01-01T00:00:00.000Z";
   writeFileSync(join(w.a.paths.userDir, "projects.json"), JSON.stringify(registry));
-  const crmBox = mailbox(w.b.paths.userDir, "clubefashion", "crm");
+  const crmBox = mailbox(w.b.paths.userDir, "shop", "crm");
   const inbox = readBox(crmBox.dir, "inbox").box;
   const opened = {
     mode: "read-only" as const,
@@ -219,8 +216,8 @@ test("SP2c AC-3: the receiving policy, the hops, the concurrency and a tampered 
       ...question(),
       id: `M-2026-10-15-00${n}-storefront`,
       at: "2026-10-15T10:00:00.000Z",
-      from: { workspace: "clubefashion", project: "storefront", item: null, agent: "session" },
-      to: { workspace: "clubefashion", project: "crm", item: null, agent: null },
+      from: { workspace: "shop", project: "storefront", item: null, agent: "session" },
+      to: { workspace: "shop", project: "crm", item: null, agent: null },
       subject: "x",
       body: "x",
       replyTo: null,
@@ -237,7 +234,7 @@ test("SP2c AC-3: the receiving policy, the hops, the concurrency and a tampered 
     join(w.b.paths.crewDir, "policy.json"),
     JSON.stringify({
       mail: {
-        workspace: "clubefashion",
+        workspace: "shop",
         name: "crm",
         accept: ["question", "notice", "change-request"],
       },
@@ -246,7 +243,7 @@ test("SP2c AC-3: the receiving policy, the hops, the concurrency and a tampered 
   setPolicyValue(w.b.paths, "mail.maxConcurrent", "3"); // records the hand edit's hash as the engine's, so the next edit is the tampering
   writeFileSync(
     join(w.b.paths.crewDir, "policy.json"),
-    JSON.stringify({ mail: { workspace: "clubefashion", name: "crm", accept: ["question"] } }),
+    JSON.stringify({ mail: { workspace: "shop", name: "crm", accept: ["question"] } }),
   );
   expect(send(w.a.ctx, question("Fourth"), null)).toMatchObject({
     refused: "crm's policy changed outside the engine; its user accepts it with crew policy accept",
@@ -264,7 +261,7 @@ test("SP2c AC-4: inbox, read, reply, refuse; a long body lives beside the inbox;
   if ("refused" in sent) throw new Error(sent.refused);
   expect(sent.message.body).toBe(`${long.slice(0, 200)}...`);
   expect(sent.message.bodyFile).toBe(
-    join(mailbox(w.b.paths.userDir, "clubefashion", "crm").dir, `${sent.message.id}.md`),
+    join(mailbox(w.b.paths.userDir, "shop", "crm").dir, `${sent.message.id}.md`),
   );
   expect(readFileSync(sent.message.bodyFile ?? "", "utf8")).toBe(long);
   const inbox = ownInbox(w.b.ctx);
@@ -291,10 +288,7 @@ test("SP2c AC-4: inbox, read, reply, refuse; a long body lives beside the inbox;
   });
   // The sender's outbox learns the status at the next sync.
   syncMail(w.a.ctx, w.a.paths);
-  const outbox = readBox(
-    mailbox(w.a.paths.userDir, "clubefashion", "storefront").dir,
-    "outbox",
-  ).box;
+  const outbox = readBox(mailbox(w.a.paths.userDir, "shop", "storefront").dir, "outbox").box;
   expect(outbox.messages.find((m) => m.id === sent.message.id)?.status).toBe("done");
   // Refuse, and a reply to a refused message.
   const second = send(w.a.ctx, question("Second"), null);
@@ -312,7 +306,7 @@ test("SP2c AC-4: inbox, read, reply, refuse; a long body lives beside the inbox;
     join(w.b.paths.crewDir, "policy.json"),
     JSON.stringify({
       mail: {
-        workspace: "clubefashion",
+        workspace: "shop",
         name: "crm",
         open: "branch",
         accept: ["question", "notice", "change-request"],
@@ -458,7 +452,7 @@ test("SP2c AC-5: a message to the judge comes from the lead only, the critics re
 
 test("SP2c AC-6: the mailbox lock; a stale lock is taken; two writers lose nothing", () => {
   const w = workspace();
-  const box = mailbox(w.b.paths.userDir, "clubefashion", "crm");
+  const box = mailbox(w.b.paths.userDir, "shop", "crm");
   mkdirSync(box.dir, { recursive: true });
   const lock = join(box.dir, ".lock");
   mkdirSync(lock);
@@ -512,8 +506,8 @@ test("SP2c AC-7: the registry knows root, name, workspace, liveness and worktree
   const w = workspace();
   const entries = loadRegistry(w.a.paths.userDir).projects;
   expect(entries.map((p) => [p.name, p.workspace, p.sessionId])).toEqual([
-    ["storefront", "clubefashion", "session-storefront"],
-    ["crm", "clubefashion", "session-crm"],
+    ["storefront", "shop", "session-storefront"],
+    ["crm", "shop", "session-crm"],
     ["wizardingcode-developer-crew", "wizardingcode", "session-wizardingcode-developer-crew"],
   ]);
   const crm = entries[1] as (typeof entries)[number];
@@ -559,14 +553,14 @@ test("SP2c AC-7: the registry knows root, name, workspace, liveness and worktree
   registry.projects.push({
     root: "/nowhere/warehouse",
     name: "warehouse",
-    workspace: "clubefashion",
+    workspace: "shop",
     lastSeen: "2026-10-15T00:00:00.000Z",
     sessionId: "s",
   });
   writeFileSync(join(w.a.paths.userDir, "projects.json"), JSON.stringify(registry));
   expect(resolveProject(w.a.ctx, "warehouse")).toEqual({
     refused:
-      "no project named warehouse in workspace clubefashion; the registry knew one at /nowhere/warehouse, which is gone",
+      "no project named warehouse in workspace shop; the registry knew one at /nowhere/warehouse, which is gone",
   });
   expect(pruneRegistry(w.a.paths.userDir)).toEqual(["/nowhere/warehouse"]);
   expect(loadRegistry(w.a.paths.userDir).projects.some((p) => p.name === "warehouse")).toBe(false);
@@ -611,8 +605,8 @@ withMailLock(process.argv[2]!, () => "never", { waitMs: 300 });
 
 test("SP2c AC-2: a mailbox changed outside the engine is never written; the send is refused and the files stay as the hand left them", () => {
   const w = workspace();
-  const crmDir = mailbox(w.b.paths.userDir, "clubefashion", "crm").dir;
-  const ownDir = mailbox(w.a.paths.userDir, "clubefashion", "storefront").dir;
+  const crmDir = mailbox(w.b.paths.userDir, "shop", "crm").dir;
+  const ownDir = mailbox(w.a.paths.userDir, "shop", "storefront").dir;
   const first = send(w.a.ctx, question("First"), null);
   if ("refused" in first) throw new Error(first.refused);
   // The destination's inbox, hand-edited: refused, recorded in the sender's outbox, the inbox untouched.
@@ -660,7 +654,7 @@ test("SP2c AC-4: an inbox a hand changed is refused by read, refuse and reply, a
   const w = workspace();
   const sent = send(w.a.ctx, question("Hand"), null);
   if ("refused" in sent) throw new Error(sent.refused);
-  const crmDir = mailbox(w.b.paths.userDir, "clubefashion", "crm").dir;
+  const crmDir = mailbox(w.b.paths.userDir, "shop", "crm").dir;
   const inbox = JSON.parse(readFileSync(join(crmDir, "inbox.json"), "utf8")) as Mailbox;
   (inbox.messages[0] as Message).subject = "FORGED";
   const forged = JSON.stringify(inbox);
@@ -674,7 +668,7 @@ test("SP2c AC-4: an inbox a hand changed is refused by read, refuse and reply, a
   expect(reply(w.b.ctx, sent.message.id, "yes", {}, [])).toEqual(refusal);
   expect(readFileSync(join(crmDir, "inbox.json"), "utf8")).toBe(forged);
   // Nothing was recorded anywhere: the sender's outbox still says sent.
-  const outbox = readBox(mailbox(w.a.paths.userDir, "clubefashion", "storefront").dir, "outbox");
+  const outbox = readBox(mailbox(w.a.paths.userDir, "shop", "storefront").dir, "outbox");
   expect(outbox.box.messages.find((m) => m.id === sent.message.id)?.status).toBe("sent");
 });
 
@@ -697,9 +691,9 @@ test("SP2c AC-7: two projects of one name in two workspaces are told apart by th
   writeFileSync(join(w.a.paths.userDir, "projects.json"), JSON.stringify(registry));
   const sent = send(w.a.ctx, question("Which crm?"), null);
   if ("refused" in sent) throw new Error(sent.refused);
-  expect(
-    readBox(mailbox(w.b.paths.userDir, "clubefashion", "crm").dir, "inbox").box.messages,
-  ).toHaveLength(1);
+  expect(readBox(mailbox(w.b.paths.userDir, "shop", "crm").dir, "inbox").box.messages).toHaveLength(
+    1,
+  );
   expect(existsSync(join(w.a.paths.userDir, "mail", "wizardingcode", "crm", "inbox.json"))).toBe(
     false,
   );
@@ -710,11 +704,11 @@ test("SP2c AC-7: two projects of one name in two workspaces are told apart by th
   writeFileSync(join(w.a.paths.userDir, "projects.json"), JSON.stringify(without));
   const answered = reply(w.b.ctx, sent.message.id, "This one.", {}, []);
   if ("refused" in answered) throw new Error(answered.refused);
-  const before = readBox(mailbox(w.a.paths.userDir, "clubefashion", "storefront").dir, "outbox");
+  const before = readBox(mailbox(w.a.paths.userDir, "shop", "storefront").dir, "outbox");
   expect(before.box.messages.find((m) => m.id === sent.message.id)?.status).toBe("sent");
   registerProject(w.a.ctx, "session-storefront");
   syncMail(w.a.ctx, w.a.paths);
-  const outbox = readBox(mailbox(w.a.paths.userDir, "clubefashion", "storefront").dir, "outbox");
+  const outbox = readBox(mailbox(w.a.paths.userDir, "shop", "storefront").dir, "outbox");
   expect(outbox.box.messages.find((m) => m.id === sent.message.id)?.status).toBe("done");
 });
 
@@ -730,12 +724,12 @@ test("SP2c AC-7: syncMail copies nothing from an inbox a hand changed, a receive
   if ("refused" in answered) throw new Error(answered.refused);
   registerProject(w.a.ctx, "session-storefront");
   // crm's inbox hand-edited after the answer: the sync copies nothing from it.
-  const crmDir = mailbox(w.b.paths.userDir, "clubefashion", "crm").dir;
+  const crmDir = mailbox(w.b.paths.userDir, "shop", "crm").dir;
   const crmInbox = JSON.parse(readFileSync(join(crmDir, "inbox.json"), "utf8")) as Mailbox;
   (crmInbox.messages[0] as Message).subject = "FORGED";
   writeFileSync(join(crmDir, "inbox.json"), JSON.stringify(crmInbox));
   expect(syncMail(w.a.ctx, w.a.paths).updated).toBe(0);
-  const ownDir = mailbox(w.a.paths.userDir, "clubefashion", "storefront").dir;
+  const ownDir = mailbox(w.a.paths.userDir, "shop", "storefront").dir;
   expect(readBox(ownDir, "outbox").box.messages.find((m) => m.id === sent.message.id)?.status).toBe(
     "sent",
   );
@@ -795,10 +789,9 @@ function sendOrThrow(
   return out.message;
 }
 
-const crmInbox = (w: ReturnType<typeof workspace>) =>
-  mailbox(w.b.paths.userDir, "clubefashion", "crm").dir;
+const crmInbox = (w: ReturnType<typeof workspace>) => mailbox(w.b.paths.userDir, "shop", "crm").dir;
 const storefrontOutbox = (w: ReturnType<typeof workspace>) =>
-  mailbox(w.a.paths.userDir, "clubefashion", "storefront").dir;
+  mailbox(w.a.paths.userDir, "shop", "storefront").dir;
 
 test("SP7b AC-1: a message carries the sender's proposed priority and the receiver's decision; a raise, a lowering without a reason, a question and a notice are refused", () => {
   const w = receiving();
@@ -1023,7 +1016,7 @@ test("SP7b AC-4: a status moves only along the table; a reply closes a request o
   ev.unproven = ["gate test failing"];
   saveEvidence(w.b.paths, child.id, ev);
   const outboxCount = () =>
-    readBox(mailbox(w.b.paths.userDir, "clubefashion", "crm").dir, "outbox").box.messages.length;
+    readBox(mailbox(w.b.paths.userDir, "shop", "crm").dir, "outbox").box.messages.length;
   const before = outboxCount();
   expect(reply(w.b.ctx, change.id, "x", { item: "../x" }, [])).toEqual({
     refused: "unknown work item: ../x",
@@ -1085,7 +1078,7 @@ function warehouse(w: ReturnType<typeof workspace>) {
     join(paths.crewDir, "policy.json"),
     JSON.stringify({
       mail: {
-        workspace: "clubefashion",
+        workspace: "shop",
         name: "warehouse",
         accept: ["question", "notice", "change-request", "blocker"],
       },
@@ -1098,7 +1091,7 @@ function warehouse(w: ReturnType<typeof workspace>) {
 }
 
 const crmOutbox = (w: ReturnType<typeof workspace>) =>
-  readBox(mailbox(w.b.paths.userDir, "clubefashion", "crm").dir, "outbox").box.messages;
+  readBox(mailbox(w.b.paths.userDir, "shop", "crm").dir, "outbox").box.messages;
 
 /** A gate run of a child's evidence, with the fields the record needs. */
 function gateRun(gate: string, status: "pass" | "fail"): GateRun {
@@ -1151,7 +1144,7 @@ test("SP7b-T2 AC-1: a thread is its root's id, inherited by every reply; --threa
     join(w.b.paths.crewDir, "policy.json"),
     JSON.stringify({
       mail: {
-        workspace: "clubefashion",
+        workspace: "shop",
         name: "crm",
         accept: ["question", "notice", "change-request", "blocker"],
         maxParties: 2,

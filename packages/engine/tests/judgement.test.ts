@@ -10,8 +10,11 @@ import {
   notRunRecord,
   parseRulings,
   plannedJudgementGates,
+  plannedTaskJudgement,
   readReviewInputs,
   recordJudgement,
+  reviewDir,
+  scopeHash,
   stampRuling,
   writeReviewInputs,
 } from "../src/judgement.ts";
@@ -380,4 +383,24 @@ test("SP7b-T4 AC-4: the review inputs list the captures under review/ui with the
   const bare = createWork(paths, "fix");
   writeReviewInputs(paths, bare, ["src/App.vue"], "f1");
   expect(readReviewInputs(paths, bare.id)?.captures).toEqual([]);
+});
+
+test("SP7b-T5 AC-1: the todo's judgement is planned from its scope, its scope hash is order-free, and the review inputs of a todo live under review/T-n", () => {
+  expect(plannedTaskJudgement(["src/App.vue", "src/auth/x.ts"], DEFAULT_POLICY)).toEqual([
+    { gate: "ui-ux", reason: "interface files: src/App.vue" },
+    { gate: "security", reason: "risk area auth" },
+  ]);
+  expect(scopeHash(["b", "a", "a"])).toBe(scopeHash(["a", "b"]));
+  expect(scopeHash(["a"])).not.toBe(scopeHash(["a", "b"]));
+  const root = makeRepo({ "src/App.vue": "<template/>" });
+  const paths = repoPaths(root, testEnv());
+  const work = createWork(paths, "fix");
+  expect(reviewDir(paths, "w1", "T-3").endsWith(join("review", "T-3"))).toBe(true);
+  write(root, "src/App.vue", "<template>hi</template>");
+  writeReviewInputs(paths, work, ["src/App.vue"], "f1", "T-3");
+  expect(
+    readFileSync(join(paths.crewDir, "work", work.id, "review", "T-3", "files.txt"), "utf8"),
+  ).toBe("src/App.vue\n");
+  expect(readReviewInputs(paths, work.id, "T-3")).toMatchObject({ fingerprint: "f1" });
+  expect(readReviewInputs(paths, work.id)).toBeNull();
 });

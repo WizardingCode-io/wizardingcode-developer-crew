@@ -428,7 +428,7 @@ Verdicts agree at every effort. Upheld findings: `high` reproduced Task 6's and 
 - What happened: `packages/engine/tests/paths.test.ts` and `packages/engine/tests/policy-config-state.test.ts` use a client's workspace name as a fixture value for `mail.workspace`, against the rule that no client project name enters the repository (fixtures use `a`, `b`, `storefront`, `crm`, `lead`).
 - Expected: the value replaced by a neutral name (`w`) in the next hardening item; the rule added to the test-quality rubric's "what the reviewer checks" so a reviewer flags it.
 - Evidence: the `mail.workspace` fixture values in the two test files (`mailboxDir`, `isProtectedPath` and `setPolicyValue` cases); the name is not repeated here.
-- Outcome: open.
+- Outcome: closed in SP7b Task 5 (`2026-10-18-005`): the name replaced by `shop` in every test, in the mail reference and in the two SP2c documents; the test-quality rubric asks about fixture names (question 8).
 
 ### 51. Debt of SP7a Task 2 (`2026-10-17-009`): the judge's advisories
 
@@ -468,7 +468,7 @@ Verdicts agree at every effort. Upheld findings: `high` reproduced Task 6's and 
 - What happened: one run of `bun run check` during Task 5 failed on "SP2c AC-3: every writer of the session's state takes the local folder's lock, waits half a second for one held, and then goes on rather than fail open" (`hooks-post-tool-use.test.ts`) with `ENOENT: no such file or directory, utimensat '…/.crew/local/.lock'` after 10.8 s; the next run passed, as did the gate runs before and after. The test holds a lock file and touches it while the writers wait; a writer that took and released the lock between the test's check and its `utimensat` removes the file under it.
 - Expected: the test touches the lock through a path that tolerates its removal (or holds it for the whole wait), in a hardening item.
 - Evidence: the item's log `tdd-AC-4-after-*.txt` of the first after run.
-- Outcome: open.
+- Outcome: closed in SP7b Task 5 (`2026-10-18-005`): the test dates each lock it holds a minute ahead, so no writer finds it stale however slow the run; `lock.test.ts` proves the mechanism.
 
 ### 56. Debt of SP7a Task 6 (`2026-10-17-014`): the judge's advisories
 
@@ -486,7 +486,7 @@ Verdicts agree at every effort. Upheld findings: `high` reproduced Task 6's and 
 - What happened: the caps `team.maxJudgementRounds` and `team.maxValidationRounds` (2 each) refused rounds the work needed and that only the user could continue (`crew continue <id> judgement|validation`): twice in Task 6 (the leads' delivery returns opened a third judgement round; its reviewers found the `$`-sequence defect that opened a fourth) and once in Task 7 (the QA lead's second return on the spec, a one-sentence proof, made a third validation round). Each time the session stopped and asked; the user answered yes each time and then wrote: "não quero andar sempre a ter que fazer isto … eu vou dormir continua até ao fim", a yes given in advance for every further continuation of the run. The caps did their job once (they made the returns visible and recorded) and then became the stop the user does not want (ADR 0005: zero stops, `attendedDecisions: relay`).
 - Expected: the policy carries a standing grant the user signs once (for example `team.continuations: ask | granted` or a per-kind cap the user raises with `crew policy set team.maxValidationRounds 4`), so a round the work needs runs and is recorded as the user's by that grant, while a run that keeps returning still ends in a wait after the raised cap; the hardening item or SP7b decides the shape. Until then the session runs `crew continue` under the user's written yes of 2026-10-17 and says so in the record.
 - Evidence: the decision register entries of kind `continue` for the two items; this conversation's messages of 2026-10-17 night.
-- Outcome: open.
+- Outcome: closed in SP7b Task 5 (`2026-10-18-005`): `team.continuations: granted` (plan decision 15), the user's standing grant of two rounds past each cap, recorded in the item and the register; `crew continue` stays for the rest.
 
 ### 58. Debt of SP7a Task 7 (`2026-10-17-015`): the judge's advisories
 
@@ -503,7 +503,7 @@ Verdicts agree at every effort. Upheld findings: `high` reproduced Task 6's and 
 - What happened: the security lead's validation of the Task 8 spec read `packages/engine/src/paths.ts`: the engine protects `work.json`, `evidence.json` (where the rulings live), `objections.json`, `mail.json`, `report.md`, `logs/` and the project's `decisions.json`, and the PreToolUse hook denies a direct write to them; the reviewers' findings files (`review/<gate>.findings.md`) are not in that list, so a session could edit a reviewer's answer before the judge reads it and nothing would refuse. The skill's rule 2 forbids it in words; the engine does not enforce it. Under the installed 0.4.0 plugin the session writes those files itself (the hook does not file them, #49), which is why the gap is live today.
 - Expected: the SubagentStop hook files the answers (0.5.0 and later) and the engine protects `review/*.findings.md` once written (a hand edit refused like the ledger's, or the judge's ruling recording the files' hashes); the rules reference says today's state exactly (rule 14).
 - Evidence: `conclave/lead-security.round1.md` of the item, R-4; `packages/engine/src/paths.ts`.
-- Outcome: open.
+- Outcome: closed in SP7b Task 5 (`2026-10-18-005`): the review folder is the engine's except `ui/` and `e2e/` (plan decision 16), for the Write tool and for a Bash write; rule 14 says so.
 
 ### 60. The fast-route overhead is 2.11× against the 2.03× acceptance
 
@@ -568,7 +568,7 @@ Verdicts agree at every effort. Upheld findings: `high` reproduced Task 6's and 
 - What happened: `cat > docs/plans/2026-10-18-sp7b-environment-priorities-visibility.md <<'EOF' … EOF`, a 300-line plan whose body names the engine's local state file (`.crew/local/env.json`) in prose, was denied by the Bash hook with "files under .crew/ and ~/.wizardingcode/crew that the engine owns are written only by the crew command". The command writes to `docs/plans/`, which is not protected. `simpleCommands()` in `packages/engine/src/hooks/shell.ts` hands every here-document body line to the text rules as if it were a command line, by design ("each here-document body's lines after the command that reads it"), so a line of data that mentions a protected path trips a rule meant for `sh <<EOF`. The plan was written with the Write tool instead.
 - Expected: a here-document is data unless the command that reads it is an interpreter (`sh`, `bash`, `zsh`, `node`, `python`, `eval`, `source`, or a pipe into one); a body fed to `cat`, `tee` or a redirection is not read as commands. A test for both shapes in `shell.test.ts` and `hooks-pre-tool-use.test.ts`.
 - Evidence: this session's denied call on 2026-10-18; `packages/engine/src/hooks/shell.ts` (`simpleCommands`).
-- Outcome: open; taken in SP7b Task 5 (plan decision 21).
+- Outcome: closed in SP7b Task 5 (`2026-10-18-005`): a here-document is data only when a listed reader takes it through a clean pipe chain (plan decision 21), everything else keeps its body read as command lines.
 
 ### 68. Debt of SP7b Task 1 (`2026-10-18-001`): the judge's advisories
 
@@ -594,7 +594,7 @@ Verdicts agree at every effort. Upheld findings: `high` reproduced Task 6's and 
 - What happened: after the first ruling was recorded (`crew judgement record`, round 1, both gates not proven), the fixes were made and `crew gate run` cut the diff again. The run's reset of the review folder deleted `code-quality.findings.md`, `test-quality.findings.md` and `ruling.json` of round 1; the `<gate>.round1.md` and `ruling.round1.json` copies that Task 8 of SP7a's folder holds are made only when a later record renames the files, which had not happened yet. The round-2 reviewers were pointed at "review/code-quality.round1.md (if present)" and found nothing; the round-1 findings survive only inside the ruling's `text` fields in `evidence.json` (the judge quotes each finding) and in this session's transcript.
 - Expected: `crew judgement record` keeps the round's files as `<gate>.round<n>.md` and `ruling.round<n>.json` at the time of the record, so a gate run between rounds cannot drop them; or the gate run's reset spares the round copies and renames the current files before deleting.
 - Evidence: the item's `review/` listing after the second gate run (diff.patch, files.txt, inputs.json only); `.crew/work/2026-10-17-016-…/review/` with its round copies for comparison.
-- Outcome: open; a hardening item of SP7b (Task 5) or SP3.
+- Outcome: closed in SP7b Task 5 (`2026-10-18-005`): `crew judgement record` keeps `<gate>.round<n>.md` and `ruling.round<n>.json` at the record, for the item and for a todo.
 
 ### 71. A start command that returns at once leaves `crew env stop` with nothing to stop
 
@@ -621,3 +621,11 @@ Verdicts agree at every effort. Upheld findings: `high` reproduced Task 6's and 
 - Expected: taken in the first hardening item of SP7b (Task 5) or SP3, red first.
 - Evidence: the item's `evidence.json` (`judgement`, both rounds), `review/ruling.round1.json`, `review/ruling.json`.
 - Outcome: open.
+
+### 74. The engine's tests leave every fixture in the temp folder, and the disk filled up mid gate run
+
+- Date: 2026-10-18. Project: this repository. Item: `2026-10-18-005`. Category: `blocks`. Severity: high.
+- What happened: the gate run of SP7b Task 5 died on `ENOSPC` while opening its lint log; `df` showed 205 MiB free on a 926 GiB disk and the temp folder (`os.tmpdir()`, `/var/folders/…/T`) held 325,118 folders named `crew-*`, each a git repository a test made with `tempDir()` and never removed. Every `bun test` of the engine (the gate's two test runs, each `tdd` record, each reviewer's suite) adds hundreds; six days of the crew's own development filled the disk. The folders were deleted by hand to go on (a `find … -name 'crew-*' | xargs rm -rf` over the temp folder).
+- Expected: `tempDir()` in `packages/engine/tests/helpers.ts` registers each folder it makes and the suite removes them when it ends (an `afterAll` in a preload, or a process exit hook), with an escape hatch (`WIZARDINGCODE_CREW_KEEP_FIXTURES=1`) for a failing test's post-mortem; the `test` script sets `--preload` to it. Until then, `rm -rf "$(node -e 'console.log(require("os").tmpdir())')"/crew-*` after a long session.
+- Evidence: the gate run's error of 2026-10-18 evening (`ENOSPC … logs/lint-_-1792342770394.txt`); `df -h /` and the count of `crew-*` folders in this session's transcript.
+- Outcome: open; a hardening item of SP7b (Task 6 or 7) or SP3, red first.

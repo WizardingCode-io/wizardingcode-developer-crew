@@ -6,14 +6,19 @@ import { workingRoles } from "../src/state.ts";
 import { createWork, saveWork } from "../src/work.ts";
 import { git, hookContext, makeRepo, tempDir, testEnv } from "./helpers.ts";
 
-test("SP2b: the review folder is the session's to write, and judgement and debate are not user-only", () => {
+test("SP2b: judgement and debate are not user-only; the review folder is the engine's since SP7b, its ui/ folder the session's", () => {
   const { root, ctx } = setup();
   const work = createWork(ctx.paths, "feature");
   work.route = "standard";
   work.phase = "gate";
   saveWork(ctx.paths, work);
   const review = join(root, ".crew", "work", work.id, "review", "ruling.json");
-  expect(onPreToolUse(ctx, { tool_name: "Write", tool_input: { file_path: review } })).toEqual({});
+  // The ruling is the engine's to write since SP7b (decision 16); the captures stay the session's.
+  expect(
+    decision(onPreToolUse(ctx, { tool_name: "Write", tool_input: { file_path: review } })),
+  ).toBe("deny");
+  const capture = join(root, ".crew", "work", work.id, "review", "ui", "home-empty.png");
+  expect(onPreToolUse(ctx, { tool_name: "Write", tool_input: { file_path: capture } })).toEqual({});
   const bash = (command: string) =>
     onPreToolUse(ctx, { tool_name: "Bash", tool_input: { command }, permission_mode: "default" });
   expect(
@@ -1379,4 +1384,87 @@ test("SP7a AC-7 (Task 7): an Agent call on one of the plugin's roles is recorded
     ),
   ) as { hooks: { PreToolUse?: { matcher: string }[] } };
   expect(hooks.hooks.PreToolUse?.[0]?.matcher).toBe("Write|Edit|MultiEdit|NotebookEdit|Bash|Agent");
+});
+
+test("SP7b-T5 AC-3 (review): the engine's review files are denied to the Write tool and to a Bash write, the captures and the e2e folders are not", () => {
+  const { root, ctx } = setup();
+  const write = (rel: string) =>
+    decision(
+      onPreToolUse(ctx, {
+        tool_name: "Write",
+        tool_input: { file_path: join(root, ".crew", "work", "w1", rel) },
+      }),
+    );
+  expect(write("review/code-quality.findings.md")).toBe("deny");
+  expect(write("review/T-3/ruling.json")).toBe("deny");
+  expect(write("review/ui/../ruling.json")).toBe("deny");
+  expect(write("review/ui/home-empty.png")).toBeUndefined();
+  expect(write("review/T-3/ui/console-home-empty.json")).toBeUndefined();
+  const bash = (command: string) =>
+    decision(onPreToolUse(ctx, { tool_name: "Bash", tool_input: { command } }));
+  for (const denied of [
+    "ruling.json",
+    "ui-ux.findings.md",
+    "T-3/ui-ux.round1.md",
+    "ui/../ruling.json",
+    "ui/a/../../ruling.json",
+    "ui/./../ruling.json",
+    "ui//../ruling.json",
+    "T-3/ui/x/../../ruling.json",
+    "e2e_x",
+    "ui/..",
+  ])
+    expect([denied, bash(`cp x .crew/work/w1/review/${denied}`)]).toEqual([denied, "deny"]);
+  for (const allowed of ["ui/a.png", "ui/./a.png", "e2e/console.json", "T-3/e2e/logs.txt"])
+    expect([allowed, bash(`cp x .crew/work/w1/review/${allowed}`)]).toEqual([allowed, undefined]);
+});
+
+test("SP7b-T5 AC-3 (here-documents): a here-document is data only when a listed reader takes it through a clean pipe chain; an interpreter, a wrapper, a group, a substitution, a process substitution or an unknown program keeps its body read as command lines", () => {
+  const { ctx } = setup();
+  const bash = (command: string) =>
+    decision(onPreToolUse(ctx, { tool_name: "Bash", tool_input: { command } }));
+  const body = "rm .crew/profile.json";
+  const allowed = [
+    `cat > docs/x.md <<'EOF'\n${body}\nEOF`,
+    `tee docs/x.md <<'EOF'\necho x > .crew/profile.json\nEOF`,
+    `git commit -F - <<'EOF'\nrm .crew/work/w1/evidence.json\nEOF`,
+    `cat <<'EOF' | sort > docs/x.md\n${body}\nEOF`,
+    `cat <<'EOF' > docs/x.md; rm docs/draft.md\n${body}\nEOF`,
+    `env -i cat <<'EOF' > docs/x.md\n${body}\nEOF`,
+    `git tag -a v1 -F - <<'EOF'\n${body}\nEOF`,
+    `gh pr create --body-file - <<'EOF'\n${body}\nEOF`,
+  ];
+  for (const command of allowed) expect([command, bash(command)]).toEqual([command, undefined]);
+  const denied = [
+    `python3 - <<'EOF'\nimport os; os.system("${body}")\nEOF`,
+    `python3.12 - <<'EOF'\nimport os; os.system("${body}")\nEOF`,
+    `/bin/sh <<'EOF'\n${body}\nEOF`,
+    `sudo -u root bash <<'EOF'\n${body}\nEOF`,
+    `env -i bash <<'EOF'\n${body}\nEOF`,
+    `timeout 5 sh <<'EOF'\n${body}\nEOF`,
+    `cat <<'EOF' | tee /tmp/x | sh\n${body}\nEOF`,
+    `cat <<'EOF' | { sh; }\n${body}\nEOF`,
+    `cat <<'EOF' | (sh)\n${body}\nEOF`,
+    `cat <<'EOF' | $SHELL\n${body}\nEOF`,
+    `cat <<'EOF' | while read l; do $l; done\n${body}\nEOF`,
+    `cat <<'EOF' | xargs -I{} sh -c {}\n${body}\nEOF`,
+    `{ sh; } <<'EOF'\n${body}\nEOF`,
+    `lua <<'EOF'\nos.execute("${body}")\nEOF`,
+    `eval "$(cat <<'EOF'\n${body}\nEOF\n)"`,
+    `source <(cat <<'EOF'\n${body}\nEOF\n)`,
+    `git -c alias.x='!sh' x <<'EOF'\n${body}\nEOF`,
+    `git <<'EOF'\n${body}\nEOF`,
+    `gh alias set x '!sh' <<'EOF'\n${body}\nEOF`,
+    `cat <<'EOF' > >(sh)\n${body}\nEOF`,
+    `tee >(sh) <<'EOF'\n${body}\nEOF`,
+    `git apply <<'EOF'\n--- a/.crew/profile.json\n+++ b/.crew/profile.json\n${body}\nEOF`,
+    `curl -K - <<'EOF'\noutput = ".crew/profile.json"\n${body}\nEOF`,
+    `gh api --input - repos/x <<'EOF'\n${body}\nEOF`,
+    `git -C x commit -F - <<'EOF'\n${body}\nEOF`,
+    `git --exec-path=/tmp/x commit -F - <<'EOF'\n${body}\nEOF`,
+    // A reader's own text is judged whatever its body is: a data reader writing an engine file.
+    `cat > .crew/profile.json <<'EOF'\nhello\nEOF`,
+    `tee .crew/work/w1/evidence.json <<'EOF'\nhello\nEOF`,
+  ];
+  for (const command of denied) expect([command, bash(command)]).toEqual([command, "deny"]);
 });

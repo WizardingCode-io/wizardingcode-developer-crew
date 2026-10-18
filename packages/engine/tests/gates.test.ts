@@ -1255,3 +1255,23 @@ test("SP7b-T4 AC-3: the console and the logs are graded as data and an offence f
   expect(linked.tail).toContain("logs: link.log is outside the project; not read");
   expect(existsSync(join(e2eDir, "logs.txt"))).toBe(false);
 }, 60_000);
+
+test("SP7b-T5 AC-1: runTaskGate returns the judgement the todo's scope plans, and runs none of it", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/App.vue": "<template/>",
+    "src/a.ts": "x",
+  });
+  const paths = repoPaths(root, testEnv());
+  const { profile } = ensureProfile(paths);
+  const work = createWork(paths, "fix");
+  work.route = "standard";
+  addCriterion(work, "x");
+  write(root, "src/App.vue", "<template>hi</template>");
+  const ui = await runTaskGate(paths, work, profile, DEFAULT_POLICY, ["src/App.vue"]);
+  expect(ui.runs.map((r) => r.gate)).toEqual(["test"]);
+  expect(ui.judgement).toEqual([{ gate: "ui-ux", reason: "interface files: src/App.vue" }]);
+  expect((await runTaskGate(paths, work, profile, DEFAULT_POLICY, ["src/a.ts"])).judgement).toEqual(
+    [],
+  );
+});

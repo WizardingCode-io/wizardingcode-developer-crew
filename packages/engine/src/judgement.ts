@@ -1,7 +1,7 @@
-import { readdirSync, unlinkSync } from "node:fs";
+import { copyFileSync, existsSync, readdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { reviewPatch } from "./fingerprint.ts";
-import { nowIso, readJson, writeText } from "./fs.ts";
+import { nowIso, readJson, sha256, writeText } from "./fs.ts";
 import { type CrewPaths, workDir } from "./paths.ts";
 import { isInterfacePath } from "./paths-kind.ts";
 import { plannedSeats } from "./team.ts";
@@ -43,9 +43,51 @@ export function plannedJudgementGates(
     .map((s) => ({ gate: s.gate, reason: s.reason }));
 }
 
-/** Where the review of an item lives: the engine's inputs, and the roles' answers the session saves beside them. Not engine-owned. */
-export function reviewDir(paths: CrewPaths, id: string): string {
-  return join(workDir(paths, id), "review");
+/** Where the review of an item lives, or of one of its todos under `review/T-n` (SP7b decision 14): the engine's inputs, the roles' answers the hook files beside them and the round copies, all the engine's except `ui/` and `e2e/` (decision 16). */
+export function reviewDir(paths: CrewPaths, id: string, task?: string): string {
+  const dir = join(workDir(paths, id), "review");
+  return task ? join(dir, task) : dir;
+}
+
+/**
+ * The judgement gates a todo's files ask for (SP7b decision 14): the gate seats the registry plans
+ * for the scope alone, as `{ gate, reason }`.
+ */
+export function plannedTaskJudgement(scope: readonly string[], policy: Policy): PlannedJudgement[] {
+  return plannedSeats("fast", [], [], policy, scope).flatMap((s) =>
+    s.kind === "gate" && s.gate ? [{ gate: s.gate, reason: s.reason }] : [],
+  );
+}
+
+/** `n finding` or `n findings`, as every line that counts a ruling's findings says it. */
+export function findingsText(n: number): string {
+  return `${n} finding${n === 1 ? "" : "s"}`;
+}
+
+/** The hash of a scope as a set: sorted, deduplicated, one path per line. A todo's ruling carries it. */
+export function scopeHash(scope: readonly string[]): string {
+  return sha256([...new Set(scope)].sort().join("\n"));
+}
+
+/**
+ * The round's files, kept by the engine at the record (SP7b decision 16, finding 70): each gate's
+ * findings file as `<gate>.round<n>.md` when it exists, and the ruling file as `ruling.round<n>.json`,
+ * in the review folder the record belongs to; an earlier copy of the same round is overwritten.
+ */
+export function keepRound(
+  paths: CrewPaths,
+  id: string,
+  round: number,
+  gates: readonly JudgementGateName[],
+  rulingFile: string,
+  task?: string,
+): void {
+  const dir = reviewDir(paths, id, task);
+  for (const gate of gates) {
+    const findings = join(dir, `${gate}.findings.md`);
+    if (existsSync(findings)) copyFileSync(findings, join(dir, `${gate}.round${round}.md`));
+  }
+  if (existsSync(rulingFile)) copyFileSync(rulingFile, join(dir, `ruling.round${round}.json`));
 }
 
 /** One capture the session took under `review/ui/` (SP2 §10), with the console file saved beside it, or null without one (rule 5). */
@@ -63,22 +105,23 @@ export interface ReviewInputs {
 
 const CAPTURE = /\.(?:png|jpe?g)$/i;
 
-/** The captures under `review/ui/`, sorted by name, each with its `console-<name>.json` when the session saved one. */
-export function listCaptures(paths: CrewPaths, id: string): Capture[] {
+/** The captures under `review/ui/` (or `review/T-n/ui/` for a todo), sorted by name, each with its `console-<name>.json` when the session saved one. */
+export function listCaptures(paths: CrewPaths, id: string, task?: string): Capture[] {
   let names: string[];
   try {
-    names = readdirSync(join(reviewDir(paths, id), "ui"));
+    names = readdirSync(join(reviewDir(paths, id, task), "ui"));
   } catch {
     return [];
   }
+  const prefix = task ? `review/${task}/ui/` : "review/ui/";
   return names
     .filter((name) => CAPTURE.test(name))
     .sort()
     .map((name) => {
       const consoleFile = `console-${name.replace(CAPTURE, "")}.json`;
       return {
-        file: `review/ui/${name}`,
-        console: names.includes(consoleFile) ? `review/ui/${consoleFile}` : null,
+        file: `${prefix}${name}`,
+        console: names.includes(consoleFile) ? `${prefix}${consoleFile}` : null,
       };
     });
 }
@@ -89,8 +132,8 @@ function isCapture(raw: unknown): raw is Capture {
   return typeof file === "string" && (typeof consoleFile === "string" || consoleFile === null);
 }
 
-export function readReviewInputs(paths: CrewPaths, id: string): ReviewInputs | null {
-  const raw = readJson<Partial<ReviewInputs>>(join(reviewDir(paths, id), "inputs.json"));
+export function readReviewInputs(paths: CrewPaths, id: string, task?: string): ReviewInputs | null {
+  const raw = readJson<Partial<ReviewInputs>>(join(reviewDir(paths, id, task), "inputs.json"));
   if (!raw || typeof raw.fingerprint !== "string" || typeof raw.at !== "string") return null;
   const captures = Array.isArray(raw.captures) ? raw.captures.filter(isCapture) : [];
   return { fingerprint: raw.fingerprint, at: raw.at, captures };
@@ -111,9 +154,10 @@ export function writeReviewInputs(
   work: WorkItem,
   changed: readonly string[],
   fingerprint: string,
+  task?: string,
 ): { dir: string; note: string | null } {
-  const dir = reviewDir(paths, work.id);
-  const previous = readReviewInputs(paths, work.id);
+  const dir = reviewDir(paths, work.id, task);
+  const previous = readReviewInputs(paths, work.id, task);
   if (previous && previous.fingerprint !== fingerprint) {
     let names: string[] = [];
     try {
@@ -130,7 +174,7 @@ export function writeReviewInputs(
   writeText(join(dir, "files.txt"), changed.length ? `${changed.join("\n")}\n` : "");
   writeText(
     join(dir, "inputs.json"),
-    `${JSON.stringify({ fingerprint, at: nowIso(), captures: listCaptures(paths, work.id) }, null, 2)}\n`,
+    `${JSON.stringify({ fingerprint, at: nowIso(), captures: listCaptures(paths, work.id, task) }, null, 2)}\n`,
   );
   return { dir, note: cut.note };
 }
@@ -216,6 +260,7 @@ export function plannedNote(planned: readonly JudgementGateName[]): string {
 export function parseRulings(
   raw: unknown,
   planned: readonly JudgementGateName[],
+  subject = "this item",
 ): { rulings: Ruling[] } | { refused: string } {
   if (!isRecord(raw) || !Array.isArray(raw.rulings))
     return { refused: 'the ruling file is a JSON object with a "rulings" list' };
@@ -230,7 +275,7 @@ export function parseRulings(
         refused: `${where}: unknown judgement gate: ${String(gate)} (${JUDGEMENT_GATES.join(", ")})`,
       };
     if (!planned.includes(gate))
-      return { refused: `${where}: ${gate} is not planned for this item${plannedNote(planned)}` };
+      return { refused: `${where}: ${gate} is not planned for ${subject}${plannedNote(planned)}` };
     const verdict = entry.verdict;
     if (verdict !== "proven" && verdict !== "not-proven")
       return {

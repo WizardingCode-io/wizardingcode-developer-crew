@@ -35,13 +35,18 @@ import type { HookPayload } from "./hooks/types.ts";
 import {
   contradiction,
   fillTokens,
+  findingsText,
   judgementRows,
+  keepRound,
   notRunRecord,
   parseRulings,
   plannedNote,
+  plannedTaskJudgement,
   readReviewInputs,
   recordJudgement,
+  scopeHash,
   stampRuling,
+  writeReviewInputs,
 } from "./judgement.ts";
 import {
   acceptMail,
@@ -134,10 +139,12 @@ import type {
   Message,
   OpenedSession,
   Phase,
+  PlannedJudgement,
   Policy,
   Profile,
   ProjectEntry,
   Stack,
+  TaskRecord,
   UserConfig,
   WorkItem,
 } from "./types.ts";
@@ -169,6 +176,7 @@ import {
   createWork,
   debateState,
   type GuardContext,
+  isSkipped,
   loadWork,
   nextPhaseOf,
   openDebate,
@@ -210,7 +218,7 @@ const KNOWN_FLAGS: Record<string, readonly string[]> = {
   resume: [],
   tdd: ["reason"],
   gate: ["only"],
-  judgement: ["ruling", "not-run", "reason"],
+  judgement: ["ruling", "not-run", "reason", "task"],
   skip: ["reason", "mode"],
   evidence: [],
   status: [],
@@ -462,6 +470,258 @@ function decisionText(policy: Policy, decision: Decision): string {
 /** Who took a decision, as the register names them: `decidedBy` without its leading "by ". */
 function whoDecided(decision: Parameters<typeof decidedBy>[0]): string {
   return decidedBy(decision).replace(/^by /, "");
+}
+
+/**
+ * A round past a cap (SP7 §6.1): allowed within the cap plus the rounds the user continued; under
+ * `team.continuations: granted` the engine records the user's standing grant for up to two more
+ * rounds, saved before the round runs (SP7b decision 15); past that, refused with the text given,
+ * which names `crew continue`. `round` is the rounds already spent.
+ */
+function continueOrRefuse(
+  env: Env,
+  work: WorkItem,
+  what: "judgement" | "validation" | "gate",
+  task: string | undefined,
+  cap: number,
+  round: number,
+  refusal: string,
+): Outcome | null {
+  const mine = (work.continued ?? []).filter((c) => c.what === what && c.task === task);
+  const grants = mine.filter((c) => decisionCounts(env.policy, c.by)).length;
+  if (round < cap + grants) return null;
+  if (env.policy.team.continuations !== "granted" || mine.filter((c) => c.standing).length >= 2)
+    return refuse(refusal);
+  work.continued = [
+    ...(work.continued ?? []),
+    { what, ...(task ? { task } : {}), by: { by: "user" }, at: nowIso(), standing: true },
+  ];
+  saveWork(env.paths, work);
+  appendDecision(env.paths, {
+    at: nowIso(),
+    item: work.id,
+    kind: "continue",
+    text: `${what}${task ? ` of ${task}` : ""} continued under the standing grant (team.continuations: granted)`,
+    by: "the user",
+  });
+  return null;
+}
+
+/**
+ * The todo's gate record after a run (SP7b decision 14): the judgement its files ask for is the
+ * run's own plan (the round's scope) with the plan of the todo's other files, a union across rounds
+ * that never shrinks; the inputs are cut for the round's scope with the todo's own, and a ruling is
+ * kept across the re-gate only on the current code and the current cut. Returns the planned list.
+ */
+function planTaskJudgement(
+  env: Env,
+  work: WorkItem,
+  tampered: boolean,
+  record: TaskRecord,
+  task: string,
+  round: number,
+  scope: string[],
+  own: { scope: string[] } | { refused: string },
+  result: Awaited<ReturnType<typeof runTaskGate>>,
+): PlannedJudgement[] {
+  const others = ("scope" in own ? own.scope : []).filter((p) => !scope.includes(p));
+  const cut = [...scope, ...others];
+  const planned = [...(record.gate?.planned ?? [])];
+  for (const p of [...result.judgement, ...plannedTaskJudgement(others, env.policy)])
+    if (!planned.some((q) => q.gate === p.gate)) planned.push(p);
+  const current = assess(env.paths, work, env.profile, env.policy, tampered).currentFingerprint;
+  const hash = scopeHash(cut);
+  record.gate = {
+    round,
+    at: nowIso(),
+    status: result.status,
+    runs: result.runs,
+    scope,
+    planned,
+    cut,
+    judgement: (record.gate?.judgement ?? []).filter(
+      (j) => j.fingerprint === current && j.scope === hash,
+    ),
+  };
+  if (result.status === "pass" && planned.length)
+    writeReviewInputs(env.paths, work, cut, current, task);
+  return planned;
+}
+
+/** The judgement gates a todo still owes (SP7b decision 14): planned, not skipped on the item, with no `proven` record. */
+function taskPending(work: WorkItem, record: TaskRecord, policy: Policy): JudgementGateName[] {
+  const gate = record.gate;
+  return (gate?.planned ?? [])
+    .map((p) => p.gate)
+    .filter(
+      (g) =>
+        !isSkipped(work, `gate:${g}`, policy) &&
+        !(gate?.judgement ?? []).some((r) => r.gate === g && r.verdict === "proven"),
+    );
+}
+
+/** The todo's state after its gate or a ruling: gated only with the deterministic pass and nothing pending; briefed is never lowered. */
+function settleTaskState(work: WorkItem, record: TaskRecord, policy: Policy): void {
+  if (record.state === "briefed") return;
+  const gated = record.gate?.status === "pass" && taskPending(work, record, policy).length === 0;
+  if (gated) record.state = "gated";
+  else if (record.state === "gated") record.state = "merged";
+}
+
+/** A todo's pending gates as the gate's text and a refusal name them: `ui-ux not proven (2 findings)`, `ui-ux not run`. */
+function pendingText(record: TaskRecord, pending: readonly JudgementGateName[]): string {
+  return pending
+    .map((g) => {
+      const r = (record.gate?.judgement ?? []).find((j) => j.gate === g);
+      return r && r.verdict === "not-proven"
+        ? `${g} not proven (${findingsText(r.findings.length)})`
+        : `${g} not run`;
+    })
+    .join("; ");
+}
+
+/** What a `crew judgement record` names: the ruling file it read, or the gate it marks not run. */
+interface RulingInput {
+  records: JudgementRecord[];
+  rulingPath: string | null;
+}
+
+/**
+ * The records a `crew judgement record` makes, for the item or for a todo (SP7b decision 14): one
+ * not-run record for the gate named, or every ruling of the file given, parsed against the gates
+ * planned for `subject`, stamped with the fingerprint and the files the inputs were cut for, and
+ * refused as a whole on one contradiction (review of item 2026-10-15-001, advisory). A gate that
+ * could not run has no ruling file to record, so the two flags do not go together (review of SP2b,
+ * finding 11); a relative path is from the repository root (D-1 of the SP2b minors).
+ */
+function rulingRecords(
+  env: Env,
+  parsed: Parsed,
+  gateWord: string | undefined,
+  planned: readonly JudgementGateName[],
+  fingerprint: string,
+  changed: readonly string[],
+  workId: string,
+  subject: string,
+  usage: string,
+): RulingInput | Outcome {
+  const records: JudgementRecord[] = [];
+  if (parsed.flags["not-run"] && typeof parsed.flags.ruling === "string")
+    return refuse(
+      "--not-run and --ruling do not go together: a gate that could not run has no ruling; give one or the other",
+    );
+  if (parsed.flags["not-run"]) {
+    const reason = typeof parsed.flags.reason === "string" ? parsed.flags.reason.trim() : "";
+    if (!gateWord || !reason) return refuse(usage);
+    if (!isJudgementGateName(gateWord))
+      return refuse(`unknown judgement gate: ${gateWord} (${JUDGEMENT_GATES.join(", ")})`);
+    if (!planned.includes(gateWord))
+      return refuse(`${gateWord} is not planned for ${subject}${plannedNote(planned)}`);
+    records.push(notRunRecord(gateWord, reason, fingerprint));
+    return { records, rulingPath: null };
+  }
+  if (typeof parsed.flags.ruling !== "string") return refuse(usage);
+  const rulingPath = resolve(env.paths.root, parsed.flags.ruling);
+  const text = readText(rulingPath);
+  if (text === null) return refuse(`no ruling file at ${rulingPath}`);
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    return refuse(`the ruling file is not valid JSON: ${rulingPath}`);
+  }
+  const parsedRulings = parseRulings(raw, planned, subject);
+  if ("refused" in parsedRulings) return refuse(parsedRulings.refused);
+  for (const ruling of parsedRulings.rulings)
+    records.push(stampRuling(ruling, fingerprint, changed, workId));
+  for (const record of records) {
+    const why = contradiction(record);
+    if (why) return refuse(why);
+  }
+  return { records, rulingPath };
+}
+
+/**
+ * A todo's ruling (SP7b decision 14): parsed against the gates the todo's gate planned, bound to the
+ * current code and to the files its inputs were cut for, recorded into the todo's gate and never
+ * into the item's evidence or its rounds; the todo is gated once nothing is pending.
+ */
+function recordTaskJudgement(
+  env: Env,
+  work: WorkItem,
+  tampered: boolean,
+  parsed: Parsed,
+  task: string,
+): Outcome {
+  const usage =
+    'usage: crew judgement <id> record --task T-n --ruling <file> | crew judgement <id> record <gate> --not-run --reason "<why>" --task T-n';
+  const record = (work.tasks ?? []).find((t) => t.task === task);
+  if (!record) return refuse(`${task} is not a task of ${work.id}`);
+  const planned = (record.gate?.planned ?? []).map((p) => p.gate);
+  if (!planned.length)
+    return refuse(`${task} plans no judgement gate (crew task <id> gate ${task})`);
+  const before = assess(env.paths, work, env.profile, env.policy, tampered);
+  const inputs = readReviewInputs(env.paths, work.id, task);
+  if (!inputs)
+    return refuse(
+      `no review inputs for ${task}: run crew task <id> gate ${task} first, then the reviewers and the judge`,
+    );
+  if (inputs.fingerprint !== before.currentFingerprint)
+    return refuse(
+      `the review inputs of ${task} describe other code than the current one: run crew task <id> gate ${task}, then the reviewers and the judge again`,
+    );
+  const cut = record.gate?.cut ?? record.gate?.scope ?? [];
+  const input = rulingRecords(
+    env,
+    parsed,
+    parsed.positional[3],
+    planned,
+    before.currentFingerprint,
+    cut,
+    work.id,
+    task,
+    usage,
+  );
+  if (isOutcome(input)) return input;
+  const { records, rulingPath } = input;
+  fillTokens(records, before.evidence.roles ?? [], inputs.at);
+  const hash = scopeHash(cut);
+  const gate = record.gate as NonNullable<TaskRecord["gate"]>;
+  for (const r of records)
+    gate.judgement = [
+      ...(gate.judgement ?? []).filter((j) => j.gate !== r.gate),
+      { ...r, scope: hash },
+    ];
+  if (rulingPath)
+    keepRound(
+      env.paths,
+      work.id,
+      gate.round,
+      records.map((r) => r.gate),
+      rulingPath,
+      task,
+    );
+  settleTaskState(work, record, env.policy);
+  saveWork(env.paths, work);
+  const pending = taskPending(work, record, env.policy);
+  const lines = records.map((r) => {
+    const detail =
+      r.verdict === "not-run" ? `: ${r.reason}` : ` (${findingsText(r.findings.length)})`;
+    const word =
+      r.verdict === "not-proven" ? "not proven" : r.verdict === "not-run" ? "not run" : "proven";
+    return `${task}: ${r.gate} ${word}${detail}`;
+  });
+  lines.push(
+    record.state === "gated" || record.state === "briefed"
+      ? `${task}: gated`
+      : `${task}: not gated: ${pendingText(record, pending)}`,
+  );
+  return {
+    code: pending.length === 0 ? 0 : 1,
+    stdout: true,
+    text: lines.join("\n"),
+    data: { task: record, gate: record.gate, pending },
+  };
 }
 
 function guardContext(env: Env, work: WorkItem, tampered: boolean): GuardContext {
@@ -781,6 +1041,15 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         // Asked even under relay (PreToolUse): the policy that governs signatures is signed by a prompt.
         const result = setPolicyValue(env.paths, key, value);
         if ("refused" in result) return refuse(result.refused);
+        // The standing grant is the second loosening a policy may carry (SP7b decision 15): on record.
+        if (key === "team.continuations" && value === "granted")
+          appendDecision(env.paths, {
+            at: nowIso(),
+            item: "policy",
+            kind: "decision",
+            text: "team.continuations set to granted: rounds past a cap are the user's standing grant, up to the cap plus two",
+            by: "the user",
+          });
         return ok(`policy ${key}: ${value}`, result);
       }
       return refuse("usage: crew policy accept | crew policy set <key> <value>");
@@ -1333,6 +1602,18 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       const usage =
         'usage: crew judgement <id> record --ruling <file> | crew judgement <id> record <gate> --not-run --reason "<why>"';
       if (args[1] !== "record") return refuse(usage);
+      // A todo's ruling goes into the todo's gate (SP7b decision 14), never into the item's rounds.
+      if (parsed.flags.task !== undefined) {
+        if (typeof parsed.flags.task !== "string" || !/^T-\d+$/.test(parsed.flags.task))
+          return refuse("usage: crew judgement <id> record --task T-n --ruling <file>");
+        return recordTaskJudgement(
+          env,
+          opened.work,
+          env.tampered || opened.tampered,
+          parsed,
+          parsed.flags.task,
+        );
+      }
       const before = assess(
         env.paths,
         opened.work,
@@ -1347,32 +1628,21 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       // reading anything, and the user decides.
       const rounds = opened.work.rounds ?? { judgement: 0, validation: 0 };
       const newRound = rounds.judgementCode !== before.currentFingerprint;
-      const grants = (opened.work.continued ?? []).filter(
-        (c) => c.what === "judgement" && decisionCounts(env.policy, c.by),
-      ).length;
-      if (newRound && rounds.judgement >= env.policy.team.maxJudgementRounds + grants)
-        return refuse(
+      if (newRound) {
+        const held = continueOrRefuse(
+          env,
+          opened.work,
+          "judgement",
+          undefined,
+          env.policy.team.maxJudgementRounds,
+          rounds.judgement,
           `judgement round ${rounds.judgement + 1} of ${opened.work.id}: the policy allows ${env.policy.team.maxJudgementRounds} (team.maxJudgementRounds); the user continues it once with crew continue ${opened.work.id} judgement, or decides (crew skip <id> gate:<gate> where policy.json allows it)`,
         );
-      const records: JudgementRecord[] = [];
-      // One or the other: a gate that could not run has no ruling file to record (review of SP2b, finding 11).
-      if (parsed.flags["not-run"] && typeof parsed.flags.ruling === "string")
-        return refuse(
-          "--not-run and --ruling do not go together: a gate that could not run has no ruling; give one or the other",
-        );
-      if (parsed.flags["not-run"]) {
-        const gate = args[2];
-        const reason = typeof parsed.flags.reason === "string" ? parsed.flags.reason.trim() : "";
-        if (!gate || !reason) return refuse(usage);
-        if (!isJudgementGateName(gate))
-          return refuse(`unknown judgement gate: ${gate} (${JUDGEMENT_GATES.join(", ")})`);
-        if (!planned.includes(gate))
-          return refuse(`${gate} is not planned for this item${plannedNote(planned)}`);
-        records.push(notRunRecord(gate, reason, before.currentFingerprint));
-      } else {
-        if (typeof parsed.flags.ruling !== "string") return refuse(usage);
-        // A ruling is about the inputs the judge saw: none, or inputs cut from other code, and the
-        // file cannot be recorded against the code as it is now (review of SP2b, finding 1).
+        if (held) return held;
+      }
+      // A ruling is about the inputs the judge saw: none, or inputs cut from other code, and the
+      // file cannot be recorded against the code as it is now (review of SP2b, finding 1).
+      if (!parsed.flags["not-run"]) {
         const inputs = readReviewInputs(env.paths, opened.work.id);
         if (!inputs)
           return refuse(
@@ -1382,32 +1652,20 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           return refuse(
             `the review inputs describe other code than the current one: run crew gate run ${opened.work.id}, then the reviewers and the judge again`,
           );
-        // A relative path is from the repository root, like every path the skill names (D-1 of
-        // the SP2b minors, 2026-10-15); the refusal prints the path as resolved, so a path given
-        // from a subfolder is refused for where it was looked for (review of SP2b, finding 6).
-        const rulingPath = resolve(env.paths.root, parsed.flags.ruling);
-        const text = readText(rulingPath);
-        if (text === null) return refuse(`no ruling file at ${rulingPath}`);
-        let raw: unknown;
-        try {
-          raw = JSON.parse(text);
-        } catch {
-          return refuse(`the ruling file is not valid JSON: ${rulingPath}`);
-        }
-        const parsedRulings = parseRulings(raw, planned);
-        if ("refused" in parsedRulings) return refuse(parsedRulings.refused);
-        for (const ruling of parsedRulings.rulings)
-          records.push(
-            stampRuling(ruling, before.currentFingerprint, before.changed, opened.work.id),
-          );
       }
-      // Checked once every record is stamped (a defect is inside or outside the change only then),
-      // and before anything is recorded: one contradiction refuses the whole command. Every record
-      // goes through it, a not-run one too (review of item 2026-10-15-001, advisory).
-      for (const record of records) {
-        const why = contradiction(record);
-        if (why) return refuse(why);
-      }
+      const input = rulingRecords(
+        env,
+        parsed,
+        args[2],
+        planned,
+        before.currentFingerprint,
+        before.changed,
+        opened.work.id,
+        "this item",
+        usage,
+      );
+      if (isOutcome(input)) return input;
+      const { records } = input;
       fillTokens(
         records,
         before.evidence.roles ?? [],
@@ -1429,6 +1687,15 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           judgementCode: before.currentFingerprint,
         };
       saveWork(env.paths, opened.work);
+      // The round's files, kept by the engine before any later gate run resets the folder (finding 70).
+      if (typeof parsed.flags.ruling === "string")
+        keepRound(
+          env.paths,
+          opened.work.id,
+          opened.work.rounds?.judgement ?? rounds.judgement,
+          records.map((r) => r.gate),
+          resolve(env.paths.root, parsed.flags.ruling),
+        );
       // Each upheld defect inside the change is a decision the judge took about this code (SP7 §6.6).
       const rulingFile =
         typeof parsed.flags.ruling === "string"
@@ -1454,7 +1721,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         const detail =
           r.verdict === "not-run"
             ? `: ${r.reason}`
-            : ` (${r.findings.length} finding${r.findings.length === 1 ? "" : "s"}${outside ? `, ${outside} outside the change` : ""})`;
+            : ` (${findingsText(r.findings.length)}${outside ? `, ${outside} outside the change` : ""})`;
         const word =
           r.verdict === "not-proven"
             ? "not proven"
@@ -1602,14 +1869,17 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         const flagScope = parsed.flags.scope === undefined ? undefined : list(parsed.flags.scope);
         const scoped = taskScope(env.paths.root, env.profile, record, flagScope);
         if ("refused" in scoped) return refuse(scoped.refused);
-        const grants = (opened.work.continued ?? []).filter(
-          (c) => c.what === "gate" && c.task === task && decisionCounts(env.policy, c.by),
-        ).length;
         const round = record.gate?.round ?? 0;
-        if (round >= env.policy.team.maxGateRounds + grants)
-          return refuse(
-            `gate round ${round + 1} of ${task}: the policy allows ${env.policy.team.maxGateRounds} (team.maxGateRounds); the user continues it once with crew continue ${opened.work.id} gate ${task}, or decides`,
-          );
+        const held = continueOrRefuse(
+          env,
+          opened.work,
+          "gate",
+          task,
+          env.policy.team.maxGateRounds,
+          round,
+          `gate round ${round + 1} of ${task}: the policy allows ${env.policy.team.maxGateRounds} (team.maxGateRounds); the user continues it once with crew continue ${opened.work.id} gate ${task}, or decides`,
+        );
+        if (held) return held;
         const result = await runTaskGate(
           env.paths,
           opened.work,
@@ -1617,26 +1887,44 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           env.policy,
           scoped.scope,
         );
-        record.gate = {
-          round: round + 1,
-          at: nowIso(),
-          status: result.status,
-          runs: result.runs,
-          scope: scoped.scope,
-        };
-        // The state ladder only climbs: a gate re-run after the brief keeps the todo briefed (the brief
-        // is rewritten with crew task brief when the lead wants the new runs in it).
-        if (result.status === "pass" && record.state !== "briefed") record.state = "gated";
+        const planned = planTaskJudgement(
+          env,
+          opened.work,
+          env.tampered || opened.tampered,
+          record,
+          task,
+          round + 1,
+          scoped.scope,
+          flagScope?.length ? taskScope(env.paths.root, env.profile, record) : scoped,
+          result,
+        );
+        // The state ladder only climbs past gated: a gate re-run after the brief keeps the todo briefed
+        // (the brief is rewritten with crew task brief when the lead wants the new runs in it).
+        settleTaskState(opened.work, record, env.policy);
         saveWork(env.paths, opened.work);
         const lines = result.runs.map(
           (r) =>
             `  ${r.gate} (${r.target}): ${r.status} in ${(r.durationMs / 1000).toFixed(1)}s${r.reason ? ` (${r.reason})` : ""}`,
         );
+        const pending =
+          result.status === "pass" ? taskPending(opened.work, record, env.policy) : [];
+        if (pending.length)
+          lines.push(
+            `Judgement gates to run for ${task}: ${pending
+              .map((g) => `${g} (${planned.find((p) => p.gate === g)?.reason ?? ""})`)
+              .join(
+                ", ",
+              )}; inputs in .crew/work/${opened.work.id}/review/${task}/ (diff.patch, files.txt); record each with crew judgement ${opened.work.id} record --task ${task} --ruling <file>`,
+          );
+        const verdict =
+          result.status === "pass" && pending.length
+            ? `pass, judgement pending (${pending.join(", ")})`
+            : result.status;
         return {
           code: result.status === "pass" ? 0 : 1,
           stdout: true,
-          text: `${lines.join("\n")}\n${task} gate round ${round + 1}: ${result.status}`,
-          data: { task: record, gate: record.gate },
+          text: `${lines.join("\n")}\n${task} gate round ${round + 1}: ${verdict}`,
+          data: { task: record, gate: record.gate, pending },
         };
       }
       if (args[1] === "brief") {
@@ -1647,6 +1935,10 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           return refuse(task ? `${task} is not a task of ${opened.work.id}` : usage);
         if (record.gate?.status !== "pass")
           return refuse(`${task} has no passing gate yet (crew task <id> gate ${task})`);
+        if (taskPending(opened.work, record, env.policy).length)
+          return refuse(
+            `${task} has a judgement gate not proven yet (crew judgement <id> record --task ${task} --ruling <file>)`,
+          );
         const text = writeBrief(
           env.paths,
           opened.work,
@@ -1779,17 +2071,18 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       const last = same[same.length - 1];
       const newRound = !last || last.hash !== hash;
       const rounds = work.rounds ?? { judgement: 0, validation: 0 };
-      const grants = (work.continued ?? []).filter(
-        (c) => c.what === "validation" && decisionCounts(env.policy, c.by),
-      ).length;
-      if (
-        what === "spec" &&
-        newRound &&
-        rounds.validation >= env.policy.team.maxValidationRounds + grants
-      )
-        return refuse(
+      if (what === "spec" && newRound) {
+        const held = continueOrRefuse(
+          env,
+          work,
+          "validation",
+          undefined,
+          env.policy.team.maxValidationRounds,
+          rounds.validation,
           `validation round ${rounds.validation + 1} of ${work.id}: the policy allows ${env.policy.team.maxValidationRounds} (team.maxValidationRounds); the user continues it once with crew continue ${work.id} validation, or decides`,
         );
+        if (held) return held;
+      }
       const round = newRound
         ? (what === "spec" ? rounds.validation : (last?.round ?? 0)) + 1
         : (last?.round ?? 1);

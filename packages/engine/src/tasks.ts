@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { loadEvidence, saveEvidence, tddSummary } from "./evidence.ts";
 import { gitChangedPaths, gitHead, isGitRepo, isWatched } from "./fingerprint.ts";
 import { nowIso, readText, writeText } from "./fs.ts";
+import { findingsText } from "./judgement.ts";
 import {
   loadItemMail,
   type MailContext,
@@ -318,6 +319,12 @@ export function writeBrief(
   const proven = [
     ...(gate?.runs ?? []).map(
       (r) => `- ${r.gate} (${r.target}): ${r.status} in ${(r.durationMs / 1000).toFixed(1)}s`,
+    ),
+    // The todo's own judgement (SP7b decision 14), as recorded with --task.
+    ...(gate?.judgement ?? []).map((j) =>
+      j.verdict === "not-run"
+        ? `- ${j.gate}: not run: ${j.reason ?? ""}`
+        : `- ${j.gate}: ${j.verdict === "proven" ? "proven" : "not proven"} (${findingsText(j.findings.length)})`,
     ),
     ...record.criteria.map((id) => {
       const criterion = work.criteria.find((c) => c.id === id);

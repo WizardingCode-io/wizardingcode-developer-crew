@@ -198,7 +198,7 @@ test("SP2c: policy.mail has its defaults when absent and its values validated wh
     file,
     JSON.stringify({
       mail: {
-        workspace: "clubefashion",
+        workspace: "shop",
         name: "crm",
         accept: ["question", "change-request", "bogus", 3],
         open: "branch",
@@ -211,7 +211,7 @@ test("SP2c: policy.mail has its defaults when absent and its values validated wh
     }),
   );
   expect(loadPolicy(paths).policy.mail).toEqual({
-    workspace: "clubefashion",
+    workspace: "shop",
     name: "crm",
     accept: ["question", "change-request"],
     open: "branch",
@@ -227,7 +227,7 @@ test("SP2c: policy.mail has its defaults when absent and its values validated wh
   // A name the mailbox folder cannot take is dropped, not folded.
   writeFileSync(
     file,
-    JSON.stringify({ mail: { workspace: "Club Fashion", name: "../x", open: "yes" } }),
+    JSON.stringify({ mail: { workspace: "Shop Floor", name: "../x", open: "yes" } }),
   );
   expect(loadPolicy(paths).policy.mail).toMatchObject({
     workspace: null,
@@ -238,9 +238,9 @@ test("SP2c: policy.mail has its defaults when absent and its values validated wh
 
 test("SP2c: crew policy set writes the scalar mail keys, each value checked, and leaves the lists to a hand edit", () => {
   const paths = repoPaths(makeRepo(), testEnv());
-  expect(setPolicyValue(paths, "mail.workspace", "clubefashion")).toEqual({
+  expect(setPolicyValue(paths, "mail.workspace", "shop")).toEqual({
     key: "mail.workspace",
-    value: "clubefashion",
+    value: "shop",
   });
   expect(setPolicyValue(paths, "mail.name", "crm")).toEqual({ key: "mail.name", value: "crm" });
   expect(setPolicyValue(paths, "mail.open", "branch")).toEqual({
@@ -258,17 +258,17 @@ test("SP2c: crew policy set writes the scalar mail keys, each value checked, and
   const written = JSON.parse(readFileSync(join(paths.crewDir, "policy.json"), "utf8"));
   expect(written).toEqual({
     attendedDecisions: "prompt",
-    mail: { workspace: "clubefashion", name: "crm", open: "branch", maxConcurrent: 3 },
+    mail: { workspace: "shop", name: "crm", open: "branch", maxConcurrent: 3 },
   });
   expect(loadPolicy(paths).policy.mail).toMatchObject({
-    workspace: "clubefashion",
+    workspace: "shop",
     name: "crm",
     open: "branch",
     maxConcurrent: 3,
   });
-  expect(setPolicyValue(paths, "mail.workspace", "Club Fashion")).toEqual({
+  expect(setPolicyValue(paths, "mail.workspace", "Shop Floor")).toEqual({
     refused:
-      "mail.workspace is a lowercase name of letters, digits, dot, dash and underscore, up to 64 characters, not Club Fashion",
+      "mail.workspace is a lowercase name of letters, digits, dot, dash and underscore, up to 64 characters, not Shop Floor",
   });
   expect(setPolicyValue(paths, "mail.open", "yes")).toEqual({
     refused: "mail.open is one of read-only, branch, not yes",
@@ -308,7 +308,7 @@ test("SP2c: crew policy set writes the scalar mail keys, each value checked, and
   });
   expect(setPolicyValue(paths, "mail.accept", "question")).toEqual({
     refused:
-      "unknown policy key: mail.accept (crew policy set writes attendedDecisions, unattendedDecisions, mail.workspace, mail.name, mail.open, mail.maxConcurrent, mail.maxHops, mail.maxTurns, mail.maxMinutes, mail.maxParties, mail.worktrees, team.template, team.maxExperts, team.maxValidationRounds, team.maxJudgementRounds, team.maxGateRounds)",
+      "unknown policy key: mail.accept (crew policy set writes attendedDecisions, unattendedDecisions, mail.workspace, mail.name, mail.open, mail.maxConcurrent, mail.maxHops, mail.maxTurns, mail.maxMinutes, mail.maxParties, mail.worktrees, team.template, team.maxExperts, team.maxValidationRounds, team.maxJudgementRounds, team.maxGateRounds, team.continuations)",
   });
 });
 
@@ -322,6 +322,7 @@ test("SP7a AC-3: policy.team has its defaults when absent, only tightens when pr
     maxValidationRounds: 2,
     maxJudgementRounds: 2,
     maxGateRounds: 2,
+    continuations: "ask",
   });
   expect(loadPolicy(paths).policy.team).toEqual(DEFAULT_POLICY.team);
   mkdirSync(paths.crewDir, { recursive: true });
@@ -348,6 +349,7 @@ test("SP7a AC-3: policy.team has its defaults when absent, only tightens when pr
     maxValidationRounds: 1,
     maxJudgementRounds: 2,
     maxGateRounds: 2,
+    continuations: "ask",
   });
   const fresh = repoPaths(makeRepo(), testEnv());
   expect(setPolicyValue(fresh, "team.maxJudgementRounds", "1")).toEqual({
@@ -416,4 +418,28 @@ test("SP7b-T4 AC-1: allowSkips defaults to tdd and e2e: the user may skip the e2
   expect(DEFAULT_POLICY.allowSkips).toEqual(["tdd", "e2e"]);
   expect(skipAllowed(DEFAULT_POLICY, "gate:e2e")).toBe(true);
   expect(skipAllowed(DEFAULT_POLICY, "gate:test")).toBe(false);
+});
+
+test("SP7b-T5 AC-2: team.continuations defaults to ask, reads granted or ask only, and is settable", () => {
+  expect(DEFAULT_POLICY.team.continuations).toBe("ask");
+  const root = makeRepo();
+  const paths = repoPaths(root, testEnv());
+  mkdirSync(join(root, ".crew"), { recursive: true });
+  writeFileSync(
+    join(root, ".crew", "policy.json"),
+    JSON.stringify({ team: { continuations: "granted" } }),
+  );
+  expect(loadPolicy(paths).policy.team.continuations).toBe("granted");
+  writeFileSync(
+    join(root, ".crew", "policy.json"),
+    JSON.stringify({ team: { continuations: "maybe" } }),
+  );
+  expect(loadPolicy(paths).policy.team.continuations).toBe("ask");
+  const fresh = repoPaths(makeRepo(), testEnv());
+  expect(setPolicyValue(fresh, "team.continuations", "granted")).toEqual({
+    key: "team.continuations",
+    value: "granted",
+  });
+  expect(setPolicyValue(fresh, "team.continuations", "yes")).toHaveProperty("refused");
+  expect(loadPolicy(fresh).policy.team.continuations).toBe("granted");
 });

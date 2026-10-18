@@ -26,6 +26,8 @@ export interface Piece {
   tokens: Token[];
   inner: Piece[];
   heredocs: string[];
+  /** Whether the piece's input is the previous piece's output (`|` or `|&` before it). */
+  piped: boolean;
 }
 /** A command line read: its simple commands, and what was still open at its end (`a quote`, `a substitution`, `an expansion`), which the shell would refuse to run. */
 export interface Reading {
@@ -202,6 +204,8 @@ function read(text: string, start: number, closer: Closer, depth: number): Frame
   let commandAt = 0;
   // Whether the piece began behind a `|` or an `&`: a word there is a command, never a keyword.
   let piped = false;
+  // Whether the next piece's input is this pipeline's output: a single `|` or a `|&` before it.
+  let pipeIn = false;
   const heredocs: Heredoc[] = [];
   const begin = (i: number): void => {
     if (started) return;
@@ -254,8 +258,17 @@ function read(text: string, start: number, closer: Closer, depth: number): Frame
     endWord(i);
     const first = tokens[0];
     const last = tokens[tokens.length - 1];
-    if (first && last)
-      pieces.push({ text: text.slice(first.from, last.to), tokens, inner, heredocs: [] });
+    if (first && last) {
+      pieces.push({
+        text: text.slice(first.from, last.to),
+        tokens,
+        inner,
+        heredocs: [],
+        piped: pipeIn,
+      });
+      // A pipe reaches the next piece with tokens: a subshell's `(` or a newline between carries it on.
+      pipeIn = false;
+    }
     tokens = [];
     inner = [];
     armStart = 0;
@@ -469,6 +482,7 @@ function read(text: string, start: number, closer: Closer, depth: number): Frame
       else {
         endPiece(i);
         piped = true;
+        if (ch === "|" && next !== "|" && text.charAt(i - 1) !== "|") pipeIn = true;
       }
     } else if (ch === "(" && next === ")") {
       // A function's head (`f()`, `f ()`): the name before it is no command, and its body follows.
@@ -518,12 +532,4 @@ function read(text: string, start: number, closer: Closer, depth: number): Frame
 export function readCommand(command: string): Reading {
   const { pieces, unclosed } = read(command, 0, null, 0);
   return { pieces, unclosed };
-}
-
-/** The texts of a command line's simple commands, as written, each here-document body's lines after the command that reads it, for the rules that still read a piece's text. */
-export function simpleCommands(command: string): string[] {
-  return readCommand(command).pieces.flatMap((p) => [
-    p.text,
-    ...p.heredocs.flatMap((body) => body.split("\n").filter((line) => line !== "")),
-  ]);
 }

@@ -87,6 +87,8 @@ export interface TeamPolicy {
   maxValidationRounds: number;
   maxJudgementRounds: number;
   maxGateRounds: number;
+  /** Whether rounds past a cap run as the user's standing grant, up to the cap plus two (SP7b decision 15), or wait for `crew continue` (`ask`, the default). */
+  continuations: "ask" | "granted";
 }
 
 /** A judgement gate the item needs, and why: "standard route", "risk area auth", "interface files: a.vue", "policy". */
@@ -323,7 +325,19 @@ export interface TaskRecord {
   /** Where the todo stands (SP7 §8.1): open (no reply), handed (an implementer runs), merged, gated (its gate passed), briefed. */
   state?: "open" | "handed" | "merged" | "gated" | "briefed";
   /** The todo's own gate, run on the files its diff touched; its runs are the todo's, never the item's evidence. */
-  gate?: { round: number; at: string; status: "pass" | "fail"; runs: GateRun[]; scope: string[] };
+  gate?: {
+    round: number;
+    at: string;
+    status: "pass" | "fail";
+    runs: GateRun[];
+    scope: string[];
+    /** The judgement gates the todo's files ask for (SP7b decision 14), a union across its rounds; never shrinks. */
+    planned?: PlannedJudgement[];
+    /** The files the todo's review inputs were cut for: the round's scope with the todo's own. */
+    cut?: string[];
+    /** The rulings recorded with `--task`, each on the current code and the current cut. */
+    judgement?: JudgementRecord[];
+  };
   /** The brief's path, relative to the work folder. */
   brief?: string;
   /** A todo done inline by the lead: no worktree, no message; its scope names its files. */
@@ -611,6 +625,8 @@ export interface WorkItem {
     task?: string;
     by: Decision;
     at: string;
+    /** Recorded by the engine under `team.continuations: granted`, as the user's standing grant. */
+    standing?: true;
   }[];
   createdAt: string;
   updatedAt: string;
@@ -696,6 +712,8 @@ export interface JudgementRecord {
   at: string;
   /** The fingerprint of the code the ruling vouches for; a ruling on other code counts as not run. */
   fingerprint: string;
+  /** A todo's ruling: the hash of the scope its inputs were cut for; a re-gate on other files drops it. */
+  scope?: string;
 }
 
 export interface Evidence {

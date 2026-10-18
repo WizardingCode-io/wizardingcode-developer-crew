@@ -215,7 +215,9 @@ test("SP2c: the skill has the three waits, the tasks and the mail; the reference
   const gate = readReference("gate.md");
   expect(gate).toContain("crew await <id> role");
   expect(gate).toMatch(/The engine saves each role's answer[^\n]*SubagentStop/);
-  expect(gate).toMatch(/save it yourself only when[^\n]*the hook could not/i);
+  expect(gate).toMatch(
+    /resume the role with SendMessage so the hook files its answer[^\n]*never write it yourself/,
+  );
   expect(gate).toContain("## The judge's one question");
   expect(gate).toContain("crew mail send --to . --agent review-<gate> --type question");
   expect(gate).toContain("## Clarifications");
@@ -376,7 +378,7 @@ test("SP7a AC-8 (Task 8): the skill page has the Rules row and the twenty rules 
     "mail never leaves the workspace (the engine's refusal); the knowledge base's confidentiality mark is SP4 and not yet enforced",
   );
   expect(rules).toContain(
-    "a ruling is never edited: the engine refuses a contradiction and protects the records it writes; the reviewers' findings files under `review/` are the session's to write and are not protected (debt, finding 59)",
+    "a ruling is never edited: the engine refuses a contradiction and protects the records it writes, the reviewers' findings files, the rulings and the round copies under `review/` among them (finding 59); `review/ui/` and `review/e2e/` are the session's",
   );
   expect(rules).toContain(
     "in a session nobody watches, a full-route approval runs only with `--mode` and is recorded as the agent's decision, never as a person's; a disputed validator verdict waits (SP3)",
@@ -406,4 +408,47 @@ test("SP7b-T4 AC-4: the UI/UX rubric needs a console file beside each capture, r
   expect(gate).toContain("WIZARDINGCODE_CREW_CONSOLE_FILE");
   expect(gate).toContain("e2e/playwright.mjs");
   expect(gate).toContain("crew skip <id> gate:e2e");
+});
+
+test("SP7b-T5 AC-2: rule 10 names the standing grant as the second loosening a policy may carry", () => {
+  const rules = readReference("rules.md");
+  expect(rules).toContain(
+    "Enforced by: the route and the seats; the gate per todo (`crew task <id> gate T-n`) with the judgement gates its files ask for; `team.maxJudgementRounds`, `team.maxValidationRounds` and `team.maxGateRounds` as refusals; `team.continuations: granted` is the second loosening a policy may carry, after `riskPathExclusions`: rounds past a cap up to the cap plus two, each recorded as the user's standing grant.",
+  );
+  expect((rules.match(/Enforced by:/g) ?? []).length).toBe(20);
+});
+
+test("SP7b-T5 AC-3: the gate reference says the engine owns review/ and keeps the round's files, the plan reference says how a todo's judgement runs, rule 14 names the protection, and the README says it in one sentence", () => {
+  const gate = readReference("gate.md");
+  expect(gate).toContain(
+    "The engine owns the files under review/ except ui/ and e2e/: when a file is missing after a role returned (the hook could not read its transcript), resume the role with SendMessage so the hook files its answer, or record the gate --not-run; never write it yourself.",
+  );
+  expect(gate).toContain(
+    "The engine keeps the round's files at the record (<gate>.round<n>.md, ruling.round<n>.json), so a later gate run's reset loses nothing.",
+  );
+  expect(readReference("plan.md")).toContain(
+    "When the todo's files ask for a judgement gate (an interface file: ui-ux; a risk path: security), the gate prints it and cuts the todo's inputs under review/T-n/; launch exactly those reviewers and the judge as for the item and record with crew judgement <id> record --task T-n --ruling <file>; the todo is gated only when every planned judgement is proven.",
+  );
+  expect(readReference("rules.md")).toContain(
+    "Enforced by: the records' order; a ruling is never edited: the engine refuses a contradiction and protects the records it writes, the reviewers' findings files, the rulings and the round copies under `review/` among them (finding 59); `review/ui/` and `review/e2e/` are the session's.",
+  );
+  const readme = readFileSync(
+    fileURLToPath(new URL("../../../README.md", import.meta.url)),
+    "utf8",
+  );
+  expect(readme).toContain(
+    "A todo whose files touch a page or a risk path is judged by the reviewers its files ask for before it counts as gated, and a policy may carry a standing grant of two rounds past each cap (team.continuations: granted) so the user is not woken at every cap.",
+  );
+});
+
+test("SP7b-T5 AC-4: the test-quality rubric asks about fixture names", () => {
+  const rubric = readFileSync(
+    fileURLToPath(
+      new URL("../../../plugins/core/skills/crew/rubrics/test-quality.md", import.meta.url),
+    ),
+    "utf8",
+  );
+  expect(rubric).toContain(
+    "8. Fixtures: does any fixture name a client, a customer or a real workspace? Fixtures use neutral names (a, b, storefront, crm, shop); a real name is a defect.",
+  );
 });

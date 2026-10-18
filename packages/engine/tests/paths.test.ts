@@ -74,14 +74,41 @@ test("a symlinked alias of the root gives the same root, repo id and protection"
 test("SP2c: the registry and the mailboxes live under the user's crew directory; mail.json is engine-owned in a work folder", () => {
   const paths = repoPaths(makeRepo(), testEnv());
   expect(registryPath(paths.userDir)).toBe(join(paths.userDir, "projects.json"));
-  expect(mailboxDir(paths.userDir, "clubefashion", "crm")).toBe(
-    join(paths.userDir, "mail", "clubefashion", "crm"),
-  );
+  expect(mailboxDir(paths.userDir, "shop", "crm")).toBe(join(paths.userDir, "mail", "shop", "crm"));
   expect(mailboxDir(paths.userDir, null, "solo")).toBe(
     join(paths.userDir, "mail", "_alone", "solo"),
   );
   expect(isProtectedPath(paths, join(paths.root, ".crew", "work", "w1", "mail.json"))).toBe(true);
-  expect(
-    isProtectedPath(paths, join(paths.userDir, "mail", "clubefashion", "crm", "inbox.json")),
-  ).toBe(true);
+  expect(isProtectedPath(paths, join(paths.userDir, "mail", "shop", "crm", "inbox.json"))).toBe(
+    true,
+  );
+});
+
+test("SP7b-T5 AC-3: the review folder is the engine's except the captures and the e2e folders, under the item and under a todo", () => {
+  const root = makeRepo();
+  const paths = repoPaths(root, testEnv());
+  const p = (rel: string) => isProtectedPath(paths, join(root, ".crew", "work", "w1", rel));
+  for (const protectedPath of [
+    "review",
+    "review/code-quality.findings.md",
+    "review/ruling.json",
+    "review/ruling.round1.json",
+    "review/inputs.json",
+    "review/diff.patch",
+    "review/ui-ux.findings.md",
+    "review/ui/../ruling.json",
+    "review/T-3",
+    "review/T-3/test-quality.round2.md",
+    "review/T-3/inputs.json",
+  ])
+    expect([protectedPath, p(protectedPath)]).toEqual([protectedPath, true]);
+  for (const open of [
+    "review/ui",
+    "review/ui/home-empty.png",
+    "review/ui/console-home-empty.json",
+    "review/e2e/console.json",
+    "review/T-3/ui/cart-error.png",
+    "review/T-3/e2e/logs.txt",
+  ])
+    expect([open, p(open)]).toEqual([open, false]);
 });

@@ -2847,7 +2847,7 @@ test("SP7a AC-4: crew metrics counts the records of a project and of a workspace
     (await c.run("cto", "record", "--workspace", "w", "--file", "missing.md")).err.trim(),
   ).toBe(`no plan file at ${join(root, "missing.md")}`);
   // The workspace names a folder under the user's crew directory: a name that is not a name is refused.
-  for (const bad of ["../x", "a/b", "Club Fashion"])
+  for (const bad of ["../x", "a/b", "Shop Floor"])
     expect(
       (await c.run("cto", "record", "--workspace", bad, "--file", "cto-plan.md")).err.trim(),
     ).toBe(
@@ -3497,4 +3497,273 @@ test("SP7b-T4 AC-4: the gate run names the captures and the ones without a conso
   const bare = (await c.json("start", "Another", "--answers", answers, "--criterion", "a")).data
     .id as string;
   expect((await c.run("gate", "run", bare)).out).not.toContain("captures:");
+});
+
+/** The decision register of a repository, as the engine writes it. */
+function register(root: string): { kind: string; text: string; by: string }[] {
+  return (
+    JSON.parse(readFileSync(join(root, ".crew", "decisions.json"), "utf8")) as {
+      entries: { kind: string; text: string; by: string }[];
+    }
+  ).entries;
+}
+
+test("SP7b-T5 AC-2 (gate): under team.continuations granted a todo's gate runs two rounds past the cap, each the user's standing grant, and the fifth is refused until crew continue", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+    ".crew/policy.json": JSON.stringify({ team: { continuations: "granted" } }),
+  });
+  const env = testEnv();
+  const c = io(root, env);
+  const id = (await c.json("start", "Thing", "--answers", answers, "--criterion", "a")).data
+    .id as string;
+  expect(
+    (
+      await c.run(
+        "task",
+        id,
+        "note",
+        "T-5",
+        "--criteria",
+        "AC-1",
+        "--scope",
+        "src/a.ts",
+        "--text",
+        "x",
+      )
+    ).code,
+  ).toBe(0);
+  const gate = () => c.run("task", id, "gate", "T-5");
+  const continued = () => loadWork(repoPaths(root, env), id).work?.continued ?? [];
+  expect((await gate()).code).toBe(0);
+  expect((await gate()).code).toBe(0);
+  expect(continued()).toEqual([]);
+  const third = await gate();
+  expect(third.code).toBe(0);
+  expect(third.out).toContain("T-5 gate round 3: pass");
+  expect(continued()).toMatchObject([
+    { what: "gate", task: "T-5", by: { by: "user" }, standing: true },
+  ]);
+  expect(register(root).at(-1)).toMatchObject({
+    kind: "continue",
+    text: "gate of T-5 continued under the standing grant (team.continuations: granted)",
+    by: "the user",
+  });
+  expect((await gate()).out).toContain("T-5 gate round 4: pass");
+  expect(continued().filter((e) => e.standing).length).toBe(2);
+  const fifth = await gate();
+  expect(fifth.code).toBe(1);
+  expect(fifth.err.trim()).toBe(
+    `gate round 5 of T-5: the policy allows 2 (team.maxGateRounds); the user continues it once with crew continue ${id} gate T-5, or decides`,
+  );
+  expect((await c.run("continue", id, "gate", "T-5")).code).toBe(0);
+  expect(continued().length).toBe(3);
+  expect(continued()[2]?.standing).toBeUndefined();
+  expect((await gate()).out).toContain("T-5 gate round 5: pass");
+  expect((await gate()).err.trim()).toBe(
+    `gate round 6 of T-5: the policy allows 2 (team.maxGateRounds); the user continues it once with crew continue ${id} gate T-5, or decides`,
+  );
+  // The policy set that grants it is in the register; another key appends nothing.
+  const before = register(root).length;
+  expect((await c.run("policy", "set", "team.maxGateRounds", "1")).code).toBe(0);
+  expect(register(root).length).toBe(before);
+  expect((await c.run("policy", "set", "team.continuations", "granted")).out.trim()).toBe(
+    "policy team.continuations: granted",
+  );
+  expect(register(root).at(-1)).toMatchObject({
+    kind: "decision",
+    text: "team.continuations set to granted: rounds past a cap are the user's standing grant, up to the cap plus two",
+    by: "the user",
+  });
+});
+
+test("SP7b-T5 AC-2 (validation): under the standing grant the spec's third and fourth rounds are accepted and recorded, the fifth refused until crew continue", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+    ".crew/policy.json": JSON.stringify({ team: { continuations: "granted" } }),
+  });
+  const env = testEnv();
+  const c = io(root, env);
+  const id = (
+    await c.json(
+      "start",
+      "Refactor the module",
+      "--answers",
+      JSON.stringify({ ...JSON.parse(answers), scope: 1 }),
+      "--criterion",
+      "a",
+    )
+  ).data.id as string;
+  write(
+    root,
+    `.crew/work/${id}/conclave.md`,
+    "# Gap round\n\n## Assumed by good practice\n- none\n\n## Decisions only the user can make\n- none\n\n## Proposals\n- none\n\n## Warnings\n- none\n",
+  );
+  const spec = (n: number) =>
+    write(
+      root,
+      `.crew/work/${id}/spec.md`,
+      `# Spec\n\n## Acceptance criteria\n- AC-1 a, version ${n}\n`,
+    );
+  spec(1);
+  await c.run("phase", id, "next");
+  await c.run("phase", id, "next");
+  await c.run("phase", id, "next");
+  await c.run("approve", id, "spec", "--validator", "complete-gap-round");
+  const validate = () =>
+    c.run(
+      "validation",
+      id,
+      "record",
+      "--what",
+      "spec",
+      "--by",
+      "lead-qa",
+      "--file",
+      leadFile(root, id, "lead-qa"),
+    );
+  expect((await validate()).out.trim()).toBe("validation of spec by lead-qa: validated (round 1)");
+  spec(2);
+  expect((await validate()).out.trim()).toBe("validation of spec by lead-qa: validated (round 2)");
+  spec(3);
+  expect((await validate()).out.trim()).toBe("validation of spec by lead-qa: validated (round 3)");
+  const continued = () => loadWork(repoPaths(root, env), id).work?.continued ?? [];
+  expect(continued()).toMatchObject([{ what: "validation", by: { by: "user" }, standing: true }]);
+  expect(register(root).at(-1)).toMatchObject({
+    kind: "continue",
+    text: "validation continued under the standing grant (team.continuations: granted)",
+    by: "the user",
+  });
+  spec(4);
+  expect((await validate()).out.trim()).toBe("validation of spec by lead-qa: validated (round 4)");
+  expect(continued().filter((e) => e.standing).length).toBe(2);
+  spec(5);
+  expect((await validate()).err.trim()).toBe(
+    `validation round 5 of ${id}: the policy allows 2 (team.maxValidationRounds); the user continues it once with crew continue ${id} validation, or decides`,
+  );
+  expect((await c.run("continue", id, "validation")).code).toBe(0);
+  expect((await validate()).out.trim()).toBe("validation of spec by lead-qa: validated (round 5)");
+});
+
+test("SP7b-T5 AC-2 (judgement): under the standing grant the third and fourth judgement rounds are accepted and recorded, the fifth refused until crew continue", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+    ".crew/policy.json": JSON.stringify({ team: { continuations: "granted" } }),
+  });
+  const env = testEnv();
+  const c = io(root, env);
+  const id = (
+    await c.json(
+      "start",
+      "Refactor the module",
+      "--answers",
+      JSON.stringify({ ...JSON.parse(answers), scope: 1 }),
+      "--criterion",
+      "a",
+    )
+  ).data.id as string;
+  const file = `.crew/work/${id}/review/ruling.json`;
+  const ruling = (verdict: "proven" | "not-proven") =>
+    JSON.stringify({
+      rulings: [
+        {
+          gate: "code-quality",
+          verdict,
+          findings:
+            verdict === "proven"
+              ? []
+              : [{ file: "src/a.ts", line: 1, text: "a magic value", severity: "defect" }],
+          tokens: 1,
+        },
+        { gate: "test-quality", verdict: "proven", findings: [], tokens: 1 },
+      ],
+    });
+  const round = async (n: number, verdict: "proven" | "not-proven") => {
+    write(root, "src/a.ts", `y${n}`);
+    await c.run("gate", "run", id);
+    write(root, file, ruling(verdict));
+    return c.run("judgement", id, "record", "--ruling", file);
+  };
+  const continued = () => loadWork(repoPaths(root, env), id).work?.continued ?? [];
+  expect((await round(1, "not-proven")).code).toBe(1);
+  expect((await round(2, "not-proven")).code).toBe(1);
+  expect(continued()).toEqual([]);
+  expect((await round(3, "not-proven")).out).toContain("code-quality: not proven (1 finding)");
+  expect(continued()).toMatchObject([{ what: "judgement", by: { by: "user" }, standing: true }]);
+  expect(
+    register(root).some(
+      (e) =>
+        e.text === "judgement continued under the standing grant (team.continuations: granted)",
+    ),
+  ).toBe(true);
+  expect((await round(4, "not-proven")).out).toContain("code-quality: not proven (1 finding)");
+  expect(continued().filter((e) => e.standing).length).toBe(2);
+  expect(loadWork(repoPaths(root, env), id).work?.rounds).toMatchObject({ judgement: 4 });
+  const fifth = await round(5, "proven");
+  expect(fifth.code).toBe(1);
+  expect(fifth.err.trim()).toBe(
+    `judgement round 5 of ${id}: the policy allows 2 (team.maxJudgementRounds); the user continues it once with crew continue ${id} judgement, or decides (crew skip <id> gate:<gate> where policy.json allows it)`,
+  );
+  expect((await c.run("continue", id, "judgement")).code).toBe(0);
+  expect((await c.run("judgement", id, "record", "--ruling", file)).out).toContain(
+    "code-quality: proven (0 findings)",
+  );
+  expect(loadWork(repoPaths(root, env), id).work?.rounds).toMatchObject({ judgement: 5 });
+});
+
+test("SP7b-T5 AC-3: the engine keeps each judgement round's findings and ruling as round copies at the record, and a gate run's reset leaves them", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/App.vue": "<template/>",
+  });
+  const c = io(root);
+  const id = (await c.json("start", "Empty state", "--answers", answers, "--criterion", "a")).data
+    .id as string;
+  write(root, "src/App.vue", "<template>empty</template>");
+  await c.run("tdd", "red", id, "AC-1", "--", "exit 1");
+  await c.run("tdd", "green", id, "AC-1", "--", "exit 0");
+  await c.run("skip", id, "gate:e2e", "--reason", "no environment in the fixture");
+  await c.run("gate", "run", id);
+  const review = join(root, ".crew", "work", id, "review");
+  const file = join(review, "ruling.json");
+  const notProven = JSON.stringify({
+    rulings: [
+      {
+        gate: "ui-ux",
+        verdict: "not-proven",
+        findings: [{ file: "src/App.vue", line: 1, text: "no empty state", severity: "defect" }],
+      },
+    ],
+  });
+  const proven = JSON.stringify({ rulings: [{ gate: "ui-ux", verdict: "proven", findings: [] }] });
+  writeFileSync(
+    join(review, "ui-ux.findings.md"),
+    "# ui-ux findings\n- F-1 · src/App.vue:1 · no empty state\n",
+  );
+  writeFileSync(file, notProven);
+  expect((await c.run("judgement", id, "record", "--ruling", file)).code).toBe(1);
+  expect(readFileSync(join(review, "ui-ux.round1.md"), "utf8")).toBe(
+    "# ui-ux findings\n- F-1 · src/App.vue:1 · no empty state\n",
+  );
+  expect(readFileSync(join(review, "ruling.round1.json"), "utf8")).toBe(notProven);
+  // The code changes and the gate run cuts the inputs again: the originals go, the copies stay.
+  write(root, "src/App.vue", "<template>empty, with copy</template>");
+  await c.run("gate", "run", id);
+  expect(existsSync(file)).toBe(false);
+  expect(existsSync(join(review, "ui-ux.findings.md"))).toBe(false);
+  expect(existsSync(join(review, "ui-ux.round1.md"))).toBe(true);
+  expect(existsSync(join(review, "ruling.round1.json"))).toBe(true);
+  writeFileSync(join(review, "ui-ux.findings.md"), "# ui-ux findings\n- none\n");
+  writeFileSync(file, proven);
+  expect((await c.run("judgement", id, "record", "--ruling", file)).code).toBe(0);
+  expect(readFileSync(join(review, "ui-ux.round2.md"), "utf8")).toBe("# ui-ux findings\n- none\n");
+  expect(readFileSync(join(review, "ruling.round2.json"), "utf8")).toBe(proven);
+  expect(readFileSync(join(review, "ruling.round1.json"), "utf8")).toBe(notProven);
+  // A not-run record on the same code copies nothing.
+  await c.run("judgement", id, "record", "ui-ux", "--not-run", "--reason", "no browser");
+  expect(readFileSync(join(review, "ruling.round2.json"), "utf8")).toBe(proven);
+  expect(existsSync(join(review, "ruling.round3.json"))).toBe(false);
 });

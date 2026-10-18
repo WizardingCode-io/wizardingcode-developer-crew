@@ -40,6 +40,7 @@ export const DEFAULT_TEAM_POLICY: TeamPolicy = {
   maxValidationRounds: 2,
   maxJudgementRounds: 2,
   maxGateRounds: 2,
+  continuations: "ask",
 };
 
 export const DEFAULT_POLICY: Policy = {
@@ -106,6 +107,7 @@ export const SETTABLE_POLICY_KEYS: Record<string, Settable> = {
   "team.maxValidationRounds": { integer: RANGES.maxValidationRounds },
   "team.maxJudgementRounds": { integer: RANGES.maxJudgementRounds },
   "team.maxGateRounds": { integer: RANGES.maxGateRounds },
+  "team.continuations": { values: ["ask", "granted"] },
 };
 
 function policyPath(paths: CrewPaths): string {
@@ -276,12 +278,15 @@ function loadTeamPolicy(raw: unknown): TeamPolicy {
       RANGES.maxGateRounds,
       DEFAULT_TEAM_POLICY.maxGateRounds,
     ),
+    continuations: t.continuations === "granted" ? "granted" : "ask",
   };
 }
 
 /**
- * A policy can only tighten, with one exception: `riskPathExclusions` takes paths out of the risk
- * patterns (ADR 0003). Anything it does not say falls back to the default.
+ * A policy can only tighten, with two exceptions: `riskPathExclusions` takes paths out of the risk
+ * patterns (ADR 0003), and `team.continuations: granted` lets rounds past a cap run as the user's
+ * standing grant, up to the cap plus two (SP7b decision 15). Anything it does not say falls back
+ * to the default.
  */
 export function loadPolicy(paths: CrewPaths): { policy: Policy; tampered: boolean } {
   const read = readProtectedJson<Record<string, unknown>>(paths, policyPath(paths));

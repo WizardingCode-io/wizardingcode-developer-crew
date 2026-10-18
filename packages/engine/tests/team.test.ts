@@ -186,3 +186,32 @@ test("SP7a AC-1 (round 2): ETL and DevOps sit on the full route only; team.alway
     "judge",
   ]);
 });
+
+test("SP7b-T5 AC-1: a todo's scope plans only the seats its files ask for: ui-ux for interface files, security for a risk path, the judge with them, nothing of the route or the policy", () => {
+  const scoped = (scope: string[], policy = DEFAULT_POLICY) =>
+    plannedSeats("standard", [], ["src/a.ts"], policy, scope);
+  expect(roles(scoped(["src/App.vue"]))).toEqual(["review-ui-ux", "judge"]);
+  expect(scoped(["src/App.vue"])[0]).toEqual({
+    role: "review-ui-ux",
+    team: "qa",
+    kind: "gate",
+    gate: "ui-ux",
+    reason: "interface files: src/App.vue",
+  });
+  expect(roles(scoped(["src/auth/login.ts"]))).toEqual(["review-security", "judge"]);
+  expect(scoped(["src/auth/login.ts"])[0]?.reason).toBe("risk area auth");
+  expect(scoped(["src/auth/login.ts", "src/payment.ts"])[0]?.reason).toBe(
+    "risk areas auth, payments",
+  );
+  expect(scoped(["src/A.vue", "src/B.vue", "src/C.vue", "src/D.vue"])[0]?.reason).toBe(
+    "interface files: src/A.vue, src/B.vue, src/C.vue, +1 more",
+  );
+  expect(scoped(["src/a.ts"])).toEqual([]);
+  expect(scoped([])).toEqual([]);
+  const loaded = {
+    ...DEFAULT_POLICY,
+    judgementGates: ["code-quality" as const],
+    team: { ...DEFAULT_POLICY.team, always: ["etl" as const] },
+  };
+  expect(roles(scoped(["src/App.vue"], loaded))).toEqual(["review-ui-ux", "judge"]);
+});

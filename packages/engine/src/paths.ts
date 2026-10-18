@@ -103,6 +103,9 @@ export const PROTECTED_WORK_FILES: readonly string[] = [
   "mail.json",
 ];
 const PROTECTED_IN_WORK = new Set(PROTECTED_WORK_FILES);
+/** The one source of what stays the session's under `review/` (SP7b decision 16): `ui` or `e2e`, right under it or under a todo's `T-n/`; the hook's text rule builds on it too. */
+export const REVIEW_OPEN_SEGMENT = String.raw`(?:T-\d+\/)?(?:ui|e2e)`;
+const REVIEW_OPEN = new RegExp(String.raw`^review\/${REVIEW_OPEN_SEGMENT}(?:\/|$)`);
 
 /** Files only the engine writes. The agent is denied direct writes to them. */
 export function isProtectedPath(paths: CrewPaths, absPath: string): boolean {
@@ -115,5 +118,8 @@ export function isProtectedPath(paths: CrewPaths, absPath: string): boolean {
   const inWork = /^\.crew\/work\/[^/]+\/(.+)$/.exec(rel);
   if (!inWork) return false;
   const inner = inWork[1] ?? "";
+  // The review folder is the engine's (the reviewers' answers, the rulings, the round copies, the
+  // inputs), except the folders the session fills with captures and the e2e run writes.
+  if (inner === "review" || inner.startsWith("review/")) return !REVIEW_OPEN.test(inner);
   return PROTECTED_IN_WORK.has(inner) || inner.startsWith("logs/");
 }

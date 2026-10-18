@@ -1,5 +1,5 @@
 // packages/engine/src/cli.ts
-import { existsSync as existsSync9 } from "node:fs";
+import { existsSync as existsSync10 } from "node:fs";
 import { basename as basename6, join as join34, relative as relative7, resolve as resolve4 } from "node:path";
 
 // packages/engine/src/argv.ts
@@ -1364,6 +1364,8 @@ var PROTECTED_WORK_FILES = [
   "mail.json"
 ];
 var PROTECTED_IN_WORK = new Set(PROTECTED_WORK_FILES);
+var REVIEW_OPEN_SEGMENT = String.raw`(?:T-\d+\/)?(?:ui|e2e)`;
+var REVIEW_OPEN = new RegExp(String.raw`^review\/${REVIEW_OPEN_SEGMENT}(?:\/|$)`);
 function isProtectedPath(paths, absPath) {
   const abs = canonical(absPath);
   if (abs === paths.userDir || abs.startsWith(paths.userDir + sep))
@@ -1379,6 +1381,8 @@ function isProtectedPath(paths, absPath) {
   if (!inWork)
     return false;
   const inner = inWork[1] ?? "";
+  if (inner === "review" || inner.startsWith("review/"))
+    return !REVIEW_OPEN.test(inner);
   return PROTECTED_IN_WORK.has(inner) || inner.startsWith("logs/");
 }
 
@@ -1405,7 +1409,8 @@ var DEFAULT_TEAM_POLICY = {
   maxExperts: 3,
   maxValidationRounds: 2,
   maxJudgementRounds: 2,
-  maxGateRounds: 2
+  maxGateRounds: 2,
+  continuations: "ask"
 };
 var DEFAULT_POLICY = {
   requiredGates: [],
@@ -1451,7 +1456,8 @@ var SETTABLE_POLICY_KEYS = {
   "team.maxExperts": { integer: RANGES.maxExperts },
   "team.maxValidationRounds": { integer: RANGES.maxValidationRounds },
   "team.maxJudgementRounds": { integer: RANGES.maxJudgementRounds },
-  "team.maxGateRounds": { integer: RANGES.maxGateRounds }
+  "team.maxGateRounds": { integer: RANGES.maxGateRounds },
+  "team.continuations": { values: ["ask", "granted"] }
 };
 function policyPath(paths) {
   return join12(paths.crewDir, "policy.json");
@@ -1553,7 +1559,8 @@ function loadTeamPolicy(raw) {
     maxExperts: bounded(t.maxExperts, RANGES.maxExperts, DEFAULT_TEAM_POLICY.maxExperts),
     maxValidationRounds: bounded(t.maxValidationRounds, RANGES.maxValidationRounds, DEFAULT_TEAM_POLICY.maxValidationRounds),
     maxJudgementRounds: bounded(t.maxJudgementRounds, RANGES.maxJudgementRounds, DEFAULT_TEAM_POLICY.maxJudgementRounds),
-    maxGateRounds: bounded(t.maxGateRounds, RANGES.maxGateRounds, DEFAULT_TEAM_POLICY.maxGateRounds)
+    maxGateRounds: bounded(t.maxGateRounds, RANGES.maxGateRounds, DEFAULT_TEAM_POLICY.maxGateRounds),
+    continuations: t.continuations === "granted" ? "granted" : "ask"
   };
 }
 function loadPolicy(paths) {
@@ -1851,7 +1858,38 @@ function seated(team, def, route, riskAreas, policy) {
     return route === "full" && riskAreas.includes(rule.area) ? `risk area ${rule.area}` : null;
   return null;
 }
-function plannedSeats(route, riskAreas, changed, policy) {
+function interfaceReason(interfaces) {
+  const shown = interfaces.slice(0, 3).join(", ");
+  const more = interfaces.length > 3 ? `, +${interfaces.length - 3} more` : "";
+  return `interface files: ${shown}${more}`;
+}
+function taskSeats(scope, policy) {
+  const seats = [];
+  const interfaces = scope.filter(isInterfacePath);
+  if (interfaces.length)
+    seats.push({
+      role: "review-ui-ux",
+      team: "qa",
+      kind: "gate",
+      gate: "ui-ux",
+      reason: interfaceReason(interfaces)
+    });
+  const areas = riskAreasForPaths(scope, policy);
+  if (areas.length)
+    seats.push({
+      role: "review-security",
+      team: "security",
+      kind: "gate",
+      gate: "security",
+      reason: `risk area${areas.length === 1 ? "" : "s"} ${areas.join(", ")}`
+    });
+  if (seats.length)
+    seats.push({ role: "judge", team: null, kind: "debate", reason: "a gate is planned" });
+  return seats;
+}
+function plannedSeats(route, riskAreas, changed, policy, scope) {
+  if (scope !== undefined)
+    return taskSeats(scope, policy);
   const seats = [];
   const plan = (seat) => {
     if (!seats.some((s) => s.role === seat.role))
@@ -1869,11 +1907,8 @@ function plannedSeats(route, riskAreas, changed, policy) {
   else if (route === "standard" && riskAreas.length)
     gate("security", "security", `risk area${riskAreas.length === 1 ? "" : "s"} ${riskAreas.join(", ")}`);
   const interfaces = changed.filter(isInterfacePath);
-  if (interfaces.length) {
-    const shown = interfaces.slice(0, 3).join(", ");
-    const more = interfaces.length > 3 ? `, +${interfaces.length - 3} more` : "";
-    gate("ui-ux", "qa", `interface files: ${shown}${more}`);
-  }
+  if (interfaces.length)
+    gate("ui-ux", "qa", interfaceReason(interfaces));
   if (route === "full") {
     gate("risk", "architects", "full route");
     gate("architecture", "architects", "full route");
@@ -4786,27 +4821,49 @@ async function runE2e(inputs) {
 }
 
 // packages/engine/src/judgement.ts
-import { readdirSync as readdirSync5, unlinkSync as unlinkSync3 } from "node:fs";
+import { copyFileSync, existsSync as existsSync8, readdirSync as readdirSync5, unlinkSync as unlinkSync3 } from "node:fs";
 import { join as join25 } from "node:path";
 function plannedJudgementGates(route, riskAreas, changed, policy) {
   return plannedSeats(route, riskAreas, changed, policy).filter((s) => s.kind === "gate" && s.gate !== undefined).map((s) => ({ gate: s.gate, reason: s.reason }));
 }
-function reviewDir(paths, id) {
-  return join25(workDir(paths, id), "review");
+function reviewDir(paths, id, task) {
+  const dir = join25(workDir(paths, id), "review");
+  return task ? join25(dir, task) : dir;
+}
+function plannedTaskJudgement(scope, policy) {
+  return plannedSeats("fast", [], [], policy, scope).flatMap((s) => s.kind === "gate" && s.gate ? [{ gate: s.gate, reason: s.reason }] : []);
+}
+function findingsText(n) {
+  return `${n} finding${n === 1 ? "" : "s"}`;
+}
+function scopeHash(scope) {
+  return sha256([...new Set(scope)].sort().join(`
+`));
+}
+function keepRound(paths, id, round, gates, rulingFile, task) {
+  const dir = reviewDir(paths, id, task);
+  for (const gate of gates) {
+    const findings = join25(dir, `${gate}.findings.md`);
+    if (existsSync8(findings))
+      copyFileSync(findings, join25(dir, `${gate}.round${round}.md`));
+  }
+  if (existsSync8(rulingFile))
+    copyFileSync(rulingFile, join25(dir, `ruling.round${round}.json`));
 }
 var CAPTURE = /\.(?:png|jpe?g)$/i;
-function listCaptures(paths, id) {
+function listCaptures(paths, id, task) {
   let names;
   try {
-    names = readdirSync5(join25(reviewDir(paths, id), "ui"));
+    names = readdirSync5(join25(reviewDir(paths, id, task), "ui"));
   } catch {
     return [];
   }
+  const prefix = task ? `review/${task}/ui/` : "review/ui/";
   return names.filter((name) => CAPTURE.test(name)).sort().map((name) => {
     const consoleFile = `console-${name.replace(CAPTURE, "")}.json`;
     return {
-      file: `review/ui/${name}`,
-      console: names.includes(consoleFile) ? `review/ui/${consoleFile}` : null
+      file: `${prefix}${name}`,
+      console: names.includes(consoleFile) ? `${prefix}${consoleFile}` : null
     };
   });
 }
@@ -4816,16 +4873,16 @@ function isCapture(raw) {
   const { file, console: consoleFile } = raw;
   return typeof file === "string" && (typeof consoleFile === "string" || consoleFile === null);
 }
-function readReviewInputs(paths, id) {
-  const raw = readJson(join25(reviewDir(paths, id), "inputs.json"));
+function readReviewInputs(paths, id, task) {
+  const raw = readJson(join25(reviewDir(paths, id, task), "inputs.json"));
   if (!raw || typeof raw.fingerprint !== "string" || typeof raw.at !== "string")
     return null;
   const captures = Array.isArray(raw.captures) ? raw.captures.filter(isCapture) : [];
   return { fingerprint: raw.fingerprint, at: raw.at, captures };
 }
-function writeReviewInputs(paths, work, changed, fingerprint) {
-  const dir = reviewDir(paths, work.id);
-  const previous = readReviewInputs(paths, work.id);
+function writeReviewInputs(paths, work, changed, fingerprint, task) {
+  const dir = reviewDir(paths, work.id, task);
+  const previous = readReviewInputs(paths, work.id, task);
   if (previous && previous.fingerprint !== fingerprint) {
     let names = [];
     try {
@@ -4843,7 +4900,7 @@ function writeReviewInputs(paths, work, changed, fingerprint) {
   writeText(join25(dir, "files.txt"), changed.length ? `${changed.join(`
 `)}
 ` : "");
-  writeText(join25(dir, "inputs.json"), `${JSON.stringify({ fingerprint, at: nowIso(), captures: listCaptures(paths, work.id) }, null, 2)}
+  writeText(join25(dir, "inputs.json"), `${JSON.stringify({ fingerprint, at: nowIso(), captures: listCaptures(paths, work.id, task) }, null, 2)}
 `);
   return { dir, note: cut.note };
 }
@@ -4886,7 +4943,7 @@ function isRecord(value) {
 function plannedNote(planned) {
   return planned.length ? ` (planned: ${planned.join(", ")})` : " (none is planned)";
 }
-function parseRulings(raw, planned) {
+function parseRulings(raw, planned, subject = "this item") {
   if (!isRecord(raw) || !Array.isArray(raw.rulings))
     return { refused: 'the ruling file is a JSON object with a "rulings" list' };
   if (raw.rulings.length === 0)
@@ -4902,7 +4959,7 @@ function parseRulings(raw, planned) {
         refused: `${where}: unknown judgement gate: ${String(gate)} (${JUDGEMENT_GATES.join(", ")})`
       };
     if (!planned.includes(gate))
-      return { refused: `${where}: ${gate} is not planned for this item${plannedNote(planned)}` };
+      return { refused: `${where}: ${gate} is not planned for ${subject}${plannedNote(planned)}` };
     const verdict = entry.verdict;
     if (verdict !== "proven" && verdict !== "not-proven")
       return {
@@ -5408,7 +5465,11 @@ async function runTaskGate(paths, work, profile, policy, scope) {
   const runs = [];
   for (const p of planned)
     runs.push(await runOne(paths, work, profile, p, stamp2, scope, scope));
-  return { status: runs.length && runs.every((r) => r.status === "pass") ? "pass" : "fail", runs };
+  return {
+    status: runs.length && runs.every((r) => r.status === "pass") ? "pass" : "fail",
+    runs,
+    judgement: plannedTaskJudgement(scope, policy)
+  };
 }
 async function runOne(paths, work, profile, planned, fingerprint, changed, scope) {
   const { gate, target: targetPath } = planned;
@@ -5822,6 +5883,7 @@ function read(text, start, closer, depth) {
   let cases = 0;
   let commandAt = 0;
   let piped = false;
+  let pipeIn = false;
   const heredocs = [];
   const begin = (i) => {
     if (started)
@@ -5867,8 +5929,16 @@ function read(text, start, closer, depth) {
     endWord(i);
     const first = tokens[0];
     const last = tokens[tokens.length - 1];
-    if (first && last)
-      pieces.push({ text: text.slice(first.from, last.to), tokens, inner, heredocs: [] });
+    if (first && last) {
+      pieces.push({
+        text: text.slice(first.from, last.to),
+        tokens,
+        inner,
+        heredocs: [],
+        piped: pipeIn
+      });
+      pipeIn = false;
+    }
     tokens = [];
     inner = [];
     armStart = 0;
@@ -6095,6 +6165,8 @@ function read(text, start, closer, depth) {
       else {
         endPiece(i);
         piped = true;
+        if (ch === "|" && next !== "|" && text.charAt(i - 1) !== "|")
+          pipeIn = true;
       }
     } else if (ch === "(" && next === ")") {
       if (started)
@@ -6147,13 +6219,6 @@ function read(text, start, closer, depth) {
 function readCommand(command) {
   const { pieces, unclosed } = read(command, 0, null, 0);
   return { pieces, unclosed };
-}
-function simpleCommands(command) {
-  return readCommand(command).pieces.flatMap((p) => [
-    p.text,
-    ...p.heredocs.flatMap((body) => body.split(`
-`).filter((line) => line !== ""))
-  ]);
 }
 
 // packages/engine/src/hooks/subagent-stop.ts
@@ -6460,7 +6525,10 @@ function relay(ctx, questionId, answer, agent) {
 var WRITE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
 var SHELL_NAMES = ["sh", "bash", "zsh", "dash", "ksh", "fish"];
 var SHELLS = `(?:${SHELL_NAMES.join("|")})`;
-var ENGINE_FILES = /\.crew\/(?:profile\.json|policy\.json|decisions\.json|\.gitignore|local\b|work\/[^\s/]+\/(?:work\.json|evidence\.json|objections\.json|mail\.json|report\.md|logs\b))|\.wizardingcode\/crew\b/;
+var PATH_END = String.raw`[\s"'\x60;&|)]`;
+var NOT_DOTDOT_SEGMENT = String.raw`(?!\.\.(?:\/|${PATH_END}|$))[^\s"'\x60;&|)/]*\/?`;
+var REVIEW_OWNED = String.raw`review(?!\/${REVIEW_OPEN_SEGMENT}(?:\/(?:${NOT_DOTDOT_SEGMENT})*)?(?=${PATH_END}|$))`;
+var ENGINE_FILES = new RegExp(String.raw`\.crew\/(?:profile\.json|policy\.json|decisions\.json|\.gitignore|local\b|work\/[^\s/]+\/(?:work\.json|evidence\.json|objections\.json|mail\.json|report\.md|logs\b|${REVIEW_OWNED}))|\.wizardingcode\/crew\b`);
 var WRITE_SHAPE = /(?:^|[\s;&|("'])(?:rm|mv|cp|tee|truncate|chmod|touch|dd|install)\b|sed\s+-i|>{1,2}\|?\s*["']?\S*(?:\.crew\/|\.wizardingcode\/crew\b)/;
 var OPAQUE_REDIRECT = />{1,2}\|?\s*["']?[$`]/;
 var PROMPTLESS_MODES = new Set(["bypassPermissions", "dontAsk"]);
@@ -6759,6 +6827,63 @@ function crewArgs(words) {
       return words.slice(end + 1);
   }
   return null;
+}
+var DATA_READERS = new Set([
+  "cat",
+  "tee",
+  "head",
+  "tail",
+  "wc",
+  "sort",
+  "uniq",
+  "grep",
+  "tr",
+  "cut",
+  "fold",
+  "fmt",
+  "diff",
+  "cmp",
+  "md5sum",
+  "shasum",
+  "sha256sum",
+  "base64",
+  "jq",
+  "yq"
+]);
+var GIT_TEXT = new Set([
+  "commit",
+  "tag",
+  "notes",
+  "check-attr",
+  "check-ignore",
+  "stripspace",
+  "interpret-trailers"
+]);
+var GH_TEXT = new Set(["pr", "issue", "release", "gist"]);
+var PROCESS_SUBSTITUTION_ANYWHERE = /[<>]\(/;
+function readsOnly(piece) {
+  if (PROCESS_SUBSTITUTION_ANYWHERE.test(piece.text))
+    return false;
+  const { program, words } = commandOf(piece);
+  if (program === "git")
+    return GIT_TEXT.has(words[1] ?? "");
+  if (program === "gh")
+    return GH_TEXT.has(words[1] ?? "");
+  return DATA_READERS.has(program);
+}
+function judgedTexts(pieces, inner = false) {
+  const texts = [];
+  pieces.forEach((piece, i) => {
+    texts.push(piece.text);
+    let data = !inner && readsOnly(piece);
+    for (let j = i + 1;data && j < pieces.length && pieces[j]?.piped; j++)
+      data = readsOnly(pieces[j]);
+    if (!data)
+      texts.push(...piece.heredocs.flatMap((body) => body.split(`
+`).filter((l) => l !== "")));
+    texts.push(...judgedTexts(piece.inner, true));
+  });
+  return texts;
 }
 function commandOf({ text, tokens, inner, heredocs }) {
   const lead = withoutLead(withoutRedirects(tokens));
@@ -7195,7 +7320,7 @@ function onPreToolUse(ctx, payload) {
         return answer(...decided);
       asked ??= decided;
     }
-    for (const piece of simpleCommands(command)) {
+    for (const piece of judgedTexts(readCommand(command).pieces)) {
       if (ENGINE_FILES.test(piece) && WRITE_SHAPE.test(piece) || OPAQUE_REDIRECT.test(piece) && ENGINE_FILES.test(command)) {
         return answer("deny", "Crew: files under .crew/ and ~/.wizardingcode/crew that the engine owns are written only by the crew command");
       }
@@ -7214,7 +7339,7 @@ function onPreToolUse(ctx, payload) {
 }
 
 // packages/engine/src/tasks.ts
-import { cpSync, existsSync as existsSync8 } from "node:fs";
+import { cpSync, existsSync as existsSync9 } from "node:fs";
 import { join as join31 } from "node:path";
 function shortId(workId) {
   return workId.slice(0, 14);
@@ -7285,7 +7410,7 @@ function openTask(ctx, env, work, task, criteria, text) {
   if (!body)
     return { refused: `plan.md names no task ${task}; give its text with --text "<task>"` };
   const names = taskNames(work.id, env.paths.root, task, env.policy.mail.worktrees);
-  if (existsSync8(names.worktree))
+  if (existsSync9(names.worktree))
     return { refused: `${names.worktree} exists; remove it or pick another task number` };
   let branches;
   try {
@@ -7403,6 +7528,7 @@ function writeBrief(paths, work, record, evidence, policy) {
   const gate = record.gate;
   const proven = [
     ...(gate?.runs ?? []).map((r) => `- ${r.gate} (${r.target}): ${r.status} in ${(r.durationMs / 1000).toFixed(1)}s`),
+    ...(gate?.judgement ?? []).map((j) => j.verdict === "not-run" ? `- ${j.gate}: not run: ${j.reason ?? ""}` : `- ${j.gate}: ${j.verdict === "proven" ? "proven" : "not proven"} (${findingsText(j.findings.length)})`),
     ...record.criteria.map((id) => {
       const criterion = work.criteria.find((c) => c.id === id);
       return `- ${id}: ${criterion ? tddSummary(work, evidence, id, criterion.kind, policy) : "unknown criterion"}`;
@@ -7489,7 +7615,7 @@ function mergeTask(ctx, env, work, task, options = {}) {
     return {
       refused: `${task} has no reply yet (message ${record.message}); the implementer ends with crew mail reply`
     };
-  const childPaths = existsSync8(record.worktree) ? resolvePaths(record.worktree, ctx.env) : null;
+  const childPaths = existsSync9(record.worktree) ? resolvePaths(record.worktree, ctx.env) : null;
   if (!childPaths)
     return {
       refused: `${task}'s worktree ${record.worktree} is gone; restore it with git worktree add ${record.worktree} ${record.branch}, then merge`
@@ -7536,7 +7662,7 @@ function mergeTask(ctx, env, work, task, options = {}) {
   saveWork(env.paths, work);
   const credit = creditChild(env.paths, work, record, options.forcedBy !== undefined);
   const childDir = workDir(env.paths, child);
-  if (existsSync8(workDir(childPaths, child)))
+  if (existsSync9(workDir(childPaths, child)))
     cpSync(workDir(childPaths, child), childDir, {
       recursive: true,
       force: false,
@@ -8080,7 +8206,7 @@ var KNOWN_FLAGS = {
   resume: [],
   tdd: ["reason"],
   gate: ["only"],
-  judgement: ["ruling", "not-run", "reason"],
+  judgement: ["ruling", "not-run", "reason", "task"],
   skip: ["reason", "mode"],
   evidence: [],
   status: [],
@@ -8216,7 +8342,7 @@ function accept(env, target) {
     });
   }
   const dir = workDir(env.paths, target);
-  if (!/^[\w.-]+$/.test(target) || target.includes("..") || !existsSync9(join34(dir, "work.json")))
+  if (!/^[\w.-]+$/.test(target) || target.includes("..") || !existsSync10(join34(dir, "work.json")))
     return refuse(`unknown work item: ${target}`);
   const files = PROTECTED_WORK_FILES.filter((name) => recordIntegrity(env.paths, join34(dir, name)));
   return ok(`${target} accepted: ${files.join(", ")} now trusted as they are`, {
@@ -8266,6 +8392,154 @@ function decisionText(policy, decision) {
 function whoDecided(decision) {
   return decidedBy(decision).replace(/^by /, "");
 }
+function continueOrRefuse(env, work, what, task, cap, round, refusal) {
+  const mine = (work.continued ?? []).filter((c) => c.what === what && c.task === task);
+  const grants = mine.filter((c) => decisionCounts(env.policy, c.by)).length;
+  if (round < cap + grants)
+    return null;
+  if (env.policy.team.continuations !== "granted" || mine.filter((c) => c.standing).length >= 2)
+    return refuse(refusal);
+  work.continued = [
+    ...work.continued ?? [],
+    { what, ...task ? { task } : {}, by: { by: "user" }, at: nowIso(), standing: true }
+  ];
+  saveWork(env.paths, work);
+  appendDecision(env.paths, {
+    at: nowIso(),
+    item: work.id,
+    kind: "continue",
+    text: `${what}${task ? ` of ${task}` : ""} continued under the standing grant (team.continuations: granted)`,
+    by: "the user"
+  });
+  return null;
+}
+function planTaskJudgement(env, work, tampered, record, task, round, scope, own, result) {
+  const others = ("scope" in own ? own.scope : []).filter((p) => !scope.includes(p));
+  const cut = [...scope, ...others];
+  const planned = [...record.gate?.planned ?? []];
+  for (const p of [...result.judgement, ...plannedTaskJudgement(others, env.policy)])
+    if (!planned.some((q) => q.gate === p.gate))
+      planned.push(p);
+  const current = assess(env.paths, work, env.profile, env.policy, tampered).currentFingerprint;
+  const hash = scopeHash(cut);
+  record.gate = {
+    round,
+    at: nowIso(),
+    status: result.status,
+    runs: result.runs,
+    scope,
+    planned,
+    cut,
+    judgement: (record.gate?.judgement ?? []).filter((j) => j.fingerprint === current && j.scope === hash)
+  };
+  if (result.status === "pass" && planned.length)
+    writeReviewInputs(env.paths, work, cut, current, task);
+  return planned;
+}
+function taskPending(work, record, policy) {
+  const gate = record.gate;
+  return (gate?.planned ?? []).map((p) => p.gate).filter((g) => !isSkipped(work, `gate:${g}`, policy) && !(gate?.judgement ?? []).some((r) => r.gate === g && r.verdict === "proven"));
+}
+function settleTaskState(work, record, policy) {
+  if (record.state === "briefed")
+    return;
+  const gated = record.gate?.status === "pass" && taskPending(work, record, policy).length === 0;
+  if (gated)
+    record.state = "gated";
+  else if (record.state === "gated")
+    record.state = "merged";
+}
+function pendingText(record, pending) {
+  return pending.map((g) => {
+    const r = (record.gate?.judgement ?? []).find((j) => j.gate === g);
+    return r && r.verdict === "not-proven" ? `${g} not proven (${findingsText(r.findings.length)})` : `${g} not run`;
+  }).join("; ");
+}
+function rulingRecords(env, parsed, gateWord, planned, fingerprint, changed, workId, subject, usage) {
+  const records = [];
+  if (parsed.flags["not-run"] && typeof parsed.flags.ruling === "string")
+    return refuse("--not-run and --ruling do not go together: a gate that could not run has no ruling; give one or the other");
+  if (parsed.flags["not-run"]) {
+    const reason = typeof parsed.flags.reason === "string" ? parsed.flags.reason.trim() : "";
+    if (!gateWord || !reason)
+      return refuse(usage);
+    if (!isJudgementGateName(gateWord))
+      return refuse(`unknown judgement gate: ${gateWord} (${JUDGEMENT_GATES.join(", ")})`);
+    if (!planned.includes(gateWord))
+      return refuse(`${gateWord} is not planned for ${subject}${plannedNote(planned)}`);
+    records.push(notRunRecord(gateWord, reason, fingerprint));
+    return { records, rulingPath: null };
+  }
+  if (typeof parsed.flags.ruling !== "string")
+    return refuse(usage);
+  const rulingPath = resolve4(env.paths.root, parsed.flags.ruling);
+  const text = readText(rulingPath);
+  if (text === null)
+    return refuse(`no ruling file at ${rulingPath}`);
+  let raw;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    return refuse(`the ruling file is not valid JSON: ${rulingPath}`);
+  }
+  const parsedRulings = parseRulings(raw, planned, subject);
+  if ("refused" in parsedRulings)
+    return refuse(parsedRulings.refused);
+  for (const ruling of parsedRulings.rulings)
+    records.push(stampRuling(ruling, fingerprint, changed, workId));
+  for (const record of records) {
+    const why = contradiction(record);
+    if (why)
+      return refuse(why);
+  }
+  return { records, rulingPath };
+}
+function recordTaskJudgement(env, work, tampered, parsed, task) {
+  const usage = 'usage: crew judgement <id> record --task T-n --ruling <file> | crew judgement <id> record <gate> --not-run --reason "<why>" --task T-n';
+  const record = (work.tasks ?? []).find((t) => t.task === task);
+  if (!record)
+    return refuse(`${task} is not a task of ${work.id}`);
+  const planned = (record.gate?.planned ?? []).map((p) => p.gate);
+  if (!planned.length)
+    return refuse(`${task} plans no judgement gate (crew task <id> gate ${task})`);
+  const before = assess(env.paths, work, env.profile, env.policy, tampered);
+  const inputs = readReviewInputs(env.paths, work.id, task);
+  if (!inputs)
+    return refuse(`no review inputs for ${task}: run crew task <id> gate ${task} first, then the reviewers and the judge`);
+  if (inputs.fingerprint !== before.currentFingerprint)
+    return refuse(`the review inputs of ${task} describe other code than the current one: run crew task <id> gate ${task}, then the reviewers and the judge again`);
+  const cut = record.gate?.cut ?? record.gate?.scope ?? [];
+  const input = rulingRecords(env, parsed, parsed.positional[3], planned, before.currentFingerprint, cut, work.id, task, usage);
+  if (isOutcome(input))
+    return input;
+  const { records, rulingPath } = input;
+  fillTokens(records, before.evidence.roles ?? [], inputs.at);
+  const hash = scopeHash(cut);
+  const gate = record.gate;
+  for (const r of records)
+    gate.judgement = [
+      ...(gate.judgement ?? []).filter((j) => j.gate !== r.gate),
+      { ...r, scope: hash }
+    ];
+  if (rulingPath)
+    keepRound(env.paths, work.id, gate.round, records.map((r) => r.gate), rulingPath, task);
+  settleTaskState(work, record, env.policy);
+  saveWork(env.paths, work);
+  const pending = taskPending(work, record, env.policy);
+  const lines2 = records.map((r) => {
+    const detail = r.verdict === "not-run" ? `: ${r.reason}` : ` (${findingsText(r.findings.length)})`;
+    const word = r.verdict === "not-proven" ? "not proven" : r.verdict === "not-run" ? "not run" : "proven";
+    return `${task}: ${r.gate} ${word}${detail}`;
+  });
+  lines2.push(record.state === "gated" || record.state === "briefed" ? `${task}: gated` : `${task}: not gated: ${pendingText(record, pending)}`);
+  return {
+    code: pending.length === 0 ? 0 : 1,
+    stdout: true,
+    text: lines2.join(`
+`),
+    data: { task: record, gate: record.gate, pending }
+  };
+}
 function guardContext(env, work, tampered) {
   const dir = workDir(env.paths, work.id);
   const result = assess(env.paths, work, env.profile, env.policy, env.tampered || tampered);
@@ -8273,7 +8547,7 @@ function guardContext(env, work, tampered) {
     specText: readText(join34(dir, "spec.md")),
     conclaveText: readText(join34(dir, "conclave.md")),
     ledger: loadLedger(env.paths, work.id).ledger,
-    planExists: existsSync9(join34(dir, "plan.md")),
+    planExists: existsSync10(join34(dir, "plan.md")),
     evidence: result.evidence,
     proven: result.verdict === "proven",
     unproven: result.unproven,
@@ -8530,6 +8804,14 @@ async function dispatch(parsed, io) {
         const result = setPolicyValue(env.paths, key, value);
         if ("refused" in result)
           return refuse(result.refused);
+        if (key === "team.continuations" && value === "granted")
+          appendDecision(env.paths, {
+            at: nowIso(),
+            item: "policy",
+            kind: "decision",
+            text: "team.continuations set to granted: rounds past a cap are the user's standing grant, up to the cap plus two",
+            by: "the user"
+          });
         return ok(`policy ${key}: ${value}`, result);
       }
       return refuse("usage: crew policy accept | crew policy set <key> <value>");
@@ -8987,55 +9269,31 @@ captures: ${captures.length}${silent.length ? ` (${silent.length} without a cons
       const usage = 'usage: crew judgement <id> record --ruling <file> | crew judgement <id> record <gate> --not-run --reason "<why>"';
       if (args[1] !== "record")
         return refuse(usage);
+      if (parsed.flags.task !== undefined) {
+        if (typeof parsed.flags.task !== "string" || !/^T-\d+$/.test(parsed.flags.task))
+          return refuse("usage: crew judgement <id> record --task T-n --ruling <file>");
+        return recordTaskJudgement(env, opened.work, env.tampered || opened.tampered, parsed, parsed.flags.task);
+      }
       const before = assess(env.paths, opened.work, env.profile, env.policy, env.tampered || opened.tampered);
       const planned = before.judgement.map((j) => j.gate);
       const rounds = opened.work.rounds ?? { judgement: 0, validation: 0 };
       const newRound = rounds.judgementCode !== before.currentFingerprint;
-      const grants = (opened.work.continued ?? []).filter((c) => c.what === "judgement" && decisionCounts(env.policy, c.by)).length;
-      if (newRound && rounds.judgement >= env.policy.team.maxJudgementRounds + grants)
-        return refuse(`judgement round ${rounds.judgement + 1} of ${opened.work.id}: the policy allows ${env.policy.team.maxJudgementRounds} (team.maxJudgementRounds); the user continues it once with crew continue ${opened.work.id} judgement, or decides (crew skip <id> gate:<gate> where policy.json allows it)`);
-      const records = [];
-      if (parsed.flags["not-run"] && typeof parsed.flags.ruling === "string")
-        return refuse("--not-run and --ruling do not go together: a gate that could not run has no ruling; give one or the other");
-      if (parsed.flags["not-run"]) {
-        const gate = args[2];
-        const reason = typeof parsed.flags.reason === "string" ? parsed.flags.reason.trim() : "";
-        if (!gate || !reason)
-          return refuse(usage);
-        if (!isJudgementGateName(gate))
-          return refuse(`unknown judgement gate: ${gate} (${JUDGEMENT_GATES.join(", ")})`);
-        if (!planned.includes(gate))
-          return refuse(`${gate} is not planned for this item${plannedNote(planned)}`);
-        records.push(notRunRecord(gate, reason, before.currentFingerprint));
-      } else {
-        if (typeof parsed.flags.ruling !== "string")
-          return refuse(usage);
+      if (newRound) {
+        const held = continueOrRefuse(env, opened.work, "judgement", undefined, env.policy.team.maxJudgementRounds, rounds.judgement, `judgement round ${rounds.judgement + 1} of ${opened.work.id}: the policy allows ${env.policy.team.maxJudgementRounds} (team.maxJudgementRounds); the user continues it once with crew continue ${opened.work.id} judgement, or decides (crew skip <id> gate:<gate> where policy.json allows it)`);
+        if (held)
+          return held;
+      }
+      if (!parsed.flags["not-run"]) {
         const inputs = readReviewInputs(env.paths, opened.work.id);
         if (!inputs)
           return refuse(`no review inputs for this item: run crew gate run ${opened.work.id} first, then the reviewers and the judge`);
         if (inputs.fingerprint !== before.currentFingerprint)
           return refuse(`the review inputs describe other code than the current one: run crew gate run ${opened.work.id}, then the reviewers and the judge again`);
-        const rulingPath = resolve4(env.paths.root, parsed.flags.ruling);
-        const text = readText(rulingPath);
-        if (text === null)
-          return refuse(`no ruling file at ${rulingPath}`);
-        let raw;
-        try {
-          raw = JSON.parse(text);
-        } catch {
-          return refuse(`the ruling file is not valid JSON: ${rulingPath}`);
-        }
-        const parsedRulings = parseRulings(raw, planned);
-        if ("refused" in parsedRulings)
-          return refuse(parsedRulings.refused);
-        for (const ruling of parsedRulings.rulings)
-          records.push(stampRuling(ruling, before.currentFingerprint, before.changed, opened.work.id));
       }
-      for (const record of records) {
-        const why = contradiction(record);
-        if (why)
-          return refuse(why);
-      }
+      const input = rulingRecords(env, parsed, args[2], planned, before.currentFingerprint, before.changed, opened.work.id, "this item", usage);
+      if (isOutcome(input))
+        return input;
+      const { records } = input;
       fillTokens(records, before.evidence.roles ?? [], readReviewInputs(env.paths, opened.work.id)?.at);
       for (const record of records)
         recordJudgement(before.evidence, record);
@@ -9050,6 +9308,8 @@ captures: ${captures.length}${silent.length ? ` (${silent.length} without a cons
           judgementCode: before.currentFingerprint
         };
       saveWork(env.paths, opened.work);
+      if (typeof parsed.flags.ruling === "string")
+        keepRound(env.paths, opened.work.id, opened.work.rounds?.judgement ?? rounds.judgement, records.map((r) => r.gate), resolve4(env.paths.root, parsed.flags.ruling));
       const rulingFile = typeof parsed.flags.ruling === "string" ? relative7(env.paths.root, resolve4(env.paths.root, parsed.flags.ruling)).replace(/\\/g, "/") : undefined;
       for (const record of records)
         for (const f of record.findings)
@@ -9065,7 +9325,7 @@ captures: ${captures.length}${silent.length ? ` (${silent.length} without a cons
       deliver2(env, opened, result.evidence);
       const lines2 = records.map((r) => {
         const outside = r.findings.filter((f) => f.outside).length;
-        const detail = r.verdict === "not-run" ? `: ${r.reason}` : ` (${r.findings.length} finding${r.findings.length === 1 ? "" : "s"}${outside ? `, ${outside} outside the change` : ""})`;
+        const detail = r.verdict === "not-run" ? `: ${r.reason}` : ` (${findingsText(r.findings.length)}${outside ? `, ${outside} outside the change` : ""})`;
         const word = r.verdict === "not-proven" ? "not proven" : r.verdict === "not-run" ? "not run" : "proven";
         return `  ${r.gate}: ${word}${detail}`;
       });
@@ -9167,29 +9427,26 @@ ${out.notes.join(`
         const scoped = taskScope(env.paths.root, env.profile, record, flagScope);
         if ("refused" in scoped)
           return refuse(scoped.refused);
-        const grants = (opened.work.continued ?? []).filter((c) => c.what === "gate" && c.task === task && decisionCounts(env.policy, c.by)).length;
         const round = record.gate?.round ?? 0;
-        if (round >= env.policy.team.maxGateRounds + grants)
-          return refuse(`gate round ${round + 1} of ${task}: the policy allows ${env.policy.team.maxGateRounds} (team.maxGateRounds); the user continues it once with crew continue ${opened.work.id} gate ${task}, or decides`);
+        const held = continueOrRefuse(env, opened.work, "gate", task, env.policy.team.maxGateRounds, round, `gate round ${round + 1} of ${task}: the policy allows ${env.policy.team.maxGateRounds} (team.maxGateRounds); the user continues it once with crew continue ${opened.work.id} gate ${task}, or decides`);
+        if (held)
+          return held;
         const result = await runTaskGate(env.paths, opened.work, env.profile, env.policy, scoped.scope);
-        record.gate = {
-          round: round + 1,
-          at: nowIso(),
-          status: result.status,
-          runs: result.runs,
-          scope: scoped.scope
-        };
-        if (result.status === "pass" && record.state !== "briefed")
-          record.state = "gated";
+        const planned = planTaskJudgement(env, opened.work, env.tampered || opened.tampered, record, task, round + 1, scoped.scope, flagScope?.length ? taskScope(env.paths.root, env.profile, record) : scoped, result);
+        settleTaskState(opened.work, record, env.policy);
         saveWork(env.paths, opened.work);
         const lines2 = result.runs.map((r) => `  ${r.gate} (${r.target}): ${r.status} in ${(r.durationMs / 1000).toFixed(1)}s${r.reason ? ` (${r.reason})` : ""}`);
+        const pending = result.status === "pass" ? taskPending(opened.work, record, env.policy) : [];
+        if (pending.length)
+          lines2.push(`Judgement gates to run for ${task}: ${pending.map((g) => `${g} (${planned.find((p) => p.gate === g)?.reason ?? ""})`).join(", ")}; inputs in .crew/work/${opened.work.id}/review/${task}/ (diff.patch, files.txt); record each with crew judgement ${opened.work.id} record --task ${task} --ruling <file>`);
+        const verdict = result.status === "pass" && pending.length ? `pass, judgement pending (${pending.join(", ")})` : result.status;
         return {
           code: result.status === "pass" ? 0 : 1,
           stdout: true,
           text: `${lines2.join(`
 `)}
-${task} gate round ${round + 1}: ${result.status}`,
-          data: { task: record, gate: record.gate }
+${task} gate round ${round + 1}: ${verdict}`,
+          data: { task: record, gate: record.gate, pending }
         };
       }
       if (args[1] === "brief") {
@@ -9199,6 +9456,8 @@ ${task} gate round ${round + 1}: ${result.status}`,
           return refuse(task ? `${task} is not a task of ${opened.work.id}` : usage);
         if (record.gate?.status !== "pass")
           return refuse(`${task} has no passing gate yet (crew task <id> gate ${task})`);
+        if (taskPending(opened.work, record, env.policy).length)
+          return refuse(`${task} has a judgement gate not proven yet (crew judgement <id> record --task ${task} --ruling <file>)`);
         const text = writeBrief(env.paths, opened.work, record, loadEvidence(env.paths, opened.work.id).evidence, env.policy);
         saveWork(env.paths, opened.work);
         return ok(text, { task: record, brief: text });
@@ -9295,9 +9554,11 @@ test-first not credited: ${out.uncredited}` : "";
       const last = same[same.length - 1];
       const newRound = !last || last.hash !== hash;
       const rounds = work.rounds ?? { judgement: 0, validation: 0 };
-      const grants = (work.continued ?? []).filter((c) => c.what === "validation" && decisionCounts(env.policy, c.by)).length;
-      if (what === "spec" && newRound && rounds.validation >= env.policy.team.maxValidationRounds + grants)
-        return refuse(`validation round ${rounds.validation + 1} of ${work.id}: the policy allows ${env.policy.team.maxValidationRounds} (team.maxValidationRounds); the user continues it once with crew continue ${work.id} validation, or decides`);
+      if (what === "spec" && newRound) {
+        const held = continueOrRefuse(env, work, "validation", undefined, env.policy.team.maxValidationRounds, rounds.validation, `validation round ${rounds.validation + 1} of ${work.id}: the policy allows ${env.policy.team.maxValidationRounds} (team.maxValidationRounds); the user continues it once with crew continue ${work.id} validation, or decides`);
+        if (held)
+          return held;
+      }
       const round = newRound ? (what === "spec" ? rounds.validation : last?.round ?? 0) + 1 : last?.round ?? 1;
       work.validations = [
         ...work.validations ?? [],

@@ -15,6 +15,7 @@ The item's diff (`review/diff.patch`), the files it touches (`review/files.txt`)
 5. Behaviour, not implementation: where the criterion is a behaviour, does the test assert what a caller sees rather than private names, call counts or the order of internal calls?
 6. Readable as the criterion: do the test's name and failure message say which criterion broke?
 7. Mutation: when a report exists, a survived mutant on a line of the diff is a test that does not fail when the code changes; name the mutant and the line.
+8. Fixtures: does any fixture name a client, a customer or a real workspace? Fixtures use neutral names (a, b, storefront, crm, shop); a real name is a defect.
 
 ## Defect or advisory
 
