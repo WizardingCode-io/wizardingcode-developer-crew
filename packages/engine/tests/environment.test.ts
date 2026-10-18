@@ -187,7 +187,7 @@ test("SP7b-T3 AC-2: crew env starts the environment detached with a record writt
   expect((await checkHealth(paths, env)).up).toBe(true);
   expect(await envStatus(paths, env)).toMatchObject({ state: "up", managed: true, pid });
   const stopped = await stopEnvironment(paths, env);
-  expect(stopped).toEqual({ stopped: true, pid });
+  expect(stopped).toEqual({ stopped: true, pid, signalled: true });
   expect(existsSync(join(root, "up.flag"))).toBe(false);
   await waitFor("the started process to die", () => !isAlive(pid));
   expect(existsSync(envRecordPath(paths))).toBe(false);
@@ -208,7 +208,7 @@ test("SP7b-T3 AC-2: crew env starts the environment detached with a record writt
     managed: true,
   });
   const ended = await stopEnvironment(paths, flagged({ stop: undefined }));
-  expect(ended).toEqual({ stopped: true, pid: recorded.pid });
+  expect(ended).toEqual({ stopped: true, pid: recorded.pid, signalled: true });
   await waitFor("the sleeper to die", () => !isAlive(recorded.pid as number));
   // A start whose health never comes: the group is ended and the record removed.
   const timedOut = await startEnvironment(
@@ -221,36 +221,58 @@ test("SP7b-T3 AC-2: crew env starts the environment detached with a record writt
   expect(existsSync(envRecordPath(paths))).toBe(false);
   const starts = readdirSync(join(paths.localDir, "env")).filter((f) => f.startsWith("start-"));
   expect(starts.length).toBe(3);
-  // A stale record: the process is gone, so nothing is signalled and the stop command does not run.
+  // A stale record (finding 71): the stop command runs whenever the profile has one, nothing is
+  // signalled, the record goes; without a stop command the stop is refused and says so.
   const gone = spawnSync("sh", ["-c", "exit 0"]);
   const stale = flagged({ stop: confirmed("touch stopped.flag") });
-  writeJson(envRecordPath(paths), {
+  const staleRecord = {
     pid: gone.pid,
     processStart: "gone",
     startedAt: "2026-10-18T10:00:00.000Z",
     managed: true,
     log: null,
     command: "x",
-  });
+  };
+  writeJson(envRecordPath(paths), staleRecord);
   expect(await stopEnvironment(paths, stale)).toEqual({
+    stopped: true,
+    pid: gone.pid,
+    signalled: false,
+  });
+  expect(existsSync(join(root, "stopped.flag"))).toBe(true);
+  expect(existsSync(envRecordPath(paths))).toBe(false);
+  unlinkSync(join(root, "stopped.flag"));
+  writeJson(envRecordPath(paths), staleRecord);
+  expect(await stopEnvironment(paths, flagged({ stop: undefined }))).toEqual({
     refused: `the recorded process (pid ${gone.pid}) is gone; the record was removed and nothing was signalled`,
   });
   expect(existsSync(envRecordPath(paths))).toBe(false);
   expect(existsSync(join(root, "stopped.flag"))).toBe(false);
-  // A reused pid: alive, but not the process the engine started.
-  writeJson(envRecordPath(paths), {
-    pid: process.pid,
-    processStart: "not this one",
-    startedAt: "2026-10-18T10:00:00.000Z",
-    managed: true,
-    log: null,
-    command: "x",
-  });
+  // A reused pid: alive, but not the process the engine started: never signalled, with or without a stop command.
+  const reused = { ...staleRecord, pid: process.pid, processStart: "not this one" };
+  writeJson(envRecordPath(paths), reused);
   expect(await stopEnvironment(paths, stale)).toEqual({
+    stopped: true,
+    pid: process.pid,
+    signalled: false,
+  });
+  expect(existsSync(join(root, "stopped.flag"))).toBe(true);
+  unlinkSync(join(root, "stopped.flag"));
+  writeJson(envRecordPath(paths), reused);
+  expect(await stopEnvironment(paths, flagged({ stop: undefined }))).toEqual({
     refused: `the recorded process (pid ${process.pid}) is gone; the record was removed and nothing was signalled`,
   });
   expect(existsSync(envRecordPath(paths))).toBe(false);
-  expect(existsSync(join(root, "stopped.flag"))).toBe(false);
+  // An empty start time is never ours, even with a live pid.
+  writeJson(envRecordPath(paths), { ...reused, processStart: "" });
+  expect(await stopEnvironment(paths, stale)).toEqual({
+    stopped: true,
+    pid: process.pid,
+    signalled: false,
+  });
+  expect(existsSync(join(root, "stopped.flag"))).toBe(true);
+  unlinkSync(join(root, "stopped.flag"));
+  expect(existsSync(envRecordPath(paths))).toBe(false);
 });
 
 test("SP7b-T3 AC-3: an environment up before the start is the user's: nothing spawned, recorded as not managed, never stopped; down when its server dies", async () => {

@@ -10,6 +10,8 @@ export interface DetectedTarget {
   workspaces?: string[];
   /** True when the detector had to guess (several lockfiles, no declared package manager): the commands are proposed, not detected, so the first session is asked to confirm them. */
   proposed?: boolean;
+  /** Gates whose command is a guess from a config file rather than a script (the e2e runner): proposed whatever the manager. */
+  proposedGates?: GateName[];
 }
 
 export interface Detector {

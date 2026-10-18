@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { detectProfile } from "../src/detect/index.ts";
 import { nodeDetector } from "../src/detect/node.ts";
+import { GATE_NAMES } from "../src/types.ts";
 import { tempDir, write } from "./helpers.ts";
 
 test("returns null without a package.json", () => {
@@ -169,4 +170,38 @@ test("finding 13: the packageManager field wins; several lockfiles without it ma
     command: "yarn run test",
     source: "detected",
   });
+});
+
+test("SP7b-T4 AC-1: the e2e command comes from a test:e2e or e2e script (detected) or from a Playwright or Cypress config (proposed); test:e2e stays out of the test gate; GATE_NAMES ends with e2e", () => {
+  const playwright = tempDir();
+  write(playwright, "package.json", JSON.stringify({ scripts: { test: "vitest run" } }));
+  write(playwright, "playwright.config.ts", "export default {};");
+  const pw = detectProfile(playwright).targets[0];
+  expect(pw?.gates.e2e).toEqual({ command: "npx playwright test", source: "proposed" });
+  expect(pw?.gates.test).toEqual({ command: "npm run test", source: "detected" });
+  const cypress = tempDir();
+  write(cypress, "package.json", JSON.stringify({ scripts: {} }));
+  write(cypress, "cypress.config.js", "module.exports = {};");
+  expect(detectProfile(cypress).targets[0]?.gates.e2e).toEqual({
+    command: "npx cypress run",
+    source: "proposed",
+  });
+  const script = tempDir();
+  write(
+    script,
+    "package.json",
+    JSON.stringify({ scripts: { "test:unit": "vitest run", "test:e2e": "playwright test" } }),
+  );
+  write(script, "bun.lock", "");
+  const byScript = detectProfile(script).targets[0];
+  expect(byScript?.gates.e2e).toEqual({ command: "bun run test:e2e", source: "detected" });
+  expect(byScript?.gates.test).toEqual({ command: "bun run test:unit", source: "detected" });
+  const plain = tempDir();
+  write(plain, "package.json", JSON.stringify({ scripts: { e2e: "cypress run" } }));
+  write(plain, "bun.lock", "");
+  expect(detectProfile(plain).targets[0]?.gates.e2e).toEqual({
+    command: "bun run e2e",
+    source: "detected",
+  });
+  expect(GATE_NAMES).toEqual(["build", "test", "lint", "typecheck", "secrets", "deps", "e2e"]);
 });

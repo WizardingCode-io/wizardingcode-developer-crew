@@ -69,6 +69,7 @@ test("SP2b: judgement rulings are recorded from a file, judged by the verdict, s
   write(root, "src/App.vue", "<template>empty</template>");
   expect((await c.run("tdd", "red", id, "AC-1", "--", "exit 1")).code).toBe(0);
   expect((await c.run("tdd", "green", id, "AC-1", "--", "exit 0")).code).toBe(0);
+  await c.run("skip", id, "gate:e2e", "--reason", "no environment in the fixture");
   const first = await c.json("gate", "run", id);
   expect(first.code).toBe(1);
   expect(first.data.unproven).toEqual(["judgement gate ui-ux not run"]);
@@ -204,6 +205,7 @@ test("SP2b review: a ruling is accepted only while the review inputs describe th
   expect((await c.run("judgement", id, "record", "--ruling", file)).err.trim()).toBe(
     `no review inputs for this item: run crew gate run ${id} first, then the reviewers and the judge`,
   );
+  await c.run("skip", id, "gate:e2e", "--reason", "no environment in the fixture");
   await c.run("gate", "run", id);
   writeFileSync(join(review, "ui-ux.findings.md"), "# ui-ux findings\n");
   writeFileSync(file, proven);
@@ -235,6 +237,7 @@ test("SP2b minors: a relative --ruling path resolves from the repository root an
   write(root, "src/App.vue", "<template>empty</template>");
   await c.run("tdd", "red", id, "AC-1", "--", "exit 1");
   await c.run("tdd", "green", id, "AC-1", "--", "exit 0");
+  await c.run("skip", id, "gate:e2e", "--reason", "no environment in the fixture");
   await c.run("gate", "run", id);
   // From a subfolder, the same relative path names the same file: the one under the root.
   mkdirSync(join(root, "sub"));
@@ -280,6 +283,7 @@ test("SP2b minors: a proven ruling with a defect inside the change is refused an
   write(root, "src/App.vue", "<template>empty</template>");
   await c.run("tdd", "red", id, "AC-1", "--", "exit 1");
   await c.run("tdd", "green", id, "AC-1", "--", "exit 0");
+  await c.run("skip", id, "gate:e2e", "--reason", "no environment in the fixture");
   await c.run("gate", "run", id);
   const file = join(root, ".crew", "work", id, "review", "ruling.json");
   const ruling = (findings: unknown[]) =>
@@ -316,6 +320,7 @@ test("SP2b minors: a gate run whose patch has no diff content says so, with the 
   write(root, "src/App.vue", "<template>empty</template>");
   await c.run("tdd", "red", id, "AC-1", "--", "exit 1");
   await c.run("tdd", "green", id, "AC-1", "--", "exit 0");
+  await c.run("skip", id, "gate:e2e", "--reason", "no environment in the fixture");
   const run = await c.json("gate", "run", id);
   expect(run.data.judgement).toEqual([{ gate: "ui-ux", reason: "interface files: src/App.vue" }]);
   expect(run.data.reviewNote).toBe("outside git, no diff can be cut");
@@ -347,10 +352,11 @@ test("SP2b: a judgement gate is skipped only when the policy lists it, and the v
   expect((await c.run("skip", id, "gate:nope", "--reason", "x")).err.trim()).toBe(
     "unknown step: gate:nope",
   );
-  write(root, ".crew/policy.json", JSON.stringify({ allowSkips: ["tdd", "ui-ux"] }));
+  write(root, ".crew/policy.json", JSON.stringify({ allowSkips: ["tdd", "ui-ux", "e2e"] }));
   expect((await c.run("policy", "accept")).code).toBe(0);
   const skipped = await c.json("skip", id, "ui-ux", "--reason", "no browser");
   expect((skipped.data.skips as { step: string }[]).at(-1)?.step).toBe("gate:ui-ux");
+  await c.run("skip", id, "gate:e2e", "--reason", "no environment in the fixture");
   expect((await c.json("gate", "run", id)).data.verdict).toBe("proven");
   expect((await c.run("gate", "run", id)).out).not.toContain("Judgement gates to run");
   expect((await c.json("status")).data.judgement).toEqual([
@@ -375,6 +381,7 @@ test("SP2b: gate run names the judgement gates to run, accepts their names in --
   write(root, "src/App.vue", "<template>empty</template>");
   expect((await c.run("tdd", "red", id, "AC-1", "--", "exit 1")).code).toBe(0);
   expect((await c.run("tdd", "green", id, "AC-1", "--", "exit 0")).code).toBe(0);
+  await c.run("skip", id, "gate:e2e", "--reason", "no environment in the fixture");
   const run = await c.run("gate", "run", id);
   expect(run.out).toContain(
     `Judgement gates to run: ui-ux (interface files: src/App.vue); inputs in .crew/work/${id}/review/ (diff.patch, files.txt); record each with crew judgement ${id} record --ruling <file>`,
@@ -383,7 +390,8 @@ test("SP2b: gate run names the judgement gates to run, accepts their names in --
   const json = await c.json("gate", "run", id, "--only", "ui-ux");
   expect(json.data.judgement).toEqual([{ gate: "ui-ux", reason: "interface files: src/App.vue" }]);
   expect(json.data.review).toBe(`.crew/work/${id}/review`);
-  expect((json.data.runs as unknown[]).length).toBe(2);
+  // secrets, test and the skipped e2e row of the full run; --only ui-ux ran nothing new.
+  expect((json.data.runs as unknown[]).length).toBe(3);
   expect((await c.run("gate", "run", id, "--only", "ui-ux,bogus")).err.trim()).toBe(
     "unknown gate: bogus",
   );
@@ -2018,6 +2026,7 @@ test("SP2c AC-5: crew judgement record fills tokens from the engine's role recor
   write(root, "src/App.vue", "<template>empty</template>");
   await c.run("tdd", "red", id, "AC-1", "--", "exit 1");
   await c.run("tdd", "green", id, "AC-1", "--", "exit 0");
+  await c.run("skip", id, "gate:e2e", "--reason", "no environment in the fixture");
   await c.run("gate", "run", id);
   const paths = repoPaths(root, c.env);
   const { evidence } = loadEvidence(paths, id);
@@ -2179,6 +2188,7 @@ test("SP7a AC-4: crew team prints the seats with their reasons and records them;
   expect(status.data.rounds).toEqual({ judgement: 0, validation: 0 });
   // The gate run records the seats too, from the paths the change touched.
   write(root, "src/App.vue", "<template />");
+  await c.run("skip", id, "gate:e2e", "--reason", "no environment in the fixture");
   await c.run("gate", "run", id);
   const after = loadWork(repoPaths(root, env), id).work;
   expect(after?.seats?.map((s) => s.role)).toContain("review-ui-ux");
@@ -3420,4 +3430,71 @@ test("SP7b-T3 AC-3: crew env on the user's environment: nothing started, never s
   );
   unlinkSync(join(root, "up.flag"));
   expect((await c.run("env", "status")).out).toBe("environment: down\n");
+});
+
+test("SP7b-T4 AC-1: crew profile set e2e sets the command; an interface change without an environment leaves the e2e gate unavailable until the user sets one or skips the gate, which the default policy allows for e2e alone", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/App.vue": "<template/>",
+  });
+  const c = io(root);
+  expect((await c.run("profile", "set", "e2e", "npx playwright test")).out.trim()).toBe(
+    "e2e for . set and confirmed: npx playwright test",
+  );
+  expect(loadProfile(repoPaths(root, c.env)).profile?.targets[0]?.gates.e2e).toEqual({
+    command: "npx playwright test",
+    source: "confirmed",
+  });
+  const id = (await c.json("start", "Empty state", "--answers", answers, "--criterion", "a")).data
+    .id as string;
+  write(root, "src/App.vue", "<template>empty</template>");
+  await c.run("tdd", "red", id, "AC-1", "--", "exit 1");
+  await c.run("tdd", "green", id, "AC-1", "--", "exit 0");
+  const reason = 'no environment in the profile (crew profile set environment.start "<cmd>")';
+  const first = await c.json("gate", "run", id);
+  expect(first.data.unproven).toContain(`gate e2e unavailable: ${reason}`);
+  expect((first.data.runs as GateRun[]).find((r) => r.gate === "e2e")).toMatchObject({
+    status: "unavailable",
+    reason,
+  });
+  const refused = await c.run("skip", id, "gate:test", "--reason", "x");
+  expect(refused.code).toBe(1);
+  expect(refused.err).toContain("allowSkips");
+  const skipped = await c.json("skip", id, "gate:e2e", "--reason", "no environment yet");
+  expect(skipped.code).toBe(0);
+  expect(loadWork(repoPaths(root, c.env), id).work?.skips).toMatchObject([
+    { step: "gate:e2e", reason: "no environment yet", by: "user" },
+  ]);
+  const second = await c.json("gate", "run", id);
+  expect((second.data.runs as GateRun[]).find((r) => r.gate === "e2e")).toMatchObject({
+    status: "skipped",
+    reason: "no environment yet",
+  });
+  expect((second.data.unproven as string[]).some((u) => u.includes("e2e"))).toBe(false);
+});
+
+test("SP7b-T4 AC-4: the gate run names the captures and the ones without a console file", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/App.vue": "<template/>",
+  });
+  const c = io(root);
+  const id = (await c.json("start", "Empty state", "--answers", answers, "--criterion", "a")).data
+    .id as string;
+  write(root, "src/App.vue", "<template>empty</template>");
+  await c.run("skip", id, "gate:e2e", "--reason", "no environment in the fixture");
+  const ui = join(root, ".crew", "work", id, "review", "ui");
+  write(ui, "home-empty.png", "png");
+  write(ui, "console-home-empty.json", "[]");
+  write(ui, "cart-error.png", "png");
+  const run = await c.run("gate", "run", id);
+  expect(run.out).toContain("captures: 2 (1 without a console file: cart-error.png)");
+  expect(readReviewInputs(repoPaths(root, c.env), id)?.captures).toEqual([
+    { file: "review/ui/cart-error.png", console: null },
+    { file: "review/ui/home-empty.png", console: "review/ui/console-home-empty.json" },
+  ]);
+  // Without captures the line is not printed.
+  const bare = (await c.json("start", "Another", "--answers", answers, "--criterion", "a")).data
+    .id as string;
+  expect((await c.run("gate", "run", bare)).out).not.toContain("captures:");
 });

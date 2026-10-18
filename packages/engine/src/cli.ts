@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { join, relative, resolve } from "node:path";
+import { basename, join, relative, resolve } from "node:path";
 import { type Parsed, parse } from "./argv.ts";
 import { AnswerError, type Answers, computeRoute, validateAnswers } from "./classify.ts";
 import { loadConfig, saveConfig, setConfigValue } from "./config.ts";
@@ -693,7 +693,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       if (sub === "set") {
         if (!GATE_NAMES.includes(gate as GateName) || gate === "secrets" || !cmd)
           return refuse(
-            'usage: crew profile set <build|test|lint|typecheck|deps> "<cmd>" [--target <path>]',
+            'usage: crew profile set <build|test|lint|typecheck|deps|e2e> "<cmd>" [--target <path>]',
           );
         const targetPath = typeof parsed.flags.target === "string" ? parsed.flags.target : ".";
         const stackFlag = parsed.flags.stack;
@@ -1295,6 +1295,15 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       // What the reviewers' patch lacks is said here too, never found out from an empty file
       // (review of SP2b, findings 9 and 10).
       const reviewLine = outcome.reviewNote ? `\ndiff.patch: ${outcome.reviewNote}` : "";
+      // The captures the session took, and which of them lack the console file the UI/UX rubric
+      // needs (rule 5): said at the gate run, before the reviewer is launched.
+      const captures = outcome.review
+        ? (readReviewInputs(env.paths, opened.work.id)?.captures ?? [])
+        : [];
+      const silent = captures.filter((c) => c.console === null).map((c) => basename(c.file));
+      const capturesLine = captures.length
+        ? `\ncaptures: ${captures.length}${silent.length ? ` (${silent.length} without a console file: ${silent.join(", ")})` : ""}`
+        : "";
       return {
         code: outcome.verdict === "proven" ? 0 : 1,
         stdout: true,
@@ -1303,7 +1312,8 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           raised +
           gateSummary(opened.work, outcome.verdict, outcome.unproven, outcome.evidence.runs) +
           judgementNote +
-          reviewLine,
+          reviewLine +
+          capturesLine,
         data: {
           verdict: outcome.verdict,
           unproven: outcome.unproven,

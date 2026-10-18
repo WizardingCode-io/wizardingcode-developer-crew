@@ -35,7 +35,7 @@
 
 Requirement: Node.js 20 or later on `PATH` (the hooks and the `crew` command run on it). Development uses Bun.
 
-The profile may also hold the project's environment (start, health, stop, logs, url), detected from a compose file, a Laravel `artisan`, a Makefile target or a `package.json` script and proposed for the user to confirm (`crew profile set environment.<key>`, `crew profile confirm environment`); `crew env start | health | stop | status` drive it, and an environment the user already had running is never stopped by the engine.
+The profile may also hold the project's environment (start, health, stop, logs, url), detected from a compose file, a Laravel `artisan`, a Makefile target or a `package.json` script and proposed for the user to confirm (`crew profile set environment.<key>`, `crew profile confirm environment`); `crew env start | health | stop | status` drive it, and an environment the user already had running is never stopped by the engine. The e2e gate runs the project's end-to-end command around that environment when the change touches an interface or a public-api path, reads the browser's console (`console.json`, written by the project's test run or the crew's Playwright fixture) and the environment's logs, and fails on the first error or warning; a project without an environment yet skips the gate on the user's say.
 
 ## Where state lives
 

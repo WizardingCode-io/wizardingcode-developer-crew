@@ -4,7 +4,7 @@ The UI/UX gate asks whether the change does what the criterion says where the us
 
 ## What the reviewer receives
 
-Captures the session took in a browser of each page the diff changes, one per page and state, under `review/ui/<page>-<state>.png`; the item's criteria; the diff (`review/diff.patch`) and the files it touches (`review/files.txt`) for what a capture cannot show.
+Captures the session took in a browser of each page the diff changes, one per page and state, under `review/ui/<page>-<state>.png`; the item's criteria; the diff (`review/diff.patch`) and the files it touches (`review/files.txt`) for what a capture cannot show. A capture without its console file (console-<page>-<state>.json beside it, saved from the browser's console tool) cannot answer the questions for that page: Not answerable, never passed.
 
 ## Questions
 

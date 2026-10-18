@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
-import { chmodSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseAudit } from "../src/audit.ts";
+import { readEnvRecord } from "../src/environment.ts";
 import { emptyEvidence, loadEvidence, renderReport, saveEvidence } from "../src/evidence.ts";
 import { computeFingerprint } from "../src/fingerprint.ts";
 import {
@@ -15,10 +16,11 @@ import {
   runTaskGate,
   scopedTestCommand,
 } from "../src/gates.ts";
+import { isAlive } from "../src/open.ts";
 import { DEFAULT_POLICY } from "../src/policy.ts";
 import { namedFiles } from "../src/problems.ts";
 import { ensureProfile, loadProfile, saveProfile } from "../src/profile.ts";
-import type { Target } from "../src/types.ts";
+import type { Environment, GateCommand, GateRun, Policy, Profile, Target } from "../src/types.ts";
 import { addCriterion, addSkip, createWork } from "../src/work.ts";
 import { git, makeRepo, repoPaths, tempDir, testEnv, write } from "./helpers.ts";
 
@@ -33,6 +35,7 @@ test("SP2b: a gate run writes the review inputs when a judgement gate is planned
   const work = createWork(paths, "fix");
   work.route = "fast";
   addCriterion(work, "x");
+  addSkip(work, "gate:e2e", "no environment in the fixture");
   write(root, "src/a.ts", "y");
   const plain = await runGates(paths, work, profile, DEFAULT_POLICY);
   expect(plain.judgement).toEqual([]);
@@ -67,6 +70,7 @@ test("SP2b: --only with judgement names alone runs no deterministic gate and rew
   const work = createWork(paths, "fix");
   work.route = "fast";
   addCriterion(work, "x");
+  addSkip(work, "gate:e2e", "no environment in the fixture");
   addSkip(work, "tdd:AC-1", "manual");
   write(root, "src/App.vue", "<template>a</template>");
   const only = await runGates(paths, work, profile, DEFAULT_POLICY, { only: ["ui-ux"] });
@@ -987,3 +991,267 @@ test("SP7a AC-3 (Task 6): runTaskGate runs the todo's files through the scoped t
   });
   expect(loadEvidence(paths, work.id).evidence.runs).toEqual([]);
 });
+
+// SP7b Task 4: the e2e gate, the console and the logs.
+
+const confirmedCmd = (command: string): GateCommand => ({ command, source: "confirmed" });
+
+/** The environment of the e2e tests: a flag file stands for the server, a sleeping process for it being up. */
+function flagged(overrides: Partial<Environment> = {}): Environment {
+  return {
+    start: confirmedCmd("sh -c 'touch up.flag; exec sleep 300'"),
+    health: confirmedCmd("test -f up.flag"),
+    stop: confirmedCmd("rm -f up.flag"),
+    timeoutMs: 10_000,
+    ...overrides,
+  };
+}
+
+async function waitFor(what: string, cond: () => boolean, ms = 4000): Promise<void> {
+  const until = Date.now() + ms;
+  while (!cond() && Date.now() < until) await new Promise((r) => setTimeout(r, 50));
+  if (!cond()) throw new Error(`timed out waiting for ${what}`);
+}
+
+/** An e2e command that checks the two variables and writes an empty console file. */
+const E2E_OK =
+  'sh -c \'test -n "$WIZARDINGCODE_CREW_E2E_DIR" && test -d "$WIZARDINGCODE_CREW_E2E_DIR" && test -n "$WIZARDINGCODE_CREW_CONSOLE_FILE" && printf "[]" > "$WIZARDINGCODE_CREW_CONSOLE_FILE"\'';
+
+const e2eRun = (runs: readonly GateRun[]): GateRun | undefined =>
+  runs.find((r) => r.gate === "e2e");
+
+/** A repository whose interface file changed, its profile holding the environment and the e2e command. */
+function e2eRepo(e2e: string, environment: Environment | undefined = flagged()) {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/App.vue": "<template/>",
+  });
+  const paths = repoPaths(root, testEnv());
+  const { profile } = ensureProfile(paths);
+  const target = profile.targets[0];
+  if (!target) throw new Error("no target detected");
+  target.gates.e2e = confirmedCmd(e2e);
+  if (environment) profile.environment = environment;
+  const work = createWork(paths, "fix");
+  work.route = "standard";
+  addCriterion(work, "x");
+  write(root, "src/App.vue", "<template>hi</template>");
+  return { root, paths, profile, target, work };
+}
+
+test("SP7b-T4 AC-1: the e2e gate is planned from the change and the policy, exactly once, on the first target with a command, never per target or on a todo's gate, and is unavailable with the command to set", async () => {
+  const withE2e: Policy = { ...DEFAULT_POLICY, requiredGates: ["e2e"] };
+  expect(gatesForTarget(target, withE2e, ["src/a.ts"])).not.toContain("e2e");
+  const profile: Profile = {
+    version: 1,
+    detectedAt: "",
+    targets: [target, { ...target, path: "apps/api" }],
+    watch: { exclude: [] },
+  };
+  const root = tempDir();
+  const planned = plannedGates("standard", profile, DEFAULT_POLICY, ["src/App.vue"], root);
+  expect(planned.at(-1)).toEqual({ gate: "e2e", target: "." });
+  expect(planned.filter((p) => p.gate === "e2e").length).toBe(1);
+  const has = (list: { gate: string }[]) => list.some((p) => p.gate === "e2e");
+  expect(has(plannedGates("standard", profile, DEFAULT_POLICY, ["src/a.ts"], root))).toBe(false);
+  const publicApi: Policy = { ...DEFAULT_POLICY, riskPaths: { "public-api": ["src/api/**"] } };
+  expect(has(plannedGates("standard", profile, publicApi, ["src/api/users.ts"], root))).toBe(true);
+  const required = plannedGates("standard", profile, withE2e, ["src/a.ts", "apps/api/x.php"], root);
+  expect(required.filter((p) => p.gate === "e2e")).toEqual([{ gate: "e2e", target: "." }]);
+  expect(has(plannedGates("fast", profile, DEFAULT_POLICY, ["src/App.vue"], root))).toBe(true);
+  expect(has(plannedGates("fast", profile, DEFAULT_POLICY, ["src/a.ts"], root))).toBe(false);
+  const web: Profile = {
+    ...profile,
+    targets: [
+      target,
+      {
+        ...target,
+        path: "apps/web",
+        gates: { ...target.gates, e2e: confirmedCmd("npx playwright test") },
+      },
+    ],
+  };
+  expect(
+    plannedGates("standard", web, DEFAULT_POLICY, ["apps/web/src/App.vue"], root).at(-1),
+  ).toEqual({
+    gate: "e2e",
+    target: "apps/web",
+  });
+  // A todo's gate never runs it, whatever the policy says.
+  const repo = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/App.vue": "<template/>",
+  });
+  const paths = repoPaths(repo, testEnv());
+  const { profile: detected } = ensureProfile(paths);
+  const work = createWork(paths, "fix");
+  work.route = "standard";
+  addCriterion(work, "x");
+  write(repo, "src/App.vue", "<template>hi</template>");
+  const todo = await runTaskGate(paths, work, detected, withE2e, ["src/App.vue"]);
+  expect(todo.runs.map((r) => r.gate)).toEqual(["test"]);
+  // The item's run: unavailable, with the command that would make it run.
+  const noEnvironment =
+    'no environment in the profile (crew profile set environment.start "<cmd>")';
+  const noEnv = await runGates(paths, work, detected, DEFAULT_POLICY);
+  expect(e2eRun(noEnv.evidence.runs)).toMatchObject({
+    status: "unavailable",
+    reason: noEnvironment,
+  });
+  expect(noEnv.unproven).toContain(`gate e2e unavailable: ${noEnvironment}`);
+  detected.environment = flagged();
+  const noCommand = 'no e2e command (crew profile set e2e "<cmd>")';
+  const noCmd = await runGates(paths, work, detected, DEFAULT_POLICY);
+  expect(e2eRun(noCmd.evidence.runs)).toMatchObject({ status: "unavailable", reason: noCommand });
+  expect(noCmd.unproven).toContain(`gate e2e unavailable: ${noCommand}`);
+});
+
+test("SP7b-T4 AC-2: the run starts the environment unless the user's is up, waits for health, runs the e2e command with the two variables, stops what it started and records the artifacts", async () => {
+  const { root, paths, profile, target, work } = e2eRepo(E2E_OK);
+  const e2eDir = join(paths.crewDir, "work", work.id, "review", "e2e");
+  const started = e2eRun((await runGates(paths, work, profile, DEFAULT_POLICY)).evidence.runs);
+  if (!started) throw new Error("no e2e run");
+  expect(started.status).toBe("pass");
+  expect(started.artifacts).toEqual({
+    dir: "review/e2e",
+    console: "review/e2e/console.json",
+    logs: null,
+  });
+  expect(readFileSync(join(e2eDir, "console.json"), "utf8")).toBe("[]");
+  const lines = started.tail.split("\n");
+  expect(lines.slice(-2)).toEqual(["console: clean", "logs: none"]);
+  const pid = Number(
+    /^environment: started by the engine \(pid (\d+)\)$/.exec(lines.at(-3) ?? "")?.[1],
+  );
+  expect(pid).toBeGreaterThan(0);
+  expect(existsSync(join(root, "up.flag"))).toBe(false);
+  await waitFor("the started process to die", () => !isAlive(pid));
+  expect(existsSync(join(paths.localDir, "env.json"))).toBe(false);
+  // The user's environment is up before the run: used, never stopped.
+  write(root, "up.flag", "");
+  const users = e2eRun((await runGates(paths, work, profile, DEFAULT_POLICY)).evidence.runs);
+  expect(users?.status).toBe("pass");
+  expect(users?.tail).toContain("environment: the user's");
+  expect(existsSync(join(root, "up.flag"))).toBe(true);
+  expect(readEnvRecord(paths)?.pid ?? null).toBeNull();
+  rmSync(join(root, "up.flag"));
+  // Health that never comes: unavailable with the reason, nothing left running.
+  const sick = {
+    ...profile,
+    environment: flagged({ health: confirmedCmd("exit 1"), timeoutMs: 1000 }),
+  };
+  const timedOut = e2eRun((await runGates(paths, work, sick, DEFAULT_POLICY)).evidence.runs);
+  expect(timedOut).toMatchObject({
+    status: "unavailable",
+    reason: "the environment did not answer health in 1 s (exit 1)",
+  });
+  expect(existsSync(join(paths.localDir, "env.json"))).toBe(false);
+  rmSync(join(root, "up.flag"), { force: true });
+  // An e2e command that never ends is timed out, and what was started is still stopped.
+  const slow = {
+    ...profile,
+    targets: [
+      {
+        ...target,
+        gates: { ...target.gates, e2e: { ...confirmedCmd("sleep 30"), timeoutMs: 500 } },
+      },
+    ],
+  };
+  const late = e2eRun((await runGates(paths, work, slow, DEFAULT_POLICY)).evidence.runs);
+  expect(late).toMatchObject({ status: "fail", reason: "timed out" });
+  expect(existsSync(join(root, "up.flag"))).toBe(false);
+  expect(existsSync(join(paths.localDir, "env.json"))).toBe(false);
+  // A failing e2e command fails the run and still stops what was started.
+  target.gates.e2e = confirmedCmd("exit 1");
+  const failed = e2eRun((await runGates(paths, work, profile, DEFAULT_POLICY)).evidence.runs);
+  expect(failed).toMatchObject({ status: "fail", exit: 1 });
+  expect(existsSync(join(root, "up.flag"))).toBe(false);
+  expect(existsSync(join(paths.localDir, "env.json"))).toBe(false);
+}, 60_000);
+
+test("SP7b-T4 AC-3: the console and the logs are graded as data and an offence fails the gate naming the first; a stale console file is never read; a logs path is read inside the project by its real path, a logs command is the user's", async () => {
+  const { root, paths, profile, target, work } = e2eRepo("exit 0");
+  const e2eDir = join(paths.crewDir, "work", work.id, "review", "e2e");
+  // The user's environment is up: no start and no stop around each run.
+  write(root, "up.flag", "");
+  write(
+    root,
+    "e2e-warning.sh",
+    `printf '[{"page":"/home","type":"warning","text":"deprecated"}]' > "$WIZARDINGCODE_CREW_CONSOLE_FILE"\n`,
+  );
+  write(root, "e2e-append.sh", "printf 'ERROR boom\\n' >> app.log\n");
+  const run = async (e2e: string, logs?: string): Promise<GateRun> => {
+    target.gates.e2e = confirmedCmd(e2e);
+    profile.environment = flagged(logs === undefined ? {} : { logs });
+    const found = e2eRun((await runGates(paths, work, profile, DEFAULT_POLICY)).evidence.runs);
+    if (!found) throw new Error("no e2e run");
+    return found;
+  };
+  const warning = await run("sh e2e-warning.sh");
+  expect(warning).toMatchObject({ status: "fail", reason: "console warning on /home: deprecated" });
+  expect(warning.artifacts?.console).toBe("review/e2e/console.json");
+  const silent = await run("exit 0");
+  expect(silent.status).toBe("pass");
+  expect(silent.artifacts?.console).toBeNull();
+  expect(silent.tail).toContain("console: not captured");
+  // The lines form, as the Playwright fixture writes it, and a file that does not parse.
+  write(
+    root,
+    "e2e-lines.sh",
+    `printf '%s\\n' '{"page":"/cart","type":"error","text":"boom"}' > "$WIZARDINGCODE_CREW_E2E_DIR/console.jsonl"\n`,
+  );
+  const lines = await run("sh e2e-lines.sh");
+  expect(lines).toMatchObject({ status: "fail", reason: "console error on /cart: boom" });
+  expect(lines.artifacts?.console).toBe("review/e2e/console.jsonl");
+  write(root, "e2e-broken.sh", `printf '{nope' > "$WIZARDINGCODE_CREW_CONSOLE_FILE"\n`);
+  const broken = await run("sh e2e-broken.sh");
+  expect(broken).toMatchObject({ status: "fail", reason: "console file does not parse" });
+  expect(broken.tail).toContain("console file does not parse");
+  // A stale console file of an earlier run is removed before the run, in either form.
+  writeFileSync(join(e2eDir, "console.json"), '[{"page":"/home","type":"warning","text":"stale"}]');
+  const staleArray = await run("exit 0");
+  expect(staleArray.status).toBe("pass");
+  expect(staleArray.artifacts?.console).toBeNull();
+  expect(staleArray.tail).toContain("console: not captured");
+  expect(existsSync(join(e2eDir, "console.json"))).toBe(false);
+  writeFileSync(join(e2eDir, "console.jsonl"), '{"page":"/cart","type":"error","text":"stale"}\n');
+  const staleLines = await run("exit 0");
+  expect(staleLines.status).toBe("pass");
+  expect(staleLines.artifacts?.console).toBeNull();
+  expect(staleLines.tail).toContain("console: not captured");
+  expect(existsSync(join(e2eDir, "console.jsonl"))).toBe(false);
+  // The logs as a path: only the lines the run added are read.
+  write(root, "app.log", "ERROR old\n");
+  const appended = await run("sh e2e-append.sh", "app.log");
+  expect(appended).toMatchObject({ status: "fail", reason: "logs: ERROR boom" });
+  expect(readFileSync(join(e2eDir, "logs.txt"), "utf8")).toBe("ERROR boom\n");
+  expect(appended.artifacts?.logs).toBe("review/e2e/logs.txt");
+  // The logs as a command (it holds whitespace): its output after the run; its exit code is never the verdict.
+  write(root, "app.log", "INFO fine\n");
+  const byCommand = await run("exit 0", "cat app.log");
+  expect(byCommand.status).toBe("pass");
+  expect(byCommand.tail).toContain("logs: clean");
+  expect(readFileSync(join(e2eDir, "logs.txt"), "utf8")).toBe("INFO fine\n");
+  const failingCommand = await run("exit 0", "cat ../x");
+  expect(failingCommand.status).toBe("pass");
+  expect(failingCommand.artifacts?.logs).toBe("review/e2e/logs.txt");
+  expect(readFileSync(join(e2eDir, "logs.txt"), "utf8")).toBe("");
+  expect(failingCommand.tail).toContain("logs: clean");
+  // A path outside the project, a missing one, or a link out of the project reads nothing and says so.
+  for (const outside of ["/abs/app.log", "../x"]) {
+    const kept = await run("exit 0", outside);
+    expect(kept.status).toBe("pass");
+    expect(kept.tail).toContain(`logs: ${outside} is outside the project; not read`);
+    expect(kept.artifacts?.logs).toBeNull();
+  }
+  const missing = await run("exit 0", "missing.log");
+  expect(missing.status).toBe("pass");
+  expect(missing.tail).toContain("logs: missing.log not found; not read");
+  const elsewhere = join(tempDir(), "secret.log");
+  writeFileSync(elsewhere, "ERROR secret\n");
+  symlinkSync(elsewhere, join(root, "link.log"));
+  const linked = await run("exit 0", "link.log");
+  expect(linked.status).toBe("pass");
+  expect(linked.tail).toContain("logs: link.log is outside the project; not read");
+  expect(existsSync(join(e2eDir, "logs.txt"))).toBe(false);
+}, 60_000);

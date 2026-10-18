@@ -1,4 +1,4 @@
-export type GateName = "build" | "test" | "lint" | "typecheck" | "secrets" | "deps";
+export type GateName = "build" | "test" | "lint" | "typecheck" | "secrets" | "deps" | "e2e";
 export const GATE_NAMES: readonly GateName[] = [
   "build",
   "test",
@@ -6,6 +6,7 @@ export const GATE_NAMES: readonly GateName[] = [
   "typecheck",
   "secrets",
   "deps",
+  "e2e",
 ];
 
 /**
@@ -668,6 +669,8 @@ export interface GateRun {
   problems?: { touched: string[]; untouched: number };
   /** The watched files a build gate rewrote; the stamp of the gate run was taken after it (finding 18). */
   wrote?: string[];
+  /** What an e2e run left under the work folder (SP7 §8.3): its folder, the console file it read and the logs it graded, or null for each it had not. */
+  artifacts?: { dir: string; console: string | null; logs: string | null };
 }
 
 export type JudgementVerdict = "proven" | "not-proven" | "not-run";

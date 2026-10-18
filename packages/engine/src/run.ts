@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { createWriteStream, mkdirSync } from "node:fs";
+import { createWriteStream, mkdirSync, type WriteStream } from "node:fs";
 import { dirname } from "node:path";
 
 export interface RunOptions {
@@ -8,6 +8,8 @@ export interface RunOptions {
   logPath: string;
   env?: NodeJS.ProcessEnv;
   stdin?: string;
+  /** Where stderr goes when it must not mix with stdout in the log (the e2e gate grades a logs command's stdout alone); the tail still holds both. */
+  stderrLogPath?: string;
 }
 
 export interface RunResult {
@@ -36,10 +38,15 @@ function killTree(pid: number | undefined): void {
 export function runCommand(command: string, options: RunOptions): Promise<RunResult> {
   mkdirSync(dirname(options.logPath), { recursive: true });
   const log = createWriteStream(options.logPath);
+  let errors: WriteStream | null = null;
+  if (options.stderrLogPath) {
+    mkdirSync(dirname(options.stderrLogPath), { recursive: true });
+    errors = createWriteStream(options.stderrLogPath);
+  }
   const lines: string[] = [];
   let partial = "";
-  const absorb = (chunk: Buffer): void => {
-    log.write(chunk);
+  const absorb = (chunk: Buffer, to: WriteStream = log): void => {
+    to.write(chunk);
     partial += chunk.toString("utf8");
     const pieces = partial.split("\n");
     partial = pieces.pop() ?? "";
@@ -63,13 +70,14 @@ export function runCommand(command: string, options: RunOptions): Promise<RunRes
       timedOut = true;
       killTree(child.pid);
     }, options.timeoutMs);
-    child.stdout?.on("data", absorb);
-    child.stderr?.on("data", absorb);
+    child.stdout?.on("data", (chunk: Buffer) => absorb(chunk));
+    child.stderr?.on("data", (chunk: Buffer) => absorb(chunk, errors ?? log));
     if (options.stdin !== undefined) child.stdin?.end(options.stdin);
     const finish = (exit: number | null): void => {
       clearTimeout(timer);
       if (partial) lines.push(partial);
       log.end();
+      errors?.end();
       resolve({
         exit,
         durationMs: Date.now() - started,

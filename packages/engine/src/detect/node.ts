@@ -27,7 +27,15 @@ const SCRIPT_CANDIDATES: Record<Exclude<GateName, "secrets" | "deps">, string[]>
   test: ["test", "unit"],
   lint: ["lint", "lint:check", "eslint", "biome"],
   typecheck: ["typecheck", "type-check", "types", "tsc"],
+  e2e: ["test:e2e", "e2e"],
 };
+
+/** The end-to-end runners known by their config file, when no script names one (SP7 §8.2): always proposed. */
+const E2E_BY_CONFIG: [string, string][] = [
+  ["playwright.config", "npx playwright test"],
+  ["cypress.config", "npx cypress run"],
+];
+const CONFIG_EXTENSIONS = ["ts", "js", "mjs", "cjs"];
 
 const TSC_BY_MANAGER: Record<string, string> = {
   npm: "npx tsc --noEmit",
@@ -88,6 +96,16 @@ export const nodeDetector: Detector = {
     if (!gates.typecheck && exists(join(dir, "tsconfig.json"))) {
       gates.typecheck = TSC_BY_MANAGER[manager];
     }
+    const proposedGates: GateName[] = [];
+    if (!gates.e2e) {
+      const runner = E2E_BY_CONFIG.find(([config]) =>
+        CONFIG_EXTENSIONS.some((ext) => exists(join(dir, `${config}.${ext}`))),
+      );
+      if (runner) {
+        gates.e2e = runner[1];
+        proposedGates.push("e2e");
+      }
+    }
     const workspaces = workspaceGlobs(pkg);
     // A runner that takes the files to test gives a todo's gate its scoped command (SP7 §8.1).
     const deps = { ...(pkg.dependencies ?? {}), ...(pkg.devDependencies ?? {}) };
@@ -104,6 +122,7 @@ export const nodeDetector: Detector = {
       ...(testScoped ? { testScoped } : {}),
       ...(workspaces.length ? { workspaces } : {}),
       ...(sure ? {} : { proposed: true }),
+      ...(proposedGates.length ? { proposedGates } : {}),
     };
   },
 };

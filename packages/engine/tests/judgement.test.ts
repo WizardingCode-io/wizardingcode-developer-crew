@@ -1,4 +1,6 @@
 import { expect, test } from "bun:test";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { emptyEvidence } from "../src/evidence.ts";
 import {
   contradiction,
@@ -8,13 +10,15 @@ import {
   notRunRecord,
   parseRulings,
   plannedJudgementGates,
+  readReviewInputs,
   recordJudgement,
   stampRuling,
+  writeReviewInputs,
 } from "../src/judgement.ts";
 import { DEFAULT_POLICY } from "../src/policy.ts";
 import type { Evidence, JudgementGateName, Policy } from "../src/types.ts";
 import { createWork } from "../src/work.ts";
-import { makeRepo, repoPaths, testEnv } from "./helpers.ts";
+import { makeRepo, repoPaths, testEnv, write } from "./helpers.ts";
 
 const names = (planned: { gate: string }[]) => planned.map((p) => p.gate);
 
@@ -349,4 +353,31 @@ test("SP2c AC-5: fillTokens counts only the records of this round, and none when
   const unknown = [ruling()];
   fillTokens(unknown, roles);
   expect(unknown[0]?.tokens).toBe(0);
+});
+
+test("SP7b-T4 AC-4: the review inputs list the captures under review/ui with their console file, sorted by name, and read them back", () => {
+  const root = makeRepo({ "src/App.vue": "<template/>" });
+  const paths = repoPaths(root, testEnv());
+  const work = createWork(paths, "fix");
+  write(root, "src/App.vue", "<template>hi</template>");
+  const ui = join(paths.crewDir, "work", work.id, "review", "ui");
+  mkdirSync(ui, { recursive: true });
+  writeFileSync(join(ui, "home-empty.png"), "png");
+  writeFileSync(join(ui, "console-home-empty.json"), "[]");
+  writeFileSync(join(ui, "cart-error.png"), "png");
+  writeFileSync(join(ui, "notes.txt"), "not a capture");
+  writeReviewInputs(paths, work, ["src/App.vue"], "f1");
+  const captures = [
+    { file: "review/ui/cart-error.png", console: null },
+    { file: "review/ui/home-empty.png", console: "review/ui/console-home-empty.json" },
+  ];
+  expect(readReviewInputs(paths, work.id)?.captures).toEqual(captures);
+  const raw = JSON.parse(
+    readFileSync(join(paths.crewDir, "work", work.id, "review", "inputs.json"), "utf8"),
+  ) as { captures: unknown };
+  expect(raw.captures).toEqual(captures);
+  // Without a capture folder the list is empty, never missing.
+  const bare = createWork(paths, "fix");
+  writeReviewInputs(paths, bare, ["src/App.vue"], "f1");
+  expect(readReviewInputs(paths, bare.id)?.captures).toEqual([]);
 });

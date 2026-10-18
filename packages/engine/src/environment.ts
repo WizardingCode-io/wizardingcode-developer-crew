@@ -73,10 +73,10 @@ export async function checkHealth(
   return { up: result.exit === 0 && !result.timedOut, exit: result.exit, tail: result.tail };
 }
 
-/** True while the recorded pid is alive and is still the process the engine started (its start time as `ps` printed it). */
+/** True while the recorded pid is alive and is still the process the engine started: a recorded start time, non-empty, equal to what `ps` prints for the pid now. */
 function stillOurs(record: { pid: number | null; processStart: string | null }): boolean {
   if (record.pid === null || !isAlive(record.pid)) return false;
-  return record.processStart !== null && processStart(record.pid) === record.processStart;
+  return !!record.processStart && processStart(record.pid) === record.processStart;
 }
 
 export type StartOutcome =
@@ -152,15 +152,17 @@ export async function startEnvironment(
 }
 
 /**
- * Stops what the engine started (SP7 §8.2): the stop command when the profile has one, then the
- * process group. Refused with no record; refused for an environment that was up before the start,
- * which is the user's; and refused, with the record removed and nothing signalled, when the
- * recorded process is gone or its pid is another process's by now.
+ * Stops what the engine started (SP7 §8.2): the stop command whenever the profile has one (a
+ * compose environment outlives the command that started it, finding 71), then the process group,
+ * signalled only while the recorded pid is alive and is still the process the engine started.
+ * Refused with no record; refused for an environment that was up before the start, which is the
+ * user's; and refused, with the record removed and nothing signalled, when the recorded process is
+ * gone or its pid is another process's by now and the profile has no stop command to run.
  */
 export async function stopEnvironment(
   paths: CrewPaths,
   environment: Environment,
-): Promise<{ stopped: true; pid: number | null } | { refused: string }> {
+): Promise<{ stopped: true; pid: number | null; signalled: boolean } | { refused: string }> {
   const record = readEnvRecord(paths);
   if (!record) return { refused: "nothing was started by the engine (crew env start)" };
   if (!record.managed)
@@ -168,7 +170,8 @@ export async function stopEnvironment(
       refused:
         "the environment was up before crew env start: it is the user's, and the engine never stops it",
     };
-  if (!stillOurs(record)) {
+  const ours = stillOurs(record);
+  if (!ours && !environment.stop) {
     removeRecord(paths);
     return {
       refused: `the recorded process (pid ${record.pid}) is gone; the record was removed and nothing was signalled`,
@@ -181,9 +184,10 @@ export async function stopEnvironment(
       logPath: envLog(paths, `stop-${stamp()}.txt`),
     });
   }
-  if (stillOurs(record)) killGroup(record.pid as number);
+  const signalled = ours && stillOurs(record);
+  if (signalled) killGroup(record.pid as number);
   removeRecord(paths);
-  return { stopped: true, pid: record.pid };
+  return { stopped: true, pid: record.pid, signalled };
 }
 
 export interface EnvStatus {

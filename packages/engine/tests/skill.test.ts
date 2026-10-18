@@ -387,3 +387,23 @@ test("SP7a AC-8 (Task 8): the skill page has the Rules row and the twenty rules 
   expect((rules.match(/Enforced by:/g) ?? []).length).toBe(20);
   expect(Buffer.byteLength(skill, "utf8")).toBeLessThanOrEqual(9254);
 });
+
+test("SP7b-T4 AC-4: the UI/UX rubric needs a console file beside each capture, rule 5 names the e2e gate, and the gate reference says how the run is wired", () => {
+  const rubric = readFileSync(
+    fileURLToPath(new URL("../../../plugins/core/skills/crew/rubrics/ui-ux.md", import.meta.url)),
+    "utf8",
+  );
+  expect(rubric).toContain(
+    "A capture without its console file (console-<page>-<state>.json beside it, saved from the browser's console tool) cannot answer the questions for that page: Not answerable, never passed.",
+  );
+  const rules = readReference("rules.md");
+  expect(rules).toContain(
+    "Enforced by: the UI/UX rubric; the e2e gate, which reads console.json (or console.jsonl) and the environment's logs and fails on an error or a warning naming the first; a capture without its console file is not answerable.",
+  );
+  expect((rules.match(/Enforced by:/g) ?? []).length).toBe(20);
+  const gate = readReference("gate.md");
+  expect(gate).toContain("WIZARDINGCODE_CREW_E2E_DIR");
+  expect(gate).toContain("WIZARDINGCODE_CREW_CONSOLE_FILE");
+  expect(gate).toContain("e2e/playwright.mjs");
+  expect(gate).toContain("crew skip <id> gate:e2e");
+});

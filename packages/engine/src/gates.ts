@@ -2,6 +2,7 @@ import { accessSync, constants, mkdirSync, rmSync, writeFileSync } from "node:fs
 import { basename, delimiter, join } from "node:path";
 import { type AuditToolName, parseAudit } from "./audit.ts";
 import { excludedRiskPaths, riskAreasForPaths } from "./classify.ts";
+import { runE2e } from "./e2e.ts";
 import { computeVerdict, loadEvidence, type PlannedGate, saveEvidence } from "./evidence.ts";
 import {
   changedWatchedPaths,
@@ -15,6 +16,7 @@ import { exists, nowIso, readText } from "./fs.ts";
 import { plannedJudgementGates, writeReviewInputs } from "./judgement.ts";
 import { loadLedger } from "./objections.ts";
 import { type CrewPaths, workDir } from "./paths.ts";
+import { isInterfacePath } from "./paths-kind.ts";
 import { namedFiles } from "./problems.ts";
 import { runCommand } from "./run.ts";
 import { scanSecrets } from "./secrets.ts";
@@ -253,7 +255,7 @@ async function judgeAudit(
   };
 }
 
-/** The gate table from the spec, section 12, the same on every route since ADR 0002. Secrets is planned separately, once per repository. */
+/** The gate table from the spec, section 12, the same on every route since ADR 0002. Secrets and e2e are planned separately, once per item. */
 export function gatesForTarget(target: Target, policy: Policy, changed: string[]): GateName[] {
   const has = (gate: GateName): boolean => !!target.gates[gate];
   const gates: GateName[] = [];
@@ -264,8 +266,17 @@ export function gatesForTarget(target: Target, policy: Policy, changed: string[]
   // On every route the audit looks at the change: dependencies the item did not touch are the owner's standing debt (ADR 0002).
   if (manifestChanged(changed)) gates.push("deps");
   for (const gate of policy.requiredGates)
-    if (gate !== "secrets" && !gates.includes(gate)) gates.push(gate);
+    if (gate !== "secrets" && gate !== "e2e" && !gates.includes(gate)) gates.push(gate);
   return gates;
+}
+
+/** Whether the item's change calls for the e2e gate (SP7 §8.2): an interface or a public-api path, or the policy requiring it. */
+function wantsE2e(policy: Policy, changed: string[]): boolean {
+  return (
+    policy.requiredGates.includes("e2e") ||
+    changed.some(isInterfacePath) ||
+    riskAreasForPaths(changed, policy).includes("public-api")
+  );
 }
 
 export function plannedGates(
@@ -310,6 +321,17 @@ export function plannedGates(
     changed.some((path) => !profile.targets.some((t) => covers(t, path)));
   if (uncovered && !planned.some((g) => g.gate === "test" && g.target === "."))
     planned.push({ gate: "test", target: "." });
+  // The e2e gate runs the whole application once per item, never per target: on the first target
+  // with a command, else at the root, where the run says what is missing (SP7 §8.2).
+  if (wantsE2e(policy, changed)) {
+    const runner = profile.targets.find((t) => t.gates.e2e);
+    const shared = runner !== undefined && (atPath.get(runner.path) ?? 0) > 1;
+    planned.push({
+      gate: "e2e",
+      target: runner?.path ?? ".",
+      ...(shared && runner ? { stack: runner.stack } : {}),
+    });
+  }
   return planned;
 }
 
@@ -358,7 +380,8 @@ export function scopedTestCommand(target: Target, scope: readonly string[]): str
 
 /**
  * A todo's own gate (SP7 §8.1): the deterministic gates the todo's files plan, without the secrets
- * scan (the item's gate run scans the whole change), the test command scoped to those files. The
+ * scan (the item's gate run scans the whole change) and without the e2e run (the item's run proves
+ * the whole application), the test command scoped to those files. The
  * runs are returned to the todo's record, never written to the item's evidence; an `unavailable`
  * test gate fails the todo, since a todo with nothing to test is not proven.
  */
@@ -370,7 +393,7 @@ export async function runTaskGate(
   scope: string[],
 ): Promise<{ status: "pass" | "fail"; runs: GateRun[] }> {
   const planned = plannedGates(work.route, profile, policy, scope, paths.root).filter(
-    (p) => p.gate !== "secrets",
+    (p) => p.gate !== "secrets" && p.gate !== "e2e",
   );
   const stamp = gitHead(paths.root) ?? "none";
   const runs: GateRun[] = [];
@@ -417,6 +440,18 @@ async function runOne(
     };
   }
   const target = targetOf(profile, planned);
+  if (gate === "e2e") {
+    const where = targetPath.replace(/[^a-z0-9]+/gi, "_");
+    return runE2e({
+      paths,
+      work,
+      profile,
+      target: target ?? null,
+      base,
+      timeoutMs: target ? gateTimeoutMs(target, "e2e") : 0,
+      log: `logs/e2e-${where}-${Date.now()}.txt`,
+    });
+  }
   if (!target)
     return {
       ...base,

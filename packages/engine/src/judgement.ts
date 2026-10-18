@@ -48,17 +48,52 @@ export function reviewDir(paths: CrewPaths, id: string): string {
   return join(workDir(paths, id), "review");
 }
 
-/** What the review inputs describe: the fingerprint of the code the diff was cut from, and when. */
+/** One capture the session took under `review/ui/` (SP2 §10), with the console file saved beside it, or null without one (rule 5). */
+export interface Capture {
+  file: string;
+  console: string | null;
+}
+
+/** What the review inputs describe: the fingerprint of the code the diff was cut from, when, and the captures. */
 export interface ReviewInputs {
   fingerprint: string;
   at: string;
+  captures: Capture[];
+}
+
+const CAPTURE = /\.(?:png|jpe?g)$/i;
+
+/** The captures under `review/ui/`, sorted by name, each with its `console-<name>.json` when the session saved one. */
+export function listCaptures(paths: CrewPaths, id: string): Capture[] {
+  let names: string[];
+  try {
+    names = readdirSync(join(reviewDir(paths, id), "ui"));
+  } catch {
+    return [];
+  }
+  return names
+    .filter((name) => CAPTURE.test(name))
+    .sort()
+    .map((name) => {
+      const consoleFile = `console-${name.replace(CAPTURE, "")}.json`;
+      return {
+        file: `review/ui/${name}`,
+        console: names.includes(consoleFile) ? `review/ui/${consoleFile}` : null,
+      };
+    });
+}
+
+function isCapture(raw: unknown): raw is Capture {
+  if (!raw || typeof raw !== "object") return false;
+  const { file, console: consoleFile } = raw as Record<string, unknown>;
+  return typeof file === "string" && (typeof consoleFile === "string" || consoleFile === null);
 }
 
 export function readReviewInputs(paths: CrewPaths, id: string): ReviewInputs | null {
   const raw = readJson<Partial<ReviewInputs>>(join(reviewDir(paths, id), "inputs.json"));
-  return raw && typeof raw.fingerprint === "string" && typeof raw.at === "string"
-    ? { fingerprint: raw.fingerprint, at: raw.at }
-    : null;
+  if (!raw || typeof raw.fingerprint !== "string" || typeof raw.at !== "string") return null;
+  const captures = Array.isArray(raw.captures) ? raw.captures.filter(isCapture) : [];
+  return { fingerprint: raw.fingerprint, at: raw.at, captures };
 }
 
 /**
@@ -68,6 +103,8 @@ export function readReviewInputs(paths: CrewPaths, id: string): ReviewInputs | n
  * session writes its findings and its ruling beside them. When the inputs are rewritten for other
  * code, the findings and the ruling written for the old code go with them: a ruling the judge gave
  * on code that no longer exists must not be recorded against the new (review of SP2b, finding 1).
+ * The captures under `review/ui/` are listed with their console files, so the UI/UX reviewer and
+ * the gate run can say which page has no console measurement (SP7 §8.3).
  */
 export function writeReviewInputs(
   paths: CrewPaths,
@@ -93,7 +130,7 @@ export function writeReviewInputs(
   writeText(join(dir, "files.txt"), changed.length ? `${changed.join("\n")}\n` : "");
   writeText(
     join(dir, "inputs.json"),
-    `${JSON.stringify({ fingerprint, at: nowIso() }, null, 2)}\n`,
+    `${JSON.stringify({ fingerprint, at: nowIso(), captures: listCaptures(paths, work.id) }, null, 2)}\n`,
   );
   return { dir, note: cut.note };
 }
