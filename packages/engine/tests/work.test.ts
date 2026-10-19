@@ -6,6 +6,7 @@ import { addObjection, bindObjection } from "../src/objections.ts";
 import { workDir } from "../src/paths.ts";
 import { DEFAULT_POLICY } from "../src/policy.ts";
 import { loadState } from "../src/state.ts";
+import { strategyHash } from "../src/strategy.ts";
 import { plannedSeats } from "../src/team.ts";
 import type { Evidence, ObjectionLedger, RunRecord } from "../src/types.ts";
 import { PHASE_ORDER } from "../src/types.ts";
@@ -32,6 +33,7 @@ import {
   openDebate,
   PHASES_BY_ROUTE,
   phasesFor,
+  plannedStrategyJudgement,
   raiseKind,
   raiseRoute,
   removeCriterion,
@@ -39,6 +41,7 @@ import {
   validatorPreconditions,
 } from "../src/work.ts";
 import { git, makeRepo, repoPaths, tempDir, testEnv } from "./helpers.ts";
+import { RESEARCH, STRATEGY } from "./strategy.test.ts";
 
 const run: RunRecord = {
   command: "x",
@@ -52,6 +55,7 @@ const run: RunRecord = {
 const empty: GuardContext = {
   specText: null,
   strategyText: null,
+  researcherText: null,
   analysisText: null,
   originRecorded: false,
   gitRepository: false,
@@ -848,10 +852,13 @@ test("SP8-T2 AC-2: a new project's phases carry strategy before specify; raiseKi
     "gate",
     "deliver",
   ]);
+  // The research comes first, then the document; its shape and its ruling are the strategy guard's (SP8 Task 3).
   expect(guardFor(w, "specify", { ...empty, strategyText: null })).toEqual([
-    "strategy.md in the work folder",
+    "conclave/researcher.md: the researcher's pass comes before the strategy (references/strategy.md)",
   ]);
-  expect(guardFor(w, "specify", { ...empty, strategyText: "# Strategy\n" })).toEqual([]);
+  expect(
+    guardFor(w, "specify", { ...empty, researcherText: RESEARCH, strategyText: null }),
+  ).toEqual(["strategy.md in the work folder"]);
   expect(raiseKind(w, "again")).toEqual({
     ok: false,
     reason:
@@ -890,4 +897,93 @@ test("SP8-T2 AC-2: a new project's phases carry strategy before specify; raiseKi
   audit.phase = "audit";
   expect(raiseKind(audit, "x")).toMatchObject({ ok: false });
   expect(audit.kind).toBe("audit");
+});
+
+test("SP8-T3 AC-2, AC-3: the guard out of strategy asks for the research, then the faults, then a proven strategy ruling on the current hash (stale after an edit, never a code ruling); the strategy gate is planned for a new project alone", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const work = createWork(paths, "a new product");
+  applyClassification(
+    work,
+    "new-product",
+    { route: "standard", reasons: [], riskAreas: [] },
+    { kind: "new-project", from: "work_type new-product" },
+  );
+  work.phase = "strategy";
+  expect(guardFor(work, "specify", { ...empty, strategyText: STRATEGY })).toEqual([
+    "conclave/researcher.md: the researcher's pass comes before the strategy (references/strategy.md)",
+  ]);
+  expect(guardFor(work, "specify", { ...empty, researcherText: RESEARCH })).toEqual([
+    "strategy.md in the work folder",
+  ]);
+  const broken = STRATEGY.replace(
+    "- One service serves the need [R3]",
+    "- One service serves the need",
+  );
+  expect(
+    guardFor(work, "specify", { ...empty, strategyText: broken, researcherText: RESEARCH })[0],
+  ).toBe(
+    'strategy.md: no mark on "One service serves the need" in Viability: every claim ends with [R<n>] naming a fact line of conclave/researcher.md',
+  );
+  const hash = strategyHash(STRATEGY, RESEARCH);
+  const ruling = (
+    gate: "strategy" | "code-quality",
+    fingerprint: string,
+    verdict: "proven" | "not-proven" = "proven",
+  ) => ({
+    ...emptyEvidence(),
+    judgement: [
+      {
+        gate,
+        verdict,
+        reviewer: "judge",
+        judge: "judge",
+        findings: [],
+        at: "2026-10-19T10:00:00.000Z",
+        fingerprint,
+      },
+    ],
+  });
+  const ctx = (evidence: Evidence | null) => ({
+    ...empty,
+    strategyText: STRATEGY,
+    researcherText: RESEARCH,
+    evidence,
+  });
+  expect(guardFor(work, "specify", ctx(null))).toEqual([
+    "a proven strategy ruling (crew strategy <id> check, the reviewer and the judge, crew judgement <id> record --ruling <file>)",
+  ]);
+  expect(guardFor(work, "specify", ctx(ruling("code-quality", hash)))).toEqual([
+    "a proven strategy ruling (crew strategy <id> check, the reviewer and the judge, crew judgement <id> record --ruling <file>)",
+  ]);
+  expect(guardFor(work, "specify", ctx(ruling("strategy", "other")))).toEqual([
+    "the strategy ruling is stale: strategy.md or conclave/researcher.md changed after it; check and judge again",
+  ]);
+  expect(guardFor(work, "specify", ctx(ruling("strategy", hash, "not-proven")))).toEqual([
+    "the strategy ruling is not proven (0 findings)",
+  ]);
+  expect(guardFor(work, "specify", ctx(ruling("strategy", hash)))).toEqual([]);
+  // The planned gate names its reviewer: the live path (the check, the record, the status) reads it from here.
+  expect(plannedStrategyJudgement(work)).toEqual([
+    {
+      gate: "strategy",
+      reviewer: "judge",
+      reason: "new project, standard route: the judge rules from the files",
+    },
+  ]);
+  work.route = "full";
+  expect(plannedStrategyJudgement(work)).toEqual([
+    {
+      gate: "strategy",
+      reviewer: "cto",
+      reason: "new project, full route: the CTO reviews, the judge rules",
+    },
+  ]);
+  const feature = createWork(paths, "a feature");
+  applyClassification(
+    feature,
+    "feature",
+    { route: "full", reasons: [], riskAreas: [] },
+    { kind: "feature", from: "work_type feature" },
+  );
+  expect(plannedStrategyJudgement(feature)).toEqual([]);
 });

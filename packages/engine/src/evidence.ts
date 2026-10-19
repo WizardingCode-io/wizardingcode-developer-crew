@@ -12,6 +12,7 @@ import { questionChannelsCell } from "./questions.ts";
 import { sourceLine } from "./source.ts";
 import { oneLine } from "./state.ts";
 import { readProtectedJson, writeProtectedJson } from "./store.ts";
+import { STRATEGY_SECTIONS, type StrategyReport, verdictText } from "./strategy.ts";
 import type {
   CriterionKind,
   DecidedBy,
@@ -330,6 +331,7 @@ export function renderReport(
   mail?: { box: Mailbox; tampered: boolean },
   selfName?: string,
   analysis?: { origin: Origin | null; tampered: boolean },
+  strategy?: StrategyReport | null,
 ): string {
   const lines: string[] = [];
   lines.push(`# Report: ${work.title}`, "");
@@ -385,6 +387,23 @@ export function renderReport(
       );
       if (o.note) lines.push(`- Note: ${o.note}`);
     }
+    lines.push("");
+  }
+  // A new project's strategy as it stands (SP7 §7.3, §13.1): from the research alone until SP4.
+  if (strategy) {
+    lines.push("## Strategy", "");
+    lines.push(`- From the research alone (no knowledge base until SP4).`);
+    const claims = STRATEGY_SECTIONS.filter((s) => s !== "Scaling phases")
+      .map((s) => `${s} ${strategy.counts[s]}`)
+      .join(", ");
+    lines.push(`- Claims: ${claims}; scaling rows: ${strategy.rows}.`);
+    const r = strategy.ruling;
+    lines.push(
+      r
+        ? `- Ruling: ${verdictText(r.verdict)} (reviewer ${r.reviewer}, ${r.findings} finding${r.findings === 1 ? "" : "s"})${r.stale ? ", stale: the files changed after it" : ""}.`
+        : "- Ruling: none.",
+    );
+    if (strategy.faults.length) lines.push(`- Faults: ${strategy.faults.join("; ")}`);
     lines.push("");
   }
   lines.push(

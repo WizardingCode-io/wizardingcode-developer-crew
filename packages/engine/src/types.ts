@@ -99,6 +99,13 @@ export interface PlannedJudgement {
   reason: string;
 }
 
+/** The strategy's judgement gate as planned (SP8 Task 3): the CTO reviews on full, the judge rules alone on standard. */
+export type StrategyReviewer = "cto" | "judge";
+export interface PlannedStrategyJudgement extends PlannedJudgement {
+  gate: "strategy";
+  reviewer: StrategyReviewer;
+}
+
 export type CommandSource = "detected" | "proposed" | "confirmed";
 export interface GateCommand {
   command: string;
@@ -696,7 +703,14 @@ export interface WorkItem {
    * last counted round vouched for, so a ruling recorded again on the same code, or a not-run
    * beside it, is the same round, and a record against new code opens the next.
    */
-  rounds?: { judgement: number; validation: number; judgementCode?: string | null };
+  rounds?: {
+    judgement: number;
+    validation: number;
+    judgementCode?: string | null;
+    /** The strategy's own rounds (SP8 Task 3): a record on a new strategy hash opens one. */
+    strategy?: number;
+    strategyHash?: string | null;
+  };
   /** The leads' verdicts on the spec, the plan and the delivery (SP7 §6.4), recorded by `crew validation`. */
   validations?: Validation[];
   /** When each phase was entered; the minutes per phase of `crew metrics` come from it. */

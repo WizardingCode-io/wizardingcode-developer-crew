@@ -216,3 +216,23 @@ test("SP7b-T5 AC-1: a todo's scope plans only the seats its files ask for: ui-ux
   };
   expect(roles(scoped(["src/App.vue"], loaded))).toEqual(["review-ui-ux", "judge"]);
 });
+
+test("SP8-T3 AC-3: the CTO sits as the strategy's reviewer on the full route alone, and only when the item has a strategy", () => {
+  const cto = (seats: ReturnType<typeof plannedSeats>) => seats.find((s) => s.role === "cto");
+  expect(
+    cto(plannedSeats("full", [], ["src/a.ts"], DEFAULT_POLICY, undefined, { strategy: true })),
+  ).toEqual({
+    role: "cto",
+    team: null,
+    kind: "cto",
+    gate: "strategy",
+    reason: "reviewer of the strategy (full route)",
+  });
+  expect(
+    cto(plannedSeats("standard", [], ["src/a.ts"], DEFAULT_POLICY, undefined, { strategy: true })),
+  ).toBeUndefined();
+  expect(cto(plannedSeats("full", [], ["src/a.ts"], DEFAULT_POLICY))).toBeUndefined();
+  expect(
+    cto(plannedSeats("full", [], ["src/a.ts"], DEFAULT_POLICY, undefined, { strategy: false })),
+  ).toBeUndefined();
+});

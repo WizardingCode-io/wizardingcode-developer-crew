@@ -188,7 +188,10 @@ test("SP7a AC-5 (Task 4): the tech lead validates with a verdict and numbered re
 });
 
 test("SP2b: one rubric per judgement gate, each judging the change and never the repository", () => {
-  expect(readdirSync(RUBRICS).sort()).toEqual(REVIEWERS.map((g) => `${g}.md`).sort());
+  // The strategy's rubric (SP8) is the CTO's and the judge's: no reviewer agent carries its name.
+  expect(readdirSync(RUBRICS).sort()).toEqual(
+    [...REVIEWERS.map((g) => `${g}.md`), "strategy.md"].sort(),
+  );
   for (const gate of REVIEWERS) {
     const rubric = readFileSync(`${RUBRICS}${gate}.md`, "utf8");
     for (const heading of LISTS) expect(rubric).toContain(heading);
@@ -213,4 +216,16 @@ test("SP2c: the expert answers the objections once, the judge asks one question 
     expect(tools(meta)).not.toContain("SendMessage");
     expect(body).not.toMatch(/\bcrew mail\b/);
   }
+});
+
+test("SP8-T3: the CTO reviews the strategy and the judge rules it, each with its own section and shape", () => {
+  const cto = agent("cto").body;
+  expect(cto).toContain("## As reviewer of the strategy");
+  expect(cto).toContain("# strategy findings for <id>");
+  expect(cto).toContain("${CLAUDE_PLUGIN_ROOT}/skills/crew/rubrics/strategy.md");
+  expect(cto).toContain("strategy.md:<line>");
+  const judge = agent("judge").body;
+  expect(judge).toContain("## As judge of the strategy");
+  expect(judge).toContain('"gate":"strategy"');
+  expect(judge).toMatch(/reviewer[^\n]*"cto"[^\n]*"judge"/);
 });

@@ -495,3 +495,34 @@ test("SP8-T1 AC-5 (finding 92): rule 5 tells a missing fact of the request (a qu
   );
   expect(Buffer.byteLength(skill, "utf8")).toBeLessThanOrEqual(9254);
 });
+
+test("SP8-T3: the skill page has the Strategy row between Understand and Specify and the strategy reference, the reference carries the two rules of discernment and rule 3's line, the rubric asks the five questions, and the page stays within the ceiling", () => {
+  const method = skill.slice(skill.indexOf("## The method"), skill.indexOf("## The nine typed"));
+  expect(method).toMatch(
+    /\| Understand \|[^\n]*\n\| Strategy \|[^\n]*new project[^\n]*`references\/strategy\.md`[^\n]*\| `crew strategy <id> check`[^\n]*\n\| Specify \|/,
+  );
+  expect(skill).toContain("| Strategy | `references/strategy.md` |");
+  const strategy = readReference("strategy.md");
+  for (const text of [
+    "Viability",
+    "Scaling phases",
+    "[R<n>]",
+    "crew strategy <id> check",
+    "crew research <id> verify",
+    "over-engineering",
+    "point by point",
+    "from the research alone (no knowledge base until SP4)",
+    "remote test environment",
+    "crew judgement <id> record",
+  ])
+    expect(strategy).toContain(text);
+  const rubric = readFileSync(
+    `${import.meta.dir}/../../../plugins/core/skills/crew/rubrics/strategy.md`,
+    "utf8",
+  );
+  for (const word of ["proportion", "proof", "measured", "trigger", "point by point"])
+    expect(rubric.toLowerCase()).toContain(word);
+  expect(readReference("conclave.md")).toMatch(/new project[^\n]*resumed/);
+  expect(readReference("understand.md")).toContain("references/strategy.md");
+  expect(Buffer.byteLength(skill, "utf8")).toBeLessThanOrEqual(9254);
+});

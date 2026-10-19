@@ -216,6 +216,7 @@ export function plannedSeats(
   changed: readonly string[],
   policy: Policy,
   scope?: readonly string[],
+  options?: { strategy?: boolean },
 ): Seat[] {
   // A todo's scope plans the todo's seats and nothing else (SP7b decision 14).
   if (scope !== undefined) return taskSeats(scope, policy);
@@ -244,6 +245,16 @@ export function plannedSeats(
     gate("risk", "architects", "full route");
     gate("architecture", "architects", "full route");
   }
+  // The CTO reviews a new project's strategy on the full route (SP7 §6.2, §7.3); on standard the
+  // judge rules it from the files and nobody sits for it.
+  if (route === "full" && options?.strategy)
+    plan({
+      role: "cto",
+      team: null,
+      kind: "cto",
+      gate: "strategy",
+      reason: "reviewer of the strategy (full route)",
+    });
   // A team the policy always seats brings every reviewer the registry gives it, on any route,
   // beyond what the route planned (SP7 §6.1); a seat the route already planned keeps its reason.
   for (const team of policy.team.always)

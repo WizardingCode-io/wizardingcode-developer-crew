@@ -1,5 +1,5 @@
 // packages/engine/src/cli.ts
-import { existsSync as existsSync16 } from "node:fs";
+import { existsSync as existsSync16, statSync as statSync8 } from "node:fs";
 import { basename as basename6, isAbsolute as isAbsolute7, join as join39, relative as relative9, resolve as resolve4 } from "node:path";
 
 // packages/engine/src/analysis.ts
@@ -1907,7 +1907,7 @@ function taskSeats(scope, policy) {
     seats.push({ role: "judge", team: null, kind: "debate", reason: "a gate is planned" });
   return seats;
 }
-function plannedSeats(route, riskAreas, changed, policy, scope) {
+function plannedSeats(route, riskAreas, changed, policy, scope, options) {
   if (scope !== undefined)
     return taskSeats(scope, policy);
   const seats = [];
@@ -1933,6 +1933,14 @@ function plannedSeats(route, riskAreas, changed, policy, scope) {
     gate("risk", "architects", "full route");
     gate("architecture", "architects", "full route");
   }
+  if (route === "full" && options?.strategy)
+    plan({
+      role: "cto",
+      team: null,
+      kind: "cto",
+      gate: "strategy",
+      reason: "reviewer of the strategy (full route)"
+    });
   for (const team of policy.team.always)
     for (const g of TEAMS[team].gates)
       gate(g, team, "policy team.always");
@@ -2200,6 +2208,135 @@ function questionJson(question) {
   return { ...question, open: question.answer === null };
 }
 
+// packages/engine/src/strategy.ts
+var STRATEGY_SECTIONS = ["Viability", "Cost", "Time", "Stack", "Scaling phases"];
+var RESEARCH_ALONE = "from the research alone (no knowledge base until SP4)";
+var FACT_HEADINGS = new Set(["What the code does today", "What the documentation says"]);
+var MARK = /\[R(\d+)\]/g;
+var KNOWLEDGE_MARK = /\[K:[^\]]+\]/g;
+var SEPARATOR_CELL = /^:?-+:?$/;
+function isSection(name) {
+  return STRATEGY_SECTIONS.includes(name);
+}
+function parseStrategy(text) {
+  const bullets = {
+    Viability: [],
+    Cost: [],
+    Time: [],
+    Stack: [],
+    "Scaling phases": []
+  };
+  const present = [];
+  const rows = [];
+  let current = null;
+  for (const raw of text.split(`
+`)) {
+    const line = raw.trimEnd();
+    const heading = /^## (.+)$/.exec(line);
+    if (heading) {
+      const name = (heading[1] ?? "").trim();
+      current = isSection(name) ? name : null;
+      if (current && !present.includes(current))
+        present.push(current);
+      continue;
+    }
+    if (!current)
+      continue;
+    if (current === "Scaling phases") {
+      if (!line.startsWith("|"))
+        continue;
+      const cells = line.split("|").slice(1, -1).map((c) => c.trim());
+      if (cells.every((c) => SEPARATOR_CELL.test(c)))
+        continue;
+      if (cells.map((c) => c.toLowerCase()).join("|") === "trigger|change|cost")
+        continue;
+      rows.push({ trigger: cells[0] ?? "", change: cells[1] ?? "", cost: cells[2] ?? "" });
+    } else if (line.startsWith("- "))
+      bullets[current].push(line.slice(2).trim());
+  }
+  return { present, bullets, rows };
+}
+function factLines(researcherText) {
+  const facts = new Set;
+  let under = false;
+  researcherText.split(`
+`).forEach((raw, i) => {
+    const line = raw.trimEnd();
+    const heading = /^## (.+)$/.exec(line);
+    if (heading) {
+      under = FACT_HEADINGS.has((heading[1] ?? "").trim());
+      return;
+    }
+    if (under && line.startsWith("- ") && line.trim() !== "- none")
+      facts.add(i + 1);
+  });
+  return facts;
+}
+function checkStrategy(text, researcherText) {
+  const faults = [];
+  const parsed = parseStrategy(text);
+  const facts = factLines(researcherText);
+  for (const section of STRATEGY_SECTIONS) {
+    const empty = section === "Scaling phases" ? !parsed.present.includes(section) : parsed.bullets[section].length === 0;
+    if (empty) {
+      faults.push(`a "${section}" section with content in strategy.md`);
+      continue;
+    }
+    if (section === "Scaling phases") {
+      if (parsed.rows.length === 0)
+        faults.push("no row in the Scaling phases table (| Trigger | Change | Cost |): every project has a first trigger at which its design changes");
+      parsed.rows.forEach((row, i) => {
+        if (!row.trigger || !row.change || !row.cost)
+          faults.push(`row ${i + 1} of the Scaling phases table has an empty cell`);
+      });
+      continue;
+    }
+    for (const bullet of parsed.bullets[section]) {
+      const knowledge = bullet.match(KNOWLEDGE_MARK) ?? [];
+      for (const k of knowledge)
+        faults.push(`${k} in ${section}: knowledge entries arrive with SP4`);
+      const marks = [...bullet.matchAll(MARK)].map((m) => Number(m[1]));
+      if (marks.length === 0 && knowledge.length === 0)
+        faults.push(`no mark on "${bullet.slice(0, 60)}" in ${section}: every claim ends with [R<n>] naming a fact line of conclave/researcher.md`);
+      for (const n of marks)
+        if (!facts.has(n))
+          faults.push(`[R${n}] in ${section} is not a fact line of conclave/researcher.md`);
+    }
+  }
+  return faults;
+}
+function strategyHash(strategyText, researcherText) {
+  return sha256(`${strategyText}
+---
+${researcherText}`);
+}
+function strategyReport(strategyText, researcherText, evidence) {
+  if (strategyText === null)
+    return null;
+  const research = researcherText ?? "";
+  const parsed = parseStrategy(strategyText);
+  const counts = {
+    Viability: parsed.bullets.Viability.length,
+    Cost: parsed.bullets.Cost.length,
+    Time: parsed.bullets.Time.length,
+    Stack: parsed.bullets.Stack.length,
+    "Scaling phases": 0
+  };
+  const faults = researcherText === null ? [RESEARCHER_FIRST] : checkStrategy(strategyText, research);
+  const record = evidence?.judgement?.find((j) => j.gate === "strategy") ?? null;
+  const ruling = record ? {
+    verdict: record.verdict,
+    reviewer: record.reviewer ?? "judge",
+    findings: record.findings.length,
+    stale: record.fingerprint !== strategyHash(strategyText, research)
+  } : null;
+  return { faults, counts, rows: parsed.rows.length, ruling };
+}
+var RESEARCHER_FIRST = "conclave/researcher.md: the researcher's pass comes before the strategy (references/strategy.md)";
+function verdictText(verdict) {
+  return verdict === "not-proven" ? "not proven" : verdict === "not-run" ? "not run" : "proven";
+}
+
 // packages/engine/src/work.ts
 import { existsSync as existsSync5, readdirSync as readdirSync2 } from "node:fs";
 import { join as join12 } from "node:path";
@@ -2293,6 +2430,23 @@ function phasesFor(work) {
       return [...base.slice(0, at), "strategy", ...base.slice(at)];
   }
   return [...base];
+}
+function plannedStrategyJudgement(work) {
+  if (!phasesFor(work).includes("strategy"))
+    return [];
+  return work.route === "full" ? [
+    {
+      gate: "strategy",
+      reviewer: "cto",
+      reason: "new project, full route: the CTO reviews, the judge rules"
+    }
+  ] : [
+    {
+      gate: "strategy",
+      reviewer: "judge",
+      reason: "new project, standard route: the judge rules from the files"
+    }
+  ];
 }
 function kindFloor(work) {
   if (work.kind === "new-project" && work.route === "fast") {
@@ -2684,8 +2838,23 @@ function guardFor(work, next, ctx) {
     if (ctx.gitRepository && !ctx.originRecorded)
       missing.push("analysis/origin.json in the work folder (crew analyse <id> --paths <files>)");
   }
-  if (work.phase === "strategy" && ctx.strategyText === null)
-    missing.push("strategy.md in the work folder");
+  if (work.phase === "strategy") {
+    if (ctx.researcherText === null)
+      missing.push(RESEARCHER_FIRST);
+    else if (ctx.strategyText === null)
+      missing.push("strategy.md in the work folder");
+    else {
+      missing.push(...checkStrategy(ctx.strategyText, ctx.researcherText).map((f) => `strategy.md: ${f}`));
+      const hash = strategyHash(ctx.strategyText, ctx.researcherText);
+      const record = ctx.evidence?.judgement?.find((j) => j.gate === "strategy");
+      if (!record)
+        missing.push("a proven strategy ruling (crew strategy <id> check, the reviewer and the judge, crew judgement <id> record --ruling <file>)");
+      else if (record.fingerprint !== hash)
+        missing.push("the strategy ruling is stale: strategy.md or conclave/researcher.md changed after it; check and judge again");
+      else if (record.verdict !== "proven")
+        missing.push(`the strategy ruling is ${verdictText(record.verdict)} (${record.findings.length} findings)`);
+    }
+  }
   if (next === "deliver" && kindOfItem(work) === "audit") {
     missing.push(...ctx.unproven.map((reason) => `not proven: ${reason}`));
     return missing;
@@ -2955,7 +3124,7 @@ function problemStatus(status, p) {
     return `fail: problems in ${p.touched.join(", ")}${p.untouched ? ` (${untouched} also)` : ""}`;
   return `pass: ${untouched} with problems, none of the item's`;
 }
-function renderReport(work, evidence, policy, ledger, mail, selfName, analysis) {
+function renderReport(work, evidence, policy, ledger, mail, selfName, analysis, strategy) {
   const lines = [];
   lines.push(`# Report: ${work.title}`, "");
   lines.push(`- Work: \`${work.id}\``);
@@ -2992,6 +3161,17 @@ function renderReport(work, evidence, policy, ledger, mail, selfName, analysis) 
       if (o.note)
         lines.push(`- Note: ${o.note}`);
     }
+    lines.push("");
+  }
+  if (strategy) {
+    lines.push("## Strategy", "");
+    lines.push(`- From the research alone (no knowledge base until SP4).`);
+    const claims = STRATEGY_SECTIONS.filter((s) => s !== "Scaling phases").map((s) => `${s} ${strategy.counts[s]}`).join(", ");
+    lines.push(`- Claims: ${claims}; scaling rows: ${strategy.rows}.`);
+    const r = strategy.ruling;
+    lines.push(r ? `- Ruling: ${verdictText(r.verdict)} (reviewer ${r.reviewer}, ${r.findings} finding${r.findings === 1 ? "" : "s"})${r.stale ? ", stale: the files changed after it" : ""}.` : "- Ruling: none.");
+    if (strategy.faults.length)
+      lines.push(`- Faults: ${strategy.faults.join("; ")}`);
     lines.push("");
   }
   lines.push("## Acceptance criteria", "", "| Id | Kind | Criterion | Test-first |", "| :- | :- | :- | :- |");
@@ -9884,6 +10064,7 @@ var KNOWN_FLAGS = {
   start: ["answers", "criterion", "preserve", "origin", "priority", "source", "reason"],
   classify: ["answers"],
   kind: ["reason"],
+  strategy: [],
   criteria: ["kind", "contract"],
   decision: ["default"],
   debate: ["reason", "tokens"],
@@ -10188,6 +10369,79 @@ function rulingRecords(env, parsed, gateWord, planned, fingerprint, changed, wor
   }
   return { records, rulingPath };
 }
+function rulingGates(env, parsed, gateWord) {
+  if (parsed.flags["not-run"])
+    return gateWord ? [gateWord] : [];
+  if (typeof parsed.flags.ruling !== "string")
+    return [];
+  const text = readText(resolve4(env.paths.root, parsed.flags.ruling));
+  if (text === null)
+    return [];
+  try {
+    const raw = JSON.parse(text);
+    return Array.isArray(raw.rulings) ? raw.rulings.map((r) => typeof r?.gate === "string" ? r.gate : "") : [];
+  } catch {
+    return [];
+  }
+}
+async function recordStrategyJudgement(env, opened, parsed, gateWord, usage) {
+  const work = opened.work;
+  const [planned] = plannedStrategyJudgement(work);
+  if (!planned)
+    return refuse("strategy is not a phase of this item: a strategy ruling is recorded on a new project alone");
+  const dir = workDir(env.paths, work.id);
+  const inputs = readJson(join39(dir, "review", "strategy", "inputs.json"));
+  if (!inputs || typeof inputs.hash !== "string" || typeof inputs.at !== "string")
+    return refuse(`no strategy check for this item: run crew strategy ${work.id} check first, then the reviewer and the judge`);
+  const research = readText(join39(dir, "conclave", "researcher.md"));
+  const text = readText(join39(dir, "strategy.md"));
+  if (research === null)
+    return refuse(RESEARCHER_FIRST);
+  if (text === null)
+    return refuse("strategy.md in the work folder (references/strategy.md)");
+  const hash = strategyHash(text, research);
+  if (hash !== inputs.hash)
+    return refuse(`strategy.md or conclave/researcher.md changed after the check: run crew strategy ${work.id} check again, then the reviewer and the judge`);
+  const input = rulingRecords(env, parsed, gateWord, ["strategy"], hash, ["strategy.md", `.crew/work/${work.id}/strategy.md`], work.id, "the strategy", usage);
+  if (isOutcome(input))
+    return input;
+  const record2 = input.records[0];
+  if (!record2)
+    return refuse(usage);
+  if (record2.verdict !== "not-run") {
+    if (planned.reviewer === "cto") {
+      const cto = join39(dir, "conclave", "cto.md");
+      if (!existsSync16(cto))
+        return refuse("the CTO's review of the strategy comes before the ruling on the full route (conclave/cto.md, launched after crew strategy check)");
+      if (statSync8(cto).mtimeMs < Date.parse(inputs.at))
+        return refuse("conclave/cto.md predates the check: the CTO reviews the strategy as it is now, then the judge rules");
+      if (record2.reviewer !== "cto")
+        return refuse("on the full route the CTO reviews the strategy: the ruling names reviewer cto");
+    } else if (record2.reviewer !== "judge")
+      return refuse("on the standard route the judge rules the strategy from the files: the ruling names reviewer judge");
+  }
+  const rounds = work.rounds ?? { judgement: 0, validation: 0 };
+  const round = rounds.strategy ?? 0;
+  const newRound = rounds.strategyHash !== hash;
+  if (newRound) {
+    const held = continueOrRefuse(env, work, "judgement", undefined, env.policy.team.maxJudgementRounds, round, `strategy round ${round + 1} of ${work.id}: the policy allows ${env.policy.team.maxJudgementRounds} (team.maxJudgementRounds); the user continues it once with crew continue ${work.id} judgement, or decides`);
+    if (held)
+      return held;
+  }
+  const saved = updateEvidence(env.paths, work.id, (fresh) => {
+    recordJudgement(fresh, record2);
+  });
+  if ("refused" in saved)
+    return refuse(saved.refused);
+  work.rounds = {
+    ...rounds,
+    strategy: newRound ? round + 1 : round,
+    strategyHash: hash
+  };
+  saveWork(env.paths, work);
+  const n = record2.findings.length;
+  return ok(`strategy: ${verdictText(record2.verdict)} (${n} finding${n === 1 ? "" : "s"}, reviewer ${record2.reviewer ?? "judge"}); strategy round ${work.rounds.strategy}`, { record: record2, rounds: work.rounds });
+}
 async function recordTaskJudgement(env, ioEnv, work, tampered, parsed, task) {
   const usage = 'usage: crew judgement <id> record --task T-n --ruling <file> | crew judgement <id> record <gate> --not-run --reason "<why>" --task T-n';
   const record2 = (work.tasks ?? []).find((t) => t.task === task);
@@ -10248,6 +10502,7 @@ function guardContext(env, work, tampered) {
   return {
     specText: readText(join39(dir, "spec.md")),
     strategyText: readText(join39(dir, "strategy.md")),
+    researcherText: readText(join39(dir, "conclave", "researcher.md")),
     analysisText: readText(join39(dir, "analysis.md")),
     originRecorded: existsSync16(join39(dir, "analysis", "origin.json")),
     gitRepository: isGitRepo(env.paths.root),
@@ -10271,7 +10526,19 @@ function deliver2(env, opened, evidence) {
   writeProtectedText(env.paths, join39(workDir(env.paths, opened.work.id), "report.md"), reportOf(env, opened.work, evidence));
 }
 function reportOf(env, work, evidence) {
-  return renderReport(work, evidence, env.policy, loadLedger(env.paths, work.id).ledger, loadItemMail(env.paths, work.id), env.mail.self.project, readOrigin(env.paths, work.id) ?? undefined);
+  return renderReport(work, evidence, env.policy, loadLedger(env.paths, work.id).ledger, loadItemMail(env.paths, work.id), env.mail.self.project, readOrigin(env.paths, work.id) ?? undefined, strategyOf(env, work, evidence));
+}
+function strategyOf(env, work, evidence) {
+  if (!phasesFor(work).includes("strategy"))
+    return null;
+  const dir = workDir(env.paths, work.id);
+  return strategyReport(readText(join39(dir, "strategy.md")), readText(join39(dir, "conclave", "researcher.md")), evidence);
+}
+function strategyLine(report, planned) {
+  const state = report === null ? "no strategy.md yet" : report.faults.length ? `${report.faults.length} fault${report.faults.length === 1 ? "" : "s"}` : "ok";
+  const r = report?.ruling;
+  const ruling = !r ? "none" : r.stale ? "stale" : r.verdict === "proven" ? "proven" : `${verdictText(r.verdict)} (${r.findings} findings)`;
+  return `  strategy ${RESEARCH_ALONE}: ${state}; ruling ${ruling}; gate ${planned.gate} planned: ${planned.reason}`;
 }
 function startPriority(flag, origin, answers) {
   if (flag)
@@ -11019,6 +11286,41 @@ ${originNotes.join(`
         decision: result
       });
     }
+    case "strategy": {
+      const opened = openForChange(env, args[0]);
+      if (isOutcome(opened))
+        return opened;
+      if (args[1] !== "check")
+        return refuse("usage: crew strategy <id> check");
+      const [plannedCheck] = plannedStrategyJudgement(opened.work);
+      if (!plannedCheck)
+        return refuse("strategy is not a phase of this item: a strategy belongs to a new project");
+      const dir = workDir(env.paths, opened.work.id);
+      const research = readText(join39(dir, "conclave", "researcher.md"));
+      if (research === null)
+        return refuse(RESEARCHER_FIRST);
+      const text = readText(join39(dir, "strategy.md"));
+      if (text === null)
+        return refuse("strategy.md in the work folder (references/strategy.md)");
+      const faults = checkStrategy(text, research);
+      if (faults.length)
+        return refuse(faults.map((f) => `strategy.md: ${f}`).join(`
+`), { faults });
+      const hash = strategyHash(text, research);
+      const reviewer = plannedCheck.reviewer;
+      writeProtectedJson(env.paths, join39(dir, "review", "strategy", "inputs.json"), {
+        at: nowIso(),
+        hash,
+        strategy: "strategy.md",
+        researcher: "conclave/researcher.md",
+        reviewer
+      });
+      const parsedStrategy = parseStrategy(text);
+      const claims = STRATEGY_SECTIONS.reduce((n, s) => n + parsedStrategy.bullets[s].length, 0);
+      const rows = parsedStrategy.rows.length;
+      const next = reviewer === "cto" ? "reviewer cto (full route): launch the CTO as reviewer of the strategy, then the judge" : "reviewer judge (standard route): launch the judge as judge of the strategy";
+      return ok(`strategy ok: ${claims} claims marked, ${rows} scaling row${rows === 1 ? "" : "s"}; hash ${hash.slice(0, 12)}; ${next}`, { hash, reviewer, claims, rows });
+    }
     case "kind": {
       const usage = 'usage: crew kind <id> raise --reason "<why>"';
       const opened = openForChange(env, args[0]);
@@ -11493,6 +11795,12 @@ ${outcome.saveRefused}` : ""),
       const usage = 'usage: crew judgement <id> record --ruling <file> | crew judgement <id> record <gate> --not-run --reason "<why>"';
       if (args[1] !== "record")
         return refuse(usage);
+      const strategyGate = rulingGates(env, parsed, args[2]);
+      if (strategyGate.includes("strategy")) {
+        if (strategyGate.length !== 1)
+          return refuse("a strategy ruling is recorded on its own: one ruling with gate strategy and no other");
+        return recordStrategyJudgement(env, opened, parsed, args[2], usage);
+      }
       if (parsed.flags.task !== undefined) {
         if (typeof parsed.flags.task !== "string" || !/^T-\d+$/.test(parsed.flags.task))
           return refuse("usage: crew judgement <id> record --task T-n --ruling <file>");
@@ -11775,7 +12083,9 @@ test-first not credited: ${out.uncredited}` : "";
       if (isOutcome(opened))
         return opened;
       const changed = changedWatchedPaths(env.paths.root, env.profile, opened.work);
-      const seats = plannedSeats(opened.work.route, opened.work.riskAreas, changed, env.policy);
+      const seats = plannedSeats(opened.work.route, opened.work.riskAreas, changed, env.policy, undefined, {
+        strategy: phasesFor(opened.work).includes("strategy")
+      });
       const primary = primaryTeam(changed);
       opened.work.seats = seats;
       opened.work.primaryTeam = primary;
@@ -12024,6 +12334,9 @@ ${lines2.join(`
       ].filter((l) => l !== null);
       if (work.source)
         extra.unshift(`  source ${sourceLine(work.source)}`);
+      const plannedStrategy = work.phase === "strategy" ? plannedStrategyJudgement(work)[0] : undefined;
+      if (plannedStrategy)
+        extra.unshift(strategyLine(strategyOf(env, work, result.evidence), plannedStrategy));
       const analysis = work.phase === "analyse" ? readOrigin(env.paths, work.id) : null;
       if (analysis)
         extra.unshift(analysis.origin ? `  analysis: ${originSummary(analysis.origin)}` : `  analysis: origin.json changed outside the engine (crew accept ${work.id})`);
@@ -12414,6 +12727,7 @@ var HELP = `crew ${VERSION}
       --mode auto|bypassPermissions|dontAsk   no person watching: recorded as the agent's decision
   approve <id> audit                    a person signs an audit's report (asks the user; never with --mode or --validator)
   kind <id> raise --reason "<why>"      a feature raised to a new project while its spec is open: the strategy comes next
+  strategy <id> check                   check strategy.md (the five sections, [R<n>] marks on the research's facts, the scaling table) and write the strategy's review inputs
   phase <id> next                       advance when the guard holds
   await <id> user | role | mail <mid>   mark the turn's wait: for the user, for the roles, or for a reply to a message
   resume <id>                           clear the wait (asks the user while a jev dispute is held on the item)

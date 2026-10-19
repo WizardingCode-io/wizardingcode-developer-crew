@@ -10,6 +10,7 @@ import {
   statSync,
   symlinkSync,
   unlinkSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
@@ -28,6 +29,7 @@ import { readProtectedJson, writeProtectedJson } from "../src/store.ts";
 import type { GateRun, Message, WorkItem } from "../src/types.ts";
 import { loadWork, saveWork } from "../src/work.ts";
 import { git, makeRepo, repoPaths, tempDir, testEnv, write } from "./helpers.ts";
+import { RESEARCH, STRATEGY } from "./strategy.test.ts";
 
 test("SP2b: debate open and close through the command; plan waits while the debate is open; status says so", async () => {
   const root = makeRepo({
@@ -5670,9 +5672,11 @@ test("SP8-T2 AC-2: crew kind raise moves a feature to a new project, back to str
   expect((await c.json("status")).data.phases).toContain("strategy");
   const blocked = await c.run("phase", id, "next");
   expect(blocked.code).toBe(1);
-  expect(blocked.err).toContain("strategy.md in the work folder");
-  write(root, `.crew/work/${id}/strategy.md`, "# Strategy\n");
-  expect((await c.json("phase", id, "next")).data.phase).toBe("specify");
+  expect(blocked.err).toContain(
+    "conclave/researcher.md: the researcher's pass comes before the strategy",
+  );
+  write(root, `.crew/work/${id}/conclave/researcher.md`, RESEARCH);
+  expect((await c.run("phase", id, "next")).err).toContain("strategy.md in the work folder");
   expect((await c.run("kind", id, "raise", "--reason", "again")).err).toContain(
     "only a feature is raised to a strategy",
   );
@@ -5730,4 +5734,293 @@ test("SP8-T2 AC-3: crew approve <id> audit is a person's: --mode and --validator
     kind: "approval",
     text: "audit signed",
   });
+});
+
+const newProduct = (extra: Record<string, unknown> = {}) =>
+  JSON.stringify({ ...JSON.parse(answers), work_type: "new-product", scope: 1, ...extra });
+
+/** An item in the strategy phase: a new product (always full), or a standard feature raised to a new project at understand. */
+async function strategyItem(
+  c: ReturnType<typeof io>,
+  root: string,
+  options: { full?: boolean; files?: boolean } = {},
+) {
+  let id: string;
+  if (options.full) {
+    id = (await c.json("start", "A new product", "--answers", newProduct(), "--criterion", "a"))
+      .data.id as string;
+    for (let i = 0; i < 2; i++) await c.run("phase", id, "next");
+  } else {
+    const standard = JSON.stringify({ ...JSON.parse(answers), work_type: "feature", scope: 1 });
+    id = (
+      await c.json(
+        "start",
+        "A feature grown into a product",
+        "--answers",
+        standard,
+        "--criterion",
+        "a",
+      )
+    ).data.id as string;
+    await c.run("phase", id, "next");
+    expect((await c.run("kind", id, "raise", "--reason", "a product of its own")).code).toBe(0);
+    await c.run("phase", id, "next");
+  }
+  expect((await c.json("status")).data.phase).toBe("strategy");
+  if (options.files !== false) {
+    write(root, `.crew/work/${id}/conclave/researcher.md`, RESEARCH);
+    write(root, `.crew/work/${id}/strategy.md`, STRATEGY);
+  }
+  return id;
+}
+
+const strategyRuling = (reviewer: string, verdict: "proven" | "not-proven" = "proven") =>
+  JSON.stringify({
+    rulings: [{ gate: "strategy", verdict, reviewer, judge: "judge", findings: [], tokens: 0 }],
+  });
+
+test("SP8-T3 AC-1, AC-4: crew strategy check refuses the faults naming them, needs the research first, and with none writes the inputs and names the reviewer; the status says the strategy is from the research alone", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const c = io(root);
+  const id = await strategyItem(c, root, { files: false });
+  // The status names the planned judgement gate from plannedStrategyJudgement (round 1 of the review: a dead path).
+  expect((await c.run("status")).out).toContain(
+    "strategy from the research alone (no knowledge base until SP4): no strategy.md yet; ruling none; gate strategy planned: new project, standard route: the judge rules from the files",
+  );
+  const early = await c.run("strategy", id, "check");
+  expect(early.code).toBe(1);
+  expect(early.err.trim()).toBe(
+    "conclave/researcher.md: the researcher's pass comes before the strategy (references/strategy.md)",
+  );
+  write(root, `.crew/work/${id}/conclave/researcher.md`, RESEARCH);
+  write(
+    root,
+    `.crew/work/${id}/strategy.md`,
+    STRATEGY.replace("| 10k users | the queue becomes a service | 2 weeks |\n", "").replace(
+      "[R5]\n\n## Time",
+      "[R7]\n\n## Time",
+    ),
+  );
+  const faulty = await c.run("strategy", id, "check");
+  expect(faulty.code).toBe(1);
+  expect(faulty.err.trim()).toBe(
+    "strategy.md: [R7] in Cost is not a fact line of conclave/researcher.md\nstrategy.md: no row in the Scaling phases table (| Trigger | Change | Cost |): every project has a first trigger at which its design changes",
+  );
+  expect(existsSync(join(root, ".crew", "work", id, "review", "strategy", "inputs.json"))).toBe(
+    false,
+  );
+  expect((await c.run("status")).out).toContain(
+    "strategy from the research alone (no knowledge base until SP4): 2 faults; ruling none",
+  );
+  write(root, `.crew/work/${id}/strategy.md`, STRATEGY);
+  const ok = await c.run("strategy", id, "check");
+  expect(ok.code, ok.err).toBe(0);
+  expect(ok.out.trim()).toMatch(
+    /^strategy ok: 4 claims marked, 1 scaling row; hash [0-9a-f]{12}; reviewer judge \(standard route\): launch the judge as judge of the strategy$/,
+  );
+  const inputs = JSON.parse(
+    readFileSync(join(root, ".crew", "work", id, "review", "strategy", "inputs.json"), "utf8"),
+  ) as { hash: string; reviewer: string; strategy: string; researcher: string };
+  expect(inputs).toMatchObject({
+    reviewer: "judge",
+    strategy: "strategy.md",
+    researcher: "conclave/researcher.md",
+  });
+  expect(inputs.hash).toMatch(/^[0-9a-f]{64}$/);
+  expect((await c.run("status")).out).toContain(
+    "strategy from the research alone (no knowledge base until SP4): ok; ruling none",
+  );
+  // The guard runs the check itself: a fault written after the check is named at phase next.
+  write(
+    root,
+    `.crew/work/${id}/strategy.md`,
+    STRATEGY.replace("- One service serves the need [R3]", "- One service serves the need"),
+  );
+  const blocked = await c.run("phase", id, "next");
+  expect(blocked.code).toBe(1);
+  expect(blocked.err).toContain(
+    'strategy.md: no mark on "One service serves the need" in Viability',
+  );
+});
+
+test("SP8-T3 AC-2: a strategy ruling is recorded on its own path (stamped with the two files' hash, strategy.md inside the change), refused on a feature, without the check, on a changed hash and over the round cap; stale after an edit; the code's verdict and plan never name it", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const c = io(root);
+  const paths = repoPaths(root, c.env);
+  const id = await strategyItem(c, root);
+  const file = join(root, "ruling.json");
+  writeFileSync(file, strategyRuling("judge"));
+  const unchecked = await c.run("judgement", id, "record", "--ruling", file);
+  expect(unchecked.code).toBe(1);
+  expect(unchecked.err.trim()).toBe(
+    `no strategy check for this item: run crew strategy ${id} check first, then the reviewer and the judge`,
+  );
+  expect((await c.run("strategy", id, "check")).code).toBe(0);
+  write(root, `.crew/work/${id}/strategy.md`, `${STRATEGY}\n`);
+  const changed = await c.run("judgement", id, "record", "--ruling", file);
+  expect(changed.code).toBe(1);
+  expect(changed.err.trim()).toBe(
+    `strategy.md or conclave/researcher.md changed after the check: run crew strategy ${id} check again, then the reviewer and the judge`,
+  );
+  write(root, `.crew/work/${id}/strategy.md`, STRATEGY);
+  const recorded = await c.run("judgement", id, "record", "--ruling", file);
+  expect(recorded.code, recorded.err).toBe(0);
+  expect(recorded.out.trim()).toBe(
+    "strategy: proven (0 findings, reviewer judge); strategy round 1",
+  );
+  const evidence = loadEvidence(paths, id).evidence;
+  const record = evidence.judgement?.find((j) => j.gate === "strategy");
+  expect(record?.fingerprint).toMatch(/^[0-9a-f]{64}$/);
+  expect(record?.fingerprint).not.toBe(evidence.fingerprint);
+  expect((loadWork(paths, id).work as WorkItem).rounds).toMatchObject({
+    strategy: 1,
+    judgement: 0,
+  });
+  // A finding on strategy.md is inside the change; one on a source file is outside.
+  writeFileSync(
+    file,
+    JSON.stringify({
+      rulings: [
+        {
+          gate: "strategy",
+          verdict: "proven",
+          reviewer: "judge",
+          judge: "judge",
+          findings: [
+            { file: "strategy.md", line: 4, text: "a", severity: "advisory" },
+            { file: "src/a.ts", line: 1, text: "b", severity: "advisory" },
+          ],
+          tokens: 0,
+        },
+      ],
+    }),
+  );
+  expect((await c.run("judgement", id, "record", "--ruling", file)).code).toBe(0);
+  const marked = loadEvidence(paths, id).evidence.judgement?.find((j) => j.gate === "strategy");
+  expect(marked?.findings.map((f) => f.outside ?? false)).toEqual([false, true]);
+  expect((loadWork(paths, id).work as WorkItem).rounds?.strategy).toBe(1);
+  // The code's verdict and plan: no strategy gate anywhere.
+  const status = await c.json("status");
+  expect(JSON.stringify(status.data.unproven)).not.toContain("strategy");
+  expect(
+    ((await c.json("team", id)).data.seats as { gate?: string }[]).map((s) => s.gate),
+  ).not.toContain("strategy");
+  // Stale after an edit; restored, the item moves on.
+  write(root, `.crew/work/${id}/strategy.md`, `${STRATEGY}\n`);
+  const stale = await c.run("phase", id, "next");
+  expect(stale.code).toBe(1);
+  expect(stale.err).toContain("the strategy ruling is stale");
+  write(root, `.crew/work/${id}/strategy.md`, STRATEGY);
+  expect((await c.json("phase", id, "next")).data.phase).toBe("specify");
+  expect((await c.run("evidence", id)).out).toContain(
+    "## Strategy\n\n- From the research alone (no knowledge base until SP4).\n- Claims: Viability 1, Cost 1, Time 1, Stack 1; scaling rows: 1.\n- Ruling: proven (reviewer judge, 2 findings).\n",
+  );
+  // A feature refuses a strategy ruling.
+  const feature = (await c.json("start", "A feature", "--answers", answers, "--criterion", "a"))
+    .data.id as string;
+  writeFileSync(file, strategyRuling("judge"));
+  const refused = await c.run("judgement", feature, "record", "--ruling", file);
+  expect(refused.code).toBe(1);
+  expect(refused.err.trim()).toBe(
+    "strategy is not a phase of this item: a strategy ruling is recorded on a new project alone",
+  );
+  // The rounds' cap: a record on a new hash opens a round; the third is refused.
+  const second = await strategyItem(c, root);
+  const cycle = async (text: string) => {
+    write(root, `.crew/work/${second}/strategy.md`, text);
+    expect((await c.run("strategy", second, "check")).code).toBe(0);
+    return c.run("judgement", second, "record", "--ruling", file);
+  };
+  expect((await cycle(STRATEGY)).out).toContain("strategy round 1");
+  expect((await cycle(`${STRATEGY}\n`)).out).toContain("strategy round 2");
+  const capped = await cycle(`${STRATEGY}\n\n`);
+  expect(capped.code).toBe(1);
+  expect(capped.err).toContain(
+    `strategy round 3 of ${second}: the policy allows 2 (team.maxJudgementRounds)`,
+  );
+  expect(capped.err).toContain(`crew continue ${second} judgement`);
+});
+
+test("SP8-T3 AC-2, AC-3: on the full route the strategy ruling needs the CTO's review written after the check and names the CTO as the reviewer; the check names the CTO; a mixed ruling file is refused", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const c = io(root);
+  const id = await strategyItem(c, root, { full: true });
+  expect((await c.json("status")).data.route).toBe("full");
+  const checked = await c.run("strategy", id, "check");
+  expect(checked.code, checked.err).toBe(0);
+  expect(checked.out).toContain(
+    "reviewer cto (full route): launch the CTO as reviewer of the strategy, then the judge",
+  );
+  const at = Date.parse(
+    (
+      JSON.parse(
+        readFileSync(join(root, ".crew", "work", id, "review", "strategy", "inputs.json"), "utf8"),
+      ) as { at: string }
+    ).at,
+  );
+  const file = join(root, "ruling.json");
+  writeFileSync(file, strategyRuling("cto"));
+  const noCto = await c.run("judgement", id, "record", "--ruling", file);
+  expect(noCto.code).toBe(1);
+  expect(noCto.err.trim()).toBe(
+    "the CTO's review of the strategy comes before the ruling on the full route (conclave/cto.md, launched after crew strategy check)",
+  );
+  const cto = join(root, ".crew", "work", id, "conclave", "cto.md");
+  write(
+    root,
+    `.crew/work/${id}/conclave/cto.md`,
+    "# strategy findings for x\nreviewer: cto\n\n## Findings\n(or: none)\n",
+  );
+  utimesSync(cto, new Date(at - 60_000), new Date(at - 60_000));
+  const old = await c.run("judgement", id, "record", "--ruling", file);
+  expect(old.code).toBe(1);
+  expect(old.err.trim()).toBe(
+    "conclave/cto.md predates the check: the CTO reviews the strategy as it is now, then the judge rules",
+  );
+  utimesSync(cto, new Date(at + 1_000), new Date(at + 1_000));
+  writeFileSync(file, strategyRuling("judge"));
+  const wrong = await c.run("judgement", id, "record", "--ruling", file);
+  expect(wrong.code).toBe(1);
+  expect(wrong.err.trim()).toBe(
+    "on the full route the CTO reviews the strategy: the ruling names reviewer cto",
+  );
+  writeFileSync(
+    file,
+    JSON.stringify({
+      rulings: [
+        {
+          gate: "strategy",
+          verdict: "proven",
+          reviewer: "cto",
+          judge: "judge",
+          findings: [],
+          tokens: 0,
+        },
+        { gate: "code-quality", verdict: "proven", findings: [], tokens: 0 },
+      ],
+    }),
+  );
+  expect((await c.run("judgement", id, "record", "--ruling", file)).err.trim()).toBe(
+    "a strategy ruling is recorded on its own: one ruling with gate strategy and no other",
+  );
+  writeFileSync(file, strategyRuling("cto"));
+  const recorded = await c.run("judgement", id, "record", "--ruling", file);
+  expect(recorded.code, recorded.err).toBe(0);
+  expect(recorded.out.trim()).toBe("strategy: proven (0 findings, reviewer cto); strategy round 1");
+  expect((await c.json("phase", id, "next")).data.phase).toBe("specify");
+  // A standard item's ruling names the judge; the CTO's name is refused there.
+  const standard = await strategyItem(c, root);
+  expect((await c.run("strategy", standard, "check")).code).toBe(0);
+  expect((await c.run("judgement", standard, "record", "--ruling", file)).err.trim()).toBe(
+    "on the standard route the judge rules the strategy from the files: the ruling names reviewer judge",
+  );
 });

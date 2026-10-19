@@ -11,6 +11,7 @@ import { decisionCounts } from "./policy.ts";
 import { sourceLine, sourceText } from "./source.ts";
 import { loadState, updateState } from "./state.ts";
 import { readProtectedJson, writeProtectedJson } from "./store.ts";
+import { checkStrategy, RESEARCHER_FIRST, strategyHash, verdictText } from "./strategy.ts";
 import type {
   Criterion,
   CriterionKind,
@@ -20,6 +21,7 @@ import type {
   GapDecision,
   ObjectionLedger,
   Phase,
+  PlannedStrategyJudgement,
   Policy,
   RemovedCriterion,
   Route,
@@ -69,6 +71,32 @@ export function phasesFor(work: Pick<WorkItem, "route" | "kind">): Phase[] {
     if (at !== -1) return [...base.slice(0, at), "strategy", ...base.slice(at)];
   }
   return [...base];
+}
+
+/**
+ * The strategy's judgement gate (SP7 §7.3, SP8 Task 3): planned for an item whose phases include
+ * strategy and kept apart from the gates the gate run plans over the code; on the full route the
+ * CTO reviews and the judge rules, on standard the judge rules from the files alone.
+ */
+export function plannedStrategyJudgement(
+  work: Pick<WorkItem, "route" | "kind">,
+): PlannedStrategyJudgement[] {
+  if (!phasesFor(work).includes("strategy")) return [];
+  return work.route === "full"
+    ? [
+        {
+          gate: "strategy",
+          reviewer: "cto",
+          reason: "new project, full route: the CTO reviews, the judge rules",
+        },
+      ]
+    : [
+        {
+          gate: "strategy",
+          reviewer: "judge",
+          reason: "new project, standard route: the judge rules from the files",
+        },
+      ];
 }
 
 /** The floors a kind sets on the route (SP7 §7.1, §7.5): a new project is never fast, an audit is always full. */
@@ -524,6 +552,8 @@ export interface GuardContext {
   specText: string | null;
   /** `strategy.md` of the work folder, or null without one (a new project's strategy phase, SP7 §7.3). */
   strategyText: string | null;
+  /** `conclave/researcher.md`, the facts a strategy's marks name, or null without one. */
+  researcherText: string | null;
   /** `analysis.md` of the work folder, or null without one (an issue's analyse phase, SP7 §7.4). */
   analysisText: string | null;
   /** Whether `analysis/origin.json` exists in the work folder (`crew analyse`, SP3 Task 5). */
@@ -616,10 +646,32 @@ export function guardFor(work: WorkItem, next: Phase, ctx: GuardContext): string
     if (ctx.gitRepository && !ctx.originRecorded)
       missing.push("analysis/origin.json in the work folder (crew analyse <id> --paths <files>)");
   }
-  // Out of strategy (SP7 §7.3): the document by name here; its structure, its marks and its
-  // judgement come with the strategy's own check (SP8 Task 3).
-  if (work.phase === "strategy" && ctx.strategyText === null)
-    missing.push("strategy.md in the work folder");
+  // Out of strategy (SP7 §7.3): the research first, then the document's shape and marks, then a
+  // proven ruling with gate strategy on the hash of the two files as they are now; no ruling of
+  // another gate counts, and an edit after the ruling makes it stale.
+  if (work.phase === "strategy") {
+    if (ctx.researcherText === null) missing.push(RESEARCHER_FIRST);
+    else if (ctx.strategyText === null) missing.push("strategy.md in the work folder");
+    else {
+      missing.push(
+        ...checkStrategy(ctx.strategyText, ctx.researcherText).map((f) => `strategy.md: ${f}`),
+      );
+      const hash = strategyHash(ctx.strategyText, ctx.researcherText);
+      const record = ctx.evidence?.judgement?.find((j) => j.gate === "strategy");
+      if (!record)
+        missing.push(
+          "a proven strategy ruling (crew strategy <id> check, the reviewer and the judge, crew judgement <id> record --ruling <file>)",
+        );
+      else if (record.fingerprint !== hash)
+        missing.push(
+          "the strategy ruling is stale: strategy.md or conclave/researcher.md changed after it; check and judge again",
+        );
+      else if (record.verdict !== "proven")
+        missing.push(
+          `the strategy ruling is ${verdictText(record.verdict)} (${record.findings.length} findings)`,
+        );
+    }
+  }
   if (next === "deliver" && kindOfItem(work) === "audit") {
     // An audit is proven by its three records alone (SP7 §7.5): no spec, no gate run, no leads.
     missing.push(...ctx.unproven.map((reason) => `not proven: ${reason}`));

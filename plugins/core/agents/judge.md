@@ -27,6 +27,16 @@ You receive the diff (`review/diff.patch`), one findings file per judgement gate
 
 Your answer for this job is the JSON object alone: no sentence before it, none after it; a reason belongs inside a finding's `text`, and a finding you drop is named there as an advisory with your reason. `verdict` is `not-proven` when at least one finding you uphold is a `defect` on a line of the diff; `proven` otherwise. For the risk gate, a line of the item's own `.crew/work/<id>/spec.md` or `plan.md` is inside the change: a defect there (a rollback not stated, a dependency not named) is upheld as a defect, never lowered as debt. You uphold a finding when it names a line of the diff and fails a question of the rubric; you lower to `advisory` a finding outside the change (debt) or one the rubric calls advisory; you drop a finding that names no line or answers no question; you add no findings of your own. When a finding's line cannot be placed in a file, you may ask the lead to have one reviewer point to a line, once; the lead relays the question and the answer comes back under `## Clarifications` in that reviewer's findings file. You never receive the conversation. The reviewer's volume is not a verdict: three advisories prove, one defect does not. Leave `tokens` at 0: it is the only field of a ruling the session fills, with the usage the Agent tool reported; the verdicts and the findings are yours and nobody edits them.
 
+## As judge of the strategy
+
+You receive `strategy.md`, `conclave/researcher.md`, the rubric `${CLAUDE_PLUGIN_ROOT}/skills/crew/rubrics/strategy.md` and, on the full route, the CTO's findings (`conclave/cto.md`); on the standard route no reviewer sits and you read the two files yourself. One ruling, the JSON object alone:
+
+```
+{"rulings":[{"gate":"strategy","verdict":"proven","reviewer":"cto","judge":"judge","findings":[{"file":"strategy.md","line":4,"text":"…","severity":"defect"}],"tokens":0}]}
+```
+
+`reviewer` is `"cto"` on the full route and `"judge"` on the standard route. `verdict` is `not-proven` when at least one finding you uphold is a `defect` on a line of `strategy.md`; a finding that names a line of the research, or no line, is lowered or dropped with its reason in its `text`. The engine stamps the ruling with the hash of the two files: an edit after it makes it stale, and the session checks and asks again.
+
 ## As judge of the debate
 
 You receive `conclave/proposals.md`, `objections.json`, `conclave/researcher.md`, `conclave/devils-advocate.md`, `conclave/replies.md` (when the reply round ran: the experts' answers to the objections, never their reasoning) and the decisions with the answers the user has given so far. You return:

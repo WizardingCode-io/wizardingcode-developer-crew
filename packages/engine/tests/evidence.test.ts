@@ -21,6 +21,7 @@ import { addObjection, bindObjection, waiveObjection } from "../src/objections.t
 import { workDir } from "../src/paths.ts";
 import { DEFAULT_POLICY } from "../src/policy.ts";
 import { addQuestion, answerQuestion } from "../src/questions.ts";
+import { strategyReport } from "../src/strategy.ts";
 import type {
   Evidence,
   GateRun,
@@ -44,6 +45,7 @@ import {
   unansweredDecisions,
 } from "../src/work.ts";
 import { makeRepo, repoPaths, testEnv } from "./helpers.ts";
+import { RESEARCH, STRATEGY } from "./strategy.test.ts";
 
 const run: RunRecord = {
   command: "npm run test",
@@ -977,4 +979,46 @@ test("SP3-T6 AC-2: the report marks each judged finding (verified by Jev, disput
     "## Verifications\n\n| What | Ref | Answer | Confidence | Model | At |\n| :- | :- | :- | -: | :- | :- |\n| defect | code-quality src/a.ts:1 | yes 0.93 | 0.93 | jev-1.13.0 | 2026-10-19T10:00:00.000Z |\n| fact | F-1 | contradicts 0.95 | 0.95 | file | 2026-10-19T10:01:00.000Z |\n| validator | complete-gap-round v2 \\| x | no 0.97 | 0.97 | file | 2026-10-19T10:02:00.000Z |\n",
   );
   expect(renderReport(work, emptyEvidence(), DEFAULT_POLICY)).not.toContain("## Verifications");
+});
+
+test("SP8-T3 AC-4: the report's Strategy section says the strategy is from the research alone, counts the claims and the rows, and names the ruling's state or the faults", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const work = createWork(paths, "a new product");
+  work.kind = "new-project";
+  const report = (text: string, ruling: Evidence["judgement"]) =>
+    renderReport(
+      work,
+      { ...emptyEvidence(), judgement: ruling },
+      DEFAULT_POLICY,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      strategyReport(text, RESEARCH, { judgement: ruling }),
+    );
+  const none = report(STRATEGY, []);
+  expect(none).toContain(
+    "## Strategy\n\n- From the research alone (no knowledge base until SP4).\n- Claims: Viability 1, Cost 1, Time 1, Stack 1; scaling rows: 1.\n- Ruling: none.\n",
+  );
+  expect(none.indexOf("## Strategy")).toBeLessThan(none.indexOf("## Acceptance criteria"));
+  const stale = report(STRATEGY, [
+    {
+      gate: "strategy",
+      verdict: "not-proven",
+      reviewer: "cto",
+      judge: "judge",
+      findings: [{ file: "strategy.md", line: 4, text: "x", severity: "defect" }],
+      at: "2026-10-19T10:00:00.000Z",
+      fingerprint: "other",
+    },
+  ]);
+  expect(stale).toContain(
+    "- Ruling: not proven (reviewer cto, 1 finding), stale: the files changed after it.\n",
+  );
+  const faulty = report(
+    STRATEGY.replace("- One service serves the need [R3]", "- One service serves the need"),
+    [],
+  );
+  expect(faulty).toContain('- Faults: no mark on "One service serves the need" in Viability');
+  expect(renderReport(work, emptyEvidence(), DEFAULT_POLICY)).not.toContain("## Strategy");
 });

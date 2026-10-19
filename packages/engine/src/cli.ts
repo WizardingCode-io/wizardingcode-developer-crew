@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { analyseOrigin, originSummary, readOrigin, writeOrigin } from "./analysis.ts";
 import { commaList, type Parsed, parse } from "./argv.ts";
@@ -37,7 +37,7 @@ import {
   updateEvidence,
 } from "./evidence.ts";
 import { changedWatchedPaths, hashPaths, isGitRepo } from "./fingerprint.ts";
-import { ensureDir, nowIso, readText, sha256, writeText } from "./fs.ts";
+import { ensureDir, nowIso, readJson, readText, sha256, writeText } from "./fs.ts";
 import { assess, reassess, runGates, runTaskGate } from "./gates.ts";
 import { handleHook } from "./hooks/index.ts";
 import type { HookPayload } from "./hooks/types.ts";
@@ -158,6 +158,17 @@ import {
   writeProtectedText,
 } from "./store.ts";
 import {
+  checkStrategy,
+  parseStrategy,
+  RESEARCH_ALONE,
+  RESEARCHER_FIRST,
+  STRATEGY_SECTIONS,
+  type StrategyReport,
+  strategyHash,
+  strategyReport,
+  verdictText,
+} from "./strategy.ts";
+import {
   listTasks,
   mergeTask,
   noteTask,
@@ -183,6 +194,7 @@ import type {
   OpenedSession,
   Phase,
   PlannedJudgement,
+  PlannedStrategyJudgement,
   Policy,
   Profile,
   ProjectEntry,
@@ -241,6 +253,7 @@ import {
   openDebate,
   openItems,
   phasesFor,
+  plannedStrategyJudgement,
   raiseKind,
   removeCriterion,
   saveWork,
@@ -270,6 +283,7 @@ const KNOWN_FLAGS: Record<string, readonly string[]> = {
   start: ["answers", "criterion", "preserve", "origin", "priority", "source", "reason"],
   classify: ["answers"],
   kind: ["reason"],
+  strategy: [],
   criteria: ["kind", "contract"],
   decision: ["default"],
   debate: ["reason", "tokens"],
@@ -713,6 +727,125 @@ function rulingRecords(
   return { records, rulingPath };
 }
 
+/** The gates a judgement command names, read before anything is checked: the --not-run gate word, or every gate of the ruling file (none when the file cannot be read or parsed: the normal path says why). */
+function rulingGates(env: Env, parsed: Parsed, gateWord: string | undefined): string[] {
+  if (parsed.flags["not-run"]) return gateWord ? [gateWord] : [];
+  if (typeof parsed.flags.ruling !== "string") return [];
+  const text = readText(resolve(env.paths.root, parsed.flags.ruling));
+  if (text === null) return [];
+  try {
+    const raw = JSON.parse(text) as { rulings?: { gate?: unknown }[] };
+    return Array.isArray(raw.rulings)
+      ? raw.rulings.map((r) => (typeof r?.gate === "string" ? r.gate : ""))
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * A strategy ruling (SP7 §7.3, SP8 Task 3): on a new project alone, after the check, against the
+ * hash of strategy.md and conclave/researcher.md as they are now (an edit after the check refuses
+ * the record; an edit after the record makes it stale), with strategy.md inside the change; on
+ * the full route the CTO's review (written after the check) names the reviewer, on standard the
+ * judge; a record on a new hash opens a strategy round under the judgement cap.
+ */
+async function recordStrategyJudgement(
+  env: Env,
+  opened: Opened,
+  parsed: Parsed,
+  gateWord: string | undefined,
+  usage: string,
+): Promise<Outcome> {
+  const work = opened.work;
+  const [planned] = plannedStrategyJudgement(work);
+  if (!planned)
+    return refuse(
+      "strategy is not a phase of this item: a strategy ruling is recorded on a new project alone",
+    );
+  const dir = workDir(env.paths, work.id);
+  const inputs = readJson<{ at?: string; hash?: string }>(
+    join(dir, "review", "strategy", "inputs.json"),
+  );
+  if (!inputs || typeof inputs.hash !== "string" || typeof inputs.at !== "string")
+    return refuse(
+      `no strategy check for this item: run crew strategy ${work.id} check first, then the reviewer and the judge`,
+    );
+  const research = readText(join(dir, "conclave", "researcher.md"));
+  const text = readText(join(dir, "strategy.md"));
+  if (research === null) return refuse(RESEARCHER_FIRST);
+  if (text === null) return refuse("strategy.md in the work folder (references/strategy.md)");
+  const hash = strategyHash(text, research);
+  if (hash !== inputs.hash)
+    return refuse(
+      `strategy.md or conclave/researcher.md changed after the check: run crew strategy ${work.id} check again, then the reviewer and the judge`,
+    );
+  const input = rulingRecords(
+    env,
+    parsed,
+    gateWord,
+    ["strategy"],
+    hash,
+    ["strategy.md", `.crew/work/${work.id}/strategy.md`],
+    work.id,
+    "the strategy",
+    usage,
+  );
+  if (isOutcome(input)) return input;
+  const record = input.records[0];
+  if (!record) return refuse(usage);
+  if (record.verdict !== "not-run") {
+    if (planned.reviewer === "cto") {
+      const cto = join(dir, "conclave", "cto.md");
+      if (!existsSync(cto))
+        return refuse(
+          "the CTO's review of the strategy comes before the ruling on the full route (conclave/cto.md, launched after crew strategy check)",
+        );
+      if (statSync(cto).mtimeMs < Date.parse(inputs.at))
+        return refuse(
+          "conclave/cto.md predates the check: the CTO reviews the strategy as it is now, then the judge rules",
+        );
+      if (record.reviewer !== "cto")
+        return refuse(
+          "on the full route the CTO reviews the strategy: the ruling names reviewer cto",
+        );
+    } else if (record.reviewer !== "judge")
+      return refuse(
+        "on the standard route the judge rules the strategy from the files: the ruling names reviewer judge",
+      );
+  }
+  const rounds = work.rounds ?? { judgement: 0, validation: 0 };
+  const round = rounds.strategy ?? 0;
+  const newRound = rounds.strategyHash !== hash;
+  if (newRound) {
+    const held = continueOrRefuse(
+      env,
+      work,
+      "judgement",
+      undefined,
+      env.policy.team.maxJudgementRounds,
+      round,
+      `strategy round ${round + 1} of ${work.id}: the policy allows ${env.policy.team.maxJudgementRounds} (team.maxJudgementRounds); the user continues it once with crew continue ${work.id} judgement, or decides`,
+    );
+    if (held) return held;
+  }
+  const saved = updateEvidence(env.paths, work.id, (fresh) => {
+    recordJudgement(fresh, record);
+  });
+  if ("refused" in saved) return refuse(saved.refused);
+  work.rounds = {
+    ...rounds,
+    strategy: newRound ? round + 1 : round,
+    strategyHash: hash,
+  };
+  saveWork(env.paths, work);
+  const n = record.findings.length;
+  return ok(
+    `strategy: ${verdictText(record.verdict)} (${n} finding${n === 1 ? "" : "s"}, reviewer ${record.reviewer ?? "judge"}); strategy round ${work.rounds.strategy}`,
+    { record, rounds: work.rounds },
+  );
+}
+
 /**
  * A todo's ruling (SP7b decision 14): parsed against the gates the todo's gate planned, bound to the
  * current code and to the files its inputs were cut for, recorded into the todo's gate and never
@@ -818,6 +951,7 @@ function guardContext(env: Env, work: WorkItem, tampered: boolean): GuardContext
   return {
     specText: readText(join(dir, "spec.md")),
     strategyText: readText(join(dir, "strategy.md")),
+    researcherText: readText(join(dir, "conclave", "researcher.md")),
     analysisText: readText(join(dir, "analysis.md")),
     originRecorded: existsSync(join(dir, "analysis", "origin.json")),
     gitRepository: isGitRepo(env.paths.root),
@@ -859,7 +993,38 @@ function reportOf(env: Env, work: WorkItem, evidence: Evidence): string {
     loadItemMail(env.paths, work.id),
     env.mail.self.project,
     readOrigin(env.paths, work.id) ?? undefined,
+    strategyOf(env, work, evidence),
   );
+}
+
+/** The strategy of a new project as it stands, for the status and the report; null for any other item or before the document exists. */
+function strategyOf(env: Env, work: WorkItem, evidence: Evidence): StrategyReport | null {
+  if (!phasesFor(work).includes("strategy")) return null;
+  const dir = workDir(env.paths, work.id);
+  return strategyReport(
+    readText(join(dir, "strategy.md")),
+    readText(join(dir, "conclave", "researcher.md")),
+    evidence,
+  );
+}
+
+/** `ok`, `n faults` or `no strategy.md yet`, then the ruling's state, for the status line. */
+function strategyLine(report: StrategyReport | null, planned: PlannedStrategyJudgement): string {
+  const state =
+    report === null
+      ? "no strategy.md yet"
+      : report.faults.length
+        ? `${report.faults.length} fault${report.faults.length === 1 ? "" : "s"}`
+        : "ok";
+  const r = report?.ruling;
+  const ruling = !r
+    ? "none"
+    : r.stale
+      ? "stale"
+      : r.verdict === "proven"
+        ? "proven"
+        : `${verdictText(r.verdict)} (${r.findings} findings)`;
+  return `  strategy ${RESEARCH_ALONE}: ${state}; ruling ${ruling}; gate ${planned.gate} planned: ${planned.reason}`;
 }
 
 /** The item's priority at start (SP7 §7.1, SP3 Task 2): the flag, else the origin's confirmed level, else the `priority` answer's level, else normal. */
@@ -1773,6 +1938,44 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         decision: result,
       });
     }
+    case "strategy": {
+      // The strategy's check (SP7 §7.3, SP8 Task 3): the shape and the marks against the research as
+      // it stands, then the review inputs the ruling is recorded against.
+      const opened = openForChange(env, args[0]);
+      if (isOutcome(opened)) return opened;
+      if (args[1] !== "check") return refuse("usage: crew strategy <id> check");
+      const [plannedCheck] = plannedStrategyJudgement(opened.work);
+      if (!plannedCheck)
+        return refuse("strategy is not a phase of this item: a strategy belongs to a new project");
+      const dir = workDir(env.paths, opened.work.id);
+      const research = readText(join(dir, "conclave", "researcher.md"));
+      if (research === null) return refuse(RESEARCHER_FIRST);
+      const text = readText(join(dir, "strategy.md"));
+      if (text === null) return refuse("strategy.md in the work folder (references/strategy.md)");
+      const faults = checkStrategy(text, research);
+      if (faults.length)
+        return refuse(faults.map((f) => `strategy.md: ${f}`).join("\n"), { faults });
+      const hash = strategyHash(text, research);
+      const reviewer = plannedCheck.reviewer;
+      writeProtectedJson(env.paths, join(dir, "review", "strategy", "inputs.json"), {
+        at: nowIso(),
+        hash,
+        strategy: "strategy.md",
+        researcher: "conclave/researcher.md",
+        reviewer,
+      });
+      const parsedStrategy = parseStrategy(text);
+      const claims = STRATEGY_SECTIONS.reduce((n, s) => n + parsedStrategy.bullets[s].length, 0);
+      const rows = parsedStrategy.rows.length;
+      const next =
+        reviewer === "cto"
+          ? "reviewer cto (full route): launch the CTO as reviewer of the strategy, then the judge"
+          : "reviewer judge (standard route): launch the judge as judge of the strategy";
+      return ok(
+        `strategy ok: ${claims} claims marked, ${rows} scaling row${rows === 1 ? "" : "s"}; hash ${hash.slice(0, 12)}; ${next}`,
+        { hash, reviewer, claims, rows },
+      );
+    }
     case "kind": {
       // A feature raised to a new project while its spec is open (SP7 §7.3, SP8 decision 2): the
       // lead's call, recorded as the agent's.
@@ -2314,6 +2517,16 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       const usage =
         'usage: crew judgement <id> record --ruling <file> | crew judgement <id> record <gate> --not-run --reason "<why>"';
       if (args[1] !== "record") return refuse(usage);
+      // A strategy ruling (SP8 Task 3) is recorded on its own path: against the hash of the two
+      // files, never the code's fingerprint, and in its own rounds.
+      const strategyGate = rulingGates(env, parsed, args[2]);
+      if (strategyGate.includes("strategy")) {
+        if (strategyGate.length !== 1)
+          return refuse(
+            "a strategy ruling is recorded on its own: one ruling with gate strategy and no other",
+          );
+        return recordStrategyJudgement(env, opened, parsed, args[2], usage);
+      }
       // A todo's ruling goes into the todo's gate (SP7b decision 14), never into the item's rounds.
       if (parsed.flags.task !== undefined) {
         if (typeof parsed.flags.task !== "string" || !/^T-\d+$/.test(parsed.flags.task))
@@ -2749,7 +2962,16 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       const opened = openForChange(env, args[0]);
       if (isOutcome(opened)) return opened;
       const changed = changedWatchedPaths(env.paths.root, env.profile, opened.work);
-      const seats = plannedSeats(opened.work.route, opened.work.riskAreas, changed, env.policy);
+      const seats = plannedSeats(
+        opened.work.route,
+        opened.work.riskAreas,
+        changed,
+        env.policy,
+        undefined,
+        {
+          strategy: phasesFor(opened.work).includes("strategy"),
+        },
+      );
       const primary = primaryTeam(changed);
       opened.work.seats = seats;
       opened.work.primaryTeam = primary;
@@ -3064,6 +3286,11 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           : null,
       ].filter((l): l is string => l !== null);
       if (work.source) extra.unshift(`  source ${sourceLine(work.source)}`);
+      // The strategy while it is written and judged (SP7 §7.3): its faults and its ruling.
+      const plannedStrategy =
+        work.phase === "strategy" ? plannedStrategyJudgement(work)[0] : undefined;
+      if (plannedStrategy)
+        extra.unshift(strategyLine(strategyOf(env, work, result.evidence), plannedStrategy));
       // The origin while the item is analysed (SP7 §7.4): its size, or a hand edit named.
       const analysis = work.phase === "analyse" ? readOrigin(env.paths, work.id) : null;
       if (analysis)
@@ -3517,6 +3744,7 @@ const HELP = `crew ${VERSION}
       --mode auto|bypassPermissions|dontAsk   no person watching: recorded as the agent's decision
   approve <id> audit                    a person signs an audit's report (asks the user; never with --mode or --validator)
   kind <id> raise --reason "<why>"      a feature raised to a new project while its spec is open: the strategy comes next
+  strategy <id> check                   check strategy.md (the five sections, [R<n>] marks on the research's facts, the scaling table) and write the strategy's review inputs
   phase <id> next                       advance when the guard holds
   await <id> user | role | mail <mid>   mark the turn's wait: for the user, for the roles, or for a reply to a message
   resume <id>                           clear the wait (asks the user while a jev dispute is held on the item)

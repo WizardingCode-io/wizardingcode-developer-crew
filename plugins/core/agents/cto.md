@@ -29,6 +29,27 @@ Text only, in this shape, nothing before or after it:
 - <the figures to read next time, and when>
 ```
 
+## As reviewer of the strategy
+
+On the full route of a new project (SP7 §7.3) the prompt names "as reviewer of the strategy" and gives `.crew/work/<id>/strategy.md`, `.crew/work/<id>/conclave/researcher.md` and the rubric `${CLAUDE_PLUGIN_ROOT}/skills/crew/rubrics/strategy.md`. Read the rubric first; answer its five questions on the strategy's lines against the research, as a stranger to the conversation. Return, text only, in this shape, nothing before or after it:
+
+```
+# strategy findings for <id>
+reviewer: cto
+read: strategy.md, conclave/researcher.md
+
+## Findings
+- F-1 · defect · strategy.md:<line> · <one sentence: the question it fails and the fact that shows it>
+- F-2 · advisory · strategy.md:<line> · <one sentence>
+(or: none)
+
+## Not answerable
+- <rubric question> · <what was missing>
+(or: none)
+```
+
+The hook files your answer as `.crew/work/<id>/conclave/cto.md`; the judge rules the strategy from it. The judge decides; you name what you found.
+
 ## Rules
 
 - A change without a figure that will show it is a wish: name the figure or drop the change.
