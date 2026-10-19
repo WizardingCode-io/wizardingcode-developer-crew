@@ -25,7 +25,7 @@ import { loadPolicy } from "../src/policy.ts";
 import { loadProfile } from "../src/profile.ts";
 import { recordWorking } from "../src/state.ts";
 import { readProtectedJson, writeProtectedJson } from "../src/store.ts";
-import type { GateRun, Message } from "../src/types.ts";
+import type { GateRun, Message, WorkItem } from "../src/types.ts";
 import { loadWork, saveWork } from "../src/work.ts";
 import { git, makeRepo, repoPaths, tempDir, testEnv, write } from "./helpers.ts";
 
@@ -4921,4 +4921,413 @@ test("SP3-T5 AC-1, AC-2: crew analyse writes the origin from git and the records
   expect((await cp.run("evidence", pid)).out).toContain(
     "## Analysis\n\n- Paths: none\n- Items: none in the records\n- Note: no git repository\n",
   );
+}, 30_000);
+
+/** A canned Jev for the item's user folder: the endpoint set as the user would, the answers written as the API returns them. */
+async function cannedJev(c: ReturnType<typeof io>, answers: unknown): Promise<string> {
+  const file = join(tempDir("crew-jev-"), "answers.json");
+  writeFileSync(file, JSON.stringify(answers));
+  expect((await c.run("config", "jev.endpoint", `file://${file}`)).code).toBe(0);
+  return file;
+}
+
+const DEFECT_RULING = (verdict: "proven" | "not-proven" = "not-proven") =>
+  JSON.stringify({
+    rulings: [
+      {
+        gate: "code-quality",
+        verdict,
+        reviewer: "review-code-quality",
+        judge: "judge",
+        findings: [
+          { file: "src/a.ts", line: 1, text: "a copy of logic", severity: "defect" },
+          { file: "src/a.ts", text: "no line", severity: "defect" },
+        ],
+      },
+    ],
+  });
+
+/** A standard-route item through its gates to the judgement, with a one-line change in src/a.ts. */
+async function judged(route: "standard" | "full") {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const c = io(root);
+  const risky = JSON.stringify({
+    ...JSON.parse(answers),
+    work_type: "feature",
+    scope: 1,
+    touches_auth: route === "full" ? 1 : 0,
+  });
+  const id = (await c.json("start", "Jev", "--answers", risky, "--criterion", "a")).data
+    .id as string;
+  const work = loadWork(repoPaths(root, c.env), id).work as WorkItem;
+  work.phase = "build";
+  saveWork(repoPaths(root, c.env), work);
+  write(root, "src/a.ts", "x = 1");
+  expect((await c.run("tdd", "red", id, "AC-1", "--", "exit 1")).code).toBe(0);
+  expect((await c.run("tdd", "green", id, "AC-1", "--", "exit 0")).code).toBe(0);
+  await c.run("skip", id, "gate:e2e", "--reason", "no environment in the fixture");
+  // The ruling file sits in the tree the gate run fingerprints: written before the run.
+  const ruling = join(root, "ruling.json");
+  writeFileSync(ruling, DEFECT_RULING());
+  const gate = await c.json("gate", "run", id);
+  expect(gate.data.unproven).toContain("judgement gate code-quality not run");
+  return { root, c, id, ruling };
+}
+
+test("SP3-T6 AC-1, AC-2, AC-5: crew judgement record asks Jev about the upheld defects through the canned transport, marks them under the gate's line and in the report, records the answers with the model, and a disputed defect stays a defect with the verdict and the exit code unchanged; without Jev nothing is asked", async () => {
+  const { root, c, id, ruling } = await judged("standard");
+  const plain = await c.run("judgement", id, "record", "--ruling", ruling);
+  expect(plain.err).toBe("");
+  expect(plain.code).toBe(1);
+  expect(plain.out).not.toContain("jev");
+  expect(loadEvidence(repoPaths(root, c.env), id).evidence.verifications).toBeUndefined();
+  write(root, "src/a.ts", "x = 2");
+  expect((await c.run("tdd", "green", id, "AC-1", "--", "exit 0")).code).toBe(0);
+  await c.run("gate", "run", id);
+  await cannedJev(c, { d1: { type: "noul", noul: 0.04 } });
+  const recorded = await c.run("judgement", id, "record", "--ruling", ruling);
+  expect(recorded.code).toBe(1);
+  expect(recorded.out).toContain(
+    "  code-quality: not proven (2 findings)\n    src/a.ts:1 disputed by jev (0.96)\n    src/a.ts unverified: no line\nNot proven: judgement gate code-quality not proven (2 findings)",
+  );
+  const evidence = loadEvidence(repoPaths(root, c.env), id).evidence;
+  expect(evidence.judgement?.[0]?.findings[0]?.verification).toEqual({
+    status: "disputed",
+    confidence: 0.96,
+  });
+  expect(evidence.verifications?.map((v) => [v.what, v.ref, v.model, v.confidence])).toEqual([
+    ["defect", "code-quality src/a.ts:1", "file", 0.96],
+  ]);
+  expect(typeof evidence.verifications?.[0]?.at).toBe("string");
+  expect((await c.run("evidence", id)).out).toContain(
+    "- code-quality: src/a.ts:1 a copy of logic (defect, disputed by Jev (0.96))\n",
+  );
+  expect((await c.run("evidence", id)).out).toContain(
+    "| defect | code-quality src/a.ts:1 | no 0.96 | 0.96 | file |",
+  );
+  expect((await c.json("status")).data.awaiting).toBeNull();
+  // The metrics line, from the gate's record with its mark.
+  expect((await c.run("metrics")).out).toContain(
+    "\n  verifications: 1 (defects verified 0, disputed 1, unverified 1; agreement 0)\n",
+  );
+  // The verify.asks policy: with defect out, nothing is asked.
+  write(root, "src/a.ts", "x = 3");
+  await c.run("tdd", "green", id, "AC-1", "--", "exit 0");
+  await c.run("gate", "run", id);
+  expect((await c.run("policy", "set", "verify.asks", "triage")).code).toBe(0);
+  // A third round: the user continues it (relayed under the default policy).
+  expect((await c.run("continue", id, "judgement")).code).toBe(0);
+  const quiet = await c.run("judgement", id, "record", "--ruling", ruling);
+  expect(quiet.err).toBe("");
+  expect(quiet.out).not.toContain("jev");
+  expect(loadEvidence(repoPaths(root, c.env), id).evidence.verifications).toHaveLength(1);
+  // The metrics line counts the gate's latest record, which carries no mark now.
+  expect((await c.run("metrics")).out).toContain(
+    "\n  verifications: 1 (defects verified 0, disputed 0, unverified 0; agreement none)\n",
+  );
+}, 30_000);
+
+test("SP3-T6 AC-3: with Jev down, crew judgement record marks the sent defects unverified with the reason, keeps the verdict and the exit code, makes a full-route item wait for a person (an existing wait kept) and a standard one not", async () => {
+  const full = await judged("full");
+  expect((await full.c.run("config", "jev.endpoint", "http://127.0.0.1:1/v1")).code).toBe(0);
+  const fullEnv = { ...full.c.env, WIZARDINGCODE_JEV_API_KEY: "sk-test" };
+  const cf = io(full.root, fullEnv);
+  const recorded = await cf.run("judgement", full.id, "record", "--ruling", full.ruling);
+  expect(recorded.err).toBe("");
+  expect(recorded.code).toBe(1);
+  expect(recorded.out).toMatch(
+    /\n {4}src\/a\.ts:1 unverified: jev unavailable: network error: .+\n {4}src\/a\.ts unverified: no line\n/,
+  );
+  expect(recorded.out).toMatch(
+    /\njev unavailable: network error: .+; a full-route item waits for a person\n?$/,
+  );
+  expect(
+    loadEvidence(repoPaths(full.root, fullEnv), full.id).evidence.verifications,
+  ).toBeUndefined();
+  expect((await cf.json("status")).data.awaiting).toBe("user");
+  // An existing wait is kept.
+  await cf.run("await", full.id, "role");
+  write(full.root, "src/a.ts", "x = 2");
+  await cf.run("tdd", "green", full.id, "AC-1", "--", "exit 0");
+  await cf.run("gate", "run", full.id);
+  await cf.run("judgement", full.id, "record", "--ruling", full.ruling);
+  expect((await cf.json("status")).data.awaiting).toBe("role");
+  const standard = await judged("standard");
+  expect((await standard.c.run("config", "jev.endpoint", "http://127.0.0.1:1/v1")).code).toBe(0);
+  const cs = io(standard.root, { ...standard.c.env, WIZARDINGCODE_JEV_API_KEY: "sk-test" });
+  const out = await cs.run("judgement", standard.id, "record", "--ruling", standard.ruling);
+  expect(out.out).toMatch(/\njev unavailable: network error: .+\n?$/);
+  expect(out.out).not.toContain("waits for a person");
+  expect((await cs.json("status")).data.awaiting).toBeNull();
+}, 30_000);
+
+test("SP3-T6 AC-1, AC-2, AC-3, AC-5: crew approve --validator asks the rule of Jev: two yeses approve (verified by jev), a no refuses and the item waits for a person with no approval recorded, between approves unverified, Jev down approves unverified with the reason; without Jev as before", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const c = io(root);
+  const paths = repoPaths(root, c.env);
+  const feature = JSON.stringify({ ...JSON.parse(answers), work_type: "feature", scope: 1 });
+  const id = (await c.json("start", "Validator", "--answers", feature, "--criterion", "a")).data
+    .id as string;
+  write(root, `.crew/work/${id}/spec.md`, "# Spec\n\n## Problem\n\nx\n\n## Design\n\ny\n");
+  write(
+    root,
+    `.crew/work/${id}/conclave.md`,
+    "# Conclave\n\n## Assumed by good practice\n- x\n\n## Decisions only the user can make\n- none\n\n## Proposals\n- y\n\n## Warnings\n- none\n",
+  );
+  for (let i = 0; i < 3; i++) await c.run("phase", id, "next");
+  expect((await c.json("status")).data.phase).toBe("conclave");
+  const plain = await c.run("approve", id, "spec", "--validator", "complete-gap-round");
+  expect(plain.code).toBe(0);
+  expect(plain.out).not.toContain("jev");
+  const work = loadWork(paths, id).work as WorkItem;
+  work.approvals = [];
+  saveWork(paths, work);
+  const approvalsBefore = listDecisions(paths).filter(
+    (e) => e.item === id && e.kind === "approval",
+  ).length;
+  const file = await cannedJev(c, {
+    v1: { type: "noul", noul: 0.9 },
+    v2: { type: "noul", noul: 0.03 },
+  });
+  const refused = await c.run("approve", id, "spec", "--validator", "complete-gap-round");
+  expect(refused.code).toBe(1);
+  expect(refused.err.trim()).toBe(
+    "disputed by jev: Is every warning listed in `conclave` under 'Warnings' that names a security, data or payment risk present in `objections`? (0.97); the item waits for a person",
+  );
+  expect((await c.json("status")).data.awaiting).toBe("user");
+  expect((loadWork(paths, id).work as WorkItem).approvals).toEqual([]);
+  expect(listDecisions(paths).filter((e) => e.item === id && e.kind === "approval")).toHaveLength(
+    approvalsBefore,
+  );
+  expect(JSON.stringify(loadEvidence(paths, id).evidence.verifications?.map((v) => v.ref))).toBe(
+    JSON.stringify(["complete-gap-round v1", "complete-gap-round v2"]),
+  );
+  expect(loadEvidence(paths, id).evidence.verifications?.map((v) => v.ref)).toEqual([
+    "complete-gap-round v1",
+    "complete-gap-round v2",
+  ]);
+  // A person's approval is still the way on.
+  expect((await c.run("approve", id, "spec")).code).toBe(0);
+  const again = loadWork(paths, id).work as WorkItem;
+  again.approvals = [];
+  saveWork(paths, again);
+  writeFileSync(
+    file,
+    JSON.stringify({ v1: { type: "noul", noul: 0.5 }, v2: { type: "noul", noul: 0.9 } }),
+  );
+  const between = await c.run("approve", id, "spec", "--validator", "complete-gap-round");
+  expect(between.code).toBe(0);
+  expect(between.out.trim()).toMatch(/\(unverified: between the thresholds\)$/);
+  const third = loadWork(paths, id).work as WorkItem;
+  third.approvals = [];
+  saveWork(paths, third);
+  writeFileSync(
+    file,
+    JSON.stringify({ v1: { type: "noul", noul: 0.9 }, v2: { type: "noul", noul: 0.9 } }),
+  );
+  const verified = await c.run("approve", id, "spec", "--validator", "complete-gap-round");
+  expect(verified.out.trim()).toMatch(/\(verified by jev\)$/);
+  const fourth = loadWork(paths, id).work as WorkItem;
+  fourth.approvals = [];
+  saveWork(paths, fourth);
+  expect((await c.run("config", "jev.endpoint", "http://127.0.0.1:1/v1")).code).toBe(0);
+  const cd = io(root, { ...c.env, WIZARDINGCODE_JEV_API_KEY: "sk-test" });
+  const downOut = await cd.run("approve", id, "spec", "--validator", "complete-gap-round");
+  expect(downOut.code).toBe(0);
+  expect(downOut.out.trim()).toMatch(/\(unverified: jev unavailable: network error: .+\)$/);
+}, 30_000);
+
+test("SP3-T6 AC-1, AC-3, AC-5: crew research verify checks the quotes, asks Jev about the found facts, writes the verification file with the hash and says the counts; debate close needs it on the current file when Jev is configured; Jev down leaves the facts unverified and the file written; without Jev the facts are unverified as such", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+    "docs/notes.md": "The cache lives one hour.\n",
+  });
+  const c = io(root);
+  const paths = repoPaths(root, c.env);
+  const feature = JSON.stringify({ ...JSON.parse(answers), work_type: "feature", scope: 1 });
+  const id = (await c.json("start", "Facts", "--answers", feature, "--criterion", "a")).data
+    .id as string;
+  const dir = join(root, ".crew", "work", id);
+  write(root, `.crew/work/${id}/spec.md`, "# Spec\n\n## Problem\n\nx\n\n## Design\n\ny\n");
+  write(
+    root,
+    `.crew/work/${id}/conclave.md`,
+    "# Conclave\n\n## Assumed by good practice\n- x\n\n## Decisions only the user can make\n- none\n\n## Proposals\n- y\n\n## Warnings\n- none\n",
+  );
+  for (let i = 0; i < 3; i++) await c.run("phase", id, "next");
+  await c.run("decision", id, "add", "Cache or not?");
+  expect((await c.json("debate", id, "open", "--reason", "cache")).code).toBe(0);
+  expect((await c.run("research", id, "verify")).err.trim()).toBe(
+    `no researcher file at .crew/work/${id}/conclave/researcher.md`,
+  );
+  write(
+    root,
+    `.crew/work/${id}/conclave/researcher.md`,
+    '# Research\n## What the documentation says\n- docs/notes.md · "The cache lives one hour" · D-1 bounds the window\n- docs/notes.md · "never written" · D-1 again\n- https://docs.invalid/x · "anything" · D-1 remote\n',
+  );
+  // Not configured: the found fact unverified as such, the file written, the close allowed.
+  const plain = await c.run("research", id, "verify");
+  expect(plain.code).toBe(0);
+  expect(plain.out.trim()).toMatch(
+    /^3 facts: 1 unverified, 2 not-found \(F-2: the quote is not in docs\/notes\.md; F-3: https:\/\/docs\.invalid\/x: .+; jev not configured\)$/,
+  );
+  const verification = () =>
+    JSON.parse(readFileSync(join(dir, "conclave", "researcher.verification.json"), "utf8")) as {
+      hash: string;
+      facts: { id: string; source: string; status: string; reason?: string; confidence?: number }[];
+    };
+  expect(verification().facts.map((f) => [f.id, f.status])).toEqual([
+    ["F-1", "unverified"],
+    ["F-2", "not-found"],
+    ["F-3", "not-found"],
+  ]);
+  expect(verification().facts[0]?.reason).toBe("jev not configured");
+  expect(isProtectedPath(paths, join(dir, "conclave", "researcher.verification.json"))).toBe(true);
+  expect((await c.run("debate", id, "close", "--tokens", "10")).code).toBe(0);
+  // Configured: the close refused until verified on the current file, then allowed; an edit refuses again.
+  const file = await cannedJev(c, {
+    f1: { type: "choice", choice: "supports", probabilities: { supports: 0.9 }, confidence: 0.9 },
+  });
+  const reopened = loadWork(paths, id).work as WorkItem;
+  if (reopened.debate) reopened.debate.closedAt = undefined;
+  saveWork(paths, reopened);
+  write(
+    root,
+    `.crew/work/${id}/conclave/researcher.md`,
+    '# Research\n## What the documentation says\n- docs/notes.md · "The cache lives one hour" · D-1 bounds the window\n',
+  );
+  expect((await c.run("debate", id, "close")).err.trim()).toBe(
+    `run crew research ${id} verify first (the researcher's facts are unverified)`,
+  );
+  const asked = await c.run("research", id, "verify");
+  expect(asked.out.trim()).toBe("1 fact: 1 verified");
+  expect(verification().facts).toEqual([
+    { id: "F-1", source: "docs/notes.md", status: "verified", confidence: 0.9 },
+  ]);
+  expect(
+    loadEvidence(paths, id).evidence.verifications?.map((v) => [v.what, v.ref, v.model]),
+  ).toEqual([["fact", "F-1", "file"]]);
+  expect((await c.run("debate", id, "close", "--tokens", "10")).code).toBe(0);
+  const again = loadWork(paths, id).work as WorkItem;
+  if (again.debate) again.debate.closedAt = undefined;
+  saveWork(paths, again);
+  write(
+    root,
+    `.crew/work/${id}/conclave/researcher.md`,
+    '# Research\n## What the documentation says\n- docs/notes.md · "The cache lives one hour" · D-1 bounds the window, edited\n',
+  );
+  expect((await c.run("debate", id, "close")).code).toBe(1);
+  // Down: the fact unverified with the reason, the file written, the close allowed.
+  writeFileSync(file, "{not json");
+  const downOut = await c.run("research", id, "verify");
+  expect(downOut.out.trim()).toBe(
+    `1 fact: 1 unverified (jev unavailable: canned answers unreadable: ${file})`,
+  );
+  expect(verification().facts[0]).toMatchObject({
+    status: "unverified",
+    reason: `jev unavailable: canned answers unreadable: ${file}`,
+  });
+  expect((await c.run("debate", id, "close", "--tokens", "10")).code).toBe(0);
+  // An empty section, and a file outside the root.
+  write(
+    root,
+    `.crew/work/${id}/conclave/researcher.md`,
+    "# Research\n## What the documentation says\n",
+  );
+  expect((await c.run("research", id, "verify")).out.trim()).toBe(
+    `no facts in .crew/work/${id}/conclave/researcher.md`,
+  );
+  expect((await c.run("research", id, "verify", "--file", "../outside.md")).code).toBe(1);
+}, 30_000);
+
+test("SP3-T6 AC-1, AC-2, AC-5: crew start --source asks Jev for a triage proposal, prints it capped at the source's proposal with the flags, records the four answers, and never makes it the record; below the threshold no proposal; without Jev or with the ask off nothing is asked", async () => {
+  const { env, a, ca } = mailRepos();
+  await ca.run("detect");
+  const paths = repoPaths(a, env);
+  const legend = {
+    "1": "a cosmetic or convenience change nobody is waiting on",
+    "2": "ordinary work the business expects in its turn",
+    "3": "work a signed deadline or a named client commitment depends on",
+    "4": "production is down or a client cannot work until it is done",
+  };
+  const file = await cannedJev(ca, {
+    priority: {
+      type: "score",
+      score: 3.8,
+      legend,
+      probabilities: { "1": 0.01, "2": 0.04, "3": 0.15, "4": 0.8 },
+      confidence: 0.86,
+    },
+    is_production_down: { type: "noul", noul: 0.02 },
+    names_a_signed_deadline: { type: "noul", noul: 0.05 },
+    is_vague: { type: "noul", noul: 0.1 },
+  });
+  const started = await ca.run(
+    "start",
+    "Checkout is down",
+    "--answers",
+    answers,
+    "--source",
+    TICKET,
+  );
+  expect(started.code).toBe(0);
+  expect(started.out).toContain(
+    "\n  priority high (proposed, unconfirmed: no signed business priorities)\n  jev proposes high (0.86; production down 0.02, signed deadline 0.05, vague 0.10), capped at the source's high\n",
+  );
+  const id = (await ca.json("status")).data.active as string;
+  expect((await ca.json("status")).data).toMatchObject({
+    priority: "high",
+    triage: { proposed: "high", confirmed: null },
+  });
+  expect(
+    loadEvidence(paths, id).evidence.verifications?.map((v) => [v.what, v.ref, v.model]),
+  ).toEqual([
+    ["triage", "is_production_down", "file"],
+    ["triage", "names_a_signed_deadline", "file"],
+    ["triage", "is_vague", "file"],
+    ["triage", "priority", "file"],
+  ]);
+  writeFileSync(
+    file,
+    JSON.stringify({
+      priority: {
+        type: "score",
+        score: 2.1,
+        legend,
+        probabilities: { "1": 0.1, "2": 0.5, "3": 0.3, "4": 0.1 },
+        confidence: 0.42,
+      },
+      is_production_down: { type: "noul", noul: 0.02 },
+      names_a_signed_deadline: { type: "noul", noul: 0.05 },
+      is_vague: { type: "noul", noul: 0.1 },
+    }),
+  );
+  expect(
+    (await ca.run("start", "Button label", "--answers", answers, "--source", TICKET)).out,
+  ).toContain("\n  jev: no proposal (confidence 0.42 under 0.8)\n");
+  writeFileSync(file, "{not json");
+  expect(
+    (await ca.run("start", "Button label", "--answers", answers, "--source", TICKET)).out,
+  ).toContain(`\n  jev unavailable: canned answers unreadable: ${file}\n`);
+  // The ask off: nothing asked, nothing recorded.
+  expect((await ca.run("policy", "set", "verify.asks", "defect")).code).toBe(0);
+  const quiet = await ca.run("start", "Button label", "--answers", answers, "--source", TICKET);
+  expect(quiet.out).not.toContain("jev");
+  const quietId = (await ca.json("status")).data.active as string;
+  expect(loadEvidence(paths, quietId).evidence.verifications).toBeUndefined();
+  // Not configured: as before.
+  expect(
+    (await ca.run("config", "jev.endpoint", "https://api.typesafe.ai/v1/systemone")).code,
+  ).toBe(0);
+  await ca.run("policy", "set", "verify.asks", "defect,validator,fact,triage");
+  expect(
+    (await ca.run("start", "Button label", "--answers", answers, "--source", TICKET)).out,
+  ).not.toContain("jev");
 }, 30_000);

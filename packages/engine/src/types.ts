@@ -749,12 +749,43 @@ export interface GateRun {
 export type JudgementVerdict = "proven" | "not-proven" | "not-run";
 export type FindingSeverity = "defect" | "advisory";
 /** One finding of a reviewer, tied to a file; `outside` when the file is not part of the item's change (ADR 0006: reported, never failed on). */
+/** What Jev made of an upheld defect (SP7 §11, SP3 decision 11): verified, disputed (the defect stays), or unverified with the reason. */
+export interface FindingVerification {
+  status: "verified" | "disputed" | "unverified";
+  reason?: string;
+  confidence?: number;
+}
+
 export interface JudgementFinding {
   file: string;
   line?: number;
   text: string;
   severity: FindingSeverity;
   outside?: boolean;
+  verification?: FindingVerification;
+}
+
+/** One answer of Jev on the record (SP3 decision 11): what was asked, of what, the answer as returned, its confidence, the model, when. */
+export interface Verification {
+  what: "defect" | "validator" | "fact" | "triage";
+  ref: string;
+  question: string;
+  answer: unknown;
+  confidence: number | null;
+  model: string;
+  at: string;
+}
+
+/** The asks the engine may make of Jev (security review of SP3 Task 6): the key alone is not consent to every one. */
+export type VerifyAsk = "defect" | "validator" | "fact" | "triage";
+export const VERIFY_ASKS: readonly VerifyAsk[] = ["defect", "validator", "fact", "triage"];
+
+/** What leaves the machine and what an answer is worth (SP3 decision 9). */
+export interface VerifyPolicy {
+  send: "claims" | "claims-and-snippets";
+  maxClaimsPerItem: number;
+  threshold: number;
+  asks: VerifyAsk[];
 }
 /** A judgement gate's ruling as recorded: the judge's verdict, the reviewer's findings, stamped with when and on which code. */
 export interface JudgementRecord {
@@ -783,6 +814,8 @@ export interface Evidence {
   judgement?: JudgementRecord[];
   /** Each role's end as SubagentStop recorded it. Absent before 0.5.0. */
   roles?: RoleRecord[];
+  /** Jev's answers on this item (SP3 Task 6); absent before 0.8.0 and until the first ask. */
+  verifications?: Verification[];
 }
 
 export interface Policy {
@@ -814,6 +847,8 @@ export interface Policy {
   attendedDecisions: "prompt" | "relay";
   /** The mailbox: the workspace, the name, what is accepted, what may open and the limits (SP2c §6). */
   mail: MailPolicy;
+  /** The verification backend's policy (SP3 decision 9). */
+  verify: VerifyPolicy;
   /** The team: a template, teams added beyond the route, and the caps on experts and rounds (SP7 §6.1). */
   team: TeamPolicy;
 }
@@ -822,4 +857,6 @@ export type Mode = "partner" | "guide" | "pilot";
 export interface UserConfig {
   mode: Mode;
   decisions: { log: boolean };
+  /** Where Jev is reached when the environment does not say (SP3 decision 8); the key is never here. */
+  jev?: { endpoint?: string; model?: string };
 }

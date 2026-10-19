@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, sep } from "node:path";
 import { buildContext } from "../src/hooks/context.ts";
@@ -75,7 +75,13 @@ export function makeRepo(files: Record<string, string> = { "README.md": "# test\
 
 /** An environment whose user state lives in a fresh temporary home. */
 export function testEnv(): NodeJS.ProcessEnv {
-  return { ...process.env, WIZARDINGCODE_HOME: tempDir("crew-home-") };
+  const home = tempDir("crew-home-");
+  // No test ever starts the real claude binary (finding 89): a session the engine opens for mail
+  // runs this fake, which exits at once; a test that needs a session's shape sets its own fake.
+  const fake = join(home, "claude");
+  writeFileSync(fake, "#!/bin/sh\nexit 0\n");
+  chmodSync(fake, 0o755);
+  return { ...process.env, WIZARDINGCODE_HOME: home, WIZARDINGCODE_CREW_CLAUDE: fake };
 }
 
 /** Paths of a folder the test knows to be active (a git repository or one holding .crew/). */

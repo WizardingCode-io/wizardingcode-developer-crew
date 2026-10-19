@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { emptyEvidence, saveEvidence } from "../src/evidence.ts";
 import { computeMetrics, metricsText } from "../src/metrics.ts";
 import { addObjection, emptyLedger, saveLedger, waiveObjection } from "../src/objections.ts";
-import type { Evidence, GateRun, JudgementRecord } from "../src/types.ts";
+import type { Evidence, GateRun, JudgementRecord, Verification } from "../src/types.ts";
 import { createWork, saveWork } from "../src/work.ts";
 import { makeRepo, repoPaths, testEnv } from "./helpers.ts";
 
@@ -162,4 +162,103 @@ test("SP7a AC-4 (round 2): computeMetrics counts every figure from the records o
   expect(text).toContain("minutes per phase: build 10, gate 20");
   // A project with no work folder counts nothing and breaks nothing.
   expect(computeMetrics([repoPaths(makeRepo(), env)]).items.total).toBe(0);
+});
+
+test("SP3-T6 AC-4: computeMetrics counts every verification, the defect marks and the agreement (verified over verified plus disputed, two decimals, null without a judged defect); an item without an evidence file counts nothing", () => {
+  const env = testEnv();
+  const a = repoPaths(makeRepo(), env);
+  const one = createWork(a, "One");
+  saveWork(a, one);
+  const verification = (what: Verification["what"], ref: string): Verification => ({
+    what,
+    ref,
+    question: "q",
+    answer: { type: "noul", noul: 0.9 },
+    confidence: 0.9,
+    model: "file",
+    at: "2026-10-19T10:00:00.000Z",
+  });
+  saveEvidence(a, one.id, {
+    ...emptyEvidence(),
+    judgement: [
+      {
+        gate: "code-quality",
+        verdict: "not-proven",
+        at: "2026-10-19T10:00:00.000Z",
+        fingerprint: "f",
+        findings: [
+          {
+            file: "src/a.ts",
+            line: 1,
+            text: "a",
+            severity: "defect",
+            verification: { status: "verified", confidence: 0.9 },
+          },
+          {
+            file: "src/a.ts",
+            line: 2,
+            text: "b",
+            severity: "defect",
+            verification: { status: "disputed", confidence: 0.95 },
+          },
+          {
+            file: "src/a.ts",
+            line: 3,
+            text: "c",
+            severity: "defect",
+            verification: {
+              status: "unverified",
+              reason: "between the thresholds",
+              confidence: 0.5,
+            },
+          },
+          {
+            file: "src/z.ts",
+            line: 1,
+            text: "d",
+            severity: "defect",
+            outside: true,
+            verification: { status: "verified", confidence: 0.9 },
+          },
+          {
+            file: "src/a.ts",
+            line: 4,
+            text: "e",
+            severity: "advisory",
+            verification: { status: "disputed", confidence: 0.9 },
+          },
+        ],
+      },
+    ],
+    verifications: [
+      verification("defect", "code-quality src/a.ts:1"),
+      verification("defect", "code-quality src/a.ts:2"),
+      verification("defect", "code-quality src/a.ts:3"),
+      verification("validator", "complete-gap-round v1"),
+      verification("triage", "priority"),
+    ],
+  });
+  const two = createWork(a, "Two");
+  saveWork(a, two);
+  expect(computeMetrics([a]).verifications).toEqual({
+    total: 5,
+    verified: 1,
+    disputed: 1,
+    unverified: 1,
+    agreement: 0.5,
+  });
+  expect(metricsText(computeMetrics([a]))).toContain(
+    "\n  verifications: 5 (defects verified 1, disputed 1, unverified 1; agreement 0.5)\n",
+  );
+  const b = repoPaths(makeRepo(), env);
+  expect(computeMetrics([b]).verifications).toEqual({
+    total: 0,
+    verified: 0,
+    disputed: 0,
+    unverified: 0,
+    agreement: null,
+  });
+  expect(metricsText(computeMetrics([b]))).toContain(
+    "verifications: 0 (defects verified 0, disputed 0, unverified 0; agreement none)",
+  );
 });

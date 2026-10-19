@@ -25,6 +25,14 @@ export interface Metrics {
   decisions: { total: number; byUser: number; byValidator: number; byAgent: number };
   gates: { notRun: number; skipped: number };
   phaseMinutes: Partial<Record<Phase, number>>;
+  /** Jev's answers (SP3 decision 13): every record's count, the defect marks, and verified over verified plus disputed. */
+  verifications: {
+    total: number;
+    verified: number;
+    disputed: number;
+    unverified: number;
+    agreement: number | null;
+  };
 }
 
 const count = (map: Record<string, number>, key: string, n = 1): void => {
@@ -49,8 +57,13 @@ export function computeMetrics(projects: CrewPaths[]): Metrics {
     decisions: { total: 0, byUser: 0, byValidator: 0, byAgent: 0 },
     gates: { notRun: 0, skipped: 0 },
     phaseMinutes: {},
+    verifications: { total: 0, verified: 0, disputed: 0, unverified: 0, agreement: null },
   };
   const phaseTotals: Partial<Record<Phase, number>> = {};
+  const agreementOf = () => {
+    const judged = m.verifications.verified + m.verifications.disputed;
+    return judged ? Math.round((m.verifications.verified / judged) * 100) / 100 : null;
+  };
   for (const paths of projects) {
     // An objection's status is read, not stored (open, resolved, waived, as `objectionStatus` reads it
     // from the item, the evidence and the project's policy).
@@ -91,9 +104,12 @@ export function computeMetrics(projects: CrewPaths[]): Metrics {
       }
       for (const j of evidence.judgement ?? []) {
         if (j.verdict === "not-run") m.gates.notRun += 1;
-        const defects = j.findings.filter((f) => f.severity === "defect" && !f.outside).length;
-        if (defects) count(m.defects.byReviewer, j.reviewer ?? `review-${j.gate}`, defects);
+        const upheld = j.findings.filter((f) => f.severity === "defect" && !f.outside);
+        if (upheld.length)
+          count(m.defects.byReviewer, j.reviewer ?? `review-${j.gate}`, upheld.length);
+        for (const f of upheld) if (f.verification) m.verifications[f.verification.status] += 1;
       }
+      m.verifications.total += evidence.verifications?.length ?? 0;
       m.gates.skipped += evidence.runs.filter((r) => r.status === "skipped").length;
       for (const o of loadLedger(paths, id).ledger.objections)
         count(m.objections.byStatus, objectionStatus(o, work, evidence, policy));
@@ -110,6 +126,7 @@ export function computeMetrics(projects: CrewPaths[]): Metrics {
   }
   for (const [phase, minutes] of Object.entries(phaseTotals) as [Phase, number][])
     m.phaseMinutes[phase] = Math.round(minutes * 100) / 100;
+  m.verifications.agreement = agreementOf();
   return m;
 }
 
@@ -128,6 +145,7 @@ export function metricsText(m: Metrics): string {
     `  defects upheld: ${Object.values(m.defects.byReviewer).reduce((a, b) => a + b, 0)}${Object.keys(m.defects.byReviewer).length ? ` (${pairs(m.defects.byReviewer)})` : ""}`,
     `  tasks: ${m.tasks.opened} opened, ${m.tasks.proven} proven, ${m.tasks.unproven} unproven`,
     `  decisions: ${m.decisions.total} (user ${m.decisions.byUser}, validator ${m.decisions.byValidator}, agent ${m.decisions.byAgent})`,
+    `  verifications: ${m.verifications.total} (defects verified ${m.verifications.verified}, disputed ${m.verifications.disputed}, unverified ${m.verifications.unverified}; agreement ${m.verifications.agreement === null ? "none" : m.verifications.agreement})`,
     `  gates: ${m.gates.notRun} not run, ${m.gates.skipped} skipped`,
     `  minutes per phase: ${Object.keys(m.phaseMinutes).length ? pairs(m.phaseMinutes as Record<string, number>) : "none yet"}`,
   ].join("\n");

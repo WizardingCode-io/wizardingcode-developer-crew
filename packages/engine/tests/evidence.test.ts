@@ -894,3 +894,85 @@ test("SP3-T5 AC-2: the report's Analysis section lists the paths with their comm
     `## Analysis\n\nanalysis/origin.json changed outside the engine; the user accepts it with crew accept ${work.id}.\n`,
   );
 });
+
+test("SP3-T6 AC-2: the report marks each judged finding (verified by Jev, disputed by Jev, unverified with its reason) and lists the Verifications with the answers in words, pipes escaped", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const work = createWork(paths, "Jev");
+  const evidence: Evidence = {
+    ...emptyEvidence(),
+    judgement: [
+      {
+        gate: "code-quality",
+        verdict: "not-proven",
+        at: "2026-10-19T10:00:00.000Z",
+        fingerprint: emptyEvidence().fingerprint ?? "",
+        findings: [
+          {
+            file: "src/a.ts",
+            line: 1,
+            text: "a copy",
+            severity: "defect",
+            verification: { status: "verified", confidence: 0.93 },
+          },
+          {
+            file: "src/a.ts",
+            line: 2,
+            text: "dead | code",
+            severity: "defect",
+            verification: { status: "disputed", confidence: 0.95 },
+          },
+          {
+            file: "src/a.ts",
+            text: "no line",
+            severity: "defect",
+            verification: { status: "unverified", reason: "no line" },
+          },
+        ],
+      },
+    ],
+    verifications: [
+      {
+        what: "defect",
+        ref: "code-quality src/a.ts:1",
+        question: "q",
+        answer: { type: "noul", noul: 0.93 },
+        confidence: 0.93,
+        model: "jev-1.13.0",
+        at: "2026-10-19T10:00:00.000Z",
+      },
+      {
+        what: "fact",
+        ref: "F-1",
+        question: "q",
+        answer: {
+          type: "choice",
+          choice: "contradicts",
+          probabilities: { contradicts: 0.95 },
+          confidence: 0.95,
+        },
+        confidence: 0.95,
+        model: "file",
+        at: "2026-10-19T10:01:00.000Z",
+      },
+      {
+        what: "validator",
+        ref: "complete-gap-round v2 | x",
+        question: "q",
+        answer: { type: "noul", noul: 0.03 },
+        confidence: 0.97,
+        model: "file",
+        at: "2026-10-19T10:02:00.000Z",
+      },
+    ],
+  };
+  const report = renderReport(work, evidence, DEFAULT_POLICY);
+  expect(report).toContain("- code-quality: src/a.ts:1 a copy (defect, verified by Jev (0.93))\n");
+  expect(report).toContain(
+    "- code-quality: src/a.ts:2 dead \\| code (defect, disputed by Jev (0.95))\n",
+  );
+  expect(report).toContain("- code-quality: src/a.ts no line (defect, unverified: no line)\n");
+  expect(report).toContain(
+    "## Verifications\n\n| What | Ref | Answer | Confidence | Model | At |\n| :- | :- | :- | -: | :- | :- |\n| defect | code-quality src/a.ts:1 | yes 0.93 | 0.93 | jev-1.13.0 | 2026-10-19T10:00:00.000Z |\n| fact | F-1 | contradicts 0.95 | 0.95 | file | 2026-10-19T10:01:00.000Z |\n| validator | complete-gap-round v2 \\| x | no 0.97 | 0.97 | file | 2026-10-19T10:02:00.000Z |\n",
+  );
+  expect(renderReport(work, emptyEvidence(), DEFAULT_POLICY)).not.toContain("## Verifications");
+});

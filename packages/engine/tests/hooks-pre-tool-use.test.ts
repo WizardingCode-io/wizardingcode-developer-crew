@@ -1520,3 +1520,18 @@ test("SP3-T4 AC-1, AC-2: crew question answer is the user's (asked under prompt,
   expect(decision(bash(headless, 'crew question w1 add "x"', "default"))).toBe("deny");
   expect(bash(headless, 'crew question w1 add "x" --mode default', "default")).toEqual({});
 });
+
+test("SP3-T6 AC-4: crew config jev.endpoint and jev.model with a value are the user's (asked under prompt, relayed under relay); reading them is free", () => {
+  const prompt = setup();
+  const relay = setup(null);
+  const bash = (ctx: typeof prompt.ctx, command: string) =>
+    onPreToolUse(ctx, { tool_name: "Bash", tool_input: { command }, permission_mode: "default" });
+  expect(decision(bash(prompt.ctx, "crew config jev.endpoint https://proxy.invalid/v1"))).toBe(
+    "ask",
+  );
+  expect(decision(bash(prompt.ctx, "crew config jev.model jev-1.13.0"))).toBe("ask");
+  expect(bash(relay.ctx, "crew config jev.endpoint file:///tmp/answers.json")).toEqual({});
+  expect(bash(prompt.ctx, "crew config jev.endpoint")).toEqual({});
+  expect(bash(prompt.ctx, "crew config")).toEqual({});
+  expect(bash(prompt.ctx, "crew config decisions.log false")).toEqual({});
+});

@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { loadConfig, saveConfig, setConfigValue } from "../src/config.ts";
+import { DEFAULT_CONFIG, loadConfig, saveConfig, setConfigValue } from "../src/config.ts";
 import {
   DEFAULT_MAIL_POLICY,
   DEFAULT_POLICY,
@@ -308,7 +308,7 @@ test("SP2c: crew policy set writes the scalar mail keys, each value checked, and
   });
   expect(setPolicyValue(paths, "mail.accept", "question")).toEqual({
     refused:
-      "unknown policy key: mail.accept (crew policy set writes attendedDecisions, unattendedDecisions, mail.workspace, mail.name, mail.open, mail.maxConcurrent, mail.maxHops, mail.maxTurns, mail.maxMinutes, mail.maxParties, mail.worktrees, team.template, team.maxExperts, team.maxValidationRounds, team.maxJudgementRounds, team.maxGateRounds, team.continuations)",
+      "unknown policy key: mail.accept (crew policy set writes attendedDecisions, unattendedDecisions, mail.workspace, mail.name, mail.open, mail.maxConcurrent, mail.maxHops, mail.maxTurns, mail.maxMinutes, mail.maxParties, mail.worktrees, team.template, team.maxExperts, team.maxValidationRounds, team.maxJudgementRounds, team.maxGateRounds, team.continuations, verify.send, verify.maxClaimsPerItem, verify.threshold, verify.asks)",
   });
 });
 
@@ -442,4 +442,90 @@ test("SP7b-T5 AC-2: team.continuations defaults to ask, reads granted or ask onl
   });
   expect(setPolicyValue(fresh, "team.continuations", "yes")).toHaveProperty("refused");
   expect(loadPolicy(fresh).policy.team.continuations).toBe("granted");
+});
+
+test("SP3-T6 AC-4: policy.verify has its defaults when absent, falls back key by key when present, and its keys are settable within their ranges; crew config jev.endpoint and jev.model are validated and read back", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  expect(DEFAULT_POLICY.verify).toEqual({
+    send: "claims",
+    maxClaimsPerItem: 50,
+    threshold: 0.8,
+    asks: ["defect", "validator", "fact", "triage"],
+  });
+  expect(loadPolicy(paths).policy.verify).toEqual(DEFAULT_POLICY.verify);
+  mkdirSync(paths.crewDir, { recursive: true });
+  writeFileSync(
+    join(paths.crewDir, "policy.json"),
+    JSON.stringify({
+      verify: {
+        send: "claims-and-snippets",
+        maxClaimsPerItem: 500,
+        threshold: 1.2,
+        asks: ["defect", "nope"],
+      },
+    }),
+  );
+  expect(loadPolicy(paths).policy.verify).toEqual({
+    send: "claims-and-snippets",
+    maxClaimsPerItem: 50,
+    threshold: 0.8,
+    asks: ["defect"],
+  });
+  writeFileSync(join(paths.crewDir, "policy.json"), JSON.stringify({ verify: { asks: [] } }));
+  expect(loadPolicy(paths).policy.verify.asks).toEqual(["defect", "validator", "fact", "triage"]);
+  writeFileSync(join(paths.crewDir, "policy.json"), "{}");
+  expect(setPolicyValue(paths, "verify.threshold", "0.4")).toEqual({
+    refused: "verify.threshold is a number from 0.5 to 0.99 with at most two decimals, not 0.4",
+  });
+  for (const bad of ["0.49", "1", "0.855", "x"])
+    expect("refused" in setPolicyValue(paths, "verify.threshold", bad)).toBe(true);
+  for (const good of ["0.5", "0.9", "0.99"]) {
+    expect(setPolicyValue(paths, "verify.threshold", good)).toEqual({
+      key: "verify.threshold",
+      value: good,
+    });
+    expect(loadPolicy(paths).policy.verify.threshold).toBe(Number(good));
+  }
+  expect(setPolicyValue(paths, "verify.send", "claims-and-snippets")).toEqual({
+    key: "verify.send",
+    value: "claims-and-snippets",
+  });
+  expect(loadPolicy(paths).policy.verify.send).toBe("claims-and-snippets");
+  for (const bad of ["0", "201", "1.5"])
+    expect("refused" in setPolicyValue(paths, "verify.maxClaimsPerItem", bad)).toBe(true);
+  for (const good of ["1", "200"]) {
+    expect("refused" in setPolicyValue(paths, "verify.maxClaimsPerItem", good)).toBe(false);
+    expect(loadPolicy(paths).policy.verify.maxClaimsPerItem).toBe(Number(good));
+  }
+  expect(setPolicyValue(paths, "verify.asks", "defect,triage")).toEqual({
+    key: "verify.asks",
+    value: "defect,triage",
+  });
+  expect(loadPolicy(paths).policy.verify.asks).toEqual(["defect", "triage"]);
+  expect(setPolicyValue(paths, "verify.asks", "defect,x")).toEqual({
+    refused:
+      "verify.asks is a comma-separated subset of defect, validator, fact, triage, not defect,x",
+  });
+  expect("refused" in setPolicyValue(paths, "verify.asks", "")).toBe(true);
+  // The config: where Jev is reached, never its key.
+  let config = DEFAULT_CONFIG;
+  for (const bad of ["ftp://x", "http://api.invalid/x", "https://u:p@api.invalid/x"])
+    expect(() => setConfigValue(config, "jev.endpoint", bad)).toThrow(
+      /jev\.endpoint is an https URL/,
+    );
+  for (const good of [
+    "file:///tmp/answers.json",
+    "https://proxy.invalid/v1",
+    "http://127.0.0.1:1/v1",
+  ]) {
+    config = setConfigValue(config, "jev.endpoint", good);
+    expect(config.jev?.endpoint).toBe(good);
+  }
+  config = setConfigValue(config, "jev.model", "jev-1.13.0");
+  expect(config.jev).toEqual({ endpoint: "http://127.0.0.1:1/v1", model: "jev-1.13.0" });
+  expect(() => setConfigValue(config, "jev.model", "")).toThrow(/jev\.model/);
+  saveConfig(paths, config);
+  expect(loadConfig(paths).jev).toEqual({ endpoint: "http://127.0.0.1:1/v1", model: "jev-1.13.0" });
+  saveConfig(paths, { ...config, jev: { endpoint: "http://api.invalid/x" } });
+  expect(loadConfig(paths).jev).toBeUndefined();
 });

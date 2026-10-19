@@ -381,7 +381,7 @@ test("SP7a AC-8 (Task 8): the skill page has the Rules row and the twenty rules 
     "a ruling is never edited: the engine refuses a contradiction and protects the records it writes, the reviewers' findings files, the rulings and the round copies under `review/` among them (finding 59); `review/ui/` and `review/e2e/` are the session's",
   );
   expect(rules).toContain(
-    "in a session nobody watches, a full-route approval runs only with `--mode` and is recorded as the agent's decision, never as a person's; a disputed validator verdict waits (SP3)",
+    "in a session nobody watches, a full-route approval runs only with `--mode` and is recorded as the agent's decision, never as a person's; a validator condition Jev disputes refuses the approval and marks the item waiting for the user, and Jev down at a full-route judgement record makes the item wait too (`references/jev.md`)",
   );
   expect(rules).toContain(
     "the deploy denial holds in sessions opened by mail; elsewhere the skill instructs and a person's yes is the gate; the policy key that may allow a deploy is SP7b",

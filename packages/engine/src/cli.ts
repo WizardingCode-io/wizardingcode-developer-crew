@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { basename, join, relative, resolve } from "node:path";
+import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { analyseOrigin, originSummary, readOrigin, writeOrigin } from "./analysis.ts";
 import { type Parsed, parse } from "./argv.ts";
 import {
@@ -41,6 +41,7 @@ import { ensureDir, nowIso, readText, sha256, writeText } from "./fs.ts";
 import { assess, reassess, runGates, runTaskGate } from "./gates.ts";
 import { handleHook } from "./hooks/index.ts";
 import type { HookPayload } from "./hooks/types.ts";
+import { JEV_ENDPOINT, JEV_MODEL, jevConfig, two } from "./jev.ts";
 import {
   contradiction,
   fillTokens,
@@ -53,6 +54,7 @@ import {
   plannedTaskJudgement,
   readReviewInputs,
   recordJudgement,
+  reviewDir,
   scopeHash,
   stampRuling,
   verdictWord,
@@ -139,9 +141,16 @@ import {
   questionLine,
   questionsSorted,
 } from "./questions.ts";
+import { fetchSource, findQuote, parseFacts } from "./research.ts";
 import { parseSource, sourceLine } from "./source.ts";
 import { ensureCrewDir, oneLine, workingRoles } from "./state.ts";
-import { integrityOf, recordIntegrity, writeProtectedText } from "./store.ts";
+import {
+  integrityOf,
+  readProtectedJson,
+  recordIntegrity,
+  writeProtectedJson,
+  writeProtectedText,
+} from "./store.ts";
 import {
   listTasks,
   mergeTask,
@@ -159,6 +168,7 @@ import type {
   Decision,
   Environment,
   Evidence,
+  FindingVerification,
   GateName,
   JudgementGateName,
   JudgementRecord,
@@ -174,6 +184,7 @@ import type {
   TaskRecord,
   Triage,
   UserConfig,
+  Verification,
   WorkItem,
 } from "./types.ts";
 import {
@@ -190,6 +201,16 @@ import {
   VALIDATOR_RULES,
 } from "./types.ts";
 import { parseValidation, validationHash } from "./validation.ts";
+import {
+  askAllowed,
+  type DefectsOutcome,
+  type FactInput,
+  type TriageOutcome,
+  verifyDefects,
+  verifyFacts,
+  verifyTriage,
+  verifyValidator,
+} from "./verify.ts";
 import { VERSION } from "./version.ts";
 import {
   activeWork,
@@ -259,6 +280,7 @@ const KNOWN_FLAGS: Record<string, readonly string[]> = {
   workspace: ["file"],
   question: ["channel", "ref", "mode"],
   analyse: ["paths"],
+  research: ["file"],
   mail: [
     "to",
     "type",
@@ -685,13 +707,14 @@ function rulingRecords(
  * current code and to the files its inputs were cut for, recorded into the todo's gate and never
  * into the item's evidence or its rounds; the todo is gated once nothing is pending.
  */
-function recordTaskJudgement(
+async function recordTaskJudgement(
   env: Env,
+  ioEnv: NodeJS.ProcessEnv,
   work: WorkItem,
   tampered: boolean,
   parsed: Parsed,
   task: string,
-): Outcome {
+): Promise<Outcome> {
   const usage =
     'usage: crew judgement <id> record --task T-n --ruling <file> | crew judgement <id> record <gate> --not-run --reason "<why>" --task T-n';
   const record = (work.tasks ?? []).find((t) => t.task === task);
@@ -724,6 +747,22 @@ function recordTaskJudgement(
   if (isOutcome(input)) return input;
   const { records, rulingPath } = input;
   fillTokens(records, before.evidence.roles ?? [], inputs.at);
+  // The todo's upheld defects asked of Jev as the item's are (SP3 decision 10); the answers go on
+  // the item's evidence, the marks on the todo's records; the item's route decides the wait.
+  const defects = await askDefects(
+    env,
+    ioEnv,
+    records,
+    join(reviewDir(env.paths, work.id, task), "diff.patch"),
+  );
+  const notes: string[] = [];
+  if (defects?.records.length) {
+    const appended = updateEvidence(env.paths, work.id, (fresh) => {
+      fresh.verifications = [...(fresh.verifications ?? []), ...defects.records];
+    });
+    if ("refused" in appended) notes.push(appended.refused);
+  }
+  const jevWait = jevUnavailableWait(work, defects);
   const hash = scopeHash(cut);
   const gate = record.gate as NonNullable<TaskRecord["gate"]>;
   for (const r of records)
@@ -743,10 +782,10 @@ function recordTaskJudgement(
   settleTaskState(work, record, env.policy);
   saveWork(env.paths, work);
   const pending = taskPending(work, record, env.policy);
-  const lines = records.map((r) => {
+  const lines = records.flatMap((r) => {
     const detail =
       r.verdict === "not-run" ? `: ${r.reason}` : ` (${findingsText(r.findings.length)})`;
-    return `${task}: ${r.gate} ${verdictWord(r.verdict)}${detail}`;
+    return [`${task}: ${r.gate} ${verdictWord(r.verdict)}${detail}`, ...markLines(r)];
   });
   // A briefed todo whose judgement is pending again says so, never "gated" (finding 75).
   lines.push(
@@ -756,6 +795,8 @@ function recordTaskJudgement(
         ? `${task}: briefed, judgement pending (${pendingText(record, pending)})`
         : `${task}: not gated: ${pendingText(record, pending)}`,
   );
+  if (jevWait) lines.push(jevWait);
+  lines.push(...notes);
   return {
     code: pending.length === 0 ? 0 : 1,
     stdout: true,
@@ -842,6 +883,57 @@ function moveOriginMail(
   if (!current || mailStatus(current) === to) return;
   const moved = moveMail(env.mail, originId, to, {}, notes);
   if ("refused" in moved) notes.push(moved.refused);
+}
+
+/** The upheld defects asked of Jev when it is configured and the policy allows the ask (SP3 decision 10); null otherwise. */
+async function askDefects(
+  env: Env,
+  ioEnv: NodeJS.ProcessEnv,
+  records: JudgementRecord[],
+  patchFile: string,
+): Promise<DefectsOutcome | null> {
+  const jev = jevConfig(ioEnv, env.config);
+  if (!jev.configured || !askAllowed(env.policy, "defect")) return null;
+  return verifyDefects(jev, env.policy, records, readText(patchFile) ?? "");
+}
+
+/** One line per marked finding under its gate's line: `    <file>:<line> verified by jev (0.93)`. */
+function markLines(record: JudgementRecord): string[] {
+  return record.findings
+    .filter((f) => f.verification)
+    .map((f) => {
+      const v = f.verification as FindingVerification;
+      const mark =
+        v.status === "unverified"
+          ? `unverified: ${v.reason ?? "no reason"}`
+          : `${v.status} by jev${v.confidence !== undefined ? ` (${two(v.confidence)})` : ""}`;
+      return `    ${f.file}${f.line ? `:${f.line}` : ""} ${mark}`;
+    });
+}
+
+/**
+ * Jev down at a record (SP3 decision 12): a full-route item waits for a person after the record
+ * when it has no wait yet; the line that says so, or the plain unavailability on another route.
+ */
+function jevUnavailableWait(work: WorkItem, defects: DefectsOutcome | null): string | null {
+  if (!defects?.unavailable) return null;
+  if (work.route !== "full") return `jev unavailable: ${defects.unavailable}`;
+  if (work.awaiting === null) {
+    work.awaiting = "user";
+    delete work.awaitingMessage;
+  }
+  return `jev unavailable: ${defects.unavailable}; a full-route item waits for a person`;
+}
+
+/** `jev proposes normal (0.86; production down 0.02, signed deadline 0.05, vague 0.10), capped at the source's high`, or why there is no proposal. */
+function triageProposalText(outcome: TriageOutcome, proposed: MailPriority): string {
+  if (!outcome.proposal) {
+    const reason = outcome.reason ?? "no answer";
+    return reason.startsWith("jev unavailable: ") ? reason : `jev: no proposal (${reason})`;
+  }
+  const p = outcome.proposal;
+  const flags = `production down ${two(p.flags.is_production_down ?? 0)}, signed deadline ${two(p.flags.names_a_signed_deadline ?? 0)}, vague ${two(p.flags.is_vague ?? 0)}`;
+  return `jev proposes ${p.level} (${two(p.confidence)}; ${flags})${p.capped ? `, capped at the source's ${proposed}` : ""}`;
 }
 
 /**
@@ -1273,6 +1365,34 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       if (work.route === "fast" && criteria.length > 0)
         advancePhase(work, guardContext(env, work, false));
       saveWork(env.paths, work);
+      // The source's urgency judged by Jev (SP3 decision 10): a proposal to the lead, capped at the
+      // source's, never the record; its answers on the item's evidence.
+      let jevLine = "";
+      if (source?.proposedPriority) {
+        const jev = jevConfig(io.env, env.config);
+        if (jev.configured && askAllowed(env.policy, "triage")) {
+          const workspace = env.mail.self.workspace;
+          const priorities = workspace ? prioritiesState(env.paths.userDir, workspace) : null;
+          const outcome = await verifyTriage(jev, env.policy, {
+            request: {
+              text: input,
+              channel: source.channel,
+              connector: source.connector ?? null,
+              proposed_priority: source.proposedPriority,
+            },
+            business_priorities: priorities?.state === "signed" ? priorities.text : null,
+            queue: openItems(env.paths, work.id).map((w) => ({
+              kind: kindOfItem(w),
+              priority: w.priority ?? "normal",
+            })),
+          });
+          if (outcome.records.length)
+            updateEvidence(env.paths, work.id, (fresh) => {
+              fresh.verifications = [...(fresh.verifications ?? []), ...outcome.records];
+            });
+          jevLine = `\n  ${triageProposalText(outcome, source.proposedPriority)}`;
+        }
+      }
       // A lowering is the lead's decision about the item (SP7 §10.2, §6.6).
       if (triage?.confirmed && triage.confirmed !== triage.proposed)
         appendDecision(env.paths, {
@@ -1308,7 +1428,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         ? `\n  decision register: ${registered} entr${registered === 1 ? "y" : "ies"} (crew decisions)`
         : "";
       return ok(
-        `${warning}${sharedWarning}${inheritedWarning}${provenNote}started ${work.id} (route ${work.route}: ${work.routeReasons.join("; ")})${kindLine}${sourceLines}${triageLine}${lines}${teamLine}${registerLine}${originNotes.length ? `\n${originNotes.join("\n")}` : ""}`,
+        `${warning}${sharedWarning}${inheritedWarning}${provenNote}started ${work.id} (route ${work.route}: ${work.routeReasons.join("; ")})${kindLine}${sourceLines}${triageLine}${jevLine}${lines}${teamLine}${registerLine}${originNotes.length ? `\n${originNotes.join("\n")}` : ""}`,
         {
           id: work.id,
           route: work.route,
@@ -1482,6 +1602,20 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         return ok(`debate open on ${opened.work.id}: ${result.reason}`, { debate: result });
       }
       if (args[1] === "close") {
+        // The researcher's facts verified against the current file before the close (SP3 decision 10).
+        const jev = jevConfig(io.env, env.config);
+        const conclaveDir = join(workDir(env.paths, opened.work.id), "conclave");
+        const researcherText = readText(join(conclaveDir, "researcher.md"));
+        if (jev.configured && askAllowed(env.policy, "fact") && researcherText !== null) {
+          const read = readProtectedJson<{ hash?: unknown }>(
+            env.paths,
+            join(conclaveDir, "researcher.verification.json"),
+          );
+          if (read.tampered || read.data?.hash !== sha256(researcherText))
+            return refuse(
+              `run crew research ${opened.work.id} verify first (the researcher's facts are unverified)`,
+            );
+        }
         const flag = parsed.flags.tokens;
         const tokens =
           flag === undefined ? undefined : typeof flag === "string" ? Number(flag) : Number.NaN;
@@ -1553,6 +1687,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       }
       const decision = validatorFlag(parsed, env.policy);
       if (isOutcome(decision)) return decision;
+      let jevNote = "";
       if (decision.by === "validator") {
         // The engine checks the rule's mechanical part before anything is recorded (SP2 §9).
         if (decision.rule !== "complete-gap-round")
@@ -1567,6 +1702,44 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
             `the complete-gap-round rule does not hold; missing:\n  ${missing.join("\n  ")}`,
             { missing },
           );
+        // The rule asked of Jev (SP3 decision 10): a disputed condition makes the item wait for a
+        // person (rule 15); verified or unverified, the approval proceeds and says which.
+        const jev = jevConfig(io.env, env.config);
+        if (jev.configured && askAllowed(env.policy, "validator")) {
+          const dir = workDir(env.paths, opened.work.id);
+          const evidence = loadEvidence(env.paths, opened.work.id).evidence;
+          const outcome = await verifyValidator(jev, env.policy, {
+            conclave: readText(join(dir, "conclave.md")) ?? "",
+            decisions: (opened.work.decisions ?? []).map((d) => ({
+              id: d.id,
+              question: d.question,
+              answer: d.answer ?? null,
+              default: d.default ?? null,
+            })),
+            objections: loadLedger(env.paths, opened.work.id).ledger.objections.map((o) => ({
+              id: o.id,
+              severity: o.severity,
+              status: objectionStatus(o, opened.work, evidence, env.policy),
+              criterion: o.criterion ?? null,
+            })),
+          });
+          if (outcome.records.length)
+            updateEvidence(env.paths, opened.work.id, (fresh) => {
+              fresh.verifications = [...(fresh.verifications ?? []), ...outcome.records];
+            });
+          if (outcome.status === "disputed") {
+            opened.work.awaiting = "user";
+            delete opened.work.awaitingMessage;
+            saveWork(env.paths, opened.work);
+            return refuse(
+              `disputed by jev: ${outcome.condition} (${two(outcome.confidence ?? 0)}); the item waits for a person`,
+            );
+          }
+          jevNote =
+            outcome.status === "verified"
+              ? " (verified by jev)"
+              : ` (unverified: ${outcome.reason ?? "no reason"})`;
+        }
       }
       approve(opened.work, "spec", decision);
       appendDecision(env.paths, {
@@ -1577,9 +1750,10 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         by: whoDecided(decision),
       });
       saveWork(env.paths, opened.work);
-      return ok(`spec approved for ${opened.work.id} ${decisionText(env.policy, decision)}`, {
-        approvals: opened.work.approvals,
-      });
+      return ok(
+        `spec approved for ${opened.work.id} ${decisionText(env.policy, decision)}${jevNote}`,
+        { approvals: opened.work.approvals },
+      );
     }
     case "phase": {
       const opened = openForChange(env, args[0]);
@@ -1627,6 +1801,110 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         awaiting: kind,
         awaitingMessage: opened.work.awaitingMessage ?? null,
       });
+    }
+    case "research": {
+      // The researcher's facts checked against their sources, then asked of Jev (SP3 decision 10).
+      const usage = "usage: crew research <id> verify [--file <path>]";
+      const opened = openForChange(env, args[0]);
+      if (isOutcome(opened)) return opened;
+      if (args[1] !== "verify") return refuse(usage);
+      const dir = workDir(env.paths, opened.work.id);
+      const file =
+        typeof parsed.flags.file === "string"
+          ? resolve(env.paths.root, parsed.flags.file)
+          : join(dir, "conclave", "researcher.md");
+      const rel = relative(env.paths.root, file).replace(/\\/g, "/");
+      if (rel.startsWith("..") || isAbsolute(rel))
+        return refuse(`${parsed.flags.file} is not under the root`);
+      const text = readText(file);
+      if (text === null) return refuse(`no researcher file at ${rel}`);
+      const facts = parseFacts(text);
+      if (!facts.length) return ok(`no facts in ${rel}`, { facts: [] });
+      const jev = jevConfig(io.env, env.config);
+      const asking = jev.configured && askAllowed(env.policy, "fact");
+      type Status = {
+        id: string;
+        source: string;
+        status: "verified" | "disputed" | "unverified" | "not-found";
+        reason?: string;
+        confidence?: number;
+      };
+      const statuses = new Map<string, Status>();
+      const found: FactInput[] = [];
+      for (const f of facts) {
+        const source = await fetchSource(f.source, env.paths.root);
+        if ("refused" in source) {
+          statuses.set(f.id, {
+            id: f.id,
+            source: f.source,
+            status: "not-found",
+            reason: source.refused,
+          });
+          continue;
+        }
+        const quote = findQuote(f.quote, source.text);
+        if (!quote) {
+          statuses.set(f.id, {
+            id: f.id,
+            source: f.source,
+            status: "not-found",
+            reason: `the quote is not in ${f.source}`,
+          });
+          continue;
+        }
+        found.push({ id: f.id, claim: f.claim, quote: f.quote, excerpt: quote.excerpt });
+      }
+      let tail: string | null = null;
+      let records: Verification[] = [];
+      if (found.length && !asking) {
+        for (const f of found)
+          statuses.set(f.id, {
+            id: f.id,
+            source: facts.find((x) => x.id === f.id)?.source ?? "",
+            status: "unverified",
+            reason: "jev not configured",
+          });
+        tail = "jev not configured";
+      } else if (found.length) {
+        const out = await verifyFacts(jev, env.policy, found);
+        records = out.records;
+        for (const f of found) {
+          const mark = out.marks[f.id];
+          statuses.set(f.id, {
+            id: f.id,
+            source: facts.find((x) => x.id === f.id)?.source ?? "",
+            status: mark?.status ?? "unverified",
+            ...(mark?.reason ? { reason: mark.reason } : {}),
+            ...(mark && mark.confidence !== null ? { confidence: mark.confidence } : {}),
+          });
+        }
+        if (out.unavailable) tail = `jev unavailable: ${out.unavailable}`;
+      }
+      const ordered = facts.map((f) => statuses.get(f.id) as Status);
+      writeProtectedJson(env.paths, join(dir, "conclave", "researcher.verification.json"), {
+        at: nowIso(),
+        hash: sha256(text),
+        facts: ordered,
+      });
+      if (records.length) {
+        const appended = updateEvidence(env.paths, opened.work.id, (fresh) => {
+          fresh.verifications = [...(fresh.verifications ?? []), ...records];
+        });
+        if ("refused" in appended) tail = tail ? `${tail}; ${appended.refused}` : appended.refused;
+      }
+      const counts = (["verified", "disputed", "unverified", "not-found"] as const)
+        .map((s) => [s, ordered.filter((x) => x.status === s).length] as const)
+        .filter(([, n]) => n > 0)
+        .map(([s, n]) => `${n} ${s}`);
+      const reasons = ordered
+        .filter((x) => x.status === "not-found")
+        .map((x) => `${x.id}: ${x.reason}`);
+      if (tail) reasons.push(tail);
+      const n = facts.length;
+      return ok(
+        `${n} fact${n === 1 ? "" : "s"}: ${counts.join(", ")}${reasons.length ? ` (${reasons.join("; ")})` : ""}`,
+        { facts: ordered, file: "conclave/researcher.verification.json" },
+      );
     }
     case "analyse": {
       // Where the defect came from (SP7 §7.4, rule 11): git and the records, written to the item.
@@ -1917,6 +2195,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           return refuse("usage: crew judgement <id> record --task T-n --ruling <file>");
         return recordTaskJudgement(
           env,
+          io.env,
           opened.work,
           env.tampered || opened.tampered,
           parsed,
@@ -1980,12 +2259,22 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         before.evidence.roles ?? [],
         readReviewInputs(env.paths, opened.work.id)?.at,
       );
+      // The upheld defects asked of Jev (SP3 decision 10) before the save: the marks go on the
+      // findings, the answers on the evidence; unavailable marks and records nothing.
+      const defects = await askDefects(
+        env,
+        io.env,
+        records,
+        join(reviewDir(env.paths, opened.work.id), "diff.patch"),
+      );
       // The rulings go into the evidence as it stands at the save, under the lock (finding 81), the
       // verdict is computed on it, and the file is written once, with the verdict: no reader sees
       // new records beside a stale verdict (review of SP2b, finding 8). A record that proves the
       // work delivers it; a refused save (the file edited outside the engine, a lock held) records nothing.
       const saved = updateEvidence(env.paths, opened.work.id, (fresh) => {
         for (const record of records) recordJudgement(fresh, record);
+        if (defects?.records.length)
+          fresh.verifications = [...(fresh.verifications ?? []), ...defects.records];
         const merged = reassess({ ...before, evidence: fresh }, opened.work, env.policy);
         fresh.verdict = merged.verdict;
         fresh.unproven = merged.unproven;
@@ -1993,6 +2282,8 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       });
       if ("refused" in saved) return refuse(saved.refused);
       const result = saved.result;
+      // Jev down on a full-route item: the item waits for a person after the record (decision 12).
+      const jevWait = jevUnavailableWait(opened.work, defects);
       // The round spent, counted at the first record against this code (plan decision 3 of SP7a).
       if (newRound)
         opened.work.rounds = {
@@ -2030,19 +2321,20 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
               ...(rulingFile ? { file: rulingFile } : {}),
             });
       deliver(env, opened, result.evidence);
-      const lines = records.map((r) => {
+      const lines = records.flatMap((r) => {
         const outside = r.findings.filter((f) => f.outside).length;
         const detail =
           r.verdict === "not-run"
             ? `: ${r.reason}`
             : ` (${findingsText(r.findings.length)}${outside ? `, ${outside} outside the change` : ""})`;
-        return `  ${r.gate}: ${verdictWord(r.verdict)}${detail}`;
+        return [`  ${r.gate}: ${verdictWord(r.verdict)}${detail}`, ...markLines(r)];
       });
       lines.push(
         result.verdict === "proven"
           ? `Proven: ${opened.work.id}`
           : `Not proven: ${result.unproven.join("; ")}`,
       );
+      if (jevWait) lines.push(jevWait);
       // Like gate run: the exit code says whether the work is proven, so a chain stops at "Not proven".
       return {
         code: result.verdict === "proven" ? 0 : 1,
@@ -3062,7 +3354,15 @@ function settings(command: "mode" | "config", args: string[], user: { userDir: s
   if (!key) return ok(JSON.stringify(config), { config });
   if (value === undefined) {
     const current =
-      key === "mode" ? config.mode : key === "decisions.log" ? config.decisions.log : undefined;
+      key === "mode"
+        ? config.mode
+        : key === "decisions.log"
+          ? config.decisions.log
+          : key === "jev.endpoint"
+            ? (config.jev?.endpoint ?? JEV_ENDPOINT)
+            : key === "jev.model"
+              ? (config.jev?.model ?? JEV_MODEL)
+              : undefined;
     return current === undefined
       ? refuse(`unknown setting: ${key}`)
       : ok(String(current), { key, value: current });

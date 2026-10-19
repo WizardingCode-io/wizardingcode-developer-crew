@@ -252,6 +252,63 @@ export interface Ruling {
   tokens?: number;
 }
 
+/**
+ * The lines of the diff around a finding's line (SP3 decision 10): the hunk of `file` whose new side
+ * holds `line`, its lines from five before to five after within the hunk, numbered; null for a
+ * file the patch does not touch or a line in no hunk.
+ */
+export function hunkLines(
+  patch: string,
+  file: string,
+  line: number,
+): { from: number; to: number; text: string } | null {
+  const lines = patch.split("\n");
+  let current: string | null = null;
+  let newLine = 0;
+  let inHunk = false;
+  let hunkRows: { n: number; text: string }[] = [];
+  let found: { n: number; text: string }[] | null = null;
+  const settle = () => {
+    if (current === file && hunkRows.some((r) => r.n === line)) found = hunkRows;
+  };
+  for (const raw of lines) {
+    const header = /^diff --git a\/(.+?) b\/(.+)$/.exec(raw);
+    if (header) {
+      settle();
+      if (found) break;
+      current = header[2] ?? null;
+      inHunk = false;
+      hunkRows = [];
+      continue;
+    }
+    const hunk = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(raw);
+    if (hunk) {
+      settle();
+      if (found) break;
+      newLine = Number(hunk[1]);
+      inHunk = true;
+      hunkRows = [];
+      continue;
+    }
+    if (!inHunk || current !== file) continue;
+    if (raw.startsWith("+") || raw.startsWith(" ")) {
+      hunkRows.push({ n: newLine, text: raw.slice(1) });
+      newLine += 1;
+    } else if (raw.startsWith("\\")) {
+      // "\ No newline at end of file": no line of either side
+    }
+  }
+  settle();
+  if (!found) return null;
+  const rows = (found as { n: number; text: string }[]).filter(
+    (r) => r.n >= line - 5 && r.n <= line + 5,
+  );
+  const first = rows[0];
+  const last = rows[rows.length - 1];
+  if (!first || !last) return null;
+  return { from: first.n, to: last.n, text: rows.map((r) => `${r.n}: ${r.text}`).join("\n") };
+}
+
 /** " (planned: a, b)" or " (none is planned)", for a refusal that names a gate the item does not need. */
 export function plannedNote(planned: readonly JudgementGateName[]): string {
   return planned.length ? ` (planned: ${planned.join(", ")})` : " (none is planned)";

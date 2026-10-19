@@ -52,6 +52,8 @@ test("isProtectedPath covers engine-owned files and nothing else", () => {
   expect(p(".crew/work/w1/spec.md")).toBe(false);
   // The origin the engine writes (SP3 Task 5) is its own; the analysis document stays the session's.
   expect(p(".crew/work/w1/analysis/origin.json")).toBe(true);
+  expect(p(".crew/work/w1/conclave/researcher.verification.json")).toBe(true);
+  expect(p(".crew/work/w1/conclave/researcher.md")).toBe(false);
   expect(p(".crew/work/w1/analysis.md")).toBe(false);
   expect(p(".crew/work/w1/brief.md")).toBe(false);
   expect(p("src/app.ts")).toBe(false);

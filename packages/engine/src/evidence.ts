@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import type { Origin, OriginItem } from "./analysis.ts";
 import { UNAVAILABLE } from "./fingerprint.ts";
+import { two } from "./jev.ts";
 import { LockBusy, withLock } from "./lock.ts";
 import { decidedPriority, mailStatus, readContracts, threadOf } from "./mail-status.ts";
 import { blockingObjections, objectionStatus } from "./objections.ts";
@@ -15,6 +16,7 @@ import type {
   CriterionKind,
   DecidedBy,
   Evidence,
+  FindingVerification,
   GateName,
   GateRun,
   Mailbox,
@@ -45,6 +47,34 @@ export function decidedBy(decision: Decided): string {
   if (decision.by === "validator") return `by the validator (rule: ${decision.rule ?? "unnamed"})`;
   if (decision.by === "agent") return `by the agent in ${decision.mode} mode`;
   return decision.relayed ? "by the user, relayed by the agent" : "by the user";
+}
+
+/** `verified by Jev (0.93)`, `disputed by Jev (0.95)`, `unverified: <reason>`: a finding's mark as the report and the record command say it. */
+export function markText(v: FindingVerification): string {
+  if (v.status === "unverified")
+    return `unverified: ${(v.reason ?? "no reason").replace(/\|/g, "\\|")}`;
+  return `${v.status} by Jev${v.confidence !== undefined ? ` (${two(v.confidence)})` : ""}`;
+}
+
+/** An answer as the Verifications table shows it: `yes 0.93` or `no 0.97` for a noul, `<choice> 0.95`, `score <k> 0.86` for the highest level. */
+export function answerText(answer: unknown): string {
+  if (typeof answer !== "object" || answer === null) return "-";
+  const a = answer as {
+    type?: unknown;
+    noul?: unknown;
+    choice?: unknown;
+    confidence?: unknown;
+    probabilities?: Record<string, number>;
+  };
+  if (a.type === "noul" && typeof a.noul === "number")
+    return a.noul >= 0.5 ? `yes ${two(a.noul)}` : `no ${two(1 - a.noul)}`;
+  const confidence = typeof a.confidence === "number" ? two(a.confidence) : "-";
+  if (a.type === "choice" && typeof a.choice === "string") return `${a.choice} ${confidence}`;
+  if (a.type === "score" && a.probabilities) {
+    const top = Object.entries(a.probabilities).sort(([, x], [, y]) => y - x)[0];
+    return `score ${top ? top[0] : "-"} ${confidence}`;
+  }
+  return "-";
 }
 
 /** What a decision not taken by a person is worth under the policy; a person's needs no note. */
@@ -402,9 +432,24 @@ export function renderReport(
     if (findings.length) lines.push("");
     for (const f of findings) {
       lines.push(
-        `- ${f.gate}: ${f.file}${f.line ? `:${f.line}` : ""} ${f.text} (${f.severity}${f.outside ? ", outside the change" : ""})`,
+        `- ${f.gate}: ${f.file}${f.line ? `:${f.line}` : ""} ${f.text.replace(/\|/g, "\\|")} (${f.severity}${f.outside ? ", outside the change" : ""}${f.verification ? `, ${markText(f.verification)}` : ""})`,
       );
     }
+  }
+  // Jev's answers on the item (SP3 Task 6): what was asked, the answer, its confidence, the model.
+  if (evidence.verifications?.length) {
+    lines.push(
+      "",
+      "## Verifications",
+      "",
+      "| What | Ref | Answer | Confidence | Model | At |",
+      "| :- | :- | :- | -: | :- | :- |",
+    );
+    const cell = (text: string) => oneLine(text).replace(/\|/g, "\\|");
+    for (const v of evidence.verifications)
+      lines.push(
+        `| ${v.what} | ${cell(v.ref)} | ${cell(answerText(v.answer))} | ${v.confidence === null ? "-" : two(v.confidence)} | ${cell(v.model)} | ${v.at} |`,
+      );
   }
   // The seats the route planned, with their reasons, and the rounds spent against the caps (SP7 §6.6).
   if (work.seats?.length || work.rounds) {

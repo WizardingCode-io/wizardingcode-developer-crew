@@ -1,6 +1,6 @@
 // packages/engine/src/cli.ts
 import { existsSync as existsSync15 } from "node:fs";
-import { basename as basename6, join as join39, relative as relative9, resolve as resolve4 } from "node:path";
+import { basename as basename6, isAbsolute as isAbsolute7, join as join39, relative as relative9, resolve as resolve4 } from "node:path";
 
 // packages/engine/src/analysis.ts
 import { existsSync as existsSync8, lstatSync as lstatSync2, mkdirSync as mkdirSync4 } from "node:fs";
@@ -429,6 +429,230 @@ function computeFingerprint(root, profile, base, maxFiles = MAX_WATCHED_FILES, m
 `))}`;
 }
 
+// packages/engine/src/jev.ts
+import { readFileSync as readFileSync3 } from "node:fs";
+var JEV_ENDPOINT = "https://api.typesafe.ai/v1/systemone";
+var JEV_MODEL = "jev-latest";
+var JEV_KEY_VARIABLE = "WIZARDINGCODE_JEV_API_KEY";
+var LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
+function endpointRefusal(endpoint) {
+  if (endpoint.startsWith("file://"))
+    return endpoint.length > "file://".length ? null : "file:// needs a path";
+  let url;
+  try {
+    url = new URL(endpoint);
+  } catch {
+    return "not a URL";
+  }
+  if (url.username || url.password)
+    return "an endpoint carries no userinfo";
+  if (url.protocol === "https:")
+    return null;
+  if (url.protocol === "http:" && LOOPBACK.has(url.hostname))
+    return null;
+  return "the key travels over https (http only to a loopback host)";
+}
+function jevConfig(env, config) {
+  const key = env[JEV_KEY_VARIABLE]?.trim() || null;
+  const endpoint = env.WIZARDINGCODE_JEV_ENDPOINT?.trim() || config.jev?.endpoint || JEV_ENDPOINT;
+  const model = env.WIZARDINGCODE_JEV_MODEL?.trim() || config.jev?.model || JEV_MODEL;
+  const refused = endpointRefusal(endpoint);
+  const canned = refused === null && endpoint.startsWith("file://") ? endpoint.slice("file://".length) : null;
+  return {
+    key,
+    endpoint,
+    model,
+    canned,
+    configured: key !== null || canned !== null,
+    refused
+  };
+}
+var RETRY_MS = [1000, 2000];
+function redact(text, cfg) {
+  let out = text;
+  try {
+    const url = new URL(cfg.endpoint);
+    const bare = `${url.protocol}//${url.host}${url.pathname}`;
+    if (url.username || url.password || url.search)
+      out = out.split(cfg.endpoint).join(bare);
+    if (url.username || url.password)
+      out = out.split(`${url.username}:${url.password}@`).join("");
+    if (url.search)
+      out = out.split(url.search).join("");
+  } catch {}
+  if (cfg.key)
+    out = out.split(cfg.key).join("[key]");
+  return out.replace(/\s+/g, " ").trim().slice(0, 200);
+}
+function isAnswer(value, type) {
+  if (typeof value !== "object" || value === null)
+    return false;
+  const a = value;
+  if (a.type !== type)
+    return false;
+  if (type === "noul")
+    return typeof a.noul === "number" && Number.isFinite(a.noul);
+  if (typeof a.confidence !== "number" || typeof a.probabilities !== "object" || a.probabilities === null)
+    return false;
+  if (type === "choice")
+    return typeof a.choice === "string";
+  return typeof a.score === "number" && typeof a.legend === "object" && a.legend !== null;
+}
+function takeAnswers(raw, questions, source) {
+  if (typeof raw !== "object" || raw === null)
+    return { unavailable: "malformed answer" };
+  const answers = raw;
+  const taken = {};
+  for (const [id, question] of Object.entries(questions)) {
+    const answer = answers[id];
+    if (answer === undefined)
+      return { unavailable: source === "file" ? `no canned answer for ${id}` : "malformed answer" };
+    if (!isAnswer(answer, question.type))
+      return {
+        unavailable: source === "file" ? `canned answer for ${id} is not a ${question.type}` : "malformed answer"
+      };
+    taken[id] = answer;
+  }
+  return { taken };
+}
+function canned(cfg, request) {
+  const path = cfg.canned ?? "";
+  let raw;
+  try {
+    raw = JSON.parse(readFileSync3(path, "utf8"));
+  } catch {
+    return { ok: false, unavailable: `canned answers unreadable: ${path}` };
+  }
+  const answers = takeAnswers(raw, request.questions, "file");
+  if ("unavailable" in answers)
+    return { ok: false, unavailable: answers.unavailable };
+  return {
+    ok: true,
+    answers: answers.taken,
+    model: "file",
+    usage: { input_tokens: 0, output_tokens: 0 }
+  };
+}
+async function bodyMessage(response) {
+  let text = "";
+  try {
+    text = await response.text();
+  } catch {
+    return "";
+  }
+  try {
+    const parsed = JSON.parse(text);
+    const message = parsed.error?.message ?? parsed.message;
+    if (typeof message === "string" && message)
+      return message;
+  } catch {}
+  return text;
+}
+async function askJev(cfg, request, options = {}) {
+  if (cfg.refused)
+    return { ok: false, unavailable: `endpoint refused: ${cfg.refused}` };
+  if (cfg.canned !== null)
+    return canned(cfg, request);
+  if (cfg.key === null)
+    return { ok: false, unavailable: `no key (${JEV_KEY_VARIABLE})` };
+  const doFetch = options.fetch ?? fetch;
+  const timeoutMs = options.timeoutMs ?? 20000;
+  const sleep = options.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
+  const body = JSON.stringify({
+    state: request.state,
+    model: cfg.model,
+    questions: request.questions
+  });
+  const fail = (reason) => ({ ok: false, unavailable: redact(reason, cfg) });
+  for (let attempt = 0;; attempt++) {
+    let response;
+    try {
+      response = await doFetch(cfg.endpoint, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${cfg.key}`, "Content-Type": "application/json" },
+        body,
+        signal: AbortSignal.timeout(timeoutMs)
+      });
+    } catch (error) {
+      const name = error instanceof Error ? error.name : "";
+      if (name === "TimeoutError" || name === "AbortError")
+        return fail(`timeout after ${timeoutMs} ms`);
+      return fail(`network error: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    if (response.status === 429 || response.status === 529) {
+      const wait = RETRY_MS[attempt];
+      if (wait !== undefined) {
+        await sleep(wait);
+        continue;
+      }
+      return fail(response.status === 429 ? "rate limited (429)" : "overloaded (529)");
+    }
+    if (response.status === 401)
+      return fail("unauthorised (401)");
+    if (response.status < 200 || response.status >= 300)
+      return fail(`${response.status}: ${await bodyMessage(response)}`);
+    let parsed;
+    try {
+      parsed = await response.json();
+    } catch {
+      return fail("malformed answer");
+    }
+    const payload = typeof parsed === "object" && parsed !== null ? parsed : {};
+    const answers = takeAnswers(payload.answers, request.questions, "api");
+    if ("unavailable" in answers)
+      return fail(answers.unavailable);
+    return {
+      ok: true,
+      answers: answers.taken,
+      model: typeof payload.model === "string" ? payload.model : cfg.model,
+      usage: {
+        input_tokens: typeof payload.usage?.input_tokens === "number" ? payload.usage.input_tokens : 0,
+        output_tokens: typeof payload.usage?.output_tokens === "number" ? payload.usage.output_tokens : 0
+      }
+    };
+  }
+}
+function round4(n) {
+  return Math.round(n * 1e4) / 1e4;
+}
+function two(n) {
+  return n.toFixed(2);
+}
+function markOf(answer, threshold, options = {}) {
+  const limit = round4(threshold);
+  if (answer.type === "noul") {
+    const p = round4(answer.noul);
+    if (p >= limit)
+      return { status: "verified", confidence: answer.noul };
+    if (p <= round4(1 - limit))
+      return { status: "disputed", confidence: round4(1 - answer.noul) };
+    return { status: "unverified", confidence: answer.noul, reason: "between the thresholds" };
+  }
+  if (answer.type === "choice") {
+    if (round4(answer.confidence) < limit)
+      return {
+        status: "unverified",
+        confidence: answer.confidence,
+        reason: `confidence ${two(answer.confidence)} under ${threshold}`
+      };
+    if (answer.choice === (options.supports ?? "supports"))
+      return { status: "verified", confidence: answer.confidence };
+    if (answer.choice === (options.contradicts ?? "contradicts"))
+      return { status: "disputed", confidence: answer.confidence };
+    return { status: "unverified", confidence: answer.confidence, reason: answer.choice };
+  }
+  return { status: "unverified", confidence: answer.confidence, reason: "a score is a proposal" };
+}
+function topLevel(answer, levels) {
+  let best = { level: levels[0] ?? "", probability: -1 };
+  for (const level of levels) {
+    const p = answer.probabilities[level] ?? 0;
+    if (p > best.probability)
+      best = { level, probability: p };
+  }
+  return best;
+}
+
 // packages/engine/src/lock.ts
 import { mkdirSync as mkdirSync2, rmdirSync, statSync } from "node:fs";
 import { join as join4 } from "node:path";
@@ -541,6 +765,7 @@ var VALIDATOR_RULES = ["complete-gap-round", "stated-default"];
 function isValidatorRule(value) {
   return VALIDATOR_RULES.includes(value);
 }
+var VERIFY_ASKS = ["defect", "validator", "fact", "triage"];
 
 // packages/engine/src/mail-status.ts
 var MAIL_TRANSITIONS = {
@@ -712,7 +937,8 @@ var PROTECTED_WORK_FILES = [
   "report.md",
   "objections.json",
   "mail.json",
-  "analysis/origin.json"
+  "analysis/origin.json",
+  "conclave/researcher.verification.json"
 ];
 var PROTECTED_IN_WORK = new Set(PROTECTED_WORK_FILES);
 var REVIEW_OPEN_SEGMENT = String.raw`(?:T-\d+\/)?(?:ui|e2e)`;
@@ -765,6 +991,23 @@ var DEFAULT_TEAM_POLICY = {
   maxGateRounds: 2,
   continuations: "ask"
 };
+var DEFAULT_VERIFY_POLICY = {
+  send: "claims",
+  maxClaimsPerItem: 50,
+  threshold: 0.8,
+  asks: [...VERIFY_ASKS]
+};
+function loadVerifyPolicy(raw) {
+  const v = typeof raw === "object" && raw !== null && !Array.isArray(raw) ? raw : {};
+  const threshold = typeof v.threshold === "number" && v.threshold >= 0.5 && v.threshold <= 0.99 ? v.threshold : DEFAULT_VERIFY_POLICY.threshold;
+  const asks = Array.isArray(v.asks) ? v.asks.filter((a) => VERIFY_ASKS.includes(a)) : [];
+  return {
+    send: v.send === "claims-and-snippets" ? "claims-and-snippets" : "claims",
+    maxClaimsPerItem: bounded(v.maxClaimsPerItem, RANGES.maxClaimsPerItem, DEFAULT_VERIFY_POLICY.maxClaimsPerItem),
+    threshold,
+    asks: asks.length ? asks : [...DEFAULT_VERIFY_POLICY.asks]
+  };
+}
 var DEFAULT_POLICY = {
   requiredGates: [],
   judgementGates: [],
@@ -776,7 +1019,8 @@ var DEFAULT_POLICY = {
   unattendedDecisions: "wait",
   attendedDecisions: "relay",
   mail: DEFAULT_MAIL_POLICY,
-  team: DEFAULT_TEAM_POLICY
+  team: DEFAULT_TEAM_POLICY,
+  verify: DEFAULT_VERIFY_POLICY
 };
 var NAME_HINT = "a lowercase name of letters, digits, dot, dash and underscore, up to 64 characters";
 var RANGES = {
@@ -788,7 +1032,8 @@ var RANGES = {
   maxExperts: { min: 1, max: 3 },
   maxValidationRounds: { min: 1, max: 2 },
   maxJudgementRounds: { min: 1, max: 2 },
-  maxGateRounds: { min: 1, max: 2 }
+  maxGateRounds: { min: 1, max: 2 },
+  maxClaimsPerItem: { min: 1, max: 200 }
 };
 var SETTABLE_POLICY_KEYS = {
   attendedDecisions: { values: ["prompt", "relay"] },
@@ -810,12 +1055,30 @@ var SETTABLE_POLICY_KEYS = {
   "team.maxValidationRounds": { integer: RANGES.maxValidationRounds },
   "team.maxJudgementRounds": { integer: RANGES.maxJudgementRounds },
   "team.maxGateRounds": { integer: RANGES.maxGateRounds },
-  "team.continuations": { values: ["ask", "granted"] }
+  "team.continuations": { values: ["ask", "granted"] },
+  "verify.send": { values: ["claims", "claims-and-snippets"] },
+  "verify.maxClaimsPerItem": { integer: RANGES.maxClaimsPerItem },
+  "verify.threshold": { decimal: { min: 0.5, max: 0.99 } },
+  "verify.asks": { subset: VERIFY_ASKS }
 };
 function policyPath(paths) {
   return join6(paths.crewDir, "policy.json");
 }
 function checkSettable(key, rule, value) {
+  if ("decimal" in rule) {
+    const { min: min2, max: max2 } = rule.decimal;
+    const n2 = Number(value);
+    return /^\d+(?:\.\d{1,2})?$/.test(value) && n2 >= min2 && n2 <= max2 ? n2 : {
+      refused: `${key} is a number from ${min2} to ${max2} with at most two decimals, not ${value}`
+    };
+  }
+  if ("subset" in rule) {
+    const names = value.split(",").map((n2) => n2.trim()).filter(Boolean);
+    const unknown = names.filter((n2) => !rule.subset.includes(n2));
+    return names.length && !unknown.length ? [...new Set(names)] : {
+      refused: `${key} is a comma-separated subset of ${rule.subset.join(", ")}, not ${value || "nothing"}`
+    };
+  }
   if ("values" in rule)
     return rule.values.includes(value) ? value : { refused: `${key} is one of ${rule.values.join(", ")}, not ${value}` };
   if ("pattern" in rule)
@@ -832,7 +1095,7 @@ function setPolicyValue(paths, key, value) {
     };
   }
   const checked = checkSettable(key, rule, value);
-  if (typeof checked === "object")
+  if (typeof checked === "object" && !Array.isArray(checked))
     return checked;
   const read = readProtectedJson(paths, policyPath(paths));
   if (read.tampered) {
@@ -940,7 +1203,8 @@ function loadPolicy(paths) {
       unattendedDecisions: raw.unattendedDecisions === "count" || raw.unattendedDecisions === "validator" ? raw.unattendedDecisions : "wait",
       attendedDecisions: raw.attendedDecisions === "prompt" ? "prompt" : "relay",
       mail: loadMailPolicy(raw.mail),
-      team: loadTeamPolicy(raw.team)
+      team: loadTeamPolicy(raw.team),
+      verify: loadVerifyPolicy(raw.verify)
     },
     tampered: read.tampered
   };
@@ -2419,6 +2683,26 @@ function decidedBy(decision) {
     return `by the agent in ${decision.mode} mode`;
   return decision.relayed ? "by the user, relayed by the agent" : "by the user";
 }
+function markText(v) {
+  if (v.status === "unverified")
+    return `unverified: ${(v.reason ?? "no reason").replace(/\|/g, "\\|")}`;
+  return `${v.status} by Jev${v.confidence !== undefined ? ` (${two(v.confidence)})` : ""}`;
+}
+function answerText(answer) {
+  if (typeof answer !== "object" || answer === null)
+    return "-";
+  const a = answer;
+  if (a.type === "noul" && typeof a.noul === "number")
+    return a.noul >= 0.5 ? `yes ${two(a.noul)}` : `no ${two(1 - a.noul)}`;
+  const confidence = typeof a.confidence === "number" ? two(a.confidence) : "-";
+  if (a.type === "choice" && typeof a.choice === "string")
+    return `${a.choice} ${confidence}`;
+  if (a.type === "score" && a.probabilities) {
+    const top = Object.entries(a.probabilities).sort(([, x], [, y]) => y - x)[0];
+    return `score ${top ? top[0] : "-"} ${confidence}`;
+  }
+  return "-";
+}
 function countedNote(policy, decision) {
   if (!decision.by || decision.by === "user")
     return "";
@@ -2630,8 +2914,14 @@ function renderReport(work, evidence, policy, ledger, mail, selfName, analysis) 
     if (findings.length)
       lines.push("");
     for (const f of findings) {
-      lines.push(`- ${f.gate}: ${f.file}${f.line ? `:${f.line}` : ""} ${f.text} (${f.severity}${f.outside ? ", outside the change" : ""})`);
+      lines.push(`- ${f.gate}: ${f.file}${f.line ? `:${f.line}` : ""} ${f.text.replace(/\|/g, "\\|")} (${f.severity}${f.outside ? ", outside the change" : ""}${f.verification ? `, ${markText(f.verification)}` : ""})`);
     }
+  }
+  if (evidence.verifications?.length) {
+    lines.push("", "## Verifications", "", "| What | Ref | Answer | Confidence | Model | At |", "| :- | :- | :- | -: | :- | :- |");
+    const cell = (text) => oneLine(text).replace(/\|/g, "\\|");
+    for (const v of evidence.verifications)
+      lines.push(`| ${v.what} | ${cell(v.ref)} | ${cell(answerText(v.answer))} | ${v.confidence === null ? "-" : two(v.confidence)} | ${cell(v.model)} | ${v.at} |`);
   }
   if (work.seats?.length || work.rounds) {
     lines.push("", "## Team", "");
@@ -3968,11 +4258,18 @@ var MODES = ["partner", "guide", "pilot"];
 function configPath(paths) {
   return join17(paths.userDir, "config.json");
 }
+var MODEL_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 function loadConfig(paths) {
   const raw = readJson(configPath(paths)) ?? {};
+  const jev = {};
+  if (typeof raw.jev?.endpoint === "string" && endpointRefusal(raw.jev.endpoint) === null)
+    jev.endpoint = raw.jev.endpoint;
+  if (typeof raw.jev?.model === "string" && MODEL_NAME.test(raw.jev.model))
+    jev.model = raw.jev.model;
   return {
     mode: MODES.includes(raw.mode) ? raw.mode : DEFAULT_CONFIG.mode,
-    decisions: { log: raw.decisions?.log !== false }
+    decisions: { log: raw.decisions?.log !== false },
+    ...Object.keys(jev).length ? { jev } : {}
   };
 }
 function saveConfig(paths, config) {
@@ -3988,6 +4285,17 @@ function setConfigValue(config, key, value) {
     if (value !== "true" && value !== "false")
       throw new Error("decisions.log must be true or false");
     return { ...config, decisions: { log: value === "true" } };
+  }
+  if (key === "jev.endpoint") {
+    const refused = endpointRefusal(value);
+    if (refused)
+      throw new Error(`jev.endpoint is an https URL, an http URL to a loopback host, or a file:// path, with no userinfo: ${refused}`);
+    return { ...config, jev: { ...config.jev, endpoint: value } };
+  }
+  if (key === "jev.model") {
+    if (!MODEL_NAME.test(value))
+      throw new Error("jev.model is a name of letters, digits, dot, dash and underscore");
+    return { ...config, jev: { ...config.jev, model: value } };
   }
   throw new Error(`unknown setting: ${key}`);
 }
@@ -5238,7 +5546,7 @@ import {
 import { join as join28, relative as relative6, sep as sep2 } from "node:path";
 
 // packages/engine/src/console.ts
-import { existsSync as existsSync10, readFileSync as readFileSync3 } from "node:fs";
+import { existsSync as existsSync10, readFileSync as readFileSync4 } from "node:fs";
 import { join as join27 } from "node:path";
 function levelOf(type) {
   return type === "warn" ? "warning" : type;
@@ -5267,7 +5575,7 @@ function gradeConsole(dir) {
   if (existsSync10(array)) {
     file = array;
     try {
-      const data = JSON.parse(readFileSync3(array, "utf8"));
+      const data = JSON.parse(readFileSync4(array, "utf8"));
       if (!Array.isArray(data))
         return { status: "invalid", file };
       parsed = data;
@@ -5277,7 +5585,7 @@ function gradeConsole(dir) {
   } else if (existsSync10(lines)) {
     file = lines;
     try {
-      parsed = readFileSync3(lines, "utf8").split(`
+      parsed = readFileSync4(lines, "utf8").split(`
 `).filter((l) => l.trim()).map((l) => JSON.parse(l));
     } catch {
       return { status: "invalid", file };
@@ -5554,6 +5862,57 @@ function judgementRows(work, evidence, planned, currentFingerprint, policy) {
 function isRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
+function hunkLines(patch, file, line) {
+  const lines = patch.split(`
+`);
+  let current = null;
+  let newLine = 0;
+  let inHunk = false;
+  let hunkRows = [];
+  let found = null;
+  const settle = () => {
+    if (current === file && hunkRows.some((r) => r.n === line))
+      found = hunkRows;
+  };
+  for (const raw of lines) {
+    const header = /^diff --git a\/(.+?) b\/(.+)$/.exec(raw);
+    if (header) {
+      settle();
+      if (found)
+        break;
+      current = header[2] ?? null;
+      inHunk = false;
+      hunkRows = [];
+      continue;
+    }
+    const hunk = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(raw);
+    if (hunk) {
+      settle();
+      if (found)
+        break;
+      newLine = Number(hunk[1]);
+      inHunk = true;
+      hunkRows = [];
+      continue;
+    }
+    if (!inHunk || current !== file)
+      continue;
+    if (raw.startsWith("+") || raw.startsWith(" ")) {
+      hunkRows.push({ n: newLine, text: raw.slice(1) });
+      newLine += 1;
+    } else if (raw.startsWith("\\")) {}
+  }
+  settle();
+  if (!found)
+    return null;
+  const rows = found.filter((r) => r.n >= line - 5 && r.n <= line + 5);
+  const first = rows[0];
+  const last = rows[rows.length - 1];
+  if (!first || !last)
+    return null;
+  return { from: first.n, to: last.n, text: rows.map((r) => `${r.n}: ${r.text}`).join(`
+`) };
+}
 function plannedNote(planned) {
   return planned.length ? ` (planned: ${planned.join(", ")})` : " (none is planned)";
 }
@@ -5710,7 +6069,7 @@ function namedFiles(text, dirs, root) {
 
 // packages/engine/src/secrets.ts
 import { execFileSync as execFileSync4, spawnSync } from "node:child_process";
-import { readFileSync as readFileSync4 } from "node:fs";
+import { readFileSync as readFileSync5 } from "node:fs";
 import { join as join31 } from "node:path";
 var RULES2 = [
   {
@@ -5756,7 +6115,7 @@ function isBinary(buffer) {
 function fileSource(root, path) {
   let buffer;
   try {
-    buffer = readFileSync4(join31(root, path));
+    buffer = readFileSync5(join31(root, path));
   } catch {
     return null;
   }
@@ -7613,7 +7972,7 @@ function userOnlyCommand(args) {
   const [verb, second, third] = parsed.positional;
   const presence = verb === "question" && third === "add";
   const unreadable = (word) => word !== undefined && UNREADABLE_VERB.test(word);
-  const userOnly = unreadable(verb) || (verb === "profile" || verb === "policy") && unreadable(second) || verb === "skip" || verb === "approve" || verb === "accept" || verb === "decide" || verb === "continue" || verb === "objection" && parsed.positional.includes("waive") || verb === "profile" && (second === "confirm" || second === "set") || verb === "policy" && (second === "accept" || second === "set") || verb === "workspace" && second === "priorities" && parsed.positional.includes("accept") || verb === "question" && third === "answer" || verb === "task" && parsed.positional.includes("merge") && parsed.flags.force === true;
+  const userOnly = unreadable(verb) || (verb === "profile" || verb === "policy") && unreadable(second) || verb === "skip" || verb === "approve" || verb === "accept" || verb === "decide" || verb === "continue" || verb === "objection" && parsed.positional.includes("waive") || verb === "profile" && (second === "confirm" || second === "set") || verb === "policy" && (second === "accept" || second === "set") || verb === "workspace" && second === "priorities" && parsed.positional.includes("accept") || verb === "question" && third === "answer" || verb === "config" && typeof second === "string" && second.startsWith("jev.") && third !== undefined || verb === "task" && parsed.positional.includes("merge") && parsed.flags.force === true;
   if (!userOnly && !presence)
     return null;
   return {
@@ -8630,9 +8989,14 @@ function computeMetrics(projects) {
     objections: { byStatus: {} },
     decisions: { total: 0, byUser: 0, byValidator: 0, byAgent: 0 },
     gates: { notRun: 0, skipped: 0 },
-    phaseMinutes: {}
+    phaseMinutes: {},
+    verifications: { total: 0, verified: 0, disputed: 0, unverified: 0, agreement: null }
   };
   const phaseTotals = {};
+  const agreementOf = () => {
+    const judged = m.verifications.verified + m.verifications.disputed;
+    return judged ? Math.round(m.verifications.verified / judged * 100) / 100 : null;
+  };
   for (const paths of projects) {
     const policy = loadPolicy(paths).policy;
     let ids = [];
@@ -8680,10 +9044,14 @@ function computeMetrics(projects) {
       for (const j of evidence.judgement ?? []) {
         if (j.verdict === "not-run")
           m.gates.notRun += 1;
-        const defects = j.findings.filter((f) => f.severity === "defect" && !f.outside).length;
-        if (defects)
-          count(m.defects.byReviewer, j.reviewer ?? `review-${j.gate}`, defects);
+        const upheld = j.findings.filter((f) => f.severity === "defect" && !f.outside);
+        if (upheld.length)
+          count(m.defects.byReviewer, j.reviewer ?? `review-${j.gate}`, upheld.length);
+        for (const f of upheld)
+          if (f.verification)
+            m.verifications[f.verification.status] += 1;
       }
+      m.verifications.total += evidence.verifications?.length ?? 0;
       m.gates.skipped += evidence.runs.filter((r) => r.status === "skipped").length;
       for (const o of loadLedger(paths, id).ledger.objections)
         count(m.objections.byStatus, objectionStatus(o, work, evidence, policy));
@@ -8701,6 +9069,7 @@ function computeMetrics(projects) {
   }
   for (const [phase, minutes] of Object.entries(phaseTotals))
     m.phaseMinutes[phase] = Math.round(minutes * 100) / 100;
+  m.verifications.agreement = agreementOf();
   return m;
 }
 function metricsText(m) {
@@ -8713,10 +9082,119 @@ function metricsText(m) {
     `  defects upheld: ${Object.values(m.defects.byReviewer).reduce((a, b) => a + b, 0)}${Object.keys(m.defects.byReviewer).length ? ` (${pairs(m.defects.byReviewer)})` : ""}`,
     `  tasks: ${m.tasks.opened} opened, ${m.tasks.proven} proven, ${m.tasks.unproven} unproven`,
     `  decisions: ${m.decisions.total} (user ${m.decisions.byUser}, validator ${m.decisions.byValidator}, agent ${m.decisions.byAgent})`,
+    `  verifications: ${m.verifications.total} (defects verified ${m.verifications.verified}, disputed ${m.verifications.disputed}, unverified ${m.verifications.unverified}; agreement ${m.verifications.agreement === null ? "none" : m.verifications.agreement})`,
     `  gates: ${m.gates.notRun} not run, ${m.gates.skipped} skipped`,
     `  minutes per phase: ${Object.keys(m.phaseMinutes).length ? pairs(m.phaseMinutes) : "none yet"}`
   ].join(`
 `);
+}
+
+// packages/engine/src/research.ts
+var SECTION = /^##\s+What the documentation says\s*$/m;
+var LINE = /^-\s+(.+?)\s+·\s+["“”](.+?)["“”]\s+·\s+(.+?)\s*$/;
+function parseFacts(text) {
+  const start = SECTION.exec(text);
+  if (!start)
+    return [];
+  const body = text.slice(start.index + start[0].length);
+  const end = body.search(/^##\s/m);
+  const section = end === -1 ? body : body.slice(0, end);
+  const facts = [];
+  for (const raw of section.split(`
+`)) {
+    const m = LINE.exec(raw.trim());
+    if (!m?.[1] || !m[2] || !m[3])
+      continue;
+    facts.push({ id: `F-${facts.length + 1}`, source: m[1], quote: m[2], claim: m[3] });
+  }
+  return facts;
+}
+var TEXT_TYPES = /^(?:text\/|application\/json|application\/xhtml\+xml)/i;
+var MAX_HOPS = 3;
+function urlRefusal(raw) {
+  let url;
+  try {
+    url = new URL(raw);
+  } catch {
+    return "not a URL";
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:")
+    return "not http(s)";
+  if (url.username || url.password)
+    return "userinfo";
+  const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
+  const mapped = host.startsWith("::ffff:") ? host.slice("::ffff:".length) : null;
+  const linkLocalV4 = (h) => /^169\.254\./.test(h) || /^a9fe:/.test(h);
+  if (host === "metadata.google.internal" || host === "fd00:ec2::254" || linkLocalV4(host) || mapped !== null && linkLocalV4(mapped) || /^fe[89ab][0-9a-f]:/.test(host))
+    return `refused host ${host}`;
+  return null;
+}
+async function fetchSource(source, root, options = {}) {
+  if (/^https?:\/\//i.test(source)) {
+    const doFetch = options.fetch ?? fetch;
+    const maxBytes = options.maxBytes ?? 2 * 1024 * 1024;
+    let url = source;
+    for (let hop = 0;; hop++) {
+      const bad = urlRefusal(url);
+      if (bad)
+        return { refused: `${source}: ${bad}` };
+      let response;
+      try {
+        response = await doFetch(url, {
+          method: "GET",
+          redirect: "manual",
+          signal: AbortSignal.timeout(options.timeoutMs ?? 15000)
+        });
+      } catch (error) {
+        return { refused: `${source}: ${error instanceof Error ? error.message : String(error)}` };
+      }
+      if (response.status >= 300 && response.status < 400) {
+        const location = response.headers.get("location");
+        if (!location || hop >= MAX_HOPS)
+          return { refused: `${source}: ${response.status}` };
+        try {
+          url = new URL(location, url).toString();
+        } catch {
+          return { refused: `${source}: not a URL` };
+        }
+        continue;
+      }
+      if (response.status < 200 || response.status >= 300)
+        return { refused: `${source}: ${response.status}` };
+      const type = response.headers.get("content-type") ?? "";
+      if (!TEXT_TYPES.test(type))
+        return { refused: `${source}: not a text source (${type || "unknown"})` };
+      let text;
+      try {
+        text = await response.text();
+      } catch (error) {
+        return { refused: `${source}: ${error instanceof Error ? error.message : String(error)}` };
+      }
+      return { text: text.length > maxBytes ? text.slice(0, maxBytes) : text };
+    }
+  }
+  if (checkPath(root, source) !== null)
+    return { refused: `${source}: not a tracked file` };
+  const file = confinedDocument(root, source);
+  if ("refused" in file)
+    return { refused: `${source}: not a tracked file` };
+  return { text: readText(file.file) ?? "" };
+}
+function normalise(text) {
+  return text.replace(/[“”„«»]/g, '"').replace(/[‘’‚]/g, "'").replace(/[‐‑‒–—−]/g, "-").replace(/\s+/g, " ").trim();
+}
+var EXCERPT = 300;
+function findQuote(quote, text) {
+  const needle = normalise(quote);
+  if (!needle)
+    return null;
+  const hay = normalise(text);
+  const at = hay.indexOf(needle);
+  if (at === -1)
+    return null;
+  const from = Math.max(0, at - EXCERPT);
+  const to = Math.min(hay.length, at + needle.length + EXCERPT);
+  return { excerpt: hay.slice(from, to) };
 }
 
 // packages/engine/src/tdd.ts
@@ -8838,6 +9316,285 @@ async function recordTdd(paths, work, evidence, profile, criterionId, step, over
   };
 }
 
+// packages/engine/src/verify.ts
+var RUBRIC_QUESTIONS = {
+  "code-quality": "a violation of SOLID or KISS as the code-quality rubric's six questions name it: a type with more than one reason to change, a copy of logic, a name that says the opposite of what the code does, dead or unreachable code, a workaround, a hardcoded value",
+  "test-quality": "a test that would not fail if the behaviour it names broke, a criterion with no such test, or an assertion true by construction",
+  "ui-ux": "a page whose criterion is not visible in the capture, a missing state (loading, empty, error), a control without a keyboard path or a label, or copy outside the project's language and voice",
+  security: "a path by which authentication, authorisation, personal data, payments, a public API or a migration can be misused, leaked or bypassed",
+  architecture: "a drift from the project's defined architecture, data model, contracts or integrations",
+  data: "a schema, migration, query, transaction or index that loses, corrupts or blocks data",
+  infra: "a pipeline, deployment, host, secret or rollback that fails or exposes something",
+  risk: "a change whose failure in production has no rollback, loses data, breaks a third party or has no watch in its first hour"
+};
+var CAPS = {
+  findingText: 1000,
+  conclave: 16 * 1024,
+  request: 8 * 1024,
+  priorities: 8 * 1024
+};
+function cut(text, max) {
+  return text.length > max ? `${text.slice(0, max)}…` : text;
+}
+function askAllowed(policy, ask) {
+  return policy.verify.asks.includes(ask);
+}
+function record(what, ref, question, answer2, confidence, model) {
+  return {
+    what,
+    ref,
+    question: typeof question.instructions === "string" ? question.instructions : JSON.stringify(question.instructions),
+    answer: answer2,
+    confidence,
+    model,
+    at: nowIso()
+  };
+}
+var UNAVAILABLE2 = (reason) => `jev unavailable: ${reason}`;
+function findingMark(mark) {
+  return {
+    status: mark.status,
+    ...mark.reason ? { reason: mark.reason } : {},
+    ...mark.confidence !== null ? { confidence: mark.confidence } : {}
+  };
+}
+async function verifyDefects(cfg, policy, records, patch, options = {}) {
+  const candidates = records.flatMap((r) => r.verdict === "not-proven" ? r.findings.filter((f) => f.severity === "defect" && !f.outside).map((f) => ({ record: r, finding: f })) : []);
+  const sent = [];
+  const state = {};
+  const questions = {};
+  const snippets = policy.verify.send === "claims-and-snippets";
+  for (const c of candidates) {
+    if (c.finding.line === undefined) {
+      c.finding.verification = { status: "unverified", reason: "no line" };
+      continue;
+    }
+    const lines2 = hunkLines(patch, c.finding.file, c.finding.line);
+    if (!lines2) {
+      c.finding.verification = { status: "unverified", reason: "line outside the change's hunks" };
+      continue;
+    }
+    if (sent.length >= policy.verify.maxClaimsPerItem) {
+      c.finding.verification = { status: "unverified", reason: "over verify.maxClaimsPerItem" };
+      continue;
+    }
+    const id = `d${sent.length + 1}`;
+    sent.push({ id, record: c.record, finding: c.finding });
+    state[id] = {
+      file: c.finding.file,
+      line: c.finding.line,
+      text: cut(c.finding.text, CAPS.findingText),
+      rubric: RUBRIC_QUESTIONS[c.record.gate],
+      ...snippets ? { lines: lines2.text } : {}
+    };
+    questions[id] = snippets ? {
+      type: "choice",
+      instructions: `What is the relation between the cited lines \`findings.${id}.lines\` and the finding's \`text\` at \`findings.${id}\`?`,
+      criteria: {
+        supports: "the lines show what the text says",
+        contradicts: "the lines show the opposite, or the text does not hold on them",
+        says_nothing: "the lines do not show whether the text holds"
+      }
+    } : {
+      type: "noul",
+      instructions: `Does the finding at \`findings.${id}\`, taken at its word (its \`text\` about \`file\` at \`line\`), describe a defect of the kind \`findings.${id}.rubric\` names?`,
+      criteria: {
+        true: "the text, read literally, names such a defect",
+        false: "the text names something else, or no defect"
+      }
+    };
+  }
+  if (!sent.length)
+    return { records: [], unavailable: null, sent: 0 };
+  const result = await askJev(cfg, { state: { findings: state }, questions }, options);
+  if (!result.ok) {
+    for (const s of sent)
+      s.finding.verification = { status: "unverified", reason: UNAVAILABLE2(result.unavailable) };
+    return { records: [], unavailable: result.unavailable, sent: sent.length };
+  }
+  const out = [];
+  for (const s of sent) {
+    const answer2 = result.answers[s.id];
+    const question = questions[s.id];
+    if (!answer2 || !question)
+      continue;
+    const mark = markOf(answer2, policy.verify.threshold);
+    s.finding.verification = findingMark(mark);
+    out.push(record("defect", `${s.record.gate} ${s.finding.file}:${s.finding.line}`, question, answer2, mark.confidence, result.model));
+  }
+  return { records: out, unavailable: null, sent: sent.length };
+}
+var VALIDATOR_QUESTIONS = {
+  v1: "Is every decision listed in `conclave` under the heading 'Decisions only the user can make' present in `decisions` with an answer or a stated default?",
+  v2: "Is every warning listed in `conclave` under 'Warnings' that names a security, data or payment risk present in `objections`?"
+};
+async function verifyValidator(cfg, policy, input, options = {}) {
+  const questions = {
+    v1: { type: "noul", instructions: VALIDATOR_QUESTIONS.v1 },
+    v2: { type: "noul", instructions: VALIDATOR_QUESTIONS.v2 }
+  };
+  const result = await askJev(cfg, { state: { ...input, conclave: cut(input.conclave, CAPS.conclave) }, questions }, options);
+  if (!result.ok)
+    return {
+      status: "unverified",
+      condition: null,
+      confidence: null,
+      reason: UNAVAILABLE2(result.unavailable),
+      records: []
+    };
+  const records = [];
+  let outcome = {
+    status: "verified",
+    condition: null,
+    confidence: null,
+    records
+  };
+  for (const id of ["v1", "v2"]) {
+    const answer2 = result.answers[id];
+    const question = questions[id];
+    if (!answer2 || !question)
+      continue;
+    const mark = markOf(answer2, policy.verify.threshold);
+    records.push(record("validator", `complete-gap-round ${id}`, question, answer2, mark.confidence, result.model));
+    if (mark.status === "disputed" && outcome.status !== "disputed")
+      outcome = {
+        status: "disputed",
+        condition: VALIDATOR_QUESTIONS[id],
+        confidence: mark.confidence,
+        records
+      };
+    else if (mark.status === "unverified" && outcome.status === "verified")
+      outcome = {
+        status: "unverified",
+        condition: null,
+        confidence: mark.confidence,
+        reason: mark.reason,
+        records
+      };
+  }
+  return outcome;
+}
+async function verifyFacts(cfg, policy, facts, options = {}) {
+  if (!facts.length)
+    return { marks: {}, unavailable: null, records: [] };
+  const state = {};
+  const questions = {};
+  const ids = new Map;
+  facts.forEach((f, i) => {
+    const id = `f${i + 1}`;
+    ids.set(f.id, id);
+    state[id] = { claim: f.claim, quote: f.quote, excerpt: f.excerpt };
+    questions[id] = {
+      type: "choice",
+      instructions: `What is the relation between the excerpt \`facts.${id}.excerpt\` of the source and the quote \`facts.${id}.quote\` the researcher cited for the claim \`facts.${id}.claim\`?`,
+      criteria: {
+        supports: "the excerpt contains the quote's meaning as cited",
+        contradicts: "the excerpt says otherwise",
+        says_nothing: "the excerpt does not settle it"
+      }
+    };
+  });
+  const result = await askJev(cfg, { state: { facts: state }, questions }, options);
+  if (!result.ok) {
+    const marks2 = {};
+    for (const f of facts)
+      marks2[f.id] = {
+        status: "unverified",
+        confidence: null,
+        reason: UNAVAILABLE2(result.unavailable)
+      };
+    return { marks: marks2, unavailable: result.unavailable, records: [] };
+  }
+  const marks = {};
+  const records = [];
+  for (const f of facts) {
+    const id = ids.get(f.id) ?? "";
+    const answer2 = result.answers[id];
+    const question = questions[id];
+    if (!answer2 || !question)
+      continue;
+    const mark = markOf(answer2, policy.verify.threshold);
+    marks[f.id] = mark;
+    records.push(record("fact", f.id, question, answer2, mark.confidence, result.model));
+  }
+  return { marks, unavailable: null, records };
+}
+var PRIORITY_LEVELS2 = ["low", "normal", "high", "blocker"];
+var LEVEL_TEXT = {
+  low: "a cosmetic or convenience change nobody is waiting on",
+  normal: "ordinary work the business expects in its turn",
+  high: "work a signed deadline or a named client commitment depends on",
+  blocker: "production is down or a client cannot work until it is done"
+};
+var FLAGS = ["is_production_down", "names_a_signed_deadline", "is_vague"];
+var FLAG_QUESTIONS = {
+  is_production_down: "Does `request.text` say production, or a client's use of it, is down now?",
+  names_a_signed_deadline: "Does `request.text` name a deadline or a commitment that `business_priorities` lists?",
+  is_vague: "Would two competent engineers build different things from `request.text`?"
+};
+function rank(p) {
+  return PRIORITY_LEVELS2.indexOf(p);
+}
+async function verifyTriage(cfg, policy, input, options = {}) {
+  const state = {
+    request: { ...input.request, text: cut(input.request.text, CAPS.request) },
+    business_priorities: input.business_priorities === null ? null : cut(input.business_priorities, CAPS.priorities),
+    queue: input.queue
+  };
+  const questions = {
+    priority: {
+      type: "score",
+      instructions: "Judged against `business_priorities` and the open `queue`, which level does `request` deserve?",
+      criteria: PRIORITY_LEVELS2.map((l) => LEVEL_TEXT[l])
+    }
+  };
+  for (const flag of FLAGS)
+    questions[flag] = { type: "noul", instructions: FLAG_QUESTIONS[flag] };
+  const result = await askJev(cfg, { state, questions }, options);
+  if (!result.ok)
+    return { proposal: null, reason: UNAVAILABLE2(result.unavailable), records: [] };
+  const records = [];
+  const score = result.answers.priority;
+  const flags = {};
+  for (const flag of FLAGS) {
+    const answer2 = result.answers[flag];
+    const question = questions[flag];
+    if (answer2?.type === "noul" && question) {
+      flags[flag] = answer2.noul;
+      records.push(record("triage", flag, question, answer2, answer2.noul, result.model));
+    }
+  }
+  const scoreQuestion = questions.priority;
+  if (score?.type !== "score" || !scoreQuestion)
+    return { proposal: null, reason: "jev unavailable: malformed answer", records };
+  const byLevel = {};
+  for (const [key, text] of Object.entries(score.legend)) {
+    const level = PRIORITY_LEVELS2.find((l) => LEVEL_TEXT[l] === text);
+    if (level)
+      byLevel[level] = score.probabilities[key] ?? 0;
+  }
+  const normalised = { ...score, probabilities: byLevel };
+  const top = topLevel(normalised, PRIORITY_LEVELS2);
+  records.push(record("triage", "priority", scoreQuestion, score, score.confidence, result.model));
+  if (score.confidence < policy.verify.threshold)
+    return {
+      proposal: null,
+      reason: `confidence ${score.confidence.toFixed(2)} under ${policy.verify.threshold}`,
+      records
+    };
+  const capped = rank(top.level) > rank(input.request.proposed_priority);
+  return {
+    proposal: {
+      level: capped ? input.request.proposed_priority : top.level,
+      confidence: score.confidence,
+      probabilities: byLevel,
+      flags,
+      capped
+    },
+    records
+  };
+}
+
 // packages/engine/src/version.ts
 var VERSION = "0.7.0";
 
@@ -8853,10 +9610,10 @@ function unconfirmedPriorities(messages) {
   return messages.filter((m) => (m.type === "change-request" || m.type === "blocker") && m.priority !== undefined && m.priorityDecision === undefined).length;
 }
 function environmentState(paths) {
-  const record = readEnvRecord(paths);
-  if (!record)
+  const record2 = readEnvRecord(paths);
+  if (!record2)
     return "none";
-  if (record.managed && record.pid !== null && !isAlive(record.pid))
+  if (record2.managed && record2.pid !== null && !isAlive(record2.pid))
     return "down";
   return "up";
 }
@@ -8941,6 +9698,7 @@ var KNOWN_FLAGS = {
   workspace: ["file"],
   question: ["channel", "ref", "mode"],
   analyse: ["paths"],
+  research: ["file"],
   mail: [
     "to",
     "type",
@@ -9143,45 +9901,45 @@ function continueOrRefuse(env, work, what, task, cap, round, refusal) {
   return null;
 }
 function planTaskJudgement(env, options) {
-  const { work, tampered, record, task, round, scope, ownScope, result } = options;
+  const { work, tampered, record: record2, task, round, scope, ownScope, result } = options;
   const others = ownScope.filter((p) => !scope.includes(p));
-  const cut = [...scope, ...others];
-  const planned = [...record.gate?.planned ?? []];
+  const cut2 = [...scope, ...others];
+  const planned = [...record2.gate?.planned ?? []];
   for (const p of [...result.judgement, ...plannedTaskJudgement(others, env.policy)])
     if (!planned.some((q) => q.gate === p.gate))
       planned.push(p);
   const current = assess(env.paths, work, env.profile, env.policy, tampered).currentFingerprint;
-  const hash = scopeHash(cut);
-  record.gate = {
+  const hash = scopeHash(cut2);
+  record2.gate = {
     round,
     at: nowIso(),
     status: result.status,
     runs: result.runs,
     scope,
     planned,
-    cut,
-    judgement: (record.gate?.judgement ?? []).filter((j) => j.fingerprint === current && j.scope === hash)
+    cut: cut2,
+    judgement: (record2.gate?.judgement ?? []).filter((j) => j.fingerprint === current && j.scope === hash)
   };
   if (result.status === "pass" && planned.length)
-    writeReviewInputs(env.paths, work, cut, current, task);
+    writeReviewInputs(env.paths, work, cut2, current, task);
   return planned;
 }
-function taskPending(work, record, policy) {
-  const gate = record.gate;
+function taskPending(work, record2, policy) {
+  const gate = record2.gate;
   return (gate?.planned ?? []).map((p) => p.gate).filter((g) => !isSkipped(work, `gate:${g}`, policy) && !(gate?.judgement ?? []).some((r) => r.gate === g && r.verdict === "proven"));
 }
-function settleTaskState(work, record, policy) {
-  if (record.state === "briefed")
+function settleTaskState(work, record2, policy) {
+  if (record2.state === "briefed")
     return;
-  const gated = record.gate?.status === "pass" && taskPending(work, record, policy).length === 0;
+  const gated = record2.gate?.status === "pass" && taskPending(work, record2, policy).length === 0;
   if (gated)
-    record.state = "gated";
-  else if (record.state === "gated")
-    record.state = "merged";
+    record2.state = "gated";
+  else if (record2.state === "gated")
+    record2.state = "merged";
 }
-function pendingText(record, pending) {
+function pendingText(record2, pending) {
   return pending.map((g) => {
-    const r = (record.gate?.judgement ?? []).find((j) => j.gate === g);
+    const r = (record2.gate?.judgement ?? []).find((j) => j.gate === g);
     return r && r.verdict === "not-proven" ? `${g} not proven (${findingsText(r.findings.length)})` : `${g} not run`;
   }).join("; ");
 }
@@ -9217,19 +9975,19 @@ function rulingRecords(env, parsed, gateWord, planned, fingerprint, changed, wor
     return refuse(parsedRulings.refused);
   for (const ruling of parsedRulings.rulings)
     records.push(stampRuling(ruling, fingerprint, changed, workId));
-  for (const record of records) {
-    const why = contradiction(record);
+  for (const record2 of records) {
+    const why = contradiction(record2);
     if (why)
       return refuse(why);
   }
   return { records, rulingPath };
 }
-function recordTaskJudgement(env, work, tampered, parsed, task) {
+async function recordTaskJudgement(env, ioEnv, work, tampered, parsed, task) {
   const usage = 'usage: crew judgement <id> record --task T-n --ruling <file> | crew judgement <id> record <gate> --not-run --reason "<why>" --task T-n';
-  const record = (work.tasks ?? []).find((t) => t.task === task);
-  if (!record)
+  const record2 = (work.tasks ?? []).find((t) => t.task === task);
+  if (!record2)
     return refuse(`${task} is not a task of ${work.id}`);
-  const planned = (record.gate?.planned ?? []).map((p) => p.gate);
+  const planned = (record2.gate?.planned ?? []).map((p) => p.gate);
   if (!planned.length)
     return refuse(`${task} plans no judgement gate (crew task <id> gate ${task})`);
   const before = assess(env.paths, work, env.profile, env.policy, tampered);
@@ -9238,14 +9996,24 @@ function recordTaskJudgement(env, work, tampered, parsed, task) {
     return refuse(`no review inputs for ${task}: run crew task <id> gate ${task} first, then the reviewers and the judge`);
   if (inputs.fingerprint !== before.currentFingerprint)
     return refuse(`the review inputs of ${task} describe other code than the current one: run crew task <id> gate ${task}, then the reviewers and the judge again`);
-  const cut = record.gate?.cut ?? record.gate?.scope ?? [];
-  const input = rulingRecords(env, parsed, parsed.positional[3], planned, before.currentFingerprint, cut, work.id, task, usage);
+  const cut2 = record2.gate?.cut ?? record2.gate?.scope ?? [];
+  const input = rulingRecords(env, parsed, parsed.positional[3], planned, before.currentFingerprint, cut2, work.id, task, usage);
   if (isOutcome(input))
     return input;
   const { records, rulingPath } = input;
   fillTokens(records, before.evidence.roles ?? [], inputs.at);
-  const hash = scopeHash(cut);
-  const gate = record.gate;
+  const defects = await askDefects(env, ioEnv, records, join39(reviewDir(env.paths, work.id, task), "diff.patch"));
+  const notes = [];
+  if (defects?.records.length) {
+    const appended = updateEvidence(env.paths, work.id, (fresh) => {
+      fresh.verifications = [...fresh.verifications ?? [], ...defects.records];
+    });
+    if ("refused" in appended)
+      notes.push(appended.refused);
+  }
+  const jevWait = jevUnavailableWait(work, defects);
+  const hash = scopeHash(cut2);
+  const gate = record2.gate;
   for (const r of records)
     gate.judgement = [
       ...(gate.judgement ?? []).filter((j) => j.gate !== r.gate),
@@ -9253,20 +10021,23 @@ function recordTaskJudgement(env, work, tampered, parsed, task) {
     ];
   if (rulingPath)
     keepRound(env.paths, work.id, gate.round, records.map((r) => r.gate), rulingPath, task);
-  settleTaskState(work, record, env.policy);
+  settleTaskState(work, record2, env.policy);
   saveWork(env.paths, work);
-  const pending = taskPending(work, record, env.policy);
-  const lines2 = records.map((r) => {
+  const pending = taskPending(work, record2, env.policy);
+  const lines2 = records.flatMap((r) => {
     const detail = r.verdict === "not-run" ? `: ${r.reason}` : ` (${findingsText(r.findings.length)})`;
-    return `${task}: ${r.gate} ${verdictWord(r.verdict)}${detail}`;
+    return [`${task}: ${r.gate} ${verdictWord(r.verdict)}${detail}`, ...markLines(r)];
   });
-  lines2.push(pending.length === 0 ? `${task}: gated` : record.state === "briefed" ? `${task}: briefed, judgement pending (${pendingText(record, pending)})` : `${task}: not gated: ${pendingText(record, pending)}`);
+  lines2.push(pending.length === 0 ? `${task}: gated` : record2.state === "briefed" ? `${task}: briefed, judgement pending (${pendingText(record2, pending)})` : `${task}: not gated: ${pendingText(record2, pending)}`);
+  if (jevWait)
+    lines2.push(jevWait);
+  lines2.push(...notes);
   return {
     code: pending.length === 0 ? 0 : 1,
     stdout: true,
     text: lines2.join(`
 `),
-    data: { task: record, gate: record.gate, pending }
+    data: { task: record2, gate: record2.gate, pending }
   };
 }
 function guardContext(env, work, tampered) {
@@ -9318,6 +10089,39 @@ function moveOriginMail(env, work, to, notes) {
   const moved = moveMail(env.mail, originId, to, {}, notes);
   if ("refused" in moved)
     notes.push(moved.refused);
+}
+async function askDefects(env, ioEnv, records, patchFile) {
+  const jev = jevConfig(ioEnv, env.config);
+  if (!jev.configured || !askAllowed(env.policy, "defect"))
+    return null;
+  return verifyDefects(jev, env.policy, records, readText(patchFile) ?? "");
+}
+function markLines(record2) {
+  return record2.findings.filter((f) => f.verification).map((f) => {
+    const v = f.verification;
+    const mark = v.status === "unverified" ? `unverified: ${v.reason ?? "no reason"}` : `${v.status} by jev${v.confidence !== undefined ? ` (${two(v.confidence)})` : ""}`;
+    return `    ${f.file}${f.line ? `:${f.line}` : ""} ${mark}`;
+  });
+}
+function jevUnavailableWait(work, defects) {
+  if (!defects?.unavailable)
+    return null;
+  if (work.route !== "full")
+    return `jev unavailable: ${defects.unavailable}`;
+  if (work.awaiting === null) {
+    work.awaiting = "user";
+    delete work.awaitingMessage;
+  }
+  return `jev unavailable: ${defects.unavailable}; a full-route item waits for a person`;
+}
+function triageProposalText(outcome, proposed2) {
+  if (!outcome.proposal) {
+    const reason = outcome.reason ?? "no answer";
+    return reason.startsWith("jev unavailable: ") ? reason : `jev: no proposal (${reason})`;
+  }
+  const p = outcome.proposal;
+  const flags = `production down ${two(p.flags.is_production_down ?? 0)}, signed deadline ${two(p.flags.names_a_signed_deadline ?? 0)}, vague ${two(p.flags.is_vague ?? 0)}`;
+  return `jev proposes ${p.level} (${two(p.confidence)}; ${flags})${p.capped ? `, capped at the source's ${proposed2}` : ""}`;
 }
 function triageText(work, short = false) {
   const t = work.triage;
@@ -9666,6 +10470,33 @@ async function dispatch(parsed, io) {
       if (work.route === "fast" && criteria.length > 0)
         advancePhase(work, guardContext(env, work, false));
       saveWork(env.paths, work);
+      let jevLine = "";
+      if (source?.proposedPriority) {
+        const jev = jevConfig(io.env, env.config);
+        if (jev.configured && askAllowed(env.policy, "triage")) {
+          const workspace = env.mail.self.workspace;
+          const priorities = workspace ? prioritiesState(env.paths.userDir, workspace) : null;
+          const outcome = await verifyTriage(jev, env.policy, {
+            request: {
+              text: input,
+              channel: source.channel,
+              connector: source.connector ?? null,
+              proposed_priority: source.proposedPriority
+            },
+            business_priorities: priorities?.state === "signed" ? priorities.text : null,
+            queue: openItems(env.paths, work.id).map((w) => ({
+              kind: kindOfItem(w),
+              priority: w.priority ?? "normal"
+            }))
+          });
+          if (outcome.records.length)
+            updateEvidence(env.paths, work.id, (fresh) => {
+              fresh.verifications = [...fresh.verifications ?? [], ...outcome.records];
+            });
+          jevLine = `
+  ${triageProposalText(outcome, source.proposedPriority)}`;
+        }
+      }
       if (triage?.confirmed && triage.confirmed !== triage.proposed)
         appendDecision(env.paths, {
           at: triage.at,
@@ -9695,7 +10526,7 @@ async function dispatch(parsed, io) {
       const registered = decisionsCount(env.paths);
       const registerLine = registered ? `
   decision register: ${registered} entr${registered === 1 ? "y" : "ies"} (crew decisions)` : "";
-      return ok(`${warning}${sharedWarning}${inheritedWarning}${provenNote}started ${work.id} (route ${work.route}: ${work.routeReasons.join("; ")})${kindLine}${sourceLines}${triageLine}${lines2}${teamLine}${registerLine}${originNotes.length ? `
+      return ok(`${warning}${sharedWarning}${inheritedWarning}${provenNote}started ${work.id} (route ${work.route}: ${work.routeReasons.join("; ")})${kindLine}${sourceLines}${triageLine}${jevLine}${lines2}${teamLine}${registerLine}${originNotes.length ? `
 ${originNotes.join(`
 `)}` : ""}`, {
         id: work.id,
@@ -9859,6 +10690,14 @@ ${originNotes.join(`
         return ok(`debate open on ${opened.work.id}: ${result.reason}`, { debate: result });
       }
       if (args[1] === "close") {
+        const jev = jevConfig(io.env, env.config);
+        const conclaveDir = join39(workDir(env.paths, opened.work.id), "conclave");
+        const researcherText = readText(join39(conclaveDir, "researcher.md"));
+        if (jev.configured && askAllowed(env.policy, "fact") && researcherText !== null) {
+          const read2 = readProtectedJson(env.paths, join39(conclaveDir, "researcher.verification.json"));
+          if (read2.tampered || read2.data?.hash !== sha256(researcherText))
+            return refuse(`run crew research ${opened.work.id} verify first (the researcher's facts are unverified)`);
+        }
         const flag = parsed.flags.tokens;
         const tokens = flag === undefined ? undefined : typeof flag === "string" ? Number(flag) : Number.NaN;
         if (tokens !== undefined && !(Number.isFinite(tokens) && tokens >= 0))
@@ -9922,6 +10761,7 @@ ${originNotes.join(`
       const decision = validatorFlag(parsed, env.policy);
       if (isOutcome(decision))
         return decision;
+      let jevNote = "";
       if (decision.by === "validator") {
         if (decision.rule !== "complete-gap-round")
           return refuse("a spec is approved by the validator under the complete-gap-round rule");
@@ -9930,6 +10770,37 @@ ${originNotes.join(`
           return refuse(`the complete-gap-round rule does not hold; missing:
   ${missing.join(`
   `)}`, { missing });
+        const jev = jevConfig(io.env, env.config);
+        if (jev.configured && askAllowed(env.policy, "validator")) {
+          const dir = workDir(env.paths, opened.work.id);
+          const evidence = loadEvidence(env.paths, opened.work.id).evidence;
+          const outcome = await verifyValidator(jev, env.policy, {
+            conclave: readText(join39(dir, "conclave.md")) ?? "",
+            decisions: (opened.work.decisions ?? []).map((d) => ({
+              id: d.id,
+              question: d.question,
+              answer: d.answer ?? null,
+              default: d.default ?? null
+            })),
+            objections: loadLedger(env.paths, opened.work.id).ledger.objections.map((o) => ({
+              id: o.id,
+              severity: o.severity,
+              status: objectionStatus(o, opened.work, evidence, env.policy),
+              criterion: o.criterion ?? null
+            }))
+          });
+          if (outcome.records.length)
+            updateEvidence(env.paths, opened.work.id, (fresh) => {
+              fresh.verifications = [...fresh.verifications ?? [], ...outcome.records];
+            });
+          if (outcome.status === "disputed") {
+            opened.work.awaiting = "user";
+            delete opened.work.awaitingMessage;
+            saveWork(env.paths, opened.work);
+            return refuse(`disputed by jev: ${outcome.condition} (${two(outcome.confidence ?? 0)}); the item waits for a person`);
+          }
+          jevNote = outcome.status === "verified" ? " (verified by jev)" : ` (unverified: ${outcome.reason ?? "no reason"})`;
+        }
       }
       approve(opened.work, "spec", decision);
       appendDecision(env.paths, {
@@ -9940,9 +10811,7 @@ ${originNotes.join(`
         by: whoDecided(decision)
       });
       saveWork(env.paths, opened.work);
-      return ok(`spec approved for ${opened.work.id} ${decisionText(env.policy, decision)}`, {
-        approvals: opened.work.approvals
-      });
+      return ok(`spec approved for ${opened.work.id} ${decisionText(env.policy, decision)}${jevNote}`, { approvals: opened.work.approvals });
     }
     case "phase": {
       const opened = openForChange(env, args[0]);
@@ -9998,6 +10867,98 @@ ${originNotes.join(`
         awaiting: kind,
         awaitingMessage: opened.work.awaitingMessage ?? null
       });
+    }
+    case "research": {
+      const usage = "usage: crew research <id> verify [--file <path>]";
+      const opened = openForChange(env, args[0]);
+      if (isOutcome(opened))
+        return opened;
+      if (args[1] !== "verify")
+        return refuse(usage);
+      const dir = workDir(env.paths, opened.work.id);
+      const file = typeof parsed.flags.file === "string" ? resolve4(env.paths.root, parsed.flags.file) : join39(dir, "conclave", "researcher.md");
+      const rel2 = relative9(env.paths.root, file).replace(/\\/g, "/");
+      if (rel2.startsWith("..") || isAbsolute7(rel2))
+        return refuse(`${parsed.flags.file} is not under the root`);
+      const text = readText(file);
+      if (text === null)
+        return refuse(`no researcher file at ${rel2}`);
+      const facts = parseFacts(text);
+      if (!facts.length)
+        return ok(`no facts in ${rel2}`, { facts: [] });
+      const jev = jevConfig(io.env, env.config);
+      const asking = jev.configured && askAllowed(env.policy, "fact");
+      const statuses = new Map;
+      const found = [];
+      for (const f of facts) {
+        const source = await fetchSource(f.source, env.paths.root);
+        if ("refused" in source) {
+          statuses.set(f.id, {
+            id: f.id,
+            source: f.source,
+            status: "not-found",
+            reason: source.refused
+          });
+          continue;
+        }
+        const quote = findQuote(f.quote, source.text);
+        if (!quote) {
+          statuses.set(f.id, {
+            id: f.id,
+            source: f.source,
+            status: "not-found",
+            reason: `the quote is not in ${f.source}`
+          });
+          continue;
+        }
+        found.push({ id: f.id, claim: f.claim, quote: f.quote, excerpt: quote.excerpt });
+      }
+      let tail = null;
+      let records = [];
+      if (found.length && !asking) {
+        for (const f of found)
+          statuses.set(f.id, {
+            id: f.id,
+            source: facts.find((x) => x.id === f.id)?.source ?? "",
+            status: "unverified",
+            reason: "jev not configured"
+          });
+        tail = "jev not configured";
+      } else if (found.length) {
+        const out = await verifyFacts(jev, env.policy, found);
+        records = out.records;
+        for (const f of found) {
+          const mark = out.marks[f.id];
+          statuses.set(f.id, {
+            id: f.id,
+            source: facts.find((x) => x.id === f.id)?.source ?? "",
+            status: mark?.status ?? "unverified",
+            ...mark?.reason ? { reason: mark.reason } : {},
+            ...mark && mark.confidence !== null ? { confidence: mark.confidence } : {}
+          });
+        }
+        if (out.unavailable)
+          tail = `jev unavailable: ${out.unavailable}`;
+      }
+      const ordered = facts.map((f) => statuses.get(f.id));
+      writeProtectedJson(env.paths, join39(dir, "conclave", "researcher.verification.json"), {
+        at: nowIso(),
+        hash: sha256(text),
+        facts: ordered
+      });
+      if (records.length) {
+        const appended = updateEvidence(env.paths, opened.work.id, (fresh) => {
+          fresh.verifications = [...fresh.verifications ?? [], ...records];
+        });
+        if ("refused" in appended)
+          tail = tail ? `${tail}; ${appended.refused}` : appended.refused;
+      }
+      const counts = ["verified", "disputed", "unverified", "not-found"].map((s) => [s, ordered.filter((x) => x.status === s).length]).filter(([, n2]) => n2 > 0).map(([s, n2]) => `${n2} ${s}`);
+      const reasons = ordered.filter((x) => x.status === "not-found").map((x) => `${x.id}: ${x.reason}`);
+      if (tail)
+        reasons.push(tail);
+      const n = facts.length;
+      return ok(`${n} fact${n === 1 ? "" : "s"}: ${counts.join(", ")}${reasons.length ? ` (${reasons.join("; ")})` : ""}`, { facts: ordered, file: "conclave/researcher.verification.json" });
     }
     case "analyse": {
       const usage = "usage: crew analyse <id> --paths <file,file>";
@@ -10224,7 +11185,7 @@ ${outcome.saveRefused}` : ""),
       if (parsed.flags.task !== undefined) {
         if (typeof parsed.flags.task !== "string" || !/^T-\d+$/.test(parsed.flags.task))
           return refuse("usage: crew judgement <id> record --task T-n --ruling <file>");
-        return recordTaskJudgement(env, opened.work, env.tampered || opened.tampered, parsed, parsed.flags.task);
+        return recordTaskJudgement(env, io.env, opened.work, env.tampered || opened.tampered, parsed, parsed.flags.task);
       }
       const before = assess(env.paths, opened.work, env.profile, env.policy, env.tampered || opened.tampered);
       const planned = before.judgement.map((j) => j.gate);
@@ -10247,9 +11208,12 @@ ${outcome.saveRefused}` : ""),
         return input;
       const { records } = input;
       fillTokens(records, before.evidence.roles ?? [], readReviewInputs(env.paths, opened.work.id)?.at);
+      const defects = await askDefects(env, io.env, records, join39(reviewDir(env.paths, opened.work.id), "diff.patch"));
       const saved = updateEvidence(env.paths, opened.work.id, (fresh) => {
-        for (const record of records)
-          recordJudgement(fresh, record);
+        for (const record2 of records)
+          recordJudgement(fresh, record2);
+        if (defects?.records.length)
+          fresh.verifications = [...fresh.verifications ?? [], ...defects.records];
         const merged = reassess({ ...before, evidence: fresh }, opened.work, env.policy);
         fresh.verdict = merged.verdict;
         fresh.unproven = merged.unproven;
@@ -10258,6 +11222,7 @@ ${outcome.saveRefused}` : ""),
       if ("refused" in saved)
         return refuse(saved.refused);
       const result = saved.result;
+      const jevWait = jevUnavailableWait(opened.work, defects);
       if (newRound)
         opened.work.rounds = {
           ...rounds,
@@ -10268,24 +11233,26 @@ ${outcome.saveRefused}` : ""),
       if (typeof parsed.flags.ruling === "string")
         keepRound(env.paths, opened.work.id, opened.work.rounds?.judgement ?? rounds.judgement, records.map((r) => r.gate), resolve4(env.paths.root, parsed.flags.ruling));
       const rulingFile = typeof parsed.flags.ruling === "string" ? relative9(env.paths.root, resolve4(env.paths.root, parsed.flags.ruling)).replace(/\\/g, "/") : undefined;
-      for (const record of records)
-        for (const f of record.findings)
-          if (record.verdict === "not-proven" && f.severity === "defect" && !f.outside)
+      for (const record2 of records)
+        for (const f of record2.findings)
+          if (record2.verdict === "not-proven" && f.severity === "defect" && !f.outside)
             appendDecision(env.paths, {
               at: nowIso(),
               item: opened.work.id,
               kind: "ruling",
-              text: `${record.gate} defect: ${f.file}${f.line ? `:${f.line}` : ""} ${f.text}`,
+              text: `${record2.gate} defect: ${f.file}${f.line ? `:${f.line}` : ""} ${f.text}`,
               by: "the judge",
               ...rulingFile ? { file: rulingFile } : {}
             });
       deliver2(env, opened, result.evidence);
-      const lines2 = records.map((r) => {
+      const lines2 = records.flatMap((r) => {
         const outside = r.findings.filter((f) => f.outside).length;
         const detail = r.verdict === "not-run" ? `: ${r.reason}` : ` (${findingsText(r.findings.length)}${outside ? `, ${outside} outside the change` : ""})`;
-        return `  ${r.gate}: ${verdictWord(r.verdict)}${detail}`;
+        return [`  ${r.gate}: ${verdictWord(r.verdict)}${detail}`, ...markLines(r)];
       });
       lines2.push(result.verdict === "proven" ? `Proven: ${opened.work.id}` : `Not proven: ${result.unproven.join("; ")}`);
+      if (jevWait)
+        lines2.push(jevWait);
       return {
         code: result.verdict === "proven" ? 0 : 1,
         stdout: true,
@@ -10381,33 +11348,33 @@ ${out.notes.join(`
       }
       if (args[1] === "gate") {
         const task = args[2];
-        const record = (opened.work.tasks ?? []).find((t) => t.task === task);
-        if (!task || !record)
+        const record2 = (opened.work.tasks ?? []).find((t) => t.task === task);
+        if (!task || !record2)
           return refuse(task ? `${task} is not a task of ${opened.work.id}` : usage);
         const flagScope = parsed.flags.scope === undefined ? undefined : list(parsed.flags.scope);
-        const scoped = taskScope(env.paths.root, env.profile, record, flagScope);
+        const scoped = taskScope(env.paths.root, env.profile, record2, flagScope);
         if ("refused" in scoped)
           return refuse(scoped.refused);
-        const round = record.gate?.round ?? 0;
+        const round = record2.gate?.round ?? 0;
         const held = continueOrRefuse(env, opened.work, "gate", task, env.policy.team.maxGateRounds, round, `gate round ${round + 1} of ${task}: the policy allows ${env.policy.team.maxGateRounds} (team.maxGateRounds); the user continues it once with crew continue ${opened.work.id} gate ${task}, or decides`);
         if (held)
           return held;
         const result = await runTaskGate(env.paths, opened.work, env.profile, env.policy, scoped.scope);
-        const own = flagScope?.length ? taskScope(env.paths.root, env.profile, record) : scoped;
+        const own = flagScope?.length ? taskScope(env.paths.root, env.profile, record2) : scoped;
         const planned = planTaskJudgement(env, {
           work: opened.work,
           tampered: env.tampered || opened.tampered,
-          record,
+          record: record2,
           task,
           round: round + 1,
           scope: scoped.scope,
           ownScope: "scope" in own ? own.scope : [],
           result
         });
-        settleTaskState(opened.work, record, env.policy);
+        settleTaskState(opened.work, record2, env.policy);
         saveWork(env.paths, opened.work);
         const lines2 = result.runs.map((r) => `  ${r.gate} (${r.target}): ${r.status} in ${(r.durationMs / 1000).toFixed(1)}s${r.reason ? ` (${r.reason})` : ""}`);
-        const pending = result.status === "pass" ? taskPending(opened.work, record, env.policy) : [];
+        const pending = result.status === "pass" ? taskPending(opened.work, record2, env.policy) : [];
         if (pending.length)
           lines2.push(`Judgement gates to run for ${task}: ${pending.map((g) => `${g} (${planned.find((p) => p.gate === g)?.reason ?? ""})`).join(", ")}; inputs in .crew/work/${opened.work.id}/review/${task}/ (diff.patch, files.txt); record each with crew judgement ${opened.work.id} record --task ${task} --ruling <file>`);
         const verdict = result.status === "pass" && pending.length ? `pass, judgement pending (${pending.join(", ")})` : result.status;
@@ -10417,28 +11384,28 @@ ${out.notes.join(`
           text: `${lines2.join(`
 `)}
 ${task} gate round ${round + 1}: ${verdict}`,
-          data: { task: record, gate: record.gate, pending }
+          data: { task: record2, gate: record2.gate, pending }
         };
       }
       if (args[1] === "brief") {
         const task = args[2];
-        const record = (opened.work.tasks ?? []).find((t) => t.task === task);
-        if (!task || !record)
+        const record2 = (opened.work.tasks ?? []).find((t) => t.task === task);
+        if (!task || !record2)
           return refuse(task ? `${task} is not a task of ${opened.work.id}` : usage);
         if (parsed.flags.print) {
-          const brief = record.brief ? readText(join39(workDir(env.paths, opened.work.id), record.brief)) : null;
+          const brief = record2.brief ? readText(join39(workDir(env.paths, opened.work.id), record2.brief)) : null;
           if (brief === null)
             return refuse(`${task} has no brief yet (crew task <id> brief ${task})`);
           return ok(brief.endsWith(`
 `) ? brief.slice(0, -1) : brief, { task, brief });
         }
-        if (record.gate?.status !== "pass")
+        if (record2.gate?.status !== "pass")
           return refuse(`${task} has no passing gate yet (crew task <id> gate ${task})`);
-        if (taskPending(opened.work, record, env.policy).length)
+        if (taskPending(opened.work, record2, env.policy).length)
           return refuse(`${task} has a judgement gate not proven yet (crew judgement <id> record --task ${task} --ruling <file>)`);
-        const text = writeBrief(env.paths, opened.work, record, loadEvidence(env.paths, opened.work.id).evidence, env.policy);
+        const text = writeBrief(env.paths, opened.work, record2, loadEvidence(env.paths, opened.work.id).evidence, env.policy);
         saveWork(env.paths, opened.work);
-        return ok(text, { task: record, brief: text });
+        return ok(text, { task: record2, brief: text });
       }
       if (args[1] === "list") {
         const swept = sweptText(sweepSafely(ctx));
@@ -11090,7 +12057,7 @@ function settings(command, args, user) {
   if (!key)
     return ok(JSON.stringify(config), { config });
   if (value === undefined) {
-    const current = key === "mode" ? config.mode : key === "decisions.log" ? config.decisions.log : undefined;
+    const current = key === "mode" ? config.mode : key === "decisions.log" ? config.decisions.log : key === "jev.endpoint" ? config.jev?.endpoint ?? JEV_ENDPOINT : key === "jev.model" ? config.jev?.model ?? JEV_MODEL : undefined;
     return current === undefined ? refuse(`unknown setting: ${key}`) : ok(String(current), { key, value: current });
   }
   try {

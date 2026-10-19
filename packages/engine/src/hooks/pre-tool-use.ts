@@ -683,6 +683,11 @@ function userOnlyCommand(
     (verb === "workspace" && second === "priorities" && parsed.positional.includes("accept")) ||
     // A doubt is answered by a person (SP7 §10.3, rule 7).
     (verb === "question" && third === "answer") ||
+    // Where Jev is reached is the user's to set (SP3 Task 6); reading it is free.
+    (verb === "config" &&
+      typeof second === "string" &&
+      second.startsWith("jev.") &&
+      third !== undefined) ||
     (verb === "task" && parsed.positional.includes("merge") && parsed.flags.force === true);
   if (!userOnly && !presence) return null;
   return {

@@ -11,8 +11,10 @@ import type {
   Route,
   TeamName,
   TeamPolicy,
+  VerifyAsk,
+  VerifyPolicy,
 } from "./types.ts";
-import { GATE_NAMES, isJudgementGateName, isMailType, ROUTE_ORDER } from "./types.ts";
+import { GATE_NAMES, isJudgementGateName, isMailType, ROUTE_ORDER, VERIFY_ASKS } from "./types.ts";
 
 export const MAIL_NAME = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 /** `..` or a relative path of plain segments: where task worktrees go (plan decision 12). */
@@ -43,6 +45,38 @@ export const DEFAULT_TEAM_POLICY: TeamPolicy = {
   continuations: "ask",
 };
 
+export const DEFAULT_VERIFY_POLICY: VerifyPolicy = {
+  send: "claims",
+  maxClaimsPerItem: 50,
+  threshold: 0.8,
+  asks: [...VERIFY_ASKS],
+};
+
+/** The verify block key by key (SP3 decision 9): a value out of its range, or an unknown name, falls back alone. */
+function loadVerifyPolicy(raw: unknown): VerifyPolicy {
+  const v = (typeof raw === "object" && raw !== null && !Array.isArray(raw) ? raw : {}) as Record<
+    string,
+    unknown
+  >;
+  const threshold =
+    typeof v.threshold === "number" && v.threshold >= 0.5 && v.threshold <= 0.99
+      ? v.threshold
+      : DEFAULT_VERIFY_POLICY.threshold;
+  const asks = Array.isArray(v.asks)
+    ? v.asks.filter((a): a is VerifyAsk => VERIFY_ASKS.includes(a as VerifyAsk))
+    : [];
+  return {
+    send: v.send === "claims-and-snippets" ? "claims-and-snippets" : "claims",
+    maxClaimsPerItem: bounded(
+      v.maxClaimsPerItem,
+      RANGES.maxClaimsPerItem,
+      DEFAULT_VERIFY_POLICY.maxClaimsPerItem,
+    ),
+    threshold,
+    asks: asks.length ? asks : [...DEFAULT_VERIFY_POLICY.asks],
+  };
+}
+
 export const DEFAULT_POLICY: Policy = {
   requiredGates: [],
   judgementGates: [],
@@ -58,13 +92,18 @@ export const DEFAULT_POLICY: Policy = {
   attendedDecisions: "relay",
   mail: DEFAULT_MAIL_POLICY,
   team: DEFAULT_TEAM_POLICY,
+  verify: DEFAULT_VERIFY_POLICY,
 };
 
 /** How `crew policy set` checks a value: one of a list, a name, or a whole number in a range. */
 type Settable =
   | { values: readonly string[] }
   | { pattern: RegExp; hint: string }
-  | { integer: { min: number; max: number } };
+  | { integer: { min: number; max: number } }
+  /** A number with at most two decimals inside its range (SP3 Task 6: the verify threshold). */
+  | { decimal: { min: number; max: number } }
+  /** A comma-separated non-empty subset of the names, written as a list (SP3 Task 6: the verify asks). */
+  | { subset: readonly string[] };
 
 const NAME_HINT =
   "a lowercase name of letters, digits, dot, dash and underscore, up to 64 characters";
@@ -84,6 +123,8 @@ const RANGES = {
   maxValidationRounds: { min: 1, max: 2 },
   maxJudgementRounds: { min: 1, max: 2 },
   maxGateRounds: { min: 1, max: 2 },
+  // The claims one item may send to Jev in one ask (SP3 decision 9).
+  maxClaimsPerItem: { min: 1, max: 200 },
 } as const satisfies Record<string, Range>;
 
 /** The scalar keys `crew policy set` writes; the lists (`mail.accept`, `allowSkips`, …) are hand-written and accepted. */
@@ -108,6 +149,10 @@ export const SETTABLE_POLICY_KEYS: Record<string, Settable> = {
   "team.maxJudgementRounds": { integer: RANGES.maxJudgementRounds },
   "team.maxGateRounds": { integer: RANGES.maxGateRounds },
   "team.continuations": { values: ["ask", "granted"] },
+  "verify.send": { values: ["claims", "claims-and-snippets"] },
+  "verify.maxClaimsPerItem": { integer: RANGES.maxClaimsPerItem },
+  "verify.threshold": { decimal: { min: 0.5, max: 0.99 } },
+  "verify.asks": { subset: VERIFY_ASKS },
 };
 
 function policyPath(paths: CrewPaths): string {
@@ -118,7 +163,28 @@ function checkSettable(
   key: string,
   rule: Settable,
   value: string,
-): string | number | { refused: string } {
+): string | number | string[] | { refused: string } {
+  if ("decimal" in rule) {
+    const { min, max } = rule.decimal;
+    const n = Number(value);
+    return /^\d+(?:\.\d{1,2})?$/.test(value) && n >= min && n <= max
+      ? n
+      : {
+          refused: `${key} is a number from ${min} to ${max} with at most two decimals, not ${value}`,
+        };
+  }
+  if ("subset" in rule) {
+    const names = value
+      .split(",")
+      .map((n) => n.trim())
+      .filter(Boolean);
+    const unknown = names.filter((n) => !rule.subset.includes(n));
+    return names.length && !unknown.length
+      ? [...new Set(names)]
+      : {
+          refused: `${key} is a comma-separated subset of ${rule.subset.join(", ")}, not ${value || "nothing"}`,
+        };
+  }
   if ("values" in rule)
     return rule.values.includes(value)
       ? value
@@ -149,7 +215,7 @@ export function setPolicyValue(
     };
   }
   const checked = checkSettable(key, rule, value);
-  if (typeof checked === "object") return checked;
+  if (typeof checked === "object" && !Array.isArray(checked)) return checked;
   const read = readProtectedJson<Record<string, unknown>>(paths, policyPath(paths));
   if (read.tampered) {
     return {
@@ -321,6 +387,7 @@ export function loadPolicy(paths: CrewPaths): { policy: Policy; tampered: boolea
       attendedDecisions: raw.attendedDecisions === "prompt" ? "prompt" : "relay",
       mail: loadMailPolicy(raw.mail),
       team: loadTeamPolicy(raw.team),
+      verify: loadVerifyPolicy(raw.verify),
     },
     tampered: read.tampered,
   };
