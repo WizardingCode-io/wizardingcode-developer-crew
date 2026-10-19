@@ -87,6 +87,9 @@ export function factLines(researcherText: string): Set<number> {
   return facts;
 }
 
+export const RESEARCHER_FIRST =
+  "conclave/researcher.md: the researcher's pass comes before the strategy (references/strategy.md)";
+
 /** The faults of a strategy against the research as it stands: none for a sound one. */
 export function checkStrategy(text: string, researcherText: string): string[] {
   const faults: string[] = [];
@@ -175,9 +178,6 @@ export function strategyReport(
     : null;
   return { faults, counts, rows: parsed.rows.length, ruling };
 }
-
-export const RESEARCHER_FIRST =
-  "conclave/researcher.md: the researcher's pass comes before the strategy (references/strategy.md)";
 
 /** The ruling's word as the status and the report print it. */
 export function verdictText(verdict: JudgementRecord["verdict"]): string {

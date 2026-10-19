@@ -3,6 +3,13 @@ import { type Parsed, parse } from "../argv.ts";
 import { isWatched } from "../fingerprint.ts";
 import { nowIso } from "../fs.ts";
 import { AUDIT_OPEN_FILES, canonical, isProtectedPath, REVIEW_OPEN_SEGMENT } from "../paths.ts";
+import {
+  COMMAND_WRAPPERS,
+  type CommandWrapper,
+  SHELL_NAMES,
+  shellTakesNext,
+  takesNext,
+} from "../shell-words.ts";
 import { recordWorking } from "../state.ts";
 import type { Policy } from "../types.ts";
 import { activeWork, isBeforeBuild, loadWork } from "../work.ts";
@@ -20,7 +27,6 @@ const WRITE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
 // The shells are no wrappers: in an opened session a shell with its script on its input (`echo … |
 // sh`, `bash -s < f`) is denied, so they stand as the program; a shell given its script with `-c`
 // hands it on (`handedOn`), as `eval` and `trap` do (security review of SP2c task 3, round 13).
-const SHELL_NAMES = ["sh", "bash", "zsh", "dash", "ksh", "fish"];
 const SHELLS = `(?:${SHELL_NAMES.join("|")})`;
 // The review folder is the engine's except the captures and the e2e folders (SP7b decision 16):
 // `ui` or `e2e` as a whole segment right under `review/` or `review/T-n/`, with a tail of segments
@@ -123,32 +129,11 @@ function variableDenial(cleaned: string): string | null {
 // piece's every token, the lead's assignments and the redirects' targets included, since a word
 // that names the engine's folder is denied wherever it stands; the engine-file write rule alone
 // still reads the pieces' raw text, as it did before this item (code-quality review of SP2c task 4,
-// rounds 4 to 13). A wrapper's option that takes a value takes the next word, short (`nice -n 5`,
-// `sudo -u me`, `env -u VAR`, `env -vu VAR`) or long (`env --unset VAR`, `timeout --signal KILL`);
-// some take a positional of their own, before or after the options (`timeout 5`, `flock f`,
-// `script out.txt`, `su root`); `env` takes assignments too; `coproc` takes a name before its
-// block; `function` takes the function's name before its body.
-interface Wrapper {
-  name: string;
-  /** The short options that take a value, as letters. */
-  valued: string;
-  /** The long options that take a value (`--name value` or `--name=value`). */
-  longValued: string[];
-  /** Words of its own before the command (`timeout 5`, `flock /tmp/l`). */
-  positionals: number;
-  /** Takes `NAME=value` words before the command (`env FOO=1 cmd`). */
-  assignments?: true;
-  /** Options whose value is a command line of its own (`env -S "a b"`, `flock f -c "a b"`). */
-  scriptOptions?: string[];
-  /** Options whose value is the name of a variable the wrapper unsets (`env -u NAME`). */
-  unsetOptions?: string[];
-  /** Takes a name before a `{` block (`coproc NAME {`). */
-  namedBlock?: true;
-}
+// rounds 4 to 13). What a wrapper's options take is said at `CommandWrapper` (shell-words.ts).
 // The shell's keywords before a command and the ones that close a compound command, which stand
 // alone in a piece (`fi`, `done`, `esac`) and run nothing.
 const KEYWORDS = [...LEADING_KEYWORDS, "fi", "done", "in", "esac"];
-const WRAPPERS: Wrapper[] = [
+const WRAPPERS: CommandWrapper[] = [
   // The shell's own words that take one of their own before the command: a function's name, a case's subject.
   { name: "function", valued: "", longValued: [], positionals: 1 },
   { name: "case", valued: "", longValued: [], positionals: 1 },
@@ -207,16 +192,9 @@ const WRAPPERS: Wrapper[] = [
     positionals: 0,
   },
   { name: "doas", valued: "uC", longValued: [], positionals: 0 },
-  {
-    // GNU env's options and BSD env's (`-P altpath`, `-L`/`-U user`), since both are met.
-    name: "env",
-    valued: "uCPLU",
-    longValued: ["--unset", "--chdir", "--block-signal", "--default-signal", "--ignore-signal"],
-    positionals: 0,
-    assignments: true,
-    scriptOptions: ["-S", "--split-string"],
-    unsetOptions: ["-u", "--unset"],
-  },
+  // `env` and `command`, the wrappers a recorded test-first command may stand behind, come from the
+  // table `run.ts` reads too (finding 98: two copies had drifted).
+  ...COMMAND_WRAPPERS,
   { name: "exec", valued: "a", longValued: [], positionals: 0 },
   {
     name: "xargs",
@@ -236,7 +214,6 @@ const WRAPPERS: Wrapper[] = [
   },
   { name: "nohup", valued: "", longValued: [], positionals: 0 },
   { name: "time", valued: "fo", longValued: ["--format", "--output"], positionals: 0 },
-  { name: "command", valued: "", longValued: [], positionals: 0 },
   { name: "builtin", valued: "", longValued: [], positionals: 0 },
   { name: "caffeinate", valued: "tw", longValued: [], positionals: 0 },
   {
@@ -281,25 +258,13 @@ const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*\+?=/;
 // a word); a `{` glued to a word is a brace expansion, read with the word.
 const BRACKETS = ["{", "}"];
 /**
- * Whether an option word takes the next word as its value, by the wrapper's table: a long option
- * listed there without `=`, or a cluster of short options whose last letter takes a value (`-n 5`,
- * `-vu VAR`; `-n5` carries its own).
- */
-function takesNext(wrapper: Wrapper, option: string): boolean {
-  if (option.includes("=")) return false;
-  if (option.startsWith("--")) return wrapper.longValued.includes(option);
-  for (let i = 1; i < option.length; i++)
-    if (wrapper.valued.includes(option.charAt(i))) return i === option.length - 1;
-  return false;
-}
-/**
  * The value one of the named options of a wrapper carries, or null: a long option with its value
  * attached or next (`--split-string="a b"`, `--command "a b"`, `--unset NAME`), a short option on
  * its own or in a cluster with the value attached or next (`-S "a b"`, `-S"a b"`, `-vS "a b"`, `-vu
  * NAME`, `-uNAME`); a letter that takes a value ends the cluster first (`-uS` unsets S).
  */
 function optionValue(
-  wrapper: Wrapper,
+  wrapper: CommandWrapper,
   names: string[],
   option: string,
   next: string | undefined,
@@ -543,9 +508,11 @@ interface CrewCommand {
   args: string[];
   viaXargs: boolean;
 }
-// What a shell takes a value for before its `-c` script (`bash -o pipefail -c "…"`); `--` ends its options.
-const SHELL_VALUED = new Set(["-o", "+o", "-O", "+O", "--rcfile", "--init-file"]);
-/** The script a shell is given with `-c` (in an option cluster too), or null: the first word after its options. */
+/**
+ * The script a shell is given with `-c` (in an option cluster too), or null: the first word after
+ * its options, which take a value as `run.ts` reads them (`-o pipefail`, `-eo pipefail`, `+O
+ * extglob`, `--rcfile x`: finding 98's drift, closed by one table); `--` ends its options.
+ */
 function shellScript(program: string, words: string[]): string | null {
   if (!SHELL_NAMES.includes(program) || !words.some((w) => /^-[A-Za-z]*c[A-Za-z]*$/.test(w)))
     return null;
@@ -553,7 +520,7 @@ function shellScript(program: string, words: string[]): string | null {
     const w = words[i] ?? "";
     if (w === "--") return words[i + 1] ?? "";
     if (!/^[-+]/.test(w)) return w;
-    if (SHELL_VALUED.has(w)) i++;
+    if (shellTakesNext(w)) i++;
   }
   return "";
 }

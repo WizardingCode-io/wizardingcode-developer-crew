@@ -852,7 +852,8 @@ const AUDITED = {
   audit: {
     run: { at: "2026-10-19T10:00:00.000Z", head: "abc1234", summary: "1 pass, 2 fail (secrets, test), 2 unavailable (deps, e2e)" },
     runAtHead: true,
-    findings: { security: 2, business: 1 },
+    // The lines the roles filed, under the engine's own key (finding 102); the pane still reads "findings".
+    filed: { security: 2, business: 1 },
     report: { at: "2026-10-19T10:05:00.000Z", md: "audit/report.md", html: "audit/report.html", pdf: null, pdfReason: "PDF not produced: no Playwright in the project and no browser found (set WIZARDINGCODE_CREW_BROWSER)", verdict: "critical", current: true },
     signed: false,
   },

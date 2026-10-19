@@ -480,9 +480,9 @@ function stripText() {
   return 'crew ' + status.active + ' · ' + status.phase + ' · ' + status.route + priority + auditWord() + ' · ' + verdict + (gates ? ' · ' + gates : '') + todoPart() + workingPart() + unread + waiting
 }
 
-// The findings' counts as "security 2 · business 1" (the pane) or "security 2, business 1" (one line)
-function auditFindings(joiner) {
-  const found = status.audit.findings || {}
+// The filed lines' counts (the roles' own; the report counts what passed the proof check) as "security 2 · business 1" (the pane) or "security 2, business 1" (one line)
+function auditFiled(joiner) {
+  const found = status.audit.filed || {}
   return Object.keys(found).map((s) => s + ' ' + found[s]).join(joiner)
 }
 
@@ -492,7 +492,7 @@ function auditRows() {
   const id = status.active
   const rows = []
   rows.push(a.run ? 'run ✓ ' + a.run.summary : 'run … (crew audit ' + id + ' run)')
-  const findings = auditFindings(' · ')
+  const findings = auditFiled(' · ')
   rows.push(findings ? 'findings ' + findings : 'findings none yet')
   if (a.report) {
     rows.push('report ✓ md, html' + (a.report.pdf ? ', pdf' : ' · pdf not produced (' + (a.report.pdfReason || 'no reason given') + ')') + (a.report.current === false ? ' · stale' : ''))
@@ -504,7 +504,7 @@ function auditRows() {
 // "audit: run ✓ <summary> · findings security 2, business 1 · report md, html (pdf not produced) · unsigned"
 function auditLine() {
   const a = status.audit
-  const findings = auditFindings(', ')
+  const findings = auditFiled(', ')
   return 'audit: ' + (a.run ? 'run ✓ ' + a.run.summary : 'run …') + ' · ' + (findings ? 'findings ' + findings : 'no findings yet') + ' · ' + (a.report ? 'report md, html' + (a.report.pdf ? ', pdf' : ' (pdf not produced)') : 'no report yet') + ' · ' + (a.signed ? 'signed' : 'unsigned')
 }
 
@@ -512,7 +512,7 @@ function auditLine() {
 function auditWord() {
   const a = status.audit
   if (!a) return ''
-  const step = a.signed ? 'signed' : a.report ? 'report' : auditFindings(',') ? 'findings' : a.run ? 'run' : 'started'
+  const step = a.signed ? 'signed' : a.report ? 'report' : auditFiled(',') ? 'findings' : a.run ? 'run' : 'started'
   return ' · audit ' + step
 }
 

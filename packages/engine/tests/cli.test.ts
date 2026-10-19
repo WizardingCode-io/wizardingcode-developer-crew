@@ -5697,6 +5697,17 @@ test("SP8-T2 AC-2: crew kind raise moves a feature to a new project, back to str
   const late = await c.run("kind", lateId, "raise", "--reason", "x");
   expect(late.code).toBe(1);
   expect(late.err.trim()).toBe("a strategy comes before the plan; from plan on, a new item");
+  // From build and gate the refusal is the same, asserted on its own (finding 99).
+  for (const phase of ["build", "gate"] as const) {
+    const item = loadWork(paths, lateId).work as WorkItem;
+    item.phase = phase;
+    saveWork(paths, item);
+    const refused = await c.run("kind", lateId, "raise", "--reason", "x");
+    expect(refused.code, phase).toBe(1);
+    expect(refused.err.trim(), phase).toBe(
+      "a strategy comes before the plan; from plan on, a new item",
+    );
+  }
 });
 
 test("SP8-T2 AC-3: crew approve <id> audit is a person's: --mode and --validator refused with the item waiting for the user, a spec approval refused on an audit, and the signature recorded with what audit", async () => {
@@ -6097,6 +6108,26 @@ test("SP8-T4 AC-1, AC-3: crew audit run is refused on a feature and outside the 
   expect(next.code).toBe(1);
   expect(next.err).not.toContain("audit run not recorded");
   expect(next.err).toContain("audit report not rendered");
+  // `--only` after HEAD moved, or with no recorded run, is refused by the command itself, exit 1,
+  // with nothing written (finding 101; the judge's round 1 on this item).
+  const auditDir = join(root, ".crew", "work", id, "audit");
+  const bytesOf = () =>
+    ["runs.json", "files.txt", "scope.json"].map((n) => readFileSync(join(auditDir, n), "utf8"));
+  const kept = bytesOf();
+  const recorded = JSON.parse(kept[0] ?? "{}").head as string;
+  git(root, "commit", "-q", "--allow-empty", "-m", "moved");
+  const now = git(root, "rev-parse", "HEAD").trim();
+  const stale = await c.run("audit", id, "run", "--only", "test");
+  expect(stale.code).toBe(1);
+  expect(stale.err.trim()).toBe(
+    `HEAD moved since the recorded run (${recorded.slice(0, 12)} → ${now.slice(0, 12)}): run crew audit ${id} run without --only`,
+  );
+  expect(bytesOf()).toEqual(kept);
+  rmSync(join(auditDir, "runs.json"));
+  const first = await c.run("audit", id, "run", "--only", "test");
+  expect(first.code).toBe(1);
+  expect(first.err.trim()).toBe(`--only needs a recorded run: run crew audit ${id} run first`);
+  expect(existsSync(join(auditDir, "runs.json"))).toBe(false);
 });
 
 /** A browser stand-in for the report's PDF: writes a PDF header to the path it is given. */
@@ -6247,8 +6278,9 @@ test("SP8-T5 AC-2, AC-3: crew audit report renders the three formats under the b
   expect(status.verdict).toBe("proven");
   expect(status.audit).toMatchObject({
     runAtHead: true,
-    // The status counts what the roles wrote (F-2 included); the report's counts are of what passed the proof check.
-    findings: { security: 3, business: 0 },
+    // The status counts the lines the roles filed (F-2 included) under their own name; the
+    // report's `findings` are of what passed the proof check (finding 102).
+    filed: { security: 3, business: 0 },
     report: {
       md: "audit/report.md",
       html: "audit/report.html",
@@ -6263,6 +6295,10 @@ test("SP8-T5 AC-2, AC-3: crew audit report renders the three formats under the b
   expect((await c.json("status")).data.phase).toBe("deliver");
   const evidence = (await c.run("evidence", id)).out;
   expect(evidence).toContain("## Audit");
+  // The report names the roles' lines as filed, apart from the proof-checked counts (finding 102).
+  expect(evidence).toContain(
+    "- Filed: business 0, security 3 (the roles' lines; the report counts what passed the proof check).",
+  );
   expect(evidence).toContain("audit/report.pdf");
   expect(evidence).toContain("Proven");
 });

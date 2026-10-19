@@ -71,10 +71,8 @@ export function overheadByCase(result: unknown, ceilings: Record<string, number>
 /** One row as the script prints it: the costs, the ratio, and under or over the case's ceiling when both are known. */
 export function rowLine(row: Row): string {
   const ratio = row.ratio === null ? "n/a" : `${row.ratio}x`;
-  const against =
-    row.verdict !== null && row.ceiling !== null
-      ? ` · ${row.verdict} the ${row.ceiling}x ceiling`
-      : "";
+  // A verdict exists only with a ceiling and a ratio (`overheadByCase`), so it is read, not re-derived.
+  const against = row.verdict === null ? "" : ` · ${row.verdict} the ${row.ceiling}x ceiling`;
   return `${row.name}: with ${row.withUsd ?? "n/a"} USD · without ${row.withoutUsd ?? "n/a"} USD · ${ratio}${against}`;
 }
 

@@ -2202,8 +2202,7 @@ function answerQuestion(work, id, answer, by) {
   if (!text)
     return { refused: "an answer needs a text" };
   const answered = { answer: text, by, answeredAt: nowIso() };
-  Object.assign(question, answered);
-  return { ...question, ...answered };
+  return Object.assign(question, answered);
 }
 function openQuestions(work) {
   return (work.questions ?? []).filter((q) => q.answer === null);
@@ -2297,6 +2296,7 @@ function factLines(researcherText) {
   });
   return facts;
 }
+var RESEARCHER_FIRST = "conclave/researcher.md: the researcher's pass comes before the strategy (references/strategy.md)";
 function checkStrategy(text, researcherText) {
   const faults = [];
   const parsed = parseStrategy(text);
@@ -2357,7 +2357,6 @@ function strategyReport(strategyText, researcherText, evidence) {
   } : null;
   return { faults, counts, rows: parsed.rows.length, ruling };
 }
-var RESEARCHER_FIRST = "conclave/researcher.md: the researcher's pass comes before the strategy (references/strategy.md)";
 function verdictText(verdict) {
   return verdict === "not-proven" ? "not proven" : verdict === "not-run" ? "not run" : "proven";
 }
@@ -3199,7 +3198,7 @@ function renderReport(work, evidence, policy, ledger, mail, selfName, analysis, 
   }
   if (strategy) {
     lines.push("## Strategy", "");
-    lines.push(`- From the research alone (no knowledge base until SP4).`);
+    lines.push(`- ${RESEARCH_ALONE.charAt(0).toUpperCase()}${RESEARCH_ALONE.slice(1)}.`);
     const claims = STRATEGY_SECTIONS.filter((s) => s !== "Scaling phases").map((s) => `${s} ${strategy.counts[s]}`).join(", ");
     lines.push(`- Claims: ${claims}; scaling rows: ${strategy.rows}.`);
     const r = strategy.ruling;
@@ -3211,8 +3210,8 @@ function renderReport(work, evidence, policy, ledger, mail, selfName, analysis, 
   if (audit) {
     lines.push("## Audit", "");
     lines.push(audit.runSummary ? `- Run: ${audit.runSummary} (head ${audit.head ? audit.head.slice(0, 12) : "no git"})${audit.runAtHead ? "" : "; predates HEAD, run again"}.` : "- Run: none yet (crew audit <id> run).");
-    const found = Object.entries(audit.findings);
-    lines.push(`- Findings: ${found.length ? found.map(([s, n]) => `${s} ${n}`).join(", ") : "none yet"}.`);
+    const filed = Object.entries(audit.filed);
+    lines.push(`- Filed: ${filed.length ? filed.map(([s, n]) => `${s} ${n}`).join(", ") : "none yet"} (the roles' lines; the report counts what passed the proof check).`);
     lines.push(audit.report ? `- Report: ${audit.report.md}, ${audit.report.html}, ${audit.report.pdf ?? `pdf not produced (${audit.report.pdfReason ?? "no reason given"})`}; verdict ${audit.report.verdict}${audit.reportCurrent ? "" : "; stale: its inputs changed after it"}.` : "- Report: none yet (crew audit <id> report).");
     lines.push(audit.signed ? `- Signed on ${audit.signed.at.slice(0, 10)} by ${audit.signed.by === "user" ? "the user" : audit.signed.by}${audit.signed.relayed ? ", relayed by the agent" : ""}.` : "- Signed: not yet (crew approve <id> audit).", "");
   }
@@ -4620,16 +4619,16 @@ function auditState(paths, work) {
   const run = readJson(join17(dir, "runs.json"));
   const head = gitHead(paths.root);
   const runAtHead = run !== null && (run.head === null ? head === "none" : run.head === head);
-  const findings = {};
+  const filed = {};
   for (const section of AUDIT_SECTIONS) {
     const text = readText(join17(dir, `${section}.findings.md`));
     if (text !== null)
-      findings[section] = (text.match(FINDING_LINE) ?? []).length;
+      filed[section] = (text.match(FINDING_LINE) ?? []).length;
   }
   const report = readJson(join17(dir, "report.json"));
   const reportCurrent = report !== null && report.hash === reportHash(dir);
   const signed = work.approvals.find((a) => a.what === "audit") ?? null;
-  return { run, runAtHead, findings, report, reportCurrent, signed };
+  return { run, runAtHead, filed, report, reportCurrent, signed };
 }
 
 // packages/engine/src/secrets.ts
@@ -6333,6 +6332,52 @@ function openForMail(ctx, fallback, message, delivery) {
 import { spawn as spawn2 } from "node:child_process";
 import { createWriteStream, mkdirSync as mkdirSync6 } from "node:fs";
 import { dirname as dirname6 } from "node:path";
+
+// packages/engine/src/shell-words.ts
+var SHELL_NAMES = ["sh", "bash", "zsh", "dash", "ksh", "fish"];
+var SHELL_VALUED = {
+  short: "oO",
+  long: ["--rcfile", "--init-file"]
+};
+function shellTakesNext(option) {
+  if (option.startsWith("--"))
+    return SHELL_VALUED.long.includes(option);
+  return option.length > 1 && SHELL_VALUED.short.includes(option.charAt(option.length - 1));
+}
+var COMMAND_WRAPPERS = [
+  {
+    name: "env",
+    valued: "uCPLU",
+    longValued: ["--unset", "--chdir", "--block-signal", "--default-signal", "--ignore-signal"],
+    positionals: 0,
+    assignments: true,
+    scriptOptions: ["-S", "--split-string"],
+    unsetOptions: ["-u", "--unset"]
+  },
+  { name: "command", valued: "", longValued: [], positionals: 0 }
+];
+function takesNext(wrapper, option) {
+  if (option.includes("="))
+    return false;
+  if (option.startsWith("--"))
+    return wrapper.longValued.includes(option);
+  for (let i = 1;i < option.length; i++)
+    if (wrapper.valued.includes(option.charAt(i)))
+      return i === option.length - 1;
+  return false;
+}
+
+// packages/engine/src/run.ts
+function wrapperTakesNext(wrapper, option) {
+  if (takesNext(wrapper, option))
+    return true;
+  const scripts = wrapper.scriptOptions ?? [];
+  if (scripts.includes(option))
+    return true;
+  if (option.startsWith("--") || option.includes("="))
+    return false;
+  return scripts.some((s) => s.length === 2 && option.endsWith(s.charAt(1)));
+}
 var TAIL_LINES2 = 40;
 function killTree(pid) {
   if (!pid)
@@ -6348,9 +6393,7 @@ function killTree(pid) {
     } catch {}
   }
 }
-var SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh", "fish"]);
-var WRAPPERS = new Set(["env", "command"]);
-var WRAPPER_VALUE_FLAGS = new Set(["-u", "-C", "-S"]);
+var WRAPPER_BY_NAME = new Map(COMMAND_WRAPPERS.map((w) => [w.name, w]));
 var ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
 var SAFE_WORD = /^[A-Za-z0-9_@%+=:,./-]+$/;
 function quoteWord(word) {
@@ -6364,24 +6407,31 @@ function joinWords(words) {
 function shellRefusal(words) {
   const base = (word) => (word ?? "").split("/").pop() ?? "";
   let i = 0;
+  let wrapper = null;
   while (i < words.length) {
     const word = words[i] ?? "";
-    if (WRAPPERS.has(base(word)) || ASSIGNMENT.test(word))
+    const named2 = WRAPPER_BY_NAME.get(base(word));
+    if (named2) {
+      wrapper = named2;
       i += 1;
-    else if (i > 0 && word.startsWith("-"))
-      i += WRAPPER_VALUE_FLAGS.has(word) ? 2 : 1;
+    } else if (ASSIGNMENT.test(word)) {
+      wrapper = null;
+      i += 1;
+    } else if (wrapper && word.startsWith("-"))
+      i += wrapperTakesNext(wrapper, word) ? 2 : 1;
     else
       break;
   }
   const name = base(words[i]);
-  if (!SHELLS.has(name))
+  if (!SHELL_NAMES.includes(name))
     return null;
   let j = i + 1;
   let commandString = false;
-  while (j < words.length && (words[j] ?? "").startsWith("-")) {
-    if (/^-[A-Za-z]*c[A-Za-z]*$/.test(words[j] ?? ""))
+  while (j < words.length && /^[-+]/.test(words[j] ?? "")) {
+    const option = words[j] ?? "";
+    if (/^-[A-Za-z]*c[A-Za-z]*$/.test(option))
       commandString = true;
-    j += 1;
+    j += shellTakesNext(option) ? 2 : 1;
   }
   const after = words.length - j;
   if (!commandString || after <= 1)
@@ -7580,6 +7630,12 @@ function auditScope(paths, profile, policy, files) {
     riskAreas: riskAreasForPaths(files, policy)
   };
 }
+function staleRefusal(id, stale) {
+  if ("reason" in stale)
+    return `--only needs a recorded run: run crew audit ${id} run first`;
+  const short = (sha) => sha === null ? "no git" : sha.slice(0, 12);
+  return `HEAD moved since the recorded run (${short(stale.recorded)} → ${short(stale.now)}): run crew audit ${id} run without --only`;
+}
 function cappedRefusal(cap) {
   return `the tree has more than ${cap} watched files, the walk's cap: nothing was recorded, since a partial audit would hide what it did not read; narrow the profile's targets or the folders it skips, then run again`;
 }
@@ -7603,19 +7659,28 @@ function toAuditRun(run) {
   };
 }
 async function runAudit(paths, work, profile, policy, options = {}) {
+  const dir = workDir(paths, work.id);
+  const auditDir = join34(dir, "audit");
+  const head = gitHead(paths.root);
+  const only = options.only;
+  let earlier = null;
+  if (only !== undefined) {
+    earlier = readJson(join34(auditDir, "runs.json"));
+    if (earlier === null)
+      return { stale: { reason: "no recorded run" } };
+    const now = head === "none" ? null : head;
+    if (earlier.head !== now)
+      return { stale: { recorded: earlier.head, now } };
+  }
   const cap = options.maxFiles ?? MAX_WATCHED_FILES;
   const files = auditFiles(paths.root, profile, cap);
   if (files === null)
     return { capped: cap };
-  const dir = workDir(paths, work.id);
-  const auditDir = join34(dir, "audit");
   writeProtectedText(paths, join34(auditDir, "files.txt"), `${files.join(`
 `)}
 `);
   writeProtectedJson(paths, join34(auditDir, "scope.json"), auditScope(paths, profile, policy, files));
   const unbased = { ...work, baseCommit: null };
-  const head = gitHead(paths.root);
-  const only = options.only;
   const planned = plannedGates("full", profile, policy, files, paths.root).filter((p) => p.gate !== "e2e" && (only === undefined || only.includes(p.gate)));
   const runs = [];
   for (const one of planned) {
@@ -7637,11 +7702,11 @@ async function runAudit(paths, work, profile, policy, options = {}) {
       log: null,
       reason: E2E_BY_HAND
     });
-  const earlier = only === undefined ? [] : readJson(join34(auditDir, "runs.json"))?.runs ?? [];
+  const kept = (earlier?.runs ?? []).filter((r) => !only?.includes(r.gate));
   const record = {
     at: nowIso(),
     head: head === "none" ? null : head,
-    runs: [...earlier.filter((r) => !only?.includes(r.gate)), ...runs]
+    runs: [...kept, ...runs]
   };
   writeProtectedJson(paths, join34(auditDir, "runs.json"), record);
   return record;
@@ -8569,8 +8634,7 @@ function relay(ctx, questionId, answer, agent) {
 
 // packages/engine/src/hooks/pre-tool-use.ts
 var WRITE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
-var SHELL_NAMES = ["sh", "bash", "zsh", "dash", "ksh", "fish"];
-var SHELLS2 = `(?:${SHELL_NAMES.join("|")})`;
+var SHELLS = `(?:${SHELL_NAMES.join("|")})`;
 var PATH_END = String.raw`[\s"'\x60;&|)]`;
 var NOT_DOTDOT_SEGMENT = String.raw`(?!\.\.(?:\/|${PATH_END}|$))[^\s"'\x60;&|)/]*\/?`;
 var REVIEW_OWNED = String.raw`review(?!\/${REVIEW_OPEN_SEGMENT}(?:\/(?:${NOT_DOTDOT_SEGMENT})*)?(?=${PATH_END}|$))`;
@@ -8620,7 +8684,7 @@ function variableDenial(cleaned) {
   return null;
 }
 var KEYWORDS = [...LEADING_KEYWORDS, "fi", "done", "in", "esac"];
-var WRAPPERS2 = [
+var WRAPPERS = [
   { name: "function", valued: "", longValued: [], positionals: 1 },
   { name: "case", valued: "", longValued: [], positionals: 1 },
   { name: "nice", valued: "n", longValued: ["--adjustment"], positionals: 0 },
@@ -8678,15 +8742,7 @@ var WRAPPERS2 = [
     positionals: 0
   },
   { name: "doas", valued: "uC", longValued: [], positionals: 0 },
-  {
-    name: "env",
-    valued: "uCPLU",
-    longValued: ["--unset", "--chdir", "--block-signal", "--default-signal", "--ignore-signal"],
-    positionals: 0,
-    assignments: true,
-    scriptOptions: ["-S", "--split-string"],
-    unsetOptions: ["-u", "--unset"]
-  },
+  ...COMMAND_WRAPPERS,
   { name: "exec", valued: "a", longValued: [], positionals: 0 },
   {
     name: "xargs",
@@ -8706,7 +8762,6 @@ var WRAPPERS2 = [
   },
   { name: "nohup", valued: "", longValued: [], positionals: 0 },
   { name: "time", valued: "fo", longValued: ["--format", "--output"], positionals: 0 },
-  { name: "command", valued: "", longValued: [], positionals: 0 },
   { name: "builtin", valued: "", longValued: [], positionals: 0 },
   { name: "caffeinate", valued: "tw", longValued: [], positionals: 0 },
   {
@@ -8719,7 +8774,7 @@ var WRAPPERS2 = [
   { name: "nocorrect", valued: "", longValued: [], positionals: 0 },
   { name: "coproc", valued: "", longValued: [], positionals: 0, namedBlock: true }
 ];
-var WRAPPER_BY_NAME = new Map(WRAPPERS2.map((w) => [w.name, w]));
+var WRAPPER_BY_NAME2 = new Map(WRAPPERS.map((w) => [w.name, w]));
 var JS_RUNNER_VALUED = new Set([
   "-r",
   "--require",
@@ -8747,16 +8802,6 @@ var JS_RUNNER_VALUED = new Set([
 ]);
 var ASSIGNMENT2 = /^[A-Za-z_][A-Za-z0-9_]*\+?=/;
 var BRACKETS = ["{", "}"];
-function takesNext(wrapper, option) {
-  if (option.includes("="))
-    return false;
-  if (option.startsWith("--"))
-    return wrapper.longValued.includes(option);
-  for (let i = 1;i < option.length; i++)
-    if (wrapper.valued.includes(option.charAt(i)))
-      return i === option.length - 1;
-  return false;
-}
 function optionValue(wrapper, names, option, next) {
   if (!names.length || option === "-" || option === "--")
     return null;
@@ -8780,7 +8825,7 @@ function withoutLead(words) {
   const unsets = [];
   while (i < words.length) {
     const w = words[i] ?? "";
-    const wrapper = WRAPPER_BY_NAME.get(w.replace(/^.*\//, ""));
+    const wrapper = WRAPPER_BY_NAME2.get(w.replace(/^.*\//, ""));
     if (ASSIGNMENT2.test(w) || KEYWORDS.includes(w) || BRACKETS.includes(w))
       i++;
     else if (wrapper) {
@@ -8945,7 +8990,6 @@ function commandOf({ text, tokens, inner, heredocs }) {
     args: args ? args.flatMap(splitFlagValue) : null
   };
 }
-var SHELL_VALUED = new Set(["-o", "+o", "-O", "+O", "--rcfile", "--init-file"]);
 function shellScript(program, words) {
   if (!SHELL_NAMES.includes(program) || !words.some((w) => /^-[A-Za-z]*c[A-Za-z]*$/.test(w)))
     return null;
@@ -8955,7 +8999,7 @@ function shellScript(program, words) {
       return words[i + 1] ?? "";
     if (!/^[-+]/.test(w))
       return w;
-    if (SHELL_VALUED.has(w))
+    if (shellTakesNext(w))
       i++;
   }
   return "";
@@ -9149,7 +9193,7 @@ function widensPush(word) {
     return false;
   return !("--recurse-submodules".startsWith(name) && value === "no");
 }
-var INTERPRETER_STDIN = new RegExp(String.raw`^(?:\S*/)?${SHELLS2}(?:\s+-{1,2}[A-Za-z]*)*$`);
+var INTERPRETER_STDIN = new RegExp(String.raw`^(?:\S*/)?${SHELLS}(?:\s+-{1,2}[A-Za-z]*)*$`);
 var UNREADABLE = "the guard cannot read";
 var VAR_ROOT_PATH = new RegExp(String.raw`^(?:\$\{[^}]*\}|\$\w+)(?:/[^\s${EXPANSION_CHARS}${PATTERN_CHARS}}\])]+)+$`);
 var EXPANSION = new RegExp(`[${EXPANSION_CHARS}]`);
@@ -10196,6 +10240,9 @@ var BROWSER_CANDIDATES = [
   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
   "/Applications/Chromium.app/Contents/MacOS/Chromium"
 ];
+
+class PdfTimeout extends Error {
+}
 function onPath2(binary, env) {
   for (const dir of (env.PATH ?? "").split(delimiter2)) {
     if (!dir)
@@ -10247,14 +10294,14 @@ async function printPdf(html, out, env, root, options = {}) {
   if (playwright) {
     let timer;
     const timeout = new Promise((_, reject) => {
-      timer = setTimeout(() => reject(new Error(`timed out after ${seconds(timeoutMs)}`)), timeoutMs);
+      timer = setTimeout(() => reject(new PdfTimeout(`timed out after ${seconds(timeoutMs)}`)), timeoutMs);
     });
     try {
       await Promise.race([printWithPlaywright(playwright, html, out), timeout]);
       return { ok: true, by: "playwright" };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const why = message.startsWith("timed out") ? message : `failed: ${message}`;
+      const why = error instanceof PdfTimeout ? message : `failed: ${message}`;
       return { ok: false, reason: `PDF not produced: Playwright ${why}` };
     } finally {
       if (timer)
@@ -11370,7 +11417,7 @@ function auditViewOf(env, work) {
     runSummary: s.run ? auditSummary(s.run.runs) : null,
     head: s.run?.head ?? null,
     runAtHead: s.runAtHead,
-    findings: s.findings,
+    filed: s.filed,
     report: s.report ? {
       md: s.report.md,
       html: s.report.html,
@@ -11445,7 +11492,7 @@ function auditStatusOf(env, work) {
   return {
     run: s.run ? { at: s.run.at, head: s.run.head, summary: auditSummary(s.run.runs) } : null,
     runAtHead: s.runAtHead,
-    findings: s.findings,
+    filed: s.filed,
     report: s.report ? {
       at: s.report.at,
       md: s.report.md,
@@ -12236,6 +12283,8 @@ ${originNotes.join(`
       });
       if ("capped" in result)
         return refuse(cappedRefusal(result.capped));
+      if ("stale" in result)
+        return refuse(staleRefusal(work.id, result.stale));
       const scope = readJson(join44(workDir(env.paths, work.id), "audit", "scope.json"));
       const areas = scope?.riskAreas.length ? scope.riskAreas.join(", ") : "none";
       const text = [
@@ -12917,11 +12966,10 @@ ${report}`, {
 ${out.notes.join(`
 `)}` : ""}`, { task: out.record, message: out.message, opened: out.opened, notes: out.notes });
       }
-      const list = commaList;
       if (args[1] === "note") {
         const task = args[2];
-        const criteria = list(parsed.flags.criteria);
-        const scope = list(parsed.flags.scope);
+        const criteria = commaList(parsed.flags.criteria);
+        const scope = commaList(parsed.flags.scope);
         if (!task || !criteria.length)
           return refuse(usage);
         const planText = readText(join44(workDir(env.paths, opened.work.id), "plan.md"));
@@ -12938,7 +12986,7 @@ ${out.notes.join(`
         const record2 = (opened.work.tasks ?? []).find((t) => t.task === task);
         if (!task || !record2)
           return refuse(task ? `${task} is not a task of ${opened.work.id}` : usage);
-        const flagScope = parsed.flags.scope === undefined ? undefined : list(parsed.flags.scope);
+        const flagScope = parsed.flags.scope === undefined ? undefined : commaList(parsed.flags.scope);
         const scoped = taskScope(env.paths.root, env.profile, record2, flagScope);
         if ("refused" in scoped)
           return refuse(scoped.refused);

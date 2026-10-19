@@ -1,6 +1,22 @@
 import { spawn } from "node:child_process";
 import { createWriteStream, mkdirSync, type WriteStream } from "node:fs";
 import { dirname } from "node:path";
+import {
+  COMMAND_WRAPPERS,
+  type CommandWrapper,
+  SHELL_NAMES,
+  shellTakesNext,
+  takesNext,
+} from "./shell-words.ts";
+
+/** A wrapper's option that takes the next word: a valued one, or a script option as a word (`-S`) or as a cluster's last letter (`-vS`). */
+function wrapperTakesNext(wrapper: CommandWrapper, option: string): boolean {
+  if (takesNext(wrapper, option)) return true;
+  const scripts = wrapper.scriptOptions ?? [];
+  if (scripts.includes(option)) return true;
+  if (option.startsWith("--") || option.includes("=")) return false;
+  return scripts.some((s) => s.length === 2 && option.endsWith(s.charAt(1)));
+}
 
 export interface RunOptions {
   cwd: string;
@@ -35,9 +51,7 @@ function killTree(pid: number | undefined): void {
   }
 }
 
-const SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh", "fish"]);
-const WRAPPERS = new Set(["env", "command"]);
-const WRAPPER_VALUE_FLAGS = new Set(["-u", "-C", "-S"]);
+const WRAPPER_BY_NAME = new Map(COMMAND_WRAPPERS.map((w) => [w.name, w]));
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
 const SAFE_WORD = /^[A-Za-z0-9_@%+=:,./-]+$/;
 
@@ -64,22 +78,34 @@ export function joinWords(words: readonly string[]): string {
  */
 export function shellRefusal(words: readonly string[]): string | null {
   const base = (word: string | undefined): string => (word ?? "").split("/").pop() ?? "";
-  // A wrapper, its own flags (`env -i`, `command -p`; `-u`, `-C` and `-S` take a value) and any
-  // assignments come before the shell's name (the security lead's return at the delivery).
+  // A wrapper, its options with their values (`env -u NAME`, `env -iu NAME`, `env --chdir /d`,
+  // `env -S "a b"`) and its assignments come before the shell's name (the security lead's return
+  // at the delivery). An option is the wrapper's only right after the wrapper or another of its
+  // options: after an assignment alone, `-x` is the command (finding 98).
   let i = 0;
+  let wrapper: CommandWrapper | null = null;
   while (i < words.length) {
     const word = words[i] ?? "";
-    if (WRAPPERS.has(base(word)) || ASSIGNMENT.test(word)) i += 1;
-    else if (i > 0 && word.startsWith("-")) i += WRAPPER_VALUE_FLAGS.has(word) ? 2 : 1;
+    const named = WRAPPER_BY_NAME.get(base(word));
+    if (named) {
+      wrapper = named;
+      i += 1;
+    } else if (ASSIGNMENT.test(word)) {
+      wrapper = null;
+      i += 1;
+    } else if (wrapper && word.startsWith("-")) i += wrapperTakesNext(wrapper, word) ? 2 : 1;
     else break;
   }
   const name = base(words[i]);
-  if (!SHELLS.has(name)) return null;
+  if (!SHELL_NAMES.includes(name)) return null;
+  // The shell's own options, `-…` and `+…`, some with a value (`-o pipefail`, `-eo pipefail`,
+  // `+O extglob`, `--rcfile x`): finding 98's gap stopped at the value and never saw the `-c`.
   let j = i + 1;
   let commandString = false;
-  while (j < words.length && (words[j] ?? "").startsWith("-")) {
-    if (/^-[A-Za-z]*c[A-Za-z]*$/.test(words[j] ?? "")) commandString = true;
-    j += 1;
+  while (j < words.length && /^[-+]/.test(words[j] ?? "")) {
+    const option = words[j] ?? "";
+    if (/^-[A-Za-z]*c[A-Za-z]*$/.test(option)) commandString = true;
+    j += shellTakesNext(option) ? 2 : 1;
   }
   const after = words.length - j;
   if (!commandString || after <= 1) return null;

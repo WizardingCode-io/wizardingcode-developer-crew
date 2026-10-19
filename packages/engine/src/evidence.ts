@@ -12,7 +12,7 @@ import { questionChannelsCell } from "./questions.ts";
 import { sourceLine } from "./source.ts";
 import { oneLine } from "./state.ts";
 import { readProtectedJson, writeProtectedJson } from "./store.ts";
-import { STRATEGY_SECTIONS, type StrategyReport, verdictText } from "./strategy.ts";
+import { RESEARCH_ALONE, STRATEGY_SECTIONS, type StrategyReport, verdictText } from "./strategy.ts";
 import type {
   CriterionKind,
   DecidedBy,
@@ -39,16 +39,16 @@ type Decided = {
   relayed?: boolean;
 };
 
-/**
- * "by the user", "by the user, relayed by the agent", "by the agent in <mode> mode" or "by the
- * validator (rule: <rule>)": the record says who decided, never less, never "by the user" for a
- * decision a person did not take, and never a prompt where the agent relayed a yes (ADR 0005).
- */
 /** A table cell from text a person typed: one line, its pipes escaped (finding 86). */
 function cell(text: string): string {
   return oneLine(text).replace(/\|/g, "\\|");
 }
 
+/**
+ * "by the user", "by the user, relayed by the agent", "by the agent in <mode> mode" or "by the
+ * validator (rule: <rule>)": the record says who decided, never less, never "by the user" for a
+ * decision a person did not take, and never a prompt where the agent relayed a yes (ADR 0005).
+ */
 export function decidedBy(decision: Decided): string {
   if (decision.by === "validator") return `by the validator (rule: ${decision.rule ?? "unnamed"})`;
   if (decision.by === "agent") return `by the agent in ${decision.mode} mode`;
@@ -209,7 +209,8 @@ export interface AuditReportView {
   runSummary: string | null;
   head: string | null;
   runAtHead: boolean;
-  findings: Record<string, number>;
+  /** The lines the roles filed, per section (the report's `findings` passed the proof check). */
+  filed: Record<string, number>;
   report: {
     md: string;
     html: string;
@@ -421,7 +422,7 @@ export function renderReport(
   // A new project's strategy as it stands (SP7 §7.3, §13.1): from the research alone until SP4.
   if (strategy) {
     lines.push("## Strategy", "");
-    lines.push(`- From the research alone (no knowledge base until SP4).`);
+    lines.push(`- ${RESEARCH_ALONE.charAt(0).toUpperCase()}${RESEARCH_ALONE.slice(1)}.`);
     const claims = STRATEGY_SECTIONS.filter((s) => s !== "Scaling phases")
       .map((s) => `${s} ${strategy.counts[s]}`)
       .join(", ");
@@ -443,9 +444,9 @@ export function renderReport(
         ? `- Run: ${audit.runSummary} (head ${audit.head ? audit.head.slice(0, 12) : "no git"})${audit.runAtHead ? "" : "; predates HEAD, run again"}.`
         : "- Run: none yet (crew audit <id> run).",
     );
-    const found = Object.entries(audit.findings);
+    const filed = Object.entries(audit.filed);
     lines.push(
-      `- Findings: ${found.length ? found.map(([s, n]) => `${s} ${n}`).join(", ") : "none yet"}.`,
+      `- Filed: ${filed.length ? filed.map(([s, n]) => `${s} ${n}`).join(", ") : "none yet"} (the roles' lines; the report counts what passed the proof check).`,
     );
     lines.push(
       audit.report

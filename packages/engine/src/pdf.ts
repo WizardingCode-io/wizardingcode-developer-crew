@@ -21,6 +21,9 @@ export const BROWSER_CANDIDATES: readonly string[] = [
   "/Applications/Chromium.app/Contents/MacOS/Chromium",
 ];
 
+/** The engine's own timer fired: told by its type, never by the words of a Playwright error (finding 102). */
+class PdfTimeout extends Error {}
+
 export interface PdfOptions {
   timeoutMs?: number;
   /** Where the browser's output goes; a temporary file by default. */
@@ -114,7 +117,7 @@ export async function printPdf(
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<never>((_, reject) => {
       timer = setTimeout(
-        () => reject(new Error(`timed out after ${seconds(timeoutMs)}`)),
+        () => reject(new PdfTimeout(`timed out after ${seconds(timeoutMs)}`)),
         timeoutMs,
       );
     });
@@ -123,7 +126,7 @@ export async function printPdf(
       return { ok: true, by: "playwright" };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const why = message.startsWith("timed out") ? message : `failed: ${message}`;
+      const why = error instanceof PdfTimeout ? message : `failed: ${message}`;
       return { ok: false, reason: `PDF not produced: Playwright ${why}` };
     } finally {
       if (timer) clearTimeout(timer);

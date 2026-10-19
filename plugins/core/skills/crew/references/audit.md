@@ -14,6 +14,8 @@ An audit is `work_type: audit`, always full, with four phases: receive, recogniz
 
 Read the runs before the roles start: a `fail` with its log is a finding the roles cite by `log:`, an `unavailable` with its reason goes to the report's method section as it is.
 
+Two things the run does that the audited project's owner should know before it starts: the project's own scripts run (a third-party tree's build and test commands run on the machine as a gate run's would, so a tree nobody has read is run in a container or a disposable checkout), and the project's tests may write where the engine cannot undo (a shared database, a file outside the tree), so the environment they point at is a test one. `--only` keeps the other gates' runs and is refused when HEAD moved since they ran, or when there is no recorded run yet.
+
 ## The seats
 
 `crew team <id>` prints the audit's seats from the scope: the researcher (the dependencies), security, architecture, code quality and test quality always, data when the scope names data-migration paths, infra when it names infra paths; no CTO, no lead, no judge. Launch them as subagents, in parallel, each with the prompt below; `crew await <id> role` before the turn ends while they work. The SubagentStop hook files each answer; nobody writes a role's file by hand.

@@ -196,12 +196,12 @@ export function readOrigin(
   return { origin: read.data ?? null, tampered: false };
 }
 
-/** `3 commits, 1 item (<id>: roles a, b; tasks T-1)`: the unique shas across the paths, the items with their roles and tasks. */
 /** `roles a, b; tasks T-1`, or `none` for each, as the summary and the report say it (finding 88). */
 export function rolesAndTasks(item: OriginItem): string {
   return `roles ${item.roles.join(", ") || "none"}; tasks ${item.tasks.join(", ") || "none"}`;
 }
 
+/** `3 commits, 1 item (<id>: roles a, b; tasks T-1)`: the unique shas across the paths, the items with their roles and tasks. */
 export function originSummary(origin: Origin): string {
   const shas = new Set(origin.paths.flatMap((p) => p.commits.map((c) => c.sha)));
   const n = shas.size;

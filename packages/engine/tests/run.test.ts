@@ -64,6 +64,32 @@ test("SP8-T1 AC-1 (finding 91): shellRefusal names a shell whose command string 
     ["env", "-u", "HOME", "sh", "-c", "a", "b"],
     ["env", "-i", "A=b", "zsh", "-c", "a", "b"],
     ["command", "-p", "bash", "-lc", "a", "b"],
+    // A shell's valued option, as a word or as a cluster's last letter, and its long valued
+    // options hide nothing (finding 98: `bash -o pipefail -c a b` ran `a` with `$0=b`).
+    ["bash", "-o", "pipefail", "-c", "a", "b"],
+    ["bash", "+O", "extglob", "-c", "a", "b"],
+    ["bash", "-eo", "pipefail", "-c", "a", "b"],
+    ["bash", "-eO", "extglob", "-c", "a", "b"],
+    ["bash", "--rcfile", "x", "-c", "a", "b"],
+    ["bash", "--init-file", "x", "-c", "a", "b"],
+    ["bash", "--rcfile=x", "-c", "a", "b"],
+    // A wrapper's valued option, short (as a word or a cluster), long or a script option, from
+    // the table the hook reads (finding 98: the tables had drifted, `env -P /x sh -c a b` passed).
+    ["env", "-P", "/x", "sh", "-c", "a", "b"],
+    ["env", "-iu", "X", "sh", "-c", "a", "b"],
+    ["env", "-C", "/d", "sh", "-c", "a", "b"],
+    ["env", "-L", "u", "sh", "-c", "a", "b"],
+    ["env", "-U", "u", "sh", "-c", "a", "b"],
+    ["env", "--unset", "X", "sh", "-c", "a", "b"],
+    ["env", "--chdir", "/d", "sh", "-c", "a", "b"],
+    ["env", "--block-signal", "INT", "sh", "-c", "a", "b"],
+    ["env", "--default-signal", "INT", "sh", "-c", "a", "b"],
+    ["env", "--ignore-signal", "INT", "sh", "-c", "a", "b"],
+    ["env", "--unset=X", "sh", "-c", "a", "b"],
+    ["env", "-S", "x", "sh", "-c", "a", "b"],
+    ["env", "--split-string", "x", "sh", "-c", "a", "b"],
+    ["env", "-vS", "x", "sh", "-c", "a", "b"],
+    ["env", "--", "sh", "-c", "a", "b"],
   ];
   for (const words of refused) {
     const why = shellRefusal(words);
@@ -75,6 +101,13 @@ test("SP8-T1 AC-1 (finding 91): shellRefusal names a shell whose command string 
     ["bun", "test", "x.test.ts"],
     ["sh", "script.sh", "arg"],
     ["bash", "-o", "pipefail", "-c", "x"],
+    ["bash", "-o", "pipefail", "-c", "a && b"],
+    // A cluster whose last letter takes no value: `extglob` is the command, not a shell form.
+    ["bash", "+Oe", "extglob", "-c", "a", "b"],
+    // A wrapper's flag is skipped only right after a wrapper word or another of its flags: after
+    // an assignment alone, `-x` is the command the shell (or env) runs.
+    ["A=1", "-x", "sh", "-c", "a", "b"],
+    ["env", "A=1", "-x", "sh", "-c", "a", "b"],
     ["sh", "-c"],
     ["echo", "-c", "a", "b"],
     ["bun run check && true"],

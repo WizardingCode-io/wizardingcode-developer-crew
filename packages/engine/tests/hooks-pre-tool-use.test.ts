@@ -650,6 +650,13 @@ test("finding 16: a user-only verb counts only at the command position of a simp
   // The command itself, in every spelling, is still the command.
   expect(decision(bash("FOO=1 node /x/dist/crew.mjs skip w1 gate:lint --reason x"))).toBe("ask");
   expect(decision(bash('bash -c "crew approve w1 spec"'))).toBe("ask");
+  // A shell's valued option as a cluster's last letter hides nothing from the hook either: the
+  // shell's options are read from the table run.ts reads (finding 98; the security lead's return
+  // at the delivery of SP4 Task 1). `+Oe` takes no value, so `extglob` is the script bash runs.
+  expect(decision(bash('bash -eo pipefail -c "crew approve w1 spec"'))).toBe("ask");
+  expect(decision(bash('bash -eO extglob -c "crew approve w1 spec"'))).toBe("ask");
+  expect(decision(bash('bash --rcfile x -c "crew approve w1 spec"'))).toBe("ask");
+  expect(bash('bash +Oe extglob -c "crew approve w1 spec"')).toEqual({});
   expect(decision(bash("env FOO=1 crew approve w1 spec"))).toBe("ask");
   expect(decision(bash("(crew approve w1 spec)"))).toBe("ask");
   expect(decision(bash("time crew policy accept"))).toBe("ask");
@@ -925,6 +932,11 @@ test("SP2c AC-4: a session opened by mail never merges, pushes to another branch
     ["case 1 in 1) crew task 2026-10-15-042-x merge T-2;; esac", "crew task merge"],
     ["command time -o f git merge main", "git merge"],
     ["env -P /usr/bin git merge main", "git merge"],
+    // One case per valued letter of env, pinning the table `run.ts` shares with the hook (SP4 Task 1).
+    ["env -u VAR git merge main", "git merge"],
+    ["env -C /tmp git merge main", "git merge"],
+    ["env -L user git merge main", "git merge"],
+    ["env -U user git merge main", "git merge"],
     // A literal that looks like a redirect operator, quoted or escaped, is a word (here a wrapper's
     // option value), not a redirect; a named-descriptor redirect and the forms with a glued target
     // are redirects (security review, round 10).

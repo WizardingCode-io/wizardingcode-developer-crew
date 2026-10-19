@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { AuditRun, AuditRuns, AuditScope } from "../src/audit-run.ts";
-import { auditFiles, auditScope, cappedRefusal, runAudit } from "../src/audit-run.ts";
+import { auditFiles, auditScope, cappedRefusal, runAudit, staleRefusal } from "../src/audit-run.ts";
 import { workDir } from "../src/paths.ts";
 import { DEFAULT_POLICY } from "../src/policy.ts";
 import { ensureProfile } from "../src/profile.ts";
@@ -76,7 +76,7 @@ test("SP8-T4 AC-1, AC-4: the audit runs every tool over the whole tree with no b
   const { paths, profile, work } = auditItem(root);
   const before = treeHash(root);
   const result = await runAudit(paths, work, profile, DEFAULT_POLICY, {});
-  if ("capped" in result) throw new Error("the fixture is under the cap");
+  if (!("runs" in result)) throw new Error("the fixture is under the cap and HEAD unchanged");
   const runs = result;
   expect(treeHash(root)).toBe(before);
   expect(runs.head).toBe(git(root, "rev-parse", "HEAD").trim());
@@ -108,16 +108,41 @@ test("SP8-T4 AC-1, AC-4: the audit runs every tool over the whole tree with no b
   for (const run of runs.runs) expect(["pass", "fail", "unavailable"]).toContain(run.status);
   // `--only` replaces the runs of the gates named and keeps the others.
   const only = await runAudit(paths, work, profile, DEFAULT_POLICY, { only: ["test"] });
-  if ("capped" in only) throw new Error("the fixture is under the cap");
+  if (!("runs" in only)) throw new Error("the fixture is under the cap and HEAD unchanged");
   expect(only.runs.map((r) => r.gate).sort()).toEqual(["build", "deps", "e2e", "secrets", "test"]);
   expect(byGate(only, "test")?.status).toBe("fail");
   expect(byGate(only, "build")).toEqual(build as AuditRun);
   // A second full run replaces the first: one record, the newer stamp.
   const again = await runAudit(paths, work, profile, DEFAULT_POLICY, {});
-  if ("capped" in again) throw new Error("the fixture is under the cap");
+  if (!("runs" in again)) throw new Error("the fixture is under the cap and HEAD unchanged");
   expect(again.runs.length).toBe(runs.runs.length);
   expect(readRuns(paths, work.id).at).toBe(again.at);
   expect(again.at >= runs.at).toBe(true);
+  // `--only` after HEAD moved is refused before anything is written: the kept runs would be
+  // stamped current at a head they never ran at (finding 101).
+  const auditDir = join(dir, "audit");
+  const bytesOf = () =>
+    ["runs.json", "files.txt", "scope.json"].map((n) => readFileSync(join(auditDir, n), "utf8"));
+  const kept = bytesOf();
+  git(root, "commit", "-q", "--allow-empty", "-m", "moved");
+  const now = git(root, "rev-parse", "HEAD").trim();
+  const stale = await runAudit(paths, work, profile, DEFAULT_POLICY, { only: ["test"] });
+  expect(stale).toEqual({ stale: { recorded: again.head, now } });
+  expect(bytesOf()).toEqual(kept);
+  expect(staleRefusal(work.id, { recorded: again.head, now })).toBe(
+    `HEAD moved since the recorded run (${again.head?.slice(0, 12)} → ${now.slice(0, 12)}): run crew audit ${work.id} run without --only`,
+  );
+  // `--only` with no recorded run would write a partial record at HEAD that the guard reads as the run.
+  rmSync(join(auditDir, "runs.json"));
+  const first = await runAudit(paths, work, profile, DEFAULT_POLICY, { only: ["test"] });
+  expect(first).toEqual({ stale: { reason: "no recorded run" } });
+  expect(existsSync(join(auditDir, "runs.json"))).toBe(false);
+  expect(["files.txt", "scope.json"].map((n) => readFileSync(join(auditDir, n), "utf8"))).toEqual(
+    kept.slice(1),
+  );
+  expect(staleRefusal(work.id, { reason: "no recorded run" })).toBe(
+    `--only needs a recorded run: run crew audit ${work.id} run first`,
+  );
   expect(treeHash(root)).toBe(before);
 });
 

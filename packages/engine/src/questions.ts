@@ -140,8 +140,7 @@ export function answerQuestion(
   const text = answer.trim();
   if (!text) return { refused: "an answer needs a text" };
   const answered = { answer: text, by, answeredAt: nowIso() };
-  Object.assign(question, answered);
-  return { ...question, ...answered };
+  return Object.assign(question, answered);
 }
 
 /** A question once answered: its answer, who gave it and when are never null (finding 86). */

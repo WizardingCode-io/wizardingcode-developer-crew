@@ -10,6 +10,7 @@ import {
   auditSummary,
   cappedRefusal,
   runAudit,
+  staleRefusal,
 } from "./audit-run.ts";
 import { auditState, type ReportRecord, type ReportSignature, reportHash } from "./audit-state.ts";
 import { brandOf } from "./brand.ts";
@@ -1020,7 +1021,7 @@ function auditViewOf(env: Env, work: WorkItem): AuditReportView | null {
     runSummary: s.run ? auditSummary(s.run.runs) : null,
     head: s.run?.head ?? null,
     runAtHead: s.runAtHead,
-    findings: s.findings,
+    filed: s.filed,
     report: s.report
       ? {
           md: s.report.md,
@@ -1136,7 +1137,7 @@ function auditStatusOf(env: Env, work: WorkItem): Record<string, unknown> {
   return {
     run: s.run ? { at: s.run.at, head: s.run.head, summary: auditSummary(s.run.runs) } : null,
     runAtHead: s.runAtHead,
-    findings: s.findings,
+    filed: s.filed,
     report: s.report
       ? {
           at: s.report.at,
@@ -1219,10 +1220,6 @@ function markLines(record: JudgementRecord): string[] {
     });
 }
 
-/**
- * Jev down at a record (SP3 decision 12): a full-route item waits for a person after the record
- * when it has no wait yet; the line that says so, or the plain unavailability on another route.
- */
 /** A test-first record: the run outside any lock, the record applied under it (finding 81; its own function, finding 82). */
 async function tddCommand(env: Env, parsed: Parsed, args: string[]): Promise<Outcome> {
   const [step, id, criterion] = args;
@@ -1305,6 +1302,10 @@ function appendVerifications(env: Env, id: string, records: Verification[]): str
   return "refused" in appended ? appended.refused : null;
 }
 
+/**
+ * Jev down at a record (SP3 decision 12): a full-route item waits for a person after the record
+ * when it has no wait yet; the line that says so, or the plain unavailability on another route.
+ */
 function jevUnavailableWait(work: WorkItem, defects: DefectsOutcome | null): string | null {
   if (!defects?.unavailable) return null;
   if (work.route !== "full") return `jev unavailable: ${defects.unavailable}`;
@@ -2101,6 +2102,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         only: only as GateName[] | undefined,
       });
       if ("capped" in result) return refuse(cappedRefusal(result.capped));
+      if ("stale" in result) return refuse(staleRefusal(work.id, result.stale));
       const scope = readJson<AuditScope>(join(workDir(env.paths, work.id), "audit", "scope.json"));
       const areas = scope?.riskAreas.length ? scope.riskAreas.join(", ") : "none";
       const text = [
@@ -2959,12 +2961,11 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           { task: out.record, message: out.message, opened: out.opened, notes: out.notes },
         );
       }
-      const list = commaList;
       if (args[1] === "note") {
         // A todo the lead does inline (SP7 §8.1): no worktree, no message; its scope names its files.
         const task = args[2];
-        const criteria = list(parsed.flags.criteria);
-        const scope = list(parsed.flags.scope);
+        const criteria = commaList(parsed.flags.criteria);
+        const scope = commaList(parsed.flags.scope);
         if (!task || !criteria.length) return refuse(usage);
         const planText = readText(join(workDir(env.paths, opened.work.id), "plan.md"));
         const out = noteTask(
@@ -2988,7 +2989,8 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           return refuse(task ? `${task} is not a task of ${opened.work.id}` : usage);
         // What the gate would run on comes first: a todo with nothing in this checkout is refused
         // for that, not for its rounds, which a continuation would not mend.
-        const flagScope = parsed.flags.scope === undefined ? undefined : list(parsed.flags.scope);
+        const flagScope =
+          parsed.flags.scope === undefined ? undefined : commaList(parsed.flags.scope);
         const scoped = taskScope(env.paths.root, env.profile, record, flagScope);
         if ("refused" in scoped) return refuse(scoped.refused);
         const round = record.gate?.round ?? 0;

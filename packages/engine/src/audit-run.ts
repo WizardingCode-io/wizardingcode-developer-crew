@@ -88,6 +88,16 @@ export function auditScope(
   };
 }
 
+/** Why `--only` cannot run: no recorded run to keep, or a HEAD the kept runs never ran at. */
+export type StaleAudit = { recorded: string | null; now: string | null } | { reason: string };
+
+/** The refusal of a stale `--only`, naming both heads (twelve characters each, `no git` for none) or the missing run. */
+export function staleRefusal(id: string, stale: StaleAudit): string {
+  if ("reason" in stale) return `--only needs a recorded run: run crew audit ${id} run first`;
+  const short = (sha: string | null) => (sha === null ? "no git" : sha.slice(0, 12));
+  return `HEAD moved since the recorded run (${short(stale.recorded)} → ${short(stale.now)}): run crew audit ${id} run without --only`;
+}
+
 /** The refusal of a tree over the cap: nothing was recorded, since a partial audit would hide what it did not read. */
 export function cappedRefusal(cap: number): string {
   return `the tree has more than ${cap} watched files, the walk's cap: nothing was recorded, since a partial audit would hide what it did not read; narrow the profile's targets or the folders it skips, then run again`;
@@ -134,12 +144,23 @@ export async function runAudit(
   profile: Profile,
   policy: Policy,
   options: AuditOptions = {},
-): Promise<AuditRuns | { capped: number }> {
+): Promise<AuditRuns | { capped: number } | { stale: StaleAudit }> {
+  const dir = workDir(paths, work.id);
+  const auditDir = join(dir, "audit");
+  const head = gitHead(paths.root);
+  const only = options.only;
+  // `--only` keeps the other gates' runs, which are the run at HEAD only while HEAD is where they
+  // ran (finding 101): checked before anything is written, so a refusal records nothing.
+  let earlier: AuditRuns | null = null;
+  if (only !== undefined) {
+    earlier = readJson<AuditRuns>(join(auditDir, "runs.json"));
+    if (earlier === null) return { stale: { reason: "no recorded run" } };
+    const now = head === "none" ? null : head;
+    if (earlier.head !== now) return { stale: { recorded: earlier.head, now } };
+  }
   const cap = options.maxFiles ?? MAX_WATCHED_FILES;
   const files = auditFiles(paths.root, profile, cap);
   if (files === null) return { capped: cap };
-  const dir = workDir(paths, work.id);
-  const auditDir = join(dir, "audit");
   writeProtectedText(paths, join(auditDir, "files.txt"), `${files.join("\n")}\n`);
   writeProtectedJson(
     paths,
@@ -148,8 +169,6 @@ export async function runAudit(
   );
   // No base commit: the deps judge finds nothing to compare with and the secrets scan walks the tree.
   const unbased: WorkItem = { ...work, baseCommit: null };
-  const head = gitHead(paths.root);
-  const only = options.only;
   const planned = plannedGates("full", profile, policy, files, paths.root).filter(
     (p) => p.gate !== "e2e" && (only === undefined || only.includes(p.gate)),
   );
@@ -173,12 +192,11 @@ export async function runAudit(
       log: null,
       reason: E2E_BY_HAND,
     });
-  const earlier =
-    only === undefined ? [] : (readJson<AuditRuns>(join(auditDir, "runs.json"))?.runs ?? []);
+  const kept = (earlier?.runs ?? []).filter((r) => !only?.includes(r.gate));
   const record: AuditRuns = {
     at: nowIso(),
     head: head === "none" ? null : head,
-    runs: [...earlier.filter((r) => !only?.includes(r.gate)), ...runs],
+    runs: [...kept, ...runs],
   };
   writeProtectedJson(paths, join(auditDir, "runs.json"), record);
   return record;

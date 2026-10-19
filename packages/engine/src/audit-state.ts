@@ -63,7 +63,8 @@ export interface ReportRecord {
 export interface AuditState {
   run: AuditRuns | null;
   runAtHead: boolean;
-  findings: Record<string, number>;
+  /** The lines the roles filed, per section; the report's `findings` are the ones that passed the proof check (finding 102). */
+  filed: Record<string, number>;
   report: ReportRecord | null;
   reportCurrent: boolean;
   signed: Approval | null;
@@ -86,13 +87,13 @@ export function auditState(paths: CrewPaths, work: WorkItem): AuditState {
   const run = readJson<AuditRuns>(join(dir, "runs.json"));
   const head = gitHead(paths.root);
   const runAtHead = run !== null && (run.head === null ? head === "none" : run.head === head);
-  const findings: Record<string, number> = {};
+  const filed: Record<string, number> = {};
   for (const section of AUDIT_SECTIONS) {
     const text = readText(join(dir, `${section}.findings.md`));
-    if (text !== null) findings[section] = (text.match(FINDING_LINE) ?? []).length;
+    if (text !== null) filed[section] = (text.match(FINDING_LINE) ?? []).length;
   }
   const report = readJson<ReportRecord>(join(dir, "report.json"));
   const reportCurrent = report !== null && report.hash === reportHash(dir);
   const signed = work.approvals.find((a) => a.what === "audit") ?? null;
-  return { run, runAtHead, findings, report, reportCurrent, signed };
+  return { run, runAtHead, filed, report, reportCurrent, signed };
 }

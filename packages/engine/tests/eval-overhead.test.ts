@@ -50,7 +50,7 @@ test("runs without any known cost field read as no cost at all", () => {
   expect(hasAnyCost(rows)).toBe(false);
 });
 
-test("SP8-T6 AC-2: the ceiling of a case is read from its prompt's front matter and each row says under or over it", () => {
+test("SP8-T6 AC-2: the ceiling of a case comes from the CEILINGS table and each row says under or over it (at the ceiling is under)", () => {
   const evals = fileURLToPath(new URL("../../../plugins/core/evals/", import.meta.url));
   const ceilings = readCeilings(evals);
   expect(ceilings).toMatchObject({ "fast-route-overhead": 2.03, "issue-fast-overhead": 3.5 });
@@ -80,5 +80,10 @@ test("SP8-T6 AC-2: the ceiling of a case is read from its prompt's front matter 
     "fast-route-overhead: with 0.6 USD · without 0.5 USD · 1.2x · over the 1.1x ceiling",
   );
   expect(rowLine(second)).toBe("false-done: with 0.9 USD · without n/a USD · n/a");
+  // At the ceiling exactly the case is under it: the acceptance reads "at most".
+  expect(overheadByCase(sample, { "fast-route-overhead": 1.2 })[0]).toMatchObject({
+    ratio: 1.2,
+    verdict: "under",
+  });
   expect(overheadByCase(sample)[0]).toMatchObject({ ceiling: null, verdict: null });
 });

@@ -123,6 +123,22 @@ test("SP8-T5 AC-2: the project's own Playwright, resolved from the root alone, p
       logPath: failing.log,
     }),
   ).toEqual({ ok: false, reason: "PDF not produced: Playwright failed: no chromium here" });
+  // The engine's own timeout is told by its type, not by the words: a Playwright failure that
+  // begins "timed out" is a failure (finding 102).
+  const wordy = page();
+  fakePlaywright(
+    wordy.root,
+    'module.exports = { chromium: { launch: async () => { throw new Error("timed out early: no display"); } } };\n',
+  );
+  expect(
+    await printPdf(wordy.html, wordy.out, env, wordy.root, {
+      timeoutMs: 1_000,
+      logPath: wordy.log,
+    }),
+  ).toEqual({
+    ok: false,
+    reason: "PDF not produced: Playwright failed: timed out early: no display",
+  });
   // The engine's own tree and the current directory hold no Playwright for the audited project: a bare root falls to the browser.
   const bare = page();
   expect(
