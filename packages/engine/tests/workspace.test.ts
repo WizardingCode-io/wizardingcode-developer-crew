@@ -15,6 +15,7 @@ import {
 } from "../src/mail.ts";
 import { pathsFor, registryPath } from "../src/paths.ts";
 import { loadPolicy } from "../src/policy.ts";
+import { addQuestion, answerQuestion } from "../src/questions.ts";
 import { createWork, saveWork } from "../src/work.ts";
 import { projectThreads, workspaceStatus } from "../src/workspace.ts";
 import { makeRepo, repoPaths, testEnv } from "./helpers.ts";
@@ -41,7 +42,7 @@ function project(
   return { root, paths, policy, ctx };
 }
 
-test("SP7b-T6 AC-1: the workspace status lists every project of the workspace from the records alone: live, open items, unread, open threads, unconfirmed priorities, the environment; a gone root and a worktree are told apart; no workspace says so", () => {
+test("SP7b-T6 AC-1, SP3-T4 AC-3: the workspace status lists every project of the workspace from the records alone: live, open items, unread, open threads, unconfirmed priorities, the environment; a gone root and a worktree are told apart; no workspace says so", () => {
   const env = testEnv();
   const storefront = project(env, "storefront", "shop", true);
   const crm = project(env, "crm", "shop", false, {
@@ -72,7 +73,18 @@ test("SP7b-T6 AC-1: the workspace status lists every project of the workspace fr
       },
     ],
   });
-  saveWork(storefront.paths, createWork(storefront.paths, "an open item"));
+  // The open item's two open questions and one answered count 2; a done item's open question is not
+  // counted; a record with no questions field (before 0.8.0) counts 0.
+  const openItem = createWork(storefront.paths, "an open item");
+  addQuestion(openItem, "one?", []);
+  addQuestion(openItem, "two?", []);
+  addQuestion(openItem, "three?", []);
+  answerQuestion(openItem, "Q-3", "yes", "the user");
+  saveWork(storefront.paths, openItem);
+  const doneItem = createWork(storefront.paths, "a done item");
+  addQuestion(doneItem, "late?", []);
+  doneItem.phase = "deliver";
+  saveWork(storefront.paths, doneItem);
   const sent = send(
     storefront.ctx,
     {
@@ -115,6 +127,7 @@ test("SP7b-T6 AC-1: the workspace status lists every project of the workspace fr
     unread: 1,
     threads: 1,
     priorities: 1,
+    questions: 0,
     environment: "down",
   });
   expect(status.projects[1]).toMatchObject({
@@ -125,6 +138,7 @@ test("SP7b-T6 AC-1: the workspace status lists every project of the workspace fr
     unread: 0,
     threads: 1,
     priorities: 1,
+    questions: 2,
     environment: "up",
   });
   expect(status.projects[2]).toMatchObject({
@@ -135,6 +149,7 @@ test("SP7b-T6 AC-1: the workspace status lists every project of the workspace fr
     unread: 0,
     threads: 0,
     priorities: 0,
+    questions: 0,
     environment: "none",
   });
   // The receiver confirms the priority: nothing unconfirmed on its side, and the sender sees it at its next sync.
@@ -170,6 +185,8 @@ test("SP7b-T6 AC-1: the workspace status lists every project of the workspace fr
   const closed = workspaceStatus(crm.paths, crm.policy, env);
   if ("none" in closed) throw new Error(closed.none);
   expect(closed.projects.map((p) => p.threads)).toEqual([1, 1, 0]);
+  // A notice has no priority decision to wait for (it is done when read): it counts as unconfirmed nowhere.
+  expect(closed.projects.map((p) => p.priorities)).toEqual([0, 0, 0]);
   const alone = project(env, "alone", null, false);
   expect(workspaceStatus(alone.paths, alone.policy, env)).toEqual({
     none: "no workspace in policy.json (mail.workspace): crew workspace status lists the projects of one workspace",

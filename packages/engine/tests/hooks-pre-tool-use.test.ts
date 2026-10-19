@@ -1477,3 +1477,46 @@ test("SP7b-T5 AC-3 (here-documents): a here-document is data only when a listed 
   ];
   for (const command of denied) expect([command, bash(command)]).toEqual([command, "deny"]);
 });
+
+test("SP3-T4 AC-1, AC-2: crew question answer is the user's (asked under prompt, relayed under relay, --mode demanded with nobody present); crew question add is a presence command (never asked, --mode demanded with nobody present, denied with a person present); list is free", () => {
+  const prompt = setup();
+  const relay = setup(null);
+  const bash = (ctx: typeof prompt.ctx, command: string, permission_mode?: string) =>
+    onPreToolUse(ctx, { tool_name: "Bash", tool_input: { command }, permission_mode });
+  for (const mode of ["default", "acceptEdits", "plan", "auto", undefined]) {
+    expect(decision(bash(prompt.ctx, 'crew question w1 answer Q-1 "Gold"', mode))).toBe("ask");
+    expect(bash(relay.ctx, 'crew question w1 answer Q-1 "Gold"', mode)).toEqual({});
+    expect(bash(prompt.ctx, 'crew question w1 add "Which tier?"', mode)).toEqual({});
+    expect(bash(relay.ctx, 'crew question w1 add "Which tier?"', mode)).toEqual({});
+    expect(bash(prompt.ctx, "crew question w1 list", mode)).toEqual({});
+    expect(bash(prompt.ctx, "crew question w1 posted Q-1 --channel ticket --ref x", mode)).toEqual(
+      {},
+    );
+    const flagged = bash(prompt.ctx, `crew question w1 add "x" --mode ${mode ?? "default"}`, mode);
+    expect(decision(flagged)).toBe("deny");
+    expect(reason(flagged)).toContain("without --mode");
+    expect(
+      decision(
+        bash(relay.ctx, `crew question w1 answer Q-1 "x" --mode ${mode ?? "default"}`, mode),
+      ),
+    ).toBe("deny");
+  }
+  for (const mode of ["bypassPermissions", "dontAsk"]) {
+    const bareAdd = bash(prompt.ctx, 'crew question w1 add "Which tier?"', mode);
+    expect(decision(bareAdd)).toBe("deny");
+    expect(reason(bareAdd)).toContain(`--mode ${mode}`);
+    expect(reason(bareAdd)).toContain("whether a person");
+    expect(bash(prompt.ctx, `crew question w1 add "Which tier?" --mode ${mode}`, mode)).toEqual({});
+    const bareAnswer = bash(relay.ctx, 'crew question w1 answer Q-1 "Gold"', mode);
+    expect(decision(bareAnswer)).toBe("deny");
+    expect(reason(bareAnswer)).toContain(`--mode ${mode}`);
+    expect(bash(relay.ctx, `crew question w1 answer Q-1 "Gold" --mode ${mode}`, mode)).toEqual({});
+    expect(bash(relay.ctx, "crew question w1 list", mode)).toEqual({});
+  }
+  const headless = hookContext(
+    { session_id: "s", cwd: prompt.root },
+    { ...testEnv(), CLAUDE_CODE_SESSION_ATTENDED: "0" },
+  );
+  expect(decision(bash(headless, 'crew question w1 add "x"', "default"))).toBe("deny");
+  expect(bash(headless, 'crew question w1 add "x" --mode default', "default")).toEqual({});
+});

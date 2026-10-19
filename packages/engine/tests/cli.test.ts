@@ -6,7 +6,9 @@ import {
   readdirSync,
   readFileSync,
   rmdirSync,
+  rmSync,
   statSync,
+  symlinkSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -312,7 +314,7 @@ test("SP2b minors: a proven ruling with a defect inside the change is refused an
   // A defect outside the change is debt, named and never a failure (ADR 0006): proven stands.
   ruling([{ file: "src/legacy.vue", line: 1, text: "unlabelled button", severity: "defect" }]);
   expect((await c.json("judgement", id, "record", "--ruling", file)).data.verdict).toBe("proven");
-});
+}, 30_000);
 
 test("SP2b minors: a gate run whose patch has no diff content says so, with the reason", async () => {
   // A folder without git: active once crew detect has written .crew/, the change measured by the walk.
@@ -3815,7 +3817,7 @@ function registered(
   return paths;
 }
 
-test("SP7b-T6 AC-1: crew workspace status prints the workspace's projects from the records, says so without a workspace, and refuses another verb", async () => {
+test("SP7b-T6 AC-1, SP3-T4 AC-3: crew workspace status prints the workspace's projects from the records, says so without a workspace, and refuses another verb", async () => {
   const root = makeRepo({ "package.json": JSON.stringify({ scripts: { test: "exit 0" } }) });
   const env = testEnv();
   const c = io(root, env);
@@ -3828,7 +3830,7 @@ test("SP7b-T6 AC-1: crew workspace status prints the workspace's projects from t
   const listed = await c.run("workspace", "status");
   expect(listed.code).toBe(0);
   expect(listed.out.trim()).toBe(
-    `Workspace shop: 1 project\n  crm (${paths.root}): live · items 0 · unread 0 · threads 0 open · priorities 0 unconfirmed · environment none`,
+    `Workspace shop: 1 project\n  crm (${paths.root}): live · items 0 · unread 0 · threads 0 open · priorities 0 unconfirmed · questions 0 open · environment none`,
   );
   expect((await c.json("workspace", "status")).data).toMatchObject({
     workspace: "shop",
@@ -4513,4 +4515,283 @@ test("SP3-T3 AC-3: the triage at start confirms or lowers a source's proposed pr
       )
     ).code,
   ).toBe(1);
+}, 30_000);
+
+const QUESTION_USAGE =
+  'usage: crew question <id> add "<text>" [--mode <mode>] | posted Q-n --channel cli|ticket|document|mail --ref <ref> | answer Q-n "<answer>" [--mode <mode>] | list';
+
+test("SP3-T4 AC-1: a doubt is a question on the item with its channels, posted where the engine can and left to the skill where it cannot, and the item waits for the user; a refusal is a note, never a failure; the origin message is blocked", async () => {
+  const { env, a, b, ca, cb } = mailRepos();
+  await ca.run("detect");
+  await cb.run("detect");
+  const paths = repoPaths(a, env);
+  // With a person present and a workspace: cli, and the notice to the project's own box.
+  const id = (await ca.json("start", "Loyalty tier", "--answers", answers, "--criterion", "a")).data
+    .id as string;
+  const added = await ca.run("question", id, "add", "Gold or silver first?");
+  expect(added.code).toBe(0);
+  expect(added.out.trim()).toMatch(
+    /^Q-1 recorded; waiting for the user; posted: cli, mail \(M-[^)]+\)$/,
+  );
+  const status = await ca.json("status");
+  expect(status.data.awaiting).toBe("user");
+  const q1 = (status.data.questions as Record<string, unknown>[])[0] as {
+    channels: { kind: string; posted: boolean; ref: string | null }[];
+  };
+  expect(q1).toMatchObject({
+    id: "Q-1",
+    text: "Gold or silver first?",
+    open: true,
+    channels: [
+      { kind: "cli", posted: true, ref: null },
+      { kind: "mail", posted: true },
+    ],
+  });
+  const mailRef = q1.channels[1]?.ref as string;
+  expect(mailRef).toMatch(/^M-/);
+  const own = ownInbox(mailContext(paths, loadPolicy(paths).policy, env)).messages;
+  const notice = own.find((m) => m.id === mailRef);
+  expect(notice).toMatchObject({ type: "notice", subject: `Q-1 of ${id}` });
+  expect(String(notice?.body)).toContain("Gold or silver first?");
+  expect((await ca.run("question", id, "list")).out.trim()).toBe(
+    `Q-1 · open · Gold or silver first? · posted: cli, mail (${mailRef})`,
+  );
+  expect((await ca.run("question", id, "add")).err.trim()).toBe(QUESTION_USAGE);
+  expect((await ca.run("question", id, "add", "x", "--mode", "sideways")).err).toContain(
+    "--mode names the permission mode",
+  );
+  // Nobody present (--mode) and a ticket source: the ticket is left to the skill, the mail posted, cli absent.
+  const tid = (await ca.json("start", "Button label", "--answers", answers, "--source", TICKET))
+    .data.id as string;
+  const unattended = await ca.run(
+    "question",
+    tid,
+    "add",
+    "Which label?",
+    "--mode",
+    "bypassPermissions",
+  );
+  expect(unattended.code).toBe(0);
+  expect(unattended.out.trim()).toMatch(
+    new RegExp(
+      `^Q-1 recorded; waiting for the user; posted: mail \\(M-[^)]+\\); to post: ticket \\(https://app\\.clickup\\.invalid/t/86c1\\): crew question ${tid} posted Q-1 --channel <channel> --ref <ref>$`,
+    ),
+  );
+  const posted = await ca.run(
+    "question",
+    tid,
+    "posted",
+    "Q-1",
+    "--channel",
+    "ticket",
+    "--ref",
+    "https://app.clickup.invalid/t/86c1?comment=7",
+  );
+  expect(posted.code).toBe(0);
+  expect(posted.out.trim()).toBe(
+    "Q-1 posted to ticket (https://app.clickup.invalid/t/86c1?comment=7)",
+  );
+  expect(
+    (
+      await ca.run("question", tid, "posted", "Q-1", "--channel", "ticket", "--ref", "again")
+    ).err.trim(),
+  ).toBe("Q-1 was posted to ticket already (https://app.clickup.invalid/t/86c1?comment=7)");
+  expect(
+    (await ca.run("question", tid, "posted", "Q-1", "--channel", "fax", "--ref", "x")).err.trim(),
+  ).toBe(QUESTION_USAGE);
+  expect((await ca.run("question", tid, "posted", "Q-1", "--channel", "mail")).err.trim()).toBe(
+    QUESTION_USAGE,
+  );
+  // An item waiting for the roles takes the user wait, and says so.
+  await ca.run("await", tid, "role");
+  const replaced = await ca.run("question", tid, "add", "And the colour?", "--mode", "dontAsk");
+  expect(replaced.out).toContain(
+    "Q-2 recorded; waiting for the user (was waiting for the roles); posted: mail (",
+  );
+  expect((await ca.json("status")).data.awaiting).toBe("user");
+  // A document source: the questions file beside the document, as a block quote; a document symlinked
+  // out of the root after the start, then a mailbox a hand changed, are notes with exit 0 and the item waits.
+  write(a, "docs/requests/newsletter.md", "# Newsletter\n\nAdd a flag.\n");
+  const did = (
+    await ca.json(
+      "start",
+      "the request is in docs/requests/newsletter.md",
+      "--answers",
+      answers,
+      "--source",
+      JSON.stringify({ channel: "document", documentPath: "docs/requests/newsletter.md" }),
+    )
+  ).data.id as string;
+  const docQ = await ca.run("question", did, "add", "One flag or two?");
+  expect(docQ.out.trim()).toMatch(
+    /^Q-1 recorded; waiting for the user; posted: cli, document \(docs\/requests\/newsletter\.md\.questions\.md\), mail \(M-[^)]+\)$/,
+  );
+  expect(readFileSync(join(a, "docs/requests/newsletter.md.questions.md"), "utf8")).toMatch(
+    /^# Questions on docs\/requests\/newsletter\.md\n\n## Q-1 \([^)]+\)\n\n> One flag or two\?\n$/,
+  );
+  rmSync(join(a, "docs/requests/newsletter.md"));
+  const outside = tempDir("crew-outside-");
+  writeFileSync(join(outside, "secret.md"), "secret\n");
+  symlinkSync(join(outside, "secret.md"), join(a, "docs/requests/newsletter.md"));
+  const linked = await ca.run("question", did, "add", "Still there?");
+  expect(linked.code).toBe(0);
+  expect(linked.out.trim()).toMatch(
+    new RegExp(
+      `^Q-2 recorded; waiting for the user; posted: cli, mail \\(M-[^)]+\\); to post: document \\(docs/requests/newsletter\\.md\\.questions\\.md\\): crew question ${did} posted Q-2 --channel <channel> --ref <ref>\\ndocument not posted: source: documentPath docs/requests/newsletter\\.md resolves outside the root$`,
+    ),
+  );
+  expect(readFileSync(join(outside, "secret.md"), "utf8")).toBe("secret\n");
+  // An item answering a message: the question blocks the origin, as crew await <id> user does.
+  const first = /sent (M-\S+) /.exec(
+    (await cb.run("mail", "send", "--to", "storefront", "--type", "question", "Which values?")).out,
+  )?.[1] as string;
+  const oid = (await ca.json("start", "Answer the values", "--answers", answers, "--origin", first))
+    .data.id as string;
+  const originStatus = () =>
+    readBox(mailbox(paths.userDir, "w", "storefront").dir, "inbox").box.messages.find(
+      (m) => m.id === first,
+    )?.status;
+  expect(originStatus()).toBe("in-progress");
+  expect((await ca.run("question", oid, "add", "Which units?", "--mode", "dontAsk")).code).toBe(0);
+  expect(originStatus()).toBe("blocked");
+  void b;
+  const box = mailbox(paths.userDir, "w", "storefront");
+  writeFileSync(
+    join(box.dir, "inbox.json"),
+    `${readFileSync(join(box.dir, "inbox.json"), "utf8")}\n`,
+  );
+  const noMail = await ca.run("question", did, "add", "Does it matter?");
+  expect(noMail.code).toBe(0);
+  expect(noMail.out.trim()).toBe(
+    `Q-3 recorded; waiting for the user; posted: cli; to post: document (docs/requests/newsletter.md.questions.md), mail: crew question ${did} posted Q-3 --channel <channel> --ref <ref>\ndocument not posted: source: documentPath docs/requests/newsletter.md resolves outside the root\nmail not posted: storefront's inbox changed outside the engine; files under the user's crew directory are written only by the crew command`,
+  );
+  expect((await ca.json("status")).data.awaiting).toBe("user");
+}, 30_000);
+
+test("SP3-T4 AC-2: a question's answer is a person's, recorded with who and when, clears the user wait and moves the origin on; nobody present is refused; another open question or another wait keeps the item where it is", async () => {
+  const { env, a, ca, cb } = mailRepos();
+  await ca.run("detect");
+  await cb.run("detect");
+  const paths = repoPaths(a, env);
+  const first = /sent (M-\S+) /.exec(
+    (await cb.run("mail", "send", "--to", "storefront", "--type", "question", "Which values?")).out,
+  )?.[1] as string;
+  const id = (await ca.json("start", "Answer the values", "--answers", answers, "--origin", first))
+    .data.id as string;
+  const originStatus = () =>
+    readBox(mailbox(paths.userDir, "w", "storefront").dir, "inbox").box.messages.find(
+      (m) => m.id === first,
+    )?.status;
+  await ca.run("question", id, "add", "Gold or silver first?");
+  await ca.run("question", id, "add", "And the colour?");
+  expect(originStatus()).toBe("blocked");
+  const refused = await ca.run(
+    "question",
+    id,
+    "answer",
+    "Q-1",
+    "Gold",
+    "--mode",
+    "bypassPermissions",
+  );
+  expect(refused.code).toBe(1);
+  expect(refused.err.trim()).toBe("a question is answered by a person; the item waits (Q-1)");
+  expect((await ca.json("status")).data.awaiting).toBe("user");
+  expect(
+    (await ca.run("question", id, "answer", "Q-1", "Gold", "--mode", "sideways")).err,
+  ).toContain("--mode names the permission mode");
+  expect((await ca.run("question", id, "answer", "Q-9", "x")).err.trim()).toBe(
+    "no question Q-9 on this item",
+  );
+  expect((await ca.run("question", id, "answer", "Q-1")).err.trim()).toBe(QUESTION_USAGE);
+  const firstAnswer = await ca.json("question", id, "answer", "Q-1", "Gold");
+  expect(firstAnswer.code).toBe(0);
+  expect(firstAnswer.data).toMatchObject({
+    message: "Q-1 answered by the user; Q-2 still open, the item waits",
+    awaiting: "user",
+    question: { id: "Q-1", answer: "Gold", by: "the user, relayed by the agent" },
+  });
+  const at = (firstAnswer.data.question as { answeredAt: string }).answeredAt;
+  expect(at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  expect(originStatus()).toBe("blocked");
+  expect((await ca.run("question", id, "answer", "Q-1", "Silver")).err.trim()).toBe(
+    `Q-1 was answered by the user, relayed by the agent (${at}) already`,
+  );
+  expect(listDecisions(paths).find((e) => e.kind === "question" && e.id === "Q-1")).toMatchObject({
+    item: id,
+    text: "Gold or silver first?",
+    answer: "Gold",
+    by: "the user, relayed by the agent",
+  });
+  const second = await ca.run("question", id, "answer", "Q-2", "Blue");
+  expect(second.out.trim()).toBe("Q-2 answered by the user; the item goes on");
+  expect((await ca.json("status")).data).toMatchObject({
+    awaiting: null,
+    questions: [
+      { id: "Q-1", open: false },
+      { id: "Q-2", open: false },
+    ],
+  });
+  expect(originStatus()).toBe("in-progress");
+  // Another wait is not the question's to clear; no wait is said as such.
+  await ca.run("question", id, "add", "Third?");
+  await ca.run("await", id, "role");
+  expect((await ca.run("question", id, "answer", "Q-3", "Yes")).out.trim()).toBe(
+    "Q-3 answered by the user; the item keeps waiting for the roles",
+  );
+  expect((await ca.json("status")).data.awaiting).toBe("role");
+  await ca.run("question", id, "add", "Fourth?");
+  await ca.run("resume", id);
+  expect((await ca.run("question", id, "answer", "Q-4", "No")).out.trim()).toBe(
+    "Q-4 answered by the user; the item was not waiting",
+  );
+  expect((await ca.json("status")).data.awaiting).toBeNull();
+  // Under the prompt policy the prompt was the signature: by the user.
+  const proot = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  write(proot, ".crew/policy.json", JSON.stringify({ attendedDecisions: "prompt" }));
+  const cp = io(proot);
+  const pid = (await cp.json("start", "x", "--answers", answers, "--criterion", "a")).data
+    .id as string;
+  await cp.run("question", pid, "add", "Why?");
+  expect((await cp.json("question", pid, "answer", "Q-1", "Because")).data.question).toMatchObject({
+    by: "the user",
+  });
+}, 30_000);
+
+test("SP3-T4 AC-3: open questions come first in crew status, are counted by crew workspace status and listed in the report", async () => {
+  const { env, a, ca } = mailRepos();
+  await ca.run("detect");
+  const paths = repoPaths(a, env);
+  const id = (await ca.json("start", "Loyalty tier", "--answers", answers, "--criterion", "a")).data
+    .id as string;
+  await ca.run("question", id, "add", "Gold or silver first?");
+  await ca.run("question", id, "add", "And the colour?");
+  await ca.run("question", id, "answer", "Q-1", "Gold");
+  const status = await ca.run("status");
+  expect(status.out).toMatch(
+    new RegExp(
+      `^${id} "Loyalty tier"\\n  phase build, route fast, kind feature, priority normal, waiting for the user\\n  question Q-2 open: And the colour\\? \\(posted: cli, mail \\(M-[^)]+\\)\\)\\n  branch `,
+    ),
+  );
+  const json = await ca.json("status");
+  expect(
+    (json.data.questions as { id: string; open: boolean }[]).map((q) => [q.id, q.open]),
+  ).toEqual([
+    ["Q-2", true],
+    ["Q-1", false],
+  ]);
+  expect((await ca.run("workspace", "status")).out).toContain(
+    `\n  storefront (${paths.root}): not live · items 1 · unread 2 · threads 2 open · priorities 0 unconfirmed · questions 1 open · environment none`,
+  );
+  expect((await ca.json("workspace", "status")).data.projects).toMatchObject([{ questions: 1 }]);
+  const report = (await ca.run("evidence", id)).out;
+  expect(report).toContain(
+    "## Questions\n\n| Question | Asked | Text | Channels | Answer | By | At |\n| :- | :- | :- | :- | :- | :- | :- |\n| Q-1 | ",
+  );
+  expect(report).toMatch(
+    /\| Q-1 \| [^|]+ \| Gold or silver first\? \| cli \(posted\), mail M-[^ ]+ \(posted\) \| Gold \| the user, relayed by the agent \| [^|]+ \|\n\| Q-2 \| [^|]+ \| And the colour\? \| cli \(posted\), mail M-[^ ]+ \(posted\) \| - \| - \| - \|\n/,
+  );
 }, 30_000);

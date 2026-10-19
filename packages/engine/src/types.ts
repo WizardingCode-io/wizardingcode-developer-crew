@@ -182,6 +182,28 @@ export interface Triage {
   at: string;
 }
 
+/** Where a doubt was posted (SP7 §10.3, rule 7): the conversation, the ticket, the document's questions file, the project's own mail. */
+export type QuestionChannelKind = "cli" | "mail" | "ticket" | "document";
+
+export interface QuestionChannel {
+  kind: QuestionChannelKind;
+  /** Posted by the engine (cli, document, mail) or marked posted by the skill (the ticket). */
+  posted: boolean;
+  /** The ticket's url or id, the questions file's path, the message id; null for the conversation or until the post. */
+  ref: string | null;
+}
+
+/** A doubt on record (SP7 §10.3): what was asked, where it went, and the person's answer; `Question` is the typed question of classify.ts. */
+export interface QuestionRecord {
+  id: string;
+  text: string;
+  askedAt: string;
+  channels: QuestionChannel[];
+  answer: string | null;
+  by: string | null;
+  answeredAt: string | null;
+}
+
 /** What a reply to a change request may promise about an interface, checked at the branch's tip (SP7 §9). */
 export type ContractKind = "openapi" | "types" | "schema" | "clause";
 export const CONTRACT_KINDS: readonly ContractKind[] = ["openapi", "types", "schema", "clause"];
@@ -606,6 +628,8 @@ export interface WorkItem {
   source?: Source;
   /** The triage of the source's proposed priority (SP7 §10.2); absent without a proposal. */
   triage?: Triage;
+  /** The doubts raised on the item (SP7 §10.3); absent before 0.8.0 and until the first. */
+  questions?: QuestionRecord[];
   phase: Phase;
   awaiting: Awaiting | null;
   /** For `awaiting: "mail"`: the message whose reply the item waits for. */

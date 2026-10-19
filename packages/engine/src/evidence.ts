@@ -6,6 +6,7 @@ import { blockingObjections, objectionStatus } from "./objections.ts";
 import { type CrewPaths, workDir } from "./paths.ts";
 import { decisionCounts } from "./policy.ts";
 import { triageSummary } from "./priorities.ts";
+import { questionChannelsCell } from "./questions.ts";
 import { sourceLine } from "./source.ts";
 import { oneLine } from "./state.ts";
 import { readProtectedJson, writeProtectedJson } from "./store.ts";
@@ -422,6 +423,21 @@ export function renderReport(
         ? `- Debate: opened (${debate.reason}), ${debate.closedAt ? "closed" : "open"}${debate.tokens !== undefined ? `, ${debate.tokens} tokens` : ""}`
         : "- Debate: none",
     );
+  }
+  // The doubts raised on the item (SP7 §10.3): what was asked, where it went, who answered and when.
+  if (work.questions?.length) {
+    lines.push(
+      "",
+      "## Questions",
+      "",
+      "| Question | Asked | Text | Channels | Answer | By | At |",
+      "| :- | :- | :- | :- | :- | :- | :- |",
+    );
+    const cell = (text: string) => oneLine(text).replace(/\|/g, "\\|");
+    for (const q of work.questions)
+      lines.push(
+        `| ${q.id} | ${q.askedAt} | ${cell(q.text)} | ${questionChannelsCell(q)} | ${q.answer === null ? "-" : cell(q.answer)} | ${q.by ?? "-"} | ${q.answeredAt ?? "-"} |`,
+      );
   }
   // The item's mail (SP2c §6): what it sent and what reached it, as the engine last recorded each.
   if (mail?.tampered) {

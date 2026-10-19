@@ -10,6 +10,7 @@ import { MAX_STOP_BLOCKS, onStop } from "../src/hooks/stop.ts";
 import { acceptMail, mailbox, mailContext, reply, send } from "../src/mail.ts";
 import { loadPolicy } from "../src/policy.ts";
 import { saveProfile } from "../src/profile.ts";
+import { addQuestion } from "../src/questions.ts";
 import { loadState } from "../src/state.ts";
 import type { WorkItem } from "../src/types.ts";
 import { addCriterion, addSkip, createWork, loadWork, saveWork } from "../src/work.ts";
@@ -493,3 +494,22 @@ test("SP2c AC-2: a mailbox the hook cannot use never switches the Stop rule off"
   rmdirSync(join(dir, ".lock"));
   // Four Stops, each waiting the lock's two seconds.
 }, 15_000);
+
+test("SP3-T4 AC-1: a question's wait is the user wait: the turn ends once with the same notice and pause as crew await <id> user, and blocks again", () => {
+  const { root, ctx } = session();
+  const work = createWork(ctx.paths, "feature");
+  write(root, "src/a.ts", "changed");
+  addQuestion(work, "Which tier?", [{ kind: "cli", posted: true, ref: null }]);
+  work.awaiting = "user";
+  saveWork(ctx.paths, work);
+  const response = onStop(ctx);
+  expect(response.decision).toBeUndefined();
+  expect(String(response.systemMessage)).toBe(
+    `Crew: work ${work.id} ends this turn waiting for the user and is not proven (gates have not run). The next turn is held to the Stop rule again.`,
+  );
+  const saved = loadWork(ctx.paths, work.id).work;
+  expect(saved?.awaiting).toBeNull();
+  expect(saved?.pauses?.[0]).toMatchObject({ kind: "user", reason: "gates have not run" });
+  expect(saved?.questions?.[0]).toMatchObject({ id: "Q-1", answer: null });
+  expect(onStop(ctx).decision).toBe("block");
+});

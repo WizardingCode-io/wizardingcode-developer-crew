@@ -124,6 +124,20 @@ import {
 } from "./policy.ts";
 import { acceptPriorities, prioritiesState, triagePriority } from "./priorities.ts";
 import { ensureProfile, loadProfile, refreshProfile, saveProfile } from "./profile.ts";
+import {
+  addQuestion,
+  answerQuestion,
+  channelList,
+  channelsText,
+  isQuestionChannelKind,
+  markPosted,
+  openQuestions,
+  postDocumentQuestion,
+  questionChannels,
+  questionJson,
+  questionLine,
+  questionsSorted,
+} from "./questions.ts";
 import { parseSource, sourceLine } from "./source.ts";
 import { ensureCrewDir, oneLine, workingRoles } from "./state.ts";
 import { integrityOf, recordIntegrity, writeProtectedText } from "./store.ts";
@@ -200,6 +214,7 @@ import {
   removeCriterion,
   saveWork,
   validatorPreconditions,
+  waitingPhrase,
   waitingText,
 } from "./work.ts";
 import { environmentState, projectThreads, workspaceStatus } from "./workspace.ts";
@@ -241,6 +256,7 @@ const KNOWN_FLAGS: Record<string, readonly string[]> = {
   env: [],
   task: ["criteria", "text", "scope", "force", "mode", "print"],
   workspace: ["file"],
+  question: ["channel", "ref", "mode"],
   mail: [
     "to",
     "type",
@@ -804,6 +820,25 @@ function startPriority(
   if (origin) return decidedPriority(origin);
   if (answers.priority !== undefined) return PRIORITY_LEVELS[answers.priority] ?? "normal";
   return "normal";
+}
+
+/**
+ * The request this item answers follows its waits (SP7 §9): blocked while the turn ends on one,
+ * in progress again at the resume; a message past that point (done) is left as it is. Used by
+ * `crew await`, `crew resume` and the questions record (SP3 Task 4).
+ */
+function moveOriginMail(
+  env: Env,
+  work: WorkItem,
+  to: "blocked" | "in-progress",
+  notes: string[],
+): void {
+  const originId = work.origin?.mail;
+  if (!originId) return;
+  const current = ownInbox(env.mail).messages.find((m) => m.id === originId);
+  if (!current || mailStatus(current) === to) return;
+  const moved = moveMail(env.mail, originId, to, {}, notes);
+  if ("refused" in moved) notes.push(moved.refused);
 }
 
 /**
@@ -1561,17 +1596,9 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       const opened = openForChange(env, args[0]);
       if (isOutcome(opened)) return opened;
       const usage = "usage: crew await <id> user | role | mail <message id>";
-      // The request this item answers follows its waits (SP7 §9): blocked while the turn ends on
-      // one, in progress again at the resume; a message past that point (done) is left as it is.
       const originNotes: string[] = [];
-      const moveOrigin = (to: "blocked" | "in-progress") => {
-        const originId = opened.work.origin?.mail;
-        if (!originId) return;
-        const current = ownInbox(env.mail).messages.find((m) => m.id === originId);
-        if (!current || mailStatus(current) === to) return;
-        const moved = moveMail(env.mail, originId, to, {}, originNotes);
-        if ("refused" in moved) originNotes.push(moved.refused);
-      };
+      const moveOrigin = (to: "blocked" | "in-progress") =>
+        moveOriginMail(env, opened.work, to, originNotes);
       const withNotes = (text: string) =>
         originNotes.length ? `${text}\n${originNotes.join("\n")}` : text;
       if (command === "resume") {
@@ -1597,6 +1624,139 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         awaiting: kind,
         awaitingMessage: opened.work.awaitingMessage ?? null,
       });
+    }
+    case "question": {
+      // A doubt on record (SP7 §10.3, rule 7): where it was posted, what the skill still posts, the
+      // wait it sets, and the person's answer that clears it.
+      const usage =
+        'usage: crew question <id> add "<text>" [--mode <mode>] | posted Q-n --channel cli|ticket|document|mail --ref <ref> | answer Q-n "<answer>" [--mode <mode>] | list';
+      const opened = openForChange(env, args[0]);
+      if (isOutcome(opened)) return opened;
+      const work = opened.work;
+      const verb = args[1];
+      if (verb === "list") {
+        const sorted = questionsSorted(work);
+        return ok(sorted.length ? sorted.map(questionLine).join("\n") : "no questions", {
+          questions: sorted.map(questionJson),
+        });
+      }
+      if (verb === "add") {
+        const text = args.slice(2).join(" ").trim();
+        if (!text) return refuse(usage);
+        // Without --mode a person is present (the hook demands the flag where nobody watches).
+        const decided = decisionFlag(parsed, env.policy);
+        if (isOutcome(decided)) return decided;
+        const notes: string[] = [];
+        const question = addQuestion(
+          work,
+          text,
+          questionChannels(work, {
+            personPresent: decided.by === "user",
+            workspace: env.mail.self.workspace,
+          }),
+        );
+        // The channels the engine posts itself: the questions file beside a document, the notice
+        // to the project's own box; a refusal is a note and the channel stays the skill's to post.
+        for (const channel of question.channels) {
+          if (channel.kind === "document" && work.source?.documentPath) {
+            const written = postDocumentQuestion(
+              env.paths.root,
+              work.source.documentPath,
+              question,
+            );
+            if ("refused" in written) notes.push(`document not posted: ${written.refused}`);
+            else {
+              channel.posted = true;
+              channel.ref = written.file;
+            }
+          } else if (channel.kind === "mail") {
+            const sent = send(
+              env.mail,
+              {
+                to: ".",
+                type: "notice",
+                subject: `${question.id} of ${work.id}`,
+                text: `${question.id} of ${work.id}: ${text}`,
+                item: work.id,
+              },
+              work,
+            );
+            if ("refused" in sent) notes.push(`mail not posted: ${sent.refused}`);
+            else {
+              channel.posted = true;
+              channel.ref = sent.message.id;
+            }
+          }
+        }
+        // The wait is the user wait crew await sets: a doubt is a person's to answer, whatever
+        // the item waited for before.
+        const was = waitingPhrase(work);
+        work.awaiting = "user";
+        delete work.awaitingMessage;
+        saveWork(env.paths, work);
+        moveOriginMail(env, work, "blocked", notes);
+        const toPost = channelList(question.channels, false);
+        const line = `${question.id} recorded; waiting for the user${was && was !== "waiting for the user" ? ` (was ${was})` : ""}; posted: ${channelList(question.channels, true) || "none"}${toPost ? `; to post: ${toPost}: crew question ${work.id} posted ${question.id} --channel <channel> --ref <ref>` : ""}`;
+        return ok(notes.length ? `${line}\n${notes.join("\n")}` : line, {
+          question: questionJson(question),
+          awaiting: "user",
+          notes,
+        });
+      }
+      if (verb === "posted") {
+        const id = args[2];
+        const kind = parsed.flags.channel;
+        const ref = parsed.flags.ref;
+        if (!id || !isQuestionChannelKind(kind) || typeof ref !== "string" || !ref.trim())
+          return refuse(usage);
+        const marked = markPosted(work, id, kind, ref.trim());
+        if ("refused" in marked) return refuse(marked.refused);
+        saveWork(env.paths, work);
+        return ok(`${id} posted to ${kind} (${ref.trim()})`, { question: questionJson(marked) });
+      }
+      if (verb === "answer") {
+        const id = args[2];
+        const text = args.slice(3).join(" ");
+        if (!id || !text.trim()) return refuse(usage);
+        // A person's decision (SP7 §10.3): with nobody present the doubt keeps waiting.
+        const decided = decisionFlag(parsed, env.policy);
+        if (isOutcome(decided)) return decided;
+        if (decided.by !== "user")
+          return refuse(`a question is answered by a person; the item waits (${id})`);
+        const by = whoDecided(decided);
+        const answered = answerQuestion(work, id, text, by);
+        if ("refused" in answered) return refuse(answered.refused);
+        appendDecision(env.paths, {
+          at: answered.answeredAt ?? nowIso(),
+          item: work.id,
+          kind: "question",
+          id,
+          text: answered.text,
+          answer: answered.answer ?? "",
+          by,
+        });
+        // The user wait clears when no question is open; another wait is not the question's to clear.
+        const notes: string[] = [];
+        const open = openQuestions(work);
+        let tail: string;
+        let resumed = false;
+        if (open.length) tail = `${open.map((q) => q.id).join(", ")} still open, the item waits`;
+        else if (work.awaiting === "user") {
+          work.awaiting = null;
+          delete work.awaitingMessage;
+          resumed = true;
+          tail = "the item goes on";
+        } else if (work.awaiting) tail = `the item keeps ${waitingPhrase(work)}`;
+        else tail = "the item was not waiting";
+        saveWork(env.paths, work);
+        if (resumed) moveOriginMail(env, work, "in-progress", notes);
+        const line = `${id} answered by the user; ${tail}`;
+        return ok(notes.length ? `${line}\n${notes.join("\n")}` : line, {
+          question: questionJson(answered),
+          awaiting: work.awaiting,
+        });
+      }
+      return refuse(usage);
     }
     case "tdd": {
       const [step, id, criterion] = args;
@@ -2380,7 +2540,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       if ("none" in status) return ok(status.none, { workspace: null, projects: [] });
       const lines = status.projects.map(
         (p) =>
-          `  ${p.name} (${p.root}): ${p.gone ? "gone" : p.live ? "live" : "not live"} · items ${p.items} · unread ${p.unread} · threads ${p.threads} open · priorities ${p.priorities} unconfirmed · environment ${p.environment}`,
+          `  ${p.name} (${p.root}): ${p.gone ? "gone" : p.live ? "live" : "not live"} · items ${p.items} · unread ${p.unread} · threads ${p.threads} open · priorities ${p.priorities} unconfirmed · questions ${p.questions} open · environment ${p.environment}`,
       );
       return ok(
         `Workspace ${status.workspace}: ${status.projects.length} project${status.projects.length === 1 ? "" : "s"}\n${lines.join("\n")}`,
@@ -2480,6 +2640,12 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           : null,
       ].filter((l): l is string => l !== null);
       if (work.source) extra.unshift(`  source ${sourceLine(work.source)}`);
+      // The open questions first (SP7 §10.3): a doubt a person has to answer comes before everything.
+      extra.unshift(
+        ...openQuestions(work).map(
+          (q) => `  question ${q.id} open: ${oneLine(q.text)} (${channelsText(q)})`,
+        ),
+      );
       const text = `${work.id} "${work.title}"\n  phase ${work.phase}, route ${work.route}, kind ${kindOfItem(work)}, ${triageText(work, true)}${waitingText(work)}\n${extra.length ? `${extra.join("\n")}\n` : ""}${gateSummary(work, result.verdict, result.unproven, result.evidence.runs)}`;
       // The mail synced and a task's reply that landed taken into the lead's record (SP2c §7): a
       // failure in either (a held lock, a folder that cannot be written) is one line under the
@@ -2514,6 +2680,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         priority: work.priority ?? "normal",
         source: work.source ?? null,
         triage: work.triage ?? null,
+        questions: questionsSorted(work).map(questionJson),
         awaiting: work.awaiting,
         awaitingMessage: work.awaitingMessage ?? null,
         mail: { unread: inbox.unread, answered: inbox.answered, waiting: inbox.waiting },

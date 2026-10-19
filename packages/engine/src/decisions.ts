@@ -14,7 +14,8 @@ export interface DecisionEntry {
     | "validation"
     | "continue"
     | "priorities"
-    | "triage";
+    | "triage"
+    | "question";
   id?: string;
   text: string;
   answer?: string;

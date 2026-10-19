@@ -48,14 +48,20 @@ export function register(on) {
   on('command.run', { command: 'crew' }, async ($, e) => {
     const words = (e.args || '').trim().split(/\s+/).filter(Boolean)
     const verb = words[0] || 'status'
-    if (!['status', 'panel', 'mail', 'todo', 'team', 'workspace', 'thread', 'brief', 'mode'].includes(verb)) {
-      return { text: 'Crew: unknown verb; use /crew [status|panel|mail|todo|team|workspace|thread <id>|brief T-n|mode <partner|guide|pilot>]' }
+    if (!['status', 'panel', 'mail', 'todo', 'team', 'workspace', 'thread', 'brief', 'questions', 'mode'].includes(verb)) {
+      return { text: 'Crew: unknown verb; use /crew [status|panel|mail|todo|team|workspace|thread <id>|brief T-n|questions|mode <partner|guide|pilot>]' }
     }
     // The workspace, a thread and a todo's brief come from the engine's own commands (SP7b Task 6).
     if (verb === 'workspace') return { text: crewText(await runCrew($, ['workspace', 'status'])) }
     if (verb === 'thread') {
       if (!words[1]) return { text: 'Crew: /crew thread needs a message id' }
       return { text: crewText(await runCrew($, ['mail', 'thread', words[1]])) }
+    }
+    // The item's questions, open first, from the engine's own command (SP3 Task 4)
+    if (verb === 'questions') {
+      await refresh($)
+      if (!hasWork()) return { text: 'Crew: no active work item. A change starts with the crew skill.' }
+      return { text: crewText(await runCrew($, ['question', status.active, 'list'])) }
     }
     if (verb === 'brief') {
       if (!words[1]) return { text: 'Crew: /crew brief needs a task (T-n)' }
@@ -165,6 +171,12 @@ function paneTree($, e) {
     lines.push(Text({ dimColor: true, children: [phasesText()] }))
     // The checkout's branch, from an engine that prints it (0.6.0)
     if (status.branch) lines.push(Text({ dimColor: true, children: ['Branch: ' + status.branch] }))
+    // The questions first, open before answered (SP3 Task 4): a doubt a person has to answer; an
+    // engine without the field draws no block
+    if (Array.isArray(status.questions) && status.questions.length) {
+      lines.push(Text({ dimColor: true, children: ['Questions'] }))
+      for (const q of status.questions) lines.push(Text({ children: [questionRow(q)] }))
+    }
     lines.push(Text({ children: [' '] }))
     for (const c of status.criteria || []) {
       lines.push(Text({ children: [c.id + ' ' + c.kind + ' · ' + c.tdd + ' · ' + c.text] }))
@@ -227,6 +239,16 @@ function paneTree($, e) {
     lines.push(Text({ bold: true, children: [verdictLine()] }))
   }
   return Box({ flexDirection: 'column', children: [...lines, Text({ children: [' '] }), buttons] })
+}
+
+// "? Q-2 · And the colour? · to post: ticket (86c1)" or "✓ Q-1 · Gold or silver first? → Gold"
+function questionRow(q) {
+  const list = (posted) => (q.channels || []).filter((c) => !!c.posted === posted).map((c) => (c.ref ? c.kind + ' (' + c.ref + ')' : c.kind)).join(', ')
+  if (q.open) {
+    const toPost = list(false)
+    return '? ' + q.id + ' · ' + q.text + ' · ' + (toPost ? 'to post: ' + toPost : 'posted: ' + (list(true) || 'none'))
+  }
+  return '✓ ' + q.id + ' · ' + q.text + ' → ' + q.answer
 }
 
 // "T-2 · AC-2 · crew/<short>/T-2 · <child> · proven · merged abc1234"; a task with no reply yet has no child

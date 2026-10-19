@@ -15,6 +15,7 @@ import { mailStatus, threadOf } from "./mail-status.ts";
 import { isAlive } from "./open.ts";
 import { type CrewPaths, canonical, pathsFor, userDirOf } from "./paths.ts";
 import { loadPolicy } from "./policy.ts";
+import { openQuestions } from "./questions.ts";
 import type { Message, Policy } from "./types.ts";
 import { openItems } from "./work.ts";
 
@@ -32,6 +33,8 @@ export interface ProjectStatus {
   unread: number;
   threads: number;
   priorities: number;
+  /** The open questions of the project's open items (SP7 §10.3): doubts a person has to answer. */
+  questions: number;
   environment: EnvironmentState;
 }
 
@@ -60,10 +63,19 @@ function isOpen(m: Message): boolean {
   return !CLOSED.has(mailStatus(m));
 }
 
-/** The messages whose priority was proposed and never confirmed or lowered (SP7 §9). */
+/**
+ * The requests whose priority was proposed and never confirmed or lowered (SP7 §9): a change
+ * request or a blocker, the two `crew mail accept` decides; a question is done by its reply and a
+ * notice when read, so neither has a decision to wait for (found at SP3 Task 4: a doubt's notice
+ * to the project's own box counted as unconfirmed forever).
+ */
 function unconfirmedPriorities(messages: readonly Message[]): number {
-  return messages.filter((m) => m.priority !== undefined && m.priorityDecision === undefined)
-    .length;
+  return messages.filter(
+    (m) =>
+      (m.type === "change-request" || m.type === "blocker") &&
+      m.priority !== undefined &&
+      m.priorityDecision === undefined,
+  ).length;
 }
 
 export function environmentState(paths: CrewPaths): EnvironmentState {
@@ -121,15 +133,18 @@ export function workspaceStatus(
         unread: 0,
         threads: 0,
         priorities: 0,
+        questions: 0,
       };
       if (!existsSync(join(root, ".git"))) return { ...empty, gone: true, environment: "none" };
       const projectPaths = pathsFor(root, userDir);
       const ctx = mailContext(projectPaths, loadPolicy(projectPaths).policy, env);
       const held = heldMessages(ctx);
+      const items = openItems(projectPaths);
       return {
         ...empty,
         gone: false,
-        items: openItems(projectPaths).length,
+        items: items.length,
+        questions: items.reduce((n, w) => n + openQuestions(w).length, 0),
         unread: inboxSummary(ctx).unread,
         threads: projectThreads(ctx).filter((t) => t.open).length,
         priorities: unconfirmedPriorities(held),

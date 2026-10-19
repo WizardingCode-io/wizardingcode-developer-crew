@@ -19,12 +19,14 @@ import {
 import { addObjection, bindObjection, waiveObjection } from "../src/objections.ts";
 import { workDir } from "../src/paths.ts";
 import { DEFAULT_POLICY } from "../src/policy.ts";
+import { addQuestion, answerQuestion } from "../src/questions.ts";
 import type {
   Evidence,
   GateRun,
   JudgementRecord,
   Message,
   ObjectionLedger,
+  QuestionRecord,
   RunRecord,
   WorkItem,
 } from "../src/types.ts";
@@ -798,4 +800,24 @@ test("SP3-T2 AC-3: the report names the kind and its derivation; a record withou
   expect(renderReport(older, emptyEvidence(), DEFAULT_POLICY)).toContain(
     "- Type: feature. Kind: feature. Route: standard",
   );
+});
+
+test("SP3-T4 AC-3: the report's Questions table names each channel's state, the answer with who and when, escapes pipes, and is absent without questions", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const work = createWork(paths, "a doubt");
+  expect(renderReport(work, emptyEvidence(), DEFAULT_POLICY)).not.toContain("## Questions");
+  const q1 = addQuestion(work, "Gold | silver?", [
+    { kind: "cli", posted: true, ref: null },
+    { kind: "ticket", posted: false, ref: "86c1" },
+    { kind: "document", posted: true, ref: "docs/x.md.questions.md" },
+    { kind: "mail", posted: true, ref: "M-1" },
+  ]);
+  const q2 = addQuestion(work, "Colour?", []);
+  const answered = answerQuestion(work, "Q-1", "Gold | nothing", "the user") as QuestionRecord;
+  const report = renderReport(work, emptyEvidence(), DEFAULT_POLICY);
+  expect(report).toContain(
+    `## Questions\n\n| Question | Asked | Text | Channels | Answer | By | At |\n| :- | :- | :- | :- | :- | :- | :- |\n| Q-1 | ${q1.askedAt} | Gold \\| silver? | cli (posted), ticket 86c1 (to post), document docs/x.md.questions.md (posted), mail M-1 (posted) | Gold \\| nothing | the user | ${answered.answeredAt} |\n| Q-2 | ${q2.askedAt} | Colour? | none | - | - | - |\n`,
+  );
+  // The section sits after the gap round and before the mail.
+  expect(report.indexOf("## Questions")).toBeGreaterThan(report.indexOf("## Gap round"));
 });

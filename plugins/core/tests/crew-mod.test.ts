@@ -120,7 +120,7 @@ test("/crew with an unknown verb says how to use it", async ($, on) => {
   stubs(on, () => ({ exitCode: 0, stdout: JSON.stringify(PROVEN), stderr: "" }));
   await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
   const answer = await $.command.run({ command: "crew", args: "frobnicate" });
-  expect(answer.text).toBe("Crew: unknown verb; use /crew [status|panel|mail|todo|team|workspace|thread <id>|brief T-n|mode <partner|guide|pilot>]");
+  expect(answer.text).toBe("Crew: unknown verb; use /crew [status|panel|mail|todo|team|workspace|thread <id>|brief T-n|questions|mode <partner|guide|pilot>]");
 });
 
 // What Claude Code passes to a ui.render hook for the strip above the prompt
@@ -464,7 +464,7 @@ test("SP2c: /crew mail prints the inbox; an unknown verb names it", async ($, on
   const answer = await $.command.run({ command: "crew", args: "mail" });
   expect(answer.text).toBe(`Crew: ${INBOX.message}`);
   const unknown = await $.command.run({ command: "crew", args: "fly" });
-  expect(unknown.text).toBe("Crew: unknown verb; use /crew [status|panel|mail|todo|team|workspace|thread <id>|brief T-n|mode <partner|guide|pilot>]");
+  expect(unknown.text).toBe("Crew: unknown verb; use /crew [status|panel|mail|todo|team|workspace|thread <id>|brief T-n|questions|mode <partner|guide|pilot>]");
 });
 
 test("SP2c (advisory of 2026-10-15-001): a proven row with no findings reads (0 findings)", async ($, on) => {
@@ -759,6 +759,61 @@ test("SP7b-T6 AC-3: /crew workspace, /crew thread <id> and /crew brief T-n run t
   active = NONE;
   expect((await $.command.run({ command: "crew", args: "brief T-2" })).text).toBe("Crew: no active work item. A change starts with the crew skill.");
   expect((await $.command.run({ command: "crew", args: "fly" })).text).toBe(
-    "Crew: unknown verb; use /crew [status|panel|mail|todo|team|workspace|thread <id>|brief T-n|mode <partner|guide|pilot>]",
+    "Crew: unknown verb; use /crew [status|panel|mail|todo|team|workspace|thread <id>|brief T-n|questions|mode <partner|guide|pilot>]",
   );
+});
+
+test("SP3-T4 AC-3: the panel shows the questions first, open before answered, right after the branch line; /crew questions prints the engine's list; an engine without the field draws no block", async ($, on) => {
+  const argv: string[][] = [];
+  const LIST = "Q-2 · open · And the colour? · posted: cli; to post: ticket (86c1)\nQ-1 · answered by the user (2026-10-19T09:30:00.000Z) · Gold or silver first? → Gold";
+  let active: Record<string, unknown> = {
+    ...TEAMED,
+    questions: [
+      { id: "Q-2", text: "And the colour?", askedAt: "2026-10-19T10:00:00.000Z", open: true, channels: [{ kind: "cli", posted: true, ref: null }, { kind: "ticket", posted: false, ref: "86c1" }], answer: null, by: null, answeredAt: null },
+      { id: "Q-1", text: "Gold or silver first?", askedAt: "2026-10-19T09:00:00.000Z", open: false, channels: [{ kind: "cli", posted: true, ref: null }], answer: "Gold", by: "the user", answeredAt: "2026-10-19T09:30:00.000Z" },
+    ],
+  };
+  on("session.cwd", () => ({ value: "/work" }));
+  on("process.run", ($, e) => {
+    argv.push(e.argv);
+    const sub = e.argv[2];
+    const answer =
+      sub === "question"
+        ? { ok: true, message: LIST, questions: [] }
+        : sub === "workspace"
+          ? WORKSPACE
+          : sub === "mail"
+            ? INBOX
+            : active;
+    return { value: { exitCode: 0, stdout: JSON.stringify(answer), stderr: "" } };
+  });
+  on("command.register", () => ({ value: undefined }));
+  on("session.start", () => ({ cwd: "/work" }));
+  on("ui.open", () => ({ value: { isPlaced: true } }));
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  await $.command.run({ command: "crew", args: "panel" });
+  const ui = await $.ui.mount({ ...PANE, surface: "terminal" });
+  const texts = (await ui.findAll({ type: "Text" })).map((t) => t.text);
+  const branch = texts.indexOf("Branch: main");
+  expect(branch).toBeGreaterThan(0);
+  expect(texts.slice(branch + 1, branch + 6)).toEqual([
+    "Questions",
+    "? Q-2 · And the colour? · to post: ticket (86c1)",
+    "✓ Q-1 · Gold or silver first? → Gold",
+    " ",
+    "AC-1 behavior · red then green · The total subtracts the discount.",
+  ]);
+  await ui.unmount();
+  const list = await $.command.run({ command: "crew", args: "questions" });
+  expect(list.text).toBe(`Crew: ${LIST}`);
+  expect((argv.at(-1) ?? []).slice(2)).toEqual(["question", "2026-10-15-002-delete-accounts", "list", "--json"]);
+  active = { ...TEAMED };
+  await $.command.run({ command: "crew", args: "panel" });
+  const plain = await $.ui.mount({ ...PANE, surface: "terminal" });
+  const texts2 = (await plain.findAll({ type: "Text" })).map((t) => t.text);
+  expect(texts2.includes("Questions")).toBe(false);
+  expect(texts2[texts2.indexOf("Branch: main") + 1]).toBe(" ");
+  await plain.unmount();
+  active = NONE;
+  expect((await $.command.run({ command: "crew", args: "questions" })).text).toBe("Crew: no active work item. A change starts with the crew skill.");
 });

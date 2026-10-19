@@ -18,7 +18,10 @@ const KEYS = new Set([
  * a relative path with no `..` segment, naming a regular file whose real path (symlinks resolved)
  * lies under the root's real path, so a link to a file outside the root is refused.
  */
-function documentFile(root: string, documentPath: string): { file: string } | { refused: string } {
+export function confinedDocument(
+  root: string,
+  documentPath: string,
+): { file: string } | { refused: string } {
   const bad = `source: documentPath ${documentPath}`;
   if (
     !documentPath.trim() ||
@@ -73,7 +76,7 @@ export function parseSource(raw: string, root: string): Source | { refused: stri
     const documentPath = input.documentPath;
     if (typeof documentPath !== "string")
       return { refused: "source: a document needs documentPath" };
-    const file = documentFile(root, documentPath);
+    const file = confinedDocument(root, documentPath);
     if ("refused" in file) return file;
     if (!(readText(file.file) ?? "").trim())
       return { refused: `source: documentPath ${documentPath} is empty` };
@@ -105,7 +108,7 @@ export function sourceText(
   input: string,
 ): string | { refused: string } {
   if (source.channel !== "document" || !source.documentPath) return input;
-  const file = documentFile(root, source.documentPath);
+  const file = confinedDocument(root, source.documentPath);
   if ("refused" in file) return file;
   return readText(file.file) ?? "";
 }

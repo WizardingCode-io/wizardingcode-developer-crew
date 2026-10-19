@@ -717,3 +717,18 @@ Verdicts agree at every effort. Upheld findings: `high` reproduced Task 6's and 
 - Expected: taken in the next hardening item (SP8's first task), red first.
 - Evidence: the item's `evidence.json` (`judgement`), `review/ruling.json`.
 - Outcome: open.
+
+### 85. A question's or a notice's priority counted as unconfirmed forever in `crew workspace status`
+
+- Date: 2026-10-19. Project: this repository. Category: `engine`. Severity: medium.
+- What happened: the AC-3 test of SP3 Task 4 (`2026-10-19-004`) pinned the workspace line of a project with two doubts recorded and found `priorities 2 unconfirmed`: the two notices a doubt sends to the project's own box carried a priority (`send` sets `normal` on every message) and no decision, and `unconfirmedPriorities` (SP7b Task 6) counted every message with a priority and no `priorityDecision`. A question is done by its reply and a notice when read: `crew mail accept` refuses both, so neither ever gets a decision, and every question or notice a project ever sent or received counted as unconfirmed for as long as it was held.
+- Expected: the count over the requests `crew mail accept` decides, change requests and blockers.
+- Outcome: fixed in Task 4 (`workspace.ts`, the filter on the type) with an assertion in `workspace.test.ts` (a read notice counts for nothing); the SP7b-T6 pins unchanged (the change request still counts until accepted).
+
+### 86. Debt of SP3 Task 4 (`2026-10-19-004`): the judge's advisories, one of them a hook gap
+
+- Date: 2026-10-19. Project: this repository. Category: `docs`. Severity: medium (the first item), low (the rest).
+- What happened: the questions record went through one judgement round (both gates proven; six code-quality advisories and three test-quality advisories, no defect) under the user's bounded-round rule. First, the judge's own observation: the hook's new rules read the verb after the id literally (`third === "answer"`, `third === "add"`), while the profile and policy rules guard a deciding word the hook cannot read (`unreadable(second)`), so `crew question <id> $VERB …` with the variable expanding to `answer` is neither asked nor denied for `--mode`, and the engine records the answer as the user's where nobody watches; the workspace, objection and task rules take the same risk through `positional.includes`; one clause, `(verb === "question" && unreadable(third))` in the user-only test (and the same for the presence test), closes it. Then: the `question` case holds four verbs and `add` also posts the channels, replaces the wait and moves the origin (a `postQuestionChannels` helper); `answered.answeredAt ?? nowIso()` and `answered.answer ?? ""` are unreachable defaults that an answered variant of the record's type would remove; the output line nests three conditionals and repeats `channelList(…, true) || "none"` from `channelsText` (a helper taking the hint); the report's local `cell` repeats the mail table's pipe escape plus `oneLine` (one module-level helper); `userOnlyCommand` now answers for a command that is not user-only without its doc saying so, and `presence?` is optional where its one caller always passes it (`attendedCommand`, a required field). Tests: after `await <id> role` the answer test never reads the origin's status (one `expect(originStatus()).toBe("blocked")`); the gone root's `questions: 0` holds whether or not a gone root's questions were counted (a question on the parent's open item would make it a proof); the Stop hook test sets the user wait by hand after `addQuestion` (the CLI test proves `add` sets it).
+- Expected: taken in the next hardening item (SP8's first task), the hook gap first, red first.
+- Evidence: the item's `evidence.json` (`judgement`), `review/ruling.json`.
+- Outcome: open.

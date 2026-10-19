@@ -657,10 +657,15 @@ const UNREADABLE_VERB = /[$\x60*?[{]/;
  * where the policy relays the rest, since the policy that governs signatures is itself signed by a
  * prompt (ADR 0005). A verb the hook cannot read may be any of these, so it is one.
  */
-function userOnlyCommand(args: string[]): { parsed: Parsed; policyCommand: boolean } | null {
+function userOnlyCommand(
+  args: string[],
+): { parsed: Parsed; policyCommand: boolean; presence: boolean } | null {
   const parsed = parse(args);
   if (parsed.flags.help === true || parsed.positional.includes("-h")) return null;
-  const [verb, second] = parsed.positional;
+  const [verb, second, third] = parsed.positional;
+  // A doubt's record says whether a person was there to answer (SP3 Task 4): never asked, but
+  // where nobody watches the command must say so with --mode, as a decision must.
+  const presence = verb === "question" && third === "add";
   const unreadable = (word: string | undefined) => word !== undefined && UNREADABLE_VERB.test(word);
   const userOnly =
     unreadable(verb) ||
@@ -676,9 +681,12 @@ function userOnlyCommand(args: string[]): { parsed: Parsed; policyCommand: boole
     (verb === "policy" && (second === "accept" || second === "set")) ||
     // The business priorities are signed by the user once (SP7 §10.2).
     (verb === "workspace" && second === "priorities" && parsed.positional.includes("accept")) ||
+    // A doubt is answered by a person (SP7 §10.3, rule 7).
+    (verb === "question" && third === "answer") ||
     (verb === "task" && parsed.positional.includes("merge") && parsed.flags.force === true);
-  if (!userOnly) return null;
+  if (!userOnly && !presence) return null;
   return {
+    presence,
     parsed,
     policyCommand: verb === "policy" || (verb === "accept" && second === "policy"),
   };
@@ -929,12 +937,12 @@ function unwatched(headless: boolean, permissionMode: string | undefined): strin
  * for them to sign (0.3.0).
  */
 function userOnlyDecision(
-  command: { parsed: Parsed; policyCommand: boolean },
+  command: { parsed: Parsed; policyCommand: boolean; presence?: boolean },
   permissionMode: string | undefined,
   headless: boolean,
   policy: Policy,
 ): Decision | null {
-  const { parsed, policyCommand } = command;
+  const { parsed, policyCommand, presence } = command;
   const flagged = typeof parsed.flags.mode === "string" ? parsed.flags.mode : undefined;
   const mode = permissionMode ?? "default";
   const where = unwatched(headless, permissionMode);
@@ -943,7 +951,9 @@ function userOnlyDecision(
     if (flagged === undefined) {
       return [
         "deny",
-        `Crew: no person is watching this session (${where}) and this command records a decision that only the user can take. Run it again with --mode ${mode}, so the record says the agent decided and in which mode.`,
+        presence
+          ? `Crew: no person is watching this session (${where}) and this command records whether a person can answer. Run it again with --mode ${mode}, so the record says nobody was present.`
+          : `Crew: no person is watching this session (${where}) and this command records a decision that only the user can take. Run it again with --mode ${mode}, so the record says the agent decided and in which mode.`,
       ];
     }
     return [
@@ -957,6 +967,8 @@ function userOnlyDecision(
       `Crew: a person is present (${mode} mode); run the command without --mode so they are asked`,
     ];
   }
+  // A presence command decides nothing: with a person there it runs, and the record says so.
+  if (presence) return null;
   if (typeof parsed.flags.validator === "string") return null;
   if (policy.attendedDecisions === "relay" && !policyCommand) return null;
   return ["ask", "Crew: this command records a decision that only the user can take"];
