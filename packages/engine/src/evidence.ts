@@ -200,8 +200,25 @@ export interface VerdictInput {
   ledger?: ObjectionLedger;
   /** The judgement gates planned for the item; each is a reason until a current ruling says proven (SP2 §10). */
   expectedJudgement?: PlannedJudgement[];
-  /** An audit's records as they stand (SP7 §7.5): the run and the report written, read by the caller. */
-  audit?: { run: boolean; report: boolean };
+  /** An audit's records as they stand (SP7 §7.5, SP8 Task 5): the run and whether it is at HEAD, the report and whether it is current against its inputs. */
+  audit?: { run: boolean; runAtHead: boolean; report: boolean; reportCurrent: boolean };
+}
+
+/** An audit as the report shows it (SP8 Task 5): the run's summary, the findings' counts, the report's files, the signature. */
+export interface AuditReportView {
+  runSummary: string | null;
+  head: string | null;
+  runAtHead: boolean;
+  findings: Record<string, number>;
+  report: {
+    md: string;
+    html: string;
+    pdf: string | null;
+    pdfReason: string | null;
+    verdict: string;
+  } | null;
+  reportCurrent: boolean;
+  signed: { at: string; by: string; relayed: boolean } | null;
 }
 
 export function computeVerdict(input: VerdictInput): {
@@ -214,9 +231,20 @@ export function computeVerdict(input: VerdictInput): {
   // An audit is proven by its three records (SP7 §7.5, SP8): the run, the report and a person's
   // signature; no criterion, no test-first record and no gate run have a say.
   if (kindOfItem(work) === "audit") {
-    const audit = input.audit ?? { run: false, report: false };
+    const audit = input.audit ?? {
+      run: false,
+      runAtHead: false,
+      report: false,
+      reportCurrent: false,
+    };
     if (!audit.run) unproven.push("audit run not recorded (crew audit <id> run)");
+    else if (!audit.runAtHead)
+      unproven.push("the audit run predates HEAD: run again (crew audit <id> run)");
     if (!audit.report) unproven.push("audit report not rendered (crew audit <id> report)");
+    else if (!audit.reportCurrent)
+      unproven.push(
+        "the audit report is stale: its inputs changed after it (crew audit <id> report)",
+      );
     if (!work.approvals.some((a) => a.what === "audit"))
       unproven.push("the audit's signature (crew approve <id> audit)");
     return { verdict: unproven.length === 0 ? "proven" : "unproven", unproven };
@@ -332,6 +360,7 @@ export function renderReport(
   selfName?: string,
   analysis?: { origin: Origin | null; tampered: boolean },
   strategy?: StrategyReport | null,
+  audit?: AuditReportView | null,
 ): string {
   const lines: string[] = [];
   lines.push(`# Report: ${work.title}`, "");
@@ -405,6 +434,30 @@ export function renderReport(
     );
     if (strategy.faults.length) lines.push(`- Faults: ${strategy.faults.join("; ")}`);
     lines.push("");
+  }
+  // An audit's records (SP7 §7.5, SP8 Task 5): the run, the findings, the report's three files, the signature.
+  if (audit) {
+    lines.push("## Audit", "");
+    lines.push(
+      audit.runSummary
+        ? `- Run: ${audit.runSummary} (head ${audit.head ? audit.head.slice(0, 12) : "no git"})${audit.runAtHead ? "" : "; predates HEAD, run again"}.`
+        : "- Run: none yet (crew audit <id> run).",
+    );
+    const found = Object.entries(audit.findings);
+    lines.push(
+      `- Findings: ${found.length ? found.map(([s, n]) => `${s} ${n}`).join(", ") : "none yet"}.`,
+    );
+    lines.push(
+      audit.report
+        ? `- Report: ${audit.report.md}, ${audit.report.html}, ${audit.report.pdf ?? `pdf not produced (${audit.report.pdfReason ?? "no reason given"})`}; verdict ${audit.report.verdict}${audit.reportCurrent ? "" : "; stale: its inputs changed after it"}.`
+        : "- Report: none yet (crew audit <id> report).",
+    );
+    lines.push(
+      audit.signed
+        ? `- Signed on ${audit.signed.at.slice(0, 10)} by ${audit.signed.by === "user" ? "the user" : audit.signed.by}${audit.signed.relayed ? ", relayed by the agent" : ""}.`
+        : "- Signed: not yet (crew approve <id> audit).",
+      "",
+    );
   }
   lines.push(
     "## Acceptance criteria",

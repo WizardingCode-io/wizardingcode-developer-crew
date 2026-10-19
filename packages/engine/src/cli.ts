@@ -1,7 +1,8 @@
-import { existsSync, statSync } from "node:fs";
+import { existsSync, rmSync, statSync } from "node:fs";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { analyseOrigin, originSummary, readOrigin, writeOrigin } from "./analysis.ts";
 import { commaList, type Parsed, parse } from "./argv.ts";
+import { assembleAuditReport, renderAuditHtml, renderAuditMarkdown } from "./audit-report.ts";
 import {
   type AuditRuns,
   type AuditScope,
@@ -10,6 +11,8 @@ import {
   cappedRefusal,
   runAudit,
 } from "./audit-run.ts";
+import { auditState, type ReportRecord, type ReportSignature, reportHash } from "./audit-state.ts";
+import { brandOf } from "./brand.ts";
 import {
   AnswerError,
   type Answers,
@@ -37,6 +40,7 @@ import {
   stopEnvironment,
 } from "./environment.ts";
 import {
+  type AuditReportView,
   countedNote,
   decidedBy,
   loadEvidence,
@@ -125,6 +129,7 @@ import {
   userDirOf,
   workDir,
 } from "./paths.ts";
+import { printPdf } from "./pdf.ts";
 import {
   decisionCounts,
   loadPolicy,
@@ -1003,6 +1008,95 @@ function reportOf(env: Env, work: WorkItem, evidence: Evidence): string {
     env.mail.self.project,
     readOrigin(env.paths, work.id) ?? undefined,
     strategyOf(env, work, evidence),
+    auditViewOf(env, work),
+  );
+}
+
+/** The audit's records as the report and the status show them; null for any other kind. */
+function auditViewOf(env: Env, work: WorkItem): AuditReportView | null {
+  if (kindOfItem(work) !== "audit") return null;
+  const s = auditState(env.paths, work);
+  return {
+    runSummary: s.run ? auditSummary(s.run.runs) : null,
+    head: s.run?.head ?? null,
+    runAtHead: s.runAtHead,
+    findings: s.findings,
+    report: s.report
+      ? {
+          md: s.report.md,
+          html: s.report.html,
+          pdf: s.report.pdf,
+          pdfReason: s.report.pdfReason,
+          verdict: s.report.verdict,
+        }
+      : null,
+    reportCurrent: s.reportCurrent,
+    signed: auditSignature(work),
+  };
+}
+
+/** The signature an audit's report carries: the approval, when a person signed. */
+function auditSignature(work: WorkItem): ReportSignature | null {
+  const approval = work.approvals.find((a) => a.what === "audit");
+  return approval
+    ? { at: approval.at, by: approval.by ?? "user", relayed: approval.relayed === true }
+    : null;
+}
+
+/**
+ * The report rendered from the audit folder (SP7 §13.2, SP8 Task 5): the Markdown and the HTML
+ * written, the PDF printed or its absence said, `report.json` stamped with the inputs' hash.
+ */
+async function renderAudit(
+  env: Env,
+  io: CliIo,
+  work: WorkItem,
+  signed: ReportSignature | null,
+): Promise<Outcome> {
+  const dir = workDir(env.paths, work.id);
+  const auditDir = join(dir, "audit");
+  const assembled = assembleAuditReport({
+    auditDir,
+    logsDir: join(dir, "logs"),
+    root: env.paths.root,
+    id: work.id,
+    project: env.mail.self.project,
+    date: nowIso().slice(0, 10),
+    signed,
+    // Rule 3 of SP7 §5: a remote environment like production is recommended; the report says so when the profile has none.
+    remoteEnvironmentNote: !env.profile.environment,
+  });
+  if ("refused" in assembled) return refuse(assembled.refused);
+  const { inputs, counts } = assembled;
+  const brand = brandOf(io.env, env.paths.root);
+  writeProtectedText(env.paths, join(auditDir, "report.md"), renderAuditMarkdown(inputs));
+  writeProtectedText(env.paths, join(auditDir, "report.html"), renderAuditHtml(inputs, brand));
+  // A PDF of an earlier render never outlives a print that fails.
+  const pdfPath = join(auditDir, "report.pdf");
+  rmSync(pdfPath, { force: true });
+  const printed = await printPdf(join(auditDir, "report.html"), pdfPath, io.env, env.paths.root, {
+    logPath: join(dir, "logs", "audit-pdf.txt"),
+  });
+  const record: ReportRecord = {
+    at: nowIso(),
+    hash: reportHash(auditDir),
+    md: "audit/report.md",
+    html: "audit/report.html",
+    pdf: printed.ok ? "audit/report.pdf" : null,
+    pdfReason: printed.ok ? null : printed.reason,
+    leftOut: inputs.leftOut,
+    counts,
+    verdict: inputs.verdict,
+    signed,
+  };
+  writeProtectedJson(env.paths, join(auditDir, "report.json"), record);
+  const kept = Object.values(counts).reduce((n, c) => n + c.defects + c.advisories, 0);
+  const next = signed
+    ? `crew phase ${work.id} next`
+    : `crew approve ${work.id} audit (a person signs), then crew phase ${work.id} next`;
+  return ok(
+    `audit report of ${work.id}: verdict ${inputs.verdict}; ${kept} finding${kept === 1 ? "" : "s"} kept, ${inputs.leftOut.length} left out for want of proof; audit/report.md, audit/report.html, ${printed.ok ? `audit/report.pdf (${printed.by})` : `pdf not produced: ${printed.reason}`}${brand ? "" : "; brand assets not found"}\nnext: ${next}`,
+    { report: record },
   );
 }
 
@@ -1034,6 +1128,28 @@ function strategyLine(report: StrategyReport | null, planned: PlannedStrategyJud
         ? "proven"
         : `${verdictText(r.verdict)} (${r.findings} findings)`;
   return `  strategy ${RESEARCH_ALONE}: ${state}; ruling ${ruling}; gate ${planned.gate} planned: ${planned.reason}`;
+}
+
+/** The audit block of `crew status --json`: the run's summary, the findings' counts, the report's files and state, the signature. */
+function auditStatusOf(env: Env, work: WorkItem): Record<string, unknown> {
+  const s = auditState(env.paths, work);
+  return {
+    run: s.run ? { at: s.run.at, head: s.run.head, summary: auditSummary(s.run.runs) } : null,
+    runAtHead: s.runAtHead,
+    findings: s.findings,
+    report: s.report
+      ? {
+          at: s.report.at,
+          md: s.report.md,
+          html: s.report.html,
+          pdf: s.report.pdf,
+          pdfReason: s.report.pdfReason,
+          verdict: s.report.verdict,
+          current: s.reportCurrent,
+        }
+      : null,
+    signed: s.signed !== null,
+  };
 }
 
 /** The audit's status line: the runs counted by state with the failing and the unavailable gates named, or none yet. */
@@ -1962,7 +2078,8 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       // and the scope with its risk areas beside the runs.
       const opened = openForChange(env, args[0]);
       if (isOutcome(opened)) return opened;
-      if (args[1] !== "run") return refuse("usage: crew audit <id> run [--only a,b]");
+      if (args[1] !== "run" && args[1] !== "report")
+        return refuse("usage: crew audit <id> run [--only a,b] | crew audit <id> report");
       const work = opened.work;
       if (kindOfItem(work) !== "audit")
         return refuse(
@@ -1972,6 +2089,8 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         return refuse(
           `the audit runs in the audit phase: ${work.id} is in ${work.phase} (crew phase ${work.id} next)`,
         );
+      // The report (SP8 Task 5): rendered from the folder as it stands, unsigned until a person signs.
+      if (args[1] === "report") return renderAudit(env, io, work, auditSignature(work));
       const only = typeof parsed.flags.only === "string" ? commaList(parsed.flags.only) : undefined;
       const unknown = only?.find((g) => !GATE_NAMES.includes(g as GateName));
       if (unknown !== undefined) return refuse(`unknown gate: ${unknown}`);
@@ -2078,6 +2197,16 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         }
         const signature = decisionFlag(parsed, env.policy);
         if (isOutcome(signature)) return signature;
+        // The report signed is the report as it is: rendered, and current against its inputs (SP8 Task 5).
+        const state = auditState(env.paths, opened.work);
+        if (!state.report)
+          return refuse(
+            `the audit report comes before the signature (crew audit ${opened.work.id} report)`,
+          );
+        if (!state.reportCurrent)
+          return refuse(
+            `the audit report is stale: its inputs changed after it (crew audit ${opened.work.id} report)`,
+          );
         approve(opened.work, "audit", signature);
         appendDecision(env.paths, {
           at: nowIso(),
@@ -2087,9 +2216,13 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           by: whoDecided(signature),
         });
         saveWork(env.paths, opened.work);
-        return ok(`audit signed for ${opened.work.id} ${decisionText(env.policy, signature)}`, {
-          approvals: opened.work.approvals,
-        });
+        // The three formats carry the signature line from here on.
+        const rendered = await renderAudit(env, io, opened.work, auditSignature(opened.work));
+        if (rendered.code !== 0) return rendered;
+        return ok(
+          `audit signed for ${opened.work.id} ${decisionText(env.policy, signature)}\n${rendered.text}`,
+          { approvals: opened.work.approvals, ...rendered.data },
+        );
       }
       if (isAudit)
         return refuse(`an audit is signed, not approved: crew approve ${opened.work.id} audit`);
@@ -3422,6 +3555,8 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         debate: debateState(work),
         baseCommit: work.baseCommit,
         phases: phasesFor(work),
+        // An audit's checks (SP8 Task 5): what the mod's Audit block and the strip draw.
+        ...(kindOfItem(work) === "audit" ? { audit: auditStatusOf(env, work) } : {}),
         verdict: result.verdict,
         unproven: result.unproven,
         // One name per gate, so the strip can draw a planned gate that has not run yet.
@@ -3806,6 +3941,7 @@ const HELP = `crew ${VERSION}
   kind <id> raise --reason "<why>"      a feature raised to a new project while its spec is open: the strategy comes next
   strategy <id> check                   check strategy.md (the five sections, [R<n>] marks on the research's facts, the scaling table) and write the strategy's review inputs
   audit <id> run [--only a,b]           run the project's own tools over the whole tree with no baseline (an audit item in its audit phase), every result recorded, the files the reviewers read and the scope beside them
+  audit <id> report                     render the audit's report from the findings (every one proof-checked): Markdown, HTML under the brand, the PDF by the project's Playwright or a browser or its reason; crew approve <id> audit signs it
   phase <id> next                       advance when the guard holds
   await <id> user | role | mail <mid>   mark the turn's wait: for the user, for the roles, or for a reply to a message
   resume <id>                           clear the wait (asks the user while a jev dispute is held on the item)

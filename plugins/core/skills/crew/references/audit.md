@@ -32,6 +32,10 @@ You are the lead. Read the README, the routes or entry points, the domain (model
 
 These three files are yours to write; everything else under `audit/` is the engine's or the hook's.
 
-## What comes next
+## The report
 
-`crew audit <id> report` renders the report from the runs and the findings, leaving out every finding without proof and saying so; a person signs it with `crew approve <id> audit`; `crew phase <id> next` delivers. The report half of this page says how.
+`crew audit <id> report` (after the run, with `audit/summary.md` written) parses every findings file and the dependencies table, checks each finding's proof (a file and a line that exist under the root, or a log under the item's logs) and leaves out the rest, counted and named in the method section; computes the verdict (`critical` with a security defect or a secret found, `attention` with another defect, `sound` with advisories alone); and renders `audit/report.md`, `audit/report.html` (one page under the brand, every value escaped, nothing loaded) and `audit/report.pdf` by the project's own Playwright or a browser on the machine (`WIZARDINGCODE_CREW_BROWSER`, else Chrome or Chromium found), or says why the PDF was not produced in `audit/report.json`; every log tail and finding text passes through the secrets scanner first. Run it again after any change to the findings or the summary: a report older than its inputs is stale and cannot be signed. A tree that runs its tests against a shared database, or whose scripts write to it, runs them for real: say so to the user before the run. Rule 3 of the method: a remote test environment like production is always recommended; the report says it when the profile declares none.
+
+## The signature and the delivery
+
+A person signs: `crew await <id> user`, present the report (the verdict, the counts, what was left out and why, the PDF's absence if any) and ask; at the yes, `crew approve <id> audit` (relayed under `relay`; never with `--mode` or `--validator`, which the engine refuses and leaves the item waiting for a person). The signature line goes into the three formats. Then `crew phase <id> next` delivers, and `references/deliver.md` says what to tell the user: the three files, the verdict, what the report proves and what it does not.

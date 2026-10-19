@@ -177,6 +177,12 @@ function paneTree($, e) {
       lines.push(Text({ dimColor: true, children: ['Questions'] }))
       for (const q of status.questions) lines.push(Text({ children: [questionRow(q)] }))
     }
+    // An audit's checks (SP8): the run, the findings, the report, the signature; an engine without
+    // the field, or any other kind of item, draws no block
+    if (status.audit) {
+      lines.push(Text({ dimColor: true, children: ['Audit'] }))
+      for (const row of auditRows()) lines.push(Text({ children: [row] }))
+    }
     lines.push(Text({ children: [' '] }))
     for (const c of status.criteria || []) {
       lines.push(Text({ children: [c.id + ' ' + c.kind + ' · ' + c.tdd + ' · ' + c.text] }))
@@ -471,7 +477,43 @@ function stripText() {
   // An unconfirmed triage (SP3): the proposal, marked, until the business priorities are signed
   const unconfirmed = status.triage && status.triage.confirmed === null ? ' (unconfirmed)' : ''
   const priority = status.priority && status.priority !== 'normal' ? ' · priority ' + status.priority + unconfirmed : ''
-  return 'crew ' + status.active + ' · ' + status.phase + ' · ' + status.route + priority + ' · ' + verdict + (gates ? ' · ' + gates : '') + todoPart() + workingPart() + unread + waiting
+  return 'crew ' + status.active + ' · ' + status.phase + ' · ' + status.route + priority + auditWord() + ' · ' + verdict + (gates ? ' · ' + gates : '') + todoPart() + workingPart() + unread + waiting
+}
+
+// The findings' counts as "security 2 · business 1" (the pane) or "security 2, business 1" (one line)
+function auditFindings(joiner) {
+  const found = status.audit.findings || {}
+  return Object.keys(found).map((s) => s + ' ' + found[s]).join(joiner)
+}
+
+// The Audit block of the pane: one row per check, each with its mark and the command that clears it
+function auditRows() {
+  const a = status.audit
+  const id = status.active
+  const rows = []
+  rows.push(a.run ? 'run ✓ ' + a.run.summary : 'run … (crew audit ' + id + ' run)')
+  const findings = auditFindings(' · ')
+  rows.push(findings ? 'findings ' + findings : 'findings none yet')
+  if (a.report) {
+    rows.push('report ✓ md, html' + (a.report.pdf ? ', pdf' : ' · pdf not produced (' + (a.report.pdfReason || 'no reason given') + ')') + (a.report.current === false ? ' · stale' : ''))
+  } else rows.push('report … (crew audit ' + id + ' report)')
+  rows.push(a.signed ? 'signed ✓' : 'signed … (crew approve ' + id + ' audit)')
+  return rows
+}
+
+// "audit: run ✓ <summary> · findings security 2, business 1 · report md, html (pdf not produced) · unsigned"
+function auditLine() {
+  const a = status.audit
+  const findings = auditFindings(', ')
+  return 'audit: ' + (a.run ? 'run ✓ ' + a.run.summary : 'run …') + ' · ' + (findings ? 'findings ' + findings : 'no findings yet') + ' · ' + (a.report ? 'report md, html' + (a.report.pdf ? ', pdf' : ' (pdf not produced)') : 'no report yet') + ' · ' + (a.signed ? 'signed' : 'unsigned')
+}
+
+// The strip's word for an audit: the furthest step reached
+function auditWord() {
+  const a = status.audit
+  if (!a) return ''
+  const step = a.signed ? 'signed' : a.report ? 'report' : auditFindings(',') ? 'findings' : a.run ? 'run' : 'started'
+  return ' · audit ' + step
 }
 
 // The text /crew prints in the transcript
@@ -492,6 +534,7 @@ function statusText() {
   } else if (status.mail && status.mail.unread) lines.push('  mail: ' + status.mail.unread + ' unread')
   const conclave = conclaveText()
   if (conclave) lines.push('  ' + conclave)
+  if (status.audit) lines.push('  ' + auditLine())
   for (const r of status.runs || []) {
     lines.push('  ' + r.gate + ' (' + r.target + '): ' + r.status + ' in ' + (r.durationMs / 1000).toFixed(1) + 's' + (r.reason ? ' (' + r.reason + ')' : ''))
   }

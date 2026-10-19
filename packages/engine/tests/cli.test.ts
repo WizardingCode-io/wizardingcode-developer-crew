@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   readdirSync,
@@ -14,6 +15,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { type CliIo, main } from "../src/cli.ts";
 import { listDecisions } from "../src/decisions.ts";
 import { envRecordPath } from "../src/environment.ts";
@@ -28,7 +30,7 @@ import { recordWorking } from "../src/state.ts";
 import { readProtectedJson, writeProtectedJson } from "../src/store.ts";
 import type { GateRun, Message, WorkItem } from "../src/types.ts";
 import { loadWork, saveWork } from "../src/work.ts";
-import { PLANTED_KEY } from "./audit-run.test.ts";
+import { auditFixture, PLANTED_KEY } from "./audit-run.test.ts";
 import { git, makeRepo, repoPaths, tempDir, testEnv, write } from "./helpers.ts";
 import { RESEARCH, STRATEGY } from "./strategy.test.ts";
 
@@ -5702,7 +5704,8 @@ test("SP8-T2 AC-3: crew approve <id> audit is a person's: --mode and --validator
     "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
     "src/a.ts": "x",
   });
-  const c = io(root);
+  // A browser stand-in that fails fast: the report is rendered, the PDF said as not produced.
+  const c = io(root, { ...testEnv(), WIZARDINGCODE_CREW_BROWSER: "/nonexistent/browser" });
   const paths = repoPaths(root, c.env);
   const id = (await c.json("start", "Audit this project", "--answers", auditAnswers)).data
     .id as string;
@@ -5724,9 +5727,21 @@ test("SP8-T2 AC-3: crew approve <id> audit is a person's: --mode and --validator
     `an audit is signed, not approved: crew approve ${id} audit`,
   );
   expect((loadWork(paths, id).work as WorkItem).approvals).toEqual([]);
+  // The signature needs a current report (SP8 Task 5): the run, the lead's summary, the render.
+  expect((await c.run("phase", id, "next")).code).toBe(0);
+  expect((await c.run("audit", id, "run")).code).toBe(0);
+  write(root, `.crew/work/${id}/audit/summary.md`, "Sound.\n");
+  expect((await c.run("audit", id, "report")).code).toBe(0);
+  // The record says the PDF was not produced and why, on the failing side of the print.
+  const unprinted = JSON.parse(
+    readFileSync(join(root, `.crew/work/${id}/audit/report.json`), "utf8"),
+  );
+  expect(unprinted.pdf).toBeNull();
+  expect(unprinted.pdfReason).toMatch(/^PDF not produced: the browser exited/);
+
   const signed = await c.run("approve", id, "audit");
   expect(signed.code, signed.err).toBe(0);
-  expect(signed.out.trim()).toBe(`audit signed for ${id} by the user, relayed by the agent`);
+  expect(signed.out).toContain(`audit signed for ${id} by the user, relayed by the agent`);
   expect((loadWork(paths, id).work as WorkItem).approvals).toMatchObject([
     { what: "audit", by: "user", relayed: true },
   ]);
@@ -6055,7 +6070,9 @@ test("SP8-T4 AC-1, AC-3: crew audit run is refused on a feature and outside the 
   expect((await c.run("phase", id, "next")).code).toBe(0);
   expect((await c.run("status")).out).toContain(`audit run: none yet (crew audit ${id} run)`);
   expect((await c.run("audit", id, "run", "--only", "nope")).err.trim()).toBe("unknown gate: nope");
-  expect((await c.run("audit", id)).err.trim()).toBe("usage: crew audit <id> run [--only a,b]");
+  expect((await c.run("audit", id)).err.trim()).toBe(
+    "usage: crew audit <id> run [--only a,b] | crew audit <id> report",
+  );
   const before = await c.run("team", id);
   expect(before.out.trim()).toBe(
     `Team of ${id} (audit): researcher (audit: dependencies); review-security (audit); review-architecture (audit); review-code-quality (audit); review-test-quality (audit)`,
@@ -6080,4 +6097,172 @@ test("SP8-T4 AC-1, AC-3: crew audit run is refused on a feature and outside the 
   expect(next.code).toBe(1);
   expect(next.err).not.toContain("audit run not recorded");
   expect(next.err).toContain("audit report not rendered");
+});
+
+/** A browser stand-in for the report's PDF: writes a PDF header to the path it is given. */
+function fakeBrowser(): string {
+  const dir = tempDir("crew cli pdf ");
+  const script = join(dir, "chrome.sh");
+  writeFileSync(
+    script,
+    '#!/bin/sh\nfor a in "$@"; do case "$a" in --print-to-pdf=*) printf "%%PDF-1.4\\n" > "${a#--print-to-pdf=}";; esac; done\n',
+  );
+  chmodSync(script, 0o755);
+  return script;
+}
+
+test("SP8-T5 AC-2, AC-3: crew audit report renders the three formats under the brand with the proof check and the redaction, a person signs a current report alone, the guard needs the run at HEAD, a current report and the signature, and evidence and status carry the audit", async () => {
+  const root = auditFixture();
+  // The test gate echoes a token into its log: the appendix must not carry it.
+  write(
+    root,
+    "package.json",
+    JSON.stringify({
+      name: "audited",
+      scripts: { build: "exit 0", test: `echo "aws=${PLANTED_KEY}"; exit 1` },
+    }),
+  );
+  git(root, "add", "-A");
+  git(root, "commit", "-q", "-m", "echo");
+  const c = io(root, {
+    ...testEnv(),
+    WIZARDINGCODE_CREW_BROWSER: fakeBrowser(),
+    WIZARDINGCODE_CREW_BRAND_DIR: fileURLToPath(new URL("../../../docs/brand/", import.meta.url)),
+  });
+  const id = (await c.json("start", "Audit this project", "--answers", auditAnswers)).data
+    .id as string;
+  expect((await c.run("phase", id, "next")).code).toBe(0);
+  const early = await c.run("audit", id, "report");
+  expect(early.code).toBe(1);
+  expect(early.err.trim()).toBe(`the audit run comes first (crew audit ${id} run)`);
+  expect((await c.run("audit", id, "run")).code).toBe(0);
+  const noSummary = await c.run("audit", id, "report");
+  expect(noSummary.code).toBe(1);
+  expect(noSummary.err.trim()).toBe(
+    "the lead's summary comes before the report: audit/summary.md (references/audit.md)",
+  );
+  const audit = `.crew/work/${id}/audit`;
+  write(root, `${audit}/summary.md`, "The shop <works> but leaks a key.\n");
+  write(
+    root,
+    `${audit}/security.findings.md`,
+    `# security findings for ${id}\nreviewer: review-security\n\n## Findings\n- F-1 · defect · config/keys.ts:1 · A key in the source.\n- F-2 · advisory · src/a.ts:99 · Past the end.\n- F-3 · advisory · src/a.ts:1 · Says <script>alert(1)</script> here.\n\n## Outside the change\n- none\n`,
+  );
+  write(
+    root,
+    `${audit}/business.findings.md`,
+    `# business findings for ${id}\n\n## Findings\n- F-1 · advisory · src/a.ts:1 · The README promises a token aws=${PLANTED_KEY} here.\n`,
+  );
+  write(
+    root,
+    `${audit}/dependencies.findings.md`,
+    `# Dependencies for ${id}\n| Package | Current | Latest | Pros | Cons | Risk | Proof |\n| :- | :- | :- | :- | :- | :- | :- |\n| left-pad | 1.0.0 | 1.3.0 | fixes | none | low | https://example.test/left-pad |\n`,
+  );
+  write(
+    root,
+    `${audit}/recommendations.md`,
+    `| # | Recommendation | Cost | Time | Findings |\n| :- | :- | :- | :- | :- |\n| 1 | Split the module | M | 3 | |\n| 2 | Rotate the key | S | 1 | F-1 |\n`,
+  );
+  const report = await c.run("audit", id, "report");
+  expect(report.code, report.err).toBe(0);
+  expect(report.out).toContain("verdict critical");
+  expect(report.out).toContain("1 left out for want of proof");
+  expect(report.out).toContain("audit/report.pdf");
+  expect(report.out).toContain(`crew approve ${id} audit`);
+  const record = JSON.parse(readFileSync(join(root, audit, "report.json"), "utf8"));
+  expect(record).toMatchObject({
+    md: "audit/report.md",
+    html: "audit/report.html",
+    pdf: "audit/report.pdf",
+    pdfReason: null,
+    verdict: "critical",
+    signed: null,
+    leftOut: [{ section: "security", id: "F-2", why: "line 99 past the end of src/a.ts (1 line)" }],
+  });
+  expect(record.counts.security).toEqual({ defects: 1, advisories: 1 });
+  expect(typeof record.hash).toBe("string");
+  const md = readFileSync(join(root, audit, "report.md"), "utf8");
+  for (const heading of [
+    "## Summary and verdict",
+    "## Scope and method",
+    "## Business issues",
+    "## Security issues",
+    "## Dependencies to update",
+    "## Architecture and code quality",
+    "## Tests",
+    "## Recommendations",
+    "## Appendix",
+  ])
+    expect(md).toContain(heading);
+  expect(md).toContain(
+    "left out for want of proof: security F-2 (line 99 past the end of src/a.ts (1 line))",
+  );
+  expect(md).toContain("| 2 | Rotate the key | S | 1 | F-1 |\n| 1 | Split the module | M | 3 |");
+  expect(md).toContain("A remote test environment like production is recommended");
+  expect(md).toContain("unsigned");
+  expect(md).not.toContain(PLANTED_KEY);
+  expect(md).toContain("[redacted: AWS access key]");
+  const html = readFileSync(join(root, audit, "report.html"), "utf8");
+  expect(html).toContain("<svg");
+  expect(html).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
+  expect(html).not.toMatch(/<script|<link|<iframe/i);
+  expect(html).not.toContain(PLANTED_KEY);
+  expect(readFileSync(join(root, audit, "report.pdf"), "utf8").startsWith("%PDF-1.4")).toBe(true);
+  // A findings file edited after the render makes the report stale: no signature, no delivery.
+  write(
+    root,
+    `${audit}/business.findings.md`,
+    `# business findings for ${id}\n\n## Findings\n- none\n`,
+  );
+  const stale = await c.run("approve", id, "audit");
+  expect(stale.code).toBe(1);
+  expect(stale.err.trim()).toBe(
+    `the audit report is stale: its inputs changed after it (crew audit ${id} report)`,
+  );
+  const blocked = await c.run("phase", id, "next");
+  expect(blocked.err).toContain(
+    "the audit report is stale: its inputs changed after it (crew audit <id> report)",
+  );
+  expect((await c.run("audit", id, "report")).code).toBe(0);
+  // The run must be at HEAD: a commit after it asks for a new run.
+  git(root, "commit", "-q", "--allow-empty", "-m", "after the run");
+  expect((await c.json("status")).data.unproven).toContain(
+    "the audit run predates HEAD: run again (crew audit <id> run)",
+  );
+  expect((await c.run("audit", id, "run")).code).toBe(0);
+  expect((await c.run("audit", id, "report")).code).toBe(0);
+  const signed = await c.run("approve", id, "audit");
+  expect(signed.code, signed.err).toBe(0);
+  expect(readFileSync(join(root, audit, "report.md"), "utf8")).toContain(
+    "by the user, relayed by the agent",
+  );
+  expect(readFileSync(join(root, audit, "report.html"), "utf8")).toContain(
+    "by the user, relayed by the agent",
+  );
+  expect(JSON.parse(readFileSync(join(root, audit, "report.json"), "utf8")).signed).toMatchObject({
+    by: "user",
+    relayed: true,
+  });
+  const status = (await c.json("status")).data;
+  expect(status.verdict).toBe("proven");
+  expect(status.audit).toMatchObject({
+    runAtHead: true,
+    // The status counts what the roles wrote (F-2 included); the report's counts are of what passed the proof check.
+    findings: { security: 3, business: 0 },
+    report: {
+      md: "audit/report.md",
+      html: "audit/report.html",
+      pdf: "audit/report.pdf",
+      verdict: "critical",
+      current: true,
+    },
+    signed: true,
+  });
+  expect(typeof (status.audit as { run: { summary: unknown } }).run.summary).toBe("string");
+  expect((await c.run("phase", id, "next")).code).toBe(0);
+  expect((await c.json("status")).data.phase).toBe("deliver");
+  const evidence = (await c.run("evidence", id)).out;
+  expect(evidence).toContain("## Audit");
+  expect(evidence).toContain("audit/report.pdf");
+  expect(evidence).toContain("Proven");
 });

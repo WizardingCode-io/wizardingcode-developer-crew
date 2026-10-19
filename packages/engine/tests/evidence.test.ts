@@ -37,6 +37,7 @@ import {
   addDecision,
   addSkip,
   answerDecision,
+  applyClassification,
   approve,
   closeDebate,
   createWork,
@@ -1021,4 +1022,40 @@ test("SP8-T3 AC-4: the report's Strategy section says the strategy is from the r
   );
   expect(faulty).toContain('- Faults: no mark on "One service serves the need" in Viability');
   expect(renderReport(work, emptyEvidence(), DEFAULT_POLICY)).not.toContain("## Strategy");
+});
+
+test("SP8-T5 AC-3: an audit's verdict is proven on the run at HEAD, a current report and a person's signature alone", () => {
+  const root = makeRepo({ "src/a.ts": "x" });
+  const paths = repoPaths(root, testEnv());
+  const work = createWork(paths, "Audit this project");
+  applyClassification(
+    work,
+    "audit",
+    { route: "full", reasons: [], riskAreas: [] },
+    { kind: "audit", from: "work_type audit" },
+  );
+  const input = {
+    work,
+    evidence: emptyEvidence(),
+    expected: [],
+    currentFingerprint: "f",
+    tampered: false,
+    policy: DEFAULT_POLICY,
+  };
+  const audit = { run: true, runAtHead: false, report: true, reportCurrent: false };
+  expect(computeVerdict({ ...input, audit }).unproven).toEqual([
+    "the audit run predates HEAD: run again (crew audit <id> run)",
+    "the audit report is stale: its inputs changed after it (crew audit <id> report)",
+    "the audit's signature (crew approve <id> audit)",
+  ]);
+  expect(
+    computeVerdict({ ...input, audit: { ...audit, run: false, report: false } }).unproven,
+  ).toEqual([
+    "audit run not recorded (crew audit <id> run)",
+    "audit report not rendered (crew audit <id> report)",
+    "the audit's signature (crew approve <id> audit)",
+  ]);
+  approve(work, "audit", { by: "user", relayed: true });
+  const current = { run: true, runAtHead: true, report: true, reportCurrent: true };
+  expect(computeVerdict({ ...input, audit: current })).toEqual({ verdict: "proven", unproven: [] });
 });

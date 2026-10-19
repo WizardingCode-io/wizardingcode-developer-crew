@@ -833,3 +833,59 @@ test("SP8-T1 AC-5 (finding 84): the strip shows a confirmed priority with no mar
   expect(texts.some((t) => /unconfirmed/.test(t))).toBe(false);
   await ui.unmount();
 });
+
+// An audit item (SP8): the run recorded, two findings files in, the report rendered without a PDF, unsigned
+const AUDITED = {
+  ...PROVEN,
+  active: "2026-10-19-020-audit-this-project",
+  title: "Audit this project",
+  type: "audit",
+  phase: "audit",
+  route: "full",
+  verdict: "unproven",
+  unproven: ["the audit's signature (crew approve <id> audit)"],
+  phases: ["receive", "recognize", "audit", "deliver"],
+  criteria: [],
+  runs: [],
+  expected: [],
+  branch: "main",
+  audit: {
+    run: { at: "2026-10-19T10:00:00.000Z", head: "abc1234", summary: "1 pass, 2 fail (secrets, test), 2 unavailable (deps, e2e)" },
+    runAtHead: true,
+    findings: { security: 2, business: 1 },
+    report: { at: "2026-10-19T10:05:00.000Z", md: "audit/report.md", html: "audit/report.html", pdf: null, pdfReason: "PDF not produced: no Playwright in the project and no browser found (set WIZARDINGCODE_CREW_BROWSER)", verdict: "critical", current: true },
+    signed: false,
+  },
+};
+
+test("SP8-T5 AC-3: the panel draws the Audit block with the checks and /crew status prints the audit line", async ($, on) => {
+  stubs(on, () => ({ exitCode: 0, stdout: JSON.stringify(AUDITED), stderr: "" }));
+  on("ui.open", () => ({ value: { isPlaced: true } }));
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  const status = await $.command.run({ command: "crew", args: "status" });
+  expect(status.text).toContain("  audit: run ✓ 1 pass, 2 fail (secrets, test), 2 unavailable (deps, e2e) · findings security 2, business 1 · report md, html (pdf not produced) · unsigned");
+  await $.command.run({ command: "crew", args: "panel" });
+  const ui = await $.ui.mount({ ...PANE, surface: "terminal" });
+  const texts = (await ui.findAll({ type: "Text" })).map((t) => t.text);
+  const branch = texts.indexOf("Branch: main");
+  expect(branch).toBeGreaterThan(0);
+  expect(texts.slice(branch + 1, branch + 6)).toEqual([
+    "Audit",
+    "run ✓ 1 pass, 2 fail (secrets, test), 2 unavailable (deps, e2e)",
+    "findings security 2 · business 1",
+    "report ✓ md, html · pdf not produced (PDF not produced: no Playwright in the project and no browser found (set WIZARDINGCODE_CREW_BROWSER))",
+    "signed … (crew approve 2026-10-19-020-audit-this-project audit)",
+  ]);
+  await ui.unmount();
+});
+
+test("SP8-T5 AC-3: the panel of an item without the audit field draws no Audit block", async ($, on) => {
+  stubs(on, () => ({ exitCode: 0, stdout: JSON.stringify(PROVEN), stderr: "" }));
+  on("ui.open", () => ({ value: { isPlaced: true } }));
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  await $.command.run({ command: "crew", args: "panel" });
+  const ui = await $.ui.mount({ ...PANE, surface: "terminal" });
+  const texts = (await ui.findAll({ type: "Text" })).map((t) => t.text);
+  expect(texts.includes("Audit")).toBe(false);
+  await ui.unmount();
+});

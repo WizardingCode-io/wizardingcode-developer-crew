@@ -1,6 +1,7 @@
 import { accessSync, constants, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { basename, delimiter, join } from "node:path";
 import { type AuditToolName, parseAudit } from "./audit.ts";
+import { auditState } from "./audit-state.ts";
 import { excludedRiskPaths, riskAreasForPaths } from "./classify.ts";
 import { runE2e } from "./e2e.ts";
 import { computeVerdict, loadEvidence, type PlannedGate, updateEvidence } from "./evidence.ts";
@@ -723,8 +724,8 @@ export interface Assessment {
   currentFingerprint: string;
   /** The objection ledger as read, so a reassessment needs no second read. */
   ledger: ObjectionLedger;
-  /** An audit's records as they stand (SP7 §7.5): the run and the report written. */
-  audit: { run: boolean; report: boolean };
+  /** An audit's records as they stand (SP7 §7.5, SP8 Task 5): the run at HEAD or not, the report current or not. */
+  audit: { run: boolean; runAtHead: boolean; report: boolean; reportCurrent: boolean };
   /** Whether any engine-owned file of the item was changed outside the engine. */
   tampered: boolean;
 }
@@ -752,7 +753,7 @@ export function assess(
     fingerprintMethod(read.evidence.fingerprint),
   );
   const led = loadLedger(paths, work.id);
-  const auditDir = join(workDir(paths, work.id), "audit");
+  const audit = auditState(paths, work);
   return reassess(
     {
       evidence: read.evidence,
@@ -763,8 +764,10 @@ export function assess(
       ledger: led.ledger,
       tampered: tampered || read.tampered || led.tampered,
       audit: {
-        run: existsSync(join(auditDir, "runs.json")),
-        report: existsSync(join(auditDir, "report.json")),
+        run: audit.run !== null,
+        runAtHead: audit.runAtHead,
+        report: audit.report !== null,
+        reportCurrent: audit.reportCurrent,
       },
     },
     work,
