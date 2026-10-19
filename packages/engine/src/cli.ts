@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import { basename, join, relative, resolve } from "node:path";
+import { analyseOrigin, originSummary, readOrigin, writeOrigin } from "./analysis.ts";
 import { type Parsed, parse } from "./argv.ts";
 import {
   AnswerError,
@@ -257,6 +258,7 @@ const KNOWN_FLAGS: Record<string, readonly string[]> = {
   task: ["criteria", "text", "scope", "force", "mode", "print"],
   workspace: ["file"],
   question: ["channel", "ref", "mode"],
+  analyse: ["paths"],
   mail: [
     "to",
     "type",
@@ -807,6 +809,7 @@ function reportOf(env: Env, work: WorkItem, evidence: Evidence): string {
     loadLedger(env.paths, work.id).ledger,
     loadItemMail(env.paths, work.id),
     env.mail.self.project,
+    readOrigin(env.paths, work.id) ?? undefined,
   );
 }
 
@@ -1624,6 +1627,30 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         awaiting: kind,
         awaitingMessage: opened.work.awaitingMessage ?? null,
       });
+    }
+    case "analyse": {
+      // Where the defect came from (SP7 §7.4, rule 11): git and the records, written to the item.
+      const usage = "usage: crew analyse <id> --paths <file,file>";
+      const opened = openForChange(env, args[0]);
+      if (isOutcome(opened)) return opened;
+      const list =
+        typeof parsed.flags.paths === "string"
+          ? parsed.flags.paths
+              .split(",")
+              .map((p) => p.trim())
+              .filter(Boolean)
+          : [];
+      if (!list.length) return refuse(usage);
+      const origin = analyseOrigin(env.paths, list);
+      if ("refused" in origin) return refuse(origin.refused);
+      writeOrigin(env.paths, opened.work.id, origin);
+      const data = { file: "analysis/origin.json", origin };
+      if (origin.note)
+        return ok(
+          "no git repository: origin.json written empty; write analysis.md from what you can read",
+          data,
+        );
+      return ok(`analysis/origin.json: ${originSummary(origin)}`, data);
     }
     case "question": {
       // A doubt on record (SP7 §10.3, rule 7): where it was posted, what the skill still posts, the
@@ -2640,6 +2667,14 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           : null,
       ].filter((l): l is string => l !== null);
       if (work.source) extra.unshift(`  source ${sourceLine(work.source)}`);
+      // The origin while the item is analysed (SP7 §7.4): its size, or a hand edit named.
+      const analysis = work.phase === "analyse" ? readOrigin(env.paths, work.id) : null;
+      if (analysis)
+        extra.unshift(
+          analysis.origin
+            ? `  analysis: ${originSummary(analysis.origin)}`
+            : `  analysis: origin.json changed outside the engine (crew accept ${work.id})`,
+        );
       // The open questions first (SP7 §10.3): a doubt a person has to answer comes before everything.
       extra.unshift(
         ...openQuestions(work).map(
@@ -2681,6 +2716,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         source: work.source ?? null,
         triage: work.triage ?? null,
         questions: questionsSorted(work).map(questionJson),
+        analysis: analysis?.origin ?? null,
         awaiting: work.awaiting,
         awaitingMessage: work.awaitingMessage ?? null,
         mail: { unread: inbox.unread, answered: inbox.answered, waiting: inbox.waiting },

@@ -942,7 +942,7 @@ test("SP2c AC-4: the child records origin and parent, its reply fills the task, 
     `| T-2 | AC-2 | crew/${short}/T-2 | ${childId} | proven | ${commit} | .crew/work/${childId}/report.md |`,
   );
   expect((await c.run("task", id, "merge", "T-2")).err.trim()).toBe("T-2 is already merged");
-});
+}, 30_000);
 
 test("SP2c AC-4: --force merges an unproven child and records who forced it; a forged record, a stranger item or a branch that touches another record is never merged", async () => {
   const { env, root, c, id, short, open, ended, childReplies, proveChild } = await lead({

@@ -20,6 +20,7 @@ import { loadEvidence, saveEvidence } from "../src/evidence.ts";
 import { writeJson } from "../src/fs.ts";
 import { readReviewInputs } from "../src/judgement.ts";
 import { mailbox, mailContext, ownInbox, readBox, registerProject, writeBox } from "../src/mail.ts";
+import { isProtectedPath } from "../src/paths.ts";
 import { loadPolicy } from "../src/policy.ts";
 import { loadProfile } from "../src/profile.ts";
 import { recordWorking } from "../src/state.ts";
@@ -4090,7 +4091,7 @@ test("SP3-T2 AC-1, AC-2, AC-3: crew start records the kind and says where it cam
     `.crew/work/${id}/analysis.md`,
     "# Analysis\n\n## Origin\nnone\n\n## Cause\nthe discount is read after the total\n\n## Blast radius\none function\n",
   );
-  write(root, `.crew/work/${id}/analysis/origin.json`, '{"paths":[],"items":[]}');
+  expect((await c.run("analyse", id, "--paths", "src/a.ts")).code).toBe(0);
   expect((await c.run("criteria", id, "add", "keep", "--kind", "preserve")).code).toBe(0);
   expect((await c.json("phase", id, "next")).data.phase).toBe("build");
   const log = readFileSync(join(root, ".crew", "local", "decisions.jsonl"), "utf8")
@@ -4793,5 +4794,131 @@ test("SP3-T4 AC-3: open questions come first in crew status, are counted by crew
   );
   expect(report).toMatch(
     /\| Q-1 \| [^|]+ \| Gold or silver first\? \| cli \(posted\), mail M-[^ ]+ \(posted\) \| Gold \| the user, relayed by the agent \| [^|]+ \|\n\| Q-2 \| [^|]+ \| And the colour\? \| cli \(posted\), mail M-[^ ]+ \(posted\) \| - \| - \| - \|\n/,
+  );
+}, 30_000);
+
+test("SP3-T5 AC-1, AC-2: crew analyse writes the origin from git and the records and says its size; a missing or unknown path is refused and the previous file kept; the status says it in analyse alone, after the questions and before the source, and names a tampered file; the guard reads it; the report lists it; outside git the file is empty with the note", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const c = io(root);
+  const fix = JSON.stringify({ ...JSON.parse(answers), work_type: "fix" });
+  // An earlier item whose artifacts a commit carries with the change it made.
+  const earlier = (await c.json("start", "Loyalty tier", "--answers", answers, "--criterion", "a"))
+    .data.id as string;
+  write(root, "src/a.ts", "x = 1");
+  git(root, "add", "-A");
+  git(root, "commit", "-q", "-m", "loyalty");
+  // A fix with its regression criterion lands in analyse (Task 2); the ticket is its source.
+  const id = (
+    await c.json(
+      "start",
+      "Totals wrong",
+      "--answers",
+      fix,
+      "--source",
+      TICKET,
+      "--criterion",
+      "totals right",
+    )
+  ).data.id as string;
+  await c.run("question", id, "add", "Which totals?");
+  expect((await c.run("status")).out).not.toContain("\n  analysis:");
+  expect((await c.json("status")).data.analysis).toBeNull();
+  expect((await c.run("analyse", id)).err.trim()).toBe(
+    "usage: crew analyse <id> --paths <file,file>",
+  );
+  expect((await c.run("analyse", id, "--paths", "src/nope.ts")).err.trim()).toBe(
+    "unknown path: src/nope.ts (not in the repository)",
+  );
+  const file = join(root, ".crew", "work", id, "analysis", "origin.json");
+  expect(existsSync(file)).toBe(false);
+  const analysed = await c.run("analyse", id, "--paths", "src/a.ts,package.json");
+  expect(analysed.code).toBe(0);
+  expect(analysed.out.trim()).toBe(
+    `analysis/origin.json: 2 commits, 1 item (${earlier}: roles none; tasks none)`,
+  );
+  const origin = JSON.parse(readFileSync(file, "utf8")) as {
+    at: string;
+    paths: { path: string; commits: { items: string[] }[] }[];
+    items: { id: string }[];
+  };
+  expect(origin.paths.map((p) => [p.path, p.commits.length])).toEqual([
+    ["src/a.ts", 2],
+    ["package.json", 1],
+  ]);
+  expect(origin.paths[0]?.commits[0]?.items).toEqual([earlier]);
+  expect(origin.items[0]).toMatchObject({
+    id: earlier,
+    title: "Loyalty tier",
+    kind: "feature",
+    decisions: 0,
+    mail: 0,
+  });
+  expect(isProtectedPath(repoPaths(root, c.env), file)).toBe(true);
+  // A refused run keeps the file as it was.
+  expect((await c.run("analyse", id, "--paths", "src/a.ts,src/nope.ts")).code).toBe(1);
+  expect((JSON.parse(readFileSync(file, "utf8")) as { at: string }).at).toBe(origin.at);
+  // The status: after the question, before the source; the JSON carries the origin.
+  const status = await c.run("status");
+  expect(status.out).toMatch(
+    new RegExp(
+      `\\n  question Q-1 open: Which totals\\? \\(posted: cli; to post: ticket \\(https://app\\.clickup\\.invalid/t/86c1\\)\\)\\n  analysis: 2 commits, 1 item \\(${earlier}: roles none; tasks none\\)\\n  source clickup 86c1 \\(https://app\\.clickup\\.invalid/t/86c1\\)\\n`,
+    ),
+  );
+  expect((await c.json("status")).data.analysis).toMatchObject({ items: [{ id: earlier }] });
+  // A hand edit: the status says so and the JSON carries nothing; crew accept re-trusts it.
+  writeFileSync(file, `${readFileSync(file, "utf8")}\n`);
+  expect((await c.run("status")).out).toContain(
+    `\n  analysis: origin.json changed outside the engine (crew accept ${id})\n`,
+  );
+  expect((await c.json("status")).data.analysis).toBeNull();
+  expect((await c.run("accept", id)).code).toBe(0);
+  // The guard of Task 2: the document with its three sections, the preserve criterion, then build; no line there.
+  write(
+    root,
+    `.crew/work/${id}/analysis.md`,
+    "# Analysis\n\n## Origin\n\nitem x\n\n## Cause\n\ny\n\n## Blast radius\n\nz\n",
+  );
+  await c.run("question", id, "answer", "Q-1", "All of them");
+  await c.run("criteria", id, "add", "keep", "--kind", "preserve");
+  expect((await c.json("phase", id, "next")).data.phase).toBe("build");
+  expect((await c.run("status")).out).not.toContain("\n  analysis:");
+  expect((await c.json("status")).data.analysis).toBeNull();
+  expect((await c.run("evidence", id)).out).toContain(
+    `## Analysis\n\n- Paths: src/a.ts (2 commits), package.json (1 commit)\n- Items: ${earlier} "Loyalty tier" (feature; roles none; tasks none; decisions 0; mail 0)\n`,
+  );
+  // Outside git: the file empty with the note, the guard asking for the document alone.
+  const plain = tempDir("crew-plain-");
+  mkdirSync(join(plain, ".crew"), { recursive: true });
+  write(plain, "package.json", JSON.stringify({ scripts: { test: "exit 0" } }));
+  write(plain, "src/a.ts", "x");
+  const cp = io(plain);
+  const pid = (
+    await cp.json("start", "Totals wrong", "--answers", fix, "--criterion", "totals right")
+  ).data.id as string;
+  const none = await cp.run("analyse", pid, "--paths", "src/a.ts");
+  expect(none.code).toBe(0);
+  expect(none.out.trim()).toBe(
+    "no git repository: origin.json written empty; write analysis.md from what you can read",
+  );
+  expect(
+    JSON.parse(readFileSync(join(plain, ".crew", "work", pid, "analysis", "origin.json"), "utf8")),
+  ).toMatchObject({
+    paths: [],
+    items: [],
+    note: "no git repository",
+  });
+  expect((await cp.run("status")).out).toContain("\n  analysis: 0 commits, 0 items\n");
+  write(
+    plain,
+    `.crew/work/${pid}/analysis.md`,
+    "# Analysis\n\n## Origin\n\nnone\n\n## Cause\n\ny\n\n## Blast radius\n\nz\n",
+  );
+  await cp.run("criteria", pid, "add", "keep", "--kind", "preserve");
+  expect((await cp.json("phase", pid, "next")).data.phase).toBe("build");
+  expect((await cp.run("evidence", pid)).out).toContain(
+    "## Analysis\n\n- Paths: none\n- Items: none in the records\n- Note: no git repository\n",
   );
 }, 30_000);

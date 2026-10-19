@@ -8,6 +8,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import type { Origin } from "../src/analysis.ts";
 import {
   computeVerdict,
   emptyEvidence,
@@ -820,4 +821,76 @@ test("SP3-T4 AC-3: the report's Questions table names each channel's state, the 
   );
   // The section sits after the gap round and before the mail.
   expect(report.indexOf("## Questions")).toBeGreaterThan(report.indexOf("## Gap round"));
+});
+
+test("SP3-T5 AC-2: the report's Analysis section lists the paths with their commit counts and the items with their summaries (a gone item as not in the records, a title on one line with its pipes escaped), or the note; the tampered line; absent without an origin; after the verdict and before the criteria", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const work = createWork(paths, "Totals wrong");
+  expect(renderReport(work, emptyEvidence(), DEFAULT_POLICY)).not.toContain("## Analysis");
+  const commit = (sha: string, lines: number, items: string[]) => ({
+    sha: sha.repeat(40),
+    at: "2026-10-18T10:00:00.000Z",
+    author: "x",
+    lines,
+    items,
+  });
+  const origin: Origin = {
+    at: "2026-10-19T10:00:00.000Z",
+    paths: [
+      {
+        path: "src/a.mjs",
+        commits: [commit("a", 3, ["2026-10-18-004-delete"]), commit("b", 0, [])],
+      },
+      { path: "src/index.mjs", commits: [commit("a", 1, ["2026-10-18-004-delete"])] },
+    ],
+    items: [
+      {
+        id: "2026-10-18-004-delete",
+        title: "Delete | accounts\nnow",
+        kind: "issue",
+        roles: ["review-code-quality", "judge"],
+        tasks: ["T-1"],
+        decisions: 3,
+        mail: 2,
+      },
+      {
+        id: "2026-10-01-001-gone",
+        title: null,
+        kind: null,
+        roles: [],
+        tasks: [],
+        decisions: 0,
+        mail: 0,
+      },
+      {
+        id: "2026-10-02-001-quiet",
+        title: "Quiet",
+        kind: "feature",
+        roles: [],
+        tasks: [],
+        decisions: 0,
+        mail: 0,
+      },
+    ],
+  };
+  const render = (o: { origin: Origin | null; tampered: boolean }) =>
+    renderReport(work, emptyEvidence(), DEFAULT_POLICY, undefined, undefined, undefined, o);
+  const report = render({ origin, tampered: false });
+  expect(report).toContain(
+    '## Analysis\n\n- Paths: src/a.mjs (2 commits), src/index.mjs (1 commit)\n- Items: 2026-10-18-004-delete "Delete \\| accounts now" (issue; roles review-code-quality, judge; tasks T-1; decisions 3; mail 2); 2026-10-01-001-gone (not in the records); 2026-10-02-001-quiet "Quiet" (feature; roles none; tasks none; decisions 0; mail 0)\n',
+  );
+  expect(report.indexOf("## Analysis")).toBeGreaterThan(report.indexOf("- Verdict"));
+  expect(report.indexOf("## Analysis")).toBeLessThan(report.indexOf("## Acceptance criteria"));
+  const empty: Origin = {
+    at: "2026-10-19T10:00:00.000Z",
+    paths: [],
+    items: [],
+    note: "no git repository",
+  };
+  expect(render({ origin: empty, tampered: false })).toContain(
+    "## Analysis\n\n- Paths: none\n- Items: none in the records\n- Note: no git repository\n",
+  );
+  expect(render({ origin: null, tampered: true })).toContain(
+    `## Analysis\n\nanalysis/origin.json changed outside the engine; the user accepts it with crew accept ${work.id}.\n`,
+  );
 });

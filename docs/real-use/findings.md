@@ -732,3 +732,18 @@ Verdicts agree at every effort. Upheld findings: `high` reproduced Task 6's and 
 - Expected: taken in the next hardening item (SP8's first task), the hook gap first, red first.
 - Evidence: the item's `evidence.json` (`judgement`), `review/ruling.json`.
 - Outcome: open.
+
+### 87. The gate's two test targets run the engine suite twice at once, and the engine target's 5 s default fails a different slow test each run
+
+- Date: 2026-10-19. Project: this repository. Category: `gate`. Severity: medium.
+- What happened: SP3 Task 5's gate run (`2026-10-19-005`) failed the engine test target twice in a row, each time on a different test that timed out at the 5 s default (`C4: a new session that starts on unproven changes…` at 5.9 s, then `SP2c AC-4: the child records origin and parent…` at 5.0 s), each passing alone and in the `before` and `after` runs. The gate runs the root target (`bun test --timeout 30000`, which runs the whole suite, the engine's tests included) and the engine target (`bun test` under `packages/engine`, the 5 s default) concurrently, so every engine test runs twice at the same time under double load. Thirty-one tests carry a 30 s budget now (twenty-five from Task 1, six added since as each timed out under the gate), one more each time the load lands on another.
+- Expected: one limit for every run of the engine's tests, or the two targets not running the same tests at once.
+- Outcome: open; the fix is the user's profile decision (`crew profile set test "bun test --timeout 30000" --target packages/engine --force`, asked at Task 1's delivery and again at Task 5's), or, in SP8's hardening, a root target that excludes `packages/engine` (`bun test --timeout 30000 plugins scripts`) so the engine suite runs once.
+
+### 88. Debt of SP3 Task 5 (`2026-10-19-005`): the judge's advisories
+
+- Date: 2026-10-19. Project: this repository. Category: `docs`. Severity: low.
+- What happened: `crew analyse` went through one judgement round (both gates proven; two code-quality advisories, one test-quality advisory, no defect). The report's item line repeats the `roles <a, b | none>; tasks <T-1 | none>` join of `originSummary` (one line of boilerplate; the commit pluralisation differs: per path in the report, unique shas in the summary); the `analyse` case adds a fourth copy of the comma list's `split(",").map(trim).filter(Boolean)` beside `--only`, `--criteria` and one more (a helper would fold them; the earlier copies are outside the diff); the report's `- Note:` line is asserted only with the note set, so a note printed unconditionally would pass (one `not.toContain("- Note:")` on the full origin closes it).
+- Expected: taken in the next hardening item (SP8's first task), red first.
+- Evidence: the item's `evidence.json` (`judgement`), `review/ruling.json`.
+- Outcome: open.

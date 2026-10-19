@@ -49,7 +49,7 @@ test("C4: a new session that starts on unproven changes has no baseline, so they
   onSessionStart(next, { source: "startup" });
   expect(loadState(next.paths).sessions.s2?.baseline).toBeNull();
   expect(onStop(next).decision).toBe("block");
-});
+}, 30_000);
 
 test("I3: a prompt re-arms the Stop rule and leaves the wait to the Stop that ends the turn", () => {
   const { root, ctx } = session();

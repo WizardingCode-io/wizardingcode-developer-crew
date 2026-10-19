@@ -41,6 +41,8 @@ A request enters in three ways (SP3): from the CLI, from a task manager the sess
 
 A doubt stops the work and asks, on record (rule 7): `crew question <id> add "<text>"` records the question with the channels it was posted to (the conversation when a person is present, the questions file beside a request document, a notice to the project's own mail) and the ones left for the skill to post (the ticket, marked with `crew question <id> posted`), and holds the item for the user as `crew await` does; the answer is a person's (`crew question <id> answer Q-n "<answer>"`, refused in a session nobody watches), recorded with who and when in the item and the decision register; open questions come first in `crew status`, are counted by `crew workspace status`, listed in the report and shown first by the mod (`/crew questions`).
 
+An issue is analysed before it is designed (rule 11): `crew analyse <id> --paths <files>` writes `analysis/origin.json` from git and the engine's own records, for each path the newest twenty commits with the lines the blame still attributes to them and the crew items whose artifacts they carried, each item summarised from the records (title, kind, roles, tasks, decisions, mail); the lead writes `analysis.md` with the origin, the cause and the blast radius, the guard out of the phase reads both, `crew status` says the analysis's size and the report lists it. Outside git the file is empty with a note and the document alone is asked.
+
 ## Where state lives
 
 - **`.crew/` in the repository.** Crew is active in a git repository, or in a folder that already holds `.crew/` (`crew detect` creates it); anywhere else it stays silent.

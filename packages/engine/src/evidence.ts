@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import type { Origin, OriginItem } from "./analysis.ts";
 import { UNAVAILABLE } from "./fingerprint.ts";
 import { LockBusy, withLock } from "./lock.ts";
 import { decidedPriority, mailStatus, readContracts, threadOf } from "./mail-status.ts";
@@ -281,6 +282,7 @@ export function renderReport(
   ledger?: ObjectionLedger,
   mail?: { box: Mailbox; tampered: boolean },
   selfName?: string,
+  analysis?: { origin: Origin | null; tampered: boolean },
 ): string {
   const lines: string[] = [];
   lines.push(`# Report: ${work.title}`, "");
@@ -312,6 +314,30 @@ export function renderReport(
   if (evidence.unproven.length) {
     lines.push("## Not proven", "");
     for (const reason of evidence.unproven) lines.push(`- ${reason}`);
+    lines.push("");
+  }
+  // Where the defect came from (SP7 §7.4, rule 11): the paths' commits and the items whose artifacts they carry.
+  if (analysis) {
+    lines.push("## Analysis", "");
+    if (analysis.tampered || !analysis.origin) {
+      lines.push(
+        `analysis/origin.json changed outside the engine; the user accepts it with crew accept ${work.id}.`,
+      );
+    } else {
+      const o = analysis.origin;
+      const count = (n: number) => `${n} commit${n === 1 ? "" : "s"}`;
+      lines.push(
+        `- Paths: ${o.paths.length ? o.paths.map((p) => `${p.path} (${count(p.commits.length)})`).join(", ") : "none"}`,
+      );
+      const item = (i: OriginItem) =>
+        i.kind === null
+          ? `${i.id} (not in the records)`
+          : `${i.id} "${oneLine(i.title ?? "").replace(/\|/g, "\\|")}" (${i.kind}; roles ${i.roles.join(", ") || "none"}; tasks ${i.tasks.join(", ") || "none"}; decisions ${i.decisions}; mail ${i.mail})`;
+      lines.push(
+        `- Items: ${o.items.length ? o.items.map(item).join("; ") : "none in the records"}`,
+      );
+      if (o.note) lines.push(`- Note: ${o.note}`);
+    }
     lines.push("");
   }
   lines.push(

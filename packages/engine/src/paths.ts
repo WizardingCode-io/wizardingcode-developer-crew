@@ -101,6 +101,7 @@ export const PROTECTED_WORK_FILES: readonly string[] = [
   "report.md",
   "objections.json",
   "mail.json",
+  "analysis/origin.json",
 ];
 const PROTECTED_IN_WORK = new Set(PROTECTED_WORK_FILES);
 /** The one source of what stays the session's under `review/` (SP7b decision 16): `ui` or `e2e`, right under it or under a todo's `T-n/`; the hook's text rule builds on it too. */
