@@ -817,3 +817,19 @@ test("SP3-T4 AC-3: the panel shows the questions first, open before answered, ri
   active = NONE;
   expect((await $.command.run({ command: "crew", args: "questions" })).text).toBe("Crew: no active work item. A change starts with the crew skill.");
 });
+
+test("SP8-T1 AC-5 (finding 84): the strip shows a confirmed priority with no mark", async ($, on) => {
+  const answer: Record<string, unknown> = {
+    ...TEAMED,
+    priority: "high",
+    triage: { proposed: "high", confirmed: "high", against: "signed", reason: null },
+  };
+  stubs(on, () => ({ exitCode: 0, stdout: JSON.stringify(answer), stderr: "" }));
+  on("ui.render", () => ({ type: "Text", props: {}, children: ["drawn by Claude Code"] }));
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  const ui = await $.ui.mount({ ...STRIP, surface: "terminal" });
+  const texts = (await ui.findAll({ type: "Text" })).map((t) => t.text);
+  expect(texts.some((t) => / · standard · priority high · /.test(t))).toBe(true);
+  expect(texts.some((t) => /unconfirmed/.test(t))).toBe(false);
+  await ui.unmount();
+});

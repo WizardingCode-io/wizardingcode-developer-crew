@@ -119,6 +119,8 @@ export interface Target {
   workspaceOf?: string;
   /** A test command narrowed to a todo's files (SP7 §8.1): a template with `{files}`, detected or set by the user. */
   testScoped?: GateCommand;
+  /** Gates the user removed with `crew profile unset` (finding 87): a `test` listed here is not planned for the target. */
+  unset?: GateName[];
 }
 
 /**
@@ -652,6 +654,8 @@ export interface WorkItem {
   /** The debate, when the gap round found a decision with consequences. Absent before 0.4.0 and when none opened. */
   debate?: Debate;
   approvals: Approval[];
+  /** Jev's dispute of the validator's rule (finding 94): held until a person clears it with crew resume or approves the spec. */
+  validatorDispute?: { at: string; condition: string; confidence: number | null };
   skips: Skip[];
   /** HEAD when the item started; the change is everything since. Null outside git or with no commits. */
   baseCommit: string | null;

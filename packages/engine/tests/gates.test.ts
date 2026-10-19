@@ -1329,3 +1329,20 @@ test("SP3-T1 AC-2 (finding 81): a gate run merges its runs into the evidence as 
   expect(second.verdict).toBe("unproven");
   expect(readFileSync(file, "utf8")).toBe('{"hand":true}');
 }, 30_000);
+
+test("SP8-T1 AC-7 (finding 87): a target whose test gate the user unset is planned without it, while a target with no test command still has test planned so the run says it is unavailable", () => {
+  const target: Target = {
+    path: "packages/engine",
+    stack: "node",
+    packageManager: "bun",
+    gates: { lint: { command: "biome check .", source: "detected" } },
+    timeoutMs: 1000,
+  };
+  expect(gatesForTarget(target, DEFAULT_POLICY, ["packages/engine/src/a.ts"])).toEqual([
+    "test",
+    "lint",
+  ]);
+  expect(
+    gatesForTarget({ ...target, unset: ["test"] }, DEFAULT_POLICY, ["packages/engine/src/a.ts"]),
+  ).toEqual(["lint"]);
+});

@@ -2,6 +2,10 @@
 # evals/fixtures/node-plain.sh: a green Node project with one module and one test, for the gap cases to build on.
 # Sourced by a case's fixture.sh, which adds its own files and commits once.
 set -eu
+# One commit of the fixture's own, with a name no project has (finding 96).
+fixture_commit() {
+  git -c user.name=Fixture -c user.email=fixture@example.invalid commit -q -m "$1"
+}
 git init -q -b main
 cat > package.json <<'EOF'
 { "name": "fixture", "private": true, "type": "module", "scripts": { "test": "node --test" } }

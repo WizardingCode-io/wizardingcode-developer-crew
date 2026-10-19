@@ -220,3 +220,27 @@ test("SP3-T1 AC-3 (finding 79): a before is refused, naming the paths, when a wa
   if (early.ok) early.apply(evidence);
   expect(evidence.tdd[0]?.before?.exit).toBe(0);
 });
+
+test("SP8-T1 AC-1 (finding 91): a record given shell words with more than one after -c is refused before any run, nothing recorded; the words of a quoted string reach the shell whole", async () => {
+  const s = setup();
+  write(s.root, "tests/cart.test.js", "new test");
+  const refused = await recordTdd(s.paths, s.work, s.evidence, s.profile, s.behaviour.id, "red", [
+    "sh",
+    "-c",
+    "bun",
+    "run",
+    "check",
+  ]);
+  expect(refused.ok).toBe(false);
+  expect(refused.message).toContain("quote the command string as one argument");
+  expect(refused.record).toBeUndefined();
+  expect(s.evidence.tdd).toEqual([]);
+  // `sh -c "exit 1"` as words: joined without its quotes the shell would run `exit` with $0=1 and pass.
+  const red = await recordTdd(s.paths, s.work, s.evidence, s.profile, s.behaviour.id, "red", [
+    "sh",
+    "-c",
+    "exit 1",
+  ]);
+  expect(red.ok, red.message).toBe(true);
+  expect(s.evidence.tdd.find((t) => t.criterion === s.behaviour.id)?.red?.exit).toBe(1);
+});

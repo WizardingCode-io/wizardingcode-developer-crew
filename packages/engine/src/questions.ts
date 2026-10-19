@@ -132,18 +132,20 @@ export function answerQuestion(
   id: string,
   answer: string,
   by: string,
-): QuestionRecord | { refused: string } {
+): AnsweredQuestion | { refused: string } {
   const question = work.questions?.find((q) => q.id === id);
   if (!question) return { refused: `no question ${id} on this item` };
   if (question.answer !== null)
     return { refused: `${id} was answered by ${question.by} (${question.answeredAt}) already` };
   const text = answer.trim();
   if (!text) return { refused: "an answer needs a text" };
-  question.answer = text;
-  question.by = by;
-  question.answeredAt = nowIso();
-  return question;
+  const answered = { answer: text, by, answeredAt: nowIso() };
+  Object.assign(question, answered);
+  return { ...question, ...answered };
 }
+
+/** A question once answered: its answer, who gave it and when are never null (finding 86). */
+export type AnsweredQuestion = QuestionRecord & { answer: string; by: string; answeredAt: string };
 
 export function openQuestions(work: WorkItem): QuestionRecord[] {
   return (work.questions ?? []).filter((q) => q.answer === null);

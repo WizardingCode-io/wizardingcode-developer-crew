@@ -197,15 +197,15 @@ export function readOrigin(
 }
 
 /** `3 commits, 1 item (<id>: roles a, b; tasks T-1)`: the unique shas across the paths, the items with their roles and tasks. */
+/** `roles a, b; tasks T-1`, or `none` for each, as the summary and the report say it (finding 88). */
+export function rolesAndTasks(item: OriginItem): string {
+  return `roles ${item.roles.join(", ") || "none"}; tasks ${item.tasks.join(", ") || "none"}`;
+}
+
 export function originSummary(origin: Origin): string {
   const shas = new Set(origin.paths.flatMap((p) => p.commits.map((c) => c.sha)));
   const n = shas.size;
   const m = origin.items.length;
-  const items = origin.items
-    .map(
-      (i) =>
-        `${i.id}: roles ${i.roles.join(", ") || "none"}; tasks ${i.tasks.join(", ") || "none"}`,
-    )
-    .join("; ");
+  const items = origin.items.map((i) => `${i.id}: ${rolesAndTasks(i)}`).join("; ");
   return `${n} commit${n === 1 ? "" : "s"}, ${m} item${m === 1 ? "" : "s"}${m ? ` (${items})` : ""}`;
 }

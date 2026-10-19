@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import type { Origin, OriginItem } from "./analysis.ts";
+import { type Origin, type OriginItem, rolesAndTasks } from "./analysis.ts";
 import { UNAVAILABLE } from "./fingerprint.ts";
 import { two } from "./jev.ts";
 import { LockBusy, withLock } from "./lock.ts";
@@ -43,6 +43,11 @@ type Decided = {
  * validator (rule: <rule>)": the record says who decided, never less, never "by the user" for a
  * decision a person did not take, and never a prompt where the agent relayed a yes (ADR 0005).
  */
+/** A table cell from text a person typed: one line, its pipes escaped (finding 86). */
+function cell(text: string): string {
+  return oneLine(text).replace(/\|/g, "\\|");
+}
+
 export function decidedBy(decision: Decided): string {
   if (decision.by === "validator") return `by the validator (rule: ${decision.rule ?? "unnamed"})`;
   if (decision.by === "agent") return `by the agent in ${decision.mode} mode`;
@@ -362,7 +367,7 @@ export function renderReport(
       const item = (i: OriginItem) =>
         i.kind === null
           ? `${i.id} (not in the records)`
-          : `${i.id} "${oneLine(i.title ?? "").replace(/\|/g, "\\|")}" (${i.kind}; roles ${i.roles.join(", ") || "none"}; tasks ${i.tasks.join(", ") || "none"}; decisions ${i.decisions}; mail ${i.mail})`;
+          : `${i.id} "${cell(i.title ?? "")}" (${i.kind}; ${rolesAndTasks(i)}; decisions ${i.decisions}; mail ${i.mail})`;
       lines.push(
         `- Items: ${o.items.length ? o.items.map(item).join("; ") : "none in the records"}`,
       );
@@ -445,7 +450,6 @@ export function renderReport(
       "| What | Ref | Answer | Confidence | Model | At |",
       "| :- | :- | :- | -: | :- | :- |",
     );
-    const cell = (text: string) => oneLine(text).replace(/\|/g, "\\|");
     for (const v of evidence.verifications)
       lines.push(
         `| ${v.what} | ${cell(v.ref)} | ${cell(answerText(v.answer))} | ${v.confidence === null ? "-" : two(v.confidence)} | ${cell(v.model)} | ${v.at} |`,
@@ -504,7 +508,6 @@ export function renderReport(
       "| Question | Asked | Text | Channels | Answer | By | At |",
       "| :- | :- | :- | :- | :- | :- | :- |",
     );
-    const cell = (text: string) => oneLine(text).replace(/\|/g, "\\|");
     for (const q of work.questions)
       lines.push(
         `| ${q.id} | ${q.askedAt} | ${cell(q.text)} | ${questionChannelsCell(q)} | ${q.answer === null ? "-" : cell(q.answer)} | ${q.by ?? "-"} | ${q.answeredAt ?? "-"} |`,
@@ -530,8 +533,6 @@ export function renderReport(
       const sent = m.from.item === work.id && m.from.project === selfName;
       const direction = sent ? "sent" : "received";
       const other = partyLabel(sent ? m.to : m.from);
-      // Every cell a person typed (the subject, a reason, a branch) has its pipes escaped.
-      const cell = (text: string) => text.replace(/\|/g, "\\|");
       // The status as the engine reads it (SP7 §9) and the priority with its proposal when lowered.
       const decision = m.priorityDecision;
       const priority =
@@ -547,10 +548,10 @@ export function renderReport(
       const thread = threadOf(m) === m.id ? "-" : threadOf(m);
       const contracts =
         readContracts(m)
-          .map((c) => (c.kind === "clause" ? "clause" : `${c.kind} ${cell(oneLine(c.path ?? ""))}`))
+          .map((c) => (c.kind === "clause" ? "clause" : `${c.kind} ${cell(c.path ?? "")}`))
           .join(", ") || "-";
       lines.push(
-        `| ${m.id} | ${thread} | ${m.at} | ${direction} | ${other} | ${m.type} | ${priority} | ${cell(oneLine(m.subject))} | ${status} | ${contracts} |`,
+        `| ${m.id} | ${thread} | ${m.at} | ${direction} | ${other} | ${m.type} | ${priority} | ${cell(m.subject)} | ${status} | ${contracts} |`,
       );
     }
   }

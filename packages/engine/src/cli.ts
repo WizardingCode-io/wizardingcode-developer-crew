@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { analyseOrigin, originSummary, readOrigin, writeOrigin } from "./analysis.ts";
-import { type Parsed, parse } from "./argv.ts";
+import { commaList, type Parsed, parse } from "./argv.ts";
 import {
   AnswerError,
   type Answers,
@@ -125,7 +125,13 @@ import {
   setPolicyValue,
   skipAllowed,
 } from "./policy.ts";
-import { acceptPriorities, prioritiesState, triagePriority } from "./priorities.ts";
+import {
+  acceptPriorities,
+  prioritiesLine,
+  prioritiesState,
+  triagePriority,
+  triageText,
+} from "./priorities.ts";
 import { ensureProfile, loadProfile, refreshProfile, saveProfile } from "./profile.ts";
 import {
   addQuestion,
@@ -198,10 +204,12 @@ import {
   PERMISSION_MODES,
   PHASE_ORDER,
   partyLabel,
+  type QuestionRecord,
   VALIDATOR_RULES,
 } from "./types.ts";
 import { parseValidation, validationHash } from "./validation.ts";
 import {
+  applyDefectMarks,
   askAllowed,
   type DefectsOutcome,
   type FactInput,
@@ -255,7 +263,7 @@ export interface CliIo {
 // behaviour criteria). `hook` is not here: Claude Code calls it, and its payload is on stdin.
 const KNOWN_FLAGS: Record<string, readonly string[]> = {
   detect: ["refresh"],
-  profile: ["target", "stack", "force", "timeout"],
+  profile: ["target", "stack", "force", "timeout", "mode"],
   policy: [],
   accept: [],
   start: ["answers", "criterion", "preserve", "origin", "priority", "source", "reason"],
@@ -268,7 +276,8 @@ const KNOWN_FLAGS: Record<string, readonly string[]> = {
   approve: ["mode", "validator"],
   phase: [],
   await: [],
-  resume: [],
+  // A resume that clears a jev dispute is a decision (finding 94): --mode where nobody watches.
+  resume: ["mode"],
   tdd: ["reason"],
   gate: ["only"],
   judgement: ["ruling", "not-run", "reason", "task"],
@@ -756,12 +765,8 @@ async function recordTaskJudgement(
     join(reviewDir(env.paths, work.id, task), "diff.patch"),
   );
   const notes: string[] = [];
-  if (defects?.records.length) {
-    const appended = updateEvidence(env.paths, work.id, (fresh) => {
-      fresh.verifications = [...(fresh.verifications ?? []), ...defects.records];
-    });
-    if ("refused" in appended) notes.push(appended.refused);
-  }
+  const appendRefusal = appendVerifications(env, work.id, defects?.records ?? []);
+  if (appendRefusal) notes.push(appendRefusal);
   const jevWait = jevUnavailableWait(work, defects);
   const hash = scopeHash(cut);
   const gate = record.gate as NonNullable<TaskRecord["gate"]>;
@@ -894,7 +899,8 @@ async function askDefects(
 ): Promise<DefectsOutcome | null> {
   const jev = jevConfig(ioEnv, env.config);
   if (!jev.configured || !askAllowed(env.policy, "defect")) return null;
-  return verifyDefects(jev, env.policy, records, readText(patchFile) ?? "");
+  // The marks land on the findings here, where the records are the caller's (finding 90).
+  return applyDefectMarks(await verifyDefects(jev, env.policy, records, readText(patchFile) ?? ""));
 }
 
 /** One line per marked finding under its gate's line: `    <file>:<line> verified by jev (0.93)`. */
@@ -915,6 +921,88 @@ function markLines(record: JudgementRecord): string[] {
  * Jev down at a record (SP3 decision 12): a full-route item waits for a person after the record
  * when it has no wait yet; the line that says so, or the plain unavailability on another route.
  */
+/** A test-first record: the run outside any lock, the record applied under it (finding 81; its own function, finding 82). */
+async function tddCommand(env: Env, parsed: Parsed, args: string[]): Promise<Outcome> {
+  const [step, id, criterion] = args;
+  const opened = openForChange(env, id);
+  if (isOutcome(opened)) return opened;
+  if (!["red", "green", "before", "after", "observed"].includes(step ?? "") || !criterion)
+    return refuse(
+      'usage: crew tdd <red|green|before|after|observed> <id> <criterion> [--reason "<why>"] [-- <cmd>]',
+    );
+  const { evidence } = loadEvidence(env.paths, opened.work.id);
+  const override = parsed.rest.length ? parsed.rest : undefined;
+  const reason = typeof parsed.flags.reason === "string" ? parsed.flags.reason : undefined;
+  const outcome = await recordTdd(
+    env.paths,
+    opened.work,
+    evidence,
+    env.profile,
+    criterion,
+    step as TddStep,
+    override,
+    reason,
+  );
+  const tail = outcome.record?.tail ? `\n${outcome.record.tail}` : "";
+  if (!outcome.ok) return refuse(`${outcome.message}${tail}`, { record: outcome.record });
+  // The record goes into the evidence as it stands now, under the lock: a run that took minutes
+  // merges with what landed meanwhile. A refusal (the file edited outside the engine during the
+  // run, a lock held) records nothing and says the run passed and where its log is.
+  const saved = updateEvidence(env.paths, opened.work.id, outcome.apply);
+  if ("refused" in saved)
+    return refuse(`${saved.refused} (the ${step} run passed: ${outcome.record?.log ?? "no log"})`, {
+      record: outcome.record,
+    });
+  return ok(outcome.message, { record: outcome.record });
+}
+
+/** The channels the engine posts a doubt to itself (the questions file beside a document, the notice to the project's own box); a refusal is a note and the channel stays the skill's to post (finding 86). */
+function postQuestionChannels(
+  env: Env,
+  work: WorkItem,
+  question: QuestionRecord,
+  text: string,
+): string[] {
+  const notes: string[] = [];
+  for (const channel of question.channels) {
+    if (channel.kind === "document" && work.source?.documentPath) {
+      const written = postDocumentQuestion(env.paths.root, work.source.documentPath, question);
+      if ("refused" in written) notes.push(`document not posted: ${written.refused}`);
+      else {
+        channel.posted = true;
+        channel.ref = written.file;
+      }
+    } else if (channel.kind === "mail") {
+      const sent = send(
+        env.mail,
+        {
+          to: ".",
+          type: "notice",
+          subject: `${question.id} of ${work.id}`,
+          text: `${question.id} of ${work.id}: ${text}`,
+          item: work.id,
+        },
+        work,
+      );
+      if ("refused" in sent) notes.push(`mail not posted: ${sent.refused}`);
+      else {
+        channel.posted = true;
+        channel.ref = sent.message.id;
+      }
+    }
+  }
+  return notes;
+}
+
+/** The verifications of one ask appended to the item's evidence under its lock; the refusal, if the save was refused, else null (finding 90). */
+function appendVerifications(env: Env, id: string, records: Verification[]): string | null {
+  if (!records.length) return null;
+  const appended = updateEvidence(env.paths, id, (fresh) => {
+    fresh.verifications = [...(fresh.verifications ?? []), ...records];
+  });
+  return "refused" in appended ? appended.refused : null;
+}
+
 function jevUnavailableWait(work: WorkItem, defects: DefectsOutcome | null): string | null {
   if (!defects?.unavailable) return null;
   if (work.route !== "full") return `jev unavailable: ${defects.unavailable}`;
@@ -934,22 +1022,6 @@ function triageProposalText(outcome: TriageOutcome, proposed: MailPriority): str
   const p = outcome.proposal;
   const flags = `production down ${two(p.flags.is_production_down ?? 0)}, signed deadline ${two(p.flags.names_a_signed_deadline ?? 0)}, vague ${two(p.flags.is_vague ?? 0)}`;
   return `jev proposes ${p.level} (${two(p.confidence)}; ${flags})${p.capped ? `, capped at the source's ${proposed}` : ""}`;
-}
-
-/**
- * The item's priority with its triage (SP7 §10.2): the start prints the decision in full; the
- * status (`short`) prints the level alone unless the proposal is still unconfirmed.
- */
-function triageText(work: WorkItem, short = false): string {
-  const t = work.triage;
-  const level = `priority ${work.priority ?? "normal"}`;
-  if (!t) return level;
-  if (t.confirmed === null)
-    return `priority ${t.proposed} (proposed, unconfirmed: no signed business priorities)`;
-  if (short) return level;
-  if (t.confirmed === t.proposed)
-    return `priority ${t.confirmed} (confirmed against the signed business priorities)`;
-  return `priority ${t.confirmed} (proposed ${t.proposed}, against the signed business priorities): ${t.reason ?? ""}`;
 }
 
 function logDecision(env: Env, work: WorkItem, answers: Answers): void {
@@ -1066,9 +1138,48 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
     }
     case "profile": {
       const [sub, gate, cmd] = args;
-      if (sub === "set" || sub === "confirm") {
+      if (sub === "set" || sub === "confirm" || sub === "unset") {
         const refused = tamperRefusal(env);
         if (refused) return refused;
+      }
+      if (sub === "unset") {
+        // A gate removed from a target (finding 87): the user's decision, recorded; the profile
+        // keeps at least one test gate, counted across every target.
+        if (!GATE_NAMES.includes(gate as GateName) || gate === "secrets")
+          return refuse(
+            "usage: crew profile unset <build|test|lint|typecheck|deps|e2e> [--target <path>] [--stack <s>]",
+          );
+        const decided = decisionFlag(parsed, env.policy);
+        if (isOutcome(decided)) return decided;
+        const targetPath = typeof parsed.flags.target === "string" ? parsed.flags.target : ".";
+        const stackFlag = typeof parsed.flags.stack === "string" ? parsed.flags.stack : undefined;
+        const atPath = env.profile.targets.filter((t) => t.path === targetPath);
+        if (stackFlag === undefined && atPath.length > 1)
+          return refuse(
+            `two targets at ${targetPath} (${atPath.map((t) => t.stack).join(", ")}): say which one with --stack`,
+          );
+        const target =
+          stackFlag === undefined ? atPath[0] : atPath.find((t) => t.stack === stackFlag);
+        if (!target) return refuse(`no target at ${targetPath} in the profile (crew detect)`);
+        const where = stackFlag === undefined ? targetPath : `${targetPath} (${stackFlag})`;
+        const current = target.gates[gate as GateName];
+        if (!current) return refuse(`${gate} for ${where} is not set`);
+        if (gate === "test" && env.profile.targets.filter((t) => t.gates.test).length <= 1)
+          return refuse(
+            `the profile keeps at least one test gate: test for ${where} is the last one`,
+          );
+        delete target.gates[gate as GateName];
+        target.unset = [...new Set([...(target.unset ?? []), gate as GateName])];
+        saveProfile(env.paths, env.profile);
+        const text = `${gate} for ${where} unset (was: ${current.command})`;
+        const by = whoDecided(decided);
+        appendDecision(env.paths, { at: nowIso(), item: "profile", kind: "profile", text, by });
+        return ok(`${text} ${decisionText(env.policy, decided)}`, {
+          target: targetPath,
+          gate,
+          was: current.command,
+          by,
+        });
       }
       if (sub === "set" && gate?.startsWith("environment.")) {
         // The environment, key by key (SP7 §8.2): a command is confirmed as it is set, a value is
@@ -1386,10 +1497,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
               priority: w.priority ?? "normal",
             })),
           });
-          if (outcome.records.length)
-            updateEvidence(env.paths, work.id, (fresh) => {
-              fresh.verifications = [...(fresh.verifications ?? []), ...outcome.records];
-            });
+          appendVerifications(env, work.id, outcome.records);
           jevLine = `\n  ${triageProposalText(outcome, source.proposedPriority)}`;
         }
       }
@@ -1418,7 +1526,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       }`;
       // The source and the triage (SP7 §10): where the request came from and what the lead decided of its priority.
       const sourceLines = source ? `\n  source: ${sourceLine(source)}` : "";
-      const triageLine = triage ? `\n  ${triageText(work)}` : "";
+      const triageLine = triage ? `\n  ${triageText(work, "start")}` : "";
       const teamLine = work.seats?.length
         ? `\n  team: ${work.seats.length} seats (crew team ${work.id})`
         : "";
@@ -1687,6 +1795,13 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       }
       const decision = validatorFlag(parsed, env.policy);
       if (isOutcome(decision)) return decision;
+      // A dispute Jev raised is held on the item until a person clears it (finding 94): the same
+      // session cannot reshape the conclave and ask the rule again.
+      const held = opened.work.validatorDispute;
+      if (decision.by === "validator" && held)
+        return refuse(
+          `the validator's verdict was disputed by jev on ${held.at} (${held.condition}); a person clears it: crew resume ${opened.work.id} or crew approve ${opened.work.id} spec`,
+        );
       let jevNote = "";
       if (decision.by === "validator") {
         // The engine checks the rule's mechanical part before anything is recorded (SP2 §9).
@@ -1723,13 +1838,15 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
               criterion: o.criterion ?? null,
             })),
           });
-          if (outcome.records.length)
-            updateEvidence(env.paths, opened.work.id, (fresh) => {
-              fresh.verifications = [...(fresh.verifications ?? []), ...outcome.records];
-            });
+          appendVerifications(env, opened.work.id, outcome.records);
           if (outcome.status === "disputed") {
             opened.work.awaiting = "user";
             delete opened.work.awaitingMessage;
+            opened.work.validatorDispute = {
+              at: nowIso(),
+              condition: outcome.condition ?? "the validator's rule",
+              confidence: outcome.confidence ?? null,
+            };
             saveWork(env.paths, opened.work);
             return refuse(
               `disputed by jev: ${outcome.condition} (${two(outcome.confidence ?? 0)}); the item waits for a person`,
@@ -1741,6 +1858,8 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
               : ` (unverified: ${outcome.reason ?? "no reason"})`;
         }
       }
+      // A person's approval stands above the rule Jev disputed: the dispute goes with it.
+      if (decision.by === "user") delete opened.work.validatorDispute;
       approve(opened.work, "spec", decision);
       appendDecision(env.paths, {
         at: nowIso(),
@@ -1779,11 +1898,32 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       const withNotes = (text: string) =>
         originNotes.length ? `${text}\n${originNotes.join("\n")}` : text;
       if (command === "resume") {
+        // A jev dispute held on the item is a person's to clear (finding 94): the hook asks for
+        // this resume, and with nobody present it is refused.
+        let cleared = "";
+        if (opened.work.validatorDispute) {
+          const decided = decisionFlag(parsed, env.policy);
+          if (isOutcome(decided)) return decided;
+          if (decided.by !== "user")
+            return refuse(
+              "the validator's verdict was disputed by jev; a person clears it: the item waits",
+            );
+          const by = whoDecided(decided);
+          appendDecision(env.paths, {
+            at: nowIso(),
+            item: opened.work.id,
+            kind: "dispute",
+            text: `jev dispute cleared (${opened.work.validatorDispute.condition})`,
+            by,
+          });
+          delete opened.work.validatorDispute;
+          cleared = `; the jev dispute cleared by ${by}`;
+        }
         opened.work.awaiting = null;
         delete opened.work.awaitingMessage;
         saveWork(env.paths, opened.work);
         moveOrigin("in-progress");
-        return ok(withNotes(`${opened.work.id}: resumed`), {
+        return ok(withNotes(`${opened.work.id}: resumed${cleared}`), {
           awaiting: null,
           awaitingMessage: null,
         });
@@ -1857,14 +1997,17 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       let tail: string | null = null;
       let records: Verification[] = [];
       if (found.length && !asking) {
+        const notAsked = jev.configured
+          ? "jev not asked: fact is not in verify.asks"
+          : "jev not configured";
         for (const f of found)
           statuses.set(f.id, {
             id: f.id,
             source: facts.find((x) => x.id === f.id)?.source ?? "",
             status: "unverified",
-            reason: "jev not configured",
+            reason: notAsked,
           });
-        tail = "jev not configured";
+        tail = notAsked;
       } else if (found.length) {
         const out = await verifyFacts(jev, env.policy, found);
         records = out.records;
@@ -1911,13 +2054,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       const usage = "usage: crew analyse <id> --paths <file,file>";
       const opened = openForChange(env, args[0]);
       if (isOutcome(opened)) return opened;
-      const list =
-        typeof parsed.flags.paths === "string"
-          ? parsed.flags.paths
-              .split(",")
-              .map((p) => p.trim())
-              .filter(Boolean)
-          : [];
+      const list = commaList(parsed.flags.paths);
       if (!list.length) return refuse(usage);
       const origin = analyseOrigin(env.paths, list);
       if ("refused" in origin) return refuse(origin.refused);
@@ -1951,7 +2088,6 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         // Without --mode a person is present (the hook demands the flag where nobody watches).
         const decided = decisionFlag(parsed, env.policy);
         if (isOutcome(decided)) return decided;
-        const notes: string[] = [];
         const question = addQuestion(
           work,
           text,
@@ -1960,39 +2096,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
             workspace: env.mail.self.workspace,
           }),
         );
-        // The channels the engine posts itself: the questions file beside a document, the notice
-        // to the project's own box; a refusal is a note and the channel stays the skill's to post.
-        for (const channel of question.channels) {
-          if (channel.kind === "document" && work.source?.documentPath) {
-            const written = postDocumentQuestion(
-              env.paths.root,
-              work.source.documentPath,
-              question,
-            );
-            if ("refused" in written) notes.push(`document not posted: ${written.refused}`);
-            else {
-              channel.posted = true;
-              channel.ref = written.file;
-            }
-          } else if (channel.kind === "mail") {
-            const sent = send(
-              env.mail,
-              {
-                to: ".",
-                type: "notice",
-                subject: `${question.id} of ${work.id}`,
-                text: `${question.id} of ${work.id}: ${text}`,
-                item: work.id,
-              },
-              work,
-            );
-            if ("refused" in sent) notes.push(`mail not posted: ${sent.refused}`);
-            else {
-              channel.posted = true;
-              channel.ref = sent.message.id;
-            }
-          }
-        }
+        const notes = postQuestionChannels(env, work, question, text);
         // The wait is the user wait crew await sets: a doubt is a person's to answer, whatever
         // the item waited for before.
         const was = waitingPhrase(work);
@@ -2000,8 +2104,8 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         delete work.awaitingMessage;
         saveWork(env.paths, work);
         moveOriginMail(env, work, "blocked", notes);
-        const toPost = channelList(question.channels, false);
-        const line = `${question.id} recorded; waiting for the user${was && was !== "waiting for the user" ? ` (was ${was})` : ""}; posted: ${channelList(question.channels, true) || "none"}${toPost ? `; to post: ${toPost}: crew question ${work.id} posted ${question.id} --channel <channel> --ref <ref>` : ""}`;
+        const toPost = channelList(question.channels, false).length > 0;
+        const line = `${question.id} recorded; waiting for the user${was && was !== "waiting for the user" ? ` (was ${was})` : ""}; ${channelsText(question)}${toPost ? `: crew question ${work.id} posted ${question.id} --channel <channel> --ref <ref>` : ""}`;
         return ok(notes.length ? `${line}\n${notes.join("\n")}` : line, {
           question: questionJson(question),
           awaiting: "user",
@@ -2032,12 +2136,12 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         const answered = answerQuestion(work, id, text, by);
         if ("refused" in answered) return refuse(answered.refused);
         appendDecision(env.paths, {
-          at: answered.answeredAt ?? nowIso(),
+          at: answered.answeredAt,
           item: work.id,
           kind: "question",
           id,
           text: answered.text,
-          answer: answered.answer ?? "",
+          answer: answered.answer,
           by,
         });
         // The user wait clears when no question is open; another wait is not the question's to clear.
@@ -2063,51 +2167,13 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       }
       return refuse(usage);
     }
-    case "tdd": {
-      const [step, id, criterion] = args;
-      const opened = openForChange(env, id);
-      if (isOutcome(opened)) return opened;
-      if (!["red", "green", "before", "after", "observed"].includes(step ?? "") || !criterion)
-        return refuse(
-          'usage: crew tdd <red|green|before|after|observed> <id> <criterion> [--reason "<why>"] [-- <cmd>]',
-        );
-      const { evidence } = loadEvidence(env.paths, opened.work.id);
-      const override = parsed.rest.length ? parsed.rest.join(" ") : undefined;
-      const reason = typeof parsed.flags.reason === "string" ? parsed.flags.reason : undefined;
-      const outcome = await recordTdd(
-        env.paths,
-        opened.work,
-        evidence,
-        env.profile,
-        criterion,
-        step as TddStep,
-        override,
-        reason,
-      );
-      const tail = outcome.record?.tail ? `\n${outcome.record.tail}` : "";
-      if (!outcome.ok) return refuse(`${outcome.message}${tail}`, { record: outcome.record });
-      // The record goes into the evidence as it stands now, under the lock (finding 81): a run that
-      // took minutes merges with what landed meanwhile. A refusal (the file edited outside the engine
-      // during the run, a lock held) records nothing and says the run passed and where its log is.
-      const saved = updateEvidence(env.paths, opened.work.id, outcome.apply);
-      if ("refused" in saved)
-        return refuse(
-          `${saved.refused} (the ${step} run passed: ${outcome.record?.log ?? "no log"})`,
-          { record: outcome.record },
-        );
-      return ok(outcome.message, { record: outcome.record });
-    }
+    case "tdd":
+      return tddCommand(env, parsed, args);
     case "gate": {
       const opened = openForChange(env, args[1]);
       if (isOutcome(opened)) return opened;
       if (args[0] !== "run") return refuse("usage: crew gate run <id> [--only a,b]");
-      const only =
-        typeof parsed.flags.only === "string"
-          ? parsed.flags.only
-              .split(",")
-              .map((g) => g.trim())
-              .filter(Boolean)
-          : undefined;
+      const only = typeof parsed.flags.only === "string" ? commaList(parsed.flags.only) : undefined;
       const unknown = only?.find(
         (g) => !GATE_NAMES.includes(g as GateName) && !isJudgementGateName(g),
       );
@@ -2407,13 +2473,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       const ctx = env.mail;
       if (args[1] === "open") {
         const task = args[2];
-        const criteria =
-          typeof parsed.flags.criteria === "string"
-            ? parsed.flags.criteria
-                .split(",")
-                .map((c) => c.trim())
-                .filter(Boolean)
-            : [];
+        const criteria = commaList(parsed.flags.criteria);
         if (!task || !criteria.length) return refuse(usage);
         const out = openTask(
           ctx,
@@ -2435,13 +2495,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           { task: out.record, message: out.message, opened: out.opened, notes: out.notes },
         );
       }
-      const list = (flag: unknown): string[] =>
-        typeof flag === "string"
-          ? flag
-              .split(",")
-              .map((s) => s.trim())
-              .filter(Boolean)
-          : [];
+      const list = commaList;
       if (args[1] === "note") {
         // A todo the lead does inline (SP7 §8.1): no worktree, no message; its scope names its files.
         const task = args[2];
@@ -2822,8 +2876,8 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
               : "the user";
           const signed = acceptPriorities(env.paths.userDir, workspace, { file, by });
           if ("refused" in signed) return refuse(signed.refused);
-          const state = prioritiesState(env.paths.userDir, workspace);
-          const digest = `sha256:${sha256(state.text ?? "").slice(0, 12)}`;
+          const { hash, ...state } = signed;
+          const digest = `sha256:${hash.replace(/^sha256:/, "").slice(0, 12)}`;
           appendDecision(env.paths, {
             at: nowIso(),
             item: "workspace",
@@ -2840,15 +2894,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           return refuse("usage: crew workspace priorities [accept [--file <path>]] [--json]");
         if (!workspace) return ok(noWorkspace, { workspace: null, state: null });
         const state = prioritiesState(env.paths.userDir, workspace);
-        const line =
-          state.state === "signed"
-            ? `priorities: signed (${state.signedAt})`
-            : state.state === "changed"
-              ? "priorities: changed since signing (crew workspace priorities accept)"
-              : state.state === "unsigned"
-                ? "priorities: unsigned (crew workspace priorities accept)"
-                : `priorities: none (write ${state.path}, or crew workspace priorities accept --file <path>)`;
-        return ok(line, { workspace, ...state });
+        return ok(prioritiesLine(state), { workspace, ...state });
       }
       // Every project of the workspace from the records alone (SP7b decision 17): nothing is run.
       if (args[0] !== "status")
@@ -2973,7 +3019,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           (q) => `  question ${q.id} open: ${oneLine(q.text)} (${channelsText(q)})`,
         ),
       );
-      const text = `${work.id} "${work.title}"\n  phase ${work.phase}, route ${work.route}, kind ${kindOfItem(work)}, ${triageText(work, true)}${waitingText(work)}\n${extra.length ? `${extra.join("\n")}\n` : ""}${gateSummary(work, result.verdict, result.unproven, result.evidence.runs)}`;
+      const text = `${work.id} "${work.title}"\n  phase ${work.phase}, route ${work.route}, kind ${kindOfItem(work)}, ${triageText(work, "status")}${waitingText(work)}\n${extra.length ? `${extra.join("\n")}\n` : ""}${gateSummary(work, result.verdict, result.unproven, result.evidence.runs)}`;
       // The mail synced and a task's reply that landed taken into the lead's record (SP2c §7): a
       // failure in either (a held lock, a folder that cannot be written) is one line under the
       // status, never the status lost.
@@ -3396,6 +3442,7 @@ const HELP = `crew ${VERSION}
       [--origin <message id>]           the item answers a message of this project's inbox (a session opened by mail)
       [--priority blocker|high|normal|low]   the item's priority; else its origin's confirmed one, else normal
   classify <id> --answers <json>        record typed answers and compute the route
+  analyse <id> --paths <file,file>      an issue's origin from git and the records, written to analysis/origin.json (before Understand)
   criteria <id> add "<text>" [--kind preserve|observed] [--contract <mid>:<n>]   a criterion, bound to a contract of a reply in the item's mail when given
   criteria <id> remove <AC-n>           take out a criterion no test-first record or skip names
   decision <id> add "<question>" [--default "<answer>"]   a decision only the user can make (gap round)
@@ -3406,17 +3453,20 @@ const HELP = `crew ${VERSION}
   objection <id> waive O-n --reason "<why>"     the user decides against it (asks the user)
   debate <id> open --reason "<why>"     the conclave's debate opens on a decision with consequences (once per item)
   debate <id> close [--tokens n]        the judge has ruled; plan is held while the debate is open
+  research <id> verify [--file <path>]  check the researcher's quotes in their sources; ask Jev when configured
   approve <id> spec                     record the user's approval (asks the user)
       --mode auto|bypassPermissions|dontAsk   no person watching: recorded as the agent's decision
   phase <id> next                       advance when the guard holds
   await <id> user | role | mail <mid>   mark the turn's wait: for the user, for the roles, or for a reply to a message
-  resume <id>                           clear the wait
+  resume <id>                           clear the wait (asks the user while a jev dispute is held on the item)
+  question <id> add "<text>" [--mode m] | posted Q-n --channel <c> --ref <r> | answer Q-n "<answer>" | list   a doubt on record, posted where it can; answered by a person (asks the user)
   mail send --to <project|.> --type question|change-request|notice|blocker "<text>"   send mail inside the workspace
       [--priority blocker|high|normal|low] [--thread <root>] [--agent <session|T-n|role>] [--item <id>] [--reply-to <mid>] [--subject <text>] [--file <path>]
   mail inbox [--all] | read <mid> | thread <mid> | reply <mid> "<text>" [--branch <b>] [--item <child>] [--contract <kind>:<path>[:<summary>]]… [--as <role>] [--file <path>]
   mail accept <mid> [--priority <p>] [--reason "<why>"]   confirm a request's priority, or lower it with a reason (never raise)
   mail refuse <mid> --reason "<why>" | status | stop <mid>   this project's mail and the sessions it opened (status sweeps them; stop kills one)
   workspace status [--json]           every project of the workspace: live, open items, unread, open threads, unconfirmed priorities, environment (reads records, runs nothing)
+  workspace priorities [accept [--file <path>]]   the workspace's signed business priorities (accept asks the user)
   task <id> open T-n --criteria AC-1,AC-2 [--text "<task text>"]   hand a task of the plan to an implementer: a message, a worktree, a branch, a session
   task <id> list | merge T-n [--force]   the tasks and their children; merge a proven child's branch (--force merges an unproven one: asks the user)
   tdd <red|green|before|after|observed> <id> <criterion> [--reason "<why>"] [-- <cmd>]

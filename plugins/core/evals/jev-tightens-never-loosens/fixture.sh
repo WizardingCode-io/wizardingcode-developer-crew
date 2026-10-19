@@ -16,7 +16,7 @@ SESSION
 printf '{ "unattendedDecisions": "validator" }\n' > .crew/policy.json
 printf '{ "v1": { "type": "noul", "noul": 0.95 }, "v2": { "type": "noul", "noul": 0.03 } }\n' > jev-answers.json
 git add -A
-git -c user.name=Fixture -c user.email=fixture@example.invalid commit -q -m "fixture: jev-tightens-never-loosens"
+fixture_commit "fixture: jev-tightens-never-loosens"
 # The canned file is named by a path the engine reads from the folder crew runs in (the scaffold root), so the sandbox may move the scaffold.
 crew config jev.endpoint "file://jev-answers.json" > /dev/null
 git log -1 --oneline

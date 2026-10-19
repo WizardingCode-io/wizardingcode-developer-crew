@@ -3,7 +3,7 @@
 set -eu
 . "$(dirname "$0")/../fixtures/node-plain.sh"
 git add -A
-git -c user.name=Fixture -c user.email=fixture@example.invalid commit -q -m "fixture: accounts"
+fixture_commit "fixture: accounts"
 ID=$(crew start "Add deactivateAccount to the accounts module" --answers '{"work_type":"chore","is_vague":0,"scope":0,"touches_auth":0,"touches_payments":0,"touches_personal_data":0,"touches_data_migration":0,"touches_infra":0,"touches_public_api":0}' --criterion "deactivateAccount(id) marks the account inactive" --json | node -e 'let s="";process.stdin.on("data",(d)=>{s+=d;}).on("end",()=>{process.stdout.write(JSON.parse(s).id);});')
 cat > tests/deactivate.test.mjs <<'DEACTIVATE'
 import test from "node:test";
@@ -31,5 +31,5 @@ for role in review-code-quality review-test-quality; do
 done
 crew gate run "$ID" > /dev/null
 git add -A
-git -c user.name=Fixture -c user.email=fixture@example.invalid commit -q -m "deactivation: deactivateAccount added; listAccounts unchanged"
+fixture_commit "deactivation: deactivateAccount added; listAccounts unchanged"
 git log -1 --oneline

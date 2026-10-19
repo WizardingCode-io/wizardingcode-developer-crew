@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { nowIso, readJson, readText, sha256, writeJson } from "./fs.ts";
 import { priorityRank } from "./mail-status.ts";
-import type { MailPriority, Triage } from "./types.ts";
+import type { MailPriority, Triage, WorkItem } from "./types.ts";
 
 /** The workspace's folder under the user's crew directory: `priorities.md` (the user's words) and `priorities.json` (the engine's signature). */
 export function prioritiesDir(userDir: string, workspace: string): string {
@@ -62,7 +62,7 @@ export function acceptPriorities(
   userDir: string,
   workspace: string,
   options: { file?: string; by: string },
-): { state: "signed"; path: string } | { refused: string } {
+): (PrioritiesStatus & { state: "signed"; hash: string }) | { refused: string } {
   const dir = prioritiesDir(userDir, workspace);
   const path = join(dir, "priorities.md");
   if (options.file !== undefined) {
@@ -77,8 +77,40 @@ export function acceptPriorities(
     return {
       refused: `no priorities to sign: write ${path}, or crew workspace priorities accept --file <path>`,
     };
-  writeJson(join(dir, "priorities.json"), { hash: hashOf(text), by: options.by, at: nowIso() });
-  return { state: "signed", path };
+  const hash = hashOf(text);
+  const at = nowIso();
+  writeJson(join(dir, "priorities.json"), { hash, by: options.by, at });
+  return { state: "signed", path, text, signedAt: at, hash };
+}
+
+/** The one line `crew workspace priorities` prints for each state (finding 84). */
+export function prioritiesLine(status: PrioritiesStatus): string {
+  switch (status.state) {
+    case "signed":
+      return `priorities: signed (${status.signedAt})`;
+    case "changed":
+      return "priorities: changed since signing (crew workspace priorities accept)";
+    case "unsigned":
+      return "priorities: unsigned (crew workspace priorities accept)";
+    default:
+      return `priorities: none (write ${status.path}, or crew workspace priorities accept --file <path>)`;
+  }
+}
+
+/**
+ * The item's priority with its triage (SP7 §10.2), from the one summary (finding 84): at the start
+ * the decision in full; in the status the level alone, unless the proposal is still unconfirmed.
+ */
+export function triageText(
+  work: Pick<WorkItem, "priority" | "triage">,
+  where: "start" | "status",
+): string {
+  const t = work.triage;
+  if (!t) return `priority ${work.priority ?? "normal"}`;
+  if (t.confirmed === null)
+    return `priority ${t.proposed} (proposed, unconfirmed: no signed business priorities)`;
+  if (where === "status") return `priority ${work.priority ?? "normal"}`;
+  return `priority ${t.confirmed} (${triageSummary(t)})`;
 }
 
 const NOT_SIGNED =

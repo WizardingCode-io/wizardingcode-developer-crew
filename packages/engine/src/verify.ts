@@ -1,6 +1,7 @@
 import { nowIso } from "./fs.ts";
 import {
   type AskOptions,
+  answerOf,
   askJev,
   type JevAnswer,
   type JevConfig,
@@ -8,6 +9,7 @@ import {
   type Mark,
   markOf,
   topLevel,
+  two,
 } from "./jev.ts";
 import { hunkLines } from "./judgement.ts";
 import type {
@@ -85,6 +87,12 @@ function findingMark(mark: Mark): FindingVerification {
   };
 }
 
+/** The mark one finding gets, returned to the caller who owns the records (finding 90). */
+export interface DefectMark {
+  finding: JudgementRecord["findings"][number];
+  mark: FindingVerification;
+}
+
 export interface DefectsOutcome {
   /** The verifications answered, to append to the evidence; empty when unavailable. */
   records: Verification[];
@@ -92,6 +100,8 @@ export interface DefectsOutcome {
   unavailable: string | null;
   /** How many findings were sent. */
   sent: number;
+  /** The marks for the findings, applied by the caller (`applyDefectMarks`). */
+  marks: DefectMark[];
 }
 
 /**
@@ -118,26 +128,29 @@ export async function verifyDefects(
     id: string;
     record: JudgementRecord;
     finding: (typeof candidates)[number]["finding"];
+    question: JevQuestion;
   }[] = [];
+  const marks: DefectMark[] = [];
+  const unverified = (finding: DefectMark["finding"], reason: string) =>
+    marks.push({ finding, mark: { status: "unverified", reason } });
   const state: Record<string, unknown> = {};
   const questions: Record<string, JevQuestion> = {};
   const snippets = policy.verify.send === "claims-and-snippets";
   for (const c of candidates) {
     if (c.finding.line === undefined) {
-      c.finding.verification = { status: "unverified", reason: "no line" };
+      unverified(c.finding, "no line");
       continue;
     }
     const lines = hunkLines(patch, c.finding.file, c.finding.line);
     if (!lines) {
-      c.finding.verification = { status: "unverified", reason: "line outside the change's hunks" };
+      unverified(c.finding, "line outside the change's hunks");
       continue;
     }
     if (sent.length >= policy.verify.maxClaimsPerItem) {
-      c.finding.verification = { status: "unverified", reason: "over verify.maxClaimsPerItem" };
+      unverified(c.finding, "over verify.maxClaimsPerItem");
       continue;
     }
     const id = `d${sent.length + 1}`;
-    sent.push({ id, record: c.record, finding: c.finding });
     state[id] = {
       file: c.finding.file,
       line: c.finding.line,
@@ -145,7 +158,7 @@ export async function verifyDefects(
       rubric: RUBRIC_QUESTIONS[c.record.gate],
       ...(snippets ? { lines: lines.text } : {}),
     };
-    questions[id] = snippets
+    const question: JevQuestion = snippets
       ? {
           type: "choice",
           instructions: `What is the relation between the cited lines \`findings.${id}.lines\` and the finding's \`text\` at \`findings.${id}\`?`,
@@ -163,33 +176,38 @@ export async function verifyDefects(
             false: "the text names something else, or no defect",
           },
         };
+    questions[id] = question;
+    sent.push({ id, record: c.record, finding: c.finding, question });
   }
-  if (!sent.length) return { records: [], unavailable: null, sent: 0 };
+  if (!sent.length) return { records: [], unavailable: null, sent: 0, marks };
   const result = await askJev(cfg, { state: { findings: state }, questions }, options);
   if (!result.ok) {
-    for (const s of sent)
-      s.finding.verification = { status: "unverified", reason: UNAVAILABLE(result.unavailable) };
-    return { records: [], unavailable: result.unavailable, sent: sent.length };
+    for (const s of sent) unverified(s.finding, UNAVAILABLE(result.unavailable));
+    return { records: [], unavailable: result.unavailable, sent: sent.length, marks };
   }
   const out: Verification[] = [];
   for (const s of sent) {
-    const answer = result.answers[s.id];
-    const question = questions[s.id];
-    if (!answer || !question) continue;
+    const answer = answerOf(result.answers, s.id);
     const mark = markOf(answer, policy.verify.threshold);
-    s.finding.verification = findingMark(mark);
+    marks.push({ finding: s.finding, mark: findingMark(mark) });
     out.push(
       record(
         "defect",
         `${s.record.gate} ${s.finding.file}:${s.finding.line}`,
-        question,
+        s.question,
         answer,
         mark.confidence,
         result.model,
       ),
     );
   }
-  return { records: out, unavailable: null, sent: sent.length };
+  return { records: out, unavailable: null, sent: sent.length, marks };
+}
+
+/** The marks of an ask written onto the findings they name; the outcome, for chaining. */
+export function applyDefectMarks(outcome: DefectsOutcome): DefectsOutcome {
+  for (const { finding, mark } of outcome.marks) finding.verification = mark;
+  return outcome;
 }
 
 export interface ValidatorInput {
@@ -437,7 +455,7 @@ export async function verifyTriage(
   if (score.confidence < policy.verify.threshold)
     return {
       proposal: null,
-      reason: `confidence ${score.confidence.toFixed(2)} under ${policy.verify.threshold}`,
+      reason: `confidence ${two(score.confidence)} under ${policy.verify.threshold}`,
       records,
     };
   const capped = rank(top.level as MailPriority) > rank(input.request.proposed_priority);

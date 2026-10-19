@@ -35,6 +35,57 @@ function killTree(pid: number | undefined): void {
   }
 }
 
+const SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh", "fish"]);
+const WRAPPERS = new Set(["env", "command"]);
+const WRAPPER_VALUE_FLAGS = new Set(["-u", "-C", "-S"]);
+const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
+const SAFE_WORD = /^[A-Za-z0-9_@%+=:,./-]+$/;
+
+/** One word, quoted for a POSIX shell: a word of safe characters stays as it is, the rest goes in single quotes. */
+export function quoteWord(word: string): string {
+  return SAFE_WORD.test(word) ? word : `'${word.replace(/'/g, "'\\''")}'`;
+}
+
+/**
+ * The words after `--` as one command line (finding 91): one word is the command line as given
+ * (`-- "a && b"`); several keep their boundaries, each quoted, so `-- sh -c "a && b"` reaches the
+ * shell as `sh -c 'a && b'` and not as `sh -c a && b`.
+ */
+export function joinWords(words: readonly string[]): string {
+  if (words.length === 1) return words[0] ?? "";
+  return words.map(quoteWord).join(" ");
+}
+
+/**
+ * Why shell words cannot be recorded, or null: a shell (`sh`, `bash`, `zsh`, `dash`, `ksh`,
+ * `fish`, path-qualified or behind `env` or `command`) given `-c` (alone or in a flag cluster, after
+ * other flags) and more than one word after it would run the first word as the command and hand
+ * the rest to it as parameters, and a green from that proves nothing (finding 91).
+ */
+export function shellRefusal(words: readonly string[]): string | null {
+  const base = (word: string | undefined): string => (word ?? "").split("/").pop() ?? "";
+  // A wrapper, its own flags (`env -i`, `command -p`; `-u`, `-C` and `-S` take a value) and any
+  // assignments come before the shell's name (the security lead's return at the delivery).
+  let i = 0;
+  while (i < words.length) {
+    const word = words[i] ?? "";
+    if (WRAPPERS.has(base(word)) || ASSIGNMENT.test(word)) i += 1;
+    else if (i > 0 && word.startsWith("-")) i += WRAPPER_VALUE_FLAGS.has(word) ? 2 : 1;
+    else break;
+  }
+  const name = base(words[i]);
+  if (!SHELLS.has(name)) return null;
+  let j = i + 1;
+  let commandString = false;
+  while (j < words.length && (words[j] ?? "").startsWith("-")) {
+    if (/^-[A-Za-z]*c[A-Za-z]*$/.test(words[j] ?? "")) commandString = true;
+    j += 1;
+  }
+  const after = words.length - j;
+  if (!commandString || after <= 1) return null;
+  return `${after} words follow -c and the shell would run only the first (${words[j]}) with the rest as its parameters: quote the command string as one argument, -- ${name} -c "<command>"`;
+}
+
 export function runCommand(command: string, options: RunOptions): Promise<RunResult> {
   mkdirSync(dirname(options.logPath), { recursive: true });
   const log = createWriteStream(options.logPath);

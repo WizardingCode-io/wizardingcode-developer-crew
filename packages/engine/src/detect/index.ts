@@ -108,6 +108,11 @@ export function mergeProfile(
       const old = previous.targets.find((t) => t.path === target.path && t.stack === target.stack);
       if (!old) continue;
       target.timeoutMs = old.timeoutMs;
+      // A gate the user unset stays unset (finding 87): detection does not put it back.
+      if (old.unset?.length) {
+        target.unset = [...old.unset];
+        for (const gate of old.unset) delete target.gates[gate];
+      }
       for (const [gate, command] of Object.entries(old.gates) as [GateName, GateCommand][]) {
         if (command.source !== "detected") target.gates[gate] = command;
       }

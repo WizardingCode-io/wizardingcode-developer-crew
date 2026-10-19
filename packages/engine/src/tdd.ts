@@ -3,7 +3,7 @@ import { changedWatchedPaths } from "./fingerprint.ts";
 import { nowIso } from "./fs.ts";
 import { matchesAny } from "./glob.ts";
 import { type CrewPaths, workDir } from "./paths.ts";
-import { runCommand } from "./run.ts";
+import { joinWords, runCommand, shellRefusal } from "./run.ts";
 import type { CriterionKind, Evidence, Profile, RunRecord, WorkItem } from "./types.ts";
 
 export type TddStep = "red" | "green" | "before" | "after" | "observed";
@@ -43,7 +43,7 @@ export async function recordTdd(
   profile: Profile,
   criterionId: string,
   step: TddStep,
-  override?: string,
+  override?: string | readonly string[],
   reason?: string,
 ): Promise<TddOutcome> {
   const criterion = work.criteria.find((c) => c.id === criterionId);
@@ -58,8 +58,15 @@ export async function recordTdd(
   if (step === "observed" && !reason?.trim()) {
     return { ok: false, message: "an observed run needs --reason: why no red run can exist" };
   }
+  // The words after `--` keep their boundaries (finding 91); shell words that would run in pieces
+  // are refused before anything starts, and nothing is recorded.
+  if (typeof override !== "string" && override) {
+    const why = shellRefusal(override);
+    if (why) return { ok: false, message: why };
+  }
   const fallback = defaultTestCommand(profile);
-  const command = override ?? fallback?.command;
+  const command =
+    typeof override === "string" ? override : override ? joinWords(override) : fallback?.command;
   if (!command) {
     return {
       ok: false,

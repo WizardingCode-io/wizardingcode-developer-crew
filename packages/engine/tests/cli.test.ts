@@ -4324,7 +4324,9 @@ test("SP3-T3 AC-1, AC-2: a request from a task manager or a document carries its
   expect(none.out.trim()).toBe(
     "no workspace in the policy (crew policy set mail.workspace <name>)",
   );
-  expect((await alone.run("workspace", "priorities", "accept")).err.trim()).toBe(
+  const refusedAccept = await alone.run("workspace", "priorities", "accept");
+  expect(refusedAccept.code).toBe(1);
+  expect(refusedAccept.err.trim()).toBe(
     "no workspace in the policy (crew policy set mail.workspace <name>)",
   );
 }, 30_000);
@@ -4418,7 +4420,7 @@ test("SP3-T3 AC-3: the triage at start confirms or lowers a source's proposed pr
   );
   expect(lowered.code).toBe(0);
   expect(lowered.out).toContain(
-    "priority normal (proposed high, against the signed business priorities): the release is frozen",
+    "priority normal (proposed high, confirmed normal against the signed business priorities: the release is frozen)",
   );
   const loweredId = (await ca.json("status")).data.active as string;
   expect((await ca.json("status")).data).toMatchObject({
@@ -5331,3 +5333,279 @@ test("SP3-T6 AC-1, AC-2, AC-5: crew start --source asks Jev for a triage proposa
     (await ca.run("start", "Button label", "--answers", answers, "--source", TICKET)).out,
   ).not.toContain("jev");
 }, 30_000);
+
+test('SP8-T1 AC-1 (finding 91): crew tdd runs the words after -- as one quoted command line (sh -c "exit 1" is red), and refuses a shell whose command string is followed by more words, recording nothing', async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const c = io(root);
+  const id = (await c.json("start", "Quoted words", "--answers", answers, "--criterion", "a")).data
+    .id as string;
+  write(root, "src/a.ts", "y");
+  const refused = await c.run("tdd", "red", id, "AC-1", "--", "sh", "-c", "bun", "run", "check");
+  expect(refused.code).toBe(1);
+  expect(refused.err.trim()).toContain("quote the command string as one argument");
+  const paths = repoPaths(root, c.env);
+  expect(loadEvidence(paths, id).evidence.tdd).toEqual([]);
+  expect((await c.run("tdd", "red", id, "AC-1", "--", "sh", "-c", "exit 1")).code).toBe(0);
+  expect(loadEvidence(paths, id).evidence.tdd.find((t) => t.criterion === "AC-1")?.red?.exit).toBe(
+    1,
+  );
+  expect((await c.run("tdd", "green", id, "AC-1", "--", "sh -c 'exit 0'")).code).toBe(0);
+});
+
+test("SP8-T1 AC-2 (finding 94): a Jev dispute of the validator's rule is held on the item: a second validator approval is refused naming it, a conclave edit and crew continue leave it set, crew resume --mode is refused, a person's crew resume clears it and the rule can be asked again, and a person's crew approve clears it as it proceeds", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const c = io(root);
+  const paths = repoPaths(root, c.env);
+  const feature = JSON.stringify({ ...JSON.parse(answers), work_type: "feature", scope: 1 });
+  const id = (await c.json("start", "Dispute held", "--answers", feature, "--criterion", "a")).data
+    .id as string;
+  write(root, `.crew/work/${id}/spec.md`, "# Spec\n\n## Problem\n\nx\n\n## Design\n\ny\n");
+  const conclave = (warnings: string) =>
+    `# Conclave\n\n## Assumed by good practice\n- x\n\n## Decisions only the user can make\n- none\n\n## Proposals\n- y\n\n## Warnings\n- ${warnings}\n`;
+  write(root, `.crew/work/${id}/conclave.md`, conclave("none"));
+  for (let i = 0; i < 3; i++) await c.run("phase", id, "next");
+  await cannedJev(c, {
+    v1: { type: "noul", noul: 0.9 },
+    v2: { type: "noul", noul: 0.03 },
+  });
+  const refused = await c.run("approve", id, "spec", "--validator", "complete-gap-round");
+  expect(refused.code).toBe(1);
+  expect(refused.err).toContain("disputed by jev");
+  const dispute = (loadWork(paths, id).work as WorkItem).validatorDispute;
+  expect(dispute).toMatchObject({ confidence: 0.97 });
+  expect(dispute?.condition).toContain("Warnings");
+  // The same session reshapes the conclave and asks again: refused by the record, before Jev.
+  write(root, `.crew/work/${id}/conclave.md`, conclave("nothing at all"));
+  const again = await c.run("approve", id, "spec", "--validator", "complete-gap-round");
+  expect(again.code).toBe(1);
+  expect(again.err.trim()).toBe(
+    `the validator's verdict was disputed by jev on ${dispute?.at} (${dispute?.condition}); a person clears it: crew resume ${id} or crew approve ${id} spec`,
+  );
+  await c.run("continue", id, "validation");
+  expect((loadWork(paths, id).work as WorkItem).validatorDispute).toEqual(dispute);
+  const agent = await c.run("resume", id, "--mode", "dontAsk");
+  expect(agent.code).toBe(1);
+  expect(agent.err.trim()).toBe(
+    "the validator's verdict was disputed by jev; a person clears it: the item waits",
+  );
+  expect((loadWork(paths, id).work as WorkItem).validatorDispute).toEqual(dispute);
+  expect((await c.json("status")).data.awaiting).toBe("user");
+  const resumed = await c.run("resume", id);
+  expect(resumed.code).toBe(0);
+  expect(resumed.out.trim()).toBe(
+    `${id}: resumed; the jev dispute cleared by the user, relayed by the agent`,
+  );
+  expect((loadWork(paths, id).work as WorkItem).validatorDispute).toBeUndefined();
+  expect(listDecisions(paths).find((e) => e.item === id && e.kind === "dispute")?.by).toBe(
+    "the user, relayed by the agent",
+  );
+  // Asked again, the rule goes to Jev again (the canned answer disputes once more).
+  expect((await c.run("approve", id, "spec", "--validator", "complete-gap-round")).err).toContain(
+    "disputed by jev",
+  );
+  const person = await c.run("approve", id, "spec");
+  expect(person.code).toBe(0);
+  expect((loadWork(paths, id).work as WorkItem).validatorDispute).toBeUndefined();
+});
+
+test("SP8-T1 AC-4 (finding 97): crew help lists analyse, question, research verify and workspace priorities", async () => {
+  const root = makeRepo({ "package.json": JSON.stringify({ scripts: { test: "exit 0" } }) });
+  const out = (await io(root).run("help")).out;
+  expect(out).toContain("analyse <id> --paths");
+  expect(out).toContain("question <id> add");
+  expect(out).toContain("research <id> verify");
+  expect(out).toContain("workspace priorities");
+});
+
+test("SP8-T1 AC-7 (finding 87): crew profile unset removes a gate from a target, recorded in the register as the user's; the last test gate across every target is kept; an unknown gate, a gate not set or an unknown target exits 1; the gate run no longer plans the gate removed", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0", lint: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const c = io(root);
+  const paths = repoPaths(root, c.env);
+  expect((await c.run("profile", "set", "test", "exit 0", "--target", "sub")).code).toBe(0);
+  expect((await c.run("profile", "unset", "nope")).code).toBe(1);
+  const missing = await c.run("profile", "unset", "lint", "--target", "nowhere");
+  expect(missing.code).toBe(1);
+  expect(missing.err.trim()).toBe("no target at nowhere in the profile (crew detect)");
+  const notSet = await c.run("profile", "unset", "build", "--target", "sub");
+  expect(notSet.code).toBe(1);
+  expect(notSet.err.trim()).toBe("build for sub is not set");
+  const unset = await c.run("profile", "unset", "test", "--target", ".");
+  expect(unset.code, unset.err).toBe(0);
+  expect(unset.out.trim()).toBe(
+    "test for . unset (was: npm run test) by the user, relayed by the agent",
+  );
+  expect(listDecisions(paths).find((e) => e.kind === "profile")).toMatchObject({
+    item: "profile",
+    text: "test for . unset (was: npm run test)",
+    by: "the user, relayed by the agent",
+  });
+  const last = await c.run("profile", "unset", "test", "--target", "sub");
+  expect(last.code).toBe(1);
+  expect(last.err.trim()).toBe(
+    "the profile keeps at least one test gate: test for sub is the last one",
+  );
+  expect((await c.run("profile", "unset", "lint")).code).toBe(0);
+  const id = (await c.json("start", "Unset gates", "--answers", answers, "--criterion", "a")).data
+    .id as string;
+  write(root, "src/a.ts", "y");
+  await c.run("tdd", "red", id, "AC-1", "--", "exit 1");
+  await c.run("tdd", "green", id, "AC-1", "--", "exit 0");
+  const run = await c.json("gate", "run", id);
+  const planned = (run.data.runs as { gate: string; target: string }[]).map(
+    (r) => `${r.gate} ${r.target}`,
+  );
+  expect(planned).not.toContain("test .");
+  expect(planned).not.toContain("lint .");
+  expect(planned).toContain("secrets .");
+});
+
+test("SP8-T1 AC-5 (finding 83): the priority answer's levels 1 and 2 set normal and high through crew start", async () => {
+  const root = makeRepo({ "package.json": JSON.stringify({ scripts: { test: "exit 0" } }) });
+  const c = io(root);
+  const paths = repoPaths(root, c.env);
+  const withPriority = (level: number) =>
+    JSON.stringify({ ...(JSON.parse(answers) as Record<string, unknown>), priority: level });
+  const one = (await c.json("start", "One", "--answers", withPriority(1), "--criterion", "a")).data
+    .id as string;
+  expect(loadWork(paths, one).work?.priority).toBe("normal");
+  const two = (await c.json("start", "Two", "--answers", withPriority(2), "--criterion", "a")).data
+    .id as string;
+  expect(loadWork(paths, two).work?.priority).toBe("high");
+});
+
+test("SP8-T1 AC-5 (finding 84): a confirmed or lowered triage is said at start and in the report's Triage line from one summary", async () => {
+  const { env, a, ca } = mailRepos();
+  await ca.run("detect");
+  const paths = repoPaths(a, env);
+  write(paths.userDir, "workspaces/w/priorities.md", "The checkout flow comes first.\n");
+  expect((await ca.run("workspace", "priorities", "accept")).code).toBe(0);
+  const confirmed = await ca.run("start", "Button label", "--answers", answers, "--source", TICKET);
+  expect(confirmed.code, confirmed.err).toBe(0);
+  expect(confirmed.out).toContain(
+    "priority high (proposed high, confirmed high against the signed business priorities)",
+  );
+  const id = (await ca.json("status")).data.active as string;
+  expect((await ca.run("evidence", id)).out).toContain(
+    "- Triage: proposed high, confirmed high against the signed business priorities\n",
+  );
+  const lowered = await ca.run(
+    "start",
+    "Button label",
+    "--answers",
+    answers,
+    "--source",
+    TICKET,
+    "--priority",
+    "normal",
+    "--reason",
+    "frozen",
+  );
+  expect(lowered.out).toContain(
+    "priority normal (proposed high, confirmed normal against the signed business priorities: frozen)",
+  );
+});
+
+test("SP8-T1 AC-5 (finding 86): an answer that leaves a role wait in place keeps the origin blocked", async () => {
+  const { env, a, ca, cb } = mailRepos();
+  await ca.run("detect");
+  await cb.run("detect");
+  const paths = repoPaths(a, env);
+  const first = /sent (M-\S+) /.exec(
+    (await cb.run("mail", "send", "--to", "storefront", "--type", "question", "Which values?")).out,
+  )?.[1] as string;
+  const id = (await ca.json("start", "Answer the values", "--answers", answers, "--origin", first))
+    .data.id as string;
+  const originStatus = () =>
+    readBox(mailbox(paths.userDir, "w", "storefront").dir, "inbox").box.messages.find(
+      (m) => m.id === first,
+    )?.status;
+  await ca.run("question", id, "add", "Gold or silver first?");
+  expect(originStatus()).toBe("blocked");
+  expect((await ca.run("await", id, "role")).code).toBe(0);
+  const answered = await ca.run("question", id, "answer", "Q-1", "Gold");
+  expect(answered.code, answered.err).toBe(0);
+  expect(answered.out).toContain("the item keeps waiting");
+  expect(originStatus()).toBe("blocked");
+});
+
+test("SP8-T1 AC-5 (finding 90): with validator and fact out of verify.asks, the validator approval proceeds without asking Jev and a found fact stays unverified, named as not asked", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+    "docs/src.md": "The limit is ten.\n",
+  });
+  const c = io(root);
+  const paths = repoPaths(root, c.env);
+  const feature = JSON.stringify({ ...JSON.parse(answers), work_type: "feature", scope: 1 });
+  const id = (await c.json("start", "Asks off", "--answers", feature, "--criterion", "a")).data
+    .id as string;
+  write(root, `.crew/work/${id}/spec.md`, "# Spec\n\n## Problem\n\nx\n\n## Design\n\ny\n");
+  write(
+    root,
+    `.crew/work/${id}/conclave.md`,
+    "# Conclave\n\n## Assumed by good practice\n- x\n\n## Decisions only the user can make\n- none\n\n## Proposals\n- y\n\n## Warnings\n- none\n",
+  );
+  for (let i = 0; i < 3; i++) await c.run("phase", id, "next");
+  await cannedJev(c, {
+    v1: { type: "noul", noul: 0.9 },
+    v2: { type: "noul", noul: 0.03 },
+    f1: {
+      type: "choice",
+      choice: "supports",
+      probabilities: { supports: 0.9, contradicts: 0.05, says_nothing: 0.05 },
+      confidence: 0.9,
+    },
+  });
+  expect((await c.run("policy", "set", "verify.asks", "defect,triage")).code).toBe(0);
+  const approved = await c.run("approve", id, "spec", "--validator", "complete-gap-round");
+  expect(approved.code, approved.err).toBe(0);
+  expect(approved.out).not.toContain("jev");
+  expect(loadEvidence(paths, id).evidence.verifications ?? []).toEqual([]);
+  write(
+    root,
+    `.crew/work/${id}/conclave/researcher.md`,
+    '# Research for x\n## What the code does today\n- src/a.ts:1 · x\n## What the documentation says\n- docs/src.md · "The limit is ten." · D-1 bound\n## Prior solutions\n- none\n## What the facts do not settle\n- none\n',
+  );
+  const verified = await c.run("research", id, "verify");
+  expect(verified.code, verified.err).toBe(0);
+  expect(verified.out.trim()).toBe(
+    "1 fact: 1 unverified (jev not asked: fact is not in verify.asks)",
+  );
+  expect(loadEvidence(paths, id).evidence.verifications ?? []).toEqual([]);
+});
+
+test("SP8-T1 AC-5 (finding 82): crew env stop says when the group was not signalled because the recorded process is no longer the engine's", async () => {
+  const root = makeRepo({ "package.json": JSON.stringify({ scripts: { test: "exit 0" } }) });
+  const c = io(root);
+  const paths = repoPaths(root, c.env);
+  for (const [key, value] of [
+    ["start", "sleep 30"],
+    ["health", "true"],
+    ["stop", "true"],
+  ]) {
+    expect((await c.run("profile", "set", `environment.${key}`, value as string)).code).toBe(0);
+  }
+  const gone = spawnSync("sh", ["-c", "exit 0"]);
+  writeJson(envRecordPath(paths), {
+    pid: gone.pid,
+    processStart: "gone",
+    startedAt: "2026-10-18T10:00:00.000Z",
+    managed: true,
+    log: null,
+    command: "x",
+  });
+  const stopped = await c.run("env", "stop");
+  expect(stopped.code, stopped.err).toBe(0);
+  expect(stopped.out.trim()).toBe(
+    `environment stopped (pid ${gone.pid}; the group was not signalled: the process is no longer the engine's)`,
+  );
+});

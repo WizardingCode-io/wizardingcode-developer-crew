@@ -263,6 +263,16 @@ export async function askJev(
   }
 }
 
+/**
+ * The answer to one question of a request that succeeded: `takeAnswers` admits an answer per
+ * question or none at all, so a miss here is a broken invariant, not a state (finding 90).
+ */
+export function answerOf(answers: Record<string, JevAnswer>, id: string): JevAnswer {
+  const answer = answers[id];
+  if (!answer) throw new Error(`askJev answered without ${id}`);
+  return answer;
+}
+
 export type MarkStatus = "verified" | "disputed" | "unverified";
 
 export interface Mark {

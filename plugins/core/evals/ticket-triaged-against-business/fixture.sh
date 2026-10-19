@@ -28,7 +28,7 @@ cat > business-priorities.md <<'PRIORITIES'
 3. Cosmetic changes (labels, colours, copy) wait for the release freeze to end; they are normal priority at most.
 PRIORITIES
 git add -A
-git -c user.name=Fixture -c user.email=fixture@example.invalid commit -q -m "fixture: ticket-triaged-against-business"
+fixture_commit "fixture: ticket-triaged-against-business"
 crew detect > /dev/null
 crew workspace priorities accept --file business-priorities.md > /dev/null
 git log -1 --oneline

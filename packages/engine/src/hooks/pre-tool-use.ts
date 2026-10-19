@@ -676,25 +676,47 @@ function userOnlyCommand(
     verb === "decide" ||
     // One more round past a cap is the user's to grant (SP7 §6.1).
     verb === "continue" ||
-    (verb === "objection" && parsed.positional.includes("waive")) ||
-    (verb === "profile" && (second === "confirm" || second === "set")) ||
+    // A verb the hook cannot read after the id (finding 86) takes the deciding form: asked, or
+    // --mode demanded, never let through on the words around it.
+    (verb === "objection" && (parsed.positional.includes("waive") || unreadable(third))) ||
+    (verb === "profile" && (second === "confirm" || second === "set" || second === "unset")) ||
     (verb === "policy" && (second === "accept" || second === "set")) ||
     // The business priorities are signed by the user once (SP7 §10.2).
-    (verb === "workspace" && second === "priorities" && parsed.positional.includes("accept")) ||
+    (verb === "workspace" &&
+      (unreadable(second) ||
+        (second === "priorities" &&
+          (parsed.positional.includes("accept") || unreadable(third))))) ||
     // A doubt is answered by a person (SP7 §10.3, rule 7).
-    (verb === "question" && third === "answer") ||
+    (verb === "question" && (third === "answer" || unreadable(third))) ||
     // Where Jev is reached is the user's to set (SP3 Task 6); reading it is free.
     (verb === "config" &&
       typeof second === "string" &&
       second.startsWith("jev.") &&
       third !== undefined) ||
-    (verb === "task" && parsed.positional.includes("merge") && parsed.flags.force === true);
+    (verb === "task" &&
+      ((parsed.positional.includes("merge") && parsed.flags.force === true) || unreadable(third)));
   if (!userOnly && !presence) return null;
   return {
     presence,
     parsed,
     policyCommand: verb === "policy" || (verb === "accept" && second === "policy"),
   };
+}
+/**
+ * `crew resume <id>` is the user's while a jev dispute is held on the item (finding 94), and when
+ * the id or the record cannot be read: the conservative form, as for an unreadable verb.
+ */
+function resumeDecision(
+  ctx: HookContext,
+  args: string[],
+): { parsed: Parsed; policyCommand: boolean; presence: boolean } | null {
+  const parsed = parse(args);
+  const [verb, id] = parsed.positional;
+  if (verb !== "resume") return null;
+  const readable = id !== undefined && !UNREADABLE_VERB.test(id);
+  const work = readable ? loadWork(ctx.paths, id).work : null;
+  if (work && !work.validatorDispute) return null;
+  return { parsed, policyCommand: false, presence: false };
 }
 /** The quotes and the backslashes of a command, removed for the rules that read a cleaned text. */
 const QUOTES = /["'\\]/g;
@@ -942,7 +964,7 @@ function unwatched(headless: boolean, permissionMode: string | undefined): strin
  * for them to sign (0.3.0).
  */
 function userOnlyDecision(
-  command: { parsed: Parsed; policyCommand: boolean; presence?: boolean },
+  command: { parsed: Parsed; policyCommand: boolean; presence: boolean },
   permissionMode: string | undefined,
   headless: boolean,
   policy: Policy,
@@ -1174,7 +1196,7 @@ export function onPreToolUse(ctx: HookContext, payload: HookPayload): HookRespon
           "deny",
           "Crew: a crew command whose words come from xargs' input cannot be read; write the command out",
         );
-      const userOnly = userOnlyCommand(args);
+      const userOnly = userOnlyCommand(args) ?? resumeDecision(ctx, args);
       if (!userOnly) continue;
       const decided = userOnlyDecision(userOnly, payload.permission_mode, ctx.headless, ctx.policy);
       if (decided?.[0] === "deny") return answer(...decided);

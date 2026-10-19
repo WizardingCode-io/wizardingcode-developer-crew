@@ -260,7 +260,9 @@ export function gatesForTarget(target: Target, policy: Policy, changed: string[]
   const has = (gate: GateName): boolean => !!target.gates[gate];
   const gates: GateName[] = [];
   if (has("build")) gates.push("build");
-  gates.push("test");
+  // Tests run on every route: a target without a command is planned so the run says so, unless the
+  // user unset the gate on purpose (finding 87: another target runs the same suite).
+  if (!target.unset?.includes("test")) gates.push("test");
   if (has("lint")) gates.push("lint");
   if (has("typecheck")) gates.push("typecheck");
   // On every route the audit looks at the change: dependencies the item did not touch are the owner's standing debt (ADR 0002).

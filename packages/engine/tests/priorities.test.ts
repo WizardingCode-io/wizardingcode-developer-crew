@@ -25,7 +25,7 @@ test("SP3-T3 AC-2: the priorities file's four states, the signature by hash, the
     text: "The checkout flow first.\n",
     signedAt: null,
   });
-  expect(acceptPriorities(userDir, "w", { by: "the user" })).toEqual({
+  expect(acceptPriorities(userDir, "w", { by: "the user" })).toMatchObject({
     state: "signed",
     path: file,
   });
@@ -46,7 +46,7 @@ test("SP3-T3 AC-2: the priorities file's four states, the signature by hash, the
     "The checkout flow first.\nThe loyalty launch on the 30th.\n",
   );
   expect(prioritiesState(userDir, "w").state).toBe("changed");
-  expect(acceptPriorities(userDir, "w", { by: "the user" })).toEqual({
+  expect(acceptPriorities(userDir, "w", { by: "the user" })).toMatchObject({
     state: "signed",
     path: file,
   });
@@ -62,7 +62,7 @@ test("SP3-T3 AC-2: the priorities file's four states, the signature by hash, the
   writeFileSync(join(source, "business.md"), "Cosmetic changes wait.\n");
   expect(
     acceptPriorities(userDir, "w", { file: join(source, "business.md"), by: "the user" }),
-  ).toEqual({ state: "signed", path: file });
+  ).toMatchObject({ state: "signed", path: file });
   expect(prioritiesState(userDir, "w")).toMatchObject({
     state: "signed",
     text: "Cosmetic changes wait.\n",

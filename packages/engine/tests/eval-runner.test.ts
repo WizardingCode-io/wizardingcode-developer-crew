@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } 
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { evalInvocation, SANDBOX_TAGS } from "../../../scripts/eval.ts";
+import { deniedReferenceReads, evalInvocation, SANDBOX_TAGS } from "../../../scripts/eval.ts";
 
 const base = { root: "/r", path: "/usr/bin", realGitDir: null, platform: "linux" as const };
 
@@ -306,4 +306,48 @@ test("SP7a AC-8 (Task 8), SP7b-T7 AC-1, SP3-T7 AC-1: every fixture stays inside 
         throw new Error(`${file}: a parent path outside an import: ${line}`);
     }
   }
+});
+
+const repoRoot = join(import.meta.dir, "..", "..", "..");
+
+test("SP8-T1 AC-5 (finding 96): the issue case's fixed grader anchors on the filter of active accounts, and the four SP3 fixtures commit through the shared helper", () => {
+  const grader = readFileSync(
+    join(repoRoot, "plugins/core/evals/issue-root-cause-named/graders/fixed.md"),
+    "utf8",
+  );
+  expect(grader).toContain("\\.filter\\(");
+  for (const name of [
+    "ticket-triaged-against-business",
+    "document-entry-opens-item",
+    "jev-tightens-never-loosens",
+    "issue-root-cause-named",
+  ]) {
+    const fixture = readFileSync(join(repoRoot, "plugins/core/evals", name, "fixture.sh"), "utf8");
+    expect(fixture, name).toContain("fixture_commit ");
+    expect(fixture, name).not.toContain("git -c user.name=Fixture");
+  }
+  expect(
+    readFileSync(join(repoRoot, "plugins/core/evals/fixtures/node-plain.sh"), "utf8"),
+  ).toContain("fixture_commit() {");
+});
+
+test("SP8-T1 AC-5 (finding 95): deniedReferenceReads names the plugin references a trace shows denied, once each, and nothing from a clean trace", () => {
+  const denied = JSON.stringify({
+    type: "tool_result",
+    content:
+      "Permission denied: Read /plugins/wizardingcode-developer-crew/skills/crew/references/conclave.md",
+  });
+  const said = JSON.stringify({
+    type: "assistant",
+    text: "I can't read ${CLAUDE_PLUGIN_ROOT}/skills/crew/references/conclave.md: it sits outside what I can read in this session",
+  });
+  const clean = JSON.stringify({
+    type: "tool_result",
+    content: "# Conclave (read from skills/crew/references/conclave.md)",
+  });
+  expect(deniedReferenceReads([denied, said, clean])).toEqual([
+    "skills/crew/references/conclave.md",
+  ]);
+  expect(deniedReferenceReads([clean])).toEqual([]);
+  expect(deniedReferenceReads([])).toEqual([]);
 });

@@ -879,6 +879,8 @@ test("SP3-T5 AC-2: the report's Analysis section lists the paths with their comm
   expect(report).toContain(
     '## Analysis\n\n- Paths: src/a.mjs (2 commits), src/index.mjs (1 commit)\n- Items: 2026-10-18-004-delete "Delete \\| accounts now" (issue; roles review-code-quality, judge; tasks T-1; decisions 3; mail 2); 2026-10-01-001-gone (not in the records); 2026-10-02-001-quiet "Quiet" (feature; roles none; tasks none; decisions 0; mail 0)\n',
   );
+  // A full origin carries no note line (finding 88): the line appears with a note alone.
+  expect(report).not.toContain("- Note:");
   expect(report.indexOf("## Analysis")).toBeGreaterThan(report.indexOf("- Verdict"));
   expect(report.indexOf("## Analysis")).toBeLessThan(report.indexOf("## Acceptance criteria"));
   const empty: Origin = {

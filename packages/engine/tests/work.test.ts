@@ -759,3 +759,24 @@ test("SP3-T3 AC-1: createWork writes the Source section with the original text v
   );
   expect(plain.source).toBeUndefined();
 });
+
+test("SP8-T1 AC-5 (finding 83): the guard out of analyse asks for the analysis document and the origin whatever the next phase: understand on the standard route, build on the fast one", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const issue = { kind: "issue" as const, from: "work_type fix" };
+  const standard = createWork(paths, "fix");
+  applyClassification(standard, "fix", { route: "standard", reasons: [], riskAreas: [] }, issue);
+  standard.phase = "analyse";
+  const ctx = { ...empty, gitRepository: true, originRecorded: false };
+  const asked = [
+    'an "Origin" section with content in analysis.md (write "none" when there is nothing)',
+    'a "Cause" section with content in analysis.md (write "none" when there is nothing)',
+    'a "Blast radius" section with content in analysis.md (write "none" when there is nothing)',
+    "analysis/origin.json in the work folder (crew analyse <id> --paths <files>)",
+  ];
+  expect(guardFor(standard, "understand", ctx)).toEqual(asked);
+  const fast = createWork(paths, "fix");
+  applyClassification(fast, "fix", { route: "fast", reasons: [], riskAreas: [] }, issue);
+  addCriterion(fast, "x");
+  fast.phase = "analyse";
+  expect(guardFor(fast, "build", ctx)).toEqual(expect.arrayContaining(asked));
+});

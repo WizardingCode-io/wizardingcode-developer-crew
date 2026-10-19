@@ -8,7 +8,7 @@ For each criterion, in this order:
 4. `crew tdd green <id> <criterion>`: the engine records the pass. A green with no earlier red is rejected.
 5. Refactor if the code asks for it, keeping the tests green.
 
-Use `-- <command>` after the criterion to run a single test file instead of the whole suite; the full suite runs at the gate.
+Use `-- <command>` after the criterion to run a single test file instead of the whole suite; the full suite runs at the gate. The words after `--` keep their boundaries: one quoted string is the whole command line (`-- "bun run check && bun run plugin:check"`), several words are a command and its arguments, each quoted by the engine (`-- sh -c "a && b"` reaches the shell as `sh -c 'a && b'`). A shell given `-c` and more than one word after it is refused, since the shell would run only the first word; quote the command string as one argument.
 
 For a `preserve` criterion: `crew tdd before <id> <criterion>` with the tests passing, make the change, `crew tdd after <id> <criterion>`.
 

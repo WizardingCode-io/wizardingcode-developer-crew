@@ -480,6 +480,18 @@ test("SP3-T7 AC-1 (finding 92): the page names the request's source on every rou
     /\| Receive \|[^\n]*a ticket or a document[^\n]*`references\/receive\.md`[^\n]*every route/,
   );
   expect(skill).toContain("[--source '<json>']");
-  expect(skill).toMatch(/## The fast route[\s\S]*a sourced request[^\n]*`references\/receive\.md`/);
+  // The fast-route section alone (finding 96): the match stops at the next heading.
+  const fast = skill.slice(
+    skill.indexOf("## The fast route"),
+    skill.indexOf("## The other routes"),
+  );
+  expect(fast).toMatch(/a sourced request[^\n]*`references\/receive\.md`/);
+  expect(Buffer.byteLength(skill, "utf8")).toBeLessThanOrEqual(9254);
+});
+
+test("SP8-T1 AC-5 (finding 92): rule 5 tells a missing fact of the request (a question) from a design choice (a decision), within the ceiling", () => {
+  expect(skill).toMatch(
+    /a missing fact of the request is a question[^\n]*`crew question <id> add[^\n]*a design choice is a decision[^\n]*`crew decision <id> add`/,
+  );
   expect(Buffer.byteLength(skill, "utf8")).toBeLessThanOrEqual(9254);
 });

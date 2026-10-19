@@ -612,6 +612,12 @@ async function askJev(cfg, request, options = {}) {
     };
   }
 }
+function answerOf(answers, id) {
+  const answer = answers[id];
+  if (!answer)
+    throw new Error(`askJev answered without ${id}`);
+  return answer;
+}
 function round4(n) {
   return Math.round(n * 1e4) / 1e4;
 }
@@ -1333,8 +1339,32 @@ function acceptPriorities(userDir, workspace, options) {
     return {
       refused: `no priorities to sign: write ${path}, or crew workspace priorities accept --file <path>`
     };
-  writeJson(join8(dir, "priorities.json"), { hash: hashOf(text), by: options.by, at: nowIso() });
-  return { state: "signed", path };
+  const hash = hashOf(text);
+  const at = nowIso();
+  writeJson(join8(dir, "priorities.json"), { hash, by: options.by, at });
+  return { state: "signed", path, text, signedAt: at, hash };
+}
+function prioritiesLine(status) {
+  switch (status.state) {
+    case "signed":
+      return `priorities: signed (${status.signedAt})`;
+    case "changed":
+      return "priorities: changed since signing (crew workspace priorities accept)";
+    case "unsigned":
+      return "priorities: unsigned (crew workspace priorities accept)";
+    default:
+      return `priorities: none (write ${status.path}, or crew workspace priorities accept --file <path>)`;
+  }
+}
+function triageText(work, where) {
+  const t = work.triage;
+  if (!t)
+    return `priority ${work.priority ?? "normal"}`;
+  if (t.confirmed === null)
+    return `priority ${t.proposed} (proposed, unconfirmed: no signed business priorities)`;
+  if (where === "status")
+    return `priority ${work.priority ?? "normal"}`;
+  return `priority ${t.confirmed} (${triageSummary(t)})`;
 }
 var NOT_SIGNED = "the business priorities are not signed (crew workspace priorities accept [--file <path>]): the proposal stays unconfirmed";
 function triagePriority(proposed, flag, reason, state, by) {
@@ -2127,10 +2157,9 @@ function answerQuestion(work, id, answer, by) {
   const text = answer.trim();
   if (!text)
     return { refused: "an answer needs a text" };
-  question.answer = text;
-  question.by = by;
-  question.answeredAt = nowIso();
-  return question;
+  const answered = { answer: text, by, answeredAt: nowIso() };
+  Object.assign(question, answered);
+  return { ...question, ...answered };
 }
 function openQuestions(work) {
   return (work.questions ?? []).filter((q) => q.answer === null);
@@ -2676,6 +2705,9 @@ function waitingPhrase(work) {
 }
 
 // packages/engine/src/evidence.ts
+function cell(text) {
+  return oneLine(text).replace(/\|/g, "\\|");
+}
 function decidedBy(decision) {
   if (decision.by === "validator")
     return `by the validator (rule: ${decision.rule ?? "unnamed"})`;
@@ -2885,7 +2917,7 @@ function renderReport(work, evidence, policy, ledger, mail, selfName, analysis) 
       const o = analysis.origin;
       const count = (n) => `${n} commit${n === 1 ? "" : "s"}`;
       lines.push(`- Paths: ${o.paths.length ? o.paths.map((p) => `${p.path} (${count(p.commits.length)})`).join(", ") : "none"}`);
-      const item = (i) => i.kind === null ? `${i.id} (not in the records)` : `${i.id} "${oneLine(i.title ?? "").replace(/\|/g, "\\|")}" (${i.kind}; roles ${i.roles.join(", ") || "none"}; tasks ${i.tasks.join(", ") || "none"}; decisions ${i.decisions}; mail ${i.mail})`;
+      const item = (i) => i.kind === null ? `${i.id} (not in the records)` : `${i.id} "${cell(i.title ?? "")}" (${i.kind}; ${rolesAndTasks(i)}; decisions ${i.decisions}; mail ${i.mail})`;
       lines.push(`- Items: ${o.items.length ? o.items.map(item).join("; ") : "none in the records"}`);
       if (o.note)
         lines.push(`- Note: ${o.note}`);
@@ -2919,7 +2951,6 @@ function renderReport(work, evidence, policy, ledger, mail, selfName, analysis) 
   }
   if (evidence.verifications?.length) {
     lines.push("", "## Verifications", "", "| What | Ref | Answer | Confidence | Model | At |", "| :- | :- | :- | -: | :- | :- |");
-    const cell = (text) => oneLine(text).replace(/\|/g, "\\|");
     for (const v of evidence.verifications)
       lines.push(`| ${v.what} | ${cell(v.ref)} | ${cell(answerText(v.answer))} | ${v.confidence === null ? "-" : two(v.confidence)} | ${cell(v.model)} | ${v.at} |`);
   }
@@ -2953,7 +2984,6 @@ function renderReport(work, evidence, policy, ledger, mail, selfName, analysis) 
   }
   if (work.questions?.length) {
     lines.push("", "## Questions", "", "| Question | Asked | Text | Channels | Answer | By | At |", "| :- | :- | :- | :- | :- | :- | :- |");
-    const cell = (text) => oneLine(text).replace(/\|/g, "\\|");
     for (const q of work.questions)
       lines.push(`| ${q.id} | ${q.askedAt} | ${cell(q.text)} | ${questionChannelsCell(q)} | ${q.answer === null ? "-" : cell(q.answer)} | ${q.by ?? "-"} | ${q.answeredAt ?? "-"} |`);
   }
@@ -2965,13 +2995,12 @@ function renderReport(work, evidence, policy, ledger, mail, selfName, analysis) 
       const sent = m.from.item === work.id && m.from.project === selfName;
       const direction = sent ? "sent" : "received";
       const other = partyLabel(sent ? m.to : m.from);
-      const cell = (text) => text.replace(/\|/g, "\\|");
       const decision = m.priorityDecision;
       const priority = decision && decision.confirmed !== decision.proposed ? `${decidedPriority(m)} (proposed ${decision.proposed})` : decidedPriority(m);
       const status = cell(`${mailStatus(m)}${m.reason ? `: ${m.reason}` : ""}${m.verdict ? ` (${m.verdict}${m.branch ? `, ${m.branch}` : ""})` : ""}${m.relayed ? ", relayed" : ""}`);
       const thread = threadOf(m) === m.id ? "-" : threadOf(m);
-      const contracts = readContracts(m).map((c) => c.kind === "clause" ? "clause" : `${c.kind} ${cell(oneLine(c.path ?? ""))}`).join(", ") || "-";
-      lines.push(`| ${m.id} | ${thread} | ${m.at} | ${direction} | ${other} | ${m.type} | ${priority} | ${cell(oneLine(m.subject))} | ${status} | ${contracts} |`);
+      const contracts = readContracts(m).map((c) => c.kind === "clause" ? "clause" : `${c.kind} ${cell(c.path ?? "")}`).join(", ") || "-";
+      lines.push(`| ${m.id} | ${thread} | ${m.at} | ${direction} | ${other} | ${m.type} | ${priority} | ${cell(m.subject)} | ${status} | ${contracts} |`);
     }
   }
   if (evidence.roles?.length) {
@@ -4215,16 +4244,24 @@ function readOrigin(paths, id) {
     return { origin: null, tampered: true };
   return { origin: read.data ?? null, tampered: false };
 }
+function rolesAndTasks(item) {
+  return `roles ${item.roles.join(", ") || "none"}; tasks ${item.tasks.join(", ") || "none"}`;
+}
 function originSummary(origin) {
   const shas = new Set(origin.paths.flatMap((p) => p.commits.map((c) => c.sha)));
   const n = shas.size;
   const m = origin.items.length;
-  const items = origin.items.map((i) => `${i.id}: roles ${i.roles.join(", ") || "none"}; tasks ${i.tasks.join(", ") || "none"}`).join("; ");
+  const items = origin.items.map((i) => `${i.id}: ${rolesAndTasks(i)}`).join("; ");
   return `${n} commit${n === 1 ? "" : "s"}, ${m} item${m === 1 ? "" : "s"}${m ? ` (${items})` : ""}`;
 }
 
 // packages/engine/src/argv.ts
 var BOOLEAN_FLAGS = new Set(["print", "json", "refresh", "force", "not-run", "all"]);
+function commaList(value) {
+  if (typeof value !== "string")
+    return [];
+  return value.split(",").map((s) => s.trim()).filter(Boolean);
+}
 function parse(argv) {
   const parsed = { positional: [], flags: {}, multi: {}, ordered: [], rest: [] };
   for (let i = 0;i < argv.length; i++) {
@@ -4676,6 +4713,11 @@ function mergeProfile(previous, detected, environment = null) {
       if (!old)
         continue;
       target.timeoutMs = old.timeoutMs;
+      if (old.unset?.length) {
+        target.unset = [...old.unset];
+        for (const gate of old.unset)
+          delete target.gates[gate];
+      }
       for (const [gate, command] of Object.entries(old.gates)) {
         if (command.source !== "detected")
           target.gates[gate] = command;
@@ -5237,6 +5279,46 @@ function killTree(pid) {
       process.kill(pid, "SIGKILL");
     } catch {}
   }
+}
+var SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh", "fish"]);
+var WRAPPERS = new Set(["env", "command"]);
+var WRAPPER_VALUE_FLAGS = new Set(["-u", "-C", "-S"]);
+var ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
+var SAFE_WORD = /^[A-Za-z0-9_@%+=:,./-]+$/;
+function quoteWord(word) {
+  return SAFE_WORD.test(word) ? word : `'${word.replace(/'/g, "'\\''")}'`;
+}
+function joinWords(words) {
+  if (words.length === 1)
+    return words[0] ?? "";
+  return words.map(quoteWord).join(" ");
+}
+function shellRefusal(words) {
+  const base = (word) => (word ?? "").split("/").pop() ?? "";
+  let i = 0;
+  while (i < words.length) {
+    const word = words[i] ?? "";
+    if (WRAPPERS.has(base(word)) || ASSIGNMENT.test(word))
+      i += 1;
+    else if (i > 0 && word.startsWith("-"))
+      i += WRAPPER_VALUE_FLAGS.has(word) ? 2 : 1;
+    else
+      break;
+  }
+  const name = base(words[i]);
+  if (!SHELLS.has(name))
+    return null;
+  let j = i + 1;
+  let commandString = false;
+  while (j < words.length && (words[j] ?? "").startsWith("-")) {
+    if (/^-[A-Za-z]*c[A-Za-z]*$/.test(words[j] ?? ""))
+      commandString = true;
+    j += 1;
+  }
+  const after = words.length - j;
+  if (!commandString || after <= 1)
+    return null;
+  return `${after} words follow -c and the shell would run only the first (${words[j]}) with the rest as its parameters: quote the command string as one argument, -- ${name} -c "<command>"`;
 }
 function runCommand(command, options) {
   mkdirSync6(dirname6(options.logPath), { recursive: true });
@@ -6365,7 +6447,8 @@ function gatesForTarget(target, policy, changed) {
   const gates = [];
   if (has("build"))
     gates.push("build");
-  gates.push("test");
+  if (!target.unset?.includes("test"))
+    gates.push("test");
   if (has("lint"))
     gates.push("lint");
   if (has("typecheck"))
@@ -7512,7 +7595,7 @@ function relay(ctx, questionId, answer, agent) {
 // packages/engine/src/hooks/pre-tool-use.ts
 var WRITE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);
 var SHELL_NAMES = ["sh", "bash", "zsh", "dash", "ksh", "fish"];
-var SHELLS = `(?:${SHELL_NAMES.join("|")})`;
+var SHELLS2 = `(?:${SHELL_NAMES.join("|")})`;
 var PATH_END = String.raw`[\s"'\x60;&|)]`;
 var NOT_DOTDOT_SEGMENT = String.raw`(?!\.\.(?:\/|${PATH_END}|$))[^\s"'\x60;&|)/]*\/?`;
 var REVIEW_OWNED = String.raw`review(?!\/${REVIEW_OPEN_SEGMENT}(?:\/(?:${NOT_DOTDOT_SEGMENT})*)?(?=${PATH_END}|$))`;
@@ -7561,7 +7644,7 @@ function variableDenial(cleaned) {
   return null;
 }
 var KEYWORDS = [...LEADING_KEYWORDS, "fi", "done", "in", "esac"];
-var WRAPPERS = [
+var WRAPPERS2 = [
   { name: "function", valued: "", longValued: [], positionals: 1 },
   { name: "case", valued: "", longValued: [], positionals: 1 },
   { name: "nice", valued: "n", longValued: ["--adjustment"], positionals: 0 },
@@ -7660,7 +7743,7 @@ var WRAPPERS = [
   { name: "nocorrect", valued: "", longValued: [], positionals: 0 },
   { name: "coproc", valued: "", longValued: [], positionals: 0, namedBlock: true }
 ];
-var WRAPPER_BY_NAME = new Map(WRAPPERS.map((w) => [w.name, w]));
+var WRAPPER_BY_NAME = new Map(WRAPPERS2.map((w) => [w.name, w]));
 var JS_RUNNER_VALUED = new Set([
   "-r",
   "--require",
@@ -7686,7 +7769,7 @@ var JS_RUNNER_VALUED = new Set([
   "--config",
   "-c"
 ]);
-var ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*\+?=/;
+var ASSIGNMENT2 = /^[A-Za-z_][A-Za-z0-9_]*\+?=/;
 var BRACKETS = ["{", "}"];
 function takesNext(wrapper, option) {
   if (option.includes("="))
@@ -7722,7 +7805,7 @@ function withoutLead(words) {
   while (i < words.length) {
     const w = words[i] ?? "";
     const wrapper = WRAPPER_BY_NAME.get(w.replace(/^.*\//, ""));
-    if (ASSIGNMENT.test(w) || KEYWORDS.includes(w) || BRACKETS.includes(w))
+    if (ASSIGNMENT2.test(w) || KEYWORDS.includes(w) || BRACKETS.includes(w))
       i++;
     else if (wrapper) {
       viaXargs ||= wrapper.name === "xargs";
@@ -7741,7 +7824,7 @@ function withoutLead(words) {
           i++;
           if (takesNext(wrapper, word))
             i++;
-        } else if (i < words.length && wrapper.assignments && ASSIGNMENT.test(word))
+        } else if (i < words.length && wrapper.assignments && ASSIGNMENT2.test(word))
           i++;
         else if (i < words.length && positionals > 0) {
           positionals--;
@@ -7972,7 +8055,7 @@ function userOnlyCommand(args) {
   const [verb, second, third] = parsed.positional;
   const presence = verb === "question" && third === "add";
   const unreadable = (word) => word !== undefined && UNREADABLE_VERB.test(word);
-  const userOnly = unreadable(verb) || (verb === "profile" || verb === "policy") && unreadable(second) || verb === "skip" || verb === "approve" || verb === "accept" || verb === "decide" || verb === "continue" || verb === "objection" && parsed.positional.includes("waive") || verb === "profile" && (second === "confirm" || second === "set") || verb === "policy" && (second === "accept" || second === "set") || verb === "workspace" && second === "priorities" && parsed.positional.includes("accept") || verb === "question" && third === "answer" || verb === "config" && typeof second === "string" && second.startsWith("jev.") && third !== undefined || verb === "task" && parsed.positional.includes("merge") && parsed.flags.force === true;
+  const userOnly = unreadable(verb) || (verb === "profile" || verb === "policy") && unreadable(second) || verb === "skip" || verb === "approve" || verb === "accept" || verb === "decide" || verb === "continue" || verb === "objection" && (parsed.positional.includes("waive") || unreadable(third)) || verb === "profile" && (second === "confirm" || second === "set" || second === "unset") || verb === "policy" && (second === "accept" || second === "set") || verb === "workspace" && (unreadable(second) || second === "priorities" && (parsed.positional.includes("accept") || unreadable(third))) || verb === "question" && (third === "answer" || unreadable(third)) || verb === "config" && typeof second === "string" && second.startsWith("jev.") && third !== undefined || verb === "task" && (parsed.positional.includes("merge") && parsed.flags.force === true || unreadable(third));
   if (!userOnly && !presence)
     return null;
   return {
@@ -7980,6 +8063,17 @@ function userOnlyCommand(args) {
     parsed,
     policyCommand: verb === "policy" || verb === "accept" && second === "policy"
   };
+}
+function resumeDecision(ctx, args) {
+  const parsed = parse(args);
+  const [verb, id] = parsed.positional;
+  if (verb !== "resume")
+    return null;
+  const readable = id !== undefined && !UNREADABLE_VERB.test(id);
+  const work = readable ? loadWork(ctx.paths, id).work : null;
+  if (work && !work.validatorDispute)
+    return null;
+  return { parsed, policyCommand: false, presence: false };
 }
 var QUOTES = /["'\\]/g;
 var BIN = String.raw`^(?:\S*/)?`;
@@ -8055,7 +8149,7 @@ function widensPush(word) {
     return false;
   return !("--recurse-submodules".startsWith(name) && value === "no");
 }
-var INTERPRETER_STDIN = new RegExp(String.raw`^(?:\S*/)?${SHELLS}(?:\s+-{1,2}[A-Za-z]*)*$`);
+var INTERPRETER_STDIN = new RegExp(String.raw`^(?:\S*/)?${SHELLS2}(?:\s+-{1,2}[A-Za-z]*)*$`);
 var UNREADABLE = "the guard cannot read";
 var VAR_ROOT_PATH = new RegExp(String.raw`^(?:\$\{[^}]*\}|\$\w+)(?:/[^\s${EXPANSION_CHARS}${PATTERN_CHARS}}\])]+)+$`);
 var EXPANSION = new RegExp(`[${EXPANSION_CHARS}]`);
@@ -8252,7 +8346,7 @@ function onPreToolUse(ctx, payload) {
         }
         if (tokens.some((t) => /^CDPATH\+?=/.test(t.word)))
           return answer("deny", `${stays}: CDPATH is denied`);
-        const named3 = tokens.filter((t) => handed === null || t.word !== handed && !HERE_STRING_OPERATOR.test(t.raw)).map((t) => t.word).flatMap((w) => ASSIGNMENT.test(w) ? [w, w.slice(w.indexOf("=") + 1)] : [w]);
+        const named3 = tokens.filter((t) => handed === null || t.word !== handed && !HERE_STRING_OPERATOR.test(t.raw)).map((t) => t.word).flatMap((w) => ASSIGNMENT2.test(w) ? [w, w.slice(w.indexOf("=") + 1)] : [w]);
         for (const w of named3) {
           if (w.includes(ctx.paths.userDir) || /(?:^|\/)\.wizardingcode(?:\/|$)/.test(w))
             return answer("deny", `${stays}: the engine's folder ${w} is denied`);
@@ -8304,7 +8398,7 @@ function onPreToolUse(ctx, payload) {
     for (const { args, viaXargs } of crewCommands) {
       if (viaXargs)
         return answer("deny", "Crew: a crew command whose words come from xargs' input cannot be read; write the command out");
-      const userOnly = userOnlyCommand(args);
+      const userOnly = userOnlyCommand(args) ?? resumeDecision(ctx, args);
       if (!userOnly)
         continue;
       const decided = userOnlyDecision(userOnly, payload.permission_mode, ctx.headless, ctx.policy);
@@ -9226,8 +9320,13 @@ async function recordTdd(paths, work, evidence, profile, criterionId, step, over
   if (step === "observed" && !reason?.trim()) {
     return { ok: false, message: "an observed run needs --reason: why no red run can exist" };
   }
+  if (typeof override !== "string" && override) {
+    const why = shellRefusal(override);
+    if (why)
+      return { ok: false, message: why };
+  }
   const fallback = defaultTestCommand(profile);
-  const command = override ?? fallback?.command;
+  const command = typeof override === "string" ? override : override ? joinWords(override) : fallback?.command;
   if (!command) {
     return {
       ok: false,
@@ -9361,25 +9460,26 @@ function findingMark(mark) {
 async function verifyDefects(cfg, policy, records, patch, options = {}) {
   const candidates = records.flatMap((r) => r.verdict === "not-proven" ? r.findings.filter((f) => f.severity === "defect" && !f.outside).map((f) => ({ record: r, finding: f })) : []);
   const sent = [];
+  const marks = [];
+  const unverified = (finding, reason) => marks.push({ finding, mark: { status: "unverified", reason } });
   const state = {};
   const questions = {};
   const snippets = policy.verify.send === "claims-and-snippets";
   for (const c of candidates) {
     if (c.finding.line === undefined) {
-      c.finding.verification = { status: "unverified", reason: "no line" };
+      unverified(c.finding, "no line");
       continue;
     }
     const lines2 = hunkLines(patch, c.finding.file, c.finding.line);
     if (!lines2) {
-      c.finding.verification = { status: "unverified", reason: "line outside the change's hunks" };
+      unverified(c.finding, "line outside the change's hunks");
       continue;
     }
     if (sent.length >= policy.verify.maxClaimsPerItem) {
-      c.finding.verification = { status: "unverified", reason: "over verify.maxClaimsPerItem" };
+      unverified(c.finding, "over verify.maxClaimsPerItem");
       continue;
     }
     const id = `d${sent.length + 1}`;
-    sent.push({ id, record: c.record, finding: c.finding });
     state[id] = {
       file: c.finding.file,
       line: c.finding.line,
@@ -9387,7 +9487,7 @@ async function verifyDefects(cfg, policy, records, patch, options = {}) {
       rubric: RUBRIC_QUESTIONS[c.record.gate],
       ...snippets ? { lines: lines2.text } : {}
     };
-    questions[id] = snippets ? {
+    const question = snippets ? {
       type: "choice",
       instructions: `What is the relation between the cited lines \`findings.${id}.lines\` and the finding's \`text\` at \`findings.${id}\`?`,
       criteria: {
@@ -9403,26 +9503,30 @@ async function verifyDefects(cfg, policy, records, patch, options = {}) {
         false: "the text names something else, or no defect"
       }
     };
+    questions[id] = question;
+    sent.push({ id, record: c.record, finding: c.finding, question });
   }
   if (!sent.length)
-    return { records: [], unavailable: null, sent: 0 };
+    return { records: [], unavailable: null, sent: 0, marks };
   const result = await askJev(cfg, { state: { findings: state }, questions }, options);
   if (!result.ok) {
     for (const s of sent)
-      s.finding.verification = { status: "unverified", reason: UNAVAILABLE2(result.unavailable) };
-    return { records: [], unavailable: result.unavailable, sent: sent.length };
+      unverified(s.finding, UNAVAILABLE2(result.unavailable));
+    return { records: [], unavailable: result.unavailable, sent: sent.length, marks };
   }
   const out = [];
   for (const s of sent) {
-    const answer2 = result.answers[s.id];
-    const question = questions[s.id];
-    if (!answer2 || !question)
-      continue;
+    const answer2 = answerOf(result.answers, s.id);
     const mark = markOf(answer2, policy.verify.threshold);
-    s.finding.verification = findingMark(mark);
-    out.push(record("defect", `${s.record.gate} ${s.finding.file}:${s.finding.line}`, question, answer2, mark.confidence, result.model));
+    marks.push({ finding: s.finding, mark: findingMark(mark) });
+    out.push(record("defect", `${s.record.gate} ${s.finding.file}:${s.finding.line}`, s.question, answer2, mark.confidence, result.model));
   }
-  return { records: out, unavailable: null, sent: sent.length };
+  return { records: out, unavailable: null, sent: sent.length, marks };
+}
+function applyDefectMarks(outcome) {
+  for (const { finding, mark } of outcome.marks)
+    finding.verification = mark;
+  return outcome;
 }
 var VALIDATOR_QUESTIONS = {
   v1: "Is every decision listed in `conclave` under the heading 'Decisions only the user can make' present in `decisions` with an answer or a stated default?",
@@ -9579,7 +9683,7 @@ async function verifyTriage(cfg, policy, input, options = {}) {
   if (score.confidence < policy.verify.threshold)
     return {
       proposal: null,
-      reason: `confidence ${score.confidence.toFixed(2)} under ${policy.verify.threshold}`,
+      reason: `confidence ${two(score.confidence)} under ${policy.verify.threshold}`,
       records
     };
   const capped = rank(top.level) > rank(input.request.proposed_priority);
@@ -9673,7 +9777,7 @@ function workspaceStatus(paths, policy, env) {
 // packages/engine/src/cli.ts
 var KNOWN_FLAGS = {
   detect: ["refresh"],
-  profile: ["target", "stack", "force", "timeout"],
+  profile: ["target", "stack", "force", "timeout", "mode"],
   policy: [],
   accept: [],
   start: ["answers", "criterion", "preserve", "origin", "priority", "source", "reason"],
@@ -9686,7 +9790,7 @@ var KNOWN_FLAGS = {
   approve: ["mode", "validator"],
   phase: [],
   await: [],
-  resume: [],
+  resume: ["mode"],
   tdd: ["reason"],
   gate: ["only"],
   judgement: ["ruling", "not-run", "reason", "task"],
@@ -10004,13 +10108,9 @@ async function recordTaskJudgement(env, ioEnv, work, tampered, parsed, task) {
   fillTokens(records, before.evidence.roles ?? [], inputs.at);
   const defects = await askDefects(env, ioEnv, records, join39(reviewDir(env.paths, work.id, task), "diff.patch"));
   const notes = [];
-  if (defects?.records.length) {
-    const appended = updateEvidence(env.paths, work.id, (fresh) => {
-      fresh.verifications = [...fresh.verifications ?? [], ...defects.records];
-    });
-    if ("refused" in appended)
-      notes.push(appended.refused);
-  }
+  const appendRefusal = appendVerifications(env, work.id, defects?.records ?? []);
+  if (appendRefusal)
+    notes.push(appendRefusal);
   const jevWait = jevUnavailableWait(work, defects);
   const hash = scopeHash(cut2);
   const gate = record2.gate;
@@ -10094,7 +10194,7 @@ async function askDefects(env, ioEnv, records, patchFile) {
   const jev = jevConfig(ioEnv, env.config);
   if (!jev.configured || !askAllowed(env.policy, "defect"))
     return null;
-  return verifyDefects(jev, env.policy, records, readText(patchFile) ?? "");
+  return applyDefectMarks(await verifyDefects(jev, env.policy, records, readText(patchFile) ?? ""));
 }
 function markLines(record2) {
   return record2.findings.filter((f) => f.verification).map((f) => {
@@ -10102,6 +10202,65 @@ function markLines(record2) {
     const mark = v.status === "unverified" ? `unverified: ${v.reason ?? "no reason"}` : `${v.status} by jev${v.confidence !== undefined ? ` (${two(v.confidence)})` : ""}`;
     return `    ${f.file}${f.line ? `:${f.line}` : ""} ${mark}`;
   });
+}
+async function tddCommand(env, parsed, args) {
+  const [step, id, criterion] = args;
+  const opened = openForChange(env, id);
+  if (isOutcome(opened))
+    return opened;
+  if (!["red", "green", "before", "after", "observed"].includes(step ?? "") || !criterion)
+    return refuse('usage: crew tdd <red|green|before|after|observed> <id> <criterion> [--reason "<why>"] [-- <cmd>]');
+  const { evidence } = loadEvidence(env.paths, opened.work.id);
+  const override = parsed.rest.length ? parsed.rest : undefined;
+  const reason = typeof parsed.flags.reason === "string" ? parsed.flags.reason : undefined;
+  const outcome = await recordTdd(env.paths, opened.work, evidence, env.profile, criterion, step, override, reason);
+  const tail = outcome.record?.tail ? `
+${outcome.record.tail}` : "";
+  if (!outcome.ok)
+    return refuse(`${outcome.message}${tail}`, { record: outcome.record });
+  const saved = updateEvidence(env.paths, opened.work.id, outcome.apply);
+  if ("refused" in saved)
+    return refuse(`${saved.refused} (the ${step} run passed: ${outcome.record?.log ?? "no log"})`, {
+      record: outcome.record
+    });
+  return ok(outcome.message, { record: outcome.record });
+}
+function postQuestionChannels(env, work, question, text) {
+  const notes = [];
+  for (const channel of question.channels) {
+    if (channel.kind === "document" && work.source?.documentPath) {
+      const written = postDocumentQuestion(env.paths.root, work.source.documentPath, question);
+      if ("refused" in written)
+        notes.push(`document not posted: ${written.refused}`);
+      else {
+        channel.posted = true;
+        channel.ref = written.file;
+      }
+    } else if (channel.kind === "mail") {
+      const sent = send(env.mail, {
+        to: ".",
+        type: "notice",
+        subject: `${question.id} of ${work.id}`,
+        text: `${question.id} of ${work.id}: ${text}`,
+        item: work.id
+      }, work);
+      if ("refused" in sent)
+        notes.push(`mail not posted: ${sent.refused}`);
+      else {
+        channel.posted = true;
+        channel.ref = sent.message.id;
+      }
+    }
+  }
+  return notes;
+}
+function appendVerifications(env, id, records) {
+  if (!records.length)
+    return null;
+  const appended = updateEvidence(env.paths, id, (fresh) => {
+    fresh.verifications = [...fresh.verifications ?? [], ...records];
+  });
+  return "refused" in appended ? appended.refused : null;
 }
 function jevUnavailableWait(work, defects) {
   if (!defects?.unavailable)
@@ -10122,19 +10281,6 @@ function triageProposalText(outcome, proposed2) {
   const p = outcome.proposal;
   const flags = `production down ${two(p.flags.is_production_down ?? 0)}, signed deadline ${two(p.flags.names_a_signed_deadline ?? 0)}, vague ${two(p.flags.is_vague ?? 0)}`;
   return `jev proposes ${p.level} (${two(p.confidence)}; ${flags})${p.capped ? `, capped at the source's ${proposed2}` : ""}`;
-}
-function triageText(work, short = false) {
-  const t = work.triage;
-  const level = `priority ${work.priority ?? "normal"}`;
-  if (!t)
-    return level;
-  if (t.confirmed === null)
-    return `priority ${t.proposed} (proposed, unconfirmed: no signed business priorities)`;
-  if (short)
-    return level;
-  if (t.confirmed === t.proposed)
-    return `priority ${t.confirmed} (confirmed against the signed business priorities)`;
-  return `priority ${t.confirmed} (proposed ${t.proposed}, against the signed business priorities): ${t.reason ?? ""}`;
 }
 function logDecision(env, work, answers) {
   if (!env.config.decisions.log)
@@ -10233,10 +10379,43 @@ async function dispatch(parsed, io) {
     }
     case "profile": {
       const [sub, gate, cmd] = args;
-      if (sub === "set" || sub === "confirm") {
+      if (sub === "set" || sub === "confirm" || sub === "unset") {
         const refused = tamperRefusal(env);
         if (refused)
           return refused;
+      }
+      if (sub === "unset") {
+        if (!GATE_NAMES.includes(gate) || gate === "secrets")
+          return refuse("usage: crew profile unset <build|test|lint|typecheck|deps|e2e> [--target <path>] [--stack <s>]");
+        const decided = decisionFlag(parsed, env.policy);
+        if (isOutcome(decided))
+          return decided;
+        const targetPath = typeof parsed.flags.target === "string" ? parsed.flags.target : ".";
+        const stackFlag = typeof parsed.flags.stack === "string" ? parsed.flags.stack : undefined;
+        const atPath = env.profile.targets.filter((t) => t.path === targetPath);
+        if (stackFlag === undefined && atPath.length > 1)
+          return refuse(`two targets at ${targetPath} (${atPath.map((t) => t.stack).join(", ")}): say which one with --stack`);
+        const target = stackFlag === undefined ? atPath[0] : atPath.find((t) => t.stack === stackFlag);
+        if (!target)
+          return refuse(`no target at ${targetPath} in the profile (crew detect)`);
+        const where = stackFlag === undefined ? targetPath : `${targetPath} (${stackFlag})`;
+        const current = target.gates[gate];
+        if (!current)
+          return refuse(`${gate} for ${where} is not set`);
+        if (gate === "test" && env.profile.targets.filter((t) => t.gates.test).length <= 1)
+          return refuse(`the profile keeps at least one test gate: test for ${where} is the last one`);
+        delete target.gates[gate];
+        target.unset = [...new Set([...target.unset ?? [], gate])];
+        saveProfile(env.paths, env.profile);
+        const text = `${gate} for ${where} unset (was: ${current.command})`;
+        const by = whoDecided(decided);
+        appendDecision(env.paths, { at: nowIso(), item: "profile", kind: "profile", text, by });
+        return ok(`${text} ${decisionText(env.policy, decided)}`, {
+          target: targetPath,
+          gate,
+          was: current.command,
+          by
+        });
       }
       if (sub === "set" && gate?.startsWith("environment.")) {
         const key = gate.slice("environment.".length);
@@ -10489,10 +10668,7 @@ async function dispatch(parsed, io) {
               priority: w.priority ?? "normal"
             }))
           });
-          if (outcome.records.length)
-            updateEvidence(env.paths, work.id, (fresh) => {
-              fresh.verifications = [...fresh.verifications ?? [], ...outcome.records];
-            });
+          appendVerifications(env, work.id, outcome.records);
           jevLine = `
   ${triageProposalText(outcome, source.proposedPriority)}`;
         }
@@ -10520,7 +10696,7 @@ async function dispatch(parsed, io) {
       const sourceLines = source ? `
   source: ${sourceLine(source)}` : "";
       const triageLine = triage ? `
-  ${triageText(work)}` : "";
+  ${triageText(work, "start")}` : "";
       const teamLine = work.seats?.length ? `
   team: ${work.seats.length} seats (crew team ${work.id})` : "";
       const registered = decisionsCount(env.paths);
@@ -10761,6 +10937,9 @@ ${originNotes.join(`
       const decision = validatorFlag(parsed, env.policy);
       if (isOutcome(decision))
         return decision;
+      const held = opened.work.validatorDispute;
+      if (decision.by === "validator" && held)
+        return refuse(`the validator's verdict was disputed by jev on ${held.at} (${held.condition}); a person clears it: crew resume ${opened.work.id} or crew approve ${opened.work.id} spec`);
       let jevNote = "";
       if (decision.by === "validator") {
         if (decision.rule !== "complete-gap-round")
@@ -10789,19 +10968,23 @@ ${originNotes.join(`
               criterion: o.criterion ?? null
             }))
           });
-          if (outcome.records.length)
-            updateEvidence(env.paths, opened.work.id, (fresh) => {
-              fresh.verifications = [...fresh.verifications ?? [], ...outcome.records];
-            });
+          appendVerifications(env, opened.work.id, outcome.records);
           if (outcome.status === "disputed") {
             opened.work.awaiting = "user";
             delete opened.work.awaitingMessage;
+            opened.work.validatorDispute = {
+              at: nowIso(),
+              condition: outcome.condition ?? "the validator's rule",
+              confidence: outcome.confidence ?? null
+            };
             saveWork(env.paths, opened.work);
             return refuse(`disputed by jev: ${outcome.condition} (${two(outcome.confidence ?? 0)}); the item waits for a person`);
           }
           jevNote = outcome.status === "verified" ? " (verified by jev)" : ` (unverified: ${outcome.reason ?? "no reason"})`;
         }
       }
+      if (decision.by === "user")
+        delete opened.work.validatorDispute;
       approve(opened.work, "spec", decision);
       appendDecision(env.paths, {
         at: nowIso(),
@@ -10842,11 +11025,29 @@ ${originNotes.join(`
 ${originNotes.join(`
 `)}` : text;
       if (command === "resume") {
+        let cleared = "";
+        if (opened.work.validatorDispute) {
+          const decided = decisionFlag(parsed, env.policy);
+          if (isOutcome(decided))
+            return decided;
+          if (decided.by !== "user")
+            return refuse("the validator's verdict was disputed by jev; a person clears it: the item waits");
+          const by = whoDecided(decided);
+          appendDecision(env.paths, {
+            at: nowIso(),
+            item: opened.work.id,
+            kind: "dispute",
+            text: `jev dispute cleared (${opened.work.validatorDispute.condition})`,
+            by
+          });
+          delete opened.work.validatorDispute;
+          cleared = `; the jev dispute cleared by ${by}`;
+        }
         opened.work.awaiting = null;
         delete opened.work.awaitingMessage;
         saveWork(env.paths, opened.work);
         moveOrigin("in-progress");
-        return ok(withNotes(`${opened.work.id}: resumed`), {
+        return ok(withNotes(`${opened.work.id}: resumed${cleared}`), {
           awaiting: null,
           awaitingMessage: null
         });
@@ -10916,14 +11117,15 @@ ${originNotes.join(`
       let tail = null;
       let records = [];
       if (found.length && !asking) {
+        const notAsked = jev.configured ? "jev not asked: fact is not in verify.asks" : "jev not configured";
         for (const f of found)
           statuses.set(f.id, {
             id: f.id,
             source: facts.find((x) => x.id === f.id)?.source ?? "",
             status: "unverified",
-            reason: "jev not configured"
+            reason: notAsked
           });
-        tail = "jev not configured";
+        tail = notAsked;
       } else if (found.length) {
         const out = await verifyFacts(jev, env.policy, found);
         records = out.records;
@@ -10965,7 +11167,7 @@ ${originNotes.join(`
       const opened = openForChange(env, args[0]);
       if (isOutcome(opened))
         return opened;
-      const list = typeof parsed.flags.paths === "string" ? parsed.flags.paths.split(",").map((p) => p.trim()).filter(Boolean) : [];
+      const list = commaList(parsed.flags.paths);
       if (!list.length)
         return refuse(usage);
       const origin = analyseOrigin(env.paths, list);
@@ -10998,43 +11200,18 @@ ${originNotes.join(`
         const decided = decisionFlag(parsed, env.policy);
         if (isOutcome(decided))
           return decided;
-        const notes = [];
         const question = addQuestion(work, text, questionChannels(work, {
           personPresent: decided.by === "user",
           workspace: env.mail.self.workspace
         }));
-        for (const channel of question.channels) {
-          if (channel.kind === "document" && work.source?.documentPath) {
-            const written = postDocumentQuestion(env.paths.root, work.source.documentPath, question);
-            if ("refused" in written)
-              notes.push(`document not posted: ${written.refused}`);
-            else {
-              channel.posted = true;
-              channel.ref = written.file;
-            }
-          } else if (channel.kind === "mail") {
-            const sent = send(env.mail, {
-              to: ".",
-              type: "notice",
-              subject: `${question.id} of ${work.id}`,
-              text: `${question.id} of ${work.id}: ${text}`,
-              item: work.id
-            }, work);
-            if ("refused" in sent)
-              notes.push(`mail not posted: ${sent.refused}`);
-            else {
-              channel.posted = true;
-              channel.ref = sent.message.id;
-            }
-          }
-        }
+        const notes = postQuestionChannels(env, work, question, text);
         const was = waitingPhrase(work);
         work.awaiting = "user";
         delete work.awaitingMessage;
         saveWork(env.paths, work);
         moveOriginMail(env, work, "blocked", notes);
-        const toPost = channelList(question.channels, false);
-        const line = `${question.id} recorded; waiting for the user${was && was !== "waiting for the user" ? ` (was ${was})` : ""}; posted: ${channelList(question.channels, true) || "none"}${toPost ? `; to post: ${toPost}: crew question ${work.id} posted ${question.id} --channel <channel> --ref <ref>` : ""}`;
+        const toPost = channelList(question.channels, false).length > 0;
+        const line = `${question.id} recorded; waiting for the user${was && was !== "waiting for the user" ? ` (was ${was})` : ""}; ${channelsText(question)}${toPost ? `: crew question ${work.id} posted ${question.id} --channel <channel> --ref <ref>` : ""}`;
         return ok(notes.length ? `${line}
 ${notes.join(`
 `)}` : line, {
@@ -11070,12 +11247,12 @@ ${notes.join(`
         if ("refused" in answered)
           return refuse(answered.refused);
         appendDecision(env.paths, {
-          at: answered.answeredAt ?? nowIso(),
+          at: answered.answeredAt,
           item: work.id,
           kind: "question",
           id,
           text: answered.text,
-          answer: answered.answer ?? "",
+          answer: answered.answer,
           by
         });
         const notes = [];
@@ -11106,33 +11283,15 @@ ${notes.join(`
       }
       return refuse(usage);
     }
-    case "tdd": {
-      const [step, id, criterion] = args;
-      const opened = openForChange(env, id);
-      if (isOutcome(opened))
-        return opened;
-      if (!["red", "green", "before", "after", "observed"].includes(step ?? "") || !criterion)
-        return refuse('usage: crew tdd <red|green|before|after|observed> <id> <criterion> [--reason "<why>"] [-- <cmd>]');
-      const { evidence } = loadEvidence(env.paths, opened.work.id);
-      const override = parsed.rest.length ? parsed.rest.join(" ") : undefined;
-      const reason = typeof parsed.flags.reason === "string" ? parsed.flags.reason : undefined;
-      const outcome = await recordTdd(env.paths, opened.work, evidence, env.profile, criterion, step, override, reason);
-      const tail = outcome.record?.tail ? `
-${outcome.record.tail}` : "";
-      if (!outcome.ok)
-        return refuse(`${outcome.message}${tail}`, { record: outcome.record });
-      const saved = updateEvidence(env.paths, opened.work.id, outcome.apply);
-      if ("refused" in saved)
-        return refuse(`${saved.refused} (the ${step} run passed: ${outcome.record?.log ?? "no log"})`, { record: outcome.record });
-      return ok(outcome.message, { record: outcome.record });
-    }
+    case "tdd":
+      return tddCommand(env, parsed, args);
     case "gate": {
       const opened = openForChange(env, args[1]);
       if (isOutcome(opened))
         return opened;
       if (args[0] !== "run")
         return refuse("usage: crew gate run <id> [--only a,b]");
-      const only = typeof parsed.flags.only === "string" ? parsed.flags.only.split(",").map((g) => g.trim()).filter(Boolean) : undefined;
+      const only = typeof parsed.flags.only === "string" ? commaList(parsed.flags.only) : undefined;
       const unknown = only?.find((g) => !GATE_NAMES.includes(g) && !isJudgementGateName(g));
       if (unknown !== undefined)
         return refuse(`unknown gate: ${unknown}`);
@@ -11319,7 +11478,7 @@ ${report}`, {
       const ctx = env.mail;
       if (args[1] === "open") {
         const task = args[2];
-        const criteria = typeof parsed.flags.criteria === "string" ? parsed.flags.criteria.split(",").map((c) => c.trim()).filter(Boolean) : [];
+        const criteria = commaList(parsed.flags.criteria);
         if (!task || !criteria.length)
           return refuse(usage);
         const out = openTask(ctx, env, opened.work, task, criteria, typeof parsed.flags.text === "string" ? parsed.flags.text : undefined);
@@ -11330,7 +11489,7 @@ ${report}`, {
 ${out.notes.join(`
 `)}` : ""}`, { task: out.record, message: out.message, opened: out.opened, notes: out.notes });
       }
-      const list = (flag) => typeof flag === "string" ? flag.split(",").map((s) => s.trim()).filter(Boolean) : [];
+      const list = commaList;
       if (args[1] === "note") {
         const task = args[2];
         const criteria = list(parsed.flags.criteria);
@@ -11609,8 +11768,8 @@ test-first not credited: ${out.uncredited}` : "";
           const signed = acceptPriorities(env.paths.userDir, workspace, { file, by });
           if ("refused" in signed)
             return refuse(signed.refused);
-          const state2 = prioritiesState(env.paths.userDir, workspace);
-          const digest = `sha256:${sha256(state2.text ?? "").slice(0, 12)}`;
+          const { hash, ...state2 } = signed;
+          const digest = `sha256:${hash.replace(/^sha256:/, "").slice(0, 12)}`;
           appendDecision(env.paths, {
             at: nowIso(),
             item: "workspace",
@@ -11628,8 +11787,7 @@ test-first not credited: ${out.uncredited}` : "";
         if (!workspace)
           return ok(noWorkspace, { workspace: null, state: null });
         const state = prioritiesState(env.paths.userDir, workspace);
-        const line = state.state === "signed" ? `priorities: signed (${state.signedAt})` : state.state === "changed" ? "priorities: changed since signing (crew workspace priorities accept)" : state.state === "unsigned" ? "priorities: unsigned (crew workspace priorities accept)" : `priorities: none (write ${state.path}, or crew workspace priorities accept --file <path>)`;
-        return ok(line, { workspace, ...state });
+        return ok(prioritiesLine(state), { workspace, ...state });
       }
       if (args[0] !== "status")
         return refuse("usage: crew workspace status [--json] | crew workspace priorities [accept [--file <path>]]");
@@ -11719,7 +11877,7 @@ ${lines2.join(`
         extra.unshift(analysis.origin ? `  analysis: ${originSummary(analysis.origin)}` : `  analysis: origin.json changed outside the engine (crew accept ${work.id})`);
       extra.unshift(...openQuestions(work).map((q) => `  question ${q.id} open: ${oneLine(q.text)} (${channelsText(q)})`));
       const text = `${work.id} "${work.title}"
-  phase ${work.phase}, route ${work.route}, kind ${kindOfItem(work)}, ${triageText(work, true)}${waitingText(work)}
+  phase ${work.phase}, route ${work.route}, kind ${kindOfItem(work)}, ${triageText(work, "status")}${waitingText(work)}
 ${extra.length ? `${extra.join(`
 `)}
 ` : ""}${gateSummary(work, result.verdict, result.unproven, result.evidence.runs)}`;
@@ -12087,6 +12245,7 @@ var HELP = `crew ${VERSION}
       [--origin <message id>]           the item answers a message of this project's inbox (a session opened by mail)
       [--priority blocker|high|normal|low]   the item's priority; else its origin's confirmed one, else normal
   classify <id> --answers <json>        record typed answers and compute the route
+  analyse <id> --paths <file,file>      an issue's origin from git and the records, written to analysis/origin.json (before Understand)
   criteria <id> add "<text>" [--kind preserve|observed] [--contract <mid>:<n>]   a criterion, bound to a contract of a reply in the item's mail when given
   criteria <id> remove <AC-n>           take out a criterion no test-first record or skip names
   decision <id> add "<question>" [--default "<answer>"]   a decision only the user can make (gap round)
@@ -12097,17 +12256,20 @@ var HELP = `crew ${VERSION}
   objection <id> waive O-n --reason "<why>"     the user decides against it (asks the user)
   debate <id> open --reason "<why>"     the conclave's debate opens on a decision with consequences (once per item)
   debate <id> close [--tokens n]        the judge has ruled; plan is held while the debate is open
+  research <id> verify [--file <path>]  check the researcher's quotes in their sources; ask Jev when configured
   approve <id> spec                     record the user's approval (asks the user)
       --mode auto|bypassPermissions|dontAsk   no person watching: recorded as the agent's decision
   phase <id> next                       advance when the guard holds
   await <id> user | role | mail <mid>   mark the turn's wait: for the user, for the roles, or for a reply to a message
-  resume <id>                           clear the wait
+  resume <id>                           clear the wait (asks the user while a jev dispute is held on the item)
+  question <id> add "<text>" [--mode m] | posted Q-n --channel <c> --ref <r> | answer Q-n "<answer>" | list   a doubt on record, posted where it can; answered by a person (asks the user)
   mail send --to <project|.> --type question|change-request|notice|blocker "<text>"   send mail inside the workspace
       [--priority blocker|high|normal|low] [--thread <root>] [--agent <session|T-n|role>] [--item <id>] [--reply-to <mid>] [--subject <text>] [--file <path>]
   mail inbox [--all] | read <mid> | thread <mid> | reply <mid> "<text>" [--branch <b>] [--item <child>] [--contract <kind>:<path>[:<summary>]]… [--as <role>] [--file <path>]
   mail accept <mid> [--priority <p>] [--reason "<why>"]   confirm a request's priority, or lower it with a reason (never raise)
   mail refuse <mid> --reason "<why>" | status | stop <mid>   this project's mail and the sessions it opened (status sweeps them; stop kills one)
   workspace status [--json]           every project of the workspace: live, open items, unread, open threads, unconfirmed priorities, environment (reads records, runs nothing)
+  workspace priorities [accept [--file <path>]]   the workspace's signed business priorities (accept asks the user)
   task <id> open T-n --criteria AC-1,AC-2 [--text "<task text>"]   hand a task of the plan to an implementer: a message, a worktree, a branch, a session
   task <id> list | merge T-n [--force]   the tasks and their children; merge a proven child's branch (--force merges an unproven one: asks the user)
   tdd <red|green|before|after|observed> <id> <criterion> [--reason "<why>"] [-- <cmd>]

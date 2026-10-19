@@ -17,6 +17,15 @@ export interface Parsed {
 // Flags that never take a value, so a word after them stays a positional argument.
 export const BOOLEAN_FLAGS = new Set(["print", "json", "refresh", "force", "not-run", "all"]);
 
+/** A comma-separated flag as its trimmed non-empty words; a flag absent, boolean or empty gives none (finding 88). */
+export function commaList(value: unknown): string[] {
+  if (typeof value !== "string") return [];
+  return value
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
 /** `--key value` takes the next word unless the flag is boolean or the next word is a flag; `--` ends the flags. */
 export function parse(argv: string[]): Parsed {
   const parsed: Parsed = { positional: [], flags: {}, multi: {}, ordered: [], rest: [] };

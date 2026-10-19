@@ -13,5 +13,5 @@ Marketing wants to know which accounts receive the newsletter.
 - Accounts that already exist get the value marketing decided.
 REQUEST
 git add -A
-git -c user.name=Fixture -c user.email=fixture@example.invalid commit -q -m "fixture: document-entry-opens-item"
+fixture_commit "fixture: document-entry-opens-item"
 git log -1 --oneline

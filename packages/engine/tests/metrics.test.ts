@@ -262,3 +262,34 @@ test("SP3-T6 AC-4: computeMetrics counts every verification, the defect marks an
     "verifications: 0 (defects verified 0, disputed 0, unverified 0; agreement none)",
   );
 });
+
+test("SP8-T1 AC-5 (finding 90): the agreement rounds to two decimals (two verified, one disputed: 0.67)", () => {
+  const a = repoPaths(makeRepo(), testEnv());
+  const one = createWork(a, "One");
+  saveWork(a, one);
+  const finding = (line: number, status: "verified" | "disputed") => ({
+    file: "src/a.ts",
+    line,
+    text: "t",
+    severity: "defect" as const,
+    verification: { status, confidence: 0.9 },
+  });
+  saveEvidence(a, one.id, {
+    ...emptyEvidence(),
+    judgement: [
+      {
+        gate: "code-quality",
+        verdict: "not-proven",
+        at: "2026-10-19T10:00:00.000Z",
+        fingerprint: "f",
+        findings: [finding(1, "verified"), finding(2, "verified"), finding(3, "disputed")],
+      },
+    ],
+    verifications: [],
+  });
+  expect(computeMetrics([a]).verifications).toMatchObject({
+    verified: 2,
+    disputed: 1,
+    agreement: 0.67,
+  });
+});

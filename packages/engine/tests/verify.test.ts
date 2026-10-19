@@ -7,6 +7,9 @@ import { hunkLines } from "../src/judgement.ts";
 import { DEFAULT_POLICY } from "../src/policy.ts";
 import type { JudgementRecord, Policy } from "../src/types.ts";
 import {
+  applyDefectMarks,
+  CAPS,
+  cut,
   RUBRIC_QUESTIONS,
   verifyDefects,
   verifyFacts,
@@ -92,7 +95,7 @@ test("SP3-T6 AC-1, AC-2: verifyDefects asks the upheld defects inside the hunks 
     record([{ file: "src/a.ts", line: 22, text: "proven gate", severity: "defect" }], "proven"),
   ];
   const cfg = canned({ d1: { type: "noul", noul: 0.93 }, d2: { type: "noul", noul: 0.05 } });
-  const out = await verifyDefects(cfg, DEFAULT_POLICY, sent, PATCH);
+  const out = applyDefectMarks(await verifyDefects(cfg, DEFAULT_POLICY, sent, PATCH));
   expect(out.sent).toBe(2);
   expect(out.unavailable).toBeNull();
   const findings = sent[0]?.findings ?? [];
@@ -134,9 +137,11 @@ test("SP3-T6 AC-1, AC-2: verifyDefects asks the upheld defects inside the hunks 
       });
     }) as typeof fetch;
   const claims = [record([{ file: "src/a.ts", line: 2, text: "a copy", severity: "defect" }])];
-  await verifyDefects(spy, DEFAULT_POLICY, claims, PATCH, {
-    fetch: answering({ d1: { type: "noul", noul: 0.9 } }),
-  });
+  applyDefectMarks(
+    await verifyDefects(spy, DEFAULT_POLICY, claims, PATCH, {
+      fetch: answering({ d1: { type: "noul", noul: 0.9 } }),
+    }),
+  );
   expect(bodies[0]?.state.findings.d1).toEqual({
     file: "src/a.ts",
     line: 2,
@@ -146,12 +151,8 @@ test("SP3-T6 AC-1, AC-2: verifyDefects asks the upheld defects inside the hunks 
   expect(bodies[0]?.questions.d1?.type).toBe("noul");
   expect(claims[0]?.findings[0]?.verification).toEqual({ status: "verified", confidence: 0.9 });
   const snippets = [record([{ file: "src/a.ts", line: 2, text: "a copy", severity: "defect" }])];
-  const withSnippets = await verifyDefects(
-    spy,
-    policyWith({ send: "claims-and-snippets" }),
-    snippets,
-    PATCH,
-    {
+  const withSnippets = applyDefectMarks(
+    await verifyDefects(spy, policyWith({ send: "claims-and-snippets" }), snippets, PATCH, {
       fetch: answering({
         d1: {
           type: "choice",
@@ -160,7 +161,7 @@ test("SP3-T6 AC-1, AC-2: verifyDefects asks the upheld defects inside the hunks 
           confidence: 0.95,
         },
       }),
-    },
+    }),
   );
   expect(bodies[1]?.state.findings.d1?.lines).toBe(
     "1: const a = 1;\n2: const b = 2;\n3: const c = 3;\n4: export { a, c };",
@@ -188,11 +189,13 @@ test("SP3-T6 AC-1, AC-2: verifyDefects asks the upheld defects inside the hunks 
       { file: "src/a.ts", line: 22, text: "three", severity: "defect" },
     ]),
   ];
-  const cappedOut = await verifyDefects(
-    canned({ d1: { type: "noul", noul: 0.9 }, d2: { type: "noul", noul: 0.9 } }),
-    policyWith({ maxClaimsPerItem: 2 }),
-    capped,
-    PATCH,
+  const cappedOut = applyDefectMarks(
+    await verifyDefects(
+      canned({ d1: { type: "noul", noul: 0.9 }, d2: { type: "noul", noul: 0.9 } }),
+      policyWith({ maxClaimsPerItem: 2 }),
+      capped,
+      PATCH,
+    ),
   );
   expect(cappedOut.sent).toBe(2);
   expect(capped[0]?.findings.map((f) => f.verification?.status ?? f.verification?.reason)).toEqual([
@@ -207,8 +210,8 @@ test("SP3-T6 AC-1, AC-2: verifyDefects asks the upheld defects inside the hunks 
   });
   // Down: nothing recorded, every sent finding marked.
   const unavailable = [record([{ file: "src/a.ts", line: 2, text: "one", severity: "defect" }])];
-  const downOut = await verifyDefects(down, DEFAULT_POLICY, unavailable, PATCH);
-  expect(downOut).toEqual({
+  const downOut = applyDefectMarks(await verifyDefects(down, DEFAULT_POLICY, unavailable, PATCH));
+  expect(downOut).toMatchObject({
     records: [],
     unavailable: "canned answers unreadable: /nowhere/answers.json",
     sent: 1,
@@ -225,7 +228,12 @@ test("SP3-T6 AC-1, AC-2: verifyDefects asks the upheld defects inside the hunks 
       [record([{ file: "src/a.ts", text: "x", severity: "defect" }])],
       PATCH,
     ),
-  ).toEqual({ records: [], unavailable: null, sent: 0 });
+  ).toMatchObject({
+    records: [],
+    unavailable: null,
+    sent: 0,
+    marks: [{ mark: { status: "unverified", reason: "no line" } }],
+  });
 });
 
 test("SP3-T6 AC-1, AC-2, AC-3: verifyValidator is verified on two yeses, disputed on a no naming the condition, unverified between or when Jev is down (nothing recorded)", async () => {
@@ -383,4 +391,38 @@ test("SP3-T6 AC-1, AC-2, AC-3: verifyTriage proposes the highest-probability lev
     reason: "jev unavailable: canned answers unreadable: /nowhere/answers.json",
     records: [],
   });
+});
+
+test("SP8-T1 AC-5 (finding 90): cut keeps a text within its cap with an ellipsis, and the validator's conclave leaves cut at 16 KiB", async () => {
+  expect(cut("abcdef", 3)).toBe("abc…");
+  expect(cut("abc", 3)).toBe("abc");
+  expect(CAPS).toEqual({
+    findingText: 1000,
+    conclave: 16 * 1024,
+    request: 8 * 1024,
+    priorities: 8 * 1024,
+  });
+  const bodies: { state: { conclave: string } }[] = [];
+  const spy = jevConfig(
+    { WIZARDINGCODE_JEV_API_KEY: "sk-test" } as NodeJS.ProcessEnv,
+    DEFAULT_CONFIG,
+  );
+  const fetchSpy = (async (_url: unknown, init?: RequestInit) => {
+    bodies.push(JSON.parse(String(init?.body)));
+    return new Response(
+      JSON.stringify({
+        model: "jev-1.13.0",
+        answers: { v1: { type: "noul", noul: 0.9 }, v2: { type: "noul", noul: 0.9 } },
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  }) as typeof fetch;
+  const out = await verifyValidator(
+    spy,
+    DEFAULT_POLICY,
+    { conclave: "x".repeat(20000), decisions: [], objections: [] },
+    { fetch: fetchSpy },
+  );
+  expect(out.status).toBe("verified");
+  expect(bodies[0]?.state.conclave.length).toBe(16 * 1024 + 1);
 });

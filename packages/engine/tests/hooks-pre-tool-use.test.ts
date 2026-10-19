@@ -1535,3 +1535,68 @@ test("SP3-T6 AC-4: crew config jev.endpoint and jev.model with a value are the u
   expect(bash(prompt.ctx, "crew config")).toEqual({});
   expect(bash(prompt.ctx, "crew config decisions.log false")).toEqual({});
 });
+
+test("SP8-T1 AC-2 (finding 94): crew resume is the user's while a jev dispute is held on the item, and when the hook cannot read the id or the record; free otherwise", () => {
+  const { ctx } = setup();
+  const bash = (command: string, permission_mode?: string) =>
+    onPreToolUse(ctx, { tool_name: "Bash", tool_input: { command }, permission_mode });
+  const clean = createWork(ctx.paths, "feature");
+  saveWork(ctx.paths, clean);
+  const disputed = createWork(ctx.paths, "feature");
+  disputed.validatorDispute = { at: "2026-10-19T10:00:00.000Z", condition: "q", confidence: 0.97 };
+  saveWork(ctx.paths, disputed);
+  expect(bash(`crew resume ${clean.id}`)).toEqual({});
+  expect(decision(bash(`crew resume ${disputed.id}`))).toBe("ask");
+  expect(decision(bash("crew resume $ID"))).toBe("ask");
+  expect(decision(bash("crew resume 2026-01-01-099-no-such-item"))).toBe("ask");
+  for (const mode of ["bypassPermissions", "dontAsk"]) {
+    const bare = bash(`crew resume ${disputed.id}`, mode);
+    expect(decision(bare)).toBe("deny");
+    expect(reason(bare)).toContain(`--mode ${mode}`);
+    expect(bash(`crew resume ${disputed.id} --mode ${mode}`, mode)).toEqual({});
+    expect(bash(`crew resume ${clean.id}`, mode)).toEqual({});
+  }
+});
+
+test("SP8-T1 AC-3 (finding 86): an unreadable verb after question <id>, objection <id>, task <id>, workspace and workspace priorities is the deciding form: asked with a person present, denied without --mode where nobody watches, free with it", () => {
+  const { ctx } = setup();
+  const bash = (command: string, permission_mode?: string) =>
+    onPreToolUse(ctx, { tool_name: "Bash", tool_input: { command }, permission_mode });
+  const forms = [
+    "crew question w1 $VERB Q-1 yes",
+    "crew objection w1 $V O-1 --reason x",
+    "crew task w1 $V T-1",
+    "crew workspace $V",
+    "crew workspace priorities $V --file p.md",
+  ];
+  for (const command of forms) {
+    expect(decision(bash(command)), command).toBe("ask");
+    const bare = bash(command, "dontAsk");
+    expect(decision(bare), command).toBe("deny");
+    expect(reason(bare), command).toContain("--mode dontAsk");
+    expect(bash(`${command} --mode dontAsk`, "dontAsk"), command).toEqual({});
+  }
+  // A readable verb that decides nothing stays free.
+  expect(bash("crew question w1 list")).toEqual({});
+  expect(bash("crew workspace status")).toEqual({});
+  expect(bash("crew task w1 list")).toEqual({});
+});
+
+test("SP8-T1 AC-7 (finding 87): crew profile unset is the user's, whatever the positions of the gate and --target; profile with no deciding verb stays free", () => {
+  const { ctx } = setup();
+  const bash = (command: string, permission_mode?: string) =>
+    onPreToolUse(ctx, { tool_name: "Bash", tool_input: { command }, permission_mode });
+  for (const command of [
+    "crew profile unset test --target packages/engine",
+    "crew profile --target packages/engine unset test",
+    "crew --json profile unset lint",
+  ]) {
+    expect(decision(bash(command)), command).toBe("ask");
+    const bare = bash(command, "dontAsk");
+    expect(decision(bare), command).toBe("deny");
+    expect(reason(bare), command).toContain("--mode dontAsk");
+    expect(bash(`${command} --mode dontAsk`, "dontAsk"), command).toEqual({});
+  }
+  expect(bash("crew profile")).toEqual({});
+  expect(bash("crew profile --json")).toEqual({});
+});
