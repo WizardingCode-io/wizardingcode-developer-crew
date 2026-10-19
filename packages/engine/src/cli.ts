@@ -1,7 +1,15 @@
 import { existsSync } from "node:fs";
 import { basename, join, relative, resolve } from "node:path";
 import { type Parsed, parse } from "./argv.ts";
-import { AnswerError, type Answers, computeRoute, validateAnswers } from "./classify.ts";
+import {
+  AnswerError,
+  type Answers,
+  computeRoute,
+  type KindContext,
+  kindOf,
+  PRIORITY_LEVELS,
+  validateAnswers,
+} from "./classify.ts";
 import { loadConfig, saveConfig, setConfigValue } from "./config.ts";
 import {
   appendDecision,
@@ -137,6 +145,7 @@ import type {
   GateName,
   JudgementGateName,
   JudgementRecord,
+  MailPriority,
   Message,
   OpenedSession,
   Phase,
@@ -178,11 +187,13 @@ import {
   debateState,
   type GuardContext,
   isSkipped,
+  kindLabel,
+  kindOfItem,
   loadWork,
   nextPhaseOf,
   openDebate,
   openItems,
-  PHASES_BY_ROUTE,
+  phasesFor,
   removeCriterion,
   saveWork,
   validatorPreconditions,
@@ -737,6 +748,9 @@ function guardContext(env: Env, work: WorkItem, tampered: boolean): GuardContext
   const result = assess(env.paths, work, env.profile, env.policy, env.tampered || tampered);
   return {
     specText: readText(join(dir, "spec.md")),
+    analysisText: readText(join(dir, "analysis.md")),
+    originRecorded: existsSync(join(dir, "analysis", "origin.json")),
+    gitRepository: isGitRepo(env.paths.root),
     conclaveText: readText(join(dir, "conclave.md")),
     ledger: loadLedger(env.paths, work.id).ledger,
     planExists: existsSync(join(dir, "plan.md")),
@@ -777,6 +791,18 @@ function reportOf(env: Env, work: WorkItem, evidence: Evidence): string {
   );
 }
 
+/** The item's priority at start (SP7 §7.1, SP3 Task 2): the flag, else the origin's confirmed level, else the `priority` answer's level, else normal. */
+function startPriority(
+  flag: MailPriority | undefined,
+  origin: Message | null,
+  answers: Answers,
+): MailPriority {
+  if (flag) return flag;
+  if (origin) return decidedPriority(origin);
+  if (answers.priority !== undefined) return PRIORITY_LEVELS[answers.priority] ?? "normal";
+  return "normal";
+}
+
 function logDecision(env: Env, work: WorkItem, answers: Answers): void {
   if (!env.config.decisions.log) return;
   const line = JSON.stringify({
@@ -786,6 +812,9 @@ function logDecision(env: Env, work: WorkItem, answers: Answers): void {
     answers,
     route: work.route,
     reasons: work.routeReasons,
+    // The kind and its derivation (SP7 §7.1), replayed with the nine answers.
+    kind: work.kind,
+    kindFrom: work.kindFrom,
   });
   const file = join(env.paths.localDir, "decisions.jsonl");
   writeText(file, `${readText(file) ?? ""}${line}\n`);
@@ -800,9 +829,9 @@ function parseAnswers(raw: string): Answers | Outcome {
   }
 }
 
-function classify(env: Env, work: WorkItem, answers: Answers): void {
+function classify(env: Env, work: WorkItem, answers: Answers, context: KindContext): void {
   const decision = computeRoute(answers, [], env.policy);
-  applyClassification(work, answers.work_type, decision);
+  applyClassification(work, answers.work_type, decision, kindOf(answers, context));
   logDecision(env, work, answers);
 }
 
@@ -1124,8 +1153,9 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       const sharedWarning = neighbours.length
         ? `warning: this checkout is shared with ${neighbours.join(", ")}, which ${neighbours.length === 1 ? "is" : "are"} open with uncommitted changes in ${uncommitted.join(", ")}; a second session on one checkout blocks turn ends and proves half-written code: work in a worktree (git worktree add ../<name> -b <branch>)\n`
         : "";
-      classify(env, work, answers);
-      work.priority = priorityFlag ?? (origin ? decidedPriority(origin) : "normal");
+      classify(env, work, answers, { origin: !!origin, sourceChannel: null });
+      // The item's priority: the flag, else the origin's confirmed level, else the priority answer's level, else normal.
+      work.priority = startPriority(priorityFlag, origin, answers);
       // The seats the route plans, before any path is known (SP7 §6.2): the leads' validation guard
       // names them from here; the gate run rewrites them with the paths the change touched.
       if (work.route !== "fast") {
@@ -1166,6 +1196,12 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         recordInItem(env.paths, work.id, "refused" in moved ? origin : moved);
       }
       const lines = criteria.map((c) => `\n  ${c.id} (${c.kind}): ${c.text}`).join("");
+      // The kind and where it came from (SP7 §7.1); an issue is told what comes before its build (rule 11).
+      const kindLine = `\n  ${kindLabel(work)}${
+        work.kind === "issue"
+          ? "\n  issue: analysis.md (Origin, Cause, Blast radius) and a preserve criterion before build (references/analyse.md)"
+          : ""
+      }`;
       const teamLine = work.seats?.length
         ? `\n  team: ${work.seats.length} seats (crew team ${work.id})`
         : "";
@@ -1175,10 +1211,13 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         ? `\n  decision register: ${registered} entr${registered === 1 ? "y" : "ies"} (crew decisions)`
         : "";
       return ok(
-        `${warning}${sharedWarning}${inheritedWarning}${provenNote}started ${work.id} (route ${work.route}: ${work.routeReasons.join("; ")})${lines}${teamLine}${registerLine}${originNotes.length ? `\n${originNotes.join("\n")}` : ""}`,
+        `${warning}${sharedWarning}${inheritedWarning}${provenNote}started ${work.id} (route ${work.route}: ${work.routeReasons.join("; ")})${kindLine}${lines}${teamLine}${registerLine}${originNotes.length ? `\n${originNotes.join("\n")}` : ""}`,
         {
           id: work.id,
           route: work.route,
+          kind: work.kind,
+          kindFrom: work.kindFrom,
+          priority: work.priority,
           phase: work.phase,
           routeReasons: work.routeReasons,
           replaced: warning ? previous?.work?.id : null,
@@ -1197,11 +1236,17 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         return refuse("usage: crew classify <id> --answers <json>");
       const answers = parseAnswers(parsed.flags.answers);
       if (isOutcome(answers)) return answers;
-      classify(env, opened.work, answers);
+      classify(env, opened.work, answers, { origin: !!opened.work.origin, sourceChannel: null });
       saveWork(env.paths, opened.work);
       return ok(
-        `${opened.work.id}: route ${opened.work.route} (${opened.work.routeReasons.join("; ")})`,
-        { id: opened.work.id, route: opened.work.route, riskAreas: opened.work.riskAreas },
+        `${opened.work.id}: route ${opened.work.route} (${opened.work.routeReasons.join("; ")}); ${kindLabel(opened.work)}`,
+        {
+          id: opened.work.id,
+          route: opened.work.route,
+          kind: opened.work.kind,
+          kindFrom: opened.work.kindFrom,
+          riskAreas: opened.work.riskAreas,
+        },
       );
     }
     case "criteria": {
@@ -2326,7 +2371,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           ? `  working: ${working.map((w) => (w.description ? `${w.agent} (${w.description})` : w.agent)).join(", ")}`
           : null,
       ].filter((l): l is string => l !== null);
-      const text = `${work.id} "${work.title}"\n  phase ${work.phase}, route ${work.route}, priority ${work.priority ?? "normal"}${waitingText(work)}\n${extra.length ? `${extra.join("\n")}\n` : ""}${gateSummary(work, result.verdict, result.unproven, result.evidence.runs)}`;
+      const text = `${work.id} "${work.title}"\n  phase ${work.phase}, route ${work.route}, kind ${kindOfItem(work)}, priority ${work.priority ?? "normal"}${waitingText(work)}\n${extra.length ? `${extra.join("\n")}\n` : ""}${gateSummary(work, result.verdict, result.unproven, result.evidence.runs)}`;
       // The mail synced and a task's reply that landed taken into the lead's record (SP2c §7): a
       // failure in either (a held lock, a folder that cannot be written) is one line under the
       // status, never the status lost.
@@ -2353,6 +2398,8 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         active: work.id,
         title: work.title,
         type: work.type,
+        kind: kindOfItem(work),
+        kindFrom: work.kindFrom ?? null,
         phase: work.phase,
         route: work.route,
         priority: work.priority ?? "normal",
@@ -2376,7 +2423,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         },
         debate: debateState(work),
         baseCommit: work.baseCommit,
-        phases: PHASES_BY_ROUTE[work.route],
+        phases: phasesFor(work),
         verdict: result.verdict,
         unproven: result.unproven,
         // One name per gate, so the strip can draw a planned gate that has not run yet.

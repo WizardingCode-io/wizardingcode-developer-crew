@@ -101,6 +101,7 @@ function partyLabel(party) {
 var PHASE_ORDER = [
   "receive",
   "recognize",
+  "analyse",
   "understand",
   "specify",
   "conclave",
@@ -172,8 +173,31 @@ var QUESTIONS = {
   touches_public_api: {
     type: "noul",
     instructions: "Does this change an interface other systems depend on?"
+  },
+  kind: {
+    type: "choice",
+    instructions: "What kind of work is this, beyond its type?",
+    criteria: {
+      "client-request": "a request that entered from a task manager or a document",
+      "cross-project": "a request another project of the workspace sent by mail",
+      "new-project": "a new project or a feature the conclave raises to a strategy",
+      feature: "a change to a project that exists",
+      issue: "a defect to analyse to its origin before it is fixed"
+    }
+  },
+  priority: {
+    type: "score",
+    instructions: "What priority does this request deserve for the business?",
+    criteria: [
+      "low: a nicety or a cleanup",
+      "normal: a wanted change with no deadline at risk",
+      "high: a client cannot complete a core flow, or a signed deadline is at risk this week",
+      "blocker: production is down or data is being lost for a client"
+    ]
   }
 };
+var OPTIONAL = new Set(["kind", "priority"]);
+var PRIORITY_LEVELS = ["low", "normal", "high", "blocker"];
 
 class AnswerError extends Error {
   problems;
@@ -192,6 +216,8 @@ function validateAnswers(raw) {
   const input = raw;
   for (const [id, question] of Object.entries(QUESTIONS)) {
     const value = input[id];
+    if (OPTIONAL.has(id) && value === undefined)
+      continue;
     if (question.type === "choice") {
       if (typeof value !== "string" || !(value in question.criteria)) {
         problems.push(`${id}: expected one of ${Object.keys(question.criteria).join(", ")}`);
@@ -204,9 +230,28 @@ function validateAnswers(raw) {
       problems.push(`${id}: expected an integer level from 0 to ${question.criteria.length - 1}`);
     }
   }
+  if (input.kind !== undefined && !problems.some((p) => p.startsWith("kind:"))) {
+    if (input.work_type === "fix" && input.kind !== "issue")
+      problems.push("kind: a fix is an issue");
+    if (input.work_type === "new-product" && input.kind !== "new-project")
+      problems.push("kind: a new product is a new project");
+  }
   if (problems.length)
     throw new AnswerError(problems);
   return input;
+}
+function kindOf(answers, context) {
+  if (answers.work_type === "fix")
+    return { kind: "issue", from: "work_type fix" };
+  if (answers.work_type === "new-product")
+    return { kind: "new-project", from: "work_type new-product" };
+  if (answers.kind !== undefined)
+    return { kind: answers.kind, from: "answer" };
+  if (context.origin)
+    return { kind: "cross-project", from: "origin" };
+  if (context.sourceChannel)
+    return { kind: "client-request", from: `source: ${context.sourceChannel}` };
+  return { kind: "feature", from: `work_type ${answers.work_type}` };
 }
 var AREA_BY_QUESTION = {
   touches_auth: "auth",
@@ -2125,6 +2170,20 @@ var PHASES_BY_ROUTE = {
   standard: [...DELIBERATE],
   full: [...DELIBERATE]
 };
+function phasesFor(work) {
+  const base = PHASES_BY_ROUTE[work.route];
+  if (kindOfItem(work) !== "issue")
+    return [...base];
+  const at = base.indexOf("recognize") + 1;
+  return [...base.slice(0, at), "analyse", ...base.slice(at)];
+}
+function kindOfItem(work) {
+  return work.kind ?? "feature";
+}
+function kindLabel(work) {
+  return `kind ${kindOfItem(work)} (from ${work.kindFrom ?? "default"})`;
+}
+var ANALYSIS_SECTIONS = ["Origin", "Cause", "Blast radius"];
 var CONCLAVE_SECTIONS = [
   "Assumed by good practice",
   "Decisions only the user can make",
@@ -2217,7 +2276,7 @@ function openItems(paths, except) {
   }
   return open;
 }
-function applyClassification(work, type, decision) {
+function applyClassification(work, type, decision, kind) {
   const first = work.phase === "receive";
   work.type = type;
   if (first) {
@@ -2233,6 +2292,19 @@ function applyClassification(work, type, decision) {
     }
     work.route = route;
     work.riskAreas = [...new Set([...work.riskAreas, ...decision.riskAreas])];
+  }
+  if (kind) {
+    const kept = work.kind === "issue" || work.kind === "new-project";
+    if (kept && kind.kind !== work.kind) {
+      work.routeReasons.push(`kept kind ${work.kind}: a kind is never lowered`);
+    } else {
+      work.kind = kind.kind;
+      work.kindFrom = kind.from;
+    }
+  }
+  if (work.kind === "new-project" && work.route === "fast") {
+    work.route = "standard";
+    work.routeReasons.push("kind new-project is never fast");
   }
   if (work.phase === "receive")
     work.phase = "recognize";
@@ -2392,6 +2464,9 @@ function hasAcceptanceSection(text) {
 function missingConclaveSections(text) {
   return CONCLAVE_SECTIONS.filter((name) => !hasSection(text, name));
 }
+function missingAnalysisSections(text) {
+  return ANALYSIS_SECTIONS.filter((name) => !hasSection(text, name));
+}
 function routeDocuments(work, ctx) {
   const missing = [];
   if (work.route !== "fast") {
@@ -2437,6 +2512,12 @@ function validatorPreconditions(rule, work, ctx) {
 }
 function guardFor(work, next, ctx) {
   const missing = [];
+  if (work.phase === "analyse") {
+    for (const name of missingAnalysisSections(ctx.analysisText ?? ""))
+      missing.push(`${/^[aeiou]/i.test(name) ? "an" : "a"} "${name}" section with content in analysis.md (write "none" when there is nothing)`);
+    if (ctx.gitRepository && !ctx.originRecorded)
+      missing.push("analysis/origin.json in the work folder (crew analyse <id> --paths <files>)");
+  }
   if (next === "plan") {
     missing.push(...conclaveDocument(work, ctx));
     for (const d of unansweredDecisions(work, ctx.policy))
@@ -2453,6 +2534,12 @@ function guardFor(work, next, ctx) {
       missing.push('at least one acceptance criterion (crew criteria <id> add "...")');
     }
     missing.push(...routeDocuments(work, ctx));
+    if (kindOfItem(work) === "issue") {
+      if (!work.criteria.some((c) => c.kind === "behavior"))
+        missing.push('an issue needs a regression test: at least one behavior criterion (crew criteria <id> add "<text>")');
+      if (!work.criteria.some((c) => c.kind === "preserve"))
+        missing.push('an issue keeps what works: at least one preserve criterion (crew criteria <id> add "<text>" --kind preserve)');
+    }
   } else if (next === "gate") {
     missing.push(...routeDocuments(work, ctx));
     for (const criterion of work.criteria) {
@@ -2475,7 +2562,7 @@ function guardFor(work, next, ctx) {
   return missing;
 }
 function nextPhaseOf(work) {
-  const phases = PHASES_BY_ROUTE[work.route];
+  const phases = phasesFor(work);
   const index = phases.indexOf(work.phase);
   const current = index === -1 ? phases.findIndex((p) => phaseIndex(p) > phaseIndex(work.phase)) - 1 : index;
   return phases[current + 1] ?? null;
@@ -2667,7 +2754,7 @@ function renderReport(work, evidence, policy, ledger, mail, selfName) {
   const lines = [];
   lines.push(`# Report: ${work.title}`, "");
   lines.push(`- Work: \`${work.id}\``);
-  lines.push(`- Type: ${work.type}. Route: ${work.route} (${work.routeReasons.join("; ")})`);
+  lines.push(`- Type: ${work.type}. Kind: ${kindOfItem(work)}${work.kindFrom ? ` (from ${work.kindFrom})` : ""}. Route: ${work.route} (${work.routeReasons.join("; ")})`);
   const byDecider = new Map;
   for (const o of ledger?.objections ?? []) {
     if (!o.waived || !decisionCounts(policy, o.waived))
@@ -8034,7 +8121,7 @@ var count = (map, key, n = 1) => {
 function computeMetrics(projects) {
   const m = {
     projects: projects.map((p) => p.root),
-    items: { total: 0, byRoute: {}, byType: {} },
+    items: { total: 0, byRoute: {}, byType: {}, byKind: {} },
     rounds: { judgement: 0, validation: 0, gate: 0 },
     tokens: { byRole: {}, byPersonality: {}, total: 0 },
     defects: { byReviewer: {} },
@@ -8060,6 +8147,7 @@ function computeMetrics(projects) {
       m.items.total += 1;
       count(m.items.byRoute, work.route);
       count(m.items.byType, work.type);
+      count(m.items.byKind, kindOfItem(work));
       m.rounds.judgement += work.rounds?.judgement ?? 0;
       m.rounds.validation += work.rounds?.validation ?? 0;
       for (const t of work.tasks ?? []) {
@@ -8118,7 +8206,7 @@ function metricsText(m) {
   const pairs = (map) => Object.entries(map).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => `${k} ${v}`).join(", ");
   return [
     `metrics of ${m.projects.length} project${m.projects.length === 1 ? "" : "s"}`,
-    `  items: ${m.items.total}${m.items.total ? ` (${pairs(m.items.byRoute)})` : ""}`,
+    `  items: ${m.items.total}${m.items.total ? ` (${pairs(m.items.byRoute)}; ${pairs(m.items.byKind)})` : ""}`,
     `  rounds: judgement ${m.rounds.judgement}, validation ${m.rounds.validation}, gate ${m.rounds.gate}`,
     `  tokens: ${m.tokens.total}${m.tokens.total ? ` (${pairs(m.tokens.byRole)})` : ""}`,
     `  defects upheld: ${Object.values(m.defects.byReviewer).reduce((a, b) => a + b, 0)}${Object.keys(m.defects.byReviewer).length ? ` (${pairs(m.defects.byReviewer)})` : ""}`,
@@ -8680,6 +8768,9 @@ function guardContext(env, work, tampered) {
   const result = assess(env.paths, work, env.profile, env.policy, env.tampered || tampered);
   return {
     specText: readText(join35(dir, "spec.md")),
+    analysisText: readText(join35(dir, "analysis.md")),
+    originRecorded: existsSync11(join35(dir, "analysis", "origin.json")),
+    gitRepository: isGitRepo(env.paths.root),
     conclaveText: readText(join35(dir, "conclave.md")),
     ledger: loadLedger(env.paths, work.id).ledger,
     planExists: existsSync11(join35(dir, "plan.md")),
@@ -8702,6 +8793,15 @@ function deliver2(env, opened, evidence) {
 function reportOf(env, work, evidence) {
   return renderReport(work, evidence, env.policy, loadLedger(env.paths, work.id).ledger, loadItemMail(env.paths, work.id), env.mail.self.project);
 }
+function startPriority(flag, origin, answers) {
+  if (flag)
+    return flag;
+  if (origin)
+    return decidedPriority(origin);
+  if (answers.priority !== undefined)
+    return PRIORITY_LEVELS[answers.priority] ?? "normal";
+  return "normal";
+}
 function logDecision(env, work, answers) {
   if (!env.config.decisions.log)
     return;
@@ -8711,7 +8811,9 @@ function logDecision(env, work, answers) {
     input: work.input.slice(0, 500),
     answers,
     route: work.route,
-    reasons: work.routeReasons
+    reasons: work.routeReasons,
+    kind: work.kind,
+    kindFrom: work.kindFrom
   });
   const file = join35(env.paths.localDir, "decisions.jsonl");
   writeText(file, `${readText(file) ?? ""}${line}
@@ -8726,9 +8828,9 @@ function parseAnswers(raw) {
     return refuse("answers must be valid JSON");
   }
 }
-function classify(env, work, answers) {
+function classify(env, work, answers, context) {
   const decision = computeRoute(answers, [], env.policy);
-  applyClassification(work, answers.work_type, decision);
+  applyClassification(work, answers.work_type, decision, kindOf(answers, context));
   logDecision(env, work, answers);
 }
 function gateSummary(work, verdict, unproven, runs) {
@@ -8994,8 +9096,8 @@ async function dispatch(parsed, io) {
         work.sharedCheckout = { with: neighbours, paths: uncommitted, at: work.createdAt };
       const sharedWarning = neighbours.length ? `warning: this checkout is shared with ${neighbours.join(", ")}, which ${neighbours.length === 1 ? "is" : "are"} open with uncommitted changes in ${uncommitted.join(", ")}; a second session on one checkout blocks turn ends and proves half-written code: work in a worktree (git worktree add ../<name> -b <branch>)
 ` : "";
-      classify(env, work, answers);
-      work.priority = priorityFlag ?? (origin ? decidedPriority(origin) : "normal");
+      classify(env, work, answers, { origin: !!origin, sourceChannel: null });
+      work.priority = startPriority(priorityFlag, origin, answers);
       if (work.route !== "fast") {
         work.seats = plannedSeats(work.route, work.riskAreas, [], env.policy);
         work.primaryTeam = "backend";
@@ -9024,16 +9126,22 @@ async function dispatch(parsed, io) {
       }
       const lines2 = criteria.map((c) => `
   ${c.id} (${c.kind}): ${c.text}`).join("");
+      const kindLine = `
+  ${kindLabel(work)}${work.kind === "issue" ? `
+  issue: analysis.md (Origin, Cause, Blast radius) and a preserve criterion before build (references/analyse.md)` : ""}`;
       const teamLine = work.seats?.length ? `
   team: ${work.seats.length} seats (crew team ${work.id})` : "";
       const registered = decisionsCount(env.paths);
       const registerLine = registered ? `
   decision register: ${registered} entr${registered === 1 ? "y" : "ies"} (crew decisions)` : "";
-      return ok(`${warning}${sharedWarning}${inheritedWarning}${provenNote}started ${work.id} (route ${work.route}: ${work.routeReasons.join("; ")})${lines2}${teamLine}${registerLine}${originNotes.length ? `
+      return ok(`${warning}${sharedWarning}${inheritedWarning}${provenNote}started ${work.id} (route ${work.route}: ${work.routeReasons.join("; ")})${kindLine}${lines2}${teamLine}${registerLine}${originNotes.length ? `
 ${originNotes.join(`
 `)}` : ""}`, {
         id: work.id,
         route: work.route,
+        kind: work.kind,
+        kindFrom: work.kindFrom,
+        priority: work.priority,
         phase: work.phase,
         routeReasons: work.routeReasons,
         replaced: warning ? previous?.work?.id : null,
@@ -9052,9 +9160,15 @@ ${originNotes.join(`
       const answers = parseAnswers(parsed.flags.answers);
       if (isOutcome(answers))
         return answers;
-      classify(env, opened.work, answers);
+      classify(env, opened.work, answers, { origin: !!opened.work.origin, sourceChannel: null });
       saveWork(env.paths, opened.work);
-      return ok(`${opened.work.id}: route ${opened.work.route} (${opened.work.routeReasons.join("; ")})`, { id: opened.work.id, route: opened.work.route, riskAreas: opened.work.riskAreas });
+      return ok(`${opened.work.id}: route ${opened.work.route} (${opened.work.routeReasons.join("; ")}); ${kindLabel(opened.work)}`, {
+        id: opened.work.id,
+        route: opened.work.route,
+        kind: opened.work.kind,
+        kindFrom: opened.work.kindFrom,
+        riskAreas: opened.work.riskAreas
+      });
     }
     case "criteria": {
       const opened = openForChange(env, args[0]);
@@ -9900,7 +10014,7 @@ ${lines2.join(`
         working.length ? `  working: ${working.map((w) => w.description ? `${w.agent} (${w.description})` : w.agent).join(", ")}` : null
       ].filter((l) => l !== null);
       const text = `${work.id} "${work.title}"
-  phase ${work.phase}, route ${work.route}, priority ${work.priority ?? "normal"}${waitingText(work)}
+  phase ${work.phase}, route ${work.route}, kind ${kindOfItem(work)}, priority ${work.priority ?? "normal"}${waitingText(work)}
 ${extra.length ? `${extra.join(`
 `)}
 ` : ""}${gateSummary(work, result.verdict, result.unproven, result.evidence.runs)}`;
@@ -9925,6 +10039,8 @@ ${notes.join(`
         active: work.id,
         title: work.title,
         type: work.type,
+        kind: kindOfItem(work),
+        kindFrom: work.kindFrom ?? null,
         phase: work.phase,
         route: work.route,
         priority: work.priority ?? "normal",
@@ -9945,7 +10061,7 @@ ${notes.join(`
         },
         debate: debateState(work),
         baseCommit: work.baseCommit,
-        phases: PHASES_BY_ROUTE[work.route],
+        phases: phasesFor(work),
         verdict: result.verdict,
         unproven: result.unproven,
         expected: [...new Set(result.expected.map((p) => p.gate))],

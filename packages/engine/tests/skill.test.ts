@@ -452,3 +452,25 @@ test("SP7b-T5 AC-4: the test-quality rubric asks about fixture names", () => {
     "8. Fixtures: does any fixture name a client, a customer or a real workspace? Fixtures use neutral names (a, b, storefront, crm, shop); a real name is a defect.",
   );
 });
+
+test("SP3-T2 AC-3: the skill page has the Analyse row and reference, its fast-route paragraph names the issue's two steps for a fix, and it stays within the 0.4.0 size", () => {
+  const method = skill.slice(skill.indexOf("## The method"), skill.indexOf("## The nine typed"));
+  expect(method).toMatch(
+    /\| Recognize \|[^\n]*\n\| Analyse \|[^\n]*analysis\.md[^\n]*Origin, Cause, Blast radius[^\n]*references\/analyse\.md[^\n]*\n\| Understand \|/,
+  );
+  expect(skill).toContain("| Analyse | `references/analyse.md` |");
+  const fast = skill.slice(
+    skill.indexOf("## The fast route"),
+    skill.indexOf("## The other routes"),
+  );
+  expect(fast).toContain(
+    "or a fix (an issue: `analysis.md` and a preserve criterion come before build, `references/analyse.md`)",
+  );
+  const analyse = readReference("analyse.md");
+  for (const heading of ["Origin", "Cause", "Blast radius"]) expect(analyse).toContain(heading);
+  expect(analyse).toContain("crew analyse <id> --paths");
+  expect(analyse).toContain("--kind preserve");
+  expect(readReference("receive.md")).toContain("`kind`");
+  expect(readReference("receive.md")).toContain("`priority`");
+  expect(Buffer.byteLength(skill, "utf8")).toBeLessThanOrEqual(9254);
+});

@@ -5,12 +5,18 @@ import { loadLedger, objectionStatus } from "./objections.ts";
 import type { CrewPaths } from "./paths.ts";
 import { loadPolicy } from "./policy.ts";
 import type { Phase } from "./types.ts";
-import { loadWork } from "./work.ts";
+import { kindOfItem, loadWork } from "./work.ts";
 
 /** The figures the CTO reads (SP7 §6.5), from the engine's records alone. */
 export interface Metrics {
   projects: string[];
-  items: { total: number; byRoute: Record<string, number>; byType: Record<string, number> };
+  items: {
+    total: number;
+    byRoute: Record<string, number>;
+    byType: Record<string, number>;
+    /** By the kind of work (SP7 §7.1); a record without one counts as a feature. */
+    byKind: Record<string, number>;
+  };
   rounds: { judgement: number; validation: number; gate: number };
   tokens: { byRole: Record<string, number>; byPersonality: Record<string, number>; total: number };
   defects: { byReviewer: Record<string, number> };
@@ -34,7 +40,7 @@ const count = (map: Record<string, number>, key: string, n = 1): void => {
 export function computeMetrics(projects: CrewPaths[]): Metrics {
   const m: Metrics = {
     projects: projects.map((p) => p.root),
-    items: { total: 0, byRoute: {}, byType: {} },
+    items: { total: 0, byRoute: {}, byType: {}, byKind: {} },
     rounds: { judgement: 0, validation: 0, gate: 0 },
     tokens: { byRole: {}, byPersonality: {}, total: 0 },
     defects: { byReviewer: {} },
@@ -61,6 +67,7 @@ export function computeMetrics(projects: CrewPaths[]): Metrics {
       m.items.total += 1;
       count(m.items.byRoute, work.route);
       count(m.items.byType, work.type);
+      count(m.items.byKind, kindOfItem(work));
       m.rounds.judgement += work.rounds?.judgement ?? 0;
       m.rounds.validation += work.rounds?.validation ?? 0;
       for (const t of work.tasks ?? []) {
@@ -115,7 +122,7 @@ export function metricsText(m: Metrics): string {
       .join(", ");
   return [
     `metrics of ${m.projects.length} project${m.projects.length === 1 ? "" : "s"}`,
-    `  items: ${m.items.total}${m.items.total ? ` (${pairs(m.items.byRoute)})` : ""}`,
+    `  items: ${m.items.total}${m.items.total ? ` (${pairs(m.items.byRoute)}; ${pairs(m.items.byKind)})` : ""}`,
     `  rounds: judgement ${m.rounds.judgement}, validation ${m.rounds.validation}, gate ${m.rounds.gate}`,
     `  tokens: ${m.tokens.total}${m.tokens.total ? ` (${pairs(m.tokens.byRole)})` : ""}`,
     `  defects upheld: ${Object.values(m.defects.byReviewer).reduce((a, b) => a + b, 0)}${Object.keys(m.defects.byReviewer).length ? ` (${pairs(m.defects.byReviewer)})` : ""}`,

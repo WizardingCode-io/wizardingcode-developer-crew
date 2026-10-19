@@ -392,9 +392,13 @@ export interface Registry {
 
 export type WorkType = "fix" | "feature" | "refactor" | "chore" | "new-product" | "question";
 
+/** The kind of work (SP7 §7.1): it picks the phases with the route; `audit` arrives with SP8. The answers' choice lists the five. */
+export type WorkKind = "client-request" | "cross-project" | "new-project" | "feature" | "issue";
+
 export type Phase =
   | "receive"
   | "recognize"
+  | "analyse"
   | "understand"
   | "specify"
   | "conclave"
@@ -405,6 +409,7 @@ export type Phase =
 export const PHASE_ORDER: readonly Phase[] = [
   "receive",
   "recognize",
+  "analyse",
   "understand",
   "specify",
   "conclave",
@@ -568,6 +573,10 @@ export interface WorkItem {
   title: string;
   input: string;
   type: WorkType;
+  /** The kind of work (SP7 §7.1): answered or derived at classification. Absent before 0.8.0: read as feature. */
+  kind?: WorkKind;
+  /** Where the kind came from: `answer`, `origin`, `source: <channel>`, `work_type <type>`. */
+  kindFrom?: string;
   route: Route;
   routeReasons: string[];
   riskAreas: RiskArea[];

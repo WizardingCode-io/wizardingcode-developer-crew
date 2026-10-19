@@ -4,6 +4,8 @@ import {
   type Answers,
   computeRoute,
   excludedRiskPaths,
+  kindOf,
+  PRIORITY_LEVELS,
   riskAreasForPaths,
   validateAnswers,
 } from "../src/classify.ts";
@@ -90,4 +92,57 @@ test("findings 1 and 14: a path the policy excludes raises nothing, and the excl
     ),
   ).toEqual(["plugins/core/hooks/session-start.ts", "app/Billing/Invoice.php"]);
   expect(excludedRiskPaths(["app/Auth/Guard.ts"], policy)).toEqual([]);
+});
+
+test("SP3-T2 AC-1: the optional kind and priority answers are validated when present, and a kind never lowers a fix or a new product", () => {
+  expect(validateAnswers({ ...calm, kind: "issue", priority: 2 })).toEqual({
+    ...calm,
+    kind: "issue",
+    priority: 2,
+  });
+  expect(() => validateAnswers({ ...calm, kind: "audit" })).toThrow(
+    /kind: expected one of client-request, cross-project, new-project, feature, issue/,
+  );
+  expect(() => validateAnswers({ ...calm, priority: 4 })).toThrow(
+    /priority: expected an integer level from 0 to 3/,
+  );
+  expect(() => validateAnswers({ ...calm, kind: "feature" })).toThrow(/kind: a fix is an issue/);
+  expect(() => validateAnswers({ ...calm, work_type: "new-product", kind: "feature" })).toThrow(
+    /kind: a new product is a new project/,
+  );
+});
+
+test("SP3-T2 AC-1: the kind is derived in order (the type's kinds first, then the origin, the source, feature) and an answer is taken where the type leaves it open", () => {
+  const none = { origin: false, sourceChannel: null } as const;
+  expect(kindOf(calm, none)).toEqual({ kind: "issue", from: "work_type fix" });
+  expect(kindOf(calm, { origin: true, sourceChannel: "task-manager" })).toEqual({
+    kind: "issue",
+    from: "work_type fix",
+  });
+  expect(kindOf({ ...calm, work_type: "new-product" }, none)).toEqual({
+    kind: "new-project",
+    from: "work_type new-product",
+  });
+  const feature: Answers = { ...calm, work_type: "feature" };
+  expect(kindOf(feature, { origin: true, sourceChannel: null })).toEqual({
+    kind: "cross-project",
+    from: "origin",
+  });
+  expect(kindOf(feature, { origin: false, sourceChannel: "task-manager" })).toEqual({
+    kind: "client-request",
+    from: "source: task-manager",
+  });
+  expect(kindOf(feature, { origin: false, sourceChannel: "document" })).toEqual({
+    kind: "client-request",
+    from: "source: document",
+  });
+  expect(kindOf(feature, none)).toEqual({ kind: "feature", from: "work_type feature" });
+  expect(kindOf({ ...calm, work_type: "chore" }, none)).toEqual({
+    kind: "feature",
+    from: "work_type chore",
+  });
+  expect(
+    kindOf({ ...feature, kind: "client-request" }, { origin: true, sourceChannel: null }),
+  ).toEqual({ kind: "client-request", from: "answer" });
+  expect(PRIORITY_LEVELS).toEqual(["low", "normal", "high", "blocker"]);
 });

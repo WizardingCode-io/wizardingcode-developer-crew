@@ -2,7 +2,7 @@
 
 The rules the organization works under (SP7 design §5). Each says where it is enforced today: the engine refuses or records, a hook denies, the skill instructs and the evals measure, or a person decides and the record says so. Where the enforcement is a later subproject, the rule still binds you now: follow it in words and say so in the report.
 
-1. **The workflows and the hierarchy are always followed.** Nothing leaves what the ecosystem established or what the user asked. Enforced by: the phases as data with their guards, the seats planned and recorded (`crew team <id>`), the leads' validations before the plan and the delivery.
+1. **The workflows and the hierarchy are always followed.** Nothing leaves what the ecosystem established or what the user asked. Enforced by: the phases as data with their guards (`phasesFor`: the route's list with the kind's phases, `analyse` for an issue), the seats planned and recorded (`crew team <id>`), the leads' validations before the plan and the delivery.
 2. **Nothing goes to production without tests validated and concrete proof on localhost.** Enforced by: the deploy denial in sessions opened by mail and rule 20 today; the e2e gate over the environment in SP7b.
 3. **A remote test environment like production is always recommended.** Enforced by: the skill's words today; the strategy and the deliver references say it and the report names it when absent in SP8.
 4. **Never a workaround or a known security issue; never dirty, abandoned or hardcoded code.** Enforced by: the secrets scan is a gate; a workaround, dead code or a hardcoded value is a defect of the code-quality rubric, which the skill follows in words; the security seat is always planned; the deps gate as rule 12 says.

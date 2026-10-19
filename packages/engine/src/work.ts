@@ -24,6 +24,7 @@ import type {
   Route,
   ValidatorRule,
   WorkItem,
+  WorkKind,
   WorkType,
 } from "./types.ts";
 import { PHASE_ORDER } from "./types.ts";
@@ -46,6 +47,30 @@ export const PHASES_BY_ROUTE: Record<Route, Phase[]> = {
   standard: [...DELIBERATE],
   full: [...DELIBERATE],
 };
+
+/**
+ * The phases of an item (SP7 §7.1): its route's list with its kind's phases inserted, `analyse`
+ * after `recognize` for an issue on every route. A record without a kind (before 0.8.0) is a feature.
+ */
+export function phasesFor(work: Pick<WorkItem, "route" | "kind">): Phase[] {
+  const base = PHASES_BY_ROUTE[work.route];
+  if (kindOfItem(work) !== "issue") return [...base];
+  const at = base.indexOf("recognize") + 1;
+  return [...base.slice(0, at), "analyse", ...base.slice(at)];
+}
+
+/** The kind a record carries; one written before 0.8.0 has none and is a feature. */
+export function kindOfItem(work: Pick<WorkItem, "kind">): WorkKind {
+  return work.kind ?? "feature";
+}
+
+/** `kind issue (from work_type fix)`: the kind and its derivation, as the start and the classify commands print them. */
+export function kindLabel(work: Pick<WorkItem, "kind" | "kindFrom">): string {
+  return `kind ${kindOfItem(work)} (from ${work.kindFrom ?? "default"})`;
+}
+
+/** The three sections of an issue's analysis, as headings of `analysis.md` (SP7 §7.4). */
+export const ANALYSIS_SECTIONS = ["Origin", "Cause", "Blast radius"] as const;
 
 /** The four lists of the gap round, as headings of `conclave.md` (SP2 §6). */
 export const CONCLAVE_SECTIONS = [
@@ -166,7 +191,12 @@ export function openItems(paths: CrewPaths, except?: string): WorkItem[] {
  * The first classification sets the route; a later one can only raise it, and risk areas only
  * accumulate, so calmer answers never undo a raise.
  */
-export function applyClassification(work: WorkItem, type: WorkType, decision: RouteDecision): void {
+export function applyClassification(
+  work: WorkItem,
+  type: WorkType,
+  decision: RouteDecision,
+  kind?: { kind: WorkKind; from: string },
+): void {
   // An item still in receive has only the default route, which is not a decision to keep.
   const first = work.phase === "receive";
   work.type = type;
@@ -185,6 +215,21 @@ export function applyClassification(work: WorkItem, type: WorkType, decision: Ro
     }
     work.route = route;
     work.riskAreas = [...new Set([...work.riskAreas, ...decision.riskAreas])];
+  }
+  // The kind (SP7 §7.1): recorded with where it came from; an issue or a new project is never taken
+  // away by a reclassification (rule 11), as the route is never lowered; a new project is never fast.
+  if (kind) {
+    const kept = work.kind === "issue" || work.kind === "new-project";
+    if (kept && kind.kind !== work.kind) {
+      work.routeReasons.push(`kept kind ${work.kind}: a kind is never lowered`);
+    } else {
+      work.kind = kind.kind;
+      work.kindFrom = kind.from;
+    }
+  }
+  if (work.kind === "new-project" && work.route === "fast") {
+    work.route = "standard";
+    work.routeReasons.push("kind new-project is never fast");
   }
   if (work.phase === "receive") work.phase = "recognize";
 }
@@ -399,8 +444,19 @@ export function missingConclaveSections(text: string): string[] {
   return CONCLAVE_SECTIONS.filter((name) => !hasSection(text, name));
 }
 
+/** The sections of an issue's analysis that are absent or empty, read as the conclave's are (SP7 §7.4). */
+export function missingAnalysisSections(text: string): string[] {
+  return ANALYSIS_SECTIONS.filter((name) => !hasSection(text, name));
+}
+
 export interface GuardContext {
   specText: string | null;
+  /** `analysis.md` of the work folder, or null without one (an issue's analyse phase, SP7 §7.4). */
+  analysisText: string | null;
+  /** Whether `analysis/origin.json` exists in the work folder (`crew analyse`, SP3 Task 5). */
+  originRecorded: boolean;
+  /** Whether the root is a git repository: the origin is asked for only where git can give it. */
+  gitRepository: boolean;
   conclaveText: string | null;
   ledger: ObjectionLedger | null;
   planExists: boolean;
@@ -475,6 +531,16 @@ export function validatorPreconditions(
 
 export function guardFor(work: WorkItem, next: Phase, ctx: GuardContext): string[] {
   const missing: string[] = [];
+  // Out of analyse (SP7 §7.4): the document with its three sections, and the origin the engine
+  // records from git where there is git.
+  if (work.phase === "analyse") {
+    for (const name of missingAnalysisSections(ctx.analysisText ?? ""))
+      missing.push(
+        `${/^[aeiou]/i.test(name) ? "an" : "a"} "${name}" section with content in analysis.md (write "none" when there is nothing)`,
+      );
+    if (ctx.gitRepository && !ctx.originRecorded)
+      missing.push("analysis/origin.json in the work folder (crew analyse <id> --paths <files>)");
+  }
   if (next === "plan") {
     missing.push(...conclaveDocument(work, ctx));
     for (const d of unansweredDecisions(work, ctx.policy))
@@ -497,6 +563,17 @@ export function guardFor(work: WorkItem, next: Phase, ctx: GuardContext): string
       missing.push('at least one acceptance criterion (crew criteria <id> add "...")');
     }
     missing.push(...routeDocuments(work, ctx));
+    // A fix never creates (rule 11): the regression test and what stays green, before any code.
+    if (kindOfItem(work) === "issue") {
+      if (!work.criteria.some((c) => c.kind === "behavior"))
+        missing.push(
+          'an issue needs a regression test: at least one behavior criterion (crew criteria <id> add "<text>")',
+        );
+      if (!work.criteria.some((c) => c.kind === "preserve"))
+        missing.push(
+          'an issue keeps what works: at least one preserve criterion (crew criteria <id> add "<text>" --kind preserve)',
+        );
+    }
   } else if (next === "gate") {
     missing.push(...routeDocuments(work, ctx));
     for (const criterion of work.criteria) {
@@ -525,7 +602,7 @@ export function guardFor(work: WorkItem, next: Phase, ctx: GuardContext): string
 }
 
 export function nextPhaseOf(work: WorkItem): Phase | null {
-  const phases = PHASES_BY_ROUTE[work.route];
+  const phases = phasesFor(work);
   const index = phases.indexOf(work.phase);
   // A phase that the current route does not list (after a route change) resumes at the next listed one.
   const current =

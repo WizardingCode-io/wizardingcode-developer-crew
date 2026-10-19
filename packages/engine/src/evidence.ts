@@ -23,7 +23,7 @@ import type {
   WorkItem,
 } from "./types.ts";
 import { partyLabel } from "./types.ts";
-import { isSkipped, tddDone } from "./work.ts";
+import { isSkipped, kindOfItem, tddDone } from "./work.ts";
 
 type Decided = {
   by?: DecidedBy;
@@ -282,7 +282,9 @@ export function renderReport(
   const lines: string[] = [];
   lines.push(`# Report: ${work.title}`, "");
   lines.push(`- Work: \`${work.id}\``);
-  lines.push(`- Type: ${work.type}. Route: ${work.route} (${work.routeReasons.join("; ")})`);
+  lines.push(
+    `- Type: ${work.type}. Kind: ${kindOfItem(work)}${work.kindFrom ? ` (from ${work.kindFrom})` : ""}. Route: ${work.route} (${work.routeReasons.join("; ")})`,
+  );
   // A waived objection is named with the verdict, so a report that says Proven with a waiver says so first.
   // Grouped by who waived, rendered through decidedBy: never "by the user" for a decision a
   // person did not take (SP2a review, finding I1).

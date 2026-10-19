@@ -126,6 +126,7 @@ test("SP7a AC-4 (round 2): computeMetrics counts every figure from the records o
   const two = createWork(a, "Two");
   two.route = "fast";
   two.type = "fix";
+  two.kind = "issue";
   saveWork(a, two);
   const three = createWork(b, "Three");
   three.route = "fast";
@@ -138,6 +139,8 @@ test("SP7a AC-4 (round 2): computeMetrics counts every figure from the records o
     total: 3,
     byRoute: { standard: 1, fast: 2 },
     byType: { feature: 1, fix: 2 },
+    // A record without a kind (written before 0.8.0) counts as a feature.
+    byKind: { feature: 2, issue: 1 },
   });
   expect(m.rounds).toEqual({ judgement: 2, validation: 1, gate: 3 });
   expect(m.tokens).toEqual({
@@ -153,7 +156,7 @@ test("SP7a AC-4 (round 2): computeMetrics counts every figure from the records o
   expect(m.phaseMinutes).toEqual({ build: 10, gate: 20 });
   const text = metricsText(m);
   expect(text).toContain("metrics of 2 projects");
-  expect(text).toContain("items: 3 (fast 2, standard 1)");
+  expect(text).toContain("items: 3 (fast 2, standard 1; feature 2, issue 1)");
   expect(text).toContain("tokens: 180 (expert 150, judge 30)");
   expect(text).toContain("defects upheld: 1 (review-code-quality 1)");
   expect(text).toContain("minutes per phase: build 10, gate 20");

@@ -359,6 +359,11 @@ test("source edits are denied before the build phase on standard and full routes
   work.phase = "build";
   saveWork(ctx.paths, work);
   expect(edit()).toEqual({});
+  // The analyse phase of an issue (SP3 Task 2) sits before build: denied like understand.
+  work.kind = "issue";
+  work.phase = "analyse";
+  saveWork(ctx.paths, work);
+  expect(decision(edit())).toBe("deny");
   work.route = "fast";
   work.phase = "recognize";
   saveWork(ctx.paths, work);

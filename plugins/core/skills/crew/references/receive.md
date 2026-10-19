@@ -6,6 +6,8 @@ Goal: turn the request into a brief the engine can route, and ask only what chan
 
 The nine questions are on the skill page (`SKILL.md`, "The nine typed questions"); answer them before anything else.
 
+Two optional answers may join them: `kind` (choice: `client-request`, `cross-project`, `new-project`, `feature`, `issue`) and `priority` (a level: 0 low, 1 normal, 2 high, 3 blocker). Without `kind` the engine derives it and says from what (`kind issue (from work_type fix)` at `crew start`): a fix is an issue and a new product a new project whatever the channel; an item started with `--origin` is cross-project; a request that entered from a task manager or a document is a client request; anything else is a feature. An answer is taken where the type leaves it open and refused where it would lower a fix or a new product. `priority` sets the item's priority when neither `--priority` nor an origin message gives one. An issue walks through Analyse before Understand (or before Build on the fast route): `references/analyse.md`.
+
 ## 2. Start the work item
 
 ```

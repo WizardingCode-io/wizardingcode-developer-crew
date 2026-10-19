@@ -784,3 +784,18 @@ test("SP3-T1 AC-2 (finding 81): saveEvidence is called only from evidence.ts and
     .sort();
   expect(callers).toEqual(["evidence.ts", "hooks/subagent-stop.ts"]);
 });
+
+test("SP3-T2 AC-3: the report names the kind and its derivation; a record without a kind reads as feature", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const work = createWork(paths, "a bug");
+  work.type = "fix";
+  work.kind = "issue";
+  work.kindFrom = "work_type fix";
+  expect(renderReport(work, emptyEvidence(), DEFAULT_POLICY)).toContain(
+    "- Type: fix. Kind: issue (from work_type fix). Route: standard",
+  );
+  const older = createWork(paths, "an older item");
+  expect(renderReport(older, emptyEvidence(), DEFAULT_POLICY)).toContain(
+    "- Type: feature. Kind: feature. Route: standard",
+  );
+});

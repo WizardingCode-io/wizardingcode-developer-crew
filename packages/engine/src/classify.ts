@@ -1,5 +1,5 @@
 import { matchesAny } from "./glob.ts";
-import type { Policy, RiskArea, Route, WorkType } from "./types.ts";
+import type { MailPriority, Policy, RiskArea, Route, WorkKind, WorkType } from "./types.ts";
 import { ROUTE_ORDER } from "./types.ts";
 
 export type QuestionType = "choice" | "noul" | "score";
@@ -59,7 +59,35 @@ export const QUESTIONS = {
     type: "noul",
     instructions: "Does this change an interface other systems depend on?",
   },
+  // The two optional answers of SP3 (SP7 §7.1): the kind picks the phases, the priority the urgency.
+  kind: {
+    type: "choice",
+    instructions: "What kind of work is this, beyond its type?",
+    criteria: {
+      "client-request": "a request that entered from a task manager or a document",
+      "cross-project": "a request another project of the workspace sent by mail",
+      "new-project": "a new project or a feature the conclave raises to a strategy",
+      feature: "a change to a project that exists",
+      issue: "a defect to analyse to its origin before it is fixed",
+    },
+  },
+  priority: {
+    type: "score",
+    instructions: "What priority does this request deserve for the business?",
+    criteria: [
+      "low: a nicety or a cleanup",
+      "normal: a wanted change with no deadline at risk",
+      "high: a client cannot complete a core flow, or a signed deadline is at risk this week",
+      "blocker: production is down or data is being lost for a client",
+    ],
+  },
 } as const satisfies Record<string, Question>;
+
+/** The answers a request may leave out: the engine derives the kind and reads the priority from the flags. */
+const OPTIONAL: ReadonlySet<string> = new Set(["kind", "priority"]);
+
+/** The priority a `priority` answer's level names: 0 low, 1 normal, 2 high, 3 blocker. */
+export const PRIORITY_LEVELS: readonly MailPriority[] = ["low", "normal", "high", "blocker"];
 
 export type QuestionId = keyof typeof QUESTIONS;
 
@@ -73,6 +101,8 @@ export interface Answers {
   touches_data_migration: number;
   touches_infra: number;
   touches_public_api: number;
+  kind?: WorkKind;
+  priority?: number;
 }
 
 export class AnswerError extends Error {
@@ -91,6 +121,7 @@ export function validateAnswers(raw: unknown): Answers {
   const input = raw as Record<string, unknown>;
   for (const [id, question] of Object.entries(QUESTIONS)) {
     const value = input[id];
+    if (OPTIONAL.has(id) && value === undefined) continue;
     if (question.type === "choice") {
       if (typeof value !== "string" || !(value in question.criteria)) {
         problems.push(`${id}: expected one of ${Object.keys(question.criteria).join(", ")}`);
@@ -107,8 +138,37 @@ export function validateAnswers(raw: unknown): Answers {
       problems.push(`${id}: expected an integer level from 0 to ${question.criteria.length - 1}`);
     }
   }
+  // A kind never takes an issue's or a new project's guards away (rule 11): the type's kinds are fixed.
+  if (input.kind !== undefined && !problems.some((p) => p.startsWith("kind:"))) {
+    if (input.work_type === "fix" && input.kind !== "issue")
+      problems.push("kind: a fix is an issue");
+    if (input.work_type === "new-product" && input.kind !== "new-project")
+      problems.push("kind: a new product is a new project");
+  }
   if (problems.length) throw new AnswerError(problems);
   return input as unknown as Answers;
+}
+
+/** What the engine knows of a request's channel when it derives the kind: a mail origin, a source (SP3 Task 3). */
+export interface KindContext {
+  origin: boolean;
+  sourceChannel: "task-manager" | "document" | null;
+}
+
+/**
+ * The kind of work (SP7 §7.1) and where it came from: the type's kinds first (a fix is an issue, a new
+ * product a new project, whatever the channel), then the answer where the type leaves it open, then
+ * the channel (an origin message, a source), else a feature.
+ */
+export function kindOf(answers: Answers, context: KindContext): { kind: WorkKind; from: string } {
+  if (answers.work_type === "fix") return { kind: "issue", from: "work_type fix" };
+  if (answers.work_type === "new-product")
+    return { kind: "new-project", from: "work_type new-product" };
+  if (answers.kind !== undefined) return { kind: answers.kind, from: "answer" };
+  if (context.origin) return { kind: "cross-project", from: "origin" };
+  if (context.sourceChannel)
+    return { kind: "client-request", from: `source: ${context.sourceChannel}` };
+  return { kind: "feature", from: `work_type ${answers.work_type}` };
 }
 
 const AREA_BY_QUESTION: Partial<Record<QuestionId, RiskArea>> = {

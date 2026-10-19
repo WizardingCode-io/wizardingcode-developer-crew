@@ -454,8 +454,10 @@ function io(cwd: string, env = testEnv(), stdin = "") {
   return { run, json, env };
 }
 
+// A chore in one spot: fast, and a feature by kind, so the fast-route tests land in build as they did when the
+// constant said fix (a fix is an issue from SP3 Task 2 on, and an issue walks through analyse first).
 const answers = JSON.stringify({
-  work_type: "fix",
+  work_type: "chore",
   is_vague: 0.1,
   scope: 0,
   touches_auth: 0,
@@ -1418,7 +1420,7 @@ test("a gate run that proves an item already in the gate phase delivers it", asy
   expect((await c.json("status")).data.phase).toBe("gate");
   expect((await c.json("gate", "run", id)).data.verdict).toBe("proven");
   expect((await c.json("status")).data.phase).toBe("deliver");
-});
+}, 30_000);
 
 test("SP2a: an item in specify moves to conclave, and plan asks for conclave.md by name", async () => {
   const root = makeRepo({
@@ -2810,12 +2812,17 @@ test("SP7a AC-4: crew metrics counts the records of a project and of a workspace
   expect((await c.run("gate", "run", id)).code).toBe(0);
   const metrics = await c.json("metrics");
   expect(metrics.code).toBe(0);
-  expect(metrics.data.items).toMatchObject({ total: 1, byRoute: { fast: 1 }, byType: { fix: 1 } });
+  expect(metrics.data.items).toMatchObject({
+    total: 1,
+    byRoute: { fast: 1 },
+    byType: { chore: 1 },
+    byKind: { feature: 1 },
+  });
   expect(metrics.data.rounds).toEqual({ judgement: 0, validation: 0, gate: 0 });
   expect(metrics.data.gates).toMatchObject({ notRun: 0, skipped: 0 });
   expect(metrics.data.decisions).toEqual({ total: 0, byUser: 0, byValidator: 0, byAgent: 0 });
   expect(typeof (metrics.data.phaseMinutes as Record<string, number>).build).toBe("number");
-  expect((await c.run("metrics")).out).toContain("items: 1 (fast 1)");
+  expect((await c.run("metrics")).out).toContain("items: 1 (fast 1; feature 1)");
   // A worktree of a registered project is not a project of its own: the workspace counts it once.
   const registryFile = join(repoPaths(root, env).userDir, "projects.json");
   const registry = JSON.parse(readFileSync(registryFile, "utf8")) as { projects: unknown[] };
@@ -2942,7 +2949,7 @@ test("SP7a AC-7 (Task 7): crew status --json carries the todo, the roles working
   ]);
   const lines = (await c.run("status")).out.split("\n");
   expect(lines.slice(1, 5)).toEqual([
-    "  phase build, route fast, priority normal",
+    "  phase build, route fast, kind feature, priority normal",
     `  branch ${branch}`,
     "  todo 1/2 briefed (T-1 briefed, T-2 open)",
     "  working: review-security (Review the diff), judge",
@@ -3092,6 +3099,16 @@ test("SP7b AC-4: crew start --origin, await and resume move the origin message a
     )?.status;
   const id = (await cb.json("start", "Add the field", "--answers", answers, "--origin", mid)).data
     .id as string;
+  // The kind of an item that answers a message is cross-project, from its origin (SP3 Task 2), at
+  // start and again at a classify, which reads the recorded origin.
+  expect((await cb.json("status")).data).toMatchObject({
+    kind: "cross-project",
+    kindFrom: "origin",
+  });
+  expect((await cb.json("classify", id, "--answers", answers)).data).toMatchObject({
+    kind: "cross-project",
+    kindFrom: "origin",
+  });
   expect(inboxStatus()).toBe("in-progress");
   expect(outboxStatus()).toBe("in-progress");
   expect((await cb.run("await", id, "user")).code).toBe(0);
@@ -3113,7 +3130,7 @@ test("SP7b AC-5: an item's priority comes from --priority, else from its origin'
       priority?: string;
     };
   expect(read(a, id).priority).toBe("high");
-  expect((await ca.run("status")).out).toContain("route fast, priority high\n");
+  expect((await ca.run("status")).out).toContain("route fast, kind feature, priority high\n");
   expect((await ca.json("status")).data.priority).toBe("high");
   const before = readdirSync(join(a, ".crew", "work")).length;
   const bad = await ca.run("start", "Thing", "--answers", answers, "--priority", "urgent");
@@ -3138,14 +3155,23 @@ test("SP7b AC-5: an item's priority comes from --priority, else from its origin'
   const fromLowered = (await cb.json("start", "L", "--answers", answers, "--origin", lowered)).data
     .id as string;
   expect(read(b, fromLowered).priority).toBe("normal");
-  const fromProposed = (await cb.json("start", "P", "--answers", answers, "--origin", proposed))
-    .data.id as string;
+  // The origin's level wins over the priority answer (SP3 Task 2): a level 0 answer, a proposed high.
+  const withPriority = (level: number) =>
+    JSON.stringify({ ...(JSON.parse(answers) as Record<string, unknown>), priority: level });
+  const fromProposed = (
+    await cb.json("start", "P", "--answers", withPriority(0), "--origin", proposed)
+  ).data.id as string;
   expect(read(b, fromProposed).priority).toBe("high");
   const fromUnknown = (await cb.json("start", "U", "--answers", answers, "--origin", unknown)).data
     .id as string;
   expect(read(b, fromUnknown).priority).toBe("normal");
   const plain = (await cb.json("start", "Plain", "--answers", answers)).data.id as string;
   expect(read(b, plain).priority).toBe("normal");
+  // The priority answer's levels through start: 0 low, 3 blocker (1 normal and 2 high are tested elsewhere).
+  const low = (await cb.json("start", "Low", "--answers", withPriority(0))).data.id as string;
+  expect(read(b, low).priority).toBe("low");
+  const top = (await cb.json("start", "Top", "--answers", withPriority(3))).data.id as string;
+  expect(read(b, top).priority).toBe("blocker");
 }, 30_000);
 
 // ---------------------------------------------------------------------------------------------
@@ -4009,3 +4035,143 @@ test("SP3-T1 AC-4 (finding 78): crew validation record reads the last block of a
     file: "conclave/lead-qa-reply.md",
   });
 });
+
+test("SP3-T2 AC-1, AC-2, AC-3: crew start records the kind and says where it came from; an issue lands in analyse with the issue line, its guard names what is missing, and status, the log, the report and the metrics carry the kind", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const c = io(root);
+  const fix = JSON.stringify({ ...JSON.parse(answers), work_type: "fix" });
+  const started = await c.run(
+    "start",
+    "Cart total ignores the discount",
+    "--answers",
+    fix,
+    "--criterion",
+    "the total subtracts the discount",
+  );
+  expect(started.code).toBe(0);
+  expect(started.out).toContain("kind issue (from work_type fix)");
+  expect(started.out).toContain(
+    "issue: analysis.md (Origin, Cause, Blast radius) and a preserve criterion before build (references/analyse.md)",
+  );
+  const status = await c.json("status");
+  const id = status.data.active as string;
+  expect(status.data).toMatchObject({
+    phase: "analyse",
+    route: "fast",
+    kind: "issue",
+    kindFrom: "work_type fix",
+  });
+  expect(status.data.phases).toEqual([
+    "receive",
+    "recognize",
+    "analyse",
+    "build",
+    "gate",
+    "deliver",
+  ]);
+  expect((await c.run("status")).out).toContain(
+    "phase analyse, route fast, kind issue, priority normal",
+  );
+  const next = await c.run("phase", id, "next");
+  expect(next.code).toBe(1);
+  expect(next.err).toContain('an "Origin" section with content in analysis.md');
+  expect(next.err).toContain(
+    "analysis/origin.json in the work folder (crew analyse <id> --paths <files>)",
+  );
+  expect(next.err).toContain("at least one preserve criterion");
+  write(
+    root,
+    `.crew/work/${id}/analysis.md`,
+    "# Analysis\n\n## Origin\nnone\n\n## Cause\nthe discount is read after the total\n\n## Blast radius\none function\n",
+  );
+  write(root, `.crew/work/${id}/analysis/origin.json`, '{"paths":[],"items":[]}');
+  expect((await c.run("criteria", id, "add", "keep", "--kind", "preserve")).code).toBe(0);
+  expect((await c.json("phase", id, "next")).data.phase).toBe("build");
+  const log = readFileSync(join(root, ".crew", "local", "decisions.jsonl"), "utf8")
+    .trim()
+    .split("\n")
+    .map((l) => JSON.parse(l) as Record<string, unknown>);
+  expect(log[log.length - 1]).toMatchObject({ kind: "issue", kindFrom: "work_type fix" });
+  expect((await c.json("metrics")).data.items).toMatchObject({ byKind: { issue: 1 } });
+  expect((await c.run("metrics")).out).toContain("items: 1 (fast 1; issue 1)");
+  expect((await c.run("evidence", id)).out).toContain(
+    "- Type: fix. Kind: issue (from work_type fix). Route: fast",
+  );
+});
+
+test("SP3-T2 AC-1: an answered kind is taken where the type leaves it open, a lowering answer is refused before anything is created, the priority answer sets the item's priority when nothing else does, and classify keeps a recorded issue", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const c = io(root);
+  const base = JSON.parse(answers) as Record<string, unknown>;
+  const answered = JSON.stringify({
+    ...base,
+    work_type: "feature",
+    scope: 1,
+    kind: "client-request",
+    priority: 2,
+  });
+  const start = await c.json("start", "A ticket", "--answers", answered);
+  expect(start.data).toMatchObject({
+    kind: "client-request",
+    kindFrom: "answer",
+    priority: "high",
+  });
+  expect(
+    (
+      await c.run(
+        "start",
+        "x",
+        "--answers",
+        JSON.stringify({ ...base, work_type: "fix", kind: "feature" }),
+      )
+    ).err.trim(),
+  ).toBe("invalid answers: kind: a fix is an issue");
+  expect(
+    (await c.run("start", "x", "--answers", JSON.stringify({ ...base, priority: 4 }))).err.trim(),
+  ).toBe("invalid answers: priority: expected an integer level from 0 to 3");
+  expect(readdirSync(join(root, ".crew", "work")).length).toBe(1);
+  const flagged = await c.json("start", "B", "--answers", answered, "--priority", "low");
+  expect(flagged.data.priority).toBe("low");
+  const id = flagged.data.id as string;
+  const asFix = await c.json(
+    "classify",
+    id,
+    "--answers",
+    JSON.stringify({ ...base, work_type: "fix" }),
+  );
+  expect(asFix.data).toMatchObject({ kind: "issue", kindFrom: "work_type fix" });
+  const again = await c.json(
+    "classify",
+    id,
+    "--answers",
+    JSON.stringify({ ...base, work_type: "feature", scope: 1 }),
+  );
+  expect(again.data.kind).toBe("issue");
+  // A record without a kind (written before 0.8.0) reads as feature.
+  const paths = repoPaths(root, c.env);
+  const old = loadWork(paths, id).work;
+  if (!old) throw new Error("no work");
+  old.kind = undefined;
+  old.kindFrom = undefined;
+  saveWork(paths, old);
+  expect((await c.run("status")).out).toContain("kind feature");
+  expect((await c.json("status")).data.phases).toEqual(PHASES_BY_ROUTE_STANDARD);
+});
+
+const PHASES_BY_ROUTE_STANDARD = [
+  "receive",
+  "recognize",
+  "understand",
+  "specify",
+  "conclave",
+  "plan",
+  "build",
+  "gate",
+  "deliver",
+];

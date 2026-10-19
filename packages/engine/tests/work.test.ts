@@ -8,6 +8,7 @@ import { DEFAULT_POLICY } from "../src/policy.ts";
 import { loadState } from "../src/state.ts";
 import { plannedSeats } from "../src/team.ts";
 import type { Evidence, ObjectionLedger, RunRecord } from "../src/types.ts";
+import { PHASE_ORDER } from "../src/types.ts";
 import { validationHash } from "../src/validation.ts";
 import {
   activeWork,
@@ -25,9 +26,12 @@ import {
   guardFor,
   hasAcceptanceSection,
   loadWork,
+  missingAnalysisSections,
   missingConclaveSections,
+  nextPhaseOf,
   openDebate,
   PHASES_BY_ROUTE,
+  phasesFor,
   raiseRoute,
   removeCriterion,
   saveWork,
@@ -46,6 +50,9 @@ const run: RunRecord = {
 };
 const empty: GuardContext = {
   specText: null,
+  analysisText: null,
+  originRecorded: false,
+  gitRepository: false,
   conclaveText: null,
   ledger: null,
   planExists: false,
@@ -617,4 +624,108 @@ test("advancePhase follows the route and stops at a failing guard", () => {
   addCriterion(work, "x");
   expect(advancePhase(work, empty)).toEqual({ ok: true, phase: "build" });
   expect(work.phase).toBe("build");
+});
+
+test("SP3-T2 AC-2: phasesFor inserts analyse after recognize for an issue on every route, a feature and a record without a kind keep the route's list, new-project is never fast, and a reclassification never removes issue or new-project", () => {
+  expect(phasesFor({ route: "fast", kind: "issue" })).toEqual([
+    "receive",
+    "recognize",
+    "analyse",
+    "build",
+    "gate",
+    "deliver",
+  ]);
+  expect(phasesFor({ route: "standard", kind: "issue" })).toEqual([
+    "receive",
+    "recognize",
+    "analyse",
+    "understand",
+    "specify",
+    "conclave",
+    "plan",
+    "build",
+    "gate",
+    "deliver",
+  ]);
+  expect(phasesFor({ route: "full", kind: "issue" })).toEqual(
+    phasesFor({ route: "standard", kind: "issue" }),
+  );
+  expect(phasesFor({ route: "fast", kind: "feature" })).toEqual(PHASES_BY_ROUTE.fast);
+  expect(phasesFor({ route: "standard" })).toEqual(PHASES_BY_ROUTE.standard);
+  expect(PHASE_ORDER.indexOf("analyse")).toBe(PHASE_ORDER.indexOf("recognize") + 1);
+  const paths = repoPaths(makeRepo(), testEnv());
+  const shop = createWork(paths, "a new shop");
+  applyClassification(
+    shop,
+    "chore",
+    { route: "fast", reasons: ["r"], riskAreas: [] },
+    { kind: "new-project", from: "answer" },
+  );
+  expect(shop).toMatchObject({ kind: "new-project", kindFrom: "answer", route: "standard" });
+  expect(shop.routeReasons).toContain("kind new-project is never fast");
+  const issue = createWork(paths, "a bug");
+  applyClassification(
+    issue,
+    "fix",
+    { route: "fast", reasons: ["r"], riskAreas: [] },
+    { kind: "issue", from: "work_type fix" },
+  );
+  applyClassification(
+    issue,
+    "feature",
+    { route: "standard", reasons: ["r2"], riskAreas: [] },
+    { kind: "feature", from: "work_type feature" },
+  );
+  expect(issue.kind).toBe("issue");
+  expect(issue.routeReasons).toContain("kept kind issue: a kind is never lowered");
+});
+
+test("SP3-T2 AC-2, AC-3: the guard out of analyse needs the three sections and, in git, origin.json; an issue enters build only with a behavior and a preserve criterion", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const work = createWork(paths, "a bug");
+  applyClassification(
+    work,
+    "fix",
+    { route: "fast", reasons: ["r"], riskAreas: [] },
+    { kind: "issue", from: "work_type fix" },
+  );
+  expect(nextPhaseOf(work)).toBe("analyse");
+  work.phase = "analyse";
+  const inGit: GuardContext = { ...empty, gitRepository: true };
+  expect(guardFor(work, "build", inGit)).toEqual([
+    'an "Origin" section with content in analysis.md (write "none" when there is nothing)',
+    'a "Cause" section with content in analysis.md (write "none" when there is nothing)',
+    'a "Blast radius" section with content in analysis.md (write "none" when there is nothing)',
+    "analysis/origin.json in the work folder (crew analyse <id> --paths <files>)",
+    'at least one acceptance criterion (crew criteria <id> add "...")',
+    'an issue needs a regression test: at least one behavior criterion (crew criteria <id> add "<text>")',
+    'an issue keeps what works: at least one preserve criterion (crew criteria <id> add "<text>" --kind preserve)',
+  ]);
+  const analysis =
+    "# Analysis\n\n## Origin\nitem 001\n\n## Cause\nnone\n\n## Blast radius\none module\n";
+  addCriterion(work, "the regression test");
+  const written: GuardContext = { ...inGit, analysisText: analysis, originRecorded: true };
+  expect(guardFor(work, "build", written)).toEqual([
+    'an issue keeps what works: at least one preserve criterion (crew criteria <id> add "<text>" --kind preserve)',
+  ]);
+  addCriterion(work, "keep", "preserve");
+  expect(guardFor(work, "build", written)).toEqual([]);
+  expect(
+    guardFor(work, "build", { ...written, gitRepository: false, originRecorded: false }),
+  ).toEqual([]);
+  expect(advancePhase(work, written)).toEqual({ ok: true, phase: "build" });
+  const feature = createWork(paths, "a feature");
+  applyClassification(
+    feature,
+    "chore",
+    { route: "fast", reasons: ["r"], riskAreas: [] },
+    { kind: "feature", from: "work_type chore" },
+  );
+  addCriterion(feature, "x");
+  expect(nextPhaseOf(feature)).toBe("build");
+  expect(guardFor(feature, "build", empty)).toEqual([]);
+  expect(missingAnalysisSections("## Origin\nx\n## Cause\n")).toEqual(["Cause", "Blast radius"]);
+  expect(
+    missingAnalysisSections("## Origin\nnone\n## Cause\nnone\n## Blast radius\nnone\n"),
+  ).toEqual([]);
 });
