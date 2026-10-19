@@ -380,6 +380,10 @@ test("bash: user-only decisions ask, writes to engine files are denied, everythi
   expect(decision(bash("crew policy accept"))).toBe("ask");
   expect(decision(bash("crew accept 2026-10-07-001-thing"))).toBe("ask");
   expect(decision(bash("crew accept profile"))).toBe("ask");
+  // Signing the business priorities is the user's (SP3 Task 3); reading them is not.
+  expect(decision(bash("crew workspace priorities accept --file business.md"))).toBe("ask");
+  expect(decision(bash("crew workspace priorities accept"))).toBe("ask");
+  expect(bash("crew workspace priorities")).toEqual({});
   expect(decision(bash('crew "skip" w1 gate:lint --reason x'))).toBe("ask");
   expect(decision(bash("crew sk''ip w1 gate:lint --reason x"))).toBe("ask");
   expect(decision(bash("c\\rew approve w1 spec"))).toBe("ask");

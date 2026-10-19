@@ -162,6 +162,26 @@ export interface PriorityDecision {
   at: string;
 }
 
+/** Where a request entered from (SP7 §10.1): a task manager read through the session's tools, or a document in the repository; the CLI is the absence of a source. */
+export interface Source {
+  channel: "document" | "task-manager";
+  connector?: "clickup" | "jira" | "notion" | "other";
+  externalId?: string;
+  url?: string;
+  documentPath?: string;
+  proposedPriority?: MailPriority;
+}
+
+/** The lead's triage of a source's proposed priority against the business priorities the user signed (SP7 §10.2): confirmed or lowered with a reason, never raised; unconfirmed without the signed file. */
+export interface Triage {
+  proposed: MailPriority;
+  confirmed: MailPriority | null;
+  by: string;
+  reason: string | null;
+  against: "signed" | "unsigned" | "none";
+  at: string;
+}
+
 /** What a reply to a change request may promise about an interface, checked at the branch's tip (SP7 §9). */
 export type ContractKind = "openapi" | "types" | "schema" | "clause";
 export const CONTRACT_KINDS: readonly ContractKind[] = ["openapi", "types", "schema", "clause"];
@@ -582,6 +602,10 @@ export interface WorkItem {
   riskAreas: RiskArea[];
   /** The item's priority (SP7 §7.1): given at start, else its origin message's confirmed one, else normal. Absent before 0.7.0. */
   priority?: MailPriority;
+  /** Where the request entered from (SP7 §10.1); absent for a request from the CLI and before 0.8.0. */
+  source?: Source;
+  /** The triage of the source's proposed priority (SP7 §10.2); absent without a proposal. */
+  triage?: Triage;
   phase: Phase;
   awaiting: Awaiting | null;
   /** For `awaiting: "mail"`: the message whose reply the item waits for. */

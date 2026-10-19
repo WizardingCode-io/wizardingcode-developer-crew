@@ -36,7 +36,7 @@ import {
   updateEvidence,
 } from "./evidence.ts";
 import { changedWatchedPaths, hashPaths, isGitRepo } from "./fingerprint.ts";
-import { ensureDir, nowIso, readText, writeText } from "./fs.ts";
+import { ensureDir, nowIso, readText, sha256, writeText } from "./fs.ts";
 import { assess, reassess, runGates, runTaskGate } from "./gates.ts";
 import { handleHook } from "./hooks/index.ts";
 import type { HookPayload } from "./hooks/types.ts";
@@ -122,7 +122,9 @@ import {
   setPolicyValue,
   skipAllowed,
 } from "./policy.ts";
+import { acceptPriorities, prioritiesState, triagePriority } from "./priorities.ts";
 import { ensureProfile, loadProfile, refreshProfile, saveProfile } from "./profile.ts";
+import { parseSource, sourceLine } from "./source.ts";
 import { ensureCrewDir, oneLine, workingRoles } from "./state.ts";
 import { integrityOf, recordIntegrity, writeProtectedText } from "./store.ts";
 import {
@@ -155,6 +157,7 @@ import type {
   ProjectEntry,
   Stack,
   TaskRecord,
+  Triage,
   UserConfig,
   WorkItem,
 } from "./types.ts";
@@ -218,7 +221,7 @@ const KNOWN_FLAGS: Record<string, readonly string[]> = {
   profile: ["target", "stack", "force", "timeout"],
   policy: [],
   accept: [],
-  start: ["answers", "criterion", "preserve", "origin", "priority"],
+  start: ["answers", "criterion", "preserve", "origin", "priority", "source", "reason"],
   classify: ["answers"],
   criteria: ["kind", "contract"],
   decision: ["default"],
@@ -237,7 +240,7 @@ const KNOWN_FLAGS: Record<string, readonly string[]> = {
   status: [],
   env: [],
   task: ["criteria", "text", "scope", "force", "mode", "print"],
-  workspace: [],
+  workspace: ["file"],
   mail: [
     "to",
     "type",
@@ -803,6 +806,22 @@ function startPriority(
   return "normal";
 }
 
+/**
+ * The item's priority with its triage (SP7 §10.2): the start prints the decision in full; the
+ * status (`short`) prints the level alone unless the proposal is still unconfirmed.
+ */
+function triageText(work: WorkItem, short = false): string {
+  const t = work.triage;
+  const level = `priority ${work.priority ?? "normal"}`;
+  if (!t) return level;
+  if (t.confirmed === null)
+    return `priority ${t.proposed} (proposed, unconfirmed: no signed business priorities)`;
+  if (short) return level;
+  if (t.confirmed === t.proposed)
+    return `priority ${t.confirmed} (confirmed against the signed business priorities)`;
+  return `priority ${t.confirmed} (proposed ${t.proposed}, against the signed business priorities): ${t.reason ?? ""}`;
+}
+
 function logDecision(env: Env, work: WorkItem, answers: Answers): void {
   if (!env.config.decisions.log) return;
   const line = JSON.stringify({
@@ -1121,6 +1140,30 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       const priorityFlag: unknown = parsed.flags.priority;
       if (priorityFlag !== undefined && !isMailPriority(priorityFlag))
         return refuse(badPriority(priorityFlag));
+      // Where the request entered from (SP7 §10.1) and the triage of its proposed priority against
+      // the business priorities the user signed (§10.2), both checked before anything is created.
+      const source =
+        typeof parsed.flags.source === "string"
+          ? parseSource(parsed.flags.source, env.paths.root)
+          : null;
+      if (source && "refused" in source) return refuse(source.refused);
+      const reasonFlag = typeof parsed.flags.reason === "string" ? parsed.flags.reason : undefined;
+      if (reasonFlag !== undefined && !source?.proposedPriority)
+        return refuse("--reason goes with a source's proposed priority");
+      let triage: Triage | null = null;
+      if (source?.proposedPriority) {
+        const workspace = env.mail.self.workspace;
+        const state = workspace ? prioritiesState(env.paths.userDir, workspace).state : "none";
+        const decided = triagePriority(
+          source.proposedPriority,
+          priorityFlag,
+          reasonFlag,
+          state,
+          env.mail.self.agent,
+        );
+        if ("refused" in decided) return refuse(decided.refused);
+        triage = decided;
+      }
       const previous = activeWork(env.paths);
       const previousProven =
         !!previous?.work &&
@@ -1147,15 +1190,19 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       // Other items still being worked on, while the tree holds uncommitted changes: a second
       // session on one checkout (finding 9). The proof covers the whole tree, so the record says so.
       const neighbours = uncommitted.length ? openItems(env.paths).map((w) => w.id) : [];
-      const work = createWork(env.paths, input, baseFiles);
+      const work = createWork(env.paths, input, baseFiles, source ?? undefined);
       if (neighbours.length)
         work.sharedCheckout = { with: neighbours, paths: uncommitted, at: work.createdAt };
       const sharedWarning = neighbours.length
         ? `warning: this checkout is shared with ${neighbours.join(", ")}, which ${neighbours.length === 1 ? "is" : "are"} open with uncommitted changes in ${uncommitted.join(", ")}; a second session on one checkout blocks turn ends and proves half-written code: work in a worktree (git worktree add ../<name> -b <branch>)\n`
         : "";
-      classify(env, work, answers, { origin: !!origin, sourceChannel: null });
-      // The item's priority: the flag, else the origin's confirmed level, else the priority answer's level, else normal.
-      work.priority = startPriority(priorityFlag, origin, answers);
+      classify(env, work, answers, { origin: !!origin, sourceChannel: source?.channel ?? null });
+      // The item's priority: the triage's level when a source proposed one (the proposal while
+      // unconfirmed), else the flag, the origin's confirmed level, the priority answer's level, normal.
+      if (triage) {
+        work.triage = triage;
+        work.priority = triage.confirmed ?? triage.proposed;
+      } else work.priority = startPriority(priorityFlag, origin, answers);
       // The seats the route plans, before any path is known (SP7 §6.2): the leads' validation guard
       // names them from here; the gate run rewrites them with the paths the change touched.
       if (work.route !== "fast") {
@@ -1188,6 +1235,15 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       if (work.route === "fast" && criteria.length > 0)
         advancePhase(work, guardContext(env, work, false));
       saveWork(env.paths, work);
+      // A lowering is the lead's decision about the item (SP7 §10.2, §6.6).
+      if (triage?.confirmed && triage.confirmed !== triage.proposed)
+        appendDecision(env.paths, {
+          at: triage.at,
+          item: work.id,
+          kind: "triage",
+          text: `priority lowered from ${triage.proposed} to ${triage.confirmed}: ${triage.reason ?? ""}`,
+          by: triage.by,
+        });
       const originNotes: string[] = [];
       if (origin) {
         // The message is taken on: in progress on every copy (SP7 §9); the new item keeps its copy as it now stands.
@@ -1202,6 +1258,9 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           ? "\n  issue: analysis.md (Origin, Cause, Blast radius) and a preserve criterion before build (references/analyse.md)"
           : ""
       }`;
+      // The source and the triage (SP7 §10): where the request came from and what the lead decided of its priority.
+      const sourceLines = source ? `\n  source: ${sourceLine(source)}` : "";
+      const triageLine = triage ? `\n  ${triageText(work)}` : "";
       const teamLine = work.seats?.length
         ? `\n  team: ${work.seats.length} seats (crew team ${work.id})`
         : "";
@@ -1211,13 +1270,15 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         ? `\n  decision register: ${registered} entr${registered === 1 ? "y" : "ies"} (crew decisions)`
         : "";
       return ok(
-        `${warning}${sharedWarning}${inheritedWarning}${provenNote}started ${work.id} (route ${work.route}: ${work.routeReasons.join("; ")})${kindLine}${lines}${teamLine}${registerLine}${originNotes.length ? `\n${originNotes.join("\n")}` : ""}`,
+        `${warning}${sharedWarning}${inheritedWarning}${provenNote}started ${work.id} (route ${work.route}: ${work.routeReasons.join("; ")})${kindLine}${sourceLines}${triageLine}${lines}${teamLine}${registerLine}${originNotes.length ? `\n${originNotes.join("\n")}` : ""}`,
         {
           id: work.id,
           route: work.route,
           kind: work.kind,
           kindFrom: work.kindFrom,
           priority: work.priority,
+          source: work.source ?? null,
+          triage: work.triage ?? null,
           phase: work.phase,
           routeReasons: work.routeReasons,
           replaced: warning ? previous?.work?.id : null,
@@ -2266,8 +2327,55 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       });
     }
     case "workspace": {
+      // The business priorities the user signs once (SP7 §10.2): their state, and the acceptance.
+      if (args[0] === "priorities") {
+        const workspace = env.mail.self.workspace;
+        const noWorkspace = "no workspace in the policy (crew policy set mail.workspace <name>)";
+        if (args[1] === "accept") {
+          if (!workspace) return refuse(noWorkspace);
+          const file =
+            typeof parsed.flags.file === "string"
+              ? resolve(env.paths.root, parsed.flags.file)
+              : undefined;
+          const by =
+            env.policy.attendedDecisions === "relay"
+              ? "the user, relayed by the agent"
+              : "the user";
+          const signed = acceptPriorities(env.paths.userDir, workspace, { file, by });
+          if ("refused" in signed) return refuse(signed.refused);
+          const state = prioritiesState(env.paths.userDir, workspace);
+          const digest = `sha256:${sha256(state.text ?? "").slice(0, 12)}`;
+          appendDecision(env.paths, {
+            at: nowIso(),
+            item: "workspace",
+            kind: "priorities",
+            text: `business priorities signed (${signed.path}, ${digest})`,
+            by,
+          });
+          return ok(`business priorities signed (${signed.path}, ${digest})`, {
+            workspace,
+            ...state,
+          });
+        }
+        if (args[1] !== undefined)
+          return refuse("usage: crew workspace priorities [accept [--file <path>]] [--json]");
+        if (!workspace) return ok(noWorkspace, { workspace: null, state: null });
+        const state = prioritiesState(env.paths.userDir, workspace);
+        const line =
+          state.state === "signed"
+            ? `priorities: signed (${state.signedAt})`
+            : state.state === "changed"
+              ? "priorities: changed since signing (crew workspace priorities accept)"
+              : state.state === "unsigned"
+                ? "priorities: unsigned (crew workspace priorities accept)"
+                : `priorities: none (write ${state.path}, or crew workspace priorities accept --file <path>)`;
+        return ok(line, { workspace, ...state });
+      }
       // Every project of the workspace from the records alone (SP7b decision 17): nothing is run.
-      if (args[0] !== "status") return refuse("usage: crew workspace status [--json]");
+      if (args[0] !== "status")
+        return refuse(
+          "usage: crew workspace status [--json] | crew workspace priorities [accept [--file <path>]]",
+        );
       const status = workspaceStatus(env.paths, env.policy, io.env);
       if ("none" in status) return ok(status.none, { workspace: null, projects: [] });
       const lines = status.projects.map(
@@ -2371,7 +2479,8 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           ? `  working: ${working.map((w) => (w.description ? `${w.agent} (${w.description})` : w.agent)).join(", ")}`
           : null,
       ].filter((l): l is string => l !== null);
-      const text = `${work.id} "${work.title}"\n  phase ${work.phase}, route ${work.route}, kind ${kindOfItem(work)}, priority ${work.priority ?? "normal"}${waitingText(work)}\n${extra.length ? `${extra.join("\n")}\n` : ""}${gateSummary(work, result.verdict, result.unproven, result.evidence.runs)}`;
+      if (work.source) extra.unshift(`  source ${sourceLine(work.source)}`);
+      const text = `${work.id} "${work.title}"\n  phase ${work.phase}, route ${work.route}, kind ${kindOfItem(work)}, ${triageText(work, true)}${waitingText(work)}\n${extra.length ? `${extra.join("\n")}\n` : ""}${gateSummary(work, result.verdict, result.unproven, result.evidence.runs)}`;
       // The mail synced and a task's reply that landed taken into the lead's record (SP2c §7): a
       // failure in either (a held lock, a folder that cannot be written) is one line under the
       // status, never the status lost.
@@ -2403,6 +2512,8 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         phase: work.phase,
         route: work.route,
         priority: work.priority ?? "normal",
+        source: work.source ?? null,
+        triage: work.triage ?? null,
         awaiting: work.awaiting,
         awaitingMessage: work.awaitingMessage ?? null,
         mail: { unread: inbox.unread, answered: inbox.answered, waiting: inbox.waiting },

@@ -729,3 +729,33 @@ test("SP3-T2 AC-2, AC-3: the guard out of analyse needs the three sections and, 
     missingAnalysisSections("## Origin\nnone\n## Cause\nnone\n## Blast radius\nnone\n"),
   ).toEqual([]);
 });
+
+test("SP3-T3 AC-1: createWork writes the Source section with the original text verbatim: the document's text, or the request's for a ticket", () => {
+  const root = makeRepo({
+    "docs/requests/newsletter.md": "# Newsletter\n\nAdd a newsletter flag.\n",
+  });
+  const paths = repoPaths(root, testEnv());
+  const doc = createWork(paths, "the request is in docs/requests/newsletter.md", undefined, {
+    channel: "document",
+    documentPath: "docs/requests/newsletter.md",
+  });
+  expect(readFileSync(join(root, ".crew", "work", doc.id, "brief.md"), "utf8")).toBe(
+    "# Brief\n\n## Request\n\nthe request is in docs/requests/newsletter.md\n\n## Source\n\ndocument docs/requests/newsletter.md\n\n# Newsletter\n\nAdd a newsletter flag.\n",
+  );
+  expect(doc.source).toEqual({ channel: "document", documentPath: "docs/requests/newsletter.md" });
+  const ticket = createWork(paths, "Change the button label to Sign up", undefined, {
+    channel: "task-manager",
+    connector: "clickup",
+    externalId: "86c1",
+    url: "https://x.invalid/t/86c1",
+    proposedPriority: "high",
+  });
+  expect(readFileSync(join(root, ".crew", "work", ticket.id, "brief.md"), "utf8")).toBe(
+    "# Brief\n\n## Request\n\nChange the button label to Sign up\n\n## Source\n\nclickup 86c1 (https://x.invalid/t/86c1), proposed priority high\n\nChange the button label to Sign up\n",
+  );
+  const plain = createWork(paths, "a plain request");
+  expect(readFileSync(join(root, ".crew", "work", plain.id, "brief.md"), "utf8")).toBe(
+    "# Brief\n\n## Request\n\na plain request\n",
+  );
+  expect(plain.source).toBeUndefined();
+});

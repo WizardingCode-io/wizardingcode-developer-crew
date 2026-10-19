@@ -708,3 +708,12 @@ Verdicts agree at every effort. Upheld findings: `high` reproduced Task 6's and 
 - Expected: taken in the next hardening item (SP8's first task), red first; the overhead at Task 7's run and at the whole-suite run.
 - Evidence: the item's `evidence.json` (`judgement`, both rounds), `review/ruling.json`.
 - Outcome: open.
+
+### 84. Debt of SP3 Task 3 (`2026-10-19-003`): the judge's advisories
+
+- Date: 2026-10-19. Project: this repository. Category: `docs`. Severity: low.
+- What happened: the item that brought the source, the signed business priorities and the triage at start went through one judgement round (both gates proven; five code-quality advisories, three test-quality advisories, no defect) and left the advisories recorded here under the user's bounded-round rule. Code quality: `triagePriority` narrows `state` into `against` and then tests `against !== "signed"` where `state !== "signed"` says it directly, with the fold of `changed` into `unsigned` uncommented; the `workspace priorities` branch (accept, state, the four-way state-to-line ternary) is inlined in `dispatch` as its `workspace status` neighbour is (a `prioritiesLine(state)` helper would match `triageText`); `triageText` (cli.ts) and `triageSummary` (priorities.ts) render the same three states for two prescribed sentences, and `triageText`'s boolean `short` could say what it switches; the `triage` register entry is appended after `saveWork`, as `approve` and `continue` log after saving; the accept path reads `prioritiesState` again and hashes the text a second time for the digest it prints (returning the hash from `acceptPriorities` would remove both). Test quality: the confirmation sentence of `crew start` (`priority high (confirmed against the signed business priorities)`) and the report's confirmed `- Triage:` line are asserted by nothing (the JSON triage and the status line are); the mod's strip has no case with a confirmed triage, so a mark that ignored `confirmed` would survive; `workspace priorities accept` with no workspace asserts the refusal text and not exit 1.
+- Also seen: the spec went through two lead rounds in conversation (security returned one: the document path confined by its real path; QA returned three: the triage states' proofs, `--reason`'s meaning without a proposal, the priorities file's transitions), taken before any record, so the engine counts one validation round.
+- Expected: taken in the next hardening item (SP8's first task), red first.
+- Evidence: the item's `evidence.json` (`judgement`), `review/ruling.json`.
+- Outcome: open.

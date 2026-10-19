@@ -642,6 +642,21 @@ test("SP7b-T6 AC-3: the strip shows a priority that is not normal after the rout
   await again.unmount();
 });
 
+test("SP3-T3 AC-3: the strip marks a priority whose triage is unconfirmed", async ($, on) => {
+  const answer: Record<string, unknown> = {
+    ...TEAMED,
+    priority: "high",
+    triage: { proposed: "high", confirmed: null, against: "none" },
+  };
+  stubs(on, () => ({ exitCode: 0, stdout: JSON.stringify(answer), stderr: "" }));
+  on("ui.render", () => ({ type: "Text", props: {}, children: ["drawn by Claude Code"] }));
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  const ui = await $.ui.mount({ ...STRIP, surface: "terminal" });
+  const texts = (await ui.findAll({ type: "Text" })).map((t) => t.text);
+  expect(texts.some((t) => / · standard · priority high \(unconfirmed\) · /.test(t))).toBe(true);
+  await ui.unmount();
+});
+
 test("SP7b-T6 AC-3: /crew status and the panel show the mail as threads, and the panel shows the workspace", async ($, on) => {
   const argv: string[][] = [];
   on("session.cwd", () => ({ value: "/work" }));

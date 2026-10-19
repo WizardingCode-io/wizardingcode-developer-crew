@@ -110,6 +110,10 @@ const REVIEW_OPEN = new RegExp(String.raw`^review\/${REVIEW_OPEN_SEGMENT}(?:\/|$
 /** Files only the engine writes. The agent is denied direct writes to them. */
 export function isProtectedPath(paths: CrewPaths, absPath: string): boolean {
   const abs = canonical(absPath);
+  // The business priorities are the user's words (SP7 §10.2): the one file under the user directory
+  // the engine never denies; the signature beside it stays the engine's.
+  if (/^workspaces\/[^/]+\/priorities\.md$/.test(relative(paths.userDir, abs).replace(/\\/g, "/")))
+    return false;
   if (abs === paths.userDir || abs.startsWith(paths.userDir + sep)) return true;
   const rel = relative(paths.root, abs).replace(/\\/g, "/");
   if (rel.startsWith("..") || rel === "") return false;

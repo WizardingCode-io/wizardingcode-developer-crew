@@ -53,6 +53,14 @@ test("isProtectedPath covers engine-owned files and nothing else", () => {
   expect(p(".crew/work/w1/brief.md")).toBe(false);
   expect(p("src/app.ts")).toBe(false);
   expect(isProtectedPath(paths, join(paths.userDir, "config.json"))).toBe(true);
+  // The business priorities (SP3 Task 3): the user's words are theirs to write, the signature is the engine's.
+  expect(isProtectedPath(paths, join(paths.userDir, "workspaces", "w", "priorities.md"))).toBe(
+    false,
+  );
+  expect(isProtectedPath(paths, join(paths.userDir, "workspaces", "w", "priorities.json"))).toBe(
+    true,
+  );
+  expect(isProtectedPath(paths, join(paths.userDir, "workspaces", "w", "other.md"))).toBe(true);
   expect(isProtectedPath(paths, "/tmp/elsewhere/.crew/profile.json")).toBe(false);
 });
 

@@ -446,7 +446,9 @@ function stripText() {
   const waiting = waitingText()
   const verdict = status.verdict === 'proven' ? 'proven' : 'not proven (' + (status.unproven && status.unproven[0] ? status.unproven[0] : 'gates have not run') + ')'
   const gates = gatesText()
-  const priority = status.priority && status.priority !== 'normal' ? ' · priority ' + status.priority : ''
+  // An unconfirmed triage (SP3): the proposal, marked, until the business priorities are signed
+  const unconfirmed = status.triage && status.triage.confirmed === null ? ' (unconfirmed)' : ''
+  const priority = status.priority && status.priority !== 'normal' ? ' · priority ' + status.priority + unconfirmed : ''
   return 'crew ' + status.active + ' · ' + status.phase + ' · ' + status.route + priority + ' · ' + verdict + (gates ? ' · ' + gates : '') + todoPart() + workingPart() + unread + waiting
 }
 

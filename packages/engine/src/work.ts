@@ -8,6 +8,7 @@ import { nowIso, writeText } from "./fs.ts";
 import { blockingObjections } from "./objections.ts";
 import { type CrewPaths, workDir } from "./paths.ts";
 import { decisionCounts } from "./policy.ts";
+import { sourceLine, sourceText } from "./source.ts";
 import { loadState, updateState } from "./state.ts";
 import { readProtectedJson, writeProtectedJson } from "./store.ts";
 import type {
@@ -22,6 +23,7 @@ import type {
   Policy,
   RemovedCriterion,
   Route,
+  Source,
   ValidatorRule,
   WorkItem,
   WorkKind,
@@ -110,6 +112,7 @@ export function createWork(
   paths: CrewPaths,
   input: string,
   baseFiles?: Record<string, string>,
+  source?: Source,
 ): WorkItem {
   const title = (input.split("\n").find((line) => line.trim()) ?? "untitled").trim().slice(0, 80);
   const at = nowIso();
@@ -128,13 +131,25 @@ export function createWork(
     skips: [],
     baseCommit: baseCommitOf(paths.root),
     ...(baseFiles && Object.keys(baseFiles).length > 0 ? { baseFiles } : {}),
+    ...(source ? { source } : {}),
     createdAt: at,
     updatedAt: at,
   };
   writeProtectedJson(paths, workJson(paths, work.id), work);
+  // The brief quotes the original text verbatim under its source (SP7 §10.1): the document whole,
+  // or the request's text for a ticket; a document that cannot be read now says so in its place.
+  let sourceSection = "";
+  if (source) {
+    const body = sourceText(source, paths.root, input);
+    const text = typeof body === "string" ? body : body.refused;
+    const proposed = source.proposedPriority
+      ? `, proposed priority ${source.proposedPriority}`
+      : "";
+    sourceSection = `\n## Source\n\n${sourceLine(source)}${proposed}\n\n${text.endsWith("\n") ? text : `${text}\n`}`;
+  }
   writeText(
     join(workDir(paths, work.id), "brief.md"),
-    `# Brief\n\n## Request\n\n${input.trim()}\n`,
+    `# Brief\n\n## Request\n\n${input.trim()}\n${sourceSection}`,
   );
   // Under the lock every writer of the state takes, so a notice a role's stop leaves meanwhile stays.
   updateState(paths, (state) => {

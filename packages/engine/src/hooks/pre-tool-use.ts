@@ -674,6 +674,8 @@ function userOnlyCommand(args: string[]): { parsed: Parsed; policyCommand: boole
     (verb === "objection" && parsed.positional.includes("waive")) ||
     (verb === "profile" && (second === "confirm" || second === "set")) ||
     (verb === "policy" && (second === "accept" || second === "set")) ||
+    // The business priorities are signed by the user once (SP7 §10.2).
+    (verb === "workspace" && second === "priorities" && parsed.positional.includes("accept")) ||
     (verb === "task" && parsed.positional.includes("merge") && parsed.flags.force === true);
   if (!userOnly) return null;
   return {

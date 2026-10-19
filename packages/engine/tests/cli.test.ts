@@ -12,6 +12,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { type CliIo, main } from "../src/cli.ts";
+import { listDecisions } from "../src/decisions.ts";
 import { envRecordPath } from "../src/environment.ts";
 import { loadEvidence, saveEvidence } from "../src/evidence.ts";
 import { writeJson } from "../src/fs.ts";
@@ -3846,7 +3847,7 @@ test("SP7b-T6 AC-1: crew workspace status prints the workspace's projects from t
     ],
   });
   expect((await c.run("workspace", "list")).err.trim()).toBe(
-    "usage: crew workspace status [--json]",
+    "usage: crew workspace status [--json] | crew workspace priorities [accept [--file <path>]]",
   );
 });
 
@@ -4175,3 +4176,341 @@ const PHASES_BY_ROUTE_STANDARD = [
   "gate",
   "deliver",
 ];
+
+const TICKET = JSON.stringify({
+  channel: "task-manager",
+  connector: "clickup",
+  externalId: "86c1",
+  url: "https://app.clickup.invalid/t/86c1",
+  proposedPriority: "high",
+});
+
+test("SP3-T3 AC-1, AC-2: a request from a task manager or a document carries its source and the brief quotes the text; the business priorities are signed once per workspace, their state printed; a bad source or a stray --reason creates nothing", async () => {
+  const { env, a, ca } = mailRepos();
+  await ca.run("detect");
+  const paths = repoPaths(a, env);
+  const prioritiesFile = join(paths.userDir, "workspaces", "w", "priorities.md");
+  const count = () =>
+    existsSync(join(a, ".crew", "work")) ? readdirSync(join(a, ".crew", "work")).length : 0;
+  expect((await ca.run("workspace", "priorities")).out.trim()).toBe(
+    `priorities: none (write ${prioritiesFile}, or crew workspace priorities accept --file <path>)`,
+  );
+  expect((await ca.json("workspace", "priorities")).data).toMatchObject({
+    state: "none",
+    path: prioritiesFile,
+  });
+  const started = await ca.json(
+    "start",
+    "Change the button label to Sign up",
+    "--answers",
+    answers,
+    "--source",
+    TICKET,
+  );
+  expect(started.code).toBe(0);
+  expect(started.data).toMatchObject({
+    source: { channel: "task-manager", connector: "clickup", externalId: "86c1" },
+    kind: "client-request",
+    kindFrom: "source: task-manager",
+  });
+  const id = started.data.id as string;
+  expect((await ca.run("status")).out).toContain(
+    "source clickup 86c1 (https://app.clickup.invalid/t/86c1)",
+  );
+  expect((await ca.json("status")).data.source).toMatchObject({
+    connector: "clickup",
+    externalId: "86c1",
+  });
+  expect(readFileSync(join(a, ".crew", "work", id, "brief.md"), "utf8")).toContain(
+    "## Source\n\nclickup 86c1 (https://app.clickup.invalid/t/86c1), proposed priority high\n\nChange the button label to Sign up\n",
+  );
+  expect((await ca.run("evidence", id)).out).toContain(
+    "- Source: clickup 86c1 (https://app.clickup.invalid/t/86c1)",
+  );
+  // A document is one item whose brief holds the document whole.
+  write(
+    a,
+    "docs/requests/newsletter.md",
+    "# Newsletter\n\nAdd a newsletter flag to the checkout.\n",
+  );
+  const doc = await ca.run(
+    "start",
+    "the request is in docs/requests/newsletter.md",
+    "--answers",
+    answers,
+    "--source",
+    JSON.stringify({ channel: "document", documentPath: "docs/requests/newsletter.md" }),
+  );
+  expect(doc.out).toContain("source: document docs/requests/newsletter.md");
+  expect(doc.out).toContain("kind client-request (from source: document)");
+  const docId = (await ca.json("status")).data.active as string;
+  expect(readFileSync(join(a, ".crew", "work", docId, "brief.md"), "utf8")).toContain(
+    "## Source\n\ndocument docs/requests/newsletter.md\n\n# Newsletter\n\nAdd a newsletter flag to the checkout.\n",
+  );
+  expect((await ca.json("status")).data.triage).toBeNull();
+  // A bad source, or --reason with nothing to judge, creates nothing.
+  const before = count();
+  const bad = await ca.run(
+    "start",
+    "x",
+    "--answers",
+    answers,
+    "--source",
+    JSON.stringify({ channel: "x" }),
+  );
+  expect(bad.code).toBe(1);
+  expect(bad.err.trim()).toBe("source: channel is document or task-manager");
+  const stray = await ca.run("start", "x", "--answers", answers, "--reason", "why");
+  expect(stray.err.trim()).toBe("--reason goes with a source's proposed priority");
+  const noProposal = await ca.run(
+    "start",
+    "x",
+    "--answers",
+    answers,
+    "--source",
+    JSON.stringify({ channel: "task-manager", connector: "jira", externalId: "AB-1" }),
+    "--reason",
+    "why",
+  );
+  expect(noProposal.err.trim()).toBe("--reason goes with a source's proposed priority");
+  expect(count()).toBe(before);
+  // The priorities file: written by the user, unsigned; signed once; changed after an edit; --file copies.
+  write(paths.userDir, "workspaces/w/priorities.md", "The checkout flow first.\n");
+  expect((await ca.run("workspace", "priorities")).out.trim()).toBe(
+    "priorities: unsigned (crew workspace priorities accept)",
+  );
+  const accepted = await ca.run("workspace", "priorities", "accept");
+  expect(accepted.code).toBe(0);
+  expect(accepted.out.trim()).toMatch(
+    new RegExp(
+      `^business priorities signed \\(${prioritiesFile.replace(/[.*+?^${}()|[\\]\\\\]/g, "\\\\$&")}, sha256:[0-9a-f]{12}\\)$`,
+    ),
+  );
+  expect(listDecisions(paths).some((e) => e.kind === "priorities")).toBe(true);
+  expect((await ca.run("workspace", "priorities")).out.trim()).toMatch(
+    /^priorities: signed \(\d{4}-\d{2}-\d{2}T[^)]+\)$/,
+  );
+  write(
+    paths.userDir,
+    "workspaces/w/priorities.md",
+    "The checkout flow first.\nThe loyalty launch on the 30th.\n",
+  );
+  expect((await ca.run("workspace", "priorities")).out.trim()).toBe(
+    "priorities: changed since signing (crew workspace priorities accept)",
+  );
+  const named = tempDir("crew-prio-");
+  writeFileSync(join(named, "business.md"), "Cosmetic changes wait for the freeze to end.\n");
+  const copied = await ca.run(
+    "workspace",
+    "priorities",
+    "accept",
+    "--file",
+    join(named, "business.md"),
+  );
+  expect(copied.out).toContain(`business priorities signed (${prioritiesFile}`);
+  expect(readFileSync(prioritiesFile, "utf8")).toBe(
+    "Cosmetic changes wait for the freeze to end.\n",
+  );
+  expect((await ca.json("workspace", "priorities")).data.state).toBe("signed");
+  // No workspace in the policy: no business priorities, said with exit 0.
+  const alone = io(
+    makeRepo({ "package.json": JSON.stringify({ scripts: { test: "exit 0" } }), "src/a.ts": "x" }),
+  );
+  const none = await alone.run("workspace", "priorities");
+  expect(none.code).toBe(0);
+  expect(none.out.trim()).toBe(
+    "no workspace in the policy (crew policy set mail.workspace <name>)",
+  );
+  expect((await alone.run("workspace", "priorities", "accept")).err.trim()).toBe(
+    "no workspace in the policy (crew policy set mail.workspace <name>)",
+  );
+}, 30_000);
+
+test("SP3-T3 AC-3: the triage at start confirms or lowers a source's proposed priority against the signed business priorities, never raises, and leaves it unconfirmed without the signed file", async () => {
+  const { env, a, ca } = mailRepos();
+  await ca.run("detect");
+  const paths = repoPaths(a, env);
+  const count = () => readdirSync(join(a, ".crew", "work")).length;
+  // No file yet: the proposal stays unconfirmed; a flag is refused.
+  const none = await ca.run("start", "Button label", "--answers", answers, "--source", TICKET);
+  expect(none.out).toContain(
+    "priority high (proposed, unconfirmed: no signed business priorities)",
+  );
+  const noneId = (await ca.json("status")).data.active as string;
+  expect((await ca.json("status")).data).toMatchObject({
+    priority: "high",
+    triage: { proposed: "high", confirmed: null, against: "none" },
+  });
+  expect((await ca.run("status")).out).toContain(
+    "priority high (proposed, unconfirmed: no signed business priorities)",
+  );
+  expect((await ca.run("evidence", noneId)).out).toContain(
+    "- Triage: proposed high, unconfirmed (no signed business priorities)",
+  );
+  const before = count();
+  const flagged = await ca.run(
+    "start",
+    "Button label",
+    "--answers",
+    answers,
+    "--source",
+    TICKET,
+    "--priority",
+    "normal",
+    "--reason",
+    "frozen",
+  );
+  expect(flagged.code).toBe(1);
+  expect(flagged.err.trim()).toBe(
+    "the business priorities are not signed (crew workspace priorities accept [--file <path>]): the proposal stays unconfirmed",
+  );
+  expect(count()).toBe(before);
+  write(
+    paths.userDir,
+    "workspaces/w/priorities.md",
+    "The checkout flow and the signed launch on the 30th come first; cosmetic changes wait for the freeze to end.\n",
+  );
+  const unsigned = await ca.json("start", "Button label", "--answers", answers, "--source", TICKET);
+  expect(unsigned.data.triage).toMatchObject({ confirmed: null, against: "unsigned" });
+  expect((await ca.run("workspace", "priorities", "accept")).code).toBe(0);
+  // Signed: a confirmation, a lowering with its reason on the record, a raise refused.
+  const confirmed = await ca.json(
+    "start",
+    "Button label",
+    "--answers",
+    answers,
+    "--source",
+    TICKET,
+  );
+  expect(confirmed.data).toMatchObject({
+    priority: "high",
+    triage: { proposed: "high", confirmed: "high", against: "signed", reason: null },
+  });
+  const confirmedOut = await ca.run("status");
+  expect(confirmedOut.out).toContain("priority high\n");
+  const explicit = await ca.json(
+    "start",
+    "Button label",
+    "--answers",
+    answers,
+    "--source",
+    TICKET,
+    "--priority",
+    "high",
+    "--reason",
+    "we agree",
+  );
+  expect(explicit.data.triage).toMatchObject({ confirmed: "high", reason: "we agree" });
+  const lowered = await ca.run(
+    "start",
+    "Button label",
+    "--answers",
+    answers,
+    "--source",
+    TICKET,
+    "--priority",
+    "normal",
+    "--reason",
+    "the release is frozen",
+  );
+  expect(lowered.code).toBe(0);
+  expect(lowered.out).toContain(
+    "priority normal (proposed high, against the signed business priorities): the release is frozen",
+  );
+  const loweredId = (await ca.json("status")).data.active as string;
+  expect((await ca.json("status")).data).toMatchObject({
+    priority: "normal",
+    triage: {
+      proposed: "high",
+      confirmed: "normal",
+      against: "signed",
+      reason: "the release is frozen",
+    },
+  });
+  expect(
+    listDecisions(paths).some(
+      (e) =>
+        e.kind === "triage" &&
+        e.item === loweredId &&
+        e.text.includes("lowered from high to normal"),
+    ),
+  ).toBe(true);
+  expect((await ca.run("evidence", loweredId)).out).toContain(
+    "- Triage: proposed high, confirmed normal against the signed business priorities: the release is frozen",
+  );
+  const noReason = await ca.run(
+    "start",
+    "Button label",
+    "--answers",
+    answers,
+    "--source",
+    TICKET,
+    "--priority",
+    "normal",
+  );
+  expect(noReason.err.trim()).toBe('a lowering needs --reason "<why>"');
+  const raised = await ca.run(
+    "start",
+    "Button label",
+    "--answers",
+    answers,
+    "--source",
+    TICKET,
+    "--priority",
+    "blocker",
+    "--reason",
+    "x",
+  );
+  expect(raised.err.trim()).toBe(
+    "the source proposed high; the lead confirms or lowers, never raises",
+  );
+  // A source that proposes nothing records no triage: the flag sets the priority as before.
+  const quiet = await ca.json(
+    "start",
+    "Button label",
+    "--answers",
+    answers,
+    "--source",
+    JSON.stringify({ channel: "task-manager", connector: "jira", externalId: "AB-1" }),
+    "--priority",
+    "low",
+  );
+  expect(quiet.data).toMatchObject({ priority: "low" });
+  expect((await ca.json("status")).data.triage).toBeNull();
+  // Edited after the signature: unconfirmed again.
+  write(paths.userDir, "workspaces/w/priorities.md", "Everything is urgent now.\n");
+  const changed = await ca.json("start", "Button label", "--answers", answers, "--source", TICKET);
+  expect(changed.data.triage).toMatchObject({ confirmed: null, against: "unsigned" });
+  // No workspace: no business priorities, the proposal stays unconfirmed, a flag refused.
+  const alone = io(
+    makeRepo({ "package.json": JSON.stringify({ scripts: { test: "exit 0" } }), "src/a.ts": "x" }),
+  );
+  const aloneStart = await alone.json(
+    "start",
+    "Button label",
+    "--answers",
+    answers,
+    "--source",
+    TICKET,
+  );
+  expect(aloneStart.data).toMatchObject({
+    priority: "high",
+    triage: { confirmed: null, against: "none" },
+  });
+  expect(
+    (
+      await alone.run(
+        "start",
+        "x",
+        "--answers",
+        answers,
+        "--source",
+        TICKET,
+        "--priority",
+        "normal",
+        "--reason",
+        "y",
+      )
+    ).code,
+  ).toBe(1);
+}, 30_000);

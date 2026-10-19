@@ -6,7 +6,15 @@ import { readProtectedJson, writeProtectedJson } from "./store.ts";
 export interface DecisionEntry {
   at: string;
   item: string;
-  kind: "decision" | "objection" | "approval" | "ruling" | "validation" | "continue";
+  kind:
+    | "decision"
+    | "objection"
+    | "approval"
+    | "ruling"
+    | "validation"
+    | "continue"
+    | "priorities"
+    | "triage";
   id?: string;
   text: string;
   answer?: string;

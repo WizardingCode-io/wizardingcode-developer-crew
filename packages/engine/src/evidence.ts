@@ -5,6 +5,8 @@ import { decidedPriority, mailStatus, readContracts, threadOf } from "./mail-sta
 import { blockingObjections, objectionStatus } from "./objections.ts";
 import { type CrewPaths, workDir } from "./paths.ts";
 import { decisionCounts } from "./policy.ts";
+import { triageSummary } from "./priorities.ts";
+import { sourceLine } from "./source.ts";
 import { oneLine } from "./state.ts";
 import { readProtectedJson, writeProtectedJson } from "./store.ts";
 import type {
@@ -285,6 +287,9 @@ export function renderReport(
   lines.push(
     `- Type: ${work.type}. Kind: ${kindOfItem(work)}${work.kindFrom ? ` (from ${work.kindFrom})` : ""}. Route: ${work.route} (${work.routeReasons.join("; ")})`,
   );
+  // Where the request entered from and the lead's triage of its priority (SP7 §10).
+  if (work.source) lines.push(`- Source: ${sourceLine(work.source)}`);
+  if (work.triage) lines.push(`- Triage: ${triageSummary(work.triage)}`);
   // A waived objection is named with the verdict, so a report that says Proven with a waiver says so first.
   // Grouped by who waived, rendered through decidedBy: never "by the user" for a decision a
   // person did not take (SP2a review, finding I1).
