@@ -56,9 +56,68 @@ export const PHASES_BY_ROUTE: Record<Route, Phase[]> = {
  */
 export function phasesFor(work: Pick<WorkItem, "route" | "kind">): Phase[] {
   const base = PHASES_BY_ROUTE[work.route];
-  if (kindOfItem(work) !== "issue") return [...base];
-  const at = base.indexOf("recognize") + 1;
-  return [...base.slice(0, at), "analyse", ...base.slice(at)];
+  const kind = kindOfItem(work);
+  // An audit has its own four phases on every route (SP7 §7.5): nothing is built, the report is proven.
+  if (kind === "audit") return ["receive", "recognize", "audit", "deliver"];
+  if (kind === "issue") {
+    const at = base.indexOf("recognize") + 1;
+    return [...base.slice(0, at), "analyse", ...base.slice(at)];
+  }
+  // A new project's strategy comes before its spec (SP7 §7.3); a new project is never fast.
+  if (kind === "new-project") {
+    const at = base.indexOf("specify");
+    if (at !== -1) return [...base.slice(0, at), "strategy", ...base.slice(at)];
+  }
+  return [...base];
+}
+
+/** The floors a kind sets on the route (SP7 §7.1, §7.5): a new project is never fast, an audit is always full. */
+function kindFloor(work: WorkItem): void {
+  if (work.kind === "new-project" && work.route === "fast") {
+    work.route = "standard";
+    work.routeReasons.push("kind new-project is never fast");
+  }
+  if (work.kind === "audit" && work.route !== "full") {
+    work.route = "full";
+    work.routeReasons.push("kind audit is always full");
+  }
+}
+
+/** The kinds a feature arrives as, by its channel: the only ones a strategy may be raised from (SP8). */
+const RAISABLE: readonly WorkKind[] = ["feature", "client-request", "cross-project"];
+const RAISE_PHASES: readonly Phase[] = ["understand", "specify", "conclave"];
+
+/**
+ * A feature raised to a new project while its spec is still open (SP7 §7.3, SP8 decision 2): the
+ * kind and its reason recorded, the standard floor applied, and the phase set back to `strategy`
+ * from specify or conclave (the files stay; no approval exists yet, since the spec's approval is
+ * the guard into plan). From plan on the raise is refused, and so is any other kind: an issue, a
+ * new project already, an audit (never lowered).
+ */
+export function raiseKind(
+  work: WorkItem,
+  reason: string,
+): { ok: true; movedTo: Phase | null } | { ok: false; reason: string } {
+  if (!RAISABLE.includes(kindOfItem(work)))
+    return {
+      ok: false,
+      reason: `only a feature is raised to a strategy: this item is ${kindLabel(work)}`,
+    };
+  if (phaseIndex(work.phase) >= phaseIndex("plan"))
+    return { ok: false, reason: "a strategy comes before the plan; from plan on, a new item" };
+  if (!RAISE_PHASES.includes(work.phase))
+    return {
+      ok: false,
+      reason: `a feature is raised to a strategy from understand, specify or conclave, not ${work.phase}`,
+    };
+  work.kind = "new-project";
+  work.kindFrom = `raised: ${reason}`;
+  work.routeReasons.push(`kind raised to new-project: ${reason}`);
+  kindFloor(work);
+  if (work.phase === "understand") return { ok: true, movedTo: null };
+  work.phase = "strategy";
+  work.phaseAt = { ...(work.phaseAt ?? {}), strategy: nowIso() };
+  return { ok: true, movedTo: "strategy" };
 }
 
 /** The kind a record carries; one written before 0.8.0 has none and is a feature. */
@@ -242,10 +301,7 @@ export function applyClassification(
       work.kindFrom = kind.from;
     }
   }
-  if (work.kind === "new-project" && work.route === "fast") {
-    work.route = "standard";
-    work.routeReasons.push("kind new-project is never fast");
-  }
+  kindFloor(work);
   if (work.phase === "receive") work.phase = "recognize";
 }
 
@@ -402,7 +458,7 @@ export function closeDebate(work: WorkItem, tokens?: number): Debate | { refused
   return debate;
 }
 
-export function approve(work: WorkItem, what: "spec", decision: Decision = USER): void {
+export function approve(work: WorkItem, what: "spec" | "audit", decision: Decision = USER): void {
   work.approvals.push({ what, at: nowIso(), ...decision });
 }
 
@@ -466,6 +522,8 @@ export function missingAnalysisSections(text: string): string[] {
 
 export interface GuardContext {
   specText: string | null;
+  /** `strategy.md` of the work folder, or null without one (a new project's strategy phase, SP7 §7.3). */
+  strategyText: string | null;
   /** `analysis.md` of the work folder, or null without one (an issue's analyse phase, SP7 §7.4). */
   analysisText: string | null;
   /** Whether `analysis/origin.json` exists in the work folder (`crew analyse`, SP3 Task 5). */
@@ -487,6 +545,8 @@ export { tddDone } from "./criteria.ts";
 /** What the current route asks for before code: checked again later, so a raise mid-build is felt. */
 function routeDocuments(work: WorkItem, ctx: GuardContext): string[] {
   const missing: string[] = [];
+  // An audit has no spec and no plan: its report is the document (SP7 §7.5).
+  if (kindOfItem(work) === "audit") return missing;
   if (work.route !== "fast") {
     if (ctx.specText === null) missing.push("spec.md in the work folder");
     else if (!hasAcceptanceSection(ctx.specText)) {
@@ -555,6 +615,15 @@ export function guardFor(work: WorkItem, next: Phase, ctx: GuardContext): string
       );
     if (ctx.gitRepository && !ctx.originRecorded)
       missing.push("analysis/origin.json in the work folder (crew analyse <id> --paths <files>)");
+  }
+  // Out of strategy (SP7 §7.3): the document by name here; its structure, its marks and its
+  // judgement come with the strategy's own check (SP8 Task 3).
+  if (work.phase === "strategy" && ctx.strategyText === null)
+    missing.push("strategy.md in the work folder");
+  if (next === "deliver" && kindOfItem(work) === "audit") {
+    // An audit is proven by its three records alone (SP7 §7.5): no spec, no gate run, no leads.
+    missing.push(...ctx.unproven.map((reason) => `not proven: ${reason}`));
+    return missing;
   }
   if (next === "plan") {
     missing.push(...conclaveDocument(work, ctx));

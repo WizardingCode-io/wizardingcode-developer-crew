@@ -100,8 +100,8 @@ test("SP3-T2 AC-1: the optional kind and priority answers are validated when pre
     kind: "issue",
     priority: 2,
   });
-  expect(() => validateAnswers({ ...calm, kind: "audit" })).toThrow(
-    /kind: expected one of client-request, cross-project, new-project, feature, issue/,
+  expect(() => validateAnswers({ ...calm, kind: "chore" })).toThrow(
+    /kind: expected one of client-request, cross-project, new-project, feature, issue, audit/,
   );
   expect(() => validateAnswers({ ...calm, priority: 4 })).toThrow(
     /priority: expected an integer level from 0 to 3/,
@@ -145,4 +145,21 @@ test("SP3-T2 AC-1: the kind is derived in order (the type's kinds first, then th
     kindOf({ ...feature, kind: "client-request" }, { origin: true, sourceChannel: null }),
   ).toEqual({ kind: "client-request", from: "answer" });
   expect(PRIORITY_LEVELS).toEqual(["low", "normal", "high", "blocker"]);
+});
+
+test("SP8-T2 AC-1: audit is a work type and a kind derived from it alone; an answered kind audit on another type is refused", () => {
+  expect(validateAnswers({ ...calm, work_type: "audit" })).toMatchObject({ work_type: "audit" });
+  expect(kindOf({ ...calm, work_type: "audit" }, { origin: false, sourceChannel: null })).toEqual({
+    kind: "audit",
+    from: "work_type audit",
+  });
+  expect(() => validateAnswers({ ...calm, work_type: "feature", kind: "audit" })).toThrow(
+    /an audit is work_type audit/,
+  );
+  expect(() => validateAnswers({ ...calm, work_type: "audit", kind: "feature" })).toThrow(
+    /kind: an audit is an audit/,
+  );
+  expect(validateAnswers({ ...calm, work_type: "audit", kind: "audit" })).toMatchObject({
+    kind: "audit",
+  });
 });

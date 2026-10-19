@@ -24,6 +24,8 @@ import type {
 
 /** The subject of each rubric in one sentence, named in the defect's question (decision 10). */
 export const RUBRIC_QUESTIONS: Record<JudgementGateName, string> = {
+  strategy:
+    "a fault of the strategy as the strategy rubric names it: an element not required by a stated need (over-engineering), a claim whose mark names no researched fact, a cost or a time guessed rather than measured, a scaling phase without an observable trigger, a smaller answer not argued point by point where the request asked for more",
   "code-quality":
     "a violation of SOLID or KISS as the code-quality rubric's six questions name it: a type with more than one reason to change, a copy of logic, a name that says the opposite of what the code does, dead or unreachable code, a workaround, a hardcoded value",
   "test-quality":

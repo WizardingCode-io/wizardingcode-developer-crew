@@ -199,6 +199,8 @@ export interface VerdictInput {
   ledger?: ObjectionLedger;
   /** The judgement gates planned for the item; each is a reason until a current ruling says proven (SP2 §10). */
   expectedJudgement?: PlannedJudgement[];
+  /** An audit's records as they stand (SP7 §7.5): the run and the report written, read by the caller. */
+  audit?: { run: boolean; report: boolean };
 }
 
 export function computeVerdict(input: VerdictInput): {
@@ -208,6 +210,16 @@ export function computeVerdict(input: VerdictInput): {
   const { work, evidence, expected, currentFingerprint, tampered, policy } = input;
   const unproven: string[] = [];
   if (tampered) unproven.push("state changed outside the engine");
+  // An audit is proven by its three records (SP7 §7.5, SP8): the run, the report and a person's
+  // signature; no criterion, no test-first record and no gate run have a say.
+  if (kindOfItem(work) === "audit") {
+    const audit = input.audit ?? { run: false, report: false };
+    if (!audit.run) unproven.push("audit run not recorded (crew audit <id> run)");
+    if (!audit.report) unproven.push("audit report not rendered (crew audit <id> report)");
+    if (!work.approvals.some((a) => a.what === "audit"))
+      unproven.push("the audit's signature (crew approve <id> audit)");
+    return { verdict: unproven.length === 0 ? "proven" : "unproven", unproven };
+  }
   if (currentFingerprint === UNAVAILABLE)
     unproven.push("fingerprint unavailable: too many files to watch without git");
   // When no run vouches for the current code, one reason says it all; otherwise each stale gate is named.

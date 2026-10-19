@@ -54,6 +54,7 @@ test("SP7a AC-1: the registry names nine teams, their leads, their members and t
     "architecture",
     "data",
     "infra",
+    "strategy",
   ]);
   expect(EXPERT_PERSONALITIES).toEqual(["conservative", "creative", "adventurous"]);
   expect(PERSONALITIES).toEqual([

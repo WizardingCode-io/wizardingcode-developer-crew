@@ -827,3 +827,12 @@ Verdicts agree at every effort. Upheld findings: `high` reproduced Task 6's and 
 - Evidence: the item's `evidence.json` (`judgement`, both rounds), `review/ruling.round1.json`, `conclave/judge-reply.md` (round 2), `review/code-quality.findings.md`, `review/test-quality.findings.md`.
 - Outcome: open.
 
+### 99. Debt of SP8 Task 2 (`2026-10-19-009`): the judge's advisories
+
+- Date: 2026-10-19. Project: this repository. Category: `docs`. Severity: low.
+- What happened: the kinds-and-phases item went through two judgement rounds (round 1: one code-quality defect, the never-fast floor copied into `raiseKind` from `applyClassification`, fixed with one `kindFloor` helper for both floors; one test-quality defect, the raise from `specify` untested, fixed with the assertion) and left the advisories under the user's bounded-round rule. Code quality: the "a person is present; run the command without --mode" deny of `auditApproval` repeats the text and the check of `userOnlyDecision`; `assess` runs two `existsSync` calls on `audit/runs.json` and `audit/report.json` for every item though only an audit reads them; the `approve` case carries the audit's signature beside the spec's approval (one flow each, long). Test quality: the Stop hook test pins behaviour the diff did not write (the hook reads neither kind nor phase) and an unsigned audit's effect on it is not promised; the guard assertion feeds the unproven strings in and expects them back (the CLI test proves the wording); the new-project floor on the raise path is not asserted (a fast item never sits at a raisable phase, so the state is one the engine does not produce); the refusal from `build` and `gate` rides the `plan` assertion.
+- Also seen: the spec went through two lead rounds (QA returned once: the audit approval's hook outcomes under relay, with a matching `--mode` and with `--validator` had to be stated per case; security returned twice: the same unattended paths, and the raise refused on an audit, an issue and a new project), taken before any record; three 0.8.0 assertions were updated to the grown lists (the judgement gates, the kinds' choice, the team registry's gate list) and the `analyse` position pin kept while `audit`'s reads "between recognize and understand".
+- Expected: taken in the next hardening item (SP4's first task), red first.
+- Evidence: the item's `evidence.json` (`judgement`, both rounds), `review/ruling.round1.json`, `conclave/judge-reply.md` (round 2), `review/code-quality.findings.md`, `review/test-quality.findings.md`.
+- Outcome: open.
+

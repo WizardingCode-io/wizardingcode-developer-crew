@@ -10,6 +10,7 @@ export interface Question {
 }
 
 const WORK_TYPES: Record<WorkType, string> = {
+  audit: "an end-to-end audit of an existing codebase, delivered as a report a person signs (SP8)",
   fix: "repairs behaviour that is wrong today",
   feature: "adds or changes behaviour on purpose",
   refactor: "changes structure without changing behaviour",
@@ -69,6 +70,8 @@ export const QUESTIONS = {
       "new-project": "a new project or a feature the conclave raises to a strategy",
       feature: "a change to a project that exists",
       issue: "a defect to analyse to its origin before it is fixed",
+      audit:
+        "an existing codebase audited end to end, with a report a person signs (work_type audit)",
     },
   },
   priority: {
@@ -144,6 +147,11 @@ export function validateAnswers(raw: unknown): Answers {
       problems.push("kind: a fix is an issue");
     if (input.work_type === "new-product" && input.kind !== "new-project")
       problems.push("kind: a new product is a new project");
+    // An audit's four phases and its signature are reached by its type alone (SP8).
+    if (input.work_type === "audit" && input.kind !== "audit")
+      problems.push("kind: an audit is an audit");
+    if (input.work_type !== "audit" && input.kind === "audit")
+      problems.push("kind: an audit is work_type audit");
   }
   if (problems.length) throw new AnswerError(problems);
   return input as unknown as Answers;
@@ -164,6 +172,7 @@ export function kindOf(answers: Answers, context: KindContext): { kind: WorkKind
   if (answers.work_type === "fix") return { kind: "issue", from: "work_type fix" };
   if (answers.work_type === "new-product")
     return { kind: "new-project", from: "work_type new-product" };
+  if (answers.work_type === "audit") return { kind: "audit", from: "work_type audit" };
   if (answers.kind !== undefined) return { kind: answers.kind, from: "answer" };
   if (context.origin) return { kind: "cross-project", from: "origin" };
   if (context.sourceChannel)

@@ -241,6 +241,7 @@ import {
   openDebate,
   openItems,
   phasesFor,
+  raiseKind,
   removeCriterion,
   saveWork,
   validatorPreconditions,
@@ -268,6 +269,7 @@ const KNOWN_FLAGS: Record<string, readonly string[]> = {
   accept: [],
   start: ["answers", "criterion", "preserve", "origin", "priority", "source", "reason"],
   classify: ["answers"],
+  kind: ["reason"],
   criteria: ["kind", "contract"],
   decision: ["default"],
   debate: ["reason", "tokens"],
@@ -815,6 +817,7 @@ function guardContext(env: Env, work: WorkItem, tampered: boolean): GuardContext
   const result = assess(env.paths, work, env.profile, env.policy, env.tampered || tampered);
   return {
     specText: readText(join(dir, "spec.md")),
+    strategyText: readText(join(dir, "strategy.md")),
     analysisText: readText(join(dir, "analysis.md")),
     originRecorded: existsSync(join(dir, "analysis", "origin.json")),
     gitRepository: isGitRepo(env.paths.root),
@@ -1770,13 +1773,69 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         decision: result,
       });
     }
+    case "kind": {
+      // A feature raised to a new project while its spec is open (SP7 §7.3, SP8 decision 2): the
+      // lead's call, recorded as the agent's.
+      const usage = 'usage: crew kind <id> raise --reason "<why>"';
+      const opened = openForChange(env, args[0]);
+      if (isOutcome(opened)) return opened;
+      const reason = typeof parsed.flags.reason === "string" ? parsed.flags.reason.trim() : "";
+      if (args[1] !== "raise" || !reason) return refuse(usage);
+      const raised = raiseKind(opened.work, reason);
+      if (!raised.ok) return refuse(raised.reason);
+      appendDecision(env.paths, {
+        at: nowIso(),
+        item: opened.work.id,
+        kind: "kind",
+        text: `kind raised to new-project: ${reason}`,
+        by: "the agent",
+      });
+      saveWork(env.paths, opened.work);
+      return ok(
+        `${opened.work.id}: kind new-project (raised: ${reason})${raised.movedTo ? `; phase ${raised.movedTo}` : ""}`,
+        { kind: "new-project", phase: opened.work.phase, movedTo: raised.movedTo },
+      );
+    }
     case "approve": {
       const opened = openForChange(env, args[0]);
       if (isOutcome(opened)) return opened;
-      if (args[1] !== "spec")
+      if (args[1] !== "spec" && args[1] !== "audit")
         return refuse(
-          "usage: crew approve <id> spec [--mode <mode> [--validator complete-gap-round]]",
+          "usage: crew approve <id> spec [--mode <mode> [--validator complete-gap-round]] | crew approve <id> audit",
         );
+      const isAudit = kindOfItem(opened.work) === "audit";
+      if (args[1] === "audit") {
+        // An audit's report is signed by a person alone (SP7 §7.5, rule 19): no mode and no rule
+        // records it as anyone else's; a refusal makes the item wait for one.
+        if (!isAudit)
+          return refuse(`only an audit is signed: ${opened.work.id} is ${kindLabel(opened.work)}`);
+        if (parsed.flags.mode !== undefined || parsed.flags.validator !== undefined) {
+          opened.work.awaiting = "user";
+          delete opened.work.awaitingMessage;
+          saveWork(env.paths, opened.work);
+          return refuse(
+            parsed.flags.validator !== undefined
+              ? "an audit is never approved by the validator; the item waits for a person"
+              : `an audit's report is signed by a person: run crew await ${opened.work.id} user and end the turn`,
+          );
+        }
+        const signature = decisionFlag(parsed, env.policy);
+        if (isOutcome(signature)) return signature;
+        approve(opened.work, "audit", signature);
+        appendDecision(env.paths, {
+          at: nowIso(),
+          item: opened.work.id,
+          kind: "approval",
+          text: "audit signed",
+          by: whoDecided(signature),
+        });
+        saveWork(env.paths, opened.work);
+        return ok(`audit signed for ${opened.work.id} ${decisionText(env.policy, signature)}`, {
+          approvals: opened.work.approvals,
+        });
+      }
+      if (isAudit)
+        return refuse(`an audit is signed, not approved: crew approve ${opened.work.id} audit`);
       // Nothing of the full route goes past the spec in a session opened by mail (SP2c §8, §10):
       // the item waits for a person, and the message says so to whoever sent it.
       const openedBy = env.mail.self.openedBy;
@@ -3019,7 +3078,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           (q) => `  question ${q.id} open: ${oneLine(q.text)} (${channelsText(q)})`,
         ),
       );
-      const text = `${work.id} "${work.title}"\n  phase ${work.phase}, route ${work.route}, kind ${kindOfItem(work)}, ${triageText(work, "status")}${waitingText(work)}\n${extra.length ? `${extra.join("\n")}\n` : ""}${gateSummary(work, result.verdict, result.unproven, result.evidence.runs)}`;
+      const text = `${work.id} "${work.title}"\n  phase ${work.phase}, route ${work.route}, kind ${kindOfItem(work)}, ${triageText(work, "status")}${waitingText(work)}\n${kindOfItem(work) === "audit" ? "  audit: the proof is the signed report\n" : ""}${extra.length ? `${extra.join("\n")}\n` : ""}${gateSummary(work, result.verdict, result.unproven, result.evidence.runs)}`;
       // The mail synced and a task's reply that landed taken into the lead's record (SP2c §7): a
       // failure in either (a held lock, a folder that cannot be written) is one line under the
       // status, never the status lost.
@@ -3456,6 +3515,8 @@ const HELP = `crew ${VERSION}
   research <id> verify [--file <path>]  check the researcher's quotes in their sources; ask Jev when configured
   approve <id> spec                     record the user's approval (asks the user)
       --mode auto|bypassPermissions|dontAsk   no person watching: recorded as the agent's decision
+  approve <id> audit                    a person signs an audit's report (asks the user; never with --mode or --validator)
+  kind <id> raise --reason "<why>"      a feature raised to a new project while its spec is open: the strategy comes next
   phase <id> next                       advance when the guard holds
   await <id> user | role | mail <mid>   mark the turn's wait: for the user, for the roles, or for a reply to a message
   resume <id>                           clear the wait (asks the user while a jev dispute is held on the item)

@@ -17,7 +17,8 @@ export interface DecisionEntry {
     | "triage"
     | "question"
     | "dispute"
-    | "profile";
+    | "profile"
+    | "kind";
   id?: string;
   text: string;
   answer?: string;

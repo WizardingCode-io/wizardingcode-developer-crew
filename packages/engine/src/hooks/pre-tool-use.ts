@@ -718,6 +718,39 @@ function resumeDecision(
   if (work && !work.validatorDispute) return null;
   return { parsed, policyCommand: false, presence: false };
 }
+/**
+ * `crew approve <id> audit`, or an unreadable word where `audit` would be, has no unattended form
+ * (SP7 §7.5, SP8 decision 9): where nobody watches it is denied whatever the flags, a matching
+ * `--mode` included; with a person present the attended policy decides as for any decision
+ * (ADR 0005), `--validator` exempting nothing. Null for every other command.
+ */
+function auditApproval(
+  parsed: Parsed,
+  permissionMode: string | undefined,
+  headless: boolean,
+  policy: Policy,
+): Decision | null {
+  const [verb, , what] = parsed.positional;
+  if (verb !== "approve" || what === undefined) return null;
+  if (what !== "audit" && !UNREADABLE_VERB.test(what)) return null;
+  const where = unwatched(headless, permissionMode);
+  if (where)
+    return [
+      "deny",
+      `Crew: an audit's report is signed by a person and no person is watching this session (${where}): run crew await <id> user and end the turn`,
+    ];
+  if (typeof parsed.flags.mode === "string")
+    return [
+      "deny",
+      `Crew: a person is present (${permissionMode ?? "default"} mode); run the command without --mode so they are asked`,
+    ];
+  if (policy.attendedDecisions === "relay") return null;
+  return [
+    "ask",
+    "Crew: an audit's report is signed by a person: this command records their signature",
+  ];
+}
+
 /** The quotes and the backslashes of a command, removed for the rules that read a cleaned text. */
 const QUOTES = /["'\\]/g;
 
@@ -1198,7 +1231,9 @@ export function onPreToolUse(ctx: HookContext, payload: HookPayload): HookRespon
         );
       const userOnly = userOnlyCommand(args) ?? resumeDecision(ctx, args);
       if (!userOnly) continue;
-      const decided = userOnlyDecision(userOnly, payload.permission_mode, ctx.headless, ctx.policy);
+      const decided =
+        auditApproval(userOnly.parsed, payload.permission_mode, ctx.headless, ctx.policy) ??
+        userOnlyDecision(userOnly, payload.permission_mode, ctx.headless, ctx.policy);
       if (decided?.[0] === "deny") return answer(...decided);
       asked ??= decided;
     }

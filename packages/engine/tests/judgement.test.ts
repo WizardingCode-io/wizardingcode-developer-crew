@@ -118,7 +118,7 @@ test("SP2b: a ruling file is checked before anything is recorded", () => {
   expect(parse([])).toEqual({ refused: "the ruling file has no rulings" });
   expect(parse([{ gate: "style", verdict: "proven" }])).toEqual({
     refused:
-      "ruling 1: unknown judgement gate: style (code-quality, test-quality, security, ui-ux, risk, architecture, data, infra)",
+      "ruling 1: unknown judgement gate: style (code-quality, test-quality, security, ui-ux, risk, architecture, data, infra, strategy)",
   });
   expect(parse([{ gate: "ui-ux", verdict: "proven" }])).toEqual({
     refused: "ruling 1: ui-ux is not planned for this item (planned: code-quality, test-quality)",
@@ -403,4 +403,21 @@ test("SP7b-T5 AC-1: the todo's judgement is planned from its scope, its scope ha
   ).toBe("src/App.vue\n");
   expect(readReviewInputs(paths, work.id, "T-3")).toMatchObject({ fingerprint: "f1" });
   expect(readReviewInputs(paths, work.id)).toBeNull();
+});
+
+test("SP8-T2 AC-4: a ruling with gate strategy parses when the gate is planned", () => {
+  const ruling = {
+    gate: "strategy",
+    verdict: "proven",
+    reviewer: "cto",
+    judge: "judge",
+    findings: [],
+    tokens: 0,
+  };
+  expect(parseRulings({ rulings: [ruling] }, ["strategy"])).toMatchObject({
+    rulings: [{ gate: "strategy", verdict: "proven" }],
+  });
+  expect(parseRulings({ rulings: [ruling] }, ["code-quality"])).toMatchObject({
+    refused: expect.stringContaining("strategy is not planned"),
+  });
 });

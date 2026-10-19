@@ -21,7 +21,8 @@ export type JudgementGateName =
   | "risk"
   | "architecture"
   | "data"
-  | "infra";
+  | "infra"
+  | "strategy";
 export const JUDGEMENT_GATES: readonly JudgementGateName[] = [
   "code-quality",
   "test-quality",
@@ -31,6 +32,7 @@ export const JUDGEMENT_GATES: readonly JudgementGateName[] = [
   "architecture",
   "data",
   "infra",
+  "strategy",
 ];
 export function isJudgementGateName(value: unknown): value is JudgementGateName {
   return JUDGEMENT_GATES.includes(value as JudgementGateName);
@@ -434,16 +436,32 @@ export interface Registry {
   projects: ProjectEntry[];
 }
 
-export type WorkType = "fix" | "feature" | "refactor" | "chore" | "new-product" | "question";
+export type WorkType =
+  | "fix"
+  | "feature"
+  | "refactor"
+  | "chore"
+  | "new-product"
+  | "question"
+  | "audit";
 
-/** The kind of work (SP7 §7.1): it picks the phases with the route; `audit` arrives with SP8. The answers' choice lists the five. */
-export type WorkKind = "client-request" | "cross-project" | "new-project" | "feature" | "issue";
+/** The kind of work (SP7 §7.1): it picks the phases with the route. The answers' choice lists the six; `audit` is derived from its type alone (SP8). */
+export type WorkKind =
+  | "client-request"
+  | "cross-project"
+  | "new-project"
+  | "feature"
+  | "issue"
+  | "audit";
 
+/** The phases, in the order of the method: `analyse` (an issue's, SP7 §7.4) and `audit` (an audit's own, §7.5) after recognize; `strategy` (a new project's, §7.3) before specify. */
 export type Phase =
   | "receive"
   | "recognize"
   | "analyse"
+  | "audit"
   | "understand"
+  | "strategy"
   | "specify"
   | "conclave"
   | "plan"
@@ -454,7 +472,9 @@ export const PHASE_ORDER: readonly Phase[] = [
   "receive",
   "recognize",
   "analyse",
+  "audit",
   "understand",
+  "strategy",
   "specify",
   "conclave",
   "plan",
@@ -550,7 +570,8 @@ export interface Decision {
 }
 
 export interface Approval {
-  what: "spec";
+  /** `spec`: the user's approval of a spec; `audit`: a person's signature of an audit's report (SP8), never unattended. */
+  what: "spec" | "audit";
   at: string;
   /** Absent in records written before 0.1.2, which read as the user's. */
   by?: DecidedBy;

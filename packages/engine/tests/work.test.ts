@@ -32,6 +32,7 @@ import {
   openDebate,
   PHASES_BY_ROUTE,
   phasesFor,
+  raiseKind,
   raiseRoute,
   removeCriterion,
   saveWork,
@@ -50,6 +51,7 @@ const run: RunRecord = {
 };
 const empty: GuardContext = {
   specText: null,
+  strategyText: null,
   analysisText: null,
   originRecorded: false,
   gitRepository: false,
@@ -779,4 +781,113 @@ test("SP8-T1 AC-5 (finding 83): the guard out of analyse asks for the analysis d
   addCriterion(fast, "x");
   fast.phase = "analyse";
   expect(guardFor(fast, "build", ctx)).toEqual(expect.arrayContaining(asked));
+});
+
+test("SP8-T2 AC-1: an audit is always full with the four phases on every route, its guard into deliver names the audit's records alone, and the two new phases sit in the order", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const work = createWork(paths, "audit this project");
+  applyClassification(
+    work,
+    "audit",
+    { route: "fast", reasons: [], riskAreas: [] },
+    { kind: "audit", from: "work_type audit" },
+  );
+  expect(work.route).toBe("full");
+  expect(work.routeReasons).toContain("kind audit is always full");
+  expect(phasesFor(work)).toEqual(["receive", "recognize", "audit", "deliver"]);
+  expect(phasesFor({ route: "standard", kind: "audit" })).toEqual([
+    "receive",
+    "recognize",
+    "audit",
+    "deliver",
+  ]);
+  expect(PHASE_ORDER.indexOf("audit")).toBeGreaterThan(PHASE_ORDER.indexOf("recognize"));
+  expect(PHASE_ORDER.indexOf("audit")).toBeLessThan(PHASE_ORDER.indexOf("understand"));
+  expect(PHASE_ORDER.indexOf("strategy")).toBe(PHASE_ORDER.indexOf("understand") + 1);
+  work.phase = "audit";
+  const unproven = [
+    "audit run not recorded (crew audit <id> run)",
+    "audit report not rendered (crew audit <id> report)",
+    "the audit's signature (crew approve <id> audit)",
+  ];
+  expect(guardFor(work, "deliver", { ...empty, proven: false, unproven })).toEqual(
+    unproven.map((r) => `not proven: ${r}`),
+  );
+});
+
+test("SP8-T2 AC-2: a new project's phases carry strategy before specify; raiseKind moves a feature to new-project from understand, specify or conclave (back to strategy from the last two) and refuses the rest", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const feature = () => {
+    const w = createWork(paths, "a feature");
+    applyClassification(
+      w,
+      "feature",
+      { route: "standard", reasons: [], riskAreas: [] },
+      { kind: "feature", from: "work_type feature" },
+    );
+    return w;
+  };
+  const w = feature();
+  w.phase = "conclave";
+  expect(raiseKind(w, "a new domain")).toEqual({ ok: true, movedTo: "strategy" });
+  expect(w).toMatchObject({
+    kind: "new-project",
+    kindFrom: "raised: a new domain",
+    phase: "strategy",
+  });
+  expect(w.routeReasons).toContain("kind raised to new-project: a new domain");
+  expect(phasesFor(w)).toEqual([
+    "receive",
+    "recognize",
+    "understand",
+    "strategy",
+    "specify",
+    "conclave",
+    "plan",
+    "build",
+    "gate",
+    "deliver",
+  ]);
+  expect(guardFor(w, "specify", { ...empty, strategyText: null })).toEqual([
+    "strategy.md in the work folder",
+  ]);
+  expect(guardFor(w, "specify", { ...empty, strategyText: "# Strategy\n" })).toEqual([]);
+  expect(raiseKind(w, "again")).toEqual({
+    ok: false,
+    reason:
+      "only a feature is raised to a strategy: this item is kind new-project (from raised: a new domain)",
+  });
+  const early = feature();
+  early.phase = "understand";
+  expect(raiseKind(early, "x")).toEqual({ ok: true, movedTo: null });
+  expect(early.phase).toBe("understand");
+  const mid = feature();
+  mid.phase = "specify";
+  expect(raiseKind(mid, "x")).toEqual({ ok: true, movedTo: "strategy" });
+  expect(String(mid.phase)).toBe("strategy");
+  const late = feature();
+  late.phase = "plan";
+  expect(raiseKind(late, "x")).toEqual({
+    ok: false,
+    reason: "a strategy comes before the plan; from plan on, a new item",
+  });
+  const issue = createWork(paths, "a fix");
+  applyClassification(
+    issue,
+    "fix",
+    { route: "standard", reasons: [], riskAreas: [] },
+    { kind: "issue", from: "work_type fix" },
+  );
+  issue.phase = "understand";
+  expect(raiseKind(issue, "x")).toMatchObject({ ok: false });
+  const audit = createWork(paths, "an audit");
+  applyClassification(
+    audit,
+    "audit",
+    { route: "full", reasons: [], riskAreas: [] },
+    { kind: "audit", from: "work_type audit" },
+  );
+  audit.phase = "audit";
+  expect(raiseKind(audit, "x")).toMatchObject({ ok: false });
+  expect(audit.kind).toBe("audit");
 });

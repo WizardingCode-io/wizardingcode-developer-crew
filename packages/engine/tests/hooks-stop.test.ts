@@ -13,7 +13,14 @@ import { saveProfile } from "../src/profile.ts";
 import { addQuestion } from "../src/questions.ts";
 import { loadState } from "../src/state.ts";
 import type { WorkItem } from "../src/types.ts";
-import { addCriterion, addSkip, createWork, loadWork, saveWork } from "../src/work.ts";
+import {
+  addCriterion,
+  addSkip,
+  applyClassification,
+  createWork,
+  loadWork,
+  saveWork,
+} from "../src/work.ts";
 import { hookContext, makeRepo, repoPaths, tempDir, testEnv, write } from "./helpers.ts";
 
 function session() {
@@ -512,4 +519,21 @@ test("SP3-T4 AC-1: a question's wait is the user wait: the turn ends once with t
   expect(saved?.pauses?.[0]).toMatchObject({ kind: "user", reason: "gates have not run" });
   expect(saved?.questions?.[0]).toMatchObject({ id: "Q-1", answer: null });
   expect(onStop(ctx).decision).toBe("block");
+});
+
+test("SP8-T2 AC-4: the Stop hook holds nothing on an audit item with a clean tree, whatever its phase", () => {
+  const { ctx } = session();
+  const work = createWork(ctx.paths, "audit this project");
+  applyClassification(
+    work,
+    "audit",
+    { route: "fast", reasons: [], riskAreas: [] },
+    { kind: "audit", from: "work_type audit" },
+  );
+  work.phase = "audit";
+  saveWork(ctx.paths, work);
+  expect(onStop(ctx)).toEqual({});
+  work.phase = "deliver";
+  saveWork(ctx.paths, work);
+  expect(onStop(ctx)).toEqual({});
 });

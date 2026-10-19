@@ -1,4 +1,4 @@
-import { accessSync, constants, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { accessSync, constants, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { basename, delimiter, join } from "node:path";
 import { type AuditToolName, parseAudit } from "./audit.ts";
 import { excludedRiskPaths, riskAreasForPaths } from "./classify.ts";
@@ -714,6 +714,8 @@ export interface Assessment {
   currentFingerprint: string;
   /** The objection ledger as read, so a reassessment needs no second read. */
   ledger: ObjectionLedger;
+  /** An audit's records as they stand (SP7 §7.5): the run and the report written. */
+  audit: { run: boolean; report: boolean };
   /** Whether any engine-owned file of the item was changed outside the engine. */
   tampered: boolean;
 }
@@ -741,6 +743,7 @@ export function assess(
     fingerprintMethod(read.evidence.fingerprint),
   );
   const led = loadLedger(paths, work.id);
+  const auditDir = join(workDir(paths, work.id), "audit");
   return reassess(
     {
       evidence: read.evidence,
@@ -750,6 +753,10 @@ export function assess(
       currentFingerprint,
       ledger: led.ledger,
       tampered: tampered || read.tampered || led.tampered,
+      audit: {
+        run: existsSync(join(auditDir, "runs.json")),
+        report: existsSync(join(auditDir, "report.json")),
+      },
     },
     work,
     policy,
@@ -773,6 +780,7 @@ export function reassess(a: AssessmentInputs, work: WorkItem, policy: Policy): A
     ledger: a.ledger,
     currentFingerprint: a.currentFingerprint,
     tampered: a.tampered,
+    audit: a.audit,
     policy,
   });
   return { ...a, ...verdict };

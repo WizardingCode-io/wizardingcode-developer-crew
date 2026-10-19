@@ -1,5 +1,5 @@
 // packages/engine/src/cli.ts
-import { existsSync as existsSync15 } from "node:fs";
+import { existsSync as existsSync16 } from "node:fs";
 import { basename as basename6, isAbsolute as isAbsolute7, join as join39, relative as relative9, resolve as resolve4 } from "node:path";
 
 // packages/engine/src/analysis.ts
@@ -725,7 +725,8 @@ var JUDGEMENT_GATES = [
   "risk",
   "architecture",
   "data",
-  "infra"
+  "infra",
+  "strategy"
 ];
 function isJudgementGateName(value) {
   return JUDGEMENT_GATES.includes(value);
@@ -748,7 +749,9 @@ var PHASE_ORDER = [
   "receive",
   "recognize",
   "analyse",
+  "audit",
   "understand",
+  "strategy",
   "specify",
   "conclave",
   "plan",
@@ -1495,6 +1498,7 @@ import { join as join10 } from "node:path";
 
 // packages/engine/src/classify.ts
 var WORK_TYPES = {
+  audit: "an end-to-end audit of an existing codebase, delivered as a report a person signs (SP8)",
   fix: "repairs behaviour that is wrong today",
   feature: "adds or changes behaviour on purpose",
   refactor: "changes structure without changing behaviour",
@@ -1549,7 +1553,8 @@ var QUESTIONS = {
       "cross-project": "a request another project of the workspace sent by mail",
       "new-project": "a new project or a feature the conclave raises to a strategy",
       feature: "a change to a project that exists",
-      issue: "a defect to analyse to its origin before it is fixed"
+      issue: "a defect to analyse to its origin before it is fixed",
+      audit: "an existing codebase audited end to end, with a report a person signs (work_type audit)"
     }
   },
   priority: {
@@ -1602,6 +1607,10 @@ function validateAnswers(raw) {
       problems.push("kind: a fix is an issue");
     if (input.work_type === "new-product" && input.kind !== "new-project")
       problems.push("kind: a new product is a new project");
+    if (input.work_type === "audit" && input.kind !== "audit")
+      problems.push("kind: an audit is an audit");
+    if (input.work_type !== "audit" && input.kind === "audit")
+      problems.push("kind: an audit is work_type audit");
   }
   if (problems.length)
     throw new AnswerError(problems);
@@ -1612,6 +1621,8 @@ function kindOf(answers, context) {
     return { kind: "issue", from: "work_type fix" };
   if (answers.work_type === "new-product")
     return { kind: "new-project", from: "work_type new-product" };
+  if (answers.work_type === "audit")
+    return { kind: "audit", from: "work_type audit" };
   if (answers.kind !== undefined)
     return { kind: answers.kind, from: "answer" };
   if (context.origin)
@@ -2269,10 +2280,54 @@ var PHASES_BY_ROUTE = {
 };
 function phasesFor(work) {
   const base = PHASES_BY_ROUTE[work.route];
-  if (kindOfItem(work) !== "issue")
-    return [...base];
-  const at = base.indexOf("recognize") + 1;
-  return [...base.slice(0, at), "analyse", ...base.slice(at)];
+  const kind = kindOfItem(work);
+  if (kind === "audit")
+    return ["receive", "recognize", "audit", "deliver"];
+  if (kind === "issue") {
+    const at = base.indexOf("recognize") + 1;
+    return [...base.slice(0, at), "analyse", ...base.slice(at)];
+  }
+  if (kind === "new-project") {
+    const at = base.indexOf("specify");
+    if (at !== -1)
+      return [...base.slice(0, at), "strategy", ...base.slice(at)];
+  }
+  return [...base];
+}
+function kindFloor(work) {
+  if (work.kind === "new-project" && work.route === "fast") {
+    work.route = "standard";
+    work.routeReasons.push("kind new-project is never fast");
+  }
+  if (work.kind === "audit" && work.route !== "full") {
+    work.route = "full";
+    work.routeReasons.push("kind audit is always full");
+  }
+}
+var RAISABLE = ["feature", "client-request", "cross-project"];
+var RAISE_PHASES = ["understand", "specify", "conclave"];
+function raiseKind(work, reason) {
+  if (!RAISABLE.includes(kindOfItem(work)))
+    return {
+      ok: false,
+      reason: `only a feature is raised to a strategy: this item is ${kindLabel(work)}`
+    };
+  if (phaseIndex(work.phase) >= phaseIndex("plan"))
+    return { ok: false, reason: "a strategy comes before the plan; from plan on, a new item" };
+  if (!RAISE_PHASES.includes(work.phase))
+    return {
+      ok: false,
+      reason: `a feature is raised to a strategy from understand, specify or conclave, not ${work.phase}`
+    };
+  work.kind = "new-project";
+  work.kindFrom = `raised: ${reason}`;
+  work.routeReasons.push(`kind raised to new-project: ${reason}`);
+  kindFloor(work);
+  if (work.phase === "understand")
+    return { ok: true, movedTo: null };
+  work.phase = "strategy";
+  work.phaseAt = { ...work.phaseAt ?? {}, strategy: nowIso() };
+  return { ok: true, movedTo: "strategy" };
 }
 function kindOfItem(work) {
   return work.kind ?? "feature";
@@ -2414,10 +2469,7 @@ function applyClassification(work, type, decision, kind) {
       work.kindFrom = kind.from;
     }
   }
-  if (work.kind === "new-project" && work.route === "fast") {
-    work.route = "standard";
-    work.routeReasons.push("kind new-project is never fast");
-  }
+  kindFloor(work);
   if (work.phase === "receive")
     work.phase = "recognize";
 }
@@ -2581,6 +2633,8 @@ function missingAnalysisSections(text) {
 }
 function routeDocuments(work, ctx) {
   const missing = [];
+  if (kindOfItem(work) === "audit")
+    return missing;
   if (work.route !== "fast") {
     if (ctx.specText === null)
       missing.push("spec.md in the work folder");
@@ -2629,6 +2683,12 @@ function guardFor(work, next, ctx) {
       missing.push(`${/^[aeiou]/i.test(name) ? "an" : "a"} "${name}" section with content in analysis.md (write "none" when there is nothing)`);
     if (ctx.gitRepository && !ctx.originRecorded)
       missing.push("analysis/origin.json in the work folder (crew analyse <id> --paths <files>)");
+  }
+  if (work.phase === "strategy" && ctx.strategyText === null)
+    missing.push("strategy.md in the work folder");
+  if (next === "deliver" && kindOfItem(work) === "audit") {
+    missing.push(...ctx.unproven.map((reason) => `not proven: ${reason}`));
+    return missing;
   }
   if (next === "plan") {
     missing.push(...conclaveDocument(work, ctx));
@@ -2798,6 +2858,16 @@ function computeVerdict(input) {
   const unproven = [];
   if (tampered)
     unproven.push("state changed outside the engine");
+  if (kindOfItem(work) === "audit") {
+    const audit = input.audit ?? { run: false, report: false };
+    if (!audit.run)
+      unproven.push("audit run not recorded (crew audit <id> run)");
+    if (!audit.report)
+      unproven.push("audit report not rendered (crew audit <id> report)");
+    if (!work.approvals.some((a) => a.what === "audit"))
+      unproven.push("the audit's signature (crew approve <id> audit)");
+    return { verdict: unproven.length === 0 ? "proven" : "unproven", unproven };
+  }
   if (currentFingerprint === UNAVAILABLE)
     unproven.push("fingerprint unavailable: too many files to watch without git");
   const stale = evidence.fingerprint !== null && evidence.fingerprint !== currentFingerprint && !evidence.runs.some((r) => r.fingerprint === currentFingerprint);
@@ -5526,7 +5596,7 @@ async function envStatus(paths, environment) {
 }
 
 // packages/engine/src/gates.ts
-import { accessSync as accessSync2, constants as constants2, mkdirSync as mkdirSync9, rmSync as rmSync2, writeFileSync as writeFileSync3 } from "node:fs";
+import { accessSync as accessSync2, constants as constants2, existsSync as existsSync13, mkdirSync as mkdirSync9, rmSync as rmSync2, writeFileSync as writeFileSync3 } from "node:fs";
 import { basename as basename5, delimiter, join as join32 } from "node:path";
 
 // packages/engine/src/audit.ts
@@ -6757,6 +6827,7 @@ function assess(paths, work, profile, policy, tampered = false) {
   const read = loadEvidence(paths, work.id);
   const currentFingerprint = computeFingerprint(paths.root, profile, base, MAX_WATCHED_FILES, fingerprintMethod(read.evidence.fingerprint));
   const led = loadLedger(paths, work.id);
+  const auditDir = join32(workDir(paths, work.id), "audit");
   return reassess({
     evidence: read.evidence,
     expected,
@@ -6764,7 +6835,11 @@ function assess(paths, work, profile, policy, tampered = false) {
     judgement,
     currentFingerprint,
     ledger: led.ledger,
-    tampered: tampered || read.tampered || led.tampered
+    tampered: tampered || read.tampered || led.tampered,
+    audit: {
+      run: existsSync13(join32(auditDir, "runs.json")),
+      report: existsSync13(join32(auditDir, "report.json"))
+    }
   }, work, policy);
 }
 function reassess(a, work, policy) {
@@ -6776,6 +6851,7 @@ function reassess(a, work, policy) {
     ledger: a.ledger,
     currentFingerprint: a.currentFingerprint,
     tampered: a.tampered,
+    audit: a.audit,
     policy
   });
   return { ...a, ...verdict };
@@ -8075,6 +8151,30 @@ function resumeDecision(ctx, args) {
     return null;
   return { parsed, policyCommand: false, presence: false };
 }
+function auditApproval(parsed, permissionMode, headless, policy) {
+  const [verb, , what] = parsed.positional;
+  if (verb !== "approve" || what === undefined)
+    return null;
+  if (what !== "audit" && !UNREADABLE_VERB.test(what))
+    return null;
+  const where = unwatched(headless, permissionMode);
+  if (where)
+    return [
+      "deny",
+      `Crew: an audit's report is signed by a person and no person is watching this session (${where}): run crew await <id> user and end the turn`
+    ];
+  if (typeof parsed.flags.mode === "string")
+    return [
+      "deny",
+      `Crew: a person is present (${permissionMode ?? "default"} mode); run the command without --mode so they are asked`
+    ];
+  if (policy.attendedDecisions === "relay")
+    return null;
+  return [
+    "ask",
+    "Crew: an audit's report is signed by a person: this command records their signature"
+  ];
+}
 var QUOTES = /["'\\]/g;
 var BIN = String.raw`^(?:\S*/)?`;
 var verbEntry = (re, what) => ({
@@ -8401,7 +8501,7 @@ function onPreToolUse(ctx, payload) {
       const userOnly = userOnlyCommand(args) ?? resumeDecision(ctx, args);
       if (!userOnly)
         continue;
-      const decided = userOnlyDecision(userOnly, payload.permission_mode, ctx.headless, ctx.policy);
+      const decided = auditApproval(userOnly.parsed, payload.permission_mode, ctx.headless, ctx.policy) ?? userOnlyDecision(userOnly, payload.permission_mode, ctx.headless, ctx.policy);
       if (decided?.[0] === "deny")
         return answer(...decided);
       asked ??= decided;
@@ -8425,7 +8525,7 @@ function onPreToolUse(ctx, payload) {
 }
 
 // packages/engine/src/tasks.ts
-import { cpSync, existsSync as existsSync13 } from "node:fs";
+import { cpSync, existsSync as existsSync14 } from "node:fs";
 import { join as join35 } from "node:path";
 function shortId(workId) {
   return workId.slice(0, 14);
@@ -8496,7 +8596,7 @@ function openTask(ctx, env, work, task, criteria, text) {
   if (!body)
     return { refused: `plan.md names no task ${task}; give its text with --text "<task>"` };
   const names = taskNames(work.id, env.paths.root, task, env.policy.mail.worktrees);
-  if (existsSync13(names.worktree))
+  if (existsSync14(names.worktree))
     return { refused: `${names.worktree} exists; remove it or pick another task number` };
   let branches;
   try {
@@ -8701,7 +8801,7 @@ function mergeTask(ctx, env, work, task, options = {}) {
     return {
       refused: `${task} has no reply yet (message ${record.message}); the implementer ends with crew mail reply`
     };
-  const childPaths = existsSync13(record.worktree) ? resolvePaths(record.worktree, ctx.env) : null;
+  const childPaths = existsSync14(record.worktree) ? resolvePaths(record.worktree, ctx.env) : null;
   if (!childPaths)
     return {
       refused: `${task}'s worktree ${record.worktree} is gone; restore it with git worktree add ${record.worktree} ${record.branch}, then merge`
@@ -8748,7 +8848,7 @@ function mergeTask(ctx, env, work, task, options = {}) {
   saveWork(env.paths, work);
   const credit = creditChild(env.paths, work, record, options.forcedBy !== undefined);
   const childDir = workDir(env.paths, child);
-  if (existsSync13(workDir(childPaths, child)))
+  if (existsSync14(workDir(childPaths, child)))
     cpSync(workDir(childPaths, child), childDir, {
       recursive: true,
       force: false,
@@ -9417,6 +9517,7 @@ async function recordTdd(paths, work, evidence, profile, criterionId, step, over
 
 // packages/engine/src/verify.ts
 var RUBRIC_QUESTIONS = {
+  strategy: "a fault of the strategy as the strategy rubric names it: an element not required by a stated need (over-engineering), a claim whose mark names no researched fact, a cost or a time guessed rather than measured, a scaling phase without an observable trigger, a smaller answer not argued point by point where the request asked for more",
   "code-quality": "a violation of SOLID or KISS as the code-quality rubric's six questions name it: a type with more than one reason to change, a copy of logic, a name that says the opposite of what the code does, dead or unreachable code, a workaround, a hardcoded value",
   "test-quality": "a test that would not fail if the behaviour it names broke, a criterion with no such test, or an assertion true by construction",
   "ui-ux": "a page whose criterion is not visible in the capture, a missing state (loading, empty, error), a control without a keyboard path or a label, or copy outside the project's language and voice",
@@ -9703,7 +9804,7 @@ async function verifyTriage(cfg, policy, input, options = {}) {
 var VERSION = "0.8.0";
 
 // packages/engine/src/workspace.ts
-import { existsSync as existsSync14 } from "node:fs";
+import { existsSync as existsSync15 } from "node:fs";
 import { join as join38 } from "node:path";
 var NO_WORKSPACE = "no workspace in policy.json (mail.workspace): crew workspace status lists the projects of one workspace";
 var CLOSED = new Set(["done", "refused", "expired"]);
@@ -9754,7 +9855,7 @@ function workspaceStatus(paths, policy, env) {
       priorities: 0,
       questions: 0
     };
-    if (!existsSync14(join38(root, ".git")))
+    if (!existsSync15(join38(root, ".git")))
       return { ...empty, gone: true, environment: "none" };
     const projectPaths = pathsFor(root, userDir);
     const ctx = mailContext(projectPaths, loadPolicy(projectPaths).policy, env);
@@ -9782,6 +9883,7 @@ var KNOWN_FLAGS = {
   accept: [],
   start: ["answers", "criterion", "preserve", "origin", "priority", "source", "reason"],
   classify: ["answers"],
+  kind: ["reason"],
   criteria: ["kind", "contract"],
   decision: ["default"],
   debate: ["reason", "tokens"],
@@ -9933,7 +10035,7 @@ function accept(env, target) {
     });
   }
   const dir = workDir(env.paths, target);
-  if (!/^[\w.-]+$/.test(target) || target.includes("..") || !existsSync15(join39(dir, "work.json")))
+  if (!/^[\w.-]+$/.test(target) || target.includes("..") || !existsSync16(join39(dir, "work.json")))
     return refuse(`unknown work item: ${target}`);
   const files = PROTECTED_WORK_FILES.filter((name) => recordIntegrity(env.paths, join39(dir, name)));
   return ok(`${target} accepted: ${files.join(", ")} now trusted as they are`, {
@@ -10145,12 +10247,13 @@ function guardContext(env, work, tampered) {
   const result = assess(env.paths, work, env.profile, env.policy, env.tampered || tampered);
   return {
     specText: readText(join39(dir, "spec.md")),
+    strategyText: readText(join39(dir, "strategy.md")),
     analysisText: readText(join39(dir, "analysis.md")),
-    originRecorded: existsSync15(join39(dir, "analysis", "origin.json")),
+    originRecorded: existsSync16(join39(dir, "analysis", "origin.json")),
     gitRepository: isGitRepo(env.paths.root),
     conclaveText: readText(join39(dir, "conclave.md")),
     ledger: loadLedger(env.paths, work.id).ledger,
-    planExists: existsSync15(join39(dir, "plan.md")),
+    planExists: existsSync16(join39(dir, "plan.md")),
     evidence: result.evidence,
     proven: result.verdict === "proven",
     unproven: result.unproven,
@@ -10916,12 +11019,61 @@ ${originNotes.join(`
         decision: result
       });
     }
+    case "kind": {
+      const usage = 'usage: crew kind <id> raise --reason "<why>"';
+      const opened = openForChange(env, args[0]);
+      if (isOutcome(opened))
+        return opened;
+      const reason = typeof parsed.flags.reason === "string" ? parsed.flags.reason.trim() : "";
+      if (args[1] !== "raise" || !reason)
+        return refuse(usage);
+      const raised = raiseKind(opened.work, reason);
+      if (!raised.ok)
+        return refuse(raised.reason);
+      appendDecision(env.paths, {
+        at: nowIso(),
+        item: opened.work.id,
+        kind: "kind",
+        text: `kind raised to new-project: ${reason}`,
+        by: "the agent"
+      });
+      saveWork(env.paths, opened.work);
+      return ok(`${opened.work.id}: kind new-project (raised: ${reason})${raised.movedTo ? `; phase ${raised.movedTo}` : ""}`, { kind: "new-project", phase: opened.work.phase, movedTo: raised.movedTo });
+    }
     case "approve": {
       const opened = openForChange(env, args[0]);
       if (isOutcome(opened))
         return opened;
-      if (args[1] !== "spec")
-        return refuse("usage: crew approve <id> spec [--mode <mode> [--validator complete-gap-round]]");
+      if (args[1] !== "spec" && args[1] !== "audit")
+        return refuse("usage: crew approve <id> spec [--mode <mode> [--validator complete-gap-round]] | crew approve <id> audit");
+      const isAudit = kindOfItem(opened.work) === "audit";
+      if (args[1] === "audit") {
+        if (!isAudit)
+          return refuse(`only an audit is signed: ${opened.work.id} is ${kindLabel(opened.work)}`);
+        if (parsed.flags.mode !== undefined || parsed.flags.validator !== undefined) {
+          opened.work.awaiting = "user";
+          delete opened.work.awaitingMessage;
+          saveWork(env.paths, opened.work);
+          return refuse(parsed.flags.validator !== undefined ? "an audit is never approved by the validator; the item waits for a person" : `an audit's report is signed by a person: run crew await ${opened.work.id} user and end the turn`);
+        }
+        const signature = decisionFlag(parsed, env.policy);
+        if (isOutcome(signature))
+          return signature;
+        approve(opened.work, "audit", signature);
+        appendDecision(env.paths, {
+          at: nowIso(),
+          item: opened.work.id,
+          kind: "approval",
+          text: "audit signed",
+          by: whoDecided(signature)
+        });
+        saveWork(env.paths, opened.work);
+        return ok(`audit signed for ${opened.work.id} ${decisionText(env.policy, signature)}`, {
+          approvals: opened.work.approvals
+        });
+      }
+      if (isAudit)
+        return refuse(`an audit is signed, not approved: crew approve ${opened.work.id} audit`);
       const openedBy = env.mail.self.openedBy;
       if (openedBy && opened.work.route === "full") {
         opened.work.awaiting = "user";
@@ -11878,7 +12030,8 @@ ${lines2.join(`
       extra.unshift(...openQuestions(work).map((q) => `  question ${q.id} open: ${oneLine(q.text)} (${channelsText(q)})`));
       const text = `${work.id} "${work.title}"
   phase ${work.phase}, route ${work.route}, kind ${kindOfItem(work)}, ${triageText(work, "status")}${waitingText(work)}
-${extra.length ? `${extra.join(`
+${kindOfItem(work) === "audit" ? `  audit: the proof is the signed report
+` : ""}${extra.length ? `${extra.join(`
 `)}
 ` : ""}${gateSummary(work, result.verdict, result.unproven, result.evidence.runs)}`;
       const synced = guarded("the mail was not synced", () => syncMail(env.mail, env.paths));
@@ -12259,6 +12412,8 @@ var HELP = `crew ${VERSION}
   research <id> verify [--file <path>]  check the researcher's quotes in their sources; ask Jev when configured
   approve <id> spec                     record the user's approval (asks the user)
       --mode auto|bypassPermissions|dontAsk   no person watching: recorded as the agent's decision
+  approve <id> audit                    a person signs an audit's report (asks the user; never with --mode or --validator)
+  kind <id> raise --reason "<why>"      a feature raised to a new project while its spec is open: the strategy comes next
   phase <id> next                       advance when the guard holds
   await <id> user | role | mail <mid>   mark the turn's wait: for the user, for the roles, or for a reply to a message
   resume <id>                           clear the wait (asks the user while a jev dispute is held on the item)

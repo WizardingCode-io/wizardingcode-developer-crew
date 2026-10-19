@@ -1600,3 +1600,42 @@ test("SP8-T1 AC-7 (finding 87): crew profile unset is the user's, whatever the p
   expect(bash("crew profile")).toEqual({});
   expect(bash("crew profile --json")).toEqual({});
 });
+
+test("SP8-T2 AC-3: crew approve <id> audit has no unattended form: asked under prompt, run under relay with a person, denied where nobody watches with or without --mode, --validator exempting nothing; an unreadable id or word the same", () => {
+  const prompt = setup();
+  const relay = setup({ attendedDecisions: "relay" });
+  const bash = (ctx: typeof prompt.ctx, command: string, permission_mode?: string) =>
+    onPreToolUse(ctx, { tool_name: "Bash", tool_input: { command }, permission_mode });
+  for (const mode of ["default", "auto", undefined]) {
+    expect(decision(bash(prompt.ctx, "crew approve w1 audit", mode))).toBe("ask");
+    expect(bash(relay.ctx, "crew approve w1 audit", mode)).toEqual({});
+    expect(
+      decision(bash(prompt.ctx, "crew approve w1 audit --validator complete-gap-round", mode)),
+    ).toBe("ask");
+    expect(bash(relay.ctx, "crew approve w1 audit --validator complete-gap-round", mode)).toEqual(
+      {},
+    );
+    expect(decision(bash(prompt.ctx, "crew approve $ID audit", mode))).toBe("ask");
+    expect(decision(bash(prompt.ctx, "crew approve w1 $WHAT", mode))).toBe("ask");
+    expect(
+      decision(bash(prompt.ctx, `crew approve w1 audit --mode ${mode ?? "default"}`, mode)),
+    ).toBe("deny");
+  }
+  for (const mode of ["bypassPermissions", "dontAsk"]) {
+    for (const ctx of [prompt.ctx, relay.ctx]) {
+      const bare = bash(ctx, "crew approve w1 audit", mode);
+      expect(decision(bare)).toBe("deny");
+      expect(reason(bare)).toContain("signed by a person");
+      expect(decision(bash(ctx, `crew approve w1 audit --mode ${mode}`, mode))).toBe("deny");
+      expect(
+        decision(
+          bash(ctx, `crew approve w1 audit --validator complete-gap-round --mode ${mode}`, mode),
+        ),
+      ).toBe("deny");
+      expect(decision(bash(ctx, `crew approve $ID audit --mode ${mode}`, mode))).toBe("deny");
+      expect(decision(bash(ctx, `crew approve w1 $WHAT --mode ${mode}`, mode))).toBe("deny");
+      // A spec approval keeps its unattended form.
+      expect(bash(ctx, `crew approve w1 spec --mode ${mode}`, mode)).toEqual({});
+    }
+  }
+});

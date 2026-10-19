@@ -5609,3 +5609,125 @@ test("SP8-T1 AC-5 (finding 82): crew env stop says when the group was not signal
     `environment stopped (pid ${gone.pid}; the group was not signalled: the process is no longer the engine's)`,
   );
 });
+
+const auditAnswers = JSON.stringify({ ...JSON.parse(answers), work_type: "audit", scope: 3 });
+
+test("SP8-T2 AC-1: crew start with work_type audit creates a full item with no criterion and the four phases, and its verdict names the audit's three records", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const c = io(root);
+  const started = await c.json("start", "Audit this project", "--answers", auditAnswers);
+  expect(started.code).toBe(0);
+  const id = started.data.id as string;
+  const status = await c.json("status");
+  expect(status.data).toMatchObject({ route: "full", phase: "recognize" });
+  expect(status.data.phases).toEqual(["receive", "recognize", "audit", "deliver"]);
+  const text = (await c.run("status")).out;
+  expect(text).toContain("kind audit");
+  expect(text).toContain("audit: the proof is the signed report");
+  expect(text).not.toContain("acceptance criteria");
+  expect((await c.run("phase", id, "next")).code).toBe(0);
+  expect((await c.json("status")).data.phase).toBe("audit");
+  const next = await c.run("phase", id, "next");
+  expect(next.code).toBe(1);
+  expect(next.err).toContain("not proven: audit run not recorded (crew audit <id> run)");
+  expect(next.err).toContain("not proven: audit report not rendered (crew audit <id> report)");
+  expect(next.err).toContain("not proven: the audit's signature (crew approve <id> audit)");
+  expect(next.err).not.toContain("spec.md");
+  expect(next.err).not.toContain("criteri");
+});
+
+test("SP8-T2 AC-2: crew kind raise moves a feature to a new project, back to strategy from conclave, recorded in the register; refused again, on an issue, on an audit and from plan on; the guard out of strategy asks for the document", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const c = io(root);
+  const paths = repoPaths(root, c.env);
+  const standard = JSON.stringify({ ...JSON.parse(answers), work_type: "feature", scope: 1 });
+  const id = (await c.json("start", "A feature", "--answers", standard, "--criterion", "a")).data
+    .id as string;
+  write(root, `.crew/work/${id}/spec.md`, "# Spec\n\n## Acceptance criteria\n- AC-1 x\n");
+  for (let i = 0; i < 3; i++) await c.run("phase", id, "next");
+  expect((await c.json("status")).data.phase).toBe("conclave");
+  expect((await c.run("kind", id, "raise")).code).toBe(1);
+  const raised = await c.run("kind", id, "raise", "--reason", "a new domain of its own");
+  expect(raised.code, raised.err).toBe(0);
+  expect(raised.out.trim()).toBe(
+    `${id}: kind new-project (raised: a new domain of its own); phase strategy`,
+  );
+  const work = loadWork(paths, id).work as WorkItem;
+  expect(work).toMatchObject({ kind: "new-project", kindFrom: "raised: a new domain of its own" });
+  expect(existsSync(join(root, ".crew", "work", id, "spec.md"))).toBe(true);
+  expect(listDecisions(paths)[0]).toMatchObject({
+    item: id,
+    kind: "kind",
+    text: "kind raised to new-project: a new domain of its own",
+    by: "the agent",
+  });
+  expect((await c.json("status")).data.phases).toContain("strategy");
+  const blocked = await c.run("phase", id, "next");
+  expect(blocked.code).toBe(1);
+  expect(blocked.err).toContain("strategy.md in the work folder");
+  write(root, `.crew/work/${id}/strategy.md`, "# Strategy\n");
+  expect((await c.json("phase", id, "next")).data.phase).toBe("specify");
+  expect((await c.run("kind", id, "raise", "--reason", "again")).err).toContain(
+    "only a feature is raised to a strategy",
+  );
+  const fix = (await c.json("start", "A fix", "--answers", answers, "--criterion", "a")).data
+    .id as string;
+  expect((await c.run("kind", fix, "raise", "--reason", "x")).code).toBe(1);
+  const audit = (await c.json("start", "Audit", "--answers", auditAnswers)).data.id as string;
+  expect((await c.run("kind", audit, "raise", "--reason", "x")).code).toBe(1);
+  expect(loadWork(paths, audit).work?.kind).toBe("audit");
+  const lateId = (await c.json("start", "Late feature", "--answers", standard, "--criterion", "a"))
+    .data.id as string;
+  const planned = loadWork(paths, lateId).work as WorkItem;
+  planned.phase = "plan";
+  saveWork(paths, planned);
+  const late = await c.run("kind", lateId, "raise", "--reason", "x");
+  expect(late.code).toBe(1);
+  expect(late.err.trim()).toBe("a strategy comes before the plan; from plan on, a new item");
+});
+
+test("SP8-T2 AC-3: crew approve <id> audit is a person's: --mode and --validator refused with the item waiting for the user, a spec approval refused on an audit, and the signature recorded with what audit", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const c = io(root);
+  const paths = repoPaths(root, c.env);
+  const id = (await c.json("start", "Audit this project", "--answers", auditAnswers)).data
+    .id as string;
+  const unattended = await c.run("approve", id, "audit", "--mode", "dontAsk");
+  expect(unattended.code).toBe(1);
+  expect(unattended.err.trim()).toBe(
+    `an audit's report is signed by a person: run crew await ${id} user and end the turn`,
+  );
+  expect((await c.json("status")).data.awaiting).toBe("user");
+  await c.run("resume", id);
+  const validator = await c.run("approve", id, "audit", "--validator", "complete-gap-round");
+  expect(validator.code).toBe(1);
+  expect(validator.err.trim()).toBe(
+    "an audit is never approved by the validator; the item waits for a person",
+  );
+  expect((await c.json("status")).data.awaiting).toBe("user");
+  await c.run("resume", id);
+  expect((await c.run("approve", id, "spec")).err.trim()).toBe(
+    `an audit is signed, not approved: crew approve ${id} audit`,
+  );
+  expect((loadWork(paths, id).work as WorkItem).approvals).toEqual([]);
+  const signed = await c.run("approve", id, "audit");
+  expect(signed.code, signed.err).toBe(0);
+  expect(signed.out.trim()).toBe(`audit signed for ${id} by the user, relayed by the agent`);
+  expect((loadWork(paths, id).work as WorkItem).approvals).toMatchObject([
+    { what: "audit", by: "user", relayed: true },
+  ]);
+  expect(listDecisions(paths)[0]).toMatchObject({
+    item: id,
+    kind: "approval",
+    text: "audit signed",
+  });
+});
