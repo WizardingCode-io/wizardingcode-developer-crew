@@ -10814,7 +10814,7 @@ async function verifyTriage(cfg, policy, input, options = {}) {
 }
 
 // packages/engine/src/version.ts
-var VERSION = "0.8.0";
+var VERSION = "0.9.0";
 
 // packages/engine/src/workspace.ts
 import { existsSync as existsSync18 } from "node:fs";
@@ -12508,7 +12508,7 @@ ${originNotes.join(`
         return refuse(`no researcher file at ${rel2}`);
       const facts = parseFacts(text);
       if (!facts.length)
-        return ok(`no facts in ${rel2}`, { facts: [] });
+        return ok(`no fact to verify in ${rel2}: a code fact is "- <path from the root>:<line> · <sentence>", a documentation fact "- <URL or document> · "<quote>" · <meaning>"; the strategy's marks name the file's lines either way (crew strategy ${opened.work.id} check), so go on`, { facts: [] });
       const jev = jevConfig(io.env, env.config);
       const asking = jev.configured && askAllowed(env.policy, "fact");
       const statuses = new Map;

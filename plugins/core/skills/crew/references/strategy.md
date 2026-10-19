@@ -4,7 +4,7 @@ A new project (`kind new-project`, or a feature raised with `crew kind <id> rais
 
 ## 1. The research first
 
-Launch the researcher (`wizardingcode-developer-crew:researcher`) with the brief's path and five questions: what exists today for this need (in the repository and the workspace's projects), what the documentation of the candidate stacks says (limits, maintenance, cost), what comparable work cost and took, what the request asks for that no need calls for, what a smaller answer would be. The hook saves `conclave/researcher.md`. Then `crew research <id> verify`: each quote checked in its source, Jev asked when configured (`references/jev.md`). At the conclave this researcher is resumed with the open decisions, never relaunched.
+Launch the researcher (`wizardingcode-developer-crew:researcher`) with the brief's path and five questions: what exists today for this need (in the repository and the workspace's projects), what the documentation of the candidate stacks says (limits, maintenance, cost), what comparable work cost and took, what the request asks for that no need calls for, what a smaller answer would be. The hook saves `conclave/researcher.md`. Then `crew research <id> verify`: each quote checked in its source, Jev asked when configured (`references/jev.md`). A session with no web tool leaves the documentation section at `- none` and the verify says it has no fact to verify: that is not a blocker; the strategy says it is from the research alone and goes on with the code facts, every claim marked on their lines. At the conclave this researcher is resumed with the open decisions, never relaunched.
 
 ## 2. The document
 
@@ -40,6 +40,8 @@ Every bullet ends with one or more marks `[R<n>]`, `n` the line number of `concl
 - **Persuasion.** When the user asks for something worse than the need, the proof point by point comes before the yes: each of their reasons answered with a fact and its mark. Their final word is theirs: recorded with `crew decision <id> add` and `crew decide`, never written into the strategy as the team's.
 
 A remote test environment like production is always recommended (rule 3): say so in the Time or the Stack section when the project has none, and the report names it when absent.
+
+An element the request asks for and no fact calls for is refused in the Stack section, with the fact that makes it unnecessary: a sentence that admits "no fact calls for it" and keeps the element as a compromise fails the Proportion question at the CTO's review and costs a round; the smaller answer is argued item by item, and what the user asked for is left to the user as a decision of the gap round, never built into the strategy.
 
 ## 4. The check, the review and the ruling
 

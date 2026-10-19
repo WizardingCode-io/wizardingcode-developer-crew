@@ -2408,7 +2408,12 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       const text = readText(file);
       if (text === null) return refuse(`no researcher file at ${rel}`);
       const facts = parseFacts(text);
-      if (!facts.length) return ok(`no facts in ${rel}`, { facts: [] });
+      // A research with nothing to verify is not a blocker: the strategy's marks name its lines either way (SP8 Task 6).
+      if (!facts.length)
+        return ok(
+          `no fact to verify in ${rel}: a code fact is "- <path from the root>:<line> · <sentence>", a documentation fact "- <URL or document> · "<quote>" · <meaning>"; the strategy's marks name the file's lines either way (crew strategy ${opened.work.id} check), so go on`,
+          { facts: [] },
+        );
       const jev = jevConfig(io.env, env.config);
       const asking = jev.configured && askAllowed(env.policy, "fact");
       type Status = {

@@ -5,4 +5,4 @@ allowed_tools: [Read, Glob, Grep, Skill]
 runs: 3
 ---
 
-add() in src/math.mjs subtracts instead of adding. Fix it.
+A chore, one spot: add multiply(a, b) to src/math.mjs beside add, with a test for it.

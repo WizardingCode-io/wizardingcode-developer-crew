@@ -4,7 +4,13 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } 
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { deniedReferenceReads, evalInvocation, SANDBOX_TAGS } from "../../../scripts/eval.ts";
+import {
+  armRuns,
+  deniedReferenceReads,
+  evalInvocation,
+  SANDBOX_TAGS,
+} from "../../../scripts/eval.ts";
+import { CEILINGS } from "../../../scripts/eval-overhead.ts";
 
 const base = { root: "/r", path: "/usr/bin", realGitDir: null, platform: "linux" as const };
 
@@ -66,6 +72,10 @@ const CASES = [
   "document-entry-opens-item",
   "jev-tightens-never-loosens",
   "issue-root-cause-named",
+  "strategy-rejects-over-engineering",
+  "strategy-declares-phases",
+  "audit-report-three-formats",
+  "issue-fast-overhead",
 ];
 
 test("SP2c, SP7b-T7 AC-1, SP3-T1 AC-5, SP3-T7 AC-1: the thirty-one cases each have their four parts, and the fixtures they share exist", () => {
@@ -205,7 +215,33 @@ const SCAFFOLD_STATE: Record<
     { committed: /^\.crew\/work\/[^/]+-add-deactivateaccount-[^/]*\/evidence\.json$/ },
     { committed: /^tests\/deactivate\.test\.mjs$/ },
   ],
+  // SP8 (Task 6): the strategy cases' empty projects with a README naming the request's context, the
+  // audit case's planted key (assembled by the fixture), failing test and lint error, the two overhead cases.
+  "strategy-rejects-over-engineering": [
+    { file: "README.md", pattern: /personal finance/ },
+    { file: "package.json", absent: true },
+  ],
+  "strategy-declares-phases": [
+    { file: "README.md", pattern: /social network/ },
+    { file: "package.json", absent: true },
+  ],
+  "audit-report-three-formats": [
+    { file: "config/keys.mjs", pattern: /AKIA[A-Z0-9]{16}/ },
+    { file: "package.json", pattern: /"lint":\s*"node scripts\/lint\.mjs"/ },
+    { file: "tests/fails.test.mjs", pattern: /assert\.equal\(1, 2\)/ },
+    { committed: /^config\/keys\.mjs$/ },
+  ],
+  "issue-fast-overhead": [{ file: "src/math.mjs", pattern: /return a - b/ }],
+  "fast-route-overhead": [
+    { file: "src/math.mjs", pattern: /^(?![\s\S]*multiply)[\s\S]*return a \+ b/ },
+  ],
 };
+const SP8_CASES = [
+  "strategy-rejects-over-engineering",
+  "strategy-declares-phases",
+  "audit-report-three-formats",
+  "issue-fast-overhead",
+];
 
 test("SP2c, SP3-T1 AC-5: every fixture scaffolds under sh into a committed repository, with the plugin's crew on the PATH, and leaves the state its graders rely on", () => {
   const home = mkdtempSync(join(tmpdir(), "crew-evals-home-"));
@@ -350,4 +386,59 @@ test("SP8-T1 AC-5 (finding 95): deniedReferenceReads names the plugin references
   ]);
   expect(deniedReferenceReads([clean])).toEqual([]);
   expect(deniedReferenceReads([])).toEqual([]);
+});
+
+test("SP8-T6 AC-1: the SP8 cases carry the strategy and audit tags the sandbox runs, their fixtures hold no key-shaped literal and write inside their scaffold alone", () => {
+  expect(SANDBOX_TAGS).toContain("strategy");
+  expect(SANDBOX_TAGS).toContain("audit");
+  const tagsOf = (name: string) =>
+    readFileSync(`${EVALS}${name}/case.yaml`, "utf8").match(/^tags:\s*\[([^\]]*)\]/m)?.[1] ?? "";
+  expect(tagsOf("strategy-rejects-over-engineering")).toBe("strategy");
+  expect(tagsOf("strategy-declares-phases")).toBe("strategy");
+  expect(tagsOf("audit-report-three-formats")).toBe("audit");
+  expect(tagsOf("issue-fast-overhead")).toBe("cost");
+  for (const name of [...SP8_CASES, "fast-route-overhead"]) {
+    const fixture = readFileSync(`${EVALS}${name}/fixture.sh`, "utf8");
+    // The audit case's key is assembled by the shell at scaffold time: no committed text matches the engine's rule.
+    expect(fixture, name).not.toMatch(/AKIA[A-Z0-9]{16}/);
+    // A fixture writes inside its scaffold: no home folder, no network, no absolute path outside it.
+    expect(fixture, name).not.toMatch(/\$HOME|~\/|\bcurl\b|\bwget\b/);
+    expect(fixture, name).not.toMatch(/(^|[\s"'=])\/(Users|home|tmp|etc|var|opt)\//m);
+    expect(readFileSync(`${EVALS}${name}/prompt.md`, "utf8")).toContain(
+      "allowed_tools: [Read, Glob, Grep, Skill]",
+    );
+  }
+  // The kept runs' record carries no secret value (the security lead's return R-3 of SP8 Task 6).
+  expect(
+    readFileSync(
+      fileURLToPath(new URL("../../../docs/evals/2026-10-19-sp8-results.md", import.meta.url)),
+      "utf8",
+    ),
+  ).not.toMatch(/AKIA[A-Z0-9]{16}/);
+  // The overhead cases' ceilings live in the script's table (the kit refuses unknown front-matter keys): 2.03 for the feature, 3.5 for the fix.
+  expect(CEILINGS).toEqual({ "fast-route-overhead": 2.03, "issue-fast-overhead": 3.5 });
+  for (const name of Object.keys(CEILINGS))
+    expect(existsSync(`${EVALS}${name}/case.yaml`), name).toBe(true);
+  for (const name of ["fast-route-overhead", "issue-fast-overhead"])
+    expect(readFileSync(`${EVALS}${name}/prompt.md`, "utf8")).not.toMatch(/overhead_ceiling/);
+  expect(readFileSync(`${EVALS}fast-route-overhead/prompt.md`, "utf8")).toMatch(/multiply\(a, b\)/);
+  expect(readFileSync(`${EVALS}fast-route-overhead/graders/fixed.md`, "utf8")).toContain(
+    "return a \\* b",
+  );
+  expect(readFileSync(`${EVALS}issue-fast-overhead/graders/fixed.md`, "utf8")).toContain(
+    "return a \\+ b",
+  );
+});
+
+test("SP8-T6 AC-1: the results scan reads the kit's arms as an object keyed by arm, and the older list shape too", () => {
+  expect(
+    armRuns({ with: [{ tracePath: "/a" }], without: [{ tracePath: "/b" }] }).map(
+      (r) => r.tracePath,
+    ),
+  ).toEqual(["/a", "/b"]);
+  expect(armRuns([{ runs: [{ tracePath: "/c" }] }, { runs: [] }]).map((r) => r.tracePath)).toEqual([
+    "/c",
+  ]);
+  expect(armRuns(undefined)).toEqual([]);
+  expect(armRuns({ with: "x" })).toEqual([]);
 });

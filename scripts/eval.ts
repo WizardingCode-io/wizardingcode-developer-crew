@@ -54,6 +54,9 @@ export const SANDBOX_TAGS = [
   "reception",
   "jev",
   "issue",
+  // SP8 (Task 6): the strategy and the audit cases run in the sandbox (no opener; the roles as subagents).
+  "strategy",
+  "audit",
 ];
 const COMMON = [
   "plugin",
@@ -118,6 +121,25 @@ export function deniedReferenceReads(lines: readonly string[]): string[] {
   return [...found];
 }
 
+/**
+ * The runs of a case's arms as the kit writes them: an object keyed by arm (`with`, `without`), each
+ * a list of runs; an older shape (a list of arms with `runs`) is read too (SP8 Task 6: the first
+ * shape crashed the scan after every `--case` run).
+ */
+export function armRuns(arms: unknown): { tracePath?: string }[] {
+  if (Array.isArray(arms))
+    return arms.flatMap((a) =>
+      Array.isArray((a as { runs?: unknown }).runs)
+        ? ((a as { runs: unknown[] }).runs as { tracePath?: string }[])
+        : [],
+    );
+  if (typeof arms === "object" && arms !== null)
+    return Object.values(arms as Record<string, unknown>).flatMap((runs) =>
+      Array.isArray(runs) ? (runs as { tracePath?: string }[]) : [],
+    );
+  return [];
+}
+
 /** The `needs-rerun` lines of a results folder: each case whose kept trace shows a denied reference read. */
 export function scanResults(dir: string): string[] {
   const aggregate = join(dir, "aggregate-result.json");
@@ -125,10 +147,10 @@ export function scanResults(dir: string): string[] {
   const text = readFileSync(aggregate, "utf8");
   const lines: string[] = [];
   const parsed = JSON.parse(text) as {
-    cases?: { name?: string; arms?: { runs?: { tracePath?: string }[] }[] }[];
+    cases?: { name?: string; arms?: unknown }[];
   };
   for (const c of parsed.cases ?? []) {
-    const traces = (c.arms ?? []).flatMap((a) => (a.runs ?? []).map((r) => r.tracePath ?? ""));
+    const traces = armRuns(c.arms).map((r) => r.tracePath ?? "");
     for (const trace of traces) {
       if (!trace || !existsSync(trace)) continue;
       const denied = deniedReferenceReads(readFileSync(trace, "utf8").split("\n"));

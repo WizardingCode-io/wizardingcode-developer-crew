@@ -4,7 +4,7 @@ An audit is `work_type: audit`, always full, with four phases: receive, recogniz
 
 ## Receive and recognize
 
-1. `crew start "Audit <the project, in the user's words>" --answers '<json>'` with `work_type: "audit"` and `scope: 3`; no `--criterion`. The brief says what the user wants to know (a sale, a takeover, a rewrite, a security question) and what the report is for: the lead's summary answers it.
+1. `crew start "Audit <the project, in the user's words>" --answers '<json>'` with `work_type: "audit"` and `scope: 3`; no `--criterion`. It is the first command of the audit, run alone: no `git`, `ls` or `cat` before it (the run lists the files and runs the tools; a `git` that fails or a compound command denied where Bash is restricted is no reason to audit by hand: the engine's commands are the audit, one `crew` command per call). The brief says what the user wants to know (a sale, a takeover, a rewrite, a security question) and what the report is for: the lead's summary answers it.
 2. `crew detect` and the profile: every target the tools will run on needs its commands (`crew profile set` for what detection missed, relayed); a target with no test command is recorded `unavailable`, never skipped in silence.
 3. `crew phase <id> next` into `audit`.
 

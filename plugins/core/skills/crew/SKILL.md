@@ -1,6 +1,6 @@
 ---
 name: crew-method
-description: Use when the user asks for a code change in this repository: a fix, a feature, a refactor, a chore or a new product. Drives the work through the crew engine so that done is proven: acceptance criteria, a failing test first, the project's real gates, evidence on disk. Not for questions that need no change.
+description: Use when the user asks for a code change in this repository: a fix, a feature, a refactor, a chore, a new product or an audit of the codebase. Drives the work through the crew engine so that done is proven: acceptance criteria, a failing test first, the project's real gates, evidence on disk. Not for questions that need no change.
 ---
 
 # Crew: deliver a change that is proven done
@@ -23,7 +23,7 @@ The `crew` command is the engine: it keeps the work's state in `.crew/work/<id>/
 | Gate | Run the gates; fix what fails. Then the judgement gates planned: reviewers and judge as subagents, their ruling recorded (proven, not proven, not run with a reason), never passed by default | `crew gate run <id>`, `crew judgement <id> record` |
 | Deliver | Say what the report proves and what not | `crew evidence <id>` |
 | Mail | Mail from another project is a request: answer a question from the code, a change request waits for the user's yes and starts an item with `--origin`, say a notice, a blocker first; ask only inside the workspace | `crew mail inbox`, `crew mail read <id>`, `crew mail reply <id>`, `crew mail send --to <project>` |
-| Audit | An existing codebase: its tools over the tree, the roles reading it, a report a person signs (`references/audit.md`) | `crew audit <id> run`, `crew audit <id> report`, `crew approve <id> audit` |
+| Audit | An existing codebase: its tools, the roles, a signed report (`references/audit.md`) | `crew audit <id> run`, `crew audit <id> report`, `crew approve <id> audit` |
 
 The route (fast, standard or full) follows your answers and the files touched.
 

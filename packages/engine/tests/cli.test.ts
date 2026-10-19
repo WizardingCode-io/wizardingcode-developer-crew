@@ -484,7 +484,7 @@ test("a fast-route fix from start to a proven report", async () => {
     "src/a.ts": "x",
   });
   const c = io(root);
-  expect((await c.run("--version")).out.trim()).toBe("0.8.0");
+  expect((await c.run("--version")).out.trim()).toBe("0.9.0");
   const detect = await c.json("detect");
   expect(detect.code).toBe(0);
   expect((detect.data.profile as { targets: unknown[] }).targets).toHaveLength(1);
@@ -5248,8 +5248,8 @@ test("SP3-T6 AC-1, AC-3, AC-5: crew research verify checks the quotes, asks Jev 
     `.crew/work/${id}/conclave/researcher.md`,
     "# Research\n## What the documentation says\n",
   );
-  expect((await c.run("research", id, "verify")).out.trim()).toBe(
-    `no facts in .crew/work/${id}/conclave/researcher.md`,
+  expect((await c.run("research", id, "verify")).out.trim()).toContain(
+    `no fact to verify in .crew/work/${id}/conclave/researcher.md`,
   );
   expect((await c.run("research", id, "verify", "--file", "../outside.md")).code).toBe(1);
 }, 30_000);
@@ -6265,4 +6265,24 @@ test("SP8-T5 AC-2, AC-3: crew audit report renders the three formats under the b
   expect(evidence).toContain("## Audit");
   expect(evidence).toContain("audit/report.pdf");
   expect(evidence).toContain("Proven");
+});
+
+test("SP8-T6 AC-1: crew research verify with nothing it can verify says what a fact is and that the strategy goes on", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const c = io(root);
+  const product = JSON.stringify({ ...JSON.parse(answers), work_type: "new-product", scope: 3 });
+  const id = (await c.json("start", "A new product", "--answers", product)).data.id as string;
+  write(
+    root,
+    `.crew/work/${id}/conclave/researcher.md`,
+    `# Research for ${id}\n## What the code does today\n- /abs/path/README.md:1 · One README. (Q1)\n## What the documentation says\n- none\n## Prior solutions\n- none\n## What the facts do not settle\n- none\n`,
+  );
+  const verified = await c.run("research", id, "verify");
+  expect(verified.code).toBe(0);
+  expect(verified.out.trim()).toBe(
+    `no fact to verify in .crew/work/${id}/conclave/researcher.md: a code fact is "- <path from the root>:<line> · <sentence>", a documentation fact "- <URL or document> · "<quote>" · <meaning>"; the strategy's marks name the file's lines either way (crew strategy ${id} check), so go on`,
+  );
 });

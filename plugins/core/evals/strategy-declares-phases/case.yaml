@@ -1,0 +1,6 @@
+# evals/strategy-declares-phases/case.yaml
+schema_version: "1.1"
+name: strategy-declares-phases
+tags: [strategy]
+context:
+  scaffold_script: fixture.sh
