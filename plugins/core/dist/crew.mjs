@@ -9596,7 +9596,7 @@ async function verifyTriage(cfg, policy, input, options = {}) {
 }
 
 // packages/engine/src/version.ts
-var VERSION = "0.7.0";
+var VERSION = "0.8.0";
 
 // packages/engine/src/workspace.ts
 import { existsSync as existsSync14 } from "node:fs";

@@ -62,9 +62,13 @@ const CASES = [
   "no-environment-cannot-prove",
   "priority-lowered-with-reason",
   "thread-with-contracts",
+  "ticket-triaged-against-business",
+  "document-entry-opens-item",
+  "jev-tightens-never-loosens",
+  "issue-root-cause-named",
 ];
 
-test("SP2c, SP7b-T7 AC-1, SP3-T1 AC-5: the twenty-seven cases each have their four parts, and the fixtures they share exist", () => {
+test("SP2c, SP7b-T7 AC-1, SP3-T1 AC-5, SP3-T7 AC-1: the thirty-one cases each have their four parts, and the fixtures they share exist", () => {
   const folders = readdirSync(EVALS)
     .filter((f) => !["README.md", "fixtures", "results"].includes(f))
     .sort();
@@ -87,6 +91,10 @@ test("SP2c, SP7b-T7 AC-1, SP3-T1 AC-5: the twenty-seven cases each have their fo
     "judgement-gate-not-run",
     "env-observed-proof",
     "no-environment-cannot-prove",
+    "ticket-triaged-against-business",
+    "document-entry-opens-item",
+    "jev-tightens-never-loosens",
+    "issue-root-cause-named",
   ])
     expect(readFileSync(`${EVALS}${name}/fixture.sh`, "utf8")).toContain("fixtures/node-plain.sh");
   for (const name of [
@@ -124,12 +132,17 @@ test("SP3-T1 AC-5 (finding 80): every case's tags are within the runner's sandbo
 const PLUGIN_BIN = fileURLToPath(new URL("../../../plugins/core/bin/", import.meta.url));
 
 /**
- * The state each SP7b fixture leaves and its graders rely on (finding 80): the policy and the
- * profile under the scaffold, the queued mail under the test's own crew home (`home: true`).
+ * The state each SP7b and SP3 fixture leaves and its graders rely on (finding 80): the policy and
+ * the profile under the scaffold, the queued mail, the signed priorities and the config under the
+ * test's own crew home (`home: true`), and the paths a fixture's last commit must carry (`committed`).
  */
 const SCAFFOLD_STATE: Record<
   string,
-  ({ file: string; home?: true; pattern: RegExp } | { file: string; absent: true })[]
+  (
+    | { file: string; home?: true; pattern: RegExp }
+    | { file: string; absent: true }
+    | { committed: RegExp }
+  )[]
 > = {
   "priority-lowered-with-reason": [
     {
@@ -164,6 +177,34 @@ const SCAFFOLD_STATE: Record<
     { file: "src/index.html", pattern: /<h1>/ },
     { file: "tests/e2e/run.mjs", pattern: /WIZARDINGCODE_CREW_CONSOLE_FILE/ },
   ],
+  // SP3 (Task 7): the workspace and the signed priorities of the ticket case, the document, the
+  // validator policy and the canned Jev of the jev case, the earlier item the issue case's commit carries.
+  "ticket-triaged-against-business": [
+    { file: ".crew/policy.json", pattern: /"workspace":\s*"w"/ },
+    { file: "src/page.mjs", pattern: /<button>Register<\/button>/ },
+    { file: "workspaces/w/priorities.md", home: true, pattern: /loyalty programme/ },
+    { file: "workspaces/w/priorities.json", home: true, pattern: /"hash":\s*"sha256:/ },
+  ],
+  "document-entry-opens-item": [
+    { file: "docs/requests/newsletter.md", pattern: /the value marketing decided/ },
+    { file: ".crew/policy.json", absent: true },
+  ],
+  "jev-tightens-never-loosens": [
+    { file: ".crew/policy.json", pattern: /"unattendedDecisions":\s*"validator"/ },
+    { file: "src/auth/session.mjs", pattern: /SESSION_TIMEOUT_MINUTES = 30/ },
+    { file: "jev-answers.json", pattern: /"v2":\s*\{\s*"type":\s*"noul",\s*"noul":\s*0\.03\s*\}/ },
+    {
+      file: "config.json",
+      home: true,
+      pattern: /"endpoint":\s*"file:\/\/jev-answers\.json"/,
+    },
+  ],
+  "issue-root-cause-named": [
+    { file: "src/accounts.mjs", pattern: /export function deactivateAccount/ },
+    { file: "src/accounts.mjs", pattern: /return \[\.\.\.accounts\.values\(\)\];/ },
+    { committed: /^\.crew\/work\/[^/]+-add-deactivateaccount-[^/]*\/evidence\.json$/ },
+    { committed: /^tests\/deactivate\.test\.mjs$/ },
+  ],
 };
 
 test("SP2c, SP3-T1 AC-5: every fixture scaffolds under sh into a committed repository, with the plugin's crew on the PATH, and leaves the state its graders rely on", () => {
@@ -186,7 +227,17 @@ test("SP2c, SP3-T1 AC-5: every fixture scaffolds under sh into a committed repos
           encoding: "utf8",
         });
         expect(Number(commits.stdout.trim()), `${name} has no commit`).toBeGreaterThanOrEqual(1);
+        const committed = spawnSync("git", ["-C", dir, "ls-tree", "-r", "HEAD", "--name-only"], {
+          encoding: "utf8",
+        }).stdout.split("\n");
         for (const state of SCAFFOLD_STATE[name] ?? []) {
+          if ("committed" in state) {
+            expect(
+              committed.some((p) => state.committed.test(p)),
+              `${name}: no committed path matches ${state.committed}`,
+            ).toBe(true);
+            continue;
+          }
           const path =
             "home" in state && state.home ? join(home, "crew", state.file) : join(dir, state.file);
           if ("absent" in state) {
@@ -205,9 +256,10 @@ test("SP2c, SP3-T1 AC-5: every fixture scaffolds under sh into a committed repos
   }
 }, 120_000);
 
-test("SP7a AC-8 (Task 8), SP7b-T7 AC-1: every fixture stays inside the scaffold: no home, no absolute or parent path, no global git config, no network, no package install", () => {
-  // The scope: the six team cases (SP7a Task 8, AC-2), the four SP7b cases (Task 7) and the two shared
-  // fixtures they source. The older cases source other shared fixtures (node-ts.sh, makefile.sh), outside this check.
+test("SP7a AC-8 (Task 8), SP7b-T7 AC-1, SP3-T7 AC-1: every fixture stays inside the scaffold: no home, no absolute or parent path, no global git config, no network, no package install", () => {
+  // The scope: the six team cases (SP7a Task 8, AC-2), the four SP7b cases (Task 7), the four SP3 cases
+  // (Task 7) and the two shared fixtures they source. The older cases source other shared fixtures
+  // (node-ts.sh, makefile.sh), outside this check.
   const CONFINED = [
     "team-by-route",
     "gate-scoped-to-change",
@@ -219,6 +271,10 @@ test("SP7a AC-8 (Task 8), SP7b-T7 AC-1: every fixture stays inside the scaffold:
     "no-environment-cannot-prove",
     "priority-lowered-with-reason",
     "thread-with-contracts",
+    "ticket-triaged-against-business",
+    "document-entry-opens-item",
+    "jev-tightens-never-loosens",
+    "issue-root-cause-named",
   ];
   const files = [
     `${EVALS}fixtures/node-plain.sh`,

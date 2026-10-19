@@ -474,3 +474,12 @@ test("SP3-T2 AC-3: the skill page has the Analyse row and reference, its fast-ro
   expect(readReference("receive.md")).toContain("`priority`");
   expect(Buffer.byteLength(skill, "utf8")).toBeLessThanOrEqual(9254);
 });
+
+test("SP3-T7 AC-1 (finding 92): the page names the request's source on every route, so a ticket or a document reaches crew start --source from the fast route too", () => {
+  expect(skill).toMatch(
+    /\| Receive \|[^\n]*a ticket or a document[^\n]*`references\/receive\.md`[^\n]*every route/,
+  );
+  expect(skill).toContain("[--source '<json>']");
+  expect(skill).toMatch(/## The fast route[\s\S]*a sourced request[^\n]*`references\/receive\.md`/);
+  expect(Buffer.byteLength(skill, "utf8")).toBeLessThanOrEqual(9254);
+});

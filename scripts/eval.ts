@@ -49,6 +49,10 @@ export const SANDBOX_TAGS = [
   "environment",
   "priority",
   "contracts",
+  // SP3 (Task 7): the reception, the jev and the issue cases run in the sandbox (the canned Jev transport, no opener).
+  "reception",
+  "jev",
+  "issue",
 ];
 const COMMON = [
   "plugin",

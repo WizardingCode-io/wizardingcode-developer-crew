@@ -1,0 +1,6 @@
+# evals/ticket-triaged-against-business/case.yaml
+schema_version: "1.1"
+name: ticket-triaged-against-business
+tags: [reception]
+context:
+  scaffold_script: fixture.sh

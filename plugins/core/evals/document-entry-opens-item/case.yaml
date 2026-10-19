@@ -1,0 +1,6 @@
+# evals/document-entry-opens-item/case.yaml
+schema_version: "1.1"
+name: document-entry-opens-item
+tags: [reception]
+context:
+  scaffold_script: fixture.sh
