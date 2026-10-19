@@ -3,7 +3,13 @@ import { chmodSync, existsSync, readFileSync, rmSync, symlinkSync, writeFileSync
 import { join } from "node:path";
 import { parseAudit } from "../src/audit.ts";
 import { readEnvRecord } from "../src/environment.ts";
-import { emptyEvidence, loadEvidence, renderReport, saveEvidence } from "../src/evidence.ts";
+import {
+  emptyEvidence,
+  loadEvidence,
+  renderReport,
+  saveEvidence,
+  updateEvidence,
+} from "../src/evidence.ts";
 import { computeFingerprint } from "../src/fingerprint.ts";
 import {
   assess,
@@ -17,6 +23,7 @@ import {
   scopedTestCommand,
 } from "../src/gates.ts";
 import { isAlive } from "../src/open.ts";
+import { workDir } from "../src/paths.ts";
 import { DEFAULT_POLICY } from "../src/policy.ts";
 import { namedFiles } from "../src/problems.ts";
 import { ensureProfile, loadProfile, saveProfile } from "../src/profile.ts";
@@ -438,7 +445,7 @@ test("0.3.0: the deps gate fails only on advisories absent from the base commit,
   } finally {
     process.env.PATH = savedPath;
   }
-});
+}, 30_000);
 
 test("0.3.0: lint and typecheck judge the files the item changed; a tool that names none is judged by its exit code", async () => {
   const lint = [
@@ -578,7 +585,7 @@ test("0.3.0: the test gate has twenty minutes by default, a gate may carry its o
     status: "fail",
     reason: "timed out",
   });
-});
+}, 30_000);
 
 test("finding 10: on every route the audit is planned only when the change touches a dependency", () => {
   expect(gatesForTarget(target, DEFAULT_POLICY, ["src/a.ts"])).toEqual(["test", "lint"]);
@@ -990,7 +997,7 @@ test("SP7a AC-3 (Task 6): runTaskGate runs the todo's files through the scoped t
     reason: "no command",
   });
   expect(loadEvidence(paths, work.id).evidence.runs).toEqual([]);
-});
+}, 30_000);
 
 // SP7b Task 4: the e2e gate, the console and the logs.
 
@@ -1275,3 +1282,50 @@ test("SP7b-T5 AC-1: runTaskGate returns the judgement the todo's scope plans, an
     [],
   );
 });
+
+test("SP3-T1 AC-2 (finding 81): a gate run merges its runs into the evidence as it stands at the save, so a tdd record made during the run survives and counts; a file rewritten by hand mid-run is not saved", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "sleep 1" } }),
+    "src/a.ts": "x",
+  });
+  const paths = repoPaths(root, testEnv());
+  const { profile } = ensureProfile(paths);
+  const work = createWork(paths, "fix");
+  work.route = "fast";
+  const criterion = addCriterion(work, "x", "observed");
+  write(root, "src/a.ts", "y");
+  const running = runGates(paths, work, profile, DEFAULT_POLICY);
+  await Bun.sleep(300);
+  const mid = updateEvidence(paths, work.id, (e) => {
+    e.tdd.push({
+      criterion: criterion.id,
+      observed: {
+        command: "true",
+        exit: 0,
+        at: "t",
+        durationMs: 1,
+        log: "logs/x",
+        tail: "",
+        timedOut: false,
+      },
+      reason: "recorded while the gates ran",
+    });
+  });
+  expect("saved" in mid).toBe(true);
+  const outcome = await running;
+  expect(outcome.saveRefused).toBeUndefined();
+  const saved = loadEvidence(paths, work.id).evidence;
+  expect(saved.runs.map((r) => r.gate)).toContain("test");
+  expect(saved.tdd.map((t) => t.criterion)).toEqual([criterion.id]);
+  expect(saved.unproven).not.toContain(`test-first record missing for ${criterion.id}`);
+  const again = runGates(paths, work, profile, DEFAULT_POLICY);
+  await Bun.sleep(300);
+  const file = join(workDir(paths, work.id), "evidence.json");
+  writeFileSync(file, '{"hand":true}');
+  const second = await again;
+  expect(second.saveRefused).toBe(
+    `evidence.json of ${work.id} changed outside the engine (crew accept ${work.id}); nothing recorded`,
+  );
+  expect(second.verdict).toBe("unproven");
+  expect(readFileSync(file, "utf8")).toBe('{"hand":true}');
+}, 30_000);

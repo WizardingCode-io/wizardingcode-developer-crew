@@ -242,7 +242,7 @@ test("SP2c AC-1: a mailbox the hook cannot use costs the session its mail line, 
   const text = start.hookSpecificOutput?.additionalContext ?? "";
   expect(text).toContain("WizardingCode Developer Crew is active in this repository.");
   expect(text).toContain("Mail is off for this session start: mailbox busy");
-});
+}, 30_000);
 
 test("SP2c AC-1: a session opened by mail is told which message opened it and what it may do", () => {
   const env = testEnv();

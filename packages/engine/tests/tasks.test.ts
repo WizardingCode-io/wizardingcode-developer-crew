@@ -477,7 +477,7 @@ test("SP7a AC-3 (Task 6): a todo's gate runs the gates its diff touches, bounded
   expect(report).toMatch(/\| T-2 \| AC-2 \|[^\n]*\| briefed \| pass \(round 3\) \|/);
   expect(report).toMatch(/\| T-5 \| AC-1 \|[^\n]*\| gated \| pass \(round 2\) \|/);
   expect(report).toMatch(/\| T-6 \| AC-1 \|[^\n]*\| merged \| fail \(round 1\) \|/);
-});
+}, 30_000);
 
 test("SP2c: the short id, the names and the task text", () => {
   expect(shortId("2026-10-15-042-loyalty-tier-on-checkout")).toBe("2026-10-15-042");
@@ -1477,6 +1477,21 @@ test("SP7b-T5 AC-1: a todo's gate plans the judgement its scope asks for, cuts i
   // The ladder never lowers briefed; the todo's judgement is open again, which the brief refuses to rewrite.
   expect(taskOf("T-5")).toMatchObject({ state: "briefed", gate: { round: 2, judgement: [] } });
   expect((await c.run("task", id, "brief", "T-5")).code).toBe(1);
+  // A ruling recorded while the briefed todo's judgement is pending says so, never "gated" (finding 75).
+  const pendingBriefed = await c.run(
+    "judgement",
+    id,
+    "record",
+    "ui-ux",
+    "--not-run",
+    "--reason",
+    "no browser",
+    "--task",
+    "T-5",
+  );
+  expect(pendingBriefed.code).toBe(1);
+  expect(pendingBriefed.out).toContain("T-5: briefed, judgement pending (ui-ux not run)");
+  expect(pendingBriefed.out).not.toContain("T-5: gated");
   expect((await record("T-5")).code).toBe(0);
   expect((await c.run("task", id, "brief", "T-5")).code).toBe(0);
   // A narrower --scope cannot un-plan the gate, and a ruling cut for other files counts for nothing.
@@ -1496,4 +1511,4 @@ test("SP7b-T5 AC-1: a todo's gate plans the judgement its scope asks for, cuts i
   expect(taskOf("T-5")).toMatchObject({ state: "briefed", gate: { round: 4, judgement: [] } });
   expect((await c.run("task", id, "brief", "T-5")).code).toBe(0);
   expect(loadWork(paths, id).work?.rounds?.judgement ?? 0).toBe(0);
-});
+}, 30_000);

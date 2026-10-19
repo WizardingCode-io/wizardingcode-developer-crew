@@ -36,7 +36,7 @@ const flag = "var/up";
 const verb = process.argv[2];
 mkdirSync("var", { recursive: true });
 appendFileSync("var/log.txt", `${verb}\n`);
-if (verb === "start") writeFileSync(flag, `${process.pid}\n`);
+if (verb === "start") writeFileSync(flag, "up\n");
 else if (verb === "health") process.exit(existsSync(flag) ? 0 : 1);
 else if (verb === "stop") {
   if (existsSync(flag)) unlinkSync(flag);

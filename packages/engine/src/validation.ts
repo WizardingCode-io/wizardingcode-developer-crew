@@ -2,6 +2,11 @@ import { createHash } from "node:crypto";
 import type { Seat, Validation, WorkItem } from "./types.ts";
 import type { GuardContext } from "./work.ts";
 
+/** The teams a tech lead answers for, as its first line names them (`# <team> lead's validation of <id>: <what>`); the hook and the parser read the same list. */
+export const LEAD_TEAMS = "qa|security|architects|etl|devops";
+/** Where a lead's answer starts: a split point, the line kept with its block. */
+const LEAD_HEADING = new RegExp(`^(?=# (?:${LEAD_TEAMS}) lead's validation of )`, "m");
+
 /**
  * The verdict line and the returns of a lead's file (SP7 §6.4): `verdict: validated|returned` in the
  * first four lines (a personality header may precede it), the `- R-n ·` lines under `## Returns`.
@@ -10,7 +15,10 @@ import type { GuardContext } from "./work.ts";
 export function parseValidation(
   text: string,
 ): { verdict: "validated" | "returned"; returns: number } | { refused: string } {
-  const lines = text.split("\n");
+  // A resumed lead's reply file holds its rounds one after the other (finding 78): the last block,
+  // headed by the lead's own first line, is the verdict; a file with no such line is read whole.
+  const blocks = text.split(LEAD_HEADING);
+  const lines = (blocks.length > 1 ? (blocks[blocks.length - 1] ?? text) : text).split("\n");
   const verdictLine = lines
     .slice(0, 4)
     .find((l) => /^verdict:\s*(validated|returned)\s*$/.test(l.trim()));
@@ -81,7 +89,7 @@ export function leadsMissing(
       );
     } else if (latest.verdict === "returned") {
       missing.push(
-        `validation of ${what} by ${seat.role}: returned ${latest.returns} return${latest.returns === 1 ? "" : "s"} (${latest.file}); revise the ${what === "spec" ? "spec" : "delivery"} and record the lead again`,
+        `validation of ${what} by ${seat.role}: returned ${latest.returns} return${latest.returns === 1 ? "" : "s"} (${latest.file}); revise the ${what === "spec" ? "spec" : "delivery"} and record the lead again (a resumed lead's answer: its -reply.md file)`,
       );
     }
   }

@@ -22,7 +22,7 @@ function fakePage(): {
   };
 }
 
-test("SP7b-T4 AC-4: the Playwright module's page fixture records the console and the page errors into the gate's file when it is named, nothing otherwise; test and expect are undefined without the project's @playwright/test", async () => {
+test("SP7b-T4 AC-4: the Playwright module's page fixture records the console and the page errors into the gate's file when it is named, nothing otherwise", async () => {
   const mod = (await import(MODULE)) as {
     withConsole: (base: unknown) => Fixtures;
     test: unknown;
@@ -58,7 +58,6 @@ test("SP7b-T4 AC-4: the Playwright module's page fixture records the console and
   expect(existsSync(join(dir, "console.json"))).toBe(false);
   // Outside a gate run nothing is written.
   const unnamed = fakePage();
-  const other = tempDir();
   try {
     delete process.env.WIZARDINGCODE_CREW_CONSOLE_FILE;
     await fixtures.page({ page: unnamed.page }, async () => {});
@@ -66,8 +65,21 @@ test("SP7b-T4 AC-4: the Playwright module's page fixture records the console and
     if (previous !== undefined) process.env.WIZARDINGCODE_CREW_CONSOLE_FILE = previous;
   }
   expect(unnamed.handlers.size).toBe(0);
-  expect(existsSync(join(other, "console.jsonl"))).toBe(false);
   expect(readFileSync(join(dir, "console.jsonl"), "utf8").trim().split("\n").length).toBe(2);
-  expect(mod.test).toBeUndefined();
-  expect(mod.expect).toBeUndefined();
+});
+
+test("SP3-T1 (finding 73): without the project's @playwright/test the module's test and expect throw a message that names the package, from a working directory with no node_modules above it", async () => {
+  const cwd = process.cwd();
+  const empty = tempDir("crew-no-playwright-");
+  let mod: { test: unknown; expect: unknown };
+  try {
+    process.chdir(empty);
+    mod = (await import(`${MODULE}?no-playwright`)) as { test: unknown; expect: unknown };
+  } finally {
+    process.chdir(cwd);
+  }
+  const message =
+    "@playwright/test is not installed in this project: install it, or write the console file yourself (references/gate.md)";
+  expect(() => (mod.test as () => void)()).toThrow(message);
+  expect(() => (mod.expect as () => void)()).toThrow(message);
 });

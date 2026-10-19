@@ -273,7 +273,7 @@ test("SP7b-T3 AC-2: crew env starts the environment detached with a record writt
   expect(existsSync(join(root, "stopped.flag"))).toBe(true);
   unlinkSync(join(root, "stopped.flag"));
   expect(existsSync(envRecordPath(paths))).toBe(false);
-});
+}, 30_000);
 
 test("SP7b-T3 AC-3: an environment up before the start is the user's: nothing spawned, recorded as not managed, never stopped; down when its server dies", async () => {
   const root = makeRepo();

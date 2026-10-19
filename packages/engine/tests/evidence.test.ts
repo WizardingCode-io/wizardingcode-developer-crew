@@ -1,12 +1,23 @@
 import { expect, test } from "bun:test";
 import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmdirSync,
+  writeFileSync,
+} from "node:fs";
+import { join } from "node:path";
+import {
   computeVerdict,
   emptyEvidence,
   loadEvidence,
   renderReport,
   saveEvidence,
+  updateEvidence,
 } from "../src/evidence.ts";
 import { addObjection, bindObjection, waiveObjection } from "../src/objections.ts";
+import { workDir } from "../src/paths.ts";
 import { DEFAULT_POLICY } from "../src/policy.ts";
 import type {
   Evidence,
@@ -720,4 +731,56 @@ test("SP7b-T2 AC-4: the report's Mail table carries the thread and the contracts
   const row = report.split("\n").find((l) => l.startsWith("| M-2026-10-18-002-crm |")) as string;
   expect(row).toContain("schema docs/a\\|b.yaml");
   expect(row.split(/(?<!\\)\|/).length - 2).toBe(10);
+});
+
+test("SP3-T1 AC-2 (finding 81): updateEvidence re-reads under the work folder's lock and merges; a busy lock and a file rewritten by hand are refused with nothing saved", () => {
+  const root = makeRepo();
+  const paths = repoPaths(root, testEnv());
+  const work = createWork(paths, "x");
+  saveEvidence(paths, work.id, emptyEvidence());
+  const first = updateEvidence(paths, work.id, (e) => {
+    e.tdd.push({ criterion: "AC-1", observed: run, reason: "one" });
+  });
+  expect("saved" in first && first.saved.tdd.map((t) => t.criterion)).toEqual(["AC-1"]);
+  const second = updateEvidence(paths, work.id, (e) => {
+    e.tdd.push({ criterion: "AC-2", observed: run, reason: "two" });
+  });
+  expect("saved" in second && second.saved.tdd.map((t) => t.criterion)).toEqual(["AC-1", "AC-2"]);
+  expect(loadEvidence(paths, work.id).evidence.tdd.map((t) => t.criterion)).toEqual([
+    "AC-1",
+    "AC-2",
+  ]);
+  // A fresh lock another command holds: refused, nothing written, the lock left in place.
+  const lock = join(workDir(paths, work.id), ".lock");
+  mkdirSync(lock);
+  const busy = updateEvidence(paths, work.id, (e) => {
+    e.tdd = [];
+  });
+  expect(busy).toEqual({
+    refused: `the work folder of ${work.id} is busy (another crew command holds it); nothing recorded: run the command again`,
+  });
+  expect(existsSync(lock)).toBe(true);
+  rmdirSync(lock);
+  expect(loadEvidence(paths, work.id).evidence.tdd.length).toBe(2);
+  // A file rewritten by hand: never applied, never re-sealed as the engine's own.
+  const file = join(workDir(paths, work.id), "evidence.json");
+  writeFileSync(file, '{"hand":true}');
+  const tampered = updateEvidence(paths, work.id, (e) => {
+    e.tdd = [];
+  });
+  expect(tampered).toEqual({
+    refused: `evidence.json of ${work.id} changed outside the engine (crew accept ${work.id}); nothing recorded`,
+  });
+  expect(readFileSync(file, "utf8")).toBe('{"hand":true}');
+  expect(loadEvidence(paths, work.id).tampered).toBe(true);
+}, 30_000);
+
+test("SP3-T1 AC-2 (finding 81): saveEvidence is called only from evidence.ts and the SubagentStop hook; every other saver goes through updateEvidence", () => {
+  const src = join(import.meta.dir, "..", "src");
+  const callers = readdirSync(src, { recursive: true })
+    .map(String)
+    .filter((f) => f.endsWith(".ts"))
+    .filter((f) => readFileSync(join(src, f), "utf8").includes("saveEvidence("))
+    .sort();
+  expect(callers).toEqual(["evidence.ts", "hooks/subagent-stop.ts"]);
 });

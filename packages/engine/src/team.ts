@@ -176,7 +176,7 @@ function interfaceReason(interfaces: readonly string[]): string {
  * interface files, the security reviewer for its risk paths, and the judge with them; nothing of
  * the route or the policy, which are the item's and run once on the whole change.
  */
-function taskSeats(scope: readonly string[], policy: Policy): Seat[] {
+export function taskSeats(scope: readonly string[], policy: Policy): Seat[] {
   const seats: Seat[] = [];
   const interfaces = scope.filter(isInterfacePath);
   if (interfaces.length)

@@ -8,6 +8,7 @@ import { workDir } from "../paths.ts";
 import { clearWorking } from "../state.ts";
 import { PERSONALITIES, ROLE_NAMES, TEAMS, type TeamDef } from "../team.ts";
 import type { Message, Personality, RoleRecord, TeamName } from "../types.ts";
+import { LEAD_TEAMS } from "../validation.ts";
 import { activeWork, loadWork, saveWork } from "../work.ts";
 import { leaveNotice } from "./notices.ts";
 import type { HookContext, HookPayload, HookResponse } from "./types.ts";
@@ -38,14 +39,16 @@ export function personalityOf(answer: string): Personality | "unknown" | null {
   return (PERSONALITIES as readonly string[]).includes(name) ? (name as Personality) : "unknown";
 }
 
+/** A tech lead's first line: the team (the parser's own list) and what it validated. */
+const LEAD_LINE = new RegExp(
+  `^# (${LEAD_TEAMS}) lead's validation of \\S+: (spec|plan|delivery)\\b`,
+);
+
 /** The team and the subject a tech lead's answer names on its first line (`# <team> lead's validation of <id>: <spec|delivery>`), or null. */
 export function leadAnswer(
   answer: string,
 ): { team: TeamName; what: "spec" | "plan" | "delivery" } | null {
-  const match =
-    /^# (qa|security|architects|etl|devops) lead's validation of \S+: (spec|plan|delivery)\b/.exec(
-      unfenced(answer),
-    );
+  const match = LEAD_LINE.exec(unfenced(answer));
   if (!match) return null;
   return { team: match[1] as TeamName, what: match[2] as "spec" | "plan" | "delivery" };
 }
@@ -435,7 +438,12 @@ function joinEarlierFile(dir: string, agent: string, answer: string): string {
     writeText(join(dir, file), `${body}\n- ${answer.replace(/\n/g, "\n  ")}\n`);
     return file;
   }
-  const file = `conclave/${agent}-reply.md`;
+  // A tech lead resumed for another round answers for one team: its reply joins that team's own
+  // file, never one the leads would share (finding 78).
+  const lead = agent === "tech-lead" ? leadAnswer(answer) : null;
+  const file = lead
+    ? `conclave/lead-${lead.team}${lead.what === "delivery" ? ".delivery" : ""}-reply.md`
+    : `conclave/${agent}-reply.md`;
   const current = readText(join(dir, file));
   writeText(join(dir, file), current ? `${current.trimEnd()}\n\n${answer}\n` : `${answer}\n`);
   return file;

@@ -53,3 +53,11 @@ test("SP7a AC-1: a validation is hashed to what it is about: the spec or plan te
   );
   expect(validationHash("delivery", "# spec\n", null, "sha256:abc")).toBe("sha256:abc");
 });
+
+test("SP3-T1 AC-4 (finding 78): a file holding several validation blocks (a resumed lead's rounds) is parsed from its last block", () => {
+  expect(parseValidation(`${RETURNED}\n${VALIDATED}`)).toEqual({
+    verdict: "validated",
+    returns: 0,
+  });
+  expect(parseValidation(`${VALIDATED}\n${RETURNED}`)).toEqual({ verdict: "returned", returns: 2 });
+});

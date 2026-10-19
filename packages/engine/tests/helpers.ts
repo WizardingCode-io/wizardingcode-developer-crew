@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, sep } from "node:path";
 import { buildContext } from "../src/hooks/context.ts";
 import type { HookContext, HookPayload } from "../src/hooks/types.ts";
 import { type CrewPaths, resolvePaths } from "../src/paths.ts";
@@ -13,9 +13,39 @@ const GIT_ENV = {
   GIT_COMMITTER_EMAIL: "crew@test.invalid",
 };
 
-/** Canonical (symlinks resolved), as the engine names every root: on macOS the temp dir is an alias. */
+/**
+ * The fixtures this run made, one set for every module instance that loads this file (the preload
+ * and the test files), so the preload removes them all when the run ends (finding 74).
+ */
+const REGISTRY = "__wizardingcodeCrewTempDirs";
+const globals = globalThis as Record<string, unknown>;
+if (!(globals[REGISTRY] instanceof Set)) globals[REGISTRY] = new Set<string>();
+export const TEMP_DIRS = globals[REGISTRY] as Set<string>;
+
+/** Canonical (symlinks resolved), as the engine names every root: on macOS the temp dir is an alias. Registered for the cleanup at the end of the run. */
 export function tempDir(prefix = "crew-"): string {
-  return realpathSync(mkdtempSync(join(tmpdir(), prefix)));
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), prefix)));
+  TEMP_DIRS.add(dir);
+  return dir;
+}
+
+/**
+ * Removes the registered fixtures and returns how many (finding 74). None with
+ * `WIZARDINGCODE_CREW_KEEP_FIXTURES=1`, the escape hatch for a failing test's post-mortem. A
+ * registered path outside the canonical temp folder is skipped and stays registered: nothing but
+ * the registry names a path to remove, and the registry never reaches outside the temp folder.
+ */
+export function removeTempDirs(): number {
+  if (process.env.WIZARDINGCODE_CREW_KEEP_FIXTURES === "1") return 0;
+  const temp = realpathSync(tmpdir());
+  let removed = 0;
+  for (const dir of [...TEMP_DIRS]) {
+    if (!dir.startsWith(`${temp}${sep}`)) continue;
+    rmSync(dir, { recursive: true, force: true });
+    TEMP_DIRS.delete(dir);
+    removed++;
+  }
+  return removed;
 }
 
 export function git(cwd: string, ...args: string[]): string {

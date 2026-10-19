@@ -47,5 +47,13 @@ function projectPlaywright() {
 }
 
 const playwright = projectPlaywright();
-export const test = playwright ? withConsole(playwright.test) : undefined;
-export const expect = playwright ? playwright.expect : undefined;
+
+/** Without the project's package the exports name what is missing when called, instead of "test is not a function" (finding 73). */
+function missing() {
+  throw new Error(
+    "@playwright/test is not installed in this project: install it, or write the console file yourself (references/gate.md)",
+  );
+}
+
+export const test = playwright ? withConsole(playwright.test) : missing;
+export const expect = playwright ? playwright.expect : missing;

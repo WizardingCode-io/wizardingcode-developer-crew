@@ -4,12 +4,13 @@ import { reviewPatch } from "./fingerprint.ts";
 import { nowIso, readJson, sha256, writeText } from "./fs.ts";
 import { type CrewPaths, workDir } from "./paths.ts";
 import { isInterfacePath } from "./paths-kind.ts";
-import { plannedSeats } from "./team.ts";
+import { plannedSeats, taskSeats } from "./team.ts";
 import type {
   Evidence,
   JudgementFinding,
   JudgementGateName,
   JudgementRecord,
+  JudgementVerdict,
   PlannedJudgement,
   Policy,
   RiskArea,
@@ -54,9 +55,14 @@ export function reviewDir(paths: CrewPaths, id: string, task?: string): string {
  * for the scope alone, as `{ gate, reason }`.
  */
 export function plannedTaskJudgement(scope: readonly string[], policy: Policy): PlannedJudgement[] {
-  return plannedSeats("fast", [], [], policy, scope).flatMap((s) =>
+  return taskSeats(scope, policy).flatMap((s) =>
     s.kind === "gate" && s.gate ? [{ gate: s.gate, reason: s.reason }] : [],
   );
+}
+
+/** The word a record line gives a verdict: proven, not proven, not run (the item's and the todo's lines alike). */
+export function verdictWord(verdict: JudgementVerdict): string {
+  return verdict === "not-proven" ? "not proven" : verdict === "not-run" ? "not run" : "proven";
 }
 
 /** `n finding` or `n findings`, as every line that counts a ruling's findings says it. */

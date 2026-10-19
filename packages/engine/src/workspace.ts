@@ -60,16 +60,6 @@ function isOpen(m: Message): boolean {
   return !CLOSED.has(mailStatus(m));
 }
 
-/** The roots of the threads with at least one open message, in the order their messages are held. */
-function openThreads(messages: readonly Message[]): string[] {
-  const roots: string[] = [];
-  for (const m of messages) {
-    const root = threadOf(m);
-    if (isOpen(m) && !roots.includes(root)) roots.push(root);
-  }
-  return roots;
-}
-
 /** The messages whose priority was proposed and never confirmed or lowered (SP7 §9). */
 function unconfirmedPriorities(messages: readonly Message[]): number {
   return messages.filter((m) => m.priority !== undefined && m.priorityDecision === undefined)
@@ -141,7 +131,7 @@ export function workspaceStatus(
         gone: false,
         items: openItems(projectPaths).length,
         unread: inboxSummary(ctx).unread,
-        threads: openThreads(held).length,
+        threads: projectThreads(ctx).filter((t) => t.open).length,
         priorities: unconfirmedPriorities(held),
         environment: environmentState(projectPaths),
       };

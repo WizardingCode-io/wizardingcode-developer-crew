@@ -24,8 +24,8 @@ import {
   decidedBy,
   loadEvidence,
   renderReport,
-  saveEvidence,
   tddSummary,
+  updateEvidence,
 } from "./evidence.ts";
 import { changedWatchedPaths, hashPaths, isGitRepo } from "./fingerprint.ts";
 import { ensureDir, nowIso, readText, writeText } from "./fs.ts";
@@ -46,6 +46,7 @@ import {
   recordJudgement,
   scopeHash,
   stampRuling,
+  verdictWord,
   writeReviewInputs,
 } from "./judgement.ts";
 import {
@@ -517,16 +518,20 @@ function continueOrRefuse(
  */
 function planTaskJudgement(
   env: Env,
-  work: WorkItem,
-  tampered: boolean,
-  record: TaskRecord,
-  task: string,
-  round: number,
-  scope: string[],
-  own: { scope: string[] } | { refused: string },
-  result: Awaited<ReturnType<typeof runTaskGate>>,
+  options: {
+    work: WorkItem;
+    tampered: boolean;
+    record: TaskRecord;
+    task: string;
+    round: number;
+    scope: string[];
+    /** The todo's own files beyond the round's scope; empty when they could not be read. */
+    ownScope: string[];
+    result: Awaited<ReturnType<typeof runTaskGate>>;
+  },
 ): PlannedJudgement[] {
-  const others = ("scope" in own ? own.scope : []).filter((p) => !scope.includes(p));
+  const { work, tampered, record, task, round, scope, ownScope, result } = options;
+  const others = ownScope.filter((p) => !scope.includes(p));
   const cut = [...scope, ...others];
   const planned = [...(record.gate?.planned ?? [])];
   for (const p of [...result.judgement, ...plannedTaskJudgement(others, env.policy)])
@@ -709,14 +714,15 @@ function recordTaskJudgement(
   const lines = records.map((r) => {
     const detail =
       r.verdict === "not-run" ? `: ${r.reason}` : ` (${findingsText(r.findings.length)})`;
-    const word =
-      r.verdict === "not-proven" ? "not proven" : r.verdict === "not-run" ? "not run" : "proven";
-    return `${task}: ${r.gate} ${word}${detail}`;
+    return `${task}: ${r.gate} ${verdictWord(r.verdict)}${detail}`;
   });
+  // A briefed todo whose judgement is pending again says so, never "gated" (finding 75).
   lines.push(
-    record.state === "gated" || record.state === "briefed"
+    pending.length === 0
       ? `${task}: gated`
-      : `${task}: not gated: ${pendingText(record, pending)}`,
+      : record.state === "briefed"
+        ? `${task}: briefed, judgement pending (${pendingText(record, pending)})`
+        : `${task}: not gated: ${pendingText(record, pending)}`,
   );
   return {
     code: pending.length === 0 ? 0 : 1,
@@ -1507,11 +1513,18 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         override,
         reason,
       );
-      if (outcome.ok) saveEvidence(env.paths, opened.work.id, evidence);
       const tail = outcome.record?.tail ? `\n${outcome.record.tail}` : "";
-      return outcome.ok
-        ? ok(outcome.message, { record: outcome.record })
-        : refuse(`${outcome.message}${tail}`, { record: outcome.record });
+      if (!outcome.ok) return refuse(`${outcome.message}${tail}`, { record: outcome.record });
+      // The record goes into the evidence as it stands now, under the lock (finding 81): a run that
+      // took minutes merges with what landed meanwhile. A refusal (the file edited outside the engine
+      // during the run, a lock held) records nothing and says the run passed and where its log is.
+      const saved = updateEvidence(env.paths, opened.work.id, outcome.apply);
+      if ("refused" in saved)
+        return refuse(
+          `${saved.refused} (the ${step} run passed: ${outcome.record?.log ?? "no log"})`,
+          { record: outcome.record },
+        );
+      return ok(outcome.message, { record: outcome.record });
     }
     case "gate": {
       const opened = openForChange(env, args[1]);
@@ -1584,7 +1597,8 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           gateSummary(opened.work, outcome.verdict, outcome.unproven, outcome.evidence.runs) +
           judgementNote +
           reviewLine +
-          capturesLine,
+          capturesLine +
+          (outcome.saveRefused ? `\n${outcome.saveRefused}` : ""),
         data: {
           verdict: outcome.verdict,
           unproven: outcome.unproven,
@@ -1673,14 +1687,19 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         before.evidence.roles ?? [],
         readReviewInputs(env.paths, opened.work.id)?.at,
       );
-      // The rulings go into the evidence the assessment read, the verdict is computed on it, and
-      // the file is written once, with the verdict: no reader sees new records beside a stale
-      // verdict (review of SP2b, finding 8). A record that proves the work delivers it.
-      for (const record of records) recordJudgement(before.evidence, record);
-      const result = reassess(before, opened.work, env.policy);
-      result.evidence.verdict = result.verdict;
-      result.evidence.unproven = result.unproven;
-      saveEvidence(env.paths, opened.work.id, result.evidence);
+      // The rulings go into the evidence as it stands at the save, under the lock (finding 81), the
+      // verdict is computed on it, and the file is written once, with the verdict: no reader sees
+      // new records beside a stale verdict (review of SP2b, finding 8). A record that proves the
+      // work delivers it; a refused save (the file edited outside the engine, a lock held) records nothing.
+      const saved = updateEvidence(env.paths, opened.work.id, (fresh) => {
+        for (const record of records) recordJudgement(fresh, record);
+        const merged = reassess({ ...before, evidence: fresh }, opened.work, env.policy);
+        fresh.verdict = merged.verdict;
+        fresh.unproven = merged.unproven;
+        return merged;
+      });
+      if ("refused" in saved) return refuse(saved.refused);
+      const result = saved.result;
       // The round spent, counted at the first record against this code (plan decision 3 of SP7a).
       if (newRound)
         opened.work.rounds = {
@@ -1724,13 +1743,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           r.verdict === "not-run"
             ? `: ${r.reason}`
             : ` (${findingsText(r.findings.length)}${outside ? `, ${outside} outside the change` : ""})`;
-        const word =
-          r.verdict === "not-proven"
-            ? "not proven"
-            : r.verdict === "not-run"
-              ? "not run"
-              : "proven";
-        return `  ${r.gate}: ${word}${detail}`;
+        return `  ${r.gate}: ${verdictWord(r.verdict)}${detail}`;
       });
       lines.push(
         result.verdict === "proven"
@@ -1793,7 +1806,11 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           verdict: result.verdict,
           unproven: result.unproven,
         });
-      saveEvidence(env.paths, opened.work.id, result.evidence);
+      const saved = updateEvidence(env.paths, opened.work.id, (fresh) => {
+        fresh.verdict = result.verdict;
+        fresh.unproven = result.unproven;
+      });
+      if ("refused" in saved) return refuse(saved.refused);
       writeProtectedText(env.paths, join(workDir(env.paths, opened.work.id), "report.md"), report);
       return ok(report, { verdict: result.verdict, unproven: result.unproven });
     }
@@ -1889,17 +1906,17 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           env.policy,
           scoped.scope,
         );
-        const planned = planTaskJudgement(
-          env,
-          opened.work,
-          env.tampered || opened.tampered,
+        const own = flagScope?.length ? taskScope(env.paths.root, env.profile, record) : scoped;
+        const planned = planTaskJudgement(env, {
+          work: opened.work,
+          tampered: env.tampered || opened.tampered,
           record,
           task,
-          round + 1,
-          scoped.scope,
-          flagScope?.length ? taskScope(env.paths.root, env.profile, record) : scoped,
+          round: round + 1,
+          scope: scoped.scope,
+          ownScope: "scope" in own ? own.scope : [],
           result,
-        );
+        });
         // The state ladder only climbs past gated: a gate re-run after the brief keeps the todo briefed
         // (the brief is rewritten with crew task brief when the lead wants the new runs in it).
         settleTaskState(opened.work, record, env.policy);
@@ -2255,7 +2272,10 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       if (verb === "stop") {
         const out = await stopEnvironment(env.paths, environment);
         if ("refused" in out) return refuse(out.refused);
-        return ok(`environment stopped (pid ${out.pid})`, { ...out });
+        return ok(
+          `environment stopped (pid ${out.pid}${out.signalled ? ", group signalled" : "; the group was not signalled: the process is no longer the engine's"})`,
+          { ...out },
+        );
       }
       const status = await envStatus(env.paths, environment);
       return ok(statusLine(status), { ...status });

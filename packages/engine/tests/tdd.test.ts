@@ -1,10 +1,19 @@
 import { expect, test } from "bun:test";
+import { rmSync } from "node:fs";
+import { join } from "node:path";
 import { tddDone } from "../src/criteria.ts";
 import { detectProfile } from "../src/detect/index.ts";
 import { emptyEvidence } from "../src/evidence.ts";
-import { recordTdd } from "../src/tdd.ts";
+import { recordTdd as record } from "../src/tdd.ts";
 import { addCriterion, createWork } from "../src/work.ts";
 import { makeRepo, repoPaths, testEnv, write } from "./helpers.ts";
+
+/** The engine's record, applied to the evidence it was given, as the CLI applies it under the lock (finding 81). */
+async function recordTdd(...args: Parameters<typeof record>): ReturnType<typeof record> {
+  const out = await record(...args);
+  if (out.ok) out.apply(args[2]);
+  return out;
+}
 
 function setup() {
   const root = makeRepo({
@@ -173,4 +182,41 @@ test("an explicit command overrides the profile, and no command is an error", as
   const bare = { ...s.profile, targets: [] };
   const none = await recordTdd(s.paths, s.work, emptyEvidence(), bare, s.behaviour.id, "red");
   expect(none.message).toMatch(/no test command/);
+});
+
+test("SP3-T1 AC-3 (finding 79): a before is refused, naming the paths, when a watched source already differs from the item's base; a changed test file alone is allowed", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "sh run-tests.sh" } }),
+    "run-tests.sh": "exit 0\n",
+    "src/x.mjs": "a\n",
+    "src/y.mjs": "a\n",
+  });
+  const paths = repoPaths(root, testEnv());
+  const profile = detectProfile(root);
+  const work = createWork(paths, "refactor");
+  const preserve = addCriterion(work, "keep", "preserve");
+  const evidence = emptyEvidence();
+  write(root, "src/x.mjs", "b\n");
+  write(root, "src/y.mjs", "b\n");
+  const late = await recordTdd(paths, work, evidence, profile, preserve.id, "before");
+  expect(late.ok).toBe(false);
+  expect(late.message).toBe(
+    `the watched sources already differ from the item's base (src/x.mjs, src/y.mjs): a before recorded now is not a baseline; record it before the change, or make ${preserve.id} observed with the reason`,
+  );
+  expect(late.record).toBeUndefined();
+  expect(evidence.tdd).toEqual([]);
+  // Past three paths the message counts the rest.
+  write(root, "src/a.mjs", "b\n");
+  write(root, "src/b.mjs", "b\n");
+  const many = await recordTdd(paths, work, evidence, profile, preserve.id, "before");
+  expect(many.message).toContain("(src/a.mjs, src/b.mjs, src/x.mjs, +1 more)");
+  rmSync(join(root, "src", "a.mjs"));
+  rmSync(join(root, "src", "b.mjs"));
+  write(root, "src/x.mjs", "a\n");
+  write(root, "src/y.mjs", "a\n");
+  write(root, "tests/x.test.mjs", "the red test of a behaviour criterion\n");
+  const early = await recordTdd(paths, work, evidence, profile, preserve.id, "before");
+  expect(early.ok).toBe(true);
+  if (early.ok) early.apply(evidence);
+  expect(evidence.tdd[0]?.before?.exit).toBe(0);
 });

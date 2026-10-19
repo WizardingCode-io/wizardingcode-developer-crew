@@ -431,7 +431,7 @@ test("SP2c AC-3: a stop that meets a held work-folder lock saves nothing and say
   expect(read.tampered).toBe(false);
   expect(read.evidence.roles).toHaveLength(1);
   expect(existsSync(lock)).toBe(false);
-});
+}, 30_000);
 
 test("SP2c AC-3: a role's stop that cannot be recorded says what was saved and what was not", () => {
   const { root, ctx, work } = session();
@@ -860,7 +860,7 @@ test("SP2c AC-3: a resumed role whose question is pending has its answer saved a
     agent: "review-test-quality",
     file: "review/test-quality.findings.md",
   });
-});
+}, 30_000);
 
 test.skipIf(process.getuid?.() === 0)(
   "SP2c AC-3: a relayed answer names a copy of the question the answered pass could not change",
@@ -952,4 +952,55 @@ test("SP7a AC-7 (Task 7): a role's stop clears the oldest working entry of its n
   clearWorking(ctx.paths, "judge");
   clearWorking(ctx.paths, "judge");
   expect(workingRoles(ctx.paths).map((w) => w.agent)).toEqual(["review-security"]);
+});
+
+test("SP3-T1 AC-4 (finding 78): a resumed tech lead's second answer joins its own team's reply file, the first answer untouched; two leads never share a file", () => {
+  const { root, ctx, work } = session();
+  work.route = "standard";
+  work.phase = "conclave";
+  saveWork(ctx.paths, work);
+  const dir = tempDir("crew-transcript-");
+  const stop = (id: string, answer: string) =>
+    onSubagentStop(ctx, {
+      agent_id: id,
+      agent_type: `${PLUGIN}:tech-lead`,
+      agent_transcript_path: transcript(dir, answer, [[100, 10, 0, 0]]),
+      last_assistant_message: "Done.",
+    });
+  const head = (team: string, what = "spec") =>
+    `# ${team} lead's validation of ${work.id}: ${what}\n`;
+  stop(
+    "q",
+    `${head("qa")}verdict: returned\n## Returns\n- R-1 · spec.md:3 · x\n## Notes\n- none\n`,
+  );
+  stop(
+    "s",
+    `${head("security")}verdict: returned\n## Returns\n- R-1 · spec.md:4 · y\n## Notes\n- none\n`,
+  );
+  stop("q", `${head("qa")}verdict: validated\n## Returns\n- none\n## Notes\n- round 2 of qa\n`);
+  stop(
+    "s",
+    `${head("security")}verdict: validated\n## Returns\n- none\n## Notes\n- round 2 of security\n`,
+  );
+  stop(
+    "q",
+    `${head("qa", "delivery")}verdict: validated\n## Returns\n- none\n## Notes\n- the delivery\n`,
+  );
+  const folder = join(root, ".crew", "work", work.id, "conclave");
+  expect(readFileSync(join(folder, "lead-qa.md"), "utf8")).toContain("verdict: returned");
+  expect(readFileSync(join(folder, "lead-qa.md"), "utf8")).not.toContain("round 2");
+  expect(readFileSync(join(folder, "lead-qa-reply.md"), "utf8")).toContain("round 2 of qa");
+  expect(readFileSync(join(folder, "lead-security-reply.md"), "utf8")).toContain(
+    "round 2 of security",
+  );
+  expect(readFileSync(join(folder, "lead-qa.delivery-reply.md"), "utf8")).toContain("the delivery");
+  expect(existsSync(join(folder, "tech-lead-reply.md"))).toBe(false);
+  const roles = loadEvidence(ctx.paths, work.id).evidence.roles ?? [];
+  expect(roles.filter((r) => r.agent === "tech-lead").map((r) => [r.file, r.team])).toEqual([
+    ["conclave/lead-qa.md", "qa"],
+    ["conclave/lead-security.md", "security"],
+    ["conclave/lead-qa-reply.md", "qa"],
+    ["conclave/lead-security-reply.md", "security"],
+    ["conclave/lead-qa.delivery-reply.md", "qa"],
+  ]);
 });

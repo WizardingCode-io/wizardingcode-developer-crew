@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { UNAVAILABLE } from "./fingerprint.ts";
+import { LockBusy, withLock } from "./lock.ts";
 import { decidedPriority, mailStatus, readContracts, threadOf } from "./mail-status.ts";
 import { blockingObjections, objectionStatus } from "./objections.ts";
 import { type CrewPaths, workDir } from "./paths.ts";
@@ -77,6 +78,46 @@ export function loadEvidence(
 
 export function saveEvidence(paths: CrewPaths, id: string, evidence: Evidence): void {
   writeProtectedJson(paths, evidencePath(paths, id), evidence);
+}
+
+/**
+ * One record into the evidence as it stands at the save (finding 81): under the work folder's
+ * lock the file is read again, `apply` writes its record into that copy, and the merge is saved,
+ * so a command that ran for minutes and one that ran beside it lose nothing. Refused, nothing
+ * applied and nothing saved, when the fresh read is tampered (a file edited outside the engine is
+ * never re-sealed as the engine's own) or when the lock is held past the wait (never broken, never
+ * bypassed); each refusal is the one line the caller prints with exit 1, `nothing recorded` or
+ * `nothing credited` as the caller's verb says. Returns what the callback returned beside the merge.
+ */
+export function updateEvidence<T = void>(
+  paths: CrewPaths,
+  id: string,
+  apply: (evidence: Evidence) => T,
+  options: { verb?: "recorded" | "credited" } = {},
+): { saved: Evidence; result: T } | { refused: string } {
+  const nothing = `nothing ${options.verb ?? "recorded"}`;
+  try {
+    return withLock(
+      workDir(paths, id),
+      (): { saved: Evidence; result: T } | { refused: string } => {
+        const read = loadEvidence(paths, id);
+        if (read.tampered)
+          return {
+            refused: `evidence.json of ${id} changed outside the engine (crew accept ${id}); ${nothing}`,
+          };
+        const result = apply(read.evidence);
+        saveEvidence(paths, id, read.evidence);
+        return { saved: read.evidence, result };
+      },
+      { what: "work folder" },
+    );
+  } catch (error) {
+    if (error instanceof LockBusy)
+      return {
+        refused: `the work folder of ${id} is busy (another crew command holds it); ${nothing}: run the command again`,
+      };
+    throw error;
+  }
 }
 
 export interface PlannedGate {

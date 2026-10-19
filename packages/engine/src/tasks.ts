@@ -1,6 +1,6 @@
 import { cpSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import { loadEvidence, saveEvidence, tddSummary } from "./evidence.ts";
+import { loadEvidence, tddSummary, updateEvidence } from "./evidence.ts";
 import { gitChangedPaths, gitHead, isGitRepo, isWatched } from "./fingerprint.ts";
 import { nowIso, readText, writeText } from "./fs.ts";
 import { findingsText } from "./judgement.ts";
@@ -568,24 +568,27 @@ function creditChild(
 ): { credited: string[]; uncredited: string | null } {
   if (forced)
     return { credited: [], uncredited: "a forced merge of an unproven child credits nothing" };
-  const loaded = loadEvidence(paths, work.id);
-  if (loaded.tampered)
-    return {
-      credited: [],
-      uncredited: `evidence.json of ${work.id} changed outside the engine (crew accept ${work.id}); nothing credited`,
-    };
   const merged = {
     task: record.task,
     child: record.child ?? "",
     commit: record.mergeCommit ?? "",
     at: record.mergedAt ?? nowIso(),
   };
-  const tdd = loaded.evidence.tdd.map((t) =>
-    record.criteria.includes(t.criterion) ? { ...t, merged } : t,
+  // Credited into the evidence as it stands at the save, under the lock (finding 81).
+  const saved = updateEvidence(
+    paths,
+    work.id,
+    (fresh) => {
+      const tdd = fresh.tdd.map((t) =>
+        record.criteria.includes(t.criterion) ? { ...t, merged } : t,
+      );
+      for (const criterion of record.criteria)
+        if (!tdd.some((t) => t.criterion === criterion)) tdd.push({ criterion, merged });
+      fresh.tdd = tdd;
+    },
+    { verb: "credited" },
   );
-  for (const criterion of record.criteria)
-    if (!tdd.some((t) => t.criterion === criterion)) tdd.push({ criterion, merged });
-  saveEvidence(paths, work.id, { ...loaded.evidence, tdd });
+  if ("refused" in saved) return { credited: [], uncredited: saved.refused };
   return { credited: [...record.criteria], uncredited: null };
 }
 

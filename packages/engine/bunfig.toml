@@ -1,0 +1,5 @@
+# The engine target's `bun test` (the gate's confirmed command and crew tdd's default): the preload
+# that removes the fixtures when the run ends (finding 74). bun 1.3.9 reads no timeout key here: the
+# tests that run commands or sleep declare their own budget, and the command may carry --timeout 30000.
+[test]
+preload = ["./tests/preload.ts"]

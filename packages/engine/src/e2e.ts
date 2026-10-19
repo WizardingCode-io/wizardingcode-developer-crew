@@ -29,20 +29,23 @@ export const NO_ENVIRONMENT_REASON =
   'no environment in the profile (crew profile set environment.start "<cmd>")';
 export const NO_E2E_REASON = 'no e2e command (crew profile set e2e "<cmd>")';
 
-interface LogsSource {
-  kind: "path" | "command" | "none";
-  value: string;
-  /** For a path: the real file, or null when it is outside the project or missing (`note` says which). */
-  file: string | null;
-  note: string | null;
-  sizeBefore: number;
-}
+/** Where the environment's logs come from: nothing, a command whose output is read, or a file read from the size it had (each variant carries what its reader needs). */
+type LogsSource =
+  | { kind: "none"; note: null }
+  | { kind: "command"; value: string; note: null }
+  | {
+      kind: "path";
+      value: string;
+      /** The real file, or null when it is outside the project or missing (`note` says which). */
+      file: string | null;
+      note: string | null;
+      sizeBefore: number;
+    };
 
 /** A path is read only inside the project, by its real path; a command is the profile's own and runs as such. */
 function logsSource(root: string, logs: string | undefined): LogsSource {
-  if (!logs?.trim()) return { kind: "none", value: "", file: null, note: null, sizeBefore: 0 };
-  if (COMMAND_CHARS.test(logs))
-    return { kind: "command", value: logs, file: null, note: null, sizeBefore: 0 };
+  if (!logs?.trim()) return { kind: "none", note: null };
+  if (COMMAND_CHARS.test(logs)) return { kind: "command", value: logs, note: null };
   const unread = { kind: "path" as const, value: logs, file: null, sizeBefore: 0 };
   const outside = `logs: ${logs} is outside the project; not read`;
   const missing = `logs: ${logs} not found; not read`;
@@ -168,19 +171,19 @@ export async function runE2e(inputs: E2eInputs): Promise<GateRun> {
     // What the engine started is stopped whatever the run did (the user's environment is never).
     if (started.managed) await stopEnvironment(paths, environment);
   }
-  const console_ = gradeConsole(dir);
+  const consoleGrade = gradeConsole(dir);
   const graded = logsText === null ? null : gradeLogs(logsText);
   // Each line says what its measurement found; the gate's reason is the first offence of the two.
   const consoleOffence =
-    console_.status === "failed"
-      ? `console ${console_.first.type} on ${console_.first.page}: ${console_.first.text}`
-      : console_.status === "invalid"
+    consoleGrade.status === "failed"
+      ? `console ${consoleGrade.first.type} on ${consoleGrade.first.page}: ${consoleGrade.first.text}`
+      : consoleGrade.status === "invalid"
         ? "console file does not parse"
         : null;
   const logsOffence = graded?.status === "failed" ? `logs: ${graded.first}` : null;
   const offence = consoleOffence ?? logsOffence;
   const consoleLine =
-    consoleOffence ?? (console_.status === "none" ? "console: not captured" : "console: clean");
+    consoleOffence ?? (consoleGrade.status === "none" ? "console: not captured" : "console: clean");
   const logsLine = logsOffence ?? (graded === null ? (logs.note ?? "logs: none") : "logs: clean");
   const passed = result.exit === 0 && !result.timedOut && offence === null;
   return {
@@ -197,9 +200,9 @@ export async function runE2e(inputs: E2eInputs): Promise<GateRun> {
     artifacts: {
       dir: E2E_DIR,
       console:
-        console_.file === null
+        consoleGrade.file === null
           ? null
-          : `${E2E_DIR}/${console_.file.endsWith(".jsonl") ? "console.jsonl" : "console.json"}`,
+          : `${E2E_DIR}/${consoleGrade.file.endsWith(".jsonl") ? "console.jsonl" : "console.json"}`,
       logs: logsText === null ? null : `${E2E_DIR}/logs.txt`,
     },
   };

@@ -3,7 +3,7 @@ import { basename, delimiter, join } from "node:path";
 import { type AuditToolName, parseAudit } from "./audit.ts";
 import { excludedRiskPaths, riskAreasForPaths } from "./classify.ts";
 import { runE2e } from "./e2e.ts";
-import { computeVerdict, loadEvidence, type PlannedGate, saveEvidence } from "./evidence.ts";
+import { computeVerdict, loadEvidence, type PlannedGate, updateEvidence } from "./evidence.ts";
 import {
   changedWatchedPaths,
   computeFingerprint,
@@ -560,6 +560,8 @@ export interface GateOutcome {
   review: string | null;
   /** What the review's patch lacks, when something could not be cut (review of SP2b, findings 9 and 10). */
   reviewNote: string | null;
+  /** Set when the evidence could not be saved (edited outside the engine during the run, or the lock held): nothing recorded, the verdict unproven on the in-memory evidence (finding 81). */
+  saveRefused?: string;
 }
 
 export async function runGates(
@@ -648,28 +650,45 @@ export async function runGates(
   work.seats = plannedSeats(work.route, work.riskAreas, changed, policy);
   work.primaryTeam = primaryTeam(changed);
   const reviewInputs = judgement.length ? writeReviewInputs(paths, work, changed, stamp) : null;
-  const verdict = computeVerdict({
-    work,
-    evidence,
-    expected: planned,
-    expectedJudgement: judgement,
-    policy,
-    ledger: loadLedger(paths, work.id).ledger,
-    currentFingerprint: computeFingerprint(
-      paths.root,
-      profile,
-      base,
-      MAX_WATCHED_FILES,
-      fingerprintMethod(fingerprintBefore),
-    ),
-    tampered,
+  const currentFingerprint = computeFingerprint(
+    paths.root,
+    profile,
+    base,
+    MAX_WATCHED_FILES,
+    fingerprintMethod(fingerprintBefore),
+  );
+  const ledger = loadLedger(paths, work.id).ledger;
+  const verdictOf = (of: Evidence) =>
+    computeVerdict({
+      work,
+      evidence: of,
+      expected: planned,
+      expectedJudgement: judgement,
+      policy,
+      ledger,
+      currentFingerprint,
+      tampered,
+    });
+  // Saved into the evidence as it stands now, under the lock (finding 81): the runs and the stamp
+  // are this run's, the test-first and the roles' records are whatever landed meanwhile, and the
+  // verdict is computed on the merge. A refusal (the file edited outside the engine during the run,
+  // a lock held) saves nothing and is said; the verdict is then unproven, on the in-memory evidence.
+  const saved = updateEvidence(paths, work.id, (fresh) => {
+    fresh.runs = evidence.runs;
+    fresh.fingerprint = stamp;
+    const merged = verdictOf(fresh);
+    fresh.verdict = merged.verdict;
+    fresh.unproven = merged.unproven;
   });
-  evidence.verdict = verdict.verdict;
-  evidence.unproven = verdict.unproven;
-  saveEvidence(paths, work.id, evidence);
+  if ("refused" in saved) {
+    evidence.verdict = "unproven";
+    evidence.unproven = [saved.refused, ...verdictOf(evidence).unproven];
+  }
+  const final = "saved" in saved ? saved.saved : evidence;
   return {
-    evidence,
-    ...verdict,
+    evidence: final,
+    verdict: final.verdict,
+    unproven: final.unproven,
     planned,
     changed,
     raised,
@@ -677,6 +696,7 @@ export async function runGates(
     judgement,
     review: reviewInputs?.dir ?? null,
     reviewNote: reviewInputs?.note ?? null,
+    ...("refused" in saved ? { saveRefused: saved.refused } : {}),
   };
 }
 

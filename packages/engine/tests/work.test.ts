@@ -491,7 +491,7 @@ test("SP7a AC-2: on standard and full the plan waits for the mandatory leads' va
   expect(second.ok).toBe(false);
   if (!second.ok)
     expect(second.missing).toEqual([
-      "validation of spec by lead-security: returned 1 return (conclave/lead-security.md); revise the spec and record the lead again",
+      "validation of spec by lead-security: returned 1 return (conclave/lead-security.md); revise the spec and record the lead again (a resumed lead's answer: its -reply.md file)",
     ]);
   const security = work.validations[1];
   if (security) work.validations[1] = { ...security, verdict: "validated", returns: 0 };
@@ -554,7 +554,7 @@ test("SP7a AC-2: on standard and full the plan waits for the mandatory leads' va
   expect(returnedDelivery.ok).toBe(false);
   if (!returnedDelivery.ok)
     expect(returnedDelivery.missing).toEqual([
-      "validation of delivery by lead-security: returned 2 returns (conclave/lead-security.delivery.md); revise the delivery and record the lead again",
+      "validation of delivery by lead-security: returned 2 returns (conclave/lead-security.delivery.md); revise the delivery and record the lead again (a resumed lead's answer: its -reply.md file)",
     ]);
   // A fast item, and a standard item with no seats recorded, ask for no validation.
   const fast = createWork(paths, "Fast");

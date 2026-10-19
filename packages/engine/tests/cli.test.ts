@@ -5,6 +5,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  rmdirSync,
   statSync,
   unlinkSync,
   writeFileSync,
@@ -187,7 +188,7 @@ test("SP2b: judgement rulings are recorded from a file, judged by the verdict, s
   const evidenceFile = join(root, ".crew", "work", id, "evidence.json");
   writeFileSync(evidenceFile, readFileSync(evidenceFile, "utf8").replace('"not-run"', '"proven"'));
   expect((await c.json("status")).data.unproven).toContain("state changed outside the engine");
-});
+}, 30_000);
 
 test("SP2b review: a ruling is accepted only while the review inputs describe the current code", async () => {
   const root = makeRepo({
@@ -644,7 +645,7 @@ test("0.3.0: crew gate run follows the manifests and never replaces a confirmed 
     command: "exit 0 # mine",
     source: "confirmed",
   });
-});
+}, 30_000);
 
 test("C1: gate run --only refuses an unknown gate name", async () => {
   const root = makeRepo({ "package.json": JSON.stringify({ scripts: { test: "exit 0" } }) });
@@ -2151,7 +2152,7 @@ test("SP2c AC-5: crew judgement record fills tokens from the engine's role recor
   expect((await c.json("judgement", id, "record", "--ruling", file)).data.records).toMatchObject([
     { tokens: 123 },
   ]);
-});
+}, 30_000);
 
 test("SP7a AC-4: crew team prints the seats with their reasons and records them; the gate run and the status carry them; the report has the Team table", async () => {
   const root = makeRepo({
@@ -3099,7 +3100,7 @@ test("SP7b AC-4: crew start --origin, await and resume move the origin message a
   expect((await cb.run("resume", id)).code).toBe(0);
   expect(inboxStatus()).toBe("in-progress");
   expect(outboxStatus()).toBe("in-progress");
-});
+}, 30_000);
 
 test("SP7b AC-5: an item's priority comes from --priority, else from its origin's confirmed priority, else normal; status prints it", async () => {
   const { env, a, b, ca, cb } = mailRepos(["question", "notice", "change-request", "blocker"]);
@@ -3145,7 +3146,7 @@ test("SP7b AC-5: an item's priority comes from --priority, else from its origin'
   expect(read(b, fromUnknown).priority).toBe("normal");
   const plain = (await cb.json("start", "Plain", "--answers", answers)).data.id as string;
   expect(read(b, plain).priority).toBe("normal");
-});
+}, 30_000);
 
 // ---------------------------------------------------------------------------------------------
 // SP7b Task 2: threads, contracts and the evidence in a reply
@@ -3382,7 +3383,7 @@ test("SP7b-T3 AC-2: crew profile set environment.* confirms a block key by key, 
   expect(health.data).toMatchObject({ message: "up", up: true, exit: 0 });
   const stopped = await c.json("env", "stop");
   expect(stopped.data).toMatchObject({
-    message: `environment stopped (pid ${pid})`,
+    message: `environment stopped (pid ${pid}, group signalled)`,
     stopped: true,
     pid,
   });
@@ -3413,7 +3414,7 @@ test("SP7b-T3 AC-2: crew profile set environment.* confirms a block key by key, 
   expect(confirmed?.start.source).toBe("confirmed");
   expect(confirmed?.health.source).toBe("confirmed");
   expect(confirmed?.stop?.source).toBe("confirmed");
-});
+}, 30_000);
 
 test("SP7b-T3 AC-3: crew env on the user's environment: nothing started, never stopped, down when it dies", async () => {
   const root = makeRepo();
@@ -3434,7 +3435,7 @@ test("SP7b-T3 AC-3: crew env on the user's environment: nothing started, never s
   );
   unlinkSync(join(root, "up.flag"));
   expect((await c.run("env", "status")).out).toBe("environment: down\n");
-});
+}, 30_000);
 
 test("SP7b-T4 AC-1: crew profile set e2e sets the command; an interface change without an environment leaves the e2e gate unavailable until the user sets one or skips the gate, which the default policy allows for e2e alone", async () => {
   const root = makeRepo({
@@ -3716,7 +3717,7 @@ test("SP7b-T5 AC-2 (judgement): under the standing grant the third and fourth ju
     "code-quality: proven (0 findings)",
   );
   expect(loadWork(repoPaths(root, env), id).work?.rounds).toMatchObject({ judgement: 5 });
-});
+}, 30_000);
 
 test("SP7b-T5 AC-3: the engine keeps each judgement round's findings and ruling as round copies at the record, and a gate run's reset leaves them", async () => {
   const root = makeRepo({
@@ -3923,5 +3924,88 @@ test("SP7b-T6 AC-3: crew task <id> brief T-n --print prints an existing brief as
   expect(loadWork(repoPaths(root, env), id).work?.tasks?.[0]).toMatchObject({
     state: "briefed",
     brief: "tasks/T-5.brief.md",
+  });
+});
+
+test("SP3-T1 AC-2 (finding 81): two tdd commands that overlap keep both records; a busy lock and a file rewritten by hand mid-run each refuse with one line and nothing recorded", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const env = testEnv();
+  const one = io(root, env);
+  const two = io(root, env);
+  const id = (await one.json("start", "Two records", "--answers", answers, "--preserve", "keep"))
+    .data.id as string;
+  expect((await one.run("criteria", id, "add", "measured", "--kind", "observed")).code).toBe(0);
+  expect((await one.run("tdd", "before", id, "AC-1", "--", "true")).code).toBe(0);
+  const [after, observed] = await Promise.all([
+    one.run("tdd", "after", id, "AC-1", "--", "sleep", "1"),
+    two.run("tdd", "observed", id, "AC-2", "--reason", "a measurement", "--", "true"),
+  ]);
+  expect(after.code, after.err).toBe(0);
+  expect(observed.code, observed.err).toBe(0);
+  const paths = repoPaths(root, env);
+  const tdd = loadEvidence(paths, id).evidence.tdd;
+  expect(tdd.find((t) => t.criterion === "AC-1")?.after?.exit).toBe(0);
+  expect(tdd.find((t) => t.criterion === "AC-2")?.observed?.exit).toBe(0);
+  // A fresh lock another command holds: one line, exit 1, nothing recorded, the lock left alone.
+  const lock = join(root, ".crew", "work", id, ".lock");
+  mkdirSync(lock);
+  const busy = await one.run("tdd", "observed", id, "AC-2", "--reason", "again", "--", "true");
+  expect(busy.code).toBe(1);
+  expect(busy.err.trim()).toStartWith(
+    `the work folder of ${id} is busy (another crew command holds it); nothing recorded: run the command again (the observed run passed: logs/tdd-AC-2-observed-`,
+  );
+  expect(existsSync(lock)).toBe(true);
+  rmdirSync(lock);
+  expect(loadEvidence(paths, id).evidence.tdd.find((t) => t.criterion === "AC-2")?.reason).toBe(
+    "a measurement",
+  );
+  // The file rewritten by hand while the run is in flight: the run's result is said, nothing recorded, the bytes kept.
+  const file = join(root, ".crew", "work", id, "evidence.json");
+  const running = one.run("tdd", "observed", id, "AC-2", "--reason", "again", "--", "sleep", "1");
+  await Bun.sleep(300);
+  writeFileSync(file, '{"hand":true}');
+  const tampered = await running;
+  expect(tampered.code).toBe(1);
+  expect(tampered.err.trim()).toStartWith(
+    `evidence.json of ${id} changed outside the engine (crew accept ${id}); nothing recorded (the observed run passed: logs/tdd-AC-2-observed-`,
+  );
+  expect(readFileSync(file, "utf8")).toBe('{"hand":true}');
+}, 30_000);
+
+test("SP3-T1 AC-4 (finding 78): crew validation record reads the last block of a resumed lead's reply file", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const c = io(root);
+  const standard = JSON.stringify({ ...JSON.parse(answers), scope: 1 });
+  const id = (await c.json("start", "Two rounds", "--answers", standard)).data.id as string;
+  write(root, `.crew/work/${id}/spec.md`, "# Spec\n\n## Acceptance criteria\n- AC-1 x\n");
+  const reply = `.crew/work/${id}/conclave/lead-qa-reply.md`;
+  write(
+    root,
+    reply,
+    `# qa lead's validation of ${id}: spec\nverdict: returned\n## Returns\n- R-1 · spec.md:3 · x\n## Notes\n- round 1\n\n# qa lead's validation of ${id}: spec\nverdict: validated\n## Returns\n- none\n## Notes\n- round 2\n`,
+  );
+  const recorded = await c.json(
+    "validation",
+    id,
+    "record",
+    "--what",
+    "spec",
+    "--by",
+    "lead-qa",
+    "--file",
+    reply,
+  );
+  expect(recorded.code).toBe(0);
+  expect(recorded.data.validation).toMatchObject({
+    verdict: "validated",
+    returns: 0,
+    by: "lead-qa",
+    file: "conclave/lead-qa-reply.md",
   });
 });

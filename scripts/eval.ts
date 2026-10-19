@@ -34,7 +34,7 @@ const ALLOW_TOOLS = [
 ];
 // The tags the sandbox can run: the three mail cases are tagged needs-real-opener (spike A6, the
 // sandbox's temporary config holds no login) and are recorded from an end-to-end run instead.
-const SANDBOX_TAGS = [
+export const SANDBOX_TAGS = [
   "cost",
   "enforcement",
   "method",

@@ -31,11 +31,10 @@ export function defaultTestCommand(
     : null;
 }
 
-export interface TddOutcome {
-  ok: boolean;
-  message: string;
-  record?: RunRecord;
-}
+/** A run recorded carries `apply`, which writes the step's record into whatever evidence it is given (the caller applies it under the work folder's lock, finding 81); a refusal carries the run when one happened. */
+export type TddOutcome =
+  | { ok: true; message: string; record: RunRecord; apply: (evidence: Evidence) => void }
+  | { ok: false; message: string; record?: RunRecord };
 
 export async function recordTdd(
   paths: CrewPaths,
@@ -67,18 +66,40 @@ export async function recordTdd(
       message: 'no test command: set one with crew profile set test "<cmd>" or pass -- <cmd>',
     };
   }
-  let entry = evidence.tdd.find((t) => t.criterion === criterionId);
-  if (!entry) {
-    entry = { criterion: criterionId };
-    evidence.tdd.push(entry);
-  }
-  if (step === "green" && !entry.red)
+  const entry = evidence.tdd.find((t) => t.criterion === criterionId);
+  if (step === "green" && !entry?.red)
     return { ok: false, message: `no red run recorded for ${criterionId}: run crew tdd red first` };
-  if (step === "after" && !entry.before)
+  if (step === "after" && !entry?.before)
     return {
       ok: false,
       message: `no before run recorded for ${criterionId}: run crew tdd before first`,
     };
+  // A baseline is the tests green before the change (finding 79): with a watched source already
+  // differing from the item's base, a before recorded now proves nothing the after does not, and
+  // is refused. The tests may differ: the red test of a behaviour criterion comes first.
+  if (step === "before") {
+    const changed = changedWatchedPaths(paths.root, profile, work).filter(
+      (p) => !matchesAny(p, TEST_PATTERNS),
+    );
+    if (changed.length) {
+      const named = `${changed.slice(0, 3).join(", ")}${changed.length > 3 ? `, +${changed.length - 3} more` : ""}`;
+      return {
+        ok: false,
+        message: `the watched sources already differ from the item's base (${named}): a before recorded now is not a baseline; record it before the change, or make ${criterionId} observed with the reason`,
+      };
+    }
+  }
+  // The record is written into whatever evidence the caller applies it to, never into this copy,
+  // which was read before the run and may be stale by the time it ends (finding 81).
+  const writeRecord = (recorded: TddStep, record: RunRecord) => (into: Evidence) => {
+    let target = into.tdd.find((t) => t.criterion === criterionId);
+    if (!target) {
+      target = { criterion: criterionId };
+      into.tdd.push(target);
+    }
+    target[recorded] = record;
+    if (recorded === "observed" && reason) target.reason = reason.trim();
+  };
 
   const log = `logs/tdd-${criterionId}-${step}-${Date.now()}.txt`;
   const result = await runCommand(command, {
@@ -117,8 +138,12 @@ export async function recordTdd(
     record.changedTests = changedWatchedPaths(paths.root, profile, work).filter((p) =>
       matchesAny(p, TEST_PATTERNS),
     );
-    entry.red = record;
-    return { ok: true, message: `red recorded for ${criterionId} (exit ${result.exit})`, record };
+    return {
+      ok: true,
+      message: `red recorded for ${criterionId} (exit ${result.exit})`,
+      record,
+      apply: writeRecord("red", record),
+    };
   }
   if (!passed) {
     return {
@@ -127,7 +152,10 @@ export async function recordTdd(
       record,
     };
   }
-  entry[step] = record;
-  if (step === "observed" && reason) entry.reason = reason.trim();
-  return { ok: true, message: `${step} recorded for ${criterionId}`, record };
+  return {
+    ok: true,
+    message: `${step} recorded for ${criterionId}`,
+    record,
+    apply: writeRecord(step, record),
+  };
 }

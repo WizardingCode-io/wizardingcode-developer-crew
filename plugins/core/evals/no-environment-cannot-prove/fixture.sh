@@ -19,7 +19,7 @@ cat > src/index.html <<'EOF'
 </html>
 EOF
 cat > tests/e2e/run.mjs <<'EOF'
-// The end-to-end run: against the environment (the flag), it loads the page as a browser would and writes the console the gate grades.
+// The end-to-end run: it loads the page as a browser would and writes the console the gate grades; this project describes no environment, so the gate has nothing to bring up around it.
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 
 if (!existsSync("var/up")) {
