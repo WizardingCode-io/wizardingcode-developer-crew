@@ -36,6 +36,10 @@ read: <n> files, the schema and migrations read, risk areas: <list>
 (or: none)
 ```
 
+## On an audit
+
+On an audit item (the prompt says so) you receive `.crew/work/<id>/audit/files.txt`, `audit/runs.json` and `audit/scope.json` and no diff: the files listed are the change, read them whole, and `## Outside the change` is `none`. The shape is the same; a finding a run proves (a failing test, a problem a log names) carries `log:<path under logs/>` in place of the file and line (`- F-n · defect · log:logs/audit-test-root.txt · <sentence>`). The session saves your answer as `.crew/work/<id>/audit/data.findings.md`.
+
 ## Rules
 
 - A defect is a loss or a cost a reader of the diff can name: a data loss, an irreversible step with no stated reason, an N+1 the ORM would have avoided in a list path, a constraint or an index removed, personal data without its retention. A slower query or a naming drift is an advisory.

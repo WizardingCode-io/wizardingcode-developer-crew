@@ -36,6 +36,10 @@ read: <n> files, risk areas: <list>
 (or: none)
 ```
 
+## On an audit
+
+On an audit item (the prompt says so) you receive `.crew/work/<id>/audit/files.txt`, `audit/runs.json` and `audit/scope.json` and no diff: the files listed are the change, read them whole, and `## Outside the change` is `none`. The shape is the same; a finding a run proves (a failing test, a problem a log names) carries `log:<path under logs/>` in place of the file and line (`- F-n · defect · log:logs/audit-test-root.txt · <sentence>`). The session saves your answer as `.crew/work/<id>/audit/security.findings.md`.
+
 ## Rules
 
 - A defect is a path: who calls, with what, and what they get that the risk area forbids. Name all three, or it is an advisory.

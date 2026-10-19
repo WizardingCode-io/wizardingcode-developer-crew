@@ -278,3 +278,29 @@ export function plannedSeats(
     plan({ role: "judge", team: null, kind: "debate", reason: "a gate is planned" });
   return seats;
 }
+
+/**
+ * The audit's seats (SP7 §7.5, SP8 decision 7): the researcher for the dependencies, security,
+ * architecture, code quality and test quality always, data and infra when the scope's risk areas
+ * name their paths, a team the policy always seats with its reviewers; no CTO, no lead, no judge:
+ * the report is the deliverable and a person signs it.
+ */
+export function auditSeats(scope: { riskAreas: readonly RiskArea[] }, policy: Policy): Seat[] {
+  const seats: Seat[] = [];
+  const plan = (seat: Seat): void => {
+    if (!seats.some((s) => s.role === seat.role)) seats.push(seat);
+  };
+  plan({ role: "researcher", team: "researchers", kind: "debate", reason: "audit: dependencies" });
+  const gate = (name: JudgementGateName, team: TeamName, reason: string) =>
+    plan({ role: `review-${name}`, team, kind: "gate", gate: name, reason });
+  gate("security", "security", "audit");
+  gate("architecture", "architects", "audit");
+  gate("code-quality", "backend", "audit");
+  gate("test-quality", "qa", "audit");
+  if (scope.riskAreas.includes("data-migration"))
+    gate("data", "etl", "audit: data-migration paths");
+  if (scope.riskAreas.includes("infra")) gate("infra", "devops", "audit: infra paths");
+  for (const team of policy.team.always)
+    for (const g of TEAMS[team].gates) gate(g, team, "policy team.always");
+  return seats;
+}

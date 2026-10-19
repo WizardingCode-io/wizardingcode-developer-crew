@@ -1639,3 +1639,43 @@ test("SP8-T2 AC-3: crew approve <id> audit has no unattended form: asked under p
     }
   }
 });
+
+test("SP8-T4 AC-4: the audit's engine files are denied to the Write tool and to a Bash write (a redirect, tee, a .. segment); the lead's own files are not", () => {
+  const { root, ctx } = setup();
+  const write = (rel: string) =>
+    decision(
+      onPreToolUse(ctx, {
+        tool_name: "Write",
+        tool_input: { file_path: join(root, ".crew", "work", "w1", rel) },
+      }),
+    );
+  for (const owned of [
+    "audit/runs.json",
+    "audit/files.txt",
+    "audit/scope.json",
+    "audit/report.json",
+    "audit/report.md",
+    "audit/report.html",
+    "audit/report.pdf",
+    "audit/security.findings.md",
+    "audit/architecture.findings.md",
+    "audit/code-quality.findings.md",
+    "audit/test-quality.findings.md",
+    "audit/data.findings.md",
+    "audit/infra.findings.md",
+    "audit/dependencies.findings.md",
+    "audit/summary/../runs.json",
+    "audit",
+  ])
+    expect(write(owned), owned).toBe("deny");
+  for (const open of ["audit/business.findings.md", "audit/summary.md", "audit/recommendations.md"])
+    expect(write(open), open).toBeUndefined();
+  expect(write("auditor.md")).toBeUndefined();
+  const bash = (command: string) =>
+    decision(onPreToolUse(ctx, { tool_name: "Bash", tool_input: { command } }));
+  expect(bash(`echo x > ${root}/.crew/work/w1/audit/runs.json`)).toBe("deny");
+  expect(bash(`cat f | tee ${root}/.crew/work/w1/audit/security.findings.md`)).toBe("deny");
+  expect(bash(`echo x > ${root}/.crew/work/w1/audit/summary/../scope.json`)).toBe("deny");
+  expect(bash(`echo x > ${root}/.crew/work/w1/audit/summary.md`)).toBeUndefined();
+  expect(bash(`cat ${root}/.crew/work/w1/audit/runs.json`)).toBeUndefined();
+});

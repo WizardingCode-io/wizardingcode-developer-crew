@@ -27,7 +27,7 @@ import { loadItemMail, mailbox, ROLE_AGENT, send } from "../src/mail.ts";
 import { clearWorking, recordWorking, workingRoles } from "../src/state.ts";
 import { ROLE_NAMES } from "../src/team.ts";
 import type { RoleRecord } from "../src/types.ts";
-import { addCriterion, createWork, loadWork, saveWork } from "../src/work.ts";
+import { addCriterion, applyClassification, createWork, loadWork, saveWork } from "../src/work.ts";
 import { hookContext, makeRepo, tempDir, testEnv, write } from "./helpers.ts";
 
 const PLUGIN = "wizardingcode-developer-crew";
@@ -1003,4 +1003,39 @@ test("SP3-T1 AC-4 (finding 78): a resumed tech lead's second answer joins its ow
     ["conclave/lead-security-reply.md", "security"],
     ["conclave/lead-qa.delivery-reply.md", "qa"],
   ]);
+});
+
+test("SP8-T4 AC-3: on an audit item the hook files a reviewer's answer as audit/<gate>.findings.md and the researcher's as audit/dependencies.findings.md; on any other kind the files stay where they were", () => {
+  expect(answerFile("review-security", "…", "audit")).toBe("audit/security.findings.md");
+  expect(answerFile("researcher", "# Dependencies for w1", "audit")).toBe(
+    "audit/dependencies.findings.md",
+  );
+  expect(answerFile("review-security", "…", "feature")).toBe("review/security.findings.md");
+  expect(answerFile("researcher", "# Research for w1", "feature")).toBe("conclave/researcher.md");
+  expect(answerFile("researcher", "# Research for w1")).toBe("conclave/researcher.md");
+  const { root, ctx, work } = session();
+  applyClassification(
+    work,
+    "audit",
+    { route: "full", reasons: [], riskAreas: [] },
+    { kind: "audit", from: "work_type audit" },
+  );
+  work.phase = "audit";
+  saveWork(ctx.paths, work);
+  const dir = tempDir("crew-transcript-");
+  onSubagentStop(ctx, {
+    agent_id: "r1",
+    agent_type: `${PLUGIN}:review-security`,
+    agent_transcript_path: transcript(
+      dir,
+      `# security findings for ${work.id}\nreviewer: review-security\n## Findings\n- none\n`,
+      [[100, 10, 0, 0]],
+    ),
+    last_assistant_message: "Done.",
+  });
+  expect(
+    readFileSync(join(root, ".crew", "work", work.id, "audit", "security.findings.md"), "utf8"),
+  ).toContain("# security findings for");
+  const roles = loadEvidence(ctx.paths, work.id).evidence.roles ?? [];
+  expect(roles.find((r) => r.agent === "review-security")?.file).toBe("audit/security.findings.md");
 });

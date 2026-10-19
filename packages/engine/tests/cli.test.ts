@@ -28,6 +28,7 @@ import { recordWorking } from "../src/state.ts";
 import { readProtectedJson, writeProtectedJson } from "../src/store.ts";
 import type { GateRun, Message, WorkItem } from "../src/types.ts";
 import { loadWork, saveWork } from "../src/work.ts";
+import { PLANTED_KEY } from "./audit-run.test.ts";
 import { git, makeRepo, repoPaths, tempDir, testEnv, write } from "./helpers.ts";
 import { RESEARCH, STRATEGY } from "./strategy.test.ts";
 
@@ -6023,4 +6024,60 @@ test("SP8-T3 AC-2, AC-3: on the full route the strategy ruling needs the CTO's r
   expect((await c.run("judgement", standard, "record", "--ruling", file)).err.trim()).toBe(
     "on the standard route the judge rules the strategy from the files: the ruling names reviewer judge",
   );
+});
+
+test("SP8-T4 AC-1, AC-3: crew audit run is refused on a feature and outside the audit phase, exits 0 on a project whose tests fail with every run recorded, the status summarises the runs, and crew team seats the audit's roles from the scope", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({
+      name: "audited",
+      scripts: { build: "exit 0", test: "exit 1" },
+    }),
+    "src/a.ts": "export const a = 1;\n",
+    "src/db/migrations/001_init.sql": "create table t (id int);\n",
+    "config/keys.ts": `export const aws = "${PLANTED_KEY}";\n`,
+  });
+  const c = io(root);
+  const feature = JSON.stringify({ ...JSON.parse(answers), work_type: "feature", scope: 1 });
+  const fid = (await c.json("start", "A feature", "--answers", feature, "--criterion", "a")).data
+    .id as string;
+  const notAudit = await c.run("audit", fid, "run");
+  expect(notAudit.code).toBe(1);
+  expect(notAudit.err.trim()).toBe(
+    `not an audit: ${fid} is a feature; crew audit runs on an audit item alone`,
+  );
+  const id = (await c.json("start", "Audit this project", "--answers", auditAnswers)).data
+    .id as string;
+  const early = await c.run("audit", id, "run");
+  expect(early.code).toBe(1);
+  expect(early.err.trim()).toBe(
+    `the audit runs in the audit phase: ${id} is in recognize (crew phase ${id} next)`,
+  );
+  expect((await c.run("phase", id, "next")).code).toBe(0);
+  expect((await c.run("status")).out).toContain(`audit run: none yet (crew audit ${id} run)`);
+  expect((await c.run("audit", id, "run", "--only", "nope")).err.trim()).toBe("unknown gate: nope");
+  expect((await c.run("audit", id)).err.trim()).toBe("usage: crew audit <id> run [--only a,b]");
+  const before = await c.run("team", id);
+  expect(before.out.trim()).toBe(
+    `Team of ${id} (audit): researcher (audit: dependencies); review-security (audit); review-architecture (audit); review-code-quality (audit); review-test-quality (audit)`,
+  );
+  const run = await c.run("audit", id, "run");
+  expect(run.code, run.err).toBe(0);
+  expect(run.out).toContain("build (.): pass");
+  expect(run.out).toContain("test (.): fail (logs/audit-test-root.txt)");
+  expect(run.out).toContain("secrets (.): fail (logs/audit-secrets-root.txt)");
+  expect(run.out).toContain("deps (.): unavailable (no lockfile)");
+  expect(run.out).toContain("e2e (.): unavailable (needs the environment; run by hand)");
+  expect(run.out).toContain("risk areas: data-migration");
+  expect(run.out).toContain(`runs recorded in .crew/work/${id}/audit/runs.json`);
+  expect(run.out).toContain(`crew audit ${id} report`);
+  const status = (await c.run("status")).out;
+  expect(status).toContain("audit run: 1 pass, 2 fail (secrets, test), 2 unavailable (deps, e2e)");
+  const after = await c.run("team", id);
+  expect(after.out.trim()).toBe(
+    `Team of ${id} (audit): researcher (audit: dependencies); review-security (audit); review-architecture (audit); review-code-quality (audit); review-test-quality (audit); review-data (audit: data-migration paths)`,
+  );
+  const next = await c.run("phase", id, "next");
+  expect(next.code).toBe(1);
+  expect(next.err).not.toContain("audit run not recorded");
+  expect(next.err).toContain("audit report not rendered");
 });

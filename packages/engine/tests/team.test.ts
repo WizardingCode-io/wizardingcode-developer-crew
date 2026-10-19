@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { DEFAULT_POLICY } from "../src/policy.ts";
 import {
+  auditSeats,
   EXPERT_PERSONALITIES,
   PERSONALITIES,
   plannedSeats,
@@ -235,4 +236,51 @@ test("SP8-T3 AC-3: the CTO sits as the strategy's reviewer on the full route alo
   expect(
     cto(plannedSeats("full", [], ["src/a.ts"], DEFAULT_POLICY, undefined, { strategy: false })),
   ).toBeUndefined();
+});
+
+test("SP8-T4 AC-3: the audit's seats follow the scope: the researcher for the dependencies, the four reviewers always, data and infra by the risk areas, no CTO, lead or judge", () => {
+  const roles = (seats: ReturnType<typeof auditSeats>) => seats.map((s) => s.role);
+  const plain = auditSeats({ riskAreas: [] }, DEFAULT_POLICY);
+  expect(roles(plain)).toEqual([
+    "researcher",
+    "review-security",
+    "review-architecture",
+    "review-code-quality",
+    "review-test-quality",
+  ]);
+  expect(plain[0]).toEqual({
+    role: "researcher",
+    team: "researchers",
+    kind: "debate",
+    reason: "audit: dependencies",
+  });
+  expect(plain[1]).toEqual({
+    role: "review-security",
+    team: "security",
+    kind: "gate",
+    gate: "security",
+    reason: "audit",
+  });
+  expect(plain.some((s) => s.kind === "cto" || s.kind === "lead" || s.role === "judge")).toBe(
+    false,
+  );
+  const data = auditSeats({ riskAreas: ["data-migration"] }, DEFAULT_POLICY);
+  expect(data.at(-1)).toEqual({
+    role: "review-data",
+    team: "etl",
+    kind: "gate",
+    gate: "data",
+    reason: "audit: data-migration paths",
+  });
+  const both = auditSeats({ riskAreas: ["infra", "data-migration", "auth"] }, DEFAULT_POLICY);
+  expect(roles(both).slice(5)).toEqual(["review-data", "review-infra"]);
+  expect(both.at(-1)?.reason).toBe("audit: infra paths");
+  // A team the policy always seats brings its reviewer to the audit too, once.
+  const always = {
+    ...DEFAULT_POLICY,
+    team: { ...DEFAULT_POLICY.team, always: ["devops" as const] },
+  };
+  expect(
+    roles(auditSeats({ riskAreas: ["infra"] }, always)).filter((r) => r === "review-infra"),
+  ).toEqual(["review-infra"]);
 });

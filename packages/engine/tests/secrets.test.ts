@@ -3,6 +3,7 @@ import { chmodSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { detectProfile } from "../src/detect/index.ts";
 import { changedText, isBinary, scanSecrets, scanText } from "../src/secrets.ts";
+import { PLANTED_KEY } from "./audit-run.test.ts";
 import { git, makeRepo, tempDir, write } from "./helpers.ts";
 
 test("scanText finds known key formats and ignores placeholders", () => {
@@ -70,4 +71,21 @@ test("when git cannot run, every watched file is scanned, as without git", () =>
   } finally {
     process.env.PATH = saved;
   }
+});
+
+test("SP8-T4 AC-1: scanSecrets with a null base scans the whole committed tree; undefined keeps the diff from HEAD", async () => {
+  const root = makeRepo({
+    "src/a.ts": "ok",
+    "config/keys.ts": `export const aws = "${PLANTED_KEY}";\n`,
+  });
+  const profile = detectProfile(root);
+  expect((await scanSecrets(root, profile)).status).toBe("pass");
+  const whole = await scanSecrets(root, profile, null);
+  expect(whole.status).toBe("fail");
+  expect(whole.tail).toContain("config/keys.ts:1: AWS access key");
+  expect(
+    changedText(root, profile, null)
+      .map((s) => s.source)
+      .sort(),
+  ).toEqual(["config/keys.ts", "src/a.ts"]);
 });

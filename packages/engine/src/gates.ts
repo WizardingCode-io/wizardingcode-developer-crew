@@ -399,7 +399,8 @@ export async function runTaskGate(
   );
   const stamp = gitHead(paths.root) ?? "none";
   const runs: GateRun[] = [];
-  for (const p of planned) runs.push(await runOne(paths, work, profile, p, stamp, scope, scope));
+  for (const p of planned)
+    runs.push(await runOneGate(paths, work, profile, p, stamp, scope, scope));
   // The judgement the scope asks for is planned here and run by the roles, never by the engine (SP7b decision 14).
   return {
     status: runs.length && runs.every((r) => r.status === "pass") ? "pass" : "fail",
@@ -408,7 +409,14 @@ export async function runTaskGate(
   };
 }
 
-async function runOne(
+/**
+ * One planned gate run for one target: the profile's command in the target's folder under its
+ * timeout, judged as the gate asks (the deps audit against the item's base commit, lint and
+ * typecheck by the files they name, the secrets scan over the item's change). The audit (SP8
+ * Task 4) calls it with an item whose base commit is null, so nothing is compared with a base, and
+ * names each log itself.
+ */
+export async function runOneGate(
   paths: CrewPaths,
   work: WorkItem,
   profile: Profile,
@@ -416,6 +424,7 @@ async function runOne(
   fingerprint: string,
   changed: string[],
   scope?: readonly string[],
+  logName?: string,
 ): Promise<GateRun> {
   const { gate, target: targetPath } = planned;
   const at = nowIso();
@@ -487,7 +496,7 @@ async function runOne(
   }
   const where =
     targetPath.replace(/[^a-z0-9]+/gi, "_") + (planned.stack ? `-${planned.stack}` : "");
-  const log = `logs/${gate}-${where}-${Date.now()}.txt`;
+  const log = logName ?? `logs/${gate}-${where}-${Date.now()}.txt`;
   const result = await runCommand(command, {
     cwd: join(paths.root, targetPath),
     timeoutMs: gateTimeoutMs(target, gate),
@@ -621,7 +630,7 @@ export async function runGates(
       });
       continue;
     }
-    const run = await runOne(paths, work, profile, one, stamp, changed);
+    const run = await runOneGate(paths, work, profile, one, stamp, changed);
     // A build that rewrote watched files is part of the proof, not a change against it: the stamp
     // moves to the tree as the build left it, and the run says what it wrote (finding 18).
     if (gate === "build" && run.status === "pass") {

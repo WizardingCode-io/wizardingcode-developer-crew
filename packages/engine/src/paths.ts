@@ -108,6 +108,9 @@ const PROTECTED_IN_WORK = new Set(PROTECTED_WORK_FILES);
 /** The one source of what stays the session's under `review/` (SP7b decision 16): `ui` or `e2e`, right under it or under a todo's `T-n/`; the hook's text rule builds on it too. */
 export const REVIEW_OPEN_SEGMENT = String.raw`(?:T-\d+\/)?(?:ui|e2e)`;
 const REVIEW_OPEN = new RegExp(String.raw`^review\/${REVIEW_OPEN_SEGMENT}(?:\/|$)`);
+/** The one source of what stays the lead's under `audit/` (SP8 Task 4): the business findings, the summary and the recommendations; the hook's text rule builds on it too. */
+export const AUDIT_OPEN_FILES = String.raw`(?:business\.findings\.md|summary\.md|recommendations\.md)`;
+const AUDIT_OPEN = new RegExp(String.raw`^audit\/${AUDIT_OPEN_FILES}$`);
 
 /** Files only the engine writes. The agent is denied direct writes to them. */
 export function isProtectedPath(paths: CrewPaths, absPath: string): boolean {
@@ -127,5 +130,8 @@ export function isProtectedPath(paths: CrewPaths, absPath: string): boolean {
   // The review folder is the engine's (the reviewers' answers, the rulings, the round copies, the
   // inputs), except the folders the session fills with captures and the e2e run writes.
   if (inner === "review" || inner.startsWith("review/")) return !REVIEW_OPEN.test(inner);
+  // The audit folder is the engine's (the runs, the files, the scope, the report, the roles'
+  // findings the hook files), except the three files the lead writes by hand.
+  if (inner === "audit" || inner.startsWith("audit/")) return !AUDIT_OPEN.test(inner);
   return PROTECTED_IN_WORK.has(inner) || inner.startsWith("logs/");
 }

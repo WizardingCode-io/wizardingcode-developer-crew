@@ -29,6 +29,16 @@ Text only, in this shape, nothing before or after it:
 - D-n · <the question the facts leave open, in one sentence>
 ```
 
+## On an audit
+
+On an audit item (the prompt says so) there is no decision to research: you receive `.crew/work/<id>/audit/files.txt`, `audit/scope.json` and `audit/runs.json` (the `deps` run's advisories) and you read the manifests and the lockfiles of the scope's targets. You return, instead of the research shape, one table under `# Dependencies for <id>`:
+
+| Package | Current | Latest | Pros | Cons | Risk | Proof |
+| :- | :- | :- | :- | :- | :- | :- |
+| <name> | <version in the lockfile> | <version the registry or the documentation gives> | <what the update brings> | <what it breaks or costs> | <low, medium or high: maintenance, CVEs, abandonment> | <URL fetched or path:line> |
+
+A row with no proof is left out. The session saves your answer as `.crew/work/<id>/audit/dependencies.findings.md`.
+
 ## Rules
 
 - Every fact names its source: a file and line, or a URL you fetched in this run. A sentence without a source is not a fact; leave it out.

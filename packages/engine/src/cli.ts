@@ -3,6 +3,14 @@ import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { analyseOrigin, originSummary, readOrigin, writeOrigin } from "./analysis.ts";
 import { commaList, type Parsed, parse } from "./argv.ts";
 import {
+  type AuditRuns,
+  type AuditScope,
+  auditRunLine,
+  auditSummary,
+  cappedRefusal,
+  runAudit,
+} from "./audit-run.ts";
+import {
   AnswerError,
   type Answers,
   computeRoute,
@@ -179,7 +187,7 @@ import {
   writeBrief,
 } from "./tasks.ts";
 import { recordTdd, type TddStep } from "./tdd.ts";
-import { plannedSeats, primaryTeam } from "./team.ts";
+import { auditSeats, plannedSeats, primaryTeam } from "./team.ts";
 import type {
   Criterion,
   Decision,
@@ -284,6 +292,7 @@ const KNOWN_FLAGS: Record<string, readonly string[]> = {
   classify: ["answers"],
   kind: ["reason"],
   strategy: [],
+  audit: ["only"],
   criteria: ["kind", "contract"],
   decision: ["default"],
   debate: ["reason", "tokens"],
@@ -1025,6 +1034,15 @@ function strategyLine(report: StrategyReport | null, planned: PlannedStrategyJud
         ? "proven"
         : `${verdictText(r.verdict)} (${r.findings} findings)`;
   return `  strategy ${RESEARCH_ALONE}: ${state}; ruling ${ruling}; gate ${planned.gate} planned: ${planned.reason}`;
+}
+
+/** The audit's status line: the runs counted by state with the failing and the unavailable gates named, or none yet. */
+function auditLine(env: Env, work: WorkItem): string {
+  const dir = join(workDir(env.paths, work.id), "audit");
+  const runs = readJson<AuditRuns>(join(dir, "runs.json"));
+  if (!runs) return `  audit run: none yet (crew audit ${work.id} run)`;
+  const scope = readJson<AuditScope>(join(dir, "scope.json"));
+  return `  audit run: ${auditSummary(runs.runs)}; files ${scope?.files ?? 0}`;
 }
 
 /** The item's priority at start (SP7 §7.1, SP3 Task 2): the flag, else the origin's confirmed level, else the `priority` answer's level, else normal. */
@@ -1937,6 +1955,42 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       return ok(`${result.id} answered ${decidedBy(result)}: ${result.answer}`, {
         decision: result,
       });
+    }
+    case "audit": {
+      // The audit run (SP7 §7.5, SP8 Task 4): the project's own tools over the whole tree with no
+      // baseline, every result recorded and a failure never a block; the files the reviewers read
+      // and the scope with its risk areas beside the runs.
+      const opened = openForChange(env, args[0]);
+      if (isOutcome(opened)) return opened;
+      if (args[1] !== "run") return refuse("usage: crew audit <id> run [--only a,b]");
+      const work = opened.work;
+      if (kindOfItem(work) !== "audit")
+        return refuse(
+          `not an audit: ${work.id} is a ${kindOfItem(work)}; crew audit runs on an audit item alone`,
+        );
+      if (work.phase !== "audit")
+        return refuse(
+          `the audit runs in the audit phase: ${work.id} is in ${work.phase} (crew phase ${work.id} next)`,
+        );
+      const only = typeof parsed.flags.only === "string" ? commaList(parsed.flags.only) : undefined;
+      const unknown = only?.find((g) => !GATE_NAMES.includes(g as GateName));
+      if (unknown !== undefined) return refuse(`unknown gate: ${unknown}`);
+      // The profile follows the manifests before the tools run, as a gate run does (finding 23).
+      const refreshed = refreshProfile(env.paths, env.profile, env.tampered);
+      env.profile = refreshed.profile;
+      const result = await runAudit(env.paths, work, env.profile, env.policy, {
+        only: only as GateName[] | undefined,
+      });
+      if ("capped" in result) return refuse(cappedRefusal(result.capped));
+      const scope = readJson<AuditScope>(join(workDir(env.paths, work.id), "audit", "scope.json"));
+      const areas = scope?.riskAreas.length ? scope.riskAreas.join(", ") : "none";
+      const text = [
+        `audit run of ${work.id} at ${result.head ? result.head.slice(0, 12) : "no git"}:`,
+        ...result.runs.map((r) => `  ${auditRunLine(r)}`),
+        `files ${scope?.files ?? 0} (${scope?.bytes ?? 0} bytes), targets ${scope?.targets.length ?? 0}, risk areas: ${areas}`,
+        `runs recorded in .crew/work/${work.id}/audit/runs.json; next: crew team ${work.id}, the roles over audit/files.txt (references/audit.md), then crew audit ${work.id} report`,
+      ].join("\n");
+      return ok(text, { runs: result, scope });
     }
     case "strategy": {
       // The strategy's check (SP7 §7.3, SP8 Task 3): the shape and the marks against the research as
@@ -2962,23 +3016,27 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       const opened = openForChange(env, args[0]);
       if (isOutcome(opened)) return opened;
       const changed = changedWatchedPaths(env.paths.root, env.profile, opened.work);
-      const seats = plannedSeats(
-        opened.work.route,
-        opened.work.riskAreas,
-        changed,
-        env.policy,
-        undefined,
-        {
-          strategy: phasesFor(opened.work).includes("strategy"),
-        },
-      );
+      // An audit's seats follow its scope (SP8 Task 4): the scope written by the run, the item's
+      // own risk areas before it; the route plans nothing on an audit.
+      const audit = kindOfItem(opened.work) === "audit";
+      const scope = audit
+        ? readJson<AuditScope>(join(workDir(env.paths, opened.work.id), "audit", "scope.json"))
+        : null;
+      const seats = audit
+        ? auditSeats({ riskAreas: scope?.riskAreas ?? opened.work.riskAreas }, env.policy)
+        : plannedSeats(opened.work.route, opened.work.riskAreas, changed, env.policy, undefined, {
+            strategy: phasesFor(opened.work).includes("strategy"),
+          });
       const primary = primaryTeam(changed);
       opened.work.seats = seats;
       opened.work.primaryTeam = primary;
       saveWork(env.paths, opened.work);
-      const text = seats.length
-        ? `Team of ${opened.work.id} (primary ${primary}): ${seats.map((s) => `${s.role} (${s.reason})`).join("; ")}`
-        : `Team of ${opened.work.id}: no seat (fast route)`;
+      const listed = seats.map((s) => `${s.role} (${s.reason})`).join("; ");
+      const text = audit
+        ? `Team of ${opened.work.id} (audit): ${listed}`
+        : seats.length
+          ? `Team of ${opened.work.id} (primary ${primary}): ${listed}`
+          : `Team of ${opened.work.id}: no seat (fast route)`;
       return ok(text, { seats, primaryTeam: primary });
     }
     case "validation": {
@@ -3291,6 +3349,8 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         work.phase === "strategy" ? plannedStrategyJudgement(work)[0] : undefined;
       if (plannedStrategy)
         extra.unshift(strategyLine(strategyOf(env, work, result.evidence), plannedStrategy));
+      // The audit's runs while the item is audited (SP8 Task 4): counted by state, or the command to run.
+      if (work.phase === "audit") extra.unshift(auditLine(env, work));
       // The origin while the item is analysed (SP7 §7.4): its size, or a hand edit named.
       const analysis = work.phase === "analyse" ? readOrigin(env.paths, work.id) : null;
       if (analysis)
@@ -3745,6 +3805,7 @@ const HELP = `crew ${VERSION}
   approve <id> audit                    a person signs an audit's report (asks the user; never with --mode or --validator)
   kind <id> raise --reason "<why>"      a feature raised to a new project while its spec is open: the strategy comes next
   strategy <id> check                   check strategy.md (the five sections, [R<n>] marks on the research's facts, the scaling table) and write the strategy's review inputs
+  audit <id> run [--only a,b]           run the project's own tools over the whole tree with no baseline (an audit item in its audit phase), every result recorded, the files the reviewers read and the scope beside them
   phase <id> next                       advance when the guard holds
   await <id> user | role | mail <mid>   mark the turn's wait: for the user, for the roles, or for a reply to a message
   resume <id>                           clear the wait (asks the user while a jev dispute is held on the item)

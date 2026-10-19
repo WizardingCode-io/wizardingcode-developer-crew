@@ -7,9 +7,9 @@ import { mailStatus } from "../mail-status.ts";
 import { workDir } from "../paths.ts";
 import { clearWorking } from "../state.ts";
 import { PERSONALITIES, ROLE_NAMES, TEAMS, type TeamDef } from "../team.ts";
-import type { Message, Personality, RoleRecord, TeamName } from "../types.ts";
+import type { Message, Personality, RoleRecord, TeamName, WorkKind } from "../types.ts";
 import { LEAD_TEAMS } from "../validation.ts";
-import { activeWork, loadWork, saveWork } from "../work.ts";
+import { activeWork, kindOfItem, loadWork, saveWork } from "../work.ts";
 import { leaveNotice } from "./notices.ts";
 import type { HookContext, HookPayload, HookResponse } from "./types.ts";
 
@@ -185,8 +185,16 @@ export function gatesRuling(answer: string): string | null {
   return null;
 }
 
-/** Where an agent's first answer is saved, by the agent (`review-<gate>`, `judge`, `expert-<n>`, a critic) and the shape of the answer. */
-export function answerFile(agent: string, answer: string): string {
+/**
+ * Where an agent's first answer is saved, by the agent (`review-<gate>`, `judge`, `expert-<n>`, a
+ * critic), the shape of the answer and the item's kind: on an audit (SP8 Task 4) a reviewer's
+ * findings and the researcher's dependencies go under `audit/`, where the report reads them.
+ */
+export function answerFile(agent: string, answer: string, kind?: WorkKind): string {
+  if (kind === "audit") {
+    if (agent.startsWith("review-")) return `audit/${agent.slice("review-".length)}.findings.md`;
+    if (agent === "researcher") return "audit/dependencies.findings.md";
+  }
   if (agent.startsWith("review-")) return `review/${agent.slice("review-".length)}.findings.md`;
   // A lead's validation and the CTO's plan sit beside the debate's files (SP7 §6.4, §6.5). The tech
   // lead is one agent for five teams: its answer's first line names the team and what it validated.
@@ -360,10 +368,10 @@ function recordStop(
     note = `Crew: ${agent} stopped with no answer (no hand-back and an empty last message): its end is recorded with no file; an earlier file of this role, if any, is not this round's answer. Run the role again or save its answer from the transcript${transcriptNote}.`;
   } else if (earlier?.file) {
     // A resumed role's answer joins its earlier file, never overwrites it.
-    saved = { file: joinEarlierFile(dir, agent, answer), agent };
+    saved = { file: joinEarlierFile(dir, agent, answer, kindOfItem(work)), agent };
   } else {
     // The first answer: the role's own, or a resumed role's whose earlier stop left no file.
-    const file = answerFile(agent, answer);
+    const file = answerFile(agent, answer, kindOfItem(work));
     // A ruling file holds the JSON alone, so `crew judgement record --ruling` reads it as it is.
     writeText(
       join(dir, file),
@@ -429,9 +437,9 @@ function pendingQuestion(ctx: HookContext, workId: string, agent: string): Messa
  * section of its findings file (the judge's questions), another role's after its earlier replies in
  * `conclave/<role>-reply.md`. The role's first answer is never overwritten (risk review, round 3).
  */
-function joinEarlierFile(dir: string, agent: string, answer: string): string {
+function joinEarlierFile(dir: string, agent: string, answer: string, kind: WorkKind): string {
   if (agent.startsWith("review-")) {
-    const file = answerFile(agent, answer);
+    const file = answerFile(agent, answer, kind);
     const current = (readText(join(dir, file)) ?? "").trimEnd();
     const heading = "\n## Clarifications";
     const body = current.includes(heading) ? current : `${current}\n${heading}`;

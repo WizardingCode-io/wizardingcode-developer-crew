@@ -2,7 +2,7 @@ import { isAbsolute, join, relative } from "node:path";
 import { type Parsed, parse } from "../argv.ts";
 import { isWatched } from "../fingerprint.ts";
 import { nowIso } from "../fs.ts";
-import { canonical, isProtectedPath, REVIEW_OPEN_SEGMENT } from "../paths.ts";
+import { AUDIT_OPEN_FILES, canonical, isProtectedPath, REVIEW_OPEN_SEGMENT } from "../paths.ts";
 import { recordWorking } from "../state.ts";
 import type { Policy } from "../types.ts";
 import { activeWork, isBeforeBuild, loadWork } from "../work.ts";
@@ -30,8 +30,13 @@ const SHELLS = `(?:${SHELL_NAMES.join("|")})`;
 const PATH_END = String.raw`[\s"'\x60;&|)]`;
 const NOT_DOTDOT_SEGMENT = String.raw`(?!\.\.(?:\/|${PATH_END}|$))[^\s"'\x60;&|)/]*\/?`;
 const REVIEW_OWNED = String.raw`review(?!\/${REVIEW_OPEN_SEGMENT}(?:\/(?:${NOT_DOTDOT_SEGMENT})*)?(?=${PATH_END}|$))`;
+// The audit folder is the engine's (the runs, the files, the scope, the report, the roles' findings
+// the SubagentStop hook files) except the lead's three files, named one by one (SP8 Task 4): the
+// business findings, the summary and the recommendations. Anything else under `audit`, a `..`
+// segment included, is an engine file.
+const AUDIT_OWNED = String.raw`audit(?=\/|${PATH_END}|$)(?!\/${AUDIT_OPEN_FILES}(?=${PATH_END}|$))`;
 const ENGINE_FILES = new RegExp(
-  String.raw`\.crew\/(?:profile\.json|policy\.json|decisions\.json|\.gitignore|local\b|work\/[^\s/]+\/(?:work\.json|evidence\.json|objections\.json|mail\.json|report\.md|logs\b|${REVIEW_OWNED}))|\.wizardingcode\/crew\b`,
+  String.raw`\.crew\/(?:profile\.json|policy\.json|decisions\.json|\.gitignore|local\b|work\/[^\s/]+\/(?:work\.json|evidence\.json|objections\.json|mail\.json|report\.md|logs\b|${REVIEW_OWNED}|${AUDIT_OWNED}))|\.wizardingcode\/crew\b`,
 );
 // A verb may follow a quote (`bash -c "rm ..."`). A redirect is a write only when its target is an
 // engine file (the `2>` of `2>/dev/null` after a read is not).

@@ -36,6 +36,10 @@ read: <n> files, the pipeline and deployment files read
 (or: none)
 ```
 
+## On an audit
+
+On an audit item (the prompt says so) you receive `.crew/work/<id>/audit/files.txt`, `audit/runs.json` and `audit/scope.json` and no diff: the files listed are the change, read them whole, and `## Outside the change` is `none`. The shape is the same; a finding a run proves (a failing test, a problem a log names) carries `log:<path under logs/>` in place of the file and line (`- F-n · defect · log:logs/audit-test-root.txt · <sentence>`). The session saves your answer as `.crew/work/<id>/audit/infra.findings.md`.
+
 ## Rules
 
 - A defect is a secret, a widened permission, a deploy step before the gates, no rollback for a destructive step, or a job the project's pipeline cannot run. A duplicated job or a pinned version with no reason is an advisory.

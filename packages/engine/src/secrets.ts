@@ -74,7 +74,11 @@ function fileSource(root: string, path: string): ScanSource | null {
  * Only what this change adds is scanned: added lines of tracked files, and untracked files whole.
  * With a base commit the change starts there, so a secret committed during the work is still found.
  */
-export function changedText(root: string, profile: Profile, base?: string | null): ScanSource[] {
+export function changedText(
+  root: string,
+  profile: Profile,
+  base: string | null = "HEAD",
+): ScanSource[] {
   const sources: ScanSource[] = [];
   // Above the walk's cap there is nothing to scan; the verdict already says the fingerprint is unavailable.
   const everything = () => {
@@ -84,8 +88,9 @@ export function changedText(root: string, profile: Profile, base?: string | null
     }
     return sources;
   };
-  if (!isGitRepo(root)) return everything();
-  const from = base ?? "HEAD";
+  // No base at all (an audit, SP8 Task 4): the whole tree is the change; `undefined` is the diff from HEAD.
+  if (base === null || !isGitRepo(root)) return everything();
+  const from = base;
   let diff: string | null;
   try {
     diff = execFileSync("git", ["diff", from, "--unified=0", "--no-color", "--", "."], {

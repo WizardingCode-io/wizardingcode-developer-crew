@@ -36,6 +36,10 @@ read: <what you read: the base documents, the diff, how many files>
 (or: none)
 ```
 
+## On an audit
+
+On an audit item (the prompt says so) you receive `.crew/work/<id>/audit/files.txt`, `audit/runs.json` and `audit/scope.json` and no diff: the files listed are the change, read them whole, and `## Outside the change` is `none`. The shape is the same; a finding a run proves (a failing test, a problem a log names) carries `log:<path under logs/>` in place of the file and line (`- F-n · defect · log:logs/audit-test-root.txt · <sentence>`). The session saves your answer as `.crew/work/<id>/audit/architecture.findings.md`.
+
 ## Rules
 
 - A defect names what the base says and what the change does, at a file and a line of the diff: a boundary crossed, a model reinterpreted, a contract changed without its file, an integration bypassing the project's adapter, a Design built elsewhere.

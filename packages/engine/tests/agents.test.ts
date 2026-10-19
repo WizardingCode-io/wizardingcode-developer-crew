@@ -229,3 +229,28 @@ test("SP8-T3: the CTO reviews the strategy and the judge rules it, each with its
   expect(judge).toContain('"gate":"strategy"');
   expect(judge).toMatch(/reviewer[^\n]*"cto"[^\n]*"judge"/);
 });
+
+test("SP8-T4 AC-3: the six reviewers of an audit carry the audit paragraph and the researcher the dependencies table; the ui-ux and risk reviewers do not sit on an audit", () => {
+  for (const gate of [
+    "security",
+    "architecture",
+    "code-quality",
+    "test-quality",
+    "data",
+    "infra",
+  ]) {
+    const { body } = agent(`review-${gate}`);
+    expect(body).toContain("## On an audit");
+    expect(body).toContain(".crew/work/<id>/audit/files.txt");
+    expect(body).toMatch(/no diff/);
+    expect(body).toMatch(/`## Outside the change` is `none`/);
+    expect(body).toContain("log:<path under logs/>");
+    expect(body).toContain(`audit/${gate}.findings.md`);
+  }
+  for (const gate of ["ui-ux", "risk"])
+    expect(agent(`review-${gate}`).body).not.toContain("## On an audit");
+  const researcher = agent("researcher").body;
+  expect(researcher).toContain("## On an audit");
+  expect(researcher).toContain("| Package | Current | Latest | Pros | Cons | Risk | Proof |");
+  expect(researcher).toContain("audit/dependencies.findings.md");
+});
