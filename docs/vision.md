@@ -218,6 +218,8 @@ A pack is published only with evals that show a difference against the agent wit
 
 The system works on a stack that has no pack. The engine discovers how to build, test and check the project, and the agent fetches current documentation.
 
+Status. The engine serves packs since 0.11.0 (`crew pack add|remove|list|show|files|sync`, the discovery of marketplace-installed packs at session start under Claude Code, `references/packs.md`; ADR 0010): a pack is data, registered per machine, its detector rule refining a core target's gates as proposed commands a person confirms, its template adding path globs to a team and nothing else. The first two packs are in this repository under `packs/`: `wizardingcode-pack-laravel` (a stack pack) and `wizardingcode-pack-agentic-os` (a team pack); each ships with 0.11.0 once its with-and-without cases show the difference.
+
 ## 12. Architecture
 
 **A deterministic engine plus skills.** The skills teach the agent how to do each phase. The engine, written in TypeScript, does what must not depend on a model:

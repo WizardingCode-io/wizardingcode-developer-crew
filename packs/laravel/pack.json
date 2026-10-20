@@ -1,0 +1,35 @@
+{
+  "name": "wizardingcode-pack-laravel",
+  "version": "0.11.0",
+  "kind": "stack",
+  "core": ">=0.11.0",
+  "verifiedAgainst": {
+    "laravel": "13.x",
+    "pest": "4.x",
+    "pint": "1.32.1",
+    "larastan": "3.13.0"
+  },
+  "detectors": [
+    {
+      "stack": "laravel",
+      "extends": "php",
+      "markers": ["artisan", "composer.json"],
+      "packageManager": "composer",
+      "gates": {
+        "test": "php artisan test",
+        "lint": "vendor/bin/pint --test",
+        "typecheck": "vendor/bin/phpstan analyse --no-progress"
+      },
+      "testScoped": "php artisan test {files}"
+    }
+  ],
+  "checklists": [
+    "checklists/eloquent-model.md",
+    "checklists/job-or-listener.md",
+    "checklists/artisan-command.md"
+  ],
+  "knowledge": { "laravel": "knowledge/laravel.md" },
+  "team": null,
+  "evals": ["pack-laravel-refines-the-gates", "pack-laravel-absent"],
+  "provenance": []
+}

@@ -45,6 +45,15 @@ An issue is analysed before it is designed (rule 11): `crew analyse <id> --paths
 
 Jev, TypeSafe's System One model, is the crew's second reader when a key is set (`WIZARDINGCODE_JEV_API_KEY`; the endpoint and the model by `crew config jev.endpoint|jev.model`, a `file://` canned transport for the tests): an upheld defect at `crew judgement record`, the validator's rule at `crew approve --validator`, a researcher's facts at `crew research <id> verify` and a source's urgency at `crew start --source` are asked as typed questions with probabilities, every answer recorded on the item (`evidence.verifications`, the report's Verifications table) and the agreement in `crew metrics`. A verdict only tightens from it: a disputed defect stays a defect and is said, a disputed validator condition refuses the approval and makes the item wait for a person, a triage is a proposal capped at the source's and never the record; Jev down is said as `unverified (jev unavailable: …)` and a full-route item waits. The policy's `verify` block says what leaves the machine (`claims` by default, no code; `claims-and-snippets` adds the cited lines), which asks are made (`verify.asks`), how many claims per item and the threshold.
 
+## Packs
+
+A pack is knowledge that installs apart from the core (vision §11), as data the engine serves (ADR 0010): a folder with `pack.json`, checklists for the gap round, knowledge files for the expert, a detector rule and a team template. It has no code, no agent, no hook and no skill; the crew skill reads what the engine prints for it. The two first packs live in this repository under `packs/`:
+
+- `wizardingcode-pack-laravel`, a stack pack: its rule proposes Laravel's test, lint and type-check commands and the scoped test template, tags the target `laravel`, and the expert reads its knowledge file (verified against Laravel 13.x).
+- `wizardingcode-pack-agentic-os`, a team pack: its template seats the agentic team as the expert's knowledge seat on the paths where agents, skills, prompts and hooks live.
+
+Install one from the marketplace (`claude plugin install wizardingcode-pack-laravel@wizardingcode-plugins`; the engine registers it at the next session start) or from a path (`crew pack add <path>`); `crew pack list` says the state of each. A pack's gate command enters the profile as proposed and runs only once a person confirmed it in the project (`crew profile confirm <gate>`). A pack ships with the cases that show its difference against the agent without it (`plugins/core/evals`); `plugins/core/skills/crew/references/packs.md` says how one is written and measured.
+
 ## Where state lives
 
 - **`.crew/` in the repository.** Crew is active in a git repository, or in a folder that already holds `.crew/` (`crew detect` creates it); anywhere else it stays silent.

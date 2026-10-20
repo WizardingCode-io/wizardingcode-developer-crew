@@ -637,3 +637,27 @@ test("SP6-T2 AC-9: the packs reference states the rollback before a downgrade an
     "`references/packs.md` says what to unset or remove before a downgrade; a removed pack's proposed commands and scoped template leave the profile at the next detection.",
   );
 });
+
+test("SP6-T3 AC-5: the README's Packs section and the vision's §11 say what shipped", () => {
+  const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
+  const readme = read("../../../README.md");
+  expect(readme).toContain("\n## Packs\n");
+  const packs = readme.slice(
+    readme.indexOf("\n## Packs\n"),
+    readme.indexOf("\n## Where state lives\n"),
+  );
+  for (const phrase of [
+    "`wizardingcode-pack-laravel`",
+    "`wizardingcode-pack-agentic-os`",
+    "claude plugin install wizardingcode-pack-laravel@wizardingcode-plugins",
+    "`crew pack add <path>`",
+    "runs only once a person confirmed it",
+    "ships with the cases that show its difference",
+  ])
+    expect(packs, phrase).toContain(phrase);
+  const vision = read("../../../docs/vision.md");
+  expect(vision).toContain("The engine serves packs since 0.11.0");
+  expect(vision).toContain(
+    "The first two packs are in this repository under `packs/`: `wizardingcode-pack-laravel` (a stack pack) and `wizardingcode-pack-agentic-os` (a team pack)",
+  );
+});

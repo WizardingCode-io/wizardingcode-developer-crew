@@ -1,0 +1,33 @@
+{
+  "name": "wizardingcode-pack-agentic-os",
+  "version": "0.11.0",
+  "kind": "team",
+  "core": ">=0.11.0",
+  "verifiedAgainst": {
+    "owasp-llm-top-10": "2025",
+    "claude-code": "2026-10-20"
+  },
+  "detectors": [],
+  "checklists": ["checklists/agent.md", "checklists/tool.md", "checklists/prompt.md"],
+  "knowledge": { "agentic": "knowledge/agentic.md" },
+  "team": {
+    "template": "agentic-os",
+    "teams": {
+      "agentic-os": {
+        "mandatory": {
+          "kind": "paths",
+          "globs": [
+            "agents/**",
+            "skills/**",
+            "prompts/**",
+            "hooks/**",
+            "**/*.prompt.md",
+            ".claude/**"
+          ]
+        }
+      }
+    }
+  },
+  "evals": ["pack-agentic-os-seats-the-team", "pack-agentic-os-absent"],
+  "provenance": []
+}

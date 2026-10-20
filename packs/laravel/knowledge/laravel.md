@@ -1,0 +1,37 @@
+# Laravel 13.x
+
+What a model trained on earlier Laravel gets wrong in 13.x, how work in it is verified and where the documentation is. Each line is a fact read on 2026-10-20 from the pages listed at the end; nothing here is a tutorial.
+
+## What the model gets wrong
+
+- The application is configured in `bootstrap/app.php`: `Application::configure(basePath: …)->withRouting(web: …, commands: routes/console.php, health: '/up')->withMiddleware(…)->withExceptions(…)->create()`. Middleware is appended, aliased and grouped there (`$middleware->append(…)`, `$middleware->alias([…])`, `$middleware->web(append: […])`, `$middleware->api(prepend: […])`), not in an HTTP kernel class.
+- The `app` directory holds `Http`, `Models` and `Providers` by default. `Jobs`, `Listeners`, `Events` and `Console/Commands` appear when `make:job`, `make:listener` (or `event:generate`), `make:event` and `make:command` create them. Commands in `app/Console/Commands` are registered by themselves; another directory needs `->withCommands([…])` in `bootstrap/app.php`; a closure command is defined in `routes/console.php` with `Artisan::command`.
+- Casts are a `casts()` method that returns the attribute-to-type array; an accessor or mutator is `protected function firstName(): Attribute { return Attribute::make(get: …); }`.
+- The CSRF middleware is `PreventRequestForgery`, which also verifies the request origin with the `Sec-Fetch-Site` header; `VerifyCsrfToken` and `ValidateCsrfToken` remain as deprecated aliases. A test that disables it names `PreventRequestForgery::class`.
+- Laravel 13 has first-party PHP attributes: `#[Middleware]`, `#[Authorize]`, `#[Tries]`, `#[Backoff]`, `#[Timeout]`, `#[FailOnTimeout]`. An Artisan command's signature and description are the `#[Signature('mail:send {user}')]` and `#[Description]` attributes; the `protected $signature` property is still documented under the input expectations.
+- The 13.x skeleton requires `phpunit/phpunit ^12.5.12` and `laravel/pint ^1.27`. Pest is supported out of the box, not installed by default; the Laravel 13 upgrade guide moves `pestphp/pest` to `^4.0`. Pest 5 requires PHP 8.4, while Laravel 13 runs on PHP 8.3 to 8.5.
+- The `database` queue connection is the default in new applications. A generated job implements `ShouldQueue`; `afterCommit` chained on the dispatch waits for the transaction; the `Queueable` trait serialises Eloquent models; `#[Tries(5)]` and `#[Timeout(120)]` are attributes. `JobAttempted` exposes `$exception` (the exception or null) in place of the former `$exceptionOccurred` boolean, and `QueueBusy::$connection` is `$connectionName`.
+- Listeners are found by scanning `app/Listeners` by default; `php artisan event:list` lists them; `make:listener Name --event=Event` creates one; a queued listener that implements `ShouldQueueAfterCommit` is dispatched after the commit.
+- Laravel 13 requires PHP 8.3. The cache configuration has a `serializable_classes` option set to `false`; the session skeleton sets `serialization` to `json`; a model created during `boot` throws a `LogicException`; `Str` factories reset between tests.
+- A new application's `.env` points at an SQLite database.
+- Support, as of 2026-10-20: Laravel 13 (released 2026-03-17) receives bug fixes until Q3 2027 and security fixes until 2028-03-17; Laravel 12 receives security fixes alone (bug fixes ended 2026-08-13); Laravel 11 is out of support since 2026-03-12. Major releases come yearly, minor and patch releases as often as weekly; the constraint is `^13.0`. The latest tag on 2026-10-20 was v13.38.0.
+
+## How work is verified
+
+- `php artisan test` passes its arguments to Pest or PHPUnit (`--filter`, `--testsuite=Feature`, `--stop-on-failure`); `--parallel` needs `brianium/paratest` (`--processes=4`, `--recreate-databases`); `--coverage` and `--min=` need Xdebug or PCOV; `--profile` lists the ten slowest tests. Clear the configuration cache with `config:clear` before running the tests; the skeleton's `composer run test` does it before `php artisan test`.
+- Pest's own options: `--filter`, `--compact`, `--bail`, `--parallel`, `--dirty` (the tests with uncommitted changes); a file runs by its path as the first argument. PHPUnit's documentation shows one file path per run and does not say that several paths run together, so a scoped template that passes several paths is confirmed in the project, never assumed.
+- Style: `vendor/bin/pint --test` inspects without changing files and exits non-zero on a style error; `--dirty`, `--diff=main`, `--repair`, `--parallel`; the default preset is `laravel` and `pint.json` is optional; Pint is installed with every new application.
+- Static analysis: `vendor/bin/phpstan analyse --no-progress` (`--no-progress` turns the progress bar off) with Larastan (`composer require --dev "larastan/larastan:^3.0"`; PHP 8.2+, Laravel 11.15+) and a `phpstan.neon` that includes `vendor/larastan/larastan/extension.neon` with `paths` (`app/`) and a `level` (the README's example is 5; PHPStan has levels 0 to 10, `--level max` the highest).
+- Database: the skeleton's `phpunit.xml` runs the tests on SQLite `:memory:`; `RefreshDatabase` runs each test in a transaction once the schema is current, `DatabaseMigrations` and `DatabaseTruncation` are significantly slower; `migrate:fresh` drops every table of the database (`--database=` selects a connection), whatever their prefix.
+- Routes: `php artisan route:list` lists them, `-v` and `-vv` show and expand the middleware, `--path=api`, `--except-vendor` and `--only-vendor` narrow the list.
+- Queues and events in tests: `Queue::fake()` with `Queue::assertPushed(…)`, `Event::fake()` with `Event::assertDispatched(…)`.
+- The versions this file was verified against: Laravel 13.x (v13.38.0 on 2026-10-20), Pint 1.32.1, Larastan 3.13.0 (PHPStan ^2.3), Pest 4.x (the upgrade guide's constraint; Packagist's latest is 5.3.3).
+
+## Where the documentation is
+
+- The release notes and the support table: https://laravel.com/docs/13.x/releases · the upgrade guide: https://laravel.com/docs/13.x/upgrade · the structure: https://laravel.com/docs/13.x/structure · installation: https://laravel.com/docs/13.x/installation
+- Middleware: https://laravel.com/docs/13.x/middleware · casts and accessors: https://laravel.com/docs/13.x/eloquent-mutators · Artisan: https://laravel.com/docs/13.x/artisan · queues: https://laravel.com/docs/13.x/queues · events: https://laravel.com/docs/13.x/events · routing: https://laravel.com/docs/13.x/routing · migrations: https://laravel.com/docs/13.x/migrations
+- Testing: https://laravel.com/docs/13.x/testing · database testing: https://laravel.com/docs/13.x/database-testing · Pint: https://laravel.com/docs/13.x/pint
+- Pest: https://pestphp.com/docs/installation · https://pestphp.com/docs/cli-api-reference · https://pestphp.com/docs/filtering-tests · PHPUnit: https://docs.phpunit.de/en/12.5/textui.html
+- Larastan: https://github.com/larastan/larastan · PHPStan: https://phpstan.org/user-guide/command-line-usage · https://phpstan.org/user-guide/rule-levels
+- The skeleton's files: https://raw.githubusercontent.com/laravel/laravel/13.x/composer.json · https://raw.githubusercontent.com/laravel/laravel/13.x/bootstrap/app.php · https://raw.githubusercontent.com/laravel/laravel/13.x/phpunit.xml · the tags: https://github.com/laravel/framework/releases · the tools' versions: https://packagist.org/packages/laravel/pint · https://packagist.org/packages/larastan/larastan · https://packagist.org/packages/pestphp/pest
