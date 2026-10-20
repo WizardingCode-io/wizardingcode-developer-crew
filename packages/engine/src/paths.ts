@@ -103,6 +103,8 @@ export const PROTECTED_WORK_FILES: readonly string[] = [
   "mail.json",
   "analysis/origin.json",
   "conclave/researcher.verification.json",
+  // What the base listed at classification (SP4 Task 3): the skill reads and cites it, never edits it.
+  "knowledge.md",
 ];
 const PROTECTED_IN_WORK = new Set(PROTECTED_WORK_FILES);
 /** The one source of what stays the session's under `review/` (SP7b decision 16): `ui` or `e2e`, right under it or under a todo's `T-n/`; the hook's text rule builds on it too. */

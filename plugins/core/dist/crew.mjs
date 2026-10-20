@@ -774,7 +774,13 @@ var VALIDATOR_RULES = ["complete-gap-round", "stated-default"];
 function isValidatorRule(value) {
   return VALIDATOR_RULES.includes(value);
 }
-var VERIFY_ASKS = ["defect", "validator", "fact", "triage"];
+var VERIFY_ASKS = [
+  "defect",
+  "validator",
+  "fact",
+  "triage",
+  "knowledge"
+];
 
 // packages/engine/src/mail-status.ts
 var MAIL_TRANSITIONS = {
@@ -947,7 +953,8 @@ var PROTECTED_WORK_FILES = [
   "objections.json",
   "mail.json",
   "analysis/origin.json",
-  "conclave/researcher.verification.json"
+  "conclave/researcher.verification.json",
+  "knowledge.md"
 ];
 var PROTECTED_IN_WORK = new Set(PROTECTED_WORK_FILES);
 var REVIEW_OPEN_SEGMENT = String.raw`(?:T-\d+\/)?(?:ui|e2e)`;
@@ -2240,10 +2247,10 @@ function questionJson(question) {
 
 // packages/engine/src/strategy.ts
 var STRATEGY_SECTIONS = ["Viability", "Cost", "Time", "Stack", "Scaling phases"];
-var RESEARCH_ALONE = "from the research alone (no knowledge base until SP4)";
+var RESEARCH_AND_BASE = "from the research and the base";
 var FACT_HEADINGS = new Set(["What the code does today", "What the documentation says"]);
 var MARK = /\[R(\d+)\]/g;
-var KNOWLEDGE_MARK = /\[K:[^\]]+\]/g;
+var KNOWLEDGE_MARK = /\[K:([^\]]+)\]/g;
 var SEPARATOR_CELL = /^:?-+:?$/;
 function isSection(name) {
   return STRATEGY_SECTIONS.includes(name);
@@ -2303,7 +2310,7 @@ function factLines(researcherText) {
   return facts;
 }
 var RESEARCHER_FIRST = "conclave/researcher.md: the researcher's pass comes before the strategy (references/strategy.md)";
-function checkStrategy(text, researcherText) {
+function checkStrategy(text, researcherText, listed = []) {
   const faults = [];
   const parsed = parseStrategy(text);
   const facts = factLines(researcherText);
@@ -2323,9 +2330,11 @@ function checkStrategy(text, researcherText) {
       continue;
     }
     for (const bullet of parsed.bullets[section]) {
-      const knowledge = bullet.match(KNOWLEDGE_MARK) ?? [];
-      for (const k of knowledge)
-        faults.push(`${k} in ${section}: knowledge entries arrive with SP4`);
+      const knowledge = [...bullet.matchAll(KNOWLEDGE_MARK)];
+      for (const [k, id] of knowledge) {
+        if (!listed.includes(id ?? ""))
+          faults.push(`${k} in ${section}: ${id} is not listed in knowledge.md (not in the base, or marked for another workspace: rule 13)`);
+      }
       const marks = [...bullet.matchAll(MARK)].map((m) => Number(m[1]));
       if (marks.length === 0 && knowledge.length === 0)
         faults.push(`no mark on "${bullet.slice(0, 60)}" in ${section}: every claim ends with [R<n>] naming a fact line of conclave/researcher.md`);
@@ -2341,7 +2350,7 @@ function strategyHash(strategyText, researcherText) {
 ---
 ${researcherText}`);
 }
-function strategyReport(strategyText, researcherText, evidence) {
+function strategyReport(strategyText, researcherText, evidence, listed = []) {
   if (strategyText === null)
     return null;
   const research = researcherText ?? "";
@@ -2353,7 +2362,7 @@ function strategyReport(strategyText, researcherText, evidence) {
     Stack: parsed.bullets.Stack.length,
     "Scaling phases": 0
   };
-  const faults = researcherText === null ? [RESEARCHER_FIRST] : checkStrategy(strategyText, research);
+  const faults = researcherText === null ? [RESEARCHER_FIRST] : checkStrategy(strategyText, research, listed);
   const record = evidence?.judgement?.find((j) => j.gate === "strategy") ?? null;
   const ruling = record ? {
     verdict: record.verdict,
@@ -2874,7 +2883,7 @@ function guardFor(work, next, ctx) {
     else if (ctx.strategyText === null)
       missing.push("strategy.md in the work folder");
     else {
-      missing.push(...checkStrategy(ctx.strategyText, ctx.researcherText).map((f) => `strategy.md: ${f}`));
+      missing.push(...checkStrategy(ctx.strategyText, ctx.researcherText, work.knowledge?.listed ?? []).map((f) => `strategy.md: ${f}`));
       const hash = strategyHash(ctx.strategyText, ctx.researcherText);
       const record = ctx.evidence?.judgement?.find((j) => j.gate === "strategy");
       if (!record)
@@ -3163,7 +3172,7 @@ function problemStatus(status, p) {
     return `fail: problems in ${p.touched.join(", ")}${p.untouched ? ` (${untouched} also)` : ""}`;
   return `pass: ${untouched} with problems, none of the item's`;
 }
-function renderReport(work, evidence, policy, ledger, mail, selfName, analysis, strategy, audit) {
+function renderReport(work, evidence, policy, ledger, mail, selfName, analysis, strategy, audit, knowledge) {
   const lines = [];
   lines.push(`# Report: ${work.title}`, "");
   lines.push(`- Work: \`${work.id}\``);
@@ -3204,7 +3213,7 @@ function renderReport(work, evidence, policy, ledger, mail, selfName, analysis, 
   }
   if (strategy) {
     lines.push("## Strategy", "");
-    lines.push(`- ${RESEARCH_ALONE.charAt(0).toUpperCase()}${RESEARCH_ALONE.slice(1)}.`);
+    lines.push(`- ${RESEARCH_AND_BASE.charAt(0).toUpperCase()}${RESEARCH_AND_BASE.slice(1)}.`);
     const claims = STRATEGY_SECTIONS.filter((s) => s !== "Scaling phases").map((s) => `${s} ${strategy.counts[s]}`).join(", ");
     lines.push(`- Claims: ${claims}; scaling rows: ${strategy.rows}.`);
     const r = strategy.ruling;
@@ -3213,6 +3222,10 @@ function renderReport(work, evidence, policy, ledger, mail, selfName, analysis, 
       lines.push(`- Faults: ${strategy.faults.join("; ")}`);
     lines.push("");
   }
+  lines.push("## Knowledge", "");
+  const bullets = (knowledge ?? "").split(`
+`).filter((l) => l.startsWith("- "));
+  lines.push(...bullets.length ? bullets : ["- none"], "");
   if (audit) {
     lines.push("## Audit", "");
     lines.push(audit.runSummary ? `- Run: ${audit.runSummary} (head ${audit.head ? audit.head.slice(0, 12) : "no git"})${audit.runAtHead ? "" : "; predates HEAD, run again"}.` : "- Run: none yet (crew audit <id> run).");
@@ -9907,7 +9920,8 @@ function branchContentRefusal(record, child, root) {
 function statusLine(ctx, work, tampered = false) {
   const result = assess(ctx.paths, work, ctx.profile, ctx.policy, ctx.tampered || tampered);
   const state = result.verdict === "proven" ? "proven" : `not proven (${result.unproven[0] ?? "gates have not run"})`;
-  return `Crew: work ${work.id} "${work.title}", phase ${work.phase}, route ${work.route}, ${state}${waitingText(work)}.`;
+  const knowledge = work.knowledge ? `, knowledge: ${work.knowledge.listed.length ? `${work.knowledge.listed.length} listed` : "none"}` : "";
+  return `Crew: work ${work.id} "${work.title}", phase ${work.phase}, route ${work.route}, ${state}${knowledge}${waitingText(work)}.`;
 }
 function onPrompt(ctx) {
   const notices = updateSession(ctx.paths, ctx.sessionId, (session) => {
@@ -10140,6 +10154,293 @@ function handleHook(event, payload, env = process.env) {
 // packages/engine/src/knowledge.ts
 import { existsSync as existsSync17, realpathSync as realpathSync6 } from "node:fs";
 import { isAbsolute as isAbsolute8, relative as relative10, resolve as resolve4 } from "node:path";
+
+// packages/engine/src/verify.ts
+var RUBRIC_QUESTIONS = {
+  strategy: "a fault of the strategy as the strategy rubric names it: an element not required by a stated need (over-engineering), a claim whose mark names no researched fact, a cost or a time guessed rather than measured, a scaling phase without an observable trigger, a smaller answer not argued point by point where the request asked for more",
+  "code-quality": "a violation of SOLID or KISS as the code-quality rubric's six questions name it: a type with more than one reason to change, a copy of logic, a name that says the opposite of what the code does, dead or unreachable code, a workaround, a hardcoded value",
+  "test-quality": "a test that would not fail if the behaviour it names broke, a criterion with no such test, or an assertion true by construction",
+  "ui-ux": "a page whose criterion is not visible in the capture, a missing state (loading, empty, error), a control without a keyboard path or a label, or copy outside the project's language and voice",
+  security: "a path by which authentication, authorisation, personal data, payments, a public API or a migration can be misused, leaked or bypassed",
+  architecture: "a drift from the project's defined architecture, data model, contracts or integrations",
+  data: "a schema, migration, query, transaction or index that loses, corrupts or blocks data",
+  infra: "a pipeline, deployment, host, secret or rollback that fails or exposes something",
+  risk: "a change whose failure in production has no rollback, loses data, breaks a third party or has no watch in its first hour"
+};
+var CAPS = {
+  findingText: 1000,
+  conclave: 16 * 1024,
+  request: 8 * 1024,
+  priorities: 8 * 1024
+};
+function cut(text, max) {
+  return text.length > max ? `${text.slice(0, max)}…` : text;
+}
+function askAllowed(policy, ask) {
+  return policy.verify.asks.includes(ask);
+}
+function record(what, ref, question, answer2, confidence, model) {
+  return {
+    what,
+    ref,
+    question: typeof question.instructions === "string" ? question.instructions : JSON.stringify(question.instructions),
+    answer: answer2,
+    confidence,
+    model,
+    at: nowIso()
+  };
+}
+var UNAVAILABLE2 = (reason) => `jev unavailable: ${reason}`;
+function findingMark(mark) {
+  return {
+    status: mark.status,
+    ...mark.reason ? { reason: mark.reason } : {},
+    ...mark.confidence !== null ? { confidence: mark.confidence } : {}
+  };
+}
+async function verifyDefects(cfg, policy, records, patch, options = {}) {
+  const candidates = records.flatMap((r) => r.verdict === "not-proven" ? r.findings.filter((f) => f.severity === "defect" && !f.outside).map((f) => ({ record: r, finding: f })) : []);
+  const sent = [];
+  const marks = [];
+  const unverified = (finding, reason) => marks.push({ finding, mark: { status: "unverified", reason } });
+  const state = {};
+  const questions = {};
+  const snippets = policy.verify.send === "claims-and-snippets";
+  for (const c of candidates) {
+    if (c.finding.line === undefined) {
+      unverified(c.finding, "no line");
+      continue;
+    }
+    const lines2 = hunkLines(patch, c.finding.file, c.finding.line);
+    if (!lines2) {
+      unverified(c.finding, "line outside the change's hunks");
+      continue;
+    }
+    if (sent.length >= policy.verify.maxClaimsPerItem) {
+      unverified(c.finding, "over verify.maxClaimsPerItem");
+      continue;
+    }
+    const id = `d${sent.length + 1}`;
+    state[id] = {
+      file: c.finding.file,
+      line: c.finding.line,
+      text: cut(c.finding.text, CAPS.findingText),
+      rubric: RUBRIC_QUESTIONS[c.record.gate],
+      ...snippets ? { lines: lines2.text } : {}
+    };
+    const question = snippets ? {
+      type: "choice",
+      instructions: `What is the relation between the cited lines \`findings.${id}.lines\` and the finding's \`text\` at \`findings.${id}\`?`,
+      criteria: {
+        supports: "the lines show what the text says",
+        contradicts: "the lines show the opposite, or the text does not hold on them",
+        says_nothing: "the lines do not show whether the text holds"
+      }
+    } : {
+      type: "noul",
+      instructions: `Does the finding at \`findings.${id}\`, taken at its word (its \`text\` about \`file\` at \`line\`), describe a defect of the kind \`findings.${id}.rubric\` names?`,
+      criteria: {
+        true: "the text, read literally, names such a defect",
+        false: "the text names something else, or no defect"
+      }
+    };
+    questions[id] = question;
+    sent.push({ id, record: c.record, finding: c.finding, question });
+  }
+  if (!sent.length)
+    return { records: [], unavailable: null, sent: 0, marks };
+  const result = await askJev(cfg, { state: { findings: state }, questions }, options);
+  if (!result.ok) {
+    for (const s of sent)
+      unverified(s.finding, UNAVAILABLE2(result.unavailable));
+    return { records: [], unavailable: result.unavailable, sent: sent.length, marks };
+  }
+  const out = [];
+  for (const s of sent) {
+    const answer2 = answerOf(result.answers, s.id);
+    const mark = markOf(answer2, policy.verify.threshold);
+    marks.push({ finding: s.finding, mark: findingMark(mark) });
+    out.push(record("defect", `${s.record.gate} ${s.finding.file}:${s.finding.line}`, s.question, answer2, mark.confidence, result.model));
+  }
+  return { records: out, unavailable: null, sent: sent.length, marks };
+}
+function applyDefectMarks(outcome) {
+  for (const { finding, mark } of outcome.marks)
+    finding.verification = mark;
+  return outcome;
+}
+var VALIDATOR_QUESTIONS = {
+  v1: "Is every decision listed in `conclave` under the heading 'Decisions only the user can make' present in `decisions` with an answer or a stated default?",
+  v2: "Is every warning listed in `conclave` under 'Warnings' that names a security, data or payment risk present in `objections`?"
+};
+async function verifyValidator(cfg, policy, input, options = {}) {
+  const questions = {
+    v1: { type: "noul", instructions: VALIDATOR_QUESTIONS.v1 },
+    v2: { type: "noul", instructions: VALIDATOR_QUESTIONS.v2 }
+  };
+  const result = await askJev(cfg, { state: { ...input, conclave: cut(input.conclave, CAPS.conclave) }, questions }, options);
+  if (!result.ok)
+    return {
+      status: "unverified",
+      condition: null,
+      confidence: null,
+      reason: UNAVAILABLE2(result.unavailable),
+      records: []
+    };
+  const records = [];
+  let outcome = {
+    status: "verified",
+    condition: null,
+    confidence: null,
+    records
+  };
+  for (const id of ["v1", "v2"]) {
+    const answer2 = result.answers[id];
+    const question = questions[id];
+    if (!answer2 || !question)
+      continue;
+    const mark = markOf(answer2, policy.verify.threshold);
+    records.push(record("validator", `complete-gap-round ${id}`, question, answer2, mark.confidence, result.model));
+    if (mark.status === "disputed" && outcome.status !== "disputed")
+      outcome = {
+        status: "disputed",
+        condition: VALIDATOR_QUESTIONS[id],
+        confidence: mark.confidence,
+        records
+      };
+    else if (mark.status === "unverified" && outcome.status === "verified")
+      outcome = {
+        status: "unverified",
+        condition: null,
+        confidence: mark.confidence,
+        reason: mark.reason,
+        records
+      };
+  }
+  return outcome;
+}
+async function verifyFacts(cfg, policy, facts, options = {}) {
+  if (!facts.length)
+    return { marks: {}, unavailable: null, records: [] };
+  const state = {};
+  const questions = {};
+  const ids = new Map;
+  facts.forEach((f, i) => {
+    const id = `f${i + 1}`;
+    ids.set(f.id, id);
+    state[id] = { claim: f.claim, quote: f.quote, excerpt: f.excerpt };
+    questions[id] = {
+      type: "choice",
+      instructions: `What is the relation between the excerpt \`facts.${id}.excerpt\` of the source and the quote \`facts.${id}.quote\` the researcher cited for the claim \`facts.${id}.claim\`?`,
+      criteria: {
+        supports: "the excerpt contains the quote's meaning as cited",
+        contradicts: "the excerpt says otherwise",
+        says_nothing: "the excerpt does not settle it"
+      }
+    };
+  });
+  const result = await askJev(cfg, { state: { facts: state }, questions }, options);
+  if (!result.ok) {
+    const marks2 = {};
+    for (const f of facts)
+      marks2[f.id] = {
+        status: "unverified",
+        confidence: null,
+        reason: UNAVAILABLE2(result.unavailable)
+      };
+    return { marks: marks2, unavailable: result.unavailable, records: [] };
+  }
+  const marks = {};
+  const records = [];
+  for (const f of facts) {
+    const id = ids.get(f.id) ?? "";
+    const answer2 = result.answers[id];
+    const question = questions[id];
+    if (!answer2 || !question)
+      continue;
+    const mark = markOf(answer2, policy.verify.threshold);
+    marks[f.id] = mark;
+    records.push(record("fact", f.id, question, answer2, mark.confidence, result.model));
+  }
+  return { marks, unavailable: null, records };
+}
+var PRIORITY_LEVELS2 = ["low", "normal", "high", "blocker"];
+var LEVEL_TEXT = {
+  low: "a cosmetic or convenience change nobody is waiting on",
+  normal: "ordinary work the business expects in its turn",
+  high: "work a signed deadline or a named client commitment depends on",
+  blocker: "production is down or a client cannot work until it is done"
+};
+var FLAGS = ["is_production_down", "names_a_signed_deadline", "is_vague"];
+var FLAG_QUESTIONS = {
+  is_production_down: "Does `request.text` say production, or a client's use of it, is down now?",
+  names_a_signed_deadline: "Does `request.text` name a deadline or a commitment that `business_priorities` lists?",
+  is_vague: "Would two competent engineers build different things from `request.text`?"
+};
+function rank(p) {
+  return PRIORITY_LEVELS2.indexOf(p);
+}
+async function verifyTriage(cfg, policy, input, options = {}) {
+  const state = {
+    request: { ...input.request, text: cut(input.request.text, CAPS.request) },
+    business_priorities: input.business_priorities === null ? null : cut(input.business_priorities, CAPS.priorities),
+    queue: input.queue
+  };
+  const questions = {
+    priority: {
+      type: "score",
+      instructions: "Judged against `business_priorities` and the open `queue`, which level does `request` deserve?",
+      criteria: PRIORITY_LEVELS2.map((l) => LEVEL_TEXT[l])
+    }
+  };
+  for (const flag of FLAGS)
+    questions[flag] = { type: "noul", instructions: FLAG_QUESTIONS[flag] };
+  const result = await askJev(cfg, { state, questions }, options);
+  if (!result.ok)
+    return { proposal: null, reason: UNAVAILABLE2(result.unavailable), records: [] };
+  const records = [];
+  const score = result.answers.priority;
+  const flags = {};
+  for (const flag of FLAGS) {
+    const answer2 = result.answers[flag];
+    const question = questions[flag];
+    if (answer2?.type === "noul" && question) {
+      flags[flag] = answer2.noul;
+      records.push(record("triage", flag, question, answer2, answer2.noul, result.model));
+    }
+  }
+  const scoreQuestion = questions.priority;
+  if (score?.type !== "score" || !scoreQuestion)
+    return { proposal: null, reason: "jev unavailable: malformed answer", records };
+  const byLevel = {};
+  for (const [key, text] of Object.entries(score.legend)) {
+    const level = PRIORITY_LEVELS2.find((l) => LEVEL_TEXT[l] === text);
+    if (level)
+      byLevel[level] = score.probabilities[key] ?? 0;
+  }
+  const normalised = { ...score, probabilities: byLevel };
+  const top = topLevel(normalised, PRIORITY_LEVELS2);
+  records.push(record("triage", "priority", scoreQuestion, score, score.confidence, result.model));
+  if (score.confidence < policy.verify.threshold)
+    return {
+      proposal: null,
+      reason: `confidence ${two(score.confidence)} under ${policy.verify.threshold}`,
+      records
+    };
+  const capped = rank(top.level) > rank(input.request.proposed_priority);
+  return {
+    proposal: {
+      level: capped ? input.request.proposed_priority : top.level,
+      confidence: score.confidence,
+      probabilities: byLevel,
+      flags,
+      capped
+    },
+    records
+  };
+}
+
+// packages/engine/src/knowledge.ts
 var KNOWLEDGE_KINDS = [
   "stack-preference",
   "validated-solution",
@@ -10285,6 +10586,36 @@ function words(text) {
       seen.add(run);
   return [...seen];
 }
+function lookup(base, query, limit = 10) {
+  const hits = [];
+  for (const entry of base.entries) {
+    if (!visibleTo(entry, query.scope))
+      continue;
+    if (query.kinds && !query.kinds.includes(entry.kind))
+      continue;
+    const reasons = [];
+    let score = 0;
+    for (const path of query.paths)
+      if (entry.paths.includes(path)) {
+        reasons.push(`path ${path}`);
+        score += 2;
+      }
+    for (const stack of query.stacks)
+      if (entry.stacks.includes(stack)) {
+        reasons.push(`stack ${stack}`);
+        score += 1;
+      }
+    for (const word of query.words)
+      if (entry.words.includes(word)) {
+        reasons.push(`word ${word}`);
+        score += 1;
+      }
+    if (score > 0)
+      hits.push({ entry, score, reasons });
+  }
+  hits.sort((a, b) => b.score - a.score || b.entry.createdAt.localeCompare(a.entry.createdAt));
+  return hits.slice(0, limit);
+}
 function fileInsideRoot(root, file) {
   const candidate = resolve4(root, file);
   if (!existsSync17(candidate))
@@ -10312,6 +10643,96 @@ function entryText(e) {
     e.text
   ].join(`
 `);
+}
+function safeTitle(title) {
+  const finding = scanText(title, "title")[0];
+  return finding ? `[redacted: ${finding.rule}]` : title;
+}
+async function rerankHits(cfg, policy, request, hits, options = {}) {
+  if (!cfg.configured || !askAllowed(policy, "knowledge"))
+    return { hits: hits.map((h) => ({ ...h, jev: null })), records: [], unavailable: null };
+  const cap = policy.verify.maxClaimsPerItem;
+  const entries = {};
+  const questions = {};
+  hits.slice(0, cap).forEach((h, i) => {
+    const id = `k${i + 1}`;
+    entries[id] = {
+      id: h.entry.id,
+      kind: h.entry.kind,
+      title: safeTitle(h.entry.title),
+      ...policy.verify.send === "claims-and-snippets" ? { text: h.entry.text.slice(0, KNOWLEDGE_TEXT_LIMIT) } : {}
+    };
+    questions[id] = {
+      type: "noul",
+      instructions: `Does the entry \`entries.${id}\` bear on the request \`request\`: would a developer doing the request need to read it before designing?`,
+      criteria: {
+        true: "the entry's solution, cause, fact or tendency applies to what the request asks",
+        false: "the entry concerns another need, another layer or another stack"
+      }
+    };
+  });
+  const state = { request: { title: safeTitle(request.title), kind: request.kind }, entries };
+  const result = await askJev(cfg, { state, questions }, options);
+  if (!result.ok) {
+    const reason = `jev unavailable: ${result.unavailable}`;
+    return {
+      hits: hits.map((h) => ({ ...h, jev: { noul: null, verdict: "unverified", reason } })),
+      records: [],
+      unavailable: result.unavailable
+    };
+  }
+  const threshold = policy.verify.threshold;
+  const lower = Number((1 - threshold).toFixed(2));
+  const records = [];
+  const ranked = hits.map((h, i) => {
+    if (i >= cap)
+      return { ...h, jev: { noul: null, verdict: "unverified", reason: "over maxClaimsPerItem" } };
+    const id = `k${i + 1}`;
+    const answer2 = result.answers[id];
+    const question = questions[id];
+    if (!answer2 || answer2.type !== "noul" || !question)
+      return {
+        ...h,
+        jev: { noul: null, verdict: "unverified", reason: "jev unavailable: no answer" }
+      };
+    const verdict = answer2.noul >= threshold ? "likely" : answer2.noul <= lower ? "unlikely" : "unverified";
+    records.push({
+      what: "knowledge",
+      ref: h.entry.id,
+      question: String(question.instructions),
+      answer: answer2,
+      confidence: null,
+      model: result.model,
+      at: nowIso()
+    });
+    return { ...h, jev: { noul: answer2.noul, verdict } };
+  });
+  const likely = ranked.filter((h) => h.jev?.verdict === "likely").sort((a, b) => (b.jev?.noul ?? 0) - (a.jev?.noul ?? 0));
+  return {
+    hits: [...likely, ...ranked.filter((h) => h.jev?.verdict !== "likely")],
+    records,
+    unavailable: null
+  };
+}
+function jevWord(mark) {
+  if (!mark)
+    return "jev not asked";
+  if (mark.verdict === "unverified")
+    return `unverified (${mark.reason ?? "no answer"})`;
+  return `${mark.verdict} ${mark.noul}`;
+}
+function knowledgeText(id, hits, unreadable) {
+  const lines2 = [`# Knowledge for ${id}`, ""];
+  if (unreadable)
+    lines2.push(`- none (base unreadable: ${unreadable})`);
+  else if (!hits.length)
+    lines2.push("- none");
+  else
+    for (const h of hits)
+      lines2.push(`- ${h.entry.id} · ${h.entry.kind} · "${h.entry.title}" · ${h.entry.workspace ?? "alone"} · ${h.reasons.join(", ")} · ${jevWord(h.jev)}`);
+  return `${lines2.join(`
+`)}
+`;
 }
 
 // packages/engine/src/metrics.ts
@@ -10715,13 +11136,13 @@ async function recordTdd(paths, work, evidence, profile, criterionId, step, over
       };
     }
   }
-  const writeRecord = (recorded, record2) => (into) => {
+  const writeRecord = (recorded, record3) => (into) => {
     let target = into.tdd.find((t) => t.criterion === criterionId);
     if (!target) {
       target = { criterion: criterionId };
       into.tdd.push(target);
     }
-    target[recorded] = record2;
+    target[recorded] = record3;
     if (recorded === "observed" && reason)
       target.reason = reason.trim();
   };
@@ -10731,7 +11152,7 @@ async function recordTdd(paths, work, evidence, profile, criterionId, step, over
     timeoutMs: fallback?.timeoutMs ?? 10 * 60 * 1000,
     logPath: join43(workDir(paths, work.id), log)
   });
-  const record = {
+  const record2 = {
     command,
     exit: result.exit,
     at: nowIso(),
@@ -10746,321 +11167,36 @@ async function recordTdd(paths, work, evidence, profile, criterionId, step, over
       return {
         ok: false,
         message: "the test passed before the change; a test that passes before the code exists proves nothing",
-        record
+        record: record2
       };
     }
     if (result.timedOut || result.exit === null || result.exit === 126 || result.exit === 127) {
       return {
         ok: false,
         message: `the red run did not fail for the right reason (exit ${result.exit ?? "none"}${result.timedOut ? ", timed out" : ""}): fix the command before recording`,
-        record
+        record: record2
       };
     }
-    record.changedTests = changedWatchedPaths(paths.root, profile, work).filter((p) => matchesAny(p, TEST_PATTERNS));
+    record2.changedTests = changedWatchedPaths(paths.root, profile, work).filter((p) => matchesAny(p, TEST_PATTERNS));
     return {
       ok: true,
       message: `red recorded for ${criterionId} (exit ${result.exit})`,
-      record,
-      apply: writeRecord("red", record)
+      record: record2,
+      apply: writeRecord("red", record2)
     };
   }
   if (!passed) {
     return {
       ok: false,
       message: `${step} run failed (exit ${result.exit}${result.timedOut ? ", timed out" : ""}); nothing recorded`,
-      record
+      record: record2
     };
   }
   return {
     ok: true,
     message: `${step} recorded for ${criterionId}`,
-    record,
-    apply: writeRecord(step, record)
-  };
-}
-
-// packages/engine/src/verify.ts
-var RUBRIC_QUESTIONS = {
-  strategy: "a fault of the strategy as the strategy rubric names it: an element not required by a stated need (over-engineering), a claim whose mark names no researched fact, a cost or a time guessed rather than measured, a scaling phase without an observable trigger, a smaller answer not argued point by point where the request asked for more",
-  "code-quality": "a violation of SOLID or KISS as the code-quality rubric's six questions name it: a type with more than one reason to change, a copy of logic, a name that says the opposite of what the code does, dead or unreachable code, a workaround, a hardcoded value",
-  "test-quality": "a test that would not fail if the behaviour it names broke, a criterion with no such test, or an assertion true by construction",
-  "ui-ux": "a page whose criterion is not visible in the capture, a missing state (loading, empty, error), a control without a keyboard path or a label, or copy outside the project's language and voice",
-  security: "a path by which authentication, authorisation, personal data, payments, a public API or a migration can be misused, leaked or bypassed",
-  architecture: "a drift from the project's defined architecture, data model, contracts or integrations",
-  data: "a schema, migration, query, transaction or index that loses, corrupts or blocks data",
-  infra: "a pipeline, deployment, host, secret or rollback that fails or exposes something",
-  risk: "a change whose failure in production has no rollback, loses data, breaks a third party or has no watch in its first hour"
-};
-var CAPS = {
-  findingText: 1000,
-  conclave: 16 * 1024,
-  request: 8 * 1024,
-  priorities: 8 * 1024
-};
-function cut(text, max) {
-  return text.length > max ? `${text.slice(0, max)}…` : text;
-}
-function askAllowed(policy, ask) {
-  return policy.verify.asks.includes(ask);
-}
-function record(what, ref, question, answer2, confidence, model) {
-  return {
-    what,
-    ref,
-    question: typeof question.instructions === "string" ? question.instructions : JSON.stringify(question.instructions),
-    answer: answer2,
-    confidence,
-    model,
-    at: nowIso()
-  };
-}
-var UNAVAILABLE2 = (reason) => `jev unavailable: ${reason}`;
-function findingMark(mark) {
-  return {
-    status: mark.status,
-    ...mark.reason ? { reason: mark.reason } : {},
-    ...mark.confidence !== null ? { confidence: mark.confidence } : {}
-  };
-}
-async function verifyDefects(cfg, policy, records, patch, options = {}) {
-  const candidates = records.flatMap((r) => r.verdict === "not-proven" ? r.findings.filter((f) => f.severity === "defect" && !f.outside).map((f) => ({ record: r, finding: f })) : []);
-  const sent = [];
-  const marks = [];
-  const unverified = (finding, reason) => marks.push({ finding, mark: { status: "unverified", reason } });
-  const state = {};
-  const questions = {};
-  const snippets = policy.verify.send === "claims-and-snippets";
-  for (const c of candidates) {
-    if (c.finding.line === undefined) {
-      unverified(c.finding, "no line");
-      continue;
-    }
-    const lines2 = hunkLines(patch, c.finding.file, c.finding.line);
-    if (!lines2) {
-      unverified(c.finding, "line outside the change's hunks");
-      continue;
-    }
-    if (sent.length >= policy.verify.maxClaimsPerItem) {
-      unverified(c.finding, "over verify.maxClaimsPerItem");
-      continue;
-    }
-    const id = `d${sent.length + 1}`;
-    state[id] = {
-      file: c.finding.file,
-      line: c.finding.line,
-      text: cut(c.finding.text, CAPS.findingText),
-      rubric: RUBRIC_QUESTIONS[c.record.gate],
-      ...snippets ? { lines: lines2.text } : {}
-    };
-    const question = snippets ? {
-      type: "choice",
-      instructions: `What is the relation between the cited lines \`findings.${id}.lines\` and the finding's \`text\` at \`findings.${id}\`?`,
-      criteria: {
-        supports: "the lines show what the text says",
-        contradicts: "the lines show the opposite, or the text does not hold on them",
-        says_nothing: "the lines do not show whether the text holds"
-      }
-    } : {
-      type: "noul",
-      instructions: `Does the finding at \`findings.${id}\`, taken at its word (its \`text\` about \`file\` at \`line\`), describe a defect of the kind \`findings.${id}.rubric\` names?`,
-      criteria: {
-        true: "the text, read literally, names such a defect",
-        false: "the text names something else, or no defect"
-      }
-    };
-    questions[id] = question;
-    sent.push({ id, record: c.record, finding: c.finding, question });
-  }
-  if (!sent.length)
-    return { records: [], unavailable: null, sent: 0, marks };
-  const result = await askJev(cfg, { state: { findings: state }, questions }, options);
-  if (!result.ok) {
-    for (const s of sent)
-      unverified(s.finding, UNAVAILABLE2(result.unavailable));
-    return { records: [], unavailable: result.unavailable, sent: sent.length, marks };
-  }
-  const out = [];
-  for (const s of sent) {
-    const answer2 = answerOf(result.answers, s.id);
-    const mark = markOf(answer2, policy.verify.threshold);
-    marks.push({ finding: s.finding, mark: findingMark(mark) });
-    out.push(record("defect", `${s.record.gate} ${s.finding.file}:${s.finding.line}`, s.question, answer2, mark.confidence, result.model));
-  }
-  return { records: out, unavailable: null, sent: sent.length, marks };
-}
-function applyDefectMarks(outcome) {
-  for (const { finding, mark } of outcome.marks)
-    finding.verification = mark;
-  return outcome;
-}
-var VALIDATOR_QUESTIONS = {
-  v1: "Is every decision listed in `conclave` under the heading 'Decisions only the user can make' present in `decisions` with an answer or a stated default?",
-  v2: "Is every warning listed in `conclave` under 'Warnings' that names a security, data or payment risk present in `objections`?"
-};
-async function verifyValidator(cfg, policy, input, options = {}) {
-  const questions = {
-    v1: { type: "noul", instructions: VALIDATOR_QUESTIONS.v1 },
-    v2: { type: "noul", instructions: VALIDATOR_QUESTIONS.v2 }
-  };
-  const result = await askJev(cfg, { state: { ...input, conclave: cut(input.conclave, CAPS.conclave) }, questions }, options);
-  if (!result.ok)
-    return {
-      status: "unverified",
-      condition: null,
-      confidence: null,
-      reason: UNAVAILABLE2(result.unavailable),
-      records: []
-    };
-  const records = [];
-  let outcome = {
-    status: "verified",
-    condition: null,
-    confidence: null,
-    records
-  };
-  for (const id of ["v1", "v2"]) {
-    const answer2 = result.answers[id];
-    const question = questions[id];
-    if (!answer2 || !question)
-      continue;
-    const mark = markOf(answer2, policy.verify.threshold);
-    records.push(record("validator", `complete-gap-round ${id}`, question, answer2, mark.confidence, result.model));
-    if (mark.status === "disputed" && outcome.status !== "disputed")
-      outcome = {
-        status: "disputed",
-        condition: VALIDATOR_QUESTIONS[id],
-        confidence: mark.confidence,
-        records
-      };
-    else if (mark.status === "unverified" && outcome.status === "verified")
-      outcome = {
-        status: "unverified",
-        condition: null,
-        confidence: mark.confidence,
-        reason: mark.reason,
-        records
-      };
-  }
-  return outcome;
-}
-async function verifyFacts(cfg, policy, facts, options = {}) {
-  if (!facts.length)
-    return { marks: {}, unavailable: null, records: [] };
-  const state = {};
-  const questions = {};
-  const ids = new Map;
-  facts.forEach((f, i) => {
-    const id = `f${i + 1}`;
-    ids.set(f.id, id);
-    state[id] = { claim: f.claim, quote: f.quote, excerpt: f.excerpt };
-    questions[id] = {
-      type: "choice",
-      instructions: `What is the relation between the excerpt \`facts.${id}.excerpt\` of the source and the quote \`facts.${id}.quote\` the researcher cited for the claim \`facts.${id}.claim\`?`,
-      criteria: {
-        supports: "the excerpt contains the quote's meaning as cited",
-        contradicts: "the excerpt says otherwise",
-        says_nothing: "the excerpt does not settle it"
-      }
-    };
-  });
-  const result = await askJev(cfg, { state: { facts: state }, questions }, options);
-  if (!result.ok) {
-    const marks2 = {};
-    for (const f of facts)
-      marks2[f.id] = {
-        status: "unverified",
-        confidence: null,
-        reason: UNAVAILABLE2(result.unavailable)
-      };
-    return { marks: marks2, unavailable: result.unavailable, records: [] };
-  }
-  const marks = {};
-  const records = [];
-  for (const f of facts) {
-    const id = ids.get(f.id) ?? "";
-    const answer2 = result.answers[id];
-    const question = questions[id];
-    if (!answer2 || !question)
-      continue;
-    const mark = markOf(answer2, policy.verify.threshold);
-    marks[f.id] = mark;
-    records.push(record("fact", f.id, question, answer2, mark.confidence, result.model));
-  }
-  return { marks, unavailable: null, records };
-}
-var PRIORITY_LEVELS2 = ["low", "normal", "high", "blocker"];
-var LEVEL_TEXT = {
-  low: "a cosmetic or convenience change nobody is waiting on",
-  normal: "ordinary work the business expects in its turn",
-  high: "work a signed deadline or a named client commitment depends on",
-  blocker: "production is down or a client cannot work until it is done"
-};
-var FLAGS = ["is_production_down", "names_a_signed_deadline", "is_vague"];
-var FLAG_QUESTIONS = {
-  is_production_down: "Does `request.text` say production, or a client's use of it, is down now?",
-  names_a_signed_deadline: "Does `request.text` name a deadline or a commitment that `business_priorities` lists?",
-  is_vague: "Would two competent engineers build different things from `request.text`?"
-};
-function rank(p) {
-  return PRIORITY_LEVELS2.indexOf(p);
-}
-async function verifyTriage(cfg, policy, input, options = {}) {
-  const state = {
-    request: { ...input.request, text: cut(input.request.text, CAPS.request) },
-    business_priorities: input.business_priorities === null ? null : cut(input.business_priorities, CAPS.priorities),
-    queue: input.queue
-  };
-  const questions = {
-    priority: {
-      type: "score",
-      instructions: "Judged against `business_priorities` and the open `queue`, which level does `request` deserve?",
-      criteria: PRIORITY_LEVELS2.map((l) => LEVEL_TEXT[l])
-    }
-  };
-  for (const flag of FLAGS)
-    questions[flag] = { type: "noul", instructions: FLAG_QUESTIONS[flag] };
-  const result = await askJev(cfg, { state, questions }, options);
-  if (!result.ok)
-    return { proposal: null, reason: UNAVAILABLE2(result.unavailable), records: [] };
-  const records = [];
-  const score = result.answers.priority;
-  const flags = {};
-  for (const flag of FLAGS) {
-    const answer2 = result.answers[flag];
-    const question = questions[flag];
-    if (answer2?.type === "noul" && question) {
-      flags[flag] = answer2.noul;
-      records.push(record("triage", flag, question, answer2, answer2.noul, result.model));
-    }
-  }
-  const scoreQuestion = questions.priority;
-  if (score?.type !== "score" || !scoreQuestion)
-    return { proposal: null, reason: "jev unavailable: malformed answer", records };
-  const byLevel = {};
-  for (const [key, text] of Object.entries(score.legend)) {
-    const level = PRIORITY_LEVELS2.find((l) => LEVEL_TEXT[l] === text);
-    if (level)
-      byLevel[level] = score.probabilities[key] ?? 0;
-  }
-  const normalised = { ...score, probabilities: byLevel };
-  const top = topLevel(normalised, PRIORITY_LEVELS2);
-  records.push(record("triage", "priority", scoreQuestion, score, score.confidence, result.model));
-  if (score.confidence < policy.verify.threshold)
-    return {
-      proposal: null,
-      reason: `confidence ${two(score.confidence)} under ${policy.verify.threshold}`,
-      records
-    };
-  const capped = rank(top.level) > rank(input.request.proposed_priority);
-  return {
-    proposal: {
-      level: capped ? input.request.proposed_priority : top.level,
-      confidence: score.confidence,
-      probabilities: byLevel,
-      flags,
-      capped
-    },
-    records
+    record: record2,
+    apply: writeRecord(step, record2)
   };
 }
 
@@ -11611,7 +11747,7 @@ function deliver2(env, opened, evidence) {
   writeProtectedText(env.paths, join45(workDir(env.paths, opened.work.id), "report.md"), reportOf(env, opened.work, evidence));
 }
 function reportOf(env, work, evidence) {
-  return renderReport(work, evidence, env.policy, loadLedger(env.paths, work.id).ledger, loadItemMail(env.paths, work.id), env.mail.self.project, readOrigin(env.paths, work.id) ?? undefined, strategyOf(env, work, evidence), auditViewOf(env, work));
+  return renderReport(work, evidence, env.policy, loadLedger(env.paths, work.id).ledger, loadItemMail(env.paths, work.id), env.mail.self.project, readOrigin(env.paths, work.id) ?? undefined, strategyOf(env, work, evidence), auditViewOf(env, work), readText(join45(workDir(env.paths, work.id), "knowledge.md")));
 }
 function auditViewOf(env, work) {
   if (kindOfItem(work) !== "audit")
@@ -11683,13 +11819,13 @@ function strategyOf(env, work, evidence) {
   if (!phasesFor(work).includes("strategy"))
     return null;
   const dir = workDir(env.paths, work.id);
-  return strategyReport(readText(join45(dir, "strategy.md")), readText(join45(dir, "conclave", "researcher.md")), evidence);
+  return strategyReport(readText(join45(dir, "strategy.md")), readText(join45(dir, "conclave", "researcher.md")), evidence, work.knowledge?.listed ?? []);
 }
 function strategyLine(report, planned) {
   const state = report === null ? "no strategy.md yet" : report.faults.length ? `${report.faults.length} fault${report.faults.length === 1 ? "" : "s"}` : "ok";
   const r = report?.ruling;
   const ruling = !r ? "none" : r.stale ? "stale" : r.verdict === "proven" ? "proven" : `${verdictText(r.verdict)} (${r.findings} findings)`;
-  return `  strategy ${RESEARCH_ALONE}: ${state}; ruling ${ruling}; gate ${planned.gate} planned: ${planned.reason}`;
+  return `  strategy ${RESEARCH_AND_BASE}: ${state}; ruling ${ruling}; gate ${planned.gate} planned: ${planned.reason}`;
 }
 function auditStatusOf(env, work) {
   const s = auditState(env.paths, work);
@@ -11855,10 +11991,45 @@ function parseAnswers(raw) {
     return refuse("answers must be valid JSON");
   }
 }
-function classify(env, work, answers, context) {
+async function classify(env, work, answers, context, ioEnv) {
   const decision = computeRoute(answers, [], env.policy);
   applyClassification(work, answers.work_type, decision, kindOf(answers, context));
   logDecision(env, work, answers);
+  await lookupForItem(env, work, ioEnv);
+}
+async function lookupForItem(env, work, ioEnv) {
+  const file = join45(workDir(env.paths, work.id), "knowledge.md");
+  const readAt = nowIso();
+  const read2 = readBase(env.paths.userDir);
+  if (read2.base === null) {
+    const unreadable = read2.reason === "missing" ? null : read2.reason;
+    const text2 = knowledgeText(work.id, [], unreadable);
+    writeProtectedText(env.paths, file, text2);
+    work.knowledge = { readAt, listed: [], ...unreadable ? { unreadable } : {} };
+    return text2;
+  }
+  const scope = scopeOf(env.paths, env.mail.self);
+  const stacks = [...new Set(env.profile.targets.map((t) => t.stack))];
+  const hits = lookup(read2.base, { scope, stacks, paths: [], words: words(work.title) });
+  const ranked = await rerankHits(jevConfig(ioEnv, env.config), env.policy, { title: work.title, kind: kindOfItem(work) }, hits);
+  const text = knowledgeText(work.id, ranked.hits, null);
+  writeProtectedText(env.paths, file, text);
+  work.knowledge = { readAt, listed: ranked.hits.map((h) => h.entry.id) };
+  if (ranked.records.length)
+    appendVerifications(env, work.id, ranked.records);
+  return text;
+}
+function knowledgeLine(env, work) {
+  const record2 = work.knowledge;
+  if (!record2)
+    return null;
+  if (record2.unreadable)
+    return `  knowledge: none (base unreadable: ${record2.unreadable})`;
+  if (!record2.listed.length)
+    return "  knowledge: none";
+  const entries = readBase(env.paths.userDir).base?.entries ?? [];
+  const marked = record2.listed.filter((id) => entries.find((e) => e.id === id)?.confidential !== false).length;
+  return `  knowledge: ${record2.listed.length} listed (${marked} marked)`;
 }
 function gateSummary(work, verdict, unproven, runs) {
   const lines2 = runs.map((r) => `  ${r.gate} (${r.target}${r.stack ? `, ${r.stack}` : ""}): ${r.status} in ${(r.durationMs / 1000).toFixed(1)}s`);
@@ -12171,7 +12342,7 @@ async function dispatch(parsed, io) {
         work.sharedCheckout = { with: neighbours, paths: uncommitted, at: work.createdAt };
       const sharedWarning = neighbours.length ? `warning: this checkout is shared with ${neighbours.join(", ")}, which ${neighbours.length === 1 ? "is" : "are"} open with uncommitted changes in ${uncommitted.join(", ")}; a second session on one checkout blocks turn ends and proves half-written code: work in a worktree (git worktree add ../<name> -b <branch>)
 ` : "";
-      classify(env, work, answers, { origin: !!origin, sourceChannel: source?.channel ?? null });
+      await classify(env, work, answers, { origin: !!origin, sourceChannel: source?.channel ?? null }, io.env);
       if (triage) {
         work.triage = triage;
         work.priority = triage.confirmed ?? triage.proposed;
@@ -12277,7 +12448,7 @@ ${originNotes.join(`
       const answers = parseAnswers(parsed.flags.answers);
       if (isOutcome(answers))
         return answers;
-      classify(env, opened.work, answers, { origin: !!opened.work.origin, sourceChannel: null });
+      await classify(env, opened.work, answers, { origin: !!opened.work.origin, sourceChannel: null }, io.env);
       saveWork(env.paths, opened.work);
       return ok(`${opened.work.id}: route ${opened.work.route} (${opened.work.routeReasons.join("; ")}); ${kindLabel(opened.work)}`, {
         id: opened.work.id,
@@ -12516,7 +12687,7 @@ ${originNotes.join(`
       const text = readText(join45(dir, "strategy.md"));
       if (text === null)
         return refuse("strategy.md in the work folder (references/strategy.md)");
-      const faults = checkStrategy(text, research);
+      const faults = checkStrategy(text, research, opened.work.knowledge?.listed ?? []);
       if (faults.length)
         return refuse(faults.map((f) => `strategy.md: ${f}`).join(`
 `), { faults });
@@ -13393,8 +13564,16 @@ test-first not credited: ${out.uncredited}` : "";
       return ok(metricsText(metrics), { ...metrics });
     }
     case "knowledge": {
-      const usage = 'usage: crew knowledge list [--kind <k>] | show K-n | add --kind general|documentation --title "<t>" --file <path> [--source <url>] | contradict K-n --reason "<why>" [--item <id>] | unmark K-n';
+      const usage = 'usage: crew knowledge <id> lookup | list [--kind <k>] | show K-n | add --kind general|documentation --title "<t>" --file <path> [--source <url>] | contradict K-n --reason "<why>" [--item <id>] | unmark K-n';
       const sub = args[0];
+      if (args[1] === "lookup") {
+        const opened = openForChange(env, sub);
+        if (isOutcome(opened))
+          return opened;
+        const text = await lookupForItem(env, opened.work, io.env);
+        saveWork(env.paths, opened.work);
+        return ok(text, { knowledge: opened.work.knowledge });
+      }
       const scope = scopeOf(env.paths, env.mail.self);
       const read2 = readBase(env.paths.userDir);
       const unreadable = read2.base === null && read2.reason !== "missing" ? read2.reason : null;
@@ -13434,6 +13613,9 @@ test-first not credited: ${out.uncredited}` : "";
           return refuse(`${kind} entries are written by crew learn`);
         if (typeof title !== "string" || !title.trim())
           return refuse("a knowledge entry needs a title");
+        const titled = scanText(title, "title")[0];
+        if (titled)
+          return refuse(`the title holds a secret (${titled.rule}); nothing was written`);
         const real = fileInsideRoot(env.paths.root, file);
         if (real === null)
           return refuse(`no file at ${file}`);
@@ -13682,6 +13864,9 @@ ${lines2.join(`
       ].filter((l) => l !== null);
       if (work.source)
         extra.unshift(`  source ${sourceLine(work.source)}`);
+      const knowledge = knowledgeLine(env, work);
+      if (knowledge)
+        extra.push(knowledge);
       const plannedStrategy = work.phase === "strategy" ? plannedStrategyJudgement(work)[0] : undefined;
       if (plannedStrategy)
         extra.unshift(strategyLine(strategyOf(env, work, result.evidence), plannedStrategy));
@@ -13745,6 +13930,7 @@ ${notes.join(`
         debate: debateState(work),
         baseCommit: work.baseCommit,
         phases: phasesFor(work),
+        knowledge: work.knowledge ?? null,
         ...kindOfItem(work) === "audit" ? { audit: auditStatusOf(env, work) } : {},
         verdict: result.verdict,
         unproven: result.unproven,

@@ -7,16 +7,21 @@
 import { existsSync, realpathSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { nowIso, readText, writeJson } from "./fs.ts";
+import { type AskOptions, askJev, type JevConfig, type JevQuestion } from "./jev.ts";
 import { withLock } from "./lock.ts";
 import { worktreeMainRoot } from "./mail.ts";
 import { type CrewPaths, canonical, knowledgeDir, knowledgePath } from "./paths.ts";
+import { scanText } from "./secrets.ts";
 import type {
   KnowledgeBase,
   KnowledgeDraft,
   KnowledgeEntry,
   KnowledgeKind,
+  Policy,
   Stack,
+  Verification,
 } from "./types.ts";
+import { askAllowed } from "./verify.ts";
 
 export const KNOWLEDGE_KINDS: readonly KnowledgeKind[] = [
   "stack-preference",
@@ -293,4 +298,130 @@ export function entryText(e: KnowledgeEntry): string {
     "---",
     e.text,
   ].join("\n");
+}
+
+/** Jev's word on one hit: likely or unlikely by the threshold, unverified between or when it could not answer. */
+export interface JevMark {
+  noul: number | null;
+  verdict: "likely" | "unlikely" | "unverified";
+  reason?: string;
+}
+
+export interface RankedHit extends LookupHit {
+  /** Null when Jev was not asked (not configured, or the `knowledge` ask not allowed). */
+  jev: JevMark | null;
+}
+
+/** A title as it may leave the machine: a secret in it replaced by its rule, never its value (the security lead's return at Task 3). */
+function safeTitle(title: string): string {
+  const finding = scanText(title, "title")[0];
+  return finding ? `[redacted: ${finding.rule}]` : title;
+}
+
+/**
+ * Jev over the lookup's hits (SP4 Task 3, the re-ranking cookbook): one noul per hit, the first
+ * `maxClaimsPerItem`, over the request's title and kind and the entry's id, kind and title (the
+ * text under `claims-and-snippets` alone, cut at the limit); likely hits first by noul, then the
+ * rest as the lookup gave them. Nothing is dropped: Jev reorders and marks (rule 6).
+ */
+export async function rerankHits(
+  cfg: JevConfig,
+  policy: Policy,
+  request: { title: string; kind: string },
+  hits: readonly LookupHit[],
+  options: AskOptions = {},
+): Promise<{ hits: RankedHit[]; records: Verification[]; unavailable: string | null }> {
+  if (!cfg.configured || !askAllowed(policy, "knowledge"))
+    return { hits: hits.map((h) => ({ ...h, jev: null })), records: [], unavailable: null };
+  const cap = policy.verify.maxClaimsPerItem;
+  const entries: Record<string, unknown> = {};
+  const questions: Record<string, JevQuestion> = {};
+  hits.slice(0, cap).forEach((h, i) => {
+    const id = `k${i + 1}`;
+    entries[id] = {
+      id: h.entry.id,
+      kind: h.entry.kind,
+      title: safeTitle(h.entry.title),
+      ...(policy.verify.send === "claims-and-snippets"
+        ? { text: h.entry.text.slice(0, KNOWLEDGE_TEXT_LIMIT) }
+        : {}),
+    };
+    questions[id] = {
+      type: "noul",
+      instructions: `Does the entry \`entries.${id}\` bear on the request \`request\`: would a developer doing the request need to read it before designing?`,
+      criteria: {
+        true: "the entry's solution, cause, fact or tendency applies to what the request asks",
+        false: "the entry concerns another need, another layer or another stack",
+      },
+    };
+  });
+  const state = { request: { title: safeTitle(request.title), kind: request.kind }, entries };
+  const result = await askJev(cfg, { state, questions }, options);
+  if (!result.ok) {
+    const reason = `jev unavailable: ${result.unavailable}`;
+    return {
+      hits: hits.map((h) => ({ ...h, jev: { noul: null, verdict: "unverified", reason } })),
+      records: [],
+      unavailable: result.unavailable,
+    };
+  }
+  const threshold = policy.verify.threshold;
+  // The policy's threshold has at most two decimals: the lower bound is read the same way, so 0.2 is at 1 − 0.8.
+  const lower = Number((1 - threshold).toFixed(2));
+  const records: Verification[] = [];
+  const ranked: RankedHit[] = hits.map((h, i) => {
+    if (i >= cap)
+      return { ...h, jev: { noul: null, verdict: "unverified", reason: "over maxClaimsPerItem" } };
+    const id = `k${i + 1}`;
+    const answer = result.answers[id];
+    const question = questions[id];
+    if (!answer || answer.type !== "noul" || !question)
+      return {
+        ...h,
+        jev: { noul: null, verdict: "unverified", reason: "jev unavailable: no answer" },
+      };
+    const verdict =
+      answer.noul >= threshold ? "likely" : answer.noul <= lower ? "unlikely" : "unverified";
+    records.push({
+      what: "knowledge",
+      ref: h.entry.id,
+      question: String(question.instructions),
+      answer,
+      confidence: null,
+      model: result.model,
+      at: nowIso(),
+    });
+    return { ...h, jev: { noul: answer.noul, verdict } };
+  });
+  const likely = ranked
+    .filter((h) => h.jev?.verdict === "likely")
+    .sort((a, b) => (b.jev?.noul ?? 0) - (a.jev?.noul ?? 0));
+  return {
+    hits: [...likely, ...ranked.filter((h) => h.jev?.verdict !== "likely")],
+    records,
+    unavailable: null,
+  };
+}
+
+function jevWord(mark: JevMark | null): string {
+  if (!mark) return "jev not asked";
+  if (mark.verdict === "unverified") return `unverified (${mark.reason ?? "no answer"})`;
+  return `${mark.verdict} ${mark.noul}`;
+}
+
+/** `knowledge.md` of an item: one bullet per hit with its reasons and Jev's word, or none, or why the base could not be read. */
+export function knowledgeText(
+  id: string,
+  hits: readonly RankedHit[],
+  unreadable: string | null,
+): string {
+  const lines = [`# Knowledge for ${id}`, ""];
+  if (unreadable) lines.push(`- none (base unreadable: ${unreadable})`);
+  else if (!hits.length) lines.push("- none");
+  else
+    for (const h of hits)
+      lines.push(
+        `- ${h.entry.id} · ${h.entry.kind} · "${h.entry.title}" · ${h.entry.workspace ?? "alone"} · ${h.reasons.join(", ")} · ${jevWord(h.jev)}`,
+      );
+  return `${lines.join("\n")}\n`;
 }

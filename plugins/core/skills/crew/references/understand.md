@@ -4,6 +4,7 @@ Standard and full routes only. Goal: agree on the problem before designing a sol
 
 Write, in the conversation, on one screen:
 
+- **What the base holds**: read `.crew/work/<id>/knowledge.md` first, the engine's list of the entries that bear on the request (what this project may read: unmarked entries, and marked ones of this workspace; nothing hidden is ever listed); `crew knowledge show K-n` prints an entry; a listed entry that settles a choice is cited in the spec as `[K:<id>]`, and the strategy may rest on it as on a researched fact. `crew knowledge <id> lookup` reads the base again after a kind raise or a new entry.
 - **The problem**, as a sentence that names who is affected and what they cannot do.
 - **Assumptions you are making**, each as a statement the user can refuse: "The endpoint will require an authenticated user." "Pagination keeps the current page size."
 - **What the request points at** (a route, a page, a table, a field): read where the repository lists them and say whether each exists; what does not exist is a decision for the user, never an assumption.

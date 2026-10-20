@@ -77,8 +77,10 @@ test("SP8-T3 AC-1: checkStrategy names a missing section, an unmarked bullet, a 
   ]);
   const knowledge = STRATEGY.replace("the project has [R3]", "the project has [K:stack-1]");
   expect(checkStrategy(knowledge, RESEARCH)).toEqual([
-    "[K:stack-1] in Stack: knowledge entries arrive with SP4",
+    "[K:stack-1] in Stack: stack-1 is not listed in knowledge.md (not in the base, or marked for another workspace: rule 13)",
   ]);
+  // A listed entry is a mark like a researched fact (SP4 Task 3).
+  expect(checkStrategy(knowledge, RESEARCH, ["stack-1"])).toEqual([]);
   const noRows = STRATEGY.replace("| 10k users | the queue becomes a service | 2 weeks |\n", "");
   expect(checkStrategy(noRows, RESEARCH)).toEqual([
     "no row in the Scaling phases table (| Trigger | Change | Cost |): every project has a first trigger at which its design changes",

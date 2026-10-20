@@ -4,7 +4,7 @@ A new project (`kind new-project`, or a feature raised with `crew kind <id> rais
 
 ## 1. The research first
 
-Launch the researcher (`wizardingcode-developer-crew:researcher`) with the brief's path and five questions: what exists today for this need (in the repository and the workspace's projects), what the documentation of the candidate stacks says (limits, maintenance, cost), what comparable work cost and took, what the request asks for that no need calls for, what a smaller answer would be. The hook saves `conclave/researcher.md`. Then `crew research <id> verify`: each quote checked in its source, Jev asked when configured (`references/jev.md`). A session with no web tool leaves the documentation section at `- none` and the verify says it has no fact to verify: that is not a blocker; the strategy says it is from the research alone and goes on with the code facts, every claim marked on their lines. At the conclave this researcher is resumed with the open decisions, never relaunched.
+Launch the researcher (`wizardingcode-developer-crew:researcher`) with the brief's path and five questions: what exists today for this need (in the repository and the workspace's projects), what the documentation of the candidate stacks says (limits, maintenance, cost), what comparable work cost and took, what the request asks for that no need calls for, what a smaller answer would be. The hook saves `conclave/researcher.md`. Then `crew research <id> verify`: each quote checked in its source, Jev asked when configured (`references/jev.md`). A session with no web tool leaves the documentation section at `- none` and the verify says it has no fact to verify: that is not a blocker; the strategy is from the research and the base, and goes on with the code facts and the entries `knowledge.md` lists, every claim marked on their lines. At the conclave this researcher is resumed with the open decisions, never relaunched.
 
 ## 2. The document
 
@@ -23,7 +23,7 @@ Write `.crew/work/<id>/strategy.md` with five sections, in this order:
 - <figure with its basis> [R<n>]
 
 ## Stack
-- From the research alone (no knowledge base until SP4): <the stack and why> [R<n>]
+- From the research and the base: <the stack and why> [R<n>] [K:<id>]
 
 ## Scaling phases
 
@@ -32,7 +32,7 @@ Write `.crew/work/<id>/strategy.md` with five sections, in this order:
 | <an observable trigger: users, requests, records, a date> | <what changes> | <its cost> |
 ```
 
-Every bullet ends with one or more marks `[R<n>]`, `n` the line number of `conclave/researcher.md` that carries the fact (a `- ` line under "What the code does today" or "What the documentation says"). A claim with no fact is not written. Knowledge marks `[K:<id>]` arrive with SP4: until then the Stack section says the strategy is from the research alone (no knowledge base until SP4). The table has at least one row: every project has a first trigger at which its design changes.
+Every bullet ends with one or more marks `[R<n>]`, `n` the line number of `conclave/researcher.md` that carries the fact (a `- ` line under "What the code does today" or "What the documentation says"). A claim with no fact is not written. A knowledge mark `[K:<id>]` counts as a mark when the engine listed the entry for this item in `.crew/work/<id>/knowledge.md` (read it before writing; `crew knowledge show K-n` prints the entry); an unlisted one is refused, since what is not listed is not in the base or is marked for another workspace (rule 13). A bullet may rest on a knowledge mark alone. The table has at least one row: every project has a first trigger at which its design changes.
 
 ## 3. The two rules of discernment
 

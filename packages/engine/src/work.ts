@@ -654,7 +654,9 @@ export function guardFor(work: WorkItem, next: Phase, ctx: GuardContext): string
     else if (ctx.strategyText === null) missing.push("strategy.md in the work folder");
     else {
       missing.push(
-        ...checkStrategy(ctx.strategyText, ctx.researcherText).map((f) => `strategy.md: ${f}`),
+        ...checkStrategy(ctx.strategyText, ctx.researcherText, work.knowledge?.listed ?? []).map(
+          (f) => `strategy.md: ${f}`,
+        ),
       );
       const hash = strategyHash(ctx.strategyText, ctx.researcherText);
       const record = ctx.evidence?.judgement?.find((j) => j.gate === "strategy");

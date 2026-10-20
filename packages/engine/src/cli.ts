@@ -80,7 +80,10 @@ import {
   entryText,
   fileInsideRoot,
   KNOWLEDGE_KINDS,
+  knowledgeText,
+  lookup,
   readBase,
+  rerankHits,
   scopeOf,
   USER_KINDS,
   updateEntry,
@@ -189,7 +192,7 @@ import {
 import {
   checkStrategy,
   parseStrategy,
-  RESEARCH_ALONE,
+  RESEARCH_AND_BASE,
   RESEARCHER_FIRST,
   STRATEGY_SECTIONS,
   type StrategyReport,
@@ -1027,6 +1030,7 @@ function reportOf(env: Env, work: WorkItem, evidence: Evidence): string {
     readOrigin(env.paths, work.id) ?? undefined,
     strategyOf(env, work, evidence),
     auditViewOf(env, work),
+    readText(join(workDir(env.paths, work.id), "knowledge.md")),
   );
 }
 
@@ -1126,6 +1130,7 @@ function strategyOf(env: Env, work: WorkItem, evidence: Evidence): StrategyRepor
     readText(join(dir, "strategy.md")),
     readText(join(dir, "conclave", "researcher.md")),
     evidence,
+    work.knowledge?.listed ?? [],
   );
 }
 
@@ -1145,7 +1150,7 @@ function strategyLine(report: StrategyReport | null, planned: PlannedStrategyJud
       : r.verdict === "proven"
         ? "proven"
         : `${verdictText(r.verdict)} (${r.findings} findings)`;
-  return `  strategy ${RESEARCH_ALONE}: ${state}; ruling ${ruling}; gate ${planned.gate} planned: ${planned.reason}`;
+  return `  strategy ${RESEARCH_AND_BASE}: ${state}; ruling ${ruling}; gate ${planned.gate} planned: ${planned.reason}`;
 }
 
 /** The audit block of `crew status --json`: the run's summary, the findings' counts, the report's files and state, the signature. */
@@ -1370,10 +1375,63 @@ function parseAnswers(raw: string): Answers | Outcome {
   }
 }
 
-function classify(env: Env, work: WorkItem, answers: Answers, context: KindContext): void {
+async function classify(
+  env: Env,
+  work: WorkItem,
+  answers: Answers,
+  context: KindContext,
+  ioEnv: NodeJS.ProcessEnv,
+): Promise<void> {
   const decision = computeRoute(answers, [], env.policy);
   applyClassification(work, answers.work_type, decision, kindOf(answers, context));
   logDecision(env, work, answers);
+  await lookupForItem(env, work, ioEnv);
+}
+
+/**
+ * The base read for an item at Recognize (SP4 Task 3, vision phase 1): the scope, the profile's
+ * stacks and the request's words, the hits written to `knowledge.md` and recorded, Jev reordering
+ * when configured, its records appended; a base the engine cannot read is said and the item goes on.
+ */
+async function lookupForItem(env: Env, work: WorkItem, ioEnv: NodeJS.ProcessEnv): Promise<string> {
+  const file = join(workDir(env.paths, work.id), "knowledge.md");
+  const readAt = nowIso();
+  const read = readBase(env.paths.userDir);
+  if (read.base === null) {
+    const unreadable = read.reason === "missing" ? null : read.reason;
+    const text = knowledgeText(work.id, [], unreadable);
+    writeProtectedText(env.paths, file, text);
+    work.knowledge = { readAt, listed: [], ...(unreadable ? { unreadable } : {}) };
+    return text;
+  }
+  const scope = scopeOf(env.paths, env.mail.self);
+  const stacks = [...new Set(env.profile.targets.map((t) => t.stack))];
+  // No paths at classification: an issue's origin paths join the query at crew analyse (Task 5).
+  const hits = lookup(read.base, { scope, stacks, paths: [], words: words(work.title) });
+  const ranked = await rerankHits(
+    jevConfig(ioEnv, env.config),
+    env.policy,
+    { title: work.title, kind: kindOfItem(work) },
+    hits,
+  );
+  const text = knowledgeText(work.id, ranked.hits, null);
+  writeProtectedText(env.paths, file, text);
+  work.knowledge = { readAt, listed: ranked.hits.map((h) => h.entry.id) };
+  if (ranked.records.length) appendVerifications(env, work.id, ranked.records);
+  return text;
+}
+
+/** `knowledge: 2 listed (1 marked)`, `knowledge: none` or why the base could not be read, for the status block. */
+function knowledgeLine(env: Env, work: WorkItem): string | null {
+  const record = work.knowledge;
+  if (!record) return null;
+  if (record.unreadable) return `  knowledge: none (base unreadable: ${record.unreadable})`;
+  if (!record.listed.length) return "  knowledge: none";
+  const entries = readBase(env.paths.userDir).base?.entries ?? [];
+  const marked = record.listed.filter(
+    (id) => entries.find((e) => e.id === id)?.confidential !== false,
+  ).length;
+  return `  knowledge: ${record.listed.length} listed (${marked} marked)`;
 }
 
 function gateSummary(
@@ -1757,7 +1815,13 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       const sharedWarning = neighbours.length
         ? `warning: this checkout is shared with ${neighbours.join(", ")}, which ${neighbours.length === 1 ? "is" : "are"} open with uncommitted changes in ${uncommitted.join(", ")}; a second session on one checkout blocks turn ends and proves half-written code: work in a worktree (git worktree add ../<name> -b <branch>)\n`
         : "";
-      classify(env, work, answers, { origin: !!origin, sourceChannel: source?.channel ?? null });
+      await classify(
+        env,
+        work,
+        answers,
+        { origin: !!origin, sourceChannel: source?.channel ?? null },
+        io.env,
+      );
       // The item's priority: the triage's level when a source proposed one (the proposal while
       // unconfirmed), else the flag, the origin's confirmed level, the priority answer's level, normal.
       if (triage) {
@@ -1883,7 +1947,13 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         return refuse("usage: crew classify <id> --answers <json>");
       const answers = parseAnswers(parsed.flags.answers);
       if (isOutcome(answers)) return answers;
-      classify(env, opened.work, answers, { origin: !!opened.work.origin, sourceChannel: null });
+      await classify(
+        env,
+        opened.work,
+        answers,
+        { origin: !!opened.work.origin, sourceChannel: null },
+        io.env,
+      );
       saveWork(env.paths, opened.work);
       return ok(
         `${opened.work.id}: route ${opened.work.route} (${opened.work.routeReasons.join("; ")}); ${kindLabel(opened.work)}`,
@@ -2144,7 +2214,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       if (research === null) return refuse(RESEARCHER_FIRST);
       const text = readText(join(dir, "strategy.md"));
       if (text === null) return refuse("strategy.md in the work folder (references/strategy.md)");
-      const faults = checkStrategy(text, research);
+      const faults = checkStrategy(text, research, opened.work.knowledge?.listed ?? []);
       if (faults.length)
         return refuse(faults.map((f) => `strategy.md: ${f}`).join("\n"), { faults });
       const hash = strategyHash(text, research);
@@ -3307,8 +3377,16 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       // The knowledge base's commands (SP4 Task 2, ADR 0009): what a person adds, reads, disputes
       // or, alone, unmarks; the engine's kinds enter at Learn. Rule 13 is `visibleTo`, read first.
       const usage =
-        'usage: crew knowledge list [--kind <k>] | show K-n | add --kind general|documentation --title "<t>" --file <path> [--source <url>] | contradict K-n --reason "<why>" [--item <id>] | unmark K-n';
+        'usage: crew knowledge <id> lookup | list [--kind <k>] | show K-n | add --kind general|documentation --title "<t>" --file <path> [--source <url>] | contradict K-n --reason "<why>" [--item <id>] | unmark K-n';
       const sub = args[0];
+      if (args[1] === "lookup") {
+        // The base read again for an item (SP4 Task 3): after a kind raise, after an entry entered.
+        const opened = openForChange(env, sub);
+        if (isOutcome(opened)) return opened;
+        const text = await lookupForItem(env, opened.work, io.env);
+        saveWork(env.paths, opened.work);
+        return ok(text, { knowledge: opened.work.knowledge });
+      }
       const scope = scopeOf(env.paths, env.mail.self);
       const read = readBase(env.paths.userDir);
       const unreadable = read.base === null && read.reason !== "missing" ? read.reason : null;
@@ -3352,6 +3430,9 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         if (!USER_KINDS.includes(kind)) return refuse(`${kind} entries are written by crew learn`);
         if (typeof title !== "string" || !title.trim())
           return refuse("a knowledge entry needs a title");
+        // A title leaves the machine with the lookup's ask (SP4 Task 3): a secret in it is refused here.
+        const titled = scanText(title, "title")[0];
+        if (titled) return refuse(`the title holds a secret (${titled.rule}); nothing was written`);
         // The file comes from the project's own tree (the security lead's R-3): a `..`, an absolute
         // path or a symlink that leaves it is refused, and a secret in it never enters the base.
         const real = fileInsideRoot(env.paths.root, file);
@@ -3634,6 +3715,9 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           : null,
       ].filter((l): l is string => l !== null);
       if (work.source) extra.unshift(`  source ${sourceLine(work.source)}`);
+      // What the base listed at classification (SP4 Task 3).
+      const knowledge = knowledgeLine(env, work);
+      if (knowledge) extra.push(knowledge);
       // The strategy while it is written and judged (SP7 §7.3): its faults and its ruling.
       const plannedStrategy =
         work.phase === "strategy" ? plannedStrategyJudgement(work)[0] : undefined;
@@ -3712,6 +3796,8 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         debate: debateState(work),
         baseCommit: work.baseCommit,
         phases: phasesFor(work),
+        // What the base listed at classification (SP4 Task 3).
+        knowledge: work.knowledge ?? null,
         // An audit's checks (SP8 Task 5): what the mod's Audit block and the strip draw.
         ...(kindOfItem(work) === "audit" ? { audit: auditStatusOf(env, work) } : {}),
         verdict: result.verdict,

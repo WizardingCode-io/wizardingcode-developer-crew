@@ -450,7 +450,7 @@ test("SP3-T6 AC-4: policy.verify has its defaults when absent, falls back key by
     send: "claims",
     maxClaimsPerItem: 50,
     threshold: 0.8,
-    asks: ["defect", "validator", "fact", "triage"],
+    asks: ["defect", "validator", "fact", "triage", "knowledge"],
   });
   expect(loadPolicy(paths).policy.verify).toEqual(DEFAULT_POLICY.verify);
   mkdirSync(paths.crewDir, { recursive: true });
@@ -472,7 +472,13 @@ test("SP3-T6 AC-4: policy.verify has its defaults when absent, falls back key by
     asks: ["defect"],
   });
   writeFileSync(join(paths.crewDir, "policy.json"), JSON.stringify({ verify: { asks: [] } }));
-  expect(loadPolicy(paths).policy.verify.asks).toEqual(["defect", "validator", "fact", "triage"]);
+  expect(loadPolicy(paths).policy.verify.asks).toEqual([
+    "defect",
+    "validator",
+    "fact",
+    "triage",
+    "knowledge",
+  ]);
   writeFileSync(join(paths.crewDir, "policy.json"), "{}");
   expect(setPolicyValue(paths, "verify.threshold", "0.4")).toEqual({
     refused: "verify.threshold is a number from 0.5 to 0.99 with at most two decimals, not 0.4",
@@ -504,7 +510,7 @@ test("SP3-T6 AC-4: policy.verify has its defaults when absent, falls back key by
   expect(loadPolicy(paths).policy.verify.asks).toEqual(["defect", "triage"]);
   expect(setPolicyValue(paths, "verify.asks", "defect,x")).toEqual({
     refused:
-      "verify.asks is a comma-separated subset of defect, validator, fact, triage, not defect,x",
+      "verify.asks is a comma-separated subset of defect, validator, fact, triage, knowledge, not defect,x",
   });
   expect("refused" in setPolicyValue(paths, "verify.asks", "")).toBe(true);
   // The config: where Jev is reached, never its key.

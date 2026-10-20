@@ -10,7 +10,7 @@ import { isLive, loadRegistry, mailContext, send } from "../src/mail.ts";
 import { loadPolicy } from "../src/policy.ts";
 import { loadProfile, saveProfile } from "../src/profile.ts";
 import { loadState } from "../src/state.ts";
-import { addCriterion, createWork, saveWork } from "../src/work.ts";
+import { activeWork, addCriterion, createWork, saveWork } from "../src/work.ts";
 import { hookContext, makeRepo, repoPaths, testEnv, write } from "./helpers.ts";
 
 function context(root: string, env = testEnv()) {
@@ -124,6 +124,20 @@ test("the prompt hook adds one status line only while work is active", () => {
     .additionalContext;
   expect(text).toMatch(/^Crew: work \S+ "Thing", phase receive, route standard, not proven/);
   expect(text.split("\n")).toHaveLength(1);
+  expect(text).not.toContain("knowledge:");
+  // What the base listed rides on the line every session reads (SP4 Task 3).
+  const active = activeWork(ctx.paths)?.work;
+  if (!active) throw new Error("no active work");
+  active.knowledge = { readAt: "2026-10-20T00:00:00.000Z", listed: ["K-1", "K-2"] };
+  saveWork(ctx.paths, active);
+  const listed = (onPrompt(ctx).hookSpecificOutput as { additionalContext: string })
+    .additionalContext;
+  expect(listed).toContain(", knowledge: 2 listed");
+  active.knowledge = { readAt: "2026-10-20T00:00:00.000Z", listed: [] };
+  saveWork(ctx.paths, active);
+  expect(
+    (onPrompt(ctx).hookSpecificOutput as { additionalContext: string }).additionalContext,
+  ).toContain(", knowledge: none");
 });
 
 test("finding 12: a watch list left by an earlier release follows the current default at session start", () => {

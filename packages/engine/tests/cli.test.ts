@@ -24,7 +24,7 @@ import { writeJson } from "../src/fs.ts";
 import { readReviewInputs } from "../src/judgement.ts";
 import { readBase } from "../src/knowledge.ts";
 import { mailbox, mailContext, ownInbox, readBox, registerProject, writeBox } from "../src/mail.ts";
-import { isProtectedPath } from "../src/paths.ts";
+import { isProtectedPath, knowledgePath } from "../src/paths.ts";
 import { loadPolicy } from "../src/policy.ts";
 import { loadProfile } from "../src/profile.ts";
 import { recordWorking } from "../src/state.ts";
@@ -5816,7 +5816,7 @@ test("SP8-T3 AC-1, AC-4: crew strategy check refuses the faults naming them, nee
   const id = await strategyItem(c, root, { files: false });
   // The status names the planned judgement gate from plannedStrategyJudgement (round 1 of the review: a dead path).
   expect((await c.run("status")).out).toContain(
-    "strategy from the research alone (no knowledge base until SP4): no strategy.md yet; ruling none; gate strategy planned: new project, standard route: the judge rules from the files",
+    "strategy from the research and the base: no strategy.md yet; ruling none; gate strategy planned: new project, standard route: the judge rules from the files",
   );
   const early = await c.run("strategy", id, "check");
   expect(early.code).toBe(1);
@@ -5841,7 +5841,7 @@ test("SP8-T3 AC-1, AC-4: crew strategy check refuses the faults naming them, nee
     false,
   );
   expect((await c.run("status")).out).toContain(
-    "strategy from the research alone (no knowledge base until SP4): 2 faults; ruling none",
+    "strategy from the research and the base: 2 faults; ruling none",
   );
   write(root, `.crew/work/${id}/strategy.md`, STRATEGY);
   const ok = await c.run("strategy", id, "check");
@@ -5859,7 +5859,7 @@ test("SP8-T3 AC-1, AC-4: crew strategy check refuses the faults naming them, nee
   });
   expect(inputs.hash).toMatch(/^[0-9a-f]{64}$/);
   expect((await c.run("status")).out).toContain(
-    "strategy from the research alone (no knowledge base until SP4): ok; ruling none",
+    "strategy from the research and the base: ok; ruling none",
   );
   // The guard runs the check itself: a fault written after the check is named at phase next.
   write(
@@ -5947,7 +5947,7 @@ test("SP8-T3 AC-2: a strategy ruling is recorded on its own path (stamped with t
   write(root, `.crew/work/${id}/strategy.md`, STRATEGY);
   expect((await c.json("phase", id, "next")).data.phase).toBe("specify");
   expect((await c.run("evidence", id)).out).toContain(
-    "## Strategy\n\n- From the research alone (no knowledge base until SP4).\n- Claims: Viability 1, Cost 1, Time 1, Stack 1; scaling rows: 1.\n- Ruling: proven (reviewer judge, 2 findings).\n",
+    "## Strategy\n\n- From the research and the base.\n- Claims: Viability 1, Cost 1, Time 1, Stack 1; scaling rows: 1.\n- Ruling: proven (reviewer judge, 2 findings).\n",
   );
   // A feature refuses a strategy ruling.
   const feature = (await c.json("start", "A feature", "--answers", answers, "--criterion", "a"))
@@ -6444,6 +6444,21 @@ test("SP4-T2 AC-5: crew knowledge add writes a marked entry from a file inside t
     "secret.md:1 holds a secret (AWS access key); nothing was written",
   );
   expect(secret.err).not.toContain("AKIA");
+  // A title with a secret is refused the same way (SP4 Task 3, the security lead's return).
+  const key = ["AKIA", "ABCDEFGHIJKLMNOP"].join("");
+  const titled = await ca.run(
+    "knowledge",
+    "add",
+    "--kind",
+    "general",
+    "--title",
+    `rotate ${key}`,
+    "--file",
+    "notes/login.md",
+  );
+  expect(titled.code).toBe(1);
+  expect(titled.err.trim()).toBe("the title holds a secret (AWS access key); nothing was written");
+  expect(titled.err).not.toContain(key);
   expect(readBase(join(env.WIZARDINGCODE_HOME ?? "", "crew")).base?.entries.length).toBe(1);
   // What each project reads: the visible entries alone, a hidden one answered as an unknown id.
   const listA = await ca.run("knowledge", "list");
@@ -6533,4 +6548,190 @@ test("SP4-T2 AC-6: crew knowledge unmark is a person's: --mode and --validator r
     by: "the user, relayed by the agent",
   });
   expect((await ca.run("knowledge", "unmark", "K-1")).err.trim()).toBe("K-1 is not marked");
+});
+
+test("SP4-T3 AC-1, AC-2: a start looks the base up and writes knowledge.md and the record, the status and the JSON say what was listed, crew knowledge <id> lookup rewrites it, a hidden entry is never listed, and an unreadable base is said and never stops the item", async () => {
+  const { env, a, b, ca, cb } = knowledgeProjects();
+  const standard = JSON.stringify({ ...JSON.parse(answers), work_type: "feature", scope: 1 });
+  // The first start of a user: no base yet, none listed, the item goes on.
+  const first = await cb.json(
+    "start",
+    "Nothing learned yet",
+    "--answers",
+    standard,
+    "--criterion",
+    "x",
+  );
+  expect(first.code).toBe(0);
+  expect(
+    readFileSync(join(b, ".crew", "work", first.data.id as string, "knowledge.md"), "utf8"),
+  ).toBe(`# Knowledge for ${first.data.id}\n\n- none\n`);
+  expect((await cb.run("status")).out).toContain("  knowledge: none\n");
+  expect(
+    (
+      await ca.run(
+        "knowledge",
+        "add",
+        "--kind",
+        "general",
+        "--title",
+        "Login sessions",
+        "--file",
+        "notes/login.md",
+      )
+    ).code,
+  ).toBe(0);
+  const started = await ca.json(
+    "start",
+    "Login sessions expire too early",
+    "--answers",
+    standard,
+    "--criterion",
+    "a session lasts an hour",
+  );
+  expect(started.code).toBe(0);
+  const id = started.data.id as string;
+  const file = join(a, ".crew", "work", id, "knowledge.md");
+  expect(readFileSync(file, "utf8")).toBe(
+    `# Knowledge for ${id}\n\n- K-1 · general · "Login sessions" · acme · word login, word sessions · jev not asked\n`,
+  );
+  const record = loadWork(repoPaths(a, env), id).work?.knowledge;
+  expect(record?.listed).toEqual(["K-1"]);
+  expect(typeof record?.readAt).toBe("string");
+  expect((await ca.run("status")).out).toContain("  knowledge: 1 listed (1 marked)");
+  expect((await ca.json("status")).data.knowledge).toMatchObject({ listed: ["K-1"] });
+  // A second entry enters and the lookup is run again on demand.
+  expect(
+    (
+      await ca.run(
+        "knowledge",
+        "add",
+        "--kind",
+        "documentation",
+        "--title",
+        "Session expiry in the framework",
+        "--file",
+        "notes/login.md",
+        "--source",
+        "https://docs.example/sessions",
+      )
+    ).code,
+  ).toBe(0);
+  const again = await ca.run("knowledge", id, "lookup");
+  expect(again.code, again.err).toBe(0);
+  expect(again.out).toContain("- K-2 · documentation");
+  expect(readFileSync(file, "utf8")).toContain("- K-2 · documentation");
+  expect([...(loadWork(repoPaths(a, env), id).work?.knowledge?.listed ?? [])].sort()).toEqual([
+    "K-1",
+    "K-2",
+  ]);
+  expect((await ca.run("status")).out).toContain("  knowledge: 2 listed (2 marked)");
+  expect((await ca.run("knowledge", "2026-01-01-001-none", "lookup")).code).toBe(1);
+  // The other workspace reads nothing of these.
+  const other = await ca.run("knowledge", "unmark", "K-2");
+  expect(other.code, other.err).toBe(0);
+  expect((await ca.run("status")).out).toContain("  knowledge: 2 listed (1 marked)");
+  const inB = await cb.json(
+    "start",
+    "Login sessions expire too early",
+    "--answers",
+    standard,
+    "--criterion",
+    "x",
+  );
+  const fileB = join(b, ".crew", "work", inB.data.id as string, "knowledge.md");
+  expect(readFileSync(fileB, "utf8")).toContain("- K-2 · documentation");
+  expect(readFileSync(fileB, "utf8")).not.toContain("K-1");
+  // An unreadable base is said and the item goes on.
+  writeFileSync(knowledgePath(join(env.WIZARDINGCODE_HOME ?? "", "crew")), "{not json");
+  const second = await ca.json(
+    "start",
+    "Another request about login",
+    "--answers",
+    standard,
+    "--criterion",
+    "x",
+  );
+  expect(second.code).toBe(0);
+  const id2 = second.data.id as string;
+  expect(readFileSync(join(a, ".crew", "work", id2, "knowledge.md"), "utf8")).toMatch(
+    /^# Knowledge for .*\n\n- none \(base unreadable: base\.json: /,
+  );
+  expect((await ca.run("status")).out).toMatch(
+    / {2}knowledge: none \(base unreadable: base\.json: /,
+  );
+});
+
+test("SP4-T3 AC-2, AC-3: with a canned Jev endpoint, crew knowledge <id> lookup marks the hits and appends the knowledge verification records to the item's evidence", async () => {
+  const { env, a, ca } = knowledgeProjects();
+  expect(
+    (
+      await ca.run(
+        "knowledge",
+        "add",
+        "--kind",
+        "general",
+        "--title",
+        "Login sessions",
+        "--file",
+        "notes/login.md",
+      )
+    ).code,
+  ).toBe(0);
+  const standard = JSON.stringify({ ...JSON.parse(answers), work_type: "feature", scope: 1 });
+  const id = (
+    await ca.json(
+      "start",
+      "Login sessions expire too early",
+      "--answers",
+      standard,
+      "--criterion",
+      "x",
+    )
+  ).data.id as string;
+  const file = join(tempDir("crew-jev-"), "answers.json");
+  writeFileSync(file, JSON.stringify({ k1: { type: "noul", noul: 0.93 } }));
+  expect((await ca.run("config", "jev.endpoint", `file://${file}`)).code).toBe(0);
+  const looked = await ca.run("knowledge", id, "lookup");
+  expect(looked.code, looked.err).toBe(0);
+  expect(looked.out).toContain(
+    '- K-1 · general · "Login sessions" · acme · word login, word sessions · likely 0.93',
+  );
+  const records = loadEvidence(repoPaths(a, env), id).evidence?.verifications ?? [];
+  expect(records.map((r) => [r.what, r.ref])).toEqual([["knowledge", "K-1"]]);
+  expect(records[0]?.answer).toEqual({ type: "noul", noul: 0.93 });
+});
+
+test("SP4-T3 AC-4: crew strategy check and the guard accept a [K:<id>] the engine listed for the item and refuse an unlisted one naming rule 13", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const c = io(root);
+  const id = await strategyItem(c, root, { files: false });
+  write(root, `.crew/work/${id}/conclave/researcher.md`, RESEARCH);
+  const paths = repoPaths(root, c.env);
+  const listed = loadWork(paths, id).work as WorkItem;
+  listed.knowledge = { readAt: "2026-10-20T00:00:00.000Z", listed: ["K-1"] };
+  saveWork(paths, listed);
+  write(
+    root,
+    `.crew/work/${id}/strategy.md`,
+    STRATEGY.replace("the project has [R3]", "the project has [K:K-1]"),
+  );
+  const ok = await c.run("strategy", id, "check");
+  expect(ok.code, ok.err).toBe(0);
+  expect((await c.run("phase", id, "next")).err).not.toContain("is not listed in knowledge.md");
+  write(
+    root,
+    `.crew/work/${id}/strategy.md`,
+    STRATEGY.replace("the project has [R3]", "the project has [K:K-9]"),
+  );
+  const refused = await c.run("strategy", id, "check");
+  expect(refused.code).toBe(1);
+  expect(refused.err.trim()).toBe(
+    "strategy.md: [K:K-9] in Stack: K-9 is not listed in knowledge.md (not in the base, or marked for another workspace: rule 13)",
+  );
+  expect((await c.run("phase", id, "next")).err).toContain("K-9 is not listed in knowledge.md");
+  expect((await c.run("status")).out).toContain("strategy from the research and the base: 1 fault");
 });

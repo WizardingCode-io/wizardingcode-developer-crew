@@ -649,6 +649,8 @@ export interface WorkItem {
   kind?: WorkKind;
   /** Where the kind came from: `answer`, `origin`, `source: <channel>`, `work_type <type>`. */
   kindFrom?: string;
+  /** What the base listed for this item at its classification (SP4 Task 3); absent before 0.10.0. */
+  knowledge?: KnowledgeRecord;
   route: Route;
   routeReasons: string[];
   riskAreas: RiskArea[];
@@ -806,7 +808,7 @@ export interface JudgementFinding {
 
 /** One answer of Jev on the record (SP3 decision 11): what was asked, of what, the answer as returned, its confidence, the model, when. */
 export interface Verification {
-  what: "defect" | "validator" | "fact" | "triage";
+  what: "defect" | "validator" | "fact" | "triage" | "knowledge";
   ref: string;
   question: string;
   answer: unknown;
@@ -816,8 +818,14 @@ export interface Verification {
 }
 
 /** The asks the engine may make of Jev (security review of SP3 Task 6): the key alone is not consent to every one. */
-export type VerifyAsk = "defect" | "validator" | "fact" | "triage";
-export const VERIFY_ASKS: readonly VerifyAsk[] = ["defect", "validator", "fact", "triage"];
+export type VerifyAsk = "defect" | "validator" | "fact" | "triage" | "knowledge";
+export const VERIFY_ASKS: readonly VerifyAsk[] = [
+  "defect",
+  "validator",
+  "fact",
+  "triage",
+  "knowledge",
+];
 
 /** What leaves the machine and what an answer is worth (SP3 decision 9). */
 export interface VerifyPolicy {
@@ -952,3 +960,11 @@ export type KnowledgeDraft = Omit<
   KnowledgeEntry,
   "id" | "createdAt" | "confirmedBy" | "contradictedBy"
 >;
+
+/** What the base listed for an item at its classification (SP4 Task 3): read by the skill, cited by the strategy. */
+export interface KnowledgeRecord {
+  readAt: string;
+  listed: string[];
+  /** Why the base could not be read, when it could not: the item went on without it. */
+  unreadable?: string;
+}

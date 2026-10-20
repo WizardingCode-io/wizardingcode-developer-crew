@@ -511,7 +511,7 @@ test("SP8-T3: the skill page has the Strategy row between Understand and Specify
     "crew research <id> verify",
     "over-engineering",
     "point by point",
-    "from the research alone (no knowledge base until SP4)",
+    "from the research and the base",
     "remote test environment",
     "crew judgement <id> record",
   ])

@@ -12,7 +12,12 @@ import { questionChannelsCell } from "./questions.ts";
 import { sourceLine } from "./source.ts";
 import { oneLine } from "./state.ts";
 import { readProtectedJson, writeProtectedJson } from "./store.ts";
-import { RESEARCH_ALONE, STRATEGY_SECTIONS, type StrategyReport, verdictText } from "./strategy.ts";
+import {
+  RESEARCH_AND_BASE,
+  STRATEGY_SECTIONS,
+  type StrategyReport,
+  verdictText,
+} from "./strategy.ts";
 import type {
   CriterionKind,
   DecidedBy,
@@ -362,6 +367,7 @@ export function renderReport(
   analysis?: { origin: Origin | null; tampered: boolean },
   strategy?: StrategyReport | null,
   audit?: AuditReportView | null,
+  knowledge?: string | null,
 ): string {
   const lines: string[] = [];
   lines.push(`# Report: ${work.title}`, "");
@@ -422,7 +428,7 @@ export function renderReport(
   // A new project's strategy as it stands (SP7 §7.3, §13.1): from the research alone until SP4.
   if (strategy) {
     lines.push("## Strategy", "");
-    lines.push(`- ${RESEARCH_ALONE.charAt(0).toUpperCase()}${RESEARCH_ALONE.slice(1)}.`);
+    lines.push(`- ${RESEARCH_AND_BASE.charAt(0).toUpperCase()}${RESEARCH_AND_BASE.slice(1)}.`);
     const claims = STRATEGY_SECTIONS.filter((s) => s !== "Scaling phases")
       .map((s) => `${s} ${strategy.counts[s]}`)
       .join(", ");
@@ -436,6 +442,10 @@ export function renderReport(
     if (strategy.faults.length) lines.push(`- Faults: ${strategy.faults.join("; ")}`);
     lines.push("");
   }
+  // What the base listed at classification (SP4 Task 3): the file's bullets, or none.
+  lines.push("## Knowledge", "");
+  const bullets = (knowledge ?? "").split("\n").filter((l) => l.startsWith("- "));
+  lines.push(...(bullets.length ? bullets : ["- none"]), "");
   // An audit's records (SP7 §7.5, SP8 Task 5): the run, the findings, the report's three files, the signature.
   if (audit) {
     lines.push("## Audit", "");

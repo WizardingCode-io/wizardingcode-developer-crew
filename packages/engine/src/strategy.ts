@@ -10,8 +10,8 @@ import type { Evidence, JudgementRecord } from "./types.ts";
 export const STRATEGY_SECTIONS = ["Viability", "Cost", "Time", "Stack", "Scaling phases"] as const;
 export type StrategySection = (typeof STRATEGY_SECTIONS)[number];
 
-/** What the status and the report say of every strategy until SP4 lands. */
-export const RESEARCH_ALONE = "from the research alone (no knowledge base until SP4)";
+/** What the status and the report say of every strategy: its claims rest on the research and on the base's listed entries (SP4 Task 3). */
+export const RESEARCH_AND_BASE = "from the research and the base";
 
 export interface ScalingRow {
   trigger: string;
@@ -29,7 +29,7 @@ export interface ParsedStrategy {
 
 const FACT_HEADINGS = new Set(["What the code does today", "What the documentation says"]);
 const MARK = /\[R(\d+)\]/g;
-const KNOWLEDGE_MARK = /\[K:[^\]]+\]/g;
+const KNOWLEDGE_MARK = /\[K:([^\]]+)\]/g;
 const SEPARATOR_CELL = /^:?-+:?$/;
 
 function isSection(name: string): name is StrategySection {
@@ -91,7 +91,11 @@ export const RESEARCHER_FIRST =
   "conclave/researcher.md: the researcher's pass comes before the strategy (references/strategy.md)";
 
 /** The faults of a strategy against the research as it stands: none for a sound one. */
-export function checkStrategy(text: string, researcherText: string): string[] {
+export function checkStrategy(
+  text: string,
+  researcherText: string,
+  listed: readonly string[] = [],
+): string[] {
   const faults: string[] = [];
   const parsed = parseStrategy(text);
   const facts = factLines(researcherText);
@@ -116,9 +120,15 @@ export function checkStrategy(text: string, researcherText: string): string[] {
       continue;
     }
     for (const bullet of parsed.bullets[section]) {
-      const knowledge = bullet.match(KNOWLEDGE_MARK) ?? [];
-      for (const k of knowledge)
-        faults.push(`${k} in ${section}: knowledge entries arrive with SP4`);
+      // A knowledge mark counts when the engine listed the entry for this item (SP4 Task 3): what
+      // is not listed is not in the base, or is marked for another workspace (rule 13).
+      const knowledge = [...bullet.matchAll(KNOWLEDGE_MARK)];
+      for (const [k, id] of knowledge) {
+        if (!listed.includes(id ?? ""))
+          faults.push(
+            `${k} in ${section}: ${id} is not listed in knowledge.md (not in the base, or marked for another workspace: rule 13)`,
+          );
+      }
       const marks = [...bullet.matchAll(MARK)].map((m) => Number(m[1]));
       if (marks.length === 0 && knowledge.length === 0)
         faults.push(
@@ -154,6 +164,7 @@ export function strategyReport(
   strategyText: string | null,
   researcherText: string | null,
   evidence: Pick<Evidence, "judgement"> | null,
+  listed: readonly string[] = [],
 ): StrategyReport | null {
   if (strategyText === null) return null;
   const research = researcherText ?? "";
@@ -166,7 +177,7 @@ export function strategyReport(
     "Scaling phases": 0,
   };
   const faults =
-    researcherText === null ? [RESEARCHER_FIRST] : checkStrategy(strategyText, research);
+    researcherText === null ? [RESEARCHER_FIRST] : checkStrategy(strategyText, research, listed);
   const record = evidence?.judgement?.find((j) => j.gate === "strategy") ?? null;
   const ruling = record
     ? {

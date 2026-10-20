@@ -24,7 +24,7 @@ Text only, in this shape, nothing before or after it:
 ## What the documentation says
 - <URL or document> · "<the quoted sentence>" · <what it means for D-n>
 ## Prior solutions
-- none (validated solutions arrive with SP4)
+- <K-n> · <title> · <what it settles for D-n> (from `knowledge.md` of the work folder: the base's entries the engine listed for this item; `none` when it lists none)
 ## What the facts do not settle
 - D-n · <the question the facts leave open, in one sentence>
 ```

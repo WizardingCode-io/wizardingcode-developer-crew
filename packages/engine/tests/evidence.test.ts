@@ -999,7 +999,7 @@ test("SP8-T3 AC-4: the report's Strategy section says the strategy is from the r
     );
   const none = report(STRATEGY, []);
   expect(none).toContain(
-    "## Strategy\n\n- From the research alone (no knowledge base until SP4).\n- Claims: Viability 1, Cost 1, Time 1, Stack 1; scaling rows: 1.\n- Ruling: none.\n",
+    "## Strategy\n\n- From the research and the base.\n- Claims: Viability 1, Cost 1, Time 1, Stack 1; scaling rows: 1.\n- Ruling: none.\n",
   );
   expect(none.indexOf("## Strategy")).toBeLessThan(none.indexOf("## Acceptance criteria"));
   const stale = report(STRATEGY, [
@@ -1058,4 +1058,27 @@ test("SP8-T5 AC-3: an audit's verdict is proven on the run at HEAD, a current re
   approve(work, "audit", { by: "user", relayed: true });
   const current = { run: true, runAtHead: true, report: true, reportCurrent: true };
   expect(computeVerdict({ ...input, audit: current })).toEqual({ verdict: "proven", unproven: [] });
+});
+
+test("SP4-T3 AC-5: the report's Knowledge section carries the file's bullets, or none", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const work = createWork(paths, "a login change");
+  expect(renderReport(work, emptyEvidence(), DEFAULT_POLICY)).toContain("## Knowledge\n\n- none\n");
+  const text = '# Knowledge for x\n\n- K-4 · general · "Login" · acme · word login · likely 0.91\n';
+  const report = renderReport(
+    work,
+    emptyEvidence(),
+    DEFAULT_POLICY,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    text,
+  );
+  expect(report).toContain(
+    '## Knowledge\n\n- K-4 · general · "Login" · acme · word login · likely 0.91\n',
+  );
+  expect(report).not.toContain("# Knowledge for x");
 });

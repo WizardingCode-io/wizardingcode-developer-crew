@@ -15,7 +15,11 @@ export function statusLine(ctx: HookContext, work: WorkItem, tampered = false): 
     result.verdict === "proven"
       ? "proven"
       : `not proven (${result.unproven[0] ?? "gates have not run"})`;
-  return `Crew: work ${work.id} "${work.title}", phase ${work.phase}, route ${work.route}, ${state}${waitingText(work)}.`;
+  // What the base listed, on the line every session reads (SP4 Task 3).
+  const knowledge = work.knowledge
+    ? `, knowledge: ${work.knowledge.listed.length ? `${work.knowledge.listed.length} listed` : "none"}`
+    : "";
+  return `Crew: work ${work.id} "${work.title}", phase ${work.phase}, route ${work.route}, ${state}${knowledge}${waitingText(work)}.`;
 }
 
 /**
