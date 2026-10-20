@@ -966,6 +966,16 @@ export type KnowledgeDraft = Omit<
 >;
 
 /** What the base listed for an item at its classification (SP4 Task 3): read by the skill, cited by the strategy. */
+/** A root cause the base holds on one of an issue's origin paths (SP4 Task 5, rule 17), as `analysis/origin.json` records it. */
+export interface KnownRootCause {
+  id: string;
+  title: string;
+  item: string | null;
+  commit: string | null;
+  /** The entry's paths the origin shares. */
+  paths: string[];
+}
+
 export interface KnowledgeRecord {
   readAt: string;
   listed: string[];

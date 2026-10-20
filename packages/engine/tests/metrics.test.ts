@@ -1,8 +1,17 @@
 import { expect, test } from "bun:test";
 import { emptyEvidence, saveEvidence } from "../src/evidence.ts";
-import { computeMetrics, metricsText } from "../src/metrics.ts";
+import type { KnowledgeScope } from "../src/knowledge.ts";
+import { computeMetrics, knowledgeFigures, metricsText } from "../src/metrics.ts";
 import { addObjection, emptyLedger, saveLedger, waiveObjection } from "../src/objections.ts";
-import type { Evidence, GateRun, JudgementRecord, Verification } from "../src/types.ts";
+import type {
+  Evidence,
+  GateRun,
+  JudgementRecord,
+  KnowledgeBase,
+  KnowledgeEntry,
+  KnowledgeRef,
+  Verification,
+} from "../src/types.ts";
 import { createWork, saveWork } from "../src/work.ts";
 import { makeRepo, repoPaths, testEnv } from "./helpers.ts";
 
@@ -292,4 +301,109 @@ test("SP8-T1 AC-5 (finding 90): the agreement rounds to two decimals (two verifi
     disputed: 1,
     agreement: 0.67,
   });
+});
+
+const K_AT = "2026-10-20T00:00:00.000Z";
+function kEntry(
+  id: string,
+  kind: KnowledgeEntry["kind"],
+  workspace: string,
+  confirmedBy: KnowledgeRef[],
+  contradictedBy: KnowledgeRef[],
+): KnowledgeEntry {
+  return {
+    id,
+    kind,
+    title: `${id} title`,
+    workspace,
+    project: "shop",
+    projectRoot: "/real/shop",
+    confidential: true,
+    item: null,
+    commit: null,
+    stacks: [],
+    paths: [],
+    words: [],
+    text: "t",
+    source: null,
+    createdAt: K_AT,
+    confirmedBy,
+    contradictedBy,
+  };
+}
+const ref = (item: string): KnowledgeRef => ({ item, project: "shop", at: K_AT });
+const ZERO_KINDS = {
+  "stack-preference": 0,
+  "validated-solution": 0,
+  documentation: 0,
+  "root-cause": 0,
+  general: 0,
+};
+
+test("SP4-T5 AC-4: knowledgeFigures counts the visible entries per kind, sums confirmed and contradicted over their refs, counts the items whose learn confirmed an entry, leaves a hidden entry out of every figure and row and gives zeros for no base; computeMetrics carries the figures without the rows and metricsText prints the line", () => {
+  const env = testEnv();
+  const a = repoPaths(makeRepo(), env);
+  const b = repoPaths(makeRepo(), env);
+  const scope: KnowledgeScope = { workspace: "acme", project: "shop", projectRoot: a.root };
+  const base: KnowledgeBase = {
+    version: 1,
+    next: 7,
+    entries: [
+      kEntry("K-1", "general", "acme", [ref("i1"), ref("i2")], []),
+      kEntry("K-2", "general", "acme", [], [ref("i3")]),
+      kEntry("K-3", "validated-solution", "acme", [ref("i1")], []),
+      kEntry("K-4", "validated-solution", "acme", [], []),
+      kEntry("K-5", "validated-solution", "acme", [ref("i4")], []),
+      // Another workspace's marked entry: hidden, so its refs count for nothing.
+      kEntry("K-6", "root-cause", "globex", [ref("x")], [ref("y")]),
+    ],
+  };
+  const one = createWork(a, "One");
+  one.learned = { at: K_AT, entries: ["K-7"], confirmed: ["K-1"] };
+  saveWork(a, one);
+  const two = createWork(a, "Two");
+  two.learned = { at: K_AT, entries: [], confirmed: ["K-3", "K-5"] };
+  saveWork(a, two);
+  const three = createWork(b, "Three");
+  three.learned = { at: K_AT, entries: ["K-8"], confirmed: [] };
+  saveWork(b, three);
+  saveWork(b, createWork(b, "Four"));
+  const figures = knowledgeFigures(base, scope, [a, b]);
+  const row = (
+    id: string,
+    kind: KnowledgeEntry["kind"],
+    confirmed: number,
+    contradicted: number,
+  ) => ({ id, kind, title: `${id} title`, workspace: "acme", confirmed, contradicted });
+  expect(figures).toEqual({
+    entries: { ...ZERO_KINDS, general: 2, "validated-solution": 3 },
+    confirmed: 4,
+    contradicted: 1,
+    cited: 2,
+    rows: [
+      row("K-1", "general", 2, 0),
+      row("K-2", "general", 0, 1),
+      row("K-3", "validated-solution", 1, 0),
+      row("K-4", "validated-solution", 0, 0),
+      row("K-5", "validated-solution", 1, 0),
+    ],
+  });
+  const zeros = { entries: ZERO_KINDS, confirmed: 0, contradicted: 0, cited: 0 };
+  expect(knowledgeFigures(null, scope, [a, b])).toEqual({ ...zeros, rows: [] });
+  const m = computeMetrics([a, b], figures);
+  expect(m.knowledge).toEqual({
+    entries: { ...ZERO_KINDS, general: 2, "validated-solution": 3 },
+    confirmed: 4,
+    contradicted: 1,
+    cited: 2,
+  });
+  expect("rows" in m.knowledge).toBe(false);
+  expect(metricsText(m)).toContain(
+    "\n  knowledge: 5 entries (general 2, validated-solution 3), confirmed 4, contradicted 1, cited by 2 items",
+  );
+  // A caller with no base (no figures given): zeros, and the line still printed.
+  expect(computeMetrics([a]).knowledge).toEqual(zeros);
+  expect(metricsText(computeMetrics([a]))).toContain(
+    "\n  knowledge: 0 entries, confirmed 0, contradicted 0, cited by 0 items",
+  );
 });

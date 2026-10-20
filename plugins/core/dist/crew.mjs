@@ -941,6 +941,9 @@ function registryPath(userDir) {
 function mailboxDir(userDir, workspace, project) {
   return join5(userDir, "mail", workspace ?? "_alone", project);
 }
+function ctoDir(userDir, workspace) {
+  return join5(userDir, "cto", workspace);
+}
 var PROTECTED_TOP = new Set([
   ".crew/profile.json",
   ".crew/policy.json",
@@ -2878,6 +2881,9 @@ function guardFor(work, next, ctx) {
       missing.push(`${/^[aeiou]/i.test(name) ? "an" : "a"} "${name}" section with content in analysis.md (write "none" when there is nothing)`);
     if (ctx.gitRepository && !ctx.originRecorded)
       missing.push("analysis/origin.json in the work folder (crew analyse <id> --paths <files>)");
+    for (const k of ctx.knownRootCauses)
+      if (!k.contradicted && !(ctx.analysisText ?? "").includes(`[K:${k.id}]`))
+        missing.push(`${k.id} is a known root cause of ${k.paths.join(", ")} ("${k.title}"): cite it in analysis.md as [K:${k.id}] with what this fix does differently, or crew knowledge contradict ${k.id} --reason "<why>" --item ${work.id}`);
   }
   if (work.phase === "strategy") {
     if (ctx.researcherText === null)
@@ -3180,11 +3186,12 @@ function problemStatus(status, p) {
 function learnedText(entries, confirmed) {
   return `learned ${entries.join(", ") || "none"}${confirmed.length ? `; confirmed ${confirmed.join(", ")}` : ""}`;
 }
-function renderReport(work, evidence, policy, ledger, mail, selfName, analysis, strategy, audit, knowledge) {
+function renderReport(work, evidence, policy, ledger, mail, selfName, analysis, strategy, audit, knowledge, ctoPlan) {
   const lines = [];
   lines.push(`# Report: ${work.title}`, "");
   lines.push(`- Work: \`${work.id}\``);
   lines.push(`- Type: ${work.type}. Kind: ${kindOfItem(work)}${work.kindFrom ? ` (from ${work.kindFrom})` : ""}. Route: ${work.route} (${work.routeReasons.join("; ")})`);
+  lines.push(ctoPlan ? `- CTO plan: ${ctoPlan.path} (${ctoPlan.date})` : "- CTO plan: none");
   if (work.source)
     lines.push(`- Source: ${sourceLine(work.source)}`);
   if (work.triage)
@@ -10162,8 +10169,8 @@ function handleHook(event, payload, env = process.env) {
 }
 
 // packages/engine/src/knowledge.ts
-import { existsSync as existsSync17, realpathSync as realpathSync6 } from "node:fs";
-import { isAbsolute as isAbsolute8, relative as relative10, resolve as resolve4 } from "node:path";
+import { existsSync as existsSync17, readdirSync as readdirSync6, realpathSync as realpathSync6 } from "node:fs";
+import { isAbsolute as isAbsolute8, join as join40, relative as relative10, resolve as resolve4 } from "node:path";
 
 // packages/engine/src/verify.ts
 var RUBRIC_QUESTIONS = {
@@ -10638,6 +10645,28 @@ function fileInsideRoot(root, file) {
     return null;
   }
 }
+function knownRootCauses(base, scope, paths) {
+  const hits = lookup(base, { scope, stacks: [], paths, words: [], kinds: ["root-cause"] }, Number.POSITIVE_INFINITY);
+  return hits.map(({ entry }) => ({
+    id: entry.id,
+    title: entry.title,
+    item: entry.item,
+    commit: entry.commit,
+    paths: entry.paths.filter((p) => paths.includes(p))
+  }));
+}
+var PLAN_FILE = /^\d{4}-\d{2}-\d{2}-plan\.md$/;
+function latestPlan(userDir, workspace) {
+  const dir = ctoDir(userDir, workspace);
+  let names;
+  try {
+    names = readdirSync6(dir);
+  } catch {
+    return null;
+  }
+  const last = names.filter((n) => PLAN_FILE.test(n)).sort().at(-1);
+  return last ? { path: join40(dir, last), date: last.slice(0, 10) } : null;
+}
 function entryLine(e) {
   return `${e.id} · ${e.kind} · "${e.title}" · ${e.workspace ?? "alone"} · ${e.confidential === false ? "unmarked" : "marked"} · confirmed ${e.confirmedBy.length}, contradicted ${e.contradictedBy.length}`;
 }
@@ -11106,13 +11135,57 @@ function tellWorkspace(paths, work, mail, scope, written) {
 }
 
 // packages/engine/src/metrics.ts
-import { readdirSync as readdirSync6 } from "node:fs";
+import { readdirSync as readdirSync7 } from "node:fs";
 import { join as join42 } from "node:path";
+function emptyKnowledge() {
+  const entries = {};
+  for (const kind of KNOWLEDGE_KINDS)
+    entries[kind] = 0;
+  return { entries, confirmed: 0, contradicted: 0, cited: 0 };
+}
+function knowledgeFigures(base, scope, projects) {
+  const figures = { ...emptyKnowledge(), rows: [] };
+  if (!base)
+    return figures;
+  for (const e of base.entries) {
+    if (!visibleTo(e, scope))
+      continue;
+    figures.entries[e.kind] += 1;
+    figures.confirmed += e.confirmedBy.length;
+    figures.contradicted += e.contradictedBy.length;
+    figures.rows.push({
+      id: e.id,
+      kind: e.kind,
+      title: e.title,
+      workspace: e.workspace,
+      confirmed: e.confirmedBy.length,
+      contradicted: e.contradictedBy.length
+    });
+  }
+  for (const paths of projects)
+    for (const id of workIds(paths))
+      if (loadWork(paths, id).work?.learned?.confirmed.length)
+        figures.cited += 1;
+  return figures;
+}
+function workIds(paths) {
+  try {
+    return readdirSync7(join42(paths.crewDir, "work"));
+  } catch {
+    return [];
+  }
+}
 var count = (map, key, n = 1) => {
   map[key] = (map[key] ?? 0) + n;
 };
-function computeMetrics(projects) {
+function computeMetrics(projects, knowledge = emptyKnowledge()) {
   const m = {
+    knowledge: {
+      entries: { ...knowledge.entries },
+      confirmed: knowledge.confirmed,
+      contradicted: knowledge.contradicted,
+      cited: knowledge.cited
+    },
     projects: projects.map((p) => p.root),
     items: { total: 0, byRoute: {}, byType: {}, byKind: {} },
     rounds: { judgement: 0, validation: 0, gate: 0 },
@@ -11134,7 +11207,7 @@ function computeMetrics(projects) {
     const policy = loadPolicy(paths).policy;
     let ids = [];
     try {
-      ids = readdirSync6(join42(paths.crewDir, "work"));
+      ids = readdirSync7(join42(paths.crewDir, "work"));
     } catch {
       continue;
     }
@@ -11205,6 +11278,11 @@ function computeMetrics(projects) {
   m.verifications.agreement = agreementOf();
   return m;
 }
+function knowledgeLine(k) {
+  const total = Object.values(k.entries).reduce((a, b) => a + b, 0);
+  const kinds = Object.entries(k.entries).filter(([, n]) => n > 0).sort(([a], [b]) => a.localeCompare(b)).map(([kind, n]) => `${kind} ${n}`).join(", ");
+  return `  knowledge: ${total} entr${total === 1 ? "y" : "ies"}${kinds ? ` (${kinds})` : ""}, confirmed ${k.confirmed}, contradicted ${k.contradicted}, cited by ${k.cited} item${k.cited === 1 ? "" : "s"}`;
+}
 function metricsText(m) {
   const pairs = (map) => Object.entries(map).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => `${k} ${v}`).join(", ");
   return [
@@ -11217,7 +11295,8 @@ function metricsText(m) {
     `  decisions: ${m.decisions.total} (user ${m.decisions.byUser}, validator ${m.decisions.byValidator}, agent ${m.decisions.byAgent})`,
     `  verifications: ${m.verifications.total} (defects verified ${m.verifications.verified}, disputed ${m.verifications.disputed}, unverified ${m.verifications.unverified}; agreement ${m.verifications.agreement === null ? "none" : m.verifications.agreement})`,
     `  gates: ${m.gates.notRun} not run, ${m.gates.skipped} skipped`,
-    `  minutes per phase: ${Object.keys(m.phaseMinutes).length ? pairs(m.phaseMinutes) : "none yet"}`
+    `  minutes per phase: ${Object.keys(m.phaseMinutes).length ? pairs(m.phaseMinutes) : "none yet"}`,
+    knowledgeLine(m.knowledge)
   ].join(`
 `);
 }
@@ -11979,6 +12058,26 @@ async function recordTaskJudgement(env, ioEnv, work, tampered, parsed, task) {
     data: { task: record2, gate: record2.gate, pending }
   };
 }
+function knownCausesOf(env, work) {
+  const known = readOrigin(env.paths, work.id)?.origin?.knownRootCauses ?? [];
+  if (!known.length)
+    return [];
+  const entries = readBase(env.paths.userDir).base?.entries ?? [];
+  const project = env.mail.self.project;
+  const out = [];
+  for (const k of known) {
+    const entry = entries.find((e) => e.id === k.id);
+    if (!entry)
+      continue;
+    out.push({
+      id: k.id,
+      title: k.title,
+      paths: k.paths,
+      contradicted: entry.contradictedBy.some((r) => r.item === work.id && r.project === project)
+    });
+  }
+  return out;
+}
 function guardContext(env, work, tampered) {
   const dir = workDir(env.paths, work.id);
   const result = assess(env.paths, work, env.profile, env.policy, env.tampered || tampered);
@@ -11988,6 +12087,7 @@ function guardContext(env, work, tampered) {
     researcherText: readText(join46(dir, "conclave", "researcher.md")),
     analysisText: readText(join46(dir, "analysis.md")),
     originRecorded: existsSync20(join46(dir, "analysis", "origin.json")),
+    knownRootCauses: knownCausesOf(env, work),
     gitRepository: isGitRepo(env.paths.root),
     conclaveText: readText(join46(dir, "conclave.md")),
     ledger: loadLedger(env.paths, work.id).ledger,
@@ -12009,7 +12109,7 @@ function deliver2(env, opened, evidence) {
   writeProtectedText(env.paths, join46(workDir(env.paths, opened.work.id), "report.md"), reportOf(env, opened.work, evidence));
 }
 function reportOf(env, work, evidence) {
-  return renderReport(work, evidence, env.policy, loadLedger(env.paths, work.id).ledger, loadItemMail(env.paths, work.id), env.mail.self.project, readOrigin(env.paths, work.id) ?? undefined, strategyOf(env, work, evidence), auditViewOf(env, work), readText(join46(workDir(env.paths, work.id), "knowledge.md")));
+  return renderReport(work, evidence, env.policy, loadLedger(env.paths, work.id).ledger, loadItemMail(env.paths, work.id), env.mail.self.project, readOrigin(env.paths, work.id) ?? undefined, strategyOf(env, work, evidence), auditViewOf(env, work), readText(join46(workDir(env.paths, work.id), "knowledge.md")), env.mail.self.workspace ? latestPlan(env.paths.userDir, env.mail.self.workspace) : null);
 }
 function auditViewOf(env, work) {
   if (kindOfItem(work) !== "audit")
@@ -12259,7 +12359,7 @@ async function classify(env, work, answers, context, ioEnv) {
   logDecision(env, work, answers);
   await lookupForItem(env, work, ioEnv);
 }
-async function lookupForItem(env, work, ioEnv) {
+async function lookupForItem(env, work, ioEnv, options = {}) {
   const file = join46(workDir(env.paths, work.id), "knowledge.md");
   const readAt = nowIso();
   const read2 = readBase(env.paths.userDir);
@@ -12272,7 +12372,12 @@ async function lookupForItem(env, work, ioEnv) {
   }
   const scope = scopeOf(env.paths, env.mail.self);
   const stacks = [...new Set(env.profile.targets.map((t) => t.stack))];
-  const hits = lookup(read2.base, { scope, stacks, paths: [], words: words(work.title) });
+  const hits = lookup(read2.base, {
+    scope,
+    stacks,
+    paths: options.paths ?? [],
+    words: words(work.title)
+  });
   const ranked = await rerankHits(jevConfig(ioEnv, env.config), env.policy, { title: work.title, kind: kindOfItem(work) }, hits);
   const text = knowledgeText(work.id, ranked.hits, null);
   writeProtectedText(env.paths, file, text);
@@ -12281,7 +12386,7 @@ async function lookupForItem(env, work, ioEnv) {
     appendVerifications(env, work.id, ranked.records);
   return text;
 }
-function knowledgeLine(env, work) {
+function knowledgeLine2(env, work) {
   const record2 = work.knowledge;
   if (!record2)
     return null;
@@ -13308,11 +13413,18 @@ ${originNotes.join(`
       const origin = analyseOrigin(env.paths, list);
       if ("refused" in origin)
         return refuse(origin.refused);
+      const originPaths = origin.paths.map((p) => p.path);
+      const base = readBase(env.paths.userDir).base;
+      origin.knownRootCauses = base ? knownRootCauses(base, scopeOf(env.paths, env.mail.self), originPaths) : [];
       writeOrigin(env.paths, opened.work.id, origin);
+      await lookupForItem(env, opened.work, io.env, { paths: originPaths });
+      saveWork(env.paths, opened.work);
       const data = { file: "analysis/origin.json", origin };
       if (origin.note)
         return ok("no git repository: origin.json written empty; write analysis.md from what you can read", data);
-      return ok(`analysis/origin.json: ${originSummary(origin)}`, data);
+      const known = origin.knownRootCauses.length ? `
+known root causes: ${origin.knownRootCauses.map((k) => `${k.id} "${k.title}" (${k.paths.join(", ")})`).join("; ")}` : "";
+      return ok(`analysis/origin.json: ${originSummary(origin)}${known}`, data);
     }
     case "question": {
       const usage = 'usage: crew question <id> add "<text>" [--mode <mode>] | posted Q-n --channel cli|ticket|document|mail --ref <ref> | answer Q-n "<answer>" [--mode <mode>] | list';
@@ -13849,7 +13961,9 @@ test-first not credited: ${out.uncredited}` : "";
         if (!roots.length)
           return refuse(`no project of workspace ${ws} is registered (crew detect in each project)`);
       }
-      const metrics = computeMetrics(roots.map((root) => pathsFor(root, env.paths.userDir)));
+      const projects = roots.map((root) => pathsFor(root, env.paths.userDir));
+      const figures = knowledgeFigures(readBase(env.paths.userDir).base, scopeOf(env.paths, env.mail.self), projects);
+      const metrics = computeMetrics(projects, figures);
       return ok(metricsText(metrics), { ...metrics });
     }
     case "knowledge": {
@@ -13989,22 +14103,74 @@ test-first not credited: ${out.uncredited}` : "";
       return refuse(usage);
     }
     case "cto": {
-      const usage = "usage: crew cto record --workspace <ws> --file <plan.md>";
+      const usage = "usage: crew cto review --workspace <ws> | crew cto record --workspace <ws> --file <plan.md>";
+      const verb = args[0];
       const ws = parsed.flags.workspace;
       const file = parsed.flags.file;
-      if (args[0] !== "record" || typeof ws !== "string" || typeof file !== "string")
+      if (verb !== "review" && verb !== "record" || typeof ws !== "string")
+        return refuse(usage);
+      if (verb === "record" && typeof file !== "string")
         return refuse(usage);
       if (!MAIL_NAME.test(ws))
         return refuse(`a workspace is a lowercase name of letters, digits, dot, dash and underscore, up to 64 characters, not ${ws}`);
+      const own = env.mail.self.workspace;
+      if (own === null)
+        return refuse("this project is in no workspace (crew policy set mail.workspace <name>)");
+      if (ws !== own)
+        return refuse(`this project is in workspace ${own}: crew cto ${verb} --workspace ${own}`);
+      const scope = scopeOf(env.paths, env.mail.self);
+      const dir = ctoDir(env.paths.userDir, ws);
+      const date = nowIso().slice(0, 10);
+      if (verb === "review") {
+        const roots = loadRegistry(env.paths.userDir).projects.filter((p) => p.workspace === ws && !p.worktreeOf).map((p) => p.root);
+        if (!roots.length)
+          return refuse(`no project of workspace ${ws} is registered (crew detect in each project)`);
+        const projects = roots.map((root) => pathsFor(root, env.paths.userDir));
+        const knowledge = knowledgeFigures(readBase(env.paths.userDir).base, scope, projects);
+        const metrics = computeMetrics(projects, knowledge);
+        const lastPlan = latestPlan(env.paths.userDir, ws);
+        const target2 = join46(dir, `${date}-inputs.json`);
+        writeJson(target2, { at: nowIso(), workspace: ws, metrics, lastPlan, knowledge });
+        return ok([
+          `inputs: ${target2}`,
+          `last plan: ${lastPlan?.path ?? "none"}`,
+          `launch wizardingcode-developer-crew:cto with the inputs path and the reports of the items it counts; file the plan with crew cto record --workspace ${ws} --file <plan.md>`
+        ].join(`
+`), { path: target2, lastPlan, knowledge });
+      }
       const path = resolve5(env.paths.root, file);
       const text = readText(path);
       if (text === null)
         return refuse(`no plan file at ${path}`);
-      const dir = join46(env.paths.userDir, "cto", ws);
+      const title = `CTO plan ${date} (${ws})`;
+      const finding = scanText(text, "plan")[0] ?? scanText(title, "title")[0];
+      if (finding)
+        return refuse(`the plan holds a secret (${finding.rule}) at line ${finding.line}; nothing was filed`);
+      const read2 = readBase(env.paths.userDir);
+      if (read2.base === null && read2.reason !== "missing")
+        return refuse(`the knowledge base cannot be read: ${read2.reason}; nothing was filed`);
       ensureDir(dir);
-      const target = join46(dir, `${nowIso().slice(0, 10)}-plan.md`);
+      const target = join46(dir, `${date}-plan.md`);
       writeText(target, text);
-      return ok(`CTO plan of ${ws} filed: ${target}`, { path: target });
+      const added = addEntry(env.paths.userDir, {
+        kind: "general",
+        title,
+        workspace: scope.workspace,
+        project: scope.project,
+        projectRoot: scope.projectRoot,
+        confidential: defaultConfidential("general"),
+        item: null,
+        commit: null,
+        stacks: [],
+        paths: [],
+        words: words(`${title} ${text}`),
+        text,
+        source: target
+      });
+      if ("refused" in added)
+        return refuse(added.refused);
+      return ok(`CTO plan of ${ws} filed: ${target}
+entry ${added.id}: general, marked for ${ws}`, { path: target, entry: added });
     }
     case "continue": {
       const opened = openForChange(env, args[0]);
@@ -14153,7 +14319,7 @@ ${lines2.join(`
       ].filter((l) => l !== null);
       if (work.source)
         extra.unshift(`  source ${sourceLine(work.source)}`);
-      const knowledge = knowledgeLine(env, work);
+      const knowledge = knowledgeLine2(env, work);
       if (knowledge)
         extra.push(knowledge);
       const learned = work.learned;
@@ -14582,8 +14748,9 @@ var HELP = `crew ${VERSION}
   validation <id> record --what spec|plan|delivery --by lead-<team> --file <path>   a lead's verdict from its file; a contradiction is refused
   continue <id> judgement|validation|gate T-n   one more round past the policy's cap (the user's decision)
   decisions [--grep <text>]   the project's decision register, newest first; the engine appends at every decision
-  metrics [--workspace <ws>]  the figures of this project, or of the workspace's registered projects, from the records
-  cto record --workspace <ws> --file <plan.md>   file the CTO's plan under the user's crew directory
+  metrics [--workspace <ws>]  the figures of this project, or of the workspace's registered projects, from the records and the base
+  cto review --workspace <ws>          write the CTO's inputs (the workspace's metrics, the last plan, the base's figures and rows) under the user's crew directory and print the launch line
+  cto record --workspace <ws> --file <plan.md>   file the CTO's plan under the user's crew directory and enter it in the knowledge base, marked for the workspace
   knowledge list [--kind <k>] | show K-n   the knowledge base as this project reads it (rule 13: unmarked entries, and marked ones of this workspace)
   knowledge add --kind general|documentation --title "<t>" --file <path> [--source <url>]   a person's material, from the project's own tree, marked
   knowledge contradict K-n --reason "<why>" [--item <id>]   dispute an entry (recorded); knowledge unmark K-n   a person removes a mark (asks the user; never with --mode or --validator)

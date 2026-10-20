@@ -10,6 +10,7 @@ import {
   type KnowledgeScope,
   knowledgeText,
   type LookupHit,
+  latestPlan,
   lookup,
   type RankedHit,
   readBase,
@@ -18,7 +19,7 @@ import {
   visibleTo,
   words,
 } from "../src/knowledge.ts";
-import { isProtectedPath, knowledgePath } from "../src/paths.ts";
+import { ctoDir, isProtectedPath, knowledgePath } from "../src/paths.ts";
 import { DEFAULT_POLICY } from "../src/policy.ts";
 import type { KnowledgeBase, KnowledgeDraft, KnowledgeEntry } from "../src/types.ts";
 import { makeRepo, repoPaths, tempDir, testEnv } from "./helpers.ts";
@@ -441,4 +442,21 @@ test("SP4-T3 AC-1: knowledgeText writes the file's lines, and knowledge.md is th
   );
   const paths = repoPaths(makeRepo(), testEnv());
   expect(isProtectedPath(paths, join(paths.root, ".crew", "work", "x", "knowledge.md"))).toBe(true);
+});
+
+test("SP4-T5 AC-5: latestPlan reads the newest dated plan under the workspace's CTO folder and none without one", () => {
+  const dir = userDir();
+  expect(latestPlan(dir, "acme")).toBeNull();
+  const folder = ctoDir(dir, "acme");
+  expect(folder).toBe(join(dir, "cto", "acme"));
+  mkdirSync(folder, { recursive: true });
+  writeFileSync(join(folder, "2026-10-01-plan.md"), "the old plan");
+  writeFileSync(join(folder, "2026-10-19-inputs.json"), "{}");
+  writeFileSync(join(folder, "2026-10-18-plan.md"), "the new plan");
+  writeFileSync(join(folder, "notes.md"), "not a plan");
+  expect(latestPlan(dir, "acme")).toEqual({
+    path: join(folder, "2026-10-18-plan.md"),
+    date: "2026-10-18",
+  });
+  expect(latestPlan(dir, "globex")).toBeNull();
 });

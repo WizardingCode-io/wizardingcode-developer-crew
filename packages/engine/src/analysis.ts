@@ -7,7 +7,7 @@ import { nowIso } from "./fs.ts";
 import { loadItemMail } from "./mail.ts";
 import { type CrewPaths, workDir } from "./paths.ts";
 import { readProtectedJson, writeProtectedJson } from "./store.ts";
-import type { WorkKind } from "./types.ts";
+import type { KnownRootCause, WorkKind } from "./types.ts";
 import { kindOfItem, loadWork } from "./work.ts";
 import { gitRun } from "./worktree.ts";
 
@@ -42,6 +42,8 @@ export interface Origin {
   paths: OriginPath[];
   items: OriginItem[];
   note?: string;
+  /** The base's root causes on these paths (SP4 Task 5, rule 17); absent on a record written before 0.10.0. */
+  knownRootCauses?: KnownRootCause[];
 }
 
 /** The newest commits of a path the origin lists; an older one the blame names is dropped with its lines. */

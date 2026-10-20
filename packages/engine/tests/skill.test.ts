@@ -546,3 +546,30 @@ test("SP4-T4 AC-6: the skill page has the Learn row and the two verbs within the
     expect(learn).toContain(phrase);
   expect(readReference("deliver.md")).toContain("crew learn <id>");
 });
+
+test("SP4-T5 AC-8: the CTO's page names the inputs file and the cycles it reads, analyse.md says a known root cause is cited or contradicted before the next phase, and rules.md says how rule 17 is enforced", () => {
+  const cto = readFileSync(
+    fileURLToPath(new URL("../../../plugins/core/agents/cto.md", import.meta.url)),
+    "utf8",
+  );
+  expect(cto).toContain("`~/.wizardingcode/crew/cto/<ws>/<date>-inputs.json`");
+  expect(cto).toContain("## The learning cycles");
+  for (const phrase of [
+    "entries never confirmed",
+    "entries contradicted",
+    "what the workspace reuses most",
+  ])
+    expect(cto).toContain(phrase);
+  const analyse = readReference("analyse.md");
+  expect(analyse).toContain('known root causes: K-4 "<title>" (src/accounts.mjs)');
+  expect(analyse).toContain(
+    'A known root cause is cited in `analysis.md` as `[K:K-4]` with what this fix does differently, or contradicted on record with `crew knowledge contradict K-4 --reason "<why>" --item <id>`',
+  );
+  expect(analyse).toContain(
+    "the guard out of this phase refuses `crew phase <id> next` while it is neither",
+  );
+  const rules = readReference("rules.md");
+  expect(rules).toContain(
+    "17. **Learn once.** The root cause of each issue goes to the knowledge base; the same mistake twice is the system's failure. Enforced by: the Learn phase writes the cause once (`crew learn`, a cause the base already holds refused unless confirmed); `crew analyse` names a known root cause of the origin's paths and records it in `origin.json`; the guard out of Analyse refuses the next phase until it is cited in `analysis.md` as `[K:<id>]` with what the fix does differently, or contradicted on record by this item",
+  );
+});

@@ -51,7 +51,7 @@ import {
   updateEvidence,
 } from "./evidence.ts";
 import { changedWatchedPaths, hashPaths, isGitRepo } from "./fingerprint.ts";
-import { ensureDir, nowIso, readJson, readText, sha256, writeText } from "./fs.ts";
+import { ensureDir, nowIso, readJson, readText, sha256, writeJson, writeText } from "./fs.ts";
 import { assess, reassess, runGates, runTaskGate } from "./gates.ts";
 import { handleHook } from "./hooks/index.ts";
 import type { HookPayload } from "./hooks/types.ts";
@@ -82,6 +82,8 @@ import {
   fileInsideRoot,
   KNOWLEDGE_KINDS,
   knowledgeText,
+  knownRootCauses,
+  latestPlan,
   lookup,
   readBase,
   rerankHits,
@@ -123,7 +125,7 @@ import {
   threadMessages,
   worktreeMainRoot,
 } from "./mail.ts";
-import { computeMetrics, metricsText } from "./metrics.ts";
+import { computeMetrics, knowledgeFigures, metricsText } from "./metrics.ts";
 import {
   addObjection,
   bindObjection,
@@ -143,6 +145,7 @@ import {
 } from "./open.ts";
 import {
   type CrewPaths,
+  ctoDir,
   PROTECTED_WORK_FILES,
   pathsFor,
   resolvePaths,
@@ -982,6 +985,30 @@ async function recordTaskJudgement(
   };
 }
 
+/**
+ * The origin's known root causes as the guard out of analyse reads them (SP4 Task 5, rule 17): an
+ * entry the base no longer holds is dropped; contradicted when a ref of the entry names this item
+ * in this project (a same-named item of another project counts for nothing).
+ */
+function knownCausesOf(env: Env, work: WorkItem): GuardContext["knownRootCauses"] {
+  const known = readOrigin(env.paths, work.id)?.origin?.knownRootCauses ?? [];
+  if (!known.length) return [];
+  const entries = readBase(env.paths.userDir).base?.entries ?? [];
+  const project = env.mail.self.project;
+  const out: GuardContext["knownRootCauses"] = [];
+  for (const k of known) {
+    const entry = entries.find((e) => e.id === k.id);
+    if (!entry) continue;
+    out.push({
+      id: k.id,
+      title: k.title,
+      paths: k.paths,
+      contradicted: entry.contradictedBy.some((r) => r.item === work.id && r.project === project),
+    });
+  }
+  return out;
+}
+
 function guardContext(env: Env, work: WorkItem, tampered: boolean): GuardContext {
   const dir = workDir(env.paths, work.id);
   const result = assess(env.paths, work, env.profile, env.policy, env.tampered || tampered);
@@ -991,6 +1018,7 @@ function guardContext(env: Env, work: WorkItem, tampered: boolean): GuardContext
     researcherText: readText(join(dir, "conclave", "researcher.md")),
     analysisText: readText(join(dir, "analysis.md")),
     originRecorded: existsSync(join(dir, "analysis", "origin.json")),
+    knownRootCauses: knownCausesOf(env, work),
     gitRepository: isGitRepo(env.paths.root),
     conclaveText: readText(join(dir, "conclave.md")),
     ledger: loadLedger(env.paths, work.id).ledger,
@@ -1033,6 +1061,7 @@ function reportOf(env: Env, work: WorkItem, evidence: Evidence): string {
     strategyOf(env, work, evidence),
     auditViewOf(env, work),
     readText(join(workDir(env.paths, work.id), "knowledge.md")),
+    env.mail.self.workspace ? latestPlan(env.paths.userDir, env.mail.self.workspace) : null,
   );
 }
 
@@ -1395,7 +1424,12 @@ async function classify(
  * stacks and the request's words, the hits written to `knowledge.md` and recorded, Jev reordering
  * when configured, its records appended; a base the engine cannot read is said and the item goes on.
  */
-async function lookupForItem(env: Env, work: WorkItem, ioEnv: NodeJS.ProcessEnv): Promise<string> {
+async function lookupForItem(
+  env: Env,
+  work: WorkItem,
+  ioEnv: NodeJS.ProcessEnv,
+  options: { paths?: readonly string[] } = {},
+): Promise<string> {
   const file = join(workDir(env.paths, work.id), "knowledge.md");
   const readAt = nowIso();
   const read = readBase(env.paths.userDir);
@@ -1408,8 +1442,13 @@ async function lookupForItem(env: Env, work: WorkItem, ioEnv: NodeJS.ProcessEnv)
   }
   const scope = scopeOf(env.paths, env.mail.self);
   const stacks = [...new Set(env.profile.targets.map((t) => t.stack))];
-  // No paths at classification: an issue's origin paths join the query at crew analyse (Task 5).
-  const hits = lookup(read.base, { scope, stacks, paths: [], words: words(work.title) });
+  // No paths at classification; an issue's origin paths join the query at crew analyse (Task 5).
+  const hits = lookup(read.base, {
+    scope,
+    stacks,
+    paths: options.paths ?? [],
+    words: words(work.title),
+  });
   const ranked = await rerankHits(
     jevConfig(ioEnv, env.config),
     env.policy,
@@ -2641,14 +2680,28 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       if (!list.length) return refuse(usage);
       const origin = analyseOrigin(env.paths, list);
       if ("refused" in origin) return refuse(origin.refused);
+      // Rule 17 (SP4 Task 5): the base's root causes on these paths, read apart and uncapped, go
+      // into the record; the item's knowledge.md is rewritten with the paths in its query.
+      const originPaths = origin.paths.map((p) => p.path);
+      const base = readBase(env.paths.userDir).base;
+      origin.knownRootCauses = base
+        ? knownRootCauses(base, scopeOf(env.paths, env.mail.self), originPaths)
+        : [];
       writeOrigin(env.paths, opened.work.id, origin);
+      await lookupForItem(env, opened.work, io.env, { paths: originPaths });
+      saveWork(env.paths, opened.work);
       const data = { file: "analysis/origin.json", origin };
       if (origin.note)
         return ok(
           "no git repository: origin.json written empty; write analysis.md from what you can read",
           data,
         );
-      return ok(`analysis/origin.json: ${originSummary(origin)}`, data);
+      const known = origin.knownRootCauses.length
+        ? `\nknown root causes: ${origin.knownRootCauses
+            .map((k) => `${k.id} "${k.title}" (${k.paths.join(", ")})`)
+            .join("; ")}`
+        : "";
+      return ok(`analysis/origin.json: ${originSummary(origin)}${known}`, data);
     }
     case "question": {
       // A doubt on record (SP7 §10.3, rule 7): where it was posted, what the skill still posts, the
@@ -3410,7 +3463,14 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
             `no project of workspace ${ws} is registered (crew detect in each project)`,
           );
       }
-      const metrics = computeMetrics(roots.map((root) => pathsFor(root, env.paths.userDir)));
+      const projects = roots.map((root) => pathsFor(root, env.paths.userDir));
+      // The base's figures over what this project reads (SP4 Task 5), without the rows.
+      const figures = knowledgeFigures(
+        readBase(env.paths.userDir).base,
+        scopeOf(env.paths, env.mail.self),
+        projects,
+      );
+      const metrics = computeMetrics(projects, figures);
       return ok(metricsText(metrics), { ...metrics });
     }
     case "knowledge": {
@@ -3558,26 +3618,91 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       return refuse(usage);
     }
     case "cto": {
-      // The CTO's plan filed per workspace (SP7 §6.5); the plan itself is the agent's, read from its file.
-      const usage = "usage: crew cto record --workspace <ws> --file <plan.md>";
+      // The CTO's review and plan (SP7 §6.5, SP4 Task 5): the inputs the engine writes from the
+      // records and the base, and the plan filed per workspace and entered in the base, marked.
+      const usage =
+        "usage: crew cto review --workspace <ws> | crew cto record --workspace <ws> --file <plan.md>";
+      const verb = args[0];
       const ws = parsed.flags.workspace;
       const file = parsed.flags.file;
-      if (args[0] !== "record" || typeof ws !== "string" || typeof file !== "string")
-        return refuse(usage);
+      if ((verb !== "review" && verb !== "record") || typeof ws !== "string") return refuse(usage);
+      if (verb === "record" && typeof file !== "string") return refuse(usage);
       // The workspace names a folder under the user's crew directory: the same name rule as the
       // mail's workspace, so nothing reaches outside it (code-quality review, round 1).
       if (!MAIL_NAME.test(ws))
         return refuse(
           `a workspace is a lowercase name of letters, digits, dot, dash and underscore, up to 64 characters, not ${ws}`,
         );
-      const path = resolve(env.paths.root, file);
+      // The project's own workspace alone (the security lead's return at the spec): no other
+      // workspace's figures or rows are read or written from here, and no other is named.
+      const own = env.mail.self.workspace;
+      if (own === null)
+        return refuse("this project is in no workspace (crew policy set mail.workspace <name>)");
+      if (ws !== own)
+        return refuse(`this project is in workspace ${own}: crew cto ${verb} --workspace ${own}`);
+      const scope = scopeOf(env.paths, env.mail.self);
+      const dir = ctoDir(env.paths.userDir, ws);
+      const date = nowIso().slice(0, 10);
+      if (verb === "review") {
+        const roots = loadRegistry(env.paths.userDir)
+          .projects.filter((p) => p.workspace === ws && !p.worktreeOf)
+          .map((p) => p.root);
+        if (!roots.length)
+          return refuse(
+            `no project of workspace ${ws} is registered (crew detect in each project)`,
+          );
+        const projects = roots.map((root) => pathsFor(root, env.paths.userDir));
+        const knowledge = knowledgeFigures(readBase(env.paths.userDir).base, scope, projects);
+        const metrics = computeMetrics(projects, knowledge);
+        const lastPlan = latestPlan(env.paths.userDir, ws);
+        const target = join(dir, `${date}-inputs.json`);
+        writeJson(target, { at: nowIso(), workspace: ws, metrics, lastPlan, knowledge });
+        return ok(
+          [
+            `inputs: ${target}`,
+            `last plan: ${lastPlan?.path ?? "none"}`,
+            `launch wizardingcode-developer-crew:cto with the inputs path and the reports of the items it counts; file the plan with crew cto record --workspace ${ws} --file <plan.md>`,
+          ].join("\n"),
+          { path: target, lastPlan, knowledge },
+        );
+      }
+      const path = resolve(env.paths.root, file as string);
       const text = readText(path);
       if (text === null) return refuse(`no plan file at ${path}`);
-      const dir = join(env.paths.userDir, "cto", ws);
+      const title = `CTO plan ${date} (${ws})`;
+      // The whole plan and the title through the scanner before any cut and before the file (the
+      // security lead's return at the spec): a secret leaves no file and no entry.
+      const finding = scanText(text, "plan")[0] ?? scanText(title, "title")[0];
+      if (finding)
+        return refuse(
+          `the plan holds a secret (${finding.rule}) at line ${finding.line}; nothing was filed`,
+        );
+      const read = readBase(env.paths.userDir);
+      if (read.base === null && read.reason !== "missing")
+        return refuse(`the knowledge base cannot be read: ${read.reason}; nothing was filed`);
       ensureDir(dir);
-      const target = join(dir, `${nowIso().slice(0, 10)}-plan.md`);
+      const target = join(dir, `${date}-plan.md`);
       writeText(target, text);
-      return ok(`CTO plan of ${ws} filed: ${target}`, { path: target });
+      const added = addEntry(env.paths.userDir, {
+        kind: "general",
+        title,
+        workspace: scope.workspace,
+        project: scope.project,
+        projectRoot: scope.projectRoot,
+        confidential: defaultConfidential("general"),
+        item: null,
+        commit: null,
+        stacks: [],
+        paths: [],
+        words: words(`${title} ${text}`),
+        text,
+        source: target,
+      });
+      if ("refused" in added) return refuse(added.refused);
+      return ok(
+        `CTO plan of ${ws} filed: ${target}\nentry ${added.id}: general, marked for ${ws}`,
+        { path: target, entry: added },
+      );
     }
     case "continue": {
       // One more round past a cap, the user's to grant (SP7 §6.1): recorded as theirs, like a skip.
@@ -4256,8 +4381,9 @@ const HELP = `crew ${VERSION}
   validation <id> record --what spec|plan|delivery --by lead-<team> --file <path>   a lead's verdict from its file; a contradiction is refused
   continue <id> judgement|validation|gate T-n   one more round past the policy's cap (the user's decision)
   decisions [--grep <text>]   the project's decision register, newest first; the engine appends at every decision
-  metrics [--workspace <ws>]  the figures of this project, or of the workspace's registered projects, from the records
-  cto record --workspace <ws> --file <plan.md>   file the CTO's plan under the user's crew directory
+  metrics [--workspace <ws>]  the figures of this project, or of the workspace's registered projects, from the records and the base
+  cto review --workspace <ws>          write the CTO's inputs (the workspace's metrics, the last plan, the base's figures and rows) under the user's crew directory and print the launch line
+  cto record --workspace <ws> --file <plan.md>   file the CTO's plan under the user's crew directory and enter it in the knowledge base, marked for the workspace
   knowledge list [--kind <k>] | show K-n   the knowledge base as this project reads it (rule 13: unmarked entries, and marked ones of this workspace)
   knowledge add --kind general|documentation --title "<t>" --file <path> [--source <url>]   a person's material, from the project's own tree, marked
   knowledge contradict K-n --reason "<why>" [--item <id>]   dispute an entry (recorded); knowledge unmark K-n   a person removes a mark (asks the user; never with --mode or --validator)

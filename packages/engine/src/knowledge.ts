@@ -4,19 +4,20 @@
  * origin workspace and a confidentiality mark; one rule says what a project reads (rule 13); a
  * deterministic lookup by stacks, paths and words whose order a person can follow.
  */
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync, readdirSync, realpathSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { nowIso, readText, writeJson } from "./fs.ts";
 import { type AskOptions, askJev, type JevConfig, type JevQuestion } from "./jev.ts";
 import { withLock } from "./lock.ts";
 import { worktreeMainRoot } from "./mail.ts";
-import { type CrewPaths, canonical, knowledgeDir, knowledgePath } from "./paths.ts";
+import { type CrewPaths, canonical, ctoDir, knowledgeDir, knowledgePath } from "./paths.ts";
 import { scanText } from "./secrets.ts";
 import type {
   KnowledgeBase,
   KnowledgeDraft,
   KnowledgeEntry,
   KnowledgeKind,
+  KnownRootCause,
   Policy,
   Stack,
   Verification,
@@ -271,6 +272,51 @@ export function fileInsideRoot(root: string, file: string): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * The root causes the base holds on an issue's origin paths (SP4 Task 5, rule 17): the root-cause
+ * kind alone, visible entries alone, matched by a shared path and never by words or stacks, and
+ * uncapped so a crowd of other hits never hides one; each with the paths it shares with the origin.
+ */
+export function knownRootCauses(
+  base: KnowledgeBase,
+  scope: KnowledgeScope,
+  paths: readonly string[],
+): KnownRootCause[] {
+  const hits = lookup(
+    base,
+    { scope, stacks: [], paths, words: [], kinds: ["root-cause"] },
+    Number.POSITIVE_INFINITY,
+  );
+  return hits.map(({ entry }) => ({
+    id: entry.id,
+    title: entry.title,
+    item: entry.item,
+    commit: entry.commit,
+    paths: entry.paths.filter((p) => paths.includes(p)),
+  }));
+}
+
+const PLAN_FILE = /^\d{4}-\d{2}-\d{2}-plan\.md$/;
+
+/** The newest `<date>-plan.md` the CTO filed for a workspace (`crew cto record`), or null without one. */
+export function latestPlan(
+  userDir: string,
+  workspace: string,
+): { path: string; date: string } | null {
+  const dir = ctoDir(userDir, workspace);
+  let names: string[];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return null;
+  }
+  const last = names
+    .filter((n) => PLAN_FILE.test(n))
+    .sort()
+    .at(-1);
+  return last ? { path: join(dir, last), date: last.slice(0, 10) } : null;
 }
 
 /** One entry on one line, as `crew knowledge list` prints it. */

@@ -1,11 +1,82 @@
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { loadEvidence } from "./evidence.ts";
+import { KNOWLEDGE_KINDS, type KnowledgeScope, visibleTo } from "./knowledge.ts";
 import { loadLedger, objectionStatus } from "./objections.ts";
 import type { CrewPaths } from "./paths.ts";
 import { loadPolicy } from "./policy.ts";
-import type { Phase } from "./types.ts";
+import type { KnowledgeBase, KnowledgeKind, Phase } from "./types.ts";
 import { kindOfItem, loadWork } from "./work.ts";
+
+/** One visible entry of the base as the CTO's inputs list it (SP4 Task 5): never the text. */
+export interface KnowledgeRow {
+  id: string;
+  kind: KnowledgeKind;
+  title: string;
+  workspace: string | null;
+  confirmed: number;
+  contradicted: number;
+}
+
+/** The base's figures over the entries a scope reads, and the items of the given projects whose learn confirmed one. */
+export interface KnowledgeCounts {
+  entries: Record<KnowledgeKind, number>;
+  confirmed: number;
+  contradicted: number;
+  cited: number;
+}
+
+export interface KnowledgeFigures extends KnowledgeCounts {
+  rows: KnowledgeRow[];
+}
+
+export function emptyKnowledge(): KnowledgeCounts {
+  const entries = {} as Record<KnowledgeKind, number>;
+  for (const kind of KNOWLEDGE_KINDS) entries[kind] = 0;
+  return { entries, confirmed: 0, contradicted: 0, cited: 0 };
+}
+
+/**
+ * The knowledge figures the CTO reads (SP4 Task 5): per kind, the refs summed, one row per entry,
+ * over the entries visible to the scope alone (rule 13: a hidden entry is in no figure and no
+ * row); `cited` counts the items of the projects whose learn confirmed at least one entry. No base
+ * (missing or unreadable) gives zeros.
+ */
+export function knowledgeFigures(
+  base: KnowledgeBase | null,
+  scope: KnowledgeScope,
+  projects: CrewPaths[],
+): KnowledgeFigures {
+  const figures: KnowledgeFigures = { ...emptyKnowledge(), rows: [] };
+  if (!base) return figures;
+  for (const e of base.entries) {
+    if (!visibleTo(e, scope)) continue;
+    figures.entries[e.kind] += 1;
+    figures.confirmed += e.confirmedBy.length;
+    figures.contradicted += e.contradictedBy.length;
+    figures.rows.push({
+      id: e.id,
+      kind: e.kind,
+      title: e.title,
+      workspace: e.workspace,
+      confirmed: e.confirmedBy.length,
+      contradicted: e.contradictedBy.length,
+    });
+  }
+  for (const paths of projects)
+    for (const id of workIds(paths))
+      if (loadWork(paths, id).work?.learned?.confirmed.length) figures.cited += 1;
+  return figures;
+}
+
+/** The item folders of a project, none without a work folder. */
+function workIds(paths: CrewPaths): string[] {
+  try {
+    return readdirSync(join(paths.crewDir, "work"));
+  } catch {
+    return [];
+  }
+}
 
 /** The figures the CTO reads (SP7 §6.5), from the engine's records alone. */
 export interface Metrics {
@@ -33,6 +104,8 @@ export interface Metrics {
     unverified: number;
     agreement: number | null;
   };
+  /** The base as the scope reads it (SP4 Task 5), without the rows: those stay in the CTO's inputs file. */
+  knowledge: KnowledgeCounts;
 }
 
 const count = (map: Record<string, number>, key: string, n = 1): void => {
@@ -45,8 +118,17 @@ const count = (map: Record<string, number>, key: string, n = 1): void => {
  * phase come from the stamps `advancePhase` leaves (`phaseAt`): each phase lasts until the next one
  * is entered; the current phase of an open item is not counted.
  */
-export function computeMetrics(projects: CrewPaths[]): Metrics {
+export function computeMetrics(
+  projects: CrewPaths[],
+  knowledge: KnowledgeCounts = emptyKnowledge(),
+): Metrics {
   const m: Metrics = {
+    knowledge: {
+      entries: { ...knowledge.entries },
+      confirmed: knowledge.confirmed,
+      contradicted: knowledge.contradicted,
+      cited: knowledge.cited,
+    },
     projects: projects.map((p) => p.root),
     items: { total: 0, byRoute: {}, byType: {}, byKind: {} },
     rounds: { judgement: 0, validation: 0, gate: 0 },
@@ -131,6 +213,17 @@ export function computeMetrics(projects: CrewPaths[]): Metrics {
 }
 
 /** The short text `crew metrics` prints: one line per figure that matters. */
+/** `  knowledge: 5 entries (general 2, validated-solution 3), confirmed 4, contradicted 1, cited by 2 items`. */
+function knowledgeLine(k: KnowledgeCounts): string {
+  const total = Object.values(k.entries).reduce((a, b) => a + b, 0);
+  const kinds = Object.entries(k.entries)
+    .filter(([, n]) => n > 0)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([kind, n]) => `${kind} ${n}`)
+    .join(", ");
+  return `  knowledge: ${total} entr${total === 1 ? "y" : "ies"}${kinds ? ` (${kinds})` : ""}, confirmed ${k.confirmed}, contradicted ${k.contradicted}, cited by ${k.cited} item${k.cited === 1 ? "" : "s"}`;
+}
+
 export function metricsText(m: Metrics): string {
   const pairs = (map: Record<string, number>): string =>
     Object.entries(map)
@@ -148,5 +241,6 @@ export function metricsText(m: Metrics): string {
     `  verifications: ${m.verifications.total} (defects verified ${m.verifications.verified}, disputed ${m.verifications.disputed}, unverified ${m.verifications.unverified}; agreement ${m.verifications.agreement === null ? "none" : m.verifications.agreement})`,
     `  gates: ${m.gates.notRun} not run, ${m.gates.skipped} skipped`,
     `  minutes per phase: ${Object.keys(m.phaseMinutes).length ? pairs(m.phaseMinutes as Record<string, number>) : "none yet"}`,
+    knowledgeLine(m.knowledge),
   ].join("\n");
 }

@@ -29,7 +29,7 @@ import { loadPolicy } from "../src/policy.ts";
 import { loadProfile } from "../src/profile.ts";
 import { recordWorking } from "../src/state.ts";
 import { readProtectedJson, writeProtectedJson } from "../src/store.ts";
-import type { GateRun, Message, WorkItem } from "../src/types.ts";
+import type { GateRun, KnowledgeEntry, Message, WorkItem } from "../src/types.ts";
 import { loadWork, saveWork } from "../src/work.ts";
 import { auditFixture, PLANTED_KEY } from "./audit-run.test.ts";
 import { git, makeRepo, repoPaths, tempDir, testEnv, write } from "./helpers.ts";
@@ -2857,13 +2857,13 @@ test("SP7a AC-4: crew metrics counts the records of a project and of a workspace
   );
   const filed = await c.run("cto", "record", "--workspace", "w", "--file", "cto-plan.md");
   expect(filed.code).toBe(0);
-  expect(filed.out.trim()).toMatch(
-    /^CTO plan of w filed: .*\/crew\/cto\/w\/\d{4}-\d{2}-\d{2}-plan\.md$/,
-  );
-  const filedPath = filed.out.trim().replace("CTO plan of w filed: ", "");
+  // The first line names the file; the second the entry the plan became (SP4 Task 5).
+  const filedLine = filed.out.split("\n")[0] as string;
+  expect(filedLine).toMatch(/^CTO plan of w filed: .*\/crew\/cto\/w\/\d{4}-\d{2}-\d{2}-plan\.md$/);
+  const filedPath = filedLine.replace("CTO plan of w filed: ", "");
   expect(readFileSync(filedPath, "utf8")).toContain("## Change");
   expect((await c.run("cto", "record", "--file", "cto-plan.md")).err.trim()).toBe(
-    "usage: crew cto record --workspace <ws> --file <plan.md>",
+    "usage: crew cto review --workspace <ws> | crew cto record --workspace <ws> --file <plan.md>",
   );
   expect(
     (await c.run("cto", "record", "--workspace", "w", "--file", "missing.md")).err.trim(),
@@ -6790,4 +6790,376 @@ test("SP4-T4 AC-5: crew status says what learning is left in deliver and in lear
   expect(stale.code).toBe(1);
   expect(stale.err).toContain(`not proven: the proof is on earlier code (crew gate run ${id2})`);
   expect((await c.run("status")).out).not.toContain("  learn: proven;");
+});
+
+const K_AT = "2026-10-01T00:00:00.000Z";
+/** A base entry as the engine writes it, for a test that seeds base.json whole. */
+function kEntry(id: string, over: Partial<KnowledgeEntry>): KnowledgeEntry {
+  return {
+    id,
+    kind: "general",
+    title: `${id} title`,
+    workspace: "acme",
+    project: "shop",
+    projectRoot: "/real/acme/shop",
+    confidential: true,
+    item: null,
+    commit: null,
+    stacks: [],
+    paths: [],
+    words: [],
+    text: "t",
+    source: null,
+    createdAt: K_AT,
+    confirmedBy: [],
+    contradictedBy: [],
+    ...over,
+  };
+}
+function seedBase(userDir: string, entries: KnowledgeEntry[]): void {
+  writeJson(knowledgePath(userDir), { version: 1, next: entries.length + 1, entries });
+}
+
+test("SP4-T5 AC-1, AC-2: crew analyse names the known root causes of the origin's paths from the base this project reads (a shared path, never words alone, never a hidden entry, never cut by the limit), writes them into origin.json and the hits into knowledge.md, and the guard out of analyse refuses until the cause is cited in analysis.md or contradicted by this item of this project", async () => {
+  const env = testEnv();
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+    "src/b.ts": "y",
+    ".crew/policy.json": JSON.stringify({ mail: { workspace: "acme", name: "shop" } }),
+  });
+  const c = io(root, env);
+  const paths = repoPaths(root, env);
+  const cause = kEntry("K-1", {
+    kind: "root-cause",
+    title: "Totals summed before the discount",
+    paths: ["src/a.ts"],
+    item: "2026-10-01-001-old-fix",
+    commit: "abc1234",
+  });
+  seedBase(paths.userDir, [
+    cause,
+    // Another workspace's root cause on the same path: hidden, never named.
+    kEntry("K-2", {
+      kind: "root-cause",
+      title: "Hidden cause",
+      workspace: "globex",
+      paths: ["src/a.ts"],
+    }),
+    // A root cause of another path that shares a word of the request: listed, not known.
+    kEntry("K-3", {
+      kind: "root-cause",
+      title: "Wrong totals elsewhere",
+      paths: ["src/b.ts"],
+      words: ["totals"],
+    }),
+  ]);
+  const fix = JSON.stringify({ ...JSON.parse(answers), work_type: "fix" });
+  const id = (
+    await c.json(
+      "start",
+      "Totals wrong",
+      "--answers",
+      fix,
+      "--criterion",
+      "totals right",
+      "--preserve",
+      "the invoice total",
+    )
+  ).data.id as string;
+  const analysed = await c.run("analyse", id, "--paths", "src/a.ts");
+  expect(analysed.code, analysed.err).toBe(0);
+  expect(analysed.out.trim()).toBe(
+    `analysis/origin.json: 1 commit, 0 items\nknown root causes: K-1 "Totals summed before the discount" (src/a.ts)`,
+  );
+  const originFile = join(root, ".crew", "work", id, "analysis", "origin.json");
+  const known = () =>
+    (JSON.parse(readFileSync(originFile, "utf8")) as { knownRootCauses?: unknown[] })
+      .knownRootCauses;
+  expect(known()).toEqual([
+    {
+      id: "K-1",
+      title: "Totals summed before the discount",
+      item: "2026-10-01-001-old-fix",
+      commit: "abc1234",
+      paths: ["src/a.ts"],
+    },
+  ]);
+  const knowledgeFile = join(root, ".crew", "work", id, "knowledge.md");
+  const listed = readFileSync(knowledgeFile, "utf8");
+  expect(listed).toContain(
+    '- K-1 · root-cause · "Totals summed before the discount" · acme · path src/a.ts · jev not asked',
+  );
+  expect(listed).toContain("- K-3 · root-cause");
+  expect(listed).not.toContain("K-2");
+  expect(loadWork(paths, id).work?.knowledge?.listed).toEqual(["K-1", "K-3"]);
+  // Eleven entries of other kinds that outscore the cause fill the capped list: the known cause
+  // is read apart, uncapped, so it is still named (the QA lead's return at the spec).
+  seedBase(paths.userDir, [
+    cause,
+    ...Array.from({ length: 11 }, (_, i) =>
+      kEntry(`K-${i + 2}`, {
+        title: `General ${i + 2}`,
+        paths: ["src/a.ts"],
+        words: ["totals", "wrong"],
+      }),
+    ),
+  ]);
+  const again = await c.run("analyse", id, "--paths", "src/a.ts");
+  expect(again.out).toContain(
+    'known root causes: K-1 "Totals summed before the discount" (src/a.ts)',
+  );
+  expect((known() as { id: string }[]).map((k) => k.id)).toEqual(["K-1"]);
+  expect(readFileSync(knowledgeFile, "utf8")).not.toContain("- K-1 ·");
+  // The guard: the document alone is not enough while K-1 is neither cited nor contradicted.
+  write(
+    root,
+    `.crew/work/${id}/analysis.md`,
+    "# Analysis\n\n## Origin\nnone\n\n## Cause\nthe discount is read after the total\n\n## Blast radius\none function\n",
+  );
+  const refused = await c.run("phase", id, "next");
+  expect(refused.code).toBe(1);
+  expect(refused.err).toContain(
+    `K-1 is a known root cause of src/a.ts ("Totals summed before the discount"): cite it in analysis.md as [K:K-1] with what this fix does differently, or crew knowledge contradict K-1 --reason "<why>" --item ${id}`,
+  );
+  // A contradiction by a same-named item of another project counts for nothing.
+  const base = readBase(paths.userDir).base;
+  const k1 = base?.entries.find((e) => e.id === "K-1");
+  if (!base || !k1) throw new Error("no K-1");
+  k1.contradictedBy.push({ item: id, project: "crm", at: K_AT, reason: "elsewhere" });
+  writeJson(knowledgePath(paths.userDir), base);
+  expect((await c.run("phase", id, "next")).err).toContain("K-1 is a known root cause");
+  // Cited, with what differs: the guard passes.
+  write(
+    root,
+    `.crew/work/${id}/analysis.md`,
+    "# Analysis\n\n## Origin\nnone\n\n## Cause\nUnlike [K:K-1], the discount is now applied before the sum.\n\n## Blast radius\none function\n",
+  );
+  expect((await c.json("phase", id, "next")).data.phase).toBe("build");
+  // A second issue on the same path contradicts the cause on record instead.
+  const second = (
+    await c.json(
+      "start",
+      "Totals wrong again",
+      "--answers",
+      fix,
+      "--criterion",
+      "totals right",
+      "--preserve",
+      "the invoice total",
+    )
+  ).data.id as string;
+  expect((await c.run("analyse", second, "--paths", "src/a.ts")).out).toContain(
+    "known root causes: K-1",
+  );
+  write(
+    root,
+    `.crew/work/${second}/analysis.md`,
+    "# Analysis\n\n## Origin\nnone\n\n## Cause\na rounding error\n\n## Blast radius\none function\n",
+  );
+  expect((await c.run("phase", second, "next")).err).toContain("K-1 is a known root cause");
+  expect(
+    (
+      await c.run(
+        "knowledge",
+        "contradict",
+        "K-1",
+        "--reason",
+        "the sum is right; the rounding is wrong",
+        "--item",
+        second,
+      )
+    ).code,
+  ).toBe(0);
+  expect((await c.json("phase", second, "next")).data.phase).toBe("build");
+});
+
+test("SP4-T5 AC-3, AC-4, AC-5: crew cto review writes the inputs of the project's own workspace (the metrics of its registered projects, the last plan, the base's figures and rows with nothing hidden) and prints the three lines, refusing a bad name, another workspace and a project with no workspace; crew cto record files the plan as a marked general entry of the workspace and refuses a secret beyond byte 4000 with no file and no entry; crew metrics carries the knowledge figures; the report links the latest plan or says none", async () => {
+  const env = testEnv();
+  const a = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+    ".crew/policy.json": JSON.stringify({ mail: { workspace: "w", name: "a" } }),
+  });
+  const b = makeRepo({
+    ".crew/policy.json": JSON.stringify({ mail: { workspace: "w", name: "b" } }),
+  });
+  const alone = makeRepo();
+  const ca = io(a, env);
+  const cb = io(b, env);
+  const calone = io(alone, env);
+  await ca.run("detect");
+  await cb.run("detect");
+  const paths = repoPaths(a, env);
+  seedBase(paths.userDir, [
+    kEntry("K-1", {
+      workspace: "w",
+      project: "a",
+      confirmedBy: [{ item: "i", project: "a", at: K_AT }],
+    }),
+    kEntry("K-2", {
+      kind: "validated-solution",
+      workspace: "w",
+      project: "b",
+      contradictedBy: [{ item: "j", project: "b", at: K_AT, reason: "r" }],
+    }),
+    // Another workspace's entry with refs of its own: hidden from every figure and row.
+    kEntry("K-3", {
+      kind: "root-cause",
+      workspace: "other",
+      confirmedBy: [{ item: "x", project: "y", at: K_AT }],
+      contradictedBy: [{ item: "x", project: "y", at: K_AT }],
+    }),
+  ]);
+  const id = (await ca.json("start", "Fix a", "--answers", answers, "--criterion", "a")).data
+    .id as string;
+  const loaded = loadWork(paths, id).work;
+  if (!loaded) throw new Error("no work");
+  loaded.learned = { at: K_AT, entries: [], confirmed: ["K-1"] };
+  saveWork(paths, loaded);
+  // The review: the inputs file and the three lines.
+  const review = await ca.run("cto", "review", "--workspace", "w");
+  expect(review.code, review.err).toBe(0);
+  const lines = review.out.trim().split("\n");
+  expect(lines[0]).toMatch(/^inputs: .*\/crew\/cto\/w\/\d{4}-\d{2}-\d{2}-inputs\.json$/);
+  expect(lines[1]).toBe("last plan: none");
+  expect(lines[2]).toBe(
+    "launch wizardingcode-developer-crew:cto with the inputs path and the reports of the items it counts; file the plan with crew cto record --workspace w --file <plan.md>",
+  );
+  expect(lines).toHaveLength(3);
+  const inputsPath = (lines[0] as string).replace("inputs: ", "");
+  type Inputs = {
+    at: string;
+    workspace: string;
+    metrics: { projects: string[]; knowledge: Record<string, unknown> };
+    lastPlan: unknown;
+    knowledge: {
+      entries: Record<string, number>;
+      confirmed: number;
+      contradicted: number;
+      cited: number;
+      rows: unknown[];
+    };
+  };
+  const inputs = JSON.parse(readFileSync(inputsPath, "utf8")) as Inputs;
+  expect(inputs.workspace).toBe("w");
+  expect(typeof inputs.at).toBe("string");
+  expect([...inputs.metrics.projects].sort()).toEqual([paths.root, repoPaths(b, env).root].sort());
+  expect(inputs.lastPlan).toBeNull();
+  const kinds = {
+    "stack-preference": 0,
+    "validated-solution": 1,
+    documentation: 0,
+    "root-cause": 0,
+    general: 1,
+  };
+  expect(inputs.knowledge).toEqual({
+    entries: kinds,
+    confirmed: 1,
+    contradicted: 1,
+    cited: 1,
+    rows: [
+      {
+        id: "K-1",
+        kind: "general",
+        title: "K-1 title",
+        workspace: "w",
+        confirmed: 1,
+        contradicted: 0,
+      },
+      {
+        id: "K-2",
+        kind: "validated-solution",
+        title: "K-2 title",
+        workspace: "w",
+        confirmed: 0,
+        contradicted: 1,
+      },
+    ],
+  });
+  expect(readFileSync(inputsPath, "utf8")).not.toContain("K-3");
+  expect(inputs.metrics.knowledge).toEqual({
+    entries: kinds,
+    confirmed: 1,
+    contradicted: 1,
+    cited: 1,
+  });
+  // The refusals: the name, another workspace, no workspace, the verb.
+  expect((await ca.run("cto", "review", "--workspace", "Bad Name")).err.trim()).toBe(
+    "a workspace is a lowercase name of letters, digits, dot, dash and underscore, up to 64 characters, not Bad Name",
+  );
+  expect((await ca.run("cto", "review", "--workspace", "other")).err.trim()).toBe(
+    "this project is in workspace w: crew cto review --workspace w",
+  );
+  expect((await calone.run("cto", "review", "--workspace", "w")).err.trim()).toBe(
+    "this project is in no workspace (crew policy set mail.workspace <name>)",
+  );
+  expect((await ca.run("cto", "review")).err.trim()).toBe(
+    "usage: crew cto review --workspace <ws> | crew cto record --workspace <ws> --file <plan.md>",
+  );
+  expect((await ca.run("cto", "record", "--workspace", "other", "--file", "x.md")).err.trim()).toBe(
+    "this project is in workspace w: crew cto record --workspace w",
+  );
+  // The record: a secret beyond byte 4000 refuses the whole plan, nothing filed, no entry.
+  const ctoFolder = join(paths.userDir, "cto", "w");
+  write(
+    a,
+    "leak.md",
+    `${"# CTO plan\n".repeat(400)}key = "${["AKIA", "ABCDEFGHIJKLMNOP"].join("")}"\n`,
+  );
+  const leak = await ca.run("cto", "record", "--workspace", "w", "--file", "leak.md");
+  expect(leak.code).toBe(1);
+  expect(leak.err.trim()).toBe(
+    "the plan holds a secret (AWS access key) at line 401; nothing was filed",
+  );
+  expect(readdirSync(ctoFolder).filter((f) => f.endsWith("-plan.md"))).toEqual([]);
+  expect(readBase(paths.userDir).base?.entries.map((e) => e.id)).toEqual(["K-1", "K-2", "K-3"]);
+  // A plan longer than the limit: filed whole, the entry's text cut.
+  const plan = `# CTO plan for w, 2026-10-20\n## Keep\n- the fast route\n## Change\n- ${"lower the cap. ".repeat(300)}\n## Measure\n- cost per item\n`;
+  expect(plan.length).toBeGreaterThan(4000);
+  write(a, "cto-plan.md", plan);
+  const filed = await ca.run("cto", "record", "--workspace", "w", "--file", "cto-plan.md");
+  expect(filed.code, filed.err).toBe(0);
+  const [first, entryLine] = filed.out.trim().split("\n");
+  expect(first).toMatch(/^CTO plan of w filed: .*\/crew\/cto\/w\/\d{4}-\d{2}-\d{2}-plan\.md$/);
+  expect(entryLine).toBe("entry K-4: general, marked for w");
+  const planPath = (first as string).replace("CTO plan of w filed: ", "");
+  const date = basename(planPath).slice(0, 10);
+  expect(readFileSync(planPath, "utf8")).toBe(plan);
+  const entry = readBase(paths.userDir).base?.entries.find((e) => e.id === "K-4");
+  expect(entry).toMatchObject({
+    kind: "general",
+    title: `CTO plan ${date} (w)`,
+    workspace: "w",
+    project: "a",
+    projectRoot: paths.root,
+    confidential: true,
+    item: null,
+    commit: null,
+    source: planPath,
+  });
+  expect(entry?.text).toBe(plan.slice(0, 4000));
+  // The review reads the last plan; the metrics carry the figures without the rows.
+  const reviewed = await ca.run("cto", "review", "--workspace", "w");
+  expect(reviewed.out).toContain(`last plan: ${planPath}\n`);
+  const inputs2 = JSON.parse(
+    readFileSync((reviewed.out.split("\n")[0] as string).replace("inputs: ", ""), "utf8"),
+  ) as { lastPlan: unknown };
+  expect(inputs2.lastPlan).toEqual({ path: planPath, date });
+  const metrics = await ca.json("metrics", "--workspace", "w");
+  expect(metrics.data.knowledge).toEqual({
+    entries: { ...kinds, general: 2 },
+    confirmed: 1,
+    contradicted: 1,
+    cited: 1,
+  });
+  expect((await ca.run("metrics", "--workspace", "w")).out).toContain(
+    "\n  knowledge: 3 entries (general 2, validated-solution 1), confirmed 1, contradicted 1, cited by 1 item",
+  );
+  // The report links the latest plan; a project with no workspace says none.
+  expect((await ca.run("evidence", id)).out).toContain(`\n- CTO plan: ${planPath} (${date})\n`);
+  const aloneId = (
+    await calone.json("start", "Fix alone", "--answers", answers, "--criterion", "a")
+  ).data.id as string;
+  expect((await calone.run("evidence", aloneId)).out).toContain("\n- CTO plan: none\n");
 });

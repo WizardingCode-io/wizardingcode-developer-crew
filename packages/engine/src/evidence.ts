@@ -373,6 +373,7 @@ export function renderReport(
   strategy?: StrategyReport | null,
   audit?: AuditReportView | null,
   knowledge?: string | null,
+  ctoPlan?: { path: string; date: string } | null,
 ): string {
   const lines: string[] = [];
   lines.push(`# Report: ${work.title}`, "");
@@ -380,6 +381,8 @@ export function renderReport(
   lines.push(
     `- Type: ${work.type}. Kind: ${kindOfItem(work)}${work.kindFrom ? ` (from ${work.kindFrom})` : ""}. Route: ${work.route} (${work.routeReasons.join("; ")})`,
   );
+  // The latest plan the CTO filed for the project's workspace (SP4 Task 5): its path and date, never its content.
+  lines.push(ctoPlan ? `- CTO plan: ${ctoPlan.path} (${ctoPlan.date})` : "- CTO plan: none");
   // Where the request entered from and the lead's triage of its priority (SP7 §10).
   if (work.source) lines.push(`- Source: ${sourceLine(work.source)}`);
   if (work.triage) lines.push(`- Triage: ${triageSummary(work.triage)}`);

@@ -87,6 +87,11 @@ export function mailboxDir(userDir: string, workspace: string | null, project: s
   return join(userDir, "mail", workspace ?? "_alone", project);
 }
 
+/** The CTO's folder of a workspace (SP7 §6.5): the plans it filed and the reviews' inputs. */
+export function ctoDir(userDir: string, workspace: string): string {
+  return join(userDir, "cto", workspace);
+}
+
 const PROTECTED_TOP = new Set([
   ".crew/profile.json",
   ".crew/policy.json",

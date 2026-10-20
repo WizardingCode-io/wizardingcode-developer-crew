@@ -549,6 +549,14 @@ export function missingAnalysisSections(text: string): string[] {
   return ANALYSIS_SECTIONS.filter((name) => !hasSection(text, name));
 }
 
+/** A known root cause as the guard out of analyse reads it (SP4 Task 5): contradicted when this item disputed it on record. */
+export interface KnownCause {
+  id: string;
+  title: string;
+  paths: string[];
+  contradicted: boolean;
+}
+
 export interface GuardContext {
   specText: string | null;
   /** `strategy.md` of the work folder, or null without one (a new project's strategy phase, SP7 §7.3). */
@@ -559,6 +567,8 @@ export interface GuardContext {
   analysisText: string | null;
   /** Whether `analysis/origin.json` exists in the work folder (`crew analyse`, SP3 Task 5). */
   originRecorded: boolean;
+  /** The origin's known root causes the base still holds (SP4 Task 5, rule 17). */
+  knownRootCauses: KnownCause[];
   /** Whether the root is a git repository: the origin is asked for only where git can give it. */
   gitRepository: boolean;
   conclaveText: string | null;
@@ -646,6 +656,13 @@ export function guardFor(work: WorkItem, next: Phase, ctx: GuardContext): string
       );
     if (ctx.gitRepository && !ctx.originRecorded)
       missing.push("analysis/origin.json in the work folder (crew analyse <id> --paths <files>)");
+    // Rule 17 (SP4 Task 5): a root cause the base holds on the origin's paths is cited in the
+    // document with what this fix does differently, or contradicted on record by this item.
+    for (const k of ctx.knownRootCauses)
+      if (!k.contradicted && !(ctx.analysisText ?? "").includes(`[K:${k.id}]`))
+        missing.push(
+          `${k.id} is a known root cause of ${k.paths.join(", ")} ("${k.title}"): cite it in analysis.md as [K:${k.id}] with what this fix does differently, or crew knowledge contradict ${k.id} --reason "<why>" --item ${work.id}`,
+        );
   }
   // Out of strategy (SP7 §7.3): the research first, then the document's shape and marks, then a
   // proven ruling with gate strategy on the hash of the two files as they are now; no ruling of

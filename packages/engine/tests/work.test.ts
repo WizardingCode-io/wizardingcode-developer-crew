@@ -59,6 +59,7 @@ const empty: GuardContext = {
   researcherText: null,
   analysisText: null,
   originRecorded: false,
+  knownRootCauses: [],
   gitRepository: false,
   conclaveText: null,
   ledger: null,
@@ -1042,4 +1043,63 @@ test("SP4-T4 AC-1: learn follows deliver on every route and kind but the audit, 
   });
   saveWork(paths, work);
   expect(openItems(paths).map((w) => w.id)).toEqual([]);
+});
+
+test("SP4-T5 AC-2: the guard out of analyse names a known root cause neither cited in analysis.md nor contradicted by this item, with its paths and the two ways out, and passes with the citation or the contradiction", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const work = createWork(paths, "a bug");
+  applyClassification(
+    work,
+    "fix",
+    { route: "fast", reasons: ["r"], riskAreas: [] },
+    { kind: "issue", from: "work_type fix" },
+  );
+  work.phase = "analyse";
+  addCriterion(work, "the regression test");
+  addCriterion(work, "keep", "preserve");
+  const analysis =
+    "# Analysis\n\n## Origin\nitem 001\n\n## Cause\nnone\n\n## Blast radius\none module\n";
+  const known = {
+    id: "K-4",
+    title: "Totals summed before the discount",
+    paths: ["src/accounts.mjs", "src/totals.mjs"],
+    contradicted: false,
+  };
+  const ctx: GuardContext = {
+    ...empty,
+    gitRepository: true,
+    originRecorded: true,
+    analysisText: analysis,
+    knownRootCauses: [known],
+  };
+  const refusal = `K-4 is a known root cause of src/accounts.mjs, src/totals.mjs ("Totals summed before the discount"): cite it in analysis.md as [K:K-4] with what this fix does differently, or crew knowledge contradict K-4 --reason "<why>" --item ${work.id}`;
+  expect(guardFor(work, "build", ctx)).toEqual([refusal]);
+  // Cited: the mark anywhere in the document.
+  expect(
+    guardFor(work, "build", {
+      ...ctx,
+      analysisText: `${analysis}\nUnlike [K:K-4], this fix moves the discount.\n`,
+    }),
+  ).toEqual([]);
+  // Another entry's mark is not this one's.
+  expect(guardFor(work, "build", { ...ctx, analysisText: `${analysis}\n[K:K-5]\n` })).toEqual([
+    refusal,
+  ]);
+  // Contradicted by this item: the context says so.
+  expect(
+    guardFor(work, "build", { ...ctx, knownRootCauses: [{ ...known, contradicted: true }] }),
+  ).toEqual([]);
+  // Two known causes, one cited: the other alone is named.
+  const other = { id: "K-9", title: "Rounding", paths: ["src/totals.mjs"], contradicted: false };
+  expect(
+    guardFor(work, "build", {
+      ...ctx,
+      analysisText: `${analysis}[K:K-4]`,
+      knownRootCauses: [known, other],
+    }),
+  ).toEqual([
+    `K-9 is a known root cause of src/totals.mjs ("Rounding"): cite it in analysis.md as [K:K-9] with what this fix does differently, or crew knowledge contradict K-9 --reason "<why>" --item ${work.id}`,
+  ]);
+  // No known cause: nothing asked beyond the document and the origin.
+  expect(guardFor(work, "build", { ...ctx, knownRootCauses: [] })).toEqual([]);
 });

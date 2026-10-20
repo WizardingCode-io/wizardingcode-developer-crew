@@ -1096,3 +1096,32 @@ test("SP4-T4 AC-5: the report's Knowledge section ends with what was learned, or
   work.learned = { at: "2026-10-20T00:00:00.000Z", entries: [], confirmed: [] };
   expect(renderReport(work, emptyEvidence(), DEFAULT_POLICY)).toContain("- Learned: none\n");
 });
+
+test("SP4-T5 AC-5: the report links the latest CTO plan after the Type line, or says none", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const work = workWith(paths);
+  const evidence: Evidence = { ...emptyEvidence(), fingerprint: "f" };
+  const plan = {
+    path: "/home/u/.wizardingcode/crew/cto/acme/2026-10-20-plan.md",
+    date: "2026-10-20",
+  };
+  // The seven optional records before the plan: the ledger, the mail, the name, the analysis, the strategy, the audit, the knowledge.
+  const seven = [
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+  ] as const;
+  expect(renderReport(work, evidence, DEFAULT_POLICY, ...seven, plan)).toMatch(
+    /\n- Type: [^\n]*\n- CTO plan: \/home\/u\/\.wizardingcode\/crew\/cto\/acme\/2026-10-20-plan\.md \(2026-10-20\)\n/,
+  );
+  expect(renderReport(work, evidence, DEFAULT_POLICY)).toMatch(
+    /\n- Type: [^\n]*\n- CTO plan: none\n/,
+  );
+  expect(renderReport(work, evidence, DEFAULT_POLICY, ...seven, null)).toContain(
+    "\n- CTO plan: none\n",
+  );
+});
