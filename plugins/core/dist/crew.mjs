@@ -11542,7 +11542,7 @@ async function recordTdd(paths, work, evidence, profile, criterionId, step, over
 }
 
 // packages/engine/src/version.ts
-var VERSION = "0.9.0";
+var VERSION = "0.10.0";
 
 // packages/engine/src/workspace.ts
 import { existsSync as existsSync19 } from "node:fs";
@@ -11622,7 +11622,7 @@ var KNOWN_FLAGS = {
   profile: ["target", "stack", "force", "timeout", "mode"],
   policy: [],
   accept: [],
-  start: ["answers", "criterion", "preserve", "origin", "priority", "source", "reason"],
+  start: ["answers", "criterion", "preserve", "observed", "origin", "priority", "source", "reason"],
   classify: ["answers"],
   kind: ["reason"],
   strategy: [],
@@ -11677,7 +11677,7 @@ function unknownFlag(command, parsed) {
   if (unknown === undefined)
     return null;
   const takes = [...known, "json"].map((k) => `--${k}`).join(", ");
-  const hint = command === "start" && unknown === "kind" ? '; for a criterion that existing tests keep green use --preserve "<text>"' : "";
+  const hint = command === "start" && unknown === "kind" ? '; for a criterion that existing tests keep green use --preserve "<text>", for one no test can fail first --observed "<text>"' : "";
   return refuse(`unknown flag --${unknown} for ${command} (it takes ${takes})${hint}`);
 }
 var ok = (text, data = {}) => ({ code: 0, text, data });
@@ -12730,7 +12730,7 @@ async function dispatch(parsed, io) {
           };
         }
       }
-      const criteria = parsed.ordered.filter((f) => f.key === "criterion" || f.key === "preserve").map((f) => addCriterion(work, f.value, f.key === "preserve" ? "preserve" : "behavior"));
+      const criteria = parsed.ordered.filter((f) => f.key === "criterion" || f.key === "preserve" || f.key === "observed").map((f) => addCriterion(work, f.value, f.key === "preserve" ? "preserve" : f.key === "observed" ? "observed" : "behavior"));
       if (work.route === "fast" && criteria.length > 0)
         advancePhase(work, guardContext(env, work, false));
       saveWork(env.paths, work);
@@ -14133,8 +14133,10 @@ test-first not credited: ${out.uncredited}` : "";
         writeJson(target2, { at: nowIso(), workspace: ws, metrics, lastPlan, knowledge });
         return ok([
           `inputs: ${target2}`,
+          ...metricsText(metrics).split(`
+`),
           `last plan: ${lastPlan?.path ?? "none"}`,
-          `launch wizardingcode-developer-crew:cto with the inputs path and the reports of the items it counts; file the plan with crew cto record --workspace ${ws} --file <plan.md>`
+          `launch wizardingcode-developer-crew:cto with the inputs path and the reports of the items it counts; file the plan with crew cto record --workspace ${ws} --file <plan.md>. The review item's criterion has no test: open it with crew start "<request>" --answers '<json>' --observed "<the plan filed>", record it once the plan is filed with crew tdd observed <id> AC-1 --reason "a plan, not code" -- "<a command that reads the filed plan>", then crew gate run <id>`
         ].join(`
 `), { path: target2, lastPlan, knowledge });
       }
@@ -14704,7 +14706,7 @@ var HELP = `crew ${VERSION}
   policy set <key> <value>              attendedDecisions prompt|relay, unattendedDecisions wait|count|validator, mail.workspace|name|open|maxConcurrent|maxHops|maxTurns|maxMinutes|maxParties|worktrees (asks the user)
   accept <id|profile|policy>            trust state changed outside the engine (asks the user)
   start "<request>" --answers <json>    create a work item from the typed answers
-      [--criterion "<text>"] [--preserve "<text>"]   criteria, repeatable; preserve: existing tests stay green
+      [--criterion "<text>"] [--preserve "<text>"] [--observed "<text>"]   criteria, repeatable; preserve: existing tests stay green; observed: no test can fail first (a plan, a document)
       [--origin <message id>]           the item answers a message of this project's inbox (a session opened by mail)
       [--priority blocker|high|normal|low]   the item's priority; else its origin's confirmed one, else normal
   classify <id> --answers <json>        record typed answers and compute the route

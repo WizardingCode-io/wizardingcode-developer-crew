@@ -319,7 +319,7 @@ const KNOWN_FLAGS: Record<string, readonly string[]> = {
   profile: ["target", "stack", "force", "timeout", "mode"],
   policy: [],
   accept: [],
-  start: ["answers", "criterion", "preserve", "origin", "priority", "source", "reason"],
+  start: ["answers", "criterion", "preserve", "observed", "origin", "priority", "source", "reason"],
   classify: ["answers"],
   kind: ["reason"],
   strategy: [],
@@ -377,7 +377,7 @@ function unknownFlag(command: string, parsed: Parsed): Outcome | null {
   const takes = [...known, "json"].map((k) => `--${k}`).join(", ");
   const hint =
     command === "start" && unknown === "kind"
-      ? '; for a criterion that existing tests keep green use --preserve "<text>"'
+      ? '; for a criterion that existing tests keep green use --preserve "<text>", for one no test can fail first --observed "<text>"'
       : "";
   return refuse(`unknown flag --${unknown} for ${command} (it takes ${takes})${hint}`);
 }
@@ -1893,10 +1893,17 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           };
         }
       }
-      // Both flags repeat and keep their command-line order, so the numbers read as typed.
+      // The three flags repeat and keep their command-line order, so the numbers read as typed;
+      // --observed opens a criterion no test can fail first (a plan, a document: the CTO review's, SP4 Task 6).
       const criteria = parsed.ordered
-        .filter((f) => f.key === "criterion" || f.key === "preserve")
-        .map((f) => addCriterion(work, f.value, f.key === "preserve" ? "preserve" : "behavior"));
+        .filter((f) => f.key === "criterion" || f.key === "preserve" || f.key === "observed")
+        .map((f) =>
+          addCriterion(
+            work,
+            f.value,
+            f.key === "preserve" ? "preserve" : f.key === "observed" ? "observed" : "behavior",
+          ),
+        );
       // On the fast route the criteria are all that stands before build; with them given, go there.
       if (work.route === "fast" && criteria.length > 0)
         advancePhase(work, guardContext(env, work, false));
@@ -3657,11 +3664,14 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         const lastPlan = latestPlan(env.paths.userDir, ws);
         const target = join(dir, `${date}-inputs.json`);
         writeJson(target, { at: nowIso(), workspace: ws, metrics, lastPlan, knowledge });
+        // The figures the inputs carry are printed too, so the session and its trace hold what the
+        // CTO reads (the CTO case's fourth run: the agent alone saw them, inside its own context).
         return ok(
           [
             `inputs: ${target}`,
+            ...metricsText(metrics).split("\n"),
             `last plan: ${lastPlan?.path ?? "none"}`,
-            `launch wizardingcode-developer-crew:cto with the inputs path and the reports of the items it counts; file the plan with crew cto record --workspace ${ws} --file <plan.md>`,
+            `launch wizardingcode-developer-crew:cto with the inputs path and the reports of the items it counts; file the plan with crew cto record --workspace ${ws} --file <plan.md>. The review item's criterion has no test: open it with crew start "<request>" --answers '<json>' --observed "<the plan filed>", record it once the plan is filed with crew tdd observed <id> AC-1 --reason "a plan, not code" -- "<a command that reads the filed plan>", then crew gate run <id>`,
           ].join("\n"),
           { path: target, lastPlan, knowledge },
         );
@@ -4337,7 +4347,7 @@ const HELP = `crew ${VERSION}
   policy set <key> <value>              attendedDecisions prompt|relay, unattendedDecisions wait|count|validator, mail.workspace|name|open|maxConcurrent|maxHops|maxTurns|maxMinutes|maxParties|worktrees (asks the user)
   accept <id|profile|policy>            trust state changed outside the engine (asks the user)
   start "<request>" --answers <json>    create a work item from the typed answers
-      [--criterion "<text>"] [--preserve "<text>"]   criteria, repeatable; preserve: existing tests stay green
+      [--criterion "<text>"] [--preserve "<text>"] [--observed "<text>"]   criteria, repeatable; preserve: existing tests stay green; observed: no test can fail first (a plan, a document)
       [--origin <message id>]           the item answers a message of this project's inbox (a session opened by mail)
       [--priority blocker|high|normal|low]   the item's priority; else its origin's confirmed one, else normal
   classify <id> --answers <json>        record typed answers and compute the route

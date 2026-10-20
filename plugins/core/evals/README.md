@@ -29,7 +29,7 @@ PATH="$PWD/plugins/core/bin:$(dirname "$(xcrun --find git)"):$PATH" claude plugi
 
 On Linux the PATH has no `xcrun` part. `--keep-temp` keeps each run's scaffold and `out/trace.jsonl` under the system temp directory (sealed read-only; `chmod 700` to inspect, delete when done). Each grant covers one command: a Bash call joining several with `;` or `|` needs every one of them granted, or it is denied.
 
-One case while iterating (one run, no baseline, no judge, a 5 USD ceiling):
+One case while iterating (one run, no baseline arm, the suite's judge model for its llm graders, the sandbox kept, a 5 USD ceiling):
 
 ```bash
 bun scripts/eval.ts --case false-done

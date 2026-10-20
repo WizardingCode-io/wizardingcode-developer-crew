@@ -57,6 +57,8 @@ export const SANDBOX_TAGS = [
   // SP8 (Task 6): the strategy and the audit cases run in the sandbox (no opener; the roles as subagents).
   "strategy",
   "audit",
+  // SP4 (Task 6): the knowledge cases run in the sandbox (the fixture seeds the base through the engine under the sandbox's home).
+  "knowledge",
 ];
 const COMMON = [
   "plugin",
@@ -84,6 +86,13 @@ export function evalInvocation(options: EvalOptions): { path: string; args: stri
         "none",
         "--max-cost-usd",
         "5",
+        // The one-case run keeps its sandbox too (SP8's record ran blind on the first tries; SP4 Task 6),
+        // and its llm graders are judged by the suite's judge: the kit's default is a smaller model
+        // than the agent under test (the owner's rule: never a weaker judge), and it split 1 of 3 on
+        // a trace the suite's judge reads whole.
+        "--keep-temp",
+        "--judge-model",
+        "claude-fable-5-1",
       ]
     : [
         ...COMMON,

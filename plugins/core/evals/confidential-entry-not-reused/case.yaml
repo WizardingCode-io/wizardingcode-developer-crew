@@ -1,0 +1,6 @@
+# evals/confidential-entry-not-reused/case.yaml
+schema_version: "1.1"
+name: confidential-entry-not-reused
+tags: [knowledge]
+context:
+  scaffold_script: fixture.sh

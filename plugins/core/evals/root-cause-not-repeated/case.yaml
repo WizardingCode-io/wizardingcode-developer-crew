@@ -1,0 +1,6 @@
+# evals/root-cause-not-repeated/case.yaml
+schema_version: "1.1"
+name: root-cause-not-repeated
+tags: [knowledge]
+context:
+  scaffold_script: fixture.sh

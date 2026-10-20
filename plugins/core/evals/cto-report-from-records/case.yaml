@@ -1,0 +1,6 @@
+# evals/cto-report-from-records/case.yaml
+schema_version: "1.1"
+name: cto-report-from-records
+tags: [knowledge]
+context:
+  scaffold_script: fixture.sh

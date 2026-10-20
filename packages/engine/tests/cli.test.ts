@@ -485,7 +485,7 @@ test("a fast-route fix from start to a proven report", async () => {
     "src/a.ts": "x",
   });
   const c = io(root);
-  expect((await c.run("--version")).out.trim()).toBe("0.9.0");
+  expect((await c.run("--version")).out.trim()).toBe("0.10.0");
   const detect = await c.json("detect");
   expect(detect.code).toBe(0);
   expect((detect.data.profile as { targets: unknown[] }).targets).toHaveLength(1);
@@ -7022,11 +7022,15 @@ test("SP4-T5 AC-3, AC-4, AC-5: crew cto review writes the inputs of the project'
   expect(review.code, review.err).toBe(0);
   const lines = review.out.trim().split("\n");
   expect(lines[0]).toMatch(/^inputs: .*\/crew\/cto\/w\/\d{4}-\d{2}-\d{2}-inputs\.json$/);
-  expect(lines[1]).toBe("last plan: none");
-  expect(lines[2]).toBe(
-    "launch wizardingcode-developer-crew:cto with the inputs path and the reports of the items it counts; file the plan with crew cto record --workspace w --file <plan.md>",
+  // The figures the inputs carry, printed between the path and the last plan (the CTO case's fourth run).
+  expect(lines[1]).toBe("metrics of 2 projects");
+  expect(lines).toContain(
+    "  knowledge: 2 entries (general 1, validated-solution 1), confirmed 1, contradicted 1, cited by 1 item",
   );
-  expect(lines).toHaveLength(3);
+  expect(lines.at(-2)).toBe("last plan: none");
+  expect(lines.at(-1)).toBe(
+    'launch wizardingcode-developer-crew:cto with the inputs path and the reports of the items it counts; file the plan with crew cto record --workspace w --file <plan.md>. The review item\'s criterion has no test: open it with crew start "<request>" --answers \'<json>\' --observed "<the plan filed>", record it once the plan is filed with crew tdd observed <id> AC-1 --reason "a plan, not code" -- "<a command that reads the filed plan>", then crew gate run <id>',
+  );
   const inputsPath = (lines[0] as string).replace("inputs: ", "");
   type Inputs = {
     at: string;
@@ -7162,4 +7166,35 @@ test("SP4-T5 AC-3, AC-4, AC-5: crew cto review writes the inputs of the project'
     await calone.json("start", "Fix alone", "--answers", answers, "--criterion", "a")
   ).data.id as string;
   expect((await calone.run("evidence", aloneId)).out).toContain("\n- CTO plan: none\n");
+});
+
+test("SP4-T6 AC-1 (the CTO case's first runs): crew start --observed opens a criterion no test can fail first, proven by crew tdd observed and the gate run alone, and the launch line of crew cto review names it", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    ".crew/policy.json": JSON.stringify({ mail: { workspace: "w", name: "a" } }),
+  });
+  const env = testEnv();
+  const c = io(root, env);
+  await c.run("detect");
+  const started = await c.json(
+    "start",
+    "CTO review of w",
+    "--answers",
+    answers,
+    "--observed",
+    "the CTO's plan filed under cto/w",
+  );
+  expect(started.code).toBe(0);
+  const id = started.data.id as string;
+  expect(
+    (await c.run("tdd", "observed", id, "AC-1", "--reason", "a plan, not code", "--", "exit 0"))
+      .code,
+  ).toBe(0);
+  expect((await c.run("gate", "run", id)).out).toContain(`Proven: ${id}`);
+  expect((await c.run("evidence", id)).out).toContain(
+    "| AC-1 | observed | the CTO's plan filed under cto/w | observed: passes after (a plan, not code) |",
+  );
+  expect((await c.run("cto", "review", "--workspace", "w")).out).toContain(
+    'The review item\'s criterion has no test: open it with crew start "<request>" --answers \'<json>\' --observed "<the plan filed>"',
+  );
 });

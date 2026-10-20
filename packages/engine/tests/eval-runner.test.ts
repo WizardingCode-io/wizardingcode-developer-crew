@@ -11,6 +11,7 @@ import {
   SANDBOX_TAGS,
 } from "../../../scripts/eval.ts";
 import { CEILINGS } from "../../../scripts/eval-overhead.ts";
+import type { KnowledgeEntry } from "../src/types.ts";
 
 const base = { root: "/r", path: "/usr/bin", realGitDir: null, platform: "linux" as const };
 
@@ -28,14 +29,15 @@ test("the eval PATH puts the plugin's bin first and, on macOS, the real git next
   expect(evalInvocation(base).path.split(delimiter)).toEqual(["/r/plugins/core/bin", "/usr/bin"]);
 });
 
-test("the suite runs with the judge and the reports; one case runs once, without a baseline or judge", () => {
+test("the suite runs with the judge and the reports; one case runs once, without a baseline, with the same judge", () => {
   const suite = evalInvocation(base).args;
   expect(suite.slice(0, 3)).toEqual(["plugin", "eval", "plugins/core"]);
   expect(suite.join(" ")).toContain("--judge-model claude-fable-5-1");
   expect(suite.join(" ")).toContain("--json plugins/core/evals/results/last.json");
   const one = evalInvocation({ ...base, caseName: "false-done" }).args;
   expect(one.join(" ")).toContain("--case false-done --runs 1 --ablation none");
-  expect(one).not.toContain("--judge-model");
+  // One case runs once with no baseline arm, judged by the suite's judge (SP4 Task 6: never a weaker judge).
+  expect(one.join(" ")).toContain("--judge-model claude-fable-5-1");
   expect(one.slice(one.indexOf("--allow-tools"))).toContain("Bash(crew *)");
 });
 
@@ -76,9 +78,12 @@ const CASES = [
   "strategy-declares-phases",
   "audit-report-three-formats",
   "issue-fast-overhead",
+  "confidential-entry-not-reused",
+  "root-cause-not-repeated",
+  "cto-report-from-records",
 ];
 
-test("SP2c, SP7b-T7 AC-1, SP3-T1 AC-5, SP3-T7 AC-1: the thirty-one cases each have their four parts, and the fixtures they share exist", () => {
+test("SP2c, SP7b-T7 AC-1, SP3-T1 AC-5, SP3-T7 AC-1, SP4-T6 AC-1: the thirty-four cases each have their four parts, and the fixtures they share exist", () => {
   const folders = readdirSync(EVALS)
     .filter((f) => !["README.md", "fixtures", "results"].includes(f))
     .sort();
@@ -105,6 +110,8 @@ test("SP2c, SP7b-T7 AC-1, SP3-T1 AC-5, SP3-T7 AC-1: the thirty-one cases each ha
     "document-entry-opens-item",
     "jev-tightens-never-loosens",
     "issue-root-cause-named",
+    "confidential-entry-not-reused",
+    "root-cause-not-repeated",
   ])
     expect(readFileSync(`${EVALS}${name}/fixture.sh`, "utf8")).toContain("fixtures/node-plain.sh");
   for (const name of [
@@ -113,6 +120,7 @@ test("SP2c, SP7b-T7 AC-1, SP3-T1 AC-5, SP3-T7 AC-1: the thirty-one cases each ha
     "mail-refused-by-policy",
     "priority-lowered-with-reason",
     "thread-with-contracts",
+    "cto-report-from-records",
   ])
     expect(readFileSync(`${EVALS}${name}/fixture.sh`, "utf8")).toContain(
       "fixtures/two-projects.sh",
@@ -146,12 +154,27 @@ const PLUGIN_BIN = fileURLToPath(new URL("../../../plugins/core/bin/", import.me
  * the profile under the scaffold, the queued mail, the signed priorities and the config under the
  * test's own crew home (`home: true`), and the paths a fixture's last commit must carry (`committed`).
  */
+/** The entries of a base a fixture left, parsed: the state rows of SP4's cases read them per entry. */
+function parseBase(text: string): KnowledgeEntry[] {
+  return (JSON.parse(text) as { entries: KnowledgeEntry[] }).entries;
+}
+
+/** The item folders of a project of the scaffold, none without a work folder. */
+function itemsOf(dir: string, project = "."): string[] {
+  try {
+    return readdirSync(join(dir, project, ".crew", "work")).filter((f) => /^\d{4}-/.test(f));
+  } catch {
+    return [];
+  }
+}
+
 const SCAFFOLD_STATE: Record<
   string,
   (
     | { file: string; home?: true; pattern: RegExp }
     | { file: string; absent: true }
     | { committed: RegExp }
+    | { file: string; home?: true; assert: (text: string, dir: string) => void }
   )[]
 > = {
   "priority-lowered-with-reason": [
@@ -235,6 +258,93 @@ const SCAFFOLD_STATE: Record<
   "fast-route-overhead": [
     { file: "src/math.mjs", pattern: /^(?![\s\S]*multiply)[\s\S]*return a \+ b/ },
   ],
+  // SP4 (Task 6): the base each knowledge fixture leaves under the home, parsed per entry (the leads'
+  // returns at the spec: an absence grader is sound only when the hidden entry exists and is marked),
+  // and the tree the session finds.
+  "confidential-entry-not-reused": [
+    { file: ".crew/policy.json", pattern: /"workspace":\s*"globex"/ },
+    { file: "src/catalog.mjs", pattern: /export function entryOf/ },
+    { file: "peer/shop/.crew/policy.json", pattern: /"workspace":\s*"acme"/ },
+    {
+      file: "knowledge/base.json",
+      home: true,
+      assert: (text) => {
+        const entries = parseBase(text);
+        expect(entries.map((e) => [e.id, e.kind, e.confidential, e.workspace])).toEqual([
+          ["K-1", "documentation", false, "acme"],
+          ["K-2", "validated-solution", true, "acme"],
+          ["K-3", "stack-preference", true, "acme"],
+        ]);
+        expect(entries[0]?.title).toBe("Cache expiry in the framework");
+        // The hidden solution shares a word with the request, so it would be listed if it were visible.
+        expect(entries[1]?.title).toBe("Add a cache staleness helper");
+        expect(entries[1]?.words).toContain("cache");
+        expect(entries[1]?.text).toContain("isStale(entry, maxAge)");
+        expect(entries[2]?.title).toBe("Stack preference of acme");
+        expect(entries.filter((e) => e.confidential === false)).toHaveLength(1);
+      },
+    },
+  ],
+  "root-cause-not-repeated": [
+    { file: ".crew/policy.json", pattern: /"workspace":\s*"acme"/ },
+    // The regression: listAccounts without the filter, deactivateAccount still exported, the test gone.
+    {
+      file: "src/accounts.mjs",
+      pattern:
+        /^(?![\s\S]*\.filter\([^)]*\.active)[\s\S]*export function listAccounts[\s\S]*export function deactivateAccount/,
+    },
+    { file: "tests/active.test.mjs", absent: true },
+    { committed: /^\.crew\/work\/[^/]+-listaccounts-returns-[^/]*\/evidence\.json$/ },
+    {
+      file: "knowledge/base.json",
+      home: true,
+      assert: (text) => {
+        const entries = parseBase(text);
+        expect(entries.map((e) => e.kind)).toEqual([
+          "validated-solution",
+          "root-cause",
+          "stack-preference",
+        ]);
+        // The solution carries the changed watched files; the root cause the origin's paths alone.
+        expect(entries[0]?.paths).toEqual(
+          expect.arrayContaining(["src/accounts.mjs", "tests/active.test.mjs"]),
+        );
+        const cause = entries[1];
+        expect(cause).toMatchObject({ id: "K-2", confidential: true, workspace: "acme" });
+        expect(cause?.paths).toEqual(["src/accounts.mjs"]);
+      },
+    },
+  ],
+  "cto-report-from-records": [
+    { file: ".crew/policy.json", pattern: /"workspace":\s*"w"/ },
+    { file: "src/greeting.mjs", pattern: /export function greeting/ },
+    { file: "peer/b/src/customers.mjs", pattern: /export function findCustomer/ },
+    {
+      file: "knowledge/base.json",
+      home: true,
+      assert: (text, dir) => {
+        const byId = Object.fromEntries(parseBase(text).map((e) => [e.id, e]));
+        expect(byId["K-1"]).toMatchObject({
+          kind: "validated-solution",
+          workspace: "w",
+          confidential: true,
+        });
+        expect(byId["K-1"]?.confirmedBy.map((r) => r.project)).toEqual(["b"]);
+        expect(byId["K-1"]?.contradictedBy).toEqual([]);
+        expect(byId["K-2"]).toMatchObject({ kind: "stack-preference", workspace: "w" });
+        expect(byId["K-3"]?.confirmedBy).toEqual([]);
+        expect(byId["K-3"]?.contradictedBy).toHaveLength(1);
+        expect(byId["K-3"]?.contradictedBy[0]).toMatchObject({
+          project: "a",
+          reason: "findCustomer was replaced by the framework's query",
+        });
+        expect(byId["K-3"]?.contradictedBy[0]?.item).toMatch(/-add-a-greeting-/);
+        // Three items across the two projects: one in a, two in b.
+        expect(itemsOf(dir)).toHaveLength(1);
+        expect(itemsOf(dir, "peer/b")).toHaveLength(2);
+      },
+    },
+  ],
 };
 const SP8_CASES = [
   "strategy-rejects-over-engineering",
@@ -248,6 +358,9 @@ test("SP2c, SP3-T1 AC-5: every fixture scaffolds under sh into a committed repos
   try {
     for (const name of CASES) {
       const dir = mkdtempSync(join(tmpdir(), `crew-eval-${name}-`));
+      // One crew home per case, as the sandbox gives each run its own: a knowledge fixture's base
+      // starts at K-1, which its graders name (SP4 Task 6).
+      const caseHome = mkdtempSync(join(home, `${name}-`));
       try {
         const run = spawnSync("sh", [`${EVALS}${name}/fixture.sh`], {
           cwd: dir,
@@ -255,7 +368,7 @@ test("SP2c, SP3-T1 AC-5: every fixture scaffolds under sh into a committed repos
           env: {
             ...process.env,
             PATH: `${PLUGIN_BIN}${delimiter}${process.env.PATH}`,
-            WIZARDINGCODE_HOME: home,
+            WIZARDINGCODE_HOME: caseHome,
           },
         });
         expect(run.status, `${name}: ${run.stderr}`).toBe(0);
@@ -275,12 +388,18 @@ test("SP2c, SP3-T1 AC-5: every fixture scaffolds under sh into a committed repos
             continue;
           }
           const path =
-            "home" in state && state.home ? join(home, "crew", state.file) : join(dir, state.file);
+            "home" in state && state.home
+              ? join(caseHome, "crew", state.file)
+              : join(dir, state.file);
           if ("absent" in state) {
             expect(existsSync(path), `${name}: ${state.file} written`).toBe(false);
             continue;
           }
           expect(existsSync(path), `${name}: ${state.file} not written`).toBe(true);
+          if ("assert" in state) {
+            state.assert(readFileSync(path, "utf8"), dir);
+            continue;
+          }
           expect(readFileSync(path, "utf8"), `${name}: ${state.file}`).toMatch(state.pattern);
         }
       } finally {
@@ -311,6 +430,9 @@ test("SP7a AC-8 (Task 8), SP7b-T7 AC-1, SP3-T7 AC-1: every fixture stays inside 
     "document-entry-opens-item",
     "jev-tightens-never-loosens",
     "issue-root-cause-named",
+    "confidential-entry-not-reused",
+    "root-cause-not-repeated",
+    "cto-report-from-records",
   ];
   const files = [
     `${EVALS}fixtures/node-plain.sh`,
@@ -441,4 +563,47 @@ test("SP8-T6 AC-1: the results scan reads the kit's arms as an object keyed by a
   ]);
   expect(armRuns(undefined)).toEqual([]);
   expect(armRuns({ with: "x" })).toEqual([]);
+});
+
+const SP4_CASES = [
+  "confidential-entry-not-reused",
+  "root-cause-not-repeated",
+  "cto-report-from-records",
+];
+
+test("SP4-T6 AC-1: the knowledge cases carry the tag the sandbox runs, seed the base through the engine inside their scaffold with no key-shaped literal, every regex grader says its arm, a one-case run keeps its sandbox, and the evals record holds no key and no sandbox path", () => {
+  expect(SANDBOX_TAGS).toContain("knowledge");
+  // A one-case run keeps its workspace and trace, so a failing grader can be read (the SP8 record's first runs ran blind).
+  expect(evalInvocation({ ...base, caseName: "root-cause-not-repeated" }).args).toContain(
+    "--keep-temp",
+  );
+  for (const name of SP4_CASES) {
+    const tags =
+      readFileSync(`${EVALS}${name}/case.yaml`, "utf8").match(/^tags:\s*\[([^\]]*)\]/m)?.[1] ?? "";
+    expect(tags, name).toBe("knowledge");
+    const fixture = readFileSync(`${EVALS}${name}/fixture.sh`, "utf8");
+    expect(fixture, name).not.toMatch(/AKIA[A-Z0-9]{16}/);
+    expect(fixture, name).not.toMatch(/\$HOME|~\/|\bcurl\b|\bwget\b/);
+    expect(fixture, name).not.toMatch(/(^|[\s"'=])\/(Users|home|tmp|etc|var|opt)\//m);
+    // The base is seeded through the engine's commands, never by writing its file.
+    expect(fixture, name).not.toMatch(/base\.json/);
+    expect(fixture, name).toMatch(/crew learn /);
+    expect(readFileSync(`${EVALS}${name}/prompt.md`, "utf8")).toContain(
+      "allowed_tools: [Read, Glob, Grep, Skill]",
+    );
+    // Every regex grader says its arm: the engine's lines exist on the plugin arm alone, the fix on both.
+    for (const grader of readdirSync(`${EVALS}${name}/graders`).sort()) {
+      const text = readFileSync(`${EVALS}${name}/graders/${grader}`, "utf8");
+      if (!/^type: regex$/m.test(text)) continue;
+      expect(text.match(/^arm: (.+)$/m)?.[1], `${name}/${grader}`).toBe(
+        name === "root-cause-not-repeated" && grader === "fixed.md" ? "both" : "with-only",
+      );
+    }
+  }
+  const record = readFileSync(
+    fileURLToPath(new URL("../../../docs/evals/2026-10-20-sp4-results.md", import.meta.url)),
+    "utf8",
+  );
+  expect(record).not.toMatch(/AKIA[A-Z0-9]{16}/);
+  expect(record).not.toMatch(/\/private\/var\/folders|\/tmp\/|crew-home-/);
 });
