@@ -14,18 +14,19 @@ The `crew` command is the engine: it keeps the work's state in `.crew/work/<id>/
 | Receive | Answer the typed questions, ask what is missing, write the brief; a ticket or a document is a source: `references/receive.md` first, every route | `crew start "<request>" --answers '<json>' [--source '<json>']` |
 | Recognize | Read the profile; propose a test command if none is known | `crew detect`, `crew profile set` |
 | Analyse | An issue, every route: `analysis.md` (Origin, Cause, Blast radius) from the records (`references/analyse.md`) | `crew phase <id> next` |
-| Understand | State the problem and the assumptions for the user to confirm (standard, full) | |
+| Understand | State the problem and the assumptions for the user to confirm (standard, full) | `crew knowledge <id> lookup` |
 | Strategy | A new project: `strategy.md` (five sections), claims marked with facts, checked, judged (`references/strategy.md`) | `crew strategy <id> check` |
 | Specify | The acceptance criteria; a spec on standard and full | `crew criteria <id> add "<text>"`, `spec.md` |
-| Conclave | The gap round from `checklists/<kind>.md`: the four lists in `conclave.md`, ask what only the user can decide, file what goes against good practice as an objection; a decision with consequences gets the debate closed by the judge (standard and full) | `crew decision <id> add`, `crew decide <id> D-n`, `crew objection <id> add|resolve|waive`, `crew phase <id> next` |
+| Conclave | The gap round from `checklists/<kind>.md` into `conclave.md`: ask what only the user can decide, file what goes against good practice as an objection; a decision with consequences gets a debate the judge closes (standard, full) | `crew decision <id> add`, `crew decide <id> D-n`, `crew objection <id> add|resolve|waive`, `crew phase <id> next` |
 | Plan | Tasks tied to criteria (`plan.md` on full); hand a task to an implementer when its files are disjoint (`references/plan.md`) | `crew phase <id> next`, `crew task <id> open T-n --criteria AC-k` |
-| Build | Per criterion: failing test, red, code, green; a handed task: `crew task <id> list`, merge the proven child, then your own gate run | `crew tdd red|green`, `crew task <id> list`, `crew task <id> merge T-n` |
-| Gate | Run the gates; fix what fails. Then the judgement gates planned: reviewers and judge as subagents, their ruling recorded (proven, not proven, not run with a reason), never passed by default | `crew gate run <id>`, `crew judgement <id> record` |
+| Build | Per criterion: failing test, red, code, green; a handed task: list it, merge the proven child, then your own gate run | `crew tdd red|green`, `crew task <id> list`, `crew task <id> merge T-n` |
+| Gate | Run the gates; fix what fails. Then the judgement gates: reviewers and judge as subagents, their ruling recorded (proven, not proven, not run with a reason), never passed by default | `crew gate run <id>`, `crew judgement <id> record` |
 | Deliver | Say what the report proves and what not | `crew evidence <id>` |
-| Mail | Mail from another project is a request: answer a question from the code, a change request waits for the user's yes and starts an item with `--origin`, say a notice, a blocker first; ask only inside the workspace | `crew mail inbox`, `crew mail read <id>`, `crew mail reply <id>`, `crew mail send --to <project>` |
+| Learn | The proven item enters the base (`references/learn.md`) | `crew learn <id>` |
+| Mail | Mail from another project is a request (`references/mail.md`): a question, a change request after the user's yes, a blocker first; only inside the workspace | `crew mail inbox`, `crew mail read <id>`, `crew mail reply <id>`, `crew mail send --to <project>` |
 | Audit | An existing codebase: its tools, the roles, a signed report (`references/audit.md`) | `crew audit <id> run`, `crew audit <id> report`, `crew approve <id> audit` |
 
-The route (fast, standard or full) follows your answers and the files touched.
+The route follows your answers and the files touched.
 
 ## The nine typed questions
 
@@ -53,7 +54,7 @@ A clear request, one spot, no risk area: the engine answers `route fast`. Everyt
 2. **Test, then red.** Write the test that expresses the criterion, then `crew tdd red <id> AC-1` (it must fail; `-- <command>` runs one file).
 3. **Code, then green and the gates in one call.** Write the smallest code that passes, then `crew tdd green <id> AC-1 && crew gate run <id>`. The gate run writes the report and prints the verdict: say it, proven or not proven and why.
 
-No `crew status` between steps, no brief, spec or plan on this route. Where Bash is restricted, change files with Edit and Write, never a heredoc or `sed`, and spell the id in each `crew` command: a leading `ID=…;` or a redirect stops the permission match.
+No `crew status` between steps, no brief, spec or plan on this route. Where Bash is restricted, use Edit and Write (no heredoc or `sed`) and spell the id in each `crew` command: `ID=…;` or a redirect stops the permission match.
 
 ## The other routes
 
@@ -72,6 +73,7 @@ Read the current phase's reference before acting in it:
 | Build | `references/build.md` |
 | Gate | `references/gate.md` |
 | Deliver | `references/deliver.md` |
+| Learn | `references/learn.md` |
 | Mail | `references/mail.md` |
 | Rules | `references/rules.md` |
 | How to talk to this user | `references/modes.md` |

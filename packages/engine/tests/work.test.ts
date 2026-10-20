@@ -31,6 +31,7 @@ import {
   missingConclaveSections,
   nextPhaseOf,
   openDebate,
+  openItems,
   PHASES_BY_ROUTE,
   phasesFor,
   plannedStrategyJudgement,
@@ -294,7 +295,14 @@ test("I1: a work item records the commit its change is measured from", () => {
 });
 
 test("SP2a: the conclave sits between specify and plan on standard and full, not on fast", () => {
-  expect(PHASES_BY_ROUTE.fast).toEqual(["receive", "recognize", "build", "gate", "deliver"]);
+  expect(PHASES_BY_ROUTE.fast).toEqual([
+    "receive",
+    "recognize",
+    "build",
+    "gate",
+    "deliver",
+    "learn",
+  ]);
   expect(PHASES_BY_ROUTE.standard).toEqual([
     "receive",
     "recognize",
@@ -305,6 +313,7 @@ test("SP2a: the conclave sits between specify and plan on standard and full, not
     "build",
     "gate",
     "deliver",
+    "learn",
   ]);
   expect(PHASES_BY_ROUTE.full).toEqual(PHASES_BY_ROUTE.standard);
 });
@@ -640,6 +649,7 @@ test("SP3-T2 AC-2: phasesFor inserts analyse after recognize for an issue on eve
     "build",
     "gate",
     "deliver",
+    "learn",
   ]);
   expect(phasesFor({ route: "standard", kind: "issue" })).toEqual([
     "receive",
@@ -652,6 +662,7 @@ test("SP3-T2 AC-2: phasesFor inserts analyse after recognize for an issue on eve
     "build",
     "gate",
     "deliver",
+    "learn",
   ]);
   expect(phasesFor({ route: "full", kind: "issue" })).toEqual(
     phasesFor({ route: "standard", kind: "issue" }),
@@ -851,6 +862,7 @@ test("SP8-T2 AC-2: a new project's phases carry strategy before specify; raiseKi
     "build",
     "gate",
     "deliver",
+    "learn",
   ]);
   // The research comes first, then the document; its shape and its ruling are the strategy guard's (SP8 Task 3).
   expect(guardFor(w, "specify", { ...empty, strategyText: null })).toEqual([
@@ -986,4 +998,48 @@ test("SP8-T3 AC-2, AC-3: the guard out of strategy asks for the research, then t
     { kind: "feature", from: "work_type feature" },
   );
   expect(plannedStrategyJudgement(feature)).toEqual([]);
+});
+
+test("SP4-T4 AC-1: learn follows deliver on every route and kind but the audit, is entered on a proof that holds now, and is the last phase", () => {
+  for (const route of ["fast", "standard", "full"] as const) {
+    expect(phasesFor({ route, kind: "feature" }).slice(-2)).toEqual(["deliver", "learn"]);
+    expect(phasesFor({ route, kind: "issue" }).slice(-2)).toEqual(["deliver", "learn"]);
+  }
+  expect(phasesFor({ route: "standard", kind: "new-project" }).slice(-2)).toEqual([
+    "deliver",
+    "learn",
+  ]);
+  expect(phasesFor({ route: "full", kind: "audit" })).toEqual([
+    "receive",
+    "recognize",
+    "audit",
+    "deliver",
+  ]);
+  expect(PHASE_ORDER.at(-1)).toBe("learn");
+  const paths = repoPaths(makeRepo({ "src/a.ts": "x" }));
+  const work = createWork(paths, "x");
+  work.route = "fast";
+  work.phase = "deliver";
+  // The proof as the engine computes it now is the ticket (the security lead's R-3).
+  const stale = advancePhase(work, {
+    ...empty,
+    proven: false,
+    unproven: ["watched files changed"],
+  });
+  expect(stale).toEqual({
+    ok: false,
+    missing: [`not proven: the proof is on earlier code (crew gate run ${work.id})`],
+  });
+  expect(work.phase).toBe("deliver");
+  expect(advancePhase(work, { ...empty, proven: true, unproven: [] })).toEqual({
+    ok: true,
+    phase: "learn",
+  });
+  expect(nextPhaseOf(work)).toBeNull();
+  expect(advancePhase(work, { ...empty, proven: true, unproven: [] })).toEqual({
+    ok: false,
+    missing: ["already at the last phase"],
+  });
+  saveWork(paths, work);
+  expect(openItems(paths).map((w) => w.id)).toEqual([]);
 });

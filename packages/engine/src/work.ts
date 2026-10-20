@@ -45,9 +45,10 @@ const DELIBERATE: Phase[] = [
   "build",
   "gate",
   "deliver",
+  "learn",
 ];
 export const PHASES_BY_ROUTE: Record<Route, Phase[]> = {
-  fast: ["receive", "recognize", "build", "gate", "deliver"],
+  fast: ["receive", "recognize", "build", "gate", "deliver", "learn"],
   standard: [...DELIBERATE],
   full: [...DELIBERATE],
 };
@@ -281,7 +282,7 @@ export function openItems(paths: CrewPaths, except?: string): WorkItem[] {
   for (const id of ids) {
     if (id === except || !existsSync(workJson(paths, id))) continue;
     const { work } = loadWork(paths, id);
-    if (!work || work.phase === "deliver") continue;
+    if (!work || work.phase === "deliver" || work.phase === "learn") continue;
     const evidence = readProtectedJson<Evidence>(paths, join(workDir(paths, id), "evidence.json"));
     if (evidence.data?.verdict === "proven") continue;
     open.push(work);
@@ -735,6 +736,11 @@ export function guardFor(work: WorkItem, next: Phase, ctx: GuardContext): string
     }
     // The leads validate the delivery against the evidence the report vouches for (SP7 §6.4).
     missing.push(...leadsMissing(work, ctx, "delivery"));
+  } else if (next === "learn") {
+    // The proof as it stands now is the ticket into the base (SP4 Task 4, the security lead's
+    // return): a verdict taken on earlier code learns nothing until the gates run again.
+    if (!ctx.proven)
+      missing.push(`not proven: the proof is on earlier code (crew gate run ${work.id})`);
   }
   return missing;
 }

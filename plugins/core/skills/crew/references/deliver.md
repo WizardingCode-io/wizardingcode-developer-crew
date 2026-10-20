@@ -16,3 +16,5 @@ An audit delivers its report, not a change: say the verdict (`critical`, `attent
 Say "proven" only when the report says so. If the report says not proven, the first line of your message says not proven and why. Never soften it.
 
 The work artefacts under `.crew/work/<id>/` are committed with the change by default, so the pull request carries its own evidence.
+
+6. Then the base learns (`references/learn.md`): `crew phase <id> next` into `learn` while the proof holds on the current tree, then `crew learn <id>`; say what entered the base. An audit stops at its report.

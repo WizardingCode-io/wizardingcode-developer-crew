@@ -357,6 +357,11 @@ function problemStatus(status: GateRun["status"], p: NonNullable<GateRun["proble
  * The report. `mail` is the item's copy of its messages (`mail.json`) and `selfName` the project's
  * name in the mail, so a message this item sent reads as sent and the rest as received.
  */
+/** `learned K-7, K-8; confirmed K-4`, `learned none`: one wording for the register, the status and the report (SP4 Task 4). */
+export function learnedText(entries: readonly string[], confirmed: readonly string[]): string {
+  return `learned ${entries.join(", ") || "none"}${confirmed.length ? `; confirmed ${confirmed.join(", ")}` : ""}`;
+}
+
 export function renderReport(
   work: WorkItem,
   evidence: Evidence,
@@ -445,7 +450,15 @@ export function renderReport(
   // What the base listed at classification (SP4 Task 3): the file's bullets, or none.
   lines.push("## Knowledge", "");
   const bullets = (knowledge ?? "").split("\n").filter((l) => l.startsWith("- "));
-  lines.push(...(bullets.length ? bullets : ["- none"]), "");
+  lines.push(...(bullets.length ? bullets : ["- none"]));
+  // What the item wrote into the base at Learn (SP4 Task 4), or not yet.
+  const learned = work.learned;
+  lines.push(
+    learned
+      ? `- Learned: ${learnedText(learned.entries, learned.confirmed).slice("learned ".length)}`
+      : "- Learned: not yet",
+    "",
+  );
   // An audit's records (SP7 §7.5, SP8 Task 5): the run, the findings, the report's three files, the signature.
   if (audit) {
     lines.push("## Audit", "");

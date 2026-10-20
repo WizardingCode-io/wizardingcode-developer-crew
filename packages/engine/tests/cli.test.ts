@@ -525,7 +525,7 @@ test("a fast-route fix from start to a proven report", async () => {
   expect(status.data.verdict).toBe("proven");
   expect(status.data.active).toBe(id);
   expect(status.data.title).toBe("Cart total ignores the discount");
-  expect(status.data.phases).toEqual(["receive", "recognize", "build", "gate", "deliver"]);
+  expect(status.data.phases).toEqual(["receive", "recognize", "build", "gate", "deliver", "learn"]);
   expect(status.data.criteria).toEqual([
     {
       id: "AC-1",
@@ -4081,6 +4081,7 @@ test("SP3-T2 AC-1, AC-2, AC-3: crew start records the kind and says where it cam
     "build",
     "gate",
     "deliver",
+    "learn",
   ]);
   expect((await c.run("status")).out).toContain(
     "phase analyse, route fast, kind issue, priority normal",
@@ -4184,6 +4185,7 @@ const PHASES_BY_ROUTE_STANDARD = [
   "build",
   "gate",
   "deliver",
+  "learn",
 ];
 
 const TICKET = JSON.stringify({
@@ -6734,4 +6736,58 @@ test("SP4-T3 AC-4: crew strategy check and the guard accept a [K:<id>] the engin
   );
   expect((await c.run("phase", id, "next")).err).toContain("K-9 is not listed in knowledge.md");
   expect((await c.run("status")).out).toContain("strategy from the research and the base: 1 fault");
+});
+
+test("SP4-T4 AC-5: crew status says what learning is left in deliver and in learn, crew learn writes the base and the register, --json carries learned, and a proof on earlier code is refused at the phase and at the command", async () => {
+  const env = testEnv();
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  write(root, ".crew/policy.json", JSON.stringify({ mail: { workspace: "acme", name: "shop" } }));
+  const c = io(root, env);
+  const id = (
+    await c.json("start", "Add a total", "--answers", answers, "--criterion", "the total adds up")
+  ).data.id as string;
+  write(root, "src/a.ts", "export const total = 1;\n");
+  await c.run("skip", id, "tdd:AC-1", "--reason", "manual");
+  const gate = await c.run("gate", "run", id);
+  expect(gate.out).toContain(`Proven: ${id}`);
+  expect((await c.json("status")).data.phase).toBe("deliver");
+  expect((await c.run("status")).out).toContain(
+    `  learn: proven; crew phase ${id} next, then crew learn ${id} writes the base`,
+  );
+  expect((await c.run("learn", id)).err.trim()).toBe(
+    `crew learn runs in the learn phase: crew phase ${id} next first`,
+  );
+  expect((await c.run("phase", id, "next")).out.trim()).toBe(`${id}: phase learn`);
+  expect((await c.run("status")).out).toContain(`  learn: proven, not learned: crew learn ${id}`);
+  const learned = await c.run("learn", id);
+  expect(learned.code, learned.err).toBe(0);
+  expect(learned.out).toContain('K-1 · validated-solution · "Add a total"');
+  expect(learned.out).toContain("K-2 · stack-preference");
+  expect((await c.run("status")).out).toContain("  learn: learned K-1, K-2");
+  expect((await c.json("status")).data.learned).toMatchObject({
+    entries: ["K-1", "K-2"],
+    confirmed: [],
+  });
+  expect(listDecisions(repoPaths(root, env))[0]).toMatchObject({
+    item: id,
+    kind: "knowledge",
+    text: "learned K-1, K-2",
+    by: "the agent",
+  });
+  expect((await c.run("evidence", id)).out).toContain("- Learned: K-1, K-2\n");
+  // A second item whose proof is left behind by an edit learns nothing until it is proven again.
+  const id2 = (
+    await c.json("start", "Add a count", "--answers", answers, "--criterion", "the count counts")
+  ).data.id as string;
+  write(root, "src/b.ts", "export const count = 1;\n");
+  await c.run("skip", id2, "tdd:AC-1", "--reason", "manual");
+  expect((await c.run("gate", "run", id2)).out).toContain(`Proven: ${id2}`);
+  write(root, "src/b.ts", "export const count = 2;\n");
+  const stale = await c.run("phase", id2, "next");
+  expect(stale.code).toBe(1);
+  expect(stale.err).toContain(`not proven: the proof is on earlier code (crew gate run ${id2})`);
+  expect((await c.run("status")).out).not.toContain("  learn: proven;");
 });

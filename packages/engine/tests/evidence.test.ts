@@ -1082,3 +1082,17 @@ test("SP4-T3 AC-5: the report's Knowledge section carries the file's bullets, or
   );
   expect(report).not.toContain("# Knowledge for x");
 });
+
+test("SP4-T4 AC-5: the report's Knowledge section ends with what was learned, or not yet", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const work = createWork(paths, "a login change");
+  expect(renderReport(work, emptyEvidence(), DEFAULT_POLICY)).toContain(
+    "## Knowledge\n\n- none\n- Learned: not yet\n",
+  );
+  work.learned = { at: "2026-10-20T00:00:00.000Z", entries: ["K-7", "K-8"], confirmed: ["K-4"] };
+  expect(renderReport(work, emptyEvidence(), DEFAULT_POLICY)).toContain(
+    "- Learned: K-7, K-8; confirmed K-4\n",
+  );
+  work.learned = { at: "2026-10-20T00:00:00.000Z", entries: [], confirmed: [] };
+  expect(renderReport(work, emptyEvidence(), DEFAULT_POLICY)).toContain("- Learned: none\n");
+});

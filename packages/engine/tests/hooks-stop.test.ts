@@ -537,3 +537,17 @@ test("SP8-T2 AC-4: the Stop hook holds nothing on an audit item with a clean tre
   saveWork(ctx.paths, work);
   expect(onStop(ctx)).toEqual({});
 });
+
+test("SP4-T4 AC-5: the Stop hook holds nothing for a proven item in learn with a clean tree", async () => {
+  const { root, ctx } = session();
+  const work = createWork(ctx.paths, "fix");
+  work.route = "fast";
+  addCriterion(work, "x");
+  addSkip(work, "tdd:AC-1", "manual");
+  write(root, "src/a.ts", "changed");
+  await runGates(ctx.paths, work, ctx.profile, ctx.policy);
+  work.phase = "learn";
+  saveWork(ctx.paths, work);
+  expect(onStop(ctx)).toEqual({});
+  expect(onStop(ctx)).toEqual({});
+});

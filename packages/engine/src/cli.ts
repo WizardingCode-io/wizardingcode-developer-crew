@@ -44,6 +44,7 @@ import {
   type AuditReportView,
   countedNote,
   decidedBy,
+  learnedText,
   loadEvidence,
   renderReport,
   tddSummary,
@@ -90,6 +91,7 @@ import {
   visibleTo,
   words,
 } from "./knowledge.ts";
+import { learnItem } from "./learn.ts";
 import {
   acceptMail,
   badPriority,
@@ -2412,6 +2414,44 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         { approvals: opened.work.approvals },
       );
     }
+    case "learn": {
+      // The proven item enters the base (SP4 Task 4): the proof as it stands now is the ticket.
+      const opened = openForChange(env, args[0]);
+      if (isOutcome(opened)) return opened;
+      const confirm = typeof parsed.flags.confirm === "string" ? parsed.flags.confirm : undefined;
+      const current = assess(env.paths, opened.work, env.profile, env.policy, opened.tampered);
+      const outcome = learnItem(
+        env.paths,
+        opened.work,
+        env.profile,
+        env.policy,
+        env.mail,
+        current.verdict === "proven",
+        { confirm },
+      );
+      if ("refused" in outcome) return refuse(outcome.refused);
+      saveWork(env.paths, opened.work);
+      const ids = outcome.entries.map((e) => e.id).join(", ") || "none";
+      appendDecision(env.paths, {
+        at: nowIso(),
+        item: opened.work.id,
+        kind: "knowledge",
+        text: learnedText(
+          outcome.entries.map((e) => e.id),
+          outcome.confirmed,
+        ),
+        by: "the agent",
+      });
+      const lines = [
+        ...outcome.entries.map((e) => `${e.id} · ${e.kind} · "${e.title}"`),
+        ...(outcome.confirmed.length ? [`confirmed ${outcome.confirmed.join(", ")}`] : []),
+        ...outcome.skipped.map((s) => `skipped ${s}`),
+        ...outcome.notices.map((n) =>
+          n.refused ? `notice to ${n.to} refused: ${n.refused}` : `notice ${n.id} to ${n.to}`,
+        ),
+      ];
+      return ok(lines.join("\n") || "learned none", { learned: opened.work.learned, ...outcome });
+    }
     case "phase": {
       const opened = openForChange(env, args[0]);
       if (isOutcome(opened)) return opened;
@@ -3715,9 +3755,18 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           : null,
       ].filter((l): l is string => l !== null);
       if (work.source) extra.unshift(`  source ${sourceLine(work.source)}`);
-      // What the base listed at classification (SP4 Task 3).
+      // What the base listed at classification (SP4 Task 3), and what is left to learn (Task 4).
       const knowledge = knowledgeLine(env, work);
       if (knowledge) extra.push(knowledge);
+      const learned = work.learned;
+      const learnLine = learned
+        ? `  learn: ${learnedText(learned.entries, learned.confirmed)}`
+        : work.phase === "learn"
+          ? `  learn: proven, not learned: crew learn ${work.id}`
+          : work.phase === "deliver" && result.verdict === "proven"
+            ? `  learn: proven; crew phase ${work.id} next, then crew learn ${work.id} writes the base`
+            : null;
+      if (learnLine) extra.push(learnLine);
       // The strategy while it is written and judged (SP7 §7.3): its faults and its ruling.
       const plannedStrategy =
         work.phase === "strategy" ? plannedStrategyJudgement(work)[0] : undefined;
@@ -3796,8 +3845,9 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         debate: debateState(work),
         baseCommit: work.baseCommit,
         phases: phasesFor(work),
-        // What the base listed at classification (SP4 Task 3).
+        // What the base listed at classification (SP4 Task 3) and what the item learned (Task 4).
         knowledge: work.knowledge ?? null,
+        learned: work.learned ?? null,
         // An audit's checks (SP8 Task 5): what the mod's Audit block and the strip draw.
         ...(kindOfItem(work) === "audit" ? { audit: auditStatusOf(env, work) } : {}),
         verdict: result.verdict,
@@ -4211,6 +4261,7 @@ const HELP = `crew ${VERSION}
   knowledge list [--kind <k>] | show K-n   the knowledge base as this project reads it (rule 13: unmarked entries, and marked ones of this workspace)
   knowledge add --kind general|documentation --title "<t>" --file <path> [--source <url>]   a person's material, from the project's own tree, marked
   knowledge contradict K-n --reason "<why>" [--item <id>]   dispute an entry (recorded); knowledge unmark K-n   a person removes a mark (asks the user; never with --mode or --validator)
+  learn <id> [--confirm K-n]           the proven item enters the base (in the learn phase): its solution, an issue's root cause, the facts with a source, the workspace's stack preference; what it cited is confirmed; a root cause the base holds is refused unless confirmed
   skip <id> <step> --reason "<text>"    record a skip of a tdd step, a gate or a judgement gate (asks the user; --mode as for approve)
   evidence <id>                         write and print the report
   status | mode [m] | config <key> [v]  state and settings

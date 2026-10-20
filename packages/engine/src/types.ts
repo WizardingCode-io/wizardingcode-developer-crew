@@ -474,7 +474,8 @@ export type Phase =
   | "plan"
   | "build"
   | "gate"
-  | "deliver";
+  | "deliver"
+  | "learn";
 export const PHASE_ORDER: readonly Phase[] = [
   "receive",
   "recognize",
@@ -488,6 +489,7 @@ export const PHASE_ORDER: readonly Phase[] = [
   "build",
   "gate",
   "deliver",
+  "learn",
 ];
 
 export type RiskArea =
@@ -651,6 +653,8 @@ export interface WorkItem {
   kindFrom?: string;
   /** What the base listed for this item at its classification (SP4 Task 3); absent before 0.10.0. */
   knowledge?: KnowledgeRecord;
+  /** What `crew learn` wrote and confirmed (SP4 Task 4); absent until the item learned. */
+  learned?: { at: string; entries: string[]; confirmed: string[] };
   route: Route;
   routeReasons: string[];
   riskAreas: RiskArea[];

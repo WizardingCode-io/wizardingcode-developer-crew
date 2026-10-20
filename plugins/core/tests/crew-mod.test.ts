@@ -12,7 +12,7 @@ const PROVEN = {
   route: "fast",
   awaiting: null,
   baseCommit: "abc1234",
-  phases: ["receive", "recognize", "build", "gate", "deliver"],
+  phases: ["receive", "recognize", "build", "gate", "deliver", "learn"],
   verdict: "proven",
   unproven: [],
   criteria: [{ id: "AC-1", kind: "behavior", text: "The total subtracts the discount.", tdd: "red then green" }],
@@ -208,7 +208,7 @@ const JUDGED = {
   title: "Delete accounts",
   phase: "gate",
   route: "standard",
-  phases: ["receive", "recognize", "understand", "specify", "conclave", "plan", "build", "gate", "deliver"],
+  phases: ["receive", "recognize", "understand", "specify", "conclave", "plan", "build", "gate", "deliver", "learn"],
   verdict: "unproven",
   unproven: ["judgement gate test-quality not proven"],
   decisions: [
@@ -244,7 +244,7 @@ test("the panel lists decisions with their answers, objections with their text, 
   stubs(on, () => ({ exitCode: 0, stdout: JSON.stringify(JUDGED), stderr: "" }));
   await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
   const ui = await $.ui.mount({ ...PANE, surface: "terminal" });
-  expect(await ui.find({ type: "Text", text: "receive › recognize › understand › specify › conclave › plan › build › [gate] › deliver" })).toBeDefined();
+  expect(await ui.find({ type: "Text", text: "receive › recognize › understand › specify › conclave › plan › build › [gate] › deliver › learn" })).toBeDefined();
   expect(await ui.find({ type: "Text", text: "D-1 Erasure or deactivation? → deactivation (by user)" })).toBeDefined();
   expect(await ui.find({ type: "Text", text: "D-2 Who holds the delete permission? → unanswered" })).toBeDefined();
   expect(await ui.find({ type: "Text", text: "O-1 blocking open · A support ticket's delete may be an erasure request" })).toBeDefined();
@@ -307,7 +307,7 @@ test("the panel lists phases, criteria, gates and the verdict, and its buttons w
   expect(opened.text).toBeUndefined();
   const ui = await $.ui.mount({ ...PANE, surface: "terminal" });
   expect(await ui.find({ type: "Text", text: '2026-10-07-001-fix-total "Fix total"' })).toBeDefined();
-  expect(await ui.find({ type: "Text", text: "receive › recognize › build › gate › [deliver]" })).toBeDefined();
+  expect(await ui.find({ type: "Text", text: "receive › recognize › build › gate › [deliver] › learn" })).toBeDefined();
   expect(await ui.find({ type: "Text", text: "AC-1 behavior · red then green · The total subtracts the discount." })).toBeDefined();
   expect(await ui.find({ type: "Text", text: "test (.): pass in 0.8s" })).toBeDefined();
   expect(await ui.find({ type: "Text", text: "Proven: secrets, test" })).toBeDefined();
@@ -566,7 +566,7 @@ test("SP7a AC-7 (Task 7): the panel shows the branch after the phases, then the 
   await $.command.run({ command: "crew", args: "panel" });
   const ui = await $.ui.mount({ ...PANE, surface: "terminal" });
   const texts = (await ui.findAll({ type: "Text" })).map((t) => t.text);
-  const phases = texts.indexOf("receive › recognize › understand › specify › conclave › plan › build › [gate] › deliver");
+  const phases = texts.indexOf("receive › recognize › understand › specify › conclave › plan › build › [gate] › deliver › learn");
   expect(phases).toBeGreaterThan(0);
   expect(texts[phases + 1]).toBe("Branch: main");
   const lastJudgement = texts.indexOf("risk: skipped (no production yet)");

@@ -526,3 +526,23 @@ test("SP8-T3: the skill page has the Strategy row between Understand and Specify
   expect(readReference("understand.md")).toContain("references/strategy.md");
   expect(Buffer.byteLength(skill, "utf8")).toBeLessThanOrEqual(9254);
 });
+
+test("SP4-T4 AC-6: the skill page has the Learn row and the two verbs within the ceiling, the learn reference says what is written and refused, and deliver hands off to learn", () => {
+  expect(skill).toContain("| Learn |");
+  expect(skill).toContain("`crew learn <id>`");
+  expect(skill).toContain("`crew knowledge <id> lookup`");
+  expect(skill).toContain("| Learn | `references/learn.md` |");
+  expect(Buffer.byteLength(skill, "utf8")).toBeLessThanOrEqual(9254);
+  const learn = readReference("learn.md");
+  for (const phrase of [
+    "validated-solution",
+    "root-cause",
+    "--confirm K-n",
+    "crew knowledge contradict",
+    "notice",
+    "secrets scanner",
+    "an audit learns nothing",
+  ])
+    expect(learn).toContain(phrase);
+  expect(readReference("deliver.md")).toContain("crew learn <id>");
+});
