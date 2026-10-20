@@ -14,7 +14,7 @@ import {
   utimesSync,
   writeFileSync,
 } from "node:fs";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type CliIo, main } from "../src/cli.ts";
 import { listDecisions } from "../src/decisions.ts";
@@ -30,9 +30,11 @@ import { loadProfile } from "../src/profile.ts";
 import { recordWorking } from "../src/state.ts";
 import { readProtectedJson, writeProtectedJson } from "../src/store.ts";
 import type { GateRun, KnowledgeEntry, Message, WorkItem } from "../src/types.ts";
+import { VERSION } from "../src/version.ts";
 import { loadWork, saveWork } from "../src/work.ts";
 import { auditFixture, PLANTED_KEY } from "./audit-run.test.ts";
 import { git, makeRepo, repoPaths, tempDir, testEnv, write } from "./helpers.ts";
+import { writePack } from "./pack-fixtures.ts";
 import { RESEARCH, STRATEGY } from "./strategy.test.ts";
 
 test("SP2b: debate open and close through the command; plan waits while the debate is open; status says so", async () => {
@@ -7402,4 +7404,250 @@ test("SP4-T6 AC-1 (the CTO case's first runs): crew start --observed opens a cri
   expect((await c.run("cto", "review", "--workspace", "w")).out).toContain(
     'The review item\'s criterion has no test: open it with crew start "<request>" --answers \'<json>\' --observed "<the plan filed>"',
   );
+});
+
+test("SP6-T2 AC-2, AC-3, AC-4, AC-5, AC-6: the pack commands end to end (add with its lines and refusals, list, show, files, remove, sync), the profile's tag and pack, the team's seat, template and knowledge lines, the status JSON and warning, the report's Packs line, the register", async () => {
+  const env = testEnv();
+  const root = makeRepo({
+    "composer.json": JSON.stringify({ scripts: { test: "phpunit" } }),
+    artisan: "x",
+    "app/User.php": "x",
+    "agents/triage.ts": "x",
+    ".crew/policy.json": JSON.stringify({ team: { template: "agentic-os" } }),
+  });
+  const c = io(root, env);
+  const paths = repoPaths(root, env);
+  const laravel = writePack();
+  const agentic = writePack(
+    {
+      name: "wizardingcode-pack-agentic-os",
+      kind: "team",
+      detectors: [],
+      checklists: ["checklists/agent.md"],
+      knowledge: { agentic: "knowledge/agentic.md" },
+      team: {
+        template: "agentic-os",
+        teams: { "agentic-os": { mandatory: { kind: "paths", globs: ["agents/**"] } } },
+      },
+    },
+    { "checklists/agent.md": "# Agent\n", "knowledge/agentic.md": "# Agentic\n" },
+  );
+  const register = () =>
+    listDecisions(paths)
+      .filter((d) => d.kind === "pack")
+      .map((d) => d.text);
+  // No pack yet: the list says so, files print nothing.
+  expect((await c.run("pack", "list")).out.trim()).toBe(
+    "no pack registered (crew pack add <path>)",
+  );
+  expect((await c.run("pack", "files", "checklists", "agent")).out).toBe("");
+  // add: a refusal names the field and registers nothing.
+  const bad = await c.run("pack", "add", writePack({ core: ">=99.0.0" }));
+  expect(bad.code).toBe(1);
+  expect(bad.err.trim()).toBe(
+    `core >=99.0.0 needs an engine at or above 99.0.0; this is ${VERSION}`,
+  );
+  expect((await c.run("pack", "list")).out.trim()).toBe(
+    "no pack registered (crew pack add <path>)",
+  );
+  expect((await c.run("pack", "add")).err.trim()).toBe(
+    "usage: crew pack add <path> | remove <name> | list | show <name> | files checklists <kind> | files knowledge <key> | files knowledge --item <id> | sync",
+  );
+  const added = await c.run("pack", "add", laravel);
+  expect(added.code, added.err).toBe(0);
+  expect(added.out.trim()).toBe(
+    [
+      "wizardingcode-pack-laravel 0.1.0 registered (stack): 1 checklist, 1 knowledge file, 1 detector rule, template none",
+      '  laravel: test "php artisan test" (proposed until crew profile confirm test in each project it applies to)',
+      '  laravel: lint "vendor/bin/pint --test" (proposed until crew profile confirm lint in each project it applies to)',
+      '  laravel: scoped test "php artisan test {files}" (proposed until crew profile confirm test in each project it applies to)',
+    ].join("\n"),
+  );
+  expect((await c.run("pack", "add", agentic)).out.trim()).toBe(
+    "wizardingcode-pack-agentic-os 0.1.0 registered (team): 1 checklist, 1 knowledge file, 0 detector rules, template agentic-os",
+  );
+  // list and show, with their fixed lines.
+  expect((await c.run("pack", "list")).out.trim().split("\n")).toEqual([
+    `wizardingcode-pack-laravel 0.1.0 · stack · ${laravel} · ok`,
+    `wizardingcode-pack-agentic-os 0.1.0 · team · ${agentic} · ok`,
+  ]);
+  const shown = (await c.run("pack", "show", "wizardingcode-pack-laravel")).out.trim().split("\n");
+  expect(shown[0]).toBe("wizardingcode-pack-laravel 0.1.0 · stack · ok");
+  expect(shown[1]).toBe(`root: ${laravel}`);
+  expect(shown[2]).toMatch(/^registered: \d{4}-\d{2}-\d{2}T\S+ by command$/);
+  expect(shown.slice(3)).toEqual([
+    `core: >=${VERSION} · verified against: laravel 12.x`,
+    'detectors: laravel extends php (test "php artisan test", lint "vendor/bin/pint --test")',
+    "checklists: eloquent-model",
+    "knowledge: laravel",
+    "template: none",
+    "evals: pack-laravel-refines-the-gates",
+    "provenance: none",
+  ]);
+  const shownAgentic = (await c.run("pack", "show", "wizardingcode-pack-agentic-os")).out;
+  expect(shownAgentic).toContain("\ndetectors: none\n");
+  expect(shownAgentic).toContain("\ntemplate: agentic-os (agentic-os: agents/**)\n");
+  expect((await c.run("pack", "show", "wizardingcode-pack-x")).err.trim()).toBe(
+    "no pack wizardingcode-pack-x is registered (crew pack list)",
+  );
+  // files: absolute paths, one per line.
+  expect((await c.run("pack", "files", "checklists", "eloquent-model")).out.trim()).toBe(
+    join(laravel, "checklists", "eloquent-model.md"),
+  );
+  expect((await c.run("pack", "files", "knowledge", "agentic")).out.trim()).toBe(
+    join(agentic, "knowledge", "agentic.md"),
+  );
+  // The register (newest first): the adds alone; list, show and files wrote nothing.
+  expect(register()).toEqual([
+    "pack add wizardingcode-pack-agentic-os 0.1.0",
+    "pack add wizardingcode-pack-laravel 0.1.0",
+  ]);
+  // The rule reaches the profile at the next detection: the pack and the tag printed, the commands
+  // and the scoped template proposed (round 3: the template beside the gates, with the same marks).
+  const detected = await c.run("detect", "--refresh");
+  expect(detected.code, detected.err).toBe(0);
+  expect(detected.out).toContain(
+    "  . (php, composer): test=php artisan test [proposed] (pack wizardingcode-pack-laravel), lint=vendor/bin/pint --test [proposed] (pack wizardingcode-pack-laravel), testScoped=php artisan test {files} [proposed] (pack wizardingcode-pack-laravel)\n    tags: laravel",
+  );
+  expect(loadProfile(paths).profile?.targets[0]?.tags).toEqual(["laravel"]);
+  // An item on the standard route: the seat of the pack team on the changed path, the template line, the knowledge line.
+  const id = (
+    await c.json(
+      "start",
+      "Change the triage agent",
+      "--answers",
+      JSON.stringify({ ...JSON.parse(answers), work_type: "feature", scope: 1 }),
+      "--criterion",
+      "x",
+    )
+  ).data.id as string;
+  expect((await c.run("evidence", id)).out).toContain("\n- Packs: none\n");
+  write(root, "agents/triage.ts", "changed");
+  const team = await c.run("team", id);
+  expect(team.code, team.err).toBe(0);
+  expect(team.out).toContain("expert (pack wizardingcode-pack-agentic-os (agents/**))");
+  expect(team.out).toContain("\ntemplate: agentic-os (pack)\n");
+  expect(team.out.trim().split("\n").at(-1)).toBe(
+    `knowledge for the expert: ${join(laravel, "knowledge", "laravel.md")}`,
+  );
+  // The Packs line after crew team alone: the pack served to the expert (laravel, by the target's
+  // tag) and the pack whose template seated the team (agentic, by nothing else).
+  expect((await c.run("evidence", id)).out).toContain(
+    "\n- Packs: wizardingcode-pack-laravel 0.1.0, wizardingcode-pack-agentic-os 0.1.0\n",
+  );
+  // A third pack registered after the team: files knowledge --item serves it and records it on its own.
+  const php = writePack(
+    { name: "wizardingcode-pack-php", knowledge: { php: "knowledge/php.md" }, detectors: [] },
+    { "knowledge/php.md": "# PHP\n" },
+  );
+  expect((await c.run("pack", "add", php)).code).toBe(0);
+  const forItem = await c.run("pack", "files", "knowledge", "--item", id);
+  expect(forItem.out.trim().split("\n")).toEqual([
+    join(laravel, "knowledge", "laravel.md"),
+    join(php, "knowledge", "php.md"),
+  ]);
+  expect(forItem.err).toBe("");
+  expect((await c.run("evidence", id)).out).toContain(
+    "\n- Packs: wizardingcode-pack-laravel 0.1.0, wizardingcode-pack-agentic-os 0.1.0, wizardingcode-pack-php 0.1.0\n",
+  );
+  // A specialist of the wrong form and one naming no pack: said on stderr, the rest served.
+  write(
+    root,
+    ".crew/policy.json",
+    JSON.stringify({ team: { template: "agentic-os", specialists: ["agentic", "rust:rust"] } }),
+  );
+  expect((await c.run("policy", "accept")).code).toBe(0);
+  const skipped = await c.run("pack", "files", "knowledge", "--item", id);
+  expect(skipped.err).toBe(
+    "no knowledge file: agentic: not of the form <pack>:<key>\nno knowledge file: rust:rust: no pack rust is registered\n",
+  );
+  // The rest is served: the target's tag (laravel) and its stack (php), the specialists aside.
+  expect(skipped.out.trim().split("\n")).toEqual([
+    join(laravel, "knowledge", "laravel.md"),
+    join(php, "knowledge", "php.md"),
+  ]);
+  // A climbing name is refused by remove, the engine's files untouched.
+  expect((await c.run("pack", "remove", "../projects")).err.trim()).toBe(
+    "../projects is not a pack name (wizardingcode-pack-<name>)",
+  );
+  expect((await c.run("pack", "remove", "wizardingcode-pack-php")).out.trim()).toBe(
+    "wizardingcode-pack-php removed",
+  );
+  // status --json carries the registrations; no warning while the template is registered.
+  const status = await c.json("status");
+  expect(status.data.packs).toEqual([
+    {
+      name: "wizardingcode-pack-laravel",
+      version: "0.1.0",
+      kind: "stack",
+      root: laravel,
+      by: "command",
+      state: "ok",
+    },
+    {
+      name: "wizardingcode-pack-agentic-os",
+      version: "0.1.0",
+      kind: "team",
+      root: agentic,
+      by: "command",
+      state: "ok",
+    },
+  ]);
+  expect((await c.run("status")).out).not.toContain("is not a registered pack's template");
+  // remove the template's pack: the warning on status and team; the report keeps what was served.
+  expect((await c.run("pack", "remove", "wizardingcode-pack-agentic-os")).out.trim()).toBe(
+    "wizardingcode-pack-agentic-os removed",
+  );
+  const warning =
+    "team.template agentic-os is not a registered pack's template: the core registry applies";
+  expect((await c.run("status")).out).toContain(`\n  ${warning}\n`);
+  expect((await c.run("team", id)).out).toContain(`\n${warning}`);
+  expect((await c.run("evidence", id)).out).toContain(
+    "\n- Packs: wizardingcode-pack-laravel 0.1.0, wizardingcode-pack-agentic-os 0.1.0, wizardingcode-pack-php 0.1.0\n",
+  );
+  expect(register()[0]).toBe("pack remove wizardingcode-pack-agentic-os");
+  // sync by hand: the registry file under HOME, CLAUDE_PLUGIN_ROOT set, in the command's environment.
+  const home = tempDir("home-");
+  const registry = join(home, ".claude", "plugins", "installed_plugins.json");
+  mkdirSync(dirname(registry), { recursive: true });
+  writeFileSync(
+    registry,
+    JSON.stringify({
+      version: 1,
+      plugins: {
+        "wizardingcode-pack-agentic-os@m": [
+          { scope: "user", installPath: agentic, version: "0.1.0" },
+        ],
+      },
+    }),
+  );
+  const sync = io(root, { ...env, HOME: home, CLAUDE_PLUGIN_ROOT: "/x" });
+  expect((await sync.run("pack", "sync")).out.trim()).toBe(
+    "wizardingcode-pack-agentic-os 0.1.0 registered (wizardingcode-pack-agentic-os@m)",
+  );
+  expect((await sync.run("pack", "sync")).out.trim()).toBe("nothing changed");
+  expect((await c.run("pack", "sync")).out.trim()).toBe("nothing changed");
+  expect(register().slice(0, 3)).toEqual([
+    "pack sync: nothing changed",
+    "pack sync: nothing changed",
+    "pack sync: wizardingcode-pack-agentic-os 0.1.0 registered (wizardingcode-pack-agentic-os@m)",
+  ]);
+  // crew profile confirm on a pack's test gate confirms its scoped template with it, the pack kept on both.
+  const confirmed = await c.run("profile", "confirm", "test");
+  expect(confirmed.out).toContain("test: php artisan test");
+  expect(confirmed.out).toContain("test (scoped): php artisan test {files}");
+  // The profile printed again (crew detect keeps a person's confirmations): the marks gone from both.
+  expect((await c.run("detect")).out).toContain(
+    "test=php artisan test (pack wizardingcode-pack-laravel), lint=vendor/bin/pint --test [proposed] (pack wizardingcode-pack-laravel), testScoped=php artisan test {files} (pack wizardingcode-pack-laravel)",
+  );
+  expect(loadProfile(paths).profile?.targets[0]?.gates.test).toEqual({
+    command: "php artisan test",
+    source: "confirmed",
+    pack: "wizardingcode-pack-laravel",
+  });
+  expect(loadProfile(paths).profile?.targets[0]?.testScoped).toEqual({
+    command: "php artisan test {files}",
+    source: "confirmed",
+    pack: "wizardingcode-pack-laravel",
+  });
 });

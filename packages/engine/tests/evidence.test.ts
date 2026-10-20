@@ -1089,3 +1089,15 @@ test("SP4-T5 AC-5: the report links the latest CTO plan after the Type line, or 
     "\n- CTO plan: none\n",
   );
 });
+
+test("SP6-T2 AC-6: the report's Packs line names the packs the item used after the CTO plan line, or none", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const work = createWork(paths, "a laravel change");
+  expect(renderReport(work, emptyEvidence(), DEFAULT_POLICY)).toContain(
+    "\n- CTO plan: none\n- Packs: none\n",
+  );
+  work.packs = ["wizardingcode-pack-laravel 0.1.0", "wizardingcode-pack-agentic-os 0.1.0"];
+  expect(renderReport(work, emptyEvidence(), DEFAULT_POLICY)).toContain(
+    "\n- Packs: wizardingcode-pack-laravel 0.1.0, wizardingcode-pack-agentic-os 0.1.0\n",
+  );
+});

@@ -58,7 +58,7 @@ No `crew status` between steps, no brief, spec or plan. Where Bash is restricted
 
 ## The other routes
 
-Read the phase's reference before acting:
+Read the phase's reference first:
 
 | Phase | Reference |
 | :- | :- |
@@ -75,8 +75,9 @@ Read the phase's reference before acting:
 | Deliver | `references/deliver.md` |
 | Learn | `references/learn.md` |
 | Mail | `references/mail.md` |
+| Packs | `references/packs.md` |
 | Rules | `references/rules.md` |
-| How to talk to this user | `references/modes.md` |
+| This user | `references/modes.md` |
 
 ## Rules that do not bend
 
@@ -89,4 +90,4 @@ Read the phase's reference before acting:
 7. **State changed outside the engine** stops every command that saves. Say which file the engine names; only the user runs `crew accept`.
 8. **One checkout per session.** The proof covers every watched file, so a second session on the same checkout blocks this one's turn ends; beside another, a worktree: `git worktree add ../<name> -b <branch>`.
 
-`crew status` says where the work stands.
+`crew status` says where the work is.

@@ -1,4 +1,5 @@
 import { riskAreasForPaths } from "./classify.ts";
+import { matchesAny } from "./glob.ts";
 import { isInterfacePath } from "./paths-kind.ts";
 import type {
   JudgementGateName,
@@ -10,12 +11,12 @@ import type {
   TeamName,
 } from "./types.ts";
 
-/** When a team sits at the table: always from standard up, on a risk area, on the full route, or on named paths (a pack rule). */
+/** When a team sits at the table: always from standard up, on a risk area, on the full route, or on named paths (a pack's template gives the globs, SP6 Task 2). */
 export type MandatoryRule =
   | { kind: "always" }
   | { kind: "risk-area"; area: RiskArea }
   | { kind: "route"; route: "full" }
-  | { kind: "paths" };
+  | { kind: "paths"; globs?: string[]; pack?: string };
 
 export interface TeamDef {
   lead: string;
@@ -94,6 +95,49 @@ export const TEAMS: Record<TeamName, TeamDef> = {
     validates: false,
   },
 };
+
+/** A pack's team template as the registry reads it (SP6 Task 2): globs for a `paths` team, nothing else. */
+export interface RegistryTemplate {
+  pack: string;
+  template: {
+    template: string;
+    teams: Partial<Record<TeamName, { mandatory: { kind: "paths"; globs: string[] } }>>;
+  };
+}
+
+/**
+ * The registry an item is planned from (SP6 Task 2 AC-4): the core's, or the core's with the globs
+ * of the registered template `policy.team.template` names on its `paths` teams. A template adds
+ * globs and nothing else; an unregistered name applies nothing and is said.
+ */
+export function teamsFor(
+  policy: Policy,
+  templates: readonly RegistryTemplate[],
+): { teams: Record<TeamName, TeamDef>; warning: string | null } {
+  const teams = Object.fromEntries(
+    (Object.entries(TEAMS) as [TeamName, TeamDef][]).map(([name, def]) => [
+      name,
+      { ...def, members: [...def.members], gates: [...def.gates], mandatory: { ...def.mandatory } },
+    ]),
+  ) as Record<TeamName, TeamDef>;
+  const wanted = policy.team.template;
+  if (wanted === "core") return { teams, warning: null };
+  const found = templates.find((t) => t.template.template === wanted);
+  if (!found)
+    return {
+      teams,
+      warning: `team.template ${wanted} is not a registered pack's template: the core registry applies`,
+    };
+  for (const [name, def] of Object.entries(found.template.teams) as [
+    TeamName,
+    { mandatory: { kind: "paths"; globs: string[] } },
+  ][]) {
+    const team = teams[name];
+    if (team?.mandatory.kind !== "paths") continue;
+    team.mandatory = { kind: "paths", globs: [...def.mandatory.globs], pack: found.pack };
+  }
+  return { teams, warning: null };
+}
 
 export const PERSONALITIES: readonly Personality[] = [
   "adventurous",
@@ -217,6 +261,7 @@ export function plannedSeats(
   policy: Policy,
   scope?: readonly string[],
   options?: { strategy?: boolean },
+  registry: Record<TeamName, TeamDef> = TEAMS,
 ): Seat[] {
   // A todo's scope plans the todo's seats and nothing else (SP7b decision 14).
   if (scope !== undefined) return taskSeats(scope, policy);
@@ -258,18 +303,33 @@ export function plannedSeats(
   // A team the policy always seats brings every reviewer the registry gives it, on any route,
   // beyond what the route planned (SP7 §6.1); a seat the route already planned keeps its reason.
   for (const team of policy.team.always)
-    for (const g of TEAMS[team].gates) gate(g, team, "policy team.always");
+    for (const g of registry[team].gates) gate(g, team, "policy team.always");
   for (const team of ["etl", "devops"] as const) {
-    const reason = seated(team, TEAMS[team], route, riskAreas, policy);
-    if (reason) for (const g of TEAMS[team].gates) gate(g, team, reason);
+    const reason = seated(team, registry[team], route, riskAreas, policy);
+    if (reason) for (const g of registry[team].gates) gate(g, team, reason);
   }
   for (const g of policy.judgementGates) {
-    const team = (Object.entries(TEAMS).find(([, t]) => t.gates.includes(g))?.[0] ??
+    const team = (Object.entries(registry).find(([, t]) => t.gates.includes(g))?.[0] ??
       null) as TeamName | null;
     plan({ role: `review-${g}`, team, kind: "gate", gate: g, reason: "policy" });
   }
+  // A pack team's paths (SP6 Task 2 AC-4): a changed file under a template's glob seats the team as
+  // the expert's knowledge seat (SP7 §6.3), on standard and full; the fast route stays as it is.
+  if (route !== "fast")
+    for (const [name, def] of Object.entries(registry) as [TeamName, TeamDef][]) {
+      const rule = def.mandatory;
+      if (rule.kind !== "paths" || !rule.globs?.length) continue;
+      const glob = rule.globs.find((g) => changed.some((p) => matchesAny(p, [g])));
+      if (glob)
+        plan({
+          role: "expert",
+          team: name,
+          kind: "debate",
+          reason: `pack ${rule.pack ?? name} (${glob})`,
+        });
+    }
   // The validating leads of the seated teams; on the fast route only a team the policy always seats.
-  for (const [name, def] of Object.entries(TEAMS) as [TeamName, TeamDef][]) {
+  for (const [name, def] of Object.entries(registry) as [TeamName, TeamDef][]) {
     if (!def.validates) continue;
     const reason = seated(name, def, route, riskAreas, policy);
     if (reason) plan({ role: def.lead, team: name, kind: "lead", reason });

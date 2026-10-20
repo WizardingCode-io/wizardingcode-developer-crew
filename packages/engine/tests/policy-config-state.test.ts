@@ -18,7 +18,7 @@ import {
   WORKING_MAX,
   workingRoles,
 } from "../src/state.ts";
-import { makeRepo, repoPaths, testEnv } from "./helpers.ts";
+import { makeRepo, repoPaths, testEnv, write } from "./helpers.ts";
 
 test("SP2b: judgementGates lists the judgement gates a team requires, empty by default, unknown names dropped", () => {
   const paths = repoPaths(makeRepo(), testEnv());
@@ -340,9 +340,10 @@ test("SP7a AC-3: policy.team has its defaults when absent, only tightens when pr
       },
     }),
   );
-  // A cap above its default, or below one, falls back to the default: a policy only tightens.
+  // A cap above its default, or below one, falls back to the default: a policy only tightens. The
+  // template is read as written (SP6 Task 2): an unregistered name applies nothing where it is read.
   expect(loadPolicy(paths).policy.team).toEqual({
-    template: "core",
+    template: "packs",
     always: ["etl"],
     specialists: ["laravel"],
     maxExperts: 2,
@@ -362,7 +363,12 @@ test("SP7a AC-3: policy.team has its defaults when absent, only tightens when pr
   });
   expect(loadPolicy(fresh).policy.team).toMatchObject({ maxJudgementRounds: 1, maxExperts: 2 });
   expect(setPolicyValue(fresh, "team.maxJudgementRounds", "3")).toHaveProperty("refused");
-  expect(setPolicyValue(fresh, "team.template", "packs")).toHaveProperty("refused");
+  // A template is any lowercase word since SP6 Task 2 (checked where it is read); a bad name is refused.
+  expect(setPolicyValue(fresh, "team.template", "packs")).toEqual({
+    key: "team.template",
+    value: "packs",
+  });
+  expect(setPolicyValue(fresh, "team.template", "Bad Name")).toHaveProperty("refused");
   expect(setPolicyValue(fresh, "team.template", "core")).toEqual({
     key: "team.template",
     value: "core",
@@ -534,4 +540,22 @@ test("SP3-T6 AC-4: policy.verify has its defaults when absent, falls back key by
   expect(loadConfig(paths).jev).toEqual({ endpoint: "http://127.0.0.1:1/v1", model: "jev-1.13.0" });
   saveConfig(paths, { ...config, jev: { endpoint: "http://api.invalid/x" } });
   expect(loadConfig(paths).jev).toBeUndefined();
+});
+
+test("SP6-T2 AC-4: team.template is read as written when a lowercase word and core otherwise; crew policy set takes a word and refuses a bad name", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  write(paths.root, ".crew/policy.json", JSON.stringify({ team: { template: "agentic-os" } }));
+  expect(loadPolicy(paths).policy.team.template).toBe("agentic-os");
+  write(paths.root, ".crew/policy.json", JSON.stringify({ team: { template: "Bad Name" } }));
+  expect(loadPolicy(paths).policy.team.template).toBe("core");
+  write(paths.root, ".crew/policy.json", "{}");
+  expect(loadPolicy(paths).policy.team.template).toBe("core");
+  expect(setPolicyValue(paths, "team.template", "laravel")).toEqual({
+    key: "team.template",
+    value: "laravel",
+  });
+  expect(loadPolicy(paths).policy.team.template).toBe("laravel");
+  expect(setPolicyValue(paths, "team.template", "Bad Name")).toEqual({
+    refused: "team.template is core or a pack's template name (a lowercase word), not Bad Name",
+  });
 });

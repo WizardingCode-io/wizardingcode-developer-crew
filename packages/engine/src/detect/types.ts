@@ -1,4 +1,4 @@
-import type { GateName, Stack } from "../types.ts";
+import type { CoreStack, GateName, Stack } from "../types.ts";
 
 export interface DetectedTarget {
   stack: Stack;
@@ -18,4 +18,19 @@ export interface Detector {
   stack: Stack;
   /** Returns null when the folder holds no manifest for this stack. */
   detect(dir: string): DetectedTarget | null;
+}
+
+/**
+ * A pack's detector rule, data a manifest carries (SP6 Task 2): matched when every marker exists
+ * under a folder; with `extends` it refines the core target of that stack there (the gates it
+ * names, the package manager, the scoped test), without it is a new stack. Its commands enter the
+ * profile as proposed, run only once a person confirmed them.
+ */
+export interface DetectorRule {
+  stack: string;
+  extends?: CoreStack;
+  markers: string[];
+  packageManager: string;
+  gates: Partial<Record<GateName, string>>;
+  testScoped?: string;
 }

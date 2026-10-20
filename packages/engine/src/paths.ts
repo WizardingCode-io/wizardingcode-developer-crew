@@ -92,6 +92,15 @@ export function ctoDir(userDir: string, workspace: string): string {
   return join(userDir, "cto", workspace);
 }
 
+/** The registrations of the packs the engine serves (SP6 Task 2): one file per pack under the user directory. */
+export function packsDir(userDir: string): string {
+  return join(userDir, "packs");
+}
+
+export function packPath(userDir: string, name: string): string {
+  return join(packsDir(userDir), `${name}.json`);
+}
+
 const PROTECTED_TOP = new Set([
   ".crew/profile.json",
   ".crew/policy.json",

@@ -1,17 +1,21 @@
 import { expect, test } from "bun:test";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { listDecisions } from "../src/decisions.ts";
 import { DEFAULT_WATCH_EXCLUDE } from "../src/detect/index.ts";
 import { refreshMail } from "../src/hooks/context.ts";
 import { handleHook } from "../src/hooks/index.ts";
+import { onPreToolUse } from "../src/hooks/pre-tool-use.ts";
 import { onPrompt } from "../src/hooks/prompt.ts";
 import { onSessionStart } from "../src/hooks/session-start.ts";
 import { isLive, loadRegistry, mailContext, send } from "../src/mail.ts";
+import { listPacks, registerPack } from "../src/packs.ts";
 import { loadPolicy } from "../src/policy.ts";
 import { loadProfile, saveProfile } from "../src/profile.ts";
 import { loadState } from "../src/state.ts";
 import { activeWork, addCriterion, createWork, saveWork } from "../src/work.ts";
-import { hookContext, makeRepo, repoPaths, testEnv, write } from "./helpers.ts";
+import { hookContext, makeRepo, repoPaths, tempDir, testEnv, write } from "./helpers.ts";
+import { writePack } from "./pack-fixtures.ts";
 
 function context(root: string, env = testEnv()) {
   return hookContext({ session_id: "s1", cwd: join(root, "src") }, env);
@@ -342,4 +346,151 @@ test("SP2c 8a AC-3: a hook's registration marks the project live; the context's 
   const entry = entryOf();
   expect(typeof entry?.lastHook).toBe("string");
   expect(entry !== undefined && isLive(entry)).toBe(true);
+});
+
+test("SP6-T2 AC-6: SessionStart discovers packs from the plugin registry when CLAUDE_PLUGIN_ROOT is set, their rules reach the profile at the same start, and the status says the packs", () => {
+  const home = tempDir("home-");
+  const registry = join(home, ".claude", "plugins", "installed_plugins.json");
+  mkdirSync(dirname(registry), { recursive: true });
+  const laravel = writePack();
+  writeFileSync(
+    registry,
+    JSON.stringify({
+      version: 1,
+      plugins: {
+        "wizardingcode-pack-laravel@m": [{ scope: "user", installPath: laravel, version: "0.1.0" }],
+      },
+    }),
+  );
+  const root = makeRepo({
+    "composer.json": JSON.stringify({ scripts: { test: "phpunit" } }),
+    artisan: "x",
+    "src/a.php": "x",
+  });
+  const base = testEnv();
+  const userDir = join(base.WIZARDINGCODE_HOME ?? "", "crew");
+  const text = (ctx: ReturnType<typeof hookContext>) =>
+    (onSessionStart(ctx, { source: "startup" }).hookSpecificOutput as { additionalContext: string })
+      .additionalContext;
+  // The fixture's environment never inherits the plugin's variables from the process (round 3).
+  expect(base.CLAUDE_PLUGIN_ROOT).toBeUndefined();
+  expect(base.CLAUDE_CONFIG_DIR).toBeUndefined();
+  // No CLAUDE_PLUGIN_ROOT: no discovery, no packs sentence.
+  const plain = text(hookContext({ session_id: "s1", cwd: root }, { ...base, HOME: home }));
+  expect(listPacks(userDir)).toEqual([]);
+  expect(plain).not.toContain("Packs:");
+  // With it: the pack registered by discovery before the profile refresh, so its rule is in this start's profile.
+  const env = { ...base, HOME: home, CLAUDE_PLUGIN_ROOT: "/x" };
+  const started = text(hookContext({ session_id: "s2", cwd: root }, env));
+  expect(listPacks(userDir).map((p) => [p.name, p.registration?.by])).toEqual([
+    ["wizardingcode-pack-laravel", "discovery"],
+  ]);
+  expect(started).toContain("profile refreshed: test (.): php artisan test");
+  expect(started).toContain("Packs: 1 registered.");
+  expect(loadProfile(repoPaths(root, env)).profile?.targets[0]?.gates.test).toEqual({
+    command: "php artisan test",
+    source: "proposed",
+    pack: "wizardingcode-pack-laravel",
+  });
+  // With an active item: the part on the status line, at SessionStart and at every prompt; a missing pack counted.
+  const gone = registerPack(userDir, writePack({ name: "wizardingcode-pack-gone" }), "command");
+  if ("refused" in gone) throw new Error(gone.refused);
+  rmSync(gone.root, { recursive: true });
+  const ctx = hookContext({ session_id: "s3", cwd: root }, env);
+  const work = createWork(ctx.paths, "Change the model");
+  addCriterion(work, "x");
+  saveWork(ctx.paths, work);
+  expect(text(ctx)).toContain(", packs: 2 (1 missing).");
+  expect(JSON.stringify(onPrompt(ctx))).toContain(", packs: 2 (1 missing).");
+  // A garbage registry: nothing changes and the session goes on.
+  writeFileSync(registry, "{not json");
+  expect(text(hookContext({ session_id: "s4", cwd: root }, env))).toContain(
+    ", packs: 2 (1 missing).",
+  );
+  expect(listPacks(userDir).map((p) => p.name)).toEqual([
+    "wizardingcode-pack-laravel",
+    "wizardingcode-pack-gone",
+  ]);
+});
+
+test("SP6-T2 AC-6 (round 2): a pack the hooks cannot read costs the session nothing, discovery's lines reach the register and never the context, and a prompt with no item says nothing of packs", () => {
+  const home = tempDir("home-");
+  const registry = join(home, ".claude", "plugins", "installed_plugins.json");
+  mkdirSync(dirname(registry), { recursive: true });
+  const laravel = writePack();
+  writeFileSync(
+    registry,
+    JSON.stringify({
+      version: 1,
+      plugins: {
+        "wizardingcode-pack-laravel@m": [{ scope: "user", installPath: laravel, version: "0.1.0" }],
+      },
+    }),
+  );
+  const root = makeRepo({
+    "composer.json": JSON.stringify({ scripts: { test: "phpunit" } }),
+    artisan: "x",
+    "src/a.php": "x",
+  });
+  const base = testEnv();
+  const env = { ...base, HOME: home, CLAUDE_PLUGIN_ROOT: "/x" };
+  const text = (ctx: ReturnType<typeof hookContext>) =>
+    (onSessionStart(ctx, { source: "startup" }).hookSpecificOutput as { additionalContext: string })
+      .additionalContext;
+  const decision = (r: Record<string, unknown>) =>
+    (r.hookSpecificOutput as { permissionDecision?: string } | undefined)?.permissionDecision;
+  const first = hookContext({ session_id: "s1", cwd: root }, env);
+  const started = text(first);
+  // The discovery's line is in the register, not in the context.
+  expect(started).not.toContain("registered (wizardingcode-pack-laravel@m)");
+  expect(
+    listDecisions(first.paths)
+      .filter((d) => d.kind === "pack")
+      .map((d) => d.text),
+  ).toEqual([
+    "pack discovery: wizardingcode-pack-laravel 0.1.0 registered (wizardingcode-pack-laravel@m)",
+  ]);
+  // A prompt with no active item says nothing of packs.
+  expect(JSON.stringify(onPrompt(first))).not.toContain("packs");
+  // The pack's knowledge file becomes a directory: the full listing says unreadable and serves
+  // nothing; the hooks count with the quick listing (the root and the manifest alone) and every
+  // hook still answers.
+  rmSync(join(laravel, "knowledge", "laravel.md"));
+  mkdirSync(join(laravel, "knowledge", "laravel.md"));
+  const userDir = join(base.WIZARDINGCODE_HOME ?? "", "crew");
+  expect(listPacks(userDir).map((p) => p.state.kind)).toEqual(["unreadable"]);
+  expect(listPacks(userDir, { quick: true }).map((p) => p.state.kind)).toEqual(["ok"]);
+  const ctx = hookContext({ session_id: "s2", cwd: root }, env);
+  const work = createWork(ctx.paths, "Change the model");
+  addCriterion(work, "x");
+  saveWork(ctx.paths, work);
+  expect(text(ctx)).toContain(", packs: 1.");
+  expect(JSON.stringify(onPrompt(ctx))).toContain(", packs: 1.");
+  const owned = `echo x > .crew/work/${work.id}/evidence.json`;
+  expect(decision(onPreToolUse(ctx, { tool_name: "Bash", tool_input: { command: owned } }))).toBe(
+    "deny",
+  );
+  // A refusal that stands at every start enters the register once, not once per start (round 3).
+  const stale = writePack({ name: "wizardingcode-pack-stale", core: ">=99.0.0" });
+  writeFileSync(
+    registry,
+    JSON.stringify({
+      version: 1,
+      plugins: {
+        "wizardingcode-pack-laravel@m": [{ scope: "user", installPath: laravel, version: "0.1.0" }],
+        "wizardingcode-pack-stale@m": [{ scope: "user", installPath: stale, version: "0.1.0" }],
+      },
+    }),
+  );
+  text(hookContext({ session_id: "s3", cwd: root }, env));
+  text(hookContext({ session_id: "s4", cwd: root }, env));
+  const refusals = listDecisions(ctx.paths)
+    .filter((d) => d.kind === "pack")
+    .map((d) => d.text)
+    .filter((t) => t.includes("wizardingcode-pack-stale@m"));
+  expect(refusals).toEqual([
+    expect.stringContaining(
+      "pack discovery: wizardingcode-pack-stale@m: core >=99.0.0 needs an engine at or above 99.0.0",
+    ),
+  ]);
 });

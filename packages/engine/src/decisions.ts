@@ -12,6 +12,7 @@ export interface DecisionEntry {
     | "approval"
     | "ruling"
     | "validation"
+    | "pack"
     | "continue"
     | "priorities"
     | "triage"

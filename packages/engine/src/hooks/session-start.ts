@@ -1,16 +1,19 @@
+import { appendDecision, listDecisions } from "../decisions.ts";
 import {
   DEFAULT_WATCH_EXCLUDE,
   isFormerWatchDefault,
   missingTestCommands,
 } from "../detect/index.ts";
 import { changedWatchedPaths, computeFingerprint } from "../fingerprint.ts";
+import { nowIso } from "../fs.ts";
 import { assess } from "../gates.ts";
 import { emptyInboxSummary, inboxSummary, subjectQuoted } from "../mail.ts";
+import { discoverPacks } from "../packs.ts";
 import { refreshProfile, saveProfile } from "../profile.ts";
 import { ensureCrewDir, loadState, updateSession } from "../state.ts";
 import { activeWork } from "../work.ts";
 import { mailQuietly, refreshMail, sweepLines } from "./context.ts";
-import { statusLine } from "./prompt.ts";
+import { packCounts, statusLine } from "./prompt.ts";
 import type { HookContext, HookPayload, HookResponse } from "./types.ts";
 
 export function onSessionStart(ctx: HookContext, payload: HookPayload = {}): HookResponse {
@@ -30,6 +33,27 @@ export function onSessionStart(ctx: HookContext, payload: HookPayload = {}): Hoo
   if (moved) {
     ctx.profile.watch.exclude = [...DEFAULT_WATCH_EXCLUDE];
     saveProfile(ctx.paths, ctx.profile);
+  }
+  // The packs Claude Code installed are registered before the profile refresh (SP6 Task 2 AC-6),
+  // so a discovered pack's rules reach this start's profile; read-only on the registry, fail-open.
+  try {
+    // What the discovery changed or refused enters the project's register (the risk gate's
+    // finding): the context says the count alone, the register says what happened. A refusal that
+    // stands at every start is written once: the same text as the register's last pack entry is
+    // not appended again (round 3).
+    const discovered = discoverPacks(ctx.paths.userDir, ctx.env);
+    const text = `pack discovery: ${discovered.join("; ")}`;
+    const last = listDecisions(ctx.paths).find((d) => d.kind === "pack")?.text;
+    if (discovered.length && text !== last)
+      appendDecision(ctx.paths, {
+        at: nowIso(),
+        item: "pack",
+        kind: "pack",
+        text,
+        by: "the engine",
+      });
+  } catch {
+    // A discovery that cannot run costs nothing: the session starts without it.
   }
   // The profile follows the manifests: a script or a lockfile added since the last detection is
   // picked up here and at every gate run, never by hand (finding 23).
@@ -69,10 +93,17 @@ export function onSessionStart(ctx: HookContext, payload: HookPayload = {}): Hoo
     lines.push(
       statusLine(ctx, active.work, active.tampered).replace(/^Crew: work/, "Work in progress:"),
     );
-  else
+  else {
     lines.push(
       "No work item is active. A code change starts by answering the crew skill's nine typed questions, then crew start \"<request>\" --answers '<json>'.",
     );
+    // The packs, said once here when no item's status line carries them (SP6 Task 2 AC-6).
+    const packs = packCounts(ctx);
+    if (packs.registered)
+      lines.push(
+        `Packs: ${packs.registered} registered${packs.missing ? ` (${packs.missing} missing)` : ""}.`,
+      );
+  }
   if (refreshed.changed.length) lines.push(`profile refreshed: ${refreshed.changed.join("; ")}.`);
   const missing = missingTestCommands(ctx.profile);
   if (missing.length) {

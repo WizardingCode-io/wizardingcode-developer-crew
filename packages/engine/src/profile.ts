@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { detectProfile, profileChanges } from "./detect/index.ts";
+import { packRules } from "./packs.ts";
 import type { CrewPaths } from "./paths.ts";
 import { readProtectedJson, writeProtectedJson } from "./store.ts";
 import type { Profile } from "./types.ts";
@@ -29,7 +30,7 @@ export function refreshProfile(
   tampered = false,
 ): { profile: Profile; changed: string[] } {
   if (tampered) return { profile: current, changed: [] };
-  const next = detectProfile(paths.root, current);
+  const next = detectProfile(paths.root, current, packRules(paths.userDir));
   const changed = profileChanges(current, next);
   if (changed.length === 0) return { profile: current, changed };
   saveProfile(paths, next);
@@ -40,7 +41,8 @@ export function refreshProfile(
 export function ensureProfile(paths: CrewPaths): { profile: Profile; tampered: boolean } {
   const existing = loadProfile(paths);
   if (existing.profile) return { profile: existing.profile, tampered: existing.tampered };
-  const profile = detectProfile(paths.root);
+  // The registered packs' rules read with the core detectors (SP6 Task 2), here and at every refresh.
+  const profile = detectProfile(paths.root, null, packRules(paths.userDir));
   // A profile that exists but does not parse was changed outside the engine: overwriting it would
   // hide that, so the fresh detection is used in memory only and the state stays tampered.
   if (existing.tampered) return { profile, tampered: true };

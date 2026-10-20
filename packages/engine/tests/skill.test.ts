@@ -590,3 +590,50 @@ test("SP6-T1 AC-7 (finding 109): the evals README states the needs-rerun rule", 
     "A run the runner flags `needs-rerun` is run once more; a second flag is recorded in the results note and the run stands.",
   );
 });
+
+test("SP6-T2 AC-10 (carrying AC-7's pins with a red): the packs reference, the conclave's reads from the engine, the expert's Knowledge paragraph, rule 10's line and ADR 0010, and round 3's statements", () => {
+  expect(skill).toContain("| Packs | `references/packs.md` |");
+  expect(Buffer.byteLength(skill, "utf8")).toBeLessThanOrEqual(9254);
+  const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
+  const packs = read("../../../plugins/core/skills/crew/references/packs.md");
+  for (const phrase of [
+    "crew pack add <path>",
+    "crew pack files checklists <kind>",
+    "crew pack files knowledge --item <id>",
+    "changed since registration",
+    "crew profile confirm",
+    "scanned for secrets, not for instructions",
+    "folded in only with proof",
+    // Round 3: the hold on every runner and on crew tdd, the profile's line, the complete rollback.
+    "`crew tdd red|green` without `--` refuses to run it with the same text",
+    "`crew profile` prints `testScoped=<cmd>`",
+    "the complete way is `crew pack remove <name>` and `crew detect --refresh`",
+    "a removed pack's proposed commands and scoped template leave the profile at the next detection",
+    '`crew profile set testScoped "<cmd>"` the template',
+  ])
+    expect(packs, phrase).toContain(phrase);
+  const conclave = read("../../../plugins/core/skills/crew/references/conclave.md");
+  expect(conclave).toContain("crew pack files checklists <kind>");
+  expect(conclave).toContain("crew pack files knowledge --item <id>");
+  const expert = read("../../../plugins/core/agents/expert.md");
+  expect(expert).toContain("## Knowledge");
+  const rules = read("../../../plugins/core/skills/crew/references/rules.md");
+  expect(rules).toContain(
+    "A pack's template tightens the registry and never loosens it, and a pack's gate command runs only once a person confirmed it (SP6)",
+  );
+  expect(read("../../../docs/adr/0010-packs-as-data-served-by-the-engine.md")).toContain(
+    "# ADR 0010: packs are data the engine serves",
+  );
+});
+
+test("SP6-T2 AC-9: the packs reference states the rollback before a downgrade and the configuration directory discovery reads; ADR 0010 says the same of the downgrade", () => {
+  const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
+  const packs = read("../../../plugins/core/skills/crew/references/packs.md");
+  expect(packs).toContain("before a downgrade to 0.10.0");
+  expect(packs).toContain(
+    "the config dir being `CLAUDE_CONFIG_DIR` when set and `<HOME>/.claude` otherwise",
+  );
+  expect(read("../../../docs/adr/0010-packs-as-data-served-by-the-engine.md")).toContain(
+    "`references/packs.md` says what to unset or remove before a downgrade; a removed pack's proposed commands and scoped template leave the profile at the next detection.",
+  );
+});

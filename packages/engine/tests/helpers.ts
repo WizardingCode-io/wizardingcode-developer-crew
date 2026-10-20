@@ -81,7 +81,16 @@ export function testEnv(): NodeJS.ProcessEnv {
   const fake = join(home, "claude");
   writeFileSync(fake, "#!/bin/sh\nexit 0\n");
   chmodSync(fake, 0o755);
-  return { ...process.env, WIZARDINGCODE_HOME: home, WIZARDINGCODE_CREW_CLAUDE: fake };
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    WIZARDINGCODE_HOME: home,
+    WIZARDINGCODE_CREW_CLAUDE: fake,
+  };
+  // A suite run under Claude Code inherits the plugin's variables, which would turn the pack
+  // discovery on in every fixture (SP6 Task 2, round 3): a test that wants them sets them.
+  delete env.CLAUDE_PLUGIN_ROOT;
+  delete env.CLAUDE_CONFIG_DIR;
+  return env;
 }
 
 /** Paths of a folder the test knows to be active (a git repository or one holding .crew/). */

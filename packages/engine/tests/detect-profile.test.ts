@@ -7,9 +7,11 @@ import {
   missingTestCommands,
 } from "../src/detect/index.ts";
 import { depsAuditCommand } from "../src/gates.ts";
+import { registerPack } from "../src/packs.ts";
 import { ensureProfile, loadProfile, refreshProfile, saveProfile } from "../src/profile.ts";
-import type { Profile, Target } from "../src/types.ts";
+import type { GateCommand, Profile, Target } from "../src/types.ts";
 import { makeRepo, repoPaths, tempDir, testEnv, write } from "./helpers.ts";
+import { writePack } from "./pack-fixtures.ts";
 
 function monorepo(): string {
   const dir = tempDir();
@@ -180,4 +182,215 @@ test("SP7b-T3 AC-1: refreshProfile picks up a compose file as the environment an
   const refreshed = refreshProfile(paths, profile);
   expect(refreshed.changed).toContain("environment.start (.): docker compose up -d");
   expect(loadProfile(paths).profile?.environment?.url).toBe("http://localhost:8080");
+});
+
+test("SP6-T2 AC-3: a detector rule refines the core target of its folder as proposed commands of its pack, or adds a new stack; every marker must exist; the core runs first", () => {
+  const root = makeRepo({
+    "composer.json": JSON.stringify({ scripts: { test: "phpunit", lint: "pint" } }),
+    artisan: "#!/usr/bin/env php\n",
+    "svc/Cargo.toml": "[package]\n",
+    "api/composer.json": JSON.stringify({ scripts: {} }),
+  });
+  const laravel = {
+    pack: "wizardingcode-pack-laravel",
+    rule: {
+      stack: "laravel",
+      extends: "php" as const,
+      markers: ["artisan", "composer.json"],
+      packageManager: "composer",
+      gates: { test: "php artisan test", typecheck: "vendor/bin/phpstan analyse" },
+      testScoped: "php artisan test {files}",
+    },
+  };
+  const rust = {
+    pack: "wizardingcode-pack-rust",
+    rule: {
+      stack: "rust",
+      markers: ["Cargo.toml"],
+      packageManager: "cargo",
+      gates: { test: "cargo test" },
+    },
+  };
+  const targets = detectTargets(root, [laravel, rust]);
+  const refined = targets.find((t) => t.path === "." && t.stack === "php") as Target;
+  // The gates the rule names replace the core's, as proposed commands of the pack; the others stay.
+  expect(refined.gates.test).toEqual({
+    command: "php artisan test",
+    source: "proposed",
+    pack: "wizardingcode-pack-laravel",
+  });
+  expect(refined.gates.typecheck).toEqual({
+    command: "vendor/bin/phpstan analyse",
+    source: "proposed",
+    pack: "wizardingcode-pack-laravel",
+  });
+  expect(refined.gates.lint).toEqual({ command: "composer run lint", source: "detected" });
+  expect(refined.packageManager).toBe("composer");
+  expect(refined.testScoped).toEqual({
+    command: "php artisan test {files}",
+    source: "proposed",
+    pack: "wizardingcode-pack-laravel",
+  });
+  expect(refined.tags).toEqual(["laravel"]);
+  // The php folder without the artisan marker: untouched, no tag.
+  const api = targets.find((t) => t.path === "api") as Target;
+  expect(api.tags).toBeUndefined();
+  expect(api.gates.test).toBeUndefined();
+  // A rule without extends is a new stack of its own.
+  const svc = targets.find((t) => t.path === "svc") as Target;
+  expect(svc).toMatchObject({
+    stack: "rust",
+    packageManager: "cargo",
+    gates: { test: { command: "cargo test", source: "proposed", pack: "wizardingcode-pack-rust" } },
+  });
+  expect(svc.tags).toBeUndefined();
+  // The core first: with no rule the targets are the core's three, the php one unrefined.
+  const plain = detectTargets(root);
+  expect(plain.map((t) => [t.path, t.stack])).toEqual([
+    [".", "php"],
+    ["api", "php"],
+  ]);
+  expect(plain[0]?.gates.test).toEqual({ command: "composer run test", source: "detected" });
+  // A rule with extends and no core target at its folder is skipped.
+  const alone = makeRepo({ artisan: "x", "composer.json": "{}", "src/a.ts": "x" });
+  const noPhpThere = detectTargets(alone, [
+    { ...laravel, rule: { ...laravel.rule, extends: "node" as const } },
+  ]);
+  expect(noPhpThere.map((t) => [t.stack, t.tags ?? []])).toEqual([["php", []]]);
+});
+
+test("SP6-T2 AC-3: mergeProfile carries tags and keeps a confirmed command over a pack's; ensureProfile and refreshProfile read the registered rules from the user directory", () => {
+  const detected: Target = {
+    path: ".",
+    stack: "php",
+    tags: ["laravel"],
+    packageManager: "composer",
+    gates: {
+      test: { command: "php artisan test", source: "proposed", pack: "wizardingcode-pack-laravel" },
+    },
+    timeoutMs: 1,
+  };
+  const previous: Profile = {
+    version: 1,
+    detectedAt: "2026-10-20T00:00:00.000Z",
+    targets: [
+      {
+        path: ".",
+        stack: "php",
+        packageManager: "composer",
+        gates: { test: { command: "vendor/bin/pest", source: "confirmed" } },
+        timeoutMs: 1,
+      },
+    ],
+    watch: { exclude: [] },
+  };
+  const merged = mergeProfile(previous, [detected]);
+  expect(merged.targets[0]?.tags).toEqual(["laravel"]);
+  expect(merged.targets[0]?.gates.test).toEqual({
+    command: "vendor/bin/pest",
+    source: "confirmed",
+  });
+  // The rules come from the registered packs of the user directory, at the first detection and at a refresh.
+  const env = testEnv();
+  const root = makeRepo({
+    "composer.json": JSON.stringify({ scripts: { test: "phpunit" } }),
+    artisan: "x",
+  });
+  const paths = repoPaths(root, env);
+  const before = ensureProfile(paths).profile;
+  expect(before.targets[0]?.gates.test).toEqual({
+    command: "composer run test",
+    source: "detected",
+  });
+  const registered = registerPack(paths.userDir, writePack(), "command");
+  if ("refused" in registered) throw new Error(registered.refused);
+  const refreshed = refreshProfile(paths, before);
+  expect(refreshed.changed.join("; ")).toContain("test (.): php artisan test");
+  expect(refreshed.profile.targets[0]?.gates.test).toEqual({
+    command: "php artisan test",
+    source: "proposed",
+    pack: "wizardingcode-pack-laravel",
+  });
+  expect(refreshed.profile.targets[0]?.tags).toEqual(["laravel"]);
+  expect(loadProfile(paths).profile?.targets[0]?.tags).toEqual(["laravel"]);
+  // A fresh project under the same user directory detects with the rule from the start.
+  const other = repoPaths(makeRepo({ "composer.json": "{}", artisan: "x" }), env);
+  expect(ensureProfile(other).profile.targets[0]?.tags).toEqual(["laravel"]);
+});
+
+test("SP6-T2 AC-3 (round 2): mergeProfile drops a pack's proposed command the detection no longer gives and takes a changed one, where a person's proposal or confirmation stays", () => {
+  const packGate = (command: string): GateCommand => ({
+    command,
+    source: "proposed",
+    pack: "wizardingcode-pack-laravel",
+  });
+  const previous: Profile = {
+    version: 1,
+    detectedAt: "2026-10-20T00:00:00.000Z",
+    targets: [
+      {
+        path: ".",
+        stack: "php",
+        tags: ["laravel"],
+        packageManager: "composer",
+        gates: {
+          test: packGate("php artisan test"),
+          lint: { command: "vendor/bin/pint --test", source: "proposed" },
+          typecheck: {
+            command: "vendor/bin/phpstan",
+            source: "confirmed",
+            pack: "wizardingcode-pack-laravel",
+          },
+        },
+        testScoped: packGate("php artisan test {files}"),
+        timeoutMs: 1,
+      },
+      // A target a removed pack's rule alone had added: nothing of a person's in it.
+      {
+        path: "svc",
+        stack: "rust",
+        packageManager: "cargo",
+        gates: {
+          test: { command: "cargo test", source: "proposed", pack: "wizardingcode-pack-rust" },
+        },
+        timeoutMs: 1,
+      },
+    ],
+    watch: { exclude: [] },
+  };
+  // The pack removed: the detection gives the core's php target alone.
+  const removed = mergeProfile(previous, [
+    {
+      path: ".",
+      stack: "php",
+      packageManager: "composer",
+      gates: { test: { command: "composer run test", source: "detected" } },
+      timeoutMs: 1,
+    },
+  ]);
+  expect(removed.targets.map((t) => t.path)).toEqual(["."]);
+  const php = removed.targets[0] as Target;
+  expect(php.gates.test).toEqual({ command: "composer run test", source: "detected" });
+  expect(php.gates.lint).toEqual({ command: "vendor/bin/pint --test", source: "proposed" });
+  expect(php.gates.typecheck).toEqual({
+    command: "vendor/bin/phpstan",
+    source: "confirmed",
+    pack: "wizardingcode-pack-laravel",
+  });
+  expect(php.testScoped).toBeUndefined();
+  expect(php.tags).toBeUndefined();
+  // The pack's rule changed: the new proposed command replaces the old one.
+  const changed = mergeProfile(previous, [
+    {
+      path: ".",
+      stack: "php",
+      tags: ["laravel"],
+      packageManager: "composer",
+      gates: { test: packGate("php artisan test --parallel") },
+      testScoped: packGate("php artisan test --parallel {files}"),
+      timeoutMs: 1,
+    },
+  ]);
+  expect(changed.targets[0]?.gates.test).toEqual(packGate("php artisan test --parallel"));
+  expect(changed.targets[0]?.testScoped).toEqual(packGate("php artisan test --parallel {files}"));
 });

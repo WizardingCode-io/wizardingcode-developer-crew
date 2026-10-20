@@ -144,6 +144,19 @@ import {
   sweepSafely,
 } from "./open.ts";
 import {
+  discoverPacks,
+  knowledgeFilesFor,
+  listPacks,
+  type PackListing,
+  packFiles,
+  packLabel,
+  packRules,
+  packTemplates,
+  registerPack,
+  removePack,
+  stateText,
+} from "./packs.ts";
+import {
   type CrewPaths,
   ctoDir,
   PROTECTED_WORK_FILES,
@@ -216,13 +229,14 @@ import {
   writeBrief,
 } from "./tasks.ts";
 import { recordTdd, type TddStep } from "./tdd.ts";
-import { auditSeats, plannedSeats, primaryTeam } from "./team.ts";
+import { auditSeats, plannedSeats, primaryTeam, teamsFor } from "./team.ts";
 import type {
   Criterion,
   Decision,
   Environment,
   Evidence,
   FindingVerification,
+  GateCommand,
   GateName,
   JudgementGateName,
   JudgementRecord,
@@ -1489,6 +1503,24 @@ function workspaceFigures(
   return { figures, metrics: computeMetrics(projects, figures) };
 }
 
+/** The registrations as `crew status --json` and `crew pack list --json` carry them (SP6 Task 2), from one listing the caller took. */
+function packsJson(listed: readonly PackListing[]): Record<string, unknown>[] {
+  return listed.map((p) => ({
+    name: p.name,
+    version: p.registration?.version ?? null,
+    kind: p.registration?.manifest.kind ?? null,
+    root: p.registration?.root ?? null,
+    by: p.registration?.by ?? null,
+    state: stateText(p.state),
+  }));
+}
+
+/** The packs an item used (SP6 Task 2), as `<name> <version>`, each once: the report's Packs line reads them. */
+function recordPacks(work: WorkItem, labels: readonly string[]): void {
+  const packs = [...new Set([...(work.packs ?? []), ...labels])];
+  if (packs.length) work.packs = packs;
+}
+
 /** `knowledge: 2 listed (1 marked)`, `knowledge: none` or why the base could not be read, for the status block. */
 function knowledgeLine(env: Env, work: WorkItem): string | null {
   const record = work.knowledge;
@@ -1554,7 +1586,9 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         if (refused) return refused;
       }
       const previous = parsed.flags.refresh ? loadProfile(env.paths).profile : null;
-      const profile = parsed.flags.refresh ? detectProfile(env.paths.root, previous) : env.profile;
+      const profile = parsed.flags.refresh
+        ? detectProfile(env.paths.root, previous, packRules(env.paths.userDir))
+        : env.profile;
       if (parsed.flags.refresh) {
         saveProfile(env.paths, profile);
         // Only bless a policy that has no recorded hash yet: re-recording here would let a tampered policy
@@ -1564,14 +1598,19 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         }
       }
       const missing = missingTestCommands(profile);
-      const lines = profile.targets.map(
-        (t) =>
-          `  ${t.path} (${t.stack}, ${t.packageManager}${t.workspaceOf ? `, workspace of ${t.workspaceOf}` : ""}): ${
-            Object.entries(t.gates)
-              .map(([g, c]) => `${g}=${c.command}${c.source === "proposed" ? " [proposed]" : ""}`)
-              .join(", ") || "no commands"
-          }`,
-      );
+      // A pack's command and a target's tags are said where the profile is read (SP6 Task 2 AC-3),
+      // the scoped test template with the same marks (round 3).
+      const shown = (g: string, c: GateCommand) =>
+        `${g}=${c.command}${c.source === "proposed" ? " [proposed]" : ""}${c.pack ? ` (pack ${c.pack})` : ""}`;
+      const lines = profile.targets.map((t) => {
+        const commands = [
+          ...Object.entries(t.gates).map(([g, c]) => shown(g, c)),
+          ...(t.testScoped ? [shown("testScoped", t.testScoped)] : []),
+        ];
+        return `  ${t.path} (${t.stack}, ${t.packageManager}${t.workspaceOf ? `, workspace of ${t.workspaceOf}` : ""}): ${
+          commands.join(", ") || "no commands"
+        }${t.tags?.length ? `\n    tags: ${t.tags.join(", ")}` : ""}`;
+      });
       if (missing.length)
         lines.push(
           `No test command for: ${missing.map((m) => m.target).join(", ")}. Propose one: crew profile set test "<cmd>" [--target <path>]`,
@@ -1758,12 +1797,24 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           return refuse("usage: crew profile confirm [<gate>]");
         // The user sees exactly what they are trusting.
         const confirmed: string[] = [];
-        for (const target of env.profile.targets)
+        for (const target of env.profile.targets) {
           for (const [name, command] of Object.entries(target.gates))
             if (command.source === "proposed" && (gate === undefined || name === gate)) {
               command.source = "confirmed";
               confirmed.push(`${name}: ${command.command}`);
             }
+          // A pack's scoped test template is confirmed with the test gate (SP6 Task 2 AC-3): a
+          // todo's gate runs it, so it is shown and trusted here like the whole command.
+          const scoped = target.testScoped;
+          if (
+            scoped?.pack &&
+            scoped.source === "proposed" &&
+            (gate === undefined || gate === "test")
+          ) {
+            scoped.source = "confirmed";
+            confirmed.push(`test (scoped): ${scoped.command}`);
+          }
+        }
         saveProfile(env.paths, env.profile);
         return ok([`confirmed ${confirmed.length} command(s)`, ...confirmed].join("\n  "), {
           confirmed: confirmed.length,
@@ -1899,7 +1950,15 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       // The seats the route plans, before any path is known (SP7 §6.2): the leads' validation guard
       // names them from here; the gate run rewrites them with the paths the change touched.
       if (work.route !== "fast") {
-        work.seats = plannedSeats(work.route, work.riskAreas, [], env.policy);
+        work.seats = plannedSeats(
+          work.route,
+          work.riskAreas,
+          [],
+          env.policy,
+          undefined,
+          undefined,
+          teamsFor(env.policy, packTemplates(env.paths.userDir)).teams,
+        );
         work.primaryTeam = "backend";
       }
       if (origin) {
@@ -3376,14 +3435,35 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       const scope = audit
         ? readJson<AuditScope>(join(workDir(env.paths, opened.work.id), "audit", "scope.json"))
         : null;
+      // The registry a pack's template may have widened (SP6 Task 2 AC-4), and the knowledge files
+      // the expert reads for these paths (AC-5): both said here and recorded as the packs the item used.
+      const registry = teamsFor(env.policy, packTemplates(env.paths.userDir));
       const seats = audit
         ? auditSeats({ riskAreas: scope?.riskAreas ?? opened.work.riskAreas }, env.policy)
-        : plannedSeats(opened.work.route, opened.work.riskAreas, changed, env.policy, undefined, {
-            strategy: phasesFor(opened.work).includes("strategy"),
-          });
+        : plannedSeats(
+            opened.work.route,
+            opened.work.riskAreas,
+            changed,
+            env.policy,
+            undefined,
+            { strategy: phasesFor(opened.work).includes("strategy") },
+            registry.teams,
+          );
       const primary = primaryTeam(changed);
       opened.work.seats = seats;
       opened.work.primaryTeam = primary;
+      const served = audit
+        ? { paths: [], packs: [], skipped: [] }
+        : knowledgeFilesFor(env.paths.userDir, env.profile, changed, env.policy);
+      const seatedPacks = seats.flatMap((s) => {
+        const rule = s.team ? registry.teams[s.team].mandatory : null;
+        return s.role === "expert" && rule?.kind === "paths" && rule.pack ? [rule.pack] : [];
+      });
+      const packListing = listPacks(env.paths.userDir);
+      recordPacks(
+        opened.work,
+        [...served.packs, ...seatedPacks].map((n) => packLabel(packListing, n)),
+      );
       saveWork(env.paths, opened.work);
       const listed = seats.map((s) => `${s.role} (${s.reason})`).join("; ");
       const text = audit
@@ -3391,7 +3471,21 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         : seats.length
           ? `Team of ${opened.work.id} (primary ${primary}): ${listed}`
           : `Team of ${opened.work.id}: no seat (fast route)`;
-      return ok(text, { seats, primaryTeam: primary });
+      const extra = [
+        registry.warning ??
+          (env.policy.team.template !== "core"
+            ? `template: ${env.policy.team.template} (pack)`
+            : null),
+        served.paths.length ? `knowledge for the expert: ${served.paths.join(", ")}` : null,
+      ].filter((l): l is string => l !== null);
+      return ok([text, ...extra].join("\n"), {
+        seats,
+        primaryTeam: primary,
+        template: env.policy.team.template,
+        warning: registry.warning,
+        knowledge: served.paths,
+        packs: opened.work.packs ?? [],
+      });
     }
     case "validation": {
       // A lead's verdict on the spec, the plan or the delivery, recorded from its file (SP7 §6.4): the
@@ -3648,6 +3742,144 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         return ok(`${id} unmarked by ${by}: ${entry.title} is read in every workspace`, {
           entry: changed,
         });
+      }
+      return refuse(usage);
+    }
+    case "pack": {
+      // The packs the engine serves (SP6 Task 2, ADR 0010): registered from a path or by Claude
+      // Code's discovery, checked whole, listed with their states, their files served by path.
+      const usage =
+        "usage: crew pack add <path> | remove <name> | list | show <name> | files checklists <kind> | files knowledge <key> | files knowledge --item <id> | sync";
+      const sub = args[0];
+      const userDir = env.paths.userDir;
+      const register = (text: string) =>
+        appendDecision(env.paths, {
+          at: nowIso(),
+          item: "pack",
+          kind: "pack",
+          text,
+          by: "the agent",
+        });
+      const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
+      if (sub === "add") {
+        const path = args[1];
+        if (path === undefined) return refuse(usage);
+        const added = registerPack(userDir, resolve(env.paths.root, path), "command");
+        if ("refused" in added) return refuse(added.refused);
+        const m = added.manifest;
+        const lines = [
+          `${added.name} ${added.version} registered (${m.kind}): ${plural(m.checklists.length, "checklist")}, ${plural(Object.keys(m.knowledge).length, "knowledge file")}, ${plural(m.detectors.length, "detector rule")}, template ${m.team?.template ?? "none"}`,
+        ];
+        // A pack's command is proposed until a person confirms it in each project (AC-3): said at the add.
+        for (const rule of m.detectors)
+          for (const [gate, command] of Object.entries(rule.gates))
+            lines.push(
+              `  ${rule.stack}: ${gate} "${command}" (proposed until crew profile confirm ${gate} in each project it applies to)`,
+            );
+        for (const rule of m.detectors)
+          if (rule.testScoped)
+            lines.push(
+              `  ${rule.stack}: scoped test "${rule.testScoped}" (proposed until crew profile confirm test in each project it applies to)`,
+            );
+        register(`pack add ${added.name} ${added.version}`);
+        return ok(lines.join("\n"), { registration: added });
+      }
+      if (sub === "remove") {
+        const name = args[1];
+        if (name === undefined) return refuse(usage);
+        const out = removePack(userDir, name);
+        if ("refused" in out) return refuse(out.refused);
+        register(`pack remove ${name}`);
+        return ok(`${name} removed`, { removed: name });
+      }
+      if (sub === "list") {
+        const listed = listPacks(userDir);
+        if (!listed.length) return ok("no pack registered (crew pack add <path>)", { packs: [] });
+        return ok(
+          listed
+            .map(
+              (p) =>
+                `${p.name} ${p.registration?.version ?? "?"} · ${p.registration?.manifest.kind ?? "?"} · ${p.registration?.root ?? "?"} · ${stateText(p.state)}`,
+            )
+            .join("\n"),
+          { packs: packsJson(listed) },
+        );
+      }
+      if (sub === "show") {
+        const name = args[1];
+        if (name === undefined) return refuse(usage);
+        const listing = listPacks(userDir).find((p) => p.name === name);
+        if (!listing) return refuse(`no pack ${name} is registered (crew pack list)`);
+        if (!listing.registration) return refuse(`${name}: ${stateText(listing.state)}`);
+        const r = listing.registration;
+        const m = r.manifest;
+        const lines = [
+          `${r.name} ${r.version} · ${m.kind} · ${stateText(listing.state)}`,
+          `root: ${r.root}`,
+          `registered: ${r.registeredAt} by ${r.by}`,
+          `core: ${m.core} · verified against: ${Object.entries(m.verifiedAgainst)
+            .map(([k, v]) => `${k} ${v}`)
+            .join(", ")}`,
+          `detectors: ${
+            m.detectors.length
+              ? m.detectors
+                  .map(
+                    (d) =>
+                      `${d.stack}${d.extends ? ` extends ${d.extends}` : ""} (${Object.entries(
+                        d.gates,
+                      )
+                        .map(([g, c]) => `${g} "${c}"`)
+                        .join(", ")})`,
+                  )
+                  .join("; ")
+              : "none"
+          }`,
+          `checklists: ${m.checklists.map((p) => basename(p, ".md")).join(", ") || "none"}`,
+          `knowledge: ${Object.keys(m.knowledge).join(", ") || "none"}`,
+          `template: ${
+            m.team
+              ? `${m.team.template} (${Object.entries(m.team.teams)
+                  .map(([t, d]) => `${t}: ${d.mandatory.globs.join(", ")}`)
+                  .join("; ")})`
+              : "none"
+          }`,
+          `evals: ${m.evals.join(", ") || "none"}`,
+          `provenance: ${m.provenance.length ? plural(m.provenance.length, "source") : "none"}`,
+        ];
+        return ok(lines.join("\n"), { registration: r, state: stateText(listing.state) });
+      }
+      if (sub === "files") {
+        const kind = args[1];
+        const item = parsed.flags.item;
+        if (kind === "knowledge" && typeof item === "string") {
+          // The expert's knowledge files for an item (AC-5), recorded as the packs it used.
+          const opened = openForChange(env, item);
+          if (isOutcome(opened)) return opened;
+          const changed = changedWatchedPaths(env.paths.root, env.profile, opened.work);
+          const served = knowledgeFilesFor(userDir, env.profile, changed, env.policy);
+          const listed = listPacks(userDir);
+          recordPacks(
+            opened.work,
+            served.packs.map((n) => packLabel(listed, n)),
+          );
+          saveWork(env.paths, opened.work);
+          for (const skipped of served.skipped) io.stderr(`no knowledge file: ${skipped}\n`);
+          return ok(served.paths.join("\n"), {
+            paths: served.paths,
+            packs: opened.work.packs ?? [],
+            skipped: served.skipped,
+          });
+        }
+        const key = args[2];
+        if ((kind !== "checklists" && kind !== "knowledge") || key === undefined)
+          return refuse(usage);
+        const paths = packFiles(userDir, kind, key);
+        return ok(paths.join("\n"), { paths });
+      }
+      if (sub === "sync") {
+        const lines = discoverPacks(userDir, io.env);
+        register(`pack sync: ${lines.length ? lines.join("; ") : "nothing changed"}`);
+        return ok(lines.length ? lines.join("\n") : "nothing changed", { changes: lines });
       }
       return refuse(usage);
     }
@@ -3926,6 +4158,9 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
             ? `  learn: proven; crew phase ${work.id} next, then crew learn ${work.id} writes the base`
             : null;
       if (learnLine) extra.push(learnLine);
+      // A template the policy names and no pack registers (SP6 Task 2 AC-4): said on its own line.
+      const registry = teamsFor(env.policy, packTemplates(env.paths.userDir));
+      if (registry.warning) extra.push(`  ${registry.warning}`);
       // The strategy while it is written and judged (SP7 §7.3): its faults and its ruling.
       const plannedStrategy =
         work.phase === "strategy" ? plannedStrategyJudgement(work)[0] : undefined;
@@ -3983,6 +4218,8 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         triage: work.triage ?? null,
         questions: questionsSorted(work).map(questionJson),
         analysis: analysis?.origin ?? null,
+        // The packs registered on this machine with their states (SP6 Task 2 AC-6).
+        packs: packsJson(listPacks(env.paths.userDir)),
         awaiting: work.awaiting,
         awaitingMessage: work.awaitingMessage ?? null,
         mail: { unread: inbox.unread, answered: inbox.answered, waiting: inbox.waiting },
@@ -4456,7 +4693,9 @@ export async function main(argv: string[], io: CliIo): Promise<number> {
     io.stdout(
       `${JSON.stringify({ ok: outcome.code === 0, message: outcome.text, ...outcome.data })}\n`,
     );
-  else if (outcome.code === 0 || outcome.stdout) io.stdout(`${outcome.text}\n`);
-  else io.stderr(`${outcome.text}\n`);
+  else if (outcome.code === 0 || outcome.stdout) {
+    // A command with nothing to print (crew pack files with no file) prints nothing, not a blank line.
+    if (outcome.text) io.stdout(`${outcome.text}\n`);
+  } else io.stderr(`${outcome.text}\n`);
   return outcome.code;
 }

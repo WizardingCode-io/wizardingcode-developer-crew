@@ -20,15 +20,20 @@ function article(kind: string): string {
 
 const TEST_PATTERNS = ["**/*test*", "**/*spec*", "tests/**", "test/**", "**/__tests__/**"];
 
+/** The profile's test command a `crew tdd` step runs when none follows `--`, with the pack it came from while it is still proposed (SP6 Task 2 AC-3, round 3): such a command is never run unseen, here as at the gate run. */
 export function defaultTestCommand(
   profile: Profile,
-): { command: string; timeoutMs: number } | null {
+): { command: string; timeoutMs: number; heldBy: string | null } | null {
   const target =
     profile.targets.find((t) => t.path === "." && t.gates.test) ??
     profile.targets.find((t) => t.gates.test);
-  return target?.gates.test
-    ? { command: target.gates.test.command, timeoutMs: target.timeoutMs }
-    : null;
+  const test = target?.gates.test;
+  if (!target || !test) return null;
+  return {
+    command: test.command,
+    timeoutMs: target.timeoutMs,
+    heldBy: test.pack && test.source === "proposed" ? test.pack : null,
+  };
 }
 
 /** A run recorded carries `apply`, which writes the step's record into whatever evidence it is given (the caller applies it under the work folder's lock, finding 81); a refusal carries the run when one happened. */
@@ -65,6 +70,11 @@ export async function recordTdd(
     if (why) return { ok: false, message: why };
   }
   const fallback = defaultTestCommand(profile);
+  if (override === undefined && fallback?.heldBy)
+    return {
+      ok: false,
+      message: `pack ${fallback.heldBy}'s command is not confirmed (crew profile confirm test): pass -- <cmd> to run another`,
+    };
   const command =
     typeof override === "string" ? override : override ? joinWords(override) : fallback?.command;
   if (!command) {

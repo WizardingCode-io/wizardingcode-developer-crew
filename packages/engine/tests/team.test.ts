@@ -12,8 +12,9 @@ import {
   rolePattern,
   subagentStopMatcher,
   TEAMS,
+  teamsFor,
 } from "../src/team.ts";
-import { JUDGEMENT_GATES } from "../src/types.ts";
+import { JUDGEMENT_GATES, type Seat } from "../src/types.ts";
 
 const roles = (seats: { role: string }[]) => seats.map((s) => s.role);
 
@@ -283,4 +284,94 @@ test("SP8-T4 AC-3: the audit's seats follow the scope: the researcher for the de
   expect(
     roles(auditSeats({ riskAreas: ["infra"] }, always)).filter((r) => r === "review-infra"),
   ).toEqual(["review-infra"]);
+});
+
+test("SP6-T2 AC-4: teamsFor merges a registered template's globs into a paths team and warns on an unregistered one; plannedSeats seats the pack team's expert on a matching path, on standard and full alone", () => {
+  const templates = [
+    {
+      pack: "wizardingcode-pack-agentic-os",
+      template: {
+        template: "agentic-os",
+        teams: {
+          "agentic-os": {
+            mandatory: { kind: "paths" as const, globs: ["agents/**", "prompts/**"] },
+          },
+        },
+      },
+    },
+  ];
+  const withTemplate = {
+    ...DEFAULT_POLICY,
+    team: { ...DEFAULT_POLICY.team, template: "agentic-os" },
+  };
+  const core = teamsFor(DEFAULT_POLICY, templates);
+  expect(core.warning).toBeNull();
+  expect(core.teams).toEqual(TEAMS);
+  const merged = teamsFor(withTemplate, templates);
+  expect(merged.warning).toBeNull();
+  expect(merged.teams["agentic-os"].mandatory).toEqual({
+    kind: "paths",
+    globs: ["agents/**", "prompts/**"],
+    pack: "wizardingcode-pack-agentic-os",
+  });
+  // Nothing else of the registry moves: a template adds globs and nothing more.
+  expect(merged.teams.qa).toEqual(TEAMS.qa);
+  expect(merged.teams.frontend.mandatory).toEqual(TEAMS.frontend.mandatory);
+  expect(TEAMS["agentic-os"].mandatory).toEqual({ kind: "paths" });
+  const unregistered = teamsFor(withTemplate, []);
+  expect(unregistered.warning).toBe(
+    "team.template agentic-os is not a registered pack's template: the core registry applies",
+  );
+  expect(unregistered.teams).toEqual(TEAMS);
+  // The seats: the pack team's expert on a matching changed path, with the first glob matched.
+  const expert: Seat = {
+    role: "expert",
+    team: "agentic-os",
+    kind: "debate",
+    reason: "pack wizardingcode-pack-agentic-os (agents/**)",
+  };
+  const seated = plannedSeats(
+    "standard",
+    [],
+    ["src/a.ts", "agents/triage.md"],
+    withTemplate,
+    undefined,
+    undefined,
+    merged.teams,
+  );
+  expect(seated).toContainEqual(expert);
+  expect(roles(seated)).toContain("judge");
+  expect(
+    plannedSeats(
+      "full",
+      [],
+      ["prompts/triage.md"],
+      withTemplate,
+      undefined,
+      undefined,
+      merged.teams,
+    ),
+  ).toContainEqual({ ...expert, reason: "pack wizardingcode-pack-agentic-os (prompts/**)" });
+  // Nothing on the fast route, nothing when no path matches, nothing from the core registry.
+  expect(
+    roles(
+      plannedSeats(
+        "fast",
+        [],
+        ["agents/triage.md"],
+        withTemplate,
+        undefined,
+        undefined,
+        merged.teams,
+      ),
+    ),
+  ).toEqual([]);
+  expect(
+    roles(
+      plannedSeats("standard", [], ["src/a.ts"], withTemplate, undefined, undefined, merged.teams),
+    ),
+  ).not.toContain("expert");
+  expect(roles(plannedSeats("standard", [], ["agents/triage.md"], DEFAULT_POLICY))).not.toContain(
+    "expert",
+  );
 });

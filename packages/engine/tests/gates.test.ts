@@ -19,6 +19,7 @@ import {
   manifestChanged,
   plannedGates,
   runGates,
+  runOneGate,
   runTaskGate,
   scopedTestCommand,
 } from "../src/gates.ts";
@@ -1345,4 +1346,133 @@ test("SP8-T1 AC-7 (finding 87): a target whose test gate the user unset is plann
   expect(
     gatesForTarget({ ...target, unset: ["test"] }, DEFAULT_POLICY, ["packages/engine/src/a.ts"]),
   ).toEqual(["lint"]);
+});
+
+test("SP6-T2 AC-3: a pack's gate command is not run while proposed and the gate says so; confirmed it runs; a core detector's own guess still runs", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const paths = repoPaths(root, testEnv());
+  const { profile } = ensureProfile(paths);
+  const work = createWork(paths, "fix");
+  work.route = "fast";
+  addCriterion(work, "x");
+  addSkip(work, "gate:e2e", "no environment in the fixture");
+  write(root, "src/a.ts", "y");
+  const target = profile.targets[0] as Target;
+  const sentinel = join(root, "ran.txt");
+  target.gates.test = {
+    command: "touch ran.txt && exit 0",
+    source: "proposed",
+    pack: "wizardingcode-pack-x",
+  };
+  const held = await runGates(paths, work, profile, DEFAULT_POLICY, { only: ["test"] });
+  const run = held.evidence.runs.find((g) => g.gate === "test") as GateRun;
+  expect(run.status).toBe("unavailable");
+  expect(run.confirmed).toBe(false);
+  expect(run.reason).toBe(
+    "pack wizardingcode-pack-x's command is not confirmed (crew profile confirm test)",
+  );
+  expect(existsSync(sentinel)).toBe(false);
+  expect(held.verdict).toBe("unproven");
+  expect(held.unproven).toContainEqual(
+    expect.stringContaining(
+      "unavailable: pack wizardingcode-pack-x's command is not confirmed (crew profile confirm test)",
+    ),
+  );
+  // Confirmed: it runs, the pack kept on the record.
+  target.gates.test.source = "confirmed";
+  const ran = await runGates(paths, work, profile, DEFAULT_POLICY, { only: ["test"] });
+  expect(ran.evidence.runs.find((g) => g.gate === "test")).toMatchObject({
+    status: "pass",
+    confirmed: true,
+  });
+  expect(existsSync(sentinel)).toBe(true);
+  // A core detector's own guess (no pack) still runs unconfirmed, as it did.
+  rmSync(sentinel);
+  target.gates.test = { command: "touch ran.txt && exit 0", source: "proposed" };
+  const guess = await runGates(paths, work, profile, DEFAULT_POLICY, { only: ["test"] });
+  expect(guess.evidence.runs.find((g) => g.gate === "test")).toMatchObject({
+    status: "pass",
+    confirmed: false,
+  });
+  expect(existsSync(sentinel)).toBe(true);
+});
+
+test("SP6-T2 AC-3 (round 2): a pack's scoped test template is not run while proposed, whatever the whole test command; confirmed it runs", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const paths = repoPaths(root, testEnv());
+  const { profile } = ensureProfile(paths);
+  const work = createWork(paths, "fix");
+  work.route = "fast";
+  addCriterion(work, "x");
+  write(root, "src/a.ts", "y");
+  const target = profile.targets[0] as Target;
+  const scoped = join(root, "scoped.txt");
+  // The core's detected whole command stays (a rule with no test gate), the pack's template arrives proposed.
+  target.gates.test = { command: "touch whole.txt && exit 0", source: "detected" };
+  target.testScoped = {
+    command: "touch scoped.txt && exit 0 # {files}",
+    source: "proposed",
+    pack: "wizardingcode-pack-x",
+  };
+  const planned = { gate: "test" as const, target: "." };
+  const held = await runOneGate(paths, work, profile, planned, "fp", ["src/a.ts"], ["src/a.ts"]);
+  expect(held.status).toBe("unavailable");
+  expect(held.confirmed).toBe(false);
+  expect(held.reason).toBe(
+    "pack wizardingcode-pack-x's scoped test command is not confirmed (crew profile confirm test)",
+  );
+  expect(existsSync(scoped)).toBe(false);
+  expect(existsSync(join(root, "whole.txt"))).toBe(false);
+  // The whole command confirmed by a person changes nothing for the template: still held.
+  target.gates.test = { command: "touch whole.txt && exit 0", source: "confirmed" };
+  const stillHeld = await runOneGate(
+    paths,
+    work,
+    profile,
+    planned,
+    "fp",
+    ["src/a.ts"],
+    ["src/a.ts"],
+  );
+  expect(stillHeld.status).toBe("unavailable");
+  expect(existsSync(scoped)).toBe(false);
+  // The template confirmed: it runs.
+  target.testScoped.source = "confirmed";
+  const ran = await runOneGate(paths, work, profile, planned, "fp", ["src/a.ts"], ["src/a.ts"]);
+  expect(ran.status).toBe("pass");
+  expect(existsSync(scoped)).toBe(true);
+  // Without a scope the whole command runs as before, the template untouched.
+  const whole = await runOneGate(paths, work, profile, planned, "fp", ["src/a.ts"]);
+  expect(whole.status).toBe("pass");
+  expect(existsSync(join(root, "whole.txt"))).toBe(true);
+});
+
+test("SP6-T2 AC-3 (round 3): a pack's proposed e2e command is held before the environment starts; confirmed it runs", async () => {
+  const { root, paths, profile, target, work } = e2eRepo(E2E_OK);
+  const sentinel = join(root, "e2e-ran.txt");
+  target.gates.e2e = {
+    command: `sh -c 'touch e2e-ran.txt; printf "[]" > "$WIZARDINGCODE_CREW_CONSOLE_FILE"'`,
+    source: "proposed",
+    pack: "wizardingcode-pack-x",
+  };
+  const planned = { gate: "e2e" as const, target: "." };
+  const held = await runOneGate(paths, work, profile, planned, "fp", ["src/App.vue"]);
+  expect(held.status).toBe("unavailable");
+  expect(held.confirmed).toBe(false);
+  expect(held.reason).toBe(
+    "pack wizardingcode-pack-x's command is not confirmed (crew profile confirm e2e)",
+  );
+  expect(existsSync(sentinel)).toBe(false);
+  // The hold stands before the runner: the environment was never started.
+  expect(existsSync(join(root, "up.flag"))).toBe(false);
+  target.gates.e2e.source = "confirmed";
+  const ran = await runOneGate(paths, work, profile, planned, "fp", ["src/App.vue"]);
+  expect(ran.status).toBe("pass");
+  expect(existsSync(sentinel)).toBe(true);
 });

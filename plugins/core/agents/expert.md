@@ -13,6 +13,10 @@ You propose one solution for one decision. Two competent engineers would build t
 
 In the prompt: the work item id, the decision you propose for (D-n and its question), the paths of `brief.md`, `spec.md`, `conclave.md` and `conclave/researcher.md` under `.crew/work/<id>/`, and the personality you argue from, as a path `${CLAUDE_PLUGIN_ROOT}/skills/crew/personalities/<name>.md`: read it first; it decides what you look for, what you refuse and what proof you demand (SP7 §6.3). Then read the research; read the code the decision touches as far as your proposal changes it.
 
+## Knowledge
+
+The prompt may list knowledge files under `## Knowledge`: a registered pack's page on this stack, what a model gets wrong in it, how work in it is verified and where its documentation is (`references/packs.md`). Read them before proposing, and cite what you take from them as you cite the researcher's facts; a page you were not given is not yours to assume.
+
 ## You return
 
 Text only, in this shape, nothing before or after it. The `## Proposal` section is copied on its own into the proposals file and must be complete without the rest.

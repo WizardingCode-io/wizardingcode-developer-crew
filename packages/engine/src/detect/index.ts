@@ -1,4 +1,4 @@
-import { readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { nowIso } from "../fs.ts";
 import { matchesAny } from "../glob.ts";
@@ -8,7 +8,7 @@ import { confirmedEnvironment, detectEnvironment, environmentChanges } from "./e
 import { nodeDetector } from "./node.ts";
 import { phpDetector } from "./php.ts";
 import { pythonDetector } from "./python.ts";
-import type { Detector } from "./types.ts";
+import type { DetectedTarget, Detector, DetectorRule } from "./types.ts";
 
 export const DETECTORS: readonly Detector[] = [nodeDetector, phpDetector, pythonDetector];
 export const DEFAULT_WATCH_EXCLUDE = ["**/*.md", "docs/**", ".crew/**", ".claude/**"];
@@ -49,7 +49,70 @@ function* folders(root: string, depth = 0): Generator<string> {
   }
 }
 
-export function detectTargets(root: string): Target[] {
+/** A registered pack's rule, as the profile reads it (SP6 Task 2). */
+export interface PackRule {
+  pack: string;
+  rule: DetectorRule;
+}
+
+/** A pack rule as a detector: every marker present under the folder, the rule's target returned. */
+export function dataDetector(rule: DetectorRule): Detector {
+  return {
+    stack: rule.stack,
+    detect(dir: string): DetectedTarget | null {
+      if (!rule.markers.every((marker) => existsSync(join(dir, marker)))) return null;
+      return {
+        stack: rule.stack,
+        packageManager: rule.packageManager,
+        gates: { ...rule.gates },
+        ...(rule.testScoped ? { testScoped: rule.testScoped } : {}),
+        proposed: true,
+      };
+    },
+  };
+}
+
+/**
+ * The pack rules after the core (SP6 Task 2 AC-3): a rule with `extends` refines the core target
+ * of its stack at that folder (the gates it names replace the core's as proposed commands of the
+ * pack, the others stay; the package manager and the scoped test taken; the rule's id added to the
+ * target's tags) and is skipped where no such target exists; a rule without `extends` is a new
+ * target of its own stack.
+ */
+function applyRules(root: string, targets: Target[], rules: readonly PackRule[]): void {
+  for (const dir of folders(root)) {
+    const rel = relative(root, dir).replace(/\\/g, "/") || ".";
+    for (const { pack, rule } of rules) {
+      const found = dataDetector(rule).detect(dir);
+      if (!found) continue;
+      const gates: Target["gates"] = {};
+      for (const [gate, command] of Object.entries(found.gates) as [GateName, string][])
+        gates[gate] = { command, source: "proposed", pack };
+      const testScoped: GateCommand | undefined = found.testScoped
+        ? { command: found.testScoped, source: "proposed", pack }
+        : undefined;
+      if (rule.extends) {
+        const core = targets.find((t) => t.path === rel && t.stack === rule.extends);
+        if (!core) continue;
+        Object.assign(core.gates, gates);
+        core.packageManager = found.packageManager;
+        if (testScoped) core.testScoped = testScoped;
+        core.tags = [...new Set([...(core.tags ?? []), rule.stack])];
+        continue;
+      }
+      targets.push({
+        path: rel,
+        stack: rule.stack,
+        packageManager: found.packageManager,
+        gates,
+        timeoutMs: DEFAULT_TIMEOUT_MS,
+        ...(testScoped ? { testScoped } : {}),
+      });
+    }
+  }
+}
+
+export function detectTargets(root: string, rules: readonly PackRule[] = []): Target[] {
   const targets: Target[] = [];
   const workspaces = new Map<Target, string[]>();
   for (const dir of folders(root)) {
@@ -90,7 +153,18 @@ export function detectTargets(root: string): Target[] {
       if (matchesAny(child.path.slice(prefix.length), globs)) child.workspaceOf = parent.path;
     }
   }
+  if (rules.length) applyRules(root, targets, rules);
   return targets;
+}
+
+/**
+ * A command a person proposed or confirmed, which fresh detection never discards. A pack's own
+ * proposed command (SP6 Task 2) is the detection's, not a person's: it follows the rules the packs
+ * give now, so a removed pack's command goes and a changed one is replaced; confirmed, it stays.
+ */
+function theirs(command: GateCommand): boolean {
+  if (command.source === "detected") return false;
+  return !(command.pack && command.source === "proposed");
 }
 
 /**
@@ -114,16 +188,15 @@ export function mergeProfile(
         for (const gate of old.unset) delete target.gates[gate];
       }
       for (const [gate, command] of Object.entries(old.gates) as [GateName, GateCommand][]) {
-        if (command.source !== "detected") target.gates[gate] = command;
+        if (theirs(command)) target.gates[gate] = command;
       }
       // A scoped test template the user set outlives the detection, like a confirmed gate.
-      if (old.testScoped && old.testScoped.source !== "detected")
-        target.testScoped = old.testScoped;
+      if (old.testScoped && theirs(old.testScoped)) target.testScoped = old.testScoped;
     }
     for (const old of previous.targets) {
       const found = targets.some((t) => t.path === old.path && t.stack === old.stack);
-      const theirs = Object.values(old.gates).some((g) => g.source !== "detected");
-      if (!found && theirs) targets.push({ ...old, gates: { ...old.gates } });
+      if (!found && Object.values(old.gates).some(theirs))
+        targets.push({ ...old, gates: { ...old.gates } });
     }
   }
   // The environment the user confirmed outlives the detection whole, as a confirmed gate does;
@@ -141,8 +214,12 @@ export function mergeProfile(
   };
 }
 
-export function detectProfile(root: string, previous: Profile | null = null): Profile {
-  const targets = detectTargets(root);
+export function detectProfile(
+  root: string,
+  previous: Profile | null = null,
+  rules: readonly PackRule[] = [],
+): Profile {
+  const targets = detectTargets(root, rules);
   return mergeProfile(previous, targets, detectEnvironment(root, targets));
 }
 

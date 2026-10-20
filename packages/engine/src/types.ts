@@ -82,7 +82,8 @@ export interface Validation {
 
 /** The `team` block of `policy.json` (SP7 §6.1): a template, teams added beyond the route, and caps that only tighten. */
 export interface TeamPolicy {
-  template: "core";
+  /** `core`, or the template of a registered pack (SP6 Task 2); an unregistered name applies nothing. */
+  template: string;
   always: TeamName[];
   specialists: string[];
   maxExperts: number;
@@ -112,10 +113,15 @@ export interface GateCommand {
   source: CommandSource;
   /** This gate's own time limit; without it the target's applies, with a twenty-minute floor for `test`. */
   timeoutMs?: number;
+  /** The pack whose detector rule gave the command (SP6 Task 2): proposed until a person confirms it. */
+  pack?: string;
 }
 
-/** 'other' is a target a person configured by hand, on a stack no detector knows. */
-export type Stack = "node" | "php" | "python" | "other";
+/** The stacks the core detects; 'other' is a target a person configured by hand, on a stack no detector knows. */
+export const CORE_STACKS = ["node", "php", "python", "other"] as const;
+export type CoreStack = (typeof CORE_STACKS)[number];
+/** A core stack, or the id of a pack's detector rule (SP6 Task 2). */
+export type Stack = string;
 
 export interface Target {
   /** Path relative to the repository root; '.' for the root itself. */
@@ -128,6 +134,8 @@ export interface Target {
   workspaceOf?: string;
   /** A test command narrowed to a todo's files (SP7 §8.1): a template with `{files}`, detected or set by the user. */
   testScoped?: GateCommand;
+  /** The ids of the pack rules that refined this target (SP6 Task 2): read beside `stack` for the expert's knowledge files. */
+  tags?: string[];
   /** Gates the user removed with `crew profile unset` (finding 87): a `test` listed here is not planned for the target. */
   unset?: GateName[];
 }
@@ -653,6 +661,8 @@ export interface WorkItem {
   kindFrom?: string;
   /** What the base listed for this item at its classification (SP4 Task 3); absent before 0.10.0. */
   knowledge?: KnowledgeRecord;
+  /** The packs the item used (SP6 Task 2), as `<name> <version>`: the knowledge files served to the expert, the template that seated a team. */
+  packs?: string[];
   /** What `crew learn` wrote and confirmed (SP4 Task 4); absent until the item learned. */
   learned?: { at: string; entries: string[]; confirmed: string[] };
   route: Route;

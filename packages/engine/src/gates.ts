@@ -1,4 +1,4 @@
-import { accessSync, constants, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { accessSync, constants, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { basename, delimiter, join } from "node:path";
 import { type AuditToolName, parseAudit } from "./audit.ts";
 import { auditState } from "./audit-state.ts";
@@ -457,6 +457,19 @@ export async function runOneGate(
     };
   }
   const target = targetOf(profile, planned);
+  // A pack's command is never run unseen (SP6 Task 2 AC-3): proposed until a person confirms it
+  // in this project, the gate says so and the item stays unproven; a core detector's own guess
+  // runs. The hold stands before every runner that reads the target's command, the e2e's included
+  // (round 3); the deps gate runs the audit tool, never a configured command.
+  const held = (command: string, what: string, pack: string): GateRun => ({
+    ...base,
+    command,
+    commandSource: "proposed",
+    confirmed: false,
+    reason: `pack ${pack}'s ${what} is not confirmed (crew profile confirm ${gate})`,
+  });
+  const own = gate === "deps" ? undefined : target?.gates[gate];
+  if (own?.pack && own.source === "proposed") return held(own.command, "command", own.pack);
   if (gate === "e2e") {
     const where = targetPath.replace(/[^a-z0-9]+/gi, "_");
     return runE2e({
@@ -494,6 +507,17 @@ export async function runOneGate(
         ? (scopedTestCommand(target, scope) ?? configured.command)
         : configured.command;
     source = configured.source;
+    // The scoped template the same rule gave is held on its own confirmation (the security, risk
+    // and architecture gates' finding): a todo's gate runs it, whatever the whole command's state.
+    const scoped = target.testScoped;
+    if (
+      gate === "test" &&
+      scope &&
+      command !== configured.command &&
+      scoped?.pack &&
+      scoped.source === "proposed"
+    )
+      return held(command, "scoped test command", scoped.pack);
   }
   const where =
     targetPath.replace(/[^a-z0-9]+/gi, "_") + (planned.stack ? `-${planned.stack}` : "");

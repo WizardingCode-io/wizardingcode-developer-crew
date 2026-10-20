@@ -58,5 +58,6 @@ export function buildContext(
     openedBy: mail.self.openedBy,
     openedBranch: mail.self.openedBranch,
     openedMode: mail.self.openedMode,
+    env,
   };
 }

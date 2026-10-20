@@ -1,10 +1,11 @@
 import { expect, test } from "bun:test";
-import { rmSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tddDone } from "../src/criteria.ts";
 import { detectProfile } from "../src/detect/index.ts";
 import { emptyEvidence } from "../src/evidence.ts";
 import { recordTdd as record } from "../src/tdd.ts";
+import type { Target } from "../src/types.ts";
 import { addCriterion, createWork } from "../src/work.ts";
 import { makeRepo, repoPaths, testEnv, write } from "./helpers.ts";
 
@@ -243,4 +244,38 @@ test("SP8-T1 AC-1 (finding 91): a record given shell words with more than one af
   ]);
   expect(red.ok, red.message).toBe(true);
   expect(s.evidence.tdd.find((t) => t.criterion === s.behaviour.id)?.red?.exit).toBe(1);
+});
+
+test("SP6-T2 AC-3 (round 3): crew tdd without -- never runs a pack's proposed test command; the words after --, a confirmed one and a core guess run", async () => {
+  const s = setup();
+  const target = s.profile.targets[0] as Target;
+  target.gates.test = {
+    command: "touch ran.txt && exit 1",
+    source: "proposed",
+    pack: "wizardingcode-pack-x",
+  };
+  const held = await recordTdd(s.paths, s.work, s.evidence, s.profile, s.behaviour.id, "red");
+  expect(held.ok).toBe(false);
+  expect(held.message).toBe(
+    "pack wizardingcode-pack-x's command is not confirmed (crew profile confirm test): pass -- <cmd> to run another",
+  );
+  expect(existsSync(join(s.root, "ran.txt"))).toBe(false);
+  expect(s.evidence.tdd).toEqual([]);
+  // The words after -- run, the pack's command untouched.
+  const own = await recordTdd(s.paths, s.work, s.evidence, s.profile, s.behaviour.id, "red", [
+    "sh",
+    "run-tests.sh",
+  ]);
+  expect(own.ok).toBe(true);
+  expect(existsSync(join(s.root, "ran.txt"))).toBe(false);
+  // Confirmed by a person: it is the fallback again.
+  target.gates.test.source = "confirmed";
+  const second = addCriterion(s.work, "y");
+  expect((await recordTdd(s.paths, s.work, s.evidence, s.profile, second.id, "red")).ok).toBe(true);
+  expect(existsSync(join(s.root, "ran.txt"))).toBe(true);
+  // A core detector's own guess (no pack) runs unconfirmed, as it did.
+  target.gates.test = { command: "touch guess.txt && exit 1", source: "proposed" };
+  const third = addCriterion(s.work, "z");
+  expect((await recordTdd(s.paths, s.work, s.evidence, s.profile, third.id, "red")).ok).toBe(true);
+  expect(existsSync(join(s.root, "guess.txt"))).toBe(true);
 });

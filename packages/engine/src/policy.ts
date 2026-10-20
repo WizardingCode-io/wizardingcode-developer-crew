@@ -143,7 +143,10 @@ export const SETTABLE_POLICY_KEYS: Record<string, Settable> = {
     pattern: WORKTREES,
     hint: "a relative path with no spaces (.. for the folder beside the root)",
   },
-  "team.template": { values: ["core"] },
+  "team.template": {
+    pattern: /^[a-z][a-z0-9-]*$/,
+    hint: "core or a pack's template name (a lowercase word)",
+  },
   "team.maxExperts": { integer: RANGES.maxExperts },
   "team.maxValidationRounds": { integer: RANGES.maxValidationRounds },
   "team.maxJudgementRounds": { integer: RANGES.maxJudgementRounds },
@@ -325,7 +328,9 @@ function loadTeamPolicy(raw: unknown): TeamPolicy {
     unknown
   >;
   return {
-    template: "core",
+    // A lowercase word as written (SP6 Task 2): `core`, or a pack's template checked where it is read.
+    template:
+      typeof t.template === "string" && /^[a-z][a-z0-9-]*$/.test(t.template) ? t.template : "core",
     always: strings(t.always).filter((n): n is TeamName => TEAM_NAMES.includes(n as TeamName)),
     specialists: strings(t.specialists),
     maxExperts: bounded(t.maxExperts, RANGES.maxExperts, DEFAULT_TEAM_POLICY.maxExperts),
