@@ -108,10 +108,61 @@ test("SP4-T2 AC-1: readBase says why a base cannot be read (missing, garbage, a 
   }
 });
 
+test("SP6-T1 AC-3: a ref's item is a string or null; the former dash sentinel reads as null; any other shape refuses the base naming the entry", () => {
+  const dir = userDir();
+  const file = knowledgePath(dir);
+  mkdirSync(dirname(file), { recursive: true });
+  const at = "2026-10-20T00:00:00.000Z";
+  const withRef = (ref: Record<string, unknown>) =>
+    JSON.stringify({
+      version: 1,
+      next: 2,
+      entries: [{ ...entry("K-1", at), contradictedBy: [ref] }],
+    });
+  // A base written by 0.10.0: the dash stands for no item and reads as null.
+  writeFileSync(file, withRef({ item: "-", project: "shop", at, reason: "r" }));
+  expect(readBase(dir).base?.entries[0]?.contradictedBy).toEqual([
+    { item: null, project: "shop", at, reason: "r" },
+  ]);
+  writeFileSync(file, withRef({ item: null, project: "shop", at }));
+  expect(readBase(dir).base?.entries[0]?.contradictedBy).toEqual([
+    { item: null, project: "shop", at },
+  ]);
+  writeFileSync(file, withRef({ item: "2026-10-20-001-fix", project: "shop", at }));
+  expect(readBase(dir).reason).toBe("");
+  // Any other shape: refused, the file left as it is.
+  const refused: [Record<string, unknown>, string][] = [
+    [
+      { item: 7, project: "shop", at },
+      "base.json: entry K-1 has a ref whose item is neither a string nor null",
+    ],
+    [{ item: null, at }, "base.json: entry K-1 has a ref with no project"],
+    [{ item: null, project: "shop" }, "base.json: entry K-1 has a ref with no at"],
+    [
+      { item: null, project: "shop", at, reason: 3 },
+      "base.json: entry K-1 has a ref whose reason is not a string",
+    ],
+  ];
+  for (const [ref, reason] of refused) {
+    const text = withRef(ref);
+    writeFileSync(file, text);
+    const read = readBase(dir);
+    expect(read.base, reason).toBeNull();
+    expect(read.reason, reason).toBe(reason);
+    expect(readFileSync(file, "utf8"), reason).toBe(text);
+  }
+});
+
 test("SP4-T2 AC-2: addEntry takes K-1 then K-2 for good under the lock, both present, and updateEntry changes one entry in place", () => {
   const dir = userDir();
-  const first = addEntry(dir, draft());
-  const second = addEntry(dir, draft({ title: "Cart totals", words: ["cart", "totals"] }));
+  // Two projects of one user directory, each with its own CrewPaths, add under the one lock (finding 105).
+  const home = { ...testEnv(), WIZARDINGCODE_HOME: dirname(dir) };
+  const shop = repoPaths(makeRepo({ "package.json": "{}" }), home);
+  const crm = repoPaths(makeRepo({ "package.json": "{}" }), home);
+  expect(shop.userDir).toBe(dir);
+  expect(crm.userDir).toBe(dir);
+  const first = addEntry(shop.userDir, draft());
+  const second = addEntry(crm.userDir, draft({ title: "Cart totals", words: ["cart", "totals"] }));
   if ("refused" in first || "refused" in second) throw new Error("the adds were refused");
   expect(first.id).toBe("K-1");
   expect(second.id).toBe("K-2");

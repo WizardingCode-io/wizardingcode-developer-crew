@@ -445,7 +445,7 @@ test("SP2a: a blocking objection keeps the item unproven until resolved or waive
   bindObjection(ledger, work, o1.id, "AC-1");
   waiveObjection(ledger, o2.id, "soft delete chosen knowingly", { by: "user" });
   expect(computeVerdict({ ...input, ledger }).verdict).toBe("proven");
-  const report = renderReport(work, { ...evidence, verdict: "proven" }, DEFAULT_POLICY, ledger);
+  const report = renderReport(work, { ...evidence, verdict: "proven" }, DEFAULT_POLICY, { ledger });
   expect(report).toContain("- Verdict: **Proven**, with 1 objection waived by the user");
   expect(report).toContain("## Objections");
   expect(report).toContain(
@@ -474,7 +474,7 @@ test("ADR 0005: a relayed decision reads by the user, relayed by the agent, ever
     verdict: "proven",
     unproven: [],
   };
-  const report = renderReport(work, evidence, DEFAULT_POLICY, ledger);
+  const report = renderReport(work, evidence, DEFAULT_POLICY, { ledger });
   expect(report).toContain(
     "- Verdict: **Proven**, with 1 objection waived by the user, relayed by the agent\n",
   );
@@ -513,7 +513,7 @@ test("SP2a review: the verdict line names who waived, and a not-counted waiver r
   const o1 = addObjection(ledger, "re-subscribes everyone", "fault-finder", "blocking");
   waiveObjection(ledger, o1.id, "no time", { by: "agent", mode: "dontAsk" });
   const evidence: Evidence = { ...emptyEvidence(), fingerprint: "f" };
-  const waiting = renderReport(work, evidence, DEFAULT_POLICY, ledger);
+  const waiting = renderReport(work, evidence, DEFAULT_POLICY, { ledger });
   expect(waiting).toContain("- Verdict: **Not proven**\n");
   expect(waiting).not.toContain("waived by the user");
   expect(waiting).toContain(
@@ -523,7 +523,7 @@ test("SP2a review: the verdict line names who waived, and a not-counted waiver r
     work,
     { ...evidence, verdict: "proven" },
     { ...DEFAULT_POLICY, unattendedDecisions: "count" },
-    ledger,
+    { ledger },
   );
   expect(counting).toContain(
     "- Verdict: **Proven**, with 1 objection waived by the agent in dontAsk mode (counted by policy)",
@@ -663,14 +663,10 @@ test("SP7b AC-3: the report's Mail table carries the priority and prints a 0.6.0
       at: "2026-10-18T10:01:00.000Z",
     },
   };
-  const report = renderReport(
-    work,
-    emptyEvidence(),
-    DEFAULT_POLICY,
-    undefined,
-    { box: { version: 1, messages: [message] }, tampered: false },
-    "storefront",
-  );
+  const report = renderReport(work, emptyEvidence(), DEFAULT_POLICY, {
+    mail: { box: { version: 1, messages: [message] }, tampered: false },
+    selfName: "storefront",
+  });
   expect(report).toContain(
     "| Message | Thread | At | Direction | With | Type | Priority | Subject | Status | Contracts |",
   );
@@ -717,14 +713,10 @@ test("SP7b-T2 AC-4: the report's Mail table carries the thread and the contracts
       { kind: "schema", path: "docs/a|b.yaml", hash: "b".repeat(64), summary: "first\nsecond" },
     ],
   };
-  const report = renderReport(
-    work,
-    emptyEvidence(),
-    DEFAULT_POLICY,
-    undefined,
-    { box: { version: 1, messages: [root, answer, forged] }, tampered: false },
-    "storefront",
-  );
+  const report = renderReport(work, emptyEvidence(), DEFAULT_POLICY, {
+    mail: { box: { version: 1, messages: [root, answer, forged] }, tampered: false },
+    selfName: "storefront",
+  });
   expect(report).toContain(
     "| Message | Thread | At | Direction | With | Type | Priority | Subject | Status | Contracts |",
   );
@@ -877,7 +869,7 @@ test("SP3-T5 AC-2: the report's Analysis section lists the paths with their comm
     ],
   };
   const render = (o: { origin: Origin | null; tampered: boolean }) =>
-    renderReport(work, emptyEvidence(), DEFAULT_POLICY, undefined, undefined, undefined, o);
+    renderReport(work, emptyEvidence(), DEFAULT_POLICY, { analysis: o });
   const report = render({ origin, tampered: false });
   expect(report).toContain(
     '## Analysis\n\n- Paths: src/a.mjs (2 commits), src/index.mjs (1 commit)\n- Items: 2026-10-18-004-delete "Delete \\| accounts now" (issue; roles review-code-quality, judge; tasks T-1; decisions 3; mail 2); 2026-10-01-001-gone (not in the records); 2026-10-02-001-quiet "Quiet" (feature; roles none; tasks none; decisions 0; mail 0)\n',
@@ -987,16 +979,9 @@ test("SP8-T3 AC-4: the report's Strategy section says the strategy is from the r
   const work = createWork(paths, "a new product");
   work.kind = "new-project";
   const report = (text: string, ruling: Evidence["judgement"]) =>
-    renderReport(
-      work,
-      { ...emptyEvidence(), judgement: ruling },
-      DEFAULT_POLICY,
-      undefined,
-      undefined,
-      undefined,
-      undefined,
-      strategyReport(text, RESEARCH, { judgement: ruling }),
-    );
+    renderReport(work, { ...emptyEvidence(), judgement: ruling }, DEFAULT_POLICY, {
+      strategy: strategyReport(text, RESEARCH, { judgement: ruling }),
+    });
   const none = report(STRATEGY, []);
   expect(none).toContain(
     "## Strategy\n\n- From the research and the base.\n- Claims: Viability 1, Cost 1, Time 1, Stack 1; scaling rows: 1.\n- Ruling: none.\n",
@@ -1065,18 +1050,7 @@ test("SP4-T3 AC-5: the report's Knowledge section carries the file's bullets, or
   const work = createWork(paths, "a login change");
   expect(renderReport(work, emptyEvidence(), DEFAULT_POLICY)).toContain("## Knowledge\n\n- none\n");
   const text = '# Knowledge for x\n\n- K-4 · general · "Login" · acme · word login · likely 0.91\n';
-  const report = renderReport(
-    work,
-    emptyEvidence(),
-    DEFAULT_POLICY,
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    text,
-  );
+  const report = renderReport(work, emptyEvidence(), DEFAULT_POLICY, { knowledge: text });
   expect(report).toContain(
     '## Knowledge\n\n- K-4 · general · "Login" · acme · word login · likely 0.91\n',
   );
@@ -1105,23 +1079,13 @@ test("SP4-T5 AC-5: the report links the latest CTO plan after the Type line, or 
     path: "/home/u/.wizardingcode/crew/cto/acme/2026-10-20-plan.md",
     date: "2026-10-20",
   };
-  // The seven optional records before the plan: the ledger, the mail, the name, the analysis, the strategy, the audit, the knowledge.
-  const seven = [
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-    undefined,
-  ] as const;
-  expect(renderReport(work, evidence, DEFAULT_POLICY, ...seven, plan)).toMatch(
+  expect(renderReport(work, evidence, DEFAULT_POLICY, { ctoPlan: plan })).toMatch(
     /\n- Type: [^\n]*\n- CTO plan: \/home\/u\/\.wizardingcode\/crew\/cto\/acme\/2026-10-20-plan\.md \(2026-10-20\)\n/,
   );
   expect(renderReport(work, evidence, DEFAULT_POLICY)).toMatch(
     /\n- Type: [^\n]*\n- CTO plan: none\n/,
   );
-  expect(renderReport(work, evidence, DEFAULT_POLICY, ...seven, null)).toContain(
+  expect(renderReport(work, evidence, DEFAULT_POLICY, { ctoPlan: null })).toContain(
     "\n- CTO plan: none\n",
   );
 });

@@ -6511,6 +6511,165 @@ test("SP4-T2 AC-5: crew knowledge add writes a marked entry from a file inside t
   });
 });
 
+/** A standard item at the leads' validation of its spec (SP7a AC-3's fixture), the gap round approved by the validator, under the team policy given; `record` records a lead's validated file, `revise` rewrites the spec. */
+async function specAtValidation(team: Record<string, unknown>) {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+    ".crew/policy.json": JSON.stringify({ team }),
+  });
+  const env = testEnv();
+  const c = io(root, env);
+  const id = (
+    await c.json(
+      "start",
+      "Refactor the module",
+      "--answers",
+      JSON.stringify({ ...JSON.parse(answers), scope: 1 }),
+      "--criterion",
+      "a",
+    )
+  ).data.id as string;
+  write(root, `.crew/work/${id}/spec.md`, "# Spec\n\n## Acceptance criteria\n- AC-1 a\n");
+  write(
+    root,
+    `.crew/work/${id}/conclave.md`,
+    "# Gap round\n\n## Assumed by good practice\n- none\n\n## Decisions only the user can make\n- none\n\n## Proposals\n- none\n\n## Warnings\n- none\n",
+  );
+  await c.run("phase", id, "next"); // understand
+  await c.run("phase", id, "next"); // specify
+  await c.run("phase", id, "next"); // conclave
+  await c.run("approve", id, "spec", "--validator", "complete-gap-round");
+  const record = (lead: string) =>
+    c.run(
+      "validation",
+      id,
+      "record",
+      "--what",
+      "spec",
+      "--by",
+      lead,
+      "--file",
+      leadFile(root, id, lead),
+    );
+  const revise = (n: number) =>
+    write(
+      root,
+      `.crew/work/${id}/spec.md`,
+      `# Spec\n\n## Acceptance criteria\n- AC-1 a, revision ${n}\n`,
+    );
+  const rounds = () => loadWork(repoPaths(root, env), id).work?.rounds;
+  return { root, env, c, id, record, revise, rounds };
+}
+
+test("SP6-T1 AC-1: a validation round is counted per revision each lead read, not per record; the record that would open round three is refused when continuations are asked, and crew continue lets it through once", async () => {
+  const { c, id, record, revise, rounds } = await specAtValidation({ continuations: "ask" });
+  expect((await record("lead-qa")).out.trim()).toBe(
+    "validation of spec by lead-qa: validated (round 1)",
+  );
+  // The spec changes after lead-qa read it and before lead-security's first record lands (finding 106).
+  revise(2);
+  expect((await record("lead-security")).out.trim()).toBe(
+    "validation of spec by lead-security: validated (round 1)",
+  );
+  expect(rounds()).toMatchObject({ validation: 1 });
+  // A revision both leads read again: each opens its round 2; the item's round is 2.
+  revise(3);
+  expect((await record("lead-qa")).out.trim()).toBe(
+    "validation of spec by lead-qa: validated (round 2)",
+  );
+  expect((await record("lead-security")).out.trim()).toBe(
+    "validation of spec by lead-security: validated (round 2)",
+  );
+  expect(rounds()).toMatchObject({ validation: 2 });
+  // The same hash again spends nothing.
+  expect((await record("lead-security")).out.trim()).toBe(
+    "validation of spec by lead-security: validated (round 2)",
+  );
+  // A third revision: the record that would open round 3 is refused until the user continues.
+  revise(4);
+  const third = await record("lead-qa");
+  expect(third.code).toBe(1);
+  expect(third.err.trim()).toBe(
+    `validation round 3 of ${id}: the policy allows 2 (team.maxValidationRounds); the user continues it once with crew continue ${id} validation, or decides`,
+  );
+  expect(rounds()).toMatchObject({ validation: 2 });
+  expect((await c.run("continue", id, "validation")).code).toBe(0);
+  expect((await record("lead-qa")).out.trim()).toBe(
+    "validation of spec by lead-qa: validated (round 3)",
+  );
+  // The other lead on the same revision joins round 3 without a second grant.
+  expect((await record("lead-security")).out.trim()).toBe(
+    "validation of spec by lead-security: validated (round 3)",
+  );
+  expect(rounds()).toMatchObject({ validation: 3 });
+});
+
+test("SP6-T1 AC-1: under team.continuations granted the record that would open round three spends one standing grant and is taken", async () => {
+  const { root, env, record, revise, rounds } = await specAtValidation({
+    continuations: "granted",
+  });
+  expect((await record("lead-qa")).out.trim()).toBe(
+    "validation of spec by lead-qa: validated (round 1)",
+  );
+  revise(2);
+  expect((await record("lead-security")).out.trim()).toBe(
+    "validation of spec by lead-security: validated (round 1)",
+  );
+  revise(3);
+  await record("lead-qa");
+  await record("lead-security");
+  expect(rounds()).toMatchObject({ validation: 2 });
+  revise(4);
+  const third = await record("lead-qa");
+  expect(third.code, third.err).toBe(0);
+  expect(third.out.trim()).toBe("validation of spec by lead-qa: validated (round 3)");
+  expect(rounds()).toMatchObject({ validation: 3 });
+  expect(
+    listDecisions(repoPaths(root, env)).filter(
+      (d) =>
+        d.kind === "continue" &&
+        d.text === "validation continued under the standing grant (team.continuations: granted)",
+    ),
+  ).toHaveLength(1);
+});
+
+test("SP6-T1 AC-3: crew knowledge contradict without --item stores a null item, show prints it as no item, and a dash written by 0.10.0 reads the same", async () => {
+  const { env, a, ca } = knowledgeProjects();
+  const paths = repoPaths(a, env);
+  seedBase(paths.userDir, [
+    kEntry("K-1", {
+      workspace: "acme",
+      project: "shop",
+      contradictedBy: [{ item: "-", project: "crm", at: K_AT, reason: "older" }],
+    }),
+  ]);
+  const contradicted = await ca.run("knowledge", "contradict", "K-1", "--reason", "no longer true");
+  expect(contradicted.code, contradicted.err).toBe(0);
+  expect(contradicted.out.trim()).toBe("K-1 contradicted: no longer true");
+  const refs = readBase(paths.userDir).base?.entries[0]?.contradictedBy ?? [];
+  expect(refs.map((r) => r.item)).toEqual([null, null]);
+  expect(refs[1]).toMatchObject({ project: "shop", reason: "no longer true" });
+  const shown = (await ca.run("knowledge", "show", "K-1")).out;
+  expect(shown).toContain("contradicted by: no item (crm, 2026-10-01): older; no item (shop, ");
+  expect(shown).not.toContain("- (");
+  // With --item the id is kept, as crew learn's confirmations keep it.
+  expect(
+    (
+      await ca.run(
+        "knowledge",
+        "contradict",
+        "K-1",
+        "--reason",
+        "again",
+        "--item",
+        "2026-10-20-001-x",
+      )
+    ).out.trim(),
+  ).toBe("K-1 contradicted by 2026-10-20-001-x: again");
+  expect((await ca.run("knowledge", "show", "K-1")).out).toContain("2026-10-20-001-x (shop, ");
+});
+
 test("SP4-T2 AC-6: crew knowledge unmark is a person's: --mode and --validator refused, a hidden entry answered as an unknown id, a relayed run recorded as the user's and the entry read everywhere after it", async () => {
   const { env, a, ca, cb } = knowledgeProjects();
   expect(
@@ -6529,6 +6688,10 @@ test("SP4-T2 AC-6: crew knowledge unmark is a person's: --mode and --validator r
   ).toBe(0);
   expect((await cb.run("knowledge", "unmark", "K-1")).err).toBe(
     "no entry K-1 visible to this project\n",
+  );
+  // An unknown id is answered with the one text a hidden entry gets (rule 13).
+  expect((await ca.run("knowledge", "unmark", "K-9")).err).toBe(
+    "no entry K-9 visible to this project\n",
   );
   expect((await ca.run("knowledge", "unmark", "K-1", "--mode", "auto")).err.trim()).toBe(
     "a mark is removed by a person: run the command without --mode",
@@ -6550,6 +6713,13 @@ test("SP4-T2 AC-6: crew knowledge unmark is a person's: --mode and --validator r
     by: "the user, relayed by the agent",
   });
   expect((await ca.run("knowledge", "unmark", "K-1")).err.trim()).toBe("K-1 is not marked");
+  // A base the engine cannot read: unmark is refused naming the reason, the file left as it is (finding 105).
+  const baseFile = knowledgePath(repoPaths(a, env).userDir);
+  writeFileSync(baseFile, "{not json");
+  const garbage = await ca.run("knowledge", "unmark", "K-1");
+  expect(garbage.code).toBe(1);
+  expect(garbage.err.trim()).toMatch(/^the knowledge base cannot be read: base\.json: /);
+  expect(readFileSync(baseFile, "utf8")).toBe("{not json");
 });
 
 test("SP4-T3 AC-1, AC-2: a start looks the base up and writes knowledge.md and the record, the status and the JSON say what was listed, crew knowledge <id> lookup rewrites it, a hidden entry is never listed, and an unreadable base is said and never stops the item", async () => {
@@ -6724,6 +6894,8 @@ test("SP4-T3 AC-4: crew strategy check and the guard accept a [K:<id>] the engin
   const ok = await c.run("strategy", id, "check");
   expect(ok.code, ok.err).toBe(0);
   expect((await c.run("phase", id, "next")).err).not.toContain("is not listed in knowledge.md");
+  // The accepted check reaches the status line through strategyOf (finding 106).
+  expect((await c.run("status")).out).toContain("strategy from the research and the base: ok");
   write(
     root,
     `.crew/work/${id}/strategy.md`,
@@ -6734,7 +6906,9 @@ test("SP4-T3 AC-4: crew strategy check and the guard accept a [K:<id>] the engin
   expect(refused.err.trim()).toBe(
     "strategy.md: [K:K-9] in Stack: K-9 is not listed in knowledge.md (not in the base, or marked for another workspace: rule 13)",
   );
-  expect((await c.run("phase", id, "next")).err).toContain("K-9 is not listed in knowledge.md");
+  expect((await c.run("phase", id, "next")).err).toContain(
+    "strategy.md: [K:K-9] in Stack: K-9 is not listed in knowledge.md (not in the base, or marked for another workspace: rule 13)",
+  );
   expect((await c.run("status")).out).toContain("strategy from the research and the base: 1 fault");
 });
 
@@ -6820,7 +6994,8 @@ function seedBase(userDir: string, entries: KnowledgeEntry[]): void {
   writeJson(knowledgePath(userDir), { version: 1, next: entries.length + 1, entries });
 }
 
-test("SP4-T5 AC-1, AC-2: crew analyse names the known root causes of the origin's paths from the base this project reads (a shared path, never words alone, never a hidden entry, never cut by the limit), writes them into origin.json and the hits into knowledge.md, and the guard out of analyse refuses until the cause is cited in analysis.md or contradicted by this item of this project", async () => {
+/** The SP4 Task 5 issue: a repo of workspace acme with a root cause of src/a.ts in the base (beside a hidden one and a words-only one), an item started as a fix and analysed on that path. */
+async function analysedIssue() {
   const env = testEnv();
   const root = makeRepo({
     "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
@@ -6868,6 +7043,11 @@ test("SP4-T5 AC-1, AC-2: crew analyse names the known root causes of the origin'
     )
   ).data.id as string;
   const analysed = await c.run("analyse", id, "--paths", "src/a.ts");
+  return { env, root, c, paths, cause, fix, id, analysed };
+}
+
+test("SP4-T5 AC-1: crew analyse names the known root causes of the origin's paths from the base this project reads (a shared path, never words alone, never a hidden entry, never cut by the limit) and writes them into origin.json and the hits into knowledge.md", async () => {
+  const { root, c, paths, cause, id, analysed } = await analysedIssue();
   expect(analysed.code, analysed.err).toBe(0);
   expect(analysed.out.trim()).toBe(
     `analysis/origin.json: 1 commit, 0 items\nknown root causes: K-1 "Totals summed before the discount" (src/a.ts)`,
@@ -6911,6 +7091,10 @@ test("SP4-T5 AC-1, AC-2: crew analyse names the known root causes of the origin'
   );
   expect((known() as { id: string }[]).map((k) => k.id)).toEqual(["K-1"]);
   expect(readFileSync(knowledgeFile, "utf8")).not.toContain("- K-1 ·");
+});
+
+test("SP4-T5 AC-2: the guard out of analyse refuses until the known cause is cited in analysis.md or contradicted by this item of this project; a words-only cause is never named", async () => {
+  const { root, c, paths, fix, id } = await analysedIssue();
   // The guard: the document alone is not enough while K-1 is neither cited nor contradicted.
   write(
     root,
@@ -6919,6 +7103,8 @@ test("SP4-T5 AC-1, AC-2: crew analyse names the known root causes of the origin'
   );
   const refused = await c.run("phase", id, "next");
   expect(refused.code).toBe(1);
+  // A cause that shares words alone (K-3) is never a known cause: absent from the refusal (finding 108).
+  expect(refused.err).not.toContain("K-3");
   expect(refused.err).toContain(
     `K-1 is a known root cause of src/a.ts ("Totals summed before the discount"): cite it in analysis.md as [K:K-1] with what this fix does differently, or crew knowledge contradict K-1 --reason "<why>" --item ${id}`,
   );
@@ -6974,7 +7160,8 @@ test("SP4-T5 AC-1, AC-2: crew analyse names the known root causes of the origin'
   expect((await c.json("phase", second, "next")).data.phase).toBe("build");
 });
 
-test("SP4-T5 AC-3, AC-4, AC-5: crew cto review writes the inputs of the project's own workspace (the metrics of its registered projects, the last plan, the base's figures and rows with nothing hidden) and prints the three lines, refusing a bad name, another workspace and a project with no workspace; crew cto record files the plan as a marked general entry of the workspace and refuses a secret beyond byte 4000 with no file and no entry; crew metrics carries the knowledge figures; the report links the latest plan or says none", async () => {
+/** The SP4 Task 5 workspace: two registered projects of `w` and one with no workspace, a base with an entry confirmed, one contradicted and one of another workspace, an item of `a` whose learn confirmed K-1. */
+async function ctoWorkspace() {
   const env = testEnv();
   const a = makeRepo({
     "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
@@ -7017,6 +7204,18 @@ test("SP4-T5 AC-3, AC-4, AC-5: crew cto review writes the inputs of the project'
   if (!loaded) throw new Error("no work");
   loaded.learned = { at: K_AT, entries: [], confirmed: ["K-1"] };
   saveWork(paths, loaded);
+  const kinds = {
+    "stack-preference": 0,
+    "validated-solution": 1,
+    documentation: 0,
+    "root-cause": 0,
+    general: 1,
+  };
+  return { env, a, b, ca, cb, calone, paths, id, kinds };
+}
+
+test("SP4-T5 AC-3: crew cto review writes the inputs of the project's own workspace (the metrics of its registered projects, the last plan, the base's figures and rows with nothing hidden) and prints the figures between the inputs line and the last plan", async () => {
+  const { ca, b, paths, kinds, env } = await ctoWorkspace();
   // The review: the inputs file and the three lines.
   const review = await ca.run("cto", "review", "--workspace", "w");
   expect(review.code, review.err).toBe(0);
@@ -7047,16 +7246,9 @@ test("SP4-T5 AC-3, AC-4, AC-5: crew cto review writes the inputs of the project'
   };
   const inputs = JSON.parse(readFileSync(inputsPath, "utf8")) as Inputs;
   expect(inputs.workspace).toBe("w");
-  expect(typeof inputs.at).toBe("string");
+  expect(inputs.at).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
   expect([...inputs.metrics.projects].sort()).toEqual([paths.root, repoPaths(b, env).root].sort());
   expect(inputs.lastPlan).toBeNull();
-  const kinds = {
-    "stack-preference": 0,
-    "validated-solution": 1,
-    documentation: 0,
-    "root-cause": 0,
-    general: 1,
-  };
   expect(inputs.knowledge).toEqual({
     entries: kinds,
     confirmed: 1,
@@ -7088,6 +7280,10 @@ test("SP4-T5 AC-3, AC-4, AC-5: crew cto review writes the inputs of the project'
     contradicted: 1,
     cited: 1,
   });
+});
+
+test("SP4-T5 AC-4: crew cto review and record refuse a bad name, another workspace, a project with no workspace and a missing verb", async () => {
+  const { ca, calone } = await ctoWorkspace();
   // The refusals: the name, another workspace, no workspace, the verb.
   expect((await ca.run("cto", "review", "--workspace", "Bad Name")).err.trim()).toBe(
     "a workspace is a lowercase name of letters, digits, dot, dash and underscore, up to 64 characters, not Bad Name",
@@ -7104,6 +7300,12 @@ test("SP4-T5 AC-3, AC-4, AC-5: crew cto review writes the inputs of the project'
   expect((await ca.run("cto", "record", "--workspace", "other", "--file", "x.md")).err.trim()).toBe(
     "this project is in workspace w: crew cto record --workspace w",
   );
+});
+
+test("SP4-T5 AC-5: crew cto record files the plan as a marked general entry of the workspace and refuses a secret beyond byte 4000 with no file and no entry; the review reads the last plan; crew metrics carries the knowledge figures; the report links the latest plan or says none", async () => {
+  const { a, ca, calone, paths, id, kinds } = await ctoWorkspace();
+  // No plan filed yet: the report of a workspace project says none at the command (finding 108).
+  expect((await ca.run("evidence", id)).out).toContain("\n- CTO plan: none\n");
   // The record: a secret beyond byte 4000 refuses the whole plan, nothing filed, no entry.
   const ctoFolder = join(paths.userDir, "cto", "w");
   write(
@@ -7116,7 +7318,10 @@ test("SP4-T5 AC-3, AC-4, AC-5: crew cto review writes the inputs of the project'
   expect(leak.err.trim()).toBe(
     "the plan holds a secret (AWS access key) at line 401; nothing was filed",
   );
-  expect(readdirSync(ctoFolder).filter((f) => f.endsWith("-plan.md"))).toEqual([]);
+  // Nothing filed: no review ran yet, so the workspace's folder may not even exist.
+  expect(
+    existsSync(ctoFolder) ? readdirSync(ctoFolder).filter((f) => f.endsWith("-plan.md")) : [],
+  ).toEqual([]);
   expect(readBase(paths.userDir).base?.entries.map((e) => e.id)).toEqual(["K-1", "K-2", "K-3"]);
   // A plan longer than the limit: filed whole, the entry's text cut.
   const plan = `# CTO plan for w, 2026-10-20\n## Keep\n- the fast route\n## Change\n- ${"lower the cap. ".repeat(300)}\n## Measure\n- cost per item\n`;

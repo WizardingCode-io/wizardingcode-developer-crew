@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { writeOrigin } from "../src/analysis.ts";
 import { addEntry, readBase, scopeOf, updateEntry } from "../src/knowledge.ts";
@@ -199,13 +199,19 @@ test("SP4-T4 AC-2: the stack preference is one entry per workspace, rewritten in
     e.confidential = false;
   });
   expect("refused" in unmarked).toBe(false);
+  // crm's profile is readable again, with a php target beside the node one: the rewrite changes
+  // the text and the words, and keeps the id, the date and the mark (finding 107).
+  rmSync(join(crm.root, ".crew", "profile.json"));
+  write(crm.root, "composer.json", JSON.stringify({ name: "acme/crm" }));
+  ensureProfile(crm.paths);
   const second = learn(shop, item(shop, "Second"));
   if ("refused" in second) throw new Error(second.refused);
   const again = second.entries.find((e) => e.kind === "stack-preference") as KnowledgeEntry;
   expect(again.id).toBe(stack.id);
   expect(again.createdAt).toBe(stack.createdAt);
   expect(again.confidential).toBe(false);
-  expect(again.text).toBe("node: 1 project");
+  expect(again.text).toBe("node: 2 projects\nphp: 1 project");
+  expect(again.words).toContain("projects");
   expect(entries(env).length).toBe(before + 1);
   // No profile anywhere: the draft is skipped; no workspace: no preference at all.
   const alone = project(env, null, "alone");

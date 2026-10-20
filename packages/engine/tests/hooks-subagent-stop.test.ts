@@ -7,6 +7,7 @@ import {
   readdirSync,
   readFileSync,
   rmdirSync,
+  rmSync,
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
@@ -720,16 +721,90 @@ test("SP2c AC-3: a resumed role with no question pending joins its earlier file 
   expect(
     readFileSync(join(root, ".crew", "work", work.id, "conclave", "expert-1.md"), "utf8"),
   ).toBe("# Proposal for w, D-1\n## Proposal\nAnswer: deactivate\n");
-  expect(
-    readFileSync(join(root, ".crew", "work", work.id, "conclave", "expert-1-reply.md"), "utf8"),
-  ).toBe("Deactivation keeps the audit trail.\n\nAnd erasure stays available on request.\n");
+  // The plain reply file holds the latest reply alone; the earlier one is archived under the
+  // answer's ordinal, and its record follows it there (SP6 Task 1 AC-2, findings 104 and 106).
+  const conclave = join(root, ".crew", "work", work.id, "conclave");
+  expect(readFileSync(join(conclave, "expert-1-reply.md"), "utf8")).toBe(
+    "And erasure stays available on request.\n",
+  );
+  expect(readFileSync(join(conclave, "expert-1-reply.round2.md"), "utf8")).toBe(
+    "Deactivation keeps the audit trail.\n",
+  );
   expect((loadEvidence(ctx.paths, work.id).evidence.roles ?? []).slice(3)).toMatchObject([
     { agent: "expert-1", file: "conclave/expert-1.md" },
-    { agent: "expert-1", file: "conclave/expert-1-reply.md" },
+    { agent: "expert-1", file: "conclave/expert-1-reply.round2.md" },
     { agent: "expert-1", file: "conclave/expert-1-reply.md" },
   ]);
   // No mail was involved: nothing in the item's mail.
   expect(loadItemMail(ctx.paths, work.id).box.messages).toHaveLength(0);
+});
+
+test("SP6-T1 AC-2: each later reply archives the earlier one under the lowest free index, a gap is filled, a lead's delivery reply has its own name, and a directory at the archive path fails the archive loudly and leaves the plain file", () => {
+  const { root, ctx, work } = session();
+  const conclave = join(root, ".crew", "work", work.id, "conclave");
+  const stop = (agent_id: string, agent_type: string, last_assistant_message: string) =>
+    onSubagentStop(ctx, { agent_id, agent_type, last_assistant_message }) as {
+      systemMessage?: string;
+    };
+  const expert = (text: string) => stop("e1", `${PLUGIN}:expert`, text);
+  const file = (name: string) => readFileSync(join(conclave, name), "utf8");
+  expert("# Proposal for w, D-1\n## Proposal\nAnswer: one");
+  expect(expert("two")).toEqual({});
+  // The third answer: the second is archived as round2 and the note names both paths.
+  const third = expert("three");
+  expect(third.systemMessage).toBe(
+    "Crew: expert-1's answer is saved at conclave/expert-1-reply.md (the earlier reply kept as conclave/expert-1-reply.round2.md).",
+  );
+  expect(file("expert-1-reply.md")).toBe("three\n");
+  expect(file("expert-1-reply.round2.md")).toBe("two\n");
+  // The fourth: the third goes to round3.
+  expert("four");
+  expect(file("expert-1-reply.md")).toBe("four\n");
+  expect(file("expert-1-reply.round3.md")).toBe("three\n");
+  expect(file("expert-1-reply.round2.md")).toBe("two\n");
+  // A gap in the numbering is filled, never an existing archive overwritten.
+  rmSync(join(conclave, "expert-1-reply.round2.md"));
+  expert("five");
+  expect(file("expert-1-reply.md")).toBe("five\n");
+  expect(file("expert-1-reply.round2.md")).toBe("four\n");
+  expect(file("expert-1-reply.round3.md")).toBe("three\n");
+  expect(file("expert-1.md")).toBe("# Proposal for w, D-1\n## Proposal\nAnswer: one\n");
+  const roles = loadEvidence(ctx.paths, work.id).evidence.roles ?? [];
+  expect(roles.map((r) => r.file)).toEqual([
+    "conclave/expert-1.md",
+    "conclave/expert-1-reply.round2.md",
+    "conclave/expert-1-reply.round3.md",
+    "conclave/expert-1-reply.round2.md",
+    "conclave/expert-1-reply.md",
+  ]);
+  // A directory standing at the lowest free archive path is not an archive: the archive write
+  // fails on it, the plain file is left as it was, nothing is recorded, and the note says why.
+  mkdirSync(join(conclave, "expert-1-reply.round4.md"));
+  const failed = expert("six");
+  expect(failed.systemMessage).toContain(
+    "Crew: expert-1's earlier reply could not be archived at conclave/expert-1-reply.round4.md (",
+  );
+  expect(failed.systemMessage).toContain("EISDIR");
+  expect(failed.systemMessage).toContain(
+    "): the plain reply file was left as it was; save this answer from the transcript",
+  );
+  expect(file("expert-1-reply.md")).toBe("five\n");
+  expect(loadEvidence(ctx.paths, work.id).evidence.roles ?? []).toHaveLength(5);
+  // A tech lead's delivery reply is archived under its own name, never one the leads share.
+  const lead = (text: string) =>
+    stop("l1", `${PLUGIN}:tech-lead`, `# qa lead's validation of ${work.id}: delivery\n${text}`);
+  lead("verdict: returned\n## Returns\n- R-1 · a.ts:1 · x\n## Notes\n- none");
+  lead("verdict: validated\n## Returns\n- none\n## Notes\n- fixed");
+  lead("verdict: validated\n## Returns\n- none\n## Notes\n- still fixed");
+  expect(file("lead-qa.delivery.md")).toContain("verdict: returned");
+  expect(file("lead-qa.delivery-reply.md")).toContain("still fixed");
+  expect(file("lead-qa.delivery-reply.round2.md")).toContain("- fixed");
+  // A reviewer's later answer still joins its findings file under Clarifications.
+  stop("r1", `${PLUGIN}:review-security`, "# security findings\n## Findings\n- none\n");
+  stop("r1", `${PLUGIN}:review-security`, "F-1 holds.");
+  expect(
+    readFileSync(join(root, ".crew", "work", work.id, "review", "security.findings.md"), "utf8"),
+  ).toBe("# security findings\n## Findings\n- none\n\n## Clarifications\n- F-1 holds.\n");
 });
 
 test("SP2c AC-3: a resumed role whose question is pending has its answer saved as the reply and the reply recorded as relayed", () => {

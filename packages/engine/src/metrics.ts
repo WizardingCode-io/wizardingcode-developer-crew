@@ -30,7 +30,7 @@ export interface KnowledgeFigures extends KnowledgeCounts {
   rows: KnowledgeRow[];
 }
 
-export function emptyKnowledge(): KnowledgeCounts {
+function emptyKnowledge(): KnowledgeCounts {
   const entries = {} as Record<KnowledgeKind, number>;
   for (const kind of KNOWLEDGE_KINDS) entries[kind] = 0;
   return { entries, confirmed: 0, contradicted: 0, cited: 0 };
@@ -123,6 +123,7 @@ export function computeMetrics(
   knowledge: KnowledgeCounts = emptyKnowledge(),
 ): Metrics {
   const m: Metrics = {
+    // Copied field by field: the figures carry rows (`KnowledgeFigures`) and the metrics never do.
     knowledge: {
       entries: { ...knowledge.entries },
       confirmed: knowledge.confirmed,
@@ -212,7 +213,6 @@ export function computeMetrics(
   return m;
 }
 
-/** The short text `crew metrics` prints: one line per figure that matters. */
 /** `  knowledge: 5 entries (general 2, validated-solution 3), confirmed 4, contradicted 1, cited by 2 items`. */
 function knowledgeLine(k: KnowledgeCounts): string {
   const total = Object.values(k.entries).reduce((a, b) => a + b, 0);
@@ -224,6 +224,7 @@ function knowledgeLine(k: KnowledgeCounts): string {
   return `  knowledge: ${total} entr${total === 1 ? "y" : "ies"}${kinds ? ` (${kinds})` : ""}, confirmed ${k.confirmed}, contradicted ${k.contradicted}, cited by ${k.cited} item${k.cited === 1 ? "" : "s"}`;
 }
 
+/** The short text `crew metrics` prints: one line per figure that matters. */
 export function metricsText(m: Metrics): string {
   const pairs = (map: Record<string, number>): string =>
     Object.entries(map)

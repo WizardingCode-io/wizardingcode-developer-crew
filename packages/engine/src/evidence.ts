@@ -353,28 +353,43 @@ function problemStatus(status: GateRun["status"], p: NonNullable<GateRun["proble
   return `pass: ${untouched} with problems, none of the item's`;
 }
 
-/**
- * The report. `mail` is the item's copy of its messages (`mail.json`) and `selfName` the project's
- * name in the mail, so a message this item sent reads as sent and the rest as received.
- */
-/** `learned K-7, K-8; confirmed K-4`, `learned none`: one wording for the register, the status and the report (SP4 Task 4). */
-export function learnedText(entries: readonly string[], confirmed: readonly string[]): string {
-  return `learned ${entries.join(", ") || "none"}${confirmed.length ? `; confirmed ${confirmed.join(", ")}` : ""}`;
+/** `K-7, K-8; confirmed K-4` or `none`: what the item wrote into the base, without the verb, for the report's line and the refusals (SP6 Task 1 AC-5). */
+export function learnedBody(entries: readonly string[], confirmed: readonly string[]): string {
+  return `${entries.join(", ") || "none"}${confirmed.length ? `; confirmed ${confirmed.join(", ")}` : ""}`;
 }
 
+/** `learned K-7, K-8; confirmed K-4`, `learned none`: one wording for the register, the status and the report (SP4 Task 4). */
+export function learnedText(entries: readonly string[], confirmed: readonly string[]): string {
+  return `learned ${learnedBody(entries, confirmed)}`;
+}
+
+/** What the report may carry beside the item, its evidence and the policy (SP6 Task 1 AC-5), each optional. */
+export interface ReportOptions {
+  ledger?: ObjectionLedger;
+  /** The item's copy of its messages (`mail.json`). */
+  mail?: { box: Mailbox; tampered: boolean };
+  /** The project's name in the mail, so a message this item sent reads as sent and the rest as received. */
+  selfName?: string;
+  analysis?: { origin: Origin | null; tampered: boolean };
+  strategy?: StrategyReport | null;
+  audit?: AuditReportView | null;
+  /** The text of the item's knowledge list, as the engine wrote it at classification. */
+  knowledge?: string | null;
+  ctoPlan?: { path: string; date: string } | null;
+}
+
+/**
+ * The report. Its sections read the item and the evidence, and the records `options` carries:
+ * the objections, the mail, an issue's origin, the strategy, an audit, the knowledge list and
+ * the latest CTO plan (`ReportOptions`).
+ */
 export function renderReport(
   work: WorkItem,
   evidence: Evidence,
   policy: Policy,
-  ledger?: ObjectionLedger,
-  mail?: { box: Mailbox; tampered: boolean },
-  selfName?: string,
-  analysis?: { origin: Origin | null; tampered: boolean },
-  strategy?: StrategyReport | null,
-  audit?: AuditReportView | null,
-  knowledge?: string | null,
-  ctoPlan?: { path: string; date: string } | null,
+  options: ReportOptions = {},
 ): string {
+  const { ledger, mail, selfName, analysis, strategy, audit, knowledge, ctoPlan } = options;
   const lines: string[] = [];
   lines.push(`# Report: ${work.title}`, "");
   lines.push(`- Work: \`${work.id}\``);
@@ -458,7 +473,7 @@ export function renderReport(
   const learned = work.learned;
   lines.push(
     learned
-      ? `- Learned: ${learnedText(learned.entries, learned.confirmed).slice("learned ".length)}`
+      ? `- Learned: ${learnedBody(learned.entries, learned.confirmed)}`
       : "- Learned: not yet",
     "",
   );

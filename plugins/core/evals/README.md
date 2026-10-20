@@ -27,7 +27,7 @@ PATH="$PWD/plugins/core/bin:$(dirname "$(xcrun --find git)"):$PATH" claude plugi
   --report plugins/core/evals/results/report.html --json plugins/core/evals/results/last.json
 ```
 
-On Linux the PATH has no `xcrun` part. `--keep-temp` keeps each run's scaffold and `out/trace.jsonl` under the system temp directory (sealed read-only; `chmod 700` to inspect, delete when done). Each grant covers one command: a Bash call joining several with `;` or `|` needs every one of them granted, or it is denied.
+On Linux the PATH has no `xcrun` part. `--keep-temp` keeps each run's scaffold and `out/trace.jsonl` under the system temp directory (sealed read-only; `chmod 700` to inspect, delete when done). Each grant covers one command: a Bash call joining several with `;` or `|` needs every one of them granted, or it is denied. A run the runner flags `needs-rerun` is run once more; a second flag is recorded in the results note and the run stands.
 
 One case while iterating (one run, no baseline arm, the suite's judge model for its llm graders, the sandbox kept, a 5 USD ceiling):
 

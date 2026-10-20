@@ -1050,19 +1050,18 @@ function deliver(env: Env, opened: Opened, evidence: Evidence): void {
 
 /** The item's report: its evidence, its objections, its mail and the name this project carries in the mail. */
 function reportOf(env: Env, work: WorkItem, evidence: Evidence): string {
-  return renderReport(
-    work,
-    evidence,
-    env.policy,
-    loadLedger(env.paths, work.id).ledger,
-    loadItemMail(env.paths, work.id),
-    env.mail.self.project,
-    readOrigin(env.paths, work.id) ?? undefined,
-    strategyOf(env, work, evidence),
-    auditViewOf(env, work),
-    readText(join(workDir(env.paths, work.id), "knowledge.md")),
-    env.mail.self.workspace ? latestPlan(env.paths.userDir, env.mail.self.workspace) : null,
-  );
+  return renderReport(work, evidence, env.policy, {
+    ledger: loadLedger(env.paths, work.id).ledger,
+    mail: loadItemMail(env.paths, work.id),
+    selfName: env.mail.self.project,
+    analysis: readOrigin(env.paths, work.id) ?? undefined,
+    strategy: strategyOf(env, work, evidence),
+    audit: auditViewOf(env, work),
+    knowledge: readText(join(workDir(env.paths, work.id), "knowledge.md")),
+    ctoPlan: env.mail.self.workspace
+      ? latestPlan(env.paths.userDir, env.mail.self.workspace)
+      : null,
+  });
 }
 
 /** The audit's records as the report and the status show them; null for any other kind. */
@@ -1428,11 +1427,12 @@ async function lookupForItem(
   env: Env,
   work: WorkItem,
   ioEnv: NodeJS.ProcessEnv,
-  options: { paths?: readonly string[] } = {},
+  options: { paths?: readonly string[]; base?: ReturnType<typeof readBase> } = {},
 ): Promise<string> {
   const file = join(workDir(env.paths, work.id), "knowledge.md");
   const readAt = nowIso();
-  const read = readBase(env.paths.userDir);
+  // The base as the caller read it (crew analyse reads it once for the known causes and the lookup), or read here.
+  const read = options.base ?? readBase(env.paths.userDir);
   if (read.base === null) {
     const unreadable = read.reason === "missing" ? null : read.reason;
     const text = knowledgeText(work.id, [], unreadable);
@@ -1460,6 +1460,33 @@ async function lookupForItem(
   work.knowledge = { readAt, listed: ranked.hits.map((h) => h.entry.id) };
   if (ranked.records.length) appendVerifications(env, work.id, ranked.records);
   return text;
+}
+
+/**
+ * The registered projects of a workspace (this project alone with none), the base's figures over
+ * what this project reads and their metrics, as `crew metrics --workspace` and `crew cto review`
+ * compute them (SP4 Task 5; one helper, SP6 Task 1 AC-5); null when no project is registered.
+ */
+function workspaceFigures(
+  env: Env,
+  workspace: string | null,
+): {
+  figures: ReturnType<typeof knowledgeFigures>;
+  metrics: ReturnType<typeof computeMetrics>;
+} | null {
+  const roots = workspace
+    ? loadRegistry(env.paths.userDir)
+        .projects.filter((p) => p.workspace === workspace && !p.worktreeOf)
+        .map((p) => p.root)
+    : [env.paths.root];
+  if (!roots.length) return null;
+  const projects = roots.map((root) => pathsFor(root, env.paths.userDir));
+  const figures = knowledgeFigures(
+    readBase(env.paths.userDir).base,
+    scopeOf(env.paths, env.mail.self),
+    projects,
+  );
+  return { figures, metrics: computeMetrics(projects, figures) };
 }
 
 /** `knowledge: 2 listed (1 marked)`, `knowledge: none` or why the base could not be read, for the status block. */
@@ -2690,12 +2717,12 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       // Rule 17 (SP4 Task 5): the base's root causes on these paths, read apart and uncapped, go
       // into the record; the item's knowledge.md is rewritten with the paths in its query.
       const originPaths = origin.paths.map((p) => p.path);
-      const base = readBase(env.paths.userDir).base;
-      origin.knownRootCauses = base
-        ? knownRootCauses(base, scopeOf(env.paths, env.mail.self), originPaths)
+      const read = readBase(env.paths.userDir);
+      origin.knownRootCauses = read.base
+        ? knownRootCauses(read.base, scopeOf(env.paths, env.mail.self), originPaths)
         : [];
       writeOrigin(env.paths, opened.work.id, origin);
-      await lookupForItem(env, opened.work, io.env, { paths: originPaths });
+      await lookupForItem(env, opened.work, io.env, { paths: originPaths, base: read });
       saveWork(env.paths, opened.work);
       const data = { file: "analysis/origin.json", origin };
       if (origin.note)
@@ -3399,12 +3426,24 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         readText(join(dir, "plan.md")),
         evidence.fingerprint ?? "",
       );
-      // A round is the records against one state of the spec; the delivery's and the plan's records
-      // carry their own count by hash and spend no round (the gate rounds bound a delivery).
+      // A spec round is counted per lead and per revision that lead read (SP6 Task 1 AC-1,
+      // finding 106): a lead's first record is its round 1, a record on the hash of its last
+      // record keeps that round, any other hash opens the lead's next one; the item's round is
+      // the highest a lead holds, so a spec revised between one lead's record and another lead's
+      // first never costs a round. The delivery's and the plan's records carry their own count by
+      // hash and spend no round (the gate rounds bound a delivery).
       const same = (work.validations ?? []).filter((v) => v.what === what);
       const last = same[same.length - 1];
-      const newRound = !last || last.hash !== hash;
+      const mine = same.filter((v) => v.by === by);
+      const lastMine = mine[mine.length - 1];
+      const leadRound = !lastMine
+        ? 1
+        : lastMine.hash === hash
+          ? lastMine.round
+          : lastMine.round + 1;
       const rounds = work.rounds ?? { judgement: 0, validation: 0 };
+      const newRound =
+        what === "spec" ? leadRound > rounds.validation : !last || last.hash !== hash;
       if (what === "spec" && newRound) {
         const held = continueOrRefuse(
           env,
@@ -3412,14 +3451,13 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           "validation",
           undefined,
           env.policy.team.maxValidationRounds,
-          rounds.validation,
-          `validation round ${rounds.validation + 1} of ${work.id}: the policy allows ${env.policy.team.maxValidationRounds} (team.maxValidationRounds); the user continues it once with crew continue ${work.id} validation, or decides`,
+          leadRound - 1,
+          `validation round ${leadRound} of ${work.id}: the policy allows ${env.policy.team.maxValidationRounds} (team.maxValidationRounds); the user continues it once with crew continue ${work.id} validation, or decides`,
         );
         if (held) return held;
       }
-      const round = newRound
-        ? (what === "spec" ? rounds.validation : (last?.round ?? 0)) + 1
-        : (last?.round ?? 1);
+      const round =
+        what === "spec" ? leadRound : newRound ? (last?.round ?? 0) + 1 : (last?.round ?? 1);
       work.validations = [
         ...(work.validations ?? []),
         {
@@ -3434,7 +3472,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         },
       ];
       if (what === "spec" && newRound)
-        work.rounds = { ...rounds, validation: rounds.validation + 1 };
+        work.rounds = { ...rounds, validation: Math.max(rounds.validation, leadRound) };
       saveWork(env.paths, work);
       // A return is a decision of the lead about the item (SP7 §6.6); a validated verdict is the plan's own record.
       const recorded = work.validations[work.validations.length - 1];
@@ -3460,25 +3498,10 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       // The figures of this project, or of every registered project of a workspace (SP7 §6.5), from
       // the records alone; the CTO reads them, never a transcript.
       const ws = typeof parsed.flags.workspace === "string" ? parsed.flags.workspace : null;
-      let roots = [env.paths.root];
-      if (ws) {
-        roots = loadRegistry(env.paths.userDir)
-          .projects.filter((p) => p.workspace === ws && !p.worktreeOf)
-          .map((p) => p.root);
-        if (!roots.length)
-          return refuse(
-            `no project of workspace ${ws} is registered (crew detect in each project)`,
-          );
-      }
-      const projects = roots.map((root) => pathsFor(root, env.paths.userDir));
-      // The base's figures over what this project reads (SP4 Task 5), without the rows.
-      const figures = knowledgeFigures(
-        readBase(env.paths.userDir).base,
-        scopeOf(env.paths, env.mail.self),
-        projects,
-      );
-      const metrics = computeMetrics(projects, figures);
-      return ok(metricsText(metrics), { ...metrics });
+      const computed = workspaceFigures(env, ws);
+      if (!computed)
+        return refuse(`no project of workspace ${ws} is registered (crew detect in each project)`);
+      return ok(metricsText(computed.metrics), { ...computed.metrics });
     }
     case "knowledge": {
       // The knowledge base's commands (SP4 Task 2, ADR 0009): what a person adds, reads, disputes
@@ -3583,8 +3606,9 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         if (id === undefined || typeof reason !== "string" || !reason.trim()) return refuse(usage);
         if (unreadable) return refuse(`the knowledge base cannot be read: ${unreadable}`);
         if (!visible(id)) return unseen(id);
+        // No item named: the ref says so with null, never a sentinel (SP6 Task 1 AC-3).
         const ref = {
-          item: typeof item === "string" ? item : "-",
+          item: typeof item === "string" ? item : null,
           project: scope.project,
           at: nowIso(),
           reason: reason.trim(),
@@ -3594,9 +3618,12 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         });
         if ("refused" in changed) return refuse(changed.refused);
         register(`knowledge contradict ${id}: ${ref.reason}`, "the agent");
-        return ok(`${id} contradicted${ref.item === "-" ? "" : ` by ${ref.item}`}: ${ref.reason}`, {
-          entry: changed,
-        });
+        return ok(
+          `${id} contradicted${ref.item === null ? "" : ` by ${ref.item}`}: ${ref.reason}`,
+          {
+            entry: changed,
+          },
+        );
       }
       if (sub === "unmark") {
         const id = args[1];
@@ -3631,9 +3658,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         "usage: crew cto review --workspace <ws> | crew cto record --workspace <ws> --file <plan.md>";
       const verb = args[0];
       const ws = parsed.flags.workspace;
-      const file = parsed.flags.file;
       if ((verb !== "review" && verb !== "record") || typeof ws !== "string") return refuse(usage);
-      if (verb === "record" && typeof file !== "string") return refuse(usage);
       // The workspace names a folder under the user's crew directory: the same name rule as the
       // mail's workspace, so nothing reaches outside it (code-quality review, round 1).
       if (!MAIL_NAME.test(ws))
@@ -3651,16 +3676,12 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       const dir = ctoDir(env.paths.userDir, ws);
       const date = nowIso().slice(0, 10);
       if (verb === "review") {
-        const roots = loadRegistry(env.paths.userDir)
-          .projects.filter((p) => p.workspace === ws && !p.worktreeOf)
-          .map((p) => p.root);
-        if (!roots.length)
+        const computed = workspaceFigures(env, ws);
+        if (!computed)
           return refuse(
             `no project of workspace ${ws} is registered (crew detect in each project)`,
           );
-        const projects = roots.map((root) => pathsFor(root, env.paths.userDir));
-        const knowledge = knowledgeFigures(readBase(env.paths.userDir).base, scope, projects);
-        const metrics = computeMetrics(projects, knowledge);
+        const { metrics, figures: knowledge } = computed;
         const lastPlan = latestPlan(env.paths.userDir, ws);
         const target = join(dir, `${date}-inputs.json`);
         writeJson(target, { at: nowIso(), workspace: ws, metrics, lastPlan, knowledge });
@@ -3676,7 +3697,10 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           { path: target, lastPlan, knowledge },
         );
       }
-      const path = resolve(env.paths.root, file as string);
+      // The record: the plan's file, narrowed here where it is read.
+      const file = parsed.flags.file;
+      if (typeof file !== "string") return refuse(usage);
+      const path = resolve(env.paths.root, file);
       const text = readText(path);
       if (text === null) return refuse(`no plan file at ${path}`);
       const title = `CTO plan ${date} (${ws})`;

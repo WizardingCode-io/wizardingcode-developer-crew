@@ -920,9 +920,9 @@ export type KnowledgeKind =
   | "root-cause"
   | "general";
 
-/** An item that confirmed or contradicted an entry: where, when, and why for a contradiction. */
+/** An item that confirmed or contradicted an entry: where, when, and why for a contradiction; `item` null for a contradiction recorded outside an item (SP6 Task 1 AC-3). */
 export interface KnowledgeRef {
-  item: string;
+  item: string | null;
   project: string;
   at: string;
   reason?: string;
@@ -965,7 +965,6 @@ export type KnowledgeDraft = Omit<
   "id" | "createdAt" | "confirmedBy" | "contradictedBy"
 >;
 
-/** What the base listed for an item at its classification (SP4 Task 3): read by the skill, cited by the strategy. */
 /** A root cause the base holds on one of an issue's origin paths (SP4 Task 5, rule 17), as `analysis/origin.json` records it. */
 export interface KnownRootCause {
   id: string;
@@ -976,6 +975,7 @@ export interface KnownRootCause {
   paths: string[];
 }
 
+/** What the base listed for an item at its classification (SP4 Task 3): read by the skill, cited by the strategy. */
 export interface KnowledgeRecord {
   readAt: string;
   listed: string[];

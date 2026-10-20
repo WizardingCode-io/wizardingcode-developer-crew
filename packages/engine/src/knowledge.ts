@@ -104,8 +104,31 @@ function shapeFault(data: unknown): string | null {
     for (const field of ARRAY_FIELDS)
       if (!Array.isArray(entry[field])) return `base.json: ${name} has no ${field} list`;
     if (typeof entry.createdAt !== "string") return `base.json: ${name} has no createdAt`;
+    // A ref names an item or none (null; `"-"` is what 0.10.0 wrote for none), a project and a
+    // date, and a reason when it has one (SP6 Task 1 AC-3).
+    for (const list of ["confirmedBy", "contradictedBy"] as const)
+      for (const r of entry[list] as unknown[]) {
+        if (typeof r !== "object" || r === null)
+          return `base.json: ${name} has a ref that is not an object`;
+        const ref = r as Record<string, unknown>;
+        if (ref.item !== null && typeof ref.item !== "string")
+          return `base.json: ${name} has a ref whose item is neither a string nor null`;
+        for (const field of ["project", "at"] as const)
+          if (typeof ref[field] !== "string")
+            return `base.json: ${name} has a ref with no ${field}`;
+        if (ref.reason !== undefined && typeof ref.reason !== "string")
+          return `base.json: ${name} has a ref whose reason is not a string`;
+      }
   }
   return null;
+}
+
+/** The refs as this engine reads them: the dash 0.10.0 wrote for no item is null. */
+function readRefs(base: KnowledgeBase): KnowledgeBase {
+  for (const entry of base.entries)
+    for (const list of [entry.confirmedBy, entry.contradictedBy])
+      for (const ref of list) if (ref.item === "-") ref.item = null;
+  return base;
 }
 
 /**
@@ -127,7 +150,7 @@ export function readBase(userDir: string): { base: KnowledgeBase | null; reason:
   }
   const fault = shapeFault(data);
   if (fault !== null) return { base: null, reason: fault };
-  return { base: data as KnowledgeBase, reason: "" };
+  return { base: readRefs(data as KnowledgeBase), reason: "" };
 }
 
 /** The next id taken for good, the whole file written, under the folder's lock; an unreadable base is refused, a missing one created. */
@@ -331,7 +354,7 @@ export function entryText(e: KnowledgeEntry): string {
       ? list
           .map(
             (r) =>
-              `${r.item} (${r.project}, ${r.at.slice(0, 10)})${r.reason ? `: ${r.reason}` : ""}`,
+              `${r.item ?? "no item"} (${r.project}, ${r.at.slice(0, 10)})${r.reason ? `: ${r.reason}` : ""}`,
           )
           .join("; ")
       : "none";

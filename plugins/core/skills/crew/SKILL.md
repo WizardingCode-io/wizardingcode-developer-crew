@@ -30,7 +30,7 @@ The route follows your answers and the files touched.
 
 ## The nine typed questions
 
-Answer them first; they go to `crew start` as `--answers`. Probabilities are honest estimates: 0.3 or more on a risk question sends the work to the full route.
+Answer them first; they go to `crew start` as `--answers`. 0.3 or more on a risk question sends the work to the full route.
 
 | Id | Type | Question |
 | :- | :- | :- |
@@ -48,17 +48,17 @@ Answer them first; they go to `crew start` as `--answers`. Probabilities are hon
 
 ## The fast route, in three calls
 
-A clear request, one spot, no risk area: the engine answers `route fast`. Everything you need is on this page (a sourced request: `references/receive.md`): read nothing else and batch the commands.
+A clear request, one spot, no risk area: the engine answers `route fast`. Everything you need is on this page (a sourced request: `references/receive.md`): read nothing else; batch the commands.
 
-1. **Start with the criteria.** `crew start "<request>" --answers '<json>' --criterion "<observable result>"` (repeat `--criterion`; `--preserve "<text>"` for what stays green, proven with `tdd before` and `tdd after`). The output has the id; with criteria the item is already in build. Not fast, or a fix (an issue: `analysis.md` and a preserve criterion come before build, `references/analyse.md`): follow the method table.
+1. **Start with the criteria.** `crew start "<request>" --answers '<json>' --criterion "<observable result>"` (repeat `--criterion`; `--preserve "<text>"` for what stays green, proven with `tdd before` and `tdd after`; `--observed "<text>"` for what a person checks, proven with `tdd observed`). The output has the id; with criteria the item is in build. Not fast, or a fix (an issue: `analysis.md` and a preserve criterion come before build, `references/analyse.md`): follow the method table.
 2. **Test, then red.** Write the test that expresses the criterion, then `crew tdd red <id> AC-1` (it must fail; `-- <command>` runs one file).
 3. **Code, then green and the gates in one call.** Write the smallest code that passes, then `crew tdd green <id> AC-1 && crew gate run <id>`. The gate run writes the report and prints the verdict: say it, proven or not proven and why.
 
-No `crew status` between steps, no brief, spec or plan on this route. Where Bash is restricted, use Edit and Write (no heredoc or `sed`) and spell the id in each `crew` command: `ID=…;` or a redirect stops the permission match.
+No `crew status` between steps, no brief, spec or plan. Where Bash is restricted, use Edit and Write (no heredoc or `sed`) and spell the id in each `crew` command: `ID=…;` or a redirect stops the permission match.
 
 ## The other routes
 
-Read the current phase's reference before acting in it:
+Read the phase's reference before acting:
 
 | Phase | Reference |
 | :- | :- |

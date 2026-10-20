@@ -1,3 +1,4 @@
+import { statSync } from "node:fs";
 import { join } from "node:path";
 import { loadEvidence, saveEvidence } from "../evidence.ts";
 import { nowIso, readText, writeText } from "../fs.ts";
@@ -361,14 +362,26 @@ function recordStop(
   const agent = earlier?.agent ?? agentName(role, roles);
   let saved: { file: string | null; agent: string };
   let note: string | null = null;
+  // Said when nothing else is: where this answer is and where the earlier reply went.
+  let archivedNote: string | null = null;
   if (!answer) {
     // A role cut off, or one whose last turn was only a tool call: its end is recorded, no file is
     // written, and the session is told, so an earlier round's file is not read as this answer.
     saved = { file: null, agent };
     note = `Crew: ${agent} stopped with no answer (no hand-back and an empty last message): its end is recorded with no file; an earlier file of this role, if any, is not this round's answer. Run the role again or save its answer from the transcript${transcriptNote}.`;
   } else if (earlier?.file) {
-    // A resumed role's answer joins its earlier file, never overwrites it.
-    saved = { file: joinEarlierFile(dir, agent, answer, kindOfItem(work)), agent };
+    // A resumed role's answer: its reply file holds this answer alone, the earlier reply archived
+    // first; a failed archive leaves the plain file, records nothing and is said.
+    const joined = joinEarlierFile(dir, agent, answer, kindOfItem(work));
+    if ("failed" in joined)
+      return `Crew: ${agent}'s earlier reply could not be archived at ${joined.failed} (${joined.error}): the plain reply file was left as it was; save this answer from the transcript${transcriptNote} and run the role again if it is needed.`;
+    saved = { file: joined.file, agent };
+    if (joined.archived) {
+      // The record of the answer that moved follows it to the archive (the security lead's note).
+      const moved = roles.find((r) => r.agentId === payload.agent_id && r.file === joined.file);
+      if (moved) moved.file = joined.archived;
+      archivedNote = `Crew: ${agent}'s answer ${whereSaved(saved)} (the earlier reply kept as ${joined.archived}).`;
+    }
   } else {
     // The first answer: the role's own, or a resumed role's whose earlier stop left no file.
     const file = answerFile(agent, answer, kindOfItem(work));
@@ -418,7 +431,7 @@ function recordStop(
   }
   // The reply to the relayed question is the caller's to send, once this lock is released.
   if (pending) progress.reply = answer;
-  return note;
+  return note ?? archivedNote;
 }
 
 /** The question the lead relayed to this role and nobody answered yet, if any. */
@@ -433,18 +446,25 @@ function pendingQuestion(ctx: HookContext, workId: string, agent: string): Messa
 }
 
 /**
- * A resumed role's answer joins its earlier file: a reviewer's under the one "Clarifications"
- * section of its findings file (the judge's questions), another role's after its earlier replies in
- * `conclave/<role>-reply.md`. The role's first answer is never overwritten (risk review, round 3).
+ * A resumed role's answer: a reviewer's joins its findings file under the one "Clarifications"
+ * section (the judge's questions); any other role's reply file holds the latest answer alone,
+ * the earlier reply archived beside it first (SP6 Task 1 AC-2, findings 104 and 106). The role's
+ * first answer is never overwritten (risk review, round 3). Returns the files, or the archive
+ * that could not be written with its error, the plain file then left as it was.
  */
-function joinEarlierFile(dir: string, agent: string, answer: string, kind: WorkKind): string {
+function joinEarlierFile(
+  dir: string,
+  agent: string,
+  answer: string,
+  kind: WorkKind,
+): { file: string; archived: string | null } | { failed: string; error: string } {
   if (agent.startsWith("review-")) {
     const file = answerFile(agent, answer, kind);
     const current = (readText(join(dir, file)) ?? "").trimEnd();
     const heading = "\n## Clarifications";
     const body = current.includes(heading) ? current : `${current}\n${heading}`;
     writeText(join(dir, file), `${body}\n- ${answer.replace(/\n/g, "\n  ")}\n`);
-    return file;
+    return { file, archived: null };
   }
   // A tech lead resumed for another round answers for one team: its reply joins that team's own
   // file, never one the leads would share (finding 78).
@@ -453,8 +473,31 @@ function joinEarlierFile(dir: string, agent: string, answer: string, kind: WorkK
     ? `conclave/lead-${lead.team}${lead.what === "delivery" ? ".delivery" : ""}-reply.md`
     : `conclave/${agent}-reply.md`;
   const current = readText(join(dir, file));
-  writeText(join(dir, file), current ? `${current.trimEnd()}\n\n${answer}\n` : `${answer}\n`);
-  return file;
+  let archived: string | null = null;
+  if (current !== null) {
+    // The lowest index from 2 at which no regular file stands: a gap is filled, an archive never
+    // overwritten; a directory there is not an archive, so the write fails on it and says so.
+    archived = file.replace(/\.md$/, `.round${freeArchiveIndex(dir, file)}.md`);
+    try {
+      writeText(join(dir, archived), current);
+    } catch (error) {
+      return { failed: archived, error: error instanceof Error ? error.message : String(error) };
+    }
+  }
+  writeText(join(dir, file), `${answer}\n`);
+  return { file, archived };
+}
+
+/** The lowest `k` from 2 such that no regular file stands at `<reply>.round<k>.md`. */
+function freeArchiveIndex(dir: string, replyFile: string): number {
+  for (let k = 2; ; k++) {
+    const candidate = join(dir, replyFile.replace(/\.md$/, `.round${k}.md`));
+    try {
+      if (!statSync(candidate).isFile()) return k;
+    } catch {
+      return k;
+    }
+  }
 }
 
 /**

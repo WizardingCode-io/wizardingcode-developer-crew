@@ -5,6 +5,7 @@
  */
 import { join } from "node:path";
 import { readOrigin } from "./analysis.ts";
+import { learnedBody } from "./evidence.ts";
 import { changedWatchedPaths, gitHead } from "./fingerprint.ts";
 import { nowIso, readJson, readText } from "./fs.ts";
 import {
@@ -236,7 +237,9 @@ export function learnItem(
     return { refused: `crew learn runs in the learn phase: crew phase ${work.id} next first` };
   if (kindOfItem(work) === "audit") return { refused: "an audit learns nothing in this release" };
   if (work.learned)
-    return { refused: `already learned: ${work.learned.entries.join(", ") || "none"}` };
+    return {
+      refused: `already learned: ${learnedBody(work.learned.entries, work.learned.confirmed)}`,
+    };
   if (!proven)
     return { refused: `not proven: the proof is on earlier code (crew gate run ${work.id})` };
   const dir = workDir(paths, work.id);

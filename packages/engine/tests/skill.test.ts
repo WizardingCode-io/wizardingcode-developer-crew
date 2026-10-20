@@ -573,3 +573,20 @@ test("SP4-T5 AC-8: the CTO's page names the inputs file and the cycles it reads,
     "17. **Learn once.** The root cause of each issue goes to the knowledge base; the same mistake twice is the system's failure. Enforced by: the Learn phase writes the cause once (`crew learn`, a cause the base already holds refused unless confirmed); `crew analyse` names a known root cause of the origin's paths and records it in `origin.json`; the guard out of Analyse refuses the next phase until it is cited in `analysis.md` as `[K:<id>]` with what the fix does differently, or contradicted on record by this item",
   );
 });
+
+test("SP6-T1 AC-4 (finding 109): the fast route's first step names --observed beside --preserve, within the ceiling", () => {
+  expect(skill).toContain(
+    '`--preserve "<text>"` for what stays green, proven with `tdd before` and `tdd after`; `--observed "<text>"` for what a person checks, proven with `tdd observed`)',
+  );
+  expect(Buffer.byteLength(skill, "utf8")).toBeLessThanOrEqual(9254);
+});
+
+test("SP6-T1 AC-7 (finding 109): the evals README states the needs-rerun rule", () => {
+  const readme = readFileSync(
+    new URL("../../../plugins/core/evals/README.md", import.meta.url),
+    "utf8",
+  );
+  expect(readme).toContain(
+    "A run the runner flags `needs-rerun` is run once more; a second flag is recorded in the results note and the run stands.",
+  );
+});

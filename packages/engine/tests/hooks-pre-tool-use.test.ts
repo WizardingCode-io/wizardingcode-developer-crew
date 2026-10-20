@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { onPreToolUse, openedSessionDenial } from "../src/hooks/pre-tool-use.ts";
+import { PROTECTED_WORK_FILES } from "../src/paths.ts";
 import { workingRoles } from "../src/state.ts";
 import { createWork, saveWork } from "../src/work.ts";
 import { git, hookContext, makeRepo, tempDir, testEnv } from "./helpers.ts";
@@ -657,6 +658,8 @@ test("finding 16: a user-only verb counts only at the command position of a simp
   expect(decision(bash('bash -eO extglob -c "crew approve w1 spec"'))).toBe("ask");
   expect(decision(bash('bash --rcfile x -c "crew approve w1 spec"'))).toBe("ask");
   expect(bash('bash +Oe extglob -c "crew approve w1 spec"')).toEqual({});
+  // `--` ends the shell's options: the word after it is the script (finding 104).
+  expect(decision(bash('bash -c -- "crew approve w1 spec"'))).toBe("ask");
   expect(decision(bash("env FOO=1 crew approve w1 spec"))).toBe("ask");
   expect(decision(bash("(crew approve w1 spec)"))).toBe("ask");
   expect(decision(bash("time crew policy accept"))).toBe("ask");
@@ -1638,6 +1641,14 @@ test("SP4-T2 AC-6: crew knowledge unmark has no unattended form: asked under pro
     );
     expect(decision(withMode)).toBe("deny");
     expect(reason(withMode)).toContain("removed by a person");
+    // Under relay too: a person is present, so --mode is denied, never let through (finding 105).
+    const relayWithMode = bash(
+      relay.ctx,
+      `crew knowledge unmark K-4 --mode ${mode ?? "default"}`,
+      mode,
+    );
+    expect(decision(relayWithMode), `relay --mode in ${mode}`).toBe("deny");
+    expect(reason(relayWithMode)).toContain("removed by a person");
   }
   for (const mode of ["bypassPermissions", "dontAsk"]) {
     for (const ctx of [prompt.ctx, relay.ctx]) {
@@ -1735,4 +1746,50 @@ test("SP8-T4 AC-4: the audit's engine files are denied to the Write tool and to 
   expect(bash(`echo x > ${root}/.crew/work/w1/audit/summary/../scope.json`)).toBe("deny");
   expect(bash(`echo x > ${root}/.crew/work/w1/audit/summary.md`)).toBeUndefined();
   expect(bash(`cat ${root}/.crew/work/w1/audit/runs.json`)).toBeUndefined();
+});
+
+test("SP4-T3 (finding 106): the item's knowledge.md is the engine's: a Write, an Edit and a shell write are denied, the start that writes it goes through", () => {
+  const { root, ctx } = setup(null);
+  const work = createWork(ctx.paths, "feature");
+  saveWork(ctx.paths, work);
+  const file = join(root, ".crew", "work", work.id, "knowledge.md");
+  expect(decision(onPreToolUse(ctx, { tool_name: "Write", tool_input: { file_path: file } }))).toBe(
+    "deny",
+  );
+  expect(
+    decision(
+      onPreToolUse(ctx, {
+        tool_name: "Edit",
+        tool_input: { file_path: `.crew/work/${work.id}/knowledge.md` },
+      }),
+    ),
+  ).toBe("deny");
+  const bash = (command: string) =>
+    onPreToolUse(ctx, { tool_name: "Bash", tool_input: { command }, permission_mode: "default" });
+  expect(bash(`cat .crew/work/${work.id}/knowledge.md`)).toEqual({});
+  expect(bash(`crew start "Login" --answers '{"work_type":"feature"}' --criterion "x"`)).toEqual(
+    {},
+  );
+  expect(bash(`crew knowledge ${work.id} lookup`)).toEqual({});
+});
+
+test("SP6-T1 AC-9: a shell write to any engine-owned work file is denied, from the one protected list the Write rule reads", () => {
+  const { ctx } = setup(null);
+  const work = createWork(ctx.paths, "feature");
+  saveWork(ctx.paths, work);
+  const bash = (command: string) =>
+    decision(
+      onPreToolUse(ctx, { tool_name: "Bash", tool_input: { command }, permission_mode: "default" }),
+    );
+  for (const name of PROTECTED_WORK_FILES) {
+    const file = `.crew/work/${work.id}/${name}`;
+    expect(bash(`echo x > ${file}`), name).toBe("deny");
+    expect(bash(`echo "- K-9" >> ${file}`), name).toBe("deny");
+    expect(bash(`cat f | tee ${file}`), name).toBe("deny");
+    expect(bash(`cat ${file}`), name).toBeUndefined();
+  }
+  expect(PROTECTED_WORK_FILES).toContain("knowledge.md");
+  // A file beside them that the session owns stays the session's.
+  expect(bash(`echo x > .crew/work/${work.id}/spec.md`)).toBeUndefined();
+  expect(bash(`echo x > .crew/work/${work.id}/conclave/expert-1.md`)).toBeUndefined();
 });

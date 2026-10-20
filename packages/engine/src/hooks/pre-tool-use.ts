@@ -2,7 +2,13 @@ import { isAbsolute, join, relative } from "node:path";
 import { type Parsed, parse } from "../argv.ts";
 import { isWatched } from "../fingerprint.ts";
 import { nowIso } from "../fs.ts";
-import { AUDIT_OPEN_FILES, canonical, isProtectedPath, REVIEW_OPEN_SEGMENT } from "../paths.ts";
+import {
+  AUDIT_OPEN_FILES,
+  canonical,
+  isProtectedPath,
+  PROTECTED_WORK_FILES,
+  REVIEW_OPEN_SEGMENT,
+} from "../paths.ts";
 import {
   COMMAND_WRAPPERS,
   type CommandWrapper,
@@ -41,8 +47,11 @@ const REVIEW_OWNED = String.raw`review(?!\/${REVIEW_OPEN_SEGMENT}(?:\/(?:${NOT_D
 // business findings, the summary and the recommendations. Anything else under `audit`, a `..`
 // segment included, is an engine file.
 const AUDIT_OWNED = String.raw`audit(?=\/|${PATH_END}|$)(?!\/${AUDIT_OPEN_FILES}(?=${PATH_END}|$))`;
+// The work files only the engine writes come from the one list the Write rule reads (SP6 Task 1
+// AC-9, finding 106: a shell redirect to `knowledge.md` passed while a Write to it was denied).
+const WORK_FILES = PROTECTED_WORK_FILES.map((f) => f.replace(/[./]/g, "\\$&")).join("|");
 const ENGINE_FILES = new RegExp(
-  String.raw`\.crew\/(?:profile\.json|policy\.json|decisions\.json|\.gitignore|local\b|work\/[^\s/]+\/(?:work\.json|evidence\.json|objections\.json|mail\.json|report\.md|logs\b|${REVIEW_OWNED}|${AUDIT_OWNED}))|\.wizardingcode\/crew\b`,
+  String.raw`\.crew\/(?:profile\.json|policy\.json|decisions\.json|\.gitignore|local\b|work\/[^\s/]+\/(?:${WORK_FILES}|logs\b|${REVIEW_OWNED}|${AUDIT_OWNED}))|\.wizardingcode\/crew\b`,
 );
 // A verb may follow a quote (`bash -c "rm ..."`). A redirect is a write only when its target is an
 // engine file (the `2>` of `2>/dev/null` after a read is not).
@@ -707,22 +716,13 @@ function auditApproval(
   const [verb, , what] = parsed.positional;
   if (verb !== "approve" || what === undefined) return null;
   if (what !== "audit" && !UNREADABLE_VERB.test(what)) return null;
-  const where = unwatched(headless, permissionMode);
-  if (where)
-    return [
-      "deny",
+  return personOnly(parsed, permissionMode, headless, policy, {
+    unwatched: (where) =>
       `Crew: an audit's report is signed by a person and no person is watching this session (${where}): run crew await <id> user and end the turn`,
-    ];
-  if (typeof parsed.flags.mode === "string")
-    return [
-      "deny",
-      `Crew: a person is present (${permissionMode ?? "default"} mode); run the command without --mode so they are asked`,
-    ];
-  if (policy.attendedDecisions === "relay") return null;
-  return [
-    "ask",
-    "Crew: an audit's report is signed by a person: this command records their signature",
-  ];
+    withMode: (mode) =>
+      `Crew: a person is present (${mode} mode); run the command without --mode so they are asked`,
+    ask: "Crew: an audit's report is signed by a person: this command records their signature",
+  });
 }
 
 /**
@@ -740,19 +740,33 @@ function knowledgeUnmark(
   const [verb, what] = parsed.positional;
   if (verb !== "knowledge" || what === undefined) return null;
   if (what !== "unmark" && !UNREADABLE_VERB.test(what)) return null;
-  const where = unwatched(headless, permissionMode);
-  if (where)
-    return [
-      "deny",
+  return personOnly(parsed, permissionMode, headless, policy, {
+    unwatched: (where) =>
       `Crew: a mark is removed by a person and no person is watching this session (${where}): run crew await <id> user and end the turn`,
-    ];
+    withMode: (mode) =>
+      `Crew: a mark is removed by a person (${mode} mode); run the command without --mode so they are asked`,
+    ask: "Crew: a mark is removed by a person: this command records their decision",
+  });
+}
+
+/**
+ * The one sequence of a command only a person signs (an audit's approval, a mark's removal; SP6
+ * Task 1 AC-5): denied where nobody watches, denied with `--mode` while a person is present, run
+ * with no prompt under `relay`, asked otherwise. The three texts are the caller's.
+ */
+function personOnly(
+  parsed: Parsed,
+  permissionMode: string | undefined,
+  headless: boolean,
+  policy: Policy,
+  texts: { unwatched: (where: string) => string; withMode: (mode: string) => string; ask: string },
+): Decision | null {
+  const where = unwatched(headless, permissionMode);
+  if (where) return ["deny", texts.unwatched(where)];
   if (typeof parsed.flags.mode === "string")
-    return [
-      "deny",
-      `Crew: a mark is removed by a person (${permissionMode ?? "default"} mode); run the command without --mode so they are asked`,
-    ];
+    return ["deny", texts.withMode(permissionMode ?? "default")];
   if (policy.attendedDecisions === "relay") return null;
-  return ["ask", "Crew: a mark is removed by a person: this command records their decision"];
+  return ["ask", texts.ask];
 }
 
 /** The quotes and the backslashes of a command, removed for the rules that read a cleaned text. */
