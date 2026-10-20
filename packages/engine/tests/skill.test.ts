@@ -375,7 +375,7 @@ test("SP7a AC-8 (Task 8): the skill page has the Rules row and the twenty rules 
     "a new high advisory against the base commit blocks through the deps gate when a manifest changed; an older or a moderate one is recorded debt; an unmaintained dependency has no gate, only the researcher's flag",
   );
   expect(rules).toContain(
-    "mail never leaves the workspace (the engine's refusal); the knowledge base's confidentiality mark is SP4 and not yet enforced",
+    "mail never leaves the workspace (the engine's refusal); every knowledge entry enters marked with its origin workspace, and one rule (`visibleTo`) decides what a project reads",
   );
   expect(rules).toContain(
     "a ruling is never edited: the engine refuses a contradiction and protects the records it writes, the reviewers' findings files, the rulings and the round copies under `review/` among them (finding 59); `review/ui/` and `review/e2e/` are the session's",

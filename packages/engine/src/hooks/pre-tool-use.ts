@@ -665,6 +665,8 @@ function userOnlyCommand(
       typeof second === "string" &&
       second.startsWith("jev.") &&
       third !== undefined) ||
+    // A mark is removed by a person alone (rule 13, ADR 0009): `unmark` or an unreadable word after `knowledge`.
+    (verb === "knowledge" && (second === "unmark" || unreadable(second))) ||
     (verb === "task" &&
       ((parsed.positional.includes("merge") && parsed.flags.force === true) || unreadable(third)));
   if (!userOnly && !presence) return null;
@@ -721,6 +723,36 @@ function auditApproval(
     "ask",
     "Crew: an audit's report is signed by a person: this command records their signature",
   ];
+}
+
+/**
+ * `crew knowledge unmark K-n`, or an unreadable word where `unmark` would be, has no unattended form
+ * (rule 13, ADR 0009): a mark leaves a client's entry readable in every workspace, so where nobody
+ * watches it is denied whatever the flags, a matching `--mode` included; with a person present the
+ * attended policy decides as for any decision (ADR 0005), `--validator` exempting nothing.
+ */
+function knowledgeUnmark(
+  parsed: Parsed,
+  permissionMode: string | undefined,
+  headless: boolean,
+  policy: Policy,
+): Decision | null {
+  const [verb, what] = parsed.positional;
+  if (verb !== "knowledge" || what === undefined) return null;
+  if (what !== "unmark" && !UNREADABLE_VERB.test(what)) return null;
+  const where = unwatched(headless, permissionMode);
+  if (where)
+    return [
+      "deny",
+      `Crew: a mark is removed by a person and no person is watching this session (${where}): run crew await <id> user and end the turn`,
+    ];
+  if (typeof parsed.flags.mode === "string")
+    return [
+      "deny",
+      `Crew: a mark is removed by a person (${permissionMode ?? "default"} mode); run the command without --mode so they are asked`,
+    ];
+  if (policy.attendedDecisions === "relay") return null;
+  return ["ask", "Crew: a mark is removed by a person: this command records their decision"];
 }
 
 /** The quotes and the backslashes of a command, removed for the rules that read a cleaned text. */
@@ -1205,6 +1237,7 @@ export function onPreToolUse(ctx: HookContext, payload: HookPayload): HookRespon
       if (!userOnly) continue;
       const decided =
         auditApproval(userOnly.parsed, payload.permission_mode, ctx.headless, ctx.policy) ??
+        knowledgeUnmark(userOnly.parsed, payload.permission_mode, ctx.headless, ctx.policy) ??
         userOnlyDecision(userOnly, payload.permission_mode, ctx.headless, ctx.policy);
       if (decided?.[0] === "deny") return answer(...decided);
       asked ??= decided;

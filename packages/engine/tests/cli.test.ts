@@ -14,7 +14,7 @@ import {
   utimesSync,
   writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type CliIo, main } from "../src/cli.ts";
 import { listDecisions } from "../src/decisions.ts";
@@ -22,6 +22,7 @@ import { envRecordPath } from "../src/environment.ts";
 import { loadEvidence, saveEvidence } from "../src/evidence.ts";
 import { writeJson } from "../src/fs.ts";
 import { readReviewInputs } from "../src/judgement.ts";
+import { readBase } from "../src/knowledge.ts";
 import { mailbox, mailContext, ownInbox, readBox, registerProject, writeBox } from "../src/mail.ts";
 import { isProtectedPath } from "../src/paths.ts";
 import { loadPolicy } from "../src/policy.ts";
@@ -6321,4 +6322,215 @@ test("SP8-T6 AC-1: crew research verify with nothing it can verify says what a f
   expect(verified.out.trim()).toBe(
     `no fact to verify in .crew/work/${id}/conclave/researcher.md: a code fact is "- <path from the root>:<line> · <sentence>", a documentation fact "- <URL or document> · "<quote>" · <meaning>"; the strategy's marks name the file's lines either way (crew strategy ${id} check), so go on`,
   );
+});
+
+/** Two projects of two workspaces under one user directory, the first with a note and a planted key in its tree. */
+function knowledgeProjects() {
+  const env = testEnv();
+  const a = makeRepo({
+    "notes/login.md":
+      "# Login sessions\n\nThe session cookie is renewed on every request and dropped on logout.\n",
+    "secret.md": `key = "${["AKIA", "ABCDEFGHIJKLMNOP"].join("")}"\n`,
+  });
+  write(a, ".crew/policy.json", JSON.stringify({ mail: { workspace: "acme", name: "shop" } }));
+  const b = makeRepo();
+  write(b, ".crew/policy.json", JSON.stringify({ mail: { workspace: "globex", name: "crm" } }));
+  return { env, a, b, ca: io(a, env), cb: io(b, env) };
+}
+
+test("SP4-T2 AC-5: crew knowledge add writes a marked entry from a file inside the project and refuses the engine's kinds, an empty title, a missing file, a file outside the tree and a secret; list, show and contradict read the visible entries and answer a hidden entry as an unknown id; each appends the register", async () => {
+  const { env, a, b, ca, cb } = knowledgeProjects();
+  const added = await ca.json(
+    "knowledge",
+    "add",
+    "--kind",
+    "general",
+    "--title",
+    "Login sessions",
+    "--file",
+    "notes/login.md",
+  );
+  expect(added.code).toBe(0);
+  expect(added.data.entry).toMatchObject({
+    id: "K-1",
+    kind: "general",
+    workspace: "acme",
+    project: "shop",
+    confidential: true,
+    item: null,
+    commit: null,
+    source: null,
+  });
+  const words = (added.data.entry as { words: string[] }).words;
+  for (const w of ["login", "sessions", "session", "cookie", "renewed", "request", "logout"])
+    expect(words).toContain(w);
+  expect(words).not.toContain("the");
+  expect(words).not.toContain("every");
+  // The engine's kinds enter at Learn; the user's material needs a title and a file inside the tree.
+  for (const kind of ["validated-solution", "root-cause", "stack-preference"]) {
+    const refused = await ca.run(
+      "knowledge",
+      "add",
+      "--kind",
+      kind,
+      "--title",
+      "x",
+      "--file",
+      "notes/login.md",
+    );
+    expect(refused.code, kind).toBe(1);
+    expect(refused.err.trim(), kind).toBe(`${kind} entries are written by crew learn`);
+  }
+  expect(
+    (
+      await ca.run(
+        "knowledge",
+        "add",
+        "--kind",
+        "general",
+        "--title",
+        "",
+        "--file",
+        "notes/login.md",
+      )
+    ).err.trim(),
+  ).toBe("a knowledge entry needs a title");
+  expect(
+    (
+      await ca.run(
+        "knowledge",
+        "add",
+        "--kind",
+        "general",
+        "--title",
+        "x",
+        "--file",
+        "notes/none.md",
+      )
+    ).err.trim(),
+  ).toBe("no file at notes/none.md");
+  const outside = tempDir("crew-outside-");
+  writeFileSync(join(outside, "out.md"), "outside text\n");
+  symlinkSync(join(outside, "out.md"), join(a, "notes", "link.md"));
+  // The temp folders are siblings: a `..` path reaches the file outside the tree.
+  for (const path of [`../${basename(outside)}/out.md`, join(outside, "out.md"), "notes/link.md"]) {
+    const refused = await ca.run(
+      "knowledge",
+      "add",
+      "--kind",
+      "general",
+      "--title",
+      "x",
+      "--file",
+      path,
+    );
+    expect(refused.code, path).toBe(1);
+    expect(refused.err.trim(), path).toBe(
+      `${path} is outside the project (a knowledge entry is read from the project's own tree)`,
+    );
+  }
+  const secret = await ca.run(
+    "knowledge",
+    "add",
+    "--kind",
+    "general",
+    "--title",
+    "Keys",
+    "--file",
+    "secret.md",
+  );
+  expect(secret.code).toBe(1);
+  expect(secret.err.trim()).toBe(
+    "secret.md:1 holds a secret (AWS access key); nothing was written",
+  );
+  expect(secret.err).not.toContain("AKIA");
+  expect(readBase(join(env.WIZARDINGCODE_HOME ?? "", "crew")).base?.entries.length).toBe(1);
+  // What each project reads: the visible entries alone, a hidden one answered as an unknown id.
+  const listA = await ca.run("knowledge", "list");
+  expect(listA.out.trim()).toBe(
+    'K-1 · general · "Login sessions" · acme · marked · confirmed 0, contradicted 0',
+  );
+  expect((await ca.run("knowledge", "list", "--kind", "documentation")).out.trim()).toBe("none");
+  expect((await cb.run("knowledge", "list")).out.trim()).toBe("none");
+  const shown = await ca.run("knowledge", "show", "K-1");
+  expect(shown.code).toBe(0);
+  expect(shown.out).toContain("Login sessions");
+  expect(shown.out).toContain("dropped on logout");
+  const hiddenShow = await cb.run("knowledge", "show", "K-1");
+  const unknownShow = await ca.run("knowledge", "show", "K-9");
+  expect(hiddenShow.code).toBe(1);
+  expect(hiddenShow.err).toBe("no entry K-1 visible to this project\n");
+  expect(unknownShow.err).toBe("no entry K-9 visible to this project\n");
+  const hiddenContradict = await cb.run("knowledge", "contradict", "K-1", "--reason", "x");
+  expect(hiddenContradict.err).toBe(hiddenShow.err);
+  const contradicted = await ca.run(
+    "knowledge",
+    "contradict",
+    "K-1",
+    "--reason",
+    "the cookie is not renewed on a POST",
+    "--item",
+    "2026-10-20-001-x",
+  );
+  expect(contradicted.code, contradicted.err).toBe(0);
+  expect((await ca.json("knowledge", "show", "K-1")).data.entry).toMatchObject({
+    contradictedBy: [
+      { item: "2026-10-20-001-x", project: "shop", reason: "the cookie is not renewed on a POST" },
+    ],
+  });
+  expect((await ca.run("knowledge", "list")).out).toContain("confirmed 0, contradicted 1");
+  const register = listDecisions(repoPaths(a, env));
+  expect(register[0]).toMatchObject({
+    item: "knowledge",
+    kind: "knowledge",
+    text: "knowledge contradict K-1: the cookie is not renewed on a POST",
+    by: "the agent",
+  });
+  expect(register[1]).toMatchObject({
+    item: "knowledge",
+    kind: "knowledge",
+    text: "knowledge add K-1: Login sessions",
+    by: "the agent",
+  });
+});
+
+test("SP4-T2 AC-6: crew knowledge unmark is a person's: --mode and --validator refused, a hidden entry answered as an unknown id, a relayed run recorded as the user's and the entry read everywhere after it", async () => {
+  const { env, a, ca, cb } = knowledgeProjects();
+  expect(
+    (
+      await ca.run(
+        "knowledge",
+        "add",
+        "--kind",
+        "general",
+        "--title",
+        "Login sessions",
+        "--file",
+        "notes/login.md",
+      )
+    ).code,
+  ).toBe(0);
+  expect((await cb.run("knowledge", "unmark", "K-1")).err).toBe(
+    "no entry K-1 visible to this project\n",
+  );
+  expect((await ca.run("knowledge", "unmark", "K-1", "--mode", "auto")).err.trim()).toBe(
+    "a mark is removed by a person: run the command without --mode",
+  );
+  expect(
+    (await ca.run("knowledge", "unmark", "K-1", "--validator", "complete-gap-round")).err.trim(),
+  ).toBe("a mark is never removed by the validator");
+  const unmarked = await ca.run("knowledge", "unmark", "K-1");
+  expect(unmarked.code, unmarked.err).toBe(0);
+  expect(unmarked.out.trim()).toBe(
+    "K-1 unmarked by the user, relayed by the agent: Login sessions is read in every workspace",
+  );
+  expect((await cb.run("knowledge", "show", "K-1")).code).toBe(0);
+  expect((await cb.run("knowledge", "list")).out).toContain("unmarked");
+  expect(listDecisions(repoPaths(a, env))[0]).toMatchObject({
+    item: "knowledge",
+    kind: "knowledge",
+    text: "knowledge unmark K-1: Login sessions",
+    by: "the user, relayed by the agent",
+  });
+  expect((await ca.run("knowledge", "unmark", "K-1")).err.trim()).toBe("K-1 is not marked");
 });

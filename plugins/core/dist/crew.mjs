@@ -1,6 +1,6 @@
 // packages/engine/src/cli.ts
-import { existsSync as existsSync19, rmSync as rmSync3, statSync as statSync10 } from "node:fs";
-import { basename as basename6, isAbsolute as isAbsolute8, join as join44, relative as relative10, resolve as resolve4 } from "node:path";
+import { existsSync as existsSync20, rmSync as rmSync3, statSync as statSync10 } from "node:fs";
+import { basename as basename6, isAbsolute as isAbsolute9, join as join45, relative as relative11, resolve as resolve5 } from "node:path";
 
 // packages/engine/src/analysis.ts
 import { existsSync as existsSync8, lstatSync as lstatSync2, mkdirSync as mkdirSync4 } from "node:fs";
@@ -976,6 +976,12 @@ function isProtectedPath(paths, absPath) {
   if (inner === "audit" || inner.startsWith("audit/"))
     return !AUDIT_OPEN.test(inner);
   return PROTECTED_IN_WORK.has(inner) || inner.startsWith("logs/");
+}
+function knowledgeDir(userDir) {
+  return join5(userDir, "knowledge");
+}
+function knowledgePath(userDir) {
+  return join5(knowledgeDir(userDir), "base.json");
 }
 
 // packages/engine/src/policy.ts
@@ -9075,7 +9081,7 @@ function userOnlyCommand(args) {
   const [verb, second, third] = parsed.positional;
   const presence = verb === "question" && third === "add";
   const unreadable = (word) => word !== undefined && UNREADABLE_VERB.test(word);
-  const userOnly = unreadable(verb) || (verb === "profile" || verb === "policy") && unreadable(second) || verb === "skip" || verb === "approve" || verb === "accept" || verb === "decide" || verb === "continue" || verb === "objection" && (parsed.positional.includes("waive") || unreadable(third)) || verb === "profile" && (second === "confirm" || second === "set" || second === "unset") || verb === "policy" && (second === "accept" || second === "set") || verb === "workspace" && (unreadable(second) || second === "priorities" && (parsed.positional.includes("accept") || unreadable(third))) || verb === "question" && (third === "answer" || unreadable(third)) || verb === "config" && typeof second === "string" && second.startsWith("jev.") && third !== undefined || verb === "task" && (parsed.positional.includes("merge") && parsed.flags.force === true || unreadable(third));
+  const userOnly = unreadable(verb) || (verb === "profile" || verb === "policy") && unreadable(second) || verb === "skip" || verb === "approve" || verb === "accept" || verb === "decide" || verb === "continue" || verb === "objection" && (parsed.positional.includes("waive") || unreadable(third)) || verb === "profile" && (second === "confirm" || second === "set" || second === "unset") || verb === "policy" && (second === "accept" || second === "set") || verb === "workspace" && (unreadable(second) || second === "priorities" && (parsed.positional.includes("accept") || unreadable(third))) || verb === "question" && (third === "answer" || unreadable(third)) || verb === "config" && typeof second === "string" && second.startsWith("jev.") && third !== undefined || verb === "knowledge" && (second === "unmark" || unreadable(second)) || verb === "task" && (parsed.positional.includes("merge") && parsed.flags.force === true || unreadable(third));
   if (!userOnly && !presence)
     return null;
   return {
@@ -9118,6 +9124,27 @@ function auditApproval(parsed, permissionMode, headless, policy) {
     "ask",
     "Crew: an audit's report is signed by a person: this command records their signature"
   ];
+}
+function knowledgeUnmark(parsed, permissionMode, headless, policy) {
+  const [verb, what] = parsed.positional;
+  if (verb !== "knowledge" || what === undefined)
+    return null;
+  if (what !== "unmark" && !UNREADABLE_VERB.test(what))
+    return null;
+  const where = unwatched(headless, permissionMode);
+  if (where)
+    return [
+      "deny",
+      `Crew: a mark is removed by a person and no person is watching this session (${where}): run crew await <id> user and end the turn`
+    ];
+  if (typeof parsed.flags.mode === "string")
+    return [
+      "deny",
+      `Crew: a mark is removed by a person (${permissionMode ?? "default"} mode); run the command without --mode so they are asked`
+    ];
+  if (policy.attendedDecisions === "relay")
+    return null;
+  return ["ask", "Crew: a mark is removed by a person: this command records their decision"];
 }
 var QUOTES = /["'\\]/g;
 var BIN = String.raw`^(?:\S*/)?`;
@@ -9445,7 +9472,7 @@ function onPreToolUse(ctx, payload) {
       const userOnly = userOnlyCommand(args) ?? resumeDecision(ctx, args);
       if (!userOnly)
         continue;
-      const decided = auditApproval(userOnly.parsed, payload.permission_mode, ctx.headless, ctx.policy) ?? userOnlyDecision(userOnly, payload.permission_mode, ctx.headless, ctx.policy);
+      const decided = auditApproval(userOnly.parsed, payload.permission_mode, ctx.headless, ctx.policy) ?? knowledgeUnmark(userOnly.parsed, payload.permission_mode, ctx.headless, ctx.policy) ?? userOnlyDecision(userOnly, payload.permission_mode, ctx.headless, ctx.policy);
       if (decided?.[0] === "deny")
         return answer(...decided);
       asked ??= decided;
@@ -10110,9 +10137,186 @@ function handleHook(event, payload, env = process.env) {
   }
 }
 
+// packages/engine/src/knowledge.ts
+import { existsSync as existsSync17, realpathSync as realpathSync6 } from "node:fs";
+import { isAbsolute as isAbsolute8, relative as relative10, resolve as resolve4 } from "node:path";
+var KNOWLEDGE_KINDS = [
+  "stack-preference",
+  "validated-solution",
+  "documentation",
+  "root-cause",
+  "general"
+];
+var USER_KINDS = ["general", "documentation"];
+var KNOWLEDGE_TEXT_LIMIT = 4000;
+var BASE_VERSION = 1;
+function scopeOf(paths, self) {
+  return {
+    workspace: self.workspace,
+    project: self.project,
+    projectRoot: canonical(worktreeMainRoot(paths.root) ?? paths.root)
+  };
+}
+function defaultConfidential(_kind) {
+  return true;
+}
+function visibleTo(entry, scope) {
+  if (entry.confidential === false)
+    return true;
+  if (entry.workspace !== null)
+    return entry.workspace === scope.workspace;
+  return scope.workspace === null && entry.projectRoot === scope.projectRoot;
+}
+var STRING_FIELDS = ["id", "kind", "title", "project", "projectRoot", "text"];
+var NULLABLE_FIELDS = ["workspace", "item", "commit", "source"];
+var ARRAY_FIELDS = ["stacks", "paths", "words", "confirmedBy", "contradictedBy"];
+function shapeFault(data) {
+  if (typeof data !== "object" || data === null || Array.isArray(data))
+    return "not an object";
+  const base = data;
+  if (base.version !== BASE_VERSION) {
+    const version = typeof base.version === "number" ? base.version : 0;
+    return version > BASE_VERSION ? `version ${version} is newer than this engine reads (${BASE_VERSION})` : "base.json: version is not 1";
+  }
+  if (!Number.isInteger(base.next) || base.next < 1)
+    return "base.json: next is not a positive integer";
+  if (!Array.isArray(base.entries))
+    return "base.json: entries is not an array";
+  for (const [i, e] of base.entries.entries()) {
+    const name = `entry ${typeof e?.id === "string" ? e.id : `#${i + 1}`}`;
+    if (typeof e !== "object" || e === null)
+      return `base.json: ${name} is not an object`;
+    const entry = e;
+    for (const field of STRING_FIELDS)
+      if (typeof entry[field] !== "string")
+        return `base.json: ${name} has no ${field}`;
+    if (!KNOWLEDGE_KINDS.includes(entry.kind))
+      return `base.json: ${name} has an unknown kind ${String(entry.kind)}`;
+    for (const field of NULLABLE_FIELDS)
+      if (entry[field] !== null && typeof entry[field] !== "string")
+        return `base.json: ${name} has a ${field} that is neither a string nor null`;
+    if (typeof entry.confidential !== "boolean")
+      return `base.json: ${name} has a confidential that is not a boolean`;
+    for (const field of ARRAY_FIELDS)
+      if (!Array.isArray(entry[field]))
+        return `base.json: ${name} has no ${field} list`;
+    if (typeof entry.createdAt !== "string")
+      return `base.json: ${name} has no createdAt`;
+  }
+  return null;
+}
+function readBase(userDir) {
+  const text = readText(knowledgePath(userDir));
+  if (text === null)
+    return { base: null, reason: "missing" };
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch (error) {
+    return {
+      base: null,
+      reason: `base.json: ${error instanceof Error ? error.message : String(error)}`
+    };
+  }
+  const fault = shapeFault(data);
+  if (fault !== null)
+    return { base: null, reason: fault };
+  return { base: data, reason: "" };
+}
+function addEntry(userDir, draft) {
+  return withLock(knowledgeDir(userDir), () => {
+    const read2 = readBase(userDir);
+    if (read2.base === null && read2.reason !== "missing")
+      return { refused: read2.reason };
+    const base = read2.base ?? { version: 1, next: 1, entries: [] };
+    const entry = {
+      ...draft,
+      text: draft.text.slice(0, KNOWLEDGE_TEXT_LIMIT),
+      id: `K-${base.next}`,
+      createdAt: nowIso(),
+      confirmedBy: [],
+      contradictedBy: []
+    };
+    base.next += 1;
+    base.entries.push(entry);
+    writeJson(knowledgePath(userDir), base);
+    return entry;
+  }, { what: "the knowledge base" });
+}
+function updateEntry(userDir, id, change) {
+  return withLock(knowledgeDir(userDir), () => {
+    const read2 = readBase(userDir);
+    if (read2.base === null)
+      return { refused: read2.reason === "missing" ? `no entry ${id} in the base` : read2.reason };
+    const entry = read2.base.entries.find((e) => e.id === id);
+    if (!entry)
+      return { refused: `no entry ${id} in the base` };
+    change(entry);
+    writeJson(knowledgePath(userDir), read2.base);
+    return entry;
+  }, { what: "the knowledge base" });
+}
+var STOP_WORDS = new Set([
+  "that",
+  "this",
+  "with",
+  "from",
+  "into",
+  "when",
+  "then",
+  "what",
+  "have",
+  "will",
+  "every",
+  "each",
+  "their",
+  "there",
+  "which",
+  "about",
+  "after",
+  "before",
+  "also",
+  "only"
+]);
+function words(text) {
+  const seen = new Set;
+  for (const run of text.toLowerCase().match(/[a-z0-9]{4,}/g) ?? [])
+    if (!STOP_WORDS.has(run))
+      seen.add(run);
+  return [...seen];
+}
+function fileInsideRoot(root, file) {
+  const candidate = resolve4(root, file);
+  if (!existsSync17(candidate))
+    return null;
+  try {
+    const real = realpathSync6(candidate);
+    const rel2 = relative10(realpathSync6(root), real);
+    return rel2 !== "" && !rel2.startsWith("..") && !isAbsolute8(rel2) ? real : "";
+  } catch {
+    return null;
+  }
+}
+function entryLine(e) {
+  return `${e.id} · ${e.kind} · "${e.title}" · ${e.workspace ?? "alone"} · ${e.confidential === false ? "unmarked" : "marked"} · confirmed ${e.confirmedBy.length}, contradicted ${e.contradictedBy.length}`;
+}
+function entryText(e) {
+  const refs = (list) => list.length ? list.map((r) => `${r.item} (${r.project}, ${r.at.slice(0, 10)})${r.reason ? `: ${r.reason}` : ""}`).join("; ") : "none";
+  return [
+    entryLine(e),
+    `project: ${e.project} (${e.projectRoot})`,
+    `item: ${e.item ?? "-"} · commit: ${e.commit ?? "-"} · source: ${e.source ?? "-"}`,
+    `stacks: ${e.stacks.join(", ") || "-"} · paths: ${e.paths.join(", ") || "-"} · words: ${e.words.join(", ") || "-"}`,
+    `created: ${e.createdAt} · confirmed by: ${refs(e.confirmedBy)} · contradicted by: ${refs(e.contradictedBy)}`,
+    "---",
+    e.text
+  ].join(`
+`);
+}
+
 // packages/engine/src/metrics.ts
 import { readdirSync as readdirSync6 } from "node:fs";
-import { join as join40 } from "node:path";
+import { join as join41 } from "node:path";
 var count = (map, key, n = 1) => {
   map[key] = (map[key] ?? 0) + n;
 };
@@ -10139,7 +10343,7 @@ function computeMetrics(projects) {
     const policy = loadPolicy(paths).policy;
     let ids = [];
     try {
-      ids = readdirSync6(join40(paths.crewDir, "work"));
+      ids = readdirSync6(join41(paths.crewDir, "work"));
     } catch {
       continue;
     }
@@ -10228,10 +10432,10 @@ function metricsText(m) {
 }
 
 // packages/engine/src/pdf.ts
-import { existsSync as existsSync17 } from "node:fs";
+import { existsSync as existsSync18 } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { delimiter as delimiter2, join as join41 } from "node:path";
+import { delimiter as delimiter2, join as join42 } from "node:path";
 var NO_PDF = "PDF not produced: no Playwright in the project and no browser found (set WIZARDINGCODE_CREW_BROWSER)";
 var BROWSER_CANDIDATES = [
   "google-chrome",
@@ -10247,8 +10451,8 @@ function onPath2(binary, env) {
   for (const dir of (env.PATH ?? "").split(delimiter2)) {
     if (!dir)
       continue;
-    const path = join41(dir, binary);
-    if (existsSync17(path))
+    const path = join42(dir, binary);
+    if (existsSync18(path))
       return path;
   }
   return null;
@@ -10258,7 +10462,7 @@ function findBrowser(env, candidates = BROWSER_CANDIDATES) {
   if (named2)
     return named2;
   for (const candidate of candidates) {
-    const found = candidate.includes("/") ? existsSync17(candidate) ? candidate : null : onPath2(candidate, env);
+    const found = candidate.includes("/") ? existsSync18(candidate) ? candidate : null : onPath2(candidate, env);
     if (found)
       return found;
   }
@@ -10322,7 +10526,7 @@ async function printPdf(html, out, env, root, options = {}) {
   const result = await runCommand(command, {
     cwd: root,
     timeoutMs,
-    logPath: options.logPath ?? join41(tmpdir(), `crew-pdf-${Date.now()}.log`),
+    logPath: options.logPath ?? join42(tmpdir(), `crew-pdf-${Date.now()}.log`),
     env
   });
   if (result.timedOut)
@@ -10335,7 +10539,7 @@ async function printPdf(html, out, env, root, options = {}) {
 `).filter(Boolean).slice(-3).join(" ");
     return { ok: false, reason: `PDF not produced: the browser exited ${result.exit}: ${tail}` };
   }
-  if (!existsSync17(out))
+  if (!existsSync18(out))
     return {
       ok: false,
       reason: `PDF not produced: the browser exited 0 and wrote nothing at ${out}`
@@ -10452,7 +10656,7 @@ function findQuote(quote, text) {
 }
 
 // packages/engine/src/tdd.ts
-import { join as join42 } from "node:path";
+import { join as join43 } from "node:path";
 var STEPS_BY_KIND = {
   behavior: { steps: ["red", "green"], how: "record red, then green" },
   preserve: { steps: ["before", "after"], how: "record before, then after" },
@@ -10525,7 +10729,7 @@ async function recordTdd(paths, work, evidence, profile, criterionId, step, over
   const result = await runCommand(command, {
     cwd: paths.root,
     timeoutMs: fallback?.timeoutMs ?? 10 * 60 * 1000,
-    logPath: join42(workDir(paths, work.id), log)
+    logPath: join43(workDir(paths, work.id), log)
   });
   const record = {
     command,
@@ -10864,8 +11068,8 @@ async function verifyTriage(cfg, policy, input, options = {}) {
 var VERSION = "0.9.0";
 
 // packages/engine/src/workspace.ts
-import { existsSync as existsSync18 } from "node:fs";
-import { join as join43 } from "node:path";
+import { existsSync as existsSync19 } from "node:fs";
+import { join as join44 } from "node:path";
 var NO_WORKSPACE = "no workspace in policy.json (mail.workspace): crew workspace status lists the projects of one workspace";
 var CLOSED = new Set(["done", "refused", "expired"]);
 function isOpen(m) {
@@ -10915,7 +11119,7 @@ function workspaceStatus(paths, policy, env) {
       priorities: 0,
       questions: 0
     };
-    if (!existsSync18(join43(root, ".git")))
+    if (!existsSync19(join44(root, ".git")))
       return { ...empty, gone: true, environment: "none" };
     const projectPaths = pathsFor(root, userDir);
     const ctx = mailContext(projectPaths, loadPolicy(projectPaths).policy, env);
@@ -11090,16 +11294,16 @@ function skipStep(work, raw) {
 }
 function accept(env, target) {
   if (target === "profile" || target === "policy" || target === "decisions") {
-    if (!recordIntegrity(env.paths, join44(env.paths.crewDir, `${target}.json`)))
+    if (!recordIntegrity(env.paths, join45(env.paths.crewDir, `${target}.json`)))
       return refuse(`no .crew/${target}.json to accept`);
     return ok(`${target} accepted: its current content is now the trusted version`, {
       accepted: target
     });
   }
   const dir = workDir(env.paths, target);
-  if (!/^[\w.-]+$/.test(target) || target.includes("..") || !existsSync19(join44(dir, "work.json")))
+  if (!/^[\w.-]+$/.test(target) || target.includes("..") || !existsSync20(join45(dir, "work.json")))
     return refuse(`unknown work item: ${target}`);
-  const files = PROTECTED_WORK_FILES.filter((name) => recordIntegrity(env.paths, join44(dir, name)));
+  const files = PROTECTED_WORK_FILES.filter((name) => recordIntegrity(env.paths, join45(dir, name)));
   return ok(`${target} accepted: ${files.join(", ")} now trusted as they are`, {
     accepted: target,
     files
@@ -11228,7 +11432,7 @@ function rulingRecords(env, parsed, gateWord, planned, fingerprint, changed, wor
   }
   if (typeof parsed.flags.ruling !== "string")
     return refuse(usage);
-  const rulingPath = resolve4(env.paths.root, parsed.flags.ruling);
+  const rulingPath = resolve5(env.paths.root, parsed.flags.ruling);
   const text = readText(rulingPath);
   if (text === null)
     return refuse(`no ruling file at ${rulingPath}`);
@@ -11255,7 +11459,7 @@ function rulingGates(env, parsed, gateWord) {
     return gateWord ? [gateWord] : [];
   if (typeof parsed.flags.ruling !== "string")
     return [];
-  const text = readText(resolve4(env.paths.root, parsed.flags.ruling));
+  const text = readText(resolve5(env.paths.root, parsed.flags.ruling));
   if (text === null)
     return [];
   try {
@@ -11271,11 +11475,11 @@ async function recordStrategyJudgement(env, opened, parsed, gateWord, usage) {
   if (!planned)
     return refuse("strategy is not a phase of this item: a strategy ruling is recorded on a new project alone");
   const dir = workDir(env.paths, work.id);
-  const inputs = readJson(join44(dir, "review", "strategy", "inputs.json"));
+  const inputs = readJson(join45(dir, "review", "strategy", "inputs.json"));
   if (!inputs || typeof inputs.hash !== "string" || typeof inputs.at !== "string")
     return refuse(`no strategy check for this item: run crew strategy ${work.id} check first, then the reviewer and the judge`);
-  const research = readText(join44(dir, "conclave", "researcher.md"));
-  const text = readText(join44(dir, "strategy.md"));
+  const research = readText(join45(dir, "conclave", "researcher.md"));
+  const text = readText(join45(dir, "strategy.md"));
   if (research === null)
     return refuse(RESEARCHER_FIRST);
   if (text === null)
@@ -11291,8 +11495,8 @@ async function recordStrategyJudgement(env, opened, parsed, gateWord, usage) {
     return refuse(usage);
   if (record2.verdict !== "not-run") {
     if (planned.reviewer === "cto") {
-      const cto = join44(dir, "conclave", "cto.md");
-      if (!existsSync19(cto))
+      const cto = join45(dir, "conclave", "cto.md");
+      if (!existsSync20(cto))
         return refuse("the CTO's review of the strategy comes before the ruling on the full route (conclave/cto.md, launched after crew strategy check)");
       if (statSync10(cto).mtimeMs < Date.parse(inputs.at))
         return refuse("conclave/cto.md predates the check: the CTO reviews the strategy as it is now, then the judge rules");
@@ -11343,7 +11547,7 @@ async function recordTaskJudgement(env, ioEnv, work, tampered, parsed, task) {
     return input;
   const { records, rulingPath } = input;
   fillTokens(records, before.evidence.roles ?? [], inputs.at);
-  const defects = await askDefects(env, ioEnv, records, join44(reviewDir(env.paths, work.id, task), "diff.patch"));
+  const defects = await askDefects(env, ioEnv, records, join45(reviewDir(env.paths, work.id, task), "diff.patch"));
   const notes = [];
   const appendRefusal = appendVerifications(env, work.id, defects?.records ?? []);
   if (appendRefusal)
@@ -11381,15 +11585,15 @@ function guardContext(env, work, tampered) {
   const dir = workDir(env.paths, work.id);
   const result = assess(env.paths, work, env.profile, env.policy, env.tampered || tampered);
   return {
-    specText: readText(join44(dir, "spec.md")),
-    strategyText: readText(join44(dir, "strategy.md")),
-    researcherText: readText(join44(dir, "conclave", "researcher.md")),
-    analysisText: readText(join44(dir, "analysis.md")),
-    originRecorded: existsSync19(join44(dir, "analysis", "origin.json")),
+    specText: readText(join45(dir, "spec.md")),
+    strategyText: readText(join45(dir, "strategy.md")),
+    researcherText: readText(join45(dir, "conclave", "researcher.md")),
+    analysisText: readText(join45(dir, "analysis.md")),
+    originRecorded: existsSync20(join45(dir, "analysis", "origin.json")),
     gitRepository: isGitRepo(env.paths.root),
-    conclaveText: readText(join44(dir, "conclave.md")),
+    conclaveText: readText(join45(dir, "conclave.md")),
     ledger: loadLedger(env.paths, work.id).ledger,
-    planExists: existsSync19(join44(dir, "plan.md")),
+    planExists: existsSync20(join45(dir, "plan.md")),
     evidence: result.evidence,
     proven: result.verdict === "proven",
     unproven: result.unproven,
@@ -11404,7 +11608,7 @@ function deliver2(env, opened, evidence) {
       break;
   }
   saveWork(env.paths, opened.work);
-  writeProtectedText(env.paths, join44(workDir(env.paths, opened.work.id), "report.md"), reportOf(env, opened.work, evidence));
+  writeProtectedText(env.paths, join45(workDir(env.paths, opened.work.id), "report.md"), reportOf(env, opened.work, evidence));
 }
 function reportOf(env, work, evidence) {
   return renderReport(work, evidence, env.policy, loadLedger(env.paths, work.id).ledger, loadItemMail(env.paths, work.id), env.mail.self.project, readOrigin(env.paths, work.id) ?? undefined, strategyOf(env, work, evidence), auditViewOf(env, work));
@@ -11435,10 +11639,10 @@ function auditSignature(work) {
 }
 async function renderAudit(env, io, work, signed) {
   const dir = workDir(env.paths, work.id);
-  const auditDir = join44(dir, "audit");
+  const auditDir = join45(dir, "audit");
   const assembled = assembleAuditReport({
     auditDir,
-    logsDir: join44(dir, "logs"),
+    logsDir: join45(dir, "logs"),
     root: env.paths.root,
     id: work.id,
     project: env.mail.self.project,
@@ -11450,12 +11654,12 @@ async function renderAudit(env, io, work, signed) {
     return refuse(assembled.refused);
   const { inputs, counts } = assembled;
   const brand = brandOf(io.env, env.paths.root);
-  writeProtectedText(env.paths, join44(auditDir, "report.md"), renderAuditMarkdown(inputs));
-  writeProtectedText(env.paths, join44(auditDir, "report.html"), renderAuditHtml(inputs, brand));
-  const pdfPath = join44(auditDir, "report.pdf");
+  writeProtectedText(env.paths, join45(auditDir, "report.md"), renderAuditMarkdown(inputs));
+  writeProtectedText(env.paths, join45(auditDir, "report.html"), renderAuditHtml(inputs, brand));
+  const pdfPath = join45(auditDir, "report.pdf");
   rmSync3(pdfPath, { force: true });
-  const printed = await printPdf(join44(auditDir, "report.html"), pdfPath, io.env, env.paths.root, {
-    logPath: join44(dir, "logs", "audit-pdf.txt")
+  const printed = await printPdf(join45(auditDir, "report.html"), pdfPath, io.env, env.paths.root, {
+    logPath: join45(dir, "logs", "audit-pdf.txt")
   });
   const record2 = {
     at: nowIso(),
@@ -11469,7 +11673,7 @@ async function renderAudit(env, io, work, signed) {
     verdict: inputs.verdict,
     signed
   };
-  writeProtectedJson(env.paths, join44(auditDir, "report.json"), record2);
+  writeProtectedJson(env.paths, join45(auditDir, "report.json"), record2);
   const kept = Object.values(counts).reduce((n, c) => n + c.defects + c.advisories, 0);
   const next = signed ? `crew phase ${work.id} next` : `crew approve ${work.id} audit (a person signs), then crew phase ${work.id} next`;
   return ok(`audit report of ${work.id}: verdict ${inputs.verdict}; ${kept} finding${kept === 1 ? "" : "s"} kept, ${inputs.leftOut.length} left out for want of proof; audit/report.md, audit/report.html, ${printed.ok ? `audit/report.pdf (${printed.by})` : `pdf not produced: ${printed.reason}`}${brand ? "" : "; brand assets not found"}
@@ -11479,7 +11683,7 @@ function strategyOf(env, work, evidence) {
   if (!phasesFor(work).includes("strategy"))
     return null;
   const dir = workDir(env.paths, work.id);
-  return strategyReport(readText(join44(dir, "strategy.md")), readText(join44(dir, "conclave", "researcher.md")), evidence);
+  return strategyReport(readText(join45(dir, "strategy.md")), readText(join45(dir, "conclave", "researcher.md")), evidence);
 }
 function strategyLine(report, planned) {
   const state = report === null ? "no strategy.md yet" : report.faults.length ? `${report.faults.length} fault${report.faults.length === 1 ? "" : "s"}` : "ok";
@@ -11506,11 +11710,11 @@ function auditStatusOf(env, work) {
   };
 }
 function auditLine(env, work) {
-  const dir = join44(workDir(env.paths, work.id), "audit");
-  const runs = readJson(join44(dir, "runs.json"));
+  const dir = join45(workDir(env.paths, work.id), "audit");
+  const runs = readJson(join45(dir, "runs.json"));
   if (!runs)
     return `  audit run: none yet (crew audit ${work.id} run)`;
-  const scope = readJson(join44(dir, "scope.json"));
+  const scope = readJson(join45(dir, "scope.json"));
   return `  audit run: ${auditSummary(runs.runs)}; files ${scope?.files ?? 0}`;
 }
 function startPriority(flag, origin, answers) {
@@ -11638,7 +11842,7 @@ function logDecision(env, work, answers) {
     kind: work.kind,
     kindFrom: work.kindFrom
   });
-  const file = join44(env.paths.localDir, "decisions.jsonl");
+  const file = join45(env.paths.localDir, "decisions.jsonl");
   writeText(file, `${readText(file) ?? ""}${line}
 `);
 }
@@ -11690,7 +11894,7 @@ async function dispatch(parsed, io) {
     return settings(command, args, { userDir: userDirOf(io.env) });
   let paths = resolvePaths(io.cwd, io.env);
   if (!paths && command === "detect") {
-    ensureDir(join44(resolve4(io.cwd), ".crew"));
+    ensureDir(join45(resolve5(io.cwd), ".crew"));
     paths = resolvePaths(io.cwd, io.env);
   }
   if (!paths)
@@ -11708,7 +11912,7 @@ async function dispatch(parsed, io) {
       if (parsed.flags.refresh) {
         saveProfile(env.paths, profile);
         if (integrityOf(env.paths)[".crew/policy.json"] === undefined) {
-          recordIntegrity(env.paths, join44(env.paths.crewDir, "policy.json"));
+          recordIntegrity(env.paths, join45(env.paths.crewDir, "policy.json"));
         }
       }
       const missing = missingTestCommands(profile);
@@ -12210,10 +12414,10 @@ ${originNotes.join(`
       }
       if (args[1] === "close") {
         const jev = jevConfig(io.env, env.config);
-        const conclaveDir = join44(workDir(env.paths, opened.work.id), "conclave");
-        const researcherText = readText(join44(conclaveDir, "researcher.md"));
+        const conclaveDir = join45(workDir(env.paths, opened.work.id), "conclave");
+        const researcherText = readText(join45(conclaveDir, "researcher.md"));
         if (jev.configured && askAllowed(env.policy, "fact") && researcherText !== null) {
-          const read2 = readProtectedJson(env.paths, join44(conclaveDir, "researcher.verification.json"));
+          const read2 = readProtectedJson(env.paths, join45(conclaveDir, "researcher.verification.json"));
           if (read2.tampered || read2.data?.hash !== sha256(researcherText))
             return refuse(`run crew research ${opened.work.id} verify first (the researcher's facts are unverified)`);
         }
@@ -12285,7 +12489,7 @@ ${originNotes.join(`
         return refuse(cappedRefusal(result.capped));
       if ("stale" in result)
         return refuse(staleRefusal(work.id, result.stale));
-      const scope = readJson(join44(workDir(env.paths, work.id), "audit", "scope.json"));
+      const scope = readJson(join45(workDir(env.paths, work.id), "audit", "scope.json"));
       const areas = scope?.riskAreas.length ? scope.riskAreas.join(", ") : "none";
       const text = [
         `audit run of ${work.id} at ${result.head ? result.head.slice(0, 12) : "no git"}:`,
@@ -12306,10 +12510,10 @@ ${originNotes.join(`
       if (!plannedCheck)
         return refuse("strategy is not a phase of this item: a strategy belongs to a new project");
       const dir = workDir(env.paths, opened.work.id);
-      const research = readText(join44(dir, "conclave", "researcher.md"));
+      const research = readText(join45(dir, "conclave", "researcher.md"));
       if (research === null)
         return refuse(RESEARCHER_FIRST);
-      const text = readText(join44(dir, "strategy.md"));
+      const text = readText(join45(dir, "strategy.md"));
       if (text === null)
         return refuse("strategy.md in the work folder (references/strategy.md)");
       const faults = checkStrategy(text, research);
@@ -12318,7 +12522,7 @@ ${originNotes.join(`
 `), { faults });
       const hash = strategyHash(text, research);
       const reviewer = plannedCheck.reviewer;
-      writeProtectedJson(env.paths, join44(dir, "review", "strategy", "inputs.json"), {
+      writeProtectedJson(env.paths, join45(dir, "review", "strategy", "inputs.json"), {
         at: nowIso(),
         hash,
         strategy: "strategy.md",
@@ -12425,7 +12629,7 @@ ${rendered.text}`, { approvals: opened.work.approvals, ...rendered.data });
           const dir = workDir(env.paths, opened.work.id);
           const evidence = loadEvidence(env.paths, opened.work.id).evidence;
           const outcome = await verifyValidator(jev, env.policy, {
-            conclave: readText(join44(dir, "conclave.md")) ?? "",
+            conclave: readText(join45(dir, "conclave.md")) ?? "",
             decisions: (opened.work.decisions ?? []).map((d) => ({
               id: d.id,
               question: d.question,
@@ -12548,9 +12752,9 @@ ${originNotes.join(`
       if (args[1] !== "verify")
         return refuse(usage);
       const dir = workDir(env.paths, opened.work.id);
-      const file = typeof parsed.flags.file === "string" ? resolve4(env.paths.root, parsed.flags.file) : join44(dir, "conclave", "researcher.md");
-      const rel2 = relative10(env.paths.root, file).replace(/\\/g, "/");
-      if (rel2.startsWith("..") || isAbsolute8(rel2))
+      const file = typeof parsed.flags.file === "string" ? resolve5(env.paths.root, parsed.flags.file) : join45(dir, "conclave", "researcher.md");
+      const rel2 = relative11(env.paths.root, file).replace(/\\/g, "/");
+      if (rel2.startsWith("..") || isAbsolute9(rel2))
         return refuse(`${parsed.flags.file} is not under the root`);
       const text = readText(file);
       if (text === null)
@@ -12614,7 +12818,7 @@ ${originNotes.join(`
           tail = `jev unavailable: ${out.unavailable}`;
       }
       const ordered = facts.map((f) => statuses.get(f.id));
-      writeProtectedJson(env.paths, join44(dir, "conclave", "researcher.verification.json"), {
+      writeProtectedJson(env.paths, join45(dir, "conclave", "researcher.verification.json"), {
         at: nowIso(),
         hash: sha256(text),
         facts: ordered
@@ -12777,7 +12981,7 @@ ${notes.join(`
 ` : "";
       const picked = refreshed.changed.length ? `profile refreshed: ${refreshed.changed.join("; ")}
 ` : "";
-      const review = outcome.review ? relative10(env.paths.root, outcome.review).replace(/\\/g, "/") : null;
+      const review = outcome.review ? relative11(env.paths.root, outcome.review).replace(/\\/g, "/") : null;
       const pending = judgementRows(opened.work, outcome.evidence, outcome.judgement, outcome.evidence.fingerprint ?? "", env.policy).filter((r) => r.status === "planned" || r.status === "stale");
       const judgementNote = pending.length ? `
 Judgement gates to run: ${pending.map((r) => `${r.gate} (${r.planned})`).join(", ")}; inputs in ${review}/ (diff.patch, files.txt); record each with crew judgement ${opened.work.id} record --ruling <file>` : "";
@@ -12844,7 +13048,7 @@ ${outcome.saveRefused}` : ""),
         return input;
       const { records } = input;
       fillTokens(records, before.evidence.roles ?? [], readReviewInputs(env.paths, opened.work.id)?.at);
-      const defects = await askDefects(env, io.env, records, join44(reviewDir(env.paths, opened.work.id), "diff.patch"));
+      const defects = await askDefects(env, io.env, records, join45(reviewDir(env.paths, opened.work.id), "diff.patch"));
       const saved = updateEvidence(env.paths, opened.work.id, (fresh) => {
         for (const record2 of records)
           recordJudgement(fresh, record2);
@@ -12867,8 +13071,8 @@ ${outcome.saveRefused}` : ""),
         };
       saveWork(env.paths, opened.work);
       if (typeof parsed.flags.ruling === "string")
-        keepRound(env.paths, opened.work.id, opened.work.rounds?.judgement ?? rounds.judgement, records.map((r) => r.gate), resolve4(env.paths.root, parsed.flags.ruling));
-      const rulingFile = typeof parsed.flags.ruling === "string" ? relative10(env.paths.root, resolve4(env.paths.root, parsed.flags.ruling)).replace(/\\/g, "/") : undefined;
+        keepRound(env.paths, opened.work.id, opened.work.rounds?.judgement ?? rounds.judgement, records.map((r) => r.gate), resolve5(env.paths.root, parsed.flags.ruling));
+      const rulingFile = typeof parsed.flags.ruling === "string" ? relative11(env.paths.root, resolve5(env.paths.root, parsed.flags.ruling)).replace(/\\/g, "/") : undefined;
       for (const record2 of records)
         for (const f of record2.findings)
           if (record2.verdict === "not-proven" && f.severity === "defect" && !f.outside)
@@ -12944,7 +13148,7 @@ ${report}`, {
       });
       if ("refused" in saved)
         return refuse(saved.refused);
-      writeProtectedText(env.paths, join44(workDir(env.paths, opened.work.id), "report.md"), report);
+      writeProtectedText(env.paths, join45(workDir(env.paths, opened.work.id), "report.md"), report);
       return ok(report, { verdict: result.verdict, unproven: result.unproven });
     }
     case "task": {
@@ -12972,7 +13176,7 @@ ${out.notes.join(`
         const scope = commaList(parsed.flags.scope);
         if (!task || !criteria.length)
           return refuse(usage);
-        const planText = readText(join44(workDir(env.paths, opened.work.id), "plan.md"));
+        const planText = readText(join45(workDir(env.paths, opened.work.id), "plan.md"));
         const out = noteTask(opened.work, task, criteria, scope, typeof parsed.flags.text === "string" ? parsed.flags.text : taskText(planText, task));
         if ("refused" in out)
           return refuse(out.refused);
@@ -13028,7 +13232,7 @@ ${task} gate round ${round + 1}: ${verdict}`,
         if (!task || !record2)
           return refuse(task ? `${task} is not a task of ${opened.work.id}` : usage);
         if (parsed.flags.print) {
-          const brief = record2.brief ? readText(join44(workDir(env.paths, opened.work.id), record2.brief)) : null;
+          const brief = record2.brief ? readText(join45(workDir(env.paths, opened.work.id), record2.brief)) : null;
           if (brief === null)
             return refuse(`${task} has no brief yet (crew task <id> brief ${task})`);
           return ok(brief.endsWith(`
@@ -13100,7 +13304,7 @@ test-first not credited: ${out.uncredited}` : "";
         return opened;
       const changed = changedWatchedPaths(env.paths.root, env.profile, opened.work);
       const audit = kindOfItem(opened.work) === "audit";
-      const scope = audit ? readJson(join44(workDir(env.paths, opened.work.id), "audit", "scope.json")) : null;
+      const scope = audit ? readJson(join45(workDir(env.paths, opened.work.id), "audit", "scope.json")) : null;
       const seats = audit ? auditSeats({ riskAreas: scope?.riskAreas ?? opened.work.riskAreas }, env.policy) : plannedSeats(opened.work.route, opened.work.riskAreas, changed, env.policy, undefined, {
         strategy: phasesFor(opened.work).includes("strategy")
       });
@@ -13125,7 +13329,7 @@ test-first not credited: ${out.uncredited}` : "";
       const work = opened.work;
       if (!(work.seats ?? []).some((s) => s.kind === "lead" && s.role === by))
         return refuse(`${by} is not a seat of ${work.id} (crew team ${work.id} prints the seats)`);
-      const path = resolve4(env.paths.root, file);
+      const path = resolve5(env.paths.root, file);
       const text = readText(path);
       if (text === null)
         return refuse(`no validation file at ${path}`);
@@ -13134,7 +13338,7 @@ test-first not credited: ${out.uncredited}` : "";
         return refuse(verdict.refused);
       const dir = workDir(env.paths, work.id);
       const evidence = loadEvidence(env.paths, work.id).evidence;
-      const hash = validationHash(what, readText(join44(dir, "spec.md")), readText(join44(dir, "plan.md")), evidence.fingerprint ?? "");
+      const hash = validationHash(what, readText(join45(dir, "spec.md")), readText(join45(dir, "plan.md")), evidence.fingerprint ?? "");
       const same = (work.validations ?? []).filter((v) => v.what === what);
       const last = same[same.length - 1];
       const newRound = !last || last.hash !== hash;
@@ -13153,7 +13357,7 @@ test-first not credited: ${out.uncredited}` : "";
           verdict: verdict.verdict,
           returns: verdict.returns,
           round,
-          file: relative10(dir, path).replace(/\\/g, "/"),
+          file: relative11(dir, path).replace(/\\/g, "/"),
           hash,
           at: nowIso()
         }
@@ -13188,6 +13392,131 @@ test-first not credited: ${out.uncredited}` : "";
       const metrics = computeMetrics(roots.map((root) => pathsFor(root, env.paths.userDir)));
       return ok(metricsText(metrics), { ...metrics });
     }
+    case "knowledge": {
+      const usage = 'usage: crew knowledge list [--kind <k>] | show K-n | add --kind general|documentation --title "<t>" --file <path> [--source <url>] | contradict K-n --reason "<why>" [--item <id>] | unmark K-n';
+      const sub = args[0];
+      const scope = scopeOf(env.paths, env.mail.self);
+      const read2 = readBase(env.paths.userDir);
+      const unreadable = read2.base === null && read2.reason !== "missing" ? read2.reason : null;
+      const visible = (id) => read2.base?.entries.find((e) => e.id === id && visibleTo(e, scope)) ?? null;
+      const unseen = (id) => refuse(`no entry ${id} visible to this project`);
+      const register = (text, by) => appendDecision(env.paths, { at: nowIso(), item: "knowledge", kind: "knowledge", text, by });
+      const kindFlag = parsed.flags.kind;
+      if (sub === "list") {
+        if (kindFlag !== undefined && !KNOWLEDGE_KINDS.includes(kindFlag))
+          return refuse(`unknown kind ${String(kindFlag)}: one of ${KNOWLEDGE_KINDS.join(", ")}`);
+        const entries = (read2.base?.entries ?? []).filter((e) => visibleTo(e, scope) && (kindFlag === undefined || e.kind === kindFlag));
+        const text = entries.length ? entries.map(entryLine).join(`
+`) : unreadable ? `none (the knowledge base cannot be read: ${unreadable})` : "none";
+        return ok(text, { entries, ...unreadable ? { unreadable } : {} });
+      }
+      if (sub === "show") {
+        const id = args[1];
+        if (id === undefined)
+          return refuse(usage);
+        if (unreadable)
+          return refuse(`the knowledge base cannot be read: ${unreadable}`);
+        const entry = visible(id);
+        if (!entry)
+          return unseen(id);
+        return ok(entryText(entry), { entry });
+      }
+      if (sub === "add") {
+        const title = parsed.flags.title;
+        const file = parsed.flags.file;
+        const source = parsed.flags.source;
+        if (typeof kindFlag !== "string" || typeof file !== "string" || title === undefined)
+          return refuse(usage);
+        if (!KNOWLEDGE_KINDS.includes(kindFlag))
+          return refuse(`unknown kind ${kindFlag}: one of ${KNOWLEDGE_KINDS.join(", ")}`);
+        const kind = kindFlag;
+        if (!USER_KINDS.includes(kind))
+          return refuse(`${kind} entries are written by crew learn`);
+        if (typeof title !== "string" || !title.trim())
+          return refuse("a knowledge entry needs a title");
+        const real = fileInsideRoot(env.paths.root, file);
+        if (real === null)
+          return refuse(`no file at ${file}`);
+        if (real === "")
+          return refuse(`${file} is outside the project (a knowledge entry is read from the project's own tree)`);
+        const text = readText(real) ?? "";
+        const finding = scanText(text, file)[0];
+        if (finding)
+          return refuse(`${file}:${finding.line} holds a secret (${finding.rule}); nothing was written`);
+        const added = addEntry(env.paths.userDir, {
+          kind,
+          title: title.trim(),
+          workspace: scope.workspace,
+          project: scope.project,
+          projectRoot: scope.projectRoot,
+          confidential: defaultConfidential(kind),
+          item: null,
+          commit: null,
+          stacks: [],
+          paths: [],
+          words: words(`${title} ${text}`),
+          text,
+          source: typeof source === "string" ? source : null
+        });
+        if ("refused" in added)
+          return refuse(added.refused);
+        register(`knowledge add ${added.id}: ${added.title}`, "the agent");
+        return ok(`${added.id} added (${kind}, marked for ${scope.workspace ?? "this project"}): ${added.title}`, { entry: added });
+      }
+      if (sub === "contradict") {
+        const id = args[1];
+        const reason = parsed.flags.reason;
+        const item = parsed.flags.item;
+        if (id === undefined || typeof reason !== "string" || !reason.trim())
+          return refuse(usage);
+        if (unreadable)
+          return refuse(`the knowledge base cannot be read: ${unreadable}`);
+        if (!visible(id))
+          return unseen(id);
+        const ref = {
+          item: typeof item === "string" ? item : "-",
+          project: scope.project,
+          at: nowIso(),
+          reason: reason.trim()
+        };
+        const changed = updateEntry(env.paths.userDir, id, (e) => {
+          e.contradictedBy.push(ref);
+        });
+        if ("refused" in changed)
+          return refuse(changed.refused);
+        register(`knowledge contradict ${id}: ${ref.reason}`, "the agent");
+        return ok(`${id} contradicted${ref.item === "-" ? "" : ` by ${ref.item}`}: ${ref.reason}`, {
+          entry: changed
+        });
+      }
+      if (sub === "unmark") {
+        const id = args[1];
+        if (id === undefined)
+          return refuse(usage);
+        if (parsed.flags.validator !== undefined)
+          return refuse("a mark is never removed by the validator");
+        if (parsed.flags.mode !== undefined)
+          return refuse("a mark is removed by a person: run the command without --mode");
+        if (unreadable)
+          return refuse(`the knowledge base cannot be read: ${unreadable}`);
+        const entry = visible(id);
+        if (!entry)
+          return unseen(id);
+        if (entry.confidential === false)
+          return refuse(`${id} is not marked`);
+        const by = env.policy.attendedDecisions === "relay" ? "the user, relayed by the agent" : "the user";
+        const changed = updateEntry(env.paths.userDir, id, (e) => {
+          e.confidential = false;
+        });
+        if ("refused" in changed)
+          return refuse(changed.refused);
+        register(`knowledge unmark ${id}: ${entry.title}`, by);
+        return ok(`${id} unmarked by ${by}: ${entry.title} is read in every workspace`, {
+          entry: changed
+        });
+      }
+      return refuse(usage);
+    }
     case "cto": {
       const usage = "usage: crew cto record --workspace <ws> --file <plan.md>";
       const ws = parsed.flags.workspace;
@@ -13196,13 +13525,13 @@ test-first not credited: ${out.uncredited}` : "";
         return refuse(usage);
       if (!MAIL_NAME.test(ws))
         return refuse(`a workspace is a lowercase name of letters, digits, dot, dash and underscore, up to 64 characters, not ${ws}`);
-      const path = resolve4(env.paths.root, file);
+      const path = resolve5(env.paths.root, file);
       const text = readText(path);
       if (text === null)
         return refuse(`no plan file at ${path}`);
-      const dir = join44(env.paths.userDir, "cto", ws);
+      const dir = join45(env.paths.userDir, "cto", ws);
       ensureDir(dir);
-      const target = join44(dir, `${nowIso().slice(0, 10)}-plan.md`);
+      const target = join45(dir, `${nowIso().slice(0, 10)}-plan.md`);
       writeText(target, text);
       return ok(`CTO plan of ${ws} filed: ${target}`, { path: target });
     }
@@ -13244,7 +13573,7 @@ test-first not credited: ${out.uncredited}` : "";
         if (args[1] === "accept") {
           if (!workspace)
             return refuse(noWorkspace);
-          const file = typeof parsed.flags.file === "string" ? resolve4(env.paths.root, parsed.flags.file) : undefined;
+          const file = typeof parsed.flags.file === "string" ? resolve5(env.paths.root, parsed.flags.file) : undefined;
           const by = env.policy.attendedDecisions === "relay" ? "the user, relayed by the agent" : "the user";
           const signed = acceptPriorities(env.paths.userDir, workspace, { file, by });
           if ("refused" in signed)
@@ -13775,6 +14104,9 @@ var HELP = `crew ${VERSION}
   decisions [--grep <text>]   the project's decision register, newest first; the engine appends at every decision
   metrics [--workspace <ws>]  the figures of this project, or of the workspace's registered projects, from the records
   cto record --workspace <ws> --file <plan.md>   file the CTO's plan under the user's crew directory
+  knowledge list [--kind <k>] | show K-n   the knowledge base as this project reads it (rule 13: unmarked entries, and marked ones of this workspace)
+  knowledge add --kind general|documentation --title "<t>" --file <path> [--source <url>]   a person's material, from the project's own tree, marked
+  knowledge contradict K-n --reason "<why>" [--item <id>]   dispute an entry (recorded); knowledge unmark K-n   a person removes a mark (asks the user; never with --mode or --validator)
   skip <id> <step> --reason "<text>"    record a skip of a tdd step, a gate or a judgement gate (asks the user; --mode as for approve)
   evidence <id>                         write and print the report
   status | mode [m] | config <key> [v]  state and settings

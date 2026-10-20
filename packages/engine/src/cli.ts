@@ -74,6 +74,20 @@ import {
   writeReviewInputs,
 } from "./judgement.ts";
 import {
+  addEntry,
+  defaultConfidential,
+  entryLine,
+  entryText,
+  fileInsideRoot,
+  KNOWLEDGE_KINDS,
+  readBase,
+  scopeOf,
+  USER_KINDS,
+  updateEntry,
+  visibleTo,
+  words,
+} from "./knowledge.ts";
+import {
   acceptMail,
   badPriority,
   decidedPriority,
@@ -162,6 +176,7 @@ import {
   questionsSorted,
 } from "./questions.ts";
 import { fetchSource, findQuote, parseFacts } from "./research.ts";
+import { scanText } from "./secrets.ts";
 import { parseSource, sourceLine } from "./source.ts";
 import { ensureCrewDir, oneLine, workingRoles } from "./state.ts";
 import {
@@ -203,6 +218,8 @@ import type {
   GateName,
   JudgementGateName,
   JudgementRecord,
+  KnowledgeEntry,
+  KnowledgeKind,
   MailPriority,
   Message,
   OpenedSession,
@@ -3286,6 +3303,139 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       const metrics = computeMetrics(roots.map((root) => pathsFor(root, env.paths.userDir)));
       return ok(metricsText(metrics), { ...metrics });
     }
+    case "knowledge": {
+      // The knowledge base's commands (SP4 Task 2, ADR 0009): what a person adds, reads, disputes
+      // or, alone, unmarks; the engine's kinds enter at Learn. Rule 13 is `visibleTo`, read first.
+      const usage =
+        'usage: crew knowledge list [--kind <k>] | show K-n | add --kind general|documentation --title "<t>" --file <path> [--source <url>] | contradict K-n --reason "<why>" [--item <id>] | unmark K-n';
+      const sub = args[0];
+      const scope = scopeOf(env.paths, env.mail.self);
+      const read = readBase(env.paths.userDir);
+      const unreadable = read.base === null && read.reason !== "missing" ? read.reason : null;
+      const visible = (id: string): KnowledgeEntry | null =>
+        read.base?.entries.find((e) => e.id === id && visibleTo(e, scope)) ?? null;
+      // A hidden entry and an unknown id answer alike: the base says nothing about what a project cannot read.
+      const unseen = (id: string) => refuse(`no entry ${id} visible to this project`);
+      const register = (text: string, by: string) =>
+        appendDecision(env.paths, { at: nowIso(), item: "knowledge", kind: "knowledge", text, by });
+      const kindFlag = parsed.flags.kind;
+      if (sub === "list") {
+        if (kindFlag !== undefined && !KNOWLEDGE_KINDS.includes(kindFlag as KnowledgeKind))
+          return refuse(`unknown kind ${String(kindFlag)}: one of ${KNOWLEDGE_KINDS.join(", ")}`);
+        const entries = (read.base?.entries ?? []).filter(
+          (e) => visibleTo(e, scope) && (kindFlag === undefined || e.kind === kindFlag),
+        );
+        const text = entries.length
+          ? entries.map(entryLine).join("\n")
+          : unreadable
+            ? `none (the knowledge base cannot be read: ${unreadable})`
+            : "none";
+        return ok(text, { entries, ...(unreadable ? { unreadable } : {}) });
+      }
+      if (sub === "show") {
+        const id = args[1];
+        if (id === undefined) return refuse(usage);
+        if (unreadable) return refuse(`the knowledge base cannot be read: ${unreadable}`);
+        const entry = visible(id);
+        if (!entry) return unseen(id);
+        return ok(entryText(entry), { entry });
+      }
+      if (sub === "add") {
+        const title = parsed.flags.title;
+        const file = parsed.flags.file;
+        const source = parsed.flags.source;
+        if (typeof kindFlag !== "string" || typeof file !== "string" || title === undefined)
+          return refuse(usage);
+        if (!KNOWLEDGE_KINDS.includes(kindFlag as KnowledgeKind))
+          return refuse(`unknown kind ${kindFlag}: one of ${KNOWLEDGE_KINDS.join(", ")}`);
+        const kind = kindFlag as KnowledgeKind;
+        if (!USER_KINDS.includes(kind)) return refuse(`${kind} entries are written by crew learn`);
+        if (typeof title !== "string" || !title.trim())
+          return refuse("a knowledge entry needs a title");
+        // The file comes from the project's own tree (the security lead's R-3): a `..`, an absolute
+        // path or a symlink that leaves it is refused, and a secret in it never enters the base.
+        const real = fileInsideRoot(env.paths.root, file);
+        if (real === null) return refuse(`no file at ${file}`);
+        if (real === "")
+          return refuse(
+            `${file} is outside the project (a knowledge entry is read from the project's own tree)`,
+          );
+        const text = readText(real) ?? "";
+        const finding = scanText(text, file)[0];
+        if (finding)
+          return refuse(
+            `${file}:${finding.line} holds a secret (${finding.rule}); nothing was written`,
+          );
+        const added = addEntry(env.paths.userDir, {
+          kind,
+          title: title.trim(),
+          workspace: scope.workspace,
+          project: scope.project,
+          projectRoot: scope.projectRoot,
+          confidential: defaultConfidential(kind),
+          item: null,
+          commit: null,
+          stacks: [],
+          paths: [],
+          words: words(`${title} ${text}`),
+          text,
+          source: typeof source === "string" ? source : null,
+        });
+        if ("refused" in added) return refuse(added.refused);
+        register(`knowledge add ${added.id}: ${added.title}`, "the agent");
+        return ok(
+          `${added.id} added (${kind}, marked for ${scope.workspace ?? "this project"}): ${added.title}`,
+          { entry: added },
+        );
+      }
+      if (sub === "contradict") {
+        const id = args[1];
+        const reason = parsed.flags.reason;
+        const item = parsed.flags.item;
+        if (id === undefined || typeof reason !== "string" || !reason.trim()) return refuse(usage);
+        if (unreadable) return refuse(`the knowledge base cannot be read: ${unreadable}`);
+        if (!visible(id)) return unseen(id);
+        const ref = {
+          item: typeof item === "string" ? item : "-",
+          project: scope.project,
+          at: nowIso(),
+          reason: reason.trim(),
+        };
+        const changed = updateEntry(env.paths.userDir, id, (e) => {
+          e.contradictedBy.push(ref);
+        });
+        if ("refused" in changed) return refuse(changed.refused);
+        register(`knowledge contradict ${id}: ${ref.reason}`, "the agent");
+        return ok(`${id} contradicted${ref.item === "-" ? "" : ` by ${ref.item}`}: ${ref.reason}`, {
+          entry: changed,
+        });
+      }
+      if (sub === "unmark") {
+        const id = args[1];
+        if (id === undefined) return refuse(usage);
+        // A mark leaves a client's entry readable everywhere: a person's decision alone, no mode
+        // and no rule records it as anyone else's (rule 13, ADR 0009); the hook denies the rest.
+        if (parsed.flags.validator !== undefined)
+          return refuse("a mark is never removed by the validator");
+        if (parsed.flags.mode !== undefined)
+          return refuse("a mark is removed by a person: run the command without --mode");
+        if (unreadable) return refuse(`the knowledge base cannot be read: ${unreadable}`);
+        const entry = visible(id);
+        if (!entry) return unseen(id);
+        if (entry.confidential === false) return refuse(`${id} is not marked`);
+        const by =
+          env.policy.attendedDecisions === "relay" ? "the user, relayed by the agent" : "the user";
+        const changed = updateEntry(env.paths.userDir, id, (e) => {
+          e.confidential = false;
+        });
+        if ("refused" in changed) return refuse(changed.refused);
+        register(`knowledge unmark ${id}: ${entry.title}`, by);
+        return ok(`${id} unmarked by ${by}: ${entry.title} is read in every workspace`, {
+          entry: changed,
+        });
+      }
+      return refuse(usage);
+    }
     case "cto": {
       // The CTO's plan filed per workspace (SP7 §6.5); the plan itself is the agent's, read from its file.
       const usage = "usage: crew cto record --workspace <ws> --file <plan.md>";
@@ -3972,6 +4122,9 @@ const HELP = `crew ${VERSION}
   decisions [--grep <text>]   the project's decision register, newest first; the engine appends at every decision
   metrics [--workspace <ws>]  the figures of this project, or of the workspace's registered projects, from the records
   cto record --workspace <ws> --file <plan.md>   file the CTO's plan under the user's crew directory
+  knowledge list [--kind <k>] | show K-n   the knowledge base as this project reads it (rule 13: unmarked entries, and marked ones of this workspace)
+  knowledge add --kind general|documentation --title "<t>" --file <path> [--source <url>]   a person's material, from the project's own tree, marked
+  knowledge contradict K-n --reason "<why>" [--item <id>]   dispute an entry (recorded); knowledge unmark K-n   a person removes a mark (asks the user; never with --mode or --validator)
   skip <id> <step> --reason "<text>"    record a skip of a tdd step, a gate or a judgement gate (asks the user; --mode as for approve)
   evidence <id>                         write and print the report
   status | mode [m] | config <key> [v]  state and settings

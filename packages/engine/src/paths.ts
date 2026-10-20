@@ -135,3 +135,12 @@ export function isProtectedPath(paths: CrewPaths, absPath: string): boolean {
   if (inner === "audit" || inner.startsWith("audit/")) return !AUDIT_OPEN.test(inner);
   return PROTECTED_IN_WORK.has(inner) || inner.startsWith("logs/");
 }
+
+/** The knowledge base's folder under the user directory (ADR 0009): the lock lives in it. */
+export function knowledgeDir(userDir: string): string {
+  return join(userDir, "knowledge");
+}
+/** The one file of the knowledge base, read whole and written whole by the `crew` command alone. */
+export function knowledgePath(userDir: string): string {
+  return join(knowledgeDir(userDir), "base.json");
+}

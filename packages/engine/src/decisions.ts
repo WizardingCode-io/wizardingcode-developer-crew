@@ -18,7 +18,8 @@ export interface DecisionEntry {
     | "question"
     | "dispute"
     | "profile"
-    | "kind";
+    | "kind"
+    | "knowledge";
   id?: string;
   text: string;
   answer?: string;

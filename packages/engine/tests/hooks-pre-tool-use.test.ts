@@ -1613,6 +1613,51 @@ test("SP8-T1 AC-7 (finding 87): crew profile unset is the user's, whatever the p
   expect(bash("crew profile --json")).toEqual({});
 });
 
+test("SP4-T2 AC-6: crew knowledge unmark has no unattended form: asked under prompt, run under relay with a person, denied where nobody watches and with --mode, in every spelling the lead is read by", () => {
+  const prompt = setup();
+  const relay = setup({ attendedDecisions: "relay" });
+  const bash = (ctx: typeof prompt.ctx, command: string, permission_mode?: string) =>
+    onPreToolUse(ctx, { tool_name: "Bash", tool_input: { command }, permission_mode });
+  const forms = [
+    "crew knowledge unmark K-4",
+    "crew knowledge unmark K-4 --validator complete-gap-round",
+    "crew knowledge $WHAT K-4",
+    'bash -c "crew knowledge unmark K-4"',
+    "env crew knowledge unmark K-4",
+    'bash -eo pipefail -c "crew knowledge unmark K-4"',
+  ];
+  for (const mode of ["default", "auto", undefined]) {
+    for (const form of forms) {
+      expect(decision(bash(prompt.ctx, form, mode)), form).toBe("ask");
+      expect(bash(relay.ctx, form, mode), form).toEqual({});
+    }
+    const withMode = bash(
+      prompt.ctx,
+      `crew knowledge unmark K-4 --mode ${mode ?? "default"}`,
+      mode,
+    );
+    expect(decision(withMode)).toBe("deny");
+    expect(reason(withMode)).toContain("removed by a person");
+  }
+  for (const mode of ["bypassPermissions", "dontAsk"]) {
+    for (const ctx of [prompt.ctx, relay.ctx]) {
+      for (const form of [...forms, `crew knowledge unmark K-4 --mode ${mode}`]) {
+        const denied = bash(ctx, form, mode);
+        expect(decision(denied), `${form} in ${mode}`).toBe("deny");
+        expect(reason(denied), `${form} in ${mode}`).toContain("removed by a person");
+      }
+    }
+  }
+  const headless = setup({ attendedDecisions: "relay" });
+  headless.ctx.headless = true;
+  const bare = bash(headless.ctx, "crew knowledge unmark K-4", "default");
+  expect(decision(bare)).toBe("deny");
+  expect(reason(bare)).toContain("headless");
+  // Reading the base is nobody's decision.
+  expect(bash(prompt.ctx, "crew knowledge list", "default")).toEqual({});
+  expect(bash(prompt.ctx, "crew knowledge show K-4", "default")).toEqual({});
+});
+
 test("SP8-T2 AC-3: crew approve <id> audit has no unattended form: asked under prompt, run under relay with a person, denied where nobody watches with or without --mode, --validator exempting nothing; an unreadable id or word the same", () => {
   const prompt = setup();
   const relay = setup({ attendedDecisions: "relay" });

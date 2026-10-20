@@ -899,3 +899,56 @@ export interface UserConfig {
   /** Where Jev is reached when the environment does not say (SP3 decision 8); the key is never here. */
   jev?: { endpoint?: string; model?: string };
 }
+
+/** The kinds of a knowledge entry (SP7 §12): three the engine writes at Learn, two a person adds. */
+export type KnowledgeKind =
+  | "stack-preference"
+  | "validated-solution"
+  | "documentation"
+  | "root-cause"
+  | "general";
+
+/** An item that confirmed or contradicted an entry: where, when, and why for a contradiction. */
+export interface KnowledgeRef {
+  item: string;
+  project: string;
+  at: string;
+  reason?: string;
+}
+
+/** One entry of the knowledge base (ADR 0009): what was learned, where it came from, whether it may leave. */
+export interface KnowledgeEntry {
+  id: string;
+  kind: KnowledgeKind;
+  title: string;
+  /** The origin workspace (`mail.workspace`), null for a project with none. */
+  workspace: string | null;
+  /** The origin project's name as the mail says it. */
+  project: string;
+  /** The origin project's main checkout, by its real path: what tells two alone projects apart. */
+  projectRoot: string;
+  /** Marked: read inside its workspace alone (rule 13); unmarked by a person's `crew knowledge unmark`. */
+  confidential: boolean;
+  item: string | null;
+  commit: string | null;
+  stacks: Stack[];
+  paths: string[];
+  words: string[];
+  text: string;
+  source: string | null;
+  createdAt: string;
+  confirmedBy: KnowledgeRef[];
+  contradictedBy: KnowledgeRef[];
+}
+
+export interface KnowledgeBase {
+  version: 1;
+  next: number;
+  entries: KnowledgeEntry[];
+}
+
+/** What `addEntry` takes: an entry without what the base gives it. */
+export type KnowledgeDraft = Omit<
+  KnowledgeEntry,
+  "id" | "createdAt" | "confirmedBy" | "contradictedBy"
+>;
