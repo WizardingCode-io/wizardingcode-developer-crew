@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: What each runtime enforces
+    url: https://github.com/WizardingCode-io/wizardingcode-developer-crew/blob/main/README.md#runtimes
+    about: The install from the release asset, the first session, and the guarantee table per runtime, before you report.
+  - name: The method
+    url: https://github.com/WizardingCode-io/wizardingcode-developer-crew/blob/main/plugins/core/skills/crew/SKILL.md
+    about: The phases, the commands and the rules the engine enforces on every runtime.

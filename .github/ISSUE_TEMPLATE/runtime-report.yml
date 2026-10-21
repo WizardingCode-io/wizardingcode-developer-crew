@@ -1,0 +1,75 @@
+name: Runtime report
+description: What a session on Codex CLI, Cursor, GitHub Copilot CLI, Gemini CLI, OpenCode or Claude Code did that the method did not promise, or did not do that it promised.
+title: "[runtime] "
+labels: ["runtime"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you. One report per thing seen. The README's Runtimes section says what each runtime enforces and what it only requests; a requested line that fails is still worth a report, since the record of the phase is built from these.
+  - type: dropdown
+    id: runtime
+    attributes:
+      label: Runtime
+      description: The runtime the session ran on.
+      options:
+        - Claude Code
+        - Codex CLI
+        - Cursor
+        - GitHub Copilot CLI
+        - Gemini CLI
+        - OpenCode
+    validations:
+      required: true
+  - type: input
+    id: runtime-version
+    attributes:
+      label: Runtime version
+      description: As the runtime prints it (for example `codex --version`, `copilot --version`, the About box of Cursor), with the operating system.
+      placeholder: "codex 0.42.0 on macOS 15.6"
+    validations:
+      required: true
+  - type: input
+    id: crew-version
+    attributes:
+      label: crew --version
+      description: The version of the release asset you installed, as `crew --version` prints it.
+      placeholder: "0.11.1"
+    validations:
+      required: true
+  - type: textarea
+    id: check
+    attributes:
+      label: Output of crew runtime check <name>
+      description: Run it in the project and paste the whole output, the guarantee table included.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: command
+    attributes:
+      label: The command or the prompt
+      description: What you ran or asked, as typed. A `crew` command, a prompt to the runtime, or both.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: happened
+    attributes:
+      label: What happened
+      description: What the runtime or the engine did, with the lines it printed.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+      description: What the README or the skill says should have happened.
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: The hook's answer or a log (optional)
+      description: The hook's JSON answer, the runtime's debug log around the event, or the item's report (`crew evidence <id>`). Redact paths and names you do not want public.
+      render: text

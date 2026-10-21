@@ -833,3 +833,70 @@ test("finding 121: the skill page's front matter is strict YAML (Bun.YAML), with
     "Use when the user asks for a code change in this repository: a fix, a feature, a refactor, a chore, a new product or an audit of the codebase. Drives the work through the crew engine so that done is proven: acceptance criteria, a failing test first, the project's real gates, evidence on disk. Not for questions that need no change.",
   );
 });
+
+// The outside testers of the other runtimes (the user's decision of 2026-10-21, item 2026-10-21-006):
+// the runtime report template and the README's paragraph for them.
+const repoFile = (path: string): string =>
+  readFileSync(fileURLToPath(new URL(`../../../${path}`, import.meta.url)), "utf8");
+
+test("testers AC-1: the runtime report template is strict YAML, its dropdown lists the engine's runtimes in the table's order, and it asks for what a report needs", () => {
+  const form = Bun.YAML.parse(repoFile(".github/ISSUE_TEMPLATE/runtime-report.yml")) as {
+    name: string;
+    description: string;
+    labels?: string[];
+    body: Array<{
+      type: string;
+      id?: string;
+      attributes: Record<string, unknown>;
+      validations?: { required?: boolean };
+    }>;
+  };
+  expect(form.name).toBe("Runtime report");
+  expect(form.labels).toEqual(["runtime"]);
+  const byId = Object.fromEntries(form.body.filter((f) => f.id).map((f) => [f.id, f]));
+  expect(byId.runtime?.type).toBe("dropdown");
+  expect(byId.runtime?.attributes.options).toEqual(RUNTIME_NAMES.map((n) => RUNTIMES[n].label));
+  for (const id of [
+    "runtime",
+    "runtime-version",
+    "crew-version",
+    "check",
+    "command",
+    "happened",
+    "expected",
+  ]) {
+    expect(byId[id]?.validations?.required, id).toBe(true);
+  }
+  expect(byId.log?.type).toBe("textarea");
+  expect(byId.log?.validations?.required ?? false).toBe(false);
+  expect(String(byId["crew-version"]?.attributes.label)).toContain("crew --version");
+  expect(String(byId.check?.attributes.label)).toContain("crew runtime check <name>");
+  const config = Bun.YAML.parse(repoFile(".github/ISSUE_TEMPLATE/config.yml")) as {
+    blank_issues_enabled: boolean;
+    contact_links: Array<{ name: string; url: string; about: string }>;
+  };
+  expect(config.blank_issues_enabled).toBe(true);
+  expect(config.contact_links.map((l) => l.url)).toContain(
+    "https://github.com/WizardingCode-io/wizardingcode-developer-crew/blob/main/README.md#runtimes",
+  );
+});
+
+test("testers AC-2: the README tells a tester how to install, check, run a first session and report, and the real-use README records the decision", () => {
+  const readme = repoFile("README.md");
+  const section = readme.slice(readme.indexOf("## Runtimes"), readme.indexOf("## Benchmark"));
+  expect(section).toContain("**Testing on another runtime.**");
+  for (const sentence of [
+    "`crew runtime install <name>`",
+    "`crew runtime check <name>`",
+    "`crew --version`",
+    "an ask becomes a deny",
+    "`.github/ISSUE_TEMPLATE/runtime-report.yml`",
+    "https://github.com/WizardingCode-io/wizardingcode-developer-crew/issues/new?template=runtime-report.yml",
+    "Each report is a finding of the real-use phase",
+  ]) {
+    expect(section, sentence).toContain(sentence);
+  }
+  expect(repoFile("docs/real-use/README.md")).toContain(
+    "By the user's decision of 2026-10-21, the sessions on Codex CLI, Cursor, Gemini CLI and OpenCode are run by outside testers from the release asset",
+  );
+});
