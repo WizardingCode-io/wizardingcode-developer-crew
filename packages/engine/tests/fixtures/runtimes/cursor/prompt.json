@@ -1,0 +1,15 @@
+{
+  "conversation_id": "c1",
+  "generation_id": "g2",
+  "model": "claude-4-sonnet",
+  "model_id": "claude-4-sonnet",
+  "model_params": {},
+  "hook_event_name": "beforeSubmitPrompt",
+  "cursor_version": "2.5.0",
+  "workspace_roots": [
+    "/repo"
+  ],
+  "user_email": "dev@example.com",
+  "transcript_path": "/tmp/c1.txt",
+  "prompt": "Fix the cart total"
+}

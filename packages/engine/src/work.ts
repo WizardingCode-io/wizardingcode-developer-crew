@@ -5,6 +5,7 @@ import { higherRoute, routeRank } from "./classify.ts";
 import { tddDone } from "./criteria.ts";
 import { baseCommitOf } from "./fingerprint.ts";
 import { nowIso, writeText } from "./fs.ts";
+import { withLock } from "./lock.ts";
 import { blockingObjections } from "./objections.ts";
 import { type CrewPaths, workDir } from "./paths.ts";
 import { decisionCounts } from "./policy.ts";
@@ -257,6 +258,25 @@ export function loadWork(
 ): { work: WorkItem | null; tampered: boolean } {
   const read = readProtectedJson<WorkItem>(paths, workJson(paths, id));
   return { work: read.data, tampered: read.tampered };
+}
+
+/**
+ * The runtime a hook observed the active item under (SP6 Task 4): written once per name, under the
+ * work folder's lock so a parallel role's record is never raced; a name already present writes
+ * nothing. Returns whether the item changed.
+ */
+export function noteRuntime(paths: CrewPaths, id: string, runtime: string): boolean {
+  return withLock(
+    workDir(paths, id),
+    () => {
+      const { work, tampered } = loadWork(paths, id);
+      if (!work || tampered || work.runtimes?.includes(runtime)) return false;
+      work.runtimes = [...(work.runtimes ?? []), runtime];
+      saveWork(paths, work);
+      return true;
+    },
+    { what: "work folder" },
+  );
 }
 
 export function activeWork(paths: CrewPaths): { work: WorkItem | null; tampered: boolean } | null {

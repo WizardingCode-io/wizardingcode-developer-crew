@@ -1,0 +1,8 @@
+{
+  "conversation_id": "c1",
+  "hook_event_name": "preToolUse",
+  "tool_name": "Shell",
+  "tool_input": {
+    "command": "npm test"
+  }
+}

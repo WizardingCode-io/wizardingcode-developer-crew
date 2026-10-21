@@ -14,7 +14,7 @@ import {
   utimesSync,
   writeFileSync,
 } from "node:fs";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type CliIo, main } from "../src/cli.ts";
 import { listDecisions } from "../src/decisions.ts";
@@ -27,6 +27,7 @@ import { mailbox, mailContext, ownInbox, readBox, registerProject, writeBox } fr
 import { isProtectedPath, knowledgePath } from "../src/paths.ts";
 import { loadPolicy } from "../src/policy.ts";
 import { loadProfile } from "../src/profile.ts";
+import { guaranteeLines, pluginRoot, RUNTIMES } from "../src/runtimes.ts";
 import { recordWorking } from "../src/state.ts";
 import { readProtectedJson, writeProtectedJson } from "../src/store.ts";
 import type { GateRun, KnowledgeEntry, Message, WorkItem } from "../src/types.ts";
@@ -7650,4 +7651,1085 @@ test("SP6-T2 AC-2, AC-3, AC-4, AC-5, AC-6: the pack commands end to end (add wit
     source: "confirmed",
     pack: "wizardingcode-pack-laravel",
   });
+});
+
+test("SP6-T4 AC-2: crew hook --runtime reads the runtime's payload, answers in its shape with the exit code, refuses an unknown runtime on stderr before reading, relays a dropped systemMessage as a notice, and records the runtime the item was observed under once, in order", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const env = testEnv();
+  const c = io(root, env);
+  const id = (
+    await c.json(
+      "start",
+      "Fix the cart total",
+      "--answers",
+      JSON.stringify({ ...JSON.parse(answers), work_type: "chore", scope: 0 }),
+      "--criterion",
+      "x",
+    )
+  ).data.id as string;
+  const hook = (stdin: unknown, ...argv: string[]) =>
+    io(root, env, typeof stdin === "string" ? stdin : JSON.stringify(stdin)).run("hook", ...argv);
+  const workJson = join(root, ".crew", "work", id, "work.json");
+  const runtimesOf = () =>
+    (JSON.parse(readFileSync(workJson, "utf8")) as { runtimes?: string[] }).runtimes;
+  // Claude Code's own session start records claude.
+  expect(runtimesOf()).toBeUndefined();
+  await hook({ session_id: "s1", cwd: root, source: "startup" }, "session-start");
+  expect(runtimesOf()).toEqual(["claude"]);
+  // Cursor: a Write to the item's evidence file, denied in Cursor's shape, exit 0; the runtime
+  // recorded beside claude. The reason names the path as the reader resolved it against the
+  // workspace root (judgement round 2).
+  const owned = `.crew/work/${id}/evidence.json`;
+  const denied = await hook(
+    {
+      conversation_id: "c1",
+      workspace_roots: [root],
+      hook_event_name: "preToolUse",
+      tool_name: "Write",
+      tool_input: { file_path: owned },
+    },
+    "pre-tool-use",
+    "--runtime",
+    "cursor",
+  );
+  expect(denied).toEqual({
+    code: 0,
+    out: `${JSON.stringify({ permission: "deny", agent_message: `Crew: ${join(root, owned)} is maintained by the engine and is changed through the crew command` })}\n`,
+    err: "",
+  });
+  expect(runtimesOf()).toEqual(["claude", "cursor"]);
+  // A second Cursor event leaves the item's bytes unchanged.
+  const before = readFileSync(workJson, "utf8");
+  await hook(
+    {
+      conversation_id: "c1",
+      workspace_roots: [root],
+      tool_name: "Shell",
+      tool_input: { command: "ls" },
+    },
+    "pre-tool-use",
+    "--runtime",
+    "cursor",
+  );
+  expect(readFileSync(workJson, "utf8")).toBe(before);
+  // A forbidden command through Gemini's reader and writer: a person-only crew command the engine
+  // would ask about under a prompting policy is denied on a runtime that cannot ask.
+  writeFileSync(
+    join(root, ".crew", "policy.json"),
+    JSON.stringify({ attendedDecisions: "prompt" }),
+  );
+  const asked = await hook(
+    {
+      session_id: "s1",
+      cwd: root,
+      hook_event_name: "BeforeTool",
+      tool_name: "run_shell_command",
+      tool_input: { command: `crew approve ${id} spec` },
+    },
+    "pre-tool-use",
+    "--runtime",
+    "gemini",
+  );
+  expect(asked.code).toBe(0);
+  expect(JSON.parse(asked.out)).toMatchObject({ decision: "deny" });
+  expect((JSON.parse(asked.out) as { reason: string }).reason).toBe(
+    "Crew: this command records a decision that only the user can take",
+  );
+  expect(runtimesOf()).toEqual(["claude", "cursor", "gemini"]);
+  // An unknown runtime: nothing on stdout, the text on stderr, exit 1, before stdin is read.
+  expect(await hook("{not json", "prompt", "--runtime", "antigravity")).toEqual({
+    code: 1,
+    out: "",
+    err: "unknown runtime antigravity (crew runtime list)\n",
+  });
+  // A dropped systemMessage (Copilot has no field for it) is a notice the next context carries.
+  const stopped = await hook(
+    {
+      session_id: "s1",
+      cwd: root,
+      hook_event_name: "SubagentStop",
+      agent_id: "a1",
+      agent_type: "custom",
+      agent_name: "crew-review-security",
+      response: "",
+      transcript_path: "/tmp/sub-a1.json",
+    },
+    "subagent-stop",
+    "--runtime",
+    "copilot",
+  );
+  expect(stopped).toEqual({ code: 0, out: "{}\n", err: "" });
+  const next = await hook(
+    {
+      session_id: "s1",
+      cwd: root,
+      hook_event_name: "PostToolUse",
+      tool_name: "Bash",
+      tool_input: { command: "ls" },
+    },
+    "post-tool-use",
+    "--runtime",
+    "copilot",
+  );
+  expect(next).toEqual({
+    code: 0,
+    out: `${JSON.stringify({ additionalContext: "Crew: review-security stopped with no answer (no hand-back and an empty last message): its end is recorded with no file; an earlier file of this role, if any, is not this round's answer. Run the role again or save its answer from the transcript (/tmp/sub-a1.json)." })}\n`,
+    err: "",
+  });
+  // A systemMessage on an event whose writer drops it (judgement round 2): Cursor's stop releases
+  // the fourth turn end with the engine's note alone; the note reaches the next context.
+  const cursorStop = () =>
+    hook(
+      {
+        conversation_id: "c2",
+        workspace_roots: [root],
+        hook_event_name: "stop",
+        status: "completed",
+      },
+      "stop",
+      "--runtime",
+      "cursor",
+    );
+  for (let i = 0; i < 3; i += 1) {
+    const held = await cursorStop();
+    expect(held.code).toBe(0);
+    expect((JSON.parse(held.out) as { followup_message?: string }).followup_message).toMatch(
+      /^Crew: watched source files changed and the work is not proven/,
+    );
+  }
+  expect(await cursorStop()).toEqual({ code: 0, out: "{}\n", err: "" });
+  const carried = await hook(
+    {
+      conversation_id: "c2",
+      workspace_roots: [root],
+      hook_event_name: "postToolUse",
+      tool_name: "Shell",
+      tool_input: { command: "ls" },
+    },
+    "post-tool-use",
+    "--runtime",
+    "cursor",
+  );
+  expect(carried.code).toBe(0);
+  expect((JSON.parse(carried.out) as { additional_context?: string }).additional_context).toContain(
+    "Crew: not proven after 3 attempts.",
+  );
+  // A payload for which no context can be built: {} and exit 0.
+  const nowhere = tempDir("nowhere-");
+  expect(
+    await io(nowhere, env, JSON.stringify({ session_id: "s9", cwd: nowhere })).run(
+      "hook",
+      "stop",
+      "--runtime",
+      "cursor",
+    ),
+  ).toEqual({ code: 0, out: "{}\n", err: "" });
+});
+
+/** Every file under a folder, relative, posix. */
+function filesBelow(dir: string, base = dir): string[] {
+  return readdirSync(dir).flatMap((name) => {
+    const path = join(dir, name);
+    return statSync(path).isDirectory()
+      ? filesBelow(path, base)
+      : [relative(base, path).split(sep).join("/")];
+  });
+}
+
+test("SP6-T4 AC-3: crew runtime list; install merges the hook configuration, copies the skill as crew-method, generates the agents under crew names, prints every file and the trust step, refuses claude and a non-JSON config; check reads the configuration back with one line per event, the hashes and the guarantee table, exit 1 on missing, stale, foreign or a gone root", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const home = tempDir("home-");
+  const env = { ...testEnv(), HOME: home };
+  const c = io(root, env);
+  const plugin = pluginRoot();
+  const cmd = (event: string, runtime: string) =>
+    `node ${plugin}/dist/crew.mjs hook ${event} --runtime ${runtime}`;
+  // list: one line per runtime.
+  const listed = await c.run("runtime", "list");
+  expect(listed.code).toBe(0);
+  expect(listed.out.trim().split("\n")).toHaveLength(6);
+  expect(listed.out).toContain(
+    "cursor · Cursor · hooks: session-start, prompt, pre-tool-use, post-tool-use, stop, subagent-stop · config: .cursor/hooks.json | ~/.cursor/hooks.json · skills: .agents/skills · agents: .cursor/agents",
+  );
+  expect(listed.out).toContain(
+    "opencode · OpenCode · hooks: session-start, pre-tool-use, post-tool-use · config: .opencode/plugins/wizardingcode-crew.js | ~/.config/opencode/plugins/wizardingcode-crew.js · skills: .agents/skills · agents: .opencode/agents",
+  );
+  // claude is the plugin.
+  expect((await c.run("runtime", "install", "claude")).err.trim()).toBe(
+    "claude is installed as a plugin (claude plugin install wizardingcode-developer-crew@wizardingcode-plugins)",
+  );
+  expect((await c.run("runtime", "install", "antigravity")).err.trim()).toBe(
+    "unknown runtime antigravity (crew runtime list)",
+  );
+  // Cursor at project scope, with a foreign hook and a user-owned agent already there.
+  const mine = { command: "./audit.sh", loop_limit: 10 };
+  write(root, ".cursor/hooks.json", JSON.stringify({ version: 1, hooks: { stop: [mine] } }));
+  write(root, ".cursor/agents/mine.md", "---\nname: mine\n---\n\nmine\n");
+  const installed = await c.run("runtime", "install", "cursor");
+  expect(installed.code, installed.err).toBe(0);
+  const files = installed.out.trim().split("\n");
+  expect(files[0]).toBe(join(root, ".cursor", "hooks.json"));
+  for (const f of files) expect(isAbsolute(f), f).toBe(true);
+  expect(files).toContain(join(root, ".agents", "skills", "crew-method", "SKILL.md"));
+  expect(files).toContain(join(root, ".agents", "skills", "crew-method", "references", "rules.md"));
+  expect(files).toContain(join(root, ".cursor", "agents", "crew-tech-lead.md"));
+  expect(files.filter((f) => f.includes("/.cursor/agents/"))).toHaveLength(15);
+  expect(installed.out).not.toContain("trust:");
+  expect(filesBelow(join(root, ".agents", "skills", "crew-method")).sort()).toEqual(
+    filesBelow(join(plugin, "skills", "crew")).sort(),
+  );
+  expect(readFileSync(join(root, ".cursor", "agents", "mine.md"), "utf8")).toBe(
+    "---\nname: mine\n---\n\nmine\n",
+  );
+  expect(readFileSync(join(root, ".cursor", "agents", "crew-tech-lead.md"), "utf8")).toContain(
+    "readonly: true",
+  );
+  const hooks = JSON.parse(readFileSync(join(root, ".cursor", "hooks.json"), "utf8")) as {
+    version: number;
+    hooks: Record<string, unknown[]>;
+  };
+  expect(hooks.version).toBe(1);
+  expect(hooks.hooks.stop).toEqual([
+    mine,
+    { command: cmd("stop", "cursor"), timeout: 10, loop_limit: null },
+  ]);
+  expect(hooks.hooks.preToolUse).toEqual([
+    { command: cmd("pre-tool-use", "cursor"), timeout: 5, matcher: "Shell|Write|Delete|Task" },
+  ]);
+  // A reinstall writes the same file.
+  const before = readFileSync(join(root, ".cursor", "hooks.json"), "utf8");
+  expect((await c.run("runtime", "install", "cursor")).code).toBe(0);
+  expect(readFileSync(join(root, ".cursor", "hooks.json"), "utf8")).toBe(before);
+  // Gemini at user scope: the settings merged (the other keys kept), the trust step last.
+  mkdirSync(join(home, ".gemini"), { recursive: true });
+  const foreign = {
+    matcher: "write_file",
+    hooks: [{ type: "command", command: "./mine.sh", timeout: 5000 }],
+  };
+  writeFileSync(
+    join(home, ".gemini", "settings.json"),
+    JSON.stringify({ theme: "dark", hooks: { BeforeTool: [foreign] } }),
+  );
+  const gemini = await c.run("runtime", "install", "gemini", "--scope", "user");
+  expect(gemini.code, gemini.err).toBe(0);
+  const geminiLines = gemini.out.trim().split("\n");
+  expect(geminiLines[0]).toBe(join(home, ".gemini", "settings.json"));
+  expect(geminiLines.at(-1)).toBe(
+    "trust: the first run warns about the new hook; a changed command is warned about again",
+  );
+  const settings = JSON.parse(readFileSync(join(home, ".gemini", "settings.json"), "utf8")) as {
+    theme: string;
+    hooks: Record<string, { hooks: { command: string }[] }[]>;
+  };
+  expect(settings.theme).toBe("dark");
+  expect(settings.hooks.BeforeTool?.[0]).toEqual(foreign);
+  expect(settings.hooks.BeforeTool?.[1]?.hooks[0]?.command).toBe(cmd("pre-tool-use", "gemini"));
+  expect(existsSync(join(home, ".agents", "skills", "crew-method", "SKILL.md"))).toBe(true);
+  expect(readFileSync(join(home, ".gemini", "agents", "crew-judge.md"), "utf8")).toContain(
+    "  - read_file",
+  );
+  // OpenCode: the plugin text with this root, and its agents.
+  expect((await c.run("runtime", "install", "opencode")).code).toBe(0);
+  expect(
+    readFileSync(join(root, ".opencode", "plugins", "wizardingcode-crew.js"), "utf8"),
+  ).toContain(`const ROOT = ${JSON.stringify(plugin)};`);
+  expect(readFileSync(join(root, ".opencode", "agents", "crew-researcher.md"), "utf8")).toContain(
+    "mode: subagent",
+  );
+  // A configuration that is not JSON: refused naming it, nothing else written.
+  write(root, ".codex/hooks.json", "{not json");
+  const refused = await c.run("runtime", "install", "codex");
+  expect(refused.code).toBe(1);
+  expect(refused.err.trim()).toBe(
+    `${join(root, ".codex", "hooks.json")} is not JSON: fix or move it first`,
+  );
+  expect(existsSync(join(root, ".codex", "agents"))).toBe(false);
+  // check: the written Cursor configuration, every line, exit 0.
+  const checked = await c.run("runtime", "check", "cursor");
+  expect(checked.code, checked.out).toBe(0);
+  expect(checked.out).toBe(
+    `${[
+      `config: ${join(root, ".cursor", "hooks.json")}`,
+      `root: ${plugin} ok`,
+      "session-start: sessionStart ok",
+      "prompt: beforeSubmitPrompt ok",
+      "pre-tool-use: preToolUse ok",
+      "post-tool-use: postToolUse ok",
+      "stop: stop ok",
+      "subagent-stop: subagentStop ok",
+      "skill: ok",
+      "agents: ok",
+      ...guaranteeLines(RUNTIMES.cursor),
+    ].join("\n")}\n`,
+  );
+  // Gemini at user scope: the event the runtime lacks says none; the trust line last.
+  const g = await c.run("runtime", "check", "gemini", "--scope", "user");
+  expect(g.code, g.out).toBe(0);
+  expect(g.out).toContain("\nsubagent-stop: none\n");
+  expect(g.out.trim().split("\n").at(-1)).toBe(
+    "trust: the first run warns about the new hook; a changed command is warned about again",
+  );
+  // claude: the plugin's own hooks.json.
+  const cl = await c.run("runtime", "check", "claude");
+  expect(cl.code, cl.out).toBe(0);
+  expect(cl.out.split("\n")[0]).toBe(`config: ${join(plugin, "hooks", "hooks.json")}`);
+  // A stale skill copy and a stale agent: exit 1 with the counts.
+  write(root, ".agents/skills/crew-method/SKILL.md", "changed");
+  write(root, ".cursor/agents/crew-judge.md", "changed");
+  const stale = await c.run("runtime", "check", "cursor");
+  expect(stale.code).toBe(1);
+  expect(stale.out).toContain("\nskill: stale (1 files differ)\n");
+  expect(stale.out).toContain("\nagents: stale (1 files differ)\n");
+  // Missing at both scopes; foreign (no crew hook); a root that is gone.
+  const missing = await c.run("runtime", "check", "copilot");
+  expect(missing.code).toBe(1);
+  expect(missing.out.split("\n")[0]).toBe(
+    `missing: ${join(root, ".github", "hooks", "crew.json")} | ${join(home, ".copilot", "hooks", "crew.json")}`,
+  );
+  write(
+    root,
+    ".github/hooks/crew.json",
+    JSON.stringify({ version: 1, hooks: { PreToolUse: [{ type: "command", bash: "./mine.sh" }] } }),
+  );
+  const noCrew = await c.run("runtime", "check", "copilot");
+  expect(noCrew.code).toBe(1);
+  expect(noCrew.out.split("\n")[0]).toBe(
+    `config: ${join(root, ".github", "hooks", "crew.json")} holds no crew hook`,
+  );
+  write(
+    root,
+    ".codex/hooks.json",
+    JSON.stringify({
+      hooks: {
+        Stop: [
+          {
+            hooks: [
+              { type: "command", command: "node /gone/dist/crew.mjs hook stop --runtime codex" },
+            ],
+          },
+        ],
+      },
+    }),
+  );
+  const gone = await c.run("runtime", "check", "codex");
+  expect(gone.code).toBe(1);
+  expect(gone.out.split("\n")[1]).toBe("root: /gone missing dist/crew.mjs");
+  // remove (judgement round 2, the rollback): crew's entries stripped from the merged
+  // configuration, the foreign ones and the other keys kept; crew-method and crew's agents gone,
+  // the user's own agent kept; every path printed, rewritten or removed.
+  const removedCursor = await c.run("runtime", "remove", "cursor");
+  expect(removedCursor.code, removedCursor.err).toBe(0);
+  const cursorLines = removedCursor.out.trim().split("\n");
+  expect(cursorLines[0]).toBe(`rewritten ${join(root, ".cursor", "hooks.json")}`);
+  expect(cursorLines).toContain(`removed ${join(root, ".agents", "skills", "crew-method")}`);
+  expect(cursorLines).toContain(`removed ${join(root, ".cursor", "agents", "crew-tech-lead.md")}`);
+  expect(cursorLines.filter((l) => l.includes("/.cursor/agents/"))).toHaveLength(15);
+  expect(JSON.parse(readFileSync(join(root, ".cursor", "hooks.json"), "utf8"))).toEqual({
+    version: 1,
+    hooks: { stop: [mine] },
+  });
+  expect(existsSync(join(root, ".agents", "skills", "crew-method"))).toBe(false);
+  expect(existsSync(join(root, ".cursor", "agents", "crew-tech-lead.md"))).toBe(false);
+  expect(readFileSync(join(root, ".cursor", "agents", "mine.md"), "utf8")).toBe(
+    "---\nname: mine\n---\n\nmine\n",
+  );
+  expect((await c.run("runtime", "check", "cursor")).out.split("\n")[0]).toBe(
+    `config: ${join(root, ".cursor", "hooks.json")} holds no crew hook`,
+  );
+  // Gemini at user scope: the settings keep the theme and the foreign hook, nothing of crew's.
+  const removedGemini = await c.run("runtime", "remove", "gemini", "--scope", "user");
+  expect(removedGemini.code, removedGemini.err).toBe(0);
+  expect(JSON.parse(readFileSync(join(home, ".gemini", "settings.json"), "utf8"))).toEqual({
+    theme: "dark",
+    hooks: { BeforeTool: [foreign] },
+  });
+  expect(existsSync(join(home, ".agents", "skills", "crew-method"))).toBe(false);
+  expect(existsSync(join(home, ".gemini", "agents", "crew-judge.md"))).toBe(false);
+  // OpenCode's plugin file is crew's own: deleted. A configuration crew alone filled is deleted.
+  const removedOpencode = await c.run("runtime", "remove", "opencode");
+  expect(removedOpencode.code, removedOpencode.err).toBe(0);
+  expect(removedOpencode.out.split("\n")[0]).toBe(
+    `removed ${join(root, ".opencode", "plugins", "wizardingcode-crew.js")}`,
+  );
+  expect(existsSync(join(root, ".opencode", "plugins", "wizardingcode-crew.js"))).toBe(false);
+  expect(existsSync(join(root, ".opencode", "agents", "crew-researcher.md"))).toBe(false);
+  const removedCodex = await c.run("runtime", "remove", "codex");
+  expect(removedCodex).toEqual({
+    code: 0,
+    out: `removed ${join(root, ".codex", "hooks.json")}\n`,
+    err: "",
+  });
+  expect(existsSync(join(root, ".codex", "hooks.json"))).toBe(false);
+  // Nothing of crew's: said, exit 0. A configuration that is not JSON: refused as at install.
+  expect(await c.run("runtime", "remove", "copilot")).toEqual({
+    code: 0,
+    out: "nothing of crew's installed for copilot at project scope\n",
+    err: "",
+  });
+  write(root, ".codex/hooks.json", "{not json");
+  expect((await c.run("runtime", "remove", "codex")).err.trim()).toBe(
+    `${join(root, ".codex", "hooks.json")} is not JSON: fix or move it first`,
+  );
+  expect((await c.run("runtime", "remove", "claude")).err.trim()).toBe(
+    "claude is installed as a plugin (claude plugin uninstall wizardingcode-developer-crew@wizardingcode-plugins)",
+  );
+});
+
+test("SP6-T4 AC-5: crew answer file files a role's answer as the hook does, marked filed by the session, resumes only the record --as names, refuses an unknown role, a missing file, a closed item, a missing record and an item whose runtimes file by hook, never clears a role wait; the judgement, validation and gate-run lines, the report's column and Runtimes line", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const env = testEnv();
+  const c = io(root, env);
+  const start = async (title: string) =>
+    (
+      await c.json(
+        "start",
+        title,
+        "--answers",
+        JSON.stringify({ ...JSON.parse(answers), work_type: "chore", scope: 0 }),
+        "--criterion",
+        "x",
+      )
+    ).data.id as string;
+  const hook = (stdin: unknown, ...argv: string[]) =>
+    io(root, env, JSON.stringify(stdin)).run("hook", ...argv);
+  const answer = (name: string, text: string) => {
+    const path = join(tempDir("answer-"), name);
+    writeFileSync(path, text);
+    return path;
+  };
+  const findings =
+    "# security findings for the item\nreviewer: review-security\nread: 1 files, 1 hunks\n\n## Findings\n- none\n\n## Outside the change\n- none\n\n## Not answerable\n- none\n";
+  // An item no hook observed is refused naming claude; one claude's hooks observed is refused naming claude.
+  const first = await start("Fix the cart total");
+  const filing = answer("security.md", findings);
+  expect(
+    await c.run("answer", "file", first, "--role", "review-security", "--file", filing),
+  ).toMatchObject({
+    code: 1,
+    err: `${first} ran under claude, which files the roles' answers by its subagent hook: resume the role or save its answer from the transcript\n`,
+  });
+  await hook({ session_id: "s1", cwd: root, source: "startup" }, "session-start");
+  expect(
+    (await c.run("answer", "file", first, "--role", "review-security", "--file", filing)).code,
+  ).toBe(1);
+  // Gemini observed the item: the session files, and the record says so.
+  await hook(
+    { session_id: "s1", cwd: root, hook_event_name: "BeforeAgent", prompt: "go" },
+    "prompt",
+    "--runtime",
+    "gemini",
+  );
+  expect(loadWork(repoPaths(root, env), first).work?.runtimes).toEqual(["claude", "gemini"]);
+  const filed = await c.run("answer", "file", first, "--role", "review-security", "--file", filing);
+  expect(filed).toEqual({
+    code: 0,
+    out: `review-security's answer filed as review/security.findings.md (by the session); a role wait is cleared with crew resume ${first}\n`,
+    err: "",
+  });
+  expect(
+    readFileSync(join(root, ".crew", "work", first, "review", "security.findings.md"), "utf8"),
+  ).toBe(findings);
+  const roles = () => loadEvidence(repoPaths(root, env), first).evidence.roles ?? [];
+  expect(roles()).toEqual([
+    expect.objectContaining({
+      agent: "review-security",
+      tokens: 0,
+      tokensFrom: "none",
+      file: "review/security.findings.md",
+      filedBy: "session",
+    }),
+  ]);
+  expect(roles()[0]).not.toHaveProperty("agentId");
+  // The refusals: an unknown role, a missing file, a missing record to resume.
+  expect(
+    (await c.run("answer", "file", first, "--role", "reviewer", "--file", filing)).err,
+  ).toMatch(/^unknown role reviewer \(one of: judge, cto, tech-lead, /);
+  expect(
+    (await c.run("answer", "file", first, "--role", "judge", "--file", "/nowhere/x.md")).err.trim(),
+  ).toBe("no file at /nowhere/x.md");
+  expect(
+    (
+      await c.run("answer", "file", first, "--role", "expert", "--file", filing, "--as", "expert-3")
+    ).err.trim(),
+  ).toBe(`no record expert-3 to resume (crew evidence ${first})`);
+  // Resumed with --as: the answer joins the reviewer's file, one record; without --as: a new record.
+  const more = answer("more.md", "## Clarification\n- the lock row\n");
+  expect(
+    (
+      await c.run(
+        "answer",
+        "file",
+        first,
+        "--role",
+        "review-security",
+        "--file",
+        more,
+        "--as",
+        "review-security",
+      )
+    ).code,
+  ).toBe(0);
+  // The first findings survive whole; the resumed answer joins them under the one heading
+  // (judgement round 2: a filing that ignored --as would have replaced them).
+  expect(
+    readFileSync(join(root, ".crew", "work", first, "review", "security.findings.md"), "utf8"),
+  ).toBe(`${findings.trimEnd()}\n\n## Clarifications\n- ## Clarification\n  - the lock row\n`);
+  // A filing is a record, as a stop is: the resumed role has two, on the one file.
+  expect(roles().map((r) => [r.agent, r.file, r.filedBy])).toEqual([
+    ["review-security", "review/security.findings.md", "session"],
+    ["review-security", "review/security.findings.md", "session"],
+  ]);
+  const expertFile = answer(
+    "expert.md",
+    "# Proposal for D-1\npersonality: builder\n\n## Proposal\nx\n",
+  );
+  expect(
+    (await c.run("answer", "file", first, "--role", "expert", "--file", expertFile)).out.trim(),
+  ).toBe(
+    `expert-1's answer filed as conclave/expert-1.md (by the session); a role wait is cleared with crew resume ${first}`,
+  );
+  expect(roles().map((r) => r.agent)).toEqual(["review-security", "review-security", "expert-1"]);
+  // The judge's answer in its shape is the ruling file, and a role wait stays until crew resume.
+  const work = loadWork(repoPaths(root, env), first).work;
+  if (!work) throw new Error("no work");
+  work.awaiting = "role";
+  saveWork(repoPaths(root, env), work);
+  const ruling = answer(
+    "ruling.json",
+    JSON.stringify({
+      rulings: [
+        {
+          gate: "code-quality",
+          verdict: "proven",
+          reviewer: "review-code-quality",
+          judge: "judge",
+          findings: [],
+          tokens: 0,
+        },
+        {
+          gate: "test-quality",
+          verdict: "proven",
+          reviewer: "review-test-quality",
+          judge: "judge",
+          findings: [],
+          tokens: 0,
+        },
+      ],
+    }),
+  );
+  expect((await c.run("answer", "file", first, "--role", "judge", "--file", ruling)).code).toBe(0);
+  expect(existsSync(join(root, ".crew", "work", first, "review", "ruling.json"))).toBe(true);
+  expect(loadWork(repoPaths(root, env), first).work?.awaiting).toBe("role");
+  expect((await c.run("resume", first)).code).toBe(0);
+  // The gate run's launch line and the judgement's line carry the session's filings; the report its
+  // column and the Runtimes line. The judgement gates are the standard route's, on a changed source.
+  const standard = loadWork(repoPaths(root, env), first).work;
+  if (!standard) throw new Error("no work");
+  standard.route = "standard";
+  standard.phase = "build";
+  saveWork(repoPaths(root, env), standard);
+  write(root, "src/a.ts", "changed");
+  const gate = await c.run("gate", "run", first);
+  expect(gate.out).toContain("\nanswers filed by the session: review-security, expert-1, judge\n");
+  const judged = await c.run(
+    "judgement",
+    first,
+    "record",
+    "--ruling",
+    join(root, ".crew", "work", first, "review", "ruling.json"),
+  );
+  expect(judged.out).toContain("answers filed by the session: review-security, expert-1, judge");
+  const report = (await c.run("evidence", first)).out;
+  expect(report).toContain("| Role | Personality | At | Tokens | Answer | Filed by |");
+  expect(report).toMatch(
+    /\| review-security \| - \| [^|]+ \| not read \| review\/security\.findings\.md \| session \|/,
+  );
+  expect(report).toContain(
+    "- Runtimes: claude (context at start: enforced; the status line per prompt: enforced; the denial of engine files: enforced; the denial of forbidden commands: enforced; the hold at Stop: enforced; the roles' answers filed: enforced; the roles read-only: enforced); gemini (context at start: enforced; the status line per prompt: enforced; the denial of engine files: enforced; the denial of forbidden commands: enforced; the hold at Stop: enforced; the roles' answers filed: requested (no subagent event); the roles read-only: enforced)",
+  );
+  // A hook's own filing says hook in the column.
+  await hook(
+    {
+      session_id: "s1",
+      cwd: root,
+      agent_id: "q1",
+      agent_type: "wizardingcode-developer-crew:review-code-quality",
+      last_assistant_message:
+        "# code-quality findings\nreviewer: review-code-quality\nread: 1 files, 1 hunks\n\n## Findings\n- none\n\n## Outside the change\n- none\n\n## Not answerable\n- none\n",
+    },
+    "subagent-stop",
+  );
+  expect((await c.run("evidence", first)).out).toMatch(
+    /\| review-code-quality \| - \| [^|]+ \| not read \| review\/code-quality\.findings\.md \| hook \|/,
+  );
+  // The validation line, and a closed item refused.
+  const lead = answer(
+    "lead-qa.md",
+    `# qa lead's validation of ${first}: spec\nverdict: validated\n## Returns\nnone\n## Notes\n- fine\n`,
+  );
+  expect(
+    (await c.run("answer", "file", first, "--role", "tech-lead", "--file", lead)).out,
+  ).toContain("filed as conclave/lead-qa.md (by the session)");
+  const validated = await c.run(
+    "validation",
+    first,
+    "record",
+    "--what",
+    "spec",
+    "--by",
+    "lead-qa",
+    "--file",
+    join(root, ".crew", "work", first, "conclave", "lead-qa.md"),
+  );
+  expect(validated.out).toContain(
+    "answers filed by the session: review-security, expert-1, judge, tech-lead",
+  );
+  const closed = loadWork(repoPaths(root, env), first).work;
+  if (!closed) throw new Error("no work");
+  closed.phase = "learn";
+  saveWork(repoPaths(root, env), closed);
+  expect(
+    (await c.run("answer", "file", first, "--role", "judge", "--file", ruling)).err.trim(),
+  ).toBe(`${first} is not open (phase learn)`);
+  // An item with no runtime recorded and the report without the Runtimes line.
+  const second = await start("Another chore");
+  expect((await c.run("evidence", second)).out).not.toContain("- Runtimes:");
+});
+
+test("SP6-T4 AC-8: the end-to-end rows per runtime and enforced guarantee through crew hook --runtime: the engine-file denials in each shape (a patch's paths, a Delete, Copilot's inputs and PowerShell), the context at start, the prompt line, the hold at stop, the roles' answers filed, and the hook verb denied from a command", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+    "pkg/README.md": "pkg",
+  });
+  const env = testEnv();
+  const c = io(root, env);
+  const id = (
+    await c.json(
+      "start",
+      "Fix the cart total",
+      "--answers",
+      JSON.stringify({ ...JSON.parse(answers), work_type: "chore", scope: 0 }),
+      "--criterion",
+      "x",
+    )
+  ).data.id as string;
+  const hook = async (stdin: unknown, event: string, runtime: string) => {
+    const r = await io(root, env, JSON.stringify(stdin)).run("hook", event, "--runtime", runtime);
+    expect(r.code, `${runtime} ${event}`).toBe(0);
+    return JSON.parse(r.out) as Record<string, unknown>;
+  };
+  await io(root, env, JSON.stringify({ session_id: "s1", cwd: root, source: "startup" })).run(
+    "hook",
+    "session-start",
+  );
+  const owned = `.crew/work/${id}/evidence.json`;
+  const ownedAbs = join(root, owned);
+  const reason = (path: string) =>
+    `Crew: ${path} is maintained by the engine and is changed through the crew command`;
+  const patch = (header: string) => `*** Begin Patch\n*** ${header}\n@@\n-x\n+y\n*** End Patch\n`;
+  // Codex: a patch updating the evidence file, and one reaching it through ../ from a subfolder.
+  expect(
+    await hook(
+      {
+        session_id: "s1",
+        cwd: root,
+        tool_name: "apply_patch",
+        tool_input: { command: patch(`Update File: ${owned}`) },
+      },
+      "pre-tool-use",
+      "codex",
+    ),
+  ).toEqual({
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "deny",
+      permissionDecisionReason: reason(ownedAbs),
+    },
+  });
+  expect(
+    await hook(
+      {
+        session_id: "s1",
+        cwd: join(root, "pkg"),
+        tool_name: "apply_patch",
+        tool_input: { command: patch(`Update File: ../${owned}`) },
+      },
+      "pre-tool-use",
+      "codex",
+    ),
+  ).toEqual({
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "deny",
+      permissionDecisionReason: reason(ownedAbs),
+    },
+  });
+  // A patch to a free file whose content holds an apostrophe: allowed; a patch adding a watched file is allowed on the fast route in build.
+  expect(
+    await hook(
+      {
+        session_id: "s1",
+        cwd: root,
+        tool_name: "apply_patch",
+        tool_input: {
+          command: `*** Begin Patch\n*** Update File: docs/notes.md\n@@\n-it's\n+it isn't\n*** End Patch\n`,
+        },
+      },
+      "pre-tool-use",
+      "codex",
+    ),
+  ).toEqual({});
+  // OpenCode: the plugin's wire shape with a patch.
+  expect(
+    await hook(
+      {
+        session_id: "ses_1",
+        cwd: root,
+        tool_name: "apply_patch",
+        tool_input: { patchText: patch(`Update File: ${owned}`) },
+      },
+      "pre-tool-use",
+      "opencode",
+    ),
+  ).toEqual({
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "deny",
+      permissionDecisionReason: reason(ownedAbs),
+    },
+  });
+  expect(
+    await hook(
+      { session_id: "ses_1", cwd: root, tool_name: "bash", tool_input: { command: `rm ${owned}` } },
+      "pre-tool-use",
+      "opencode",
+    ),
+  ).toMatchObject({ hookSpecificOutput: { permissionDecision: "deny" } });
+  // Cursor: a Delete on the engine's file (the reason names the path resolved against the
+  // workspace root, judgement round 2), and a Shell write.
+  const cursor = { conversation_id: "c1", workspace_roots: [root] };
+  expect(
+    await hook(
+      { ...cursor, tool_name: "Delete", tool_input: { path: owned } },
+      "pre-tool-use",
+      "cursor",
+    ),
+  ).toEqual({
+    permission: "deny",
+    agent_message: reason(ownedAbs),
+  });
+  expect(
+    await hook(
+      { ...cursor, tool_name: "Shell", tool_input: { command: `rm ${owned}` } },
+      "pre-tool-use",
+      "cursor",
+    ),
+  ).toMatchObject({
+    permission: "deny",
+  });
+  // Copilot: create with file_path, a plain-string input, an Edit carrying patch text, PowerShell writes; a free PowerShell command allowed.
+  const copilot = { session_id: "s1", cwd: root, hook_event_name: "PreToolUse" };
+  const copilotDeny = (path: string) => ({
+    permissionDecision: "deny",
+    permissionDecisionReason: reason(path),
+  });
+  expect(
+    await hook(
+      { ...copilot, tool_name: "create", tool_input: { file_path: owned } },
+      "pre-tool-use",
+      "copilot",
+    ),
+  ).toEqual(copilotDeny(ownedAbs));
+  expect(
+    await hook({ ...copilot, tool_name: "create", tool_input: owned }, "pre-tool-use", "copilot"),
+  ).toEqual(copilotDeny(ownedAbs));
+  // A PowerShell line with a person's decision: asked by the engine under a prompting policy, a
+  // deny in Copilot's shape (judgement round 2); the hook verb through a backslash path, denied.
+  writeFileSync(
+    join(root, ".crew", "policy.json"),
+    JSON.stringify({ attendedDecisions: "prompt" }),
+  );
+  expect(
+    await hook(
+      { ...copilot, tool_name: "powershell", tool_input: { command: `crew approve ${id} spec` } },
+      "pre-tool-use",
+      "copilot",
+    ),
+  ).toEqual({
+    permissionDecision: "deny",
+    permissionDecisionReason: "Crew: this command records a decision that only the user can take",
+  });
+  expect(
+    await hook(
+      {
+        ...copilot,
+        tool_name: "powershell",
+        tool_input: {
+          command: "node C:\\tools\\crew\\dist\\crew.mjs hook prompt --runtime gemini",
+        },
+      },
+      "pre-tool-use",
+      "copilot",
+    ),
+  ).toEqual({
+    permissionDecision: "deny",
+    permissionDecisionReason:
+      "Crew: crew hook runs from the runtime's hook configuration alone, never from a command",
+  });
+  // The line handed on to another PowerShell (judgement round-3): read as sh -c's is.
+  expect(
+    await hook(
+      {
+        ...copilot,
+        tool_name: "powershell",
+        tool_input: { command: `pwsh -NoProfile -Command "crew approve ${id} spec"` },
+      },
+      "pre-tool-use",
+      "copilot",
+    ),
+  ).toEqual({
+    permissionDecision: "deny",
+    permissionDecisionReason: "Crew: this command records a decision that only the user can take",
+  });
+  expect(
+    await hook(
+      { ...copilot, tool_name: "Edit", tool_input: patch(`Update File: ${owned}`) },
+      "pre-tool-use",
+      "copilot",
+    ),
+  ).toEqual(copilotDeny(ownedAbs));
+  for (const command of [`Set-Content ${owned} x`, `Remove-Item ${owned}`])
+    expect(
+      await hook(
+        { ...copilot, tool_name: "powershell", tool_input: { command } },
+        "pre-tool-use",
+        "copilot",
+      ),
+      command,
+    ).toEqual({
+      permissionDecision: "deny",
+      permissionDecisionReason:
+        "Crew: files under .crew/ and ~/.wizardingcode/crew that the engine owns are written only by the crew command",
+    });
+  expect(
+    await hook(
+      { ...copilot, tool_name: "powershell", tool_input: { command: "Set-Content src/a.ts x" } },
+      "pre-tool-use",
+      "copilot",
+    ),
+  ).toEqual({});
+  // Gemini: write_file on the engine's file.
+  expect(
+    await hook(
+      {
+        session_id: "s1",
+        cwd: root,
+        tool_name: "write_file",
+        tool_input: { file_path: owned, content: "x" },
+      },
+      "pre-tool-use",
+      "gemini",
+    ),
+  ).toEqual({ decision: "deny", reason: reason(ownedAbs) });
+  // From a subfolder of the repository, a path climbing to the engine's file is judged where the
+  // runtime writes it (judgement round 2): denied, naming the resolved path.
+  expect(
+    await hook(
+      {
+        session_id: "s1",
+        cwd: join(root, "src"),
+        tool_name: "write_file",
+        tool_input: { file_path: `../${owned}`, content: "x" },
+      },
+      "pre-tool-use",
+      "gemini",
+    ),
+  ).toEqual({ decision: "deny", reason: reason(ownedAbs) });
+  // Context at start, in each shape; the prompt line where enforced.
+  const starts = {
+    codex: await hook({ session_id: "s2", cwd: root, source: "startup" }, "session-start", "codex"),
+    cursor: await hook(
+      { conversation_id: "c2", workspace_roots: [root] },
+      "session-start",
+      "cursor",
+    ),
+    gemini: await hook(
+      { session_id: "s3", cwd: root, source: "startup" },
+      "session-start",
+      "gemini",
+    ),
+    copilot: await hook(
+      { session_id: "s4", cwd: root, source: "startup" },
+      "session-start",
+      "copilot",
+    ),
+  };
+  expect(
+    (starts.codex.hookSpecificOutput as { additionalContext: string }).additionalContext,
+  ).toContain(`Work in progress: ${id}`);
+  expect(starts.cursor.additional_context as string).toContain(`Work in progress: ${id}`);
+  expect(
+    starts.gemini.hookSpecificOutput as { hookEventName: string; additionalContext: string },
+  ).toMatchObject({ hookEventName: "SessionStart" });
+  expect(
+    (starts.gemini.hookSpecificOutput as { additionalContext: string }).additionalContext,
+  ).toContain(`Work in progress: ${id}`);
+  expect(starts.copilot.additionalContext as string).toContain(`Work in progress: ${id}`);
+  expect(
+    (await hook({ session_id: "s2", cwd: root, prompt: "go" }, "prompt", "codex"))
+      .hookSpecificOutput,
+  ).toMatchObject({ hookEventName: "UserPromptSubmit" });
+  expect(
+    (await hook({ session_id: "s3", cwd: root, prompt: "go" }, "prompt", "gemini"))
+      .hookSpecificOutput,
+  ).toMatchObject({ hookEventName: "BeforeAgent" });
+  expect(
+    await hook(
+      { conversation_id: "c2", workspace_roots: [root], prompt: "go" },
+      "prompt",
+      "cursor",
+    ),
+  ).toEqual({});
+  expect(await hook({ session_id: "s4", cwd: root, prompt: "go" }, "prompt", "copilot")).toEqual(
+    {},
+  );
+  // The hold at stop on an unproven change, in each shape.
+  write(root, "src/a.ts", "changed");
+  expect(await hook({ session_id: "s2", cwd: root }, "stop", "codex")).toMatchObject({
+    decision: "block",
+  });
+  expect(
+    (
+      await hook(
+        { conversation_id: "c2", workspace_roots: [root], status: "completed", loop_count: 0 },
+        "stop",
+        "cursor",
+      )
+    ).followup_message as string,
+  ).toContain("Crew: watched source files changed and the work is not proven.");
+  expect(
+    await hook({ session_id: "s3", cwd: root, prompt_response: "Done." }, "stop", "gemini"),
+  ).toMatchObject({ decision: "deny" });
+  expect(
+    await hook({ session_id: "s4", cwd: root, stop_hook_active: false }, "stop", "copilot"),
+  ).toMatchObject({ decision: "block" });
+  // The roles' answers filed by the hook where the runtime gives the name and the answer.
+  const findings =
+    "# security findings\nreviewer: review-security\nread: 1 files, 1 hunks\n\n## Findings\n- none\n\n## Outside the change\n- none\n\n## Not answerable\n- none";
+  expect(
+    await hook(
+      {
+        session_id: "s4",
+        cwd: root,
+        hook_event_name: "SubagentStop",
+        agent_id: "a1",
+        agent_type: "custom",
+        agent_name: "crew-review-security",
+        response: findings,
+        transcript_path: "/tmp/a1.json",
+      },
+      "subagent-stop",
+      "copilot",
+    ),
+  ).toEqual({});
+  expect(
+    readFileSync(join(root, ".crew", "work", id, "review", "security.findings.md"), "utf8"),
+  ).toBe(`${findings}\n`);
+  const roles = loadEvidence(repoPaths(root, env), id).evidence.roles ?? [];
+  expect(roles).toEqual([
+    expect.objectContaining({
+      agent: "review-security",
+      agentId: "a1",
+      tokensFrom: "none",
+      file: "review/security.findings.md",
+    }),
+  ]);
+  expect(roles[0]).not.toHaveProperty("filedBy");
+  // Cursor's summary filed as the answer (a new record: no agent id); Codex's agent_type carrying the generated name.
+  expect(
+    await hook(
+      {
+        conversation_id: "c2",
+        workspace_roots: [root],
+        subagent_type: "crew-review-risk",
+        status: "completed",
+        summary: findings.replace(/security/g, "risk"),
+        agent_transcript_path: "/tmp/sub.txt",
+      },
+      "subagent-stop",
+      "cursor",
+    ),
+  ).toEqual({});
+  expect(existsSync(join(root, ".crew", "work", id, "review", "risk.findings.md"))).toBe(true);
+  expect(
+    await hook(
+      {
+        session_id: "s2",
+        cwd: root,
+        agent_id: "a3",
+        agent_type: "crew-review-code-quality",
+        last_assistant_message: findings.replace(/security/g, "code-quality"),
+      },
+      "subagent-stop",
+      "codex",
+    ),
+  ).toEqual({});
+  expect(existsSync(join(root, ".crew", "work", id, "review", "code-quality.findings.md"))).toBe(
+    true,
+  );
+  // The hook verb from a Claude session's Bash: denied, the observed runtimes untouched, the session filing still refused on a Claude item.
+  const other = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const o = io(other, env);
+  const claudeItem = (
+    await o.json(
+      "start",
+      "A chore",
+      "--answers",
+      JSON.stringify({ ...JSON.parse(answers), work_type: "chore", scope: 0 }),
+      "--criterion",
+      "x",
+    )
+  ).data.id as string;
+  await io(other, env, JSON.stringify({ session_id: "s9", cwd: other, source: "startup" })).run(
+    "hook",
+    "session-start",
+  );
+  const bash = await io(
+    other,
+    env,
+    JSON.stringify({
+      session_id: "s9",
+      cwd: other,
+      tool_name: "Bash",
+      tool_input: { command: "crew hook prompt --runtime gemini" },
+      permission_mode: "default",
+    }),
+  ).run("hook", "pre-tool-use");
+  expect(JSON.parse(bash.out)).toEqual({
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "deny",
+      permissionDecisionReason:
+        "Crew: crew hook runs from the runtime's hook configuration alone, never from a command",
+    },
+  });
+  expect(loadWork(repoPaths(other, env), claudeItem).work?.runtimes).toEqual(["claude"]);
+  const file = join(tempDir("answer-"), "x.md");
+  writeFileSync(file, findings);
+  expect(
+    (await o.run("answer", "file", claudeItem, "--role", "review-security", "--file", file)).code,
+  ).toBe(1);
 });

@@ -1,6 +1,7 @@
 import { statSync } from "node:fs";
 import { readJson } from "../packages/engine/src/fs.ts";
 import { VERSION } from "../packages/engine/src/version.ts";
+import { archiveKilobytes, buildTarball } from "./tarball.ts";
 
 const outdir = "plugins/core/dist";
 const manifest = readJson<{ version: string }>("plugins/core/.claude-plugin/plugin.json");
@@ -29,3 +30,8 @@ if (size > 2 * 1024 * 1024) {
   process.exit(1);
 }
 console.log(`built ${outdir}/crew.mjs (${Math.round(size / 1024)} KB) for version ${VERSION}`);
+// The release asset for the other runtimes (SP6 Task 4): the plugin folder as one archive.
+if (process.argv.includes("--tarball")) {
+  const archive = buildTarball(VERSION, "dist");
+  console.log(`built ${archive} (${archiveKilobytes(archive)} KB)`);
+}

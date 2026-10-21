@@ -4,6 +4,7 @@ import { dirname } from "node:path";
 import {
   COMMAND_WRAPPERS,
   type CommandWrapper,
+  quoteWord,
   SHELL_NAMES,
   shellTakesNext,
   takesNext,
@@ -53,13 +54,6 @@ function killTree(pid: number | undefined): void {
 
 const WRAPPER_BY_NAME = new Map(COMMAND_WRAPPERS.map((w) => [w.name, w]));
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
-const SAFE_WORD = /^[A-Za-z0-9_@%+=:,./-]+$/;
-
-/** One word, quoted for a POSIX shell: a word of safe characters stays as it is, the rest goes in single quotes. */
-export function quoteWord(word: string): string {
-  return SAFE_WORD.test(word) ? word : `'${word.replace(/'/g, "'\\''")}'`;
-}
-
 /**
  * The words after `--` as one command line (finding 91): one word is the command line as given
  * (`-- "a && b"`); several keep their boundaries, each quoted, so `-- sh -c "a && b"` reaches the

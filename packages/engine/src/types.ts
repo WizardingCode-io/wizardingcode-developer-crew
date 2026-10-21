@@ -430,6 +430,8 @@ export interface RoleRecord {
   personality?: Personality | "unknown";
   /** The team the role sits in, from the registry; absent for the judge and the debate's critics. */
   team?: TeamName;
+  /** Who filed the answer (SP6 Task 4): the SubagentStop hook (absent, the default) or the session with `crew answer file`. */
+  filedBy?: "hook" | "session";
 }
 
 /** A project the engine has seen (`~/.wizardingcode/crew/projects.json`). */
@@ -663,6 +665,8 @@ export interface WorkItem {
   knowledge?: KnowledgeRecord;
   /** The packs the item used (SP6 Task 2), as `<name> <version>`: the knowledge files served to the expert, the template that seated a team. */
   packs?: string[];
+  /** The runtimes whose hooks observed this item (SP6 Task 4: `crew hook --runtime <name>`, `claude` for Claude Code's own), each once, in the order seen; absent on an item no hook ran under. */
+  runtimes?: string[];
   /** What `crew learn` wrote and confirmed (SP4 Task 4); absent until the item learned. */
   learned?: { at: string; entries: string[]; confirmed: string[] };
   route: Route;

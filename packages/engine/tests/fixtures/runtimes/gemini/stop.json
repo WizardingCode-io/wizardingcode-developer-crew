@@ -1,0 +1,10 @@
+{
+  "session_id": "s1",
+  "transcript_path": "/tmp/s1.json",
+  "cwd": "/repo",
+  "hook_event_name": "AfterAgent",
+  "timestamp": "2026-10-20T10:00:04Z",
+  "prompt": "Fix the cart total",
+  "prompt_response": "Done.",
+  "stop_hook_active": false
+}

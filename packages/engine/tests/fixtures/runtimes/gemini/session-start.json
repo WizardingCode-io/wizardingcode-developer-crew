@@ -1,0 +1,8 @@
+{
+  "session_id": "s1",
+  "transcript_path": "/tmp/s1.json",
+  "cwd": "/repo",
+  "hook_event_name": "SessionStart",
+  "timestamp": "2026-10-20T10:00:00Z",
+  "source": "startup"
+}

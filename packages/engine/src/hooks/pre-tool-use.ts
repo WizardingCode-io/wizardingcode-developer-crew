@@ -10,15 +10,17 @@ import {
   REVIEW_OPEN_SEGMENT,
 } from "../paths.ts";
 import {
-  COMMAND_WRAPPERS,
   type CommandWrapper,
+  quoteWord,
   SHELL_NAMES,
   shellTakesNext,
   takesNext,
+  WRAPPERS,
 } from "../shell-words.ts";
 import { recordWorking } from "../state.ts";
 import type { Policy } from "../types.ts";
 import { activeWork, isBeforeBuild, loadWork } from "../work.ts";
+import { POWERSHELL_HOOK, powershellAsPosix, unreadablePowershell } from "./powershell.ts";
 import { LEADING_KEYWORDS, OPERATOR_PREFIX, type Piece, readCommand, type Token } from "./shell.ts";
 import { roleOf, teamOf } from "./subagent-stop.ts";
 import type { HookContext, HookPayload, HookResponse } from "./types.ts";
@@ -53,6 +55,8 @@ const WORK_FILES = PROTECTED_WORK_FILES.map((f) => f.replace(/[./]/g, "\\$&")).j
 const ENGINE_FILES = new RegExp(
   String.raw`\.crew\/(?:profile\.json|policy\.json|decisions\.json|\.gitignore|local\b|work\/[^\s/]+\/(?:${WORK_FILES}|logs\b|${REVIEW_OWNED}|${AUDIT_OWNED}))|\.wizardingcode\/crew\b`,
 );
+const HOOK_VERB_REASON =
+  "Crew: crew hook runs from the runtime's hook configuration alone, never from a command";
 // A verb may follow a quote (`bash -c "rm ..."`). A redirect is a write only when its target is an
 // engine file (the `2>` of `2>/dev/null` after a read is not).
 const WRITE_SHAPE =
@@ -73,7 +77,7 @@ const PROMPTLESS_MODES = new Set(["bypassPermissions", "dontAsk"]);
 // cannot tell apart (security review of SP2c task 4).
 const CREW_COMMAND = /^(?:\S*\/)?crew(?:\.mjs)?$/;
 const CREW_BUNDLE = /^(?:\S*\/)?crew\.mjs$/;
-const JS_RUNNER = /^(?:\S*\/)?(?:node|bun)$/;
+const JS_RUNNER = /^(?:\S*\/)?(?:node|bun)(?:\.exe)?$/;
 const READ_ONLY_VERBS = new Set(["status", "help"]);
 const READ_ONLY_MAIL = new Set(["read", "inbox", "reply", "status"]);
 // The opener's variables are the engine's record of what the session is, so no command of the
@@ -142,99 +146,6 @@ function variableDenial(cleaned: string): string | null {
 // The shell's keywords before a command and the ones that close a compound command, which stand
 // alone in a piece (`fi`, `done`, `esac`) and run nothing.
 const KEYWORDS = [...LEADING_KEYWORDS, "fi", "done", "in", "esac"];
-const WRAPPERS: CommandWrapper[] = [
-  // The shell's own words that take one of their own before the command: a function's name, a case's subject.
-  { name: "function", valued: "", longValued: [], positionals: 1 },
-  { name: "case", valued: "", longValued: [], positionals: 1 },
-  { name: "nice", valued: "n", longValued: ["--adjustment"], positionals: 0 },
-  {
-    name: "timeout",
-    valued: "sk",
-    longValued: ["--signal", "--kill-after"],
-    positionals: 1,
-  },
-  { name: "stdbuf", valued: "ioe", longValued: ["--input", "--output", "--error"], positionals: 0 },
-  {
-    name: "flock",
-    valued: "w",
-    longValued: ["--wait", "--timeout", "--conflict-exit-code"],
-    positionals: 1,
-    scriptOptions: ["-c", "--command"],
-  },
-  {
-    name: "script",
-    valued: "FtEBIOomT",
-    longValued: [
-      "--echo",
-      "--log-in",
-      "--log-out",
-      "--log-io",
-      "--log-timing",
-      "--logging-format",
-      "--output-limit",
-    ],
-    positionals: 1,
-    scriptOptions: ["-c", "--command"],
-  },
-  {
-    name: "su",
-    valued: "gGsw",
-    longValued: ["--group", "--supp-group", "--shell", "--whitelist-environment"],
-    positionals: 1,
-    scriptOptions: ["-c", "--command", "--session-command"],
-  },
-  {
-    name: "sudo",
-    valued: "ugpChDTrt",
-    longValued: [
-      "--user",
-      "--group",
-      "--prompt",
-      "--close-from",
-      "--host",
-      "--chdir",
-      "--command-timeout",
-      "--role",
-      "--type",
-      "--other-user",
-    ],
-    positionals: 0,
-  },
-  { name: "doas", valued: "uC", longValued: [], positionals: 0 },
-  // `env` and `command`, the wrappers a recorded test-first command may stand behind, come from the
-  // table `run.ts` reads too (finding 98: two copies had drifted).
-  ...COMMAND_WRAPPERS,
-  { name: "exec", valued: "a", longValued: [], positionals: 0 },
-  {
-    name: "xargs",
-    valued: "nILPdEsa",
-    longValued: [
-      "--max-args",
-      "--replace",
-      "--max-lines",
-      "--max-procs",
-      "--delimiter",
-      "--eof",
-      "--max-chars",
-      "--arg-file",
-      "--process-slot-var",
-    ],
-    positionals: 0,
-  },
-  { name: "nohup", valued: "", longValued: [], positionals: 0 },
-  { name: "time", valued: "fo", longValued: ["--format", "--output"], positionals: 0 },
-  { name: "builtin", valued: "", longValued: [], positionals: 0 },
-  { name: "caffeinate", valued: "tw", longValued: [], positionals: 0 },
-  {
-    name: "ionice",
-    valued: "cnp",
-    longValued: ["--class", "--classdata", "--pid"],
-    positionals: 0,
-  },
-  { name: "noglob", valued: "", longValued: [], positionals: 0 },
-  { name: "nocorrect", valued: "", longValued: [], positionals: 0 },
-  { name: "coproc", valued: "", longValued: [], positionals: 0, namedBlock: true },
-];
 const WRAPPER_BY_NAME = new Map(WRAPPERS.map((w) => [w.name, w]));
 // What node and bun take a value for, before the script they run (`node -r ./a.js …/crew.mjs`).
 const JS_RUNNER_VALUED = new Set([
@@ -266,6 +177,10 @@ const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*\+?=/;
 // A group's braces stand alone as words (the shell reader separates at parentheses, so none reaches
 // a word); a `{` glued to a word is a brace expansion, read with the word.
 const BRACKETS = ["{", "}"];
+/** A next word no shell line holds: given to `optionValue` to learn whether an option takes the next word at all. */
+const NEXT_WORD = "\u0000next";
+/** find's action words, each opening a command line that runs per file found. */
+const EXEC_ACTION = /^-(?:exec|execdir|ok|okdir)$/;
 /**
  * The value one of the named options of a wrapper carries, or null: a long option with its value
  * attached or next (`--split-string="a b"`, `--command "a b"`, `--unset NAME`), a short option on
@@ -300,7 +215,7 @@ interface Lead {
   unsets: string[];
   /** The first wrapper in the lead, by name: what a rule names when nothing stands behind the lead. */
   firstWrapper?: string;
-  /** The command line a wrapper was given as one string (`env -S`, `flock -c`). */
+  /** The command line a wrapper was given as one string (`env -S`, `flock -c`), the words after the option appended to it with one space each, each quoted for the re-read (`env -S "a b" c` runs `a b c`). */
   script?: string;
 }
 /**
@@ -326,7 +241,21 @@ function withoutLead(words: string[]): Lead {
         const word = words[i] ?? "";
         if (i < words.length && word.startsWith("-")) {
           const script = optionValue(wrapper, wrapper.scriptOptions ?? [], word, words[i + 1]);
-          if (script !== null) return { words: [], viaXargs, unsets, firstWrapper, script };
+          if (script !== null) {
+            // The words after the option belong to the script: `env -S "a b" c` runs `a b c`
+            // (SP6 Task 4, judgement round 16); for another wrapper that reads more, never less.
+            // The option took the next word when it carries no value of its own.
+            const fromNext =
+              optionValue(wrapper, wrapper.scriptOptions ?? [], word, NEXT_WORD) === NEXT_WORD;
+            const after = words.slice(i + (fromNext ? 2 : 1)).map(quoteWord);
+            return {
+              words: [],
+              viaXargs,
+              unsets,
+              firstWrapper,
+              script: [script, ...after].join(" "),
+            };
+          }
           const unset = optionValue(wrapper, wrapper.unsetOptions ?? [], word, words[i + 1]);
           if (unset !== null) unsets.push(unset);
           i++;
@@ -384,7 +313,7 @@ function withoutRedirects(tokens: Token[]): string[] {
 }
 // What npx and bunx take before the package they run (`npx -y crew …`, `bunx --bun crew …`); the
 // value of `-c`/`--call` is a command line of its own, read as a wrapper's string option is.
-const NPX_RUNNER = /^(?:\S*\/)?(?:npx|bunx)$/;
+const NPX_RUNNER = /^(?:\S*\/)?(?:npx|bunx)(?:\.cmd|\.exe)?$/;
 const NPX_CALL = ["-c", "--call"];
 const NPX_VALUED = new Set(["-p", "--package", ...NPX_CALL, "--shell", "--loglevel"]);
 // The two kinds of runner that take options before what they run: node and bun before the bundle,
@@ -539,7 +468,8 @@ const WATCH_VALUED = new Set(["-n", "--interval"]);
  * The command line a simple command hands on to be run, or null: a wrapper's string option (`env -S
  * "…"`, `flock f -c "…"`, `script -c "…"`, `su -c "…"`), a shell's `-c` script, a here-string or a
  * here-document a shell reads, `eval`'s words, `trap`'s first word (run when the signal comes), the
- * words after `find -exec` up to `;` or `+`, npx's `-c`, `watch`'s words.
+ * words of every `find -exec` group, each up to its `;` or its `{} +`, quoted for the re-read and
+ * joined by ` ; `, npx's `-c`, `watch`'s words.
  */
 function handedOn({ program, words, script, tokens, heredocs }: Command): string | null {
   if (script !== undefined) return script;
@@ -563,12 +493,45 @@ function handedOn({ program, words, script, tokens, heredocs }: Command): string
   }
   if (program === "eval") return words.slice(1).join(" ");
   if (program === "trap") return words.slice(1).find((w) => !w.startsWith("-")) ?? "";
-  const exec = words.findIndex((w) => /^-(?:exec|execdir|ok|okdir)$/.test(w));
-  if (program === "find" && exec !== -1)
-    return words
-      .slice(exec + 1)
-      .filter((w) => w !== ";" && w !== "+")
-      .join(" ");
+  const exec = words.findIndex((w) => EXEC_ACTION.test(w));
+  if (program === "find" && exec !== -1) {
+    // Every -exec group under each of find's two readings, each up to its own terminator, as one
+    // command line: a group opens at an action word when none is open (inside a group such a word
+    // is the command's own) and closes at the reading's terminator; the predicates between a
+    // terminator and the next action are find's own. GNU reads `;` exactly and, for -exec and
+    // -execdir alone, `+` exactly after a word holding `{}` (-ok never ends at `+`); BSD reads a
+    // word that starts with `;` and, for every action, a word that starts with `+` after `{}`
+    // exactly. The groups of both readings are handed on, each once, so a group's own trailing
+    // words are never dropped under either find, and where the real find reads a later group as
+    // the first command's words nothing of it runs.
+    const readings: ((w: string, last: string, plusEnds: boolean) => boolean)[] = [
+      (w, last, plusEnds) => w === ";" || (plusEnds && w === "+" && last.includes("{}")),
+      (w, last) => w.startsWith(";") || (w.startsWith("+") && last === "{}"),
+    ];
+    const groups = new Set<string>();
+    for (const ends of readings) {
+      let group: string[] | null = null;
+      let plusEnds = false;
+      let last = "";
+      for (const w of words.slice(exec)) {
+        if (group === null) {
+          if (EXEC_ACTION.test(w)) {
+            group = [];
+            plusEnds = !/^-ok/.test(w);
+            last = "";
+          }
+        } else if (ends(w, last, plusEnds)) {
+          if (group.length) groups.add(group.join(" "));
+          group = null;
+        } else {
+          group.push(quoteWord(w));
+          last = w;
+        }
+      }
+      if (group?.length) groups.add(group.join(" "));
+    }
+    return [...groups].join(" ; ");
+  }
   if (NPX_RUNNER.test(program)) return runnerOptions(words, "npx").call;
   if (program === "watch") {
     let i = 1;
@@ -628,8 +591,10 @@ function splitFlagValue(word: string): string[] {
   const match = /^(--[\w-]+)=(.*)$/.exec(word);
   return match ? [match[1] ?? "", match[2] ?? ""] : [word];
 }
-// A verb the hook cannot read: an expansion or a pattern (security review of SP2c task 4, round 7).
-const UNREADABLE_VERB = /[$\x60*?[{]/;
+// A verb the hook cannot read: an expansion or a pattern (security review of SP2c task 4, round 7),
+// or a word carrying a space or a comma, which a shell never hands crew as one verb unless quoted
+// or, on PowerShell, as a list it splits (SP6 Task 4, judgement round 16).
+const UNREADABLE_VERB = /[$\x60*?[{,\s]/;
 /**
  * The user-only command among crew's, read from its parsed words (SP2a review, finding C1: the id
  * and the flags in any order): skip, approve, accept, decide, an objection's waive, profile confirm
@@ -994,6 +959,20 @@ export function openedSessionDenial(
 
 type Decision = ["deny" | "ask", string];
 
+/** The decision on a PowerShell line the hook cannot read: denied where nobody watches, asked otherwise in every policy. */
+function unreadableDecision(
+  line: { reason: string; asked: string; wayOut: string },
+  headless: boolean,
+  permissionMode: string | undefined,
+): Decision {
+  const where = unwatched(headless, permissionMode);
+  return where
+    ? [
+        "deny",
+        `Crew: ${line.reason} and no person is watching this session (${where}): ${line.wayOut}`,
+      ]
+    : ["ask", line.asked];
+}
 /**
  * Where no person watches the session, named for a reason (`a headless session in default mode`,
  * `bypassPermissions mode`), or null where a person is there to answer a prompt: the one rule the
@@ -1069,6 +1048,14 @@ function pathFromInput(input: Record<string, unknown>): string | null {
   }
   return null;
 }
+/** The single path a Write tool names and every path of `paths` (a runtime adapter's patch), once each. */
+function pathsFromInput(input: Record<string, unknown>): string[] {
+  const single = pathFromInput(input);
+  const listed = Array.isArray(input.paths)
+    ? input.paths.filter((p): p is string => typeof p === "string" && p !== "")
+    : [];
+  return [...new Set([...(single ? [single] : []), ...listed])];
+}
 
 export function onPreToolUse(ctx: HookContext, payload: HookPayload): HookResponse {
   const tool = payload.tool_name ?? "";
@@ -1089,17 +1076,23 @@ export function onPreToolUse(ctx: HookContext, payload: HookPayload): HookRespon
     return {};
   }
   if (WRITE_TOOLS.has(tool)) {
-    const filePath = pathFromInput(input);
-    if (!filePath) return {};
-    const abs = canonical(isAbsolute(filePath) ? filePath : join(ctx.paths.root, filePath));
-    if (isProtectedPath(ctx.paths, abs)) {
-      return answer(
-        "deny",
-        `Crew: ${filePath} is maintained by the engine and is changed through the crew command`,
-      );
+    // Every path the call names (a runtime's patch carries several, SP6 Task 4): one engine-owned
+    // path denies the call naming it; one watched path before build is the phase rule's.
+    const paths = pathsFromInput(input);
+    if (!paths.length) return {};
+    let watched = false;
+    for (const filePath of paths) {
+      const abs = canonical(isAbsolute(filePath) ? filePath : join(ctx.paths.root, filePath));
+      if (isProtectedPath(ctx.paths, abs)) {
+        return answer(
+          "deny",
+          `Crew: ${filePath} is maintained by the engine and is changed through the crew command`,
+        );
+      }
+      const rel = relative(ctx.paths.root, abs).replace(/\\/g, "/");
+      if (rel !== "" && !rel.startsWith("..") && isWatched(rel, ctx.profile)) watched = true;
     }
-    const rel = relative(ctx.paths.root, abs).replace(/\\/g, "/");
-    if (rel === "" || rel.startsWith("..") || !isWatched(rel, ctx.profile)) return {};
+    if (!watched) return {};
     const active = activeWork(ctx.paths);
     const work = active?.work;
     if (work && work.route !== "fast" && isBeforeBuild(work)) {
@@ -1111,7 +1104,29 @@ export function onPreToolUse(ctx: HookContext, payload: HookPayload): HookRespon
     return {};
   }
   if (tool === "Bash") {
-    const command = typeof input.command === "string" ? input.command : "";
+    const written = typeof input.command === "string" ? input.command : "";
+    // A PowerShell command (Copilot's `powershell`, read by the runtime adapter with `shell`): the
+    // POSIX write shape knows nothing of Set-Content, Out-File or Remove-Item, so a command that
+    // names an engine file at all, with either separator, is denied (SP6 Task 4, the security
+    // lead's return), and the hook verb in PowerShell's own shapes with it. Then the line goes on
+    // to the command rules as a POSIX shell would read it (judgement round 2): a person's decision
+    // or an opened session's merge through powershell is read as through bash.
+    const powershell = input.shell === "powershell";
+    const command = powershell ? powershellAsPosix(written) : written;
+    if (powershell) {
+      // The written line is read with its quotes gone too, so a protected path glued to a closing
+      // quote (`"C:/repo/.crew"/work/x`) is denied whatever PowerShell makes of the glue.
+      if (
+        ENGINE_FILES.test(written) ||
+        ENGINE_FILES.test(written.replace(/["']/g, "")) ||
+        ENGINE_FILES.test(command)
+      )
+        return answer(
+          "deny",
+          "Crew: files under .crew/ and ~/.wizardingcode/crew that the engine owns are written only by the crew command",
+        );
+      if (POWERSHELL_HOOK.test(written)) return answer("deny", HOOK_VERB_REASON);
+    }
     // A session opened by mail never merges or deploys (SP2c §10): the rule holds from the first
     // command, before any item exists, since the opener sets the variables. The branch it may
     // push is the one the opener pinned, never whatever HEAD says now (a checkout would choose
@@ -1121,11 +1136,24 @@ export function onPreToolUse(ctx: HookContext, payload: HookPayload): HookRespon
     const walked = walk(command);
     const { found } = walked;
     const crewCommands = crewCommandsOf(found);
+    // The PowerShell line the hook cannot read (judgement rounds 5 onwards, hooks/powershell.ts), in
+    // its order: a mark that hides the text, a crew program at a command position the walker did
+    // not read, a comma in a crew command's word, an evaluator the rewrite did not fold, a crew
+    // word inside a string of a piece the walker neither read as crew nor handed on, a hand-on the
+    // rewrite did not fold, and the crew word anywhere else in such a piece. Denied in an opened
+    // session; a hidden line is denied where nobody watches before the walker's words are trusted;
+    // the ask, and the crew case, come at the end after every deny, in every policy.
+    const unreadable = powershell ? unreadablePowershell(written, command, found) : null;
+    // The hook verb runs from a runtime's hook configuration alone (SP6 Task 4): a session that ran
+    // it by hand could declare the runtime its item was observed under.
+    if (crewCommands.some((c) => c.args[0] === "hook")) return answer("deny", HOOK_VERB_REASON);
     if (ctx.openedBy) {
       const cleanedCommand = command.replace(QUOTES, "");
       const opened = `Crew: this session was opened by mail (${ctx.openedBy})`;
       const never = `${opened} and never merges, pushes to another branch, releases or deploys`;
       const ending = `it ends with crew mail reply ${ctx.openedBy} --branch ${ctx.openedBranch ?? "<branch>"} --item <child id>`;
+      if (unreadable)
+        return answer("deny", `${opened} and ${unreadable.reason} is denied: ${unreadable.wayOut}`);
       const variables = `${opened} and the opener's variables are not its to change`;
       // The opener's variables first: the rules below read them from the hook's environment. A
       // name anywhere in the line; then each piece the walk found, its text with the quotes gone,
@@ -1240,6 +1268,13 @@ export function onPreToolUse(ctx: HookContext, payload: HookPayload): HookRespon
     // A user-only crew command, wherever it stands in the line (behind a wrapper, in a shell's
     // script, in a substitution), is judged from its own words. Crew with its words on xargs'
     // input cannot be read, in any session. A deny anywhere wins over an ask.
+    // A PowerShell line whose text is hidden from the reader (judgement rounds 9 and 10) is denied
+    // here where nobody watches, before the commands the walker could read are trusted, since its
+    // words may be anything; its ask comes at the end, after every deny the read commands earn.
+    if (unreadable?.hidden) {
+      const decided = unreadableDecision(unreadable, ctx.headless, payload.permission_mode);
+      if (decided[0] === "deny") return answer(...decided);
+    }
     let asked: Decision | null = null;
     for (const { args, viaXargs } of crewCommands) {
       if (viaXargs)
@@ -1270,6 +1305,11 @@ export function onPreToolUse(ctx: HookContext, payload: HookPayload): HookRespon
         );
       }
     }
+    // The PowerShell line the hook cannot read (judgement rounds 6 onwards): decided as a line the
+    // hook cannot close is, after every deny above, in every policy; no `--mode` can be read from
+    // it, so where nobody watches it is denied until written plainly.
+    if (unreadable)
+      return answer(...unreadableDecision(unreadable, ctx.headless, payload.permission_mode));
     // A line the reader could not close (a quote, a substitution, an expansion, or one nested past
     // what it reads) is a person's to allow in any session, whatever its text says: the shell
     // refuses such a line or runs what the hook could not see, and the user-only rule above only

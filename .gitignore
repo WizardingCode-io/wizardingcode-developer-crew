@@ -13,3 +13,6 @@ graphify-out/
 
 # the impeccable plugin's local cache (tooling, never the change)
 .impeccable/
+
+# The release asset bun scripts/build.ts --tarball writes (SP6 Task 4).
+/dist/

@@ -1,0 +1,23 @@
+{
+  "conversation_id": "c1",
+  "generation_id": "g3",
+  "model": "claude-4-sonnet",
+  "model_id": "claude-4-sonnet",
+  "model_params": {},
+  "hook_event_name": "subagentStop",
+  "cursor_version": "2.5.0",
+  "workspace_roots": [
+    "/repo"
+  ],
+  "user_email": "dev@example.com",
+  "transcript_path": "/tmp/c1.txt",
+  "subagent_type": "crew-review-security",
+  "status": "completed",
+  "task": "Review the diff against the security rubric",
+  "summary": "# security findings for w1\nreviewer: review-security\nread: 1 files, 1 hunks\n\n## Findings\n- none\n\n## Outside the change\n- none\n\n## Not answerable\n- none\n",
+  "duration_ms": 12000,
+  "tool_call_count": 4,
+  "loop_count": 0,
+  "modified_files": [],
+  "agent_transcript_path": "/tmp/sub-c1.txt"
+}

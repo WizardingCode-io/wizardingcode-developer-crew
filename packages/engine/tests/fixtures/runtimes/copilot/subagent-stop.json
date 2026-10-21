@@ -1,0 +1,12 @@
+{
+  "session_id": "s1",
+  "timestamp": 1760954405000,
+  "cwd": "/repo",
+  "hook_event_name": "SubagentStop",
+  "agent_id": "a1",
+  "agent_type": "custom",
+  "agent_name": "crew-review-security",
+  "response": "# security findings for w1\nreviewer: review-security\nread: 1 files, 1 hunks\n\n## Findings\n- none\n\n## Outside the change\n- none\n\n## Not answerable\n- none\n",
+  "stop_reason": "end_turn",
+  "transcript_path": "/tmp/sub-a1.json"
+}

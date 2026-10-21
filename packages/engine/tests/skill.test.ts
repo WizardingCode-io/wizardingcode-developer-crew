@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { guaranteeLines, RUNTIME_NAMES, RUNTIMES } from "../src/runtimes.ts";
 
 const KINDS = [
   "endpoint",
@@ -659,5 +660,97 @@ test("SP6-T3 AC-5: the README's Packs section and the vision's §11 say what shi
   expect(vision).toContain("The engine serves packs since 0.11.0");
   expect(vision).toContain(
     "The first two packs are in this repository under `packs/`: `wizardingcode-pack-laravel` (a stack pack) and `wizardingcode-pack-agentic-os` (a team pack)",
+  );
+});
+
+/** The guarantee lines a document lists under a runtime's heading (`### <label>`), as `- <line>` bullets. */
+function documentedGuarantees(text: string, label: string): string[] {
+  const at = text.indexOf(`### ${label}\n`);
+  if (at === -1) return [];
+  const rest = text.slice(at + `### ${label}\n`.length);
+  const end = rest.search(/^#{1,3} /m);
+  return (end === -1 ? rest : rest.slice(0, end))
+    .split("\n")
+    .filter((l) => l.startsWith("- "))
+    .map((l) => l.slice(2));
+}
+
+test("SP6-T4 AC-7: the runtimes reference, the launch sentence in gate.md and conclave.md, the Runtimes row within the ceiling, the README's and the reference's guarantee tables equal to the engine's, the vision's seven-row table and single reference, ADR 0011", () => {
+  const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
+  expect(skill).toContain("| Runtimes | `references/runtimes.md` |");
+  expect(Buffer.byteLength(skill, "utf8")).toBeLessThanOrEqual(9254);
+  const launch =
+    "Launch the role: in Claude Code one Agent call by its scoped name; in another runtime as `references/runtimes.md` says, and file its answer with `crew answer file` where the table says the filing is requested.";
+  expect(read("../../../plugins/core/skills/crew/references/gate.md")).toContain(launch);
+  expect(read("../../../plugins/core/skills/crew/references/conclave.md")).toContain(launch);
+  const reference = read("../../../plugins/core/skills/crew/references/runtimes.md");
+  const readme = read("../../../README.md");
+  for (const phrase of [
+    "crew runtime install <name>",
+    "crew runtime check <name>",
+    "crew answer file <id> --role <role> --file <path>",
+    "an `ask` the engine answers becomes a `deny`",
+    "the person runs it",
+    "`*** Begin Patch`",
+    "`loop_limit: null`",
+    "Antigravity CLI",
+    "fails closed",
+    "eight consecutive",
+    "the engine's own cap of three",
+    "`crew-method`",
+    "`crew-<role>`",
+    "`crew pack add <path>`",
+    "exit 1",
+    "never from a command",
+    "denied where nobody watches, in a session opened by mail and on Copilot, which answers every ask of the engine as a deny",
+    "denied on Copilot, where an ask is a deny",
+  ])
+    expect(reference, phrase).toContain(phrase);
+  for (const name of RUNTIME_NAMES) {
+    const runtime = RUNTIMES[name];
+    expect(documentedGuarantees(reference, runtime.label), `${name} in the reference`).toEqual(
+      guaranteeLines(runtime),
+    );
+    expect(documentedGuarantees(readme, runtime.label), `${name} in the README`).toEqual(
+      guaranteeLines(runtime),
+    );
+  }
+  expect(readme).toContain("\n## Runtimes\n");
+  const vision = read("../../../docs/vision.md");
+  expect(vision).toContain(
+    "| Guarantee | Claude Code | Codex CLI | Cursor | GitHub Copilot CLI | Gemini CLI | OpenCode |",
+  );
+  for (const what of [
+    "context at start",
+    "the status line per prompt",
+    "the denial of engine files",
+    "the denial of forbidden commands",
+    "the hold at Stop",
+    "the roles' answers filed",
+    "the roles read-only",
+  ])
+    expect(vision, what).toContain(`| ${what} |`);
+  expect(vision).not.toContain("each runtime gets a small mapping file");
+  expect(vision).toContain("one reference, `references/runtimes.md`, serves every runtime");
+  const adr = read("../../../docs/adr/0011-runtime-adapters.md");
+  expect(adr).toContain(
+    "# ADR 0011: runtime adapters, one table and the plugin folder as the distribution",
+  );
+  expect(adr).toContain(
+    "one reference for every runtime in place of the mapping file per runtime the vision's §13 named",
+  );
+  // The ADR holds the decisions and points to the module for the reading's grammar; the shared-rule
+  // changes that reach Claude Code are a consequence; the findings carry the delivered reading of a
+  // patch and the debt.
+  expect(adr).toContain(
+    "the reading's grammar, form by form, is the module comment of `packages/engine/src/hooks/powershell.ts`",
+  );
+  expect(adr).toContain(
+    "The rules every runtime shares changed with the item, Claude Code included",
+  );
+  const findings = read("../../../docs/real-use/findings.md");
+  expect(findings).toContain("reads it as a `Write` whose paths are every path a hunk names");
+  expect(findings).toContain(
+    "### 114. SP6 Task 4 (`2026-10-20-008`): the Copilot tier moved to requested, the PowerShell layer, and the debt that stands",
   );
 });

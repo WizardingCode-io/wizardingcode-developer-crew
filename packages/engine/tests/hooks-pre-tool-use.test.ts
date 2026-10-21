@@ -63,6 +63,41 @@ function decision(response: Record<string, unknown>): string | undefined {
   return (response.hookSpecificOutput as { permissionDecision?: string } | undefined)
     ?.permissionDecision;
 }
+/**
+ * The helpers the PowerShell rounds' tests share (from AC-19 on): a line on Copilot's powershell
+ * tool and the same on bash, the reason of an answer, the text of a hidden mark with its way out,
+ * the user-only text, and the crew word's reason and way out.
+ */
+function powershellRows(ctx: Parameters<typeof onPreToolUse>[0]) {
+  const ps = (command: string) =>
+    onPreToolUse(ctx, {
+      tool_name: "Bash",
+      tool_input: { command, shell: "powershell" },
+      permission_mode: "default",
+    });
+  const bash = (command: string) =>
+    onPreToolUse(ctx, { tool_name: "Bash", tool_input: { command }, permission_mode: "default" });
+  const reasonOf = (r: ReturnType<typeof ps>) =>
+    (r.hookSpecificOutput as { permissionDecisionReason: string }).permissionDecisionReason;
+  const hidden = (what: string, wayOut = "write the line plainly, without it") =>
+    `Crew: a PowerShell line whose text the hook cannot read (${what}), so a person decides: ${wayOut}`;
+  return {
+    ps,
+    bash,
+    reasonOf,
+    hidden,
+    userOnly: "Crew: this command records a decision that only the user can take",
+    unplaced: hidden(
+      "a # the reader cannot place (after =, a bracket, a comma, a redirection, a closing parenthesis or brace, or a quoted part glued to a word or inside a subexpression)",
+      "write a space before the #, or quote it",
+    ),
+    substitution:
+      "Crew: a substitution the guard cannot read: the shell refuses such a line or runs what the hook could not see, so a person decides",
+    crewWord: "a crew word in a command the reader did not read as crew",
+    wayOut:
+      "write a crew command plainly, or keep the word out of the line (a text from a file: git commit -F <file>; a folder with its trailing slash: crew/; a file by its folder or a glob: bin/cre[w])",
+  };
+}
 
 // The prompt rules are tested under the policy that prompts; since 0.3.0 the default relays (ADR 0005).
 function setup(policy: Record<string, unknown> | null = { attendedDecisions: "prompt" }) {
@@ -618,12 +653,28 @@ test("bash: the user-only rule and --mode are read from the same simple command"
   const bash = (command: string, permission_mode?: string) =>
     onPreToolUse(ctx, { tool_name: "Bash", tool_input: { command }, permission_mode });
   // Finding 5: a read-only probe whose payload names the command, after an echo that says --mode.
-  // Since finding 16 the payload is text, not the command: the probe gets no opinion at all.
+  // Since finding 16 the payload is text, not the command: the inner approve gets no opinion. Since
+  // SP6 Task 4 the probe itself is denied, as every `crew hook` run from a command is (the hook verb
+  // runs from a runtime's hook configuration alone), and the reason is that rule's, never an ask.
   const probe = [
     'echo "probe: the bare command, --mode in auto, through the installed bundle"',
     `printf '%s' '{"permission_mode":"auto","tool_input":{"command":"node plugins/core/dist/crew.mjs approve w1 spec"}}' | node dist/crew.mjs hook pre-tool-use`,
   ].join("; ");
-  expect(bash(probe, "plan")).toEqual({});
+  expect(bash(probe, "plan")).toEqual({
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "deny",
+      permissionDecisionReason:
+        "Crew: crew hook runs from the runtime's hook configuration alone, never from a command",
+    },
+  });
+  // The same payload text without the hook verb: no opinion, as finding 16 states.
+  expect(
+    bash(
+      `printf '%s' '{"permission_mode":"auto","tool_input":{"command":"node plugins/core/dist/crew.mjs approve w1 spec"}}' > /tmp/probe.json`,
+      "plan",
+    ),
+  ).toEqual({});
   expect(bash('crew skip w1 gate:lint --reason "a; b && c" --mode dontAsk', "dontAsk")).toEqual({});
   expect(decision(bash('crew skip w1 gate:lint --reason "a; b"', "default"))).toBe("ask");
   expect(decision(bash('crew skip w1 gate:lint --reason "a; b" --mode auto', "default"))).toBe(
@@ -1792,4 +1843,1818 @@ test("SP6-T1 AC-9: a shell write to any engine-owned work file is denied, from t
   // A file beside them that the session owns stays the session's.
   expect(bash(`echo x > .crew/work/${work.id}/spec.md`)).toBeUndefined();
   expect(bash(`echo x > .crew/work/${work.id}/conclave/expert-1.md`)).toBeUndefined();
+});
+
+test("SP6-T4 AC-1: the Write rule reads every path of tool_input.paths (a runtime's patch): denied when any is engine-owned, naming it; the phase rule when any is watched", () => {
+  const { root, ctx } = setup(null);
+  const work = createWork(ctx.paths, "feature");
+  work.route = "standard";
+  work.phase = "specify";
+  saveWork(ctx.paths, work);
+  const owned = join(root, ".crew", "work", work.id, "evidence.json");
+  const write = (tool_input: Record<string, unknown>) =>
+    onPreToolUse(ctx, { tool_name: "Write", tool_input });
+  const denied = write({
+    file_path: join(root, "README.md"),
+    paths: [join(root, "README.md"), owned],
+  });
+  expect(decision(denied)).toBe("deny");
+  expect(
+    (denied.hookSpecificOutput as { permissionDecisionReason: string }).permissionDecisionReason,
+  ).toBe(`Crew: ${owned} is maintained by the engine and is changed through the crew command`);
+  // A watched source among the paths before build: the phase rule.
+  const phased = write({ file_path: join(root, "README.md"), paths: [join(root, "src/a.ts")] });
+  expect(decision(phased)).toBe("deny");
+  expect(
+    (phased.hookSpecificOutput as { permissionDecisionReason: string }).permissionDecisionReason,
+  ).toContain(`source files change in the build phase`);
+  // Free paths alone: allowed; an empty list: allowed.
+  expect(write({ file_path: join(root, "README.md"), paths: [join(root, "docs/x.md")] })).toEqual(
+    {},
+  );
+  expect(write({ paths: [] })).toEqual({});
+});
+
+test("SP6-T4 AC-1: a PowerShell command (tool_input.shell) is denied when its text names an engine file at all; a free file is allowed", () => {
+  const { ctx } = setup(null);
+  const work = createWork(ctx.paths, "fix");
+  saveWork(ctx.paths, work);
+  const { ps } = powershellRows(ctx);
+  for (const command of [
+    `Set-Content .crew/work/${work.id}/evidence.json x`,
+    `Remove-Item .crew/work/${work.id}/evidence.json`,
+    `Get-Content .crew/profile.json | Out-File .crew/work/${work.id}/work.json`,
+  ]) {
+    const response = ps(command);
+    expect(decision(response), command).toBe("deny");
+    expect(
+      (response.hookSpecificOutput as { permissionDecisionReason: string })
+        .permissionDecisionReason,
+    ).toBe(
+      "Crew: files under .crew/ and ~/.wizardingcode/crew that the engine owns are written only by the crew command",
+    );
+  }
+  expect(ps("Set-Content src/a.ts x")).toEqual({});
+  expect(ps("Get-ChildItem")).toEqual({});
+  // Without the shell mark the POSIX rule reads the same text as before (no write shape: allowed).
+  expect(
+    onPreToolUse(ctx, {
+      tool_name: "Bash",
+      tool_input: { command: `Set-Content .crew/work/${work.id}/evidence.json x` },
+      permission_mode: "default",
+    }),
+  ).toEqual({});
+});
+
+test("SP6-T4 AC-1: a Bash command that runs the crew hook verb is denied in every form the rules read; the runtime's hook configuration alone runs it", () => {
+  const { ctx } = setup(null);
+  const bash = (command: string) =>
+    onPreToolUse(ctx, { tool_name: "Bash", tool_input: { command }, permission_mode: "default" });
+  const reason =
+    "Crew: crew hook runs from the runtime's hook configuration alone, never from a command";
+  for (const command of [
+    "crew hook prompt --runtime gemini",
+    "node plugins/core/dist/crew.mjs hook session-start",
+    "echo '{}' | node /opt/crew/dist/crew.mjs hook pre-tool-use --runtime cursor",
+    "cd /tmp && crew hook stop",
+    "npx crew hook prompt",
+  ]) {
+    const response = bash(command);
+    expect(decision(response), command).toBe("deny");
+    expect(
+      (response.hookSpecificOutput as { permissionDecisionReason: string })
+        .permissionDecisionReason,
+    ).toBe(reason);
+  }
+  expect(bash("crew status")).toEqual({});
+  expect(bash("crew runtime check gemini")).toEqual({});
+  expect(bash("grep hook README.md")).toEqual({});
+});
+
+test("SP6-T4 AC-1 (judgement round 2): a PowerShell command reaches the command rules after the engine-file check: a user-only crew command is asked as in a POSIX shell, and the hook verb is denied through a backslash path, a quoted program or the call operator", () => {
+  const { ctx } = setup();
+  const work = createWork(ctx.paths, "fix");
+  saveWork(ctx.paths, work);
+  const { ps, reasonOf } = powershellRows(ctx);
+  // A person's decision through powershell: asked (the runtime's writer turns it into a deny).
+  for (const command of [
+    `crew approve ${work.id} spec`,
+    `crew skip ${work.id} tdd:AC-1 --reason x`,
+    `& "crew" approve ${work.id} spec`,
+    `node C:\\tools\\crew\\dist\\crew.mjs approve ${work.id} spec`,
+  ]) {
+    const response = ps(command);
+    expect(decision(response), command).toBe("ask");
+    expect(reasonOf(response)).toBe(
+      "Crew: this command records a decision that only the user can take",
+    );
+  }
+  // The hook verb in PowerShell's own shapes.
+  const hookReason =
+    "Crew: crew hook runs from the runtime's hook configuration alone, never from a command";
+  for (const command of [
+    "node C:\\tools\\crew\\dist\\crew.mjs hook prompt --runtime gemini",
+    '& "crew" hook prompt --runtime gemini',
+    "& 'C:\\tools\\crew\\dist\\crew.mjs' hook stop",
+    "Crew Hook prompt",
+    "cd C:\\x; crew hook session-start",
+  ]) {
+    const response = ps(command);
+    expect(decision(response), command).toBe("deny");
+    expect(reasonOf(response)).toBe(hookReason);
+  }
+  // What reads nothing of crew's stays allowed.
+  expect(ps("crew status")).toEqual({});
+  expect(ps("Get-ChildItem -Recurse")).toEqual({});
+});
+
+test("SP6-T4 AC-11 (judgement round-3): a PowerShell line that hands a command line on (pwsh or powershell -Command, Invoke-Expression or iex, cmd /c, Start-Process with an argument list) is read as a POSIX shell's hand-on is, and a user-only crew verb the walker still cannot reach is asked as an unreadable crew command", () => {
+  const { ctx } = setup();
+  const work = createWork(ctx.paths, "fix");
+  saveWork(ctx.paths, work);
+  const { ps, reasonOf } = powershellRows(ctx);
+  for (const command of [
+    `pwsh -c "crew approve ${work.id} spec"`,
+    `powershell -NoProfile -Command "crew skip ${work.id} tdd:AC-1 --reason x"`,
+    `powershell.exe -Command 'crew continue ${work.id} judgement'`,
+    `Invoke-Expression "crew approve ${work.id} spec"`,
+    `iex 'crew decide ${work.id} D-1 --option 1'`,
+    `cmd /c crew approve ${work.id} spec`,
+    `Start-Process crew -ArgumentList approve,${work.id},spec`,
+    `Start-Process -FilePath "crew" -ArgumentList "approve", "${work.id}", "spec"`,
+    `pwsh -c crew approve ${work.id} spec`,
+    `cd C:\\x; pwsh -NoLogo -c "node C:\\tools\\crew\\dist\\crew.mjs approve ${work.id} spec"`,
+  ]) {
+    const response = ps(command);
+    expect(decision(response), command).toBe("ask");
+    expect(reasonOf(response), command).toBe(
+      "Crew: this command records a decision that only the user can take",
+    );
+  }
+  // The hook verb through the same hand-ons: denied as the verb is.
+  for (const command of [
+    'pwsh -c "crew hook prompt --runtime gemini"',
+    "iex 'crew hook stop'",
+    "cmd /c crew hook session-start",
+  ]) {
+    expect(decision(ps(command)), command).toBe("deny");
+    expect(reasonOf(ps(command))).toBe(
+      "Crew: crew hook runs from the runtime's hook configuration alone, never from a command",
+    );
+  }
+  // A hand-on with nothing of crew's to decide stays allowed, as a reading verb does.
+  expect(ps('pwsh -c "crew status"')).toEqual({});
+  expect(ps("Start-Process notepad -ArgumentList README.md")).toEqual({});
+  expect(ps("iex 'Get-Date'")).toEqual({});
+  expect(ps("cmd /c dir")).toEqual({});
+});
+
+test("SP6-T4 AC-12 (judgement round-4): the PowerShell rewrite reads Start-Process in every documented shape and pwsh with valued options, the backstop reads the crew words from the text of a hand-on the rewrite does not know and decides them as the one user-only rule does, prose that names crew is not a command, and an opened session's rules reach a push handed on through PowerShell", () => {
+  const { root, ctx } = setup();
+  const work = createWork(ctx.paths, "fix");
+  saveWork(ctx.paths, work);
+  const { ps, reasonOf, userOnly } = powershellRows(ctx);
+  // Start-Process: the arguments as one string (PowerShell splits it on spaces), a switch between
+  // the program and the list, the parameters in another order, the -Args alias, the saps alias.
+  for (const command of [
+    `Start-Process node -ArgumentList "C:\\p\\dist\\crew.mjs","approve ${work.id} spec"`,
+    `Start-Process crew -ArgumentList "approve ${work.id} spec"`,
+    `Start-Process node -Wait -ArgumentList C:\\p\\dist\\crew.mjs,approve,${work.id},spec`,
+    `Start-Process -ArgumentList approve,${work.id},spec -FilePath crew`,
+    `Start-Process crew -Args approve,${work.id},spec -NoNewWindow`,
+    `saps crew -ArgumentList approve,${work.id},spec`,
+    `Start-Process -WorkingDirectory C:\\x -FilePath "crew" -ArgumentList "skip", "${work.id}", "tdd:AC-1", "--reason", "x"`,
+  ]) {
+    const response = ps(command);
+    expect(decision(response), command).toBe("ask");
+    expect(reasonOf(response), command).toBe(userOnly);
+  }
+  // pwsh with an option that takes a value before -Command: read as sh -c all the same, so the
+  // verbs the one user-only rule decides (workspace priorities accept, config jev.*) are read.
+  for (const command of [
+    `pwsh -NoProfile -ExecutionPolicy Bypass -Command "crew workspace priorities accept"`,
+    `pwsh -ExecutionPolicy Bypass -c "crew config jev.url https://x"`,
+    `powershell -WindowStyle Hidden -Command "crew approve ${work.id} spec"`,
+  ]) {
+    const response = ps(command);
+    expect(decision(response), command).toBe("ask");
+    expect(reasonOf(response), command).toBe(userOnly);
+  }
+  // && stays a list of two commands, not a background operator.
+  expect(ps("Get-Date && crew status")).toEqual({});
+  expect(ps("Start-Process notepad -Wait -ArgumentList README.md")).toEqual({});
+  // An opened session: a push handed on through PowerShell reaches the opened-session rule, which
+  // no backstop could (the line names no crew command).
+  git(root, "checkout", "-q", "-b", "crew/2026-10-15-042/T-2");
+  const opened = hookContext(
+    { session_id: "s", cwd: root },
+    {
+      ...testEnv(),
+      WIZARDINGCODE_CREW_MAIL_ID: "M-2026-10-15-001-storefront",
+      WIZARDINGCODE_CREW_MAIL_BRANCH: "crew/2026-10-15-042/T-2",
+      CLAUDE_CODE_SESSION_ATTENDED: "0",
+    },
+  );
+  const openedPs = (command: string) =>
+    onPreToolUse(opened, {
+      tool_name: "Bash",
+      tool_input: { command, shell: "powershell" },
+      permission_mode: "dontAsk",
+    });
+  for (const command of [
+    'pwsh -c "git push origin main"',
+    "iex 'git push origin main'",
+    "cmd /c git push origin main",
+    "Start-Process git -ArgumentList push,origin,main",
+    `powershell -Command "crew task merge T-1"`,
+  ]) {
+    const response = openedPs(command);
+    expect(decision(response), command).toBe("deny");
+    expect(reasonOf(response), command).toContain("opened by mail");
+  }
+  expect(openedPs("pwsh -c 'git push origin crew/2026-10-15-042/T-2'")).toEqual({});
+});
+
+test("SP6-T4 AC-13 (judgement round-5): every crew program at a command position of a PowerShell line is accounted for by the walker, or the line is a crew command the hook cannot read: userOnly naming the way out, denied where nobody watches and in an opened session, whatever stands before it and whatever opens the block; Start-Process's positional list, prefixes and -Name:value, cmd /c's quoted rest and powershell's positional string are read; a folder, a word or a string that names crew is not a command", () => {
+  const { root, ctx } = setup();
+  const work = createWork(ctx.paths, "fix");
+  saveWork(ctx.paths, work);
+  const { ps, reasonOf, userOnly } = powershellRows(ctx);
+  const unreadable =
+    "Crew: a crew command the hook cannot read (a script block, or a hand-on the reader does not follow) may record a decision only the user can take: write it plainly, one crew command per line";
+  // Read through the walker after the rewrite: the user-only rule's own text.
+  for (const command of [
+    `crew status; cmd /c "crew approve ${work.id} spec"`,
+    `cmd /c "crew status & crew approve ${work.id} spec"`,
+    `Start-Process crew 'approve ${work.id} spec'`,
+    `Start-Process -WorkingDir C:\\x crew 'approve ${work.id} spec'`,
+    `Start-Process -FilePath:crew -ArgumentList:approve,${work.id},spec`,
+    `Start-Process crew -Wait -ArgumentList approve,${work.id},spec`,
+    `powershell "crew approve ${work.id} spec"`,
+    `pwsh -NoProfile "crew skip ${work.id} tdd:AC-1 --reason x"`,
+    // A group at a command position after a subshell is one the POSIX reader follows.
+    `foreach ($i in 1) { crew skip ${work.id} tdd:AC-1 --reason x }`,
+  ]) {
+    const response = ps(command);
+    expect(decision(response), command).toBe("ask");
+    expect(reasonOf(response), command).toBe(userOnly);
+  }
+  // A crew program the walker could not account for: a script block whatever opens it, a quoted
+  // word inside it, a readable crew command before it, an assignment of its output.
+  for (const command of [
+    `crew status; Start-Job { crew approve ${work.id} spec }`,
+    `Start-Job { crew status; crew approve ${work.id} spec }`,
+    `Start-Job { crew status }; Start-Job { crew approve ${work.id} spec }`,
+    `Start-Job { crew objection "O-1" waive }`,
+    `Invoke-Command { crew question 'Q-1' answer yes }`,
+    `Start-Job { crew "approve" ${work.id} spec }`,
+    `try { crew approve ${work.id} spec } finally { }`,
+    `1 | ForEach-Object { crew approve ${work.id} spec }`,
+    `Invoke-Command -ScriptBlock { crew approve ${work.id} spec }`,
+    `Start-Job { crew workspace priorities accept }`,
+    `Start-ThreadJob -ScriptBlock { crew config jev.url https://x }`,
+    "Start-Job { crew status }",
+    "$x = crew status",
+  ]) {
+    const response = ps(command);
+    expect(decision(response), command).toBe("ask");
+    expect(reasonOf(response), command).toBe(unreadable);
+  }
+  // Where nobody watches: the unreadable form is denied naming the way out (no --mode can be read
+  // from it); a handed-on line the walker reads carries its --mode as through bash.
+  const unwatched = hookContext(
+    { session_id: "s", cwd: root },
+    { ...testEnv(), CLAUDE_CODE_SESSION_ATTENDED: "0" },
+  );
+  const headless = (command: string) =>
+    onPreToolUse(unwatched, {
+      tool_name: "Bash",
+      tool_input: { command, shell: "powershell" },
+      permission_mode: "dontAsk",
+    });
+  const deniedBlock = headless(`Start-Job { crew approve ${work.id} spec --mode dontAsk }`);
+  expect(decision(deniedBlock)).toBe("deny");
+  expect(reasonOf(deniedBlock)).toContain(
+    "Crew: a crew command the hook cannot read (a script block, or a hand-on the reader does not follow) and no person is watching this session",
+  );
+  expect(reasonOf(deniedBlock)).toContain("write it plainly, one crew command per line");
+  expect(headless(`pwsh -c "crew approve ${work.id} spec --mode dontAsk"`)).toEqual({});
+  // Not a crew command: a folder named with its slash (a bare word, a string or a hand-on's text
+  // that names crew is userOnly since round 13, AC-21).
+  expect(ps("cat crew/README.md")).toEqual({});
+  // An opened session: a crew command it cannot read is denied, as a push handed on with a valued
+  // option or behind a switch is, the rule named in the reason.
+  git(root, "checkout", "-q", "-b", "crew/2026-10-15-042/T-2");
+  const opened = hookContext(
+    { session_id: "s", cwd: root },
+    {
+      ...testEnv(),
+      WIZARDINGCODE_CREW_MAIL_ID: "M-2026-10-15-001-storefront",
+      WIZARDINGCODE_CREW_MAIL_BRANCH: "crew/2026-10-15-042/T-2",
+      CLAUDE_CODE_SESSION_ATTENDED: "0",
+    },
+  );
+  const openedPs = (command: string) =>
+    onPreToolUse(opened, {
+      tool_name: "Bash",
+      tool_input: { command, shell: "powershell" },
+      permission_mode: "dontAsk",
+    });
+  const block = openedPs(`Start-Job { crew task merge T-1 }`);
+  expect(decision(block)).toBe("deny");
+  expect(reasonOf(block)).toContain("opened by mail");
+  expect(reasonOf(block)).toContain("a crew command the hook cannot read");
+  expect(reasonOf(openedPs("Start-Job { crew status }"))).toContain(
+    "a crew command the hook cannot read",
+  );
+  for (const command of [
+    'pwsh -ExecutionPolicy Bypass -c "git push origin main"',
+    "Start-Process git -Wait -ArgumentList push,origin,main",
+  ]) {
+    const response = openedPs(command);
+    expect(decision(response), command).toBe("deny");
+    expect(reasonOf(response), command).toContain("git push is denied");
+  }
+  expect(reasonOf(openedPs('powershell -Command "crew task merge T-1"'))).toContain(
+    "crew task merge is denied",
+  );
+});
+
+test("SP6-T4 AC-14 (judgement round-6): the crew programs the walker read are taken out of the PowerShell line by position and whatever crew program is left at a command position is unreadable, whatever read command stood before it (a wrapper, a handed-on string); a crew word followed by a subexpression or a splat is unreadable; an unreadable crew command is userOnly in every policy, relay included; a quoted program behind a runner inside a block counts; a string, an assignment of a string or a flag's value that names crew is not a command", () => {
+  const { root, ctx } = setup();
+  const work = createWork(ctx.paths, "fix");
+  saveWork(ctx.paths, work);
+  const { ps, reasonOf, userOnly } = powershellRows(ctx);
+  const unreadable =
+    "Crew: a crew command the hook cannot read (a script block, or a hand-on the reader does not follow) may record a decision only the user can take: write it plainly, one crew command per line";
+  // A switch between the program and the positional list: read through the walker.
+  const switched = ps(`Start-Process crew -Wait 'approve ${work.id} spec'`);
+  expect(decision(switched)).toBe("ask");
+  expect(reasonOf(switched)).toBe(userOnly);
+  // A readable crew command the walker found, through a wrapper or a handed-on string, no longer
+  // stands in for the unread one in a block; a quoted program behind a runner inside a block counts;
+  // a subexpression or a splat as crew's words is unreadable.
+  for (const command of [
+    `env crew status; Start-Job { crew approve ${work.id} spec }`,
+    `iex 'crew status'; Start-Job { crew approve ${work.id} spec }`,
+    `pwsh -c "crew status"; Invoke-Command { crew skip ${work.id} tdd:AC-1 --reason x }`,
+    `Start-Job { node C:\\p\\dist\\crew.mjs approve ${work.id} spec }`,
+    `Start-Job { node "C:/p/crew.mjs" approve ${work.id} spec }`,
+    `crew ('approve') ${work.id} spec`,
+    `crew (Write-Output approve) ${work.id} spec`,
+    `crew @('approve','${work.id}','spec')`,
+    `$a = 'approve','${work.id}','spec'; crew @a`,
+  ]) {
+    const response = ps(command);
+    expect(decision(response), command).toBe("ask");
+    expect(reasonOf(response), command).toBe(unreadable);
+  }
+  // (A flag's value that names crew is userOnly since round 13, AC-21.)
+  // Under relay (no policy file) a plain user-only command runs with no prompt, as ADR 0005 says;
+  // an unreadable crew command is userOnly in every policy, the policy's own commands included.
+  const relay = setup(null);
+  const relayWork = createWork(relay.ctx.paths, "fix");
+  saveWork(relay.ctx.paths, relayWork);
+  const relayPs = (command: string) =>
+    onPreToolUse(relay.ctx, {
+      tool_name: "Bash",
+      tool_input: { command, shell: "powershell" },
+      permission_mode: "default",
+    });
+  expect(relayPs(`crew approve ${relayWork.id} spec`)).toEqual({});
+  for (const command of [
+    `Start-Job { crew approve ${relayWork.id} spec }`,
+    "Start-Job { crew policy set attendedDecisions prompt }",
+  ]) {
+    const response = relayPs(command);
+    expect(decision(response), command).toBe("ask");
+    expect(reasonOf(response), command).toBe(unreadable);
+  }
+  // An opened session: the unread block is denied although a readable crew command stood before it;
+  // a switch before a positional push is read.
+  git(root, "checkout", "-q", "-b", "crew/2026-10-15-042/T-2");
+  const opened = hookContext(
+    { session_id: "s", cwd: root },
+    {
+      ...testEnv(),
+      WIZARDINGCODE_CREW_MAIL_ID: "M-2026-10-15-001-storefront",
+      WIZARDINGCODE_CREW_MAIL_BRANCH: "crew/2026-10-15-042/T-2",
+      CLAUDE_CODE_SESSION_ATTENDED: "0",
+    },
+  );
+  const openedPs = (command: string) =>
+    onPreToolUse(opened, {
+      tool_name: "Bash",
+      tool_input: { command, shell: "powershell" },
+      permission_mode: "dontAsk",
+    });
+  const hidden = openedPs("iex 'crew status'; Start-Job { crew task merge T-1 }");
+  expect(decision(hidden)).toBe("deny");
+  expect(reasonOf(hidden)).toContain("a crew command the hook cannot read");
+  expect(reasonOf(openedPs("Start-Process -NoNewWindow git push,origin,main"))).toContain(
+    "git push is denied",
+  );
+});
+
+test("SP6-T4 AC-15 (judgement round-7): nothing is taken out of the line by text: every piece the walker did not read as crew, at every level (a substitution's inside included), is read for a crew program at a command position, so a readable crew command never hides an unread one whatever it says; an assignment of any shape, return and throw are command positions; a flag before a subexpression or a splat still makes the crew command unreadable; a script block compiled from a string is the command it holds", () => {
+  const { root, ctx } = setup();
+  const work = createWork(ctx.paths, "fix");
+  saveWork(ctx.paths, work);
+  const { ps, reasonOf, userOnly } = powershellRows(ctx);
+  const unreadable =
+    "Crew: a crew command the hook cannot read (a script block, or a hand-on the reader does not follow) may record a decision only the user can take: write it plainly, one crew command per line";
+  // A read piece whose text is a prefix of, or equal to, the unread one; a subexpression inside an
+  // expandable string; every assignment shape, return and throw; a flag before the subexpression;
+  // a block on a second line behind a readable command.
+  for (const command of [
+    `iex 'crew a'; Start-Job { crew approve ${work.id} spec }`,
+    `Start-Job { env crew 'skip' ${work.id} tdd:AC-1 --reason x }; env crew "status"`,
+    `Start-Job { crew approve 'B' }; iex "crew approve 'A'"`,
+    `Write-Output "$(Invoke-Command { crew approve ${work.id} spec })"`,
+    `$env:X = crew approve ${work.id} spec`,
+    `$global:x = crew approve ${work.id} spec`,
+    `$x += crew approve ${work.id} spec`,
+    `$a[0] = crew approve ${work.id} spec`,
+    `$o.p = crew approve ${work.id} spec`,
+    `\${x} = crew approve ${work.id} spec`,
+    `return crew approve ${work.id} spec`,
+    `throw crew approve ${work.id} spec`,
+    `crew --json ('approve') ${work.id} spec`,
+    "crew --json @a",
+    `Start-Job { crew approve ${work.id} audit }\ncrew status`,
+  ]) {
+    const response = ps(command);
+    expect(decision(response), command).toBe("ask");
+    expect(reasonOf(response), command).toBe(unreadable);
+  }
+  // A string compiled into a script block is the command it holds; a substitution the walker read
+  // is accounted for where it stands.
+  for (const command of [
+    `& ([scriptblock]::Create('crew approve ${work.id} spec'))`,
+    `$ExecutionContext.InvokeCommand.InvokeScript("crew skip ${work.id} tdd:AC-1 --reason x")`,
+    `$x = $(crew approve ${work.id} spec)`,
+  ]) {
+    const response = ps(command);
+    expect(decision(response), command).toBe("ask");
+    expect(reasonOf(response), command).toBe(userOnly);
+  }
+  // Where nobody watches, the block behind a readable command with a matching --mode is denied.
+  const unwatched = hookContext(
+    { session_id: "s", cwd: root },
+    { ...testEnv(), CLAUDE_CODE_SESSION_ATTENDED: "0" },
+  );
+  const twoLines = onPreToolUse(unwatched, {
+    tool_name: "Bash",
+    tool_input: {
+      command: `Start-Job { crew approve ${work.id} --mode dontAsk audit }\ncrew approve ${work.id} --mode dontAsk`,
+      shell: "powershell",
+    },
+    permission_mode: "dontAsk",
+  });
+  expect(decision(twoLines)).toBe("deny");
+  expect(reasonOf(twoLines)).toContain(
+    "Crew: a crew command the hook cannot read (a script block, or a hand-on the reader does not follow) and no person is watching this session",
+  );
+  // Not a command: a read substitution assigned (the strings that name crew are round 11's).
+  expect(ps('$x = "$(crew status)"')).toEqual({});
+});
+
+test("SP6-T4 AC-16 (judgement round-8): the walker's whole wrapper table stands before a program in a block; PowerShell's own spellings reach the reader (a backtick escape decoded, the stop-parsing token gone, an encoded command decoded, iex with parentheses, -Command or a piped string, NewScriptBlock, a concatenated string, a parenthesised program name, node.exe and a runner's valued options); a long line without crew costs nothing", () => {
+  const { root, ctx } = setup();
+  const work = createWork(ctx.paths, "fix");
+  saveWork(ctx.paths, work);
+  const { ps, reasonOf, userOnly } = powershellRows(ctx);
+  const unreadable =
+    "Crew: a crew command the hook cannot read (a script block, or a hand-on the reader does not follow) may record a decision only the user can take: write it plainly, one crew command per line";
+  const approve = `crew approve ${work.id} spec`;
+  // PowerShell's own spellings of a plain command, read through the walker after the rewrite.
+  for (const command of [
+    `iex ("${approve}")`,
+    `Invoke-Expression('${approve}')`,
+    `iex -Command "${approve}"`,
+    `& $ExecutionContext.InvokeCommand.NewScriptBlock('${approve}')`,
+    `& ([scriptblock]::Create('crew ' + 'approve ${work.id} spec'))`,
+    `"${approve}" | iex`,
+    `& ('cr'+'ew') approve ${work.id} spec`,
+    `node.exe C:/p/crew.mjs approve ${work.id} spec`,
+    `npx.cmd crew approve ${work.id} spec`,
+  ]) {
+    const response = ps(command);
+    expect(decision(response), command).toBe("ask");
+    expect(reasonOf(response), command).toBe(userOnly);
+  }
+  // The walker's whole wrapper table, a runner's valued options and node.exe inside a block.
+  for (const command of [
+    `Start-Job { timeout 5 ${approve} }`,
+    `Start-Job { sudo -u x ${approve} }`,
+    `Start-Job { nohup ${approve} }`,
+    `Start-Job { time ${approve} }`,
+    `Start-Job { node --env-file .env C:/p/crew.mjs approve ${work.id} spec }`,
+    `Start-Job { npx -p crew@1 crew approve ${work.id} spec }`,
+    `Start-Job { node.exe C:/p/crew.mjs approve ${work.id} spec }`,
+    `Start-Job { npx.cmd crew approve ${work.id} spec }`,
+  ]) {
+    const response = ps(command);
+    expect(decision(response), command).toBe("ask");
+    expect(reasonOf(response), command).toBe(unreadable);
+  }
+  // A long keyword-led line that names no crew is read at once.
+  const started = Date.now();
+  expect(ps(`if ($a) { ${"x=1 ".repeat(300)}} else { ${"do y ".repeat(300)}}`)).toEqual({});
+  expect(Date.now() - started).toBeLessThan(2000);
+  // An opened session: the same spellings reach the merge and push rules.
+  git(root, "checkout", "-q", "-b", "crew/2026-10-15-042/T-2");
+  const opened = hookContext(
+    { session_id: "s", cwd: root },
+    {
+      ...testEnv(),
+      WIZARDINGCODE_CREW_MAIL_ID: "M-2026-10-15-001-storefront",
+      WIZARDINGCODE_CREW_MAIL_BRANCH: "crew/2026-10-15-042/T-2",
+      CLAUDE_CODE_SESSION_ATTENDED: "0",
+    },
+  );
+  const openedPs = (command: string) =>
+    onPreToolUse(opened, {
+      tool_name: "Bash",
+      tool_input: { command, shell: "powershell" },
+      permission_mode: "dontAsk",
+    });
+  for (const command of ['"crew task merge T-1 --force" | iex']) {
+    const response = openedPs(command);
+    expect(decision(response), command).toBe("deny");
+    expect(reasonOf(response), command).toContain("crew task merge is denied");
+  }
+  expect(
+    reasonOf(
+      openedPs(
+        `pwsh -EncodedCommand ${Buffer.from("git push origin main", "utf16le").toString("base64")}`,
+      ),
+    ),
+  ).toContain("an encoded command");
+});
+
+test("SP6-T4 AC-17 (judgement round-9): the reader folds literals and decodes nothing: a line whose text it cannot read (a backtick escape, the stop-parsing token, an encoded command, a typographic quote, a %NAME% expansion, an evaluator given anything but one literal string) is userOnly in every policy and denied where nobody watches or in an opened session, crew named or not; the evaluators' other spellings are read when given one literal string; a line without such a mark is read as before", () => {
+  const { root, ctx } = setup();
+  const work = createWork(ctx.paths, "fix");
+  saveWork(ctx.paths, work);
+  const { ps, reasonOf, userOnly, hidden } = powershellRows(ctx);
+  const approve = `crew approve ${work.id} spec`;
+  const encoded = Buffer.from(approve, "utf16le").toString("base64");
+  const evaluator = "an evaluator given anything but one literal string";
+  // A mark that hides the text: userOnly naming it, crew named or not, a line continuation included.
+  for (const [command, what] of [
+    [`cre\`w ap\`prove ${work.id} spec`, "a backtick escape"],
+    [`crew profile \`\n confirm test`, "a backtick escape"],
+    [`echo \`"; ${approve}; echo \`"`, "a backtick escape"],
+    ["Get-ChildItem `-Recurse", "a backtick escape"],
+    [`node C:/p/crew.mjs --% approve ${work.id} spec`, "the stop-parsing token --%"],
+    [`pwsh -NoProfile -EncodedCommand ${encoded}`, "an encoded command"],
+    [`powershell -enc ${encoded}`, "an encoded command"],
+    [
+      `pwsh -enc ${Buffer.from(`pwsh -enc ${encoded}`, "utf16le").toString("base64")}`,
+      "an encoded command",
+    ],
+    [`echo "x“; ${approve}; echo “y"`, "a typographic quote"],
+    [`cmd /c crew %V% ${work.id} spec`, "a %NAME% expansion"],
+    ["iex $cmd", evaluator],
+    ["Invoke-Expression $cmd", evaluator],
+    ["[scriptblock]::Create('crew ' + $x)", evaluator],
+    ["& ([scriptblock]::Create($y))", evaluator],
+    ["$ExecutionContext.InvokeCommand.InvokeScript($z)", evaluator],
+  ] as const) {
+    const response = ps(command);
+    expect(decision(response), command).toBe("ask");
+    expect(reasonOf(response), command).toBe(hidden(what));
+  }
+  // The evaluators' other spellings, given one literal string, are read through the walker.
+  for (const command of [
+    `iex -C "${approve}"`,
+    `iex -Command:"${approve}"`,
+    `& [System.Management.Automation.ScriptBlock]::Create('${approve}')`,
+    `$ExecutionContext.SessionState.InvokeCommand.InvokeScript('${approve}')`,
+  ]) {
+    const response = ps(command);
+    expect(decision(response), command).toBe("ask");
+    expect(reasonOf(response), command).toBe(userOnly);
+  }
+  // Not a mark: another program's -e, a plain line.
+  for (const command of ["sed -e s/a/b/ f", "docker run -e FOO=bar img", "crew status"])
+    expect(ps(command), command).toEqual({});
+  // Where nobody watches: denied naming the mark.
+  const unwatched = hookContext(
+    { session_id: "s", cwd: root },
+    { ...testEnv(), CLAUDE_CODE_SESSION_ATTENDED: "0" },
+  );
+  const continued = onPreToolUse(unwatched, {
+    tool_name: "Bash",
+    tool_input: { command: `crew profile \`\n confirm test`, shell: "powershell" },
+    permission_mode: "dontAsk",
+  });
+  expect(decision(continued)).toBe("deny");
+  expect(reasonOf(continued)).toContain(
+    "Crew: a PowerShell line whose text the hook cannot read (a backtick escape) and no person is watching this session",
+  );
+  // An opened session: denied naming the mark.
+  git(root, "checkout", "-q", "-b", "crew/2026-10-15-042/T-2");
+  const opened = hookContext(
+    { session_id: "s", cwd: root },
+    {
+      ...testEnv(),
+      WIZARDINGCODE_CREW_MAIL_ID: "M-2026-10-15-001-storefront",
+      WIZARDINGCODE_CREW_MAIL_BRANCH: "crew/2026-10-15-042/T-2",
+      CLAUDE_CODE_SESSION_ATTENDED: "0",
+    },
+  );
+  const openedPs = (command: string) =>
+    onPreToolUse(opened, {
+      tool_name: "Bash",
+      tool_input: { command, shell: "powershell" },
+      permission_mode: "dontAsk",
+    });
+  for (const command of [
+    `crew task merge T-1 \`\n --force`,
+    `pwsh -enc ${Buffer.from("git push origin main", "utf16le").toString("base64")}`,
+    "node C:/p/crew.mjs --% task merge T-1",
+  ]) {
+    const response = openedPs(command);
+    expect(decision(response), command).toBe("deny");
+    expect(reasonOf(response), command).toContain("opened by mail");
+    expect(reasonOf(response), command).toContain("whose text the hook cannot read");
+  }
+});
+
+test("SP6-T4 AC-18 (judgement round-10): the reader recognises a small set of literal forms and asks about everything else that could run a command: a hand-on program still standing after the rewrite (pwsh, powershell or cmd by name or by path with any parameters, Start-Process, Invoke-Command, Start-Job, an evaluator), an alias or a command lookup, a caret, a typographic dash, a here-string, an unusual space, an encoded command by any prefix or path; a hand-on by path with one literal string is read; prose that names such a program is not a command", () => {
+  const { root, ctx } = setup();
+  const work = createWork(ctx.paths, "fix");
+  saveWork(ctx.paths, work);
+  const { ps, reasonOf, userOnly, hidden } = powershellRows(ctx);
+  const approve = `crew approve ${work.id} spec`;
+  const encoded = Buffer.from(approve, "utf16le").toString("base64");
+  const pwshPath = "C:\\Program Files\\PowerShell\\7\\pwsh.exe";
+  for (const [command, what] of [
+    [`pwsh -en ${encoded}`, "an encoded command"],
+    [`& '${pwshPath}' -enc ${encoded}`, "an encoded command"],
+    [`C:\\pwsh7\\pwsh.exe -encodedC ${encoded}`, "an encoded command"],
+    [`pwsh -Comm ${approve}`, "a hand-on the reader did not follow (pwsh)"],
+    [`cmd /d /c ${approve}`, "a hand-on the reader did not follow (cmd)"],
+    [`cmd /c crew ap^prove ${work.id} spec`, "a caret escape"],
+    [`cmd /c cr^ew approve ${work.id} spec`, "a caret escape"],
+    [`Start-Process crew \u2013ArgumentList 'approve ${work.id} spec'`, "a typographic dash"],
+    [`echo @"\na"\n"@; ${approve}; echo @"\nb"\n"@`, "a here-string"],
+    [`crew\u00a0approve ${work.id} spec`, "an unusual space"],
+    ["Start-Job { Get-Date }", "a hand-on the reader did not follow (Start-Job)"],
+    [
+      `Invoke-Command -ComputerName x { ${approve} }`,
+      "a crew command the hook cannot read (a script block, or a hand-on the reader does not follow)",
+    ],
+    [`Set-Alias c crew; c approve ${work.id} spec`, "an alias or a command lookup"],
+    [`& (Get-Command crew) approve ${work.id} spec`, "an alias or a command lookup"],
+    [`& (gcm crew) approve ${work.id} spec`, "an alias or a command lookup"],
+    [`& 'iex' "${approve}"`, "an evaluator given anything but one literal string"],
+  ] as const) {
+    const response = ps(command);
+    expect(decision(response), command).toBe("ask");
+    const reason = reasonOf(response);
+    if (what.startsWith("a crew command")) expect(reason, command).toContain(what);
+    else expect(reason, command).toBe(hidden(what));
+  }
+  // A hand-on by path, given one literal string, is read through the walker.
+  for (const command of [
+    `& '${pwshPath}' -c "${approve}"`,
+    `C:\\pwsh7\\pwsh.exe -c "${approve}"`,
+    `/usr/bin/pwsh -Command '${approve}'`,
+  ]) {
+    const response = ps(command);
+    expect(decision(response), command).toBe("ask");
+    expect(reasonOf(response), command).toBe(userOnly);
+  }
+  // Prose that names such a program, and a word that is one, are not a command.
+  for (const command of [
+    'git commit -m "fix cmd"',
+    'git commit -m "use pwsh later"',
+    'Write-Host "run Start-Job later"',
+    "echo cmd",
+    "cmd /c dir",
+    "Start-Process notepad -ArgumentList README.md",
+  ])
+    expect(ps(command), command).toEqual({});
+  // Where nobody watches, a hidden line is denied before the words the walker read are trusted.
+  const unwatched = hookContext(
+    { session_id: "s", cwd: root },
+    { ...testEnv(), CLAUDE_CODE_SESSION_ATTENDED: "0" },
+  );
+  const headless = onPreToolUse(unwatched, {
+    tool_name: "Bash",
+    tool_input: { command: `pwsh -Comm ${approve} --mode dontAsk`, shell: "powershell" },
+    permission_mode: "dontAsk",
+  });
+  expect(decision(headless)).toBe("deny");
+  expect(reasonOf(headless)).toContain(
+    "a hand-on the reader did not follow (pwsh)) and no person is watching this session",
+  );
+  // An opened session: a hidden line denied naming the mark, a hand-on by path read to the rule.
+  git(root, "checkout", "-q", "-b", "crew/2026-10-15-042/T-2");
+  const opened = hookContext(
+    { session_id: "s", cwd: root },
+    {
+      ...testEnv(),
+      WIZARDINGCODE_CREW_MAIL_ID: "M-2026-10-15-001-storefront",
+      WIZARDINGCODE_CREW_MAIL_BRANCH: "crew/2026-10-15-042/T-2",
+      CLAUDE_CODE_SESSION_ATTENDED: "0",
+    },
+  );
+  const openedPs = (command: string) =>
+    onPreToolUse(opened, {
+      tool_name: "Bash",
+      tool_input: { command, shell: "powershell" },
+      permission_mode: "dontAsk",
+    });
+  const viaCmd = openedPs("cmd /d /c git push origin main");
+  expect(decision(viaCmd)).toBe("deny");
+  expect(reasonOf(viaCmd)).toContain("a hand-on the reader did not follow (cmd)");
+  expect(reasonOf(openedPs(`C:\\pwsh7\\pwsh.exe -c "git push origin main"`))).toContain(
+    "git push is denied",
+  );
+});
+
+test("SP6-T4 AC-19 (judgement round-11): inside a string of a piece the walker did not read as a crew command and did not hand on, a crew word is a line the hook cannot read, whatever program the string is given to; a block comment is a mark; the caret and the %NAME% marks apply to a cmd or a stop-parsing line alone; a quoted path to a shell or to cmd with parameters the reader does not know is a hand-on left", () => {
+  const { root, ctx } = setup();
+  const work = createWork(ctx.paths, "fix");
+  saveWork(ctx.paths, work);
+  const { ps, reasonOf, hidden, wayOut } = powershellRows(ctx);
+  const approve = `crew approve ${work.id} spec`;
+  const inString = "a crew word inside a string the reader did not open";
+  const pwshPath = "C:\\Program Files\\PowerShell\\7\\pwsh.exe";
+  // A literal command line given to any program, and prose that names crew inside a string: the
+  // reader does not know what the program does with it, so it asks.
+  for (const command of [
+    `forfiles /p . /m x.log /c "cmd /c ${approve}"`,
+    `Invoke-WmiMethod -Class Win32_Process -Name Create -ArgumentList 'cmd /c ${approve}'`,
+    `Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{CommandLine='cmd /c ${approve}'}`,
+    `schtasks /create /sc once /st 00:00 /tr "cmd /c ${approve}" /tn x`,
+    `[Diagnostics.Process]::Start('cmd','/c ${approve}')`,
+    `(New-Object -ComObject WScript.Shell).Run('cmd /c ${approve}')`,
+    `'${approve}' | cmd`,
+    'git commit -m "crew approve flow"',
+    "Select-String -Pattern 'crew task merge' README.md",
+    'git log --grep "crew skip"',
+    'Write-Host "crew approve"',
+    'git commit -m "crew approve flow"; cmd /c dir',
+    `Write-Host "done; crew approve ${work.id} spec"`,
+    'git commit -m "x & node dist/crew.mjs approve"',
+    '$tool = "crew"',
+    "@{ name = 'crew' }",
+    'Write-Host "crew status"; crew status',
+    'git commit -m "fix: iex crew approve"',
+    'Write-Host "$(Get-Date) crew"',
+  ]) {
+    const response = ps(command);
+    expect(decision(response), command).toBe("ask");
+    expect(reasonOf(response), command).toBe(hidden(inString, wayOut));
+  }
+  // A block comment hides what follows it from the reader; a quoted path to a shell or to cmd
+  // with parameters the reader does not know is a hand-on left.
+  for (const [command, what] of [
+    [`<# #> ${approve}`, "a block comment"],
+    [`crew <# #> approve ${work.id} spec`, "a block comment"],
+    [`& '${pwshPath}' -Comm ${approve}`, "a hand-on the reader did not follow (pwsh)"],
+    [`& "cmd" /d /c ${approve}`, "a hand-on the reader did not follow (cmd)"],
+  ] as const) {
+    const response = ps(command);
+    expect(decision(response), command).toBe("ask");
+    expect(reasonOf(response), command).toBe(hidden(what));
+  }
+  // The caret and the %NAME% expansion are cmd's: a regex anchor, a parent revision and a format
+  // string are read as before, a handed-on string the walker read is not a string to the rule, and
+  // a path that names crew inside a string is not a crew word.
+  for (const command of [
+    "rg '^export' src",
+    "git diff HEAD^",
+    "git log --format=%H%n",
+    'Get-Date -UFormat "%Y%m%d"',
+    'Get-Content "crew/README.md"',
+  ])
+    expect(ps(command), command).toEqual({});
+  // An opened session: a string given to a program is denied naming the mark.
+  git(root, "checkout", "-q", "-b", "crew/2026-10-15-042/T-2");
+  const opened = hookContext(
+    { session_id: "s", cwd: root },
+    {
+      ...testEnv(),
+      WIZARDINGCODE_CREW_MAIL_ID: "M-2026-10-15-001-storefront",
+      WIZARDINGCODE_CREW_MAIL_BRANCH: "crew/2026-10-15-042/T-2",
+      CLAUDE_CODE_SESSION_ATTENDED: "0",
+    },
+  );
+  const viaForfiles = onPreToolUse(opened, {
+    tool_name: "Bash",
+    tool_input: {
+      command: 'forfiles /c "cmd /c crew task merge T-1 --force"',
+      shell: "powershell",
+    },
+    permission_mode: "dontAsk",
+  });
+  expect(decision(viaForfiles)).toBe("deny");
+  expect(reasonOf(viaForfiles)).toContain("opened by mail");
+  expect(reasonOf(viaForfiles)).toContain(inString);
+});
+
+test("SP6-T4 AC-20 (judgement round-12): PowerShell's start alias at a command position, and cmd's start and call behind cmd /c, are read as the command they run; a crew program named by path inside a string is a crew word and a string's bounds are its own quotes; cmd's marks are read where cmd stands as a program; the string rule spares a crew command the walker read, comes after the crew rule and before the hand-on rule, and names the file form as its way out", () => {
+  const { root, ctx } = setup();
+  const work = createWork(ctx.paths, "fix");
+  saveWork(ctx.paths, work);
+  const { ps, reasonOf, hidden, userOnly, wayOut } = powershellRows(ctx);
+  const approve = `crew approve ${work.id} spec`;
+  const inString = "a crew word inside a string the reader did not open";
+  const bundle = "C:\\p\\dist\\crew.mjs";
+  // start, PowerShell's alias of Start-Process, at a command position; cmd's start with its title
+  // and its switches, and cmd's call, behind cmd /c: the command they run, read by the walker; a
+  // crew command the walker read is the user-only rule's whatever its strings say.
+  for (const command of [
+    `start node ${bundle},approve,${work.id},spec`,
+    `& start -Wait node ${bundle},approve,${work.id},spec`,
+    `start "crew" approve,${work.id},spec`,
+    `cmd /c start node ${bundle} approve ${work.id} spec`,
+    `cmd /c start "" /wait /d C:\\p node ${bundle} approve ${work.id} spec`,
+    `cmd /c "call node ${bundle} approve ${work.id} spec"`,
+    `cmd /c call node ${bundle} approve ${work.id} spec`,
+    `sudo start node ${bundle},approve,${work.id},spec`,
+    `pwsh -c "cmd /c ${approve}"`,
+    `pwsh -c "start node ${bundle},approve,${work.id},spec"`,
+    `pwsh -c "iex '${approve}'"`,
+    `crew skip ${work.id} tdd:AC-1 --reason "crew is down"`,
+  ]) {
+    const response = ps(command);
+    expect(decision(response), command).toBe("ask");
+    expect(reasonOf(response), command).toBe(userOnly);
+  }
+  // A crew program named by path inside a string, a quoted path ending in crew, and a string
+  // inside a block the walker did not open: asked naming the file form as the way out.
+  for (const command of [
+    `forfiles /c "bash -c '/c/tools/wizardingcode/bin/crew approve ${work.id} spec'"`,
+    'git add "src/crew"',
+    'Start-Job { Write-Host "crew" }',
+  ]) {
+    const response = ps(command);
+    expect(decision(response), command).toBe("ask");
+    expect(reasonOf(response), command).toBe(hidden(inString, wayOut));
+  }
+  // The crew rule before the string rule; cmd's marks where cmd stands as a program, by name at
+  // the end of a pipe or by a quoted path.
+  for (const [command, reason] of [
+    [
+      `Start-Job { ${approve}; Write-Host "crew" }`,
+      "Crew: a crew command the hook cannot read (a script block, or a hand-on the reader does not follow) may record a decision only the user can take: write it plainly, one crew command per line",
+    ],
+    ['"echo %PATH%" | cmd', hidden("a %NAME% expansion")],
+    [`"C:\\Windows\\System32\\cmd.exe" /c echo ^crew`, hidden("a caret escape")],
+  ] as const) {
+    const response = ps(command);
+    expect(decision(response), command).toBe("ask");
+    expect(reasonOf(response), command).toBe(reason);
+  }
+  // Read as before: a word that contains crew, a crew command the walker read whose string names
+  // crew, start as a word, and cmd as a path segment (a bare crew between two strings is a word,
+  // AC-21).
+  for (const command of [
+    'Write-Host "screw"',
+    `crew criteria ${work.id} add "crew status prints the line"`,
+    "npm start",
+    "go test -run '^TestFoo$' ./cmd/...",
+    "git diff HEAD^ -- cmd/server/main.go",
+    "rg '^func main' cmd/",
+  ])
+    expect(ps(command), command).toEqual({});
+  // An opened session: a merge behind cmd's start is denied as the command it is.
+  git(root, "checkout", "-q", "-b", "crew/2026-10-15-042/T-2");
+  const opened = hookContext(
+    { session_id: "s", cwd: root },
+    {
+      ...testEnv(),
+      WIZARDINGCODE_CREW_MAIL_ID: "M-2026-10-15-001-storefront",
+      WIZARDINGCODE_CREW_MAIL_BRANCH: "crew/2026-10-15-042/T-2",
+      CLAUDE_CODE_SESSION_ATTENDED: "0",
+    },
+  );
+  const viaStart = onPreToolUse(opened, {
+    tool_name: "Bash",
+    tool_input: {
+      command: `cmd /c start node ${bundle} task merge T-1 --force`,
+      shell: "powershell",
+    },
+    permission_mode: "dontAsk",
+  });
+  expect(decision(viaStart)).toBe("deny");
+  expect(reasonOf(viaStart)).toContain("opened by mail");
+  expect(reasonOf(viaStart)).toContain("merge");
+});
+
+test("SP6-T4 AC-21 (judgement round-13): a crew word in any piece the walker did not read as a crew command and did not hand on is a line the hook cannot read wherever it stands, so every literal line that could run a crew command is asked whatever its grammar; a folder with its slash, .crew, a file of another name and a word that contains crew are read as before; an unknown Start-Process parameter leaves the line as written and a colon-form switch drops its value; the call operator goes before the rewrites; an evaluator and a hand-on inside a handed string are asked by the per-piece reading", () => {
+  const { root, ctx } = setup();
+  const work = createWork(ctx.paths, "fix");
+  saveWork(ctx.paths, work);
+  const { ps, reasonOf, wayOut, crewWord, hidden, userOnly } = powershellRows(ctx);
+  const approve = `crew approve ${work.id} spec`;
+  const bundle = "C:\\p\\dist\\crew.mjs";
+  // Read as the user-only command: the call operator before the rewrites, Start-Process's common
+  // parameters by name and by alias, a colon-form switch, the alias with its words apart, saps and
+  // a shell inside a handed string.
+  for (const command of [
+    `. start node ${bundle},approve,${work.id},spec`,
+    `Start-Process -ErrorAction Stop node ${bundle},approve,${work.id},spec`,
+    `start -ea 0 node ${bundle},approve,${work.id},spec`,
+    `start -Wait:$true node ${bundle},approve,${work.id},spec`,
+    `start node ${bundle} approve ${work.id} spec`,
+    `pwsh -c "saps node ${bundle},approve,${work.id},spec"`,
+    `pwsh -c "pwsh -c '${approve}'"`,
+  ]) {
+    const response = ps(command);
+    expect(decision(response), command).toBe("ask");
+    expect(reasonOf(response), command).toBe(userOnly);
+  }
+  // A crew word the reader could not place, whatever the grammar around it: an assignment of the
+  // alias, cmd's builtins repeated, after a separator, with a joined value or the echo-off prefix,
+  // a quoted runner path with a space, an unknown parameter of the alias, a folder, a word, a
+  // flag's value, a path ending in crew, a word behind a handed string or a program.
+  for (const command of [
+    `$null = start node ${bundle},approve,${work.id},spec`,
+    `cmd /c call call node ${bundle} approve ${work.id} spec`,
+    `cmd /c "ver & call node ${bundle} approve ${work.id} spec"`,
+    `cmd /c "ver & start /b node ${bundle} approve ${work.id} spec"`,
+    `cmd /c start /dC:\\tmp node ${bundle} approve ${work.id} spec`,
+    `cmd /c "@node ${bundle} approve ${work.id} spec"`,
+    `& "C:\\Program Files\\nodejs\\node.exe" ${bundle} approve ${work.id} spec`,
+    `start -Foo bar node ${bundle},approve,${work.id},spec`,
+    "cd crew",
+    "ls crew",
+    "echo crew approve now",
+    "git log --grep=crew",
+    "ls plugins/core/bin/crew",
+    "Move-Item 'a' crew 'b'",
+    'pwsh -c "echo crew approve"',
+    "Start-Process notepad 'crew skip notes.txt'",
+  ]) {
+    const response = ps(command);
+    expect(decision(response), command).toBe("ask");
+    expect(reasonOf(response), command).toBe(hidden(crewWord, wayOut));
+  }
+  // An unknown parameter leaves Start-Process standing as a hand-on; an evaluator and a hand-on
+  // inside a handed string are read in their own piece; a script block compiled from an
+  // expression is an evaluator.
+  for (const [command, what] of [
+    [
+      `Start-Process -Foo bar node ${bundle},approve,${work.id},spec`,
+      "a hand-on the reader did not follow (Start-Process)",
+    ],
+    ['pwsh -c "iex -Command x.ps1"', "an evaluator given anything but one literal string"],
+    ['pwsh -c "pwsh -Comm git status"', "a hand-on the reader did not follow (pwsh)"],
+    ["[scriptblock]::Create($x)", "an evaluator given anything but one literal string"],
+  ] as const) {
+    const response = ps(command);
+    expect(decision(response), command).toBe("ask");
+    expect(reasonOf(response), command).toBe(hidden(what));
+  }
+  // Read as before: a folder with its slash, .crew, a file of another name, a word that contains
+  // crew, a .NET Create that is no script block, start as a word with arguments.
+  for (const command of [
+    "ls crew/",
+    "cat crew.log",
+    "ls .crew/work",
+    'Write-Host "my-crew"',
+    'Write-Host ".crew"',
+    'Write-Host "mycrew.mjs"',
+    `pwsh -c "[IO.File]::Create('out.txt')"`,
+    "npm start -- --port 3000",
+  ])
+    expect(ps(command), command).toEqual({});
+  // An opened session: a merge behind cmd's echo-off prefix is denied naming the crew word.
+  git(root, "checkout", "-q", "-b", "crew/2026-10-15-042/T-2");
+  const opened = hookContext(
+    { session_id: "s", cwd: root },
+    {
+      ...testEnv(),
+      WIZARDINGCODE_CREW_MAIL_ID: "M-2026-10-15-001-storefront",
+      WIZARDINGCODE_CREW_MAIL_BRANCH: "crew/2026-10-15-042/T-2",
+      CLAUDE_CODE_SESSION_ATTENDED: "0",
+    },
+  );
+  const viaEchoOff = onPreToolUse(opened, {
+    tool_name: "Bash",
+    tool_input: { command: `cmd /c "@node ${bundle} task merge T-1 --force"`, shell: "powershell" },
+    permission_mode: "dontAsk",
+  });
+  expect(decision(viaEchoOff)).toBe("deny");
+  expect(reasonOf(viaEchoOff)).toContain("opened by mail");
+  expect(reasonOf(viaEchoOff)).toContain(crewWord);
+});
+
+test("SP6-T4 AC-22 (judgement round-14): a Start-Process parameter is read by its exact name or alias first and by a prefix only when one name fits, an ambiguous prefix leaving the line as written; the words of a handed piece outside the handed script are read for the crew word; an unquoted comma is PowerShell's argument separator, so a crew piece whose word carries one is read as the words it passes; the crew word's bounds take a shim extension and a trailing dot; the way out names a file's folder or a glob", () => {
+  const { root, ctx } = setup();
+  const work = createWork(ctx.paths, "fix");
+  saveWork(ctx.paths, work);
+  const { ps, reasonOf, wayOut, crewWord, hidden, userOnly } = powershellRows(ctx);
+  const approve = `crew approve ${work.id} spec`;
+  const inString = "a crew word inside a string the reader did not open";
+  const bundle = "C:\\p\\dist\\crew.mjs";
+  // Read as the user-only command: -Verb and -wa by their exact names (not as prefixes of the
+  // switches -Verbose and -Wait). (A comma list in a crew command's word is round 15's, AC-23.)
+  for (const command of [
+    `Start-Process -Verb RunAs crew -ArgumentList approve,${work.id},spec`,
+    `start -wa 0 node ${bundle},approve,${work.id},spec`,
+  ]) {
+    const response = ps(command);
+    expect(decision(response), command).toBe("ask");
+    expect(reasonOf(response), command).toBe(userOnly);
+  }
+  // The words after a script handed to pwsh are joined to it, and env -S's string to the words
+  // after it (round 15): the user-only command.
+  for (const command of [
+    `pwsh -c "echo x;" ${approve}`,
+    `powershell -Command "&" ${approve}`,
+    `pwsh "echo x;" ${approve}`,
+    `env -S "node" ${bundle} approve ${work.id} spec`,
+  ]) {
+    const response = ps(command);
+    expect(decision(response), command).toBe("ask");
+    expect(reasonOf(response), command).toBe(userOnly);
+  }
+  // The crew word in the words after a script handed to bash (not joined), in a shim's name and
+  // before a trailing dot.
+  for (const command of [
+    `bash -c 'echo x' _ ${approve}`,
+    `C:\\p\\bin\\crew.cmd approve ${work.id} spec`,
+    `node ${bundle}. approve ${work.id} spec`,
+  ]) {
+    const response = ps(command);
+    expect(decision(response), command).toBe("ask");
+    expect(reasonOf(response), command).toBe(hidden(crewWord, wayOut));
+  }
+  // An ambiguous prefix leaves Start-Process standing; the string rule before the word rule.
+  for (const [command, reason] of [
+    [
+      `Start-Process -W 0 crew -ArgumentList approve,${work.id},spec`,
+      hidden("a hand-on the reader did not follow (Start-Process)"),
+    ],
+    ['Move-Item "crew" crew', hidden(inString, wayOut)],
+  ] as const) {
+    const response = ps(command);
+    expect(decision(response), command).toBe("ask");
+    expect(reasonOf(response), command).toBe(reason);
+  }
+  // Read as before: a handed script that is the crew command, a word that continues past crew, a
+  // comma inside a string or in another program's words.
+  for (const command of [
+    'pwsh -c "crew status"',
+    "ls crews",
+    "cat crew-notes.txt",
+    'git log --format="%h,%s"',
+    "Write-Host 1,2",
+  ])
+    expect(ps(command), command).toEqual({});
+  // An opened session: a merge in the words after a handed script is denied naming the crew word.
+  git(root, "checkout", "-q", "-b", "crew/2026-10-15-042/T-2");
+  const opened = hookContext(
+    { session_id: "s", cwd: root },
+    {
+      ...testEnv(),
+      WIZARDINGCODE_CREW_MAIL_ID: "M-2026-10-15-001-storefront",
+      WIZARDINGCODE_CREW_MAIL_BRANCH: "crew/2026-10-15-042/T-2",
+      CLAUDE_CODE_SESSION_ATTENDED: "0",
+    },
+  );
+  const afterScript = onPreToolUse(opened, {
+    tool_name: "Bash",
+    tool_input: { command: 'pwsh -c "echo x;" crew task merge T-1 --force', shell: "powershell" },
+    permission_mode: "dontAsk",
+  });
+  expect(decision(afterScript)).toBe("deny");
+  expect(reasonOf(afterScript)).toContain("opened by mail");
+  expect(reasonOf(afterScript)).toContain("crew task merge is denied");
+});
+
+test("SP6-T4 AC-23 (judgement round-15): a crew command the walker read whose word carries a comma outside quotes is a line the hook cannot read wherever it stands, so no comma is folded by text; a script handed to pwsh is joined with the words after it as pwsh joins them, and env -S's string with the words after it; a handed piece's words outside its script are read from the walker's tokens; the crew word's trailing dot is read before a closing quote and every shim extension has a row", () => {
+  const { root, ctx } = setup();
+  const work = createWork(ctx.paths, "fix");
+  saveWork(ctx.paths, work);
+  const { ps, reasonOf, wayOut, crewWord, hidden, userOnly } = powershellRows(ctx);
+  const inString = "a crew word inside a string the reader did not open";
+  const commaWord =
+    "a comma inside a crew command's word (PowerShell's argument separator the walker did not split)";
+  const wordsApart =
+    'quote the list as one word (--criteria "AC-1,AC-2"), or write the words apart';
+  const bundle = "C:\\p\\dist\\crew.mjs";
+  // A comma outside quotes in a crew command's word, wherever the command stands: PowerShell
+  // passes the list's items to a native program as separate arguments, and the walker reads one
+  // word; nothing is folded by text, the line is asked.
+  for (const command of [
+    `crew approve,${work.id},spec`,
+    `node ${bundle} approve,${work.id},spec`,
+    `npx crew skip,${work.id},tdd:AC-1`,
+    `pwsh -c "crew approve,${work.id},spec"`,
+    `pwsh -c crew approve,${work.id},spec`,
+    `Write-Host "$(crew approve,${work.id},spec)"`,
+    `crew approve,${work.id},spec # don't`,
+    `crew approve,"${work.id}",spec`,
+  ]) {
+    const response = ps(command);
+    expect(decision(response), command).toBe("ask");
+    expect(reasonOf(response), command).toBe(hidden(commaWord, wordsApart));
+  }
+  // A script handed to pwsh joined with the words after it, and env -S's string with the words
+  // after it, as they run them: the walker reads the user-only command.
+  for (const command of [
+    `pwsh -c "crew" approve ${work.id} spec`,
+    `pwsh -c "crew" "approve ${work.id} spec"`,
+    `env -S "node ${bundle}" approve ${work.id} spec`,
+    `pwsh -c 'approve ${work.id} spec; crew' "approve ${work.id} spec; crew"`,
+  ]) {
+    const response = ps(command);
+    expect(decision(response), command).toBe("ask");
+    expect(reasonOf(response), command).toBe(userOnly);
+  }
+  // The crew word in every shim's name and before a trailing dot at the end of the line; a quoted
+  // program ending in a dot is a string that names crew.
+  for (const [command, reason] of [
+    [`C:\\p\\bin\\crew.ps1 approve ${work.id} spec`, hidden(crewWord, wayOut)],
+    [`crew.exe approve ${work.id} spec`, hidden(crewWord, wayOut)],
+    [`crew.bat approve ${work.id} spec`, hidden(crewWord, wayOut)],
+    ["ls bin/crew.", hidden(crewWord, wayOut)],
+    [`Start-Process "crew." -ArgumentList approve,${work.id},spec`, hidden(inString, wayOut)],
+    // A script that expands is one the walker cannot read: its own ask.
+    [
+      'pwsh -c "crew status $(date)"',
+      "Crew: an expansion the guard cannot read: the shell refuses such a line or runs what the hook could not see, so a person decides",
+    ],
+  ] as const) {
+    const response = ps(command);
+    expect(decision(response), command).toBe("ask");
+    expect(reasonOf(response), command).toBe(reason);
+  }
+  // Read as before: a quoted comma in a crew command's word, a comma in another program's words.
+  for (const command of [`crew criteria ${work.id} add "x, y and z"`, "Get-ChildItem a,b"])
+    expect(ps(command), command).toEqual({});
+  // An opened session: a merge split across the handed script and the words after it is denied
+  // as the command it is.
+  git(root, "checkout", "-q", "-b", "crew/2026-10-15-042/T-2");
+  const opened = hookContext(
+    { session_id: "s", cwd: root },
+    {
+      ...testEnv(),
+      WIZARDINGCODE_CREW_MAIL_ID: "M-2026-10-15-001-storefront",
+      WIZARDINGCODE_CREW_MAIL_BRANCH: "crew/2026-10-15-042/T-2",
+      CLAUDE_CODE_SESSION_ATTENDED: "0",
+    },
+  );
+  const joined = onPreToolUse(opened, {
+    tool_name: "Bash",
+    tool_input: { command: 'pwsh -c "crew" task merge T-1 --force', shell: "powershell" },
+    permission_mode: "dontAsk",
+  });
+  expect(decision(joined)).toBe("deny");
+  expect(reasonOf(joined)).toContain("opened by mail");
+  expect(reasonOf(joined)).toContain("crew task merge is denied");
+});
+
+test("SP6-T4 AC-24 (judgement round-16): the rest of a line handed to pwsh is split into PowerShell words, glued quotes included, their quotes gone and joined into the one script the walker reads; the words after a wrapper's split-string option belong to its script in the walker on every tool, whatever options stand before it; a crew verb carrying a space or a comma is a verb the hook cannot read; the handed script's token is dropped at its position alone; the comma rule's way out names the quoted list", () => {
+  const { root, ctx } = setup();
+  const work = createWork(ctx.paths, "fix");
+  saveWork(ctx.paths, work);
+  const { ps, bash, reasonOf, hidden, userOnly, wayOut } = powershellRows(ctx);
+  const inString = "a crew word inside a string the reader did not open";
+  const commaWord =
+    "a comma inside a crew command's word (PowerShell's argument separator the walker did not split)";
+  const wordsApart =
+    'quote the list as one word (--criteria "AC-1,AC-2"), or write the words apart';
+  const bundle = "C:\\p\\dist\\crew.mjs";
+  // The rest of a pwsh line as pwsh reads it: a quoted rest after an unquoted word, a single-quoted
+  // rest after the script, a quote glued to a word; env's split string with the words after it,
+  // whatever the option's spelling or the options before it; on bash too, where the walker reads
+  // them, and a crew verb carrying a space is a verb the hook cannot read.
+  for (const command of [
+    `pwsh -c crew 'approve ${work.id} spec'`,
+    `pwsh -c "crew" 'approve ${work.id} spec'`,
+    `pwsh -c "crew config" jev.url"" https://x`,
+    `env -S 'node ${bundle}' approve ${work.id} spec`,
+    `env --split-string "node ${bundle}" approve ${work.id} spec`,
+    `env -vS "node ${bundle}" approve ${work.id} spec`,
+    `env -v -S "node ${bundle}" approve ${work.id} spec`,
+  ]) {
+    const response = ps(command);
+    expect(decision(response), command).toBe("ask");
+    expect(reasonOf(response), command).toBe(userOnly);
+  }
+  for (const command of [
+    `env -S "node /p/dist/crew.mjs" approve ${work.id} spec`,
+    `env -vS "node /p/dist/crew.mjs" approve ${work.id} spec`,
+    `crew 'approve ${work.id} spec'`,
+  ]) {
+    const response = bash(command);
+    expect(decision(response), command).toBe("ask");
+    expect(reasonOf(response), command).toBe(userOnly);
+  }
+  // The comma rule's way out names the quoted list; the quoted list is read as before; the
+  // trailing dot before a single closing quote; the handed script's token dropped at its position
+  // alone, so a later copy of its text is a string that names crew.
+  for (const [command, reason] of [
+    [`crew task ${work.id} open T-1 --criteria AC-1,AC-2`, hidden(commaWord, wordsApart)],
+    [`Start-Process 'crew.' -ArgumentList approve,${work.id},spec`, hidden(inString, wayOut)],
+    [`bash -c 'crew status' 'crew status' crew approve ${work.id} spec`, hidden(inString, wayOut)],
+  ] as const) {
+    const response = ps(command);
+    expect(decision(response), command).toBe("ask");
+    expect(reasonOf(response), command).toBe(reason);
+  }
+  expect(ps(`crew task ${work.id} open T-1 --criteria "AC-1,AC-2"`)).toEqual({});
+  // An opened session: a merge quoted after an unquoted crew, a merge with --force glued past a
+  // quote, and a merge appended to env's split string, on both tools, are denied as the command
+  // they are.
+  git(root, "checkout", "-q", "-b", "crew/2026-10-15-042/T-2");
+  const opened = hookContext(
+    { session_id: "s", cwd: root },
+    {
+      ...testEnv(),
+      WIZARDINGCODE_CREW_MAIL_ID: "M-2026-10-15-001-storefront",
+      WIZARDINGCODE_CREW_MAIL_BRANCH: "crew/2026-10-15-042/T-2",
+      CLAUDE_CODE_SESSION_ATTENDED: "0",
+    },
+  );
+  // (env -S is a cleared environment to the opened session's own rule, which denies it first.)
+  for (const [command, shell, denied] of [
+    ["pwsh -c crew 'task merge T-1 --force'", "powershell", "crew task merge is denied"],
+    ['pwsh -c "crew task merge" T-1"" --force', "powershell", "crew task merge is denied"],
+    ['env -vS "crew task merge T-1" --force', "powershell", "a cleared environment is denied"],
+    ['env -vS "crew task merge T-1" --force', undefined, "a cleared environment is denied"],
+    ['env -S "crew task merge T-1" --force', undefined, "a cleared environment is denied"],
+  ] as const) {
+    const response = onPreToolUse(opened, {
+      tool_name: "Bash",
+      tool_input: shell ? { command, shell } : { command },
+      permission_mode: "dontAsk",
+    });
+    expect(decision(response), command).toBe("deny");
+    expect(reasonOf(response), command).toContain("opened by mail");
+    expect(reasonOf(response), command).toContain(denied);
+  }
+});
+
+test("SP6-T4 AC-25 (judgement round-17): the rest of a line handed to pwsh stops at a line end, reads PowerShell's doubled-quote escape as the quote it is and is joined inside a handed string as at the top level; the words a split-string option or find -exec hands on as argv are quoted for the walker's re-read on every tool; a word glued from quoted and bare parts is one word; a handed script's words are dropped only behind the script's own token", () => {
+  const { root, ctx } = setup();
+  const work = createWork(ctx.paths, "fix");
+  saveWork(ctx.paths, work);
+  const { ps, bash, reasonOf, hidden, userOnly, wayOut } = powershellRows(ctx);
+  const inString = "a crew word inside a string the reader did not open";
+  const merge = `crew task ${work.id} merge T-1`;
+  // Read as the user-only command on the powershell tool: a word glued from quoted and bare parts,
+  // a rest inside a handed string joined as at the top level, the doubled-quote escape in both
+  // quote kinds, a second line read at the top level, a quoted # among env's and find's argv.
+  for (const command of [
+    `pwsh -c cr'ew' approve ${work.id} spec`,
+    `pwsh -c "pwsh -c crew 'approve ${work.id} spec'"`,
+    `pwsh -c 'crew approve ${work.id} ''spec'''`,
+    `pwsh -c "crew approve ${work.id} ""spec"""`,
+    `pwsh -c crew status\n${merge} --force`,
+    `pwsh -c "crew status"\n${merge} --force`,
+    `env -S "${merge}" "#" --force`,
+    `find . -exec ${merge} '#' --force ';'`,
+  ]) {
+    const response = ps(command);
+    expect(decision(response), command).toBe("ask");
+    expect(reasonOf(response), command).toBe(userOnly);
+  }
+  // On bash: the attached and the long-option forms of the split string with words after them, a
+  // comma in a crew verb, env's and find's quoted argv.
+  for (const command of [
+    `env -S'node /p/dist/crew.mjs' approve ${work.id} spec`,
+    `env --split-string="node /p/dist/crew.mjs" approve ${work.id} spec`,
+    `crew approve,${work.id},spec`,
+    `env -S "${merge}" "#" --force`,
+    `find . -exec ${merge} '#' --force ';'`,
+  ]) {
+    const response = bash(command);
+    expect(decision(response), command).toBe("ask");
+    expect(reasonOf(response), command).toBe(userOnly);
+  }
+  // A quote inside a single-quoted part is kept for the reader inside: the crew command stays in
+  // the string. A doubled quote inside a double-quoted part is the quote it is, so `"…"""` is one
+  // word ending in a quote, which the reader inside cannot close. A second line that is the
+  // session's own command is read as before.
+  expect(reasonOf(ps(`pwsh -c 'echo "x; crew approve ${work.id} spec"'`))).toBe(
+    hidden(inString, wayOut),
+  );
+  expect(reasonOf(ps(`pwsh -c "crew config jev.url""" https://x`))).toBe(
+    "Crew: a quote the guard cannot read: the shell refuses such a line or runs what the hook could not see, so a person decides",
+  );
+  expect(ps('pwsh -c "npm test"\ncrew status')).toEqual({});
+  // An opened session: a merge behind a glued --force or the escape around # and ; is denied (the
+  // opened session denies any merge; the glue and the escapes are pinned above and in AC-26), and a
+  // merge on a second line is read as the command it is.
+  git(root, "checkout", "-q", "-b", "crew/2026-10-15-042/T-2");
+  const opened = hookContext(
+    { session_id: "s", cwd: root },
+    {
+      ...testEnv(),
+      WIZARDINGCODE_CREW_MAIL_ID: "M-2026-10-15-001-storefront",
+      WIZARDINGCODE_CREW_MAIL_BRANCH: "crew/2026-10-15-042/T-2",
+      CLAUDE_CODE_SESSION_ATTENDED: "0",
+    },
+  );
+  for (const [command, denied] of [
+    ["pwsh -c crew task merge T-1 '--for'ce", "crew task merge is denied"],
+    ["pwsh -c 'crew task merge T-1 ''#'' --force'", "crew task merge is denied"],
+    ['pwsh -c "crew task merge T-1 "";"" --force"', "crew task merge is denied"],
+    ['pwsh -c "npm ci"\ngit merge main', "git merge"],
+  ] as const) {
+    const response = onPreToolUse(opened, {
+      tool_name: "Bash",
+      tool_input: { command, shell: "powershell" },
+      permission_mode: "dontAsk",
+    });
+    expect(decision(response), command).toBe("deny");
+    expect(reasonOf(response), command).toContain("opened by mail");
+    expect(reasonOf(response), command).toContain(denied);
+  }
+});
+
+test("SP6-T4 AC-26 (judgement round-18): the walker quotes a joined argv word only when it needs quoting, so a comma list stays visible; a split-string option's taking of the next word is the option's, an empty word included; every -exec group is handed on; a lone CR ends a statement; a handed rest is joined at any depth, stops at a closing brace that ends an enclosing statement and not inside a balanced group, and a word beginning with a quoted part ends at its close; a script block given to crew is a crew command the hook cannot read", () => {
+  const { root, ctx } = setup();
+  const work = createWork(ctx.paths, "fix");
+  saveWork(ctx.paths, work);
+  const { ps, bash, reasonOf, hidden, userOnly, wayOut, crewWord } = powershellRows(ctx);
+  const commaWord =
+    "a comma inside a crew command's word (PowerShell's argument separator the walker did not split)";
+  const wordsApart =
+    'quote the list as one word (--criteria "AC-1,AC-2"), or write the words apart';
+  const unreadableCrew =
+    "Crew: a crew command the hook cannot read (a script block, or a hand-on the reader does not follow) may record a decision only the user can take: write it plainly, one crew command per line";
+  const approve = `crew approve ${work.id} spec`;
+  const merge = `crew task ${work.id} merge T-1`;
+  // Read as the user-only command on the powershell tool: the single-quoted escape in a watched
+  // session, three and six nested hand-ons, a lone CR after a bare and after a quoted script, a
+  // handed rest closed by the brace of its block, an empty split string, a word that begins with
+  // a quoted part split at its close, a second -exec group.
+  for (const command of [
+    `pwsh -c '${merge} ''#'' --force'`,
+    `pwsh -c 'pwsh -c "pwsh -c crew ''approve ${work.id} spec''"'`,
+    `pwsh -c pwsh -c pwsh -c pwsh -c pwsh -c pwsh -c ${approve}`,
+    `pwsh -c crew status\r${merge} --force`,
+    `pwsh -c "crew status"\r${merge} --force`,
+    `env -S '' ${approve}`,
+    `pwsh -c "${merge}"--force`,
+    `find . -exec true ';' -exec ${merge} --force ';'`,
+  ]) {
+    const response = ps(command);
+    expect(decision(response), command).toBe("ask");
+    expect(reasonOf(response), command).toBe(userOnly);
+  }
+  for (const command of [
+    `env -S '' ${approve}`,
+    `env --split-string '' ${approve}`,
+    `env -S "${merge}" "it's" --force`,
+    `find . -exec true ';' -exec ${merge} --force ';'`,
+  ]) {
+    const response = bash(command);
+    expect(decision(response), command).toBe("ask");
+    expect(reasonOf(response), command).toBe(userOnly);
+  }
+  // A comma list the walker joined stays visible to the comma rule; a script word before the
+  // script's own token stays in the piece's text; a script block given to crew.
+  for (const [command, reason] of [
+    [
+      `find . -exec crew task ${work.id} open T-1 --criteria AC-1,AC-2 ';'`,
+      hidden(commaWord, wordsApart),
+    ],
+    [`env -S "crew task ${work.id} open T-1 --criteria" AC-1,AC-2`, hidden(commaWord, wordsApart)],
+    ["find C:\\p\\crew.mjs -exec node C:\\p\\crew.mjs status ';'", hidden(crewWord, wayOut)],
+    [`${merge} {--force}`, unreadableCrew],
+    // A handed rest closed by its block's brace: the crew command in the other block is a word
+    // the POSIX reader does not read as a command (PowerShell's if/else), so it is asked.
+    [`if (1) { pwsh -c npm ci } else { ${approve} }`, hidden(crewWord, wayOut)],
+  ] as const) {
+    const response = ps(command);
+    expect(decision(response), command).toBe("ask");
+    expect(reasonOf(response), command).toBe(reason);
+  }
+  // A balanced subexpression inside an unquoted handed rest stays the rest's: the script expands,
+  // which is the walker's own ask (an unclosed group would be a quote the guard cannot read); a
+  // block closed before the session's own command is read as before.
+  expect(reasonOf(ps("pwsh -c npm test $(Get-Date)"))).toBe(
+    "Crew: an expansion the guard cannot read: the shell refuses such a line or runs what the hook could not see, so a person decides",
+  );
+  expect(ps("& { pwsh -c npm ci }; crew status")).toEqual({});
+  // An opened session: a merge after a block's closing brace is asked as the crew word and denied,
+  // a `git merge` after a block's call is denied as the command it is, and a merge glued to a
+  // closing quote is denied (the opened session denies any merge; the glue is pinned in AC-27).
+  git(root, "checkout", "-q", "-b", "crew/2026-10-15-042/T-2");
+  const opened = hookContext(
+    { session_id: "s", cwd: root },
+    {
+      ...testEnv(),
+      WIZARDINGCODE_CREW_MAIL_ID: "M-2026-10-15-001-storefront",
+      WIZARDINGCODE_CREW_MAIL_BRANCH: "crew/2026-10-15-042/T-2",
+      CLAUDE_CODE_SESSION_ATTENDED: "0",
+    },
+  );
+  for (const [command, denied] of [
+    ["if (1) { pwsh -c npm ci } else { crew task merge T-1 }", crewWord],
+    ["& { pwsh -c npm ci }; git merge main", "git merge"],
+    ['pwsh -c "crew task merge T-1"--force', "crew task merge is denied"],
+  ] as const) {
+    const response = onPreToolUse(opened, {
+      tool_name: "Bash",
+      tool_input: { command, shell: "powershell" },
+      permission_mode: "dontAsk",
+    });
+    expect(decision(response), command).toBe("deny");
+    expect(reasonOf(response), command).toContain("opened by mail");
+    expect(reasonOf(response), command).toContain(denied);
+  }
+});
+
+test("SP6-T4 AC-27 (judgement round-19): a find's -exec group opens only when none is open and closes at a + only after {}; a handed rest is joined to a depth of eight and flattened beyond it; the split of a word that begins with a quoted part lives in one place and applies at every level; a balanced group may hold one more level; a protected path glued to a quote is denied from the written line", () => {
+  const { ctx } = setup();
+  const work = createWork(ctx.paths, "fix");
+  saveWork(ctx.paths, work);
+  const { ps, bash, reasonOf, userOnly } = powershellRows(ctx);
+  const approve = `crew approve ${work.id} spec`;
+  const merge = `crew task ${work.id} merge T-1`;
+  const deep = `${"pwsh -c ".repeat(40)}${approve}`;
+  // Read as the user-only command on the powershell tool: the glue at the top level and inside a
+  // quoted handed script in both quote kinds, two levels deep; an -exec word and a + among a
+  // group's argv; forty nested hand-ons, flattened beyond the eighth.
+  for (const command of [
+    `crew task ${work.id} merge "T-1"--force`,
+    `pwsh -c 'pwsh -c "${merge}"--force'`,
+    `pwsh -c 'crew task ${work.id} merge "T-1"--force'`,
+    `pwsh -c "crew task ${work.id} merge 'T-1'--force"`,
+    `find . -exec ${merge} -exec --force ';'`,
+    `find . -exec ${merge} -execdir --force ';'`,
+    `find . -exec ${merge} + --force ';'`,
+    deep,
+  ]) {
+    const response = ps(command);
+    expect(decision(response), command).toBe("ask");
+    expect(reasonOf(response), command).toBe(userOnly);
+  }
+  for (const command of [
+    `find . -exec ${merge} -exec --force ';'`,
+    `find . -exec ${merge} + --force ';'`,
+    `find . -exec rm {} + -o -exec ${merge} --force ';'`,
+  ]) {
+    const response = bash(command);
+    expect(decision(response), command).toBe("ask");
+    expect(reasonOf(response), command).toBe(userOnly);
+  }
+  // A nested balanced group stays the rest's (the walker's own expansion ask, not an unclosed
+  // quote); a block in a handed rest and a second group of an ordinary find are read as before.
+  expect(reasonOf(ps("pwsh -c npm test $((Get-Date).Year)"))).toBe(
+    "Crew: an expansion the guard cannot read: the shell refuses such a line or runs what the hook could not see, so a person decides",
+  );
+  expect(ps("pwsh -c npm ci { x }; crew status")).toEqual({});
+  expect(bash("find . -exec rm {} + -o -name x -exec echo {} ';'")).toEqual({});
+  // A protected path glued to a closing quote is denied from the written line, whatever PowerShell
+  // makes of the glue.
+  const glued = ps(`Remove-Item "C:/repo/.crew"/work/${work.id}/evidence.json`);
+  expect(decision(glued)).toBe("deny");
+  expect(reasonOf(glued)).toContain("written only by the crew command");
+});
+
+test("SP6-T4 AC-28 (judgement round-20): a shell's hand-on is folded only at a command position and the fold carries a mark no line can hold, so a sh -c or pwsh -c among a crew command's own words stays its words, at the cap too; a word that begins with a quoted part is split again on its remainder; the -ok rule and the split's first pass have rows (a find's terminators: AC-29, both readings)", () => {
+  const { ctx } = setup();
+  const work = createWork(ctx.paths, "fix");
+  saveWork(ctx.paths, work);
+  const { ps, bash, reasonOf, hidden, userOnly, crewWord, wayOut } = powershellRows(ctx);
+  const approve = `crew approve ${work.id} spec`;
+  const merge = `crew task ${work.id} merge T-1`;
+  // Read as the user-only command on the powershell tool: a sh -c or pwsh -c among crew's own
+  // words stays its words, at the top level and past the cap; the remainder of a glued word split
+  // again, at the top level and in a handed rest; a handed rest closed by the parenthesis of an
+  // enclosing statement.
+  for (const command of [
+    `${merge} sh -c --force x`,
+    `crew task ${work.id} sh -c merge --force`,
+    `${"pwsh -c ".repeat(9)}${merge} -sh -c --force`,
+    `crew task ${work.id} merge "T-1"'x'--force`,
+    `pwsh -c crew task ${work.id} merge "T-1"'x'--force`,
+    `if (pwsh -c npm ci) { ${approve} }`,
+  ]) {
+    const response = ps(command);
+    expect(decision(response), command).toBe("ask");
+    expect(reasonOf(response), command).toBe(userOnly);
+  }
+  // The two readings of find's terminators (round 21): on the powershell tool the reading that
+  // keeps the later group as the first command's words carries the crew word in a command the
+  // reader did not read as crew, so the crew word's rule asks before the user-only rule does.
+  for (const command of [
+    `find . -exec true x{} + -exec ${merge} --force ';'`,
+    `find . -exec true ';x' -exec ${merge} --force ';'`,
+  ])
+    expect(reasonOf(ps(command)), command).toBe(hidden(crewWord, wayOut));
+  // On the powershell tool a bare `{}` among crew's words is a script block to PowerShell: a crew
+  // command the hook cannot read (the -ok rule itself is pinned on bash below).
+  expect(reasonOf(ps(`find . -ok ${merge} {} + --force ';'`))).toBe(
+    "Crew: a crew command the hook cannot read (a script block, or a hand-on the reader does not follow) may record a decision only the user can take: write it plainly, one crew command per line",
+  );
+  for (const command of [
+    `find . -ok ${merge} {} + --force ';'`,
+    `find . -exec true x{} + -exec ${merge} --force ';'`,
+    `find . -exec true ';x' -exec ${merge} --force ';'`,
+  ]) {
+    const response = bash(command);
+    expect(decision(response), command).toBe("ask");
+    expect(reasonOf(response), command).toBe(userOnly);
+  }
+  // A block inside a handed rest stays the rest's: a string after it joins the handed script, so
+  // the crew word is read in a command the reader did not read as crew. A pwsh among a crew
+  // command's words is not folded: it stays a word and is asked as a hand-on left.
+  expect(reasonOf(ps(`pwsh -c npm ci { x } "${approve}"`))).toBe(hidden(crewWord, wayOut));
+  expect(reasonOf(ps(`${merge} pwsh -c --force x`))).toBe(
+    hidden("a hand-on the reader did not follow (pwsh)"),
+  );
+});
+
+test("SP6-T4 AC-29 (judgement round-21): a find's -exec groups are handed on under GNU's and BSD's terminators, every group of each reading, so a group's own trailing words are never dropped under either find; a shell folded behind an opening quote has its rest bounded by that string's close; a crew program in any quoting is never a wrapper's word before a fold; a control character on the line is a mark that hides its text; a shell the Start-Process and cmd rewrites expose is read (the rewrites run before the one fold since round 23); the split's first pass in a handed rest and -execdir's + have rows", () => {
+  const { ctx } = setup();
+  const work = createWork(ctx.paths, "fix");
+  saveWork(ctx.paths, work);
+  const { ps, bash, reasonOf, hidden, userOnly } = powershellRows(ctx);
+  const merge = `crew task ${work.id} merge T-1`;
+  // Read as the user-only command on the powershell tool: a fold behind an opening quote bounded by
+  // that string's close (pwsh hands `pwsh -c a` as one word and `--force` as the next, with either
+  // quote, and a doubled quote inside the string is the string's); the remainder of a glued word
+  // split in a handed rest alone (the written line's split sees one quoted word; the evaluator's
+  // rewrite exposes the glue); find's terminators under each reading (`;x` and `+` after `x{}` end
+  // a group under one find and not the other).
+  for (const command of [
+    `${merge} 'pwsh -c a' --force 'b'`,
+    `${merge} "pwsh -c a" --force "b"`,
+    `crew objection ${work.id} 'pwsh -c a' waive 'b'`,
+    `${merge} "pwsh -c a"" x" --force`,
+    `& ([scriptblock]::Create('pwsh -c crew task ${work.id} merge "T-1"--force'))`,
+    `find . -exec ${merge} ';x' --force ';'`,
+    `find . -exec ${merge} x{} + --force ';'`,
+  ]) {
+    const response = ps(command);
+    expect(decision(response), command).toBe("ask");
+    expect(reasonOf(response), command).toBe(userOnly);
+  }
+  // On bash: each terminator that one find reads and the other does not (`;x`, `+x` after `{}`,
+  // `+` after `x{}`), the group's trailing words kept under the reading that keeps them; and
+  // -execdir's `+` after `{}` closing its group, so the -exec after it opens its own.
+  for (const command of [
+    `find . -exec ${merge} ';x' --force ';'`,
+    `find . -exec ${merge} {} +x --force ';'`,
+    `find . -exec ${merge} x{} + --force ';'`,
+    `find . -execdir rm {} + -exec ${merge} --force ';'`,
+  ]) {
+    const response = bash(command);
+    expect(decision(response), command).toBe("ask");
+    expect(reasonOf(response), command).toBe(userOnly);
+  }
+  // A crew program in any quoting is never a wrapper's or a runner's word before a fold: the pwsh
+  // among the crew command's words stays a word and is asked as the hand-on left.
+  for (const command of [
+    `sudo "crew" task ${work.id} merge T-1 pwsh -c --force x`,
+    `env 'crew' task ${work.id} merge T-1 pwsh -c --force x`,
+    `sudo node "crew.mjs" task ${work.id} merge T-1 pwsh -c --force x`,
+  ])
+    expect(reasonOf(ps(command)), command).toBe(
+      hidden("a hand-on the reader did not follow (pwsh)"),
+    );
+  // A control character is a mark that hides the line's text, whether or not the line names crew
+  // (the fold's own marks are such characters, so no written line can carry one).
+  for (const command of ["npm ci \u0000x", "crew status \u001b[0m"])
+    expect(reasonOf(ps(command)), JSON.stringify(command)).toBe(hidden("a control character"));
+  // A shell the Start-Process and cmd rewrites expose (the rewrites run before the one fold) is
+  // read as a hand-on with its script, not asked as a hand-on left.
+  for (const command of [`Start-Process pwsh "-c npm ci"`, "cmd /c pwsh -c npm ci"])
+    expect(ps(command), command).toEqual({});
+});
+
+test("SP6-T4 AC-30 (judgement round-22): a shell behind a quote is folded only when that quote opens a string, so a pwsh after a closing quote stays a word asked as a hand-on left; the bounded in-string rest, its escape inside a double-quoted string, the cmd string's read-back, the doubled quote inside the string, -execdir's + under GNU's reading alone and Start-Process's -ArgumentList form have rows", () => {
+  const { ctx } = setup();
+  const work = createWork(ctx.paths, "fix");
+  saveWork(ctx.paths, work);
+  const { ps, bash, reasonOf, hidden, userOnly } = powershellRows(ctx);
+  const merge = `crew task ${work.id} merge T-1`;
+  // A pwsh after a closing quote is one of the command's words to PowerShell, never a command
+  // position: it is not folded (the round-21 fold took the closing quote for an opening one and
+  // joined the flag into a quoted word) and is asked as the hand-on left.
+  for (const command of [
+    `crew task ${work.id} merge "T-1" pwsh -c --force`,
+    `crew task ${work.id} merge 'T-1' pwsh -c --force x`,
+    `crew task ${work.id} merge 'T-1' pwsh -c --force`,
+    `crew objection ${work.id} "O-1" pwsh -c waive`,
+  ])
+    expect(reasonOf(ps(command)), command).toBe(
+      hidden("a hand-on the reader did not follow (pwsh)"),
+    );
+  // Read as the user-only command: a quoted hand-on whose script names crew, behind an evaluator
+  // with either quote (the in-string rest joined, and escaped inside a double-quoted string, so the
+  // script is the one word the walker hands on), behind cmd /c (the escaped string read back as the
+  // word it is), and with a doubled quote inside the string (the string's, not its close).
+  for (const command of [
+    `iex 'pwsh -c crew task ${work.id} merge T-1 --force'`,
+    `iex "pwsh -c crew task ${work.id} merge T-1 --force"`,
+    `cmd /c "pwsh -c crew approve ${work.id} spec"`,
+    `iex 'pwsh -c crew task ${work.id} merge T-1 '' a'' --force'`,
+  ]) {
+    const response = ps(command);
+    expect(decision(response), command).toBe("ask");
+    expect(reasonOf(response), command).toBe(userOnly);
+  }
+  // GNU's reading alone closes -execdir's group at + after x{} (BSD's needs {} exactly), so the
+  // -exec after it is read as its own command under that reading.
+  const execdir = bash(`find . -execdir rm x{} + -exec ${merge} --force ';'`);
+  expect(decision(execdir)).toBe("ask");
+  expect(reasonOf(execdir)).toBe(userOnly);
+  // Start-Process's -ArgumentList form, rewritten before the fold as the positional form is.
+  expect(ps("Start-Process pwsh -ArgumentList '-NoProfile','-c','npm test'")).toEqual({});
+});
+
+test("SP6-T4 AC-31 (judgement round-23): a PowerShell line comment is dropped before the line is read, on the written line and in each handed level, so a quote inside it never changes how the quotes after it are read; the cmd and Start-Process rewrites run before the fold at each level and no pass folds inside a script already joined, so the quotes the fold escaped are never read as PowerShell's; the rows", () => {
+  const { ctx } = setup();
+  const work = createWork(ctx.paths, "fix");
+  saveWork(ctx.paths, work);
+  const { ps, reasonOf, hidden, userOnly } = powershellRows(ctx);
+  const handOn = hidden("a hand-on the reader did not follow (pwsh)");
+  // A quote inside a comment line is no quote: the closing quote after it is still a closing one,
+  // and the pwsh behind it stays a word asked as the hand-on left. A quote of the other kind inside
+  // a string, and a quote the fold itself escaped on the first pass, change nothing either; a
+  // subexpression's quote stands inside its string.
+  for (const command of [
+    `# it's\ncrew task ${work.id} merge 'T-1' pwsh -c --force x`,
+    `# 5" screen\ncrew task ${work.id} merge "T-1" pwsh -c --force`,
+    `# "\ncrew objection ${work.id} "O-1" pwsh -c waive`,
+    `pwsh -c 'a " b'; crew task ${work.id} merge "T-1" pwsh -c --force`,
+    `crew task ${work.id} merge "$('a')" pwsh -c --force`,
+  ])
+    expect(reasonOf(ps(command)), JSON.stringify(command)).toBe(handOn);
+  // A shell the cmd or Start-Process rewrite exposes inside a handed script is folded at that
+  // level, so the script stays one word to the outer shell and the crew command inside is read; a
+  // comment before a crew command hides nothing, and a `#` inside a string is no comment.
+  for (const command of [
+    `pwsh -c 'x ; cmd /c pwsh -c crew approve ${work.id} spec'`,
+    `pwsh -c "x; cmd /c pwsh -c crew task ${work.id} merge T-1 --force"`,
+    `pwsh -c 'x ; Start-Process pwsh "-c crew approve ${work.id} spec"'`,
+    `# don't\ncrew approve ${work.id} spec`,
+    `Write-Host "#" ; crew approve ${work.id} spec`,
+  ]) {
+    const response = ps(command);
+    expect(decision(response), JSON.stringify(command)).toBe("ask");
+    expect(reasonOf(response), JSON.stringify(command)).toBe(userOnly);
+  }
+  // A comment runs nothing, a shell the rewrite exposes inside a script runs what it names.
+  for (const command of [`# crew approve ${work.id} spec`, "pwsh -c 'x ; cmd /c pwsh -c npm ci'"])
+    expect(ps(command), command).toEqual({});
+});
+
+test("SP6-T4 AC-32 (judgement round-24): a # starts a line comment after whitespace, a separator, an opening brace or parenthesis, a quoted part that began its word, and at the line start, never inside a string (a subexpression's own statements take one as the top level does; = and a bracket: AC-33, a closing brace or parenthesis: AC-35); the comment drop and the rewrites in a handed level, the token-start rule in both directions, a comment after a closing quote, a nested-quote subexpression and a comment joined across a level's words have rows", () => {
+  const { ctx } = setup();
+  const work = createWork(ctx.paths, "fix");
+  saveWork(ctx.paths, work);
+  const { ps, reasonOf, hidden, userOnly, wayOut } = powershellRows(ctx);
+  const handOn = hidden("a hand-on the reader did not follow (pwsh)");
+  const merge = `crew task ${work.id} merge 'T-1' pwsh -c --force x`;
+  // A comment after a quoted part that began its word, or after a separator, is one, on the written
+  // line and inside a handed level, so its apostrophe never turns the closing quote of 'T-1' into
+  // an opening one: the pwsh stays a word asked as the hand-on left (a # after `]` or `=`: AC-33).
+  for (const command of [
+    `"a"#it's\n${merge}`,
+    `'a'#it's\n${merge}`,
+    `npm ci ; # it's\n${merge}`,
+    `pwsh -c "# it's\n${merge}"`,
+  ])
+    expect(reasonOf(ps(command)), JSON.stringify(command)).toBe(handOn);
+  // A # glued to a word is no comment; a cmd a handed level alone exposes (c"md" is no cmd to the
+  // written line) is rewritten there and its pwsh read; a comment in one word of a handed level
+  // ends at the newline a later word carries, as pwsh joins them (the level's drop itself is
+  // pinned by the `pwsh -c "# it's…"` row above; this row pins the newline end); a subexpression
+  // of a double-quoted string nests its quotes, so the # inside the string is no comment and the
+  // crew command after the string is read.
+  for (const command of [
+    `Write-Host a#b ; crew approve ${work.id} spec`,
+    `pwsh -c c"md" /c pwsh -c crew approve ${work.id} spec`,
+    `pwsh -c 'x # y\ncrew approve ${work.id} spec'`,
+    `echo "$('"')' # "; crew approve ${work.id} spec`,
+  ]) {
+    const response = ps(command);
+    expect(decision(response), JSON.stringify(command)).toBe("ask");
+    expect(reasonOf(response), JSON.stringify(command)).toBe(userOnly);
+  }
+  // A quoted cmd rest with a lone quote of the other kind changes the quotes' reading after it:
+  // the crew command lands inside a string the reader did not open and is asked as the crew word
+  // there, never read as forced.
+  expect(reasonOf(ps(`cmd /c "x 'y" ; crew task ${work.id} merge 'T-1' pwsh -c --force`))).toBe(
+    hidden("a crew word inside a string the reader did not open", wayOut),
+  );
+  // A # after a space inside a handed level's words is the inner shell's comment: nothing after
+  // it runs (the POSIX walker would drop it too; the level's drop is pinned above).
+  expect(ps(`pwsh -c 'echo' '#' 'crew approve ${work.id} spec'`)).toEqual({});
+});
+
+test("SP6-T4 AC-33 (judgement round-25): a # starts a line comment only where both of PowerShell's modes start one (the line start, whitespace, a separator, an opening parenthesis or brace, a quoted part that began its word); after =, a bracket, a comma, a redirection or a quoted part glued to word text it is asked about, on the written line and inside a handed level, never dropped; a subexpression's own statements take a comment; the rows", () => {
+  const { ctx } = setup();
+  const work = createWork(ctx.paths, "fix");
+  saveWork(ctx.paths, work);
+  const { ps, reasonOf, hidden, userOnly, unplaced, substitution } = powershellRows(ctx);
+  const handOn = hidden("a hand-on the reader did not follow (pwsh)");
+  const merge = `crew task ${work.id} merge 'T-1' pwsh -c --force x`;
+  // In argument mode PowerShell keeps a # after =, a bracket, a comma, a redirection or a quoted
+  // part glued to word text inside the word (`--format=#%h` is one argument), in expression mode
+  // it starts a comment there ([int]#, $x=#): the reader cannot tell the modes apart, so such a
+  // line is asked about, with the way out, and the crew command after it is never dropped unseen;
+  // inside a handed level the same.
+  for (const command of [
+    `git log -1 --format=#%h; crew approve ${work.id} spec`,
+    `x=#y; crew task ${work.id} merge T-1 --force`,
+    `echo a[#]; crew approve ${work.id} spec`,
+    `echo a]#b ; crew approve ${work.id} spec`,
+    `echo a"b"#c; crew approve ${work.id} spec`,
+    `echo x'a'#c ; crew task ${work.id} merge T-1 --force`,
+    `echo a>#b ; crew approve ${work.id} spec`,
+    `a,#b ; crew approve ${work.id} spec`,
+    `[int]#it's\n${merge}`,
+    `$x=#it's\n${merge}`,
+    `pwsh -c 'echo a=#b ; crew approve ${work.id} spec'`,
+    `pwsh -c 'echo a"b"#c ; crew approve ${work.id} spec'`,
+  ])
+    expect(reasonOf(ps(command)), JSON.stringify(command)).toBe(unplaced);
+  // Each boundary both modes share starts a comment: the drop keeps the pwsh on the next line a
+  // word asked as the hand-on left (a separator, a pipe, an ampersand; whitespace and a quoted
+  // part that began its word are AC-32's; an opening parenthesis AC-35's, a closing one is asked).
+  for (const command of [`npm ci;#it's\n${merge}`, `a|#it's\n${merge}`, `a&#it's\n${merge}`])
+    expect(reasonOf(ps(command)), JSON.stringify(command)).toBe(handOn);
+  // A quoted part glued after word text is the word's (`a"b"c` is one argument, kept whole by the
+  // split), so the command after the separator is read.
+  expect(reasonOf(ps(`echo a"b"c ; crew approve ${work.id} spec`))).toBe(userOnly);
+  // Inside a subexpression of a double-quoted string the statements take a comment as the top
+  // level does, so the string is left open and the walker asks about the substitution; the
+  // string's own quotes nest, so a closing quote after `"$('"')"` is a closing one and the pwsh
+  // after it stays a word; a # inside a braced variable name is dropped and the expansion left
+  // open is asked about by the walker.
+  expect(reasonOf(ps(`echo "$( # x )"; crew approve ${work.id} spec`))).toBe(substitution);
+  expect(reasonOf(ps(`crew task ${work.id} merge "$('"')" pwsh -c --force`))).toBe(handOn);
+  expect(reasonOf(ps(`\${#x}; crew approve ${work.id} spec`))).toBe(
+    "Crew: an expansion the guard cannot read: the shell refuses such a line or runs what the hook could not see, so a person decides",
+  );
+});
+
+test("SP6-T4 AC-35 (judgement round-26): a # after a closing parenthesis or brace is asked about (a$(1)#x is one word to pwsh, (1)#x a comment), only an opening one is a boundary kept; a quoted part counts as beginning its word at the top level alone; the $( guard, opensString's stack against the two-state reader, the opening parenthesis, the glued expansion on the written line and in a handed level, < in a handed level and a nested parenthesis in a subexpression have rows", () => {
+  const { ctx } = setup();
+  const work = createWork(ctx.paths, "fix");
+  saveWork(ctx.paths, work);
+  const { ps, reasonOf, hidden, userOnly, unplaced } = powershellRows(ctx);
+  const handOn = hidden("a hand-on the reader did not follow (pwsh)");
+  const merge = `crew task ${work.id} merge 'T-1' pwsh -c --force x`;
+  // A ) or } before a # closes an expansion glued in a word as often as a group (pwsh prints a1#x
+  // for a$(1)#x and 1 alone for $(1)#x): the # is asked about, on the written line and inside a
+  // handed level, and a < glued to a # by a level's unquote the same.
+  for (const command of [
+    `echo a$(1)#x; crew approve ${work.id} spec`,
+    `echo a\${x}#y; crew approve ${work.id} spec`,
+    `echo $(1)#x; crew approve ${work.id} spec`,
+    `(a)#it's\n${merge}`,
+    `{a}#it's\n${merge}`,
+    `pwsh -c 'echo a$(1)#x; crew approve ${work.id} spec'`,
+    `pwsh -c a<'#b' ; crew approve ${work.id} spec`,
+  ])
+    expect(reasonOf(ps(command)), JSON.stringify(command)).toBe(unplaced);
+  // An opening parenthesis is a boundary kept (the comment runs to the line end inside the group,
+  // and the merge on the next line is the group's); a bare ( inside a double-quoted string opens no
+  // subexpression, so the string's closing quote closes it and the pwsh after it stays a word; the
+  // stack reads "$('"')' " as one string still open at its last quote, where a two-state reading
+  // would see a new string, so the pwsh after it stays a word too.
+  for (const command of [
+    `(#it's\n${merge})`,
+    `crew task ${work.id} merge "(" pwsh -c --force`,
+    `crew task ${work.id} merge "$('"')' " pwsh -c --force`,
+  ])
+    expect(reasonOf(ps(command)), JSON.stringify(command)).toBe(handOn);
+  // A parenthesis nested inside a subexpression is the subexpression's: the string closes where
+  // pwsh closes it and the crew command after it is read.
+  const nested = ps(`echo "$( ('a') )"; crew approve ${work.id} spec`);
+  expect(decision(nested)).toBe("ask");
+  expect(reasonOf(nested)).toBe(userOnly);
+});
+
+test("SP6-T4 AC-36 (judgement round-27): a # after a quoted part inside a subexpression is asked about (the quoted-part rule reads the top level alone); a # after a parenthesis nested in a subexpression is the subexpression's comment; an opening parenthesis or brace glued to word text leaves pwsh a parse error and the hook nothing to ask; the rows", () => {
+  const { ctx } = setup();
+  const work = createWork(ctx.paths, "fix");
+  saveWork(ctx.paths, work);
+  const { ps, reasonOf, substitution, unplaced } = powershellRows(ctx);
+  // Inside a subexpression the quoted-part rule does not apply (the flag is the top level's), so
+  // the # after 'a' is asked about and the crew command after the string is never dropped; after a
+  // parenthesis nested in the subexpression the # is the subexpression's own comment, which runs
+  // to the line end and leaves the string open for the walker's substitution rule (without the
+  // nested push the # would be string text and the crew command read).
+  expect(reasonOf(ps(`echo "$( 'a'#x )"; crew approve ${work.id} spec`))).toBe(unplaced);
+  expect(reasonOf(ps(`echo "$( ('a') # x )"; crew approve ${work.id} spec`))).toBe(substitution);
+  // An opening parenthesis or brace ends a bare word and the # after it starts a comment inside the
+  // group, which pwsh never closes (a parse error that runs nothing): the drop leaves the same
+  // open group and nothing to ask about.
+  for (const command of [
+    `echo a(#x ; crew approve ${work.id} spec`,
+    `echo a{#x ; crew approve ${work.id} spec`,
+  ])
+    expect(ps(command), command).toEqual({});
 });

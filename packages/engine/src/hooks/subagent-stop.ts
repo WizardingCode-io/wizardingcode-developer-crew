@@ -283,25 +283,18 @@ export function onSubagentStop(ctx: HookContext, payload: HookPayload): HookResp
     // Several roles stop at once (the reviewers run in parallel): the item's folder is read and
     // written under its lock, so no record is lost and the integrity record stays in step. A lock
     // held past the wait saves nothing rather than racing, and says so.
+    const input: AnswerInput = {
+      answer: roleAnswer(payload.agent_transcript_path, payload.last_assistant_message),
+      ...(payload.agent_id ? { agentId: payload.agent_id } : {}),
+      filedBy: "hook",
+      tokens: roleTokens(payload.agent_transcript_path),
+    };
     let note = withLock(
       workDir(ctx.paths, id),
-      () => recordStop(ctx, id, role, payload, transcriptNote, progress),
+      () => fileAnswer(ctx, id, role, input, transcriptNote, progress),
       { what: "work folder" },
     );
-    // The reply to a relayed question goes out after the record and outside the item's lock, so the
-    // lock covers the record alone and the mailbox's waits never hold the other roles' stops (risk
-    // review, round 14). A passing cause (a lock, a write) clears on its own; a refusal names what
-    // the mail will not take.
-    if (progress.pending && progress.reply && progress.saved) {
-      const question = progress.pending;
-      const { agent, file } = progress.saved;
-      const relayed = relay(ctx, question, progress.reply, agent);
-      progress.pending = null;
-      if ("refused" in relayed)
-        note = `Crew: ${agent}'s answer to ${question} ${whereSaved(progress.saved)} but the reply was not sent: ${relayed.refused}. Once that is cleared, send it with ${sendByHand(id, question, agent, file)}.`;
-      else if (relayed.notes.length)
-        note = `Crew: ${agent}'s answer to ${question} was sent, but ${relayed.notes.join("; ")}.`;
-    }
+    note = relayAfterLock(ctx, id, progress, note);
     return note ? tell(note) : {};
   } catch (error) {
     const why = (error as Error).message;
@@ -319,7 +312,7 @@ export function onSubagentStop(ctx: HookContext, payload: HookPayload): HookResp
   }
 }
 
-interface Progress {
+export interface Progress {
   saved: { file: string | null; agent: string } | null;
   recorded: boolean;
   /** The relayed question still waiting for this answer as its reply. */
@@ -328,21 +321,86 @@ interface Progress {
   reply: string | null;
 }
 
+/**
+ * The reply to a relayed question goes out after the record and outside the item's lock, so the
+ * lock covers the record alone and the mailbox's waits never hold the other roles' stops (risk
+ * review, round 14). A passing cause (a lock, a write) clears on its own; a refusal names what
+ * the mail will not take. Returns the note to tell, the record's own when nothing was relayed.
+ */
+function relayAfterLock(
+  ctx: HookContext,
+  id: string,
+  progress: Progress,
+  note: string | null,
+): string | null {
+  if (!(progress.pending && progress.reply && progress.saved)) return note;
+  const question = progress.pending;
+  const { agent, file } = progress.saved;
+  const relayed = relay(ctx, question, progress.reply, agent);
+  progress.pending = null;
+  if ("refused" in relayed)
+    return `Crew: ${agent}'s answer to ${question} ${whereSaved(progress.saved)} but the reply was not sent: ${relayed.refused}. Once that is cleared, send it with ${sendByHand(id, question, agent, file)}.`;
+  if (relayed.notes.length)
+    return `Crew: ${agent}'s answer to ${question} was sent, but ${relayed.notes.join("; ")}.`;
+  return note;
+}
+
+/**
+ * The session's filing of a role's answer (`crew answer file`, SP6 Task 4 AC-5): the same lock,
+ * the same record and the same reply step as the hook's, marked `filedBy: "session"`; a refusal
+ * (a record to resume that is not there, a tampered item) is thrown with its text.
+ */
+export function fileAnswerBySession(
+  ctx: HookContext,
+  id: string,
+  role: string,
+  input: Omit<AnswerInput, "filedBy" | "tokens">,
+): { file: string | null; agent: string; note: string | null } {
+  const progress: Progress = { saved: null, recorded: false, pending: null, reply: null };
+  const full: AnswerInput = { ...input, filedBy: "session", tokens: { tokens: 0, from: "none" } };
+  let note = withLock(workDir(ctx.paths, id), () => fileAnswer(ctx, id, role, full, "", progress), {
+    what: "work folder",
+  });
+  note = relayAfterLock(ctx, id, progress, note);
+  if (!progress.saved) throw new Error(note ?? "nothing was saved");
+  return { ...progress.saved, note };
+}
+
 function tamperedItem(id: string): string {
   return `work.json changed outside the engine; crew accept ${id}`;
 }
 
 /**
- * Under the work folder's lock: the item and its evidence are read here, not before the lock, so
- * what is saved is what was there when the lock was taken. Returns the note for the session when
- * something was saved but not all of it, null when all went well; throws when it could not go on,
- * with `progress` saying how far it got.
+ * What a filing carries (SP6 Task 4 AC-5): the hook's, read from the subagent's transcript and
+ * payload, or the session's, read from a file (`crew answer file`). A filing without an agent id
+ * resumes the record `as` names and makes a new one otherwise. The transcript itself is the hook's
+ * to read before the filing (the answer, the tokens, the note); the filing never opens it.
  */
-function recordStop(
+export interface AnswerInput {
+  answer: string;
+  agentId?: string;
+  /** The record to resume when no agent id names it (`crew answer file --as <agent>`). */
+  as?: string;
+  filedBy: "hook" | "session";
+  /** The transcript's tokens (the hook); the session has none. */
+  tokens: { tokens: number; from: "transcript" | "none" };
+}
+
+/**
+ * Files a role's answer under the item: the file under `conclave/` or `review/`, the record in the
+ * evidence, a resumed role's earlier reply archived first. One function for the hook and for the
+ * session (SP6 Task 4 AC-5): the hook calls it with what the transcript gave, the session with a
+ * file's text and `filedBy: "session"`; a session's filing never clears a role wait. Called under
+ * the work folder's lock: the item and its evidence are read here, not before the lock, so what is
+ * saved is what was there when the lock was taken. Returns the note for the session when something
+ * was saved but not all of it, null when all went well; throws when it could not go on, with
+ * `progress` saying how far it got.
+ */
+export function fileAnswer(
   ctx: HookContext,
   id: string,
   role: string,
-  payload: HookPayload,
+  input: AnswerInput,
   transcriptNote: string,
   progress: Progress,
 ): string | null {
@@ -354,11 +412,17 @@ function recordStop(
   const read = loadEvidence(ctx.paths, id);
   const evidence = read.evidence;
   const roles = evidence.roles ?? [];
-  const answer = roleAnswer(payload.agent_transcript_path, payload.last_assistant_message);
-  const { tokens, from } = roleTokens(payload.agent_transcript_path);
+  const answer = input.answer;
+  const { tokens, from } = input.tokens;
   // The same agent again: a resumed role, with its first answer on disk or not; its name is the
-  // one its first record took.
-  const earlier = payload.agent_id ? roles.find((r) => r.agentId === payload.agent_id) : undefined;
+  // one its first record took. Without an agent id, the record `as` names, or a new one.
+  const earlier = input.agentId
+    ? roles.find((r) => r.agentId === input.agentId)
+    : input.as
+      ? roles.find((r) => r.agent === input.as)
+      : undefined;
+  if (input.as && !earlier)
+    throw new Error(`no record ${input.as} to resume (crew evidence ${id})`);
   const agent = earlier?.agent ?? agentName(role, roles);
   let saved: { file: string | null; agent: string };
   let note: string | null = null;
@@ -378,7 +442,11 @@ function recordStop(
     saved = { file: joined.file, agent };
     if (joined.archived) {
       // The record of the answer that moved follows it to the archive (the security lead's note).
-      const moved = roles.find((r) => r.agentId === payload.agent_id && r.file === joined.file);
+      const moved = roles.find(
+        (r) =>
+          (input.agentId ? r.agentId === input.agentId : r.agent === agent) &&
+          r.file === joined.file,
+      );
       if (moved) moved.file = joined.archived;
       archivedNote = `Crew: ${agent}'s answer ${whereSaved(saved)} (the earlier reply kept as ${joined.archived}).`;
     }
@@ -414,18 +482,20 @@ function recordStop(
     ...roles,
     {
       agent: saved.agent,
-      ...(payload.agent_id ? { agentId: payload.agent_id } : {}),
+      ...(input.agentId ? { agentId: input.agentId } : {}),
       at: nowIso(),
       tokens,
       tokensFrom: from,
       file: saved.file,
       ...(personality ? { personality } : {}),
       ...(team ? { team } : {}),
+      ...(input.filedBy === "session" ? { filedBy: "session" as const } : {}),
     },
   ];
   saveEvidence(ctx.paths, id, evidence);
   progress.recorded = true;
-  if (role === "judge" && work.awaiting === "role") {
+  // The judge's own stop clears the role wait; a session's filing never does (crew resume is the way).
+  if (role === "judge" && work.awaiting === "role" && input.filedBy === "hook") {
     work.awaiting = null;
     saveWork(ctx.paths, work);
   }

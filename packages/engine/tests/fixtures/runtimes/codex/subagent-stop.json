@@ -1,0 +1,12 @@
+{
+  "session_id": "s1",
+  "transcript_path": "/tmp/s1.jsonl",
+  "cwd": "/repo",
+  "hook_event_name": "SubagentStop",
+  "model": "gpt-5-codex",
+  "agent_id": "a1",
+  "agent_type": "crew-review-security",
+  "agent_transcript_path": "/tmp/a1.jsonl",
+  "stop_hook_active": false,
+  "last_assistant_message": "# security findings for w1\nreviewer: review-security\nread: 1 files, 1 hunks\n\n## Findings\n- none\n\n## Outside the change\n- none\n\n## Not answerable\n- none\n"
+}

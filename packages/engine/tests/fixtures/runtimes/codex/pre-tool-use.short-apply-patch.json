@@ -1,0 +1,13 @@
+{
+  "session_id": "s1",
+  "transcript_path": "/tmp/s1.jsonl",
+  "cwd": "/repo/pkg",
+  "hook_event_name": "PreToolUse",
+  "model": "gpt-5-codex",
+  "tool_name": "apply_patch",
+  "tool_input": {
+    "command": "*** Begin Patch\n*** Update File: src/a.ts\n@@\n-const x = 1;\n+const x = 2;\n*** Add File: ../docs/new.md\n+# new\n*** End Patch\n"
+  },
+  "turn_id": "t1",
+  "tool_use_id": "u2"
+}

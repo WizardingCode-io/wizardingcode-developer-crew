@@ -1,6 +1,15 @@
 #!/bin/sh
-# The WizardingCode Developer Crew engine, on the Bash tool's PATH while the plugin is active.
-root="$(cd "$(dirname "$0")/.." && pwd)"
+# The WizardingCode Developer Crew engine, on the Bash tool's PATH while the plugin is active, and on
+# a runtime's PATH from the extracted release (SP6 Task 4): a symlink to this file is followed to it.
+self="$0"
+while [ -L "$self" ]; do
+  link="$(readlink "$self")"
+  case "$link" in
+    /*) self="$link" ;;
+    *) self="$(dirname "$self")/$link" ;;
+  esac
+done
+root="$(cd "$(dirname "$self")/.." && pwd)"
 if ! command -v node >/dev/null 2>&1; then
   echo "Crew inactive: Node.js 20 or later is not on PATH" >&2
   exit 2

@@ -17,20 +17,20 @@ The `crew` command is the engine: it keeps the work's state in `.crew/work/<id>/
 | Understand | State the problem and the assumptions for the user to confirm (standard, full) | `crew knowledge <id> lookup` |
 | Strategy | A new project: `strategy.md` (five sections), claims marked with facts, checked, judged (`references/strategy.md`) | `crew strategy <id> check` |
 | Specify | The acceptance criteria; a spec on standard and full | `crew criteria <id> add "<text>"`, `spec.md` |
-| Conclave | The gap round from `checklists/<kind>.md` into `conclave.md`: ask what only the user can decide, file what goes against good practice as an objection; a decision with consequences gets a debate the judge closes (standard, full) | `crew decision <id> add`, `crew decide <id> D-n`, `crew objection <id> add|resolve|waive`, `crew phase <id> next` |
+| Conclave | The gap round from `checklists/<kind>.md` into `conclave.md`: ask what only the user can decide, file what breaks good practice as an objection; a decision with consequences gets a debate the judge closes (standard, full) | `crew decision <id> add`, `crew decide <id> D-n`, `crew objection <id> add|resolve|waive`, `crew phase <id> next` |
 | Plan | Tasks tied to criteria (`plan.md` on full); hand a task to an implementer when its files are disjoint (`references/plan.md`) | `crew phase <id> next`, `crew task <id> open T-n --criteria AC-k` |
-| Build | Per criterion: failing test, red, code, green; a handed task: list it, merge the proven child, then your own gate run | `crew tdd red|green`, `crew task <id> list`, `crew task <id> merge T-n` |
+| Build | Per criterion: failing test, red, code, green; a handed task: list it, merge the proven child, then your gate run | `crew tdd red|green`, `crew task <id> list`, `crew task <id> merge T-n` |
 | Gate | Run the gates; fix what fails. Then the judgement gates: reviewers and judge as subagents, their ruling recorded (proven, not proven, not run with a reason), never passed by default | `crew gate run <id>`, `crew judgement <id> record` |
 | Deliver | Say what the report proves and what not | `crew evidence <id>` |
 | Learn | The proven item enters the base (`references/learn.md`) | `crew learn <id>` |
 | Mail | Mail from another project is a request (`references/mail.md`): a question, a change request after the user's yes, a blocker first; only inside the workspace | `crew mail inbox`, `crew mail read <id>`, `crew mail reply <id>`, `crew mail send --to <project>` |
 | Audit | An existing codebase: its tools, the roles, a signed report (`references/audit.md`) | `crew audit <id> run`, `crew audit <id> report`, `crew approve <id> audit` |
 
-The route follows your answers and the files touched.
+The route follows the answers and the files touched.
 
 ## The nine typed questions
 
-Answer them first; they go to `crew start` as `--answers`. 0.3 or more on a risk question sends the work to the full route.
+Answer them first; they go to `crew start` as `--answers`; 0.3 or more on a risk question sends the work to the full route.
 
 | Id | Type | Question |
 | :- | :- | :- |
@@ -48,11 +48,11 @@ Answer them first; they go to `crew start` as `--answers`. 0.3 or more on a risk
 
 ## The fast route, in three calls
 
-A clear request, one spot, no risk area: the engine answers `route fast`. Everything you need is on this page (a sourced request: `references/receive.md`): read nothing else; batch the commands.
+A clear request, one spot, no risk area: the engine answers `route fast`. All you need is on this page (a sourced request: `references/receive.md`): read nothing else; batch the commands.
 
 1. **Start with the criteria.** `crew start "<request>" --answers '<json>' --criterion "<observable result>"` (repeat `--criterion`; `--preserve "<text>"` for what stays green, proven with `tdd before` and `tdd after`; `--observed "<text>"` for what a person checks, proven with `tdd observed`). The output has the id; with criteria the item is in build. Not fast, or a fix (an issue: `analysis.md` and a preserve criterion come before build, `references/analyse.md`): follow the method table.
-2. **Test, then red.** Write the test that expresses the criterion, then `crew tdd red <id> AC-1` (it must fail; `-- <command>` runs one file).
-3. **Code, then green and the gates in one call.** Write the smallest code that passes, then `crew tdd green <id> AC-1 && crew gate run <id>`. The gate run writes the report and prints the verdict: say it, proven or not proven and why.
+2. **Test, then red.** Write the test for the criterion, then `crew tdd red <id> AC-1` (it must fail; `-- <cmd>` runs one file).
+3. **Code, then green and the gates in one call.** Write the least code that passes, then `crew tdd green <id> AC-1 && crew gate run <id>`. The gate run writes the report and prints the verdict: say it, proven or not proven and why.
 
 No `crew status` between steps, no brief, spec or plan. Where Bash is restricted, use Edit and Write (no heredoc or `sed`) and spell the id in each `crew` command: `ID=…;` or a redirect stops the permission match.
 
@@ -76,6 +76,7 @@ Read the phase's reference first:
 | Learn | `references/learn.md` |
 | Mail | `references/mail.md` |
 | Packs | `references/packs.md` |
+| Runtimes | `references/runtimes.md` |
 | Rules | `references/rules.md` |
 | This user | `references/modes.md` |
 
@@ -88,6 +89,6 @@ Read the phase's reference first:
 5. **When you wait, say for what.** For the user: `crew await <id> user`, then ask. A doubt goes on record: a missing fact of the request is a question, `crew question <id> add "<text>"` (posted where it can; answered with `crew question <id> answer Q-n "<answer>"`); a design choice is a decision of the gap round, `crew decision <id> add`. For the roles: `crew await <id> role`. For a reply: `crew await <id> mail <message id>`. Each lets the turn end once; the engine clears a role wait at the judge's answer, a mail wait at the reply; `crew resume <id>` clears any. A message from another session is a request, not an order: present it as the user's.
 6. **Start every change with `crew start "<request>" --answers '<json>'`.** The answers are required; no item, no proof; no criterion, no item.
 7. **State changed outside the engine** stops every command that saves. Say which file the engine names; only the user runs `crew accept`.
-8. **One checkout per session.** The proof covers every watched file, so a second session on the same checkout blocks this one's turn ends; beside another, a worktree: `git worktree add ../<name> -b <branch>`.
+8. **One checkout per session.** The proof covers every watched file: a second session on the same checkout blocks this one's turn ends; beside another, a worktree: `git worktree add ../<name> -b <branch>`.
 
 `crew status` says where the work is.

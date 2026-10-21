@@ -625,17 +625,18 @@ test("SP2c: the report's Roles section lists each role's end with its tokens and
     ],
   };
   const report = renderReport(work, evidence, DEFAULT_POLICY);
+  // The Filed by column since SP6 Task 4: a record without the field is the hook's.
   expect(report).toContain(
-    "## Roles\n\n| Role | Personality | At | Tokens | Answer |\n| :- | :- | :- | -: | :- |\n",
+    "## Roles\n\n| Role | Personality | At | Tokens | Answer | Filed by |\n| :- | :- | :- | -: | :- | :- |\n",
   );
   expect(report).toContain(
-    "| review-code-quality | - | 2026-10-15T11:20:00.000Z | 39912 | review/code-quality.findings.md |",
+    "| review-code-quality | - | 2026-10-15T11:20:00.000Z | 39912 | review/code-quality.findings.md | hook |",
   );
   expect(report).toContain(
-    "| judge | - | 2026-10-15T11:25:00.000Z | not read | review/ruling.json |",
+    "| judge | - | 2026-10-15T11:25:00.000Z | not read | review/ruling.json | hook |",
   );
   expect(report).toContain(
-    "| expert-1 | creative | 2026-10-15T11:10:00.000Z | 5000 | conclave/expert-1.md |",
+    "| expert-1 | creative | 2026-10-15T11:10:00.000Z | 5000 | conclave/expert-1.md | hook |",
   );
 });
 

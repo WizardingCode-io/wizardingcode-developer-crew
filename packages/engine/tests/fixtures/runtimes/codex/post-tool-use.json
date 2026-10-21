@@ -1,0 +1,16 @@
+{
+  "session_id": "s1",
+  "transcript_path": "/tmp/s1.jsonl",
+  "cwd": "/repo",
+  "hook_event_name": "PostToolUse",
+  "model": "gpt-5-codex",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "ls"
+  },
+  "tool_response": {
+    "output": ""
+  },
+  "turn_id": "t1",
+  "tool_use_id": "u1"
+}

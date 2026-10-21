@@ -1,4 +1,4 @@
-import { existsSync, rmSync, statSync } from "node:fs";
+import { existsSync, readFileSync, rmSync, statSync } from "node:fs";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { analyseOrigin, originSummary, readOrigin, writeOrigin } from "./analysis.ts";
 import { commaList, type Parsed, parse } from "./argv.ts";
@@ -53,7 +53,10 @@ import {
 import { changedWatchedPaths, hashPaths, isGitRepo } from "./fingerprint.ts";
 import { ensureDir, nowIso, readJson, readText, sha256, writeJson, writeText } from "./fs.ts";
 import { assess, reassess, runGates, runTaskGate } from "./gates.ts";
+import { buildContext } from "./hooks/context.ts";
 import { handleHook } from "./hooks/index.ts";
+import { leaveNotice } from "./hooks/notices.ts";
+import { fileAnswerBySession } from "./hooks/subagent-stop.ts";
 import type { HookPayload } from "./hooks/types.ts";
 import { JEV_ENDPOINT, JEV_MODEL, jevConfig, two } from "./jev.ts";
 import {
@@ -197,6 +200,18 @@ import {
   questionsSorted,
 } from "./questions.ts";
 import { fetchSource, findQuote, parseFacts } from "./research.ts";
+import {
+  checkRuntime,
+  ENGINE_EVENTS,
+  type EngineEvent,
+  installRuntime,
+  listLines,
+  pluginRoot,
+  RUNTIME_NAMES,
+  removeRuntime,
+  runtimeOf,
+  type Scope,
+} from "./runtimes.ts";
 import { scanText } from "./secrets.ts";
 import { parseSource, sourceLine } from "./source.ts";
 import { ensureCrewDir, oneLine, workingRoles } from "./state.ts";
@@ -229,7 +244,7 @@ import {
   writeBrief,
 } from "./tasks.ts";
 import { recordTdd, type TddStep } from "./tdd.ts";
-import { auditSeats, plannedSeats, primaryTeam, teamsFor } from "./team.ts";
+import { auditSeats, plannedSeats, primaryTeam, ROLE_NAMES, teamsFor } from "./team.ts";
 import type {
   Criterion,
   Decision,
@@ -251,6 +266,7 @@ import type {
   Policy,
   Profile,
   ProjectEntry,
+  RoleRecord,
   Stack,
   TaskRecord,
   Triage,
@@ -303,6 +319,7 @@ import {
   kindOfItem,
   loadWork,
   nextPhaseOf,
+  noteRuntime,
   openDebate,
   openItems,
   phasesFor,
@@ -1548,22 +1565,86 @@ function gateSummary(
   return lines.join("\n");
 }
 
+/** `answers filed by the session: <agents>` when any role record was the session's (SP6 Task 4 AC-5); empty otherwise. */
+function sessionFiledLine(roles: readonly RoleRecord[]): string {
+  const agents = [...new Set(roles.filter((r) => r.filedBy === "session").map((r) => r.agent))];
+  return agents.length ? `answers filed by the session: ${agents.join(", ")}` : "";
+}
+
+/** A hook answer's `systemMessage` the runtime could not carry, left as a notice for the session's next context; nothing when no context can be built. */
+function leaveNoticeFor(payload: HookPayload, env: NodeJS.ProcessEnv, text: string): void {
+  try {
+    const ctx = buildContext(payload, env);
+    if (ctx) leaveNotice(ctx, text);
+  } catch {
+    // The hook fails open: a notice that cannot be kept costs the session nothing.
+  }
+}
+
+/**
+ * The active item learns the runtime whose hook observed it (SP6 Task 4), once per name, fail-open.
+ * A name the item already holds takes no lock (judgement round 2: the hooks run on every tool call
+ * beside the roles' filings, which share the folder's lock); `noteRuntime` checks again under it.
+ */
+function observeRuntime(payload: HookPayload, env: NodeJS.ProcessEnv, runtime: string): void {
+  try {
+    const paths = resolvePaths(payload.cwd ?? "", env);
+    const active = paths ? activeWork(paths) : null;
+    if (paths && active?.work && !active.tampered && !active.work.runtimes?.includes(runtime))
+      noteRuntime(paths, active.work.id, runtime);
+  } catch {
+    // As above.
+  }
+}
+
 async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
   const [command, ...args] = parsed.positional;
   if (parsed.flags.version || command === "version") return ok(VERSION, { version: VERSION });
   if (command === "hook") {
+    // The runtime the hook runs under (SP6 Task 4): its reader turns the payload into the engine's,
+    // its writer turns the engine's answer into its shape; `claude` is today's path byte for byte.
+    // An unknown runtime is refused before stdin is read.
     const event = args[0] ?? "";
-    let payload: Record<string, unknown> = {};
+    const runtimeName = typeof parsed.flags.runtime === "string" ? parsed.flags.runtime : "claude";
+    const runtime = runtimeOf(runtimeName);
+    if (!runtime) return refuse(`unknown runtime ${runtimeName} (crew runtime list)`);
+    let raw: unknown = {};
     try {
-      const raw = await io.stdin();
-      payload = raw.trim() ? (JSON.parse(raw) as Record<string, unknown>) : {};
+      const text = await io.stdin();
+      raw = text.trim() ? JSON.parse(text) : {};
     } catch {
-      payload = {};
+      raw = {};
     }
+    const engineEvent = (ENGINE_EVENTS as readonly string[]).includes(event)
+      ? (event as EngineEvent)
+      : null;
+    const payload: HookPayload = engineEvent
+      ? runtime.readPayload(engineEvent, raw, io.cwd)
+      : typeof raw === "object" && raw !== null && !Array.isArray(raw)
+        ? (raw as HookPayload)
+        : {};
     if (typeof payload.cwd !== "string") payload.cwd = io.cwd;
-    return ok(JSON.stringify(handleHook(event, payload as HookPayload, io.env)), {
-      hookEvent: event,
-    });
+    const response = handleHook(event, payload, io.env);
+    const written = engineEvent
+      ? runtime.writeResponse(engineEvent, response)
+      : { stdout: JSON.stringify(response), exitCode: 0, dropped: null };
+    // A systemMessage the runtime has no field for is kept as a notice the next context carries
+    // (the subagent-stop hook leaves its own, hooks/notices.ts, so it is not left twice); the item
+    // learns which runtime observed it, once per name, from the events a session starts with.
+    if (written.dropped && engineEvent !== "subagent-stop")
+      leaveNoticeFor(payload, io.env, written.dropped);
+    if (
+      engineEvent === "session-start" ||
+      engineEvent === "prompt" ||
+      engineEvent === "pre-tool-use"
+    )
+      observeRuntime(payload, io.env, runtime.name);
+    return {
+      code: written.exitCode,
+      text: written.stdout,
+      stdout: true,
+      data: { hookEvent: event },
+    };
   }
   const badFlag = unknownFlag(command ?? "help", parsed);
   if (badFlag) return badFlag;
@@ -2939,8 +3020,10 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         outcome.evidence.fingerprint ?? "",
         env.policy,
       ).filter((r) => r.status === "planned" || r.status === "stale");
+      // The judge's launch line carries the answers the session filed (SP6 Task 4, decision 10).
+      const filedBySession = sessionFiledLine(outcome.evidence.roles ?? []);
       const judgementNote = pending.length
-        ? `\nJudgement gates to run: ${pending.map((r) => `${r.gate} (${r.planned})`).join(", ")}; inputs in ${review}/ (diff.patch, files.txt); record each with crew judgement ${opened.work.id} record --ruling <file>`
+        ? `\nJudgement gates to run: ${pending.map((r) => `${r.gate} (${r.planned})`).join(", ")}; inputs in ${review}/ (diff.patch, files.txt); record each with crew judgement ${opened.work.id} record --ruling <file>${filedBySession ? `\n${filedBySession}` : ""}`
         : "";
       // What the reviewers' patch lacks is said here too, never found out from an empty file
       // (review of SP2b, findings 9 and 10).
@@ -3139,6 +3222,9 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           ? `Proven: ${opened.work.id}`
           : `Not proven: ${result.unproven.join("; ")}`,
       );
+      // The answers the session filed, said with the verdict (SP6 Task 4, decision 10).
+      const filedBySession = sessionFiledLine(before.evidence.roles ?? []);
+      if (filedBySession) lines.push(filedBySession);
       if (jevWait) lines.push(jevWait);
       // Like gate run: the exit code says whether the work is proven, so a chain stops at "Not proven".
       return {
@@ -3583,7 +3669,8 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         verdict.verdict === "validated"
           ? `validated (round ${round})`
           : `returned, ${verdict.returns} return${verdict.returns === 1 ? "" : "s"} (round ${round})`;
-      return ok(`validation of ${what} by ${by}: ${said}`, {
+      const filedLine = sessionFiledLine(loadEvidence(env.paths, work.id).evidence.roles ?? []);
+      return ok(`validation of ${what} by ${by}: ${said}${filedLine ? `\n${filedLine}` : ""}`, {
         validation: work.validations[work.validations.length - 1],
         rounds: work.rounds ?? rounds,
       });
@@ -3744,6 +3831,104 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         });
       }
       return refuse(usage);
+    }
+    case "answer": {
+      // A role's answer filed by the session (SP6 Task 4 AC-5), where the runtime the item ran
+      // under files none by hook: the same filing as the SubagentStop hook's, marked as the session's.
+      const usage = "usage: crew answer file <id> --role <role> --file <path> [--as <agent>]";
+      if (args[0] !== "file") return refuse(usage);
+      const role = typeof parsed.flags.role === "string" ? parsed.flags.role : "";
+      const file = typeof parsed.flags.file === "string" ? parsed.flags.file : "";
+      const as = typeof parsed.flags.as === "string" ? parsed.flags.as : undefined;
+      if (!role || !file) return refuse(usage);
+      const opened = openForChange(env, args[1]);
+      if (isOutcome(opened)) return opened;
+      const work = opened.work;
+      if (work.phase === "learn") return refuse(`${work.id} is not open (phase ${work.phase})`);
+      if (!ROLE_NAMES.includes(role))
+        return refuse(`unknown role ${role} (one of: ${ROLE_NAMES.join(", ")})`);
+      if (!existsSync(file)) return refuse(`no file at ${file}`);
+      const observed = work.runtimes?.length ? work.runtimes : ["claude"];
+      const byHook = observed.filter((n) =>
+        runtimeOf(n)?.guarantees.some(
+          (g) => g.what === "the roles' answers filed" && g.tier === "enforced",
+        ),
+      );
+      if (byHook.length === observed.length)
+        return refuse(
+          `${work.id} ran under ${observed.join(" and ")}, which files the roles' answers by its subagent hook: resume the role or save its answer from the transcript`,
+        );
+      const ctx = buildContext({ session_id: "crew-answer", cwd: env.paths.root }, io.env);
+      if (!ctx) return refuse("crew is inactive here");
+      try {
+        // The file's text as the role's answer; the filing adds the final newline the hook adds.
+        const done = fileAnswerBySession(ctx, work.id, role, {
+          answer: readFileSync(file, "utf8").replace(/\n$/, ""),
+          ...(as ? { as } : {}),
+        });
+        const lines = [
+          `${done.agent}'s answer filed as ${done.file ?? "no file"} (by the session); a role wait is cleared with crew resume ${work.id}`,
+        ];
+        if (done.note) lines.push(done.note);
+        return ok(lines.join("\n"), { agent: done.agent, file: done.file });
+      } catch (error) {
+        return refuse((error as Error).message);
+      }
+    }
+    case "runtime": {
+      // The runtime adapters (SP6 Task 4 AC-3): the table listed, a runtime's hook configuration
+      // merged in, the skill copied as crew-method and the agents generated under crew names, and
+      // the configuration read back with one result per event, the copies' hashes and the table.
+      const [sub, name] = args;
+      const usage =
+        "usage: crew runtime list | install <name> [--scope project|user] | remove <name> [--scope project|user] | check <name> [--scope project|user]";
+      if (sub === "list") return ok(listLines().join("\n"), { runtimes: [...RUNTIME_NAMES] });
+      if (sub !== "install" && sub !== "remove" && sub !== "check") return refuse(usage);
+      const runtime = runtimeOf(name ?? "");
+      if (!runtime) return refuse(`unknown runtime ${name ?? ""} (crew runtime list)`);
+      const scopeFlag = parsed.flags.scope;
+      if (scopeFlag !== undefined && scopeFlag !== "project" && scopeFlag !== "user")
+        return refuse(usage);
+      const scope = scopeFlag as Scope | undefined;
+      const dirs = { project: env.paths.root, home: io.env.HOME ?? "" };
+      const root = pluginRoot();
+      if (sub === "install") {
+        if (runtime.name === "claude")
+          return refuse(
+            "claude is installed as a plugin (claude plugin install wizardingcode-developer-crew@wizardingcode-plugins)",
+          );
+        const done = installRuntime(runtime, scope ?? "project", dirs, root);
+        if ("refused" in done) return refuse(done.refused);
+        const lines = [...done.files, ...(done.trust ? [`trust: ${done.trust}`] : [])];
+        return ok(lines.join("\n"), { files: done.files, trust: done.trust });
+      }
+      if (sub === "remove") {
+        // The rollback (judgement round 2): crew's entries out of the merged configuration, the
+        // foreign ones kept; crew's own files gone; every path printed.
+        if (runtime.name === "claude")
+          return refuse(
+            "claude is installed as a plugin (claude plugin uninstall wizardingcode-developer-crew@wizardingcode-plugins)",
+          );
+        const done = removeRuntime(runtime, scope ?? "project", dirs);
+        if ("refused" in done) return refuse(done.refused);
+        const lines = [
+          ...done.rewritten.map((p) => `rewritten ${p}`),
+          ...done.removed.map((p) => `removed ${p}`),
+        ];
+        return ok(
+          lines.length
+            ? lines.join("\n")
+            : `nothing of crew's installed for ${runtime.name} at ${scope ?? "project"} scope`,
+          { rewritten: done.rewritten, removed: done.removed },
+        );
+      }
+      const checked = checkRuntime(runtime, scope ?? null, dirs, root);
+      return {
+        code: checked.ok ? 0 : 1,
+        text: checked.lines.join("\n"),
+        stdout: true,
+        data: { lines: checked.lines, ok: checked.ok },
+      };
     }
     case "pack": {
       // The packs the engine serves (SP6 Task 2, ADR 0010): registered from a path or by Claude
@@ -4659,6 +4844,8 @@ const HELP = `crew ${VERSION}
   knowledge add --kind general|documentation --title "<t>" --file <path> [--source <url>]   a person's material, from the project's own tree, marked
   knowledge contradict K-n --reason "<why>" [--item <id>]   dispute an entry (recorded); knowledge unmark K-n   a person removes a mark (asks the user; never with --mode or --validator)
   learn <id> [--confirm K-n]           the proven item enters the base (in the learn phase): its solution, an issue's root cause, the facts with a source, the workspace's stack preference; what it cited is confirmed; a root cause the base holds is refused unless confirmed
+  pack add <path> | remove <name> | list | show <name> | files checklists <kind> | files knowledge <key> | files knowledge --item <id> | sync   the packs the engine serves (references/packs.md)
+  runtime list | install <name> [--scope project|user] | remove <name> [--scope project|user] | check <name> [--scope project|user]   the runtime adapters: the table, a runtime's hook configuration merged in with the skill and the agents, crew's entries and files taken out again, and the configuration read back with the guarantee table (references/runtimes.md)
   skip <id> <step> --reason "<text>"    record a skip of a tdd step, a gate or a judgement gate (asks the user; --mode as for approve)
   evidence <id>                         write and print the report
   status | mode [m] | config <key> [v]  state and settings
@@ -4686,8 +4873,11 @@ export async function main(argv: string[], io: CliIo): Promise<number> {
     return 2;
   }
   if (parsed.positional[0] === "hook") {
-    io.stdout(`${outcome.text}\n`);
-    return 0;
+    // The runtime's answer on stdout with its exit code; a refusal (an unknown runtime) on stderr,
+    // so no runtime reads it as its JSON (Gemini forbids plain text on stdout).
+    if (outcome.code === 0 || outcome.stdout) io.stdout(`${outcome.text}\n`);
+    else io.stderr(`${outcome.text}\n`);
+    return outcome.code;
   }
   if (parsed.flags.json)
     io.stdout(

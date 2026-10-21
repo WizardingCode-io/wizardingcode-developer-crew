@@ -245,12 +245,19 @@ The engine is a library with thin faces: a command first, and an MCP server when
 
 ## 13. Runtimes
 
-| Tier | Runtimes | What the user gets |
-| :- | :- | :- |
-| Enforced | Claude Code, Codex, Cursor, Copilot, Gemini CLI, OpenCode | The gates block through hooks |
-| Requested | Runtimes with skills but no hooks | The same method. The system states that verification is requested, not enforced |
+The method is one; what each runtime enforces is what its hooks document. Skills are written once and used unchanged everywhere: they name actions, not tools, and one reference, `references/runtimes.md`, serves every runtime, repeating the table the engine prints (`crew runtime check <name>`; ADR 0011). Status (0.11.0), per guarantee, from the official pages read on 2026-10-20:
 
-Skills are written once and used unchanged everywhere. They name actions, not tools, and each runtime gets a small mapping file.
+| Guarantee | Claude Code | Codex CLI | Cursor | GitHub Copilot CLI | Gemini CLI | OpenCode |
+| :- | :- | :- | :- | :- | :- | :- |
+| context at start | enforced | enforced | enforced | enforced | enforced | requested |
+| the status line per prompt | enforced | enforced | requested | requested | enforced | requested |
+| the denial of engine files | enforced | enforced | requested | requested | enforced | requested |
+| the denial of forbidden commands | enforced | enforced | enforced | requested (powershell by text) | enforced | enforced |
+| the hold at Stop | enforced | enforced | enforced | enforced | enforced | requested |
+| the roles' answers filed | enforced | requested | requested | enforced | requested | requested |
+| the roles read-only | enforced | requested | enforced | enforced | enforced | enforced |
+
+A requested cell means the runtime's page documents no mechanism for it; the reference and `crew runtime check` say why, and the skill states there that verification is requested, not enforced. The plugin folder is the distribution on every runtime (a release asset, `bin/crew` on PATH, `crew runtime install <name>`).
 
 ## 14. Packaging
 

@@ -54,6 +54,66 @@ A pack is knowledge that installs apart from the core (vision §11), as data the
 
 Install one from the marketplace (`claude plugin install wizardingcode-pack-laravel@wizardingcode-plugins`; the engine registers it at the next session start) or from a path (`crew pack add <path>`); `crew pack list` says the state of each. A pack's gate command enters the profile as proposed and runs only once a person confirmed it in the project (`crew profile confirm <gate>`). A pack ships with the cases that show its difference against the agent without it (`plugins/core/evals`); `plugins/core/skills/crew/references/packs.md` says how one is written and measured.
 
+## Runtimes
+
+The method runs in Claude Code as a plugin, and in Codex CLI, Cursor, GitHub Copilot CLI, Gemini CLI and OpenCode through one table of adapters in the engine (ADR 0011): `crew hook <event> --runtime <name>` reads the runtime's payload into the engine's and writes the engine's answer in the runtime's shape, so the rules never change per runtime. Install from the release asset: extract `wizardingcode-developer-crew-<version>.tar.gz`, put the extracted `bin/` on PATH, and in the project run `crew runtime install <name>` (`--scope user` for the home); it merges crew's entries into the runtime's hook configuration (a foreign hook stays), copies the skill as `crew-method` under `.agents/skills`, generates the agents under `crew-` names in the runtime's format, prints every file written and the trust step the runtime asks for (Codex's `/hooks` review, Gemini's first-run warning). `crew runtime check <name>` reads it back: the root, one line per event, the copies by hash and the guarantee table below; `crew runtime remove <name>` is the rollback (crew's entries out of the configuration, the foreign ones and the other keys kept, crew's files gone); `crew runtime list` prints the table. Where the table says a filing is requested, the session files a role's answer with `crew answer file <id> --role <role> --file <path>` and the record says so.
+
+What each runtime enforces, from its official page (read on 2026-10-20; a requested line says what the page does not document; `plugins/core/skills/crew/references/runtimes.md` has the details):
+
+### Claude Code
+- context at start: enforced
+- the status line per prompt: enforced
+- the denial of engine files: enforced
+- the denial of forbidden commands: enforced
+- the hold at Stop: enforced
+- the roles' answers filed: enforced
+- the roles read-only: enforced
+
+### Codex CLI
+- context at start: enforced
+- the status line per prompt: enforced
+- the denial of engine files: enforced
+- the denial of forbidden commands: enforced
+- the hold at Stop: enforced
+- the roles' answers filed: requested (the page does not say that agent_type names a custom agent)
+- the roles read-only: requested (no tools field is documented for a Codex agent)
+
+### Cursor
+- context at start: enforced
+- the status line per prompt: requested (beforeSubmitPrompt carries no context field)
+- the denial of engine files: requested (the Write and Delete path fields are not documented; Shell is denied)
+- the denial of forbidden commands: enforced
+- the hold at Stop: enforced
+- the roles' answers filed: requested (subagentStop gives a summary, not the transcript's last message, and the transcript format is not documented)
+- the roles read-only: enforced
+
+### GitHub Copilot CLI
+- context at start: enforced
+- the status line per prompt: requested (UserPromptSubmit carries no context field)
+- the denial of engine files: requested (the create, edit and apply_patch input fields are not documented; file_path, path and filePath are tried and patch text is parsed; bash is denied)
+- the denial of forbidden commands: requested (the powershell tool's lines are read by text and rewritten for the POSIX reader, so a crew command built without the word crew on the line may pass, and a line that names the word outside a crew command, or a crew command with an unquoted comma list, is denied, since Copilot answers every ask of the engine as a deny; bash is enforced)
+- the hold at Stop: enforced
+- the roles' answers filed: enforced
+- the roles read-only: enforced
+
+### Gemini CLI
+- context at start: enforced
+- the status line per prompt: enforced
+- the denial of engine files: enforced
+- the denial of forbidden commands: enforced
+- the hold at Stop: enforced
+- the roles' answers filed: requested (no subagent event)
+- the roles read-only: enforced
+
+### OpenCode
+- context at start: requested (no context injection, and the session id field of session.created is not documented: the skill's first step runs crew status)
+- the status line per prompt: requested (no prompt hook)
+- the denial of engine files: requested (the write, edit and apply_patch argument names are not on an official page; filePath is tried)
+- the denial of forbidden commands: enforced
+- the hold at Stop: requested (no stop hook: the record says the turn's end was not held)
+- the roles' answers filed: requested (no subagent event)
+- the roles read-only: enforced
+
 ## Where state lives
 
 - **`.crew/` in the repository.** Crew is active in a git repository, or in a folder that already holds `.crew/` (`crew detect` creates it); anywhere else it stays silent.

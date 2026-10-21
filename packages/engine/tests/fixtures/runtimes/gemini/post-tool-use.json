@@ -1,0 +1,15 @@
+{
+  "session_id": "s1",
+  "transcript_path": "/tmp/s1.json",
+  "cwd": "/repo",
+  "hook_event_name": "AfterTool",
+  "timestamp": "2026-10-20T10:00:03Z",
+  "tool_name": "write_file",
+  "tool_input": {
+    "file_path": "src/a.ts",
+    "content": "export const x = 2;\n"
+  },
+  "tool_response": {
+    "output": "ok"
+  }
+}

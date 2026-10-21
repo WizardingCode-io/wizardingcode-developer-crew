@@ -1,7 +1,8 @@
 /**
  * The words a command's lead is read by, shared by `run.ts` (the words a test-first command may
  * record, finding 91) and the PreToolUse hook (the lead of every Bash command): one table, so the
- * two readers never drift (finding 98: `env -P /x sh -c a b` passed one reader and not the other).
+ * two readers never drift (finding 98: `env -P /x sh -c a b` passed one reader and not the other),
+ * and the one quoting rule both write a word with (`quoteWord`).
  */
 
 /** The shells whose `-c` takes a command string. */
@@ -69,3 +70,108 @@ export function takesNext(wrapper: CommandWrapper, option: string): boolean {
     if (wrapper.valued.includes(option.charAt(i))) return i === option.length - 1;
   return false;
 }
+
+const SAFE_WORD = /^[A-Za-z0-9_@%+=:,./-]+$/;
+/** One word, quoted for a POSIX shell's reading: a word of safe characters stays as it is, the rest goes in single quotes. The engine's one rule, for the words after `crew tdd --`, the words `env -S "a b" c` appends to its string and `find -exec`'s, so a comma list stays a bare word and a `#` or a `;` stays the word it is. */
+export function quoteWord(word: string): string {
+  return SAFE_WORD.test(word) ? word : `'${word.replace(/'/g, "'\\''")}'`;
+}
+
+/**
+ * The wrappers a shell may stand behind in a command, as both readers read them (the hook's walker and
+ * the PowerShell reader's command positions): `COMMAND_WRAPPERS` and the shell's own words that take
+ * one of their own before the command. What a wrapper's options take is said at `CommandWrapper`.
+ */
+export const WRAPPERS: readonly CommandWrapper[] = [
+  // The shell's own words that take one of their own before the command: a function's name, a case's subject.
+  { name: "function", valued: "", longValued: [], positionals: 1 },
+  { name: "case", valued: "", longValued: [], positionals: 1 },
+  { name: "nice", valued: "n", longValued: ["--adjustment"], positionals: 0 },
+  {
+    name: "timeout",
+    valued: "sk",
+    longValued: ["--signal", "--kill-after"],
+    positionals: 1,
+  },
+  { name: "stdbuf", valued: "ioe", longValued: ["--input", "--output", "--error"], positionals: 0 },
+  {
+    name: "flock",
+    valued: "w",
+    longValued: ["--wait", "--timeout", "--conflict-exit-code"],
+    positionals: 1,
+    scriptOptions: ["-c", "--command"],
+  },
+  {
+    name: "script",
+    valued: "FtEBIOomT",
+    longValued: [
+      "--echo",
+      "--log-in",
+      "--log-out",
+      "--log-io",
+      "--log-timing",
+      "--logging-format",
+      "--output-limit",
+    ],
+    positionals: 1,
+    scriptOptions: ["-c", "--command"],
+  },
+  {
+    name: "su",
+    valued: "gGsw",
+    longValued: ["--group", "--supp-group", "--shell", "--whitelist-environment"],
+    positionals: 1,
+    scriptOptions: ["-c", "--command", "--session-command"],
+  },
+  {
+    name: "sudo",
+    valued: "ugpChDTrt",
+    longValued: [
+      "--user",
+      "--group",
+      "--prompt",
+      "--close-from",
+      "--host",
+      "--chdir",
+      "--command-timeout",
+      "--role",
+      "--type",
+      "--other-user",
+    ],
+    positionals: 0,
+  },
+  { name: "doas", valued: "uC", longValued: [], positionals: 0 },
+  // `env` and `command`, the wrappers a recorded test-first command may stand behind, come from the
+  // table `run.ts` reads too (finding 98: two copies had drifted).
+  ...COMMAND_WRAPPERS,
+  { name: "exec", valued: "a", longValued: [], positionals: 0 },
+  {
+    name: "xargs",
+    valued: "nILPdEsa",
+    longValued: [
+      "--max-args",
+      "--replace",
+      "--max-lines",
+      "--max-procs",
+      "--delimiter",
+      "--eof",
+      "--max-chars",
+      "--arg-file",
+      "--process-slot-var",
+    ],
+    positionals: 0,
+  },
+  { name: "nohup", valued: "", longValued: [], positionals: 0 },
+  { name: "time", valued: "fo", longValued: ["--format", "--output"], positionals: 0 },
+  { name: "builtin", valued: "", longValued: [], positionals: 0 },
+  { name: "caffeinate", valued: "tw", longValued: [], positionals: 0 },
+  {
+    name: "ionice",
+    valued: "cnp",
+    longValued: ["--class", "--classdata", "--pid"],
+    positionals: 0,
+  },
+  { name: "noglob", valued: "", longValued: [], positionals: 0 },
+  { name: "nocorrect", valued: "", longValued: [], positionals: 0 },
+  { name: "coproc", valued: "", longValued: [], positionals: 0, namedBlock: true },
+];

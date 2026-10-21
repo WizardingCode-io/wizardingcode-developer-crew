@@ -9,6 +9,7 @@ import { type CrewPaths, workDir } from "./paths.ts";
 import { decisionCounts } from "./policy.ts";
 import { triageSummary } from "./priorities.ts";
 import { questionChannelsCell } from "./questions.ts";
+import { guaranteeLines, runtimeOf } from "./runtimes.ts";
 import { sourceLine } from "./source.ts";
 import { oneLine } from "./state.ts";
 import { readProtectedJson, writeProtectedJson } from "./store.ts";
@@ -596,6 +597,17 @@ export function renderReport(
     lines.push(
       `- Rounds: judgement ${rounds.judgement} of ${policy.team.maxJudgementRounds}, validation ${rounds.validation} of ${policy.team.maxValidationRounds}`,
     );
+    // The runtimes whose hooks observed the item, each with its guarantees (SP6 Task 4); nothing
+    // for an item no hook recorded (one before 0.11.0).
+    if (work.runtimes?.length)
+      lines.push(
+        `- Runtimes: ${work.runtimes
+          .map((name) => {
+            const runtime = runtimeOf(name);
+            return runtime ? `${name} (${guaranteeLines(runtime).join("; ")})` : name;
+          })
+          .join("; ")}`,
+      );
   }
   // The leads' verdicts on the spec, the plan and the delivery (SP7 §6.4), every round kept.
   if (work.validations?.length) {
@@ -683,18 +695,18 @@ export function renderReport(
       );
     }
   }
-  // Each role's end as the SubagentStop hook recorded it (SP2c §11).
+  // Each role's end as the SubagentStop hook recorded it (SP2c §11), or as the session filed it (SP6 Task 4).
   if (evidence.roles?.length) {
     lines.push(
       "",
       "## Roles",
       "",
-      "| Role | Personality | At | Tokens | Answer |",
-      "| :- | :- | :- | -: | :- |",
+      "| Role | Personality | At | Tokens | Answer | Filed by |",
+      "| :- | :- | :- | -: | :- | :- |",
     );
     for (const r of evidence.roles)
       lines.push(
-        `| ${r.agent} | ${r.personality ?? "-"} | ${r.at} | ${r.tokensFrom === "none" ? "not read" : r.tokens} | ${r.file ?? "not saved"} |`,
+        `| ${r.agent} | ${r.personality ?? "-"} | ${r.at} | ${r.tokensFrom === "none" ? "not read" : r.tokens} | ${r.file ?? "not saved"} | ${r.filedBy ?? "hook"} |`,
       );
   }
   // The tasks handed to implementers (SP2c §7), filled by `crew task`.

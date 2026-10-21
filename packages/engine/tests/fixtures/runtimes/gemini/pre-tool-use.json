@@ -1,0 +1,13 @@
+{
+  "session_id": "s1",
+  "transcript_path": "/tmp/s1.json",
+  "cwd": "/repo",
+  "hook_event_name": "BeforeTool",
+  "timestamp": "2026-10-20T10:00:02Z",
+  "tool_name": "run_shell_command",
+  "tool_input": {
+    "command": "npm test",
+    "description": "Run the tests",
+    "dir_path": "/repo"
+  }
+}

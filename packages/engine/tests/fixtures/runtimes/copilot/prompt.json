@@ -1,0 +1,7 @@
+{
+  "session_id": "s1",
+  "timestamp": 1760954401000,
+  "cwd": "/repo",
+  "hook_event_name": "UserPromptSubmit",
+  "prompt": "Fix the cart total"
+}
