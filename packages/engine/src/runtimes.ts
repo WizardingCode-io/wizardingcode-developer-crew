@@ -9,7 +9,7 @@ import {
 } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { frontMatterProblems } from "./front-matter.ts";
+import { FRONT_MATTER, frontMatterProblems, parseQuoted } from "./front-matter.ts";
 import { sha256 as hashOf, writeText } from "./fs.ts";
 import type { HookPayload, HookResponse } from "./hooks/types.ts";
 import { opencodePlugin } from "./runtimes/opencode-plugin.ts";
@@ -231,18 +231,12 @@ function frontmatter(lines: string[], body: string): string {
  * generators), anything else raw, as before.
  */
 function scalar(value: string): string {
-  if (value.length < 2 || !value.startsWith('"') || !value.endsWith('"')) return value;
-  try {
-    const parsed: unknown = JSON.parse(value);
-    return typeof parsed === "string" ? parsed : value;
-  } catch {
-    return value;
-  }
+  return parseQuoted(value) ?? value;
 }
 
 /** The frontmatter and the body of an agent page (`plugins/core/agents/*.md`). */
 export function readAgentPage(text: string): AgentPage {
-  const match = /^---\n([\s\S]*?)\n---\n/.exec(text);
+  const match = FRONT_MATTER.exec(text);
   const fields: Record<string, string> = {};
   for (const line of (match?.[1] ?? "").split("\n")) {
     const at = line.indexOf(":");
@@ -1249,9 +1243,10 @@ export function installRuntime(
   const pageProblems = existsSync(skillPage)
     ? frontMatterProblems(readFileSync(skillPage, "utf8"))
     : [];
-  if (pageProblems[0])
+  // Every problem named at once (finding 128): one attempt is enough to fix the page.
+  if (pageProblems.length)
     return {
-      refused: `skills/crew/SKILL.md ${pageProblems[0]}; a strict YAML loader drops the page: fix the front matter`,
+      refused: `skills/crew/SKILL.md ${pageProblems.join("; ")}; a strict YAML loader drops the page: fix the front matter`,
     };
   const files: string[] = [];
   const configPath = resolveScoped(
@@ -1494,25 +1489,21 @@ export function checkRuntime(
     const skillHashes = new Map(
       filesBelow(skillSource).map((rel) => [rel, sha256(join(skillSource, rel))]),
     );
-    const skill = copyState(
-      skillHashes,
-      join(resolveScoped(runtime.skillsDir[foundScope], dirs), SKILL_FOLDER),
-      (p) => (existsSync(p) ? sha256(p) : null),
-    );
+    const skillCopy = join(resolveScoped(runtime.skillsDir[foundScope], dirs), SKILL_FOLDER);
+    const skill = copyState(skillHashes, skillCopy, (p) => (existsSync(p) ? sha256(p) : null));
     lines.push(`skill: ${skill}`);
     if (skill !== "ok") ok = false;
     // The installed page as a strict YAML loader reads it (finding 121): a copy equal to its source
-    // is still dropped by the runtime when its front matter holds a plain scalar YAML reads otherwise.
-    const installedPage = join(
-      resolveScoped(runtime.skillsDir[foundScope], dirs),
-      SKILL_FOLDER,
-      "SKILL.md",
-    );
-    const pageProblems = existsSync(installedPage)
-      ? frontMatterProblems(readFileSync(installedPage, "utf8"))
-      : ["missing"];
-    lines.push(`skill front matter: ${pageProblems[0] ? `SKILL.md ${pageProblems[0]}` : "ok"}`);
-    if (pageProblems[0]) ok = false;
+    // is still dropped by the runtime when its front matter holds a plain scalar YAML reads
+    // otherwise. Every problem is named (finding 128); a missing page is the skill line's to say.
+    const installedPage = join(skillCopy, "SKILL.md");
+    if (existsSync(installedPage)) {
+      const pageProblems = frontMatterProblems(readFileSync(installedPage, "utf8"));
+      lines.push(
+        `skill front matter: ${pageProblems.length ? `SKILL.md ${pageProblems.join("; ")}` : "ok"}`,
+      );
+      if (pageProblems.length) ok = false;
+    }
     if (runtime.agentsDir) {
       const expected = new Map(
         generatedAgents(runtime, root).map(({ name, text: t }) => [name, hashOf(t)]),

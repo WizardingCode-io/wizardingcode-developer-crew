@@ -309,7 +309,7 @@ export function computeVerdict(input: VerdictInput): {
     if (isSkipped(work, `tdd:${criterion.id}`, policy)) continue;
     // A superseded criterion is read through its replacement (finding 118's list): the last of
     // the chain proves for all of them, and a missing proof names the chain.
-    const current = currentCriterion(work, criterion.id) ?? criterion;
+    const current = currentCriterion(work, criterion);
     const record = evidence.tdd.find((t) => t.criterion === current.id);
     if (!tddDone(record, current.kind))
       unproven.push(
@@ -429,8 +429,12 @@ export function renderReport(
   lines.push(ctoPlan ? `- CTO plan: ${ctoPlan.path} (${ctoPlan.date})` : "- CTO plan: none");
   // The packs the item used (SP6 Task 2): the knowledge files served to the expert, the template that seated a team.
   lines.push(work.packs?.length ? `- Packs: ${work.packs.join(", ")}` : "- Packs: none");
+  // The files by their pack and the path inside it (finding 118), never a machine's path; a record
+  // older than the labels prints the paths it holds.
   if (work.knowledgeFiles?.length)
-    lines.push(`- Knowledge files for the expert: ${work.knowledgeFiles.join(", ")}`);
+    lines.push(
+      `- Knowledge files for the expert: ${(work.knowledgeLabels?.length ? work.knowledgeLabels : work.knowledgeFiles).join(", ")}`,
+    );
   // Where the request entered from and the lead's triage of its priority (SP7 §10).
   if (work.source) lines.push(`- Source: ${sourceLine(work.source)}`);
   if (work.triage) lines.push(`- Triage: ${triageSummary(work.triage)}`);

@@ -398,3 +398,19 @@ test("AC-7 (finding 126): the markers are the runner's own line: a phrase inside
   expect(c.ok).toBe(false);
   expect(c.message).toContain("the run ran no test (error: regex");
 });
+
+test("AC-4 (item C2a): one negative row per anchored zero-test rule: the runner's phrase indented or prefixed is a failing test's own output, recorded as a red", async () => {
+  const scripts = [
+    "echo '    error: regex \"x\" matched 0 tests. Searched 1 file'\necho ' 1 fail'\nexit 1\n",
+    "echo '  Ran 0 tests across 0 files.'\necho ' 1 fail'\nexit 1\n",
+    "echo '> No test files found, exiting with code 1'\necho ' 1 fail'\nexit 1\n",
+    "echo '- ===== no tests ran in 0.01s ====='\necho ' 1 fail'\nexit 1\n",
+    "echo '    No tests executed!'\necho ' 1 fail'\nexit 1\n",
+  ];
+  for (const script of scripts) {
+    const s = setup();
+    write(s.root, "run-tests.sh", script);
+    const red = await recordTdd(s.paths, s.work, s.evidence, s.profile, s.behaviour.id, "red");
+    expect(red.ok, script).toBe(true);
+  }
+});

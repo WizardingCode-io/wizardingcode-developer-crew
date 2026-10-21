@@ -1539,11 +1539,14 @@ test("SP6-T6 AC-4, AC-15: the gate run re-plans the seats with the registered te
   // the report prints them, so a session that never ran crew team still shows them at Deliver.
   expect(work.packs).toEqual(["wizardingcode-pack-agentic-os 0.1.0"]);
   expect(work.knowledgeFiles).toEqual([join(agentic, "knowledge", "agentic.md")]);
+  expect(work.knowledgeLabels).toEqual(["wizardingcode-pack-agentic-os:knowledge/agentic.md"]);
   const report = renderReport(work, out.evidence, policy);
   expect(report).toContain("- Packs: wizardingcode-pack-agentic-os 0.1.0\n");
+  // The report names the file by its pack and the path inside it (finding 118), never by a machine's path.
   expect(report).toContain(
-    `- Knowledge files for the expert: ${join(agentic, "knowledge", "agentic.md")}\n`,
+    "- Knowledge files for the expert: wizardingcode-pack-agentic-os:knowledge/agentic.md\n",
   );
+  expect(report).not.toContain(join(agentic, "knowledge"));
   expect(report).toContain(
     "| expert | agentic-os | pack wizardingcode-pack-agentic-os (agents/**) |",
   );

@@ -291,6 +291,7 @@ test("SP6-T3 AC-2: the agentic-os pack is complete: the template with its six gl
   const profile = detectProfile(node, null, packRules(paths.userDir));
   expect(knowledgeFilesFor(paths.userDir, profile, ["agents/x.md"], policy)).toEqual({
     paths: [],
+    labels: [],
     packs: [],
     skipped: [],
   });
@@ -349,7 +350,7 @@ test("SP6-T3 AC-3: the Laravel rule refines a fixture tree with artisan (the gat
   expect(p.testScoped).toBeUndefined();
   expect(
     knowledgeFilesFor(paths.userDir, plainProfile, ["app/Models/User.php"], DEFAULT_POLICY),
-  ).toEqual({ paths: [], packs: [], skipped: [] });
+  ).toEqual({ paths: [], labels: [], packs: [], skipped: [] });
   // The hold on the real pack's commands: sentinel commands keep the source and the pack.
   const work = createWork(paths, "fix");
   work.route = "fast";

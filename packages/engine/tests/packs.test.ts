@@ -415,8 +415,11 @@ test("SP6-T2 AC-5: knowledgeFilesFor reads the changed files' targets' stacks an
     team: { ...DEFAULT_POLICY.team, specialists },
   });
   // A change under api/: the php target's tag laravel.
+  // The labels beside the paths (finding 118): the pack's name and the path inside it, what a
+  // report may print without a machine's path.
   expect(knowledgeFilesFor(dir, profile, ["api/app/User.php"], policy([]))).toEqual({
     paths: [join(laravel, "knowledge", "laravel.md")],
+    labels: ["wizardingcode-pack-laravel:knowledge/laravel.md"],
     packs: ["wizardingcode-pack-laravel"],
     skipped: [],
   });

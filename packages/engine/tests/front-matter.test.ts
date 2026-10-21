@@ -141,6 +141,55 @@ test("AC-3 (finding 121's debt), narrower than YAML: every shape the rule refuse
       key: "description",
       text: "a",
     },
+    // The remaining indicators (item C2a): each refused, each read otherwise or thrown on by YAML.
+    {
+      lines: ["name: x", "description: [a]"],
+      problem: 'starts with "["',
+      key: "description",
+      text: "[a]",
+    },
+    {
+      lines: ["name: x", "description: ]a"],
+      problem: 'starts with "]"',
+      key: "description",
+      text: "]a",
+    },
+    {
+      lines: ["name: x", "description: {a: b}"],
+      problem: 'starts with "{"',
+      key: "description",
+      text: "{a: b}",
+    },
+    {
+      lines: ["name: x", "description: }a"],
+      problem: 'starts with "}"',
+      key: "description",
+      text: "}a",
+    },
+    {
+      lines: ["name: x", "description: %TAG"],
+      problem: 'starts with "%"',
+      key: "description",
+      text: "%TAG",
+    },
+    {
+      lines: ["name: x", "description: @a"],
+      problem: 'starts with "@"',
+      key: "description",
+      text: "@a",
+    },
+    {
+      lines: ["name: x", "description: `a"],
+      problem: 'starts with "`"',
+      key: "description",
+      text: "`a",
+    },
+    {
+      lines: ["name: x", "description: >", "  folded"],
+      problem: 'starts with ">"',
+      key: "description",
+      text: ">",
+    },
     { lines: ["name: x", "? x"], problem: 'not "key: value"', key: "x", text: "" },
     { lines: ["name: a", "name: b"], problem: 'key "name" given twice', key: "name", text: "a" },
   ];

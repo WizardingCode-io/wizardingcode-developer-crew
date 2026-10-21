@@ -3722,3 +3722,28 @@ test("AC-2 (finding 124): crew abandon is a user-only command: asked under promp
   expect(reason(bare)).toContain("--mode auto");
   expect(bashIn(headless, 'crew abandon w1 --reason "dropped" --mode auto', "auto")).toEqual({});
 });
+
+test("AC-3 (finding 128): with a person present, --validator never lets a policy command past the ask; approve keeps its validator rule", () => {
+  const bashIn = (ctx: ReturnType<typeof setup>["ctx"], command: string, mode?: string) =>
+    onPreToolUse(ctx, { tool_name: "Bash", tool_input: { command }, permission_mode: mode });
+  for (const policy of [{ attendedDecisions: "prompt" }, { attendedDecisions: "relay" }]) {
+    const { ctx } = setup(policy);
+    for (const mode of ["default", "auto"]) {
+      expect(
+        decision(
+          bashIn(
+            ctx,
+            "crew policy set attendedDecisions relay --validator complete-gap-round",
+            mode,
+          ),
+        ),
+        `${policy.attendedDecisions} ${mode}`,
+      ).toBe("ask");
+      expect(
+        decision(bashIn(ctx, "crew accept policy --validator complete-gap-round", mode)),
+        `${policy.attendedDecisions} ${mode}`,
+      ).toBe("ask");
+      expect(bashIn(ctx, "crew approve w1 spec --validator complete-gap-round", mode)).toEqual({});
+    }
+  }
+});

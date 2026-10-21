@@ -1154,12 +1154,12 @@ function setPolicyValue(paths, key, value) {
     };
   }
   const checked = checkSettable(key, rule, value);
-  if (typeof checked === "object" && !Array.isArray(checked))
+  if (isRefusal(checked))
     return checked;
-  const read = readProtectedJson(paths, policyPath(paths));
-  if (read.tampered)
-    return { refused: TAMPERED_POLICY };
-  const raw = { ...read.data ?? {} };
+  const file = readPolicyFile(paths);
+  if ("refused" in file)
+    return file;
+  const { raw } = file;
   const dot = key.indexOf(".");
   if (dot === -1)
     raw[key] = checked;
@@ -1173,18 +1173,27 @@ function setPolicyValue(paths, key, value) {
   writeProtectedJson(paths, policyPath(paths), raw);
   return { key, value };
 }
+function readPolicyFile(paths) {
+  const read = readProtectedJson(paths, policyPath(paths));
+  if (read.tampered)
+    return { refused: TAMPERED_POLICY };
+  return { raw: { ...read.data ?? {} } };
+}
+function isRefusal(checked) {
+  return typeof checked === "object" && !Array.isArray(checked);
+}
 function planListChange(paths, key, value, remove) {
   const rule = SETTABLE_POLICY_KEYS[key];
   if (!rule || !("list" in rule)) {
     return { refused: `${key} is not a list key (${LIST_POLICY_KEYS.join(", ")})` };
   }
   const checked = checkSettable(key, rule, value);
-  if (typeof checked === "object" && !Array.isArray(checked))
+  if (isRefusal(checked))
     return checked;
-  const read = readProtectedJson(paths, policyPath(paths));
-  if (read.tampered)
-    return { refused: TAMPERED_POLICY };
-  const raw = { ...read.data ?? {} };
+  const file = readPolicyFile(paths);
+  if ("refused" in file)
+    return file;
+  const { raw } = file;
   const list = strings(raw[key]);
   const listed = list.includes(value);
   if (remove && !listed) {
@@ -2354,6 +2363,16 @@ import { fileURLToPath } from "node:url";
 // packages/engine/src/front-matter.ts
 var FRONT_MATTER = /^---\n([\s\S]*?)\n---\n/;
 var KEY_VALUE = /^([A-Za-z_][\w-]*): (.+)$/;
+function parseQuoted(value) {
+  if (value.length < 2 || !value.startsWith('"') || !value.endsWith('"'))
+    return;
+  try {
+    const parsed = JSON.parse(value);
+    return typeof parsed === "string" ? parsed : undefined;
+  } catch {
+    return;
+  }
+}
 var INDICATORS = new Set([
   "[",
   "]",
@@ -2391,13 +2410,7 @@ function frontMatterProblems(text) {
       problems.push(`line ${n}: key "${key}" given twice`);
     seen.add(key);
     if (value.startsWith('"')) {
-      let parsed;
-      try {
-        parsed = JSON.parse(value);
-      } catch {
-        parsed = undefined;
-      }
-      if (typeof parsed !== "string")
+      if (parseQuoted(value) === undefined)
         problems.push(`line ${n}: a quoted value is not a JSON string`);
       return;
     }
@@ -2580,17 +2593,10 @@ ${lines.join(`
 ${body}`;
 }
 function scalar(value) {
-  if (value.length < 2 || !value.startsWith('"') || !value.endsWith('"'))
-    return value;
-  try {
-    const parsed = JSON.parse(value);
-    return typeof parsed === "string" ? parsed : value;
-  } catch {
-    return value;
-  }
+  return parseQuoted(value) ?? value;
 }
 function readAgentPage(text) {
-  const match = /^---\n([\s\S]*?)\n---\n/.exec(text);
+  const match = FRONT_MATTER.exec(text);
   const fields = {};
   for (const line of (match?.[1] ?? "").split(`
 `)) {
@@ -3528,9 +3534,9 @@ function generatedAgents(runtime, root) {
 function installRuntime(runtime, scope, dirs, root) {
   const skillPage = join12(root, "skills", "crew", "SKILL.md");
   const pageProblems = existsSync5(skillPage) ? frontMatterProblems(readFileSync4(skillPage, "utf8")) : [];
-  if (pageProblems[0])
+  if (pageProblems.length)
     return {
-      refused: `skills/crew/SKILL.md ${pageProblems[0]}; a strict YAML loader drops the page: fix the front matter`
+      refused: `skills/crew/SKILL.md ${pageProblems.join("; ")}; a strict YAML loader drops the page: fix the front matter`
     };
   const files = [];
   const configPath = resolveScoped(scope === "project" ? runtime.config.project : runtime.config.user, dirs);
@@ -3726,15 +3732,18 @@ function checkRuntime(runtime, scope, dirs, fallbackRoot) {
   } else {
     const skillSource = join12(root, "skills", "crew");
     const skillHashes = new Map(filesBelow(skillSource).map((rel2) => [rel2, sha2562(join12(skillSource, rel2))]));
-    const skill = copyState(skillHashes, join12(resolveScoped(runtime.skillsDir[foundScope], dirs), SKILL_FOLDER), (p) => existsSync5(p) ? sha2562(p) : null);
+    const skillCopy = join12(resolveScoped(runtime.skillsDir[foundScope], dirs), SKILL_FOLDER);
+    const skill = copyState(skillHashes, skillCopy, (p) => existsSync5(p) ? sha2562(p) : null);
     lines.push(`skill: ${skill}`);
     if (skill !== "ok")
       ok = false;
-    const installedPage = join12(resolveScoped(runtime.skillsDir[foundScope], dirs), SKILL_FOLDER, "SKILL.md");
-    const pageProblems = existsSync5(installedPage) ? frontMatterProblems(readFileSync4(installedPage, "utf8")) : ["missing"];
-    lines.push(`skill front matter: ${pageProblems[0] ? `SKILL.md ${pageProblems[0]}` : "ok"}`);
-    if (pageProblems[0])
-      ok = false;
+    const installedPage = join12(skillCopy, "SKILL.md");
+    if (existsSync5(installedPage)) {
+      const pageProblems = frontMatterProblems(readFileSync4(installedPage, "utf8"));
+      lines.push(`skill front matter: ${pageProblems.length ? `SKILL.md ${pageProblems.join("; ")}` : "ok"}`);
+      if (pageProblems.length)
+        ok = false;
+    }
     if (runtime.agentsDir) {
       const expected = new Map(generatedAgents(runtime, root).map(({ name, text: t }) => [name, sha256(t)]));
       const agents = copyState(expected, resolveScoped(runtime.agentsDir[foundScope], dirs), (p) => existsSync5(p) ? sha2562(p) : null);
@@ -4258,12 +4267,12 @@ function supersedeCriterion(work, from, by, ledger) {
   old.supersededBy = { id: by, at };
   return { criterion: old, at };
 }
-function currentCriterion(work, id) {
-  let current = work.criteria.find((c) => c.id === id);
+function currentCriterion(work, criterion) {
+  let current = criterion;
   const seen = new Set;
-  while (current?.supersededBy && !seen.has(current.id)) {
+  while (current.supersededBy && !seen.has(current.id)) {
     seen.add(current.id);
-    current = work.criteria.find((c) => c.id === current?.supersededBy?.id) ?? current;
+    current = work.criteria.find((c) => c.id === current.supersededBy?.id) ?? current;
   }
   return current;
 }
@@ -4704,7 +4713,7 @@ function computeVerdict(input) {
   for (const criterion of work.criteria) {
     if (isSkipped(work, `tdd:${criterion.id}`, policy))
       continue;
-    const current = currentCriterion(work, criterion.id) ?? criterion;
+    const current = currentCriterion(work, criterion);
     const record = evidence.tdd.find((t) => t.criterion === current.id);
     if (!tddDone(record, current.kind))
       unproven.push(`test-first record missing for ${criterion.id}${current.id !== criterion.id ? ` (superseded by ${current.id})` : ""}`);
@@ -4771,7 +4780,7 @@ function renderReport(work, evidence, policy, options = {}) {
   lines.push(ctoPlan ? `- CTO plan: ${ctoPlan.path} (${ctoPlan.date})` : "- CTO plan: none");
   lines.push(work.packs?.length ? `- Packs: ${work.packs.join(", ")}` : "- Packs: none");
   if (work.knowledgeFiles?.length)
-    lines.push(`- Knowledge files for the expert: ${work.knowledgeFiles.join(", ")}`);
+    lines.push(`- Knowledge files for the expert: ${((work.knowledgeLabels?.length) ? work.knowledgeLabels : work.knowledgeFiles).join(", ")}`);
   if (work.source)
     lines.push(`- Source: ${sourceLine(work.source)}`);
   if (work.triage)
@@ -7929,11 +7938,14 @@ function knowledgeFilesFor(userDir, profile, changed, policy) {
   const targets = changed.length ? profile.targets.filter((t) => changed.some((f) => holds(t.path, f))) : profile.targets;
   const keys = [...new Set(targets.flatMap((t) => [t.stack, ...t.tags ?? []]))];
   const paths = [];
+  const labels = [];
   const served = new Set;
   const add = (pack, rel2) => {
     const path = join28(pack.root, rel2);
-    if (!paths.includes(path))
+    if (!paths.includes(path)) {
       paths.push(path);
+      labels.push(`${pack.name}:${rel2}`);
+    }
     served.add(pack.name);
   };
   for (const pack of packs)
@@ -7962,7 +7974,12 @@ function knowledgeFilesFor(userDir, profile, changed, policy) {
     }
     add(pack, rel2);
   }
-  return { paths, packs: packs.filter((p) => served.has(p.name)).map((p) => p.name), skipped };
+  return {
+    paths,
+    labels,
+    packs: packs.filter((p) => served.has(p.name)).map((p) => p.name),
+    skipped
+  };
 }
 function recordPacks(work, labels) {
   const packs = [...new Set([...work.packs ?? [], ...labels])];
@@ -7976,6 +7993,7 @@ function recordPackUse(work, userDir, profile, changed, policy, registry) {
     return s.role === "expert" && rule?.kind === "paths" && rule.pack ? [rule.pack] : [];
   });
   work.knowledgeFiles = served.paths;
+  work.knowledgeLabels = served.labels;
   const names = [...served.packs, ...seated2];
   if (names.length) {
     const listing = listPacks(userDir, { quick: true });
@@ -11211,10 +11229,7 @@ function fileAnswer(ctx, id, role, input, transcriptNote, progress) {
   let note = null;
   let archivedNote = null;
   let keptAs = null;
-  const noteKept = (archived, word) => {
-    keptAs = archived;
-    archivedNote = `Crew: ${agent}'s answer ${whereSaved(saved)} (the earlier ${word} kept as ${archived}).`;
-  };
+  const keptNote = (archived, word) => `Crew: ${agent}'s answer ${whereSaved(saved)} (the earlier ${word} kept as ${archived}).`;
   if (!answer) {
     saved = { file: null, agent };
     note = `Crew: ${agent} stopped with no answer (no hand-back and an empty last message): its end is recorded with no file; an earlier file of this role, if any, is not this round's answer. Run the role again or save its answer from the transcript${transcriptNote}.`;
@@ -11227,7 +11242,8 @@ function fileAnswer(ctx, id, role, input, transcriptNote, progress) {
       const moved = roles.find((r) => (input.agentId ? r.agentId === input.agentId : r.agent === agent) && r.file === joined.file);
       if (moved)
         moved.file = joined.archived;
-      noteKept(joined.archived, "reply");
+      keptAs = joined.archived;
+      archivedNote = keptNote(joined.archived, "reply");
     }
   } else {
     const file = answerFile(agent, answer, kindOfItem(work));
@@ -11251,7 +11267,8 @@ function fileAnswer(ctx, id, role, input, transcriptNote, progress) {
       }
       if (moved)
         saveWork(ctx.paths, work);
-      noteKept(kept.archived, "answer");
+      keptAs = kept.archived;
+      archivedNote = keptNote(kept.archived, "answer");
     }
   }
   progress.saved = saved;
@@ -11309,7 +11326,7 @@ ${heading}`;
     return { file: file2, archived: null };
   }
   const lead = agent === "tech-lead" ? leadAnswer(answer) : null;
-  const file = lead ? leadReplyFile(`lead-${lead.team}`, lead.what) : `conclave/${agent}-reply.md`;
+  const file = lead ? leadReplyFile(`lead-${lead.team}`, lead.what) : leadReplyFile(agent, "");
   const kept = archiveExisting(dir, file);
   if ("failed" in kept)
     return kept;
@@ -11993,7 +12010,7 @@ function userOnlyDecision(command2, permissionMode, headless, policy) {
   }
   if (presence)
     return null;
-  if (typeof parsed.flags.validator === "string")
+  if (typeof parsed.flags.validator === "string" && !policyCommand)
     return null;
   if (policy.attendedDecisions === "relay" && !policyCommand)
     return null;
@@ -14546,13 +14563,19 @@ function accept(env, target) {
     files
   });
 }
-function openForChange(env, id) {
+function openUntampered(env, id) {
   const opened = openWork(env, id);
+  if (isOutcome(opened))
+    return opened;
+  return tamperRefusal(env, opened) ?? opened;
+}
+function openForChange(env, id) {
+  const opened = openUntampered(env, id);
   if (isOutcome(opened))
     return opened;
   if (opened.work.abandoned)
     return refuse(`${abandonedLine(opened.work.id, opened.work.abandoned)}; start a new item`);
-  return tamperRefusal(env, opened) ?? opened;
+  return opened;
 }
 function abandonedLine(id, closed) {
   return `${id} was abandoned on ${closed.at.slice(0, 10)}: ${closed.reason}`;
@@ -15021,6 +15044,24 @@ function markLines(record2) {
     const mark = v.status === "unverified" ? `unverified: ${v.reason ?? "no reason"}` : `${v.status} by jev${v.confidence !== undefined ? ` (${two(v.confidence)})` : ""}`;
     return `    ${f.file}${f.line ? `:${f.line}` : ""} ${mark}`;
   });
+}
+function supersedeCommand(env, opened, parsed, args) {
+  const by = typeof parsed.flags.by === "string" ? parsed.flags.by.trim() : "";
+  if (!args[2] || !by)
+    return refuse("usage: crew criteria <id> supersede <AC-n> --by <AC-m>");
+  const outcome = supersedeCriterion(opened.work, args[2], by, loadLedger(env.paths, opened.work.id).ledger);
+  if ("refused" in outcome)
+    return refuse(outcome.refused);
+  saveWork(env.paths, opened.work);
+  appendDecision(env.paths, {
+    at: outcome.at,
+    item: opened.work.id,
+    kind: "supersede",
+    id: outcome.criterion.id,
+    text: `${outcome.criterion.id} superseded by ${by}`,
+    by: "the agent"
+  });
+  return ok(`${outcome.criterion.id} superseded by ${by}`, { criterion: outcome.criterion });
 }
 async function tddCommand(env, parsed, args) {
   const [step, id, criterion] = args;
@@ -15705,24 +15746,8 @@ ${originNotes.join(`
         const { removed } = outcome;
         return ok(`${removed.id} (${removed.kind}) removed: ${removed.text}`, { removed });
       }
-      if (args[1] === "supersede") {
-        const by = typeof parsed.flags.by === "string" ? parsed.flags.by.trim() : "";
-        if (!args[2] || !by)
-          return refuse("usage: crew criteria <id> supersede <AC-n> --by <AC-m>");
-        const outcome = supersedeCriterion(opened.work, args[2], by, loadLedger(env.paths, opened.work.id).ledger);
-        if ("refused" in outcome)
-          return refuse(outcome.refused);
-        saveWork(env.paths, opened.work);
-        appendDecision(env.paths, {
-          at: outcome.at,
-          item: opened.work.id,
-          kind: "supersede",
-          id: outcome.criterion.id,
-          text: `${outcome.criterion.id} superseded by ${by}`,
-          by: "the agent"
-        });
-        return ok(`${outcome.criterion.id} superseded by ${by}`, { criterion: outcome.criterion });
-      }
+      if (args[1] === "supersede")
+        return supersedeCommand(env, opened, parsed, args);
       const text = args.slice(2).join(" ").trim();
       if (args[1] !== "add" || !text)
         return refuse('usage: crew criteria <id> add "<criterion>" [--kind preserve|observed] | crew criteria <id> remove <AC-n> | crew criteria <id> supersede <AC-n> --by <AC-m>');
@@ -16564,12 +16589,9 @@ ${outcome.saveRefused}` : ""),
       };
     }
     case "abandon": {
-      const opened = openWork(env, args[0]);
+      const opened = openUntampered(env, args[0]);
       if (isOutcome(opened))
         return opened;
-      const tampered = tamperRefusal(env, opened);
-      if (tampered)
-        return tampered;
       const reason = typeof parsed.flags.reason === "string" ? parsed.flags.reason.trim() : "";
       if (!reason)
         return refuse('usage: crew abandon <id> --reason "<why>"');

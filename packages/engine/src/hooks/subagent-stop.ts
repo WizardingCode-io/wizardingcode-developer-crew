@@ -431,10 +431,8 @@ export function fileAnswer(
   // The archive an earlier answer went to, named even when the record cannot be made; one note
   // for the resumed branch (an earlier reply) and the first-answer branch (an earlier answer).
   let keptAs: string | null = null;
-  const noteKept = (archived: string, word: "reply" | "answer"): void => {
-    keptAs = archived;
-    archivedNote = `Crew: ${agent}'s answer ${whereSaved(saved)} (the earlier ${word} kept as ${archived}).`;
-  };
+  const keptNote = (archived: string, word: "reply" | "answer"): string =>
+    `Crew: ${agent}'s answer ${whereSaved(saved)} (the earlier ${word} kept as ${archived}).`;
   if (!answer) {
     // A role cut off, or one whose last turn was only a tool call: its end is recorded, no file is
     // written, and the session is told, so an earlier round's file is not read as this answer.
@@ -455,7 +453,8 @@ export function fileAnswer(
           r.file === joined.file,
       );
       if (moved) moved.file = joined.archived;
-      noteKept(joined.archived, "reply");
+      keptAs = joined.archived;
+      archivedNote = keptNote(joined.archived, "reply");
     }
   } else {
     // The first answer: the role's own, or a resumed role's whose earlier stop left no file. An
@@ -482,7 +481,8 @@ export function fileAnswer(
         moved = true;
       }
       if (moved) saveWork(ctx.paths, work);
-      noteKept(kept.archived, "answer");
+      keptAs = kept.archived;
+      archivedNote = keptNote(kept.archived, "answer");
     }
   }
   progress.saved = saved;
@@ -565,7 +565,8 @@ function joinEarlierFile(
   // A tech lead resumed for another round answers for one team: its reply joins that team's own
   // file, never one the leads would share (finding 78).
   const lead = agent === "tech-lead" ? leadAnswer(answer) : null;
-  const file = lead ? leadReplyFile(`lead-${lead.team}`, lead.what) : `conclave/${agent}-reply.md`;
+  // One spelling of a reply file for every role: a lead's by its team and what, any other's by its name.
+  const file = lead ? leadReplyFile(`lead-${lead.team}`, lead.what) : leadReplyFile(agent, "");
   const kept = archiveExisting(dir, file);
   if ("failed" in kept) return kept;
   writeText(join(dir, file), `${answer}\n`);

@@ -567,13 +567,20 @@ function accept(env: Env, target: string): Outcome {
 }
 
 /** Opens a work item for a command that saves it; refuses when its state cannot be trusted. */
-function openForChange(env: Env, id: string | undefined): Opened | Outcome {
+/** The item opened and not hand-edited: the prologue every command that may write shares. */
+function openUntampered(env: Env, id: string | undefined): Opened | Outcome {
   const opened = openWork(env, id);
+  if (isOutcome(opened)) return opened;
+  return tamperRefusal(env, opened) ?? opened;
+}
+
+function openForChange(env: Env, id: string | undefined): Opened | Outcome {
+  const opened = openUntampered(env, id);
   if (isOutcome(opened)) return opened;
   // An abandoned item is read, never changed again (finding 124): one door for every command.
   if (opened.work.abandoned)
     return refuse(`${abandonedLine(opened.work.id, opened.work.abandoned)}; start a new item`);
-  return tamperRefusal(env, opened) ?? opened;
+  return opened;
 }
 
 /** `<id> was abandoned on <date>: <reason>`, the refusal every command gives an item the user dropped. */
@@ -1318,6 +1325,33 @@ function markLines(record: JudgementRecord): string[] {
 }
 
 /** A test-first record: the run outside any lock, the record applied under it (finding 81; its own function, finding 82). */
+/**
+ * `crew criteria <id> supersede <AC-n> --by <AC-m>`: a criterion's text replaced by another's, on
+ * record (finding 118's list). The rules (the kinds' rank, the objections' bindings, the chain)
+ * live in `supersedeCriterion`; the register entry is the agent's, an amendment of the spec.
+ */
+function supersedeCommand(env: Env, opened: Opened, parsed: Parsed, args: string[]): Outcome {
+  const by = typeof parsed.flags.by === "string" ? parsed.flags.by.trim() : "";
+  if (!args[2] || !by) return refuse("usage: crew criteria <id> supersede <AC-n> --by <AC-m>");
+  const outcome = supersedeCriterion(
+    opened.work,
+    args[2],
+    by,
+    loadLedger(env.paths, opened.work.id).ledger,
+  );
+  if ("refused" in outcome) return refuse(outcome.refused);
+  saveWork(env.paths, opened.work);
+  appendDecision(env.paths, {
+    at: outcome.at,
+    item: opened.work.id,
+    kind: "supersede",
+    id: outcome.criterion.id,
+    text: `${outcome.criterion.id} superseded by ${by}`,
+    by: "the agent",
+  });
+  return ok(`${outcome.criterion.id} superseded by ${by}`, { criterion: outcome.criterion });
+}
+
 async function tddCommand(env: Env, parsed: Parsed, args: string[]): Promise<Outcome> {
   const [step, id, criterion] = args;
   const opened = openForChange(env, id);
@@ -2239,30 +2273,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         const { removed } = outcome;
         return ok(`${removed.id} (${removed.kind}) removed: ${removed.text}`, { removed });
       }
-      if (args[1] === "supersede") {
-        // A criterion's text replaced by another's, on record (finding 118's list): the agent's
-        // amendment of the spec, bounded by the kinds' rank and the objections' bindings.
-        const by = typeof parsed.flags.by === "string" ? parsed.flags.by.trim() : "";
-        if (!args[2] || !by)
-          return refuse("usage: crew criteria <id> supersede <AC-n> --by <AC-m>");
-        const outcome = supersedeCriterion(
-          opened.work,
-          args[2],
-          by,
-          loadLedger(env.paths, opened.work.id).ledger,
-        );
-        if ("refused" in outcome) return refuse(outcome.refused);
-        saveWork(env.paths, opened.work);
-        appendDecision(env.paths, {
-          at: outcome.at,
-          item: opened.work.id,
-          kind: "supersede",
-          id: outcome.criterion.id,
-          text: `${outcome.criterion.id} superseded by ${by}`,
-          by: "the agent",
-        });
-        return ok(`${outcome.criterion.id} superseded by ${by}`, { criterion: outcome.criterion });
-      }
+      if (args[1] === "supersede") return supersedeCommand(env, opened, parsed, args);
       const text = args.slice(2).join(" ").trim();
       if (args[1] !== "add" || !text)
         return refuse(
@@ -3303,10 +3314,8 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
     case "abandon": {
       // An item the user drops is closed on their word (finding 124): recorded as their decision,
       // taken out of the live lists, read-only from then on; nothing is deleted.
-      const opened = openWork(env, args[0]);
+      const opened = openUntampered(env, args[0]);
       if (isOutcome(opened)) return opened;
-      const tampered = tamperRefusal(env, opened);
-      if (tampered) return tampered;
       const reason = typeof parsed.flags.reason === "string" ? parsed.flags.reason.trim() : "";
       if (!reason) return refuse('usage: crew abandon <id> --reason "<why>"');
       const work = opened.work;

@@ -9,8 +9,20 @@
  * never wider: whatever it passes, a strict parser reads as the text the engine reads
  * (`front-matter.test.ts` proves both directions against Bun.YAML).
  */
-const FRONT_MATTER = /^---\n([\s\S]*?)\n---\n/;
+/** The front-matter block of a page: the lines between the opening `---` and the next. */
+export const FRONT_MATTER = /^---\n([\s\S]*?)\n---\n/;
 const KEY_VALUE = /^([A-Za-z_][\w-]*): (.+)$/;
+
+/** A double-quoted value decoded once as the JSON string it is; undefined for anything else (one reading for the rule and the agent-page reader). */
+export function parseQuoted(value: string): string | undefined {
+  if (value.length < 2 || !value.startsWith('"') || !value.endsWith('"')) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return typeof parsed === "string" ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
 const INDICATORS = new Set([
   "[",
   "]",
@@ -48,13 +60,7 @@ export function frontMatterProblems(text: string): string[] {
     if (seen.has(key)) problems.push(`line ${n}: key "${key}" given twice`);
     seen.add(key);
     if (value.startsWith('"')) {
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(value);
-      } catch {
-        parsed = undefined;
-      }
-      if (typeof parsed !== "string")
+      if (parseQuoted(value) === undefined)
         problems.push(`line ${n}: a quoted value is not a JSON string`);
       return;
     }

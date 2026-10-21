@@ -4094,17 +4094,9 @@ test("AC-4 (finding 119): crew validation record refuses a file whose content it
   );
   const record = (path: string) =>
     c.run("validation", id, "record", "--what", "spec", "--by", "lead-qa", "--file", path);
-  const first = await c.json(
-    "validation",
-    id,
-    "record",
-    "--what",
-    "spec",
-    "--by",
-    "lead-qa",
-    "--file",
-    file,
-  );
+  const recorded = (path: string, lead = "lead-qa", what = "spec") =>
+    c.json("validation", id, "record", "--what", what, "--by", lead, "--file", path);
+  const first = await recorded(file);
   expect(first.code).toBe(0);
   expect(first.data.validation).toMatchObject({ round: 1, verdict: "returned", returns: 1 });
   expect(String((first.data.validation as { fileHash?: string }).fileHash)).toMatch(
@@ -4123,19 +4115,13 @@ test("AC-4 (finding 119): crew validation record refuses a file whose content it
   // lead and the what, never on the content alone.
   const other = `.crew/work/${id}/conclave/lead-security.md`;
   write(root, other, readFileSync(join(root, file), "utf8"));
-  const otherLead = await c.json(
-    "validation",
-    id,
-    "record",
-    "--what",
-    "spec",
-    "--by",
-    "lead-security",
-    "--file",
-    other,
-  );
+  const otherLead = await recorded(other, "lead-security");
   expect(otherLead.code).toBe(0);
   expect(otherLead.data.validation).toMatchObject({ by: "lead-security", round: 1 });
+  // The same text under another what is that what's own first answer: accepted (item C2a).
+  const asPlan = await recorded(file, "lead-qa", "plan");
+  expect(asPlan.code).toBe(0);
+  expect(asPlan.data.validation).toMatchObject({ what: "plan", by: "lead-qa", round: 1 });
   // The lead's new answer, from its reply file, opens round 2 as today.
   const reply = `.crew/work/${id}/conclave/lead-qa-reply.md`;
   write(
@@ -7678,9 +7664,11 @@ test("SP6-T2 AC-2, AC-3, AC-4, AC-5, AC-6: the pack commands end to end (add wit
     "\n- Packs: wizardingcode-pack-laravel 0.1.0, wizardingcode-pack-agentic-os 0.1.0\n",
   );
   // AC-29 (SP6 Task 6): crew team records the expert's files too, and the report prints them.
+  // The report names the file by its pack and the path inside it, never by a machine's path (finding 118).
   expect((await c.run("evidence", id)).out).toContain(
-    `\n- Knowledge files for the expert: ${join(laravel, "knowledge", "laravel.md")}\n`,
+    "\n- Knowledge files for the expert: wizardingcode-pack-laravel:knowledge/laravel.md\n",
   );
+  expect((await c.run("evidence", id)).out).not.toContain(join(laravel, "knowledge"));
   // A third pack registered after the team: files knowledge --item serves it and records it on its own.
   const php = writePack(
     { name: "wizardingcode-pack-php", knowledge: { php: "knowledge/php.md" }, detectors: [] },
@@ -9327,10 +9315,27 @@ test("AC-6: a criterion is superseded only by one of a kind at least as strict, 
   expect((await sup("AC-6", "AC-2")).code).toBe(0);
   expect((await sup("AC-3", "AC-4")).code).toBe(0);
   expect((await sup("AC-1", "AC-4")).code).toBe(0);
+  // The verdict of a superseded red-only criterion names the chain until AC-4 is proven (item C2a).
+  expect((await c.run("evidence", id)).out).toContain(
+    "- test-first record missing for AC-1 (superseded by AC-4)",
+  );
   expect((await sup("AC-2", "AC-4")).code).toBe(0);
   const report = (await c.run("evidence", id)).out;
   expect(report).toContain("| AC-1 | behavior | a behaviour | superseded by AC-4 (");
   expect(report).toContain("); own record: red only |");
   expect(report).toContain("| AC-2 | observed | an observation | superseded by AC-4 (");
   expect(report).toContain("); own record: missing |");
+});
+
+test("F120 (item C2a): the glob's length boundary: 200 characters accepted and written, 201 refused and nothing written", async () => {
+  const { c, file } = policyRepo();
+  expect((await c.run("policy", "set", "riskPathExclusions", "a".repeat(200))).code).toBe(0);
+  expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({
+    minimumRoute: "standard",
+    riskPathExclusions: ["a".repeat(200)],
+  });
+  const over = await c.run("policy", "set", "riskPathExclusions", "a".repeat(201));
+  expect(over.code).toBe(1);
+  expect(over.err).toContain("up to 200");
+  expect(JSON.parse(readFileSync(file, "utf8")).riskPathExclusions).toEqual(["a".repeat(200)]);
 });

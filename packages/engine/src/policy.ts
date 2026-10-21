@@ -253,10 +253,10 @@ export function setPolicyValue(
     };
   }
   const checked = checkSettable(key, rule, value);
-  if (typeof checked === "object" && !Array.isArray(checked)) return checked;
-  const read = readProtectedJson<Record<string, unknown>>(paths, policyPath(paths));
-  if (read.tampered) return { refused: TAMPERED_POLICY };
-  const raw = { ...(read.data ?? {}) };
+  if (isRefusal(checked)) return checked;
+  const file = readPolicyFile(paths);
+  if ("refused" in file) return file;
+  const { raw } = file;
   const dot = key.indexOf(".");
   if (dot === -1) raw[key] = checked;
   else {
@@ -287,6 +287,18 @@ export type ListChange = {
  * as for a scalar key; the list is read as the loader reads it (`strings`), so a hand-written value
  * that is not an array, or holds non-strings, is stored cleaned at the next write.
  */
+/** The policy file as written, or the refusal a hand edit earns: one reading for every writer. */
+function readPolicyFile(paths: CrewPaths): { raw: Record<string, unknown> } | { refused: string } {
+  const read = readProtectedJson<Record<string, unknown>>(paths, policyPath(paths));
+  if (read.tampered) return { refused: TAMPERED_POLICY };
+  return { raw: { ...(read.data ?? {}) } };
+}
+
+/** `checkSettable`'s refusal: the one object among its values, since a list is an array. */
+function isRefusal(checked: ReturnType<typeof checkSettable>): checked is { refused: string } {
+  return typeof checked === "object" && !Array.isArray(checked);
+}
+
 export function planListChange(
   paths: CrewPaths,
   key: string,
@@ -298,10 +310,10 @@ export function planListChange(
     return { refused: `${key} is not a list key (${LIST_POLICY_KEYS.join(", ")})` };
   }
   const checked = checkSettable(key, rule, value);
-  if (typeof checked === "object" && !Array.isArray(checked)) return checked;
-  const read = readProtectedJson<Record<string, unknown>>(paths, policyPath(paths));
-  if (read.tampered) return { refused: TAMPERED_POLICY };
-  const raw = { ...(read.data ?? {}) };
+  if (isRefusal(checked)) return checked;
+  const file = readPolicyFile(paths);
+  if ("refused" in file) return file;
+  const { raw } = file;
   const list = strings(raw[key]);
   const listed = list.includes(value);
   if (remove && !listed) {

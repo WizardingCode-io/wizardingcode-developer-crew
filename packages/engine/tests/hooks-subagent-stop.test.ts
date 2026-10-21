@@ -1222,3 +1222,30 @@ test("SP8-T4 AC-3: on an audit item the hook files a reviewer's answer as audit/
   const roles = loadEvidence(ctx.paths, work.id).evidence.roles ?? [];
   expect(roles.find((r) => r.agent === "review-security")?.file).toBe("audit/security.findings.md");
 });
+
+test("AC-4 (item C2a): the tampered-evidence note names the archive an earlier answer went to, so the move is not lost with the record", () => {
+  const { root, ctx, work } = session();
+  work.route = "standard";
+  work.phase = "conclave";
+  saveWork(ctx.paths, work);
+  const dir = tempDir("crew-transcript-");
+  const stop = (id: string, answer: string) =>
+    onSubagentStop(ctx, {
+      agent_id: id,
+      agent_type: `${PLUGIN}:tech-lead`,
+      agent_transcript_path: transcript(dir, answer, [[100, 10, 0, 0]]),
+      last_assistant_message: "Done.",
+    });
+  const head = `# qa lead's validation of ${work.id}: spec\n`;
+  stop("q1", `${head}verdict: returned\n## Returns\n- R-1 · spec.md:3 · x\n## Notes\n- round 1\n`);
+  // The evidence edited by hand: the next answer is archived and written, its record is not.
+  const evidencePath = join(root, ".crew", "work", work.id, "evidence.json");
+  writeFileSync(evidencePath, `${readFileSync(evidencePath, "utf8")}\n`);
+  const second = stop("q2", `${head}verdict: validated\n## Returns\n- none\n## Notes\n- round 2\n`);
+  expect(String(second.systemMessage)).toContain(
+    "is saved at conclave/lead-qa.md (the earlier answer kept as conclave/lead-qa.round2.md) but its end and tokens are not recorded",
+  );
+  const conclave = join(root, ".crew", "work", work.id, "conclave");
+  expect(readFileSync(join(conclave, "lead-qa.round2.md"), "utf8")).toContain("- round 1");
+  expect(readFileSync(join(conclave, "lead-qa.md"), "utf8")).toContain("- round 2");
+});

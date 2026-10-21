@@ -1150,3 +1150,21 @@ test("SP6-T2 AC-6: the report's Packs line names the packs the item used after t
     "\n- Packs: wizardingcode-pack-laravel 0.1.0, wizardingcode-pack-agentic-os 0.1.0\n",
   );
 });
+
+test("AC-1 (finding 118): the report names each knowledge file by its pack and the path inside it, never by a machine's path; a record without labels prints the paths as before", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const work = workWith(paths);
+  const evidence: Evidence = { ...emptyEvidence(), fingerprint: "f" };
+  work.knowledgeFiles = ["/home/someone/.wizardingcode/crew/packs/laravel/knowledge/laravel.md"];
+  work.knowledgeLabels = ["wizardingcode-pack-laravel:knowledge/laravel.md"];
+  const labelled = renderReport(work, evidence, DEFAULT_POLICY);
+  expect(labelled).toContain(
+    "- Knowledge files for the expert: wizardingcode-pack-laravel:knowledge/laravel.md\n",
+  );
+  expect(labelled).not.toContain("/home/someone");
+  // An older record carries the paths alone: printed as before.
+  delete work.knowledgeLabels;
+  expect(renderReport(work, evidence, DEFAULT_POLICY)).toContain(
+    "- Knowledge files for the expert: /home/someone/.wizardingcode/crew/packs/laravel/knowledge/laravel.md\n",
+  );
+});

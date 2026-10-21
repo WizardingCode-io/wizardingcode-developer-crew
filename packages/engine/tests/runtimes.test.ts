@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { HookPayload, HookResponse } from "../src/hooks/types.ts";
@@ -1098,6 +1098,25 @@ test("AC-3 (finding 121's debt): crew runtime install refuses a skill page a str
   expect(broken.lines).toContain(
     'skill front matter: SKILL.md line 3: a plain value holds ": " (quote it)',
   );
+  // Every problem named, in line order (finding 128): one attempt is enough to fix a page.
+  writeFileSync(
+    join(dirs.project, ".agents", "skills", "crew-method", "SKILL.md"),
+    page("Use when: a #b"),
+  );
+  expect(checkRuntime(RUNTIMES.cursor, "project", dirs, root).lines).toContain(
+    'skill front matter: SKILL.md line 3: a plain value holds ": " (quote it); line 3: a plain value holds " #" (quote it)',
+  );
+  writeFileSync(join(root, "skills", "crew", "SKILL.md"), page("Use when: a #b"));
+  expect(installRuntime(RUNTIMES.cursor, "project", dirs, root)).toEqual({
+    refused:
+      'skills/crew/SKILL.md line 3: a plain value holds ": " (quote it); line 3: a plain value holds " #" (quote it); a strict YAML loader drops the page: fix the front matter',
+  });
+  // The copy gone: the skill line says so once, and no front-matter line is printed.
+  rmSync(join(dirs.project, ".agents", "skills", "crew-method", "SKILL.md"));
+  const gone = checkRuntime(RUNTIMES.cursor, "project", dirs, root);
+  expect(gone.ok).toBe(false);
+  expect(gone.lines.some((l) => l.startsWith("skill front matter"))).toBe(false);
+  expect(gone.lines.find((l) => l.startsWith("skill: "))).not.toBe("skill: ok");
 });
 
 test("SP6-T4 AC-4: the OpenCode plugin text runs crew hook through the injected $ with the mapped payload, throws the reason on deny or ask and returns on anything else", async () => {

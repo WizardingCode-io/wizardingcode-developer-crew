@@ -456,14 +456,14 @@ export function supersedeCriterion(
 }
 
 /** The criterion whose proof stands for `id`: the last of its supersede chain, or itself. */
-export function currentCriterion(work: WorkItem, id: string): Criterion | undefined {
-  let current = work.criteria.find((c) => c.id === id);
+export function currentCriterion(work: WorkItem, criterion: Criterion): Criterion {
+  let current = criterion;
   // The engine's writers never leave a cycle or a dangling replacement (`supersedeCriterion` and
   // `removeCriterion` refuse both); `seen` and the fallback guard a hand-edited record on the read side.
   const seen = new Set<string>();
-  while (current?.supersededBy && !seen.has(current.id)) {
+  while (current.supersededBy && !seen.has(current.id)) {
     seen.add(current.id);
-    current = work.criteria.find((c) => c.id === current?.supersededBy?.id) ?? current;
+    current = work.criteria.find((c) => c.id === current.supersededBy?.id) ?? current;
   }
   return current;
 }

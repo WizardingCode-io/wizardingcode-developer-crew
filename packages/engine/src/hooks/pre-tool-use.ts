@@ -599,9 +599,10 @@ const UNREADABLE_VERB = /[$\x60*?[{,\s]/;
  * The user-only command among crew's, read from its parsed words (SP2a review, finding C1: the id
  * and the flags in any order): skip, approve, accept, decide, an objection's waive, profile confirm
  * or set, policy accept or set, a task's merge with --force. A help lookup records nothing, so it
- * is none (finding 22). `policyCommand` names the two that change or accept the policy, asked even
- * where the policy relays the rest, since the policy that governs signatures is itself signed by a
- * prompt (ADR 0005). A verb the hook cannot read may be any of these, so it is one.
+ * is none (finding 22). `policyCommand` names the two that change or accept the policy (and an
+ * unreadable word after `policy`, taken for one on the conservative side), asked even where the
+ * policy relays the rest, since the policy that governs signatures is itself signed by a prompt
+ * (ADR 0005). A verb the hook cannot read may be any of these, so it is one.
  */
 function userOnlyCommand(
   args: string[],
@@ -1035,7 +1036,9 @@ function userOnlyDecision(
   }
   // A presence command decides nothing: with a person there it runs, and the record says so.
   if (presence) return null;
-  if (typeof parsed.flags.validator === "string") return null;
+  // A validator's decision is checked by the engine, so a person has nothing to sign; the policy's
+  // own commands are never the validator's (finding 128): asked, flag or no flag.
+  if (typeof parsed.flags.validator === "string" && !policyCommand) return null;
   if (policy.attendedDecisions === "relay" && !policyCommand) return null;
   return ["ask", "Crew: this command records a decision that only the user can take"];
 }

@@ -519,7 +519,7 @@ export function knowledgeFilesFor(
   profile: Profile,
   changed: readonly string[],
   policy: Policy,
-): { paths: string[]; packs: string[]; skipped: string[] } {
+): { paths: string[]; labels: string[]; packs: string[]; skipped: string[] } {
   const packs = okPacks(userDir);
   const holds = (targetPath: string, file: string) =>
     targetPath === "." || file.startsWith(`${targetPath}/`);
@@ -528,10 +528,15 @@ export function knowledgeFilesFor(
     : profile.targets;
   const keys = [...new Set(targets.flatMap((t) => [t.stack, ...(t.tags ?? [])]))];
   const paths: string[] = [];
+  // The same files as `<pack>:<path inside the pack>` (finding 118): the report's names, never a machine's path.
+  const labels: string[] = [];
   const served = new Set<string>();
   const add = (pack: PackRegistration, rel: string) => {
     const path = join(pack.root, rel);
-    if (!paths.includes(path)) paths.push(path);
+    if (!paths.includes(path)) {
+      paths.push(path);
+      labels.push(`${pack.name}:${rel}`);
+    }
     served.add(pack.name);
   };
   for (const pack of packs)
@@ -559,7 +564,12 @@ export function knowledgeFilesFor(
     }
     add(pack, rel);
   }
-  return { paths, packs: packs.filter((p) => served.has(p.name)).map((p) => p.name), skipped };
+  return {
+    paths,
+    labels,
+    packs: packs.filter((p) => served.has(p.name)).map((p) => p.name),
+    skipped,
+  };
 }
 
 /** The packs an item used (SP6 Task 2), as `<name> <version>`, each once: the report's Packs line reads them. */
@@ -581,13 +591,14 @@ export function recordPackUse(
   changed: readonly string[],
   policy: Policy,
   registry: Record<TeamName, TeamDef>,
-): { paths: string[]; packs: string[]; skipped: string[] } {
+): { paths: string[]; labels: string[]; packs: string[]; skipped: string[] } {
   const served = knowledgeFilesFor(userDir, profile, changed, policy);
   const seated = (work.seats ?? []).flatMap((s) => {
     const rule = s.team ? registry[s.team].mandatory : null;
     return s.role === "expert" && rule?.kind === "paths" && rule.pack ? [rule.pack] : [];
   });
   work.knowledgeFiles = served.paths;
+  work.knowledgeLabels = served.labels;
   const names = [...served.packs, ...seated];
   if (names.length) {
     const listing = listPacks(userDir, { quick: true });
