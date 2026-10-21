@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
@@ -11,17 +12,38 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { delimiter, join } from "node:path";
+import { basename, delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   armRuns,
+  createRunFolder,
   deniedReferenceReads,
   evalInvocation,
+  runFolder,
   SANDBOX_TAGS,
+  scanResults,
 } from "../../../scripts/eval.ts";
 import { CEILINGS } from "../../../scripts/eval-overhead.ts";
 import { scanText } from "../src/secrets.ts";
 import type { KnowledgeEntry } from "../src/types.ts";
+import {
+  acceptedRead,
+  agentText,
+  composedPath,
+  deniedRead,
+  firstClaudeOn,
+  foldersSince,
+  listResults,
+  PLUGIN_ROOT,
+  REFERENCE_TEXT,
+  RUN_FOLDER,
+  reference,
+  scanAggregate,
+  stubKit,
+  toolResult,
+  toolUse,
+  writeTrace,
+} from "./kit-stub.ts";
 
 const base = { root: "/r", path: "/usr/bin", realGitDir: null, platform: "linux" as const };
 
@@ -614,25 +636,372 @@ test("SP8-T1 AC-5 (finding 96): the issue case's fixed grader anchors on the fil
   ).toContain("fixture_commit() {");
 });
 
-test("SP8-T1 AC-5 (finding 95): deniedReferenceReads names the plugin references a trace shows denied, once each, and nothing from a clean trace", () => {
-  const denied = JSON.stringify({
-    type: "tool_result",
-    content:
-      "Permission denied: Read /plugins/wizardingcode-developer-crew/skills/crew/references/conclave.md",
-  });
-  const said = JSON.stringify({
-    type: "assistant",
-    text: "I can't read ${CLAUDE_PLUGIN_ROOT}/skills/crew/references/conclave.md: it sits outside what I can read in this session",
-  });
-  const clean = JSON.stringify({
-    type: "tool_result",
-    content: "# Conclave (read from skills/crew/references/conclave.md)",
-  });
-  expect(deniedReferenceReads([denied, said, clean])).toEqual([
+test("SP8-T1 AC-5 (finding 95), in the kit's line shape since 2026-10-21-003 AC-1: deniedReferenceReads names the reference a denied Read names, once, the agent's own report of one, and nothing from a clean trace", () => {
+  const denied = deniedRead("toolu_1", "conclave.md");
+  const said = agentText(
+    "I can't read ${CLAUDE_PLUGIN_ROOT}/skills/crew/references/conclave.md: it sits outside what I can read in this session",
+  );
+  const clean = acceptedRead("toolu_2", "receive.md");
+  expect(deniedReferenceReads([...denied, said, ...clean])).toEqual([
     "skills/crew/references/conclave.md",
   ]);
-  expect(deniedReferenceReads([clean])).toEqual([]);
+  expect(deniedReferenceReads(clean)).toEqual([]);
   expect(deniedReferenceReads([])).toEqual([]);
+});
+
+// The hardening of finding 118 (2026-10-21-003): the kit's own marks, the scripts' own folder.
+const RESULTS = join(repoRoot, "plugins", "core", "evals", "results");
+/** Spawns scripts/eval.ts with the stub first on PATH, from the repository root unless told otherwise. */
+const runEval = (bin: string, args: string[], env: Record<string, string>, cwd = repoRoot) => {
+  const path = [bin, process.env.PATH ?? ""].join(delimiter);
+  expect(firstClaudeOn(composedPath(repoRoot, path))).toBe(bin);
+  return spawnSync("bun", [join(repoRoot, "scripts", "eval.ts"), ...args], {
+    cwd,
+    encoding: "utf8",
+    env: { ...process.env, ...env, PATH: path },
+  });
+};
+
+test("H118 AC-1: a denial is read from the result's own marks, is_error or a decision other than accept, through the tool_use input or the error text, or from the agent's own report; an accepted read whose content holds the denial words and whose metadata says accept is never named", () => {
+  // The false flag of finding 118: the method's words in the content, accept in the metadata, the path on the line.
+  const accepted = acceptedRead("toolu_a", "understand.md");
+  expect(accepted[1]).toContain("permission");
+  expect(accepted[1]).toContain("skills/crew/references/understand.md");
+  expect(deniedReferenceReads(accepted)).toEqual([]);
+  // is_error alone, the path from the tool_use input (the error text names nothing).
+  expect(
+    deniedReferenceReads([
+      toolUse("toolu_b", "Read", { file_path: reference("conclave.md") }),
+      toolResult("toolu_b", "File does not exist.", { isError: true }),
+    ]),
+  ).toEqual(["skills/crew/references/conclave.md"]);
+  // reject in the metadata alone, no is_error.
+  expect(
+    deniedReferenceReads([
+      toolUse("toolu_c", "Read", { file_path: reference("specify.md") }),
+      toolResult("toolu_c", "Permission to use Read has been denied.", { decision: "reject" }),
+    ]),
+  ).toEqual(["skills/crew/references/specify.md"]);
+  // The path from the error text alone (no tool_use line for the id, no metadata).
+  expect(
+    deniedReferenceReads([
+      toolResult("toolu_d", `Permission denied: Read ${reference("build.md")}`, {
+        isError: true,
+        meta: false,
+      }),
+    ]),
+  ).toEqual(["skills/crew/references/build.md"]);
+  // A Bash command naming a reference, denied.
+  expect(
+    deniedReferenceReads([
+      toolUse("toolu_e", "Bash", { command: `cat ${reference("gate.md")}` }),
+      toolResult(
+        "toolu_e",
+        "Permission to use Bash has been denied because Claude Code is running in don't ask mode.",
+        { isError: true, decision: "reject" },
+      ),
+    ]),
+  ).toEqual(["skills/crew/references/gate.md"]);
+  // The agent's own report, with no read of the file.
+  expect(
+    deniedReferenceReads([
+      agentText(
+        `I can't read ${reference("deliver.md")}: it sits outside what I can read in this session`,
+      ),
+    ]),
+  ).toEqual(["skills/crew/references/deliver.md"]);
+  // The agent's report set aside by an accepted Read of that path.
+  expect(
+    deniedReferenceReads([
+      agentText(`I can't read ${reference("learn.md")}: permission denied`),
+      ...acceptedRead("toolu_f", "learn.md"),
+    ]),
+  ).toEqual([]);
+  // An accepted result of another tool, an accepted Read of another file and a line that is not JSON name nothing.
+  expect(
+    deniedReferenceReads([
+      toolUse("toolu_g", "Bash", { command: `ls ${reference("")}` }),
+      toolResult("toolu_g", "receive.md\npermission.md"),
+      "not json",
+      ...acceptedRead("toolu_h", "plan.md"),
+    ]),
+  ).toEqual([]);
+});
+
+test("H118 AC-9: the agent's report is set aside only by an accepted Read of that same path; a denial naming the folder alone is named skills/crew/references; the join reads the result before its tool_use and a metadata entry with no content entry; an accepted read followed by the agent's words is not named", () => {
+  const report = agentText(
+    `I can't read ${reference("learn.md")}: it sits outside what I can read in this session`,
+  );
+  // An accepted Bash naming the path sets nothing aside.
+  expect(
+    deniedReferenceReads([
+      report,
+      toolUse("toolu_1", "Bash", { command: `ls ${reference("learn.md")}` }),
+      toolResult("toolu_1", reference("learn.md")),
+    ]),
+  ).toEqual(["skills/crew/references/learn.md"]);
+  // An accepted Read of another reference sets nothing aside.
+  expect(deniedReferenceReads([report, ...acceptedRead("toolu_2", "plan.md")])).toEqual([
+    "skills/crew/references/learn.md",
+  ]);
+  // A denied Glob of the folder alone.
+  expect(
+    deniedReferenceReads([
+      toolUse("toolu_3", "Glob", {
+        pattern: "*.md",
+        path: `${PLUGIN_ROOT}/skills/crew/references`,
+      }),
+      toolResult("toolu_3", "Permission denied.", { isError: true }),
+    ]),
+  ).toEqual(["skills/crew/references"]);
+  // The result before its tool_use.
+  const [use, result] = deniedRead("toolu_4", "gate.md") as [string, string];
+  expect(deniedReferenceReads([result, use])).toEqual(["skills/crew/references/gate.md"]);
+  // A metadata entry whose id has no content entry: the rejection is the denial.
+  const metaOnly = JSON.stringify({
+    type: "user",
+    message: { role: "user", content: [{ type: "text", text: "continue" }] },
+    tool_result_meta: [
+      {
+        id: "toolu_5",
+        permission_decision: { decision: "reject", source: "config", reason_type: "mode" },
+      },
+    ],
+  });
+  expect(
+    deniedReferenceReads([
+      toolUse("toolu_5", "Read", { file_path: reference("audit.md") }),
+      metaOnly,
+    ]),
+  ).toEqual(["skills/crew/references/audit.md"]);
+  // An accepted read, then the agent's words about the file with the denial words beside the path.
+  expect(
+    deniedReferenceReads([
+      ...acceptedRead("toolu_6", "rules.md"),
+      agentText(`${reference("rules.md")} says a permission is asked where nobody watches`),
+    ]),
+  ).toEqual([]);
+  // A metadata entry without a decision is not a rejection.
+  const noDecision = JSON.stringify({
+    type: "user",
+    message: {
+      role: "user",
+      content: [{ type: "tool_result", tool_use_id: "toolu_7", content: REFERENCE_TEXT }],
+    },
+    tool_result_meta: [{ id: "toolu_7" }],
+  });
+  expect(
+    deniedReferenceReads([
+      toolUse("toolu_7", "Read", { file_path: reference("mail.md") }),
+      noDecision,
+    ]),
+  ).toEqual([]);
+});
+
+test("H118 AC-6: scanResults prints one line per denied run, none for accepted reads alone, and a trace unreadable line for a trace yielding no assistant or user line", () => {
+  const dir = mkdtempSync(join(tmpdir(), "scan-"));
+  const deniedA1 = writeTrace(join(dir, "a1.jsonl"), [
+    ...acceptedRead("t1", "receive.md"),
+    ...deniedRead("t2", "conclave.md"),
+  ]);
+  const deniedA2 = writeTrace(join(dir, "a2.jsonl"), deniedRead("t3", "specify.md"));
+  const deniedB = writeTrace(join(dir, "b1.jsonl"), [
+    ...deniedRead("t4", "gate.md"),
+    ...deniedRead("t5", "conclave.md"),
+  ]);
+  const acceptedB = writeTrace(join(dir, "b2.jsonl"), acceptedRead("t6", "gate.md"));
+  const acceptedC1 = writeTrace(join(dir, "c1.jsonl"), [
+    ...acceptedRead("t7", "understand.md"),
+    ...acceptedRead("t8", "specify.md"),
+  ]);
+  const acceptedC2 = writeTrace(join(dir, "c2.jsonl"), acceptedRead("t9", "conclave.md"));
+  const garbage = writeTrace(join(dir, "d1.jsonl"), [
+    "not json",
+    '{"type":"system","subtype":"init"}',
+    "{truncated",
+  ]);
+  const empty = writeTrace(join(dir, "d2.jsonl"), []);
+  writeFileSync(
+    join(dir, "aggregate-result.json"),
+    scanAggregate({
+      a: [deniedA1, deniedA2],
+      b: [deniedB, acceptedB],
+      c: [acceptedC1, acceptedC2],
+      d: [garbage, empty, join(dir, "missing.jsonl")],
+    }),
+  );
+  expect(scanResults(dir)).toEqual([
+    "needs-rerun: a (reference read denied: skills/crew/references/conclave.md)",
+    "needs-rerun: a (reference read denied: skills/crew/references/specify.md)",
+    "needs-rerun: b (reference read denied: skills/crew/references/gate.md, skills/crew/references/conclave.md)",
+    `needs-rerun: d (trace unreadable: ${garbage})`,
+    `needs-rerun: d (trace unreadable: ${empty})`,
+  ]);
+  expect(scanResults(join(dir, "none"))).toEqual([]);
+});
+
+test("H118 AC-7: runFolder builds the kit's stamp and the suffix from the clock given; createRunFolder refuses a parent other than results and an existing folder; a case name outside ^[\\w-]+$ is the usage line before anything is created", () => {
+  const now = new Date("2026-10-21T03:45:01.273Z");
+  expect(runFolder("/r/results", "benchmark", now)).toBe(
+    "/r/results/2026-10-21T03-45-01-273Z-benchmark",
+  );
+  expect(runFolder("/r/results", "case-false-done", now)).toBe(
+    "/r/results/2026-10-21T03-45-01-273Z-case-false-done",
+  );
+  expect(runFolder("/r/results", "suite", new Date("2026-01-02T00:00:00.000Z"))).toBe(
+    "/r/results/2026-01-02T00-00-00-000Z-suite",
+  );
+  const dir = mkdtempSync(join(tmpdir(), "run-folder-"));
+  const results = join(dir, "results");
+  const folder = runFolder(results, "suite", now);
+  expect(existsSync(results)).toBe(false);
+  createRunFolder(folder, results);
+  expect(statSync(folder).isDirectory()).toBe(true);
+  expect(() => createRunFolder(folder, results)).toThrow(`run folder ${folder} exists`);
+  const outside = join(dir, "elsewhere", "2026-10-21T03-45-01-273Z-suite");
+  expect(() => createRunFolder(outside, results)).toThrow(
+    `run folder ${outside} is not under ${results}`,
+  );
+  expect(existsSync(join(dir, "elsewhere"))).toBe(false);
+  const climbing = join(results, "..", "x");
+  expect(() => createRunFolder(climbing, results)).toThrow("is not under");
+  expect(existsSync(join(dir, "x"))).toBe(false);
+  // The usage line for a case name that is not a plain word, before anything is created.
+  const bin = stubKit(dir);
+  const before = listResults(RESULTS);
+  for (const name of ["../x", "a b", "x/y", ""]) {
+    const run = runEval(bin, ["--case", name], { STUB_EXIT: "0" });
+    expect(run.status, name).toBe(1);
+    expect(run.stderr, name).toContain("usage: bun scripts/eval.ts [--case <name>]");
+  }
+  expect(foldersSince(RESULTS, before)).toEqual([]);
+});
+
+test("H118 AC-4: bun scripts/eval.ts gives the kit a folder of its own through --output-dir and scans that folder's traces alone, with --case and without; newestResults is gone from both scripts", () => {
+  const dir = mkdtempSync(join(tmpdir(), "eval-run-"));
+  const bin = stubKit(dir);
+  const denied = writeTrace(join(dir, "denied.jsonl"), [
+    ...acceptedRead("t1", "receive.md"),
+    ...deniedRead("t2", "build.md"),
+  ]);
+  const accepted = writeTrace(join(dir, "accepted.jsonl"), [
+    ...acceptedRead("t3", "understand.md"),
+    ...acceptedRead("t4", "conclave.md"),
+  ]);
+  const flagged = join(dir, "flagged.json");
+  writeFileSync(flagged, scanAggregate({ "proven-test-first": [denied, accepted] }));
+  const clean = join(dir, "clean.json");
+  writeFileSync(clean, scanAggregate({ "false-done": [accepted] }));
+  const decoyAggregate = join(dir, "decoy.json");
+  writeFileSync(decoyAggregate, scanAggregate({ "decoy-case": [denied] }));
+  const decoy = join(RESULTS, `9999-decoy-${process.pid}`);
+  const hadResults = existsSync(RESULTS);
+  const before = listResults(RESULTS);
+  try {
+    const log = join(dir, "stub.log");
+    const suite = runEval(bin, [], {
+      STUB_AGGREGATE: flagged,
+      STUB_EXIT: "1",
+      STUB_LOG: log,
+      STUB_DECOY: decoy,
+      STUB_DECOY_AGGREGATE: decoyAggregate,
+    });
+    expect(suite.status, suite.stderr).toBe(1);
+    expect(suite.stdout).toContain(
+      "needs-rerun: proven-test-first (reference read denied: skills/crew/references/build.md)",
+    );
+    expect(suite.stdout).not.toContain("decoy-case");
+    const own = foldersSince(RESULTS, before).filter((f) => f !== basename(decoy));
+    expect(own).toHaveLength(1);
+    const folder = own[0] ?? "";
+    expect(folder).toMatch(RUN_FOLDER);
+    expect(folder.endsWith("-suite")).toBe(true);
+    expect(existsSync(join(RESULTS, folder, "aggregate-result.json"))).toBe(true);
+    const [cwd, args] = readFileSync(log, "utf8").split("\n");
+    expect(realpathSync(cwd ?? "")).toBe(realpathSync(repoRoot));
+    expect(args).toContain(`--output-dir plugins/core/evals/results/${folder}`);
+    expect(args).toContain("--tag ");
+    expect(suite.stdout).toContain(`--output-dir plugins/core/evals/results/${folder}`);
+    // One case: the suffix names it, an accepted-only trace prints no line, the status is the kit's.
+    const one = runEval(bin, ["--case", "false-done"], {
+      STUB_AGGREGATE: clean,
+      STUB_EXIT: "0",
+      STUB_LOG: log,
+    });
+    expect(one.status, one.stderr).toBe(0);
+    expect(one.stdout).not.toContain("needs-rerun");
+    const second = foldersSince(RESULTS, [...before, folder, basename(decoy)]);
+    expect(second).toHaveLength(1);
+    expect(second[0]?.endsWith("-case-false-done")).toBe(true);
+    const logged = readFileSync(log, "utf8").split("\n")[1] ?? "";
+    expect(logged).toContain("--case false-done");
+    expect(logged).toContain(`--output-dir plugins/core/evals/results/${second[0]}`);
+  } finally {
+    for (const f of foldersSince(RESULTS, before))
+      rmSync(join(RESULTS, f), { recursive: true, force: true });
+    if (!hadResults) rmSync(RESULTS, { recursive: true, force: true });
+  }
+  const evalSource = readFileSync(join(repoRoot, "scripts", "eval.ts"), "utf8");
+  const benchmarkSource = readFileSync(join(repoRoot, "scripts", "benchmark.ts"), "utf8");
+  expect(evalSource).not.toContain("newestResults");
+  expect(benchmarkSource).not.toContain("newestResults");
+  expect(benchmarkSource).not.toContain("readdirSync");
+});
+
+test("H118 AC-8 (eval.ts): the kit is spawned with cwd the repository root wherever the script runs from, and a folder holding no aggregate after the run is refused naming the status and the folder, nothing scanned; decoy older and newer folders are never read", () => {
+  const dir = mkdtempSync(join(tmpdir(), "eval-empty-"));
+  const bin = stubKit(dir);
+  const denied = writeTrace(join(dir, "denied.jsonl"), deniedRead("t1", "build.md"));
+  const decoyAggregate = join(dir, "decoy.json");
+  writeFileSync(decoyAggregate, scanAggregate({ "decoy-case": [denied] }));
+  const older = join(RESULTS, `0000-older-${process.pid}`);
+  const newer = join(RESULTS, `9999-newer-${process.pid}`);
+  const hadResults = existsSync(RESULTS);
+  const before = listResults(RESULTS);
+  try {
+    mkdirSync(older, { recursive: true });
+    writeFileSync(join(older, "aggregate-result.json"), readFileSync(decoyAggregate));
+    const log = join(dir, "stub.log");
+    // From another cwd, with nothing to copy: the folder is created under the repository, the kit runs there, the empty folder is refused.
+    const run = runEval(
+      bin,
+      [],
+      {
+        STUB_AGGREGATE: join(dir, "missing.json"),
+        STUB_EXIT: "0",
+        STUB_LOG: log,
+        STUB_DECOY: newer,
+        STUB_DECOY_AGGREGATE: decoyAggregate,
+      },
+      dir,
+    );
+    expect(run.status).toBe(1);
+    const own = foldersSince(RESULTS, [...before, basename(older)]).filter(
+      (f) => f !== basename(newer),
+    );
+    expect(own).toHaveLength(1);
+    expect(own[0]).toMatch(RUN_FOLDER);
+    expect(run.stderr).toContain(
+      `eval: the kit exited 0 and wrote no aggregate in plugins/core/evals/results/${own[0]}`,
+    );
+    expect(run.stdout).not.toContain("needs-rerun");
+    expect(realpathSync(readFileSync(log, "utf8").split("\n")[0] ?? "")).toBe(
+      realpathSync(repoRoot),
+    );
+    // From another cwd with an aggregate: written into the repository's folder and scanned there, the decoys nowhere.
+    const flagged = join(dir, "flagged.json");
+    writeFileSync(flagged, scanAggregate({ "proven-test-first": [denied] }));
+    const good = runEval(bin, [], { STUB_AGGREGATE: flagged, STUB_EXIT: "0" }, dir);
+    expect(good.status, good.stderr).toBe(0);
+    expect(good.stdout).toContain(
+      "needs-rerun: proven-test-first (reference read denied: skills/crew/references/build.md)",
+    );
+    expect(good.stdout).not.toContain("decoy-case");
+  } finally {
+    for (const f of foldersSince(RESULTS, before))
+      rmSync(join(RESULTS, f), { recursive: true, force: true });
+    if (!hadResults) rmSync(RESULTS, { recursive: true, force: true });
+  }
 });
 
 test("SP8-T6 AC-1: the SP8 cases carry the strategy and audit tags the sandbox runs, their fixtures hold no key-shaped literal and write inside their scaffold alone", () => {
@@ -889,13 +1258,16 @@ test("SP6-T6 AC-1: the four pack cases carry the tag packs, SANDBOX_TAGS holds i
 test("SP6-T6 AC-11, AC-28: fixtures/bin holds the repository helper alone (no shim: a session's PATH is Claude Code's, never the runner's); both mains pass the invocation's environment beside PATH", () => {
   expect(readdirSync(FIXTURES_BIN)).toEqual(["wizardingcode-crew-repo"]);
   expect(statSync(join(FIXTURES_BIN, "wizardingcode-crew-repo")).mode & 0o111).not.toBe(0);
-  for (const script of ["scripts/eval.ts", "scripts/benchmark.ts"]) {
-    const source = readFileSync(join(repoRoot, script), "utf8");
-    expect(source, script).toContain("env: { ...process.env, ...env, PATH: path }");
-  }
-  expect(readFileSync(join(repoRoot, "scripts/benchmark.ts"), "utf8")).not.toContain(
-    "WIZARDINGCODE_CREW_REPO",
+  // H118: both mains run the kit through runKit, the one spawn, which passes the invocation's environment beside PATH.
+  const evalSource = readFileSync(join(repoRoot, "scripts/eval.ts"), "utf8");
+  expect(evalSource).toContain("env: { ...process.env, ...env, PATH: path }");
+  expect(evalSource.split('spawnSync("claude"').length).toBe(2);
+  const benchmarkSource = readFileSync(join(repoRoot, "scripts/benchmark.ts"), "utf8");
+  expect(benchmarkSource).toContain(
+    'runKit({ root: ROOT, suffix: "benchmark", tags: ["benchmark"] })',
   );
+  expect(benchmarkSource).not.toContain('spawnSync("claude"');
+  expect(benchmarkSource).not.toContain("WIZARDINGCODE_CREW_REPO");
   const readme = readFileSync(`${EVALS}README.md`, "utf8");
   expect(readme).toContain(
     "The Laravel pair needs `php` on the machine that runs the evals (the fixture's `artisan` is a PHP script with no framework): a session's PATH is Claude Code's, with the plugin's own `bin/` added, never the runner's, so nothing the runner puts on its PATH reaches the engine's gates inside a session.",

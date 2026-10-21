@@ -11,9 +11,9 @@
  * UTC day of the run's start, so a record can never name a version that did not run.
  */
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { evalInvocation, newestResults, realGitDir, scanResults } from "./eval.ts";
+import { runKit, scanResults } from "./eval.ts";
 
 export type Category = "functional" | "security" | "cost";
 export const CATEGORIES: Category[] = ["functional", "security", "cost"];
@@ -514,49 +514,31 @@ if (import.meta.main) {
   let command: string | null = null;
   if (from) text = readFileSync(from, "utf8");
   else {
-    const { path, args, env } = evalInvocation({
-      root: ROOT,
-      platform: process.platform,
-      path: process.env.PATH ?? "",
-      realGitDir: realGitDir(process.platform),
-      tags: ["benchmark"],
-    });
-    command = `claude ${args.join(" ")}`;
-    console.log(command);
-    // The record comes from the aggregate this run wrote, whatever the kit's status: 1 says a case
-    // scored below the threshold and 2 a partial run, both figures the record carries.
-    const results = join(ROOT, "plugins", "core", "evals", "results");
-    const before = newestResults(results);
-    const run = spawnSync("claude", args, {
-      stdio: "inherit",
-      env: { ...process.env, ...env, PATH: path },
-    });
-    const newest = newestResults(results);
-    if (
-      newest === null ||
-      newest === before ||
-      !existsSync(join(newest, "aggregate-result.json"))
-    ) {
+    // The record comes from the aggregate this run wrote into a folder of its own (finding 118),
+    // whatever the kit's status: 1 says a case scored below the threshold and 2 a partial run,
+    // both figures the record carries.
+    const run = runKit({ root: ROOT, suffix: "benchmark", tags: ["benchmark"] });
+    command = run.command;
+    if (!run.aggregate) {
       console.error(
-        `benchmark: the kit exited ${String(run.status)} and wrote no new aggregate under plugins/core/evals/results`,
+        `benchmark: the kit exited ${String(run.status)} and wrote no aggregate in ${run.relative}`,
       );
       process.exit(1);
     }
-    const aggregate = join(newest, "aggregate-result.json");
     // A run the suite's runner would flag is not a benchmark record (finding 95's rule in the
     // evals README): the person reruns it, or writes the record from its aggregate on purpose.
-    const flagged = scanResults(newest);
+    const flagged = scanResults(run.folder);
     if (flagged.length) {
       for (const line of flagged) console.error(line);
       console.error(
-        `benchmark: a run the runner flags needs-rerun is run once more; no record written (to write it from this aggregate anyway: bun scripts/benchmark.ts --from ${aggregate})`,
+        `benchmark: a run the runner flags needs-rerun is run once more; no record written (to write it from this aggregate anyway: bun scripts/benchmark.ts --from ${run.aggregate})`,
       );
       process.exit(1);
     }
     console.log(
       `benchmark: the kit exited ${String(run.status)} (${KIT_EXIT[run.status ?? -1] ?? "not a status the kit documents"}); the record is written from its aggregate`,
     );
-    text = readFileSync(aggregate, "utf8");
+    text = readFileSync(run.aggregate, "utf8");
   }
   const set = readSet(readFileSync(join(ROOT, SET_PATH), "utf8"));
   const head = spawnSync("git", ["rev-parse", "HEAD"], { cwd: ROOT, encoding: "utf8" });

@@ -20,6 +20,7 @@ It prints the `claude plugin eval` command it runs, which is:
 ```bash
 PATH="$PWD/plugins/core/evals/fixtures/bin:$PWD/plugins/core/bin:$(dirname "$(xcrun --find git)"):$PATH" WIZARDINGCODE_CREW_REPO="$PWD" claude plugin eval plugins/core \
   --scaffold --trust-plugin --no-publish --keep-temp \
+  --output-dir plugins/core/evals/results/<UTC stamp>-suite \
   --model claude-sonnet-5-5 --judge-model claude-fable-5-1 \
   --max-cost-usd 40 --concurrency 3 \
   --tag cost enforcement method risk stacks gap kind validator judgement team environment priority contracts reception jev issue strategy audit knowledge benchmark packs \
@@ -84,6 +85,8 @@ The agent under test runs on Sonnet 5.5 and the judge on Fable 5.1 (the owner's 
 On the standard and full routes the method pauses for the user's decisions (`crew await <id> user`): the assumptions in Understand, and on the full route the approval of the spec before any source file changes. An eval has a single turn, so the prompts of `proven-test-first` and `risk-escalation` state the decisions and ask the agent not to wait. On the full route that is not enough, by design: the approval is the user's signature, so `risk-escalation` scores the stop at that gate as the right outcome with the plugin, and the edit as the right outcome without it.
 
 `results/` is ignored by git; the recorded runs live in `docs/evals/`.
+
+Each run of `scripts/eval.ts` gives the kit a folder of its own under `results/` through `--output-dir` (the kit's own UTC stamp shape, suffixed `-suite` or `-case-<name>`; created before the kit starts and refused if it exists; the kit run with the repository root as its working directory wherever the script was started from) and reads that folder alone after the run, never the newest folder by name (finding 118). A run whose folder holds no aggregate is refused as `eval: the kit exited <status> and wrote no aggregate in plugins/core/evals/results/<folder>`. The runner then prints one `needs-rerun` line per run whose kept trace (the sandbox file the aggregate names as `tracePath`) shows a plugin reference denied to the agent, read from the trace's own marks: a tool result flagged `is_error` or rejected in its permission metadata whose call named the reference (a Read's path, a Bash command, the references folder itself), or the error's text naming it, or the agent's own words reporting the denial with no accepted Read of that path in the trace; a trace with no readable line is flagged `trace unreadable`. An accepted read is never a denial, whatever the reference's own text says (finding 118: the references hold the words "permission" and "bypassPermissions", and every accepted call carries `permission_decision: accept`). Such a run is re-run rather than scored (finding 95).
 
 ## Two projects in one workspace
 
