@@ -43,6 +43,22 @@ export function parseValidation(
   return { verdict, returns };
 }
 
+/**
+ * The sha256 of a lead's file as read, kept on its validation record (finding 119): a file whose
+ * content the record already holds for that lead is an earlier round's answer, not a new one.
+ */
+export function fileHash(text: string): string {
+  return `sha256:${createHash("sha256").update(text).digest("hex")}`;
+}
+
+/**
+ * The file a resumed lead's answer lands in (SP3-T1, finding 78): its team's own reply file,
+ * `.delivery` for a delivery. One spelling for the hook that writes it and the command that names it.
+ */
+export function leadReplyFile(lead: string, what: string): string {
+  return `conclave/${lead}${what === "delivery" ? ".delivery" : ""}-reply.md`;
+}
+
 /** What a validation is about: the spec's text, the plan's text, or the evidence fingerprint of a delivery. */
 export function validationHash(
   what: Validation["what"],

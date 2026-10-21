@@ -293,7 +293,7 @@ import {
   type QuestionRecord,
   VALIDATOR_RULES,
 } from "./types.ts";
-import { parseValidation, validationHash } from "./validation.ts";
+import { fileHash, leadReplyFile, parseValidation, validationHash } from "./validation.ts";
 import {
   applyDefectMarks,
   askAllowed,
@@ -3631,6 +3631,18 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       const verdict = parseValidation(text);
       if ("refused" in verdict) return refuse(verdict.refused);
       const dir = workDir(env.paths, work.id);
+      // A file whose content this lead's record already holds for this `what` is an earlier
+      // round's answer, whatever the spec's revision (finding 119): refused, naming the record it
+      // is and the file a resumed lead's new answer lands in. A record without the hash (an older
+      // item) tells nothing apart and is read as before.
+      const contentHash = fileHash(text);
+      const repeated = (work.validations ?? []).find(
+        (v) => v.what === what && v.by === by && v.fileHash === contentHash,
+      );
+      if (repeated)
+        return refuse(
+          `already recorded: ${repeated.file} is the answer recorded for round ${repeated.round} of ${by} (${what}); record the lead's new answer (a resumed lead's lands in ${leadReplyFile(by, what)})`,
+        );
       const evidence = loadEvidence(env.paths, work.id).evidence;
       const hash = validationHash(
         what,
@@ -3680,6 +3692,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           round,
           file: relative(dir, path).replace(/\\/g, "/"),
           hash,
+          fileHash: contentHash,
           at: nowIso(),
         },
       ];

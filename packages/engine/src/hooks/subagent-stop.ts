@@ -9,7 +9,7 @@ import { workDir } from "../paths.ts";
 import { clearWorking } from "../state.ts";
 import { PERSONALITIES, ROLE_NAMES, TEAMS, type TeamDef } from "../team.ts";
 import type { Message, Personality, RoleRecord, TeamName, WorkKind } from "../types.ts";
-import { LEAD_TEAMS } from "../validation.ts";
+import { LEAD_TEAMS, leadReplyFile } from "../validation.ts";
 import { activeWork, kindOfItem, loadWork, saveWork } from "../work.ts";
 import { leaveNotice } from "./notices.ts";
 import type { HookContext, HookPayload, HookResponse } from "./types.ts";
@@ -428,6 +428,13 @@ export function fileAnswer(
   let note: string | null = null;
   // Said when nothing else is: where this answer is and where the earlier reply went.
   let archivedNote: string | null = null;
+  // The archive an earlier answer went to, named even when the record cannot be made; one note
+  // for the resumed branch (an earlier reply) and the first-answer branch (an earlier answer).
+  let keptAs: string | null = null;
+  const noteKept = (archived: string, word: "reply" | "answer"): void => {
+    keptAs = archived;
+    archivedNote = `Crew: ${agent}'s answer ${whereSaved(saved)} (the earlier ${word} kept as ${archived}).`;
+  };
   if (!answer) {
     // A role cut off, or one whose last turn was only a tool call: its end is recorded, no file is
     // written, and the session is told, so an earlier round's file is not read as this answer.
@@ -448,17 +455,35 @@ export function fileAnswer(
           r.file === joined.file,
       );
       if (moved) moved.file = joined.archived;
-      archivedNote = `Crew: ${agent}'s answer ${whereSaved(saved)} (the earlier reply kept as ${joined.archived}).`;
+      noteKept(joined.archived, "reply");
     }
   } else {
-    // The first answer: the role's own, or a resumed role's whose earlier stop left no file.
+    // The first answer: the role's own, or a resumed role's whose earlier stop left no file. An
+    // answer already on disk under conclave/ (a role launched anew, not resumed) is archived first
+    // and never written over (finding 125); the review files keep their rounds at the record.
     const file = answerFile(agent, answer, kindOfItem(work));
+    const kept = file.startsWith("conclave/") ? archiveExisting(dir, file) : { archived: null };
+    if ("failed" in kept)
+      return `Crew: ${agent}'s earlier answer could not be archived at ${kept.failed} (${kept.error}): the plain file was left as it was; save this answer from the transcript${transcriptNote} and run the role again if it is needed.`;
     // A ruling file holds the JSON alone, so `crew judgement record --ruling` reads it as it is.
     writeText(
       join(dir, file),
       file.endsWith(".json") ? `${gatesRuling(answer) ?? unfenced(answer)}\n` : `${answer}\n`,
     );
     saved = { file, agent };
+    if (kept.archived) {
+      // The records that named the plain file follow its content to the archive: the role's in
+      // the evidence (saved below with this answer's record) and a lead's validation in work.json.
+      for (const r of roles) if (r.file === file) r.file = kept.archived;
+      let moved = false;
+      for (const v of work.validations ?? []) {
+        if (v.file !== file) continue;
+        v.file = kept.archived;
+        moved = true;
+      }
+      if (moved) saveWork(ctx.paths, work);
+      noteKept(kept.archived, "answer");
+    }
   }
   progress.saved = saved;
   // A resumed role may have a relayed question waiting, whether or not its earlier stop left a
@@ -472,7 +497,8 @@ export function fileAnswer(
     if (!answer)
       return `Crew: ${agent} stopped with no answer (no hand-back and an empty last message) and its end is not recorded: ${tampered}. Run the role again or save its answer from the transcript${transcriptNote}.`;
     const { where, unsent } = savedAndUnsentPhrases(id, saved, pending?.id ?? null);
-    return `Crew: ${agent}'s answer ${where} but its end and tokens are not recorded: ${tampered}${unsent}`;
+    const keptPhrase = keptAs ? ` (the earlier answer kept as ${keptAs})` : "";
+    return `Crew: ${agent}'s answer ${where}${keptPhrase} but its end and tokens are not recorded: ${tampered}${unsent}`;
   }
   // The lens the role declared and the team the registry gives it (SP7 §6.3), when either exists.
   const personality = personalityOf(answer);
@@ -539,23 +565,32 @@ function joinEarlierFile(
   // A tech lead resumed for another round answers for one team: its reply joins that team's own
   // file, never one the leads would share (finding 78).
   const lead = agent === "tech-lead" ? leadAnswer(answer) : null;
-  const file = lead
-    ? `conclave/lead-${lead.team}${lead.what === "delivery" ? ".delivery" : ""}-reply.md`
-    : `conclave/${agent}-reply.md`;
-  const current = readText(join(dir, file));
-  let archived: string | null = null;
-  if (current !== null) {
-    // The lowest index from 2 at which no regular file stands: a gap is filled, an archive never
-    // overwritten; a directory there is not an archive, so the write fails on it and says so.
-    archived = file.replace(/\.md$/, `.round${freeArchiveIndex(dir, file)}.md`);
-    try {
-      writeText(join(dir, archived), current);
-    } catch (error) {
-      return { failed: archived, error: error instanceof Error ? error.message : String(error) };
-    }
-  }
+  const file = lead ? leadReplyFile(`lead-${lead.team}`, lead.what) : `conclave/${agent}-reply.md`;
+  const kept = archiveExisting(dir, file);
+  if ("failed" in kept) return kept;
   writeText(join(dir, file), `${answer}\n`);
-  return { file, archived };
+  return { file, archived: kept.archived };
+}
+
+/**
+ * The file at `file`, when one stands there, copied to the lowest free `.round<n>.md` beside it
+ * before it is written over: from 2, a gap is filled, an archive never overwritten; a directory
+ * there is not an archive, so the write fails on it and says so. An answer on disk is never lost
+ * (finding 125): the resumed branch and the first-answer branch both go through here.
+ */
+function archiveExisting(
+  dir: string,
+  file: string,
+): { archived: string | null } | { failed: string; error: string } {
+  const current = readText(join(dir, file));
+  if (current === null) return { archived: null };
+  const archived = file.replace(/\.md$/, `.round${freeArchiveIndex(dir, file)}.md`);
+  try {
+    writeText(join(dir, archived), current);
+  } catch (error) {
+    return { failed: archived, error: error instanceof Error ? error.message : String(error) };
+  }
+  return { archived };
 }
 
 /** The lowest `k` from 2 such that no regular file stands at `<reply>.round<k>.md`. */

@@ -3828,6 +3828,12 @@ function parseValidation(text) {
     };
   return { verdict, returns };
 }
+function fileHash(text) {
+  return `sha256:${createHash2("sha256").update(text).digest("hex")}`;
+}
+function leadReplyFile(lead, what) {
+  return `conclave/${lead}${what === "delivery" ? ".delivery" : ""}-reply.md`;
+}
 function validationHash(what, specText, planText, evidenceFingerprint) {
   if (what === "delivery")
     return evidenceFingerprint;
@@ -4615,6 +4621,13 @@ function learnedBody(entries, confirmed) {
 function learnedText(entries, confirmed) {
   return `learned ${learnedBody(entries, confirmed)}`;
 }
+function waitedFor(kind) {
+  if (kind === "role")
+    return "for the roles";
+  if (kind === "mail")
+    return "for a reply";
+  return "for the user";
+}
 function renderReport(work, evidence, policy, options = {}) {
   const { ledger, mail, selfName, analysis, strategy, audit, knowledge, ctoPlan } = options;
   const lines = [];
@@ -4781,11 +4794,12 @@ function renderReport(work, evidence, policy, options = {}) {
   const removed = work.removedCriteria ?? [];
   const pauses = work.pauses ?? [];
   const shared = work.sharedCheckout;
-  if (work.approvals.length || work.skips.length || removed.length || pauses.length || shared) {
+  if (shared) {
+    const n = shared.paths.length;
+    lines.push("", "## Checkout", "", `- started in a checkout shared with ${shared.with.join(", ")}: ${n} uncommitted file${n === 1 ? "" : "s"} at the start, listed in work.json (sharedCheckout.paths) (${shared.at})`);
+  }
+  if (work.approvals.length || work.skips.length || removed.length) {
     lines.push("", "## Decisions", "");
-    if (shared) {
-      lines.push(`- started in a checkout shared with ${shared.with.join(", ")}, open with uncommitted changes in ${shared.paths.join(", ")} (${shared.at})`);
-    }
     for (const a of work.approvals) {
       lines.push(`- ${a.what} approved ${decidedBy(a)} (${a.at})${countedNote(policy, a)}`);
     }
@@ -4794,8 +4808,11 @@ function renderReport(work, evidence, policy, options = {}) {
     }
     for (const r of removed)
       lines.push(`- ${r.id} (${r.kind}) removed (${r.at}): ${r.text}`);
+  }
+  if (pauses.length) {
+    lines.push("", "## Waits", "");
     for (const p of pauses)
-      lines.push(`- paused for the user (${p.at}), not proven: ${p.reason}`);
+      lines.push(`- ${waitedFor(p.kind)} (${p.at}), not proven: ${p.reason}`);
   }
   if (ledger?.objections.length) {
     lines.push("", "## Objections", "");
@@ -11055,6 +11072,11 @@ function fileAnswer(ctx, id, role, input, transcriptNote, progress) {
   let saved;
   let note = null;
   let archivedNote = null;
+  let keptAs = null;
+  const noteKept = (archived, word) => {
+    keptAs = archived;
+    archivedNote = `Crew: ${agent}'s answer ${whereSaved(saved)} (the earlier ${word} kept as ${archived}).`;
+  };
   if (!answer) {
     saved = { file: null, agent };
     note = `Crew: ${agent} stopped with no answer (no hand-back and an empty last message): its end is recorded with no file; an earlier file of this role, if any, is not this round's answer. Run the role again or save its answer from the transcript${transcriptNote}.`;
@@ -11067,14 +11089,32 @@ function fileAnswer(ctx, id, role, input, transcriptNote, progress) {
       const moved = roles.find((r) => (input.agentId ? r.agentId === input.agentId : r.agent === agent) && r.file === joined.file);
       if (moved)
         moved.file = joined.archived;
-      archivedNote = `Crew: ${agent}'s answer ${whereSaved(saved)} (the earlier reply kept as ${joined.archived}).`;
+      noteKept(joined.archived, "reply");
     }
   } else {
     const file = answerFile(agent, answer, kindOfItem(work));
+    const kept = file.startsWith("conclave/") ? archiveExisting(dir, file) : { archived: null };
+    if ("failed" in kept)
+      return `Crew: ${agent}'s earlier answer could not be archived at ${kept.failed} (${kept.error}): the plain file was left as it was; save this answer from the transcript${transcriptNote} and run the role again if it is needed.`;
     writeText(join39(dir, file), file.endsWith(".json") ? `${gatesRuling(answer) ?? unfenced(answer)}
 ` : `${answer}
 `);
     saved = { file, agent };
+    if (kept.archived) {
+      for (const r of roles)
+        if (r.file === file)
+          r.file = kept.archived;
+      let moved = false;
+      for (const v of work.validations ?? []) {
+        if (v.file !== file)
+          continue;
+        v.file = kept.archived;
+        moved = true;
+      }
+      if (moved)
+        saveWork(ctx.paths, work);
+      noteKept(kept.archived, "answer");
+    }
   }
   progress.saved = saved;
   const pending = earlier && answer ? pendingQuestion(ctx, id, agent) : undefined;
@@ -11084,7 +11124,8 @@ function fileAnswer(ctx, id, role, input, transcriptNote, progress) {
     if (!answer)
       return `Crew: ${agent} stopped with no answer (no hand-back and an empty last message) and its end is not recorded: ${tampered}. Run the role again or save its answer from the transcript${transcriptNote}.`;
     const { where, unsent } = savedAndUnsentPhrases(id, saved, pending?.id ?? null);
-    return `Crew: ${agent}'s answer ${where} but its end and tokens are not recorded: ${tampered}${unsent}`;
+    const keptPhrase = keptAs ? ` (the earlier answer kept as ${keptAs})` : "";
+    return `Crew: ${agent}'s answer ${where}${keptPhrase} but its end and tokens are not recorded: ${tampered}${unsent}`;
   }
   const personality = personalityOf(answer);
   const team = saved.agent === "tech-lead" ? leadAnswer(answer)?.team ?? null : teamOf(saved.agent);
@@ -11118,10 +11159,10 @@ function pendingQuestion(ctx, workId, agent) {
 function joinEarlierFile(dir, agent, answer, kind) {
   if (agent.startsWith("review-")) {
     const file2 = answerFile(agent, answer, kind);
-    const current2 = (readText(join39(dir, file2)) ?? "").trimEnd();
+    const current = (readText(join39(dir, file2)) ?? "").trimEnd();
     const heading = `
 ## Clarifications`;
-    const body = current2.includes(heading) ? current2 : `${current2}
+    const body = current.includes(heading) ? current : `${current}
 ${heading}`;
     writeText(join39(dir, file2), `${body}
 - ${answer.replace(/\n/g, `
@@ -11130,20 +11171,25 @@ ${heading}`;
     return { file: file2, archived: null };
   }
   const lead = agent === "tech-lead" ? leadAnswer(answer) : null;
-  const file = lead ? `conclave/lead-${lead.team}${lead.what === "delivery" ? ".delivery" : ""}-reply.md` : `conclave/${agent}-reply.md`;
-  const current = readText(join39(dir, file));
-  let archived = null;
-  if (current !== null) {
-    archived = file.replace(/\.md$/, `.round${freeArchiveIndex(dir, file)}.md`);
-    try {
-      writeText(join39(dir, archived), current);
-    } catch (error) {
-      return { failed: archived, error: error instanceof Error ? error.message : String(error) };
-    }
-  }
+  const file = lead ? leadReplyFile(`lead-${lead.team}`, lead.what) : `conclave/${agent}-reply.md`;
+  const kept = archiveExisting(dir, file);
+  if ("failed" in kept)
+    return kept;
   writeText(join39(dir, file), `${answer}
 `);
-  return { file, archived };
+  return { file, archived: kept.archived };
+}
+function archiveExisting(dir, file) {
+  const current = readText(join39(dir, file));
+  if (current === null)
+    return { archived: null };
+  const archived = file.replace(/\.md$/, `.round${freeArchiveIndex(dir, file)}.md`);
+  try {
+    writeText(join39(dir, archived), current);
+  } catch (error) {
+    return { failed: archived, error: error instanceof Error ? error.message : String(error) };
+  }
+  return { archived };
 }
 function freeArchiveIndex(dir, replyFile) {
   for (let k = 2;; k++) {
@@ -16570,6 +16616,10 @@ test-first not credited: ${out2.uncredited}` : "";
       if ("refused" in verdict)
         return refuse(verdict.refused);
       const dir = workDir(env.paths, work.id);
+      const contentHash = fileHash(text);
+      const repeated = (work.validations ?? []).find((v) => v.what === what && v.by === by && v.fileHash === contentHash);
+      if (repeated)
+        return refuse(`already recorded: ${repeated.file} is the answer recorded for round ${repeated.round} of ${by} (${what}); record the lead's new answer (a resumed lead's lands in ${leadReplyFile(by, what)})`);
       const evidence = loadEvidence(env.paths, work.id).evidence;
       const hash = validationHash(what, readText(join48(dir, "spec.md")), readText(join48(dir, "plan.md")), evidence.fingerprint ?? "");
       const same2 = (work.validations ?? []).filter((v) => v.what === what);
@@ -16595,6 +16645,7 @@ test-first not credited: ${out2.uncredited}` : "";
           round,
           file: relative12(dir, path).replace(/\\/g, "/"),
           hash,
+          fileHash: contentHash,
           at: nowIso()
         }
       ];

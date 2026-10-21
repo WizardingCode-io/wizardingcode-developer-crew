@@ -839,6 +839,17 @@ test("finding 121: the skill page's front matter is strict YAML (Bun.YAML), with
 const repoFile = (path: string): string =>
   readFileSync(fileURLToPath(new URL(`../../../${path}`, import.meta.url)), "utf8");
 
+test("AC-5 (finding 119): the conclave and deliver references say where a resumed lead's answer lands and that the record is taken from that file", () => {
+  const conclave = repoFile("plugins/core/skills/crew/references/conclave.md");
+  const deliver = repoFile("plugins/core/skills/crew/references/deliver.md");
+  expect(conclave).toContain(
+    "A lead resumed for another round answers into `conclave/lead-<team>-reply.md`, the earlier reply archived beside it as `.round<n>.md`; record that file, never the round-1 file, since the engine refuses a file whose content it already recorded for that lead.",
+  );
+  expect(deliver).toContain(
+    "a resumed lead's answer lands in `conclave/lead-<team>.delivery-reply.md` (the earlier reply archived beside it as `.round<n>.md`): record that file, since the engine refuses one it already recorded;",
+  );
+});
+
 test("testers AC-1: the runtime report template is strict YAML, its dropdown lists the engine's runtimes in the table's order, and it asks for what a report needs", () => {
   const form = Bun.YAML.parse(repoFile(".github/ISSUE_TEMPLATE/runtime-report.yml")) as {
     name: string;

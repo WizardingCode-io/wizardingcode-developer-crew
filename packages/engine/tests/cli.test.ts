@@ -2647,7 +2647,8 @@ test("SP7a AC-3: crew validation record parses the lead's file, refuses a lead n
   expect((await c.run("phase", id, "next")).err).toContain(
     "validation of spec by lead-security: returned 1 return",
   );
-  // The spec revised: round 2; validated by both; the plan opens.
+  // The spec revised: round 2; validated by both; the plan opens. Each lead's round-2 answer is
+  // its own: an identical file is an earlier round's and is refused (finding 119).
   write(
     root,
     `.crew/work/${id}/spec.md`,
@@ -2664,7 +2665,12 @@ test("SP7a AC-3: crew validation record parses the lead's file, refuses a lead n
         "--by",
         "lead-qa",
         "--file",
-        leadFile(root, id, "lead-qa"),
+        leadFile(
+          root,
+          id,
+          "lead-qa",
+          `# lead-qa validation of ${id}: spec\nverdict: validated\n## Returns\n- none\n## Notes\n- holds, observed as b\n`,
+        ),
       )
     ).out.trim(),
   ).toBe("validation of spec by lead-qa: validated (round 2)");
@@ -2703,7 +2709,12 @@ test("SP7a AC-3: crew validation record parses the lead's file, refuses a lead n
     "--by",
     "lead-qa",
     "--file",
-    leadFile(root, id, "lead-qa"),
+    leadFile(
+      root,
+      id,
+      "lead-qa",
+      `# lead-qa validation of ${id}: spec\nverdict: validated\n## Returns\n- none\n## Notes\n- holds, observed as c\n`,
+    ),
   );
   expect(third.err.trim()).toBe(
     `validation round 3 of ${id}: the policy allows 2 (team.maxValidationRounds); the user continues it once with crew continue ${id} validation, or decides`,
@@ -2720,7 +2731,12 @@ test("SP7a AC-3: crew validation record parses the lead's file, refuses a lead n
         "--by",
         "lead-qa",
         "--file",
-        leadFile(root, id, "lead-qa"),
+        leadFile(
+          root,
+          id,
+          "lead-qa",
+          `# lead-qa validation of ${id}: spec\nverdict: validated\n## Returns\n- none\n## Notes\n- holds, observed as c\n`,
+        ),
       )
     ).out.trim(),
   ).toBe("validation of spec by lead-qa: validated (round 3)");
@@ -2730,7 +2746,7 @@ test("SP7a AC-3: crew validation record parses the lead's file, refuses a lead n
       root,
       id,
       `lead-qa-plan-${n}`,
-      `# qa lead's validation of ${id}: plan\nverdict: validated\n## Returns\n- none\n## Notes\n- holds\n`,
+      `# qa lead's validation of ${id}: plan\nverdict: validated\n## Returns\n- none\n## Notes\n- holds for plan ${n}\n`,
     );
   expect(
     (
@@ -2769,22 +2785,27 @@ test("SP7a AC-3: crew validation record parses the lead's file, refuses a lead n
     "lead-qa.delivery",
     `# qa lead's validation of ${id}: delivery\nverdict: validated\n## Returns\n- none\n## Notes\n- holds\n`,
   );
-  for (let i = 0; i < 2; i++)
-    expect(
-      (
-        await c.run(
-          "validation",
-          id,
-          "record",
-          "--what",
-          "delivery",
-          "--by",
-          "lead-qa",
-          "--file",
-          deliveryFile,
-        )
-      ).out.trim(),
-    ).toBe("validation of delivery by lead-qa: validated (round 1)");
+  const delivery = () =>
+    c.run(
+      "validation",
+      id,
+      "record",
+      "--what",
+      "delivery",
+      "--by",
+      "lead-qa",
+      "--file",
+      deliveryFile,
+    );
+  expect((await delivery()).out.trim()).toBe(
+    "validation of delivery by lead-qa: validated (round 1)",
+  );
+  // The same answer again is the round-1 answer (finding 119): refused, naming the reply file.
+  const sameDelivery = await delivery();
+  expect(sameDelivery.code).toBe(1);
+  expect(sameDelivery.err.trim()).toBe(
+    "already recorded: conclave/lead-qa.delivery.md is the answer recorded for round 1 of lead-qa (delivery); record the lead's new answer (a resumed lead's lands in conclave/lead-qa.delivery-reply.md)",
+  );
   expect(loadWork(repoPaths(root, env), id).work?.rounds).toMatchObject({
     judgement: 0,
     validation: 3,
@@ -3656,7 +3677,8 @@ test("SP7b-T5 AC-2 (validation): under the standing grant the spec's third and f
   await c.run("phase", id, "next");
   await c.run("phase", id, "next");
   await c.run("approve", id, "spec", "--validator", "complete-gap-round");
-  const validate = () =>
+  // The lead's answer names the version it read (finding 119: an identical file is refused).
+  const validate = (n: number) =>
     c.run(
       "validation",
       id,
@@ -3666,13 +3688,18 @@ test("SP7b-T5 AC-2 (validation): under the standing grant the spec's third and f
       "--by",
       "lead-qa",
       "--file",
-      leadFile(root, id, "lead-qa"),
+      leadFile(
+        root,
+        id,
+        "lead-qa",
+        `# lead-qa validation of ${id}: spec\nverdict: validated\n## Returns\n- none\n## Notes\n- holds for version ${n}\n`,
+      ),
     );
-  expect((await validate()).out.trim()).toBe("validation of spec by lead-qa: validated (round 1)");
+  expect((await validate(1)).out.trim()).toBe("validation of spec by lead-qa: validated (round 1)");
   spec(2);
-  expect((await validate()).out.trim()).toBe("validation of spec by lead-qa: validated (round 2)");
+  expect((await validate(2)).out.trim()).toBe("validation of spec by lead-qa: validated (round 2)");
   spec(3);
-  expect((await validate()).out.trim()).toBe("validation of spec by lead-qa: validated (round 3)");
+  expect((await validate(3)).out.trim()).toBe("validation of spec by lead-qa: validated (round 3)");
   const continued = () => loadWork(repoPaths(root, env), id).work?.continued ?? [];
   expect(continued()).toMatchObject([{ what: "validation", by: { by: "user" }, standing: true }]);
   expect(register(root).at(-1)).toMatchObject({
@@ -3681,14 +3708,14 @@ test("SP7b-T5 AC-2 (validation): under the standing grant the spec's third and f
     by: "the user",
   });
   spec(4);
-  expect((await validate()).out.trim()).toBe("validation of spec by lead-qa: validated (round 4)");
+  expect((await validate(4)).out.trim()).toBe("validation of spec by lead-qa: validated (round 4)");
   expect(continued().filter((e) => e.standing).length).toBe(2);
   spec(5);
-  expect((await validate()).err.trim()).toBe(
+  expect((await validate(5)).err.trim()).toBe(
     `validation round 5 of ${id}: the policy allows 2 (team.maxValidationRounds); the user continues it once with crew continue ${id} validation, or decides`,
   );
   expect((await c.run("continue", id, "validation")).code).toBe(0);
-  expect((await validate()).out.trim()).toBe("validation of spec by lead-qa: validated (round 5)");
+  expect((await validate(5)).out.trim()).toBe("validation of spec by lead-qa: validated (round 5)");
 });
 
 test("SP7b-T5 AC-2 (judgement): under the standing grant the third and fourth judgement rounds are accepted and recorded, the fifth refused until crew continue", async () => {
@@ -4047,6 +4074,101 @@ test("SP3-T1 AC-4 (finding 78): crew validation record reads the last block of a
     by: "lead-qa",
     file: "conclave/lead-qa-reply.md",
   });
+});
+
+test("AC-4 (finding 119): crew validation record refuses a file whose content it already recorded for the same lead and what, keeps the file's hash on the record, and reads an older record without one as before", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const env = testEnv();
+  const c = io(root, env);
+  const standard = JSON.stringify({ ...JSON.parse(answers), scope: 1 });
+  const id = (await c.json("start", "Two rounds", "--answers", standard)).data.id as string;
+  write(root, `.crew/work/${id}/spec.md`, "# Spec\n\n## Acceptance criteria\n- AC-1 x\n");
+  const file = `.crew/work/${id}/conclave/lead-qa.md`;
+  write(
+    root,
+    file,
+    `# qa lead's validation of ${id}: spec\nverdict: returned\n## Returns\n- R-1 · spec.md:3 · x\n## Notes\n- round 1\n`,
+  );
+  const record = (path: string) =>
+    c.run("validation", id, "record", "--what", "spec", "--by", "lead-qa", "--file", path);
+  const first = await c.json(
+    "validation",
+    id,
+    "record",
+    "--what",
+    "spec",
+    "--by",
+    "lead-qa",
+    "--file",
+    file,
+  );
+  expect(first.code).toBe(0);
+  expect(first.data.validation).toMatchObject({ round: 1, verdict: "returned", returns: 1 });
+  expect(String((first.data.validation as { fileHash?: string }).fileHash)).toMatch(
+    /^sha256:[0-9a-f]{64}$/,
+  );
+  // The spec is revised and the round-1 file is recorded again from habit (this repository's
+  // item 2026-10-21-003): refused, naming the record it already is, and the right file.
+  write(root, `.crew/work/${id}/spec.md`, "# Spec\n\n## Acceptance criteria\n- AC-1 x, revised\n");
+  const again = await record(file);
+  expect(again.code).toBe(1);
+  expect(again.err.trim()).toBe(
+    `already recorded: conclave/lead-qa.md is the answer recorded for round 1 of lead-qa (spec); record the lead's new answer (a resumed lead's lands in conclave/lead-qa-reply.md)`,
+  );
+  expect(loadWork(repoPaths(root, env), id).work?.validations).toHaveLength(1);
+  // The same text under another lead is that lead's own first answer: the refusal keys on the
+  // lead and the what, never on the content alone.
+  const other = `.crew/work/${id}/conclave/lead-security.md`;
+  write(root, other, readFileSync(join(root, file), "utf8"));
+  const otherLead = await c.json(
+    "validation",
+    id,
+    "record",
+    "--what",
+    "spec",
+    "--by",
+    "lead-security",
+    "--file",
+    other,
+  );
+  expect(otherLead.code).toBe(0);
+  expect(otherLead.data.validation).toMatchObject({ by: "lead-security", round: 1 });
+  // The lead's new answer, from its reply file, opens round 2 as today.
+  const reply = `.crew/work/${id}/conclave/lead-qa-reply.md`;
+  write(
+    root,
+    reply,
+    `# qa lead's validation of ${id}: spec\nverdict: validated\n## Returns\n- none\n## Notes\n- round 2\n`,
+  );
+  const second = await c.json(
+    "validation",
+    id,
+    "record",
+    "--what",
+    "spec",
+    "--by",
+    "lead-qa",
+    "--file",
+    reply,
+  );
+  expect(second.code).toBe(0);
+  expect(second.data.validation).toMatchObject({
+    round: 2,
+    verdict: "validated",
+    file: "conclave/lead-qa-reply.md",
+  });
+  // An older record without the hash is read as before: the same file recorded again on the
+  // same spec keeps its round, since nothing on the record tells the content apart.
+  const item = loadWork(repoPaths(root, env), id);
+  if (!item.work) throw new Error("no work");
+  for (const v of item.work.validations ?? []) delete (v as { fileHash?: string }).fileHash;
+  saveWork(repoPaths(root, env), item.work);
+  const legacy = await record(reply);
+  expect(legacy.code).toBe(0);
+  expect(legacy.out).toContain("validated (round 2)");
 });
 
 test("SP3-T2 AC-1, AC-2, AC-3: crew start records the kind and says where it came from; an issue lands in analyse with the issue line, its guard names what is missing, and status, the log, the report and the metrics carry the kind", async () => {
@@ -6543,6 +6665,9 @@ async function specAtValidation(team: Record<string, unknown>) {
   await c.run("phase", id, "next"); // specify
   await c.run("phase", id, "next"); // conclave
   await c.run("approve", id, "spec", "--validator", "complete-gap-round");
+  // A lead's answer names the revision it read, as a real answer does: an identical file is an
+  // earlier round's answer and is refused (finding 119, item 2026-10-21-008 AC-4).
+  let revision = 1;
   const record = (lead: string) =>
     c.run(
       "validation",
@@ -6553,14 +6678,21 @@ async function specAtValidation(team: Record<string, unknown>) {
       "--by",
       lead,
       "--file",
-      leadFile(root, id, lead),
+      leadFile(
+        root,
+        id,
+        lead,
+        `# ${lead} validation of ${id}: spec\nverdict: validated\n## Returns\n- none\n## Notes\n- holds for revision ${revision}\n`,
+      ),
     );
-  const revise = (n: number) =>
+  const revise = (n: number) => {
+    revision = n;
     write(
       root,
       `.crew/work/${id}/spec.md`,
       `# Spec\n\n## Acceptance criteria\n- AC-1 a, revision ${n}\n`,
     );
+  };
   const rounds = () => loadWork(repoPaths(root, env), id).work?.rounds;
   return { root, env, c, id, record, revise, rounds };
 }
@@ -6585,10 +6717,13 @@ test("SP6-T1 AC-1: a validation round is counted per revision each lead read, no
     "validation of spec by lead-security: validated (round 2)",
   );
   expect(rounds()).toMatchObject({ validation: 2 });
-  // The same hash again spends nothing.
-  expect((await record("lead-security")).out.trim()).toBe(
-    "validation of spec by lead-security: validated (round 2)",
+  // The same answer again is an earlier round's (finding 119): refused, and no round is spent.
+  const same = await record("lead-security");
+  expect(same.code).toBe(1);
+  expect(same.err.trim()).toContain(
+    "already recorded: conclave/lead-security.md is the answer recorded for round 2 of lead-security (spec)",
   );
+  expect(rounds()).toMatchObject({ validation: 2 });
   // A third revision: the record that would open round 3 is refused until the user continues.
   revise(4);
   const third = await record("lead-qa");

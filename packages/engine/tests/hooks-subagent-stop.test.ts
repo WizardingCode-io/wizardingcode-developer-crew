@@ -1080,6 +1080,114 @@ test("SP3-T1 AC-4 (finding 78): a resumed tech lead's second answer joins its ow
   ]);
 });
 
+test("AC-3 (finding 125): a lead launched anew never overwrites its earlier answer: the file is archived as .round<n>.md, the note names both, and the role's and the validation's records follow it", () => {
+  const { root, ctx, work } = session();
+  work.route = "standard";
+  work.phase = "conclave";
+  saveWork(ctx.paths, work);
+  const dir = tempDir("crew-transcript-");
+  const stop = (id: string, answer: string) =>
+    onSubagentStop(ctx, {
+      agent_id: id,
+      agent_type: `${PLUGIN}:tech-lead`,
+      agent_transcript_path: transcript(dir, answer, [[100, 10, 0, 0]]),
+      last_assistant_message: "Done.",
+    });
+  const head = `# qa lead's validation of ${work.id}: spec\n`;
+  const folder = join(root, ".crew", "work", work.id, "conclave");
+  const file = (name: string) => readFileSync(join(folder, name), "utf8");
+  stop("q1", `${head}verdict: returned\n## Returns\n- R-1 · spec.md:3 · x\n## Notes\n- round 1\n`);
+  // The session records round 1 from the plain file, then launches the lead again (a new agent
+  // id, not a resume): the user's sessions in the client projects do this every round.
+  const recorded = loadWork(ctx.paths, work.id).work;
+  if (!recorded) throw new Error("no work");
+  recorded.validations = [
+    {
+      what: "spec",
+      by: "lead-qa",
+      verdict: "returned",
+      returns: 1,
+      round: 1,
+      file: "conclave/lead-qa.md",
+      hash: "sha256:spec1",
+      at: "2026-10-21T10:00:00.000Z",
+    },
+  ];
+  saveWork(ctx.paths, recorded);
+  const second = stop("q2", `${head}verdict: validated\n## Returns\n- none\n## Notes\n- round 2\n`);
+  expect(file("lead-qa.round2.md")).toContain("- round 1");
+  expect(file("lead-qa.md")).toContain("- round 2");
+  expect(file("lead-qa.md")).not.toContain("round 1");
+  expect(second.systemMessage).toContain("is saved at conclave/lead-qa.md");
+  expect(second.systemMessage).toContain("(the earlier answer kept as conclave/lead-qa.round2.md)");
+  const roles = loadEvidence(ctx.paths, work.id).evidence.roles ?? [];
+  expect(roles.filter((r) => r.agent === "tech-lead").map((r) => r.file)).toEqual([
+    "conclave/lead-qa.round2.md",
+    "conclave/lead-qa.md",
+  ]);
+  expect(loadWork(ctx.paths, work.id).work?.validations?.[0]?.file).toBe(
+    "conclave/lead-qa.round2.md",
+  );
+  // A third launch takes the next free index and never writes over an archive.
+  stop("q3", `${head}verdict: validated\n## Returns\n- none\n## Notes\n- round 3\n`);
+  expect(file("lead-qa.round3.md")).toContain("- round 2");
+  expect(file("lead-qa.round2.md")).toContain("- round 1");
+  expect(file("lead-qa.md")).toContain("- round 3");
+});
+
+test("AC-9 (finding 125): a first answer whose archive cannot be written leaves the earlier file untouched, writes nothing, records nothing, and the note says where the archive failed and why", () => {
+  const { root, ctx, work } = session();
+  work.route = "standard";
+  work.phase = "conclave";
+  saveWork(ctx.paths, work);
+  const dir = tempDir("crew-transcript-");
+  const stop = (id: string, answer: string) =>
+    onSubagentStop(ctx, {
+      agent_id: id,
+      agent_type: `${PLUGIN}:tech-lead`,
+      agent_transcript_path: transcript(dir, answer, [[100, 10, 0, 0]]),
+      last_assistant_message: "Done.",
+    });
+  const head = `# security lead's validation of ${work.id}: spec\n`;
+  const folder = join(root, ".crew", "work", work.id, "conclave");
+  stop("s1", `${head}verdict: returned\n## Returns\n- R-1 · spec.md:3 · x\n## Notes\n- round 1\n`);
+  // A directory at the lowest free archive path is not an archive: the copy fails on it.
+  mkdirSync(join(folder, "lead-security.round2.md"));
+  const failed = stop("s2", `${head}verdict: validated\n## Returns\n- none\n## Notes\n- round 2\n`);
+  expect(failed.systemMessage).toContain(
+    "Crew: tech-lead's earlier answer could not be archived at conclave/lead-security.round2.md (",
+  );
+  expect(failed.systemMessage).toContain("EISDIR");
+  expect(failed.systemMessage).toContain(
+    "): the plain file was left as it was; save this answer from the transcript",
+  );
+  expect(readFileSync(join(folder, "lead-security.md"), "utf8")).toContain("- round 1");
+  expect(readFileSync(join(folder, "lead-security.md"), "utf8")).not.toContain("round 2");
+  expect(existsSync(join(folder, "lead-security.round3.md"))).toBe(false);
+  expect(loadEvidence(ctx.paths, work.id).evidence.roles ?? []).toHaveLength(1);
+});
+
+test("AC-3 (finding 125): a review file is not archived: a reviewer launched anew writes over its findings file, which the gate run resets and the judgement record keeps per round", () => {
+  const { root, ctx, work } = session();
+  work.route = "standard";
+  work.phase = "gate";
+  saveWork(ctx.paths, work);
+  const dir = tempDir("crew-transcript-");
+  const stop = (id: string, answer: string) =>
+    onSubagentStop(ctx, {
+      agent_id: id,
+      agent_type: `${PLUGIN}:review-security`,
+      agent_transcript_path: transcript(dir, answer, [[100, 10, 0, 0]]),
+      last_assistant_message: "Done.",
+    });
+  stop("r1", "# security findings\n## Findings\n- F-1 · defect · a.ts:1 · x\n");
+  const second = stop("r2", "# security findings\n## Findings\n- none\n");
+  const review = join(root, ".crew", "work", work.id, "review");
+  expect(readFileSync(join(review, "security.findings.md"), "utf8")).toContain("- none");
+  expect(readdirSync(review).filter((f) => f.includes(".round"))).toEqual([]);
+  expect(String(second.systemMessage)).not.toContain("kept as");
+});
+
 test("SP8-T4 AC-3: on an audit item the hook files a reviewer's answer as audit/<gate>.findings.md and the researcher's as audit/dependencies.findings.md; on any other kind the files stay where they were", () => {
   expect(answerFile("review-security", "…", "audit")).toBe("audit/security.findings.md");
   expect(answerFile("researcher", "# Dependencies for w1", "audit")).toBe(

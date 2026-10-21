@@ -77,6 +77,12 @@ export interface Validation {
   file: string;
   /** The content the verdict is about: the spec's or the plan's hash, the evidence fingerprint for a delivery. */
   hash: string;
+  /**
+   * The sha256 of the lead's file as read (finding 119): a file already recorded for this lead and
+   * this `what` is an earlier round's answer and is refused as a new one. Absent on older records,
+   * which tell nothing apart and are read as before.
+   */
+  fileHash?: string;
   at: string;
 }
 

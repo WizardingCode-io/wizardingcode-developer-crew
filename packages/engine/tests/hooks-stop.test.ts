@@ -141,8 +141,10 @@ test("case 3: a work item waiting for the user lets the turn end with a notice",
     loadEvidence(ctx.paths, work.id).evidence,
     ctx.policy,
   );
-  expect(report).toContain("## Decisions");
-  expect(report).toContain("paused for the user");
+  // The pause is a wait, listed by its kind (finding 123): never a decision.
+  expect(report).toContain("## Waits");
+  expect(report).toContain("- for the user (");
+  expect(report).not.toContain("paused for the user");
   expect(onStop(ctx).decision).toBe("block");
 });
 

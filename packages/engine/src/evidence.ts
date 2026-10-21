@@ -379,6 +379,13 @@ export interface ReportOptions {
   ctoPlan?: { path: string; date: string } | null;
 }
 
+/** Whom a turn end waited for, from the pause's kind (finding 123); no kind is the user's wait. */
+function waitedFor(kind: "user" | "role" | "mail" | undefined): string {
+  if (kind === "role") return "for the roles";
+  if (kind === "mail") return "for a reply";
+  return "for the user";
+}
+
 /**
  * The report. Its sections read the item and the evidence, and the records `options` carries:
  * the objections, the mail, an issue's origin, the strategy, an audit, the knowledge list and
@@ -736,13 +743,20 @@ export function renderReport(
   const removed = work.removedCriteria ?? [];
   const pauses = work.pauses ?? [];
   const shared = work.sharedCheckout;
-  if (work.approvals.length || work.skips.length || removed.length || pauses.length || shared) {
+  // What the start found (finding 9): a fact, not a decision (finding 124). The open items by id
+  // and the count of uncommitted files; the paths stay in work.json, never in a report that may
+  // be pasted outside the project.
+  if (shared) {
+    const n = shared.paths.length;
+    lines.push(
+      "",
+      "## Checkout",
+      "",
+      `- started in a checkout shared with ${shared.with.join(", ")}: ${n} uncommitted file${n === 1 ? "" : "s"} at the start, listed in work.json (sharedCheckout.paths) (${shared.at})`,
+    );
+  }
+  if (work.approvals.length || work.skips.length || removed.length) {
     lines.push("", "## Decisions", "");
-    if (shared) {
-      lines.push(
-        `- started in a checkout shared with ${shared.with.join(", ")}, open with uncommitted changes in ${shared.paths.join(", ")} (${shared.at})`,
-      );
-    }
     for (const a of work.approvals) {
       lines.push(`- ${a.what} approved ${decidedBy(a)} (${a.at})${countedNote(policy, a)}`);
     }
@@ -752,7 +766,13 @@ export function renderReport(
       );
     }
     for (const r of removed) lines.push(`- ${r.id} (${r.kind}) removed (${r.at}): ${r.text}`);
-    for (const p of pauses) lines.push(`- paused for the user (${p.at}), not proven: ${p.reason}`);
+  }
+  // The turns that ended waiting while the work was not proven, by whom the session waited for
+  // (finding 123): a wait is never a decision. A pause with no kind predates the roles' and the
+  // mail's waits (SP2c), when the only wait a turn could end on was the user's.
+  if (pauses.length) {
+    lines.push("", "## Waits", "");
+    for (const p of pauses) lines.push(`- ${waitedFor(p.kind)} (${p.at}), not proven: ${p.reason}`);
   }
   if (ledger?.objections.length) {
     lines.push("", "## Objections", "");

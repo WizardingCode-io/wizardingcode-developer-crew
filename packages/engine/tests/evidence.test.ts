@@ -381,10 +381,58 @@ test("the report says when the item started in a checkout shared with an open it
     at: "2026-10-14T10:00:00.000Z",
   };
   const report = renderReport(work, evidence, DEFAULT_POLICY);
-  expect(report).toContain("## Decisions");
+  // The note is a fact of the start, not a decision (finding 124): its own section, the open
+  // items by id and the count of uncommitted files; the paths stay in work.json, never in a
+  // report that may be pasted elsewhere.
+  expect(report).toContain("## Checkout");
   expect(report).toContain(
-    "- started in a checkout shared with 2026-10-13-001-lane-a, 2026-10-13-002-lane-b, open with uncommitted changes in src/a.ts, src/b.ts (2026-10-14T10:00:00.000Z)",
+    "- started in a checkout shared with 2026-10-13-001-lane-a, 2026-10-13-002-lane-b: 2 uncommitted files at the start, listed in work.json (sharedCheckout.paths) (2026-10-14T10:00:00.000Z)",
   );
+  expect(report).not.toContain("src/a.ts");
+  expect(report).not.toContain("## Decisions");
+  work.sharedCheckout = { ...work.sharedCheckout, paths: ["src/a.ts"] };
+  expect(renderReport(work, evidence, DEFAULT_POLICY)).toContain(
+    ": 1 uncommitted file at the start, listed in work.json (sharedCheckout.paths) (",
+  );
+});
+
+test("AC-1 (finding 123): the report lists every pause under Waits by its kind, and the Decisions section holds decisions alone", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const work = workWith(paths);
+  const evidence: Evidence = { ...emptyEvidence(), fingerprint: "f" };
+  work.pauses = [
+    { at: "2026-10-21T09:06:05.180Z", reason: "gates have not run", kind: "role" },
+    { at: "2026-10-21T09:52:15.899Z", reason: "gates have not run", kind: "user" },
+    {
+      at: "2026-10-21T10:13:36.105Z",
+      reason: "judgement gate code-quality not run",
+      kind: "mail",
+    },
+    // A record older than SP2c has no kind: the only wait then was the user's.
+    { at: "2026-10-21T10:25:05.227Z", reason: "gates have not run" },
+  ];
+  const report = renderReport(work, evidence, DEFAULT_POLICY);
+  expect(report).toContain("## Waits");
+  expect(report).toContain(
+    "- for the roles (2026-10-21T09:06:05.180Z), not proven: gates have not run",
+  );
+  expect(report).toContain(
+    "- for the user (2026-10-21T09:52:15.899Z), not proven: gates have not run",
+  );
+  expect(report).toContain(
+    "- for a reply (2026-10-21T10:13:36.105Z), not proven: judgement gate code-quality not run",
+  );
+  expect(report).toContain(
+    "- for the user (2026-10-21T10:25:05.227Z), not proven: gates have not run",
+  );
+  expect(report).not.toContain("paused for the user");
+  // Pauses alone open no Decisions section: that section holds decisions.
+  expect(report).not.toContain("## Decisions");
+  approve(work, "spec");
+  const withDecision = renderReport(work, evidence, DEFAULT_POLICY);
+  expect(withDecision).toContain("## Decisions");
+  expect(withDecision.indexOf("## Decisions")).toBeLessThan(withDecision.indexOf("## Waits"));
+  expect(withDecision.split("## Decisions")[1]?.split("## Waits")[0]).not.toContain("not proven:");
 });
 
 test("SP2a: the report lists the gap round's decisions and who took each", () => {
