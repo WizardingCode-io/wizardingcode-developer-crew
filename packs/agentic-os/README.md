@@ -18,7 +18,7 @@ Verified against: OWASP Top 10 for LLM Applications 2025; Claude Code and Anthro
 
 ## Install
 
-From the WizardingCode marketplace, with the core plugin at 0.11.0 or later:
+From the WizardingCode marketplace, with the core plugin at 0.11.1 or later:
 
 ```sh
 claude plugin install wizardingcode-pack-agentic-os@wizardingcode-plugins

@@ -1,7 +1,7 @@
 {
   "name": "wizardingcode-pack-agentic-os",
   "displayName": "WizardingCode Pack: Agentic OS",
-  "version": "0.11.0",
+  "version": "0.11.1",
   "description": "A team pack for agentic systems, served by the crew engine of wizardingcode-developer-crew: a team template that seats the agentic-os team on the paths where agents, skills, prompts and hooks live, three checklists for the gap round and one knowledge file for the expert. Data only: no code, no skill, no agent, no hook.",
   "author": { "name": "WizardingCode", "url": "https://wizardingcode.io" },
   "homepage": "https://github.com/WizardingCode-io/wizardingcode-developer-crew",

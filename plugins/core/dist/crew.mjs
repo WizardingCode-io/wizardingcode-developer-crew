@@ -7403,7 +7403,7 @@ import { homedir as homedir2 } from "node:os";
 import { basename as basename5, isAbsolute as isAbsolute6, join as join28, sep as sep3 } from "node:path";
 
 // packages/engine/src/version.ts
-var VERSION = "0.11.0";
+var VERSION = "0.11.1";
 
 // packages/engine/src/packs.ts
 var PACK_NAME = /^wizardingcode-pack-[a-z0-9][a-z0-9-]*$/;

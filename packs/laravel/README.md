@@ -14,7 +14,7 @@ Verified against: Laravel 13.x, Pest 4.x, Pint 1.32.1, Larastan 3.13.0 (the docu
 
 ## Install
 
-From the WizardingCode marketplace, with the core plugin at 0.11.0 or later:
+From the WizardingCode marketplace, with the core plugin at 0.11.1 or later:
 
 ```sh
 claude plugin install wizardingcode-pack-laravel@wizardingcode-plugins
