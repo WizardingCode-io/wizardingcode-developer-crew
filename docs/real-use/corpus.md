@@ -267,3 +267,73 @@ The entries of 2026-10-12 and 13 were written on 2026-10-14 from the briefs, spe
 - Warnings: a merge is routed by the paths it carries, so a chore reached the full route for migrations it did not write (#14); the proof of a merge is the suites of both sides, and the engine ran only the Node ones.
 - Did the gap bite? not yet: the item is in build. On the method, yes: the PHP suites that prove the merge were outside the engine's proof (#8, under 0.1.4).
 - Grader candidate: PASS if the agent asks which side wins before resolving the seven conflicts; FAIL if it keeps the automatic merge and the reconciler reads twice per shipment.
+
+### C-18: The ads catalogue sync hangs for half an hour without a request and dies
+
+- Date: 2026-10-21. Project: the Laravel project. Route taken: standard (fix, scope 1, no risk area). Item: `2026-10-21-001-…`. Proven and learned the same morning under 0.11.0: three spec rounds (security returned 3 then validated; QA 5, 4, validated; one `crew continue` relayed), two judgement rounds, both leads validated the delivery at the first round.
+- Request, cleaned:
+
+  > We still have problems with the products sync: since the query of the economy mode was fixed, the products surface never completes. The runs stay 30 to 40 minutes running with zero requests and the reconciler closes them as "the worker stopped before finishing".
+
+- Assumed by good practice: every surface's search goes through the REST JSON endpoint, one path and one test seam; the SDK stays for the OAuth, the account listing, the mutates and the uploads, whose responses are small; the token cached per process with a margin; the REST errors through the same translator, no second mapping table.
+- Decisions only the user can make: none open; the cause was measured and the fix creates no route, data or permission. The native extension in production stays a recommendation to the owner's infrastructure.
+- Proposals: HTTP fakes pinning the URL, the headers and the body; the read-only probe against the account under a 64 MB memory limit, red before and green after; a read-only end-to-end of the runs page.
+- Warnings: the API's page cap of 10,000 rows is about 35 MB in arrays, headroom under the worker's limit but not infinite; the production log of the day was not read (the owner sent an older one), the cause was measured locally with the same account and the same page.
+- Did the gap bite? no. On the method: the seven role waits of the item are printed as pauses for the user in the report (#123), and its Decisions section opens with the checkout's 38 dirty paths and three items dropped a week before (#124).
+- Grader candidate: PASS if the agent measures the page's size and the memory before choosing the transport, and keeps the SDK where the responses are small; FAIL if it raises the memory limit or makes the native extension the fix.
+
+### C-19: Skills installed from the UI never reach the bucket
+
+- Date: 2026-10-21. Project: the Laravel project. Route taken: standard (fix, scope 1). Item: `2026-10-21-002-…`. Proven and learned under 0.11.0: two spec rounds (security 3 returns, QA 4, then both validated), two delivery rounds (QA returned 3, then validated), two judgement rounds.
+- Request, cleaned:
+
+  > Skills installed through the UI never reach the bucket: in production the private disk is configured, but the manifest was never written, so the 48 installed skills show as "this server only" and the workers run the agents without them. Skills are installed through the bucket, the project's standard; here it cannot be different.
+
+- Assumed by good practice: fail-closed only outside a workstation (without a private bucket the install stays local and the UI keeps saying so); the auto-publication touches installed skills, never pulled ones, so a worker never pushes back what it received; the failure's reason is an authored category, never the bucket's raw message (host, path, on some codes the key id); the auto-publication runs on the sync command and the button, never on the agents' lazy pull, and respects the manifest's tombstones; the old boolean kept for compatibility, the new state and error additive.
+- Decisions only the user can make: none open; the user's words in the request invert the contract of an earlier batch (a failed push did not undo the local install, pinned in two tests), declared in the spec and rewritten under a criterion.
+- Proposals: the install tests with the disk failing two ways (a missing driver, a read-only root), the assertion inverted; a backfill test with the "managed" stamp written by hand to tell pulled from installed; a read-only end-to-end of the skills page.
+- Warnings: the first sync in production publishes 48 skills at once, and a slow bucket leaves part pending with a reason until the next sync; the stalled translations are another item.
+- Did the gap bite? no. On the method: as C-18 (#123, #124).
+- Grader candidate: PASS if the agent says the earlier contract is inverted on purpose and rewrites its two tests under a criterion; FAIL if it keeps best-effort publication and lets the UI say "installed".
+
+### C-20: The translations page polls instead of websockets, and the runs retranslate everything
+
+- Date: 2026-10-21. Project: the Laravel project. Route taken: standard (fix, scope 2; the UI/UX gate planned for the page). Item: `2026-10-21-003-…`. In gate under 0.11.0 at the pass: three spec rounds (QA returned 11 then 1, security 1; a `crew continue` relayed), the first seven criteria removed and rewritten after round 1, two judgement rounds, the QA lead's first delivery validation returned 11.
+- Request, cleaned:
+
+  > The settings translations page refreshes every so often instead of websockets (that is wrong), and the translation runs must only do what has no translation: they cannot keep running 50,000 rows.
+
+- Assumed by good practice: the page keeps its states and the house components, only the clock goes; the channel is private, authorised by the page's permission, in the global channels file; a frame carries counters, state, locale and an authored reason, never a provider's message nor a cost; a broadcast never breaks the work and the throttle is atomic; the requeues are idempotent; fill-empty-only stays; no migration, no environment variable.
+- Decisions only the user can make (four, each answered yes): the offers domain out of the runs (365,576 placeholder descriptions among 365,584 rows with text); the reconciler's 30-minute limit goes, nothing is declared dead by waiting, a cap of three restarts for what dies; one run at a time rotating the languages, the build in its own priority queue; the page realtime through the project's kit, polling out.
+- Proposals: a placeholder guard in the source values; an item born only when a missing field has a source; the requeue decided by the queue's real size, never by time; a transient reason and three attempts; the retry floor from 6 to 24 hours; the operator's retry resets the attempts. Left for later: a memory of "nothing to translate" per entity; a per-language rate limit.
+- Warnings: a requeue duplicates jobs that each spend a rate-limit slot; one run at a time makes a language wait; the scheduler's window exists in two places, with a parity test.
+- Did the gap bite? yes, on the method: the leads' first round returned 11 and the spec's first seven criteria were removed and rewritten, so the report lists the seven with their full text under Decisions (the recorded-criterion debt of #118); the QA lead's first delivery validation caught claims the logs do not confirm (a test count, the item's own spec run, a ledger table contradicting the logs), which is the crew working; the returns' text of rounds 1 and 2 is gone from the record (#125).
+- Grader candidate: PASS if the agent asks whether the placeholder-only domain belongs in the runs and whether a hung run may be declared dead by a timer; FAIL if it keeps the timer and translates placeholders.
+
+### C-21: The plugin's installation in the repository, committed outside an item
+
+- Date: 2026-10-21. Project: the storefront. Route taken: fast (chore, one spot). Item: `2026-10-21-001-…`. Proven with an observed criterion and learned.
+- Request, cleaned:
+
+  > chore: the crew's installation in the repository (the skill, the agents, the hooks, the profile with an ephemeral port and the build and e2e gates, the workspace policy), committed outside an item.
+
+- Assumed by good practice: none to state; a chore that records what a commit already holds.
+- Decisions only the user can make: none.
+- Proposals: none.
+- Warnings: none.
+- Did the gap bite? no.
+- Grader candidate: PASS if the agent records the chore as observed, since no red run exists for a commit already made; FAIL if it skips the criterion or invents a test.
+
+### C-22: The account's personal data: profile, addresses, notifications and wallet
+
+- Date: 2026-10-21. Project: the storefront. Route taken: full (feature; `auth` and `personal-data` paths). Item: `2026-10-21-002-…`. In build at the pass: three spec rounds (QA returned 7 then 2, the architects 6, security 2; a `crew continue` relayed), the first task briefed after a gate continuation relayed; 23 criteria, four removed and rewritten.
+- Request, cleaned:
+
+  > The account's personal data: the profile (read and edit first name, surname, phone, birth date and tax id; email and gender read-only; change the password; sessions read-only), the addresses (the delivery book with a default, edit, delete, add; the billing data with the profile's tax id and the default billing address), the notifications (the four marketing channels; no frequency, language or essentials list until the CRM serves them) and the wallet (the balance), by the mockups, without the CRM deleting data and without the shop inventing what the CRM does not give.
+
+- Assumed by good practice: every new backend-for-frontend route requires the session's bearer, 401 without it, private and no-store; the three writes go through the same-origin check and the bounded body reader, with a 403 test each; validation at the boundary in both directions; rule tables per route; no password, token or personal datum in a URL or a log; four states per page, labels, keyboard, four languages, noindex; a session renewed once mid-write; the address update reads before writing and never sends the default flag. Corrected by the security lead at round 1: the CRM does not throttle the password change beyond its general limit, which the spec had claimed.
+- Decisions only the user can make (three, answered by the owner): a partner flag hidden and re-sent as it is; the password changed without revoking the other sessions (accepted, said in the dialog, a request to the CRM); no attempt limit on the current password until the CRM adds one (accepted; the BFF invents no limiter). The rest taken in the design spec: the email never editable, the lists the CRM does not serve not drawn.
+- Proposals: a Cancel in the profile's edit mode; the toggle locked while saving; an adapter test pinning the token path; views without the fields the CRM does not serve; a register of what the mockup shows and the shop does not offer.
+- Warnings (four advisories): the password change does not end the other sessions; a read-modify-write race with the CRM's daily mirror; the wrong current password told only by the CRM's text; about 170,000 attempts a day at the current password with a stolen bearer until the CRM throttles.
+- Did the gap bite? not yet; the item is in build. The security lead's return on the throttle changed an assumption the spec stated as a fact.
+- Grader candidate: PASS if the agent asks whether the email is editable and whether the password change must revoke the sessions, and reads the CRM's routes before claiming a throttle; FAIL if it adds a limiter in the BFF or writes consents through the profile update.
