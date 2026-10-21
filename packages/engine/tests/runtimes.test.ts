@@ -1,14 +1,16 @@
 import { expect, test } from "bun:test";
-import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { HookPayload, HookResponse } from "../src/hooks/types.ts";
 import { opencodePlugin } from "../src/runtimes/opencode-plugin.ts";
 import {
+  checkRuntime,
   ENGINE_EVENTS,
   type EngineEvent,
   type Guarantee,
   guaranteeLines,
+  installRuntime,
   patchPaths,
   RUNTIME_NAMES,
   RUNTIMES,
@@ -1017,6 +1019,85 @@ test("SP6-T4 AC-3: the agent file per format, from the tech lead's page", () => 
   expect(RUNTIMES.gemini.agentFile(writer)?.text).not.toContain("tools:");
   expect(RUNTIMES.copilot.agentFile(writer)?.text).not.toContain("tools:");
   expect(RUNTIMES.opencode.agentFile(writer)?.text).not.toContain("permission:");
+});
+
+test("AC-2 (finding 121's debt): readAgentPage decodes a double-quoted description once, so the generated files of a quoted page are byte-identical to the unquoted page's", () => {
+  const pageText = readFileSync(
+    fileURLToPath(new URL("../../../plugins/core/agents/tech-lead.md", import.meta.url)),
+    "utf8",
+  );
+  const page = readAgentPage(pageText);
+  const quotedText = pageText.replace(
+    /^description: (.*)$/m,
+    (_, d: string) => `description: ${JSON.stringify(d)}`,
+  );
+  expect(quotedText).not.toBe(pageText);
+  const quoted = readAgentPage(quotedText);
+  expect(quoted).toEqual(page);
+  for (const name of RUNTIME_NAMES) {
+    expect(RUNTIMES[name].agentFile(quoted), name).toEqual(RUNTIMES[name].agentFile(page));
+  }
+  // An escape inside the quotes is decoded once by the reader and encoded once by a generator.
+  const escaped = readAgentPage(
+    '---\nname: x\ndescription: "a \\"b\\" c"\ntools: Read\n---\n\nbody\n',
+  );
+  expect(escaped.description).toBe('a "b" c');
+  expect(RUNTIMES.copilot.agentFile(escaped)?.text).toContain('description: "a \\"b\\" c"');
+  // A value that is not a JSON string stays raw, as today.
+  expect(
+    readAgentPage('---\nname: x\ndescription: "unclosed\ntools: Read\n---\n\nbody\n').description,
+  ).toBe('"unclosed');
+});
+
+test("AC-3 (finding 121's debt): crew runtime install refuses a skill page a strict loader drops, naming the line, and writes nothing; crew runtime check reports the installed page's front matter", () => {
+  const root = tempDir("crew-root-");
+  const page = (description: string) =>
+    `---\nname: crew-method\ndescription: ${description}\n---\n\n# Crew\n`;
+  mkdirSync(join(root, "skills", "crew", "references"), { recursive: true });
+  mkdirSync(join(root, "agents"), { recursive: true });
+  mkdirSync(join(root, "dist"), { recursive: true });
+  writeFileSync(join(root, "dist", "crew.mjs"), "");
+  writeFileSync(join(root, "skills", "crew", "references", "rules.md"), "# Rules\n");
+  writeFileSync(
+    join(root, "agents", "tech-lead.md"),
+    readFileSync(
+      fileURLToPath(new URL("../../../plugins/core/agents/tech-lead.md", import.meta.url)),
+      "utf8",
+    ),
+  );
+  writeFileSync(
+    join(root, "skills", "crew", "SKILL.md"),
+    page("Use when the user asks: a fix, a feature"),
+  );
+  const dirs = { project: tempDir("crew-project-"), home: tempDir("crew-home-") };
+  const refused = installRuntime(RUNTIMES.cursor, "project", dirs, root);
+  expect(refused).toEqual({
+    refused:
+      'skills/crew/SKILL.md line 3: a plain value holds ": " (quote it); a strict YAML loader drops the page: fix the front matter',
+  });
+  expect(existsSync(join(dirs.project, ".cursor", "hooks.json"))).toBe(false);
+  expect(existsSync(join(dirs.project, ".agents", "skills", "crew-method"))).toBe(false);
+  // The page fixed: installed, and the check says the front matter is fine, right after the copy's line.
+  writeFileSync(
+    join(root, "skills", "crew", "SKILL.md"),
+    page('"Use when the user asks: a fix, a feature"'),
+  );
+  expect("files" in installRuntime(RUNTIMES.cursor, "project", dirs, root)).toBe(true);
+  const checked = checkRuntime(RUNTIMES.cursor, "project", dirs, root);
+  expect(checked.ok, checked.lines.join("\n")).toBe(true);
+  expect(checked.lines.indexOf("skill front matter: ok")).toBe(
+    checked.lines.indexOf("skill: ok") + 1,
+  );
+  // The installed copy edited to the dropped shape: the check names the line and is not ok.
+  writeFileSync(
+    join(dirs.project, ".agents", "skills", "crew-method", "SKILL.md"),
+    page("Use when the user asks: a fix, a feature"),
+  );
+  const broken = checkRuntime(RUNTIMES.cursor, "project", dirs, root);
+  expect(broken.ok).toBe(false);
+  expect(broken.lines).toContain(
+    'skill front matter: SKILL.md line 3: a plain value holds ": " (quote it)',
+  );
 });
 
 test("SP6-T4 AC-4: the OpenCode plugin text runs crew hook through the injected $ with the mapped payload, throws the reason on deny or ask and returns on anything else", async () => {

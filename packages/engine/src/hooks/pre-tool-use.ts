@@ -1004,6 +1004,13 @@ function userOnlyDecision(
   const mode = permissionMode ?? "default";
   const where = unwatched(headless, permissionMode);
   if (where) {
+    // A policy command has no unattended form (finding 122): the command refuses --mode by design
+    // (ADR 0005), so the answer names the person's way instead of a flag the command refuses.
+    if (policyCommand)
+      return [
+        "deny",
+        `Crew: no person is watching this session (${where}) and the policy is changed by a person alone: edit .crew/policy.json by hand and run crew policy accept in a session a person watches (crew policy set takes no --mode)`,
+      ];
     if (flagged === mode) return null;
     if (flagged === undefined) {
       return [

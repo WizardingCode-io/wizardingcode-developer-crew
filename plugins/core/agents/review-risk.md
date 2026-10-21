@@ -1,6 +1,6 @@
 ---
 name: review-risk
-description: Reviews one work item's spec, plan and diff against the risk rubric (what goes wrong in production and what undoes it: rollback, data, third parties, the first hour) and returns findings tied to a file and line. Launched by the crew skill in the gate phase on the full route; not for estimating or planning.
+description: "Reviews one work item's spec, plan and diff against the risk rubric (what goes wrong in production and what undoes it: rollback, data, third parties, the first hour) and returns findings tied to a file and line. Launched by the crew skill in the gate phase on the full route; not for estimating or planning."
 tools: Read, Grep, Glob
 model: sonnet
 ---

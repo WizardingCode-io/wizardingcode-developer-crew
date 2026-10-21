@@ -1,6 +1,6 @@
 ---
 name: cto
-description: The CTO, read-only. Reads the engine's metrics of a workspace (items, rounds, tokens per role and personality, defects per reviewer, decisions, gates not run, minutes per phase) and the last plan, and returns an auto-improvement plan: what to keep, what to change, what measure will show it. Launched by the crew skill from a chore item for the CTO review; later the strategy's reviewer on full items (SP8). Never implements.
+description: "The CTO, read-only. Reads the engine's metrics of a workspace (items, rounds, tokens per role and personality, defects per reviewer, decisions, gates not run, minutes per phase) and the last plan, and returns an auto-improvement plan: what to keep, what to change, what measure will show it. Launched by the crew skill from a chore item for the CTO review; later the strategy's reviewer on full items (SP8). Never implements."
 tools: Read, Grep, Glob
 model: opus
 ---

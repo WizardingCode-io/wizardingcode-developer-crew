@@ -839,6 +839,36 @@ test("finding 121: the skill page's front matter is strict YAML (Bun.YAML), with
 const repoFile = (path: string): string =>
   readFileSync(fileURLToPath(new URL(`../../../${path}`, import.meta.url)), "utf8");
 
+test("AC-1 (finding 121's debt): every shipped front matter is strict YAML, the skill page and the fifteen agent pages, with the descriptions of cto.md and review-risk.md quoted", () => {
+  const agents = fileURLToPath(new URL("../../../plugins/core/agents/", import.meta.url));
+  const pages = readdirSync(agents)
+    .filter((f) => f.endsWith(".md"))
+    .sort();
+  expect(pages).toHaveLength(15);
+  const frontMatter = (text: string): Record<string, unknown> => {
+    const match = /^---\n([\s\S]*?)\n---\n/.exec(text);
+    if (!match?.[1]) throw new Error("no front matter");
+    return Bun.YAML.parse(match[1]) as Record<string, unknown>;
+  };
+  for (const page of pages) {
+    const text = readFileSync(`${agents}${page}`, "utf8");
+    const parsed = frontMatter(text);
+    expect(parsed.name, page).toBe(page.replace(/\.md$/, ""));
+    expect(typeof parsed.description, page).toBe("string");
+    expect(String(parsed.description).length, page).toBeGreaterThan(40);
+    expect(typeof parsed.tools, page).toBe("string");
+    if ("model" in parsed) expect(typeof parsed.model, page).toBe("string");
+  }
+  // The two pages whose descriptions hold ": " are quoted the way the generators quote them, so
+  // a strict loader reads one string, not a nested mapping (finding 121).
+  for (const page of ["cto.md", "review-risk.md"]) {
+    const line = readFileSync(`${agents}${page}`, "utf8").split("\n")[2] ?? "";
+    expect(line.startsWith('description: "'), page).toBe(true);
+    expect(line.endsWith('"'), page).toBe(true);
+  }
+  expect(Object.keys(frontMatter(skill))).toEqual(["name", "description"]);
+});
+
 test("AC-5 (finding 119): the conclave and deliver references say where a resumed lead's answer lands and that the record is taken from that file", () => {
   const conclave = repoFile("plugins/core/skills/crew/references/conclave.md");
   const deliver = repoFile("plugins/core/skills/crew/references/deliver.md");

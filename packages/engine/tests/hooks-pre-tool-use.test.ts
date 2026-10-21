@@ -535,6 +535,52 @@ test("ADR 0005: under attendedDecisions relay a user-only command passes with no
   ).toBe("ask");
 });
 
+test("AC-4 (finding 122): where nobody watches, a policy command is denied with the person's way, with or without --mode; every other user-only command keeps the --mode ask", () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const headless = hookContext(
+    { session_id: "s", cwd: root },
+    { ...testEnv(), CLAUDE_CODE_SESSION_ATTENDED: "0" },
+  );
+  const bash = (command: string, permission_mode?: string) =>
+    onPreToolUse(headless, { tool_name: "Bash", tool_input: { command }, permission_mode });
+  const policyCommands = [
+    "crew policy set attendedDecisions relay",
+    "crew policy set attendedDecisions relay --mode auto",
+    'crew policy set riskPathExclusions "src/x.ts" --mode bypassPermissions',
+    "crew policy accept",
+    "crew accept policy",
+  ];
+  for (const command of policyCommands) {
+    for (const mode of ["auto", "bypassPermissions", "default"]) {
+      const response = bash(command, mode);
+      expect(decision(response), `${command} (${mode})`).toBe("deny");
+      const why = reason(response) ?? "";
+      expect(why, command).toContain("the policy is changed by a person alone");
+      expect(why, command).toContain(".crew/policy.json");
+      expect(why, command).toContain("crew policy accept");
+      expect(why, command).toContain("crew policy set takes no --mode");
+      expect(why, command).not.toContain("Run it again with --mode");
+    }
+  }
+  // Every other user-only command keeps the --mode ask where nobody watches (finding 3).
+  expect(reason(bash("crew approve w1 spec", "auto"))).toContain("--mode auto");
+  expect(bash("crew approve w1 spec --mode auto", "auto")).toEqual({});
+  // With a person present a policy command is asked, even under relay (ADR 0005): unchanged.
+  const { ctx } = setup({ attendedDecisions: "relay" });
+  expect(
+    decision(
+      onPreToolUse(ctx, {
+        tool_name: "Bash",
+        tool_input: { command: "crew policy set attendedDecisions prompt" },
+        permission_mode: "auto",
+      }),
+    ),
+  ).toBe("ask");
+});
+
 test("bash: in a mode that shows no prompt, a user-only decision must name its mode to be recorded as the agent's", () => {
   const { ctx } = setup();
   const bash = (command: string, permission_mode: string) =>

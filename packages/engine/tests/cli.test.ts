@@ -8121,6 +8121,7 @@ test("SP6-T4 AC-3: crew runtime list; install merges the hook configuration, cop
       "stop: stop ok",
       "subagent-stop: subagentStop ok",
       "skill: ok",
+      "skill front matter: ok",
       "agents: ok",
       ...guaranteeLines(RUNTIMES.cursor),
     ].join("\n")}\n`,

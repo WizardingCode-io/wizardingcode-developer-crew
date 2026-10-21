@@ -2351,6 +2351,69 @@ import {
 import { dirname as dirname4, join as join12, relative as relative5, resolve as resolve2, sep as sep2 } from "node:path";
 import { fileURLToPath } from "node:url";
 
+// packages/engine/src/front-matter.ts
+var FRONT_MATTER = /^---\n([\s\S]*?)\n---\n/;
+var KEY_VALUE = /^([A-Za-z_][\w-]*): (.+)$/;
+var INDICATORS = new Set([
+  "[",
+  "]",
+  "{",
+  "}",
+  "&",
+  "*",
+  "!",
+  "|",
+  ">",
+  "'",
+  '"',
+  "%",
+  "@",
+  "`",
+  "?"
+]);
+function frontMatterProblems(text) {
+  const match = FRONT_MATTER.exec(text);
+  if (!match)
+    return ["line 1: no front matter (--- … ---)"];
+  const problems = [];
+  const seen = new Set;
+  (match[1] ?? "").split(`
+`).forEach((line, i) => {
+    const n = i + 2;
+    const kv = KEY_VALUE.exec(line);
+    const key = kv?.[1];
+    const value = kv?.[2];
+    if (key === undefined || value === undefined) {
+      problems.push(`line ${n}: not "key: value"`);
+      return;
+    }
+    if (seen.has(key))
+      problems.push(`line ${n}: key "${key}" given twice`);
+    seen.add(key);
+    if (value.startsWith('"')) {
+      let parsed;
+      try {
+        parsed = JSON.parse(value);
+      } catch {
+        parsed = undefined;
+      }
+      if (typeof parsed !== "string")
+        problems.push(`line ${n}: a quoted value is not a JSON string`);
+      return;
+    }
+    const first = value[0] ?? "";
+    if (INDICATORS.has(first) || value.startsWith("- "))
+      problems.push(`line ${n}: a plain value starts with "${first}" (quote it)`);
+    if (value.includes(": "))
+      problems.push(`line ${n}: a plain value holds ": " (quote it)`);
+    if (value.includes(" #"))
+      problems.push(`line ${n}: a plain value holds " #" (quote it)`);
+    if (value.endsWith(":"))
+      problems.push(`line ${n}: a plain value ends with ":" (quote it)`);
+  });
+  return problems;
+}
+
 // packages/engine/src/runtimes/opencode-plugin.ts
 function opencodePlugin(root) {
   return `// WizardingCode Developer Crew: the OpenCode plugin the crew engine wrote (crew runtime install opencode).
@@ -2516,6 +2579,16 @@ ${lines.join(`
 
 ${body}`;
 }
+function scalar(value) {
+  if (value.length < 2 || !value.startsWith('"') || !value.endsWith('"'))
+    return value;
+  try {
+    const parsed = JSON.parse(value);
+    return typeof parsed === "string" ? parsed : value;
+  } catch {
+    return value;
+  }
+}
 function readAgentPage(text) {
   const match = /^---\n([\s\S]*?)\n---\n/.exec(text);
   const fields = {};
@@ -2523,7 +2596,7 @@ function readAgentPage(text) {
 `)) {
     const at = line.indexOf(":");
     if (at > 0)
-      fields[line.slice(0, at).trim()] = line.slice(at + 1).trim();
+      fields[line.slice(0, at).trim()] = scalar(line.slice(at + 1).trim());
   }
   const body = match ? text.slice(match[0].length).replace(/^\n+/, "") : text;
   return {
@@ -3453,6 +3526,12 @@ function generatedAgents(runtime, root) {
   });
 }
 function installRuntime(runtime, scope, dirs, root) {
+  const skillPage = join12(root, "skills", "crew", "SKILL.md");
+  const pageProblems = existsSync5(skillPage) ? frontMatterProblems(readFileSync4(skillPage, "utf8")) : [];
+  if (pageProblems[0])
+    return {
+      refused: `skills/crew/SKILL.md ${pageProblems[0]}; a strict YAML loader drops the page: fix the front matter`
+    };
   const files = [];
   const configPath = resolveScoped(scope === "project" ? runtime.config.project : runtime.config.user, dirs);
   const entries = runtime.config.entries(root);
@@ -3650,6 +3729,11 @@ function checkRuntime(runtime, scope, dirs, fallbackRoot) {
     const skill = copyState(skillHashes, join12(resolveScoped(runtime.skillsDir[foundScope], dirs), SKILL_FOLDER), (p) => existsSync5(p) ? sha2562(p) : null);
     lines.push(`skill: ${skill}`);
     if (skill !== "ok")
+      ok = false;
+    const installedPage = join12(resolveScoped(runtime.skillsDir[foundScope], dirs), SKILL_FOLDER, "SKILL.md");
+    const pageProblems = existsSync5(installedPage) ? frontMatterProblems(readFileSync4(installedPage, "utf8")) : ["missing"];
+    lines.push(`skill front matter: ${pageProblems[0] ? `SKILL.md ${pageProblems[0]}` : "ok"}`);
+    if (pageProblems[0])
       ok = false;
     if (runtime.agentsDir) {
       const expected = new Map(generatedAgents(runtime, root).map(({ name, text: t }) => [name, sha256(t)]));
@@ -11829,6 +11913,11 @@ function userOnlyDecision(command2, permissionMode, headless, policy) {
   const mode = permissionMode ?? "default";
   const where = unwatched(headless, permissionMode);
   if (where) {
+    if (policyCommand)
+      return [
+        "deny",
+        `Crew: no person is watching this session (${where}) and the policy is changed by a person alone: edit .crew/policy.json by hand and run crew policy accept in a session a person watches (crew policy set takes no --mode)`
+      ];
     if (flagged === mode)
       return null;
     if (flagged === undefined) {

@@ -9,6 +9,7 @@ import {
 } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { frontMatterProblems } from "./front-matter.ts";
 import { sha256 as hashOf, writeText } from "./fs.ts";
 import type { HookPayload, HookResponse } from "./hooks/types.ts";
 import { opencodePlugin } from "./runtimes/opencode-plugin.ts";
@@ -224,13 +225,28 @@ function frontmatter(lines: string[], body: string): string {
   return `---\n${lines.join("\n")}\n---\n\n${body}`;
 }
 
+/**
+ * A front-matter value as the engine reads it: a double-quoted one decoded once as the JSON string
+ * it is (finding 121's debt: a page quoted for a strict loader must not be quoted twice by the
+ * generators), anything else raw, as before.
+ */
+function scalar(value: string): string {
+  if (value.length < 2 || !value.startsWith('"') || !value.endsWith('"')) return value;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return typeof parsed === "string" ? parsed : value;
+  } catch {
+    return value;
+  }
+}
+
 /** The frontmatter and the body of an agent page (`plugins/core/agents/*.md`). */
 export function readAgentPage(text: string): AgentPage {
   const match = /^---\n([\s\S]*?)\n---\n/.exec(text);
   const fields: Record<string, string> = {};
   for (const line of (match?.[1] ?? "").split("\n")) {
     const at = line.indexOf(":");
-    if (at > 0) fields[line.slice(0, at).trim()] = line.slice(at + 1).trim();
+    if (at > 0) fields[line.slice(0, at).trim()] = scalar(line.slice(at + 1).trim());
   }
   const body = match ? text.slice(match[0].length).replace(/^\n+/, "") : text;
   return {
@@ -1227,6 +1243,16 @@ export function installRuntime(
   dirs: InstallDirs,
   root: string,
 ): { files: string[]; trust: string | null } | { refused: string } {
+  // A skill page a strict YAML loader would drop is refused before anything is written
+  // (finding 121): the runtime would load the hooks and lose the method without a word.
+  const skillPage = join(root, "skills", "crew", "SKILL.md");
+  const pageProblems = existsSync(skillPage)
+    ? frontMatterProblems(readFileSync(skillPage, "utf8"))
+    : [];
+  if (pageProblems[0])
+    return {
+      refused: `skills/crew/SKILL.md ${pageProblems[0]}; a strict YAML loader drops the page: fix the front matter`,
+    };
   const files: string[] = [];
   const configPath = resolveScoped(
     scope === "project" ? runtime.config.project : runtime.config.user,
@@ -1475,6 +1501,18 @@ export function checkRuntime(
     );
     lines.push(`skill: ${skill}`);
     if (skill !== "ok") ok = false;
+    // The installed page as a strict YAML loader reads it (finding 121): a copy equal to its source
+    // is still dropped by the runtime when its front matter holds a plain scalar YAML reads otherwise.
+    const installedPage = join(
+      resolveScoped(runtime.skillsDir[foundScope], dirs),
+      SKILL_FOLDER,
+      "SKILL.md",
+    );
+    const pageProblems = existsSync(installedPage)
+      ? frontMatterProblems(readFileSync(installedPage, "utf8"))
+      : ["missing"];
+    lines.push(`skill front matter: ${pageProblems[0] ? `SKILL.md ${pageProblems[0]}` : "ok"}`);
+    if (pageProblems[0]) ok = false;
     if (runtime.agentsDir) {
       const expected = new Map(
         generatedAgents(runtime, root).map(({ name, text: t }) => [name, hashOf(t)]),
