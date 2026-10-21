@@ -488,7 +488,7 @@ test("a fast-route fix from start to a proven report", async () => {
     "src/a.ts": "x",
   });
   const c = io(root);
-  expect((await c.run("--version")).out.trim()).toBe("0.10.0");
+  expect((await c.run("--version")).out.trim()).toBe("0.11.0");
   const detect = await c.json("detect");
   expect(detect.code).toBe(0);
   expect((detect.data.profile as { targets: unknown[] }).targets).toHaveLength(1);
@@ -7531,10 +7531,20 @@ test("SP6-T2 AC-2, AC-3, AC-4, AC-5, AC-6: the pack commands end to end (add wit
   expect(team.out.trim().split("\n").at(-1)).toBe(
     `knowledge for the expert: ${join(laravel, "knowledge", "laravel.md")}`,
   );
+  // AC-15 (SP6 Task 6): the same seat from an agent's Markdown alone, which the watch excludes; the
+  // committed .ts is restored first, so the Markdown is the only change.
+  git(root, "checkout", "--", "agents/triage.ts");
+  write(root, "agents/triage.md", "# Triage\n");
+  const fromMarkdown = await c.run("team", id);
+  expect(fromMarkdown.out).toContain("expert (pack wizardingcode-pack-agentic-os (agents/**))");
   // The Packs line after crew team alone: the pack served to the expert (laravel, by the target's
   // tag) and the pack whose template seated the team (agentic, by nothing else).
   expect((await c.run("evidence", id)).out).toContain(
     "\n- Packs: wizardingcode-pack-laravel 0.1.0, wizardingcode-pack-agentic-os 0.1.0\n",
+  );
+  // AC-29 (SP6 Task 6): crew team records the expert's files too, and the report prints them.
+  expect((await c.run("evidence", id)).out).toContain(
+    `\n- Knowledge files for the expert: ${join(laravel, "knowledge", "laravel.md")}\n`,
   );
   // A third pack registered after the team: files knowledge --item serves it and records it on its own.
   const php = writePack(
@@ -7651,6 +7661,18 @@ test("SP6-T2 AC-2, AC-3, AC-4, AC-5, AC-6: the pack commands end to end (add wit
     source: "confirmed",
     pack: "wizardingcode-pack-laravel",
   });
+  // AC-32 (SP6 Task 6): the expert's files move from some to none when the packs behind them go,
+  // and the report's line goes with them: the field is overwritten on every call, as the seats are.
+  for (const pack of (await c.json("pack", "list")).data.packs as { name: string }[])
+    expect((await c.run("pack", "remove", pack.name)).code, pack.name).toBe(0);
+  // The specialists still name their pack; unregistered, it serves nothing, as the skipped line says.
+  const teamWithout = await c.run("team", id);
+  expect(teamWithout.code, teamWithout.err + teamWithout.out).toBe(0);
+  const withoutFiles = (await c.run("evidence", id)).out;
+  expect(withoutFiles).not.toContain("Knowledge files for the expert");
+  expect(withoutFiles).toContain(
+    "\n- Packs: wizardingcode-pack-laravel 0.1.0, wizardingcode-pack-agentic-os 0.1.0",
+  );
 });
 
 test("SP6-T4 AC-2: crew hook --runtime reads the runtime's payload, answers in its shape with the exit code, refuses an unknown runtime on stderr before reading, relays a dropped systemMessage as a notice, and records the runtime the item was observed under once, in order", async () => {

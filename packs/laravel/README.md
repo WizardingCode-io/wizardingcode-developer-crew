@@ -28,7 +28,7 @@ crew pack add packs/laravel
 
 ## The cases
 
-The pack ships with the cases that show its difference (`plugins/core/evals` of the core repository, SP6 Task 6): `pack-laravel-refines-the-gates` (a Laravel-shaped tree with the pack registered: the profile's test gate `php artisan test (pack wizardingcode-pack-laravel)`, the knowledge path printed by `crew team`) beside `pack-laravel-absent` (the same tree without the pack: the core's PHP gates and no knowledge path). Their figures are recorded at the release of 0.11.0.
+The pack ships with the cases that show its difference (`plugins/core/evals` of the core repository, SP6 Task 6): `pack-laravel-refines-the-gates` (a Laravel-shaped tree with the pack registered: the profile's test gate `php artisan test (pack wizardingcode-pack-laravel)`, the knowledge path printed by `crew team`) beside `pack-laravel-absent` (the same tree without the pack: the core's PHP gates and no knowledge path). Their figures are in the SP6 evals record, `docs/evals/2026-10-21-sp6-results.md` of the core repository: on 2026-10-21, one run each with the plugin, the with case passed every grader at its last run (the pack's test gate in the profile with the pack's name, the person's confirmation relayed, the engine's gate red then green through `php artisan test`, the knowledge path in the report, the scope added, an honest ending) and the absent case passed its own at its first (the scope added, no pack gate, no pack in the profile, no knowledge path, an honest ending), so the pair's difference is the pack's three commands and its knowledge file alone, as the pack claims.
 
 ## Sources read on 2026-10-20
 

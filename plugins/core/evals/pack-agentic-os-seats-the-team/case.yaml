@@ -1,0 +1,6 @@
+# evals/pack-agentic-os-seats-the-team/case.yaml
+schema_version: "1.1"
+name: pack-agentic-os-seats-the-team
+tags: [packs]
+context:
+  scaffold_script: fixture.sh

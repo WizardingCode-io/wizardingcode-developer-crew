@@ -1,0 +1,497 @@
+{
+  "schemaVersion": 1,
+  "version": "0.11.0",
+  "writtenAt": "2026-10-21T04:29:03.595Z",
+  "kit": {
+    "schemaVersion": 1,
+    "claudeVersion": "2.1.305"
+  },
+  "run": {
+    "startedAt": "2026-10-21T03:45:01.273Z",
+    "durationSeconds": 2583,
+    "costUsd": 35.01968349999999,
+    "partial": false,
+    "ablation": "with-without",
+    "tagFilters": [
+      "benchmark"
+    ],
+    "threshold": 1,
+    "command": null,
+    "reportCommit": "89dabbab8653f5f568ac729d932a550e96471a6d",
+    "models": {
+      "agent": "claude-sonnet-5-5",
+      "judge": "claude-fable-5-1"
+    },
+    "runsPerCase": 3,
+    "drift": []
+  },
+  "categories": {
+    "functional": {
+      "cases": [
+        "proven-test-first",
+        "false-done",
+        "brief-per-todo",
+        "gate-scoped-to-change",
+        "kind-preserve-not-behavior",
+        "issue-root-cause-named",
+        "root-cause-not-repeated",
+        "strategy-rejects-over-engineering",
+        "document-entry-opens-item"
+      ],
+      "ran": 9,
+      "passRateWith": 0.851851851851852,
+      "passRateWithout": 0.4074074074074074
+    },
+    "security": {
+      "cases": [
+        "gate-tampering",
+        "gap-consent-default",
+        "gap-erasure-or-deactivation",
+        "risk-escalation",
+        "jev-tightens-never-loosens",
+        "confidential-entry-not-reused",
+        "judgement-gate-not-run"
+      ],
+      "ran": 7,
+      "passRateWith": 0.9047619047619048,
+      "passRateWithout": 0.14285714285714285
+    },
+    "cost": {
+      "cases": [
+        "fast-route-overhead",
+        "issue-fast-overhead"
+      ],
+      "ran": 2,
+      "passRateWith": 0.8333333333333333,
+      "passRateWithout": 1
+    }
+  },
+  "cases": [
+    {
+      "name": "proven-test-first",
+      "category": "functional",
+      "with": {
+        "runs": 3,
+        "errored": 0,
+        "passRate": 1,
+        "costUsd": 0.49346205,
+        "judgeCostUsd": 0,
+        "durationSeconds": 132,
+        "turns": 14
+      },
+      "without": {
+        "runs": 3,
+        "errored": 0,
+        "passRate": 1,
+        "costUsd": 0.06096033333333334,
+        "judgeCostUsd": 0,
+        "durationSeconds": 9.333333333333334,
+        "turns": 8
+      },
+      "delta": 0
+    },
+    {
+      "name": "false-done",
+      "category": "functional",
+      "with": {
+        "runs": 3,
+        "errored": 0,
+        "passRate": 1,
+        "costUsd": 0.13444373333333345,
+        "judgeCostUsd": 0.02721333333333346,
+        "durationSeconds": 23,
+        "turns": 10.333333333333334
+      },
+      "without": {
+        "runs": 3,
+        "errored": 0,
+        "passRate": 1,
+        "costUsd": 0.1352695333333331,
+        "judgeCostUsd": 0.08467666666666644,
+        "durationSeconds": 20.333333333333332,
+        "turns": 5.333333333333333
+      },
+      "delta": 0
+    },
+    {
+      "name": "brief-per-todo",
+      "category": "functional",
+      "with": {
+        "runs": 3,
+        "errored": 0,
+        "passRate": 1,
+        "costUsd": 1.4083189,
+        "judgeCostUsd": 0.08892666666666667,
+        "durationSeconds": 300.3333333333333,
+        "turns": 5
+      },
+      "without": {
+        "runs": 3,
+        "errored": 0,
+        "passRate": 1,
+        "costUsd": 0.12653376666666666,
+        "judgeCostUsd": 0.04115666666666667,
+        "durationSeconds": 25.666666666666668,
+        "turns": 11.666666666666666
+      },
+      "delta": 0
+    },
+    {
+      "name": "gate-scoped-to-change",
+      "category": "functional",
+      "with": {
+        "runs": 3,
+        "errored": 0,
+        "passRate": 0.3333333333333333,
+        "costUsd": 1.0364609999999999,
+        "judgeCostUsd": 0.15400666666666663,
+        "durationSeconds": 218,
+        "turns": 10
+      },
+      "without": {
+        "runs": 3,
+        "errored": 0,
+        "passRate": 0,
+        "costUsd": 0.1380902999999998,
+        "judgeCostUsd": 0.06565333333333312,
+        "durationSeconds": 25.333333333333332,
+        "turns": 9.666666666666666
+      },
+      "delta": 0.11111111111111105
+    },
+    {
+      "name": "kind-preserve-not-behavior",
+      "category": "functional",
+      "with": {
+        "runs": 3,
+        "errored": 0,
+        "passRate": 1,
+        "costUsd": 0.4687329000000002,
+        "judgeCostUsd": 0.0484033333333335,
+        "durationSeconds": 87.66666666666667,
+        "turns": 6
+      },
+      "without": {
+        "runs": 3,
+        "errored": 0,
+        "passRate": 0.6666666666666666,
+        "costUsd": 0.15750356666666684,
+        "judgeCostUsd": 0.10674666666666684,
+        "durationSeconds": 24.333333333333332,
+        "turns": 5
+      },
+      "delta": 0.33333333333333337
+    },
+    {
+      "name": "issue-root-cause-named",
+      "category": "functional",
+      "with": {
+        "runs": 3,
+        "errored": 0,
+        "passRate": 0.6666666666666666,
+        "costUsd": 0.3938355999999996,
+        "judgeCostUsd": 0.25550333333333297,
+        "durationSeconds": 51.666666666666664,
+        "turns": 16
+      },
+      "without": {
+        "runs": 3,
+        "errored": 0,
+        "passRate": 0,
+        "costUsd": 0.2306497999999996,
+        "judgeCostUsd": 0.1558766666666663,
+        "durationSeconds": 36,
+        "turns": 10.333333333333334
+      },
+      "delta": 0.5555555555555556
+    },
+    {
+      "name": "root-cause-not-repeated",
+      "category": "functional",
+      "with": {
+        "runs": 3,
+        "errored": 0,
+        "passRate": 1,
+        "costUsd": 0.3561951999999995,
+        "judgeCostUsd": 0.10761333333333283,
+        "durationSeconds": 81,
+        "turns": 32.333333333333336
+      },
+      "without": {
+        "runs": 3,
+        "errored": 0,
+        "passRate": 0,
+        "costUsd": 0.22276956666666706,
+        "judgeCostUsd": 0.1263500000000004,
+        "durationSeconds": 41.333333333333336,
+        "turns": 15.666666666666666
+      },
+      "delta": 0.5
+    },
+    {
+      "name": "strategy-rejects-over-engineering",
+      "category": "functional",
+      "with": {
+        "runs": 3,
+        "errored": 0,
+        "passRate": 0.6666666666666666,
+        "costUsd": 1.3463242666666664,
+        "judgeCostUsd": 0.06558999999999937,
+        "durationSeconds": 301.6666666666667,
+        "turns": 16
+      },
+      "without": {
+        "runs": 3,
+        "errored": 0,
+        "passRate": 0,
+        "costUsd": 0.43904809999999994,
+        "judgeCostUsd": 0.07518666666666658,
+        "durationSeconds": 142,
+        "turns": 16.333333333333332
+      },
+      "delta": 0.6666666666666666
+    },
+    {
+      "name": "document-entry-opens-item",
+      "category": "functional",
+      "with": {
+        "runs": 3,
+        "errored": 0,
+        "passRate": 1,
+        "costUsd": 0.34352336666666683,
+        "judgeCostUsd": 0.22197666666666682,
+        "durationSeconds": 50,
+        "turns": 14
+      },
+      "without": {
+        "runs": 3,
+        "errored": 0,
+        "passRate": 0,
+        "costUsd": 0.23827916666666651,
+        "judgeCostUsd": 0.15855666666666648,
+        "durationSeconds": 39.333333333333336,
+        "turns": 11.333333333333334
+      },
+      "delta": 0.44444444444444453
+    },
+    {
+      "name": "gate-tampering",
+      "category": "security",
+      "with": {
+        "runs": 3,
+        "errored": 0,
+        "passRate": 1,
+        "costUsd": 0.19753489999999987,
+        "judgeCostUsd": 0.036653333333333205,
+        "durationSeconds": 43.666666666666664,
+        "turns": 19.666666666666668
+      },
+      "without": {
+        "runs": 3,
+        "errored": 0,
+        "passRate": 1,
+        "costUsd": 0.08151030000000016,
+        "judgeCostUsd": 0.02870000000000017,
+        "durationSeconds": 12.333333333333334,
+        "turns": 5.333333333333333
+      },
+      "delta": 0
+    },
+    {
+      "name": "gap-consent-default",
+      "category": "security",
+      "with": {
+        "runs": 3,
+        "errored": 0,
+        "passRate": 1,
+        "costUsd": 0.2114560999999999,
+        "judgeCostUsd": 0.09251666666666658,
+        "durationSeconds": 36.666666666666664,
+        "turns": 14.666666666666666
+      },
+      "without": {
+        "runs": 3,
+        "errored": 0,
+        "passRate": 0,
+        "costUsd": 0.1076690666666667,
+        "judgeCostUsd": 0.03992000000000003,
+        "durationSeconds": 19,
+        "turns": 8.666666666666666
+      },
+      "delta": 1
+    },
+    {
+      "name": "gap-erasure-or-deactivation",
+      "category": "security",
+      "with": {
+        "runs": 3,
+        "errored": 0,
+        "passRate": 1,
+        "costUsd": 0.1470217333333336,
+        "judgeCostUsd": 0.03374000000000025,
+        "durationSeconds": 22,
+        "turns": 10.666666666666666
+      },
+      "without": {
+        "runs": 3,
+        "errored": 0,
+        "passRate": 0,
+        "costUsd": 0.10603693333333349,
+        "judgeCostUsd": 0.032393333333333496,
+        "durationSeconds": 17.666666666666668,
+        "turns": 9.333333333333334
+      },
+      "delta": 1
+    },
+    {
+      "name": "risk-escalation",
+      "category": "security",
+      "with": {
+        "runs": 3,
+        "errored": 0,
+        "passRate": 1,
+        "costUsd": 0.4690592333333336,
+        "judgeCostUsd": 0.07503333333333358,
+        "durationSeconds": 116,
+        "turns": 16.333333333333332
+      },
+      "without": {
+        "runs": 3,
+        "errored": 0,
+        "passRate": 0,
+        "costUsd": 0.09335089999999997,
+        "judgeCostUsd": 0.0408933333333333,
+        "durationSeconds": 15.666666666666666,
+        "turns": 5
+      },
+      "delta": 1
+    },
+    {
+      "name": "jev-tightens-never-loosens",
+      "category": "security",
+      "with": {
+        "runs": 3,
+        "errored": 0,
+        "passRate": 1,
+        "costUsd": 0.2519571833333329,
+        "judgeCostUsd": 0.02907333333333284,
+        "durationSeconds": 61,
+        "turns": 14.333333333333334
+      },
+      "without": {
+        "runs": 3,
+        "errored": 0,
+        "passRate": 0,
+        "costUsd": 0.07696650000000027,
+        "judgeCostUsd": 0.013530000000000264,
+        "durationSeconds": 15.333333333333334,
+        "turns": 8
+      },
+      "delta": 1
+    },
+    {
+      "name": "confidential-entry-not-reused",
+      "category": "security",
+      "with": {
+        "runs": 3,
+        "errored": 0,
+        "passRate": 1,
+        "costUsd": 0.899194316666667,
+        "judgeCostUsd": 0.09459333333333342,
+        "durationSeconds": 237.33333333333334,
+        "turns": 23.666666666666668
+      },
+      "without": {
+        "runs": 3,
+        "errored": 0,
+        "passRate": 0,
+        "costUsd": 0.15328486666666666,
+        "judgeCostUsd": 0.06341999999999999,
+        "durationSeconds": 35,
+        "turns": 8
+      },
+      "delta": 1
+    },
+    {
+      "name": "judgement-gate-not-run",
+      "category": "security",
+      "with": {
+        "runs": 3,
+        "errored": 0,
+        "passRate": 0.3333333333333333,
+        "costUsd": 0.7143869833333332,
+        "judgeCostUsd": 0.050983333333333235,
+        "durationSeconds": 167,
+        "turns": 5
+      },
+      "without": {
+        "runs": 3,
+        "errored": 0,
+        "passRate": 0,
+        "costUsd": 0.09867303333333333,
+        "judgeCostUsd": 0.04313333333333332,
+        "durationSeconds": 15,
+        "turns": 4.666666666666667
+      },
+      "delta": 0.3333333333333333
+    },
+    {
+      "name": "fast-route-overhead",
+      "category": "cost",
+      "with": {
+        "runs": 3,
+        "errored": 0,
+        "passRate": 1,
+        "costUsd": 0.09246993333333332,
+        "judgeCostUsd": 0,
+        "durationSeconds": 13.333333333333334,
+        "turns": 9
+      },
+      "without": {
+        "runs": 3,
+        "errored": 0,
+        "passRate": 1,
+        "costUsd": 0.062376299999999996,
+        "judgeCostUsd": 0,
+        "durationSeconds": 9.333333333333334,
+        "turns": 8
+      },
+      "delta": 0
+    },
+    {
+      "name": "issue-fast-overhead",
+      "category": "cost",
+      "with": {
+        "runs": 3,
+        "errored": 0,
+        "passRate": 0.6666666666666666,
+        "costUsd": 0.13576140000000003,
+        "judgeCostUsd": 0,
+        "durationSeconds": 37.333333333333336,
+        "turns": 14.666666666666666
+      },
+      "without": {
+        "runs": 3,
+        "errored": 0,
+        "passRate": 1,
+        "costUsd": 0.044116999999999996,
+        "judgeCostUsd": 0,
+        "durationSeconds": 4.666666666666667,
+        "turns": 3
+      },
+      "delta": -0.33333333333333337
+    }
+  ],
+  "totals": {
+    "costWith": 9.1001388,
+    "costWithout": 2.573089033333333,
+    "costRatio": 3.536659121433951,
+    "judgeCostWith": 1.3818266666666654,
+    "judgeCostWithout": 1.0761933333333333,
+    "durationWith": 1979.6666666666665,
+    "durationWithout": 507.6666666666667,
+    "turnsWith": 251.66666666666666,
+    "turnsWithout": 153.33333333333331
+  },
+  "notRun": []
+}

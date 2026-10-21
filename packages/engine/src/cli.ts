@@ -50,7 +50,7 @@ import {
   tddSummary,
   updateEvidence,
 } from "./evidence.ts";
-import { changedWatchedPaths, hashPaths, isGitRepo } from "./fingerprint.ts";
+import { changedPaths, changedWatchedPaths, hashPaths, isGitRepo } from "./fingerprint.ts";
 import { ensureDir, nowIso, readJson, readText, sha256, writeJson, writeText } from "./fs.ts";
 import { assess, reassess, runGates, runTaskGate } from "./gates.ts";
 import { buildContext } from "./hooks/context.ts";
@@ -155,6 +155,8 @@ import {
   packLabel,
   packRules,
   packTemplates,
+  recordPacks,
+  recordPackUse,
   registerPack,
   removePack,
   stateText,
@@ -1530,12 +1532,6 @@ function packsJson(listed: readonly PackListing[]): Record<string, unknown>[] {
     by: p.registration?.by ?? null,
     state: stateText(p.state),
   }));
-}
-
-/** The packs an item used (SP6 Task 2), as `<name> <version>`, each once: the report's Packs line reads them. */
-function recordPacks(work: WorkItem, labels: readonly string[]): void {
-  const packs = [...new Set([...(work.packs ?? []), ...labels])];
-  if (packs.length) work.packs = packs;
 }
 
 /** `knowledge: 2 listed (1 marked)`, `knowledge: none` or why the base could not be read, for the status block. */
@@ -3534,22 +3530,21 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
             undefined,
             { strategy: phasesFor(opened.work).includes("strategy") },
             registry.teams,
+            changedPaths(env.paths.root, opened.work),
           );
       const primary = primaryTeam(changed);
       opened.work.seats = seats;
       opened.work.primaryTeam = primary;
       const served = audit
         ? { paths: [], packs: [], skipped: [] }
-        : knowledgeFilesFor(env.paths.userDir, env.profile, changed, env.policy);
-      const seatedPacks = seats.flatMap((s) => {
-        const rule = s.team ? registry.teams[s.team].mandatory : null;
-        return s.role === "expert" && rule?.kind === "paths" && rule.pack ? [rule.pack] : [];
-      });
-      const packListing = listPacks(env.paths.userDir);
-      recordPacks(
-        opened.work,
-        [...served.packs, ...seatedPacks].map((n) => packLabel(packListing, n)),
-      );
+        : recordPackUse(
+            opened.work,
+            env.paths.userDir,
+            env.profile,
+            changed,
+            env.policy,
+            registry.teams,
+          );
       saveWork(env.paths, opened.work);
       const listed = seats.map((s) => `${s.role} (${s.reason})`).join("; ");
       const text = audit

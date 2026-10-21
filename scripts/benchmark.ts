@@ -514,7 +514,7 @@ if (import.meta.main) {
   let command: string | null = null;
   if (from) text = readFileSync(from, "utf8");
   else {
-    const { path, args } = evalInvocation({
+    const { path, args, env } = evalInvocation({
       root: ROOT,
       platform: process.platform,
       path: process.env.PATH ?? "",
@@ -529,7 +529,7 @@ if (import.meta.main) {
     const before = newestResults(results);
     const run = spawnSync("claude", args, {
       stdio: "inherit",
-      env: { ...process.env, PATH: path },
+      env: { ...process.env, ...env, PATH: path },
     });
     const newest = newestResults(results);
     if (

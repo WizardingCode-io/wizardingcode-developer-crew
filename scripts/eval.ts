@@ -63,6 +63,10 @@ export const SANDBOX_TAGS = [
   "knowledge",
   // SP6 (Task 5): the benchmark set's tag; its cases carry a sandbox tag each as well.
   "benchmark",
+  // SP6 (Task 6): the two pack pairs run in the sandbox (the fixture copies the repository's pack into
+  // the scaffold and registers it; the Laravel pair needs php on the machine, since a session's PATH is
+  // Claude Code's and never the runner's).
+  "packs",
 ];
 const COMMON = [
   "plugin",
@@ -75,10 +79,20 @@ const COMMON = [
   "claude-sonnet-5-5",
 ];
 
-export function evalInvocation(options: EvalOptions): { path: string; args: string[] } {
+export function evalInvocation(options: EvalOptions): {
+  path: string;
+  args: string[];
+  /** What the kit's environment carries beyond PATH: the repository root the pack fixtures register from. */
+  env: Record<string, string>;
+} {
   if (options.tags && options.caseName)
     throw new Error("evalInvocation: a one-case run takes no tags");
-  const entries = [join(options.root, "plugins/core/bin")];
+  // The fixtures' bin first (SP6 Task 6: the helper a pack fixture asks the repository root of, since
+  // the kit keeps PATH and strips the rest), then the plugin's.
+  const entries = [
+    join(options.root, "plugins/core/evals/fixtures/bin"),
+    join(options.root, "plugins/core/bin"),
+  ];
   if (options.realGitDir) entries.push(options.realGitDir);
   if (options.path) entries.push(options.path);
   const args = options.caseName
@@ -116,7 +130,11 @@ export function evalInvocation(options: EvalOptions): { path: string; args: stri
         "--json",
         "plugins/core/evals/results/last.json",
       ];
-  return { path: entries.join(delimiter), args: [...args, "--allow-tools", ...ALLOW_TOOLS] };
+  return {
+    path: entries.join(delimiter),
+    args: [...args, "--allow-tools", ...ALLOW_TOOLS],
+    env: { WIZARDINGCODE_CREW_REPO: options.root },
+  };
 }
 
 const REFERENCE_PATH = /skills\/crew\/references\/[\w.-]+/g;
@@ -203,7 +221,7 @@ if (import.meta.main) {
     console.error("usage: bun scripts/eval.ts [--case <name>]");
     process.exit(1);
   }
-  const { path, args } = evalInvocation({
+  const { path, args, env } = evalInvocation({
     root: join(import.meta.dir, ".."),
     platform: process.platform,
     path: process.env.PATH ?? "",
@@ -211,7 +229,10 @@ if (import.meta.main) {
     caseName: name,
   });
   console.log(`claude ${args.join(" ")}`);
-  const run = spawnSync("claude", args, { stdio: "inherit", env: { ...process.env, PATH: path } });
+  const run = spawnSync("claude", args, {
+    stdio: "inherit",
+    env: { ...process.env, ...env, PATH: path },
+  });
   // The newest results folder's traces, read for a denied reference read (finding 95).
   const newest = newestResults(join(import.meta.dir, "..", "plugins", "core", "evals", "results"));
   if (newest) for (const line of scanResults(newest)) console.log(line);

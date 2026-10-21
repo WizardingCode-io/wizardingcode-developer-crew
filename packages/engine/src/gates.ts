@@ -6,6 +6,7 @@ import { excludedRiskPaths, riskAreasForPaths } from "./classify.ts";
 import { runE2e } from "./e2e.ts";
 import { computeVerdict, loadEvidence, type PlannedGate, updateEvidence } from "./evidence.ts";
 import {
+  changedPaths,
   changedWatchedPaths,
   computeFingerprint,
   fingerprintMethod,
@@ -16,12 +17,13 @@ import {
 import { exists, nowIso, readText } from "./fs.ts";
 import { plannedJudgementGates, plannedTaskJudgement, writeReviewInputs } from "./judgement.ts";
 import { loadLedger } from "./objections.ts";
+import { packTemplates, recordPackUse } from "./packs.ts";
 import { type CrewPaths, workDir } from "./paths.ts";
 import { isInterfacePath } from "./paths-kind.ts";
 import { namedFiles } from "./problems.ts";
 import { runCommand } from "./run.ts";
 import { scanSecrets } from "./secrets.ts";
-import { plannedSeats, primaryTeam } from "./team.ts";
+import { plannedSeats, primaryTeam, teamsFor } from "./team.ts";
 import type {
   Evidence,
   GateName,
@@ -682,8 +684,23 @@ export async function runGates(
   // Planned after the route may have been raised, so a risk area the diff touched plans the security gate.
   const judgement = plannedJudgementGates(work.route, work.riskAreas, changed, policy);
   // The seats the route plans, recorded with the paths the change touched (SP7 §6.6); the caller
-  // saves the work, as it does for the risk areas.
-  work.seats = plannedSeats(work.route, work.riskAreas, changed, policy);
+  // saves the work, as it does for the risk areas. The registry carries the registered packs'
+  // templates and their globs read the change before the watch's exclusions, as `crew team` does
+  // (SP6 Task 6), so a pack's seat survives to the report.
+  const registry = teamsFor(policy, packTemplates(paths.userDir)).teams;
+  work.seats = plannedSeats(
+    work.route,
+    work.riskAreas,
+    changed,
+    policy,
+    undefined,
+    undefined,
+    registry,
+    changedPaths(paths.root, base),
+  );
+  // What crew team records at the conclave, recorded again with the paths the change touched (SP6
+  // Task 6), so the report shows the packs and the expert's files even when crew team never ran.
+  recordPackUse(work, paths.userDir, profile, changed, policy, registry);
   work.primaryTeam = primaryTeam(changed);
   const reviewInputs = judgement.length ? writeReviewInputs(paths, work, changed, stamp) : null;
   const currentFingerprint = computeFingerprint(

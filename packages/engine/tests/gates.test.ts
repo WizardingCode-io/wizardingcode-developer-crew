@@ -10,7 +10,7 @@ import {
   saveEvidence,
   updateEvidence,
 } from "../src/evidence.ts";
-import { computeFingerprint } from "../src/fingerprint.ts";
+import { changedWatchedPaths, computeFingerprint } from "../src/fingerprint.ts";
 import {
   assess,
   depsAuditCommand,
@@ -24,6 +24,7 @@ import {
   scopedTestCommand,
 } from "../src/gates.ts";
 import { isAlive } from "../src/open.ts";
+import { registerPack } from "../src/packs.ts";
 import { workDir } from "../src/paths.ts";
 import { DEFAULT_POLICY } from "../src/policy.ts";
 import { namedFiles } from "../src/problems.ts";
@@ -31,6 +32,7 @@ import { ensureProfile, loadProfile, saveProfile } from "../src/profile.ts";
 import type { Environment, GateCommand, GateRun, Policy, Profile, Target } from "../src/types.ts";
 import { addCriterion, addSkip, createWork } from "../src/work.ts";
 import { git, makeRepo, repoPaths, tempDir, testEnv, write } from "./helpers.ts";
+import { writePack } from "./pack-fixtures.ts";
 
 test("SP2b: a gate run writes the review inputs when a judgement gate is planned, and nothing on a fast item without an interface file", async () => {
   const root = makeRepo({
@@ -1475,4 +1477,74 @@ test("SP6-T2 AC-3 (round 3): a pack's proposed e2e command is held before the en
   const ran = await runOneGate(paths, work, profile, planned, "fp", ["src/App.vue"]);
   expect(ran.status).toBe("pass");
   expect(existsSync(sentinel)).toBe(true);
+});
+
+test("SP6-T6 AC-4, AC-15: the gate run re-plans the seats with the registered templates merged and from the change's paths before the watch's exclusions, so an agent's Markdown under a template's glob seats the pack's expert; the watched list keeps excluding it", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+    "agents/triage.md": "# Triage\n",
+  });
+  const paths = repoPaths(root, testEnv());
+  const agentic = writePack(
+    {
+      name: "wizardingcode-pack-agentic-os",
+      kind: "team",
+      detectors: [],
+      checklists: ["checklists/agent.md"],
+      knowledge: { agentic: "knowledge/agentic.md" },
+      team: {
+        template: "agentic-os",
+        teams: { "agentic-os": { mandatory: { kind: "paths", globs: ["agents/**"] } } },
+      },
+    },
+    { "checklists/agent.md": "# Agent\n", "knowledge/agentic.md": "# Agentic\n" },
+  );
+  expect("refused" in registerPack(paths.userDir, agentic, "command")).toBe(false);
+  const policy: Policy = {
+    ...DEFAULT_POLICY,
+    team: {
+      ...DEFAULT_POLICY.team,
+      template: "agentic-os",
+      specialists: ["wizardingcode-pack-agentic-os:agentic"],
+    },
+  };
+  const { profile } = ensureProfile(paths);
+  const work = createWork(paths, "feature");
+  work.route = "standard";
+  addCriterion(work, "x");
+  addSkip(work, "gate:e2e", "no environment in the fixture");
+  write(
+    root,
+    "agents/triage.md",
+    "# Triage\n\n- a request naming an outage goes to the on-call queue\n",
+  );
+  // A watched change beside the Markdown, so the run's own output shows which list fed what.
+  write(root, "src/a.ts", "y");
+  const out = await runGates(paths, work, profile, policy);
+  // AC-30: the review inputs and the risk areas read the watched list, so the agent's Markdown is
+  // not among the files cut for review and raises no risk area; the template's seat alone read it.
+  const files = readFileSync(join(workDir(paths, work.id), "review", "files.txt"), "utf8");
+  expect(files).toContain("src/a.ts");
+  expect(files).not.toContain("agents/triage.md");
+  expect(work.riskAreas).toEqual([]);
+  expect(changedWatchedPaths(root, profile, work)).not.toContain("agents/triage.md");
+  expect(out.evidence.runs.find((g) => g.gate === "test")?.status).toBe("pass");
+  const expert = (work.seats ?? []).find((s) => s.role === "expert");
+  expect(expert?.team).toBe("agentic-os");
+  expect(expert?.reason).toBe("pack wizardingcode-pack-agentic-os (agents/**)");
+  // AC-31: the primary team is recorded by the gate run as before (a regression of round 2's refactor).
+  expect(work.primaryTeam).toBe("backend");
+  // AC-27 (SP6 Task 6): the gate run records the packs and the expert's files as crew team does, and
+  // the report prints them, so a session that never ran crew team still shows them at Deliver.
+  expect(work.packs).toEqual(["wizardingcode-pack-agentic-os 0.1.0"]);
+  expect(work.knowledgeFiles).toEqual([join(agentic, "knowledge", "agentic.md")]);
+  const report = renderReport(work, out.evidence, policy);
+  expect(report).toContain("- Packs: wizardingcode-pack-agentic-os 0.1.0\n");
+  expect(report).toContain(
+    `- Knowledge files for the expert: ${join(agentic, "knowledge", "agentic.md")}\n`,
+  );
+  expect(report).toContain(
+    "| expert | agentic-os | pack wizardingcode-pack-agentic-os (agents/**) |",
+  );
 });

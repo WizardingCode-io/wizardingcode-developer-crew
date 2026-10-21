@@ -401,6 +401,8 @@ export function renderReport(
   lines.push(ctoPlan ? `- CTO plan: ${ctoPlan.path} (${ctoPlan.date})` : "- CTO plan: none");
   // The packs the item used (SP6 Task 2): the knowledge files served to the expert, the template that seated a team.
   lines.push(work.packs?.length ? `- Packs: ${work.packs.join(", ")}` : "- Packs: none");
+  if (work.knowledgeFiles?.length)
+    lines.push(`- Knowledge files for the expert: ${work.knowledgeFiles.join(", ")}`);
   // Where the request entered from and the lead's triage of its priority (SP7 §10).
   if (work.source) lines.push(`- Source: ${sourceLine(work.source)}`);
   if (work.triage) lines.push(`- Triage: ${triageSummary(work.triage)}`);

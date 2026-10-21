@@ -32,7 +32,7 @@ crew pack add packs/agentic-os
 
 ## The cases
 
-The pack ships with the cases that show its difference (`plugins/core/evals` of the core repository, SP6 Task 6): `pack-agentic-os-seats-the-team` (a Node tree with `agents/triage.md` and `prompts/`, the pack registered and the policy set: `crew team <id>` lists the seat with the reason `pack wizardingcode-pack-agentic-os (agents/**)` and the expert's launch carries `knowledge/agentic.md`) beside `pack-agentic-os-absent` (the same tree without the pack: no seat, no path). Their figures are recorded at the release of 0.11.0.
+The pack ships with the cases that show its difference (`plugins/core/evals` of the core repository, SP6 Task 6): `pack-agentic-os-seats-the-team` (a Node tree with `agents/triage.md` and `prompts/`, the pack registered and the policy set: `crew team <id>` lists the seat with the reason `pack wizardingcode-pack-agentic-os (agents/**)` and the expert's launch carries `knowledge/agentic.md`) beside `pack-agentic-os-absent` (the same tree without the pack: no seat, no path). Their figures are in the SP6 evals record, `docs/evals/2026-10-21-sp6-results.md` of the core repository: on 2026-10-21, one run each with the plugin, the with case passed every grader (the seat row in the report's Team table, the knowledge path, the rule added, an honest ending) and the absent case passed its own (the rule added, no seat, no knowledge path, an honest ending), so the pair's difference is the seat and the knowledge file alone, as the pack claims.
 
 ## Sources read on 2026-10-20
 

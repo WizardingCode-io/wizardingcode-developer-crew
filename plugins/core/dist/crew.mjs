@@ -404,6 +404,13 @@ function changedWatchedPaths(root, profile, base, maxFiles = MAX_WATCHED_FILES) 
   }
   return allWatchedFiles(root, profile, maxFiles) ?? [];
 }
+function changedPaths(root, base) {
+  if (!isGitRepo(root))
+    return [];
+  const commit = base?.baseCommit ?? null;
+  const paths = commit ? gitChangedSince(root, commit) : gitChangedPaths(root);
+  return paths === null ? [] : ownChanges(root, paths, base);
+}
 function fingerprintMethod(fingerprint) {
   return fingerprint?.startsWith(WALK_PREFIX) ? "walk" : undefined;
 }
@@ -1960,7 +1967,7 @@ function taskSeats(scope, policy) {
     seats.push({ role: "judge", team: null, kind: "debate", reason: "a gate is planned" });
   return seats;
 }
-function plannedSeats(route, riskAreas, changed, policy, scope, options, registry = TEAMS) {
+function plannedSeats(route, riskAreas, changed, policy, scope, options, registry = TEAMS, templatePaths = changed) {
   if (scope !== undefined)
     return taskSeats(scope, policy);
   const seats = [];
@@ -2012,7 +2019,7 @@ function plannedSeats(route, riskAreas, changed, policy, scope, options, registr
       const rule = def.mandatory;
       if (rule.kind !== "paths" || !rule.globs?.length)
         continue;
-      const glob = rule.globs.find((g) => changed.some((p) => matchesAny(p, [g])));
+      const glob = rule.globs.find((g) => templatePaths.some((p) => matchesAny(p, [g])));
       if (glob)
         plan({
           role: "expert",
@@ -4580,6 +4587,8 @@ function renderReport(work, evidence, policy, options = {}) {
   lines.push(`- Type: ${work.type}. Kind: ${kindOfItem(work)}${work.kindFrom ? ` (from ${work.kindFrom})` : ""}. Route: ${work.route} (${work.routeReasons.join("; ")})`);
   lines.push(ctoPlan ? `- CTO plan: ${ctoPlan.path} (${ctoPlan.date})` : "- CTO plan: none");
   lines.push(work.packs?.length ? `- Packs: ${work.packs.join(", ")}` : "- Packs: none");
+  if (work.knowledgeFiles?.length)
+    lines.push(`- Knowledge files for the expert: ${work.knowledgeFiles.join(", ")}`);
   if (work.source)
     lines.push(`- Source: ${sourceLine(work.source)}`);
   if (work.triage)
@@ -7350,7 +7359,7 @@ import { homedir as homedir2 } from "node:os";
 import { basename as basename5, isAbsolute as isAbsolute6, join as join28, sep as sep3 } from "node:path";
 
 // packages/engine/src/version.ts
-var VERSION = "0.10.0";
+var VERSION = "0.11.0";
 
 // packages/engine/src/packs.ts
 var PACK_NAME = /^wizardingcode-pack-[a-z0-9][a-z0-9-]*$/;
@@ -7755,6 +7764,25 @@ function knowledgeFilesFor(userDir, profile, changed, policy) {
     add(pack, rel2);
   }
   return { paths, packs: packs.filter((p) => served.has(p.name)).map((p) => p.name), skipped };
+}
+function recordPacks(work, labels) {
+  const packs = [...new Set([...work.packs ?? [], ...labels])];
+  if (packs.length)
+    work.packs = packs;
+}
+function recordPackUse(work, userDir, profile, changed, policy, registry) {
+  const served = knowledgeFilesFor(userDir, profile, changed, policy);
+  const seated2 = (work.seats ?? []).flatMap((s) => {
+    const rule = s.team ? registry[s.team].mandatory : null;
+    return s.role === "expert" && rule?.kind === "paths" && rule.pack ? [rule.pack] : [];
+  });
+  work.knowledgeFiles = served.paths;
+  const names = [...served.packs, ...seated2];
+  if (names.length) {
+    const listing = listPacks(userDir, { quick: true });
+    recordPacks(work, names.map((name) => packLabel(listing, name)));
+  }
+  return served;
 }
 function packLabel(listed, name) {
   const pack = listed.find((p) => p.name === name)?.registration;
@@ -9601,7 +9629,9 @@ async function runGates(paths, work, profile, policy, options = {}) {
   }
   evidence.fingerprint = stamp2;
   const judgement = plannedJudgementGates(work.route, work.riskAreas, changed, policy);
-  work.seats = plannedSeats(work.route, work.riskAreas, changed, policy);
+  const registry = teamsFor(policy, packTemplates(paths.userDir)).teams;
+  work.seats = plannedSeats(work.route, work.riskAreas, changed, policy, undefined, undefined, registry, changedPaths(paths.root, base));
+  recordPackUse(work, paths.userDir, profile, changed, policy, registry);
   work.primaryTeam = primaryTeam(changed);
   const reviewInputs = judgement.length ? writeReviewInputs(paths, work, changed, stamp2) : null;
   const currentFingerprint = computeFingerprint(paths.root, profile, base, MAX_WATCHED_FILES, fingerprintMethod(fingerprintBefore));
@@ -14881,11 +14911,6 @@ function packsJson(listed) {
     state: stateText(p.state)
   }));
 }
-function recordPacks(work, labels) {
-  const packs = [...new Set([...work.packs ?? [], ...labels])];
-  if (packs.length)
-    work.packs = packs;
-}
 function knowledgeLine2(env, work) {
   const record2 = work.knowledge;
   if (!record2)
@@ -16431,17 +16456,11 @@ test-first not credited: ${out2.uncredited}` : "";
       const audit = kindOfItem(opened.work) === "audit";
       const scope = audit ? readJson(join48(workDir(env.paths, opened.work.id), "audit", "scope.json")) : null;
       const registry = teamsFor(env.policy, packTemplates(env.paths.userDir));
-      const seats = audit ? auditSeats({ riskAreas: scope?.riskAreas ?? opened.work.riskAreas }, env.policy) : plannedSeats(opened.work.route, opened.work.riskAreas, changed, env.policy, undefined, { strategy: phasesFor(opened.work).includes("strategy") }, registry.teams);
+      const seats = audit ? auditSeats({ riskAreas: scope?.riskAreas ?? opened.work.riskAreas }, env.policy) : plannedSeats(opened.work.route, opened.work.riskAreas, changed, env.policy, undefined, { strategy: phasesFor(opened.work).includes("strategy") }, registry.teams, changedPaths(env.paths.root, opened.work));
       const primary = primaryTeam(changed);
       opened.work.seats = seats;
       opened.work.primaryTeam = primary;
-      const served = audit ? { paths: [], packs: [], skipped: [] } : knowledgeFilesFor(env.paths.userDir, env.profile, changed, env.policy);
-      const seatedPacks = seats.flatMap((s) => {
-        const rule = s.team ? registry.teams[s.team].mandatory : null;
-        return s.role === "expert" && rule?.kind === "paths" && rule.pack ? [rule.pack] : [];
-      });
-      const packListing = listPacks(env.paths.userDir);
-      recordPacks(opened.work, [...served.packs, ...seatedPacks].map((n) => packLabel(packListing, n)));
+      const served = audit ? { paths: [], packs: [], skipped: [] } : recordPackUse(opened.work, env.paths.userDir, env.profile, changed, env.policy, registry.teams);
       saveWork(env.paths, opened.work);
       const listed = seats.map((s) => `${s.role} (${s.reason})`).join("; ");
       const text = audit ? `Team of ${opened.work.id} (audit): ${listed}` : seats.length ? `Team of ${opened.work.id} (primary ${primary}): ${listed}` : `Team of ${opened.work.id}: no seat (fast route)`;

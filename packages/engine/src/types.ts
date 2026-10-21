@@ -665,6 +665,8 @@ export interface WorkItem {
   knowledge?: KnowledgeRecord;
   /** The packs the item used (SP6 Task 2), as `<name> <version>`: the knowledge files served to the expert, the template that seated a team. */
   packs?: string[];
+  /** The expert's knowledge files the packs served for the item's paths and specialists (SP6 Task 6), recorded at crew team and at the gate run. */
+  knowledgeFiles?: string[];
   /** The runtimes whose hooks observed this item (SP6 Task 4: `crew hook --runtime <name>`, `claude` for Claude Code's own), each once, in the order seen; absent on an item no hook ran under. */
   runtimes?: string[];
   /** What `crew learn` wrote and confirmed (SP4 Task 4); absent until the item learned. */

@@ -1,0 +1,5 @@
+#!/bin/sh
+# evals/fixtures/bin/wizardingcode-crew-repo: prints the root of the repository this folder lives in. The eval
+# kit strips the runner's environment before a scaffold runs and keeps PATH, so a pack fixture that needs the
+# repository's packs/ asks this helper when WIZARDINGCODE_CREW_REPO is unset (SP6 Task 6, decision 12).
+cd "$(dirname "$0")/../../../../.." && pwd

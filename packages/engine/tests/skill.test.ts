@@ -795,3 +795,28 @@ test("SP6-T5 AC-5, AC-10: docs/benchmark/README.md has its four parts, the READM
     expect(text, name).not.toMatch(/\b\d+\s*\/\s*\d+\b/);
   }
 });
+
+test("SP6-T6 AC-8, AC-23: the records of 0.11.0 hold their exact strings: the vision's status line, the README's release paragraph and its links to the benchmark and evals records, the real-use README's phase after 0.11.0 with its exit, the pack READMEs naming the evals record", () => {
+  const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
+  expect(read("../../../docs/vision.md")).toContain("0.11.0 (2026-10-21) is SP6, released");
+  const readme = read("../../../README.md");
+  expect(readme).toContain("Release 0.11.0 (2026-10-21) is SP6");
+  const link = readme.match(/docs\/benchmark\/\d{4}-\d{2}-\d{2}-0\.11\.0\.md/)?.[0];
+  expect(link).toBeDefined();
+  expect(existsSync(fileURLToPath(new URL(`../../../${link}`, import.meta.url))), link).toBe(true);
+  expect(readme).toContain("docs/evals/2026-10-21-sp6-results.md");
+  const realUse = read("../../../docs/real-use/README.md");
+  expect(realUse).toContain("\n## The phase after 0.11.0\n");
+  expect(realUse).toContain(
+    "Exit: no `blocks` or `false-proof` finding open, and 1.0 cut from it (ADR 0004, ADR 0008).",
+  );
+  for (const pack of ["laravel", "agentic-os"])
+    expect(read(`../../../packs/${pack}/README.md`), pack).toContain(
+      "docs/evals/2026-10-21-sp6-results.md",
+    );
+  expect(
+    existsSync(
+      fileURLToPath(new URL("../../../docs/evals/2026-10-21-sp6-results.md", import.meta.url)),
+    ),
+  ).toBe(true);
+});

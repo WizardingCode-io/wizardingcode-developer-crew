@@ -6,7 +6,7 @@ import { ensureDir, nowIso, readJson, readText, sha256, writeJson } from "./fs.t
 import { withLock } from "./lock.ts";
 import { packPath, packsDir } from "./paths.ts";
 import { scanText } from "./secrets.ts";
-import { TEAMS } from "./team.ts";
+import { TEAMS, type TeamDef } from "./team.ts";
 import {
   CORE_STACKS,
   type CoreStack,
@@ -15,6 +15,7 @@ import {
   type Policy,
   type Profile,
   type TeamName,
+  type WorkItem,
 } from "./types.ts";
 import { VERSION } from "./version.ts";
 
@@ -559,6 +560,43 @@ export function knowledgeFilesFor(
     add(pack, rel);
   }
   return { paths, packs: packs.filter((p) => served.has(p.name)).map((p) => p.name), skipped };
+}
+
+/** The packs an item used (SP6 Task 2), as `<name> <version>`, each once: the report's Packs line reads them. */
+export function recordPacks(work: WorkItem, labels: readonly string[]): void {
+  const packs = [...new Set([...(work.packs ?? []), ...labels])];
+  if (packs.length) work.packs = packs;
+}
+
+/**
+ * What an item used of the packs, recorded at `crew team` and at the gate run (SP6 Task 6): the
+ * expert's knowledge files for the changed targets and the policy's specialists, and the packs behind
+ * them or behind a template that seated the expert. `knowledgeFiles` follows the files served on every
+ * call, as the seats do; the packs accumulate, each once, for the report's Packs line.
+ */
+export function recordPackUse(
+  work: WorkItem,
+  userDir: string,
+  profile: Profile,
+  changed: readonly string[],
+  policy: Policy,
+  registry: Record<TeamName, TeamDef>,
+): { paths: string[]; packs: string[]; skipped: string[] } {
+  const served = knowledgeFilesFor(userDir, profile, changed, policy);
+  const seated = (work.seats ?? []).flatMap((s) => {
+    const rule = s.team ? registry[s.team].mandatory : null;
+    return s.role === "expert" && rule?.kind === "paths" && rule.pack ? [rule.pack] : [];
+  });
+  work.knowledgeFiles = served.paths;
+  const names = [...served.packs, ...seated];
+  if (names.length) {
+    const listing = listPacks(userDir, { quick: true });
+    recordPacks(
+      work,
+      names.map((name) => packLabel(listing, name)),
+    );
+  }
+  return served;
 }
 
 /** `<name> <version>` for the report's Packs line, from one listing taken by the caller. */

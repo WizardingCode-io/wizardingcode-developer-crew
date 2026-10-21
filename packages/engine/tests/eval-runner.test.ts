@@ -1,6 +1,15 @@
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,6 +20,7 @@ import {
   SANDBOX_TAGS,
 } from "../../../scripts/eval.ts";
 import { CEILINGS } from "../../../scripts/eval-overhead.ts";
+import { scanText } from "../src/secrets.ts";
 import type { KnowledgeEntry } from "../src/types.ts";
 
 const base = { root: "/r", path: "/usr/bin", realGitDir: null, platform: "linux" as const };
@@ -21,12 +31,18 @@ test("the eval PATH puts the plugin's bin first and, on macOS, the real git next
     platform: "darwin",
     realGitDir: "/Library/Developer/CommandLineTools/usr/bin",
   });
+  // SP6 Task 6 (AC-1): the fixtures' bin first, where the repository helper lives, then the plugin's bin.
   expect(mac.path.split(delimiter)).toEqual([
+    "/r/plugins/core/evals/fixtures/bin",
     "/r/plugins/core/bin",
     "/Library/Developer/CommandLineTools/usr/bin",
     "/usr/bin",
   ]);
-  expect(evalInvocation(base).path.split(delimiter)).toEqual(["/r/plugins/core/bin", "/usr/bin"]);
+  expect(evalInvocation(base).path.split(delimiter)).toEqual([
+    "/r/plugins/core/evals/fixtures/bin",
+    "/r/plugins/core/bin",
+    "/usr/bin",
+  ]);
 });
 
 test("the suite runs with the judge and the reports; one case runs once, without a baseline, with the same judge", () => {
@@ -81,9 +97,15 @@ const CASES = [
   "confidential-entry-not-reused",
   "root-cause-not-repeated",
   "cto-report-from-records",
+  // SP6 Task 6: the two pack pairs (decision 12).
+  "pack-laravel-refines-the-gates",
+  "pack-laravel-absent",
+  "pack-agentic-os-seats-the-team",
+  "pack-agentic-os-absent",
 ];
+const PACK_CASES = CASES.slice(-4);
 
-test("SP2c, SP7b-T7 AC-1, SP3-T1 AC-5, SP3-T7 AC-1, SP4-T6 AC-1: the thirty-four cases each have their four parts, and the fixtures they share exist", () => {
+test("SP2c, SP7b-T7 AC-1, SP3-T1 AC-5, SP3-T7 AC-1, SP4-T6 AC-1: the forty-two cases each have their four parts, and the fixtures they share exist", () => {
   const folders = readdirSync(EVALS)
     // benchmark.json is the benchmark set (SP6 Task 5), not a case.
     .filter((f) => !["README.md", "benchmark.json", "fixtures", "results"].includes(f))
@@ -149,6 +171,10 @@ test("SP3-T1 AC-5 (finding 80): every case's tags are within the runner's sandbo
 });
 
 const PLUGIN_BIN = fileURLToPath(new URL("../../../plugins/core/bin/", import.meta.url));
+const FIXTURES_BIN = fileURLToPath(
+  new URL("../../../plugins/core/evals/fixtures/bin/", import.meta.url),
+);
+const repoRoot = join(import.meta.dir, "..", "..", "..");
 
 /**
  * The state each SP7b and SP3 fixture leaves and its graders rely on (finding 80): the policy and
@@ -347,6 +373,100 @@ const SCAFFOLD_STATE: Record<
     },
   ],
 };
+const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+/** A gate of the laravel profile as the detector writes it: command, source, then the pack or the close. */
+const LARAVEL_GATE = (gate: string, command: string, source: string, pack: boolean) =>
+  new RegExp(
+    `"${gate}":\\s*\\{\\s*"command":\\s*"${escapeRegExp(command)}",\\s*"source":\\s*"${source}"${pack ? ',\\s*"pack":\\s*"wizardingcode-pack-laravel"' : "\\s*\\}"}`,
+  );
+Object.assign(SCAFFOLD_STATE, {
+  // SP6 Task 6 (AC-19): the pack pairs' state. The with cases copy the repository's pack into the
+  // scaffold's .packs/ at scaffold time and register the copy under the home (the kit's sandbox reads the
+  // scaffold and the plugin folder, not the repository beside them), and the laravel profile carries the
+  // pack's three gates proposed; the absent cases leave the core's guess.
+  "pack-laravel-refines-the-gates": [
+    { file: "artisan", pattern: /scopeActive/ },
+    { file: "composer.json", pattern: /"laravel\/framework":\s*"\^13\.0"/ },
+    { file: "pack.json", absent: true },
+    { file: ".packs/laravel/pack.json", pattern: /"name":\s*"wizardingcode-pack-laravel"/ },
+    { file: ".gitignore", pattern: /^\.packs\/$/m },
+    {
+      file: ".crew/profile.json",
+      pattern: LARAVEL_GATE("test", "php artisan test", "proposed", true),
+    },
+    {
+      file: ".crew/profile.json",
+      pattern: LARAVEL_GATE("lint", "vendor/bin/pint --test", "proposed", true),
+    },
+    {
+      file: ".crew/profile.json",
+      pattern: LARAVEL_GATE(
+        "typecheck",
+        "vendor/bin/phpstan analyse --no-progress",
+        "proposed",
+        true,
+      ),
+    },
+    { file: ".crew/profile.json", pattern: /"tags":\s*\[\s*"laravel"\s*\]/ },
+    {
+      file: "packs/wizardingcode-pack-laravel.json",
+      home: true,
+      assert: (text: string, dir: string) => {
+        const registration = JSON.parse(text) as { root: string; by: string };
+        expect(realpathSync(registration.root)).toBe(realpathSync(join(dir, ".packs", "laravel")));
+        expect(registration.by).toBe("command");
+      },
+    },
+  ],
+  "pack-laravel-absent": [
+    { file: "artisan", pattern: /scopeActive/ },
+    { file: "pack.json", absent: true },
+    { file: ".crew/profile.json", pattern: /^(?![\s\S]*"test":\s*\{)[\s\S]*"lint":/ },
+    {
+      file: ".crew/profile.json",
+      pattern: LARAVEL_GATE("lint", "vendor/bin/pint --test", "detected", false),
+    },
+    {
+      file: ".crew/profile.json",
+      pattern: LARAVEL_GATE(
+        "typecheck",
+        "vendor/bin/phpstan analyse --no-progress",
+        "detected",
+        false,
+      ),
+    },
+    { file: ".crew/profile.json", pattern: /^(?![\s\S]*"pack")(?![\s\S]*"laravel")[\s\S]*$/ },
+    { file: "packs/wizardingcode-pack-laravel.json", home: true, absent: true },
+  ],
+  "pack-agentic-os-seats-the-team": [
+    { file: "agents/triage.md", pattern: /^# Triage/ },
+    { file: "tests/triage.test.mjs", pattern: /on-call/ },
+    { file: "pack.json", absent: true },
+    {
+      file: ".crew/policy.json",
+      pattern:
+        /"team":\s*\{\s*"template":\s*"agentic-os",\s*"specialists":\s*\["wizardingcode-pack-agentic-os:agentic"\]\s*\}/,
+    },
+    {
+      file: "packs/wizardingcode-pack-agentic-os.json",
+      home: true,
+      assert: (text: string, dir: string) => {
+        const registration = JSON.parse(text) as { root: string; by: string };
+        expect(realpathSync(registration.root)).toBe(
+          realpathSync(join(dir, ".packs", "agentic-os")),
+        );
+        expect(registration.by).toBe("command");
+      },
+    },
+  ],
+  "pack-agentic-os-absent": [
+    { file: "agents/triage.md", pattern: /^# Triage/ },
+    { file: "pack.json", absent: true },
+    { file: ".crew/policy.json", absent: true },
+    { file: "packs/wizardingcode-pack-agentic-os.json", home: true, absent: true },
+  ],
+});
+
 const SP8_CASES = [
   "strategy-rejects-over-engineering",
   "strategy-declares-phases",
@@ -368,8 +488,9 @@ test("SP2c, SP3-T1 AC-5: every fixture scaffolds under sh into a committed repos
           encoding: "utf8",
           env: {
             ...process.env,
-            PATH: `${PLUGIN_BIN}${delimiter}${process.env.PATH}`,
+            PATH: `${FIXTURES_BIN}${delimiter}${PLUGIN_BIN}${delimiter}${process.env.PATH}`,
             WIZARDINGCODE_HOME: caseHome,
+            WIZARDINGCODE_CREW_REPO: repoRoot,
           },
         });
         expect(run.status, `${name}: ${run.stderr}`).toBe(0);
@@ -434,16 +555,21 @@ test("SP7a AC-8 (Task 8), SP7b-T7 AC-1, SP3-T7 AC-1: every fixture stays inside 
     "confidential-entry-not-reused",
     "root-cause-not-repeated",
     "cto-report-from-records",
+    ...PACK_CASES,
   ];
   const files = [
     `${EVALS}fixtures/node-plain.sh`,
     `${EVALS}fixtures/two-projects.sh`,
+    `${EVALS}fixtures/laravel-shaped.sh`,
+    `${EVALS}fixtures/node-agentic.sh`,
     ...CONFINED.map((name) => `${EVALS}${name}/fixture.sh`),
   ];
   // The one permitted parent path: sourcing a shared fixture beside the case, inside the evals tree.
   const sourcing = [
     '. "$(dirname "$0")/../fixtures/node-plain.sh"',
     '. "$(dirname "$0")/../fixtures/two-projects.sh"',
+    '. "$(dirname "$0")/../fixtures/laravel-shaped.sh"',
+    '. "$(dirname "$0")/../fixtures/node-agentic.sh"',
   ];
   const forbidden = [
     /cd \//,
@@ -466,8 +592,6 @@ test("SP7a AC-8 (Task 8), SP7b-T7 AC-1, SP3-T7 AC-1: every fixture stays inside 
     }
   }
 });
-
-const repoRoot = join(import.meta.dir, "..", "..", "..");
 
 test("SP8-T1 AC-5 (finding 96): the issue case's fixed grader anchors on the filter of active accounts, and the four SP3 fixtures commit through the shared helper", () => {
   const grader = readFileSync(
@@ -611,4 +735,402 @@ test("SP4-T6 AC-1: the knowledge cases carry the tag the sandbox runs, seed the 
   );
   expect(record).not.toMatch(/AKIA[A-Z0-9]{16}/);
   expect(record).not.toMatch(/\/private\/var\/folders|\/tmp\/|crew-home-/);
+});
+
+// SP6 Task 6: the pack pairs (decision 12), the shim and the runner's environment.
+const PACK_GRADERS: Record<string, Record<string, Record<string, string>>> = {
+  "pack-laravel-refines-the-gates": {
+    "pack-gate": {
+      type: "regex",
+      target: "trace",
+      pattern:
+        "test=php artisan test( \\[proposed\\])? \\(pack wizardingcode-pack-laravel\\)|pack wizardingcode-pack-laravel's command is not confirmed",
+      arm: "with-only",
+    },
+    "gate-ran": {
+      type: "regex",
+      target: "trace",
+      pattern: "test \\(\\.\\): pass",
+      arm: "with-only",
+    },
+    "profile-pack": {
+      type: "regex",
+      target: "{ source: file, path: .crew/profile.json }",
+      pattern:
+        '"command":\\s*"php artisan test",\\s*"source":\\s*"confirmed",\\s*"pack":\\s*"wizardingcode-pack-laravel"',
+      arm: "with-only",
+    },
+    "knowledge-path": {
+      type: "regex",
+      target: "trace",
+      pattern: "knowledge/laravel\\.md",
+      arm: "with-only",
+    },
+    "scope-added": {
+      type: "regex",
+      target: "{ source: file, path: app/Models/Account.php }",
+      pattern: "scopeActive|#\\[Scope\\]",
+      arm: "both",
+    },
+    "honest-ending": { type: "llm" },
+  },
+  "pack-laravel-absent": {
+    "no-pack-gate": {
+      type: "regex",
+      target: "trace",
+      pattern: "\\(pack wizardingcode-pack-laravel\\)",
+      match: "not_contains",
+      arm: "with-only",
+    },
+    "no-pack-in-profile": {
+      type: "regex",
+      target: "{ source: file, path: .crew/profile.json }",
+      pattern: '"pack":',
+      match: "not_contains",
+      arm: "with-only",
+    },
+    "no-knowledge-path": {
+      type: "regex",
+      target: "trace",
+      pattern: "knowledge/laravel\\.md",
+      match: "not_contains",
+      arm: "with-only",
+    },
+    "scope-added": {
+      type: "regex",
+      target: "{ source: file, path: app/Models/Account.php }",
+      pattern: "scopeActive|#\\[Scope\\]",
+      arm: "both",
+    },
+    "honest-ending": { type: "llm" },
+  },
+  "pack-agentic-os-seats-the-team": {
+    seat: {
+      type: "regex",
+      target: "trace",
+      pattern:
+        "\\| expert \\| agentic-os \\| pack wizardingcode-pack-agentic-os \\(agents/\\*\\*\\) \\|",
+      arm: "with-only",
+    },
+    "knowledge-path": {
+      type: "regex",
+      target: "trace",
+      pattern: "knowledge/agentic\\.md",
+      arm: "with-only",
+    },
+    "rule-added": {
+      type: "regex",
+      target: "{ source: file, path: agents/triage.md }",
+      pattern: "on-call",
+      arm: "both",
+    },
+    "honest-ending": { type: "llm" },
+  },
+  "pack-agentic-os-absent": {
+    "no-seat": {
+      type: "regex",
+      target: "trace",
+      pattern: "pack wizardingcode-pack-agentic-os",
+      match: "not_contains",
+      arm: "with-only",
+    },
+    "no-knowledge-path": {
+      type: "regex",
+      target: "trace",
+      pattern: "knowledge/agentic\\.md",
+      match: "not_contains",
+      arm: "with-only",
+    },
+    "rule-added": {
+      type: "regex",
+      target: "{ source: file, path: agents/triage.md }",
+      pattern: "on-call",
+      arm: "both",
+    },
+    "honest-ending": { type: "llm" },
+  },
+};
+/** A grader's front matter as key: value lines, the quotes of a pattern stripped. */
+const frontMatter = (text: string): Record<string, string> => {
+  const block = text.split("---")[1] ?? "";
+  const out: Record<string, string> = {};
+  for (const line of block.split("\n")) {
+    const at = line.indexOf(":");
+    if (at < 0) continue;
+    const key = line.slice(0, at).trim();
+    let value = line.slice(at + 1).trim();
+    if (value.startsWith("'") && value.endsWith("'"))
+      value = value.slice(1, -1).replace(/''/g, "'");
+    out[key] = value;
+  }
+  return out;
+};
+
+test("SP6-T6 AC-1: the four pack cases carry the tag packs, SANDBOX_TAGS holds it, the invocation carries the repository root as WIZARDINGCODE_CREW_REPO and nothing else, and the README's command line shows the PATH", () => {
+  expect(SANDBOX_TAGS).toContain("packs");
+  for (const name of PACK_CASES) {
+    const tags =
+      readFileSync(`${EVALS}${name}/case.yaml`, "utf8").match(/^tags:\s*\[([^\]]*)\]/m)?.[1] ?? "";
+    expect(
+      tags.split(",").map((t) => t.trim()),
+      name,
+    ).toContain("packs");
+  }
+  expect(evalInvocation(base).env).toEqual({ WIZARDINGCODE_CREW_REPO: "/r" });
+  expect(evalInvocation({ ...base, caseName: "false-done" }).env).toEqual({
+    WIZARDINGCODE_CREW_REPO: "/r",
+  });
+  const readme = readFileSync(`${EVALS}README.md`, "utf8");
+  expect(readme).toContain(
+    'PATH="$PWD/plugins/core/evals/fixtures/bin:$PWD/plugins/core/bin:$(dirname "$(xcrun --find git)"):$PATH" WIZARDINGCODE_CREW_REPO="$PWD" claude plugin eval plugins/core',
+  );
+});
+
+test("SP6-T6 AC-11, AC-28: fixtures/bin holds the repository helper alone (no shim: a session's PATH is Claude Code's, never the runner's); both mains pass the invocation's environment beside PATH", () => {
+  expect(readdirSync(FIXTURES_BIN)).toEqual(["wizardingcode-crew-repo"]);
+  expect(statSync(join(FIXTURES_BIN, "wizardingcode-crew-repo")).mode & 0o111).not.toBe(0);
+  for (const script of ["scripts/eval.ts", "scripts/benchmark.ts"]) {
+    const source = readFileSync(join(repoRoot, script), "utf8");
+    expect(source, script).toContain("env: { ...process.env, ...env, PATH: path }");
+  }
+  expect(readFileSync(join(repoRoot, "scripts/benchmark.ts"), "utf8")).not.toContain(
+    "WIZARDINGCODE_CREW_REPO",
+  );
+  const readme = readFileSync(`${EVALS}README.md`, "utf8");
+  expect(readme).toContain(
+    "The Laravel pair needs `php` on the machine that runs the evals (the fixture's `artisan` is a PHP script with no framework): a session's PATH is Claude Code's, with the plugin's own `bin/` added, never the runner's, so nothing the runner puts on its PATH reaches the engine's gates inside a session.",
+  );
+});
+
+test("SP6-T6 AC-12: the pack fixtures stay confined: set -eu, the variable alone as the pack's path, a loud refusal without it, crew pack add before crew detect, no copy of a pack, no gate confirmed or set by hand; a with fixture given an empty folder exits non-zero and leaves no commit", () => {
+  const withCases = ["pack-laravel-refines-the-gates", "pack-agentic-os-seats-the-team"];
+  for (const name of PACK_CASES) {
+    const text = readFileSync(`${EVALS}${name}/fixture.sh`, "utf8");
+    expect(text, name).toContain("set -eu");
+    expect(text, name).not.toMatch(/crew profile (confirm|set)/);
+    expect(text, name).not.toMatch(/\.crew\/profile\.json/);
+    // Nothing of a fixture enters the repository's packs/ or changes into it; the copy goes one way,
+    // from the repository into the scaffold's .packs/ (the kit's sandbox reads the scaffold and the
+    // plugin folder, not the repository beside them), and the registration names the scaffold's copy.
+    expect(text, name).not.toMatch(/\bcd\b[^\n]*packs\//);
+    expect(text, name).not.toMatch(/>\s*"?\$REPO\/packs/);
+    // Every line that names the repository's packs/ (not the scaffold's .packs/) is the copy, the
+    // manifest check or a comment.
+    for (const line of text.split("\n").filter((l) => /(^|[^.])packs\//.test(l)))
+      expect(line.trim(), name).toMatch(
+        /^cp -R "\$REPO\/packs\/(laravel|agentic-os)" \.packs\/(laravel|agentic-os)$|pack\.json|^# /,
+      );
+    for (const line of text.split("\n").filter((l) => l.includes("crew pack add")))
+      expect(line.trim(), name).toMatch(
+        /^crew pack add \.packs\/(laravel|agentic-os)( > \/dev\/null)?$/,
+      );
+    if (withCases.includes(name)) {
+      expect(text, name).toMatch(/WIZARDINGCODE_CREW_REPO[^\n]*pack\.json is missing/);
+      expect(text.indexOf("crew pack add"), name).toBeLessThan(text.indexOf("crew detect"));
+    } else expect(text, name).not.toContain("crew pack add");
+  }
+  for (const shared of ["laravel-shaped.sh", "node-agentic.sh"])
+    expect(readFileSync(`${EVALS}fixtures/${shared}`, "utf8")).toContain("set -eu");
+  for (const name of withCases) {
+    const dir = mkdtempSync(join(tmpdir(), `crew-eval-empty-${name}-`));
+    const home = mkdtempSync(join(tmpdir(), "crew-evals-home-"));
+    const empty = mkdtempSync(join(tmpdir(), "no-packs-"));
+    try {
+      const run = spawnSync("sh", [`${EVALS}${name}/fixture.sh`], {
+        cwd: dir,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          PATH: `${FIXTURES_BIN}${delimiter}${PLUGIN_BIN}${delimiter}${process.env.PATH}`,
+          WIZARDINGCODE_HOME: home,
+          WIZARDINGCODE_CREW_REPO: empty,
+        },
+      });
+      expect(run.status, name).not.toBe(0);
+      expect(run.stderr, name).toContain("pack.json is missing");
+      expect(
+        spawnSync("git", ["-C", dir, "rev-list", "--count", "HEAD"], { encoding: "utf8" }).status,
+      ).not.toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      rmSync(home, { recursive: true, force: true });
+      rmSync(empty, { recursive: true, force: true });
+    }
+  }
+});
+
+test("SP6-T6 AC-18, AC-28: the laravel fixture's artisan is a PHP script that fails through the machine's php as committed and passes once the model holds the scope", () => {
+  const php = spawnSync("php", ["-v"], { encoding: "utf8" });
+  expect(php.status, "php is needed on PATH for the Laravel pair").toBe(0);
+  const dir = mkdtempSync(join(tmpdir(), "crew-eval-artisan-"));
+  const home = mkdtempSync(join(tmpdir(), "crew-evals-home-"));
+  const env = {
+    ...process.env,
+    PATH: `${FIXTURES_BIN}${delimiter}${PLUGIN_BIN}${delimiter}${process.env.PATH}`,
+    WIZARDINGCODE_HOME: home,
+    WIZARDINGCODE_CREW_REPO: repoRoot,
+  };
+  try {
+    const scaffold = spawnSync("sh", [`${EVALS}pack-laravel-absent/fixture.sh`], {
+      cwd: dir,
+      encoding: "utf8",
+      env,
+    });
+    expect(scaffold.status, scaffold.stderr).toBe(0);
+    expect(readFileSync(join(dir, "artisan"), "utf8").split("\n")[0]).toBe("#!/usr/bin/env php");
+    const red = spawnSync("php", ["artisan", "test"], { cwd: dir, encoding: "utf8", env });
+    expect(red.status, red.stdout + red.stderr).toBe(1);
+    expect(red.stdout).toContain("FAIL");
+    const model = join(dir, "app", "Models", "Account.php");
+    writeFileSync(
+      model,
+      readFileSync(model, "utf8").replace(
+        /\}\s*$/,
+        "    public function scopeActive($query)\n    {\n        return $query->where('active', true);\n    }\n}\n",
+      ),
+    );
+    const green = spawnSync("php", ["artisan", "test"], { cwd: dir, encoding: "utf8", env });
+    expect(green.status, green.stdout + green.stderr).toBe(0);
+    expect(green.stdout).toContain("PASS");
+    // The attribute form Laravel documents since 12.x turns the gate green too (AC-20's grader accepts it).
+    writeFileSync(
+      model,
+      readFileSync(model, "utf8").replace(
+        / {4}public function scopeActive[\s\S]*?\n {4}\}\n/,
+        "    #[Scope]\n    protected function active($query)\n    {\n        return $query->where('active', true);\n    }\n",
+      ),
+    );
+    expect(readFileSync(model, "utf8")).not.toContain("scopeActive");
+    const attribute = spawnSync("php", ["artisan", "test"], { cwd: dir, encoding: "utf8", env });
+    expect(attribute.status, attribute.stdout + attribute.stderr).toBe(0);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("SP6-T6 AC-3, AC-16, AC-17, AC-20, AC-24: the pack cases' graders, their patterns, targets and arms, exactly; the laravel prompt names scopeActive and asks for crew profile before the confirmation", () => {
+  for (const [name, graders] of Object.entries(PACK_GRADERS)) {
+    const dir = `${EVALS}${name}/graders/`;
+    expect(readdirSync(dir).sort(), name).toEqual(
+      Object.keys(graders)
+        .map((g) => `${g}.md`)
+        .sort(),
+    );
+    for (const [grader, expected] of Object.entries(graders))
+      expect(frontMatter(readFileSync(`${dir}${grader}.md`, "utf8")), `${name}/${grader}`).toEqual(
+        expected,
+      );
+  }
+  const prompt = readFileSync(`${EVALS}pack-laravel-refines-the-gates/prompt.md`, "utf8");
+  expect(prompt).toContain("scopeActive");
+  expect(prompt).toMatch(/crew profile[^.]*then confirm them/);
+  expect(readFileSync(`${EVALS}pack-laravel-absent/prompt.md`, "utf8")).toContain(
+    "php artisan test",
+  );
+  expect(readFileSync(`${EVALS}pack-agentic-os-seats-the-team/prompt.md`, "utf8")).toContain(
+    "on-call",
+  );
+  for (const name of PACK_CASES) {
+    const text = readFileSync(`${EVALS}${name}/prompt.md`, "utf8");
+    expect(text, name).toMatch(/^---\nmax_turns: \d+\n/);
+    expect(text, name).toContain("without waiting for me");
+  }
+});
+
+test("SP6-T6 AC-13: the committed records of the SP6 run hold no absolute path and no secret: the redacted aggregate copy, the evals record and the pack READMEs' figures paragraphs", () => {
+  const files = [
+    "docs/evals/2026-10-21-sp6-results.md",
+    "docs/evals/2026-10-21-sp6-aggregate-result.json",
+    "packs/laravel/README.md",
+    "packs/agentic-os/README.md",
+  ];
+  for (const rel of files) {
+    const text = readFileSync(join(repoRoot, rel), "utf8");
+    for (const forbidden of ["/Users/", "/private/", "/tmp/", "crew-home-", repoRoot])
+      expect(text, `${rel} holds ${forbidden}`).not.toContain(forbidden);
+    expect(scanText(text, rel), rel).toEqual([]);
+  }
+  const aggregate = JSON.parse(readFileSync(join(repoRoot, files[1] as string), "utf8")) as {
+    suite: { root: string; plugins: { path: string }[] };
+    cases: { arms: Record<string, { tracePath: string }[]> }[];
+  };
+  expect(aggregate.suite.root).toBe("<repo>");
+  for (const plugin of aggregate.suite.plugins) expect(plugin.path).toBe("<repo>/plugins/core");
+  for (const c of aggregate.cases)
+    for (const runs of Object.values(c.arms))
+      for (const run of runs) expect(run.tracePath).toMatch(/^<tmp>\//);
+});
+
+test("SP6-T6 AC-26: the repository root reaches a pack fixture through PATH: the helper prints the root of the repository it lives in, a with fixture run without the variable registers the pack, and the fixtures take the variable first", () => {
+  const env = {
+    ...process.env,
+    PATH: `${FIXTURES_BIN}${delimiter}${PLUGIN_BIN}${delimiter}${process.env.PATH}`,
+  };
+  delete (env as Record<string, string | undefined>).WIZARDINGCODE_CREW_REPO;
+  const helper = spawnSync("wizardingcode-crew-repo", [], { encoding: "utf8", env });
+  expect(helper.status, helper.stderr).toBe(0);
+  expect(realpathSync(helper.stdout.trim())).toBe(realpathSync(repoRoot));
+  for (const name of ["pack-laravel-refines-the-gates", "pack-agentic-os-seats-the-team"]) {
+    const text = readFileSync(`${EVALS}${name}/fixture.sh`, "utf8");
+    expect(text, name).toContain(
+      'REPO="${WIZARDINGCODE_CREW_REPO:-$(wizardingcode-crew-repo 2>/dev/null || true)}"',
+    );
+    const dir = mkdtempSync(join(tmpdir(), `crew-eval-nohome-${name}-`));
+    const home = mkdtempSync(join(tmpdir(), "crew-evals-home-"));
+    try {
+      const run = spawnSync("sh", [`${EVALS}${name}/fixture.sh`], {
+        cwd: dir,
+        encoding: "utf8",
+        env: { ...env, WIZARDINGCODE_HOME: home },
+      });
+      expect(run.status, `${name}: ${run.stderr}`).toBe(0);
+      const pack = name.startsWith("pack-laravel")
+        ? "wizardingcode-pack-laravel"
+        : "wizardingcode-pack-agentic-os";
+      expect(existsSync(join(home, "crew", "packs", `${pack}.json`)), name).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      rmSync(home, { recursive: true, force: true });
+    }
+  }
+});
+
+test("SP6-T6 AC-24: the profile-pack grader's pattern holds after a person's confirmation and a refreshed detection: the key order command, source, pack is what the engine leaves", () => {
+  const dir = mkdtempSync(join(tmpdir(), "crew-eval-confirm-"));
+  const home = mkdtempSync(join(tmpdir(), "crew-evals-home-"));
+  const env = {
+    ...process.env,
+    PATH: `${FIXTURES_BIN}${delimiter}${PLUGIN_BIN}${delimiter}${process.env.PATH}`,
+    WIZARDINGCODE_HOME: home,
+    WIZARDINGCODE_CREW_REPO: repoRoot,
+  };
+  try {
+    const scaffold = spawnSync("sh", [`${EVALS}pack-laravel-refines-the-gates/fixture.sh`], {
+      cwd: dir,
+      encoding: "utf8",
+      env,
+    });
+    expect(scaffold.status, scaffold.stderr).toBe(0);
+    const pattern = new RegExp(
+      frontMatter(
+        readFileSync(`${EVALS}pack-laravel-refines-the-gates/graders/profile-pack.md`, "utf8"),
+      ).pattern as string,
+    );
+    const profile = () => readFileSync(join(dir, ".crew", "profile.json"), "utf8");
+    expect(profile()).not.toMatch(pattern);
+    const confirm = spawnSync("crew", ["profile", "confirm", "test"], {
+      cwd: dir,
+      encoding: "utf8",
+      env,
+    });
+    expect(confirm.status, confirm.stderr).toBe(0);
+    expect(profile()).toMatch(pattern);
+    const refresh = spawnSync("crew", ["detect", "--refresh"], { cwd: dir, encoding: "utf8", env });
+    expect(refresh.status, refresh.stderr).toBe(0);
+    expect(profile()).toMatch(pattern);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  }
 });

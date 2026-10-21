@@ -255,6 +255,19 @@ export function changedWatchedPaths(
   return allWatchedFiles(root, profile, maxFiles) ?? [];
 }
 
+/**
+ * Every path the change touches, before the watch's exclusions (SP6 Task 6): a pack template's
+ * globs name an agent's Markdown and `.claude/`, which the watch keeps out of the fingerprint and
+ * the gates. Git's view since the item's base, the item's own changes; nothing outside git, where
+ * the watched list walks the tree instead. Read for the templates' seats and for nothing else.
+ */
+export function changedPaths(root: string, base?: ChangeBase | null): string[] {
+  if (!isGitRepo(root)) return [];
+  const commit = base?.baseCommit ?? null;
+  const paths = commit ? gitChangedSince(root, commit) : gitChangedPaths(root);
+  return paths === null ? [] : ownChanges(root, paths, base);
+}
+
 /** The method a fingerprint was made with, so the same evidence is judged the same way everywhere. */
 export function fingerprintMethod(fingerprint: string | null): FingerprintMethod | undefined {
   return fingerprint?.startsWith(WALK_PREFIX) ? "walk" : undefined;

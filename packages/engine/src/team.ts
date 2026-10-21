@@ -262,6 +262,9 @@ export function plannedSeats(
   scope?: readonly string[],
   options?: { strategy?: boolean },
   registry: Record<TeamName, TeamDef> = TEAMS,
+  // The paths a pack template's globs are matched against: the change's paths before the watch's
+  // exclusions (SP6 Task 6), since an agent's Markdown is what such a template names.
+  templatePaths: readonly string[] = changed,
 ): Seat[] {
   // A todo's scope plans the todo's seats and nothing else (SP7b decision 14).
   if (scope !== undefined) return taskSeats(scope, policy);
@@ -319,7 +322,7 @@ export function plannedSeats(
     for (const [name, def] of Object.entries(registry) as [TeamName, TeamDef][]) {
       const rule = def.mandatory;
       if (rule.kind !== "paths" || !rule.globs?.length) continue;
-      const glob = rule.globs.find((g) => changed.some((p) => matchesAny(p, [g])));
+      const glob = rule.globs.find((g) => templatePaths.some((p) => matchesAny(p, [g])));
       if (glob)
         plan({
           role: "expert",
