@@ -820,3 +820,16 @@ test("SP6-T6 AC-8, AC-23: the records of 0.11.0 hold their exact strings: the vi
     ),
   ).toBe(true);
 });
+
+test("finding 121: the skill page's front matter is strict YAML (Bun.YAML), with the name crew-method and the description's text unchanged", () => {
+  // Copilot CLI 1.0.101 refused the copied page: an unquoted description holding ": " is read as a
+  // nested mapping by a strict parser, so the method never reached the Copilot agent.
+  const match = /^---\n([\s\S]*?)\n---\n/.exec(skill);
+  if (!match?.[1]) throw new Error("the skill page has no front matter");
+  const parsed = Bun.YAML.parse(match[1]) as Record<string, unknown>;
+  expect(Object.keys(parsed)).toEqual(["name", "description"]);
+  expect(parsed.name).toBe("crew-method");
+  expect(parsed.description).toBe(
+    "Use when the user asks for a code change in this repository: a fix, a feature, a refactor, a chore, a new product or an audit of the codebase. Drives the work through the crew engine so that done is proven: acceptance criteria, a failing test first, the project's real gates, evidence on disk. Not for questions that need no change.",
+  );
+});
