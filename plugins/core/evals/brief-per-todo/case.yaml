@@ -1,6 +1,6 @@
 # evals/brief-per-todo/case.yaml
 schema_version: "1.1"
 name: brief-per-todo
-tags: [team]
+tags: [team, benchmark]
 context:
   scaffold_script: fixture.sh

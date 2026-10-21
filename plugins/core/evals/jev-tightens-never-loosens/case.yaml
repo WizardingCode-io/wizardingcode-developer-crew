@@ -1,6 +1,6 @@
 # evals/jev-tightens-never-loosens/case.yaml
 schema_version: "1.1"
 name: jev-tightens-never-loosens
-tags: [jev]
+tags: [jev, benchmark]
 context:
   scaffold_script: fixture.sh

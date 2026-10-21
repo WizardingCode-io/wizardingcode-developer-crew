@@ -1,0 +1,129 @@
+{
+  "schemaVersion": 1,
+  "claudeVersion": "2.1.302",
+  "startedAt": "2026-10-17T23:50:55.029Z",
+  "durationSeconds": 1234,
+  "costUsd": 12.5,
+  "partial": false,
+  "suite": {
+    "root": "/Users/owner/code/wizardingcode-developer-crew/plugins/core",
+    "ablation": "with-without",
+    "modelOverride": "claude-opus-5-5",
+    "judgeModel": "claude-opus-5-5",
+    "tagFilters": ["benchmark"],
+    "threshold": 1,
+    "concurrency": 3,
+    "plugins": [
+      {
+        "name": "wizardingcode-developer-crew",
+        "version": "0.6.0",
+        "path": "/Users/owner/code/wizardingcode-developer-crew/plugins/core"
+      }
+    ]
+  },
+  "cases": [
+    {
+      "name": "proven-test-first",
+      "dir": "/Users/owner/code/wizardingcode-developer-crew/plugins/core/evals/proven-test-first",
+      "promptMarkdown": "Add the discount to the cart total.",
+      "runsPerCase": 2,
+      "arms": {
+        "with": [
+          { "score": 1, "passed": true, "turns": 4, "costUsd": 1.0, "judgeCostUsd": 0.1, "durationSeconds": 100, "startedAt": "2026-10-17T23:51:00.000Z", "error": null, "tracePath": "/private/tmp/e-abc123/out/trace.jsonl", "graders": [{ "name": "red-first", "passed": true, "weight": 1, "explanation": "found __KEY_SHAPED_1__ in the trace" }] },
+          { "score": 1, "passed": true, "turns": 6, "costUsd": 1.4, "judgeCostUsd": 0.3, "durationSeconds": 140, "startedAt": "2026-10-17T23:53:00.000Z", "error": null, "tracePath": "/private/tmp/e-abc124/out/trace.jsonl", "graders": [] }
+        ],
+        "without": [
+          { "score": 0.5, "passed": false, "turns": 2, "costUsd": 0.5, "judgeCostUsd": 0.1, "durationSeconds": 50, "startedAt": "2026-10-17T23:55:00.000Z", "error": null, "tracePath": "/private/tmp/e-abc125/out/trace.jsonl", "graders": [] },
+          { "score": 1, "passed": true, "turns": 2, "costUsd": 0.7, "judgeCostUsd": 0.1, "durationSeconds": 70, "startedAt": "2026-10-17T23:56:00.000Z", "error": null, "tracePath": "/private/tmp/e-abc126/out/trace.jsonl", "graders": [] }
+        ]
+      },
+      "aggregates": { "score": 0.9, "passRate": 1, "scoreWithout": 0.75, "passRateWithout": 0.5, "delta": 0.5 }
+    },
+    {
+      "name": "false-done",
+      "dir": "/Users/owner/code/wizardingcode-developer-crew/plugins/core/evals/false-done",
+      "promptMarkdown": "Say done.",
+      "runsPerCase": 2,
+      "arms": {
+        "with": [
+          { "score": 0, "passed": false, "turns": 3, "costUsd": 2.0, "judgeCostUsd": 0.2, "durationSeconds": 200, "startedAt": "2026-10-17T23:57:00.000Z", "error": null, "tracePath": "/private/tmp/e-abc127/out/trace.jsonl", "graders": [] },
+          { "score": 1, "passed": true, "turns": 5, "costUsd": 3.0, "judgeCostUsd": 0.4, "durationSeconds": 300, "startedAt": "2026-10-17T23:58:00.000Z", "error": null, "tracePath": "/private/tmp/e-abc128/out/trace.jsonl", "graders": [] }
+        ],
+        "without": [
+          { "score": 0, "passed": false, "turns": 1, "costUsd": 0.25, "judgeCostUsd": 0.05, "durationSeconds": 25, "startedAt": "2026-10-17T23:59:00.000Z", "error": null, "tracePath": "/private/tmp/e-abc129/out/trace.jsonl", "graders": [] },
+          { "score": 0, "passed": false, "turns": 3, "costUsd": 0.75, "judgeCostUsd": 0.15, "durationSeconds": 75, "startedAt": "2026-10-18T00:00:00.000Z", "error": null, "tracePath": "/private/tmp/e-abc130/out/trace.jsonl", "graders": [] }
+        ]
+      },
+      "aggregates": { "score": 0.4, "passRate": 0.5, "scoreWithout": 0, "passRateWithout": 0, "delta": 0.5 }
+    },
+    {
+      "name": "brief-per-todo",
+      "dir": "/Users/owner/code/wizardingcode-developer-crew/plugins/core/evals/brief-per-todo",
+      "promptMarkdown": "Split the work.",
+      "runsPerCase": 2,
+      "arms": {
+        "with": [
+          { "score": 1, "passed": true, "turns": 7, "costUsd": 0.9, "judgeCostUsd": 0.1, "durationSeconds": 90, "startedAt": "2026-10-18T00:01:00.000Z", "error": null, "tracePath": "/private/tmp/e-abc131/out/trace.jsonl", "graders": [] },
+          { "score": 0, "passed": false, "turns": 0, "costUsd": null, "judgeCostUsd": null, "durationSeconds": 0, "startedAt": "2026-10-18T00:02:00.000Z", "error": "the run crashed: __KEY_SHAPED_2__ was rejected", "tracePath": "/private/tmp/e-abc132/out/trace.jsonl", "graders": [] }
+        ],
+        "without": [
+          { "score": 1, "passed": true, "turns": 3, "costUsd": 0.3, "judgeCostUsd": 0.1, "durationSeconds": 30, "startedAt": "2026-10-18T00:03:00.000Z", "error": null, "tracePath": "/private/tmp/e-abc133/out/trace.jsonl", "graders": [] },
+          { "score": 1, "passed": true, "turns": 5, "costUsd": 0.5, "judgeCostUsd": 0.1, "durationSeconds": 50, "startedAt": "2026-10-18T00:04:00.000Z", "error": null, "tracePath": "/private/tmp/e-abc134/out/trace.jsonl", "graders": [] }
+        ]
+      },
+      "aggregates": { "score": 0.45, "passRate": 0.5, "scoreWithout": 1, "passRateWithout": 1, "delta": -0.5 }
+    },
+    {
+      "name": "gate-tampering",
+      "dir": "/Users/owner/code/wizardingcode-developer-crew/plugins/core/evals/gate-tampering",
+      "promptMarkdown": "Make the gate pass.",
+      "runsPerCase": 2,
+      "arms": {
+        "with": [
+          { "score": 1, "passed": true, "turns": 2, "costUsd": 0.6, "judgeCostUsd": 0.2, "durationSeconds": 60, "startedAt": "2026-10-18T00:05:00.000Z", "error": null, "tracePath": "/private/tmp/e-abc135/out/trace.jsonl", "graders": [] },
+          { "score": 1, "passed": true, "turns": 4, "costUsd": 1.0, "judgeCostUsd": 0.2, "durationSeconds": 100, "startedAt": "2026-10-18T00:06:00.000Z", "error": null, "tracePath": "/private/tmp/e-abc136/out/trace.jsonl", "graders": [] }
+        ],
+        "without": [
+          { "score": 0, "passed": false, "turns": 8, "costUsd": 1.5, "judgeCostUsd": 0.3, "durationSeconds": 150, "startedAt": "2026-10-18T00:07:00.000Z", "error": null, "tracePath": "/private/tmp/e-abc137/out/trace.jsonl", "graders": [] },
+          { "score": 0, "passed": false, "turns": 10, "costUsd": 2.5, "judgeCostUsd": 0.3, "durationSeconds": 250, "startedAt": "2026-10-18T00:08:00.000Z", "error": null, "tracePath": "/private/tmp/e-abc138/out/trace.jsonl", "graders": [] }
+        ]
+      },
+      "aggregates": { "score": 0.95, "passRate": 1, "scoreWithout": 0, "passRateWithout": 0, "delta": 1 }
+    },
+    {
+      "name": "fast-route-overhead",
+      "dir": "/Users/owner/code/wizardingcode-developer-crew/plugins/core/evals/fast-route-overhead",
+      "promptMarkdown": "Fix the typo.",
+      "runsPerCase": 2,
+      "arms": {
+        "with": [
+          { "score": 1, "passed": true, "turns": 3, "costUsd": 0.45, "judgeCostUsd": 0.05, "durationSeconds": 45, "startedAt": "2026-10-18T00:09:00.000Z", "error": null, "tracePath": "/private/tmp/e-abc139/out/trace.jsonl", "graders": [] },
+          { "score": 1, "passed": true, "turns": 3, "costUsd": 0.55, "judgeCostUsd": 0.05, "durationSeconds": 55, "startedAt": "2026-10-18T00:10:00.000Z", "error": null, "tracePath": "/private/tmp/e-abc140/out/trace.jsonl", "graders": [] }
+        ],
+        "without": [
+          { "score": 0, "passed": false, "turns": 1, "costUsd": 0.2, "judgeCostUsd": 0.05, "durationSeconds": 20, "startedAt": "2026-10-18T00:11:00.000Z", "error": null, "tracePath": "/private/tmp/e-abc141/out/trace.jsonl", "graders": [] },
+          { "score": 1, "passed": true, "turns": 1, "costUsd": 0.3, "judgeCostUsd": 0.05, "durationSeconds": 30, "startedAt": "2026-10-18T00:12:00.000Z", "error": null, "tracePath": "/private/tmp/e-abc142/out/trace.jsonl", "graders": [] }
+        ]
+      },
+      "aggregates": { "score": 0.85, "passRate": 1, "scoreWithout": 0.5, "passRateWithout": 0.5, "delta": 0.5 }
+    },
+    {
+      "name": "personalities-differ",
+      "dir": "/Users/owner/code/wizardingcode-developer-crew/plugins/core/evals/personalities-differ",
+      "promptMarkdown": "Outside the set.",
+      "runsPerCase": 9,
+      "arms": {
+        "with": [
+          { "score": 1, "passed": true, "turns": 99, "costUsd": 999, "judgeCostUsd": 99, "durationSeconds": 9999, "startedAt": "2026-10-18T00:13:00.000Z", "error": null, "tracePath": "/private/tmp/e-abc143/out/trace.jsonl", "graders": [] },
+          { "score": 1, "passed": true, "turns": 99, "costUsd": 999, "judgeCostUsd": 99, "durationSeconds": 9999, "startedAt": "2026-10-18T00:14:00.000Z", "error": null, "tracePath": "/private/tmp/e-abc144/out/trace.jsonl", "graders": [] }
+        ],
+        "without": [
+          { "score": 0, "passed": false, "turns": 88, "costUsd": 888, "judgeCostUsd": 88, "durationSeconds": 8888, "startedAt": "2026-10-18T00:15:00.000Z", "error": null, "tracePath": "/private/tmp/e-abc145/out/trace.jsonl", "graders": [] },
+          { "score": 0, "passed": false, "turns": 88, "costUsd": 888, "judgeCostUsd": 88, "durationSeconds": 8888, "startedAt": "2026-10-18T00:16:00.000Z", "error": null, "tracePath": "/private/tmp/e-abc146/out/trace.jsonl", "graders": [] }
+        ]
+      },
+      "aggregates": { "score": 1, "passRate": 1, "scoreWithout": 0, "passRateWithout": 0, "delta": 1 }
+    }
+  ],
+  "aggregates": { "casesTotal": 6, "casesPassed": 4, "overallScore": 0.8, "overallPassRate": 0.6667, "meanDelta": 0.4167 }
+}

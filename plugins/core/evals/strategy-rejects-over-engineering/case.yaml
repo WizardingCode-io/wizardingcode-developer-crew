@@ -1,6 +1,6 @@
 # evals/strategy-rejects-over-engineering/case.yaml
 schema_version: "1.1"
 name: strategy-rejects-over-engineering
-tags: [strategy]
+tags: [strategy, benchmark]
 context:
   scaffold_script: fixture.sh

@@ -85,7 +85,8 @@ const CASES = [
 
 test("SP2c, SP7b-T7 AC-1, SP3-T1 AC-5, SP3-T7 AC-1, SP4-T6 AC-1: the thirty-four cases each have their four parts, and the fixtures they share exist", () => {
   const folders = readdirSync(EVALS)
-    .filter((f) => !["README.md", "fixtures", "results"].includes(f))
+    // benchmark.json is the benchmark set (SP6 Task 5), not a case.
+    .filter((f) => !["README.md", "benchmark.json", "fixtures", "results"].includes(f))
     .sort();
   expect(folders).toEqual([...CASES].sort());
   for (const name of CASES) {
@@ -515,10 +516,11 @@ test("SP8-T6 AC-1: the SP8 cases carry the strategy and audit tags the sandbox r
   expect(SANDBOX_TAGS).toContain("audit");
   const tagsOf = (name: string) =>
     readFileSync(`${EVALS}${name}/case.yaml`, "utf8").match(/^tags:\s*\[([^\]]*)\]/m)?.[1] ?? "";
-  expect(tagsOf("strategy-rejects-over-engineering")).toBe("strategy");
+  // The benchmark set (SP6 Task 5) tags its cases too.
+  expect(tagsOf("strategy-rejects-over-engineering")).toBe("strategy, benchmark");
   expect(tagsOf("strategy-declares-phases")).toBe("strategy");
   expect(tagsOf("audit-report-three-formats")).toBe("audit");
-  expect(tagsOf("issue-fast-overhead")).toBe("cost");
+  expect(tagsOf("issue-fast-overhead")).toBe("cost, benchmark");
   for (const name of [...SP8_CASES, "fast-route-overhead"]) {
     const fixture = readFileSync(`${EVALS}${name}/fixture.sh`, "utf8");
     // The audit case's key is assembled by the shell at scaffold time: no committed text matches the engine's rule.
@@ -580,7 +582,10 @@ test("SP4-T6 AC-1: the knowledge cases carry the tag the sandbox runs, seed the 
   for (const name of SP4_CASES) {
     const tags =
       readFileSync(`${EVALS}${name}/case.yaml`, "utf8").match(/^tags:\s*\[([^\]]*)\]/m)?.[1] ?? "";
-    expect(tags, name).toBe("knowledge");
+    // Two of the three are in the benchmark set (SP6 Task 5) and carry its tag too.
+    expect(tags, name).toBe(
+      name === "cto-report-from-records" ? "knowledge" : "knowledge, benchmark",
+    );
     const fixture = readFileSync(`${EVALS}${name}/fixture.sh`, "utf8");
     expect(fixture, name).not.toMatch(/AKIA[A-Z0-9]{16}/);
     expect(fixture, name).not.toMatch(/\$HOME|~\/|\bcurl\b|\bwget\b/);

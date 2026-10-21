@@ -114,6 +114,10 @@ What each runtime enforces, from its official page (read on 2026-10-20; a reques
 - the roles' answers filed: requested (no subagent event)
 - the roles read-only: enforced
 
+## Benchmark
+
+`bun scripts/benchmark.ts` runs the cases tagged `benchmark` (the set and its categories, functional, security and cost, in `plugins/core/evals/benchmark.json`) through the eval kit as the whole suite runs, with the plugin and without it, and writes `docs/benchmark/<date>-<version>.md` and `.json` from the kit's aggregate result alone: no figure is typed by hand. It needs Claude Code with the eval kit and a key in the environment; the cost of a run is what the newest record under `docs/benchmark/` says, and the first record is written at the close of the subproject that added the benchmark. `bun scripts/benchmark.ts --from <aggregate.json>` writes the report from a saved result. `docs/benchmark/README.md` says what the benchmark measures, how a record is read and what it does not measure.
+
 ## Where state lives
 
 - **`.crew/` in the repository.** Crew is active in a git repository, or in a folder that already holds `.crew/` (`crew detect` creates it); anywhere else it stays silent.

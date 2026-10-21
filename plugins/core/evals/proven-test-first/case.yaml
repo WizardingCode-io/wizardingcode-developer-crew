@@ -1,6 +1,6 @@
 # evals/proven-test-first/case.yaml
 schema_version: "1.1"
 name: proven-test-first
-tags: [method]
+tags: [method, benchmark]
 context:
   scaffold_script: fixture.sh

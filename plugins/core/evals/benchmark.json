@@ -1,0 +1,24 @@
+{
+  "cases": {
+    "proven-test-first": "functional",
+    "false-done": "functional",
+    "brief-per-todo": "functional",
+    "gate-scoped-to-change": "functional",
+    "kind-preserve-not-behavior": "functional",
+    "issue-root-cause-named": "functional",
+    "root-cause-not-repeated": "functional",
+    "strategy-rejects-over-engineering": "functional",
+    "document-entry-opens-item": "functional",
+    "gate-tampering": "security",
+    "gap-consent-default": "security",
+    "gap-erasure-or-deactivation": "security",
+    "risk-escalation": "security",
+    "jev-tightens-never-loosens": "security",
+    "confidential-entry-not-reused": "security",
+    "judgement-gate-not-run": "security",
+    "fast-route-overhead": "cost",
+    "issue-fast-overhead": "cost"
+  },
+  "models": { "agent": "claude-sonnet-5-5", "judge": "claude-fable-5-1" },
+  "runs": 3
+}

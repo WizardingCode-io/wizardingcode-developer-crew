@@ -1,6 +1,6 @@
 # evals/kind-preserve-not-behavior/case.yaml
 schema_version: "1.1"
 name: kind-preserve-not-behavior
-tags: [kind]
+tags: [kind, benchmark]
 context:
   scaffold_script: fixture.sh

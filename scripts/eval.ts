@@ -11,6 +11,8 @@ export interface EvalOptions {
   path: string;
   realGitDir: string | null;
   caseName?: string;
+  /** The tags to run in place of the sandbox list (the benchmark's `benchmark`); never with a case. */
+  tags?: string[];
 }
 
 const ALLOW_TOOLS = [
@@ -59,6 +61,8 @@ export const SANDBOX_TAGS = [
   "audit",
   // SP4 (Task 6): the knowledge cases run in the sandbox (the fixture seeds the base through the engine under the sandbox's home).
   "knowledge",
+  // SP6 (Task 5): the benchmark set's tag; its cases carry a sandbox tag each as well.
+  "benchmark",
 ];
 const COMMON = [
   "plugin",
@@ -72,6 +76,8 @@ const COMMON = [
 ];
 
 export function evalInvocation(options: EvalOptions): { path: string; args: string[] } {
+  if (options.tags && options.caseName)
+    throw new Error("evalInvocation: a one-case run takes no tags");
   const entries = [join(options.root, "plugins/core/bin")];
   if (options.realGitDir) entries.push(options.realGitDir);
   if (options.path) entries.push(options.path);
@@ -97,7 +103,7 @@ export function evalInvocation(options: EvalOptions): { path: string; args: stri
     : [
         ...COMMON,
         "--tag",
-        ...SANDBOX_TAGS,
+        ...(options.tags ?? SANDBOX_TAGS),
         "--keep-temp",
         "--judge-model",
         "claude-fable-5-1",
@@ -149,6 +155,16 @@ export function armRuns(arms: unknown): { tracePath?: string }[] {
   return [];
 }
 
+/** The newest results folder under the kit's results directory (the last `<year>-…` name in sort order), or null. */
+export function newestResults(results: string): string | null {
+  if (!existsSync(results)) return null;
+  const newest = readdirSync(results)
+    .filter((f) => /^\d{4}-/.test(f))
+    .sort()
+    .pop();
+  return newest === undefined ? null : join(results, newest);
+}
+
 /** The `needs-rerun` lines of a results folder: each case whose kept trace shows a denied reference read. */
 export function scanResults(dir: string): string[] {
   const aggregate = join(dir, "aggregate-result.json");
@@ -197,13 +213,7 @@ if (import.meta.main) {
   console.log(`claude ${args.join(" ")}`);
   const run = spawnSync("claude", args, { stdio: "inherit", env: { ...process.env, PATH: path } });
   // The newest results folder's traces, read for a denied reference read (finding 95).
-  const results = join(import.meta.dir, "..", "plugins", "core", "evals", "results");
-  const newest = existsSync(results)
-    ? readdirSync(results)
-        .filter((f) => /^\d{4}-/.test(f))
-        .sort()
-        .pop()
-    : undefined;
-  if (newest) for (const line of scanResults(join(results, newest))) console.log(line);
+  const newest = newestResults(join(import.meta.dir, "..", "plugins", "core", "evals", "results"));
+  if (newest) for (const line of scanResults(newest)) console.log(line);
   process.exit(run.status ?? 1);
 }

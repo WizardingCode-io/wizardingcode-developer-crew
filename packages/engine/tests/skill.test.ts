@@ -754,3 +754,44 @@ test("SP6-T4 AC-7: the runtimes reference, the launch sentence in gate.md and co
     "### 114. SP6 Task 4 (`2026-10-20-008`): the Copilot tier moved to requested, the PowerShell layer, and the debt that stands",
   );
 });
+
+test("SP6-T5 AC-5, AC-10: docs/benchmark/README.md has its four parts, the README's Benchmark section names the command and the records folder, the evals README names the tag and the set, and none of them types a figure", () => {
+  const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
+  const bench = read("../../../docs/benchmark/README.md");
+  for (const heading of [
+    "## What it measures",
+    "## How to run it",
+    "## How to read a record",
+    "## What it does not measure",
+  ])
+    expect(bench, heading).toContain(heading);
+  expect(bench).toContain("bun scripts/benchmark.ts");
+  // AC-20: the cost is read in the newest record, never typed here.
+  expect(bench).toContain("The cost of a run is what the newest record here says.");
+  const readme = read("../../../README.md");
+  const start = readme.indexOf("\n## Benchmark\n");
+  expect(start).toBeGreaterThan(0);
+  const section = readme.slice(start, readme.indexOf("\n## ", start + 5));
+  expect(section).toContain("bun scripts/benchmark.ts");
+  expect(section).toContain("docs/benchmark/");
+  const evals = read("../../../plugins/core/evals/README.md");
+  expect(evals).toContain("`benchmark`");
+  expect(evals).toContain("benchmark.json");
+  const benchLines = evals
+    .split("\n")
+    .filter((line) => /benchmark/i.test(line))
+    .join("\n");
+  // No figure typed by hand: no USD, no dollar amount, no percentage, no rate as a fraction or a
+  // decimal between 0 and 1; the figures are the newest record's.
+  for (const [name, text] of [
+    ["docs/benchmark/README.md", bench],
+    ["the README's Benchmark section", section],
+    ["the evals README's benchmark lines", benchLines],
+  ] as const) {
+    expect(text, name).not.toMatch(/USD/);
+    expect(text, name).not.toMatch(/\$\s?\d/);
+    expect(text, name).not.toMatch(/\d\s?%/);
+    expect(text, name).not.toMatch(/\b0\.\d+\b/);
+    expect(text, name).not.toMatch(/\b\d+\s*\/\s*\d+\b/);
+  }
+});
