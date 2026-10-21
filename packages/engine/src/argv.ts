@@ -15,7 +15,16 @@ export interface Parsed {
 }
 
 // Flags that never take a value, so a word after them stays a positional argument.
-export const BOOLEAN_FLAGS = new Set(["print", "json", "refresh", "force", "not-run", "all"]);
+export const BOOLEAN_FLAGS = new Set([
+  "print",
+  "json",
+  "refresh",
+  "force",
+  "not-run",
+  "all",
+  // `crew policy set <list key> <value> --remove` (finding 120): in either position, never a value.
+  "remove",
+]);
 
 /** A comma-separated flag as its trimmed non-empty words; a flag absent, boolean or empty gives none (finding 88). */
 export function commaList(value: unknown): string[] {

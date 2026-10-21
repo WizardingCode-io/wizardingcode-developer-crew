@@ -8755,3 +8755,238 @@ test("SP6-T4 AC-8: the end-to-end rows per runtime and enforced guarantee throug
     (await o.run("answer", "file", claudeItem, "--role", "review-security", "--file", file)).code,
   ).toBe(1);
 });
+
+// Finding 120 (item 2026-10-21-005): crew policy set takes riskPathExclusions as a list key, one glob
+// added or removed per command, recorded as the user's decision before the file is written.
+const F120_HINT =
+  "riskPathExclusions is a relative glob of the repository with at least one literal character: no leading slash or ./, no .. segment, no whitespace or backslash, up to 200 characters, not ";
+
+/** A repository with a hand-written, trusted policy holding `minimumRoute` alone. */
+function policyRepo(policy = '{"minimumRoute":"standard"}') {
+  const root = makeRepo({ "package.json": JSON.stringify({ scripts: { test: "exit 0" } }) });
+  const c = io(root);
+  const paths = repoPaths(root, c.env);
+  const file = join(root, ".crew", "policy.json");
+  mkdirSync(join(root, ".crew"), { recursive: true });
+  writeFileSync(file, policy);
+  return { root, c, paths, file };
+}
+
+test("F120 AC-1: crew policy set riskPathExclusions <glob> appends the glob, keeps the file trusted and the rest as written, records the user's decision, and says already listed the second time", async () => {
+  const { c, paths, file } = policyRepo();
+  const glob = "packages/engine/src/hooks/session-start.ts";
+  const added = await c.run("policy", "set", "riskPathExclusions", glob);
+  expect(added.code).toBe(0);
+  expect(added.out.trim()).toBe(`policy riskPathExclusions: ${glob} added (now: ${glob})`);
+  expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({
+    minimumRoute: "standard",
+    riskPathExclusions: [glob],
+  });
+  expect(readProtectedJson(paths, file).tampered).toBe(false);
+  expect(loadPolicy(paths).policy.riskPathExclusions).toEqual([glob]);
+  const register = listDecisions(paths);
+  expect(register[0]).toMatchObject({
+    item: "policy",
+    kind: "decision",
+    by: "the user",
+    text: `riskPathExclusions: ${glob} added, paths matching it never raise the route (ADR 0003)`,
+  });
+  const text = readFileSync(file, "utf8");
+  const again = await c.run("policy", "set", "riskPathExclusions", glob);
+  expect(again.code).toBe(0);
+  expect(again.out.trim()).toBe(`policy riskPathExclusions: ${glob} already listed (now: ${glob})`);
+  expect(readFileSync(file, "utf8")).toBe(text);
+  expect(listDecisions(paths).length).toBe(register.length);
+  const second = await c.json("policy", "set", "riskPathExclusions", "app/Billing/Invoice.php");
+  expect(second.code).toBe(0);
+  expect(second.data).toMatchObject({
+    key: "riskPathExclusions",
+    value: "app/Billing/Invoice.php",
+    action: "added",
+    list: [glob, "app/Billing/Invoice.php"],
+  });
+  expect(loadPolicy(paths).policy.riskPathExclusions).toEqual([glob, "app/Billing/Invoice.php"]);
+});
+
+test("F120 AC-2: --remove takes the glob out and prints the list left, nothing when empty; a glob not listed is refused naming it and the list, nothing written", async () => {
+  const { c, paths, file } = policyRepo('{"riskPathExclusions":["a/b.ts","c/*.ts"]}');
+  const before = readFileSync(file, "utf8");
+  const count = listDecisions(paths).length;
+  const missing = await c.run("policy", "set", "riskPathExclusions", "x/y.ts", "--remove");
+  expect(missing.code).toBe(1);
+  expect(missing.err).toContain(
+    "riskPathExclusions does not list x/y.ts (it lists: a/b.ts, c/*.ts)",
+  );
+  expect(readFileSync(file, "utf8")).toBe(before);
+  expect(listDecisions(paths).length).toBe(count);
+  const removed = await c.run("policy", "set", "riskPathExclusions", "a/b.ts", "--remove");
+  expect(removed.code).toBe(0);
+  expect(removed.out.trim()).toBe("policy riskPathExclusions: a/b.ts removed (now: c/*.ts)");
+  expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({ riskPathExclusions: ["c/*.ts"] });
+  expect(listDecisions(paths)[0]).toMatchObject({
+    item: "policy",
+    kind: "decision",
+    by: "the user",
+    text: "riskPathExclusions: a/b.ts removed, paths matching it raise the route again",
+  });
+  const last = await c.json("policy", "set", "riskPathExclusions", "c/*.ts", "--remove");
+  expect(last.code).toBe(0);
+  expect(last.data).toMatchObject({ action: "removed", list: [] });
+  expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({ riskPathExclusions: [] });
+  const plain = await c.run("policy", "set", "riskPathExclusions", "c/*.ts", "--remove");
+  expect(plain.code).toBe(1);
+  expect(plain.err).toContain("riskPathExclusions does not list c/*.ts (it lists nothing)");
+  const text = readFileSync(file, "utf8");
+  const gone = await c.run("policy", "set", "riskPathExclusions", "nothing/here.ts", "--remove");
+  expect(gone.code).toBe(1);
+  expect(readFileSync(file, "utf8")).toBe(text);
+});
+
+test("F120 AC-3: a leading slash, a .. segment, whitespace, a backslash or 201 characters are refused with the hint and nothing written; crew help and the unknown-key refusal name riskPathExclusions", async () => {
+  const { c, paths, file } = policyRepo();
+  const before = readFileSync(file, "utf8");
+  const count = listDecisions(paths).length;
+  for (const value of ["/abs/path.ts", "a/../b.ts", "../x", "a b.ts", "a\\b.ts", "a".repeat(201)]) {
+    const refused = await c.run("policy", "set", "riskPathExclusions", value);
+    expect(refused.code).toBe(1);
+    expect(refused.err).toContain(`${F120_HINT}${value}`);
+  }
+  expect(readFileSync(file, "utf8")).toBe(before);
+  expect(listDecisions(paths).length).toBe(count);
+  const help = await c.run("help");
+  expect(help.out).toContain('riskPathExclusions "<glob>" (one glob added; --remove takes it out)');
+  const badKey = await c.run("policy", "set", "minimumRoute", "full");
+  expect(badKey.code).toBe(1);
+  expect(badKey.err).toContain("riskPathExclusions");
+  expect(badKey.err).toContain("attendedDecisions, unattendedDecisions");
+});
+
+test("F120 AC-5: the register holds the add and the removal as the user's decision, appended before the file is written; already listed and every refusal append nothing", async () => {
+  const { c, paths, file } = policyRepo();
+  const count = listDecisions(paths).length;
+  expect((await c.run("policy", "set", "riskPathExclusions", "a/b.ts")).code).toBe(0);
+  expect(listDecisions(paths).length).toBe(count + 1);
+  expect(listDecisions(paths)[0]).toMatchObject({
+    item: "policy",
+    kind: "decision",
+    by: "the user",
+    text: "riskPathExclusions: a/b.ts added, paths matching it never raise the route (ADR 0003)",
+  });
+  expect((await c.run("policy", "set", "riskPathExclusions", "a/b.ts")).code).toBe(0);
+  expect((await c.run("policy", "set", "riskPathExclusions", "/abs.ts")).code).toBe(1);
+  expect((await c.run("policy", "set", "riskPathExclusions", "x/y.ts", "--remove")).code).toBe(1);
+  expect(listDecisions(paths).length).toBe(count + 1);
+  expect((await c.run("policy", "set", "riskPathExclusions", "a/b.ts", "--remove")).code).toBe(0);
+  expect(listDecisions(paths).length).toBe(count + 2);
+  expect(listDecisions(paths)[0]).toMatchObject({
+    text: "riskPathExclusions: a/b.ts removed, paths matching it raise the route again",
+  });
+  // The record comes first: a write that throws (the policy path is a directory) leaves the decision
+  // recorded and the file as it was, and the command fails.
+  rmSync(file);
+  mkdirSync(file);
+  const thrown = await c
+    .run("policy", "set", "riskPathExclusions", "c/d.ts")
+    .catch((error: Error) => ({ code: -1, out: "", err: error.message }));
+  expect(thrown.code).not.toBe(0);
+  expect(statSync(file).isDirectory()).toBe(true);
+  expect(listDecisions(paths).length).toBe(count + 3);
+  expect(listDecisions(paths)[0]).toMatchObject({
+    text: "riskPathExclusions: c/d.ts added, paths matching it never raise the route (ADR 0003)",
+  });
+});
+
+test("F120 AC-6: a glob with no literal character or a leading ./ is refused; session-start.ts and session-*.ts are accepted; --remove runs the shape check; no value is the usage line and an empty string the hint", async () => {
+  const { c, paths, file } = policyRepo();
+  const before = readFileSync(file, "utf8");
+  for (const value of ["*", "**", "**/*", "?", "*/", "./x"]) {
+    const refused = await c.run("policy", "set", "riskPathExclusions", value);
+    expect(refused.code).toBe(1);
+    expect(refused.err).toContain(`${F120_HINT}${value}`);
+  }
+  expect(readFileSync(file, "utf8")).toBe(before);
+  const remove = await c.run("policy", "set", "riskPathExclusions", "../x", "--remove");
+  expect(remove.code).toBe(1);
+  expect(remove.err).toContain(`${F120_HINT}../x`);
+  expect(remove.err).not.toContain("does not list");
+  const usage = await c.run("policy", "set", "riskPathExclusions");
+  expect(usage.code).toBe(1);
+  expect(usage.err).toContain("usage: crew policy set <");
+  const empty = await c.run("policy", "set", "riskPathExclusions", "");
+  expect(empty.code).toBe(1);
+  expect(empty.err).toContain(F120_HINT);
+  expect(readFileSync(file, "utf8")).toBe(before);
+  for (const value of [
+    "packages/engine/src/hooks/session-start.ts",
+    "packages/engine/src/hooks/session-*.ts",
+  ]) {
+    expect((await c.run("policy", "set", "riskPathExclusions", value)).code).toBe(0);
+  }
+  expect(loadPolicy(paths).policy.riskPathExclusions).toEqual([
+    "packages/engine/src/hooks/session-start.ts",
+    "packages/engine/src/hooks/session-*.ts",
+  ]);
+});
+
+test("F120 AC-7: a policy edited outside the engine refuses the add and the removal until crew policy accept; a hand-written list that is not an array or holds non-strings is cleaned at the next write, the other keys kept", async () => {
+  const { c, paths, file } = policyRepo();
+  expect((await c.run("policy", "set", "attendedDecisions", "relay")).code).toBe(0);
+  writeFileSync(
+    file,
+    '{"attendedDecisions":"relay","minimumRoute":"fast","riskPathExclusions":["a/b.ts"]}',
+  );
+  const edited = readFileSync(file, "utf8");
+  const count = listDecisions(paths).length;
+  const add = await c.run("policy", "set", "riskPathExclusions", "c/d.ts");
+  expect(add.code).toBe(1);
+  expect(add.err).toContain("state changed outside the engine: .crew/policy.json");
+  const remove = await c.run("policy", "set", "riskPathExclusions", "a/b.ts", "--remove");
+  expect(remove.code).toBe(1);
+  expect(remove.err).toContain("state changed outside the engine: .crew/policy.json");
+  expect(readFileSync(file, "utf8")).toBe(edited);
+  expect(listDecisions(paths).length).toBe(count);
+  expect((await c.run("policy", "accept")).code).toBe(0);
+  expect((await c.run("policy", "set", "riskPathExclusions", "c/d.ts")).code).toBe(0);
+  expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({
+    attendedDecisions: "relay",
+    minimumRoute: "fast",
+    riskPathExclusions: ["a/b.ts", "c/d.ts"],
+  });
+  expect(readProtectedJson(paths, file).tampered).toBe(false);
+  // A string where the list should be, and non-strings inside it: read as the loader reads them.
+  const asString = policyRepo('{"riskPathExclusions":"a/b.ts","minimumRoute":"fast"}');
+  expect((await asString.c.run("policy", "set", "riskPathExclusions", "c/d.ts")).code).toBe(0);
+  expect(JSON.parse(readFileSync(asString.file, "utf8"))).toEqual({
+    riskPathExclusions: ["c/d.ts"],
+    minimumRoute: "fast",
+  });
+  const mixed = policyRepo('{"riskPathExclusions":["a/b.ts",3,null,"c/*.ts"]}');
+  const cleaned = await mixed.c.run("policy", "set", "riskPathExclusions", "e/f.ts");
+  expect(cleaned.code).toBe(0);
+  expect(cleaned.out.trim()).toBe(
+    "policy riskPathExclusions: e/f.ts added (now: a/b.ts, c/*.ts, e/f.ts)",
+  );
+  expect(JSON.parse(readFileSync(mixed.file, "utf8"))).toEqual({
+    riskPathExclusions: ["a/b.ts", "c/*.ts", "e/f.ts"],
+  });
+});
+
+test("F120 AC-9: --remove is a boolean flag in either position, and refused with a scalar key", async () => {
+  const { c, paths, file } = policyRepo('{"riskPathExclusions":["a/b.ts","c/d.ts"]}');
+  const leading = await c.run("policy", "set", "riskPathExclusions", "--remove", "a/b.ts");
+  expect(leading.code).toBe(0);
+  expect(leading.out.trim()).toBe("policy riskPathExclusions: a/b.ts removed (now: c/d.ts)");
+  const trailing = await c.run("policy", "set", "riskPathExclusions", "c/d.ts", "--remove");
+  expect(trailing.code).toBe(0);
+  expect(trailing.out.trim()).toBe("policy riskPathExclusions: c/d.ts removed (now: nothing)");
+  const before = readFileSync(file, "utf8");
+  const count = listDecisions(paths).length;
+  const scalar = await c.run("policy", "set", "attendedDecisions", "prompt", "--remove");
+  expect(scalar.code).toBe(1);
+  expect(scalar.err).toContain(
+    "--remove applies to a list key (riskPathExclusions), not attendedDecisions",
+  );
+  expect(readFileSync(file, "utf8")).toBe(before);
+  expect(listDecisions(paths).length).toBe(count);
+  expect(loadPolicy(paths).policy.attendedDecisions).toBe("relay");
+});

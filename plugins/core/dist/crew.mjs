@@ -1079,6 +1079,8 @@ var RANGES = {
   maxGateRounds: { min: 1, max: 2 },
   maxClaimsPerItem: { min: 1, max: 200 }
 };
+var EXCLUSION_GLOB = /^(?!\.?\/)(?!.*(?:^|\/)\.\.(?:\/|$))(?=.*[^*?/])[^\s\\]{1,200}$/;
+var EXCLUSION_HINT = "a relative glob of the repository with at least one literal character: no leading slash or ./, no .. segment, no whitespace or backslash, up to 200 characters";
 var SETTABLE_POLICY_KEYS = {
   attendedDecisions: { values: ["prompt", "relay"] },
   unattendedDecisions: { values: ["wait", "count", "validator"] },
@@ -1106,8 +1108,11 @@ var SETTABLE_POLICY_KEYS = {
   "verify.send": { values: ["claims", "claims-and-snippets"] },
   "verify.maxClaimsPerItem": { integer: RANGES.maxClaimsPerItem },
   "verify.threshold": { decimal: { min: 0.5, max: 0.99 } },
-  "verify.asks": { subset: VERIFY_ASKS }
+  "verify.asks": { subset: VERIFY_ASKS },
+  riskPathExclusions: { list: { pattern: EXCLUSION_GLOB, hint: EXCLUSION_HINT } }
 };
+var LIST_POLICY_KEYS = Object.entries(SETTABLE_POLICY_KEYS).filter(([, rule]) => ("list" in rule)).map(([key]) => key);
+var TAMPERED_POLICY = "state changed outside the engine: .crew/policy.json; the user can accept it with crew policy accept";
 function policyPath(paths) {
   return join6(paths.crewDir, "policy.json");
 }
@@ -1130,6 +1135,8 @@ function checkSettable(key, rule, value) {
     return rule.values.includes(value) ? value : { refused: `${key} is one of ${rule.values.join(", ")}, not ${value}` };
   if ("pattern" in rule)
     return rule.pattern.test(value) ? value : { refused: `${key} is ${rule.hint}, not ${value}` };
+  if ("list" in rule)
+    return rule.list.pattern.test(value) ? value : { refused: `${key} is ${rule.list.hint}, not ${value}` };
   const n = Number(value);
   const { min, max } = rule.integer;
   return /^\d+$/.test(value) && n >= min && n <= max ? n : { refused: `${key} is a whole number from ${min} to ${max}, not ${value}` };
@@ -1141,15 +1148,17 @@ function setPolicyValue(paths, key, value) {
       refused: `unknown policy key: ${key} (crew policy set writes ${Object.keys(SETTABLE_POLICY_KEYS).join(", ")})`
     };
   }
+  if ("list" in rule) {
+    return {
+      refused: `${key} is a list: crew policy set ${key} "<glob>" adds one glob, --remove takes it out`
+    };
+  }
   const checked = checkSettable(key, rule, value);
   if (typeof checked === "object" && !Array.isArray(checked))
     return checked;
   const read = readProtectedJson(paths, policyPath(paths));
-  if (read.tampered) {
-    return {
-      refused: "state changed outside the engine: .crew/policy.json; the user can accept it with crew policy accept"
-    };
-  }
+  if (read.tampered)
+    return { refused: TAMPERED_POLICY };
   const raw = { ...read.data ?? {} };
   const dot = key.indexOf(".");
   if (dot === -1)
@@ -1163,6 +1172,33 @@ function setPolicyValue(paths, key, value) {
   }
   writeProtectedJson(paths, policyPath(paths), raw);
   return { key, value };
+}
+function planListChange(paths, key, value, remove) {
+  const rule = SETTABLE_POLICY_KEYS[key];
+  if (!rule || !("list" in rule)) {
+    return { refused: `${key} is not a list key (${LIST_POLICY_KEYS.join(", ")})` };
+  }
+  const checked = checkSettable(key, rule, value);
+  if (typeof checked === "object" && !Array.isArray(checked))
+    return checked;
+  const read = readProtectedJson(paths, policyPath(paths));
+  if (read.tampered)
+    return { refused: TAMPERED_POLICY };
+  const raw = { ...read.data ?? {} };
+  const list = strings(raw[key]);
+  const listed = list.includes(value);
+  if (remove && !listed) {
+    const lists = list.length ? `it lists: ${list.join(", ")}` : "it lists nothing";
+    return { refused: `${key} does not list ${value} (${lists})` };
+  }
+  if (remove)
+    return { key, value, action: "removed", list: list.filter((g) => g !== value), raw };
+  if (listed)
+    return { key, value, action: "already listed", list, raw };
+  return { key, value, action: "added", list: [...list, value], raw };
+}
+function writeListChange(paths, change) {
+  writeProtectedJson(paths, policyPath(paths), { ...change.raw, [change.key]: change.list });
 }
 function mailName(value) {
   return typeof value === "string" && MAIL_NAME.test(value) ? value : null;
@@ -5985,7 +6021,15 @@ function originSummary(origin) {
 }
 
 // packages/engine/src/argv.ts
-var BOOLEAN_FLAGS = new Set(["print", "json", "refresh", "force", "not-run", "all"]);
+var BOOLEAN_FLAGS = new Set([
+  "print",
+  "json",
+  "refresh",
+  "force",
+  "not-run",
+  "all",
+  "remove"
+]);
 function commaList(value) {
   if (typeof value !== "string")
     return [];
@@ -14118,7 +14162,7 @@ function workspaceStatus(paths, policy, env) {
 var KNOWN_FLAGS = {
   detect: ["refresh"],
   profile: ["target", "stack", "force", "timeout", "mode"],
-  policy: [],
+  policy: ["remove"],
   accept: [],
   start: ["answers", "criterion", "preserve", "observed", "origin", "priority", "source", "reason"],
   classify: ["answers"],
@@ -15208,6 +15252,33 @@ async function dispatch(parsed, io) {
         const [, key, value] = args;
         if (!key || value === undefined) {
           return refuse(`usage: crew policy set <${Object.keys(SETTABLE_POLICY_KEYS).join("|")}> <value>`);
+        }
+        const remove = parsed.flags.remove === true;
+        const rule = SETTABLE_POLICY_KEYS[key];
+        if (remove && !(rule && ("list" in rule))) {
+          return refuse(`--remove applies to a list key (${LIST_POLICY_KEYS.join(", ")}), not ${key}`);
+        }
+        if (rule && "list" in rule) {
+          const plan = planListChange(env.paths, key, value, remove);
+          if ("refused" in plan)
+            return refuse(plan.refused);
+          if (plan.action !== "already listed") {
+            appendDecision(env.paths, {
+              at: nowIso(),
+              item: "policy",
+              kind: "decision",
+              text: plan.action === "added" ? `${key}: ${value} added, paths matching it never raise the route (ADR 0003)` : `${key}: ${value} removed, paths matching it raise the route again`,
+              by: "the user"
+            });
+            writeListChange(env.paths, plan);
+          }
+          const now = plan.list.length ? plan.list.join(", ") : "nothing";
+          return ok(`policy ${key}: ${value} ${plan.action} (now: ${now})`, {
+            key,
+            value,
+            action: plan.action,
+            list: plan.list
+          });
         }
         const result = setPolicyValue(env.paths, key, value);
         if ("refused" in result)
@@ -17498,7 +17569,7 @@ var HELP = `crew ${VERSION}
   profile confirm environment           confirm the environment the detector proposed (asks the user)
   env start | health | stop | status    start the environment (detached, recorded, health awaited), check it, stop what the engine started, say where it stands
   policy accept                         trust the current policy.json after a hand edit (asks the user)
-  policy set <key> <value>              attendedDecisions prompt|relay, unattendedDecisions wait|count|validator, mail.workspace|name|open|maxConcurrent|maxHops|maxTurns|maxMinutes|maxParties|worktrees (asks the user)
+  policy set <key> <value> [--remove]   attendedDecisions prompt|relay, unattendedDecisions wait|count|validator, mail.workspace|name|open|maxConcurrent|maxHops|maxTurns|maxMinutes|maxParties|worktrees, riskPathExclusions "<glob>" (one glob added; --remove takes it out) (asks the user)
   accept <id|profile|policy>            trust state changed outside the engine (asks the user)
   start "<request>" --answers <json>    create a work item from the typed answers
       [--criterion "<text>"] [--preserve "<text>"] [--observed "<text>"]   criteria, repeatable; preserve: existing tests stay green; observed: no test can fail first (a plan, a document)

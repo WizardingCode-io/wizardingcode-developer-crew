@@ -308,7 +308,13 @@ test("SP2c: crew policy set writes the scalar mail keys, each value checked, and
   });
   expect(setPolicyValue(paths, "mail.accept", "question")).toEqual({
     refused:
-      "unknown policy key: mail.accept (crew policy set writes attendedDecisions, unattendedDecisions, mail.workspace, mail.name, mail.open, mail.maxConcurrent, mail.maxHops, mail.maxTurns, mail.maxMinutes, mail.maxParties, mail.worktrees, team.template, team.maxExperts, team.maxValidationRounds, team.maxJudgementRounds, team.maxGateRounds, team.continuations, verify.send, verify.maxClaimsPerItem, verify.threshold, verify.asks)",
+      "unknown policy key: mail.accept (crew policy set writes attendedDecisions, unattendedDecisions, mail.workspace, mail.name, mail.open, mail.maxConcurrent, mail.maxHops, mail.maxTurns, mail.maxMinutes, mail.maxParties, mail.worktrees, team.template, team.maxExperts, team.maxValidationRounds, team.maxJudgementRounds, team.maxGateRounds, team.continuations, verify.send, verify.maxClaimsPerItem, verify.threshold, verify.asks, riskPathExclusions)",
+  });
+  // The one list the command changes (finding 120) goes through planListChange, never through the
+  // scalar writer: written here, one glob would replace the whole list with a string.
+  expect(setPolicyValue(paths, "riskPathExclusions", "a/b.ts")).toEqual({
+    refused:
+      'riskPathExclusions is a list: crew policy set riskPathExclusions "<glob>" adds one glob, --remove takes it out',
   });
 });
 

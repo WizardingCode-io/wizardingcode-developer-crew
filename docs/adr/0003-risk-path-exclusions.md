@@ -31,3 +31,4 @@ The typed answers are untouched: an exclusion applies to paths, never to what th
 - Section 15 of the SP1 design is amended: the policy can only tighten, with this one exception.
 - A team that excludes too much loses the full route where it matters; the line in the report is what makes that visible in review.
 - SP3's replay has, in the exclusions teams write, a record of where the defaults were wrong.
+- 2026-10-21 (finding 120): the exclusion is also written by `crew policy set riskPathExclusions "<glob>"`, one glob per command, and `--remove` takes one out. It is a user-only command the PreToolUse hook asks even under `relay` (ADR 0005), each add and removal is appended to the decision register as the user's before the file is written, a glob with no literal character (`**`, `*`) is refused so one command cannot turn the risk route off for the whole project, and the file stays as protected as before: a hand edit still needs `crew policy accept`.

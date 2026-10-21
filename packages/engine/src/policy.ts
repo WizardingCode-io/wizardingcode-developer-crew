@@ -103,7 +103,9 @@ type Settable =
   /** A number with at most two decimals inside its range (SP3 Task 6: the verify threshold). */
   | { decimal: { min: number; max: number } }
   /** A comma-separated non-empty subset of the names, written as a list (SP3 Task 6: the verify asks). */
-  | { subset: readonly string[] };
+  | { subset: readonly string[] }
+  /** A list the command changes one element at a time, each checked by shape (finding 120: the exclusions). */
+  | { list: { pattern: RegExp; hint: string } };
 
 const NAME_HINT =
   "a lowercase name of letters, digits, dot, dash and underscore, up to 64 characters";
@@ -127,7 +129,17 @@ const RANGES = {
   maxClaimsPerItem: { min: 1, max: 200 },
 } as const satisfies Record<string, Range>;
 
-/** The scalar keys `crew policy set` writes; the lists (`mail.accept`, `allowSkips`, …) are hand-written and accepted. */
+/**
+ * One exclusion glob: relative to the repository (no leading `/` or `./`, since the matcher strips
+ * `./` from the path and not from the pattern), no `..` segment, no whitespace or backslash, up to
+ * 200 characters, and at least one literal character outside `*`, `?` and `/`: `**` alone would
+ * match every path and turn the risk route off for the whole project with one command.
+ */
+const EXCLUSION_GLOB = /^(?!\.?\/)(?!.*(?:^|\/)\.\.(?:\/|$))(?=.*[^*?/])[^\s\\]{1,200}$/;
+const EXCLUSION_HINT =
+  "a relative glob of the repository with at least one literal character: no leading slash or ./, no .. segment, no whitespace or backslash, up to 200 characters";
+
+/** The scalar keys `crew policy set` writes, and the one list it changes an element at a time (finding 120); the other lists (`mail.accept`, `allowSkips`, …) are hand-written and accepted. */
 export const SETTABLE_POLICY_KEYS: Record<string, Settable> = {
   attendedDecisions: { values: ["prompt", "relay"] },
   unattendedDecisions: { values: ["wait", "count", "validator"] },
@@ -156,7 +168,18 @@ export const SETTABLE_POLICY_KEYS: Record<string, Settable> = {
   "verify.maxClaimsPerItem": { integer: RANGES.maxClaimsPerItem },
   "verify.threshold": { decimal: { min: 0.5, max: 0.99 } },
   "verify.asks": { subset: VERIFY_ASKS },
+  // The one loosening a policy may carry (ADR 0003), one glob per command, added or removed (finding 120).
+  // Appended last: the messages that enumerate the table keep their first keys.
+  riskPathExclusions: { list: { pattern: EXCLUSION_GLOB, hint: EXCLUSION_HINT } },
 };
+
+/** The keys of the table `crew policy set … --remove` applies to. */
+export const LIST_POLICY_KEYS = Object.entries(SETTABLE_POLICY_KEYS)
+  .filter(([, rule]) => "list" in rule)
+  .map(([key]) => key);
+
+const TAMPERED_POLICY =
+  "state changed outside the engine: .crew/policy.json; the user can accept it with crew policy accept";
 
 function policyPath(paths: CrewPaths): string {
   return join(paths.crewDir, "policy.json");
@@ -194,6 +217,11 @@ function checkSettable(
       : { refused: `${key} is one of ${rule.values.join(", ")}, not ${value}` };
   if ("pattern" in rule)
     return rule.pattern.test(value) ? value : { refused: `${key} is ${rule.hint}, not ${value}` };
+  // Before the integer fallback: a rule with no branch of its own would be read as an integer.
+  if ("list" in rule)
+    return rule.list.pattern.test(value)
+      ? value
+      : { refused: `${key} is ${rule.list.hint}, not ${value}` };
   const n = Number(value);
   const { min, max } = rule.integer;
   return /^\d+$/.test(value) && n >= min && n <= max
@@ -217,15 +245,17 @@ export function setPolicyValue(
       refused: `unknown policy key: ${key} (crew policy set writes ${Object.keys(SETTABLE_POLICY_KEYS).join(", ")})`,
     };
   }
+  // A list key goes through planListChange and writeListChange: written here, one glob would
+  // replace the whole list with a string.
+  if ("list" in rule) {
+    return {
+      refused: `${key} is a list: crew policy set ${key} "<glob>" adds one glob, --remove takes it out`,
+    };
+  }
   const checked = checkSettable(key, rule, value);
   if (typeof checked === "object" && !Array.isArray(checked)) return checked;
   const read = readProtectedJson<Record<string, unknown>>(paths, policyPath(paths));
-  if (read.tampered) {
-    return {
-      refused:
-        "state changed outside the engine: .crew/policy.json; the user can accept it with crew policy accept",
-    };
-  }
+  if (read.tampered) return { refused: TAMPERED_POLICY };
   const raw = { ...(read.data ?? {}) };
   const dot = key.indexOf(".");
   if (dot === -1) raw[key] = checked;
@@ -238,6 +268,54 @@ export function setPolicyValue(
   }
   writeProtectedJson(paths, policyPath(paths), raw);
   return { key, value };
+}
+
+/** One change of a list key of `policy.json`, decided before anything is recorded or written (finding 120). */
+export type ListChange = {
+  key: string;
+  value: string;
+  action: "added" | "removed" | "already listed";
+  /** The list as the file will hold it after the change. */
+  list: string[];
+  raw: Record<string, unknown>;
+};
+
+/**
+ * Reads and checks a list key's change, with or without `--remove`, and returns what the write
+ * would do or the refusal. The caller records the user's decision first and writes after
+ * (`writeListChange`), so a loosening never exists without its record. A tampered file is refused
+ * as for a scalar key; the list is read as the loader reads it (`strings`), so a hand-written value
+ * that is not an array, or holds non-strings, is stored cleaned at the next write.
+ */
+export function planListChange(
+  paths: CrewPaths,
+  key: string,
+  value: string,
+  remove: boolean,
+): ListChange | { refused: string } {
+  const rule = SETTABLE_POLICY_KEYS[key];
+  if (!rule || !("list" in rule)) {
+    return { refused: `${key} is not a list key (${LIST_POLICY_KEYS.join(", ")})` };
+  }
+  const checked = checkSettable(key, rule, value);
+  if (typeof checked === "object" && !Array.isArray(checked)) return checked;
+  const read = readProtectedJson<Record<string, unknown>>(paths, policyPath(paths));
+  if (read.tampered) return { refused: TAMPERED_POLICY };
+  const raw = { ...(read.data ?? {}) };
+  const list = strings(raw[key]);
+  const listed = list.includes(value);
+  if (remove && !listed) {
+    const lists = list.length ? `it lists: ${list.join(", ")}` : "it lists nothing";
+    return { refused: `${key} does not list ${value} (${lists})` };
+  }
+  if (remove) return { key, value, action: "removed", list: list.filter((g) => g !== value), raw };
+  if (listed) return { key, value, action: "already listed", list, raw };
+  return { key, value, action: "added", list: [...list, value], raw };
+}
+
+/** Writes the list a `planListChange` decided, the rest of the file kept as written. */
+export function writeListChange(paths: CrewPaths, change: ListChange): void {
+  writeProtectedJson(paths, policyPath(paths), { ...change.raw, [change.key]: change.list });
 }
 
 function mailName(value: unknown): string | null {

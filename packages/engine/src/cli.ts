@@ -173,11 +173,14 @@ import {
 import { printPdf } from "./pdf.ts";
 import {
   decisionCounts,
+  LIST_POLICY_KEYS,
   loadPolicy,
   MAIL_NAME,
+  planListChange,
   SETTABLE_POLICY_KEYS,
   setPolicyValue,
   skipAllowed,
+  writeListChange,
 } from "./policy.ts";
 import {
   acceptPriorities,
@@ -350,7 +353,7 @@ export interface CliIo {
 const KNOWN_FLAGS: Record<string, readonly string[]> = {
   detect: ["refresh"],
   profile: ["target", "stack", "force", "timeout", "mode"],
-  policy: [],
+  policy: ["remove"],
   accept: [],
   start: ["answers", "criterion", "preserve", "observed", "origin", "priority", "source", "reason"],
   classify: ["answers"],
@@ -1910,6 +1913,40 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           );
         }
         // Asked even under relay (PreToolUse): the policy that governs signatures is signed by a prompt.
+        const remove = parsed.flags.remove === true;
+        const rule = SETTABLE_POLICY_KEYS[key];
+        if (remove && !(rule && "list" in rule)) {
+          return refuse(
+            `--remove applies to a list key (${LIST_POLICY_KEYS.join(", ")}), not ${key}`,
+          );
+        }
+        if (rule && "list" in rule) {
+          // A list key, one glob at a time (finding 120): the user's decision is recorded before the
+          // file is written, so a loosening never exists without its record; "already listed" and
+          // every refusal record nothing.
+          const plan = planListChange(env.paths, key, value, remove);
+          if ("refused" in plan) return refuse(plan.refused);
+          if (plan.action !== "already listed") {
+            appendDecision(env.paths, {
+              at: nowIso(),
+              item: "policy",
+              kind: "decision",
+              text:
+                plan.action === "added"
+                  ? `${key}: ${value} added, paths matching it never raise the route (ADR 0003)`
+                  : `${key}: ${value} removed, paths matching it raise the route again`,
+              by: "the user",
+            });
+            writeListChange(env.paths, plan);
+          }
+          const now = plan.list.length ? plan.list.join(", ") : "nothing";
+          return ok(`policy ${key}: ${value} ${plan.action} (now: ${now})`, {
+            key,
+            value,
+            action: plan.action,
+            list: plan.list,
+          });
+        }
         const result = setPolicyValue(env.paths, key, value);
         if ("refused" in result) return refuse(result.refused);
         // The standing grant is the second loosening a policy may carry (SP7b decision 15): on record.
@@ -4785,7 +4822,7 @@ const HELP = `crew ${VERSION}
   profile confirm environment           confirm the environment the detector proposed (asks the user)
   env start | health | stop | status    start the environment (detached, recorded, health awaited), check it, stop what the engine started, say where it stands
   policy accept                         trust the current policy.json after a hand edit (asks the user)
-  policy set <key> <value>              attendedDecisions prompt|relay, unattendedDecisions wait|count|validator, mail.workspace|name|open|maxConcurrent|maxHops|maxTurns|maxMinutes|maxParties|worktrees (asks the user)
+  policy set <key> <value> [--remove]   attendedDecisions prompt|relay, unattendedDecisions wait|count|validator, mail.workspace|name|open|maxConcurrent|maxHops|maxTurns|maxMinutes|maxParties|worktrees, riskPathExclusions "<glob>" (one glob added; --remove takes it out) (asks the user)
   accept <id|profile|policy>            trust state changed outside the engine (asks the user)
   start "<request>" --answers <json>    create a work item from the typed answers
       [--criterion "<text>"] [--preserve "<text>"] [--observed "<text>"]   criteria, repeatable; preserve: existing tests stay green; observed: no test can fail first (a plan, a document)
