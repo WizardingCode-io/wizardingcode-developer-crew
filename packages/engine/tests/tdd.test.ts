@@ -279,3 +279,122 @@ test("SP6-T2 AC-3 (round 3): crew tdd without -- never runs a pack's proposed te
   expect((await recordTdd(s.paths, s.work, s.evidence, s.profile, third.id, "red")).ok).toBe(true);
   expect(existsSync(join(s.root, "guess.txt"))).toBe(true);
 });
+
+test("AC-4 (finding 126): a run whose output says no test ran is refused for every step, naming the line, and records nothing", async () => {
+  const s = setup();
+  const bunLine =
+    'error: regex "AC-4 (finding 119)" matched 0 tests. Searched 1 file (skipping 146 tests) [36.00ms]';
+  write(s.root, "run-tests.sh", `echo '${bunLine}'\nexit 1\n`);
+  const red = await recordTdd(s.paths, s.work, s.evidence, s.profile, s.behaviour.id, "red");
+  expect(red.ok).toBe(false);
+  expect(red.message).toBe(
+    `the run ran no test (${bunLine}): fix the command or the filter before recording`,
+  );
+  expect(s.evidence.tdd).toEqual([]);
+  expect(red.record?.log).toMatch(/^logs\/tdd-AC-1-red-/);
+  // A passing run that ran nothing is no before either.
+  write(s.root, "run-tests.sh", "echo 'Ran 0 tests across 0 files. [5.00ms]'\nexit 0\n");
+  const before = await recordTdd(s.paths, s.work, s.evidence, s.profile, s.preserve.id, "before");
+  expect(before.ok).toBe(false);
+  expect(before.message).toBe(
+    "the run ran no test (Ran 0 tests across 0 files. [5.00ms]): fix the command or the filter before recording",
+  );
+  // The other runners' own lines.
+  for (const line of [
+    "No test files found, exiting with code 1",
+    "No tests found, exiting with code 1",
+    "============================ no tests ran in 0.01s =============================",
+    "No tests executed!",
+  ]) {
+    write(s.root, "run-tests.sh", `echo '${line}'\nexit 1\n`);
+    const refused = await recordTdd(s.paths, s.work, s.evidence, s.profile, s.behaviour.id, "red");
+    expect(refused.ok, line).toBe(false);
+    expect(refused.message, line).toBe(
+      `the run ran no test (${line}): fix the command or the filter before recording`,
+    );
+  }
+  expect(s.evidence.tdd).toEqual([]);
+  // A run that ran tests is recorded as today.
+  write(s.root, "run-tests.sh", "echo ' 0 pass'\necho ' 1 fail'\nexit 1\n");
+  const real = await recordTdd(s.paths, s.work, s.evidence, s.profile, s.behaviour.id, "red");
+  expect(real.ok).toBe(true);
+  expect(s.evidence.tdd[0]?.red?.exit).toBe(1);
+  // Every step: a green, an after and an observed on an empty run are refused the same way.
+  const empty = "echo 'Ran 0 tests across 0 files. [5.00ms]'\nexit 0\n";
+  write(s.root, "run-tests.sh", empty);
+  const green = await recordTdd(s.paths, s.work, s.evidence, s.profile, s.behaviour.id, "green");
+  expect(green.ok).toBe(false);
+  expect(green.message).toContain("the run ran no test (Ran 0 tests across 0 files.");
+  expect(s.evidence.tdd[0]?.green).toBeUndefined();
+  write(s.root, "run-tests.sh", "echo ' 1 pass'\nexit 0\n");
+  expect(
+    (await recordTdd(s.paths, s.work, s.evidence, s.profile, s.preserve.id, "before")).ok,
+  ).toBe(true);
+  write(s.root, "run-tests.sh", empty);
+  const after = await recordTdd(s.paths, s.work, s.evidence, s.profile, s.preserve.id, "after");
+  expect(after.ok).toBe(false);
+  expect(after.message).toContain("the run ran no test (");
+  const observed = addCriterion(s.work, "seen", "observed");
+  const seen = await recordTdd(
+    s.paths,
+    s.work,
+    s.evidence,
+    s.profile,
+    observed.id,
+    "observed",
+    undefined,
+    "no red run can exist",
+  );
+  expect(seen.ok).toBe(false);
+  expect(seen.message).toContain("the run ran no test (");
+  expect(s.evidence.tdd.find((t) => t.criterion === observed.id)).toBeUndefined();
+});
+
+test("AC-7 (finding 126): the markers are the runner's own line: a phrase inside an indented assertion message or a diff line is a failing test, recorded as a red", async () => {
+  const indented = setup();
+  write(
+    indented.root,
+    "run-tests.sh",
+    "echo '(fail) x'\necho '    error: expect(received).toContain(expected)'\necho '    Expected: matched 0 tests'\necho ' 0 pass'\necho ' 1 fail'\nexit 1\n",
+  );
+  const a = await recordTdd(
+    indented.paths,
+    indented.work,
+    indented.evidence,
+    indented.profile,
+    indented.behaviour.id,
+    "red",
+  );
+  expect(a.ok, a.message).toBe(true);
+  const diff = setup();
+  write(
+    diff.root,
+    "run-tests.sh",
+    "echo '(fail) y'\necho '+ No tests found'\necho '- x'\necho ' 1 fail'\nexit 1\n",
+  );
+  const b = await recordTdd(
+    diff.paths,
+    diff.work,
+    diff.evidence,
+    diff.profile,
+    diff.behaviour.id,
+    "red",
+  );
+  expect(b.ok, b.message).toBe(true);
+  const own = setup();
+  write(
+    own.root,
+    "run-tests.sh",
+    "echo 'error: regex \"x\" matched 0 tests. Searched 1 file (skipping 3 tests) [1.00ms]'\nexit 1\n",
+  );
+  const c = await recordTdd(
+    own.paths,
+    own.work,
+    own.evidence,
+    own.profile,
+    own.behaviour.id,
+    "red",
+  );
+  expect(c.ok).toBe(false);
+  expect(c.message).toContain("the run ran no test (error: regex");
+});

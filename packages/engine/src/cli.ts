@@ -219,7 +219,7 @@ import {
 } from "./runtimes.ts";
 import { scanText } from "./secrets.ts";
 import { parseSource, sourceLine } from "./source.ts";
-import { ensureCrewDir, oneLine, workingRoles } from "./state.ts";
+import { ensureCrewDir, loadState, oneLine, saveState, workingRoles } from "./state.ts";
 import {
   integrityOf,
   readProtectedJson,
@@ -332,6 +332,7 @@ import {
   raiseKind,
   removeCriterion,
   saveWork,
+  supersedeCriterion,
   validatorPreconditions,
   waitingPhrase,
   waitingText,
@@ -360,7 +361,7 @@ const KNOWN_FLAGS: Record<string, readonly string[]> = {
   kind: ["reason"],
   strategy: [],
   audit: ["only"],
-  criteria: ["kind", "contract"],
+  criteria: ["kind", "contract", "by"],
   decision: ["default"],
   debate: ["reason", "tokens"],
   decide: ["mode", "validator"],
@@ -569,7 +570,15 @@ function accept(env: Env, target: string): Outcome {
 function openForChange(env: Env, id: string | undefined): Opened | Outcome {
   const opened = openWork(env, id);
   if (isOutcome(opened)) return opened;
+  // An abandoned item is read, never changed again (finding 124): one door for every command.
+  if (opened.work.abandoned)
+    return refuse(`${abandonedLine(opened.work.id, opened.work.abandoned)}; start a new item`);
   return tamperRefusal(env, opened) ?? opened;
+}
+
+/** `<id> was abandoned on <date>: <reason>`, the refusal every command gives an item the user dropped. */
+function abandonedLine(id: string, closed: NonNullable<WorkItem["abandoned"]>): string {
+  return `${id} was abandoned on ${closed.at.slice(0, 10)}: ${closed.reason}`;
 }
 
 function isOutcome(value: unknown): value is Outcome {
@@ -2230,10 +2239,34 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         const { removed } = outcome;
         return ok(`${removed.id} (${removed.kind}) removed: ${removed.text}`, { removed });
       }
+      if (args[1] === "supersede") {
+        // A criterion's text replaced by another's, on record (finding 118's list): the agent's
+        // amendment of the spec, bounded by the kinds' rank and the objections' bindings.
+        const by = typeof parsed.flags.by === "string" ? parsed.flags.by.trim() : "";
+        if (!args[2] || !by)
+          return refuse("usage: crew criteria <id> supersede <AC-n> --by <AC-m>");
+        const outcome = supersedeCriterion(
+          opened.work,
+          args[2],
+          by,
+          loadLedger(env.paths, opened.work.id).ledger,
+        );
+        if ("refused" in outcome) return refuse(outcome.refused);
+        saveWork(env.paths, opened.work);
+        appendDecision(env.paths, {
+          at: outcome.at,
+          item: opened.work.id,
+          kind: "supersede",
+          id: outcome.criterion.id,
+          text: `${outcome.criterion.id} superseded by ${by}`,
+          by: "the agent",
+        });
+        return ok(`${outcome.criterion.id} superseded by ${by}`, { criterion: outcome.criterion });
+      }
       const text = args.slice(2).join(" ").trim();
       if (args[1] !== "add" || !text)
         return refuse(
-          'usage: crew criteria <id> add "<criterion>" [--kind preserve|observed] | crew criteria <id> remove <AC-n>',
+          'usage: crew criteria <id> add "<criterion>" [--kind preserve|observed] | crew criteria <id> remove <AC-n> | crew criteria <id> supersede <AC-n> --by <AC-m>',
         );
       const kind =
         parsed.flags.kind === "preserve" || parsed.flags.kind === "observed"
@@ -3266,6 +3299,38 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         text: lines.join("\n"),
         data: { records, verdict: result.verdict, unproven: result.unproven },
       };
+    }
+    case "abandon": {
+      // An item the user drops is closed on their word (finding 124): recorded as their decision,
+      // taken out of the live lists, read-only from then on; nothing is deleted.
+      const opened = openWork(env, args[0]);
+      if (isOutcome(opened)) return opened;
+      const tampered = tamperRefusal(env, opened);
+      if (tampered) return tampered;
+      const reason = typeof parsed.flags.reason === "string" ? parsed.flags.reason.trim() : "";
+      if (!reason) return refuse('usage: crew abandon <id> --reason "<why>"');
+      const work = opened.work;
+      if (work.abandoned) return refuse(abandonedLine(work.id, work.abandoned));
+      if (work.phase === "learn") return refuse(`${work.id} is learned: nothing to abandon`);
+      const decision = decisionFlag(parsed, env.policy);
+      if (isOutcome(decision)) return decision;
+      work.abandoned = { at: nowIso(), reason, by: decision };
+      saveWork(env.paths, work);
+      const state = loadState(env.paths);
+      if (state.active === work.id) {
+        state.active = null;
+        saveState(env.paths, state);
+      }
+      appendDecision(env.paths, {
+        at: work.abandoned.at,
+        item: work.id,
+        kind: "abandon",
+        text: `abandoned: ${reason}`,
+        by: whoDecided(decision),
+      });
+      return ok(`abandoned ${work.id} ${decisionText(env.policy, decision)}: ${reason}`, {
+        abandoned: work.abandoned,
+      });
     }
     case "skip": {
       const opened = openForChange(env, args[0]);
@@ -4330,7 +4395,10 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       return ok(statusLine(status), { ...status });
     }
     case "status": {
-      const active = activeWork(env.paths);
+      // With an id any item is read, an abandoned one included (finding 124); with none, the active one.
+      const named = args[0] ? openWork(env, args[0]) : null;
+      if (named && isOutcome(named)) return named;
+      const active = named ?? activeWork(env.paths);
       if (!active?.work) return ok("no active work item", { active: null });
       const result = assess(
         env.paths,
@@ -4412,7 +4480,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           (q) => `  question ${q.id} open: ${oneLine(q.text)} (${channelsText(q)})`,
         ),
       );
-      const text = `${work.id} "${work.title}"\n  phase ${work.phase}, route ${work.route}, kind ${kindOfItem(work)}, ${triageText(work, "status")}${waitingText(work)}\n${kindOfItem(work) === "audit" ? "  audit: the proof is the signed report\n" : ""}${extra.length ? `${extra.join("\n")}\n` : ""}${gateSummary(work, result.verdict, result.unproven, result.evidence.runs)}`;
+      const text = `${work.id} "${work.title}"\n  phase ${work.phase}, ${work.abandoned ? `abandoned (${work.abandoned.reason}), ` : ""}route ${work.route}, kind ${kindOfItem(work)}, ${triageText(work, "status")}${waitingText(work)}\n${kindOfItem(work) === "audit" ? "  audit: the proof is the signed report\n" : ""}${extra.length ? `${extra.join("\n")}\n` : ""}${gateSummary(work, result.verdict, result.unproven, result.evidence.runs)}`;
       // The mail synced and a task's reply that landed taken into the lead's record (SP2c §7): a
       // failure in either (a held lock, a folder that cannot be written) is one line under the
       // status, never the status lost.
@@ -4845,6 +4913,8 @@ const HELP = `crew ${VERSION}
   analyse <id> --paths <file,file>      an issue's origin from git and the records, written to analysis/origin.json (before Understand)
   criteria <id> add "<text>" [--kind preserve|observed] [--contract <mid>:<n>]   a criterion, bound to a contract of a reply in the item's mail when given
   criteria <id> remove <AC-n>           take out a criterion no test-first record or skip names
+  criteria <id> supersede <AC-n> --by <AC-m>   AC-m's text replaces AC-n's: the report shows both, the verdict reads AC-m, AC-n's records stay (a kind at least as strict; no objection left on AC-n)
+  abandon <id> --reason "<why>"         close an item the user drops: their decision on record; the item leaves the open items and the active slot, nothing changes it again, every file stays readable (asks the user)
   decision <id> add "<question>" [--default "<answer>"]   a decision only the user can make (gap round)
   decide <id> D-n "<answer>"            record the user's answer (asks the user)
       --mode <mode> --validator stated-default   no person watching: the validator takes the default

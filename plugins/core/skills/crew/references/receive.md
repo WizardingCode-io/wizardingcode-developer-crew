@@ -45,3 +45,5 @@ The observable results, one per line. These become the criteria.
 ```
 
 On the fast route, the brief stays as the engine wrote it.
+
+An item the user drops is closed on their word: `crew abandon <id> --reason "<why>"` (asked like an approval; relayed under `relay`; `--mode` where nobody watches) records their decision, takes the item out of the open items and the active slot, and refuses every later change to it; every file and record stays readable. Its uncommitted changes are theirs to commit, revert or carry into a new item.

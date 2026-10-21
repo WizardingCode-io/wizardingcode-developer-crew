@@ -525,6 +525,11 @@ export interface Criterion {
   text: string;
   /** A contract of a reply in the item's mail the criterion is bound to (SP7 §9): the message and the contract's 1-based index. */
   contract?: { message: string; index: number };
+  /**
+   * The criterion whose text replaced this one's (finding 118's list): the report shows both, the
+   * verdict reads the replacement's proof, and this one's records stay. Never removed once set.
+   */
+  supersededBy?: { id: string; at: string };
 }
 
 /** A criterion taken out while no test-first record or skip named it. Its number is never reused. */
@@ -703,6 +708,11 @@ export interface WorkItem {
   removedCriteria?: RemovedCriterion[];
   /** Turns that ended waiting for the user while the work was not proven. Absent before 0.1.4. */
   pauses?: Pause[];
+  /**
+   * The item closed on the user's word (finding 124): no longer active, open or changed by any
+   * command; every file and record stays readable.
+   */
+  abandoned?: { at: string; reason: string; by: Decision };
   /** Set when the item started beside other open items with uncommitted changes. Absent before 0.1.7. */
   sharedCheckout?: SharedCheckout;
   /** The gap round's decisions only the user can make, and their answers. Absent before 0.2.0. */

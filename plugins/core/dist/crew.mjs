@@ -4134,7 +4134,8 @@ function activeWork(paths) {
   const id = loadState(paths).active;
   if (!id || !existsSync6(workJson(paths, id)))
     return null;
-  return loadWork(paths, id);
+  const item = loadWork(paths, id);
+  return item.work?.abandoned ? null : item;
 }
 function openItems(paths, except) {
   let ids = [];
@@ -4148,7 +4149,7 @@ function openItems(paths, except) {
     if (id === except || !existsSync6(workJson(paths, id)))
       continue;
     const { work } = loadWork(paths, id);
-    if (!work || work.phase === "deliver" || work.phase === "learn")
+    if (!work || work.abandoned || work.phase === "deliver" || work.phase === "learn")
       continue;
     const evidence = readProtectedJson(paths, join13(workDir(paths, id), "evidence.json"));
     if (evidence.data?.verdict === "proven")
@@ -4213,6 +4214,12 @@ function removeCriterion(work, evidence, id, ledger) {
   const bound = ledger?.objections.find((o) => o.criterion === id && !o.waived);
   if (bound)
     return { refused: `${id} is bound to objection ${bound.id}; it stays` };
+  const target = work.criteria[index];
+  if (target.supersededBy)
+    return { refused: `${id} is superseded by ${target.supersededBy.id}; it stays` };
+  const replaced = work.criteria.find((c) => c.supersededBy?.id === id);
+  if (replaced)
+    return { refused: `${id} supersedes ${replaced.id}; it stays` };
   if (evidence.tdd.some((t) => t.criterion === id)) {
     return { refused: `${id} has a test-first record; it stays` };
   }
@@ -4223,6 +4230,42 @@ function removeCriterion(work, evidence, id, ledger) {
   const removed = { ...criterion, at: nowIso() };
   work.removedCriteria = [...work.removedCriteria ?? [], removed];
   return { removed };
+}
+var PROOF_RANK = { behavior: 2, preserve: 1, observed: 0 };
+function supersedeCriterion(work, from, by, ledger) {
+  const old = work.criteria.find((c) => c.id === from);
+  if (!old)
+    return { refused: `unknown criterion: ${from}` };
+  const replacement = work.criteria.find((c) => c.id === by);
+  if (!replacement)
+    return { refused: `unknown criterion: ${by}` };
+  if (from === by)
+    return { refused: `${from} cannot supersede itself` };
+  if (old.supersededBy)
+    return { refused: `${from} is already superseded by ${old.supersededBy.id}` };
+  if (replacement.supersededBy)
+    return {
+      refused: `${by} is superseded by ${replacement.supersededBy.id}: supersede by ${replacement.supersededBy.id} instead`
+    };
+  const bound = ledger?.objections.find((o) => o.criterion === from && !o.waived);
+  if (bound)
+    return { refused: `${bound.id} is bound to ${from}: resolve it against ${by} first` };
+  if (PROOF_RANK[replacement.kind] < PROOF_RANK[old.kind])
+    return {
+      refused: `${by} (${replacement.kind}) cannot replace ${from} (${old.kind}): a replacement proves at least as much`
+    };
+  const at = nowIso();
+  old.supersededBy = { id: by, at };
+  return { criterion: old, at };
+}
+function currentCriterion(work, id) {
+  let current = work.criteria.find((c) => c.id === id);
+  const seen = new Set;
+  while (current?.supersededBy && !seen.has(current.id)) {
+    seen.add(current.id);
+    current = work.criteria.find((c) => c.id === current?.supersededBy?.id) ?? current;
+  }
+  return current;
 }
 var USER = { by: "user" };
 function addDecision(work, question, dflt) {
@@ -4661,13 +4704,20 @@ function computeVerdict(input) {
   for (const criterion of work.criteria) {
     if (isSkipped(work, `tdd:${criterion.id}`, policy))
       continue;
-    const record = evidence.tdd.find((t) => t.criterion === criterion.id);
-    if (!tddDone(record, criterion.kind))
-      unproven.push(`test-first record missing for ${criterion.id}`);
+    const current = currentCriterion(work, criterion.id) ?? criterion;
+    const record = evidence.tdd.find((t) => t.criterion === current.id);
+    if (!tddDone(record, current.kind))
+      unproven.push(`test-first record missing for ${criterion.id}${current.id !== criterion.id ? ` (superseded by ${current.id})` : ""}`);
   }
   return { verdict: unproven.length === 0 ? "proven" : "unproven", unproven };
 }
 function tddSummary(work, evidence, criterionId, kind, policy) {
+  const replaced = work.criteria.find((c) => c.id === criterionId)?.supersededBy;
+  if (replaced)
+    return `superseded by ${replaced.id} (${replaced.at.slice(0, 10)}); own record: ${ownSummary(work, evidence, criterionId, kind, policy)}`;
+  return ownSummary(work, evidence, criterionId, kind, policy);
+}
+function ownSummary(work, evidence, criterionId, kind, policy) {
   if (isSkipped(work, `tdd:${criterionId}`, policy)) {
     const skip = work.skips.find((s) => s.step === `tdd:${criterionId}`);
     return `skipped: ${skip?.reason ?? ""}`;
@@ -4734,7 +4784,8 @@ function renderReport(work, evidence, policy, options = {}) {
     byDecider.set(who, (byDecider.get(who) ?? 0) + 1);
   }
   const waivedNote = byDecider.size ? `, with ${[...byDecider].map(([who, n]) => `${n} objection${n === 1 ? "" : "s"} waived ${who}`).join(" and ")}` : "";
-  lines.push(`- Verdict: **${evidence.verdict === "proven" ? "Proven" : "Not proven"}**${waivedNote}`, "");
+  const verdictLine = work.abandoned ? `Abandoned on ${work.abandoned.at.slice(0, 10)}: ${work.abandoned.reason}` : evidence.verdict === "proven" ? "Proven" : "Not proven";
+  lines.push(`- Verdict: **${verdictLine}**${waivedNote}`, "");
   if (evidence.unproven.length) {
     lines.push("## Not proven", "");
     for (const reason of evidence.unproven)
@@ -4882,8 +4933,11 @@ function renderReport(work, evidence, policy, options = {}) {
     const n = shared.paths.length;
     lines.push("", "## Checkout", "", `- started in a checkout shared with ${shared.with.join(", ")}: ${n} uncommitted file${n === 1 ? "" : "s"} at the start, listed in work.json (sharedCheckout.paths) (${shared.at})`);
   }
-  if (work.approvals.length || work.skips.length || removed.length) {
+  if (work.approvals.length || work.skips.length || removed.length || work.abandoned) {
     lines.push("", "## Decisions", "");
+    if (work.abandoned) {
+      lines.push(`- abandoned ${decidedBy(work.abandoned.by)} (${work.abandoned.at}): ${work.abandoned.reason}`);
+    }
     for (const a of work.approvals) {
       lines.push(`- ${a.what} approved ${decidedBy(a)} (${a.at})${countedNote(policy, a)}`);
     }
@@ -11691,7 +11745,7 @@ function userOnlyCommand(args) {
   const [verb, second, third] = parsed.positional;
   const presence = verb === "question" && third === "add";
   const unreadable = (word) => word !== undefined && UNREADABLE_VERB.test(word);
-  const userOnly = unreadable(verb) || (verb === "profile" || verb === "policy") && unreadable(second) || verb === "skip" || verb === "approve" || verb === "accept" || verb === "decide" || verb === "continue" || verb === "objection" && (parsed.positional.includes("waive") || unreadable(third)) || verb === "profile" && (second === "confirm" || second === "set" || second === "unset") || verb === "policy" && (second === "accept" || second === "set") || verb === "workspace" && (unreadable(second) || second === "priorities" && (parsed.positional.includes("accept") || unreadable(third))) || verb === "question" && (third === "answer" || unreadable(third)) || verb === "config" && typeof second === "string" && second.startsWith("jev.") && third !== undefined || verb === "knowledge" && (second === "unmark" || unreadable(second)) || verb === "task" && (parsed.positional.includes("merge") && parsed.flags.force === true || unreadable(third));
+  const userOnly = unreadable(verb) || (verb === "profile" || verb === "policy") && unreadable(second) || verb === "skip" || verb === "approve" || verb === "accept" || verb === "decide" || verb === "continue" || verb === "abandon" || verb === "objection" && (parsed.positional.includes("waive") || unreadable(third)) || verb === "profile" && (second === "confirm" || second === "set" || second === "unset") || verb === "policy" && (second === "accept" || second === "set") || verb === "workspace" && (unreadable(second) || second === "priorities" && (parsed.positional.includes("accept") || unreadable(third))) || verb === "question" && (third === "answer" || unreadable(third)) || verb === "config" && typeof second === "string" && second.startsWith("jev.") && third !== undefined || verb === "knowledge" && (second === "unmark" || unreadable(second)) || verb === "task" && (parsed.positional.includes("merge") && parsed.flags.force === true || unreadable(third));
   if (!userOnly && !presence)
     return null;
   return {
@@ -14087,6 +14141,22 @@ async function printPdf(html, out2, env, root, options = {}) {
 
 // packages/engine/src/tdd.ts
 import { join as join46 } from "node:path";
+var NO_TEST_LINES = [
+  /^error: .*matched 0 tests\. Searched /,
+  /^Ran 0 tests across /,
+  /^No test files found/,
+  /^No tests found/,
+  /^=+ no tests ran in /,
+  /^No tests executed!?/
+];
+function ranNoTest(tail) {
+  for (const line of tail.split(`
+`)) {
+    if (NO_TEST_LINES.some((rule) => rule.test(line)))
+      return line;
+  }
+  return null;
+}
 var STEPS_BY_KIND = {
   behavior: { steps: ["red", "green"], how: "record red, then green" },
   preserve: { steps: ["before", "after"], how: "record before, then after" },
@@ -14118,6 +14188,11 @@ async function recordTdd(paths, work, evidence, profile, criterionId, step, over
       message: `${criterionId} is ${article(criterion.kind)} ${criterion.kind} criterion: ${expected.how}`
     };
   }
+  if (criterion.supersededBy)
+    return {
+      ok: false,
+      message: `${criterionId} is superseded by ${criterion.supersededBy.id}: record the proof on ${criterion.supersededBy.id}`
+    };
   if (step === "observed" && !reason?.trim()) {
     return { ok: false, message: "an observed run needs --reason: why no red run can exist" };
   }
@@ -14183,6 +14258,14 @@ async function recordTdd(paths, work, evidence, profile, criterionId, step, over
     timedOut: result.timedOut
   };
   const passed = result.exit === 0 && !result.timedOut;
+  const empty = ranNoTest(result.tail);
+  if (empty !== null) {
+    return {
+      ok: false,
+      message: `the run ran no test (${empty}): fix the command or the filter before recording`,
+      record: record2
+    };
+  }
   if (step === "red") {
     if (passed) {
       return {
@@ -14304,7 +14387,7 @@ var KNOWN_FLAGS = {
   kind: ["reason"],
   strategy: [],
   audit: ["only"],
-  criteria: ["kind", "contract"],
+  criteria: ["kind", "contract", "by"],
   decision: ["default"],
   debate: ["reason", "tokens"],
   decide: ["mode", "validator"],
@@ -14467,7 +14550,12 @@ function openForChange(env, id) {
   const opened = openWork(env, id);
   if (isOutcome(opened))
     return opened;
+  if (opened.work.abandoned)
+    return refuse(`${abandonedLine(opened.work.id, opened.work.abandoned)}; start a new item`);
   return tamperRefusal(env, opened) ?? opened;
+}
+function abandonedLine(id, closed) {
+  return `${id} was abandoned on ${closed.at.slice(0, 10)}: ${closed.reason}`;
 }
 function isOutcome(value) {
   return typeof value === "object" && value !== null && "code" in value && "text" in value;
@@ -15617,9 +15705,27 @@ ${originNotes.join(`
         const { removed } = outcome;
         return ok(`${removed.id} (${removed.kind}) removed: ${removed.text}`, { removed });
       }
+      if (args[1] === "supersede") {
+        const by = typeof parsed.flags.by === "string" ? parsed.flags.by.trim() : "";
+        if (!args[2] || !by)
+          return refuse("usage: crew criteria <id> supersede <AC-n> --by <AC-m>");
+        const outcome = supersedeCriterion(opened.work, args[2], by, loadLedger(env.paths, opened.work.id).ledger);
+        if ("refused" in outcome)
+          return refuse(outcome.refused);
+        saveWork(env.paths, opened.work);
+        appendDecision(env.paths, {
+          at: outcome.at,
+          item: opened.work.id,
+          kind: "supersede",
+          id: outcome.criterion.id,
+          text: `${outcome.criterion.id} superseded by ${by}`,
+          by: "the agent"
+        });
+        return ok(`${outcome.criterion.id} superseded by ${by}`, { criterion: outcome.criterion });
+      }
       const text = args.slice(2).join(" ").trim();
       if (args[1] !== "add" || !text)
-        return refuse('usage: crew criteria <id> add "<criterion>" [--kind preserve|observed] | crew criteria <id> remove <AC-n>');
+        return refuse('usage: crew criteria <id> add "<criterion>" [--kind preserve|observed] | crew criteria <id> remove <AC-n> | crew criteria <id> supersede <AC-n> --by <AC-m>');
       const kind = parsed.flags.kind === "preserve" || parsed.flags.kind === "observed" ? parsed.flags.kind : "behavior";
       let contract;
       if (typeof parsed.flags.contract === "string") {
@@ -16457,6 +16563,42 @@ ${outcome.saveRefused}` : ""),
         data: { records, verdict: result.verdict, unproven: result.unproven }
       };
     }
+    case "abandon": {
+      const opened = openWork(env, args[0]);
+      if (isOutcome(opened))
+        return opened;
+      const tampered = tamperRefusal(env, opened);
+      if (tampered)
+        return tampered;
+      const reason = typeof parsed.flags.reason === "string" ? parsed.flags.reason.trim() : "";
+      if (!reason)
+        return refuse('usage: crew abandon <id> --reason "<why>"');
+      const work = opened.work;
+      if (work.abandoned)
+        return refuse(abandonedLine(work.id, work.abandoned));
+      if (work.phase === "learn")
+        return refuse(`${work.id} is learned: nothing to abandon`);
+      const decision = decisionFlag(parsed, env.policy);
+      if (isOutcome(decision))
+        return decision;
+      work.abandoned = { at: nowIso(), reason, by: decision };
+      saveWork(env.paths, work);
+      const state = loadState(env.paths);
+      if (state.active === work.id) {
+        state.active = null;
+        saveState(env.paths, state);
+      }
+      appendDecision(env.paths, {
+        at: work.abandoned.at,
+        item: work.id,
+        kind: "abandon",
+        text: `abandoned: ${reason}`,
+        by: whoDecided(decision)
+      });
+      return ok(`abandoned ${work.id} ${decisionText(env.policy, decision)}: ${reason}`, {
+        abandoned: work.abandoned
+      });
+    }
     case "skip": {
       const opened = openForChange(env, args[0]);
       if (isOutcome(opened))
@@ -17287,7 +17429,10 @@ ${lines2.join(`
       return ok(statusLine2(status), { ...status });
     }
     case "status": {
-      const active = activeWork(env.paths);
+      const named2 = args[0] ? openWork(env, args[0]) : null;
+      if (named2 && isOutcome(named2))
+        return named2;
+      const active = named2 ?? activeWork(env.paths);
       if (!active?.work)
         return ok("no active work item", { active: null });
       const result = assess(env.paths, active.work, env.profile, env.policy, env.tampered || active.tampered);
@@ -17343,7 +17488,7 @@ ${lines2.join(`
         extra.unshift(analysis.origin ? `  analysis: ${originSummary(analysis.origin)}` : `  analysis: origin.json changed outside the engine (crew accept ${work.id})`);
       extra.unshift(...openQuestions(work).map((q) => `  question ${q.id} open: ${oneLine(q.text)} (${channelsText(q)})`));
       const text = `${work.id} "${work.title}"
-  phase ${work.phase}, route ${work.route}, kind ${kindOfItem(work)}, ${triageText(work, "status")}${waitingText(work)}
+  phase ${work.phase}, ${work.abandoned ? `abandoned (${work.abandoned.reason}), ` : ""}route ${work.route}, kind ${kindOfItem(work)}, ${triageText(work, "status")}${waitingText(work)}
 ${kindOfItem(work) === "audit" ? `  audit: the proof is the signed report
 ` : ""}${extra.length ? `${extra.join(`
 `)}
@@ -17719,6 +17864,8 @@ var HELP = `crew ${VERSION}
   analyse <id> --paths <file,file>      an issue's origin from git and the records, written to analysis/origin.json (before Understand)
   criteria <id> add "<text>" [--kind preserve|observed] [--contract <mid>:<n>]   a criterion, bound to a contract of a reply in the item's mail when given
   criteria <id> remove <AC-n>           take out a criterion no test-first record or skip names
+  criteria <id> supersede <AC-n> --by <AC-m>   AC-m's text replaces AC-n's: the report shows both, the verdict reads AC-m, AC-n's records stay (a kind at least as strict; no objection left on AC-n)
+  abandon <id> --reason "<why>"         close an item the user drops: their decision on record; the item leaves the open items and the active slot, nothing changes it again, every file stays readable (asks the user)
   decision <id> add "<question>" [--default "<answer>"]   a decision only the user can make (gap round)
   decide <id> D-n "<answer>"            record the user's answer (asks the user)
       --mode <mode> --validator stated-default   no person watching: the validator takes the default

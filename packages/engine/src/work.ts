@@ -282,7 +282,9 @@ export function noteRuntime(paths: CrewPaths, id: string, runtime: string): bool
 export function activeWork(paths: CrewPaths): { work: WorkItem | null; tampered: boolean } | null {
   const id = loadState(paths).active;
   if (!id || !existsSync(workJson(paths, id))) return null;
-  return loadWork(paths, id);
+  const item = loadWork(paths, id);
+  // An abandoned item is nobody's work (finding 124): the Stop rule and the status see no item.
+  return item.work?.abandoned ? null : item;
 }
 
 /**
@@ -302,7 +304,7 @@ export function openItems(paths: CrewPaths, except?: string): WorkItem[] {
   for (const id of ids) {
     if (id === except || !existsSync(workJson(paths, id))) continue;
     const { work } = loadWork(paths, id);
-    if (!work || work.phase === "deliver" || work.phase === "learn") continue;
+    if (!work || work.abandoned || work.phase === "deliver" || work.phase === "learn") continue;
     const evidence = readProtectedJson<Evidence>(paths, join(workDir(paths, id), "evidence.json"));
     if (evidence.data?.verdict === "proven") continue;
     open.push(work);
@@ -397,6 +399,12 @@ export function removeCriterion(
   // An objection bound to the criterion would be silently unresolved by the removal.
   const bound = ledger?.objections.find((o) => o.criterion === id && !o.waived);
   if (bound) return { refused: `${id} is bound to objection ${bound.id}; it stays` };
+  // A superseded criterion and its replacement are read together (finding 118's list): neither goes.
+  const target = work.criteria[index] as Criterion;
+  if (target.supersededBy)
+    return { refused: `${id} is superseded by ${target.supersededBy.id}; it stays` };
+  const replaced = work.criteria.find((c) => c.supersededBy?.id === id);
+  if (replaced) return { refused: `${id} supersedes ${replaced.id}; it stays` };
   if (evidence.tdd.some((t) => t.criterion === id)) {
     return { refused: `${id} has a test-first record; it stays` };
   }
@@ -407,6 +415,57 @@ export function removeCriterion(
   const removed: RemovedCriterion = { ...criterion, at: nowIso() };
   work.removedCriteria = [...(work.removedCriteria ?? []), removed];
   return { removed };
+}
+
+/** How much a criterion's proof shows: a behaviour's red and green, a preservation's before and after, an observation's pass with a reason. */
+const PROOF_RANK: Record<CriterionKind, number> = { behavior: 2, preserve: 1, observed: 0 };
+
+/**
+ * Records that a criterion's text was replaced by another's (finding 118's list, the hardening item
+ * 2026-10-21-010): the old one keeps its id, its text and its records and is read through the new
+ * one. Refused where the replacement would prove less than the old (the kinds' rank), where an
+ * objection still rests on the old one (bind it to the new one first, as `removeCriterion` keeps),
+ * where either is already superseded, and on the same id.
+ */
+export function supersedeCriterion(
+  work: WorkItem,
+  from: string,
+  by: string,
+  ledger?: ObjectionLedger,
+): { criterion: Criterion; at: string } | { refused: string } {
+  const old = work.criteria.find((c) => c.id === from);
+  if (!old) return { refused: `unknown criterion: ${from}` };
+  const replacement = work.criteria.find((c) => c.id === by);
+  if (!replacement) return { refused: `unknown criterion: ${by}` };
+  if (from === by) return { refused: `${from} cannot supersede itself` };
+  if (old.supersededBy)
+    return { refused: `${from} is already superseded by ${old.supersededBy.id}` };
+  if (replacement.supersededBy)
+    return {
+      refused: `${by} is superseded by ${replacement.supersededBy.id}: supersede by ${replacement.supersededBy.id} instead`,
+    };
+  const bound = ledger?.objections.find((o) => o.criterion === from && !o.waived);
+  if (bound) return { refused: `${bound.id} is bound to ${from}: resolve it against ${by} first` };
+  if (PROOF_RANK[replacement.kind] < PROOF_RANK[old.kind])
+    return {
+      refused: `${by} (${replacement.kind}) cannot replace ${from} (${old.kind}): a replacement proves at least as much`,
+    };
+  const at = nowIso();
+  old.supersededBy = { id: by, at };
+  return { criterion: old, at };
+}
+
+/** The criterion whose proof stands for `id`: the last of its supersede chain, or itself. */
+export function currentCriterion(work: WorkItem, id: string): Criterion | undefined {
+  let current = work.criteria.find((c) => c.id === id);
+  // The engine's writers never leave a cycle or a dangling replacement (`supersedeCriterion` and
+  // `removeCriterion` refuse both); `seen` and the fallback guard a hand-edited record on the read side.
+  const seen = new Set<string>();
+  while (current?.supersededBy && !seen.has(current.id)) {
+    seen.add(current.id);
+    current = work.criteria.find((c) => c.id === current?.supersededBy?.id) ?? current;
+  }
+  return current;
 }
 
 const USER: Decision = { by: "user" };

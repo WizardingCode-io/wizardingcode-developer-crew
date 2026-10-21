@@ -28,7 +28,7 @@ import { isProtectedPath, knowledgePath } from "../src/paths.ts";
 import { loadPolicy } from "../src/policy.ts";
 import { loadProfile } from "../src/profile.ts";
 import { guaranteeLines, pluginRoot, RUNTIMES } from "../src/runtimes.ts";
-import { recordWorking } from "../src/state.ts";
+import { loadState, recordWorking } from "../src/state.ts";
 import { readProtectedJson, writeProtectedJson } from "../src/store.ts";
 import type { GateRun, KnowledgeEntry, Message, WorkItem } from "../src/types.ts";
 import { VERSION } from "../src/version.ts";
@@ -9125,4 +9125,212 @@ test("F120 AC-9: --remove is a boolean flag in either position, and refused with
   expect(readFileSync(file, "utf8")).toBe(before);
   expect(listDecisions(paths).length).toBe(count);
   expect(loadPolicy(paths).policy.attendedDecisions).toBe("relay");
+});
+
+test("AC-1 (finding 124): crew abandon closes an item the user drops: the decision recorded, the item no longer active or open, every change refused, the status and the report saying so", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const env = testEnv();
+  const c = io(root, env);
+  const first = (await c.json("start", "Lane A", "--answers", answers, "--criterion", "a")).data
+    .id as string;
+  expect((await c.run("abandon", first)).err.trim()).toBe(
+    'usage: crew abandon <id> --reason "<why>"',
+  );
+  const abandoned = await c.run("abandon", first, "--reason", "the client dropped the request");
+  expect(abandoned.code, abandoned.err).toBe(0);
+  expect(abandoned.out.trim()).toBe(
+    `abandoned ${first} by the user, relayed by the agent: the client dropped the request`,
+  );
+  const record = loadWork(repoPaths(root, env), first).work;
+  expect(record?.abandoned).toMatchObject({
+    reason: "the client dropped the request",
+    by: { by: "user", relayed: true },
+  });
+  const at = record?.abandoned?.at ?? "";
+  expect(typeof at).toBe("string");
+  expect(register(root).at(-1)).toMatchObject({
+    kind: "abandon",
+    text: "abandoned: the client dropped the request",
+    by: "the user, relayed by the agent",
+  });
+  expect(loadState(repoPaths(root, env)).active).toBeNull();
+  // A second abandon, and every changing command, is refused naming the abandonment.
+  const date = at.slice(0, 10);
+  expect((await c.run("abandon", first, "--reason", "again")).err.trim()).toBe(
+    `${first} was abandoned on ${date}: the client dropped the request`,
+  );
+  for (const args of [
+    ["phase", first, "next"],
+    ["tdd", "red", first, "AC-1"],
+    ["gate", "run", first],
+    ["criteria", first, "add", "b"],
+    ["resume", first],
+  ]) {
+    const refused = await c.run(...args);
+    expect(refused.code, args.join(" ")).toBe(1);
+    expect(refused.err.trim(), args.join(" ")).toBe(
+      `${first} was abandoned on ${date}: the client dropped the request; start a new item`,
+    );
+  }
+  // Still readable: the status with the id, the evidence, the register.
+  expect((await c.run("status")).out.trim()).toBe("no active work item");
+  const status = await c.run("status", first);
+  expect(status.code, status.err).toBe(0);
+  expect(status.out).toContain("phase build, abandoned (the client dropped the request), route");
+  const report = (await c.run("evidence", first)).out;
+  expect(report).toContain(`- Verdict: **Abandoned on ${date}: the client dropped the request**`);
+  expect(report).toContain(
+    `- abandoned by the user, relayed by the agent (${at}): the client dropped the request`,
+  );
+  expect((await c.run("decisions", "--grep", "dropped")).out).toContain(
+    "abandoned: the client dropped the request",
+  );
+  // Not a neighbour: a second item started with uncommitted changes names no shared checkout.
+  write(root, "src/a.ts", "half-written");
+  const second = await c.json("start", "Lane B", "--answers", answers, "--criterion", "b");
+  expect(second.code).toBe(0);
+  expect(second.data.shared).toBeNull();
+  // A learned item is done, not abandoned.
+  const secondId = second.data.id as string;
+  const learned = loadWork(repoPaths(root, env), secondId).work;
+  if (!learned) throw new Error("no work");
+  learned.phase = "learn";
+  saveWork(repoPaths(root, env), learned);
+  expect((await c.run("abandon", secondId, "--reason", "x")).err.trim()).toBe(
+    `${secondId} is learned: nothing to abandon`,
+  );
+});
+
+test("AC-8 (finding 118's list): crew criteria supersede records a replacement, refuses what would lose evidence or an objection, and the report and the verdict read the replacement, down a chain", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "sh run-tests.sh" } }),
+    "run-tests.sh": "exit 1\n",
+    "src/a.ts": "x",
+  });
+  const env = testEnv();
+  const c = io(root, env);
+  const id = (
+    await c.json("start", "Supersede", "--answers", answers, "--criterion", "the old text")
+  ).data.id as string;
+  expect((await c.run("tdd", "red", id, "AC-1")).code).toBe(0);
+  write(root, "run-tests.sh", "exit 0\n");
+  expect((await c.run("tdd", "green", id, "AC-1")).code).toBe(0);
+  await c.run("criteria", id, "add", "the new text");
+  const sup = (from: string, by: string) => c.run("criteria", id, "supersede", from, "--by", by);
+  expect((await sup("AC-9", "AC-2")).err.trim()).toBe("unknown criterion: AC-9");
+  expect((await sup("AC-1", "AC-9")).err.trim()).toBe("unknown criterion: AC-9");
+  expect((await sup("AC-1", "AC-1")).err.trim()).toBe("AC-1 cannot supersede itself");
+  // An objection bound to AC-1, then resolved by its proof: refused either way until re-bound.
+  await c.run("objection", id, "add", "x", "--by", "gap-round", "--severity", "blocking");
+  expect((await c.run("objection", id, "resolve", "O-1", "--criterion", "AC-1")).code).toBe(0);
+  expect((await sup("AC-1", "AC-2")).err.trim()).toBe(
+    "O-1 is bound to AC-1: resolve it against AC-2 first",
+  );
+  expect((await c.run("objection", id, "resolve", "O-1", "--criterion", "AC-2")).code).toBe(0);
+  const done = await sup("AC-1", "AC-2");
+  expect(done.code, done.err).toBe(0);
+  expect(done.out.trim()).toBe("AC-1 superseded by AC-2");
+  const work = loadWork(repoPaths(root, env), id).work;
+  expect(work?.criteria[0]?.supersededBy).toMatchObject({ id: "AC-2" });
+  expect(typeof work?.criteria[0]?.supersededBy?.at).toBe("string");
+  expect(register(root).at(-1)).toMatchObject({
+    kind: "supersede",
+    text: "AC-1 superseded by AC-2",
+    by: "the agent",
+  });
+  // AC-1's records stay; a new record on it and a removal of either are refused naming the other.
+  write(root, "run-tests.sh", "exit 1\n");
+  expect((await c.run("tdd", "red", id, "AC-1")).err.trim()).toBe(
+    "AC-1 is superseded by AC-2: record the proof on AC-2",
+  );
+  expect((await c.run("criteria", id, "remove", "AC-1")).err.trim()).toBe(
+    "AC-1 is superseded by AC-2; it stays",
+  );
+  // AC-2 holds O-1 now, so the objection's rule speaks first; without it, the supersede's would.
+  expect((await c.run("criteria", id, "remove", "AC-2")).err.trim()).toBe(
+    "AC-2 is bound to objection O-1; it stays",
+  );
+  await c.run("objection", id, "waive", "O-1", "--reason", "x");
+  expect((await c.run("criteria", id, "remove", "AC-2")).err.trim()).toBe(
+    "AC-2 supersedes AC-1; it stays",
+  );
+  // The report's row and the verdict: AC-2 unproven names the chain; AC-2 proven clears AC-1.
+  let report = (await c.run("evidence", id)).out;
+  expect(report).toContain("| AC-1 | behavior | the old text | superseded by AC-2 (");
+  expect(report).toContain("); own record: red then green |");
+  expect(report).toContain("- test-first record missing for AC-1 (superseded by AC-2)");
+  expect(report).toContain("- test-first record missing for AC-2");
+  expect((await c.run("tdd", "red", id, "AC-2")).code).toBe(0);
+  write(root, "run-tests.sh", "exit 0\n");
+  expect((await c.run("tdd", "green", id, "AC-2")).code).toBe(0);
+  report = (await c.run("evidence", id)).out;
+  expect(report).not.toContain("test-first record missing for AC-1");
+  expect(report).not.toContain("test-first record missing for AC-2");
+  // A second supersede of AC-1 and a supersede by a superseded criterion are refused; a chain
+  // (AC-1 by AC-2 by AC-3) resolves to the last.
+  await c.run("criteria", id, "add", "a third text");
+  expect((await sup("AC-1", "AC-3")).err.trim()).toBe("AC-1 is already superseded by AC-2");
+  expect((await sup("AC-3", "AC-1")).err.trim()).toBe(
+    "AC-1 is superseded by AC-2: supersede by AC-2 instead",
+  );
+  expect((await sup("AC-2", "AC-3")).code).toBe(0);
+  report = (await c.run("evidence", id)).out;
+  expect(report).toContain("- test-first record missing for AC-1 (superseded by AC-3)");
+  expect(report).toContain("- test-first record missing for AC-2 (superseded by AC-3)");
+  expect(report).toContain("- test-first record missing for AC-3");
+  write(root, "run-tests.sh", "exit 1\n");
+  expect((await c.run("tdd", "red", id, "AC-3")).code).toBe(0);
+  write(root, "run-tests.sh", "exit 0\n");
+  expect((await c.run("tdd", "green", id, "AC-3")).code).toBe(0);
+  report = (await c.run("evidence", id)).out;
+  expect(report).not.toContain("test-first record missing");
+});
+
+test("AC-6: a criterion is superseded only by one of a kind at least as strict, and the report shows the superseded criterion's own record state", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "sh run-tests.sh" } }),
+    "run-tests.sh": "exit 1\n",
+    "src/a.ts": "x",
+  });
+  const env = testEnv();
+  const c = io(root, env);
+  const id = (await c.json("start", "Kinds", "--answers", answers, "--criterion", "a behaviour"))
+    .data.id as string;
+  expect((await c.run("tdd", "red", id, "AC-1")).code).toBe(0);
+  await c.run("criteria", id, "add", "an observation", "--kind", "observed");
+  await c.run("criteria", id, "add", "a preservation", "--kind", "preserve");
+  await c.run("criteria", id, "add", "another behaviour");
+  const sup = (from: string, by: string) => c.run("criteria", id, "supersede", from, "--by", by);
+  expect((await sup("AC-1", "AC-2")).err.trim()).toBe(
+    "AC-2 (observed) cannot replace AC-1 (behavior): a replacement proves at least as much",
+  );
+  expect((await sup("AC-1", "AC-3")).err.trim()).toBe(
+    "AC-3 (preserve) cannot replace AC-1 (behavior): a replacement proves at least as much",
+  );
+  expect((await sup("AC-3", "AC-2")).err.trim()).toBe(
+    "AC-2 (observed) cannot replace AC-3 (preserve): a replacement proves at least as much",
+  );
+  // An objection bound to AC-1 while its proof is still red-only: refused until re-bound.
+  await c.run("objection", id, "add", "y", "--by", "gap-round", "--severity", "advisory");
+  expect((await c.run("objection", id, "resolve", "O-1", "--criterion", "AC-1")).code).toBe(0);
+  expect((await sup("AC-1", "AC-4")).err.trim()).toBe(
+    "O-1 is bound to AC-1: resolve it against AC-4 first",
+  );
+  expect((await c.run("objection", id, "resolve", "O-1", "--criterion", "AC-4")).code).toBe(0);
+  // Equal ranks are allowed: a preserve by a preserve, an observed by an observed.
+  await c.run("criteria", id, "add", "another preservation", "--kind", "preserve");
+  await c.run("criteria", id, "add", "another observation", "--kind", "observed");
+  expect((await sup("AC-5", "AC-3")).code).toBe(0);
+  expect((await sup("AC-6", "AC-2")).code).toBe(0);
+  expect((await sup("AC-3", "AC-4")).code).toBe(0);
+  expect((await sup("AC-1", "AC-4")).code).toBe(0);
+  expect((await sup("AC-2", "AC-4")).code).toBe(0);
+  const report = (await c.run("evidence", id)).out;
+  expect(report).toContain("| AC-1 | behavior | a behaviour | superseded by AC-4 (");
+  expect(report).toContain("); own record: red only |");
+  expect(report).toContain("| AC-2 | observed | an observation | superseded by AC-4 (");
+  expect(report).toContain("); own record: missing |");
 });

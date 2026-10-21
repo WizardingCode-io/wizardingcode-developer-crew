@@ -3704,3 +3704,21 @@ test("SP6-T4 AC-36 (judgement round-27): a # after a quoted part inside a subexp
   ])
     expect(ps(command), command).toEqual({});
 });
+
+test("AC-2 (finding 124): crew abandon is a user-only command: asked under prompt, passed under relay, --mode demanded where nobody watches", () => {
+  const prompt = setup();
+  const bashIn = (ctx: ReturnType<typeof setup>["ctx"], command: string, mode?: string) =>
+    onPreToolUse(ctx, { tool_name: "Bash", tool_input: { command }, permission_mode: mode });
+  expect(decision(bashIn(prompt.ctx, 'crew abandon w1 --reason "dropped"', "default"))).toBe("ask");
+  expect(decision(bashIn(prompt.ctx, "crew abandon w1 --reason dropped", "auto"))).toBe("ask");
+  const relay = setup({ attendedDecisions: "relay" });
+  expect(bashIn(relay.ctx, 'crew abandon w1 --reason "dropped"', "auto")).toEqual({});
+  const headless = hookContext(
+    { session_id: "s", cwd: prompt.root },
+    { ...testEnv(), CLAUDE_CODE_SESSION_ATTENDED: "0" },
+  );
+  const bare = bashIn(headless, 'crew abandon w1 --reason "dropped"', "auto");
+  expect(decision(bare)).toBe("deny");
+  expect(reason(bare)).toContain("--mode auto");
+  expect(bashIn(headless, 'crew abandon w1 --reason "dropped" --mode auto', "auto")).toEqual({});
+});

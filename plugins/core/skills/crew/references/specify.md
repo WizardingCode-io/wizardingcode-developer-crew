@@ -25,6 +25,8 @@ crew criteria <id> add "The stubbed checkout flow passes end to end." --kind obs
 
 It is proven with `crew tdd observed <id> AC-n --reason "<why no red run can exist>"`, and the report shows the reason apart from skips.
 
+A criterion whose text a later revision made false is never removed once it has a record (evidence stays): `crew criteria supersede AC-n --by AC-m` records that AC-m's text replaces AC-n's. The report shows both, with what AC-n proved on its own; the verdict reads AC-m's proof for AC-n; AC-m must prove at least as much (a behaviour by a behaviour, a preservation by a preservation or a behaviour, an observation by any), and an objection still bound to AC-n is resolved against AC-m first.
+
 ## Standard route: a short spec
 
 Write `.crew/work/<id>/spec.md` and add each criterion with `crew criteria`:

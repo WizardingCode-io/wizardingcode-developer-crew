@@ -6,6 +6,29 @@ import { type CrewPaths, workDir } from "./paths.ts";
 import { joinWords, runCommand, shellRefusal } from "./run.ts";
 import type { CriterionKind, Evidence, Profile, RunRecord, WorkItem } from "./types.ts";
 
+/**
+ * The runners' own summary lines for a run that found nothing to run (finding 126), anchored per
+ * runner and read as whole, unindented lines: bun, vitest, jest, pytest and PHPUnit. A line a
+ * failing test printed is indented or a diff line, so its words never count (the security lead
+ * of 2026-10-21-010).
+ */
+const NO_TEST_LINES: readonly RegExp[] = [
+  /^error: .*matched 0 tests\. Searched /,
+  /^Ran 0 tests across /,
+  /^No test files found/,
+  /^No tests found/,
+  /^=+ no tests ran in /,
+  /^No tests executed!?/,
+];
+
+/** The line of a run's tail that says no test ran, or null when the runner ran something. */
+function ranNoTest(tail: string): string | null {
+  for (const line of tail.split("\n")) {
+    if (NO_TEST_LINES.some((rule) => rule.test(line))) return line;
+  }
+  return null;
+}
+
 export type TddStep = "red" | "green" | "before" | "after" | "observed";
 
 const STEPS_BY_KIND: Record<CriterionKind, { steps: TddStep[]; how: string }> = {
@@ -60,6 +83,13 @@ export async function recordTdd(
       message: `${criterionId} is ${article(criterion.kind)} ${criterion.kind} criterion: ${expected.how}`,
     };
   }
+  // A superseded criterion is proven through its replacement (finding 118's list): its own
+  // records stay as they are, and a new one would prove a text that is no longer the spec's.
+  if (criterion.supersededBy)
+    return {
+      ok: false,
+      message: `${criterionId} is superseded by ${criterion.supersededBy.id}: record the proof on ${criterion.supersededBy.id}`,
+    };
   if (step === "observed" && !reason?.trim()) {
     return { ok: false, message: "an observed run needs --reason: why no red run can exist" };
   }
@@ -134,6 +164,16 @@ export async function recordTdd(
     timedOut: result.timedOut,
   };
   const passed = result.exit === 0 && !result.timedOut;
+  // A runner that found nothing to run says so in its own words (finding 126): a red, a green, a
+  // before, an after or an observed on such a run proves nothing, and nothing is recorded.
+  const empty = ranNoTest(result.tail);
+  if (empty !== null) {
+    return {
+      ok: false,
+      message: `the run ran no test (${empty}): fix the command or the filter before recording`,
+      record,
+    };
+  }
   if (step === "red") {
     if (passed) {
       return {

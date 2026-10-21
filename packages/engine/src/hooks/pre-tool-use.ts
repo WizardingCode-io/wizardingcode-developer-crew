@@ -622,6 +622,8 @@ function userOnlyCommand(
     verb === "decide" ||
     // One more round past a cap is the user's to grant (SP7 §6.1).
     verb === "continue" ||
+    // An item is dropped on the user's word alone (finding 124).
+    verb === "abandon" ||
     // A verb the hook cannot read after the id (finding 86) takes the deciding form: asked, or
     // --mode demanded, never let through on the words around it.
     (verb === "objection" && (parsed.positional.includes("waive") || unreadable(third))) ||

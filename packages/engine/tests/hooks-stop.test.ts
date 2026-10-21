@@ -553,3 +553,20 @@ test("SP4-T4 AC-5: the Stop hook holds nothing for a proven item in learn with a
   expect(onStop(ctx)).toEqual({});
   expect(onStop(ctx)).toEqual({});
 });
+
+test("AC-1 (finding 124): an abandoned item is not the Stop rule's item: the rule sees no work item", () => {
+  const { root, ctx } = session();
+  const work = createWork(ctx.paths, "fix");
+  write(root, "src/a.ts", "changed");
+  expect(String(onStop(ctx).reason)).toContain(`crew await ${work.id} user`);
+  work.abandoned = {
+    at: "2026-10-21T18:00:00.000Z",
+    reason: "the client dropped the request",
+    by: { by: "user", relayed: true },
+  };
+  saveWork(ctx.paths, work);
+  const response = onStop(ctx);
+  expect(response.decision).toBe("block");
+  expect(String(response.reason)).toContain("no work item");
+  expect(String(response.reason)).not.toContain(work.id);
+});

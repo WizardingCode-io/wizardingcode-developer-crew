@@ -36,7 +36,7 @@ import type {
   WorkItem,
 } from "./types.ts";
 import { partyLabel } from "./types.ts";
-import { isSkipped, kindOfItem, tddDone } from "./work.ts";
+import { currentCriterion, isSkipped, kindOfItem, tddDone } from "./work.ts";
 
 type Decided = {
   by?: DecidedBy;
@@ -307,14 +307,35 @@ export function computeVerdict(input: VerdictInput): {
     unproven.push('no acceptance criteria (crew criteria <id> add "...")');
   for (const criterion of work.criteria) {
     if (isSkipped(work, `tdd:${criterion.id}`, policy)) continue;
-    const record = evidence.tdd.find((t) => t.criterion === criterion.id);
-    if (!tddDone(record, criterion.kind))
-      unproven.push(`test-first record missing for ${criterion.id}`);
+    // A superseded criterion is read through its replacement (finding 118's list): the last of
+    // the chain proves for all of them, and a missing proof names the chain.
+    const current = currentCriterion(work, criterion.id) ?? criterion;
+    const record = evidence.tdd.find((t) => t.criterion === current.id);
+    if (!tddDone(record, current.kind))
+      unproven.push(
+        `test-first record missing for ${criterion.id}${current.id !== criterion.id ? ` (superseded by ${current.id})` : ""}`,
+      );
   }
   return { verdict: unproven.length === 0 ? "proven" : "unproven", unproven };
 }
 
 export function tddSummary(
+  work: WorkItem,
+  evidence: Evidence,
+  criterionId: string,
+  kind: CriterionKind,
+  policy: Policy,
+): string {
+  // A superseded criterion's cell says which text replaced it and what it proved on its own
+  // (finding 118's list, the security lead of 2026-10-21-010): the reader sees both.
+  const replaced = work.criteria.find((c) => c.id === criterionId)?.supersededBy;
+  if (replaced)
+    return `superseded by ${replaced.id} (${replaced.at.slice(0, 10)}); own record: ${ownSummary(work, evidence, criterionId, kind, policy)}`;
+  return ownSummary(work, evidence, criterionId, kind, policy);
+}
+
+/** A criterion's own test-first state, read from its records alone. */
+function ownSummary(
   work: WorkItem,
   evidence: Evidence,
   criterionId: string,
@@ -427,10 +448,13 @@ export function renderReport(
         .map(([who, n]) => `${n} objection${n === 1 ? "" : "s"} waived ${who}`)
         .join(" and ")}`
     : "";
-  lines.push(
-    `- Verdict: **${evidence.verdict === "proven" ? "Proven" : "Not proven"}**${waivedNote}`,
-    "",
-  );
+  // An abandoned item's verdict is the user's word (finding 124), never a proof it will not have.
+  const verdictLine = work.abandoned
+    ? `Abandoned on ${work.abandoned.at.slice(0, 10)}: ${work.abandoned.reason}`
+    : evidence.verdict === "proven"
+      ? "Proven"
+      : "Not proven";
+  lines.push(`- Verdict: **${verdictLine}**${waivedNote}`, "");
   if (evidence.unproven.length) {
     lines.push("## Not proven", "");
     for (const reason of evidence.unproven) lines.push(`- ${reason}`);
@@ -755,8 +779,13 @@ export function renderReport(
       `- started in a checkout shared with ${shared.with.join(", ")}: ${n} uncommitted file${n === 1 ? "" : "s"} at the start, listed in work.json (sharedCheckout.paths) (${shared.at})`,
     );
   }
-  if (work.approvals.length || work.skips.length || removed.length) {
+  if (work.approvals.length || work.skips.length || removed.length || work.abandoned) {
     lines.push("", "## Decisions", "");
+    if (work.abandoned) {
+      lines.push(
+        `- abandoned ${decidedBy(work.abandoned.by)} (${work.abandoned.at}): ${work.abandoned.reason}`,
+      );
+    }
     for (const a of work.approvals) {
       lines.push(`- ${a.what} approved ${decidedBy(a)} (${a.at})${countedNote(policy, a)}`);
     }
