@@ -456,10 +456,7 @@ function relayAfterLock(
     return `Crew: ${agent}'s answer to ${question} ${whereSaved(progress.saved)} but the reply was not sent: ${relayed.refused}${named}. Once that is cleared, send it with ${sendByHand(id, question, agent, file)}.`;
   }
   if ("refused" in relayed) {
-    const sent = relayed.refused.replace(
-      `${relayed.delivered} was delivered, but `,
-      `${relayed.delivered} was sent, but `,
-    );
+    const sent = `${relayed.delivered} was sent, but ${relayed.refused}`;
     return `Crew: ${agent}'s answer to ${question} ${whereSaved(progress.saved)}: ${[sent, ...notes].join("; ")}.`;
   }
   if (notes.length)

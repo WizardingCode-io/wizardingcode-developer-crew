@@ -1138,3 +1138,10 @@ Verdicts agree at every effort. Upheld findings: `high` reproduced Task 6's and 
 - Expected: learn reads the item's verdict as recorded at its delivery (the fingerprint of the tree its leads validated, or its commit), not the working tree's: an item past deliver is no longer edited (`openItems` says so).
 - Evidence: the refused learn; 007's `evidence.json` (proven, delivery validated round 2).
 - Outcome: fixed in `2026-10-22-010` (fast route): `crew learn` takes the verdict its last gate run recorded, untampered, beside the working tree's; the row `F138` in `cli.test.ts`.
+
+### 139. Rule 17's root-cause match is too wide for this repository's items, and refuses one entry at a time
+- Date: 2026-10-22. Project: this repository. Items: `2026-10-22-007`, `-009`, `-010`, `-011`. Category: `friction`. Severity: low.
+- What happened: every engine item of the consolidation was refused at learn by a root cause it does not share: the match needs one shared path and three shared words, and this repository's items share `cli.ts`, `subagent-stop.ts` or `mail.ts` and the words of its own prose (`hook`, `record`, `answer`, `item`); item 4 (`011`) was refused three times in a row, by K-49, K-70 and K-74, one per run, each needing its own `crew knowledge contradict`. An entry the analysis cites as `[K:K-n]` is confirmed at the same learn, so an entry can come out both contradicted and confirmed by one item (K-70 by `011`).
+- Expected: the refusal lists every matching entry at once; the match weighs the cause's words against the base's (common words of the project count for little); a cited entry is not offered as a duplicate.
+- Evidence: the four items' refused learns; `crew knowledge show K-49`, `K-70`, `K-74` (their `contradictedBy`).
+- Outcome: open, for the closing debt chore.

@@ -123,6 +123,13 @@ function writeProtectedJsonAt(integrityFile, absPath, data) {
   writeText(absPath, text);
   rememberIn(integrityFile, basename(absPath), text);
 }
+function recordIntegrityAt(integrityFile, absPath) {
+  const text = readText(absPath);
+  if (text === null)
+    return false;
+  rememberIn(integrityFile, basename(absPath), text);
+  return true;
+}
 function readProtectedJsonAt(integrityFile, absPath) {
   return readProtected(integrityFile, basename(absPath), absPath, false);
 }
@@ -5258,8 +5265,10 @@ function checkContracts(root, branch, base, contracts, body) {
         try {
           changed = gitRun(root, "diff", "--name-only", "--end-of-options", base, tip).split(`
 `).filter(Boolean);
-        } catch {
-          changed = [];
+        } catch (error) {
+          return {
+            refused: `contract types:${path} cannot be checked: git diff failed (${gitError(error)})`
+          };
         }
       }
       if (!changed.includes(path))
@@ -5337,14 +5346,17 @@ function projectEntry(registry, workspace, name) {
   const ws = workspace === "_alone" ? null : workspace;
   return registry.projects.find((p) => p.name === name && p.workspace === ws && !p.worktreeOf);
 }
+function seenWithin(at, ms, now) {
+  const seen = at === undefined ? Number.NaN : Date.parse(at);
+  return Number.isFinite(seen) && now - seen <= ms;
+}
 function isLive(entry, now = Date.now()) {
-  const seen = entry.lastHook === undefined ? Number.NaN : Date.parse(entry.lastHook);
-  return Number.isFinite(seen) && now - seen <= LIVE_MS;
+  return seenWithin(entry.lastHook, LIVE_MS, now);
 }
 function registerProject(ctx, sessionId, options = {}) {
   const registry = loadRegistry(ctx.paths.userDir);
   const existing = registry.projects.find((p) => p.root === ctx.paths.root);
-  const recent = (at) => at !== undefined && options.minIntervalMs !== undefined && Date.now() - Date.parse(at) < options.minIntervalMs;
+  const recent = (at) => options.minIntervalMs !== undefined && seenWithin(at, options.minIntervalMs, Date.now());
   if (existing && recent(existing.lastSeen) && existing.sessionId === sessionId && (!options.hook || recent(existing.lastHook)))
     return existing;
   const main = worktreeMainRoot(ctx.paths.root);
@@ -5384,7 +5396,7 @@ function resolveProject(ctx, to) {
       lastSeen: nowIso(),
       sessionId: ""
     };
-    return { entry: own };
+    return { entry: own, toSelf: true };
   }
   if (ctx.self.workspace === null) {
     return {
@@ -5396,7 +5408,8 @@ function resolveProject(ctx, to) {
   const alive = inWorkspace.filter((p) => existsSync8(p.root));
   if (alive.length) {
     alive.sort((a, b) => b.lastSeen.localeCompare(a.lastSeen));
-    return { entry: alive[0] };
+    const entry = alive[0];
+    return { entry, toSelf: entry.root === main };
   }
   const where = `in workspace ${ctx.self.workspace}`;
   if (inWorkspace.length) {
@@ -5439,6 +5452,26 @@ function writeBox(dir, which, box) {
 }
 function withMailLock(dir, fn, options = {}) {
   return withLock(dir, fn, { ...options, what: "mailbox" });
+}
+function acceptBox(ctx, which) {
+  const { mail } = effectiveMailPolicy(ctx.paths.root, ctx.policy, ctx.env);
+  if (mail.name === null && mail.workspace === null)
+    return {
+      refused: "this project has no mail identity (crew policy set mail.workspace <name>); it has no mailbox to accept"
+    };
+  const dir = mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project).dir;
+  const file = boxFile(dir, which);
+  try {
+    return withMailLock(dir, () => {
+      if (!recordIntegrityAt(boxFile(dir, "integrity"), file))
+        return { refused: `no ${which} at ${file} to accept` };
+      return { file, messages: readBox(dir, which).box.messages };
+    });
+  } catch (error) {
+    if (!(error instanceof LockBusy))
+      throw error;
+    return { refused: `${which} not accepted: ${error.message}` };
+  }
 }
 function newMessageId(outbox, project, at) {
   const day = at.slice(0, 10);
@@ -5535,6 +5568,35 @@ function appendToBox(dir, which, owner, build) {
     return message;
   });
 }
+function outboxMessage(self, itemId, at, fields) {
+  return { at, from: party(self, itemId), hops: self.hops, opened: null, ...fields };
+}
+function agentRefusal(ctx, request, name, toSelf, itemId, work) {
+  const agent = request.agent;
+  if (!agent)
+    return null;
+  if (!toSelf)
+    return `--agent addresses a role or a task of this project; ${name} is another project`;
+  if (ROLE_AGENT.test(agent)) {
+    if (agent === "judge" && ctx.self.agent !== "session")
+      return `a message to the judge comes from the lead (session), not from ${ctx.self.agent}`;
+    if (CRITICS.has(agent)) {
+      const proposals = itemId ? `.crew/work/${itemId}/conclave/proposals.md` : null;
+      const given = request.filePath ? canonical(resolve4(ctx.paths.root, request.filePath)) : null;
+      if (!proposals || !given || given !== canonical(join16(ctx.paths.root, proposals)) || request.text.trim())
+        return `a message to ${agent} carries ${proposals ?? ".crew/work/<id>/conclave/proposals.md"} (--file) and nothing else`;
+    }
+    return null;
+  }
+  if (TASK_AGENT.test(agent)) {
+    if (!(work?.tasks ?? []).some((t) => t.task === agent))
+      return `${agent} is not a task of ${work?.id ?? "the active item"} (crew task <id> open ${agent} …)`;
+    return null;
+  }
+  if (agent !== "session")
+    return `--agent is session, a task (T-n) or a role, not ${agent}`;
+  return null;
+}
 function send(ctx, request, work) {
   const at = nowIso();
   const self = ctx.self;
@@ -5559,25 +5621,22 @@ function send(ctx, request, work) {
       return { refused: `no message ${request.thread} in this project's mail`, message: null };
   }
   const resolved = resolveProject(ctx, request.to);
+  const subject = subjectOf({
+    subject: request.subject ?? (root ? subjectQuoted(root.subject) : undefined),
+    text
+  });
   const refuse = (reason, to2) => {
-    const written = appendToBox(own.dir, "outbox", self.project, (box) => ({
+    const written = appendToBox(own.dir, "outbox", self.project, (box) => outboxMessage(self, itemId, at, {
       id: newMessageId(box, self.project, at),
-      at,
-      from: party(self, itemId),
       to: to2,
       type: request.type,
       priority,
       ...root ? { thread: root.id } : {},
-      subject: subjectOf({
-        subject: request.subject ?? (root ? subjectQuoted(root.subject) : undefined),
-        text
-      }),
+      subject,
       body: text.slice(0, PREVIEW_CHARS),
       replyTo: request.replyTo ?? null,
-      hops: self.hops,
       status: "refused",
-      reason,
-      opened: null
+      reason
     }));
     if ("refused" in written)
       return { refused: written.refused, message: null };
@@ -5604,34 +5663,17 @@ function send(ctx, request, work) {
         message: null
       };
   }
-  const toSelf = entry.root === (worktreeMainRoot(ctx.paths.root) ?? ctx.paths.root);
+  const toSelf = resolved.toSelf;
   const to = {
     workspace: self.workspace ?? "_alone",
     project: entry.name,
     item: null,
     agent: request.agent ?? null
   };
-  let relayed = false;
-  if (request.agent) {
-    if (!toSelf)
-      return refuse(`--agent addresses a role or a task of this project; ${entry.name} is another project`, to);
-    if (ROLE_AGENT.test(request.agent)) {
-      relayed = true;
-      if (request.agent === "judge" && self.agent !== "session")
-        return refuse(`a message to the judge comes from the lead (session), not from ${self.agent}`, to);
-      if (CRITICS.has(request.agent)) {
-        const proposals = itemId ? `.crew/work/${itemId}/conclave/proposals.md` : null;
-        const given = request.filePath ? canonical(resolve4(ctx.paths.root, request.filePath)) : null;
-        if (!proposals || !given || given !== canonical(join16(ctx.paths.root, proposals)) || request.text.trim())
-          return refuse(`a message to ${request.agent} carries ${proposals ?? ".crew/work/<id>/conclave/proposals.md"} (--file) and nothing else`, to);
-      }
-    } else if (TASK_AGENT.test(request.agent)) {
-      if (!(work?.tasks ?? []).some((t) => t.task === request.agent))
-        return refuse(`${request.agent} is not a task of ${work?.id ?? "the active item"} (crew task <id> open ${request.agent} …)`, to);
-    } else if (request.agent !== "session") {
-      return refuse(`--agent is session, a task (T-n) or a role, not ${request.agent}`, to);
-    }
-  }
+  const agentRefused = agentRefusal(ctx, request, entry.name, toSelf, itemId, work);
+  if (agentRefused)
+    return refuse(agentRefused, to);
+  const relayed = request.agent !== undefined && ROLE_AGENT.test(request.agent);
   const destination = destinationPolicy(entry, ctx.env);
   if (!destination)
     return refuse(`${entry.name} at ${entry.root} is not a crew project any more`, to);
@@ -5666,25 +5708,18 @@ function send(ctx, request, work) {
   }
   const message = appendToBox(own.dir, "outbox", self.project, (outbox) => {
     const id = newMessageId(outbox, self.project, at);
-    return {
+    return outboxMessage(self, itemId, at, {
       id,
-      at,
-      from: party(self, itemId),
       to,
       type: request.type,
       priority,
       ...root ? { thread: root.id } : {},
-      subject: subjectOf({
-        subject: request.subject ?? (root ? subjectQuoted(root.subject) : undefined),
-        text
-      }),
+      subject,
       ...placeBody(dest.dir, id, text),
       replyTo: request.replyTo ?? null,
-      hops: self.hops,
       status: "sent",
-      ...relayed ? { relayed: true } : {},
-      opened: null
-    };
+      ...relayed ? { relayed: true } : {}
+    });
   });
   if ("refused" in message)
     return { refused: message.refused, message: null };
@@ -5710,20 +5745,28 @@ function deliver(ctx, dir, owner, message) {
   };
 }
 function recordOpened(ctx, id, opened, skipped) {
-  const result = updateEverywhere(ctx, id, (m) => ({ ...m, opened }), skipped);
+  const pass = recordEverywhere(ctx, id, (m) => ({ ...m, opened }), skipped);
+  if (pass.ownBusy)
+    throw new LockBusy(pass.ownBusy);
+  const result = pass.changed;
   const own = readBox(mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project).dir, "outbox");
   const copy = own.box.messages.find((m) => m.id === id);
   return result && !own.tampered && copy?.opened?.pid === opened.pid ? result : null;
 }
 function updateEverywhere(ctx, id, change, skipped) {
+  return recordEverywhere(ctx, id, change, skipped).changed;
+}
+function recordEverywhere(ctx, id, change, skipped) {
   let result = null;
+  let ownBusy = null;
+  const ownDir = mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project).dir;
   const registry = loadRegistry(ctx.paths.userDir);
   const boxes = new Set;
   for (const p of registry.projects) {
     if (!p.worktreeOf)
       boxes.add(mailbox(ctx.paths.userDir, p.workspace, p.name).dir);
   }
-  boxes.add(mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project).dir);
+  boxes.add(ownDir);
   const holding = [];
   for (const dir of boxes) {
     for (const which of ["inbox", "outbox"]) {
@@ -5739,32 +5782,40 @@ function updateEverywhere(ctx, id, change, skipped) {
     }
   }
   for (const [dir, which] of holding) {
-    withMailLock(dir, () => {
-      let read;
-      try {
-        read = readBox(dir, which);
-      } catch (error) {
-        skipped(`${boxFile(dir, which)} (${error.message.split(`
+    try {
+      withMailLock(dir, () => {
+        let read;
+        try {
+          read = readBox(dir, which);
+        } catch (error) {
+          skipped(`${boxFile(dir, which)} (${error.message.split(`
 `)[0]})`);
-        return;
-      }
-      const { box, tampered } = read;
-      if (tampered) {
-        skipped(`${boxFile(dir, which)} (changed outside the engine)`);
-        return;
-      }
-      const index = box.messages.findIndex((m) => m.id === id);
-      if (index === -1)
-        return;
-      const changed = change(box.messages[index]);
-      box.messages[index] = changed;
-      writeBox(dir, which, box);
-      result = result ?? changed;
-    });
+          return;
+        }
+        const { box, tampered } = read;
+        if (tampered) {
+          skipped(`${boxFile(dir, which)} (changed outside the engine)`);
+          return;
+        }
+        const index = box.messages.findIndex((m) => m.id === id);
+        if (index === -1)
+          return;
+        const changed = change(box.messages[index]);
+        box.messages[index] = changed;
+        writeBox(dir, which, box);
+        result = result ?? changed;
+      });
+    } catch (error) {
+      if (!(error instanceof LockBusy))
+        throw error;
+      skipped(`${boxFile(dir, which)} (${error.message})`);
+      if (dir === ownDir)
+        ownBusy = error.message;
+    }
   }
   if (result)
     recordForParties(ctx, registry, result);
-  return result;
+  return { changed: result, ownBusy };
 }
 function ownInbox(ctx) {
   const { box, tampered } = readBox(mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project).dir, "inbox");
@@ -5789,8 +5840,8 @@ function ownMessage(ctx, id) {
   const found = messages.find((m) => m.id === id);
   return found ? { found } : { refused: `no message ${id} in this inbox` };
 }
-function notUpdated(id) {
-  return { refused: `${id} could not be updated: its mailbox changed while it was being written` };
+function unwritten(pass) {
+  return pass.ownBusy ? `its mailbox is busy (${pass.ownBusy})` : "its mailbox changed while it was being written";
 }
 function skippedLine(id) {
   return (what) => `a copy of ${id} was not changed: ${what}`;
@@ -5803,18 +5854,27 @@ function withoutReason(m) {
   delete copy.reason;
   return copy;
 }
+function applyMove(m, to, at, extra) {
+  const read = readFirst(m, to, at);
+  if (to === "blocked" && mailStatus(read) === "blocked")
+    return { ...read, ...extra };
+  return transition(to === "done" ? withoutReason(read) : read, to, extra);
+}
 function moveMail(ctx, id, to, extra, notes) {
   const own = ownMessage(ctx, id);
   if ("refused" in own)
     return own;
   const at = nowIso();
-  const check = transition(readFirst(own.found, to, at), to, extra);
+  const check = applyMove(own.found, to, at, extra);
   if ("refused" in check)
     return check;
-  return updateEverywhere(ctx, id, (m) => {
-    const moved = transition(readFirst(m, to, at), to, extra);
+  const pass = recordEverywhere(ctx, id, (m) => {
+    const moved = applyMove(m, to, at, extra);
     return "refused" in moved ? m : moved;
-  }, (w) => notes.push(skippedLine(id)(w))) ?? notUpdated(id);
+  }, (w) => notes.push(skippedLine(id)(w)));
+  if (!pass.changed || pass.ownBusy)
+    return { refused: `${id} could not be updated: ${unwritten(pass)}` };
+  return pass.changed;
 }
 function markRead(ctx, id, notes) {
   const own = ownMessage(ctx, id);
@@ -5932,9 +5992,8 @@ function reply(ctx, id, text, options, notes) {
     return { refused: tamperedBox(original.from.project, "inbox") };
   const replyMessage = appendToBox(own.dir, "outbox", ctx.self.project, (outbox) => {
     const replyId = newMessageId(outbox, ctx.self.project, at);
-    return {
+    return outboxMessage(ctx.self, original.to.item, at, {
       id: replyId,
-      at,
       from,
       to: {
         workspace: original.from.workspace,
@@ -5946,44 +6005,41 @@ function reply(ctx, id, text, options, notes) {
       subject: original.subject.startsWith("Re: ") ? original.subject : `Re: ${original.subject}`,
       ...placeBody(dest.dir, replyId, body),
       replyTo: original.id,
-      hops: ctx.self.hops,
       status: "sent",
       ...options.as || original.relayed ? { relayed: true } : {},
-      opened: null,
       ...options.branch ? { branch: options.branch } : {},
       ...options.item ? { item: options.item } : {},
       ...verdict ? { verdict } : {},
       thread: threadOf(original),
       ...checked.contracts.length ? { contracts: checked.contracts } : {},
       ...carried ? { evidence: carried } : {}
-    };
+    });
   });
   if ("refused" in replyMessage)
     return { refused: replyMessage.refused };
   const failed = deliver(ctx, dest.dir, original.from.project, replyMessage);
   if (failed)
     return failed;
-  const answered = updateEverywhere(ctx, id, (m) => {
-    const read = readFirst(m, to, at);
-    const extra = {
-      answeredAt: at,
-      ...options.branch ? { branch: options.branch } : {},
-      ...options.item ? { item: options.item } : {},
-      ...verdict ? { verdict } : {},
-      ...reason !== undefined ? { reason } : {}
-    };
-    const moved = to === "blocked" && mailStatus(read) === "blocked" ? { ...read, ...extra } : transition(to === "done" ? withoutReason(read) : read, to, extra);
+  const extra = {
+    answeredAt: at,
+    ...options.branch ? { branch: options.branch } : {},
+    ...options.item ? { item: options.item } : {},
+    ...verdict ? { verdict } : {},
+    ...reason !== undefined ? { reason } : {}
+  };
+  const answered = recordEverywhere(ctx, id, (m) => {
+    const moved = applyMove(m, to, at, extra);
     return "refused" in moved ? m : moved;
   }, (w) => notes.push(skippedLine(id)(w)));
-  if (!answered)
+  if (!answered.changed || answered.ownBusy)
     return {
-      refused: `${replyMessage.id} was delivered, but ${id} could not be marked answered: its mailbox changed while it was being written`,
+      refused: `${id} could not be marked answered: ${unwritten(answered)}`,
       delivered: replyMessage.id
     };
   withMailLock(ownDir, () => {
     recordForParties(ctx, loadRegistry(ctx.paths.userDir), replyMessage);
   });
-  return { reply: replyMessage, original: answered };
+  return { reply: replyMessage, original: answered.changed };
 }
 function syncMail(ctx, paths) {
   const own = mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project);
@@ -5991,13 +6047,15 @@ function syncMail(ctx, paths) {
   return withMailLock(own.dir, () => {
     let updated = 0;
     const { box: outbox, tampered } = readBox(own.dir, "outbox");
+    const inboxes = new Map;
     if (!tampered) {
       for (const sent of outbox.messages) {
         if (sent.status === "refused")
           continue;
         const entry = projectEntry(registry, sent.to.workspace, sent.to.project);
         const theirsDir = entry ? mailbox(ctx.paths.userDir, entry.workspace, entry.name).dir : own.dir;
-        const inbox2 = readBox(theirsDir, "inbox");
+        const inbox2 = inboxes.get(theirsDir) ?? readBox(theirsDir, "inbox");
+        inboxes.set(theirsDir, inbox2);
         if (inbox2.tampered)
           continue;
         const theirs = inbox2.box.messages.find((m) => m.id === sent.id);
@@ -6012,7 +6070,7 @@ function syncMail(ctx, paths) {
     }
     const inbox = ownInbox(ctx);
     if (inbox.tampered)
-      return { newMail: [], newReplies: [], updated, tampered: true };
+      return { newMail: [], updated, tampered: true };
     const marker = join16(own.dir, `synced-${ctx.self.agent}.json`);
     const seen = new Set(readJson(marker) ?? []);
     const newMail = [];
@@ -6023,12 +6081,7 @@ function syncMail(ctx, paths) {
       seen.add(m.id);
     }
     writeJson(marker, [...seen]);
-    return {
-      newMail,
-      newReplies: newMail.filter((m) => m.replyTo !== null),
-      updated,
-      tampered: false
-    };
+    return { newMail, updated, tampered: false };
   });
 }
 function markNoticed(ctx, id, notes) {
@@ -11358,7 +11411,7 @@ function relayAfterLock(ctx, id, progress, note) {
     return `Crew: ${agent}'s answer to ${question} ${whereSaved(progress.saved)} but the reply was not sent: ${relayed.refused}${named2}. Once that is cleared, send it with ${sendByHand(id, question, agent, file)}.`;
   }
   if ("refused" in relayed) {
-    const sent = relayed.refused.replace(`${relayed.delivered} was delivered, but `, `${relayed.delivered} was sent, but `);
+    const sent = `${relayed.delivered} was sent, but ${relayed.refused}`;
     return `Crew: ${agent}'s answer to ${question} ${whereSaved(progress.saved)}: ${[sent, ...notes].join("; ")}.`;
   }
   if (notes.length)
@@ -14745,6 +14798,26 @@ function accept(env, target) {
     files
   });
 }
+var ACCEPT_USAGE = "usage: crew accept <id|profile|policy|decisions> | crew accept mail inbox|outbox";
+function acceptMailbox(env, which) {
+  const accepted = acceptBox(env.mail, which);
+  if ("refused" in accepted)
+    return refuse(accepted.refused);
+  const { file, messages } = accepted;
+  appendDecision(env.paths, {
+    at: nowIso(),
+    item: "mail",
+    kind: "accept",
+    text: `${which} accepted as it is after a hand edit: ${file} (${messages.length} message${messages.length === 1 ? "" : "s"})`,
+    by: "the user"
+  });
+  const lines2 = messages.map((m) => `  ${m.id} · from ${m.from.project} · ${mailStatus(m)}`);
+  return ok([
+    `${which} accepted: ${file} is now trusted as it is, ${messages.length} message${messages.length === 1 ? "" : "s"}`,
+    ...lines2
+  ].join(`
+`), { accepted: `mail ${which}`, file, messages });
+}
 function openUntampered(env, id) {
   const opened = openWork(env, id);
   if (isOutcome(opened))
@@ -15759,7 +15832,13 @@ async function dispatch(parsed, io) {
     }
     case "accept": {
       if (!args[0])
-        return refuse("usage: crew accept <id|profile|policy|decisions>");
+        return refuse(ACCEPT_USAGE);
+      if (args[0] === "mail") {
+        const which = args[1];
+        if (which !== "inbox" && which !== "outbox" || args.length > 2)
+          return refuse(ACCEPT_USAGE);
+        return acceptMailbox(env, which);
+      }
       return accept(env, args[0]);
     }
     case "start": {
@@ -17918,7 +17997,7 @@ ${body}`, { message: result, body });
           ...parsed.multi.contract?.length ? { contracts: parsed.multi.contract } : {}
         }, notes);
         if ("refused" in result)
-          return refuse(result.refused);
+          return refuse(result.delivered === undefined ? result.refused : `${result.delivered} was delivered, but ${result.refused}`);
         return ok(`replied to ${args[1]}: ${result.reply.id} to ${result.reply.to.project}; ${args[1]} ${mailStatus(result.original)}${notes.length ? `
 ${notes.join(`
 `)}` : ""}`, { reply: result.reply, original: result.original, notes });

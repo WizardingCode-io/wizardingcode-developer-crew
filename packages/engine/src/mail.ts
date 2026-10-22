@@ -3,7 +3,7 @@ import { accessSync, constants, existsSync, statSync } from "node:fs";
 import { basename, isAbsolute, join, resolve } from "node:path";
 import { loadEvidence } from "./evidence.ts";
 import { nowIso, readJson, readText, writeJson, writeText } from "./fs.ts";
-import { withLock } from "./lock.ts";
+import { LockBusy, withLock } from "./lock.ts";
 import {
   decidedPriority,
   insidePath,
@@ -30,6 +30,7 @@ import { oneLine } from "./state.ts";
 import {
   readProtectedJson,
   readProtectedJsonAt,
+  recordIntegrityAt,
   writeProtectedJson,
   writeProtectedJsonAt,
 } from "./store.ts";
@@ -57,7 +58,7 @@ import {
   type WorkItem,
 } from "./types.ts";
 import { loadWork } from "./work.ts";
-import { gitRun, gitShow } from "./worktree.ts";
+import { gitError, gitRun, gitShow } from "./worktree.ts";
 
 export {
   decidedPriority,
@@ -122,12 +123,14 @@ export function threadMessages(
   return { messages, parties: threadParties(messages, root) };
 }
 
-/** A `--contract` as typed: `<kind>:<path>[:<summary>]`, or `clause:<summary>`; the first colon after the kind ends the path. */
+/** A contract as `parseContract` reads it from a `--contract` value: no path for a clause. */
 interface ParsedContract {
   kind: ContractKind;
   path: string | null;
   summary: string;
 }
+
+/** A `--contract` as typed: `<kind>:<path>[:<summary>]`, or `clause:<summary>`; the first colon after the kind ends the path. */
 export function parseContract(text: string): ParsedContract | { refused: string } {
   const match = /^(openapi|types|schema|clause):([\s\S]*)$/.exec(text);
   if (!match)
@@ -199,12 +202,15 @@ export function checkContracts(
           refused: `contract types:${path} cannot be checked: the child has no base commit`,
         };
       if (changed === null) {
+        // A diff git cannot give is named as such, never read as a path outside it (finding 69).
         try {
           changed = gitRun(root, "diff", "--name-only", "--end-of-options", base, tip)
             .split("\n")
             .filter(Boolean);
-        } catch {
-          changed = [];
+        } catch (error) {
+          return {
+            refused: `contract types:${path} cannot be checked: git diff failed (${gitError(error)})`,
+          };
         }
       }
       if (!changed.includes(path))
@@ -347,10 +353,15 @@ function projectEntry(
   return registry.projects.find((p) => p.name === name && p.workspace === ws && !p.worktreeOf);
 }
 
+/** Whether a time a record carries is within `ms` of `now`; an absent or unreadable time never is. */
+function seenWithin(at: string | undefined, ms: number, now: number): boolean {
+  const seen = at === undefined ? Number.NaN : Date.parse(at);
+  return Number.isFinite(seen) && now - seen <= ms;
+}
+
 /** Live means a session's hook ran here within `LIVE_MS`; a command's registration never counts (SP2c 8a, finding #39). */
 export function isLive(entry: ProjectEntry, now = Date.now()): boolean {
-  const seen = entry.lastHook === undefined ? Number.NaN : Date.parse(entry.lastHook);
-  return Number.isFinite(seen) && now - seen <= LIVE_MS;
+  return seenWithin(entry.lastHook, LIVE_MS, now);
 }
 
 /**
@@ -369,9 +380,7 @@ export function registerProject(
   const registry = loadRegistry(ctx.paths.userDir);
   const existing = registry.projects.find((p) => p.root === ctx.paths.root);
   const recent = (at: string | undefined): boolean =>
-    at !== undefined &&
-    options.minIntervalMs !== undefined &&
-    Date.now() - Date.parse(at) < options.minIntervalMs;
+    options.minIntervalMs !== undefined && seenWithin(at, options.minIntervalMs, Date.now());
   if (
     existing &&
     recent(existing.lastSeen) &&
@@ -412,12 +421,13 @@ export function pruneRegistry(userDir: string): string[] {
  * The project a name means, within the sender's workspace and nowhere else (SP2c §6): `.` is the
  * sender itself; a project with no workspace knows only itself; a name of another workspace is
  * refused with the workspace it is in, so the refusal says what happened without hinting at a way
- * across. Worktrees are never the destination of a name: the main checkout is.
+ * across. Worktrees are never the destination of a name: the main checkout is. `toSelf` says
+ * whether that checkout is the sender's own, from the one reading of its main root.
  */
 export function resolveProject(
   ctx: MailContext,
   to: string,
-): { entry: ProjectEntry } | { refused: string } {
+): { entry: ProjectEntry; toSelf: boolean } | { refused: string } {
   const registry = loadRegistry(ctx.paths.userDir);
   const main = worktreeMainRoot(ctx.paths.root) ?? ctx.paths.root;
   if (to === "." || to === ctx.self.project) {
@@ -430,7 +440,7 @@ export function resolveProject(
       lastSeen: nowIso(),
       sessionId: "",
     };
-    return { entry: own };
+    return { entry: own, toSelf: true };
   }
   if (ctx.self.workspace === null) {
     return {
@@ -444,7 +454,8 @@ export function resolveProject(
   if (alive.length) {
     // The most recently seen one, when a name was registered from two roots.
     alive.sort((a, b) => b.lastSeen.localeCompare(a.lastSeen));
-    return { entry: alive[0] as ProjectEntry };
+    const entry = alive[0] as ProjectEntry;
+    return { entry, toSelf: entry.root === main };
   }
   const where = `in workspace ${ctx.self.workspace}`;
   if (inWorkspace.length) {
@@ -511,6 +522,37 @@ export function writeBox(dir: string, which: "inbox" | "outbox", box: Mailbox): 
 /** The mailbox's lock: `withLock` on the mailbox folder, reported as the mailbox. */
 export function withMailLock<T>(dir: string, fn: () => T, options: { waitMs?: number } = {}): T {
   return withLock(dir, fn, { ...options, what: "mailbox" });
+}
+
+/**
+ * The user's acceptance of this project's own box after a hand edit (`crew accept mail`): its
+ * current content recorded as the engine's, read and recorded under the mailbox's lock so no writer
+ * changes it meanwhile, with the messages it now holds for the user to see what was signed. The
+ * box is the one `ctx.self` names; nothing reaches another project's. A project with no mail
+ * identity (no `mail.name` nor `mail.workspace` in the governing policy) has no box to accept.
+ */
+export function acceptBox(
+  ctx: MailContext,
+  which: "inbox" | "outbox",
+): { file: string; messages: Message[] } | { refused: string } {
+  const { mail } = effectiveMailPolicy(ctx.paths.root, ctx.policy, ctx.env);
+  if (mail.name === null && mail.workspace === null)
+    return {
+      refused:
+        "this project has no mail identity (crew policy set mail.workspace <name>); it has no mailbox to accept",
+    };
+  const dir = mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project).dir;
+  const file = boxFile(dir, which);
+  try {
+    return withMailLock(dir, () => {
+      if (!recordIntegrityAt(boxFile(dir, "integrity"), file))
+        return { refused: `no ${which} at ${file} to accept` };
+      return { file, messages: readBox(dir, which).box.messages };
+    });
+  } catch (error) {
+    if (!(error instanceof LockBusy)) throw error;
+    return { refused: `${which} not accepted: ${error.message}` };
+  }
 }
 
 /** `M-<day>-<nnn>-<project>`: the sequence counts the sender's messages of that day (plan decision 1). */
@@ -684,6 +726,58 @@ function appendToBox(
   });
 }
 
+/** A message of this project's outbox: from this agent and the item, at its time and its hops, opening no session; `fields` carries the rest. */
+function outboxMessage(
+  self: MailSelf,
+  itemId: string | null,
+  at: string,
+  fields: Omit<Message, "at" | "from" | "hops" | "opened"> & { from?: MailParty },
+): Message {
+  return { at, from: party(self, itemId), hops: self.hops, opened: null, ...fields };
+}
+
+/**
+ * Why `--agent` cannot address what it names (SP2c §7), or null: a role or a task of this project
+ * only; the judge hears from the lead; a critic receives the item's proposals and nothing else; a
+ * task is one of the item's.
+ */
+function agentRefusal(
+  ctx: MailContext,
+  request: SendRequest,
+  name: string,
+  toSelf: boolean,
+  itemId: string | null,
+  work: WorkItem | null,
+): string | null {
+  const agent = request.agent;
+  if (!agent) return null;
+  if (!toSelf)
+    return `--agent addresses a role or a task of this project; ${name} is another project`;
+  if (ROLE_AGENT.test(agent)) {
+    if (agent === "judge" && ctx.self.agent !== "session")
+      return `a message to the judge comes from the lead (session), not from ${ctx.self.agent}`;
+    if (CRITICS.has(agent)) {
+      const proposals = itemId ? `.crew/work/${itemId}/conclave/proposals.md` : null;
+      const given = request.filePath ? canonical(resolve(ctx.paths.root, request.filePath)) : null;
+      if (
+        !proposals ||
+        !given ||
+        given !== canonical(join(ctx.paths.root, proposals)) ||
+        request.text.trim()
+      )
+        return `a message to ${agent} carries ${proposals ?? ".crew/work/<id>/conclave/proposals.md"} (--file) and nothing else`;
+    }
+    return null;
+  }
+  if (TASK_AGENT.test(agent)) {
+    if (!(work?.tasks ?? []).some((t) => t.task === agent))
+      return `${agent} is not a task of ${work?.id ?? "the active item"} (crew task <id> open ${agent} …)`;
+    return null;
+  }
+  if (agent !== "session") return `--agent is session, a task (T-n) or a role, not ${agent}`;
+  return null;
+}
+
 /**
  * Sends a message under the rules of SP2c §6, in their order, before anything is written: the
  * destination is in the sender's workspace; its policy accepts the type; the hops are under its
@@ -721,30 +815,30 @@ export function send(
       return { refused: `no message ${request.thread} in this project's mail`, message: null };
   }
   const resolved = resolveProject(ctx, request.to);
+  // The subject, the thread's root quoted when the message joins one and gives none of its own.
+  const subject = subjectOf({
+    subject: request.subject ?? (root ? subjectQuoted(root.subject) : undefined),
+    text,
+  });
   // A refusal is recorded in the sender's outbox; when that outbox is itself tampered, nothing is.
   const refuse = (
     reason: string,
     to: MailAddressee,
   ): { refused: string; message: Message | null } => {
-    const written = appendToBox(own.dir, "outbox", self.project, (box) => ({
-      id: newMessageId(box, self.project, at),
-      at,
-      from: party(self, itemId),
-      to,
-      type: request.type,
-      priority,
-      ...(root ? { thread: root.id } : {}),
-      subject: subjectOf({
-        subject: request.subject ?? (root ? subjectQuoted(root.subject) : undefined),
-        text,
+    const written = appendToBox(own.dir, "outbox", self.project, (box) =>
+      outboxMessage(self, itemId, at, {
+        id: newMessageId(box, self.project, at),
+        to,
+        type: request.type,
+        priority,
+        ...(root ? { thread: root.id } : {}),
+        subject,
+        body: text.slice(0, PREVIEW_CHARS),
+        replyTo: request.replyTo ?? null,
+        status: "refused",
+        reason,
       }),
-      body: text.slice(0, PREVIEW_CHARS),
-      replyTo: request.replyTo ?? null,
-      hops: self.hops,
-      status: "refused",
-      reason,
-      opened: null,
-    }));
+    );
     if ("refused" in written) return { refused: written.refused, message: null };
     if (itemId) recordInItem(ctx.paths, itemId, written);
     return { refused: reason, message: written };
@@ -770,53 +864,16 @@ export function send(
         message: null,
       };
   }
-  const toSelf = entry.root === (worktreeMainRoot(ctx.paths.root) ?? ctx.paths.root);
+  const toSelf = resolved.toSelf;
   const to: MailAddressee = {
     workspace: self.workspace ?? "_alone",
     project: entry.name,
     item: null,
     agent: request.agent ?? null,
   };
-  let relayed = false;
-  if (request.agent) {
-    if (!toSelf)
-      return refuse(
-        `--agent addresses a role or a task of this project; ${entry.name} is another project`,
-        to,
-      );
-    if (ROLE_AGENT.test(request.agent)) {
-      relayed = true;
-      if (request.agent === "judge" && self.agent !== "session")
-        return refuse(
-          `a message to the judge comes from the lead (session), not from ${self.agent}`,
-          to,
-        );
-      if (CRITICS.has(request.agent)) {
-        const proposals = itemId ? `.crew/work/${itemId}/conclave/proposals.md` : null;
-        const given = request.filePath
-          ? canonical(resolve(ctx.paths.root, request.filePath))
-          : null;
-        if (
-          !proposals ||
-          !given ||
-          given !== canonical(join(ctx.paths.root, proposals)) ||
-          request.text.trim()
-        )
-          return refuse(
-            `a message to ${request.agent} carries ${proposals ?? ".crew/work/<id>/conclave/proposals.md"} (--file) and nothing else`,
-            to,
-          );
-      }
-    } else if (TASK_AGENT.test(request.agent)) {
-      if (!(work?.tasks ?? []).some((t) => t.task === request.agent))
-        return refuse(
-          `${request.agent} is not a task of ${work?.id ?? "the active item"} (crew task <id> open ${request.agent} …)`,
-          to,
-        );
-    } else if (request.agent !== "session") {
-      return refuse(`--agent is session, a task (T-n) or a role, not ${request.agent}`, to);
-    }
-  }
+  const agentRefused = agentRefusal(ctx, request, entry.name, toSelf, itemId, work);
+  if (agentRefused) return refuse(agentRefused, to);
+  const relayed = request.agent !== undefined && ROLE_AGENT.test(request.agent);
   const destination = destinationPolicy(entry, ctx.env);
   if (!destination)
     return refuse(`${entry.name} at ${entry.root} is not a crew project any more`, to);
@@ -864,25 +921,18 @@ export function send(
   // The sender's outbox gives the id; the receiver's inbox gets the record; the item keeps its copy.
   const message = appendToBox(own.dir, "outbox", self.project, (outbox) => {
     const id = newMessageId(outbox, self.project, at);
-    return {
+    return outboxMessage(self, itemId, at, {
       id,
-      at,
-      from: party(self, itemId),
       to,
       type: request.type,
       priority,
       ...(root ? { thread: root.id } : {}),
-      subject: subjectOf({
-        subject: request.subject ?? (root ? subjectQuoted(root.subject) : undefined),
-        text,
-      }),
+      subject,
       ...placeBody(dest.dir, id, text),
       replyTo: request.replyTo ?? null,
-      hops: self.hops,
       status: "sent",
       ...(relayed ? { relayed: true } : {}),
-      opened: null,
-    };
+    });
   });
   if ("refused" in message) return { refused: message.refused, message: null };
   const failed = deliver(ctx, dest.dir, entry.name, message);
@@ -923,8 +973,9 @@ function deliver(
 
 /**
  * Records the session a message opened on every copy of it. Returns the message, or null when the
- * opener's own outbox did not take the record (it changed outside the engine): the sweep, the stop
- * and the listing read that copy, so a session it does not carry would run unseen by them.
+ * opener's own outbox did not take the record (it changed outside the engine); throws `LockBusy`
+ * when that outbox was busy past the lock's wait: the sweep, the stop and the listing read that
+ * copy, so a session it does not carry would run unseen by them.
  */
 export function recordOpened(
   ctx: MailContext,
@@ -932,7 +983,9 @@ export function recordOpened(
   opened: OpenedSession,
   skipped: (what: string) => void,
 ): Message | null {
-  const result = updateEverywhere(ctx, id, (m) => ({ ...m, opened }), skipped);
+  const pass = recordEverywhere(ctx, id, (m) => ({ ...m, opened }), skipped);
+  if (pass.ownBusy) throw new LockBusy(pass.ownBusy);
+  const result = pass.changed;
   const own = readBox(
     mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project).dir,
     "outbox",
@@ -944,7 +997,8 @@ export function recordOpened(
 /**
  * The one place a message's state changes: the inbox it sits in, the outbox it left, the item that
  * sent or received it. Each copy is changed under its box's lock from its own state, which the
- * engine keeps equal across the copies (every change goes through here).
+ * engine keeps equal across the copies (every change goes through here). Returns the first copy
+ * changed, or null when none was.
  */
 export function updateEverywhere(
   ctx: MailContext,
@@ -952,13 +1006,30 @@ export function updateEverywhere(
   change: (m: Message) => Message,
   skipped: (what: string) => void,
 ): Message | null {
+  return recordEverywhere(ctx, id, change, skipped).changed;
+}
+
+/**
+ * `updateEverywhere`'s pass, with what a caller that takes success from it needs: a box busy past
+ * the lock's wait is skipped and named like a box that cannot be read, and the pass goes on with
+ * the others (finding 30); `ownBusy` is the lock's message when that box is this project's own, a
+ * copy the caller could not write.
+ */
+function recordEverywhere(
+  ctx: MailContext,
+  id: string,
+  change: (m: Message) => Message,
+  skipped: (what: string) => void,
+): { changed: Message | null; ownBusy: string | null } {
   let result = null as Message | null;
+  let ownBusy = null as string | null;
+  const ownDir = mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project).dir;
   const registry = loadRegistry(ctx.paths.userDir);
   const boxes = new Set<string>();
   for (const p of registry.projects) {
     if (!p.worktreeOf) boxes.add(mailbox(ctx.paths.userDir, p.workspace, p.name).dir);
   }
-  boxes.add(mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project).dir);
+  boxes.add(ownDir);
   // The boxes that hold a copy, found first without a lock: a box that cannot be read is skipped
   // and named to the caller, never a reason to stop the pass before the other copies (risk review
   // of SP2c task 4, round 17), and a box that holds no copy is never locked.
@@ -976,29 +1047,35 @@ export function updateEverywhere(
   // Each holding copy under its box's lock, re-read there: a box that changed outside the engine
   // or cannot be read by then is skipped and named like the others, never written over.
   for (const [dir, which] of holding) {
-    withMailLock(dir, () => {
-      let read: ReturnType<typeof readBox>;
-      try {
-        read = readBox(dir, which);
-      } catch (error) {
-        skipped(`${boxFile(dir, which)} (${(error as Error).message.split("\n")[0]})`);
-        return;
-      }
-      const { box, tampered } = read;
-      if (tampered) {
-        skipped(`${boxFile(dir, which)} (changed outside the engine)`);
-        return;
-      }
-      const index = box.messages.findIndex((m) => m.id === id);
-      if (index === -1) return;
-      const changed = change(box.messages[index] as Message);
-      box.messages[index] = changed;
-      writeBox(dir, which, box);
-      result = result ?? changed;
-    });
+    try {
+      withMailLock(dir, () => {
+        let read: ReturnType<typeof readBox>;
+        try {
+          read = readBox(dir, which);
+        } catch (error) {
+          skipped(`${boxFile(dir, which)} (${(error as Error).message.split("\n")[0]})`);
+          return;
+        }
+        const { box, tampered } = read;
+        if (tampered) {
+          skipped(`${boxFile(dir, which)} (changed outside the engine)`);
+          return;
+        }
+        const index = box.messages.findIndex((m) => m.id === id);
+        if (index === -1) return;
+        const changed = change(box.messages[index] as Message);
+        box.messages[index] = changed;
+        writeBox(dir, which, box);
+        result = result ?? changed;
+      });
+    } catch (error) {
+      if (!(error instanceof LockBusy)) throw error;
+      skipped(`${boxFile(dir, which)} (${error.message})`);
+      if (dir === ownDir) ownBusy = error.message;
+    }
   }
   if (result) recordForParties(ctx, registry, result);
-  return result;
+  return { changed: result, ownBusy };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1039,9 +1116,11 @@ function ownMessage(ctx: MailContext, id: string): { found: Message } | { refuse
   return found ? { found } : { refused: `no message ${id} in this inbox` };
 }
 
-/** `updateEverywhere` found no box it could write (one changed while it was being written): a refusal, never a stale copy. */
-function notUpdated(id: string): { refused: string } {
-  return { refused: `${id} could not be updated: its mailbox changed while it was being written` };
+/** Why the pass left this project's copy unwritten: its box busy past the lock's wait, else changed while it was being written. */
+function unwritten(pass: { ownBusy: string | null }): string {
+  return pass.ownBusy
+    ? `its mailbox is busy (${pass.ownBusy})`
+    : "its mailbox changed while it was being written";
 }
 
 /** A copy of a message the record pass could not change, as a line for the command's output. */
@@ -1064,9 +1143,27 @@ function withoutReason(m: Message): Message {
 }
 
 /**
- * Moves a message of this agent's inbox along the table (SP7 §9) on every copy, reading it first
- * when it is still sent: the one way a status changes, so a move the table refuses is refused
- * before anything is written and nothing rewrites a record it does not move.
+ * A message moved to `to` along the table (SP7 §9), read first when it is still sent: a block
+ * renewed by another unproven reply stays a block with the new fields, and a move to done drops
+ * the reason a block left.
+ */
+function applyMove(
+  m: Message,
+  to: MappedStatus,
+  at: string,
+  extra: Partial<Message>,
+): Message | { refused: string } {
+  const read = readFirst(m, to, at);
+  if (to === "blocked" && mailStatus(read) === "blocked") return { ...read, ...extra };
+  return transition(to === "done" ? withoutReason(read) : read, to, extra);
+}
+
+/**
+ * Moves a message of this agent's inbox along the table on every copy: the move of `markRead`,
+ * `refuseMail` and `acceptMail` (`reply` moves its original with the same `applyMove`; the opener,
+ * the sweep and `approve` set a status through `updateEverywhere`). A move the table refuses is
+ * refused before anything is written, a copy it cannot move is left as it is, and a copy of this
+ * project's own box left unwritten fails the move.
  */
 export function moveMail(
   ctx: MailContext,
@@ -1078,19 +1175,20 @@ export function moveMail(
   const own = ownMessage(ctx, id);
   if ("refused" in own) return own;
   const at = nowIso();
-  const check = transition(readFirst(own.found, to, at), to, extra);
+  const check = applyMove(own.found, to, at, extra);
   if ("refused" in check) return check;
-  return (
-    updateEverywhere(
-      ctx,
-      id,
-      (m) => {
-        const moved = transition(readFirst(m, to, at), to, extra);
-        return "refused" in moved ? m : moved;
-      },
-      (w) => notes.push(skippedLine(id)(w)),
-    ) ?? notUpdated(id)
+  const pass = recordEverywhere(
+    ctx,
+    id,
+    (m) => {
+      const moved = applyMove(m, to, at, extra);
+      return "refused" in moved ? m : moved;
+    },
+    (w) => notes.push(skippedLine(id)(w)),
   );
+  if (!pass.changed || pass.ownBusy)
+    return { refused: `${id} could not be updated: ${unwritten(pass)}` };
+  return pass.changed;
 }
 
 export function markRead(
@@ -1282,9 +1380,8 @@ export function reply(
     return { refused: tamperedBox(original.from.project, "inbox") };
   const replyMessage = appendToBox(own.dir, "outbox", ctx.self.project, (outbox) => {
     const replyId = newMessageId(outbox, ctx.self.project, at);
-    return {
+    return outboxMessage(ctx.self, original.to.item, at, {
       id: replyId,
-      at,
       from,
       to: {
         workspace: original.from.workspace,
@@ -1296,48 +1393,42 @@ export function reply(
       subject: original.subject.startsWith("Re: ") ? original.subject : `Re: ${original.subject}`,
       ...placeBody(dest.dir, replyId, body),
       replyTo: original.id,
-      hops: ctx.self.hops,
       status: "sent",
       ...(options.as || original.relayed ? { relayed: true } : {}),
-      opened: null,
       ...(options.branch ? { branch: options.branch } : {}),
       ...(options.item ? { item: options.item } : {}),
       ...(verdict ? { verdict } : {}),
       thread: threadOf(original),
       ...(checked.contracts.length ? { contracts: checked.contracts } : {}),
       ...(carried ? { evidence: carried } : {}),
-    };
+    });
   });
   if ("refused" in replyMessage) return { refused: replyMessage.refused };
   const failed = deliver(ctx, dest.dir, original.from.project, replyMessage);
   if (failed) return failed;
-  const answered = updateEverywhere(
+  const extra: Partial<Message> = {
+    answeredAt: at,
+    ...(options.branch ? { branch: options.branch } : {}),
+    ...(options.item ? { item: options.item } : {}),
+    ...(verdict ? { verdict } : {}),
+    ...(reason !== undefined ? { reason } : {}),
+  };
+  const answered = recordEverywhere(
     ctx,
     id,
     (m) => {
-      const read = readFirst(m, to, at);
-      const extra: Partial<Message> = {
-        answeredAt: at,
-        ...(options.branch ? { branch: options.branch } : {}),
-        ...(options.item ? { item: options.item } : {}),
-        ...(verdict ? { verdict } : {}),
-        ...(reason !== undefined ? { reason } : {}),
-      };
-      // A block renewed by another unproven reply stays a block, with the new reasons.
-      const moved =
-        to === "blocked" && mailStatus(read) === "blocked"
-          ? { ...read, ...extra }
-          : transition(to === "done" ? withoutReason(read) : read, to, extra);
+      const moved = applyMove(m, to, at, extra);
       return "refused" in moved ? m : moved;
     },
     (w) => notes.push(skippedLine(id)(w)),
   );
-  // The reply is delivered by now; a box that changed meanwhile leaves the original unmarked, and the
-  // refusal says so rather than passing the stale copy off as answered. It names the delivered
-  // reply, so a caller never reads it as not sent (finding 30).
-  if (!answered)
+  // The reply is delivered by now; a copy of this project's own box left unwritten (changed or busy
+  // meanwhile) leaves the original unmarked, and the refusal says so rather than passing another
+  // copy off as answered. `delivered` names the reply, so a caller never reads it as not sent, and
+  // each caller says it in its words (finding 30).
+  if (!answered.changed || answered.ownBusy)
     return {
-      refused: `${replyMessage.id} was delivered, but ${id} could not be marked answered: its mailbox changed while it was being written`,
+      refused: `${id} could not be marked answered: ${unwritten(answered)}`,
       delivered: replyMessage.id,
     };
   // The item's record is written under the own mailbox's lock, the lock the sync writes it under
@@ -1346,18 +1437,18 @@ export function reply(
   withMailLock(ownDir, () => {
     recordForParties(ctx, loadRegistry(ctx.paths.userDir), replyMessage);
   });
-  return { reply: replyMessage, original: answered };
+  return { reply: replyMessage, original: answered.changed };
 }
 
 /**
  * Brings this project's record up to date with the others' inboxes: the status of what it sent, as
  * the receiver last recorded it, and the mail that reached it, into the item each message names.
- * Returns the replies that landed since the last sync (the hooks clear a `mail` wait with them).
+ * Returns the mail this agent had not been told about yet, and how many sent copies changed.
  */
 export function syncMail(
   ctx: MailContext,
   paths: CrewPaths,
-): { newMail: Message[]; newReplies: Message[]; updated: number; tampered: boolean } {
+): { newMail: Message[]; updated: number; tampered: boolean } {
   const own = mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project);
   const registry = loadRegistry(ctx.paths.userDir);
   // Under the own mailbox's lock throughout: the statuses the receivers recorded and the mail that
@@ -1366,6 +1457,8 @@ export function syncMail(
   return withMailLock(own.dir, () => {
     let updated = 0;
     const { box: outbox, tampered } = readBox(own.dir, "outbox");
+    // Each receiver's inbox read once for the pass, however many messages went to it.
+    const inboxes = new Map<string, ReturnType<typeof readBox>>();
     if (!tampered) {
       for (const sent of outbox.messages) {
         if (sent.status === "refused") continue;
@@ -1374,7 +1467,8 @@ export function syncMail(
         const theirsDir = entry
           ? mailbox(ctx.paths.userDir, entry.workspace, entry.name).dir
           : own.dir;
-        const inbox = readBox(theirsDir, "inbox");
+        const inbox = inboxes.get(theirsDir) ?? readBox(theirsDir, "inbox");
+        inboxes.set(theirsDir, inbox);
         if (inbox.tampered) continue;
         const theirs = inbox.box.messages.find((m) => m.id === sent.id);
         if (theirs && JSON.stringify(theirs) !== JSON.stringify(sent)) {
@@ -1386,7 +1480,7 @@ export function syncMail(
       if (updated) writeBox(own.dir, "outbox", outbox);
     }
     const inbox = ownInbox(ctx);
-    if (inbox.tampered) return { newMail: [], newReplies: [], updated, tampered: true };
+    if (inbox.tampered) return { newMail: [], updated, tampered: true };
     // What this agent has already been told about, so a hook names each arrival once.
     const marker = join(own.dir, `synced-${ctx.self.agent}.json`);
     const seen = new Set(readJson<string[]>(marker) ?? []);
@@ -1397,12 +1491,7 @@ export function syncMail(
       seen.add(m.id);
     }
     writeJson(marker, [...seen]);
-    return {
-      newMail,
-      newReplies: newMail.filter((m) => m.replyTo !== null),
-      updated,
-      tampered: false,
-    };
+    return { newMail, updated, tampered: false };
   });
 }
 
@@ -1473,6 +1562,7 @@ export function inboxSummary(ctx: MailContext): InboxSummary {
     return { ...emptyInboxSummary(), tampered, line: tamperedBox(ctx.self.project, "inbox") };
   // Counted through the mapped status, so a record of an earlier engine version counts as what it stands for.
   const unread = messages.filter(unanswered);
+  // Answered: a reply to something this project asked, landed and not read yet.
   const answered = messages.filter((m) => m.replyTo && mailStatus(m) === "sent");
   const waiting = messages.filter((m) => mailStatus(m) === "blocked");
   const blockers = unread.filter((m) => m.type === "blocker");

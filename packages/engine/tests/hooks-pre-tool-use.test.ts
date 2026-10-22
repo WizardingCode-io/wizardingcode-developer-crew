@@ -471,6 +471,23 @@ test("finding 22: a --help lookup on a user-only verb is not asked, since the co
   expect(decision(bash("crew approve w1 spec"))).toBe("ask");
 });
 
+test("CON4-AC-3-hook: crew accept mail inbox and outbox are asked under attendedDecisions prompt and relayed under relay", () => {
+  const { ctx } = setup();
+  const bash = (command: string, permission_mode?: string) =>
+    onPreToolUse(ctx, { tool_name: "Bash", tool_input: { command }, permission_mode });
+  expect(decision(bash("crew accept mail inbox"))).toBe("ask");
+  expect(decision(bash("crew accept mail outbox"))).toBe("ask");
+  expect(decision(bash("node /x/dist/crew.mjs --json accept mail inbox", "default"))).toBe("ask");
+  const relay = setup({ attendedDecisions: "relay" });
+  expect(
+    onPreToolUse(relay.ctx, {
+      tool_name: "Bash",
+      tool_input: { command: "crew accept mail inbox" },
+      permission_mode: "default",
+    }),
+  ).toEqual({});
+});
+
 test("ADR 0005: under attendedDecisions relay a user-only command passes with no prompt, except the policy's own commands", () => {
   const root = makeRepo({
     "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),

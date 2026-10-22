@@ -22,7 +22,8 @@ export interface DecisionEntry {
     | "kind"
     | "knowledge"
     | "abandon"
-    | "supersede";
+    | "supersede"
+    | "accept";
   id?: string;
   text: string;
   answer?: string;

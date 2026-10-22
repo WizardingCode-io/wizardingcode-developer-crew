@@ -1,11 +1,20 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { basename, join } from "node:path";
 import { loadEvidence, saveEvidence } from "../src/evidence.ts";
 import {
   acceptMail,
+  checkContracts,
   decidedPriority,
   INLINE_BODY_LIMIT,
   inboxSummary,
@@ -19,6 +28,7 @@ import {
   markRead,
   newMessageId,
   ownInbox,
+  parseContract,
   priorityOf,
   pruneRegistry,
   readBox,
@@ -36,6 +46,7 @@ import {
   writeBox,
 } from "../src/mail.ts";
 import { loadPolicy, setPolicyValue } from "../src/policy.ts";
+import * as store from "../src/store.ts";
 import { readProtectedJson, recordIntegrity } from "../src/store.ts";
 import type { GateRun, Mailbox, MailPriority, Message } from "../src/types.ts";
 import { createWork, saveWork } from "../src/work.ts";
@@ -1286,6 +1297,105 @@ test("SP7b-T2 AC-2: a contract is checked at the branch's tip, never the working
     createHash("sha256").update("export type A = 2;\n").digest("hex"),
   );
 });
+
+test("CON4-AC-1: a types contract whose git diff cannot be read is refused naming the git failure, never as a path not in the child's diff (finding 69)", () => {
+  const root = makeRepo({ "README.md": "# crm\n" });
+  git(root, "checkout", "-q", "-b", "crew/x/T-1");
+  write(root, "src/types.ts", "export type A = 1;\n");
+  git(root, "add", "src/types.ts");
+  git(root, "commit", "-q", "-m", "types");
+  git(root, "checkout", "-q", "main");
+  // The file is at the branch's tip, so every check before the diff passes; the base is no commit.
+  const contract = parseContract("types:src/types.ts");
+  if ("refused" in contract) throw new Error(contract.refused);
+  const missing = "0123456789abcdef0123456789abcdef01234567";
+  const out = checkContracts(root, "crew/x/T-1", missing, [contract], "Done.");
+  expect(out).toHaveProperty("refused");
+  const refused = (out as { refused: string }).refused;
+  expect(refused).toStartWith("contract types:src/types.ts cannot be checked: git diff failed (");
+  expect(refused).not.toContain("not in the child's diff");
+  // The git failure's first line is named, one line, inside the parentheses.
+  expect(refused).toMatch(/git diff failed \([^\n]+\)$/);
+});
+
+/** A call that may throw, read as its outcome: a throw is `{ threw }`, so the row fails on what it returned. */
+function outcome<T>(call: () => T): T | { threw: string } {
+  try {
+    return call();
+  } catch (error) {
+    return { threw: (error as Error).message };
+  }
+}
+
+test("CON4-AC-5: a busy mailbox during a record pass is a note and the other copies are recorded; a busy copy in this project's own box fails the change (finding 30)", () => {
+  const w = receiving();
+  const ownDir = crmInbox(w);
+  const otherDir = storefrontOutbox(w);
+  // Two holding copies of one message: the storefront's outbox and the crm's inbox.
+  const notice = sendOrThrow(w.a.ctx, { to: "crm", type: "notice", text: "Heads up" });
+  const otherLock = join(otherDir, ".lock");
+  mkdirSync(otherLock);
+  const notes: string[] = [];
+  let moved: ReturnType<typeof markRead> | { threw: string };
+  try {
+    moved = outcome(() => markRead(w.b.ctx, notice.id, notes));
+  } finally {
+    rmSync(otherLock, { recursive: true, force: true });
+  }
+  // The call returns, this project's copy is changed, the other's is not, and a note names the busy box.
+  expect(moved).toMatchObject({ id: notice.id, status: "done" });
+  expect(readBox(ownDir, "inbox").box.messages.find((m) => m.id === notice.id)?.status).toBe(
+    "done",
+  );
+  expect(readBox(otherDir, "outbox").box.messages.find((m) => m.id === notice.id)?.status).toBe(
+    "sent",
+  );
+  expect(notes.join("\n")).toContain(
+    `${join(otherDir, "outbox.json")} (mailbox busy: ${otherLock} held for more than `,
+  );
+  // This project's own box busy after the reply is delivered, the other copy free: the reply is
+  // refused as delivered but not marked, never a success taken from the storefront's copy.
+  const q = sendOrThrow(w.a.ctx, question("Which values?"));
+  const later = sendOrThrow(w.a.ctx, { to: "crm", type: "notice", text: "Later" });
+  const ownLock = join(ownDir, ".lock");
+  const realRead = store.readProtectedJsonAt;
+  const read = spyOn(store, "readProtectedJsonAt").mockImplementation(((
+    integrity: string,
+    file: string,
+  ) => {
+    const out = realRead<Mailbox>(integrity, file);
+    // The storefront's inbox holding the reply: the delivery is done and no lock is held.
+    if (
+      file === join(otherDir, "inbox.json") &&
+      out.data?.messages?.some((m) => m.replyTo === q.id) &&
+      !existsSync(ownLock)
+    )
+      mkdirSync(ownLock);
+    return out;
+  }) as typeof store.readProtectedJsonAt);
+  let replied: ReturnType<typeof reply> | { threw: string };
+  try {
+    replied = outcome(() => reply(w.b.ctx, q.id, "Gold, silver, none.", {}, []));
+  } finally {
+    read.mockRestore();
+  }
+  const delivered = readBox(otherDir, "inbox").box.messages.find((m) => m.replyTo === q.id);
+  expect(delivered).toBeDefined();
+  expect(replied).not.toHaveProperty("reply");
+  expect(replied).toMatchObject({ delivered: delivered?.id });
+  expect((replied as { refused?: string }).refused ?? "").toContain(
+    `${q.id} could not be marked answered`,
+  );
+  // moveMail, with this project's own box still busy, fails.
+  let failed: ReturnType<typeof markRead> | { threw: string };
+  try {
+    failed = outcome(() => markRead(w.b.ctx, later.id, []));
+  } finally {
+    rmSync(ownLock, { recursive: true, force: true });
+  }
+  expect(failed).toHaveProperty("refused");
+  expect(failed).not.toHaveProperty("status");
+}, 20_000);
 
 test("SP7b-T2 AC-3: a reply carries the child's evidence read from disk, and its reader validates what another party wrote", () => {
   const w = receiving();

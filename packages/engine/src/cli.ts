@@ -98,6 +98,7 @@ import {
 } from "./knowledge.ts";
 import { learnItem } from "./learn.ts";
 import {
+  acceptBox,
   acceptMail,
   badPriority,
   decidedPriority,
@@ -564,6 +565,36 @@ function accept(env: Env, target: string): Outcome {
     accepted: target,
     files,
   });
+}
+
+/** What `crew accept` takes: an item, a file of .crew/, or this project's own mailbox. */
+const ACCEPT_USAGE =
+  "usage: crew accept <id|profile|policy|decisions> | crew accept mail inbox|outbox";
+
+/**
+ * The user trusts this project's own mailbox again after a hand edit (finding 30): the box's file
+ * and each message it now holds are printed, so the signature is informed, and the acceptance is a
+ * decision of the register. Asks the user (PreToolUse), as every accept does.
+ */
+function acceptMailbox(env: Env, which: "inbox" | "outbox"): Outcome {
+  const accepted = acceptBox(env.mail, which);
+  if ("refused" in accepted) return refuse(accepted.refused);
+  const { file, messages } = accepted;
+  appendDecision(env.paths, {
+    at: nowIso(),
+    item: "mail",
+    kind: "accept",
+    text: `${which} accepted as it is after a hand edit: ${file} (${messages.length} message${messages.length === 1 ? "" : "s"})`,
+    by: "the user",
+  });
+  const lines = messages.map((m) => `  ${m.id} · from ${m.from.project} · ${mailStatus(m)}`);
+  return ok(
+    [
+      `${which} accepted: ${file} is now trusted as it is, ${messages.length} message${messages.length === 1 ? "" : "s"}`,
+      ...lines,
+    ].join("\n"),
+    { accepted: `mail ${which}`, file, messages },
+  );
 }
 
 /** The item opened and not hand-edited: the prologue every command that may write shares. */
@@ -2030,7 +2061,13 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       return refuse("usage: crew policy accept | crew policy set <key> <value>");
     }
     case "accept": {
-      if (!args[0]) return refuse("usage: crew accept <id|profile|policy|decisions>");
+      if (!args[0]) return refuse(ACCEPT_USAGE);
+      if (args[0] === "mail") {
+        const which = args[1];
+        if ((which !== "inbox" && which !== "outbox") || args.length > 2)
+          return refuse(ACCEPT_USAGE);
+        return acceptMailbox(env, which);
+      }
       return accept(env, args[0]);
     }
     case "start": {
@@ -4765,7 +4802,12 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           },
           notes,
         );
-        if ("refused" in result) return refuse(result.refused);
+        if ("refused" in result)
+          return refuse(
+            result.delivered === undefined
+              ? result.refused
+              : `${result.delivered} was delivered, but ${result.refused}`,
+          );
         return ok(
           `replied to ${args[1]}: ${result.reply.id} to ${result.reply.to.project}; ${args[1]} ${mailStatus(result.original)}${notes.length ? `\n${notes.join("\n")}` : ""}`,
           { reply: result.reply, original: result.original, notes },

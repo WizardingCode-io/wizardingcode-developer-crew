@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, rmdirSync } from "node:fs";
 import { basename, join } from "node:path";
 import { loadEvidence, renderReport } from "../src/evidence.ts";
@@ -7,7 +7,8 @@ import { handleHook } from "../src/hooks/index.ts";
 import { onPrompt } from "../src/hooks/prompt.ts";
 import { onSessionStart } from "../src/hooks/session-start.ts";
 import { MAX_STOP_BLOCKS, onStop } from "../src/hooks/stop.ts";
-import { acceptMail, mailbox, mailContext, reply, send } from "../src/mail.ts";
+import * as mail from "../src/mail.ts";
+import { acceptMail, mailbox, mailContext, readBox, reply, send } from "../src/mail.ts";
 import { loadPolicy } from "../src/policy.ts";
 import { saveProfile } from "../src/profile.ts";
 import { addQuestion } from "../src/questions.ts";
@@ -572,7 +573,8 @@ test("AC-1 (finding 124): an abandoned item is not the Stop rule's item: the rul
   expect(String(response.reason)).not.toContain(work.id);
 });
 
-test("CON3-AC-7: when the Stop hook cannot mark a blocker noticed, its block reason names the mail error (finding 30)", () => {
+/** A blocker from storefront in crm's inbox, both projects' sessions started; the Stop hook runs in crm. */
+function blockerFixture() {
   const env = testEnv();
   const a = makeRepo({ "README.md": "# storefront\n" });
   const b = makeRepo({
@@ -597,17 +599,43 @@ test("CON3-AC-7: when the Stop hook cannot mark a blocker noticed, its block rea
     null,
   );
   if ("refused" in sent) throw new Error(sent.refused);
+  return { ctx, pa, id: sent.message.id };
+}
+
+test("CON3-AC-7: when the Stop hook cannot mark a blocker noticed, its block reason names the mail error (finding 30)", () => {
+  const { ctx, id } = blockerFixture();
+  // The mark throws: the hook still blocks on the blocker, and its reason names the error.
+  const marking = spyOn(mail, "markNoticed").mockImplementation(() => {
+    throw new Error("the mailbox could not be written: disk full");
+  });
+  try {
+    const first = onStop(ctx) as { decision?: string; reason?: string };
+    expect(first.decision).toBe("block");
+    expect(first.reason).toContain(`Crew: blocker ${id} from storefront`);
+    expect(first.reason).toContain("mail: the mailbox could not be written: disk full");
+  } finally {
+    marking.mockRestore();
+  }
+});
+
+test("CON4-AC-5-stop: a sender's box busy while the Stop hook marks a blocker noticed is a note in the block reason, and the receiver's copy is marked (finding 30)", () => {
+  const { ctx, pa, id } = blockerFixture();
   // The sender's mailbox is held by another process past the wait: its copy cannot be written.
-  const lock = join(mailbox(pa.userDir, "w", "storefront").dir, ".lock");
+  const senderDir = mailbox(pa.userDir, "w", "storefront").dir;
+  const lock = join(senderDir, ".lock");
   mkdirSync(lock);
   try {
     const first = onStop(ctx) as { decision?: string; reason?: string };
     expect(first.decision).toBe("block");
-    expect(first.reason).toContain(`Crew: blocker ${sent.message.id} from storefront`);
-    expect(first.reason).toContain(`mail: mailbox busy: ${lock} held for more than 2000 ms`);
+    expect(first.reason).toContain(`Crew: blocker ${id} from storefront`);
+    expect(first.reason).toContain(
+      `a copy of ${id} was not changed: ${join(senderDir, "outbox.json")} (mailbox busy: ${lock} held for more than 2000 ms)`,
+    );
   } finally {
     rmdirSync(lock);
   }
+  const own = readBox(mailbox(pa.userDir, "w", "crm").dir, "inbox").box.messages;
+  expect(own.find((m) => m.id === id)?.noticedAt).toEqual(expect.any(String));
 }, 30_000);
 
 test("CON3-AC-8: the Stop hook's cap on consecutive blocks is not reset by a prompt; a Stop that does not continue a block (stop_hook_active false) starts a new count (finding 114)", () => {

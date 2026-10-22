@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import {
   chmodSync,
@@ -29,8 +29,9 @@ import { loadPolicy } from "../src/policy.ts";
 import { loadProfile } from "../src/profile.ts";
 import { guaranteeLines, pluginRoot, RUNTIMES } from "../src/runtimes.ts";
 import { loadState, recordWorking } from "../src/state.ts";
+import * as store from "../src/store.ts";
 import { readProtectedJson, writeProtectedJson } from "../src/store.ts";
-import type { GateRun, KnowledgeEntry, Message, WorkItem } from "../src/types.ts";
+import type { GateRun, KnowledgeEntry, Mailbox, Message, WorkItem } from "../src/types.ts";
 import { fileHash } from "../src/validation.ts";
 import { VERSION } from "../src/version.ts";
 import { loadWork, saveWork } from "../src/work.ts";
@@ -3007,6 +3008,151 @@ test("SP7a AC-7 (Task 7): crew status --json carries the todo, the roles working
   const bare = await p.json("status");
   expect(bare.data.branch).toBeNull();
   expect((await p.run("status")).out).not.toContain("  branch ");
+});
+
+/** A hand edit of a mailbox file: the subject of its first message changed, the integrity left as it was. */
+function handEdit(file: string): void {
+  const box = JSON.parse(readFileSync(file, "utf8")) as { messages: { subject: string }[] };
+  (box.messages[0] as { subject: string }).subject = "edited by hand";
+  writeFileSync(file, JSON.stringify(box));
+}
+
+test("CON4-AC-3: crew accept mail inbox|outbox accepts this project's own box after a hand edit, as a decision the user signs; another project's box is never accepted (finding 30)", async () => {
+  const { env, b, ca, cb } = mailRepos();
+  // A sibling of the same workspace, taking questions.
+  const c = makeRepo({ "README.md": "# warehouse\n" });
+  write(c, ".crew/policy.json", JSON.stringify({ mail: { workspace: "w", name: "warehouse" } }));
+  const cc = io(c, env);
+  for (const p of [ca, cb, cc]) await p.run("detect");
+  for (const [root, to] of [
+    [b, "crm"],
+    [c, "warehouse"],
+  ] as const) {
+    const pr = repoPaths(root, env);
+    registerProject(mailContext(pr, loadPolicy(pr).policy, env), "cli", { hook: true });
+    expect(
+      (await ca.run("mail", "send", "--to", to, "--type", "question", `For ${to}?`)).code,
+    ).toBe(0);
+  }
+  const crmDir = crmInboxDir(env);
+  const warehouseDir = join(env.WIZARDINGCODE_HOME as string, "crew", "mail", "w", "warehouse");
+  const mid = (JSON.parse(readFileSync(join(crmDir, "inbox.json"), "utf8")) as Mailbox).messages[0]
+    ?.id as string;
+  handEdit(join(crmDir, "inbox.json"));
+  handEdit(join(warehouseDir, "inbox.json"));
+  const refused = await cb.run("mail", "inbox");
+  expect(refused.code).toBe(1);
+  expect(refused.err).toContain("crm's inbox changed outside the engine");
+  const siblingIntegrity = readFileSync(join(warehouseDir, "integrity.json"));
+  const decisionsBefore = listDecisions(repoPaths(b, env)).length;
+  // The accept: the box's file and each message it holds, so the signature is informed.
+  const accepted = await cb.run("accept", "mail", "inbox");
+  expect(accepted.code).toBe(0);
+  expect(accepted.out).toContain(join(crmDir, "inbox.json"));
+  expect(accepted.out).toContain(mid);
+  expect(accepted.out).toContain("storefront");
+  expect(accepted.out).toContain("sent");
+  expect(listDecisions(repoPaths(b, env)).length).toBe(decisionsBefore + 1);
+  const reads = await cb.run("mail", "inbox");
+  expect(reads.code).toBe(0);
+  expect(reads.out).toContain(mid);
+  // The outbox target exists too: the storefront's, which holds what it sent; crm has sent nothing.
+  expect((await ca.run("accept", "mail", "outbox")).code).toBe(0);
+  expect((await cb.run("accept", "mail", "outbox")).code).toBe(1);
+  // Nothing names another box: an unknown word, no word, a path are refused with the usage.
+  for (const argv of [
+    ["accept", "mail", "nonsense"],
+    ["accept", "mail"],
+    ["accept", "mail", "../warehouse/inbox"],
+  ]) {
+    const out = await cb.run(...argv);
+    expect(out.code).toBe(1);
+    expect(out.err).toContain("usage: crew accept");
+    expect(out.err).toContain("outbox");
+  }
+  // The sibling's box stays refused, its integrity byte for byte as it was.
+  expect(readFileSync(join(warehouseDir, "integrity.json")).equals(siblingIntegrity)).toBe(true);
+  const sibling = await cc.run("mail", "inbox");
+  expect(sibling.code).toBe(1);
+  expect(sibling.err).toContain("warehouse's inbox changed outside the engine");
+  // A project with no mail identity is refused, never read as a work item.
+  const bare = makeRepo({ "README.md": "# bare\n" });
+  const none = await io(bare, env).run("accept", "mail", "inbox");
+  expect(none.code).toBe(1);
+  expect(none.err).not.toContain("unknown work item");
+  expect(none.err).toContain("has no mail identity");
+}, 30_000);
+
+test("CON4-AC-3-busy: crew accept mail inbox is refused while the box's mailbox lock is held, and nothing is recorded (finding 30)", async () => {
+  const { env, b, ca, cb } = mailRepos();
+  await ca.run("detect");
+  await cb.run("detect");
+  const pb = repoPaths(b, env);
+  registerProject(mailContext(pb, loadPolicy(pb).policy, env), "cli", { hook: true });
+  expect((await ca.run("mail", "send", "--to", "crm", "--type", "question", "Tiers?")).code).toBe(
+    0,
+  );
+  const crmDir = crmInboxDir(env);
+  handEdit(join(crmDir, "inbox.json"));
+  const integrity = readFileSync(join(crmDir, "integrity.json"));
+  const decisionsBefore = listDecisions(pb).length;
+  const lock = join(crmDir, ".lock");
+  mkdirSync(lock);
+  let busy: { code: number; out: string; err: string };
+  try {
+    busy = await cb.run("accept", "mail", "inbox");
+  } finally {
+    rmdirSync(lock);
+  }
+  expect(busy.code).toBe(1);
+  expect(busy.err).toContain(`inbox not accepted: mailbox busy: ${lock} held for more than `);
+  expect(readFileSync(join(crmDir, "integrity.json")).equals(integrity)).toBe(true);
+  expect(listDecisions(pb).length).toBe(decisionsBefore);
+  expect((await cb.run("mail", "inbox")).err).toContain("crm's inbox changed outside the engine");
+}, 30_000);
+
+test("CON4-AC-4-reply: crew mail reply names the delivered reply when the original could not be marked answered (finding 30, unchanged by the refactor)", async () => {
+  const { b, env, ca, cb } = mailRepos();
+  await ca.run("detect");
+  await cb.run("detect");
+  const pb = repoPaths(b, env);
+  registerProject(mailContext(pb, loadPolicy(pb).policy, env), "cli", { hook: true });
+  const sent = await ca.run("mail", "send", "--to", "crm", "--type", "question", "Which tiers?");
+  const mid = /sent (M-\S+) /.exec(sent.out)?.[1] as string;
+  // Once the reply is delivered, every box reads as changed outside the engine: the original's
+  // copies are skipped and nothing is marked answered.
+  const realRead = store.readProtectedJsonAt;
+  let delivered = false;
+  const read = spyOn(store, "readProtectedJsonAt").mockImplementation(((
+    integrity: string,
+    file: string,
+  ) => {
+    const out = realRead<Mailbox>(integrity, file);
+    if (out.data?.messages?.some((m) => m.replyTo === mid)) delivered = true;
+    return delivered && /(inbox|outbox)\.json$/.test(file) ? { ...out, tampered: true } : out;
+  }) as typeof store.readProtectedJsonAt);
+  let replied: { code: number; out: string; err: string };
+  try {
+    replied = await cb.run("mail", "reply", mid, "Gold, silver, none.");
+  } finally {
+    read.mockRestore();
+  }
+  const storefrontInbox = join(
+    env.WIZARDINGCODE_HOME as string,
+    "crew",
+    "mail",
+    "w",
+    "storefront",
+    "inbox.json",
+  );
+  const replyId = (JSON.parse(readFileSync(storefrontInbox, "utf8")) as Mailbox).messages.find(
+    (m) => m.replyTo === mid,
+  )?.id;
+  expect(replyId).toBeDefined();
+  expect(replied.code).toBe(1);
+  expect(replied.err).toContain(
+    `${replyId} was delivered, but ${mid} could not be marked answered: `,
+  );
 });
 
 // ---------------------------------------------------------------------------------------------

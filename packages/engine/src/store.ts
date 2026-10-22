@@ -105,6 +105,14 @@ export function writeProtectedJsonAt(integrityFile: string, absPath: string, dat
   rememberIn(integrityFile, basename(absPath), text);
 }
 
+/** Records the current content of a file outside any repository the user accepted (a mailbox), in the integrity file beside it. */
+export function recordIntegrityAt(integrityFile: string, absPath: string): boolean {
+  const text = readText(absPath);
+  if (text === null) return false;
+  rememberIn(integrityFile, basename(absPath), text);
+  return true;
+}
+
 /** The same rule, against the integrity file beside the file; nothing there is hand-written. */
 export function readProtectedJsonAt<T>(integrityFile: string, absPath: string): Protected<T> {
   return readProtected<T>(integrityFile, basename(absPath), absPath, false);
