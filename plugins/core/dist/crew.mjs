@@ -168,7 +168,9 @@ import { readdirSync, readFileSync as readFileSync2 } from "node:fs";
 import { join as join3 } from "node:path";
 
 // packages/engine/src/glob.ts
-var SPECIAL = /[.+^${}()|[\]\\]/g;
+function escapeRegExp(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 function globToRegExp(glob) {
   let re = "";
   for (let i = 0;i < glob.length; i++) {
@@ -188,7 +190,7 @@ function globToRegExp(glob) {
     } else if (c === "?") {
       re += "[^/]";
     } else if (c !== undefined) {
-      re += c.replace(SPECIAL, "\\$&");
+      re += escapeRegExp(c);
     }
   }
   return new RegExp(`^${re}$`, "i");
@@ -4417,7 +4419,7 @@ function isBeforeBuild(work) {
   return phaseIndex(work.phase) < phaseIndex("build");
 }
 function sectionBodies(text, heading) {
-  const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const escaped = escapeRegExp(heading);
   const bodies = [];
   for (const match of text.matchAll(new RegExp(`^(#{1,6})\\s*${escaped}\\s*$`, "gim"))) {
     const level = (match[1] ?? "#").length;
@@ -8605,6 +8607,12 @@ function shellTakesNext(option) {
     return SHELL_VALUED.long.includes(option);
   return option.length > 1 && SHELL_VALUED.short.includes(option.charAt(option.length - 1));
 }
+var JS_RUNNERS = ["node", "bun"];
+var NPX_RUNNERS = ["npx", "bunx"];
+var RUNNER_SUFFIXES = { js: [".exe"], npx: [".cmd", ".exe"] };
+function runnerSuffix(suffixes) {
+  return `(?:${suffixes.map((s) => s.replace(".", "\\.")).join("|")})?`;
+}
 var COMMAND_WRAPPERS = [
   {
     name: "env",
@@ -8613,6 +8621,7 @@ var COMMAND_WRAPPERS = [
     positionals: 0,
     assignments: true,
     scriptOptions: ["-S", "--split-string"],
+    scriptAppends: true,
     unsetOptions: ["-u", "--unset"]
   },
   { name: "command", valued: "", longValued: [], positionals: 0 }
@@ -8647,7 +8656,8 @@ var WRAPPERS = [
     valued: "w",
     longValued: ["--wait", "--timeout", "--conflict-exit-code"],
     positionals: 1,
-    scriptOptions: ["-c", "--command"]
+    scriptOptions: ["-c", "--command"],
+    scriptAppends: true
   },
   {
     name: "script",
@@ -10330,10 +10340,26 @@ function arithmeticEnd(text, open) {
       i++;
     else if (ch === "'" || ch === '"')
       return -1;
-    else if (ch === "(")
+    else if (ch === "$" && text.charAt(i + 1) === "(" && text.charAt(i + 2) !== "(")
+      return -1;
+    else if (ch === "`") {
+      i = backtickEnd(text, i);
+      if (i < 0)
+        return -1;
+    } else if (ch === "(")
       depth++;
     else if (ch === ")" && --depth === 1)
       return text.charAt(i + 1) === ")" ? i + 2 : -1;
+  }
+  return -1;
+}
+function backtickEnd(text, open) {
+  for (let i = open + 1;i < text.length; i++) {
+    const ch = text.charAt(i);
+    if (ch === "\\")
+      i++;
+    else if (ch === "`")
+      return i;
   }
   return -1;
 }
@@ -10697,7 +10723,7 @@ var CREW_PROGRAM = String.raw`(?:^|[\s;|&(\x60"'={])${CREW_WORD}["']?`;
 var POWERSHELL_HOOK = new RegExp(String.raw`${CREW_PROGRAM}\s+hook\b`, "i");
 var OTHER_WORD = String.raw`(?!["']?${CREW_WORD}["']?(?=\s|$))\S+`;
 var BEFORE_PROGRAM = String.raw`(?:(?:${[...LEADING_KEYWORDS.filter((k) => k !== "!"), ...WRAPPERS.map((w) => w.name)].join("|")})(?:\s+${OTHER_WORD}){0,8}?\s+|!\s+|\w+=\S*\s+){0,4}`;
-var RUNNER = String.raw`(?:(?:node|bun|npx|bunx)(?:\.exe|\.cmd)?(?:\s+${OTHER_WORD}){0,8}?\s+)?`;
+var RUNNER = String.raw`(?:(?:${[...JS_RUNNERS, ...NPX_RUNNERS].join("|")})${runnerSuffix([...new Set([...RUNNER_SUFFIXES.js, ...RUNNER_SUFFIXES.npx])])}(?:\s+${OTHER_WORD}){0,8}?\s+)?`;
 var CREW_AT_COMMAND = new RegExp(String.raw`(?:^|[;|&({\x60\n]\s*|(?<!-[^\s=]*)\+?=\s*|\b(?:return|throw)\s+)${BEFORE_PROGRAM}${RUNNER}${CREW_WORD}(?=\s|$)`, "i");
 var CREW_WITH_EXPRESSION = new RegExp(String.raw`${CREW_PROGRAM}(?:\s+[^\s;|&(){}@"'\x60]+)*\s+[(@{]`, "i");
 var QUOTED_STRING = /"[^"]*"|'[^']*'/g;
@@ -10717,6 +10743,7 @@ function unreadCrew(command2, read2) {
   return read2.some(({ piece, args, handed }) => args === null && handed === null && NAMES_CREW.test(piece) && CREW_AT_COMMAND.test(bareText(piece)));
 }
 var code = String.fromCharCode;
+var FOLD_MARKS = { handed: code(0), joined: code(1), ambiguous: code(2) };
 var CONTROLS = new RegExp(`[${code(0)}-${code(8)}${code(11, 12)}${code(14)}-${code(31)}]`);
 var HIDDEN_MARKS = [
   [/`/, "a backtick escape"],
@@ -10905,8 +10932,8 @@ var startProcessRewrite = (whole, pre, before, rest) => {
 };
 var CMD_BUILTIN = /^(?:call\s+|start\s+(?:"[^"]*"\s+)?(?:\/(?:d|affinity|node|machine)\s+(?:"[^"]*"|\S+)\s+|\/\w+\s+)*)/i;
 var cmdRest = (rest) => rest.replace(CMD_BUILTIN, "");
-var MARK2 = "\x00";
-var JOINED = "\x01";
+var MARK2 = FOLD_MARKS.handed;
+var JOINED = FOLD_MARKS.joined;
 var MARKS = new RegExp(`[${MARK2}${JOINED}]`, "g");
 var HANDED = `${MARK2}sh -c`;
 var HANDED_PREFIX = new RegExp(`${HANDED}[ \\t]*`, "g");
@@ -10954,7 +10981,7 @@ var quoteStep = (open, text, k) => {
 var inString = (open) => /["']/.test(open[open.length - 1] ?? "");
 var BEFORE_COMMENT = /[\s;|&({]/;
 var AMBIGUOUS_BEFORE_COMMENT = /[)}=[\],<>"']/;
-var AMBIGUOUS = "\x02";
+var AMBIGUOUS = FOLD_MARKS.ambiguous;
 var AMBIGUOUS_COMMENT = "a # the reader cannot place (after =, a bracket, a comma, a redirection, a closing parenthesis or brace, or a quoted part glued to a word or inside a subexpression)";
 var SPACE_BEFORE = "write a space before the #, or quote it";
 var withoutComments = (text) => {
@@ -11466,15 +11493,18 @@ var PATH_END = String.raw`[\s"'\x60;&|)]`;
 var NOT_DOTDOT_SEGMENT = String.raw`(?!\.\.(?:\/|${PATH_END}|$))[^\s"'\x60;&|)/]*\/?`;
 var REVIEW_OWNED = String.raw`review(?!\/${REVIEW_OPEN_SEGMENT}(?:\/(?:${NOT_DOTDOT_SEGMENT})*)?(?=${PATH_END}|$))`;
 var AUDIT_OWNED = String.raw`audit(?=\/|${PATH_END}|$)(?!\/${AUDIT_OPEN_FILES}(?=${PATH_END}|$))`;
-var WORK_FILES = PROTECTED_WORK_FILES.map((f) => f.replace(/[./]/g, "\\$&")).join("|");
-var ENGINE_FILES = new RegExp(String.raw`\.crew\/(?:profile\.json|policy\.json|decisions\.json|\.gitignore|local\b|work\/[^\s/]+\/(?:${WORK_FILES}|logs\b|${REVIEW_OWNED}|${AUDIT_OWNED}))|\.wizardingcode\/crew\b`);
+var WORK_FILES = PROTECTED_WORK_FILES.map(escapeRegExp).join("|");
+var ENGINE_FILES = new RegExp(String.raw`\.crew\/(?:profile\.json|policy\.json|decisions\.json|\.gitignore|local\b|work\/[^\s/]+\/(?:${WORK_FILES}|logs\b|${REVIEW_OWNED}|${AUDIT_OWNED}))|\.wizardingcode\/crew\b`, "i");
+var ENGINE_FOLDER = new RegExp(String.raw`(?:^|[\s"'=(:\/\\])\.crew(?:[\/\\]work(?:[\/\\][^\s\/\\"'\x60;&|)*]+)?)?(?:[\/\\](?:\*\*?|\.))*[\/\\]?(?=${PATH_END}|$)`, "i");
+var REMOVE_OR_MOVE = /(?:^|[\s;&|("'/])(?:rm|rmdir|mv|chmod|chown)\b/i;
+var POWERSHELL_REMOVE_OR_MOVE = /(?:^|[\s;&|({])(?:Remove-Item|ri|rm|rmdir|rd|del|erase|Move-Item|mi|mv|move|Rename-Item|rni|ren)(?=\s|$)/i;
 var HOOK_VERB_REASON = "Crew: crew hook runs from the runtime's hook configuration alone, never from a command";
-var WRITE_SHAPE = /(?:^|[\s;&|("'])(?:rm|mv|cp|tee|truncate|chmod|touch|dd|install)\b|sed\s+-i|>{1,2}\|?\s*["']?\S*(?:\.crew\/|\.wizardingcode\/crew\b)/;
+var WRITE_SHAPE = /(?:^|[\s;&|("'])(?:rm|mv|cp|tee|truncate|chmod|touch|dd|install)\b|sed\s+-i|>{1,2}\|?\s*["']?\S*(?:\.crew\/|\.wizardingcode\/crew\b)/i;
 var OPAQUE_REDIRECT = />{1,2}\|?\s*["']?[$`]/;
 var PROMPTLESS_MODES = new Set(["bypassPermissions", "dontAsk"]);
-var CREW_COMMAND = /^(?:\S*\/)?crew(?:\.mjs)?$/;
-var CREW_BUNDLE = /^(?:\S*\/)?crew\.mjs$/;
-var JS_RUNNER = /^(?:\S*\/)?(?:node|bun)(?:\.exe)?$/;
+var CREW_COMMAND = /^(?:.*[/\\])?crew(?:\.mjs)?$/i;
+var CREW_BUNDLE = /^(?:.*[/\\])?crew\.mjs$/i;
+var JS_RUNNER = new RegExp(String.raw`^(?:.*[\/\\])?(?:${JS_RUNNERS.join("|")})${runnerSuffix(RUNNER_SUFFIXES.js)}$`, "i");
 var READ_ONLY_VERBS = new Set(["status", "help"]);
 var READ_ONLY_MAIL = new Set(["read", "inbox", "reply", "status"]);
 var OPENER_VAR = /WIZARDINGCODE_\w+|CLAUDE_CODE_SESSION_ATTENDED/;
@@ -11580,7 +11610,7 @@ function withoutLead(words) {
           const script = optionValue(wrapper, wrapper.scriptOptions ?? [], word, words[i + 1]);
           if (script !== null) {
             const fromNext = optionValue(wrapper, wrapper.scriptOptions ?? [], word, NEXT_WORD) === NEXT_WORD;
-            const after = words.slice(i + (fromNext ? 2 : 1)).map(quoteWord);
+            const after = wrapper.scriptAppends ? words.slice(i + (fromNext ? 2 : 1)).map(quoteWord) : [];
             return {
               words: [],
               viaXargs,
@@ -11637,7 +11667,7 @@ function withoutRedirects(tokens) {
   }
   return kept;
 }
-var NPX_RUNNER = /^(?:\S*\/)?(?:npx|bunx)(?:\.cmd|\.exe)?$/;
+var NPX_RUNNER = new RegExp(String.raw`^(?:\S*\/)?(?:${NPX_RUNNERS.join("|")})${runnerSuffix(RUNNER_SUFFIXES.npx)}$`);
 var NPX_CALL = ["-c", "--call"];
 var NPX_VALUED = new Set(["-p", "--package", ...NPX_CALL, "--shell", "--loglevel"]);
 var RUNNER_VALUED = { js: JS_RUNNER_VALUED, npx: NPX_VALUED };
@@ -11860,7 +11890,7 @@ function userOnlyCommand(args) {
   return {
     presence,
     parsed,
-    policyCommand: verb === "policy" || verb === "accept" && second === "policy"
+    policyCommand: unreadable(verb) || verb === "policy" || verb === "accept" && (second === "policy" || unreadable(second))
   };
 }
 function resumeDecision(ctx, args) {
@@ -12175,7 +12205,8 @@ function onPreToolUse(ctx, payload) {
     const powershell = input.shell === "powershell";
     const command2 = powershell ? powershellAsPosix(written) : written;
     if (powershell) {
-      if (ENGINE_FILES.test(written) || ENGINE_FILES.test(written.replace(/["']/g, "")) || ENGINE_FILES.test(command2))
+      const unquoted = written.replace(/["']/g, "");
+      if (ENGINE_FILES.test(written) || ENGINE_FILES.test(unquoted) || ENGINE_FILES.test(command2) || POWERSHELL_REMOVE_OR_MOVE.test(written) && (ENGINE_FOLDER.test(written) || ENGINE_FOLDER.test(unquoted)))
         return answer("deny", "Crew: files under .crew/ and ~/.wizardingcode/crew that the engine owns are written only by the crew command");
       if (POWERSHELL_HOOK.test(written))
         return answer("deny", HOOK_VERB_REASON);
@@ -12233,7 +12264,10 @@ function onPreToolUse(ctx, payload) {
           return answer("deny", `${opened} and stops no sessions: crew mail stop is denied`);
         if (verb === "approve") {
           const id = positional[1];
-          if (id && loadWork(ctx.paths, id).work?.route === "full")
+          const work = id === undefined || UNREADABLE_VERB.test(id) ? null : loadWork(ctx.paths, id).work;
+          if (!work && ctx.openedMode !== "read-only")
+            return answer("deny", `${opened} and a spec it cannot read waits for a person: crew approve ${id ?? ""} is denied; run crew await ${id ?? "<id>"} user and end the turn`);
+          if (work?.route === "full")
             return answer("deny", `${opened} and a full-route spec waits for a person: crew approve ${id} is denied; run crew await ${id} user and end the turn`);
         }
       }
@@ -12280,7 +12314,7 @@ function onPreToolUse(ctx, payload) {
       asked ??= decided;
     }
     for (const piece of judgedTexts(readCommand(command2).pieces)) {
-      if (ENGINE_FILES.test(piece) && WRITE_SHAPE.test(piece) || OPAQUE_REDIRECT.test(piece) && ENGINE_FILES.test(command2)) {
+      if (ENGINE_FILES.test(piece) && WRITE_SHAPE.test(piece) || ENGINE_FOLDER.test(piece) && REMOVE_OR_MOVE.test(piece) || OPAQUE_REDIRECT.test(piece) && ENGINE_FILES.test(command2)) {
         return answer("deny", "Crew: files under .crew/ and ~/.wizardingcode/crew that the engine owns are written only by the crew command");
       }
     }

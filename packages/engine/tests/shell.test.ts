@@ -111,3 +111,16 @@ test("SP7b-T5 AC-3: a piece knows whether it is piped into, and the reading of h
   ]);
   expect(readCommand("cat <<'EOF' | sh\nrm x\nEOF").pieces[0]?.heredocs).toEqual(["rm x\n"]);
 });
+
+test("CON2-AC-6 (finding 30): an arithmetic body is read past a backtick's parentheses, and a $( inside it is read as commands", () => {
+  const backtick = readCommand("(( n = `echo ))` ))");
+  expect(backtick.unclosed).toBeNull();
+  expect(words("(( n = `echo ))` ))")).toEqual([["(( n = `echo ))` ))"]]);
+  const all = (pieces: ReturnType<typeof readCommand>["pieces"]): string[][] =>
+    pieces.flatMap((p) => [p.tokens.map((t) => t.word), ...all(p.inner)]);
+  expect(all(readCommand("(( $(crew approve w1) ))").pieces)).toContainEqual([
+    "crew",
+    "approve",
+    "w1",
+  ]);
+});

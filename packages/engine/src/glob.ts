@@ -1,4 +1,7 @@
-const SPECIAL = /[.+^${}()|[\]\\]/g;
+/** `s` as a regular expression that matches it literally (findings 54, 110: one escape for every caller). */
+export function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 export function globToRegExp(glob: string): RegExp {
   let re = "";
@@ -19,7 +22,7 @@ export function globToRegExp(glob: string): RegExp {
     } else if (c === "?") {
       re += "[^/]";
     } else if (c !== undefined) {
-      re += c.replace(SPECIAL, "\\$&");
+      re += escapeRegExp(c);
     }
   }
   return new RegExp(`^${re}$`, "i");

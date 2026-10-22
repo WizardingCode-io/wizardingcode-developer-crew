@@ -125,7 +125,10 @@ function bracketEnd(text: string, open: number, close: "}" | "]"): number {
  * counted) and reads arithmetic only when the next character is the `)` that closes the outer one;
  * otherwise the text is a subshell or a command substitution. A quote inside the candidate makes
  * it no arithmetic either: zsh refuses such a line and bash reads it as commands, so reading it as
- * commands here errs closed. A backslash protects the next character.
+ * commands here errs closed. A backslash protects the next character. A backtick's contents are
+ * skipped to its closing backtick, as the shell skips them when it matches the parentheses, and a
+ * `$(` that opens no nested arithmetic makes the text commands, for the same reason as a quote
+ * (finding 30).
  */
 function arithmeticEnd(text: string, open: number): number {
   let depth = 0;
@@ -133,8 +136,22 @@ function arithmeticEnd(text: string, open: number): number {
     const ch = text.charAt(i);
     if (ch === "\\") i++;
     else if (ch === "'" || ch === '"') return -1;
-    else if (ch === "(") depth++;
+    else if (ch === "$" && text.charAt(i + 1) === "(" && text.charAt(i + 2) !== "(") return -1;
+    else if (ch === "`") {
+      i = backtickEnd(text, i);
+      if (i < 0) return -1;
+    } else if (ch === "(") depth++;
     else if (ch === ")" && --depth === 1) return text.charAt(i + 1) === ")" ? i + 2 : -1;
+  }
+  return -1;
+}
+
+/** The index of the backtick that closes the one at `open`, a backslash protecting the next character, or -1. */
+function backtickEnd(text: string, open: number): number {
+  for (let i = open + 1; i < text.length; i++) {
+    const ch = text.charAt(i);
+    if (ch === "\\") i++;
+    else if (ch === "`") return i;
   }
   return -1;
 }

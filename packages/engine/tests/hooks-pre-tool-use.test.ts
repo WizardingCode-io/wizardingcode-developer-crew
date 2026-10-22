@@ -2813,6 +2813,8 @@ test("SP6-T4 AC-21 (judgement round-13): a crew word in any piece the walker did
     `start node ${bundle} approve ${work.id} spec`,
     `pwsh -c "saps node ${bundle},approve,${work.id},spec"`,
     `pwsh -c "pwsh -c '${approve}'"`,
+    // A quoted runner path with a space is read as the runner since consolidation item 2 (AC-2).
+    `& "C:\\Program Files\\nodejs\\node.exe" ${bundle} approve ${work.id} spec`,
   ]) {
     const response = ps(command);
     expect(decision(response), command).toBe("ask");
@@ -2820,7 +2822,7 @@ test("SP6-T4 AC-21 (judgement round-13): a crew word in any piece the walker did
   }
   // A crew word the reader could not place, whatever the grammar around it: an assignment of the
   // alias, cmd's builtins repeated, after a separator, with a joined value or the echo-off prefix,
-  // a quoted runner path with a space, an unknown parameter of the alias, a folder, a word, a
+  // an unknown parameter of the alias, a folder, a word, a
   // flag's value, a path ending in crew, a word behind a handed string or a program.
   for (const command of [
     `$null = start node ${bundle},approve,${work.id},spec`,
@@ -2829,7 +2831,6 @@ test("SP6-T4 AC-21 (judgement round-13): a crew word in any piece the walker did
     `cmd /c "ver & start /b node ${bundle} approve ${work.id} spec"`,
     `cmd /c start /dC:\\tmp node ${bundle} approve ${work.id} spec`,
     `cmd /c "@node ${bundle} approve ${work.id} spec"`,
-    `& "C:\\Program Files\\nodejs\\node.exe" ${bundle} approve ${work.id} spec`,
     `start -Foo bar node ${bundle},approve,${work.id},spec`,
     "cd crew",
     "ls crew",
@@ -3746,4 +3747,90 @@ test("AC-3 (finding 128): with a person present, --validator never lets a policy
       expect(bashIn(ctx, "crew approve w1 spec --validator complete-gap-round", mode)).toEqual({});
     }
   }
+});
+
+test("CON2-AC-1 (finding 114): removing or moving the engine's folder itself, or its contents as a whole, is denied on both tools, a read of it passes, and the rule ignores case", () => {
+  const { ctx } = setup(null);
+  const { ps, bash } = powershellRows(ctx);
+  const engine =
+    "Crew: files under .crew/ and ~/.wizardingcode/crew that the engine owns are written only by the crew command";
+  const reasonOf = (r: Record<string, unknown>) =>
+    (r.hookSpecificOutput as { permissionDecisionReason?: string } | undefined)
+      ?.permissionDecisionReason;
+  for (const command of [
+    "rm -rf .crew",
+    "rm -rf .crew/",
+    "rm -rf .crew/work",
+    "mv .crew/work/w1 /tmp",
+    "rm -rf .crew/*",
+    "rm -rf .crew/work/*",
+    "rm -rf .crew/.",
+    "mv .crew/work/. /tmp",
+    "rm -rf .CREW",
+    "echo x > .CREW/work/w1/evidence.json",
+  ])
+    expect(reasonOf(bash(command)), command).toBe(engine);
+  for (const command of ["ls .crew", "ls .crew/*", "cat .crew/work/w1/report.md", "ls -la .CREW"])
+    expect(bash(command), command).toEqual({});
+  for (const command of [
+    "Remove-Item .crew -Recurse",
+    "Remove-Item .crew\\* -Recurse",
+    "ri .CREW\\work",
+    "Move-Item .crew\\work C:\\tmp",
+    "del .crew",
+  ])
+    expect(reasonOf(ps(command)), command).toBe(engine);
+  for (const command of ["Get-ChildItem .crew", "Get-ChildItem .crew\\*"])
+    expect(ps(command), command).toEqual({});
+});
+
+test("CON2-AC-2 (finding 114): a crew command at a quoted path with a space, or in capitals, is read as crew", () => {
+  const { ctx } = setup();
+  const bash = (command: string) =>
+    onPreToolUse(ctx, { tool_name: "Bash", tool_input: { command }, permission_mode: "default" });
+  for (const command of [
+    '"/tmp/My Tools/crew" approve w1 spec',
+    'node "/tmp/My Tools/crew.mjs" skip w1 gate:lint --reason x',
+    "CREW approve w1 spec",
+    "/x/dist/CREW.MJS approve w1 spec",
+  ])
+    expect(decision(bash(command)), command).toBe("ask");
+});
+
+test("CON2-AC-4 (finding 114): under relay an unreadable verb, or accept's unreadable second word, is asked as a policy command", () => {
+  const { root, ctx } = setup(null);
+  const bash = (command: string, permission_mode = "default") =>
+    onPreToolUse(ctx, { tool_name: "Bash", tool_input: { command }, permission_mode });
+  for (const command of ["crew $V set attendedDecisions prompt", "crew accept $W", 'crew "$V" x'])
+    expect(decision(bash(command)), command).toBe("ask");
+  const headless = hookContext(
+    { session_id: "s", cwd: root },
+    { ...testEnv(), CLAUDE_CODE_SESSION_ATTENDED: "0" },
+  );
+  for (const command of ["crew $V set attendedDecisions prompt", "crew accept $W"])
+    expect(
+      decision(
+        onPreToolUse(headless, {
+          tool_name: "Bash",
+          tool_input: { command },
+          permission_mode: "auto",
+        }),
+      ),
+      command,
+    ).toBe("deny");
+  // A readable verb that is not a policy command keeps the relay.
+  expect(bash("crew approve w1 spec")).toEqual({});
+});
+
+test("CON2-AC-8 (finding 114): su -c and script -c take no following words into their script; env -S and flock -c still do", () => {
+  const { ctx } = setup();
+  const bash = (command: string) =>
+    onPreToolUse(ctx, { tool_name: "Bash", tool_input: { command }, permission_mode: "default" });
+  expect(bash("script -c crew skip")).toEqual({});
+  expect(bash("su -c crew approve")).toEqual({});
+  expect(decision(bash("env -S 'crew skip' w1 x"))).toBe("ask");
+  expect(decision(bash("flock /tmp/l -c crew skip"))).toBe("ask");
+  // A user-only verb inside the script itself is still read.
+  expect(decision(bash("su -c 'crew approve w1 spec' root"))).toBe("ask");
+  expect(decision(bash("script -c 'crew skip w1 x' out.log"))).toBe("ask");
 });

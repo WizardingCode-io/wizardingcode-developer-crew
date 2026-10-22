@@ -2,6 +2,7 @@ import { isAbsolute, join, relative } from "node:path";
 import { type Parsed, parse } from "../argv.ts";
 import { isWatched } from "../fingerprint.ts";
 import { nowIso } from "../fs.ts";
+import { escapeRegExp } from "../glob.ts";
 import {
   AUDIT_OPEN_FILES,
   canonical,
@@ -11,7 +12,11 @@ import {
 } from "../paths.ts";
 import {
   type CommandWrapper,
+  JS_RUNNERS,
+  NPX_RUNNERS,
   quoteWord,
+  RUNNER_SUFFIXES,
+  runnerSuffix,
   SHELL_NAMES,
   shellTakesNext,
   takesNext,
@@ -51,16 +56,30 @@ const REVIEW_OWNED = String.raw`review(?!\/${REVIEW_OPEN_SEGMENT}(?:\/(?:${NOT_D
 const AUDIT_OWNED = String.raw`audit(?=\/|${PATH_END}|$)(?!\/${AUDIT_OPEN_FILES}(?=${PATH_END}|$))`;
 // The work files only the engine writes come from the one list the Write rule reads (SP6 Task 1
 // AC-9, finding 106: a shell redirect to `knowledge.md` passed while a Write to it was denied).
-const WORK_FILES = PROTECTED_WORK_FILES.map((f) => f.replace(/[./]/g, "\\$&")).join("|");
+const WORK_FILES = PROTECTED_WORK_FILES.map(escapeRegExp).join("|");
 const ENGINE_FILES = new RegExp(
   String.raw`\.crew\/(?:profile\.json|policy\.json|decisions\.json|\.gitignore|local\b|work\/[^\s/]+\/(?:${WORK_FILES}|logs\b|${REVIEW_OWNED}|${AUDIT_OWNED}))|\.wizardingcode\/crew\b`,
+  "i",
 );
+// The engine's folder itself, its work folder or an item's folder, as a whole path or by its
+// contents as a whole (`.crew/*`, `.crew/.`): a remove or a move of it takes every engine file
+// at once (finding 114), while a read of it is free. Case is ignored, as on the filesystems the
+// runtimes run on (macOS, Windows).
+const ENGINE_FOLDER = new RegExp(
+  String.raw`(?:^|[\s"'=(:\/\\])\.crew(?:[\/\\]work(?:[\/\\][^\s\/\\"'\x60;&|)*]+)?)?(?:[\/\\](?:\*\*?|\.))*[\/\\]?(?=${PATH_END}|$)`,
+  "i",
+);
+// The POSIX verbs that remove, move or re-permission a folder: a copy of the folder reads it.
+const REMOVE_OR_MOVE = /(?:^|[\s;&|("'/])(?:rm|rmdir|mv|chmod|chown)\b/i;
+// PowerShell's verbs that remove or move a path, and their aliases, at a command position.
+const POWERSHELL_REMOVE_OR_MOVE =
+  /(?:^|[\s;&|({])(?:Remove-Item|ri|rm|rmdir|rd|del|erase|Move-Item|mi|mv|move|Rename-Item|rni|ren)(?=\s|$)/i;
 const HOOK_VERB_REASON =
   "Crew: crew hook runs from the runtime's hook configuration alone, never from a command";
 // A verb may follow a quote (`bash -c "rm ..."`). A redirect is a write only when its target is an
 // engine file (the `2>` of `2>/dev/null` after a read is not).
 const WRITE_SHAPE =
-  /(?:^|[\s;&|("'])(?:rm|mv|cp|tee|truncate|chmod|touch|dd|install)\b|sed\s+-i|>{1,2}\|?\s*["']?\S*(?:\.crew\/|\.wizardingcode\/crew\b)/;
+  /(?:^|[\s;&|("'])(?:rm|mv|cp|tee|truncate|chmod|touch|dd|install)\b|sed\s+-i|>{1,2}\|?\s*["']?\S*(?:\.crew\/|\.wizardingcode\/crew\b)/i;
 // A redirect whose target cannot be read from the text (`$F`, `$(...)`, a backtick) may reach an
 // engine file through a variable set in another simple command: a deny rule fails closed on it
 // whenever the whole command names one.
@@ -75,9 +94,12 @@ const PROMPTLESS_MODES = new Set(["bypassPermissions", "dontAsk"]);
 // verbs a read-only session opened by mail may run: its mail read, inbox and reply, its status, the
 // help. The rest writes, sends, or runs a shell (`tdd … -- <cmd>`), which the opener's allow-list
 // cannot tell apart (security review of SP2c task 4).
-const CREW_COMMAND = /^(?:\S*\/)?crew(?:\.mjs)?$/;
-const CREW_BUNDLE = /^(?:\S*\/)?crew\.mjs$/;
-const JS_RUNNER = /^(?:\S*\/)?(?:node|bun)(?:\.exe)?$/;
+const CREW_COMMAND = /^(?:.*[/\\])?crew(?:\.mjs)?$/i;
+const CREW_BUNDLE = /^(?:.*[/\\])?crew\.mjs$/i;
+const JS_RUNNER = new RegExp(
+  String.raw`^(?:.*[\/\\])?(?:${JS_RUNNERS.join("|")})${runnerSuffix(RUNNER_SUFFIXES.js)}$`,
+  "i",
+);
 const READ_ONLY_VERBS = new Set(["status", "help"]);
 const READ_ONLY_MAIL = new Set(["read", "inbox", "reply", "status"]);
 // The opener's variables are the engine's record of what the session is, so no command of the
@@ -242,12 +264,15 @@ function withoutLead(words: string[]): Lead {
         if (i < words.length && word.startsWith("-")) {
           const script = optionValue(wrapper, wrapper.scriptOptions ?? [], word, words[i + 1]);
           if (script !== null) {
-            // The words after the option belong to the script: `env -S "a b" c` runs `a b c`
-            // (SP6 Task 4, judgement round 16); for another wrapper that reads more, never less.
-            // The option took the next word when it carries no value of its own.
+            // The words after the option belong to the script where the wrapper joins them:
+            // `env -S "a b" c` runs `a b c` (SP6 Task 4, judgement round 16); `su -c s user` and
+            // `script -c s file` do not (finding 114). The option took the next word when it
+            // carries no value of its own.
             const fromNext =
               optionValue(wrapper, wrapper.scriptOptions ?? [], word, NEXT_WORD) === NEXT_WORD;
-            const after = words.slice(i + (fromNext ? 2 : 1)).map(quoteWord);
+            const after = wrapper.scriptAppends
+              ? words.slice(i + (fromNext ? 2 : 1)).map(quoteWord)
+              : [];
             return {
               words: [],
               viaXargs,
@@ -313,7 +338,9 @@ function withoutRedirects(tokens: Token[]): string[] {
 }
 // What npx and bunx take before the package they run (`npx -y crew …`, `bunx --bun crew …`); the
 // value of `-c`/`--call` is a command line of its own, read as a wrapper's string option is.
-const NPX_RUNNER = /^(?:\S*\/)?(?:npx|bunx)(?:\.cmd|\.exe)?$/;
+const NPX_RUNNER = new RegExp(
+  String.raw`^(?:\S*\/)?(?:${NPX_RUNNERS.join("|")})${runnerSuffix(RUNNER_SUFFIXES.npx)}$`,
+);
 const NPX_CALL = ["-c", "--call"];
 const NPX_VALUED = new Set(["-p", "--package", ...NPX_CALL, "--shell", "--loglevel"]);
 // The two kinds of runner that take options before what they run: node and bun before the bundle,
@@ -650,7 +677,11 @@ function userOnlyCommand(
   return {
     presence,
     parsed,
-    policyCommand: verb === "policy" || (verb === "accept" && second === "policy"),
+    // A verb or an accept's word the text cannot read may be a policy command (finding 114).
+    policyCommand:
+      unreadable(verb) ||
+      verb === "policy" ||
+      (verb === "accept" && (second === "policy" || unreadable(second))),
   };
 }
 /**
@@ -1128,10 +1159,13 @@ export function onPreToolUse(ctx: HookContext, payload: HookPayload): HookRespon
     if (powershell) {
       // The written line is read with its quotes gone too, so a protected path glued to a closing
       // quote (`"C:/repo/.crew"/work/x`) is denied whatever PowerShell makes of the glue.
+      const unquoted = written.replace(/["']/g, "");
       if (
         ENGINE_FILES.test(written) ||
-        ENGINE_FILES.test(written.replace(/["']/g, "")) ||
-        ENGINE_FILES.test(command)
+        ENGINE_FILES.test(unquoted) ||
+        ENGINE_FILES.test(command) ||
+        (POWERSHELL_REMOVE_OR_MOVE.test(written) &&
+          (ENGINE_FOLDER.test(written) || ENGINE_FOLDER.test(unquoted)))
       )
         return answer(
           "deny",
@@ -1232,7 +1266,17 @@ export function onPreToolUse(ctx: HookContext, payload: HookPayload): HookRespon
           return answer("deny", `${opened} and stops no sessions: crew mail stop is denied`);
         if (verb === "approve") {
           const id = positional[1];
-          if (id && loadWork(ctx.paths, id).work?.route === "full")
+          // An id the text cannot read, or one naming no item, may be a full-route item's: the
+          // decision waits for a person as a full-route spec's does (finding 30); a read-only session
+          // denies every approve below, with its own reason.
+          const work =
+            id === undefined || UNREADABLE_VERB.test(id) ? null : loadWork(ctx.paths, id).work;
+          if (!work && ctx.openedMode !== "read-only")
+            return answer(
+              "deny",
+              `${opened} and a spec it cannot read waits for a person: crew approve ${id ?? ""} is denied; run crew await ${id ?? "<id>"} user and end the turn`,
+            );
+          if (work?.route === "full")
             return answer(
               "deny",
               `${opened} and a full-route spec waits for a person: crew approve ${id} is denied; run crew await ${id} user and end the turn`,
@@ -1309,6 +1353,7 @@ export function onPreToolUse(ctx: HookContext, payload: HookPayload): HookRespon
       // No exemption for crew command lines: `crew x; echo > .crew/...` is two simple commands, and no crew command names a protected path.
       if (
         (ENGINE_FILES.test(piece) && WRITE_SHAPE.test(piece)) ||
+        (ENGINE_FOLDER.test(piece) && REMOVE_OR_MOVE.test(piece)) ||
         (OPAQUE_REDIRECT.test(piece) && ENGINE_FILES.test(command))
       ) {
         return answer(

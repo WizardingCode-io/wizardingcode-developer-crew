@@ -5,6 +5,7 @@ import { higherRoute, routeRank } from "./classify.ts";
 import { tddDone } from "./criteria.ts";
 import { baseCommitOf } from "./fingerprint.ts";
 import { nowIso, writeText } from "./fs.ts";
+import { escapeRegExp } from "./glob.ts";
 import { withLock } from "./lock.ts";
 import { blockingObjections } from "./objections.ts";
 import { type CrewPaths, workDir } from "./paths.ts";
@@ -598,7 +599,7 @@ export function isBeforeBuild(work: WorkItem): boolean {
  * is written under it is (SP2a review, finding I3).
  */
 function sectionBodies(text: string, heading: string): string[] {
-  const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const escaped = escapeRegExp(heading);
   const bodies: string[] = [];
   for (const match of text.matchAll(new RegExp(`^(#{1,6})\\s*${escaped}\\s*$`, "gim"))) {
     const level = (match[1] ?? "#").length;

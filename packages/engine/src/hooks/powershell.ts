@@ -26,7 +26,13 @@
  * records the subset read and the pwsh 7 run that checked it.
  */
 
-import { WRAPPERS } from "../shell-words.ts";
+import {
+  JS_RUNNERS,
+  NPX_RUNNERS,
+  RUNNER_SUFFIXES,
+  runnerSuffix,
+  WRAPPERS,
+} from "../shell-words.ts";
 import { LEADING_KEYWORDS, SUBSTITUTED } from "./shell.ts";
 
 // A crew program: by name or by a path with either separator, the bundle included.
@@ -46,7 +52,7 @@ const OTHER_WORD = String.raw`(?!["']?${CREW_WORD}["']?(?=\s|$))\S+`;
 const BEFORE_PROGRAM = String.raw`(?:(?:${[...LEADING_KEYWORDS.filter((k) => k !== "!"), ...WRAPPERS.map((w) => w.name)].join("|")})(?:\s+${OTHER_WORD}){0,8}?\s+|!\s+|\w+=\S*\s+){0,4}`;
 // A JavaScript runner before the bundle, with its options and their values, by its POSIX name or
 // Windows' (`node.exe`, `npx.cmd`).
-const RUNNER = String.raw`(?:(?:node|bun|npx|bunx)(?:\.exe|\.cmd)?(?:\s+${OTHER_WORD}){0,8}?\s+)?`;
+const RUNNER = String.raw`(?:(?:${[...JS_RUNNERS, ...NPX_RUNNERS].join("|")})${runnerSuffix([...new Set([...RUNNER_SUFFIXES.js, ...RUNNER_SUFFIXES.npx])])}(?:\s+${OTHER_WORD}){0,8}?\s+)?`;
 // A crew program at a command position of a piece's text: its start, a separator, a brace, a
 // backtick or a newline before it, the right side of an assignment of any shape (`=` or `+=`, not
 // inside a `-flag=` token), `return` or `throw`; then what the walker lets stand before a program,
@@ -126,6 +132,9 @@ function unreadCrew(command: string, read: ReadPiece[]): boolean {
 // The C0 controls but tab, line feed and carriage return, from their codes (a control character
 // spelt in a regex is a lint error, which is the point of the fold's marks among them).
 const code = String.fromCharCode;
+// The marks the fold writes into a line (a handed shell, a joined word, an ambiguous comment): control
+// characters, so CONTROLS covers them and a written line can never carry one unseen.
+const FOLD_MARKS = { handed: code(0), joined: code(1), ambiguous: code(2) } as const;
 const CONTROLS = new RegExp(`[${code(0)}-${code(8)}${code(11, 12)}${code(14)}-${code(31)}]`);
 const HIDDEN_MARKS: [RegExp, string][] = [
   [/`/, "a backtick escape"],
@@ -426,8 +435,8 @@ const cmdRest = (rest: string): string => rest.replace(CMD_BUILTIN, "");
 // The fold's marks, control characters no written line holds (`HIDDEN_MARKS` asks about one): the
 // mark of a hand-on folded and not yet read, and the mark of one whose rest was joined, which a
 // later pass leaves alone.
-const MARK = "\u0000";
-const JOINED = "\u0001";
+const MARK = FOLD_MARKS.handed;
+const JOINED = FOLD_MARKS.joined;
 const MARKS = new RegExp(`[${MARK}${JOINED}]`, "g");
 const HANDED = `${MARK}sh -c`;
 const HANDED_PREFIX = new RegExp(`${HANDED}[ \\t]*`, "g");
@@ -536,7 +545,7 @@ const AMBIGUOUS_BEFORE_COMMENT = /[)}=[\],<>"']/;
  * holds (`CONTROLS` asks about one); `unreadablePowershell` asks about a line that carries it,
  * from any level.
  */
-const AMBIGUOUS = "\u0002";
+const AMBIGUOUS = FOLD_MARKS.ambiguous;
 const AMBIGUOUS_COMMENT =
   "a # the reader cannot place (after =, a bracket, a comma, a redirection, a closing parenthesis or brace, or a quoted part glued to a word or inside a subexpression)";
 const SPACE_BEFORE = "write a space before the #, or quote it";

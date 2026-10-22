@@ -41,12 +41,22 @@ export interface CommandWrapper {
   assignments?: true;
   /** Options whose value is a command line of its own (`env -S "a b"`, `flock f -c "a b"`). */
   scriptOptions?: string[];
+  /** Joins the words after the script option's value to the script (`env -S "a b" c` runs `a b c`); `flock` is kept with it, since its words after `-c` are not known to be ignored, and an over-read fails closed. */
+  scriptAppends?: true;
   /** Options whose value is the name of a variable the wrapper unsets (`env -u NAME`). */
   unsetOptions?: string[];
   /** Takes a name before a `{` block (`coproc NAME {`). */
   namedBlock?: true;
 }
 
+/** The JavaScript runners a crew bundle may stand behind, and the npx-style ones that name a package, with the Windows suffixes each reader accepts: written once for the POSIX and PowerShell readers. */
+export const JS_RUNNERS = ["node", "bun"] as const;
+export const NPX_RUNNERS = ["npx", "bunx"] as const;
+export const RUNNER_SUFFIXES = { js: [".exe"], npx: [".cmd", ".exe"] } as const;
+/** The suffixes as an optional group of a regular expression. */
+export function runnerSuffix(suffixes: readonly string[]): string {
+  return `(?:${suffixes.map((s) => s.replace(".", "\\.")).join("|")})?`;
+}
 /** The wrappers a shell may stand behind in a recorded command: read by both readers, written once. */
 export const COMMAND_WRAPPERS: readonly CommandWrapper[] = [
   {
@@ -57,6 +67,7 @@ export const COMMAND_WRAPPERS: readonly CommandWrapper[] = [
     positionals: 0,
     assignments: true,
     scriptOptions: ["-S", "--split-string"],
+    scriptAppends: true,
     unsetOptions: ["-u", "--unset"],
   },
   { name: "command", valued: "", longValued: [], positionals: 0 },
@@ -100,6 +111,7 @@ export const WRAPPERS: readonly CommandWrapper[] = [
     longValued: ["--wait", "--timeout", "--conflict-exit-code"],
     positionals: 1,
     scriptOptions: ["-c", "--command"],
+    scriptAppends: true,
   },
   {
     name: "script",

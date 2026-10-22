@@ -429,3 +429,22 @@ test("SP2c AC-5: the opener's record only narrows what the variables say: it nam
     `Crew: this session was opened by mail (${MID}) and the opener's variables are not its to change: CLAUDE_CODE_SESSION_ATTENDED is denied`,
   );
 });
+
+test("CON2-AC-3 (finding 30): in a session opened by mail, crew approve whose id cannot be read or names no item waits for a person", () => {
+  const { ctx, bash, reason } = session("branch");
+  const opened = `Crew: this session was opened by mail (${MID})`;
+  // The reason names the id as the shell hands it to crew (quotes removed, a substitution as `${…}`).
+  for (const [id, word] of [
+    ['"$ID"', "$ID"],
+    ["$(cat id)", "${…}"],
+    ["nosuch", "nosuch"],
+  ])
+    expect(reason(bash(`crew approve ${id} spec --mode dontAsk`)), id).toBe(
+      `${opened} and a spec it cannot read waits for a person: crew approve ${word} is denied; run crew await ${word} user and end the turn`,
+    );
+  const standard = createWork(ctx.paths, "Rename a field");
+  saveWork(ctx.paths, standard);
+  expect(
+    bash(`crew approve ${standard.id} spec --mode dontAsk --validator complete-gap-round`),
+  ).toEqual({});
+});
