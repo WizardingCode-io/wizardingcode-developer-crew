@@ -58,6 +58,24 @@ const fixtureText = () =>
     .replace("__KEY_SHAPED_1__", KEY_SHAPED)
     .replace("__KEY_SHAPED_2__", `${KEY_SHAPED.slice(0, -1)}Z`);
 const fixture = () => readAggregate(fixtureText());
+/**
+ * Runs a row that spawns the scripts with their results under OWN: the body gets OWN's folders
+ * before it; the real results folder must gain nothing, and what the body left under OWN is removed
+ * after it, OWN itself when the row made it.
+ */
+function inOwnResults(body: (before: string[]) => void): void {
+  const hadResults = existsSync(OWN);
+  const before = listResults(OWN);
+  const realBefore = listResults(RESULTS);
+  try {
+    body(before);
+    expect(listResults(RESULTS)).toEqual(realBefore);
+  } finally {
+    for (const f of foldersSince(OWN, before))
+      rmSync(join(OWN, f), { recursive: true, force: true });
+    if (!hadResults) rmSync(OWN, { recursive: true, force: true });
+  }
+}
 const META = {
   command: "claude plugin eval plugins/core --tag benchmark",
   // Free of digits: a figure found inside the commit would prove nothing (AC-17).
@@ -500,9 +518,6 @@ test("H118 AC-3 (SP6-T5 AC-13 rewritten): without --from the script gives the ki
     fixtureText().replace("/private/tmp/e-abc123/out/trace.jsonl", trace),
   );
   const decoy = join(OWN, `9999-decoy-${process.pid}`);
-  const hadResults = existsSync(OWN);
-  const before = listResults(OWN);
-  const realBefore = listResults(RESULTS);
   const path = [bin, process.env.PATH ?? ""].join(delimiter);
   const log = join(dir, "stub.log");
   const env = {
@@ -517,7 +532,7 @@ test("H118 AC-3 (SP6-T5 AC-13 rewritten): without --from the script gives the ki
     STUB_DECOY_AGGREGATE: decoyAggregate,
   };
   expect(firstClaudeOn(composedPath(path))).toBe(bin);
-  try {
+  inOwnResults((before) => {
     const out = join(dir, "out");
     const run = spawnSync("bun", ["scripts/benchmark.ts", "--out", out], {
       cwd: ROOT,
@@ -569,13 +584,7 @@ test("H118 AC-3 (SP6-T5 AC-13 rewritten): without --from the script gives the ki
       `benchmark: the kit exited 3 and wrote no aggregate in ${OWN_REL}/${second[0]}`,
     );
     expect(existsSync(join(dir, "out2"))).toBe(false);
-    // The real results folder gained nothing: the runs went to the row's own folder.
-    expect(listResults(RESULTS)).toEqual(realBefore);
-  } finally {
-    for (const f of foldersSince(OWN, before))
-      rmSync(join(OWN, f), { recursive: true, force: true });
-    if (!hadResults) rmSync(OWN, { recursive: true, force: true });
-  }
+  });
 });
 
 test("SP6-T5 AC-14: a run the runner flags needs-rerun writes no record: the lines and the rule printed with the way out, exit 1, --out left absent; the README says so and names the kit's statuses the record carries", () => {
@@ -588,12 +597,9 @@ test("SP6-T5 AC-14: a run the runner flags needs-rerun writes no record: the lin
     aggregatePath,
     fixtureText().replace("/private/tmp/e-abc123/out/trace.jsonl", trace),
   );
-  const hadResults = existsSync(OWN);
-  const before = listResults(OWN);
-  const realBefore = listResults(RESULTS);
   const path = [bin, process.env.PATH ?? ""].join(delimiter);
   expect(firstClaudeOn(composedPath(path))).toBe(bin);
-  try {
+  inOwnResults((before) => {
     const run = spawnSync("bun", ["scripts/benchmark.ts", "--out", join(dir, "out")], {
       cwd: ROOT,
       encoding: "utf8",
@@ -615,13 +621,7 @@ test("SP6-T5 AC-14: a run the runner flags needs-rerun writes no record: the lin
       `benchmark: a run the runner flags needs-rerun is run once more; no record written (to write it from this aggregate anyway: bun scripts/benchmark.ts --from ${join(OWN, own[0] ?? "", "aggregate-result.json")})`,
     );
     expect(existsSync(join(dir, "out"))).toBe(false);
-    // The real results folder gained nothing: the run went to the row's own folder.
-    expect(listResults(RESULTS)).toEqual(realBefore);
-  } finally {
-    for (const f of foldersSince(OWN, before))
-      rmSync(join(OWN, f), { recursive: true, force: true });
-    if (!hadResults) rmSync(OWN, { recursive: true, force: true });
-  }
+  });
   const readme = readFileSync(join(ROOT, "docs", "benchmark", "README.md"), "utf8");
   expect(readme).toContain(
     "The script exits 0 once the record is written, whatever the kit's status: 1 says a case scored below the threshold and 2 a partial run, both carried in the record; a run that left no aggregate is refused naming the status.",
@@ -698,9 +698,6 @@ test("H118 AC-8 (SP6-T5 AC-21 rewritten): a run whose own folder holds no aggreg
   const bin = stubKit(dir);
   const older = join(OWN, `0000-older-${process.pid}`);
   const newer = join(OWN, `9999-newer-${process.pid}`);
-  const hadResults = existsSync(OWN);
-  const before = listResults(OWN);
-  const realBefore = listResults(RESULTS);
   const path = [bin, process.env.PATH ?? ""].join(delimiter);
   expect(firstClaudeOn(composedPath(path))).toBe(bin);
   // Distinct aggregates: a record read from either would carry another version's stem.
@@ -711,7 +708,7 @@ test("H118 AC-8 (SP6-T5 AC-21 rewritten): a run whose own folder holds no aggreg
   writeFileSync(newerAggregate, fixtureText().replace('"version": "0.6.0"', '"version": "0.6.1"'));
   const ownAggregate = join(dir, "own.json");
   writeFileSync(ownAggregate, fixtureText());
-  try {
+  inOwnResults((before) => {
     mkdirSync(older, { recursive: true });
     writeFileSync(join(older, "aggregate-result.json"), readFileSync(olderAggregate));
     const log = join(dir, "stub.log");
@@ -768,13 +765,7 @@ test("H118 AC-8 (SP6-T5 AC-21 rewritten): a run whose own folder holds no aggreg
       "2026-10-17-0.6.0.json",
       "2026-10-17-0.6.0.md",
     ]);
-    // The real results folder gained nothing: the runs and the decoys went to the row's own folder.
-    expect(listResults(RESULTS)).toEqual(realBefore);
-  } finally {
-    for (const f of foldersSince(OWN, before))
-      rmSync(join(OWN, f), { recursive: true, force: true });
-    if (!hadResults) rmSync(OWN, { recursive: true, force: true });
-  }
+  });
 });
 
 test("SP6-T5 AC-22: the run section's lines and the remaining Cases rows are pinned literally; the main reads the set through readSet; the models.judge refusal; no redundant category cast", () => {

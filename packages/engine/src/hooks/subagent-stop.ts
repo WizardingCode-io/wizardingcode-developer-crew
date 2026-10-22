@@ -426,8 +426,6 @@ export function fileAnswer(
   const agent = earlier?.agent ?? agentName(role, roles);
   let saved: { file: string | null; agent: string };
   let note: string | null = null;
-  // Said when nothing else is: where this answer is and where the earlier reply went.
-  let archivedNote: string | null = null;
   // The archive an earlier answer went to, named even when the record cannot be made; one note
   // for the resumed branch (an earlier reply) and the first-answer branch (an earlier answer).
   let keptAs: string | null = null;
@@ -484,8 +482,9 @@ export function fileAnswer(
     }
   }
   // The note of the archive, once for both branches: a resumed role's earlier reply, a relaunched
-  // role's earlier answer.
-  if (keptAs) archivedNote = keptNote(keptAs, earlier?.file ? "reply" : "answer");
+  // role's earlier answer. Said when nothing else is: where this answer is and where the earlier
+  // reply went.
+  const archivedNote = keptAs ? keptNote(keptAs, earlier?.file ? "reply" : "answer") : null;
   progress.saved = saved;
   // A resumed role may have a relayed question waiting, whether or not its earlier stop left a
   // file: its answer is also the reply to it, sent once the end is recorded (SP2c §7).

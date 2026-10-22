@@ -312,7 +312,7 @@ export function scanResults(dir: string): string[] {
 }
 
 /** The kit's results directory, relative to the repository root: what the kit receives, so no absolute path enters a record's command line. */
-export const RESULTS_DIR = "plugins/core/evals/results";
+const RESULTS_DIR = "plugins/core/evals/results";
 
 /**
  * The results directory a run uses: `WIZARDINGCODE_CREW_EVAL_RESULTS` when set (item C2b,

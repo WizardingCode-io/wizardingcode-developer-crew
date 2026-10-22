@@ -1,5 +1,7 @@
 import { expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as metrics from "../src/metrics.ts";
 
@@ -70,7 +72,6 @@ test("SP6-T1 AC-8: the analyse case reads the base once, the cto case casts noth
 // inserted between the two leaves the comment over a stranger. The symptom is textual: a doc
 // comment opening right after another doc comment closed. A file's leading comment before any
 // code is the one legitimate stacked shape.
-import { readdirSync } from "node:fs";
 
 /** Every `<file>:<line>` where a doc comment opens right after another doc comment closed, the file's leading comment excepted. */
 function stackedDocComments(dir: string): string[] {
@@ -88,15 +89,11 @@ function stackedDocComments(dir: string): string[] {
       if (!inBlock && line.startsWith("/**")) {
         if (prevClosedBlockAfterCode) found.push(`${entry}:${i + 1}`);
         blockStartedAfterCode = codeSeen;
-        if (!line.endsWith("*/")) {
-          inBlock = true;
-          prevClosedBlockAfterCode = false;
-          continue;
-        }
-        prevClosedBlockAfterCode = blockStartedAfterCode;
-        continue;
+        inBlock = true;
+        prevClosedBlockAfterCode = false;
       }
       if (inBlock) {
+        // A block's close, on its opening line or a later one, is the one place it is recorded.
         if (line.endsWith("*/")) {
           inBlock = false;
           prevClosedBlockAfterCode = blockStartedAfterCode;
@@ -113,4 +110,22 @@ function stackedDocComments(dir: string): string[] {
 test("AC-1 (item C2b, finding 130): no doc comment stacked under another doc comment anywhere in the engine's source, a file's leading comment excepted", () => {
   const dir = fileURLToPath(new URL("../src", import.meta.url));
   expect(stackedDocComments(dir)).toEqual([]);
+});
+
+test("AC-1 (finding 131): the scanner names a doc comment stacked under another, and passes a single-line doc comment over a declaration and a file's leading comment", () => {
+  const dir = mkdtempSync(join(tmpdir(), "crew-stacked-"));
+  try {
+    writeFileSync(
+      join(dir, "stacked.ts"),
+      "import { x } from \"./x.ts\";\n\n/** The stranger's comment. */\n/**\n * The owner's comment.\n */\nexport const y = x;\n",
+    );
+    writeFileSync(
+      join(dir, "clean.ts"),
+      "/**\n * The file's leading comment.\n */\n/** The first declaration. */\nexport const a = 1;\n\n/** A single-line one. */\nexport const b = 2;\n",
+    );
+    writeFileSync(join(dir, "notes.md"), "/** a */\n/** b */\n");
+    expect(stackedDocComments(dir)).toEqual(["stacked.ts:4"]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

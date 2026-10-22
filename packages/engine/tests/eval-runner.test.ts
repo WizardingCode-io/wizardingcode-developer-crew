@@ -21,6 +21,7 @@ import {
   evalInvocation,
   resultsDir,
   runFolder,
+  runKit,
   SANDBOX_TAGS,
   scanResults,
 } from "../../../scripts/eval.ts";
@@ -1513,9 +1514,32 @@ test("AC-2 (item C2b, finding 118's debt): resultsDir takes WIZARDINGCODE_CREW_E
   expect(resultsDir({ WIZARDINGCODE_CREW_EVAL_RESULTS: "plugins/core/evals/results-test-1" })).toBe(
     "plugins/core/evals/results-test-1",
   );
-  for (const value of ["/tmp/results", "plugins/../x", "..\\x", "plugins\\..\\x", ""]) {
+  for (const value of [
+    "/tmp/results",
+    "C:\\results",
+    "plugins/../x",
+    "..\\x",
+    "plugins\\..\\x",
+    "",
+  ]) {
     expect(() => resultsDir({ WIZARDINGCODE_CREW_EVAL_RESULTS: value }), value).toThrow(
       `WIZARDINGCODE_CREW_EVAL_RESULTS must be a path under the repository, not ${value}`,
     );
+  }
+});
+
+test("AC-3 (finding 131): runKit takes its folder from resultsDir, so an absolute WIZARDINGCODE_CREW_EVAL_RESULTS is refused before any folder is created or the kit spawned", () => {
+  const root = mkdtempSync(join(tmpdir(), "crew-runkit-"));
+  const saved = process.env.WIZARDINGCODE_CREW_EVAL_RESULTS;
+  process.env.WIZARDINGCODE_CREW_EVAL_RESULTS = "/tmp/results";
+  try {
+    expect(() => runKit({ root, suffix: "refused" })).toThrow(
+      "WIZARDINGCODE_CREW_EVAL_RESULTS must be a path under the repository, not /tmp/results",
+    );
+    expect(readdirSync(root)).toEqual([]);
+  } finally {
+    if (saved === undefined) delete process.env.WIZARDINGCODE_CREW_EVAL_RESULTS;
+    else process.env.WIZARDINGCODE_CREW_EVAL_RESULTS = saved;
+    rmSync(root, { recursive: true, force: true });
   }
 });

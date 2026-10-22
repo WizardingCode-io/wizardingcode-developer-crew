@@ -11227,7 +11227,6 @@ function fileAnswer(ctx, id, role, input, transcriptNote, progress) {
   const agent = earlier?.agent ?? agentName(role, roles);
   let saved;
   let note = null;
-  let archivedNote = null;
   let keptAs = null;
   const keptNote = (archived, word) => `Crew: ${agent}'s answer ${whereSaved(saved)} (the earlier ${word} kept as ${archived}).`;
   if (!answer) {
@@ -11269,8 +11268,7 @@ function fileAnswer(ctx, id, role, input, transcriptNote, progress) {
       keptAs = kept.archived;
     }
   }
-  if (keptAs)
-    archivedNote = keptNote(keptAs, earlier?.file ? "reply" : "answer");
+  const archivedNote = keptAs ? keptNote(keptAs, earlier?.file ? "reply" : "answer") : null;
   progress.saved = saved;
   const pending = earlier && answer ? pendingQuestion(ctx, id, agent) : undefined;
   progress.pending = pending?.id ?? null;
