@@ -34,7 +34,7 @@ body:
     attributes:
       label: crew --version
       description: The version of the release asset you installed, as `crew --version` prints it.
-      placeholder: "0.11.1"
+      placeholder: "0.11.2"
     validations:
       required: true
   - type: textarea
