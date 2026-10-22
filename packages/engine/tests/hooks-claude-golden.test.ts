@@ -164,7 +164,7 @@ test("SP6-T4 AC-9: the golden rows of crew hook per event, each in its state, un
     }),
   ).toEqual({
     systemMessage:
-      "Crew: review-risk stopped with no answer (no hand-back and an empty last message): its end is recorded with no file; an earlier file of this role, if any, is not this round's answer. Run the role again or save its answer from the transcript (/tmp/r1.jsonl).",
+      "Crew: review-risk stopped with no answer (no hand-back in its last turn): its end is recorded with no file; an earlier file of this role, if any, is not this round's answer. Run the role again or save its answer from the transcript (/tmp/r1.jsonl).",
   });
   // An unknown event: {}. Garbage stdin is an empty payload, judged in the command's folder: {} where nothing is unproven.
   expect(await both(run, "no-such-event", session)).toEqual({});

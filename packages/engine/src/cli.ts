@@ -1,5 +1,5 @@
-import { existsSync, readFileSync, rmSync, statSync } from "node:fs";
-import { basename, isAbsolute, join, relative, resolve } from "node:path";
+import { existsSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
+import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { analyseOrigin, originSummary, readOrigin, writeOrigin } from "./analysis.ts";
 import { commaList, type Parsed, parse } from "./argv.ts";
 import { assembleAuditReport, renderAuditHtml, renderAuditMarkdown } from "./audit-report.ts";
@@ -293,7 +293,7 @@ import {
   type QuestionRecord,
   VALIDATOR_RULES,
 } from "./types.ts";
-import { fileHash, parseValidation, replyFile, validationHash } from "./validation.ts";
+import { fileHash, leadHeading, parseValidation, replyFile, validationHash } from "./validation.ts";
 import {
   applyDefectMarks,
   askAllowed,
@@ -1682,6 +1682,21 @@ function observeRuntime(payload: HookPayload, env: NodeJS.ProcessEnv, runtime: s
   } catch {
     // As above.
   }
+}
+
+/** The real path of `path`, links followed, or `path` itself when it does not exist. */
+function realOrSelf(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
+}
+
+/** Whether `path` is under `folder`: a relative path that never climbs out of it. */
+function insideFolder(path: string, folder: string): boolean {
+  const rel = relative(folder, path);
+  return rel !== "" && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
 }
 
 async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
@@ -3709,22 +3724,40 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       if (!(work.seats ?? []).some((s) => s.kind === "lead" && s.role === by))
         return refuse(`${by} is not a seat of ${work.id} (crew team ${work.id} prints the seats)`);
       const path = resolve(env.paths.root, file);
+      const dir = workDir(env.paths, work.id);
+      // The record's file lives with the item, so the evidence outlives the session (item D,
+      // finding 132): its real path, links followed, must be inside the item's folder.
       const text = readText(path);
       if (text === null) return refuse(`no validation file at ${path}`);
+      if (!insideFolder(realOrSelf(path), realOrSelf(dir)))
+        return refuse(`the validation file must be inside .crew/work/${work.id}/: ${file}`);
+      // The heading of the block the verdict is read from names the item, the subject and the
+      // team; an answer for another of them is not this validation (finding 132: a spec answer
+      // recorded as the delivery's). A file with no lead heading cannot be told apart.
+      const name = relative(dir, path).replace(/\\/g, "/");
+      const asked = `asked: the ${what} by ${by} for ${work.id}`;
+      const heading = leadHeading(text);
+      if (!heading)
+        return refuse(
+          `${name} has no lead heading (# <team> lead's validation of ${work.id}: <spec|plan|delivery>); ${asked}`,
+        );
+      if (heading.item !== work.id || heading.what !== what || `lead-${heading.team}` !== by)
+        return refuse(
+          `${name} is the ${heading.team} lead's ${heading.what} answer for ${heading.item}; ${asked}`,
+        );
       const verdict = parseValidation(text);
       if ("refused" in verdict) return refuse(verdict.refused);
-      const dir = workDir(env.paths, work.id);
-      // A file whose content this lead's record already holds for this `what` is an earlier
-      // round's answer, whatever the spec's revision (finding 119): refused, naming the record it
-      // is and the file a resumed lead's new answer lands in. A record without the hash (an older
-      // item) tells nothing apart and is read as before.
+      // A file whose content this lead's record already holds, under any subject, is an earlier
+      // answer, whatever the spec's revision (finding 119; any subject since item D, finding 132):
+      // refused, naming the record it is and the file a resumed lead's new answer lands in. A
+      // record without the hash (an older item) tells nothing apart and is read as before.
       const contentHash = fileHash(text);
       const repeated = (work.validations ?? []).find(
-        (v) => v.what === what && v.by === by && v.fileHash === contentHash,
+        (v) => v.by === by && v.fileHash === contentHash,
       );
       if (repeated)
         return refuse(
-          `already recorded: ${repeated.file} is the answer recorded for round ${repeated.round} of ${by} (${what}); record the lead's new answer (a resumed lead's lands in ${replyFile(by, what)})`,
+          `already recorded: ${repeated.file} is the answer recorded for round ${repeated.round} of ${by} (${repeated.what}); record the lead's new answer (a resumed lead's lands in ${replyFile(by, what)})`,
         );
       const evidence = loadEvidence(env.paths, work.id).evidence;
       const hash = validationHash(

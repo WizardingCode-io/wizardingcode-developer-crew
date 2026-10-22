@@ -4,8 +4,28 @@ import type { GuardContext } from "./work.ts";
 
 /** The teams a tech lead answers for, as its first line names them (`# <team> lead's validation of <id>: <what>`); the hook and the parser read the same list. */
 export const LEAD_TEAMS = "qa|security|architects|etl|devops";
+/** The opening of a lead's heading line, before the item and the subject. */
+const LEAD_OPENING = `# (${LEAD_TEAMS}) lead's validation of `;
 /** Where a lead's answer starts: a split point, the line kept with its block. */
-const LEAD_HEADING = new RegExp(`^(?=# (?:${LEAD_TEAMS}) lead's validation of )`, "m");
+const LEAD_HEADING = new RegExp(`^(?=${LEAD_OPENING})`, "m");
+/** A lead's heading line, its team, item and subject captured: the record's and the hook's one pattern (item D). */
+export const LEAD_LINE = `^${LEAD_OPENING}(\\S+): (spec|plan|delivery)\\b`;
+
+/**
+ * The team, the item and the subject the last lead heading of a file names: the heading of the
+ * block `parseValidation` reads the verdict from (item D, finding 132). Null when the file has none.
+ */
+export function leadHeading(
+  text: string,
+): { team: string; item: string; what: "spec" | "plan" | "delivery" } | null {
+  const last = [...text.matchAll(new RegExp(LEAD_LINE, "gm"))].pop();
+  if (!last) return null;
+  return {
+    team: last[1] as string,
+    item: last[2] as string,
+    what: last[3] as "spec" | "plan" | "delivery",
+  };
+}
 
 /**
  * The verdict line and the returns of a lead's file (SP7 §6.4): `verdict: validated|returned` in the

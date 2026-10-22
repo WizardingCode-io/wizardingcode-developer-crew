@@ -1,6 +1,6 @@
 // packages/engine/src/cli.ts
-import { existsSync as existsSync22, readFileSync as readFileSync10, rmSync as rmSync5, statSync as statSync12 } from "node:fs";
-import { basename as basename7, isAbsolute as isAbsolute10, join as join48, relative as relative12, resolve as resolve6 } from "node:path";
+import { existsSync as existsSync22, readFileSync as readFileSync10, realpathSync as realpathSync8, rmSync as rmSync5, statSync as statSync12 } from "node:fs";
+import { basename as basename7, isAbsolute as isAbsolute10, join as join48, relative as relative12, resolve as resolve6, sep as sep5 } from "node:path";
 
 // packages/engine/src/analysis.ts
 import { existsSync as existsSync9, lstatSync as lstatSync2, mkdirSync as mkdirSync5 } from "node:fs";
@@ -674,6 +674,44 @@ var LOCK_WAIT_MS = 2000;
 function sleep(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
+function ageOf(path) {
+  try {
+    return Date.now() - statSync(path).mtimeMs;
+  } catch {
+    return null;
+  }
+}
+function breakStale(lock) {
+  const breaker = `${lock}.break`;
+  try {
+    mkdirSync2(breaker);
+  } catch (error) {
+    if (error.code !== "EEXIST")
+      throw error;
+    const age = ageOf(breaker);
+    if (age !== null && age > LOCK_STALE_MS) {
+      try {
+        rmdirSync(breaker);
+      } catch {}
+    }
+    return false;
+  }
+  try {
+    const age = ageOf(lock);
+    if (age === null)
+      return true;
+    if (age <= LOCK_STALE_MS)
+      return false;
+    try {
+      rmdirSync(lock);
+    } catch {}
+    return true;
+  } finally {
+    try {
+      rmdirSync(breaker);
+    } catch {}
+  }
+}
 
 class LockBusy extends Error {
 }
@@ -690,16 +728,9 @@ function withLock(dir, fn, options = {}) {
       if (error.code !== "EEXIST")
         throw error;
     }
-    let age = null;
-    try {
-      age = Date.now() - statSync(lock).mtimeMs;
-    } catch {}
-    if (age !== null && age > LOCK_STALE_MS) {
-      try {
-        rmdirSync(lock);
-      } catch {}
+    const age = ageOf(lock);
+    if (age !== null && age > LOCK_STALE_MS && breakStale(lock))
       continue;
-    }
     if (Date.now() - started >= waitMs)
       throw new LockBusy(`${options.what ?? "folder"} busy: ${lock} held for more than ${waitMs} ms`);
     if (age !== null)
@@ -3896,7 +3927,19 @@ import { join as join13 } from "node:path";
 // packages/engine/src/validation.ts
 import { createHash as createHash2 } from "node:crypto";
 var LEAD_TEAMS = "qa|security|architects|etl|devops";
-var LEAD_HEADING = new RegExp(`^(?=# (?:${LEAD_TEAMS}) lead's validation of )`, "m");
+var LEAD_OPENING = `# (${LEAD_TEAMS}) lead's validation of `;
+var LEAD_HEADING = new RegExp(`^(?=${LEAD_OPENING})`, "m");
+var LEAD_LINE = `^${LEAD_OPENING}(\\S+): (spec|plan|delivery)\\b`;
+function leadHeading(text) {
+  const last = [...text.matchAll(new RegExp(LEAD_LINE, "gm"))].pop();
+  if (!last)
+    return null;
+  return {
+    team: last[1],
+    item: last[2],
+    what: last[3]
+  };
+}
 function parseValidation(text) {
   const blocks = text.split(LEAD_HEADING);
   const lines = (blocks.length > 1 ? blocks[blocks.length - 1] ?? text : text).split(`
@@ -10998,12 +11041,11 @@ function personalityOf(answer) {
   const name = line.trim().slice("personality:".length).trim().toLowerCase();
   return PERSONALITIES.includes(name) ? name : "unknown";
 }
-var LEAD_LINE = new RegExp(`^# (${LEAD_TEAMS}) lead's validation of \\S+: (spec|plan|delivery)\\b`);
 function leadAnswer(answer) {
-  const match = LEAD_LINE.exec(unfenced(answer));
+  const match = new RegExp(LEAD_LINE).exec(unfenced(answer));
   if (!match)
     return null;
-  return { team: match[1], what: match[2] };
+  return { team: match[1], what: match[3] };
 }
 function teamOf(agent) {
   for (const [name, def] of Object.entries(TEAMS))
@@ -11026,17 +11068,67 @@ function lines(transcriptPath) {
   }
   return out2;
 }
-function roleAnswer(transcriptPath, lastMessage) {
-  let handback = null;
-  for (const line of lines(transcriptPath)) {
-    if (line.type !== "assistant" || !Array.isArray(line.message?.content))
-      continue;
-    for (const part of line.message.content) {
-      if (part.type === "tool_use" && part.name === "SubagentHandback" && typeof part.input?.message === "string")
-        handback = part.input.message;
-    }
+var HANDBACK_WAIT_MS = 3000;
+var HANDBACK_WAIT_CAP_MS = 1e4;
+var HANDBACK_POLL_MS = 100;
+function handbackWaitMs(env) {
+  const raw = env.WIZARDINGCODE_CREW_HANDBACK_WAIT_MS;
+  if (raw === undefined || raw.trim() === "")
+    return HANDBACK_WAIT_MS;
+  const ms = Number(raw);
+  if (!Number.isFinite(ms) || ms < 0)
+    return HANDBACK_WAIT_MS;
+  return Math.min(ms, HANDBACK_WAIT_CAP_MS);
+}
+function isPrompt(line) {
+  if (line.type !== "user")
+    return false;
+  const content = line.message?.content;
+  if (typeof content === "string")
+    return true;
+  return Array.isArray(content) && !content.some((p) => p.type === "tool_result");
+}
+function handbackOf(line) {
+  if (line.type !== "assistant" || !Array.isArray(line.message?.content))
+    return null;
+  let found = null;
+  for (const part of line.message.content) {
+    if (part.type === "tool_use" && part.name === "SubagentHandback" && typeof part.input?.message === "string")
+      found = part.input.message;
   }
-  return (handback ?? lastMessage ?? "").trim();
+  return found;
+}
+function readTurns(transcriptPath) {
+  const all = lines(transcriptPath);
+  let start = -1;
+  all.forEach((line, i) => {
+    if (isPrompt(line))
+      start = i;
+  });
+  let turn = null;
+  let earlier = false;
+  all.forEach((line, i) => {
+    const handback = handbackOf(line);
+    if (handback === null)
+      return;
+    if (i > start)
+      turn = handback;
+    else
+      earlier = true;
+  });
+  return { count: all.length, turn, earlier };
+}
+function roleAnswer(transcriptPath, lastMessage, wait = { ms: 0 }) {
+  let read2 = readTurns(transcriptPath);
+  for (let waited = 0;read2.turn === null && read2.count > 0 && waited < wait.ms; waited += HANDBACK_POLL_MS) {
+    (wait.sleep ?? sleep)(HANDBACK_POLL_MS);
+    read2 = readTurns(transcriptPath);
+  }
+  if (read2.turn !== null)
+    return read2.turn.trim();
+  if (read2.earlier)
+    return "";
+  return (lastMessage ?? "").trim();
 }
 var SPENT = ["input_tokens", "output_tokens", "cache_creation_input_tokens"];
 function roleTokens(transcriptPath) {
@@ -11162,7 +11254,9 @@ function onSubagentStop(ctx, payload) {
   const progress = { saved: null, recorded: false, pending: null, reply: null };
   try {
     const input = {
-      answer: roleAnswer(payload.agent_transcript_path, payload.last_assistant_message),
+      answer: roleAnswer(payload.agent_transcript_path, payload.last_assistant_message, {
+        ms: handbackWaitMs(ctx.env)
+      }),
       ...payload.agent_id ? { agentId: payload.agent_id } : {},
       filedBy: "hook",
       tokens: roleTokens(payload.agent_transcript_path)
@@ -11231,7 +11325,7 @@ function fileAnswer(ctx, id, role, input, transcriptNote, progress) {
   const keptNote = (archived, word) => `Crew: ${agent}'s answer ${whereSaved(saved)} (the earlier ${word} kept as ${archived}).`;
   if (!answer) {
     saved = { file: null, agent };
-    note = `Crew: ${agent} stopped with no answer (no hand-back and an empty last message): its end is recorded with no file; an earlier file of this role, if any, is not this round's answer. Run the role again or save its answer from the transcript${transcriptNote}.`;
+    note = `Crew: ${agent} stopped with no answer (no hand-back in its last turn): its end is recorded with no file; an earlier file of this role, if any, is not this round's answer. Run the role again or save its answer from the transcript${transcriptNote}.`;
   } else if (earlier?.file) {
     const joined = joinEarlierFile(dir, agent, answer, kindOfItem(work));
     if ("failed" in joined)
@@ -11275,7 +11369,7 @@ function fileAnswer(ctx, id, role, input, transcriptNote, progress) {
   if (read2.tampered) {
     const tampered = `evidence.json of ${id} changed outside the engine (crew accept ${id})`;
     if (!answer)
-      return `Crew: ${agent} stopped with no answer (no hand-back and an empty last message) and its end is not recorded: ${tampered}. Run the role again or save its answer from the transcript${transcriptNote}.`;
+      return `Crew: ${agent} stopped with no answer (no hand-back in its last turn) and its end is not recorded: ${tampered}. Run the role again or save its answer from the transcript${transcriptNote}.`;
     const { where, unsent } = savedAndUnsentPhrases(id, saved, pending?.id ?? null);
     const keptPhrase = keptAs ? ` (the earlier answer kept as ${keptAs})` : "";
     return `Crew: ${agent}'s answer ${where}${keptPhrase} but its end and tokens are not recorded: ${tampered}${unsent}`;
@@ -15290,6 +15384,17 @@ function observeRuntime(payload, env, runtime) {
       noteRuntime(paths, active.work.id, runtime);
   } catch {}
 }
+function realOrSelf(path) {
+  try {
+    return realpathSync8(path);
+  } catch {
+    return path;
+  }
+}
+function insideFolder(path, folder) {
+  const rel2 = relative12(folder, path);
+  return rel2 !== "" && rel2 !== ".." && !rel2.startsWith(`..${sep5}`) && !isAbsolute10(rel2);
+}
 async function dispatch(parsed, io) {
   const [command2, ...args] = parsed.positional;
   if (parsed.flags.version || command2 === "version")
@@ -16865,17 +16970,26 @@ test-first not credited: ${out2.uncredited}` : "";
       if (!(work.seats ?? []).some((s) => s.kind === "lead" && s.role === by))
         return refuse(`${by} is not a seat of ${work.id} (crew team ${work.id} prints the seats)`);
       const path = resolve6(env.paths.root, file);
+      const dir = workDir(env.paths, work.id);
       const text = readText(path);
       if (text === null)
         return refuse(`no validation file at ${path}`);
+      if (!insideFolder(realOrSelf(path), realOrSelf(dir)))
+        return refuse(`the validation file must be inside .crew/work/${work.id}/: ${file}`);
+      const name = relative12(dir, path).replace(/\\/g, "/");
+      const asked = `asked: the ${what} by ${by} for ${work.id}`;
+      const heading = leadHeading(text);
+      if (!heading)
+        return refuse(`${name} has no lead heading (# <team> lead's validation of ${work.id}: <spec|plan|delivery>); ${asked}`);
+      if (heading.item !== work.id || heading.what !== what || `lead-${heading.team}` !== by)
+        return refuse(`${name} is the ${heading.team} lead's ${heading.what} answer for ${heading.item}; ${asked}`);
       const verdict = parseValidation(text);
       if ("refused" in verdict)
         return refuse(verdict.refused);
-      const dir = workDir(env.paths, work.id);
       const contentHash = fileHash(text);
-      const repeated = (work.validations ?? []).find((v) => v.what === what && v.by === by && v.fileHash === contentHash);
+      const repeated = (work.validations ?? []).find((v) => v.by === by && v.fileHash === contentHash);
       if (repeated)
-        return refuse(`already recorded: ${repeated.file} is the answer recorded for round ${repeated.round} of ${by} (${what}); record the lead's new answer (a resumed lead's lands in ${replyFile(by, what)})`);
+        return refuse(`already recorded: ${repeated.file} is the answer recorded for round ${repeated.round} of ${by} (${repeated.what}); record the lead's new answer (a resumed lead's lands in ${replyFile(by, what)})`);
       const evidence = loadEvidence(env.paths, work.id).evidence;
       const hash = validationHash(what, readText(join48(dir, "spec.md")), readText(join48(dir, "plan.md")), evidence.fingerprint ?? "");
       const same2 = (work.validations ?? []).filter((v) => v.what === what);

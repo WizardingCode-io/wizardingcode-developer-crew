@@ -31,6 +31,7 @@ import { guaranteeLines, pluginRoot, RUNTIMES } from "../src/runtimes.ts";
 import { loadState, recordWorking } from "../src/state.ts";
 import { readProtectedJson, writeProtectedJson } from "../src/store.ts";
 import type { GateRun, KnowledgeEntry, Message, WorkItem } from "../src/types.ts";
+import { fileHash } from "../src/validation.ts";
 import { VERSION } from "../src/version.ts";
 import { loadWork, saveWork } from "../src/work.ts";
 import { auditFixture, PLANTED_KEY } from "./audit-run.test.ts";
@@ -2341,7 +2342,7 @@ test("SP7a AC-5: a third judgement round is refused; the user continues it once 
 function leadFile(root: string, id: string, lead: string, body?: string): string {
   const text =
     body ??
-    `# ${lead} validation of ${id}: spec\nverdict: validated\n## Returns\n- none\n## Notes\n- holds\n`;
+    `# ${lead.replace(/^lead-/, "")} lead's validation of ${id}: spec\nverdict: validated\n## Returns\n- none\n## Notes\n- holds\n`;
   write(root, `.crew/work/${id}/conclave/${lead}.md`, text);
   return `.crew/work/${id}/conclave/${lead}.md`;
 }
@@ -2598,7 +2599,7 @@ test("SP7a AC-3: crew validation record parses the lead's file, refuses a lead n
     root,
     id,
     "lead-qa",
-    `# lead-qa validation of ${id}: spec\nverdict: validated\n## Returns\n- R-1 · spec.md:3 · unclear\n## Notes\n- none\n`,
+    `# qa lead's validation of ${id}: spec\nverdict: validated\n## Returns\n- R-1 · spec.md:3 · unclear\n## Notes\n- none\n`,
   );
   const contradiction = await c.run(
     "validation",
@@ -2628,7 +2629,7 @@ test("SP7a AC-3: crew validation record parses the lead's file, refuses a lead n
       )
     ).out.trim(),
   ).toBe("validation of spec by lead-qa: validated (round 1)");
-  const returned = `# lead-security validation of ${id}: spec\nverdict: returned\n## Returns\n- R-1 · spec.md:4 · AC-1 is not observable\n## Notes\n- none\n`;
+  const returned = `# security lead's validation of ${id}: spec\nverdict: returned\n## Returns\n- R-1 · spec.md:4 · AC-1 is not observable\n## Notes\n- none\n`;
   expect(
     (
       await c.run(
@@ -2669,7 +2670,7 @@ test("SP7a AC-3: crew validation record parses the lead's file, refuses a lead n
           root,
           id,
           "lead-qa",
-          `# lead-qa validation of ${id}: spec\nverdict: validated\n## Returns\n- none\n## Notes\n- holds, observed as b\n`,
+          `# qa lead's validation of ${id}: spec\nverdict: validated\n## Returns\n- none\n## Notes\n- holds, observed as b\n`,
         ),
       )
     ).out.trim(),
@@ -2713,7 +2714,7 @@ test("SP7a AC-3: crew validation record parses the lead's file, refuses a lead n
       root,
       id,
       "lead-qa",
-      `# lead-qa validation of ${id}: spec\nverdict: validated\n## Returns\n- none\n## Notes\n- holds, observed as c\n`,
+      `# qa lead's validation of ${id}: spec\nverdict: validated\n## Returns\n- none\n## Notes\n- holds, observed as c\n`,
     ),
   );
   expect(third.err.trim()).toBe(
@@ -2735,7 +2736,7 @@ test("SP7a AC-3: crew validation record parses the lead's file, refuses a lead n
           root,
           id,
           "lead-qa",
-          `# lead-qa validation of ${id}: spec\nverdict: validated\n## Returns\n- none\n## Notes\n- holds, observed as c\n`,
+          `# qa lead's validation of ${id}: spec\nverdict: validated\n## Returns\n- none\n## Notes\n- holds, observed as c\n`,
         ),
       )
     ).out.trim(),
@@ -3692,7 +3693,7 @@ test("SP7b-T5 AC-2 (validation): under the standing grant the spec's third and f
         root,
         id,
         "lead-qa",
-        `# lead-qa validation of ${id}: spec\nverdict: validated\n## Returns\n- none\n## Notes\n- holds for version ${n}\n`,
+        `# qa lead's validation of ${id}: spec\nverdict: validated\n## Returns\n- none\n## Notes\n- holds for version ${n}\n`,
       ),
     );
   expect((await validate(1)).out.trim()).toBe("validation of spec by lead-qa: validated (round 1)");
@@ -4076,7 +4077,7 @@ test("SP3-T1 AC-4 (finding 78): crew validation record reads the last block of a
   });
 });
 
-test("AC-4 (finding 119): crew validation record refuses a file whose content it already recorded for the same lead and what, keeps the file's hash on the record, and reads an older record without one as before", async () => {
+test("AC-4 (finding 119; item D): crew validation record refuses a file whose content it already recorded for the same lead, keeps the file's hash on the record, and reads an older record without one as before", async () => {
   const root = makeRepo({
     "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
     "src/a.ts": "x",
@@ -4111,17 +4112,39 @@ test("AC-4 (finding 119): crew validation record refuses a file whose content it
     `already recorded: conclave/lead-qa.md is the answer recorded for round 1 of lead-qa (spec); record the lead's new answer (a resumed lead's lands in conclave/lead-qa-reply.md)`,
   );
   expect(loadWork(repoPaths(root, env), id).work?.validations).toHaveLength(1);
-  // The same text under another lead is that lead's own first answer: the refusal keys on the
-  // lead and the what, never on the content alone.
+  // The same text under another lead, or under another what, names its own lead and subject in
+  // its heading: refused as that lead's answer (item D, finding 132; until then both were
+  // accepted, item C2a), never recorded as another's.
   const other = `.crew/work/${id}/conclave/lead-security.md`;
   write(root, other, readFileSync(join(root, file), "utf8"));
-  const otherLead = await recorded(other, "lead-security");
-  expect(otherLead.code).toBe(0);
-  expect(otherLead.data.validation).toMatchObject({ by: "lead-security", round: 1 });
-  // The same text under another what is that what's own first answer: accepted (item C2a).
-  const asPlan = await recorded(file, "lead-qa", "plan");
-  expect(asPlan.code).toBe(0);
-  expect(asPlan.data.validation).toMatchObject({ what: "plan", by: "lead-qa", round: 1 });
+  const otherLead = await c.run(
+    "validation",
+    id,
+    "record",
+    "--what",
+    "spec",
+    "--by",
+    "lead-security",
+    "--file",
+    other,
+  );
+  expect(otherLead.code).toBe(1);
+  expect(otherLead.err).toContain(
+    `conclave/lead-security.md is the qa lead's spec answer for ${id}`,
+  );
+  const asPlan = await c.run(
+    "validation",
+    id,
+    "record",
+    "--what",
+    "plan",
+    "--by",
+    "lead-qa",
+    "--file",
+    file,
+  );
+  expect(asPlan.code).toBe(1);
+  expect(asPlan.err).toContain(`conclave/lead-qa.md is the qa lead's spec answer for ${id}`);
   // The lead's new answer, from its reply file, opens round 2 as today.
   const reply = `.crew/work/${id}/conclave/lead-qa-reply.md`;
   write(
@@ -6668,7 +6691,7 @@ async function specAtValidation(team: Record<string, unknown>) {
         root,
         id,
         lead,
-        `# ${lead} validation of ${id}: spec\nverdict: validated\n## Returns\n- none\n## Notes\n- holds for revision ${revision}\n`,
+        `# ${lead.replace(/^lead-/, "")} lead's validation of ${id}: spec\nverdict: validated\n## Returns\n- none\n## Notes\n- holds for revision ${revision}\n`,
       ),
     );
   const revise = (n: number) => {
@@ -7921,7 +7944,7 @@ test("SP6-T4 AC-2: crew hook --runtime reads the runtime's payload, answers in i
   );
   expect(next).toEqual({
     code: 0,
-    out: `${JSON.stringify({ additionalContext: "Crew: review-security stopped with no answer (no hand-back and an empty last message): its end is recorded with no file; an earlier file of this role, if any, is not this round's answer. Run the role again or save its answer from the transcript (/tmp/sub-a1.json)." })}\n`,
+    out: `${JSON.stringify({ additionalContext: "Crew: review-security stopped with no answer (no hand-back in its last turn): its end is recorded with no file; an earlier file of this role, if any, is not this round's answer. Run the role again or save its answer from the transcript (/tmp/sub-a1.json)." })}\n`,
     err: "",
   });
   // A systemMessage on an event whose writer drops it (judgement round 2): Cursor's stop releases
@@ -9356,4 +9379,142 @@ test("AC-4 (item C2b): a hand-edited item refuses crew abandon with the tamper l
   expect(loadWork(repoPaths(root, c.env), id).work?.abandoned).toBeUndefined();
   expect((await c.run("accept", id)).code).toBe(0);
   expect((await c.run("abandon", id, "--reason", "dropped")).code).toBe(0);
+});
+
+/** A standard item at its spec with QA's round-1 file recorded (item D's rows, finding 132). */
+async function validationItem() {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const env = testEnv();
+  const c = io(root, env);
+  const standard = JSON.stringify({ ...JSON.parse(answers), scope: 1 });
+  const id = (await c.json("start", "Validated records", "--answers", standard)).data.id as string;
+  write(root, `.crew/work/${id}/spec.md`, "# Spec\n\n## Acceptance criteria\n- AC-1 x\n");
+  const head = (team: string, what: string, item = id) =>
+    `# ${team} lead's validation of ${item}: ${what}\n`;
+  const body = "verdict: validated\n## Returns\n- none\n## Notes\n- n\n";
+  const spec = `.crew/work/${id}/conclave/lead-qa.md`;
+  write(root, spec, `${head("qa", "spec")}${body}`);
+  const recorded = (path: string, what = "spec", lead = "lead-qa") =>
+    c.json("validation", id, "record", "--what", what, "--by", lead, "--file", path);
+  // A refusal is read from the command's error output.
+  const refused = (path: string, what = "spec", lead = "lead-qa") =>
+    c.run("validation", id, "record", "--what", what, "--by", lead, "--file", path);
+  expect((await recorded(spec)).code).toBe(0);
+  return { root, env, c, id, head, body, spec, recorded, refused };
+}
+
+test("AC-9 (item D, finding 132): crew validation record reads the last lead-headed block and refuses one naming another item, subject or team, and a file with no lead heading", async () => {
+  const { root, id, head, body, spec, recorded, refused } = await validationItem();
+  // The spec answer offered as the delivery's (finding 132): refused, naming both.
+  const asDelivery = await refused(spec, "delivery");
+  expect(asDelivery.code).toBe(1);
+  expect(asDelivery.err.trim()).toBe(
+    `conclave/lead-qa.md is the qa lead's spec answer for ${id}; asked: the delivery by lead-qa for ${id}`,
+  );
+  // Another team's lead.
+  const qaPlan = `.crew/work/${id}/conclave/lead-qa.plan.md`;
+  write(root, qaPlan, `${head("qa", "plan")}${body}`);
+  const asSecurity = await refused(qaPlan, "plan", "lead-security");
+  expect(asSecurity.code).toBe(1);
+  expect(asSecurity.err.trim()).toBe(
+    `conclave/lead-qa.plan.md is the qa lead's plan answer for ${id}; asked: the plan by lead-security for ${id}`,
+  );
+  // Another item's answer.
+  const stranger = `.crew/work/${id}/conclave/lead-qa.stranger.md`;
+  write(root, stranger, `${head("qa", "plan", "2026-01-01-001-other")}${body}`);
+  const other = await refused(stranger, "plan");
+  expect(other.code).toBe(1);
+  expect(other.err.trim()).toBe(
+    `conclave/lead-qa.stranger.md is the qa lead's plan answer for 2026-01-01-001-other; asked: the plan by lead-qa for ${id}`,
+  );
+  // The other teams the parser knows, offered for QA's seat.
+  for (const team of ["architects", "etl", "devops"]) {
+    const theirs = `.crew/work/${id}/conclave/lead-${team}.md`;
+    write(root, theirs, `${head(team, "plan")}${body}`);
+    const out = await refused(theirs, "plan");
+    expect(out.code, team).toBe(1);
+    expect(out.err.trim(), team).toBe(
+      `conclave/lead-${team}.md is the ${team} lead's plan answer for ${id}; asked: the plan by lead-qa for ${id}`,
+    );
+  }
+  // No lead heading at all.
+  const bare = `.crew/work/${id}/conclave/notes.md`;
+  write(root, bare, body);
+  const none = await refused(bare, "plan");
+  expect(none.code).toBe(1);
+  expect(none.err.trim()).toBe(
+    `conclave/notes.md has no lead heading (# <team> lead's validation of ${id}: <spec|plan|delivery>); asked: the plan by lead-qa for ${id}`,
+  );
+  // The last block is the one read: a reply file whose last round is the spec is no delivery,
+  // and one whose last round is the delivery is.
+  const reply = `.crew/work/${id}/conclave/lead-qa.delivery-reply.md`;
+  write(
+    root,
+    reply,
+    `${head("qa", "delivery")}${body}\n${head("qa", "spec")}${body.replace("- n", "- m")}`,
+  );
+  expect((await refused(reply, "delivery")).code).toBe(1);
+  write(
+    root,
+    reply,
+    `${head("qa", "spec")}${body.replace("- n", "- m")}\n${head("qa", "delivery")}${body}`,
+  );
+  const delivery = await recorded(reply, "delivery");
+  expect(delivery.code).toBe(0);
+  expect(delivery.data.validation).toMatchObject({ what: "delivery", by: "lead-qa" });
+});
+
+test("AC-4 (item D, finding 132): crew validation record refuses a file whose content this lead has on record under any subject, naming the record", async () => {
+  const { root, env, id, head, body, refused } = await validationItem();
+  // A record made before the heading was read (an older item) holds a delivery-headed file as
+  // the plan's: offered again as the delivery, its content is refused as that record.
+  const file = `.crew/work/${id}/conclave/lead-qa.delivery.md`;
+  const text = `${head("qa", "delivery")}${body}`;
+  write(root, file, text);
+  const item = loadWork(repoPaths(root, env), id);
+  if (!item.work) throw new Error("no work");
+  item.work.validations = [
+    ...(item.work.validations ?? []),
+    {
+      what: "plan",
+      by: "lead-qa",
+      verdict: "validated",
+      returns: 0,
+      round: 1,
+      file: "conclave/lead-qa.delivery.md",
+      hash: "sha256:0",
+      fileHash: fileHash(text),
+      at: "2026-10-22T10:00:00.000Z",
+    },
+  ];
+  saveWork(repoPaths(root, env), item.work);
+  const again = await refused(file, "delivery");
+  expect(again.code).toBe(1);
+  expect(again.err.trim()).toBe(
+    `already recorded: conclave/lead-qa.delivery.md is the answer recorded for round 1 of lead-qa (plan); record the lead's new answer (a resumed lead's lands in conclave/lead-qa.delivery-reply.md)`,
+  );
+});
+
+test("AC-10 (item D, finding 132): crew validation record refuses a file whose real path is outside the item's folder", async () => {
+  const { root, id, head, body, refused } = await validationItem();
+  const text = `${head("qa", "plan")}${body}`;
+  const outside = join(tempDir("crew-outside-"), "lead-qa.md");
+  writeFileSync(outside, text);
+  write(root, "notes/lead-qa.md", text);
+  const link = join(root, ".crew", "work", id, "conclave", "lead-qa.link.md");
+  symlinkSync(outside, link);
+  const folder = `.crew/work/${id}/`;
+  for (const path of [
+    outside,
+    "notes/lead-qa.md",
+    `.crew/work/${id}/../../../notes/lead-qa.md`,
+    link,
+  ]) {
+    const out = await refused(path, "plan");
+    expect(out.code, path).toBe(1);
+    expect(out.err.trim(), path).toBe(`the validation file must be inside ${folder}: ${path}`);
+  }
 });

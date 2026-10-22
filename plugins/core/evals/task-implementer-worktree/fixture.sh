@@ -49,7 +49,7 @@ crew phase "$id" next > /dev/null
 # SP7a: the mandatory leads validate the spec before the plan opens.
 mkdir -p "$item/conclave"
 for lead in lead-qa lead-security; do
-  printf '# %s validation of %s: spec\nverdict: validated\n## Returns\n- none\n## Notes\n- the criteria are observable\n' "$lead" "$id" > "$item/conclave/$lead.md"
+  printf "# %s lead's validation of %s: spec\nverdict: validated\n## Returns\n- none\n## Notes\n- the criteria are observable\n" "${lead#lead-}" "$id" > "$item/conclave/$lead.md"
   crew validation "$id" record --what spec --by "$lead" --file "$item/conclave/$lead.md" > /dev/null
 done
 crew phase "$id" next > /dev/null

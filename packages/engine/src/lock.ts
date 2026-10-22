@@ -4,8 +4,60 @@ import { join } from "node:path";
 const LOCK_STALE_MS = 10_000;
 const LOCK_WAIT_MS = 2_000;
 
-function sleep(ms: number): void {
+/** Blocks the thread for `ms`: the lock and the hooks are synchronous. */
+export function sleep(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/** Milliseconds since `path` was last changed, or null when it is gone. */
+function ageOf(path: string): number | null {
+  try {
+    return Date.now() - statSync(path).mtimeMs;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Breaks a stale lock under a lock of its own, `<lock>.break` (finding 133): two processes that
+ * both read the lock as stale would otherwise both remove it, the second removing the fresh lock
+ * the first had just taken. The breaker reads the age again and removes the lock only when it is
+ * still stale. A breaker older than the stale age was left by a process that died while breaking
+ * and is removed; a live one is another process breaking, waited for. True when the lock is gone.
+ */
+export function breakStale(lock: string): boolean {
+  const breaker = `${lock}.break`;
+  try {
+    mkdirSync(breaker);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    const age = ageOf(breaker);
+    if (age !== null && age > LOCK_STALE_MS) {
+      try {
+        rmdirSync(breaker);
+      } catch {
+        // another process took it first
+      }
+    }
+    return false;
+  }
+  try {
+    const age = ageOf(lock);
+    if (age === null) return true;
+    if (age <= LOCK_STALE_MS) return false;
+    try {
+      rmdirSync(lock);
+    } catch {
+      // gone already
+    }
+    return true;
+  } finally {
+    try {
+      rmdirSync(breaker);
+    } catch {
+      // already removed
+    }
+  }
 }
 
 /** The lock was still held after the wait: the one failure of `withLock` a caller may pass by. */
@@ -35,20 +87,9 @@ export function withLock<T>(
       // the neighbours throw it.
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
     }
-    let age: number | null = null;
-    try {
-      age = Date.now() - statSync(lock).mtimeMs;
-    } catch {
-      // gone between the two calls: taken again below, within the same wait
-    }
-    if (age !== null && age > LOCK_STALE_MS) {
-      try {
-        rmdirSync(lock);
-      } catch {
-        // another process took it first
-      }
-      continue;
-    }
+    // gone between the two calls (null): taken again below, within the same wait
+    const age = ageOf(lock);
+    if (age !== null && age > LOCK_STALE_MS && breakStale(lock)) continue;
     if (Date.now() - started >= waitMs)
       throw new LockBusy(
         `${options.what ?? "folder"} busy: ${lock} held for more than ${waitMs} ms`,

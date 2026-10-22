@@ -457,7 +457,7 @@ test("SP2c AC-3: a role's stop that cannot be recorded says what was saved and w
       last_assistant_message: "",
     }),
   ).toEqual({
-    systemMessage: `Crew: review-risk stopped with no answer (no hand-back and an empty last message) and its end is not recorded: evidence.json of ${work.id} changed outside the engine (crew accept ${work.id}). Run the role again or save its answer from the transcript.`,
+    systemMessage: `Crew: review-risk stopped with no answer (no hand-back in its last turn) and its end is not recorded: evidence.json of ${work.id} changed outside the engine (crew accept ${work.id}). Run the role again or save its answer from the transcript.`,
   });
   // Tampered while a relayed question waits: the reply is not sent, and the note says how to send it.
   const third = session();
@@ -536,7 +536,7 @@ test("SP2c AC-3: a role that stops with no answer is recorded with no file, the 
   });
   expect(stopped).toEqual({
     systemMessage:
-      "Crew: review-risk stopped with no answer (no hand-back and an empty last message): its end is recorded with no file; an earlier file of this role, if any, is not this round's answer. Run the role again or save its answer from the transcript (/tmp/agent-r1.jsonl).",
+      "Crew: review-risk stopped with no answer (no hand-back in its last turn): its end is recorded with no file; an earlier file of this role, if any, is not this round's answer. Run the role again or save its answer from the transcript (/tmp/agent-r1.jsonl).",
   });
   expect(
     readFileSync(join(root, ".crew", "work", work.id, "review", "risk.findings.md"), "utf8"),
@@ -1248,4 +1248,128 @@ test("AC-4 (item C2a): the tampered-evidence note names the archive an earlier a
   const conclave = join(root, ".crew", "work", work.id, "conclave");
   expect(readFileSync(join(conclave, "lead-qa.round2.md"), "utf8")).toContain("- round 1");
   expect(readFileSync(join(conclave, "lead-qa.md"), "utf8")).toContain("- round 2");
+});
+
+// Item D (finding 132): the lines of a transcript by shape, so a row can lay out a role's turns.
+const prompt = (text: string) => ({ type: "user", message: { role: "user", content: text } });
+const handback = (message: string) => ({
+  type: "assistant",
+  message: { content: [{ type: "tool_use", name: "SubagentHandback", input: { message } }] },
+});
+const toolUse = () => ({
+  type: "assistant",
+  message: { content: [{ type: "tool_use", name: "Read", input: { file_path: "spec.md" } }] },
+});
+const toolResult = () => ({
+  type: "user",
+  message: { content: [{ type: "tool_result", tool_use_id: "t", content: "x" }] },
+});
+/** A transcript of the given lines, one JSON object a line. */
+function turns(dir: string, lines: object[]): string {
+  const file = join(dir, "agent-turns.jsonl");
+  writeFileSync(file, `${lines.map((l) => JSON.stringify(l)).join("\n")}\n`);
+  return file;
+}
+
+test("AC-8 (item D, finding 132): roleAnswer reads the hand-back of the role's last turn alone, waits a bounded time for one not yet written, and never gives an earlier turn's", async () => {
+  const dir = tempDir("crew-turns-");
+  const read = roleAnswer as (
+    path: string | undefined,
+    last: string | undefined,
+    wait?: { ms: number; sleep?: (ms: number) => void },
+  ) => string;
+  // A tool result is a user line too: it never starts a turn, so a hand-back before one counts.
+  const first = turns(dir, [prompt("go"), toolUse(), toolResult(), handback("A1"), toolResult()]);
+  expect(read(first, "Done.", { ms: 0 })).toBe("A1");
+  // A resumed turn with tool calls and no hand-back: never the earlier turn's, even after the wait.
+  const resumed = [
+    prompt("go"),
+    handback("A1"),
+    toolResult(),
+    prompt("round 2"),
+    toolUse(),
+    toolResult(),
+  ];
+  const file = turns(dir, resumed);
+  expect(read(file, "Done.", { ms: 0 })).toBe("");
+  // The turn's hand-back written during the wait is the answer.
+  let slept = 0;
+  const late = (ms: number) => {
+    slept += ms;
+    appendFileSync(file, `${JSON.stringify(handback("A2"))}\n`);
+  };
+  expect(read(file, "Done.", { ms: 1000, sleep: late })).toBe("A2");
+  expect(slept).toBe(100);
+  // Not written within the wait: no answer, the sleeps bounded by the wait.
+  turns(dir, resumed);
+  slept = 0;
+  const count = (ms: number) => {
+    slept += ms;
+  };
+  expect(read(file, "Done.", { ms: 450, sleep: count })).toBe("");
+  expect(slept).toBeGreaterThanOrEqual(400);
+  expect(slept).toBeLessThanOrEqual(500);
+  // A prompt whose content is an array of text parts opens a turn too.
+  const parts = {
+    type: "user",
+    message: { role: "user", content: [{ type: "text", text: "round 2" }] },
+  };
+  turns(dir, [prompt("go"), handback("A1"), toolResult(), parts, toolUse(), toolResult()]);
+  expect(read(file, "Done.", { ms: 0 })).toBe("");
+  // A role that never handed back keeps the payload's last message once the wait passes.
+  const text = turns(dir, [prompt("go"), toolUse(), toolResult()]);
+  expect(read(text, "the whole text", { ms: 0 })).toBe("the whole text");
+  slept = 0;
+  expect(read(text, "the whole text", { ms: 200, sleep: count })).toBe("the whole text");
+  expect(slept).toBe(200);
+  // A missing transcript is not waited for: nothing will be written to it.
+  slept = 0;
+  expect(read(join(dir, "missing.jsonl"), "the whole text", { ms: 1000, sleep: count })).toBe(
+    "the whole text",
+  );
+  expect(slept).toBe(0);
+  // The hook's wait: a finite, non-negative number of milliseconds, capped; 3000 otherwise.
+  const mod = (await import("../src/hooks/subagent-stop.ts")) as Record<string, unknown>;
+  const waitOf = mod.handbackWaitMs as ((env: NodeJS.ProcessEnv) => number) | undefined;
+  expect(typeof waitOf).toBe("function");
+  const of = (value?: string) =>
+    waitOf?.(value === undefined ? {} : { WIZARDINGCODE_CREW_HANDBACK_WAIT_MS: value });
+  expect(of()).toBe(3000);
+  expect(of("250")).toBe(250);
+  expect(of("0")).toBe(0);
+  for (const bad of ["-1", "abc", "", "Infinity", "NaN"]) expect(of(bad), bad).toBe(3000);
+  expect(of("999999")).toBe(10000);
+});
+
+test("AC-2 (item D, finding 132): a resumed lead whose last turn holds no hand-back after the wait files no reply, its stop recorded with no file and the session told", () => {
+  const { root, ctx, work } = session();
+  work.route = "standard";
+  work.phase = "conclave";
+  saveWork(ctx.paths, work);
+  ctx.env.WIZARDINGCODE_CREW_HANDBACK_WAIT_MS = "0";
+  const dir = tempDir("crew-turns-");
+  const spec = `# qa lead's validation of ${work.id}: spec\nverdict: validated\n## Returns\n- none\n## Notes\n- round 1\n`;
+  const stop = (lines: object[]) =>
+    onSubagentStop(ctx, {
+      agent_id: "q",
+      agent_type: `${PLUGIN}:tech-lead`,
+      agent_transcript_path: turns(dir, lines),
+      last_assistant_message: "Done.",
+    });
+  stop([prompt("go"), handback(spec), toolResult()]);
+  const out = stop([
+    prompt("go"),
+    handback(spec),
+    toolResult(),
+    prompt("the delivery"),
+    toolUse(),
+    toolResult(),
+  ]);
+  const folder = join(root, ".crew", "work", work.id, "conclave");
+  expect(readdirSync(folder).sort()).toEqual(["lead-qa.md"]);
+  expect(out.systemMessage).toContain("Crew: tech-lead stopped with no answer");
+  const roles = (loadEvidence(ctx.paths, work.id).evidence.roles ?? []).filter(
+    (r) => r.agent === "tech-lead",
+  );
+  expect(roles.map((r) => r.file)).toEqual(["conclave/lead-qa.md", null]);
 });

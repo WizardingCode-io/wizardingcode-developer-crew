@@ -2,14 +2,14 @@ import { statSync } from "node:fs";
 import { join } from "node:path";
 import { loadEvidence, saveEvidence } from "../evidence.ts";
 import { nowIso, readText, writeText } from "../fs.ts";
-import { withLock } from "../lock.ts";
+import { sleep, withLock } from "../lock.ts";
 import { loadItemMail, reply } from "../mail.ts";
 import { mailStatus } from "../mail-status.ts";
 import { workDir } from "../paths.ts";
 import { clearWorking } from "../state.ts";
 import { PERSONALITIES, ROLE_NAMES, TEAMS, type TeamDef } from "../team.ts";
 import type { Message, Personality, RoleRecord, TeamName, WorkKind } from "../types.ts";
-import { LEAD_TEAMS, replyFile } from "../validation.ts";
+import { LEAD_LINE, replyFile } from "../validation.ts";
 import { activeWork, kindOfItem, loadWork, saveWork } from "../work.ts";
 import { leaveNotice } from "./notices.ts";
 import type { HookContext, HookPayload, HookResponse } from "./types.ts";
@@ -40,18 +40,13 @@ export function personalityOf(answer: string): Personality | "unknown" | null {
   return (PERSONALITIES as readonly string[]).includes(name) ? (name as Personality) : "unknown";
 }
 
-/** A tech lead's first line: the team (the parser's own list) and what it validated. */
-const LEAD_LINE = new RegExp(
-  `^# (${LEAD_TEAMS}) lead's validation of \\S+: (spec|plan|delivery)\\b`,
-);
-
 /** The team and the subject a tech lead's answer names on its first line (`# <team> lead's validation of <id>: <spec|delivery>`), or null. */
 export function leadAnswer(
   answer: string,
 ): { team: TeamName; what: "spec" | "plan" | "delivery" } | null {
-  const match = LEAD_LINE.exec(unfenced(answer));
+  const match = new RegExp(LEAD_LINE).exec(unfenced(answer));
   if (!match) return null;
-  return { team: match[1] as TeamName, what: match[2] as "spec" | "plan" | "delivery" };
+  return { team: match[1] as TeamName, what: match[3] as "spec" | "plan" | "delivery" };
 }
 
 /** The team a role belongs to in the registry (its lead or one of its members); null for the judge, the CTO and the debate roles. */
@@ -82,32 +77,100 @@ function lines(transcriptPath: string | undefined): Line[] {
   return out;
 }
 
+/** The hook's wait for a hand-back not yet in the transcript, its cap and its step (item D). */
+const HANDBACK_WAIT_MS = 3_000;
+const HANDBACK_WAIT_CAP_MS = 10_000;
+const HANDBACK_POLL_MS = 100;
+
 /**
- * The role's answer: the `message` of its last SubagentHandback call when it handed back that way
- * (since 2.1.271 the final text is then only a closing line; spike A5), else the final text the
- * payload gives.
+ * The hook's wait for a role's hand-back (item D, finding 132): `WIZARDINGCODE_CREW_HANDBACK_WAIT_MS`
+ * when it is a finite, non-negative number of milliseconds, capped so a hook never stalls; three
+ * seconds otherwise.
+ */
+export function handbackWaitMs(env: NodeJS.ProcessEnv): number {
+  const raw = env.WIZARDINGCODE_CREW_HANDBACK_WAIT_MS;
+  if (raw === undefined || raw.trim() === "") return HANDBACK_WAIT_MS;
+  const ms = Number(raw);
+  if (!Number.isFinite(ms) || ms < 0) return HANDBACK_WAIT_MS;
+  return Math.min(ms, HANDBACK_WAIT_CAP_MS);
+}
+
+/** A prompt opens a turn: a user line whose content holds no tool result (a tool result is a user line too). */
+function isPrompt(line: Line): boolean {
+  if (line.type !== "user") return false;
+  const content = line.message?.content;
+  if (typeof content === "string") return true;
+  return (
+    Array.isArray(content) && !content.some((p) => (p as { type?: string }).type === "tool_result")
+  );
+}
+
+/** The `message` of a line's SubagentHandback call, or null. */
+function handbackOf(line: Line): string | null {
+  if (line.type !== "assistant" || !Array.isArray(line.message?.content)) return null;
+  let found: string | null = null;
+  for (const part of line.message.content as {
+    type?: string;
+    name?: string;
+    input?: { message?: unknown };
+  }[]) {
+    if (
+      part.type === "tool_use" &&
+      part.name === "SubagentHandback" &&
+      typeof part.input?.message === "string"
+    )
+      found = part.input.message;
+  }
+  return found;
+}
+
+/** The transcript read once: its line count, the last turn's hand-back, and whether an earlier turn handed back. */
+function readTurns(transcriptPath: string | undefined): {
+  count: number;
+  turn: string | null;
+  earlier: boolean;
+} {
+  const all = lines(transcriptPath);
+  let start = -1;
+  all.forEach((line, i) => {
+    if (isPrompt(line)) start = i;
+  });
+  let turn: string | null = null;
+  let earlier = false;
+  all.forEach((line, i) => {
+    const handback = handbackOf(line);
+    if (handback === null) return;
+    if (i > start) turn = handback;
+    else earlier = true;
+  });
+  return { count: all.length, turn, earlier };
+}
+
+/**
+ * The role's answer: the `message` of the SubagentHandback call of its last turn, the lines after
+ * its last prompt (since 2.1.271 the final text is then only a closing line; spike A5). The stop
+ * can fire before that line reaches the file (item D, finding 132: a resumed lead's stop read the
+ * previous turn's hand-back), so a turn with none is read again every 100 ms for `wait.ms`. Then:
+ * no answer when an earlier turn handed back, never that earlier answer; the final text the
+ * payload gives otherwise (a role that ends with text). A missing transcript is not waited for.
  */
 export function roleAnswer(
   transcriptPath: string | undefined,
   lastMessage: string | undefined,
+  wait: { ms: number; sleep?: (ms: number) => void } = { ms: 0 },
 ): string {
-  let handback: string | null = null;
-  for (const line of lines(transcriptPath)) {
-    if (line.type !== "assistant" || !Array.isArray(line.message?.content)) continue;
-    for (const part of line.message.content as {
-      type?: string;
-      name?: string;
-      input?: { message?: unknown };
-    }[]) {
-      if (
-        part.type === "tool_use" &&
-        part.name === "SubagentHandback" &&
-        typeof part.input?.message === "string"
-      )
-        handback = part.input.message;
-    }
+  let read = readTurns(transcriptPath);
+  for (
+    let waited = 0;
+    read.turn === null && read.count > 0 && waited < wait.ms;
+    waited += HANDBACK_POLL_MS
+  ) {
+    (wait.sleep ?? sleep)(HANDBACK_POLL_MS);
+    read = readTurns(transcriptPath);
   }
-  return (handback ?? lastMessage ?? "").trim();
+  if (read.turn !== null) return read.turn.trim();
+  if (read.earlier) return "";
+  return (lastMessage ?? "").trim();
 }
 
 const SPENT = ["input_tokens", "output_tokens", "cache_creation_input_tokens"];
@@ -284,7 +347,9 @@ export function onSubagentStop(ctx: HookContext, payload: HookPayload): HookResp
     // written under its lock, so no record is lost and the integrity record stays in step. A lock
     // held past the wait saves nothing rather than racing, and says so.
     const input: AnswerInput = {
-      answer: roleAnswer(payload.agent_transcript_path, payload.last_assistant_message),
+      answer: roleAnswer(payload.agent_transcript_path, payload.last_assistant_message, {
+        ms: handbackWaitMs(ctx.env),
+      }),
       ...(payload.agent_id ? { agentId: payload.agent_id } : {}),
       filedBy: "hook",
       tokens: roleTokens(payload.agent_transcript_path),
@@ -435,7 +500,7 @@ export function fileAnswer(
     // A role cut off, or one whose last turn was only a tool call: its end is recorded, no file is
     // written, and the session is told, so an earlier round's file is not read as this answer.
     saved = { file: null, agent };
-    note = `Crew: ${agent} stopped with no answer (no hand-back and an empty last message): its end is recorded with no file; an earlier file of this role, if any, is not this round's answer. Run the role again or save its answer from the transcript${transcriptNote}.`;
+    note = `Crew: ${agent} stopped with no answer (no hand-back in its last turn): its end is recorded with no file; an earlier file of this role, if any, is not this round's answer. Run the role again or save its answer from the transcript${transcriptNote}.`;
   } else if (earlier?.file) {
     // A resumed role's answer: its reply file holds this answer alone, the earlier reply archived
     // first; a failed archive leaves the plain file, records nothing and is said.
@@ -495,7 +560,7 @@ export function fileAnswer(
   if (read.tampered) {
     const tampered = `evidence.json of ${id} changed outside the engine (crew accept ${id})`;
     if (!answer)
-      return `Crew: ${agent} stopped with no answer (no hand-back and an empty last message) and its end is not recorded: ${tampered}. Run the role again or save its answer from the transcript${transcriptNote}.`;
+      return `Crew: ${agent} stopped with no answer (no hand-back in its last turn) and its end is not recorded: ${tampered}. Run the role again or save its answer from the transcript${transcriptNote}.`;
     const { where, unsent } = savedAndUnsentPhrases(id, saved, pending?.id ?? null);
     const keptPhrase = keptAs ? ` (the earlier answer kept as ${keptAs})` : "";
     return `Crew: ${agent}'s answer ${where}${keptPhrase} but its end and tokens are not recorded: ${tampered}${unsent}`;
