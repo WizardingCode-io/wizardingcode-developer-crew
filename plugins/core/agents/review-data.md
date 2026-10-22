@@ -1,6 +1,6 @@
 ---
 name: review-data
-description: Reviews one work item's diff against the data rubric (schema and migrations, queries and ORM use, transactions, indexes, availability of the data) and returns findings tied to file and line. Launched by the crew skill when the change touches a data migration or the team policy seats ETL; not for designing a schema.
+description: Reviews one work item's diff against the data rubric (schema and migrations, queries and ORM use, transactions, indexes, availability of the data) and returns findings tied to file and line. Launched by the crew skill when the change touches a data migration on the full route, or the team policy seats ETL; not for designing a schema.
 tools: Read, Grep, Glob
 model: sonnet
 ---

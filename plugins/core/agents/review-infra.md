@@ -1,6 +1,6 @@
 ---
 name: review-infra
-description: Reviews one work item's diff against the infra rubric (pipelines, deployment, hosts, secrets handling, rollbacks) and returns findings tied to file and line. Launched by the crew skill when the change touches infrastructure or the team policy seats DevOps; not for operating a system.
+description: Reviews one work item's diff against the infra rubric (pipelines, deployment, hosts, secrets handling, rollbacks) and returns findings tied to file and line. Launched by the crew skill when the change touches infrastructure on the full route, or the team policy seats DevOps; not for operating a system.
 tools: Read, Grep, Glob
 model: sonnet
 ---

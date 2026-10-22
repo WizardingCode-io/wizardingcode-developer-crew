@@ -141,13 +141,17 @@ test("SP7a AC-1, AC-2: the architecture, data and infra reviewers judge the chan
   const architecture = agent("review-architecture");
   expect(architecture.meta.model).toBe("sonnet");
   expect(architecture.body).toMatch(/drift[^\n]*defect/i);
-  expect(architecture.body).toMatch(/data model|contracts|integrations/);
+  expect(architecture.body).toMatch(/data model/);
+  expect(architecture.body).toMatch(/contracts/);
+  expect(architecture.body).toMatch(/integrations/);
   const data = agent("review-data");
   expect(data.body).toMatch(/ORM/);
   expect(data.body).toMatch(/migration/);
   const infra = agent("review-infra");
   expect(infra.body).toMatch(/pipeline/);
   expect(infra.body).toMatch(/rollback/);
+  for (const reviewer of [architecture, data, infra])
+    expect(reviewer.body).toContain("You review the diff, not the repository:");
   for (const gate of ["architecture", "data", "infra"]) {
     const rubric = readFileSync(`${RUBRICS}${gate}.md`, "utf8");
     for (const heading of LISTS) expect(rubric).toContain(heading);
@@ -253,4 +257,16 @@ test("SP8-T4 AC-3: the six reviewers of an audit carry the audit paragraph and t
   expect(researcher).toContain("## On an audit");
   expect(researcher).toContain("| Package | Current | Latest | Pros | Cons | Risk | Proof |");
   expect(researcher).toContain("audit/dependencies.findings.md");
+});
+
+test("CON1-AC-2 (finding 51): the data and infra reviewers and their rubrics sit on the full route", () => {
+  for (const gate of ["data", "infra"]) {
+    expect(agent(`review-${gate}`).meta.description).toMatch(/on the full route/);
+    const first = readFileSync(`${RUBRICS}${gate}.md`, "utf8").split("\n\n")[1];
+    expect(first).toMatch(/on the full route/);
+  }
+});
+
+test("CON1-AC-3 (finding 52): the fault-finder names its personality file on its own page", () => {
+  expect(agent("fault-finder").body).toContain("personalities/sceptical.md");
 });

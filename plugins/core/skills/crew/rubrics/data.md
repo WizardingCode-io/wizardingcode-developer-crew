@@ -1,6 +1,6 @@
 # Data rubric
 
-The data gate asks what the change does to stored data: its schema and migrations, its queries and ORM use, its transactions and indexes, and the availability of the data while the change runs. It runs when the change touches a data migration, or when the team policy seats ETL.
+The data gate asks what the change does to stored data: its schema and migrations, its queries and ORM use, its transactions and indexes, and the availability of the data while the change runs. It runs when the change touches a data migration on the full route, or when the team policy seats ETL.
 
 ## What the reviewer receives
 

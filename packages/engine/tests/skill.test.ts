@@ -345,9 +345,9 @@ test("SP7a AC-1 (Task 3): five personalities, one file each, assigned to the deb
   ]);
   for (const file of readdirSync(dir)) {
     const text = readFileSync(`${dir}${file}`, "utf8");
-    expect(text).toMatch(/## Looks for/);
-    expect(text).toMatch(/## Refuses to accept/);
-    expect(text).toMatch(/## Demands as proof/);
+    expect(text).toMatch(/^## Looks for$/m);
+    expect(text).toMatch(/^## Refuses to accept$/m);
+    expect(text).toMatch(/^## Demands as proof$/m);
     expect(text.trimEnd().split("\n").length).toBeLessThanOrEqual(16);
   }
   const conclave = readReference("conclave.md");
@@ -949,4 +949,55 @@ test("testers AC-2: the README tells a tester how to install, check, run a first
   expect(repoFile("docs/real-use/README.md")).toContain(
     "By the user's decision of 2026-10-21, the sessions on Codex CLI, Cursor, Gemini CLI and OpenCode are run by outside testers from the release asset",
   );
+});
+
+test("CON1-AC-1 (finding 51): gate.md names what the architecture, data and infra reviewers receive, and seats data and infra on the full route with infra's trigger", () => {
+  const gate = readReference("gate.md");
+  expect(gate).toContain(
+    "architecture, the path of `spec.md` and where the project keeps its base (its architecture document, its data model, its contracts)",
+  );
+  expect(gate).toContain(
+    "data and infra, their risk areas (`data-migration`, with `personal-data` when present; `infra`) and the paths that raised each",
+  );
+  expect(gate).toContain(
+    "data when the change touches a data migration, on the full route (ETL's seat)",
+  );
+  expect(gate).toContain(
+    "infra when it touches infrastructure (a CI pipeline, a container, Terraform, Kubernetes or Helm, a deploy script), on the full route (DevOps's seat)",
+  );
+});
+
+test("CON1-AC-4 (finding 61): plan.md makes a request in parts done in this checkout one item with a todo per part", () => {
+  const plan = readReference("plan.md");
+  expect(plan).toContain(
+    "A request in several parts done in this checkout, one after the other, is one item with a todo per part, never an item per part:",
+  );
+  expect(plan).toContain(
+    "a separate item is for a part the user wants proven and delivered on its own.",
+  );
+});
+
+test("CON1-AC-5 (finding 62): conclave.md debates a choice the user left to the team, and the risk-area triggers stand", () => {
+  const conclave = readReference("conclave.md");
+  expect(conclave).toContain(
+    'A choice the user\'s words leave to the team ("the team decides", "your call", "debate it") is debated, not asked: those words are the decision to debate, and the reason names them.',
+  );
+  expect(conclave).toContain(
+    "It never stands for a decision that is a risk area's (who holds a permission, what is hard-deleted, which side of a conflict wins): that one is still the user's.",
+  );
+  expect(conclave).toContain(
+    "a decision whose answer changes a risk area (who holds a permission, what is hard-deleted, which side of a conflict wins), or the user asking for it.",
+  );
+});
+
+test("CON1-AC-6 (finding 31): mail.md names mail.worktrees, and gate.md and mail.md point to rule 5 for when a wait clears", () => {
+  const mail = readReference("mail.md");
+  const gate = readReference("gate.md");
+  expect(mail).toMatch(
+    /`maxConcurrent` 2, `maxHops` 2, `maxTurns` 40, `maxMinutes` 30, `worktrees`/,
+  );
+  expect(mail).not.toContain("The reply clears the wait");
+  expect(gate).not.toContain("the engine clears the wait when the judge has answered");
+  for (const text of [mail, gate])
+    expect(text).toContain("rule 5 of the skill page says when the wait clears");
 });
