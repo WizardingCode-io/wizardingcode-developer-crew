@@ -9518,3 +9518,24 @@ test("AC-10 (item D, finding 132): crew validation record refuses a file whose r
     expect(out.err.trim(), path).toBe(`the validation file must be inside ${folder}: ${path}`);
   }
 });
+
+test("F138: an item in its learn phase learns on the verdict its last gate run recorded, after a later change to the tree", async () => {
+  const env = testEnv();
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const c = io(root, env);
+  const id = (
+    await c.json("start", "Add a total", "--answers", answers, "--criterion", "the total adds up")
+  ).data.id as string;
+  write(root, "src/a.ts", "export const total = 1;\n");
+  await c.run("skip", id, "tdd:AC-1", "--reason", "manual");
+  expect((await c.run("gate", "run", id)).out).toContain(`Proven: ${id}`);
+  expect((await c.run("phase", id, "next")).out.trim()).toBe(`${id}: phase learn`);
+  // A later item's commit changes the tree the proof covered; the delivered item is not edited.
+  write(root, "src/b.ts", "export const other = 1;\n");
+  const learned = await c.run("learn", id);
+  expect(learned.code, learned.err).toBe(0);
+  expect(learned.out).toContain('validated-solution · "Add a total"');
+});

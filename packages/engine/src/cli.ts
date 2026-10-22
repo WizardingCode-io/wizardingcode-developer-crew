@@ -2729,18 +2729,22 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       );
     }
     case "learn": {
-      // The proven item enters the base (SP4 Task 4): the proof as it stands now is the ticket.
+      // The proven item enters the base (SP4 Task 4): the proof as it stands now is the ticket, or
+      // the verdict its last gate run recorded, which the deliver guard required: an item past
+      // deliver is no longer edited, so a later item's commit does not unprove it (finding 138).
       const opened = openForChange(env, args[0]);
       if (isOutcome(opened)) return opened;
       const confirm = typeof parsed.flags.confirm === "string" ? parsed.flags.confirm : undefined;
       const current = assess(env.paths, opened.work, env.profile, env.policy, opened.tampered);
+      const recorded = loadEvidence(env.paths, opened.work.id);
       const outcome = learnItem(
         env.paths,
         opened.work,
         env.profile,
         env.policy,
         env.mail,
-        current.verdict === "proven",
+        current.verdict === "proven" ||
+          (!recorded.tampered && recorded.evidence.verdict === "proven"),
         { confirm },
       );
       if ("refused" in outcome) return refuse(outcome.refused);

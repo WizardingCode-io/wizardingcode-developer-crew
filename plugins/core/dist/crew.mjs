@@ -16323,7 +16323,8 @@ ${rendered.text}`, { approvals: opened.work.approvals, ...rendered.data });
         return opened;
       const confirm = typeof parsed.flags.confirm === "string" ? parsed.flags.confirm : undefined;
       const current = assess(env.paths, opened.work, env.profile, env.policy, opened.tampered);
-      const outcome = learnItem(env.paths, opened.work, env.profile, env.policy, env.mail, current.verdict === "proven", { confirm });
+      const recorded = loadEvidence(env.paths, opened.work.id);
+      const outcome = learnItem(env.paths, opened.work, env.profile, env.policy, env.mail, current.verdict === "proven" || !recorded.tampered && recorded.evidence.verdict === "proven", { confirm });
       if ("refused" in outcome)
         return refuse(outcome.refused);
       saveWork(env.paths, opened.work);

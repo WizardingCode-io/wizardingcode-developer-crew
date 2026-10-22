@@ -1137,4 +1137,4 @@ Verdicts agree at every effort. Upheld findings: `high` reproduced Task 6's and 
 - What happened: item 007 was proven, committed (f95bfd3), validated at delivery and moved to its learn phase; its learn was refused by finding 137. Once item 009 fixed 137 and changed other engine files, `crew learn 2026-10-22-007-…` refused with `not proven: the proof is on earlier code (crew gate run …)`. A new gate run would cut a diff that holds items 008 and 009 too and seat its reviewers again on code that is not its own.
 - Expected: learn reads the item's verdict as recorded at its delivery (the fingerprint of the tree its leads validated, or its commit), not the working tree's: an item past deliver is no longer edited (`openItems` says so).
 - Evidence: the refused learn; 007's `evidence.json` (proven, delivery validated round 2).
-- Outcome: open; 007 waits in learn for the fix.
+- Outcome: fixed in `2026-10-22-010` (fast route): `crew learn` takes the verdict its last gate run recorded, untampered, beside the working tree's; the row `F138` in `cli.test.ts`.
