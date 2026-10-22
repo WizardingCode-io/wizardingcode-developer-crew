@@ -9,7 +9,7 @@ import { workDir } from "../paths.ts";
 import { clearWorking } from "../state.ts";
 import { PERSONALITIES, ROLE_NAMES, TEAMS, type TeamDef } from "../team.ts";
 import type { Message, Personality, RoleRecord, TeamName, WorkKind } from "../types.ts";
-import { LEAD_TEAMS, leadReplyFile } from "../validation.ts";
+import { LEAD_TEAMS, replyFile } from "../validation.ts";
 import { activeWork, kindOfItem, loadWork, saveWork } from "../work.ts";
 import { leaveNotice } from "./notices.ts";
 import type { HookContext, HookPayload, HookResponse } from "./types.ts";
@@ -454,7 +454,6 @@ export function fileAnswer(
       );
       if (moved) moved.file = joined.archived;
       keptAs = joined.archived;
-      archivedNote = keptNote(joined.archived, "reply");
     }
   } else {
     // The first answer: the role's own, or a resumed role's whose earlier stop left no file. An
@@ -482,9 +481,11 @@ export function fileAnswer(
       }
       if (moved) saveWork(ctx.paths, work);
       keptAs = kept.archived;
-      archivedNote = keptNote(kept.archived, "answer");
     }
   }
+  // The note of the archive, once for both branches: a resumed role's earlier reply, a relaunched
+  // role's earlier answer.
+  if (keptAs) archivedNote = keptNote(keptAs, earlier?.file ? "reply" : "answer");
   progress.saved = saved;
   // A resumed role may have a relayed question waiting, whether or not its earlier stop left a
   // file: its answer is also the reply to it, sent once the end is recorded (SP2c §7).
@@ -566,7 +567,7 @@ function joinEarlierFile(
   // file, never one the leads would share (finding 78).
   const lead = agent === "tech-lead" ? leadAnswer(answer) : null;
   // One spelling of a reply file for every role: a lead's by its team and what, any other's by its name.
-  const file = lead ? leadReplyFile(`lead-${lead.team}`, lead.what) : leadReplyFile(agent, "");
+  const file = lead ? replyFile(`lead-${lead.team}`, lead.what) : replyFile(agent, "");
   const kept = archiveExisting(dir, file);
   if ("failed" in kept) return kept;
   writeText(join(dir, file), `${answer}\n`);

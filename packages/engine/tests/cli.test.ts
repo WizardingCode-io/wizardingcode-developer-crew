@@ -9339,3 +9339,21 @@ test("F120 (item C2a): the glob's length boundary: 200 characters accepted and w
   expect(over.err).toContain("up to 200");
   expect(JSON.parse(readFileSync(file, "utf8")).riskPathExclusions).toEqual(["a".repeat(200)]);
 });
+
+test("AC-4 (item C2b): a hand-edited item refuses crew abandon with the tamper line until the user accepts it", async () => {
+  const root = makeRepo({ "package.json": JSON.stringify({ scripts: { test: "exit 0" } }) });
+  const c = io(root);
+  const id = (await c.json("start", "Thing", "--answers", answers)).data.id as string;
+  const file = join(root, ".crew", "work", id, "work.json");
+  const work = JSON.parse(readFileSync(file, "utf8"));
+  work.skips.push({ step: "gate:test", reason: "agent", at: "t" });
+  writeFileSync(file, JSON.stringify(work));
+  const refused = await c.run("abandon", id, "--reason", "dropped");
+  expect(refused.code).toBe(1);
+  expect(refused.err.trim()).toBe(
+    `state changed outside the engine: .crew/work/${id}/work.json; the user can accept it with crew accept ${id}`,
+  );
+  expect(loadWork(repoPaths(root, c.env), id).work?.abandoned).toBeUndefined();
+  expect((await c.run("accept", id)).code).toBe(0);
+  expect((await c.run("abandon", id, "--reason", "dropped")).code).toBe(0);
+});

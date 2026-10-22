@@ -872,18 +872,19 @@ test("AC-1 (finding 121's debt): every shipped front matter is strict YAML, the 
 test("AC-5 (finding 119): the conclave and deliver references say where a resumed lead's answer lands and that the record is taken from that file", () => {
   const conclave = repoFile("plugins/core/skills/crew/references/conclave.md");
   const deliver = repoFile("plugins/core/skills/crew/references/deliver.md");
-  // The load-bearing fragments, not the sentences verbatim (item C2a): a rewording keeps them.
+  // The sentences' subjects and verbs, not the sentences verbatim (items C2a and C2b): a
+  // rewording that keeps the instruction keeps these; one that drops or inverts it fails.
   for (const fragment of [
-    "`conclave/lead-<team>-reply.md`",
-    "`.round<n>.md`",
-    "record that file",
-    "refuses a file whose content it already recorded",
+    "A lead resumed for another round answers into `conclave/lead-<team>-reply.md`",
+    "the earlier reply archived beside it as `.round<n>.md`",
+    "record that file, never the round-1 file",
+    "the engine refuses a file whose content it already recorded for that lead",
   ])
     expect(conclave, fragment).toContain(fragment);
   for (const fragment of [
-    "`conclave/lead-<team>.delivery-reply.md`",
-    "`.round<n>.md`",
-    "record that file",
+    "a resumed lead's answer lands in `conclave/lead-<team>.delivery-reply.md`",
+    "the earlier reply archived beside it as `.round<n>.md`",
+    "record that file, since the engine refuses one it already recorded",
   ])
     expect(deliver, fragment).toContain(fragment);
 });

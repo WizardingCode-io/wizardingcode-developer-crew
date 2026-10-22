@@ -827,7 +827,6 @@ export interface GateRun {
 
 export type JudgementVerdict = "proven" | "not-proven" | "not-run";
 export type FindingSeverity = "defect" | "advisory";
-/** One finding of a reviewer, tied to a file; `outside` when the file is not part of the item's change (ADR 0006: reported, never failed on). */
 /** What Jev made of an upheld defect (SP7 §11, SP3 decision 11): verified, disputed (the defect stays), or unverified with the reason. */
 export interface FindingVerification {
   status: "verified" | "disputed" | "unverified";
@@ -835,6 +834,7 @@ export interface FindingVerification {
   confidence?: number;
 }
 
+/** One finding of a reviewer, tied to a file; `outside` when the file is not part of the item's change (ADR 0006: reported, never failed on). */
 export interface JudgementFinding {
   file: string;
   line?: number;

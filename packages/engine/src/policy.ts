@@ -280,13 +280,6 @@ export type ListChange = {
   raw: Record<string, unknown>;
 };
 
-/**
- * Reads and checks a list key's change, with or without `--remove`, and returns what the write
- * would do or the refusal. The caller records the user's decision first and writes after
- * (`writeListChange`), so a loosening never exists without its record. A tampered file is refused
- * as for a scalar key; the list is read as the loader reads it (`strings`), so a hand-written value
- * that is not an array, or holds non-strings, is stored cleaned at the next write.
- */
 /** The policy file as written, or the refusal a hand edit earns: one reading for every writer. */
 function readPolicyFile(paths: CrewPaths): { raw: Record<string, unknown> } | { refused: string } {
   const read = readProtectedJson<Record<string, unknown>>(paths, policyPath(paths));
@@ -299,6 +292,13 @@ function isRefusal(checked: ReturnType<typeof checkSettable>): checked is { refu
   return typeof checked === "object" && !Array.isArray(checked);
 }
 
+/**
+ * Reads and checks a list key's change, with or without `--remove`, and returns what the write
+ * would do or the refusal. The caller records the user's decision first and writes after
+ * (`writeListChange`), so a loosening never exists without its record. A tampered file is refused
+ * as for a scalar key; the list is read as the loader reads it (`strings`), so a hand-written value
+ * that is not an array, or holds non-strings, is stored cleaned at the next write.
+ */
 export function planListChange(
   paths: CrewPaths,
   key: string,

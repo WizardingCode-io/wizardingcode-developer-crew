@@ -213,7 +213,6 @@ export function openTask(
   return { record, message: sent.message, opened, notes };
 }
 
-/** Each task with the message's status as the mailbox has it, and the child's verdict from the reply or the worktree. */
 /**
  * A todo the lead does inline (SP7 §8.1): no worktree and no message, its work already in the
  * checkout, its scope the files it touched, so its gate and its brief run like a handed-out task's.
@@ -367,6 +366,7 @@ export function writeBrief(
   return text;
 }
 
+/** Each task with the message's status as the mailbox has it, and the child's verdict from the reply or the worktree. */
 export function listTasks(
   ctx: MailContext,
   work: WorkItem,

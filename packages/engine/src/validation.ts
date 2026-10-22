@@ -52,11 +52,12 @@ export function fileHash(text: string): string {
 }
 
 /**
- * The file a resumed lead's answer lands in (SP3-T1, finding 78): its team's own reply file,
- * `.delivery` for a delivery. One spelling for the hook that writes it and the command that names it.
+ * The file a resumed role's answer lands in (SP3-T1, finding 78): the role's own reply file, a
+ * lead's by its team with `.delivery` for a delivery, any other role's by its name. One spelling
+ * for the hook that writes it and the command that names it.
  */
-export function leadReplyFile(lead: string, what: string): string {
-  return `conclave/${lead}${what === "delivery" ? ".delivery" : ""}-reply.md`;
+export function replyFile(name: string, what: string): string {
+  return `conclave/${name}${what === "delivery" ? ".delivery" : ""}-reply.md`;
 }
 
 /** What a validation is about: the spec's text, the plan's text, or the evidence fingerprint of a delivery. */

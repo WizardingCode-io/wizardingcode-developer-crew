@@ -43,6 +43,10 @@ const FIXTURE = join(import.meta.dir, "fixtures", "benchmark", "aggregate.json")
 const REFERENCE = join(ROOT, "docs", "evals", "2026-10-18-sp7a-aggregate-result.json");
 const set = (): BenchmarkSet => JSON.parse(readFileSync(join(ROOT, SET_PATH), "utf8"));
 const RESULTS = join(EVALS, "results");
+// The rows that spawn the scripts write under a folder of their own (item C2b, finding 118's debt):
+// the scripts take it from WIZARDINGCODE_CREW_EVAL_RESULTS, repository-relative like the default.
+const OWN_REL = `plugins/core/evals/results-test-${process.pid}`;
+const OWN = join(ROOT, OWN_REL);
 // The stub kit, the trace shapes and the PATH helpers live in kit-stub.ts (shared with the runner's tests).
 /** The PATH the script composes for the kit (the plugin's bin and the real git ahead of the given one). */
 const composedPath = (path: string): string => composed(ROOT, path);
@@ -495,14 +499,16 @@ test("H118 AC-3 (SP6-T5 AC-13 rewritten): without --from the script gives the ki
     decoyAggregate,
     fixtureText().replace("/private/tmp/e-abc123/out/trace.jsonl", trace),
   );
-  const decoy = join(RESULTS, `9999-decoy-${process.pid}`);
-  const hadResults = existsSync(RESULTS);
-  const before = listResults(RESULTS);
+  const decoy = join(OWN, `9999-decoy-${process.pid}`);
+  const hadResults = existsSync(OWN);
+  const before = listResults(OWN);
+  const realBefore = listResults(RESULTS);
   const path = [bin, process.env.PATH ?? ""].join(delimiter);
   const log = join(dir, "stub.log");
   const env = {
     ...process.env,
     PATH: path,
+    WIZARDINGCODE_CREW_EVAL_RESULTS: OWN_REL,
     TZ: "Pacific/Kiritimati",
     STUB_AGGREGATE: aggregatePath,
     STUB_EXIT: "1",
@@ -524,17 +530,15 @@ test("H118 AC-3 (SP6-T5 AC-13 rewritten): without --from the script gives the ki
     expect(readdirSync(out).sort()).toEqual(["2026-10-17-0.6.0.json", "2026-10-17-0.6.0.md"]);
     const parsed = JSON.parse(readFileSync(join(out, "2026-10-17-0.6.0.json"), "utf8"));
     // The run's own folder: the kit's stamp and the benchmark suffix, holding the aggregate the stub copied there.
-    const own = foldersSince(RESULTS, before).filter((f) => f !== basename(decoy));
+    const own = foldersSince(OWN, before).filter((f) => f !== basename(decoy));
     expect(own).toHaveLength(1);
     const folder = own[0] ?? "";
     expect(folder).toMatch(RUN_FOLDER);
     expect(folder.endsWith("-benchmark")).toBe(true);
-    expect(readFileSync(join(RESULTS, folder, "aggregate-result.json"), "utf8")).toBe(
-      fixtureText(),
-    );
+    expect(readFileSync(join(OWN, folder, "aggregate-result.json"), "utf8")).toBe(fixtureText());
     // The command line: the --output-dir value is that folder, the rest deep-equals the line built here.
     const value = String(parsed.run.command).match(/--output-dir (\S+)/)?.[1];
-    expect(value).toBe(`plugins/core/evals/results/${folder}`);
+    expect(value).toBe(`${OWN_REL}/${folder}`);
     const { args } = evalInvocation({
       root: ROOT,
       platform: process.platform,
@@ -559,16 +563,18 @@ test("H118 AC-3 (SP6-T5 AC-13 rewritten): without --from the script gives the ki
       env: { ...env, STUB_AGGREGATE: join(dir, "missing.json"), STUB_EXIT: "3", STUB_DECOY: "" },
     });
     expect(gone.status).toBe(1);
-    const second = foldersSince(RESULTS, [...before, folder, basename(decoy)]);
+    const second = foldersSince(OWN, [...before, folder, basename(decoy)]);
     expect(second).toHaveLength(1);
     expect(gone.stderr).toContain(
-      `benchmark: the kit exited 3 and wrote no aggregate in plugins/core/evals/results/${second[0]}`,
+      `benchmark: the kit exited 3 and wrote no aggregate in ${OWN_REL}/${second[0]}`,
     );
     expect(existsSync(join(dir, "out2"))).toBe(false);
+    // The real results folder gained nothing: the runs went to the row's own folder.
+    expect(listResults(RESULTS)).toEqual(realBefore);
   } finally {
-    for (const f of foldersSince(RESULTS, before))
-      rmSync(join(RESULTS, f), { recursive: true, force: true });
-    if (!hadResults) rmSync(RESULTS, { recursive: true, force: true });
+    for (const f of foldersSince(OWN, before))
+      rmSync(join(OWN, f), { recursive: true, force: true });
+    if (!hadResults) rmSync(OWN, { recursive: true, force: true });
   }
 });
 
@@ -582,8 +588,9 @@ test("SP6-T5 AC-14: a run the runner flags needs-rerun writes no record: the lin
     aggregatePath,
     fixtureText().replace("/private/tmp/e-abc123/out/trace.jsonl", trace),
   );
-  const hadResults = existsSync(RESULTS);
-  const before = listResults(RESULTS);
+  const hadResults = existsSync(OWN);
+  const before = listResults(OWN);
+  const realBefore = listResults(RESULTS);
   const path = [bin, process.env.PATH ?? ""].join(delimiter);
   expect(firstClaudeOn(composedPath(path))).toBe(bin);
   try {
@@ -593,24 +600,27 @@ test("SP6-T5 AC-14: a run the runner flags needs-rerun writes no record: the lin
       env: {
         ...process.env,
         PATH: path,
+        WIZARDINGCODE_CREW_EVAL_RESULTS: OWN_REL,
         STUB_AGGREGATE: aggregatePath,
         STUB_EXIT: "0",
       },
     });
     expect(run.status).toBe(1);
-    const own = foldersSince(RESULTS, before);
+    const own = foldersSince(OWN, before);
     expect(own).toHaveLength(1);
     expect(run.stderr).toContain(
       "needs-rerun: proven-test-first (reference read denied: skills/crew/references/build.md)",
     );
     expect(run.stderr).toContain(
-      `benchmark: a run the runner flags needs-rerun is run once more; no record written (to write it from this aggregate anyway: bun scripts/benchmark.ts --from ${join(RESULTS, own[0] ?? "", "aggregate-result.json")})`,
+      `benchmark: a run the runner flags needs-rerun is run once more; no record written (to write it from this aggregate anyway: bun scripts/benchmark.ts --from ${join(OWN, own[0] ?? "", "aggregate-result.json")})`,
     );
     expect(existsSync(join(dir, "out"))).toBe(false);
+    // The real results folder gained nothing: the run went to the row's own folder.
+    expect(listResults(RESULTS)).toEqual(realBefore);
   } finally {
-    for (const f of foldersSince(RESULTS, before))
-      rmSync(join(RESULTS, f), { recursive: true, force: true });
-    if (!hadResults) rmSync(RESULTS, { recursive: true, force: true });
+    for (const f of foldersSince(OWN, before))
+      rmSync(join(OWN, f), { recursive: true, force: true });
+    if (!hadResults) rmSync(OWN, { recursive: true, force: true });
   }
   const readme = readFileSync(join(ROOT, "docs", "benchmark", "README.md"), "utf8");
   expect(readme).toContain(
@@ -686,10 +696,11 @@ test("SP6-T5 AC-17: the walk matches a figure at a boundary alone, the commit is
 test("H118 AC-8 (SP6-T5 AC-21 rewritten): a run whose own folder holds no aggregate is refused naming the status and the folder, nothing written, while decoy older and newer folders holding distinct aggregates are never read; the kit runs with cwd the repository root wherever the script is run from", () => {
   const dir = mkdtempSync(join(tmpdir(), "benchmark-empty-"));
   const bin = stubKit(dir);
-  const older = join(RESULTS, `0000-older-${process.pid}`);
-  const newer = join(RESULTS, `9999-newer-${process.pid}`);
-  const hadResults = existsSync(RESULTS);
-  const before = listResults(RESULTS);
+  const older = join(OWN, `0000-older-${process.pid}`);
+  const newer = join(OWN, `9999-newer-${process.pid}`);
+  const hadResults = existsSync(OWN);
+  const before = listResults(OWN);
+  const realBefore = listResults(RESULTS);
   const path = [bin, process.env.PATH ?? ""].join(delimiter);
   expect(firstClaudeOn(composedPath(path))).toBe(bin);
   // Distinct aggregates: a record read from either would carry another version's stem.
@@ -715,6 +726,7 @@ test("H118 AC-8 (SP6-T5 AC-21 rewritten): a run whose own folder holds no aggreg
         env: {
           ...process.env,
           PATH: path,
+          WIZARDINGCODE_CREW_EVAL_RESULTS: OWN_REL,
           STUB_AGGREGATE: join(dir, "missing.json"),
           STUB_EXIT: "0",
           STUB_LOG: log,
@@ -724,13 +736,13 @@ test("H118 AC-8 (SP6-T5 AC-21 rewritten): a run whose own folder holds no aggreg
       },
     );
     expect(run.status).toBe(1);
-    const own = foldersSince(RESULTS, [...before, basename(older)]).filter(
+    const own = foldersSince(OWN, [...before, basename(older)]).filter(
       (f) => f !== basename(newer),
     );
     expect(own).toHaveLength(1);
     expect(own[0]).toMatch(RUN_FOLDER);
     expect(run.stderr).toContain(
-      `benchmark: the kit exited 0 and wrote no aggregate in plugins/core/evals/results/${own[0]}`,
+      `benchmark: the kit exited 0 and wrote no aggregate in ${OWN_REL}/${own[0]}`,
     );
     expect(existsSync(join(dir, "out"))).toBe(false);
     expect(realpathSync(readFileSync(log, "utf8").split("\n")[0] ?? "")).toBe(realpathSync(ROOT));
@@ -744,6 +756,7 @@ test("H118 AC-8 (SP6-T5 AC-21 rewritten): a run whose own folder holds no aggreg
         env: {
           ...process.env,
           PATH: path,
+          WIZARDINGCODE_CREW_EVAL_RESULTS: OWN_REL,
           TZ: "Pacific/Kiritimati",
           STUB_AGGREGATE: ownAggregate,
           STUB_EXIT: "0",
@@ -755,10 +768,12 @@ test("H118 AC-8 (SP6-T5 AC-21 rewritten): a run whose own folder holds no aggreg
       "2026-10-17-0.6.0.json",
       "2026-10-17-0.6.0.md",
     ]);
+    // The real results folder gained nothing: the runs and the decoys went to the row's own folder.
+    expect(listResults(RESULTS)).toEqual(realBefore);
   } finally {
-    for (const f of foldersSince(RESULTS, before))
-      rmSync(join(RESULTS, f), { recursive: true, force: true });
-    if (!hadResults) rmSync(RESULTS, { recursive: true, force: true });
+    for (const f of foldersSince(OWN, before))
+      rmSync(join(OWN, f), { recursive: true, force: true });
+    if (!hadResults) rmSync(OWN, { recursive: true, force: true });
   }
 });
 

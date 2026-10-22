@@ -3924,8 +3924,8 @@ function parseValidation(text) {
 function fileHash(text) {
   return `sha256:${createHash2("sha256").update(text).digest("hex")}`;
 }
-function leadReplyFile(lead, what) {
-  return `conclave/${lead}${what === "delivery" ? ".delivery" : ""}-reply.md`;
+function replyFile(name, what) {
+  return `conclave/${name}${what === "delivery" ? ".delivery" : ""}-reply.md`;
 }
 function validationHash(what, specText, planText, evidenceFingerprint) {
   if (what === "delivery")
@@ -11243,7 +11243,6 @@ function fileAnswer(ctx, id, role, input, transcriptNote, progress) {
       if (moved)
         moved.file = joined.archived;
       keptAs = joined.archived;
-      archivedNote = keptNote(joined.archived, "reply");
     }
   } else {
     const file = answerFile(agent, answer, kindOfItem(work));
@@ -11268,9 +11267,10 @@ function fileAnswer(ctx, id, role, input, transcriptNote, progress) {
       if (moved)
         saveWork(ctx.paths, work);
       keptAs = kept.archived;
-      archivedNote = keptNote(kept.archived, "answer");
     }
   }
+  if (keptAs)
+    archivedNote = keptNote(keptAs, earlier?.file ? "reply" : "answer");
   progress.saved = saved;
   const pending = earlier && answer ? pendingQuestion(ctx, id, agent) : undefined;
   progress.pending = pending?.id ?? null;
@@ -11326,7 +11326,7 @@ ${heading}`;
     return { file: file2, archived: null };
   }
   const lead = agent === "tech-lead" ? leadAnswer(answer) : null;
-  const file = lead ? leadReplyFile(`lead-${lead.team}`, lead.what) : leadReplyFile(agent, "");
+  const file = lead ? replyFile(`lead-${lead.team}`, lead.what) : replyFile(agent, "");
   const kept = archiveExisting(dir, file);
   if ("failed" in kept)
     return kept;
@@ -11346,9 +11346,9 @@ function archiveExisting(dir, file) {
   }
   return { archived };
 }
-function freeArchiveIndex(dir, replyFile) {
+function freeArchiveIndex(dir, replyFile2) {
   for (let k = 2;; k++) {
-    const candidate = join39(dir, replyFile.replace(/\.md$/, `.round${k}.md`));
+    const candidate = join39(dir, replyFile2.replace(/\.md$/, `.round${k}.md`));
     try {
       if (!statSync11(candidate).isFile())
         return k;
@@ -15045,6 +15045,42 @@ function markLines(record2) {
     return `    ${f.file}${f.line ? `:${f.line}` : ""} ${mark}`;
   });
 }
+function setListKey(env, key, value, remove) {
+  const plan = planListChange(env.paths, key, value, remove);
+  if ("refused" in plan)
+    return refuse(plan.refused);
+  if (plan.action !== "already listed") {
+    appendDecision(env.paths, {
+      at: nowIso(),
+      item: "policy",
+      kind: "decision",
+      text: plan.action === "added" ? `${key}: ${value} added, paths matching it never raise the route (ADR 0003)` : `${key}: ${value} removed, paths matching it raise the route again`,
+      by: "the user"
+    });
+    writeListChange(env.paths, plan);
+  }
+  const now = plan.list.length ? plan.list.join(", ") : "nothing";
+  return ok(`policy ${key}: ${value} ${plan.action} (now: ${now})`, {
+    key,
+    value,
+    action: plan.action,
+    list: plan.list
+  });
+}
+function setScalarKey(env, key, value) {
+  const result = setPolicyValue(env.paths, key, value);
+  if ("refused" in result)
+    return refuse(result.refused);
+  if (key === "team.continuations" && value === "granted")
+    appendDecision(env.paths, {
+      at: nowIso(),
+      item: "policy",
+      kind: "decision",
+      text: "team.continuations set to granted: rounds past a cap are the user's standing grant, up to the cap plus two",
+      by: "the user"
+    });
+  return ok(`policy ${key}: ${value}`, result);
+}
 function supersedeCommand(env, opened, parsed, args) {
   const by = typeof parsed.flags.by === "string" ? parsed.flags.by.trim() : "";
   if (!args[2] || !by)
@@ -15522,40 +15558,9 @@ async function dispatch(parsed, io) {
         if (remove && !(rule && ("list" in rule))) {
           return refuse(`--remove applies to a list key (${LIST_POLICY_KEYS.join(", ")}), not ${key}`);
         }
-        if (rule && "list" in rule) {
-          const plan = planListChange(env.paths, key, value, remove);
-          if ("refused" in plan)
-            return refuse(plan.refused);
-          if (plan.action !== "already listed") {
-            appendDecision(env.paths, {
-              at: nowIso(),
-              item: "policy",
-              kind: "decision",
-              text: plan.action === "added" ? `${key}: ${value} added, paths matching it never raise the route (ADR 0003)` : `${key}: ${value} removed, paths matching it raise the route again`,
-              by: "the user"
-            });
-            writeListChange(env.paths, plan);
-          }
-          const now = plan.list.length ? plan.list.join(", ") : "nothing";
-          return ok(`policy ${key}: ${value} ${plan.action} (now: ${now})`, {
-            key,
-            value,
-            action: plan.action,
-            list: plan.list
-          });
-        }
-        const result = setPolicyValue(env.paths, key, value);
-        if ("refused" in result)
-          return refuse(result.refused);
-        if (key === "team.continuations" && value === "granted")
-          appendDecision(env.paths, {
-            at: nowIso(),
-            item: "policy",
-            kind: "decision",
-            text: "team.continuations set to granted: rounds past a cap are the user's standing grant, up to the cap plus two",
-            by: "the user"
-          });
-        return ok(`policy ${key}: ${value}`, result);
+        if (rule && "list" in rule)
+          return setListKey(env, key, value, remove);
+        return setScalarKey(env, key, value);
       }
       return refuse("usage: crew policy accept | crew policy set <key> <value>");
     }
@@ -16872,7 +16877,7 @@ test-first not credited: ${out2.uncredited}` : "";
       const contentHash = fileHash(text);
       const repeated = (work.validations ?? []).find((v) => v.what === what && v.by === by && v.fileHash === contentHash);
       if (repeated)
-        return refuse(`already recorded: ${repeated.file} is the answer recorded for round ${repeated.round} of ${by} (${what}); record the lead's new answer (a resumed lead's lands in ${leadReplyFile(by, what)})`);
+        return refuse(`already recorded: ${repeated.file} is the answer recorded for round ${repeated.round} of ${by} (${what}); record the lead's new answer (a resumed lead's lands in ${replyFile(by, what)})`);
       const evidence = loadEvidence(env.paths, work.id).evidence;
       const hash = validationHash(what, readText(join48(dir, "spec.md")), readText(join48(dir, "plan.md")), evidence.fingerprint ?? "");
       const same2 = (work.validations ?? []).filter((v) => v.what === what);

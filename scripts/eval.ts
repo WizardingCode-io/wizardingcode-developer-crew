@@ -314,6 +314,28 @@ export function scanResults(dir: string): string[] {
 /** The kit's results directory, relative to the repository root: what the kit receives, so no absolute path enters a record's command line. */
 export const RESULTS_DIR = "plugins/core/evals/results";
 
+/**
+ * The results directory a run uses: `WIZARDINGCODE_CREW_EVAL_RESULTS` when set (item C2b,
+ * finding 118's debt: the tests give their runs a folder of their own and never write where a
+ * real run reads), the kit's directory otherwise. A set value stays repository-relative like the
+ * default, since the kit receives it as `--output-dir`: an absolute path, a `..` segment on either
+ * separator or an empty value is refused naming the variable.
+ */
+export function resultsDir(env: Record<string, string | undefined> = process.env): string {
+  const value = env.WIZARDINGCODE_CREW_EVAL_RESULTS;
+  if (value === undefined) return RESULTS_DIR;
+  const refused =
+    value === "" ||
+    value.startsWith("/") ||
+    /^[A-Za-z]:/.test(value) ||
+    value.split(/[\\/]/).includes("..");
+  if (refused)
+    throw new Error(
+      `WIZARDINGCODE_CREW_EVAL_RESULTS must be a path under the repository, not ${value}`,
+    );
+  return value;
+}
+
 /** The folder a run gives the kit: the kit's own UTC stamp shape and the run's suffix, from the clock given and nothing else. */
 export function runFolder(results: string, suffix: string, now: Date): string {
   return join(results, `${now.toISOString().replace(/[:.]/g, "-")}-${suffix}`);
@@ -360,10 +382,11 @@ export function runKit(options: {
   caseName?: string;
   tags?: string[];
 }): KitRun {
-  const results = join(options.root, RESULTS_DIR);
+  const dir = resultsDir();
+  const results = join(options.root, dir);
   const folder = runFolder(results, options.suffix, new Date());
   createRunFolder(folder, results);
-  const relative = `${RESULTS_DIR}/${basename(folder)}`;
+  const relative = `${dir}/${basename(folder)}`;
   const { path, args, env } = evalInvocation({
     root: options.root,
     platform: process.platform,

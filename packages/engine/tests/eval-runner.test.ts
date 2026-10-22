@@ -19,6 +19,7 @@ import {
   createRunFolder,
   deniedReferenceReads,
   evalInvocation,
+  resultsDir,
   runFolder,
   SANDBOX_TAGS,
   scanResults,
@@ -1504,5 +1505,17 @@ test("SP6-T6 AC-24: the profile-pack grader's pattern holds after a person's con
   } finally {
     rmSync(dir, { recursive: true, force: true });
     rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("AC-2 (item C2b, finding 118's debt): resultsDir takes WIZARDINGCODE_CREW_EVAL_RESULTS when set, a repository-relative path without .., and the default otherwise", () => {
+  expect(resultsDir({})).toBe("plugins/core/evals/results");
+  expect(resultsDir({ WIZARDINGCODE_CREW_EVAL_RESULTS: "plugins/core/evals/results-test-1" })).toBe(
+    "plugins/core/evals/results-test-1",
+  );
+  for (const value of ["/tmp/results", "plugins/../x", "..\\x", "plugins\\..\\x", ""]) {
+    expect(() => resultsDir({ WIZARDINGCODE_CREW_EVAL_RESULTS: value }), value).toThrow(
+      `WIZARDINGCODE_CREW_EVAL_RESULTS must be a path under the repository, not ${value}`,
+    );
   }
 });

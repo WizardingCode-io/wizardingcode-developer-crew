@@ -65,3 +65,52 @@ test("SP6-T1 AC-8: the analyse case reads the base once, the cto case casts noth
   expect(copy).toBeGreaterThan(0);
   expect(lines[copy - 1]).toMatch(/^\s*\/\/.*rows/);
 });
+
+// Item C2b (finding 130): a doc comment is bound to its declaration by adjacency, and a function
+// inserted between the two leaves the comment over a stranger. The symptom is textual: a doc
+// comment opening right after another doc comment closed. A file's leading comment before any
+// code is the one legitimate stacked shape.
+import { readdirSync } from "node:fs";
+
+/** Every `<file>:<line>` where a doc comment opens right after another doc comment closed, the file's leading comment excepted. */
+function stackedDocComments(dir: string): string[] {
+  const found: string[] = [];
+  for (const entry of readdirSync(dir, { recursive: true, encoding: "utf8" })) {
+    if (!entry.endsWith(".ts")) continue;
+    const lines = readFileSync(`${dir}/${entry}`, "utf8").split("\n");
+    let codeSeen = false;
+    let inBlock = false;
+    let blockStartedAfterCode = false;
+    let prevClosedBlockAfterCode = false;
+    for (let i = 0; i < lines.length; i++) {
+      const line = (lines[i] ?? "").trim();
+      if (!line) continue;
+      if (!inBlock && line.startsWith("/**")) {
+        if (prevClosedBlockAfterCode) found.push(`${entry}:${i + 1}`);
+        blockStartedAfterCode = codeSeen;
+        if (!line.endsWith("*/")) {
+          inBlock = true;
+          prevClosedBlockAfterCode = false;
+          continue;
+        }
+        prevClosedBlockAfterCode = blockStartedAfterCode;
+        continue;
+      }
+      if (inBlock) {
+        if (line.endsWith("*/")) {
+          inBlock = false;
+          prevClosedBlockAfterCode = blockStartedAfterCode;
+        }
+        continue;
+      }
+      prevClosedBlockAfterCode = false;
+      if (!line.startsWith("//")) codeSeen = true;
+    }
+  }
+  return found.sort();
+}
+
+test("AC-1 (item C2b, finding 130): no doc comment stacked under another doc comment anywhere in the engine's source, a file's leading comment excepted", () => {
+  const dir = fileURLToPath(new URL("../src", import.meta.url));
+  expect(stackedDocComments(dir)).toEqual([]);
+});

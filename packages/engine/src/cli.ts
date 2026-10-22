@@ -293,7 +293,7 @@ import {
   type QuestionRecord,
   VALIDATOR_RULES,
 } from "./types.ts";
-import { fileHash, leadReplyFile, parseValidation, validationHash } from "./validation.ts";
+import { fileHash, parseValidation, replyFile, validationHash } from "./validation.ts";
 import {
   applyDefectMarks,
   askAllowed,
@@ -566,7 +566,6 @@ function accept(env: Env, target: string): Outcome {
   });
 }
 
-/** Opens a work item for a command that saves it; refuses when its state cannot be trusted. */
 /** The item opened and not hand-edited: the prologue every command that may write shares. */
 function openUntampered(env: Env, id: string | undefined): Opened | Outcome {
   const opened = openWork(env, id);
@@ -574,6 +573,7 @@ function openUntampered(env: Env, id: string | undefined): Opened | Outcome {
   return tamperRefusal(env, opened) ?? opened;
 }
 
+/** Opens a work item for a command that saves it; refuses when its state cannot be trusted. */
 function openForChange(env: Env, id: string | undefined): Opened | Outcome {
   const opened = openUntampered(env, id);
   if (isOutcome(opened)) return opened;
@@ -1324,7 +1324,51 @@ function markLines(record: JudgementRecord): string[] {
     });
 }
 
-/** A test-first record: the run outside any lock, the record applied under it (finding 81; its own function, finding 82). */
+/**
+ * `crew policy set <list key> <glob> [--remove]`: one glob at a time (finding 120). The user's
+ * decision is recorded before the file is written, so a loosening never exists without its record;
+ * "already listed" and every refusal record nothing.
+ */
+function setListKey(env: Env, key: string, value: string, remove: boolean): Outcome {
+  const plan = planListChange(env.paths, key, value, remove);
+  if ("refused" in plan) return refuse(plan.refused);
+  if (plan.action !== "already listed") {
+    appendDecision(env.paths, {
+      at: nowIso(),
+      item: "policy",
+      kind: "decision",
+      text:
+        plan.action === "added"
+          ? `${key}: ${value} added, paths matching it never raise the route (ADR 0003)`
+          : `${key}: ${value} removed, paths matching it raise the route again`,
+      by: "the user",
+    });
+    writeListChange(env.paths, plan);
+  }
+  const now = plan.list.length ? plan.list.join(", ") : "nothing";
+  return ok(`policy ${key}: ${value} ${plan.action} (now: ${now})`, {
+    key,
+    value,
+    action: plan.action,
+    list: plan.list,
+  });
+}
+
+/** `crew policy set <scalar key> <value>`: written through the engine; the standing grant, the second loosening a policy may carry (SP7b decision 15), on record. */
+function setScalarKey(env: Env, key: string, value: string): Outcome {
+  const result = setPolicyValue(env.paths, key, value);
+  if ("refused" in result) return refuse(result.refused);
+  if (key === "team.continuations" && value === "granted")
+    appendDecision(env.paths, {
+      at: nowIso(),
+      item: "policy",
+      kind: "decision",
+      text: "team.continuations set to granted: rounds past a cap are the user's standing grant, up to the cap plus two",
+      by: "the user",
+    });
+  return ok(`policy ${key}: ${value}`, result);
+}
+
 /**
  * `crew criteria <id> supersede <AC-n> --by <AC-m>`: a criterion's text replaced by another's, on
  * record (finding 118's list). The rules (the kinds' rank, the objections' bindings, the chain)
@@ -1352,6 +1396,7 @@ function supersedeCommand(env: Env, opened: Opened, parsed: Parsed, args: string
   return ok(`${outcome.criterion.id} superseded by ${by}`, { criterion: outcome.criterion });
 }
 
+/** A test-first record: the run outside any lock, the record applied under it (finding 81; its own function, finding 82). */
 async function tddCommand(env: Env, parsed: Parsed, args: string[]): Promise<Outcome> {
   const [step, id, criterion] = args;
   const opened = openForChange(env, id);
@@ -1963,45 +2008,9 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
             `--remove applies to a list key (${LIST_POLICY_KEYS.join(", ")}), not ${key}`,
           );
         }
-        if (rule && "list" in rule) {
-          // A list key, one glob at a time (finding 120): the user's decision is recorded before the
-          // file is written, so a loosening never exists without its record; "already listed" and
-          // every refusal record nothing.
-          const plan = planListChange(env.paths, key, value, remove);
-          if ("refused" in plan) return refuse(plan.refused);
-          if (plan.action !== "already listed") {
-            appendDecision(env.paths, {
-              at: nowIso(),
-              item: "policy",
-              kind: "decision",
-              text:
-                plan.action === "added"
-                  ? `${key}: ${value} added, paths matching it never raise the route (ADR 0003)`
-                  : `${key}: ${value} removed, paths matching it raise the route again`,
-              by: "the user",
-            });
-            writeListChange(env.paths, plan);
-          }
-          const now = plan.list.length ? plan.list.join(", ") : "nothing";
-          return ok(`policy ${key}: ${value} ${plan.action} (now: ${now})`, {
-            key,
-            value,
-            action: plan.action,
-            list: plan.list,
-          });
-        }
-        const result = setPolicyValue(env.paths, key, value);
-        if ("refused" in result) return refuse(result.refused);
-        // The standing grant is the second loosening a policy may carry (SP7b decision 15): on record.
-        if (key === "team.continuations" && value === "granted")
-          appendDecision(env.paths, {
-            at: nowIso(),
-            item: "policy",
-            kind: "decision",
-            text: "team.continuations set to granted: rounds past a cap are the user's standing grant, up to the cap plus two",
-            by: "the user",
-          });
-        return ok(`policy ${key}: ${value}`, result);
+        // Two key kinds, two helpers (finding 120's advisory): the handler reads the usage and the flag.
+        if (rule && "list" in rule) return setListKey(env, key, value, remove);
+        return setScalarKey(env, key, value);
       }
       return refuse("usage: crew policy accept | crew policy set <key> <value>");
     }
@@ -3715,7 +3724,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       );
       if (repeated)
         return refuse(
-          `already recorded: ${repeated.file} is the answer recorded for round ${repeated.round} of ${by} (${what}); record the lead's new answer (a resumed lead's lands in ${leadReplyFile(by, what)})`,
+          `already recorded: ${repeated.file} is the answer recorded for round ${repeated.round} of ${by} (${what}); record the lead's new answer (a resumed lead's lands in ${replyFile(by, what)})`,
         );
       const evidence = loadEvidence(env.paths, work.id).evidence;
       const hash = validationHash(
