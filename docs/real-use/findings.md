@@ -1117,3 +1117,17 @@ Verdicts agree at every effort. Upheld findings: `high` reproduced Task 6's and 
 - Expected: the phase check reads a superseded criterion through its replacement, as the verdict does.
 - Evidence: the item's `work.json` (`supersededBy` on AC-5 and AC-7), the refused `crew phase` output.
 - Outcome: fixed in `2026-10-22-008` (fast route): the build-to-gate guard skips a superseded criterion, whose replacement it reads in its own turn; the row `F135` in `work.test.ts`.
+
+### 136. A role's answer is filed under the active item, whatever item its heading names
+- Date: 2026-10-22. Project: this repository. Items: `2026-10-22-007`, `2026-10-22-008`. Category: `silent`. Severity: medium.
+- What happened: consolidation item 2 (`007`) was proven and committed, then the fix of finding 135 ran as its own fast item (`008`, which took the active slot at `crew start` and kept it after `crew learn`); the fix's commit changed the code under 007's proof, so 007's gates were run again and its two reviewers resumed for round 2. Their answers, headed `# code-quality findings for 2026-10-22-007-…`, were filed by the SubagentStop hook as `.crew/work/2026-10-22-008-…/review/code-quality.findings.md` and `test-quality.findings.md`, the active item's folder; 007's `review/` held only the round-1 archive. A resume to repeat the answer filed it there again. No command moves the active slot back to an open item.
+- Expected: the hook files a role's answer under the item its heading names (the leads' and the reviewers' headings carry the id) when that item exists and waits for the role, and the active item otherwise; a learned item leaves the active slot; `crew status` names a stray answer.
+- Evidence: the two folders' `review/` listings; 008's `review/` holding answers headed for 007.
+- Outcome: open, for consolidation item 3 (the hooks).
+
+### 137. crew learn keeps refusing a root cause after the item contradicted the entry it matched
+- Date: 2026-10-22. Project: this repository. Item: `2026-10-22-007`. Category: `blocks`. Severity: medium.
+- What happened: `crew learn 2026-10-22-007-…` was refused because K-68 (finding 135's root cause, learned from `2026-10-22-008` minutes before) "already records this root cause": the two share `packages/engine/src/work.ts`, since the finding-135 fix was committed under 007's proof and joined its diff, and three words. The refusal names two ways out; `crew knowledge contradict K-68 --reason "…" --item 2026-10-22-007-…` recorded the contradiction (`contradicted 1`, by this item), and `crew learn` then refused with the same text, under both the installed 0.11.3 and the repository's bundle. The only open way left is `--confirm K-68`, which would record a false confirmation and drop the item's own causes from the base.
+- Expected: after a contradiction by this item, learn writes the item's root cause beside the contradicted entry, as the learn reference says ("disputes it, then learn again").
+- Evidence: `crew knowledge show K-68` (`contradicted by: 2026-10-22-007-…`), the two refused learns.
+- Outcome: open, for consolidation item 3; item 007 waits in its learn phase, proven and committed (f95bfd3), validated at delivery round 2.
