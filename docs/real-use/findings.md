@@ -1131,3 +1131,10 @@ Verdicts agree at every effort. Upheld findings: `high` reproduced Task 6's and 
 - Expected: after a contradiction by this item, learn writes the item's root cause beside the contradicted entry, as the learn reference says ("disputes it, then learn again").
 - Evidence: `crew knowledge show K-68` (`contradicted by: 2026-10-22-007-…`), the two refused learns.
 - Outcome: open, for consolidation item 3; item 007 waits in its learn phase, proven and committed (f95bfd3), validated at delivery round 2.
+
+### 138. A delivered item cannot learn once a later commit changes the code its proof covers
+- Date: 2026-10-22. Project: this repository. Item: `2026-10-22-007`. Category: `blocks`. Severity: medium.
+- What happened: item 007 was proven, committed (f95bfd3), validated at delivery and moved to its learn phase; its learn was refused by finding 137. Once item 009 fixed 137 and changed other engine files, `crew learn 2026-10-22-007-…` refused with `not proven: the proof is on earlier code (crew gate run …)`. A new gate run would cut a diff that holds items 008 and 009 too and seat its reviewers again on code that is not its own.
+- Expected: learn reads the item's verdict as recorded at its delivery (the fingerprint of the tree its leads validated, or its commit), not the working tree's: an item past deliver is no longer edited (`openItems` says so).
+- Evidence: the refused learn; 007's `evidence.json` (proven, delivery validated round 2).
+- Outcome: open; 007 waits in learn for the fix.

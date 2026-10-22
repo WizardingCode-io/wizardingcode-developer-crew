@@ -1,5 +1,6 @@
-import { statSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { WORK_ID } from "../analysis.ts";
 import { loadEvidence, saveEvidence } from "../evidence.ts";
 import { nowIso, readText, writeText } from "../fs.ts";
 import { sleep, withLock } from "../lock.ts";
@@ -8,8 +9,8 @@ import { mailStatus } from "../mail-status.ts";
 import { workDir } from "../paths.ts";
 import { clearWorking } from "../state.ts";
 import { PERSONALITIES, ROLE_NAMES, TEAMS, type TeamDef } from "../team.ts";
-import type { Message, Personality, RoleRecord, TeamName, WorkKind } from "../types.ts";
-import { LEAD_LINE, replyFile } from "../validation.ts";
+import type { Message, Personality, RoleRecord, TeamName, WorkItem, WorkKind } from "../types.ts";
+import { LEAD_LINE, leadSuffix, replyFile } from "../validation.ts";
 import { activeWork, kindOfItem, loadWork, saveWork } from "../work.ts";
 import { leaveNotice } from "./notices.ts";
 import type { HookContext, HookPayload, HookResponse } from "./types.ts";
@@ -264,9 +265,7 @@ export function answerFile(agent: string, answer: string, kind?: WorkKind): stri
   // lead is one agent for five teams: its answer's first line names the team and what it validated.
   if (agent === "tech-lead") {
     const lead = leadAnswer(answer);
-    return lead
-      ? `conclave/lead-${lead.team}${lead.what === "delivery" ? ".delivery" : ""}.md`
-      : "conclave/tech-lead.md";
+    return lead ? `conclave/lead-${lead.team}${leadSuffix(lead.what)}.md` : "conclave/tech-lead.md";
   }
   if (agent.startsWith("lead-")) return `conclave/${agent}.md`;
   if (agent === "cto") return "conclave/cto.md";
@@ -309,6 +308,42 @@ function savedAndUnsentPhrases(
   };
 }
 
+/** A work item id of the engine's shape, as an answer's first heading line names it. */
+const HEADING_ITEM = /\b(\d{4}-\d{2}-\d{2}-\d{3}-[a-z0-9][a-z0-9-]*[a-z0-9])\b/;
+
+/**
+ * The item a role's answer is filed under (finding 136): the item its first heading line names
+ * when that item is open in this project (its work.json under this project's store, not
+ * abandoned, not learned); else, when the active item is not waiting for the roles, the one open
+ * item that is, if exactly one; else the active item. Only this project's store is read, so
+ * another project's item is never reached, and an item whose record changed outside the engine is
+ * no open item (the security lead's return). Null when no rule names an item.
+ */
+export function answerItem(ctx: HookContext, answer: string): string | null {
+  const open = (id: string): WorkItem | null => {
+    if (!WORK_ID.test(id) || !existsSync(join(workDir(ctx.paths, id), "work.json"))) return null;
+    const { work, tampered } = loadWork(ctx.paths, id);
+    return work && !tampered && !work.abandoned && !work.learned ? work : null;
+  };
+  const heading = unfenced(answer)
+    .split("\n")
+    .find((l) => l.trim().startsWith("#"));
+  const named = heading ? HEADING_ITEM.exec(heading)?.[1] : undefined;
+  if (named && open(named)) return named;
+  const active = activeWork(ctx.paths)?.work ?? null;
+  if (active?.awaiting !== "role") {
+    let ids: string[] = [];
+    try {
+      ids = readdirSync(join(ctx.paths.crewDir, "work"));
+    } catch {
+      ids = [];
+    }
+    const waiting = ids.filter((id) => open(id)?.awaiting === "role");
+    if (waiting.length === 1) return waiting[0] as string;
+  }
+  return active?.id ?? null;
+}
+
 /**
  * A role of this plugin stopped: its answer is saved where its type says, its end and its tokens
  * go into the active item's evidence, a judge's stop ends a `role` wait, and a resumed role's
@@ -331,15 +366,24 @@ export function onSubagentStop(ctx: HookContext, payload: HookPayload): HookResp
     return { systemMessage: text };
   };
   const active = activeWork(ctx.paths);
-  if (!active?.work)
+  const answer = roleAnswer(payload.agent_transcript_path, payload.last_assistant_message, {
+    ms: handbackWaitMs(ctx.env),
+  });
+  // The item the answer is for (finding 136), the active one unless the answer or the waits say otherwise.
+  const id = answerItem(ctx, answer);
+  if (!id)
     return tell(`Crew: ${role} stopped with no active work item: its answer was not recorded.`);
-  const id = active.work.id;
+  const activeId = active?.work?.id ?? null;
+  // Said whenever the answer went to another item than the active one, so the session knows where.
+  const elsewhere =
+    id === activeId ? "" : ` (for ${id}, not the active ${activeId ?? "item: none is active"})`;
   const transcriptNote = payload.agent_transcript_path ? ` (${payload.agent_transcript_path})` : "";
   const nothingSaved = (reason: string): HookResponse =>
     tell(
       `Crew: ${role} stopped but nothing was saved for ${id} (${reason}): save its answer from the transcript${transcriptNote} by hand, or run the role again.`,
     );
-  if (active.tampered) return nothingSaved(tamperedItem(id));
+  if (id === activeId ? active?.tampered : loadWork(ctx.paths, id).tampered)
+    return nothingSaved(tamperedItem(id));
   // What the record got done before a failure, so the session is told what is on disk and what is not.
   const progress: Progress = { saved: null, recorded: false, pending: null, reply: null };
   try {
@@ -347,9 +391,7 @@ export function onSubagentStop(ctx: HookContext, payload: HookPayload): HookResp
     // written under its lock, so no record is lost and the integrity record stays in step. A lock
     // held past the wait saves nothing rather than racing, and says so.
     const input: AnswerInput = {
-      answer: roleAnswer(payload.agent_transcript_path, payload.last_assistant_message, {
-        ms: handbackWaitMs(ctx.env),
-      }),
+      answer,
       ...(payload.agent_id ? { agentId: payload.agent_id } : {}),
       filedBy: "hook",
       tokens: roleTokens(payload.agent_transcript_path),
@@ -360,7 +402,10 @@ export function onSubagentStop(ctx: HookContext, payload: HookPayload): HookResp
       { what: "work folder" },
     );
     note = relayAfterLock(ctx, id, progress, note);
-    return note ? tell(note) : {};
+    if (note) return tell(`${note}${elsewhere}`);
+    return elsewhere
+      ? tell(`Crew: ${progress.saved?.agent ?? role}'s answer is filed${elsewhere}.`)
+      : {};
   } catch (error) {
     const why = (error as Error).message;
     if (!progress.saved) return nothingSaved(why);
@@ -403,10 +448,22 @@ function relayAfterLock(
   const { agent, file } = progress.saved;
   const relayed = relay(ctx, question, progress.reply, agent);
   progress.pending = null;
-  if ("refused" in relayed)
-    return `Crew: ${agent}'s answer to ${question} ${whereSaved(progress.saved)} but the reply was not sent: ${relayed.refused}. Once that is cleared, send it with ${sendByHand(id, question, agent, file)}.`;
-  if (relayed.notes.length)
-    return `Crew: ${agent}'s answer to ${question} was sent, but ${relayed.notes.join("; ")}.`;
+  // The notes of the answered pass go with every outcome; a refusal raised after the delivery is
+  // said as sent, with no line to send it by hand, since a second send would repeat it (finding 30).
+  const notes = relayed.notes;
+  if ("refused" in relayed && relayed.delivered === undefined) {
+    const named = notes.length ? ` (${notes.join("; ")})` : "";
+    return `Crew: ${agent}'s answer to ${question} ${whereSaved(progress.saved)} but the reply was not sent: ${relayed.refused}${named}. Once that is cleared, send it with ${sendByHand(id, question, agent, file)}.`;
+  }
+  if ("refused" in relayed) {
+    const sent = relayed.refused.replace(
+      `${relayed.delivered} was delivered, but `,
+      `${relayed.delivered} was sent, but `,
+    );
+    return `Crew: ${agent}'s answer to ${question} ${whereSaved(progress.saved)}: ${[sent, ...notes].join("; ")}.`;
+  }
+  if (notes.length)
+    return `Crew: ${agent}'s answer to ${question} was sent, but ${notes.join("; ")}.`;
   return note;
 }
 
@@ -527,10 +584,7 @@ export function fileAnswer(
     if ("failed" in kept)
       return `Crew: ${agent}'s earlier answer could not be archived at ${kept.failed} (${kept.error}): the plain file was left as it was; save this answer from the transcript${transcriptNote} and run the role again if it is needed.`;
     // A ruling file holds the JSON alone, so `crew judgement record --ruling` reads it as it is.
-    writeText(
-      join(dir, file),
-      file.endsWith(".json") ? `${gatesRuling(answer) ?? unfenced(answer)}\n` : `${answer}\n`,
-    );
+    writeText(join(dir, file), file.endsWith(".json") ? `${gatesRuling(answer)}\n` : `${answer}\n`);
     saved = { file, agent };
     if (kept.archived) {
       // The records that named the plain file follow its content to the archive: the role's in
@@ -674,19 +728,25 @@ function freeArchiveIndex(dir: string, replyFile: string): number {
 /**
  * The answer recorded in the mail as the role's reply, relayed by the lead (SP2c §7). When sent, the
  * notes of the answered pass (a copy of the question it could not change, named for the session to
- * read); else why not, a refusal or a mailbox that could not be written.
+ * read); else why not, a refusal or a mailbox that could not be written, with the notes still,
+ * and the reply's id when the refusal came after its delivery (finding 30).
  */
 function relay(
   ctx: HookContext,
   questionId: string,
   answer: string,
   agent: string,
-): { refused: string } | { notes: string[] } {
+): { refused: string; delivered?: string; notes: string[] } | { notes: string[] } {
   const notes: string[] = [];
   try {
     const sent = reply(ctx.mail, questionId, answer, { as: agent }, notes);
-    return "refused" in sent ? { refused: sent.refused } : { notes };
+    if (!("refused" in sent)) return { notes };
+    return {
+      refused: sent.refused,
+      ...(sent.delivered === undefined ? {} : { delivered: sent.delivered }),
+      notes,
+    };
   } catch (error) {
-    return { refused: (error as Error).message };
+    return { refused: (error as Error).message, notes };
   }
 }

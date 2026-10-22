@@ -21,11 +21,15 @@ export function refreshMail(ctx: HookContext): { newMail: Message[]; failed: str
   }
 }
 
-/** A read of the mailbox that must not cost the hook its rule: `fallback` when the mailbox cannot be read. */
-export function mailQuietly<T>(read: () => T, fallback: T): T {
+/**
+ * A read of the mailbox that must not cost the hook its rule: `fallback` when the mailbox cannot be
+ * read, with `mail: <message>` pushed into `notes` when given, so the error is said (finding 30).
+ */
+export function mailQuietly<T>(read: () => T, fallback: T, notes?: string[]): T {
   try {
     return read();
-  } catch {
+  } catch (error) {
+    notes?.push(`mail: ${(error as Error).message}`);
     return fallback;
   }
 }

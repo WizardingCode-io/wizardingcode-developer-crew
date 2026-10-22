@@ -265,10 +265,19 @@ export function learnItem(
         refused: `--confirm names ${options.confirm}, which is not a root cause this project reads`,
       };
   }
-  // Rule 17: a root cause enters once.
+  // Rule 17: a root cause enters once, but beside an entry this item contradicted in this project
+  // (finding 137), the way out the refusal names.
   const cause = drafts.find((d) => d.kind === "root-cause");
+  const contradicted = (e: KnowledgeEntry): boolean =>
+    e.contradictedBy.some((r) => r.item === work.id && r.project === scope.project);
   const duplicate = cause
-    ? entries.find((e) => e.kind === "root-cause" && visibleTo(e, scope) && sameRootCause(e, cause))
+    ? entries.find(
+        (e) =>
+          e.kind === "root-cause" &&
+          visibleTo(e, scope) &&
+          !contradicted(e) &&
+          sameRootCause(e, cause),
+      )
     : undefined;
   if (duplicate && confirmTarget?.id !== duplicate.id)
     return {

@@ -13,6 +13,7 @@ import { listPacks, registerPack } from "../src/packs.ts";
 import { loadPolicy } from "../src/policy.ts";
 import { loadProfile, saveProfile } from "../src/profile.ts";
 import { loadState } from "../src/state.ts";
+import { VERSION } from "../src/version.ts";
 import { activeWork, addCriterion, createWork, saveWork } from "../src/work.ts";
 import { hookContext, makeRepo, repoPaths, tempDir, testEnv, write } from "./helpers.ts";
 import { writePack } from "./pack-fixtures.ts";
@@ -493,4 +494,21 @@ test("SP6-T2 AC-6 (round 2): a pack the hooks cannot read costs the session noth
       "pack discovery: wizardingcode-pack-stale@m: core >=99.0.0 needs an engine at or above 99.0.0",
     ),
   ]);
+});
+
+test("CON3-AC-4: the SessionStart context names the running engine's version (finding 66)", () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const start = handleHook(
+    "session-start",
+    { session_id: "s", cwd: root, source: "startup" },
+    testEnv(),
+  ) as {
+    hookSpecificOutput?: { additionalContext: string };
+  };
+  const text = start.hookSpecificOutput?.additionalContext ?? "";
+  expect(text).toContain("WizardingCode Developer Crew is active in this repository.");
+  expect(text).toContain(`Engine: crew ${VERSION}.`);
 });

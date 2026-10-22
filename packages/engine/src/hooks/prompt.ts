@@ -47,17 +47,14 @@ function packsPart(ctx: HookContext): string {
 }
 
 /**
- * The user has spoken: the Stop rule starts counting blocks afresh. The wait for the user is not
- * ended here. A prompt can be queued while the agent still works, and Claude Code runs this hook as
- * soon as it is typed, so only the Stop that lets the turn end spends the wait.
+ * The user has spoken. Neither the Stop rule's count of blocks nor the wait for the user is reset
+ * here: a prompt can be queued while the agent still works, and Claude Code runs this hook as soon
+ * as it is typed, so only a Stop starts the count afresh (finding 114) and spends the wait.
  */
 export function onPrompt(ctx: HookContext): HookResponse {
-  // The count starts afresh, and what a role's stop could not save is taken, if no tool call
-  // printed it yet; under the lock every writer of the state takes.
-  const notices = updateSession(ctx.paths, ctx.sessionId, (session) => {
-    session.stopBlocks = 0;
-    return takeNotices(session);
-  });
+  // What a role's stop could not save is taken, if no tool call printed it yet; under the lock
+  // every writer of the state takes.
+  const notices = updateSession(ctx.paths, ctx.sessionId, (session) => takeNotices(session));
   // The project's registry entry is refreshed, and what arrived since the last prompt is named once.
   const mail = refreshMail(ctx);
   const active = activeWork(ctx.paths);

@@ -68,7 +68,8 @@ test("I3: a prompt re-arms the Stop rule and leaves the wait to the Stop that en
   saveWork(ctx.paths, work);
   onPrompt(ctx);
   expect(loadWork(ctx.paths, work.id).work?.awaiting).toBe("user");
-  expect(loadState(ctx.paths).sessions.s?.stopBlocks).toBe(0);
+  // Since finding 114 (CON3 AC-8) a prompt no longer resets the count: a Stop does.
+  expect(loadState(ctx.paths).sessions.s?.stopBlocks).toBe(MAX_STOP_BLOCKS);
   expect(onStop(ctx).decision).toBeUndefined();
   expect(loadWork(ctx.paths, work.id).work?.awaiting).toBeNull();
   expect(onStop(ctx).decision).toBe("block");
@@ -569,4 +570,84 @@ test("AC-1 (finding 124): an abandoned item is not the Stop rule's item: the rul
   expect(response.decision).toBe("block");
   expect(String(response.reason)).toContain("no work item");
   expect(String(response.reason)).not.toContain(work.id);
+});
+
+test("CON3-AC-7: when the Stop hook cannot mark a blocker noticed, its block reason names the mail error (finding 30)", () => {
+  const env = testEnv();
+  const a = makeRepo({ "README.md": "# storefront\n" });
+  const b = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/b.ts": "x",
+  });
+  write(a, ".crew/policy.json", JSON.stringify({ mail: { workspace: "w", name: "storefront" } }));
+  write(
+    b,
+    ".crew/policy.json",
+    JSON.stringify({
+      mail: { workspace: "w", name: "crm", accept: ["question", "notice", "blocker"] },
+    }),
+  );
+  onSessionStart(hookContext({ session_id: "sa", cwd: a }, env));
+  const ctx = hookContext({ session_id: "sb", cwd: b }, env);
+  onSessionStart(ctx);
+  const pa = repoPaths(a, env);
+  const sent = send(
+    mailContext(pa, loadPolicy(pa).policy, env),
+    { to: "crm", type: "blocker", text: "Checkout is down" },
+    null,
+  );
+  if ("refused" in sent) throw new Error(sent.refused);
+  // The sender's mailbox is held by another process past the wait: its copy cannot be written.
+  const lock = join(mailbox(pa.userDir, "w", "storefront").dir, ".lock");
+  mkdirSync(lock);
+  try {
+    const first = onStop(ctx) as { decision?: string; reason?: string };
+    expect(first.decision).toBe("block");
+    expect(first.reason).toContain(`Crew: blocker ${sent.message.id} from storefront`);
+    expect(first.reason).toContain(`mail: mailbox busy: ${lock} held for more than 2000 ms`);
+  } finally {
+    rmdirSync(lock);
+  }
+}, 30_000);
+
+test("CON3-AC-8: the Stop hook's cap on consecutive blocks is not reset by a prompt; a Stop that does not continue a block (stop_hook_active false) starts a new count (finding 114)", () => {
+  const { root, ctx, env } = session();
+  const work = createWork(ctx.paths, "fix");
+  addCriterion(work, "x");
+  saveWork(ctx.paths, work);
+  write(root, "src/a.ts", "changed");
+  const stopIn = (c: typeof ctx, active?: boolean) =>
+    onStop(c, active === undefined ? {} : { stop_hook_active: active }) as {
+      decision?: string;
+      reason?: string;
+      systemMessage?: string;
+    };
+  const stop = (active?: boolean) => stopIn(ctx, active);
+  const capText = `Crew: not proven after ${MAX_STOP_BLOCKS} attempts.`;
+  expect(MAX_STOP_BLOCKS).toBe(3);
+  // A prompt queued between Stops 2 and 3 does not reset the count.
+  expect(stop(false).decision).toBe("block");
+  expect(stop(true).decision).toBe("block");
+  onPrompt(ctx);
+  expect(stop(true).decision).toBe("block");
+  const released = stop(true);
+  expect(released.decision).toBeUndefined();
+  expect(released.systemMessage ?? "").toContain(capText);
+  // Apart: a Stop with false after two blocks starts the count again, and three more blocks follow.
+  expect(stop(false).decision).toBe("block");
+  expect(stop(true).decision).toBe("block");
+  expect(stop(false).decision).toBe("block");
+  expect(stop(true).decision).toBe("block");
+  expect(stop(true).decision).toBe("block");
+  expect(stop(true).systemMessage ?? "").toContain(capText);
+  // With the field absent on every Stop (a runtime that sends none), in a session of its own:
+  // three blocks, and the fourth releases.
+  const other = hookContext({ session_id: "s-absent", cwd: root }, env);
+  onSessionStart(other, { source: "startup" });
+  expect(stopIn(other).decision).toBe("block");
+  expect(stopIn(other).decision).toBe("block");
+  expect(stopIn(other).decision).toBe("block");
+  const absent = stopIn(other);
+  expect(absent.decision).toBeUndefined();
+  expect(absent.systemMessage ?? "").toContain(capText);
 });

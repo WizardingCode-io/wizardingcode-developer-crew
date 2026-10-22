@@ -72,12 +72,20 @@ export function fileHash(text: string): string {
 }
 
 /**
+ * What a lead's file name carries for its subject: nothing for the spec, `.plan` for a plan
+ * (finding 53, so a plan's validation never lands on the spec's file), `.delivery` for a delivery.
+ */
+export function leadSuffix(what: string): string {
+  return what === "plan" || what === "delivery" ? `.${what}` : "";
+}
+
+/**
  * The file a resumed role's answer lands in (SP3-T1, finding 78): the role's own reply file, a
- * lead's by its team with `.delivery` for a delivery, any other role's by its name. One spelling
- * for the hook that writes it and the command that names it.
+ * lead's by its team with its subject's suffix (`leadSuffix`), any other role's by its name. One
+ * spelling for the hook that writes it and the command that names it.
  */
 export function replyFile(name: string, what: string): string {
-  return `conclave/${name}${what === "delivery" ? ".delivery" : ""}-reply.md`;
+  return `conclave/${name}${leadSuffix(what)}-reply.md`;
 }
 
 /** What a validation is about: the spec's text, the plan's text, or the evidence fingerprint of a delivery. */

@@ -11,6 +11,7 @@ import { emptyInboxSummary, inboxSummary, subjectQuoted } from "../mail.ts";
 import { discoverPacks } from "../packs.ts";
 import { refreshProfile, saveProfile } from "../profile.ts";
 import { ensureCrewDir, loadState, updateSession } from "../state.ts";
+import { VERSION } from "../version.ts";
 import { activeWork } from "../work.ts";
 import { mailQuietly, refreshMail, sweepLines } from "./context.ts";
 import { packCounts, statusLine } from "./prompt.ts";
@@ -43,8 +44,8 @@ export function onSessionStart(ctx: HookContext, payload: HookPayload = {}): Hoo
     // not appended again (round 3).
     const discovered = discoverPacks(ctx.paths.userDir, ctx.env);
     const text = `pack discovery: ${discovered.join("; ")}`;
-    const last = listDecisions(ctx.paths).find((d) => d.kind === "pack")?.text;
-    if (discovered.length && text !== last)
+    // The register is read only when the discovery has something to say (finding 111).
+    if (discovered.length && text !== listDecisions(ctx.paths).find((d) => d.kind === "pack")?.text)
       appendDecision(ctx.paths, {
         at: nowIso(),
         item: "pack",
@@ -88,6 +89,8 @@ export function onSessionStart(ctx: HookContext, payload: HookPayload = {}): Hoo
     ctx.policy.attendedDecisions === "relay"
       ? "You run every crew command; the user never types one: a decision that is theirs (crew approve, skip, decide, accept, profile confirm) is relayed by you from the conversation under this repository's policy (attendedDecisions: relay), so run the command once the user has said yes, with no prompt; the record says relayed by the agent."
       : "You run every crew command; the user never types one: a decision that is theirs (crew approve, skip, decide, accept, profile confirm) is signed by the permission prompt your command raises, in auto mode too.",
+    // The engine that runs, so a stale plugin shows at the start, not in the cache (finding 66).
+    `Engine: crew ${VERSION}.`,
   ];
   if (active?.work)
     lines.push(

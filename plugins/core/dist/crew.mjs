@@ -1,5 +1,5 @@
 // packages/engine/src/cli.ts
-import { existsSync as existsSync22, readFileSync as readFileSync10, realpathSync as realpathSync8, rmSync as rmSync5, statSync as statSync12 } from "node:fs";
+import { existsSync as existsSync23, readFileSync as readFileSync10, realpathSync as realpathSync8, rmSync as rmSync5, statSync as statSync12 } from "node:fs";
 import { basename as basename7, isAbsolute as isAbsolute10, join as join48, relative as relative12, resolve as resolve6, sep as sep5 } from "node:path";
 
 // packages/engine/src/analysis.ts
@@ -3969,8 +3969,11 @@ function parseValidation(text) {
 function fileHash(text) {
   return `sha256:${createHash2("sha256").update(text).digest("hex")}`;
 }
+function leadSuffix(what) {
+  return what === "plan" || what === "delivery" ? `.${what}` : "";
+}
 function replyFile(name, what) {
-  return `conclave/${name}${what === "delivery" ? ".delivery" : ""}-reply.md`;
+  return `conclave/${name}${leadSuffix(what)}-reply.md`;
 }
 function validationHash(what, specText, planText, evidenceFingerprint) {
   if (what === "delivery")
@@ -5974,7 +5977,8 @@ function reply(ctx, id, text, options, notes) {
   }, (w) => notes.push(skippedLine(id)(w)));
   if (!answered)
     return {
-      refused: `${replyMessage.id} was delivered, but ${id} could not be marked answered: its mailbox changed while it was being written`
+      refused: `${replyMessage.id} was delivered, but ${id} could not be marked answered: its mailbox changed while it was being written`,
+      delivered: replyMessage.id
     };
   withMailLock(ownDir, () => {
     recordForParties(ctx, loadRegistry(ctx.paths.userDir), replyMessage);
@@ -9834,6 +9838,10 @@ function judgeProblems(run, paths, work, targetPath, changed) {
     problems: { touched, untouched }
   };
 }
+function reviewPaths(root, base, watched) {
+  const all = changedPaths(root, base).filter((p) => !p.toLowerCase().startsWith(".crew/"));
+  return all.length ? all : [...watched];
+}
 async function runGates(paths, work, profile, policy, options = {}) {
   const base = work;
   const changed = changedWatchedPaths(paths.root, profile, base);
@@ -9905,7 +9913,7 @@ async function runGates(paths, work, profile, policy, options = {}) {
   work.seats = plannedSeats(work.route, work.riskAreas, changed, policy, undefined, undefined, registry, changedPaths(paths.root, base));
   recordPackUse(work, paths.userDir, profile, changed, policy, registry);
   work.primaryTeam = primaryTeam(changed);
-  const reviewInputs = judgement.length ? writeReviewInputs(paths, work, changed, stamp2) : null;
+  const reviewInputs = judgement.length ? writeReviewInputs(paths, work, reviewPaths(paths.root, base, changed), stamp2) : null;
   const currentFingerprint = computeFingerprint(paths.root, profile, base, MAX_WATCHED_FILES, fingerprintMethod(fingerprintBefore));
   const ledger = loadLedger(paths, work.id).ledger;
   const verdictOf = (of) => computeVerdict({
@@ -10202,10 +10210,11 @@ function refreshMail(ctx) {
     return { newMail: [], failed: error.message };
   }
 }
-function mailQuietly(read, fallback) {
+function mailQuietly(read, fallback, notes) {
   try {
     return read();
-  } catch {
+  } catch (error) {
+    notes?.push(`mail: ${error.message}`);
     return fallback;
   }
 }
@@ -11052,7 +11061,7 @@ function powershellAsPosix(command2) {
 }
 
 // packages/engine/src/hooks/subagent-stop.ts
-import { statSync as statSync11 } from "node:fs";
+import { existsSync as existsSync18, readdirSync as readdirSync8, statSync as statSync11 } from "node:fs";
 import { join as join39 } from "node:path";
 var PLUGIN_PREFIX2 = "wizardingcode-developer-crew:";
 var BARE_ROLE = new RegExp(`^(${ROLE_NAMES.join("|")})$`);
@@ -11231,7 +11240,7 @@ function answerFile(agent, answer, kind) {
     return `review/${agent.slice("review-".length)}.findings.md`;
   if (agent === "tech-lead") {
     const lead = leadAnswer(answer);
-    return lead ? `conclave/lead-${lead.team}${lead.what === "delivery" ? ".delivery" : ""}.md` : "conclave/tech-lead.md";
+    return lead ? `conclave/lead-${lead.team}${leadSuffix(lead.what)}.md` : "conclave/tech-lead.md";
   }
   if (agent.startsWith("lead-"))
     return `conclave/${agent}.md`;
@@ -11263,6 +11272,33 @@ function savedAndUnsentPhrases(workId, saved, pending) {
     unsent: pending ? `; the reply to ${pending} was not sent: send it with ${sendByHand(workId, pending, saved.agent, saved.file)}.` : "."
   };
 }
+var HEADING_ITEM = /\b(\d{4}-\d{2}-\d{2}-\d{3}-[a-z0-9][a-z0-9-]*[a-z0-9])\b/;
+function answerItem(ctx, answer) {
+  const open = (id) => {
+    if (!WORK_ID2.test(id) || !existsSync18(join39(workDir(ctx.paths, id), "work.json")))
+      return null;
+    const { work, tampered } = loadWork(ctx.paths, id);
+    return work && !tampered && !work.abandoned && !work.learned ? work : null;
+  };
+  const heading = unfenced(answer).split(`
+`).find((l) => l.trim().startsWith("#"));
+  const named2 = heading ? HEADING_ITEM.exec(heading)?.[1] : undefined;
+  if (named2 && open(named2))
+    return named2;
+  const active = activeWork(ctx.paths)?.work ?? null;
+  if (active?.awaiting !== "role") {
+    let ids = [];
+    try {
+      ids = readdirSync8(join39(ctx.paths.crewDir, "work"));
+    } catch {
+      ids = [];
+    }
+    const waiting = ids.filter((id) => open(id)?.awaiting === "role");
+    if (waiting.length === 1)
+      return waiting[0];
+  }
+  return active?.id ?? null;
+}
 function onSubagentStop(ctx, payload) {
   const role = roleOf(payload.agent_type);
   if (!role)
@@ -11273,26 +11309,31 @@ function onSubagentStop(ctx, payload) {
     return { systemMessage: text };
   };
   const active = activeWork(ctx.paths);
-  if (!active?.work)
+  const answer = roleAnswer(payload.agent_transcript_path, payload.last_assistant_message, {
+    ms: handbackWaitMs(ctx.env)
+  });
+  const id = answerItem(ctx, answer);
+  if (!id)
     return tell(`Crew: ${role} stopped with no active work item: its answer was not recorded.`);
-  const id = active.work.id;
+  const activeId = active?.work?.id ?? null;
+  const elsewhere = id === activeId ? "" : ` (for ${id}, not the active ${activeId ?? "item: none is active"})`;
   const transcriptNote = payload.agent_transcript_path ? ` (${payload.agent_transcript_path})` : "";
   const nothingSaved = (reason) => tell(`Crew: ${role} stopped but nothing was saved for ${id} (${reason}): save its answer from the transcript${transcriptNote} by hand, or run the role again.`);
-  if (active.tampered)
+  if (id === activeId ? active?.tampered : loadWork(ctx.paths, id).tampered)
     return nothingSaved(tamperedItem(id));
   const progress = { saved: null, recorded: false, pending: null, reply: null };
   try {
     const input = {
-      answer: roleAnswer(payload.agent_transcript_path, payload.last_assistant_message, {
-        ms: handbackWaitMs(ctx.env)
-      }),
+      answer,
       ...payload.agent_id ? { agentId: payload.agent_id } : {},
       filedBy: "hook",
       tokens: roleTokens(payload.agent_transcript_path)
     };
     let note = withLock(workDir(ctx.paths, id), () => fileAnswer(ctx, id, role, input, transcriptNote, progress), { what: "work folder" });
     note = relayAfterLock(ctx, id, progress, note);
-    return note ? tell(note) : {};
+    if (note)
+      return tell(`${note}${elsewhere}`);
+    return elsewhere ? tell(`Crew: ${progress.saved?.agent ?? role}'s answer is filed${elsewhere}.`) : {};
   } catch (error) {
     const why = error.message;
     if (!progress.saved)
@@ -11311,10 +11352,17 @@ function relayAfterLock(ctx, id, progress, note) {
   const { agent, file } = progress.saved;
   const relayed = relay(ctx, question, progress.reply, agent);
   progress.pending = null;
-  if ("refused" in relayed)
-    return `Crew: ${agent}'s answer to ${question} ${whereSaved(progress.saved)} but the reply was not sent: ${relayed.refused}. Once that is cleared, send it with ${sendByHand(id, question, agent, file)}.`;
-  if (relayed.notes.length)
-    return `Crew: ${agent}'s answer to ${question} was sent, but ${relayed.notes.join("; ")}.`;
+  const notes = relayed.notes;
+  if ("refused" in relayed && relayed.delivered === undefined) {
+    const named2 = notes.length ? ` (${notes.join("; ")})` : "";
+    return `Crew: ${agent}'s answer to ${question} ${whereSaved(progress.saved)} but the reply was not sent: ${relayed.refused}${named2}. Once that is cleared, send it with ${sendByHand(id, question, agent, file)}.`;
+  }
+  if ("refused" in relayed) {
+    const sent = relayed.refused.replace(`${relayed.delivered} was delivered, but `, `${relayed.delivered} was sent, but `);
+    return `Crew: ${agent}'s answer to ${question} ${whereSaved(progress.saved)}: ${[sent, ...notes].join("; ")}.`;
+  }
+  if (notes.length)
+    return `Crew: ${agent}'s answer to ${question} was sent, but ${notes.join("; ")}.`;
   return note;
 }
 function fileAnswerBySession(ctx, id, role, input) {
@@ -11371,7 +11419,7 @@ function fileAnswer(ctx, id, role, input, transcriptNote, progress) {
     const kept = file.startsWith("conclave/") ? archiveExisting(dir, file) : { archived: null };
     if ("failed" in kept)
       return `Crew: ${agent}'s earlier answer could not be archived at ${kept.failed} (${kept.error}): the plain file was left as it was; save this answer from the transcript${transcriptNote} and run the role again if it is needed.`;
-    writeText(join39(dir, file), file.endsWith(".json") ? `${gatesRuling(answer) ?? unfenced(answer)}
+    writeText(join39(dir, file), file.endsWith(".json") ? `${gatesRuling(answer)}
 ` : `${answer}
 `);
     saved = { file, agent };
@@ -11482,9 +11530,15 @@ function relay(ctx, questionId, answer, agent) {
   const notes = [];
   try {
     const sent = reply(ctx.mail, questionId, answer, { as: agent }, notes);
-    return "refused" in sent ? { refused: sent.refused } : { notes };
+    if (!("refused" in sent))
+      return { notes };
+    return {
+      refused: sent.refused,
+      ...sent.delivered === undefined ? {} : { delivered: sent.delivered },
+      notes
+    };
   } catch (error) {
-    return { refused: error.message };
+    return { refused: error.message, notes };
   }
 }
 
@@ -12336,7 +12390,7 @@ function onPreToolUse(ctx, payload) {
 }
 
 // packages/engine/src/tasks.ts
-import { cpSync, existsSync as existsSync18 } from "node:fs";
+import { cpSync, existsSync as existsSync19 } from "node:fs";
 import { join as join41 } from "node:path";
 function shortId(workId) {
   return workId.slice(0, 14);
@@ -12407,7 +12461,7 @@ function openTask(ctx, env, work, task, criteria, text) {
   if (!body)
     return { refused: `plan.md names no task ${task}; give its text with --text "<task>"` };
   const names = taskNames(work.id, env.paths.root, task, env.policy.mail.worktrees);
-  if (existsSync18(names.worktree))
+  if (existsSync19(names.worktree))
     return { refused: `${names.worktree} exists; remove it or pick another task number` };
   let branches;
   try {
@@ -12612,7 +12666,7 @@ function mergeTask(ctx, env, work, task, options = {}) {
     return {
       refused: `${task} has no reply yet (message ${record.message}); the implementer ends with crew mail reply`
     };
-  const childPaths = existsSync18(record.worktree) ? resolvePaths(record.worktree, ctx.env) : null;
+  const childPaths = existsSync19(record.worktree) ? resolvePaths(record.worktree, ctx.env) : null;
   if (!childPaths)
     return {
       refused: `${task}'s worktree ${record.worktree} is gone; restore it with git worktree add ${record.worktree} ${record.branch}, then merge`
@@ -12659,7 +12713,7 @@ function mergeTask(ctx, env, work, task, options = {}) {
   saveWork(env.paths, work);
   const credit = creditChild(env.paths, work, record, options.forcedBy !== undefined);
   const childDir = workDir(env.paths, child);
-  if (existsSync18(workDir(childPaths, child)))
+  if (existsSync19(workDir(childPaths, child)))
     cpSync(workDir(childPaths, child), childDir, {
       recursive: true,
       force: false,
@@ -12768,10 +12822,7 @@ function packsPart(ctx) {
   return `, packs: ${registered}${missing ? ` (${missing} missing)` : ""}`;
 }
 function onPrompt(ctx) {
-  const notices = updateSession(ctx.paths, ctx.sessionId, (session) => {
-    session.stopBlocks = 0;
-    return takeNotices(session);
-  });
+  const notices = updateSession(ctx.paths, ctx.sessionId, (session) => takeNotices(session));
   const mail = refreshMail(ctx);
   const active = activeWork(ctx.paths);
   if (active?.work && !mail.failed)
@@ -12808,8 +12859,7 @@ function onSessionStart(ctx, payload = {}) {
   try {
     const discovered = discoverPacks(ctx.paths.userDir, ctx.env);
     const text = `pack discovery: ${discovered.join("; ")}`;
-    const last = listDecisions(ctx.paths).find((d) => d.kind === "pack")?.text;
-    if (discovered.length && text !== last)
+    if (discovered.length && text !== listDecisions(ctx.paths).find((d) => d.kind === "pack")?.text)
       appendDecision(ctx.paths, {
         at: nowIso(),
         item: "pack",
@@ -12834,7 +12884,8 @@ function onSessionStart(ctx, payload = {}) {
   }
   const lines2 = [
     "WizardingCode Developer Crew is active in this repository. Work is proven by the `crew` command and the crew skill, and a turn cannot end while watched source files have unproven changes.",
-    ctx.policy.attendedDecisions === "relay" ? "You run every crew command; the user never types one: a decision that is theirs (crew approve, skip, decide, accept, profile confirm) is relayed by you from the conversation under this repository's policy (attendedDecisions: relay), so run the command once the user has said yes, with no prompt; the record says relayed by the agent." : "You run every crew command; the user never types one: a decision that is theirs (crew approve, skip, decide, accept, profile confirm) is signed by the permission prompt your command raises, in auto mode too."
+    ctx.policy.attendedDecisions === "relay" ? "You run every crew command; the user never types one: a decision that is theirs (crew approve, skip, decide, accept, profile confirm) is relayed by you from the conversation under this repository's policy (attendedDecisions: relay), so run the command once the user has said yes, with no prompt; the record says relayed by the agent." : "You run every crew command; the user never types one: a decision that is theirs (crew approve, skip, decide, accept, profile confirm) is signed by the permission prompt your command raises, in auto mode too.",
+    `Engine: crew ${VERSION}.`
   ];
   if (active?.work)
     lines2.push(statusLine(ctx, active.work, active.tampered).replace(/^Crew: work/, "Work in progress:"));
@@ -12884,6 +12935,8 @@ function asksUserToTypeCrew(message2) {
 }
 function onStop(ctx, payload = {}) {
   const session = sessionState(loadState(ctx.paths), ctx.sessionId);
+  if (payload.stop_hook_active === false)
+    session.stopBlocks = 0;
   const done = (response, withNotices = false) => updateSession(ctx.paths, ctx.sessionId, (fresh) => {
     fresh.stopBlocks = session.stopBlocks;
     if (!withNotices)
@@ -12934,7 +12987,7 @@ function onStop(ctx, payload = {}) {
     }
     const blocker = inbox.blockers.find((b) => !b.noticedAt);
     if (blocker) {
-      mailQuietly(() => markNoticed(ctx.mail, blocker.id, notes), undefined);
+      mailQuietly(() => markNoticed(ctx.mail, blocker.id, notes), undefined, notes);
       return hold(`Crew: blocker ${blocker.id} from ${blocker.from.project}: ${subjectQuoted(blocker.subject)}. Read it (crew mail read ${blocker.id}) and say it to the user before anything else.`);
     }
   }
@@ -13013,7 +13066,7 @@ function handleHook(event, payload, env = process.env) {
 }
 
 // packages/engine/src/knowledge.ts
-import { existsSync as existsSync19, readdirSync as readdirSync8, realpathSync as realpathSync7 } from "node:fs";
+import { existsSync as existsSync20, readdirSync as readdirSync9, realpathSync as realpathSync7 } from "node:fs";
 import { isAbsolute as isAbsolute9, join as join42, relative as relative11, resolve as resolve5 } from "node:path";
 
 // packages/engine/src/verify.ts
@@ -13500,7 +13553,7 @@ function lookup(base, query, limit = 10) {
 }
 function fileInsideRoot(root, file) {
   const candidate = resolve5(root, file);
-  if (!existsSync19(candidate))
+  if (!existsSync20(candidate))
     return null;
   try {
     const real = realpathSync7(candidate);
@@ -13525,7 +13578,7 @@ function latestPlan(userDir, workspace) {
   const dir = ctoDir(userDir, workspace);
   let names;
   try {
-    names = readdirSync8(dir);
+    names = readdirSync9(dir);
   } catch {
     return null;
   }
@@ -13948,7 +14001,8 @@ function learnItem(paths, work, profile, policy, mail, proven, options = {}) {
       };
   }
   const cause = drafts.find((d) => d.kind === "root-cause");
-  const duplicate = cause ? entries.find((e) => e.kind === "root-cause" && visibleTo(e, scope) && sameRootCause(e, cause)) : undefined;
+  const contradicted = (e) => e.contradictedBy.some((r) => r.item === work.id && r.project === scope.project);
+  const duplicate = cause ? entries.find((e) => e.kind === "root-cause" && visibleTo(e, scope) && !contradicted(e) && sameRootCause(e, cause)) : undefined;
   if (duplicate && confirmTarget?.id !== duplicate.id)
     return {
       refused: `${duplicate.id} already records this root cause (item ${duplicate.item ?? "-"}, commit ${duplicate.commit ?? "-"}): crew learn ${work.id} --confirm ${duplicate.id} confirms it, crew knowledge contradict ${duplicate.id} --reason "<why>" --item ${work.id} disputes it`
@@ -14002,7 +14056,7 @@ function tellWorkspace(paths, work, mail, scope, written) {
 }
 
 // packages/engine/src/metrics.ts
-import { readdirSync as readdirSync9 } from "node:fs";
+import { readdirSync as readdirSync10 } from "node:fs";
 import { join as join44 } from "node:path";
 function emptyKnowledge() {
   const entries = {};
@@ -14037,7 +14091,7 @@ function knowledgeFigures(base, scope, projects) {
 }
 function workIds(paths) {
   try {
-    return readdirSync9(join44(paths.crewDir, "work"));
+    return readdirSync10(join44(paths.crewDir, "work"));
   } catch {
     return [];
   }
@@ -14074,7 +14128,7 @@ function computeMetrics(projects, knowledge = emptyKnowledge()) {
     const policy = loadPolicy(paths).policy;
     let ids = [];
     try {
-      ids = readdirSync9(join44(paths.crewDir, "work"));
+      ids = readdirSync10(join44(paths.crewDir, "work"));
     } catch {
       continue;
     }
@@ -14169,7 +14223,7 @@ function metricsText(m) {
 }
 
 // packages/engine/src/pdf.ts
-import { existsSync as existsSync20 } from "node:fs";
+import { existsSync as existsSync21 } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { delimiter as delimiter2, join as join45 } from "node:path";
@@ -14189,7 +14243,7 @@ function onPath2(binary, env) {
     if (!dir)
       continue;
     const path = join45(dir, binary);
-    if (existsSync20(path))
+    if (existsSync21(path))
       return path;
   }
   return null;
@@ -14199,7 +14253,7 @@ function findBrowser(env, candidates = BROWSER_CANDIDATES) {
   if (named2)
     return named2;
   for (const candidate of candidates) {
-    const found = candidate.includes("/") ? existsSync20(candidate) ? candidate : null : onPath2(candidate, env);
+    const found = candidate.includes("/") ? existsSync21(candidate) ? candidate : null : onPath2(candidate, env);
     if (found)
       return found;
   }
@@ -14276,7 +14330,7 @@ async function printPdf(html, out2, env, root, options = {}) {
 `).filter(Boolean).slice(-3).join(" ");
     return { ok: false, reason: `PDF not produced: the browser exited ${result.exit}: ${tail}` };
   }
-  if (!existsSync20(out2))
+  if (!existsSync21(out2))
     return {
       ok: false,
       reason: `PDF not produced: the browser exited 0 and wrote nothing at ${out2}`
@@ -14450,7 +14504,7 @@ async function recordTdd(paths, work, evidence, profile, criterionId, step, over
 }
 
 // packages/engine/src/workspace.ts
-import { existsSync as existsSync21 } from "node:fs";
+import { existsSync as existsSync22 } from "node:fs";
 import { join as join47 } from "node:path";
 var NO_WORKSPACE = "no workspace in policy.json (mail.workspace): crew workspace status lists the projects of one workspace";
 var CLOSED = new Set(["done", "refused", "expired"]);
@@ -14501,7 +14555,7 @@ function workspaceStatus(paths, policy, env) {
       priorities: 0,
       questions: 0
     };
-    if (!existsSync21(join47(root, ".git")))
+    if (!existsSync22(join47(root, ".git")))
       return { ...empty, gone: true, environment: "none" };
     const projectPaths = pathsFor(root, userDir);
     const ctx = mailContext(projectPaths, loadPolicy(projectPaths).policy, env);
@@ -14683,7 +14737,7 @@ function accept(env, target) {
     });
   }
   const dir = workDir(env.paths, target);
-  if (!/^[\w.-]+$/.test(target) || target.includes("..") || !existsSync22(join48(dir, "work.json")))
+  if (!/^[\w.-]+$/.test(target) || target.includes("..") || !existsSync23(join48(dir, "work.json")))
     return refuse(`unknown work item: ${target}`);
   const files = PROTECTED_WORK_FILES.filter((name) => recordIntegrity(env.paths, join48(dir, name)));
   return ok(`${target} accepted: ${files.join(", ")} now trusted as they are`, {
@@ -14889,7 +14943,7 @@ async function recordStrategyJudgement(env, opened, parsed, gateWord, usage) {
   if (record2.verdict !== "not-run") {
     if (planned.reviewer === "cto") {
       const cto = join48(dir, "conclave", "cto.md");
-      if (!existsSync22(cto))
+      if (!existsSync23(cto))
         return refuse("the CTO's review of the strategy comes before the ruling on the full route (conclave/cto.md, launched after crew strategy check)");
       if (statSync12(cto).mtimeMs < Date.parse(inputs.at))
         return refuse("conclave/cto.md predates the check: the CTO reviews the strategy as it is now, then the judge rules");
@@ -15002,12 +15056,12 @@ function guardContext(env, work, tampered) {
     strategyText: readText(join48(dir, "strategy.md")),
     researcherText: readText(join48(dir, "conclave", "researcher.md")),
     analysisText: readText(join48(dir, "analysis.md")),
-    originRecorded: existsSync22(join48(dir, "analysis", "origin.json")),
+    originRecorded: existsSync23(join48(dir, "analysis", "origin.json")),
     knownRootCauses: knownCausesOf(env, work),
     gitRepository: isGitRepo(env.paths.root),
     conclaveText: readText(join48(dir, "conclave.md")),
     ledger: loadLedger(env.paths, work.id).ledger,
-    planExists: existsSync22(join48(dir, "plan.md")),
+    planExists: existsSync23(join48(dir, "plan.md")),
     evidence: result.evidence,
     proven: result.verdict === "proven",
     unproven: result.unproven,
@@ -17236,7 +17290,7 @@ ${filedLine}` : ""}`, {
         return refuse(`${work.id} is not open (phase ${work.phase})`);
       if (!ROLE_NAMES.includes(role))
         return refuse(`unknown role ${role} (one of: ${ROLE_NAMES.join(", ")})`);
-      if (!existsSync22(file))
+      if (!existsSync23(file))
         return refuse(`no file at ${file}`);
       const observed = work.runtimes?.length ? work.runtimes : ["claude"];
       const byHook = observed.filter((n) => runtimeOf(n)?.guarantees.some((g) => g.what === "the roles' answers filed" && g.tier === "enforced"));

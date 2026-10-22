@@ -33,6 +33,9 @@ export function asksUserToTypeCrew(message: string | undefined): boolean {
 export function onStop(ctx: HookContext, payload: HookPayload = {}): HookResponse {
   // Read for the rule's decisions; written once, at the end, by `done`.
   const session = sessionState(loadState(ctx.paths), ctx.sessionId);
+  // A Stop that does not continue a block starts a new count (finding 114); an absent field, on a
+  // runtime that sends none, leaves the count alone, so the cap still releases a loop there.
+  if (payload.stop_hook_active === false) session.stopBlocks = 0;
   // The session's state is written under the lock every writer takes, with what this run decided
   // (its count of blocks) and, for a blocked turn end, the notices the roles' stops left, taken as
   // they stand then rather than as they were read above, so one left meanwhile is not written away.
@@ -109,7 +112,7 @@ export function onStop(ctx: HookContext, payload: HookPayload = {}): HookRespons
     // A blocker interrupts the end of the turn, once (SP2c §6: the doorbell, then the Stop hook names it).
     const blocker = inbox.blockers.find((b) => !b.noticedAt);
     if (blocker) {
-      mailQuietly(() => markNoticed(ctx.mail, blocker.id, notes), undefined);
+      mailQuietly(() => markNoticed(ctx.mail, blocker.id, notes), undefined, notes);
       return hold(
         `Crew: blocker ${blocker.id} from ${blocker.from.project}: ${subjectQuoted(blocker.subject)}. Read it (crew mail read ${blocker.id}) and say it to the user before anything else.`,
       );

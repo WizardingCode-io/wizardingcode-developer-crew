@@ -602,6 +602,20 @@ export interface GateOutcome {
   saveRefused?: string;
 }
 
+/**
+ * The files the reviewers read (finding 134): every path the item changed, watched or not, but
+ * the engine's own `.crew/` (compared without regard to case), from git's view, so an ignored file
+ * stays out. Outside git, or with nothing there, the watched list the rest of the run reads.
+ */
+export function reviewPaths(
+  root: string,
+  base: Parameters<typeof changedPaths>[1],
+  watched: readonly string[],
+): string[] {
+  const all = changedPaths(root, base).filter((p) => !p.toLowerCase().startsWith(".crew/"));
+  return all.length ? all : [...watched];
+}
+
 export async function runGates(
   paths: CrewPaths,
   work: WorkItem,
@@ -702,7 +716,9 @@ export async function runGates(
   // Task 6), so the report shows the packs and the expert's files even when crew team never ran.
   recordPackUse(work, paths.userDir, profile, changed, policy, registry);
   work.primaryTeam = primaryTeam(changed);
-  const reviewInputs = judgement.length ? writeReviewInputs(paths, work, changed, stamp) : null;
+  const reviewInputs = judgement.length
+    ? writeReviewInputs(paths, work, reviewPaths(paths.root, base, changed), stamp)
+    : null;
   const currentFingerprint = computeFingerprint(
     paths.root,
     profile,

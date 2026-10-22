@@ -1522,11 +1522,11 @@ test("SP6-T6 AC-4, AC-15: the gate run re-plans the seats with the registered te
   // A watched change beside the Markdown, so the run's own output shows which list fed what.
   write(root, "src/a.ts", "y");
   const out = await runGates(paths, work, profile, policy);
-  // AC-30: the review inputs and the risk areas read the watched list, so the agent's Markdown is
-  // not among the files cut for review and raises no risk area; the template's seat alone read it.
+  // AC-30: the risk areas read the watched list, so the agent's Markdown raises no risk area. The
+  // review inputs read every changed path since finding 134 (CON3 AC-1), so the reviewers see it.
   const files = readFileSync(join(workDir(paths, work.id), "review", "files.txt"), "utf8");
   expect(files).toContain("src/a.ts");
-  expect(files).not.toContain("agents/triage.md");
+  expect(files).toContain("agents/triage.md");
   expect(work.riskAreas).toEqual([]);
   expect(changedWatchedPaths(root, profile, work)).not.toContain("agents/triage.md");
   expect(out.evidence.runs.find((g) => g.gate === "test")?.status).toBe("pass");
@@ -1550,4 +1550,34 @@ test("SP6-T6 AC-4, AC-15: the gate run re-plans the seats with the registered te
   expect(report).toContain(
     "| expert | agentic-os | pack wizardingcode-pack-agentic-os (agents/**) |",
   );
+});
+
+test("CON3-AC-1: the review cut lists and diffs every file the item changed outside .crew/, watched or not, so a changed Markdown file the profile does not watch reaches the reviewers (finding 134)", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+    "plugins/x/SKILL.md": "# Skill\n",
+  });
+  const paths = repoPaths(root, testEnv());
+  const { profile } = ensureProfile(paths);
+  const work = createWork(paths, "fix");
+  work.route = "standard";
+  addCriterion(work, "x");
+  addSkip(work, "gate:e2e", "no environment in the fixture");
+  write(root, "src/a.ts", "y");
+  write(root, "plugins/x/SKILL.md", "# Skill\n\nA new rule for the reviewers.\n");
+  write(root, ".crew/notes.txt", "the engine's own file\n");
+  // The default profile keeps Markdown out of the watch: the turn-end rule never sees the SKILL.md.
+  expect(changedWatchedPaths(root, profile, work)).not.toContain("plugins/x/SKILL.md");
+  const out = await runGates(paths, work, profile, DEFAULT_POLICY);
+  expect(out.review).toBe(join(paths.crewDir, "work", work.id, "review"));
+  const review = out.review ?? "";
+  const files = readFileSync(join(review, "files.txt"), "utf8").split("\n").filter(Boolean);
+  expect(files).toContain("src/a.ts");
+  expect(files).toContain("plugins/x/SKILL.md");
+  expect(files.some((f) => f.toLowerCase().startsWith(".crew/"))).toBe(false);
+  const patch = readFileSync(join(review, "diff.patch"), "utf8");
+  expect(patch).toContain("+++ b/plugins/x/SKILL.md");
+  expect(patch).toContain("+A new rule for the reviewers.");
+  expect(patch).not.toContain(".crew/");
 });

@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import {
   appendFileSync,
   chmodSync,
@@ -26,8 +26,10 @@ import {
 } from "../src/hooks/subagent-stop.ts";
 import { loadItemMail, mailbox, ROLE_AGENT, send } from "../src/mail.ts";
 import { clearWorking, recordWorking, workingRoles } from "../src/state.ts";
+import * as store from "../src/store.ts";
 import { ROLE_NAMES } from "../src/team.ts";
-import type { RoleRecord } from "../src/types.ts";
+import type { Mailbox, RoleRecord } from "../src/types.ts";
+import { replyFile } from "../src/validation.ts";
 import { addCriterion, applyClassification, createWork, loadWork, saveWork } from "../src/work.ts";
 import { hookContext, makeRepo, tempDir, testEnv, write } from "./helpers.ts";
 
@@ -1372,4 +1374,198 @@ test("AC-2 (item D, finding 132): a resumed lead whose last turn holds no hand-b
     (r) => r.agent === "tech-lead",
   );
   expect(roles.map((r) => r.file)).toEqual(["conclave/lead-qa.md", null]);
+});
+
+test("CON3-AC-5: a lead's validation of a plan is filed as conclave/lead-<team>.plan.md, a resumed one as conclave/lead-<team>.plan-reply.md, never over the spec's files (finding 53)", () => {
+  expect(answerFile("tech-lead", "# qa lead's validation of w: plan\nverdict: validated\n")).toBe(
+    "conclave/lead-qa.plan.md",
+  );
+  expect(replyFile("lead-qa", "plan")).toBe("conclave/lead-qa.plan-reply.md");
+  // The spec's names and the delivery's are unchanged.
+  expect(answerFile("tech-lead", "# qa lead's validation of w: spec\nverdict: validated\n")).toBe(
+    "conclave/lead-qa.md",
+  );
+  expect(replyFile("lead-qa", "spec")).toBe("conclave/lead-qa-reply.md");
+  expect(
+    answerFile("tech-lead", "# qa lead's validation of w: delivery\nverdict: validated\n"),
+  ).toBe("conclave/lead-qa.delivery.md");
+  expect(replyFile("lead-qa", "delivery")).toBe("conclave/lead-qa.delivery-reply.md");
+  expect(replyFile("judge", "")).toBe("conclave/judge-reply.md");
+});
+
+/**
+ * The relay of a reviewer's answer to the lead's question, with the boxes as `mark` leaves them
+ * once the reply is in them: a box holding the reply reads as changed outside the engine.
+ */
+function relayWithBoxesChanged(boxes: RegExp, throwOnItemMail = false) {
+  const { root, ctx, work } = session();
+  onSubagentStop(ctx, {
+    agent_id: "r1",
+    agent_type: `${PLUGIN}:review-test-quality`,
+    last_assistant_message:
+      "# test-quality findings\n## Findings\n- F-1 · advisory · a.test.ts:9 · …\n",
+  });
+  const q = send(
+    ctx.mail,
+    { to: ".", agent: "review-test-quality", type: "question", text: "Which file line?" },
+    work,
+  );
+  if ("refused" in q) throw new Error(q.refused);
+  const qid = q.message.id;
+  const realRead = store.readProtectedJsonAt;
+  const realWrite = store.writeProtectedJson;
+  let changed = false;
+  const read = spyOn(store, "readProtectedJsonAt").mockImplementation(((
+    integrity: string,
+    file: string,
+  ) => {
+    const out = realRead<Mailbox>(integrity, file);
+    if (boxes.test(file) && out.data?.messages?.some((m) => m.replyTo === qid)) {
+      changed = true;
+      return { ...out, tampered: true };
+    }
+    return out;
+  }) as typeof store.readProtectedJsonAt);
+  const write = spyOn(store, "writeProtectedJson").mockImplementation(((
+    ...args: Parameters<typeof store.writeProtectedJson>
+  ) => {
+    if (throwOnItemMail && changed && String(args[1]).endsWith("mail.json"))
+      throw new Error("disk full");
+    return realWrite(...args);
+  }) as typeof store.writeProtectedJson);
+  let stop: { systemMessage?: string };
+  try {
+    stop = onSubagentStop(ctx, {
+      agent_id: "r1",
+      agent_type: `${PLUGIN}:review-test-quality`,
+      last_assistant_message: "F-1 is line 12.",
+    }) as { systemMessage?: string };
+  } finally {
+    read.mockRestore();
+    write.mockRestore();
+  }
+  const own = mailbox(ctx.paths.userDir, ctx.mail.self.workspace, ctx.mail.self.project).dir;
+  const outbox = JSON.parse(readFileSync(join(own, "outbox.json"), "utf8")) as Mailbox;
+  const sent = outbox.messages.find((m) => m.replyTo === qid);
+  return { root, ctx, work, qid, sent, text: stop.systemMessage ?? "" };
+}
+
+test("CON3-AC-6: a relayed reply delivered while the original could not be marked answered is reported as sent with that note, never as not sent with a send-by-hand line; a refusal keeps the relay's notes (finding 30)", () => {
+  // Every copy of the original changed between the delivery and the marking: nothing is marked.
+  const delivered = relayWithBoxesChanged(/(inbox|outbox)\.json$/);
+  expect(delivered.sent).toBeDefined();
+  const replyId = delivered.sent?.id ?? "";
+  expect(delivered.text).toContain(
+    `${replyId} was sent, but ${delivered.qid} could not be marked answered: `,
+  );
+  expect(delivered.text).not.toContain("was not sent");
+  expect(delivered.text).not.toContain("crew mail reply");
+  // The copies the marking skipped are named with it.
+  expect(delivered.text).toContain(`a copy of ${delivered.qid} was not changed: `);
+  // A plain refusal (here the item's record failing after a copy was skipped) keeps the notes.
+  const refused = relayWithBoxesChanged(/inbox\.json$/, true);
+  expect(refused.text).toContain("disk full");
+  expect(refused.text).toContain(`a copy of ${refused.qid} was not changed: `);
+});
+
+test("CON3-AC-10: the SubagentStop hook files a role's answer under the open item its heading names, else the one item waiting for the roles when the active one is not, else the active item; the notice names the item when it is not the active one (finding 136)", () => {
+  const { root, ctx, work: first } = session();
+  const second = createWork(ctx.paths, "Export invoices");
+  addCriterion(second, "y");
+  saveWork(ctx.paths, second);
+  const dir = tempDir("crew-transcript-");
+  const stop = (id: string, role: string, answer: string) =>
+    onSubagentStop(ctx, {
+      agent_id: id,
+      agent_type: `${PLUGIN}:${role}`,
+      agent_transcript_path: transcript(dir, answer, [[100, 10, 0, 0]]),
+      last_assistant_message: "Done.",
+    }) as { systemMessage?: string };
+  const folder = (id: string) => join(root, ".crew", "work", id);
+  const notActive = `for ${first.id}, not the active ${second.id}`;
+  // A reviewer's answer headed for the first item: filed there, and the notice names it.
+  const reviewed = stop(
+    "r1",
+    "review-code-quality",
+    `# code-quality findings for ${first.id}\n## Findings\n- none\n`,
+  );
+  expect(existsSync(join(folder(first.id), "review", "code-quality.findings.md"))).toBe(true);
+  expect(existsSync(join(folder(second.id), "review", "code-quality.findings.md"))).toBe(false);
+  expect(reviewed.systemMessage ?? "").toContain(notActive);
+  expect((loadEvidence(ctx.paths, first.id).evidence.roles ?? []).map((r) => r.agent)).toContain(
+    "review-code-quality",
+  );
+  // A judge's JSON (no heading): the first waits for the roles and the active one does not.
+  const waiting = loadWork(ctx.paths, first.id).work;
+  if (!waiting) throw new Error("no work");
+  waiting.awaiting = "role";
+  saveWork(ctx.paths, waiting);
+  const ruling =
+    '{"rulings":[{"gate":"code-quality","verdict":"proven","findings":[],"tokens":0}]}';
+  const ruled = stop("j1", "judge", ruling);
+  expect(existsSync(join(folder(first.id), "review", "ruling.json"))).toBe(true);
+  expect(existsSync(join(folder(second.id), "review", "ruling.json"))).toBe(false);
+  expect(ruled.systemMessage ?? "").toContain(notActive);
+  // With neither waiting: the active item's, as today.
+  const cleared = loadWork(ctx.paths, first.id).work;
+  if (!cleared) throw new Error("no work");
+  cleared.awaiting = null;
+  saveWork(ctx.paths, cleared);
+  stop("j2", "judge", ruling);
+  expect(existsSync(join(folder(second.id), "review", "ruling.json"))).toBe(true);
+  // A heading naming a learned item, and one naming an id no store of this project holds: the active item.
+  const learned = loadWork(ctx.paths, first.id).work;
+  if (!learned) throw new Error("no work");
+  learned.learned = { at: "t", entries: [], confirmed: [] };
+  saveWork(ctx.paths, learned);
+  stop("r2", "review-security", `# security findings for ${first.id}\n## Findings\n- none\n`);
+  expect(existsSync(join(folder(second.id), "review", "security.findings.md"))).toBe(true);
+  expect(existsSync(join(folder(first.id), "review", "security.findings.md"))).toBe(false);
+  stop("r3", "review-risk", "# risk findings for 2026-10-22-999-nowhere\n## Findings\n- none\n");
+  expect(existsSync(join(folder(second.id), "review", "risk.findings.md"))).toBe(true);
+});
+
+test("CON3-AC-11: a tampered item never takes a role's answer by its heading or its wait; the answer falls to the next rule and the tampered folder is left untouched", () => {
+  const { root, ctx, work: first } = session();
+  const second = createWork(ctx.paths, "Export invoices");
+  addCriterion(second, "y");
+  saveWork(ctx.paths, second);
+  const dir = tempDir("crew-transcript-");
+  const stop = (id: string, role: string, answer: string) =>
+    onSubagentStop(ctx, {
+      agent_id: id,
+      agent_type: `${PLUGIN}:${role}`,
+      agent_transcript_path: transcript(dir, answer, [[100, 10, 0, 0]]),
+      last_assistant_message: "Done.",
+    }) as { systemMessage?: string };
+  const folder = (id: string) => join(root, ".crew", "work", id);
+  // The first item waits for the roles, then its work.json is edited by hand.
+  const waiting = loadWork(ctx.paths, first.id).work;
+  if (!waiting) throw new Error("no work");
+  waiting.awaiting = "role";
+  saveWork(ctx.paths, waiting);
+  const file = join(folder(first.id), "work.json");
+  writeFileSync(
+    file,
+    readFileSync(file, "utf8").replace('"title"', '"title" ').replace(/\n$/, " \n"),
+  );
+  expect(loadWork(ctx.paths, first.id).tampered).toBe(true);
+  const before = readdirSync(folder(first.id)).sort();
+  // By its heading: the answer falls to the active item.
+  stop(
+    "r1",
+    "review-code-quality",
+    `# code-quality findings for ${first.id}\n## Findings\n- none\n`,
+  );
+  expect(existsSync(join(folder(first.id), "review", "code-quality.findings.md"))).toBe(false);
+  expect(existsSync(join(folder(second.id), "review", "code-quality.findings.md"))).toBe(true);
+  // By its wait: a judge's JSON falls to the active item too.
+  stop(
+    "j1",
+    "judge",
+    '{"rulings":[{"gate":"code-quality","verdict":"proven","findings":[],"tokens":0}]}',
+  );
+  expect(existsSync(join(folder(first.id), "review", "ruling.json"))).toBe(false);
+  expect(existsSync(join(folder(second.id), "review", "ruling.json"))).toBe(true);
+  expect(readdirSync(folder(first.id)).sort()).toEqual(before);
 });

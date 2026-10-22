@@ -499,3 +499,68 @@ test("SP4-T4 AC-2: with no verification file every fact with a URL source is wri
     "https://docs.example/b",
   ]);
 });
+
+test("CON3-AC-3: after crew knowledge contradict K-n --item <id>, crew learn <id> is no longer refused by K-n and writes the item's own root cause; a contradiction by another item, or by the same item id in another project, still refuses (finding 137)", () => {
+  const env = testEnv();
+  const p = project(env, "acme", "shop");
+  const cause = (title: string, text: string) => {
+    const w = item(p, title);
+    w.kind = "issue";
+    saveWork(p.paths, w);
+    writeFileSync(
+      join(workDir(p.paths, w.id), "analysis.md"),
+      `# Analysis\n\n## Origin\n\nnone\n\n## Cause\n\n${text}\n\n## Blast radius\n\nnone\n`,
+    );
+    writeOrigin(p.paths, w.id, {
+      at: "t",
+      paths: [{ path: "src/accounts.mjs", commits: [] }],
+      items: [],
+    });
+    return loadWork(p.paths, w.id).work as WorkItem;
+  };
+  const firstIssue = cause(
+    "Listing shows deactivated accounts",
+    "The listing query forgets the active filter after the status column moved.",
+  );
+  const first = learn(p, firstIssue);
+  if ("refused" in first) throw new Error(first.refused);
+  const root = first.entries.find((e) => e.kind === "root-cause") as KnowledgeEntry;
+  const again = cause(
+    "Deactivated accounts listed again",
+    "The listing query forgets the active filter on the status column.",
+  );
+  const refusal = {
+    refused: `${root.id} already records this root cause (item ${firstIssue.id}, commit ${root.commit}): crew learn ${again.id} --confirm ${root.id} confirms it, crew knowledge contradict ${root.id} --reason "<why>" --item ${again.id} disputes it`,
+  };
+  expect(learn(p, again)).toEqual(refusal);
+  const userDir = join(env.WIZARDINGCODE_HOME ?? "", "crew");
+  // What crew knowledge contradict writes (cli.ts, `contradict`): a ref of the item and this project.
+  const contradict = (by: string | null, project: string) => {
+    const changed = updateEntry(userDir, root.id, (e) => {
+      e.contradictedBy.push({ item: by, project, at: "t", reason: "another cause" });
+    });
+    if ("refused" in changed) throw new Error(changed.refused);
+  };
+  // Contradicted by another item of this project: the refusal stands.
+  contradict(firstIssue.id, "shop");
+  expect(learn(p, again)).toEqual(refusal);
+  // Contradicted by the same item id in another project: the refusal stands.
+  contradict(again.id, "crm");
+  expect(learn(p, again)).toEqual(refusal);
+  expect(loadWork(p.paths, again.id).work?.learned).toBeUndefined();
+  // Contradicted by this item in this project: the learn writes the item's own root cause.
+  contradict(again.id, "shop");
+  const out = learn(p, again);
+  expect(out).not.toHaveProperty("refused");
+  if ("refused" in out) throw new Error(out.refused);
+  const own = out.entries.find((e) => e.kind === "root-cause") as KnowledgeEntry;
+  expect(own).toMatchObject({
+    title: "Root cause: Deactivated accounts listed again",
+    text: "The listing query forgets the active filter on the status column.",
+    paths: ["src/accounts.mjs"],
+    item: again.id,
+  });
+  expect(own.id).not.toBe(root.id);
+  expect(entries(env).find((e) => e.id === root.id)?.kind).toBe("root-cause");
+  expect(loadWork(p.paths, again.id).work?.learned).toBeDefined();
+});

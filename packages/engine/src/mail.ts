@@ -1188,7 +1188,7 @@ export function reply(
   },
   // Where a copy the record pass could not change is named: the command's or the hook's output.
   notes: string[],
-): { reply: Message; original: Message } | { refused: string } {
+): { reply: Message; original: Message } | { refused: string; delivered?: string } {
   const ownDir = mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project).dir;
   const inbox = readBox(ownDir, "inbox");
   if (inbox.tampered) return { refused: tamperedBox(ctx.self.project, "inbox") };
@@ -1333,10 +1333,12 @@ export function reply(
     (w) => notes.push(skippedLine(id)(w)),
   );
   // The reply is delivered by now; a box that changed meanwhile leaves the original unmarked, and the
-  // refusal says so rather than passing the stale copy off as answered.
+  // refusal says so rather than passing the stale copy off as answered. It names the delivered
+  // reply, so a caller never reads it as not sent (finding 30).
   if (!answered)
     return {
       refused: `${replyMessage.id} was delivered, but ${id} could not be marked answered: its mailbox changed while it was being written`,
+      delivered: replyMessage.id,
     };
   // The item's record is written under the own mailbox's lock, the lock the sync writes it under
   // too, so a reply from a role's stop and the lead's sync never interleave on it (risk review of
