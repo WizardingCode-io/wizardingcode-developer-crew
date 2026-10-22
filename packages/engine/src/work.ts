@@ -813,6 +813,9 @@ export function guardFor(work: WorkItem, next: Phase, ctx: GuardContext): string
   } else if (next === "gate") {
     missing.push(...routeDocuments(work, ctx));
     for (const criterion of work.criteria) {
+      // A superseded criterion is proven through its replacement, which the loop reads in its own
+      // turn, as the verdict does (finding 135).
+      if (criterion.supersededBy) continue;
       if (isSkipped(work, `tdd:${criterion.id}`, ctx.policy)) continue;
       const record = ctx.evidence?.tdd.find((t) => t.criterion === criterion.id);
       if (!tddDone(record, criterion.kind)) {

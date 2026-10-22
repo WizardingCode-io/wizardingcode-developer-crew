@@ -39,6 +39,7 @@ import {
   raiseRoute,
   removeCriterion,
   saveWork,
+  supersedeCriterion,
   validatorPreconditions,
 } from "../src/work.ts";
 import { git, makeRepo, repoPaths, tempDir, testEnv } from "./helpers.ts";
@@ -1102,4 +1103,26 @@ test("SP4-T5 AC-2: the guard out of analyse names a known root cause neither cit
   ]);
   // No known cause: nothing asked beyond the document and the origin.
   expect(guardFor(work, "build", { ...ctx, knownRootCauses: [] })).toEqual([]);
+});
+
+test("F135: the gate guard reads a superseded criterion through its replacement, and refuses while the replacement has no complete record", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const work = createWork(paths, "fix");
+  applyClassification(work, "fix", { route: "fast", reasons: [], riskAreas: [] });
+  addCriterion(work, "the old text");
+  addCriterion(work, "the new text");
+  expect(supersedeCriterion(work, "AC-1", "AC-2")).toMatchObject({ criterion: { id: "AC-1" } });
+  const evidence = (records: Evidence["tdd"]): GuardContext => ({
+    ...empty,
+    evidence: { ...emptyEvidence(), tdd: records },
+  });
+  expect(guardFor(work, "gate", evidence([]))).toEqual([
+    "test-first record for AC-2 (crew tdd red/green)",
+  ]);
+  expect(guardFor(work, "gate", evidence([{ criterion: "AC-2", red: run }]))).toEqual([
+    "test-first record for AC-2 (crew tdd red/green)",
+  ]);
+  expect(guardFor(work, "gate", evidence([{ criterion: "AC-2", red: run, green: run }]))).toEqual(
+    [],
+  );
 });

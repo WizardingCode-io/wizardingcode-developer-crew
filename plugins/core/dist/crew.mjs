@@ -4544,6 +4544,8 @@ function guardFor(work, next, ctx) {
   } else if (next === "gate") {
     missing.push(...routeDocuments(work, ctx));
     for (const criterion of work.criteria) {
+      if (criterion.supersededBy)
+        continue;
       if (isSkipped(work, `tdd:${criterion.id}`, ctx.policy))
         continue;
       const record = ctx.evidence?.tdd.find((t) => t.criterion === criterion.id);

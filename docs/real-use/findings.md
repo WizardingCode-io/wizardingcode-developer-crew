@@ -1110,3 +1110,10 @@ Verdicts agree at every effort. Upheld findings: `high` reproduced Task 6's and 
 - Expected: the review cut takes every file the item changed, watched or not (the watch list decides what blocks a turn's end, not what a reviewer sees), or the profile of a plugin repository watches its shipped Markdown (`plugins/**/*.md`); the report names any changed file the cut left out.
 - Evidence: the item's `review/files.txt` (two lines), `review/code-quality.findings.md` (the "Not answerable" line of the first answer and the resumed answer), `review/ruling.json`.
 - Outcome: open, for the engine item of this consolidation (cli.ts / fingerprint.ts).
+
+### 135. The gate phase refuses an item whose superseded criterion has no record of its own
+- Date: 2026-10-22. Project: this repository. Item: `2026-10-22-007`. Category: `blocks`. Severity: medium.
+- What happened: the spec's round-1 returns made AC-5 and AC-7 false in part; `crew criteria <id> supersede AC-5 --by AC-8` and `AC-7 --by AC-9` recorded the replacements before any test-first record existed. The build proved AC-8 and AC-9, the gates and both judgement gates passed and `crew status` said proven, but `crew phase <id> next` out of build refused: `test-first record for AC-5 (crew tdd red/green)`, `test-first record for AC-7 (crew tdd before/after)`. The phase check (`work.ts`, the `next === "gate"` branch) reads each criterion's own record, where the verdict (`evidence.ts`) reads a superseded criterion's replacement.
+- Expected: the phase check reads a superseded criterion through its replacement, as the verdict does.
+- Evidence: the item's `work.json` (`supersededBy` on AC-5 and AC-7), the refused `crew phase` output.
+- Outcome: fixed in `2026-10-22-008` (fast route): the build-to-gate guard skips a superseded criterion, whose replacement it reads in its own turn; the row `F135` in `work.test.ts`.
