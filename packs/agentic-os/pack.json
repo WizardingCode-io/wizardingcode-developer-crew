@@ -1,8 +1,8 @@
 {
   "name": "wizardingcode-pack-agentic-os",
-  "version": "0.11.2",
+  "version": "0.11.3",
   "kind": "team",
-  "core": ">=0.11.2",
+  "core": ">=0.11.3",
   "verifiedAgainst": {
     "owasp-llm-top-10": "2025",
     "claude-code": "2026-10-20"
