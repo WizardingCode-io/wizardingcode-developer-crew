@@ -29,7 +29,7 @@ test("finds targets up to three levels deep and skips dependency folders", () =>
   expect(profile.watch.exclude).toEqual(["**/*.md", "docs/**", ".crew/**", ".claude/**"]);
 });
 
-test("re-detection keeps proposed and confirmed commands and timeouts", () => {
+test("re-detection keeps confirmed commands and timeouts, and replaces a proposed guess (CON6-AC-4)", () => {
   const dir = monorepo();
   const previous: Profile = detectProfile(dir);
   const target = previous.targets[0];
@@ -39,7 +39,8 @@ test("re-detection keeps proposed and confirmed commands and timeouts", () => {
   target.timeoutMs = 1234;
   const fresh = detectProfile(dir, previous);
   expect(fresh.targets[0]?.gates.lint).toEqual({ command: "make lint", source: "confirmed" });
-  expect(fresh.targets[0]?.gates.test).toEqual({ command: "make test", source: "proposed" });
+  expect(fresh.targets[0]?.gates.test?.source).toBe("detected");
+  expect(fresh.targets[0]?.gates.test?.command).not.toBe("make test");
   expect(fresh.targets[0]?.timeoutMs).toBe(1234);
 });
 
@@ -115,7 +116,8 @@ test("mergeProfile leaves the targets it is given untouched", () => {
   const previous = detectProfile(dir);
   const root = previous.targets[0];
   if (!root) throw new Error("no target");
-  root.gates.test = { command: "make test", source: "proposed" };
+  // Confirmed: only a person's command outlives a fresh detection (CON6-AC-4).
+  root.gates.test = { command: "make test", source: "confirmed" };
   root.timeoutMs = 1234;
   const targets = detectTargets(dir);
   const snapshot = JSON.stringify(targets);
@@ -180,7 +182,7 @@ test("SP7b-T3 AC-1: refreshProfile picks up a compose file as the environment an
   expect(profile.environment).toBeUndefined();
   write(root, "compose.yaml", 'services:\n  web:\n    image: x\n    ports:\n      - "8080:80"\n');
   const refreshed = refreshProfile(paths, profile);
-  expect(refreshed.changed).toContain("environment.start (.): docker compose up -d");
+  expect(refreshed.changed).toContain("environment.start: docker compose up -d");
   expect(loadProfile(paths).profile?.environment?.url).toBe("http://localhost:8080");
 });
 
@@ -318,7 +320,7 @@ test("SP6-T2 AC-3: mergeProfile carries tags and keeps a confirmed command over 
   expect(ensureProfile(other).profile.targets[0]?.tags).toEqual(["laravel"]);
 });
 
-test("SP6-T2 AC-3 (round 2): mergeProfile drops a pack's proposed command the detection no longer gives and takes a changed one, where a person's proposal or confirmation stays", () => {
+test("SP6-T2 AC-3 (round 2): mergeProfile drops a pack's proposed command the detection no longer gives and takes a changed one, where a person's confirmation stays", () => {
   const packGate = (command: string): GateCommand => ({
     command,
     source: "proposed",
@@ -371,7 +373,8 @@ test("SP6-T2 AC-3 (round 2): mergeProfile drops a pack's proposed command the de
   expect(removed.targets.map((t) => t.path)).toEqual(["."]);
   const php = removed.targets[0] as Target;
   expect(php.gates.test).toEqual({ command: "composer run test", source: "detected" });
-  expect(php.gates.lint).toEqual({ command: "vendor/bin/pint --test", source: "proposed" });
+  // A core guess nobody confirmed goes with the detection that no longer gives it (CON6-AC-4).
+  expect(php.gates.lint).toBeUndefined();
   expect(php.gates.typecheck).toEqual({
     command: "vendor/bin/phpstan",
     source: "confirmed",
@@ -393,4 +396,48 @@ test("SP6-T2 AC-3 (round 2): mergeProfile drops a pack's proposed command the de
   ]);
   expect(changed.targets[0]?.gates.test).toEqual(packGate("php artisan test --parallel"));
   expect(changed.targets[0]?.testScoped).toEqual(packGate("php artisan test --parallel {files}"));
+});
+
+test("CON6-AC-4 (finding 111): a fresh detection replaces a core detector's own unconfirmed guess and keeps only what a person confirmed; a pack's proposed command is replaced as before", () => {
+  const detected: Target = {
+    path: ".",
+    stack: "node",
+    packageManager: "npm",
+    gates: {
+      test: { command: "vitest run", source: "detected" },
+      lint: { command: "eslint .", source: "detected" },
+      typecheck: { command: "tsc --noEmit", source: "detected" },
+    },
+    timeoutMs: 1,
+  };
+  const previous: Profile = {
+    version: 1,
+    detectedAt: "2026-10-20T00:00:00.000Z",
+    targets: [
+      {
+        path: ".",
+        stack: "node",
+        packageManager: "npm",
+        gates: {
+          // A core detector's guess, never confirmed, no pack: the fresh detection replaces it.
+          test: { command: "npm test", source: "proposed" },
+          // A person's confirmed command: kept.
+          lint: { command: "biome check", source: "confirmed" },
+          // A pack's proposed command: replaced, as the pack rule already had it.
+          typecheck: { command: "vue-tsc", source: "proposed", pack: "wizardingcode-pack-x" },
+        },
+        testScoped: { command: "vitest related {files}", source: "proposed" },
+        timeoutMs: 1,
+      },
+    ],
+    watch: { exclude: [] },
+  };
+  const merged = mergeProfile(previous, [detected]);
+  expect(merged.targets[0]?.gates).toEqual({
+    test: { command: "vitest run", source: "detected" },
+    lint: { command: "biome check", source: "confirmed" },
+    typecheck: { command: "tsc --noEmit", source: "detected" },
+  });
+  // The scoped template follows the same rule: a guess nobody confirmed does not outlive detection.
+  expect(merged.targets[0]?.testScoped).toBeUndefined();
 });

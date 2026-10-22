@@ -3,14 +3,14 @@ import { existsSync as existsSync23, readFileSync as readFileSync10, realpathSyn
 import { basename as basename7, isAbsolute as isAbsolute10, join as join48, relative as relative12, resolve as resolve6, sep as sep5 } from "node:path";
 
 // packages/engine/src/analysis.ts
-import { existsSync as existsSync9, lstatSync as lstatSync2, mkdirSync as mkdirSync5 } from "node:fs";
-import { dirname as dirname5, isAbsolute as isAbsolute4, join as join17 } from "node:path";
+import { existsSync as existsSync9, lstatSync as lstatSync2, mkdirSync as mkdirSync4 } from "node:fs";
+import { dirname as dirname6, isAbsolute as isAbsolute4, join as join17 } from "node:path";
 
 // packages/engine/src/decisions.ts
-import { join as join2 } from "node:path";
+import { join as join3 } from "node:path";
 
 // packages/engine/src/store.ts
-import { basename, relative } from "node:path";
+import { basename, dirname as dirname2, relative } from "node:path";
 
 // packages/engine/src/fs.ts
 import { createHash } from "node:crypto";
@@ -28,12 +28,21 @@ function ensureDir(path) {
 function readText(path) {
   try {
     return readFileSync(path, "utf8");
+  } catch (error) {
+    if (error.code === "ENOENT")
+      return null;
+    throw error;
+  }
+}
+function readTextQuietly(path) {
+  try {
+    return readFileSync(path, "utf8");
   } catch {
     return null;
   }
 }
 function readJson(path) {
-  const text = readText(path);
+  const text = readTextQuietly(path);
   if (text === null)
     return null;
   try {
@@ -56,13 +65,97 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+// packages/engine/src/lock.ts
+import { mkdirSync as mkdirSync2, rmdirSync, statSync } from "node:fs";
+import { join as join2 } from "node:path";
+var LOCK_STALE_MS = 1e4;
+var LOCK_WAIT_MS = 2000;
+function sleep(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+function ageOf(path) {
+  try {
+    return Date.now() - statSync(path).mtimeMs;
+  } catch {
+    return null;
+  }
+}
+function breakStale(lock) {
+  const breaker = `${lock}.break`;
+  try {
+    mkdirSync2(breaker);
+  } catch (error) {
+    if (error.code !== "EEXIST")
+      throw error;
+    const age = ageOf(breaker);
+    if (age !== null && age > LOCK_STALE_MS) {
+      try {
+        rmdirSync(breaker);
+      } catch {}
+    }
+    return false;
+  }
+  try {
+    const age = ageOf(lock);
+    if (age === null)
+      return true;
+    if (age <= LOCK_STALE_MS)
+      return false;
+    try {
+      rmdirSync(lock);
+    } catch {}
+    return true;
+  } finally {
+    try {
+      rmdirSync(breaker);
+    } catch {}
+  }
+}
+
+class LockBusy extends Error {
+}
+function withLock(dir, fn, options = {}) {
+  mkdirSync2(dir, { recursive: true });
+  const lock = join2(dir, ".lock");
+  const waitMs = options.waitMs ?? LOCK_WAIT_MS;
+  const started = Date.now();
+  for (;; ) {
+    try {
+      mkdirSync2(lock);
+      break;
+    } catch (error) {
+      if (error.code !== "EEXIST")
+        throw error;
+    }
+    const age = ageOf(lock);
+    if (age !== null && age > LOCK_STALE_MS && breakStale(lock))
+      continue;
+    if (Date.now() - started >= waitMs)
+      throw new LockBusy(`${options.what ?? "folder"} busy: ${lock} held for more than ${waitMs} ms`);
+    if (age !== null)
+      sleep(20);
+  }
+  try {
+    return fn();
+  } finally {
+    try {
+      rmdirSync(lock);
+    } catch {}
+  }
+}
+
 // packages/engine/src/store.ts
 var HAND_WRITTEN = ".crew/policy.json";
 function rel(paths, absPath) {
   return relative(paths.root, absPath).replace(/\\/g, "/");
 }
 function readIntegrityFile(file) {
-  const text = readText(file);
+  let text;
+  try {
+    text = readText(file);
+  } catch {
+    return { map: {}, corrupt: true };
+  }
   if (text === null)
     return { map: {}, corrupt: false };
   try {
@@ -83,7 +176,10 @@ function rememberIn(file, key, text) {
   writeJson(file, integrity);
 }
 function remember(paths, absPath, text) {
-  rememberIn(paths.integrityFile, rel(paths, absPath), text);
+  const file = paths.integrityFile;
+  withLock(dirname2(file), () => rememberIn(file, rel(paths, absPath), text), {
+    what: "integrity record"
+  });
 }
 function writeProtectedText(paths, absPath, text) {
   writeText(absPath, text);
@@ -101,7 +197,12 @@ function recordIntegrity(paths, absPath) {
   return true;
 }
 function readProtected(integrityFile, key, absPath, handWritten) {
-  const text = readText(absPath);
+  let text;
+  try {
+    text = readText(absPath);
+  } catch {
+    return { data: null, tampered: true };
+  }
   if (text === null)
     return { data: null, tampered: false };
   const { map, corrupt } = readIntegrityFile(integrityFile);
@@ -136,7 +237,7 @@ function readProtectedJsonAt(integrityFile, absPath) {
 
 // packages/engine/src/decisions.ts
 function registerPath(paths) {
-  return join2(paths.crewDir, "decisions.json");
+  return join3(paths.crewDir, "decisions.json");
 }
 function load(paths) {
   const read = readProtectedJson(paths, registerPath(paths));
@@ -172,7 +273,7 @@ import { join as join14 } from "node:path";
 // packages/engine/src/fingerprint.ts
 import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync as readFileSync2 } from "node:fs";
-import { join as join3 } from "node:path";
+import { join as join4 } from "node:path";
 
 // packages/engine/src/glob.ts
 function escapeRegExp(s) {
@@ -228,7 +329,7 @@ var MAX_WATCHED_FILES = 20000;
 var UNAVAILABLE = "unavailable";
 var WALK_PREFIX = "walk:";
 function isGitRepo(root) {
-  return exists(join3(root, ".git"));
+  return exists(join4(root, ".git"));
 }
 function gitOut(root, args) {
   return execFileSync("git", args, {
@@ -291,7 +392,7 @@ function gitChangedSince(root, base) {
 function additionPatch(root, path) {
   let buffer;
   try {
-    buffer = readFileSync2(join3(root, path));
+    buffer = readFileSync2(join4(root, path));
   } catch {
     return "";
   }
@@ -366,7 +467,7 @@ function allWatchedFiles(root, profile, maxFiles = MAX_WATCHED_FILES) {
         continue;
       const path = rel2 ? `${rel2}/${entry.name}` : entry.name;
       if (entry.isDirectory()) {
-        if (!walk(join3(dir, entry.name), path))
+        if (!walk(join4(dir, entry.name), path))
           return false;
       } else if (entry.isFile()) {
         if (++seen > maxFiles)
@@ -389,16 +490,16 @@ function hashFile(abs) {
 function hashPaths(root, paths) {
   const hashes = {};
   for (const path of paths)
-    hashes[path] = hashFile(join3(root, path));
+    hashes[path] = hashFile(join4(root, path));
   return hashes;
 }
 function ownChanges(root, paths, base) {
   const files = base?.baseFiles;
   if (!files)
     return paths;
-  const own = new Set(paths.filter((path) => files[path] === undefined || hashFile(join3(root, path)) !== files[path]));
+  const own = new Set(paths.filter((path) => files[path] === undefined || hashFile(join4(root, path)) !== files[path]));
   for (const [path, hash] of Object.entries(files)) {
-    if (!paths.includes(path) && hashFile(join3(root, path)) !== hash)
+    if (!paths.includes(path) && hashFile(join4(root, path)) !== hash)
       own.add(path);
   }
   return [...own].sort();
@@ -431,7 +532,7 @@ function computeFingerprint(root, profile, base, maxFiles = MAX_WATCHED_FILES, m
       const parts2 = [`base:${commit ?? gitHead(root)}`];
       const watched = changed.filter((p) => isWatched(p, profile));
       for (const path of ownChanges(root, watched, base)) {
-        parts2.push(`${path}:${hashFile(join3(root, path))}`);
+        parts2.push(`${path}:${hashFile(join4(root, path))}`);
       }
       return `sha256:${sha256(parts2.join(`
 `))}`;
@@ -440,7 +541,7 @@ function computeFingerprint(root, profile, base, maxFiles = MAX_WATCHED_FILES, m
   const files = allWatchedFiles(root, profile, maxFiles);
   if (files === null)
     return UNAVAILABLE;
-  const parts = files.map((path) => `${path}:${hashFile(join3(root, path))}`);
+  const parts = files.map((path) => `${path}:${hashFile(join4(root, path))}`);
   return `${WALK_PREFIX}${sha256(parts.join(`
 `))}`;
 }
@@ -573,7 +674,7 @@ async function askJev(cfg, request, options = {}) {
     return { ok: false, unavailable: `no key (${JEV_KEY_VARIABLE})` };
   const doFetch = options.fetch ?? fetch;
   const timeoutMs = options.timeoutMs ?? 20000;
-  const sleep = options.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
+  const sleep2 = options.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
   const body = JSON.stringify({
     state: request.state,
     model: cfg.model,
@@ -598,7 +699,7 @@ async function askJev(cfg, request, options = {}) {
     if (response.status === 429 || response.status === 529) {
       const wait = RETRY_MS[attempt];
       if (wait !== undefined) {
-        await sleep(wait);
+        await sleep2(wait);
         continue;
       }
       return fail(response.status === 429 ? "rate limited (429)" : "overloaded (529)");
@@ -673,85 +774,6 @@ function topLevel(answer, levels) {
       best = { level, probability: p };
   }
   return best;
-}
-
-// packages/engine/src/lock.ts
-import { mkdirSync as mkdirSync2, rmdirSync, statSync } from "node:fs";
-import { join as join4 } from "node:path";
-var LOCK_STALE_MS = 1e4;
-var LOCK_WAIT_MS = 2000;
-function sleep(ms) {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-}
-function ageOf(path) {
-  try {
-    return Date.now() - statSync(path).mtimeMs;
-  } catch {
-    return null;
-  }
-}
-function breakStale(lock) {
-  const breaker = `${lock}.break`;
-  try {
-    mkdirSync2(breaker);
-  } catch (error) {
-    if (error.code !== "EEXIST")
-      throw error;
-    const age = ageOf(breaker);
-    if (age !== null && age > LOCK_STALE_MS) {
-      try {
-        rmdirSync(breaker);
-      } catch {}
-    }
-    return false;
-  }
-  try {
-    const age = ageOf(lock);
-    if (age === null)
-      return true;
-    if (age <= LOCK_STALE_MS)
-      return false;
-    try {
-      rmdirSync(lock);
-    } catch {}
-    return true;
-  } finally {
-    try {
-      rmdirSync(breaker);
-    } catch {}
-  }
-}
-
-class LockBusy extends Error {
-}
-function withLock(dir, fn, options = {}) {
-  mkdirSync2(dir, { recursive: true });
-  const lock = join4(dir, ".lock");
-  const waitMs = options.waitMs ?? LOCK_WAIT_MS;
-  const started = Date.now();
-  for (;; ) {
-    try {
-      mkdirSync2(lock);
-      break;
-    } catch (error) {
-      if (error.code !== "EEXIST")
-        throw error;
-    }
-    const age = ageOf(lock);
-    if (age !== null && age > LOCK_STALE_MS && breakStale(lock))
-      continue;
-    if (Date.now() - started >= waitMs)
-      throw new LockBusy(`${options.what ?? "folder"} busy: ${lock} held for more than ${waitMs} ms`);
-    if (age !== null)
-      sleep(20);
-  }
-  try {
-    return fn();
-  } finally {
-    try {
-      rmdirSync(lock);
-    } catch {}
-  }
 }
 
 // packages/engine/src/types.ts
@@ -930,7 +952,7 @@ function tddDone(record, kind) {
 // packages/engine/src/paths.ts
 import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { basename as basename2, dirname as dirname2, join as join5, relative as relative2, resolve, sep } from "node:path";
+import { basename as basename2, dirname as dirname3, join as join5, relative as relative2, resolve, sep } from "node:path";
 function canonical(path) {
   const abs = resolve(path);
   const tail = [];
@@ -939,7 +961,7 @@ function canonical(path) {
     try {
       return join5(realpathSync(dir), ...tail);
     } catch {
-      const parent = dirname2(dir);
+      const parent = dirname3(dir);
       if (parent === dir)
         return abs;
       tail.unshift(basename2(dir));
@@ -953,7 +975,7 @@ function findRoot(cwd) {
   for (;; ) {
     if (exists(join5(dir, ".git")))
       return dir;
-    const parent = dirname2(dir);
+    const parent = dirname3(dir);
     if (parent === dir)
       break;
     dir = parent;
@@ -1051,573 +1073,6 @@ function knowledgePath(userDir) {
 
 // packages/engine/src/policy.ts
 import { join as join6 } from "node:path";
-var MAIL_NAME = /^[a-z0-9][a-z0-9._-]{0,63}$/;
-var WORKTREES = /^(\.\.|[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)*)$/;
-var DEFAULT_MAIL_POLICY = {
-  workspace: null,
-  name: null,
-  accept: ["question", "notice"],
-  open: "read-only",
-  maxConcurrent: 2,
-  maxHops: 2,
-  maxTurns: 40,
-  maxMinutes: 30,
-  worktrees: "..",
-  maxParties: 4
-};
-var DEFAULT_TEAM_POLICY = {
-  template: "core",
-  always: [],
-  specialists: [],
-  maxExperts: 3,
-  maxValidationRounds: 2,
-  maxJudgementRounds: 2,
-  maxGateRounds: 2,
-  continuations: "ask"
-};
-var DEFAULT_VERIFY_POLICY = {
-  send: "claims",
-  maxClaimsPerItem: 50,
-  threshold: 0.8,
-  asks: [...VERIFY_ASKS]
-};
-function loadVerifyPolicy(raw) {
-  const v = typeof raw === "object" && raw !== null && !Array.isArray(raw) ? raw : {};
-  const threshold = typeof v.threshold === "number" && v.threshold >= 0.5 && v.threshold <= 0.99 ? v.threshold : DEFAULT_VERIFY_POLICY.threshold;
-  const asks = Array.isArray(v.asks) ? v.asks.filter((a) => VERIFY_ASKS.includes(a)) : [];
-  return {
-    send: v.send === "claims-and-snippets" ? "claims-and-snippets" : "claims",
-    maxClaimsPerItem: bounded(v.maxClaimsPerItem, RANGES.maxClaimsPerItem, DEFAULT_VERIFY_POLICY.maxClaimsPerItem),
-    threshold,
-    asks: asks.length ? asks : [...DEFAULT_VERIFY_POLICY.asks]
-  };
-}
-var DEFAULT_POLICY = {
-  requiredGates: [],
-  judgementGates: [],
-  riskPaths: {},
-  riskPathExclusions: [],
-  minimumRoute: "fast",
-  allowSkips: ["tdd", "e2e"],
-  artifacts: "commit",
-  unattendedDecisions: "wait",
-  attendedDecisions: "relay",
-  mail: DEFAULT_MAIL_POLICY,
-  team: DEFAULT_TEAM_POLICY,
-  verify: DEFAULT_VERIFY_POLICY
-};
-var NAME_HINT = "a lowercase name of letters, digits, dot, dash and underscore, up to 64 characters";
-var RANGES = {
-  maxConcurrent: { min: 1, max: 10 },
-  maxHops: { min: 1, max: 10 },
-  maxTurns: { min: 1, max: 500 },
-  maxMinutes: { min: 1, max: 600 },
-  maxParties: { min: 2, max: 4 },
-  maxExperts: { min: 1, max: 3 },
-  maxValidationRounds: { min: 1, max: 2 },
-  maxJudgementRounds: { min: 1, max: 2 },
-  maxGateRounds: { min: 1, max: 2 },
-  maxClaimsPerItem: { min: 1, max: 200 }
-};
-var EXCLUSION_GLOB = /^(?!\.?\/)(?!.*(?:^|\/)\.\.(?:\/|$))(?=.*[^*?/])[^\s\\]{1,200}$/;
-var EXCLUSION_HINT = "a relative glob of the repository with at least one literal character: no leading slash or ./, no .. segment, no whitespace or backslash, up to 200 characters";
-var SETTABLE_POLICY_KEYS = {
-  attendedDecisions: { values: ["prompt", "relay"] },
-  unattendedDecisions: { values: ["wait", "count", "validator"] },
-  "mail.workspace": { pattern: MAIL_NAME, hint: NAME_HINT },
-  "mail.name": { pattern: MAIL_NAME, hint: NAME_HINT },
-  "mail.open": { values: ["read-only", "branch"] },
-  "mail.maxConcurrent": { integer: RANGES.maxConcurrent },
-  "mail.maxHops": { integer: RANGES.maxHops },
-  "mail.maxTurns": { integer: RANGES.maxTurns },
-  "mail.maxMinutes": { integer: RANGES.maxMinutes },
-  "mail.maxParties": { integer: RANGES.maxParties },
-  "mail.worktrees": {
-    pattern: WORKTREES,
-    hint: "a relative path with no spaces (.. for the folder beside the root)"
-  },
-  "team.template": {
-    pattern: /^[a-z][a-z0-9-]*$/,
-    hint: "core or a pack's template name (a lowercase word)"
-  },
-  "team.maxExperts": { integer: RANGES.maxExperts },
-  "team.maxValidationRounds": { integer: RANGES.maxValidationRounds },
-  "team.maxJudgementRounds": { integer: RANGES.maxJudgementRounds },
-  "team.maxGateRounds": { integer: RANGES.maxGateRounds },
-  "team.continuations": { values: ["ask", "granted"] },
-  "verify.send": { values: ["claims", "claims-and-snippets"] },
-  "verify.maxClaimsPerItem": { integer: RANGES.maxClaimsPerItem },
-  "verify.threshold": { decimal: { min: 0.5, max: 0.99 } },
-  "verify.asks": { subset: VERIFY_ASKS },
-  riskPathExclusions: { list: { pattern: EXCLUSION_GLOB, hint: EXCLUSION_HINT } }
-};
-var LIST_POLICY_KEYS = Object.entries(SETTABLE_POLICY_KEYS).filter(([, rule]) => ("list" in rule)).map(([key]) => key);
-var TAMPERED_POLICY = "state changed outside the engine: .crew/policy.json; the user can accept it with crew policy accept";
-function policyPath(paths) {
-  return join6(paths.crewDir, "policy.json");
-}
-function checkSettable(key, rule, value) {
-  if ("decimal" in rule) {
-    const { min: min2, max: max2 } = rule.decimal;
-    const n2 = Number(value);
-    return /^\d+(?:\.\d{1,2})?$/.test(value) && n2 >= min2 && n2 <= max2 ? n2 : {
-      refused: `${key} is a number from ${min2} to ${max2} with at most two decimals, not ${value}`
-    };
-  }
-  if ("subset" in rule) {
-    const names = value.split(",").map((n2) => n2.trim()).filter(Boolean);
-    const unknown = names.filter((n2) => !rule.subset.includes(n2));
-    return names.length && !unknown.length ? [...new Set(names)] : {
-      refused: `${key} is a comma-separated subset of ${rule.subset.join(", ")}, not ${value || "nothing"}`
-    };
-  }
-  if ("values" in rule)
-    return rule.values.includes(value) ? value : { refused: `${key} is one of ${rule.values.join(", ")}, not ${value}` };
-  if ("pattern" in rule)
-    return rule.pattern.test(value) ? value : { refused: `${key} is ${rule.hint}, not ${value}` };
-  if ("list" in rule)
-    return rule.list.pattern.test(value) ? value : { refused: `${key} is ${rule.list.hint}, not ${value}` };
-  const n = Number(value);
-  const { min, max } = rule.integer;
-  return /^\d+$/.test(value) && n >= min && n <= max ? n : { refused: `${key} is a whole number from ${min} to ${max}, not ${value}` };
-}
-function setPolicyValue(paths, key, value) {
-  const rule = SETTABLE_POLICY_KEYS[key];
-  if (!rule) {
-    return {
-      refused: `unknown policy key: ${key} (crew policy set writes ${Object.keys(SETTABLE_POLICY_KEYS).join(", ")})`
-    };
-  }
-  if ("list" in rule) {
-    return {
-      refused: `${key} is a list: crew policy set ${key} "<glob>" adds one glob, --remove takes it out`
-    };
-  }
-  const checked = checkSettable(key, rule, value);
-  if (isRefusal(checked))
-    return checked;
-  const file = readPolicyFile(paths);
-  if ("refused" in file)
-    return file;
-  const { raw } = file;
-  const dot = key.indexOf(".");
-  if (dot === -1)
-    raw[key] = checked;
-  else {
-    const block = raw[key.slice(0, dot)];
-    raw[key.slice(0, dot)] = {
-      ...typeof block === "object" && block !== null && !Array.isArray(block) ? block : {},
-      [key.slice(dot + 1)]: checked
-    };
-  }
-  writeProtectedJson(paths, policyPath(paths), raw);
-  return { key, value };
-}
-function readPolicyFile(paths) {
-  const read = readProtectedJson(paths, policyPath(paths));
-  if (read.tampered)
-    return { refused: TAMPERED_POLICY };
-  return { raw: { ...read.data ?? {} } };
-}
-function isRefusal(checked) {
-  return typeof checked === "object" && !Array.isArray(checked);
-}
-function planListChange(paths, key, value, remove) {
-  const rule = SETTABLE_POLICY_KEYS[key];
-  if (!rule || !("list" in rule)) {
-    return { refused: `${key} is not a list key (${LIST_POLICY_KEYS.join(", ")})` };
-  }
-  const checked = checkSettable(key, rule, value);
-  if (isRefusal(checked))
-    return checked;
-  const file = readPolicyFile(paths);
-  if ("refused" in file)
-    return file;
-  const { raw } = file;
-  const list = strings(raw[key]);
-  const listed = list.includes(value);
-  if (remove && !listed) {
-    const lists = list.length ? `it lists: ${list.join(", ")}` : "it lists nothing";
-    return { refused: `${key} does not list ${value} (${lists})` };
-  }
-  if (remove)
-    return { key, value, action: "removed", list: list.filter((g) => g !== value), raw };
-  if (listed)
-    return { key, value, action: "already listed", list, raw };
-  return { key, value, action: "added", list: [...list, value], raw };
-}
-function writeListChange(paths, change) {
-  writeProtectedJson(paths, policyPath(paths), { ...change.raw, [change.key]: change.list });
-}
-function mailName(value) {
-  return typeof value === "string" && MAIL_NAME.test(value) ? value : null;
-}
-function bounded(value, range, fallback) {
-  return typeof value === "number" && Number.isInteger(value) && value >= range.min && value <= range.max ? value : fallback;
-}
-function loadMailPolicy(raw) {
-  const m = typeof raw === "object" && raw !== null && !Array.isArray(raw) ? raw : {};
-  return {
-    workspace: mailName(m.workspace),
-    name: mailName(m.name),
-    accept: Array.isArray(m.accept) ? m.accept.filter(isMailType) : [...DEFAULT_MAIL_POLICY.accept],
-    open: m.open === "branch" ? "branch" : "read-only",
-    maxConcurrent: bounded(m.maxConcurrent, RANGES.maxConcurrent, DEFAULT_MAIL_POLICY.maxConcurrent),
-    maxHops: bounded(m.maxHops, RANGES.maxHops, DEFAULT_MAIL_POLICY.maxHops),
-    maxTurns: bounded(m.maxTurns, RANGES.maxTurns, DEFAULT_MAIL_POLICY.maxTurns),
-    maxMinutes: bounded(m.maxMinutes, RANGES.maxMinutes, DEFAULT_MAIL_POLICY.maxMinutes),
-    worktrees: typeof m.worktrees === "string" && WORKTREES.test(m.worktrees) ? m.worktrees : DEFAULT_MAIL_POLICY.worktrees,
-    maxParties: bounded(m.maxParties, RANGES.maxParties, DEFAULT_MAIL_POLICY.maxParties)
-  };
-}
-function decisionCounts(policy, decision) {
-  if (decision.by === "validator")
-    return decision.mode === undefined || policy.unattendedDecisions === "validator";
-  return decision.by !== "agent" || policy.unattendedDecisions === "count";
-}
-var RISK_AREAS = [
-  "auth",
-  "payments",
-  "personal-data",
-  "data-migration",
-  "infra",
-  "public-api",
-  "secrets"
-];
-function strings(value) {
-  return Array.isArray(value) ? value.filter((v) => typeof v === "string") : [];
-}
-var TEAM_NAMES = [
-  "architects",
-  "researchers",
-  "etl",
-  "security",
-  "devops",
-  "qa",
-  "backend",
-  "frontend",
-  "agentic-os"
-];
-function loadTeamPolicy(raw) {
-  const t = typeof raw === "object" && raw !== null && !Array.isArray(raw) ? raw : {};
-  return {
-    template: typeof t.template === "string" && /^[a-z][a-z0-9-]*$/.test(t.template) ? t.template : "core",
-    always: strings(t.always).filter((n) => TEAM_NAMES.includes(n)),
-    specialists: strings(t.specialists),
-    maxExperts: bounded(t.maxExperts, RANGES.maxExperts, DEFAULT_TEAM_POLICY.maxExperts),
-    maxValidationRounds: bounded(t.maxValidationRounds, RANGES.maxValidationRounds, DEFAULT_TEAM_POLICY.maxValidationRounds),
-    maxJudgementRounds: bounded(t.maxJudgementRounds, RANGES.maxJudgementRounds, DEFAULT_TEAM_POLICY.maxJudgementRounds),
-    maxGateRounds: bounded(t.maxGateRounds, RANGES.maxGateRounds, DEFAULT_TEAM_POLICY.maxGateRounds),
-    continuations: t.continuations === "granted" ? "granted" : "ask"
-  };
-}
-function loadPolicy(paths) {
-  const read = readProtectedJson(paths, policyPath(paths));
-  const raw = read.data ?? {};
-  const riskPaths = {};
-  const rawRisk = raw.riskPaths ?? {};
-  for (const area of RISK_AREAS) {
-    const patterns = strings(rawRisk[area]);
-    if (patterns.length)
-      riskPaths[area] = patterns;
-  }
-  const minimumRoute = ROUTE_ORDER.includes(raw.minimumRoute) ? raw.minimumRoute : DEFAULT_POLICY.minimumRoute;
-  const allowSkips = Array.isArray(raw.allowSkips) ? strings(raw.allowSkips) : DEFAULT_POLICY.allowSkips;
-  return {
-    policy: {
-      requiredGates: strings(raw.requiredGates).filter((g) => GATE_NAMES.includes(g)),
-      judgementGates: strings(raw.judgementGates).filter(isJudgementGateName),
-      riskPaths,
-      riskPathExclusions: strings(raw.riskPathExclusions),
-      minimumRoute,
-      allowSkips,
-      artifacts: raw.artifacts === "local" ? "local" : "commit",
-      unattendedDecisions: raw.unattendedDecisions === "count" || raw.unattendedDecisions === "validator" ? raw.unattendedDecisions : "wait",
-      attendedDecisions: raw.attendedDecisions === "prompt" ? "prompt" : "relay",
-      mail: loadMailPolicy(raw.mail),
-      team: loadTeamPolicy(raw.team),
-      verify: loadVerifyPolicy(raw.verify)
-    },
-    tampered: read.tampered
-  };
-}
-function skipAllowed(policy, step) {
-  const bare = step.replace(/^(gate|tdd):/, "");
-  return policy.allowSkips.some((s) => s === "*" || s === step || s === bare || s === "tdd" && step.startsWith("tdd:"));
-}
-
-// packages/engine/src/objections.ts
-function ledgerPath(paths, id) {
-  return join7(workDir(paths, id), "objections.json");
-}
-function emptyLedger() {
-  return { objections: [] };
-}
-function loadLedger(paths, id) {
-  const read = readProtectedJson(paths, ledgerPath(paths, id));
-  return { ledger: read.data ?? emptyLedger(), tampered: read.tampered };
-}
-function saveLedger(paths, id, ledger) {
-  writeProtectedJson(paths, ledgerPath(paths, id), ledger);
-}
-function addObjection(ledger, text, raisedBy, severity) {
-  const taken = ledger.objections.map((o) => Number(o.id.slice("O-".length))).filter(Number.isFinite);
-  const next = taken.length ? Math.max(...taken) + 1 : 1;
-  const objection = {
-    id: `O-${next}`,
-    raisedBy,
-    severity,
-    text: text.trim(),
-    raisedAt: nowIso()
-  };
-  ledger.objections.push(objection);
-  return objection;
-}
-function bindObjection(ledger, work, id, criterion) {
-  const objection = ledger.objections.find((o) => o.id === id);
-  if (!objection)
-    return { refused: `unknown objection: ${id}` };
-  if (objection.waived)
-    return { refused: `${id} is waived; it stays waived` };
-  if (!work.criteria.some((c) => c.id === criterion)) {
-    return { refused: `unknown criterion: ${criterion}` };
-  }
-  objection.criterion = criterion;
-  return objection;
-}
-function waiveObjection(ledger, id, reason, decision) {
-  const objection = ledger.objections.find((o) => o.id === id);
-  if (!objection)
-    return { refused: `unknown objection: ${id}` };
-  if (decision.by === "validator") {
-    return {
-      refused: "the validator never waives an objection; a person does, or it is bound to a criterion"
-    };
-  }
-  objection.waived = {
-    reason: reason.trim(),
-    at: nowIso(),
-    by: decision.by,
-    ...decision.mode ? { mode: decision.mode } : {},
-    ...decision.relayed ? { relayed: true } : {}
-  };
-  return objection;
-}
-function objectionStatus(objection, work, evidence, policy) {
-  if (objection.waived && decisionCounts(policy, objection.waived))
-    return "waived";
-  if (objection.criterion) {
-    const criterion = work.criteria.find((c) => c.id === objection.criterion);
-    const record = evidence?.tdd.find((t) => t.criterion === objection.criterion);
-    return criterion && tddDone(record, criterion.kind) ? "resolved" : "bound";
-  }
-  return "open";
-}
-function blockingObjections(ledger, work, evidence, policy, statuses) {
-  return ledger.objections.filter((o) => o.severity === "blocking" && statuses.includes(objectionStatus(o, work, evidence, policy)));
-}
-
-// packages/engine/src/priorities.ts
-import { existsSync as existsSync2, mkdirSync as mkdirSync3, writeFileSync as writeFileSync2 } from "node:fs";
-import { join as join8 } from "node:path";
-function prioritiesDir(userDir, workspace) {
-  return join8(userDir, "workspaces", workspace);
-}
-function hashOf(text) {
-  return `sha256:${sha256(text)}`;
-}
-function readSignature(dir) {
-  const file = join8(dir, "priorities.json");
-  if (!existsSync2(file))
-    return;
-  const raw = readJson(file);
-  if (!raw || typeof raw.hash !== "string")
-    return null;
-  return { hash: raw.hash, by: String(raw.by ?? ""), at: String(raw.at ?? "") };
-}
-function prioritiesState(userDir, workspace) {
-  const dir = prioritiesDir(userDir, workspace);
-  const path = join8(dir, "priorities.md");
-  const text = readText(path);
-  if (text === null)
-    return { state: "none", path, text: null, signedAt: null };
-  const signature = readSignature(dir);
-  if (signature === undefined)
-    return { state: "unsigned", path, text, signedAt: null };
-  if (signature === null || signature.hash !== hashOf(text))
-    return { state: "changed", path, text, signedAt: null };
-  return { state: "signed", path, text, signedAt: signature.at };
-}
-function acceptPriorities(userDir, workspace, options) {
-  const dir = prioritiesDir(userDir, workspace);
-  const path = join8(dir, "priorities.md");
-  if (options.file !== undefined) {
-    const copied = readText(options.file);
-    if (copied === null)
-      return { refused: `${options.file} cannot be read` };
-    if (!copied.trim())
-      return { refused: `${options.file} is empty` };
-    mkdirSync3(dir, { recursive: true });
-    writeFileSync2(path, copied);
-  }
-  const text = readText(path);
-  if (text === null || !text.trim())
-    return {
-      refused: `no priorities to sign: write ${path}, or crew workspace priorities accept --file <path>`
-    };
-  const hash = hashOf(text);
-  const at = nowIso();
-  writeJson(join8(dir, "priorities.json"), { hash, by: options.by, at });
-  return { state: "signed", path, text, signedAt: at, hash };
-}
-function prioritiesLine(status) {
-  switch (status.state) {
-    case "signed":
-      return `priorities: signed (${status.signedAt})`;
-    case "changed":
-      return "priorities: changed since signing (crew workspace priorities accept)";
-    case "unsigned":
-      return "priorities: unsigned (crew workspace priorities accept)";
-    default:
-      return `priorities: none (write ${status.path}, or crew workspace priorities accept --file <path>)`;
-  }
-}
-function triageText(work, where) {
-  const t = work.triage;
-  if (!t)
-    return `priority ${work.priority ?? "normal"}`;
-  if (t.confirmed === null)
-    return `priority ${t.proposed} (proposed, unconfirmed: no signed business priorities)`;
-  if (where === "status")
-    return `priority ${work.priority ?? "normal"}`;
-  return `priority ${t.confirmed} (${triageSummary(t)})`;
-}
-var NOT_SIGNED = "the business priorities are not signed (crew workspace priorities accept [--file <path>]): the proposal stays unconfirmed";
-function triagePriority(proposed, flag, reason, state, by) {
-  const cleaned = reason?.trim() ? reason.trim().replace(/\s*\n\s*/g, " ") : null;
-  const against = state === "signed" ? "signed" : state === "none" ? "none" : "unsigned";
-  if (against !== "signed") {
-    if (flag !== undefined)
-      return { refused: NOT_SIGNED };
-    return { proposed, confirmed: null, by, reason: cleaned, against, at: nowIso() };
-  }
-  const confirmed = flag ?? proposed;
-  if (priorityRank(confirmed) < priorityRank(proposed))
-    return {
-      refused: `the source proposed ${proposed}; the lead confirms or lowers, never raises`
-    };
-  if (priorityRank(confirmed) > priorityRank(proposed) && !cleaned)
-    return { refused: 'a lowering needs --reason "<why>"' };
-  return { proposed, confirmed, by, reason: cleaned, against, at: nowIso() };
-}
-function triageSummary(triage) {
-  if (triage.confirmed === null)
-    return `proposed ${triage.proposed}, unconfirmed (no signed business priorities)`;
-  const reason = triage.reason ? `: ${triage.reason}` : "";
-  return `proposed ${triage.proposed}, confirmed ${triage.confirmed} against the signed business priorities${reason}`;
-}
-
-// packages/engine/src/questions.ts
-import { appendFileSync, existsSync as existsSync4, lstatSync, realpathSync as realpathSync3 } from "node:fs";
-import { dirname as dirname3, isAbsolute as isAbsolute2, join as join11, relative as relative4 } from "node:path";
-
-// packages/engine/src/source.ts
-import { existsSync as existsSync3, realpathSync as realpathSync2, statSync as statSync2 } from "node:fs";
-import { isAbsolute, join as join9, relative as relative3 } from "node:path";
-var CONNECTORS = ["clickup", "jira", "notion", "other"];
-var KEYS = new Set([
-  "channel",
-  "connector",
-  "externalId",
-  "url",
-  "documentPath",
-  "proposedPriority"
-]);
-function confinedDocument(root, documentPath) {
-  const bad = `source: documentPath ${documentPath}`;
-  if (!documentPath.trim() || isAbsolute(documentPath) || documentPath.split(/[\\/]/).includes(".."))
-    return { refused: `${bad} is not a relative path under the root` };
-  const candidate = join9(root, documentPath);
-  let real;
-  let rootReal;
-  try {
-    if (!existsSync3(candidate) || !statSync2(candidate).isFile())
-      return { refused: `${bad} is not a file under the root` };
-    real = realpathSync2(candidate);
-    rootReal = realpathSync2(root);
-  } catch {
-    return { refused: `${bad} is not a file under the root` };
-  }
-  const rel2 = relative3(rootReal, real);
-  if (rel2 === "" || rel2.startsWith("..") || isAbsolute(rel2))
-    return { refused: `${bad} resolves outside the root` };
-  return { file: real };
-}
-function parseSource(raw, root) {
-  let value;
-  try {
-    value = JSON.parse(raw);
-  } catch {
-    return { refused: "source: a JSON object" };
-  }
-  if (typeof value !== "object" || value === null || Array.isArray(value))
-    return { refused: "source: a JSON object" };
-  const input = value;
-  for (const key of Object.keys(input))
-    if (!KEYS.has(key))
-      return { refused: `source: unknown key ${key}` };
-  const channel = input.channel;
-  if (channel !== "document" && channel !== "task-manager")
-    return { refused: "source: channel is document or task-manager" };
-  const source = { channel };
-  if (channel === "task-manager") {
-    const connector = input.connector;
-    const externalId = input.externalId;
-    if (typeof connector !== "string" || typeof externalId !== "string" || !externalId.trim())
-      return { refused: "source: a task manager needs connector and externalId" };
-    if (!CONNECTORS.includes(connector))
-      return { refused: "source: connector is clickup, jira, notion or other" };
-    source.connector = connector;
-    source.externalId = externalId.trim();
-  } else {
-    const documentPath = input.documentPath;
-    if (typeof documentPath !== "string")
-      return { refused: "source: a document needs documentPath" };
-    const file = confinedDocument(root, documentPath);
-    if ("refused" in file)
-      return file;
-    if (!(readText(file.file) ?? "").trim())
-      return { refused: `source: documentPath ${documentPath} is empty` };
-    source.documentPath = documentPath;
-  }
-  if (input.url !== undefined) {
-    if (typeof input.url !== "string" || !/^https?:\/\//.test(input.url))
-      return { refused: "source: url is http or https" };
-    source.url = input.url;
-  }
-  if (input.proposedPriority !== undefined) {
-    if (!isMailPriority(input.proposedPriority))
-      return { refused: "source: proposedPriority is one of blocker, high, normal, low" };
-    source.proposedPriority = input.proposedPriority;
-  }
-  return source;
-}
-function sourceLine(source) {
-  if (source.channel === "document")
-    return `document ${source.documentPath ?? ""}`;
-  return `${source.connector ?? "other"} ${source.externalId ?? ""}${source.url ? ` (${source.url})` : ""}`;
-}
-function sourceText(source, root, input) {
-  if (source.channel !== "document" || !source.documentPath)
-    return input;
-  const file = confinedDocument(root, source.documentPath);
-  if ("refused" in file)
-    return file;
-  return readText(file.file) ?? "";
-}
-
-// packages/engine/src/state.ts
-import { join as join10 } from "node:path";
 
 // packages/engine/src/classify.ts
 var WORK_TYPES = {
@@ -2052,7 +1507,8 @@ function taskSeats(scope, policy) {
     seats.push({ role: "judge", team: null, kind: "debate", reason: "a gate is planned" });
   return seats;
 }
-function plannedSeats(route, riskAreas, changed, policy, scope, options, registry = TEAMS, templatePaths = changed) {
+function plannedSeats(route, riskAreas, changed, policy, options = {}) {
+  const { scope, strategy, registry = TEAMS, templatePaths = changed } = options;
   if (scope !== undefined)
     return taskSeats(scope, policy);
   const seats = [];
@@ -2062,23 +1518,24 @@ function plannedSeats(route, riskAreas, changed, policy, scope, options, registr
   };
   if (route !== "fast")
     plan({ role: "researcher", team: "researchers", kind: "debate", reason: `${route} route` });
-  const gate = (name, team, reason) => plan({ role: `review-${name}`, team, kind: "gate", gate: name, reason });
+  const owner = (name) => Object.entries(registry).find(([, t]) => t.gates.includes(name))?.[0] ?? null;
+  const gate = (name, reason, team = owner(name)) => plan({ role: `review-${name}`, team, kind: "gate", gate: name, reason });
   if (route !== "fast") {
-    gate("code-quality", "backend", `${route} route`);
-    gate("test-quality", "qa", `${route} route`);
+    gate("code-quality", `${route} route`);
+    gate("test-quality", `${route} route`);
   }
   if (route === "full")
-    gate("security", "security", "full route");
+    gate("security", "full route");
   else if (route === "standard" && riskAreas.length)
-    gate("security", "security", `risk area${riskAreas.length === 1 ? "" : "s"} ${riskAreas.join(", ")}`);
+    gate("security", `risk area${riskAreas.length === 1 ? "" : "s"} ${riskAreas.join(", ")}`);
   const interfaces = changed.filter(isInterfacePath);
   if (interfaces.length)
-    gate("ui-ux", "qa", interfaceReason(interfaces));
+    gate("ui-ux", interfaceReason(interfaces));
   if (route === "full") {
-    gate("risk", "architects", "full route");
-    gate("architecture", "architects", "full route");
+    gate("risk", "full route", "architects");
+    gate("architecture", "full route");
   }
-  if (route === "full" && options?.strategy)
+  if (route === "full" && strategy)
     plan({
       role: "cto",
       team: null,
@@ -2088,17 +1545,15 @@ function plannedSeats(route, riskAreas, changed, policy, scope, options, registr
     });
   for (const team of policy.team.always)
     for (const g of registry[team].gates)
-      gate(g, team, "policy team.always");
+      gate(g, "policy team.always", team);
   for (const team of ["etl", "devops"]) {
     const reason = seated(team, registry[team], route, riskAreas, policy);
     if (reason)
       for (const g of registry[team].gates)
-        gate(g, team, reason);
+        gate(g, reason, team);
   }
-  for (const g of policy.judgementGates) {
-    const team = Object.entries(registry).find(([, t]) => t.gates.includes(g))?.[0] ?? null;
-    plan({ role: `review-${g}`, team, kind: "gate", gate: g, reason: "policy" });
-  }
+  for (const g of policy.judgementGates)
+    gate(g, "policy");
   if (route !== "fast")
     for (const [name, def] of Object.entries(registry)) {
       const rule = def.mandatory;
@@ -2146,7 +1601,564 @@ function auditSeats(scope, policy) {
   return seats;
 }
 
+// packages/engine/src/policy.ts
+var MAIL_NAME = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+var LOWERCASE_WORD = /^[a-z][a-z0-9-]*$/;
+var WORKTREES = /^(\.\.|[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)*)$/;
+var DEFAULT_MAIL_POLICY = {
+  workspace: null,
+  name: null,
+  accept: ["question", "notice"],
+  open: "read-only",
+  maxConcurrent: 2,
+  maxHops: 2,
+  maxTurns: 40,
+  maxMinutes: 30,
+  worktrees: "..",
+  maxParties: 4
+};
+var DEFAULT_TEAM_POLICY = {
+  template: "core",
+  always: [],
+  specialists: [],
+  maxExperts: 3,
+  maxValidationRounds: 2,
+  maxJudgementRounds: 2,
+  maxGateRounds: 2,
+  continuations: "ask"
+};
+var DEFAULT_VERIFY_POLICY = {
+  send: "claims",
+  maxClaimsPerItem: 50,
+  threshold: 0.8,
+  asks: [...VERIFY_ASKS]
+};
+function loadVerifyPolicy(raw) {
+  const v = typeof raw === "object" && raw !== null && !Array.isArray(raw) ? raw : {};
+  const threshold = typeof v.threshold === "number" && v.threshold >= 0.5 && v.threshold <= 0.99 ? v.threshold : DEFAULT_VERIFY_POLICY.threshold;
+  const asks = Array.isArray(v.asks) ? v.asks.filter((a) => VERIFY_ASKS.includes(a)) : [];
+  return {
+    send: v.send === "claims-and-snippets" ? "claims-and-snippets" : "claims",
+    maxClaimsPerItem: bounded(v.maxClaimsPerItem, RANGES.maxClaimsPerItem, DEFAULT_VERIFY_POLICY.maxClaimsPerItem),
+    threshold,
+    asks: asks.length ? asks : [...DEFAULT_VERIFY_POLICY.asks]
+  };
+}
+var DEFAULT_POLICY = {
+  requiredGates: [],
+  judgementGates: [],
+  riskPaths: {},
+  riskPathExclusions: [],
+  minimumRoute: "fast",
+  allowSkips: ["tdd", "e2e"],
+  artifacts: "commit",
+  unattendedDecisions: "wait",
+  attendedDecisions: "relay",
+  mail: { ...DEFAULT_MAIL_POLICY, accept: [...DEFAULT_MAIL_POLICY.accept] },
+  team: DEFAULT_TEAM_POLICY,
+  verify: DEFAULT_VERIFY_POLICY
+};
+var NAME_HINT = "a lowercase name of letters, digits, dot, dash and underscore, up to 64 characters";
+var RANGES = {
+  maxConcurrent: { min: 1, max: 10 },
+  maxHops: { min: 1, max: 10 },
+  maxTurns: { min: 1, max: 500 },
+  maxMinutes: { min: 1, max: 600 },
+  maxParties: { min: 2, max: 4 },
+  maxExperts: { min: 1, max: 3 },
+  maxValidationRounds: { min: 1, max: 2 },
+  maxJudgementRounds: { min: 1, max: 2 },
+  maxGateRounds: { min: 1, max: 2 },
+  maxClaimsPerItem: { min: 1, max: 200 }
+};
+var EXCLUSION_GLOB = /^(?!\.?\/)(?!.*(?:^|\/)\.\.(?:\/|$))(?=.*[^*?/])[^\s\\]{1,200}$/;
+var EXCLUSION_HINT = "a relative glob of the repository with at least one literal character: no leading slash or ./, no .. segment, no whitespace or backslash, up to 200 characters";
+var SETTABLE_POLICY_KEYS = {
+  attendedDecisions: { values: ["prompt", "relay"] },
+  unattendedDecisions: { values: ["wait", "count", "validator"] },
+  "mail.workspace": { pattern: MAIL_NAME, hint: NAME_HINT },
+  "mail.name": { pattern: MAIL_NAME, hint: NAME_HINT },
+  "mail.open": { values: ["read-only", "branch"] },
+  "mail.maxConcurrent": { integer: RANGES.maxConcurrent },
+  "mail.maxHops": { integer: RANGES.maxHops },
+  "mail.maxTurns": { integer: RANGES.maxTurns },
+  "mail.maxMinutes": { integer: RANGES.maxMinutes },
+  "mail.maxParties": { integer: RANGES.maxParties },
+  "mail.worktrees": {
+    pattern: WORKTREES,
+    hint: "a relative path with no spaces (.. for the folder beside the root)"
+  },
+  "team.template": {
+    pattern: LOWERCASE_WORD,
+    hint: "core or a pack's template name (a lowercase word)"
+  },
+  "team.maxExperts": { integer: RANGES.maxExperts },
+  "team.maxValidationRounds": { integer: RANGES.maxValidationRounds },
+  "team.maxJudgementRounds": { integer: RANGES.maxJudgementRounds },
+  "team.maxGateRounds": { integer: RANGES.maxGateRounds },
+  "team.continuations": { values: ["ask", "granted"] },
+  "verify.send": { values: ["claims", "claims-and-snippets"] },
+  "verify.maxClaimsPerItem": { integer: RANGES.maxClaimsPerItem },
+  "verify.threshold": { decimal: { min: 0.5, max: 0.99 } },
+  "verify.asks": { subset: VERIFY_ASKS },
+  riskPathExclusions: { list: { pattern: EXCLUSION_GLOB, hint: EXCLUSION_HINT } }
+};
+var LIST_POLICY_KEYS = Object.entries(SETTABLE_POLICY_KEYS).filter(([, rule]) => ("list" in rule)).map(([key]) => key);
+var TAMPERED_POLICY = "state changed outside the engine: .crew/policy.json; the user can accept it with crew policy accept";
+function policyPath(paths) {
+  return join6(paths.crewDir, "policy.json");
+}
+function checkSettable(key, rule, value) {
+  if ("decimal" in rule) {
+    const { min: min2, max: max2 } = rule.decimal;
+    const n2 = Number(value);
+    return /^\d+(?:\.\d{1,2})?$/.test(value) && n2 >= min2 && n2 <= max2 ? n2 : {
+      refused: `${key} is a number from ${min2} to ${max2} with at most two decimals, not ${value}`
+    };
+  }
+  if ("subset" in rule) {
+    const names = value.split(",").map((n2) => n2.trim()).filter(Boolean);
+    const unknown = names.filter((n2) => !rule.subset.includes(n2));
+    return names.length && !unknown.length ? [...new Set(names)] : {
+      refused: `${key} is a comma-separated subset of ${rule.subset.join(", ")}, not ${value || "nothing"}`
+    };
+  }
+  if ("values" in rule)
+    return rule.values.includes(value) ? value : { refused: `${key} is one of ${rule.values.join(", ")}, not ${value}` };
+  if ("pattern" in rule)
+    return rule.pattern.test(value) ? value : { refused: `${key} is ${rule.hint}, not ${value}` };
+  if ("list" in rule)
+    return rule.list.pattern.test(value) ? value : { refused: `${key} is ${rule.list.hint}, not ${value}` };
+  const n = Number(value);
+  const { min, max } = rule.integer;
+  return /^\d+$/.test(value) && n >= min && n <= max ? n : { refused: `${key} is a whole number from ${min} to ${max}, not ${value}` };
+}
+function setPolicyValue(paths, key, value) {
+  const rule = Object.hasOwn(SETTABLE_POLICY_KEYS, key) ? SETTABLE_POLICY_KEYS[key] : undefined;
+  if (!rule) {
+    return {
+      refused: `unknown policy key: ${key} (crew policy set writes ${Object.keys(SETTABLE_POLICY_KEYS).join(", ")})`
+    };
+  }
+  if ("list" in rule) {
+    return {
+      refused: `${key} is a list: crew policy set ${key} "<glob>" adds one glob, --remove takes it out`
+    };
+  }
+  const checked = checkSettable(key, rule, value);
+  if (isRefusal(checked))
+    return checked;
+  const file = readPolicyFile(paths);
+  if ("refused" in file)
+    return file;
+  const { raw } = file;
+  const dot = key.indexOf(".");
+  if (dot === -1)
+    raw[key] = checked;
+  else {
+    const block = raw[key.slice(0, dot)];
+    raw[key.slice(0, dot)] = {
+      ...typeof block === "object" && block !== null && !Array.isArray(block) ? block : {},
+      [key.slice(dot + 1)]: checked
+    };
+  }
+  writeProtectedJson(paths, policyPath(paths), raw);
+  return { key, value };
+}
+function readPolicyFile(paths) {
+  const read = readProtectedJson(paths, policyPath(paths));
+  if (read.tampered)
+    return { refused: TAMPERED_POLICY };
+  return { raw: { ...read.data ?? {} } };
+}
+function isRefusal(checked) {
+  return typeof checked === "object" && !Array.isArray(checked);
+}
+function planListChange(paths, key, value, remove) {
+  const rule = Object.hasOwn(SETTABLE_POLICY_KEYS, key) ? SETTABLE_POLICY_KEYS[key] : undefined;
+  if (!rule || !("list" in rule)) {
+    return { refused: `${key} is not a list key (${LIST_POLICY_KEYS.join(", ")})` };
+  }
+  const checked = checkSettable(key, rule, value);
+  if (isRefusal(checked))
+    return checked;
+  const file = readPolicyFile(paths);
+  if ("refused" in file)
+    return file;
+  const { raw } = file;
+  const list = strings(raw[key]);
+  const listed = list.includes(value);
+  if (remove && !listed) {
+    const lists = list.length ? `it lists: ${list.join(", ")}` : "it lists nothing";
+    return { refused: `${key} does not list ${value} (${lists})` };
+  }
+  if (remove)
+    return { key, value, action: "removed", list: list.filter((g) => g !== value), raw };
+  if (listed)
+    return { key, value, action: "already listed", list, raw };
+  return { key, value, action: "added", list: [...list, value], raw };
+}
+function writeListChange(paths, change) {
+  writeProtectedJson(paths, policyPath(paths), { ...change.raw, [change.key]: change.list });
+}
+function mailName(value) {
+  return typeof value === "string" && MAIL_NAME.test(value) ? value : null;
+}
+function bounded(value, range, fallback) {
+  return typeof value === "number" && Number.isInteger(value) && value >= range.min && value <= range.max ? value : fallback;
+}
+function loadMailPolicy(raw) {
+  const m = typeof raw === "object" && raw !== null && !Array.isArray(raw) ? raw : {};
+  return {
+    workspace: mailName(m.workspace),
+    name: mailName(m.name),
+    accept: Array.isArray(m.accept) ? m.accept.filter(isMailType) : [...DEFAULT_MAIL_POLICY.accept],
+    open: m.open === "branch" ? "branch" : "read-only",
+    maxConcurrent: bounded(m.maxConcurrent, RANGES.maxConcurrent, DEFAULT_MAIL_POLICY.maxConcurrent),
+    maxHops: bounded(m.maxHops, RANGES.maxHops, DEFAULT_MAIL_POLICY.maxHops),
+    maxTurns: bounded(m.maxTurns, RANGES.maxTurns, DEFAULT_MAIL_POLICY.maxTurns),
+    maxMinutes: bounded(m.maxMinutes, RANGES.maxMinutes, DEFAULT_MAIL_POLICY.maxMinutes),
+    worktrees: typeof m.worktrees === "string" && WORKTREES.test(m.worktrees) ? m.worktrees : DEFAULT_MAIL_POLICY.worktrees,
+    maxParties: bounded(m.maxParties, RANGES.maxParties, DEFAULT_MAIL_POLICY.maxParties)
+  };
+}
+function decisionCounts(policy, decision) {
+  if (decision.by === "validator")
+    return decision.mode === undefined || policy.unattendedDecisions === "validator";
+  return decision.by !== "agent" || policy.unattendedDecisions === "count";
+}
+var RISK_AREAS = [
+  "auth",
+  "payments",
+  "personal-data",
+  "data-migration",
+  "infra",
+  "public-api",
+  "secrets"
+];
+function strings(value) {
+  return Array.isArray(value) ? value.filter((v) => typeof v === "string") : [];
+}
+var TEAM_NAMES = Object.keys(TEAMS);
+function loadTeamPolicy(raw) {
+  const t = typeof raw === "object" && raw !== null && !Array.isArray(raw) ? raw : {};
+  return {
+    template: typeof t.template === "string" && LOWERCASE_WORD.test(t.template) ? t.template : "core",
+    always: strings(t.always).filter((n) => TEAM_NAMES.includes(n)),
+    specialists: strings(t.specialists),
+    maxExperts: bounded(t.maxExperts, RANGES.maxExperts, DEFAULT_TEAM_POLICY.maxExperts),
+    maxValidationRounds: bounded(t.maxValidationRounds, RANGES.maxValidationRounds, DEFAULT_TEAM_POLICY.maxValidationRounds),
+    maxJudgementRounds: bounded(t.maxJudgementRounds, RANGES.maxJudgementRounds, DEFAULT_TEAM_POLICY.maxJudgementRounds),
+    maxGateRounds: bounded(t.maxGateRounds, RANGES.maxGateRounds, DEFAULT_TEAM_POLICY.maxGateRounds),
+    continuations: t.continuations === "granted" ? "granted" : "ask"
+  };
+}
+function loadPolicy(paths) {
+  const read = readProtectedJson(paths, policyPath(paths));
+  const raw = read.data ?? {};
+  const riskPaths = {};
+  const rawRisk = raw.riskPaths ?? {};
+  for (const area of RISK_AREAS) {
+    const patterns = strings(rawRisk[area]);
+    if (patterns.length)
+      riskPaths[area] = patterns;
+  }
+  const minimumRoute = ROUTE_ORDER.includes(raw.minimumRoute) ? raw.minimumRoute : DEFAULT_POLICY.minimumRoute;
+  const allowSkips = Array.isArray(raw.allowSkips) ? strings(raw.allowSkips) : [...DEFAULT_POLICY.allowSkips];
+  return {
+    policy: {
+      requiredGates: strings(raw.requiredGates).filter((g) => GATE_NAMES.includes(g)),
+      judgementGates: strings(raw.judgementGates).filter(isJudgementGateName),
+      riskPaths,
+      riskPathExclusions: strings(raw.riskPathExclusions),
+      minimumRoute,
+      allowSkips,
+      artifacts: raw.artifacts === "local" ? "local" : "commit",
+      unattendedDecisions: raw.unattendedDecisions === "count" || raw.unattendedDecisions === "validator" ? raw.unattendedDecisions : "wait",
+      attendedDecisions: raw.attendedDecisions === "prompt" ? "prompt" : "relay",
+      mail: loadMailPolicy(raw.mail),
+      team: loadTeamPolicy(raw.team),
+      verify: loadVerifyPolicy(raw.verify)
+    },
+    tampered: read.tampered
+  };
+}
+function skipAllowed(policy, step) {
+  const bare = step.replace(/^(gate|tdd):/, "");
+  return policy.allowSkips.some((s) => s === "*" || s === step || s === bare || s === "tdd" && step.startsWith("tdd:"));
+}
+
+// packages/engine/src/objections.ts
+function ledgerPath(paths, id) {
+  return join7(workDir(paths, id), "objections.json");
+}
+function emptyLedger() {
+  return { objections: [] };
+}
+function loadLedger(paths, id) {
+  const read = readProtectedJson(paths, ledgerPath(paths, id));
+  return { ledger: read.data ?? emptyLedger(), tampered: read.tampered };
+}
+function saveLedger(paths, id, ledger) {
+  writeProtectedJson(paths, ledgerPath(paths, id), ledger);
+}
+function addObjection(ledger, text, raisedBy, severity) {
+  const taken = ledger.objections.map((o) => Number(o.id.slice("O-".length))).filter(Number.isFinite);
+  const next = taken.length ? Math.max(...taken) + 1 : 1;
+  const objection = {
+    id: `O-${next}`,
+    raisedBy,
+    severity,
+    text: text.trim(),
+    raisedAt: nowIso()
+  };
+  ledger.objections.push(objection);
+  return objection;
+}
+function bindObjection(ledger, work, id, criterion) {
+  const objection = ledger.objections.find((o) => o.id === id);
+  if (!objection)
+    return { refused: `unknown objection: ${id}` };
+  if (objection.waived)
+    return { refused: `${id} is waived; it stays waived` };
+  if (!work.criteria.some((c) => c.id === criterion)) {
+    return { refused: `unknown criterion: ${criterion}` };
+  }
+  objection.criterion = criterion;
+  return objection;
+}
+function waiveObjection(ledger, id, reason, decision) {
+  const objection = ledger.objections.find((o) => o.id === id);
+  if (!objection)
+    return { refused: `unknown objection: ${id}` };
+  if (decision.by === "validator") {
+    return {
+      refused: "the validator never waives an objection; a person does, or it is bound to a criterion"
+    };
+  }
+  objection.waived = {
+    reason: reason.trim(),
+    at: nowIso(),
+    by: decision.by,
+    ...decision.mode ? { mode: decision.mode } : {},
+    ...decision.relayed ? { relayed: true } : {}
+  };
+  return objection;
+}
+function objectionStatus(objection, work, evidence, policy) {
+  if (objection.waived && decisionCounts(policy, objection.waived))
+    return "waived";
+  if (objection.criterion) {
+    const criterion = work.criteria.find((c) => c.id === objection.criterion);
+    const record = evidence?.tdd.find((t) => t.criterion === objection.criterion);
+    return criterion && tddDone(record, criterion.kind) ? "resolved" : "bound";
+  }
+  return "open";
+}
+function blockingObjections(ledger, work, evidence, policy, statuses) {
+  return ledger.objections.filter((o) => o.severity === "blocking" && statuses.includes(objectionStatus(o, work, evidence, policy)));
+}
+
+// packages/engine/src/priorities.ts
+import { existsSync as existsSync2 } from "node:fs";
+import { join as join8 } from "node:path";
+function prioritiesDir(userDir, workspace) {
+  return join8(userDir, "workspaces", workspace);
+}
+function hashOf(text) {
+  return `sha256:${sha256(text)}`;
+}
+function readSignature(dir) {
+  const file = join8(dir, "priorities.json");
+  if (!existsSync2(file))
+    return;
+  const raw = readJson(file);
+  if (!raw || typeof raw.hash !== "string")
+    return null;
+  return { hash: raw.hash, by: String(raw.by ?? ""), at: String(raw.at ?? "") };
+}
+function prioritiesState(userDir, workspace) {
+  const dir = prioritiesDir(userDir, workspace);
+  const path = join8(dir, "priorities.md");
+  const text = readText(path);
+  if (text === null)
+    return { state: "none", path, text: null, signedAt: null };
+  const signature = readSignature(dir);
+  if (signature === undefined)
+    return { state: "unsigned", path, text, signedAt: null };
+  if (signature === null || signature.hash !== hashOf(text))
+    return { state: "changed", path, text, signedAt: null };
+  return { state: "signed", path, text, signedAt: signature.at };
+}
+function acceptPriorities(userDir, workspace, options) {
+  const dir = prioritiesDir(userDir, workspace);
+  const path = join8(dir, "priorities.md");
+  if (options.file !== undefined) {
+    const copied = readTextQuietly(options.file);
+    if (copied === null)
+      return { refused: `${options.file} cannot be read` };
+    if (!copied.trim())
+      return { refused: `${options.file} is empty` };
+    writeText(path, copied);
+  }
+  const text = readText(path);
+  if (text === null || !text.trim())
+    return {
+      refused: `no priorities to sign: write ${path}, or crew workspace priorities accept --file <path>`
+    };
+  const hash = hashOf(text);
+  const at = nowIso();
+  writeJson(join8(dir, "priorities.json"), { hash, by: options.by, at });
+  return { state: "signed", path, text, signedAt: at, hash };
+}
+function prioritiesLine(status) {
+  switch (status.state) {
+    case "signed":
+      return `priorities: signed (${status.signedAt})`;
+    case "changed":
+      return "priorities: changed since signing (crew workspace priorities accept)";
+    case "unsigned":
+      return "priorities: unsigned (crew workspace priorities accept)";
+    default:
+      return `priorities: none (write ${status.path}, or crew workspace priorities accept --file <path>)`;
+  }
+}
+function triageText(work, where) {
+  const t = work.triage;
+  if (!t)
+    return `priority ${work.priority ?? "normal"}`;
+  if (t.confirmed === null)
+    return `priority ${t.proposed} (proposed, unconfirmed: no signed business priorities)`;
+  if (where === "status")
+    return `priority ${work.priority ?? "normal"}`;
+  return `priority ${t.confirmed} (${triageSummary(t)})`;
+}
+var NOT_SIGNED = "the business priorities are not signed (crew workspace priorities accept [--file <path>]): the proposal stays unconfirmed";
+function triagePriority(proposed, flag, reason, state, by) {
+  const cleaned = reason?.trim() ? reason.trim().replace(/\s*\n\s*/g, " ") : null;
+  const against = state === "signed" ? "signed" : state === "none" ? "none" : "unsigned";
+  if (against !== "signed") {
+    if (flag !== undefined)
+      return { refused: NOT_SIGNED };
+    return { proposed, confirmed: null, by, reason: cleaned, against, at: nowIso() };
+  }
+  const confirmed = flag ?? proposed;
+  if (priorityRank(confirmed) < priorityRank(proposed))
+    return {
+      refused: `the source proposed ${proposed}; the lead confirms or lowers, never raises`
+    };
+  if (priorityRank(confirmed) > priorityRank(proposed) && !cleaned)
+    return { refused: 'a lowering needs --reason "<why>"' };
+  return { proposed, confirmed, by, reason: cleaned, against, at: nowIso() };
+}
+function triageSummary(triage) {
+  if (triage.confirmed === null)
+    return `proposed ${triage.proposed}, unconfirmed (no signed business priorities)`;
+  const reason = triage.reason ? `: ${triage.reason}` : "";
+  return `proposed ${triage.proposed}, confirmed ${triage.confirmed} against the signed business priorities${reason}`;
+}
+
+// packages/engine/src/questions.ts
+import { appendFileSync, existsSync as existsSync4, lstatSync, realpathSync as realpathSync3 } from "node:fs";
+import { dirname as dirname4, isAbsolute as isAbsolute2, join as join11, relative as relative4 } from "node:path";
+
+// packages/engine/src/source.ts
+import { existsSync as existsSync3, realpathSync as realpathSync2, statSync as statSync2 } from "node:fs";
+import { isAbsolute, join as join9, relative as relative3 } from "node:path";
+var CONNECTORS = ["clickup", "jira", "notion", "other"];
+var KEYS = new Set([
+  "channel",
+  "connector",
+  "externalId",
+  "url",
+  "documentPath",
+  "proposedPriority"
+]);
+function confinedDocument(root, documentPath) {
+  const bad = `source: documentPath ${documentPath}`;
+  if (!documentPath.trim() || isAbsolute(documentPath) || documentPath.split(/[\\/]/).includes(".."))
+    return { refused: `${bad} is not a relative path under the root` };
+  const candidate = join9(root, documentPath);
+  let real;
+  let rootReal;
+  try {
+    if (!existsSync3(candidate) || !statSync2(candidate).isFile())
+      return { refused: `${bad} is not a file under the root` };
+    real = realpathSync2(candidate);
+    rootReal = realpathSync2(root);
+  } catch {
+    return { refused: `${bad} is not a file under the root` };
+  }
+  const rel2 = relative3(rootReal, real);
+  if (rel2 === "" || rel2.startsWith("..") || isAbsolute(rel2))
+    return { refused: `${bad} resolves outside the root` };
+  return { file: real };
+}
+function parseSource(raw, root) {
+  let value;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    return { refused: "source: a JSON object" };
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    return { refused: "source: a JSON object" };
+  const input = value;
+  for (const key of Object.keys(input))
+    if (!KEYS.has(key))
+      return { refused: `source: unknown key ${key}` };
+  const channel = input.channel;
+  if (channel !== "document" && channel !== "task-manager")
+    return { refused: "source: channel is document or task-manager" };
+  const source = { channel };
+  if (channel === "task-manager") {
+    const connector = input.connector;
+    const externalId = input.externalId;
+    if (typeof connector !== "string" || typeof externalId !== "string" || !externalId.trim())
+      return { refused: "source: a task manager needs connector and externalId" };
+    if (!CONNECTORS.includes(connector))
+      return { refused: "source: connector is clickup, jira, notion or other" };
+    source.connector = connector;
+    source.externalId = externalId.trim();
+  } else {
+    const documentPath = input.documentPath;
+    if (typeof documentPath !== "string")
+      return { refused: "source: a document needs documentPath" };
+    const file = confinedDocument(root, documentPath);
+    if ("refused" in file)
+      return file;
+    if (!(readText(file.file) ?? "").trim())
+      return { refused: `source: documentPath ${documentPath} is empty` };
+    source.documentPath = documentPath;
+  }
+  if (input.url !== undefined) {
+    if (typeof input.url !== "string" || !/^https?:\/\//.test(input.url))
+      return { refused: "source: url is http or https" };
+    source.url = input.url;
+  }
+  if (input.proposedPriority !== undefined) {
+    if (!isMailPriority(input.proposedPriority))
+      return { refused: "source: proposedPriority is one of blocker, high, normal, low" };
+    source.proposedPriority = input.proposedPriority;
+  }
+  return source;
+}
+function sourceLine(source) {
+  if (source.channel === "document")
+    return `document ${source.documentPath ?? ""}`;
+  return `${source.connector ?? "other"} ${source.externalId ?? ""}${source.url ? ` (${source.url})` : ""}`;
+}
+function sourceText(source, root, input) {
+  if (source.channel !== "document" || !source.documentPath)
+    return input;
+  const file = confinedDocument(root, source.documentPath);
+  if ("refused" in file)
+    return file;
+  return readText(file.file) ?? "";
+}
+
 // packages/engine/src/state.ts
+import { join as join10 } from "node:path";
 var WORKING_TTL_MS = 3600000;
 var WORKING_MAX = 50;
 var DESCRIPTION_MAX = 120;
@@ -2169,12 +2181,15 @@ function wellShaped(raw) {
       continue;
     if (w.team !== null && !(typeof w.team === "string" && Object.hasOwn(TEAMS, w.team)))
       continue;
+    const description = typeof w.description === "string" ? oneLine(w.description) : undefined;
+    if (description === "")
+      continue;
     kept.push({
       agent: w.agent,
       team: w.team,
       since: w.since,
       sessionId: typeof w.sessionId === "string" ? w.sessionId : "",
-      ...typeof w.description === "string" ? { description: w.description } : {}
+      ...description !== undefined ? { description } : {}
     });
   }
   return kept.slice(-WORKING_MAX);
@@ -2303,7 +2318,7 @@ function postDocumentQuestion(root, documentPath, question) {
   let parentReal;
   try {
     rootReal = realpathSync3(root);
-    parentReal = realpathSync3(dirname3(target));
+    parentReal = realpathSync3(dirname4(target));
   } catch {
     return { refused: `${file} cannot be written: its folder is not under the root` };
   }
@@ -2394,13 +2409,13 @@ function questionJson(question) {
 import {
   copyFileSync,
   existsSync as existsSync5,
-  mkdirSync as mkdirSync4,
+  mkdirSync as mkdirSync3,
   readdirSync as readdirSync2,
   readFileSync as readFileSync4,
   rmSync,
   statSync as statSync3
 } from "node:fs";
-import { dirname as dirname4, join as join12, relative as relative5, resolve as resolve2, sep as sep2 } from "node:path";
+import { dirname as dirname5, join as join12, relative as relative5, resolve as resolve2, sep as sep2 } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // packages/engine/src/front-matter.ts
@@ -3542,8 +3557,8 @@ function guaranteeLines(runtime) {
 function pluginRoot() {
   const here = fileURLToPath(import.meta.url);
   if (here.endsWith(`${"/dist/"}crew.mjs`))
-    return dirname4(dirname4(here));
-  return resolve2(dirname4(here), "../../../plugins/core");
+    return dirname5(dirname5(here));
+  return resolve2(dirname5(here), "../../../plugins/core");
 }
 function resolveScoped(path, dirs) {
   return path.startsWith("~/") ? join12(dirs.home, path.slice(2)) : join12(dirs.project, path);
@@ -3603,7 +3618,7 @@ function installRuntime(runtime, scope, dirs, root) {
   const skillTarget = join12(resolveScoped(runtime.skillsDir[scope], dirs), SKILL_FOLDER);
   for (const rel2 of filesBelow(skillSource).sort()) {
     const target = join12(skillTarget, rel2);
-    mkdirSync4(dirname4(target), { recursive: true });
+    mkdirSync3(dirname5(target), { recursive: true });
     copyFileSync(join12(skillSource, rel2), target);
     files.push(target);
   }
@@ -3938,7 +3953,7 @@ import { join as join13 } from "node:path";
 
 // packages/engine/src/validation.ts
 import { createHash as createHash2 } from "node:crypto";
-var LEAD_TEAMS = "qa|security|architects|etl|devops";
+var LEAD_TEAMS = Object.entries(TEAMS).filter(([, team]) => team.validates).map(([name]) => name).join("|");
 var LEAD_OPENING = `# (${LEAD_TEAMS}) lead's validation of `;
 var LEAD_HEADING = new RegExp(`^(?=${LEAD_OPENING})`, "m");
 var LEAD_LINE = `^${LEAD_OPENING}(\\S+): (spec|plan|delivery)\\b`;
@@ -5159,21 +5174,22 @@ function dropBranch(root, branch) {
 var ENGINE_DIR = ".crew/";
 function dirtyPaths(path) {
   return gitRun(path, "status", "--porcelain", "--untracked-files=all").split(`
-`).map((line) => /^\s*[MADRCU?!]{0,2}\s+(.+)$/.exec(line)?.[1] ?? "").filter((p) => p.length > 0).flatMap((p) => p.split(" -> "));
+`).map((line) => /^\s*[MADRCU?]{0,2}\s+(.+)$/.exec(line)?.[1] ?? "").filter((p) => p.length > 0).flatMap((p) => p.split(" -> "));
+}
+function onlyEngineDirt(path) {
+  try {
+    const dirty = dirtyPaths(path);
+    return dirty.length > 0 && dirty.every((p) => p.startsWith(ENGINE_DIR));
+  } catch {
+    return false;
+  }
 }
 function removeWorktree(root, path) {
   try {
     gitRun(root, "worktree", "remove", path);
     return null;
   } catch (error) {
-    let onlyEngine;
-    try {
-      const dirty = dirtyPaths(path);
-      onlyEngine = dirty.length > 0 && dirty.every((p) => p.startsWith(ENGINE_DIR));
-    } catch {
-      onlyEngine = false;
-    }
-    if (!onlyEngine)
+    if (!onlyEngineDirt(path))
       return { kept: gitError(error) };
     try {
       gitRun(root, "worktree", "remove", "--force", path);
@@ -6284,7 +6300,7 @@ function originPath(paths, id) {
 }
 function writeOrigin(paths, id, origin) {
   const file = originPath(paths, id);
-  mkdirSync5(dirname5(file), { recursive: true });
+  mkdirSync4(dirname6(file), { recursive: true });
   writeProtectedJson(paths, file, origin);
 }
 function readOrigin(paths, id) {
@@ -7008,7 +7024,7 @@ import { statSync as statSync10 } from "node:fs";
 import { join as join36 } from "node:path";
 
 // packages/engine/src/gates.ts
-import { accessSync as accessSync2, constants as constants2, mkdirSync as mkdirSync10, rmSync as rmSync4, writeFileSync as writeFileSync3 } from "node:fs";
+import { accessSync as accessSync2, constants as constants2, mkdirSync as mkdirSync9, rmSync as rmSync4 } from "node:fs";
 import { basename as basename6, delimiter, join as join35 } from "node:path";
 
 // packages/engine/src/audit.ts
@@ -7096,102 +7112,15 @@ function parseAudit(tool, text) {
   return { readable: true, advisories: [...ids], abandoned };
 }
 
-// packages/engine/src/e2e.ts
-import {
-  closeSync as closeSync3,
-  existsSync as existsSync15,
-  mkdirSync as mkdirSync9,
-  openSync as openSync3,
-  readSync,
-  realpathSync as realpathSync6,
-  statSync as statSync8,
-  unlinkSync as unlinkSync2
-} from "node:fs";
-import { join as join32, relative as relative8, sep as sep4 } from "node:path";
-
-// packages/engine/src/console.ts
-import { existsSync as existsSync11, readFileSync as readFileSync7 } from "node:fs";
-import { join as join21 } from "node:path";
-function levelOf(type) {
-  return type === "warn" ? "warning" : type;
-}
-function entriesOf(parsed) {
-  const entries = [];
-  for (const raw of parsed) {
-    if (!raw || typeof raw !== "object")
-      continue;
-    const { page, type, text } = raw;
-    if (typeof type !== "string")
-      continue;
-    entries.push({
-      page: typeof page === "string" ? page : "",
-      type: levelOf(type),
-      text: typeof text === "string" ? text : ""
-    });
-  }
-  return entries;
-}
-function gradeConsole(dir) {
-  const array = join21(dir, "console.json");
-  const lines = join21(dir, "console.jsonl");
-  let parsed;
-  let file;
-  if (existsSync11(array)) {
-    file = array;
-    try {
-      const data = JSON.parse(readFileSync7(array, "utf8"));
-      if (!Array.isArray(data))
-        return { status: "invalid", file };
-      parsed = data;
-    } catch {
-      return { status: "invalid", file };
-    }
-  } else if (existsSync11(lines)) {
-    file = lines;
-    try {
-      parsed = readFileSync7(lines, "utf8").split(`
-`).filter((l) => l.trim()).map((l) => JSON.parse(l));
-    } catch {
-      return { status: "invalid", file };
-    }
-  } else
-    return { status: "none", file: null };
-  const first = entriesOf(parsed).find((e) => e.type === "error" || e.type === "warning");
-  return first ? { status: "failed", file, first } : { status: "clean", file };
-}
-var LEVEL_AT_START = /^\W*(?:\[?\d[\dT:\-./Z ]*\]?\s*)?\[?(error|warn|warning)\b/i;
-var LEVEL_FIELD = /"level"\s*:\s*"(error|warn|warning)"/i;
-var LEVEL_PAIR = /\blevel=(error|warn|warning)\b/i;
-function gradeLogs(text) {
-  for (const line of text.split(`
-`)) {
-    if (LEVEL_AT_START.test(line) || LEVEL_FIELD.test(line) || LEVEL_PAIR.test(line))
-      return { status: "failed", first: line.trim() };
-  }
-  return { status: "clean" };
-}
-
-// packages/engine/src/environment.ts
-import { spawn as spawn3 } from "node:child_process";
-import { closeSync as closeSync2, mkdirSync as mkdirSync8, openSync as openSync2, unlinkSync } from "node:fs";
-import { dirname as dirname8, join as join31 } from "node:path";
-
-// packages/engine/src/open.ts
-import { execFileSync as execFileSync4, spawn } from "node:child_process";
-import { closeSync, mkdirSync as mkdirSync6, openSync } from "node:fs";
-import { dirname as dirname6, join as join30 } from "node:path";
-
-// packages/engine/src/profile.ts
-import { join as join29 } from "node:path";
-
 // packages/engine/src/detect/index.ts
-import { existsSync as existsSync13, readdirSync as readdirSync5, statSync as statSync7 } from "node:fs";
-import { join as join27, relative as relative7 } from "node:path";
+import { existsSync as existsSync12, readdirSync as readdirSync5, statSync as statSync7 } from "node:fs";
+import { join as join26, relative as relative7 } from "node:path";
 
 // packages/engine/src/detect/environment.ts
-import { existsSync as existsSync12 } from "node:fs";
-import { join as join22 } from "node:path";
+import { existsSync as existsSync11 } from "node:fs";
+import { join as join21 } from "node:path";
 var ENVIRONMENT_TIMEOUT_MS = 120000;
+var ENVIRONMENT_COMMANDS = ["start", "health", "stop"];
 var COMPOSE_FILES = ["docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"];
 var MAKE_TARGETS = ["start", "serve", "dev"];
 var NODE_SCRIPTS = ["dev", "start"];
@@ -7207,23 +7136,23 @@ function composePort(text) {
   return Number.isInteger(port) && port >= 1 && port <= 65535 ? port : DEFAULT_PORT;
 }
 function detectEnvironment(root, targets) {
-  const compose = COMPOSE_FILES.map((f) => join22(root, f)).find((p) => existsSync12(p));
+  const compose = COMPOSE_FILES.map((f) => join21(root, f)).find((p) => existsSync11(p));
   if (compose) {
     return {
       start: proposed("docker compose up -d"),
       stop: proposed("docker compose down"),
-      ...onLocalhost("localhost", composePort(readText(compose) ?? "")),
+      ...onLocalhost("localhost", composePort(readTextQuietly(compose) ?? "")),
       timeoutMs: ENVIRONMENT_TIMEOUT_MS
     };
   }
-  if (existsSync12(join22(root, "artisan"))) {
+  if (existsSync11(join21(root, "artisan"))) {
     return {
       start: proposed("php artisan serve --port 8000"),
       ...onLocalhost("127.0.0.1", 8000),
       timeoutMs: ENVIRONMENT_TIMEOUT_MS
     };
   }
-  const makefile = readText(join22(root, "Makefile"));
+  const makefile = readTextQuietly(join21(root, "Makefile"));
   const target = makefile ? MAKE_TARGETS.find((t) => new RegExp(`^${t}:`, "m").test(makefile)) : undefined;
   if (target) {
     return {
@@ -7232,7 +7161,7 @@ function detectEnvironment(root, targets) {
       timeoutMs: ENVIRONMENT_TIMEOUT_MS
     };
   }
-  const pkg = readJson(join22(root, "package.json"));
+  const pkg = readJson(join21(root, "package.json"));
   const script = NODE_SCRIPTS.find((s) => typeof pkg?.scripts?.[s] === "string");
   if (script) {
     const detected = targets.find((t) => t.path === "." && t.stack === "node")?.packageManager;
@@ -7246,7 +7175,7 @@ function detectEnvironment(root, targets) {
   return null;
 }
 function confirmedEnvironment(environment) {
-  return [environment.start, environment.health, environment.stop].some((c) => c?.source === "confirmed");
+  return ENVIRONMENT_COMMANDS.some((key) => environment[key]?.source === "confirmed");
 }
 function environmentChanges(previous, next) {
   if (previous && !next)
@@ -7254,23 +7183,23 @@ function environmentChanges(previous, next) {
   if (!next)
     return [];
   const lines = [];
-  for (const key of ["start", "health", "stop"]) {
+  for (const key of ENVIRONMENT_COMMANDS) {
     const before = previous?.[key];
     const after = next[key];
     if (after && (before?.command !== after.command || before.source !== after.source))
-      lines.push(`environment.${key} (.): ${after.command}`);
+      lines.push(`environment.${key}: ${after.command}`);
     else if (before && !after)
-      lines.push(`environment.${key} (.): removed`);
+      lines.push(`environment.${key}: removed`);
   }
   return lines;
 }
 
 // packages/engine/src/detect/node.ts
-import { join as join24 } from "node:path";
+import { join as join23 } from "node:path";
 
 // packages/engine/src/detect/scripts.ts
 import { readdirSync as readdirSync4, statSync as statSync6 } from "node:fs";
-import { join as join23 } from "node:path";
+import { join as join22 } from "node:path";
 var NEVER_A_GATE = /^test:(watch|ui|dev|debug|e2e|browser|visual)(?:[:-]|$)/;
 function testScripts(scripts) {
   const names = Object.keys(scripts).filter((n) => n.startsWith("test:"));
@@ -7290,7 +7219,7 @@ function hasTestFiles(dir, depth = 0) {
   for (const name of names) {
     if (name.startsWith(".") || SKIP_DIRS.has(name))
       continue;
-    const path = join23(dir, name);
+    const path = join22(dir, name);
     let isDir = false;
     try {
       isDir = statSync6(path).isDirectory();
@@ -7339,13 +7268,13 @@ function packageManager(dir, pkg) {
   const declared = typeof pkg.packageManager === "string" ? pkg.packageManager.split("@")[0] : "";
   if (declared && MANAGERS.includes(declared))
     return { manager: declared, sure: true };
-  const present = LOCKFILES.filter(([, files]) => files.some((f) => exists(join24(dir, f)))).map(([manager]) => manager);
+  const present = LOCKFILES.filter(([, files]) => files.some((f) => exists(join23(dir, f)))).map(([manager]) => manager);
   return { manager: present[0] ?? "npm", sure: present.length <= 1 };
 }
 var nodeDetector = {
   stack: "node",
   detect(dir) {
-    const pkg = readJson(join24(dir, "package.json"));
+    const pkg = readJson(join23(dir, "package.json"));
     if (!pkg)
       return null;
     const { manager, sure } = packageManager(dir, pkg);
@@ -7367,15 +7296,15 @@ var nodeDetector = {
     if (!gates.test) {
       if (convention.rest.length)
         gates.test = convention.rest.map((n) => `${manager} run ${n}`).join(" && ");
-      else if (manager === "bun" && (exists(join24(dir, "bunfig.toml")) || hasTestFiles(dir)))
+      else if (manager === "bun" && (exists(join23(dir, "bunfig.toml")) || hasTestFiles(dir)))
         gates.test = "bun test";
     }
-    if (!gates.typecheck && exists(join24(dir, "tsconfig.json"))) {
+    if (!gates.typecheck && exists(join23(dir, "tsconfig.json"))) {
       gates.typecheck = TSC_BY_MANAGER[manager];
     }
     const proposedGates = [];
     if (!gates.e2e) {
-      const runner = E2E_BY_CONFIG.find(([config]) => CONFIG_EXTENSIONS.some((ext) => exists(join24(dir, `${config}.${ext}`))));
+      const runner = E2E_BY_CONFIG.find(([config]) => CONFIG_EXTENSIONS.some((ext) => exists(join23(dir, `${config}.${ext}`))));
       if (runner) {
         gates.e2e = runner[1];
         proposedGates.push("e2e");
@@ -7397,15 +7326,15 @@ var nodeDetector = {
 };
 
 // packages/engine/src/detect/php.ts
-import { join as join25 } from "node:path";
+import { join as join24 } from "node:path";
 var phpDetector = {
   stack: "php",
   detect(dir) {
-    const composer = readJson(join25(dir, "composer.json"));
+    const composer = readJson(join24(dir, "composer.json"));
     if (!composer)
       return null;
     const scripts = composer.scripts ?? {};
-    const installed = (tool) => exists(join25(dir, "vendor", "bin", tool));
+    const installed = (tool) => exists(join24(dir, "vendor", "bin", tool));
     const run = (name) => `composer run ${name}`;
     const convention = testScripts(scripts);
     const gates = {};
@@ -7436,7 +7365,7 @@ var phpDetector = {
 };
 
 // packages/engine/src/detect/python.ts
-import { join as join26 } from "node:path";
+import { join as join25 } from "node:path";
 var PREFIX = {
   uv: "uv run ",
   poetry: "poetry run ",
@@ -7445,17 +7374,17 @@ var PREFIX = {
 var pythonDetector = {
   stack: "python",
   detect(dir) {
-    const pyproject = readText(join26(dir, "pyproject.toml"));
-    if (pyproject === null && !exists(join26(dir, "requirements.txt")))
+    const pyproject = readTextQuietly(join25(dir, "pyproject.toml"));
+    if (pyproject === null && !exists(join25(dir, "requirements.txt")))
       return null;
-    const manager = exists(join26(dir, "uv.lock")) ? "uv" : exists(join26(dir, "poetry.lock")) ? "poetry" : "pip";
+    const manager = exists(join25(dir, "uv.lock")) ? "uv" : exists(join25(dir, "poetry.lock")) ? "poetry" : "pip";
     const prefix = PREFIX[manager] ?? "";
     const text = pyproject ?? "";
     const gates = {};
-    const hasPytest = /\[tool\.pytest/.test(text) || exists(join26(dir, "pytest.ini")) || exists(join26(dir, "conftest.py")) || exists(join26(dir, "tests"));
+    const hasPytest = /\[tool\.pytest/.test(text) || exists(join25(dir, "pytest.ini")) || exists(join25(dir, "conftest.py")) || exists(join25(dir, "tests"));
     if (hasPytest)
       gates.test = `${prefix}pytest`;
-    if (/\[tool\.ruff/.test(text) || exists(join26(dir, "ruff.toml"))) {
+    if (/\[tool\.ruff/.test(text) || exists(join25(dir, "ruff.toml"))) {
       gates.lint = `${prefix}ruff check .`;
     }
     if (/\[tool\.mypy/.test(text))
@@ -7499,7 +7428,7 @@ function* folders(root, depth = 0) {
   for (const name of names) {
     if (name.startsWith(".") || SKIP_DIRS.has(name))
       continue;
-    const path = join27(root, name);
+    const path = join26(root, name);
     try {
       if (!statSync7(path).isDirectory())
         continue;
@@ -7513,7 +7442,7 @@ function dataDetector(rule) {
   return {
     stack: rule.stack,
     detect(dir) {
-      if (!rule.markers.every((marker) => existsSync13(join27(dir, marker))))
+      if (!rule.markers.every((marker) => existsSync12(join26(dir, marker))))
         return null;
       return {
         stack: rule.stack,
@@ -7525,8 +7454,8 @@ function dataDetector(rule) {
     }
   };
 }
-function applyRules(root, targets, rules) {
-  for (const dir of folders(root)) {
+function applyRules(root, dirs, targets, rules) {
+  for (const dir of dirs) {
     const rel2 = relative7(root, dir).replace(/\\/g, "/") || ".";
     for (const { pack, rule } of rules) {
       const found = dataDetector(rule).detect(dir);
@@ -7561,7 +7490,8 @@ function applyRules(root, targets, rules) {
 function detectTargets(root, rules = []) {
   const targets = [];
   const workspaces = new Map;
-  for (const dir of folders(root)) {
+  const dirs = [...folders(root)];
+  for (const dir of dirs) {
     for (const detector of DETECTORS) {
       const found = detector.detect(dir);
       if (!found)
@@ -7600,13 +7530,14 @@ function detectTargets(root, rules = []) {
     }
   }
   if (rules.length)
-    applyRules(root, targets, rules);
+    applyRules(root, dirs, targets, rules);
   return targets;
 }
+function proposedByPack(command2) {
+  return command2?.pack && command2.source === "proposed" ? command2.pack : null;
+}
 function theirs(command2) {
-  if (command2.source === "detected")
-    return false;
-  return !(command2.pack && command2.source === "proposed");
+  return command2.source === "confirmed";
 }
 function mergeProfile(previous, detected, environment = null) {
   const targets = detected.map((t) => ({ ...t, gates: { ...t.gates } }));
@@ -7684,6 +7615,94 @@ function missingTestCommands(profile) {
   return paths.filter((p) => !covered.has(p)).map((target) => ({ target, gate: "test" }));
 }
 
+// packages/engine/src/e2e.ts
+import {
+  closeSync as closeSync3,
+  existsSync as existsSync15,
+  mkdirSync as mkdirSync8,
+  openSync as openSync3,
+  readSync,
+  realpathSync as realpathSync6,
+  statSync as statSync8,
+  unlinkSync as unlinkSync2
+} from "node:fs";
+import { join as join32, relative as relative8, sep as sep4 } from "node:path";
+
+// packages/engine/src/console.ts
+import { existsSync as existsSync13, readFileSync as readFileSync7 } from "node:fs";
+import { join as join27 } from "node:path";
+function levelOf(type) {
+  return type === "warn" ? "warning" : type;
+}
+function entriesOf(parsed) {
+  const entries = [];
+  for (const raw of parsed) {
+    if (!raw || typeof raw !== "object")
+      continue;
+    const { page, type, text } = raw;
+    if (typeof type !== "string")
+      continue;
+    entries.push({
+      page: typeof page === "string" ? page : "",
+      type: levelOf(type),
+      text: typeof text === "string" ? text : ""
+    });
+  }
+  return entries;
+}
+function gradeConsole(dir) {
+  const array = join27(dir, "console.json");
+  const lines = join27(dir, "console.jsonl");
+  let parsed;
+  let file;
+  if (existsSync13(array)) {
+    file = array;
+    try {
+      const data = JSON.parse(readFileSync7(array, "utf8"));
+      if (!Array.isArray(data))
+        return { status: "invalid", file };
+      parsed = data;
+    } catch {
+      return { status: "invalid", file };
+    }
+  } else if (existsSync13(lines)) {
+    file = lines;
+    try {
+      parsed = readFileSync7(lines, "utf8").split(`
+`).filter((l) => l.trim()).map((l) => JSON.parse(l));
+    } catch {
+      return { status: "invalid", file };
+    }
+  } else
+    return { status: "none", file: null };
+  const first = entriesOf(parsed).find((e) => e.type === "error" || e.type === "warning");
+  return first ? { status: "failed", file, first } : { status: "clean", file };
+}
+var LEVEL_AT_START = /^\W*(?:\[?\d[\dT:\-./Z ]*\]?\s*)?\[?(error|warn|warning)\b/i;
+var LEVEL_FIELD = /"level"\s*:\s*"(error|warn|warning)"/i;
+var LEVEL_PAIR = /\blevel=(error|warn|warning)\b/i;
+function gradeLogs(text) {
+  for (const line of text.split(`
+`)) {
+    if (LEVEL_AT_START.test(line) || LEVEL_FIELD.test(line) || LEVEL_PAIR.test(line))
+      return { status: "failed", first: line.trim() };
+  }
+  return { status: "clean" };
+}
+
+// packages/engine/src/environment.ts
+import { spawn as spawn3 } from "node:child_process";
+import { closeSync as closeSync2, mkdirSync as mkdirSync7, openSync as openSync2, unlinkSync } from "node:fs";
+import { dirname as dirname9, join as join31 } from "node:path";
+
+// packages/engine/src/open.ts
+import { execFileSync as execFileSync4, spawn } from "node:child_process";
+import { closeSync, mkdirSync as mkdirSync5, openSync } from "node:fs";
+import { dirname as dirname7, join as join30 } from "node:path";
+
+// packages/engine/src/profile.ts
+import { join as join29 } from "node:path";
+
 // packages/engine/src/packs.ts
 import { existsSync as existsSync14, readdirSync as readdirSync6, readFileSync as readFileSync8, realpathSync as realpathSync5, rmSync as rmSync3 } from "node:fs";
 import { homedir as homedir2 } from "node:os";
@@ -7694,7 +7713,6 @@ var VERSION = "0.11.3";
 
 // packages/engine/src/packs.ts
 var PACK_NAME = /^wizardingcode-pack-[a-z0-9][a-z0-9-]*$/;
-var WORD = /^[a-z][a-z0-9-]*$/;
 var SEMVER = /^\d+\.\d+\.\d+$/;
 var CORE_RANGE = /^>=(\d+)\.(\d+)\.(\d+)$/;
 var PACK_KINDS = ["stack", "domain", "team"];
@@ -7717,7 +7735,12 @@ var isStringList = (v) => Array.isArray(v) && v.every((s) => typeof s === "strin
 var climbs = (p) => isAbsolute6(p) || p.split(/[\\/]/).some((segment) => segment === "..");
 var message = (error) => error instanceof Error ? error.message : String(error);
 function readManifest(root) {
-  const text = readText(join28(root, "pack.json"));
+  let text;
+  try {
+    text = readText(join28(root, "pack.json"));
+  } catch (error) {
+    return { refused: `pack.json cannot be read: ${message(error)}` };
+  }
   if (text === null)
     return { refused: "pack.json names nothing: the file is missing" };
   let data;
@@ -7748,7 +7771,7 @@ function readManifest(root) {
       return bad("detectors is not a list of rules");
     const stack = typeof raw.stack === "string" ? raw.stack : "?";
     const rule = (what) => bad(`detector ${stack}: ${what}`);
-    if (typeof raw.stack !== "string" || !WORD.test(raw.stack))
+    if (typeof raw.stack !== "string" || !LOWERCASE_WORD.test(raw.stack))
       return rule("stack is not a lowercase word");
     if (raw.extends !== undefined && !CORE_STACKS.includes(raw.extends))
       return rule(`extends ${String(raw.extends)} is not a core stack (${CORE_STACKS.join(", ")})`);
@@ -7792,14 +7815,14 @@ function readManifest(root) {
   for (const v of Object.values(m.knowledge))
     if (climbs(v))
       return bad(`knowledge holds a path that is absolute or climbs (${v})`);
-  if (!Object.entries(m.knowledge).every(([k, v]) => WORD.test(k) && /^knowledge\/[a-z0-9-]+\.md$/.test(v)))
+  if (!Object.entries(m.knowledge).every(([k, v]) => LOWERCASE_WORD.test(k) && /^knowledge\/[a-z0-9-]+\.md$/.test(v)))
     return bad("knowledge is not an object of lowercase keys to knowledge/<name>.md paths");
   let team = null;
   if (m.team !== null) {
     if (!isRecord2(m.team))
       return bad("team is not null or a template");
     const t = m.team;
-    if (typeof t.template !== "string" || !WORD.test(t.template))
+    if (typeof t.template !== "string" || !LOWERCASE_WORD.test(t.template))
       return bad("template: template is not a lowercase word");
     for (const key of Object.keys(t))
       if (!TEMPLATE_KEYS.has(key))
@@ -7932,6 +7955,12 @@ function registerPack(userDir, root, by, key = null) {
   if (refused)
     return { refused };
   const manifest = read.manifest;
+  let real;
+  try {
+    real = realpathSync5(root);
+  } catch (error) {
+    return { refused: `${root} cannot be resolved: ${message(error)}` };
+  }
   const dir = packsDir(userDir);
   ensureDir(dir);
   return withLock(dir, () => {
@@ -7942,7 +7971,7 @@ function registerPack(userDir, root, by, key = null) {
     const registration = {
       name: manifest.name,
       version: manifest.version,
-      root: realpathSync5(root),
+      root: real,
       registeredAt,
       by,
       key,
@@ -8002,7 +8031,7 @@ function listPacks(userDir, options = {}) {
   const listed = [];
   for (const file of names) {
     const name = basename5(file, ".json");
-    const text = readText(join28(dir, file)) ?? "";
+    const text = readTextQuietly(join28(dir, file)) ?? "";
     let registration = null;
     let reason = "";
     try {
@@ -8135,7 +8164,7 @@ function pluginRegistryPath(env) {
 function discoverPacks(userDir, env) {
   if (!env.CLAUDE_PLUGIN_ROOT)
     return [];
-  const text = readText(pluginRegistryPath(env));
+  const text = readTextQuietly(pluginRegistryPath(env));
   if (text === null)
     return [];
   let data;
@@ -8344,7 +8373,7 @@ function openSession(ctx, request, notes = []) {
   };
   let fd;
   try {
-    mkdirSync6(dirname6(request.log), { recursive: true });
+    mkdirSync5(dirname7(request.log), { recursive: true });
     fd = openSync(request.log, "a");
   } catch (error) {
     return undone(`could not open the log ${request.log}: ${error.message}`);
@@ -8609,7 +8638,15 @@ function stopSession(ctx, id, notes) {
     return { refused: `${id} has no session running` };
   if (!isSession(m.opened)) {
     const swept = { ended: [], expired: [], lines: [] };
-    sweepOne(ctx, m, Date.now(), swept);
+    try {
+      sweepOne(ctx, m, Date.now(), swept);
+    } catch (error) {
+      const failed = `the settle of ${id} failed: ${error.message.split(`
+`)[0]}`;
+      return {
+        refused: `${id} has no session running (${[...swept.lines, failed].join("; ")})`
+      };
+    }
     return {
       refused: `${id} has no session running: it ${readOutcome(m.opened.log).ended ? "ended" : "is gone"}${swept.lines.length ? ` (${swept.lines.join("; ")})` : ""}`
     };
@@ -8671,8 +8708,8 @@ function openForMail(ctx, fallback, message2, delivery) {
 
 // packages/engine/src/run.ts
 import { spawn as spawn2 } from "node:child_process";
-import { createWriteStream, mkdirSync as mkdirSync7 } from "node:fs";
-import { dirname as dirname7 } from "node:path";
+import { createWriteStream, mkdirSync as mkdirSync6 } from "node:fs";
+import { dirname as dirname8 } from "node:path";
 
 // packages/engine/src/shell-words.ts
 var SHELL_NAMES = ["sh", "bash", "zsh", "dash", "ksh", "fish"];
@@ -8878,11 +8915,11 @@ function shellRefusal(words) {
   return `${after} words follow -c and the shell would run only the first (${words[j]}) with the rest as its parameters: quote the command string as one argument, -- ${name} -c "<command>"`;
 }
 function runCommand(command2, options) {
-  mkdirSync7(dirname7(options.logPath), { recursive: true });
+  mkdirSync6(dirname8(options.logPath), { recursive: true });
   const log = createWriteStream(options.logPath);
   let errors = null;
   if (options.stderrLogPath) {
-    mkdirSync7(dirname7(options.stderrLogPath), { recursive: true });
+    mkdirSync6(dirname8(options.stderrLogPath), { recursive: true });
     errors = createWriteStream(options.stderrLogPath);
   }
   const lines = [];
@@ -9000,7 +9037,7 @@ async function startEnvironment(paths, environment, sleep2 = (ms) => new Promise
     return { started: false, managed: false, pid: null, log: null };
   }
   const log = envLog(paths, `start-${stamp()}.txt`);
-  mkdirSync8(dirname8(log), { recursive: true });
+  mkdirSync7(dirname9(log), { recursive: true });
   const fd = openSync2(log, "a");
   let pid;
   try {
@@ -9143,7 +9180,7 @@ async function readLogs(paths, work, logs, logsFile, log) {
       logPath: logsFile,
       stderrLogPath: join32(workDir(paths, work.id), log.replace(/\.txt$/, "-logs-stderr.txt"))
     });
-    return readText(logsFile) ?? "";
+    return readTextQuietly(logsFile) ?? "";
   }
   return null;
 }
@@ -9156,7 +9193,7 @@ async function runE2e(inputs) {
   if (!target || !command2)
     return { ...base, reason: NO_E2E_REASON };
   const dir = join32(workDir(paths, work.id), E2E_DIR);
-  mkdirSync9(dir, { recursive: true });
+  mkdirSync8(dir, { recursive: true });
   for (const name of STALE) {
     try {
       unlinkSync2(join32(dir, name));
@@ -9217,8 +9254,8 @@ async function runE2e(inputs) {
 // packages/engine/src/judgement.ts
 import { copyFileSync as copyFileSync2, existsSync as existsSync16, readdirSync as readdirSync7, unlinkSync as unlinkSync3 } from "node:fs";
 import { join as join33 } from "node:path";
-function plannedJudgementGates(route, riskAreas, changed, policy) {
-  return plannedSeats(route, riskAreas, changed, policy).filter((s) => s.kind === "gate" && s.gate !== undefined).map((s) => ({ gate: s.gate, reason: s.reason }));
+function plannedJudgementGates(route, riskAreas, changed, policy, registry = TEAMS) {
+  return plannedSeats(route, riskAreas, changed, policy, { registry }).filter((s) => s.kind === "gate" && s.gate !== undefined).map((s) => ({ gate: s.gate, reason: s.reason }));
 }
 function reviewDir(paths, id, task) {
   const dir = join33(workDir(paths, id), "review");
@@ -9621,12 +9658,13 @@ function depsAuditCommand(target, root, env = process.env) {
   if (target.stack === "python") {
     if (!onPath("pip-audit", env))
       return { reason: "pip-audit not on PATH" };
-    const prefix = PYTHON_AUDIT[target.packageManager] ?? PYTHON_AUDIT.pip ?? "pip-audit";
+    const own = Object.hasOwn(PYTHON_AUDIT, target.packageManager) ? PYTHON_AUDIT[target.packageManager] : undefined;
+    const prefix = own ?? PYTHON_AUDIT.pip ?? "pip-audit";
     return { command: `${prefix} --format=json`, tool: "pip-audit", files: [] };
   }
   let tool;
   if (target.stack === "node") {
-    tool = NODE_AUDIT[target.packageManager];
+    tool = Object.hasOwn(NODE_AUDIT, target.packageManager) ? NODE_AUDIT[target.packageManager] : undefined;
     if (tool && target.packageManager === "yarn" && exists(join35(dir, ".yarnrc.yml")))
       tool = { ...tool, command: "yarn npm audit --severity high --json" };
   } else if (target.stack === "php") {
@@ -9652,14 +9690,14 @@ async function baselineAdvisories(paths, work, target, audit, where) {
     return { readable: false, advisories: [] };
   const scratch = join35(paths.crewDir, "local", "audit-base", work.id, where || "root");
   rmSync4(scratch, { recursive: true, force: true });
-  mkdirSync10(scratch, { recursive: true });
+  mkdirSync9(scratch, { recursive: true });
   let lockfiles = 0;
   for (const [index, file] of audit.files.entries()) {
     const rel2 = target.path === "." ? file : `${target.path}/${file}`;
     const text = gitShowFile(paths.root, work.baseCommit, rel2);
     if (text === null)
       continue;
-    writeFileSync3(join35(scratch, file), text);
+    writeText(join35(scratch, file), text);
     if (index > 0)
       lockfiles += 1;
   }
@@ -9671,11 +9709,11 @@ async function baselineAdvisories(paths, work, target, audit, where) {
     timeoutMs: gateTimeoutMs(target, "deps"),
     logPath: log
   });
-  const report = parseAudit(audit.tool, readText(log) ?? result.tail);
+  const report = parseAudit(audit.tool, readTextQuietly(log) ?? result.tail);
   return { readable: report.readable && !result.timedOut, advisories: report.advisories };
 }
 async function judgeAudit(run, audit, paths, work, target, where) {
-  const text = run.log && readText(join35(workDir(paths, work.id), run.log)) || run.tail;
+  const text = run.log && readTextQuietly(join35(workDir(paths, work.id), run.log)) || run.tail;
   const report = parseAudit(audit.tool, text);
   if (!report.readable)
     return { ...run, reason: "audit report unreadable; judged by exit code" };
@@ -9716,12 +9754,15 @@ function gatesForTarget(target, policy, changed) {
       gates.push(gate);
   return gates;
 }
+function covers(target, path) {
+  return target.path === "." || path === target.path || path.startsWith(`${target.path}/`);
+}
 function wantsE2e(policy, changed) {
   return policy.requiredGates.includes("e2e") || changed.some(isInterfacePath) || riskAreasForPaths(changed, policy).includes("public-api");
 }
 function plannedGates(route, profile, policy, changed, root) {
   const planned = [{ gate: "secrets", target: "." }];
-  const touched = profile.targets.filter((t) => t.path === "." || changed.length === 0 || changed.some((p) => p === t.path || p.startsWith(`${t.path}/`)));
+  const touched = profile.targets.filter((t) => changed.length === 0 || changed.some((p) => covers(t, p)));
   const atPath = new Map;
   for (const t of profile.targets)
     atPath.set(t.path, (atPath.get(t.path) ?? 0) + 1);
@@ -9736,7 +9777,6 @@ function plannedGates(route, profile, policy, changed, root) {
       planned.push({ gate, target: target.path, ...shared ? { stack: target.stack } : {} });
     }
   }
-  const covers = (t, path) => t.path === "." || path === t.path || path.startsWith(`${t.path}/`);
   const uncovered = profile.targets.length === 0 || changed.some((path) => !profile.targets.some((t) => covers(t, path)));
   if (uncovered && !planned.some((g) => g.gate === "test" && g.target === "."))
     planned.push({ gate: "test", target: "." });
@@ -9759,10 +9799,10 @@ function superseded(run, planned) {
 }
 var SOURCE_EXTENSIONS = /\.(?:[cm]?[jt]sx?|vue|svelte|astro|php|py|rb|go|rs|java|kt|cs)$/i;
 function shellWord(path) {
-  return /^[A-Za-z0-9_./-]+$/.test(path) ? path : `'${path.replace(/'/g, "'\\''")}'`;
+  const word = path.startsWith("-") ? `./${path}` : path;
+  return /^[A-Za-z0-9_./-]+$/.test(word) ? word : `'${word.replace(/'/g, "'\\''")}'`;
 }
-function scopedTestCommand(target, scope) {
-  const whole = target.gates.test?.command ?? null;
+function narrowedTest(target, whole, scope) {
   if (!target.testScoped)
     return whole;
   const prefix = target.path === "." ? "" : `${target.path}/`;
@@ -9822,8 +9862,9 @@ async function runOneGate(paths, work, profile, planned, fingerprint, changed, s
     reason: `pack ${pack}'s ${what} is not confirmed (crew profile confirm ${gate})`
   });
   const own = gate === "deps" ? undefined : target?.gates[gate];
-  if (own?.pack && own.source === "proposed")
-    return held(own.command, "command", own.pack);
+  const ownPack = proposedByPack(own);
+  if (own && ownPack)
+    return held(own.command, "command", ownPack);
   if (gate === "e2e") {
     const where2 = targetPath.replace(/[^a-z0-9]+/gi, "_");
     return runE2e({
@@ -9854,11 +9895,11 @@ async function runOneGate(paths, work, profile, planned, fingerprint, changed, s
     const configured = target.gates[gate];
     if (!configured)
       return { ...base, reason: "no command" };
-    command2 = gate === "test" && scope ? scopedTestCommand(target, scope) ?? configured.command : configured.command;
+    command2 = gate === "test" && scope ? narrowedTest(target, configured.command, scope) : configured.command;
     source = configured.source;
-    const scoped = target.testScoped;
-    if (gate === "test" && scope && command2 !== configured.command && scoped?.pack && scoped.source === "proposed")
-      return held(command2, "scoped test command", scoped.pack);
+    const scopedPack = proposedByPack(target.testScoped);
+    if (gate === "test" && scope && command2 !== configured.command && scopedPack)
+      return held(command2, "scoped test command", scopedPack);
   }
   const where = targetPath.replace(/[^a-z0-9]+/gi, "_") + (planned.stack ? `-${planned.stack}` : "");
   const log = logName ?? `logs/${gate}-${where}-${Date.now()}.txt`;
@@ -9889,7 +9930,7 @@ async function runOneGate(paths, work, profile, planned, fingerprint, changed, s
   return run;
 }
 function judgeProblems(run, paths, work, targetPath, changed) {
-  const text = run.log && readText(join35(workDir(paths, work.id), run.log)) || run.tail;
+  const text = run.log && readTextQuietly(join35(workDir(paths, work.id), run.log)) || run.tail;
   const named2 = namedFiles2(text, [join35(paths.root, targetPath), paths.root], paths.root);
   if (named2.length === 0)
     return run;
@@ -9980,9 +10021,12 @@ async function runGates(paths, work, profile, policy, options = {}) {
         r.fingerprint = stamp2;
   }
   evidence.fingerprint = stamp2;
-  const judgement = plannedJudgementGates(work.route, work.riskAreas, changed, policy);
   const registry = teamsFor(policy, packTemplates(paths.userDir)).teams;
-  work.seats = plannedSeats(work.route, work.riskAreas, changed, policy, undefined, undefined, registry, changedPaths(paths.root, base));
+  const judgement = plannedJudgementGates(work.route, work.riskAreas, changed, policy, registry);
+  work.seats = plannedSeats(work.route, work.riskAreas, changed, policy, {
+    registry,
+    templatePaths: changedPaths(paths.root, base)
+  });
   recordPackUse(work, paths.userDir, profile, changed, policy, registry);
   work.primaryTeam = primaryTeam(changed);
   const reviewInputs = judgement.length ? writeReviewInputs(paths, work, reviewPaths(paths.root, base, changed), stamp2) : null;
@@ -10028,7 +10072,7 @@ function assess(paths, work, profile, policy, tampered = false) {
   const base = work;
   const changed = changedWatchedPaths(paths.root, profile, base);
   const expected = plannedGates(work.route, profile, policy, changed, paths.root);
-  const judgement = plannedJudgementGates(work.route, work.riskAreas, changed, policy);
+  const judgement = plannedJudgementGates(work.route, work.riskAreas, changed, policy, teamsFor(policy, packTemplates(paths.userDir)).teams);
   const read = loadEvidence(paths, work.id);
   const currentFingerprint = computeFingerprint(paths.root, profile, base, MAX_WATCHED_FILES, fingerprintMethod(read.evidence.fingerprint));
   const led = loadLedger(paths, work.id);
@@ -10185,14 +10229,14 @@ function auditSummary(runs) {
 
 // packages/engine/src/brand.ts
 import { existsSync as existsSync17, readFileSync as readFileSync9 } from "node:fs";
-import { dirname as dirname9, join as join37 } from "node:path";
+import { dirname as dirname10, join as join37 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 var BRAND_FILES = {
   lockup: "wizardingcode-lockup.svg",
   mark: "wizardingcode-mark.svg",
   reverse: "wizardingcode-lockup-reverse.svg"
 };
-var MODULE_DIR = dirname9(fileURLToPath2(import.meta.url));
+var MODULE_DIR = dirname10(fileURLToPath2(import.meta.url));
 function holdsBrand(dir) {
   return existsSync17(join37(dir, BRAND_FILES.lockup)) && existsSync17(join37(dir, BRAND_FILES.mark));
 }
@@ -11164,7 +11208,7 @@ function teamOf(agent) {
   return null;
 }
 function lines(transcriptPath) {
-  const text = transcriptPath ? readText(transcriptPath) : null;
+  const text = transcriptPath ? readTextQuietly(transcriptPath) : null;
   if (text === null)
     return [];
   const out2 = [];
@@ -11576,7 +11620,12 @@ ${heading}`;
   return { file, archived: kept.archived };
 }
 function archiveExisting(dir, file) {
-  const current = readText(join39(dir, file));
+  let current;
+  try {
+    current = readText(join39(dir, file));
+  } catch (error) {
+    return { failed: file, error: error instanceof Error ? error.message : String(error) };
+  }
   if (current === null)
     return { archived: null };
   const archived = file.replace(/\.md$/, `.round${freeArchiveIndex(dir, file)}.md`);
@@ -12630,11 +12679,11 @@ function noteTask(work, task, criteria, scope, text) {
   return { record };
 }
 function scopeRefusal(scope) {
-  const outside = scope.find((p) => p.startsWith("/") || /^[A-Za-z]:[\\/]/.test(p) || p.split(/[\\/]/).includes("..") || /[\n\r\0]/.test(p));
+  const outside = scope.find((p) => p.startsWith("/") || p.startsWith("\\") || /^[A-Za-z]:[\\/]/.test(p) || p.split(/[\\/]/).includes("..") || /[\n\r\0]/.test(p));
   return outside === undefined ? null : `a scope path stays inside the repository: ${JSON.stringify(outside)}`;
 }
 function taskScope(root, profile, record, flagScope) {
-  const escaped2 = flagScope?.length ? scopeRefusal(flagScope) : null;
+  const escaped2 = scopeRefusal(flagScope ?? []);
   if (escaped2)
     return { refused: escaped2 };
   if (record.inline)
@@ -12649,6 +12698,18 @@ function taskScope(root, profile, record, flagScope) {
       refused: `merge commit ${commit.slice(0, 7)} of ${record.task} is not in this checkout's history; restore it or note the todo again`
     };
   }
+  let revert;
+  try {
+    revert = gitRun(root, "log", "-1", "--format=%H", "--fixed-strings", `--grep=This reverts commit ${commit}`, `${commit}..HEAD`);
+  } catch (error) {
+    return {
+      refused: `the history after ${record.task}'s merge cannot be read: ${gitError(error)}`
+    };
+  }
+  if (revert)
+    return {
+      refused: `${record.task}'s merge ${commit.slice(0, 7)} was reverted at ${revert.slice(0, 7)}: open the task again or gate the item`
+    };
   const changed = gitRun(root, "diff", "--name-only", `${commit}^1`, commit).split(`
 `).map((p) => p.trim()).filter((p) => p && isWatched(p, profile));
   return { scope: flagScope?.length ? flagScope : changed };
@@ -12775,13 +12836,14 @@ function mergeTask(ctx, env, work, task, options = {}) {
     return withSwept(`git merge failed: ${gitError(error)}; resolve it by hand (or git merge --abort) and run the merge again`);
   }
   const commit = gitHead(env.paths.root);
-  record.mergedAt = nowIso();
+  const at = nowIso();
+  record.mergedAt = at;
   record.mergeCommit = commit;
   record.state = "merged";
   if (options.forcedBy)
     record.forcedBy = options.forcedBy;
   saveWork(env.paths, work);
-  const credit = creditChild(env.paths, work, record, options.forcedBy !== undefined);
+  const credit = creditChild(env.paths, work, record, { child, commit, at }, options.forcedBy !== undefined);
   const childDir = workDir(env.paths, child);
   if (existsSync19(workDir(childPaths, child)))
     cpSync(workDir(childPaths, child), childDir, {
@@ -12864,15 +12926,10 @@ function dropTask(ctx, env, work, task) {
   dropOpenedMarker(ctx.paths.userDir, record.worktree);
   return { record, tip, swept: swept.lines, notes };
 }
-function creditChild(paths, work, record, forced) {
+function creditChild(paths, work, record, proof, forced) {
   if (forced)
     return { credited: [], uncredited: "a forced merge of an unproven child credits nothing" };
-  const merged = {
-    task: record.task,
-    child: record.child ?? "",
-    commit: record.mergeCommit ?? "",
-    at: record.mergedAt ?? nowIso()
-  };
+  const merged = { task: record.task, ...proof };
   const saved = updateEvidence(paths, work.id, (fresh) => {
     const tdd = fresh.tdd.map((t) => record.criteria.includes(t.criterion) ? { ...t, merged } : t);
     for (const criterion of record.criteria)
@@ -14286,7 +14343,7 @@ function computeMetrics(projects, knowledge = emptyKnowledge()) {
         if (d.answer === undefined)
           continue;
         m.decisions.total += 1;
-        if (d.by === "user")
+        if (d.by === "user" || d.by === undefined)
           m.decisions.byUser += 1;
         else if (d.by === "validator")
           m.decisions.byValidator += 1;
@@ -14300,6 +14357,9 @@ function computeMetrics(projects, knowledge = emptyKnowledge()) {
           count(m.tokens.byPersonality, r.personality, r.tokens);
         m.tokens.total += r.tokens;
       }
+      if (!evidence.roles?.length)
+        for (const j of evidence.judgement ?? [])
+          m.tokens.total += j.tokens ?? 0;
       for (const j of evidence.judgement ?? []) {
         if (j.verdict === "not-run")
           m.gates.notRun += 1;
@@ -14505,7 +14565,7 @@ function defaultTestCommand(profile) {
   return {
     command: test.command,
     timeoutMs: target.timeoutMs,
-    heldBy: test.pack && test.source === "proposed" ? test.pack : null
+    heldBy: proposedByPack(test)
   };
 }
 async function recordTdd(paths, work, evidence, profile, criterionId, step, override, reason) {
@@ -14569,6 +14629,8 @@ async function recordTdd(paths, work, evidence, profile, criterionId, step, over
       target = { criterion: criterionId };
       into.tdd.push(target);
     }
+    if (recorded === "red" && target.red)
+      target.reds = [...target.reds ?? [], target.red];
     target[recorded] = record3;
     if (recorded === "observed" && reason)
       target.reason = reason.trim();
@@ -16238,7 +16300,7 @@ async function dispatch(parsed, io) {
         if (!block)
           return refuse(NO_ENVIRONMENT);
         const confirmed = [];
-        for (const key of ["start", "health", "stop"]) {
+        for (const key of ENVIRONMENT_COMMANDS) {
           const command3 = block[key];
           if (command3?.source === "proposed" && command3.command.trim()) {
             command3.source = "confirmed";
@@ -16428,7 +16490,9 @@ async function dispatch(parsed, io) {
       } else
         work.priority = startPriority(priorityFlag, origin, answers);
       if (work.route !== "fast") {
-        work.seats = plannedSeats(work.route, work.riskAreas, [], env.policy, undefined, undefined, teamsFor(env.policy, packTemplates(env.paths.userDir)).teams);
+        work.seats = plannedSeats(work.route, work.riskAreas, [], env.policy, {
+          registry: teamsFor(env.policy, packTemplates(env.paths.userDir)).teams
+        });
         work.primaryTeam = primaryTeam([]);
       }
       if (origin) {
@@ -17544,7 +17608,11 @@ test-first not credited: ${out2.uncredited}` : "";
       const audit = kindOfItem(opened.work) === "audit";
       const scope = audit ? readJson(join48(workDir(env.paths, opened.work.id), "audit", "scope.json")) : null;
       const registry = teamsFor(env.policy, packTemplates(env.paths.userDir));
-      const seats = audit ? auditSeats({ riskAreas: scope?.riskAreas ?? opened.work.riskAreas }, env.policy) : plannedSeats(opened.work.route, opened.work.riskAreas, changed, env.policy, undefined, { strategy: phasesFor(opened.work).includes("strategy") }, registry.teams, changedPaths(env.paths.root, opened.work));
+      const seats = audit ? auditSeats({ riskAreas: scope?.riskAreas ?? opened.work.riskAreas }, env.policy) : plannedSeats(opened.work.route, opened.work.riskAreas, changed, env.policy, {
+        strategy: phasesFor(opened.work).includes("strategy"),
+        registry: registry.teams,
+        templatePaths: changedPaths(env.paths.root, opened.work)
+      });
       const primary = primaryTeam(changed);
       opened.work.seats = seats;
       opened.work.primaryTeam = primary;
@@ -18205,7 +18273,7 @@ function statusLine2(status) {
     return `environment: up, started by the engine (pid ${status.pid}, since ${status.since})`;
   return status.managed === false ? "environment: up (the user's)" : "environment: up";
 }
-var ENVIRONMENT_KEYS = ["start", "health", "stop", "logs", "url", "timeout"];
+var ENVIRONMENT_KEYS = [...ENVIRONMENT_COMMANDS, "logs", "url", "timeout"];
 var NO_ENVIRONMENT = 'no environment in the profile (crew profile set environment.start "<cmd>")';
 function settings(command2, args, user) {
   const config = loadConfig(user);

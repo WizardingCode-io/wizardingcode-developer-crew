@@ -1,9 +1,13 @@
 import { createHash } from "node:crypto";
+import { TEAMS } from "./team.ts";
 import type { Seat, Validation, WorkItem } from "./types.ts";
 import type { GuardContext } from "./work.ts";
 
 /** The teams a tech lead answers for, as its first line names them (`# <team> lead's validation of <id>: <what>`); the hook and the parser read the same list. */
-export const LEAD_TEAMS = "qa|security|architects|etl|devops";
+export const LEAD_TEAMS = Object.entries(TEAMS)
+  .filter(([, team]) => team.validates)
+  .map(([name]) => name)
+  .join("|");
 /** The opening of a lead's heading line, before the item and the subject. */
 const LEAD_OPENING = `# (${LEAD_TEAMS}) lead's validation of `;
 /** Where a lead's answer starts: a split point, the line kept with its block. */

@@ -2,11 +2,12 @@ import { existsSync, readdirSync, readFileSync, realpathSync, rmSync } from "nod
 import { homedir } from "node:os";
 import { basename, isAbsolute, join, sep } from "node:path";
 import type { DetectorRule } from "./detect/types.ts";
-import { ensureDir, nowIso, readJson, readText, sha256, writeJson } from "./fs.ts";
+import { ensureDir, nowIso, readJson, readText, readTextQuietly, sha256, writeJson } from "./fs.ts";
 import { withLock } from "./lock.ts";
 import { packPath, packsDir } from "./paths.ts";
+import { LOWERCASE_WORD } from "./policy.ts";
 import { scanText } from "./secrets.ts";
-import { TEAMS, type TeamDef } from "./team.ts";
+import { type RegistryTemplate, TEAMS, type TeamDef } from "./team.ts";
 import {
   CORE_STACKS,
   type CoreStack,
@@ -79,7 +80,6 @@ export interface PackListing {
 }
 
 export const PACK_NAME = /^wizardingcode-pack-[a-z0-9][a-z0-9-]*$/;
-const WORD = /^[a-z][a-z0-9-]*$/;
 const SEMVER = /^\d+\.\d+\.\d+$/;
 const CORE_RANGE = /^>=(\d+)\.(\d+)\.(\d+)$/;
 const PACK_KINDS: readonly PackKind[] = ["stack", "domain", "team"];
@@ -111,7 +111,12 @@ const message = (error: unknown): string =>
 
 /** The manifest at `<root>/pack.json`, checked field by field (SP6 Task 2 AC-1), or the one refusal. */
 export function readManifest(root: string): { manifest: PackManifest } | { refused: string } {
-  const text = readText(join(root, "pack.json"));
+  let text: string | null;
+  try {
+    text = readText(join(root, "pack.json"));
+  } catch (error) {
+    return { refused: `pack.json cannot be read: ${message(error)}` };
+  }
   if (text === null) return { refused: "pack.json names nothing: the file is missing" };
   let data: unknown;
   try {
@@ -140,7 +145,7 @@ export function readManifest(root: string): { manifest: PackManifest } | { refus
     if (!isRecord(raw)) return bad("detectors is not a list of rules");
     const stack = typeof raw.stack === "string" ? raw.stack : "?";
     const rule = (what: string) => bad(`detector ${stack}: ${what}`);
-    if (typeof raw.stack !== "string" || !WORD.test(raw.stack))
+    if (typeof raw.stack !== "string" || !LOWERCASE_WORD.test(raw.stack))
       return rule("stack is not a lowercase word");
     if (raw.extends !== undefined && !CORE_STACKS.includes(raw.extends as CoreStack))
       return rule(`extends ${String(raw.extends)} is not a core stack (${CORE_STACKS.join(", ")})`);
@@ -183,7 +188,7 @@ export function readManifest(root: string): { manifest: PackManifest } | { refus
     if (climbs(v)) return bad(`knowledge holds a path that is absolute or climbs (${v})`);
   if (
     !Object.entries(m.knowledge as Record<string, string>).every(
-      ([k, v]) => WORD.test(k) && /^knowledge\/[a-z0-9-]+\.md$/.test(v),
+      ([k, v]) => LOWERCASE_WORD.test(k) && /^knowledge\/[a-z0-9-]+\.md$/.test(v),
     )
   )
     return bad("knowledge is not an object of lowercase keys to knowledge/<name>.md paths");
@@ -191,7 +196,7 @@ export function readManifest(root: string): { manifest: PackManifest } | { refus
   if (m.team !== null) {
     if (!isRecord(m.team)) return bad("team is not null or a template");
     const t = m.team;
-    if (typeof t.template !== "string" || !WORD.test(t.template))
+    if (typeof t.template !== "string" || !LOWERCASE_WORD.test(t.template))
       return bad("template: template is not a lowercase word");
     for (const key of Object.keys(t))
       if (!TEMPLATE_KEYS.has(key))
@@ -348,6 +353,13 @@ export function registerPack(
   const refused = checkPack(root, read.manifest);
   if (refused) return { refused };
   const manifest = read.manifest;
+  // The folder named by its real path; one gone since its manifest was read is refused, never thrown.
+  let real: string;
+  try {
+    real = realpathSync(root);
+  } catch (error) {
+    return { refused: `${root} cannot be resolved: ${message(error)}` };
+  }
   const dir = packsDir(userDir);
   ensureDir(dir);
   return withLock(dir, () => {
@@ -366,7 +378,7 @@ export function registerPack(
     const registration: PackRegistration = {
       name: manifest.name,
       version: manifest.version,
-      root: realpathSync(root),
+      root: real,
       registeredAt,
       by,
       key,
@@ -430,7 +442,8 @@ export function listPacks(userDir: string, options: { quick?: boolean } = {}): P
   const listed: PackListing[] = [];
   for (const file of names) {
     const name = basename(file, ".json");
-    const text = readText(join(dir, file)) ?? "";
+    // A registration that cannot be read is listed as broken, as one that does not parse.
+    const text = readTextQuietly(join(dir, file)) ?? "";
     let registration: PackRegistration | null = null;
     let reason = "";
     try {
@@ -498,7 +511,7 @@ export function packRules(userDir: string): { pack: string; rule: DetectorRule }
   );
 }
 
-export function packTemplates(userDir: string): { pack: string; template: TeamTemplate }[] {
+export function packTemplates(userDir: string): RegistryTemplate[] {
   return okPacks(userDir).flatMap((p) =>
     p.manifest.team ? [{ pack: p.name, template: p.manifest.team }] : [],
   );
@@ -634,7 +647,8 @@ interface InstalledPlugin {
  */
 export function discoverPacks(userDir: string, env: NodeJS.ProcessEnv): string[] {
   if (!env.CLAUDE_PLUGIN_ROOT) return [];
-  const text = readText(pluginRegistryPath(env));
+  // Run from the session-start hook: a registry that cannot be read discovers nothing.
+  const text = readTextQuietly(pluginRegistryPath(env));
   if (text === null) return [];
   let data: unknown;
   try {

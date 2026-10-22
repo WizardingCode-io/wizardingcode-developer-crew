@@ -1,5 +1,8 @@
 import { expect, test } from "bun:test";
-import { oneLine } from "../src/state.ts";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { loadState, oneLine } from "../src/state.ts";
+import { makeRepo, repoPaths, testEnv } from "./helpers.ts";
 
 /** The bidirectional and invisible format characters oneLine deletes (finding 58, the security lead's return). */
 const FORMAT = [
@@ -20,4 +23,35 @@ test("CON5-AC-7-oneline: oneLine deletes each bidirectional and invisible format
   // What it removes today stays removed: an escape sequence, and C0, DEL and C1 as one space.
   expect(oneLine("a\x1b[31mb")).toBe("ab");
   expect(oneLine("a\x00b\x7fc\x85d")).toBe("a b c d");
+});
+
+test("CON6-AC-8 (finding 58): a working role's stored description is cleaned to one line again when the state is read", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  mkdirSync(paths.localDir, { recursive: true });
+  const since = new Date().toISOString();
+  const dirty = "\x1b[31mreview\x1b[0m the\ncart\u202e  totals\r\n";
+  writeFileSync(
+    join(paths.localDir, "state.json"),
+    JSON.stringify({
+      active: null,
+      sessions: {},
+      working: [
+        { agent: "review-security", team: null, since, sessionId: "s", description: dirty },
+        { agent: "judge", team: null, since, sessionId: "s", description: "\u200b\n\x1b[0m" },
+      ],
+    }),
+  );
+  const working = loadState(paths).working ?? [];
+  expect(working[0]).toEqual({
+    agent: "review-security",
+    team: null,
+    since,
+    sessionId: "s",
+    description: "review the cart totals",
+  });
+  // A description that cleans to nothing is not kept as an empty line.
+  for (const role of working) expect(role.description).not.toBe("");
+  expect(
+    working.map((w) => w.description).filter((d) => d !== undefined && oneLine(d) !== d),
+  ).toEqual([]);
 });

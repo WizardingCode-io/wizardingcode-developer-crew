@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { composePort, detectEnvironment } from "../src/detect/environment.ts";
+import { composePort, detectEnvironment, environmentChanges } from "../src/detect/environment.ts";
 import { detectProfile, mergeProfile, profileChanges } from "../src/detect/index.ts";
 import {
   checkHealth,
@@ -147,18 +147,18 @@ test("SP7b-T3 AC-1: the environment is detected from a compose file, artisan, a 
   expect(profileChanges({ ...base, environment: startConfirmed }, kept)).toEqual([]);
   // The changes a re-detection names.
   expect(profileChanges(base, { ...base, environment: detected })).toContain(
-    "environment.start (.): docker compose up -d",
+    "environment.start: docker compose up -d",
   );
   expect(
     profileChanges(
       { ...base, environment: detected },
       { ...base, environment: { ...detected, health: confirmed(detected.health.command) } },
     ),
-  ).toEqual(["environment.health (.): curl -fsS http://localhost:8080/"]);
+  ).toEqual(["environment.health: curl -fsS http://localhost:8080/"]);
   const { stop: _stop, ...withoutStop } = detected;
   expect(
     profileChanges({ ...base, environment: detected }, { ...base, environment: withoutStop }),
-  ).toEqual(["environment.stop (.): removed"]);
+  ).toEqual(["environment.stop: removed"]);
   expect(profileChanges({ ...base, environment: detected }, base)).toContain(
     "environment: removed",
   );
@@ -295,4 +295,23 @@ test("SP7b-T3 AC-3: an environment up before the start is the user's: nothing sp
   expect(existsSync(join(root, "up.flag"))).toBe(true);
   unlinkSync(join(root, "up.flag"));
   expect(await envStatus(paths, env)).toMatchObject({ state: "down", managed: false });
+});
+
+test("CON6-AC-5 (finding 72): the environment's change lines carry no (.) marker", () => {
+  const before: Environment = {
+    start: proposed("docker compose up -d"),
+    health: proposed("curl -fsS http://localhost:8080/"),
+    stop: proposed("docker compose down"),
+    timeoutMs: 1,
+  };
+  const after: Environment = {
+    start: confirmed("docker compose up -d --wait"),
+    health: proposed("curl -fsS http://localhost:8080/"),
+    timeoutMs: 1,
+  };
+  expect(environmentChanges(before, after)).toEqual([
+    "environment.start: docker compose up -d --wait",
+    "environment.stop: removed",
+  ]);
+  for (const line of environmentChanges(undefined, before)) expect(line).not.toContain("(.)");
 });

@@ -1,5 +1,6 @@
-import { basename, relative } from "node:path";
+import { basename, dirname, relative } from "node:path";
 import { readText, sha256, writeJson, writeText } from "./fs.ts";
+import { withLock } from "./lock.ts";
 import type { CrewPaths } from "./paths.ts";
 
 type Integrity = Record<string, string>;
@@ -12,9 +13,17 @@ export function rel(paths: CrewPaths, absPath: string): string {
   return relative(paths.root, absPath).replace(/\\/g, "/");
 }
 
-/** `corrupt` when the file exists but is not a JSON object: nothing it vouched for can be trusted. */
+/**
+ * `corrupt` when the file exists but is not a JSON object, or cannot be read (a directory, no
+ * permission, finding 30): nothing it vouched for can be trusted. Only an absent file is empty.
+ */
 function readIntegrityFile(file: string): { map: Integrity; corrupt: boolean } {
-  const text = readText(file);
+  let text: string | null;
+  try {
+    text = readText(file);
+  } catch {
+    return { map: {}, corrupt: true };
+  }
   if (text === null) return { map: {}, corrupt: false };
   try {
     const parsed: unknown = JSON.parse(text);
@@ -36,8 +45,17 @@ function rememberIn(file: string, key: string, text: string): void {
   writeJson(file, integrity);
 }
 
+/**
+ * A repository's hash recorded under the store's lock (finding 29): `withLock` on the integrity
+ * file's folder, so two writers never lose each other's hash; a lock held past the wait throws
+ * `LockBusy` and nothing is written unlocked. The `At` writers need no lock of their own: a
+ * mailbox's integrity file sits in the mailbox folder, whose lock every writer of a box holds.
+ */
 function remember(paths: CrewPaths, absPath: string, text: string): void {
-  rememberIn(paths.integrityFile, rel(paths, absPath), text);
+  const file = paths.integrityFile;
+  withLock(dirname(file), () => rememberIn(file, rel(paths, absPath), text), {
+    what: "integrity record",
+  });
 }
 
 export function writeProtectedText(paths: CrewPaths, absPath: string, text: string): void {
@@ -74,7 +92,13 @@ function readProtected<T>(
   absPath: string,
   handWritten: boolean,
 ): Protected<T> {
-  const text = readText(absPath);
+  // A file that is there but cannot be read (finding 30) holds nothing to trust.
+  let text: string | null;
+  try {
+    text = readText(absPath);
+  } catch {
+    return { data: null, tampered: true };
+  }
   if (text === null) return { data: null, tampered: false };
   const { map, corrupt } = readIntegrityFile(integrityFile);
   const expected = map[key];

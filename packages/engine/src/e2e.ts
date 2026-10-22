@@ -11,7 +11,7 @@ import {
 import { join, relative, sep } from "node:path";
 import { gradeConsole, gradeLogs } from "./console.ts";
 import { startEnvironment, stopEnvironment } from "./environment.ts";
-import { readText, writeText } from "./fs.ts";
+import { readTextQuietly, writeText } from "./fs.ts";
 import { insidePath } from "./mail-status.ts";
 import { type CrewPaths, workDir } from "./paths.ts";
 import { runCommand } from "./run.ts";
@@ -106,7 +106,7 @@ async function readLogs(
       logPath: logsFile,
       stderrLogPath: join(workDir(paths, work.id), log.replace(/\.txt$/, "-logs-stderr.txt")),
     });
-    return readText(logsFile) ?? "";
+    return readTextQuietly(logsFile) ?? "";
   }
   return null;
 }

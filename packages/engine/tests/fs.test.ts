@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { exists, readJson, readText, sha256, writeJson, writeText } from "../src/fs.ts";
@@ -26,4 +26,19 @@ test("writeJson round-trips and readJson returns null on invalid JSON", () => {
   expect(readJson<{ a: number }>(file)?.a).toBe(1);
   writeText(file, "{not json");
   expect(readJson(file)).toBeNull();
+});
+
+test("CON6-AC-10 (finding 30): readText returns null for a missing file only and throws any other read error", () => {
+  const dir = mkdtempSync(join(tmpdir(), "crew-fs-"));
+  expect(readText(join(dir, "missing.txt"))).toBeNull();
+  expect(readText(join(dir, "no", "such", "folder.txt"))).toBeNull();
+  const folder = join(dir, "a-folder");
+  mkdirSync(folder);
+  let outcome: unknown;
+  try {
+    outcome = { read: readText(folder) };
+  } catch (error) {
+    outcome = { threw: (error as NodeJS.ErrnoException).code };
+  }
+  expect(outcome).toEqual({ threw: "EISDIR" });
 });

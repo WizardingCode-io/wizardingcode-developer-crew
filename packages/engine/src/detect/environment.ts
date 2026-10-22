@@ -1,10 +1,13 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { readJson, readText } from "../fs.ts";
+import { readJson, readTextQuietly } from "../fs.ts";
 import type { Environment, GateCommand, Target } from "../types.ts";
 
 /** How long `crew env start` and the e2e gate wait for health by default (SP7 §8.2). */
 export const ENVIRONMENT_TIMEOUT_MS = 120_000;
+/** The environment's commands, named once for the detector, the re-detection's lines and `crew profile`. */
+export const ENVIRONMENT_COMMANDS = ["start", "health", "stop"] as const;
+export type EnvironmentCommand = (typeof ENVIRONMENT_COMMANDS)[number];
 const COMPOSE_FILES = ["docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"];
 /** The Makefile targets that start an application, in order of preference. */
 const MAKE_TARGETS = ["start", "serve", "dev"];
@@ -43,7 +46,7 @@ export function detectEnvironment(root: string, targets: readonly Target[]): Env
     return {
       start: proposed("docker compose up -d"),
       stop: proposed("docker compose down"),
-      ...onLocalhost("localhost", composePort(readText(compose) ?? "")),
+      ...onLocalhost("localhost", composePort(readTextQuietly(compose) ?? "")),
       timeoutMs: ENVIRONMENT_TIMEOUT_MS,
     };
   }
@@ -54,7 +57,8 @@ export function detectEnvironment(root: string, targets: readonly Target[]): Env
       timeoutMs: ENVIRONMENT_TIMEOUT_MS,
     };
   }
-  const makefile = readText(join(root, "Makefile"));
+  // A file that cannot be read is no marker: detection runs in the hooks too (finding 30).
+  const makefile = readTextQuietly(join(root, "Makefile"));
   const target = makefile
     ? MAKE_TARGETS.find((t) => new RegExp(`^${t}:`, "m").test(makefile))
     : undefined;
@@ -81,9 +85,7 @@ export function detectEnvironment(root: string, targets: readonly Target[]): Env
 
 /** True when the user confirmed any command of the block: it then outlives a re-detection whole, as a confirmed gate does. */
 export function confirmedEnvironment(environment: Environment): boolean {
-  return [environment.start, environment.health, environment.stop].some(
-    (c) => c?.source === "confirmed",
-  );
+  return ENVIRONMENT_COMMANDS.some((key) => environment[key]?.source === "confirmed");
 }
 
 /** What a re-detection changed in the environment, one line each (SP7 §8.2), in `profileChanges`' voice. */
@@ -94,12 +96,12 @@ export function environmentChanges(
   if (previous && !next) return ["environment: removed"];
   if (!next) return [];
   const lines: string[] = [];
-  for (const key of ["start", "health", "stop"] as const) {
+  for (const key of ENVIRONMENT_COMMANDS) {
     const before = previous?.[key];
     const after = next[key];
     if (after && (before?.command !== after.command || before.source !== after.source))
-      lines.push(`environment.${key} (.): ${after.command}`);
-    else if (before && !after) lines.push(`environment.${key} (.): removed`);
+      lines.push(`environment.${key}: ${after.command}`);
+    else if (before && !after) lines.push(`environment.${key}: removed`);
   }
   return lines;
 }

@@ -23,6 +23,8 @@ export type MappedStatus =
   | "expired";
 
 export const MAIL_TRANSITIONS: Record<MappedStatus, readonly MappedStatus[]> = {
+  // A receiver may answer without reading the message as a step of its own: from sent, every
+  // status a reply or the sweep gives is reachable; only accepted waits for a read.
   sent: ["read", "done", "refused", "expired", "in-progress", "blocked"],
   read: ["accepted", "refused", "in-progress", "done", "blocked", "expired"],
   accepted: ["in-progress", "blocked", "done", "refused"],

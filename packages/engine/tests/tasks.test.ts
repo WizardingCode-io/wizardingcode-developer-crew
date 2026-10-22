@@ -11,6 +11,7 @@ import {
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type CliIo, main } from "../src/cli.ts";
+import { detectProfile } from "../src/detect/index.ts";
 import { loadEvidence, saveEvidence } from "../src/evidence.ts";
 import { scopeHash } from "../src/judgement.ts";
 import {
@@ -26,7 +27,7 @@ import {
 import { isAlive, readOutcome } from "../src/open.ts";
 import { openedMarkerFile, writeOpenedMarker } from "../src/opened.ts";
 import { loadPolicy } from "../src/policy.ts";
-import { shortId, taskNames, taskText, writeBrief } from "../src/tasks.ts";
+import { scopeRefusal, shortId, taskNames, taskScope, taskText, writeBrief } from "../src/tasks.ts";
 import type { Message, TaskRecord } from "../src/types.ts";
 import { createWork, loadWork, saveWork } from "../src/work.ts";
 import { git, makeRepo, repoPaths, tempDir, testEnv, write } from "./helpers.ts";
@@ -1512,3 +1513,52 @@ test("SP7b-T5 AC-1: a todo's gate plans the judgement its scope asks for, cuts i
   expect((await c.run("task", id, "brief", "T-5")).code).toBe(0);
   expect(loadWork(paths, id).work?.rounds?.judgement ?? 0).toBe(0);
 }, 30_000);
+
+test("CON6-AC-3 (finding 56): a task's scope that starts with a backslash, a UNC path among them, is refused naming the path", () => {
+  for (const path of ["\\\\server\\share\\a.ts", "\\a.ts", "\\src/a.ts"]) {
+    const refusal = scopeRefusal([path]);
+    expect(refusal).not.toBeNull();
+    expect(
+      refusal !== null && (refusal.includes(path) || refusal.includes(JSON.stringify(path))),
+    ).toBe(true);
+  }
+  // A relative path stays a name of the checkout.
+  expect(scopeRefusal(["src/a.ts"])).toBeNull();
+});
+
+test("CON6-AC-6 (finding 30): a task whose merge HEAD has undone with git revert -m 1 is refused as reverted by the task's scope; a merge git cannot read refuses too", () => {
+  const root = makeRepo({ "package.json": JSON.stringify({ scripts: { test: "exit 0" } }) });
+  git(root, "checkout", "-q", "-b", "crew/t-1");
+  write(root, "src/a.ts", "export const a = 1;\n");
+  git(root, "add", "-A");
+  git(root, "commit", "-q", "-m", "T-1");
+  git(root, "checkout", "-q", "main");
+  git(root, "merge", "-q", "--no-ff", "-m", "Merge T-1", "crew/t-1");
+  const merge = git(root, "rev-parse", "HEAD");
+  git(root, "revert", "--no-edit", "-m", "1", merge);
+  const revert = git(root, "rev-parse", "HEAD");
+  const profile = detectProfile(root);
+  const record: TaskRecord = {
+    task: "T-1",
+    message: "",
+    criteria: ["AC-1"],
+    text: "T-1",
+    branch: "crew/t-1",
+    worktree: "",
+    openedAt: "2026-10-22T10:00:00.000Z",
+    state: "merged",
+    mergedAt: "2026-10-22T10:05:00.000Z",
+    mergeCommit: merge,
+  };
+  expect(taskScope(root, profile, record)).toEqual({
+    refused: `T-1's merge ${merge.slice(0, 7)} was reverted at ${revert.slice(0, 7)}: open the task again or gate the item`,
+  });
+  // A merge commit git cannot read (one that does not exist) makes the scope refuse, never pass.
+  let unreadable: unknown;
+  try {
+    unreadable = taskScope(root, profile, { ...record, mergeCommit: "0".repeat(40) });
+  } catch (error) {
+    unreadable = { threw: String(error) };
+  }
+  expect(unreadable).toMatchObject({ refused: expect.any(String) });
+});

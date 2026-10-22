@@ -1,5 +1,6 @@
 import { riskAreasForPaths } from "./classify.ts";
 import { matchesAny } from "./glob.ts";
+import type { TeamTemplate } from "./packs.ts";
 import { isInterfacePath } from "./paths-kind.ts";
 import type {
   JudgementGateName,
@@ -99,10 +100,7 @@ export const TEAMS: Record<TeamName, TeamDef> = {
 /** A pack's team template as the registry reads it (SP6 Task 2): globs for a `paths` team, nothing else. */
 export interface RegistryTemplate {
   pack: string;
-  template: {
-    template: string;
-    teams: Partial<Record<TeamName, { mandatory: { kind: "paths"; globs: string[] } }>>;
-  };
+  template: TeamTemplate;
 }
 
 /**
@@ -245,6 +243,21 @@ export function taskSeats(scope: readonly string[], policy: Policy): Seat[] {
   return seats;
 }
 
+/** What `plannedSeats` is given beside the route and the change, each with its default. */
+export interface SeatOptions {
+  /** A todo's scope: the todo's seats and nothing else (SP7b decision 14). */
+  scope?: readonly string[];
+  /** Whether the item has a strategy for the CTO to review. */
+  strategy?: boolean;
+  /** The registry the seats are planned from: the core's by default, or `teamsFor`'s with a pack's template. */
+  registry?: Record<TeamName, TeamDef>;
+  /**
+   * The paths a pack template's globs are matched against: the change's paths before the watch's
+   * exclusions (SP6 Task 6), since an agent's Markdown is what such a template names.
+   */
+  templatePaths?: readonly string[];
+}
+
 /**
  * Every seat of an item (SP7 §6.2): the researcher from standard up; the reviewers of the seated
  * teams (code and test quality from standard up; security on full or on a risk area; UI/UX on any
@@ -259,13 +272,9 @@ export function plannedSeats(
   riskAreas: readonly RiskArea[],
   changed: readonly string[],
   policy: Policy,
-  scope?: readonly string[],
-  options?: { strategy?: boolean },
-  registry: Record<TeamName, TeamDef> = TEAMS,
-  // The paths a pack template's globs are matched against: the change's paths before the watch's
-  // exclusions (SP6 Task 6), since an agent's Markdown is what such a template names.
-  templatePaths: readonly string[] = changed,
+  options: SeatOptions = {},
 ): Seat[] {
+  const { scope, strategy, registry = TEAMS, templatePaths = changed } = options;
   // A todo's scope plans the todo's seats and nothing else (SP7b decision 14).
   if (scope !== undefined) return taskSeats(scope, policy);
   const seats: Seat[] = [];
@@ -274,28 +283,30 @@ export function plannedSeats(
   };
   if (route !== "fast")
     plan({ role: "researcher", team: "researchers", kind: "debate", reason: `${route} route` });
-  const gate = (name: JudgementGateName, team: TeamName, reason: string) =>
+  // A gate's reviewer sits in the team whose registry entry rules that gate; the risk review is
+  // ruled by no team's reviewers and sits with the architects, who own the full route.
+  const owner = (name: JudgementGateName): TeamName | null =>
+    (Object.entries(registry) as [TeamName, TeamDef][]).find(([, t]) =>
+      t.gates.includes(name),
+    )?.[0] ?? null;
+  const gate = (name: JudgementGateName, reason: string, team = owner(name)) =>
     plan({ role: `review-${name}`, team, kind: "gate", gate: name, reason });
   if (route !== "fast") {
-    gate("code-quality", "backend", `${route} route`);
-    gate("test-quality", "qa", `${route} route`);
+    gate("code-quality", `${route} route`);
+    gate("test-quality", `${route} route`);
   }
-  if (route === "full") gate("security", "security", "full route");
+  if (route === "full") gate("security", "full route");
   else if (route === "standard" && riskAreas.length)
-    gate(
-      "security",
-      "security",
-      `risk area${riskAreas.length === 1 ? "" : "s"} ${riskAreas.join(", ")}`,
-    );
+    gate("security", `risk area${riskAreas.length === 1 ? "" : "s"} ${riskAreas.join(", ")}`);
   const interfaces = changed.filter(isInterfacePath);
-  if (interfaces.length) gate("ui-ux", "qa", interfaceReason(interfaces));
+  if (interfaces.length) gate("ui-ux", interfaceReason(interfaces));
   if (route === "full") {
-    gate("risk", "architects", "full route");
-    gate("architecture", "architects", "full route");
+    gate("risk", "full route", "architects");
+    gate("architecture", "full route");
   }
   // The CTO reviews a new project's strategy on the full route (SP7 §6.2, §7.3); on standard the
   // judge rules it from the files and nobody sits for it.
-  if (route === "full" && options?.strategy)
+  if (route === "full" && strategy)
     plan({
       role: "cto",
       team: null,
@@ -306,16 +317,12 @@ export function plannedSeats(
   // A team the policy always seats brings every reviewer the registry gives it, on any route,
   // beyond what the route planned (SP7 §6.1); a seat the route already planned keeps its reason.
   for (const team of policy.team.always)
-    for (const g of registry[team].gates) gate(g, team, "policy team.always");
+    for (const g of registry[team].gates) gate(g, "policy team.always", team);
   for (const team of ["etl", "devops"] as const) {
     const reason = seated(team, registry[team], route, riskAreas, policy);
-    if (reason) for (const g of registry[team].gates) gate(g, team, reason);
+    if (reason) for (const g of registry[team].gates) gate(g, reason, team);
   }
-  for (const g of policy.judgementGates) {
-    const team = (Object.entries(registry).find(([, t]) => t.gates.includes(g))?.[0] ??
-      null) as TeamName | null;
-    plan({ role: `review-${g}`, team, kind: "gate", gate: g, reason: "policy" });
-  }
+  for (const g of policy.judgementGates) gate(g, "policy");
   // A pack team's paths (SP6 Task 2 AC-4): a changed file under a template's glob seats the team as
   // the expert's knowledge seat (SP7 §6.3), on standard and full; the fast route stays as it is.
   if (route !== "fast")

@@ -9184,19 +9184,41 @@ test("F120 AC-5: the register holds the add and the removal as the user's decisi
   expect(listDecisions(paths)[0]).toMatchObject({
     text: "riskPathExclusions: a/b.ts removed, paths matching it raise the route again",
   });
-  // The record comes first: a write that throws (the policy path is a directory) leaves the decision
-  // recorded and the file as it was, and the command fails.
-  rmSync(file);
-  mkdirSync(file);
-  const thrown = await c
-    .run("policy", "set", "riskPathExclusions", "c/d.ts")
-    .catch((error: Error) => ({ code: -1, out: "", err: error.message }));
+  // The record comes first: a write of the policy that throws leaves the decision recorded and the
+  // file as it was, and the command fails. Only the policy's write throws; the register's goes through.
+  const before = readFileSync(file, "utf8");
+  const realWrite = store.writeProtectedJson;
+  const write = spyOn(store, "writeProtectedJson").mockImplementation(((
+    ...args: Parameters<typeof store.writeProtectedJson>
+  ) => {
+    if (args[1] === file) throw new Error("disk full");
+    return realWrite(...args);
+  }) as typeof store.writeProtectedJson);
+  let thrown: { code: number; err: string };
+  try {
+    thrown = await c
+      .run("policy", "set", "riskPathExclusions", "c/d.ts")
+      .catch((error: Error) => ({ code: -1, out: "", err: error.message }));
+  } finally {
+    write.mockRestore();
+  }
   expect(thrown.code).not.toBe(0);
-  expect(statSync(file).isDirectory()).toBe(true);
+  expect(readFileSync(file, "utf8")).toBe(before);
   expect(listDecisions(paths).length).toBe(count + 3);
   expect(listDecisions(paths)[0]).toMatchObject({
     text: "riskPathExclusions: c/d.ts added, paths matching it never raise the route (ADR 0003)",
   });
+  // A policy path that cannot be read (a directory) is not an absent policy since CON6-AC-10: it
+  // reads as changed outside the engine and is refused before anything is recorded or written.
+  rmSync(file);
+  mkdirSync(file);
+  const refused = await c
+    .run("policy", "set", "riskPathExclusions", "e/f.ts")
+    .catch((error: Error) => ({ code: -1, out: "", err: error.message }));
+  expect(refused.code).toBe(1);
+  expect(refused.err).toContain("state changed outside the engine: .crew/policy.json");
+  expect(statSync(file).isDirectory()).toBe(true);
+  expect(listDecisions(paths).length).toBe(count + 3);
 });
 
 test("F120 AC-6: a glob with no literal character or a leading ./ is refused; session-start.ts and session-*.ts are accepted; --remove runs the shape check; no value is the usage line and an empty string the hint", async () => {

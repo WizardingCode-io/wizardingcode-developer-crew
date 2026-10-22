@@ -192,7 +192,7 @@ test("SP7a AC-1 (round 2): ETL and DevOps sit on the full route only; team.alway
 
 test("SP7b-T5 AC-1: a todo's scope plans only the seats its files ask for: ui-ux for interface files, security for a risk path, the judge with them, nothing of the route or the policy", () => {
   const scoped = (scope: string[], policy = DEFAULT_POLICY) =>
-    plannedSeats("standard", [], ["src/a.ts"], policy, scope);
+    plannedSeats("standard", [], ["src/a.ts"], policy, { scope });
   expect(roles(scoped(["src/App.vue"]))).toEqual(["review-ui-ux", "judge"]);
   expect(scoped(["src/App.vue"])[0]).toEqual({
     role: "review-ui-ux",
@@ -221,9 +221,7 @@ test("SP7b-T5 AC-1: a todo's scope plans only the seats its files ask for: ui-ux
 
 test("SP8-T3 AC-3: the CTO sits as the strategy's reviewer on the full route alone, and only when the item has a strategy", () => {
   const cto = (seats: ReturnType<typeof plannedSeats>) => seats.find((s) => s.role === "cto");
-  expect(
-    cto(plannedSeats("full", [], ["src/a.ts"], DEFAULT_POLICY, undefined, { strategy: true })),
-  ).toEqual({
+  expect(cto(plannedSeats("full", [], ["src/a.ts"], DEFAULT_POLICY, { strategy: true }))).toEqual({
     role: "cto",
     team: null,
     kind: "cto",
@@ -231,11 +229,11 @@ test("SP8-T3 AC-3: the CTO sits as the strategy's reviewer on the full route alo
     reason: "reviewer of the strategy (full route)",
   });
   expect(
-    cto(plannedSeats("standard", [], ["src/a.ts"], DEFAULT_POLICY, undefined, { strategy: true })),
+    cto(plannedSeats("standard", [], ["src/a.ts"], DEFAULT_POLICY, { strategy: true })),
   ).toBeUndefined();
   expect(cto(plannedSeats("full", [], ["src/a.ts"], DEFAULT_POLICY))).toBeUndefined();
   expect(
-    cto(plannedSeats("full", [], ["src/a.ts"], DEFAULT_POLICY, undefined, { strategy: false })),
+    cto(plannedSeats("full", [], ["src/a.ts"], DEFAULT_POLICY, { strategy: false })),
   ).toBeUndefined();
 });
 
@@ -330,46 +328,20 @@ test("SP6-T2 AC-4: teamsFor merges a registered template's globs into a paths te
     kind: "debate",
     reason: "pack wizardingcode-pack-agentic-os (agents/**)",
   };
-  const seated = plannedSeats(
-    "standard",
-    [],
-    ["src/a.ts", "agents/triage.md"],
-    withTemplate,
-    undefined,
-    undefined,
-    merged.teams,
-  );
+  const seated = plannedSeats("standard", [], ["src/a.ts", "agents/triage.md"], withTemplate, {
+    registry: merged.teams,
+  });
   expect(seated).toContainEqual(expert);
   expect(roles(seated)).toContain("judge");
   expect(
-    plannedSeats(
-      "full",
-      [],
-      ["prompts/triage.md"],
-      withTemplate,
-      undefined,
-      undefined,
-      merged.teams,
-    ),
+    plannedSeats("full", [], ["prompts/triage.md"], withTemplate, { registry: merged.teams }),
   ).toContainEqual({ ...expert, reason: "pack wizardingcode-pack-agentic-os (prompts/**)" });
   // Nothing on the fast route, nothing when no path matches, nothing from the core registry.
   expect(
-    roles(
-      plannedSeats(
-        "fast",
-        [],
-        ["agents/triage.md"],
-        withTemplate,
-        undefined,
-        undefined,
-        merged.teams,
-      ),
-    ),
+    roles(plannedSeats("fast", [], ["agents/triage.md"], withTemplate, { registry: merged.teams })),
   ).toEqual([]);
   expect(
-    roles(
-      plannedSeats("standard", [], ["src/a.ts"], withTemplate, undefined, undefined, merged.teams),
-    ),
+    roles(plannedSeats("standard", [], ["src/a.ts"], withTemplate, { registry: merged.teams })),
   ).not.toContain("expert");
   expect(roles(plannedSeats("standard", [], ["agents/triage.md"], DEFAULT_POLICY))).not.toContain(
     "expert",

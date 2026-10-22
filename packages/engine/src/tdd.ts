@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { proposedByPack } from "./detect/index.ts";
 import { changedWatchedPaths } from "./fingerprint.ts";
 import { nowIso } from "./fs.ts";
 import { matchesAny } from "./glob.ts";
@@ -55,7 +56,7 @@ export function defaultTestCommand(
   return {
     command: test.command,
     timeoutMs: target.timeoutMs,
-    heldBy: test.pack && test.source === "proposed" ? test.pack : null,
+    heldBy: proposedByPack(test),
   };
 }
 
@@ -144,6 +145,8 @@ export async function recordTdd(
       target = { criterion: criterionId };
       into.tdd.push(target);
     }
+    // A red over an earlier one keeps the earlier in the history (finding 29); the latest decides.
+    if (recorded === "red" && target.red) target.reds = [...(target.reds ?? []), target.red];
     target[recorded] = record;
     if (recorded === "observed" && reason) target.reason = reason.trim();
   };

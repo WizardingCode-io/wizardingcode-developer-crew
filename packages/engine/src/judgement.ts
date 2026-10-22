@@ -3,8 +3,7 @@ import { join } from "node:path";
 import { reviewPatch } from "./fingerprint.ts";
 import { nowIso, readJson, sha256, writeText } from "./fs.ts";
 import { type CrewPaths, workDir } from "./paths.ts";
-import { isInterfacePath } from "./paths-kind.ts";
-import { plannedSeats, taskSeats } from "./team.ts";
+import { plannedSeats, TEAMS, type TeamDef, taskSeats } from "./team.ts";
 import type {
   Evidence,
   JudgementFinding,
@@ -17,14 +16,11 @@ import type {
   RoleRecord,
   Route,
   Seat,
+  TeamName,
   WorkItem,
 } from "./types.ts";
 import { isJudgementGateName, JUDGEMENT_GATES } from "./types.ts";
 import { isSkipped } from "./work.ts";
-
-// The interface-file reading lives in paths-kind.ts since SP7a (the registry asks it too); the name
-// stays exported from here for its callers.
-export { isInterfacePath };
 
 /**
  * The judgement gates an item needs (SP2 §10), as a view of the seats the registry plans (SP7 §6.2):
@@ -36,8 +32,10 @@ export function plannedJudgementGates(
   riskAreas: readonly RiskArea[],
   changed: readonly string[],
   policy: Policy,
+  // The registry the seats are planned from: a pack's template seats its teams' reviewers here too.
+  registry: Record<TeamName, TeamDef> = TEAMS,
 ): PlannedJudgement[] {
-  return plannedSeats(route, riskAreas, changed, policy)
+  return plannedSeats(route, riskAreas, changed, policy, { registry })
     .filter(
       (s): s is Seat & { gate: JudgementGateName } => s.kind === "gate" && s.gate !== undefined,
     )

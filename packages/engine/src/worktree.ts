@@ -67,11 +67,24 @@ const ENGINE_DIR = ".crew/";
  * space in the first column would otherwise shift the first path.
  */
 function dirtyPaths(path: string): string[] {
-  return gitRun(path, "status", "--porcelain", "--untracked-files=all")
-    .split("\n")
-    .map((line) => /^\s*[MADRCU?!]{0,2}\s+(.+)$/.exec(line)?.[1] ?? "")
-    .filter((p) => p.length > 0)
-    .flatMap((p) => p.split(" -> "));
+  return (
+    gitRun(path, "status", "--porcelain", "--untracked-files=all")
+      .split("\n")
+      // `!!` (ignored) is not in the class: without `--ignored` the status never lists it.
+      .map((line) => /^\s*[MADRCU?]{0,2}\s+(.+)$/.exec(line)?.[1] ?? "")
+      .filter((p) => p.length > 0)
+      .flatMap((p) => p.split(" -> "))
+  );
+}
+
+/** Whether a worktree is dirty only under the engine's own folder; false when its status cannot be read. */
+function onlyEngineDirt(path: string): boolean {
+  try {
+    const dirty = dirtyPaths(path);
+    return dirty.length > 0 && dirty.every((p) => p.startsWith(ENGINE_DIR));
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -85,14 +98,7 @@ export function removeWorktree(root: string, path: string): { kept: string } | n
     gitRun(root, "worktree", "remove", path);
     return null;
   } catch (error) {
-    let onlyEngine: boolean;
-    try {
-      const dirty = dirtyPaths(path);
-      onlyEngine = dirty.length > 0 && dirty.every((p) => p.startsWith(ENGINE_DIR));
-    } catch {
-      onlyEngine = false;
-    }
-    if (!onlyEngine) return { kept: gitError(error) };
+    if (!onlyEngineDirt(path)) return { kept: gitError(error) };
     try {
       gitRun(root, "worktree", "remove", "--force", path);
       return null;

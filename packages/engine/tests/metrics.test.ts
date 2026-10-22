@@ -407,3 +407,37 @@ test("SP4-T5 AC-4: knowledgeFigures counts the visible entries per kind, sums co
     "\n  knowledge: 0 entries, confirmed 0, contradicted 0, cited by 0 items",
   );
 });
+
+test("CON6-AC-7-tokens (finding 66): with no role record, crew metrics counts the judgement records' tokens", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const item = createWork(paths, "No roles");
+  saveWork(paths, item);
+  const evidence: Evidence = {
+    ...emptyEvidence(),
+    fingerprint: "sha256:f",
+    judgement: [
+      { ...ruling("code-quality", "proven", []), tokens: 40 },
+      { ...ruling("security", "proven", []), tokens: 60 },
+    ],
+  };
+  expect(evidence.roles).toBeUndefined();
+  saveEvidence(paths, item.id, evidence);
+  expect(computeMetrics([paths]).tokens.total).toBe(100);
+});
+
+test("CON6-AC-7-by (finding 53): crew metrics counts a decision answered with no by as the user's", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const item = createWork(paths, "Old decision");
+  item.decisions = [
+    { id: "D-1", question: "q1", answer: "a" },
+    { id: "D-2", question: "q2", answer: "b", by: "validator" },
+    { id: "D-3", question: "open" },
+  ];
+  saveWork(paths, item);
+  expect(computeMetrics([paths]).decisions).toEqual({
+    total: 2,
+    byUser: 1,
+    byValidator: 1,
+    byAgent: 0,
+  });
+});

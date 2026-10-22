@@ -265,6 +265,8 @@ export function scopeRefusal(scope: readonly string[]): string | null {
   const outside = scope.find(
     (p) =>
       p.startsWith("/") ||
+      // A backslash at the start is a root on Windows, a UNC path among them (finding 56).
+      p.startsWith("\\") ||
       /^[A-Za-z]:[\\/]/.test(p) ||
       p.split(/[\\/]/).includes("..") ||
       /[\n\r\0]/.test(p),
@@ -285,7 +287,7 @@ export function taskScope(
   record: TaskRecord,
   flagScope?: string[],
 ): { scope: string[] } | { refused: string } {
-  const escaped = flagScope?.length ? scopeRefusal(flagScope) : null;
+  const escaped = scopeRefusal(flagScope ?? []);
   if (escaped) return { refused: escaped };
   if (record.inline) return { scope: flagScope?.length ? flagScope : (record.scope ?? []) };
   if (!record.mergedAt || !record.mergeCommit)
@@ -301,6 +303,28 @@ export function taskScope(
       refused: `merge commit ${commit.slice(0, 7)} of ${record.task} is not in this checkout's history; restore it or note the todo again`,
     };
   }
+  // A merge still in the history may have been undone since (`git revert -m 1`, finding 30): its
+  // files are not in this checkout either. A history git cannot read refuses, never passes.
+  let revert: string;
+  try {
+    revert = gitRun(
+      root,
+      "log",
+      "-1",
+      "--format=%H",
+      "--fixed-strings",
+      `--grep=This reverts commit ${commit}`,
+      `${commit}..HEAD`,
+    );
+  } catch (error) {
+    return {
+      refused: `the history after ${record.task}'s merge cannot be read: ${gitError(error)}`,
+    };
+  }
+  if (revert)
+    return {
+      refused: `${record.task}'s merge ${commit.slice(0, 7)} was reverted at ${revert.slice(0, 7)}: open the task again or gate the item`,
+    };
   const changed = gitRun(root, "diff", "--name-only", `${commit}^1`, commit)
     .split("\n")
     .map((p) => p.trim())
@@ -514,14 +538,21 @@ export function mergeTask(
   }
   // The merge is recorded as soon as it is committed: what follows can fail without a merge the record forgot.
   const commit = gitHead(env.paths.root);
-  record.mergedAt = nowIso();
+  const at = nowIso();
+  record.mergedAt = at;
   record.mergeCommit = commit;
   record.state = "merged";
   if (options.forcedBy) record.forcedBy = options.forcedBy;
   saveWork(env.paths, work);
   // The child's proof is the parent's for the criteria the task covered: one record per criterion
   // names the task, the child and the commit, so the report leads to the child's own red and green.
-  const credit = creditChild(env.paths, work, record, options.forcedBy !== undefined);
+  const credit = creditChild(
+    env.paths,
+    work,
+    record,
+    { child, commit, at },
+    options.forcedBy !== undefined,
+  );
   // The child's record, where the merge did not bring it (an item kept local, the logs), then trusted here as the engine's own.
   const childDir = workDir(env.paths, child);
   if (existsSync(workDir(childPaths, child)))
@@ -652,23 +683,20 @@ export function dropTask(
 
 /**
  * Credits a merged task's criteria with the child's proof (finding #41): a `merged` record per
- * criterion, keeping any red or green the lead recorded itself. A forced merge credits nothing,
- * since the child was not proven; an evidence file changed outside the engine is left as it is.
+ * criterion, naming the child, the merge commit and its time as the merge gives them, keeping any
+ * red or green the lead recorded itself. A forced merge credits nothing, since the child was not
+ * proven; an evidence file changed outside the engine is left as it is.
  */
 function creditChild(
   paths: CrewPaths,
   work: WorkItem,
   record: TaskRecord,
+  proof: { child: string; commit: string; at: string },
   forced: boolean,
 ): { credited: string[]; uncredited: string | null } {
   if (forced)
     return { credited: [], uncredited: "a forced merge of an unproven child credits nothing" };
-  const merged = {
-    task: record.task,
-    child: record.child ?? "",
-    commit: record.mergeCommit ?? "",
-    at: record.mergedAt ?? nowIso(),
-  };
+  const merged = { task: record.task, ...proof };
   // Credited into the evidence as it stands at the save, under the lock (finding 81).
   const saved = updateEvidence(
     paths,

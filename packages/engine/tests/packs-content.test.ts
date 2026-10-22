@@ -272,17 +272,15 @@ test("SP6-T3 AC-2: the agentic-os pack is complete: the template with its six gl
       reason: `pack ${AGENTIC} (${glob})`,
     });
   for (const [path, glob] of table) {
-    expect(
-      plannedSeats("standard", [], [path], policy, undefined, undefined, teams),
-      path,
-    ).toContainEqual(seat(glob));
-    expect(
-      plannedSeats("full", [], [path], policy, undefined, undefined, teams),
-      path,
-    ).toContainEqual(seat(glob));
+    expect(plannedSeats("standard", [], [path], policy, { registry: teams }), path).toContainEqual(
+      seat(glob),
+    );
+    expect(plannedSeats("full", [], [path], policy, { registry: teams }), path).toContainEqual(
+      seat(glob),
+    );
   }
   const agentic = (route: "fast" | "standard", changed: string[]) =>
-    plannedSeats(route, [], changed, policy, undefined, undefined, teams).filter(
+    plannedSeats(route, [], changed, policy, { registry: teams }).filter(
       (s) => s.team === "agentic-os",
     );
   expect(agentic("fast", ["agents/x.md"])).toEqual([]);

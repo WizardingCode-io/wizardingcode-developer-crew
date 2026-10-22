@@ -5,7 +5,6 @@ import { emptyEvidence } from "../src/evidence.ts";
 import {
   contradiction,
   fillTokens,
-  isInterfacePath,
   judgementRows,
   notRunRecord,
   parseRulings,
@@ -18,6 +17,7 @@ import {
   stampRuling,
   writeReviewInputs,
 } from "../src/judgement.ts";
+import { isInterfacePath } from "../src/paths-kind.ts";
 import { DEFAULT_POLICY } from "../src/policy.ts";
 import type { Evidence, JudgementGateName, Policy } from "../src/types.ts";
 import { createWork } from "../src/work.ts";

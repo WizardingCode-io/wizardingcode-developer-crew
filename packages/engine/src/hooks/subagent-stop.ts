@@ -2,7 +2,7 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { WORK_ID } from "../analysis.ts";
 import { loadEvidence, saveEvidence } from "../evidence.ts";
-import { nowIso, readText, writeText } from "../fs.ts";
+import { nowIso, readText, readTextQuietly, writeText } from "../fs.ts";
 import { sleep, withLock } from "../lock.ts";
 import { loadItemMail, reply } from "../mail.ts";
 import { mailStatus } from "../mail-status.ts";
@@ -64,7 +64,8 @@ type Line = {
 };
 
 function lines(transcriptPath: string | undefined): Line[] {
-  const text = transcriptPath ? readText(transcriptPath) : null;
+  // A transcript that cannot be read counts no tokens; the role's record is still made.
+  const text = transcriptPath ? readTextQuietly(transcriptPath) : null;
   if (text === null) return [];
   const out: Line[] = [];
   for (const raw of text.split("\n")) {
@@ -699,7 +700,12 @@ function archiveExisting(
   dir: string,
   file: string,
 ): { archived: string | null } | { failed: string; error: string } {
-  const current = readText(join(dir, file));
+  let current: string | null;
+  try {
+    current = readText(join(dir, file));
+  } catch (error) {
+    return { failed: file, error: error instanceof Error ? error.message : String(error) };
+  }
   if (current === null) return { archived: null };
   const archived = file.replace(/\.md$/, `.round${freeArchiveIndex(dir, file)}.md`);
   try {

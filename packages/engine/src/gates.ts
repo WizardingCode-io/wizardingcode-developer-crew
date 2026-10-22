@@ -1,8 +1,9 @@
-import { accessSync, constants, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { accessSync, constants, mkdirSync, rmSync } from "node:fs";
 import { basename, delimiter, join } from "node:path";
 import { type AuditToolName, parseAudit } from "./audit.ts";
 import { auditState } from "./audit-state.ts";
 import { excludedRiskPaths, riskAreasForPaths } from "./classify.ts";
+import { proposedByPack } from "./detect/index.ts";
 import { runE2e } from "./e2e.ts";
 import { computeVerdict, loadEvidence, type PlannedGate, updateEvidence } from "./evidence.ts";
 import {
@@ -14,7 +15,7 @@ import {
   gitShowFile,
   MAX_WATCHED_FILES,
 } from "./fingerprint.ts";
-import { exists, nowIso, readText } from "./fs.ts";
+import { exists, nowIso, readTextQuietly, writeText } from "./fs.ts";
 import { plannedJudgementGates, plannedTaskJudgement, writeReviewInputs } from "./judgement.ts";
 import { loadLedger } from "./objections.ts";
 import { packTemplates, recordPackUse } from "./packs.ts";
@@ -154,12 +155,18 @@ export function depsAuditCommand(
   const dir = join(root, target.path);
   if (target.stack === "python") {
     if (!onPath("pip-audit", env)) return { reason: "pip-audit not on PATH" };
-    const prefix = PYTHON_AUDIT[target.packageManager] ?? PYTHON_AUDIT.pip ?? "pip-audit";
+    // Own keys only: a package manager named like an inherited key (toString) is no runner.
+    const own = Object.hasOwn(PYTHON_AUDIT, target.packageManager)
+      ? PYTHON_AUDIT[target.packageManager]
+      : undefined;
+    const prefix = own ?? PYTHON_AUDIT.pip ?? "pip-audit";
     return { command: `${prefix} --format=json`, tool: "pip-audit", files: [] };
   }
   let tool: AuditTool | undefined;
   if (target.stack === "node") {
-    tool = NODE_AUDIT[target.packageManager];
+    tool = Object.hasOwn(NODE_AUDIT, target.packageManager)
+      ? NODE_AUDIT[target.packageManager]
+      : undefined;
     // Yarn Berry dropped `yarn audit`; its audit lives under `yarn npm`.
     if (tool && target.packageManager === "yarn" && exists(join(dir, ".yarnrc.yml")))
       tool = { ...tool, command: "yarn npm audit --severity high --json" };
@@ -202,7 +209,7 @@ async function baselineAdvisories(
     const rel = target.path === "." ? file : `${target.path}/${file}`;
     const text = gitShowFile(paths.root, work.baseCommit, rel);
     if (text === null) continue;
-    writeFileSync(join(scratch, file), text);
+    writeText(join(scratch, file), text);
     if (index > 0) lockfiles += 1;
   }
   if (lockfiles === 0) return { readable: true, advisories: [] };
@@ -212,7 +219,7 @@ async function baselineAdvisories(
     timeoutMs: gateTimeoutMs(target, "deps"),
     logPath: log,
   });
-  const report = parseAudit(audit.tool, readText(log) ?? result.tail);
+  const report = parseAudit(audit.tool, readTextQuietly(log) ?? result.tail);
   return { readable: report.readable && !result.timedOut, advisories: report.advisories };
 }
 
@@ -225,7 +232,7 @@ async function judgeAudit(
   target: Target,
   where: string,
 ): Promise<GateRun> {
-  const text = (run.log && readText(join(workDir(paths, work.id), run.log))) || run.tail;
+  const text = (run.log && readTextQuietly(join(workDir(paths, work.id), run.log))) || run.tail;
   const report = parseAudit(audit.tool, text);
   if (!report.readable) return { ...run, reason: "audit report unreadable; judged by exit code" };
   const started = Date.now();
@@ -275,6 +282,11 @@ export function gatesForTarget(target: Target, policy: Policy, changed: string[]
   return gates;
 }
 
+/** Whether a target covers a path: the root covers every path, any other its own folder. */
+function covers(target: Target, path: string): boolean {
+  return target.path === "." || path === target.path || path.startsWith(`${target.path}/`);
+}
+
 /** Whether the item's change calls for the e2e gate (SP7 §8.2): an interface or a public-api path, or the policy requiring it. */
 function wantsE2e(policy: Policy, changed: string[]): boolean {
   return (
@@ -293,10 +305,7 @@ export function plannedGates(
 ): PlannedGate[] {
   const planned: PlannedGate[] = [{ gate: "secrets", target: "." }];
   const touched = profile.targets.filter(
-    (t) =>
-      t.path === "." ||
-      changed.length === 0 ||
-      changed.some((p) => p === t.path || p.startsWith(`${t.path}/`)),
+    (t) => changed.length === 0 || changed.some((p) => covers(t, p)),
   );
   // Two manifests in one folder (composer.json beside package.json) are two targets at one path;
   // the stack then names which one a gate belongs to (finding 8 of the real-use phase).
@@ -319,8 +328,6 @@ export function plannedGates(
   // A profile with no target, or a changed file no target covers, plans the test gate at the root
   // anyway: it ends unavailable until a command is set, so an item is never proven by the secrets
   // gate alone (finding #36 of the real-use phase).
-  const covers = (t: Target, path: string) =>
-    t.path === "." || path === t.path || path.startsWith(`${t.path}/`);
   const uncovered =
     profile.targets.length === 0 ||
     changed.some((path) => !profile.targets.some((t) => covers(t, path)));
@@ -360,10 +367,13 @@ const SOURCE_EXTENSIONS = /\.(?:[cm]?[jt]sx?|vue|svelte|astro|php|py|rb|go|rs|ja
 
 /**
  * A path as one shell word: as it is when it has only safe characters, in POSIX single quotes
- * otherwise, so a file name on an implementer's branch adds no command to the lead's gate.
+ * otherwise, so a file name on an implementer's branch adds no command to the lead's gate. A name
+ * that starts with `-` is written `./<name>` first, so the runner never reads it as an option
+ * (finding 56).
  */
 function shellWord(path: string): string {
-  return /^[A-Za-z0-9_./-]+$/.test(path) ? path : `'${path.replace(/'/g, "'\\''")}'`;
+  const word = path.startsWith("-") ? `./${path}` : path;
+  return /^[A-Za-z0-9_./-]+$/.test(word) ? word : `'${word.replace(/'/g, "'\\''")}'`;
 }
 
 /**
@@ -372,7 +382,12 @@ function shellWord(path: string): string {
  * has no template or the todo touched no source file of the target; null with no test command.
  */
 export function scopedTestCommand(target: Target, scope: readonly string[]): string | null {
-  const whole = target.gates.test?.command ?? null;
+  const whole = target.gates.test?.command;
+  return whole === undefined ? null : narrowedTest(target, whole, scope);
+}
+
+/** `whole` narrowed to the todo's source files under the target by its scoped template, or `whole` itself. */
+function narrowedTest(target: Target, whole: string, scope: readonly string[]): string {
   if (!target.testScoped) return whole;
   const prefix = target.path === "." ? "" : `${target.path}/`;
   const files = scope
@@ -471,7 +486,8 @@ export async function runOneGate(
     reason: `pack ${pack}'s ${what} is not confirmed (crew profile confirm ${gate})`,
   });
   const own = gate === "deps" ? undefined : target?.gates[gate];
-  if (own?.pack && own.source === "proposed") return held(own.command, "command", own.pack);
+  const ownPack = proposedByPack(own);
+  if (own && ownPack) return held(own.command, "command", ownPack);
   if (gate === "e2e") {
     const where = targetPath.replace(/[^a-z0-9]+/gi, "_");
     return runE2e({
@@ -506,20 +522,14 @@ export async function runOneGate(
     // A todo's gate runs the test command narrowed to the todo's files where the profile knows how (SP7 §8.1).
     command =
       gate === "test" && scope
-        ? (scopedTestCommand(target, scope) ?? configured.command)
+        ? narrowedTest(target, configured.command, scope)
         : configured.command;
     source = configured.source;
     // The scoped template the same rule gave is held on its own confirmation (the security, risk
     // and architecture gates' finding): a todo's gate runs it, whatever the whole command's state.
-    const scoped = target.testScoped;
-    if (
-      gate === "test" &&
-      scope &&
-      command !== configured.command &&
-      scoped?.pack &&
-      scoped.source === "proposed"
-    )
-      return held(command, "scoped test command", scoped.pack);
+    const scopedPack = proposedByPack(target.testScoped);
+    if (gate === "test" && scope && command !== configured.command && scopedPack)
+      return held(command, "scoped test command", scopedPack);
   }
   const where =
     targetPath.replace(/[^a-z0-9]+/gi, "_") + (planned.stack ? `-${planned.stack}` : "");
@@ -563,7 +573,7 @@ function judgeProblems(
   targetPath: string,
   changed: string[],
 ): GateRun {
-  const text = (run.log && readText(join(workDir(paths, work.id), run.log))) || run.tail;
+  const text = (run.log && readTextQuietly(join(workDir(paths, work.id), run.log))) || run.tail;
   const named = namedFiles(text, [join(paths.root, targetPath), paths.root], paths.root);
   if (named.length === 0) return run;
   const touched = named.filter((file) => changed.includes(file));
@@ -695,23 +705,18 @@ export async function runGates(
   if (stamp !== fingerprintBefore)
     for (const r of evidence.runs) if (r.fingerprint === fingerprintBefore) r.fingerprint = stamp;
   evidence.fingerprint = stamp;
-  // Planned after the route may have been raised, so a risk area the diff touched plans the security gate.
-  const judgement = plannedJudgementGates(work.route, work.riskAreas, changed, policy);
   // The seats the route plans, recorded with the paths the change touched (SP7 §6.6); the caller
   // saves the work, as it does for the risk areas. The registry carries the registered packs'
   // templates and their globs read the change before the watch's exclusions, as `crew team` does
   // (SP6 Task 6), so a pack's seat survives to the report.
   const registry = teamsFor(policy, packTemplates(paths.userDir)).teams;
-  work.seats = plannedSeats(
-    work.route,
-    work.riskAreas,
-    changed,
-    policy,
-    undefined,
-    undefined,
+  // Planned after the route may have been raised, so a risk area the diff touched plans the
+  // security gate; from the same registry as the seats.
+  const judgement = plannedJudgementGates(work.route, work.riskAreas, changed, policy, registry);
+  work.seats = plannedSeats(work.route, work.riskAreas, changed, policy, {
     registry,
-    changedPaths(paths.root, base),
-  );
+    templatePaths: changedPaths(paths.root, base),
+  });
   // What crew team records at the conclave, recorded again with the paths the change touched (SP6
   // Task 6), so the report shows the packs and the expert's files even when crew team never ran.
   recordPackUse(work, paths.userDir, profile, changed, policy, registry);
@@ -798,7 +803,13 @@ export function assess(
   const base = work;
   const changed = changedWatchedPaths(paths.root, profile, base);
   const expected = plannedGates(work.route, profile, policy, changed, paths.root);
-  const judgement = plannedJudgementGates(work.route, work.riskAreas, changed, policy);
+  const judgement = plannedJudgementGates(
+    work.route,
+    work.riskAreas,
+    changed,
+    policy,
+    teamsFor(policy, packTemplates(paths.userDir)).teams,
+  );
   const read = loadEvidence(paths, work.id);
   // Judged with the method the evidence was made with: a walk fingerprint from a process where
   // git could not run is compared to the walk here, not to git's name for the same code.

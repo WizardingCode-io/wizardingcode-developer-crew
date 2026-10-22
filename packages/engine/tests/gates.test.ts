@@ -130,6 +130,21 @@ test("SP7a AC-2 (Task 6): the scoped test command takes the todo's source files 
   );
 });
 
+test("CON6-AC-2 (finding 56): a scoped test command writes a file name that starts with - as ./<name>, so the runner never reads it as an option", () => {
+  const scoped: Target = {
+    ...target,
+    testScoped: { command: "vitest related {files} --run", source: "detected" },
+  };
+  expect(scopedTestCommand(scoped, ["-rf.ts", "src/ok.ts"])).toBe(
+    "vitest related ./-rf.ts src/ok.ts --run",
+  );
+  // Under a target's folder the name is cut from the target's path, then prefixed.
+  const api: Target = { ...scoped, path: "apps/api" };
+  expect(scopedTestCommand(api, ["apps/api/--watch.ts"])).toBe("vitest related ./--watch.ts --run");
+  // A name that needs quoting is prefixed first and quoted whole.
+  expect(scopedTestCommand(scoped, ["-a b.ts"])).toBe("vitest related './-a b.ts' --run");
+});
+
 test("planned gates follow the route table", () => {
   expect(gatesForTarget(target, DEFAULT_POLICY, ["src/a.ts"])).toEqual(["test", "lint"]);
   expect(gatesForTarget(target, DEFAULT_POLICY, ["package.json"])).toEqual([

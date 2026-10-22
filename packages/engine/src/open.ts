@@ -642,7 +642,15 @@ export function stopSession(
   if (!isSession(m.opened)) {
     // The session is settled here, and what its record could not change is said with the refusal.
     const swept: SweepResult = { ended: [], expired: [], lines: [] };
-    sweepOne(ctx, m, Date.now(), swept);
+    // A settle that throws is the refusal, as `sweepSafely` says it (finding 30): never a throw.
+    try {
+      sweepOne(ctx, m, Date.now(), swept);
+    } catch (error) {
+      const failed = `the settle of ${id} failed: ${(error as Error).message.split("\n")[0]}`;
+      return {
+        refused: `${id} has no session running (${[...swept.lines, failed].join("; ")})`,
+      };
+    }
     return {
       refused: `${id} has no session running: it ${readOutcome(m.opened.log).ended ? "ended" : "is gone"}${swept.lines.length ? ` (${swept.lines.join("; ")})` : ""}`,
     };

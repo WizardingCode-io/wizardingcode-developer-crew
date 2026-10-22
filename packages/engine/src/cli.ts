@@ -32,7 +32,11 @@ import {
   listDecisions,
   registerTampered,
 } from "./decisions.ts";
-import { ENVIRONMENT_TIMEOUT_MS } from "./detect/environment.ts";
+import {
+  ENVIRONMENT_COMMANDS,
+  ENVIRONMENT_TIMEOUT_MS,
+  type EnvironmentCommand,
+} from "./detect/environment.ts";
 import { detectProfile, missingTestCommands } from "./detect/index.ts";
 import {
   checkHealth,
@@ -2492,7 +2496,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           block[key] = cmd;
           printed = `environment.${key} set: ${cmd}`;
         } else {
-          block[key as "start" | "health" | "stop"] = { command: cmd, source: "confirmed" };
+          block[key as EnvironmentCommand] = { command: cmd, source: "confirmed" };
           printed = `environment.${key} set and confirmed: ${cmd}`;
         }
         env.profile.environment = block;
@@ -2503,7 +2507,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         const block = env.profile.environment;
         if (!block) return refuse(NO_ENVIRONMENT);
         const confirmed: string[] = [];
-        for (const key of ["start", "health", "stop"] as const) {
+        for (const key of ENVIRONMENT_COMMANDS) {
           const command = block[key];
           if (command?.source === "proposed" && command.command.trim()) {
             command.source = "confirmed";
@@ -2756,15 +2760,9 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       // The seats the route plans, before any path is known (SP7 §6.2): the leads' validation guard
       // names them from here; the gate run rewrites them with the paths the change touched.
       if (work.route !== "fast") {
-        work.seats = plannedSeats(
-          work.route,
-          work.riskAreas,
-          [],
-          env.policy,
-          undefined,
-          undefined,
-          teamsFor(env.policy, packTemplates(env.paths.userDir)).teams,
-        );
+        work.seats = plannedSeats(work.route, work.riskAreas, [], env.policy, {
+          registry: teamsFor(env.policy, packTemplates(env.paths.userDir)).teams,
+        });
         work.primaryTeam = primaryTeam([]);
       }
       if (origin) {
@@ -4161,16 +4159,11 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       const registry = teamsFor(env.policy, packTemplates(env.paths.userDir));
       const seats = audit
         ? auditSeats({ riskAreas: scope?.riskAreas ?? opened.work.riskAreas }, env.policy)
-        : plannedSeats(
-            opened.work.route,
-            opened.work.riskAreas,
-            changed,
-            env.policy,
-            undefined,
-            { strategy: phasesFor(opened.work).includes("strategy") },
-            registry.teams,
-            changedPaths(env.paths.root, opened.work),
-          );
+        : plannedSeats(opened.work.route, opened.work.riskAreas, changed, env.policy, {
+            strategy: phasesFor(opened.work).includes("strategy"),
+            registry: registry.teams,
+            templatePaths: changedPaths(env.paths.root, opened.work),
+          });
       const primary = primaryTeam(changed);
       opened.work.seats = seats;
       opened.work.primaryTeam = primary;
@@ -4972,7 +4965,7 @@ function statusLine(status: EnvStatus): string {
   return status.managed === false ? "environment: up (the user's)" : "environment: up";
 }
 
-const ENVIRONMENT_KEYS = ["start", "health", "stop", "logs", "url", "timeout"] as const;
+const ENVIRONMENT_KEYS = [...ENVIRONMENT_COMMANDS, "logs", "url", "timeout"] as const;
 type EnvironmentKey = (typeof ENVIRONMENT_KEYS)[number];
 const NO_ENVIRONMENT = 'no environment in the profile (crew profile set environment.start "<cmd>")';
 

@@ -67,12 +67,16 @@ function wellShaped(raw: unknown): WorkingRole[] {
     const w = entry as Record<string, unknown>;
     if (typeof w.agent !== "string" || typeof w.since !== "string") continue;
     if (w.team !== null && !(typeof w.team === "string" && Object.hasOwn(TEAMS, w.team))) continue;
+    // A description is cleaned to one line again on load (finding 58): the file may have been
+    // written by hand or by an older engine. One that cleans to nothing drops the entry.
+    const description = typeof w.description === "string" ? oneLine(w.description) : undefined;
+    if (description === "") continue;
     kept.push({
       agent: w.agent,
       team: w.team as TeamName | null,
       since: w.since,
       sessionId: typeof w.sessionId === "string" ? w.sessionId : "",
-      ...(typeof w.description === "string" ? { description: w.description } : {}),
+      ...(description !== undefined ? { description } : {}),
     });
   }
   return kept.slice(-WORKING_MAX);
@@ -139,7 +143,9 @@ const STATE_LOCK_WAIT_MS = 500;
  * what another hook wrote meanwhile (a notice a role's stop left, `hooks/notices.ts`) is not written
  * over by one that loaded the state before it. The lock is waited for half a second; one still held
  * then is passed by, since a hook that failed here would fail open and skip its rule, and a notice
- * lost to that window is still in the person's systemMessage.
+ * lost to that window is still in the person's systemMessage. The unlocked fallback is the user's
+ * decision of 2026-10-22 (consolidation item 6): kept, rather than a refusal that would switch a
+ * hook's rule off for the turn.
  */
 export function updateState<T>(paths: CrewPaths, change: (state: LocalState) => T): T {
   const run = (): T => {

@@ -175,7 +175,9 @@ export function computeMetrics(
       for (const d of work.decisions ?? []) {
         if (d.answer === undefined) continue;
         m.decisions.total += 1;
-        if (d.by === "user") m.decisions.byUser += 1;
+        // A decision with no `by` was recorded before it was named, and reads as the user's, as an
+        // Approval does (finding 53).
+        if (d.by === "user" || d.by === undefined) m.decisions.byUser += 1;
         else if (d.by === "validator") m.decisions.byValidator += 1;
         else if (d.by === "agent") m.decisions.byAgent += 1;
       }
@@ -185,6 +187,10 @@ export function computeMetrics(
         if (r.personality) count(m.tokens.byPersonality, r.personality, r.tokens);
         m.tokens.total += r.tokens;
       }
+      // With no role record (a session without the SubagentStop hook, finding 66), the rulings'
+      // own tokens are the item's count; with one, they are already in it.
+      if (!evidence.roles?.length)
+        for (const j of evidence.judgement ?? []) m.tokens.total += j.tokens ?? 0;
       for (const j of evidence.judgement ?? []) {
         if (j.verdict === "not-run") m.gates.notRun += 1;
         const upheld = j.findings.filter((f) => f.severity === "defect" && !f.outside);

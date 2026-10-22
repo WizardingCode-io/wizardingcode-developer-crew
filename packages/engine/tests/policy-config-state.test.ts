@@ -7,6 +7,7 @@ import {
   DEFAULT_POLICY,
   decisionCounts,
   loadPolicy,
+  SETTABLE_POLICY_KEYS,
   setPolicyValue,
   skipAllowed,
 } from "../src/policy.ts";
@@ -564,4 +565,20 @@ test("SP6-T2 AC-4: team.template is read as written when a lowercase word and co
   expect(setPolicyValue(paths, "team.template", "Bad Name")).toEqual({
     refused: "team.template is core or a pack's template name (a lowercase word), not Bad Name",
   });
+});
+
+test("CON6-AC-1 (finding 27): crew policy set with an inherited key such as toString is refused as an unknown policy key, never a TypeError", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const known = Object.keys(SETTABLE_POLICY_KEYS).join(", ");
+  for (const key of ["toString", "constructor", "hasOwnProperty", "__proto__"]) {
+    let outcome: unknown;
+    try {
+      outcome = setPolicyValue(paths, key, "x");
+    } catch (error) {
+      outcome = { threw: String(error) };
+    }
+    expect(outcome).toEqual({
+      refused: `unknown policy key: ${key} (crew policy set writes ${known})`,
+    });
+  }
 });

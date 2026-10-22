@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import type { CrewPaths } from "./paths.ts";
 import { readProtectedJson, writeProtectedJson } from "./store.ts";
+import { TEAMS } from "./team.ts";
 import type {
   DecidedBy,
   GateName,
@@ -17,6 +18,8 @@ import type {
 import { GATE_NAMES, isJudgementGateName, isMailType, ROUTE_ORDER, VERIFY_ASKS } from "./types.ts";
 
 export const MAIL_NAME = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+/** A lowercase word: a template's name, a pack's stack or knowledge key; one spelling for the policy and the packs. */
+export const LOWERCASE_WORD = /^[a-z][a-z0-9-]*$/;
 /** `..` or a relative path of plain segments: where task worktrees go (plan decision 12). */
 export const WORKTREES = /^(\.\.|[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)*)$/;
 
@@ -90,7 +93,8 @@ export const DEFAULT_POLICY: Policy = {
   artifacts: "commit",
   unattendedDecisions: "wait",
   attendedDecisions: "relay",
-  mail: DEFAULT_MAIL_POLICY,
+  // A copy: a caller that changes the default policy's mail block leaves the mail defaults as they are.
+  mail: { ...DEFAULT_MAIL_POLICY, accept: [...DEFAULT_MAIL_POLICY.accept] },
   team: DEFAULT_TEAM_POLICY,
   verify: DEFAULT_VERIFY_POLICY,
 };
@@ -157,7 +161,7 @@ export const SETTABLE_POLICY_KEYS: Record<string, Settable> = {
     hint: "a relative path with no spaces (.. for the folder beside the root)",
   },
   "team.template": {
-    pattern: /^[a-z][a-z0-9-]*$/,
+    pattern: LOWERCASE_WORD,
     hint: "core or a pack's template name (a lowercase word)",
   },
   "team.maxExperts": { integer: RANGES.maxExperts },
@@ -240,7 +244,8 @@ export function setPolicyValue(
   key: string,
   value: string,
 ): { key: string; value: string } | { refused: string } {
-  const rule = SETTABLE_POLICY_KEYS[key];
+  // Own keys only (finding 27): an inherited name such as toString is no policy key.
+  const rule = Object.hasOwn(SETTABLE_POLICY_KEYS, key) ? SETTABLE_POLICY_KEYS[key] : undefined;
   if (!rule) {
     return {
       refused: `unknown policy key: ${key} (crew policy set writes ${Object.keys(SETTABLE_POLICY_KEYS).join(", ")})`,
@@ -306,7 +311,7 @@ export function planListChange(
   value: string,
   remove: boolean,
 ): ListChange | { refused: string } {
-  const rule = SETTABLE_POLICY_KEYS[key];
+  const rule = Object.hasOwn(SETTABLE_POLICY_KEYS, key) ? SETTABLE_POLICY_KEYS[key] : undefined;
   if (!rule || !("list" in rule)) {
     return { refused: `${key} is not a list key (${LIST_POLICY_KEYS.join(", ")})` };
   }
@@ -400,17 +405,8 @@ function strings(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : [];
 }
 
-const TEAM_NAMES: readonly TeamName[] = [
-  "architects",
-  "researchers",
-  "etl",
-  "security",
-  "devops",
-  "qa",
-  "backend",
-  "frontend",
-  "agentic-os",
-];
+/** The teams of the registry, named once (`TEAMS`). */
+const TEAM_NAMES = Object.keys(TEAMS) as readonly TeamName[];
 
 /** The team block as written, each value checked: an unknown team dropped, a cap outside its range at its default (SP7 §6.1). */
 function loadTeamPolicy(raw: unknown): TeamPolicy {
@@ -421,7 +417,7 @@ function loadTeamPolicy(raw: unknown): TeamPolicy {
   return {
     // A lowercase word as written (SP6 Task 2): `core`, or a pack's template checked where it is read.
     template:
-      typeof t.template === "string" && /^[a-z][a-z0-9-]*$/.test(t.template) ? t.template : "core",
+      typeof t.template === "string" && LOWERCASE_WORD.test(t.template) ? t.template : "core",
     always: strings(t.always).filter((n): n is TeamName => TEAM_NAMES.includes(n as TeamName)),
     specialists: strings(t.specialists),
     maxExperts: bounded(t.maxExperts, RANGES.maxExperts, DEFAULT_TEAM_POLICY.maxExperts),
@@ -462,9 +458,10 @@ export function loadPolicy(paths: CrewPaths): { policy: Policy; tampered: boolea
   const minimumRoute = ROUTE_ORDER.includes(raw.minimumRoute as Route)
     ? (raw.minimumRoute as Route)
     : DEFAULT_POLICY.minimumRoute;
+  // A copy of the default list: a caller that changes its policy's list leaves the default whole.
   const allowSkips = Array.isArray(raw.allowSkips)
     ? strings(raw.allowSkips)
-    : DEFAULT_POLICY.allowSkips;
+    : [...DEFAULT_POLICY.allowSkips];
   return {
     policy: {
       requiredGates: strings(raw.requiredGates).filter((g): g is GateName =>

@@ -782,7 +782,10 @@ export interface RunRecord {
 
 export interface TddRecord {
   criterion: string;
+  /** The latest red: the one the criterion's proof reads. */
   red?: RunRecord;
+  /** Every earlier red, oldest first (finding 29): a red recorded over one keeps it here; nothing else reads it. */
+  reds?: RunRecord[];
   green?: RunRecord;
   before?: RunRecord;
   after?: RunRecord;

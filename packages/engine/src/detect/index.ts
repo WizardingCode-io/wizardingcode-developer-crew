@@ -77,10 +77,15 @@ export function dataDetector(rule: DetectorRule): Detector {
  * of its stack at that folder (the gates it names replace the core's as proposed commands of the
  * pack, the others stay; the package manager and the scoped test taken; the rule's id added to the
  * target's tags) and is skipped where no such target exists; a rule without `extends` is a new
- * target of its own stack.
+ * target of its own stack. The folders are the ones `detectTargets` walked, not walked again.
  */
-function applyRules(root: string, targets: Target[], rules: readonly PackRule[]): void {
-  for (const dir of folders(root)) {
+function applyRules(
+  root: string,
+  dirs: readonly string[],
+  targets: Target[],
+  rules: readonly PackRule[],
+): void {
+  for (const dir of dirs) {
     const rel = relative(root, dir).replace(/\\/g, "/") || ".";
     for (const { pack, rule } of rules) {
       const found = dataDetector(rule).detect(dir);
@@ -115,7 +120,9 @@ function applyRules(root: string, targets: Target[], rules: readonly PackRule[])
 export function detectTargets(root: string, rules: readonly PackRule[] = []): Target[] {
   const targets: Target[] = [];
   const workspaces = new Map<Target, string[]>();
-  for (const dir of folders(root)) {
+  // The tree is walked once: the core's detectors and the packs' rules read the same folders.
+  const dirs = [...folders(root)];
+  for (const dir of dirs) {
     for (const detector of DETECTORS) {
       const found = detector.detect(dir);
       if (!found) continue;
@@ -153,22 +160,31 @@ export function detectTargets(root: string, rules: readonly PackRule[] = []): Ta
       if (matchesAny(child.path.slice(prefix.length), globs)) child.workspaceOf = parent.path;
     }
   }
-  if (rules.length) applyRules(root, targets, rules);
+  if (rules.length) applyRules(root, dirs, targets, rules);
   return targets;
 }
 
 /**
- * A command a person proposed or confirmed, which fresh detection never discards. A pack's own
- * proposed command (SP6 Task 2) is the detection's, not a person's: it follows the rules the packs
- * give now, so a removed pack's command goes and a changed one is replaced; confirmed, it stays.
+ * The pack whose proposed command this is, still waiting for a person's confirmation (SP6 Task 2),
+ * or null: a core command, a confirmed one, or none. The gates hold such a command, `crew tdd`
+ * runs it only when named, and a fresh detection replaces it.
  */
-function theirs(command: GateCommand): boolean {
-  if (command.source === "detected") return false;
-  return !(command.pack && command.source === "proposed");
+export function proposedByPack(command: GateCommand | undefined): string | null {
+  return command?.pack && command.source === "proposed" ? command.pack : null;
 }
 
 /**
- * Fresh detection never discards what a person proposed or confirmed: their commands stay on a
+ * A command a person confirmed, which fresh detection never discards (finding 111). A proposed
+ * command, a core detector's guess or a pack's (SP6 Task 2), is the detection's, not a person's:
+ * it follows what the detectors and the packs give now, so a stale guess is replaced and a removed
+ * pack's command goes.
+ */
+function theirs(command: GateCommand): boolean {
+  return command.source === "confirmed";
+}
+
+/**
+ * Fresh detection never discards what a person confirmed: their commands stay on a
  * re-detected target, and a target no detector finds (a Makefile folder set by hand) stays whole.
  */
 export function mergeProfile(

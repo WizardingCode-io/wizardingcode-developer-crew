@@ -1,6 +1,6 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { nowIso, readJson, readText, sha256, writeJson } from "./fs.ts";
+import { nowIso, readJson, readText, readTextQuietly, sha256, writeJson, writeText } from "./fs.ts";
 import { priorityRank } from "./mail-status.ts";
 import type { MailPriority, Triage, WorkItem } from "./types.ts";
 
@@ -66,11 +66,12 @@ export function acceptPriorities(
   const dir = prioritiesDir(userDir, workspace);
   const path = join(dir, "priorities.md");
   if (options.file !== undefined) {
-    const copied = readText(options.file);
+    // Missing or unreadable, the person's file is refused alike.
+    const copied = readTextQuietly(options.file);
     if (copied === null) return { refused: `${options.file} cannot be read` };
     if (!copied.trim()) return { refused: `${options.file} is empty` };
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(path, copied);
+    // Atomic: a reader never sees a half-copied file.
+    writeText(path, copied);
   }
   const text = readText(path);
   if (text === null || !text.trim())

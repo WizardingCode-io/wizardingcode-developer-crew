@@ -5,7 +5,7 @@ import { tddDone } from "../src/criteria.ts";
 import { detectProfile } from "../src/detect/index.ts";
 import { emptyEvidence } from "../src/evidence.ts";
 import { recordTdd as record } from "../src/tdd.ts";
-import type { Target } from "../src/types.ts";
+import type { RunRecord, Target } from "../src/types.ts";
 import { addCriterion, createWork } from "../src/work.ts";
 import { makeRepo, repoPaths, testEnv, write } from "./helpers.ts";
 
@@ -413,4 +413,23 @@ test("AC-4 (item C2a): one negative row per anchored zero-test rule: the runner'
     const red = await recordTdd(s.paths, s.work, s.evidence, s.profile, s.behaviour.id, "red");
     expect(red.ok, script).toBe(true);
   }
+});
+
+test("CON6-AC-11 (finding 29): a second crew tdd red of a criterion keeps the earlier red in the record's history, the latest deciding", async () => {
+  const s = setup();
+  const first = await recordTdd(s.paths, s.work, s.evidence, s.profile, s.behaviour.id, "red");
+  expect(first.ok).toBe(true);
+  const earlier = s.evidence.tdd[0]?.red;
+  write(s.root, "run-tests.sh", "exit 2\n");
+  const second = await recordTdd(s.paths, s.work, s.evidence, s.profile, s.behaviour.id, "red");
+  expect(second.ok).toBe(true);
+  const row = s.evidence.tdd[0] as unknown as { red?: RunRecord; reds?: RunRecord[] };
+  expect(row.red?.exit).toBe(2);
+  expect(row.reds).toEqual([earlier as RunRecord]);
+  // A third red appends the second, in order.
+  const latest = row.red;
+  write(s.root, "run-tests.sh", "exit 3\n");
+  await recordTdd(s.paths, s.work, s.evidence, s.profile, s.behaviour.id, "red");
+  expect(row.red?.exit).toBe(3);
+  expect(row.reds).toEqual([earlier as RunRecord, latest as RunRecord]);
 });

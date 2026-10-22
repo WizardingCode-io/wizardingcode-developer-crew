@@ -802,3 +802,31 @@ test("SP2c AC-2: a change request opens a session on a branch of the destination
   expect(git(b, "branch", "--list", `crew/mail/${change.message.id}`)).toBe("");
   expect(existsSync(openedMarkerFile(pa.userDir, failedWorktree))).toBe(false);
 }, 20_000);
+
+test.skipIf(process.getuid?.() === 0)(
+  "CON6-AC-9 (finding 30): crew mail stop of a session whose sweep throws refuses naming the settle failure, its lines once, never a throw",
+  async () => {
+    const { pa, ctxA, ask } = pair();
+    const ended = ask(ctxA, "Will the stop settle me?");
+    await waitFor(
+      "the fake to end",
+      () => readOutcome(ended.opened().log).ended && !isAlive(ended.opened().pid),
+    );
+    // The receiver's mailbox folder cannot be written: the settle's record throws there.
+    const crmDir = mailbox(pa.userDir, "w", "crm").dir;
+    chmodSync(crmDir, 0o555);
+    let outcome: unknown;
+    try {
+      outcome = stopSession(ctxA, ended.id, []);
+    } catch (error) {
+      outcome = { threw: String(error) };
+    } finally {
+      chmodSync(crmDir, 0o755);
+    }
+    expect(outcome).toEqual({ refused: expect.stringContaining("EACCES") });
+    const refused = (outcome as { refused: string }).refused;
+    // The failure is said once, not once per line that repeats it.
+    expect(refused.split("EACCES").length - 1).toBe(1);
+  },
+  20_000,
+);

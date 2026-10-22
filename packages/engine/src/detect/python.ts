@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { exists, readText } from "../fs.ts";
+import { exists, readTextQuietly } from "../fs.ts";
 import type { GateName } from "../types.ts";
 import type { DetectedTarget, Detector } from "./types.ts";
 
@@ -12,7 +12,8 @@ const PREFIX: Record<string, string> = {
 export const pythonDetector: Detector = {
   stack: "python",
   detect(dir: string): DetectedTarget | null {
-    const pyproject = readText(join(dir, "pyproject.toml"));
+    // A marker that cannot be read is no marker: detection runs in the hooks too (finding 30).
+    const pyproject = readTextQuietly(join(dir, "pyproject.toml"));
     if (pyproject === null && !exists(join(dir, "requirements.txt"))) return null;
     const manager = exists(join(dir, "uv.lock"))
       ? "uv"

@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, readFileSync, rmdirSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { LockBusy } from "../src/lock.ts";
 import {
   readProtectedJson,
   readProtectedJsonAt,
@@ -85,3 +86,43 @@ test("SP2c: a protected file outside a repository has its own integrity file, ke
   writeFileSync(join(dir, "outbox.json"), "{}");
   expect(readProtectedJsonAt(integrity, join(dir, "outbox.json")).tampered).toBe(true);
 });
+
+test("CON6-AC-10-integrity (finding 30): an integrity file that cannot be read (a folder) leaves a protected file tampered or refused, never trusted", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const file = join(paths.crewDir, "profile.json");
+  writeProtectedJson(paths, file, { version: 1 });
+  rmSync(paths.integrityFile);
+  mkdirSync(paths.integrityFile);
+  let outcome: unknown;
+  try {
+    outcome = readProtectedJson<{ version: number }>(paths, file);
+  } catch (error) {
+    outcome = { refused: String(error) };
+  }
+  expect(outcome).not.toEqual({ data: { version: 1 }, tampered: false });
+  expect(
+    (outcome as { tampered?: boolean }).tampered === true ||
+      typeof (outcome as { refused?: unknown }).refused === "string",
+  ).toBe(true);
+});
+
+test("CON6-AC-12 (finding 29): the integrity record is written under the store's lock: a held lock makes the write wait and refuse with LockBusy, the integrity file unchanged", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const file = join(paths.crewDir, "profile.json");
+  writeProtectedJson(paths, file, { version: 1 });
+  const before = readFileSync(paths.integrityFile);
+  // Another writer holds the store's lock: a fresh lock folder beside the integrity file.
+  const lock = join(dirname(paths.integrityFile), ".lock");
+  mkdirSync(lock);
+  let outcome: unknown;
+  try {
+    writeProtectedJson(paths, file, { version: 2 });
+    outcome = "written";
+  } catch (error) {
+    outcome = error instanceof LockBusy ? "LockBusy" : String(error);
+  } finally {
+    rmdirSync(lock);
+  }
+  expect(outcome).toBe("LockBusy");
+  expect(readFileSync(paths.integrityFile).equals(before)).toBe(true);
+}, 15_000);
