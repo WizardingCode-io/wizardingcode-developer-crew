@@ -23,7 +23,8 @@ export interface DecisionEntry {
     | "knowledge"
     | "abandon"
     | "supersede"
-    | "accept";
+    | "accept"
+    | "task";
   id?: string;
   text: string;
   answer?: string;

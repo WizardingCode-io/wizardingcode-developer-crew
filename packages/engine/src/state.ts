@@ -34,20 +34,28 @@ export const WORKING_TTL_MS = 3_600_000;
 export const WORKING_MAX = 50;
 const DESCRIPTION_MAX = 120;
 
+/** A text cut at `max` characters, the last one an ellipsis when anything was cut. */
+export function cut(text: string, max = DESCRIPTION_MAX): string {
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
 /**
  * The description an Agent launch gave, as one printable line (security review of SP7a Task 7): the
  * text comes from whatever launched the subagent, so a terminal escape, a newline forging a status
- * line or ten thousand characters are not written and never drawn.
+ * line or ten thousand characters are not written and never drawn. The bidirectional and invisible
+ * format characters are deleted, not spaced, so a name cannot read in another order than its bytes
+ * (finding 58, the security lead's return).
  */
 export function oneLine(text: string): string {
   const line = text
     // biome-ignore lint/suspicious/noControlCharactersInRegex: the escape sequences are the subject
     .replace(/(?:\x1b\[|\x9b)[0-?]*[ -/]*[@-~]/g, "")
+    .replace(/[\u200b-\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff]/g, "")
     // biome-ignore lint/suspicious/noControlCharactersInRegex: C0, DEL and C1 are the subject
     .replace(/[\x00-\x1f\x7f-\x9f]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
-  return line.length > DESCRIPTION_MAX ? `${line.slice(0, DESCRIPTION_MAX - 1)}…` : line;
+  return cut(line);
 }
 
 /** The entries a state file holds that have the shape the engine writes; anything else is dropped, never thrown on. */

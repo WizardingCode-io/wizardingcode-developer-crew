@@ -85,6 +85,12 @@ export function taskText(planText: string | null, task: string): string | null {
   return null;
 }
 
+/** A task's record in the item, or the one refusal every task verb gives for a task it does not hold. */
+export function findTask(work: WorkItem, task: string): TaskRecord | { refused: string } {
+  const record = (work.tasks ?? []).find((t) => t.task === task);
+  return record ?? { refused: `${task} is not a task of ${work.id}` };
+}
+
 function dirtyWatched(root: string, profile: Profile): string[] {
   return (gitChangedPaths(root) ?? []).filter((p) => isWatched(p, profile));
 }
@@ -468,8 +474,8 @@ export function mergeTask(
   | { refused: string } {
   if (ctx.self.openedBy)
     return { refused: `a session opened by mail (${ctx.self.openedBy}) never merges` };
-  const record = (work.tasks ?? []).find((t) => t.task === task);
-  if (!record) return { refused: `${task} is not a task of ${work.id}` };
+  const record = findTask(work, task);
+  if ("refused" in record) return record;
   if (record.mergedAt) return { refused: `${task} is already merged` };
   absorbReplies(ctx, work);
   const child = record.child;
@@ -494,22 +500,8 @@ export function mergeTask(
     return {
       refused: `uncommitted changes in ${dirty.join(", ")}; commit or stash them, then merge`,
     };
-  // The implementer's session must have ended before its worktree goes; what the sweep could not
-  // settle is said with the refusal, so a dead session whose record failed is not taken for a live one.
-  const swept = sweepSafely(ctx);
-  // What that sweep settled or could not goes with whatever the merge answers, since no later sweep
-  // says it again; a line that is the refusal's own text is not said twice.
-  const withSwept = (refused: string): { refused: string } => {
-    const lines = swept.lines.filter((l) => l !== refused);
-    return { refused: lines.length ? `${refused} (${lines.join("; ")})` : refused };
-  };
-  const sessions = readOpenSessions(ctx);
-  if (sessions.tampered) return withSwept(sessions.tampered);
-  const running = sessions.messages.find((m) => m.id === record.message);
-  if (running)
-    return withSwept(
-      `${task}'s implementer is still running (pid ${running.opened?.pid}); wait for it to end, or stop it with crew mail stop ${record.message}`,
-    );
+  const { swept, withSwept, refused } = implementerEnded(ctx, record);
+  if (refused) return refused;
   const branch = branchContentRefusal(record, child, env.paths.root);
   if (branch) return withSwept(branch.refused);
   const subject = `Merge ${task} of ${work.id} (${record.branch}): ${child}, ${record.verdict ?? "unproven"}${options.forcedBy ? ", forced by the user" : ""}`;
@@ -553,6 +545,109 @@ export function mergeTask(
     ...(kept ? { worktreeKept: kept.kept } : {}),
     ...credit,
   };
+}
+
+/**
+ * The check that a task's implementer has ended before its worktree goes, the merge's and the
+ * drop's: the sweep first, then the sessions record (refused when it changed outside the engine or
+ * while a session holds the task's message). What the sweep settled or could not goes with whatever
+ * the command answers (`withSwept`), since no later sweep says it again; a line that is the
+ * refusal's own text is not said twice, so a dead session whose record failed is not taken for a
+ * live one.
+ */
+function implementerEnded(
+  ctx: MailContext,
+  record: TaskRecord,
+): {
+  swept: ReturnType<typeof sweepSafely>;
+  withSwept: (refused: string) => { refused: string };
+  refused: { refused: string } | null;
+} {
+  const swept = sweepSafely(ctx);
+  const withSwept = (refused: string): { refused: string } => {
+    const lines = swept.lines.filter((l) => l !== refused);
+    return { refused: lines.length ? `${refused} (${lines.join("; ")})` : refused };
+  };
+  const sessions = readOpenSessions(ctx);
+  if (sessions.tampered) return { swept, withSwept, refused: withSwept(sessions.tampered) };
+  const running = sessions.messages.find((m) => m.id === record.message);
+  return {
+    swept,
+    withSwept,
+    refused: running
+      ? withSwept(
+          `${record.task}'s implementer is still running (pid ${running.opened?.pid}); wait for it to end, or stop it with crew mail stop ${record.message}`,
+        )
+      : null,
+  };
+}
+
+/** The states of a task whose work reached the item's tree: merged, then gated and briefed. */
+const MERGED_STATES: readonly (TaskRecord["state"] | undefined)[] = ["merged", "gated", "briefed"];
+
+/**
+ * Drops an unmerged task (finding 30, the user's decision of 2026-10-22): its worktree, then its
+ * branch, its record, its message refused. Every refusal comes before any git runs: a session
+ * opened by mail, an unknown task, an inline todo (its work is the checkout's), a merged one (by
+ * its state or a merge recorded), a record whose worktree or branch is not the pair the engine
+ * makes for it now (a hand edit naming `main` or the root), and the merge's own running check. A
+ * git step that fails is named and the record, the message and the register stay; the worktree
+ * goes first, so a failing branch step leaves it gone and says so.
+ */
+export function dropTask(
+  ctx: MailContext,
+  env: TaskEnv,
+  work: WorkItem,
+  task: string,
+): { record: TaskRecord; tip: string; swept: string[]; notes: string[] } | { refused: string } {
+  if (ctx.self.openedBy)
+    return { refused: `a session opened by mail (${ctx.self.openedBy}) never drops a task` };
+  const record = findTask(work, task);
+  if ("refused" in record) return record;
+  if (record.inline || !record.branch || !record.worktree)
+    return {
+      refused: `${task} is an inline todo: it has no worktree and no branch, and its work is in this checkout; not dropped`,
+    };
+  if (record.mergedAt || record.mergeCommit || MERGED_STATES.includes(record.state))
+    return {
+      refused: `${task} is merged (${record.state ?? "merged"}${record.mergeCommit ? `, ${record.mergeCommit.slice(0, 7)}` : ""}): its work is in the item's tree; not dropped`,
+    };
+  const names = taskNames(work.id, env.paths.root, task, env.policy.mail.worktrees);
+  if (record.branch !== names.branch || record.worktree !== names.worktree)
+    return {
+      refused: `${task}'s record names the branch ${record.branch} and the worktree ${record.worktree}, not the pair the engine makes for it (${names.branch}, ${names.worktree}); not dropped`,
+    };
+  const { swept, withSwept, refused } = implementerEnded(ctx, record);
+  if (refused) return refused;
+  let tip: string;
+  try {
+    tip = gitRun(env.paths.root, "rev-parse", "--verify", "--quiet", `refs/heads/${record.branch}`);
+  } catch (error) {
+    return withSwept(
+      `the branch ${record.branch} cannot be read: ${gitError(error)}; nothing was dropped`,
+    );
+  }
+  try {
+    gitRun(env.paths.root, "worktree", "remove", "--force", "--", record.worktree);
+  } catch (error) {
+    return withSwept(
+      `git worktree remove failed: ${gitError(error)}; nothing was dropped: the worktree ${record.worktree}, the branch ${record.branch}, the record and the message stay`,
+    );
+  }
+  try {
+    gitRun(env.paths.root, "branch", "-D", "--", record.branch);
+  } catch (error) {
+    return withSwept(
+      `the worktree ${record.worktree} was removed; git branch -D failed: ${gitError(error)}; the branch ${record.branch}, the record and the message stay`,
+    );
+  }
+  work.tasks = (work.tasks ?? []).filter((t) => t !== record);
+  saveWork(env.paths, work);
+  const notes: string[] = [];
+  updateStatusEverywhere(ctx, record.message, "refused", "dropped by the user", notes);
+  // A record of what opened the implementer that a crash left behind goes with the worktree.
+  dropOpenedMarker(ctx.paths.userDir, record.worktree);
+  return { record, tip, swept: swept.lines, notes };
 }
 
 /**

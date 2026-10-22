@@ -107,7 +107,8 @@ type Settable =
   /** A list the command changes one element at a time, each checked by shape (finding 120: the exclusions). */
   | { list: { pattern: RegExp; hint: string } };
 
-const NAME_HINT =
+/** What a mail name is, said the same by the policy and the commands that refuse one. */
+export const NAME_HINT =
   "a lowercase name of letters, digits, dot, dash and underscore, up to 64 characters";
 
 type Range = { min: number; max: number };

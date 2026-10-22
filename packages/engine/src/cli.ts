@@ -26,6 +26,7 @@ import {
 import { loadConfig, saveConfig, setConfigValue } from "./config.ts";
 import {
   appendDecision,
+  type DecisionEntry,
   decisionLine,
   decisionsCount,
   listDecisions,
@@ -49,6 +50,7 @@ import {
   renderReport,
   tddSummary,
   updateEvidence,
+  whoDecides,
 } from "./evidence.ts";
 import { changedPaths, changedWatchedPaths, hashPaths, isGitRepo } from "./fingerprint.ts";
 import { ensureDir, nowIso, readJson, readText, sha256, writeJson, writeText } from "./fs.ts";
@@ -177,6 +179,7 @@ import {
   LIST_POLICY_KEYS,
   loadPolicy,
   MAIL_NAME,
+  NAME_HINT,
   planListChange,
   SETTABLE_POLICY_KEYS,
   setPolicyValue,
@@ -225,6 +228,7 @@ import {
   integrityOf,
   readProtectedJson,
   recordIntegrity,
+  rel,
   writeProtectedJson,
   writeProtectedText,
 } from "./store.ts";
@@ -240,6 +244,8 @@ import {
   verdictText,
 } from "./strategy.ts";
 import {
+  dropTask,
+  findTask,
   listTasks,
   mergeTask,
   noteTask,
@@ -294,7 +300,14 @@ import {
   type QuestionRecord,
   VALIDATOR_RULES,
 } from "./types.ts";
-import { fileHash, leadHeading, parseValidation, replyFile, validationHash } from "./validation.ts";
+import {
+  fileHash,
+  leadHeading,
+  parseValidation,
+  replyFile,
+  validationHash,
+  validationRound,
+} from "./validation.ts";
 import {
   applyDefectMarks,
   askAllowed,
@@ -580,9 +593,7 @@ function acceptMailbox(env: Env, which: "inbox" | "outbox"): Outcome {
   const accepted = acceptBox(env.mail, which);
   if ("refused" in accepted) return refuse(accepted.refused);
   const { file, messages } = accepted;
-  appendDecision(env.paths, {
-    at: nowIso(),
-    item: "mail",
+  decide(env, "mail", {
     kind: "accept",
     text: `${which} accepted as it is after a hand edit: ${file} (${messages.length} message${messages.length === 1 ? "" : "s"})`,
     by: "the user",
@@ -672,9 +683,103 @@ function decisionText(policy: Policy, decision: Decision): string {
   return `${decidedBy(decision)}${note ? ` (${note.slice(2)})` : ""}`;
 }
 
-/** Who took a decision, as the register names them: `decidedBy` without its leading "by ". */
-function whoDecided(decision: Parameters<typeof decidedBy>[0]): string {
-  return decidedBy(decision).replace(/^by /, "");
+/** The register's entries of a ruling (SP7 §6.6): each upheld defect inside the change, a decision the judge took about this code. */
+function rulingDecisions(
+  records: readonly JudgementRecord[],
+  item: string,
+  file: string | undefined,
+): DecisionEntry[] {
+  return records.flatMap((record) =>
+    record.verdict === "not-proven"
+      ? record.findings
+          .filter((f) => f.severity === "defect" && !f.outside)
+          .map((f) => ({
+            at: nowIso(),
+            item,
+            kind: "ruling" as const,
+            text: `${record.gate} defect: ${f.file}${f.line ? `:${f.line}` : ""} ${f.text}`,
+            by: "the judge",
+            ...(file ? { file } : {}),
+          }))
+      : [],
+  );
+}
+
+/** One entry of the project's register for an item (or a name such as `policy`), stamped now unless the record carries its own time. */
+function decide(
+  env: Env,
+  item: string,
+  fields: Omit<DecisionEntry, "at" | "item"> & { at?: string },
+): void {
+  appendDecision(env.paths, { at: fields.at ?? nowIso(), item, ...fields });
+}
+
+/**
+ * A todo's own gate on the files it touched (SP7 §8.1), bounded by team.maxGateRounds: the gates
+ * its scope runs, the judgement it plans, the state it climbs to.
+ */
+async function taskGate(
+  env: Env,
+  opened: Opened,
+  parsed: Parsed,
+  record: TaskRecord,
+): Promise<Outcome> {
+  const task = record.task;
+  // What the gate would run on comes first: a todo with nothing in this checkout is refused
+  // for that, not for its rounds, which a continuation would not mend.
+  const flagScope = parsed.flags.scope === undefined ? undefined : commaList(parsed.flags.scope);
+  const scoped = taskScope(env.paths.root, env.profile, record, flagScope);
+  if ("refused" in scoped) return refuse(scoped.refused);
+  const round = record.gate?.round ?? 0;
+  const held = continueOrRefuse(
+    env,
+    opened.work,
+    "gate",
+    task,
+    env.policy.team.maxGateRounds,
+    round,
+    `gate round ${round + 1} of ${task}: the policy allows ${env.policy.team.maxGateRounds} (team.maxGateRounds); the user continues it once with crew continue ${opened.work.id} gate ${task}, or decides`,
+  );
+  if (held) return held;
+  const result = await runTaskGate(env.paths, opened.work, env.profile, env.policy, scoped.scope);
+  const own = flagScope?.length ? taskScope(env.paths.root, env.profile, record) : scoped;
+  const planned = planTaskJudgement(env, {
+    work: opened.work,
+    tampered: env.tampered || opened.tampered,
+    record,
+    task,
+    round: round + 1,
+    scope: scoped.scope,
+    ownScope: "scope" in own ? own.scope : [],
+    result,
+  });
+  // The state ladder only climbs past gated: a gate re-run after the brief keeps the todo briefed
+  // (the brief is rewritten with crew task brief when the lead wants the new runs in it).
+  settleTaskState(opened.work, record, env.policy);
+  saveWork(env.paths, opened.work);
+  const lines = result.runs.map(
+    (r) =>
+      `  ${r.gate} (${r.target}): ${r.status} in ${(r.durationMs / 1000).toFixed(1)}s${r.reason ? ` (${r.reason})` : ""}`,
+  );
+  const pending = result.status === "pass" ? taskPending(opened.work, record, env.policy) : [];
+  if (pending.length)
+    lines.push(
+      `Judgement gates to run for ${task}: ${pending
+        .map((g) => `${g} (${planned.find((p) => p.gate === g)?.reason ?? ""})`)
+        .join(
+          ", ",
+        )}; inputs in .crew/work/${opened.work.id}/review/${task}/ (diff.patch, files.txt); record each with crew judgement ${opened.work.id} record --task ${task} --ruling <file>`,
+    );
+  const verdict =
+    result.status === "pass" && pending.length
+      ? `pass, judgement pending (${pending.join(", ")})`
+      : result.status;
+  return {
+    code: result.status === "pass" ? 0 : 1,
+    stdout: true,
+    text: `${lines.join("\n")}\n${task} gate round ${round + 1}: ${verdict}`,
+    data: { task: record, gate: record.gate, pending },
+  };
 }
 
 /**
@@ -702,9 +807,7 @@ function continueOrRefuse(
     { what, ...(task ? { task } : {}), by: { by: "user" }, at: nowIso(), standing: true },
   ];
   saveWork(env.paths, work);
-  appendDecision(env.paths, {
-    at: nowIso(),
-    item: work.id,
+  decide(env, work.id, {
     kind: "continue",
     text: `${what}${task ? ` of ${task}` : ""} continued under the standing grant (team.continuations: granted)`,
     by: "the user",
@@ -984,8 +1087,8 @@ async function recordTaskJudgement(
 ): Promise<Outcome> {
   const usage =
     'usage: crew judgement <id> record --task T-n --ruling <file> | crew judgement <id> record <gate> --not-run --reason "<why>" --task T-n';
-  const record = (work.tasks ?? []).find((t) => t.task === task);
-  if (!record) return refuse(`${task} is not a task of ${work.id}`);
+  const record = findTask(work, task);
+  if ("refused" in record) return refuse(record.refused);
   const planned = (record.gate?.planned ?? []).map((p) => p.gate);
   if (!planned.length)
     return refuse(`${task} plans no judgement gate (crew task <id> gate ${task})`);
@@ -1312,7 +1415,9 @@ function startPriority(
 /**
  * The request this item answers follows its waits (SP7 §9): blocked while the turn ends on one,
  * in progress again at the resume; a message past that point (done) is left as it is. Used by
- * `crew await`, `crew resume` and the questions record (SP3 Task 4).
+ * `crew await`, `crew resume` and the questions record (SP3 Task 4). What the move could not do (a
+ * copy of the message it could not update, a refused move) is pushed onto `notes`, the line the
+ * command prints under its answer; the move itself never refuses the command.
  */
 function moveOriginMail(
   env: Env,
@@ -1326,6 +1431,67 @@ function moveOriginMail(
   if (!current || mailStatus(current) === to) return;
   const moved = moveMail(env.mail, originId, to, {}, notes);
   if ("refused" in moved) notes.push(moved.refused);
+}
+
+/** The origin's notes a wait or a resume carries under its answer (moveOriginMail). */
+function withNotes(text: string, notes: readonly string[]): string {
+  return notes.length ? `${text}\n${notes.join("\n")}` : text;
+}
+
+/** `crew await <id> user | role | mail <mid>`: the three waits a turn may end on (SP2c §9), the origin blocked. */
+function awaitCommand(env: Env, args: string[]): Outcome {
+  const opened = openForChange(env, args[0]);
+  if (isOutcome(opened)) return opened;
+  const usage = "usage: crew await <id> user | role | mail <message id>";
+  const kind = args[1];
+  if (kind !== "user" && kind !== "role" && kind !== "mail") return refuse(usage);
+  if (kind === "mail" && !args[2]) return refuse(usage);
+  opened.work.awaiting = kind;
+  if (kind === "mail") opened.work.awaitingMessage = args[2];
+  else delete opened.work.awaitingMessage;
+  saveWork(env.paths, opened.work);
+  const notes: string[] = [];
+  moveOriginMail(env, opened.work, "blocked", notes);
+  return ok(withNotes(`${opened.work.id}: ${waitingText(opened.work, { bare: true })}`, notes), {
+    awaiting: kind,
+    awaitingMessage: opened.work.awaitingMessage ?? null,
+  });
+}
+
+/**
+ * `crew resume <id>`: the wait cleared, the origin in progress again. A jev dispute held on the
+ * item is a person's to clear (finding 94): the hook asks for this resume, and with nobody present
+ * it is refused.
+ */
+function resumeCommand(env: Env, parsed: Parsed, args: string[]): Outcome {
+  const opened = openForChange(env, args[0]);
+  if (isOutcome(opened)) return opened;
+  let cleared = "";
+  if (opened.work.validatorDispute) {
+    const decided = decisionFlag(parsed, env.policy);
+    if (isOutcome(decided)) return decided;
+    if (decided.by !== "user")
+      return refuse(
+        "the validator's verdict was disputed by jev; a person clears it: the item waits",
+      );
+    const by = whoDecides(decided);
+    decide(env, opened.work.id, {
+      kind: "dispute",
+      text: `jev dispute cleared (${opened.work.validatorDispute.condition})`,
+      by,
+    });
+    delete opened.work.validatorDispute;
+    cleared = `; the jev dispute cleared by ${by}`;
+  }
+  opened.work.awaiting = null;
+  delete opened.work.awaitingMessage;
+  saveWork(env.paths, opened.work);
+  const notes: string[] = [];
+  moveOriginMail(env, opened.work, "in-progress", notes);
+  return ok(withNotes(`${opened.work.id}: resumed${cleared}`, notes), {
+    awaiting: null,
+    awaitingMessage: null,
+  });
 }
 
 /** The upheld defects asked of Jev when it is configured and the policy allows the ask (SP3 decision 10); null otherwise. */
@@ -1364,9 +1530,7 @@ function setListKey(env: Env, key: string, value: string, remove: boolean): Outc
   const plan = planListChange(env.paths, key, value, remove);
   if ("refused" in plan) return refuse(plan.refused);
   if (plan.action !== "already listed") {
-    appendDecision(env.paths, {
-      at: nowIso(),
-      item: "policy",
+    decide(env, "policy", {
       kind: "decision",
       text:
         plan.action === "added"
@@ -1390,9 +1554,7 @@ function setScalarKey(env: Env, key: string, value: string): Outcome {
   const result = setPolicyValue(env.paths, key, value);
   if ("refused" in result) return refuse(result.refused);
   if (key === "team.continuations" && value === "granted")
-    appendDecision(env.paths, {
-      at: nowIso(),
-      item: "policy",
+    decide(env, "policy", {
       kind: "decision",
       text: "team.continuations set to granted: rounds past a cap are the user's standing grant, up to the cap plus two",
       by: "the user",
@@ -1416,9 +1578,8 @@ function supersedeCommand(env: Env, opened: Opened, parsed: Parsed, args: string
   );
   if ("refused" in outcome) return refuse(outcome.refused);
   saveWork(env.paths, opened.work);
-  appendDecision(env.paths, {
+  decide(env, opened.work.id, {
     at: outcome.at,
-    item: opened.work.id,
     kind: "supersede",
     id: outcome.criterion.id,
     text: `${outcome.criterion.id} superseded by ${by}`,
@@ -1730,6 +1891,433 @@ function insideFolder(path: string, folder: string): boolean {
   return rel !== "" && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
 }
 
+/** `crew mail …`: the project's mail inside the workspace and the sessions it opened (SP2c, SP7b). */
+async function mailCommand(env: Env, parsed: Parsed, args: string[]): Promise<Outcome> {
+  const sendUsage =
+    'usage: crew mail send --to <project|.> --type question|change-request|notice|blocker [--priority blocker|high|normal|low] [--thread <root>] [--agent <session|T-n|role>] [--item <id>] [--reply-to <mid>] [--subject <text>] "<text>" [--file <path>]';
+  const usage = `${sendUsage} | inbox [--all] | read <mid> | thread <mid> | accept <mid> [--priority <p>] [--reason "<why>"] | reply <mid> "<text>" [--branch <b>] [--item <child id>] [--contract <kind>:<path>[:<summary>]]… [--as <role>] [--file <path>] | refuse <mid> --reason "<why>" | status | stop <mid>`;
+  const ctx = env.mail;
+  const verb = args[0];
+  if (verb === "send") {
+    const to = parsed.flags.to;
+    const type = parsed.flags.type;
+    const text = args.slice(1).join(" ");
+    if (typeof to !== "string" || !isMailType(type)) return refuse(sendUsage);
+    const sendPriority: unknown = parsed.flags.priority;
+    if (sendPriority !== undefined && !isMailPriority(sendPriority))
+      return refuse(badPriority(sendPriority));
+    const item = typeof parsed.flags.item === "string" ? parsed.flags.item : undefined;
+    const work = item
+      ? (loadWork(env.paths, item).work ?? null)
+      : (activeWork(env.paths)?.work ?? null);
+    if (item && !work) return refuse(`unknown work item: ${item}`);
+    const out = send(
+      ctx,
+      {
+        to,
+        type,
+        text,
+        ...(sendPriority ? { priority: sendPriority } : {}),
+        ...(typeof parsed.flags.thread === "string" ? { thread: parsed.flags.thread } : {}),
+        ...(typeof parsed.flags.agent === "string" ? { agent: parsed.flags.agent } : {}),
+        ...(typeof parsed.flags.subject === "string" ? { subject: parsed.flags.subject } : {}),
+        ...(typeof parsed.flags.file === "string" ? { filePath: parsed.flags.file } : {}),
+        ...(item ? { item } : {}),
+        ...(typeof parsed.flags["reply-to"] === "string"
+          ? { replyTo: parsed.flags["reply-to"] }
+          : {}),
+      },
+      work,
+    );
+    if ("refused" in out)
+      return refuse(
+        `refused: ${out.refused}${out.message ? "; recorded in the outbox as refused" : ""}`,
+        { refused: out.refused, message: out.message },
+      );
+    const { message, delivery } = out;
+    const where = `to ${message.to.project} (workspace ${message.to.workspace})`;
+    let next: string;
+    if (delivery.kind === "self") next = `to ${message.to.agent ?? "session"} of this project`;
+    else if (delivery.kind === "live")
+      next = `live session (session ${delivery.entry.sessionId}): ring it if your harness lists it`;
+    else if (delivery.kind === "queued") next = `queued; ${delivery.reason}`;
+    // No live session: the engine opens one for the message (SP2c §10).
+    else next = openForMail(ctx, env.policy, message, delivery);
+    const note = work ? "" : "\nnote: no active work item, so no item keeps a copy of this message";
+    return ok(`sent ${message.id} ${where}; ${next}${note}`, {
+      message,
+      delivery: delivery.kind,
+      ...(delivery.kind === "open" ? { mode: delivery.mode } : {}),
+    });
+  }
+  if (verb === "inbox") {
+    syncMail(ctx, env.paths);
+    const { messages, tampered } = ownInbox(ctx);
+    if (tampered) return refuse(tamperedBox(ctx.self.project, "inbox"));
+    // What is open, and the requests done (never their replies); --all shows everything (SP7 §9).
+    const shown = parsed.flags.all
+      ? messages
+      : messages.filter((m) => {
+          const status = mailStatus(m);
+          return status === "done" ? !m.replyTo : status !== "refused" && status !== "expired";
+        });
+    const summary = inboxSummary(ctx);
+    const lines = shown.map(
+      (m) =>
+        `  ${m.id} · [${decidedPriority(m)}] · ${m.type} · from ${partyLabel(m.from)} · ${m.subject} · ${mailStatus(m)}${m.reason ? `: ${m.reason}` : ""}`,
+    );
+    return ok(
+      `Mail (${ctx.self.workspace ?? "alone"}/${ctx.self.project}, as ${ctx.self.agent}): ${summary.unread} unread, ${summary.answered} answered${lines.length ? `\n${lines.join("\n")}` : ""}`,
+      { ...summary, messages: shown },
+    );
+  }
+  if (verb === "read") {
+    if (!args[1]) return refuse(usage);
+    syncMail(ctx, env.paths);
+    const notes: string[] = [];
+    const result = markRead(ctx, args[1], notes);
+    if ("refused" in result) return refuse(result.refused);
+    const body = result.bodyFile ? (readText(result.bodyFile) ?? result.body) : result.body;
+    const head = [
+      ...notes,
+      `id: ${result.id}`,
+      `from: ${result.from.project} (${result.from.agent})`,
+      `to: ${result.to.project}${result.to.agent ? ` (${result.to.agent})` : ""}`,
+      `type: ${result.type}`,
+      `subject: ${result.subject}`,
+      `status: ${mailStatus(result)}${result.reason ? `: ${result.reason}` : ""}`,
+      `at: ${result.at}`,
+      priorityLine(result),
+      ...evidenceLine(result),
+      ...(result.from.item ? [`from item: ${result.from.item}`] : []),
+      ...(result.replyTo ? [`reply to: ${result.replyTo}`] : []),
+      ...(result.branch ? [`branch: ${result.branch}`] : []),
+      ...(result.item
+        ? [`item: ${result.item}${result.verdict ? ` (${result.verdict})` : ""}`]
+        : []),
+    ];
+    return ok(`${head.join("\n")}\n\n${body}`, { message: result, body });
+  }
+  if (verb === "reply") {
+    const text = args.slice(2).join(" ");
+    if (!args[1]) return refuse(usage);
+    const notes: string[] = [];
+    const result = replyMail(
+      ctx,
+      args[1],
+      text,
+      {
+        ...(typeof parsed.flags.file === "string" ? { filePath: parsed.flags.file } : {}),
+        ...(typeof parsed.flags.branch === "string" ? { branch: parsed.flags.branch } : {}),
+        ...(typeof parsed.flags.item === "string" ? { item: parsed.flags.item } : {}),
+        ...(typeof parsed.flags.as === "string" ? { as: parsed.flags.as } : {}),
+        ...(parsed.multi.contract?.length ? { contracts: parsed.multi.contract } : {}),
+      },
+      notes,
+    );
+    if ("refused" in result)
+      return refuse(
+        result.delivered === undefined
+          ? result.refused
+          : `${result.delivered} was delivered, but ${result.refused}`,
+      );
+    return ok(
+      `replied to ${args[1]}: ${result.reply.id} to ${result.reply.to.project}; ${args[1]} ${mailStatus(result.original)}${notes.length ? `\n${notes.join("\n")}` : ""}`,
+      { reply: result.reply, original: result.original, notes },
+    );
+  }
+  if (verb === "thread") {
+    if (!args[1]) return refuse(usage);
+    syncMail(ctx, env.paths);
+    const result = threadMessages(ctx, args[1]);
+    if ("refused" in result) return refuse(result.refused);
+    const lines = result.messages.map(
+      (m) =>
+        `  ${m.id} · [${decidedPriority(m)}] · ${m.type} · ${partyLabel(m.from)} → ${partyLabel(m.to)} · ${oneLine(m.subject)} · ${mailStatus(m)}`,
+    );
+    return ok(
+      `Thread ${args[1]}: ${result.messages.length} message${result.messages.length === 1 ? "" : "s"}, ${result.parties.length} part${result.parties.length === 1 ? "y" : "ies"} (${result.parties.join(", ")})\n${lines.join("\n")}`,
+      { root: args[1], messages: result.messages, parties: result.parties },
+    );
+  }
+  if (verb === "accept") {
+    if (!args[1]) return refuse(usage);
+    const priority: unknown = parsed.flags.priority;
+    if (priority !== undefined && !isMailPriority(priority)) return refuse(badPriority(priority));
+    const reason = typeof parsed.flags.reason === "string" ? parsed.flags.reason : undefined;
+    const notes: string[] = [];
+    const result = acceptMail(
+      ctx,
+      args[1],
+      {
+        ...(priority ? { priority } : {}),
+        ...(reason ? { reason } : {}),
+        by: ctx.self.agent,
+      },
+      notes,
+    );
+    if ("refused" in result) return refuse(result.refused);
+    const d = result.message.priorityDecision;
+    const level = d
+      ? `${d.confirmed}${d.confirmed !== d.proposed ? ` (proposed ${d.proposed})` : ""}${d.reason ? `: ${d.reason}` : ""}`
+      : priorityOf(result.message);
+    return ok(`${args[1]} accepted at ${level}${notes.length ? `\n${notes.join("\n")}` : ""}`, {
+      message: result.message,
+      notes,
+    });
+  }
+  if (verb === "refuse") {
+    const reason = typeof parsed.flags.reason === "string" ? parsed.flags.reason : "";
+    if (!args[1] || !reason.trim()) return refuse(usage);
+    const notes: string[] = [];
+    const result = refuseMail(ctx, args[1], reason, notes);
+    if ("refused" in result) return refuse(result.refused);
+    return ok(
+      `${args[1]} refused: ${reason.trim()}${notes.length ? `\n${notes.join("\n")}` : ""}`,
+      { message: result, notes },
+    );
+  }
+  if (verb === "status") {
+    const pruned = pruneRegistry(env.paths.userDir);
+    // What became of the sessions this project opened, before they are listed (SP2c §10).
+    const swept = sweepSafely(ctx);
+    const { messages: sessions, tampered, untrusted } = readOpenSessions(ctx);
+    const sessionLine = (m: (typeof sessions)[number]) => {
+      const opened = m.opened as OpenedSession;
+      return `  ${m.id} → ${m.to.project}: ${opened.mode} session ${opened.name} (pid ${opened.pid ?? "none"}), since ${opened.startedAt}, ${Math.floor(minutesRun(opened))} of ${opened.maxMinutes} minutes used, ${opened.maxTurns} turns allowed`;
+    };
+    const sweptLine = sweptText(swept);
+    // With the outbox changed outside the engine (named once: by the sweep's line above, or here
+    // where the sweep said nothing, inside a session opened by mail), what it records is listed
+    // all the same, marked, with the commands that stop a session's whole process group (the
+    // request, then the kill a member that ignored it needs), its log, and whether its pid is
+    // still the session, gone, or another process's by now (the rollback's first step).
+    const untrustedLine = (m: (typeof sessions)[number]) => {
+      const opened = m.opened as OpenedSession;
+      const state = pidState(opened);
+      const marked =
+        state === "session" ? "" : state === "gone" ? " (gone)" : " (pid now another process)";
+      return `${sessionLine(m)}, log ${opened.log}${marked}`;
+    };
+    const named = tampered && !swept.lines.includes(tampered) ? `${tampered}\n` : "";
+    const listed = tampered
+      ? `${named}open sessions as the outbox records them (not trusted; stop one with kill -TERM -- -<pid>, then kill -KILL -- -<pid> after a second; read its log): ${untrusted.length ? `\n${untrusted.map(untrustedLine).join("\n")}` : "none"}`
+      : `open sessions: ${sessions.length ? `\n${sessions.map(sessionLine).join("\n")}` : "none"}`;
+    // The inbox read guarded as `crew status` reads it: the sweep's lines and the outbox's
+    // sessions stand whether or not the inbox can be read.
+    let summary = emptyInboxSummary();
+    const summarised = guarded("the inbox was not read", () => {
+      summary = inboxSummary(ctx);
+    });
+    return ok(
+      `${summarised || (summary.line ?? `Mail (${ctx.self.workspace ?? "alone"}): inbox empty`)}${sweptLine ? `\n${sweptLine}` : ""}\n${listed}${pruned.length ? `\nregistry pruned: ${pruned.join(", ")}` : ""}`,
+      { sessions, untrusted, swept, pruned, ...summary },
+    );
+  }
+  if (verb === "stop") {
+    if (!args[1]) return refuse(usage);
+    const notes: string[] = [];
+    const stopped = stopSession(ctx, args[1], notes);
+    if ("refused" in stopped) return refuse(stopped.refused);
+    return ok(
+      `${stopped.id} stopped (session ${stopped.opened?.name}, pid ${stopped.opened?.pid})${notes.length ? `\n${notes.join("\n")}` : ""}`,
+      { message: stopped, notes },
+    );
+  }
+  return refuse(usage);
+}
+
+/**
+ * `crew status` of one item: the person's view of where it stands (the phase, the waits, the
+ * branch, the todo, the roles working, the gates) as text, and the machine form the mod draws.
+ */
+function statusView(env: Env, active: Opened): Outcome {
+  const result = assess(
+    env.paths,
+    active.work,
+    env.profile,
+    env.policy,
+    env.tampered || active.tampered,
+  );
+  const work = active.work;
+  // The checkout's branch, the plan's todo and the roles working (SP7 §14): the person's view of
+  // who does what now. A branch name is one cleaned line, as a role's description (finding 58); none
+  // outside a git repository.
+  let branch: string | null = null;
+  try {
+    const name = gitRun(env.paths.root, "rev-parse", "--abbrev-ref", "HEAD").trim();
+    branch = name ? oneLine(name) : null;
+  } catch {
+    branch = null;
+  }
+  const todoItems = (work.tasks ?? []).map((t) => ({
+    task: t.task,
+    criteria: t.criteria,
+    state: t.state ?? "open",
+    inline: t.inline === true,
+  }));
+  const todo = {
+    done: todoItems.filter((t) => t.state === "briefed").length,
+    total: todoItems.length,
+    items: todoItems,
+  };
+  const working = workingRoles(env.paths).map((w) => ({
+    agent: w.agent,
+    team: w.team,
+    since: w.since,
+    ...(w.description ? { description: w.description } : {}),
+  }));
+  const extra = [
+    branch ? `  branch ${branch}` : null,
+    todo.total
+      ? `  todo ${todo.done}/${todo.total} briefed (${todoItems.map((t) => `${t.task} ${t.state}`).join(", ")})`
+      : null,
+    working.length
+      ? `  working: ${working.map((w) => (w.description ? `${w.agent} (${w.description})` : w.agent)).join(", ")}`
+      : null,
+  ].filter((l): l is string => l !== null);
+  if (work.source) extra.unshift(`  source ${oneLine(sourceLine(work.source))}`);
+  // What the base listed at classification (SP4 Task 3), and what is left to learn (Task 4).
+  const knowledge = knowledgeLine(env, work);
+  if (knowledge) extra.push(knowledge);
+  const learned = work.learned;
+  const learnLine = learned
+    ? `  learn: ${learnedText(learned.entries, learned.confirmed)}`
+    : work.phase === "learn"
+      ? `  learn: proven, not learned: crew learn ${work.id}`
+      : work.phase === "deliver" && result.verdict === "proven"
+        ? `  learn: proven; crew phase ${work.id} next, then crew learn ${work.id} writes the base`
+        : null;
+  if (learnLine) extra.push(learnLine);
+  // A template the policy names and no pack registers (SP6 Task 2 AC-4): said on its own line.
+  const registry = teamsFor(env.policy, packTemplates(env.paths.userDir));
+  if (registry.warning) extra.push(`  ${registry.warning}`);
+  // The strategy while it is written and judged (SP7 §7.3): its faults and its ruling.
+  const plannedStrategy = work.phase === "strategy" ? plannedStrategyJudgement(work)[0] : undefined;
+  if (plannedStrategy)
+    extra.unshift(strategyLine(strategyOf(env, work, result.evidence), plannedStrategy));
+  // The audit's runs while the item is audited (SP8 Task 4): counted by state, or the command to run.
+  if (work.phase === "audit") extra.unshift(auditLine(env, work));
+  // The origin while the item is analysed (SP7 §7.4): its size, or a hand edit named.
+  const analysis = work.phase === "analyse" ? readOrigin(env.paths, work.id) : null;
+  if (analysis)
+    extra.unshift(
+      analysis.origin
+        ? `  analysis: ${originSummary(analysis.origin)}`
+        : `  analysis: origin.json changed outside the engine (crew accept ${work.id})`,
+    );
+  // The open questions first (SP7 §10.3): a doubt a person has to answer comes before everything.
+  extra.unshift(
+    ...openQuestions(work).map(
+      (q) => `  question ${q.id} open: ${oneLine(q.text)} (${channelsText(q)})`,
+    ),
+  );
+  const text = `${work.id} "${work.title}"\n  phase ${work.phase}, ${work.abandoned ? `abandoned (${work.abandoned.reason}), ` : ""}route ${work.route}, kind ${kindOfItem(work)}, ${triageText(work, "status")}${waitingText(work)}\n${kindOfItem(work) === "audit" ? "  audit: the proof is the signed report\n" : ""}${extra.length ? `${extra.join("\n")}\n` : ""}${gateSummary(work, result.verdict, result.unproven, result.evidence.runs)}`;
+  // The mail synced and a task's reply that landed taken into the lead's record (SP2c §7): a
+  // failure in either (a held lock, a folder that cannot be written) is one line under the
+  // status, never the status lost.
+  const synced = guarded("the mail was not synced", () => syncMail(env.mail, env.paths));
+  let inbox = emptyInboxSummary();
+  const summarised = guarded("the inbox was not read", () => {
+    inbox = inboxSummary(env.mail);
+  });
+  const taken = guarded("the replies were not taken", () =>
+    takeReplies(env.mail, env.paths, active),
+  );
+  let tasks: ReturnType<typeof listTasks> = [];
+  const listed = guarded("the tasks were not listed", () => {
+    tasks = listTasks(env.mail, work);
+  });
+  // The project's threads (SP7b decision 18), read like the inbox: a box that cannot be read
+  // costs the threads, not the status, and is named in one line.
+  let threads: ReturnType<typeof projectThreads> = [];
+  const threaded = guarded("the threads were not read", () => {
+    threads = projectThreads(env.mail);
+  });
+  const notes = [synced, summarised, taken, listed, threaded].filter(Boolean);
+  return ok(notes.length ? `${text}\n${notes.join("\n")}` : text, {
+    active: work.id,
+    title: work.title,
+    type: work.type,
+    kind: kindOfItem(work),
+    kindFrom: work.kindFrom ?? null,
+    phase: work.phase,
+    route: work.route,
+    priority: work.priority ?? "normal",
+    source: work.source ?? null,
+    triage: work.triage ?? null,
+    questions: questionsSorted(work).map(questionJson),
+    analysis: analysis?.origin ?? null,
+    // The packs registered on this machine with their states (SP6 Task 2 AC-6).
+    packs: packsJson(listPacks(env.paths.userDir)),
+    awaiting: work.awaiting,
+    awaitingMessage: work.awaitingMessage ?? null,
+    mail: { unread: inbox.unread, answered: inbox.answered, waiting: inbox.waiting },
+    // The project's threads and the environment's record (SP7b decision 18): what the mod draws.
+    threads,
+    environment: environmentState(env.paths),
+    tasks,
+    // The team of the item (SP7 §14): the seats, the session's team, the rounds spent, the
+    // branch, the todo and the roles working.
+    branch,
+    todo,
+    working,
+    team: work.seats ?? [],
+    primaryTeam: work.primaryTeam ?? null,
+    rounds: {
+      judgement: work.rounds?.judgement ?? 0,
+      validation: work.rounds?.validation ?? 0,
+    },
+    debate: debateState(work),
+    baseCommit: work.baseCommit,
+    phases: phasesFor(work),
+    // What the base listed at classification (SP4 Task 3) and what the item learned (Task 4).
+    knowledge: work.knowledge ?? null,
+    learned: work.learned ?? null,
+    // An audit's checks (SP8 Task 5): what the mod's Audit block and the strip draw.
+    ...(kindOfItem(work) === "audit" ? { audit: auditStatusOf(env, work) } : {}),
+    verdict: result.verdict,
+    unproven: result.unproven,
+    // One name per gate, so the strip can draw a planned gate that has not run yet.
+    expected: [...new Set(result.expected.map((p) => p.gate))],
+    criteria: work.criteria.map((c) => ({
+      id: c.id,
+      kind: c.kind,
+      text: c.text,
+      tdd: tddSummary(work, result.evidence, c.id, c.kind, env.policy),
+      ...(c.contract ? { contract: c.contract } : {}),
+    })),
+    runs: result.evidence.runs.map((r) => ({
+      gate: r.gate,
+      target: r.target,
+      ...(r.stack ? { stack: r.stack } : {}),
+      status: r.status,
+      durationMs: r.durationMs,
+      ...(r.reason ? { reason: r.reason } : {}),
+    })),
+    skips: work.skips.map((s) => ({ step: s.step, reason: s.reason })),
+    judgement: judgementRows(
+      work,
+      result.evidence,
+      result.judgement,
+      result.currentFingerprint,
+      env.policy,
+    ),
+    decisions: (work.decisions ?? []).map((d) => ({
+      id: d.id,
+      question: d.question,
+      ...(d.answer !== undefined ? { answer: d.answer } : {}),
+      ...(d.by ? { by: d.by } : {}),
+    })),
+    objections: loadLedger(env.paths, work.id).ledger.objections.map((o) => ({
+      id: o.id,
+      severity: o.severity,
+      status: objectionStatus(o, work, result.evidence, env.policy),
+      text: o.text,
+    })),
+  });
+}
+
 async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
   const [command, ...args] = parsed.positional;
   if (parsed.flags.version || command === "version") return ok(VERSION, { version: VERSION });
@@ -1871,8 +2459,8 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         target.unset = [...new Set([...(target.unset ?? []), gate as GateName])];
         saveProfile(env.paths, env.profile);
         const text = `${gate} for ${where} unset (was: ${current.command})`;
-        const by = whoDecided(decided);
-        appendDecision(env.paths, { at: nowIso(), item: "profile", kind: "profile", text, by });
+        const by = whoDecides(decided);
+        decide(env, "profile", { kind: "profile", text, by });
         return ok(`${text} ${decisionText(env.policy, decided)}`, {
           target: targetPath,
           gate,
@@ -2177,7 +2765,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           undefined,
           teamsFor(env.policy, packTemplates(env.paths.userDir)).teams,
         );
-        work.primaryTeam = "backend";
+        work.primaryTeam = primaryTeam([]);
       }
       if (origin) {
         work.origin = { mail: origin.id };
@@ -2239,9 +2827,8 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       }
       // A lowering is the lead's decision about the item (SP7 §10.2, §6.6).
       if (triage?.confirmed && triage.confirmed !== triage.proposed)
-        appendDecision(env.paths, {
+        decide(env, work.id, {
           at: triage.at,
-          item: work.id,
           kind: "triage",
           text: `priority lowered from ${triage.proposed} to ${triage.confirmed}: ${triage.reason ?? ""}`,
           by: triage.by,
@@ -2388,9 +2975,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         const result = bindObjection(ledger, opened.work, args[2], parsed.flags.criterion);
         if ("refused" in result) return refuse(result.refused);
         saveLedger(env.paths, opened.work.id, ledger);
-        appendDecision(env.paths, {
-          at: nowIso(),
-          item: opened.work.id,
+        decide(env, opened.work.id, {
           kind: "objection",
           id: result.id,
           text: result.text,
@@ -2410,14 +2995,12 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         if ("refused" in result) return refuse(result.refused);
         saveLedger(env.paths, opened.work.id, ledger);
         const waiver = result.waived ?? { by: "user" as const };
-        appendDecision(env.paths, {
-          at: nowIso(),
-          item: opened.work.id,
+        decide(env, opened.work.id, {
           kind: "objection",
           id: result.id,
           text: result.text,
           answer: `waived: ${reason}`,
-          by: whoDecided(waiver),
+          by: whoDecides(waiver),
         });
         return ok(
           `${result.id} waived ${decidedBy(waiver)}${countedNote(env.policy, waiver)}: ${reason}`,
@@ -2500,14 +3083,12 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       const result = answerDecision(opened.work, id, answer, who);
       if ("refused" in result) return refuse(result.refused);
       saveWork(env.paths, opened.work);
-      appendDecision(env.paths, {
-        at: nowIso(),
-        item: opened.work.id,
+      decide(env, opened.work.id, {
         kind: "decision",
         id: result.id,
         text: result.question,
         ...(result.answer ? { answer: result.answer } : {}),
-        by: whoDecided(result),
+        by: whoDecides(result),
       });
       return ok(`${result.id} answered ${decidedBy(result)}: ${result.answer}`, {
         decision: result,
@@ -2601,9 +3182,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       if (args[1] !== "raise" || !reason) return refuse(usage);
       const raised = raiseKind(opened.work, reason);
       if (!raised.ok) return refuse(raised.reason);
-      appendDecision(env.paths, {
-        at: nowIso(),
-        item: opened.work.id,
+      decide(env, opened.work.id, {
         kind: "kind",
         text: `kind raised to new-project: ${reason}`,
         by: "the agent",
@@ -2650,12 +3229,10 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
             `the audit report is stale: its inputs changed after it (crew audit ${opened.work.id} report)`,
           );
         approve(opened.work, "audit", signature);
-        appendDecision(env.paths, {
-          at: nowIso(),
-          item: opened.work.id,
+        decide(env, opened.work.id, {
           kind: "approval",
           text: "audit signed",
-          by: whoDecided(signature),
+          by: whoDecides(signature),
         });
         saveWork(env.paths, opened.work);
         // The three formats carry the signature line from here on.
@@ -2752,12 +3329,10 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       // A person's approval stands above the rule Jev disputed: the dispute goes with it.
       if (decision.by === "user") delete opened.work.validatorDispute;
       approve(opened.work, "spec", decision);
-      appendDecision(env.paths, {
-        at: nowIso(),
-        item: opened.work.id,
+      decide(env, opened.work.id, {
         kind: "approval",
         text: "spec approved",
-        by: whoDecided(decision),
+        by: whoDecides(decision),
       });
       saveWork(env.paths, opened.work);
       return ok(
@@ -2787,9 +3362,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       if ("refused" in outcome) return refuse(outcome.refused);
       saveWork(env.paths, opened.work);
       const ids = outcome.entries.map((e) => e.id).join(", ") || "none";
-      appendDecision(env.paths, {
-        at: nowIso(),
-        item: opened.work.id,
+      decide(env, opened.work.id, {
         kind: "knowledge",
         text: learnedText(
           outcome.entries.map((e) => e.id),
@@ -2821,60 +3394,9 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       return ok(`${opened.work.id}: phase ${result.phase}`, { phase: result.phase });
     }
     case "await":
-    case "resume": {
-      const opened = openForChange(env, args[0]);
-      if (isOutcome(opened)) return opened;
-      const usage = "usage: crew await <id> user | role | mail <message id>";
-      const originNotes: string[] = [];
-      const moveOrigin = (to: "blocked" | "in-progress") =>
-        moveOriginMail(env, opened.work, to, originNotes);
-      const withNotes = (text: string) =>
-        originNotes.length ? `${text}\n${originNotes.join("\n")}` : text;
-      if (command === "resume") {
-        // A jev dispute held on the item is a person's to clear (finding 94): the hook asks for
-        // this resume, and with nobody present it is refused.
-        let cleared = "";
-        if (opened.work.validatorDispute) {
-          const decided = decisionFlag(parsed, env.policy);
-          if (isOutcome(decided)) return decided;
-          if (decided.by !== "user")
-            return refuse(
-              "the validator's verdict was disputed by jev; a person clears it: the item waits",
-            );
-          const by = whoDecided(decided);
-          appendDecision(env.paths, {
-            at: nowIso(),
-            item: opened.work.id,
-            kind: "dispute",
-            text: `jev dispute cleared (${opened.work.validatorDispute.condition})`,
-            by,
-          });
-          delete opened.work.validatorDispute;
-          cleared = `; the jev dispute cleared by ${by}`;
-        }
-        opened.work.awaiting = null;
-        delete opened.work.awaitingMessage;
-        saveWork(env.paths, opened.work);
-        moveOrigin("in-progress");
-        return ok(withNotes(`${opened.work.id}: resumed${cleared}`), {
-          awaiting: null,
-          awaitingMessage: null,
-        });
-      }
-      // The three waits a turn may end on (SP2c §9): the user, the roles, a reply to a message.
-      const kind = args[1];
-      if (kind !== "user" && kind !== "role" && kind !== "mail") return refuse(usage);
-      if (kind === "mail" && !args[2]) return refuse(usage);
-      opened.work.awaiting = kind;
-      if (kind === "mail") opened.work.awaitingMessage = args[2];
-      else delete opened.work.awaitingMessage;
-      saveWork(env.paths, opened.work);
-      moveOrigin("blocked");
-      return ok(withNotes(`${opened.work.id}: ${waitingText(opened.work).slice(2)}`), {
-        awaiting: kind,
-        awaitingMessage: opened.work.awaitingMessage ?? null,
-      });
-    }
+      return awaitCommand(env, args);
+    case "resume":
+      return resumeCommand(env, parsed, args);
     case "research": {
       // The researcher's facts checked against their sources, then asked of Jev (SP3 decision 10).
       const usage = "usage: crew research <id> verify [--file <path>]";
@@ -2886,16 +3408,16 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         typeof parsed.flags.file === "string"
           ? resolve(env.paths.root, parsed.flags.file)
           : join(dir, "conclave", "researcher.md");
-      const rel = relative(env.paths.root, file).replace(/\\/g, "/");
-      if (rel.startsWith("..") || isAbsolute(rel))
+      const named = rel(env.paths, file);
+      if (named.startsWith("..") || isAbsolute(named))
         return refuse(`${parsed.flags.file} is not under the root`);
       const text = readText(file);
-      if (text === null) return refuse(`no researcher file at ${rel}`);
+      if (text === null) return refuse(`no researcher file at ${named}`);
       const facts = parseFacts(text);
       // A research with nothing to verify is not a blocker: the strategy's marks name its lines either way (SP8 Task 6).
       if (!facts.length)
         return ok(
-          `no fact to verify in ${rel}: a code fact is "- <path from the root>:<line> · <sentence>", a documentation fact "- <URL or document> · "<quote>" · <meaning>"; the strategy's marks name the file's lines either way (crew strategy ${opened.work.id} check), so go on`,
+          `no fact to verify in ${named}: a code fact is "- <path from the root>:<line> · <sentence>", a documentation fact "- <URL or document> · "<quote>" · <meaning>"; the strategy's marks name the file's lines either way (crew strategy ${opened.work.id} check), so go on`,
           { facts: [] },
         );
       const jev = jevConfig(io.env, env.config);
@@ -3084,12 +3606,11 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         if (isOutcome(decided)) return decided;
         if (decided.by !== "user")
           return refuse(`a question is answered by a person; the item waits (${id})`);
-        const by = whoDecided(decided);
+        const by = whoDecides(decided);
         const answered = answerQuestion(work, id, text, by);
         if ("refused" in answered) return refuse(answered.refused);
-        appendDecision(env.paths, {
+        decide(env, work.id, {
           at: answered.answeredAt,
-          item: work.id,
           kind: "question",
           id,
           text: answered.text,
@@ -3149,9 +3670,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       const picked = refreshed.changed.length
         ? `profile refreshed: ${refreshed.changed.join("; ")}\n`
         : "";
-      const review = outcome.review
-        ? relative(env.paths.root, outcome.review).replace(/\\/g, "/")
-        : null;
+      const review = outcome.review ? rel(env.paths, outcome.review) : null;
       // The judgement gates still to run, each with why it is planned: the cost is printed before
       // the roles run (SP2 §10). The rows the status and the panel show decide: a current ruling
       // or a counted skip takes a gate off the list, a ruling on earlier code keeps it on.
@@ -3334,22 +3853,10 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       // Each upheld defect inside the change is a decision the judge took about this code (SP7 §6.6).
       const rulingFile =
         typeof parsed.flags.ruling === "string"
-          ? relative(env.paths.root, resolve(env.paths.root, parsed.flags.ruling)).replace(
-              /\\/g,
-              "/",
-            )
+          ? rel(env.paths, resolve(env.paths.root, parsed.flags.ruling))
           : undefined;
-      for (const record of records)
-        for (const f of record.findings)
-          if (record.verdict === "not-proven" && f.severity === "defect" && !f.outside)
-            appendDecision(env.paths, {
-              at: nowIso(),
-              item: opened.work.id,
-              kind: "ruling",
-              text: `${record.gate} defect: ${f.file}${f.line ? `:${f.line}` : ""} ${f.text}`,
-              by: "the judge",
-              ...(rulingFile ? { file: rulingFile } : {}),
-            });
+      for (const entry of rulingDecisions(records, opened.work.id, rulingFile))
+        appendDecision(env.paths, entry);
       deliver(env, opened, result.evidence);
       const lines = records.flatMap((r) => {
         const outside = r.findings.filter((f) => f.outside).length;
@@ -3395,12 +3902,11 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         state.active = null;
         saveState(env.paths, state);
       }
-      appendDecision(env.paths, {
+      decide(env, work.id, {
         at: work.abandoned.at,
-        item: work.id,
         kind: "abandon",
         text: `abandoned: ${reason}`,
-        by: whoDecided(decision),
+        by: whoDecides(decision),
       });
       return ok(`abandoned ${work.id} ${decisionText(env.policy, decision)}: ${reason}`, {
         abandoned: work.abandoned,
@@ -3466,12 +3972,13 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       const opened = openForChange(env, args[0]);
       if (isOutcome(opened)) return opened;
       const usage =
-        'usage: crew task <id> open T-n --criteria AC-1,AC-2 [--text "<task text>"] | note T-n --criteria AC-k --scope <path>[,<path>] [--text "<todo>"] | list | merge T-n [--force] | gate T-n [--scope <path>[,<path>]] | brief T-n';
+        'usage: crew task <id> open T-n --criteria AC-1,AC-2 [--text "<task text>"] | note T-n --criteria AC-k --scope <path>[,<path>] [--text "<todo>"] | list | merge T-n [--force] | drop T-n | gate T-n [--scope <path>[,<path>]] | brief T-n';
       const ctx = env.mail;
       if (args[1] === "open") {
         const task = args[2];
         const criteria = commaList(parsed.flags.criteria);
-        if (!task || !criteria.length) return refuse(usage);
+        // A word after the task's id is refused, not ignored (finding 114).
+        if (!task || !criteria.length || args.length > 3) return refuse(usage);
         const out = openTask(
           ctx,
           env,
@@ -3482,7 +3989,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         );
         if ("refused" in out) return refuse(out.refused);
         // A task whose implementer did not start, or started and was stopped, keeps its record, its
-        // worktree and its branch (a crew task drop is the hardening task's): the line says what to do.
+        // worktree and its branch (crew task drop removes them, the user's decision): the line says what to do.
         const session =
           "failed" in out.opened
             ? `the implementer ${out.opened.stopped ? "was started and stopped" : "did not start"}: ${out.opened.failed}; the task keeps its record, the worktree ${out.record.worktree} and the branch ${out.record.branch}: open the implementer by hand there (a session opened by hand is watched by no sweep and no merge check), or drop them (git worktree remove ${out.record.worktree}; git branch -D ${out.record.branch})`
@@ -3497,7 +4004,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         const task = args[2];
         const criteria = commaList(parsed.flags.criteria);
         const scope = commaList(parsed.flags.scope);
-        if (!task || !criteria.length) return refuse(usage);
+        if (!task || !criteria.length || args.length > 3) return refuse(usage);
         const planText = readText(join(workDir(env.paths, opened.work.id), "plan.md"));
         const out = noteTask(
           opened.work,
@@ -3515,79 +4022,17 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       if (args[1] === "gate") {
         // The todo's own gate on the files it touched (SP7 §8.1), bounded by team.maxGateRounds.
         const task = args[2];
-        const record = (opened.work.tasks ?? []).find((t) => t.task === task);
-        if (!task || !record)
-          return refuse(task ? `${task} is not a task of ${opened.work.id}` : usage);
-        // What the gate would run on comes first: a todo with nothing in this checkout is refused
-        // for that, not for its rounds, which a continuation would not mend.
-        const flagScope =
-          parsed.flags.scope === undefined ? undefined : commaList(parsed.flags.scope);
-        const scoped = taskScope(env.paths.root, env.profile, record, flagScope);
-        if ("refused" in scoped) return refuse(scoped.refused);
-        const round = record.gate?.round ?? 0;
-        const held = continueOrRefuse(
-          env,
-          opened.work,
-          "gate",
-          task,
-          env.policy.team.maxGateRounds,
-          round,
-          `gate round ${round + 1} of ${task}: the policy allows ${env.policy.team.maxGateRounds} (team.maxGateRounds); the user continues it once with crew continue ${opened.work.id} gate ${task}, or decides`,
-        );
-        if (held) return held;
-        const result = await runTaskGate(
-          env.paths,
-          opened.work,
-          env.profile,
-          env.policy,
-          scoped.scope,
-        );
-        const own = flagScope?.length ? taskScope(env.paths.root, env.profile, record) : scoped;
-        const planned = planTaskJudgement(env, {
-          work: opened.work,
-          tampered: env.tampered || opened.tampered,
-          record,
-          task,
-          round: round + 1,
-          scope: scoped.scope,
-          ownScope: "scope" in own ? own.scope : [],
-          result,
-        });
-        // The state ladder only climbs past gated: a gate re-run after the brief keeps the todo briefed
-        // (the brief is rewritten with crew task brief when the lead wants the new runs in it).
-        settleTaskState(opened.work, record, env.policy);
-        saveWork(env.paths, opened.work);
-        const lines = result.runs.map(
-          (r) =>
-            `  ${r.gate} (${r.target}): ${r.status} in ${(r.durationMs / 1000).toFixed(1)}s${r.reason ? ` (${r.reason})` : ""}`,
-        );
-        const pending =
-          result.status === "pass" ? taskPending(opened.work, record, env.policy) : [];
-        if (pending.length)
-          lines.push(
-            `Judgement gates to run for ${task}: ${pending
-              .map((g) => `${g} (${planned.find((p) => p.gate === g)?.reason ?? ""})`)
-              .join(
-                ", ",
-              )}; inputs in .crew/work/${opened.work.id}/review/${task}/ (diff.patch, files.txt); record each with crew judgement ${opened.work.id} record --task ${task} --ruling <file>`,
-          );
-        const verdict =
-          result.status === "pass" && pending.length
-            ? `pass, judgement pending (${pending.join(", ")})`
-            : result.status;
-        return {
-          code: result.status === "pass" ? 0 : 1,
-          stdout: true,
-          text: `${lines.join("\n")}\n${task} gate round ${round + 1}: ${verdict}`,
-          data: { task: record, gate: record.gate, pending },
-        };
+        if (!task) return refuse(usage);
+        const record = findTask(opened.work, task);
+        if ("refused" in record) return refuse(record.refused);
+        return taskGate(env, opened, parsed, record);
       }
       if (args[1] === "brief") {
         // What the todo changed, proved and left, from the records (SP7 §8.1); the leads read it at delivery.
         const task = args[2];
-        const record = (opened.work.tasks ?? []).find((t) => t.task === task);
-        if (!task || !record)
-          return refuse(task ? `${task} is not a task of ${opened.work.id}` : usage);
+        if (!task) return refuse(usage);
+        const record = findTask(opened.work, task);
+        if ("refused" in record) return refuse(record.refused);
         // --print reads the brief as it is, for the mod; it writes nothing and refuses with none.
         if (parsed.flags.print) {
           const brief = record.brief
@@ -3639,8 +4084,26 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           },
         );
       }
+      if (args[1] === "drop") {
+        // An unmerged task removed (finding 30): the user's decision, taken as every user-only command is.
+        const task = args[2];
+        if (!task || args.length > 3) return refuse(usage);
+        const decision = decisionFlag(parsed, env.policy);
+        if (isOutcome(decision)) return decision;
+        const out = dropTask(ctx, env, opened.work, task);
+        if ("refused" in out) return refuse(out.refused);
+        decide(env, opened.work.id, {
+          kind: "task",
+          text: `dropped ${task}: branch ${out.record.branch} at ${out.tip}`,
+          by: whoDecides(decision),
+        });
+        return ok(
+          `${out.swept.length ? `${out.swept.join("\n")}\n` : ""}dropped ${task} of ${opened.work.id} ${decisionText(env.policy, decision)}: worktree ${out.record.worktree} and branch ${out.record.branch} (at ${out.tip.slice(0, 7)}) removed, message ${out.record.message} refused${out.notes.length ? `\n${out.notes.join("\n")}` : ""}`,
+          { task: out.record, tip: out.tip, swept: out.swept },
+        );
+      }
       if (args[1] === "merge") {
-        if (!args[2]) return refuse(usage);
+        if (!args[2] || args.length > 3) return refuse(usage);
         // `--force` merges an unproven child: the user's decision, taken as every user-only command is.
         const forcedBy = parsed.flags.force ? decisionFlag(parsed, env.policy) : undefined;
         if (isOutcome(forcedBy)) return forcedBy;
@@ -3807,24 +4270,16 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         readText(join(dir, "plan.md")),
         evidence.fingerprint ?? "",
       );
-      // A spec round is counted per lead and per revision that lead read (SP6 Task 1 AC-1,
-      // finding 106): a lead's first record is its round 1, a record on the hash of its last
-      // record keeps that round, any other hash opens the lead's next one; the item's round is
-      // the highest a lead holds, so a spec revised between one lead's record and another lead's
-      // first never costs a round. The delivery's and the plan's records carry their own count by
-      // hash and spend no round (the gate rounds bound a delivery).
-      const same = (work.validations ?? []).filter((v) => v.what === what);
-      const last = same[same.length - 1];
-      const mine = same.filter((v) => v.by === by);
-      const lastMine = mine[mine.length - 1];
-      const leadRound = !lastMine
-        ? 1
-        : lastMine.hash === hash
-          ? lastMine.round
-          : lastMine.round + 1;
+      // The round this record counts in, one counter per subject (validation.ts); a new spec round
+      // past the cap waits for the user's continuation.
       const rounds = work.rounds ?? { judgement: 0, validation: 0 };
-      const newRound =
-        what === "spec" ? leadRound > rounds.validation : !last || last.hash !== hash;
+      const { round, newRound } = validationRound(
+        work.validations ?? [],
+        what,
+        by,
+        hash,
+        rounds.validation,
+      );
       if (what === "spec" && newRound) {
         const held = continueOrRefuse(
           env,
@@ -3832,13 +4287,11 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           "validation",
           undefined,
           env.policy.team.maxValidationRounds,
-          leadRound - 1,
-          `validation round ${leadRound} of ${work.id}: the policy allows ${env.policy.team.maxValidationRounds} (team.maxValidationRounds); the user continues it once with crew continue ${work.id} validation, or decides`,
+          round - 1,
+          `validation round ${round} of ${work.id}: the policy allows ${env.policy.team.maxValidationRounds} (team.maxValidationRounds); the user continues it once with crew continue ${work.id} validation, or decides`,
         );
         if (held) return held;
       }
-      const round =
-        what === "spec" ? leadRound : newRound ? (last?.round ?? 0) + 1 : (last?.round ?? 1);
       work.validations = [
         ...(work.validations ?? []),
         {
@@ -3847,21 +4300,20 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           verdict: verdict.verdict,
           returns: verdict.returns,
           round,
-          file: relative(dir, path).replace(/\\/g, "/"),
+          file: name,
           hash,
           fileHash: contentHash,
           at: nowIso(),
         },
       ];
       if (what === "spec" && newRound)
-        work.rounds = { ...rounds, validation: Math.max(rounds.validation, leadRound) };
+        work.rounds = { ...rounds, validation: Math.max(rounds.validation, round) };
       saveWork(env.paths, work);
       // A return is a decision of the lead about the item (SP7 §6.6); a validated verdict is the plan's own record.
       const recorded = work.validations[work.validations.length - 1];
       if (verdict.verdict === "returned" && recorded)
-        appendDecision(env.paths, {
+        decide(env, work.id, {
           at: recorded.at,
-          item: work.id,
           kind: "validation",
           text: `${what} returned by ${by}: ${verdict.returns} return${verdict.returns === 1 ? "" : "s"}`,
           by,
@@ -3908,7 +4360,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       // A hidden entry and an unknown id answer alike: the base says nothing about what a project cannot read.
       const unseen = (id: string) => refuse(`no entry ${id} visible to this project`);
       const register = (text: string, by: string) =>
-        appendDecision(env.paths, { at: nowIso(), item: "knowledge", kind: "knowledge", text, by });
+        decide(env, "knowledge", { kind: "knowledge", text, by });
       const kindFlag = parsed.flags.kind;
       if (sub === "list") {
         if (kindFlag !== undefined && !KNOWLEDGE_KINDS.includes(kindFlag as KnowledgeKind))
@@ -4140,9 +4592,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       const sub = args[0];
       const userDir = env.paths.userDir;
       const register = (text: string) =>
-        appendDecision(env.paths, {
-          at: nowIso(),
-          item: "pack",
+        decide(env, "pack", {
           kind: "pack",
           text,
           by: "the agent",
@@ -4280,10 +4730,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       if ((verb !== "review" && verb !== "record") || typeof ws !== "string") return refuse(usage);
       // The workspace names a folder under the user's crew directory: the same name rule as the
       // mail's workspace, so nothing reaches outside it (code-quality review, round 1).
-      if (!MAIL_NAME.test(ws))
-        return refuse(
-          `a workspace is a lowercase name of letters, digits, dot, dash and underscore, up to 64 characters, not ${ws}`,
-        );
+      if (!MAIL_NAME.test(ws)) return refuse(`a workspace is ${NAME_HINT}, not ${ws}`);
       // The project's own workspace alone (the security lead's return at the spec): no other
       // workspace's figures or rows are read or written from here, and no other is named.
       const own = env.mail.self.workspace;
@@ -4334,7 +4781,9 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       if (read.base === null && read.reason !== "missing")
         return refuse(`the knowledge base cannot be read: ${read.reason}; nothing was filed`);
       ensureDir(dir);
-      const target = join(dir, `${date}-plan.md`);
+      // A second plan the same day goes beside the first, never over it (finding 53).
+      let target = join(dir, `${date}-plan.md`);
+      for (let n = 2; existsSync(target); n++) target = join(dir, `${date}-plan-${n}.md`);
       writeText(target, text);
       const added = addEntry(env.paths.userDir, {
         kind: "general",
@@ -4374,12 +4823,10 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         { what, ...(task ? { task } : {}), by: decision, at: nowIso() },
       ];
       saveWork(env.paths, opened.work);
-      appendDecision(env.paths, {
-        at: nowIso(),
-        item: opened.work.id,
+      decide(env, opened.work.id, {
         kind: "continue",
         text: `${what} continued for one more round`,
-        by: whoDecided(decision),
+        by: whoDecides(decision),
       });
       const subject =
         what === "gate" ? `gate of ${task} of ${opened.work.id}` : `${what} of ${opened.work.id}`;
@@ -4406,9 +4853,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           if ("refused" in signed) return refuse(signed.refused);
           const { hash, ...state } = signed;
           const digest = `sha256:${hash.replace(/^sha256:/, "").slice(0, 12)}`;
-          appendDecision(env.paths, {
-            at: nowIso(),
-            item: "workspace",
+          decide(env, "workspace", {
             kind: "priorities",
             text: `business priorities signed (${signed.path}, ${digest})`,
             by,
@@ -4492,428 +4937,10 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       if (named && isOutcome(named)) return named;
       const active = named ?? activeWork(env.paths);
       if (!active?.work) return ok("no active work item", { active: null });
-      const result = assess(
-        env.paths,
-        active.work,
-        env.profile,
-        env.policy,
-        env.tampered || active.tampered,
-      );
-      const work = active.work;
-      // The checkout's branch, the plan's todo and the roles working (SP7 §14): the person's view of
-      // who does what now. A branch name is cut at 120 characters; none outside a git repository.
-      let branch: string | null = null;
-      try {
-        const name = gitRun(env.paths.root, "rev-parse", "--abbrev-ref", "HEAD").trim();
-        branch = name ? (name.length > 120 ? `${name.slice(0, 119)}…` : name) : null;
-      } catch {
-        branch = null;
-      }
-      const todoItems = (work.tasks ?? []).map((t) => ({
-        task: t.task,
-        criteria: t.criteria,
-        state: t.state ?? "open",
-        inline: t.inline === true,
-      }));
-      const todo = {
-        done: todoItems.filter((t) => t.state === "briefed").length,
-        total: todoItems.length,
-        items: todoItems,
-      };
-      const working = workingRoles(env.paths).map((w) => ({
-        agent: w.agent,
-        team: w.team,
-        since: w.since,
-        ...(w.description ? { description: w.description } : {}),
-      }));
-      const extra = [
-        branch ? `  branch ${branch}` : null,
-        todo.total
-          ? `  todo ${todo.done}/${todo.total} briefed (${todoItems.map((t) => `${t.task} ${t.state}`).join(", ")})`
-          : null,
-        working.length
-          ? `  working: ${working.map((w) => (w.description ? `${w.agent} (${w.description})` : w.agent)).join(", ")}`
-          : null,
-      ].filter((l): l is string => l !== null);
-      if (work.source) extra.unshift(`  source ${sourceLine(work.source)}`);
-      // What the base listed at classification (SP4 Task 3), and what is left to learn (Task 4).
-      const knowledge = knowledgeLine(env, work);
-      if (knowledge) extra.push(knowledge);
-      const learned = work.learned;
-      const learnLine = learned
-        ? `  learn: ${learnedText(learned.entries, learned.confirmed)}`
-        : work.phase === "learn"
-          ? `  learn: proven, not learned: crew learn ${work.id}`
-          : work.phase === "deliver" && result.verdict === "proven"
-            ? `  learn: proven; crew phase ${work.id} next, then crew learn ${work.id} writes the base`
-            : null;
-      if (learnLine) extra.push(learnLine);
-      // A template the policy names and no pack registers (SP6 Task 2 AC-4): said on its own line.
-      const registry = teamsFor(env.policy, packTemplates(env.paths.userDir));
-      if (registry.warning) extra.push(`  ${registry.warning}`);
-      // The strategy while it is written and judged (SP7 §7.3): its faults and its ruling.
-      const plannedStrategy =
-        work.phase === "strategy" ? plannedStrategyJudgement(work)[0] : undefined;
-      if (plannedStrategy)
-        extra.unshift(strategyLine(strategyOf(env, work, result.evidence), plannedStrategy));
-      // The audit's runs while the item is audited (SP8 Task 4): counted by state, or the command to run.
-      if (work.phase === "audit") extra.unshift(auditLine(env, work));
-      // The origin while the item is analysed (SP7 §7.4): its size, or a hand edit named.
-      const analysis = work.phase === "analyse" ? readOrigin(env.paths, work.id) : null;
-      if (analysis)
-        extra.unshift(
-          analysis.origin
-            ? `  analysis: ${originSummary(analysis.origin)}`
-            : `  analysis: origin.json changed outside the engine (crew accept ${work.id})`,
-        );
-      // The open questions first (SP7 §10.3): a doubt a person has to answer comes before everything.
-      extra.unshift(
-        ...openQuestions(work).map(
-          (q) => `  question ${q.id} open: ${oneLine(q.text)} (${channelsText(q)})`,
-        ),
-      );
-      const text = `${work.id} "${work.title}"\n  phase ${work.phase}, ${work.abandoned ? `abandoned (${work.abandoned.reason}), ` : ""}route ${work.route}, kind ${kindOfItem(work)}, ${triageText(work, "status")}${waitingText(work)}\n${kindOfItem(work) === "audit" ? "  audit: the proof is the signed report\n" : ""}${extra.length ? `${extra.join("\n")}\n` : ""}${gateSummary(work, result.verdict, result.unproven, result.evidence.runs)}`;
-      // The mail synced and a task's reply that landed taken into the lead's record (SP2c §7): a
-      // failure in either (a held lock, a folder that cannot be written) is one line under the
-      // status, never the status lost.
-      const synced = guarded("the mail was not synced", () => syncMail(env.mail, env.paths));
-      let inbox = emptyInboxSummary();
-      const summarised = guarded("the inbox was not read", () => {
-        inbox = inboxSummary(env.mail);
-      });
-      const taken = guarded("the replies were not taken", () =>
-        takeReplies(env.mail, env.paths, active),
-      );
-      let tasks: ReturnType<typeof listTasks> = [];
-      const listed = guarded("the tasks were not listed", () => {
-        tasks = listTasks(env.mail, work);
-      });
-      // The project's threads (SP7b decision 18), read like the inbox: a box that cannot be read
-      // costs the threads, not the status, and is named in one line.
-      let threads: ReturnType<typeof projectThreads> = [];
-      const threaded = guarded("the threads were not read", () => {
-        threads = projectThreads(env.mail);
-      });
-      const notes = [synced, summarised, taken, listed, threaded].filter(Boolean);
-      return ok(notes.length ? `${text}\n${notes.join("\n")}` : text, {
-        active: work.id,
-        title: work.title,
-        type: work.type,
-        kind: kindOfItem(work),
-        kindFrom: work.kindFrom ?? null,
-        phase: work.phase,
-        route: work.route,
-        priority: work.priority ?? "normal",
-        source: work.source ?? null,
-        triage: work.triage ?? null,
-        questions: questionsSorted(work).map(questionJson),
-        analysis: analysis?.origin ?? null,
-        // The packs registered on this machine with their states (SP6 Task 2 AC-6).
-        packs: packsJson(listPacks(env.paths.userDir)),
-        awaiting: work.awaiting,
-        awaitingMessage: work.awaitingMessage ?? null,
-        mail: { unread: inbox.unread, answered: inbox.answered, waiting: inbox.waiting },
-        // The project's threads and the environment's record (SP7b decision 18): what the mod draws.
-        threads,
-        environment: environmentState(env.paths),
-        tasks,
-        // The team of the item (SP7 §14): the seats, the session's team, the rounds spent, the
-        // branch, the todo and the roles working.
-        branch,
-        todo,
-        working,
-        team: work.seats ?? [],
-        primaryTeam: work.primaryTeam ?? null,
-        rounds: {
-          judgement: work.rounds?.judgement ?? 0,
-          validation: work.rounds?.validation ?? 0,
-        },
-        debate: debateState(work),
-        baseCommit: work.baseCommit,
-        phases: phasesFor(work),
-        // What the base listed at classification (SP4 Task 3) and what the item learned (Task 4).
-        knowledge: work.knowledge ?? null,
-        learned: work.learned ?? null,
-        // An audit's checks (SP8 Task 5): what the mod's Audit block and the strip draw.
-        ...(kindOfItem(work) === "audit" ? { audit: auditStatusOf(env, work) } : {}),
-        verdict: result.verdict,
-        unproven: result.unproven,
-        // One name per gate, so the strip can draw a planned gate that has not run yet.
-        expected: [...new Set(result.expected.map((p) => p.gate))],
-        criteria: work.criteria.map((c) => ({
-          id: c.id,
-          kind: c.kind,
-          text: c.text,
-          tdd: tddSummary(work, result.evidence, c.id, c.kind, env.policy),
-          ...(c.contract ? { contract: c.contract } : {}),
-        })),
-        runs: result.evidence.runs.map((r) => ({
-          gate: r.gate,
-          target: r.target,
-          ...(r.stack ? { stack: r.stack } : {}),
-          status: r.status,
-          durationMs: r.durationMs,
-          ...(r.reason ? { reason: r.reason } : {}),
-        })),
-        skips: work.skips.map((s) => ({ step: s.step, reason: s.reason })),
-        judgement: judgementRows(
-          work,
-          result.evidence,
-          result.judgement,
-          result.currentFingerprint,
-          env.policy,
-        ),
-        decisions: (work.decisions ?? []).map((d) => ({
-          id: d.id,
-          question: d.question,
-          ...(d.answer !== undefined ? { answer: d.answer } : {}),
-          ...(d.by ? { by: d.by } : {}),
-        })),
-        objections: loadLedger(env.paths, work.id).ledger.objections.map((o) => ({
-          id: o.id,
-          severity: o.severity,
-          status: objectionStatus(o, work, result.evidence, env.policy),
-          text: o.text,
-        })),
-      });
+      return statusView(env, { work: active.work, tampered: active.tampered });
     }
-    case "mail": {
-      const sendUsage =
-        'usage: crew mail send --to <project|.> --type question|change-request|notice|blocker [--priority blocker|high|normal|low] [--thread <root>] [--agent <session|T-n|role>] [--item <id>] [--reply-to <mid>] [--subject <text>] "<text>" [--file <path>]';
-      const usage = `${sendUsage} | inbox [--all] | read <mid> | thread <mid> | accept <mid> [--priority <p>] [--reason "<why>"] | reply <mid> "<text>" [--branch <b>] [--item <child id>] [--contract <kind>:<path>[:<summary>]]… [--as <role>] [--file <path>] | refuse <mid> --reason "<why>" | status | stop <mid>`;
-      const ctx = env.mail;
-      const verb = args[0];
-      if (verb === "send") {
-        const to = parsed.flags.to;
-        const type = parsed.flags.type;
-        const text = args.slice(1).join(" ");
-        if (typeof to !== "string" || !isMailType(type)) return refuse(sendUsage);
-        const sendPriority: unknown = parsed.flags.priority;
-        if (sendPriority !== undefined && !isMailPriority(sendPriority))
-          return refuse(badPriority(sendPriority));
-        const item = typeof parsed.flags.item === "string" ? parsed.flags.item : undefined;
-        const work = item
-          ? (loadWork(env.paths, item).work ?? null)
-          : (activeWork(env.paths)?.work ?? null);
-        if (item && !work) return refuse(`unknown work item: ${item}`);
-        const out = send(
-          ctx,
-          {
-            to,
-            type,
-            text,
-            ...(sendPriority ? { priority: sendPriority } : {}),
-            ...(typeof parsed.flags.thread === "string" ? { thread: parsed.flags.thread } : {}),
-            ...(typeof parsed.flags.agent === "string" ? { agent: parsed.flags.agent } : {}),
-            ...(typeof parsed.flags.subject === "string" ? { subject: parsed.flags.subject } : {}),
-            ...(typeof parsed.flags.file === "string" ? { filePath: parsed.flags.file } : {}),
-            ...(item ? { item } : {}),
-            ...(typeof parsed.flags["reply-to"] === "string"
-              ? { replyTo: parsed.flags["reply-to"] }
-              : {}),
-          },
-          work,
-        );
-        if ("refused" in out)
-          return refuse(
-            `refused: ${out.refused}${out.message ? "; recorded in the outbox as refused" : ""}`,
-            { refused: out.refused, message: out.message },
-          );
-        const { message, delivery } = out;
-        const where = `to ${message.to.project} (workspace ${message.to.workspace})`;
-        let next: string;
-        if (delivery.kind === "self") next = `to ${message.to.agent ?? "session"} of this project`;
-        else if (delivery.kind === "live")
-          next = `live session (session ${delivery.entry.sessionId}): ring it if your harness lists it`;
-        else if (delivery.kind === "queued") next = `queued; ${delivery.reason}`;
-        // No live session: the engine opens one for the message (SP2c §10).
-        else next = openForMail(ctx, env.policy, message, delivery);
-        const note = work
-          ? ""
-          : "\nnote: no active work item, so no item keeps a copy of this message";
-        return ok(`sent ${message.id} ${where}; ${next}${note}`, {
-          message,
-          delivery: delivery.kind,
-          ...(delivery.kind === "open" ? { mode: delivery.mode } : {}),
-        });
-      }
-      if (verb === "inbox") {
-        syncMail(ctx, env.paths);
-        const { messages, tampered } = ownInbox(ctx);
-        if (tampered) return refuse(tamperedBox(ctx.self.project, "inbox"));
-        // What is open, and the requests done (never their replies); --all shows everything (SP7 §9).
-        const shown = parsed.flags.all
-          ? messages
-          : messages.filter((m) => {
-              const status = mailStatus(m);
-              return status === "done" ? !m.replyTo : status !== "refused" && status !== "expired";
-            });
-        const summary = inboxSummary(ctx);
-        const lines = shown.map(
-          (m) =>
-            `  ${m.id} · [${decidedPriority(m)}] · ${m.type} · from ${partyLabel(m.from)} · ${m.subject} · ${mailStatus(m)}${m.reason ? `: ${m.reason}` : ""}`,
-        );
-        return ok(
-          `Mail (${ctx.self.workspace ?? "alone"}/${ctx.self.project}, as ${ctx.self.agent}): ${summary.unread} unread, ${summary.answered} answered${lines.length ? `\n${lines.join("\n")}` : ""}`,
-          { ...summary, messages: shown },
-        );
-      }
-      if (verb === "read") {
-        if (!args[1]) return refuse(usage);
-        syncMail(ctx, env.paths);
-        const notes: string[] = [];
-        const result = markRead(ctx, args[1], notes);
-        if ("refused" in result) return refuse(result.refused);
-        const body = result.bodyFile ? (readText(result.bodyFile) ?? result.body) : result.body;
-        const head = [
-          ...notes,
-          `id: ${result.id}`,
-          `from: ${result.from.project} (${result.from.agent})`,
-          `to: ${result.to.project}${result.to.agent ? ` (${result.to.agent})` : ""}`,
-          `type: ${result.type}`,
-          `subject: ${result.subject}`,
-          `status: ${mailStatus(result)}${result.reason ? `: ${result.reason}` : ""}`,
-          `at: ${result.at}`,
-          priorityLine(result),
-          ...evidenceLine(result),
-          ...(result.from.item ? [`from item: ${result.from.item}`] : []),
-          ...(result.replyTo ? [`reply to: ${result.replyTo}`] : []),
-          ...(result.branch ? [`branch: ${result.branch}`] : []),
-          ...(result.item
-            ? [`item: ${result.item}${result.verdict ? ` (${result.verdict})` : ""}`]
-            : []),
-        ];
-        return ok(`${head.join("\n")}\n\n${body}`, { message: result, body });
-      }
-      if (verb === "reply") {
-        const text = args.slice(2).join(" ");
-        if (!args[1]) return refuse(usage);
-        const notes: string[] = [];
-        const result = replyMail(
-          ctx,
-          args[1],
-          text,
-          {
-            ...(typeof parsed.flags.file === "string" ? { filePath: parsed.flags.file } : {}),
-            ...(typeof parsed.flags.branch === "string" ? { branch: parsed.flags.branch } : {}),
-            ...(typeof parsed.flags.item === "string" ? { item: parsed.flags.item } : {}),
-            ...(typeof parsed.flags.as === "string" ? { as: parsed.flags.as } : {}),
-            ...(parsed.multi.contract?.length ? { contracts: parsed.multi.contract } : {}),
-          },
-          notes,
-        );
-        if ("refused" in result)
-          return refuse(
-            result.delivered === undefined
-              ? result.refused
-              : `${result.delivered} was delivered, but ${result.refused}`,
-          );
-        return ok(
-          `replied to ${args[1]}: ${result.reply.id} to ${result.reply.to.project}; ${args[1]} ${mailStatus(result.original)}${notes.length ? `\n${notes.join("\n")}` : ""}`,
-          { reply: result.reply, original: result.original, notes },
-        );
-      }
-      if (verb === "thread") {
-        if (!args[1]) return refuse(usage);
-        syncMail(ctx, env.paths);
-        const result = threadMessages(ctx, args[1]);
-        if ("refused" in result) return refuse(result.refused);
-        const lines = result.messages.map(
-          (m) =>
-            `  ${m.id} · [${decidedPriority(m)}] · ${m.type} · ${partyLabel(m.from)} → ${partyLabel(m.to)} · ${oneLine(m.subject)} · ${mailStatus(m)}`,
-        );
-        return ok(
-          `Thread ${args[1]}: ${result.messages.length} message${result.messages.length === 1 ? "" : "s"}, ${result.parties.length} part${result.parties.length === 1 ? "y" : "ies"} (${result.parties.join(", ")})\n${lines.join("\n")}`,
-          { root: args[1], messages: result.messages, parties: result.parties },
-        );
-      }
-      if (verb === "accept") {
-        if (!args[1]) return refuse(usage);
-        const priority: unknown = parsed.flags.priority;
-        if (priority !== undefined && !isMailPriority(priority))
-          return refuse(badPriority(priority));
-        const reason = typeof parsed.flags.reason === "string" ? parsed.flags.reason : undefined;
-        const notes: string[] = [];
-        const result = acceptMail(
-          ctx,
-          args[1],
-          {
-            ...(priority ? { priority } : {}),
-            ...(reason ? { reason } : {}),
-            by: ctx.self.agent,
-          },
-          notes,
-        );
-        if ("refused" in result) return refuse(result.refused);
-        const d = result.message.priorityDecision;
-        const level = d
-          ? `${d.confirmed}${d.confirmed !== d.proposed ? ` (proposed ${d.proposed})` : ""}${d.reason ? `: ${d.reason}` : ""}`
-          : priorityOf(result.message);
-        return ok(`${args[1]} accepted at ${level}${notes.length ? `\n${notes.join("\n")}` : ""}`, {
-          message: result.message,
-          notes,
-        });
-      }
-      if (verb === "refuse") {
-        const reason = typeof parsed.flags.reason === "string" ? parsed.flags.reason : "";
-        if (!args[1] || !reason.trim()) return refuse(usage);
-        const notes: string[] = [];
-        const result = refuseMail(ctx, args[1], reason, notes);
-        if ("refused" in result) return refuse(result.refused);
-        return ok(
-          `${args[1]} refused: ${reason.trim()}${notes.length ? `\n${notes.join("\n")}` : ""}`,
-          { message: result, notes },
-        );
-      }
-      if (verb === "status") {
-        const pruned = pruneRegistry(env.paths.userDir);
-        // What became of the sessions this project opened, before they are listed (SP2c §10).
-        const swept = sweepSafely(ctx);
-        const { messages: sessions, tampered, untrusted } = readOpenSessions(ctx);
-        const sessionLine = (m: (typeof sessions)[number]) => {
-          const opened = m.opened as OpenedSession;
-          return `  ${m.id} → ${m.to.project}: ${opened.mode} session ${opened.name} (pid ${opened.pid ?? "none"}), since ${opened.startedAt}, ${Math.floor(minutesRun(opened))} of ${opened.maxMinutes} minutes used, ${opened.maxTurns} turns allowed`;
-        };
-        const sweptLine = sweptText(swept);
-        // With the outbox changed outside the engine (named once: by the sweep's line above, or here
-        // where the sweep said nothing, inside a session opened by mail), what it records is listed
-        // all the same, marked, with the commands that stop a session's whole process group (the
-        // request, then the kill a member that ignored it needs), its log, and whether its pid is
-        // still the session, gone, or another process's by now (the rollback's first step).
-        const untrustedLine = (m: (typeof sessions)[number]) => {
-          const opened = m.opened as OpenedSession;
-          const state = pidState(opened);
-          const marked =
-            state === "session" ? "" : state === "gone" ? " (gone)" : " (pid now another process)";
-          return `${sessionLine(m)}, log ${opened.log}${marked}`;
-        };
-        const named = tampered && !swept.lines.includes(tampered) ? `${tampered}\n` : "";
-        const listed = tampered
-          ? `${named}open sessions as the outbox records them (not trusted; stop one with kill -TERM -- -<pid>, then kill -KILL -- -<pid> after a second; read its log): ${untrusted.length ? `\n${untrusted.map(untrustedLine).join("\n")}` : "none"}`
-          : `open sessions: ${sessions.length ? `\n${sessions.map(sessionLine).join("\n")}` : "none"}`;
-        // The inbox read guarded as `crew status` reads it: the sweep's lines and the outbox's
-        // sessions stand whether or not the inbox can be read.
-        let summary = emptyInboxSummary();
-        const summarised = guarded("the inbox was not read", () => {
-          summary = inboxSummary(ctx);
-        });
-        return ok(
-          `${summarised || (summary.line ?? `Mail (${ctx.self.workspace ?? "alone"}): inbox empty`)}${sweptLine ? `\n${sweptLine}` : ""}\n${listed}${pruned.length ? `\nregistry pruned: ${pruned.join(", ")}` : ""}`,
-          { sessions, untrusted, swept, pruned, ...summary },
-        );
-      }
-      if (verb === "stop") {
-        if (!args[1]) return refuse(usage);
-        const notes: string[] = [];
-        const stopped = stopSession(ctx, args[1], notes);
-        if ("refused" in stopped) return refuse(stopped.refused);
-        return ok(
-          `${stopped.id} stopped (session ${stopped.opened?.name}, pid ${stopped.opened?.pid})${notes.length ? `\n${notes.join("\n")}` : ""}`,
-          { message: stopped, notes },
-        );
-      }
-      return refuse(usage);
-    }
+    case "mail":
+      return mailCommand(env, parsed, args);
     default:
       return refuse(`unknown command: ${command}\n${HELP}`);
   }
@@ -5041,6 +5068,7 @@ const HELP = `crew ${VERSION}
   workspace priorities [accept [--file <path>]]   the workspace's signed business priorities (accept asks the user)
   task <id> open T-n --criteria AC-1,AC-2 [--text "<task text>"]   hand a task of the plan to an implementer: a message, a worktree, a branch, a session
   task <id> list | merge T-n [--force]   the tasks and their children; merge a proven child's branch (--force merges an unproven one: asks the user)
+  task <id> drop T-n                    remove an unmerged task whose implementer is not running: its worktree, its branch, its record; its message refused (asks the user)
   tdd <red|green|before|after|observed> <id> <criterion> [--reason "<why>"] [-- <cmd>]
   gate run <id> [--only a,b]            run the gates the route requires; plans the judgement gates and writes their inputs to .crew/work/<id>/review/
   judgement <id> record --ruling <file>  record the rulings of a review file ({"rulings":[{gate,verdict,reviewer,judge,findings,tokens}]}); exit 0 once proven
@@ -5048,7 +5076,7 @@ const HELP = `crew ${VERSION}
   team <id>                   the seats the route plans for the item, with their reasons, recorded
   validation <id> record --what spec|plan|delivery --by lead-<team> --file <path>   a lead's verdict from its file; a contradiction is refused
   continue <id> judgement|validation|gate T-n   one more round past the policy's cap (the user's decision)
-  decisions [--grep <text>]   the project's decision register, newest first; the engine appends at every decision
+  decisions [--grep <text>]   the project's decision register, newest first; --grep matches the id, the text and the answer, in any case
   metrics [--workspace <ws>]  the figures of this project, or of the workspace's registered projects, from the records and the base
   cto review --workspace <ws>          write the CTO's inputs (the workspace's metrics, the last plan, the base's figures and rows) under the user's crew directory and print the launch line
   cto record --workspace <ws> --file <plan.md>   file the CTO's plan under the user's crew directory and enter it in the knowledge base, marked for the workspace

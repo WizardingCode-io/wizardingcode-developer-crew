@@ -56,9 +56,14 @@ function cell(text: string): string {
  * decision a person did not take, and never a prompt where the agent relayed a yes (ADR 0005).
  */
 export function decidedBy(decision: Decided): string {
-  if (decision.by === "validator") return `by the validator (rule: ${decision.rule ?? "unnamed"})`;
-  if (decision.by === "agent") return `by the agent in ${decision.mode} mode`;
-  return decision.relayed ? "by the user, relayed by the agent" : "by the user";
+  return `by ${whoDecides(decision)}`;
+}
+
+/** Who took a decision, as the register names them: `decidedBy`'s name without its "by ". */
+export function whoDecides(decision: Decided): string {
+  if (decision.by === "validator") return `the validator (rule: ${decision.rule ?? "unnamed"})`;
+  if (decision.by === "agent") return `the agent in ${decision.mode} mode`;
+  return decision.relayed ? "the user, relayed by the agent" : "the user";
 }
 
 /** `verified by Jev (0.93)`, `disputed by Jev (0.95)`, `unverified: <reason>`: a finding's mark as the report and the record command say it. */

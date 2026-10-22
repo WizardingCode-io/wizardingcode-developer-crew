@@ -1001,3 +1001,8 @@ test("CON1-AC-6 (finding 31): mail.md names mail.worktrees, and gate.md and mail
   for (const text of [mail, gate])
     expect(text).toContain("rule 5 of the skill page says when the wait clears");
 });
+
+test("CON5-AC-8-plan (finding 30): plan.md's todo loop names crew task <id> drop T-n where it names the hand commands", () => {
+  const plan = readReference("plan.md");
+  expect(plan).toContain("crew task <id> drop T-n");
+});

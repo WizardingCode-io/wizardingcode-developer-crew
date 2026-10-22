@@ -625,8 +625,8 @@ const UNREADABLE_VERB = /[$\x60*?[{,\s]/;
 /**
  * The user-only command among crew's, read from its parsed words (SP2a review, finding C1: the id
  * and the flags in any order): skip, approve, accept, decide, an objection's waive, profile confirm
- * or set, policy accept or set, a task's merge with --force. A help lookup records nothing, so it
- * is none (finding 22). `policyCommand` names the two that change or accept the policy (and an
+ * or set, policy accept or set, a task's merge with --force, a task's drop (finding 30). A help
+ * lookup records nothing, so it is none (finding 22). `policyCommand` names the two that change or accept the policy (and an
  * unreadable word after `policy`, taken for one on the conservative side), asked even where the
  * policy relays the rest, since the policy that governs signatures is itself signed by a prompt
  * (ADR 0005). A verb the hook cannot read may be any of these, so it is one.
@@ -672,7 +672,9 @@ function userOnlyCommand(
     // A mark is removed by a person alone (rule 13, ADR 0009): `unmark` or an unreadable word after `knowledge`.
     (verb === "knowledge" && (second === "unmark" || unreadable(second))) ||
     (verb === "task" &&
-      ((parsed.positional.includes("merge") && parsed.flags.force === true) || unreadable(third)));
+      ((parsed.positional.includes("merge") && parsed.flags.force === true) ||
+        parsed.positional.includes("drop") ||
+        unreadable(third)));
   if (!userOnly && !presence) return null;
   return {
     presence,
@@ -1250,8 +1252,8 @@ export function onPreToolUse(ctx: HookContext, payload: HookPayload): HookRespon
       }
       // Crew's verbs no opened session runs, read as the CLI parses them (a flag that takes a value
       // takes the next word), in every crew command the line holds: a merge of a task, a task of
-      // its own, a stop of the project's sessions, the approval of a full-route spec, which waits
-      // for a person (AC-5).
+      // its own or its drop (finding 30), a stop of the project's sessions, the approval of a
+      // full-route spec, which waits for a person (AC-5).
       for (const { args } of crewCommands) {
         const { positional } = parse(args);
         const verb = positional[0];
@@ -1262,6 +1264,8 @@ export function onPreToolUse(ctx: HookContext, payload: HookPayload): HookRespon
             "deny",
             `${opened} and opens no tasks of its own: crew task open is denied`,
           );
+        if (verb === "task" && positional.includes("drop"))
+          return answer("deny", `${opened} and drops no tasks: crew task drop is denied`);
         if (verb === "mail" && positional[1] === "stop")
           return answer("deny", `${opened} and stops no sessions: crew mail stop is denied`);
         if (verb === "approve") {

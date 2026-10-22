@@ -3851,3 +3851,35 @@ test("CON2-AC-8 (finding 114): su -c and script -c take no following words into 
   expect(decision(bash("su -c 'crew approve w1 spec' root"))).toBe("ask");
   expect(decision(bash("script -c 'crew skip w1 x' out.log"))).toBe("ask");
 });
+
+test("CON5-AC-8-hook (finding 30): crew task <id> drop T-n is the user's: asked under prompt, relayed under relay, denied where nobody watches", () => {
+  const bash = (ctx: ReturnType<typeof setup>["ctx"], command: string, permission_mode?: string) =>
+    onPreToolUse(ctx, { tool_name: "Bash", tool_input: { command }, permission_mode });
+  const commands = [
+    "crew task w1 drop T-1",
+    "crew --json task w1 drop T-1",
+    "node /x/dist/crew.mjs task w1 drop T-1",
+  ];
+  const prompt = setup();
+  for (const mode of ["default", "acceptEdits", "auto", undefined])
+    for (const command of commands)
+      expect(decision(bash(prompt.ctx, command, mode)), `${command} (${mode})`).toBe("ask");
+  const relay = setup({ attendedDecisions: "relay" });
+  for (const mode of ["default", "auto"])
+    for (const command of commands) expect(bash(relay.ctx, command, mode)).toEqual({});
+  // Where nobody watches: denied, the --mode ask as for every other user-only command.
+  for (const mode of ["bypassPermissions", "dontAsk"]) {
+    const bare = bash(prompt.ctx, "crew task w1 drop T-1", mode);
+    expect(decision(bare)).toBe("deny");
+    expect(reason(bare)).toContain(`--mode ${mode}`);
+  }
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const headless = hookContext(
+    { session_id: "s", cwd: root },
+    { ...testEnv(), CLAUDE_CODE_SESSION_ATTENDED: "0" },
+  );
+  expect(decision(bash(headless, "crew task w1 drop T-1", "auto"))).toBe("deny");
+});

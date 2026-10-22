@@ -448,3 +448,18 @@ test("CON2-AC-3 (finding 30): in a session opened by mail, crew approve whose id
     bash(`crew approve ${standard.id} spec --mode dontAsk --validator complete-gap-round`),
   ).toEqual({});
 });
+
+test("CON5-AC-8-opened (finding 30): in a session opened by mail, crew task drop is denied beside open and merge", () => {
+  for (const mode of ["read-only", "branch"] as const) {
+    const { bash, decision, reason } = session(mode);
+    for (const cmd of [
+      "crew task w1 drop T-1",
+      "crew task w1 drop T-1 --mode dontAsk",
+      "crew --json task w1 drop T-1 --mode dontAsk",
+      "env -u FOO crew task w1 drop T-1 --mode dontAsk",
+    ]) {
+      expect(decision(bash(cmd)), `${mode}: ${cmd}`).toBe("deny");
+      if (mode === "branch") expect(reason(bash(cmd)), cmd).toContain("crew task drop is denied");
+    }
+  }
+});

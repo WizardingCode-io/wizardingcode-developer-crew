@@ -2150,9 +2150,12 @@ function auditSeats(scope, policy) {
 var WORKING_TTL_MS = 3600000;
 var WORKING_MAX = 50;
 var DESCRIPTION_MAX = 120;
+function cut(text, max = DESCRIPTION_MAX) {
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
 function oneLine(text) {
-  const line = text.replace(/(?:\x1b\[|\x9b)[0-?]*[ -/]*[@-~]/g, "").replace(/[\x00-\x1f\x7f-\x9f]+/g, " ").replace(/\s+/g, " ").trim();
-  return line.length > DESCRIPTION_MAX ? `${line.slice(0, DESCRIPTION_MAX - 1)}…` : line;
+  const line = text.replace(/(?:\x1b\[|\x9b)[0-?]*[ -/]*[@-~]/g, "").replace(/[\u200b-\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff]/g, "").replace(/[\x00-\x1f\x7f-\x9f]+/g, " ").replace(/\s+/g, " ").trim();
+  return cut(line);
 }
 function wellShaped(raw) {
   if (!Array.isArray(raw))
@@ -3988,6 +3991,17 @@ function validationHash(what, specText, planText, evidenceFingerprint) {
   const text = what === "spec" ? specText : planText;
   return `sha256:${createHash2("sha256").update(text ?? "").digest("hex")}`;
 }
+function validationRound(validations, what, by, hash, spentSpecRounds) {
+  const same2 = validations.filter((v) => v.what === what);
+  if (what === "spec") {
+    const lastMine = same2.filter((v) => v.by === by).at(-1);
+    const round = !lastMine ? 1 : lastMine.hash === hash ? lastMine.round : lastMine.round + 1;
+    return { round, newRound: round > spentSpecRounds };
+  }
+  const last = same2.at(-1);
+  const newRound = !last || last.hash !== hash;
+  return { round: newRound ? (last?.round ?? 0) + 1 : last?.round ?? 1, newRound };
+}
 function leadSeats(work) {
   return (work.seats ?? []).filter((s) => s.kind === "lead");
 }
@@ -4594,9 +4608,11 @@ function advancePhase(work, ctx) {
   work.phaseAt = { ...work.phaseAt ?? {}, [next]: nowIso() };
   return { ok: true, phase: next };
 }
-function waitingText(work) {
+function waitingText(work, options = {}) {
   const phrase = waitingPhrase(work);
-  return phrase ? `, ${phrase}` : "";
+  if (!phrase)
+    return "";
+  return options.bare ? phrase : `, ${phrase}`;
 }
 function waitingPhrase(work) {
   if (work.awaiting === "user")
@@ -4613,11 +4629,14 @@ function cell(text) {
   return oneLine(text).replace(/\|/g, "\\|");
 }
 function decidedBy(decision) {
+  return `by ${whoDecides(decision)}`;
+}
+function whoDecides(decision) {
   if (decision.by === "validator")
-    return `by the validator (rule: ${decision.rule ?? "unnamed"})`;
+    return `the validator (rule: ${decision.rule ?? "unnamed"})`;
   if (decision.by === "agent")
-    return `by the agent in ${decision.mode} mode`;
-  return decision.relayed ? "by the user, relayed by the agent" : "by the user";
+    return `the agent in ${decision.mode} mode`;
+  return decision.relayed ? "the user, relayed by the agent" : "the user";
 }
 function markText(v) {
   if (v.status === "unverified")
@@ -9273,14 +9292,14 @@ function writeReviewInputs(paths, work, changed, fingerprint, task) {
         unlinkSync3(join33(dir, name));
     }
   }
-  const cut = reviewPatch(paths.root, work.baseCommit, changed);
-  writeText(join33(dir, "diff.patch"), cut.patch);
+  const cut2 = reviewPatch(paths.root, work.baseCommit, changed);
+  writeText(join33(dir, "diff.patch"), cut2.patch);
   writeText(join33(dir, "files.txt"), changed.length ? `${changed.join(`
 `)}
 ` : "");
   writeText(join33(dir, "inputs.json"), `${JSON.stringify({ fingerprint, at: nowIso(), captures: listCaptures(paths, work.id, task) }, null, 2)}
 `);
-  return { dir, note: cut.note };
+  return { dir, note: cut2.note };
 }
 function judgementRows(work, evidence, planned, currentFingerprint, policy) {
   return planned.map((p) => {
@@ -11993,7 +12012,7 @@ function userOnlyCommand(args) {
   const [verb, second, third] = parsed.positional;
   const presence = verb === "question" && third === "add";
   const unreadable = (word) => word !== undefined && UNREADABLE_VERB.test(word);
-  const userOnly = unreadable(verb) || (verb === "profile" || verb === "policy") && unreadable(second) || verb === "skip" || verb === "approve" || verb === "accept" || verb === "decide" || verb === "continue" || verb === "abandon" || verb === "objection" && (parsed.positional.includes("waive") || unreadable(third)) || verb === "profile" && (second === "confirm" || second === "set" || second === "unset") || verb === "policy" && (second === "accept" || second === "set") || verb === "workspace" && (unreadable(second) || second === "priorities" && (parsed.positional.includes("accept") || unreadable(third))) || verb === "question" && (third === "answer" || unreadable(third)) || verb === "config" && typeof second === "string" && second.startsWith("jev.") && third !== undefined || verb === "knowledge" && (second === "unmark" || unreadable(second)) || verb === "task" && (parsed.positional.includes("merge") && parsed.flags.force === true || unreadable(third));
+  const userOnly = unreadable(verb) || (verb === "profile" || verb === "policy") && unreadable(second) || verb === "skip" || verb === "approve" || verb === "accept" || verb === "decide" || verb === "continue" || verb === "abandon" || verb === "objection" && (parsed.positional.includes("waive") || unreadable(third)) || verb === "profile" && (second === "confirm" || second === "set" || second === "unset") || verb === "policy" && (second === "accept" || second === "set") || verb === "workspace" && (unreadable(second) || second === "priorities" && (parsed.positional.includes("accept") || unreadable(third))) || verb === "question" && (third === "answer" || unreadable(third)) || verb === "config" && typeof second === "string" && second.startsWith("jev.") && third !== undefined || verb === "knowledge" && (second === "unmark" || unreadable(second)) || verb === "task" && (parsed.positional.includes("merge") && parsed.flags.force === true || parsed.positional.includes("drop") || unreadable(third));
   if (!userOnly && !presence)
     return null;
   return {
@@ -12369,6 +12388,8 @@ function onPreToolUse(ctx, payload) {
           return answer("deny", `${never}: crew task merge is denied; ${ending}`);
         if (verb === "task" && positional.includes("open"))
           return answer("deny", `${opened} and opens no tasks of its own: crew task open is denied`);
+        if (verb === "task" && positional.includes("drop"))
+          return answer("deny", `${opened} and drops no tasks: crew task drop is denied`);
         if (verb === "mail" && positional[1] === "stop")
           return answer("deny", `${opened} and stops no sessions: crew mail stop is denied`);
         if (verb === "approve") {
@@ -12480,6 +12501,10 @@ function taskText(planText, task) {
     }
   }
   return null;
+}
+function findTask(work, task) {
+  const record = (work.tasks ?? []).find((t) => t.task === task);
+  return record ?? { refused: `${task} is not a task of ${work.id}` };
 }
 function dirtyWatched(root, profile) {
   return (gitChangedPaths(root) ?? []).filter((p) => isWatched(p, profile));
@@ -12708,9 +12733,9 @@ var CHILD_RECORD_FILES = [
 function mergeTask(ctx, env, work, task, options = {}) {
   if (ctx.self.openedBy)
     return { refused: `a session opened by mail (${ctx.self.openedBy}) never merges` };
-  const record = (work.tasks ?? []).find((t) => t.task === task);
-  if (!record)
-    return { refused: `${task} is not a task of ${work.id}` };
+  const record = findTask(work, task);
+  if ("refused" in record)
+    return record;
   if (record.mergedAt)
     return { refused: `${task} is already merged` };
   absorbReplies(ctx, work);
@@ -12737,17 +12762,9 @@ function mergeTask(ctx, env, work, task, options = {}) {
     return {
       refused: `uncommitted changes in ${dirty.join(", ")}; commit or stash them, then merge`
     };
-  const swept = sweepSafely(ctx);
-  const withSwept = (refused) => {
-    const lines2 = swept.lines.filter((l) => l !== refused);
-    return { refused: lines2.length ? `${refused} (${lines2.join("; ")})` : refused };
-  };
-  const sessions = readOpenSessions(ctx);
-  if (sessions.tampered)
-    return withSwept(sessions.tampered);
-  const running = sessions.messages.find((m) => m.id === record.message);
-  if (running)
-    return withSwept(`${task}'s implementer is still running (pid ${running.opened?.pid}); wait for it to end, or stop it with crew mail stop ${record.message}`);
+  const { swept, withSwept, refused } = implementerEnded(ctx, record);
+  if (refused)
+    return refused;
   const branch = branchContentRefusal(record, child, env.paths.root);
   if (branch)
     return withSwept(branch.refused);
@@ -12784,6 +12801,68 @@ function mergeTask(ctx, env, work, task, options = {}) {
     ...kept ? { worktreeKept: kept.kept } : {},
     ...credit
   };
+}
+function implementerEnded(ctx, record) {
+  const swept = sweepSafely(ctx);
+  const withSwept = (refused) => {
+    const lines2 = swept.lines.filter((l) => l !== refused);
+    return { refused: lines2.length ? `${refused} (${lines2.join("; ")})` : refused };
+  };
+  const sessions = readOpenSessions(ctx);
+  if (sessions.tampered)
+    return { swept, withSwept, refused: withSwept(sessions.tampered) };
+  const running = sessions.messages.find((m) => m.id === record.message);
+  return {
+    swept,
+    withSwept,
+    refused: running ? withSwept(`${record.task}'s implementer is still running (pid ${running.opened?.pid}); wait for it to end, or stop it with crew mail stop ${record.message}`) : null
+  };
+}
+var MERGED_STATES = ["merged", "gated", "briefed"];
+function dropTask(ctx, env, work, task) {
+  if (ctx.self.openedBy)
+    return { refused: `a session opened by mail (${ctx.self.openedBy}) never drops a task` };
+  const record = findTask(work, task);
+  if ("refused" in record)
+    return record;
+  if (record.inline || !record.branch || !record.worktree)
+    return {
+      refused: `${task} is an inline todo: it has no worktree and no branch, and its work is in this checkout; not dropped`
+    };
+  if (record.mergedAt || record.mergeCommit || MERGED_STATES.includes(record.state))
+    return {
+      refused: `${task} is merged (${record.state ?? "merged"}${record.mergeCommit ? `, ${record.mergeCommit.slice(0, 7)}` : ""}): its work is in the item's tree; not dropped`
+    };
+  const names = taskNames(work.id, env.paths.root, task, env.policy.mail.worktrees);
+  if (record.branch !== names.branch || record.worktree !== names.worktree)
+    return {
+      refused: `${task}'s record names the branch ${record.branch} and the worktree ${record.worktree}, not the pair the engine makes for it (${names.branch}, ${names.worktree}); not dropped`
+    };
+  const { swept, withSwept, refused } = implementerEnded(ctx, record);
+  if (refused)
+    return refused;
+  let tip;
+  try {
+    tip = gitRun(env.paths.root, "rev-parse", "--verify", "--quiet", `refs/heads/${record.branch}`);
+  } catch (error) {
+    return withSwept(`the branch ${record.branch} cannot be read: ${gitError(error)}; nothing was dropped`);
+  }
+  try {
+    gitRun(env.paths.root, "worktree", "remove", "--force", "--", record.worktree);
+  } catch (error) {
+    return withSwept(`git worktree remove failed: ${gitError(error)}; nothing was dropped: the worktree ${record.worktree}, the branch ${record.branch}, the record and the message stay`);
+  }
+  try {
+    gitRun(env.paths.root, "branch", "-D", "--", record.branch);
+  } catch (error) {
+    return withSwept(`the worktree ${record.worktree} was removed; git branch -D failed: ${gitError(error)}; the branch ${record.branch}, the record and the message stay`);
+  }
+  work.tasks = (work.tasks ?? []).filter((t) => t !== record);
+  saveWork(env.paths, work);
+  const notes = [];
+  updateStatusEverywhere(ctx, record.message, "refused", "dropped by the user", notes);
+  dropOpenedMarker(ctx.paths.userDir, record.worktree);
+  return { record, tip, swept: swept.lines, notes };
 }
 function creditChild(paths, work, record, forced) {
   if (forced)
@@ -13140,7 +13219,7 @@ var CAPS = {
   request: 8 * 1024,
   priorities: 8 * 1024
 };
-function cut(text, max) {
+function cut2(text, max) {
   return text.length > max ? `${text.slice(0, max)}…` : text;
 }
 function askAllowed(policy, ask) {
@@ -13191,7 +13270,7 @@ async function verifyDefects(cfg, policy, records, patch, options = {}) {
     state[id] = {
       file: c.finding.file,
       line: c.finding.line,
-      text: cut(c.finding.text, CAPS.findingText),
+      text: cut2(c.finding.text, CAPS.findingText),
       rubric: RUBRIC_QUESTIONS[c.record.gate],
       ...snippets ? { lines: lines2.text } : {}
     };
@@ -13245,7 +13324,7 @@ async function verifyValidator(cfg, policy, input, options = {}) {
     v1: { type: "noul", instructions: VALIDATOR_QUESTIONS.v1 },
     v2: { type: "noul", instructions: VALIDATOR_QUESTIONS.v2 }
   };
-  const result = await askJev(cfg, { state: { ...input, conclave: cut(input.conclave, CAPS.conclave) }, questions }, options);
+  const result = await askJev(cfg, { state: { ...input, conclave: cut2(input.conclave, CAPS.conclave) }, questions }, options);
   if (!result.ok)
     return {
       status: "unverified",
@@ -13349,8 +13428,8 @@ function rank(p) {
 }
 async function verifyTriage(cfg, policy, input, options = {}) {
   const state = {
-    request: { ...input.request, text: cut(input.request.text, CAPS.request) },
-    business_priorities: input.business_priorities === null ? null : cut(input.business_priorities, CAPS.priorities),
+    request: { ...input.request, text: cut2(input.request.text, CAPS.request) },
+    business_priorities: input.business_priorities === null ? null : cut2(input.business_priorities, CAPS.priorities),
     queue: input.queue
   };
   const questions = {
@@ -13877,7 +13956,7 @@ function stacksOf(profile, changed) {
   }
   return [...stacks];
 }
-function cut2(text) {
+function cut3(text) {
   return text.slice(0, KNOWLEDGE_TEXT_LIMIT);
 }
 var SOURCE = {
@@ -13903,7 +13982,7 @@ function draftsOf(paths, work, profile, policy, scope) {
   const skipped = [];
   const problem = section(readText(join43(dir, "spec.md")), "Problem");
   const criteria = work.criteria.map((c) => `${c.id}: ${c.text}`);
-  const solutionText = cut2([...problem ? [problem] : [], ...criteria].join(`
+  const solutionText = cut3([...problem ? [problem] : [], ...criteria].join(`
 `));
   const changed = changedWatchedPaths(paths.root, profile, work);
   const head = gitHead(paths.root);
@@ -13924,7 +14003,7 @@ function draftsOf(paths, work, profile, policy, scope) {
     const origin = readOrigin(paths, work.id)?.origin ?? null;
     if (cause && origin) {
       const title = `Root cause: ${work.title}`;
-      const text = cut2(cause);
+      const text = cut3(cause);
       drafts.push({
         ...base,
         kind: "root-cause",
@@ -13954,7 +14033,7 @@ function draftsOf(paths, work, profile, policy, scope) {
       const url = new URL(fact.source);
       const source = `${url.origin}${url.pathname}`;
       const title = `${source} · ${fact.quote.slice(0, 60)}`;
-      const text = cut2(`${fact.quote} · ${fact.claim}`);
+      const text = cut3(`${fact.quote} · ${fact.claim}`);
       drafts.push({
         ...base,
         kind: "documentation",
@@ -14804,9 +14883,7 @@ function acceptMailbox(env, which) {
   if ("refused" in accepted)
     return refuse(accepted.refused);
   const { file, messages } = accepted;
-  appendDecision(env.paths, {
-    at: nowIso(),
-    item: "mail",
+  decide(env, "mail", {
     kind: "accept",
     text: `${which} accepted as it is after a hand edit: ${file} (${messages.length} message${messages.length === 1 ? "" : "s"})`,
     by: "the user"
@@ -14868,8 +14945,56 @@ function decisionText(policy, decision) {
   const note = countedNote(policy, decision);
   return `${decidedBy(decision)}${note ? ` (${note.slice(2)})` : ""}`;
 }
-function whoDecided(decision) {
-  return decidedBy(decision).replace(/^by /, "");
+function rulingDecisions(records, item, file) {
+  return records.flatMap((record2) => record2.verdict === "not-proven" ? record2.findings.filter((f) => f.severity === "defect" && !f.outside).map((f) => ({
+    at: nowIso(),
+    item,
+    kind: "ruling",
+    text: `${record2.gate} defect: ${f.file}${f.line ? `:${f.line}` : ""} ${f.text}`,
+    by: "the judge",
+    ...file ? { file } : {}
+  })) : []);
+}
+function decide(env, item, fields) {
+  appendDecision(env.paths, { at: fields.at ?? nowIso(), item, ...fields });
+}
+async function taskGate(env, opened, parsed, record2) {
+  const task = record2.task;
+  const flagScope = parsed.flags.scope === undefined ? undefined : commaList(parsed.flags.scope);
+  const scoped = taskScope(env.paths.root, env.profile, record2, flagScope);
+  if ("refused" in scoped)
+    return refuse(scoped.refused);
+  const round = record2.gate?.round ?? 0;
+  const held = continueOrRefuse(env, opened.work, "gate", task, env.policy.team.maxGateRounds, round, `gate round ${round + 1} of ${task}: the policy allows ${env.policy.team.maxGateRounds} (team.maxGateRounds); the user continues it once with crew continue ${opened.work.id} gate ${task}, or decides`);
+  if (held)
+    return held;
+  const result = await runTaskGate(env.paths, opened.work, env.profile, env.policy, scoped.scope);
+  const own = flagScope?.length ? taskScope(env.paths.root, env.profile, record2) : scoped;
+  const planned = planTaskJudgement(env, {
+    work: opened.work,
+    tampered: env.tampered || opened.tampered,
+    record: record2,
+    task,
+    round: round + 1,
+    scope: scoped.scope,
+    ownScope: "scope" in own ? own.scope : [],
+    result
+  });
+  settleTaskState(opened.work, record2, env.policy);
+  saveWork(env.paths, opened.work);
+  const lines2 = result.runs.map((r) => `  ${r.gate} (${r.target}): ${r.status} in ${(r.durationMs / 1000).toFixed(1)}s${r.reason ? ` (${r.reason})` : ""}`);
+  const pending = result.status === "pass" ? taskPending(opened.work, record2, env.policy) : [];
+  if (pending.length)
+    lines2.push(`Judgement gates to run for ${task}: ${pending.map((g) => `${g} (${planned.find((p) => p.gate === g)?.reason ?? ""})`).join(", ")}; inputs in .crew/work/${opened.work.id}/review/${task}/ (diff.patch, files.txt); record each with crew judgement ${opened.work.id} record --task ${task} --ruling <file>`);
+  const verdict = result.status === "pass" && pending.length ? `pass, judgement pending (${pending.join(", ")})` : result.status;
+  return {
+    code: result.status === "pass" ? 0 : 1,
+    stdout: true,
+    text: `${lines2.join(`
+`)}
+${task} gate round ${round + 1}: ${verdict}`,
+    data: { task: record2, gate: record2.gate, pending }
+  };
 }
 function continueOrRefuse(env, work, what, task, cap, round, refusal) {
   const mine = (work.continued ?? []).filter((c) => c.what === what && c.task === task);
@@ -14883,9 +15008,7 @@ function continueOrRefuse(env, work, what, task, cap, round, refusal) {
     { what, ...task ? { task } : {}, by: { by: "user" }, at: nowIso(), standing: true }
   ];
   saveWork(env.paths, work);
-  appendDecision(env.paths, {
-    at: nowIso(),
-    item: work.id,
+  decide(env, work.id, {
     kind: "continue",
     text: `${what}${task ? ` of ${task}` : ""} continued under the standing grant (team.continuations: granted)`,
     by: "the user"
@@ -14895,13 +15018,13 @@ function continueOrRefuse(env, work, what, task, cap, round, refusal) {
 function planTaskJudgement(env, options) {
   const { work, tampered, record: record2, task, round, scope, ownScope, result } = options;
   const others = ownScope.filter((p) => !scope.includes(p));
-  const cut3 = [...scope, ...others];
+  const cut4 = [...scope, ...others];
   const planned = [...record2.gate?.planned ?? []];
   for (const p of [...result.judgement, ...plannedTaskJudgement(others, env.policy)])
     if (!planned.some((q) => q.gate === p.gate))
       planned.push(p);
   const current = assess(env.paths, work, env.profile, env.policy, tampered).currentFingerprint;
-  const hash = scopeHash(cut3);
+  const hash = scopeHash(cut4);
   record2.gate = {
     round,
     at: nowIso(),
@@ -14909,11 +15032,11 @@ function planTaskJudgement(env, options) {
     runs: result.runs,
     scope,
     planned,
-    cut: cut3,
+    cut: cut4,
     judgement: (record2.gate?.judgement ?? []).filter((j) => j.fingerprint === current && j.scope === hash)
   };
   if (result.status === "pass" && planned.length)
-    writeReviewInputs(env.paths, work, cut3, current, task);
+    writeReviewInputs(env.paths, work, cut4, current, task);
   return planned;
 }
 function taskPending(work, record2, policy) {
@@ -15049,9 +15172,9 @@ async function recordStrategyJudgement(env, opened, parsed, gateWord, usage) {
 }
 async function recordTaskJudgement(env, ioEnv, work, tampered, parsed, task) {
   const usage = 'usage: crew judgement <id> record --task T-n --ruling <file> | crew judgement <id> record <gate> --not-run --reason "<why>" --task T-n';
-  const record2 = (work.tasks ?? []).find((t) => t.task === task);
-  if (!record2)
-    return refuse(`${task} is not a task of ${work.id}`);
+  const record2 = findTask(work, task);
+  if ("refused" in record2)
+    return refuse(record2.refused);
   const planned = (record2.gate?.planned ?? []).map((p) => p.gate);
   if (!planned.length)
     return refuse(`${task} plans no judgement gate (crew task <id> gate ${task})`);
@@ -15061,8 +15184,8 @@ async function recordTaskJudgement(env, ioEnv, work, tampered, parsed, task) {
     return refuse(`no review inputs for ${task}: run crew task <id> gate ${task} first, then the reviewers and the judge`);
   if (inputs.fingerprint !== before.currentFingerprint)
     return refuse(`the review inputs of ${task} describe other code than the current one: run crew task <id> gate ${task}, then the reviewers and the judge again`);
-  const cut3 = record2.gate?.cut ?? record2.gate?.scope ?? [];
-  const input = rulingRecords(env, parsed, parsed.positional[3], planned, before.currentFingerprint, cut3, work.id, task, usage);
+  const cut4 = record2.gate?.cut ?? record2.gate?.scope ?? [];
+  const input = rulingRecords(env, parsed, parsed.positional[3], planned, before.currentFingerprint, cut4, work.id, task, usage);
   if (isOutcome(input))
     return input;
   const { records, rulingPath } = input;
@@ -15073,7 +15196,7 @@ async function recordTaskJudgement(env, ioEnv, work, tampered, parsed, task) {
   if (appendRefusal)
     notes.push(appendRefusal);
   const jevWait = jevUnavailableWait(work, defects);
-  const hash = scopeHash(cut3);
+  const hash = scopeHash(cut4);
   const gate = record2.gate;
   for (const r of records)
     gate.judgement = [
@@ -15287,6 +15410,64 @@ function moveOriginMail(env, work, to, notes) {
   if ("refused" in moved)
     notes.push(moved.refused);
 }
+function withNotes(text, notes) {
+  return notes.length ? `${text}
+${notes.join(`
+`)}` : text;
+}
+function awaitCommand(env, args) {
+  const opened = openForChange(env, args[0]);
+  if (isOutcome(opened))
+    return opened;
+  const usage = "usage: crew await <id> user | role | mail <message id>";
+  const kind = args[1];
+  if (kind !== "user" && kind !== "role" && kind !== "mail")
+    return refuse(usage);
+  if (kind === "mail" && !args[2])
+    return refuse(usage);
+  opened.work.awaiting = kind;
+  if (kind === "mail")
+    opened.work.awaitingMessage = args[2];
+  else
+    delete opened.work.awaitingMessage;
+  saveWork(env.paths, opened.work);
+  const notes = [];
+  moveOriginMail(env, opened.work, "blocked", notes);
+  return ok(withNotes(`${opened.work.id}: ${waitingText(opened.work, { bare: true })}`, notes), {
+    awaiting: kind,
+    awaitingMessage: opened.work.awaitingMessage ?? null
+  });
+}
+function resumeCommand(env, parsed, args) {
+  const opened = openForChange(env, args[0]);
+  if (isOutcome(opened))
+    return opened;
+  let cleared = "";
+  if (opened.work.validatorDispute) {
+    const decided = decisionFlag(parsed, env.policy);
+    if (isOutcome(decided))
+      return decided;
+    if (decided.by !== "user")
+      return refuse("the validator's verdict was disputed by jev; a person clears it: the item waits");
+    const by = whoDecides(decided);
+    decide(env, opened.work.id, {
+      kind: "dispute",
+      text: `jev dispute cleared (${opened.work.validatorDispute.condition})`,
+      by
+    });
+    delete opened.work.validatorDispute;
+    cleared = `; the jev dispute cleared by ${by}`;
+  }
+  opened.work.awaiting = null;
+  delete opened.work.awaitingMessage;
+  saveWork(env.paths, opened.work);
+  const notes = [];
+  moveOriginMail(env, opened.work, "in-progress", notes);
+  return ok(withNotes(`${opened.work.id}: resumed${cleared}`, notes), {
+    awaiting: null,
+    awaitingMessage: null
+  });
+}
 async function askDefects(env, ioEnv, records, patchFile) {
   const jev = jevConfig(ioEnv, env.config);
   if (!jev.configured || !askAllowed(env.policy, "defect"))
@@ -15305,9 +15486,7 @@ function setListKey(env, key, value, remove) {
   if ("refused" in plan)
     return refuse(plan.refused);
   if (plan.action !== "already listed") {
-    appendDecision(env.paths, {
-      at: nowIso(),
-      item: "policy",
+    decide(env, "policy", {
       kind: "decision",
       text: plan.action === "added" ? `${key}: ${value} added, paths matching it never raise the route (ADR 0003)` : `${key}: ${value} removed, paths matching it raise the route again`,
       by: "the user"
@@ -15327,9 +15506,7 @@ function setScalarKey(env, key, value) {
   if ("refused" in result)
     return refuse(result.refused);
   if (key === "team.continuations" && value === "granted")
-    appendDecision(env.paths, {
-      at: nowIso(),
-      item: "policy",
+    decide(env, "policy", {
       kind: "decision",
       text: "team.continuations set to granted: rounds past a cap are the user's standing grant, up to the cap plus two",
       by: "the user"
@@ -15344,9 +15521,8 @@ function supersedeCommand(env, opened, parsed, args) {
   if ("refused" in outcome)
     return refuse(outcome.refused);
   saveWork(env.paths, opened.work);
-  appendDecision(env.paths, {
+  decide(env, opened.work.id, {
     at: outcome.at,
-    item: opened.work.id,
     kind: "supersede",
     id: outcome.criterion.id,
     text: `${outcome.criterion.id} superseded by ${by}`,
@@ -15558,6 +15734,357 @@ function insideFolder(path, folder) {
   const rel2 = relative12(folder, path);
   return rel2 !== "" && rel2 !== ".." && !rel2.startsWith(`..${sep5}`) && !isAbsolute10(rel2);
 }
+async function mailCommand(env, parsed, args) {
+  const sendUsage = 'usage: crew mail send --to <project|.> --type question|change-request|notice|blocker [--priority blocker|high|normal|low] [--thread <root>] [--agent <session|T-n|role>] [--item <id>] [--reply-to <mid>] [--subject <text>] "<text>" [--file <path>]';
+  const usage = `${sendUsage} | inbox [--all] | read <mid> | thread <mid> | accept <mid> [--priority <p>] [--reason "<why>"] | reply <mid> "<text>" [--branch <b>] [--item <child id>] [--contract <kind>:<path>[:<summary>]]… [--as <role>] [--file <path>] | refuse <mid> --reason "<why>" | status | stop <mid>`;
+  const ctx = env.mail;
+  const verb = args[0];
+  if (verb === "send") {
+    const to = parsed.flags.to;
+    const type = parsed.flags.type;
+    const text = args.slice(1).join(" ");
+    if (typeof to !== "string" || !isMailType(type))
+      return refuse(sendUsage);
+    const sendPriority = parsed.flags.priority;
+    if (sendPriority !== undefined && !isMailPriority(sendPriority))
+      return refuse(badPriority(sendPriority));
+    const item = typeof parsed.flags.item === "string" ? parsed.flags.item : undefined;
+    const work = item ? loadWork(env.paths, item).work ?? null : activeWork(env.paths)?.work ?? null;
+    if (item && !work)
+      return refuse(`unknown work item: ${item}`);
+    const out2 = send(ctx, {
+      to,
+      type,
+      text,
+      ...sendPriority ? { priority: sendPriority } : {},
+      ...typeof parsed.flags.thread === "string" ? { thread: parsed.flags.thread } : {},
+      ...typeof parsed.flags.agent === "string" ? { agent: parsed.flags.agent } : {},
+      ...typeof parsed.flags.subject === "string" ? { subject: parsed.flags.subject } : {},
+      ...typeof parsed.flags.file === "string" ? { filePath: parsed.flags.file } : {},
+      ...item ? { item } : {},
+      ...typeof parsed.flags["reply-to"] === "string" ? { replyTo: parsed.flags["reply-to"] } : {}
+    }, work);
+    if ("refused" in out2)
+      return refuse(`refused: ${out2.refused}${out2.message ? "; recorded in the outbox as refused" : ""}`, { refused: out2.refused, message: out2.message });
+    const { message: message2, delivery } = out2;
+    const where = `to ${message2.to.project} (workspace ${message2.to.workspace})`;
+    let next;
+    if (delivery.kind === "self")
+      next = `to ${message2.to.agent ?? "session"} of this project`;
+    else if (delivery.kind === "live")
+      next = `live session (session ${delivery.entry.sessionId}): ring it if your harness lists it`;
+    else if (delivery.kind === "queued")
+      next = `queued; ${delivery.reason}`;
+    else
+      next = openForMail(ctx, env.policy, message2, delivery);
+    const note = work ? "" : `
+note: no active work item, so no item keeps a copy of this message`;
+    return ok(`sent ${message2.id} ${where}; ${next}${note}`, {
+      message: message2,
+      delivery: delivery.kind,
+      ...delivery.kind === "open" ? { mode: delivery.mode } : {}
+    });
+  }
+  if (verb === "inbox") {
+    syncMail(ctx, env.paths);
+    const { messages, tampered } = ownInbox(ctx);
+    if (tampered)
+      return refuse(tamperedBox(ctx.self.project, "inbox"));
+    const shown = parsed.flags.all ? messages : messages.filter((m) => {
+      const status = mailStatus(m);
+      return status === "done" ? !m.replyTo : status !== "refused" && status !== "expired";
+    });
+    const summary = inboxSummary(ctx);
+    const lines2 = shown.map((m) => `  ${m.id} · [${decidedPriority(m)}] · ${m.type} · from ${partyLabel(m.from)} · ${m.subject} · ${mailStatus(m)}${m.reason ? `: ${m.reason}` : ""}`);
+    return ok(`Mail (${ctx.self.workspace ?? "alone"}/${ctx.self.project}, as ${ctx.self.agent}): ${summary.unread} unread, ${summary.answered} answered${lines2.length ? `
+${lines2.join(`
+`)}` : ""}`, { ...summary, messages: shown });
+  }
+  if (verb === "read") {
+    if (!args[1])
+      return refuse(usage);
+    syncMail(ctx, env.paths);
+    const notes = [];
+    const result = markRead(ctx, args[1], notes);
+    if ("refused" in result)
+      return refuse(result.refused);
+    const body = result.bodyFile ? readText(result.bodyFile) ?? result.body : result.body;
+    const head = [
+      ...notes,
+      `id: ${result.id}`,
+      `from: ${result.from.project} (${result.from.agent})`,
+      `to: ${result.to.project}${result.to.agent ? ` (${result.to.agent})` : ""}`,
+      `type: ${result.type}`,
+      `subject: ${result.subject}`,
+      `status: ${mailStatus(result)}${result.reason ? `: ${result.reason}` : ""}`,
+      `at: ${result.at}`,
+      priorityLine(result),
+      ...evidenceLine(result),
+      ...result.from.item ? [`from item: ${result.from.item}`] : [],
+      ...result.replyTo ? [`reply to: ${result.replyTo}`] : [],
+      ...result.branch ? [`branch: ${result.branch}`] : [],
+      ...result.item ? [`item: ${result.item}${result.verdict ? ` (${result.verdict})` : ""}`] : []
+    ];
+    return ok(`${head.join(`
+`)}
+
+${body}`, { message: result, body });
+  }
+  if (verb === "reply") {
+    const text = args.slice(2).join(" ");
+    if (!args[1])
+      return refuse(usage);
+    const notes = [];
+    const result = reply(ctx, args[1], text, {
+      ...typeof parsed.flags.file === "string" ? { filePath: parsed.flags.file } : {},
+      ...typeof parsed.flags.branch === "string" ? { branch: parsed.flags.branch } : {},
+      ...typeof parsed.flags.item === "string" ? { item: parsed.flags.item } : {},
+      ...typeof parsed.flags.as === "string" ? { as: parsed.flags.as } : {},
+      ...parsed.multi.contract?.length ? { contracts: parsed.multi.contract } : {}
+    }, notes);
+    if ("refused" in result)
+      return refuse(result.delivered === undefined ? result.refused : `${result.delivered} was delivered, but ${result.refused}`);
+    return ok(`replied to ${args[1]}: ${result.reply.id} to ${result.reply.to.project}; ${args[1]} ${mailStatus(result.original)}${notes.length ? `
+${notes.join(`
+`)}` : ""}`, { reply: result.reply, original: result.original, notes });
+  }
+  if (verb === "thread") {
+    if (!args[1])
+      return refuse(usage);
+    syncMail(ctx, env.paths);
+    const result = threadMessages(ctx, args[1]);
+    if ("refused" in result)
+      return refuse(result.refused);
+    const lines2 = result.messages.map((m) => `  ${m.id} · [${decidedPriority(m)}] · ${m.type} · ${partyLabel(m.from)} → ${partyLabel(m.to)} · ${oneLine(m.subject)} · ${mailStatus(m)}`);
+    return ok(`Thread ${args[1]}: ${result.messages.length} message${result.messages.length === 1 ? "" : "s"}, ${result.parties.length} part${result.parties.length === 1 ? "y" : "ies"} (${result.parties.join(", ")})
+${lines2.join(`
+`)}`, { root: args[1], messages: result.messages, parties: result.parties });
+  }
+  if (verb === "accept") {
+    if (!args[1])
+      return refuse(usage);
+    const priority = parsed.flags.priority;
+    if (priority !== undefined && !isMailPriority(priority))
+      return refuse(badPriority(priority));
+    const reason = typeof parsed.flags.reason === "string" ? parsed.flags.reason : undefined;
+    const notes = [];
+    const result = acceptMail(ctx, args[1], {
+      ...priority ? { priority } : {},
+      ...reason ? { reason } : {},
+      by: ctx.self.agent
+    }, notes);
+    if ("refused" in result)
+      return refuse(result.refused);
+    const d = result.message.priorityDecision;
+    const level = d ? `${d.confirmed}${d.confirmed !== d.proposed ? ` (proposed ${d.proposed})` : ""}${d.reason ? `: ${d.reason}` : ""}` : priorityOf(result.message);
+    return ok(`${args[1]} accepted at ${level}${notes.length ? `
+${notes.join(`
+`)}` : ""}`, {
+      message: result.message,
+      notes
+    });
+  }
+  if (verb === "refuse") {
+    const reason = typeof parsed.flags.reason === "string" ? parsed.flags.reason : "";
+    if (!args[1] || !reason.trim())
+      return refuse(usage);
+    const notes = [];
+    const result = refuseMail(ctx, args[1], reason, notes);
+    if ("refused" in result)
+      return refuse(result.refused);
+    return ok(`${args[1]} refused: ${reason.trim()}${notes.length ? `
+${notes.join(`
+`)}` : ""}`, { message: result, notes });
+  }
+  if (verb === "status") {
+    const pruned = pruneRegistry(env.paths.userDir);
+    const swept = sweepSafely(ctx);
+    const { messages: sessions, tampered, untrusted } = readOpenSessions(ctx);
+    const sessionLine = (m) => {
+      const opened = m.opened;
+      return `  ${m.id} → ${m.to.project}: ${opened.mode} session ${opened.name} (pid ${opened.pid ?? "none"}), since ${opened.startedAt}, ${Math.floor(minutesRun(opened))} of ${opened.maxMinutes} minutes used, ${opened.maxTurns} turns allowed`;
+    };
+    const sweptLine = sweptText(swept);
+    const untrustedLine = (m) => {
+      const opened = m.opened;
+      const state = pidState(opened);
+      const marked = state === "session" ? "" : state === "gone" ? " (gone)" : " (pid now another process)";
+      return `${sessionLine(m)}, log ${opened.log}${marked}`;
+    };
+    const named2 = tampered && !swept.lines.includes(tampered) ? `${tampered}
+` : "";
+    const listed = tampered ? `${named2}open sessions as the outbox records them (not trusted; stop one with kill -TERM -- -<pid>, then kill -KILL -- -<pid> after a second; read its log): ${untrusted.length ? `
+${untrusted.map(untrustedLine).join(`
+`)}` : "none"}` : `open sessions: ${sessions.length ? `
+${sessions.map(sessionLine).join(`
+`)}` : "none"}`;
+    let summary = emptyInboxSummary();
+    const summarised = guarded("the inbox was not read", () => {
+      summary = inboxSummary(ctx);
+    });
+    return ok(`${summarised || (summary.line ?? `Mail (${ctx.self.workspace ?? "alone"}): inbox empty`)}${sweptLine ? `
+${sweptLine}` : ""}
+${listed}${pruned.length ? `
+registry pruned: ${pruned.join(", ")}` : ""}`, { sessions, untrusted, swept, pruned, ...summary });
+  }
+  if (verb === "stop") {
+    if (!args[1])
+      return refuse(usage);
+    const notes = [];
+    const stopped = stopSession(ctx, args[1], notes);
+    if ("refused" in stopped)
+      return refuse(stopped.refused);
+    return ok(`${stopped.id} stopped (session ${stopped.opened?.name}, pid ${stopped.opened?.pid})${notes.length ? `
+${notes.join(`
+`)}` : ""}`, { message: stopped, notes });
+  }
+  return refuse(usage);
+}
+function statusView(env, active) {
+  const result = assess(env.paths, active.work, env.profile, env.policy, env.tampered || active.tampered);
+  const work = active.work;
+  let branch = null;
+  try {
+    const name = gitRun(env.paths.root, "rev-parse", "--abbrev-ref", "HEAD").trim();
+    branch = name ? oneLine(name) : null;
+  } catch {
+    branch = null;
+  }
+  const todoItems = (work.tasks ?? []).map((t) => ({
+    task: t.task,
+    criteria: t.criteria,
+    state: t.state ?? "open",
+    inline: t.inline === true
+  }));
+  const todo = {
+    done: todoItems.filter((t) => t.state === "briefed").length,
+    total: todoItems.length,
+    items: todoItems
+  };
+  const working = workingRoles(env.paths).map((w) => ({
+    agent: w.agent,
+    team: w.team,
+    since: w.since,
+    ...w.description ? { description: w.description } : {}
+  }));
+  const extra = [
+    branch ? `  branch ${branch}` : null,
+    todo.total ? `  todo ${todo.done}/${todo.total} briefed (${todoItems.map((t) => `${t.task} ${t.state}`).join(", ")})` : null,
+    working.length ? `  working: ${working.map((w) => w.description ? `${w.agent} (${w.description})` : w.agent).join(", ")}` : null
+  ].filter((l) => l !== null);
+  if (work.source)
+    extra.unshift(`  source ${oneLine(sourceLine(work.source))}`);
+  const knowledge = knowledgeLine2(env, work);
+  if (knowledge)
+    extra.push(knowledge);
+  const learned = work.learned;
+  const learnLine = learned ? `  learn: ${learnedText(learned.entries, learned.confirmed)}` : work.phase === "learn" ? `  learn: proven, not learned: crew learn ${work.id}` : work.phase === "deliver" && result.verdict === "proven" ? `  learn: proven; crew phase ${work.id} next, then crew learn ${work.id} writes the base` : null;
+  if (learnLine)
+    extra.push(learnLine);
+  const registry = teamsFor(env.policy, packTemplates(env.paths.userDir));
+  if (registry.warning)
+    extra.push(`  ${registry.warning}`);
+  const plannedStrategy = work.phase === "strategy" ? plannedStrategyJudgement(work)[0] : undefined;
+  if (plannedStrategy)
+    extra.unshift(strategyLine(strategyOf(env, work, result.evidence), plannedStrategy));
+  if (work.phase === "audit")
+    extra.unshift(auditLine(env, work));
+  const analysis = work.phase === "analyse" ? readOrigin(env.paths, work.id) : null;
+  if (analysis)
+    extra.unshift(analysis.origin ? `  analysis: ${originSummary(analysis.origin)}` : `  analysis: origin.json changed outside the engine (crew accept ${work.id})`);
+  extra.unshift(...openQuestions(work).map((q) => `  question ${q.id} open: ${oneLine(q.text)} (${channelsText(q)})`));
+  const text = `${work.id} "${work.title}"
+  phase ${work.phase}, ${work.abandoned ? `abandoned (${work.abandoned.reason}), ` : ""}route ${work.route}, kind ${kindOfItem(work)}, ${triageText(work, "status")}${waitingText(work)}
+${kindOfItem(work) === "audit" ? `  audit: the proof is the signed report
+` : ""}${extra.length ? `${extra.join(`
+`)}
+` : ""}${gateSummary(work, result.verdict, result.unproven, result.evidence.runs)}`;
+  const synced = guarded("the mail was not synced", () => syncMail(env.mail, env.paths));
+  let inbox = emptyInboxSummary();
+  const summarised = guarded("the inbox was not read", () => {
+    inbox = inboxSummary(env.mail);
+  });
+  const taken = guarded("the replies were not taken", () => takeReplies(env.mail, env.paths, active));
+  let tasks = [];
+  const listed = guarded("the tasks were not listed", () => {
+    tasks = listTasks(env.mail, work);
+  });
+  let threads = [];
+  const threaded = guarded("the threads were not read", () => {
+    threads = projectThreads(env.mail);
+  });
+  const notes = [synced, summarised, taken, listed, threaded].filter(Boolean);
+  return ok(notes.length ? `${text}
+${notes.join(`
+`)}` : text, {
+    active: work.id,
+    title: work.title,
+    type: work.type,
+    kind: kindOfItem(work),
+    kindFrom: work.kindFrom ?? null,
+    phase: work.phase,
+    route: work.route,
+    priority: work.priority ?? "normal",
+    source: work.source ?? null,
+    triage: work.triage ?? null,
+    questions: questionsSorted(work).map(questionJson),
+    analysis: analysis?.origin ?? null,
+    packs: packsJson(listPacks(env.paths.userDir)),
+    awaiting: work.awaiting,
+    awaitingMessage: work.awaitingMessage ?? null,
+    mail: { unread: inbox.unread, answered: inbox.answered, waiting: inbox.waiting },
+    threads,
+    environment: environmentState(env.paths),
+    tasks,
+    branch,
+    todo,
+    working,
+    team: work.seats ?? [],
+    primaryTeam: work.primaryTeam ?? null,
+    rounds: {
+      judgement: work.rounds?.judgement ?? 0,
+      validation: work.rounds?.validation ?? 0
+    },
+    debate: debateState(work),
+    baseCommit: work.baseCommit,
+    phases: phasesFor(work),
+    knowledge: work.knowledge ?? null,
+    learned: work.learned ?? null,
+    ...kindOfItem(work) === "audit" ? { audit: auditStatusOf(env, work) } : {},
+    verdict: result.verdict,
+    unproven: result.unproven,
+    expected: [...new Set(result.expected.map((p) => p.gate))],
+    criteria: work.criteria.map((c) => ({
+      id: c.id,
+      kind: c.kind,
+      text: c.text,
+      tdd: tddSummary(work, result.evidence, c.id, c.kind, env.policy),
+      ...c.contract ? { contract: c.contract } : {}
+    })),
+    runs: result.evidence.runs.map((r) => ({
+      gate: r.gate,
+      target: r.target,
+      ...r.stack ? { stack: r.stack } : {},
+      status: r.status,
+      durationMs: r.durationMs,
+      ...r.reason ? { reason: r.reason } : {}
+    })),
+    skips: work.skips.map((s) => ({ step: s.step, reason: s.reason })),
+    judgement: judgementRows(work, result.evidence, result.judgement, result.currentFingerprint, env.policy),
+    decisions: (work.decisions ?? []).map((d) => ({
+      id: d.id,
+      question: d.question,
+      ...d.answer !== undefined ? { answer: d.answer } : {},
+      ...d.by ? { by: d.by } : {}
+    })),
+    objections: loadLedger(env.paths, work.id).ledger.objections.map((o) => ({
+      id: o.id,
+      severity: o.severity,
+      status: objectionStatus(o, work, result.evidence, env.policy),
+      text: o.text
+    }))
+  });
+}
 async function dispatch(parsed, io) {
   const [command2, ...args] = parsed.positional;
   if (parsed.flags.version || command2 === "version")
@@ -15670,8 +16197,8 @@ async function dispatch(parsed, io) {
         target.unset = [...new Set([...target.unset ?? [], gate])];
         saveProfile(env.paths, env.profile);
         const text = `${gate} for ${where} unset (was: ${current.command})`;
-        const by = whoDecided(decided);
-        appendDecision(env.paths, { at: nowIso(), item: "profile", kind: "profile", text, by });
+        const by = whoDecides(decided);
+        decide(env, "profile", { kind: "profile", text, by });
         return ok(`${text} ${decisionText(env.policy, decided)}`, {
           target: targetPath,
           gate,
@@ -15902,7 +16429,7 @@ async function dispatch(parsed, io) {
         work.priority = startPriority(priorityFlag, origin, answers);
       if (work.route !== "fast") {
         work.seats = plannedSeats(work.route, work.riskAreas, [], env.policy, undefined, undefined, teamsFor(env.policy, packTemplates(env.paths.userDir)).teams);
-        work.primaryTeam = "backend";
+        work.primaryTeam = primaryTeam([]);
       }
       if (origin) {
         work.origin = { mail: origin.id };
@@ -15944,9 +16471,8 @@ async function dispatch(parsed, io) {
         }
       }
       if (triage?.confirmed && triage.confirmed !== triage.proposed)
-        appendDecision(env.paths, {
+        decide(env, work.id, {
           at: triage.at,
-          item: work.id,
           kind: "triage",
           text: `priority lowered from ${triage.proposed} to ${triage.confirmed}: ${triage.reason ?? ""}`,
           by: triage.by
@@ -16070,9 +16596,7 @@ ${originNotes.join(`
         if ("refused" in result)
           return refuse(result.refused);
         saveLedger(env.paths, opened.work.id, ledger);
-        appendDecision(env.paths, {
-          at: nowIso(),
-          item: opened.work.id,
+        decide(env, opened.work.id, {
           kind: "objection",
           id: result.id,
           text: result.text,
@@ -16095,14 +16619,12 @@ ${originNotes.join(`
           return refuse(result.refused);
         saveLedger(env.paths, opened.work.id, ledger);
         const waiver = result.waived ?? { by: "user" };
-        appendDecision(env.paths, {
-          at: nowIso(),
-          item: opened.work.id,
+        decide(env, opened.work.id, {
           kind: "objection",
           id: result.id,
           text: result.text,
           answer: `waived: ${reason}`,
-          by: whoDecided(waiver)
+          by: whoDecides(waiver)
         });
         return ok(`${result.id} waived ${decidedBy(waiver)}${countedNote(env.policy, waiver)}: ${reason}`, { objection: result });
       }
@@ -16175,14 +16697,12 @@ ${originNotes.join(`
       if ("refused" in result)
         return refuse(result.refused);
       saveWork(env.paths, opened.work);
-      appendDecision(env.paths, {
-        at: nowIso(),
-        item: opened.work.id,
+      decide(env, opened.work.id, {
         kind: "decision",
         id: result.id,
         text: result.question,
         ...result.answer ? { answer: result.answer } : {},
-        by: whoDecided(result)
+        by: whoDecides(result)
       });
       return ok(`${result.id} answered ${decidedBy(result)}: ${result.answer}`, {
         decision: result
@@ -16271,9 +16791,7 @@ ${originNotes.join(`
       const raised = raiseKind(opened.work, reason);
       if (!raised.ok)
         return refuse(raised.reason);
-      appendDecision(env.paths, {
-        at: nowIso(),
-        item: opened.work.id,
+      decide(env, opened.work.id, {
         kind: "kind",
         text: `kind raised to new-project: ${reason}`,
         by: "the agent"
@@ -16306,12 +16824,10 @@ ${originNotes.join(`
         if (!state.reportCurrent)
           return refuse(`the audit report is stale: its inputs changed after it (crew audit ${opened.work.id} report)`);
         approve(opened.work, "audit", signature);
-        appendDecision(env.paths, {
-          at: nowIso(),
-          item: opened.work.id,
+        decide(env, opened.work.id, {
           kind: "approval",
           text: "audit signed",
-          by: whoDecided(signature)
+          by: whoDecides(signature)
         });
         saveWork(env.paths, opened.work);
         const rendered = await renderAudit(env, io, opened.work, auditSignature(opened.work));
@@ -16386,12 +16902,10 @@ ${rendered.text}`, { approvals: opened.work.approvals, ...rendered.data });
       if (decision.by === "user")
         delete opened.work.validatorDispute;
       approve(opened.work, "spec", decision);
-      appendDecision(env.paths, {
-        at: nowIso(),
-        item: opened.work.id,
+      decide(env, opened.work.id, {
         kind: "approval",
         text: "spec approved",
-        by: whoDecided(decision)
+        by: whoDecides(decision)
       });
       saveWork(env.paths, opened.work);
       return ok(`spec approved for ${opened.work.id} ${decisionText(env.policy, decision)}${jevNote}`, { approvals: opened.work.approvals });
@@ -16408,9 +16922,7 @@ ${rendered.text}`, { approvals: opened.work.approvals, ...rendered.data });
         return refuse(outcome.refused);
       saveWork(env.paths, opened.work);
       const ids = outcome.entries.map((e) => e.id).join(", ") || "none";
-      appendDecision(env.paths, {
-        at: nowIso(),
-        item: opened.work.id,
+      decide(env, opened.work.id, {
         kind: "knowledge",
         text: learnedText(outcome.entries.map((e) => e.id), outcome.confirmed),
         by: "the agent"
@@ -16442,61 +16954,9 @@ ${rendered.text}`, { approvals: opened.work.approvals, ...rendered.data });
       return ok(`${opened.work.id}: phase ${result.phase}`, { phase: result.phase });
     }
     case "await":
-    case "resume": {
-      const opened = openForChange(env, args[0]);
-      if (isOutcome(opened))
-        return opened;
-      const usage = "usage: crew await <id> user | role | mail <message id>";
-      const originNotes = [];
-      const moveOrigin = (to) => moveOriginMail(env, opened.work, to, originNotes);
-      const withNotes = (text) => originNotes.length ? `${text}
-${originNotes.join(`
-`)}` : text;
-      if (command2 === "resume") {
-        let cleared = "";
-        if (opened.work.validatorDispute) {
-          const decided = decisionFlag(parsed, env.policy);
-          if (isOutcome(decided))
-            return decided;
-          if (decided.by !== "user")
-            return refuse("the validator's verdict was disputed by jev; a person clears it: the item waits");
-          const by = whoDecided(decided);
-          appendDecision(env.paths, {
-            at: nowIso(),
-            item: opened.work.id,
-            kind: "dispute",
-            text: `jev dispute cleared (${opened.work.validatorDispute.condition})`,
-            by
-          });
-          delete opened.work.validatorDispute;
-          cleared = `; the jev dispute cleared by ${by}`;
-        }
-        opened.work.awaiting = null;
-        delete opened.work.awaitingMessage;
-        saveWork(env.paths, opened.work);
-        moveOrigin("in-progress");
-        return ok(withNotes(`${opened.work.id}: resumed${cleared}`), {
-          awaiting: null,
-          awaitingMessage: null
-        });
-      }
-      const kind = args[1];
-      if (kind !== "user" && kind !== "role" && kind !== "mail")
-        return refuse(usage);
-      if (kind === "mail" && !args[2])
-        return refuse(usage);
-      opened.work.awaiting = kind;
-      if (kind === "mail")
-        opened.work.awaitingMessage = args[2];
-      else
-        delete opened.work.awaitingMessage;
-      saveWork(env.paths, opened.work);
-      moveOrigin("blocked");
-      return ok(withNotes(`${opened.work.id}: ${waitingText(opened.work).slice(2)}`), {
-        awaiting: kind,
-        awaitingMessage: opened.work.awaitingMessage ?? null
-      });
-    }
+      return awaitCommand(env, args);
+    case "resume":
+      return resumeCommand(env, parsed, args);
     case "research": {
       const usage = "usage: crew research <id> verify [--file <path>]";
       const opened = openForChange(env, args[0]);
@@ -16506,15 +16966,15 @@ ${originNotes.join(`
         return refuse(usage);
       const dir = workDir(env.paths, opened.work.id);
       const file = typeof parsed.flags.file === "string" ? resolve6(env.paths.root, parsed.flags.file) : join48(dir, "conclave", "researcher.md");
-      const rel2 = relative12(env.paths.root, file).replace(/\\/g, "/");
-      if (rel2.startsWith("..") || isAbsolute10(rel2))
+      const named2 = rel(env.paths, file);
+      if (named2.startsWith("..") || isAbsolute10(named2))
         return refuse(`${parsed.flags.file} is not under the root`);
       const text = readText(file);
       if (text === null)
-        return refuse(`no researcher file at ${rel2}`);
+        return refuse(`no researcher file at ${named2}`);
       const facts = parseFacts(text);
       if (!facts.length)
-        return ok(`no fact to verify in ${rel2}: a code fact is "- <path from the root>:<line> · <sentence>", a documentation fact "- <URL or document> · "<quote>" · <meaning>"; the strategy's marks name the file's lines either way (crew strategy ${opened.work.id} check), so go on`, { facts: [] });
+        return ok(`no fact to verify in ${named2}: a code fact is "- <path from the root>:<line> · <sentence>", a documentation fact "- <URL or document> · "<quote>" · <meaning>"; the strategy's marks name the file's lines either way (crew strategy ${opened.work.id} check), so go on`, { facts: [] });
       const jev = jevConfig(io.env, env.config);
       const asking = jev.configured && askAllowed(env.policy, "fact");
       const statuses = new Map;
@@ -16677,13 +17137,12 @@ ${notes.join(`
           return decided;
         if (decided.by !== "user")
           return refuse(`a question is answered by a person; the item waits (${id})`);
-        const by = whoDecided(decided);
+        const by = whoDecides(decided);
         const answered = answerQuestion(work, id, text, by);
         if ("refused" in answered)
           return refuse(answered.refused);
-        appendDecision(env.paths, {
+        decide(env, work.id, {
           at: answered.answeredAt,
-          item: work.id,
           kind: "question",
           id,
           text: answered.text,
@@ -16741,7 +17200,7 @@ ${notes.join(`
 ` : "";
       const picked = refreshed.changed.length ? `profile refreshed: ${refreshed.changed.join("; ")}
 ` : "";
-      const review = outcome.review ? relative12(env.paths.root, outcome.review).replace(/\\/g, "/") : null;
+      const review = outcome.review ? rel(env.paths, outcome.review) : null;
       const pending = judgementRows(opened.work, outcome.evidence, outcome.judgement, outcome.evidence.fingerprint ?? "", env.policy).filter((r) => r.status === "planned" || r.status === "stale");
       const filedBySession = sessionFiledLine(outcome.evidence.roles ?? []);
       const judgementNote = pending.length ? `
@@ -16834,18 +17293,9 @@ ${outcome.saveRefused}` : ""),
       saveWork(env.paths, opened.work);
       if (typeof parsed.flags.ruling === "string")
         keepRound(env.paths, opened.work.id, opened.work.rounds?.judgement ?? rounds.judgement, records.map((r) => r.gate), resolve6(env.paths.root, parsed.flags.ruling));
-      const rulingFile = typeof parsed.flags.ruling === "string" ? relative12(env.paths.root, resolve6(env.paths.root, parsed.flags.ruling)).replace(/\\/g, "/") : undefined;
-      for (const record2 of records)
-        for (const f of record2.findings)
-          if (record2.verdict === "not-proven" && f.severity === "defect" && !f.outside)
-            appendDecision(env.paths, {
-              at: nowIso(),
-              item: opened.work.id,
-              kind: "ruling",
-              text: `${record2.gate} defect: ${f.file}${f.line ? `:${f.line}` : ""} ${f.text}`,
-              by: "the judge",
-              ...rulingFile ? { file: rulingFile } : {}
-            });
+      const rulingFile = typeof parsed.flags.ruling === "string" ? rel(env.paths, resolve6(env.paths.root, parsed.flags.ruling)) : undefined;
+      for (const entry of rulingDecisions(records, opened.work.id, rulingFile))
+        appendDecision(env.paths, entry);
       deliver2(env, opened, result.evidence);
       const lines2 = records.flatMap((r) => {
         const outside = r.findings.filter((f) => f.outside).length;
@@ -16888,12 +17338,11 @@ ${outcome.saveRefused}` : ""),
         state.active = null;
         saveState(env.paths, state);
       }
-      appendDecision(env.paths, {
+      decide(env, work.id, {
         at: work.abandoned.at,
-        item: work.id,
         kind: "abandon",
         text: `abandoned: ${reason}`,
-        by: whoDecided(decision)
+        by: whoDecides(decision)
       });
       return ok(`abandoned ${work.id} ${decisionText(env.policy, decision)}: ${reason}`, {
         abandoned: work.abandoned
@@ -16953,12 +17402,12 @@ ${report}`, {
       const opened = openForChange(env, args[0]);
       if (isOutcome(opened))
         return opened;
-      const usage = 'usage: crew task <id> open T-n --criteria AC-1,AC-2 [--text "<task text>"] | note T-n --criteria AC-k --scope <path>[,<path>] [--text "<todo>"] | list | merge T-n [--force] | gate T-n [--scope <path>[,<path>]] | brief T-n';
+      const usage = 'usage: crew task <id> open T-n --criteria AC-1,AC-2 [--text "<task text>"] | note T-n --criteria AC-k --scope <path>[,<path>] [--text "<todo>"] | list | merge T-n [--force] | drop T-n | gate T-n [--scope <path>[,<path>]] | brief T-n';
       const ctx = env.mail;
       if (args[1] === "open") {
         const task = args[2];
         const criteria = commaList(parsed.flags.criteria);
-        if (!task || !criteria.length)
+        if (!task || !criteria.length || args.length > 3)
           return refuse(usage);
         const out2 = openTask(ctx, env, opened.work, task, criteria, typeof parsed.flags.text === "string" ? parsed.flags.text : undefined);
         if ("refused" in out2)
@@ -16972,7 +17421,7 @@ ${out2.notes.join(`
         const task = args[2];
         const criteria = commaList(parsed.flags.criteria);
         const scope = commaList(parsed.flags.scope);
-        if (!task || !criteria.length)
+        if (!task || !criteria.length || args.length > 3)
           return refuse(usage);
         const planText = readText(join48(workDir(env.paths, opened.work.id), "plan.md"));
         const out2 = noteTask(opened.work, task, criteria, scope, typeof parsed.flags.text === "string" ? parsed.flags.text : taskText(planText, task));
@@ -16985,50 +17434,20 @@ ${out2.notes.join(`
       }
       if (args[1] === "gate") {
         const task = args[2];
-        const record2 = (opened.work.tasks ?? []).find((t) => t.task === task);
-        if (!task || !record2)
-          return refuse(task ? `${task} is not a task of ${opened.work.id}` : usage);
-        const flagScope = parsed.flags.scope === undefined ? undefined : commaList(parsed.flags.scope);
-        const scoped = taskScope(env.paths.root, env.profile, record2, flagScope);
-        if ("refused" in scoped)
-          return refuse(scoped.refused);
-        const round = record2.gate?.round ?? 0;
-        const held = continueOrRefuse(env, opened.work, "gate", task, env.policy.team.maxGateRounds, round, `gate round ${round + 1} of ${task}: the policy allows ${env.policy.team.maxGateRounds} (team.maxGateRounds); the user continues it once with crew continue ${opened.work.id} gate ${task}, or decides`);
-        if (held)
-          return held;
-        const result = await runTaskGate(env.paths, opened.work, env.profile, env.policy, scoped.scope);
-        const own = flagScope?.length ? taskScope(env.paths.root, env.profile, record2) : scoped;
-        const planned = planTaskJudgement(env, {
-          work: opened.work,
-          tampered: env.tampered || opened.tampered,
-          record: record2,
-          task,
-          round: round + 1,
-          scope: scoped.scope,
-          ownScope: "scope" in own ? own.scope : [],
-          result
-        });
-        settleTaskState(opened.work, record2, env.policy);
-        saveWork(env.paths, opened.work);
-        const lines2 = result.runs.map((r) => `  ${r.gate} (${r.target}): ${r.status} in ${(r.durationMs / 1000).toFixed(1)}s${r.reason ? ` (${r.reason})` : ""}`);
-        const pending = result.status === "pass" ? taskPending(opened.work, record2, env.policy) : [];
-        if (pending.length)
-          lines2.push(`Judgement gates to run for ${task}: ${pending.map((g) => `${g} (${planned.find((p) => p.gate === g)?.reason ?? ""})`).join(", ")}; inputs in .crew/work/${opened.work.id}/review/${task}/ (diff.patch, files.txt); record each with crew judgement ${opened.work.id} record --task ${task} --ruling <file>`);
-        const verdict = result.status === "pass" && pending.length ? `pass, judgement pending (${pending.join(", ")})` : result.status;
-        return {
-          code: result.status === "pass" ? 0 : 1,
-          stdout: true,
-          text: `${lines2.join(`
-`)}
-${task} gate round ${round + 1}: ${verdict}`,
-          data: { task: record2, gate: record2.gate, pending }
-        };
+        if (!task)
+          return refuse(usage);
+        const record2 = findTask(opened.work, task);
+        if ("refused" in record2)
+          return refuse(record2.refused);
+        return taskGate(env, opened, parsed, record2);
       }
       if (args[1] === "brief") {
         const task = args[2];
-        const record2 = (opened.work.tasks ?? []).find((t) => t.task === task);
-        if (!task || !record2)
-          return refuse(task ? `${task} is not a task of ${opened.work.id}` : usage);
+        if (!task)
+          return refuse(usage);
+        const record2 = findTask(opened.work, task);
+        if ("refused" in record2)
+          return refuse(record2.refused);
         if (parsed.flags.print) {
           const brief = record2.brief ? readText(join48(workDir(env.paths, opened.work.id), record2.brief)) : null;
           if (brief === null)
@@ -17060,8 +17479,29 @@ ${lines2.join(`
           tasks: rows
         });
       }
+      if (args[1] === "drop") {
+        const task = args[2];
+        if (!task || args.length > 3)
+          return refuse(usage);
+        const decision = decisionFlag(parsed, env.policy);
+        if (isOutcome(decision))
+          return decision;
+        const out2 = dropTask(ctx, env, opened.work, task);
+        if ("refused" in out2)
+          return refuse(out2.refused);
+        decide(env, opened.work.id, {
+          kind: "task",
+          text: `dropped ${task}: branch ${out2.record.branch} at ${out2.tip}`,
+          by: whoDecides(decision)
+        });
+        return ok(`${out2.swept.length ? `${out2.swept.join(`
+`)}
+` : ""}dropped ${task} of ${opened.work.id} ${decisionText(env.policy, decision)}: worktree ${out2.record.worktree} and branch ${out2.record.branch} (at ${out2.tip.slice(0, 7)}) removed, message ${out2.record.message} refused${out2.notes.length ? `
+${out2.notes.join(`
+`)}` : ""}`, { task: out2.record, tip: out2.tip, swept: out2.swept });
+      }
       if (args[1] === "merge") {
-        if (!args[2])
+        if (!args[2] || args.length > 3)
           return refuse(usage);
         const forcedBy = parsed.flags.force ? decisionFlag(parsed, env.policy) : undefined;
         if (isOutcome(forcedBy))
@@ -17162,19 +17602,13 @@ test-first not credited: ${out2.uncredited}` : "";
         return refuse(`already recorded: ${repeated.file} is the answer recorded for round ${repeated.round} of ${by} (${repeated.what}); record the lead's new answer (a resumed lead's lands in ${replyFile(by, what)})`);
       const evidence = loadEvidence(env.paths, work.id).evidence;
       const hash = validationHash(what, readText(join48(dir, "spec.md")), readText(join48(dir, "plan.md")), evidence.fingerprint ?? "");
-      const same2 = (work.validations ?? []).filter((v) => v.what === what);
-      const last = same2[same2.length - 1];
-      const mine = same2.filter((v) => v.by === by);
-      const lastMine = mine[mine.length - 1];
-      const leadRound = !lastMine ? 1 : lastMine.hash === hash ? lastMine.round : lastMine.round + 1;
       const rounds = work.rounds ?? { judgement: 0, validation: 0 };
-      const newRound = what === "spec" ? leadRound > rounds.validation : !last || last.hash !== hash;
+      const { round, newRound } = validationRound(work.validations ?? [], what, by, hash, rounds.validation);
       if (what === "spec" && newRound) {
-        const held = continueOrRefuse(env, work, "validation", undefined, env.policy.team.maxValidationRounds, leadRound - 1, `validation round ${leadRound} of ${work.id}: the policy allows ${env.policy.team.maxValidationRounds} (team.maxValidationRounds); the user continues it once with crew continue ${work.id} validation, or decides`);
+        const held = continueOrRefuse(env, work, "validation", undefined, env.policy.team.maxValidationRounds, round - 1, `validation round ${round} of ${work.id}: the policy allows ${env.policy.team.maxValidationRounds} (team.maxValidationRounds); the user continues it once with crew continue ${work.id} validation, or decides`);
         if (held)
           return held;
       }
-      const round = what === "spec" ? leadRound : newRound ? (last?.round ?? 0) + 1 : last?.round ?? 1;
       work.validations = [
         ...work.validations ?? [],
         {
@@ -17183,20 +17617,19 @@ test-first not credited: ${out2.uncredited}` : "";
           verdict: verdict.verdict,
           returns: verdict.returns,
           round,
-          file: relative12(dir, path).replace(/\\/g, "/"),
+          file: name,
           hash,
           fileHash: contentHash,
           at: nowIso()
         }
       ];
       if (what === "spec" && newRound)
-        work.rounds = { ...rounds, validation: Math.max(rounds.validation, leadRound) };
+        work.rounds = { ...rounds, validation: Math.max(rounds.validation, round) };
       saveWork(env.paths, work);
       const recorded = work.validations[work.validations.length - 1];
       if (verdict.verdict === "returned" && recorded)
-        appendDecision(env.paths, {
+        decide(env, work.id, {
           at: recorded.at,
-          item: work.id,
           kind: "validation",
           text: `${what} returned by ${by}: ${verdict.returns} return${verdict.returns === 1 ? "" : "s"}`,
           by,
@@ -17233,7 +17666,7 @@ ${filedLine}` : ""}`, {
       const unreadable = read2.base === null && read2.reason !== "missing" ? read2.reason : null;
       const visible = (id) => read2.base?.entries.find((e) => e.id === id && visibleTo(e, scope)) ?? null;
       const unseen = (id) => refuse(`no entry ${id} visible to this project`);
-      const register = (text, by) => appendDecision(env.paths, { at: nowIso(), item: "knowledge", kind: "knowledge", text, by });
+      const register = (text, by) => decide(env, "knowledge", { kind: "knowledge", text, by });
       const kindFlag = parsed.flags.kind;
       if (sub === "list") {
         if (kindFlag !== undefined && !KNOWLEDGE_KINDS.includes(kindFlag))
@@ -17448,9 +17881,7 @@ ${filedLine}` : ""}`, {
       const usage = "usage: crew pack add <path> | remove <name> | list | show <name> | files checklists <kind> | files knowledge <key> | files knowledge --item <id> | sync";
       const sub = args[0];
       const userDir = env.paths.userDir;
-      const register = (text) => appendDecision(env.paths, {
-        at: nowIso(),
-        item: "pack",
+      const register = (text) => decide(env, "pack", {
         kind: "pack",
         text,
         by: "the agent"
@@ -17564,7 +17995,7 @@ ${filedLine}` : ""}`, {
       if (verb !== "review" && verb !== "record" || typeof ws !== "string")
         return refuse(usage);
       if (!MAIL_NAME.test(ws))
-        return refuse(`a workspace is a lowercase name of letters, digits, dot, dash and underscore, up to 64 characters, not ${ws}`);
+        return refuse(`a workspace is ${NAME_HINT}, not ${ws}`);
       const own = env.mail.self.workspace;
       if (own === null)
         return refuse("this project is in no workspace (crew policy set mail.workspace <name>)");
@@ -17605,7 +18036,9 @@ ${filedLine}` : ""}`, {
       if (read2.base === null && read2.reason !== "missing")
         return refuse(`the knowledge base cannot be read: ${read2.reason}; nothing was filed`);
       ensureDir(dir);
-      const target = join48(dir, `${date}-plan.md`);
+      let target = join48(dir, `${date}-plan.md`);
+      for (let n = 2;existsSync23(target); n++)
+        target = join48(dir, `${date}-plan-${n}.md`);
       writeText(target, text);
       const added = addEntry(env.paths.userDir, {
         kind: "general",
@@ -17646,12 +18079,10 @@ entry ${added.id}: general, marked for ${ws}`, { path: target, entry: added });
         { what, ...task ? { task } : {}, by: decision, at: nowIso() }
       ];
       saveWork(env.paths, opened.work);
-      appendDecision(env.paths, {
-        at: nowIso(),
-        item: opened.work.id,
+      decide(env, opened.work.id, {
         kind: "continue",
         text: `${what} continued for one more round`,
-        by: whoDecided(decision)
+        by: whoDecides(decision)
       });
       const subject = what === "gate" ? `gate of ${task} of ${opened.work.id}` : `${what} of ${opened.work.id}`;
       return ok(`${subject} continued for one more round ${decisionText(env.policy, decision)}`, {
@@ -17672,9 +18103,7 @@ entry ${added.id}: general, marked for ${ws}`, { path: target, entry: added });
             return refuse(signed.refused);
           const { hash, ...state2 } = signed;
           const digest = `sha256:${hash.replace(/^sha256:/, "").slice(0, 12)}`;
-          appendDecision(env.paths, {
-            at: nowIso(),
-            item: "workspace",
+          decide(env, "workspace", {
             kind: "priorities",
             text: `business priorities signed (${signed.path}, ${digest})`,
             by
@@ -17744,356 +18173,10 @@ ${lines2.join(`
       const active = named2 ?? activeWork(env.paths);
       if (!active?.work)
         return ok("no active work item", { active: null });
-      const result = assess(env.paths, active.work, env.profile, env.policy, env.tampered || active.tampered);
-      const work = active.work;
-      let branch = null;
-      try {
-        const name = gitRun(env.paths.root, "rev-parse", "--abbrev-ref", "HEAD").trim();
-        branch = name ? name.length > 120 ? `${name.slice(0, 119)}…` : name : null;
-      } catch {
-        branch = null;
-      }
-      const todoItems = (work.tasks ?? []).map((t) => ({
-        task: t.task,
-        criteria: t.criteria,
-        state: t.state ?? "open",
-        inline: t.inline === true
-      }));
-      const todo = {
-        done: todoItems.filter((t) => t.state === "briefed").length,
-        total: todoItems.length,
-        items: todoItems
-      };
-      const working = workingRoles(env.paths).map((w) => ({
-        agent: w.agent,
-        team: w.team,
-        since: w.since,
-        ...w.description ? { description: w.description } : {}
-      }));
-      const extra = [
-        branch ? `  branch ${branch}` : null,
-        todo.total ? `  todo ${todo.done}/${todo.total} briefed (${todoItems.map((t) => `${t.task} ${t.state}`).join(", ")})` : null,
-        working.length ? `  working: ${working.map((w) => w.description ? `${w.agent} (${w.description})` : w.agent).join(", ")}` : null
-      ].filter((l) => l !== null);
-      if (work.source)
-        extra.unshift(`  source ${sourceLine(work.source)}`);
-      const knowledge = knowledgeLine2(env, work);
-      if (knowledge)
-        extra.push(knowledge);
-      const learned = work.learned;
-      const learnLine = learned ? `  learn: ${learnedText(learned.entries, learned.confirmed)}` : work.phase === "learn" ? `  learn: proven, not learned: crew learn ${work.id}` : work.phase === "deliver" && result.verdict === "proven" ? `  learn: proven; crew phase ${work.id} next, then crew learn ${work.id} writes the base` : null;
-      if (learnLine)
-        extra.push(learnLine);
-      const registry = teamsFor(env.policy, packTemplates(env.paths.userDir));
-      if (registry.warning)
-        extra.push(`  ${registry.warning}`);
-      const plannedStrategy = work.phase === "strategy" ? plannedStrategyJudgement(work)[0] : undefined;
-      if (plannedStrategy)
-        extra.unshift(strategyLine(strategyOf(env, work, result.evidence), plannedStrategy));
-      if (work.phase === "audit")
-        extra.unshift(auditLine(env, work));
-      const analysis = work.phase === "analyse" ? readOrigin(env.paths, work.id) : null;
-      if (analysis)
-        extra.unshift(analysis.origin ? `  analysis: ${originSummary(analysis.origin)}` : `  analysis: origin.json changed outside the engine (crew accept ${work.id})`);
-      extra.unshift(...openQuestions(work).map((q) => `  question ${q.id} open: ${oneLine(q.text)} (${channelsText(q)})`));
-      const text = `${work.id} "${work.title}"
-  phase ${work.phase}, ${work.abandoned ? `abandoned (${work.abandoned.reason}), ` : ""}route ${work.route}, kind ${kindOfItem(work)}, ${triageText(work, "status")}${waitingText(work)}
-${kindOfItem(work) === "audit" ? `  audit: the proof is the signed report
-` : ""}${extra.length ? `${extra.join(`
-`)}
-` : ""}${gateSummary(work, result.verdict, result.unproven, result.evidence.runs)}`;
-      const synced = guarded("the mail was not synced", () => syncMail(env.mail, env.paths));
-      let inbox = emptyInboxSummary();
-      const summarised = guarded("the inbox was not read", () => {
-        inbox = inboxSummary(env.mail);
-      });
-      const taken = guarded("the replies were not taken", () => takeReplies(env.mail, env.paths, active));
-      let tasks = [];
-      const listed = guarded("the tasks were not listed", () => {
-        tasks = listTasks(env.mail, work);
-      });
-      let threads = [];
-      const threaded = guarded("the threads were not read", () => {
-        threads = projectThreads(env.mail);
-      });
-      const notes = [synced, summarised, taken, listed, threaded].filter(Boolean);
-      return ok(notes.length ? `${text}
-${notes.join(`
-`)}` : text, {
-        active: work.id,
-        title: work.title,
-        type: work.type,
-        kind: kindOfItem(work),
-        kindFrom: work.kindFrom ?? null,
-        phase: work.phase,
-        route: work.route,
-        priority: work.priority ?? "normal",
-        source: work.source ?? null,
-        triage: work.triage ?? null,
-        questions: questionsSorted(work).map(questionJson),
-        analysis: analysis?.origin ?? null,
-        packs: packsJson(listPacks(env.paths.userDir)),
-        awaiting: work.awaiting,
-        awaitingMessage: work.awaitingMessage ?? null,
-        mail: { unread: inbox.unread, answered: inbox.answered, waiting: inbox.waiting },
-        threads,
-        environment: environmentState(env.paths),
-        tasks,
-        branch,
-        todo,
-        working,
-        team: work.seats ?? [],
-        primaryTeam: work.primaryTeam ?? null,
-        rounds: {
-          judgement: work.rounds?.judgement ?? 0,
-          validation: work.rounds?.validation ?? 0
-        },
-        debate: debateState(work),
-        baseCommit: work.baseCommit,
-        phases: phasesFor(work),
-        knowledge: work.knowledge ?? null,
-        learned: work.learned ?? null,
-        ...kindOfItem(work) === "audit" ? { audit: auditStatusOf(env, work) } : {},
-        verdict: result.verdict,
-        unproven: result.unproven,
-        expected: [...new Set(result.expected.map((p) => p.gate))],
-        criteria: work.criteria.map((c) => ({
-          id: c.id,
-          kind: c.kind,
-          text: c.text,
-          tdd: tddSummary(work, result.evidence, c.id, c.kind, env.policy),
-          ...c.contract ? { contract: c.contract } : {}
-        })),
-        runs: result.evidence.runs.map((r) => ({
-          gate: r.gate,
-          target: r.target,
-          ...r.stack ? { stack: r.stack } : {},
-          status: r.status,
-          durationMs: r.durationMs,
-          ...r.reason ? { reason: r.reason } : {}
-        })),
-        skips: work.skips.map((s) => ({ step: s.step, reason: s.reason })),
-        judgement: judgementRows(work, result.evidence, result.judgement, result.currentFingerprint, env.policy),
-        decisions: (work.decisions ?? []).map((d) => ({
-          id: d.id,
-          question: d.question,
-          ...d.answer !== undefined ? { answer: d.answer } : {},
-          ...d.by ? { by: d.by } : {}
-        })),
-        objections: loadLedger(env.paths, work.id).ledger.objections.map((o) => ({
-          id: o.id,
-          severity: o.severity,
-          status: objectionStatus(o, work, result.evidence, env.policy),
-          text: o.text
-        }))
-      });
+      return statusView(env, { work: active.work, tampered: active.tampered });
     }
-    case "mail": {
-      const sendUsage = 'usage: crew mail send --to <project|.> --type question|change-request|notice|blocker [--priority blocker|high|normal|low] [--thread <root>] [--agent <session|T-n|role>] [--item <id>] [--reply-to <mid>] [--subject <text>] "<text>" [--file <path>]';
-      const usage = `${sendUsage} | inbox [--all] | read <mid> | thread <mid> | accept <mid> [--priority <p>] [--reason "<why>"] | reply <mid> "<text>" [--branch <b>] [--item <child id>] [--contract <kind>:<path>[:<summary>]]… [--as <role>] [--file <path>] | refuse <mid> --reason "<why>" | status | stop <mid>`;
-      const ctx = env.mail;
-      const verb = args[0];
-      if (verb === "send") {
-        const to = parsed.flags.to;
-        const type = parsed.flags.type;
-        const text = args.slice(1).join(" ");
-        if (typeof to !== "string" || !isMailType(type))
-          return refuse(sendUsage);
-        const sendPriority = parsed.flags.priority;
-        if (sendPriority !== undefined && !isMailPriority(sendPriority))
-          return refuse(badPriority(sendPriority));
-        const item = typeof parsed.flags.item === "string" ? parsed.flags.item : undefined;
-        const work = item ? loadWork(env.paths, item).work ?? null : activeWork(env.paths)?.work ?? null;
-        if (item && !work)
-          return refuse(`unknown work item: ${item}`);
-        const out2 = send(ctx, {
-          to,
-          type,
-          text,
-          ...sendPriority ? { priority: sendPriority } : {},
-          ...typeof parsed.flags.thread === "string" ? { thread: parsed.flags.thread } : {},
-          ...typeof parsed.flags.agent === "string" ? { agent: parsed.flags.agent } : {},
-          ...typeof parsed.flags.subject === "string" ? { subject: parsed.flags.subject } : {},
-          ...typeof parsed.flags.file === "string" ? { filePath: parsed.flags.file } : {},
-          ...item ? { item } : {},
-          ...typeof parsed.flags["reply-to"] === "string" ? { replyTo: parsed.flags["reply-to"] } : {}
-        }, work);
-        if ("refused" in out2)
-          return refuse(`refused: ${out2.refused}${out2.message ? "; recorded in the outbox as refused" : ""}`, { refused: out2.refused, message: out2.message });
-        const { message: message2, delivery } = out2;
-        const where = `to ${message2.to.project} (workspace ${message2.to.workspace})`;
-        let next;
-        if (delivery.kind === "self")
-          next = `to ${message2.to.agent ?? "session"} of this project`;
-        else if (delivery.kind === "live")
-          next = `live session (session ${delivery.entry.sessionId}): ring it if your harness lists it`;
-        else if (delivery.kind === "queued")
-          next = `queued; ${delivery.reason}`;
-        else
-          next = openForMail(ctx, env.policy, message2, delivery);
-        const note = work ? "" : `
-note: no active work item, so no item keeps a copy of this message`;
-        return ok(`sent ${message2.id} ${where}; ${next}${note}`, {
-          message: message2,
-          delivery: delivery.kind,
-          ...delivery.kind === "open" ? { mode: delivery.mode } : {}
-        });
-      }
-      if (verb === "inbox") {
-        syncMail(ctx, env.paths);
-        const { messages, tampered } = ownInbox(ctx);
-        if (tampered)
-          return refuse(tamperedBox(ctx.self.project, "inbox"));
-        const shown = parsed.flags.all ? messages : messages.filter((m) => {
-          const status = mailStatus(m);
-          return status === "done" ? !m.replyTo : status !== "refused" && status !== "expired";
-        });
-        const summary = inboxSummary(ctx);
-        const lines2 = shown.map((m) => `  ${m.id} · [${decidedPriority(m)}] · ${m.type} · from ${partyLabel(m.from)} · ${m.subject} · ${mailStatus(m)}${m.reason ? `: ${m.reason}` : ""}`);
-        return ok(`Mail (${ctx.self.workspace ?? "alone"}/${ctx.self.project}, as ${ctx.self.agent}): ${summary.unread} unread, ${summary.answered} answered${lines2.length ? `
-${lines2.join(`
-`)}` : ""}`, { ...summary, messages: shown });
-      }
-      if (verb === "read") {
-        if (!args[1])
-          return refuse(usage);
-        syncMail(ctx, env.paths);
-        const notes = [];
-        const result = markRead(ctx, args[1], notes);
-        if ("refused" in result)
-          return refuse(result.refused);
-        const body = result.bodyFile ? readText(result.bodyFile) ?? result.body : result.body;
-        const head = [
-          ...notes,
-          `id: ${result.id}`,
-          `from: ${result.from.project} (${result.from.agent})`,
-          `to: ${result.to.project}${result.to.agent ? ` (${result.to.agent})` : ""}`,
-          `type: ${result.type}`,
-          `subject: ${result.subject}`,
-          `status: ${mailStatus(result)}${result.reason ? `: ${result.reason}` : ""}`,
-          `at: ${result.at}`,
-          priorityLine(result),
-          ...evidenceLine(result),
-          ...result.from.item ? [`from item: ${result.from.item}`] : [],
-          ...result.replyTo ? [`reply to: ${result.replyTo}`] : [],
-          ...result.branch ? [`branch: ${result.branch}`] : [],
-          ...result.item ? [`item: ${result.item}${result.verdict ? ` (${result.verdict})` : ""}`] : []
-        ];
-        return ok(`${head.join(`
-`)}
-
-${body}`, { message: result, body });
-      }
-      if (verb === "reply") {
-        const text = args.slice(2).join(" ");
-        if (!args[1])
-          return refuse(usage);
-        const notes = [];
-        const result = reply(ctx, args[1], text, {
-          ...typeof parsed.flags.file === "string" ? { filePath: parsed.flags.file } : {},
-          ...typeof parsed.flags.branch === "string" ? { branch: parsed.flags.branch } : {},
-          ...typeof parsed.flags.item === "string" ? { item: parsed.flags.item } : {},
-          ...typeof parsed.flags.as === "string" ? { as: parsed.flags.as } : {},
-          ...parsed.multi.contract?.length ? { contracts: parsed.multi.contract } : {}
-        }, notes);
-        if ("refused" in result)
-          return refuse(result.delivered === undefined ? result.refused : `${result.delivered} was delivered, but ${result.refused}`);
-        return ok(`replied to ${args[1]}: ${result.reply.id} to ${result.reply.to.project}; ${args[1]} ${mailStatus(result.original)}${notes.length ? `
-${notes.join(`
-`)}` : ""}`, { reply: result.reply, original: result.original, notes });
-      }
-      if (verb === "thread") {
-        if (!args[1])
-          return refuse(usage);
-        syncMail(ctx, env.paths);
-        const result = threadMessages(ctx, args[1]);
-        if ("refused" in result)
-          return refuse(result.refused);
-        const lines2 = result.messages.map((m) => `  ${m.id} · [${decidedPriority(m)}] · ${m.type} · ${partyLabel(m.from)} → ${partyLabel(m.to)} · ${oneLine(m.subject)} · ${mailStatus(m)}`);
-        return ok(`Thread ${args[1]}: ${result.messages.length} message${result.messages.length === 1 ? "" : "s"}, ${result.parties.length} part${result.parties.length === 1 ? "y" : "ies"} (${result.parties.join(", ")})
-${lines2.join(`
-`)}`, { root: args[1], messages: result.messages, parties: result.parties });
-      }
-      if (verb === "accept") {
-        if (!args[1])
-          return refuse(usage);
-        const priority = parsed.flags.priority;
-        if (priority !== undefined && !isMailPriority(priority))
-          return refuse(badPriority(priority));
-        const reason = typeof parsed.flags.reason === "string" ? parsed.flags.reason : undefined;
-        const notes = [];
-        const result = acceptMail(ctx, args[1], {
-          ...priority ? { priority } : {},
-          ...reason ? { reason } : {},
-          by: ctx.self.agent
-        }, notes);
-        if ("refused" in result)
-          return refuse(result.refused);
-        const d = result.message.priorityDecision;
-        const level = d ? `${d.confirmed}${d.confirmed !== d.proposed ? ` (proposed ${d.proposed})` : ""}${d.reason ? `: ${d.reason}` : ""}` : priorityOf(result.message);
-        return ok(`${args[1]} accepted at ${level}${notes.length ? `
-${notes.join(`
-`)}` : ""}`, {
-          message: result.message,
-          notes
-        });
-      }
-      if (verb === "refuse") {
-        const reason = typeof parsed.flags.reason === "string" ? parsed.flags.reason : "";
-        if (!args[1] || !reason.trim())
-          return refuse(usage);
-        const notes = [];
-        const result = refuseMail(ctx, args[1], reason, notes);
-        if ("refused" in result)
-          return refuse(result.refused);
-        return ok(`${args[1]} refused: ${reason.trim()}${notes.length ? `
-${notes.join(`
-`)}` : ""}`, { message: result, notes });
-      }
-      if (verb === "status") {
-        const pruned = pruneRegistry(env.paths.userDir);
-        const swept = sweepSafely(ctx);
-        const { messages: sessions, tampered, untrusted } = readOpenSessions(ctx);
-        const sessionLine = (m) => {
-          const opened = m.opened;
-          return `  ${m.id} → ${m.to.project}: ${opened.mode} session ${opened.name} (pid ${opened.pid ?? "none"}), since ${opened.startedAt}, ${Math.floor(minutesRun(opened))} of ${opened.maxMinutes} minutes used, ${opened.maxTurns} turns allowed`;
-        };
-        const sweptLine = sweptText(swept);
-        const untrustedLine = (m) => {
-          const opened = m.opened;
-          const state = pidState(opened);
-          const marked = state === "session" ? "" : state === "gone" ? " (gone)" : " (pid now another process)";
-          return `${sessionLine(m)}, log ${opened.log}${marked}`;
-        };
-        const named2 = tampered && !swept.lines.includes(tampered) ? `${tampered}
-` : "";
-        const listed = tampered ? `${named2}open sessions as the outbox records them (not trusted; stop one with kill -TERM -- -<pid>, then kill -KILL -- -<pid> after a second; read its log): ${untrusted.length ? `
-${untrusted.map(untrustedLine).join(`
-`)}` : "none"}` : `open sessions: ${sessions.length ? `
-${sessions.map(sessionLine).join(`
-`)}` : "none"}`;
-        let summary = emptyInboxSummary();
-        const summarised = guarded("the inbox was not read", () => {
-          summary = inboxSummary(ctx);
-        });
-        return ok(`${summarised || (summary.line ?? `Mail (${ctx.self.workspace ?? "alone"}): inbox empty`)}${sweptLine ? `
-${sweptLine}` : ""}
-${listed}${pruned.length ? `
-registry pruned: ${pruned.join(", ")}` : ""}`, { sessions, untrusted, swept, pruned, ...summary });
-      }
-      if (verb === "stop") {
-        if (!args[1])
-          return refuse(usage);
-        const notes = [];
-        const stopped = stopSession(ctx, args[1], notes);
-        if ("refused" in stopped)
-          return refuse(stopped.refused);
-        return ok(`${stopped.id} stopped (session ${stopped.opened?.name}, pid ${stopped.opened?.pid})${notes.length ? `
-${notes.join(`
-`)}` : ""}`, { message: stopped, notes });
-      }
-      return refuse(usage);
-    }
+    case "mail":
+      return mailCommand(env, parsed, args);
     default:
       return refuse(`unknown command: ${command2}
 ${HELP}`);
@@ -18204,6 +18287,7 @@ var HELP = `crew ${VERSION}
   workspace priorities [accept [--file <path>]]   the workspace's signed business priorities (accept asks the user)
   task <id> open T-n --criteria AC-1,AC-2 [--text "<task text>"]   hand a task of the plan to an implementer: a message, a worktree, a branch, a session
   task <id> list | merge T-n [--force]   the tasks and their children; merge a proven child's branch (--force merges an unproven one: asks the user)
+  task <id> drop T-n                    remove an unmerged task whose implementer is not running: its worktree, its branch, its record; its message refused (asks the user)
   tdd <red|green|before|after|observed> <id> <criterion> [--reason "<why>"] [-- <cmd>]
   gate run <id> [--only a,b]            run the gates the route requires; plans the judgement gates and writes their inputs to .crew/work/<id>/review/
   judgement <id> record --ruling <file>  record the rulings of a review file ({"rulings":[{gate,verdict,reviewer,judge,findings,tokens}]}); exit 0 once proven
@@ -18211,7 +18295,7 @@ var HELP = `crew ${VERSION}
   team <id>                   the seats the route plans for the item, with their reasons, recorded
   validation <id> record --what spec|plan|delivery --by lead-<team> --file <path>   a lead's verdict from its file; a contradiction is refused
   continue <id> judgement|validation|gate T-n   one more round past the policy's cap (the user's decision)
-  decisions [--grep <text>]   the project's decision register, newest first; the engine appends at every decision
+  decisions [--grep <text>]   the project's decision register, newest first; --grep matches the id, the text and the answer, in any case
   metrics [--workspace <ws>]  the figures of this project, or of the workspace's registered projects, from the records and the base
   cto review --workspace <ws>          write the CTO's inputs (the workspace's metrics, the last plan, the base's figures and rows) under the user's crew directory and print the launch line
   cto record --workspace <ws> --file <plan.md>   file the CTO's plan under the user's crew directory and enter it in the knowledge base, marked for the workspace

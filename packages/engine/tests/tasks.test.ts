@@ -514,7 +514,7 @@ test("SP2c AC-3: crew task open refuses what it must, then makes the worktree, t
     "unknown criterion: AC-7",
   );
   expect((await c.run("task", id, "open", "T-2")).err.trim()).toBe(
-    'usage: crew task <id> open T-n --criteria AC-1,AC-2 [--text "<task text>"] | note T-n --criteria AC-k --scope <path>[,<path>] [--text "<todo>"] | list | merge T-n [--force] | gate T-n [--scope <path>[,<path>]] | brief T-n',
+    'usage: crew task <id> open T-n --criteria AC-1,AC-2 [--text "<task text>"] | note T-n --criteria AC-k --scope <path>[,<path>] [--text "<todo>"] | list | merge T-n [--force] | drop T-n | gate T-n [--scope <path>[,<path>]] | brief T-n',
   );
   expect((await c.run("task", id, "open", "t2", "--criteria", "AC-2")).err.trim()).toBe(
     "a task is named T-n, not t2",

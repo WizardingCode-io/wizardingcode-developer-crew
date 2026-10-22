@@ -102,6 +102,33 @@ export function validationHash(
     .digest("hex")}`;
 }
 
+/**
+ * The round a lead's record counts in, one counter per subject (findings 27, 106). A spec round is
+ * counted per lead and per revision that lead read: a lead's first record is its round 1, a record
+ * on the hash of its last record keeps that round, any other hash opens the lead's next one; it is
+ * a new round of the item past the rounds already spent (`spentSpecRounds`), so a spec revised
+ * between one lead's record and another lead's first never costs a round. The plan's and the
+ * delivery's records carry their own count by hash and spend no round (the gate rounds bound a
+ * delivery): a hash other than the last record's opens the next.
+ */
+export function validationRound(
+  validations: readonly Validation[],
+  what: Validation["what"],
+  by: string,
+  hash: string,
+  spentSpecRounds: number,
+): { round: number; newRound: boolean } {
+  const same = validations.filter((v) => v.what === what);
+  if (what === "spec") {
+    const lastMine = same.filter((v) => v.by === by).at(-1);
+    const round = !lastMine ? 1 : lastMine.hash === hash ? lastMine.round : lastMine.round + 1;
+    return { round, newRound: round > spentSpecRounds };
+  }
+  const last = same.at(-1);
+  const newRound = !last || last.hash !== hash;
+  return { round: newRound ? (last?.round ?? 0) + 1 : (last?.round ?? 1), newRound };
+}
+
 /** The lead seats of the item, from its recorded seats. */
 export function leadSeats(work: WorkItem): Seat[] {
   return (work.seats ?? []).filter((s) => s.kind === "lead");

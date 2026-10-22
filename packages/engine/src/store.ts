@@ -7,7 +7,8 @@ type Integrity = Record<string, string>;
 /** A person may write the policy by hand; every other protected file is written only by the engine. */
 const HAND_WRITTEN = ".crew/policy.json";
 
-function rel(paths: CrewPaths, absPath: string): string {
+/** A path as the records name it: from the project's root, with forward slashes. */
+export function rel(paths: CrewPaths, absPath: string): string {
   return relative(paths.root, absPath).replace(/\\/g, "/");
 }
 

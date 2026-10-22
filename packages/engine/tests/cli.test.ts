@@ -23,7 +23,16 @@ import { loadEvidence, saveEvidence } from "../src/evidence.ts";
 import { writeJson } from "../src/fs.ts";
 import { readReviewInputs } from "../src/judgement.ts";
 import { readBase } from "../src/knowledge.ts";
-import { mailbox, mailContext, ownInbox, readBox, registerProject, writeBox } from "../src/mail.ts";
+import {
+  mailbox,
+  mailContext,
+  ownInbox,
+  readBox,
+  registerProject,
+  tamperedBox,
+  writeBox,
+} from "../src/mail.ts";
+import { isAlive } from "../src/open.ts";
 import { isProtectedPath, knowledgePath } from "../src/paths.ts";
 import { loadPolicy } from "../src/policy.ts";
 import { loadProfile } from "../src/profile.ts";
@@ -31,6 +40,7 @@ import { guaranteeLines, pluginRoot, RUNTIMES } from "../src/runtimes.ts";
 import { loadState, recordWorking } from "../src/state.ts";
 import * as store from "../src/store.ts";
 import { readProtectedJson, writeProtectedJson } from "../src/store.ts";
+import { taskNames } from "../src/tasks.ts";
 import type { GateRun, KnowledgeEntry, Mailbox, Message, WorkItem } from "../src/types.ts";
 import { fileHash } from "../src/validation.ts";
 import { VERSION } from "../src/version.ts";
@@ -9684,4 +9694,359 @@ test("F138: an item in its learn phase learns on the verdict its last gate run r
   const learned = await c.run("learn", id);
   expect(learned.code, learned.err).toBe(0);
   expect(learned.out).toContain('validated-solution · "Add a total"');
+});
+
+test("CON5-AC-1 (finding 53): a second CTO plan recorded the same day is written beside the first, in <date>-plan-2.md, then -plan-3.md, never over it", async () => {
+  const { a, ca } = await ctoWorkspace();
+  const record = async (file: string, text: string) => {
+    write(a, file, text);
+    const filed = await ca.run("cto", "record", "--workspace", "w", "--file", file);
+    expect(filed.code, filed.err).toBe(0);
+    return (filed.out.split("\n")[0] as string).replace("CTO plan of w filed: ", "");
+  };
+  const first = await record("plan-one.md", "# CTO plan one\n## Keep\n- the fast route\n");
+  expect(first).toMatch(/\/crew\/cto\/w\/\d{4}-\d{2}-\d{2}-plan\.md$/);
+  const date = basename(first).slice(0, 10);
+  const second = await record("plan-two.md", "# CTO plan two\n## Change\n- the cap\n");
+  expect(second).toBe(join(dirname(first), `${date}-plan-2.md`));
+  expect(readFileSync(first, "utf8")).toBe("# CTO plan one\n## Keep\n- the fast route\n");
+  expect(readFileSync(second, "utf8")).toBe("# CTO plan two\n## Change\n- the cap\n");
+  const third = await record("plan-three.md", "# CTO plan three\n");
+  expect(third).toBe(join(dirname(first), `${date}-plan-3.md`));
+  expect(readFileSync(first, "utf8")).toBe("# CTO plan one\n## Keep\n- the fast route\n");
+  expect(readFileSync(second, "utf8")).toBe("# CTO plan two\n## Change\n- the cap\n");
+  expect(readFileSync(third, "utf8")).toBe("# CTO plan three\n");
+});
+
+test("CON5-AC-7 (finding 58): crew status prints and carries the branch, a role's description and the source line with no bidirectional, invisible or C1 character", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const env = testEnv();
+  const c = io(root, env);
+  const id = (await c.json("start", "Fix a", "--answers", answers, "--criterion", "a")).data
+    .id as string;
+  // A branch named with U+202E (right-to-left override) and U+0085 (a C1 control) checked out.
+  git(root, "checkout", "-q", "-b", "fix‮ab\u0085cd");
+  const json = await c.json("status");
+  expect(json.data.branch).toBe("fixab cd");
+  const text = (await c.run("status")).out;
+  expect(text).toContain("\n  branch fixab cd\n");
+  // A role's description and a source's id and url holding U+202E, U+200B and U+FEFF.
+  const paths = repoPaths(root, env);
+  recordWorking(paths, {
+    agent: "judge",
+    team: null,
+    since: new Date().toISOString(),
+    sessionId: "s",
+    description: "Review‮ the​ diff﻿",
+  });
+  const loaded = loadWork(paths, id).work;
+  if (!loaded) throw new Error("no work");
+  loaded.source = {
+    channel: "task-manager",
+    connector: "clickup",
+    externalId: "86‮c1​﻿",
+    url: "https://app.clickup.invalid/t/‮86c1﻿",
+  };
+  saveWork(paths, loaded);
+  const shown = (await c.run("status")).out;
+  expect(shown).toContain("  working: judge (Review the diff)");
+  expect(shown).toContain("  source clickup 86c1 (https://app.clickup.invalid/t/86c1)\n");
+  for (const ch of ["‮", "​", "﻿", "\u0085"])
+    expect(shown.includes(ch), `U+${ch.charCodeAt(0).toString(16)}`).toBe(false);
+  expect(JSON.stringify((await c.json("status")).data.branch)).toBe('"fixab cd"');
+});
+
+/**
+ * A lead item of a workspace project, committed, whose implementers never start (the claude
+ * binary is missing), so a task opened here has its worktree, its branch and its message and no
+ * open session.
+ */
+async function taskRepo() {
+  const env: NodeJS.ProcessEnv = {
+    ...testEnv(),
+    WIZARDINGCODE_CREW_CLAUDE: join(tempDir("crew-none-"), "claude"),
+  };
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+    ".crew/policy.json": JSON.stringify({
+      mail: { workspace: "w", name: "lead", maxConcurrent: 10 },
+    }),
+  });
+  const c = io(root, env);
+  await c.run("detect");
+  const id = (await c.json("start", "Two parts", "--answers", answers, "--criterion", "a")).data
+    .id as string;
+  git(root, "add", "-A");
+  git(root, "commit", "-q", "-m", "lead: the item");
+  const paths = repoPaths(root, env);
+  const names = (task: string) => taskNames(id, root, task, "..");
+  const open = async (task: string) => {
+    const r = await c.json(
+      "task",
+      id,
+      "open",
+      task,
+      "--criteria",
+      "AC-1",
+      "--text",
+      `${task} text`,
+    );
+    if (r.code !== 0) throw new Error(`task open ${task}: ${String(r.data.message)}`);
+    return (r.data.message as { id: string }).id;
+  };
+  const inboxFile = join(mailbox(paths.userDir, "w", "lead").dir, "inbox.json");
+  const outboxFile = join(mailbox(paths.userDir, "w", "lead").dir, "outbox.json");
+  const registerFile = join(root, ".crew", "decisions.json");
+  /** What a refused drop must leave as it was: the record, the branches, the worktrees, the message, the register. */
+  const snapshot = () => ({
+    work: readFileSync(join(root, ".crew", "work", id, "work.json"), "utf8"),
+    branches: git(root, "branch", "--list", "crew/*"),
+    worktrees: git(root, "worktree", "list", "--porcelain"),
+    inbox: readFileSync(inboxFile, "utf8"),
+    register: existsSync(registerFile) ? readFileSync(registerFile, "utf8") : "",
+  });
+  const message = (mid: string) =>
+    readBox(mailbox(paths.userDir, "w", "lead").dir, "inbox").box.messages.find(
+      (m) => m.id === mid,
+    );
+  /** Edits the task's record through the engine's own writer, as a test fixture. */
+  const edit = (task: string, change: (t: NonNullable<WorkItem["tasks"]>[number]) => void) => {
+    const work = loadWork(paths, id).work;
+    const record = work?.tasks?.find((t) => t.task === task);
+    if (!work || !record) throw new Error(`no record of ${task}`);
+    change(record);
+    saveWork(paths, work);
+  };
+  return {
+    env,
+    root,
+    c,
+    id,
+    paths,
+    names,
+    open,
+    snapshot,
+    message,
+    edit,
+    outboxFile,
+  };
+}
+
+test("CON5-AC-3 (finding 114): crew task <id> open, note and merge refuse a word after the task's id with their usage, creating or changing nothing", async () => {
+  const { root, c, id, paths, names } = await taskRepo();
+  const head = git(root, "rev-parse", "HEAD");
+  const opened = await c.run(
+    "task",
+    id,
+    "open",
+    "T-1",
+    "stray",
+    "--criteria",
+    "AC-1",
+    "--text",
+    "a task",
+  );
+  expect(opened.code).toBe(1);
+  expect(opened.err.trim()).toStartWith("usage: crew task <id> open T-n");
+  expect(existsSync(names("T-1").worktree)).toBe(false);
+  expect(git(root, "branch", "--list", names("T-1").branch)).toBe("");
+  expect(loadWork(paths, id).work?.tasks ?? []).toEqual([]);
+  const noted = await c.run(
+    "task",
+    id,
+    "note",
+    "T-1",
+    "stray",
+    "--criteria",
+    "AC-1",
+    "--scope",
+    "src",
+    "--text",
+    "a todo",
+  );
+  expect(noted.code).toBe(1);
+  expect(noted.err.trim()).toStartWith("usage: crew task <id> open T-n");
+  expect(loadWork(paths, id).work?.tasks ?? []).toEqual([]);
+  const merged = await c.run("task", id, "merge", "T-1", "stray");
+  expect(merged.code).toBe(1);
+  expect(merged.err.trim()).toStartWith("usage: crew task <id> open T-n");
+  expect(git(root, "rev-parse", "HEAD")).toBe(head);
+  expect(loadWork(paths, id).work?.tasks ?? []).toEqual([]);
+});
+
+test("CON5-AC-8 (finding 30): crew task <id> drop T-n removes an unmerged task whose implementer is not running: the worktree, the branch, the record; refuses its message; appends the decision naming the branch and its tip", async () => {
+  const { root, c, id, paths, names, open, message } = await taskRepo();
+  const mid = await open("T-1");
+  const { branch, worktree } = names("T-1");
+  expect(existsSync(worktree)).toBe(true);
+  const tip = git(root, "rev-parse", branch);
+  const dropped = await c.run("task", id, "drop", "T-1");
+  expect(dropped.code, dropped.err).toBe(0);
+  expect(existsSync(worktree)).toBe(false);
+  expect(git(root, "worktree", "list", "--porcelain")).not.toContain(worktree);
+  expect(git(root, "branch", "--list", branch)).toBe("");
+  expect(loadWork(paths, id).work?.tasks ?? []).toEqual([]);
+  expect(message(mid)).toMatchObject({ status: "refused" });
+  expect(message(mid)?.reason).toContain("dropped by the user");
+  const last = register(root).at(-1);
+  expect(last).toMatchObject({ kind: "task", by: "the user, relayed by the agent" });
+  expect(last?.text).toMatch(
+    new RegExp(
+      `^dropped T-1: branch ${branch.replace(/[.*+?^${}()|[\]\\/]/g, "\\$&")} at ${tip.slice(0, 7)}[0-9a-f]*$`,
+    ),
+  );
+  expect(listDecisions(paths).find((e) => e.kind === ("task" as never))?.item).toBe(id);
+}, 20_000);
+
+test("CON5-AC-8-refusals: crew task <id> drop refuses, changing nothing, an unknown task, a merged one, an inline todo, a record not the engine's pair, a running implementer and a tampered sessions record", async () => {
+  const { env, root, c, id, names, open, snapshot, edit, outboxFile } = await taskRepo();
+  await open("T-1");
+  const refused = async (task: string, why?: string) => {
+    const before = snapshot();
+    const r = await c.run("task", id, "drop", task);
+    expect(r.code, `${task}: ${r.err}`).toBe(1);
+    // A refusal of its own, never the usage of a verb the command does not know.
+    expect(r.err, task).not.toContain("usage:");
+    if (why) expect(r.err, task).toContain(why);
+    expect(snapshot(), task).toEqual(before);
+    return r.err;
+  };
+  await refused("T-9", `T-9 is not a task of ${id}`);
+  // A merged task, by its state or by a merge recorded.
+  for (const state of ["merged", "gated", "briefed"] as const) {
+    edit("T-1", (t) => {
+      t.state = state;
+    });
+    await refused("T-1", "T-1");
+  }
+  edit("T-1", (t) => {
+    t.state = "handed";
+    t.mergedAt = new Date().toISOString();
+    t.mergeCommit = git(root, "rev-parse", "HEAD");
+  });
+  await refused("T-1", "T-1");
+  edit("T-1", (t) => {
+    delete t.mergedAt;
+    delete t.mergeCommit;
+  });
+  // An inline todo, with its own line.
+  expect(
+    (
+      await c.run(
+        "task",
+        id,
+        "note",
+        "T-2",
+        "--criteria",
+        "AC-1",
+        "--scope",
+        "src/a.ts",
+        "--text",
+        "inline",
+      )
+    ).code,
+  ).toBe(0);
+  expect(await refused("T-2", "T-2")).toContain("inline");
+  // A record whose branch or worktree is not the pair the engine makes for the task.
+  const pair = names("T-1");
+  edit("T-1", (t) => {
+    t.branch = "main";
+  });
+  await refused("T-1", "T-1");
+  expect(git(root, "branch", "--list", "main")).toContain("main");
+  edit("T-1", (t) => {
+    t.branch = pair.branch;
+    t.worktree = root;
+  });
+  await refused("T-1", "T-1");
+  expect(existsSync(join(root, "package.json"))).toBe(true);
+  edit("T-1", (t) => {
+    t.worktree = pair.worktree;
+  });
+  // A task whose implementer still runs: the sessions record as crew task open writes it, a live pid.
+  const sleeper = io(root, {
+    ...env,
+    WIZARDINGCODE_CREW_CLAUDE: fileURLToPath(new URL("./fixtures/fake-claude.sh", import.meta.url)),
+    FAKE_CLAUDE_SLEEP: "30",
+  });
+  const t3 = await sleeper.json(
+    "task",
+    id,
+    "open",
+    "T-3",
+    "--criteria",
+    "AC-1",
+    "--text",
+    "T-3 text",
+  );
+  expect(t3.code).toBe(0);
+  const t3mid = (t3.data.message as { id: string }).id;
+  const pid = (t3.data.opened as { pid: number }).pid;
+  try {
+    expect(isAlive(pid)).toBe(true);
+    await refused(
+      "T-3",
+      `T-3's implementer is still running (pid ${pid}); wait for it to end, or stop it with crew mail stop ${t3mid}`,
+    );
+    // A sessions record changed outside the engine: refused, as the merge refuses it.
+    const outbox = readFileSync(outboxFile, "utf8");
+    handEdit(outboxFile);
+    try {
+      await refused("T-1", tamperedBox("lead", "outbox"));
+    } finally {
+      writeFileSync(outboxFile, outbox);
+    }
+  } finally {
+    await c.run("mail", "stop", t3mid);
+  }
+}, 30_000);
+
+test("CON5-AC-8-git: a git step of crew task drop that fails is named with git's error and the record, the message and the register are kept; a failing branch step leaves the worktree gone and says so", async () => {
+  const { root, c, id, names, open, snapshot, message } = await taskRepo();
+  // The worktree locked: its removal fails first, and the branch is left.
+  const t4 = await open("T-4");
+  const p4 = names("T-4");
+  git(root, "worktree", "lock", p4.worktree);
+  const locked = snapshot();
+  const first = await c.run("task", id, "drop", "T-4");
+  expect(first.code).toBe(1);
+  expect(first.err).toContain("git worktree remove");
+  expect(first.err).toContain("cannot remove a locked working tree");
+  expect(snapshot()).toEqual(locked);
+  expect(existsSync(p4.worktree)).toBe(true);
+  expect(git(root, "branch", "--list", p4.branch)).toContain(p4.branch);
+  expect(message(t4)?.reason ?? "").not.toContain("dropped by the user");
+  git(root, "worktree", "unlock", p4.worktree);
+  // The branch checked out in the main tree: the worktree goes, the branch's deletion fails.
+  const t5 = await open("T-5");
+  const p5 = names("T-5");
+  git(root, "checkout", "-q", "--ignore-other-worktrees", p5.branch);
+  const before = snapshot();
+  const second = await c.run("task", id, "drop", "T-5");
+  expect(second.code).toBe(1);
+  expect(second.err).toContain("git branch -D");
+  expect(second.err).toContain(`cannot delete branch '${p5.branch}'`);
+  // The worktree step ran first: the worktree is gone, and the output says so beside git's error.
+  expect(existsSync(p5.worktree)).toBe(false);
+  expect(second.err).toContain(p5.worktree);
+  expect(second.err).toContain("removed");
+  const after = snapshot();
+  expect(after.work).toBe(before.work);
+  expect(after.inbox).toBe(before.inbox);
+  expect(after.register).toBe(before.register);
+  expect(after.branches).toBe(before.branches);
+  expect(message(t5)?.reason ?? "").not.toContain("dropped by the user");
+  git(root, "checkout", "-q", "main");
+}, 30_000);
+
+test("CON5-AC-5 (finding 54): crew help says what crew decisions --grep matches", async () => {
+  const root = makeRepo({ "package.json": JSON.stringify({ scripts: { test: "exit 0" } }) });
+  const help = (await io(root).run("help")).out;
+  expect(help).toContain(
+    "\n  decisions [--grep <text>]   the project's decision register, newest first; --grep matches the id, the text and the answer, in any case\n",
+  );
 });
