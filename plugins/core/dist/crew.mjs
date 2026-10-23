@@ -4554,6 +4554,29 @@ function openItems(paths, except) {
   }
   return open;
 }
+function lastLearned(paths) {
+  let ids = [];
+  try {
+    ids = readdirSync3(join14(paths.crewDir, "work"));
+  } catch {
+    return null;
+  }
+  let latest = null;
+  for (const id of ids) {
+    if (!existsSync7(workJson(paths, id)))
+      continue;
+    const { work, tampered } = loadWork(paths, id);
+    if (!work?.learned || tampered || work.abandoned)
+      continue;
+    if (!latest || (latest.learned?.at ?? "") < work.learned.at)
+      latest = work;
+  }
+  if (!latest)
+    return null;
+  const evidence = readProtectedJson(paths, join14(workDir(paths, latest.id), "evidence.json"));
+  const proven = !evidence.tampered && evidence.data?.verdict === "proven";
+  return { work: latest, fingerprint: proven ? evidence.data?.fingerprint ?? null : null };
+}
 function applyClassification(work, type, decision, kind) {
   const first = work.phase === "receive";
   work.type = type;
@@ -14110,6 +14133,13 @@ var TYPED_CREW = /(?:^|[^\w!])!\s?(?:(?:node|bun)\s+)?(?:\S*\/)?crew(?:\.mjs)?\s
 function asksUserToTypeCrew(message) {
   return message !== undefined && TYPED_CREW.test(message);
 }
+function learnedHolds(ctx) {
+  const learned = lastLearned(ctx.paths);
+  if (!learned?.fingerprint)
+    return false;
+  const now = computeFingerprint(ctx.paths.root, ctx.profile, learned.work, MAX_WATCHED_FILES, fingerprintMethod(learned.fingerprint));
+  return now !== UNAVAILABLE && now === learned.fingerprint;
+}
 function onStop(ctx, payload = {}) {
   const session = sessionState(loadState(ctx.paths), ctx.sessionId);
   if (payload.stop_hook_active === false)
@@ -14172,7 +14202,7 @@ function onStop(ctx, payload = {}) {
   const result = work ? assess(ctx.paths, work, ctx.profile, ctx.policy, ctx.tampered || !!active?.tampered) : null;
   const proven = result?.verdict === "proven";
   const changed = session.baseline !== null && current !== UNAVAILABLE ? current !== session.baseline : work !== null && !proven;
-  if (!changed || proven) {
+  if (!changed || proven || !work && learnedHolds(ctx)) {
     session.stopBlocks = 0;
     return release(notes.length ? { systemMessage: `Crew: ${notes.join("; ")}.` } : {});
   }

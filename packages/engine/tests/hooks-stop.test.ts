@@ -7,12 +7,13 @@ import { handleHook } from "../src/hooks/index.ts";
 import { onPrompt } from "../src/hooks/prompt.ts";
 import { onSessionStart } from "../src/hooks/session-start.ts";
 import { MAX_STOP_BLOCKS, onStop } from "../src/hooks/stop.ts";
+import { learnItem } from "../src/learn.ts";
 import * as mail from "../src/mail.ts";
 import { acceptMail, mailbox, mailContext, readBox, reply, send } from "../src/mail.ts";
 import { loadPolicy } from "../src/policy.ts";
 import { saveProfile } from "../src/profile.ts";
 import { addQuestion } from "../src/questions.ts";
-import { loadState } from "../src/state.ts";
+import { loadState, updateState } from "../src/state.ts";
 import type { WorkItem } from "../src/types.ts";
 import {
   addCriterion,
@@ -681,4 +682,48 @@ test("CON3-AC-8: the Stop hook's cap on consecutive blocks is not reset by a pro
   const absent = stopIn(other);
   expect(absent.decision).toBeUndefined();
   expect(absent.systemMessage ?? "").toContain(capText);
+});
+
+/** A proven item in learn whose slot is freed as `crew learn` frees it; `learned` false leaves it unlearned. */
+async function provenThenFreed(learned: boolean) {
+  const { root, ctx } = session();
+  const work = createWork(ctx.paths, "fix");
+  work.route = "fast";
+  addCriterion(work, "x");
+  addSkip(work, "tdd:AC-1", "manual");
+  write(root, "src/a.ts", "changed");
+  const outcome = await runGates(ctx.paths, work, ctx.profile, ctx.policy);
+  expect(outcome.verdict).toBe("proven");
+  work.phase = "learn";
+  saveWork(ctx.paths, work);
+  if (learned) {
+    const out = learnItem(ctx.paths, work, ctx.profile, ctx.policy, ctx.mail, true);
+    expect("refused" in out ? out.refused : "learned").toBe("learned");
+    saveWork(ctx.paths, work);
+    expect(loadWork(ctx.paths, work.id).work?.learned).toBeDefined();
+  }
+  updateState(ctx.paths, (state) => {
+    state.active = null;
+  });
+  return { root, ctx, work };
+}
+
+test("FIX141-AC-1-learned-passes: with no active item, the last learned item proven at the current fingerprint lets the turn end", async () => {
+  const { ctx } = await provenThenFreed(true);
+  expect(onStop(ctx).decision).toBeUndefined();
+});
+
+test("FIX141-AC-1-changed-blocks: a watched file changed after the learned item's proof blocks with the no-work-item text", async () => {
+  const { root, ctx } = await provenThenFreed(true);
+  write(root, "src/a.ts", "changed after the learn");
+  const response = onStop(ctx);
+  expect(response.decision).toBe("block");
+  expect(String(response.reason)).toContain('no work item: start one with crew start "<request>"');
+});
+
+test("FIX141-AC-1-unlearned-blocks: a proven item that is neither active nor learned does not count", async () => {
+  const { ctx } = await provenThenFreed(false);
+  const response = onStop(ctx);
+  expect(response.decision).toBe("block");
+  expect(String(response.reason)).toContain("no work item");
 });

@@ -1,10 +1,15 @@
-import { computeFingerprint, UNAVAILABLE } from "../fingerprint.ts";
+import {
+  computeFingerprint,
+  fingerprintMethod,
+  MAX_WATCHED_FILES,
+  UNAVAILABLE,
+} from "../fingerprint.ts";
 import { nowIso } from "../fs.ts";
 import { assess } from "../gates.ts";
 import { emptyInboxSummary, inboxSummary, markNoticed, subjectQuoted } from "../mail.ts";
 import { loadState, sessionState, updateSession } from "../state.ts";
 import { takeReplies } from "../tasks.ts";
-import { activeWork, saveWork, waitingPhrase } from "../work.ts";
+import { activeWork, lastLearned, saveWork, waitingPhrase } from "../work.ts";
 import { mailQuietly, refreshMail, sweepLines } from "./context.ts";
 import { takeNotices } from "./notices.ts";
 import type { HookContext, HookPayload, HookResponse } from "./types.ts";
@@ -19,6 +24,23 @@ const TYPED_CREW = /(?:^|[^\w!])!\s?(?:(?:node|bun)\s+)?(?:\S*\/)?crew(?:\.mjs)?
 /** Whether the agent's last message tells the user to type a crew command (finding 22 of the real-use phase). */
 export function asksUserToTypeCrew(message: string | undefined): boolean {
   return message !== undefined && TYPED_CREW.test(message);
+}
+
+/**
+ * With no active item, whether the checkout's last learned item still vouches for the tree: its
+ * last gate run proved, untampered, the code as it is now (finding 141: `crew learn` frees the slot).
+ */
+function learnedHolds(ctx: HookContext): boolean {
+  const learned = lastLearned(ctx.paths);
+  if (!learned?.fingerprint) return false;
+  const now = computeFingerprint(
+    ctx.paths.root,
+    ctx.profile,
+    learned.work,
+    MAX_WATCHED_FILES,
+    fingerprintMethod(learned.fingerprint),
+  );
+  return now !== UNAVAILABLE && now === learned.fingerprint;
 }
 
 /**
@@ -129,7 +151,7 @@ export function onStop(ctx: HookContext, payload: HookPayload = {}): HookRespons
     session.baseline !== null && current !== UNAVAILABLE
       ? current !== session.baseline
       : work !== null && !proven;
-  if (!changed || proven) {
+  if (!changed || proven || (!work && learnedHolds(ctx))) {
     session.stopBlocks = 0;
     return release(notes.length ? { systemMessage: `Crew: ${notes.join("; ")}.` } : {});
   }

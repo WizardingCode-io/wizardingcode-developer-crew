@@ -314,6 +314,36 @@ export function openItems(paths: CrewPaths, except?: string): WorkItem[] {
 }
 
 /**
+ * The checkout's most recently learned item (latest `learned.at`), with the fingerprint its last
+ * gate run proved, as `crew learn` reads it (finding 138): null when no item learned, and a null
+ * fingerprint when that run's record is tampered or did not prove (finding 141).
+ */
+export function lastLearned(
+  paths: CrewPaths,
+): { work: WorkItem; fingerprint: string | null } | null {
+  let ids: string[] = [];
+  try {
+    ids = readdirSync(join(paths.crewDir, "work"));
+  } catch {
+    return null;
+  }
+  let latest: WorkItem | null = null;
+  for (const id of ids) {
+    if (!existsSync(workJson(paths, id))) continue;
+    const { work, tampered } = loadWork(paths, id);
+    if (!work?.learned || tampered || work.abandoned) continue;
+    if (!latest || (latest.learned?.at ?? "") < work.learned.at) latest = work;
+  }
+  if (!latest) return null;
+  const evidence = readProtectedJson<Evidence>(
+    paths,
+    join(workDir(paths, latest.id), "evidence.json"),
+  );
+  const proven = !evidence.tampered && evidence.data?.verdict === "proven";
+  return { work: latest, fingerprint: proven ? (evidence.data?.fingerprint ?? null) : null };
+}
+
+/**
  * The first classification sets the route; a later one can only raise it, and risk areas only
  * accumulate, so calmer answers never undo a raise.
  */
