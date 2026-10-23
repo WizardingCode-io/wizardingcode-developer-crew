@@ -199,6 +199,7 @@ async function baselineAdvisories(
   target: Target,
   audit: ResolvedAudit,
   where: string,
+  env?: NodeJS.ProcessEnv,
 ): Promise<{ readable: boolean; advisories: string[] }> {
   if (!work.baseCommit || audit.files.length === 0) return { readable: false, advisories: [] };
   const scratch = join(paths.crewDir, "local", "audit-base", work.id, where || "root");
@@ -218,6 +219,7 @@ async function baselineAdvisories(
     cwd: scratch,
     timeoutMs: gateTimeoutMs(target, "deps"),
     logPath: log,
+    env,
   });
   const report = parseAudit(audit.tool, readTextQuietly(log) ?? result.tail);
   return { readable: report.readable && !result.timedOut, advisories: report.advisories };
@@ -231,12 +233,13 @@ async function judgeAudit(
   work: WorkItem,
   target: Target,
   where: string,
+  env?: NodeJS.ProcessEnv,
 ): Promise<GateRun> {
   const text = (run.log && readTextQuietly(join(workDir(paths, work.id), run.log))) || run.tail;
   const report = parseAudit(audit.tool, text);
   if (!report.readable) return { ...run, reason: "audit report unreadable; judged by exit code" };
   const started = Date.now();
-  const baseline = await baselineAdvisories(paths, work, target, audit, where);
+  const baseline = await baselineAdvisories(paths, work, target, audit, where, env);
   const known = baseline.readable
     ? report.advisories.filter((a) => baseline.advisories.includes(a))
     : [];
@@ -443,6 +446,7 @@ export async function runOneGate(
   changed: string[],
   scope?: readonly string[],
   logName?: string,
+  env?: NodeJS.ProcessEnv,
 ): Promise<GateRun> {
   const { gate, target: targetPath } = planned;
   const at = nowIso();
@@ -512,7 +516,7 @@ export async function runOneGate(
   let source: GateRun["commandSource"] = "detected";
   let audit: ResolvedAudit | null = null;
   if (gate === "deps") {
-    const found = depsAuditCommand(target, paths.root);
+    const found = depsAuditCommand(target, paths.root, env);
     if ("reason" in found) return { ...base, reason: found.reason };
     audit = found;
     command = found.command;
@@ -538,6 +542,7 @@ export async function runOneGate(
     cwd: join(paths.root, targetPath),
     timeoutMs: gateTimeoutMs(target, gate),
     logPath: join(workDir(paths, work.id), log),
+    env,
   });
   const passed = result.exit === 0 && !result.timedOut;
   const run: GateRun = {
@@ -554,7 +559,7 @@ export async function runOneGate(
   };
   // The audit is judged against the item's base commit, not by its exit code alone (ADR 0006).
   if (result.timedOut) return run;
-  if (audit) return judgeAudit(run, audit, paths, work, target, where);
+  if (audit) return judgeAudit(run, audit, paths, work, target, where, env);
   // Lint and typecheck are judged by the files they name (ADR 0006).
   if ((gate === "lint" || gate === "typecheck") && run.status === "fail")
     return judgeProblems(run, paths, work, targetPath, changed);
@@ -627,7 +632,12 @@ export async function runGates(
   work: WorkItem,
   profile: Profile,
   policy: Policy,
-  options: { only?: readonly (GateName | JudgementGateName)[]; tampered?: boolean } = {},
+  /** `env`: the environment of the gates' commands, the process's when none is given (finding 147). */
+  options: {
+    only?: readonly (GateName | JudgementGateName)[];
+    tampered?: boolean;
+    env?: NodeJS.ProcessEnv;
+  } = {},
 ): Promise<GateOutcome> {
   const base = work;
   const changed = changedWatchedPaths(paths.root, profile, base);
@@ -677,7 +687,17 @@ export async function runGates(
       });
       continue;
     }
-    const run = await runOneGate(paths, work, profile, one, stamp, changed);
+    const run = await runOneGate(
+      paths,
+      work,
+      profile,
+      one,
+      stamp,
+      changed,
+      undefined,
+      undefined,
+      options.env,
+    );
     // A build that rewrote watched files is part of the proof, not a change against it: the stamp
     // moves to the tree as the build left it, and the run says what it wrote (finding 18).
     if (gate === "build" && run.status === "pass") {

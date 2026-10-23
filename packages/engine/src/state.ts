@@ -24,6 +24,8 @@ export interface SessionState {
   startAt?: string;
   /** The checkout's active item at that PreToolUse: the start's item is another one. */
   startActive?: string;
+  /** The `startedAt` of each engine run whose marker let one of this session's turns end (finding 146). */
+  runPermits?: string[];
 }
 
 /** A role the session launched through the Agent tool and whose stop has not come (SP7 §14): what the mod shows as working. */

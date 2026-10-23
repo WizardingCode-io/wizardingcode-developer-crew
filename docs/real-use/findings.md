@@ -521,7 +521,7 @@ Verdicts agree at every effort. Upheld findings: `high` reproduced Task 6's and 
 - What happened: `brief-per-todo` asked for two changes "as two todos, one after the other, in this checkout"; all three plugin runs made two work items (`crew start` twice), proved each on its own and never ran `crew task note`, `crew task gate` or `crew task brief` (the three with-only graders 0/3; one run took 54 turns). `gate-scoped-to-change` asked for "one todo" and no todo gate ran there either (its fixture's defect aside). The todo loop lives in `references/plan.md` and `build.md`; the method table on the skill page says nothing of it, and "in this checkout" reads to the agent as "a new item", not "an inline todo of this plan".
 - Expected: the method table's Plan or Build row names the todo loop in one clause (within the 9254-byte ceiling, paid for elsewhere), or the plan reference says when a request's parts are todos of one item and when they are items; the case re-run after the change. Hardening item or SP7b.
 - Evidence: `docs/evals/2026-10-18-sp7a-results.md`, the brief-per-todo row and paragraph.
-- Outcome: closed in consolidation item 1 (`2026-10-22-006`, a2bdb02, 2026-10-22): `plan.md` says that a request in several parts done in this checkout is one item with a todo per part, not an item per part; released in 0.11.4; its advisories go to the closing debt chore; The eval re-run of 2026-10-23 (`docs/evals/2026-10-23-consolidation-results.md`, Opus judge): `gate-scoped-to-change` 0.60 and `brief-per-todo` 0.20; `crew task open T-1` was refused for a task plan.md does not name and the agent went on without a todo, so the todo loop is still not reached: open, for the next subproject.
+- Outcome: closed in consolidation item 1 (`2026-10-22-006`, a2bdb02, 2026-10-22): `plan.md` says that a request in several parts done in this checkout is one item with a todo per part, not an item per part; released in 0.11.4; its advisories go to the closing debt chore; The eval re-run of 2026-10-23 (`docs/evals/2026-10-23-consolidation-results.md`, Opus judge): `gate-scoped-to-change` 0.60 and `brief-per-todo` 0.20; `crew task open T-1` was refused for a task plan.md does not name and the agent went on without a todo, so the todo loop is still not reached: open, for the next subproject.; `2026-10-23-008` made the todo commands say when the item has no plan.md (AC-8); the re-run (`docs/evals/2026-10-23-hardening-0130-results.md`, 0.40, from 0.20) shows the next cause: the agent reached for `crew task open`, which needs a worktree the sandbox blocks, and skipped the todos rather than using `crew task note`. Open, for the next hardening
 
 ### 62. The conclave's debate did not run in the sandbox; the personalities were not exercised
 
@@ -529,7 +529,7 @@ Verdicts agree at every effort. Upheld findings: `high` reproduced Task 6's and 
 - What happened: `personalities-differ` left a storage design to "the team's debate"; of three plugin runs, one recorded `personality: conservative` and none recorded creative or adventurous; one run turned the choice into decision D-1 for the absent user and stopped; two built a design and reported proven with no debate in the ending (`proposals-differ` FAIL). Either the agent did not open the debate (the gap round found "a decision with consequences" and waited for the user instead of debating, as the conclave reference allows), or the debate roles ran and the sandbox's SubagentStop hook filed nothing (#40), so no `personality:` header reached the trace. The personalities of Task 3 are therefore unmeasured by this case.
 - Expected: the conclave reference says that a choice the user left to the team is debated, not asked (the user's words are the decision to debate); the hook's filing in the sandbox checked (#40); the case re-run.
 - Evidence: `docs/evals/2026-10-18-sp7a-results.md`, the personalities-differ row and paragraph.
-- Outcome: closed in consolidation item 1 (`2026-10-22-006`, a2bdb02, 2026-10-22): `conclave.md` says that a choice the user left to the team is debated, not asked: the user's words are the decision to debate; released in 0.11.4; its advisories go to the closing debt chore; The eval re-run of 2026-10-23 (`docs/evals/2026-10-23-consolidation-results.md`, Opus judge): `personalities-differ` 0.20, the agent stopping before `crew start` after Claude Code's dontAsk layer denied a compound read (finding 64's pattern, model variance); the debate was not reached: open, measured again in the next suite run.
+- Outcome: closed in consolidation item 1 (`2026-10-22-006`, a2bdb02, 2026-10-22): `conclave.md` says that a choice the user left to the team is debated, not asked: the user's words are the decision to debate; released in 0.11.4; its advisories go to the closing debt chore; The eval re-run of 2026-10-23 (`docs/evals/2026-10-23-consolidation-results.md`, Opus judge): `personalities-differ` 0.20, the agent stopping before `crew start` after Claude Code's dontAsk layer denied a compound read (finding 64's pattern, model variance); the debate was not reached: open, measured again in the next suite run.; the re-run of `2026-10-23-008` (`docs/evals/2026-10-23-hardening-0130-results.md`, 0.60, from 0.20) reached the debate (`proposals-differ` passed, the conservative expert recorded) but only one personality's header reached the trace; the run was flagged `needs-rerun` (a reference read denied in the sandbox). Open
 
 ### 63. The SP7a suite run cost 38.80 USD against the plan's estimate of about 25
 
@@ -1145,7 +1145,7 @@ Verdicts agree at every effort. Upheld findings: `high` reproduced Task 6's and 
 - What happened: every engine item of the consolidation was refused at learn by a root cause it does not share: the match needs one shared path and three shared words, and this repository's items share `cli.ts`, `subagent-stop.ts` or `mail.ts` and the words of its own prose (`hook`, `record`, `answer`, `item`); item 4 (`011`) was refused three times in a row, by K-49, K-70 and K-74, one per run, each needing its own `crew knowledge contradict`. An entry the analysis cites as `[K:K-n]` is confirmed at the same learn, so an entry can come out both contradicted and confirmed by one item (K-70 by `011`).
 - Expected: the refusal lists every matching entry at once; the match weighs the cause's words against the base's (common words of the project count for little); a cited entry is not offered as a duplicate.
 - Evidence: the four items' refused learns; `crew knowledge show K-49`, `K-70`, `K-74` (their `contradictedBy`).
-- Outcome: open, for the closing debt chore.
+- Outcome: open, for the closing debt chore.; the remaining half fixed in `2026-10-23-008` (AC-15, the 0.13.0 hardening): with four or more visible root causes, a word at least half of them hold no longer counts toward the three shared words; a real duplicate is still refused
 
 ### 140. A session cannot seat a judgement gate the route did not plan
 - Date: 2026-10-23. Project: this repository. Item: `2026-10-23-001`. Category: `friction`. Severity: low.
@@ -1173,45 +1173,52 @@ Verdicts agree at every effort. Upheld findings: `high` reproduced Task 6's and 
 - What happened: at the spec's validation the session launched the two leads with prompts naming "the QA lead (team qa)" and "the security lead (team security)" without the heading line. The SubagentStop hook filed the first answer as `conclave/tech-lead.md` rather than `conclave/lead-<team>.md`; the next lead's answer, under the same name, took `conclave/tech-lead-reply.md`, and the resumed answers landed under each other's names. Worked around by copying each answer to its own file with the right heading; the prompts now give the exact heading.
 - Expected: a lead's answer is filed under its team whatever the prompt's wording (the team read from the launch, or an answer with no lead heading refused rather than filed under the role's name), and two leads never share one file.
 - Evidence: the item's `conclave/` folder (the copied `lead-qa.md` and `lead-security.md` and their reply files; the misnamed `tech-lead.md` and `tech-lead-reply.md` are no longer there); the hook's filing notices in the session.
-- Outcome: open.
+- Outcome: fixed in `2026-10-23-008` (AC-12): a heading-less lead's answer is filed as `conclave/tech-lead-<n>.md` with no team, its replies as `tech-lead-<n>-reply.md`, and the note asks for the heading; the team is never read from the launch prompt (the security lead's return: the prompt is the session's text)
 
 ### 144. `crew tdd red` records a red on a run the shell could not parse
 - Date: 2026-10-23. Project: this repository. Item: `2026-10-23-004`. Category: `false-proof`. Severity: high.
 - What happened: `crew tdd red <id> AC-2 -- "bun test <file> -t DEBT-AC-2-(rsync-late|tar-bundled|mv-variant)"` ran through `/bin/sh -c`, which stopped with `syntax error near unexpected token '('` (exit 2) before any test ran; the engine recorded `red recorded for AC-2 (exit 2)`. The session read the log, re-took the red with the pattern quoted (3 fail), and the record keeps both entries.
 - Expected: a red needs a test run that failed; a run whose output holds no runner summary (or a shell syntax error, or exit 2 from `sh`) is refused like finding 126's zero-test run.
 - Evidence: the item's `logs/tdd-AC-2-red-1792764497181.txt` and `evidence.json` (AC-2's `reds`, the exit-2 entry).
-- Outcome: open, for the next hardening item.
+- Outcome: fixed in `2026-10-23-008` (AC-11): every tdd step refuses, and records nothing for, a run whose tail holds a whole line of an sh, bash, zsh or dash syntax or parse error, naming it; a runner's own failure is still a red
 
 ### 145. A resumed judge's ruling is filed as conclave/judge-reply.md, not review/ruling.json
 - Date: 2026-10-23. Project: this repository. Item: `2026-10-23-004`. Category: `friction`. Severity: low.
 - What happened: the judge, resumed with SendMessage for each of the item's judgement rounds 2 to 5 (and to re-issue round 1 with the verdict spelled `not-proven`), had its JSON ruling saved as `conclave/judge-reply.md` (earlier replies kept as `judge-reply.roundN.md`); `review/ruling.json` kept the first launch's ruling. `crew judgement record --ruling conclave/judge-reply.md` accepted it.
 - Expected: a judge's answer goes to `review/ruling.json` (the earlier one archived) whether the judge was launched or resumed, so the gate's ruling file is the one the stop hook and the reviewers read.
 - Evidence: the item's `conclave/judge-reply*.md` and `review/ruling.json`.
-- Outcome: open.
+- Outcome: fixed in `2026-10-23-008` (AC-13): a resumed judge's gates ruling goes to `review/ruling.json`, the earlier archived as `ruling.round<k>.json`; its other answers keep the reply file. Seen live once more in the same item, under the installed 0.12.0 (its ruling re-issued for a `line: 0` finding, filed as `conclave/judge-reply.md`)
 
 ### 146. The Stop hook does not wait for a background run the session started itself
 - Date: 2026-10-23. Project: this repository. Category: `idea`. Severity: low.
 - What happened: while a `crew tdd before` run or a gate run the session started in the background was still going, the Stop hook refused the turn's end as unproven work; the session had to record `crew await <id> role` to end the turn.
 - Expected: a turn may end while the session's own engine run is in progress, the hook naming it.
-- Outcome: deferred by the user's decision of 2026-10-23 (item `2026-10-23-004`, D-4: "Later, as a finding"), for the next subproject.
+- Outcome: taken up by the user's yes of 2026-10-23 ("sim força") and fixed in `2026-10-23-008` (AC-14): a gate run and a tdd step write `running.json` (command, pid, its start time, the session) for their length; the Stop hook lets the turn end once per run of this session with a live, unreused pid, recorded in the session state, never touching the item. Left as an advisory: one marker per item, so two runs at once on one item clear each other's
 
 ### 147. The deps gate's 0.3.0 row fails once under the whole suite's load
 - Date: 2026-10-23. Project: this repository. Item: `2026-10-23-005`. Category: `friction`. Severity: low.
 - What happened: one gate run of the item failed on `gates.test.ts` "0.3.0: the deps gate fails only on advisories absent from the base commit…" (`advisories.baselined` true expected, false received); the row passed alone three times and on the gate's rerun. The item does not touch it. The row changes the global `process.env.PATH` and audits the base commit, so a concurrent row can change what it reads.
 - Expected: the row sets its PATH per call (an `env` passed to the runner) rather than on the process, and passes under the whole suite every time.
 - Evidence: the item's `logs/test-_-1792772420375.txt`.
-- Outcome: open, for the next hardening item.
+- Outcome: fixed in `2026-10-23-008` (AC-7): `runGates` takes an `env`, passed to every gate command and to the deps gate's tool lookup; the 0.3.0 row and a new hermetic row (a `pip-audit` only the given env holds) use it
 
 ### 148. `crew tdd red`'s refusal of a test that already passes does not name the observed proof
 - Date: 2026-10-23. Project: this repository (the eval `kind-observed-e2e`). Category: `friction`. Severity: medium.
 - What happened: the agent wrote an end-to-end test that passed before the change; `crew tdd red` refused it ("the test passed before the change; a test that passes before the code exists proves nothing") and the agent offered a mutation red and waited, never using `crew tdd observed` or `--observed`, which the case expects.
 - Expected: the refusal names the ways out: a test that fails first, or `crew tdd observed <id> AC-n -- <command>` for what a person or an end-to-end run checks.
 - Evidence: `docs/evals/2026-10-23-consolidation-results.md`.
-- Outcome: open, for the next hardening item.
+- Outcome: fixed in `2026-10-23-008` (AC-2): the refusal names a test that fails first and `crew tdd observed <id> <AC> -- <command>`
 
 ### 149. The `rounds-bounded` fixture cannot force a second judgement round
 - Date: 2026-10-23. Project: this repository (the eval `rounds-bounded`). Category: `friction`. Severity: low.
 - What happened: the judge ruled both gates proven at round 1 (the seeded literal judged advisory), so the round cap was never reached and the `cap-refused` grader found nothing; SP7a's runs did the same, 3 of 3.
 - Expected: the fixture seeds a defect no judge can rate advisory (a criterion's test that passes by construction), so round 2 and the cap's refusal are reached.
 - Evidence: `docs/evals/2026-10-23-consolidation-results.md`.
-- Outcome: open, for the next hardening item.
+- Outcome: open, for the next hardening item.; not closed by `2026-10-23-008` (AC-16): the case's prompt now seeds a `typeof`-only test, and the re-run (`docs/evals/2026-10-23-hardening-0130-results.md`, 0.50) still had both gates proven at round 1; the seed must be a committed test the agent does not write. Open, for the next hardening
+
+### 150. A judge's spec-level finding with `line: 0` makes the whole ruling unrecordable
+- Date: 2026-10-23. Project: this repository. Item: `2026-10-23-008`. Category: `friction`. Severity: low.
+- What happened: the judge (Opus, Fable at its limit) ruled both gates proven with four advisories each; two test-quality advisories named `spec.md` with `line: 0`, and `crew judgement record` refused the whole ruling (`finding 3 of test-quality: line is a positive integer`). The judge was resumed to re-issue it with the criteria's lines; its re-issued ruling was filed as `conclave/judge-reply.md` (finding 145 under the installed 0.12.0).
+- Expected: the judge's prompt or agent page says every finding names a line of 1 or more (a spec finding: the criterion's line), or the record accepts a finding with no line as about the file.
+- Evidence: the item's `review/ruling.json` (the refused one) and `conclave/judge-reply.md`.
+- Outcome: open, for the next hardening.

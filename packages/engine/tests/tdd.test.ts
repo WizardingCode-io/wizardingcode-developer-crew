@@ -433,3 +433,109 @@ test("CON6-AC-11 (finding 29): a second crew tdd red of a criterion keeps the ea
   expect(row.red?.exit).toBe(3);
   expect(row.reds).toEqual([earlier as RunRecord, latest as RunRecord]);
 });
+
+test("AC-11 (finding 144): a run the shell could not parse is refused for every step, naming the line, and records nothing; a runner's own failure is still a red", async () => {
+  const s = setup();
+  // The real thing: an unquoted pattern with parentheses, as the red of 2026-10-23-004 was given.
+  const red = await recordTdd(
+    s.paths,
+    s.work,
+    s.evidence,
+    s.profile,
+    s.behaviour.id,
+    "red",
+    "echo DEBT-AC-2-(rsync-late|tar-bundled)",
+  );
+  expect(red.ok).toBe(false);
+  expect(red.message).toMatch(
+    /^the shell could not parse the command \(.*(syntax error|Syntax error|parse error).*\): fix the command \(quote a pattern with parentheses\) before recording$/,
+  );
+  expect(s.evidence.tdd).toEqual([]);
+  // Each shell's own line, whole and unindented, refuses every step.
+  const lines = [
+    "sh: -c: line 0: syntax error near unexpected token `('",
+    "/bin/sh: -c: line 1: syntax error: unexpected end of file",
+    "bash: -c: line 0: syntax error near unexpected token `|'",
+    "zsh: parse error near `('",
+    'sh: 1: Syntax error: "(" unexpected',
+    'dash: 1: Syntax error: "(" unexpected',
+  ];
+  for (const line of lines) {
+    write(s.root, "run-tests.sh", `echo "${line.replace(/[`"]/g, "\\$&")}"\nexit 2\n`);
+    const refused = await recordTdd(s.paths, s.work, s.evidence, s.profile, s.behaviour.id, "red");
+    expect(refused.ok, line).toBe(false);
+    expect(refused.message, line).toBe(
+      `the shell could not parse the command (${line}): fix the command (quote a pattern with parentheses) before recording`,
+    );
+  }
+  expect(s.evidence.tdd).toEqual([]);
+  // The other steps, on a passing run that printed a shell's parse error.
+  const parse = 'echo "zsh: parse error near \\`(\'"\nexit 0\n';
+  write(s.root, "run-tests.sh", parse);
+  const before = await recordTdd(s.paths, s.work, s.evidence, s.profile, s.preserve.id, "before");
+  expect(before.ok).toBe(false);
+  expect(before.message).toContain("the shell could not parse the command (zsh: parse error");
+  const observed = addCriterion(s.work, "seen", "observed");
+  const seen = await recordTdd(
+    s.paths,
+    s.work,
+    s.evidence,
+    s.profile,
+    observed.id,
+    "observed",
+    undefined,
+    "no red run can exist",
+  );
+  expect(seen.ok).toBe(false);
+  expect(seen.message).toContain("the shell could not parse the command (");
+  expect(s.evidence.tdd).toEqual([]);
+  // A runner's own failure is a red: exit 1, a runner's exit 2, a JavaScript SyntaxError line, an
+  // indented shell line inside a failing test's output.
+  for (const [body, exit] of [
+    ["echo ' 0 pass'\necho ' 1 fail'", 1],
+    ["echo 'FAILED tests/test_x.py::test_y'\necho '1 failed in 0.02s'", 2],
+    ["echo 'SyntaxError: Unexpected token (3:4)'\necho ' 1 fail'", 1],
+    ["echo '    sh: -c: line 0: syntax error near unexpected token'\necho ' 1 fail'", 1],
+  ] as const) {
+    const genuine = setup();
+    write(genuine.root, "run-tests.sh", `${body}\nexit ${exit}\n`);
+    const ok = await recordTdd(
+      genuine.paths,
+      genuine.work,
+      genuine.evidence,
+      genuine.profile,
+      genuine.behaviour.id,
+      "red",
+    );
+    expect(ok.ok, body).toBe(true);
+    expect(genuine.evidence.tdd[0]?.red?.exit).toBe(exit);
+  }
+  // Green and after on a parse error are refused as well.
+  write(s.root, "run-tests.sh", "echo ' 1 fail'\nexit 1\n");
+  expect((await recordTdd(s.paths, s.work, s.evidence, s.profile, s.behaviour.id, "red")).ok).toBe(
+    true,
+  );
+  write(s.root, "run-tests.sh", parse);
+  const green = await recordTdd(s.paths, s.work, s.evidence, s.profile, s.behaviour.id, "green");
+  expect(green.ok).toBe(false);
+  expect(green.message).toContain("the shell could not parse the command (");
+  write(s.root, "run-tests.sh", "echo ' 1 pass'\nexit 0\n");
+  expect(
+    (await recordTdd(s.paths, s.work, s.evidence, s.profile, s.preserve.id, "before")).ok,
+  ).toBe(true);
+  write(s.root, "run-tests.sh", parse);
+  const after = await recordTdd(s.paths, s.work, s.evidence, s.profile, s.preserve.id, "after");
+  expect(after.ok).toBe(false);
+  expect(after.message).toContain("the shell could not parse the command (");
+});
+
+test("AC-2 (finding 148): the refusal of a test that passes before the change names a test that fails first and crew tdd observed", async () => {
+  const s = setup();
+  write(s.root, "run-tests.sh", "echo ' 1 pass'\nexit 0\n");
+  const red = await recordTdd(s.paths, s.work, s.evidence, s.profile, s.behaviour.id, "red");
+  expect(red.ok).toBe(false);
+  expect(red.message).toBe(
+    `the test passed before the change; a test that passes before the code exists proves nothing: write a test that fails first, or, for what an end-to-end run or a person checks, prove it with crew tdd observed ${s.work.id} ${s.behaviour.id} -- <command> (a criterion of kind observed)`,
+  );
+  expect(s.evidence.tdd).toEqual([]);
+});

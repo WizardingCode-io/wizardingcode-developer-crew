@@ -212,6 +212,7 @@ import {
   questionsSorted,
 } from "./questions.ts";
 import { fetchSource, findQuote, parseFacts } from "./research.ts";
+import { withRunning } from "./running.ts";
 import {
   checkRuntime,
   ENGINE_EVENTS,
@@ -480,6 +481,8 @@ interface Env {
   mail: MailContext;
   /** This project's registry entry, refreshed by this command (plan decision 3). */
   registered: ProjectEntry;
+  /** The Claude Code session running this command, when one does: the owner of a run's marker (finding 146). */
+  session: string | null;
 }
 
 interface TamperedFile {
@@ -520,6 +523,7 @@ function load(paths: CrewPaths, processEnv: NodeJS.ProcessEnv): Env {
     tamperedFiles,
     mail,
     registered,
+    session: processEnv.CLAUDE_CODE_SESSION_ID ?? null,
   };
 }
 
@@ -1678,15 +1682,22 @@ async function tddCommand(env: Env, parsed: Parsed, args: string[]): Promise<Out
   // (the user's decision of 2026-10-23); a missing reason is refused first, by recordTdd.
   if (step === "observed" && reason?.trim() && !override)
     return refuse("crew tdd observed needs -- <a command that reads the artefact>");
-  const outcome = await recordTdd(
+  const outcome = await withRunning(
     env.paths,
-    opened.work,
-    evidence,
-    env.profile,
-    criterion,
-    step as TddStep,
-    override,
-    reason,
+    opened.work.id,
+    env.session,
+    `crew tdd ${step} ${opened.work.id} ${criterion}`,
+    () =>
+      recordTdd(
+        env.paths,
+        opened.work,
+        evidence,
+        env.profile,
+        criterion,
+        step as TddStep,
+        override,
+        reason,
+      ),
   );
   const tail = outcome.record?.tail ? `\n${outcome.record.tail}` : "";
   if (!outcome.ok) return refuse(`${outcome.message}${tail}`, { record: outcome.record });
@@ -3743,10 +3754,17 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       // work added is picked up here, with no detect --refresh and no profile set (finding 23).
       const refreshed = refreshProfile(env.paths, env.profile, env.tampered);
       env.profile = refreshed.profile;
-      const outcome = await runGates(env.paths, opened.work, env.profile, env.policy, {
-        only: only as (GateName | JudgementGateName)[] | undefined,
-        tampered: env.tampered || opened.tampered,
-      });
+      const outcome = await withRunning(
+        env.paths,
+        opened.work.id,
+        env.session,
+        `crew gate run ${opened.work.id}`,
+        () =>
+          runGates(env.paths, opened.work, env.profile, env.policy, {
+            only: only as (GateName | JudgementGateName)[] | undefined,
+            tampered: env.tampered || opened.tampered,
+          }),
+      );
       // A gate run is the work entering its gate phase, and its delivery when it proves the work;
       // the guards still decide, so a missing record or document keeps the phase where it is.
       deliver(env, opened, outcome.evidence);
@@ -4100,6 +4118,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           criteria,
           scope,
           typeof parsed.flags.text === "string" ? parsed.flags.text : taskText(planText, task),
+          planText,
         );
         if ("refused" in out) return refuse(out.refused);
         saveWork(env.paths, opened.work);

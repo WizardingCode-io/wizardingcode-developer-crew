@@ -7,6 +7,7 @@ import {
 import { nowIso } from "../fs.ts";
 import { assess } from "../gates.ts";
 import { emptyInboxSummary, inboxSummary, markNoticed, subjectQuoted } from "../mail.ts";
+import { runPermit } from "../running.ts";
 import { loadState, sessionState, updateSession } from "../state.ts";
 import { takeReplies } from "../tasks.ts";
 import { activeWork, lastLearned, saveWork, waitingPhrase } from "../work.ts";
@@ -64,6 +65,7 @@ export function onStop(ctx: HookContext, payload: HookPayload = {}): HookRespons
   const done = (response: HookResponse, withNotices = false): HookResponse =>
     updateSession(ctx.paths, ctx.sessionId, (fresh) => {
       fresh.stopBlocks = session.stopBlocks;
+      if (session.runPermits) fresh.runPermits = session.runPermits;
       if (!withNotices) return response;
       const notices = takeNotices(fresh)
         .map((n) => ` ${n}`)
@@ -158,6 +160,18 @@ export function onStop(ctx: HookContext, payload: HookPayload = {}): HookRespons
   const missing = result
     ? result.unproven
     : ['no work item: start one with crew start "<request>"'];
+  // The session's own engine run still going (finding 146): the turn ends once per run, nothing
+  // recorded on the item and no wait spent; the next turn is held to the rule again.
+  const running = work
+    ? runPermit(ctx.paths, work.id, ctx.sessionId, session.runPermits ?? [])
+    : null;
+  if (running) {
+    session.stopBlocks = 0;
+    session.runPermits = [...(session.runPermits ?? []), running.startedAt];
+    return done({
+      systemMessage: `Crew: ${running.command} is still running (started ${running.startedAt}); the turn ends while it runs, and the next one is held to the Stop rule again.${mailNote()}`,
+    });
+  }
   // The three waits (SP2c §9): the user, the roles, a reply. Each lets one turn end, with its notice.
   const what = work ? waitingPhrase(work) : null;
   if (work && what) {

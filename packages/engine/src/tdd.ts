@@ -22,12 +22,24 @@ const NO_TEST_LINES: readonly RegExp[] = [
   /^No tests executed!?/,
 ];
 
-/** The line of a run's tail that says no test ran, or null when the runner ran something. */
-function ranNoTest(tail: string): string | null {
+/**
+ * A shell's own line for a command it could not parse (finding 144): sh, bash, zsh and dash, whole
+ * and unindented like the runners' lines, so a test's output quoting one is still a failing test.
+ */
+const PARSE_ERROR_LINE =
+  /^(?:\/bin\/)?(?:sh|bash|zsh|dash): .*(?:syntax error|Syntax error|parse error)/;
+
+/** The first line of a run's tail that one of `rules` matches, or null. */
+function firstLine(tail: string, rules: readonly RegExp[]): string | null {
   for (const line of tail.split("\n")) {
-    if (NO_TEST_LINES.some((rule) => rule.test(line))) return line;
+    if (rules.some((rule) => rule.test(line))) return line;
   }
   return null;
+}
+
+/** The line of a run's tail that says no test ran, or null when the runner ran something. */
+function ranNoTest(tail: string): string | null {
+  return firstLine(tail, NO_TEST_LINES);
 }
 
 export type TddStep = "red" | "green" | "before" | "after" | "observed";
@@ -167,6 +179,15 @@ export async function recordTdd(
     timedOut: result.timedOut,
   };
   const passed = result.exit === 0 && !result.timedOut;
+  // A run the shell could not parse never started a test (finding 144): refused for every step.
+  const unparsed = firstLine(result.tail, [PARSE_ERROR_LINE]);
+  if (unparsed !== null) {
+    return {
+      ok: false,
+      message: `the shell could not parse the command (${unparsed}): fix the command (quote a pattern with parentheses) before recording`,
+      record,
+    };
+  }
   // A runner that found nothing to run says so in its own words (finding 126): a red, a green, a
   // before, an after or an observed on such a run proves nothing, and nothing is recorded.
   const empty = ranNoTest(result.tail);
@@ -181,8 +202,8 @@ export async function recordTdd(
     if (passed) {
       return {
         ok: false,
-        message:
-          "the test passed before the change; a test that passes before the code exists proves nothing",
+        // The two ways out, named where the agent reads the refusal (finding 148).
+        message: `the test passed before the change; a test that passes before the code exists proves nothing: write a test that fails first, or, for what an end-to-end run or a person checks, prove it with crew tdd observed ${work.id} ${criterionId} -- <command> (a criterion of kind observed)`,
         record,
       };
     }

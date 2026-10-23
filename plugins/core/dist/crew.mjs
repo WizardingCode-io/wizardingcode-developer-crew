@@ -1,6 +1,6 @@
 // packages/engine/src/cli.ts
-import { existsSync as existsSync23, readFileSync as readFileSync10, realpathSync as realpathSync8, rmSync as rmSync5, statSync as statSync12 } from "node:fs";
-import { basename as basename7, isAbsolute as isAbsolute11, join as join49, relative as relative12, resolve as resolve7, sep as sep5 } from "node:path";
+import { existsSync as existsSync24, readFileSync as readFileSync10, realpathSync as realpathSync8, rmSync as rmSync6, statSync as statSync12 } from "node:fs";
+import { basename as basename7, isAbsolute as isAbsolute11, join as join50, relative as relative12, resolve as resolve7, sep as sep5 } from "node:path";
 
 // packages/engine/src/analysis.ts
 import { existsSync as existsSync10, lstatSync as lstatSync2, mkdirSync as mkdirSync4 } from "node:fs";
@@ -9945,7 +9945,7 @@ function depsAuditCommand(target, root, env = process.env) {
     return { reason: `${tool.binary} not on PATH` };
   return { command: tool.command, tool: tool.tool, files: [tool.manifest, ...present] };
 }
-async function baselineAdvisories(paths, work, target, audit, where) {
+async function baselineAdvisories(paths, work, target, audit, where, env) {
   if (!work.baseCommit || audit.files.length === 0)
     return { readable: false, advisories: [] };
   const scratch = join36(paths.crewDir, "local", "audit-base", work.id, where || "root");
@@ -9967,18 +9967,19 @@ async function baselineAdvisories(paths, work, target, audit, where) {
   const result = await runCommand(audit.command, {
     cwd: scratch,
     timeoutMs: gateTimeoutMs(target, "deps"),
-    logPath: log
+    logPath: log,
+    env
   });
   const report = parseAudit(audit.tool, readTextQuietly(log) ?? result.tail);
   return { readable: report.readable && !result.timedOut, advisories: report.advisories };
 }
-async function judgeAudit(run, audit, paths, work, target, where) {
+async function judgeAudit(run, audit, paths, work, target, where, env) {
   const text = run.log && readTextQuietly(join36(workDir(paths, work.id), run.log)) || run.tail;
   const report = parseAudit(audit.tool, text);
   if (!report.readable)
     return { ...run, reason: "audit report unreadable; judged by exit code" };
   const started = Date.now();
-  const baseline = await baselineAdvisories(paths, work, target, audit, where);
+  const baseline = await baselineAdvisories(paths, work, target, audit, where, env);
   const known = baseline.readable ? report.advisories.filter((a) => baseline.advisories.includes(a)) : [];
   const fresh = baseline.readable ? report.advisories.filter((a) => !baseline.advisories.includes(a)) : report.advisories;
   const unbaselined = baseline.readable ? "" : "; the base commit could not be audited, so every advisory counts";
@@ -10083,7 +10084,7 @@ async function runTaskGate(paths, work, profile, policy, scope) {
     judgement: plannedTaskJudgement(scope, policy)
   };
 }
-async function runOneGate(paths, work, profile, planned, fingerprint, changed, scope, logName) {
+async function runOneGate(paths, work, profile, planned, fingerprint, changed, scope, logName, env) {
   const { gate, target: targetPath } = planned;
   const at = nowIso();
   const base = {
@@ -10146,7 +10147,7 @@ async function runOneGate(paths, work, profile, planned, fingerprint, changed, s
   let source = "detected";
   let audit = null;
   if (gate === "deps") {
-    const found = depsAuditCommand(target, paths.root);
+    const found = depsAuditCommand(target, paths.root, env);
     if ("reason" in found)
       return { ...base, reason: found.reason };
     audit = found;
@@ -10166,7 +10167,8 @@ async function runOneGate(paths, work, profile, planned, fingerprint, changed, s
   const result = await runCommand(command2, {
     cwd: join36(paths.root, targetPath),
     timeoutMs: gateTimeoutMs(target, gate),
-    logPath: join36(workDir(paths, work.id), log)
+    logPath: join36(workDir(paths, work.id), log),
+    env
   });
   const passed = result.exit === 0 && !result.timedOut;
   const run = {
@@ -10184,7 +10186,7 @@ async function runOneGate(paths, work, profile, planned, fingerprint, changed, s
   if (result.timedOut)
     return run;
   if (audit)
-    return judgeAudit(run, audit, paths, work, target, where);
+    return judgeAudit(run, audit, paths, work, target, where, env);
   if ((gate === "lint" || gate === "typecheck") && run.status === "fail")
     return judgeProblems(run, paths, work, targetPath, changed);
   return run;
@@ -10263,7 +10265,7 @@ async function runGates(paths, work, profile, policy, options = {}) {
       });
       continue;
     }
-    const run = await runOneGate(paths, work, profile, one, stamp2, changed);
+    const run = await runOneGate(paths, work, profile, one, stamp2, changed, undefined, undefined, options.env);
     if (gate === "build" && run.status === "pass") {
       const after = computeFingerprint(paths.root, profile, base, MAX_WATCHED_FILES, fingerprintMethod(fingerprintBefore));
       if (after !== stamp2) {
@@ -11466,7 +11468,7 @@ function powershellAsPosix(command2) {
 }
 
 // packages/engine/src/hooks/subagent-stop.ts
-import { readdirSync as readdirSync8, statSync as statSync11 } from "node:fs";
+import { existsSync as existsSync19, readdirSync as readdirSync8, statSync as statSync11 } from "node:fs";
 import { join as join40 } from "node:path";
 var PLUGIN_PREFIX2 = "wizardingcode-developer-crew:";
 var BARE_ROLE = new RegExp(`^(${ROLE_NAMES.join("|")})$`);
@@ -11802,11 +11804,13 @@ function fileAnswer(ctx, id, role, input, transcriptNote, progress) {
   let note = null;
   let keptAs = null;
   const keptNote = (archived, word) => `Crew: ${agent}'s answer ${whereSaved(saved)} (the earlier ${word} kept as ${archived}).`;
+  const resumedRuling = !!earlier?.file && agent === "judge" && gatesRuling(answer) !== null;
+  const headless = !!answer && agent === "tech-lead" && !leadAnswer(answer);
   if (!answer) {
     saved = { file: null, agent };
     note = `Crew: ${agent} stopped with no answer (no hand-back in its last turn): its end is recorded with no file; an earlier file of this role, if any, is not this round's answer. Run the role again or save its answer from the transcript${transcriptNote}.`;
-  } else if (earlier?.file) {
-    const joined = joinEarlierFile(dir, agent, answer, kindOfItem(work));
+  } else if (earlier?.file && !resumedRuling) {
+    const joined = joinEarlierFile(dir, agent, answer, kindOfItem(work), earlier.file, roles);
     if ("failed" in joined)
       return `Crew: ${agent}'s earlier reply could not be archived at ${joined.failed} (${joined.error}): the plain reply file was left as it was; save this answer from the transcript${transcriptNote} and run the role again if it is needed.`;
     saved = { file: joined.file, agent };
@@ -11817,8 +11821,8 @@ function fileAnswer(ctx, id, role, input, transcriptNote, progress) {
       keptAs = joined.archived;
     }
   } else {
-    const file = answerFile(agent, answer, kindOfItem(work));
-    const kept = file.startsWith("conclave/") ? archiveExisting(dir, file) : { archived: null };
+    const file = headless ? `conclave/${headlessLeadStem(dir, roles)}.md` : answerFile(agent, answer, kindOfItem(work));
+    const kept = file.startsWith("conclave/") || resumedRuling ? archiveExisting(dir, file) : { archived: null };
     if ("failed" in kept)
       return `Crew: ${agent}'s earlier answer could not be archived at ${kept.failed} (${kept.error}): the plain file was left as it was; save this answer from the transcript${transcriptNote} and run the role again if it is needed.`;
     writeText(join40(dir, file), file.endsWith(".json") ? `${gatesRuling(answer)}
@@ -11877,12 +11881,20 @@ function fileAnswer(ctx, id, role, input, transcriptNote, progress) {
   }
   if (pending)
     progress.reply = answer;
-  return note ?? archivedNote;
+  const headlessNote = headless ? `Crew: tech-lead's answer has no lead heading: saved at ${saved.file} as no team's validation; resume the lead for an answer whose first line is # <team> lead's validation of ${id}: <spec|plan|delivery>.` : null;
+  return [note ?? archivedNote, headlessNote].filter(Boolean).join(" ") || null;
+}
+function headlessLeadStem(dir, roles) {
+  for (let n = 1;; n++) {
+    const file = `conclave/tech-lead-${n}.md`;
+    if (!roles.some((r) => r.file === file) && !existsSync19(join40(dir, file)))
+      return `tech-lead-${n}`;
+  }
 }
 function pendingQuestion(ctx, workId, agent) {
   return loadItemMail(ctx.paths, workId).box.messages.find((m) => m.relayed && m.to.agent === agent && (mailStatus(m) === "sent" || mailStatus(m) === "read") && !m.replyTo);
 }
-function joinEarlierFile(dir, agent, answer, kind) {
+function joinEarlierFile(dir, agent, answer, kind, earlierFile, roles) {
   if (agent.startsWith("review-")) {
     const file2 = answerFile(agent, answer, kind);
     const current = (readText(join40(dir, file2)) ?? "").trimEnd();
@@ -11897,7 +11909,8 @@ ${heading}`;
     return { file: file2, archived: null };
   }
   const lead = agent === "tech-lead" ? leadAnswer(answer) : null;
-  const file = lead ? replyFile(`lead-${lead.team}`, lead.what) : replyFile(agent, "");
+  const headless = agent === "tech-lead" && !lead ? /^conclave\/(tech-lead-\d+)\.md$/.exec(earlierFile)?.[1] ?? headlessLeadStem(dir, roles) : null;
+  const file = lead ? replyFile(`lead-${lead.team}`, lead.what) : replyFile(headless ?? agent, "");
   const kept = archiveExisting(dir, file);
   if ("failed" in kept)
     return kept;
@@ -13516,7 +13529,7 @@ function onPostToolUse(ctx, payload = {}) {
 }
 
 // packages/engine/src/tasks.ts
-import { cpSync, existsSync as existsSync19 } from "node:fs";
+import { cpSync, existsSync as existsSync20 } from "node:fs";
 import { join as join42 } from "node:path";
 function shortId(workId) {
   return workId.slice(0, 14);
@@ -13587,11 +13600,12 @@ function openTask(ctx, env, work, task, criteria, text) {
     return {
       refused: `uncommitted changes in ${dirty.join(", ")}; commit what the implementer must see, then open the task`
     };
-  const body = text?.trim() || taskText(readText(join42(workDir(env.paths, work.id), "plan.md")), task);
+  const plan = readText(join42(workDir(env.paths, work.id), "plan.md"));
+  const body = text?.trim() || taskText(plan, task);
   if (!body)
-    return { refused: `plan.md names no task ${task}; give its text with --text "<task>"` };
+    return { refused: noTaskText(work, task, plan, "task") };
   const names = taskNames(work.id, env.paths.root, task, env.policy.mail.worktrees);
-  if (existsSync19(names.worktree))
+  if (existsSync20(names.worktree))
     return { refused: `${names.worktree} exists; remove it or pick another task number` };
   let branches;
   try {
@@ -13651,7 +13665,10 @@ Criteria: ${criteria.map((c) => `${c} ${work.criteria.find((k) => k.id === c)?.t
   }, notes);
   return { record, message: sent.message, opened, notes };
 }
-function noteTask(work, task, criteria, scope, text) {
+function noTaskText(work, task, plan, what) {
+  return plan === null ? `this item has no plan.md (route ${work.route}): give the ${what}'s text with --text "<${what}>"` : `plan.md names no task ${task}; give its text with --text "<${what}>"`;
+}
+function noteTask(work, task, criteria, scope, text, plan) {
   if (!/^T-\d+$/.test(task))
     return { refused: `a task is named T-n, not ${task}` };
   if ((work.tasks ?? []).some((t) => t.task === task))
@@ -13665,7 +13682,7 @@ function noteTask(work, task, criteria, scope, text) {
   if (escaped2)
     return { refused: escaped2 };
   if (!text)
-    return { refused: `plan.md names no task ${task}; give its text with --text "<todo>"` };
+    return { refused: noTaskText(work, task, plan, "todo") };
   const record = {
     task,
     message: "",
@@ -13808,7 +13825,7 @@ function mergeTask(ctx, env, work, task, options = {}) {
     return {
       refused: `${task} has no reply yet (message ${record.message}); the implementer ends with crew mail reply`
     };
-  const childPaths = existsSync19(record.worktree) ? resolvePaths(record.worktree, ctx.env) : null;
+  const childPaths = existsSync20(record.worktree) ? resolvePaths(record.worktree, ctx.env) : null;
   if (!childPaths)
     return {
       refused: `${task}'s worktree ${record.worktree} is gone; restore it with git worktree add ${record.worktree} ${record.branch}, then merge`
@@ -13848,7 +13865,7 @@ function mergeTask(ctx, env, work, task, options = {}) {
   saveWork(env.paths, work);
   const credit = creditChild(env.paths, work, record, { child, commit, at }, options.forcedBy !== undefined);
   const childDir = workDir(env.paths, child);
-  if (existsSync19(workDir(childPaths, child)))
+  if (existsSync20(workDir(childPaths, child)))
     cpSync(workDir(childPaths, child), childDir, {
       recursive: true,
       force: false,
@@ -14127,6 +14144,55 @@ function onSessionStart(ctx, payload = {}) {
   };
 }
 
+// packages/engine/src/running.ts
+import { rmSync as rmSync5 } from "node:fs";
+import { join as join43 } from "node:path";
+function runningFile(paths, id) {
+  return join43(workDir(paths, id), "running.json");
+}
+async function withRunning(paths, id, session, command2, run) {
+  if (!session)
+    return run();
+  const file = runningFile(paths, id);
+  const marker = {
+    command: command2,
+    pid: process.pid,
+    processStart: processStart(process.pid),
+    session,
+    startedAt: nowIso()
+  };
+  writeText(file, `${JSON.stringify(marker)}
+`);
+  try {
+    return await run();
+  } finally {
+    rmSync5(file, { force: true });
+  }
+}
+function parseMarker(text) {
+  try {
+    const m = JSON.parse(text);
+    const strings2 = [m.command, m.processStart, m.session, m.startedAt];
+    if (strings2.every((s) => typeof s === "string") && Number.isInteger(m.pid))
+      return m;
+  } catch {}
+  return null;
+}
+function runPermit(paths, id, session, spent) {
+  const file = runningFile(paths, id);
+  const text = readText(file);
+  if (text === null)
+    return null;
+  const marker = parseMarker(text);
+  if (!marker || !isAlive(marker.pid)) {
+    rmSync5(file, { force: true });
+    return null;
+  }
+  if (marker.session !== session || spent.includes(marker.startedAt))
+    return null;
+  return processStart(marker.pid) === marker.processStart ? marker : null;
+}
+
 // packages/engine/src/hooks/stop.ts
 var MAX_STOP_BLOCKS = 3;
 var TYPED_CREW = /(?:^|[^\w!])!\s?(?:(?:node|bun)\s+)?(?:\S*\/)?crew(?:\.mjs)?\s+[a-z]/m;
@@ -14146,6 +14212,8 @@ function onStop(ctx, payload = {}) {
     session.stopBlocks = 0;
   const done = (response, withNotices = false) => updateSession(ctx.paths, ctx.sessionId, (fresh) => {
     fresh.stopBlocks = session.stopBlocks;
+    if (session.runPermits)
+      fresh.runPermits = session.runPermits;
     if (!withNotices)
       return response;
     const notices = takeNotices(fresh).map((n) => ` ${n}`).join("");
@@ -14207,6 +14275,14 @@ function onStop(ctx, payload = {}) {
     return release(notes.length ? { systemMessage: `Crew: ${notes.join("; ")}.` } : {});
   }
   const missing = result ? result.unproven : ['no work item: start one with crew start "<request>"'];
+  const running = work ? runPermit(ctx.paths, work.id, ctx.sessionId, session.runPermits ?? []) : null;
+  if (running) {
+    session.stopBlocks = 0;
+    session.runPermits = [...session.runPermits ?? [], running.startedAt];
+    return done({
+      systemMessage: `Crew: ${running.command} is still running (started ${running.startedAt}); the turn ends while it runs, and the next one is held to the Stop rule again.${mailNote()}`
+    });
+  }
   const what = work ? waitingPhrase(work) : null;
   if (work && what) {
     session.stopBlocks = 0;
@@ -14279,8 +14355,8 @@ function handleHook(event, payload, env = process.env) {
 }
 
 // packages/engine/src/knowledge.ts
-import { existsSync as existsSync20, readdirSync as readdirSync9, realpathSync as realpathSync7 } from "node:fs";
-import { isAbsolute as isAbsolute10, join as join43, relative as relative11, resolve as resolve6 } from "node:path";
+import { existsSync as existsSync21, readdirSync as readdirSync9, realpathSync as realpathSync7 } from "node:fs";
+import { isAbsolute as isAbsolute10, join as join44, relative as relative11, resolve as resolve6 } from "node:path";
 
 // packages/engine/src/verify.ts
 var RUBRIC_QUESTIONS = {
@@ -14766,7 +14842,7 @@ function lookup(base, query, limit = 10) {
 }
 function fileInsideRoot(root, file) {
   const candidate = resolve6(root, file);
-  if (!existsSync20(candidate))
+  if (!existsSync21(candidate))
     return null;
   try {
     const real = realpathSync7(candidate);
@@ -14804,7 +14880,7 @@ function latestPlan(userDir, workspace) {
     const [db, nb] = order(b);
     return da === db ? na - nb : da.localeCompare(db);
   }).at(-1);
-  return last ? { path: join43(dir, last), date: last.slice(0, 10) } : null;
+  return last ? { path: join44(dir, last), date: last.slice(0, 10) } : null;
 }
 function entryLine(e) {
   return `${e.id} · ${e.kind} · "${e.title}" · ${e.workspace ?? "alone"} · ${e.confidential === false ? "unmarked" : "marked"} · confirmed ${e.confirmedBy.length}, contradicted ${e.contradictedBy.length}`;
@@ -14914,7 +14990,7 @@ function knowledgeText(id, hits, unreadable) {
 }
 
 // packages/engine/src/learn.ts
-import { join as join44 } from "node:path";
+import { join as join45 } from "node:path";
 
 // packages/engine/src/research.ts
 var SECTION = /^##\s+What the documentation says\s*$/m;
@@ -15069,7 +15145,7 @@ function draftsOf(paths, work, profile, policy, scope) {
   };
   const drafts = [];
   const skipped = [];
-  const problem = section(readText(join44(dir, "spec.md")), "Problem");
+  const problem = section(readText(join45(dir, "spec.md")), "Problem");
   const criteria = work.criteria.map((c) => `${c.id}: ${c.text}`);
   const solutionText = clipKnowledge([...problem ? [problem] : [], ...criteria].join(`
 `));
@@ -15088,7 +15164,7 @@ function draftsOf(paths, work, profile, policy, scope) {
     text: solutionText
   });
   if (kindOfItem(work) === "issue") {
-    const cause = section(readText(join44(dir, "analysis.md")), "Cause");
+    const cause = section(readText(join45(dir, "analysis.md")), "Cause");
     const origin = readOrigin(paths, work.id)?.origin ?? null;
     if (cause && origin) {
       const title = `Root cause: ${work.title}`;
@@ -15105,9 +15181,9 @@ function draftsOf(paths, work, profile, policy, scope) {
       });
     }
   }
-  const researcher = readText(join44(dir, "conclave", "researcher.md"));
+  const researcher = readText(join45(dir, "conclave", "researcher.md"));
   if (researcher !== null) {
-    const verification = readJson(join44(dir, "conclave", "researcher.verification.json"));
+    const verification = readJson(join45(dir, "conclave", "researcher.verification.json"));
     const status = new Map((verification?.facts ?? []).map((f) => [f.id, f.status ?? ""]));
     for (const fact of parseFacts(researcher)) {
       if (!/^https?:\/\//.test(fact.source))
@@ -15139,7 +15215,7 @@ function draftsOf(paths, work, profile, policy, scope) {
     for (const project of loadRegistry(paths.userDir).projects) {
       if (project.workspace !== scope.workspace)
         continue;
-      const other = readJson(join44(project.root, ".crew", "profile.json"));
+      const other = readJson(join45(project.root, ".crew", "profile.json"));
       if (!other || !Array.isArray(other.targets))
         continue;
       for (const stack of new Set(other.targets.map((t) => t.stack)))
@@ -15162,9 +15238,22 @@ function draftsOf(paths, work, profile, policy, scope) {
   }
   return { drafts, skipped };
 }
-function sameRootCause(existing, draft) {
+function commonWords(entries) {
+  const common = new Set;
+  if (entries.length < 4)
+    return common;
+  const holders = new Map;
+  for (const entry of entries)
+    for (const word of new Set(entry.words))
+      holders.set(word, (holders.get(word) ?? 0) + 1);
+  for (const [word, count] of holders)
+    if (count * 2 >= entries.length)
+      common.add(word);
+  return common;
+}
+function sameRootCause(existing, draft, common = new Set) {
   const path = draft.paths.some((p) => existing.paths.includes(p));
-  const shared = draft.words.filter((w) => existing.words.includes(w)).length;
+  const shared = draft.words.filter((w) => existing.words.includes(w) && !common.has(w)).length;
   return path && shared >= 3;
 }
 function scanDrafts(drafts) {
@@ -15184,7 +15273,7 @@ function citedIds(dir, work) {
   const listed = work.knowledge?.listed ?? [];
   if (!listed.length)
     return [];
-  const text = ["spec.md", "strategy.md", "analysis.md"].map((f) => readText(join44(dir, f)) ?? "").join(`
+  const text = ["spec.md", "strategy.md", "analysis.md"].map((f) => readText(join45(dir, f)) ?? "").join(`
 `);
   const cited = citations(text);
   return listed.filter((id) => cited.has(id));
@@ -15234,8 +15323,10 @@ function learnItem(paths, work, profile, policy, mail, proven, options = {}) {
   }
   const cause = drafts.find((d) => d.kind === "root-cause");
   const contradicted = (e) => e.contradictedBy.some((r) => r.item === work.id && r.project === scope.project);
-  const cited = citations(readText(join44(dir, "analysis.md")) ?? "");
-  const duplicates = cause ? entries.filter((e) => e.kind === "root-cause" && visibleTo(e, scope) && !contradicted(e) && !cited.has(e.id) && sameRootCause(e, cause)) : [];
+  const cited = citations(readText(join45(dir, "analysis.md")) ?? "");
+  const causes = entries.filter((e) => e.kind === "root-cause" && visibleTo(e, scope));
+  const common = commonWords(causes);
+  const duplicates = cause ? entries.filter((e) => e.kind === "root-cause" && visibleTo(e, scope) && !contradicted(e) && !cited.has(e.id) && sameRootCause(e, cause, common)) : [];
   if (duplicates.length && !duplicates.some((d) => d.id === confirmTarget?.id))
     return { refused: duplicateRefusal(work.id, duplicates) };
   const toWrite = confirmTarget ? drafts.filter((d) => d !== cause) : drafts;
@@ -15288,7 +15379,7 @@ function tellWorkspace(paths, work, mail, scope, written) {
 
 // packages/engine/src/metrics.ts
 import { readdirSync as readdirSync10 } from "node:fs";
-import { join as join45 } from "node:path";
+import { join as join46 } from "node:path";
 function emptyKnowledge() {
   const entries = {};
   for (const kind of KNOWLEDGE_KINDS)
@@ -15322,7 +15413,7 @@ function knowledgeFigures(base, scope, projects) {
 }
 function workIds(paths) {
   try {
-    return readdirSync10(join45(paths.crewDir, "work"));
+    return readdirSync10(join46(paths.crewDir, "work"));
   } catch {
     return [];
   }
@@ -15359,7 +15450,7 @@ function computeMetrics(projects, knowledge = emptyKnowledge()) {
     const policy = loadPolicy(paths).policy;
     let ids = [];
     try {
-      ids = readdirSync10(join45(paths.crewDir, "work"));
+      ids = readdirSync10(join46(paths.crewDir, "work"));
     } catch {
       continue;
     }
@@ -15457,10 +15548,10 @@ function metricsText(m) {
 }
 
 // packages/engine/src/pdf.ts
-import { existsSync as existsSync21 } from "node:fs";
+import { existsSync as existsSync22 } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { delimiter as delimiter2, join as join46 } from "node:path";
+import { delimiter as delimiter2, join as join47 } from "node:path";
 var NO_PDF = "PDF not produced: no Playwright in the project and no browser found (set WIZARDINGCODE_CREW_BROWSER)";
 var BROWSER_CANDIDATES = [
   "google-chrome",
@@ -15476,8 +15567,8 @@ function onPath2(binary, env) {
   for (const dir of (env.PATH ?? "").split(delimiter2)) {
     if (!dir)
       continue;
-    const path = join46(dir, binary);
-    if (existsSync21(path))
+    const path = join47(dir, binary);
+    if (existsSync22(path))
       return path;
   }
   return null;
@@ -15487,7 +15578,7 @@ function findBrowser(env, candidates = BROWSER_CANDIDATES) {
   if (named2)
     return named2;
   for (const candidate of candidates) {
-    const found = candidate.includes("/") ? existsSync21(candidate) ? candidate : null : onPath2(candidate, env);
+    const found = candidate.includes("/") ? existsSync22(candidate) ? candidate : null : onPath2(candidate, env);
     if (found)
       return found;
   }
@@ -15551,7 +15642,7 @@ async function printPdf(html, out2, env, root, options = {}) {
   const result = await runCommand(command2, {
     cwd: root,
     timeoutMs,
-    logPath: options.logPath ?? join46(tmpdir(), `crew-pdf-${Date.now()}.log`),
+    logPath: options.logPath ?? join47(tmpdir(), `crew-pdf-${Date.now()}.log`),
     env
   });
   if (result.timedOut)
@@ -15564,7 +15655,7 @@ async function printPdf(html, out2, env, root, options = {}) {
 `).filter(Boolean).slice(-3).join(" ");
     return { ok: false, reason: `PDF not produced: the browser exited ${result.exit}: ${tail}` };
   }
-  if (!existsSync21(out2))
+  if (!existsSync22(out2))
     return {
       ok: false,
       reason: `PDF not produced: the browser exited 0 and wrote nothing at ${out2}`
@@ -15573,7 +15664,7 @@ async function printPdf(html, out2, env, root, options = {}) {
 }
 
 // packages/engine/src/tdd.ts
-import { join as join47 } from "node:path";
+import { join as join48 } from "node:path";
 var NO_TEST_LINES = [
   /^error: .*matched 0 tests\. Searched /,
   /^Ran 0 tests across /,
@@ -15582,13 +15673,17 @@ var NO_TEST_LINES = [
   /^=+ no tests ran in /,
   /^No tests executed!?/
 ];
-function ranNoTest(tail) {
+var PARSE_ERROR_LINE = /^(?:\/bin\/)?(?:sh|bash|zsh|dash): .*(?:syntax error|Syntax error|parse error)/;
+function firstLine(tail, rules) {
   for (const line of tail.split(`
 `)) {
-    if (NO_TEST_LINES.some((rule) => rule.test(line)))
+    if (rules.some((rule) => rule.test(line)))
       return line;
   }
   return null;
+}
+function ranNoTest(tail) {
+  return firstLine(tail, NO_TEST_LINES);
 }
 var STEPS_BY_KIND = {
   behavior: { steps: ["red", "green"], how: "record red, then green" },
@@ -15681,7 +15776,7 @@ async function recordTdd(paths, work, evidence, profile, criterionId, step, over
   const result = await runCommand(command2, {
     cwd: paths.root,
     timeoutMs: fallback?.timeoutMs ?? 10 * 60 * 1000,
-    logPath: join47(workDir(paths, work.id), log)
+    logPath: join48(workDir(paths, work.id), log)
   });
   const record2 = {
     command: command2,
@@ -15693,6 +15788,14 @@ async function recordTdd(paths, work, evidence, profile, criterionId, step, over
     timedOut: result.timedOut
   };
   const passed = result.exit === 0 && !result.timedOut;
+  const unparsed = firstLine(result.tail, [PARSE_ERROR_LINE]);
+  if (unparsed !== null) {
+    return {
+      ok: false,
+      message: `the shell could not parse the command (${unparsed}): fix the command (quote a pattern with parentheses) before recording`,
+      record: record2
+    };
+  }
   const empty = ranNoTest(result.tail);
   if (empty !== null) {
     return {
@@ -15705,7 +15808,7 @@ async function recordTdd(paths, work, evidence, profile, criterionId, step, over
     if (passed) {
       return {
         ok: false,
-        message: "the test passed before the change; a test that passes before the code exists proves nothing",
+        message: `the test passed before the change; a test that passes before the code exists proves nothing: write a test that fails first, or, for what an end-to-end run or a person checks, prove it with crew tdd observed ${work.id} ${criterionId} -- <command> (a criterion of kind observed)`,
         record: record2
       };
     }
@@ -15740,8 +15843,8 @@ async function recordTdd(paths, work, evidence, profile, criterionId, step, over
 }
 
 // packages/engine/src/workspace.ts
-import { existsSync as existsSync22 } from "node:fs";
-import { join as join48 } from "node:path";
+import { existsSync as existsSync23 } from "node:fs";
+import { join as join49 } from "node:path";
 var NO_WORKSPACE = "no workspace in policy.json (mail.workspace): crew workspace status lists the projects of one workspace";
 var CLOSED = new Set(["done", "refused", "expired"]);
 function isOpen(m) {
@@ -15791,7 +15894,7 @@ function workspaceStatus(paths, policy, env) {
       priorities: 0,
       questions: 0
     };
-    if (!existsSync22(join48(root, ".git")))
+    if (!existsSync23(join49(root, ".git")))
       return { ...empty, gone: true, environment: "none" };
     const projectPaths = pathsFor(root, userDir);
     const ctx = mailContext(projectPaths, loadPolicy(projectPaths).policy, env);
@@ -15921,7 +16024,8 @@ function load2(paths, processEnv) {
     tampered: tamperedFiles.length > 0,
     tamperedFiles,
     mail,
-    registered
+    registered,
+    session: processEnv.CLAUDE_CODE_SESSION_ID ?? null
   };
 }
 function laneEnd(env, work) {
@@ -15987,16 +16091,16 @@ function skipStep(work, raw) {
 }
 function accept(env, target) {
   if (target === "profile" || target === "policy" || target === "decisions") {
-    if (!recordIntegrity(env.paths, join49(env.paths.crewDir, `${target}.json`)))
+    if (!recordIntegrity(env.paths, join50(env.paths.crewDir, `${target}.json`)))
       return refuse(`no .crew/${target}.json to accept`);
     return ok(`${target} accepted: its current content is now the trusted version`, {
       accepted: target
     });
   }
   const dir = workDir(env.paths, target);
-  if (!/^[\w.-]+$/.test(target) || target.includes("..") || !existsSync23(join49(dir, "work.json")))
+  if (!/^[\w.-]+$/.test(target) || target.includes("..") || !existsSync24(join50(dir, "work.json")))
     return refuse(`unknown work item: ${target}`);
-  const files = PROTECTED_WORK_FILES.filter((name) => recordIntegrity(env.paths, join49(dir, name)));
+  const files = PROTECTED_WORK_FILES.filter((name) => recordIntegrity(env.paths, join50(dir, name)));
   return ok(`${target} accepted: ${files.join(", ")} now trusted as they are`, {
     accepted: target,
     files
@@ -16274,11 +16378,11 @@ async function recordStrategyJudgement(env, opened, parsed, gateWord, usage) {
   if (!planned)
     return refuse("strategy is not a phase of this item: a strategy ruling is recorded on a new project alone");
   const dir = workDir(env.paths, work.id);
-  const inputs = readJson(join49(dir, "review", "strategy", "inputs.json"));
+  const inputs = readJson(join50(dir, "review", "strategy", "inputs.json"));
   if (!inputs || typeof inputs.hash !== "string" || typeof inputs.at !== "string")
     return refuse(`no strategy check for this item: run crew strategy ${work.id} check first, then the reviewer and the judge`);
-  const research = readText(join49(dir, "conclave", "researcher.md"));
-  const text = readText(join49(dir, "strategy.md"));
+  const research = readText(join50(dir, "conclave", "researcher.md"));
+  const text = readText(join50(dir, "strategy.md"));
   if (research === null)
     return refuse(RESEARCHER_FIRST);
   if (text === null)
@@ -16294,8 +16398,8 @@ async function recordStrategyJudgement(env, opened, parsed, gateWord, usage) {
     return refuse(usage);
   if (record2.verdict !== "not-run") {
     if (planned.reviewer === "cto") {
-      const cto = join49(dir, "conclave", "cto.md");
-      if (!existsSync23(cto))
+      const cto = join50(dir, "conclave", "cto.md");
+      if (!existsSync24(cto))
         return refuse("the CTO's review of the strategy comes before the ruling on the full route (conclave/cto.md, launched after crew strategy check)");
       if (statSync12(cto).mtimeMs < Date.parse(inputs.at))
         return refuse("conclave/cto.md predates the check: the CTO reviews the strategy as it is now, then the judge rules");
@@ -16346,7 +16450,7 @@ async function recordTaskJudgement(env, ioEnv, work, tampered, parsed, task) {
     return input;
   const { records, rulingPath } = input;
   fillTokens(records, before.evidence.roles ?? [], inputs.at);
-  const defects = await askDefects(env, ioEnv, records, join49(reviewDir(env.paths, work.id, task), "diff.patch"));
+  const defects = await askDefects(env, ioEnv, records, join50(reviewDir(env.paths, work.id, task), "diff.patch"));
   const notes = [];
   const appendRefusal = appendVerifications(env, work.id, defects?.records ?? []);
   if (appendRefusal)
@@ -16404,16 +16508,16 @@ function guardContext(env, work, tampered) {
   const dir = workDir(env.paths, work.id);
   const result = assess(env.paths, work, env.profile, env.policy, env.tampered || tampered);
   return {
-    specText: readText(join49(dir, "spec.md")),
-    strategyText: readText(join49(dir, "strategy.md")),
-    researcherText: readText(join49(dir, "conclave", "researcher.md")),
-    analysisText: readText(join49(dir, "analysis.md")),
-    originRecorded: existsSync23(join49(dir, "analysis", "origin.json")),
+    specText: readText(join50(dir, "spec.md")),
+    strategyText: readText(join50(dir, "strategy.md")),
+    researcherText: readText(join50(dir, "conclave", "researcher.md")),
+    analysisText: readText(join50(dir, "analysis.md")),
+    originRecorded: existsSync24(join50(dir, "analysis", "origin.json")),
     knownRootCauses: knownCausesOf(env, work),
     gitRepository: isGitRepo(env.paths.root),
-    conclaveText: readText(join49(dir, "conclave.md")),
+    conclaveText: readText(join50(dir, "conclave.md")),
     ledger: loadLedger(env.paths, work.id).ledger,
-    planExists: existsSync23(join49(dir, "plan.md")),
+    planExists: existsSync24(join50(dir, "plan.md")),
     evidence: result.evidence,
     proven: result.verdict === "proven",
     unproven: result.unproven,
@@ -16428,7 +16532,7 @@ function deliver2(env, opened, evidence) {
       break;
   }
   saveWork(env.paths, opened.work);
-  writeProtectedText(env.paths, join49(workDir(env.paths, opened.work.id), "report.md"), reportOf(env, opened.work, evidence));
+  writeProtectedText(env.paths, join50(workDir(env.paths, opened.work.id), "report.md"), reportOf(env, opened.work, evidence));
 }
 function reportOf(env, work, evidence) {
   return renderReport(work, evidence, env.policy, {
@@ -16438,7 +16542,7 @@ function reportOf(env, work, evidence) {
     analysis: readOrigin(env.paths, work.id) ?? undefined,
     strategy: strategyOf(env, work, evidence),
     audit: auditViewOf(env, work),
-    knowledge: readText(join49(workDir(env.paths, work.id), "knowledge.md")),
+    knowledge: readText(join50(workDir(env.paths, work.id), "knowledge.md")),
     ctoPlan: env.mail.self.workspace ? latestPlan(env.paths.userDir, env.mail.self.workspace) : null
   });
 }
@@ -16468,10 +16572,10 @@ function auditSignature(work) {
 }
 async function renderAudit(env, io, work, signed) {
   const dir = workDir(env.paths, work.id);
-  const auditDir = join49(dir, "audit");
+  const auditDir = join50(dir, "audit");
   const assembled = assembleAuditReport({
     auditDir,
-    logsDir: join49(dir, "logs"),
+    logsDir: join50(dir, "logs"),
     root: env.paths.root,
     id: work.id,
     project: env.mail.self.project,
@@ -16483,12 +16587,12 @@ async function renderAudit(env, io, work, signed) {
     return refuse(assembled.refused);
   const { inputs, counts } = assembled;
   const brand = brandOf(io.env, env.paths.root);
-  writeProtectedText(env.paths, join49(auditDir, "report.md"), renderAuditMarkdown(inputs));
-  writeProtectedText(env.paths, join49(auditDir, "report.html"), renderAuditHtml(inputs, brand));
-  const pdfPath = join49(auditDir, "report.pdf");
-  rmSync5(pdfPath, { force: true });
-  const printed = await printPdf(join49(auditDir, "report.html"), pdfPath, io.env, env.paths.root, {
-    logPath: join49(dir, "logs", "audit-pdf.txt")
+  writeProtectedText(env.paths, join50(auditDir, "report.md"), renderAuditMarkdown(inputs));
+  writeProtectedText(env.paths, join50(auditDir, "report.html"), renderAuditHtml(inputs, brand));
+  const pdfPath = join50(auditDir, "report.pdf");
+  rmSync6(pdfPath, { force: true });
+  const printed = await printPdf(join50(auditDir, "report.html"), pdfPath, io.env, env.paths.root, {
+    logPath: join50(dir, "logs", "audit-pdf.txt")
   });
   const record2 = {
     at: nowIso(),
@@ -16502,7 +16606,7 @@ async function renderAudit(env, io, work, signed) {
     verdict: inputs.verdict,
     signed
   };
-  writeProtectedJson(env.paths, join49(auditDir, "report.json"), record2);
+  writeProtectedJson(env.paths, join50(auditDir, "report.json"), record2);
   const kept = Object.values(counts).reduce((n, c) => n + c.defects + c.advisories, 0);
   const next = signed ? `crew phase ${work.id} next` : `crew approve ${work.id} audit (a person signs), then crew phase ${work.id} next`;
   return ok(`audit report of ${work.id}: verdict ${inputs.verdict}; ${kept} finding${kept === 1 ? "" : "s"} kept, ${inputs.leftOut.length} left out for want of proof; audit/report.md, audit/report.html, ${printed.ok ? `audit/report.pdf (${printed.by})` : `pdf not produced: ${printed.reason}`}${brand ? "" : "; brand assets not found"}
@@ -16512,7 +16616,7 @@ function strategyOf(env, work, evidence) {
   if (!phasesFor(work).includes("strategy"))
     return null;
   const dir = workDir(env.paths, work.id);
-  return strategyReport(readText(join49(dir, "strategy.md")), readText(join49(dir, "conclave", "researcher.md")), evidence, work.knowledge?.listed ?? []);
+  return strategyReport(readText(join50(dir, "strategy.md")), readText(join50(dir, "conclave", "researcher.md")), evidence, work.knowledge?.listed ?? []);
 }
 function strategyLine(report, planned) {
   const state = report === null ? "no strategy.md yet" : report.faults.length ? `${report.faults.length} fault${report.faults.length === 1 ? "" : "s"}` : "ok";
@@ -16539,11 +16643,11 @@ function auditStatusOf(env, work) {
   };
 }
 function auditLine(env, work) {
-  const dir = join49(workDir(env.paths, work.id), "audit");
-  const runs = readJson(join49(dir, "runs.json"));
+  const dir = join50(workDir(env.paths, work.id), "audit");
+  const runs = readJson(join50(dir, "runs.json"));
   if (!runs)
     return `  audit run: none yet (crew audit ${work.id} run)`;
-  const scope = readJson(join49(dir, "scope.json"));
+  const scope = readJson(join50(dir, "scope.json"));
   return `  audit run: ${auditSummary(runs.runs)}; files ${scope?.files ?? 0}`;
 }
 function startPriority(flag, origin, answers) {
@@ -16698,7 +16802,7 @@ async function tddCommand(env, parsed, args) {
   const reason = typeof parsed.flags.reason === "string" ? parsed.flags.reason : undefined;
   if (step === "observed" && reason?.trim() && !override)
     return refuse("crew tdd observed needs -- <a command that reads the artefact>");
-  const outcome = await recordTdd(env.paths, opened.work, evidence, env.profile, criterion, step, override, reason);
+  const outcome = await withRunning(env.paths, opened.work.id, env.session, `crew tdd ${step} ${opened.work.id} ${criterion}`, () => recordTdd(env.paths, opened.work, evidence, env.profile, criterion, step, override, reason));
   const tail = outcome.record?.tail ? `
 ${outcome.record.tail}` : "";
   if (!outcome.ok)
@@ -16780,7 +16884,7 @@ function logDecision(env, work, answers) {
     kind: work.kind,
     kindFrom: work.kindFrom
   });
-  const file = join49(env.paths.localDir, "decisions.jsonl");
+  const file = join50(env.paths.localDir, "decisions.jsonl");
   writeText(file, `${readText(file) ?? ""}${line}
 `);
 }
@@ -16800,7 +16904,7 @@ async function classify(env, work, answers, context, ioEnv) {
   await lookupForItem(env, work, ioEnv);
 }
 async function lookupForItem(env, work, ioEnv, options = {}) {
-  const file = join49(workDir(env.paths, work.id), "knowledge.md");
+  const file = join50(workDir(env.paths, work.id), "knowledge.md");
   const readAt = nowIso();
   const read2 = options.base ?? readBase(env.paths.userDir);
   if (read2.base === null) {
@@ -17286,7 +17390,7 @@ async function dispatch(parsed, io) {
     return settings(command2, args, { userDir: userDirOf(io.env) });
   let paths = resolvePaths(io.cwd, io.env);
   if (!paths && command2 === "detect") {
-    ensureDir(join49(resolve7(io.cwd), ".crew"));
+    ensureDir(join50(resolve7(io.cwd), ".crew"));
     paths = resolvePaths(io.cwd, io.env);
   }
   if (!paths)
@@ -17312,7 +17416,7 @@ async function dispatch(parsed, io) {
       if (parsed.flags.refresh) {
         saveProfile(env.paths, profile);
         if (integrityOf(env.paths)[".crew/policy.json"] === undefined) {
-          recordIntegrity(env.paths, join49(env.paths.crewDir, "policy.json"));
+          recordIntegrity(env.paths, join50(env.paths.crewDir, "policy.json"));
         }
       }
       const missing = missingTestCommands(profile);
@@ -17829,10 +17933,10 @@ ${originNotes.join(`
       }
       if (args[1] === "close") {
         const jev = jevConfig(io.env, env.config);
-        const conclaveDir = join49(workDir(env.paths, opened.work.id), "conclave");
-        const researcherText = readText(join49(conclaveDir, "researcher.md"));
+        const conclaveDir = join50(workDir(env.paths, opened.work.id), "conclave");
+        const researcherText = readText(join50(conclaveDir, "researcher.md"));
         if (jev.configured && askAllowed(env.policy, "fact") && researcherText !== null) {
-          const read2 = readProtectedJson(env.paths, join49(conclaveDir, "researcher.verification.json"));
+          const read2 = readProtectedJson(env.paths, join50(conclaveDir, "researcher.verification.json"));
           if (read2.tampered || read2.data?.hash !== sha256(researcherText))
             return refuse(`run crew research ${opened.work.id} verify first (the researcher's facts are unverified)`);
         }
@@ -17902,7 +18006,7 @@ ${originNotes.join(`
         return refuse(cappedRefusal(result.capped));
       if ("stale" in result)
         return refuse(staleRefusal(work.id, result.stale));
-      const scope = readJson(join49(workDir(env.paths, work.id), "audit", "scope.json"));
+      const scope = readJson(join50(workDir(env.paths, work.id), "audit", "scope.json"));
       const areas = scope?.riskAreas.length ? scope.riskAreas.join(", ") : "none";
       const text = [
         `audit run of ${work.id} at ${result.head ? result.head.slice(0, 12) : "no git"}:`,
@@ -17923,10 +18027,10 @@ ${originNotes.join(`
       if (!plannedCheck)
         return refuse("strategy is not a phase of this item: a strategy belongs to a new project");
       const dir = workDir(env.paths, opened.work.id);
-      const research = readText(join49(dir, "conclave", "researcher.md"));
+      const research = readText(join50(dir, "conclave", "researcher.md"));
       if (research === null)
         return refuse(RESEARCHER_FIRST);
-      const text = readText(join49(dir, "strategy.md"));
+      const text = readText(join50(dir, "strategy.md"));
       if (text === null)
         return refuse("strategy.md in the work folder (references/strategy.md)");
       const faults = checkStrategy(text, research, opened.work.knowledge?.listed ?? []);
@@ -17935,7 +18039,7 @@ ${originNotes.join(`
 `), { faults });
       const hash = strategyHash(text, research);
       const reviewer = plannedCheck.reviewer;
-      writeProtectedJson(env.paths, join49(dir, "review", "strategy", "inputs.json"), {
+      writeProtectedJson(env.paths, join50(dir, "review", "strategy", "inputs.json"), {
         at: nowIso(),
         hash,
         strategy: "strategy.md",
@@ -18038,7 +18142,7 @@ ${rendered.text}`, { approvals: opened.work.approvals, ...rendered.data });
           const dir = workDir(env.paths, opened.work.id);
           const evidence = loadEvidence(env.paths, opened.work.id).evidence;
           const outcome = await verifyValidator(jev, env.policy, {
-            conclave: readText(join49(dir, "conclave.md")) ?? "",
+            conclave: readText(join50(dir, "conclave.md")) ?? "",
             decisions: (opened.work.decisions ?? []).map((d) => ({
               id: d.id,
               question: d.question,
@@ -18140,7 +18244,7 @@ ${rendered.text}`, { approvals: opened.work.approvals, ...rendered.data });
       if (args[1] !== "verify")
         return refuse(usage);
       const dir = workDir(env.paths, opened.work.id);
-      const file = typeof parsed.flags.file === "string" ? resolve7(env.paths.root, parsed.flags.file) : join49(dir, "conclave", "researcher.md");
+      const file = typeof parsed.flags.file === "string" ? resolve7(env.paths.root, parsed.flags.file) : join50(dir, "conclave", "researcher.md");
       const named2 = rel(env.paths, file);
       if (named2.startsWith("..") || isAbsolute11(named2))
         return refuse(`${parsed.flags.file} is not under the root`);
@@ -18206,7 +18310,7 @@ ${rendered.text}`, { approvals: opened.work.approvals, ...rendered.data });
           tail = `jev unavailable: ${out2.unavailable}`;
       }
       const ordered = facts.map((f) => statuses.get(f.id));
-      writeProtectedJson(env.paths, join49(dir, "conclave", "researcher.verification.json"), {
+      writeProtectedJson(env.paths, join50(dir, "conclave", "researcher.verification.json"), {
         at: nowIso(),
         hash: sha256(text),
         facts: ordered
@@ -18366,10 +18470,10 @@ ${notes.join(`
         return refuse(`unknown gate: ${unknown}`);
       const refreshed = refreshProfile(env.paths, env.profile, env.tampered);
       env.profile = refreshed.profile;
-      const outcome = await runGates(env.paths, opened.work, env.profile, env.policy, {
+      const outcome = await withRunning(env.paths, opened.work.id, env.session, `crew gate run ${opened.work.id}`, () => runGates(env.paths, opened.work, env.profile, env.policy, {
         only,
         tampered: env.tampered || opened.tampered
-      });
+      }));
       deliver2(env, opened, outcome.evidence);
       const raised = outcome.raised ? `Route raised to ${outcome.raised}: ${opened.work.routeReasons.at(-1)}
 ` : "";
@@ -18444,7 +18548,7 @@ ${outcome.saveRefused}` : ""),
         return input;
       const { records } = input;
       fillTokens(records, before.evidence.roles ?? [], readReviewInputs(env.paths, opened.work.id)?.at);
-      const defects = await askDefects(env, io.env, records, join49(reviewDir(env.paths, opened.work.id), "diff.patch"));
+      const defects = await askDefects(env, io.env, records, join50(reviewDir(env.paths, opened.work.id), "diff.patch"));
       const saved = updateEvidence(env.paths, opened.work.id, (fresh) => {
         for (const record2 of records)
           recordJudgement(fresh, record2);
@@ -18570,7 +18674,7 @@ ${report}`, {
       });
       if ("refused" in saved)
         return refuse(saved.refused);
-      writeProtectedText(env.paths, join49(workDir(env.paths, opened.work.id), "report.md"), report);
+      writeProtectedText(env.paths, join50(workDir(env.paths, opened.work.id), "report.md"), report);
       return ok(report, { verdict: result.verdict, unproven: result.unproven });
     }
     case "task": {
@@ -18598,8 +18702,8 @@ ${out2.notes.join(`
         const scope = commaList(parsed.flags.scope);
         if (!task || !criteria.length || args.length > 3)
           return refuse(usage);
-        const planText = readText(join49(workDir(env.paths, opened.work.id), "plan.md"));
-        const out2 = noteTask(opened.work, task, criteria, scope, typeof parsed.flags.text === "string" ? parsed.flags.text : taskText(planText, task));
+        const planText = readText(join50(workDir(env.paths, opened.work.id), "plan.md"));
+        const out2 = noteTask(opened.work, task, criteria, scope, typeof parsed.flags.text === "string" ? parsed.flags.text : taskText(planText, task), planText);
         if ("refused" in out2)
           return refuse(out2.refused);
         saveWork(env.paths, opened.work);
@@ -18624,7 +18728,7 @@ ${out2.notes.join(`
         if ("refused" in record2)
           return refuse(record2.refused);
         if (parsed.flags.print) {
-          const brief = record2.brief ? readText(join49(workDir(env.paths, opened.work.id), record2.brief)) : null;
+          const brief = record2.brief ? readText(join50(workDir(env.paths, opened.work.id), record2.brief)) : null;
           if (brief === null)
             return refuse(`${task} has no brief yet (crew task <id> brief ${task})`);
           return ok(brief.endsWith(`
@@ -18719,7 +18823,7 @@ test-first not credited: ${out2.uncredited}` : "";
         return seatJudgement(env, parsed, opened, args.slice(2));
       const changed = changedWatchedPaths(env.paths.root, env.profile, opened.work);
       const audit = kindOfItem(opened.work) === "audit";
-      const scope = audit ? readJson(join49(workDir(env.paths, opened.work.id), "audit", "scope.json")) : null;
+      const scope = audit ? readJson(join50(workDir(env.paths, opened.work.id), "audit", "scope.json")) : null;
       const registry = teamsFor(env.policy, packTemplates(env.paths.userDir));
       const seats = audit ? auditSeats({ riskAreas: scope?.riskAreas ?? opened.work.riskAreas }, env.policy) : plannedSeats(opened.work.route, opened.work.riskAreas, changed, env.policy, {
         strategy: phasesFor(opened.work).includes("strategy"),
@@ -18788,7 +18892,7 @@ test-first not credited: ${out2.uncredited}` : "";
       if (repeated)
         return refuse(`already recorded: ${repeated.file} is the answer recorded for round ${repeated.round} of ${by} (${repeated.what}); record the lead's new answer (a resumed lead's lands in ${replyFile(by, what)})`);
       const evidence = loadEvidence(env.paths, work.id).evidence;
-      const hash = validationHash(what, readText(join49(dir, "spec.md")), readText(join49(dir, "plan.md")), evidence.fingerprint ?? "");
+      const hash = validationHash(what, readText(join50(dir, "spec.md")), readText(join50(dir, "plan.md")), evidence.fingerprint ?? "");
       const rounds = work.rounds ?? { judgement: 0, validation: 0 };
       const { round, newRound } = validationRound(work.validations ?? [], what, by, hash, rounds.validation);
       if (what === "spec" && newRound) {
@@ -18990,7 +19094,7 @@ ${filedLine}` : ""}`, {
         return refuse(`${work.id} is not open (phase ${work.phase})`);
       if (!ROLE_NAMES.includes(role))
         return refuse(`unknown role ${role} (one of: ${ROLE_NAMES.join(", ")})`);
-      if (!existsSync23(file))
+      if (!existsSync24(file))
         return refuse(`no file at ${file}`);
       const observed = work.runtimes?.length ? work.runtimes : ["claude"];
       const byHook = observed.filter((n) => runtimeOf(n)?.guarantees.some((g) => g.what === "the roles' answers filed" && g.tier === "enforced"));
@@ -19197,7 +19301,7 @@ ${filedLine}` : ""}`, {
           return refuse(`no project of workspace ${ws} is registered (crew detect in each project)`);
         const { metrics, figures: knowledge } = computed;
         const lastPlan = latestPlan(env.paths.userDir, ws);
-        const target2 = join49(dir, `${date}-inputs.json`);
+        const target2 = join50(dir, `${date}-inputs.json`);
         writeJson(target2, { at: nowIso(), workspace: ws, metrics, lastPlan, knowledge });
         return ok([
           `inputs: ${target2}`,
@@ -19223,9 +19327,9 @@ ${filedLine}` : ""}`, {
       if (read2.base === null && read2.reason !== "missing")
         return refuse(`the knowledge base cannot be read: ${read2.reason}; nothing was filed`);
       ensureDir(dir);
-      let target = join49(dir, `${date}-plan.md`);
-      for (let n = 2;existsSync23(target); n++)
-        target = join49(dir, `${date}-plan-${n}.md`);
+      let target = join50(dir, `${date}-plan.md`);
+      for (let n = 2;existsSync24(target); n++)
+        target = join50(dir, `${date}-plan-${n}.md`);
       writeText(target, text);
       const added = addEntry(env.paths.userDir, {
         kind: "general",

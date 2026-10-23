@@ -3,7 +3,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { writeOrigin } from "../src/analysis.ts";
 import { addEntry, readBase, scopeOf, updateEntry } from "../src/knowledge.ts";
-import { draftsOf, learnItem, sameRootCause } from "../src/learn.ts";
+import { commonWords, draftsOf, learnItem, sameRootCause } from "../src/learn.ts";
 import { mailbox, mailContext, readBox, registerProject } from "../src/mail.ts";
 import { workDir } from "../src/paths.ts";
 import { loadPolicy } from "../src/policy.ts";
@@ -647,4 +647,80 @@ test("DEBT-AC-9-cited: an entry the analysis cites as [K:K-n] is not offered as 
   if ("refused" in out) throw new Error(out.refused);
   expect(out.confirmed).toEqual([root.id]);
   expect(out.entries.some((e) => e.kind === "root-cause")).toBe(true);
+});
+
+test("AC-15 (finding 139): with four or more visible root causes, rule 17 does not count a word half of them hold; below four every word counts; a real duplicate is still refused", () => {
+  const env = testEnv();
+  const causeIn =
+    (p: ReturnType<typeof project>) => (title: string, text: string, path: string) => {
+      const w = item(p, title);
+      w.kind = "issue";
+      saveWork(p.paths, w);
+      writeFileSync(
+        join(workDir(p.paths, w.id), "analysis.md"),
+        `# Analysis\n\n## Origin\n\nnone\n\n## Cause\n\n${text}\n\n## Blast radius\n\nnone\n`,
+      );
+      writeOrigin(p.paths, w.id, { at: "t", paths: [{ path, commits: [] }], items: [] });
+      return loadWork(p.paths, w.id).work as WorkItem;
+    };
+  const learned = (p: ReturnType<typeof project>, w: WorkItem) => {
+    const out = learn(p, w);
+    if ("refused" in out) throw new Error(out.refused);
+    return out.entries.find((e) => e.kind === "root-cause") as KnowledgeEntry;
+  };
+  // The project's own prose: hook, record and answer in every cause.
+  const shop = project(env, "acme", "shop");
+  const cause = causeIn(shop);
+  const greek = ["alpha", "bravo", "charlie", "delta"];
+  const base = greek.map((g) =>
+    learned(
+      shop,
+      cause(`Kilo ${g}`, `The hook record answer breaks ${g}sum and ${g}tab.`, `src/${g}.ts`),
+    ),
+  );
+  // A path and the three common words only: another cause, learned.
+  const other = cause("Zulu yankee", "The hook record answer drifts on xray.", "src/alpha.ts");
+  expect(learned(shop, other).kind).toBe("root-cause");
+  // A real duplicate: the path and three rarer words of the first cause.
+  const again = cause(
+    "Kilo again",
+    "The alpha alphasum alphatab break in the hook.",
+    "src/alpha.ts",
+  );
+  const out = learn(shop, again);
+  expect("refused" in out && out.refused).toContain(
+    `${base[0]?.id} already records this root cause`,
+  );
+  // Below four entries every word counts, as before: three causes, then the common words alone refuse.
+  const crm = project(env, "globex", "crm");
+  const small = causeIn(crm);
+  for (const g of greek.slice(0, 3))
+    learned(
+      crm,
+      small(`Kilo ${g}`, `The hook record answer breaks ${g}sum and ${g}tab.`, `src/${g}.ts`),
+    );
+  const three = learn(
+    crm,
+    small("Zulu yankee", "The hook record answer drifts on xray.", "src/alpha.ts"),
+  );
+  expect("refused" in three && three.refused).toContain("already records this root cause");
+});
+
+test("AC-15 (finding 139): commonWords holds a word at least half of four or more entries hold, none below four", () => {
+  const e = (...w: string[]) => ({ words: w });
+  // Five entries: two holders count, three do not.
+  expect([...commonWords([e("a", "b"), e("a", "b"), e("a", "b"), e("b"), e("c")])].sort()).toEqual([
+    "a",
+    "b",
+  ]);
+  expect(commonWords([e("a"), e("a"), e("b"), e("c"), e("d")]).has("a")).toBe(false);
+  // Four entries: exactly half is common.
+  expect(commonWords([e("a"), e("a"), e("b"), e("c")]).has("a")).toBe(true);
+  // Three entries: nothing is common.
+  expect(commonWords([e("a"), e("a"), e("a")]).size).toBe(0);
+  // A common word does not count toward the three.
+  const existing = { paths: ["x"], words: ["hook", "record", "answer", "rare"] };
+  const draft = { paths: ["x"], words: ["hook", "record", "answer"] };
+  expect(sameRootCause(existing, draft)).toBe(true);
+  expect(sameRootCause(existing, draft, new Set(["hook"]))).toBe(false);
 });

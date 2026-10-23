@@ -143,10 +143,9 @@ export function openTask(
     return {
       refused: `uncommitted changes in ${dirty.join(", ")}; commit what the implementer must see, then open the task`,
     };
-  const body =
-    text?.trim() || taskText(readText(join(workDir(env.paths, work.id), "plan.md")), task);
-  if (!body)
-    return { refused: `plan.md names no task ${task}; give its text with --text "<task>"` };
+  const plan = readText(join(workDir(env.paths, work.id), "plan.md"));
+  const body = text?.trim() || taskText(plan, task);
+  if (!body) return { refused: noTaskText(work, task, plan, "task") };
   const names = taskNames(work.id, env.paths.root, task, env.policy.mail.worktrees);
   if (existsSync(names.worktree))
     return { refused: `${names.worktree} exists; remove it or pick another task number` };
@@ -220,6 +219,21 @@ export function openTask(
 }
 
 /**
+ * The refusal of a task or a todo with no text: the item may have no plan.md at all (the standard
+ * route writes none), which the agent read as "no todos here" (finding 61), or a plan.md without it.
+ */
+export function noTaskText(
+  work: WorkItem,
+  task: string,
+  plan: string | null,
+  what: "task" | "todo",
+): string {
+  return plan === null
+    ? `this item has no plan.md (route ${work.route}): give the ${what}'s text with --text "<${what}>"`
+    : `plan.md names no task ${task}; give its text with --text "<${what}>"`;
+}
+
+/**
  * A todo the lead does inline (SP7 §8.1): no worktree and no message, its work already in the
  * checkout, its scope the files it touched, so its gate and its brief run like a handed-out task's.
  */
@@ -229,6 +243,7 @@ export function noteTask(
   criteria: string[],
   scope: string[],
   text: string | null,
+  plan: string | null,
 ): { record: TaskRecord } | { refused: string } {
   if (!/^T-\d+$/.test(task)) return { refused: `a task is named T-n, not ${task}` };
   if ((work.tasks ?? []).some((t) => t.task === task))
@@ -239,8 +254,7 @@ export function noteTask(
     return { refused: "a scope names at least one file (--scope <path>[,<path>])" };
   const escaped = scopeRefusal(scope);
   if (escaped) return { refused: escaped };
-  if (!text)
-    return { refused: `plan.md names no task ${task}; give its text with --text "<todo>"` };
+  if (!text) return { refused: noTaskText(work, task, plan, "todo") };
   const record: TaskRecord = {
     task,
     message: "",

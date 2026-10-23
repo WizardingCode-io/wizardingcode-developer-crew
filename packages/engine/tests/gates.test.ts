@@ -383,7 +383,7 @@ test("0.3.0: parseAudit reads the advisories of each tool's JSON and says when i
   ]);
 });
 
-test("0.3.0: the deps gate fails only on advisories absent from the base commit, reports an abandoned package, and falls back to the exit code", async () => {
+test("0.3.0: the deps gate fails only on advisories absent from the base commit, reports an abandoned package, and falls back to the exit code (AC-7, finding 147: its PATH passed per call)", async () => {
   const bin = tempDir("bin-");
   // A fake npm whose audit report is the lockfile itself, so the base and the tree can differ.
   write(
@@ -398,112 +398,136 @@ test("0.3.0: the deps gate fails only on advisories absent from the base commit,
   );
   write(bin, "pnpm", "#!/bin/sh\necho garbage\nexit 1\n");
   for (const name of ["npm", "composer", "pnpm"]) chmodSync(join(bin, name), 0o755);
+  // The fake tools reach the gates through the env given to runGates, never through the process's
+  // own PATH, which a concurrent row may read (finding 147).
   const savedPath = process.env.PATH;
-  process.env.PATH = `${bin}:${savedPath}`;
-  try {
-    const old = "GHSA-old0-0000-0000";
-    const fresh = "GHSA-new0-0000-0000";
-    const known = JSON.stringify({
-      vulnerabilities: { a: { via: [{ source: 1, url: `https://github.com/advisories/${old}` }] } },
-    });
-    const root = makeRepo({
-      "package.json": JSON.stringify({ name: "x", scripts: { test: "exit 0" } }),
-      "package-lock.json": known,
-      "src/a.ts": "x",
-    });
-    const paths = repoPaths(root, testEnv());
-    const { profile } = ensureProfile(paths);
-    const work = createWork(paths, "chore");
-    work.route = "full";
-    // The item touches the lockfile and introduces nothing: the known advisory is debt, not failure.
-    write(root, "package-lock.json", `${known}\n`);
-    let outcome = await runGates(paths, work, profile, DEFAULT_POLICY, { only: ["deps"] });
-    let run = outcome.evidence.runs.find((r) => r.gate === "deps");
-    expect(run).toMatchObject({
-      status: "pass",
-      command: "npm audit --audit-level=high --json",
-      advisories: { current: 1, known: 1, fresh: [], baselined: true },
-    });
-    expect(run?.reason).toBe("1 known before this item, none introduced");
-    expect(outcome.unproven).not.toContain("gate deps failing");
-    // A new advisory fails the gate and is named.
-    const more = JSON.stringify({
-      vulnerabilities: {
-        a: { via: [{ source: 1, url: `https://github.com/advisories/${old}` }] },
-        b: { via: [{ source: 2, url: `https://github.com/advisories/${fresh}` }] },
-      },
-    });
-    write(root, "package-lock.json", more);
-    outcome = await runGates(paths, work, profile, DEFAULT_POLICY, { only: ["deps"] });
-    run = outcome.evidence.runs.find((r) => r.gate === "deps");
-    expect(run).toMatchObject({
-      status: "fail",
-      advisories: { current: 2, known: 1, fresh: [fresh], baselined: true },
-    });
-    expect(run?.reason).toBe(`1 new: ${fresh}; 1 known before`);
-    expect(outcome.unproven).toContain("gate deps failing");
-    const report = renderReport(work, outcome.evidence, DEFAULT_POLICY);
-    expect(report).toContain(`| deps | . | fail: 1 new (${fresh}), 1 known before |`);
-    // No lockfile at the base commit: the baseline is empty and every advisory is new.
-    const young = makeRepo({
-      "package.json": JSON.stringify({ name: "y", scripts: { test: "exit 0" } }),
-      "src/a.ts": "x",
-    });
-    const ypaths = repoPaths(young, testEnv());
-    const yprofile = ensureProfile(ypaths).profile;
-    const ywork = createWork(ypaths, "chore");
-    ywork.route = "full";
-    write(young, "package-lock.json", known);
-    const first = (
-      await runGates(ypaths, ywork, yprofile, DEFAULT_POLICY, { only: ["deps"] })
-    ).evidence.runs.find((r) => r.gate === "deps");
-    expect(first).toMatchObject({
-      status: "fail",
-      advisories: { current: 1, known: 0, fresh: [old], baselined: true },
-    });
-    // composer: an abandoned package is reported in the log and never fails the gate.
-    const php = makeRepo({
-      "composer.json": JSON.stringify({ scripts: { test: "true" } }),
-      "composer.lock": "{}",
-      "app/a.php": "<?php",
-    });
-    const ppaths = repoPaths(php, testEnv());
-    const pprofile = ensureProfile(ppaths).profile;
-    const pwork = createWork(ppaths, "chore");
-    pwork.route = "full";
-    write(php, "composer.lock", "{ }");
-    const audit = (
-      await runGates(ppaths, pwork, pprofile, DEFAULT_POLICY, { only: ["deps"] })
-    ).evidence.runs.find((r) => r.gate === "deps");
-    expect(audit).toMatchObject({
-      status: "pass",
-      command: "composer audit --format=json --abandoned=report",
-      advisories: { current: 0, known: 0, fresh: [], baselined: true },
-    });
-    expect(audit?.tail).toContain("symplify/x");
-    // A report that is not the tool's JSON: judged by the exit code, and the record says so.
-    const bad = makeRepo({
-      "package.json": JSON.stringify({ name: "z", scripts: { test: "exit 0" } }),
-      "pnpm-lock.yaml": "",
-      "src/a.ts": "x",
-    });
-    const bpaths = repoPaths(bad, testEnv());
-    const bprofile = ensureProfile(bpaths).profile;
-    const bwork = createWork(bpaths, "chore");
-    bwork.route = "full";
-    write(bad, "pnpm-lock.yaml", "x");
-    const unreadable = (
-      await runGates(bpaths, bwork, bprofile, DEFAULT_POLICY, { only: ["deps"] })
-    ).evidence.runs.find((r) => r.gate === "deps");
-    expect(unreadable).toMatchObject({
-      status: "fail",
-      reason: "audit report unreadable; judged by exit code",
-    });
-    expect(unreadable?.advisories).toBeUndefined();
-  } finally {
-    process.env.PATH = savedPath;
-  }
+  const gateEnv = { ...process.env, PATH: `${bin}:${savedPath}` };
+  const old = "GHSA-old0-0000-0000";
+  const fresh = "GHSA-new0-0000-0000";
+  const known = JSON.stringify({
+    vulnerabilities: { a: { via: [{ source: 1, url: `https://github.com/advisories/${old}` }] } },
+  });
+  const root = makeRepo({
+    "package.json": JSON.stringify({ name: "x", scripts: { test: "exit 0" } }),
+    "package-lock.json": known,
+    "src/a.ts": "x",
+  });
+  const paths = repoPaths(root, testEnv());
+  const { profile } = ensureProfile(paths);
+  const work = createWork(paths, "chore");
+  work.route = "full";
+  // The item touches the lockfile and introduces nothing: the known advisory is debt, not failure.
+  write(root, "package-lock.json", `${known}\n`);
+  let outcome = await runGates(paths, work, profile, DEFAULT_POLICY, {
+    only: ["deps"],
+    env: gateEnv,
+  });
+  let run = outcome.evidence.runs.find((r) => r.gate === "deps");
+  expect(run).toMatchObject({
+    status: "pass",
+    command: "npm audit --audit-level=high --json",
+    advisories: { current: 1, known: 1, fresh: [], baselined: true },
+  });
+  expect(run?.reason).toBe("1 known before this item, none introduced");
+  expect(outcome.unproven).not.toContain("gate deps failing");
+  // A new advisory fails the gate and is named.
+  const more = JSON.stringify({
+    vulnerabilities: {
+      a: { via: [{ source: 1, url: `https://github.com/advisories/${old}` }] },
+      b: { via: [{ source: 2, url: `https://github.com/advisories/${fresh}` }] },
+    },
+  });
+  write(root, "package-lock.json", more);
+  outcome = await runGates(paths, work, profile, DEFAULT_POLICY, {
+    only: ["deps"],
+    env: gateEnv,
+  });
+  run = outcome.evidence.runs.find((r) => r.gate === "deps");
+  expect(run).toMatchObject({
+    status: "fail",
+    advisories: { current: 2, known: 1, fresh: [fresh], baselined: true },
+  });
+  expect(run?.reason).toBe(`1 new: ${fresh}; 1 known before`);
+  expect(outcome.unproven).toContain("gate deps failing");
+  const report = renderReport(work, outcome.evidence, DEFAULT_POLICY);
+  expect(report).toContain(`| deps | . | fail: 1 new (${fresh}), 1 known before |`);
+  // No lockfile at the base commit: the baseline is empty and every advisory is new.
+  const young = makeRepo({
+    "package.json": JSON.stringify({ name: "y", scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const ypaths = repoPaths(young, testEnv());
+  const yprofile = ensureProfile(ypaths).profile;
+  const ywork = createWork(ypaths, "chore");
+  ywork.route = "full";
+  write(young, "package-lock.json", known);
+  const first = (
+    await runGates(ypaths, ywork, yprofile, DEFAULT_POLICY, { only: ["deps"], env: gateEnv })
+  ).evidence.runs.find((r) => r.gate === "deps");
+  expect(first).toMatchObject({
+    status: "fail",
+    advisories: { current: 1, known: 0, fresh: [old], baselined: true },
+  });
+  // composer: an abandoned package is reported in the log and never fails the gate.
+  const php = makeRepo({
+    "composer.json": JSON.stringify({ scripts: { test: "true" } }),
+    "composer.lock": "{}",
+    "app/a.php": "<?php",
+  });
+  const ppaths = repoPaths(php, testEnv());
+  const pprofile = ensureProfile(ppaths).profile;
+  const pwork = createWork(ppaths, "chore");
+  pwork.route = "full";
+  write(php, "composer.lock", "{ }");
+  const audit = (
+    await runGates(ppaths, pwork, pprofile, DEFAULT_POLICY, { only: ["deps"], env: gateEnv })
+  ).evidence.runs.find((r) => r.gate === "deps");
+  expect(audit).toMatchObject({
+    status: "pass",
+    command: "composer audit --format=json --abandoned=report",
+    advisories: { current: 0, known: 0, fresh: [], baselined: true },
+  });
+  expect(audit?.tail).toContain("symplify/x");
+  // A report that is not the tool's JSON: judged by the exit code, and the record says so.
+  const bad = makeRepo({
+    "package.json": JSON.stringify({ name: "z", scripts: { test: "exit 0" } }),
+    "pnpm-lock.yaml": "",
+    "src/a.ts": "x",
+  });
+  const bpaths = repoPaths(bad, testEnv());
+  const bprofile = ensureProfile(bpaths).profile;
+  const bwork = createWork(bpaths, "chore");
+  bwork.route = "full";
+  write(bad, "pnpm-lock.yaml", "x");
+  const unreadable = (
+    await runGates(bpaths, bwork, bprofile, DEFAULT_POLICY, { only: ["deps"], env: gateEnv })
+  ).evidence.runs.find((r) => r.gate === "deps");
+  expect(unreadable).toMatchObject({
+    status: "fail",
+    reason: "audit report unreadable; judged by exit code",
+  });
+  expect(unreadable?.advisories).toBeUndefined();
 }, 30_000);
+
+test("AC-7 (finding 147): the deps gate finds its audit tool through the env given to runGates, not the process's PATH", async () => {
+  // pip-audit is on no developer's PATH by default: only the given env holds it, and python with it.
+  const bin = tempDir("bin-");
+  write(bin, "pip-audit", "#!/bin/sh\nexit 0\n");
+  write(bin, "python", `#!/bin/sh\necho '{"dependencies":[]}'\nexit 0\n`);
+  for (const name of ["pip-audit", "python"]) chmodSync(join(bin, name), 0o755);
+  const root = makeRepo({ "requirements.txt": "requests==2.0\n", "app.py": "x = 1\n" });
+  const paths = repoPaths(root, testEnv());
+  const { profile } = ensureProfile(paths);
+  const work = createWork(paths, "chore");
+  work.route = "full";
+  // The item touches the manifest, so the deps gate is planned.
+  write(root, "requirements.txt", "requests==2.1\n");
+  const env = { ...process.env, PATH: `${bin}:/usr/bin:/bin` };
+  const outcome = await runGates(paths, work, profile, DEFAULT_POLICY, { only: ["deps"], env });
+  const run = outcome.evidence.runs.find((r) => r.gate === "deps");
+  expect(run?.reason).not.toBe("pip-audit not on PATH");
+  expect(run).toMatchObject({ status: "pass", command: "python -m pip_audit --format=json" });
+});
 
 test("0.3.0: lint and typecheck judge the files the item changed; a tool that names none is judged by its exit code", async () => {
   const lint = [

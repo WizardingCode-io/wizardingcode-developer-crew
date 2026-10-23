@@ -1558,3 +1558,36 @@ test("DEBT-AC-10-open-text: crew task open's line for an implementer that did no
   expect(opened.out).not.toContain("git worktree remove");
   expect(opened.out).not.toContain("git branch -D");
 }, 20_000);
+
+test("AC-8 (finding 61): on an item with no plan.md, crew task note and crew task open without --text say the item has no plan.md and name --text", async () => {
+  const { env, root, c, id } = await lead();
+  rmSync(join(root, ".crew", "work", id, "plan.md"));
+  git(root, "add", "-A");
+  git(root, "commit", "-q", "-m", "no plan");
+  const route = loadWork(repoPaths(root, env), id).work?.route;
+  expect(
+    (
+      await c.run("task", id, "note", "T-1", "--criteria", "AC-1", "--scope", "src/a.ts")
+    ).err.trim(),
+  ).toBe(`this item has no plan.md (route ${route}): give the todo's text with --text "<todo>"`);
+  expect((await c.run("task", id, "open", "T-1", "--criteria", "AC-1")).err.trim()).toBe(
+    `this item has no plan.md (route ${route}): give the task's text with --text "<task>"`,
+  );
+  // With --text, the todo is noted as before.
+  expect(
+    (
+      await c.run(
+        "task",
+        id,
+        "note",
+        "T-1",
+        "--criteria",
+        "AC-1",
+        "--scope",
+        "src/a.ts",
+        "--text",
+        "a",
+      )
+    ).code,
+  ).toBe(0);
+}, 30_000);

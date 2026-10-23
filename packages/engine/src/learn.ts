@@ -187,13 +187,28 @@ export function draftsOf(
   return { drafts, skipped };
 }
 
-/** The same root cause: at least one shared path and at least three shared words (rule 17). */
+/**
+ * The words of the project's own prose (finding 139): with four or more root causes, a word at
+ * least half of them hold says nothing of a cause; below four, none is common (rule 17 as before).
+ */
+export function commonWords(entries: readonly Pick<KnowledgeEntry, "words">[]): Set<string> {
+  const common = new Set<string>();
+  if (entries.length < 4) return common;
+  const holders = new Map<string, number>();
+  for (const entry of entries)
+    for (const word of new Set(entry.words)) holders.set(word, (holders.get(word) ?? 0) + 1);
+  for (const [word, count] of holders) if (count * 2 >= entries.length) common.add(word);
+  return common;
+}
+
+/** The same root cause: at least one shared path and at least three shared words, the base's common words not counted (rule 17). */
 export function sameRootCause(
   existing: Pick<KnowledgeEntry, "paths" | "words">,
   draft: Pick<KnowledgeDraft, "paths" | "words">,
+  common: ReadonlySet<string> = new Set(),
 ): boolean {
   const path = draft.paths.some((p) => existing.paths.includes(p));
-  const shared = draft.words.filter((w) => existing.words.includes(w)).length;
+  const shared = draft.words.filter((w) => existing.words.includes(w) && !common.has(w)).length;
   return path && shared >= 3;
 }
 
@@ -288,6 +303,8 @@ export function learnItem(
   const contradicted = (e: KnowledgeEntry): boolean =>
     e.contradictedBy.some((r) => r.item === work.id && r.project === scope.project);
   const cited = citations(readText(join(dir, "analysis.md")) ?? "");
+  const causes = entries.filter((e) => e.kind === "root-cause" && visibleTo(e, scope));
+  const common = commonWords(causes);
   const duplicates = cause
     ? entries.filter(
         (e) =>
@@ -295,7 +312,7 @@ export function learnItem(
           visibleTo(e, scope) &&
           !contradicted(e) &&
           !cited.has(e.id) &&
-          sameRootCause(e, cause),
+          sameRootCause(e, cause, common),
       )
     : [];
   if (duplicates.length && !duplicates.some((d) => d.id === confirmTarget?.id))

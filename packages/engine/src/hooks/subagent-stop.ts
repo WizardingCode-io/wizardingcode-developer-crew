@@ -1,4 +1,4 @@
-import { readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { WORK_ID } from "../analysis.ts";
 import { loadEvidence, saveEvidence } from "../evidence.ts";
@@ -557,15 +557,21 @@ export function fileAnswer(
   let keptAs: string | null = null;
   const keptNote = (archived: string, word: "reply" | "answer"): string =>
     `Crew: ${agent}'s answer ${whereSaved(saved)} (the earlier ${word} kept as ${archived}).`;
+  // A resumed judge's ruling goes where a launched judge's does, the ruling it replaces archived
+  // (finding 145); its other answers keep the reply file.
+  const resumedRuling = !!earlier?.file && agent === "judge" && gatesRuling(answer) !== null;
+  // A tech lead's answer with no heading names no team: it is filed under a number of its own,
+  // never a team's file, and counts as no team's validation (finding 143).
+  const headless = !!answer && agent === "tech-lead" && !leadAnswer(answer);
   if (!answer) {
     // A role cut off, or one whose last turn was only a tool call: its end is recorded, no file is
     // written, and the session is told, so an earlier round's file is not read as this answer.
     saved = { file: null, agent };
     note = `Crew: ${agent} stopped with no answer (no hand-back in its last turn): its end is recorded with no file; an earlier file of this role, if any, is not this round's answer. Run the role again or save its answer from the transcript${transcriptNote}.`;
-  } else if (earlier?.file) {
+  } else if (earlier?.file && !resumedRuling) {
     // A resumed role's answer: its reply file holds this answer alone, the earlier reply archived
     // first; a failed archive leaves the plain file, records nothing and is said.
-    const joined = joinEarlierFile(dir, agent, answer, kindOfItem(work));
+    const joined = joinEarlierFile(dir, agent, answer, kindOfItem(work), earlier.file, roles);
     if ("failed" in joined)
       return `Crew: ${agent}'s earlier reply could not be archived at ${joined.failed} (${joined.error}): the plain reply file was left as it was; save this answer from the transcript${transcriptNote} and run the role again if it is needed.`;
     saved = { file: joined.file, agent };
@@ -583,8 +589,13 @@ export function fileAnswer(
     // The first answer: the role's own, or a resumed role's whose earlier stop left no file. An
     // answer already on disk under conclave/ (a role launched anew, not resumed) is archived first
     // and never written over (finding 125); the review files keep their rounds at the record.
-    const file = answerFile(agent, answer, kindOfItem(work));
-    const kept = file.startsWith("conclave/") ? archiveExisting(dir, file) : { archived: null };
+    const file = headless
+      ? `conclave/${headlessLeadStem(dir, roles)}.md`
+      : answerFile(agent, answer, kindOfItem(work));
+    const kept =
+      file.startsWith("conclave/") || resumedRuling
+        ? archiveExisting(dir, file)
+        : { archived: null };
     if ("failed" in kept)
       return `Crew: ${agent}'s earlier answer could not be archived at ${kept.failed} (${kept.error}): the plain file was left as it was; save this answer from the transcript${transcriptNote} and run the role again if it is needed.`;
     // A ruling file holds the JSON alone, so `crew judgement record --ruling` reads it as it is.
@@ -650,7 +661,19 @@ export function fileAnswer(
   }
   // The reply to the relayed question is the caller's to send, once this lock is released.
   if (pending) progress.reply = answer;
-  return note ?? archivedNote;
+  const headlessNote = headless
+    ? `Crew: tech-lead's answer has no lead heading: saved at ${saved.file} as no team's validation; resume the lead for an answer whose first line is # <team> lead's validation of ${id}: <spec|plan|delivery>.`
+    : null;
+  return [note ?? archivedNote, headlessNote].filter(Boolean).join(" ") || null;
+}
+
+/** The first `tech-lead-<n>`, from 1, whose `conclave/<stem>.md` no record names and no file holds (finding 143). */
+function headlessLeadStem(dir: string, roles: readonly RoleRecord[]): string {
+  for (let n = 1; ; n++) {
+    const file = `conclave/tech-lead-${n}.md`;
+    if (!roles.some((r) => r.file === file) && !existsSync(join(dir, file)))
+      return `tech-lead-${n}`;
+  }
 }
 
 /** The question the lead relayed to this role and nobody answered yet, if any. */
@@ -676,6 +699,8 @@ function joinEarlierFile(
   agent: string,
   answer: string,
   kind: WorkKind,
+  earlierFile: string,
+  roles: readonly RoleRecord[],
 ): { file: string; archived: string | null } | { failed: string; error: string } {
   if (agent.startsWith("review-")) {
     const file = answerFile(agent, answer, kind);
@@ -688,8 +713,13 @@ function joinEarlierFile(
   // A tech lead resumed for another round answers for one team: its reply joins that team's own
   // file, never one the leads would share (finding 78).
   const lead = agent === "tech-lead" ? leadAnswer(answer) : null;
+  // A heading-less lead's reply follows its own numbered file (finding 143), or takes a new number.
+  const headless =
+    agent === "tech-lead" && !lead
+      ? (/^conclave\/(tech-lead-\d+)\.md$/.exec(earlierFile)?.[1] ?? headlessLeadStem(dir, roles))
+      : null;
   // One spelling of a reply file for every role: a lead's by its team and what, any other's by its name.
-  const file = lead ? replyFile(`lead-${lead.team}`, lead.what) : replyFile(agent, "");
+  const file = lead ? replyFile(`lead-${lead.team}`, lead.what) : replyFile(headless ?? agent, "");
   const kept = archiveExisting(dir, file);
   if ("failed" in kept) return kept;
   writeText(join(dir, file), `${answer}\n`);

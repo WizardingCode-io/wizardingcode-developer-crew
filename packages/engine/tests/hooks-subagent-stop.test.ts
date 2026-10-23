@@ -241,7 +241,7 @@ test("SP2c AC-3, SP7a: the SubagentStop matcher in hooks.json, roleOf, the mail 
   }
 });
 
-test("SP7a AC-5 (Task 4): a tech lead's stop is filed under the team its first line names, with that team on the record; an answer with no team goes to the agent's own file", () => {
+test("SP7a AC-5 (Task 4): a tech lead's stop is filed under the team its first line names, with that team on the record; an answer with no team goes to a numbered file of its own (finding 143)", () => {
   const { root, ctx, work } = session();
   work.route = "full";
   work.phase = "conclave";
@@ -263,12 +263,12 @@ test("SP7a AC-5 (Task 4): a tech lead's stop is filed under the team its first l
   expect(readFileSync(join(folder, "lead-etl.delivery.md"), "utf8")).toContain(
     "verdict: validated",
   );
-  expect(readFileSync(join(folder, "tech-lead.md"), "utf8")).toContain("no header");
+  expect(readFileSync(join(folder, "tech-lead-1.md"), "utf8")).toContain("no header");
   const roles = loadEvidence(ctx.paths, work.id).evidence.roles ?? [];
   const filed = roles.filter((r) => r.agent === "tech-lead");
   expect(filed.map((r) => [r.file, r.team])).toEqual([
     ["conclave/lead-etl.delivery.md", "etl"],
-    ["conclave/tech-lead.md", undefined],
+    ["conclave/tech-lead-1.md", undefined],
   ]);
 });
 
@@ -1702,4 +1702,109 @@ test("DEBT-AC-10-archive-name: freeArchiveIndex returns a free index for a file 
   // The .md names keep their form.
   writeFileSync(join(dir, "lead-qa.md"), "a");
   expect(archiveExisting(dir, "lead-qa.md")).toEqual({ archived: "lead-qa.round2.md" });
+});
+
+test("AC-13 (finding 145): a resumed judge's gates ruling goes to review/ruling.json, the earlier archived as ruling.round<k>.json; its other answer keeps the reply file and leaves the ruling alone", () => {
+  const { root, ctx, work } = session();
+  work.route = "standard";
+  work.phase = "gate";
+  saveWork(ctx.paths, work);
+  const dir = tempDir("crew-transcript-");
+  const stop = (answer: string) =>
+    onSubagentStop(ctx, {
+      agent_id: "j",
+      agent_type: `${PLUGIN}:judge`,
+      agent_transcript_path: transcript(dir, answer, [[100, 10, 0, 0]]),
+      last_assistant_message: "Ruled.",
+    });
+  const first = { rulings: [{ gate: "security", verdict: "not-proven", findings: ["F-1"] }] };
+  const second = { rulings: [{ gate: "security", verdict: "proven", findings: [] }] };
+  const third = { rulings: [{ gate: "code-quality", verdict: "proven", findings: [] }] };
+  stop(JSON.stringify(first));
+  // Resumed for round 2: the ruling, explained around, as a judge on a clean diff writes it.
+  const resumed = stop(`Round 2.\n\n\`\`\`json\n${JSON.stringify(second)}\n\`\`\``);
+  const folder = join(root, ".crew", "work", work.id);
+  const read = (f: string) => JSON.parse(readFileSync(join(folder, f), "utf8"));
+  expect(read("review/ruling.json")).toEqual(second);
+  expect(read("review/ruling.round2.json")).toEqual(first);
+  expect(existsSync(join(folder, "conclave", "judge-reply.md"))).toBe(false);
+  expect(String(resumed.systemMessage)).toContain("review/ruling.round2.json");
+  stop(JSON.stringify(third));
+  expect(read("review/ruling.json")).toEqual(third);
+  expect(read("review/ruling.round3.json")).toEqual(second);
+  // A resumed judge's answer with no ruling (its questions) keeps the reply file.
+  stop("Questions:\n- Q-1: which spec line holds?\n");
+  expect(readFileSync(join(folder, "conclave", "judge-reply.md"), "utf8")).toContain("Q-1");
+  expect(read("review/ruling.json")).toEqual(third);
+  const judges = (loadEvidence(ctx.paths, work.id).evidence.roles ?? []).filter(
+    (r) => r.agent === "judge",
+  );
+  expect(judges.map((r) => r.file)).toEqual([
+    "review/ruling.round2.json",
+    "review/ruling.round3.json",
+    "review/ruling.json",
+    "conclave/judge-reply.md",
+  ]);
+});
+
+test("AC-12 (finding 143): a tech lead's answer with no heading is filed as tech-lead-<n>.md with no team, its resumed reply as tech-lead-<n>-reply.md, and the note asks for the heading", () => {
+  const { root, ctx, work } = session();
+  work.route = "standard";
+  work.phase = "conclave";
+  saveWork(ctx.paths, work);
+  const dir = tempDir("crew-transcript-");
+  const stop = (id: string, answer: string) =>
+    onSubagentStop(ctx, {
+      agent_id: id,
+      agent_type: `${PLUGIN}:tech-lead`,
+      agent_transcript_path: transcript(dir, answer, [[100, 10, 0, 0]]),
+      last_assistant_message: "Done.",
+    });
+  const a = stop("a", "verdict: validated\nThe QA lead, team qa, finds nothing.\n");
+  const b = stop("b", "verdict: returned\nThe security lead, team security: R-1.\n");
+  const folder = join(root, ".crew", "work", work.id, "conclave");
+  expect(readFileSync(join(folder, "tech-lead-1.md"), "utf8")).toContain("team qa");
+  expect(readFileSync(join(folder, "tech-lead-2.md"), "utf8")).toContain("team security");
+  for (const team of ["qa", "security"])
+    expect(existsSync(join(folder, `lead-${team}.md`))).toBe(false);
+  expect(existsSync(join(folder, "tech-lead.md"))).toBe(false);
+  const heading = `# <team> lead's validation of ${work.id}: <spec|plan|delivery>`;
+  expect(String(a.systemMessage)).toContain(
+    `tech-lead's answer has no lead heading: saved at conclave/tech-lead-1.md as no team's validation; resume the lead for an answer whose first line is ${heading}`,
+  );
+  expect(String(b.systemMessage)).toContain(
+    "saved at conclave/tech-lead-2.md as no team's validation",
+  );
+  // Each resumed, still with no heading: each reply under its own name, never shared.
+  stop("a", "verdict: validated\nround 2 of a\n");
+  stop("b", "verdict: validated\nround 2 of b\n");
+  expect(readFileSync(join(folder, "tech-lead-1-reply.md"), "utf8")).toContain("round 2 of a");
+  expect(readFileSync(join(folder, "tech-lead-2-reply.md"), "utf8")).toContain("round 2 of b");
+  expect(existsSync(join(folder, "tech-lead-reply.md"))).toBe(false);
+  // A third round of a: its earlier reply archived beside its own reply file.
+  stop("a", "verdict: validated\nround 3 of a\n");
+  expect(readFileSync(join(folder, "tech-lead-1-reply.md"), "utf8")).toContain("round 3 of a");
+  expect(readFileSync(join(folder, "tech-lead-1-reply.round2.md"), "utf8")).toContain(
+    "round 2 of a",
+  );
+  // A file already standing at a number is skipped, never written over.
+  writeFileSync(join(folder, "tech-lead-3.md"), "a hand-made file\n");
+  stop("c", "no heading again\n");
+  expect(readFileSync(join(folder, "tech-lead-3.md"), "utf8")).toBe("a hand-made file\n");
+  expect(readFileSync(join(folder, "tech-lead-4.md"), "utf8")).toContain("no heading again");
+  // Resumed with the heading, the lead's answer is its team's again.
+  stop("a", `# qa lead's validation of ${work.id}: spec\nverdict: validated\n## Returns\n- none\n`);
+  expect(readFileSync(join(folder, "lead-qa-reply.md"), "utf8")).toContain("verdict: validated");
+  const roles = (loadEvidence(ctx.paths, work.id).evidence.roles ?? []).filter(
+    (r) => r.agent === "tech-lead",
+  );
+  expect(roles.map((r) => [r.file, r.team])).toEqual([
+    ["conclave/tech-lead-1.md", undefined],
+    ["conclave/tech-lead-2.md", undefined],
+    ["conclave/tech-lead-1-reply.round2.md", undefined],
+    ["conclave/tech-lead-2-reply.md", undefined],
+    ["conclave/tech-lead-1-reply.md", undefined],
+    ["conclave/tech-lead-4.md", undefined],
+    ["conclave/lead-qa-reply.md", "qa"],
+  ]);
 });

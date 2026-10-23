@@ -1909,3 +1909,16 @@ test("REL-AC-2 (the user's decision of 2026-10-23): the judge model is the suite
   expect(refused.status).toBe(1);
   expect(refused.stderr).toContain('eval: --judge-model takes a model name, not "x y"');
 });
+
+test("AC-16 (finding 149): rounds-bounded seeds a criterion test that passes by construction, a blocking test-quality defect no judge can rate advisory, so round 2 and the cap are reached", () => {
+  const prompt = readFileSync(`${EVALS}rounds-bounded/prompt.md`, "utf8");
+  // The seed: the criterion's only assertion is the function's type, never its result.
+  expect(prompt).toContain(
+    'its only test asserts `typeof accountAge === "function"` and nothing about the days it returns',
+  );
+  expect(prompt).toMatch(/a seeded defect of this case/);
+  // The cap stays at one round, so the second is the engine's refusal.
+  expect(readFileSync(`${EVALS}rounds-bounded/fixture.sh`, "utf8")).toContain(
+    '"maxJudgementRounds": 1',
+  );
+});
