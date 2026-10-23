@@ -1,8 +1,8 @@
 {
   "name": "wizardingcode-pack-laravel",
-  "version": "0.11.4",
+  "version": "0.12.0",
   "kind": "stack",
-  "core": ">=0.11.4",
+  "core": ">=0.12.0",
   "verifiedAgainst": {
     "laravel": "13.x",
     "pest": "4.x",

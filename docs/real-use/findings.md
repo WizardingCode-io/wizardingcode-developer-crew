@@ -324,7 +324,7 @@ Verdicts agree at every effort. Upheld findings: `high` reproduced Task 6's and 
 - What happened: in `kind-observed-e2e` the fixture's stub server cannot listen (`listen EPERM` inside the eval sandbox), so no end-to-end test can pass or fail; the agent wrote the test, found the cause, asked for `sandbox.network.allowLocalBinding` and waited (honest in two of three endings), and recorded no observed run.
 - Expected: a case whose fixture needs a socket says so, or uses a stub that answers without one.
 - Evidence: the results note; the with-arm endings.
-- Outcome: closed in consolidation item 7 (`2026-10-22-014`, 6310934, 2026-10-23): the `kind-observed-e2e` fixture's stub exports `answer(path)` and its e2e test calls it in process, opening no socket, and the graders `ruling-recorded` and `register-read` read the Bash command as run, never a reference's text; released in 0.11.4; its advisories go to the closing debt chore; the eval re-run of the affected cases is pending.
+- Outcome: closed in consolidation item 7 (`2026-10-22-014`, 6310934, 2026-10-23): the `kind-observed-e2e` fixture's stub exports `answer(path)` and its e2e test calls it in process, opening no socket, and the graders `ruling-recorded` and `register-read` read the Bash command as run, never a reference's text; released in 0.11.4; its advisories go to the closing debt chore; The eval re-run of 2026-10-23 (`docs/evals/2026-10-23-consolidation-results.md`, Opus judge): `decision-register-reread` 1.00; `rounds-bounded` 0.75 (the cap never reached, finding 149); `kind-observed-e2e` 0.33, the socket gone and the observed path reached for the first time, the refusal not naming `crew tdd observed` (finding 148).
 
 ### 38. The gap-erasure grader let a baseline that built without asking pass, and the plugin asks in prose
 
@@ -521,7 +521,7 @@ Verdicts agree at every effort. Upheld findings: `high` reproduced Task 6's and 
 - What happened: `brief-per-todo` asked for two changes "as two todos, one after the other, in this checkout"; all three plugin runs made two work items (`crew start` twice), proved each on its own and never ran `crew task note`, `crew task gate` or `crew task brief` (the three with-only graders 0/3; one run took 54 turns). `gate-scoped-to-change` asked for "one todo" and no todo gate ran there either (its fixture's defect aside). The todo loop lives in `references/plan.md` and `build.md`; the method table on the skill page says nothing of it, and "in this checkout" reads to the agent as "a new item", not "an inline todo of this plan".
 - Expected: the method table's Plan or Build row names the todo loop in one clause (within the 9254-byte ceiling, paid for elsewhere), or the plan reference says when a request's parts are todos of one item and when they are items; the case re-run after the change. Hardening item or SP7b.
 - Evidence: `docs/evals/2026-10-18-sp7a-results.md`, the brief-per-todo row and paragraph.
-- Outcome: closed in consolidation item 1 (`2026-10-22-006`, a2bdb02, 2026-10-22): `plan.md` says that a request in several parts done in this checkout is one item with a todo per part, not an item per part; released in 0.11.4; its advisories go to the closing debt chore; the eval re-run of the affected cases is pending.
+- Outcome: closed in consolidation item 1 (`2026-10-22-006`, a2bdb02, 2026-10-22): `plan.md` says that a request in several parts done in this checkout is one item with a todo per part, not an item per part; released in 0.11.4; its advisories go to the closing debt chore; The eval re-run of 2026-10-23 (`docs/evals/2026-10-23-consolidation-results.md`, Opus judge): `gate-scoped-to-change` 0.60 and `brief-per-todo` 0.20; `crew task open T-1` was refused for a task plan.md does not name and the agent went on without a todo, so the todo loop is still not reached: open, for the next subproject.
 
 ### 62. The conclave's debate did not run in the sandbox; the personalities were not exercised
 
@@ -529,7 +529,7 @@ Verdicts agree at every effort. Upheld findings: `high` reproduced Task 6's and 
 - What happened: `personalities-differ` left a storage design to "the team's debate"; of three plugin runs, one recorded `personality: conservative` and none recorded creative or adventurous; one run turned the choice into decision D-1 for the absent user and stopped; two built a design and reported proven with no debate in the ending (`proposals-differ` FAIL). Either the agent did not open the debate (the gap round found "a decision with consequences" and waited for the user instead of debating, as the conclave reference allows), or the debate roles ran and the sandbox's SubagentStop hook filed nothing (#40), so no `personality:` header reached the trace. The personalities of Task 3 are therefore unmeasured by this case.
 - Expected: the conclave reference says that a choice the user left to the team is debated, not asked (the user's words are the decision to debate); the hook's filing in the sandbox checked (#40); the case re-run.
 - Evidence: `docs/evals/2026-10-18-sp7a-results.md`, the personalities-differ row and paragraph.
-- Outcome: closed in consolidation item 1 (`2026-10-22-006`, a2bdb02, 2026-10-22): `conclave.md` says that a choice the user left to the team is debated, not asked: the user's words are the decision to debate; released in 0.11.4; its advisories go to the closing debt chore; the eval re-run of the affected cases is pending.
+- Outcome: closed in consolidation item 1 (`2026-10-22-006`, a2bdb02, 2026-10-22): `conclave.md` says that a choice the user left to the team is debated, not asked: the user's words are the decision to debate; released in 0.11.4; its advisories go to the closing debt chore; The eval re-run of 2026-10-23 (`docs/evals/2026-10-23-consolidation-results.md`, Opus judge): `personalities-differ` 0.20, the agent stopping before `crew start` after Claude Code's dontAsk layer denied a compound read (finding 64's pattern, model variance); the debate was not reached: open, measured again in the next suite run.
 
 ### 63. The SP7a suite run cost 38.80 USD against the plan's estimate of about 25
 
@@ -1159,7 +1159,7 @@ Verdicts agree at every effort. Upheld findings: `high` reproduced Task 6's and 
 - What happened: right after `crew start` of consolidation item 8, with `git status` clean, the Stop hook reported that watched source files had changed and blocked the turn end. Suspected cause, not verified: the session's baseline fingerprint is taken at the session's first hook, before the later commits of the same session (items 1 to 7, the session lanes, the release), so a tree committed since reads as changed against it.
 - Expected: on a clean tree at an item's start the Stop hook reports no change; the baseline follows the commits the session made, or the item's start takes its own.
 - Evidence: the session's Stop block at the item's start; `git status` clean at the same time.
-- Outcome: open, for the closing debt chore.
+- Outcome: cause found and fixed in `2026-10-23-007` (832d0f7, batched into 0.12.0): the Stop hook compared the tree with the session's first baseline, and once `crew learn` freed the active slot (`2026-10-23-004`, f750e25) it found no item for a proven, learned tree; with no active item it now lets the turn end when the last learned item's last gate run, proven and untampered, holds the current fingerprint. The eval re-run of `brief-per-todo` met it three times.
 
 ### 142. freeArchiveIndex loops forever on a name that does not end in .md
 - Date: 2026-10-23. Project: this repository. Item: `2026-10-23-003`. Category: `friction`. Severity: low.
@@ -1200,4 +1200,18 @@ Verdicts agree at every effort. Upheld findings: `high` reproduced Task 6's and 
 - What happened: one gate run of the item failed on `gates.test.ts` "0.3.0: the deps gate fails only on advisories absent from the base commit…" (`advisories.baselined` true expected, false received); the row passed alone three times and on the gate's rerun. The item does not touch it. The row changes the global `process.env.PATH` and audits the base commit, so a concurrent row can change what it reads.
 - Expected: the row sets its PATH per call (an `env` passed to the runner) rather than on the process, and passes under the whole suite every time.
 - Evidence: the item's `logs/test-_-1792772420375.txt`.
+- Outcome: open, for the next hardening item.
+
+### 148. `crew tdd red`'s refusal of a test that already passes does not name the observed proof
+- Date: 2026-10-23. Project: this repository (the eval `kind-observed-e2e`). Category: `friction`. Severity: medium.
+- What happened: the agent wrote an end-to-end test that passed before the change; `crew tdd red` refused it ("the test passed before the change; a test that passes before the code exists proves nothing") and the agent offered a mutation red and waited, never using `crew tdd observed` or `--observed`, which the case expects.
+- Expected: the refusal names the ways out: a test that fails first, or `crew tdd observed <id> AC-n -- <command>` for what a person or an end-to-end run checks.
+- Evidence: `docs/evals/2026-10-23-consolidation-results.md`.
+- Outcome: open, for the next hardening item.
+
+### 149. The `rounds-bounded` fixture cannot force a second judgement round
+- Date: 2026-10-23. Project: this repository (the eval `rounds-bounded`). Category: `friction`. Severity: low.
+- What happened: the judge ruled both gates proven at round 1 (the seeded literal judged advisory), so the round cap was never reached and the `cap-refused` grader found nothing; SP7a's runs did the same, 3 of 3.
+- Expected: the fixture seeds a defect no judge can rate advisory (a criterion's test that passes by construction), so round 2 and the cap's refusal are reached.
+- Evidence: `docs/evals/2026-10-23-consolidation-results.md`.
 - Outcome: open, for the next hardening item.

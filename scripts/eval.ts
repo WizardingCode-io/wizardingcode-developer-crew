@@ -17,7 +17,12 @@ export interface EvalOptions {
   outputDir?: string;
   /** The cost cap in USD the user gave (`--max-cost-usd`, finding 63): without it the suite runs uncapped and a case at 5. */
   maxCostUsd?: number;
+  /** The judge of the llm graders (`--judge-model`, the user's decision of 2026-10-23): the suite's own when not given. */
+  judgeModel?: string;
 }
+
+/** The suite's judge: never a weaker model than the agent under test (the owner's rule). */
+const JUDGE_MODEL = "claude-fable-5-1";
 
 const ALLOW_TOOLS = [
   "Write",
@@ -119,7 +124,7 @@ export function evalInvocation(options: EvalOptions): {
         // a trace the suite's judge reads whole.
         "--keep-temp",
         "--judge-model",
-        "claude-fable-5-1",
+        options.judgeModel ?? JUDGE_MODEL,
       ]
     : [
         ...COMMON,
@@ -128,7 +133,7 @@ export function evalInvocation(options: EvalOptions): {
         ...(options.tags ?? SANDBOX_TAGS),
         "--keep-temp",
         "--judge-model",
-        "claude-fable-5-1",
+        options.judgeModel ?? JUDGE_MODEL,
         ...(options.maxCostUsd === undefined ? [] : ["--max-cost-usd", String(options.maxCostUsd)]),
         "--concurrency",
         "3",
@@ -395,6 +400,7 @@ export function runKit(options: {
   caseName?: string;
   tags?: string[];
   maxCostUsd?: number;
+  judgeModel?: string;
 }): KitRun {
   const dir = resultsDir();
   const results = join(options.root, dir);
@@ -410,6 +416,7 @@ export function runKit(options: {
     tags: options.tags,
     outputDir: relative,
     maxCostUsd: options.maxCostUsd,
+    judgeModel: options.judgeModel,
   });
   const command = `claude ${args.join(" ")}`;
   console.log(costEstimate(options));
@@ -447,13 +454,15 @@ if (import.meta.main) {
   let bad: string | undefined;
   for (let i = 0; i < argv.length; i += 2) {
     const flag = argv[i] ?? "";
-    if (!["--case", "--max-cost-usd"].includes(flag) || flag in given) bad = flag;
+    if (!["--case", "--max-cost-usd", "--judge-model"].includes(flag) || flag in given) bad = flag;
     else given[flag] = argv[i + 1] ?? "";
   }
   const name = given["--case"];
   // A case name is a plain word: it names the run's folder, so nothing else may reach it.
   if (bad !== undefined || (name !== undefined && !/^[\w-]+$/.test(name))) {
-    console.error("usage: bun scripts/eval.ts [--case <name>] [--max-cost-usd <usd>]");
+    console.error(
+      "usage: bun scripts/eval.ts [--case <name>] [--max-cost-usd <usd>] [--judge-model <model>]",
+    );
     process.exit(1);
   }
   const cap = given["--max-cost-usd"];
@@ -463,11 +472,17 @@ if (import.meta.main) {
     );
     process.exit(1);
   }
+  const judge = given["--judge-model"];
+  if (judge !== undefined && !/^[\w.-]+$/.test(judge)) {
+    console.error(`eval: --judge-model takes a model name, not ${JSON.stringify(judge)}`);
+    process.exit(1);
+  }
   const run = runKit({
     root: join(import.meta.dir, ".."),
     suffix: name ? `case-${name}` : "suite",
     caseName: name,
     maxCostUsd: cap === undefined ? undefined : Number(cap),
+    judgeModel: judge,
   });
   if (!run.aggregate) {
     console.error(

@@ -1890,3 +1890,22 @@ test("CON7-AC-8 (finding 63): the runner caps a case at 5 USD and the suite at n
     rmSync(dir, { recursive: true, force: true });
   }
 }, 60_000);
+
+test("REL-AC-2 (the user's decision of 2026-10-23): the judge model is the suite's own unless one is given, for a case and for the suite alike", () => {
+  const judges = (args: string[]) => args.filter((_, i) => args[i - 1] === "--judge-model");
+  expect(judges(evalInvocation({ ...base, caseName: "false-done" }).args)).toEqual([
+    "claude-fable-5-1",
+  ]);
+  expect(judges(evalInvocation(base).args)).toEqual(["claude-fable-5-1"]);
+  const opus = { ...base, judgeModel: "claude-opus-5-5" };
+  expect(judges(evalInvocation({ ...opus, caseName: "false-done" }).args)).toEqual([
+    "claude-opus-5-5",
+  ]);
+  expect(judges(evalInvocation(opus).args)).toEqual(["claude-opus-5-5"]);
+  const refused = spawnSync("bun", ["scripts/eval.ts", "--judge-model", "x y"], {
+    cwd: join(import.meta.dir, "../../.."),
+    encoding: "utf8",
+  });
+  expect(refused.status).toBe(1);
+  expect(refused.stderr).toContain('eval: --judge-model takes a model name, not "x y"');
+});
