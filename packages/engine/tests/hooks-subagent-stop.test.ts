@@ -30,10 +30,17 @@ import { loadItemMail, mailbox, ROLE_AGENT, send } from "../src/mail.ts";
 import { clearWorking, recordWorking, workingRoles } from "../src/state.ts";
 import * as store from "../src/store.ts";
 import { ROLE_NAMES } from "../src/team.ts";
-import type { Mailbox, RoleRecord } from "../src/types.ts";
+import type { Mailbox, RoleRecord, WorkItem } from "../src/types.ts";
 import { replyFile } from "../src/validation.ts";
-import { addCriterion, applyClassification, createWork, loadWork, saveWork } from "../src/work.ts";
-import { hookContext, makeRepo, tempDir, testEnv, write } from "./helpers.ts";
+import {
+  activeWork,
+  addCriterion,
+  applyClassification,
+  createWork,
+  loadWork,
+  saveWork,
+} from "../src/work.ts";
+import { hookContext, makeRepo, spyMailReads, tempDir, testEnv, write } from "./helpers.ts";
 
 const PLUGIN = "wizardingcode-developer-crew";
 
@@ -1448,21 +1455,16 @@ function relayWithBoxesChanged(boxes: RegExp, throwOnItemMail = false) {
   );
   if ("refused" in q) throw new Error(q.refused);
   const qid = q.message.id;
-  const realRead = store.readProtectedJsonAt;
   const realWrite = store.writeProtectedJson;
   let changed = false;
-  const read = spyOn(store, "readProtectedJsonAt").mockImplementation(((
-    integrity: string,
-    file: string,
-  ) => {
-    const out = realRead<Mailbox>(integrity, file);
+  const read = spyMailReads((file, out) => {
     if (boxes.test(file) && out.data?.messages?.some((m) => m.replyTo === qid)) {
       changed = true;
       return { ...out, tampered: true };
     }
     return out;
-  }) as typeof store.readProtectedJsonAt);
-  const write = spyOn(store, "writeProtectedJson").mockImplementation(((
+  });
+  const failingWrite = spyOn(store, "writeProtectedJson").mockImplementation(((
     ...args: Parameters<typeof store.writeProtectedJson>
   ) => {
     if (throwOnItemMail && changed && String(args[1]).endsWith("mail.json"))
@@ -1478,7 +1480,7 @@ function relayWithBoxesChanged(boxes: RegExp, throwOnItemMail = false) {
     }) as { systemMessage?: string };
   } finally {
     read.mockRestore();
-    write.mockRestore();
+    failingWrite.mockRestore();
   }
   const own = mailbox(ctx.paths.userDir, ctx.mail.self.workspace, ctx.mail.self.project).dir;
   const outbox = JSON.parse(readFileSync(join(own, "outbox.json"), "utf8")) as Mailbox;
@@ -1504,8 +1506,12 @@ test("CON3-AC-6: a relayed reply delivered while the original could not be marke
   expect(refused.text).toContain(`a copy of ${refused.qid} was not changed: `);
 });
 
-test("CON3-AC-10: the SubagentStop hook files a role's answer under the open item its heading names, else the one item waiting for the roles when the active one is not, else the active item; the notice names the item when it is not the active one (finding 136)", () => {
-  const { root, ctx, work: first } = session();
+/**
+ * Two open items of one checkout, the second active, and a role's stop with its answer in a
+ * transcript: the setup the rows of finding 136 share (triage 3g).
+ */
+function twoItems() {
+  const { root, env, ctx, work: first } = session();
   const second = createWork(ctx.paths, "Export invoices");
   addCriterion(second, "y");
   saveWork(ctx.paths, second);
@@ -1518,6 +1524,11 @@ test("CON3-AC-10: the SubagentStop hook files a role's answer under the open ite
       last_assistant_message: "Done.",
     }) as { systemMessage?: string };
   const folder = (id: string) => join(root, ".crew", "work", id);
+  return { root, env, ctx, first, second, stop, folder };
+}
+
+test("CON3-AC-10: the SubagentStop hook files a role's answer under the open item its heading names, else the one item waiting for the roles when the active one is not, else the active item; the notice names the item when it is not the active one (finding 136)", () => {
+  const { ctx, first, second, stop, folder } = twoItems();
   const notActive = `for ${first.id}, not the active ${second.id}`;
   // A reviewer's answer headed for the first item: filed there, and the notice names it.
   const reviewed = stop(
@@ -1562,19 +1573,7 @@ test("CON3-AC-10: the SubagentStop hook files a role's answer under the open ite
 });
 
 test("CON3-AC-11: a tampered item never takes a role's answer by its heading or its wait; the answer falls to the next rule and the tampered folder is left untouched", () => {
-  const { root, ctx, work: first } = session();
-  const second = createWork(ctx.paths, "Export invoices");
-  addCriterion(second, "y");
-  saveWork(ctx.paths, second);
-  const dir = tempDir("crew-transcript-");
-  const stop = (id: string, role: string, answer: string) =>
-    onSubagentStop(ctx, {
-      agent_id: id,
-      agent_type: `${PLUGIN}:${role}`,
-      agent_transcript_path: transcript(dir, answer, [[100, 10, 0, 0]]),
-      last_assistant_message: "Done.",
-    }) as { systemMessage?: string };
-  const folder = (id: string) => join(root, ".crew", "work", id);
+  const { ctx, first, second, stop, folder } = twoItems();
   // The first item waits for the roles, then its work.json is edited by hand.
   const waiting = loadWork(ctx.paths, first.id).work;
   if (!waiting) throw new Error("no work");
@@ -1604,6 +1603,88 @@ test("CON3-AC-11: a tampered item never takes a role's answer by its heading or 
   expect(existsSync(join(folder(first.id), "review", "ruling.json"))).toBe(false);
   expect(existsSync(join(folder(second.id), "review", "ruling.json"))).toBe(true);
   expect(readdirSync(folder(first.id)).sort()).toEqual(before);
+});
+
+test("DEBT2-AC-2-3i: an abandoned item named by the heading, two items waiting, another project's item and a store folder that is no item's id each leave the answer with the active item; an active item waiting and changed outside the engine takes nothing, and no other item takes its answer (triage 3i, finding 136)", () => {
+  const { env, ctx, first, second, stop, folder } = twoItems();
+  const ruling =
+    '{"rulings":[{"gate":"code-quality","verdict":"proven","findings":[],"tokens":0}]}';
+  const set = (id: string, change: (w: WorkItem) => void) => {
+    const work = loadWork(ctx.paths, id).work;
+    if (!work) throw new Error("no work");
+    change(work);
+    saveWork(ctx.paths, work);
+  };
+  const holding = (ids: string[], file: string) =>
+    ids.filter((id) => existsSync(join(folder(id), "review", file)));
+  // A heading naming an abandoned item: the active item's.
+  set(first.id, (w) => {
+    w.abandoned = {
+      at: "2026-10-23T09:00:00.000Z",
+      reason: "dropped",
+      by: { by: "user", relayed: true },
+    };
+  });
+  stop(
+    "r1",
+    "review-code-quality",
+    `# code-quality findings for ${first.id}\n## Findings\n- none\n`,
+  );
+  expect(holding([first.id, second.id], "code-quality.findings.md")).toEqual([second.id]);
+  set(first.id, (w) => {
+    delete w.abandoned;
+  });
+  // Two items waiting for the roles, the active one not: no single one waits, so the active item's.
+  const third = createWork(ctx.paths, "Archive orders");
+  addCriterion(third, "z");
+  saveWork(ctx.paths, third);
+  expect(activeWork(ctx.paths)?.work?.id).toBe(third.id);
+  for (const id of [first.id, second.id])
+    set(id, (w) => {
+      w.awaiting = "role";
+    });
+  const all = [first.id, second.id, third.id];
+  stop("j1", "judge", ruling);
+  expect(holding(all, "ruling.json")).toEqual([third.id]);
+  // Another project's item by its real id, the others no longer waiting: the active item's, and
+  // the other project's folder is never written.
+  for (const id of [first.id, second.id])
+    set(id, (w) => {
+      w.awaiting = null;
+    });
+  const other = makeRepo({ "package.json": "{}" });
+  const otherPaths = hookContext({ session_id: "o", cwd: other }, env).paths;
+  const foreign = createWork(otherPaths, "Foreign item");
+  saveWork(otherPaths, foreign);
+  const otherFolder = join(other, ".crew", "work", foreign.id);
+  const otherBefore = readdirSync(otherFolder).sort();
+  stop("r2", "review-security", `# security findings for ${foreign.id}\n## Findings\n- none\n`);
+  expect(readdirSync(otherFolder).sort()).toEqual(otherBefore);
+  expect(holding(all, "security.findings.md")).toEqual([third.id]);
+  // A folder of this store whose name is no item's id, holding the engine's own record of a wait.
+  const copy = loadWork(ctx.paths, first.id).work;
+  if (!copy) throw new Error("no work");
+  saveWork(ctx.paths, { ...copy, id: "backup", awaiting: "role" });
+  expect(loadWork(ctx.paths, "backup").tampered).toBe(false);
+  stop("r3", "review-risk", "# risk findings\n## Findings\n- none\n");
+  expect(existsSync(join(ctx.paths.crewDir, "work", "backup", "review", "risk.findings.md"))).toBe(
+    false,
+  );
+  expect(holding(all, "risk.findings.md")).toEqual([third.id]);
+  rmSync(join(ctx.paths.crewDir, "work", "backup"), { recursive: true });
+  // The active item waiting, then changed outside the engine, beside one other waiting: the
+  // answer is not filed, and never under the other item.
+  set(third.id, (w) => {
+    w.awaiting = "role";
+  });
+  set(first.id, (w) => {
+    w.awaiting = "role";
+  });
+  const file = join(folder(third.id), "work.json");
+  writeFileSync(file, readFileSync(file, "utf8").replace(/\n$/, " \n"));
+  const refused = stop("r4", "review-data", "# data findings\n## Findings\n- none\n");
+  expect(refused.systemMessage ?? "").toContain(`nothing was saved for ${third.id}`);
+  expect(holding(all, "data.findings.md")).toEqual([]);
 });
 
 test("DEBT-AC-10-archive-name: freeArchiveIndex returns a free index for a file not ending in .md, and the archive takes .round<k> before its extension (finding 142)", () => {

@@ -133,7 +133,6 @@ import {
   TASK_AGENT,
   tamperedBox,
   threadMessages,
-  worktreeMainRoot,
 } from "./mail.ts";
 import { computeMetrics, knowledgeFigures, metricsText } from "./metrics.ts";
 import {
@@ -364,7 +363,7 @@ import {
   waitingText,
 } from "./work.ts";
 import { environmentState, projectThreads, workspaceStatus } from "./workspace.ts";
-import { gitRun } from "./worktree.ts";
+import { gitRun, worktreeMainRoot } from "./worktree.ts";
 
 export interface CliIo {
   stdout(text: string): void;
@@ -633,17 +632,15 @@ function acceptMailbox(env: Env, parsed: Parsed, which: "inbox" | "outbox"): Out
   const accepted = acceptBox(env.mail, which);
   if ("refused" in accepted) return refuse(accepted.refused);
   const { file, messages } = accepted;
+  const counted = `${messages.length} message${messages.length === 1 ? "" : "s"}`;
   decide(env, "mail", {
     kind: "accept",
-    text: `${which} accepted as it is after a hand edit: ${file} (${messages.length} message${messages.length === 1 ? "" : "s"})`,
+    text: `${which} accepted as it is after a hand edit: ${file} (${counted})`,
     by: whoDecides(decision),
   });
   const lines = messages.map((m) => `  ${m.id} · from ${m.from.project} · ${mailStatus(m)}`);
   return ok(
-    [
-      `${which} accepted: ${file} is now trusted as it is, ${messages.length} message${messages.length === 1 ? "" : "s"}`,
-      ...lines,
-    ].join("\n"),
+    [`${which} accepted: ${file} is now trusted as it is, ${counted}`, ...lines].join("\n"),
     { accepted: `mail ${which}`, file, messages },
   );
 }
@@ -763,19 +760,16 @@ function decisionText(policy: Policy, decision: Decision): string {
   return `${decidedBy(decision)}${note ? ` (${note.slice(2)})` : ""}`;
 }
 
-/** The register's entries of a ruling (SP7 §6.6): each upheld defect inside the change, a decision the judge took about this code. */
+/** The register's entries of a ruling (SP7 §6.6), as `decide` takes them: each upheld defect inside the change, a decision the judge took about this code. */
 function rulingDecisions(
   records: readonly JudgementRecord[],
-  item: string,
   file: string | undefined,
-): DecisionEntry[] {
+): Omit<DecisionEntry, "at" | "item">[] {
   return records.flatMap((record) =>
     record.verdict === "not-proven"
       ? record.findings
           .filter((f) => f.severity === "defect" && !f.outside)
           .map((f) => ({
-            at: nowIso(),
-            item,
             kind: "ruling" as const,
             text: `${record.gate} defect: ${f.file}${f.line ? `:${f.line}` : ""} ${f.text}`,
             by: "the judge",
@@ -1532,7 +1526,7 @@ function awaitCommand(env: Env, args: string[]): Outcome {
   saveWork(env.paths, opened.work);
   const notes: string[] = [];
   moveOriginMail(env, opened.work, "blocked", notes);
-  return ok(withNotes(`${opened.work.id}: ${waitingText(opened.work, { bare: true })}`, notes), {
+  return ok(withNotes(`${opened.work.id}: ${waitingPhrase(opened.work) ?? ""}`, notes), {
     awaiting: kind,
     awaitingMessage: opened.work.awaitingMessage ?? null,
   });
@@ -3949,8 +3943,8 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         typeof parsed.flags.ruling === "string"
           ? rel(env.paths, resolve(env.paths.root, parsed.flags.ruling))
           : undefined;
-      for (const entry of rulingDecisions(records, opened.work.id, rulingFile))
-        appendDecision(env.paths, entry);
+      for (const fields of rulingDecisions(records, rulingFile))
+        decide(env, opened.work.id, fields);
       deliver(env, opened, result.evidence);
       const lines = records.flatMap((r) => {
         const outside = r.findings.filter((f) => f.outside).length;
@@ -4266,14 +4260,13 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       opened.work.primaryTeam = primary;
       const served = audit
         ? { paths: [], packs: [], skipped: [] }
-        : recordPackUse(
-            opened.work,
-            env.paths.userDir,
-            env.profile,
+        : recordPackUse(opened.work, {
+            userDir: env.paths.userDir,
+            profile: env.profile,
             changed,
-            env.policy,
-            registry.teams,
-          );
+            policy: env.policy,
+            registry: registry.teams,
+          });
       saveWork(env.paths, opened.work);
       const listed = seats.map((s) => `${s.role} (${s.reason})`).join("; ");
       const text = audit

@@ -1,9 +1,7 @@
 #!/bin/sh
 # evals/strategy-declares-phases/fixture.sh: an empty project with a README naming the request's context (SP8): a new product declares the phases at which its design changes.
 set -eu
-fixture_commit() {
-  git -c user.name=Fixture -c user.email=fixture@example.invalid commit -q -m "$1"
-}
+. "$(dirname "$0")/../fixtures/commit.sh"
 git init -q -b main
 cat > README.md <<'README'
 # Circle

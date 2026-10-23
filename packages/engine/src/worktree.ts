@@ -1,6 +1,21 @@
 import { execFileSync } from "node:child_process";
-import { basename, resolve } from "node:path";
+import { statSync } from "node:fs";
+import { basename, isAbsolute, join, resolve } from "node:path";
+import { readText } from "./fs.ts";
 import { canonical } from "./paths.ts";
+
+/** The main checkout of a git worktree (its `.git` is a file naming the parent's), or null for a checkout of its own. */
+export function worktreeMainRoot(root: string): string | null {
+  const gitFile = join(root, ".git");
+  try {
+    if (!statSync(gitFile).isFile()) return null;
+  } catch {
+    return null;
+  }
+  const line = readText(gitFile)?.trim() ?? "";
+  const match = /^gitdir:\s*(.+?)\/\.git\/worktrees\/[^/]+\/?$/.exec(line);
+  return match?.[1] ? canonical(isAbsolute(match[1]) ? match[1] : join(root, match[1])) : null;
+}
 
 /** Runs git in a folder and returns its output, trimmed; git's failure is thrown. Git speaks the C locale, so a reason the engine reads or shows is the one it knows. */
 export function gitRun(cwd: string, ...args: string[]): string {

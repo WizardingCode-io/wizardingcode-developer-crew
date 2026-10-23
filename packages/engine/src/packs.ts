@@ -2,12 +2,21 @@ import { existsSync, readdirSync, readFileSync, realpathSync, rmSync } from "nod
 import { homedir } from "node:os";
 import { basename, isAbsolute, join, sep } from "node:path";
 import type { DetectorRule } from "./detect/types.ts";
-import { ensureDir, nowIso, readJson, readText, readTextQuietly, sha256, writeJson } from "./fs.ts";
+import {
+  ensureDir,
+  errorText,
+  nowIso,
+  readJson,
+  readText,
+  readTextQuietly,
+  sha256,
+  writeJson,
+} from "./fs.ts";
 import { withLock } from "./lock.ts";
 import { packPath, packsDir } from "./paths.ts";
 import { LOWERCASE_WORD } from "./policy.ts";
 import { scanText } from "./secrets.ts";
-import { type RegistryTemplate, TEAMS, type TeamDef } from "./team.ts";
+import { type RegistryTemplate, TEAMS, type TeamDef, type TeamTemplate } from "./team.ts";
 import {
   CORE_STACKS,
   type CoreStack,
@@ -28,11 +37,6 @@ import { VERSION } from "./version.ts";
  */
 
 export type PackKind = "stack" | "domain" | "team";
-
-export interface TeamTemplate {
-  template: string;
-  teams: Partial<Record<TeamName, { mandatory: { kind: "paths"; globs: string[] } }>>;
-}
 
 export interface Provenance {
   source: string;
@@ -106,8 +110,6 @@ const isStringList = (v: unknown): v is string[] =>
 /** A path a manifest may hold: relative, never climbing. */
 const climbs = (p: string): boolean =>
   isAbsolute(p) || p.split(/[\\/]/).some((segment) => segment === "..");
-const message = (error: unknown): string =>
-  error instanceof Error ? error.message : String(error);
 
 /** The manifest at `<root>/pack.json`, checked field by field (SP6 Task 2 AC-1), or the one refusal. */
 export function readManifest(root: string): { manifest: PackManifest } | { refused: string } {
@@ -115,14 +117,14 @@ export function readManifest(root: string): { manifest: PackManifest } | { refus
   try {
     text = readText(join(root, "pack.json"));
   } catch (error) {
-    return { refused: `pack.json cannot be read: ${message(error)}` };
+    return { refused: `pack.json cannot be read: ${errorText(error)}` };
   }
   if (text === null) return { refused: "pack.json names nothing: the file is missing" };
   let data: unknown;
   try {
     data = JSON.parse(text);
   } catch (error) {
-    return { refused: `pack.json: not JSON (${message(error)})` };
+    return { refused: `pack.json: not JSON (${errorText(error)})` };
   }
   if (!isRecord(data)) return { refused: "pack.json: not an object" };
   const m = data;
@@ -281,7 +283,7 @@ function readNamed(root: string, rel: string): { text: string } | { refused: str
   try {
     return { text: readFileSync(join(root, rel), "utf8") };
   } catch (error) {
-    return { refused: `${rel} cannot be read (${message(error)})` };
+    return { refused: `${rel} cannot be read (${errorText(error)})` };
   }
 }
 
@@ -302,7 +304,7 @@ export function checkPack(
   try {
     real = realpathSync(root);
   } catch (error) {
-    return `the pack's root cannot be read (${message(error)})`;
+    return `the pack's root cannot be read (${errorText(error)})`;
   }
   for (const rel of namedFiles(manifest)) {
     let resolved: string;
@@ -358,7 +360,7 @@ export function registerPack(
   try {
     real = realpathSync(root);
   } catch (error) {
-    return { refused: `${root} cannot be resolved: ${message(error)}` };
+    return { refused: `${root} cannot be resolved: ${errorText(error)}` };
   }
   const dir = packsDir(userDir);
   ensureDir(dir);
@@ -426,7 +428,7 @@ function stateOf(registration: PackRegistration, quick: boolean): PackState {
     if (changed.length) return { kind: "changed", files: changed };
     return { kind: "ok" };
   } catch (error) {
-    return { kind: "unreadable", reason: message(error) };
+    return { kind: "unreadable", reason: errorText(error) };
   }
 }
 
@@ -458,7 +460,7 @@ export function listPacks(userDir: string, options: { quick?: boolean } = {}): P
         registration = data as PackRegistration;
       else reason = "registration of another shape";
     } catch (error) {
-      reason = message(error);
+      reason = errorText(error);
     }
     listed.push({
       name: registration?.name ?? name,
@@ -599,12 +601,15 @@ export function recordPacks(work: WorkItem, labels: readonly string[]): void {
  */
 export function recordPackUse(
   work: WorkItem,
-  userDir: string,
-  profile: Profile,
-  changed: readonly string[],
-  policy: Policy,
-  registry: Record<TeamName, TeamDef>,
+  use: {
+    userDir: string;
+    profile: Profile;
+    changed: readonly string[];
+    policy: Policy;
+    registry: Record<TeamName, TeamDef>;
+  },
 ): { paths: string[]; labels: string[]; packs: string[]; skipped: string[] } {
+  const { userDir, profile, changed, policy, registry } = use;
   const served = knowledgeFilesFor(userDir, profile, changed, policy);
   const seated = (work.seats ?? []).flatMap((s) => {
     const rule = s.team ? registry[s.team].mandatory : null;
@@ -689,7 +694,7 @@ export function discoverPacks(userDir: string, env: NodeJS.ProcessEnv): string[]
     try {
       realRoot = realpathSync(root);
     } catch (error) {
-      lines.push(`${key}: the pack's root cannot be read (${message(error)})`);
+      lines.push(`${key}: the pack's root cannot be read (${errorText(error)})`);
       continue;
     }
     if (

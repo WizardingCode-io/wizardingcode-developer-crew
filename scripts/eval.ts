@@ -443,14 +443,16 @@ export function realGitDir(platform: NodeJS.Platform): string | null {
 if (import.meta.main) {
   const argv = process.argv.slice(2);
   const given: Record<string, string> = {};
+  // A flag the script does not take, or one given twice.
+  let bad: string | undefined;
   for (let i = 0; i < argv.length; i += 2) {
     const flag = argv[i] ?? "";
-    if (!["--case", "--max-cost-usd"].includes(flag) || flag in given) given["?"] = flag;
+    if (!["--case", "--max-cost-usd"].includes(flag) || flag in given) bad = flag;
     else given[flag] = argv[i + 1] ?? "";
   }
   const name = given["--case"];
   // A case name is a plain word: it names the run's folder, so nothing else may reach it.
-  if ("?" in given || (name !== undefined && !/^[\w-]+$/.test(name))) {
+  if (bad !== undefined || (name !== undefined && !/^[\w-]+$/.test(name))) {
     console.error("usage: bun scripts/eval.ts [--case <name>] [--max-cost-usd <usd>]");
     process.exit(1);
   }

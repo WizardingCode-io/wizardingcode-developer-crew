@@ -613,17 +613,13 @@ export interface GateOutcome {
 }
 
 /**
- * The files the reviewers read (finding 134): every path the item changed, watched or not, but
- * the engine's own `.crew/` (compared without regard to case), from git's view, so an ignored file
- * stays out. Outside git, or with nothing there, the watched list the rest of the run reads.
+ * The files the reviewers read (finding 134): every path the item changed, watched or not (`all`,
+ * git's view, so an ignored file stays out), but the engine's own `.crew/` (compared without
+ * regard to case). Outside git, or with nothing there, the watched list the rest of the run reads.
  */
-export function reviewPaths(
-  root: string,
-  base: Parameters<typeof changedPaths>[1],
-  watched: readonly string[],
-): string[] {
-  const all = changedPaths(root, base).filter((p) => !p.toLowerCase().startsWith(".crew/"));
-  return all.length ? all : [...watched];
+export function reviewPaths(all: readonly string[], watched: readonly string[]): string[] {
+  const reviewed = all.filter((p) => !p.toLowerCase().startsWith(".crew/"));
+  return reviewed.length ? reviewed : [...watched];
 }
 
 export async function runGates(
@@ -713,16 +709,18 @@ export async function runGates(
   // Planned after the route may have been raised, so a risk area the diff touched plans the
   // security gate; from the same registry as the seats.
   const judgement = itemJudgement(work, changed, policy, registry);
+  // Every path the item changed, watched or not: the templates' globs and the reviewers read it.
+  const allChanged = changedPaths(paths.root, base);
   work.seats = plannedSeats(work.route, work.riskAreas, changed, policy, {
     registry,
-    templatePaths: changedPaths(paths.root, base),
+    templatePaths: allChanged,
   });
   // What crew team records at the conclave, recorded again with the paths the change touched (SP6
   // Task 6), so the report shows the packs and the expert's files even when crew team never ran.
-  recordPackUse(work, paths.userDir, profile, changed, policy, registry);
+  recordPackUse(work, { userDir: paths.userDir, profile, changed, policy, registry });
   work.primaryTeam = primaryTeam(changed);
   const reviewInputs = judgement.length
-    ? writeReviewInputs(paths, work, reviewPaths(paths.root, base, changed), stamp)
+    ? writeReviewInputs(paths, work, reviewPaths(allChanged, changed), stamp)
     : null;
   const currentFingerprint = computeFingerprint(
     paths.root,

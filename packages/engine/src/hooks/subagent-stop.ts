@@ -1,8 +1,8 @@
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { WORK_ID } from "../analysis.ts";
 import { loadEvidence, saveEvidence } from "../evidence.ts";
-import { nowIso, readText, readTextQuietly, writeText } from "../fs.ts";
+import { errorText, nowIso, readText, readTextQuietly, writeText } from "../fs.ts";
 import { sleep, withLock } from "../lock.ts";
 import { loadItemMail, reply } from "../mail.ts";
 import { mailStatus } from "../mail-status.ts";
@@ -316,13 +316,18 @@ const HEADING_ITEM = /\b(\d{4}-\d{2}-\d{2}-\d{3}-[a-z0-9][a-z0-9-]*[a-z0-9])\b/;
  * The item a role's answer is filed under (finding 136): the item its first heading line names
  * when that item is open in this project (its work.json under this project's store, not
  * abandoned, not learned); else, when the active item is not waiting for the roles, the one open
- * item that is, if exactly one; else the active item. Only this project's store is read, so
- * another project's item is never reached, and an item whose record changed outside the engine is
- * no open item (the security lead's return). Null when no rule names an item.
+ * item that is, if exactly one; else the active item, as the caller read it after the role's
+ * hand-back wait. Only this project's store is read, so another project's item is never reached,
+ * and an item whose record changed outside the engine is no open item (the security lead's
+ * return). Null when no rule names an item.
  */
-export function answerItem(ctx: HookContext, answer: string): string | null {
+export function answerItem(
+  ctx: HookContext,
+  answer: string,
+  active: WorkItem | null,
+): string | null {
   const open = (id: string): WorkItem | null => {
-    if (!WORK_ID.test(id) || !existsSync(join(workDir(ctx.paths, id), "work.json"))) return null;
+    if (!WORK_ID.test(id)) return null;
     const { work, tampered } = loadWork(ctx.paths, id);
     return work && !tampered && !work.abandoned && !work.learned ? work : null;
   };
@@ -331,13 +336,12 @@ export function answerItem(ctx: HookContext, answer: string): string | null {
     .find((l) => l.trim().startsWith("#"));
   const named = heading ? HEADING_ITEM.exec(heading)?.[1] : undefined;
   if (named && open(named)) return named;
-  const active = activeWork(ctx.paths)?.work ?? null;
   if (active?.awaiting !== "role") {
     let ids: string[] = [];
     try {
       ids = readdirSync(join(ctx.paths.crewDir, "work"));
     } catch {
-      ids = [];
+      // no store: no item waits
     }
     const waiting = ids.filter((id) => open(id)?.awaiting === "role");
     if (waiting.length === 1) return waiting[0] as string;
@@ -366,12 +370,14 @@ export function onSubagentStop(ctx: HookContext, payload: HookPayload): HookResp
     leaveNotice(ctx, text);
     return { systemMessage: text };
   };
-  const active = activeWork(ctx.paths);
   const answer = roleAnswer(payload.agent_transcript_path, payload.last_assistant_message, {
     ms: handbackWaitMs(ctx.env),
   });
+  // The active item, read once after the hand-back wait: the item the answer goes to is the one
+  // read then (the security lead's R-2 of 2026-10-23-005).
+  const active = activeWork(ctx.paths);
   // The item the answer is for (finding 136), the active one unless the answer or the waits say otherwise.
-  const id = answerItem(ctx, answer);
+  const id = answerItem(ctx, answer, active?.work ?? null);
   if (!id)
     return tell(`Crew: ${role} stopped with no active work item: its answer was not recorded.`);
   const activeId = active?.work?.id ?? null;
@@ -713,14 +719,14 @@ export function archiveExisting(
   try {
     current = readText(join(dir, file));
   } catch (error) {
-    return { failed: file, error: error instanceof Error ? error.message : String(error) };
+    return { failed: file, error: errorText(error) };
   }
   if (current === null) return { archived: null };
   const archived = roundName(file, freeArchiveIndex(dir, file));
   try {
     writeText(join(dir, archived), current);
   } catch (error) {
-    return { failed: archived, error: error instanceof Error ? error.message : String(error) };
+    return { failed: archived, error: errorText(error) };
   }
   return { archived };
 }

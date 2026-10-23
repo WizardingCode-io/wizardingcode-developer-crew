@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { loadEvidence, saveEvidence } from "../src/evidence.ts";
 import { handleHook } from "../src/hooks/index.ts";
+import { FOLD_MARKS } from "../src/hooks/powershell.ts";
 import { onPreToolUse, openedSessionDenial } from "../src/hooks/pre-tool-use.ts";
 import type { HookPayload } from "../src/hooks/types.ts";
 import { PROTECTED_WORK_FILES } from "../src/paths.ts";
@@ -2843,8 +2844,8 @@ test("SP6-T4 AC-21 (judgement round-13): a crew word in any piece the walker did
   }
   // A crew word the reader could not place, whatever the grammar around it: an assignment of the
   // alias, cmd's builtins repeated, after a separator, with a joined value or the echo-off prefix,
-  // an unknown parameter of the alias, a folder, a word, a
-  // flag's value, a path ending in crew, a word behind a handed string or a program.
+  // an unknown parameter of the alias, a folder, a word, a flag's value, a path ending in crew, a
+  // word behind a handed string or a program.
   for (const command of [
     `$null = start node ${bundle},approve,${work.id},spec`,
     `cmd /c call call node ${bundle} approve ${work.id} spec`,
@@ -4560,9 +4561,14 @@ test("DEBT-AC-2-mv-variant: mv onto an engine file through a doubled separator, 
     expect(reason(bash(command)), command).toBe(ENGINE_WRITE);
 });
 
-test("DEBT-AC-2-find-ok: find over the engine's folder with -ok rm or -exec cp is denied", () => {
+test("DEBT-AC-2-find-ok: find over the engine's folder with -ok rm, -ok cp or -exec cp is denied", () => {
   const { bash } = debtBash();
-  for (const command of ["find .crew -ok rm {} ;", "find .crew -exec cp /tmp/x {} ;"])
+  // `-ok cp` is denied by the find rule alone: no rm or mv stands in the line for the folder rule.
+  for (const command of [
+    "find .crew -ok rm {} ;",
+    "find .crew -ok cp /tmp/x {} ;",
+    "find .crew -exec cp /tmp/x {} ;",
+  ])
     expect(reason(bash(command)), command).toBe(ENGINE_WRITE);
 });
 
@@ -4626,4 +4632,69 @@ test("DEBT-AC-2-strict-ambiguous: cp with an ambiguous long prefix reads every w
 test("DEBT-AC-2-tar-copy-out-pass: tar extracting an archive from the engine's folder elsewhere passes", () => {
   const { bash } = debtBash();
   expect(bash("tar -xf .crew/a.tar -C /tmp/out")).toEqual({});
+});
+
+// The closing debt chore's rows (2026-10-23-005, triage 2h): each pins one branch of the guard a
+// refactor touched or no row read before, and fails on a one-line mutation of it.
+test("DEBT2-AC-2-2h-item-contents: removing an item's folder by its contents as a whole (/. or /*) is denied", () => {
+  const { bash } = debtBash();
+  for (const command of ["rm -rf .crew/work/w1/.", "rm -rf .crew/work/w1/*"])
+    expect(reason(bash(command)), command).toBe(ENGINE_WRITE);
+});
+
+test("DEBT2-AC-2-2h-powershell-engine-file: on PowerShell an engine file is denied when the line as written, without its quotes, or as POSIX reads it names one, and a removal of the folder when the line as written or without its quotes names it; a listing of the folder in capitals passes (triage 2d)", () => {
+  const { ctx } = setup(null);
+  const { ps, reasonOf } = powershellRows(ctx);
+  for (const command of [
+    // As written alone: the quote keeps `local` a word of its own; without it, and with the
+    // comment gone as POSIX reads the line, no engine file is named.
+    "Set-Content x # .crew/local'x",
+    // Without its quotes alone.
+    'Set-Content ".crew"/work/w1/evidence.json x',
+    // As POSIX reads it alone: the backslashes read as separators.
+    "Set-Content .crew\\work\\w1\\evidence.json x",
+    // A removal of the folder as written alone, and without its quotes alone.
+    "Remove-Item .crew'x'",
+    'Remove-Item .cr"e"w',
+  ])
+    expect(reasonOf(ps(command)), command).toBe(ENGINE_WRITE);
+  for (const command of ["Get-ChildItem .CREW", "Get-ChildItem .crew/work"])
+    expect(ps(command), command).toEqual({});
+});
+
+test("DEBT2-AC-2-2h-fold-marks: a PowerShell line holding any of the fold's own marks is asked as a control character, so no written line carries one unseen (triage 2e)", () => {
+  const { ctx } = setup(null);
+  const { ps, reasonOf, hidden } = powershellRows(ctx);
+  for (const [name, mark] of Object.entries(FOLD_MARKS))
+    expect(reasonOf(ps(`Get-ChildItem x${mark}y`)), name).toBe(hidden("a control character"));
+});
+
+test("DEBT2-AC-2-2h-runner-capitals: a crew bundle behind NODE.EXE in capitals is read as crew and asked", () => {
+  const { ctx } = setup();
+  const bash = (command: string) =>
+    onPreToolUse(ctx, { tool_name: "Bash", tool_input: { command }, permission_mode: "default" });
+  expect(decision(bash("NODE.EXE /x/dist/crew.mjs approve w1 spec"))).toBe("ask");
+});
+
+test("DEBT2-AC-2-2h-opened-approve-no-id: in a session opened by mail, crew approve with no id waits for a person, by its own reason", () => {
+  const mid = "M-2026-10-16-001-storefront";
+  const root = makeRepo({ "package.json": JSON.stringify({ scripts: { test: "exit 0" } }) });
+  const ctx = hookContext(
+    { session_id: "s", cwd: root },
+    {
+      ...testEnv(),
+      WIZARDINGCODE_CREW_MAIL_ID: mid,
+      WIZARDINGCODE_CREW_MAIL_MODE: "branch",
+      WIZARDINGCODE_CREW_MAIL_BRANCH: `crew/mail/${mid}`,
+      CLAUDE_CODE_SESSION_ATTENDED: "0",
+    },
+  );
+  const response = onPreToolUse(ctx, {
+    tool_name: "Bash",
+    tool_input: { command: "crew approve" },
+    permission_mode: "dontAsk",
+  });
+  expect(reason(response)).toBe(
+    `Crew: this session was opened by mail (${mid}) and a spec it cannot read waits for a person: crew approve  is denied; run crew await <id> user and end the turn`,
+  );
 });

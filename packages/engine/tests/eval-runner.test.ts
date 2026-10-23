@@ -586,6 +586,7 @@ test("SP7a AC-8 (Task 8), SP7b-T7 AC-1, SP3-T7 AC-1: every fixture stays inside 
     `${EVALS}fixtures/two-projects.sh`,
     `${EVALS}fixtures/laravel-shaped.sh`,
     `${EVALS}fixtures/node-agentic.sh`,
+    `${EVALS}fixtures/commit.sh`,
     ...CONFINED.map((name) => `${EVALS}${name}/fixture.sh`),
   ];
   // The one permitted parent path: sourcing a shared fixture beside the case, inside the evals tree.
@@ -594,6 +595,7 @@ test("SP7a AC-8 (Task 8), SP7b-T7 AC-1, SP3-T7 AC-1: every fixture stays inside 
     '. "$(dirname "$0")/../fixtures/two-projects.sh"',
     '. "$(dirname "$0")/../fixtures/laravel-shaped.sh"',
     '. "$(dirname "$0")/../fixtures/node-agentic.sh"',
+    '. "$(dirname "$0")/../fixtures/commit.sh"',
   ];
   const forbidden = [
     /cd \//,
@@ -617,7 +619,7 @@ test("SP7a AC-8 (Task 8), SP7b-T7 AC-1, SP3-T7 AC-1: every fixture stays inside 
   }
 });
 
-test("SP8-T1 AC-5 (finding 96): the issue case's fixed grader anchors on the filter of active accounts, and the four SP3 fixtures commit through the shared helper", () => {
+test("SP8-T1 AC-5 (finding 96): the issue case's fixed grader anchors on the filter of active accounts, and the four SP3 fixtures commit through the shared helper, defined once in fixtures/commit.sh and sourced by every fixture that commits through it", () => {
   const grader = readFileSync(
     join(repoRoot, "plugins/core/evals/issue-root-cause-named/graders/fixed.md"),
     "utf8",
@@ -633,9 +635,36 @@ test("SP8-T1 AC-5 (finding 96): the issue case's fixed grader anchors on the fil
     expect(fixture, name).toContain("fixture_commit ");
     expect(fixture, name).not.toContain("git -c user.name=Fixture");
   }
-  expect(
-    readFileSync(join(repoRoot, "plugins/core/evals/fixtures/node-plain.sh"), "utf8"),
-  ).toContain("fixture_commit() {");
+  // The helper is defined once, in fixtures/commit.sh (O2); every fixture that commits through it
+  // sources that file, node-plain.sh among them, and none defines its own.
+  const evals = join(repoRoot, "plugins/core/evals");
+  expect(readFileSync(join(evals, "fixtures/commit.sh"), "utf8")).toContain("fixture_commit() {");
+  const sourcing = '. "$(dirname "$0")/../fixtures/commit.sh"';
+  expect(readFileSync(join(evals, "fixtures/node-plain.sh"), "utf8")).toContain(sourcing);
+  const fixtures = [
+    ...readdirSync(join(evals, "fixtures"))
+      .filter((f) => f.endsWith(".sh") && f !== "commit.sh")
+      .map((f) => join(evals, "fixtures", f)),
+    ...readdirSync(evals)
+      .map((d) => join(evals, d, "fixture.sh"))
+      .filter((f) => existsSync(f)),
+  ];
+  const defining = fixtures.filter((f) => readFileSync(f, "utf8").includes("fixture_commit() {"));
+  expect(defining).toEqual([]);
+  // A fixture that calls the helper has it from commit.sh, sourced by itself or by a shared fixture it sources.
+  const hasHelper = (file: string): boolean => {
+    const text = readFileSync(file, "utf8");
+    if (text.includes(sourcing)) return true;
+    return [...text.matchAll(/\/\.\.\/fixtures\/([\w-]+\.sh)"/g)].some(
+      (m) => m[1] !== "commit.sh" && hasHelper(join(evals, "fixtures", m[1] ?? "")),
+    );
+  };
+  for (const file of fixtures) {
+    const calls = readFileSync(file, "utf8")
+      .split("\n")
+      .some((line) => /^\s*fixture_commit /.test(line));
+    if (calls) expect(hasHelper(file), file).toBe(true);
+  }
 });
 
 test("SP8-T1 AC-5 (finding 95), in the kit's line shape since 2026-10-21-003 AC-1: deniedReferenceReads names the reference a denied Read names, once, the agent's own report of one, and nothing from a clean trace", () => {
@@ -693,6 +722,14 @@ test("H118 AC-1: a denial is read from the result's own marks, is_error or a dec
       }),
     ]),
   ).toEqual(["skills/crew/references/build.md"]);
+  // reject in the metadata alone, no is_error, the path from the error text alone (no tool_use line).
+  expect(
+    deniedReferenceReads([
+      toolResult("toolu_g", `Permission to read ${reference("plan.md")} has been denied.`, {
+        decision: "reject",
+      }),
+    ]),
+  ).toEqual(["skills/crew/references/plan.md"]);
   // A Bash command naming a reference, denied.
   expect(
     deniedReferenceReads([
@@ -1260,9 +1297,9 @@ test("SP6-T6 AC-1: the four pack cases carry the tag packs, SANDBOX_TAGS holds i
 test("SP6-T6 AC-11, AC-28: fixtures/bin holds the repository helper alone (no shim: a session's PATH is Claude Code's, never the runner's); both mains pass the invocation's environment beside PATH", () => {
   expect(readdirSync(FIXTURES_BIN)).toEqual(["wizardingcode-crew-repo"]);
   expect(statSync(join(FIXTURES_BIN, "wizardingcode-crew-repo")).mode & 0o111).not.toBe(0);
-  // H118: both mains run the kit through runKit, the one spawn, which passes the invocation's environment beside PATH.
+  // H118: both mains run the kit through runKit, the one spawn, which passes the invocation's
+  // environment beside PATH (the row "SP6-T6 AC-11 (runKit)" runs it against the stub kit).
   const evalSource = readFileSync(join(repoRoot, "scripts/eval.ts"), "utf8");
-  expect(evalSource).toContain("env: { ...process.env, ...env, PATH: path }");
   expect(evalSource.split('spawnSync("claude"').length).toBe(2);
   const benchmarkSource = readFileSync(join(repoRoot, "scripts/benchmark.ts"), "utf8");
   expect(benchmarkSource).toContain(
@@ -1275,6 +1312,42 @@ test("SP6-T6 AC-11, AC-28: fixtures/bin holds the repository helper alone (no sh
     "The Laravel pair needs `php` on the machine that runs the evals (the fixture's `artisan` is a PHP script with no framework): a session's PATH is Claude Code's, with the plugin's own `bin/` added, never the runner's, so nothing the runner puts on its PATH reaches the engine's gates inside a session.",
   );
 });
+
+test("SP6-T6 AC-11 (runKit): the kit runs with the caller's environment, the invocation's WIZARDINGCODE_CREW_REPO beside it and the composed PATH, the fixtures' bin first", () => {
+  const dir = mkdtempSync(join(tmpdir(), "eval-env-"));
+  const bin = stubKit(dir);
+  const aggregate = join(dir, "clean.json");
+  writeFileSync(aggregate, scanAggregate({ "false-done": [] }));
+  const hadResults = existsSync(RESULTS);
+  const before = listResults(RESULTS);
+  try {
+    const dump = join(dir, "kit.env");
+    const run = runEval(bin, ["--case", "false-done"], {
+      STUB_AGGREGATE: aggregate,
+      STUB_EXIT: "0",
+      STUB_ENV: dump,
+      STUB_MARK: "the caller's own variable",
+    });
+    expect(run.status, run.stderr).toBe(0);
+    const seen = new Map(
+      readFileSync(dump, "utf8")
+        .split("\n")
+        .filter((line) => line.includes("="))
+        .map((line) => [line.slice(0, line.indexOf("=")), line.slice(line.indexOf("=") + 1)]),
+    );
+    expect(seen.get("STUB_MARK")).toBe("the caller's own variable");
+    expect(seen.get("WIZARDINGCODE_CREW_REPO")).toBe(repoRoot);
+    const path = (seen.get("PATH") ?? "").split(delimiter);
+    expect(path[0]).toBe(join(repoRoot, "plugins/core/evals/fixtures/bin"));
+    expect(path[1]).toBe(join(repoRoot, "plugins/core/bin"));
+    expect(path).toContain(bin);
+  } finally {
+    for (const f of foldersSince(RESULTS, before))
+      rmSync(join(RESULTS, f), { recursive: true, force: true });
+    if (!hadResults) rmSync(RESULTS, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+  }
+}, 60_000);
 
 test("SP6-T6 AC-12: the pack fixtures stay confined: set -eu, the variable alone as the pack's path, a loud refusal without it, crew pack add before crew detect, no copy of a pack, no gate confirmed or set by hand; a with fixture given an empty folder exits non-zero and leaves no commit", () => {
   const withCases = ["pack-laravel-refines-the-gates", "pack-agentic-os-seats-the-team"];
@@ -1570,7 +1643,7 @@ const readReference = (id: string, file: string): string[] => {
   ];
 };
 
-test("CON7-AC-4-validators", () => {
+test("CON7-AC-4-validators (finding 65): team-by-route's validators-exist grader reads src/validation.mjs and passes both validators in either order, never one alone", () => {
   const grader = graderOf("team-by-route", "validators-exist");
   expect(grader.type).toBe("regex");
   expect(grader.target).toBe("{ source: file, path: src/validation.mjs }");
@@ -1585,7 +1658,30 @@ test("CON7-AC-4-validators", () => {
   expect(id).not.toMatch(pattern);
 });
 
-test("CON7-AC-4-norole", () => {
+/** The text a fixture writes to a file through `cat > <path> <<'EOF'`, as the scaffold holds it. */
+const scaffolded = (caseName: string, path: string): string => {
+  const fixture = readFileSync(`${EVALS}${caseName}/fixture.sh`, "utf8");
+  const start = fixture.indexOf(`cat > ${path} <<'EOF'\n`);
+  if (start < 0) throw new Error(`${caseName}: the fixture writes no ${path}`);
+  const body = fixture.slice(start + `cat > ${path} <<'EOF'\n`.length);
+  return body.slice(0, body.indexOf("\nEOF\n") + 1);
+};
+
+test("CON7-AC-4-norole (finding 65): the overhead cases' no-role-launched grader passes a trace with no plugin role and fails one that launched the judge, paired with a fixed grader that fails the committed code and passes the solved one", () => {
+  // The fixed grader's body: the committed src/math.mjs fails it, the request's change passes it.
+  const solved: Record<string, (committed: string) => string> = {
+    "fast-route-overhead": (committed) =>
+      `${committed}\nexport function multiply(a, b) {\n  return a * b;\n}\n`,
+    "issue-fast-overhead": (committed) => committed.replace("return a - b", "return a + b"),
+  };
+  for (const [name, solve] of Object.entries(solved)) {
+    const committed = scaffolded(name, "src/math.mjs");
+    expect(committed, name).toContain("export function add(a, b) {");
+    const fixedPattern = graderPattern(name, "fixed");
+    expect(committed, name).not.toMatch(fixedPattern);
+    expect(solve(committed), name).not.toBe(committed);
+    expect(solve(committed), name).toMatch(fixedPattern);
+  }
   for (const name of ["fast-route-overhead", "issue-fast-overhead"]) {
     const pattern = graderPattern(name, "no-role-launched");
     const plain = traceText([
@@ -1612,7 +1708,7 @@ test("CON7-AC-4-norole", () => {
   }
 });
 
-test("CON7-AC-4-ruling", () => {
+test("CON7-AC-4-ruling (finding 65): rounds-bounded's ruling-recorded grader passes the ruling recorded by a Bash call, never the agent's prose naming the command", () => {
   const pattern = graderPattern("rounds-bounded", "ruling-recorded");
   const ruling = `.crew/work/${CON7_ID}/review/ruling.json`;
   const plain = traceText(
@@ -1643,7 +1739,7 @@ test("CON7-AC-4-ruling", () => {
   expect(prose).not.toMatch(pattern);
 });
 
-test("CON7-AC-4-register", () => {
+test("CON7-AC-4-register (finding 65): decision-register-reread's register-read grader passes crew decisions run, with or without a cd prefix, never the references' text or the agent's prose", () => {
   const pattern = graderPattern("decision-register-reread", "register-read");
   expect(traceText(ranBash("b1", "crew decisions", "D-1 deactivation (user)"))).toMatch(pattern);
   const prefixed = traceText(
@@ -1664,7 +1760,7 @@ test("CON7-AC-4-register", () => {
   expect(prose).not.toMatch(pattern);
 });
 
-test("CON7-AC-4-cap", () => {
+test("CON7-AC-4-cap (finding 65): rounds-bounded's cap-refused grader, a trace regex beside the llm grader, passes the engine's refusal of a second round and never the agent quoting it", () => {
   const file = `${EVALS}rounds-bounded/graders/cap-refused.md`;
   expect(existsSync(file)).toBe(true);
   const grader = graderOf("rounds-bounded", "cap-refused");
@@ -1697,7 +1793,7 @@ test("CON7-AC-4-cap", () => {
   expect(traceText([agentText(`The engine would answer: ${refusal}`)])).not.toMatch(pattern);
 });
 
-test("CON7-AC-5", () => {
+test("CON7-AC-5 (finding 37): the kind-observed-e2e fixture opens no socket, and its e2e test passes in process with every listen made to throw", () => {
   const fixture = readFileSync(`${EVALS}kind-observed-e2e/fixture.sh`, "utf8");
   // First: the fixture opens no socket.
   expect(fixture).not.toContain("listen");
@@ -1739,7 +1835,7 @@ test("CON7-AC-5", () => {
   }
 }, 60_000);
 
-test("CON7-AC-8", () => {
+test("CON7-AC-8 (finding 63): the runner caps a case at 5 USD and the suite at nothing unless given, prints the estimate before the kit starts, passes the cap through and refuses one that is not a positive number", () => {
   // The invocation builder: no cap on the suite unless one is given, the given one passed, 5 on a case.
   const suite = evalInvocation(base).args;
   expect(suite).not.toContain("--max-cost-usd");

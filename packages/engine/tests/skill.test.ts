@@ -4,9 +4,12 @@ import { fileURLToPath } from "node:url";
 import { guaranteeLines, RUNTIME_NAMES, RUNTIMES } from "../src/runtimes.ts";
 import { SKILL_PAGE_MAX_BYTES } from "./helpers.ts";
 
+/** A repository path, absolute, by its path from the repository's root. */
+const repoPath = (path: string): string =>
+  fileURLToPath(new URL(`../../../${path}`, import.meta.url));
+
 /** A repository file's text by its path from the repository's root. */
-const repoFile = (path: string): string =>
-  readFileSync(fileURLToPath(new URL(`../../../${path}`, import.meta.url)), "utf8");
+const repoFile = (path: string): string => readFileSync(repoPath(path), "utf8");
 
 const KINDS = [
   "endpoint",
@@ -29,9 +32,7 @@ const CASES: Record<string, string[]> = {
 };
 
 test("SP2b: one checklist per kind of change, each with the four lists and its corpus cases", () => {
-  const dir = fileURLToPath(
-    new URL("../../../plugins/core/skills/crew/checklists/", import.meta.url),
-  );
+  const dir = repoPath("plugins/core/skills/crew/checklists/");
   expect(readdirSync(dir).sort()).toEqual(KINDS.map((k) => `${k}.md`).sort());
   for (const kind of KINDS) {
     const text = repoFile(`plugins/core/skills/crew/checklists/${kind}.md`);
@@ -143,9 +144,7 @@ test("0.3.0: a decision is presented in words and the user's positive word is th
   expect(readReference("specify.md")).toContain("--validator complete-gap-round");
   expect(readReference("specify.md")).not.toContain("the permission prompt is their signature");
   // The full-route eval grades the approval by rule, not a stop at a prompt.
-  const graders = fileURLToPath(
-    new URL("../../../plugins/core/evals/risk-escalation/graders/", import.meta.url),
-  );
+  const graders = repoPath("plugins/core/evals/risk-escalation/graders/");
   expect(existsSync(`${graders}stopped-for-approval.md`)).toBe(false);
   expect(repoFile("plugins/core/evals/risk-escalation/graders/approved-by-rule.md")).toContain(
     "complete-gap-round",
@@ -333,9 +332,7 @@ test("SP7a AC-5 (Task 4): the conclave reference launches the leads to validate 
 });
 
 test("SP7a AC-1 (Task 3): five personalities, one file each, assigned to the debate's seats by the conclave reference", () => {
-  const dir = fileURLToPath(
-    new URL("../../../plugins/core/skills/crew/personalities/", import.meta.url),
-  );
+  const dir = repoPath("plugins/core/skills/crew/personalities/");
   expect(readdirSync(dir).sort()).toEqual([
     "adventurous.md",
     "conservative.md",
@@ -777,7 +774,7 @@ test("SP6-T6 AC-8, AC-23: the records of 0.11.0 hold their exact strings: the vi
   expect(readme).toContain("Release 0.11.0 (2026-10-21) is SP6");
   const link = readme.match(/docs\/benchmark\/\d{4}-\d{2}-\d{2}-0\.11\.0\.md/)?.[0];
   expect(link).toBeDefined();
-  expect(existsSync(fileURLToPath(new URL(`../../../${link}`, import.meta.url))), link).toBe(true);
+  expect(existsSync(repoPath(`${link}`)), link).toBe(true);
   expect(readme).toContain("docs/evals/2026-10-21-sp6-results.md");
   const realUse = repoFile("docs/real-use/README.md");
   expect(realUse).toContain("\n## The phase after 0.11.0\n");
@@ -788,11 +785,7 @@ test("SP6-T6 AC-8, AC-23: the records of 0.11.0 hold their exact strings: the vi
     expect(repoFile(`packs/${pack}/README.md`), pack).toContain(
       "docs/evals/2026-10-21-sp6-results.md",
     );
-  expect(
-    existsSync(
-      fileURLToPath(new URL("../../../docs/evals/2026-10-21-sp6-results.md", import.meta.url)),
-    ),
-  ).toBe(true);
+  expect(existsSync(repoPath("docs/evals/2026-10-21-sp6-results.md"))).toBe(true);
 });
 
 test("finding 121: the skill page's front matter is strict YAML (Bun.YAML), with the name crew-method and the description's text unchanged", () => {
@@ -808,11 +801,8 @@ test("finding 121: the skill page's front matter is strict YAML (Bun.YAML), with
   );
 });
 
-// The outside testers of the other runtimes (the user's decision of 2026-10-21, item 2026-10-21-006):
-// the runtime report template and the README's paragraph for them.
-
 test("AC-1 (finding 121's debt): every shipped front matter is strict YAML, the skill page and the fifteen agent pages, with the descriptions of cto.md and review-risk.md quoted", () => {
-  const agents = fileURLToPath(new URL("../../../plugins/core/agents/", import.meta.url));
+  const agents = repoPath("plugins/core/agents/");
   const pages = readdirSync(agents)
     .filter((f) => f.endsWith(".md"))
     .sort();
@@ -860,6 +850,9 @@ test("AC-5 (finding 119): the conclave and deliver references say where a resume
   ])
     expect(deliver, fragment).toContain(fragment);
 });
+
+// The outside testers of the other runtimes (the user's decision of 2026-10-21, item 2026-10-21-006):
+// the runtime report template and the README's paragraph for them.
 
 test("testers AC-1: the runtime report template is strict YAML, its dropdown lists the engine's runtimes in the table's order, and it asks for what a report needs", () => {
   const form = Bun.YAML.parse(repoFile(".github/ISSUE_TEMPLATE/runtime-report.yml")) as {
@@ -955,11 +948,15 @@ test("CON1-AC-5 (finding 62): conclave.md debates a choice the user left to the 
     'A choice the user\'s words leave to the team ("the team decides", "your call", "debate it") is debated, not asked: those words are the decision to debate, and the reason names them.',
   );
   expect(conclave).toContain(
-    "It never stands for a decision that is a risk area's (who holds a permission, what is hard-deleted, which side of a conflict wins): that one is still the user's.",
+    "It never stands for a decision whose answer changes a risk area: that one is still the user's.",
   );
   expect(conclave).toContain(
     "a decision whose answer changes a risk area (who holds a permission, what is hard-deleted, which side of a conflict wins), or the user asking for it.",
   );
+  // The risk areas' examples are given once, where the triggers are listed.
+  expect(
+    conclave.split("(who holds a permission, what is hard-deleted, which side of a conflict wins)"),
+  ).toHaveLength(2);
 });
 
 test("CON1-AC-6 (finding 31): mail.md names mail.worktrees, and gate.md and mail.md point to rule 5 for when a wait clears", () => {

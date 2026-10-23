@@ -87,7 +87,7 @@ test("SP2c: a protected file outside a repository has its own integrity file, ke
   expect(readProtectedJsonAt(integrity, join(dir, "outbox.json")).tampered).toBe(true);
 });
 
-test("CON6-AC-10-integrity (finding 30): an integrity file that cannot be read (a folder) leaves a protected file tampered or refused, never trusted", () => {
+test("CON6-AC-10-integrity (finding 30): an integrity file that cannot be read (a folder) leaves a protected file read and marked tampered, never trusted", () => {
   const paths = repoPaths(makeRepo(), testEnv());
   const file = join(paths.crewDir, "profile.json");
   writeProtectedJson(paths, file, { version: 1 });
@@ -104,6 +104,8 @@ test("CON6-AC-10-integrity (finding 30): an integrity file that cannot be read (
     (outcome as { tampered?: boolean }).tampered === true ||
       typeof (outcome as { refused?: unknown }).refused === "string",
   ).toBe(true);
+  // The one outcome today: the data read and marked tampered, never refused.
+  expect(outcome).toEqual({ data: { version: 1 }, tampered: true });
 });
 
 test("CON6-AC-12 (finding 29): the integrity record is written under the store's lock: a held lock makes the write wait and refuse with LockBusy, the integrity file unchanged", () => {

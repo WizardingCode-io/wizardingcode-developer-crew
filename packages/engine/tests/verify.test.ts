@@ -9,7 +9,7 @@ import type { JudgementRecord, Policy } from "../src/types.ts";
 import {
   applyDefectMarks,
   CAPS,
-  cut,
+  clipAt,
   RUBRIC_QUESTIONS,
   verifyDefects,
   verifyFacts,
@@ -172,7 +172,7 @@ test("SP3-T6 AC-1, AC-2: verifyDefects asks the upheld defects inside the hunks 
   );
   expect(withSnippets.records[0]?.model).toBe("jev-1.13.0");
   expect(snippets[0]?.findings[0]?.verification).toEqual({ status: "disputed", confidence: 0.95 });
-  // The finding's text leaves cut at 1000 characters.
+  // The finding's text leaves clipAt at 1000 characters.
   const long = [
     record([{ file: "src/a.ts", line: 2, text: "x".repeat(1200), severity: "defect" }]),
   ];
@@ -393,9 +393,9 @@ test("SP3-T6 AC-1, AC-2, AC-3: verifyTriage proposes the highest-probability lev
   });
 });
 
-test("SP8-T1 AC-5 (finding 90): cut keeps a text within its cap with an ellipsis, and the validator's conclave leaves cut at 16 KiB", async () => {
-  expect(cut("abcdef", 3)).toBe("abc…");
-  expect(cut("abc", 3)).toBe("abc");
+test("SP8-T1 AC-5 (finding 90): clipAt keeps a text within its cap with an ellipsis, and the validator's conclave leaves clipAt at 16 KiB", async () => {
+  expect(clipAt("abcdef", 3)).toBe("abc…");
+  expect(clipAt("abc", 3)).toBe("abc");
   expect(CAPS).toEqual({
     findingText: 1000,
     conclave: 16 * 1024,

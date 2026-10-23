@@ -9,7 +9,6 @@ import {
   readOpenSessions,
   recordOpened,
   updateEverywhere,
-  worktreeMainRoot,
 } from "./mail.ts";
 import { mailStatus } from "./mail-status.ts";
 import { dropOpenedMarker, writeOpenedMarker } from "./opened.ts";
@@ -26,7 +25,13 @@ import type {
   TaskRecord,
   WorkItem,
 } from "./types.ts";
-import { addWorktree, dropBranch, removeWorktree, worktreePath } from "./worktree.ts";
+import {
+  addWorktree,
+  dropBranch,
+  removeWorktree,
+  worktreeMainRoot,
+  worktreePath,
+} from "./worktree.ts";
 
 /**
  * The parent session's variables a child must not inherit (spike A2, A8): the nesting guard, the

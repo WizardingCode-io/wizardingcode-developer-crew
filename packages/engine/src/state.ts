@@ -2,12 +2,11 @@ import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { readJson, readText, writeJson } from "./fs.ts";
 import { LockBusy, withLock } from "./lock.ts";
-import { worktreeMainRoot } from "./mail.ts";
 import { type CrewPaths, canonical, pathsFor } from "./paths.ts";
 import { readProtectedText, writeProtectedText } from "./store.ts";
 import { TEAMS } from "./team.ts";
 import type { Policy, TeamName } from "./types.ts";
-import { gitRun } from "./worktree.ts";
+import { gitRun, worktreeMainRoot } from "./worktree.ts";
 
 export interface SessionState {
   baseline: string | null;

@@ -59,21 +59,24 @@ test("C4: a new session that starts on unproven changes has no baseline, so they
   expect(onStop(next).decision).toBe("block");
 }, 30_000);
 
-test("I3: a prompt re-arms the Stop rule and leaves the wait to the Stop that ends the turn", () => {
+test("I3 (since finding 114): a prompt leaves the Stop count and the wait as they are; the Stop that ends the waiting turn clears the wait and re-arms the rule", () => {
   const { root, ctx } = session();
   const work = createWork(ctx.paths, "fix");
   write(root, "src/a.ts", "changed");
-  for (let i = 1; i <= MAX_STOP_BLOCKS; i++) expect(onStop(ctx).decision).toBe("block");
-  expect(onStop(ctx).decision).toBeUndefined();
+  for (let i = 1; i <= MAX_STOP_BLOCKS; i++)
+    expect(onStop(ctx).decision, `block ${i} of ${MAX_STOP_BLOCKS}`).toBe("block");
+  expect(onStop(ctx).decision, "past the cap, the turn ends").toBeUndefined();
   work.awaiting = "user";
   saveWork(ctx.paths, work);
   onPrompt(ctx);
-  expect(loadWork(ctx.paths, work.id).work?.awaiting).toBe("user");
+  expect(loadWork(ctx.paths, work.id).work?.awaiting, "the prompt keeps the wait").toBe("user");
   // Since finding 114 (CON3 AC-8) a prompt no longer resets the count: a Stop does.
-  expect(loadState(ctx.paths).sessions.s?.stopBlocks).toBe(MAX_STOP_BLOCKS);
-  expect(onStop(ctx).decision).toBeUndefined();
-  expect(loadWork(ctx.paths, work.id).work?.awaiting).toBeNull();
-  expect(onStop(ctx).decision).toBe("block");
+  expect(loadState(ctx.paths).sessions.s?.stopBlocks, "the prompt keeps the count").toBe(
+    MAX_STOP_BLOCKS,
+  );
+  expect(onStop(ctx).decision, "the waiting turn ends unblocked").toBeUndefined();
+  expect(loadWork(ctx.paths, work.id).work?.awaiting, "that Stop clears the wait").toBeNull();
+  expect(onStop(ctx).decision, "the rule is armed again").toBe("block");
 });
 
 test("C4: a resumed session keeps its baseline", () => {

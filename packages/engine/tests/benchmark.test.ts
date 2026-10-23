@@ -836,37 +836,60 @@ test("SP6-T5 AC-23: a path-shaped version or startedAt in the aggregate is refus
 // Consolidation item 7 (2026-10-22-014, finding 116): an all-errored arm leaves its case out of the
 // totals, and writeRecord neither overwrites a record nor writes one that holds a secret.
 
-test("CON7-AC-2", () => {
+/** The fixture with every run of one arm of gate-tampering errored, and the record of each. */
+const erroredArm = (arm: "with" | "without") => {
   const agg = fixture();
   const normal = benchmarkRecord(agg, set(), META);
   const allErrored: Aggregate = {
     ...agg,
     cases: agg.cases.map((c) =>
       c.name === "gate-tampering"
-        ? { ...c, with: c.with.map((run) => ({ ...run, errored: true })) }
+        ? { ...c, [arm]: c[arm].map((run) => ({ ...run, errored: true })) }
         : c,
     ),
   };
   const r = benchmarkRecord(allErrored, set(), META);
   const gt = normal.cases.find((c) => c.name === "gate-tampering");
   expect(gt).toBeDefined();
-  const g = gt as (typeof normal.cases)[number];
-  // The case is named, with the arm whose runs all errored.
-  expect((r as unknown as { excluded?: unknown }).excluded).toEqual([
-    { case: "gate-tampering", arm: "with" },
-  ]);
-  expect((normal as unknown as { excluded?: unknown }).excluded).toEqual([]);
-  // Out of both arms' totals; the other cases' sums as they were.
+  return { normal, r, g: gt as (typeof normal.cases)[number] };
+};
+
+/** Gate-tampering's figures out of both arms' totals, the other cases' sums as they were, the Markdown naming it under the totals. */
+const expectLeftOut = (
+  normal: ReturnType<typeof benchmarkRecord>,
+  r: ReturnType<typeof benchmarkRecord>,
+  g: ReturnType<typeof benchmarkRecord>["cases"][number],
+) => {
   close(r.totals.costWith, normal.totals.costWith - (g.with.costUsd ?? 0));
   close(r.totals.costWithout, normal.totals.costWithout - (g.without.costUsd ?? 0));
   close(r.totals.judgeCostWithout, normal.totals.judgeCostWithout - (g.without.judgeCostUsd ?? 0));
   close(r.totals.durationWithout, normal.totals.durationWithout - (g.without.durationSeconds ?? 0));
   close(r.totals.turnsWithout, normal.totals.turnsWithout - (g.without.turns ?? 0));
   close(r.totals.costRatio, r.totals.costWith / r.totals.costWithout);
-  // The Markdown names it under the totals.
   const md = renderMarkdown(r);
   const totals = md.slice(md.indexOf("## Totals"), md.indexOf("## Not run"));
   expect(totals).toContain("gate-tampering");
+};
+
+test("CON7-AC-2 (finding 116): a case whose with arm all errored is named with that arm and left out of both arms' totals", () => {
+  const { normal, r, g } = erroredArm("with");
+  // The case is named, with the arm whose runs all errored.
+  expect((r as unknown as { excluded?: unknown }).excluded).toEqual([
+    { case: "gate-tampering", arm: "with" },
+  ]);
+  expect((normal as unknown as { excluded?: unknown }).excluded).toEqual([]);
+  // Out of both arms' totals; the other cases' sums as they were.
+  expectLeftOut(normal, r, g);
+});
+
+test("CON7-AC-2-without (finding 116): a case whose without arm all errored is named with that arm and left out of both arms' totals", () => {
+  const { normal, r, g } = erroredArm("without");
+  expect((r as unknown as { excluded?: unknown }).excluded).toEqual([
+    { case: "gate-tampering", arm: "without" },
+  ]);
+  close(r.totals.judgeCostWith, normal.totals.judgeCostWith - (g.with.judgeCostUsd ?? 0));
+  expectLeftOut(normal, r, g);
+  expect(renderMarkdown(r)).toContain("gate-tampering (without)");
 });
 
 /** The message a call refuses with, or null when it did not refuse. */
@@ -879,12 +902,11 @@ const refusalOf = (call: () => unknown): string | null => {
   }
 };
 
-test("CON7-AC-3", () => {
+test("CON7-AC-3-exists (finding 116): writeRecord refuses a record whose stem exists as either file, naming it, the earlier file byte for byte, nothing else written", () => {
   const dir = mkdtempSync(join(tmpdir(), "benchmark-write-"));
   try {
     const r = record();
     const stem = `${r.run.startedAt.slice(0, 10)}-${r.version}`;
-    // A record with the same stem exists, either file: refused naming it, left byte for byte, nothing else written.
     for (const ext of ["json", "md"]) {
       const out = join(dir, `exists-${ext}`);
       mkdirSync(out);
@@ -896,7 +918,16 @@ test("CON7-AC-3", () => {
       expect(readFileSync(existing, "utf8"), ext).toBe(`the earlier record's ${ext}\n`);
       expect(readdirSync(out), ext).toEqual([`${stem}.${ext}`]);
     }
-    // A value scanText flags, in both texts: refused, neither file written, the value never quoted.
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("CON7-AC-3-secret (finding 116): writeRecord refuses a record holding a value the secrets scan flags, naming the file and the rule, never the value, neither file written", () => {
+  const dir = mkdtempSync(join(tmpdir(), "benchmark-write-"));
+  try {
+    const r = record();
+    const stem = `${r.run.startedAt.slice(0, 10)}-${r.version}`;
     const keyed = { ...r, run: { ...r.run, command: `claude plugin eval --key ${KEY_SHAPED}` } };
     expect(scanText(JSON.stringify(keyed, null, 2), "json").length).toBeGreaterThan(0);
     const out = join(dir, "keyed");
@@ -905,13 +936,28 @@ test("CON7-AC-3", () => {
     expect(message ?? "").not.toContain(KEY_SHAPED);
     expect(message ?? "").not.toContain(KEY_SHAPED.slice(0, 20));
     const rule = scanText(renderMarkdown(keyed), "md")[0]?.rule ?? "";
+    expect(rule, "the Markdown is flagged by a named rule").not.toBe("");
     expect(
       (message ?? "").includes(rule) || (message ?? "").includes(stem),
       `the refusal names the rule or the file: ${message}`,
     ).toBe(true);
+    // The JSON is scanned first: the refusal names it and the rule that flagged it.
+    const jsonRule = scanText(`${JSON.stringify(keyed, null, 2)}\n`, `${stem}.json`)[0]?.rule ?? "";
+    expect(jsonRule).not.toBe("");
+    expect(message ?? "").toContain(`${stem}.json`);
+    expect(message ?? "").toContain(`(${jsonRule})`);
     expect(existsSync(join(out, `${stem}.json`))).toBe(false);
     expect(existsSync(join(out, `${stem}.md`))).toBe(false);
-    // A value flagged in the Markdown alone (the JSON escapes its quotes): the Markdown is scanned too.
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("CON7-AC-3-md-only (finding 116): a value flagged in the Markdown alone (the JSON escapes its quotes) is refused too, never quoted, neither file written", () => {
+  const dir = mkdtempSync(join(tmpdir(), "benchmark-write-"));
+  try {
+    const r = record();
+    const stem = `${r.run.startedAt.slice(0, 10)}-${r.version}`;
     const secret = ["Zq7Wm2Rt9", "Lp4Xv8Nb3", "Kc6Hd1"].join("");
     const quoted = { ...r, run: { ...r.run, command: `run --api_key="${secret}"` } };
     expect(scanText(`${JSON.stringify(quoted, null, 2)}\n`, "json")).toEqual([]);

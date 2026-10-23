@@ -26,7 +26,7 @@ import { loadState, recordWorking, updateSession } from "../state.ts";
 import type { Policy } from "../types.ts";
 import { activeWork, isBeforeBuild, loadWork } from "../work.ts";
 import { worktreeRoots } from "../worktree.ts";
-import { holdsOpenItem, neighbours } from "./context.ts";
+import { lane } from "./context.ts";
 import { POWERSHELL_HOOK, powershellAsPosix, unreadablePowershell } from "./powershell.ts";
 import { LEADING_KEYWORDS, OPERATOR_PREFIX, type Piece, readCommand, type Token } from "./shell.ts";
 import { roleOf, teamOf } from "./subagent-stop.ts";
@@ -1141,6 +1141,8 @@ interface WriterOptions {
   flags: string;
   longValued: readonly string[];
   longFlags: readonly string[];
+  /** The flags are not listed (a plain writer's table): no option word is checked, so `strict` stays false. */
+  unlisted?: true;
 }
 const CP_OPTIONS: WriterOptions = {
   valued: "tS",
@@ -1538,7 +1540,7 @@ function readWriter(
     else if (w.startsWith("--")) {
       const [given = "", value] = w.split(/=(.*)/s, 2);
       const name = longName(given, options);
-      if (name === null) strict = true;
+      if (name === null && !options.unlisted) strict = true;
       if (name !== null && options.longValued.includes(name)) take(name, value ?? words[++i] ?? "");
       else if (value !== undefined) optionValues.push([given, value]);
     } else
@@ -1548,7 +1550,7 @@ function readWriter(
           take(`-${letter}`, w.slice(k + 1) || (words[++i] ?? ""));
           break;
         }
-        if (!options.flags.includes(letter)) strict = true;
+        if (!options.flags.includes(letter) && !options.unlisted) strict = true;
       }
   }
   return { operands, values, optionValues, strict };
@@ -1557,12 +1559,13 @@ function readWriter(
 function targetDirectory(values: Map<string, string>): string | undefined {
   return values.get("-t") ?? values.get("--target-directory");
 }
-/** The options that take a value, for the writers whose operands are all written or removed (their flags are not listed: `strict` is not read for them). */
+/** The options that take a value, for the writers whose operands are all written or removed (their flags are not listed, so no `strict` is computed for them). */
 const plainWriter = (valued: string, longValued: string[] = []): WriterOptions => ({
   valued,
   flags: "",
   longValued,
   longFlags: [],
+  unlisted: true,
 });
 const PLAIN_WRITERS: Record<string, WriterOptions> = {
   touch: plainWriter("tdr", ["--date", "--reference"]),
@@ -1818,8 +1821,9 @@ function laneDenial(ctx: HookContext, kind: "edit" | "start" | "bash"): HookResp
     // A session working on an open item of its own is never refused its edits or its Bash writes
     // (its neighbours are named in its context only); a second crew start beside a neighbour is
     // still refused.
-    first = neighbours(ctx)[0];
-    if (first && kind !== "start" && holdsOpenItem(ctx)) return null;
+    const scan = lane(ctx);
+    first = scan.neighbours[0];
+    if (first && kind !== "start" && scan.holdsOpenItem) return null;
   } catch {
     return null;
   }
@@ -1844,6 +1848,20 @@ function pathsFromInput(input: Record<string, unknown>): string[] {
     ? input.paths.filter((p): p is string => typeof p === "string" && p !== "")
     : [];
   return [...new Set([...(single ? [single] : []), ...listed])];
+}
+/**
+ * Whether a PowerShell line names an engine file, read as written, without its quotes and as a
+ * POSIX shell reads it, or removes or moves the engine's folder as written or without its quotes
+ * (triage 2d): the POSIX write shape knows nothing of Set-Content or Remove-Item.
+ */
+function namesEngineFile(written: string, unquoted: string, command: string): boolean {
+  return (
+    ENGINE_FILES.test(written) ||
+    ENGINE_FILES.test(unquoted) ||
+    ENGINE_FILES.test(command) ||
+    (POWERSHELL_REMOVE_OR_MOVE.test(written) &&
+      (ENGINE_FOLDER.test(written) || ENGINE_FOLDER.test(unquoted)))
+  );
 }
 
 export function onPreToolUse(ctx: HookContext, payload: HookPayload): HookResponse {
@@ -1908,13 +1926,7 @@ export function onPreToolUse(ctx: HookContext, payload: HookPayload): HookRespon
       // The written line is read with its quotes gone too, so a protected path glued to a closing
       // quote (`"C:/repo/.crew"/work/x`) is denied whatever PowerShell makes of the glue.
       const unquoted = written.replace(/["']/g, "");
-      if (
-        ENGINE_FILES.test(written) ||
-        ENGINE_FILES.test(unquoted) ||
-        ENGINE_FILES.test(command) ||
-        (POWERSHELL_REMOVE_OR_MOVE.test(written) &&
-          (ENGINE_FOLDER.test(written) || ENGINE_FOLDER.test(unquoted)))
-      )
+      if (namesEngineFile(written, unquoted, command))
         return answer(
           "deny",
           "Crew: files under .crew/ and ~/.wizardingcode/crew that the engine owns are written only by the crew command",

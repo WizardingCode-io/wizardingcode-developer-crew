@@ -2,9 +2,7 @@
 # evals/audit-report-three-formats/fixture.sh: a Node project with a passing build, a failing test, a lint error and a planted key, committed (SP8): the audit runs the tools, the roles read the code, the report leaves only signed by a person.
 # The key is assembled here from two pieces, so no committed text matches the engine's rule (the repository's own secrets gate).
 set -eu
-fixture_commit() {
-  git -c user.name=Fixture -c user.email=fixture@example.invalid commit -q -m "$1"
-}
+. "$(dirname "$0")/../fixtures/commit.sh"
 git init -q -b main
 cat > package.json <<'PKG'
 { "name": "fixture", "private": true, "type": "module", "scripts": { "build": "node -e \"process.exit(0)\"", "test": "node --test", "lint": "node scripts/lint.mjs" } }

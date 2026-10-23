@@ -6,10 +6,9 @@
  */
 import { existsSync, readdirSync, realpathSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import { nowIso, readText, writeJson } from "./fs.ts";
+import { errorText, nowIso, readText, writeJson } from "./fs.ts";
 import { type AskOptions, askJev, type JevConfig, type JevQuestion } from "./jev.ts";
 import { withLock } from "./lock.ts";
-import { worktreeMainRoot } from "./mail.ts";
 import { type CrewPaths, canonical, ctoDir, knowledgeDir, knowledgePath } from "./paths.ts";
 import { scanText } from "./secrets.ts";
 import type {
@@ -23,6 +22,7 @@ import type {
   Verification,
 } from "./types.ts";
 import { askAllowed } from "./verify.ts";
+import { worktreeMainRoot } from "./worktree.ts";
 
 export const KNOWLEDGE_KINDS: readonly KnowledgeKind[] = [
   "stack-preference",
@@ -145,7 +145,7 @@ export function readBase(userDir: string): { base: KnowledgeBase | null; reason:
   } catch (error) {
     return {
       base: null,
-      reason: `base.json: ${error instanceof Error ? error.message : String(error)}`,
+      reason: `base.json: ${errorText(error)}`,
     };
   }
   const fault = shapeFault(data);

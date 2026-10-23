@@ -52,7 +52,7 @@ import { fileHash } from "../src/validation.ts";
 import { VERSION } from "../src/version.ts";
 import { loadWork, saveWork } from "../src/work.ts";
 import { auditFixture, PLANTED_KEY } from "./audit-run.test.ts";
-import { git, makeRepo, repoPaths, tempDir, testEnv, write } from "./helpers.ts";
+import { git, makeRepo, repoPaths, spyMailReads, tempDir, testEnv, write } from "./helpers.ts";
 import { writePack } from "./pack-fixtures.ts";
 import { RESEARCH, STRATEGY } from "./strategy.test.ts";
 
@@ -3137,16 +3137,11 @@ test("CON4-AC-4-reply: crew mail reply names the delivered reply when the origin
   const mid = /sent (M-\S+) /.exec(sent.out)?.[1] as string;
   // Once the reply is delivered, every box reads as changed outside the engine: the original's
   // copies are skipped and nothing is marked answered.
-  const realRead = store.readProtectedJsonAt;
   let delivered = false;
-  const read = spyOn(store, "readProtectedJsonAt").mockImplementation(((
-    integrity: string,
-    file: string,
-  ) => {
-    const out = realRead<Mailbox>(integrity, file);
+  const read = spyMailReads((file, out) => {
     if (out.data?.messages?.some((m) => m.replyTo === mid)) delivered = true;
     return delivered && /(inbox|outbox)\.json$/.test(file) ? { ...out, tampered: true } : out;
-  }) as typeof store.readProtectedJsonAt);
+  });
   let replied: { code: number; out: string; err: string };
   try {
     replied = await cb.run("mail", "reply", mid, "Gold, silver, none.");
@@ -9171,11 +9166,14 @@ test("F120 AC-3: a leading slash, a .. segment, whitespace, a backslash or 201 c
 });
 
 test("F120 AC-5: the register holds the add and the removal as the user's decision, appended before the file is written; already listed and every refusal append nothing", async () => {
-  const { c, paths, file } = policyRepo();
-  const count = listDecisions(paths).length;
+  const { root, c, file } = policyRepo();
+  // The register as it is on disk, newest first; none before the first decision.
+  const onDisk = () =>
+    existsSync(join(root, ".crew", "decisions.json")) ? [...register(root)].reverse() : [];
+  const count = onDisk().length;
   expect((await c.run("policy", "set", "riskPathExclusions", "a/b.ts")).code).toBe(0);
-  expect(listDecisions(paths).length).toBe(count + 1);
-  expect(listDecisions(paths)[0]).toMatchObject({
+  expect(onDisk().length).toBe(count + 1);
+  expect(onDisk()[0]).toMatchObject({
     item: "policy",
     kind: "decision",
     by: "the user",
@@ -9184,10 +9182,10 @@ test("F120 AC-5: the register holds the add and the removal as the user's decisi
   expect((await c.run("policy", "set", "riskPathExclusions", "a/b.ts")).code).toBe(0);
   expect((await c.run("policy", "set", "riskPathExclusions", "/abs.ts")).code).toBe(1);
   expect((await c.run("policy", "set", "riskPathExclusions", "x/y.ts", "--remove")).code).toBe(1);
-  expect(listDecisions(paths).length).toBe(count + 1);
+  expect(onDisk().length).toBe(count + 1);
   expect((await c.run("policy", "set", "riskPathExclusions", "a/b.ts", "--remove")).code).toBe(0);
-  expect(listDecisions(paths).length).toBe(count + 2);
-  expect(listDecisions(paths)[0]).toMatchObject({
+  expect(onDisk().length).toBe(count + 2);
+  expect(onDisk()[0]).toMatchObject({
     text: "riskPathExclusions: a/b.ts removed, paths matching it raise the route again",
   });
   // The record comes first: a write of the policy that throws leaves the decision recorded and the
@@ -9210,8 +9208,8 @@ test("F120 AC-5: the register holds the add and the removal as the user's decisi
   }
   expect(thrown.code).not.toBe(0);
   expect(readFileSync(file, "utf8")).toBe(before);
-  expect(listDecisions(paths).length).toBe(count + 3);
-  expect(listDecisions(paths)[0]).toMatchObject({
+  expect(onDisk().length).toBe(count + 3);
+  expect(onDisk()[0]).toMatchObject({
     text: "riskPathExclusions: c/d.ts added, paths matching it never raise the route (ADR 0003)",
   });
   // A policy path that cannot be read (a directory) is not an absent policy since CON6-AC-10: it
@@ -9224,7 +9222,7 @@ test("F120 AC-5: the register holds the add and the removal as the user's decisi
   expect(refused.code).toBe(1);
   expect(refused.err).toContain("state changed outside the engine: .crew/policy.json");
   expect(statSync(file).isDirectory()).toBe(true);
-  expect(listDecisions(paths).length).toBe(count + 3);
+  expect(onDisk().length).toBe(count + 3);
 });
 
 test("F120 AC-6: a glob with no literal character or a leading ./ is refused; session-start.ts and session-*.ts are accepted; --remove runs the shape check; no value is the usage line and an empty string the hint", async () => {
@@ -9864,6 +9862,10 @@ async function taskRepo() {
   };
 }
 
+/** The usage line of `crew task`, every verb's form in it. */
+const TASK_USAGE =
+  'usage: crew task <id> open T-n --criteria AC-1,AC-2 [--text "<task text>"] | note T-n --criteria AC-k --scope <path>[,<path>] [--text "<todo>"] | list | merge T-n [--force] | drop T-n | gate T-n [--scope <path>[,<path>]] | brief T-n';
+
 test("CON5-AC-3 (finding 114): crew task <id> open, note and merge refuse a word after the task's id with their usage, creating or changing nothing", async () => {
   const { root, c, id, paths, names } = await taskRepo();
   const head = git(root, "rev-parse", "HEAD");
@@ -9879,7 +9881,7 @@ test("CON5-AC-3 (finding 114): crew task <id> open, note and merge refuse a word
     "a task",
   );
   expect(opened.code).toBe(1);
-  expect(opened.err.trim()).toStartWith("usage: crew task <id> open T-n");
+  expect(opened.err.trim()).toBe(TASK_USAGE);
   expect(existsSync(names("T-1").worktree)).toBe(false);
   expect(git(root, "branch", "--list", names("T-1").branch)).toBe("");
   expect(loadWork(paths, id).work?.tasks ?? []).toEqual([]);
@@ -9897,11 +9899,11 @@ test("CON5-AC-3 (finding 114): crew task <id> open, note and merge refuse a word
     "a todo",
   );
   expect(noted.code).toBe(1);
-  expect(noted.err.trim()).toStartWith("usage: crew task <id> open T-n");
+  expect(noted.err.trim()).toBe(TASK_USAGE);
   expect(loadWork(paths, id).work?.tasks ?? []).toEqual([]);
   const merged = await c.run("task", id, "merge", "T-1", "stray");
   expect(merged.code).toBe(1);
-  expect(merged.err.trim()).toStartWith("usage: crew task <id> open T-n");
+  expect(merged.err.trim()).toBe(TASK_USAGE);
   expect(git(root, "rev-parse", "HEAD")).toBe(head);
   expect(loadWork(paths, id).work?.tasks ?? []).toEqual([]);
 });
@@ -9945,18 +9947,21 @@ test("CON5-AC-8-refusals: crew task <id> drop refuses, changing nothing, an unkn
   };
   await refused("T-9", `T-9 is not a task of ${id}`);
   // A merged task, by its state or by a merge recorded.
+  const merged = (what: string) =>
+    `T-1 is merged (${what}): its work is in the item's tree; not dropped`;
   for (const state of ["merged", "gated", "briefed"] as const) {
     edit("T-1", (t) => {
       t.state = state;
     });
-    await refused("T-1", "T-1");
+    await refused("T-1", merged(state));
   }
+  const head = git(root, "rev-parse", "HEAD");
   edit("T-1", (t) => {
     t.state = "handed";
     t.mergedAt = new Date().toISOString();
-    t.mergeCommit = git(root, "rev-parse", "HEAD");
+    t.mergeCommit = head;
   });
-  await refused("T-1", "T-1");
+  await refused("T-1", merged(`handed, ${head.slice(0, 7)}`));
   edit("T-1", (t) => {
     delete t.mergedAt;
     delete t.mergeCommit;
@@ -9978,19 +9983,24 @@ test("CON5-AC-8-refusals: crew task <id> drop refuses, changing nothing, an unkn
       )
     ).code,
   ).toBe(0);
-  expect(await refused("T-2", "T-2")).toContain("inline");
+  await refused(
+    "T-2",
+    "T-2 is an inline todo: it has no worktree and no branch, and its work is in this checkout; not dropped",
+  );
   // A record whose branch or worktree is not the pair the engine makes for the task.
   const pair = names("T-1");
+  const notThePair = (branch: string, worktree: string) =>
+    `T-1's record names the branch ${branch} and the worktree ${worktree}, not the pair the engine makes for it (${pair.branch}, ${pair.worktree}); not dropped`;
   edit("T-1", (t) => {
     t.branch = "main";
   });
-  await refused("T-1", "T-1");
+  await refused("T-1", notThePair("main", pair.worktree));
   expect(git(root, "branch", "--list", "main")).toContain("main");
   edit("T-1", (t) => {
     t.branch = pair.branch;
     t.worktree = root;
   });
-  await refused("T-1", "T-1");
+  await refused("T-1", notThePair(pair.branch, root));
   expect(existsSync(join(root, "package.json"))).toBe(true);
   edit("T-1", (t) => {
     t.worktree = pair.worktree;
@@ -10431,19 +10441,31 @@ test("DEBT-AC-15-refusals: crew team <id> seat refuses an unknown gate, a gate a
   await c.run("gate", "run", id);
   const entriesNow = () =>
     existsSync(join(root, ".crew", "decisions.json")) ? register(root) : [];
+  const unknown = (gate: string) =>
+    `unknown judgement gate: ${gate} (code-quality, test-quality, security, ui-ux, risk, architecture, data, infra)`;
+  const usage = 'usage: crew team <id> seat <gate> --reason "<why>"';
   const cases: [string, string[], string][] = [
-    ["unknown", ["seat", "lint", "--reason", "why"], "lint"],
-    ["unknown-name", ["seat", "bogus", "--reason", "why"], "bogus"],
-    ["planned", ["seat", "code-quality", "--reason", "why"], "code-quality"],
-    ["no-reason", ["seat", "security"], "--reason"],
-    ["empty-reason", ["seat", "security", "--reason", "  "], "--reason"],
+    ["unknown", ["seat", "lint", "--reason", "why"], unknown("lint")],
+    ["unknown-name", ["seat", "bogus", "--reason", "why"], unknown("bogus")],
+    [
+      "planned",
+      ["seat", "code-quality", "--reason", "why"],
+      `code-quality is already planned for ${id} (`,
+    ],
+    // The two reason refusals print the one usage line: the code gives them one text, and each is
+    // told from the other refusals by its full text and from a seat by the work file below.
+    ["no-reason", ["seat", "security"], usage],
+    ["empty-reason", ["seat", "security", "--reason", "  "], usage],
+    // A second word after the gate is refused with the same line before any reason is read.
+    ["two-words", ["seat", "security", "extra", "--reason", "why"], usage],
   ];
-  for (const [name, argv, names] of cases) {
+  for (const [name, argv, text] of cases) {
     const work = readFileSync(workFile, "utf8");
     const decisions = entriesNow().length;
     const r = await c.run("team", id, ...argv);
     expect(r.code, name).toBe(1);
-    expect(r.err, name).toContain(names);
+    if (text === usage) expect(r.err.trim(), name).toBe(usage);
+    else expect(r.err, name).toContain(text);
     expect(readFileSync(workFile, "utf8"), name).toBe(work);
     expect(entriesNow().length, name).toBe(decisions);
   }

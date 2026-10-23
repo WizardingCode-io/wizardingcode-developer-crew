@@ -49,7 +49,7 @@ export const CAPS = {
   priorities: 8 * 1024,
 };
 
-export function cut(text: string, max: number): string {
+export function clipAt(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max)}…` : text;
 }
 
@@ -156,7 +156,7 @@ export async function verifyDefects(
     state[id] = {
       file: c.finding.file,
       line: c.finding.line,
-      text: cut(c.finding.text, CAPS.findingText),
+      text: clipAt(c.finding.text, CAPS.findingText),
       rubric: RUBRIC_QUESTIONS[c.record.gate],
       ...(snippets ? { lines: lines.text } : {}),
     };
@@ -244,7 +244,7 @@ export async function verifyValidator(
   };
   const result = await askJev(
     cfg,
-    { state: { ...input, conclave: cut(input.conclave, CAPS.conclave) }, questions },
+    { state: { ...input, conclave: clipAt(input.conclave, CAPS.conclave) }, questions },
     options,
   );
   if (!result.ok)
@@ -415,9 +415,11 @@ export async function verifyTriage(
   options: AskOptions = {},
 ): Promise<TriageOutcome> {
   const state = {
-    request: { ...input.request, text: cut(input.request.text, CAPS.request) },
+    request: { ...input.request, text: clipAt(input.request.text, CAPS.request) },
     business_priorities:
-      input.business_priorities === null ? null : cut(input.business_priorities, CAPS.priorities),
+      input.business_priorities === null
+        ? null
+        : clipAt(input.business_priorities, CAPS.priorities),
     queue: input.queue,
   };
   const questions: Record<string, JevQuestion> = {

@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { startsItem } from "../src/hooks/pre-tool-use.ts";
 import { readCommand } from "../src/hooks/shell.ts";
 import { WRAPPERS } from "../src/shell-words.ts";
 
@@ -117,6 +118,8 @@ test("CON2-AC-6 (finding 30): an arithmetic body is read past a backtick's paren
   const backtick = readCommand("(( n = `echo ))` ))");
   expect(backtick.unclosed).toBeNull();
   expect(words("(( n = `echo ))` ))")).toEqual([["(( n = `echo ))` ))"]]);
+  // The backtick's contents are read as a command of their own inside the arithmetic word.
+  expect(backtick.pieces[0]?.inner.map((p) => p.tokens.map((t) => t.word))).toEqual([["echo"]]);
   const all = (pieces: ReturnType<typeof readCommand>["pieces"]): string[][] =>
     pieces.flatMap((p) => [p.tokens.map((t) => t.word), ...all(p.inner)]);
   expect(all(readCommand("(( $(crew approve w1) ))").pieces)).toContainEqual([
@@ -135,4 +138,10 @@ test("DEBT-AC-4-stands-alone: a wrapper with a script option appends its followi
   expect(alone).toEqual(["script", "su"]);
   // The opt-in field is gone: a wrapper added later appends by default.
   expect(WRAPPERS.filter((w) => "scriptAppends" in w).map((w) => w.name)).toEqual([]);
+  // The reader itself: the words after su's and script's script are not joined to it, while
+  // env -S and flock -c join them, so only those read `crew start` as one command.
+  for (const line of ["su -c crew start x", "script -c crew start x"])
+    expect(startsItem(line), line).toBe(false);
+  for (const line of ["env -S crew start x", "flock /tmp/l -c crew start x"])
+    expect(startsItem(line), line).toBe(true);
 });

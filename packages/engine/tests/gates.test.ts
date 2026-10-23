@@ -1,5 +1,13 @@
 import { expect, test } from "bun:test";
-import { chmodSync, existsSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { parseAudit } from "../src/audit.ts";
 import { readEnvRecord } from "../src/environment.ts";
@@ -10,7 +18,7 @@ import {
   saveEvidence,
   updateEvidence,
 } from "../src/evidence.ts";
-import { changedWatchedPaths, computeFingerprint } from "../src/fingerprint.ts";
+import { changedPaths, changedWatchedPaths, computeFingerprint } from "../src/fingerprint.ts";
 import {
   assess,
   depsAuditCommand,
@@ -163,24 +171,18 @@ test("CON8-AC-2 (finding 56): the scoped command's quoted names reach a POSIX sh
   const names = ["a b;touch X.ts", "it's.ts", "$&.ts"];
   const command = scopedTestCommand(words, names);
   const tmp = tempDir("crew-quote-");
-  try {
-    // Each name's word alone: a name the shell would split runs nothing even when no other name's
-    // quote leaves the whole line unparsed.
-    for (const name of names) {
-      const word = scopedTestCommand(words, [name]);
-      const alone = Bun.spawnSync(["/bin/sh", "-c", `printf '%s\n' ${word}`], { cwd: tmp });
-      expect(existsSync(join(tmp, "X.ts"))).toBe(false);
-      expect(alone.stdout.toString().split("\n").slice(0, -1)).toEqual([name]);
-      expect(alone.exitCode).toBe(0);
-    }
-    // One shell, the one a gate runs in: the words are printf's arguments, never a second shell's input.
-    const run = Bun.spawnSync(["/bin/sh", "-c", `printf '%s\n' ${command}`], { cwd: tmp });
+  /** The words printf receives from one POSIX shell, one per line; nothing else in that shell runs. */
+  const sh = (word: string | null) => {
+    const run = Bun.spawnSync(["/bin/sh", "-c", `printf '%s\n' ${word}`], { cwd: tmp });
     expect(existsSync(join(tmp, "X.ts"))).toBe(false);
-    expect(run.stdout.toString().split("\n").slice(0, -1)).toEqual(names);
     expect(run.exitCode).toBe(0);
-  } finally {
-    rmSync(tmp, { recursive: true, force: true });
-  }
+    return run.stdout.toString().split("\n").slice(0, -1);
+  };
+  // Each name's word alone: a name the shell would split runs nothing even when no other name's
+  // quote leaves the whole line unparsed.
+  for (const name of names) expect(sh(scopedTestCommand(words, [name]))).toEqual([name]);
+  // One shell, the one a gate runs in: the words are printf's arguments, never a second shell's input.
+  expect(sh(command)).toEqual(names);
 });
 
 test("planned gates follow the route table", () => {
@@ -1622,6 +1624,8 @@ test("CON3-AC-1: the review cut lists and diffs every file the item changed outs
   write(root, ".crew/notes.txt", "the engine's own file\n");
   // The default profile keeps Markdown out of the watch: the turn-end rule never sees the SKILL.md.
   expect(changedWatchedPaths(root, profile, work)).not.toContain("plugins/x/SKILL.md");
+  // git's own list holds the engine's file, so the cut below leaves it out, not git.
+  expect(changedPaths(root, work)).toContain(".crew/notes.txt");
   const out = await runGates(paths, work, profile, DEFAULT_POLICY);
   expect(out.review).toBe(join(paths.crewDir, "work", work.id, "review"));
   const review = out.review ?? "";
@@ -1633,4 +1637,34 @@ test("CON3-AC-1: the review cut lists and diffs every file the item changed outs
   expect(patch).toContain("+++ b/plugins/x/SKILL.md");
   expect(patch).toContain("+A new rule for the reviewers.");
   expect(patch).not.toContain(".crew/");
+});
+
+test("CON3-AC-1-case: the engine's folder as git names it in another case (.CREW/) stays out of the review cut, the list and the diff", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const paths = repoPaths(root, testEnv());
+  const { profile } = ensureProfile(paths);
+  const work = createWork(paths, "fix");
+  work.route = "standard";
+  addCriterion(work, "x");
+  addSkip(work, "gate:e2e", "no environment in the fixture");
+  write(root, "src/a.ts", "y");
+  // On a filesystem that ignores case the engine's own folder is renamed, so git lists it as .CREW/;
+  // where case counts, a folder .CREW/ beside it.
+  if (existsSync(join(root, ".CREW"))) {
+    renameSync(join(root, ".crew"), join(root, ".crew-renamed"));
+    renameSync(join(root, ".crew-renamed"), join(root, ".CREW"));
+  }
+  write(root, ".CREW/notes.txt", "the engine's own file\n");
+  expect(changedPaths(root, work).filter((f) => f.startsWith(".CREW/"))).not.toEqual([]);
+  const out = await runGates(paths, work, profile, DEFAULT_POLICY);
+  const review = out.review ?? "";
+  expect(review).not.toBe("");
+  const files = readFileSync(join(review, "files.txt"), "utf8").split("\n").filter(Boolean);
+  expect(files).toEqual(["src/a.ts"]);
+  const patch = readFileSync(join(review, "diff.patch"), "utf8");
+  expect(patch).toContain("+++ b/src/a.ts");
+  expect(patch.toLowerCase()).not.toContain(".crew/");
 });

@@ -7,6 +7,7 @@ import {
   mkdirSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
@@ -51,7 +52,8 @@ import * as store from "../src/store.ts";
 import { readProtectedJson, recordIntegrity } from "../src/store.ts";
 import type { GateRun, Mailbox, MailPriority, Message } from "../src/types.ts";
 import { createWork, saveWork } from "../src/work.ts";
-import { git, makeRepo, repoPaths, tempDir, testEnv, write } from "./helpers.ts";
+import { worktreeMainRoot } from "../src/worktree.ts";
+import { git, makeRepo, repoPaths, spyMailReads, tempDir, testEnv, write } from "./helpers.ts";
 
 /** Two projects of one workspace and a third outside it, each registered as a session would. */
 function workspace(env = testEnv(), acceptB: string[] = ["question", "notice"]) {
@@ -1359,12 +1361,7 @@ test("CON4-AC-5: a busy mailbox during a record pass is a note and the other cop
   const q = sendOrThrow(w.a.ctx, question("Which values?"));
   const later = sendOrThrow(w.a.ctx, { to: "crm", type: "notice", text: "Later" });
   const ownLock = join(ownDir, ".lock");
-  const realRead = store.readProtectedJsonAt;
-  const read = spyOn(store, "readProtectedJsonAt").mockImplementation(((
-    integrity: string,
-    file: string,
-  ) => {
-    const out = realRead<Mailbox>(integrity, file);
+  const read = spyMailReads((file, out) => {
     // The storefront's inbox holding the reply: the delivery is done and no lock is held.
     if (
       file === join(otherDir, "inbox.json") &&
@@ -1373,7 +1370,7 @@ test("CON4-AC-5: a busy mailbox during a record pass is a note and the other cop
     )
       mkdirSync(ownLock);
     return out;
-  }) as typeof store.readProtectedJsonAt);
+  });
   let replied: ReturnType<typeof reply> | { threw: string };
   try {
     replied = outcome(() => reply(w.b.ctx, q.id, "Gold, silver, none.", {}, []));
@@ -1397,6 +1394,131 @@ test("CON4-AC-5: a busy mailbox during a record pass is a note and the other cop
   expect(failed).toHaveProperty("refused");
   expect(failed).not.toHaveProperty("status");
 }, 20_000);
+
+test("DEBT2-AC-1-worktree-main-root: a worktree's .git file names its main checkout, absolute, relative, with a trailing separator or through a link, by its real path; a .git folder, no .git and a .git file of another shape name none (triage L7)", () => {
+  const base = tempDir();
+  const main = join(base, "main");
+  mkdirSync(join(main, ".git", "worktrees", "w"), { recursive: true });
+  const linked = join(base, "link");
+  symlinkSync(main, linked);
+  const checkout = (name: string, gitFile: string | null) => {
+    const dir = join(base, name);
+    mkdirSync(dir, { recursive: true });
+    if (gitFile !== null) writeFileSync(join(dir, ".git"), gitFile);
+    return dir;
+  };
+  expect(worktreeMainRoot(checkout("absolute", `gitdir: ${main}/.git/worktrees/w\n`))).toBe(main);
+  expect(worktreeMainRoot(checkout("relative", "gitdir: ../main/.git/worktrees/w\n"))).toBe(main);
+  expect(worktreeMainRoot(checkout("trailing", `gitdir: ${main}/.git/worktrees/w/\n`))).toBe(main);
+  expect(worktreeMainRoot(checkout("through-link", `gitdir: ${linked}/.git/worktrees/w`))).toBe(
+    main,
+  );
+  expect(worktreeMainRoot(main)).toBeNull();
+  expect(worktreeMainRoot(checkout("none", null))).toBeNull();
+  expect(worktreeMainRoot(checkout("submodule", "gitdir: ../main/.git/modules/w\n"))).toBeNull();
+});
+
+/**
+ * The receiving workspace with a third copy of one notice (triage 4i): the storefront's outbox,
+ * the crm's own inbox and the inbox of a third project of the workspace, registered after the
+ * crm, so a record pass from the crm meets a copy before its own box and one after it.
+ */
+function threeCopies() {
+  const w = receiving();
+  const root = makeRepo({ "README.md": "# billing\n" });
+  const paths = repoPaths(root, w.env);
+  mkdirSync(paths.crewDir, { recursive: true });
+  writeFileSync(
+    join(paths.crewDir, "policy.json"),
+    JSON.stringify({ mail: { workspace: "shop", name: "billing" } }),
+  );
+  registerProject(mailContext(paths, loadPolicy(paths).policy, w.env), "session-billing", {
+    hook: true,
+  });
+  const notice = sendOrThrow(w.a.ctx, { to: "crm", type: "notice", text: "Heads up" });
+  const third = mailbox(paths.userDir, "shop", "billing").dir;
+  writeBox(third, "inbox", { version: 1, messages: [notice] });
+  const status = (dir: string, which: "inbox" | "outbox") =>
+    readBox(dir, which).box.messages.find((m) => m.id === notice.id)?.status;
+  return { w, notice, own: crmInbox(w), first: storefrontOutbox(w), third, status };
+}
+
+test("DEBT2-AC-2-4i-third-copy: with this project's own box busy, the copies before and after it are recorded, its own is not, and the change fails (triage 4i)", () => {
+  const { w, notice, own, first, third, status } = threeCopies();
+  const ownLock = join(own, ".lock");
+  mkdirSync(ownLock);
+  const notes: string[] = [];
+  let moved: ReturnType<typeof markRead> | { threw: string };
+  try {
+    moved = outcome(() => markRead(w.b.ctx, notice.id, notes));
+  } finally {
+    rmSync(ownLock, { recursive: true, force: true });
+  }
+  expect(moved).toHaveProperty("refused");
+  expect(status(first, "outbox")).toBe("done");
+  expect(status(third, "inbox")).toBe("done");
+  expect(status(own, "inbox")).toBe("sent");
+  expect(notes.join("\n")).toContain(
+    `${join(own, "inbox.json")} (mailbox busy: ${ownLock} held for more than `,
+  );
+}, 20_000);
+
+test("DEBT2-AC-1-record-in-box: under a box's lock, a copy that cannot be read by then is skipped and named, one gone by then is left with no note, and a write that fails is no skipped box but the pass's failure (triage 4d)", () => {
+  // Read under the lock: the box's lock folder stands while the pass holds it.
+  const locked = (file: string) => existsSync(join(file, "..", ".lock"));
+  const unreadable = threeCopies();
+  const thirdInbox = join(unreadable.third, "inbox.json");
+  let read = spyMailReads((file, out) => {
+    if (file === thirdInbox && locked(file)) throw new Error("bad sector");
+    return out;
+  });
+  const notes: string[] = [];
+  let moved: ReturnType<typeof markRead> | { threw: string };
+  try {
+    moved = outcome(() => markRead(unreadable.w.b.ctx, unreadable.notice.id, notes));
+  } finally {
+    read.mockRestore();
+  }
+  expect(moved).toMatchObject({ id: unreadable.notice.id, status: "done" });
+  expect(notes).toEqual([
+    `a copy of ${unreadable.notice.id} was not changed: ${thirdInbox} (bad sector)`,
+  ]);
+  expect(unreadable.status(unreadable.third, "inbox")).toBe("sent");
+  // The copy gone from the third box by the time its lock is held: nothing written, nothing said.
+  const gone = threeCopies();
+  const goneInbox = join(gone.third, "inbox.json");
+  const before = readFileSync(goneInbox, "utf8");
+  read = spyMailReads((file, out) =>
+    file === goneInbox && locked(file) && out.data
+      ? { ...out, data: { ...out.data, messages: [] } }
+      : out,
+  );
+  const goneNotes: string[] = [];
+  try {
+    moved = outcome(() => markRead(gone.w.b.ctx, gone.notice.id, goneNotes));
+  } finally {
+    read.mockRestore();
+  }
+  expect(moved).toMatchObject({ id: gone.notice.id, status: "done" });
+  expect(goneNotes).toEqual([]);
+  expect(readFileSync(goneInbox, "utf8")).toBe(before);
+  // A write that fails under the lock is thrown to the caller, never read as a box to skip.
+  const failing = threeCopies();
+  const failingInbox = join(failing.third, "inbox.json");
+  const realWrite = store.writeProtectedJsonAt;
+  const write = spyOn(store, "writeProtectedJsonAt").mockImplementation(((
+    ...args: Parameters<typeof store.writeProtectedJsonAt>
+  ) => {
+    if (args[1] === failingInbox) throw new Error("disk full");
+    return realWrite(...args);
+  }) as typeof store.writeProtectedJsonAt);
+  try {
+    moved = outcome(() => markRead(failing.w.b.ctx, failing.notice.id, []));
+  } finally {
+    write.mockRestore();
+  }
+  expect(moved).toEqual({ threw: "disk full" });
+}, 30_000);
 
 test("SP7b-T2 AC-3: a reply carries the child's evidence read from disk, and its reader validates what another party wrote", () => {
   const w = receiving();

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { accessSync, constants, existsSync, statSync } from "node:fs";
+import { accessSync, constants, existsSync } from "node:fs";
 import { basename, isAbsolute, join, resolve } from "node:path";
 import { loadEvidence } from "./evidence.ts";
 import { nowIso, readJson, readText, writeJson, writeText } from "./fs.ts";
@@ -58,7 +58,7 @@ import {
   type WorkItem,
 } from "./types.ts";
 import { loadWork } from "./work.ts";
-import { gitError, gitRun, gitShow } from "./worktree.ts";
+import { gitError, gitRun, gitShow, worktreeMainRoot } from "./worktree.ts";
 
 export {
   decidedPriority,
@@ -256,19 +256,6 @@ export interface MailContext {
   policy: Policy;
   env: NodeJS.ProcessEnv;
   self: MailSelf;
-}
-
-/** The main checkout of a git worktree (its `.git` is a file naming the parent's), or null for a checkout of its own. */
-export function worktreeMainRoot(root: string): string | null {
-  const gitFile = join(root, ".git");
-  try {
-    if (!statSync(gitFile).isFile()) return null;
-  } catch {
-    return null;
-  }
-  const line = readText(gitFile)?.trim() ?? "";
-  const match = /^gitdir:\s*(.+?)\/\.git\/worktrees\/[^/]+\/?$/.exec(line);
-  return match?.[1] ? canonical(isAbsolute(match[1]) ? match[1] : join(root, match[1])) : null;
 }
 
 /**
@@ -756,11 +743,9 @@ function outboxMessage(
 function agentRefusal(
   ctx: MailContext,
   request: SendRequest,
-  name: string,
-  toSelf: boolean,
-  itemId: string | null,
-  work: WorkItem | null,
+  to: { name: string; toSelf: boolean; itemId: string | null; work: WorkItem | null },
 ): string | null {
+  const { name, toSelf, itemId, work } = to;
   const agent = request.agent;
   if (!agent) return null;
   if (!toSelf)
@@ -883,7 +868,12 @@ export function send(
     item: null,
     agent: request.agent ?? null,
   };
-  const agentRefused = agentRefusal(ctx, request, entry.name, toSelf, itemId, work);
+  const agentRefused = agentRefusal(ctx, request, {
+    name: entry.name,
+    toSelf,
+    itemId,
+    work,
+  });
   if (agentRefused) return refuse(agentRefused, to);
   const relayed = request.agent !== undefined && ROLE_AGENT.test(request.agent);
   const destination = destinationPolicy(entry, ctx.env);
@@ -1060,26 +1050,8 @@ function recordEverywhere(
   // or cannot be read by then is skipped and named like the others, never written over.
   for (const [dir, which] of holding) {
     try {
-      withMailLock(dir, () => {
-        let read: ReturnType<typeof readBox>;
-        try {
-          read = readBox(dir, which);
-        } catch (error) {
-          skipped(`${boxFile(dir, which)} (${(error as Error).message.split("\n")[0]})`);
-          return;
-        }
-        const { box, tampered } = read;
-        if (tampered) {
-          skipped(`${boxFile(dir, which)} (changed outside the engine)`);
-          return;
-        }
-        const index = box.messages.findIndex((m) => m.id === id);
-        if (index === -1) return;
-        const changed = change(box.messages[index] as Message);
-        box.messages[index] = changed;
-        writeBox(dir, which, box);
-        result = result ?? changed;
-      });
+      const changed = recordInBox(dir, which, id, change, skipped);
+      result = result ?? changed;
     } catch (error) {
       if (!(error instanceof LockBusy)) throw error;
       skipped(`${boxFile(dir, which)} (${error.message})`);
@@ -1090,6 +1062,41 @@ function recordEverywhere(
   // change the own box lacks (triage 4a).
   if (result && !ownBusy) recordForParties(ctx, registry, result);
   return { changed: result, ownBusy };
+}
+
+/**
+ * One holding copy changed under its box's lock (triage 4d), the box re-read there: a box that
+ * changed outside the engine or cannot be read by then is skipped and named, never written over;
+ * a copy gone by then is left. The changed message, or null. A lock held past the wait throws
+ * `LockBusy`, for the pass to name.
+ */
+function recordInBox(
+  dir: string,
+  which: "inbox" | "outbox",
+  id: string,
+  change: (m: Message) => Message,
+  skipped: (what: string) => void,
+): Message | null {
+  return withMailLock(dir, () => {
+    let read: ReturnType<typeof readBox>;
+    try {
+      read = readBox(dir, which);
+    } catch (error) {
+      skipped(`${boxFile(dir, which)} (${(error as Error).message.split("\n")[0]})`);
+      return null;
+    }
+    const { box, tampered } = read;
+    if (tampered) {
+      skipped(`${boxFile(dir, which)} (changed outside the engine)`);
+      return null;
+    }
+    const index = box.messages.findIndex((m) => m.id === id);
+    if (index === -1) return null;
+    const changed = change(box.messages[index] as Message);
+    box.messages[index] = changed;
+    writeBox(dir, which, box);
+    return changed;
+  });
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1131,7 +1138,7 @@ function ownMessage(ctx: MailContext, id: string): { found: Message } | { refuse
 }
 
 /** Why the pass left this project's copy unwritten: its box busy past the lock's wait, else changed while it was being written. */
-function unwritten(pass: { ownBusy: string | null }): string {
+function whyOwnCopyUnwritten(pass: { ownBusy: string | null }): string {
   return pass.ownBusy
     ? `its mailbox is busy (${pass.ownBusy})`
     : "its mailbox changed while it was being written";
@@ -1201,7 +1208,7 @@ export function moveMail(
     (w) => notes.push(skippedLine(id)(w)),
   );
   if (!pass.changed || pass.ownBusy)
-    return { refused: `${id} could not be updated: ${unwritten(pass)}` };
+    return { refused: `${id} could not be updated: ${whyOwnCopyUnwritten(pass)}` };
   return pass.changed;
 }
 
@@ -1442,7 +1449,7 @@ export function reply(
   // each caller says it in its words (finding 30).
   if (!answered.changed || answered.ownBusy)
     return {
-      refused: `${id} could not be marked answered: ${unwritten(answered)}`,
+      refused: `${id} could not be marked answered: ${whyOwnCopyUnwritten(answered)}`,
       delivered: replyMessage.id,
     };
   // The item's record is written under the own mailbox's lock, the lock the sync writes it under

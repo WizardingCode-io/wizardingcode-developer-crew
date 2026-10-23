@@ -89,23 +89,33 @@ export function buildContext(
  * its own rules and has none: the opener is read from the engine's records (`resolveOpener`).
  */
 export function neighbours(ctx: HookContext): { id: string; item: string }[] {
-  if (ctx.openedBy) return [];
+  return lane(ctx).neighbours;
+}
+
+/**
+ * The live neighbours and whether this session holds an open item of this checkout, which the
+ * lane rule never refuses (AC-3, its own item passes), from one scan of the open items (triage
+ * L6). With no neighbour nothing is scanned, and `holdsOpenItem` is false.
+ */
+export function lane(ctx: HookContext): {
+  neighbours: { id: string; item: string }[];
+  holdsOpenItem: boolean;
+} {
+  if (ctx.openedBy) return { neighbours: [], holdsOpenItem: false };
   const live = liveSessions(ctx.paths);
   const own = live[ctx.sessionId]?.item;
   const others = Object.entries(live)
     .filter(([id, s]) => id !== ctx.sessionId && s.item && s.item !== own)
     .sort(([a], [b]) => a.localeCompare(b));
-  if (!others.length) return [];
+  if (!others.length) return { neighbours: [], holdsOpenItem: false };
   const open = new Set(openItems(ctx.paths).map((w) => w.id));
-  return others
-    .filter(([, s]) => open.has(s.item ?? ""))
-    .map(([id, s]) => ({ id, item: s.item ?? "" }));
-}
-
-/** Whether this session holds an open item of this checkout: the lane rule never refuses it (AC-3, its own item passes). */
-export function holdsOpenItem(ctx: HookContext): boolean {
-  const own = loadState(ctx.paths).sessions[ctx.sessionId]?.item;
-  return !!own && openItems(ctx.paths).some((w) => w.id === own);
+  const held = loadState(ctx.paths).sessions[ctx.sessionId]?.item;
+  return {
+    neighbours: others
+      .filter(([, s]) => open.has(s.item ?? ""))
+      .map(([id, s]) => ({ id, item: s.item ?? "" })),
+    holdsOpenItem: !!held && open.has(held),
+  };
 }
 
 /** The context line naming the live neighbours (AC-4), or null when there is none or the check fails. */

@@ -54,7 +54,8 @@ function stacksOf(profile: Profile, changed: readonly string[]): Stack[] {
   return [...stacks];
 }
 
-function cut(text: string): string {
+/** A draft's text within the base's limit for one entry. */
+function clipKnowledge(text: string): string {
   return text.slice(0, KNOWLEDGE_TEXT_LIMIT);
 }
 
@@ -91,7 +92,7 @@ export function draftsOf(
   // The validated solution: the spec's problem and the criteria, the files the item changed.
   const problem = section(readText(join(dir, "spec.md")), "Problem");
   const criteria = work.criteria.map((c) => `${c.id}: ${c.text}`);
-  const solutionText = cut([...(problem ? [problem] : []), ...criteria].join("\n"));
+  const solutionText = clipKnowledge([...(problem ? [problem] : []), ...criteria].join("\n"));
   const changed = changedWatchedPaths(paths.root, profile, work);
   const head = gitHead(paths.root);
   const commit = policy.artifacts === "commit" && head !== "none" ? head : null;
@@ -112,7 +113,7 @@ export function draftsOf(
     const origin = readOrigin(paths, work.id)?.origin ?? null;
     if (cause && origin) {
       const title = `Root cause: ${work.title}`;
-      const text = cut(cause);
+      const text = clipKnowledge(cause);
       drafts.push({
         ...base,
         kind: "root-cause",
@@ -144,7 +145,7 @@ export function draftsOf(
       const url = new URL(fact.source);
       const source = `${url.origin}${url.pathname}`;
       const title = `${source} · ${fact.quote.slice(0, 60)}`;
-      const text = cut(`${fact.quote} · ${fact.claim}`);
+      const text = clipKnowledge(`${fact.quote} · ${fact.claim}`);
       drafts.push({
         ...base,
         kind: "documentation",
@@ -208,6 +209,11 @@ export function scanDrafts(drafts: readonly KnowledgeDraft[]): string | null {
   return null;
 }
 
+/** The ids a text cites as `[K:<id>]`, the one form of a citation. */
+function citations(text: string): Set<string> {
+  return new Set([...text.matchAll(/\[K:([^\]]+)\]/g)].map((m) => m[1] ?? ""));
+}
+
 /** The ids the records cite as `[K:<id>]`, among the ones the engine listed for the item. */
 function citedIds(dir: string, work: WorkItem): string[] {
   const listed = work.knowledge?.listed ?? [];
@@ -215,7 +221,7 @@ function citedIds(dir: string, work: WorkItem): string[] {
   const text = ["spec.md", "strategy.md", "analysis.md"]
     .map((f) => readText(join(dir, f)) ?? "")
     .join("\n");
-  const cited = new Set([...text.matchAll(/\[K:([^\]]+)\]/g)].map((m) => m[1] ?? ""));
+  const cited = citations(text);
   return listed.filter((id) => cited.has(id));
 }
 
@@ -281,9 +287,7 @@ export function learnItem(
   const cause = drafts.find((d) => d.kind === "root-cause");
   const contradicted = (e: KnowledgeEntry): boolean =>
     e.contradictedBy.some((r) => r.item === work.id && r.project === scope.project);
-  const cited = new Set(
-    [...(readText(join(dir, "analysis.md")) ?? "").matchAll(/\[K:([^\]]+)\]/g)].map((m) => m[1]),
-  );
+  const cited = citations(readText(join(dir, "analysis.md")) ?? "");
   const duplicates = cause
     ? entries.filter(
         (e) =>

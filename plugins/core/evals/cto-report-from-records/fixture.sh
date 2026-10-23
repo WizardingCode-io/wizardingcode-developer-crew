@@ -7,9 +7,7 @@ read_id() {
   node -e 'let s="";process.stdin.on("data",(d)=>{s+=d;}).on("end",()=>{process.stdout.write(JSON.parse(s).id);});'
 }
 # One commit of the fixture's own, with a name no project has (finding 96); two-projects.sh commits inline and defines no helper.
-fixture_commit() {
-  git -c user.name=Fixture -c user.email=fixture@example.invalid commit -q -m "$1"
-}
+. "$(dirname "$0")/../fixtures/commit.sh"
 # a: a greeting for the banner, proven and learned.
 A_ID=$(crew start "Add a greeting for the storefront banner" --answers "$ANSWERS" --criterion "greeting(name) returns the banner's greeting for the name" --json | read_id)
 cat > tests/greeting.test.mjs <<'EOF'

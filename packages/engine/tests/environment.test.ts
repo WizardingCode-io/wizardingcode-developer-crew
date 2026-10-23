@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { beforeAll, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
@@ -40,10 +40,15 @@ const compose = (ports: string) =>
   `services:\n  web:\n    image: x\n${ports ? `    ports:\n      - ${ports}\n` : ""}`;
 
 // The AC-1 blocks share the environment a compose file publishing "8080:80" is detected as (the
-// merge and the change lines start from it) and the profile those blocks merge into.
-const quoted = tempDir();
-write(quoted, "compose.yaml", compose('"8080:80"'));
-const detected = detectEnvironment(quoted, []) as Environment;
+// merge and the change lines start from it) and the profile those blocks merge into; the fixture
+// is written before the tests run, never when the module loads.
+let quoted = "";
+let detected: Environment;
+beforeAll(() => {
+  quoted = tempDir();
+  write(quoted, "compose.yaml", compose('"8080:80"'));
+  detected = detectEnvironment(quoted, []) as Environment;
+});
 const base: Profile = {
   version: 1,
   detectedAt: "2026-10-18T10:00:00.000Z",

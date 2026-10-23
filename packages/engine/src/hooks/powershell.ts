@@ -132,9 +132,6 @@ function unreadCrew(command: string, read: ReadPiece[]): boolean {
 // The C0 controls but tab, line feed and carriage return, from their codes (a control character
 // spelt in a regex is a lint error, which is the point of the fold's marks among them).
 const code = String.fromCharCode;
-// The marks the fold writes into a line (a handed shell, a joined word, an ambiguous comment): control
-// characters, so CONTROLS covers them and a written line can never carry one unseen.
-const FOLD_MARKS = { handed: code(0), joined: code(1), ambiguous: code(2) } as const;
 const CONTROLS = new RegExp(`[${code(0)}-${code(8)}${code(11, 12)}${code(14)}-${code(31)}]`);
 const HIDDEN_MARKS: [RegExp, string][] = [
   [/`/, "a backtick escape"],
@@ -290,7 +287,7 @@ export function unreadablePowershell(
 ): Unreadable | null {
   const mark = markOn(written);
   if (mark) return hiddenLine(mark);
-  if (command.includes(AMBIGUOUS)) return hiddenLine(AMBIGUOUS_COMMENT, SPACE_BEFORE);
+  if (command.includes(FOLD_MARKS.ambiguous)) return hiddenLine(AMBIGUOUS_COMMENT, SPACE_BEFORE);
   if (unreadCrew(command, read))
     return {
       reason: UNREADABLE_CREW,
@@ -432,13 +429,14 @@ const CMD_BUILTIN =
   /^(?:call\s+|start\s+(?:"[^"]*"\s+)?(?:\/(?:d|affinity|node|machine)\s+(?:"[^"]*"|\S+)\s+|\/\w+\s+)*)/i;
 /** The words cmd runs from the text behind `cmd /c`: its builtin gone. */
 const cmdRest = (rest: string): string => rest.replace(CMD_BUILTIN, "");
-// The fold's marks, control characters no written line holds (`HIDDEN_MARKS` asks about one): the
-// mark of a hand-on folded and not yet read, and the mark of one whose rest was joined, which a
-// later pass leaves alone.
-const MARK = FOLD_MARKS.handed;
-const JOINED = FOLD_MARKS.joined;
-const MARKS = new RegExp(`[${MARK}${JOINED}]`, "g");
-const HANDED = `${MARK}sh -c`;
+// The marks the fold writes into a line, control characters so CONTROLS covers them and no written
+// line holds one unseen (`HIDDEN_MARKS` asks about one): the mark of a hand-on folded and not yet
+// read, the mark of one whose rest was joined, which a later pass leaves alone, and the mark the
+// comment drop leaves in place of a `#` it cannot place, which `unreadablePowershell` asks about
+// from any level.
+export const FOLD_MARKS = { handed: code(0), joined: code(1), ambiguous: code(2) } as const;
+const MARKS = new RegExp(`[${FOLD_MARKS.handed}${FOLD_MARKS.joined}]`, "g");
+const HANDED = `${FOLD_MARKS.handed}sh -c`;
 const HANDED_PREFIX = new RegExp(`${HANDED}[ \\t]*`, "g");
 const HANDED_DEPTH = 8;
 const DQ = `"(?:[^"]|"")*"`;
@@ -540,12 +538,6 @@ const BEFORE_COMMENT = /[\s;|&({]/;
 // apart, so such a `#` is asked about, never dropped. A quoted part inside a subexpression is
 // asked about too: the word-start rule reads the top level alone.
 const AMBIGUOUS_BEFORE_COMMENT = /[)}=[\],<>"']/;
-/**
- * The mark the drop leaves in place of a `#` it cannot place, a control character no written line
- * holds (`CONTROLS` asks about one); `unreadablePowershell` asks about a line that carries it,
- * from any level.
- */
-const AMBIGUOUS = FOLD_MARKS.ambiguous;
 const AMBIGUOUS_COMMENT =
   "a # the reader cannot place (after =, a bracket, a comma, a redirection, a closing parenthesis or brace, or a quoted part glued to a word or inside a subexpression)";
 const SPACE_BEFORE = "write a space before the #, or quote it";
@@ -577,7 +569,7 @@ const withoutComments = (text: string): string => {
         continue;
       }
       if (AMBIGUOUS_BEFORE_COMMENT.test(before)) {
-        out += AMBIGUOUS;
+        out += FOLD_MARKS.ambiguous;
         continue;
       }
     }
@@ -636,17 +628,18 @@ const joinHanded = (rest: string, depth: number): string => {
  * double-quoted one, so the word stays the one pwsh hands. Applied to the written line and to each
  * handed level, each after its cmd and Start-Process rewrites, so a shell they expose is folded
  * where it stands and no pass folds inside a script already joined (a rest once joined is marked
- * `JOINED`, so the same pass reads it no more).
+ * `FOLD_MARKS.joined`, so the same pass reads it no more).
  */
 const foldHandOns = (text: string, depth = 0): string =>
   foldShells(text)
     .replace(
       HANDED_REST,
-      (_, pre: string, rest: string) => `${pre.replace(MARK, JOINED)} ${joinHanded(rest, depth)}`,
+      (_, pre: string, rest: string) =>
+        `${pre.replace(FOLD_MARKS.handed, FOLD_MARKS.joined)} ${joinHanded(rest, depth)}`,
     )
     .replace(HANDED_IN_STRING, (_, quote: string, pre: string, rest: string) => {
       const joined = joinHanded(rest, depth);
-      return `${quote}${pre.replace(MARK, JOINED)} ${quote === '"' ? escaped(joined) : joined}`;
+      return `${quote}${pre.replace(FOLD_MARKS.handed, FOLD_MARKS.joined)} ${quote === '"' ? escaped(joined) : joined}`;
     });
 
 // Two literal strings joined by `+`, as PowerShell joins them: one string, a few levels deep.

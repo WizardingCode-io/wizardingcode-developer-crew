@@ -1194,3 +1194,10 @@ Verdicts agree at every effort. Upheld findings: `high` reproduced Task 6's and 
 - What happened: while a `crew tdd before` run or a gate run the session started in the background was still going, the Stop hook refused the turn's end as unproven work; the session had to record `crew await <id> role` to end the turn.
 - Expected: a turn may end while the session's own engine run is in progress, the hook naming it.
 - Outcome: deferred by the user's decision of 2026-10-23 (item `2026-10-23-004`, D-4: "Later, as a finding"), for the next subproject.
+
+### 147. The deps gate's 0.3.0 row fails once under the whole suite's load
+- Date: 2026-10-23. Project: this repository. Item: `2026-10-23-005`. Category: `friction`. Severity: low.
+- What happened: one gate run of the item failed on `gates.test.ts` "0.3.0: the deps gate fails only on advisories absent from the base commit…" (`advisories.baselined` true expected, false received); the row passed alone three times and on the gate's rerun. The item does not touch it. The row changes the global `process.env.PATH` and audits the base commit, so a concurrent row can change what it reads.
+- Expected: the row sets its PATH per call (an `env` passed to the runner) rather than on the process, and passes under the whole suite every time.
+- Evidence: the item's `logs/test-_-1792772420375.txt`.
+- Outcome: open, for the next hardening item.

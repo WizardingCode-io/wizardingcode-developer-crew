@@ -1,6 +1,6 @@
 import { appendFileSync, existsSync, lstatSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, join, relative } from "node:path";
-import { nowIso } from "./fs.ts";
+import { errorText, nowIso } from "./fs.ts";
 import { confinedDocument } from "./source.ts";
 import { oneLine } from "./state.ts";
 import type { QuestionChannel, QuestionChannelKind, QuestionRecord, WorkItem } from "./types.ts";
@@ -97,7 +97,7 @@ export function postDocumentQuestion(
     appendFileSync(target, `\n## ${question.id} (${question.askedAt})\n\n${quoted}\n`);
   } catch (error) {
     return {
-      refused: `${file} cannot be written: ${error instanceof Error ? error.message : String(error)}`,
+      refused: `${file} cannot be written: ${errorText(error)}`,
     };
   }
   return { file };

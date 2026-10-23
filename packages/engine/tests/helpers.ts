@@ -1,3 +1,4 @@
+import { spyOn } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -5,6 +6,8 @@ import { dirname, join, sep } from "node:path";
 import { buildContext } from "../src/hooks/context.ts";
 import type { HookContext, HookPayload } from "../src/hooks/types.ts";
 import { type CrewPaths, resolvePaths } from "../src/paths.ts";
+import * as store from "../src/store.ts";
+import type { Mailbox } from "../src/types.ts";
 
 const GIT_ENV = {
   GIT_AUTHOR_NAME: "Crew Test",
@@ -112,4 +115,19 @@ export function hookContext(payload: HookPayload, env: NodeJS.ProcessEnv = testE
   const ctx = buildContext(payload, env);
   if (!ctx) throw new Error(`crew is inactive in ${payload.cwd}`);
   return ctx;
+}
+
+/**
+ * A spy on the protected reads of the mailboxes (triage 4g): every `readProtectedJsonAt` goes
+ * through `onRead` with the file and what the real read returned, and `onRead`'s answer is the
+ * read. The caller restores it with `mockRestore`, in a `finally`.
+ */
+export function spyMailReads(
+  onRead: (file: string, read: store.Protected<Mailbox>) => store.Protected<Mailbox>,
+) {
+  const realRead = store.readProtectedJsonAt;
+  return spyOn(store, "readProtectedJsonAt").mockImplementation(((
+    integrity: string,
+    file: string,
+  ) => onRead(file, realRead<Mailbox>(integrity, file))) as typeof store.readProtectedJsonAt);
 }

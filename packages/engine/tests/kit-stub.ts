@@ -12,7 +12,7 @@ import { evalInvocation, realGitDir } from "../../../scripts/eval.ts";
  * Writes the stub as `<dir>/bin/claude` and returns the bin folder. The environment drives it:
  * `STUB_AGGREGATE` the file copied as `aggregate-result.json` into the `--output-dir` folder;
  * `STUB_EXIT` the status; `STUB_LOG` a file that receives the cwd on its first line and the
- * arguments on the second; `STUB_DECOY` a folder created (with its parents) during the run holding
+ * arguments on the second; `STUB_ENV` a file that receives the kit's environment, `env`'s lines; `STUB_DECOY` a folder created (with its parents) during the run holding
  * `STUB_DECOY_AGGREGATE` as its aggregate, the "newer folder written beside it" of AC-3 and AC-4.
  */
 export const stubKit = (dir: string): string => {
@@ -25,6 +25,7 @@ export const stubKit = (dir: string): string => {
       "#!/bin/sh",
       'out=""',
       'if [ -n "$STUB_LOG" ]; then pwd > "$STUB_LOG"; echo "$@" >> "$STUB_LOG"; fi',
+      'if [ -n "$STUB_ENV" ]; then env > "$STUB_ENV"; fi',
       'while [ $# -gt 0 ]; do [ "$1" = "--output-dir" ] && out="$2"; shift; done',
       'if [ -n "$STUB_DECOY" ]; then mkdir -p "$STUB_DECOY"; cp "$STUB_DECOY_AGGREGATE" "$STUB_DECOY/aggregate-result.json"; fi',
       'if [ -n "$out" ] && [ -d "$out" ] && [ -f "$STUB_AGGREGATE" ]; then cp "$STUB_AGGREGATE" "$out/aggregate-result.json"; fi',

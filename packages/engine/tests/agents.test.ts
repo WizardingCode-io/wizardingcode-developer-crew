@@ -259,11 +259,28 @@ test("SP8-T4 AC-3: the six reviewers of an audit carry the audit paragraph and t
   expect(researcher).toContain("audit/dependencies.findings.md");
 });
 
-test("CON1-AC-2 (finding 51): the data and infra reviewers and their rubrics sit on the full route", () => {
-  for (const gate of ["data", "infra"]) {
+/** The first paragraph after a page's H1: its lines up to the next blank line. */
+const firstParagraph = (text: string): string => {
+  const lines = text.split("\n");
+  const start = lines.findIndex((l) => l.startsWith("# ")) + 1;
+  const from = lines.findIndex((l, i) => i >= start && l.trim() !== "");
+  const end = lines.findIndex((l, i) => i > from && l.trim() === "");
+  return lines.slice(from, end === -1 ? undefined : end).join("\n");
+};
+
+test("CON1-AC-2 (finding 51): the data and infra reviewers and their rubrics sit on the full route, and whenever the team policy seats ETL or DevOps", () => {
+  const triggers = {
+    data: ["touches a data migration", "ETL"],
+    infra: ["touches infrastructure", "DevOps"],
+  };
+  for (const [gate, [touches, team]] of Object.entries(triggers)) {
+    const seat = `when the change ${touches} on the full route, or whenever the team policy seats ${team}`;
     expect(agent(`review-${gate}`).meta.description).toMatch(/on the full route/);
-    const first = readFileSync(`${RUBRICS}${gate}.md`, "utf8").split("\n\n")[1];
+    expect(agent(`review-${gate}`).meta.description).toContain(`${seat};`);
+    const first = firstParagraph(readFileSync(`${RUBRICS}${gate}.md`, "utf8"));
+    expect(first).toMatch(/^The \w+ gate asks /);
     expect(first).toMatch(/on the full route/);
+    expect(first).toContain(`It runs ${seat}.`);
   }
 });
 

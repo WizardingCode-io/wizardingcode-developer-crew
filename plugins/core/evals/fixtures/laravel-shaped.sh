@@ -6,9 +6,7 @@
 # Sourced by a case's fixture.sh, which registers the pack or not, commits once and detects the profile.
 set -eu
 # One commit of the fixture's own, with a name no project has (finding 96).
-fixture_commit() {
-  git -c user.name=Fixture -c user.email=fixture@example.invalid commit -q -m "$1"
-}
+. "$(dirname "$0")/../fixtures/commit.sh"
 git init -q -b main
 cat > composer.json <<'EOF'
 {

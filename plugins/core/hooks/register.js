@@ -302,24 +302,14 @@ function workingAgents() {
   return (status.working || []).map((w) => w.agent).join(', ')
 }
 
-// " · todo 1/2" or ''
-function todoPart() {
-  return todoCount() ? ' · ' + todoCount() : ''
-}
-
-// " · working review-code-quality, judge" or ''
-function workingPart() {
-  return workingAgents() ? ' · working ' + workingAgents() : ''
+// The prefix and the text, or '' when the text is empty: " · todo 1/2", " · working judge"
+function part(text, prefix) {
+  return text ? prefix + text : ''
 }
 
 // "review-code-quality (Review the diff), judge"
 function workingNames() {
   return (status.working || []).map((w) => (w.description ? w.agent + ' (' + w.description + ')' : w.agent)).join(', ')
-}
-
-// " · waiting for the user", " · waiting for the roles", " · waiting for a reply to M-…", or '' when the item waits for nothing
-function waitingText() {
-  return waitingCore() ? ' · ' + waitingCore() : ''
 }
 
 // "waiting for the user", "waiting for the roles", "waiting for a reply to M-…" or ''
@@ -344,7 +334,7 @@ function decisionText(d) {
 
 // "O-1 blocking open · <text>"; an engine before SP2b sends no text
 function objectionText(o) {
-  return o.id + ' ' + o.severity + ' ' + o.status + (o.text ? ' · ' + o.text : '')
+  return o.id + ' ' + o.severity + ' ' + o.status + part(o.text, ' · ')
 }
 
 const JUDGEMENT_WORDS = { planned: 'planned', proven: 'proven', 'not-proven': 'not proven', 'not-run': 'not run', stale: 'stale', skipped: 'skipped' }
@@ -495,13 +485,13 @@ function verdictLine() {
 function stripText() {
   if (!hasWork()) return ''
   const unread = status.mail && status.mail.unread ? ' · mail ' + status.mail.unread + ' unread' : ''
-  const waiting = waitingText()
+  const waiting = part(waitingCore(), ' · ')
   const verdict = status.verdict === 'proven' ? 'proven' : 'not proven (' + (status.unproven && status.unproven[0] ? status.unproven[0] : 'gates have not run') + ')'
   const gates = gatesText()
   // An unconfirmed triage (SP3): the proposal, marked, until the business priorities are signed
   const unconfirmed = status.triage && status.triage.confirmed === null ? ' (unconfirmed)' : ''
   const priority = status.priority && status.priority !== 'normal' ? ' · priority ' + status.priority + unconfirmed : ''
-  return 'crew ' + status.active + ' · ' + status.phase + ' · ' + status.route + priority + auditWord() + ' · ' + verdict + (gates ? ' · ' + gates : '') + todoPart() + workingPart() + unread + waiting
+  return 'crew ' + status.active + ' · ' + status.phase + ' · ' + status.route + priority + auditWord() + ' · ' + verdict + part(gates, ' · ') + part(todoCount(), ' · ') + part(workingAgents(), ' · working ') + unread + waiting
 }
 
 // The filed lines' counts (the roles' own; the report counts what passed the proof check) as "security 2 · business 1" (the pane) or "security 2, business 1" (one line)
@@ -546,12 +536,12 @@ function statusText() {
   if (!hasWork()) return 'Crew: no active work item. A change starts with the crew skill.'
   const lines = [
     status.active + ' "' + status.title + '"',
-    '  phase ' + status.phase + ', route ' + status.route + (waitingCore() ? ', ' + waitingCore() : ''),
+    '  phase ' + status.phase + ', route ' + status.route + part(waitingCore(), ', '),
   ]
   if (status.branch) lines.push('  branch ' + status.branch)
   if (status.team && status.team.length) lines.push('  team: ' + status.team.map((s) => s.role).join(', ') + ' (primary ' + status.primaryTeam + ')')
   if ((status.todo && status.todo.total) || (status.working && status.working.length)) {
-    lines.push('  ' + [todoCount(), workingAgents() ? 'working: ' + workingAgents() : ''].filter(Boolean).join(' · '))
+    lines.push('  ' + [todoCount(), part(workingAgents(), 'working: ')].filter(Boolean).join(' · '))
   }
   if (Array.isArray(status.threads)) {
     if (status.threads.length) lines.push('  mail: ' + threadsLine())

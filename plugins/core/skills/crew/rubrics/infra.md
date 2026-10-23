@@ -1,6 +1,6 @@
 # Infra rubric
 
-The infra gate asks what the change does to the pipeline and the deployment: which steps run and in what order, what identity each runs under, where secrets live, how a destructive step is undone, and whether the result runs anywhere but one machine. It runs when the change touches infrastructure on the full route, or when the team policy seats DevOps.
+The infra gate asks what the change does to the pipeline and the deployment: which steps run and in what order, what identity each runs under, where secrets live, how a destructive step is undone, and whether the result runs anywhere but one machine. It runs when the change touches infrastructure on the full route, or whenever the team policy seats DevOps.
 
 ## What the reviewer receives
 

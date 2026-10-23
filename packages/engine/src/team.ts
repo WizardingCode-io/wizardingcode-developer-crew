@@ -1,6 +1,5 @@
 import { riskAreasForPaths } from "./classify.ts";
 import { matchesAny } from "./glob.ts";
-import type { TeamTemplate } from "./packs.ts";
 import { isInterfacePath } from "./paths-kind.ts";
 import type {
   JudgementGateName,
@@ -96,6 +95,12 @@ export const TEAMS: Record<TeamName, TeamDef> = {
     validates: false,
   },
 };
+
+/** A pack's team template (SP6 Task 2): its name and the globs it gives each `paths` team. */
+export interface TeamTemplate {
+  template: string;
+  teams: Partial<Record<TeamName, { mandatory: { kind: "paths"; globs: string[] } }>>;
+}
 
 /** A pack's team template as the registry reads it (SP6 Task 2): globs for a `paths` team, nothing else. */
 export interface RegistryTemplate {

@@ -1,5 +1,5 @@
 import { checkPath } from "./analysis.ts";
-import { readText } from "./fs.ts";
+import { errorText, readText } from "./fs.ts";
 import { confinedDocument } from "./source.ts";
 
 /** One line of the researcher's `## What the documentation says`: the source, the quote, the claim it supports. */
@@ -98,7 +98,7 @@ export async function fetchSource(
           signal: AbortSignal.timeout(options.timeoutMs ?? 15000),
         });
       } catch (error) {
-        return { refused: `${source}: ${error instanceof Error ? error.message : String(error)}` };
+        return { refused: `${source}: ${errorText(error)}` };
       }
       if (response.status >= 300 && response.status < 400) {
         const location = response.headers.get("location");
@@ -119,7 +119,7 @@ export async function fetchSource(
       try {
         text = await response.text();
       } catch (error) {
-        return { refused: `${source}: ${error instanceof Error ? error.message : String(error)}` };
+        return { refused: `${source}: ${errorText(error)}` };
       }
       return { text: text.length > maxBytes ? text.slice(0, maxBytes) : text };
     }

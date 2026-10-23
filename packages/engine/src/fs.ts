@@ -2,6 +2,11 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
+/** What a caught value says: an error's message, anything else as a string. */
+export function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 export function sha256(data: string | Uint8Array): string {
   return createHash("sha256").update(data).digest("hex");
 }

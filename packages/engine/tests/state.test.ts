@@ -44,6 +44,8 @@ test("CON6-AC-8 (finding 58): a working role's stored description is cleaned to 
     }),
   );
   const working = loadState(paths).working ?? [];
+  // The judge's description cleans to nothing: its role is not kept as an empty line.
+  expect(working).toHaveLength(1);
   expect(working[0]).toEqual({
     agent: "review-security",
     team: null,

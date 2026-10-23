@@ -868,11 +868,10 @@ export function advancePhase(
   return { ok: true, phase: next };
 }
 
-/** ", waiting for the user" / ", waiting for the roles" / ", waiting for a reply to M-…" / "" (SP2c §9); with `bare`, the phrase alone. */
-export function waitingText(work: WorkItem, options: { bare?: boolean } = {}): string {
+/** ", waiting for the user" / ", waiting for the roles" / ", waiting for a reply to M-…" / "" (SP2c §9). */
+export function waitingText(work: WorkItem): string {
   const phrase = waitingPhrase(work);
-  if (!phrase) return "";
-  return options.bare ? phrase : `, ${phrase}`;
+  return phrase ? `, ${phrase}` : "";
 }
 
 /** "waiting for the user" / "waiting for the roles" / "waiting for a reply to M-…" / null: the wait as a phrase of its own. */
