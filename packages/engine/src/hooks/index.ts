@@ -1,3 +1,5 @@
+import { nowIso } from "../fs.ts";
+import { updateSession } from "../state.ts";
 import { buildContext } from "./context.ts";
 import { onPostToolUse } from "./post-tool-use.ts";
 import { onPreToolUse } from "./pre-tool-use.ts";
@@ -14,6 +16,7 @@ const EVENTS = new Set([
   "post-tool-use",
   "stop",
   "subagent-stop",
+  "session-end",
 ]);
 
 export const INACTIVE_CONTEXT =
@@ -49,6 +52,12 @@ export function handleHook(
         return onPostToolUse(ctx, payload);
       case "subagent-stop":
         return onSubagentStop(ctx, payload);
+      case "session-end":
+        // Whatever the reason (`/clear` and logout among them), the session is no neighbour now.
+        updateSession(ctx.paths, ctx.sessionId, (session) => {
+          session.endedAt = nowIso();
+        });
+        return {};
       default:
         return onStop(ctx, payload);
     }

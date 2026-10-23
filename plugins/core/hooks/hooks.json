@@ -21,6 +21,9 @@
     "Stop": [
       { "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/dist/crew.mjs", "hook", "stop"], "timeout": 10 }] }
     ],
+    "SessionEnd": [
+      { "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/dist/crew.mjs", "hook", "session-end"], "timeout": 5 }] }
+    ],
     "SubagentStop": [
       {
         "matcher": "^wizardingcode-developer-crew:(judge|cto|tech-lead|researcher|expert|devils-advocate|fault-finder|review-code-quality|review-test-quality|review-security|review-ui-ux|review-risk|review-architecture|review-data|review-infra|lead-researchers|lead-qa|lead-security|lead-architects|lead-etl|lead-devops|lead-backend|lead-frontend|lead-agentic-os)$",

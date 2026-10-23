@@ -5,7 +5,7 @@ import { updateSession } from "../state.ts";
 import { takeReplies } from "../tasks.ts";
 import type { WorkItem } from "../types.ts";
 import { activeWork, waitingText } from "../work.ts";
-import { mailQuietly, refreshMail } from "./context.ts";
+import { mailQuietly, neighbourLine, refreshMail } from "./context.ts";
 import { takeNotices } from "./notices.ts";
 import type { HookContext, HookResponse } from "./types.ts";
 
@@ -63,6 +63,8 @@ export function onPrompt(ctx: HookContext): HookResponse {
     mailQuietly(() => takeReplies(ctx.mail, ctx.paths, active), undefined);
   const lines: string[] = [];
   if (active?.work) lines.push(statusLine(ctx, active.work, active.tampered));
+  const lane = neighbourLine(ctx);
+  if (lane) lines.push(lane);
   lines.push(...notices);
   if (mail.failed) lines.push(`Mail is off for this prompt: ${mail.failed}.`);
   else if (mail.newMail.length)

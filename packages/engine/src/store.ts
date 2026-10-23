@@ -91,15 +91,15 @@ function readProtected<T>(
   key: string,
   absPath: string,
   handWritten: boolean,
-): Protected<T> {
+): Protected<T> & { text: string | null } {
   // A file that is there but cannot be read (finding 30) holds nothing to trust.
   let text: string | null;
   try {
     text = readText(absPath);
   } catch {
-    return { data: null, tampered: true };
+    return { data: null, tampered: true, text: null };
   }
-  if (text === null) return { data: null, tampered: false };
+  if (text === null) return { data: null, tampered: false, text };
   const { map, corrupt } = readIntegrityFile(integrityFile);
   const expected = map[key];
   const tampered = corrupt
@@ -108,14 +108,23 @@ function readProtected<T>(
       ? !handWritten && Object.keys(map).length > 0
       : expected !== sha256(text);
   try {
-    return { data: JSON.parse(text) as T, tampered };
+    return { data: JSON.parse(text) as T, tampered, text };
   } catch {
-    return { data: null, tampered: true };
+    return { data: null, tampered: true, text };
   }
 }
 
 /** A protected file of a repository, keyed by its path from the root in the repository's integrity file; the policy may be hand-written. */
 export function readProtectedJson<T>(paths: CrewPaths, absPath: string): Protected<T> {
+  const { data, tampered } = readProtectedText<T>(paths, absPath);
+  return { data, tampered };
+}
+
+/** `readProtectedJson` with the very text the hash was checked on, for a byte-for-byte copy (session lanes, AC-5). */
+export function readProtectedText<T>(
+  paths: CrewPaths,
+  absPath: string,
+): Protected<T> & { text: string | null } {
   const key = rel(paths, absPath);
   return readProtected<T>(paths.integrityFile, key, absPath, key === HAND_WRITTEN);
 }
@@ -140,5 +149,6 @@ export function recordIntegrityAt(integrityFile: string, absPath: string): boole
 
 /** The same rule, against the integrity file beside the file; nothing there is hand-written. */
 export function readProtectedJsonAt<T>(integrityFile: string, absPath: string): Protected<T> {
-  return readProtected<T>(integrityFile, basename(absPath), absPath, false);
+  const { data, tampered } = readProtected<T>(integrityFile, basename(absPath), absPath, false);
+  return { data, tampered };
 }

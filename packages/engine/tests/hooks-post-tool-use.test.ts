@@ -1,14 +1,17 @@
 import { expect, test } from "bun:test";
 import { mkdirSync, readFileSync, rmdirSync, statSync, utimesSync } from "node:fs";
 import { join } from "node:path";
+import { type CliIo, main } from "../src/cli.ts";
 import { handleHook } from "../src/hooks/index.ts";
 import { onPostToolUse } from "../src/hooks/post-tool-use.ts";
 import { onPrompt } from "../src/hooks/prompt.ts";
 import { onSessionStart } from "../src/hooks/session-start.ts";
 import { onStop } from "../src/hooks/stop.ts";
 import { onSubagentStop } from "../src/hooks/subagent-stop.ts";
+import type { HookPayload } from "../src/hooks/types.ts";
+import { loadState } from "../src/state.ts";
 import { addCriterion, createWork, saveWork } from "../src/work.ts";
-import { hookContext, makeRepo, testEnv, write } from "./helpers.ts";
+import { hookContext, makeRepo, repoPaths, testEnv, write } from "./helpers.ts";
 
 const PLUGIN = "wizardingcode-developer-crew";
 
@@ -162,3 +165,149 @@ test("SP2c AC-3: every writer of the session's state takes the local folder's lo
   // The Stop rule still ran: the change is unproven, so the turn is blocked.
   expect(onStop(ctx)).toMatchObject({ decision: "block" });
 }, 15_000);
+
+/** A fast chore, so a real crew start makes an item with no question asked. */
+const START_ANSWERS = JSON.stringify({
+  work_type: "chore",
+  is_vague: 0.1,
+  scope: 0,
+  touches_auth: 0,
+  touches_payments: 0,
+  touches_personal_data: 0,
+  touches_data_migration: 0,
+  touches_infra: 0,
+  touches_public_api: 0,
+});
+
+/** A checkout, its sessions' hooks as Claude Code runs them, and the crew command run in process. */
+function lanes() {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const env = testEnv();
+  const paths = repoPaths(root, env);
+  const crew = async (...argv: string[]) => {
+    const out: string[] = [];
+    const err: string[] = [];
+    const io: CliIo = {
+      stdout: (t) => out.push(t),
+      stderr: (t) => err.push(t),
+      stdin: async () => "",
+      env,
+      cwd: root,
+    };
+    const code = await main(argv, io);
+    return { code, out: out.join(""), err: err.join("") };
+  };
+  const bash = (session_id: string, command: string, stdout = ""): HookPayload =>
+    ({
+      session_id,
+      cwd: root,
+      tool_name: "Bash",
+      tool_input: { command },
+      tool_response: { stdout, stderr: "", interrupted: false },
+    }) as HookPayload;
+  const pre = (session: string, command: string) =>
+    handleHook("pre-tool-use", bash(session, command), env);
+  const post = (session: string, command: string, stdout: string) =>
+    handleHook("post-tool-use", bash(session, command, stdout), env);
+  const itemOf = (session: string) =>
+    (loadState(paths).sessions[session] as { item?: unknown } | undefined)?.item;
+  /** A real crew start between the session's two hooks: the id of the item it made. */
+  const started = async (session: string, command: string, title: string) => {
+    pre(session, command);
+    const run = await crew(
+      "start",
+      title,
+      "--answers",
+      START_ANSWERS,
+      "--criterion",
+      "x",
+      "--json",
+    );
+    expect(run.code, run.err).toBe(0);
+    const id = (JSON.parse(run.out) as { id: string }).id;
+    post(session, command, `started ${id}`);
+    return id;
+  };
+  return { root, env, paths, crew, pre, post, itemOf, started };
+}
+
+test("LANE-AC-2: the item a crew start makes is the creating session's own item, whatever the command's spelling", async () => {
+  // Each spelling in a checkout of its own: a second session beside a live one is refused (AC-3).
+  const spellings = [
+    (_root: string) => `crew start "Add a total" --answers '${START_ANSWERS}'`,
+    (root: string) => `cd "${root}" && crew start "Add a total" --answers '${START_ANSWERS}'`,
+    (_root: string) =>
+      `"/opt/wizardingcode/bin/crew" start "Add a total" --answers '${START_ANSWERS}'`,
+  ];
+  for (const spelling of spellings) {
+    const { root, itemOf, started } = lanes();
+    const command = spelling(root);
+    const id = await started("s-start", command, "Add a total");
+    expect(itemOf("s-start"), command).toBe(id);
+  }
+});
+
+test("LANE-AC-2: a command that only prints started <id>, a refused crew start and an item created before the command's PreToolUse set nothing", async () => {
+  const { paths, crew, pre, post, itemOf, started } = lanes();
+  const held = await started(
+    "s-owner",
+    `crew start "Add a total" --answers '${START_ANSWERS}'`,
+    "Add a total",
+  );
+  expect(itemOf("s-owner")).toBe(held);
+  // Another session's command prints the owner's item without starting anything.
+  pre("s-echo", `echo "started ${held}"`);
+  post("s-echo", `echo "started ${held}"`, `started ${held}`);
+  expect(itemOf("s-echo")).toBeUndefined();
+  // An item already active before this session's PreToolUse (made outside any hook) is stale: a
+  // refused crew start (no new item) leaves the session with nothing, whatever the output says.
+  const outside = await crew(
+    "start",
+    "Made outside",
+    "--answers",
+    START_ANSWERS,
+    "--criterion",
+    "x",
+    "--json",
+  );
+  expect(outside.code, outside.err).toBe(0);
+  const stale = (JSON.parse(outside.out) as { id: string }).id;
+  Bun.sleepSync(5);
+  const refusedCommand = `crew start "Again" --answers '{"work_type":"bug"}'`;
+  pre("s-refused", refusedCommand);
+  const refused = await crew("start", "Again", "--answers", '{"work_type":"bug"}');
+  expect(refused.code).toBe(1);
+  post("s-refused", refusedCommand, `started ${stale}`);
+  expect(itemOf("s-refused")).toBeUndefined();
+  // The checkout's active item is the stale one, and it stays nobody's.
+  expect(loadState(paths).active).toBe(stale);
+  expect(itemOf("s-owner")).toBe(held);
+});
+
+test("LANE-AC-2: an item another live session holds is never claimed", async () => {
+  const { crew, pre, post, itemOf } = lanes();
+  const command = `crew start "Add a total" --answers '${START_ANSWERS}'`;
+  // B's PreToolUse comes first, then A's, then A's start makes the item and A's PostToolUse claims it.
+  pre("s-b", command);
+  pre("s-a", command);
+  const run = await crew(
+    "start",
+    "Add a total",
+    "--answers",
+    START_ANSWERS,
+    "--criterion",
+    "x",
+    "--json",
+  );
+  expect(run.code, run.err).toBe(0);
+  const id = (JSON.parse(run.out) as { id: string }).id;
+  post("s-a", command, `started ${id}`);
+  expect(itemOf("s-a")).toBe(id);
+  // B's PostToolUse finds the item made after its PreToolUse, but A, live, holds it.
+  post("s-b", command, `started ${id}`);
+  expect(itemOf("s-b")).toBeUndefined();
+  expect(itemOf("s-a")).toBe(id);
+});

@@ -13,7 +13,7 @@ import { refreshProfile, saveProfile } from "../profile.ts";
 import { ensureCrewDir, loadState, updateSession } from "../state.ts";
 import { VERSION } from "../version.ts";
 import { activeWork } from "../work.ts";
-import { mailQuietly, refreshMail, sweepLines } from "./context.ts";
+import { mailQuietly, neighbourLine, refreshMail, sweepLines } from "./context.ts";
 import { packCounts, statusLine } from "./prompt.ts";
 import type { HookContext, HookPayload, HookResponse } from "./types.ts";
 
@@ -107,6 +107,8 @@ export function onSessionStart(ctx: HookContext, payload: HookPayload = {}): Hoo
         `Packs: ${packs.registered} registered${packs.missing ? ` (${packs.missing} missing)` : ""}.`,
       );
   }
+  const lane = neighbourLine(ctx);
+  if (lane) lines.push(lane);
   if (refreshed.changed.length) lines.push(`profile refreshed: ${refreshed.changed.join("; ")}.`);
   const missing = missingTestCommands(ctx.profile);
   if (missing.length) {

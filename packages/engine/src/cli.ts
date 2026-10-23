@@ -227,7 +227,14 @@ import {
 } from "./runtimes.ts";
 import { scanText } from "./secrets.ts";
 import { parseSource, sourceLine } from "./source.ts";
-import { ensureCrewDir, loadState, oneLine, saveState, workingRoles } from "./state.ts";
+import {
+  adoptMainFiles,
+  ensureCrewDir,
+  loadState,
+  oneLine,
+  saveState,
+  workingRoles,
+} from "./state.ts";
 import {
   integrityOf,
   readProtectedJson,
@@ -514,6 +521,31 @@ function load(paths: CrewPaths, processEnv: NodeJS.ProcessEnv): Env {
     mail,
     registered,
   };
+}
+
+/**
+ * The lane's end (session lanes, AC-6): an item learned in a worktree tells its own project by mail
+ * that its branch is proven, and the output's last line names the merge. A mail that fails is a
+ * note, never a failed learn; in a main checkout, nothing.
+ */
+function laneEnd(env: Env, work: WorkItem): string[] {
+  const main = worktreeMainRoot(env.paths.root);
+  if (!main) return [];
+  let branch: string;
+  try {
+    branch = gitRun(env.paths.root, "rev-parse", "--abbrev-ref", "HEAD");
+  } catch {
+    return [];
+  }
+  const text = `Lane ${branch} (${work.id}, proven) is proven and committed: merge it from the main checkout.`;
+  let note: string | null = null;
+  try {
+    const sent = send(env.mail, { to: ".", type: "notice", text, item: work.id }, work);
+    if ("refused" in sent) note = `lane notice not sent: ${sent.refused}`;
+  } catch (error) {
+    note = `lane notice not sent: ${(error as Error).message}`;
+  }
+  return [...(note ? [note] : []), `merge ${branch} from ${main} when its work is committed`];
 }
 
 function openWork(env: Env, id: string | undefined): Opened | Outcome {
@@ -2383,6 +2415,14 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
     paths = resolvePaths(io.cwd, io.env);
   }
   if (!paths) return refuse(INACTIVE);
+  // A worktree takes its main checkout's policy and profile before anything reads them (AC-5).
+  try {
+    for (const note of adoptMainFiles(paths)) io.stderr(`${note}\n`);
+  } catch (error) {
+    io.stderr(
+      `the main checkout's policy and profile were not copied: ${(error as Error).message}\n`,
+    );
+  }
   const env = load(paths, io.env);
 
   switch (command) {
@@ -3376,7 +3416,8 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           n.refused ? `notice to ${n.to} refused: ${n.refused}` : `notice ${n.id} to ${n.to}`,
         ),
       ];
-      return ok(lines.join("\n") || "learned none", { learned: opened.work.learned, ...outcome });
+      const text = [lines.join("\n") || "learned none", ...laneEnd(env, opened.work)].join("\n");
+      return ok(text, { learned: opened.work.learned, ...outcome });
     }
     case "phase": {
       const opened = openForChange(env, args[0]);

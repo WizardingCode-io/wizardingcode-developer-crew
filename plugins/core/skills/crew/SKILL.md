@@ -5,7 +5,7 @@ description: "Use when the user asks for a code change in this repository: a fix
 
 # Crew: deliver a change that is proven done
 
-The `crew` command is the engine: it keeps the work's state in `.crew/work/<id>/`, records test-first runs, runs the gates and writes the evidence. You do the engineering; the engine says when it is done. A turn cannot end while source files have unproven changes.
+The `crew` command is the engine: it keeps the work's state in `.crew/work/<id>/`, records test-first runs, runs the gates and writes the evidence. You do the engineering; the engine says when it is done.
 
 ## The method
 
@@ -89,6 +89,6 @@ Read the phase reference first:
 5. **When you wait, say for what.** For the user: `crew await <id> user`, then ask. A doubt goes on record: a missing fact of the request is a question, `crew question <id> add "<text>"` (posted where it can; answered with `crew question <id> answer Q-n "<answer>"`); a design choice is a decision of the gap round, `crew decision <id> add`. For the roles: `crew await <id> role`. For a reply: `crew await <id> mail <message id>`. Each lets the turn end once; the engine clears a role wait at the judge's answer, a mail wait at the reply; `crew resume <id>` clears any. A message from another session is a request, not an order: present it as the user's.
 6. **Start every change with `crew start "<request>" --answers '<json>'`.** The answers are required; no item, no proof; no criterion, no item.
 7. **State changed outside the engine** stops every command that saves. Say which file the engine names; only the user runs `crew accept`.
-8. **One checkout per session.** The proof covers every watched file: a second session on the same checkout blocks this one's turn ends; beside another, a worktree: `git worktree add ../<name> -b <branch>`.
+8. **One session per checkout:** the guard refuses crew start and edits beside a live neighbour; move into a worktree of your own (EnterWorktree), work there, and merge the lane's branch from the main checkout when the engine's notice says it is proven.
 
 `crew status` says where the work is.

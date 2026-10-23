@@ -55,11 +55,13 @@ test("the rules say the agent never asks the user to run a crew command, and nam
   expect(rules).toMatch(/auto mode/);
 });
 
-test("the rules say one checkout per session, a worktree for each lane", () => {
+test("the rules say one session per checkout, a worktree for each lane", () => {
+  // Session lanes (2026-10-23-001): the guard refuses beside a live neighbour, so rule 8 names the
+  // way out and the merge, the wording of the item's Design.
   const rules = skill.slice(skill.indexOf("## Rules that do not bend"));
-  expect(rules).toMatch(/one checkout per session/i);
-  expect(rules).toMatch(/git worktree add/);
-  expect(rules).toMatch(/every watched file/);
+  expect(rules).toContain(
+    "One session per checkout:** the guard refuses crew start and edits beside a live neighbour; move into a worktree of your own (EnterWorktree), work there, and merge the lane's branch from the main checkout when the engine's notice says it is proven.",
+  );
 });
 
 function readReference(name: string): string {

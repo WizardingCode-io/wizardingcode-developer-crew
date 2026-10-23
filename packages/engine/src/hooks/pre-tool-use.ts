@@ -22,9 +22,10 @@ import {
   takesNext,
   WRAPPERS,
 } from "../shell-words.ts";
-import { recordWorking } from "../state.ts";
+import { loadState, recordWorking, updateSession } from "../state.ts";
 import type { Policy } from "../types.ts";
 import { activeWork, isBeforeBuild, loadWork } from "../work.ts";
+import { holdsOpenItem, neighbours } from "./context.ts";
 import { POWERSHELL_HOOK, powershellAsPosix, unreadablePowershell } from "./powershell.ts";
 import { LEADING_KEYWORDS, OPERATOR_PREFIX, type Piece, readCommand, type Token } from "./shell.ts";
 import { roleOf, teamOf } from "./subagent-stop.ts";
@@ -1086,6 +1087,32 @@ function answer(permissionDecision: "deny" | "ask", reason: string): HookRespons
   };
 }
 
+/** Whether a command line holds a crew start, in any spelling the reader reads as crew (session lanes, AC-2 and AC-3). */
+export function startsItem(command: string): boolean {
+  return crewCommandsOf(walk(command).found).some((c) => parse(c.args).positional[0] === "start");
+}
+
+/**
+ * The refusal beside a live neighbour (session lanes, AC-3), after every other rule: a check that
+ * fails is no neighbour and never skips another rule (the security lead's R-2).
+ */
+function laneDenial(ctx: HookContext, edit: boolean): HookResponse | null {
+  let first: { id: string; item: string } | undefined;
+  try {
+    // A session working on an open item of its own is never refused its edits (its neighbours are
+    // named in its context only); a second crew start beside a neighbour is still refused.
+    first = neighbours(ctx)[0];
+    if (first && edit && holdsOpenItem(ctx)) return null;
+  } catch {
+    return null;
+  }
+  if (!first) return null;
+  return answer(
+    "deny",
+    `Crew: session ${first.id.slice(0, 8)} is working on ${first.item} in this checkout; start yours in a worktree of your own: call EnterWorktree (Claude Code) or run git worktree add ../<name> -b <branch> and continue there, then crew start`,
+  );
+}
+
 function pathFromInput(input: Record<string, unknown>): string | null {
   for (const key of ["file_path", "notebook_path", "path"]) {
     const value = input[key];
@@ -1146,7 +1173,7 @@ export function onPreToolUse(ctx: HookContext, payload: HookPayload): HookRespon
         `Crew: work ${work.id} is in phase ${work.phase} on the ${work.route} route; source files change in the build phase (crew phase ${work.id} next)`,
       );
     }
-    return {};
+    return laneDenial(ctx, true) ?? {};
   }
   if (tool === "Bash") {
     const written = typeof input.command === "string" ? input.command : "";
@@ -1386,6 +1413,22 @@ export function onPreToolUse(ctx: HookContext, payload: HookPayload): HookRespon
           `Crew: ${what}, and no person is watching this session (${where}); write the command so that the hook can read it`,
         );
       return answer("ask", `Crew: ${what}, so a person decides`);
+    }
+    // A crew start beside a live neighbour is refused; one let through records its time, which
+    // the PostToolUse reads the new item's creation against (AC-2).
+    if (crewCommands.some((c) => parse(c.args).positional[0] === "start")) {
+      const lane = laneDenial(ctx, false);
+      if (lane) return lane;
+      try {
+        const active = loadState(ctx.paths).active;
+        updateSession(ctx.paths, ctx.sessionId, (session) => {
+          session.startAt = nowIso();
+          if (active) session.startActive = active;
+          else delete session.startActive;
+        });
+      } catch {
+        // no time recorded: the start claims no item
+      }
     }
     if (asked) return answer(...asked);
   }

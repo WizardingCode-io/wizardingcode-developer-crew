@@ -1,11 +1,15 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { loadEvidence, saveEvidence } from "../src/evidence.ts";
+import { handleHook } from "../src/hooks/index.ts";
 import { onPreToolUse, openedSessionDenial } from "../src/hooks/pre-tool-use.ts";
+import type { HookPayload } from "../src/hooks/types.ts";
 import { PROTECTED_WORK_FILES } from "../src/paths.ts";
-import { workingRoles } from "../src/state.ts";
+import { loadState, saveState, workingRoles } from "../src/state.ts";
+import * as workModule from "../src/work.ts";
 import { createWork, saveWork } from "../src/work.ts";
-import { git, hookContext, makeRepo, tempDir, testEnv } from "./helpers.ts";
+import { git, hookContext, makeRepo, repoPaths, tempDir, testEnv } from "./helpers.ts";
 
 test("SP2b: judgement and debate are not user-only; the review folder is the engine's since SP7b, its ui/ folder the session's", () => {
   const { root, ctx } = setup();
@@ -3882,4 +3886,231 @@ test("CON5-AC-8-hook (finding 30): crew task <id> drop T-n is the user's: asked 
     { ...testEnv(), CLAUDE_CODE_SESSION_ATTENDED: "0" },
   );
   expect(decision(bash(headless, "crew task w1 drop T-1", "auto"))).toBe("deny");
+});
+
+const LANE_A = "aaaaaaaa-0000-4000-8000-00000000000a";
+const LANE_B = "bbbbbbbb-0000-4000-8000-00000000000b";
+const LANE_C = "cccccccc-0000-4000-8000-00000000000c";
+
+/** The refusal beside a live neighbour (session lanes, AC-3), one line with the way out. */
+function laneReason(sid8: string, item: string): string {
+  return `Crew: session ${sid8} is working on ${item} in this checkout; start yours in a worktree of your own: call EnterWorktree (Claude Code) or run git worktree add ../<name> -b <branch> and continue there, then crew start`;
+}
+
+/**
+ * A checkout with an item in build, the hooks of its sessions as Claude Code runs them, and the
+ * session records written as the engine's hooks write them (AC-1): liveness data, not a protected
+ * record, so a fixture may set a neighbour's time directly.
+ */
+function laneCheckout() {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const env = testEnv();
+  const paths = repoPaths(root, env);
+  const item = (title: string) => {
+    const work = createWork(paths, title);
+    work.route = "standard";
+    work.phase = "build";
+    saveWork(paths, work);
+    return work;
+  };
+  const record = (id: string, fields: Record<string, unknown>) => {
+    const state = loadState(paths);
+    (state.sessions as Record<string, unknown>)[id] = {
+      baseline: null,
+      stopBlocks: 0,
+      cwd: root,
+      seenAt: new Date().toISOString(),
+      ...fields,
+    };
+    saveState(paths, state);
+  };
+  const hook = (
+    session: string,
+    tool_name: string,
+    tool_input: Record<string, unknown>,
+    options: { cwd?: string; env?: NodeJS.ProcessEnv; permission_mode?: string } = {},
+  ) =>
+    handleHook(
+      "pre-tool-use",
+      {
+        session_id: session,
+        cwd: options.cwd ?? root,
+        tool_name,
+        tool_input,
+        permission_mode: options.permission_mode ?? "default",
+      },
+      options.env ?? env,
+    );
+  const writeTo = (session: string, file: string, options?: Parameters<typeof hook>[3]) =>
+    hook(session, "Write", { file_path: file, content: "y" }, options);
+  const bash = (session: string, command: string, options?: Parameters<typeof hook>[3]) =>
+    hook(session, "Bash", { command }, options);
+  return { root, env, paths, item, record, hook, writeTo, bash };
+}
+
+test("LANE-AC-3: beside a live neighbour holding an open item, crew start and a watched write are refused with the neighbour and the way out; its own item, reads, reading commands and a gone neighbour pass", () => {
+  const { root, env, paths, item, record, hook, writeTo, bash } = laneCheckout();
+  const held = item("Add a total");
+  record(LANE_A, { item: held.id });
+  const refused = (r: Record<string, unknown>) => ({ decision: decision(r), reason: reason(r) });
+  const expected = { decision: "deny", reason: laneReason("aaaaaaaa", held.id) };
+  // Session B is refused crew start and a Write to a watched file, each with the one-line reason.
+  expect(refused(bash(LANE_B, `crew start "x" --answers {}`))).toEqual(expected);
+  expect(refused(writeTo(LANE_B, join(root, "src", "a.ts")))).toEqual(expected);
+  for (const tool of ["Edit", "MultiEdit"])
+    expect(refused(hook(LANE_B, tool, { file_path: join(root, "src", "a.ts") }))).toEqual(expected);
+  expect(
+    refused(hook(LANE_B, "NotebookEdit", { notebook_path: join(root, "src", "n.ipynb") })),
+  ).toEqual(expected);
+  // Reads, crew's reading commands, a plain command and an unwatched path pass.
+  expect(hook(LANE_B, "Read", { file_path: join(root, "src", "a.ts") })).toEqual({});
+  expect(bash(LANE_B, "crew status")).toEqual({});
+  expect(bash(LANE_B, "ls")).toEqual({});
+  expect(writeTo(LANE_B, join(root, "docs", "notes.md"))).toEqual({});
+  // A's own item: its edits pass.
+  expect(writeTo(LANE_A, join(root, "src", "a.ts"))).toEqual({});
+  // A made stale (seen eleven minutes ago), or ended: B passes.
+  record(LANE_A, { item: held.id, seenAt: new Date(Date.now() - 11 * 60_000).toISOString() });
+  expect(writeTo(LANE_B, join(root, "src", "a.ts"))).toEqual({});
+  expect(bash(LANE_B, `crew start "x" --answers {}`)).toEqual({});
+  record(LANE_A, { item: held.id, endedAt: new Date().toISOString() });
+  expect(writeTo(LANE_B, join(root, "src", "a.ts"))).toEqual({});
+  // A live again, its item proven: no longer open, B passes.
+  record(LANE_A, { item: held.id });
+  expect(refused(writeTo(LANE_B, join(root, "src", "a.ts")))).toEqual(expected);
+  const evidence = loadEvidence(paths, held.id).evidence;
+  evidence.verdict = "proven";
+  saveEvidence(paths, held.id, evidence);
+  expect(writeTo(LANE_B, join(root, "src", "a.ts"))).toEqual({});
+  expect(bash(LANE_B, `crew start "x" --answers {}`)).toEqual({});
+  // A session opened by mail keeps its own rules: no lane refusal, its merge still denied.
+  const other = item("Add a count");
+  record(LANE_A, { item: other.id });
+  const mailEnv = {
+    ...env,
+    WIZARDINGCODE_CREW_MAIL_ID: "M-2026-10-23-001-storefront",
+    WIZARDINGCODE_CREW_MAIL_BRANCH: "crew/2026-10-23-001/T-1",
+    CLAUDE_CODE_SESSION_ATTENDED: "0",
+  };
+  expect(hookContext({ session_id: LANE_B, cwd: root }, mailEnv).openedBy).toBe(
+    "M-2026-10-23-001-storefront",
+  );
+  expect(
+    writeTo(LANE_B, join(root, "src", "a.ts"), { env: mailEnv, permission_mode: "dontAsk" }),
+  ).toEqual({});
+  expect(
+    reason(bash(LANE_B, "git merge main", { env: mailEnv, permission_mode: "dontAsk" })),
+  ).toContain("Crew: this session was opened by mail (M-2026-10-23-001-storefront)");
+});
+
+test("LANE-AC-3-task: an engine-opened task session in a worktree of the lead's checkout is no neighbour of the lead", () => {
+  const { root, env, paths, item, record, writeTo, bash } = laneCheckout();
+  const held = item("Add a total");
+  record(LANE_A, { item: held.id });
+  const worktree = join(root, ".crew", "worktrees", "t1");
+  git(root, "worktree", "add", "-q", "-b", `crew/${held.id}/T-1`, worktree);
+  const task = "tttttttt-0000-4000-8000-00000000000t";
+  // The task session works in its own worktree: its record is that checkout's, never the lead's.
+  expect(writeTo(task, join(worktree, "src", "a.ts"), { cwd: worktree })).toEqual({});
+  const own = loadState(repoPaths(worktree, env)).sessions[task] as { cwd?: unknown } | undefined;
+  expect(own?.cwd).toBe(worktree);
+  expect(Object.keys(loadState(paths).sessions)).not.toContain(task);
+  // The lead's own edits and start pass beside it.
+  expect(writeTo(LANE_A, join(root, "src", "a.ts"))).toEqual({});
+  expect(bash(LANE_A, `crew start "next" --answers {}`)).toEqual({});
+});
+
+test("LANE-AC-3-clear: the person's earlier session ended by SessionEnd (clear) is no neighbour; a crashed one still live is, with the way out, and crew start in a worktree passes", () => {
+  const { root, env, item, record, writeTo, bash } = laneCheckout();
+  const earlier = item("Add a total");
+  record(LANE_A, { item: earlier.id });
+  handleHook(
+    "session-end",
+    {
+      session_id: LANE_A,
+      cwd: root,
+      hook_event_name: "SessionEnd",
+      reason: "clear",
+    } as HookPayload,
+    env,
+  );
+  expect(
+    (loadState(repoPaths(root, env)).sessions[LANE_A] as { endedAt?: unknown }).endedAt,
+  ).toEqual(expect.any(String));
+  // The session after the clear works on in the same checkout.
+  expect(writeTo(LANE_B, join(root, "src", "a.ts"))).toEqual({});
+  expect(bash(LANE_B, `crew start "x" --answers {}`)).toEqual({});
+  // An earlier session that crashed (no SessionEnd) is live for ten minutes: refused, with the way out.
+  const crashed = item("Add a count");
+  record(LANE_C, { item: crashed.id });
+  const refusal = bash(LANE_B, `crew start "x" --answers {}`);
+  expect(decision(refusal)).toBe("deny");
+  expect(reason(refusal)).toBe(laneReason("cccccccc", crashed.id));
+  expect(reason(refusal)).toContain("EnterWorktree");
+  expect(reason(refusal)).toContain("git worktree add");
+  // In a worktree of its own, the start passes.
+  const lane = join(tempDir(), "lane");
+  git(root, "worktree", "add", "-q", "-b", "lane-b", lane);
+  expect(bash(LANE_B, `crew start "x" --answers {}`, { cwd: lane })).toEqual({});
+});
+
+test("LANE-AC-3-corrupt: a neighbour check that throws is no neighbour and skips no other rule; a corrupt state.json leaves the protected-path denial of a .crew/ write working", () => {
+  const { root, paths, item, record, writeTo } = laneCheckout();
+  const held = item("Add a total");
+  record(LANE_A, { item: held.id });
+  const protectedReason = (file: string) =>
+    `Crew: ${file} is maintained by the engine and is changed through the crew command`;
+  const policyFile = join(root, ".crew", "policy.json");
+  const evidenceFile = join(root, ".crew", "work", held.id, "evidence.json");
+  // The check runs, and throws: no neighbour, and the rules before it still answer.
+  const open = spyOn(workModule, "openItems").mockImplementation(() => {
+    throw new Error("the work folder could not be read");
+  });
+  try {
+    expect(writeTo(LANE_B, join(root, "src", "a.ts"))).toEqual({});
+    expect(open).toHaveBeenCalled();
+    expect(reason(writeTo(LANE_B, policyFile))).toBe(protectedReason(policyFile));
+  } finally {
+    open.mockRestore();
+  }
+  // A state file that does not parse, sessions that are not a map, entries that are not records.
+  const stateFile = join(paths.localDir, "state.json");
+  for (const corrupt of [
+    "{not json",
+    JSON.stringify({ active: held.id, sessions: "garbage" }),
+    JSON.stringify({ active: held.id, sessions: { [LANE_B]: 7, [LANE_A]: null } }),
+  ]) {
+    writeFileSync(stateFile, corrupt);
+    expect(reason(writeTo(LANE_B, policyFile)), corrupt).toBe(protectedReason(policyFile));
+    writeFileSync(stateFile, corrupt);
+    expect(reason(writeTo(LANE_B, evidenceFile)), corrupt).toBe(protectedReason(evidenceFile));
+  }
+});
+
+test("LANE-AC-3-own: a session holding an open item of its own is never refused beside a neighbour holding another; a session with none still is", () => {
+  const { root, item, record, writeTo } = laneCheckout();
+  const first = item("Add a total");
+  const second = item("Add a count");
+  record(LANE_A, { item: first.id });
+  record(LANE_B, { item: second.id });
+  // Each one's own watched write passes, beside the other live session.
+  expect(writeTo(LANE_A, join(root, "src", "a.ts"))).toEqual({});
+  expect(writeTo(LANE_B, join(root, "src", "a.ts"))).toEqual({});
+  // A third session with no item of its own is refused, naming the first neighbour by id.
+  expect(reason(writeTo(LANE_C, join(root, "src", "a.ts")))).toBe(laneReason("aaaaaaaa", first.id));
+});
+
+test("LANE-AC-3-start: a session holding an open item of its own is still refused a second crew start beside a live neighbour holding another; its own watched write passes", () => {
+  const { root, item, record, writeTo, bash } = laneCheckout();
+  const first = item("Add a total");
+  const second = item("Add a count");
+  record(LANE_A, { item: first.id });
+  record(LANE_B, { item: second.id });
+  expect(reason(bash(LANE_B, `crew start "y" --answers {}`))).toBe(
+    laneReason("aaaaaaaa", first.id),
+  );
+  expect(writeTo(LANE_B, join(root, "src", "a.ts"))).toEqual({});
 });

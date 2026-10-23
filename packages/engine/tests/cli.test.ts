@@ -23,6 +23,7 @@ import { loadEvidence, saveEvidence } from "../src/evidence.ts";
 import { writeJson } from "../src/fs.ts";
 import { readReviewInputs } from "../src/judgement.ts";
 import { readBase } from "../src/knowledge.ts";
+import * as mailModule from "../src/mail.ts";
 import {
   mailbox,
   mailContext,
@@ -35,11 +36,16 @@ import {
 import { isAlive } from "../src/open.ts";
 import { isProtectedPath, knowledgePath } from "../src/paths.ts";
 import { loadPolicy } from "../src/policy.ts";
-import { loadProfile } from "../src/profile.ts";
+import { loadProfile, saveProfile } from "../src/profile.ts";
 import { guaranteeLines, pluginRoot, RUNTIMES } from "../src/runtimes.ts";
 import { loadState, recordWorking } from "../src/state.ts";
 import * as store from "../src/store.ts";
-import { readProtectedJson, writeProtectedJson } from "../src/store.ts";
+import {
+  integrityOf,
+  readProtectedJson,
+  recordIntegrity,
+  writeProtectedJson,
+} from "../src/store.ts";
 import { taskNames } from "../src/tasks.ts";
 import type { GateRun, KnowledgeEntry, Mailbox, Message, WorkItem } from "../src/types.ts";
 import { fileHash } from "../src/validation.ts";
@@ -10071,4 +10077,153 @@ test("CON5-AC-5 (finding 54): crew help says what crew decisions --grep matches"
   expect(help).toContain(
     "\n  decisions [--grep <text>]   the project's decision register, newest first; --grep matches the id, the text and the answer, in any case\n",
   );
+});
+
+/** A file's text, or null when it is not there: a missing copy is an assertion, never a crash. */
+function textOrNull(path: string): string | null {
+  return existsSync(path) ? readFileSync(path, "utf8") : null;
+}
+
+/** A main checkout whose policy and profile are its own (not what a detection would write), not committed. */
+async function laneMain(policy: Record<string, unknown> = { minimumRoute: "standard" }) {
+  const env = testEnv();
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  write(root, ".crew/policy.json", `${JSON.stringify(policy, null, 2)}\n`);
+  const c = io(root, env);
+  expect((await c.run("status")).code).toBe(0);
+  const paths = repoPaths(root, env);
+  const profile = loadProfile(paths).profile;
+  if (!profile) throw new Error("no profile in the main checkout");
+  profile.watch.exclude = [...profile.watch.exclude, "tmp/**"];
+  saveProfile(paths, profile);
+  recordIntegrity(paths, join(root, ".crew", "policy.json"));
+  return { env, root, paths, c };
+}
+
+test("LANE-AC-5: a worktree with no policy.json or profile.json takes its main checkout's at the first engine command, recorded under its own integrity record; never a tampered one, never over its own, never from a foreign folder", async () => {
+  const { env, root } = await laneMain();
+  const mainPolicy = join(root, ".crew", "policy.json");
+  const mainProfile = join(root, ".crew", "profile.json");
+  const lane = join(tempDir(), "lane");
+  git(root, "worktree", "add", "-q", "-b", "lane-a", lane);
+  const status = await io(lane, env).run("status");
+  expect(status.code, status.err).toBe(0);
+  const lanePaths = repoPaths(lane, env);
+  const lanePolicy = join(lane, ".crew", "policy.json");
+  const laneProfile = join(lane, ".crew", "profile.json");
+  // The copies, byte for byte, and their hashes in the worktree's own record.
+  expect(textOrNull(lanePolicy)).toBe(textOrNull(mainPolicy));
+  expect(textOrNull(laneProfile)).toBe(textOrNull(mainProfile));
+  expect(integrityOf(lanePaths)[".crew/policy.json"]).toEqual(expect.any(String));
+  expect(integrityOf(lanePaths)[".crew/profile.json"]).toEqual(expect.any(String));
+  expect(readProtectedJson(lanePaths, lanePolicy).tampered).toBe(false);
+  expect(readProtectedJson(lanePaths, laneProfile).tampered).toBe(false);
+  expect(loadPolicy(lanePaths)).toMatchObject({
+    tampered: false,
+    policy: { minimumRoute: "standard" },
+  });
+  expect(loadProfile(lanePaths).profile?.watch.exclude).toContain("tmp/**");
+  // A worktree's own file is never overwritten; the one it lacks is still copied.
+  const own = join(tempDir(), "own");
+  git(root, "worktree", "add", "-q", "-b", "lane-own", own);
+  const ownPolicy = `${JSON.stringify({ minimumRoute: "full" }, null, 2)}\n`;
+  write(own, ".crew/policy.json", ownPolicy);
+  expect((await io(own, env).run("status")).code).toBe(0);
+  expect(textOrNull(join(own, ".crew", "policy.json"))).toBe(ownPolicy);
+  expect(textOrNull(join(own, ".crew", "profile.json"))).toBe(textOrNull(mainProfile));
+  // A main policy changed outside the engine is not copied, and the output says so.
+  writeFileSync(mainPolicy, `${JSON.stringify({ minimumRoute: "fast" }, null, 2)}\n`);
+  const tampered = join(tempDir(), "tampered");
+  git(root, "worktree", "add", "-q", "-b", "lane-tampered", tampered);
+  const refused = await io(tampered, env).run("status");
+  expect(existsSync(join(tampered, ".crew", "policy.json"))).toBe(false);
+  expect(`${refused.out}${refused.err}`).toContain("not copied");
+  expect(`${refused.out}${refused.err}`).toContain("policy.json");
+  expect(textOrNull(join(tampered, ".crew", "profile.json"))).toBe(textOrNull(mainProfile));
+  // A .git file naming a foreign folder that carries a crafted policy, even with a gitdir pointing
+  // back: git does not resolve it to that folder's repository, so nothing is copied, and it is said.
+  const foreign = tempDir();
+  const crafted = `${JSON.stringify({ attendedDecisions: "relay", allowSkips: ["*"] }, null, 2)}\n`;
+  write(foreign, ".crew/policy.json", crafted);
+  const posing = tempDir();
+  write(foreign, ".git/worktrees/x/gitdir", `${join(posing, ".git")}\n`);
+  write(posing, ".git", `gitdir: ${join(foreign, ".git", "worktrees", "x")}\n`);
+  const crafty = await io(posing, env).run("status");
+  expect(existsSync(join(posing, ".crew", "policy.json"))).toBe(false);
+  expect(`${crafty.out}${crafty.err}`).toContain("not copied");
+});
+
+test("LANE-AC-6: an item of a worktree that learns sends its project the lane notice and says to merge the branch from the main checkout; a mail failure is a note; a learn in the main checkout sends nothing", async () => {
+  const env = testEnv();
+  delete env.CLAUDE_CODE_SESSION_ID;
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  write(root, ".crew/policy.json", JSON.stringify({ mail: { workspace: "acme", name: "shop" } }));
+  const c = io(root, env);
+  expect((await c.run("status")).code).toBe(0);
+  const inbox = () =>
+    readBox(mailbox(repoPaths(root, env).userDir, "acme", "shop").dir, "inbox").box.messages;
+  const lane = join(tempDir(), "lane");
+  git(root, "worktree", "add", "-q", "-b", "lane-total", lane);
+  const cw = io(lane, env);
+  /** An item proven in `at`, moved to learn and committed: its id. */
+  const provenItem = async (
+    at: ReturnType<typeof io>,
+    dir: string,
+    title: string,
+    file: string,
+  ) => {
+    const id = (await at.json("start", title, "--answers", answers, "--criterion", "it adds up"))
+      .data.id as string;
+    write(dir, file, `export const v = "${title}";\n`);
+    await at.run("skip", id, "tdd:AC-1", "--reason", "manual");
+    expect((await at.run("gate", "run", id)).out).toContain(`Proven: ${id}`);
+    expect((await at.run("phase", id, "next")).out.trim()).toBe(`${id}: phase learn`);
+    git(dir, "add", "-A");
+    git(dir, "commit", "-q", "-m", title);
+    return id;
+  };
+  const id = await provenItem(cw, lane, "Add a total", "src/a.ts");
+  const before = inbox().length;
+  const learned = await cw.run("learn", id);
+  expect(learned.code, learned.err).toBe(0);
+  const notice = `Lane lane-total (${id}, proven) is proven and committed: merge it from the main checkout.`;
+  const received = inbox().slice(before);
+  expect(
+    received.some((m) => m.type === "notice" && (m.subject === notice || m.body === notice)),
+  ).toBe(true);
+  expect(learned.out.trim().split("\n").at(-1)).toBe(
+    `merge lane-total from ${root} when its work is committed`,
+  );
+  // A mail that fails is a note: the learn is done.
+  const realSend = mailModule.send;
+  const sending = spyOn(mailModule, "send").mockImplementation(((
+    ...args: Parameters<typeof mailModule.send>
+  ) => {
+    if (args[1].text.startsWith("Lane "))
+      throw new Error("the mailbox could not be written: disk full");
+    return realSend(...args);
+  }) as typeof mailModule.send);
+  let failed: Awaited<ReturnType<typeof cw.run>>;
+  const second = await provenItem(cw, lane, "Add a count", "src/b.ts");
+  try {
+    failed = await cw.run("learn", second);
+  } finally {
+    sending.mockRestore();
+  }
+  expect(failed.code, failed.err).toBe(0);
+  expect(loadWork(repoPaths(lane, env), second).work?.learned).toBeDefined();
+  expect(`${failed.out}${failed.err}`).toContain("disk full");
+  // A learn in the main checkout sends no lane notice and names no merge.
+  const mainItem = await provenItem(c, root, "Add a sum", "src/c.ts");
+  const count = inbox().length;
+  const mainLearn = await c.run("learn", mainItem);
+  expect(mainLearn.code, mainLearn.err).toBe(0);
+  expect(inbox().length).toBe(count);
+  expect(mainLearn.out).not.toContain("merge ");
 });

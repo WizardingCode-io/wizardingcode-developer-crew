@@ -12,7 +12,7 @@ import { isLive, loadRegistry, mailContext, send } from "../src/mail.ts";
 import { listPacks, registerPack } from "../src/packs.ts";
 import { loadPolicy } from "../src/policy.ts";
 import { loadProfile, saveProfile } from "../src/profile.ts";
-import { loadState } from "../src/state.ts";
+import { loadState, saveState } from "../src/state.ts";
 import { VERSION } from "../src/version.ts";
 import { activeWork, addCriterion, createWork, saveWork } from "../src/work.ts";
 import { hookContext, makeRepo, repoPaths, tempDir, testEnv, write } from "./helpers.ts";
@@ -511,4 +511,58 @@ test("CON3-AC-4: the SessionStart context names the running engine's version (fi
   const text = start.hookSpecificOutput?.additionalContext ?? "";
   expect(text).toContain("WizardingCode Developer Crew is active in this repository.");
   expect(text).toContain(`Engine: crew ${VERSION}.`);
+});
+
+test("LANE-AC-4: the start context and each prompt's context name the live neighbour sessions and the rule; a session alone gets nothing added", () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const env = testEnv();
+  const paths = repoPaths(root, env);
+  const open = (title: string) => {
+    const work = createWork(paths, title);
+    work.phase = "build";
+    saveWork(paths, work);
+    return work.id;
+  };
+  const total = open("Add a total");
+  const count = open("Add a count");
+  // Two live neighbours, as their hooks record them (AC-1): liveness data, set here directly.
+  const state = loadState(paths);
+  const now = Date.now();
+  (state.sessions as Record<string, unknown>)["aaaaaaaa-0000-4000-8000-00000000000a"] = {
+    baseline: null,
+    stopBlocks: 0,
+    cwd: root,
+    seenAt: new Date(now - 2000).toISOString(),
+    item: total,
+  };
+  (state.sessions as Record<string, unknown>)["cccccccc-0000-4000-8000-00000000000c"] = {
+    baseline: null,
+    stopBlocks: 0,
+    cwd: root,
+    seenAt: new Date(now - 1000).toISOString(),
+    item: count,
+  };
+  saveState(paths, state);
+  const line = `Crew: 2 other live session(s) in this checkout: aaaaaaaa on ${total}, cccccccc on ${count}. Start new work in a worktree of your own (EnterWorktree).`;
+  const contextOf = (response: Record<string, unknown>) =>
+    (response.hookSpecificOutput as { additionalContext?: string } | undefined)
+      ?.additionalContext ?? "";
+  const b = { session_id: "bbbbbbbb-0000-4000-8000-00000000000b", cwd: root };
+  expect(contextOf(handleHook("session-start", { ...b, source: "startup" }, env))).toContain(line);
+  expect(contextOf(handleHook("prompt", { ...b, prompt: "go on" }, env))).toContain(line);
+  // A session alone: nothing added at its start or its prompt.
+  const alone = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const solo = { session_id: "dddddddd-0000-4000-8000-00000000000d", cwd: alone };
+  expect(contextOf(handleHook("session-start", { ...solo, source: "startup" }, env))).not.toContain(
+    "other live session",
+  );
+  expect(contextOf(handleHook("prompt", { ...solo, prompt: "go on" }, env))).not.toContain(
+    "other live session",
+  );
 });
