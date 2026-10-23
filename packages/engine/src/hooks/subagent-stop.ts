@@ -691,12 +691,21 @@ function joinEarlierFile(
 }
 
 /**
+ * Round `k`'s name of a file: `.round<k>` before its extension (`lead-qa.round2.md`,
+ * `ruling.round2.json`), at the end of a name with none (finding 142).
+ */
+function roundName(file: string, k: number): string {
+  const ext = /\.[^./]+$/.exec(file)?.[0] ?? "";
+  return `${file.slice(0, file.length - ext.length)}.round${k}${ext}`;
+}
+
+/**
  * The file at `file`, when one stands there, copied to the lowest free `.round<n>.md` beside it
  * before it is written over: from 2, a gap is filled, an archive never overwritten; a directory
  * there is not an archive, so the write fails on it and says so. An answer on disk is never lost
  * (finding 125): the resumed branch and the first-answer branch both go through here.
  */
-function archiveExisting(
+export function archiveExisting(
   dir: string,
   file: string,
 ): { archived: string | null } | { failed: string; error: string } {
@@ -707,7 +716,7 @@ function archiveExisting(
     return { failed: file, error: error instanceof Error ? error.message : String(error) };
   }
   if (current === null) return { archived: null };
-  const archived = file.replace(/\.md$/, `.round${freeArchiveIndex(dir, file)}.md`);
+  const archived = roundName(file, freeArchiveIndex(dir, file));
   try {
     writeText(join(dir, archived), current);
   } catch (error) {
@@ -716,10 +725,10 @@ function archiveExisting(
   return { archived };
 }
 
-/** The lowest `k` from 2 such that no regular file stands at `<reply>.round<k>.md`. */
-function freeArchiveIndex(dir: string, replyFile: string): number {
+/** The lowest `k` from 2 such that no regular file stands at the reply's round `k` name (`roundName`). */
+export function freeArchiveIndex(dir: string, replyFile: string): number {
   for (let k = 2; ; k++) {
-    const candidate = join(dir, replyFile.replace(/\.md$/, `.round${k}.md`));
+    const candidate = join(dir, roundName(replyFile, k));
     try {
       if (!statSync(candidate).isFile()) return k;
     } catch {

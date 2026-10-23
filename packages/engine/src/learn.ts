@@ -219,6 +219,17 @@ function citedIds(dir: string, work: WorkItem): string[] {
   return listed.filter((id) => cited.has(id));
 }
 
+/** Rule 17's refusal: every entry that already records the cause, with the two ways out of each (finding 139). */
+function duplicateRefusal(id: string, duplicates: readonly KnowledgeEntry[]): string {
+  const origin = (d: KnowledgeEntry) => `item ${d.item ?? "-"}, commit ${d.commit ?? "-"}`;
+  const contradict = (d: KnowledgeEntry) =>
+    `crew knowledge contradict ${d.id} --reason "<why>" --item ${id}`;
+  const [only] = duplicates;
+  if (only && duplicates.length === 1)
+    return `${only.id} already records this root cause (${origin(only)}): crew learn ${id} --confirm ${only.id} confirms it, ${contradict(only)} disputes it`;
+  return `${duplicates.map((d) => d.id).join(", ")} already record this root cause (${duplicates.map((d) => `${d.id}: ${origin(d)}`).join("; ")}): crew learn ${id} --confirm <K-n> confirms one of them, ${duplicates.map(contradict).join(" and ")} dispute them`;
+}
+
 /**
  * The learn of one item: refused outside the phase, on an audit, twice, on a proof that no longer
  * holds, on a secret, on an id the project cannot read, on a duplicate root cause without
@@ -266,23 +277,25 @@ export function learnItem(
       };
   }
   // Rule 17: a root cause enters once, but beside an entry this item contradicted in this project
-  // (finding 137), the way out the refusal names.
+  // (finding 137) or one its analysis cites as [K:K-n] (finding 139); every match in one refusal.
   const cause = drafts.find((d) => d.kind === "root-cause");
   const contradicted = (e: KnowledgeEntry): boolean =>
     e.contradictedBy.some((r) => r.item === work.id && r.project === scope.project);
-  const duplicate = cause
-    ? entries.find(
+  const cited = new Set(
+    [...(readText(join(dir, "analysis.md")) ?? "").matchAll(/\[K:([^\]]+)\]/g)].map((m) => m[1]),
+  );
+  const duplicates = cause
+    ? entries.filter(
         (e) =>
           e.kind === "root-cause" &&
           visibleTo(e, scope) &&
           !contradicted(e) &&
+          !cited.has(e.id) &&
           sameRootCause(e, cause),
       )
-    : undefined;
-  if (duplicate && confirmTarget?.id !== duplicate.id)
-    return {
-      refused: `${duplicate.id} already records this root cause (item ${duplicate.item ?? "-"}, commit ${duplicate.commit ?? "-"}): crew learn ${work.id} --confirm ${duplicate.id} confirms it, crew knowledge contradict ${duplicate.id} --reason "<why>" --item ${work.id} disputes it`,
-    };
+    : [];
+  if (duplicates.length && !duplicates.some((d) => d.id === confirmTarget?.id))
+    return { refused: duplicateRefusal(work.id, duplicates) };
   const toWrite = confirmTarget ? drafts.filter((d) => d !== cause) : drafts;
   // The writes: a stack preference of this workspace is rewritten in place.
   const written: KnowledgeEntry[] = [];

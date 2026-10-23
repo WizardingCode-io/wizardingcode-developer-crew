@@ -4114,3 +4114,516 @@ test("LANE-AC-3-start: a session holding an open item of its own is still refuse
   );
   expect(writeTo(LANE_B, join(root, "src", "a.ts"))).toEqual({});
 });
+
+// The closing debt chore's guard rows (item 2026-10-23-004): the engine's folder in its lexical
+// forms, the writers that copy into it, flock's following words, npx by any spelling, the other
+// worktrees' engine files, a Bash write beside a live neighbour and the agent's seat verb.
+const ENGINE_WRITE =
+  "Crew: files under .crew/ and ~/.wizardingcode/crew that the engine owns are written only by the crew command";
+const HOOK_VERB_REASON_TEXT =
+  "Crew: crew hook runs from the runtime's hook configuration alone, never from a command";
+/** A Bash call in a fresh checkout under the given policy (relay by default), as the default mode runs it. */
+function debtBash(policy: Record<string, unknown> | null = null) {
+  const { root, ctx } = setup(policy);
+  const bash = (command: string, permission_mode = "default") =>
+    onPreToolUse(ctx, { tool_name: "Bash", tool_input: { command }, permission_mode });
+  return { root, ctx, bash };
+}
+
+test("DEBT-AC-1-doubled-slash: a removal or move of the engine's folder through a doubled separator is denied", () => {
+  const { bash } = debtBash();
+  for (const command of ["rm -rf .crew//work", "rm -rf .crew//", "mv .crew//work/w1 /tmp"])
+    expect(reason(bash(command)), command).toBe(ENGINE_WRITE);
+});
+
+test("DEBT-AC-1-dot-segment: a removal of the engine's folder through a ./ segment is denied", () => {
+  const { bash } = debtBash();
+  for (const command of [
+    "rm -rf .crew/./work",
+    "rm -rf ./.crew/./work/w1",
+    "rm -rf .crew/work/./w1",
+  ])
+    expect(reason(bash(command)), command).toBe(ENGINE_WRITE);
+});
+
+test("DEBT-AC-1-dotdot: a removal or move of the engine's folder through a seg/.. segment is denied; one that resolves out of it passes", () => {
+  const { bash } = debtBash();
+  for (const command of [
+    "rm -rf .crew/work/w1/..",
+    "rm -rf .crew/x/../work",
+    "rm -rf src/../.crew",
+    "mv .crew/x/../work /tmp",
+  ])
+    expect(reason(bash(command)), command).toBe(ENGINE_WRITE);
+  for (const command of ["rm -rf .crew/work/../../src", "rm -rf src/../dist"])
+    expect(bash(command), command).toEqual({});
+});
+
+test("DEBT-AC-1-brace: a brace expansion that yields the engine's folder is denied", () => {
+  const { bash } = debtBash();
+  for (const command of [
+    "rm -rf .{crew,x}",
+    "rm -rf .cr{e,}w",
+    "rm -rf .crew/{work,x}",
+    "rm -rf .crew/wor{j..l}",
+  ])
+    expect(reason(bash(command)), command).toBe(ENGINE_WRITE);
+  expect(bash("rm -rf {dist,build}")).toEqual({});
+});
+
+test("DEBT-AC-1-glob: a glob that can match .crew, .crew/work or an item's folder is denied", () => {
+  const { bash } = debtBash();
+  for (const command of [
+    "rm -rf .c*",
+    "rm -rf .cr?w",
+    "rm -rf .crew*",
+    "rm -rf .[c]rew",
+    "mv .crew/wo* /tmp",
+    "rm -rf .crew/work/w*",
+    "rm -rf .crew/work/w1/.",
+    "rm -rf .crew/work/w1/*",
+  ])
+    expect(reason(bash(command)), command).toBe(ENGINE_WRITE);
+});
+
+test("DEBT-AC-1-passes: a read of .c*, and a glob that cannot match a leading dot or .crew, pass", () => {
+  const { bash } = debtBash();
+  for (const command of [
+    "ls .c*",
+    "cat .cr?w/work/w1/report.md",
+    "rm -rf *",
+    "rm -rf *.log",
+    "rm -rf src/*",
+    "rm -rf .cache*",
+    "rm -rf ?crew",
+    "rm .crew/work/w1/notes.md",
+  ])
+    expect(bash(command), command).toEqual({});
+});
+
+test("DEBT-AC-2-cp: cp with the engine's folder or a file in it as the destination is denied", () => {
+  const { bash } = debtBash();
+  for (const command of [
+    "cp -r x .crew",
+    "cp -r x/. .crew/work/w1/",
+    "cp x .crew/work",
+    "cp -t .crew/work/w1 x",
+    "cp --target-directory=.crew x",
+    "cp --target-directory .crew/work x",
+  ])
+    expect(reason(bash(command)), command).toBe(ENGINE_WRITE);
+});
+
+test("DEBT-AC-2-rsync: rsync with the engine's folder or a file in it as the destination is denied", () => {
+  const { bash } = debtBash();
+  for (const command of [
+    "rsync -a x .crew/work/w1/evidence.json",
+    "rsync -a x/ .crew/",
+    "rsync -a x .crew/work",
+  ])
+    expect(reason(bash(command)), command).toBe(ENGINE_WRITE);
+});
+
+test("DEBT-AC-2-install: install into the engine's folder, by its last word or -t, is denied", () => {
+  const { bash } = debtBash();
+  for (const command of ["install x .crew/work/w1", "install -t .crew x", "install -m 644 x .crew"])
+    expect(reason(bash(command)), command).toBe(ENGINE_WRITE);
+});
+
+test("DEBT-AC-2-tar-extract: tar extracting into the engine's folder (-C, -C<dir>, --directory) is denied", () => {
+  const { bash } = debtBash();
+  for (const command of [
+    "tar -xf a.tar -C .crew",
+    "tar -xf a.tar -C.crew/work",
+    "tar xf a.tar -C .crew/work/w1",
+    "tar --extract -f a.tar --directory .crew",
+    "tar -x -f a.tar --directory=.crew/work",
+  ])
+    expect(reason(bash(command)), command).toBe(ENGINE_WRITE);
+});
+
+test("DEBT-AC-2-tar-create: tar creating an archive from the engine's folder is a read and passes", () => {
+  const { bash } = debtBash();
+  for (const command of ["tar -cf /tmp/a.tar -C .crew .", "tar -czf /tmp/a.tgz .crew"])
+    expect(bash(command), command).toEqual({});
+});
+
+test("DEBT-AC-2-find: find over the engine's folder with -delete or -exec rm, mv or cp is denied", () => {
+  const { bash } = debtBash();
+  for (const command of [
+    "find .crew -delete",
+    "find .crew/work -name '*.json' -delete",
+    "find . -name evidence.json -delete",
+    "find . -path '*crew*' -exec rm {} +",
+    "find . -wholename './.crew/work/*' -execdir rm {} ;",
+    "find . -name '.c*' -okdir mv {} /tmp ;",
+  ])
+    expect(reason(bash(command)), command).toBe(ENGINE_WRITE);
+});
+
+test("DEBT-AC-2-copy-out: a copy out of the engine's folder, and a find that reads it or removes elsewhere, pass", () => {
+  const { bash } = debtBash();
+  for (const command of [
+    "cp .crew/work/w1/report.md /tmp",
+    "rsync -a .crew/work/w1/ /tmp/b",
+    "cp -r .crew /tmp/backup",
+    "find .crew -name x",
+    "find . -name '*.log' -delete",
+  ])
+    expect(bash(command), command).toEqual({});
+});
+
+test("DEBT-AC-3-asked: the words after flock -c's script are a command of their own, and a user-only crew command there is asked", () => {
+  const { bash } = debtBash({ attendedDecisions: "prompt" });
+  for (const command of [
+    "flock /tmp/l -c true crew approve w1 spec",
+    "flock /tmp/l -c 'echo a' crew skip w1 x",
+    "flock /tmp/l -c 'crew skip' x",
+  ])
+    expect(decision(bash(command)), command).toBe("ask");
+});
+
+test("DEBT-AC-3-denied: a denied command in the words after flock -c's script is denied", () => {
+  const { bash } = debtBash();
+  expect(reason(bash("flock /tmp/l -c true crew hook prompt"))).toBe(HOOK_VERB_REASON_TEXT);
+  expect(reason(bash("flock /tmp/l -c true rm -rf .crew"))).toBe(ENGINE_WRITE);
+  // A script that is plain and words that are plain pass.
+  expect(bash("flock /tmp/l -c true echo done")).toEqual({});
+});
+
+test("DEBT-AC-4-npx-case: npx in capitals is read as the npx runner", () => {
+  const { bash } = debtBash({ attendedDecisions: "prompt" });
+  for (const command of [
+    "NPX crew approve w1 spec",
+    "Npx -y crew skip w1 x",
+    "BUNX crew approve w1 spec",
+  ])
+    expect(decision(bash(command)), command).toBe("ask");
+});
+
+test("DEBT-AC-4-npx-path: npx by a Windows path or with its .cmd suffix is read as the npx runner", () => {
+  const { bash } = debtBash({ attendedDecisions: "prompt" });
+  for (const command of [
+    String.raw`C:\\x\\npx.cmd crew approve w1 spec`,
+    String.raw`'C:\x\npx.cmd' crew approve w1 spec`,
+    String.raw`'C:\x\NPX.EXE' -c 'crew approve w1 spec'`,
+  ])
+    expect(decision(bash(command)), command).toBe("ask");
+});
+
+test("DEBT-AC-5-write: a Write-family edit to a file under another worktree's .crew of the same repository is denied as an engine file", () => {
+  const { root, ctx } = setup(null);
+  const other = join(tempDir(), "other");
+  git(root, "worktree", "add", "-q", "-b", "other", other);
+  const engineFile = (file: string) =>
+    `Crew: ${file} is maintained by the engine and is changed through the crew command`;
+  const evidence = join(other, ".crew", "work", "w1", "evidence.json");
+  for (const tool of ["Write", "Edit", "MultiEdit"])
+    expect(
+      reason(onPreToolUse(ctx, { tool_name: tool, tool_input: { file_path: evidence } })),
+      tool,
+    ).toBe(engineFile(evidence));
+  // From the other worktree, the main checkout's engine files are denied the same way.
+  const fromOther = hookContext({ session_id: "s", cwd: other }, testEnv());
+  const policy = join(root, ".crew", "policy.json");
+  expect(
+    reason(onPreToolUse(fromOther, { tool_name: "Write", tool_input: { file_path: policy } })),
+  ).toBe(engineFile(policy));
+});
+
+test("DEBT-AC-5-symlink: a path into another worktree's .crew through a link, or to a file not there yet, is compared by its real path", () => {
+  const { root, ctx } = setup(null);
+  const other = join(tempDir(), "other");
+  git(root, "worktree", "add", "-q", "-b", "other", other);
+  const link = join(tempDir(), "link");
+  symlinkSync(other, link);
+  const file = join(link, ".crew", "work", "w9", "logs", "new.txt");
+  expect(decision(onPreToolUse(ctx, { tool_name: "Write", tool_input: { file_path: file } }))).toBe(
+    "deny",
+  );
+});
+
+test("DEBT-AC-5-bash: a Bash write to a file under another worktree's .crew is denied", () => {
+  const { root, ctx } = setup(null);
+  const other = join(tempDir(), "other");
+  git(root, "worktree", "add", "-q", "-b", "other", other);
+  const bash = (command: string) =>
+    onPreToolUse(ctx, { tool_name: "Bash", tool_input: { command }, permission_mode: "default" });
+  const evidence = join(other, ".crew", "work", "w1", "evidence.json");
+  for (const command of [`cp x ${evidence}`, `echo x > ${evidence}`])
+    expect(reason(bash(command)), command).toBe(ENGINE_WRITE);
+});
+
+test("DEBT-AC-5-passes: a write to another worktree's source passes, and with no git on PATH the answers are today's", () => {
+  const { root, ctx } = setup(null);
+  const other = join(tempDir(), "other");
+  git(root, "worktree", "add", "-q", "-b", "other", other);
+  const write = (file: string) =>
+    onPreToolUse(ctx, { tool_name: "Write", tool_input: { file_path: file } });
+  expect(write(join(other, "src", "x.ts"))).toEqual({});
+  const path = process.env.PATH;
+  // A PATH of one empty folder: no git to run.
+  process.env.PATH = tempDir("crew-nogit-");
+  try {
+    // The worktrees cannot be listed: no extra worktree, the checkout's own rule unchanged.
+    expect(write(join(other, ".crew", "work", "w1", "evidence.json"))).toEqual({});
+    expect(decision(write(join(root, ".crew", "policy.json")))).toBe("deny");
+  } finally {
+    process.env.PATH = path;
+  }
+});
+
+test("DEBT-AC-14-redirect: beside a live neighbour, a >, >> or &> redirect to a watched file is denied with the lane's reason", () => {
+  const { item, record, bash } = laneCheckout();
+  const held = item("Add a total");
+  record(LANE_A, { item: held.id });
+  for (const command of [
+    "echo x > src/a.ts",
+    "echo x >> src/a.ts",
+    "echo x &> src/b.ts",
+    "printf x 2> src/err.ts",
+  ])
+    expect(reason(bash(LANE_B, command)), command).toBe(laneReason("aaaaaaaa", held.id));
+});
+
+test("DEBT-AC-14-tee: beside a live neighbour, tee to a watched file is denied", () => {
+  const { item, record, bash } = laneCheckout();
+  const held = item("Add a total");
+  record(LANE_A, { item: held.id });
+  for (const command of ["echo x | tee src/a.ts", "echo x | tee -a docs/n.md src/b.ts"])
+    expect(reason(bash(LANE_B, command)), command).toBe(laneReason("aaaaaaaa", held.id));
+});
+
+test("DEBT-AC-14-sed: beside a live neighbour, sed -i on a watched file is denied", () => {
+  const { item, record, bash } = laneCheckout();
+  const held = item("Add a total");
+  record(LANE_A, { item: held.id });
+  for (const command of ["sed -i '' s/a/b/ src/a.ts", "sed -i.bak -e s/a/b/ src/a.ts"])
+    expect(reason(bash(LANE_B, command)), command).toBe(laneReason("aaaaaaaa", held.id));
+});
+
+test("DEBT-AC-14-writers: beside a live neighbour, every writer the guard reads (mv both words, cp, rsync, install, rm, touch, truncate, dd, tar extracting) is denied on a watched path", () => {
+  const { item, record, bash } = laneCheckout();
+  const held = item("Add a total");
+  record(LANE_A, { item: held.id });
+  for (const command of [
+    "mv src/a.ts docs/a.md",
+    "mv docs/a.md src/a.ts",
+    "cp docs/a.md src/a.ts",
+    "cp -t src docs/a.md",
+    "rsync -a docs/a.md src/a.ts",
+    "install docs/a.md src/a.ts",
+    "rm src/a.ts",
+    "rm -rf src",
+    "touch src/new.ts",
+    "truncate -s 0 src/a.ts",
+    "dd if=/dev/zero of=src/a.ts count=1",
+    "tar -xf a.tar -C src",
+  ])
+    expect(reason(bash(LANE_B, command)), command).toBe(laneReason("aaaaaaaa", held.id));
+});
+
+test("DEBT-AC-14-cwd: a write's path is resolved against the session's cwd", () => {
+  const { root, item, record, bash } = laneCheckout();
+  const held = item("Add a total");
+  record(LANE_A, { item: held.id });
+  expect(reason(bash(LANE_B, "echo x > a.ts", { cwd: join(root, "src") }))).toBe(
+    laneReason("aaaaaaaa", held.id),
+  );
+});
+
+test("DEBT-AC-14-alone: the same commands with no neighbour pass", () => {
+  const { item, record, bash } = laneCheckout();
+  const held = item("Add a total");
+  // The neighbour is gone (ended): nothing refuses.
+  record(LANE_A, { item: held.id, endedAt: new Date().toISOString() });
+  for (const command of [
+    "echo x > src/a.ts",
+    "echo x | tee src/a.ts",
+    "sed -i '' s/a/b/ src/a.ts",
+    "mv src/a.ts src/b.ts",
+    "rm src/a.ts",
+    "touch src/new.ts",
+  ])
+    expect(bash(LANE_B, command), command).toEqual({});
+});
+
+test("DEBT-AC-14-unwatched: beside a live neighbour, a write to an unwatched path, a copy out of a watched one and a read pass", () => {
+  const { item, record, bash } = laneCheckout();
+  const held = item("Add a total");
+  record(LANE_A, { item: held.id });
+  for (const command of [
+    "echo x > docs/notes.md",
+    "echo x > /tmp/out.txt",
+    "cp src/a.ts /tmp/x.ts",
+    "ls src 2>/dev/null",
+    "cat src/a.ts > /tmp/copy.ts",
+    "tar -cf /tmp/a.tar -C src .",
+  ])
+    expect(bash(LANE_B, command), command).toEqual({});
+});
+
+test("DEBT-AC-14-unreadable: beside a live neighbour, a write through a path the reader cannot read passes", () => {
+  const { item, record, bash } = laneCheckout();
+  const held = item("Add a total");
+  record(LANE_A, { item: held.id });
+  for (const command of ["echo x > $F", 'echo x > "$(printf src/a.ts)"', "cp docs/a.md $DEST"])
+    expect(bash(LANE_B, command), command).toEqual({});
+});
+
+test("DEBT-AC-14-own: the session holding its own open item writes beside a neighbour holding another and passes", () => {
+  const { item, record, bash } = laneCheckout();
+  const first = item("Add a total");
+  const second = item("Add a count");
+  record(LANE_A, { item: first.id });
+  record(LANE_B, { item: second.id });
+  for (const command of ["echo x > src/a.ts", "sed -i '' s/a/b/ src/a.ts", "rm src/a.ts"]) {
+    expect(bash(LANE_A, command), command).toEqual({});
+    expect(bash(LANE_B, command), command).toEqual({});
+  }
+});
+
+test("DEBT-AC-15-seat-writable: crew team <id> seat <gate> --reason is the agent's, unasked in a session that may write", () => {
+  const command = 'crew team w1 seat security --reason "the change reads tokens"';
+  const prompt = debtBash({ attendedDecisions: "prompt" });
+  for (const mode of ["default", "auto", "acceptEdits"])
+    expect(prompt.bash(command, mode), mode).toEqual({});
+  const relay = debtBash();
+  expect(relay.bash(command)).toEqual({});
+  // A session opened by mail on a branch may write: the verb is its too.
+  const mid = "M-2026-10-23-004-storefront";
+  const env = {
+    ...testEnv(),
+    WIZARDINGCODE_CREW_MAIL_ID: mid,
+    WIZARDINGCODE_CREW_MAIL_MODE: "branch",
+    WIZARDINGCODE_CREW_MAIL_BRANCH: `crew/mail/${mid}`,
+    CLAUDE_CODE_SESSION_ATTENDED: "0",
+  };
+  const branch = hookContext({ session_id: "s", cwd: relay.root }, env);
+  expect(
+    onPreToolUse(branch, {
+      tool_name: "Bash",
+      tool_input: { command },
+      permission_mode: "dontAsk",
+    }),
+  ).toEqual({});
+});
+
+test("DEBT-AC-15-seat-read-only: crew team seat is refused in a read-only session opened by mail", () => {
+  const { root } = debtBash();
+  const mid = "M-2026-10-23-004-storefront";
+  const env = {
+    ...testEnv(),
+    WIZARDINGCODE_CREW_MAIL_ID: mid,
+    WIZARDINGCODE_CREW_MAIL_MODE: "read-only",
+    CLAUDE_CODE_SESSION_ATTENDED: "0",
+  };
+  const ctx = hookContext({ session_id: "s", cwd: root }, env);
+  const answer = onPreToolUse(ctx, {
+    tool_name: "Bash",
+    tool_input: { command: 'crew team w1 seat security --reason "x"' },
+    permission_mode: "dontAsk",
+  });
+  expect(reason(answer)).toBe(
+    `Crew: this read-only session was opened by mail (${mid}) and may only read and reply: crew team is denied; it ends with crew mail reply ${mid} "<text>"`,
+  );
+});
+
+test("DEBT-AC-2-rsync-late-option: rsync onto an engine file is denied with its valued options after the operands", () => {
+  const { bash } = debtBash();
+  for (const option of [
+    "--exclude x",
+    "--include x",
+    "--backup-dir x",
+    "--link-dest x",
+    "--chmod u+w",
+    "--log-file x",
+  ]) {
+    const command = `rsync /tmp/forged.json .crew/work/w1/evidence.json ${option}`;
+    expect(reason(bash(command)), command).toBe(ENGINE_WRITE);
+  }
+});
+
+test("DEBT-AC-2-tar-bundled: tar extracting with C bundled after other letters, or old style, into the engine's folder is denied; a create from it passes", () => {
+  const { bash } = debtBash();
+  for (const command of ["tar -xC .crew/work/w1 -f forged.tar", "tar xfC forged.tar .crew"])
+    expect(reason(bash(command)), command).toBe(ENGINE_WRITE);
+  expect(bash("tar -czf b.tgz -C .crew .")).toEqual({});
+});
+
+test("DEBT-AC-2-mv-variant: mv onto an engine file through a doubled separator, in the checkout or the user's crew folder, is denied", () => {
+  const { bash } = debtBash();
+  for (const command of [
+    "mv /tmp/x .crew//work/w1/evidence.json",
+    "mv /tmp/h.json ~/.wizardingcode//crew/integrity/r.json",
+  ])
+    expect(reason(bash(command)), command).toBe(ENGINE_WRITE);
+});
+
+test("DEBT-AC-2-find-ok: find over the engine's folder with -ok rm or -exec cp is denied", () => {
+  const { bash } = debtBash();
+  for (const command of ["find .crew -ok rm {} ;", "find .crew -exec cp /tmp/x {} ;"])
+    expect(reason(bash(command)), command).toBe(ENGINE_WRITE);
+});
+
+// An option the writer's table does not read exactly reads the piece strictly (judgement round 2).
+const UNKNOWN_OPTION_ROWS: [string, string][] = [
+  ["rsync-short-at", "rsync /tmp/f .crew/work/w1/evidence.json -@ 1"],
+  ["cp-target-spaced", "cp --target .crew/work/w1 /tmp/evidence.json"],
+  ["cp-target-attached", "cp --target=.crew/work/w1 /tmp/evidence.json"],
+  ["install-target", "install --target .crew/work/w1 /tmp/evidence.json"],
+  ["tar-dir", "tar -xf forged.tar --dir .crew/work/w1"],
+  ["tar-direct-attached", "tar -xf forged.tar --direct=.crew"],
+  ["rsync-not-in-table", "rsync /tmp/f .crew/work/w1/evidence.json --not-in-table x"],
+];
+for (const [name, command] of UNKNOWN_OPTION_ROWS)
+  test(`DEBT-AC-2-unknown-option-${name}: ${command} is denied`, () => {
+    const { bash } = debtBash();
+    expect(reason(bash(command))).toBe(ENGINE_WRITE);
+  });
+
+test("DEBT-AC-2-known-options-pass: with every option known, a copy out of the engine's folder and an extraction elsewhere pass", () => {
+  const { bash } = debtBash();
+  for (const command of [
+    "rsync -a --progress .crew/a .crew/b /tmp/x",
+    "cp -v .crew/work/w1/report.md /tmp",
+    "tar -xf a.tar -C /tmp/out --verbose",
+  ])
+    expect(bash(command), command).toEqual({});
+});
+
+// An option's value that names the engine's folder or a file in it is a destination, whatever the
+// option (judgement round 3).
+const OPTION_VALUE_ROWS: [string, string][] = [
+  ["log-file", "rsync --log-file .crew/policy.json a b"],
+  ["write-batch", "rsync --write-batch .crew/work/w1/x a b"],
+  ["only-write-batch", "rsync --only-write-batch .crew/x a b"],
+  ["backup-dir", "rsync -b --backup-dir .crew/work/w1 a b"],
+  ["partial-dir", "rsync --partial-dir .crew/x a b"],
+  ["temp-dir", "rsync -T .crew/x a b"],
+];
+for (const [name, command] of OPTION_VALUE_ROWS)
+  test(`DEBT-AC-2-option-value-${name}: ${command} is denied`, () => {
+    const { bash } = debtBash();
+    expect(reason(bash(command))).toBe(ENGINE_WRITE);
+  });
+
+test("DEBT-AC-2-strict-tar: tar extracting with an option outside its table reads every word as the folder", () => {
+  const { bash } = debtBash();
+  expect(reason(bash("tar -xf f.tar --zz .crew/work/w1"))).toBe(ENGINE_WRITE);
+});
+
+test("DEBT-AC-2-strict-short: cp with a short letter outside its table reads every word as the destination", () => {
+  const { bash } = debtBash();
+  expect(reason(bash("cp -Q .crew/work/w1 /tmp/f"))).toBe(ENGINE_WRITE);
+});
+
+test("DEBT-AC-2-strict-ambiguous: cp with an ambiguous long prefix reads every word as the destination", () => {
+  const { bash } = debtBash();
+  expect(reason(bash("cp --s .crew/work/w1 /tmp/f"))).toBe(ENGINE_WRITE);
+});
+
+test("DEBT-AC-2-tar-copy-out-pass: tar extracting an archive from the engine's folder elsewhere passes", () => {
+  const { bash } = debtBash();
+  expect(bash("tar -xf .crew/a.tar -C /tmp/out")).toEqual({});
+});

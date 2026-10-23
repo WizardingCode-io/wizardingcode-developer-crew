@@ -635,10 +635,12 @@ export function dropTask(
     return { refused: `a session opened by mail (${ctx.self.openedBy}) never drops a task` };
   const record = findTask(work, task);
   if ("refused" in record) return record;
-  if (record.inline || !record.branch || !record.worktree)
+  if (record.inline)
     return {
       refused: `${task} is an inline todo: it has no worktree and no branch, and its work is in this checkout; not dropped`,
     };
+  if (!record.branch || !record.worktree)
+    return { refused: `${task} has no worktree or branch recorded` };
   if (record.mergedAt || record.mergeCommit || MERGED_STATES.includes(record.state))
     return {
       refused: `${task} is merged (${record.state ?? "merged"}${record.mergeCommit ? `, ${record.mergeCommit.slice(0, 7)}` : ""}): its work is in the item's tree; not dropped`,

@@ -1,8 +1,10 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import * as stateModule from "../src/state.ts";
 import { loadState, oneLine } from "../src/state.ts";
-import { makeRepo, repoPaths, testEnv } from "./helpers.ts";
+import * as worktreeModule from "../src/worktree.ts";
+import { git, makeRepo, repoPaths, tempDir, testEnv } from "./helpers.ts";
 
 /** The bidirectional and invisible format characters oneLine deletes (finding 58, the security lead's return). */
 const FORMAT = [
@@ -54,4 +56,37 @@ test("CON6-AC-8 (finding 58): a working role's stored description is cleaned to 
   expect(
     working.map((w) => w.description).filter((d) => d !== undefined && oneLine(d) !== d),
   ).toEqual([]);
+});
+
+test("DEBT-AC-7-worktree-of: isWorktreeOf reads a gitdir written with backslashes and a trailing separator", () => {
+  const main = makeRepo();
+  const lane = join(tempDir(), "lane");
+  git(main, "worktree", "add", "-q", "-b", "lane", lane);
+  const record = join(main, ".git", "worktrees", "lane");
+  const isWorktreeOf = (
+    stateModule as unknown as { isWorktreeOf?: (r: string, m: string) => boolean }
+  ).isWorktreeOf;
+  expect(typeof isWorktreeOf).toBe("function");
+  const real = worktreeModule.gitRun;
+  // The gitdir a Windows git writes cannot be followed by this git: the common dir is answered.
+  const run = spyOn(worktreeModule, "gitRun").mockImplementation((cwd, ...args) =>
+    args[0] === "rev-parse" ? join(main, ".git") : real(cwd, ...args),
+  );
+  try {
+    for (const line of [
+      `gitdir: ${record.replace(/\//g, "\\")}`,
+      `gitdir: ${record.replace(/\//g, "\\")}\\`,
+      `gitdir: ${record}/`,
+    ]) {
+      writeFileSync(join(lane, ".git"), `${line}\n`);
+      expect(isWorktreeOf?.(lane, main), line).toBe(true);
+    }
+    writeFileSync(
+      join(lane, ".git"),
+      `gitdir: ${join(main, ".git", "worktrees", "other").replace(/\//g, "\\")}\\\n`,
+    );
+    expect(isWorktreeOf?.(lane, main)).toBe(false);
+  } finally {
+    run.mockRestore();
+  }
 });

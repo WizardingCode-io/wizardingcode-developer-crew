@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { mkdirSync, readFileSync, rmdirSync, statSync, utimesSync } from "node:fs";
 import { join } from "node:path";
 import { type CliIo, main } from "../src/cli.ts";
+import { loadEvidence, saveEvidence } from "../src/evidence.ts";
 import { handleHook } from "../src/hooks/index.ts";
 import { onPostToolUse } from "../src/hooks/post-tool-use.ts";
 import { onPrompt } from "../src/hooks/prompt.ts";
@@ -310,4 +311,108 @@ test("LANE-AC-2: an item another live session holds is never claimed", async () 
   post("s-b", command, `started ${id}`);
   expect(itemOf("s-b")).toBeUndefined();
   expect(itemOf("s-a")).toBe(id);
+});
+
+/** A real crew start, run between a session's hooks by the caller: the id of the item it made. */
+async function made(crew: ReturnType<typeof lanes>["crew"], title: string): Promise<string> {
+  const run = await crew("start", title, "--answers", START_ANSWERS, "--criterion", "x", "--json");
+  expect(run.code, run.err).toBe(0);
+  return (JSON.parse(run.out) as { id: string }).id;
+}
+
+test("DEBT-AC-7-interleaved: two starts whose PostToolUse hooks run after both items exist each claim the item their own start printed", async () => {
+  const { crew, pre, post, itemOf } = lanes();
+  const commandA = `crew start "Add a total" --answers '${START_ANSWERS}'`;
+  const commandB = `crew start "Add a count" --answers '${START_ANSWERS}'`;
+  pre("s-a", commandA);
+  pre("s-b", commandB);
+  const a = await made(crew, "Add a total");
+  const b = await made(crew, "Add a count");
+  // A's PostToolUse comes after B's start: the checkout's active item is B's, A takes its own.
+  post("s-a", commandA, `started ${a} (route fast: x)`);
+  post("s-b", commandB, `started ${b} (route fast: x)`);
+  expect(itemOf("s-a")).toBe(a);
+  expect(itemOf("s-b")).toBe(b);
+});
+
+test("DEBT-AC-7-compound: a crew start beside another command claims nothing, whatever the output prints; a cd prefix is no other command", async () => {
+  const { crew, pre, post, itemOf } = lanes();
+  // The security lead's R-4: A's own start is refused, its echo prints B's item, made after A's
+  // PreToolUse and not yet claimed by B.
+  const echoed = `crew start "Again" --answers '{"work_type":"bug"}'; echo "started $(cat /tmp/b-id)"`;
+  pre("s-a", echoed);
+  pre("s-b", `crew start "Add a count" --answers '${START_ANSWERS}'`);
+  const b = await made(crew, "Add a count");
+  post("s-a", echoed, `started ${b}`);
+  expect(itemOf("s-a")).toBeUndefined();
+  post("s-b", `crew start "Add a count" --answers '${START_ANSWERS}'`, `started ${b}`);
+  expect(itemOf("s-b")).toBe(b);
+  // A start of its own followed by another command: nothing is claimed either. Each in a
+  // checkout of its own, since a start beside a live session holding an item is refused (AC-3).
+  const chain = lanes();
+  const chained = `crew start "Add a total" --answers '${START_ANSWERS}' && echo ok`;
+  chain.pre("s-c", chained);
+  const c = await made(chain.crew, "Add a total");
+  chain.post("s-c", chained, `started ${c}\nok`);
+  expect(chain.itemOf("s-c")).toBeUndefined();
+  // A cd into the checkout before it is the one prefix allowed.
+  const cd = lanes();
+  const prefixed = `cd "${cd.root}" && crew start "Add a note" --answers '${START_ANSWERS}'`;
+  cd.pre("s-d", prefixed);
+  const d = await made(cd.crew, "Add a note");
+  cd.post("s-d", prefixed, `started ${d}`);
+  expect(cd.itemOf("s-d")).toBe(d);
+});
+
+test("DEBT-AC-7-two-lines: an output holding more than one started line claims nothing", async () => {
+  const { crew, pre, post, itemOf } = lanes();
+  const command = `crew start "Add a total" --answers '${START_ANSWERS}'`;
+  pre("s-a", command);
+  const a = await made(crew, "Add a total");
+  post("s-a", command, `started ${a}\nstarted ${a}`);
+  expect(itemOf("s-a")).toBeUndefined();
+});
+
+test("DEBT-AC-7-unknown: a printed id that is no item of this checkout claims nothing", async () => {
+  const { crew, pre, post, itemOf } = lanes();
+  const command = `crew start "Add a total" --answers '${START_ANSWERS}'`;
+  pre("s-a", command);
+  await made(crew, "Add a total");
+  post("s-a", command, "started 2026-01-01-001-nowhere");
+  expect(itemOf("s-a")).toBeUndefined();
+});
+
+test("DEBT-AC-7-before: a printed id created before the session's PreToolUse claims nothing", async () => {
+  const { crew, pre, post, itemOf } = lanes();
+  const stale = await made(crew, "Made outside");
+  Bun.sleepSync(5);
+  const command = `crew start "Add a total" --answers '${START_ANSWERS}'`;
+  pre("s-a", command);
+  await made(crew, "Add a total");
+  post("s-a", command, `started ${stale}`);
+  expect(itemOf("s-a")).toBeUndefined();
+});
+
+test("DEBT-AC-7-not-open: a printed id whose item is no longer open claims nothing", async () => {
+  const { paths, crew, pre, post, itemOf } = lanes();
+  const command = `crew start "Add a total" --answers '${START_ANSWERS}'`;
+  pre("s-a", command);
+  const a = await made(crew, "Add a total");
+  const evidence = loadEvidence(paths, a).evidence;
+  evidence.verdict = "proven";
+  saveEvidence(paths, a, evidence);
+  post("s-a", command, `started ${a}`);
+  expect(itemOf("s-a")).toBeUndefined();
+});
+
+test("DEBT-AC-7-held: a printed id another live session holds claims nothing", async () => {
+  const { crew, pre, post, itemOf } = lanes();
+  const command = `crew start "Add a total" --answers '${START_ANSWERS}'`;
+  pre("s-a", command);
+  pre("s-b", command);
+  const b = await made(crew, "Add a total");
+  post("s-b", command, `started ${b}`);
+  post("s-a", command, `started ${b}`);
+  expect(itemOf("s-a")).toBeUndefined();
+  expect(itemOf("s-b")).toBe(b);
 });

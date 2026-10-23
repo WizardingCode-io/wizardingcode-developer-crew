@@ -19,6 +19,7 @@ import {
   INLINE_BODY_LIMIT,
   inboxSummary,
   isLive,
+  loadItemMail,
   loadRegistry,
   MAIL_TRANSITIONS,
   type MappedStatus,
@@ -1457,3 +1458,32 @@ test("SP7b-T2 AC-3: a reply carries the child's evidence read from disk, and its
   ).toEqual({ report: ".crew/work/x/report.md", fingerprint: "f", gatesPassed: ["lint"] });
   expect(readEvidence(q)).toBeNull();
 });
+
+test("DEBT-AC-10-own-busy: a record pass that cannot write this project's own copy leaves the parties' item copies as they were (triage 4a)", () => {
+  const w = receiving();
+  const ownDir = crmInbox(w);
+  const otherDir = storefrontOutbox(w);
+  // The sender's item holds its copy of the notice, as sent.
+  const item = createWork(w.a.paths, "Loyalty tiers");
+  saveWork(w.a.paths, item);
+  const sent = send(w.a.ctx, { to: "crm", type: "notice", text: "Heads up" }, item);
+  if ("refused" in sent) throw new Error(sent.refused);
+  const copy = () =>
+    loadItemMail(w.a.paths, item.id).box.messages.find((m) => m.id === sent.message.id);
+  expect(copy()?.status).toBe("sent");
+  // crm's own box busy for the whole pass, the storefront's copy free.
+  const ownLock = join(ownDir, ".lock");
+  mkdirSync(ownLock);
+  let moved: ReturnType<typeof markRead> | { threw: string };
+  try {
+    moved = outcome(() => markRead(w.b.ctx, sent.message.id, []));
+  } finally {
+    rmSync(ownLock, { recursive: true, force: true });
+  }
+  expect(moved).toHaveProperty("refused");
+  // The other box's copy was changed, but no party's item copy records a change the own box lacks.
+  expect(
+    readBox(otherDir, "outbox").box.messages.find((m) => m.id === sent.message.id)?.status,
+  ).toBe("done");
+  expect(copy()?.status).toBe("sent");
+}, 20_000);

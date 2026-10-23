@@ -128,9 +128,27 @@ const REVIEW_OPEN = new RegExp(String.raw`^review\/${REVIEW_OPEN_SEGMENT}(?:\/|$
 export const AUDIT_OPEN_FILES = String.raw`(?:business\.findings\.md|summary\.md|recommendations\.md)`;
 const AUDIT_OPEN = new RegExp(String.raw`^audit\/${AUDIT_OPEN_FILES}$`);
 
-/** Files only the engine writes. The agent is denied direct writes to them. */
-export function isProtectedPath(paths: CrewPaths, absPath: string): boolean {
+/**
+ * Whether a path lies under the `.crew/` of another worktree of the repository (triage L3): the
+ * deepest worktree holding it, by real path, when that is not this checkout (a task's worktree
+ * under `.crew/worktrees/` is its own checkout, and its source is not the lead's engine file).
+ */
+function inOtherWorktreeCrew(root: string, abs: string, worktrees: readonly string[]): boolean {
+  const own = canonical(root);
+  const holding = [own, ...worktrees]
+    .filter((w) => abs === w || abs.startsWith(w + sep))
+    .sort((a, b) => b.length - a.length)[0];
+  return !!holding && holding !== own && abs.startsWith(join(holding, ".crew") + sep);
+}
+
+/** Files only the engine writes, in this checkout and under the `.crew/` of every other worktree given (`worktreeRoots`). The agent is denied direct writes to them. */
+export function isProtectedPath(
+  paths: CrewPaths,
+  absPath: string,
+  worktrees: readonly string[] = [],
+): boolean {
   const abs = canonical(absPath);
+  if (inOtherWorktreeCrew(paths.root, abs, worktrees)) return true;
   // The business priorities are the user's words (SP7 §10.2): the one file under the user directory
   // the engine never denies; the signature beside it stays the engine's.
   if (/^workspaces\/[^/]+\/priorities\.md$/.test(relative(paths.userDir, abs).replace(/\\/g, "/")))

@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { basename, resolve } from "node:path";
+import { canonical } from "./paths.ts";
 
 /** Runs git in a folder and returns its output, trimmed; git's failure is thrown. Git speaks the C locale, so a reason the engine reads or shows is the one it knows. */
 export function gitRun(cwd: string, ...args: string[]): string {
@@ -9,6 +10,21 @@ export function gitRun(cwd: string, ...args: string[]): string {
     env: { ...process.env, LC_ALL: "C" },
     stdio: ["ignore", "pipe", "pipe"],
   }).trim();
+}
+
+/**
+ * Every worktree of the repository a folder is in, the main checkout included, each by its real
+ * path, from `git worktree list --porcelain`; a git failure (none on PATH, no repository) is none.
+ */
+export function worktreeRoots(cwd: string): string[] {
+  try {
+    return gitRun(cwd, "worktree", "list", "--porcelain")
+      .split("\n")
+      .filter((line) => line.startsWith("worktree "))
+      .map((line) => canonical(line.slice("worktree ".length)));
+  } catch {
+    return [];
+  }
 }
 
 /** The bytes of a file at a branch's tip, or null when the branch or the file is not there; the revision goes after `--end-of-options`, so neither can be read as an option. */

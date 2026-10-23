@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 import { readJson, readText, writeJson } from "./fs.ts";
 import { LockBusy, withLock } from "./lock.ts";
 import { worktreeMainRoot } from "./mail.ts";
@@ -273,14 +273,20 @@ export function ensureCrewDir(paths: CrewPaths, policy: Policy): void {
 /**
  * Whether `root` is a worktree of `main` as git itself says (the security lead's R-3): its common
  * git folder is `<main>/.git`, and the main's record of the worktree points back at its `.git`. A
- * `.git` file naming a foreign folder fails one or the other.
+ * `.git` file naming a foreign folder fails one or the other. The gitdir's name is read with either
+ * separator and a trailing one dropped, as a Windows git writes it (triage L8).
  */
-function isWorktreeOf(root: string, main: string): boolean {
+export function isWorktreeOf(root: string, main: string): boolean {
   try {
     const common = gitRun(root, "rev-parse", "--git-common-dir");
     if (canonical(resolve(root, common)) !== canonical(join(main, ".git"))) return false;
     const line = readText(join(root, ".git"))?.trim() ?? "";
-    const name = basename(line.replace(/^gitdir:\s*/, "").replace(/\/$/, ""));
+    const name =
+      line
+        .replace(/^gitdir:\s*/, "")
+        .replace(/[/\\]+$/, "")
+        .split(/[/\\]/)
+        .pop() ?? "";
     const record = join(main, ".git", "worktrees", name);
     const back = readText(join(record, "gitdir"))?.trim() ?? "";
     return back !== "" && canonical(resolve(record, back)) === canonical(join(root, ".git"));

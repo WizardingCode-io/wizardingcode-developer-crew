@@ -17,6 +17,8 @@ import { onSessionStart } from "../src/hooks/session-start.ts";
 import {
   agentName,
   answerFile,
+  archiveExisting,
+  freeArchiveIndex,
   onSubagentStop,
   personalityOf,
   roleAnswer,
@@ -1602,4 +1604,21 @@ test("CON3-AC-11: a tampered item never takes a role's answer by its heading or 
   expect(existsSync(join(folder(first.id), "review", "ruling.json"))).toBe(false);
   expect(existsSync(join(folder(second.id), "review", "ruling.json"))).toBe(true);
   expect(readdirSync(folder(first.id)).sort()).toEqual(before);
+});
+
+test("DEBT-AC-10-archive-name: freeArchiveIndex returns a free index for a file not ending in .md, and the archive takes .round<k> before its extension (finding 142)", () => {
+  const dir = tempDir();
+  writeFileSync(join(dir, "ruling.json"), "{}");
+  expect(freeArchiveIndex(dir, "ruling.json")).toBe(2);
+  writeFileSync(join(dir, "ruling.round2.json"), "{}");
+  expect(freeArchiveIndex(dir, "ruling.json")).toBe(3);
+  // A name with no extension at all takes the suffix at its end.
+  writeFileSync(join(dir, "notes"), "n");
+  expect(freeArchiveIndex(dir, "notes")).toBe(2);
+  expect(archiveExisting(dir, "ruling.json")).toEqual({ archived: "ruling.round3.json" });
+  expect(readFileSync(join(dir, "ruling.round3.json"), "utf8")).toBe("{}");
+  expect(archiveExisting(dir, "notes")).toEqual({ archived: "notes.round2" });
+  // The .md names keep their form.
+  writeFileSync(join(dir, "lead-qa.md"), "a");
+  expect(archiveExisting(dir, "lead-qa.md")).toEqual({ archived: "lead-qa.round2.md" });
 });

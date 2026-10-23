@@ -95,8 +95,14 @@ export const DEFAULT_POLICY: Policy = {
   attendedDecisions: "relay",
   // A copy: a caller that changes the default policy's mail block leaves the mail defaults as they are.
   mail: { ...DEFAULT_MAIL_POLICY, accept: [...DEFAULT_MAIL_POLICY.accept] },
-  team: DEFAULT_TEAM_POLICY,
-  verify: DEFAULT_VERIFY_POLICY,
+  // Copies, as the mail block is: a caller that changes the default policy's team or verify block
+  // leaves DEFAULT_TEAM_POLICY and DEFAULT_VERIFY_POLICY as they are (triage 6b).
+  team: {
+    ...DEFAULT_TEAM_POLICY,
+    always: [...DEFAULT_TEAM_POLICY.always],
+    specialists: [...DEFAULT_TEAM_POLICY.specialists],
+  },
+  verify: { ...DEFAULT_VERIFY_POLICY, asks: [...DEFAULT_VERIFY_POLICY.asks] },
 };
 
 /** How `crew policy set` checks a value: one of a list, a name, or a whole number in a range. */

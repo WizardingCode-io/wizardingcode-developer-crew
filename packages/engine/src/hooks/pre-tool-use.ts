@@ -2,7 +2,7 @@ import { isAbsolute, join, relative } from "node:path";
 import { type Parsed, parse } from "../argv.ts";
 import { isWatched } from "../fingerprint.ts";
 import { nowIso } from "../fs.ts";
-import { escapeRegExp } from "../glob.ts";
+import { braceExpand, escapeRegExp, normalizePathWord, segmentMatches } from "../glob.ts";
 import {
   AUDIT_OPEN_FILES,
   canonical,
@@ -25,6 +25,7 @@ import {
 import { loadState, recordWorking, updateSession } from "../state.ts";
 import type { Policy } from "../types.ts";
 import { activeWork, isBeforeBuild, loadWork } from "../work.ts";
+import { worktreeRoots } from "../worktree.ts";
 import { holdsOpenItem, neighbours } from "./context.ts";
 import { POWERSHELL_HOOK, powershellAsPosix, unreadablePowershell } from "./powershell.ts";
 import { LEADING_KEYWORDS, OPERATOR_PREFIX, type Piece, readCommand, type Token } from "./shell.ts";
@@ -271,11 +272,11 @@ function withoutLead(words: string[]): Lead {
             // carries no value of its own.
             const fromNext =
               optionValue(wrapper, wrapper.scriptOptions ?? [], word, NEXT_WORD) === NEXT_WORD;
-            const after = wrapper.scriptAppends
-              ? words.slice(i + (fromNext ? 2 : 1)).map(quoteWord)
-              : [];
+            const following = words.slice(i + (fromNext ? 2 : 1));
+            const after = wrapper.scriptStandsAlone ? [] : following.map(quoteWord);
+            // flock's following words are also read as a command of their own (triage 2l).
             return {
-              words: [],
+              words: wrapper.scriptTrailing ? following : [],
               viaXargs,
               unsets,
               firstWrapper,
@@ -340,7 +341,8 @@ function withoutRedirects(tokens: Token[]): string[] {
 // What npx and bunx take before the package they run (`npx -y crew …`, `bunx --bun crew …`); the
 // value of `-c`/`--call` is a command line of its own, read as a wrapper's string option is.
 const NPX_RUNNER = new RegExp(
-  String.raw`^(?:\S*\/)?(?:${NPX_RUNNERS.join("|")})${runnerSuffix(RUNNER_SUFFIXES.npx)}$`,
+  String.raw`^(?:.*[\/\\])?(?:${NPX_RUNNERS.join("|")})${runnerSuffix(RUNNER_SUFFIXES.npx)}$`,
+  "i",
 );
 const NPX_CALL = ["-c", "--call"];
 const NPX_VALUED = new Set(["-p", "--package", ...NPX_CALL, "--shell", "--loglevel"]);
@@ -1087,6 +1089,720 @@ function answer(permissionDecision: "deny" | "ask", reason: string): HookRespons
   };
 }
 
+// The engine's folder, its work folder and an item's folder, as segments (`*`: any item's name).
+const ENGINE_FOLDER_FORMS: readonly (readonly string[])[] = [
+  [".crew"],
+  [".crew", "work"],
+  [".crew", "work", "*"],
+];
+/**
+ * Whether a path word names the engine's folder, its work folder or an item's folder (triage 2j):
+ * brace-expanded first, each expansion normalised lexically and read as a glob, its contents as a
+ * whole (`/*`, `/**`) read as the folder. A glob names the folder when it can match it, a leading
+ * wildcard never matching the leading dot (`.c*` and `.cr?w` do, `*` and `.cache*` do not).
+ */
+function namesEngineFolder(word: string): boolean {
+  return braceExpand(word).some((expanded) => {
+    const segments = normalizePathWord(expanded).split("/").filter(Boolean);
+    while (segments.length && /^\*\*?$/.test(segments[segments.length - 1] ?? "")) segments.pop();
+    return ENGINE_FOLDER_FORMS.some(
+      (form) =>
+        segments.length >= form.length &&
+        form.every((name, k) => {
+          const segment = segments[segments.length - form.length + k] ?? "";
+          return name === "*" ? segment !== ".." : segmentMatches(segment, name);
+        }),
+    );
+  });
+}
+/** Whether a word names a path anywhere inside the engine's folder or the user's crew folder (an option's value: a batch file, a log, a backup or partial folder there writes in it). */
+function namesInsideEngine(word: string): boolean {
+  return (
+    namesEngineTarget(word) ||
+    braceExpand(word).some((w) =>
+      /(?:^|\/)(?:\.crew|\.wizardingcode\/crew)(?:\/|$)/i.test(normalizePathWord(w)),
+    )
+  );
+}
+/** Whether a written path word is the engine's folder or one of its files (a copy's or an extraction's destination). */
+function namesEngineTarget(word: string): boolean {
+  return (
+    namesEngineFolder(word) ||
+    braceExpand(word).some((w) => ENGINE_FILES.test(normalizePathWord(w)))
+  );
+}
+/**
+ * Every option a copying writer is known to take, GNU's and BSD's common ones (judgement round 2):
+ * the short letters that take a value and those that do not, the long names that take a value and
+ * those that do not. An option outside its writer's table makes the piece read strictly.
+ */
+interface WriterOptions {
+  valued: string;
+  flags: string;
+  longValued: readonly string[];
+  longFlags: readonly string[];
+}
+const CP_OPTIONS: WriterOptions = {
+  valued: "tS",
+  flags: "abcdfHiIlLnNpPrRsTuvxXZ",
+  longValued: ["--target-directory", "--suffix"],
+  longFlags: [
+    "--archive",
+    "--attributes-only",
+    "--backup",
+    "--copy-contents",
+    "--context",
+    "--debug",
+    "--dereference",
+    "--force",
+    "--interactive",
+    "--keep-directory-symlink",
+    "--link",
+    "--no-clobber",
+    "--no-dereference",
+    "--no-preserve",
+    "--no-target-directory",
+    "--one-file-system",
+    "--parents",
+    "--preserve",
+    "--recursive",
+    "--reflink",
+    "--remove-destination",
+    "--sparse",
+    "--strip-trailing-slashes",
+    "--symbolic-link",
+    "--update",
+    "--verbose",
+  ],
+};
+const WRITER_OPTIONS: Record<string, WriterOptions> = {
+  cp: CP_OPTIONS,
+  mv: {
+    valued: "tS",
+    flags: "bfhinTuvZ",
+    longValued: ["--target-directory", "--suffix"],
+    longFlags: [
+      "--backup",
+      "--context",
+      "--debug",
+      "--exchange",
+      "--force",
+      "--interactive",
+      "--no-clobber",
+      "--no-copy",
+      "--no-target-directory",
+      "--strip-trailing-slashes",
+      "--update",
+      "--verbose",
+    ],
+  },
+  install: {
+    valued: "BfgmotS",
+    flags: "bcCdDMpsTUvZ",
+    longValued: [
+      "--group",
+      "--mode",
+      "--owner",
+      "--strip-program",
+      "--suffix",
+      "--target-directory",
+    ],
+    longFlags: [
+      "--backup",
+      "--compare",
+      "--context",
+      "--debug",
+      "--directory",
+      "--no-target-directory",
+      "--preserve-context",
+      "--preserve-timestamps",
+      "--strip",
+      "--verbose",
+    ],
+  },
+  rsync: {
+    valued: "@BefMT",
+    flags: "0468aAbcCdDEFghHiIJkKlLmnNoOpPqrRsStuUvWxXyz",
+    longValued: [
+      "--address",
+      "--backup-dir",
+      "--block-size",
+      "--bwlimit",
+      "--checksum-choice",
+      "--checksum-seed",
+      "--chmod",
+      "--chown",
+      "--compare-dest",
+      "--compress-choice",
+      "--compress-level",
+      "--contimeout",
+      "--copy-dest",
+      "--debug",
+      "--exclude",
+      "--exclude-from",
+      "--files-from",
+      "--filter",
+      "--groupmap",
+      "--iconv",
+      "--include",
+      "--include-from",
+      "--info",
+      "--link-dest",
+      "--log-file",
+      "--log-file-format",
+      "--max-alloc",
+      "--max-delete",
+      "--max-size",
+      "--min-size",
+      "--modify-window",
+      "--only-write-batch",
+      "--out-format",
+      "--partial-dir",
+      "--password-file",
+      "--port",
+      "--protocol",
+      "--read-batch",
+      "--remote-option",
+      "--rsh",
+      "--rsync-path",
+      "--skip-compress",
+      "--sockopts",
+      "--stop-after",
+      "--stop-at",
+      "--suffix",
+      "--temp-dir",
+      "--timeout",
+      "--usermap",
+      "--write-batch",
+    ],
+    longFlags: [
+      "--8-bit-output",
+      "--acls",
+      "--append",
+      "--append-verify",
+      "--archive",
+      "--atimes",
+      "--backup",
+      "--blocking-io",
+      "--checksum",
+      "--compress",
+      "--copy-dirlinks",
+      "--copy-links",
+      "--copy-unsafe-links",
+      "--crtimes",
+      "--cvs-exclude",
+      "--delay-updates",
+      "--delete",
+      "--delete-after",
+      "--delete-before",
+      "--delete-delay",
+      "--delete-during",
+      "--delete-excluded",
+      "--delete-missing-args",
+      "--devices",
+      "--dirs",
+      "--dry-run",
+      "--executability",
+      "--existing",
+      "--fake-super",
+      "--force",
+      "--from0",
+      "--fuzzy",
+      "--group",
+      "--hard-links",
+      "--human-readable",
+      "--ignore-errors",
+      "--ignore-existing",
+      "--ignore-missing-args",
+      "--ignore-times",
+      "--inplace",
+      "--ipv4",
+      "--ipv6",
+      "--itemize-changes",
+      "--keep-dirlinks",
+      "--links",
+      "--list-only",
+      "--mkpath",
+      "--no-implied-dirs",
+      "--no-motd",
+      "--numeric-ids",
+      "--old-args",
+      "--omit-dir-times",
+      "--omit-link-times",
+      "--one-file-system",
+      "--open-noatime",
+      "--owner",
+      "--partial",
+      "--perms",
+      "--preallocate",
+      "--progress",
+      "--protect-args",
+      "--prune-empty-dirs",
+      "--quiet",
+      "--recursive",
+      "--relative",
+      "--remove-source-files",
+      "--safe-links",
+      "--secluded-args",
+      "--size-only",
+      "--sparse",
+      "--specials",
+      "--stats",
+      "--super",
+      "--times",
+      "--trust-sender",
+      "--update",
+      "--verbose",
+      "--whole-file",
+      "--xattrs",
+    ],
+  },
+};
+/** tar's options (GNU's and BSD's common ones); BSD's `-s` takes a pattern, by getopt's rule in a dash cluster. */
+const TAR_OPTIONS: WriterOptions = {
+  valued: "bCfFgHIKLNsTVX",
+  flags: "AacdhijJklmMnoOpPqrRStuUvwWxzZ",
+  longValued: [
+    "--after-date",
+    "--blocking-factor",
+    "--checkpoint-action",
+    "--directory",
+    "--exclude",
+    "--exclude-from",
+    "--exclude-tag",
+    "--exclude-tag-all",
+    "--exclude-tag-under",
+    "--file",
+    "--files-from",
+    "--format",
+    "--group",
+    "--index-file",
+    "--info-script",
+    "--label",
+    "--level",
+    "--listed-incremental",
+    "--mode",
+    "--mtime",
+    "--new-volume-script",
+    "--newer",
+    "--newer-mtime",
+    "--owner",
+    "--quoting-style",
+    "--record-size",
+    "--rmt-command",
+    "--rsh-command",
+    "--strip-components",
+    "--suffix",
+    "--tape-length",
+    "--to-command",
+    "--transform",
+    "--use-compress-program",
+    "--volno-file",
+    "--warning",
+    "--xform",
+  ],
+  longFlags: [
+    "--absolute-names",
+    "--acls",
+    "--anchored",
+    "--append",
+    "--auto-compress",
+    "--backup",
+    "--block-number",
+    "--bzip2",
+    "--catenate",
+    "--check-links",
+    "--checkpoint",
+    "--compare",
+    "--compress",
+    "--concatenate",
+    "--confirmation",
+    "--create",
+    "--delay-directory-restore",
+    "--delete",
+    "--dereference",
+    "--diff",
+    "--exclude-backups",
+    "--exclude-caches",
+    "--exclude-caches-all",
+    "--exclude-caches-under",
+    "--exclude-vcs",
+    "--exclude-vcs-ignores",
+    "--extract",
+    "--force-local",
+    "--full-time",
+    "--get",
+    "--gunzip",
+    "--gzip",
+    "--hard-dereference",
+    "--ignore-case",
+    "--ignore-failed-read",
+    "--ignore-zeros",
+    "--interactive",
+    "--keep-directory-symlink",
+    "--keep-newer-files",
+    "--keep-old-files",
+    "--list",
+    "--lzip",
+    "--lzma",
+    "--lzop",
+    "--multi-volume",
+    "--no-acls",
+    "--no-anchored",
+    "--no-delay-directory-restore",
+    "--no-ignore-case",
+    "--no-null",
+    "--no-recursion",
+    "--no-same-owner",
+    "--no-same-permissions",
+    "--no-seek",
+    "--no-selinux",
+    "--no-unquote",
+    "--no-wildcards",
+    "--no-xattrs",
+    "--null",
+    "--numeric-owner",
+    "--old-archive",
+    "--one-file-system",
+    "--overwrite",
+    "--overwrite-dir",
+    "--portability",
+    "--posix",
+    "--preserve-order",
+    "--preserve-permissions",
+    "--recursion",
+    "--recursive-unlink",
+    "--remove-files",
+    "--same-order",
+    "--same-owner",
+    "--same-permissions",
+    "--seek",
+    "--selinux",
+    "--show-stored-names",
+    "--show-transformed-names",
+    "--skip-old-files",
+    "--sparse",
+    "--to-stdout",
+    "--totals",
+    "--touch",
+    "--uncompress",
+    "--ungzip",
+    "--unlink-first",
+    "--unquote",
+    "--update",
+    "--utc",
+    "--verbose",
+    "--verify",
+    "--wildcards",
+    "--xattrs",
+    "--xz",
+    "--zstd",
+  ],
+};
+/** A long option's full name, by exact name or by a unique prefix (GNU's abbreviations, `--target` for `--target-directory`); null when no name or more than one matches. */
+function longName(given: string, options: WriterOptions): string | null {
+  const names = [...options.longValued, ...options.longFlags];
+  if (names.includes(given)) return given;
+  const matches = names.filter((n) => n.startsWith(given));
+  return matches.length === 1 ? (matches[0] ?? null) : null;
+}
+/**
+ * A writer's words as its table reads them, the one argument reader of the write rules: its
+ * operands (its non-option words, every word after `--`), the values its valued options take (by
+ * full name or `-letter`, the last of each), every option value in order, spaced or attached
+ * (`--x=value`, whatever the option), and whether any option word stood outside the table
+ * (`strict`: the caller that needs it reads the piece with every word as a possible destination).
+ */
+function readWriter(
+  words: string[],
+  options: WriterOptions,
+): {
+  operands: string[];
+  values: Map<string, string>;
+  optionValues: [string, string][];
+  strict: boolean;
+} {
+  const operands: string[] = [];
+  const values = new Map<string, string>();
+  const optionValues: [string, string][] = [];
+  let strict = false;
+  let ended = false;
+  const take = (name: string, value: string) => {
+    values.set(name, value);
+    optionValues.push([name, value]);
+  };
+  for (let i = 1; i < words.length; i++) {
+    const w = words[i] ?? "";
+    if (ended || !w.startsWith("-") || w === "-") operands.push(w);
+    else if (w === "--") ended = true;
+    else if (w.startsWith("--")) {
+      const [given = "", value] = w.split(/=(.*)/s, 2);
+      const name = longName(given, options);
+      if (name === null) strict = true;
+      if (name !== null && options.longValued.includes(name)) take(name, value ?? words[++i] ?? "");
+      else if (value !== undefined) optionValues.push([given, value]);
+    } else
+      for (let k = 1; k < w.length; k++) {
+        const letter = w.charAt(k);
+        if (options.valued.includes(letter)) {
+          take(`-${letter}`, w.slice(k + 1) || (words[++i] ?? ""));
+          break;
+        }
+        if (!options.flags.includes(letter)) strict = true;
+      }
+  }
+  return { operands, values, optionValues, strict };
+}
+/** The folder `-t` or `--target-directory` names, if either is given. */
+function targetDirectory(values: Map<string, string>): string | undefined {
+  return values.get("-t") ?? values.get("--target-directory");
+}
+/** The options that take a value, for the writers whose operands are all written or removed (their flags are not listed: `strict` is not read for them). */
+const plainWriter = (valued: string, longValued: string[] = []): WriterOptions => ({
+  valued,
+  flags: "",
+  longValued,
+  longFlags: [],
+});
+const PLAIN_WRITERS: Record<string, WriterOptions> = {
+  touch: plainWriter("tdr", ["--date", "--reference"]),
+  truncate: plainWriter("sr", ["--size", "--reference"]),
+  tee: plainWriter(""),
+  rm: plainWriter(""),
+  rmdir: plainWriter(""),
+  chmod: plainWriter("", ["--reference"]),
+  chown: plainWriter("", ["--reference"]),
+};
+/**
+ * A command's words for a path test: `withoutLead` drops a trailing `}` from the last word as a
+ * group's closing brace, which a brace expansion's own closing (`.{crew,x}`) is not.
+ */
+function pathWords({ words, tokens }: Found): string[] {
+  const last = words.length - 1;
+  const kept = withoutRedirects(tokens);
+  const written = kept[kept.length - 1];
+  const word = words[last];
+  if (word === undefined || written === undefined || written === word || !written.startsWith(word))
+    return words;
+  const count = (c: string) => written.split(c).length - 1;
+  return count("{") >= count("}") ? [...words.slice(0, last), written] : words;
+}
+/** How a simple command reaches a path: removing or moving it, copying or extracting into it, writing it, or naming it as an option's value (a possible destination for the engine's rule, not a write the lane rule reads). */
+type WriteKind = "remove" | "copy" | "write" | "value";
+/**
+ * The paths a simple command writes, removes or moves, as the reader reads its words (triage 2j,
+ * 2k, L1): a `>`, `>>`, `&>` redirect's target, tee's files, sed -i's files, the operands of rm,
+ * rmdir, mv (both words), chmod and chown, the destination of cp, mv, rsync and install (`-t` or
+ * the last operand), touch's and truncate's operands, dd's `of=`, and tar's `-C`/`--directory`
+ * when it extracts; for cp, mv, rsync, install and tar, every option value too (judgement round
+ * 3), and every word when an option stands outside the writer's table. Nothing is resolved here; a
+ * word may be a pattern or an expansion.
+ */
+function writtenPaths(found: Found): { word: string; kind: WriteKind }[] {
+  const { tokens, program } = found;
+  const words = pathWords(found);
+  const out: { word: string; kind: WriteKind }[] = [];
+  for (let i = 0; i < tokens.length; i++) {
+    const { word, raw } = tokens[i] ?? { word: "", raw: "" };
+    const operator = redirectOperator(raw);
+    if (operator === undefined || operator.includes("<")) continue;
+    const target = raw.length > operator.length ? word.slice(operator.length) : tokens[++i]?.word;
+    if (target === undefined || (operator.endsWith("&") && /^(?:\d+|-)$/.test(target))) continue;
+    out.push({ word: target, kind: "write" });
+  }
+  const name = program.toLowerCase();
+  const options = WRITER_OPTIONS[name];
+  if (options) {
+    const { operands, values, optionValues, strict } = readWriter(words, options);
+    const target = targetDirectory(values);
+    // mv removes both its words; each copying writer writes its destination. An option outside
+    // the table reads the piece strictly: every word may be the destination.
+    if (name === "mv")
+      for (const w of [...operands, ...(target === undefined ? [] : [target])])
+        out.push({ word: w, kind: "remove" });
+    const destinations = strict
+      ? operands
+      : [target ?? (operands.length > 1 ? operands[operands.length - 1] : undefined)];
+    for (const destination of new Set(destinations))
+      if (destination !== undefined) out.push({ word: destination, kind: "copy" });
+    for (const [, value] of optionValues) out.push({ word: value, kind: "value" });
+  }
+  const plain = PLAIN_WRITERS[name];
+  if (plain) {
+    const { operands } = readWriter(words, plain);
+    const kind: WriteKind =
+      name === "touch" || name === "truncate" || name === "tee" ? "write" : "remove";
+    for (const w of operands) out.push({ word: w, kind });
+  }
+  if (name === "dd")
+    for (const w of words) if (w.startsWith("of=")) out.push({ word: w.slice(3), kind: "write" });
+  if (name === "sed")
+    out.push(...sedInPlaceFiles(words).map((w) => ({ word: w, kind: "write" as const })));
+  if (name === "tar") out.push(...tarExtractPaths(words));
+  return out;
+}
+/** The files `sed -i` edits in place (none without `-i`): its operands after the script, which is the first operand unless `-e` or `-f` gave one; BSD's `-i ''` and `-i .bak` take their suffix. */
+function sedInPlaceFiles(words: string[]): string[] {
+  const inPlace = words.some((w) => /^-[A-Za-z]*i/.test(w) || w.startsWith("--in-place"));
+  if (!inPlace) return [];
+  const operands: string[] = [];
+  let scripted = false;
+  for (let i = 1; i < words.length; i++) {
+    const w = words[i] ?? "";
+    if (w === "-e" || w === "-f" || w === "--expression" || w === "--file") {
+      scripted = true;
+      i++;
+    } else if (/^--(?:expression|file)=/.test(w) || /^-[A-Za-z]*[ef]./.test(w)) scripted = true;
+    else if (w === "-i" && /^(?:$|\.)/.test(words[i + 1] ?? "x")) i++;
+    else if (!w.startsWith("-")) operands.push(w);
+  }
+  return scripted ? operands : operands.slice(1);
+}
+/**
+ * The folders tar extracts into, when it extracts (`-x`, `--extract`, `--get` or a unique prefix of
+ * them, or `x` in an old-style first word); none when it creates or lists: `-C dir`, `-Cdir`, `C`
+ * in a dash cluster by getopt's rule (`-xC dir`), `--directory[=]dir` or its prefix (`--dir`), and
+ * in an old-style first word with no dash (`xfC a.tar dir`) the next free word for each valued
+ * letter in the letters' order; every option value besides, but the archive's (`-f`, `--file`), as
+ * a possible destination. An option outside tar's table reads the piece strictly: every word may
+ * be the folder.
+ */
+function tarExtractPaths(words: string[]): { word: string; kind: WriteKind }[] {
+  const first = words[1] ?? "";
+  const oldStyle = /^[A-Za-z]+$/.test(first);
+  const extracts =
+    (oldStyle && first.includes("x")) ||
+    words.some((w) => {
+      const name = w.startsWith("--") ? longName(w.split("=")[0] ?? "", TAR_OPTIONS) : null;
+      return name === "--extract" || name === "--get" || /^-[A-Za-z]*x/.test(w);
+    });
+  if (!extracts) return [];
+  let rest = words;
+  const dirs: string[] = [];
+  const oldValues: [string, string][] = [];
+  let strict = false;
+  if (oldStyle) {
+    // The old style's letters take their values from the words after it, in order.
+    let next = 2;
+    for (const letter of first) {
+      if (TAR_OPTIONS.valued.includes(letter)) {
+        const value = words[next++];
+        if (value === undefined) continue;
+        oldValues.push([`-${letter}`, value]);
+        if (letter === "C") dirs.push(value);
+      } else if (!TAR_OPTIONS.flags.includes(letter)) strict = true;
+    }
+    rest = [words[0] ?? "", ...words.slice(next)];
+  }
+  const read = readWriter(rest, TAR_OPTIONS);
+  for (const [name, value] of read.values)
+    if (name === "-C" || name === "--directory") dirs.push(value);
+  const folders = read.strict || strict ? [...dirs, ...read.operands] : dirs;
+  return [
+    ...folders.map((word) => ({ word, kind: "copy" as const })),
+    // The archive an extraction reads is no destination (`tar -xf .crew/a.tar -C /tmp/out`).
+    ...[...oldValues, ...read.optionValues]
+      .filter(([name]) => name !== "-f" && name !== "--file")
+      .map(([, word]) => ({ word, kind: "value" as const })),
+  ];
+}
+/** The names find's patterns are tested against: the engine's folder and its files. */
+const ENGINE_NAMES = [
+  ".crew",
+  "profile.json",
+  "policy.json",
+  "decisions.json",
+  ...PROTECTED_WORK_FILES.map((f) => f.replace(/^.*\//, "")),
+];
+const FIND_PATTERNS = new Set(["-name", "-iname", "-path", "-ipath", "-wholename", "-iwholename"]);
+/**
+ * Whether a find removes the engine's folder or its files (triage 2k): it holds `-delete`, or an
+ * `-exec`, `-execdir`, `-ok` or `-okdir` running rm, mv or cp, and a start path names the folder or
+ * a path in it, or a `-name`, `-path` or `-wholename` pattern can name the folder or one of its
+ * files (a pattern holding `crew` does), read as find reads it, with no rule for a leading dot.
+ */
+function findRemovesEngine(words: string[]): boolean {
+  const removes =
+    words.includes("-delete") ||
+    words.some(
+      (w, i) =>
+        EXEC_ACTION.test(w) &&
+        ["rm", "mv", "cp"].includes((words[i + 1] ?? "").replace(/^.*\//, "")),
+    );
+  if (!removes) return false;
+  let i = 1;
+  for (; i < words.length && /^-[HLP]$|^-O\d*$|^-D$/.test(words[i] ?? ""); i++)
+    if (words[i] === "-D") i++;
+  for (; i < words.length && !/^[-(!)]/.test(words[i] ?? ""); i++) {
+    const start = words[i] ?? "";
+    if (namesEngineTarget(start) || /(?:^|\/)\.crew(?:\/|$)/i.test(normalizePathWord(start)))
+      return true;
+  }
+  return words.some(
+    (w, k) =>
+      FIND_PATTERNS.has(w) &&
+      braceExpand(words[k + 1] ?? "").some(
+        (pattern) =>
+          /crew/i.test(pattern) || ENGINE_NAMES.some((n) => segmentMatches(pattern, n, false)),
+      ),
+  );
+}
+/** Whether a simple command removes or moves the engine's folder, copies or extracts into it or onto one of its files, or finds and removes in it (triage 2j, 2k). */
+function writesEngine(found: Found): boolean {
+  if (found.program.toLowerCase() === "find" && findRemovesEngine(pathWords(found))) return true;
+  return writtenPaths(found).some(({ word, kind }) =>
+    kind === "remove"
+      ? namesEngineFolder(word)
+      : kind === "value"
+        ? namesInsideEngine(word)
+        : kind === "copy" && namesEngineTarget(word),
+  );
+}
+/** A plain cp, rsync or install with no redirect whose destination is not the engine's: an engine file among its sources is read, not written (the source of a copy out of `.crew` stays a read). */
+function copiesOut(found: Found): boolean {
+  if (!["cp", "rsync", "install"].includes(found.program.toLowerCase())) return false;
+  if (found.tokens.some((t) => redirectOperator(t.raw) !== undefined)) return false;
+  const targets = writtenPaths(found);
+  return targets.length > 0 && !targets.some(({ word }) => namesEngineTarget(word));
+}
+/**
+ * Whether a command writes or removes a watched file of this checkout (triage L1, the user's
+ * decision of 2026-10-23): a path `writtenPaths` reads (chmod and chown aside), resolved against
+ * the session's cwd and watched by the fingerprint's own rule. A word the reader cannot read (a
+ * variable, a substitution, find's `{}`, the home) is none, as the cooperative rule covers it.
+ */
+function writesWatched(ctx: HookContext, cwd: string, found: Found[]): boolean {
+  for (const f of found) {
+    if (["chmod", "chown"].includes(f.program.toLowerCase())) continue;
+    for (const { word, kind } of writtenPaths(f)) {
+      if (kind === "value" || !word || /[$`~]|\{\}/.test(word)) continue;
+      const abs = canonical(isAbsolute(word) ? word : join(cwd, word));
+      const rel = relative(ctx.paths.root, abs).replace(/\\/g, "/");
+      if (!rel.startsWith("..") && !isAbsolute(rel) && (rel === "" || isWatched(rel, ctx.profile)))
+        return true;
+    }
+  }
+  return false;
+}
+/**
+ * Whether a command line is one crew start and nothing else (triage L2, the security lead's R-4):
+ * no `;`, `&&`, `||`, pipe, redirect, substitution or here-document beside it, a `cd <dir> &&`
+ * before it excepted. The PostToolUse claims the printed id of such a line only.
+ */
+export function startsItemAlone(command: string): boolean {
+  const rest = command.replace(/^\s*cd\s+(?:"[^"$`\\]*"|'[^']*'|[^\s;&|<>()`$"'\\]+)\s*&&\s*/, "");
+  const reading = readCommand(rest);
+  const [piece] = reading.pieces;
+  if (reading.unclosed || reading.pieces.length !== 1 || !piece) return false;
+  if (piece.inner.length || piece.heredocs.length) return false;
+  if (piece.tokens.some((t) => redirectOperator(t.raw) !== undefined)) return false;
+  const { found } = walk(rest);
+  const [crew] = crewCommandsOf(found);
+  return (
+    found.length === 1 && !!crew && !crew.viaXargs && parse(crew.args).positional[0] === "start"
+  );
+}
+
 /** Whether a command line holds a crew start, in any spelling the reader reads as crew (session lanes, AC-2 and AC-3). */
 export function startsItem(command: string): boolean {
   return crewCommandsOf(walk(command).found).some((c) => parse(c.args).positional[0] === "start");
@@ -1096,13 +1812,14 @@ export function startsItem(command: string): boolean {
  * The refusal beside a live neighbour (session lanes, AC-3), after every other rule: a check that
  * fails is no neighbour and never skips another rule (the security lead's R-2).
  */
-function laneDenial(ctx: HookContext, edit: boolean): HookResponse | null {
+function laneDenial(ctx: HookContext, kind: "edit" | "start" | "bash"): HookResponse | null {
   let first: { id: string; item: string } | undefined;
   try {
-    // A session working on an open item of its own is never refused its edits (its neighbours are
-    // named in its context only); a second crew start beside a neighbour is still refused.
+    // A session working on an open item of its own is never refused its edits or its Bash writes
+    // (its neighbours are named in its context only); a second crew start beside a neighbour is
+    // still refused.
     first = neighbours(ctx)[0];
-    if (first && edit && holdsOpenItem(ctx)) return null;
+    if (first && kind !== "start" && holdsOpenItem(ctx)) return null;
   } catch {
     return null;
   }
@@ -1153,9 +1870,11 @@ export function onPreToolUse(ctx: HookContext, payload: HookPayload): HookRespon
     const paths = pathsFromInput(input);
     if (!paths.length) return {};
     let watched = false;
+    // The repository's other worktrees, read once for the call (triage L3).
+    const worktrees = worktreeRoots(ctx.paths.root);
     for (const filePath of paths) {
       const abs = canonical(isAbsolute(filePath) ? filePath : join(ctx.paths.root, filePath));
-      if (isProtectedPath(ctx.paths, abs)) {
+      if (isProtectedPath(ctx.paths, abs, worktrees)) {
         return answer(
           "deny",
           `Crew: ${filePath} is maintained by the engine and is changed through the crew command`,
@@ -1173,7 +1892,7 @@ export function onPreToolUse(ctx: HookContext, payload: HookPayload): HookRespon
         `Crew: work ${work.id} is in phase ${work.phase} on the ${work.route} route; source files change in the build phase (crew phase ${work.id} next)`,
       );
     }
-    return laneDenial(ctx, true) ?? {};
+    return laneDenial(ctx, "edit") ?? {};
   }
   if (tool === "Bash") {
     const written = typeof input.command === "string" ? input.command : "";
@@ -1379,11 +2098,13 @@ export function onPreToolUse(ctx: HookContext, payload: HookPayload): HookRespon
       asked ??= decided;
     }
     // Each simple command is judged on its own: an engine file named in one and a write verb in
-    // another are not a write (finding 2 of the real-use phase).
+    // another are not a write (finding 2 of the real-use phase). A plain copy whose destination is
+    // not the engine's reads its sources (triage 2k).
+    const readCopies = new Set(found.filter(copiesOut).map((f) => f.piece));
     for (const piece of judgedTexts(readCommand(command).pieces)) {
       // No exemption for crew command lines: `crew x; echo > .crew/...` is two simple commands, and no crew command names a protected path.
       if (
-        (ENGINE_FILES.test(piece) && WRITE_SHAPE.test(piece)) ||
+        (ENGINE_FILES.test(piece) && WRITE_SHAPE.test(piece) && !readCopies.has(piece)) ||
         (ENGINE_FOLDER.test(piece) && REMOVE_OR_MOVE.test(piece)) ||
         (OPAQUE_REDIRECT.test(piece) && ENGINE_FILES.test(command))
       ) {
@@ -1393,6 +2114,14 @@ export function onPreToolUse(ctx: HookContext, payload: HookPayload): HookRespon
         );
       }
     }
+    // The words of every simple command, read as the shell reads them: the engine's folder in its
+    // lexical forms (a doubled separator, a `.` or `seg/..` segment, a brace expansion, a glob)
+    // removed or moved, a copy or an extraction into it, a find that removes in it (triage 2j, 2k).
+    if (found.some(writesEngine))
+      return answer(
+        "deny",
+        "Crew: files under .crew/ and ~/.wizardingcode/crew that the engine owns are written only by the crew command",
+      );
     // The PowerShell line the hook cannot read (judgement rounds 6 onwards): decided as a line the
     // hook cannot close is, after every deny above, in every policy; no `--mode` can be read from
     // it, so where nobody watches it is denied until written plainly.
@@ -1414,10 +2143,22 @@ export function onPreToolUse(ctx: HookContext, payload: HookPayload): HookRespon
         );
       return answer("ask", `Crew: ${what}, so a person decides`);
     }
+    // A Bash write to a watched file beside a live neighbour holding an open item is refused as an
+    // edit is (triage L1); a check that fails is no write.
+    let writes = false;
+    try {
+      writes = writesWatched(ctx, payload.cwd ?? ctx.paths.root, found);
+    } catch {
+      // no write read: the cooperative rule covers it
+    }
+    if (writes) {
+      const lane = laneDenial(ctx, "bash");
+      if (lane) return lane;
+    }
     // A crew start beside a live neighbour is refused; one let through records its time, which
     // the PostToolUse reads the new item's creation against (AC-2).
     if (crewCommands.some((c) => parse(c.args).positional[0] === "start")) {
-      const lane = laneDenial(ctx, false);
+      const lane = laneDenial(ctx, "start");
       if (lane) return lane;
       try {
         const active = loadState(ctx.paths).active;

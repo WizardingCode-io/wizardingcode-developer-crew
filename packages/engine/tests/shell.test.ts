@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { readCommand } from "../src/hooks/shell.ts";
+import { WRAPPERS } from "../src/shell-words.ts";
 
 const words = (command: string) =>
   readCommand(command).pieces.map((p) => p.tokens.map((t) => t.word));
@@ -123,4 +124,15 @@ test("CON2-AC-6 (finding 30): an arithmetic body is read past a backtick's paren
     "approve",
     "w1",
   ]);
+});
+
+test("DEBT-AC-4-stands-alone: a wrapper with a script option appends its following words unless it is listed as standing alone, and only su and script are", () => {
+  const withScript = WRAPPERS.filter((w) => w.scriptOptions?.length);
+  const alone = withScript
+    .filter((w) => (w as { scriptStandsAlone?: true }).scriptStandsAlone)
+    .map((w) => w.name)
+    .sort();
+  expect(alone).toEqual(["script", "su"]);
+  // The opt-in field is gone: a wrapper added later appends by default.
+  expect(WRAPPERS.filter((w) => "scriptAppends" in w).map((w) => w.name)).toEqual([]);
 });

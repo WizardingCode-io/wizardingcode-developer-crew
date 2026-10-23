@@ -1174,3 +1174,23 @@ Verdicts agree at every effort. Upheld findings: `high` reproduced Task 6's and 
 - Expected: a lead's answer is filed under its team whatever the prompt's wording (the team read from the launch, or an answer with no lead heading refused rather than filed under the role's name), and two leads never share one file.
 - Evidence: the item's `conclave/` folder (the copied `lead-qa.md` and `lead-security.md` and their reply files; the misnamed `tech-lead.md` and `tech-lead-reply.md` are no longer there); the hook's filing notices in the session.
 - Outcome: open.
+
+### 144. `crew tdd red` records a red on a run the shell could not parse
+- Date: 2026-10-23. Project: this repository. Item: `2026-10-23-004`. Category: `false-proof`. Severity: high.
+- What happened: `crew tdd red <id> AC-2 -- "bun test <file> -t DEBT-AC-2-(rsync-late|tar-bundled|mv-variant)"` ran through `/bin/sh -c`, which stopped with `syntax error near unexpected token '('` (exit 2) before any test ran; the engine recorded `red recorded for AC-2 (exit 2)`. The session read the log, re-took the red with the pattern quoted (3 fail), and the record keeps both entries.
+- Expected: a red needs a test run that failed; a run whose output holds no runner summary (or a shell syntax error, or exit 2 from `sh`) is refused like finding 126's zero-test run.
+- Evidence: the item's `logs/tdd-AC-2-red-1792764497181.txt` and `evidence.json` (AC-2's `reds`, the exit-2 entry).
+- Outcome: open, for the next hardening item.
+
+### 145. A resumed judge's ruling is filed as conclave/judge-reply.md, not review/ruling.json
+- Date: 2026-10-23. Project: this repository. Item: `2026-10-23-004`. Category: `friction`. Severity: low.
+- What happened: the judge, resumed with SendMessage for each of the item's judgement rounds 2 to 5 (and to re-issue round 1 with the verdict spelled `not-proven`), had its JSON ruling saved as `conclave/judge-reply.md` (earlier replies kept as `judge-reply.roundN.md`); `review/ruling.json` kept the first launch's ruling. `crew judgement record --ruling conclave/judge-reply.md` accepted it.
+- Expected: a judge's answer goes to `review/ruling.json` (the earlier one archived) whether the judge was launched or resumed, so the gate's ruling file is the one the stop hook and the reviewers read.
+- Evidence: the item's `conclave/judge-reply*.md` and `review/ruling.json`.
+- Outcome: open.
+
+### 146. The Stop hook does not wait for a background run the session started itself
+- Date: 2026-10-23. Project: this repository. Category: `idea`. Severity: low.
+- What happened: while a `crew tdd before` run or a gate run the session started in the background was still going, the Stop hook refused the turn's end as unproven work; the session had to record `crew await <id> role` to end the turn.
+- Expected: a turn may end while the session's own engine run is in progress, the hook naming it.
+- Outcome: deferred by the user's decision of 2026-10-23 (item `2026-10-23-004`, D-4: "Later, as a finding"), for the next subproject.

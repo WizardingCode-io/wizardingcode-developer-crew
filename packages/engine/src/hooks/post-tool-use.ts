@@ -1,24 +1,27 @@
 import { liveSessions, loadState, sessionState, updateSession } from "../state.ts";
-import { activeWork } from "../work.ts";
+import { openItems } from "../work.ts";
 import { takeNotices } from "./notices.ts";
-import { startsItem } from "./pre-tool-use.ts";
+import { startsItem, startsItemAlone } from "./pre-tool-use.ts";
 import type { HookContext, HookPayload, HookResponse } from "./types.ts";
 
 /**
  * The item a crew start made becomes the session's own (session lanes, AC-2, the security lead's
- * R-1), read from the engine's state, never from the command's output: the checkout's active item
- * when it is not the one the start's PreToolUse saw, was created at or after it, and no other live
- * session holds it.
+ * R-1; triage L2): the id the command printed (`started <id>`), taken only when the command is one
+ * crew start and nothing else (`startsItemAlone`) and its output holds exactly one started line,
+ * and only when the engine's state says that id is an open item of this checkout, created at or
+ * after the start's PreToolUse and held by no other live session.
  */
-function claimStarted(ctx: HookContext): void {
+function claimStarted(ctx: HookContext, command: string, output: string): void {
   const start = loadState(ctx.paths).sessions[ctx.sessionId];
   const since = start?.startAt;
   if (!since) return;
-  const work = activeWork(ctx.paths)?.work;
+  const printed = [...output.matchAll(/^started (\S+)/gm)].map((m) => m[1]);
+  const id = startsItemAlone(command) && printed.length === 1 ? printed[0] : undefined;
+  const work = id ? openItems(ctx.paths).find((w) => w.id === id) : undefined;
   const held =
     !!work &&
     Object.entries(liveSessions(ctx.paths)).some(
-      ([id, s]) => id !== ctx.sessionId && s.item === work.id,
+      ([sid, s]) => sid !== ctx.sessionId && s.item === work.id,
     );
   updateSession(ctx.paths, ctx.sessionId, (session) => {
     if (work && work.id !== start.startActive && work.createdAt >= since && !held)
@@ -26,6 +29,13 @@ function claimStarted(ctx: HookContext): void {
     delete session.startAt;
     delete session.startActive;
   });
+}
+
+/** What a tool's answer printed: Claude Code's Bash `stdout`, an adapter's `output`, or the answer itself when it is text. */
+function printedBy(response: unknown): string {
+  if (typeof response === "string") return response;
+  const { stdout, output } = (response ?? {}) as { stdout?: unknown; output?: unknown };
+  return typeof stdout === "string" ? stdout : typeof output === "string" ? output : "";
 }
 
 /**
@@ -41,7 +51,7 @@ export function onPostToolUse(ctx: HookContext, payload: HookPayload = {}): Hook
   const command = payload.tool_input?.command;
   if (payload.tool_name === "Bash" && typeof command === "string" && startsItem(command)) {
     try {
-      claimStarted(ctx);
+      claimStarted(ctx, command, printedBy(payload.tool_response));
     } catch {
       // no claim: the session holds no item
     }

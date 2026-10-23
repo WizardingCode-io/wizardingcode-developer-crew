@@ -1546,3 +1546,15 @@ test("CON6-AC-6 (finding 30): a task whose merge HEAD has undone with git revert
   }
   expect(unreadable).toMatchObject({ refused: expect.any(String) });
 });
+
+test("DEBT-AC-10-open-text: crew task open's line for an implementer that did not start names crew task <id> drop T-n, not the hand git commands (triage 5j)", async () => {
+  const { c, id } = await lead({
+    env: { WIZARDINGCODE_CREW_CLAUDE: join(tempDir("crew-none-"), "claude") },
+  });
+  const opened = await c.run("task", id, "open", "T-1", "--criteria", "AC-1");
+  expect(opened.code).toBe(0);
+  expect(opened.out).toContain("the implementer did not start");
+  expect(opened.out).toContain(`crew task ${id} drop T-1`);
+  expect(opened.out).not.toContain("git worktree remove");
+  expect(opened.out).not.toContain("git branch -D");
+}, 20_000);

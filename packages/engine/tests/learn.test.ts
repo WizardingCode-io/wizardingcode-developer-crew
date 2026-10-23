@@ -564,3 +564,87 @@ test("CON3-AC-3: after crew knowledge contradict K-n --item <id>, crew learn <id
   expect(entries(env).find((e) => e.id === root.id)?.kind).toBe("root-cause");
   expect(loadWork(p.paths, again.id).work?.learned).toBeDefined();
 });
+
+/** An issue at learn with its cause and origin written, read back as the engine has it. */
+function issue(p: ReturnType<typeof project>, title: string, text: string, paths: string[]) {
+  const w = item(p, title);
+  w.kind = "issue";
+  saveWork(p.paths, w);
+  writeFileSync(
+    join(workDir(p.paths, w.id), "analysis.md"),
+    `# Analysis\n\n## Origin\n\nnone\n\n## Cause\n\n${text}\n\n## Blast radius\n\nnone\n`,
+  );
+  writeOrigin(p.paths, w.id, {
+    at: "t",
+    paths: paths.map((path) => ({ path, commits: [] })),
+    items: [],
+  });
+  return loadWork(p.paths, w.id).work as WorkItem;
+}
+
+/** A second root cause beside `root`, the same paths and words: another match for the same draft. */
+function twin(env: NodeJS.ProcessEnv, root: KnowledgeEntry): KnowledgeEntry {
+  const {
+    id: _id,
+    confirmedBy: _c,
+    contradictedBy: _x,
+    at: _at,
+    ...draft
+  } = root as KnowledgeEntry & {
+    at?: string;
+  };
+  const added = addEntry(join(env.WIZARDINGCODE_HOME ?? "", "crew"), {
+    ...(draft as unknown as KnowledgeDraft),
+    title: "Root cause: the same filter, again",
+  });
+  if ("refused" in added) throw new Error(added.refused);
+  return added;
+}
+
+const CAUSE = "The listing query forgets the active filter after the status column moved.";
+
+test("DEBT-AC-9-every-match: rule 17's refusal names every matching root cause in one message, with the ways out of each (finding 139)", () => {
+  const env = testEnv();
+  const p = project(env, "acme", "shop");
+  const first = learn(
+    p,
+    issue(p, "Listing shows deactivated accounts", CAUSE, ["src/accounts.mjs"]),
+  );
+  if ("refused" in first) throw new Error(first.refused);
+  const one = first.entries.find((e) => e.kind === "root-cause") as KnowledgeEntry;
+  const two = twin(env, one);
+  const again = issue(p, "Deactivated accounts listed again", CAUSE, ["src/accounts.mjs"]);
+  const out = learn(p, again);
+  expect(out).toHaveProperty("refused");
+  const refused = (out as { refused: string }).refused;
+  for (const entry of [one, two]) {
+    expect(refused).toContain(entry.id);
+    expect(refused).toContain(
+      `crew knowledge contradict ${entry.id} --reason "<why>" --item ${again.id}`,
+    );
+  }
+  expect(loadWork(p.paths, again.id).work?.learned).toBeUndefined();
+});
+
+test("DEBT-AC-9-cited: an entry the analysis cites as [K:K-n] is not offered as a duplicate: the learn confirms it and writes the item's own cause (finding 139)", () => {
+  const env = testEnv();
+  const p = project(env, "acme", "shop");
+  const first = learn(
+    p,
+    issue(p, "Listing shows deactivated accounts", CAUSE, ["src/accounts.mjs"]),
+  );
+  if ("refused" in first) throw new Error(first.refused);
+  const root = first.entries.find((e) => e.kind === "root-cause") as KnowledgeEntry;
+  const again = issue(
+    p,
+    "Deactivated accounts listed again",
+    `${CAUSE} Unlike [K:${root.id}], the filter is now part of the query builder.`,
+    ["src/accounts.mjs"],
+  );
+  again.knowledge = { readAt: "t", listed: [root.id] };
+  saveWork(p.paths, again);
+  const out = learn(p, again);
+  if ("refused" in out) throw new Error(out.refused);
+  expect(out.confirmed).toEqual([root.id]);
+  expect(out.entries.some((e) => e.kind === "root-cause")).toBe(true);
+});

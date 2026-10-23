@@ -735,6 +735,8 @@ export interface WorkItem {
   baseFiles?: Record<string, string>;
   /** The seats planned for the item, with their reasons; written by `crew team` and the gate run (SP7 §6.6). */
   seats?: Seat[];
+  /** The judgement gates the agent seated beyond the route's (`crew team <id> seat`, finding 140): planned from then on. */
+  seatedJudgement?: { gate: JudgementGateName; reason: string; at: string }[];
   /** The team whose lead the session is: frontend when the change touches interface files, backend otherwise. */
   primaryTeam?: "backend" | "frontend";
   /**

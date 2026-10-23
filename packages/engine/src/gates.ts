@@ -712,7 +712,7 @@ export async function runGates(
   const registry = teamsFor(policy, packTemplates(paths.userDir)).teams;
   // Planned after the route may have been raised, so a risk area the diff touched plans the
   // security gate; from the same registry as the seats.
-  const judgement = plannedJudgementGates(work.route, work.riskAreas, changed, policy, registry);
+  const judgement = itemJudgement(work, changed, policy, registry);
   work.seats = plannedSeats(work.route, work.riskAreas, changed, policy, {
     registry,
     templatePaths: changedPaths(paths.root, base),
@@ -792,6 +792,23 @@ export interface Assessment {
   tampered: boolean;
 }
 
+/**
+ * The judgement gates an item is held to: the route's, then each gate the agent seated with
+ * `crew team <id> seat` (finding 140), its reason the planned one's.
+ */
+export function itemJudgement(
+  work: WorkItem,
+  changed: readonly string[],
+  policy: Policy,
+  registry: Parameters<typeof plannedJudgementGates>[4],
+): PlannedJudgement[] {
+  const planned = plannedJudgementGates(work.route, work.riskAreas, changed, policy, registry);
+  for (const seated of work.seatedJudgement ?? [])
+    if (!planned.some((p) => p.gate === seated.gate))
+      planned.push({ gate: seated.gate, reason: `seated: ${seated.reason}` });
+  return planned;
+}
+
 /** Read-only: what the evidence says about the code as it is right now. Fast enough for a hook. */
 export function assess(
   paths: CrewPaths,
@@ -803,9 +820,8 @@ export function assess(
   const base = work;
   const changed = changedWatchedPaths(paths.root, profile, base);
   const expected = plannedGates(work.route, profile, policy, changed, paths.root);
-  const judgement = plannedJudgementGates(
-    work.route,
-    work.riskAreas,
+  const judgement = itemJudgement(
+    work,
     changed,
     policy,
     teamsFor(policy, packTemplates(paths.userDir)).teams,

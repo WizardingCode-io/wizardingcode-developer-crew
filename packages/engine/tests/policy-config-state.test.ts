@@ -5,6 +5,8 @@ import { DEFAULT_CONFIG, loadConfig, saveConfig, setConfigValue } from "../src/c
 import {
   DEFAULT_MAIL_POLICY,
   DEFAULT_POLICY,
+  DEFAULT_TEAM_POLICY,
+  DEFAULT_VERIFY_POLICY,
   decisionCounts,
   loadPolicy,
   SETTABLE_POLICY_KEYS,
@@ -581,4 +583,20 @@ test("CON6-AC-1 (finding 27): crew policy set with an inherited key such as toSt
       refused: `unknown policy key: ${key} (crew policy set writes ${known})`,
     });
   }
+});
+
+test("DEBT-AC-10-policy-copies: neither the default policy nor a loaded one shares the default team or verify objects (triage 6b)", () => {
+  expect(DEFAULT_POLICY.team).toEqual(DEFAULT_TEAM_POLICY);
+  expect(DEFAULT_POLICY.team).not.toBe(DEFAULT_TEAM_POLICY);
+  expect(DEFAULT_POLICY.verify).toEqual(DEFAULT_VERIFY_POLICY);
+  expect(DEFAULT_POLICY.verify).not.toBe(DEFAULT_VERIFY_POLICY);
+  expect(DEFAULT_POLICY.verify.asks).not.toBe(DEFAULT_VERIFY_POLICY.asks);
+  const paths = repoPaths(makeRepo(), testEnv());
+  const loaded = loadPolicy(paths).policy;
+  expect(loaded.team).not.toBe(DEFAULT_TEAM_POLICY);
+  expect(loaded.verify).not.toBe(DEFAULT_VERIFY_POLICY);
+  const before = JSON.stringify(DEFAULT_TEAM_POLICY);
+  loaded.team.maxExperts = 1;
+  loaded.team.always.push("qa");
+  expect(JSON.stringify(DEFAULT_TEAM_POLICY)).toBe(before);
 });

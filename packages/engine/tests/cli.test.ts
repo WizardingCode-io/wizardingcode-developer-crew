@@ -7249,8 +7249,8 @@ test("SP4-T4 AC-5: crew status says what learning is left in deliver and in lear
   expect(learned.code, learned.err).toBe(0);
   expect(learned.out).toContain('K-1 · validated-solution · "Add a total"');
   expect(learned.out).toContain("K-2 · stack-preference");
-  expect((await c.run("status")).out).toContain("  learn: learned K-1, K-2");
-  expect((await c.json("status")).data.learned).toMatchObject({
+  expect((await c.run("status", id)).out).toContain("  learn: learned K-1, K-2");
+  expect((await c.json("status", id)).data.learned).toMatchObject({
     entries: ["K-1", "K-2"],
     confirmed: [],
   });
@@ -10192,7 +10192,7 @@ test("LANE-AC-6: an item of a worktree that learns sends its project the lane no
   const before = inbox().length;
   const learned = await cw.run("learn", id);
   expect(learned.code, learned.err).toBe(0);
-  const notice = `Lane lane-total (${id}, proven) is proven and committed: merge it from the main checkout.`;
+  const notice = `Lane lane-total (${id}, proven) is proven: commit it, then merge it from the main checkout.`;
   const received = inbox().slice(before);
   expect(
     received.some((m) => m.type === "notice" && (m.subject === notice || m.body === notice)),
@@ -10226,4 +10226,225 @@ test("LANE-AC-6: an item of a worktree that learns sends its project the lane no
   expect(mainLearn.code, mainLearn.err).toBe(0);
   expect(inbox().length).toBe(count);
   expect(mainLearn.out).not.toContain("merge ");
+});
+
+test("DEBT-AC-8-unparseable: crew accept mail inbox refuses a box that does not parse, naming it, and records nothing: the box is still reported changed outside the engine (triage 4j)", async () => {
+  const { env, b, ca, cb } = mailRepos();
+  await ca.run("detect");
+  await cb.run("detect");
+  const pb = repoPaths(b, env);
+  registerProject(mailContext(pb, loadPolicy(pb).policy, env), "cli", { hook: true });
+  expect((await ca.run("mail", "send", "--to", "crm", "--type", "question", "Tiers?")).code).toBe(
+    0,
+  );
+  const crmDir = crmInboxDir(env);
+  const box = join(crmDir, "inbox.json");
+  writeFileSync(box, "{bad");
+  const integrity = readFileSync(join(crmDir, "integrity.json"));
+  const decisionsBefore = listDecisions(pb).length;
+  const refused = await cb.run("accept", "mail", "inbox");
+  expect(refused.code).toBe(1);
+  expect(refused.err).toContain(box);
+  expect(readFileSync(join(crmDir, "integrity.json")).equals(integrity)).toBe(true);
+  expect(listDecisions(pb).length).toBe(decisionsBefore);
+  expect((await cb.run("mail", "inbox")).err).toContain("crm's inbox changed outside the engine");
+}, 30_000);
+
+test("DEBT-AC-8-not-a-mailbox: crew accept mail inbox refuses a box that parses but holds no messages array, naming it, and records nothing (triage 4j)", async () => {
+  const { env, b, ca, cb } = mailRepos();
+  await ca.run("detect");
+  await cb.run("detect");
+  const pb = repoPaths(b, env);
+  registerProject(mailContext(pb, loadPolicy(pb).policy, env), "cli", { hook: true });
+  expect((await ca.run("mail", "send", "--to", "crm", "--type", "question", "Tiers?")).code).toBe(
+    0,
+  );
+  const crmDir = crmInboxDir(env);
+  const box = join(crmDir, "inbox.json");
+  writeFileSync(box, '{"x":1}');
+  const integrity = readFileSync(join(crmDir, "integrity.json"));
+  const decisionsBefore = listDecisions(pb).length;
+  const refused = await cb.run("accept", "mail", "inbox");
+  expect(refused.code).toBe(1);
+  expect(refused.err).toContain(box);
+  expect(readFileSync(join(crmDir, "integrity.json")).equals(integrity)).toBe(true);
+  expect(listDecisions(pb).length).toBe(decisionsBefore);
+  expect((await cb.run("mail", "inbox")).err).toContain("crm's inbox changed outside the engine");
+}, 30_000);
+
+test("DEBT-AC-8-relayed: under attendedDecisions relay, crew accept mail records the acceptance as the user's, relayed by the agent (triage 4k)", async () => {
+  const { env, b, ca, cb } = mailRepos();
+  await ca.run("detect");
+  await cb.run("detect");
+  const pb = repoPaths(b, env);
+  expect(loadPolicy(pb).policy.attendedDecisions).toBe("relay");
+  registerProject(mailContext(pb, loadPolicy(pb).policy, env), "cli", { hook: true });
+  expect((await ca.run("mail", "send", "--to", "crm", "--type", "question", "Tiers?")).code).toBe(
+    0,
+  );
+  handEdit(join(crmInboxDir(env), "inbox.json"));
+  const accepted = await cb.run("accept", "mail", "inbox");
+  expect(accepted.code, accepted.err).toBe(0);
+  expect(register(b).at(-1)).toMatchObject({
+    kind: "accept",
+    by: "the user, relayed by the agent",
+  });
+}, 30_000);
+
+test("DEBT-AC-9-active: crew learn leaves the active slot when the learned item holds it, and a later start takes the slot (finding 136's second half)", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const env = testEnv();
+  const c = io(root, env);
+  const id = (await c.json("start", "Add a total", "--answers", answers, "--criterion", "it adds"))
+    .data.id as string;
+  write(root, "src/a.ts", "export const v = 1;\n");
+  await c.run("skip", id, "tdd:AC-1", "--reason", "manual");
+  expect((await c.run("gate", "run", id)).out).toContain(`Proven: ${id}`);
+  expect((await c.run("phase", id, "next")).out.trim()).toBe(`${id}: phase learn`);
+  expect(loadState(repoPaths(root, env)).active).toBe(id);
+  const learned = await c.run("learn", id);
+  expect(learned.code, learned.err).toBe(0);
+  expect(loadState(repoPaths(root, env)).active).toBeNull();
+  expect((await c.run("status")).out.trim()).toBe("no active work item");
+  const next = (await c.json("start", "Add a count", "--answers", answers, "--criterion", "b")).data
+    .id as string;
+  expect(loadState(repoPaths(root, env)).active).toBe(next);
+  expect((await c.json("status")).data.active).toBe(next);
+});
+
+test("DEBT-AC-10-no-worktree: crew task drop refuses a handed task record with no worktree or no branch recorded with its own text, changing nothing (triage 5c)", async () => {
+  const { c, id, open, snapshot, edit } = await taskRepo();
+  await open("T-1");
+  for (const field of ["worktree", "branch"] as const) {
+    let kept = "";
+    edit("T-1", (t) => {
+      kept = t[field] ?? "";
+      t.state = "handed";
+      delete t[field];
+    });
+    const before = snapshot();
+    const r = await c.run("task", id, "drop", "T-1");
+    expect(r.code, field).toBe(1);
+    expect(r.err.trim(), field).toBe("T-1 has no worktree or branch recorded");
+    expect(snapshot(), field).toEqual(before);
+    edit("T-1", (t) => {
+      t[field] = kept;
+    });
+  }
+}, 30_000);
+
+test("DEBT-AC-11: crew tdd observed without -- refuses naming the form and records nothing (the user's decision of 2026-10-23)", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const env = testEnv();
+  const c = io(root, env);
+  const id = (await c.json("start", "Stubbed e2e", "--answers", answers, "--criterion", "a")).data
+    .id as string;
+  expect(
+    (await c.run("criteria", id, "add", "the stubbed e2e passes", "--kind", "observed")).code,
+  ).toBe(0);
+  const evidence = join(root, ".crew", "work", id, "evidence.json");
+  const before = existsSync(evidence) ? readFileSync(evidence, "utf8") : null;
+  const refused = await c.run("tdd", "observed", id, "AC-2", "--reason", "the server is stubbed");
+  expect(refused.code).toBe(1);
+  expect(refused.err.trim()).toBe("crew tdd observed needs -- <a command that reads the artefact>");
+  expect(existsSync(evidence) ? readFileSync(evidence, "utf8") : null).toBe(before);
+  expect(
+    loadEvidence(repoPaths(root, env), id).evidence.tdd.find((r) => r.criterion === "AC-2"),
+  ).toBeUndefined();
+});
+
+/** A standard item in build with its test-first records, the e2e gate skipped: code-quality and test-quality planned. */
+async function seatItem() {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const env = testEnv();
+  const c = io(root, env);
+  const standard = JSON.stringify({ ...JSON.parse(answers), work_type: "feature", scope: 1 });
+  const id = (await c.json("start", "Guard change", "--answers", standard, "--criterion", "a")).data
+    .id as string;
+  const work = loadWork(repoPaths(root, env), id).work as WorkItem;
+  work.phase = "build";
+  saveWork(repoPaths(root, env), work);
+  write(root, "src/a.ts", "x = 1");
+  expect((await c.run("tdd", "red", id, "AC-1", "--", "exit 1")).code).toBe(0);
+  expect((await c.run("tdd", "green", id, "AC-1", "--", "exit 0")).code).toBe(0);
+  await c.run("skip", id, "gate:e2e", "--reason", "no environment in the fixture");
+  const workFile = join(root, ".crew", "work", id, "work.json");
+  return { root, env, c, id, workFile };
+}
+
+test("DEBT-AC-15-seat: crew team <id> seat <gate> --reason seats an unplanned judgement gate on the item's record and the register as the agent's addition; the gate run lists it and the ruling accepts it (finding 140)", async () => {
+  const { root, env, c, id } = await seatItem();
+  const first = await c.json("gate", "run", id);
+  expect(first.data.unproven).toContain("judgement gate code-quality not run");
+  expect(first.data.unproven).not.toContain("judgement gate security not run");
+  const reason = "the guard changed under riskPathExclusions";
+  const entriesNow = () =>
+    existsSync(join(root, ".crew", "decisions.json")) ? register(root) : [];
+  const before = entriesNow().length;
+  const seated = await c.run("team", id, "seat", "security", "--reason", reason);
+  expect(seated.code, seated.err).toBe(0);
+  expect(seated.out).toContain("security");
+  expect(seated.out).toContain(reason);
+  // On the register: the agent's addition, no decision of the user's.
+  const entries = entriesNow();
+  expect(entries.length).toBe(before + 1);
+  expect(entries.at(-1)?.by).toBe("the agent");
+  expect(entries.at(-1)?.text).toContain("security");
+  expect(entries.at(-1)?.text).toContain(reason);
+  expect(JSON.stringify(loadWork(repoPaths(root, env), id).work)).toContain(reason);
+  // The gate run lists it with the planned ones.
+  const second = await c.json("gate", "run", id);
+  expect(second.data.unproven).toContain("judgement gate security not run");
+  expect(second.data.unproven).toContain("judgement gate code-quality not run");
+  // The ruling accepts it.
+  const file = join(root, ".crew", "work", id, "review", "ruling.json");
+  const proven = (gate: string) => ({
+    gate,
+    verdict: "proven",
+    reviewer: gate,
+    judge: "judge",
+    tokens: 100,
+    findings: [],
+  });
+  writeFileSync(
+    file,
+    JSON.stringify({ rulings: ["code-quality", "test-quality", "security"].map(proven) }),
+  );
+  const recorded = await c.run("judgement", id, "record", "--ruling", file);
+  expect(recorded.err).not.toContain("not planned");
+  expect(recorded.code, recorded.err).toBe(0);
+  const judgement = (await c.json("status")).data.judgement as { gate: string; status: string }[];
+  expect(judgement.find((j) => j.gate === "security")?.status).toBe("proven");
+});
+
+test("DEBT-AC-15-refusals: crew team <id> seat refuses an unknown gate, a gate already planned, a missing reason and an empty reason, each recording nothing (finding 140)", async () => {
+  const { root, c, id, workFile } = await seatItem();
+  await c.run("gate", "run", id);
+  const entriesNow = () =>
+    existsSync(join(root, ".crew", "decisions.json")) ? register(root) : [];
+  const cases: [string, string[], string][] = [
+    ["unknown", ["seat", "lint", "--reason", "why"], "lint"],
+    ["unknown-name", ["seat", "bogus", "--reason", "why"], "bogus"],
+    ["planned", ["seat", "code-quality", "--reason", "why"], "code-quality"],
+    ["no-reason", ["seat", "security"], "--reason"],
+    ["empty-reason", ["seat", "security", "--reason", "  "], "--reason"],
+  ];
+  for (const [name, argv, names] of cases) {
+    const work = readFileSync(workFile, "utf8");
+    const decisions = entriesNow().length;
+    const r = await c.run("team", id, ...argv);
+    expect(r.code, name).toBe(1);
+    expect(r.err, name).toContain(names);
+    expect(readFileSync(workFile, "utf8"), name).toBe(work);
+    expect(entriesNow().length, name).toBe(decisions);
+  }
 });

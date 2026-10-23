@@ -545,9 +545,21 @@ export function acceptBox(
   const file = boxFile(dir, which);
   try {
     return withMailLock(dir, () => {
-      if (!recordIntegrityAt(boxFile(dir, "integrity"), file))
-        return { refused: `no ${which} at ${file} to accept` };
-      return { file, messages: readBox(dir, which).box.messages };
+      // Read once and parsed first (triage 4j): a box that is not a mailbox is never trusted, and
+      // the integrity recorded is the hash of the very bytes that were parsed.
+      const text = readText(file);
+      if (text === null) return { refused: `no ${which} at ${file} to accept` };
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        return { refused: `${which} not accepted: ${file} is not valid JSON` };
+      }
+      const messages = (parsed as Partial<Mailbox> | null)?.messages;
+      if (!Array.isArray(messages))
+        return { refused: `${which} not accepted: ${file} is not a mailbox (no messages array)` };
+      recordIntegrityAt(boxFile(dir, "integrity"), file, text);
+      return { file, messages: messages as Message[] };
     });
   } catch (error) {
     if (!(error instanceof LockBusy)) throw error;
@@ -1074,7 +1086,9 @@ function recordEverywhere(
       if (dir === ownDir) ownBusy = error.message;
     }
   }
-  if (result) recordForParties(ctx, registry, result);
+  // A pass that could not write this project's own copy fails its caller: no item copy records a
+  // change the own box lacks (triage 4a).
+  if (result && !ownBusy) recordForParties(ctx, registry, result);
   return { changed: result, ownBusy };
 }
 

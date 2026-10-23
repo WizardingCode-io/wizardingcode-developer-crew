@@ -1,6 +1,6 @@
 // packages/engine/src/cli.ts
 import { existsSync as existsSync24, readFileSync as readFileSync10, realpathSync as realpathSync8, rmSync as rmSync5, statSync as statSync12 } from "node:fs";
-import { basename as basename8, isAbsolute as isAbsolute10, join as join48, relative as relative12, resolve as resolve7, sep as sep5 } from "node:path";
+import { basename as basename7, isAbsolute as isAbsolute10, join as join48, relative as relative12, resolve as resolve7, sep as sep5 } from "node:path";
 
 // packages/engine/src/analysis.ts
 import { existsSync as existsSync10, lstatSync as lstatSync2, mkdirSync as mkdirSync4 } from "node:fs";
@@ -228,8 +228,8 @@ function writeProtectedJsonAt(integrityFile, absPath, data) {
   writeText(absPath, text);
   rememberIn(integrityFile, basename(absPath), text);
 }
-function recordIntegrityAt(integrityFile, absPath) {
-  const text = readText(absPath);
+function recordIntegrityAt(integrityFile, absPath, read) {
+  const text = read ?? readText(absPath);
   if (text === null)
     return false;
   rememberIn(integrityFile, basename(absPath), text);
@@ -311,6 +311,108 @@ function globToRegExp(glob) {
 function matchesAny(path, patterns) {
   const normalised = path.replace(/\\/g, "/").replace(/^\.\//, "");
   return patterns.some((pattern) => globToRegExp(pattern).test(normalised));
+}
+var MAX_BRACE_WORDS = 256;
+function braceExpand(word) {
+  const words = [word];
+  const out = [];
+  while (words.length && out.length + words.length <= MAX_BRACE_WORDS) {
+    const w = words.shift() ?? "";
+    const parts = firstBrace(w);
+    if (!parts) {
+      out.push(w);
+      continue;
+    }
+    const [head, choices, tail] = parts;
+    words.unshift(...choices.map((c) => `${head}${c}${tail}`));
+  }
+  return [...out, ...words];
+}
+function firstBrace(word) {
+  for (let open = word.indexOf("{");open !== -1; open = word.indexOf("{", open + 1)) {
+    let depth = 0;
+    const commas = [];
+    for (let i = open;i < word.length; i++) {
+      const c = word[i];
+      if (c === "{")
+        depth++;
+      else if (c === "}" && --depth === 0) {
+        const body = word.slice(open + 1, i);
+        const head = word.slice(0, open);
+        const tail = word.slice(i + 1);
+        if (commas.length) {
+          const choices = [];
+          let from = open + 1;
+          for (const at of [...commas, i]) {
+            choices.push(word.slice(from, at));
+            from = at + 1;
+          }
+          return [head, choices, tail];
+        }
+        const range = /^(-?\d+|[A-Za-z])\.\.(-?\d+|[A-Za-z])$/.exec(body);
+        if (range)
+          return [head, braceRange(range[1] ?? "", range[2] ?? ""), tail];
+        break;
+      } else if (c === "," && depth === 1)
+        commas.push(i);
+    }
+  }
+  return null;
+}
+function braceRange(from, to) {
+  const numeric = /\d/.test(from) && /\d/.test(to);
+  const a = numeric ? Number(from) : from.charCodeAt(0);
+  const b = numeric ? Number(to) : to.charCodeAt(0);
+  const step = a <= b ? 1 : -1;
+  const out = [];
+  for (let n = a;out.length < MAX_BRACE_WORDS; n += step) {
+    out.push(numeric ? String(n) : String.fromCharCode(n));
+    if (n === b)
+      break;
+  }
+  return out;
+}
+function normalizePathWord(word) {
+  const slashed = word.replace(/\\/g, "/");
+  const absolute = slashed.startsWith("/");
+  const kept = [];
+  for (const segment of slashed.split("/")) {
+    if (segment === "" || segment === ".")
+      continue;
+    if (segment === ".." && kept.length && kept[kept.length - 1] !== "..")
+      kept.pop();
+    else
+      kept.push(segment);
+  }
+  return `${absolute ? "/" : ""}${kept.join("/")}`;
+}
+function segmentMatches(segment, name, leadingDot = true) {
+  if (leadingDot && name.startsWith(".") && /^[*?[]/.test(segment))
+    return false;
+  let re = "";
+  for (let i = 0;i < segment.length; i++) {
+    const c = segment[i] ?? "";
+    if (c === "*")
+      re += ".*";
+    else if (c === "?")
+      re += ".";
+    else if (c === "[") {
+      const close = segment.indexOf("]", i + 2);
+      if (close === -1)
+        re += "\\[";
+      else {
+        const body = segment.slice(i + 1, close).replace(/^[!^]/, "^").replace(/\\/g, "\\\\");
+        re += `[${body}]`;
+        i = close;
+      }
+    } else
+      re += escapeRegExp(c);
+  }
+  try {
+    return new RegExp(`^${re}$`, "is").test(name);
+  } catch {
+    return true;
+  }
 }
 
 // packages/engine/src/skip-dirs.ts
@@ -1046,8 +1148,15 @@ var REVIEW_OPEN_SEGMENT = String.raw`(?:T-\d+\/)?(?:ui|e2e)`;
 var REVIEW_OPEN = new RegExp(String.raw`^review\/${REVIEW_OPEN_SEGMENT}(?:\/|$)`);
 var AUDIT_OPEN_FILES = String.raw`(?:business\.findings\.md|summary\.md|recommendations\.md)`;
 var AUDIT_OPEN = new RegExp(String.raw`^audit\/${AUDIT_OPEN_FILES}$`);
-function isProtectedPath(paths, absPath) {
+function inOtherWorktreeCrew(root, abs, worktrees) {
+  const own = canonical(root);
+  const holding = [own, ...worktrees].filter((w) => abs === w || abs.startsWith(w + sep)).sort((a, b) => b.length - a.length)[0];
+  return !!holding && holding !== own && abs.startsWith(join5(holding, ".crew") + sep);
+}
+function isProtectedPath(paths, absPath, worktrees = []) {
   const abs = canonical(absPath);
+  if (inOtherWorktreeCrew(paths.root, abs, worktrees))
+    return true;
   if (/^workspaces\/[^/]+\/priorities\.md$/.test(relative2(paths.userDir, abs).replace(/\\/g, "/")))
     return false;
   if (abs === paths.userDir || abs.startsWith(paths.userDir + sep))
@@ -1660,8 +1769,12 @@ var DEFAULT_POLICY = {
   unattendedDecisions: "wait",
   attendedDecisions: "relay",
   mail: { ...DEFAULT_MAIL_POLICY, accept: [...DEFAULT_MAIL_POLICY.accept] },
-  team: DEFAULT_TEAM_POLICY,
-  verify: DEFAULT_VERIFY_POLICY
+  team: {
+    ...DEFAULT_TEAM_POLICY,
+    always: [...DEFAULT_TEAM_POLICY.always],
+    specialists: [...DEFAULT_TEAM_POLICY.specialists]
+  },
+  verify: { ...DEFAULT_VERIFY_POLICY, asks: [...DEFAULT_VERIFY_POLICY.asks] }
 };
 var NAME_HINT = "a lowercase name of letters, digits, dot, dash and underscore, up to 64 characters";
 var RANGES = {
@@ -2164,7 +2277,7 @@ function sourceText(source, root, input) {
 
 // packages/engine/src/state.ts
 import { existsSync as existsSync7 } from "node:fs";
-import { basename as basename5, join as join13, resolve as resolve4 } from "node:path";
+import { join as join13, resolve as resolve4 } from "node:path";
 
 // packages/engine/src/mail.ts
 import { createHash as createHash3 } from "node:crypto";
@@ -3053,6 +3166,14 @@ function gitRun(cwd, ...args) {
     stdio: ["ignore", "pipe", "pipe"]
   }).trim();
 }
+function worktreeRoots(cwd) {
+  try {
+    return gitRun(cwd, "worktree", "list", "--porcelain").split(`
+`).filter((line) => line.startsWith("worktree ")).map((line) => canonical(line.slice("worktree ".length)));
+  } catch {
+    return [];
+  }
+}
 function gitShow(cwd, branch, path) {
   try {
     return execFileSync2("git", ["show", "--end-of-options", `${branch}:${path}`], {
@@ -3414,9 +3535,20 @@ function acceptBox(ctx, which) {
   const file = boxFile(dir, which);
   try {
     return withMailLock(dir, () => {
-      if (!recordIntegrityAt(boxFile(dir, "integrity"), file))
+      const text = readText(file);
+      if (text === null)
         return { refused: `no ${which} at ${file} to accept` };
-      return { file, messages: readBox(dir, which).box.messages };
+      let parsed;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        return { refused: `${which} not accepted: ${file} is not valid JSON` };
+      }
+      const messages = parsed?.messages;
+      if (!Array.isArray(messages))
+        return { refused: `${which} not accepted: ${file} is not a mailbox (no messages array)` };
+      recordIntegrityAt(boxFile(dir, "integrity"), file, text);
+      return { file, messages };
     });
   } catch (error) {
     if (!(error instanceof LockBusy))
@@ -3764,7 +3896,7 @@ function recordEverywhere(ctx, id, change, skipped) {
         ownBusy = error.message;
     }
   }
-  if (result)
+  if (result && !ownBusy)
     recordForParties(ctx, registry, result);
   return { changed: result, ownBusy };
 }
@@ -4267,7 +4399,7 @@ function isWorktreeOf(root, main) {
     if (canonical(resolve4(root, common)) !== canonical(join13(main, ".git")))
       return false;
     const line = readText(join13(root, ".git"))?.trim() ?? "";
-    const name = basename5(line.replace(/^gitdir:\s*/, "").replace(/\/$/, ""));
+    const name = line.replace(/^gitdir:\s*/, "").replace(/[/\\]+$/, "").split(/[/\\]/).pop() ?? "";
     const record = join13(main, ".git", "worktrees", name);
     const back = readText(join13(record, "gitdir"))?.trim() ?? "";
     return back !== "" && canonical(resolve4(record, back)) === canonical(join13(root, ".git"));
@@ -7117,7 +7249,7 @@ import { join as join36 } from "node:path";
 
 // packages/engine/src/gates.ts
 import { accessSync as accessSync2, constants as constants2, mkdirSync as mkdirSync9, rmSync as rmSync4 } from "node:fs";
-import { basename as basename7, delimiter, join as join35 } from "node:path";
+import { basename as basename6, delimiter, join as join35 } from "node:path";
 
 // packages/engine/src/audit.ts
 var NAMED_ID = /\b(GHSA-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{4}|CVE-\d{4}-\d{4,}|PKSA-[0-9a-z]{4}(?:-[0-9a-z]{4}){1,2}|PYSEC-\d{4}-\d+)\b/i;
@@ -7798,7 +7930,7 @@ import { join as join29 } from "node:path";
 // packages/engine/src/packs.ts
 import { existsSync as existsSync15, readdirSync as readdirSync6, readFileSync as readFileSync8, realpathSync as realpathSync5, rmSync as rmSync3 } from "node:fs";
 import { homedir as homedir2 } from "node:os";
-import { basename as basename6, isAbsolute as isAbsolute6, join as join28, sep as sep3 } from "node:path";
+import { basename as basename5, isAbsolute as isAbsolute6, join as join28, sep as sep3 } from "node:path";
 
 // packages/engine/src/version.ts
 var VERSION = "0.11.4";
@@ -8122,7 +8254,7 @@ function listPacks(userDir, options = {}) {
   }
   const listed = [];
   for (const file of names) {
-    const name = basename6(file, ".json");
+    const name = basename5(file, ".json");
     const text = readTextQuietly(join28(dir, file)) ?? "";
     let registration = null;
     let reason = "";
@@ -8157,7 +8289,7 @@ function packFiles(userDir, kind, key) {
   for (const pack of okPacks(userDir)) {
     if (kind === "checklists") {
       for (const rel2 of pack.manifest.checklists)
-        if (basename6(rel2, ".md") === key)
+        if (basename5(rel2, ".md") === key)
           paths.push(join28(pack.root, rel2));
     } else {
       const rel2 = pack.manifest.knowledge[key];
@@ -8828,7 +8960,6 @@ var COMMAND_WRAPPERS = [
     positionals: 0,
     assignments: true,
     scriptOptions: ["-S", "--split-string"],
-    scriptAppends: true,
     unsetOptions: ["-u", "--unset"]
   },
   { name: "command", valued: "", longValued: [], positionals: 0 }
@@ -8864,7 +8995,7 @@ var WRAPPERS = [
     longValued: ["--wait", "--timeout", "--conflict-exit-code"],
     positionals: 1,
     scriptOptions: ["-c", "--command"],
-    scriptAppends: true
+    scriptTrailing: true
   },
   {
     name: "script",
@@ -8879,14 +9010,16 @@ var WRAPPERS = [
       "--output-limit"
     ],
     positionals: 1,
-    scriptOptions: ["-c", "--command"]
+    scriptOptions: ["-c", "--command"],
+    scriptStandsAlone: true
   },
   {
     name: "su",
     valued: "gGsw",
     longValued: ["--group", "--supp-group", "--shell", "--whitelist-environment"],
     positionals: 1,
-    scriptOptions: ["-c", "--command", "--session-command"]
+    scriptOptions: ["-c", "--command", "--session-command"],
+    scriptStandsAlone: true
   },
   {
     name: "sudo",
@@ -9687,7 +9820,7 @@ var MANIFESTS = new Set([
   "requirements.txt"
 ]);
 function manifestChanged(changed) {
-  return changed.some((p) => MANIFESTS.has(basename7(p)) || /^requirements.*\.txt$/.test(basename7(p)));
+  return changed.some((p) => MANIFESTS.has(basename6(p)) || /^requirements.*\.txt$/.test(basename6(p)));
 }
 function onPath(binary, env) {
   const extensions = process.platform === "win32" ? ["", ...(env.PATHEXT ?? ".EXE;.CMD;.BAT").split(";")] : [""];
@@ -10114,7 +10247,7 @@ async function runGates(paths, work, profile, policy, options = {}) {
   }
   evidence.fingerprint = stamp2;
   const registry = teamsFor(policy, packTemplates(paths.userDir)).teams;
-  const judgement = plannedJudgementGates(work.route, work.riskAreas, changed, policy, registry);
+  const judgement = itemJudgement(work, changed, policy, registry);
   work.seats = plannedSeats(work.route, work.riskAreas, changed, policy, {
     registry,
     templatePaths: changedPaths(paths.root, base)
@@ -10160,11 +10293,18 @@ async function runGates(paths, work, profile, policy, options = {}) {
     ..."refused" in saved ? { saveRefused: saved.refused } : {}
   };
 }
+function itemJudgement(work, changed, policy, registry) {
+  const planned = plannedJudgementGates(work.route, work.riskAreas, changed, policy, registry);
+  for (const seated2 of work.seatedJudgement ?? [])
+    if (!planned.some((p) => p.gate === seated2.gate))
+      planned.push({ gate: seated2.gate, reason: `seated: ${seated2.reason}` });
+  return planned;
+}
 function assess(paths, work, profile, policy, tampered = false) {
   const base = work;
   const changed = changedWatchedPaths(paths.root, profile, base);
   const expected = plannedGates(work.route, profile, policy, changed, paths.root);
-  const judgement = plannedJudgementGates(work.route, work.riskAreas, changed, policy, teamsFor(policy, packTemplates(paths.userDir)).teams);
+  const judgement = itemJudgement(work, changed, policy, teamsFor(policy, packTemplates(paths.userDir)).teams);
   const read = loadEvidence(paths, work.id);
   const currentFingerprint = computeFingerprint(paths.root, profile, base, MAX_WATCHED_FILES, fingerprintMethod(read.evidence.fingerprint));
   const led = loadLedger(paths, work.id);
@@ -11732,6 +11872,10 @@ ${heading}`;
 `);
   return { file, archived: kept.archived };
 }
+function roundName(file, k) {
+  const ext = /\.[^./]+$/.exec(file)?.[0] ?? "";
+  return `${file.slice(0, file.length - ext.length)}.round${k}${ext}`;
+}
 function archiveExisting(dir, file) {
   let current;
   try {
@@ -11741,7 +11885,7 @@ function archiveExisting(dir, file) {
   }
   if (current === null)
     return { archived: null };
-  const archived = file.replace(/\.md$/, `.round${freeArchiveIndex(dir, file)}.md`);
+  const archived = roundName(file, freeArchiveIndex(dir, file));
   try {
     writeText(join39(dir, archived), current);
   } catch (error) {
@@ -11751,7 +11895,7 @@ function archiveExisting(dir, file) {
 }
 function freeArchiveIndex(dir, replyFile2) {
   for (let k = 2;; k++) {
-    const candidate = join39(dir, replyFile2.replace(/\.md$/, `.round${k}.md`));
+    const candidate = join39(dir, roundName(replyFile2, k));
     try {
       if (!statSync11(candidate).isFile())
         return k;
@@ -11900,9 +12044,10 @@ function withoutLead(words) {
           const script = optionValue(wrapper, wrapper.scriptOptions ?? [], word, words[i + 1]);
           if (script !== null) {
             const fromNext = optionValue(wrapper, wrapper.scriptOptions ?? [], word, NEXT_WORD) === NEXT_WORD;
-            const after = wrapper.scriptAppends ? words.slice(i + (fromNext ? 2 : 1)).map(quoteWord) : [];
+            const following = words.slice(i + (fromNext ? 2 : 1));
+            const after = wrapper.scriptStandsAlone ? [] : following.map(quoteWord);
             return {
-              words: [],
+              words: wrapper.scriptTrailing ? following : [],
               viaXargs,
               unsets,
               firstWrapper,
@@ -11957,7 +12102,7 @@ function withoutRedirects(tokens) {
   }
   return kept;
 }
-var NPX_RUNNER = new RegExp(String.raw`^(?:\S*\/)?(?:${NPX_RUNNERS.join("|")})${runnerSuffix(RUNNER_SUFFIXES.npx)}$`);
+var NPX_RUNNER = new RegExp(String.raw`^(?:.*[\/\\])?(?:${NPX_RUNNERS.join("|")})${runnerSuffix(RUNNER_SUFFIXES.npx)}$`, "i");
 var NPX_CALL = ["-c", "--call"];
 var NPX_VALUED = new Set(["-p", "--package", ...NPX_CALL, "--shell", "--loglevel"]);
 var RUNNER_VALUED = { js: JS_RUNNER_VALUED, npx: NPX_VALUED };
@@ -12437,14 +12582,635 @@ function answer(permissionDecision, reason) {
     }
   };
 }
+var ENGINE_FOLDER_FORMS = [
+  [".crew"],
+  [".crew", "work"],
+  [".crew", "work", "*"]
+];
+function namesEngineFolder(word) {
+  return braceExpand(word).some((expanded) => {
+    const segments = normalizePathWord(expanded).split("/").filter(Boolean);
+    while (segments.length && /^\*\*?$/.test(segments[segments.length - 1] ?? ""))
+      segments.pop();
+    return ENGINE_FOLDER_FORMS.some((form) => segments.length >= form.length && form.every((name, k) => {
+      const segment = segments[segments.length - form.length + k] ?? "";
+      return name === "*" ? segment !== ".." : segmentMatches(segment, name);
+    }));
+  });
+}
+function namesInsideEngine(word) {
+  return namesEngineTarget(word) || braceExpand(word).some((w) => /(?:^|\/)(?:\.crew|\.wizardingcode\/crew)(?:\/|$)/i.test(normalizePathWord(w)));
+}
+function namesEngineTarget(word) {
+  return namesEngineFolder(word) || braceExpand(word).some((w) => ENGINE_FILES.test(normalizePathWord(w)));
+}
+var CP_OPTIONS = {
+  valued: "tS",
+  flags: "abcdfHiIlLnNpPrRsTuvxXZ",
+  longValued: ["--target-directory", "--suffix"],
+  longFlags: [
+    "--archive",
+    "--attributes-only",
+    "--backup",
+    "--copy-contents",
+    "--context",
+    "--debug",
+    "--dereference",
+    "--force",
+    "--interactive",
+    "--keep-directory-symlink",
+    "--link",
+    "--no-clobber",
+    "--no-dereference",
+    "--no-preserve",
+    "--no-target-directory",
+    "--one-file-system",
+    "--parents",
+    "--preserve",
+    "--recursive",
+    "--reflink",
+    "--remove-destination",
+    "--sparse",
+    "--strip-trailing-slashes",
+    "--symbolic-link",
+    "--update",
+    "--verbose"
+  ]
+};
+var WRITER_OPTIONS = {
+  cp: CP_OPTIONS,
+  mv: {
+    valued: "tS",
+    flags: "bfhinTuvZ",
+    longValued: ["--target-directory", "--suffix"],
+    longFlags: [
+      "--backup",
+      "--context",
+      "--debug",
+      "--exchange",
+      "--force",
+      "--interactive",
+      "--no-clobber",
+      "--no-copy",
+      "--no-target-directory",
+      "--strip-trailing-slashes",
+      "--update",
+      "--verbose"
+    ]
+  },
+  install: {
+    valued: "BfgmotS",
+    flags: "bcCdDMpsTUvZ",
+    longValued: [
+      "--group",
+      "--mode",
+      "--owner",
+      "--strip-program",
+      "--suffix",
+      "--target-directory"
+    ],
+    longFlags: [
+      "--backup",
+      "--compare",
+      "--context",
+      "--debug",
+      "--directory",
+      "--no-target-directory",
+      "--preserve-context",
+      "--preserve-timestamps",
+      "--strip",
+      "--verbose"
+    ]
+  },
+  rsync: {
+    valued: "@BefMT",
+    flags: "0468aAbcCdDEFghHiIJkKlLmnNoOpPqrRsStuUvWxXyz",
+    longValued: [
+      "--address",
+      "--backup-dir",
+      "--block-size",
+      "--bwlimit",
+      "--checksum-choice",
+      "--checksum-seed",
+      "--chmod",
+      "--chown",
+      "--compare-dest",
+      "--compress-choice",
+      "--compress-level",
+      "--contimeout",
+      "--copy-dest",
+      "--debug",
+      "--exclude",
+      "--exclude-from",
+      "--files-from",
+      "--filter",
+      "--groupmap",
+      "--iconv",
+      "--include",
+      "--include-from",
+      "--info",
+      "--link-dest",
+      "--log-file",
+      "--log-file-format",
+      "--max-alloc",
+      "--max-delete",
+      "--max-size",
+      "--min-size",
+      "--modify-window",
+      "--only-write-batch",
+      "--out-format",
+      "--partial-dir",
+      "--password-file",
+      "--port",
+      "--protocol",
+      "--read-batch",
+      "--remote-option",
+      "--rsh",
+      "--rsync-path",
+      "--skip-compress",
+      "--sockopts",
+      "--stop-after",
+      "--stop-at",
+      "--suffix",
+      "--temp-dir",
+      "--timeout",
+      "--usermap",
+      "--write-batch"
+    ],
+    longFlags: [
+      "--8-bit-output",
+      "--acls",
+      "--append",
+      "--append-verify",
+      "--archive",
+      "--atimes",
+      "--backup",
+      "--blocking-io",
+      "--checksum",
+      "--compress",
+      "--copy-dirlinks",
+      "--copy-links",
+      "--copy-unsafe-links",
+      "--crtimes",
+      "--cvs-exclude",
+      "--delay-updates",
+      "--delete",
+      "--delete-after",
+      "--delete-before",
+      "--delete-delay",
+      "--delete-during",
+      "--delete-excluded",
+      "--delete-missing-args",
+      "--devices",
+      "--dirs",
+      "--dry-run",
+      "--executability",
+      "--existing",
+      "--fake-super",
+      "--force",
+      "--from0",
+      "--fuzzy",
+      "--group",
+      "--hard-links",
+      "--human-readable",
+      "--ignore-errors",
+      "--ignore-existing",
+      "--ignore-missing-args",
+      "--ignore-times",
+      "--inplace",
+      "--ipv4",
+      "--ipv6",
+      "--itemize-changes",
+      "--keep-dirlinks",
+      "--links",
+      "--list-only",
+      "--mkpath",
+      "--no-implied-dirs",
+      "--no-motd",
+      "--numeric-ids",
+      "--old-args",
+      "--omit-dir-times",
+      "--omit-link-times",
+      "--one-file-system",
+      "--open-noatime",
+      "--owner",
+      "--partial",
+      "--perms",
+      "--preallocate",
+      "--progress",
+      "--protect-args",
+      "--prune-empty-dirs",
+      "--quiet",
+      "--recursive",
+      "--relative",
+      "--remove-source-files",
+      "--safe-links",
+      "--secluded-args",
+      "--size-only",
+      "--sparse",
+      "--specials",
+      "--stats",
+      "--super",
+      "--times",
+      "--trust-sender",
+      "--update",
+      "--verbose",
+      "--whole-file",
+      "--xattrs"
+    ]
+  }
+};
+var TAR_OPTIONS = {
+  valued: "bCfFgHIKLNsTVX",
+  flags: "AacdhijJklmMnoOpPqrRStuUvwWxzZ",
+  longValued: [
+    "--after-date",
+    "--blocking-factor",
+    "--checkpoint-action",
+    "--directory",
+    "--exclude",
+    "--exclude-from",
+    "--exclude-tag",
+    "--exclude-tag-all",
+    "--exclude-tag-under",
+    "--file",
+    "--files-from",
+    "--format",
+    "--group",
+    "--index-file",
+    "--info-script",
+    "--label",
+    "--level",
+    "--listed-incremental",
+    "--mode",
+    "--mtime",
+    "--new-volume-script",
+    "--newer",
+    "--newer-mtime",
+    "--owner",
+    "--quoting-style",
+    "--record-size",
+    "--rmt-command",
+    "--rsh-command",
+    "--strip-components",
+    "--suffix",
+    "--tape-length",
+    "--to-command",
+    "--transform",
+    "--use-compress-program",
+    "--volno-file",
+    "--warning",
+    "--xform"
+  ],
+  longFlags: [
+    "--absolute-names",
+    "--acls",
+    "--anchored",
+    "--append",
+    "--auto-compress",
+    "--backup",
+    "--block-number",
+    "--bzip2",
+    "--catenate",
+    "--check-links",
+    "--checkpoint",
+    "--compare",
+    "--compress",
+    "--concatenate",
+    "--confirmation",
+    "--create",
+    "--delay-directory-restore",
+    "--delete",
+    "--dereference",
+    "--diff",
+    "--exclude-backups",
+    "--exclude-caches",
+    "--exclude-caches-all",
+    "--exclude-caches-under",
+    "--exclude-vcs",
+    "--exclude-vcs-ignores",
+    "--extract",
+    "--force-local",
+    "--full-time",
+    "--get",
+    "--gunzip",
+    "--gzip",
+    "--hard-dereference",
+    "--ignore-case",
+    "--ignore-failed-read",
+    "--ignore-zeros",
+    "--interactive",
+    "--keep-directory-symlink",
+    "--keep-newer-files",
+    "--keep-old-files",
+    "--list",
+    "--lzip",
+    "--lzma",
+    "--lzop",
+    "--multi-volume",
+    "--no-acls",
+    "--no-anchored",
+    "--no-delay-directory-restore",
+    "--no-ignore-case",
+    "--no-null",
+    "--no-recursion",
+    "--no-same-owner",
+    "--no-same-permissions",
+    "--no-seek",
+    "--no-selinux",
+    "--no-unquote",
+    "--no-wildcards",
+    "--no-xattrs",
+    "--null",
+    "--numeric-owner",
+    "--old-archive",
+    "--one-file-system",
+    "--overwrite",
+    "--overwrite-dir",
+    "--portability",
+    "--posix",
+    "--preserve-order",
+    "--preserve-permissions",
+    "--recursion",
+    "--recursive-unlink",
+    "--remove-files",
+    "--same-order",
+    "--same-owner",
+    "--same-permissions",
+    "--seek",
+    "--selinux",
+    "--show-stored-names",
+    "--show-transformed-names",
+    "--skip-old-files",
+    "--sparse",
+    "--to-stdout",
+    "--totals",
+    "--touch",
+    "--uncompress",
+    "--ungzip",
+    "--unlink-first",
+    "--unquote",
+    "--update",
+    "--utc",
+    "--verbose",
+    "--verify",
+    "--wildcards",
+    "--xattrs",
+    "--xz",
+    "--zstd"
+  ]
+};
+function longName(given, options) {
+  const names = [...options.longValued, ...options.longFlags];
+  if (names.includes(given))
+    return given;
+  const matches = names.filter((n) => n.startsWith(given));
+  return matches.length === 1 ? matches[0] ?? null : null;
+}
+function readWriter(words, options) {
+  const operands = [];
+  const values = new Map;
+  const optionValues = [];
+  let strict = false;
+  let ended2 = false;
+  const take = (name, value) => {
+    values.set(name, value);
+    optionValues.push([name, value]);
+  };
+  for (let i = 1;i < words.length; i++) {
+    const w = words[i] ?? "";
+    if (ended2 || !w.startsWith("-") || w === "-")
+      operands.push(w);
+    else if (w === "--")
+      ended2 = true;
+    else if (w.startsWith("--")) {
+      const [given = "", value] = w.split(/=(.*)/s, 2);
+      const name = longName(given, options);
+      if (name === null)
+        strict = true;
+      if (name !== null && options.longValued.includes(name))
+        take(name, value ?? words[++i] ?? "");
+      else if (value !== undefined)
+        optionValues.push([given, value]);
+    } else
+      for (let k = 1;k < w.length; k++) {
+        const letter = w.charAt(k);
+        if (options.valued.includes(letter)) {
+          take(`-${letter}`, w.slice(k + 1) || (words[++i] ?? ""));
+          break;
+        }
+        if (!options.flags.includes(letter))
+          strict = true;
+      }
+  }
+  return { operands, values, optionValues, strict };
+}
+function targetDirectory(values) {
+  return values.get("-t") ?? values.get("--target-directory");
+}
+var plainWriter = (valued, longValued = []) => ({
+  valued,
+  flags: "",
+  longValued,
+  longFlags: []
+});
+var PLAIN_WRITERS = {
+  touch: plainWriter("tdr", ["--date", "--reference"]),
+  truncate: plainWriter("sr", ["--size", "--reference"]),
+  tee: plainWriter(""),
+  rm: plainWriter(""),
+  rmdir: plainWriter(""),
+  chmod: plainWriter("", ["--reference"]),
+  chown: plainWriter("", ["--reference"])
+};
+function pathWords({ words, tokens }) {
+  const last = words.length - 1;
+  const kept = withoutRedirects(tokens);
+  const written = kept[kept.length - 1];
+  const word = words[last];
+  if (word === undefined || written === undefined || written === word || !written.startsWith(word))
+    return words;
+  const count = (c) => written.split(c).length - 1;
+  return count("{") >= count("}") ? [...words.slice(0, last), written] : words;
+}
+function writtenPaths(found) {
+  const { tokens, program } = found;
+  const words = pathWords(found);
+  const out2 = [];
+  for (let i = 0;i < tokens.length; i++) {
+    const { word, raw } = tokens[i] ?? { word: "", raw: "" };
+    const operator = redirectOperator(raw);
+    if (operator === undefined || operator.includes("<"))
+      continue;
+    const target = raw.length > operator.length ? word.slice(operator.length) : tokens[++i]?.word;
+    if (target === undefined || operator.endsWith("&") && /^(?:\d+|-)$/.test(target))
+      continue;
+    out2.push({ word: target, kind: "write" });
+  }
+  const name = program.toLowerCase();
+  const options = WRITER_OPTIONS[name];
+  if (options) {
+    const { operands, values, optionValues, strict } = readWriter(words, options);
+    const target = targetDirectory(values);
+    if (name === "mv")
+      for (const w of [...operands, ...target === undefined ? [] : [target]])
+        out2.push({ word: w, kind: "remove" });
+    const destinations = strict ? operands : [target ?? (operands.length > 1 ? operands[operands.length - 1] : undefined)];
+    for (const destination of new Set(destinations))
+      if (destination !== undefined)
+        out2.push({ word: destination, kind: "copy" });
+    for (const [, value] of optionValues)
+      out2.push({ word: value, kind: "value" });
+  }
+  const plain2 = PLAIN_WRITERS[name];
+  if (plain2) {
+    const { operands } = readWriter(words, plain2);
+    const kind = name === "touch" || name === "truncate" || name === "tee" ? "write" : "remove";
+    for (const w of operands)
+      out2.push({ word: w, kind });
+  }
+  if (name === "dd") {
+    for (const w of words)
+      if (w.startsWith("of="))
+        out2.push({ word: w.slice(3), kind: "write" });
+  }
+  if (name === "sed")
+    out2.push(...sedInPlaceFiles(words).map((w) => ({ word: w, kind: "write" })));
+  if (name === "tar")
+    out2.push(...tarExtractPaths(words));
+  return out2;
+}
+function sedInPlaceFiles(words) {
+  const inPlace = words.some((w) => /^-[A-Za-z]*i/.test(w) || w.startsWith("--in-place"));
+  if (!inPlace)
+    return [];
+  const operands = [];
+  let scripted = false;
+  for (let i = 1;i < words.length; i++) {
+    const w = words[i] ?? "";
+    if (w === "-e" || w === "-f" || w === "--expression" || w === "--file") {
+      scripted = true;
+      i++;
+    } else if (/^--(?:expression|file)=/.test(w) || /^-[A-Za-z]*[ef]./.test(w))
+      scripted = true;
+    else if (w === "-i" && /^(?:$|\.)/.test(words[i + 1] ?? "x"))
+      i++;
+    else if (!w.startsWith("-"))
+      operands.push(w);
+  }
+  return scripted ? operands : operands.slice(1);
+}
+function tarExtractPaths(words) {
+  const first = words[1] ?? "";
+  const oldStyle = /^[A-Za-z]+$/.test(first);
+  const extracts = oldStyle && first.includes("x") || words.some((w) => {
+    const name = w.startsWith("--") ? longName(w.split("=")[0] ?? "", TAR_OPTIONS) : null;
+    return name === "--extract" || name === "--get" || /^-[A-Za-z]*x/.test(w);
+  });
+  if (!extracts)
+    return [];
+  let rest = words;
+  const dirs = [];
+  const oldValues = [];
+  let strict = false;
+  if (oldStyle) {
+    let next = 2;
+    for (const letter of first) {
+      if (TAR_OPTIONS.valued.includes(letter)) {
+        const value = words[next++];
+        if (value === undefined)
+          continue;
+        oldValues.push([`-${letter}`, value]);
+        if (letter === "C")
+          dirs.push(value);
+      } else if (!TAR_OPTIONS.flags.includes(letter))
+        strict = true;
+    }
+    rest = [words[0] ?? "", ...words.slice(next)];
+  }
+  const read2 = readWriter(rest, TAR_OPTIONS);
+  for (const [name, value] of read2.values)
+    if (name === "-C" || name === "--directory")
+      dirs.push(value);
+  const folders2 = read2.strict || strict ? [...dirs, ...read2.operands] : dirs;
+  return [
+    ...folders2.map((word) => ({ word, kind: "copy" })),
+    ...[...oldValues, ...read2.optionValues].filter(([name]) => name !== "-f" && name !== "--file").map(([, word]) => ({ word, kind: "value" }))
+  ];
+}
+var ENGINE_NAMES = [
+  ".crew",
+  "profile.json",
+  "policy.json",
+  "decisions.json",
+  ...PROTECTED_WORK_FILES.map((f) => f.replace(/^.*\//, ""))
+];
+var FIND_PATTERNS = new Set(["-name", "-iname", "-path", "-ipath", "-wholename", "-iwholename"]);
+function findRemovesEngine(words) {
+  const removes = words.includes("-delete") || words.some((w, i2) => EXEC_ACTION.test(w) && ["rm", "mv", "cp"].includes((words[i2 + 1] ?? "").replace(/^.*\//, "")));
+  if (!removes)
+    return false;
+  let i = 1;
+  for (;i < words.length && /^-[HLP]$|^-O\d*$|^-D$/.test(words[i] ?? ""); i++)
+    if (words[i] === "-D")
+      i++;
+  for (;i < words.length && !/^[-(!)]/.test(words[i] ?? ""); i++) {
+    const start = words[i] ?? "";
+    if (namesEngineTarget(start) || /(?:^|\/)\.crew(?:\/|$)/i.test(normalizePathWord(start)))
+      return true;
+  }
+  return words.some((w, k) => FIND_PATTERNS.has(w) && braceExpand(words[k + 1] ?? "").some((pattern) => /crew/i.test(pattern) || ENGINE_NAMES.some((n) => segmentMatches(pattern, n, false))));
+}
+function writesEngine(found) {
+  if (found.program.toLowerCase() === "find" && findRemovesEngine(pathWords(found)))
+    return true;
+  return writtenPaths(found).some(({ word, kind }) => kind === "remove" ? namesEngineFolder(word) : kind === "value" ? namesInsideEngine(word) : kind === "copy" && namesEngineTarget(word));
+}
+function copiesOut(found) {
+  if (!["cp", "rsync", "install"].includes(found.program.toLowerCase()))
+    return false;
+  if (found.tokens.some((t) => redirectOperator(t.raw) !== undefined))
+    return false;
+  const targets = writtenPaths(found);
+  return targets.length > 0 && !targets.some(({ word }) => namesEngineTarget(word));
+}
+function writesWatched(ctx, cwd, found) {
+  for (const f of found) {
+    if (["chmod", "chown"].includes(f.program.toLowerCase()))
+      continue;
+    for (const { word, kind } of writtenPaths(f)) {
+      if (kind === "value" || !word || /[$`~]|\{\}/.test(word))
+        continue;
+      const abs = canonical(isAbsolute8(word) ? word : join40(cwd, word));
+      const rel2 = relative10(ctx.paths.root, abs).replace(/\\/g, "/");
+      if (!rel2.startsWith("..") && !isAbsolute8(rel2) && (rel2 === "" || isWatched(rel2, ctx.profile)))
+        return true;
+    }
+  }
+  return false;
+}
+function startsItemAlone(command2) {
+  const rest = command2.replace(/^\s*cd\s+(?:"[^"$`\\]*"|'[^']*'|[^\s;&|<>()`$"'\\]+)\s*&&\s*/, "");
+  const reading = readCommand(rest);
+  const [piece] = reading.pieces;
+  if (reading.unclosed || reading.pieces.length !== 1 || !piece)
+    return false;
+  if (piece.inner.length || piece.heredocs.length)
+    return false;
+  if (piece.tokens.some((t) => redirectOperator(t.raw) !== undefined))
+    return false;
+  const { found } = walk(rest);
+  const [crew] = crewCommandsOf(found);
+  return found.length === 1 && !!crew && !crew.viaXargs && parse(crew.args).positional[0] === "start";
+}
 function startsItem(command2) {
   return crewCommandsOf(walk(command2).found).some((c) => parse(c.args).positional[0] === "start");
 }
-function laneDenial(ctx, edit) {
+function laneDenial(ctx, kind) {
   let first;
   try {
     first = neighbours(ctx)[0];
-    if (first && edit && holdsOpenItem(ctx))
+    if (first && kind !== "start" && holdsOpenItem(ctx))
       return null;
   } catch {
     return null;
@@ -12488,9 +13254,10 @@ function onPreToolUse(ctx, payload) {
     if (!paths.length)
       return {};
     let watched = false;
+    const worktrees = worktreeRoots(ctx.paths.root);
     for (const filePath of paths) {
       const abs = canonical(isAbsolute8(filePath) ? filePath : join40(ctx.paths.root, filePath));
-      if (isProtectedPath(ctx.paths, abs)) {
+      if (isProtectedPath(ctx.paths, abs, worktrees)) {
         return answer("deny", `Crew: ${filePath} is maintained by the engine and is changed through the crew command`);
       }
       const rel2 = relative10(ctx.paths.root, abs).replace(/\\/g, "/");
@@ -12504,7 +13271,7 @@ function onPreToolUse(ctx, payload) {
     if (work && work.route !== "fast" && isBeforeBuild(work)) {
       return answer("deny", `Crew: work ${work.id} is in phase ${work.phase} on the ${work.route} route; source files change in the build phase (crew phase ${work.id} next)`);
     }
-    return laneDenial(ctx, true) ?? {};
+    return laneDenial(ctx, "edit") ?? {};
   }
   if (tool === "Bash") {
     const written = typeof input.command === "string" ? input.command : "";
@@ -12621,11 +13388,14 @@ function onPreToolUse(ctx, payload) {
         return answer(...decided);
       asked ??= decided;
     }
+    const readCopies = new Set(found.filter(copiesOut).map((f) => f.piece));
     for (const piece of judgedTexts(readCommand(command2).pieces)) {
-      if (ENGINE_FILES.test(piece) && WRITE_SHAPE.test(piece) || ENGINE_FOLDER.test(piece) && REMOVE_OR_MOVE.test(piece) || OPAQUE_REDIRECT.test(piece) && ENGINE_FILES.test(command2)) {
+      if (ENGINE_FILES.test(piece) && WRITE_SHAPE.test(piece) && !readCopies.has(piece) || ENGINE_FOLDER.test(piece) && REMOVE_OR_MOVE.test(piece) || OPAQUE_REDIRECT.test(piece) && ENGINE_FILES.test(command2)) {
         return answer("deny", "Crew: files under .crew/ and ~/.wizardingcode/crew that the engine owns are written only by the crew command");
       }
     }
+    if (found.some(writesEngine))
+      return answer("deny", "Crew: files under .crew/ and ~/.wizardingcode/crew that the engine owns are written only by the crew command");
     if (unreadable)
       return answer(...unreadableDecision(unreadable, ctx.headless, payload.permission_mode));
     if (walked.unreadable) {
@@ -12635,8 +13405,17 @@ function onPreToolUse(ctx, payload) {
         return answer("deny", `Crew: ${what}, and no person is watching this session (${where}); write the command so that the hook can read it`);
       return answer("ask", `Crew: ${what}, so a person decides`);
     }
+    let writes = false;
+    try {
+      writes = writesWatched(ctx, payload.cwd ?? ctx.paths.root, found);
+    } catch {}
+    if (writes) {
+      const lane = laneDenial(ctx, "bash");
+      if (lane)
+        return lane;
+    }
     if (crewCommands.some((c) => parse(c.args).positional[0] === "start")) {
-      const lane = laneDenial(ctx, false);
+      const lane = laneDenial(ctx, "start");
       if (lane)
         return lane;
       try {
@@ -12657,13 +13436,15 @@ function onPreToolUse(ctx, payload) {
 }
 
 // packages/engine/src/hooks/post-tool-use.ts
-function claimStarted(ctx) {
+function claimStarted(ctx, command2, output) {
   const start = loadState(ctx.paths).sessions[ctx.sessionId];
   const since = start?.startAt;
   if (!since)
     return;
-  const work = activeWork(ctx.paths)?.work;
-  const held = !!work && Object.entries(liveSessions(ctx.paths)).some(([id, s]) => id !== ctx.sessionId && s.item === work.id);
+  const printed = [...output.matchAll(/^started (\S+)/gm)].map((m) => m[1]);
+  const id = startsItemAlone(command2) && printed.length === 1 ? printed[0] : undefined;
+  const work = id ? openItems(ctx.paths).find((w) => w.id === id) : undefined;
+  const held = !!work && Object.entries(liveSessions(ctx.paths)).some(([sid, s]) => sid !== ctx.sessionId && s.item === work.id);
   updateSession(ctx.paths, ctx.sessionId, (session) => {
     if (work && work.id !== start.startActive && work.createdAt >= since && !held)
       session.item = work.id;
@@ -12671,13 +13452,19 @@ function claimStarted(ctx) {
     delete session.startActive;
   });
 }
+function printedBy(response) {
+  if (typeof response === "string")
+    return response;
+  const { stdout, output } = response ?? {};
+  return typeof stdout === "string" ? stdout : typeof output === "string" ? output : "";
+}
 function onPostToolUse(ctx, payload = {}) {
   if (payload.agent_id)
     return {};
   const command2 = payload.tool_input?.command;
   if (payload.tool_name === "Bash" && typeof command2 === "string" && startsItem(command2)) {
     try {
-      claimStarted(ctx);
+      claimStarted(ctx, command2, printedBy(payload.tool_response));
     } catch {}
   }
   if (!sessionState(loadState(ctx.paths), ctx.sessionId).notices?.length)
@@ -13065,10 +13852,12 @@ function dropTask(ctx, env, work, task) {
   const record = findTask(work, task);
   if ("refused" in record)
     return record;
-  if (record.inline || !record.branch || !record.worktree)
+  if (record.inline)
     return {
       refused: `${task} is an inline todo: it has no worktree and no branch, and its work is in this checkout; not dropped`
     };
+  if (!record.branch || !record.worktree)
+    return { refused: `${task} has no worktree or branch recorded` };
   if (record.mergedAt || record.mergeCommit || MERGED_STATES.includes(record.state))
     return {
       refused: `${task} is merged (${record.state ?? "merged"}${record.mergeCommit ? `, ${record.mergeCommit.slice(0, 7)}` : ""}): its work is in the item's tree; not dropped`
@@ -13952,7 +14741,7 @@ function knownRootCauses(base, scope, paths) {
     paths: entry.paths.filter((p) => paths.includes(p))
   }));
 }
-var PLAN_FILE = /^\d{4}-\d{2}-\d{2}-plan\.md$/;
+var PLAN_FILE = /^(\d{4}-\d{2}-\d{2})-plan(?:-(\d+))?\.md$/;
 function latestPlan(userDir, workspace) {
   const dir = ctoDir(userDir, workspace);
   let names;
@@ -13961,7 +14750,15 @@ function latestPlan(userDir, workspace) {
   } catch {
     return null;
   }
-  const last = names.filter((n) => PLAN_FILE.test(n)).sort().at(-1);
+  const order = (n) => {
+    const m = PLAN_FILE.exec(n);
+    return [m?.[1] ?? "", Number(m?.[2] ?? 1)];
+  };
+  const last = names.filter((n) => PLAN_FILE.test(n)).sort((a, b) => {
+    const [da, na] = order(a);
+    const [db, nb] = order(b);
+    return da === db ? na - nb : da.localeCompare(db);
+  }).at(-1);
   return last ? { path: join42(dir, last), date: last.slice(0, 10) } : null;
 }
 function entryLine(e) {
@@ -14344,6 +15141,14 @@ function citedIds(dir, work) {
   const cited = new Set([...text.matchAll(/\[K:([^\]]+)\]/g)].map((m) => m[1] ?? ""));
   return listed.filter((id) => cited.has(id));
 }
+function duplicateRefusal(id, duplicates) {
+  const origin = (d) => `item ${d.item ?? "-"}, commit ${d.commit ?? "-"}`;
+  const contradict = (d) => `crew knowledge contradict ${d.id} --reason "<why>" --item ${id}`;
+  const [only] = duplicates;
+  if (only && duplicates.length === 1)
+    return `${only.id} already records this root cause (${origin(only)}): crew learn ${id} --confirm ${only.id} confirms it, ${contradict(only)} disputes it`;
+  return `${duplicates.map((d) => d.id).join(", ")} already record this root cause (${duplicates.map((d) => `${d.id}: ${origin(d)}`).join("; ")}): crew learn ${id} --confirm <K-n> confirms one of them, ${duplicates.map(contradict).join(" and ")} dispute them`;
+}
 function learnItem(paths, work, profile, policy, mail, proven, options = {}) {
   if (work.phase !== "learn")
     return { refused: `crew learn runs in the learn phase: crew phase ${work.id} next first` };
@@ -14381,11 +15186,10 @@ function learnItem(paths, work, profile, policy, mail, proven, options = {}) {
   }
   const cause = drafts.find((d) => d.kind === "root-cause");
   const contradicted = (e) => e.contradictedBy.some((r) => r.item === work.id && r.project === scope.project);
-  const duplicate = cause ? entries.find((e) => e.kind === "root-cause" && visibleTo(e, scope) && !contradicted(e) && sameRootCause(e, cause)) : undefined;
-  if (duplicate && confirmTarget?.id !== duplicate.id)
-    return {
-      refused: `${duplicate.id} already records this root cause (item ${duplicate.item ?? "-"}, commit ${duplicate.commit ?? "-"}): crew learn ${work.id} --confirm ${duplicate.id} confirms it, crew knowledge contradict ${duplicate.id} --reason "<why>" --item ${work.id} disputes it`
-    };
+  const cited = new Set([...(readText(join43(dir, "analysis.md")) ?? "").matchAll(/\[K:([^\]]+)\]/g)].map((m) => m[1]));
+  const duplicates = cause ? entries.filter((e) => e.kind === "root-cause" && visibleTo(e, scope) && !contradicted(e) && !cited.has(e.id) && sameRootCause(e, cause)) : [];
+  if (duplicates.length && !duplicates.some((d) => d.id === confirmTarget?.id))
+    return { refused: duplicateRefusal(work.id, duplicates) };
   const toWrite = confirmTarget ? drafts.filter((d) => d !== cause) : drafts;
   const written = [];
   for (const draft of toWrite) {
@@ -15082,7 +15886,7 @@ function laneEnd(env, work) {
   } catch {
     return [];
   }
-  const text = `Lane ${branch} (${work.id}, proven) is proven and committed: merge it from the main checkout.`;
+  const text = `Lane ${branch} (${work.id}, proven) is proven: commit it, then merge it from the main checkout.`;
   let note = null;
   try {
     const sent = send(env.mail, { to: ".", type: "notice", text, item: work.id }, work);
@@ -15151,7 +15955,10 @@ function accept(env, target) {
   });
 }
 var ACCEPT_USAGE = "usage: crew accept <id|profile|policy|decisions> | crew accept mail inbox|outbox";
-function acceptMailbox(env, which) {
+function acceptMailbox(env, parsed, which) {
+  const decision = decisionFlag(parsed, env.policy);
+  if (isOutcome(decision))
+    return decision;
   const accepted = acceptBox(env.mail, which);
   if ("refused" in accepted)
     return refuse(accepted.refused);
@@ -15159,7 +15966,7 @@ function acceptMailbox(env, which) {
   decide(env, "mail", {
     kind: "accept",
     text: `${which} accepted as it is after a hand edit: ${file} (${messages.length} message${messages.length === 1 ? "" : "s"})`,
-    by: "the user"
+    by: whoDecides(decision)
   });
   const lines2 = messages.map((m) => `  ${m.id} · from ${m.from.project} · ${mailStatus(m)}`);
   return ok([
@@ -15213,6 +16020,38 @@ function validatorFlag(parsed, policy) {
   if (isOutcome(base))
     return base;
   return { by: "validator", mode: base.mode, rule };
+}
+var SEATABLE_GATES = JUDGEMENT_GATES.filter((g) => g !== "strategy");
+var SEAT_USAGE = 'usage: crew team <id> seat <gate> --reason "<why>"';
+function seatJudgement(env, parsed, opened, words2) {
+  const [gate] = words2;
+  if (!gate || words2.length > 1)
+    return refuse(SEAT_USAGE);
+  if (!SEATABLE_GATES.includes(gate))
+    return refuse(`unknown judgement gate: ${gate} (${SEATABLE_GATES.join(", ")})`);
+  const work = opened.work;
+  const planned = assess(env.paths, work, env.profile, env.policy, opened.tampered).judgement;
+  const already = planned.find((p) => p.gate === gate);
+  if (already)
+    return refuse(`${gate} is already planned for ${work.id} (${already.reason})`);
+  const reason = typeof parsed.flags.reason === "string" ? parsed.flags.reason.trim() : "";
+  if (!reason)
+    return refuse(SEAT_USAGE);
+  const at = nowIso();
+  work.seatedJudgement = [
+    ...work.seatedJudgement ?? [],
+    { gate, reason, at }
+  ];
+  saveWork(env.paths, work);
+  decide(env, work.id, {
+    at,
+    kind: "decision",
+    text: `judgement gate ${gate} seated: ${reason}`,
+    by: "the agent"
+  });
+  return ok(`${gate} seated on ${work.id}: ${reason}; the gate run plans it`, {
+    seated: work.seatedJudgement
+  });
 }
 function decisionText(policy, decision) {
   const note = countedNote(policy, decision);
@@ -15813,6 +16652,8 @@ async function tddCommand(env, parsed, args) {
   const { evidence } = loadEvidence(env.paths, opened.work.id);
   const override = parsed.rest.length ? parsed.rest : undefined;
   const reason = typeof parsed.flags.reason === "string" ? parsed.flags.reason : undefined;
+  if (step === "observed" && reason?.trim() && !override)
+    return refuse("crew tdd observed needs -- <a command that reads the artefact>");
   const outcome = await recordTdd(env.paths, opened.work, evidence, env.profile, criterion, step, override, reason);
   const tail = outcome.record?.tail ? `
 ${outcome.record.tail}` : "";
@@ -16645,7 +17486,7 @@ async function dispatch(parsed, io) {
         const which = args[1];
         if (which !== "inbox" && which !== "outbox" || args.length > 2)
           return refuse(ACCEPT_USAGE);
-        return acceptMailbox(env, which);
+        return acceptMailbox(env, parsed, which);
       }
       return accept(env, args[0]);
     }
@@ -17200,10 +18041,15 @@ ${rendered.text}`, { approvals: opened.work.approvals, ...rendered.data });
       const confirm = typeof parsed.flags.confirm === "string" ? parsed.flags.confirm : undefined;
       const current = assess(env.paths, opened.work, env.profile, env.policy, opened.tampered);
       const recorded = loadEvidence(env.paths, opened.work.id);
-      const outcome = learnItem(env.paths, opened.work, env.profile, env.policy, env.mail, current.verdict === "proven" || !recorded.tampered && recorded.evidence.verdict === "proven", { confirm });
+      const verdict = current.verdict === "proven" || recorded.tampered ? current.verdict : recorded.evidence.verdict;
+      const outcome = learnItem(env.paths, opened.work, env.profile, env.policy, env.mail, verdict === "proven", { confirm });
       if ("refused" in outcome)
         return refuse(outcome.refused);
       saveWork(env.paths, opened.work);
+      updateState(env.paths, (state) => {
+        if (state.active === opened.work.id)
+          state.active = null;
+      });
       const ids = outcome.entries.map((e) => e.id).join(", ") || "none";
       decide(env, opened.work.id, {
         kind: "knowledge",
@@ -17494,7 +18340,7 @@ ${filedBySession}` : ""}` : "";
       const reviewLine = outcome.reviewNote ? `
 diff.patch: ${outcome.reviewNote}` : "";
       const captures = outcome.review ? readReviewInputs(env.paths, opened.work.id)?.captures ?? [] : [];
-      const silent = captures.filter((c) => c.console === null).map((c) => basename8(c.file));
+      const silent = captures.filter((c) => c.console === null).map((c) => basename7(c.file));
       const capturesLine = captures.length ? `
 captures: ${captures.length}${silent.length ? ` (${silent.length} without a console file: ${silent.join(", ")})` : ""}` : "";
       return {
@@ -17697,7 +18543,7 @@ ${report}`, {
         const out2 = openTask(ctx, env, opened.work, task, criteria, typeof parsed.flags.text === "string" ? parsed.flags.text : undefined);
         if ("refused" in out2)
           return refuse(out2.refused);
-        const session = "failed" in out2.opened ? `the implementer ${out2.opened.stopped ? "was started and stopped" : "did not start"}: ${out2.opened.failed}; the task keeps its record, the worktree ${out2.record.worktree} and the branch ${out2.record.branch}: open the implementer by hand there (a session opened by hand is watched by no sweep and no merge check), or drop them (git worktree remove ${out2.record.worktree}; git branch -D ${out2.record.branch})` : `implementer started (${out2.opened.name}, pid ${out2.opened.pid}, ${out2.opened.maxTurns} turns, ${minutesText(out2.opened.maxMinutes)})`;
+        const session = "failed" in out2.opened ? `the implementer ${out2.opened.stopped ? "was started and stopped" : "did not start"}: ${out2.opened.failed}; the task keeps its record, the worktree ${out2.record.worktree} and the branch ${out2.record.branch}: open the implementer by hand there (a session opened by hand is watched by no sweep and no merge check), or drop them with crew task ${opened.work.id} drop ${task}` : `implementer started (${out2.opened.name}, pid ${out2.opened.pid}, ${out2.opened.maxTurns} turns, ${minutesText(out2.opened.maxMinutes)})`;
         return ok(`${task} opened: message ${out2.message.id}, worktree ${out2.record.worktree}, branch ${out2.record.branch}; ${session}${out2.notes.length ? `
 ${out2.notes.join(`
 `)}` : ""}`, { task: out2.record, message: out2.message, opened: out2.opened, notes: out2.notes });
@@ -17825,6 +18671,8 @@ test-first not credited: ${out2.uncredited}` : "";
       const opened = openForChange(env, args[0]);
       if (isOutcome(opened))
         return opened;
+      if (args[1] === "seat")
+        return seatJudgement(env, parsed, opened, args.slice(2));
       const changed = changedWatchedPaths(env.paths.root, env.profile, opened.work);
       const audit = kindOfItem(opened.work) === "audit";
       const scope = audit ? readJson(join48(workDir(env.paths, opened.work.id), "audit", "scope.json")) : null;
@@ -18231,7 +19079,7 @@ ${filedLine}` : ""}`, {
           `registered: ${r.registeredAt} by ${r.by}`,
           `core: ${m.core} · verified against: ${Object.entries(m.verifiedAgainst).map(([k, v]) => `${k} ${v}`).join(", ")}`,
           `detectors: ${m.detectors.length ? m.detectors.map((d) => `${d.stack}${d.extends ? ` extends ${d.extends}` : ""} (${Object.entries(d.gates).map(([g, c]) => `${g} "${c}"`).join(", ")})`).join("; ") : "none"}`,
-          `checklists: ${m.checklists.map((p) => basename8(p, ".md")).join(", ") || "none"}`,
+          `checklists: ${m.checklists.map((p) => basename7(p, ".md")).join(", ") || "none"}`,
           `knowledge: ${Object.keys(m.knowledge).join(", ") || "none"}`,
           `template: ${m.team ? `${m.team.template} (${Object.entries(m.team.teams).map(([t, d]) => `${t}: ${d.mandatory.globs.join(", ")}`).join("; ")})` : "none"}`,
           `evals: ${m.evals.join(", ") || "none"}`,
@@ -18582,6 +19430,7 @@ var HELP = `crew ${VERSION}
   judgement <id> record --ruling <file>  record the rulings of a review file ({"rulings":[{gate,verdict,reviewer,judge,findings,tokens}]}); exit 0 once proven
   judgement <id> record <gate> --not-run --reason "<why>"   a judgement gate that could not run, never passed by default
   team <id>                   the seats the route plans for the item, with their reasons, recorded
+  team <id> seat <gate> --reason "<why>"  seat a judgement gate the route did not plan (the agent's addition, on the register)
   validation <id> record --what spec|plan|delivery --by lead-<team> --file <path>   a lead's verdict from its file; a contradiction is refused
   continue <id> judgement|validation|gate T-n   one more round past the policy's cap (the user's decision)
   decisions [--grep <text>]   the project's decision register, newest first; --grep matches the id, the text and the answer, in any case

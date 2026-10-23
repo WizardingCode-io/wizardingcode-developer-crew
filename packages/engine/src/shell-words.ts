@@ -41,8 +41,10 @@ export interface CommandWrapper {
   assignments?: true;
   /** Options whose value is a command line of its own (`env -S "a b"`, `flock f -c "a b"`). */
   scriptOptions?: string[];
-  /** Joins the words after the script option's value to the script (`env -S "a b" c` runs `a b c`); `flock` is kept with it, since its words after `-c` are not known to be ignored, and an over-read fails closed. */
-  scriptAppends?: true;
+  /** The words after the script option's value are not joined to the script (`su -c s user`, `script -c s file`: finding 114). Every other wrapper joins them (`env -S "a b" c` runs `a b c`), so a wrapper added later fails closed. */
+  scriptStandsAlone?: true;
+  /** The words after the script option's value are read as a command of their own too (`flock f -c s words`): its words after `-c` are not known to be ignored, so both readings are judged. */
+  scriptTrailing?: true;
   /** Options whose value is the name of a variable the wrapper unsets (`env -u NAME`). */
   unsetOptions?: string[];
   /** Takes a name before a `{` block (`coproc NAME {`). */
@@ -67,7 +69,6 @@ export const COMMAND_WRAPPERS: readonly CommandWrapper[] = [
     positionals: 0,
     assignments: true,
     scriptOptions: ["-S", "--split-string"],
-    scriptAppends: true,
     unsetOptions: ["-u", "--unset"],
   },
   { name: "command", valued: "", longValued: [], positionals: 0 },
@@ -111,7 +112,7 @@ export const WRAPPERS: readonly CommandWrapper[] = [
     longValued: ["--wait", "--timeout", "--conflict-exit-code"],
     positionals: 1,
     scriptOptions: ["-c", "--command"],
-    scriptAppends: true,
+    scriptTrailing: true,
   },
   {
     name: "script",
@@ -127,6 +128,7 @@ export const WRAPPERS: readonly CommandWrapper[] = [
     ],
     positionals: 1,
     scriptOptions: ["-c", "--command"],
+    scriptStandsAlone: true,
   },
   {
     name: "su",
@@ -134,6 +136,7 @@ export const WRAPPERS: readonly CommandWrapper[] = [
     longValued: ["--group", "--supp-group", "--shell", "--whitelist-environment"],
     positionals: 1,
     scriptOptions: ["-c", "--command", "--session-command"],
+    scriptStandsAlone: true,
   },
   {
     name: "sudo",

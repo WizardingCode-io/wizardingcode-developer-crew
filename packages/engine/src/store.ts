@@ -139,9 +139,13 @@ export function writeProtectedJsonAt(integrityFile: string, absPath: string, dat
   rememberIn(integrityFile, basename(absPath), text);
 }
 
-/** Records the current content of a file outside any repository the user accepted (a mailbox), in the integrity file beside it. */
-export function recordIntegrityAt(integrityFile: string, absPath: string): boolean {
-  const text = readText(absPath);
+/**
+ * Records the current content of a file outside any repository the user accepted (a mailbox), in
+ * the integrity file beside it; with `read`, the bytes the caller already read and checked are
+ * recorded, never the file read a second time (the security lead's R-5 of 2026-10-23-004).
+ */
+export function recordIntegrityAt(integrityFile: string, absPath: string, read?: string): boolean {
+  const text = read ?? readText(absPath);
   if (text === null) return false;
   rememberIn(integrityFile, basename(absPath), text);
   return true;

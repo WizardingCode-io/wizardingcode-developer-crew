@@ -233,6 +233,7 @@ import {
   loadState,
   oneLine,
   saveState,
+  updateState,
   workingRoles,
 } from "./state.ts";
 import {
@@ -537,7 +538,7 @@ function laneEnd(env: Env, work: WorkItem): string[] {
   } catch {
     return [];
   }
-  const text = `Lane ${branch} (${work.id}, proven) is proven and committed: merge it from the main checkout.`;
+  const text = `Lane ${branch} (${work.id}, proven) is proven: commit it, then merge it from the main checkout.`;
   let note: string | null = null;
   try {
     const sent = send(env.mail, { to: ".", type: "notice", text, item: work.id }, work);
@@ -625,14 +626,17 @@ const ACCEPT_USAGE =
  * and each message it now holds are printed, so the signature is informed, and the acceptance is a
  * decision of the register. Asks the user (PreToolUse), as every accept does.
  */
-function acceptMailbox(env: Env, which: "inbox" | "outbox"): Outcome {
+function acceptMailbox(env: Env, parsed: Parsed, which: "inbox" | "outbox"): Outcome {
+  // Who signs, as crew abandon reads it (triage 4k): under relay, the user relayed by the agent.
+  const decision = decisionFlag(parsed, env.policy);
+  if (isOutcome(decision)) return decision;
   const accepted = acceptBox(env.mail, which);
   if ("refused" in accepted) return refuse(accepted.refused);
   const { file, messages } = accepted;
   decide(env, "mail", {
     kind: "accept",
     text: `${which} accepted as it is after a hand edit: ${file} (${messages.length} message${messages.length === 1 ? "" : "s"})`,
-    by: "the user",
+    by: whoDecides(decision),
   });
   const lines = messages.map((m) => `  ${m.id} · from ${m.from.project} · ${mailStatus(m)}`);
   return ok(
@@ -711,6 +715,46 @@ function validatorFlag(parsed: Parsed, policy: Policy): Decision | Outcome {
   const base = decisionFlag(parsed, policy);
   if (isOutcome(base)) return base;
   return { by: "validator", mode: base.mode, rule };
+}
+
+/** The judgement gates of the rubrics a session may seat beyond the route's (finding 140). */
+const SEATABLE_GATES: readonly JudgementGateName[] = JUDGEMENT_GATES.filter(
+  (g) => g !== "strategy",
+);
+
+const SEAT_USAGE = 'usage: crew team <id> seat <gate> --reason "<why>"';
+
+/**
+ * `crew team <id> seat <gate> --reason`: a judgement gate the route did not plan, added to the
+ * item's with its reason and time, and on the register as the agent's: it strengthens the item, so
+ * it is no decision of the user's (finding 140). The gate run lists it and the ruling accepts it.
+ */
+function seatJudgement(env: Env, parsed: Parsed, opened: Opened, words: string[]): Outcome {
+  const [gate] = words;
+  if (!gate || words.length > 1) return refuse(SEAT_USAGE);
+  if (!(SEATABLE_GATES as readonly string[]).includes(gate))
+    return refuse(`unknown judgement gate: ${gate} (${SEATABLE_GATES.join(", ")})`);
+  const work = opened.work;
+  const planned = assess(env.paths, work, env.profile, env.policy, opened.tampered).judgement;
+  const already = planned.find((p) => p.gate === gate);
+  if (already) return refuse(`${gate} is already planned for ${work.id} (${already.reason})`);
+  const reason = typeof parsed.flags.reason === "string" ? parsed.flags.reason.trim() : "";
+  if (!reason) return refuse(SEAT_USAGE);
+  const at = nowIso();
+  work.seatedJudgement = [
+    ...(work.seatedJudgement ?? []),
+    { gate: gate as JudgementGateName, reason, at },
+  ];
+  saveWork(env.paths, work);
+  decide(env, work.id, {
+    at,
+    kind: "decision",
+    text: `judgement gate ${gate} seated: ${reason}`,
+    by: "the agent",
+  });
+  return ok(`${gate} seated on ${work.id}: ${reason}; the gate run plans it`, {
+    seated: work.seatedJudgement,
+  });
 }
 
 /** The decision as the report will show it: who, and whether the policy counts it. */
@@ -1636,6 +1680,10 @@ async function tddCommand(env: Env, parsed: Parsed, args: string[]): Promise<Out
   const { evidence } = loadEvidence(env.paths, opened.work.id);
   const override = parsed.rest.length ? parsed.rest : undefined;
   const reason = typeof parsed.flags.reason === "string" ? parsed.flags.reason : undefined;
+  // An observed run reads the artefact it observes, never the project's test command by default
+  // (the user's decision of 2026-10-23); a missing reason is refused first, by recordTdd.
+  if (step === "observed" && reason?.trim() && !override)
+    return refuse("crew tdd observed needs -- <a command that reads the artefact>");
   const outcome = await recordTdd(
     env.paths,
     opened.work,
@@ -2698,7 +2746,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         const which = args[1];
         if ((which !== "inbox" && which !== "outbox") || args.length > 2)
           return refuse(ACCEPT_USAGE);
-        return acceptMailbox(env, which);
+        return acceptMailbox(env, parsed, which);
       }
       return accept(env, args[0]);
     }
@@ -3387,18 +3435,25 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       const confirm = typeof parsed.flags.confirm === "string" ? parsed.flags.confirm : undefined;
       const current = assess(env.paths, opened.work, env.profile, env.policy, opened.tampered);
       const recorded = loadEvidence(env.paths, opened.work.id);
+      const verdict =
+        current.verdict === "proven" || recorded.tampered
+          ? current.verdict
+          : recorded.evidence.verdict;
       const outcome = learnItem(
         env.paths,
         opened.work,
         env.profile,
         env.policy,
         env.mail,
-        current.verdict === "proven" ||
-          (!recorded.tampered && recorded.evidence.verdict === "proven"),
+        verdict === "proven",
         { confirm },
       );
       if ("refused" in outcome) return refuse(outcome.refused);
       saveWork(env.paths, opened.work);
+      // A learned item leaves the active slot (finding 136's second half): the next start takes it.
+      updateState(env.paths, (state) => {
+        if (state.active === opened.work.id) state.active = null;
+      });
       const ids = outcome.entries.map((e) => e.id).join(", ") || "none";
       decide(env, opened.work.id, {
         kind: "knowledge",
@@ -4031,7 +4086,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         // worktree and its branch (crew task drop removes them, the user's decision): the line says what to do.
         const session =
           "failed" in out.opened
-            ? `the implementer ${out.opened.stopped ? "was started and stopped" : "did not start"}: ${out.opened.failed}; the task keeps its record, the worktree ${out.record.worktree} and the branch ${out.record.branch}: open the implementer by hand there (a session opened by hand is watched by no sweep and no merge check), or drop them (git worktree remove ${out.record.worktree}; git branch -D ${out.record.branch})`
+            ? `the implementer ${out.opened.stopped ? "was started and stopped" : "did not start"}: ${out.opened.failed}; the task keeps its record, the worktree ${out.record.worktree} and the branch ${out.record.branch}: open the implementer by hand there (a session opened by hand is watched by no sweep and no merge check), or drop them with crew task ${opened.work.id} drop ${task}`
             : `implementer started (${out.opened.name}, pid ${out.opened.pid}, ${out.opened.maxTurns} turns, ${minutesText(out.opened.maxMinutes)})`;
         return ok(
           `${task} opened: message ${out.message.id}, worktree ${out.record.worktree}, branch ${out.record.branch}; ${session}${out.notes.length ? `\n${out.notes.join("\n")}` : ""}`,
@@ -4188,6 +4243,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       // The seats the route plans for the item, printed before anything runs and recorded (SP7 §6.2, §6.6).
       const opened = openForChange(env, args[0]);
       if (isOutcome(opened)) return opened;
+      if (args[1] === "seat") return seatJudgement(env, parsed, opened, args.slice(2));
       const changed = changedWatchedPaths(env.paths.root, env.profile, opened.work);
       // An audit's seats follow its scope (SP8 Task 4): the scope written by the run, the item's
       // own risk areas before it; the route plans nothing on an audit.
@@ -5108,6 +5164,7 @@ const HELP = `crew ${VERSION}
   judgement <id> record --ruling <file>  record the rulings of a review file ({"rulings":[{gate,verdict,reviewer,judge,findings,tokens}]}); exit 0 once proven
   judgement <id> record <gate> --not-run --reason "<why>"   a judgement gate that could not run, never passed by default
   team <id>                   the seats the route plans for the item, with their reasons, recorded
+  team <id> seat <gate> --reason "<why>"  seat a judgement gate the route did not plan (the agent's addition, on the register)
   validation <id> record --what spec|plan|delivery --by lead-<team> --file <path>   a lead's verdict from its file; a contradiction is refused
   continue <id> judgement|validation|gate T-n   one more round past the policy's cap (the user's decision)
   decisions [--grep <text>]   the project's decision register, newest first; --grep matches the id, the text and the answer, in any case

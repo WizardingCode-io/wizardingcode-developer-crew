@@ -511,3 +511,23 @@ test("SP4-T5 AC-5: latestPlan reads the newest dated plan under the workspace's 
   });
   expect(latestPlan(dir, "globex")).toBeNull();
 });
+
+test("DEBT-AC-10-plan-number: latestPlan reads a numbered plan of the same day after the plain one, by number, and the date first (finding 53)", () => {
+  const dir = userDir();
+  const folder = ctoDir(dir, "acme");
+  mkdirSync(folder, { recursive: true });
+  writeFileSync(join(folder, "2026-10-18-plan.md"), "the first plan of the day");
+  writeFileSync(join(folder, "2026-10-18-plan-2.md"), "the second");
+  expect(latestPlan(dir, "acme")).toEqual({
+    path: join(folder, "2026-10-18-plan-2.md"),
+    date: "2026-10-18",
+  });
+  writeFileSync(join(folder, "2026-10-18-plan-10.md"), "the tenth");
+  expect(latestPlan(dir, "acme")?.path).toBe(join(folder, "2026-10-18-plan-10.md"));
+  // A later date beats any number of an earlier one.
+  writeFileSync(join(folder, "2026-10-19-plan.md"), "the next day's");
+  expect(latestPlan(dir, "acme")).toEqual({
+    path: join(folder, "2026-10-19-plan.md"),
+    date: "2026-10-19",
+  });
+});

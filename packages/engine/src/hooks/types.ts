@@ -19,6 +19,8 @@ export interface HookPayload {
   agent_type?: string;
   /** SubagentStop: the subagent's own transcript (JSONL). */
   agent_transcript_path?: string;
+  /** PostToolUse: what the tool answered (Bash: `stdout`, Copilot's adapter: `output`). */
+  tool_response?: unknown;
 }
 
 export type HookResponse = Record<string, unknown>;

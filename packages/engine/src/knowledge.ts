@@ -321,7 +321,8 @@ export function knownRootCauses(
   }));
 }
 
-const PLAN_FILE = /^\d{4}-\d{2}-\d{2}-plan\.md$/;
+/** `<date>-plan.md`, then `<date>-plan-2.md`, `-3`… for the same day's later plans (finding 53). */
+const PLAN_FILE = /^(\d{4}-\d{2}-\d{2})-plan(?:-(\d+))?\.md$/;
 
 /** The newest `<date>-plan.md` the CTO filed for a workspace (`crew cto record`), or null without one. */
 export function latestPlan(
@@ -335,9 +336,18 @@ export function latestPlan(
   } catch {
     return null;
   }
+  // By date, then by number, the plain name first: plan-10 after plan-2 after plan.
+  const order = (n: string): [string, number] => {
+    const m = PLAN_FILE.exec(n);
+    return [m?.[1] ?? "", Number(m?.[2] ?? 1)];
+  };
   const last = names
     .filter((n) => PLAN_FILE.test(n))
-    .sort()
+    .sort((a, b) => {
+      const [da, na] = order(a);
+      const [db, nb] = order(b);
+      return da === db ? na - nb : da.localeCompare(db);
+    })
     .at(-1);
   return last ? { path: join(dir, last), date: last.slice(0, 10) } : null;
 }
