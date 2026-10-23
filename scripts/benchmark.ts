@@ -11,8 +11,9 @@
  * UTC day of the run's start, so a record can never name a version that did not run.
  */
 import { spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
+import { scanText } from "../packages/engine/src/secrets.ts";
 import { runKit, scanResults } from "./eval.ts";
 
 export type Category = "functional" | "security" | "cost";
@@ -82,7 +83,7 @@ function shaped(value: unknown, path: string, pattern: RegExp, expected: string)
   return text;
 }
 const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T/;
-const VERSION = /^\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$/;
+const VERSION_SHAPE = /^\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$/;
 
 function readRun(raw: unknown, path: string): Run {
   const run = field<Record<string, unknown>>(raw, path, "object");
@@ -133,7 +134,8 @@ function readCase(raw: unknown, path: string): AggregateCase {
 /**
  * The kit's aggregate result read into the fields the record uses, refused when it is not the
  * schema the report reads, when its arms are not with and without, when it names no plugin of
- * ours, or when a read field has the wrong type (each refusal names what it found).
+ * ours, when a read field has the wrong type, or when the run's start or the plugin's version,
+ * which name the record's file, is not an ISO instant or a version (each refusal names what it found).
  */
 export function readAggregate(text: string): Aggregate {
   const raw: unknown = JSON.parse(text);
@@ -174,7 +176,7 @@ export function readAggregate(text: string): Aggregate {
       pluginVersion: shaped(
         plugin.version,
         `suite.plugins[${at}].version`,
-        VERSION,
+        VERSION_SHAPE,
         "a version (X.Y.Z)",
       ),
     },
@@ -237,6 +239,8 @@ export interface BenchmarkRecord {
   categories: Record<Category, CategoryRecord>;
   cases: CaseRecord[];
   totals: Totals;
+  /** The cases left out of the totals: an arm whose every run errored, named with that arm (finding 116). */
+  excluded: { case: string; arm: "with" | "without" }[];
   notRun: string[];
 }
 export interface RecordMeta {
@@ -296,7 +300,8 @@ function armFigures(runs: Run[], passRate: number): ArmFigures {
  * The record of a run: one formula per field. A case's pass rate per arm is the kit's; its cost,
  * judge cost, time and turns per arm are means over the runs that finished; a category's rates
  * are means over its run cases (null when none ran); the totals are the sums of the case means
- * (one run of the set per arm) and the cost ratio with over without (null on a zero without); a
+ * (one run of the set per arm) and the cost ratio with over without (null on a zero without),
+ * leaving out of both arms a case with an arm whose every run errored, named in `excluded`; a
  * case of the set the run did not cover is `notRun`, a case outside the set counts nowhere; the
  * models and the runs per case are the aggregate's, and `drift` names where they differ from the
  * set's.
@@ -338,18 +343,25 @@ export function benchmarkRecord(
       ];
     }),
   ) as Record<Category, CategoryRecord>;
-  const costWith = sum(cases.map((c) => c.with.costUsd));
-  const costWithout = sum(cases.map((c) => c.without.costUsd));
+  const allErrored = (a: ArmFigures) => a.runs === 0 && a.errored > 0;
+  const excluded = cases.flatMap((c) =>
+    (["with", "without"] as const)
+      .filter((arm) => allErrored(c[arm]))
+      .map((arm) => ({ case: c.name, arm })),
+  );
+  const counted = cases.filter((c) => !allErrored(c.with) && !allErrored(c.without));
+  const costWith = sum(counted.map((c) => c.with.costUsd));
+  const costWithout = sum(counted.map((c) => c.without.costUsd));
   const totals: Totals = {
     costWith,
     costWithout,
     costRatio: costWithout > 0 ? costWith / costWithout : null,
-    judgeCostWith: sum(cases.map((c) => c.with.judgeCostUsd)),
-    judgeCostWithout: sum(cases.map((c) => c.without.judgeCostUsd)),
-    durationWith: sum(cases.map((c) => c.with.durationSeconds)),
-    durationWithout: sum(cases.map((c) => c.without.durationSeconds)),
-    turnsWith: sum(cases.map((c) => c.with.turns)),
-    turnsWithout: sum(cases.map((c) => c.without.turns)),
+    judgeCostWith: sum(counted.map((c) => c.with.judgeCostUsd)),
+    judgeCostWithout: sum(counted.map((c) => c.without.judgeCostUsd)),
+    durationWith: sum(counted.map((c) => c.with.durationSeconds)),
+    durationWithout: sum(counted.map((c) => c.without.durationSeconds)),
+    turnsWith: sum(counted.map((c) => c.with.turns)),
+    turnsWithout: sum(counted.map((c) => c.without.turns)),
   };
   const perCase = [
     ...new Set(aggregate.cases.filter((c) => names.includes(c.name)).map((c) => c.runsPerCase)),
@@ -385,6 +397,7 @@ export function benchmarkRecord(
     categories,
     cases,
     totals,
+    excluded,
     notRun,
   };
 }
@@ -465,6 +478,13 @@ export function renderMarkdown(record: BenchmarkRecord): string {
     "",
     `Cost ratio, with over without: ${cell(totals.costRatio)}.`,
     "",
+  );
+  if (record.excluded.length)
+    lines.push(
+      `Left out of the totals, an arm whose every run errored: ${record.excluded.map((e) => `${e.case} (${e.arm})`).join(", ")}.`,
+      "",
+    );
+  lines.push(
     "## Not run",
     "",
     record.notRun.length ? `not run: ${record.notRun.join(", ")}` : "Every case of the set ran.",
@@ -473,17 +493,35 @@ export function renderMarkdown(record: BenchmarkRecord): string {
   return lines.join("\n");
 }
 
-/** The two files of a record under `dir`, the JSON the record and the Markdown rendered from it; their paths. */
+/**
+ * The two files of a record under `dir`, the JSON the record and the Markdown rendered from it;
+ * their paths. Refused, writing neither, when a file of the same stem exists (a record is never
+ * overwritten) or when either text holds a value the secrets scan flags, named by file and rule
+ * and never quoted (finding 116).
+ */
 export function writeRecord(record: BenchmarkRecord, dir: string): string[] {
   // The stem comes from the aggregate: it names a file in `dir` and nothing else, whatever it holds.
   const name = recordStem(record);
   if (dirname(resolve(dir, name)) !== resolve(dir))
     throw new Error(`benchmark: the record's stem ${name} is not a file name`);
-  mkdirSync(dir, { recursive: true });
   const stem = join(dir, name);
-  writeFileSync(`${stem}.json`, `${JSON.stringify(record, null, 2)}\n`);
-  writeFileSync(`${stem}.md`, renderMarkdown(record));
-  return [`${stem}.json`, `${stem}.md`];
+  const files: [string, string][] = [
+    [`${stem}.json`, `${JSON.stringify(record, null, 2)}\n`],
+    [`${stem}.md`, renderMarkdown(record)],
+  ];
+  for (const [path] of files)
+    if (existsSync(path))
+      throw new Error(`benchmark: ${path} exists; a record is never overwritten`);
+  for (const [path, text] of files) {
+    const found = scanText(text, basename(path))[0];
+    if (found)
+      throw new Error(
+        `benchmark: ${basename(path)} line ${found.line} holds a value the secrets scan flags (${found.rule}); no record written`,
+      );
+  }
+  mkdirSync(dir, { recursive: true });
+  for (const [path, text] of files) writeFileSync(path, text);
+  return files.map(([path]) => path);
 }
 
 /** What the kit's exit status says (`claude plugin eval --help`): the aggregate is written under each. */

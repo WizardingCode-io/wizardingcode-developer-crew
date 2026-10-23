@@ -8,5 +8,5 @@ cat > .crew/policy.json <<'JSON'
 { "team": { "maxJudgementRounds": 1 } }
 JSON
 git add -A
-git -c user.name=Fixture -c user.email=fixture@example.invalid commit -q -m "fixture: node project, one judgement round"
+fixture_commit "fixture: node project, one judgement round"
 git log -1 --oneline

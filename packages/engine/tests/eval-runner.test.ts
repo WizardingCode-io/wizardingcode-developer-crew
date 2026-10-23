@@ -1543,3 +1543,254 @@ test("AC-3 (finding 131): runKit takes its folder from resultsDir, so an absolut
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+// Consolidation item 7 (2026-10-22-014): the graders read what ran (findings 65, 37), the
+// kind-observed-e2e fixture opens no socket (finding 37) and the runner's cost cap (finding 63).
+
+/** A grader's front matter, read from its file in the case's graders folder. */
+const graderOf = (caseName: string, grader: string): Record<string, string> =>
+  frontMatter(readFileSync(`${EVALS}${caseName}/graders/${grader}.md`, "utf8"));
+/** A regex grader's pattern compiled as the kit reads it. */
+const graderPattern = (caseName: string, grader: string): RegExp =>
+  new RegExp(graderOf(caseName, grader).pattern as string);
+/** A kept trace's text: its lines, one JSON line each, as the kit's regex graders read it. */
+const traceText = (lines: readonly string[]): string => `${lines.join("\n")}\n`;
+const CON7_ID = "2026-10-22-001-rounds";
+/** The two lines of a Bash call that ran the command and printed its output. */
+const ranBash = (id: string, command: string, output: string, isError = false): string[] => [
+  toolUse(id, "Bash", { command, description: "Run the crew command" }),
+  toolResult(id, output, { isError }),
+];
+/** The two lines of an accepted Read of a reference, its whole text as the result. */
+const readReference = (id: string, file: string): string[] => {
+  const text = readFileSync(join(repoRoot, "plugins/core/skills/crew/references", file), "utf8");
+  return [
+    toolUse(id, "Read", { file_path: reference(file) }),
+    toolResult(id, text, { filePath: reference(file) }),
+  ];
+};
+
+test("CON7-AC-4-validators", () => {
+  const grader = graderOf("team-by-route", "validators-exist");
+  expect(grader.type).toBe("regex");
+  expect(grader.target).toBe("{ source: file, path: src/validation.mjs }");
+  const pattern = graderPattern("team-by-route", "validators-exist");
+  const id = 'export function validId(id) {\n  return typeof id === "string" && id !== "";\n}\n';
+  const email = 'export function validEmail(email) {\n  return email.split("@").length === 2;\n}\n';
+  // Both validators, in either order.
+  expect(`${id}\n${email}`).toMatch(pattern);
+  expect(`${email}\n${id}`).toMatch(pattern);
+  // One of the two is not enough.
+  expect(email).not.toMatch(pattern);
+  expect(id).not.toMatch(pattern);
+});
+
+test("CON7-AC-4-norole", () => {
+  for (const name of ["fast-route-overhead", "issue-fast-overhead"]) {
+    const pattern = graderPattern(name, "no-role-launched");
+    const plain = traceText([
+      ...readReference("r1", "gate.md"),
+      ...ranBash("b1", "node --test", "# pass 2"),
+      agentText("Added multiply beside add, with its test; the suite passes."),
+    ]);
+    expect(plain, name).toMatch(pattern);
+    const judged = traceText([
+      ...ranBash("b1", "node --test", "# pass 2"),
+      toolUse("a1", "Agent", {
+        subagent_type: "wizardingcode-developer-crew:judge",
+        description: "Rule the gates",
+        prompt: "as judge of the gates",
+      }),
+      toolResult("a1", "ruling filed"),
+    ]);
+    expect(judged, name).not.toMatch(pattern);
+    // The negative grader is paired with the positive one: a run that did nothing fails `fixed`.
+    const fixed = graderOf(name, "fixed");
+    expect(fixed.type, name).toBe("regex");
+    expect(fixed.arm, name).toBe("both");
+    expect(fixed.target, name).toBe("{ source: file, path: src/math.mjs }");
+  }
+});
+
+test("CON7-AC-4-ruling", () => {
+  const pattern = graderPattern("rounds-bounded", "ruling-recorded");
+  const ruling = `.crew/work/${CON7_ID}/review/ruling.json`;
+  const plain = traceText(
+    ranBash("b1", `crew judgement ${CON7_ID} record --ruling ${ruling}`, "code-quality: proven"),
+  );
+  expect(plain).toMatch(pattern);
+  // A quoted cd prefix: the command field holds escaped quotes before the call.
+  const prefixed = traceText(
+    ranBash(
+      "b2",
+      `cd "/x" && crew judgement ${CON7_ID} record --ruling ${ruling}`,
+      "code-quality: proven",
+    ),
+  );
+  expect(prefixed).toContain('\\"/x\\"');
+  expect(prefixed).toMatch(pattern);
+  // The references' sentences alone, read by the agent: no ruling recorded.
+  const references = traceText([
+    ...readReference("r1", "gate.md"),
+    ...readReference("r2", "plan.md"),
+  ]);
+  expect(references).toContain("crew judgement <id> record --ruling");
+  expect(references).not.toMatch(pattern);
+  // The agent only quoting the command in its own words: no ruling recorded.
+  const prose = traceText([
+    agentText(`Next I record the ruling with crew judgement ${CON7_ID} record --ruling ${ruling}.`),
+  ]);
+  expect(prose).not.toMatch(pattern);
+});
+
+test("CON7-AC-4-register", () => {
+  const pattern = graderPattern("decision-register-reread", "register-read");
+  expect(traceText(ranBash("b1", "crew decisions", "D-1 deactivation (user)"))).toMatch(pattern);
+  const prefixed = traceText(
+    ranBash("b2", 'cd "/x" && crew decisions --grep loyalty', "D-1 deactivation (user)"),
+  );
+  expect(prefixed).toContain('\\"/x\\"');
+  expect(prefixed).toMatch(pattern);
+  const references = traceText([
+    ...readReference("r1", "rules.md"),
+    ...readReference("r2", "understand.md"),
+    ...readReference("r3", "receive.md"),
+  ]);
+  expect(references).toContain("crew decisions");
+  expect(references).not.toMatch(pattern);
+  const prose = traceText([
+    agentText("Before building I would read the register with crew decisions --grep loyalty."),
+  ]);
+  expect(prose).not.toMatch(pattern);
+});
+
+test("CON7-AC-4-cap", () => {
+  const file = `${EVALS}rounds-bounded/graders/cap-refused.md`;
+  expect(existsSync(file)).toBe(true);
+  const grader = graderOf("rounds-bounded", "cap-refused");
+  expect(grader.type).toBe("regex");
+  expect(grader.target).toBe("trace");
+  expect(grader.arm).toBeDefined();
+  // The llm grader stays beside it.
+  expect(graderOf("rounds-bounded", "cap-respected").type).toBe("llm");
+  const pattern = graderPattern("rounds-bounded", "cap-refused");
+  // The engine's refusal as cli.ts prints it for a policy of one round.
+  const refusal = `judgement round 2 of ${CON7_ID}: the policy allows 1 (team.maxJudgementRounds); the user continues it once with crew continue ${CON7_ID} judgement, or decides (crew skip <id> gate:<gate> where policy.json allows it)`;
+  const refused = traceText(
+    ranBash(
+      "b1",
+      `crew judgement ${CON7_ID} record --ruling .crew/work/${CON7_ID}/review/ruling.json`,
+      `Exit code 1\n${refusal}`,
+      true,
+    ),
+  );
+  expect(refused).toMatch(pattern);
+  // Another round count or another cap is not the refusal of this case.
+  expect(
+    traceText(ranBash("b2", "crew status", refusal.replace("allows 1", "allows 2"))),
+  ).not.toMatch(pattern);
+  // A proven first ruling alone: no refusal.
+  expect(
+    traceText(ranBash("b3", `crew judgement ${CON7_ID} record --ruling r.json`, "proven")),
+  ).not.toMatch(pattern);
+  // The agent only quoting the refusal in its own words: the engine refused nothing.
+  expect(traceText([agentText(`The engine would answer: ${refusal}`)])).not.toMatch(pattern);
+});
+
+test("CON7-AC-5", () => {
+  const fixture = readFileSync(`${EVALS}kind-observed-e2e/fixture.sh`, "utf8");
+  // First: the fixture opens no socket.
+  expect(fixture).not.toContain("listen");
+  expect(fixture).toMatch(/export function answer\(path\)/);
+  const dir = mkdtempSync(join(tmpdir(), "crew-eval-nosocket-"));
+  const home = mkdtempSync(join(tmpdir(), "crew-evals-home-"));
+  const guard = join(home, "no-listen.mjs");
+  // Any listen in the test process throws: the e2e test passes only in process.
+  writeFileSync(
+    guard,
+    [
+      'import net from "node:net";',
+      "net.Server.prototype.listen = function () {",
+      '  throw new Error("a listening socket was opened");',
+      "};",
+      "",
+    ].join("\n"),
+  );
+  try {
+    const scaffold = spawnSync("sh", [`${EVALS}kind-observed-e2e/fixture.sh`], {
+      cwd: dir,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${FIXTURES_BIN}${delimiter}${PLUGIN_BIN}${delimiter}${process.env.PATH}`,
+        WIZARDINGCODE_HOME: home,
+      },
+    });
+    expect(scaffold.status, scaffold.stderr).toBe(0);
+    const run = spawnSync("node", ["--import", guard, "--test", "tests/e2e/health.test.mjs"], {
+      cwd: dir,
+      encoding: "utf8",
+    });
+    expect(run.status, `${run.stdout}\n${run.stderr}`).toBe(0);
+    expect(run.stdout).toContain("pass 1");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  }
+}, 60_000);
+
+test("CON7-AC-8", () => {
+  // The invocation builder: no cap on the suite unless one is given, the given one passed, 5 on a case.
+  const suite = evalInvocation(base).args;
+  expect(suite).not.toContain("--max-cost-usd");
+  const capped = evalInvocation({ ...base, maxCostUsd: 12 }).args;
+  expect(capped[capped.indexOf("--max-cost-usd") + 1]).toBe("12");
+  const one = evalInvocation({ ...base, caseName: "false-done" }).args;
+  expect(one[one.indexOf("--max-cost-usd") + 1]).toBe("5");
+  // The main: the estimate with its figure and source before the kit starts, the flag passed through,
+  // a value that is not a positive number refused before the kit starts.
+  const dir = mkdtempSync(join(tmpdir(), "eval-cap-"));
+  const bin = stubKit(dir);
+  const aggregate = join(dir, "clean.json");
+  writeFileSync(aggregate, scanAggregate({ "false-done": [] }));
+  const hadResults = existsSync(RESULTS);
+  const before = listResults(RESULTS);
+  try {
+    const log = join(dir, "suite.log");
+    const run = runEval(bin, [], { STUB_AGGREGATE: aggregate, STUB_EXIT: "0", STUB_LOG: log });
+    expect(run.status, run.stderr).toBe(0);
+    const estimate = run.stdout.match(/estimated cost: about 38\.80 USD \(([^)]*)\)/);
+    expect(estimate?.[1] ?? "").toContain("SP7a");
+    expect(run.stdout.indexOf("estimated cost:")).toBeLessThan(
+      run.stdout.indexOf("claude plugin eval"),
+    );
+    expect(readFileSync(log, "utf8").split("\n")[1] ?? "").not.toContain("--max-cost-usd");
+    const cappedLog = join(dir, "capped.log");
+    const cappedRun = runEval(bin, ["--max-cost-usd", "12"], {
+      STUB_AGGREGATE: aggregate,
+      STUB_EXIT: "0",
+      STUB_LOG: cappedLog,
+    });
+    expect(cappedRun.status, cappedRun.stderr).toBe(0);
+    expect(readFileSync(cappedLog, "utf8").split("\n")[1] ?? "").toContain("--max-cost-usd 12");
+    for (const value of ["0", "-3", "abc", ""]) {
+      const refusedLog = join(dir, `refused-${value || "empty"}.log`);
+      const folders = listResults(RESULTS);
+      const refused = runEval(bin, ["--max-cost-usd", value], {
+        STUB_AGGREGATE: aggregate,
+        STUB_EXIT: "0",
+        STUB_LOG: refusedLog,
+      });
+      expect(refused.status, value).not.toBe(0);
+      expect(refused.stderr, value).toMatch(/--max-cost-usd/);
+      expect(refused.stderr, value).toMatch(/positive number/);
+      expect(existsSync(refusedLog), `${value}: the kit started`).toBe(false);
+      expect(listResults(RESULTS), value).toEqual(folders);
+    }
+  } finally {
+    for (const f of foldersSince(RESULTS, before))
+      rmSync(join(RESULTS, f), { recursive: true, force: true });
+    if (!hadResults) rmSync(RESULTS, { recursive: true, force: true });
+    rmSync(dir, { recursive: true, force: true });
+  }
+}, 60_000);

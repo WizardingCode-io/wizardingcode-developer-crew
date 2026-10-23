@@ -1,6 +1,6 @@
 ---
 type: regex
 target: trace
-pattern: 'crew judgement [^\n]* record'
+pattern: '"command":\s*"(?:[^"\\]|\\.)*crew judgement \S+ record --ruling'
 arm: with-only
 ---

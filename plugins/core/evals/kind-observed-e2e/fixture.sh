@@ -3,34 +3,25 @@
 set -eu
 . "$(dirname "$0")/../fixtures/node-plain.sh"
 mkdir -p tests/e2e
+# The stub answers in process, with no socket: the sandbox denies a port (finding 37).
 cat > tests/stub-server.mjs <<'EOF'
-import { createServer } from "node:http";
+const ROUTES = {
+  "/health": { ok: true },
+  "/version": { version: "1.2.3" },
+};
 
-export function start() {
-  const server = createServer((req, res) => {
-    res.setHeader("content-type", "application/json");
-    if (req.url === "/health") return res.end(JSON.stringify({ ok: true }));
-    if (req.url === "/version") return res.end(JSON.stringify({ version: "1.2.3" }));
-    res.statusCode = 404;
-    res.end("{}");
-  });
-  return new Promise((resolve) => server.listen(0, () => resolve({ server, port: server.address().port })));
-}
-
-export function stop(started) {
-  return new Promise((resolve) => started.server.close(resolve));
+export function answer(path) {
+  const body = ROUTES[path];
+  return body ? { status: 200, body } : { status: 404, body: {} };
 }
 EOF
 cat > tests/e2e/health.test.mjs <<'EOF'
 import test from "node:test";
 import assert from "node:assert/strict";
-import { start, stop } from "../stub-server.mjs";
+import { answer } from "../stub-server.mjs";
 
-test("GET /health answers ok", async () => {
-  const started = await start();
-  const answer = await fetch(`http://127.0.0.1:${started.port}/health`);
-  assert.deepEqual(await answer.json(), { ok: true });
-  await stop(started);
+test("GET /health answers ok", () => {
+  assert.deepEqual(answer("/health"), { status: 200, body: { ok: true } });
 });
 EOF
 git add -A

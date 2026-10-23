@@ -30,5 +30,5 @@ test("the page has its title", () => {
 });
 JS
 git add -A
-git -c user.name=Fixture -c user.email=fixture@example.invalid commit -q -m "fixture: two-target workspace, green"
+fixture_commit "fixture: two-target workspace, green"
 git log -1 --oneline

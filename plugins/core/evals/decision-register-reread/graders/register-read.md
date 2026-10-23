@@ -1,6 +1,6 @@
 ---
 type: regex
 target: trace
-pattern: 'crew decisions'
+pattern: '"command":\s*"(?:[^"\\]|\\.)*crew decisions'
 arm: with-only
 ---

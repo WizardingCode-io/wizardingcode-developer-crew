@@ -15,6 +15,8 @@ export interface EvalOptions {
   tags?: string[];
   /** The folder the kit writes its aggregate to (`--output-dir`), as given: the run's own (finding 118). */
   outputDir?: string;
+  /** The cost cap in USD the user gave (`--max-cost-usd`, finding 63): without it the suite runs uncapped and a case at 5. */
+  maxCostUsd?: number;
 }
 
 const ALLOW_TOOLS = [
@@ -110,7 +112,7 @@ export function evalInvocation(options: EvalOptions): {
         "--ablation",
         "none",
         "--max-cost-usd",
-        "5",
+        String(options.maxCostUsd ?? 5),
         // The one-case run keeps its sandbox too (SP8's record ran blind on the first tries; SP4 Task 6),
         // and its llm graders are judged by the suite's judge: the kit's default is a smaller model
         // than the agent under test (the owner's rule: never a weaker judge), and it split 1 of 3 on
@@ -127,8 +129,7 @@ export function evalInvocation(options: EvalOptions): {
         "--keep-temp",
         "--judge-model",
         "claude-fable-5-1",
-        "--max-cost-usd",
-        "40",
+        ...(options.maxCostUsd === undefined ? [] : ["--max-cost-usd", String(options.maxCostUsd)]),
         "--concurrency",
         "3",
         "--report",
@@ -141,6 +142,18 @@ export function evalInvocation(options: EvalOptions): {
     args: [...args, "--allow-tools", ...ALLOW_TOOLS],
     env: { WIZARDINGCODE_CREW_REPO: options.root },
   };
+}
+
+/**
+ * The line a run prints before the kit starts: what it is likely to cost, from the last recorded
+ * figures, and where the figure comes from (finding 63, the user's decision of 2026-10-22).
+ */
+export function costEstimate(options: { caseName?: string; tags?: string[] }): string {
+  if (options.caseName)
+    return "estimated cost: about 0.3 to 1.4 USD (the one-case runs recorded in docs/evals/; the case's cap is 5 USD)";
+  if (options.tags?.includes("benchmark"))
+    return "estimated cost: about 35 USD (the benchmark run of 2026-10-21, docs/benchmark/2026-10-21-0.11.0.md: 9.10 + 2.57 USD a run of the set, three runs and the judges)";
+  return "estimated cost: about 38.80 USD (the SP7a suite run, docs/evals/2026-10-18-sp7a-results.md; the suite has grown since, so more)";
 }
 
 // A reference's path as a trace holds it, absolute or relative, matched by suffix: the file, or the
@@ -381,6 +394,7 @@ export function runKit(options: {
   suffix: string;
   caseName?: string;
   tags?: string[];
+  maxCostUsd?: number;
 }): KitRun {
   const dir = resultsDir();
   const results = join(options.root, dir);
@@ -395,8 +409,10 @@ export function runKit(options: {
     caseName: options.caseName,
     tags: options.tags,
     outputDir: relative,
+    maxCostUsd: options.maxCostUsd,
   });
   const command = `claude ${args.join(" ")}`;
+  console.log(costEstimate(options));
   console.log(command);
   const run = spawnSync("claude", args, {
     cwd: options.root,
@@ -425,19 +441,31 @@ export function realGitDir(platform: NodeJS.Platform): string | null {
 }
 
 if (import.meta.main) {
-  const [flag, name] = process.argv.slice(2);
+  const argv = process.argv.slice(2);
+  const given: Record<string, string> = {};
+  for (let i = 0; i < argv.length; i += 2) {
+    const flag = argv[i] ?? "";
+    if (!["--case", "--max-cost-usd"].includes(flag) || flag in given) given["?"] = flag;
+    else given[flag] = argv[i + 1] ?? "";
+  }
+  const name = given["--case"];
   // A case name is a plain word: it names the run's folder, so nothing else may reach it.
-  if (
-    (flag !== undefined && flag !== "--case") ||
-    (flag === "--case" && !/^[\w-]+$/.test(name ?? ""))
-  ) {
-    console.error("usage: bun scripts/eval.ts [--case <name>]");
+  if ("?" in given || (name !== undefined && !/^[\w-]+$/.test(name))) {
+    console.error("usage: bun scripts/eval.ts [--case <name>] [--max-cost-usd <usd>]");
+    process.exit(1);
+  }
+  const cap = given["--max-cost-usd"];
+  if (cap !== undefined && !(/^\d+(\.\d+)?$/.test(cap) && Number(cap) > 0)) {
+    console.error(
+      `eval: --max-cost-usd takes a positive number of USD, not ${JSON.stringify(cap)}`,
+    );
     process.exit(1);
   }
   const run = runKit({
     root: join(import.meta.dir, ".."),
     suffix: name ? `case-${name}` : "suite",
     caseName: name,
+    maxCostUsd: cap === undefined ? undefined : Number(cap),
   });
   if (!run.aggregate) {
     console.error(

@@ -832,3 +832,97 @@ test("SP6-T5 AC-23: a path-shaped version or startedAt in the aggregate is refus
   expect(existsSync(resolve(records, "2026-10-17-/../../x.json"))).toBe(false);
   expect(readdirSync(out)).toEqual(["crafted.json"]);
 });
+
+// Consolidation item 7 (2026-10-22-014, finding 116): an all-errored arm leaves its case out of the
+// totals, and writeRecord neither overwrites a record nor writes one that holds a secret.
+
+test("CON7-AC-2", () => {
+  const agg = fixture();
+  const normal = benchmarkRecord(agg, set(), META);
+  const allErrored: Aggregate = {
+    ...agg,
+    cases: agg.cases.map((c) =>
+      c.name === "gate-tampering"
+        ? { ...c, with: c.with.map((run) => ({ ...run, errored: true })) }
+        : c,
+    ),
+  };
+  const r = benchmarkRecord(allErrored, set(), META);
+  const gt = normal.cases.find((c) => c.name === "gate-tampering");
+  expect(gt).toBeDefined();
+  const g = gt as (typeof normal.cases)[number];
+  // The case is named, with the arm whose runs all errored.
+  expect((r as unknown as { excluded?: unknown }).excluded).toEqual([
+    { case: "gate-tampering", arm: "with" },
+  ]);
+  expect((normal as unknown as { excluded?: unknown }).excluded).toEqual([]);
+  // Out of both arms' totals; the other cases' sums as they were.
+  close(r.totals.costWith, normal.totals.costWith - (g.with.costUsd ?? 0));
+  close(r.totals.costWithout, normal.totals.costWithout - (g.without.costUsd ?? 0));
+  close(r.totals.judgeCostWithout, normal.totals.judgeCostWithout - (g.without.judgeCostUsd ?? 0));
+  close(r.totals.durationWithout, normal.totals.durationWithout - (g.without.durationSeconds ?? 0));
+  close(r.totals.turnsWithout, normal.totals.turnsWithout - (g.without.turns ?? 0));
+  close(r.totals.costRatio, r.totals.costWith / r.totals.costWithout);
+  // The Markdown names it under the totals.
+  const md = renderMarkdown(r);
+  const totals = md.slice(md.indexOf("## Totals"), md.indexOf("## Not run"));
+  expect(totals).toContain("gate-tampering");
+});
+
+/** The message a call refuses with, or null when it did not refuse. */
+const refusalOf = (call: () => unknown): string | null => {
+  try {
+    call();
+    return null;
+  } catch (error) {
+    return (error as Error).message;
+  }
+};
+
+test("CON7-AC-3", () => {
+  const dir = mkdtempSync(join(tmpdir(), "benchmark-write-"));
+  try {
+    const r = record();
+    const stem = `${r.run.startedAt.slice(0, 10)}-${r.version}`;
+    // A record with the same stem exists, either file: refused naming it, left byte for byte, nothing else written.
+    for (const ext of ["json", "md"]) {
+      const out = join(dir, `exists-${ext}`);
+      mkdirSync(out);
+      const existing = join(out, `${stem}.${ext}`);
+      writeFileSync(existing, `the earlier record's ${ext}\n`);
+      const message = refusalOf(() => writeRecord(r, out));
+      expect(message, ext).not.toBeNull();
+      expect(message ?? "", ext).toContain(`${stem}.${ext}`);
+      expect(readFileSync(existing, "utf8"), ext).toBe(`the earlier record's ${ext}\n`);
+      expect(readdirSync(out), ext).toEqual([`${stem}.${ext}`]);
+    }
+    // A value scanText flags, in both texts: refused, neither file written, the value never quoted.
+    const keyed = { ...r, run: { ...r.run, command: `claude plugin eval --key ${KEY_SHAPED}` } };
+    expect(scanText(JSON.stringify(keyed, null, 2), "json").length).toBeGreaterThan(0);
+    const out = join(dir, "keyed");
+    const message = refusalOf(() => writeRecord(keyed, out));
+    expect(message).not.toBeNull();
+    expect(message ?? "").not.toContain(KEY_SHAPED);
+    expect(message ?? "").not.toContain(KEY_SHAPED.slice(0, 20));
+    const rule = scanText(renderMarkdown(keyed), "md")[0]?.rule ?? "";
+    expect(
+      (message ?? "").includes(rule) || (message ?? "").includes(stem),
+      `the refusal names the rule or the file: ${message}`,
+    ).toBe(true);
+    expect(existsSync(join(out, `${stem}.json`))).toBe(false);
+    expect(existsSync(join(out, `${stem}.md`))).toBe(false);
+    // A value flagged in the Markdown alone (the JSON escapes its quotes): the Markdown is scanned too.
+    const secret = ["Zq7Wm2Rt9", "Lp4Xv8Nb3", "Kc6Hd1"].join("");
+    const quoted = { ...r, run: { ...r.run, command: `run --api_key="${secret}"` } };
+    expect(scanText(`${JSON.stringify(quoted, null, 2)}\n`, "json")).toEqual([]);
+    expect(scanText(renderMarkdown(quoted), "md").length).toBeGreaterThan(0);
+    const mdOut = join(dir, "md-only");
+    const mdMessage = refusalOf(() => writeRecord(quoted, mdOut));
+    expect(mdMessage).not.toBeNull();
+    expect(mdMessage ?? "").not.toContain(secret);
+    expect(existsSync(join(mdOut, `${stem}.json`))).toBe(false);
+    expect(existsSync(join(mdOut, `${stem}.md`))).toBe(false);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

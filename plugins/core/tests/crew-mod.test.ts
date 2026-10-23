@@ -890,3 +890,43 @@ test("SP8-T5 AC-3: the panel of an item without the audit field draws no Audit b
   expect(texts.includes("Audit")).toBe(false);
   await ui.unmount();
 });
+
+// Consolidation item 7 (2026-10-22-014, finding 32): the panel's inbox is a turn old no more
+test("CON7-AC-1", async ($, on) => {
+  let unread = 2;
+  const argv: string[][] = [];
+  on("session.cwd", () => ({ value: "/work" }));
+  on("process.run", ($, e) => {
+    argv.push(e.argv);
+    if (e.argv[2] === "mail") return { value: { exitCode: 0, stdout: JSON.stringify(INBOX), stderr: "" } };
+    if (e.argv[2] === "workspace")
+      return { value: { exitCode: 1, stdout: JSON.stringify({ ok: false, message: "no workspace" }), stderr: "" } };
+    return { value: { exitCode: 0, stdout: JSON.stringify({ ...MAILED, mail: { ...MAILED.mail, unread } }), stderr: "" } };
+  });
+  on("command.register", () => ({ value: undefined }));
+  on("session.start", () => ({ cwd: "/work" }));
+  on("ui.open", () => ({ value: { isPlaced: true } }));
+  on("turn.complete", () => ({ text: "theirs" }));
+  const OLD = "M-2026-10-15-002-storefront · blocker · from storefront · Checkout is down · sent";
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  await $.command.run({ command: "crew", args: "panel" });
+  let ui = await $.ui.mount({ ...PANE, surface: "terminal" });
+  expect(await ui.find({ type: "Text", text: OLD })).toBeDefined();
+  await ui.unmount();
+  // A turn that leaves the unread count as it was: the inbox kept, not fetched again
+  let before = argv.length;
+  await $.turn.complete({ turnId: "t1", answer: "done", durationMs: 10, isAborted: false, usage: null });
+  expect(argv.slice(before).map((a) => a.slice(2))).toEqual([["status", "--json"]]);
+  ui = await $.ui.mount({ ...PANE, surface: "terminal" });
+  expect(await ui.find({ type: "Text", text: OLD })).toBeDefined();
+  await ui.unmount();
+  // A turn that changes the unread count: no line of the inbox fetched before it
+  unread = 3;
+  before = argv.length;
+  await $.turn.complete({ turnId: "t2", answer: "done", durationMs: 10, isAborted: false, usage: null });
+  expect(argv.slice(before).map((a) => a.slice(2))).toEqual([["status", "--json"]]);
+  ui = await $.ui.mount({ ...PANE, surface: "terminal" });
+  expect(await ui.find({ type: "Text", text: "Mail: 3 unread, 1 answered" })).toBeDefined();
+  expect(await ui.find({ type: "Text", text: OLD })).toBeUndefined();
+  await ui.unmount();
+});

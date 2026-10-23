@@ -21,8 +21,8 @@ Brand conventions: products, plugins and skills are called `wizardingcode-<thing
 - `bun run build` — bundles the `crew` command into `plugins/core/dist/crew.mjs`
 - `bun run format` — formats and fixes lint
 - `bun run plugin:check` — `claude plugin validate --strict` and the mod's tests (they need the plugin runtime; `bun run check` does not run them)
-- `bun scripts/eval.ts [--case <name>]` — runs the eval suite with the PATH and the environment it needs (the sandbox cases at three runs and two arms are about twice the 40 USD ceiling since 0.11.0; one case with the plugin alone is about 0.5 to 1.2 USD)
-- `bun scripts/benchmark.ts [--from <aggregate.json>] [--out <dir>]` — runs the benchmark set through the kit (about 35 USD) and writes `docs/benchmark/<date>-<version>.{md,json}` from the aggregate alone (`docs/benchmark/README.md`)
+- `bun scripts/eval.ts [--case <name>] [--max-cost-usd <usd>]` — runs the eval suite with the PATH and the environment it needs and prints an estimate first; the whole suite has no default cap since the user's decision of 2026-10-22 (finding 63: no hard limit, managed), so run only the affected cases with `--case` (about 0.3 to 1.4 USD each, capped at 5 unless given); the suite is about 39 USD a run at three runs and two arms
+- `bun scripts/benchmark.ts [--from <aggregate.json>] [--out <dir>]` — runs the benchmark set through the kit (about 35 USD, no default cap; `--max-cost-usd` sets one) and writes `docs/benchmark/<date>-<version>.{md,json}` from the aggregate alone (`docs/benchmark/README.md`)
 - `claude --plugin-dir ./plugins/core` — loads the plugin for one session
 - `node plugins/core/dist/crew.mjs status` — where the work stands (`crew help` lists the commands)
 

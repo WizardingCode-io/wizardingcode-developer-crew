@@ -5,6 +5,11 @@
 // reached by running the bundled CLI with `$.process.run`.
 
 const PANE = 'crew'
+// The verbs /crew forwards to the engine as they are: the argv each runs
+const FORWARDED = {
+  mail: () => ['mail', 'inbox'],
+  mode: (words) => ['mode', ...words.slice(1)],
+}
 
 // The last answer of `crew status --json`, or null before the first refresh
 let status = null
@@ -12,6 +17,8 @@ let status = null
 let error = null
 // The last answer of `crew mail inbox --json`, fetched for the panel alone, or null
 let inbox = null
+// The unread count of the status the inbox was fetched for (finding 32)
+let inboxUnread = null
 // The last answer of `crew workspace status --json`, fetched for the panel alone, or null (SP7b Task 6)
 let workspace = null
 
@@ -101,8 +108,7 @@ export function register(on) {
       await refresh($)
       return { text: teamText() }
     }
-    if (verb === 'mail') return { text: crewText(await runCrew($, ['mail', 'inbox'])) }
-    if (verb === 'mode') return { text: crewText(await runCrew($, ['mode', ...words.slice(1)])) }
+    if (FORWARDED[verb]) return { text: crewText(await runCrew($, FORWARDED[verb](words))) }
     await refresh($)
     return { text: statusText() }
   })
@@ -286,14 +292,24 @@ function teamText() {
   return 'Crew: team of ' + status.active + ' (primary ' + status.primaryTeam + '): ' + status.team.map((s) => s.role + ' (' + s.reason + ')').join(', ')
 }
 
+// "todo 1/2" or ''
+function todoCount() {
+  return status.todo && status.todo.total ? 'todo ' + status.todo.done + '/' + status.todo.total : ''
+}
+
+// "review-code-quality, judge" or ''
+function workingAgents() {
+  return (status.working || []).map((w) => w.agent).join(', ')
+}
+
 // " · todo 1/2" or ''
 function todoPart() {
-  return status.todo && status.todo.total ? ' · todo ' + status.todo.done + '/' + status.todo.total : ''
+  return todoCount() ? ' · ' + todoCount() : ''
 }
 
 // " · working review-code-quality, judge" or ''
 function workingPart() {
-  return status.working && status.working.length ? ' · working ' + status.working.map((w) => w.agent).join(', ') : ''
+  return workingAgents() ? ' · working ' + workingAgents() : ''
 }
 
 // "review-code-quality (Review the diff), judge"
@@ -303,10 +319,15 @@ function workingNames() {
 
 // " · waiting for the user", " · waiting for the roles", " · waiting for a reply to M-…", or '' when the item waits for nothing
 function waitingText() {
+  return waitingCore() ? ' · ' + waitingCore() : ''
+}
+
+// "waiting for the user", "waiting for the roles", "waiting for a reply to M-…" or ''
+function waitingCore() {
   if (!status) return ''
-  if (status.awaiting === 'user') return ' · waiting for the user'
-  if (status.awaiting === 'role') return ' · waiting for the roles'
-  if (status.awaiting === 'mail') return ' · waiting for a reply to ' + (status.awaitingMessage || 'a message')
+  if (status.awaiting === 'user') return 'waiting for the user'
+  if (status.awaiting === 'role') return 'waiting for the roles'
+  if (status.awaiting === 'mail') return 'waiting for a reply to ' + (status.awaitingMessage || 'a message')
   return ''
 }
 
@@ -384,6 +405,8 @@ function reasonOf(err) {
 
 async function refresh($) {
   const answer = await runCrew($, ['status'])
+  // An inbox fetched for another unread count is a turn old: dropped, the panel fetches it again (finding 32)
+  if (inbox && !(answer && answer.ok && answer.mail && answer.mail.unread === inboxUnread)) inbox = null
   if (answer && answer.ok) {
     status = answer
     error = null
@@ -408,6 +431,7 @@ async function refreshInbox($) {
   }
   const answer = await runCrew($, ['mail', 'inbox'])
   inbox = answer && answer.ok ? answer : null
+  inboxUnread = status.mail.unread
 }
 
 // The workspace, for the panel alone: fetched with the inbox, and only from an engine that prints it
@@ -522,12 +546,12 @@ function statusText() {
   if (!hasWork()) return 'Crew: no active work item. A change starts with the crew skill.'
   const lines = [
     status.active + ' "' + status.title + '"',
-    '  phase ' + status.phase + ', route ' + status.route + (waitingText() ? ', ' + waitingText().slice(3) : ''),
+    '  phase ' + status.phase + ', route ' + status.route + (waitingCore() ? ', ' + waitingCore() : ''),
   ]
   if (status.branch) lines.push('  branch ' + status.branch)
   if (status.team && status.team.length) lines.push('  team: ' + status.team.map((s) => s.role).join(', ') + ' (primary ' + status.primaryTeam + ')')
   if ((status.todo && status.todo.total) || (status.working && status.working.length)) {
-    lines.push('  ' + [status.todo && status.todo.total ? 'todo ' + status.todo.done + '/' + status.todo.total : null, status.working && status.working.length ? 'working: ' + status.working.map((w) => w.agent).join(', ') : null].filter(Boolean).join(' · '))
+    lines.push('  ' + [todoCount(), workingAgents() ? 'working: ' + workingAgents() : ''].filter(Boolean).join(' · '))
   }
   if (Array.isArray(status.threads)) {
     if (status.threads.length) lines.push('  mail: ' + threadsLine())
