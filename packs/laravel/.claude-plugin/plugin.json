@@ -1,7 +1,7 @@
 {
   "name": "wizardingcode-pack-laravel",
   "displayName": "WizardingCode Pack: Laravel",
-  "version": "0.11.3",
+  "version": "0.11.4",
   "description": "Knowledge and verification for Laravel 13.x, served by the crew engine of wizardingcode-developer-crew: a detector rule that proposes the project's test, lint and type-check commands, three checklists for the gap round and one knowledge file for the expert. Data only: no code, no skill, no agent, no hook.",
   "author": { "name": "WizardingCode", "url": "https://wizardingcode.io" },
   "homepage": "https://github.com/WizardingCode-io/wizardingcode-developer-crew",
