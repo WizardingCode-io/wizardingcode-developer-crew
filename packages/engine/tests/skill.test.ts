@@ -2,6 +2,11 @@ import { expect, test } from "bun:test";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { guaranteeLines, RUNTIME_NAMES, RUNTIMES } from "../src/runtimes.ts";
+import { SKILL_PAGE_MAX_BYTES } from "./helpers.ts";
+
+/** A repository file's text by its path from the repository's root. */
+const repoFile = (path: string): string =>
+  readFileSync(fileURLToPath(new URL(`../../../${path}`, import.meta.url)), "utf8");
 
 const KINDS = [
   "endpoint",
@@ -29,7 +34,7 @@ test("SP2b: one checklist per kind of change, each with the four lists and its c
   );
   expect(readdirSync(dir).sort()).toEqual(KINDS.map((k) => `${k}.md`).sort());
   for (const kind of KINDS) {
-    const text = readFileSync(`${dir}${kind}.md`, "utf8");
+    const text = repoFile(`plugins/core/skills/crew/checklists/${kind}.md`);
     for (const heading of [
       "Assumed by good practice",
       "Decisions only the user can make",
@@ -42,10 +47,7 @@ test("SP2b: one checklist per kind of change, each with the four lists and its c
   }
 });
 
-const skill = readFileSync(
-  fileURLToPath(new URL("../../../plugins/core/skills/crew/SKILL.md", import.meta.url)),
-  "utf8",
-);
+const skill = repoFile("plugins/core/skills/crew/SKILL.md");
 
 test("the rules say the agent never asks the user to run a crew command, and name the sessions with no person", () => {
   const rules = skill.slice(skill.indexOf("## Rules that do not bend"));
@@ -65,10 +67,7 @@ test("the rules say one session per checkout, a worktree for each lane", () => {
 });
 
 function readReference(name: string): string {
-  return readFileSync(
-    fileURLToPath(new URL(`../../../plugins/core/skills/crew/references/${name}`, import.meta.url)),
-    "utf8",
-  );
+  return repoFile(`plugins/core/skills/crew/references/${name}`);
 }
 
 test("SP2b: the skill drives the debate through the roles and the judgement gates through the reviewers and the judge", () => {
@@ -148,7 +147,9 @@ test("0.3.0: a decision is presented in words and the user's positive word is th
     new URL("../../../plugins/core/evals/risk-escalation/graders/", import.meta.url),
   );
   expect(existsSync(`${graders}stopped-for-approval.md`)).toBe(false);
-  expect(readFileSync(`${graders}approved-by-rule.md`, "utf8")).toContain("complete-gap-round");
+  expect(repoFile("plugins/core/evals/risk-escalation/graders/approved-by-rule.md")).toContain(
+    "complete-gap-round",
+  );
 });
 
 test("SP2a: the skill drives the conclave phase", () => {
@@ -279,12 +280,9 @@ test("SP2c AC-2: the sentences of the references the engine relies on are pinned
 });
 
 test("SP2c debt: the gap round asks whether the target exists in this repository (#34), and the skill page is no larger than in 0.4.0 (#33)", () => {
-  const dir = fileURLToPath(
-    new URL("../../../plugins/core/skills/crew/checklists/", import.meta.url),
-  );
   const exists = "a target nobody serves is a decision for the user, never an assumption";
   for (const kind of ["endpoint", "link-target"]) {
-    const text = readFileSync(`${dir}${kind}.md`, "utf8");
+    const text = repoFile(`plugins/core/skills/crew/checklists/${kind}.md`);
     expect(text).toContain(exists);
     expect(text).toMatch(/read where the routes or pages are listed/);
   }
@@ -294,7 +292,7 @@ test("SP2c debt: the gap round asks whether the target exists in this repository
   );
   // Every fast-route turn re-reads this page: 0.4.0's size (9254 bytes) is the ceiling, and a page
   // that grows past it is trimmed where the fast route does not read (finding #33).
-  expect(Buffer.byteLength(skill, "utf8")).toBeLessThanOrEqual(9254);
+  expect(Buffer.byteLength(skill, "utf8")).toBeLessThanOrEqual(SKILL_PAGE_MAX_BYTES);
 });
 
 test("SP7a AC-4 (Task 6): the plan and build references describe the todo loop: note or merge, gate, brief, two failing rounds wait for a person", () => {
@@ -346,7 +344,7 @@ test("SP7a AC-1 (Task 3): five personalities, one file each, assigned to the deb
     "sceptical.md",
   ]);
   for (const file of readdirSync(dir)) {
-    const text = readFileSync(`${dir}${file}`, "utf8");
+    const text = repoFile(`plugins/core/skills/crew/personalities/${file}`);
     expect(text).toMatch(/^## Looks for$/m);
     expect(text).toMatch(/^## Refuses to accept$/m);
     expect(text).toMatch(/^## Demands as proof$/m);
@@ -390,14 +388,11 @@ test("SP7a AC-8 (Task 8): the skill page has the Rules row and the twenty rules 
     "the deploy denial holds in sessions opened by mail; elsewhere the skill instructs and a person's yes is the gate; the policy key that may allow a deploy is SP7b",
   );
   expect((rules.match(/Enforced by:/g) ?? []).length).toBe(20);
-  expect(Buffer.byteLength(skill, "utf8")).toBeLessThanOrEqual(9254);
+  expect(Buffer.byteLength(skill, "utf8")).toBeLessThanOrEqual(SKILL_PAGE_MAX_BYTES);
 });
 
 test("SP7b-T4 AC-4: the UI/UX rubric needs a console file beside each capture, rule 5 names the e2e gate, and the gate reference says how the run is wired", () => {
-  const rubric = readFileSync(
-    fileURLToPath(new URL("../../../plugins/core/skills/crew/rubrics/ui-ux.md", import.meta.url)),
-    "utf8",
-  );
+  const rubric = repoFile("plugins/core/skills/crew/rubrics/ui-ux.md");
   expect(rubric).toContain(
     "A capture without its console file (console-<page>-<state>.json beside it, saved from the browser's console tool) cannot answer the questions for that page: Not answerable, never passed.",
   );
@@ -435,22 +430,14 @@ test("SP7b-T5 AC-3: the gate reference says the engine owns review/ and keeps th
   expect(readReference("rules.md")).toContain(
     "Enforced by: the records' order; a ruling is never edited: the engine refuses a contradiction and protects the records it writes, the reviewers' findings files, the rulings and the round copies under `review/` among them (finding 59); `review/ui/` and `review/e2e/` are the session's.",
   );
-  const readme = readFileSync(
-    fileURLToPath(new URL("../../../README.md", import.meta.url)),
-    "utf8",
-  );
+  const readme = repoFile("README.md");
   expect(readme).toContain(
     "A todo whose files touch a page or a risk path is judged by the reviewers its files ask for before it counts as gated, and a policy may carry a standing grant of two rounds past each cap (team.continuations: granted) so the user is not woken at every cap.",
   );
 });
 
 test("SP7b-T5 AC-4: the test-quality rubric asks about fixture names", () => {
-  const rubric = readFileSync(
-    fileURLToPath(
-      new URL("../../../plugins/core/skills/crew/rubrics/test-quality.md", import.meta.url),
-    ),
-    "utf8",
-  );
+  const rubric = repoFile("plugins/core/skills/crew/rubrics/test-quality.md");
   expect(rubric).toContain(
     "8. Fixtures: does any fixture name a client, a customer or a real workspace? Fixtures use neutral names (a, b, storefront, crm, shop); a real name is a defect.",
   );
@@ -475,7 +462,7 @@ test("SP3-T2 AC-3: the skill page has the Analyse row and reference, its fast-ro
   expect(analyse).toContain("--kind preserve");
   expect(readReference("receive.md")).toContain("`kind`");
   expect(readReference("receive.md")).toContain("`priority`");
-  expect(Buffer.byteLength(skill, "utf8")).toBeLessThanOrEqual(9254);
+  expect(Buffer.byteLength(skill, "utf8")).toBeLessThanOrEqual(SKILL_PAGE_MAX_BYTES);
 });
 
 test("SP3-T7 AC-1 (finding 92): the page names the request's source on every route, so a ticket or a document reaches crew start --source from the fast route too", () => {
@@ -489,14 +476,14 @@ test("SP3-T7 AC-1 (finding 92): the page names the request's source on every rou
     skill.indexOf("## The other routes"),
   );
   expect(fast).toMatch(/a sourced request[^\n]*`references\/receive\.md`/);
-  expect(Buffer.byteLength(skill, "utf8")).toBeLessThanOrEqual(9254);
+  expect(Buffer.byteLength(skill, "utf8")).toBeLessThanOrEqual(SKILL_PAGE_MAX_BYTES);
 });
 
 test("SP8-T1 AC-5 (finding 92): rule 5 tells a missing fact of the request (a question) from a design choice (a decision), within the ceiling", () => {
   expect(skill).toMatch(
     /a missing fact of the request is a question[^\n]*`crew question <id> add[^\n]*a design choice is a decision[^\n]*`crew decision <id> add`/,
   );
-  expect(Buffer.byteLength(skill, "utf8")).toBeLessThanOrEqual(9254);
+  expect(Buffer.byteLength(skill, "utf8")).toBeLessThanOrEqual(SKILL_PAGE_MAX_BYTES);
 });
 
 test("SP8-T3: the skill page has the Strategy row between Understand and Specify and the strategy reference, the reference carries the two rules of discernment and rule 3's line, the rubric asks the five questions, and the page stays within the ceiling", () => {
@@ -519,15 +506,12 @@ test("SP8-T3: the skill page has the Strategy row between Understand and Specify
     "crew judgement <id> record",
   ])
     expect(strategy).toContain(text);
-  const rubric = readFileSync(
-    `${import.meta.dir}/../../../plugins/core/skills/crew/rubrics/strategy.md`,
-    "utf8",
-  );
+  const rubric = repoFile("plugins/core/skills/crew/rubrics/strategy.md");
   for (const word of ["proportion", "proof", "measured", "trigger", "point by point"])
     expect(rubric.toLowerCase()).toContain(word);
   expect(readReference("conclave.md")).toMatch(/new project[^\n]*resumed/);
   expect(readReference("understand.md")).toContain("references/strategy.md");
-  expect(Buffer.byteLength(skill, "utf8")).toBeLessThanOrEqual(9254);
+  expect(Buffer.byteLength(skill, "utf8")).toBeLessThanOrEqual(SKILL_PAGE_MAX_BYTES);
 });
 
 test("SP4-T4 AC-6: the skill page has the Learn row and the two verbs within the ceiling, the learn reference says what is written and refused, and deliver hands off to learn", () => {
@@ -535,7 +519,7 @@ test("SP4-T4 AC-6: the skill page has the Learn row and the two verbs within the
   expect(skill).toContain("`crew learn <id>`");
   expect(skill).toContain("`crew knowledge <id> lookup`");
   expect(skill).toContain("| Learn | `references/learn.md` |");
-  expect(Buffer.byteLength(skill, "utf8")).toBeLessThanOrEqual(9254);
+  expect(Buffer.byteLength(skill, "utf8")).toBeLessThanOrEqual(SKILL_PAGE_MAX_BYTES);
   const learn = readReference("learn.md");
   for (const phrase of [
     "validated-solution",
@@ -551,10 +535,7 @@ test("SP4-T4 AC-6: the skill page has the Learn row and the two verbs within the
 });
 
 test("SP4-T5 AC-8: the CTO's page names the inputs file and the cycles it reads, analyse.md says a known root cause is cited or contradicted before the next phase, and rules.md says how rule 17 is enforced", () => {
-  const cto = readFileSync(
-    fileURLToPath(new URL("../../../plugins/core/agents/cto.md", import.meta.url)),
-    "utf8",
-  );
+  const cto = repoFile("plugins/core/agents/cto.md");
   expect(cto).toContain("`~/.wizardingcode/crew/cto/<ws>/<date>-inputs.json`");
   expect(cto).toContain("## The learning cycles");
   for (const phrase of [
@@ -581,14 +562,11 @@ test("SP6-T1 AC-4 (finding 109): the fast route's first step names --observed be
   expect(skill).toContain(
     '`--preserve "<text>"` for what stays green, proven with `tdd before` and `tdd after`; `--observed "<text>"` for what a person checks, proven with `tdd observed`)',
   );
-  expect(Buffer.byteLength(skill, "utf8")).toBeLessThanOrEqual(9254);
+  expect(Buffer.byteLength(skill, "utf8")).toBeLessThanOrEqual(SKILL_PAGE_MAX_BYTES);
 });
 
 test("SP6-T1 AC-7 (finding 109): the evals README states the needs-rerun rule", () => {
-  const readme = readFileSync(
-    new URL("../../../plugins/core/evals/README.md", import.meta.url),
-    "utf8",
-  );
+  const readme = repoFile("plugins/core/evals/README.md");
   expect(readme).toContain(
     "A run the runner flags `needs-rerun` is run once more; a second flag is recorded in the results note and the run stands.",
   );
@@ -596,9 +574,8 @@ test("SP6-T1 AC-7 (finding 109): the evals README states the needs-rerun rule", 
 
 test("SP6-T2 AC-10 (carrying AC-7's pins with a red): the packs reference, the conclave's reads from the engine, the expert's Knowledge paragraph, rule 10's line and ADR 0010, and round 3's statements", () => {
   expect(skill).toContain("| Packs | `references/packs.md` |");
-  expect(Buffer.byteLength(skill, "utf8")).toBeLessThanOrEqual(9254);
-  const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
-  const packs = read("../../../plugins/core/skills/crew/references/packs.md");
+  expect(Buffer.byteLength(skill, "utf8")).toBeLessThanOrEqual(SKILL_PAGE_MAX_BYTES);
+  const packs = repoFile("plugins/core/skills/crew/references/packs.md");
   for (const phrase of [
     "crew pack add <path>",
     "crew pack files checklists <kind>",
@@ -615,35 +592,33 @@ test("SP6-T2 AC-10 (carrying AC-7's pins with a red): the packs reference, the c
     '`crew profile set testScoped "<cmd>"` the template',
   ])
     expect(packs, phrase).toContain(phrase);
-  const conclave = read("../../../plugins/core/skills/crew/references/conclave.md");
+  const conclave = repoFile("plugins/core/skills/crew/references/conclave.md");
   expect(conclave).toContain("crew pack files checklists <kind>");
   expect(conclave).toContain("crew pack files knowledge --item <id>");
-  const expert = read("../../../plugins/core/agents/expert.md");
+  const expert = repoFile("plugins/core/agents/expert.md");
   expect(expert).toContain("## Knowledge");
-  const rules = read("../../../plugins/core/skills/crew/references/rules.md");
+  const rules = repoFile("plugins/core/skills/crew/references/rules.md");
   expect(rules).toContain(
     "A pack's template tightens the registry and never loosens it, and a pack's gate command runs only once a person confirmed it (SP6)",
   );
-  expect(read("../../../docs/adr/0010-packs-as-data-served-by-the-engine.md")).toContain(
+  expect(repoFile("docs/adr/0010-packs-as-data-served-by-the-engine.md")).toContain(
     "# ADR 0010: packs are data the engine serves",
   );
 });
 
 test("SP6-T2 AC-9: the packs reference states the rollback before a downgrade and the configuration directory discovery reads; ADR 0010 says the same of the downgrade", () => {
-  const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
-  const packs = read("../../../plugins/core/skills/crew/references/packs.md");
+  const packs = repoFile("plugins/core/skills/crew/references/packs.md");
   expect(packs).toContain("before a downgrade to 0.10.0");
   expect(packs).toContain(
     "the config dir being `CLAUDE_CONFIG_DIR` when set and `<HOME>/.claude` otherwise",
   );
-  expect(read("../../../docs/adr/0010-packs-as-data-served-by-the-engine.md")).toContain(
+  expect(repoFile("docs/adr/0010-packs-as-data-served-by-the-engine.md")).toContain(
     "`references/packs.md` says what to unset or remove before a downgrade; a removed pack's proposed commands and scoped template leave the profile at the next detection.",
   );
 });
 
 test("SP6-T3 AC-5: the README's Packs section and the vision's §11 say what shipped", () => {
-  const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
-  const readme = read("../../../README.md");
+  const readme = repoFile("README.md");
   expect(readme).toContain("\n## Packs\n");
   const packs = readme.slice(
     readme.indexOf("\n## Packs\n"),
@@ -658,7 +633,7 @@ test("SP6-T3 AC-5: the README's Packs section and the vision's §11 say what shi
     "ships with the cases that show its difference",
   ])
     expect(packs, phrase).toContain(phrase);
-  const vision = read("../../../docs/vision.md");
+  const vision = repoFile("docs/vision.md");
   expect(vision).toContain("The engine serves packs since 0.11.0");
   expect(vision).toContain(
     "The first two packs are in this repository under `packs/`: `wizardingcode-pack-laravel` (a stack pack) and `wizardingcode-pack-agentic-os` (a team pack)",
@@ -678,15 +653,14 @@ function documentedGuarantees(text: string, label: string): string[] {
 }
 
 test("SP6-T4 AC-7: the runtimes reference, the launch sentence in gate.md and conclave.md, the Runtimes row within the ceiling, the README's and the reference's guarantee tables equal to the engine's, the vision's seven-row table and single reference, ADR 0011", () => {
-  const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
   expect(skill).toContain("| Runtimes | `references/runtimes.md` |");
-  expect(Buffer.byteLength(skill, "utf8")).toBeLessThanOrEqual(9254);
+  expect(Buffer.byteLength(skill, "utf8")).toBeLessThanOrEqual(SKILL_PAGE_MAX_BYTES);
   const launch =
     "Launch the role: in Claude Code one Agent call by its scoped name; in another runtime as `references/runtimes.md` says, and file its answer with `crew answer file` where the table says the filing is requested.";
-  expect(read("../../../plugins/core/skills/crew/references/gate.md")).toContain(launch);
-  expect(read("../../../plugins/core/skills/crew/references/conclave.md")).toContain(launch);
-  const reference = read("../../../plugins/core/skills/crew/references/runtimes.md");
-  const readme = read("../../../README.md");
+  expect(repoFile("plugins/core/skills/crew/references/gate.md")).toContain(launch);
+  expect(repoFile("plugins/core/skills/crew/references/conclave.md")).toContain(launch);
+  const reference = repoFile("plugins/core/skills/crew/references/runtimes.md");
+  const readme = repoFile("README.md");
   for (const phrase of [
     "crew runtime install <name>",
     "crew runtime check <name>",
@@ -718,7 +692,7 @@ test("SP6-T4 AC-7: the runtimes reference, the launch sentence in gate.md and co
     );
   }
   expect(readme).toContain("\n## Runtimes\n");
-  const vision = read("../../../docs/vision.md");
+  const vision = repoFile("docs/vision.md");
   expect(vision).toContain(
     "| Guarantee | Claude Code | Codex CLI | Cursor | GitHub Copilot CLI | Gemini CLI | OpenCode |",
   );
@@ -734,7 +708,7 @@ test("SP6-T4 AC-7: the runtimes reference, the launch sentence in gate.md and co
     expect(vision, what).toContain(`| ${what} |`);
   expect(vision).not.toContain("each runtime gets a small mapping file");
   expect(vision).toContain("one reference, `references/runtimes.md`, serves every runtime");
-  const adr = read("../../../docs/adr/0011-runtime-adapters.md");
+  const adr = repoFile("docs/adr/0011-runtime-adapters.md");
   expect(adr).toContain(
     "# ADR 0011: runtime adapters, one table and the plugin folder as the distribution",
   );
@@ -750,7 +724,7 @@ test("SP6-T4 AC-7: the runtimes reference, the launch sentence in gate.md and co
   expect(adr).toContain(
     "The rules every runtime shares changed with the item, Claude Code included",
   );
-  const findings = read("../../../docs/real-use/findings.md");
+  const findings = repoFile("docs/real-use/findings.md");
   expect(findings).toContain("reads it as a `Write` whose paths are every path a hunk names");
   expect(findings).toContain(
     "### 114. SP6 Task 4 (`2026-10-20-008`): the Copilot tier moved to requested, the PowerShell layer, and the debt that stands",
@@ -758,8 +732,7 @@ test("SP6-T4 AC-7: the runtimes reference, the launch sentence in gate.md and co
 });
 
 test("SP6-T5 AC-5, AC-10: docs/benchmark/README.md has its four parts, the README's Benchmark section names the command and the records folder, the evals README names the tag and the set, and none of them types a figure", () => {
-  const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
-  const bench = read("../../../docs/benchmark/README.md");
+  const bench = repoFile("docs/benchmark/README.md");
   for (const heading of [
     "## What it measures",
     "## How to run it",
@@ -770,13 +743,13 @@ test("SP6-T5 AC-5, AC-10: docs/benchmark/README.md has its four parts, the READM
   expect(bench).toContain("bun scripts/benchmark.ts");
   // AC-20: the cost is read in the newest record, never typed here.
   expect(bench).toContain("The cost of a run is what the newest record here says.");
-  const readme = read("../../../README.md");
+  const readme = repoFile("README.md");
   const start = readme.indexOf("\n## Benchmark\n");
   expect(start).toBeGreaterThan(0);
   const section = readme.slice(start, readme.indexOf("\n## ", start + 5));
   expect(section).toContain("bun scripts/benchmark.ts");
   expect(section).toContain("docs/benchmark/");
-  const evals = read("../../../plugins/core/evals/README.md");
+  const evals = repoFile("plugins/core/evals/README.md");
   expect(evals).toContain("`benchmark`");
   expect(evals).toContain("benchmark.json");
   const benchLines = evals
@@ -799,21 +772,20 @@ test("SP6-T5 AC-5, AC-10: docs/benchmark/README.md has its four parts, the READM
 });
 
 test("SP6-T6 AC-8, AC-23: the records of 0.11.0 hold their exact strings: the vision's status line, the README's release paragraph and its links to the benchmark and evals records, the real-use README's phase after 0.11.0 with its exit, the pack READMEs naming the evals record", () => {
-  const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
-  expect(read("../../../docs/vision.md")).toContain("0.11.0 (2026-10-21) is SP6, released");
-  const readme = read("../../../README.md");
+  expect(repoFile("docs/vision.md")).toContain("0.11.0 (2026-10-21) is SP6, released");
+  const readme = repoFile("README.md");
   expect(readme).toContain("Release 0.11.0 (2026-10-21) is SP6");
   const link = readme.match(/docs\/benchmark\/\d{4}-\d{2}-\d{2}-0\.11\.0\.md/)?.[0];
   expect(link).toBeDefined();
   expect(existsSync(fileURLToPath(new URL(`../../../${link}`, import.meta.url))), link).toBe(true);
   expect(readme).toContain("docs/evals/2026-10-21-sp6-results.md");
-  const realUse = read("../../../docs/real-use/README.md");
+  const realUse = repoFile("docs/real-use/README.md");
   expect(realUse).toContain("\n## The phase after 0.11.0\n");
   expect(realUse).toContain(
     "Exit: no `blocks` or `false-proof` finding open, and 1.0 cut from it (ADR 0004, ADR 0008).",
   );
   for (const pack of ["laravel", "agentic-os"])
-    expect(read(`../../../packs/${pack}/README.md`), pack).toContain(
+    expect(repoFile(`packs/${pack}/README.md`), pack).toContain(
       "docs/evals/2026-10-21-sp6-results.md",
     );
   expect(
@@ -838,8 +810,6 @@ test("finding 121: the skill page's front matter is strict YAML (Bun.YAML), with
 
 // The outside testers of the other runtimes (the user's decision of 2026-10-21, item 2026-10-21-006):
 // the runtime report template and the README's paragraph for them.
-const repoFile = (path: string): string =>
-  readFileSync(fileURLToPath(new URL(`../../../${path}`, import.meta.url)), "utf8");
 
 test("AC-1 (finding 121's debt): every shipped front matter is strict YAML, the skill page and the fifteen agent pages, with the descriptions of cto.md and review-risk.md quoted", () => {
   const agents = fileURLToPath(new URL("../../../plugins/core/agents/", import.meta.url));
@@ -853,7 +823,7 @@ test("AC-1 (finding 121's debt): every shipped front matter is strict YAML, the 
     return Bun.YAML.parse(match[1]) as Record<string, unknown>;
   };
   for (const page of pages) {
-    const text = readFileSync(`${agents}${page}`, "utf8");
+    const text = repoFile(`plugins/core/agents/${page}`);
     const parsed = frontMatter(text);
     expect(parsed.name, page).toBe(page.replace(/\.md$/, ""));
     expect(typeof parsed.description, page).toBe("string");
@@ -864,7 +834,7 @@ test("AC-1 (finding 121's debt): every shipped front matter is strict YAML, the 
   // The two pages whose descriptions hold ": " are quoted the way the generators quote them, so
   // a strict loader reads one string, not a nested mapping (finding 121).
   for (const page of ["cto.md", "review-risk.md"]) {
-    const line = readFileSync(`${agents}${page}`, "utf8").split("\n")[2] ?? "";
+    const line = repoFile(`plugins/core/agents/${page}`).split("\n")[2] ?? "";
     expect(line.startsWith('description: "'), page).toBe(true);
     expect(line.endsWith('"'), page).toBe(true);
   }

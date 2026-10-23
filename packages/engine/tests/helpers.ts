@@ -14,6 +14,13 @@ const GIT_ENV = {
 };
 
 /**
+ * The skill page's ceiling in bytes: every fast-route turn re-reads the page, so 0.4.0's size is
+ * the ceiling, and a page that grows past it is trimmed where the fast route does not read
+ * (finding #33).
+ */
+export const SKILL_PAGE_MAX_BYTES = 9254;
+
+/**
  * The fixtures this run made, one set for every module instance that loads this file (the preload
  * and the test files), so the preload removes them all when the run ends (finding 74).
  */

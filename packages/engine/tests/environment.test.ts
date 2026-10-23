@@ -39,11 +39,20 @@ async function waitFor(what: string, cond: () => boolean, ms = 4000): Promise<vo
 const compose = (ports: string) =>
   `services:\n  web:\n    image: x\n${ports ? `    ports:\n      - ${ports}\n` : ""}`;
 
-test("SP7b-T3 AC-1: the environment is detected from a compose file, artisan, a Makefile target or a package.json script, every command proposed, the port digits alone; a confirmed block outlives a re-detection", () => {
-  const quoted = tempDir();
-  write(quoted, "compose.yaml", compose('"8080:80"'));
+// The AC-1 blocks share the environment a compose file publishing "8080:80" is detected as (the
+// merge and the change lines start from it) and the profile those blocks merge into.
+const quoted = tempDir();
+write(quoted, "compose.yaml", compose('"8080:80"'));
+const detected = detectEnvironment(quoted, []) as Environment;
+const base: Profile = {
+  version: 1,
+  detectedAt: "2026-10-18T10:00:00.000Z",
+  targets: [],
+  watch: { exclude: [] },
+};
+
+test("SP7b-T3 AC-1 (compose port): the environment is detected from a compose file, every command proposed, the port digits alone", () => {
   expect(composePort(readFileSync(join(quoted, "compose.yaml"), "utf8"))).toBe(8080);
-  const detected = detectEnvironment(quoted, []) as Environment;
   expect(detected).toEqual({
     start: proposed("docker compose up -d"),
     stop: proposed("docker compose down"),
@@ -73,6 +82,9 @@ test("SP7b-T3 AC-1: the environment is detected from a compose file, artisan, a 
     write(dir, name, compose('"8081:80"'));
     expect(detectEnvironment(dir, [])?.url).toBe("http://localhost:8081");
   }
+});
+
+test("SP7b-T3 AC-1 (artisan): the environment is detected from artisan, and a compose file beside it wins", () => {
   const laravel = tempDir();
   write(laravel, "artisan", "#!/usr/bin/env php\n");
   expect(detectEnvironment(laravel, [])).toEqual({
@@ -87,6 +99,9 @@ test("SP7b-T3 AC-1: the environment is detected from a compose file, artisan, a 
   expect(detectEnvironment(laravel, [])?.health).toEqual(
     proposed("curl -fsS http://localhost:3000/"),
   );
+});
+
+test("SP7b-T3 AC-1 (Makefile): the environment is detected from a Makefile's serve, start or dev target", () => {
   const makefiles: [string, string | null][] = [
     ["dev:\n\tnode app.js\nserve:\n\tnode serve.js\n", "make serve"],
     ["serve:\n\tx\nstart:\n\ty\n", "make start"],
@@ -98,6 +113,9 @@ test("SP7b-T3 AC-1: the environment is detected from a compose file, artisan, a 
     write(dir, "Makefile", text);
     expect(detectEnvironment(dir, [])?.start.command ?? null).toBe(start);
   }
+});
+
+test("SP7b-T3 AC-1 (package.json): the environment is detected from a package.json script, and a tree with none of the four has none", () => {
   const node = tempDir();
   write(
     node,
@@ -118,13 +136,10 @@ test("SP7b-T3 AC-1: the environment is detected from a compose file, artisan, a 
   write(nothing, "README.md", "# nothing\n");
   expect(detectEnvironment(nothing, [])).toBeNull();
   expect(detectProfile(nothing).environment).toBeUndefined();
+});
+
+test("SP7b-T3 AC-1 (mergeProfile): a confirmed block outlives a re-detection", () => {
   // The merge: a block with any confirmed command outlives the detection whole; a proposed one follows it.
-  const base: Profile = {
-    version: 1,
-    detectedAt: "2026-10-18T10:00:00.000Z",
-    targets: [],
-    watch: { exclude: [] },
-  };
   const startConfirmed: Environment = { ...detected, start: confirmed("make up") };
   expect(mergeProfile({ ...base, environment: startConfirmed }, [], detected).environment).toEqual(
     startConfirmed,
@@ -145,6 +160,9 @@ test("SP7b-T3 AC-1: the environment is detected from a compose file, artisan, a 
   const kept = mergeProfile({ ...base, environment: startConfirmed }, [], null);
   expect(kept.environment).toEqual(startConfirmed);
   expect(profileChanges({ ...base, environment: startConfirmed }, kept)).toEqual([]);
+});
+
+test("SP7b-T3 AC-1 (the change lines): a re-detection names the environment's changes", () => {
   // The changes a re-detection names.
   expect(profileChanges(base, { ...base, environment: detected })).toContain(
     "environment.start: docker compose up -d",

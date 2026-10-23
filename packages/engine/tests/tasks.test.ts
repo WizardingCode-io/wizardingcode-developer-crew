@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "bun:test";
 import {
   chmodSync,
   existsSync,
@@ -246,239 +246,223 @@ async function lead(options: LeadOptions = {}) {
   return { env, root, c, id, short, worktreeOf, open, ended, childReplies, proveChild };
 }
 
-test("SP7a AC-3 (Task 6): a todo's gate runs the gates its diff touches, bounded by the cap; the brief is written from the records; an inline todo takes a scope; a gone merge commit refuses", async () => {
-  const { env, root, c, id, open, childReplies, proveChild, ended } = await lead({
-    mail: { maxConcurrent: 10 },
-  });
-  const t2 = await open("T-2", "AC-2");
-  expect(loadWork(repoPaths(root, env), id).work?.tasks?.[0]?.state).toBe("handed");
-  const c2 = await childReplies("T-2", t2.message, t2.worktree);
-  proveChild(t2.worktree, c2.childEnv, c2.childId);
-  await ended(t2);
-  // Before the merge, no gate: the todo's files are not in this checkout yet.
-  expect((await c.run("task", id, "gate", "T-2")).err.trim()).toBe(
-    "T-2 is not merged yet (crew task <id> merge T-2)",
-  );
-  const merged = await c.json("task", id, "merge", "T-2");
-  if (merged.code !== 0) throw new Error(String(merged.data.message));
-  expect(loadWork(repoPaths(root, env), id).work?.tasks?.[0]?.state).toBe("merged");
-  // The profile's scoped template narrows the todo's test command to its files.
-  const template = `node -e "process.exit(process.argv[1].includes('fail') ? 1 : 0)" {files}`;
-  expect((await c.run("profile", "set", "testScoped", template)).code).toBe(0);
-  // Before the gate, no brief.
-  expect((await c.run("task", id, "brief", "T-2")).err.trim()).toBe(
-    "T-2 has no passing gate yet (crew task <id> gate T-2)",
-  );
-  const gated = await c.json("task", id, "gate", "T-2");
-  expect(gated.code).toBe(0);
-  expect(gated.data.gate).toMatchObject({ round: 1, status: "pass", scope: ["src/b.ts"] });
-  const runs = (
-    gated.data.gate as { runs: { gate: string; command: string | null; status: string }[] }
-  ).runs;
-  expect(runs.map((r) => r.gate)).toEqual(["test"]);
-  // The command that ran is the template over the todo's file, not the target's whole test command.
-  expect(runs[0]).toMatchObject({
-    command: template.replace("{files}", "src/b.ts"),
-    status: "pass",
-  });
-  expect(loadWork(repoPaths(root, env), id).work?.tasks?.[0]?.state).toBe("gated");
-  // The todo's runs are the todo's: the item's evidence keeps none of them.
-  expect(loadEvidence(repoPaths(root, env), id).evidence.runs).toEqual([]);
-  const brief = await c.run("task", id, "brief", "T-2");
-  expect(brief.code).toBe(0);
-  expect(brief.out).toContain(`# Brief: T-2 of ${id}`);
-  expect(brief.out).toContain("## Changed\n- src/b.ts");
-  expect(brief.out).toContain("## Proven\n- test (.): pass");
-  const mergeCommit = loadWork(repoPaths(root, env), id).work?.tasks?.[0]?.mergeCommit ?? "";
-  expect(brief.out).toContain(
-    `\n- AC-2: proven by T-2 (child ${c2.childId}, merged ${mergeCommit.slice(0, 7)})\n`,
-  );
-  expect(brief.out).toContain("## Left\n- none");
-  expect(existsSync(join(root, ".crew", "work", id, "tasks", "T-2.brief.md"))).toBe(true);
-  expect(loadWork(repoPaths(root, env), id).work?.tasks?.[0]).toMatchObject({
-    state: "briefed",
-    brief: "tasks/T-2.brief.md",
-  });
-  // A delivery validation a lead returned is what the brief leaves open; the spec's validated ones are not listed.
-  write(
-    root,
-    `.crew/work/${id}/conclave/lead-qa.delivery.md`,
-    `# qa lead's validation of ${id}: delivery\nverdict: returned\n## Returns\n- R-1 · src/b.ts:1 · B is a number, the plan says a string\n## Notes\n- none\n`,
-  );
-  const returned = await c.run(
-    "validation",
-    id,
-    "record",
-    "--what",
-    "delivery",
-    "--by",
-    "lead-qa",
-    "--file",
-    `.crew/work/${id}/conclave/lead-qa.delivery.md`,
-  );
-  if (returned.code !== 0) throw new Error(returned.err);
-  const rebriefed = (await c.run("task", id, "brief", "T-2")).out;
-  expect(rebriefed.split("## Left\n")[1]?.trim()).toBe(
-    "- lead-qa returned 1 return (conclave/lead-qa.delivery.md)",
-  );
-  // A second gate run is round 2, here with --scope standing in for the merge commit's diff; a third
-  // is refused until the user continues.
-  expect((await c.json("task", id, "gate", "T-2", "--scope", "src/a.ts")).data.gate).toMatchObject({
-    round: 2,
-    scope: ["src/a.ts"],
-  });
-  expect((await c.run("task", id, "gate", "T-2")).err.trim()).toBe(
-    `gate round 3 of T-2: the policy allows 2 (team.maxGateRounds); the user continues it once with crew continue ${id} gate T-2, or decides`,
-  );
-  expect((await c.run("continue", id, "gate", "T-2")).code).toBe(0);
-  expect((await c.json("task", id, "gate", "T-2")).data.gate).toMatchObject({ round: 3 });
-  // An inline todo: no worktree, a declared scope.
-  expect(
-    (
-      await c.run("task", id, "note", "T-5", "--criteria", "AC-1", "--scope", "src/a.ts")
-    ).err.trim(),
-  ).toBe('plan.md names no task T-5; give its text with --text "<todo>"');
-  expect(
-    (await c.run("task", id, "note", "T-7", "--criteria", "AC-1", "--text", "no scope")).err.trim(),
-  ).toBe("a scope names at least one file (--scope <path>[,<path>])");
-  // A scope path stays inside the repository: no absolute path, no `..`, no newline (the security
-  // lead's return R-2 of SP7a Task 6).
-  for (const bad of ["../x.ts", "/tmp/x.ts", "src/../../x.ts", "src/a\nb.ts"]) {
-    const escaped = await c.run(
-      "task",
+// One lead for the four parts, which run in order on it: each part starts from the state the part
+// before it left, so a part run alone under a -t filter is not supported.
+describe("SP7a AC-3 (Task 6): a todo's gate runs the gates its diff touches, bounded by the cap; the brief is written from the records; an inline todo takes a scope; a gone merge commit refuses", () => {
+  let ctx: Awaited<ReturnType<typeof lead>>;
+  beforeAll(async () => {
+    ctx = await lead({ mail: { maxConcurrent: 10 } });
+  }, 30_000);
+  /** `crew task note` on the lead's item. */
+  const note = (task: string, ...flags: string[]) =>
+    ctx.c.run("task", ctx.id, "note", task, ...flags);
+
+  test("part 1: the gate and the brief, from the lead set up with no task open", async () => {
+    const { env, root, c, id, open, childReplies, proveChild, ended } = ctx;
+    const t2 = await open("T-2", "AC-2");
+    expect(loadWork(repoPaths(root, env), id).work?.tasks?.[0]?.state).toBe("handed");
+    const c2 = await childReplies("T-2", t2.message, t2.worktree);
+    proveChild(t2.worktree, c2.childEnv, c2.childId);
+    await ended(t2);
+    // Before the merge, no gate: the todo's files are not in this checkout yet.
+    expect((await c.run("task", id, "gate", "T-2")).err.trim()).toBe(
+      "T-2 is not merged yet (crew task <id> merge T-2)",
+    );
+    const merged = await c.json("task", id, "merge", "T-2");
+    if (merged.code !== 0) throw new Error(String(merged.data.message));
+    expect(loadWork(repoPaths(root, env), id).work?.tasks?.[0]?.state).toBe("merged");
+    // The profile's scoped template narrows the todo's test command to its files.
+    const template = `node -e "process.exit(process.argv[1].includes('fail') ? 1 : 0)" {files}`;
+    expect((await c.run("profile", "set", "testScoped", template)).code).toBe(0);
+    // Before the gate, no brief.
+    expect((await c.run("task", id, "brief", "T-2")).err.trim()).toBe(
+      "T-2 has no passing gate yet (crew task <id> gate T-2)",
+    );
+    const gated = await c.json("task", id, "gate", "T-2");
+    expect(gated.code).toBe(0);
+    expect(gated.data.gate).toMatchObject({ round: 1, status: "pass", scope: ["src/b.ts"] });
+    const runs = (
+      gated.data.gate as { runs: { gate: string; command: string | null; status: string }[] }
+    ).runs;
+    expect(runs.map((r) => r.gate)).toEqual(["test"]);
+    // The command that ran is the template over the todo's file, not the target's whole test command.
+    expect(runs[0]).toMatchObject({
+      command: template.replace("{files}", "src/b.ts"),
+      status: "pass",
+    });
+    expect(loadWork(repoPaths(root, env), id).work?.tasks?.[0]?.state).toBe("gated");
+    // The todo's runs are the todo's: the item's evidence keeps none of them.
+    expect(loadEvidence(repoPaths(root, env), id).evidence.runs).toEqual([]);
+    const brief = await c.run("task", id, "brief", "T-2");
+    expect(brief.code).toBe(0);
+    expect(brief.out).toContain(`# Brief: T-2 of ${id}`);
+    expect(brief.out).toContain("## Changed\n- src/b.ts");
+    expect(brief.out).toContain("## Proven\n- test (.): pass");
+    const mergeCommit = loadWork(repoPaths(root, env), id).work?.tasks?.[0]?.mergeCommit ?? "";
+    expect(brief.out).toContain(
+      `\n- AC-2: proven by T-2 (child ${c2.childId}, merged ${mergeCommit.slice(0, 7)})\n`,
+    );
+    expect(brief.out).toContain("## Left\n- none");
+    expect(existsSync(join(root, ".crew", "work", id, "tasks", "T-2.brief.md"))).toBe(true);
+    expect(loadWork(repoPaths(root, env), id).work?.tasks?.[0]).toMatchObject({
+      state: "briefed",
+      brief: "tasks/T-2.brief.md",
+    });
+    // A delivery validation a lead returned is what the brief leaves open; the spec's validated ones are not listed.
+    write(
+      root,
+      `.crew/work/${id}/conclave/lead-qa.delivery.md`,
+      `# qa lead's validation of ${id}: delivery\nverdict: returned\n## Returns\n- R-1 · src/b.ts:1 · B is a number, the plan says a string\n## Notes\n- none\n`,
+    );
+    const returned = await c.run(
+      "validation",
       id,
-      "note",
-      "T-8",
+      "record",
+      "--what",
+      "delivery",
+      "--by",
+      "lead-qa",
+      "--file",
+      `.crew/work/${id}/conclave/lead-qa.delivery.md`,
+    );
+    if (returned.code !== 0) throw new Error(returned.err);
+    const rebriefed = (await c.run("task", id, "brief", "T-2")).out;
+    expect(rebriefed.split("## Left\n")[1]?.trim()).toBe(
+      "- lead-qa returned 1 return (conclave/lead-qa.delivery.md)",
+    );
+    // A second gate run is round 2, here with --scope standing in for the merge commit's diff; a third
+    // is refused until the user continues.
+    expect(
+      (await c.json("task", id, "gate", "T-2", "--scope", "src/a.ts")).data.gate,
+    ).toMatchObject({
+      round: 2,
+      scope: ["src/a.ts"],
+    });
+    expect((await c.run("task", id, "gate", "T-2")).err.trim()).toBe(
+      `gate round 3 of T-2: the policy allows 2 (team.maxGateRounds); the user continues it once with crew continue ${id} gate T-2, or decides`,
+    );
+    expect((await c.run("continue", id, "gate", "T-2")).code).toBe(0);
+    expect((await c.json("task", id, "gate", "T-2")).data.gate).toMatchObject({ round: 3 });
+  }, 30_000);
+
+  test("part 2: inline todos and scope refusals, from T-2 merged and gated at round 3 after the crew continue, with the brief and lead-qa's returned validation recorded", async () => {
+    const { env, root, c, id } = ctx;
+    // An inline todo: no worktree, a declared scope.
+    expect((await note("T-5", "--criteria", "AC-1", "--scope", "src/a.ts")).err.trim()).toBe(
+      'plan.md names no task T-5; give its text with --text "<todo>"',
+    );
+    expect((await note("T-7", "--criteria", "AC-1", "--text", "no scope")).err.trim()).toBe(
+      "a scope names at least one file (--scope <path>[,<path>])",
+    );
+    // A scope path stays inside the repository: no absolute path, no `..`, no newline (the security
+    // lead's return R-2 of SP7a Task 6).
+    for (const bad of ["../x.ts", "/tmp/x.ts", "src/../../x.ts", "src/a\nb.ts"]) {
+      const escaped = await note("T-8", "--criteria", "AC-1", "--scope", bad, "--text", "escapes");
+      expect(escaped.err.trim()).toBe(
+        `a scope path stays inside the repository: ${JSON.stringify(bad)}`,
+      );
+    }
+    const noted = await note(
+      "T-5",
       "--criteria",
       "AC-1",
       "--scope",
-      bad,
+      "src/a.ts",
       "--text",
-      "escapes",
+      "AC-1 inline",
     );
-    expect(escaped.err.trim()).toBe(
-      `a scope path stays inside the repository: ${JSON.stringify(bad)}`,
+    expect(noted.out.trim()).toBe("T-5 noted: inline, AC-1, scope src/a.ts");
+    expect(
+      (
+        await note("T-5", "--criteria", "AC-1", "--scope", "src/a.ts", "--text", "again")
+      ).err.trim(),
+    ).toBe("T-5 is already a task of this item");
+    expect(
+      (await note("T-6", "--criteria", "AC-9", "--scope", "src/a.ts", "--text", "x")).err.trim(),
+    ).toBe("unknown criterion: AC-9");
+    write(root, "src/a.ts", "export const A = 2;\n");
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "T-5");
+    expect((await c.json("task", id, "gate", "T-5")).data.gate).toMatchObject({
+      status: "pass",
+      scope: ["src/a.ts"],
+    });
+    // The flag's scope stands in for the recorded one.
+    expect(
+      (await c.json("task", id, "gate", "T-5", "--scope", "src/b.ts")).data.gate,
+    ).toMatchObject({
+      round: 2,
+      status: "pass",
+      scope: ["src/b.ts"],
+    });
+    // A flag's path outside the repository is refused before any round is spent.
+    expect((await c.run("task", id, "gate", "T-5", "--scope", "../x.ts")).err.trim()).toBe(
+      'a scope path stays inside the repository: "../x.ts"',
     );
-  }
-  const noted = await c.run(
-    "task",
-    id,
-    "note",
-    "T-5",
-    "--criteria",
-    "AC-1",
-    "--scope",
-    "src/a.ts",
-    "--text",
-    "AC-1 inline",
-  );
-  expect(noted.out.trim()).toBe("T-5 noted: inline, AC-1, scope src/a.ts");
-  expect(
-    (
-      await c.run(
-        "task",
-        id,
-        "note",
-        "T-5",
-        "--criteria",
-        "AC-1",
-        "--scope",
-        "src/a.ts",
-        "--text",
-        "again",
-      )
-    ).err.trim(),
-  ).toBe("T-5 is already a task of this item");
-  expect(
-    (
-      await c.run(
-        "task",
-        id,
-        "note",
-        "T-6",
-        "--criteria",
-        "AC-9",
-        "--scope",
-        "src/a.ts",
-        "--text",
-        "x",
-      )
-    ).err.trim(),
-  ).toBe("unknown criterion: AC-9");
-  write(root, "src/a.ts", "export const A = 2;\n");
-  git(root, "add", "-A");
-  git(root, "commit", "-q", "-m", "T-5");
-  expect((await c.json("task", id, "gate", "T-5")).data.gate).toMatchObject({
-    status: "pass",
-    scope: ["src/a.ts"],
-  });
-  // The flag's scope stands in for the recorded one.
-  expect((await c.json("task", id, "gate", "T-5", "--scope", "src/b.ts")).data.gate).toMatchObject({
-    round: 2,
-    status: "pass",
-    scope: ["src/b.ts"],
-  });
-  // A flag's path outside the repository is refused before any round is spent.
-  expect((await c.run("task", id, "gate", "T-5", "--scope", "../x.ts")).err.trim()).toBe(
-    'a scope path stays inside the repository: "../x.ts"',
-  );
-  expect(
-    loadWork(repoPaths(root, env), id).work?.tasks?.find((t) => t.task === "T-5")?.gate,
-  ).toMatchObject({ round: 2 });
-  // A todo whose scoped test fails: the gate says so, the state stays merged, no brief is written.
-  write(root, "src/fail.ts", "export const F = 1;\n");
-  git(root, "add", "-A");
-  git(root, "commit", "-q", "-m", "T-6");
-  const sixth = await c.run(
-    "task",
-    id,
-    "note",
-    "T-6",
-    "--criteria",
-    "AC-1",
-    "--scope",
-    "src/fail.ts",
-    "--text",
-    "fails",
-  );
-  expect(sixth.code).toBe(0);
-  const failed = await c.run("task", id, "gate", "T-6");
-  expect(failed.code).toBe(1);
-  expect(failed.out).toContain("  test (.): fail in ");
-  expect(failed.out).toContain("T-6 gate round 1: fail");
-  expect(
-    loadWork(repoPaths(root, env), id).work?.tasks?.find((t) => t.task === "T-6"),
-  ).toMatchObject({
-    state: "merged",
-    gate: { round: 1, status: "fail", scope: ["src/fail.ts"] },
-  });
-  expect((await c.run("task", id, "brief", "T-6")).err.trim()).toBe(
-    "T-6 has no passing gate yet (crew task <id> gate T-6)",
-  );
-  const listed = (await c.run("task", id, "list")).out;
-  expect(listed).toContain("T-5 · AC-1 · inline · gated");
-  expect(listed).toContain("T-6 · AC-1 · inline · merged");
-  expect(listed).toMatch(/T-2 · AC-2 · [^\n]* · briefed/);
-  // The merge commit of T-2 rewritten away (the history squashed over it, the tree untouched): the
-  // gate refuses and records nothing.
-  const before = git(root, "rev-parse", "HEAD").trim();
-  git(root, "reset", "-q", "--soft", `${mergeCommit}^1`);
-  git(root, "commit", "-q", "-m", "squashed over the merge of T-2");
-  const gone = await c.run("task", id, "gate", "T-2");
-  expect(gone.code).toBe(1);
-  expect(gone.err.trim()).toMatch(
-    /^merge commit [0-9a-f]{7} of T-2 is not in this checkout's history; restore it or note the todo again$/,
-  );
-  git(root, "reset", "-q", "--soft", before);
-  expect(loadWork(repoPaths(root, env), id).work?.tasks?.[0]?.gate).toMatchObject({ round: 3 });
-  const report = (await c.run("evidence", id)).out;
-  expect(report).toContain(
-    "| Task | Criteria | Branch | Child | Verdict | Merged | Report | State | Gate |",
-  );
-  expect(report).toMatch(/\| T-2 \| AC-2 \|[^\n]*\| briefed \| pass \(round 3\) \|/);
-  expect(report).toMatch(/\| T-5 \| AC-1 \|[^\n]*\| gated \| pass \(round 2\) \|/);
-  expect(report).toMatch(/\| T-6 \| AC-1 \|[^\n]*\| merged \| fail \(round 1\) \|/);
-}, 30_000);
+    expect(
+      loadWork(repoPaths(root, env), id).work?.tasks?.find((t) => t.task === "T-5")?.gate,
+    ).toMatchObject({ round: 2 });
+  }, 30_000);
+
+  test("part 3: a failing gate, from the inline todos opened and refused", async () => {
+    const { env, root, c, id } = ctx;
+    // A todo whose scoped test fails: the gate says so, the state stays merged, no brief is written.
+    write(root, "src/fail.ts", "export const F = 1;\n");
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "T-6");
+    const sixth = await note(
+      "T-6",
+      "--criteria",
+      "AC-1",
+      "--scope",
+      "src/fail.ts",
+      "--text",
+      "fails",
+    );
+    expect(sixth.code).toBe(0);
+    const failed = await c.run("task", id, "gate", "T-6");
+    expect(failed.code).toBe(1);
+    expect(failed.out).toContain("  test (.): fail in ");
+    expect(failed.out).toContain("T-6 gate round 1: fail");
+    expect(
+      loadWork(repoPaths(root, env), id).work?.tasks?.find((t) => t.task === "T-6"),
+    ).toMatchObject({
+      state: "merged",
+      gate: { round: 1, status: "fail", scope: ["src/fail.ts"] },
+    });
+    expect((await c.run("task", id, "brief", "T-6")).err.trim()).toBe(
+      "T-6 has no passing gate yet (crew task <id> gate T-6)",
+    );
+    const listed = (await c.run("task", id, "list")).out;
+    expect(listed).toContain("T-5 · AC-1 · inline · gated");
+    expect(listed).toContain("T-6 · AC-1 · inline · merged");
+    expect(listed).toMatch(/T-2 · AC-2 · [^\n]* · briefed/);
+  }, 30_000);
+
+  test("part 4: a gone merge commit and the Gate column, from T-6's failing gate", async () => {
+    const { env, root, c, id } = ctx;
+    const mergeCommit = loadWork(repoPaths(root, env), id).work?.tasks?.[0]?.mergeCommit ?? "";
+    // The merge commit of T-2 rewritten away (the history squashed over it, the tree untouched): the
+    // gate refuses and records nothing.
+    const before = git(root, "rev-parse", "HEAD").trim();
+    git(root, "reset", "-q", "--soft", `${mergeCommit}^1`);
+    git(root, "commit", "-q", "-m", "squashed over the merge of T-2");
+    const gone = await c.run("task", id, "gate", "T-2");
+    expect(gone.code).toBe(1);
+    expect(gone.err.trim()).toMatch(
+      /^merge commit [0-9a-f]{7} of T-2 is not in this checkout's history; restore it or note the todo again$/,
+    );
+    git(root, "reset", "-q", "--soft", before);
+    expect(loadWork(repoPaths(root, env), id).work?.tasks?.[0]?.gate).toMatchObject({ round: 3 });
+    const report = (await c.run("evidence", id)).out;
+    expect(report).toContain(
+      "| Task | Criteria | Branch | Child | Verdict | Merged | Report | State | Gate |",
+    );
+    expect(report).toMatch(/\| T-2 \| AC-2 \|[^\n]*\| briefed \| pass \(round 3\) \|/);
+    expect(report).toMatch(/\| T-5 \| AC-1 \|[^\n]*\| gated \| pass \(round 2\) \|/);
+    expect(report).toMatch(/\| T-6 \| AC-1 \|[^\n]*\| merged \| fail \(round 1\) \|/);
+  }, 30_000);
+});
 
 test("SP2c: the short id, the names and the task text", () => {
   expect(shortId("2026-10-15-042-loyalty-tier-on-checkout")).toBe("2026-10-15-042");

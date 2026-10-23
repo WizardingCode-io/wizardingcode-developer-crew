@@ -136,6 +136,22 @@ function expectKnowledgeShape(path: string, title: string) {
   for (const body of bodies(text)) expect(body.trim().length).toBeGreaterThan(0);
 }
 
+/**
+ * A pack's plugin.json: the name always; the licence MIT and the `pack` keyword when `keywords` is
+ * set; the author's name and the version when given; each assertion with the label when given.
+ */
+function expectPluginShape(
+  root: string,
+  want: { name: string; label?: string; author?: string; keywords?: boolean; version?: string },
+) {
+  const plugin = JSON.parse(read(join(root, ".claude-plugin", "plugin.json")));
+  if (want.version !== undefined) expect(plugin.version, want.label).toBe(want.version);
+  expect(plugin.name, want.label).toBe(want.name);
+  if (want.keywords) expect(plugin.license, want.label).toBe("MIT");
+  if (want.author !== undefined) expect(plugin.author?.name, want.label).toBe(want.author);
+  if (want.keywords) expect(plugin.keywords, want.label).toContain("pack");
+}
+
 function expectChecklistShape(path: string) {
   const text = read(path);
   const lines = text.split("\n");
@@ -185,11 +201,7 @@ test("SP6-T3 AC-1: the Laravel pack is complete: decision 7's rule and files, th
   expect(v.pint).toMatch(/^\d+\.\d+\.\d+$/);
   expect(v.larastan).toMatch(/^\d+\.\d+\.\d+$/);
   expect(checkPack(root, m, m.version)).toBeNull();
-  const plugin = JSON.parse(read(join(root, ".claude-plugin", "plugin.json")));
-  expect(plugin.name).toBe(LARAVEL);
-  expect(plugin.license).toBe("MIT");
-  expect(plugin.author?.name).toBe("WizardingCode");
-  expect(plugin.keywords).toContain("pack");
+  expectPluginShape(root, { name: LARAVEL, author: "WizardingCode", keywords: true });
   const readme = read(join(root, "README.md"));
   expect(readme).toContain(
     `Verified against: Laravel ${v.laravel}, Pest ${v.pest}, Pint ${v.pint}, Larastan ${v.larastan}`,
@@ -224,10 +236,7 @@ test("SP6-T3 AC-2: the agentic-os pack is complete: the template with its six gl
   expect(v["owasp-llm-top-10"]).toMatch(/^\d{4}$/);
   expect(v["claude-code"]).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   expect(checkPack(root, m, m.version)).toBeNull();
-  const plugin = JSON.parse(read(join(root, ".claude-plugin", "plugin.json")));
-  expect(plugin.name).toBe(AGENTIC);
-  expect(plugin.license).toBe("MIT");
-  expect(plugin.keywords).toContain("pack");
+  expectPluginShape(root, { name: AGENTIC, keywords: true });
   const readme = read(join(root, "README.md"));
   expect(readme).toContain(
     `Verified against: OWASP Top 10 for LLM Applications ${v["owasp-llm-top-10"]}; Claude Code and Anthropic documentation read on ${v["claude-code"]}`,
@@ -392,9 +401,7 @@ test("SP6-T3 AC-4: the packs' versions follow the engine's (the pack's version, 
     const m = manifestOf(root);
     expect([VERSION, nextMinor(VERSION)], key).toContain(m.version);
     expect(m.core, key).toBe(`>=${m.version}`);
-    const plugin = JSON.parse(read(join(root, ".claude-plugin", "plugin.json")));
-    expect(plugin.version, key).toBe(m.version);
-    expect(plugin.name, key).toBe(m.name);
+    expectPluginShape(root, { name: m.name, label: key, version: m.version });
     expect(checkPack(root, m, m.version), key).toBeNull();
     expect(checkPack(root, m, "0.10.0"), key).toBe(
       `core ${m.core} needs an engine at or above ${m.version}; this is 0.10.0`,

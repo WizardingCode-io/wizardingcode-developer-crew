@@ -145,6 +145,44 @@ test("CON6-AC-2 (finding 56): a scoped test command writes a file name that star
   expect(scopedTestCommand(scoped, ["-a b.ts"])).toBe("vitest related './-a b.ts' --run");
 });
 
+test("CON8-AC-1 (finding 56): a scoped test command never narrows to a path that only shares a prefix with the target's folder, and narrows to the target's own file beside it", () => {
+  const api: Target = {
+    ...target,
+    path: "apps/api",
+    testScoped: { command: "vitest related {files} --run", source: "detected" },
+  };
+  // apps/api2 is a sibling folder, not under apps/api: the whole test command runs.
+  expect(scopedTestCommand(api, ["apps/api2/x.ts"])).toBe("t");
+  expect(scopedTestCommand(api, ["apps/api2/x.ts", "apps/api/src/a.ts"])).toBe(
+    "vitest related src/a.ts --run",
+  );
+});
+
+test("CON8-AC-2 (finding 56): the scoped command's quoted names reach a POSIX shell as the same names, and a hostile name runs no command", () => {
+  const words: Target = { ...target, testScoped: { command: "{files}", source: "detected" } };
+  const names = ["a b;touch X.ts", "it's.ts", "$&.ts"];
+  const command = scopedTestCommand(words, names);
+  const tmp = tempDir("crew-quote-");
+  try {
+    // Each name's word alone: a name the shell would split runs nothing even when no other name's
+    // quote leaves the whole line unparsed.
+    for (const name of names) {
+      const word = scopedTestCommand(words, [name]);
+      const alone = Bun.spawnSync(["/bin/sh", "-c", `printf '%s\n' ${word}`], { cwd: tmp });
+      expect(existsSync(join(tmp, "X.ts"))).toBe(false);
+      expect(alone.stdout.toString().split("\n").slice(0, -1)).toEqual([name]);
+      expect(alone.exitCode).toBe(0);
+    }
+    // One shell, the one a gate runs in: the words are printf's arguments, never a second shell's input.
+    const run = Bun.spawnSync(["/bin/sh", "-c", `printf '%s\n' ${command}`], { cwd: tmp });
+    expect(existsSync(join(tmp, "X.ts"))).toBe(false);
+    expect(run.stdout.toString().split("\n").slice(0, -1)).toEqual(names);
+    expect(run.exitCode).toBe(0);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
 test("planned gates follow the route table", () => {
   expect(gatesForTarget(target, DEFAULT_POLICY, ["src/a.ts"])).toEqual(["test", "lint"]);
   expect(gatesForTarget(target, DEFAULT_POLICY, ["package.json"])).toEqual([

@@ -1190,6 +1190,40 @@ test("AC-3 (finding 125): a review file is not archived: a reviewer launched ane
   expect(String(second.systemMessage)).not.toContain("kept as");
 });
 
+test("CON8-AC-3 (finding 127): a judge launched twice leaves the second ruling in review/ruling.json with no archived round file and no kept-as note, and both rulings recorded", () => {
+  const { root, ctx, work } = session();
+  work.route = "standard";
+  work.phase = "gate";
+  saveWork(ctx.paths, work);
+  const dir = tempDir("crew-transcript-");
+  const stop = (id: string, answer: string) =>
+    onSubagentStop(ctx, {
+      agent_id: id,
+      agent_type: `${PLUGIN}:judge`,
+      agent_transcript_path: transcript(dir, answer, [[100, 10, 0, 0]]),
+      last_assistant_message: "Ruled.",
+    });
+  stop("j1", '{"rulings":[{"gate":"security","verdict":"defect","findings":["F-1"],"tokens":0}]}');
+  const second = stop(
+    "j2",
+    '{"rulings":[{"gate":"security","verdict":"proven","findings":[],"tokens":0}]}',
+  );
+  const review = join(root, ".crew", "work", work.id, "review");
+  expect(JSON.parse(readFileSync(join(review, "ruling.json"), "utf8"))).toEqual({
+    rulings: [{ gate: "security", verdict: "proven", findings: [], tokens: 0 }],
+  });
+  expect(readdirSync(review).filter((f) => f.includes(".round"))).toEqual([]);
+  expect(String(second.systemMessage)).not.toContain("kept as");
+  // The overwrite never hides that an earlier ruling existed: both answers are recorded (R-3).
+  const judges = (loadEvidence(ctx.paths, work.id).evidence.roles ?? []).filter(
+    (r) => r.agent === "judge",
+  );
+  expect(judges.map((r) => [r.agentId, r.file])).toEqual([
+    ["j1", "review/ruling.json"],
+    ["j2", "review/ruling.json"],
+  ]);
+});
+
 test("SP8-T4 AC-3: on an audit item the hook files a reviewer's answer as audit/<gate>.findings.md and the researcher's as audit/dependencies.findings.md; on any other kind the files stay where they were", () => {
   expect(answerFile("review-security", "…", "audit")).toBe("audit/security.findings.md");
   expect(answerFile("researcher", "# Dependencies for w1", "audit")).toBe(
