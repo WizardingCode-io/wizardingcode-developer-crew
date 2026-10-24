@@ -8,6 +8,7 @@ import { onPreToolUse, openedSessionDenial } from "../src/hooks/pre-tool-use.ts"
 import type { HookPayload } from "../src/hooks/types.ts";
 import { PROTECTED_WORK_FILES } from "../src/paths.ts";
 import { loadState, saveState, workingRoles } from "../src/state.ts";
+import { writeProtectedJson } from "../src/store.ts";
 import * as workModule from "../src/work.ts";
 import { createWork, saveWork } from "../src/work.ts";
 import { git, hookContext, makeRepo, repoPaths, tempDir, testEnv } from "./helpers.ts";
@@ -4697,4 +4698,81 @@ test("DEBT2-AC-2-2h-opened-approve-no-id: in a session opened by mail, crew appr
   expect(reason(response)).toBe(
     `Crew: this session was opened by mail (${mid}) and a spec it cannot read waits for a person: crew approve  is denied; run crew await <id> user and end the turn`,
   );
+});
+
+test("AC-10 (finding 122): where nobody watches, only one plain crew policy set that lowers an allowed cap under the policy passes; everything else is denied, failing closed", () => {
+  // One environment for the writes and the hook: the integrity record lives in its home
+  const env = testEnv();
+  const repo = (policy: Record<string, unknown> | "tampered" | null) => {
+    const root = makeRepo({
+      "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+      "src/a.ts": "x",
+    });
+    // Written through the paths the hook reads, so the integrity record is the one it checks
+    const paths = hookContext({ session_id: "s", cwd: root }, env).paths;
+    const file = join(paths.root, ".crew", "policy.json");
+    if (policy === "tampered") {
+      writeProtectedJson(paths, file, { unattendedPolicyChanges: "validator" });
+      writeFileSync(
+        file,
+        JSON.stringify({ unattendedPolicyChanges: "validator", team: { maxGateRounds: 9 } }),
+      );
+    } else if (policy) writeProtectedJson(paths, file, policy);
+    return root;
+  };
+  const allowed =
+    "crew policy set team.maxJudgementRounds 1 --mode dontAsk --validator policy-change";
+  const run = (root: string, command: string, permission_mode = "dontAsk", headless = false) =>
+    onPreToolUse(
+      hookContext(
+        { session_id: "s", cwd: root },
+        { ...env, ...(headless ? { CLAUDE_CODE_SESSION_ATTENDED: "0" } : {}) },
+      ),
+      { tool_name: "Bash", tool_input: { command }, permission_mode },
+    );
+  const open = repo({ unattendedPolicyChanges: "validator" });
+  // The allowed form passes, in dontAsk and in a headless bypassPermissions session
+  expect(run(open, allowed)).toEqual({});
+  expect(
+    run(open, allowed.replace("dontAsk", "bypassPermissions"), "bypassPermissions", true),
+  ).toEqual({});
+  const denied: [string, string, string?, boolean?][] = [
+    [allowed.replace("team.maxJudgementRounds 1", "mail.maxHops 3"), "does not lower"],
+    [
+      allowed.replace("team.maxJudgementRounds 1", "verify.send claims-and-snippets"),
+      "verify.send is a person's",
+    ],
+    [allowed.replace("team.maxJudgementRounds 1", "team.newKey 1"), "team.newKey is a person's"],
+    [
+      'crew policy set riskPathExclusions "src/x.ts" --remove --mode dontAsk --validator policy-change',
+      "a person's",
+    ],
+    [allowed.replace("--validator policy-change", ""), "policy-change"],
+    [`${allowed} && echo done`, "one plain crew policy set"],
+    [`sh -c "${allowed}"`, "one plain crew policy set"],
+    [`FOO=1 ${allowed}`, "one plain crew policy set"],
+    [`${allowed} | cat`, "one plain crew policy set"],
+    [`${allowed}; echo done`, "one plain crew policy set"],
+    [`echo $(${allowed})`, "one plain crew policy set"],
+    [
+      "crew policy set --mode dontAsk --validator policy-change team.maxJudgementRounds 1",
+      "one plain crew policy set",
+    ],
+    [allowed, "not dontAsk", "bypassPermissions"],
+    ["crew policy accept --mode dontAsk", "the policy is changed by a person alone"],
+    ["crew accept policy --mode dontAsk", "the policy is changed by a person alone"],
+  ];
+  for (const [command, why, mode] of denied) {
+    const response = run(open, command, mode ?? "dontAsk");
+    expect(decision(response), command).toBe("deny");
+    expect(reason(response) ?? "", command).toContain(why);
+  }
+  // A policy that says never, a missing policy, an unknown value, a tampered file: denied
+  for (const policy of [{}, null, { unattendedPolicyChanges: "always" }, "tampered" as const]) {
+    const response = run(repo(policy), allowed);
+    expect(decision(response), JSON.stringify(policy)).toBe("deny");
+  }
+  expect(reason(run(repo("tampered"), allowed))).toContain("changed outside the engine");
+  // A watched session is asked as today
+  expect(decision(run(open, "crew policy set team.maxJudgementRounds 1", "default"))).toBe("ask");
 });

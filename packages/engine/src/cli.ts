@@ -183,10 +183,12 @@ import {
   loadPolicy,
   MAIL_NAME,
   NAME_HINT,
+  POLICY_CHANGE_RULE,
   planListChange,
   SETTABLE_POLICY_KEYS,
   setPolicyValue,
   skipAllowed,
+  unattendedPolicyChange,
   writeListChange,
 } from "./policy.ts";
 import {
@@ -381,7 +383,7 @@ export interface CliIo {
 const KNOWN_FLAGS: Record<string, readonly string[]> = {
   detect: ["refresh"],
   profile: ["target", "stack", "force", "timeout", "mode"],
-  policy: ["remove"],
+  policy: ["remove", "mode", "validator"],
   accept: [],
   start: [
     "answers",
@@ -1638,6 +1640,62 @@ function setListKey(env: Env, key: string, value: string, remove: boolean): Outc
   });
 }
 
+/**
+ * `crew policy set <cap> <value> --mode <mode> --validator policy-change` where nobody watches
+ * (finding 122, ADR 0012): allowed by `unattendedPolicyChange` alone, in a mode that shows no
+ * prompt, on a policy file the engine wrote; the register entry, with the old and the new value, is
+ * written before the file. A refusal before the entry writes neither; a write that fails after it
+ * adds a second entry saying the change was not written.
+ */
+function lowerByValidator(
+  env: Env,
+  parsed: Parsed,
+  key: string,
+  value: string,
+  remove: boolean,
+): Outcome {
+  const mode = parsed.flags.mode;
+  if (mode !== "dontAsk" && mode !== "bypassPermissions")
+    return refuse(
+      "an unattended policy change runs in a mode that shows no prompt: --mode dontAsk or bypassPermissions",
+    );
+  if (loadPolicy(env.paths).tampered)
+    return refuse(
+      "the policy file changed outside the engine: a person accepts it first (crew policy accept)",
+    );
+  const change = unattendedPolicyChange(env.policy, key, value, {
+    rule: parsed.flags.validator,
+    remove,
+  });
+  if ("refused" in change) return refuse(change.refused);
+  const entry = {
+    kind: "decision" as const,
+    by: `the validator (rule: ${POLICY_CHANGE_RULE}), in ${mode} mode`,
+    rule: POLICY_CHANGE_RULE,
+    mode,
+  };
+  decide(env, "policy", {
+    ...entry,
+    text: `${change.key}: ${change.from} → ${change.to}, lowered by the validator`,
+  });
+  let written: ReturnType<typeof setPolicyValue>;
+  try {
+    written = setPolicyValue(env.paths, change.key, value);
+  } catch (error) {
+    written = { refused: (error as Error).message };
+  }
+  if ("refused" in written) {
+    // The entry came first, so a change never exists without its record; a write that then fails
+    // is recorded too, so the register never reads as a change that was not made.
+    decide(env, "policy", { ...entry, text: `${change.key}: not written, ${written.refused}` });
+    return refuse(written.refused);
+  }
+  return ok(`policy ${change.key}: ${change.from} → ${change.to}, lowered by the validator`, {
+    ...change,
+    mode,
+  });
+}
+
 /** `crew policy set <scalar key> <value>`: written through the engine; the standing grant, the second loosening a policy may carry (SP7b decision 15), on record. */
 function setScalarKey(env: Env, key: string, value: string): Outcome {
   const result = setPolicyValue(env.paths, key, value);
@@ -2734,7 +2792,15 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       return refuse("usage: crew profile set|confirm");
     }
     case "policy": {
-      if (args[0] === "accept") return accept(env, "policy");
+      const unattended = parsed.flags.mode !== undefined || parsed.flags.validator !== undefined;
+      if (args[0] === "accept") {
+        // Accepting a hand edit is a person's under every policy (ADR 0005, 0012).
+        if (unattended)
+          return refuse(
+            "crew policy accept takes no --mode or --validator: a hand edit of the policy is accepted by a person",
+          );
+        return accept(env, "policy");
+      }
       if (args[0] === "set") {
         const [, key, value] = args;
         if (!key || value === undefined) {
@@ -2750,6 +2816,8 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
             `--remove applies to a list key (${LIST_POLICY_KEYS.join(", ")}), not ${key}`,
           );
         }
+        // Where nobody watches, the validator may only lower a cap, when the policy says so (ADR 0012).
+        if (unattended) return lowerByValidator(env, parsed, key, value, remove);
         // Two key kinds, two helpers (finding 120's advisory): the handler reads the usage and the flag.
         if (rule && "list" in rule) return setListKey(env, key, value, remove);
         return setScalarKey(env, key, value);

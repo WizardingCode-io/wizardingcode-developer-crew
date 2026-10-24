@@ -1849,6 +1849,7 @@ var DEFAULT_POLICY = {
   allowSkips: ["tdd", "e2e"],
   artifacts: "commit",
   unattendedDecisions: "wait",
+  unattendedPolicyChanges: "never",
   attendedDecisions: "relay",
   mail: { ...DEFAULT_MAIL_POLICY, accept: [...DEFAULT_MAIL_POLICY.accept] },
   team: {
@@ -1901,8 +1902,47 @@ var SETTABLE_POLICY_KEYS = {
   "verify.maxClaimsPerItem": { integer: RANGES.maxClaimsPerItem },
   "verify.threshold": { decimal: { min: 0.5, max: 0.99 } },
   "verify.asks": { subset: VERIFY_ASKS },
+  unattendedPolicyChanges: { values: ["never", "validator"] },
   riskPathExclusions: { list: { pattern: EXCLUSION_GLOB, hint: EXCLUSION_HINT } }
 };
+var POLICY_CHANGE_RULE = "policy-change";
+var UNATTENDED_LOWERINGS = [
+  "team.maxJudgementRounds",
+  "team.maxValidationRounds",
+  "team.maxGateRounds",
+  "mail.maxConcurrent",
+  "mail.maxHops",
+  "mail.maxTurns",
+  "mail.maxMinutes",
+  "mail.maxParties"
+];
+function capValue(policy, key) {
+  const [block, name] = key.split(".");
+  return policy[block][name];
+}
+function unattendedPolicyChange(policy, key, value, flags) {
+  if (policy.unattendedPolicyChanges !== "validator")
+    return { refused: "the policy keeps its changes a person's (unattendedPolicyChanges: never)" };
+  if (flags.rule !== POLICY_CHANGE_RULE)
+    return {
+      refused: `a policy change by the validator names the rule ${POLICY_CHANGE_RULE} (--validator ${POLICY_CHANGE_RULE})`
+    };
+  if (flags.remove)
+    return { refused: "--remove is a person's: the validator only lowers a cap" };
+  const cap = UNATTENDED_LOWERINGS.find((k) => k === key);
+  if (!cap)
+    return {
+      refused: `${key} is a person's: the validator only lowers ${UNATTENDED_LOWERINGS.join(", ")}`
+    };
+  const rule = SETTABLE_POLICY_KEYS[cap];
+  const checked = checkSettable(cap, rule, value);
+  if (isRefusal(checked))
+    return checked;
+  const from = capValue(policy, cap);
+  if (typeof checked !== "number" || checked >= from)
+    return { refused: `${cap}: ${value} does not lower ${from}; raising a cap is a person's` };
+  return { key: cap, from, to: checked };
+}
 var LIST_POLICY_KEYS = Object.entries(SETTABLE_POLICY_KEYS).filter(([, rule]) => ("list" in rule)).map(([key]) => key);
 var TAMPERED_POLICY = "state changed outside the engine: .crew/policy.json; the user can accept it with crew policy accept";
 function policyPath(paths) {
@@ -2075,6 +2115,7 @@ function loadPolicy(paths) {
       allowSkips,
       artifacts: raw.artifacts === "local" ? "local" : "commit",
       unattendedDecisions: raw.unattendedDecisions === "count" || raw.unattendedDecisions === "validator" ? raw.unattendedDecisions : "wait",
+      unattendedPolicyChanges: raw.unattendedPolicyChanges === "validator" ? "validator" : "never",
       attendedDecisions: raw.attendedDecisions === "prompt" ? "prompt" : "relay",
       mail: loadMailPolicy(raw.mail),
       team: loadTeamPolicy(raw.team),
@@ -12738,12 +12779,15 @@ function unwatched(headless, permissionMode) {
     return `a headless session in ${mode} mode`;
   return PROMPTLESS_MODES.has(mode) ? `${mode} mode` : null;
 }
-function userOnlyDecision(command2, permissionMode, headless, policy) {
+function userOnlyDecision(command2, permissionMode, headless, policy, line) {
   const { parsed, policyCommand, presence } = command2;
   const flagged = typeof parsed.flags.mode === "string" ? parsed.flags.mode : undefined;
   const mode = permissionMode ?? "default";
   const where = unwatched(headless, permissionMode);
   if (where) {
+    const [verb, second] = parsed.positional;
+    if (verb === "policy" && second === "set" && policy.unattendedPolicyChanges === "validator")
+      return unattendedLowering({ parsed, policy, where, mode, flagged, line });
     if (policyCommand)
       return [
         "deny",
@@ -12775,6 +12819,31 @@ function userOnlyDecision(command2, permissionMode, headless, policy) {
   if (policy.attendedDecisions === "relay" && !policyCommand)
     return null;
   return ["ask", "Crew: this command records a decision that only the user can take"];
+}
+var PLAIN_LOWERING = new RegExp(`^crew policy set [\\w.]+ \\d+ --mode (?:dontAsk|bypassPermissions) --validator ${POLICY_CHANGE_RULE}$`);
+function unattendedLowering(asked) {
+  const { parsed, policy, where, mode, flagged, line } = asked;
+  const deny = (why) => [
+    "deny",
+    `Crew: no person is watching this session (${where}): ${why}`
+  ];
+  if (line.policyTampered)
+    return deny("the policy file changed outside the engine; a person accepts it first (crew policy accept)");
+  const [, , key, value] = parsed.positional;
+  const change = unattendedPolicyChange(policy, key ?? "", value ?? "", {
+    rule: parsed.flags.validator,
+    remove: parsed.flags.remove === true
+  });
+  if ("refused" in change)
+    return deny(change.refused);
+  if (!PLAIN_LOWERING.test(line.text.trim()))
+    return deny("the validator changes the policy only by one plain crew policy set <cap> <value> --mode <mode> --validator policy-change, nothing before or after it");
+  if (flagged !== mode)
+    return [
+      "deny",
+      `Crew: this session is ${where}, not ${flagged}; run the command with --mode ${mode}`
+    ];
+  return null;
 }
 function answer(permissionDecision, reason) {
   return {
@@ -13591,7 +13660,10 @@ function onPreToolUse(ctx, payload) {
       const userOnly = userOnlyCommand(args) ?? resumeDecision(ctx, args);
       if (!userOnly)
         continue;
-      const decided = auditApproval(userOnly.parsed, payload.permission_mode, ctx.headless, ctx.policy) ?? knowledgeUnmark(userOnly.parsed, payload.permission_mode, ctx.headless, ctx.policy) ?? userOnlyDecision(userOnly, payload.permission_mode, ctx.headless, ctx.policy);
+      const decided = auditApproval(userOnly.parsed, payload.permission_mode, ctx.headless, ctx.policy) ?? knowledgeUnmark(userOnly.parsed, payload.permission_mode, ctx.headless, ctx.policy) ?? userOnlyDecision(userOnly, payload.permission_mode, ctx.headless, ctx.policy, {
+        text: command2,
+        policyTampered: loadPolicy(ctx.paths).tampered
+      });
       if (decided?.[0] === "deny")
         return answer(...decided);
       asked ??= decided;
@@ -16086,7 +16158,7 @@ function workspaceStatus(paths, policy, env) {
 var KNOWN_FLAGS = {
   detect: ["refresh"],
   profile: ["target", "stack", "force", "timeout", "mode"],
-  policy: ["remove"],
+  policy: ["remove", "mode", "validator"],
   accept: [],
   start: [
     "answers",
@@ -16939,6 +17011,43 @@ function setListKey(env, key, value, remove) {
     list: plan.list
   });
 }
+function lowerByValidator(env, parsed, key, value, remove) {
+  const mode = parsed.flags.mode;
+  if (mode !== "dontAsk" && mode !== "bypassPermissions")
+    return refuse("an unattended policy change runs in a mode that shows no prompt: --mode dontAsk or bypassPermissions");
+  if (loadPolicy(env.paths).tampered)
+    return refuse("the policy file changed outside the engine: a person accepts it first (crew policy accept)");
+  const change = unattendedPolicyChange(env.policy, key, value, {
+    rule: parsed.flags.validator,
+    remove
+  });
+  if ("refused" in change)
+    return refuse(change.refused);
+  const entry = {
+    kind: "decision",
+    by: `the validator (rule: ${POLICY_CHANGE_RULE}), in ${mode} mode`,
+    rule: POLICY_CHANGE_RULE,
+    mode
+  };
+  decide(env, "policy", {
+    ...entry,
+    text: `${change.key}: ${change.from} → ${change.to}, lowered by the validator`
+  });
+  let written;
+  try {
+    written = setPolicyValue(env.paths, change.key, value);
+  } catch (error) {
+    written = { refused: error.message };
+  }
+  if ("refused" in written) {
+    decide(env, "policy", { ...entry, text: `${change.key}: not written, ${written.refused}` });
+    return refuse(written.refused);
+  }
+  return ok(`policy ${change.key}: ${change.from} → ${change.to}, lowered by the validator`, {
+    ...change,
+    mode
+  });
+}
 function setScalarKey(env, key, value) {
   const result = setPolicyValue(env.paths, key, value);
   if ("refused" in result)
@@ -17787,8 +17896,12 @@ async function dispatch(parsed, io) {
       return refuse("usage: crew profile set|confirm");
     }
     case "policy": {
-      if (args[0] === "accept")
+      const unattended = parsed.flags.mode !== undefined || parsed.flags.validator !== undefined;
+      if (args[0] === "accept") {
+        if (unattended)
+          return refuse("crew policy accept takes no --mode or --validator: a hand edit of the policy is accepted by a person");
         return accept(env, "policy");
+      }
       if (args[0] === "set") {
         const [, key, value] = args;
         if (!key || value === undefined) {
@@ -17799,6 +17912,8 @@ async function dispatch(parsed, io) {
         if (remove && !(rule && ("list" in rule))) {
           return refuse(`--remove applies to a list key (${LIST_POLICY_KEYS.join(", ")}), not ${key}`);
         }
+        if (unattended)
+          return lowerByValidator(env, parsed, key, value, remove);
         if (rule && "list" in rule)
           return setListKey(env, key, value, remove);
         return setScalarKey(env, key, value);

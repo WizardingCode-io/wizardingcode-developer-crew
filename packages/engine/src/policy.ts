@@ -92,6 +92,7 @@ export const DEFAULT_POLICY: Policy = {
   allowSkips: ["tdd", "e2e"],
   artifacts: "commit",
   unattendedDecisions: "wait",
+  unattendedPolicyChanges: "never",
   attendedDecisions: "relay",
   // A copy: a caller that changes the default policy's mail block leaves the mail defaults as they are.
   mail: { ...DEFAULT_MAIL_POLICY, accept: [...DEFAULT_MAIL_POLICY.accept] },
@@ -179,10 +180,70 @@ export const SETTABLE_POLICY_KEYS: Record<string, Settable> = {
   "verify.maxClaimsPerItem": { integer: RANGES.maxClaimsPerItem },
   "verify.threshold": { decimal: { min: 0.5, max: 0.99 } },
   "verify.asks": { subset: VERIFY_ASKS },
+  // Who may change the policy where nobody watches (finding 122, ADR 0012): a person's key alone.
+  unattendedPolicyChanges: { values: ["never", "validator"] },
   // The one loosening a policy may carry (ADR 0003), one glob per command, added or removed (finding 120).
   // Appended last: the messages that enumerate the table keep their first keys.
   riskPathExclusions: { list: { pattern: EXCLUSION_GLOB, hint: EXCLUSION_HINT } },
 };
+
+/** The validator's rule for a policy change where nobody watches (ADR 0012), named once. */
+export const POLICY_CHANGE_RULE = "policy-change";
+
+/**
+ * The caps the validator may lower where nobody watches, under `unattendedPolicyChanges: validator`
+ * (finding 122, ADR 0012): a lower cap only makes the crew stop sooner and wait for a person; it
+ * passes nothing. Every other key, a key added later included, is a person's.
+ */
+export const UNATTENDED_LOWERINGS = [
+  "team.maxJudgementRounds",
+  "team.maxValidationRounds",
+  "team.maxGateRounds",
+  "mail.maxConcurrent",
+  "mail.maxHops",
+  "mail.maxTurns",
+  "mail.maxMinutes",
+  "mail.maxParties",
+] as const;
+
+/** A cap's value in the policy as read: `team.maxGateRounds` is `policy.team.maxGateRounds`. */
+function capValue(policy: Policy, key: (typeof UNATTENDED_LOWERINGS)[number]): number {
+  const [block, name] = key.split(".") as ["team" | "mail", string];
+  return (policy[block] as unknown as Record<string, number>)[name] as number;
+}
+
+/**
+ * Whether the validator may make this policy change where nobody watches (finding 122, ADR 0012),
+ * one answer for the PreToolUse hook and the command: the policy says `validator`, the rule is
+ * `policy-change`, no `--remove`, the key is one of `UNATTENDED_LOWERINGS`, and the value passes
+ * the table and is lower than the current one. The change with its old value, or why not.
+ */
+export function unattendedPolicyChange(
+  policy: Policy,
+  key: string,
+  value: string,
+  flags: { rule: unknown; remove: boolean },
+): { key: string; from: number; to: number } | { refused: string } {
+  if (policy.unattendedPolicyChanges !== "validator")
+    return { refused: "the policy keeps its changes a person's (unattendedPolicyChanges: never)" };
+  if (flags.rule !== POLICY_CHANGE_RULE)
+    return {
+      refused: `a policy change by the validator names the rule ${POLICY_CHANGE_RULE} (--validator ${POLICY_CHANGE_RULE})`,
+    };
+  if (flags.remove) return { refused: "--remove is a person's: the validator only lowers a cap" };
+  const cap = UNATTENDED_LOWERINGS.find((k) => k === key);
+  if (!cap)
+    return {
+      refused: `${key} is a person's: the validator only lowers ${UNATTENDED_LOWERINGS.join(", ")}`,
+    };
+  const rule = SETTABLE_POLICY_KEYS[cap] as Settable;
+  const checked = checkSettable(cap, rule, value);
+  if (isRefusal(checked)) return checked;
+  const from = capValue(policy, cap);
+  if (typeof checked !== "number" || checked >= from)
+    return { refused: `${cap}: ${value} does not lower ${from}; raising a cap is a person's` };
+  return { key: cap, from, to: checked };
+}
 
 /** The keys of the table `crew policy set … --remove` applies to. */
 export const LIST_POLICY_KEYS = Object.entries(SETTABLE_POLICY_KEYS)
@@ -483,6 +544,7 @@ export function loadPolicy(paths: CrewPaths): { policy: Policy; tampered: boolea
         raw.unattendedDecisions === "count" || raw.unattendedDecisions === "validator"
           ? raw.unattendedDecisions
           : "wait",
+      unattendedPolicyChanges: raw.unattendedPolicyChanges === "validator" ? "validator" : "never",
       attendedDecisions: raw.attendedDecisions === "prompt" ? "prompt" : "relay",
       mail: loadMailPolicy(raw.mail),
       team: loadTeamPolicy(raw.team),

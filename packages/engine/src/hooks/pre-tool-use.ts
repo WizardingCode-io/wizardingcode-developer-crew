@@ -10,6 +10,7 @@ import {
   PROTECTED_WORK_FILES,
   REVIEW_OPEN_SEGMENT,
 } from "../paths.ts";
+import { loadPolicy, POLICY_CHANGE_RULE, unattendedPolicyChange } from "../policy.ts";
 import {
   type CommandWrapper,
   JS_RUNNERS,
@@ -1037,12 +1038,17 @@ function userOnlyDecision(
   permissionMode: string | undefined,
   headless: boolean,
   policy: Policy,
+  line: { text: string; policyTampered: boolean },
 ): Decision | null {
   const { parsed, policyCommand, presence } = command;
   const flagged = typeof parsed.flags.mode === "string" ? parsed.flags.mode : undefined;
   const mode = permissionMode ?? "default";
   const where = unwatched(headless, permissionMode);
   if (where) {
+    // The validator's lowering of a cap, when the policy lets it (finding 122, ADR 0012).
+    const [verb, second] = parsed.positional;
+    if (verb === "policy" && second === "set" && policy.unattendedPolicyChanges === "validator")
+      return unattendedLowering({ parsed, policy, where, mode, flagged, line });
     // A policy command has no unattended form (finding 122): the command refuses --mode by design
     // (ADR 0005), so the answer names the person's way instead of a flag the command refuses.
     if (policyCommand)
@@ -1077,6 +1083,56 @@ function userOnlyDecision(
   if (typeof parsed.flags.validator === "string" && !policyCommand) return null;
   if (policy.attendedDecisions === "relay" && !policyCommand) return null;
   return ["ask", "Crew: this command records a decision that only the user can take"];
+}
+
+// The one form the validator's policy change takes where nobody watches (ADR 0012): one plain
+// command, the key and the value first, then the mode and the rule, nothing around it.
+const PLAIN_LOWERING = new RegExp(
+  `^crew policy set [\\w.]+ \\d+ --mode (?:dontAsk|bypassPermissions) --validator ${POLICY_CHANGE_RULE}$`,
+);
+
+/**
+ * `crew policy set` where nobody watches under `unattendedPolicyChanges: validator` (finding 122,
+ * ADR 0012). This branch fails closed: letting through is the unsafe answer, so a policy file
+ * changed outside the engine, a change `unattendedPolicyChange` refuses, a line that is not the one
+ * plain form, or a mode that is not the session's is denied, naming why.
+ */
+function unattendedLowering(asked: {
+  parsed: Parsed;
+  policy: Policy;
+  /** Why nobody watches: `dontAsk mode`, `a headless session in default mode`. */
+  where: string;
+  /** The session's permission mode, and the `--mode` the command names. */
+  mode: string;
+  flagged: string | undefined;
+  /** The whole Bash line, and whether the policy file changed outside the engine. */
+  line: { text: string; policyTampered: boolean };
+}): Decision | null {
+  const { parsed, policy, where, mode, flagged, line } = asked;
+  const deny = (why: string): Decision => [
+    "deny",
+    `Crew: no person is watching this session (${where}): ${why}`,
+  ];
+  if (line.policyTampered)
+    return deny(
+      "the policy file changed outside the engine; a person accepts it first (crew policy accept)",
+    );
+  const [, , key, value] = parsed.positional;
+  const change = unattendedPolicyChange(policy, key ?? "", value ?? "", {
+    rule: parsed.flags.validator,
+    remove: parsed.flags.remove === true,
+  });
+  if ("refused" in change) return deny(change.refused);
+  if (!PLAIN_LOWERING.test(line.text.trim()))
+    return deny(
+      "the validator changes the policy only by one plain crew policy set <cap> <value> --mode <mode> --validator policy-change, nothing before or after it",
+    );
+  if (flagged !== mode)
+    return [
+      "deny",
+      `Crew: this session is ${where}, not ${flagged}; run the command with --mode ${mode}`,
+    ];
+  return null;
 }
 
 function answer(permissionDecision: "deny" | "ask", reason: string): HookResponse {
@@ -2105,7 +2161,10 @@ export function onPreToolUse(ctx: HookContext, payload: HookPayload): HookRespon
       const decided =
         auditApproval(userOnly.parsed, payload.permission_mode, ctx.headless, ctx.policy) ??
         knowledgeUnmark(userOnly.parsed, payload.permission_mode, ctx.headless, ctx.policy) ??
-        userOnlyDecision(userOnly, payload.permission_mode, ctx.headless, ctx.policy);
+        userOnlyDecision(userOnly, payload.permission_mode, ctx.headless, ctx.policy, {
+          text: command,
+          policyTampered: loadPolicy(ctx.paths).tampered,
+        });
       if (decided?.[0] === "deny") return answer(...decided);
       asked ??= decided;
     }

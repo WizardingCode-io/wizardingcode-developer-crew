@@ -30,6 +30,10 @@ export interface DecisionEntry {
   answer?: string;
   by: string;
   file?: string;
+  /** The validator's rule, when the validator took it (a policy change: `policy-change`, ADR 0012). */
+  rule?: string;
+  /** The permission mode the entry was taken in where nobody watched. */
+  mode?: string;
 }
 
 interface Register {

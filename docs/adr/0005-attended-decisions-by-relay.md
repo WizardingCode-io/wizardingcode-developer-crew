@@ -21,7 +21,7 @@ The prompt exists because of finding 3: a record that said "approved by the user
 Three things keep the relay honest:
 
 - The record states the chain. A reader of the report knows that "relayed by the agent" is the agent reporting the user's yes, and can check the conversation; it never reads as a prompt the user answered.
-- The policy that governs signatures is itself signed by a prompt. `crew policy set` and `crew policy accept` are asked even under `relay`, and have no `--mode`, so the policy changes only when a person clicks. Switching a repository to `relay` is one prompt, once.
+- The policy that governs signatures is itself signed by a prompt. `crew policy set` and `crew policy accept` are asked even under `relay`, so the policy changes only when a person clicks. Switching a repository to `relay` is one prompt, once. Amended by ADR 0012 on 2026-10-24: `crew policy accept` still takes no `--mode`; `crew policy set` takes `--mode` and `--validator policy-change` in one case alone, where nobody watches and a policy a person set to `unattendedPolicyChanges: validator` lets the validator lower one of eight caps, and nothing else.
 - Nothing changes where no person is present. `bypassPermissions`, `dontAsk` and headless runs keep the `--mode` path, `unattendedDecisions` and the validator. `--mode` stays refused with a person present.
 
 `crew policy set <key> <value>` is added so that the user never edits the file by hand: it writes `attendedDecisions` and `unattendedDecisions` through the engine, keeps the other fields, and leaves the file trusted.

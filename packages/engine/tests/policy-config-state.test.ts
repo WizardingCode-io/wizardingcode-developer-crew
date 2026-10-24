@@ -12,6 +12,8 @@ import {
   SETTABLE_POLICY_KEYS,
   setPolicyValue,
   skipAllowed,
+  UNATTENDED_LOWERINGS,
+  unattendedPolicyChange,
 } from "../src/policy.ts";
 import {
   ensureCrewDir,
@@ -311,7 +313,7 @@ test("SP2c: crew policy set writes the scalar mail keys, each value checked, and
   });
   expect(setPolicyValue(paths, "mail.accept", "question")).toEqual({
     refused:
-      "unknown policy key: mail.accept (crew policy set writes attendedDecisions, unattendedDecisions, mail.workspace, mail.name, mail.open, mail.maxConcurrent, mail.maxHops, mail.maxTurns, mail.maxMinutes, mail.maxParties, mail.worktrees, team.template, team.maxExperts, team.maxValidationRounds, team.maxJudgementRounds, team.maxGateRounds, team.continuations, verify.send, verify.maxClaimsPerItem, verify.threshold, verify.asks, riskPathExclusions)",
+      "unknown policy key: mail.accept (crew policy set writes attendedDecisions, unattendedDecisions, mail.workspace, mail.name, mail.open, mail.maxConcurrent, mail.maxHops, mail.maxTurns, mail.maxMinutes, mail.maxParties, mail.worktrees, team.template, team.maxExperts, team.maxValidationRounds, team.maxJudgementRounds, team.maxGateRounds, team.continuations, verify.send, verify.maxClaimsPerItem, verify.threshold, verify.asks, unattendedPolicyChanges, riskPathExclusions)",
   });
   // The one list the command changes (finding 120) goes through planListChange, never through the
   // scalar writer: written here, one glob would replace the whole list with a string.
@@ -599,4 +601,79 @@ test("DEBT-AC-10-policy-copies: neither the default policy nor a loaded one shar
   loaded.team.maxExperts = 1;
   loaded.team.always.push("qa");
   expect(JSON.stringify(DEFAULT_TEAM_POLICY)).toBe(before);
+});
+
+test("AC-2 (finding 122): unattendedPolicyChanges reads never by default and for an unknown value, validator when set, and a person's crew policy set writes it", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  expect(loadPolicy(paths).policy.unattendedPolicyChanges).toBe("never");
+  write(paths.root, ".crew/policy.json", JSON.stringify({ unattendedPolicyChanges: "always" }));
+  expect(loadPolicy(paths).policy.unattendedPolicyChanges).toBe("never");
+  const fresh = repoPaths(makeRepo(), testEnv());
+  expect(setPolicyValue(fresh, "unattendedPolicyChanges", "validator")).toEqual({
+    key: "unattendedPolicyChanges",
+    value: "validator",
+  });
+  expect(loadPolicy(fresh).policy.unattendedPolicyChanges).toBe("validator");
+  expect(setPolicyValue(fresh, "unattendedPolicyChanges", "always")).toHaveProperty("refused");
+});
+
+test("AC-7 (finding 122): the validator may only lower one of eight caps, and only under unattendedPolicyChanges validator; every other settable key is a person's", () => {
+  const policy = { ...DEFAULT_POLICY, unattendedPolicyChanges: "validator" as const };
+  expect([...UNATTENDED_LOWERINGS].sort()).toEqual([
+    "mail.maxConcurrent",
+    "mail.maxHops",
+    "mail.maxMinutes",
+    "mail.maxParties",
+    "mail.maxTurns",
+    "team.maxGateRounds",
+    "team.maxJudgementRounds",
+    "team.maxValidationRounds",
+  ]);
+  const rule = { rule: "policy-change", remove: false };
+  // Every settable key that is not one of the eight is refused as a person's, whatever its value
+  for (const key of Object.keys(SETTABLE_POLICY_KEYS)) {
+    if ((UNATTENDED_LOWERINGS as readonly string[]).includes(key)) continue;
+    const out = unattendedPolicyChange(policy, key, "1", rule);
+    expect(out, key).toEqual({
+      refused: `${key} is a person's: the validator only lowers ${UNATTENDED_LOWERINGS.join(", ")}`,
+    });
+  }
+  // A key no table has is a person's too
+  expect(unattendedPolicyChange(policy, "team.newKey", "1", rule)).toHaveProperty("refused");
+  // A lowering is allowed, with the old value; a raise, an equal value, a value the table refuses are not
+  expect(unattendedPolicyChange(policy, "team.maxJudgementRounds", "1", rule)).toEqual({
+    key: "team.maxJudgementRounds",
+    from: 2,
+    to: 1,
+  });
+  expect(unattendedPolicyChange(policy, "mail.maxHops", "3", rule)).toEqual({
+    refused: "mail.maxHops: 3 does not lower 2; raising a cap is a person's",
+  });
+  expect(unattendedPolicyChange(policy, "team.maxJudgementRounds", "2", rule)).toEqual({
+    refused: "team.maxJudgementRounds: 2 does not lower 2; raising a cap is a person's",
+  });
+  expect(unattendedPolicyChange(policy, "team.maxJudgementRounds", "0", rule)).toHaveProperty(
+    "refused",
+  );
+  // A cap already at its range minimum has no lower value
+  const atMinimum = { ...policy, team: { ...policy.team, maxGateRounds: 1 } };
+  expect(unattendedPolicyChange(atMinimum, "team.maxGateRounds", "0", rule)).toHaveProperty(
+    "refused",
+  );
+  // --remove, another rule, no rule, the policy at never
+  expect(
+    unattendedPolicyChange(policy, "mail.maxHops", "1", { rule: "policy-change", remove: true }),
+  ).toEqual({ refused: "--remove is a person's: the validator only lowers a cap" });
+  expect(
+    unattendedPolicyChange(policy, "mail.maxHops", "1", { rule: "stated-default", remove: false }),
+  ).toEqual({
+    refused:
+      "a policy change by the validator names the rule policy-change (--validator policy-change)",
+  });
+  expect(
+    unattendedPolicyChange(policy, "mail.maxHops", "1", { rule: undefined, remove: false }),
+  ).toHaveProperty("refused");
+  expect(unattendedPolicyChange(DEFAULT_POLICY, "mail.maxHops", "1", rule)).toEqual({
+    refused: "the policy keeps its changes a person's (unattendedPolicyChanges: never)",
+  });
 });

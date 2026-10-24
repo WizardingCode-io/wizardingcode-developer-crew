@@ -935,6 +935,12 @@ export interface Policy {
    */
   unattendedDecisions: "wait" | "count" | "validator";
   /**
+   * Whether the validator may change the policy where nobody watches (finding 122, ADR 0012):
+   * `never` (the default) keeps every change a person's; `validator` lets it lower one of the caps
+   * of `UNATTENDED_LOWERINGS` under the rule `policy-change`, and nothing else.
+   */
+  unattendedPolicyChanges: "never" | "validator";
+  /**
    * How the user signs a decision with a person present: `prompt`, the permission prompt the
    * agent's command raises; `relay`, the agent relaying the user's yes from the conversation with no
    * prompt, recorded as "by the user, relayed by the agent" (ADR 0005). The policy's own commands

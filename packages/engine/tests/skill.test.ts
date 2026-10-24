@@ -1050,3 +1050,33 @@ test("AC-10 (finding 62): proposals.md holds each Proposal section with its reje
     conclave.split("\n").find((line) => line.startsWith("5. **One screen to the user**")) ?? "";
   expect(step5).toContain("each proposal's rejected alternative and why");
 });
+
+test("AC-11 (finding 122): ADR 0012 records the policy's own rule for unattended changes, ADR 0005 points to it, and modes.md names the key, the eight caps and the form", () => {
+  const adr = repoFile("docs/adr/0012-unattended-policy-changes.md");
+  for (const heading of [
+    "## Context",
+    "## Decision",
+    "## Alternatives rejected",
+    "## Consequences",
+  ])
+    expect(adr).toContain(heading);
+  expect(adr).toContain("unattendedPolicyChanges");
+  expect(adr).toMatch(/ADR 0005[^\n]*only when a person clicks/);
+  expect(adr).toContain("crew policy set unattendedPolicyChanges never");
+  const caps = [
+    "team.maxJudgementRounds",
+    "team.maxValidationRounds",
+    "team.maxGateRounds",
+    "mail.maxConcurrent",
+    "mail.maxHops",
+    "mail.maxTurns",
+    "mail.maxMinutes",
+    "mail.maxParties",
+  ];
+  for (const cap of caps) expect(adr).toContain(cap);
+  expect(repoFile("docs/adr/0005-attended-decisions-by-relay.md")).toContain("ADR 0012");
+  const modes = readReference("modes.md");
+  expect(modes).toContain("unattendedPolicyChanges");
+  for (const cap of caps) expect(modes).toContain(cap);
+  expect(modes).toContain("crew policy set <cap> <value> --mode <mode> --validator policy-change");
+});

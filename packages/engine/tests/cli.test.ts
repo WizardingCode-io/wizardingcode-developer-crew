@@ -947,10 +947,13 @@ test("ADR 0005: crew policy set writes the two decision keys through the engine 
     minimumRoute: "fast",
     attendedDecisions: "prompt",
   });
-  // No --mode: the policy changes only when a person clicks.
+  // No --mode under the default policy: the policy changes only when a person clicks (ADR 0005;
+  // ADR 0012 names why, the policy at never).
   const flagged = await c.run("policy", "set", "attendedDecisions", "relay", "--mode", "dontAsk");
   expect(flagged.code).toBe(1);
-  expect(flagged.err).toContain("unknown flag --mode");
+  expect(flagged.err).toContain(
+    "the policy keeps its changes a person's (unattendedPolicyChanges: never)",
+  );
   // With no policy file at all, set creates one.
   const bare = io(makeRepo({ "package.json": JSON.stringify({ scripts: { test: "exit 0" } }) }));
   expect((await bare.run("policy", "set", "attendedDecisions", "relay")).code).toBe(0);
@@ -10649,4 +10652,206 @@ test("AC-8 (finding 61): a part's todo is never handed out or dropped: crew task
   expect(drop.code).toBe(1);
   expect(drop.err).toContain("T-1 is an inline todo");
   expect(loadWork(repoPaths(root, c.env), id).work?.tasks?.map((t) => t.part)).toEqual(["P-1"]);
+});
+
+// A repository whose policy lets the validator lower a cap where nobody watches (finding 122)
+function validatorPolicyRepo(
+  policy: Record<string, unknown> = { unattendedPolicyChanges: "validator" },
+) {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const c = io(root);
+  const env = c.env;
+  const paths = repoPaths(root, env);
+  writeProtectedJson(paths, join(root, ".crew", "policy.json"), policy);
+  return { root, c, paths };
+}
+
+test("AC-7 (finding 122): crew policy set --mode --validator policy-change lowers a cap under the policy, and refuses everything else with nothing written or recorded", async () => {
+  const { c, paths } = validatorPolicyRepo();
+  const lowered = await c.run(
+    "policy",
+    "set",
+    "team.maxJudgementRounds",
+    "1",
+    "--mode",
+    "dontAsk",
+    "--validator",
+    "policy-change",
+  );
+  expect(lowered.code).toBe(0);
+  expect(loadPolicy(paths).policy.team.maxJudgementRounds).toBe(1);
+  const entries = () =>
+    (c.json("decisions") as Promise<{ data: Record<string, unknown> }>).then((r) =>
+      JSON.stringify(r.data),
+    );
+  const before = await entries();
+  const refused: [string[], string][] = [
+    [["mail.maxHops", "3", "--mode", "dontAsk", "--validator", "policy-change"], "does not lower"],
+    [
+      ["team.maxGateRounds", "2", "--mode", "dontAsk", "--validator", "policy-change"],
+      "does not lower",
+    ],
+    [
+      ["team.maxGateRounds", "0", "--mode", "dontAsk", "--validator", "policy-change"],
+      "whole number",
+    ],
+    [
+      ["verify.send", "claims-and-snippets", "--mode", "dontAsk", "--validator", "policy-change"],
+      "verify.send is a person's",
+    ],
+    [
+      ["riskPathExclusions", "src/x.ts", "--mode", "dontAsk", "--validator", "policy-change"],
+      "riskPathExclusions is a person's",
+    ],
+    [
+      [
+        "riskPathExclusions",
+        "src/x.ts",
+        "--remove",
+        "--mode",
+        "dontAsk",
+        "--validator",
+        "policy-change",
+      ],
+      "--remove is a person's",
+    ],
+    [
+      ["team.maxGateRounds", "1", "--mode", "default", "--validator", "policy-change"],
+      "dontAsk or bypassPermissions",
+    ],
+    [["team.maxGateRounds", "1", "--mode", "dontAsk"], "names the rule policy-change"],
+    [
+      ["team.maxGateRounds", "1", "--mode", "dontAsk", "--validator", "stated-default"],
+      "names the rule policy-change",
+    ],
+  ];
+  for (const [args, message] of refused) {
+    const r = await c.run("policy", "set", ...args);
+    expect(r.code, args.join(" ")).toBe(1);
+    expect(r.err, args.join(" ")).toContain(message);
+  }
+  expect(loadPolicy(paths).policy.team.maxGateRounds).toBe(2);
+  expect(await entries()).toBe(before);
+  // Under never, --mode is refused as today
+  const never = validatorPolicyRepo({});
+  const r = await never.c.run(
+    "policy",
+    "set",
+    "team.maxGateRounds",
+    "1",
+    "--mode",
+    "dontAsk",
+    "--validator",
+    "policy-change",
+  );
+  expect(r.code).toBe(1);
+  expect(r.err).toContain("unattendedPolicyChanges: never");
+  expect(loadPolicy(never.paths).policy.team.maxGateRounds).toBe(2);
+});
+
+test("AC-8 (finding 122): a validator's policy change is on the register with the key, the old and the new value, the rule and the mode, and counts as no approval", async () => {
+  const { c, paths } = validatorPolicyRepo();
+  // An item waiting for its spec's approval beside the change: the change is none of its signatures
+  const id = (await c.json("start", "Waiting item", "--answers", answers, "--criterion", "a")).data
+    .id as string;
+  const itemEntries = () => listDecisions(paths).filter((e) => e.item === id);
+  const before = itemEntries();
+  await c.run(
+    "policy",
+    "set",
+    "mail.maxHops",
+    "1",
+    "--mode",
+    "bypassPermissions",
+    "--validator",
+    "policy-change",
+  );
+  const listed = (await c.run("decisions")).out;
+  expect(listed).toContain("mail.maxHops: 2 → 1, lowered by the validator");
+  const entry = listDecisions(paths).find(
+    (e) => e.text === "mail.maxHops: 2 → 1, lowered by the validator",
+  );
+  expect(entry).toMatchObject({
+    item: "policy",
+    kind: "decision",
+    by: "the validator (rule: policy-change), in bypassPermissions mode",
+    rule: "policy-change",
+    mode: "bypassPermissions",
+  });
+  expect(itemEntries()).toEqual(before);
+  expect(
+    listDecisions(paths).some((e) => e.kind === "approval" && e.text.includes("mail.maxHops")),
+  ).toBe(false);
+  // The newest register entry is the change, and the policy holds it; the order against the
+  // write is the next test's (newest first)
+  expect(listDecisions(paths)[0]?.text).toBe("mail.maxHops: 2 → 1, lowered by the validator");
+  expect(loadPolicy(paths).policy.mail.maxHops).toBe(1);
+});
+
+test("AC-9 (finding 122): crew policy accept and crew accept policy take no --mode, under every policy", async () => {
+  const { c } = validatorPolicyRepo();
+  const refused: [string[], string][] = [
+    [
+      ["policy", "accept", "--mode", "dontAsk"],
+      "crew policy accept takes no --mode or --validator",
+    ],
+    [
+      ["policy", "accept", "--validator", "policy-change", "--mode", "dontAsk"],
+      "crew policy accept takes no --mode or --validator",
+    ],
+    [["accept", "policy", "--mode", "dontAsk"], "unknown flag --mode"],
+  ];
+  for (const [args, message] of refused) {
+    const r = await c.run(...args);
+    expect(r.code, args.join(" ")).toBe(1);
+    expect(r.err, args.join(" ")).toContain(message);
+  }
+  // The policy's rule is no item decision's: crew approve refuses it as an unknown rule
+  const id = (await c.json("start", "x", "--answers", answers, "--criterion", "a")).data
+    .id as string;
+  const approved = await c.run(
+    "approve",
+    id,
+    "spec",
+    "--mode",
+    "dontAsk",
+    "--validator",
+    "policy-change",
+  );
+  expect(approved.code).toBe(1);
+  expect(approved.err).toContain("unknown validator rule: policy-change");
+});
+
+test("AC-8 (finding 122): the register entry is written before the policy file: a write that fails leaves the entry, a second entry saying it was not written, and the policy unchanged", async () => {
+  const { c, paths } = validatorPolicyRepo();
+  // The write of the policy file fails; the other protected writes go on
+  const realWrite = store.writeProtectedJson;
+  const spy = spyOn(store, "writeProtectedJson").mockImplementation((p, file, data) => {
+    if (String(file).endsWith("policy.json")) throw new Error("disk full");
+    return realWrite(p, file, data);
+  });
+  try {
+    await c.run(
+      "policy",
+      "set",
+      "mail.maxHops",
+      "1",
+      "--mode",
+      "dontAsk",
+      "--validator",
+      "policy-change",
+    );
+  } finally {
+    spy.mockRestore();
+  }
+  const texts = listDecisions(paths).map((e) => e.text);
+  expect(texts).toContain("mail.maxHops: 2 → 1, lowered by the validator");
+  expect(texts).toContain("mail.maxHops: not written, disk full");
+  expect(texts.indexOf("mail.maxHops: not written, disk full")).toBeLessThan(
+    texts.indexOf("mail.maxHops: 2 → 1, lowered by the validator"),
+  );
+  expect(loadPolicy(paths).policy.mail.maxHops).toBe(2);
 });
