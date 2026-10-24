@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { proposedByPack } from "./detect/index.ts";
 import { changedWatchedPaths } from "./fingerprint.ts";
@@ -5,6 +6,7 @@ import { nowIso } from "./fs.ts";
 import { matchesAny } from "./glob.ts";
 import { type CrewPaths, workDir } from "./paths.ts";
 import { joinWords, runCommand, shellRefusal } from "./run.ts";
+import { testRunRefusal } from "./test-run.ts";
 import type { CriterionKind, Evidence, Profile, RunRecord, WorkItem } from "./types.ts";
 
 /**
@@ -49,6 +51,14 @@ const STEPS_BY_KIND: Record<CriterionKind, { steps: TddStep[]; how: string }> = 
   preserve: { steps: ["before", "after"], how: "record before, then after" },
   observed: { steps: ["observed"], how: "record observed, with --reason" },
 };
+
+/** The shell's own line for a command it cannot parse, read with `sh -n` (nothing runs, so no log is kept, unlike `runCommand`'s), or null; never on Windows, whose shell has no such reading. */
+function parseRefusal(command: string, cwd: string): string | null {
+  if (process.platform === "win32") return null;
+  const read = spawnSync("/bin/sh", ["-n", "-c", command], { cwd, encoding: "utf8" });
+  if (read.status === 0 || read.error) return null;
+  return firstLine(read.stderr, [PARSE_ERROR_LINE]) ?? read.stderr.trim().split("\n")[0] ?? "";
+}
 
 function article(kind: string): string {
   return /^[aeiou]/.test(kind) ? "an" : "a";
@@ -126,6 +136,22 @@ export async function recordTdd(
       message: 'no test command: set one with crew profile set test "<cmd>" or pass -- <cmd>',
     };
   }
+  // A command after `--` is read before it runs (finding 153): one the shell cannot parse keeps
+  // finding 144's refusal, read with `sh -n`, which runs nothing; one that is no test run is refused.
+  if (override !== undefined && step !== "observed") {
+    const unparsed = parseRefusal(command, paths.root);
+    if (unparsed !== null)
+      return {
+        ok: false,
+        message: `the shell could not parse the command (${unparsed}): fix the command (quote a pattern with parentheses) before recording`,
+      };
+    const why = testRunRefusal(command, paths.root, fallback?.command ?? null);
+    if (why !== null)
+      return {
+        ok: false,
+        message: `the command is no test run: ${why}; run the test (a runner in its test form, or an interpreter on a test file) before recording`,
+      };
+  }
   const entry = evidence.tdd.find((t) => t.criterion === criterionId);
   if (step === "green" && !entry?.red)
     return { ok: false, message: `no red run recorded for ${criterionId}: run crew tdd red first` };
@@ -179,7 +205,9 @@ export async function recordTdd(
     timedOut: result.timedOut,
   };
   const passed = result.exit === 0 && !result.timedOut;
-  // A run the shell could not parse never started a test (finding 144): refused for every step.
+  // A run the shell could not parse never started a test (finding 144): refused for every step. A
+  // command after `--` was read with `sh -n` before it ran; this reads the profile's own command
+  // and an observed run, which are not.
   const unparsed = firstLine(result.tail, [PARSE_ERROR_LINE]);
   if (unparsed !== null) {
     return {

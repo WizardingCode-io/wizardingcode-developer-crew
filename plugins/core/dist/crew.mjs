@@ -1,6 +1,6 @@
 // packages/engine/src/cli.ts
-import { existsSync as existsSync24, readFileSync as readFileSync10, realpathSync as realpathSync8, rmSync as rmSync6, statSync as statSync12 } from "node:fs";
-import { basename as basename7, isAbsolute as isAbsolute11, join as join50, relative as relative12, resolve as resolve7, sep as sep5 } from "node:path";
+import { existsSync as existsSync24, readFileSync as readFileSync10, realpathSync as realpathSync9, rmSync as rmSync6, statSync as statSync13 } from "node:fs";
+import { basename as basename8, isAbsolute as isAbsolute12, join as join50, relative as relative13, resolve as resolve8, sep as sep6 } from "node:path";
 
 // packages/engine/src/analysis.ts
 import { existsSync as existsSync10, lstatSync as lstatSync2, mkdirSync as mkdirSync4 } from "node:fs";
@@ -15933,7 +15933,199 @@ async function printPdf(html, out2, env, root, options = {}) {
 }
 
 // packages/engine/src/tdd.ts
+import { spawnSync as spawnSync2 } from "node:child_process";
 import { join as join48 } from "node:path";
+
+// packages/engine/src/test-run.ts
+import { realpathSync as realpathSync8, statSync as statSync12 } from "node:fs";
+import { basename as basename7, isAbsolute as isAbsolute11, relative as relative12, resolve as resolve7, sep as sep5 } from "node:path";
+var RUNNERS = new Set(["vitest", "jest", "mocha", "ava", "pytest", "phpunit", "pest", "rspec"]);
+var SUBCOMMAND_TEST = new Set(["deno", "go", "cargo", "dotnet", "swift", "composer"]);
+var PACKAGE_MANAGERS = new Set(["npm", "pnpm", "yarn", "bun"]);
+var MANAGER_VALUED = new Set([
+  "--filter",
+  "-F",
+  "-C",
+  "--prefix",
+  "--dir",
+  "--cwd",
+  "--workspace"
+]);
+var INTERPRETERS = new Set(["sh", "bash", "node", "bun", "php", "ruby"]);
+var PYTHON = /^python(?:\d+(?:\.\d+)?)?$/;
+var SETUP = new Set(["cd", "export", "set"]);
+var AFTER = new Set(["tee", "cat"]);
+var ASSIGNMENT3 = /^[A-Za-z_][A-Za-z0-9_]*=/;
+var REDIRECT = /^(?:\d+|&)?(?:[<>]+&?)(\S*)$/;
+var TEST_FOLDERS = new Set(["test", "tests", "spec", "specs", "__tests__"]);
+var TEST_NAME = /\.test\.|\.spec\.|_test\.|-test\.|Test\.php$|Tests\.cs$|^test_.*\.py$/;
+var operandsOf = (args) => args.filter((a) => !a.startsWith("-"));
+function programWords(piece) {
+  const words2 = [];
+  const expands = [];
+  for (let i = 0;i < piece.tokens.length; i++) {
+    const token = piece.tokens[i];
+    if (!token)
+      continue;
+    const redirect = REDIRECT.exec(token.raw);
+    if (redirect) {
+      if (!redirect[1])
+        i++;
+      continue;
+    }
+    words2.push(token.word);
+    expands.push(token.expands);
+  }
+  return { words: words2, expands };
+}
+function fileRefusal(operand, cwd, root) {
+  let real;
+  try {
+    real = realpathSync8(resolve7(cwd, operand));
+  } catch {
+    return `${operand} is no file`;
+  }
+  if (!statSync12(real).isFile())
+    return `${operand} is no regular file`;
+  const rel2 = relative12(realpathSync8(root), real);
+  if (rel2 === ".." || rel2.startsWith(`..${sep5}`) || isAbsolute11(rel2))
+    return `${operand} is outside the repository`;
+  const segments = rel2.split(sep5);
+  const name = segments.pop() ?? "";
+  if (segments.some((s) => TEST_FOLDERS.has(s)) || TEST_NAME.test(name) || RUNNERS.has(name))
+    return null;
+  return `${operand} does not look like a test file`;
+}
+function testRefusal(words2, cwd, root, nested) {
+  const name = basename7(words2[0] ?? "");
+  const args = words2.slice(1);
+  const operands = operandsOf(args);
+  if (RUNNERS.has(name))
+    return null;
+  if (SUBCOMMAND_TEST.has(name) && operands[0] === "test")
+    return null;
+  if (name === "make" && operands.includes("test"))
+    return null;
+  if (name === "mvn" && operands.some((a) => a === "test" || a === "verify"))
+    return null;
+  if ((name === "gradle" || name === "gradlew") && operands.some((a) => /(?:^|:)(?:test|check)$/.test(a)))
+    return null;
+  if (name === "bundle" && operands[0] === "exec") {
+    const [tool, task] = operands.slice(1);
+    if (tool === "rspec" || tool === "rake" && task === "test")
+      return null;
+  }
+  if (name === "npx" || name === "bunx") {
+    const tool = basename7(operands[0] ?? "");
+    return RUNNERS.has(tool) ? null : `${name} ${operands[0] ?? ""} runs no test runner`.trim();
+  }
+  if (PACKAGE_MANAGERS.has(name)) {
+    let i = 0;
+    while (i < args.length && (args[i] ?? "").startsWith("-"))
+      i += MANAGER_VALUED.has(args[i] ?? "") ? 2 : 1;
+    const [verb, script] = [args[i], args[i + 1]];
+    if (verb === "test")
+      return null;
+    if ((verb === "run" || verb === "run-script") && script?.includes("test"))
+      return null;
+    if (name !== "bun")
+      return `${name} ${verb ?? ""} is not the test script`.trim();
+  }
+  if (name === "node" && args.includes("--test"))
+    return null;
+  if (PYTHON.test(name) && args[0] === "-m" && (args[1] === "pytest" || args[1] === "unittest"))
+    return null;
+  if (name === "php" && operands[0] === "artisan" && operands[1] === "test")
+    return null;
+  if (name === "claude" && operands[0] === "plugin" && operands[1] === "test")
+    return null;
+  if (!INTERPRETERS.has(name) && !PYTHON.test(name))
+    return `${name || "the command"} is no test runner`;
+  let j = 0;
+  let commandString = false;
+  while (j < args.length && /^[-+]/.test(args[j] ?? "")) {
+    const option = args[j] ?? "";
+    if ((name === "sh" || name === "bash") && /^-[A-Za-z]*c[A-Za-z]*$/.test(option))
+      commandString = true;
+    j += (name === "sh" || name === "bash") && shellTakesNext(option) ? 2 : 1;
+  }
+  if (commandString) {
+    if (nested)
+      return "a shell's string runs another shell's string";
+    if (args.length > j + 1)
+      return `words follow ${name}'s string`;
+    const reading = readCommand(args[j] ?? "");
+    if (reading.unclosed)
+      return `${name}'s string leaves ${reading.unclosed} open`;
+    return linesRefusal(reading.pieces, cwd, root, true);
+  }
+  const operand = args[j];
+  if (operand === undefined)
+    return `${name} is given no file`;
+  return fileRefusal(operand, cwd, root);
+}
+function linesRefusal(pieces, start, root, nested) {
+  if (pieces.some((p) => p.inner.length || p.heredocs.length))
+    return "a substitution or a here-document runs or feeds a command of its own";
+  let cwd = start;
+  let i = 0;
+  for (;i < pieces.length; i++) {
+    const piece = pieces[i];
+    const { words: words3, expands: expands2 } = programWords(piece);
+    const first = words3.findIndex((w) => !ASSIGNMENT3.test(w));
+    if (first !== -1 && !SETUP.has(words3[first] ?? ""))
+      break;
+    if (piece.piped)
+      return "a setup command reads another command's output";
+    if (words3[first] === "cd") {
+      const target = words3[first + 1];
+      if (target === undefined || target === "-" || expands2[first + 1] || words3.length > first + 2)
+        return "cd is given no plain folder";
+      cwd = resolve7(cwd, target);
+    }
+  }
+  const test = pieces[i];
+  if (!test)
+    return "no command runs a test";
+  if (test.piped)
+    return "the test reads another command's output";
+  const { words: words2, expands } = programWords(test);
+  let at = 0;
+  while (at < words2.length && ASSIGNMENT3.test(words2[at] ?? ""))
+    at++;
+  if (basename7(words2[at] ?? "") === "env") {
+    at++;
+    while (at < words2.length && ASSIGNMENT3.test(words2[at] ?? ""))
+      at++;
+    if ((words2[at] ?? "").startsWith("-"))
+      return "env is given options";
+  }
+  if (expands[at])
+    return "the command's name is an expansion";
+  const why = testRefusal(words2.slice(at), cwd, root, nested);
+  if (why)
+    return why;
+  for (const after of pieces.slice(i + 1)) {
+    const name = basename7(programWords(after).words[0] ?? "");
+    if (!after.piped || !AFTER.has(name))
+      return `${name || "a command"} runs after the test`;
+  }
+  return null;
+}
+function testRunRefusal(command2, root, profileCommand) {
+  const reading = readCommand(command2);
+  if (reading.unclosed)
+    return null;
+  const own = profileCommand?.trim();
+  if (own && (command2 === own || command2.startsWith(`${own} `))) {
+    const mine = readCommand(own).pieces.length;
+    if (reading.pieces.length === mine && !reading.pieces.some((p) => p.inner.length))
+      return null;
+  }
+  return linesRefusal(reading.pieces, root, root, false);
+}
+
+// packages/engine/src/tdd.ts
 var NO_TEST_LINES = [
   /^error: .*matched 0 tests\. Searched /,
   /^Ran 0 tests across /,
@@ -15959,6 +16151,15 @@ var STEPS_BY_KIND = {
   preserve: { steps: ["before", "after"], how: "record before, then after" },
   observed: { steps: ["observed"], how: "record observed, with --reason" }
 };
+function parseRefusal(command2, cwd) {
+  if (process.platform === "win32")
+    return null;
+  const read2 = spawnSync2("/bin/sh", ["-n", "-c", command2], { cwd, encoding: "utf8" });
+  if (read2.status === 0 || read2.error)
+    return null;
+  return firstLine(read2.stderr, [PARSE_ERROR_LINE]) ?? read2.stderr.trim().split(`
+`)[0] ?? "";
+}
 function article(kind) {
   return /^[aeiou]/.test(kind) ? "an" : "a";
 }
@@ -16010,6 +16211,20 @@ async function recordTdd(paths, work, evidence, profile, criterionId, step, over
       ok: false,
       message: 'no test command: set one with crew profile set test "<cmd>" or pass -- <cmd>'
     };
+  }
+  if (override !== undefined && step !== "observed") {
+    const unparsed2 = parseRefusal(command2, paths.root);
+    if (unparsed2 !== null)
+      return {
+        ok: false,
+        message: `the shell could not parse the command (${unparsed2}): fix the command (quote a pattern with parentheses) before recording`
+      };
+    const why = testRunRefusal(command2, paths.root, fallback?.command ?? null);
+    if (why !== null)
+      return {
+        ok: false,
+        message: `the command is no test run: ${why}; run the test (a runner in its test form, or an interpreter on a test file) before recording`
+      };
   }
   const entry = evidence.tdd.find((t) => t.criterion === criterionId);
   if (step === "green" && !entry?.red)
@@ -16614,7 +16829,7 @@ function rulingRecords(env, parsed, gateWord, planned, fingerprint, changed, wor
   }
   if (typeof parsed.flags.ruling !== "string")
     return refuse(usage);
-  const rulingPath = resolve7(env.paths.root, parsed.flags.ruling);
+  const rulingPath = resolve8(env.paths.root, parsed.flags.ruling);
   const text = readText(rulingPath);
   if (text === null)
     return refuse(`no ruling file at ${rulingPath}`);
@@ -16641,7 +16856,7 @@ function rulingGates(env, parsed, gateWord) {
     return gateWord ? [gateWord] : [];
   if (typeof parsed.flags.ruling !== "string")
     return [];
-  const text = readText(resolve7(env.paths.root, parsed.flags.ruling));
+  const text = readText(resolve8(env.paths.root, parsed.flags.ruling));
   if (text === null)
     return [];
   try {
@@ -16680,7 +16895,7 @@ async function recordStrategyJudgement(env, opened, parsed, gateWord, usage) {
       const cto = join50(dir, "conclave", "cto.md");
       if (!existsSync24(cto))
         return refuse("the CTO's review of the strategy comes before the ruling on the full route (conclave/cto.md, launched after crew strategy check)");
-      if (statSync12(cto).mtimeMs < Date.parse(inputs.at))
+      if (statSync13(cto).mtimeMs < Date.parse(inputs.at))
         return refuse("conclave/cto.md predates the check: the CTO reviews the strategy as it is now, then the judge rules");
       if (record2.reviewer !== "cto")
         return refuse("on the full route the CTO reviews the strategy: the ruling names reviewer cto");
@@ -17303,14 +17518,14 @@ function observeRuntime(payload, env, runtime) {
 }
 function realOrSelf(path) {
   try {
-    return realpathSync8(path);
+    return realpathSync9(path);
   } catch {
     return path;
   }
 }
 function insideFolder(path, folder) {
-  const rel2 = relative12(folder, path);
-  return rel2 !== "" && rel2 !== ".." && !rel2.startsWith(`..${sep5}`) && !isAbsolute11(rel2);
+  const rel2 = relative13(folder, path);
+  return rel2 !== "" && rel2 !== ".." && !rel2.startsWith(`..${sep6}`) && !isAbsolute12(rel2);
 }
 async function mailCommand(env, parsed, args) {
   const sendUsage = 'usage: crew mail send --to <project|.> --type question|change-request|notice|blocker [--priority blocker|high|normal|low] [--thread <root>] [--agent <session|T-n|role>] [--item <id>] [--reply-to <mid>] [--subject <text>] "<text>" [--file <path>]';
@@ -17671,9 +17886,9 @@ async function researchCommand(env, parsed, args, io) {
   if (args[1] !== "verify")
     return refuse(usage);
   const dir = workDir(env.paths, opened.work.id);
-  const file = typeof parsed.flags.file === "string" ? resolve7(env.paths.root, parsed.flags.file) : join50(dir, "conclave", "researcher.md");
+  const file = typeof parsed.flags.file === "string" ? resolve8(env.paths.root, parsed.flags.file) : join50(dir, "conclave", "researcher.md");
   const named2 = rel(env.paths, file);
-  if (named2.startsWith("..") || isAbsolute11(named2))
+  if (named2.startsWith("..") || isAbsolute12(named2))
     return refuse(`${parsed.flags.file} is not under the root`);
   const text = readText(file);
   if (text === null)
@@ -17799,7 +18014,7 @@ async function dispatch(parsed, io) {
     return settings(command2, args, { userDir: userDirOf(io.env) });
   let paths = resolvePaths(io.cwd, io.env);
   if (!paths && command2 === "detect") {
-    ensureDir(join50(resolve7(io.cwd), ".crew"));
+    ensureDir(join50(resolve8(io.cwd), ".crew"));
     paths = resolvePaths(io.cwd, io.env);
   }
   if (!paths)
@@ -18818,7 +19033,7 @@ ${filedBySession}` : ""}` : "";
       const reviewLine = outcome.reviewNote ? `
 diff.patch: ${outcome.reviewNote}` : "";
       const captures = outcome.review ? readReviewInputs(env.paths, opened.work.id)?.captures ?? [] : [];
-      const silent = captures.filter((c) => c.console === null).map((c) => basename7(c.file));
+      const silent = captures.filter((c) => c.console === null).map((c) => basename8(c.file));
       const capturesLine = captures.length ? `
 captures: ${captures.length}${silent.length ? ` (${silent.length} without a console file: ${silent.join(", ")})` : ""}` : "";
       return {
@@ -18901,8 +19116,8 @@ ${outcome.saveRefused}` : ""),
         };
       saveWork(env.paths, opened.work);
       if (typeof parsed.flags.ruling === "string")
-        keepRound(env.paths, opened.work.id, opened.work.rounds?.judgement ?? rounds.judgement, records.map((r) => r.gate), resolve7(env.paths.root, parsed.flags.ruling));
-      const rulingFile = typeof parsed.flags.ruling === "string" ? rel(env.paths, resolve7(env.paths.root, parsed.flags.ruling)) : undefined;
+        keepRound(env.paths, opened.work.id, opened.work.rounds?.judgement ?? rounds.judgement, records.map((r) => r.gate), resolve8(env.paths.root, parsed.flags.ruling));
+      const rulingFile = typeof parsed.flags.ruling === "string" ? rel(env.paths, resolve8(env.paths.root, parsed.flags.ruling)) : undefined;
       for (const fields of rulingDecisions(records, rulingFile))
         decide(env, opened.work.id, fields);
       deliver2(env, opened, result.evidence);
@@ -19209,14 +19424,14 @@ test-first not credited: ${out2.uncredited}` : "";
       const work = opened.work;
       if (!(work.seats ?? []).some((s) => s.kind === "lead" && s.role === by))
         return refuse(`${by} is not a seat of ${work.id} (crew team ${work.id} prints the seats)`);
-      const path = resolve7(env.paths.root, file);
+      const path = resolve8(env.paths.root, file);
       const dir = workDir(env.paths, work.id);
       const text = readText(path);
       if (text === null)
         return refuse(`no validation file at ${path}`);
       if (!insideFolder(realOrSelf(path), realOrSelf(dir)))
         return refuse(`the validation file must be inside .crew/work/${work.id}/: ${file}`);
-      const name = relative12(dir, path).replace(/\\/g, "/");
+      const name = relative13(dir, path).replace(/\\/g, "/");
       const asked = `asked: the ${what} by ${by} for ${work.id}`;
       const heading = leadHeading(text);
       if (!heading)
@@ -19521,7 +19736,7 @@ ${filedLine}` : ""}`, {
         const path = args[1];
         if (path === undefined)
           return refuse(usage);
-        const added = registerPack(userDir, resolve7(env.paths.root, path), "command");
+        const added = registerPack(userDir, resolve8(env.paths.root, path), "command");
         if ("refused" in added)
           return refuse(added.refused);
         const m = added.manifest;
@@ -19572,7 +19787,7 @@ ${filedLine}` : ""}`, {
           `registered: ${r.registeredAt} by ${r.by}`,
           `core: ${m.core} · verified against: ${Object.entries(m.verifiedAgainst).map(([k, v]) => `${k} ${v}`).join(", ")}`,
           `detectors: ${m.detectors.length ? m.detectors.map((d) => `${d.stack}${d.extends ? ` extends ${d.extends}` : ""} (${Object.entries(d.gates).map(([g, c]) => `${g} "${c}"`).join(", ")})`).join("; ") : "none"}`,
-          `checklists: ${m.checklists.map((p) => basename7(p, ".md")).join(", ") || "none"}`,
+          `checklists: ${m.checklists.map((p) => basename8(p, ".md")).join(", ") || "none"}`,
           `knowledge: ${Object.keys(m.knowledge).join(", ") || "none"}`,
           `template: ${m.team ? `${m.team.template} (${Object.entries(m.team.teams).map(([t, d]) => `${t}: ${d.mandatory.globs.join(", ")}`).join("; ")})` : "none"}`,
           `evals: ${m.evals.join(", ") || "none"}`,
@@ -19654,7 +19869,7 @@ ${filedLine}` : ""}`, {
       const file = parsed.flags.file;
       if (typeof file !== "string")
         return refuse(usage);
-      const path = resolve7(env.paths.root, file);
+      const path = resolve8(env.paths.root, file);
       const text = readText(path);
       if (text === null)
         return refuse(`no plan file at ${path}`);
@@ -19726,7 +19941,7 @@ entry ${added.id}: general, marked for ${ws}`, { path: target, entry: added });
         if (args[1] === "accept") {
           if (!workspace)
             return refuse(noWorkspace);
-          const file = typeof parsed.flags.file === "string" ? resolve7(env.paths.root, parsed.flags.file) : undefined;
+          const file = typeof parsed.flags.file === "string" ? resolve8(env.paths.root, parsed.flags.file) : undefined;
           const by = env.policy.attendedDecisions === "relay" ? "the user, relayed by the agent" : "the user";
           const signed = acceptPriorities(env.paths.userDir, workspace, { file, by });
           if ("refused" in signed)
@@ -19928,7 +20143,7 @@ var HELP = `crew ${VERSION}
   continue <id> judgement|validation|gate T-n   one more round past the policy's cap (the user's decision)
   decisions [--grep <text>]   the project's decision register, newest first; --grep matches the id, the text and the answer, in any case
   metrics [--workspace <ws>]  the figures of this project, or of the workspace's registered projects, from the records and the base
-  cto review --workspace <ws>          write the CTO's inputs (the workspace's metrics, the last plan, the base's figures and rows) under the user's crew directory and print the launch line
+  cto review --workspace <ws>          write the CTO's inputs (the workspace's metrics, the last plan, the base's figures and rows) under the user's crew directory and print the launch line; open the review item first, with --observed "<the plan filed>" (references/learn.md)
   cto record --workspace <ws> --file <plan.md>   file the CTO's plan under the user's crew directory and enter it in the knowledge base, marked for the workspace
   knowledge list [--kind <k>] | show K-n   the knowledge base as this project reads it (rule 13: unmarked entries, and marked ones of this workspace)
   knowledge add --kind general|documentation --title "<t>" --file <path> [--source <url>]   a person's material, from the project's own tree, marked

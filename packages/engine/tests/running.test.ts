@@ -94,7 +94,8 @@ test("AC-14 (finding 146): crew gate run and crew tdd write the marker while the
     session: "sess-9",
   });
   expect(existsSync(join(root, marker))).toBe(false);
-  await run("tdd", "red", id, "AC-1", "--", `cp ${marker} seen-tdd.json; exit 1`);
+  write(root, "tests/marker.test.sh", `cp ${marker} seen-tdd.json; exit 1\n`);
+  await run("tdd", "red", id, "AC-1", "--", "sh tests/marker.test.sh");
   expect(JSON.parse(readFileSync(join(root, "seen-tdd.json"), "utf8"))).toMatchObject({
     command: `crew tdd red ${id} AC-1`,
     session: "sess-9",

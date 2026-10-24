@@ -2,7 +2,7 @@
 
 A stack pack for the WizardingCode Developer Crew: data the crew engine serves, never code. It holds one detector rule, three checklists the gap round reads and one knowledge file the expert reads. It has no skill, no agent and no hook; the crew skill reads what the engine prints for it (`crew pack files`), and the engine refuses it whole when a check fails (ADR 0010 of the core repository).
 
-Verified against: Laravel 13.x, Pest 4.x, Pint 1.32.1, Larastan 3.13.0 (the documentation read on 2026-10-20; the day's latest tag was v13.38.0).
+Verified against: Laravel 13.x, Pest 4.x, Pint 1.32.1, Larastan 3.13.2 (the documentation read on 2026-10-24; the latest 13.x tag was v13.38.0).
 
 ## What it changes in a project
 
@@ -30,7 +30,7 @@ crew pack add packs/laravel
 
 The pack ships with the cases that show its difference (`plugins/core/evals` of the core repository, SP6 Task 6): `pack-laravel-refines-the-gates` (a Laravel-shaped tree with the pack registered: the profile's test gate `php artisan test (pack wizardingcode-pack-laravel)`, the knowledge path printed by `crew team`) beside `pack-laravel-absent` (the same tree without the pack: the core's PHP gates and no knowledge path). Their figures are in the SP6 evals record, `docs/evals/2026-10-21-sp6-results.md` of the core repository: on 2026-10-21, one run each with the plugin, the with case passed every grader at its last run (the pack's test gate in the profile with the pack's name, the person's confirmation relayed, the engine's gate red then green through `php artisan test`, the knowledge path in the report, the scope added, an honest ending) and the absent case passed its own at its first (the scope added, no pack gate, no pack in the profile, no knowledge path, an honest ending), so the pair's difference is the pack's three commands and its knowledge file alone, as the pack claims.
 
-## Sources read on 2026-10-20
+## Sources read on 2026-10-24
 
 Every URL the pack's files name, with the claim it supports.
 
@@ -60,7 +60,7 @@ Every URL the pack's files name, with the claim it supports.
 - https://phpstan.org/user-guide/command-line-usage · `--no-progress`.
 - https://phpstan.org/user-guide/rule-levels · levels 0 to 10, `--level max`.
 - https://packagist.org/packages/laravel/pint · Pint 1.32.1 (2026-09-10).
-- https://packagist.org/packages/larastan/larastan · Larastan 3.13.0 (2026-10-07), PHPStan ^2.3.
+- https://packagist.org/packages/larastan/larastan · Larastan 3.13.2 (2026-10-23), PHPStan ^2.3.
 - https://packagist.org/packages/pestphp/pest · Pest 5.3.3 (2026-10-18) requires PHP ^8.4; the latest 4.x is 4.7.8.
 - https://github.com/WizardingCode-io/wizardingcode-developer-crew · the core repository (the plugin manifest's homepage and repository).
 - https://wizardingcode.io · the author.

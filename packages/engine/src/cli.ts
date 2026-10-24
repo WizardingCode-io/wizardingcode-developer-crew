@@ -5286,7 +5286,7 @@ const HELP = `crew ${VERSION}
   continue <id> judgement|validation|gate T-n   one more round past the policy's cap (the user's decision)
   decisions [--grep <text>]   the project's decision register, newest first; --grep matches the id, the text and the answer, in any case
   metrics [--workspace <ws>]  the figures of this project, or of the workspace's registered projects, from the records and the base
-  cto review --workspace <ws>          write the CTO's inputs (the workspace's metrics, the last plan, the base's figures and rows) under the user's crew directory and print the launch line
+  cto review --workspace <ws>          write the CTO's inputs (the workspace's metrics, the last plan, the base's figures and rows) under the user's crew directory and print the launch line; open the review item first, with --observed "<the plan filed>" (references/learn.md)
   cto record --workspace <ws> --file <plan.md>   file the CTO's plan under the user's crew directory and enter it in the knowledge base, marked for the workspace
   knowledge list [--kind <k>] | show K-n   the knowledge base as this project reads it (rule 13: unmarked entries, and marked ones of this workspace)
   knowledge add --kind general|documentation --title "<t>" --file <path> [--source <url>]   a person's material, from the project's own tree, marked

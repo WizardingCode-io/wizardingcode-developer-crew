@@ -5,7 +5,7 @@
   "core": ">=0.13.0",
   "verifiedAgainst": {
     "owasp-llm-top-10": "2025",
-    "claude-code": "2026-10-20"
+    "claude-code": "2026-10-24"
   },
   "detectors": [],
   "checklists": ["checklists/agent.md", "checklists/tool.md", "checklists/prompt.md"],

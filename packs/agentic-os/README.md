@@ -2,7 +2,7 @@
 
 A team pack for the WizardingCode Developer Crew: data the crew engine serves, never code. It holds one team template, three checklists the gap round reads and one knowledge file the expert reads. It has no skill, no agent and no hook; the crew skill reads what the engine prints for it (`crew pack files`), and the engine refuses it whole when a check fails (ADR 0010 of the core repository).
 
-Verified against: OWASP Top 10 for LLM Applications 2025; Claude Code and Anthropic documentation read on 2026-10-20.
+Verified against: OWASP Top 10 for LLM Applications 2025; Claude Code and Anthropic documentation read on 2026-10-24.
 
 ## What it changes in a project
 
@@ -34,7 +34,7 @@ crew pack add packs/agentic-os
 
 The pack ships with the cases that show its difference (`plugins/core/evals` of the core repository, SP6 Task 6): `pack-agentic-os-seats-the-team` (a Node tree with `agents/triage.md` and `prompts/`, the pack registered and the policy set: `crew team <id>` lists the seat with the reason `pack wizardingcode-pack-agentic-os (agents/**)` and the expert's launch carries `knowledge/agentic.md`) beside `pack-agentic-os-absent` (the same tree without the pack: no seat, no path). Their figures are in the SP6 evals record, `docs/evals/2026-10-21-sp6-results.md` of the core repository: on 2026-10-21, one run each with the plugin, the with case passed every grader (the seat row in the report's Team table, the knowledge path, the rule added, an honest ending) and the absent case passed its own (the rule added, no seat, no knowledge path, an honest ending), so the pair's difference is the seat and the knowledge file alone, as the pack claims.
 
-## Sources read on 2026-10-20
+## Sources read on 2026-10-24
 
 Every URL the pack's files name, with the claim it supports.
 
@@ -52,7 +52,7 @@ Every URL the pack's files name, with the claim it supports.
 - https://www.anthropic.com/engineering/writing-tools-for-agents · more tools do not always lead to better outcomes; tools that merely wrap an endpoint; pagination, range selection, filtering or truncation; Claude Code limits tool responses to 25,000 tokens by default.
 - https://platform.claude.com/docs/en/agents-and-tools/tool-use/overview · client and server tools; tool names, descriptions, schemas and `tool_result` blocks billed as input tokens; `strict: true`.
 - https://platform.claude.com/docs/en/build-with-claude/context-windows · everything in the request counts toward the context window; accuracy and recall degrade as it grows; cached prefixes still occupy it.
-- https://platform.claude.com/docs/en/build-with-claude/prompt-caching · the 5-minute cache by default and the 1-hour option; cache writes 1.25 times and reads 0.1 times the base input price; the order tools, system, messages.
+- https://platform.claude.com/docs/en/build-with-claude/prompt-caching · the 5-minute cache by default and the 1-hour option; cache writes 1.25 times the base input price, and reads 0.1 times it by default, 0.05 times on Claude Opus 5.5 and Sonnet 5.5 and 0.025 times on Claude Fable 5.1 and Mythos 5.1; the order tools, system, messages.
 - https://github.com/WizardingCode-io/wizardingcode-developer-crew · the core repository (the plugin manifest's homepage and repository).
 - https://wizardingcode.io · the author.
 

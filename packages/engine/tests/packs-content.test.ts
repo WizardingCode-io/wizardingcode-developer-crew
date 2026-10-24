@@ -73,7 +73,7 @@ const CHECKLIST_HEADINGS = [
   "Proposals",
   "Warnings",
 ];
-const SOURCES_HEADING = "## Sources read on 2026-10-20";
+const SOURCES_HEADING = "## Sources read on 2026-10-24";
 
 const read = (path: string) => readFileSync(path, "utf8");
 const h2 = (text: string) =>

@@ -969,7 +969,8 @@ const ended = (agentId: string, reason = "error") => ({ turnId: `t-${agentId}`, 
 test("AC-8 (finding 152): a crew role at its limit moves down the ladder, never above its start, and other agents are left alone", async ($, on) => {
   const clock = mock.clock(on, { now: 1_000 * MIN });
   const db = memory(on, { [LIMITS]: { fable: { since: clock.now(), probeAt: clock.now() + 15 * MIN } } });
-  const { given } = ladder(on, () => LIMITED);
+  // A rung with no mark is probed first (finding 154) and answers here
+  const { given } = ladder(on, (model) => (model === "fable" ? LIMITED : ANSWERED));
   await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
   await $.agent.spawn({ prompt: "rule", subagentType: JUDGE });
   expect(given.at(-1)).toBe("opus");
@@ -994,7 +995,7 @@ test("AC-8 (finding 152): with fable and opus at their limits the judge runs on 
   const clock = mock.clock(on, { now: 1_000 * MIN });
   const mark = { since: clock.now(), probeAt: clock.now() + 15 * MIN };
   const db = memory(on, { [LIMITS]: { fable: mark, opus: mark } });
-  const { given } = ladder(on, () => LIMITED);
+  const { given } = ladder(on, (model) => (model === "sonnet" ? ANSWERED : LIMITED));
   await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
   await $.agent.spawn({ prompt: "rule", subagentType: JUDGE });
   expect(given.at(-1)).toBe("sonnet");
@@ -1005,7 +1006,8 @@ test("AC-8 (finding 152): with fable and opus at their limits the judge runs on 
 
 test("AC-10 (finding 152): a crew role's turn that ends on the limit marks its model; overload, other errors, other turns and other agents mark nothing", async ($, on) => {
   const clock = mock.clock(on, { now: 1_000 * MIN });
-  const db = memory(on);
+  // Fable answered a probe just now, so the spawns themselves probe nothing (finding 154)
+  const db = memory(on, { "model-answered": { fable: clock.now() } });
   let answer: Record<string, unknown> = LIMITED;
   const { probed } = ladder(on, () => answer);
   on("turn.complete", () => ({ text: "" }));
@@ -1041,15 +1043,17 @@ test("AC-4 (finding 152): a mark is probed again only when due; an answered prob
   const clock = mock.clock(on, { now: 1_000 * MIN });
   const db = memory(on, { [LIMITS]: { fable: { since: clock.now(), probeAt: clock.now() + 15 * MIN } } });
   let answer: Record<string, unknown> = LIMITED;
-  const { given, probed } = ladder(on, () => answer);
+  const { given, probed: all } = ladder(on, (model) => (model === "fable" ? answer : ANSWERED));
+  // Fable's own probes; opus, with no mark, is probed before it runs (finding 154)
+  const fable = () => all.filter((m) => m === "fable");
   await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
   await clock.advance(14 * MIN);
   await $.agent.spawn({ prompt: "rule", subagentType: JUDGE });
-  expect(probed).toEqual([]);
+  expect(fable()).toEqual([]);
   expect(given.at(-1)).toBe("opus");
   await clock.advance(1 * MIN);
   await $.agent.spawn({ prompt: "rule", subagentType: JUDGE });
-  expect(probed).toEqual(["fable"]);
+  expect(fable()).toEqual(["fable"]);
   expect(given.at(-1)).toBe("opus");
   expect(db[LIMITS]).toEqual({ fable: { since: 1_000 * MIN, probeAt: clock.now() + 15 * MIN } });
   await clock.advance(15 * MIN);
@@ -1079,9 +1083,9 @@ test("AC-9 (finding 152): the ladder fails open: a store, clock or probe that th
   await expect($.turn.complete(ended(spawned.agentId as string))).resolves.toBeDefined();
 });
 
-test("AC-9 (finding 152): a probe that refuses with no error, and a store write that throws, mark nothing and block nothing", async ($, on) => {
+test("AC-9 (finding 152): a probe that fails with neither an answer nor the limit (a server error since finding 158 counts a timeout as the limit), and a store write that throws, mark nothing and block nothing", async ($, on) => {
   mock.clock(on, { now: 1_000 * MIN });
-  const { given } = ladder(on, () => ({ isAnswered: false, reason: "aborted", usage: { input_tokens: 0, output_tokens: 0 } }));
+  const { given } = ladder(on, () => ({ isAnswered: false, reason: "api-error", status: 500, error: "server_error", usage: { input_tokens: 0, output_tokens: 0 } }));
   let writes = 0;
   on("store.get", () => ({ value: { fable: { since: 0, probeAt: 0 } } }));
   on("store.set", () => {
@@ -1136,8 +1140,9 @@ test("AC-10 (finding 152): another plugin's agent that dies on an error is never
 });
 
 test("AC-10 (finding 152): past 200 crew spawns the oldest entry is dropped, so its error is not probed while the newest is", async ($, on) => {
-  mock.clock(on, { now: 1_000 * MIN });
-  memory(on);
+  const clock = mock.clock(on, { now: 1_000 * MIN });
+  // Fable answered a probe just now, so the spawns themselves probe nothing (finding 154)
+  memory(on, { "model-answered": { fable: clock.now() } });
   const { probed } = ladder(on, () => LIMITED);
   on("turn.complete", () => ({ text: "" }));
   await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
@@ -1147,4 +1152,67 @@ test("AC-10 (finding 152): past 200 crew spawns the oldest entry is dropped, so 
   expect(probed).toEqual([]);
   await $.turn.complete(ended(ids[1] as string));
   expect(probed).toEqual(["fable"]);
+});
+
+test("AC-15 (finding 154): a start with no mark is probed before the spawn: at its limit it is marked and the spawn moves down; answered, it runs and is not probed again for five minutes", async ($, on) => {
+  const clock = mock.clock(on, { now: 1_000 * MIN });
+  const db = memory(on);
+  const limited = new Set(["fable"]);
+  const { given, probed } = ladder(on, (model) => (limited.has(model) ? LIMITED : ANSWERED));
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  // Fable at its limit, nobody had marked it: probed, marked, and the judge runs on opus, probed too
+  await $.agent.spawn({ prompt: "rule", subagentType: JUDGE });
+  expect(probed).toEqual(["fable", "opus"]);
+  expect(given.at(-1)).toBe("opus");
+  expect(db[LIMITS]).toEqual({ fable: { since: clock.now(), probeAt: clock.now() + 15 * MIN } });
+  // Opus answered under five minutes ago: not probed again; at five minutes it is
+  await clock.advance(5 * MIN - 1);
+  await $.agent.spawn({ prompt: "propose", subagentType: EXPERT });
+  expect(probed).toEqual(["fable", "opus"]);
+  expect(given.at(-1)).toBe("-");
+  await clock.advance(1);
+  await $.agent.spawn({ prompt: "propose", subagentType: EXPERT });
+  expect(probed).toEqual(["fable", "opus", "opus"]);
+  expect(given.at(-1)).toBe("-");
+});
+
+test("AC-15 (finding 154): a start with no mark whose probe neither answers nor names the limit is left as declared, nothing marked", async ($, on) => {
+  mock.clock(on, { now: 1_000 * MIN });
+  const db = memory(on);
+  const { given, probed } = ladder(on, () => ({ isAnswered: false, reason: "api-error", status: 500, error: "server_error", usage: { input_tokens: 0, output_tokens: 0 } }));
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  await $.agent.spawn({ prompt: "review", subagentType: REVIEWER });
+  expect(probed).toEqual(["sonnet"]);
+  expect(given.at(-1)).toBe("-");
+  expect(db[LIMITS]).toBeUndefined();
+});
+
+test("AC-21 (finding 158): every probe is bounded by timeoutMs, and one that runs out of time counts as the limit: marked, and the spawn moves down", async ($, on) => {
+  const clock = mock.clock(on, { now: 1_000 * MIN });
+  const db = memory(on);
+  const timeouts: unknown[] = [];
+  stubs(on, () => ({ exitCode: 0, stdout: JSON.stringify(NONE), stderr: "" }));
+  const given: string[] = [];
+  on("agent.spawn", (_$, e) => {
+    given.push(e.model ?? "-");
+    return { model: e.model ?? "claude-fable-5-1", agentId: `a-${given.length}` };
+  });
+  on("model.complete", (_$, e) => {
+    timeouts.push(e.timeoutMs);
+    return {
+      value:
+        e.model === "fable"
+          ? { isAnswered: false, reason: "aborted", usage: { input_tokens: 0, output_tokens: 0 } }
+          : ANSWERED,
+    };
+  });
+  on("turn.complete", () => ({ text: "" }));
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  const spawned = await $.agent.spawn({ prompt: "rule", subagentType: JUDGE });
+  expect(given.at(-1)).toBe("opus");
+  expect(timeouts).toEqual([20_000, 20_000]);
+  expect(db[LIMITS]).toEqual({ fable: { since: clock.now(), probeAt: clock.now() + 15 * MIN } });
+  // The turn's end probes the model the role ran on, bounded the same way (the test-quality review's F-1).
+  await $.turn.complete(ended(spawned.agentId as string));
+  expect(timeouts).toEqual([20_000, 20_000, 20_000]);
 });

@@ -1,10 +1,11 @@
 import { expect, test } from "bun:test";
-import { existsSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { chmodSync, existsSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { basename, join } from "node:path";
 import { tddDone } from "../src/criteria.ts";
 import { detectProfile } from "../src/detect/index.ts";
 import { emptyEvidence } from "../src/evidence.ts";
 import { recordTdd as record } from "../src/tdd.ts";
+import { testRunRefusal } from "../src/test-run.ts";
 import type { RunRecord, Target } from "../src/types.ts";
 import { addCriterion, createWork } from "../src/work.ts";
 import { makeRepo, repoPaths, testEnv, write } from "./helpers.ts";
@@ -47,6 +48,9 @@ test("red must fail, green must pass after red, and test files are recorded", as
 
 test("I7: a red run that could not run (missing command, timeout) is not a red", async () => {
   const s = setup();
+  write(s.root, "tests/missing.test.sh", "exit 127\n");
+  write(s.root, "tests/denied.test.sh", "exit 126\n");
+  write(s.root, "tests/slow.test.sh", "sleep 5\n");
   const missing = await recordTdd(
     s.paths,
     s.work,
@@ -54,7 +58,7 @@ test("I7: a red run that could not run (missing command, timeout) is not a red",
     s.profile,
     s.behaviour.id,
     "red",
-    "exit 127",
+    "sh tests/missing.test.sh",
   );
   expect(missing.ok).toBe(false);
   expect(missing.message).toBe(
@@ -67,7 +71,7 @@ test("I7: a red run that could not run (missing command, timeout) is not a red",
     s.profile,
     s.behaviour.id,
     "red",
-    "exit 126",
+    "sh tests/denied.test.sh",
   );
   expect(denied.ok).toBe(false);
   const target = s.profile.targets[0];
@@ -80,7 +84,7 @@ test("I7: a red run that could not run (missing command, timeout) is not a red",
     s.profile,
     s.behaviour.id,
     "red",
-    "sleep 5",
+    "sh tests/slow.test.sh",
   );
   expect(slow.ok).toBe(false);
   expect(slow.message).toStartWith("the red run did not fail for the right reason (exit ");
@@ -169,6 +173,7 @@ test("SP2a: observed records a passing run with a reason, and refuses the other 
 
 test("an explicit command overrides the profile, and no command is an error", async () => {
   const s = setup();
+  write(s.root, "tests/seven.test.sh", "exit 7\n");
   const red = await recordTdd(
     s.paths,
     s.work,
@@ -176,10 +181,10 @@ test("an explicit command overrides the profile, and no command is an error", as
     s.profile,
     s.behaviour.id,
     "red",
-    "exit 7",
+    "sh tests/seven.test.sh",
   );
   expect(red.ok).toBe(true);
-  expect(s.evidence.tdd[0]?.red?.command).toBe("exit 7");
+  expect(s.evidence.tdd[0]?.red?.command).toBe("sh tests/seven.test.sh");
   const bare = { ...s.profile, targets: [] };
   const none = await recordTdd(s.paths, s.work, emptyEvidence(), bare, s.behaviour.id, "red");
   expect(none.message).toMatch(/no test command/);
@@ -236,11 +241,13 @@ test("SP8-T1 AC-1 (finding 91): a record given shell words with more than one af
   expect(refused.message).toContain("quote the command string as one argument");
   expect(refused.record).toBeUndefined();
   expect(s.evidence.tdd).toEqual([]);
-  // `sh -c "exit 1"` as words: joined without its quotes the shell would run `exit` with $0=1 and pass.
+  // `sh -c "sh tests/red.test.sh"` as words: joined without its quotes the shell would run `sh`
+  // with $0=tests/red.test.sh, read nothing and pass.
+  write(s.root, "tests/red.test.sh", "exit 1\n");
   const red = await recordTdd(s.paths, s.work, s.evidence, s.profile, s.behaviour.id, "red", [
     "sh",
     "-c",
-    "exit 1",
+    "sh tests/red.test.sh",
   ]);
   expect(red.ok, red.message).toBe(true);
   expect(s.evidence.tdd.find((t) => t.criterion === s.behaviour.id)?.red?.exit).toBe(1);
@@ -262,9 +269,10 @@ test("SP6-T2 AC-3 (round 3): crew tdd without -- never runs a pack's proposed te
   expect(existsSync(join(s.root, "ran.txt"))).toBe(false);
   expect(s.evidence.tdd).toEqual([]);
   // The words after -- run, the pack's command untouched.
+  write(s.root, "tests/own.test.sh", "exit 1\n");
   const own = await recordTdd(s.paths, s.work, s.evidence, s.profile, s.behaviour.id, "red", [
     "sh",
-    "run-tests.sh",
+    "tests/own.test.sh",
   ]);
   expect(own.ok).toBe(true);
   expect(existsSync(join(s.root, "ran.txt"))).toBe(false);
@@ -538,4 +546,205 @@ test("AC-2 (finding 148): the refusal of a test that passes before the change na
     `the test passed before the change; a test that passes before the code exists proves nothing: write a test that fails first, or, for what an end-to-end run or a person checks, prove it with crew tdd observed ${s.work.id} ${s.behaviour.id} -- <command> (a criterion of kind observed)`,
   );
   expect(s.evidence.tdd).toEqual([]);
+});
+
+test("AC-12 (finding 153): a red, green, before or after whose command is no test run is refused before it runs, and records nothing", async () => {
+  const s = setup();
+  const failing = 'import { expect, test } from "bun:test";\ntest("x", () => expect(1).toBe(2));\n';
+  write(s.root, "x.test.ts", failing);
+  write(s.root, "pkg/a.test.ts", failing);
+  write(s.root, "node_modules/.bin/jest", "#!/bin/sh\nexit 1\n");
+  chmodSync(join(s.root, "node_modules/.bin/jest"), 0o755);
+  write(s.root, "tests/run.sh", "exit 1\n");
+  write(s.root, "tests/x.sh", "exit 1\n");
+  write(s.root, "README.md", "exit 1\n");
+  write(s.root, "build.ts", "process.exit(1);\n");
+  const outside = `${basename(s.root)}-outside.sh`;
+  writeFileSync(join(s.root, "..", outside), "exit 1\n");
+  symlinkSync(join(s.root, "..", outside), join(s.root, "tests/link.test.sh"));
+  const refusal =
+    /^the command is no test run: .+; run the test \(a runner in its test form, or an interpreter on a test file\) before recording$/;
+  const refused = [
+    "sh -c 'exit 1'",
+    "false",
+    "true",
+    "exit 1",
+    "echo x",
+    "cat package.json",
+    "ls src",
+    "git status",
+    "npm run build",
+    "npx true",
+    "mvn clean",
+    "false package.json",
+    "sh -c 'exit 1' tests/x.sh",
+    "exit 1; bun test",
+    "false && bun test",
+    "false || bun --version",
+    "sh -c 'echo x; bun test'",
+    "sh README.md",
+    "node package.json",
+    "bun run build.ts",
+    "sh tests",
+    `sh ../${outside}`,
+    "sh tests/link.test.sh",
+    "bun test $(touch m)",
+    "sh -c 'touch m; exit 1'",
+    // After the test only `| tee` or `| cat` (the test-quality review's F-1).
+    "bun test x.test.ts | sh",
+    "bun test x.test.ts; echo x",
+    "bun test x.test.ts && touch m",
+    "bun test x.test.ts || true",
+  ];
+  for (const command of refused) {
+    const out = await recordTdd(
+      s.paths,
+      s.work,
+      s.evidence,
+      s.profile,
+      s.behaviour.id,
+      "red",
+      command,
+    );
+    expect(out.ok, command).toBe(false);
+    expect(out.message, command).toMatch(refusal);
+    expect(out.record, command).toBeUndefined();
+  }
+  expect(existsSync(join(s.root, "m"))).toBe(false);
+  expect(s.evidence.tdd).toEqual([]);
+  // The same refusal on green, before and after, as words too.
+  for (const step of ["green", "before", "after"] as const) {
+    const id = step === "green" ? s.behaviour.id : s.preserve.id;
+    const out = await recordTdd(s.paths, s.work, s.evidence, s.profile, id, step, [
+      "sh",
+      "-c",
+      "exit 0",
+    ]);
+    expect(out.message, step).toMatch(refusal);
+  }
+  const accepted = [
+    "bun test x.test.ts",
+    "sh -c 'bun test x.test.ts'",
+    "cd pkg && bun test",
+    "CI=1 bun test",
+    "env CI=1 bun test x.test.ts",
+    "./node_modules/.bin/jest",
+    "bun test x.test.ts | tee log",
+    "bun test x.test.ts | cat",
+    "sh tests/run.sh",
+    "export CI=1; bun test x.test.ts",
+    "set -e; bun test x.test.ts",
+  ];
+  for (const command of accepted) {
+    const fresh = setup();
+    for (const [rel, text] of Object.entries({
+      "x.test.ts": failing,
+      "pkg/a.test.ts": failing,
+      "tests/run.sh": "exit 1\n",
+      "node_modules/.bin/jest": "#!/bin/sh\nexit 1\n",
+    }))
+      write(fresh.root, rel, text);
+    chmodSync(join(fresh.root, "node_modules/.bin/jest"), 0o755);
+    const out = await recordTdd(
+      fresh.paths,
+      fresh.work,
+      fresh.evidence,
+      fresh.profile,
+      fresh.behaviour.id,
+      "red",
+      command,
+    );
+    expect(out.message, command).not.toMatch(refusal);
+    // A pipe ends in tee or cat, which pass: the run is a test, refused only because it passed.
+    if (!/\| (?:tee|cat)\b/.test(command)) expect(out.ok, `${command}: ${out.message}`).toBe(true);
+  }
+  // Every runner form and test-file name the rule names, read without running anything.
+  for (const name of [
+    "a.spec.js",
+    "a_test.go",
+    "a-test.sh",
+    "UserTest.php",
+    "UserTests.cs",
+    "test_a.py",
+  ])
+    write(s.root, `src/${name}`, "x\n");
+  write(s.root, "src/plain.js", "x\n");
+  for (const command of [
+    "deno test",
+    "go test ./...",
+    "cargo test",
+    "dotnet test",
+    "swift test",
+    "composer test",
+    "make test",
+    "mvn -q verify",
+    "./gradlew check",
+    "gradle :app:test",
+    "bundle exec rspec",
+    "bundle exec rake test",
+    "rspec spec/a_spec.rb",
+    "php artisan test",
+    "vendor/bin/phpunit",
+    "pest",
+    "pytest -q",
+    "python3 -m pytest",
+    "python -m unittest",
+    "npx jest",
+    "bunx vitest run",
+    "npm run test:unit",
+    "pnpm --filter api test",
+    "yarn test",
+    "bun run test",
+    "node --test",
+    "mocha",
+    "ava",
+    "node src/a.spec.js",
+    "sh src/a-test.sh",
+    "php src/UserTest.php",
+    "python3 src/test_a.py",
+    "ruby src/a_test.go",
+    "bash src/UserTests.cs",
+  ])
+    expect(testRunRefusal(command, s.root, null), command).toBeNull();
+  for (const command of [
+    "node src/plain.js",
+    "go build",
+    "cargo build",
+    "mvn clean",
+    "npx tsc",
+    "yarn build",
+    "make",
+    "python -m http.server",
+  ])
+    expect(testRunRefusal(command, s.root, null), command).not.toBeNull();
+  // The profile's command with arguments of its own counts; with another command after it, the
+  // rest is read like any command (the security review's F-1).
+  expect(testRunRefusal("make check --keep-going", s.root, "make check")).toBeNull();
+  for (const command of [
+    "make check; exit 1",
+    "make check && true",
+    "make check | sh",
+    "make check $(touch m)",
+  ])
+    expect(testRunRefusal(command, s.root, "make check"), command).not.toBeNull();
+  // A plugin's own tests, read without running claude (finding 89: no test starts the real binary).
+  expect(testRunRefusal("claude plugin test plugins/core", s.root, null)).toBeNull();
+  expect(testRunRefusal("claude plugin validate plugins/core", s.root, null)).not.toBeNull();
+  // The profile's own test command after -- is the project's test run.
+  const own = (s.profile.targets[0] as Target).gates.test?.command ?? "";
+  const mine = await recordTdd(s.paths, s.work, s.evidence, s.profile, s.behaviour.id, "red", own);
+  expect(mine.ok, mine.message).toBe(true);
+  // No -- runs the profile's command; observed keeps its own rule.
+  const observed = addCriterion(s.work, "seen", "observed");
+  const seen = await recordTdd(
+    s.paths,
+    s.work,
+    s.evidence,
+    s.profile,
+    observed.id,
+    "observed",
+    "exit 0",
+    "no red run can exist",
+  );
+  expect(seen.ok, seen.message).toBe(true);
 });

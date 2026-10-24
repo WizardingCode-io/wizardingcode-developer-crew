@@ -1,6 +1,6 @@
 # Laravel 13.x
 
-What a model trained on earlier Laravel gets wrong in 13.x, how work in it is verified and where the documentation is. Each line is a fact read on 2026-10-20 from the pages listed at the end; nothing here is a tutorial.
+What a model trained on earlier Laravel gets wrong in 13.x, how work in it is verified and where the documentation is. Each line is a fact read on 2026-10-24 from the pages listed at the end; nothing here is a tutorial.
 
 ## What the model gets wrong
 
@@ -14,7 +14,7 @@ What a model trained on earlier Laravel gets wrong in 13.x, how work in it is ve
 - Listeners are found by scanning `app/Listeners` by default; `php artisan event:list` lists them; `make:listener Name --event=Event` creates one; a queued listener that implements `ShouldQueueAfterCommit` is dispatched after the commit.
 - Laravel 13 requires PHP 8.3. The cache configuration has a `serializable_classes` option set to `false`; the session skeleton sets `serialization` to `json`; a model created during `boot` throws a `LogicException`; `Str` factories reset between tests.
 - A new application's `.env` points at an SQLite database.
-- Support, as of 2026-10-20: Laravel 13 (released 2026-03-17) receives bug fixes until Q3 2027 and security fixes until 2028-03-17; Laravel 12 receives security fixes alone (bug fixes ended 2026-08-13); Laravel 11 is out of support since 2026-03-12. Major releases come yearly, minor and patch releases as often as weekly; the constraint is `^13.0`. The latest tag on 2026-10-20 was v13.38.0.
+- Support, as of 2026-10-24: Laravel 13 (released 2026-03-17) receives bug fixes until Q3 2027 and security fixes until 2028-03-17; Laravel 12 receives security fixes alone (bug fixes ended 2026-08-13); Laravel 11 is out of support since 2026-03-12. Major releases come yearly, minor and patch releases as often as weekly; the constraint is `^13.0`. The latest 13.x tag on 2026-10-24 was v13.38.0 (released 2026-10-20).
 
 ## How work is verified
 
@@ -25,7 +25,7 @@ What a model trained on earlier Laravel gets wrong in 13.x, how work in it is ve
 - Database: the skeleton's `phpunit.xml` runs the tests on SQLite `:memory:`; `RefreshDatabase` runs each test in a transaction once the schema is current, `DatabaseMigrations` and `DatabaseTruncation` are significantly slower; `migrate:fresh` drops every table of the database (`--database=` selects a connection), whatever their prefix.
 - Routes: `php artisan route:list` lists them, `-v` and `-vv` show and expand the middleware, `--path=api`, `--except-vendor` and `--only-vendor` narrow the list.
 - Queues and events in tests: `Queue::fake()` with `Queue::assertPushed(…)`, `Event::fake()` with `Event::assertDispatched(…)`.
-- The versions this file was verified against: Laravel 13.x (v13.38.0 on 2026-10-20), Pint 1.32.1, Larastan 3.13.0 (PHPStan ^2.3), Pest 4.x (the upgrade guide's constraint; Packagist's latest is 5.3.3).
+- The versions this file was verified against: Laravel 13.x (v13.38.0, the latest 13.x tag on 2026-10-24), Pint 1.32.1, Larastan 3.13.2 (PHPStan ^2.3), Pest 4.x (the upgrade guide's constraint; Packagist's latest is 5.3.3).
 
 ## Where the documentation is
 

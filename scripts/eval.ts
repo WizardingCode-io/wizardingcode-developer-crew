@@ -24,26 +24,36 @@ export interface EvalOptions {
 /** The suite's judge: never a weaker model than the agent under test (the owner's rule). */
 const JUDGE_MODEL = "claude-fable-5-1";
 
-const ALLOW_TOOLS = [
-  "Write",
-  "Edit",
-  "Bash(crew *)",
-  "Bash(node *)",
-  "Bash(npm *)",
-  "Bash(git *)",
-  "Bash(cat *)",
-  "Bash(ls *)",
-  "Bash(sh *)",
-  "Bash(make *)",
-  "Bash(sed *)",
-  "Bash(head *)",
-  "Bash(echo *)",
-  "Bash(which *)",
-  // SP2c: a case may change into peer/b, and the opener runs claude with its environment
-  "Bash(cd *)",
-  "Bash(env *)",
-  "Bash(claude *)",
+/**
+ * The tools the kit's session may use without asking (findings 64 and 95): Bash whole, since the
+ * narrow `Bash(crew *)`-style grants denied the agent's compound commands (`cd x && crew …`) and its
+ * reads of the plugin's references, and already held `sh *`, `node *` and `env *`, which run any
+ * code: the grant widens forms, not power. The kit's OS sandbox confines what Bash reaches.
+ */
+export const ALLOW_TOOLS = ["Write", "Edit", "Bash"];
+
+/** The environment names the kit's session receives; every other name is dropped (finding 64, the security lead's R-2). */
+const KIT_ENVIRONMENT = [
+  /^(?:PATH|HOME|TMPDIR|LANG|TERM|SHELL|USER|LOGNAME|ANTHROPIC_API_KEY)$/,
+  /^LC_[A-Z_]+$/,
+  /^CLAUDE_[A-Z0-9_]+$/,
+  /^WIZARDINGCODE_[A-Z0-9_]+$/,
 ];
+/** A name of the allowlist that still names a secret (`CLAUDE_CODE_MESSAGING_TOKEN`): dropped too, unless `NEEDED_SECRETS` holds it. */
+const SECRET_NAME = /TOKEN|SECRET|PASSWORD|CREDENTIAL|_KEY$/;
+/** The one secret the kit's session needs to run at all. */
+const NEEDED_SECRETS = new Set(["ANTHROPIC_API_KEY"]);
+
+/** The environment of the kit's session: the allowlist's names from `source`, and nothing else. */
+export function kitEnvironment(source: Record<string, string | undefined>): Record<string, string> {
+  const kept: Record<string, string> = {};
+  for (const [name, value] of Object.entries(source)) {
+    if (value === undefined || !KIT_ENVIRONMENT.some((rule) => rule.test(name))) continue;
+    if (SECRET_NAME.test(name) && !NEEDED_SECRETS.has(name)) continue;
+    kept[name] = value;
+  }
+  return kept;
+}
 // The tags the sandbox can run: the three mail cases are tagged needs-real-opener (spike A6, the
 // sandbox's temporary config holds no login) and are recorded from an end-to-end run instead.
 export const SANDBOX_TAGS = [
@@ -281,8 +291,13 @@ export function readTrace(lines: readonly string[]): TraceReading {
       for (const path of [...(use?.paths ?? []), ...result.errorPaths]) denied.add(path);
     else if (use?.name === "Read") for (const path of use.paths) acceptedReads.add(path);
   }
-  for (const path of reported) if (!acceptedReads.has(path)) denied.add(path);
-  return { readable, denied: [...denied] };
+  for (const path of reported) denied.add(path);
+  // A denial an accepted Read covers is no lost read (finding 157): the same file read, or for a
+  // folder (a listing, a Glob) any file in it, as when the agent looked at another copy of the plugin
+  // and then read the plugin under test's own references.
+  const covered = (path: string): boolean =>
+    acceptedReads.has(path) || [...acceptedReads].some((read) => read.startsWith(`${path}/`));
+  return { readable, denied: [...denied].filter((path) => !covered(path)) };
 }
 
 /** The plugin references a kept trace shows denied to the agent (finding 95), once each. Such a run cannot follow the method and is re-run rather than scored. */
@@ -430,7 +445,7 @@ export function runKit(options: {
   const run = spawnSync("claude", args, {
     cwd: options.root,
     stdio: "inherit",
-    env: { ...process.env, ...env, PATH: path },
+    env: kitEnvironment({ ...process.env, ...env, PATH: path }),
   });
   const aggregate = join(folder, "aggregate-result.json");
   return {

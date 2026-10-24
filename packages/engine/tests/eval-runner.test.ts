@@ -15,10 +15,12 @@ import { tmpdir } from "node:os";
 import { basename, delimiter, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  ALLOW_TOOLS,
   armRuns,
   createRunFolder,
   deniedReferenceReads,
   evalInvocation,
+  kitEnvironment,
   resultsDir,
   runFolder,
   runKit,
@@ -78,7 +80,7 @@ test("the suite runs with the judge and the reports; one case runs once, without
   expect(one.join(" ")).toContain("--case false-done --runs 1 --ablation none");
   // One case runs once with no baseline arm, judged by the suite's judge (SP4 Task 6: never a weaker judge).
   expect(one.join(" ")).toContain("--judge-model claude-fable-5-1");
-  expect(one.slice(one.indexOf("--allow-tools"))).toContain("Bash(crew *)");
+  expect(one.slice(one.indexOf("--allow-tools"))).toEqual(["--allow-tools", ...ALLOW_TOOLS]);
 });
 
 const EVALS = fileURLToPath(new URL("../../../plugins/core/evals/", import.meta.url));
@@ -175,8 +177,8 @@ test("SP2c, SP7b-T7 AC-1, SP3-T1 AC-5, SP3-T7 AC-1, SP4-T6 AC-1: the forty-two c
   expect(existsSync(`${EVALS}fixtures/node-plain.sh`)).toBe(true);
   expect(existsSync(`${EVALS}fixtures/two-projects.sh`)).toBe(true);
   const args = evalInvocation(base).args.join(" ");
-  for (const grant of ["Bash(cd *)", "Bash(env *)", "Bash(claude *)"])
-    expect(args).toContain(grant);
+  // Bash whole covers `cd`, `env` and `claude` (findings 64, 95).
+  expect(args).toContain("--allow-tools Write Edit Bash");
   // The sandbox run skips the cases that need a real opener (spike A6): the suite filters by the sandbox tags.
   // The four SP7b cases need none (a change request to a read-only project is queued), so their tags are in.
   expect(args).toContain(`--tag ${SANDBOX_TAGS.join(" ")}`);
@@ -909,7 +911,7 @@ test("H118 AC-7: runFolder builds the kit's stamp and the suffix from the clock 
   const bin = stubKit(dir);
   const before = listResults(RESULTS);
   for (const name of ["../x", "a b", "x/y", ""]) {
-    const run = runEval(bin, ["--case", name], { STUB_EXIT: "0" });
+    const run = runEval(bin, ["--case", name], { WIZARDINGCODE_STUB_EXIT: "0" });
     expect(run.status, name).toBe(1);
     expect(run.stderr, name).toContain("usage: bun scripts/eval.ts [--case <name>]");
   }
@@ -939,11 +941,11 @@ test("H118 AC-4: bun scripts/eval.ts gives the kit a folder of its own through -
   try {
     const log = join(dir, "stub.log");
     const suite = runEval(bin, [], {
-      STUB_AGGREGATE: flagged,
-      STUB_EXIT: "1",
-      STUB_LOG: log,
-      STUB_DECOY: decoy,
-      STUB_DECOY_AGGREGATE: decoyAggregate,
+      WIZARDINGCODE_STUB_AGGREGATE: flagged,
+      WIZARDINGCODE_STUB_EXIT: "1",
+      WIZARDINGCODE_STUB_LOG: log,
+      WIZARDINGCODE_STUB_DECOY: decoy,
+      WIZARDINGCODE_STUB_DECOY_AGGREGATE: decoyAggregate,
     });
     expect(suite.status, suite.stderr).toBe(1);
     expect(suite.stdout).toContain(
@@ -963,9 +965,9 @@ test("H118 AC-4: bun scripts/eval.ts gives the kit a folder of its own through -
     expect(suite.stdout).toContain(`--output-dir plugins/core/evals/results/${folder}`);
     // One case: the suffix names it, an accepted-only trace prints no line, the status is the kit's.
     const one = runEval(bin, ["--case", "false-done"], {
-      STUB_AGGREGATE: clean,
-      STUB_EXIT: "0",
-      STUB_LOG: log,
+      WIZARDINGCODE_STUB_AGGREGATE: clean,
+      WIZARDINGCODE_STUB_EXIT: "0",
+      WIZARDINGCODE_STUB_LOG: log,
     });
     expect(one.status, one.stderr).toBe(0);
     expect(one.stdout).not.toContain("needs-rerun");
@@ -1006,11 +1008,11 @@ test("H118 AC-8 (eval.ts): the kit is spawned with cwd the repository root where
       bin,
       [],
       {
-        STUB_AGGREGATE: join(dir, "missing.json"),
-        STUB_EXIT: "0",
-        STUB_LOG: log,
-        STUB_DECOY: newer,
-        STUB_DECOY_AGGREGATE: decoyAggregate,
+        WIZARDINGCODE_STUB_AGGREGATE: join(dir, "missing.json"),
+        WIZARDINGCODE_STUB_EXIT: "0",
+        WIZARDINGCODE_STUB_LOG: log,
+        WIZARDINGCODE_STUB_DECOY: newer,
+        WIZARDINGCODE_STUB_DECOY_AGGREGATE: decoyAggregate,
       },
       dir,
     );
@@ -1030,7 +1032,12 @@ test("H118 AC-8 (eval.ts): the kit is spawned with cwd the repository root where
     // From another cwd with an aggregate: written into the repository's folder and scanned there, the decoys nowhere.
     const flagged = join(dir, "flagged.json");
     writeFileSync(flagged, scanAggregate({ "proven-test-first": [denied] }));
-    const good = runEval(bin, [], { STUB_AGGREGATE: flagged, STUB_EXIT: "0" }, dir);
+    const good = runEval(
+      bin,
+      [],
+      { WIZARDINGCODE_STUB_AGGREGATE: flagged, WIZARDINGCODE_STUB_EXIT: "0" },
+      dir,
+    );
     expect(good.status, good.stderr).toBe(0);
     expect(good.stdout).toContain(
       "needs-rerun: proven-test-first (reference read denied: skills/crew/references/build.md)",
@@ -1313,7 +1320,7 @@ test("SP6-T6 AC-11, AC-28: fixtures/bin holds the repository helper alone (no sh
   );
 });
 
-test("SP6-T6 AC-11 (runKit): the kit runs with the caller's environment, the invocation's WIZARDINGCODE_CREW_REPO beside it and the composed PATH, the fixtures' bin first", () => {
+test("SP6-T6 AC-11 (runKit): the kit runs with the allowlist's names of the caller's environment (finding 64), the invocation's WIZARDINGCODE_CREW_REPO beside it and the composed PATH, the fixtures' bin first", () => {
   const dir = mkdtempSync(join(tmpdir(), "eval-env-"));
   const bin = stubKit(dir);
   const aggregate = join(dir, "clean.json");
@@ -1323,10 +1330,11 @@ test("SP6-T6 AC-11 (runKit): the kit runs with the caller's environment, the inv
   try {
     const dump = join(dir, "kit.env");
     const run = runEval(bin, ["--case", "false-done"], {
-      STUB_AGGREGATE: aggregate,
-      STUB_EXIT: "0",
-      STUB_ENV: dump,
-      STUB_MARK: "the caller's own variable",
+      WIZARDINGCODE_STUB_AGGREGATE: aggregate,
+      WIZARDINGCODE_STUB_EXIT: "0",
+      WIZARDINGCODE_STUB_ENV: dump,
+      WIZARDINGCODE_STUB_MARK: "the caller's own variable",
+      CALLER_MARK: "a name the allowlist does not hold",
     });
     expect(run.status, run.stderr).toBe(0);
     const seen = new Map(
@@ -1335,7 +1343,9 @@ test("SP6-T6 AC-11 (runKit): the kit runs with the caller's environment, the inv
         .filter((line) => line.includes("="))
         .map((line) => [line.slice(0, line.indexOf("=")), line.slice(line.indexOf("=") + 1)]),
     );
-    expect(seen.get("STUB_MARK")).toBe("the caller's own variable");
+    expect(seen.get("WIZARDINGCODE_STUB_MARK")).toBe("the caller's own variable");
+    // The allowlist alone reaches the kit (finding 64): a caller's other name is dropped.
+    expect(seen.has("CALLER_MARK")).toBe(false);
     expect(seen.get("WIZARDINGCODE_CREW_REPO")).toBe(repoRoot);
     const path = (seen.get("PATH") ?? "").split(delimiter);
     expect(path[0]).toBe(join(repoRoot, "plugins/core/evals/fixtures/bin"));
@@ -1853,7 +1863,11 @@ test("CON7-AC-8 (finding 63): the runner caps a case at 5 USD and the suite at n
   const before = listResults(RESULTS);
   try {
     const log = join(dir, "suite.log");
-    const run = runEval(bin, [], { STUB_AGGREGATE: aggregate, STUB_EXIT: "0", STUB_LOG: log });
+    const run = runEval(bin, [], {
+      WIZARDINGCODE_STUB_AGGREGATE: aggregate,
+      WIZARDINGCODE_STUB_EXIT: "0",
+      WIZARDINGCODE_STUB_LOG: log,
+    });
     expect(run.status, run.stderr).toBe(0);
     const estimate = run.stdout.match(/estimated cost: about 38\.80 USD \(([^)]*)\)/);
     expect(estimate?.[1] ?? "").toContain("SP7a");
@@ -1863,9 +1877,9 @@ test("CON7-AC-8 (finding 63): the runner caps a case at 5 USD and the suite at n
     expect(readFileSync(log, "utf8").split("\n")[1] ?? "").not.toContain("--max-cost-usd");
     const cappedLog = join(dir, "capped.log");
     const cappedRun = runEval(bin, ["--max-cost-usd", "12"], {
-      STUB_AGGREGATE: aggregate,
-      STUB_EXIT: "0",
-      STUB_LOG: cappedLog,
+      WIZARDINGCODE_STUB_AGGREGATE: aggregate,
+      WIZARDINGCODE_STUB_EXIT: "0",
+      WIZARDINGCODE_STUB_LOG: cappedLog,
     });
     expect(cappedRun.status, cappedRun.stderr).toBe(0);
     expect(readFileSync(cappedLog, "utf8").split("\n")[1] ?? "").toContain("--max-cost-usd 12");
@@ -1873,9 +1887,9 @@ test("CON7-AC-8 (finding 63): the runner caps a case at 5 USD and the suite at n
       const refusedLog = join(dir, `refused-${value || "empty"}.log`);
       const folders = listResults(RESULTS);
       const refused = runEval(bin, ["--max-cost-usd", value], {
-        STUB_AGGREGATE: aggregate,
-        STUB_EXIT: "0",
-        STUB_LOG: refusedLog,
+        WIZARDINGCODE_STUB_AGGREGATE: aggregate,
+        WIZARDINGCODE_STUB_EXIT: "0",
+        WIZARDINGCODE_STUB_LOG: refusedLog,
       });
       expect(refused.status, value).not.toBe(0);
       expect(refused.stderr, value).toMatch(/--max-cost-usd/);
@@ -1908,29 +1922,6 @@ test("REL-AC-2 (the user's decision of 2026-10-23): the judge model is the suite
   });
   expect(refused.status).toBe(1);
   expect(refused.stderr).toContain('eval: --judge-model takes a model name, not "x y"');
-});
-
-test("AC-4 (finding 149): rounds-bounded seeds a defect nobody chose, an existing audit call that logs the whole account with its email, and dictates no test, so round 2 and the cap are reached", () => {
-  const prompt = readFileSync(`${EVALS}rounds-bounded/prompt.md`, "utf8");
-  const fixture = readFileSync(`${EVALS}rounds-bounded/fixture.sh`, "utf8");
-  // The seed lives in the repository, not in the request: logging the email is nobody's decision.
-  // The case writes the audit module; the shared fixture's createAccount calls it (finding 151).
-  expect(fixture).toContain("export function audit(event, account)");
-  expect(fixture).toContain("JSON.stringify({ event, account })");
-  expect(fixture).toContain("AUDIT_HOOK=1");
-  expect(readFileSync(`${EVALS}fixtures/node-plain.sh`, "utf8")).toContain(
-    `audit("account.created", accounts.get(id))`,
-  );
-  // The email the log writes is the shared fixture's, on a reserved domain.
-  expect(readFileSync(`${EVALS}fixtures/node-plain.sh`, "utf8")).toContain("a@example.invalid");
-  expect(prompt).toContain("`deactivateAccount(id)`");
-  expect(prompt).toMatch(/as `createAccount` does/);
-  // The weak test and its "seeded defects" label (AC-16 of 2026-10-23-008, AC-8 of 2026-10-24-001)
-  // read as the user's decision, which the judge deferred to (finding 149).
-  expect(prompt).not.toContain("```");
-  expect(prompt).not.toMatch(/seeded defect|typeof accountAge|only test you add/);
-  // The cap stays at one round, so the second is the engine's refusal.
-  expect(fixture).toContain('"maxJudgementRounds": 1');
 });
 
 test("AC-10 (finding 62): personalities-differ's proposals-differ grader passes on designs proposed or named as rejected alternatives, never on proposals alone", () => {
@@ -1967,22 +1958,157 @@ test("AC-12 (finding 118): the agent's own words count as a denial only where on
   ).toEqual([ref]);
 });
 
-test("AC-7 (finding 151): rounds-bounded takes the shared fixture's audit hook, and its scaffolded project's tests print the audit line with the email; no other fixture sets the hook", () => {
+test("AC-14 (was AC-13; findings 64, 95): the kit's session gets Bash whole, Write and Edit, and only the environment names of the allowlist", () => {
+  expect(ALLOW_TOOLS).toEqual(["Write", "Edit", "Bash"]);
+  const args = evalInvocation({ root: "/r", platform: "linux", path: "", realGitDir: null }).args;
+  expect(args.slice(args.indexOf("--allow-tools") + 1)).toEqual(["Write", "Edit", "Bash"]);
+  const kept = {
+    ANTHROPIC_API_KEY: "k",
+    CLAUDE_CONFIG_DIR: "/c",
+    PATH: "/bin",
+    LC_ALL: "C",
+    HOME: "/h",
+    TMPDIR: "/t",
+    WIZARDINGCODE_CREW_REPO: "/r",
+  };
+  const dropped = {
+    SSH_AUTH_SOCK: "/s",
+    GH_TOKEN: "g",
+    AWS_PROFILE: "p",
+    DB_PASSWORD: "d",
+    KUBECONFIG: "/k",
+    DOCKER_AUTH_CONFIG: "{}",
+    NPM_CONFIG_TOKEN: "n",
+    RANDOM_NEW_NAME: "x",
+    CLAUDE_CODE_MESSAGING_TOKEN: "m",
+    WIZARDINGCODE_SECRET: "w",
+  };
+  expect(kitEnvironment({ ...kept, ...dropped })).toEqual(kept);
+  // The grant lives in scripts/eval.ts alone; the bundle's `Bash(crew *)` is the opened sessions'
+  // grant (open.ts), not the eval's; the kit's ignored results are no file of the repository. grep
+  // says 1 for no match; 2, an error, is never an absence.
+  const grep = (pattern: string, ...exclude: string[]) =>
+    spawnSync(
+      "grep",
+      ["-rlE", ...exclude.map((e) => `--exclude=${e}`), "-e", pattern, "plugins", ".claude"],
+      {
+        cwd: repoRoot,
+        encoding: "utf8",
+      },
+    );
+  const flag = grep("--allow-tools");
+  expect(flag.status, `${flag.stdout}${flag.stderr}`).toBe(1);
+  const narrow = grep("Bash\\(crew", "crew.mjs");
+  expect(narrow.status, `${narrow.stdout}${narrow.stderr}`).toBe(1);
+  expect(readFileSync(join(repoRoot, "plugins/core/dist/crew.mjs"), "utf8")).not.toContain(
+    "--allow-tools",
+  );
+});
+
+test("AC-17 (finding 157): a denied reference read covered by an accepted Read of the same file, or a denied references folder covered by an accepted Read of any file in it, is no lost read; one never covered still flags", () => {
+  // The run of 2026-10-24: a listing of the installed plugin's references denied, then the plugin
+  // under test's own references read.
+  const listing = [
+    toolUse("toolu_l", "Bash", {
+      command: "cd ~/.claude/plugins/cache/x/0.13.0/ && ls skills/crew/references",
+    }),
+    toolResult("toolu_l", "ls: skills/crew/references: Operation not permitted", { isError: true }),
+  ];
+  expect(deniedReferenceReads([...listing, ...acceptedRead("toolu_r", "conclave.md")])).toEqual([]);
+  // The same file denied, then read: covered; read before the denial: covered too.
+  const file = deniedRead("toolu_d", "specify.md");
+  expect(deniedReferenceReads([...file, ...acceptedRead("toolu_s", "specify.md")])).toEqual([]);
+  expect(deniedReferenceReads([...acceptedRead("toolu_s", "specify.md"), ...file])).toEqual([]);
+  // Another file read covers neither a denied file nor, alone, anything else.
+  expect(deniedReferenceReads([...file, ...acceptedRead("toolu_o", "plan.md")])).toEqual([
+    "skills/crew/references/specify.md",
+  ]);
+  expect(deniedReferenceReads(listing)).toEqual(["skills/crew/references"]);
+});
+
+test("AC-22 (findings 155, 156, 159): learn.md gives the CTO review's order; figures-quoted judges the plan file with the fixture's figures; briefs-say-changed matches a brief the Read tool showed and refuses another file", () => {
+  const learn = readFileSync(
+    join(repoRoot, "plugins/core/skills/crew/references/learn.md"),
+    "utf8",
+  );
+  const section = learn.slice(learn.indexOf("## 4. The CTO review"));
+  expect(section).toStartWith("## 4. The CTO review");
+  expect(section).toContain('--observed "<the plan filed>"` before anything else');
+  expect(section).toContain("A behaviour criterion cannot be superseded by an observed one");
+  expect(section.indexOf("--observed")).toBeLessThan(
+    section.indexOf("crew cto review --workspace"),
+  );
+  const figures = readFileSync(
+    join(EVALS, "cto-report-from-records/graders/figures-quoted.md"),
+    "utf8",
+  );
+  // The judge reads the plan file: an llm judge of the trace sees only its first and last 12
+  // messages (the kit's documentation), where neither the engine's figures nor the plan sit.
+  expect(figures).toMatch(/^focus: \{ source: file, path: cto-plan\.md \}$/m);
+  expect(figures).not.toContain("focus: trace");
+  expect(figures).toContain(
+    "items 3 when the review item is opened after the review, 4 when it is opened first",
+  );
+  expect(figures).toContain(
+    "knowledge 4 entries (stack-preference 1, validated-solution 3), confirmed 1, contradicted 1, cited by 1 item",
+  );
+  expect(readFileSync(join(EVALS, "cto-report-from-records/prompt.md"), "utf8")).toContain(
+    "written to `cto-plan.md` in this project",
+  );
+  const grader = readFileSync(join(EVALS, "brief-per-todo/graders/briefs-say-changed.md"), "utf8");
+  const pattern = new RegExp(/^pattern: '(.*)'$/m.exec(grader)?.[1] ?? "^$");
+  // As the Read tool shows a brief in a JSON trace (escaped newline, the line number, an escaped tab),
+  // as the kit may decode it, and as the brief itself is written.
+  expect(
+    pattern.test(String.raw`"3\t## Changed\n4\t- src/accounts.mjs\n5\t- tests/a.test.mjs"`),
+  ).toBe(true);
+  expect(pattern.test("3\t## Changed\n4\t- src/accounts.mjs")).toBe(true);
+  expect(pattern.test("## Changed\n- src/accounts.mjs")).toBe(true);
+  expect(pattern.test(String.raw`"3\t## Changed\n4\t- src/other.mjs"`)).toBe(false);
+});
+
+test("AC-23 (findings 149, 62): rounds-bounded's fixture leaves round 1 recorded not proven under a cap of one, with no audit seed left; personalities-differ runs under the unattended user's policy and proposals-differ judges the final message", () => {
   const dir = mkdtempSync(join(tmpdir(), "crew-rounds-"));
+  const home = mkdtempSync(join(tmpdir(), "crew-rounds-home-"));
   const scaffold = spawnSync("sh", [`${EVALS}rounds-bounded/fixture.sh`], {
     cwd: dir,
     encoding: "utf8",
+    env: {
+      ...process.env,
+      PATH: [join(repoRoot, "plugins/core/bin"), process.env.PATH ?? ""].join(delimiter),
+      WIZARDINGCODE_HOME: home,
+    },
   });
   expect(scaffold.status, scaffold.stderr).toBe(0);
-  const tests = spawnSync("node", ["--test"], { cwd: dir, encoding: "utf8" });
-  expect(tests.status, tests.stdout).toBe(0);
-  expect(tests.stdout).toContain('"email":"a@example.invalid"');
-  const fixture = readFileSync(`${EVALS}rounds-bounded/fixture.sh`, "utf8");
-  expect(fixture).not.toContain("cat > src/accounts.mjs");
-  expect(fixture).toContain("AUDIT_HOOK=");
+  const [id] = readdirSync(join(dir, ".crew/work"));
+  const work = JSON.parse(readFileSync(join(dir, ".crew/work", id ?? "", "work.json"), "utf8"));
+  expect(work.rounds.judgement).toBe(1);
+  const policy = JSON.parse(readFileSync(join(dir, ".crew/policy.json"), "utf8"));
+  expect(policy.team.maxJudgementRounds).toBe(1);
+  const evidence = JSON.parse(
+    readFileSync(join(dir, ".crew/work", id ?? "", "evidence.json"), "utf8"),
+  );
+  const verdicts = Object.fromEntries(
+    (evidence.judgement as { gate: string; verdict: string }[]).map((j) => [j.gate, j.verdict]),
+  );
+  expect(verdicts["code-quality"]).toBe("not-proven");
+  expect(verdicts.security).toBe("not-proven");
+  // Everything committed: the session starts from a clean tree with the defect in the code.
+  expect(spawnSync("git", ["status", "--porcelain"], { cwd: dir, encoding: "utf8" }).stdout).toBe(
+    "",
+  );
+  expect(readFileSync(join(dir, "src/accounts.mjs"), "utf8")).toContain(
+    "console.log(`deactivating ${account.email}`)",
+  );
+  // The audit seed is gone from the shared fixture and from every case.
+  expect(readFileSync(`${EVALS}fixtures/node-plain.sh`, "utf8")).not.toContain("AUDIT_HOOK");
   for (const name of readdirSync(EVALS)) {
     const file = join(EVALS, name, "fixture.sh");
-    if (name === "rounds-bounded" || !existsSync(file)) continue;
-    expect(readFileSync(file, "utf8"), name).not.toContain("AUDIT_HOOK=");
+    if (existsSync(file)) expect(readFileSync(file, "utf8"), name).not.toContain("AUDIT_HOOK");
   }
+  const differ = graderOf("personalities-differ", "proposals-differ") as Record<string, unknown>;
+  expect(differ.focus).toBeUndefined();
+  expect(readFileSync(`${EVALS}personalities-differ/fixture.sh`, "utf8")).toContain(
+    '{ "unattendedDecisions": "count" }',
+  );
 });

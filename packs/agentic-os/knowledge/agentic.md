@@ -1,6 +1,6 @@
 # Agentic systems
 
-What a model gets wrong when it writes agents, tools and prompts, how such work is verified and where the documentation is. Each line is a fact read on 2026-10-20 from the pages listed at the end; the OWASP Top 10 for Agentic Applications is a download whose entries are not quoted here.
+What a model gets wrong when it writes agents, tools and prompts, how such work is verified and where the documentation is. Each line is a fact read on 2026-10-24 from the pages listed at the end; the OWASP Top 10 for Agentic Applications is a download whose entries are not quoted here.
 
 ## What the model gets wrong
 
@@ -20,7 +20,7 @@ What a model gets wrong when it writes agents, tools and prompts, how such work 
 - Success criteria defined before the work, evaluations automated where possible, volume preferred over hand-made quality.
 - Every place untrusted text enters the prompt reviewed against the injection mitigations: tool results, fetched pages and files treated as data, separated and marked, never as instructions.
 - A tool's scope asserted: the subagent's `tools` or `disallowedTools` list, the permission rules' effect in their order (deny, ask, allow), and a hook that only observes or defers where a hard rule exists.
-- The token cost measured: the cache follows tools, then system, then messages, and a change at one level invalidates it and every level after; the cache lives 5 minutes by default, 1 hour at extra cost; a cache write costs 1.25 times and a read 0.1 times the base input price.
+- The token cost measured: the cache follows tools, then system, then messages, and a change at one level invalidates it and every level after; the cache lives 5 minutes by default, 1 hour at extra cost; a cache write costs 1.25 times the base input price and a read 0.1 times it by default, 0.05 times on Claude Opus 5.5 and Sonnet 5.5 and 0.025 times on Claude Fable 5.1 and Mythos 5.1.
 
 ## Where the documentation is
 

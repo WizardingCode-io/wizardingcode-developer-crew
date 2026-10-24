@@ -52,9 +52,31 @@ import { fileHash } from "../src/validation.ts";
 import { VERSION } from "../src/version.ts";
 import { loadWork, saveWork } from "../src/work.ts";
 import { auditFixture, PLANTED_KEY } from "./audit-run.test.ts";
-import { git, makeRepo, repoPaths, spyMailReads, tempDir, testEnv, write } from "./helpers.ts";
+import {
+  makeRepo as bareRepo,
+  git,
+  repoPaths,
+  spyMailReads,
+  tempDir,
+  testEnv,
+  write,
+} from "./helpers.ts";
 import { writePack } from "./pack-fixtures.ts";
 import { RESEARCH, STRATEGY } from "./strategy.test.ts";
+
+/** The test files a `crew tdd` step runs after `--` here: a command that is no test run is refused (finding 153). */
+const RED = "sh tests/crew-red.test.sh";
+const GREEN = "sh tests/crew-green.test.sh";
+
+/** A repository with the test files `RED` and `GREEN` run, committed with the rest. */
+function makeRepo(files: Record<string, string> = { "README.md": "# test\n" }): string {
+  return bareRepo({
+    ...files,
+    "tests/crew-red.test.sh": "exit 1\n",
+    "tests/crew-green.test.sh": "exit 0\n",
+    "tests/crew-slow.test.sh": "sleep 1\nexit 0\n",
+  });
+}
 
 test("SP2b: debate open and close through the command; plan waits while the debate is open; status says so", async () => {
   const root = makeRepo({
@@ -103,8 +125,8 @@ test("SP2b: judgement rulings are recorded from a file, judged by the verdict, s
   const id = (await c.json("start", "Empty state", "--answers", answers, "--criterion", "a")).data
     .id as string;
   write(root, "src/App.vue", "<template>empty</template>");
-  expect((await c.run("tdd", "red", id, "AC-1", "--", "exit 1")).code).toBe(0);
-  expect((await c.run("tdd", "green", id, "AC-1", "--", "exit 0")).code).toBe(0);
+  expect((await c.run("tdd", "red", id, "AC-1", "--", RED)).code).toBe(0);
+  expect((await c.run("tdd", "green", id, "AC-1", "--", GREEN)).code).toBe(0);
   await c.run("skip", id, "gate:e2e", "--reason", "no environment in the fixture");
   const first = await c.json("gate", "run", id);
   expect(first.code).toBe(1);
@@ -230,8 +252,8 @@ test("SP2b review: a ruling is accepted only while the review inputs describe th
   const id = (await c.json("start", "Empty state", "--answers", answers, "--criterion", "a")).data
     .id as string;
   write(root, "src/App.vue", "<template>empty</template>");
-  await c.run("tdd", "red", id, "AC-1", "--", "exit 1");
-  await c.run("tdd", "green", id, "AC-1", "--", "exit 0");
+  await c.run("tdd", "red", id, "AC-1", "--", RED);
+  await c.run("tdd", "green", id, "AC-1", "--", GREEN);
   const review = join(root, ".crew", "work", id, "review");
   const file = join(review, "ruling.json");
   const proven = JSON.stringify({ rulings: [{ gate: "ui-ux", verdict: "proven", findings: [] }] });
@@ -271,8 +293,8 @@ test("SP2b minors: a relative --ruling path resolves from the repository root an
   const id = (await c.json("start", "Empty state", "--answers", answers, "--criterion", "a")).data
     .id as string;
   write(root, "src/App.vue", "<template>empty</template>");
-  await c.run("tdd", "red", id, "AC-1", "--", "exit 1");
-  await c.run("tdd", "green", id, "AC-1", "--", "exit 0");
+  await c.run("tdd", "red", id, "AC-1", "--", RED);
+  await c.run("tdd", "green", id, "AC-1", "--", GREEN);
   await c.run("skip", id, "gate:e2e", "--reason", "no environment in the fixture");
   await c.run("gate", "run", id);
   // From a subfolder, the same relative path names the same file: the one under the root.
@@ -317,8 +339,8 @@ test("SP2b minors: a proven ruling with a defect inside the change is refused an
   const id = (await c.json("start", "Empty state", "--answers", answers, "--criterion", "a")).data
     .id as string;
   write(root, "src/App.vue", "<template>empty</template>");
-  await c.run("tdd", "red", id, "AC-1", "--", "exit 1");
-  await c.run("tdd", "green", id, "AC-1", "--", "exit 0");
+  await c.run("tdd", "red", id, "AC-1", "--", RED);
+  await c.run("tdd", "green", id, "AC-1", "--", GREEN);
   await c.run("skip", id, "gate:e2e", "--reason", "no environment in the fixture");
   await c.run("gate", "run", id);
   const file = join(root, ".crew", "work", id, "review", "ruling.json");
@@ -354,8 +376,8 @@ test("SP2b minors: a gate run whose patch has no diff content says so, with the 
   const id = (await c.json("start", "Empty state", "--answers", answers, "--criterion", "a")).data
     .id as string;
   write(root, "src/App.vue", "<template>empty</template>");
-  await c.run("tdd", "red", id, "AC-1", "--", "exit 1");
-  await c.run("tdd", "green", id, "AC-1", "--", "exit 0");
+  await c.run("tdd", "red", id, "AC-1", "--", RED);
+  await c.run("tdd", "green", id, "AC-1", "--", GREEN);
   await c.run("skip", id, "gate:e2e", "--reason", "no environment in the fixture");
   const run = await c.json("gate", "run", id);
   expect(run.data.judgement).toEqual([{ gate: "ui-ux", reason: "interface files: src/App.vue" }]);
@@ -377,8 +399,8 @@ test("SP2b: a judgement gate is skipped only when the policy lists it, and the v
   const id = (await c.json("start", "Empty state", "--answers", answers, "--criterion", "a")).data
     .id as string;
   write(root, "src/App.vue", "<template>empty</template>");
-  await c.run("tdd", "red", id, "AC-1", "--", "exit 1");
-  await c.run("tdd", "green", id, "AC-1", "--", "exit 0");
+  await c.run("tdd", "red", id, "AC-1", "--", RED);
+  await c.run("tdd", "green", id, "AC-1", "--", GREEN);
   const refused = await c.run("skip", id, "gate:ui-ux", "--reason", "no browser");
   expect(refused.code).toBe(1);
   expect(refused.err).toContain(
@@ -415,8 +437,8 @@ test("SP2b: gate run names the judgement gates to run, accepts their names in --
   const id = (await c.json("start", "Empty state", "--answers", answers, "--criterion", "a")).data
     .id as string;
   write(root, "src/App.vue", "<template>empty</template>");
-  expect((await c.run("tdd", "red", id, "AC-1", "--", "exit 1")).code).toBe(0);
-  expect((await c.run("tdd", "green", id, "AC-1", "--", "exit 0")).code).toBe(0);
+  expect((await c.run("tdd", "red", id, "AC-1", "--", RED)).code).toBe(0);
+  expect((await c.run("tdd", "green", id, "AC-1", "--", GREEN)).code).toBe(0);
   await c.run("skip", id, "gate:e2e", "--reason", "no environment in the fixture");
   const run = await c.run("gate", "run", id);
   expect(run.out).toContain(
@@ -1248,8 +1270,8 @@ test("a new item after a proven, uncommitted one starts with no change of its ow
   const first = (await c.json("start", "First", "--answers", answers, "--criterion", "a")).data
     .id as string;
   write(root, "src/a.ts", "the first item's work");
-  expect((await c.run("tdd", "red", first, "AC-1", "--", "exit 1")).code).toBe(0);
-  expect((await c.run("tdd", "green", first, "AC-1", "--", "exit 0")).code).toBe(0);
+  expect((await c.run("tdd", "red", first, "AC-1", "--", RED)).code).toBe(0);
+  expect((await c.run("tdd", "green", first, "AC-1", "--", GREEN)).code).toBe(0);
   expect((await c.json("gate", "run", first)).data.verdict).toBe("proven");
   const second = await c.json("start", "Second", "--answers", answers, "--criterion", "b");
   const secondId = second.data.id as string;
@@ -1397,8 +1419,8 @@ test("start records no shared checkout without a neighbour or without a change (
   const cleanId = clean.data.id as string;
   // A proven, delivered neighbour with its work still uncommitted is not open; an open one is.
   write(root, "src/a.ts", "clean's work");
-  expect((await c.run("tdd", "red", cleanId, "AC-1", "--", "exit 1")).code).toBe(0);
-  expect((await c.run("tdd", "green", cleanId, "AC-1", "--", "exit 0")).code).toBe(0);
+  expect((await c.run("tdd", "red", cleanId, "AC-1", "--", RED)).code).toBe(0);
+  expect((await c.run("tdd", "green", cleanId, "AC-1", "--", GREEN)).code).toBe(0);
   expect((await c.json("gate", "run", cleanId)).data.verdict).toBe("proven");
   const after = await c.json("start", "After", "--answers", answers, "--criterion", "c");
   expect((after.data.shared as { with: string[] }).with).toEqual([aloneId]);
@@ -1416,8 +1438,8 @@ test("a proven item is not an open neighbour, whatever its phase; an unproven on
   const proven = (await c.json("start", "Proven", "--answers", answers, "--criterion", "a")).data
     .id as string;
   write(root, "src/a.ts", "proven's work");
-  expect((await c.run("tdd", "red", proven, "AC-1", "--", "exit 1")).code).toBe(0);
-  expect((await c.run("tdd", "green", proven, "AC-1", "--", "exit 0")).code).toBe(0);
+  expect((await c.run("tdd", "red", proven, "AC-1", "--", RED)).code).toBe(0);
+  expect((await c.run("tdd", "green", proven, "AC-1", "--", GREEN)).code).toBe(0);
   expect((await c.json("gate", "run", proven)).data.verdict).toBe("proven");
   const file = join(root, ".crew", "work", proven, "work.json");
   const record = readProtectedJson<{ phase: string }>(paths, file).data;
@@ -1425,8 +1447,8 @@ test("a proven item is not an open neighbour, whatever its phase; an unproven on
   // Unproven and in gate: a gate run that proved nothing leaves it there, still being worked on.
   const open = (await c.json("start", "Open", "--answers", answers, "--criterion", "b")).data
     .id as string;
-  expect((await c.run("tdd", "red", open, "AC-1", "--", "exit 1")).code).toBe(0);
-  expect((await c.run("tdd", "green", open, "AC-1", "--", "exit 0")).code).toBe(0);
+  expect((await c.run("tdd", "red", open, "AC-1", "--", RED)).code).toBe(0);
+  expect((await c.run("tdd", "green", open, "AC-1", "--", GREEN)).code).toBe(0);
   expect((await c.json("gate", "run", open, "--only", "test")).data.verdict).toBe("unproven");
   expect((await c.json("status")).data.phase).toBe("gate");
   write(root, "src/a.ts", "open's half-written work");
@@ -1443,8 +1465,8 @@ test("a gate run that proves an item already in the gate phase delivers it", asy
   const id = (await c.json("start", "Twice", "--answers", answers, "--criterion", "a")).data
     .id as string;
   write(root, "src/a.ts", "y");
-  expect((await c.run("tdd", "red", id, "AC-1", "--", "exit 1")).code).toBe(0);
-  expect((await c.run("tdd", "green", id, "AC-1", "--", "exit 0")).code).toBe(0);
+  expect((await c.run("tdd", "red", id, "AC-1", "--", RED)).code).toBe(0);
+  expect((await c.run("tdd", "green", id, "AC-1", "--", GREEN)).code).toBe(0);
   // A partial run proves nothing and moves the item from build to gate.
   const partial = await c.json("gate", "run", id, "--only", "secrets");
   expect(partial.data.verdict).toBe("unproven");
@@ -1615,8 +1637,8 @@ test("SP2a: an observed criterion through the command, and in the report", async
     ).code,
   ).toBe(0);
   write(root, "src/a.ts", "y");
-  expect((await c.run("tdd", "red", id, "AC-1", "--", "exit 1")).code).toBe(0);
-  expect((await c.run("tdd", "green", id, "AC-1", "--", "exit 0")).code).toBe(0);
+  expect((await c.run("tdd", "red", id, "AC-1", "--", RED)).code).toBe(0);
+  expect((await c.run("tdd", "green", id, "AC-1", "--", GREEN)).code).toBe(0);
   expect((await c.json("gate", "run", id)).data.verdict).toBe("proven");
   const report = readFileSync(join(root, ".crew", "work", id, "report.md"), "utf8");
   expect(report).toContain(
@@ -1777,8 +1799,8 @@ test("SP2a review: a hand-edited ledger reaches the verdict, not only the saving
     "blocking",
   );
   write(root, "src/a.ts", "y");
-  expect((await c.run("tdd", "red", id, "AC-1", "--", "exit 1")).code).toBe(0);
-  expect((await c.run("tdd", "green", id, "AC-1", "--", "exit 0")).code).toBe(0);
+  expect((await c.run("tdd", "red", id, "AC-1", "--", RED)).code).toBe(0);
+  expect((await c.run("tdd", "green", id, "AC-1", "--", GREEN)).code).toBe(0);
   expect((await c.json("gate", "run", id)).data.unproven).toEqual([
     "blocking objection O-1 open: re-subscribes everyone",
   ]);
@@ -2065,8 +2087,8 @@ test("SP2c AC-5: crew judgement record fills tokens from the engine's role recor
   const id = (await c.json("start", "Empty state", "--answers", answers, "--criterion", "a")).data
     .id as string;
   write(root, "src/App.vue", "<template>empty</template>");
-  await c.run("tdd", "red", id, "AC-1", "--", "exit 1");
-  await c.run("tdd", "green", id, "AC-1", "--", "exit 0");
+  await c.run("tdd", "red", id, "AC-1", "--", RED);
+  await c.run("tdd", "green", id, "AC-1", "--", GREEN);
   await c.run("skip", id, "gate:e2e", "--reason", "no environment in the fixture");
   await c.run("gate", "run", id);
   const paths = repoPaths(root, c.env);
@@ -2862,8 +2884,8 @@ test("SP7a AC-4: crew metrics counts the records of a project and of a workspace
   const id = (await c.json("start", "Fix a", "--answers", answers, "--criterion", "a")).data
     .id as string;
   write(root, "src/a.ts", "y");
-  await c.run("tdd", "red", id, "AC-1", "--", "exit 1");
-  await c.run("tdd", "green", id, "AC-1", "--", "exit 0");
+  await c.run("tdd", "red", id, "AC-1", "--", RED);
+  await c.run("tdd", "green", id, "AC-1", "--", GREEN);
   expect((await c.run("gate", "run", id)).code).toBe(0);
   const metrics = await c.json("metrics");
   expect(metrics.code).toBe(0);
@@ -3674,8 +3696,8 @@ test("SP7b-T4 AC-1: crew profile set e2e sets the command; an interface change w
   const id = (await c.json("start", "Empty state", "--answers", answers, "--criterion", "a")).data
     .id as string;
   write(root, "src/App.vue", "<template>empty</template>");
-  await c.run("tdd", "red", id, "AC-1", "--", "exit 1");
-  await c.run("tdd", "green", id, "AC-1", "--", "exit 0");
+  await c.run("tdd", "red", id, "AC-1", "--", RED);
+  await c.run("tdd", "green", id, "AC-1", "--", GREEN);
   const reason = 'no environment in the profile (crew profile set environment.start "<cmd>")';
   const first = await c.json("gate", "run", id);
   expect(first.data.unproven).toContain(`gate e2e unavailable: ${reason}`);
@@ -3955,8 +3977,8 @@ test("SP7b-T5 AC-3: the engine keeps each judgement round's findings and ruling 
   const id = (await c.json("start", "Empty state", "--answers", answers, "--criterion", "a")).data
     .id as string;
   write(root, "src/App.vue", "<template>empty</template>");
-  await c.run("tdd", "red", id, "AC-1", "--", "exit 1");
-  await c.run("tdd", "green", id, "AC-1", "--", "exit 0");
+  await c.run("tdd", "red", id, "AC-1", "--", RED);
+  await c.run("tdd", "green", id, "AC-1", "--", GREEN);
   await c.run("skip", id, "gate:e2e", "--reason", "no environment in the fixture");
   await c.run("gate", "run", id);
   const review = join(root, ".crew", "work", id, "review");
@@ -4165,9 +4187,9 @@ test("SP3-T1 AC-2 (finding 81): two tdd commands that overlap keep both records;
   const id = (await one.json("start", "Two records", "--answers", answers, "--preserve", "keep"))
     .data.id as string;
   expect((await one.run("criteria", id, "add", "measured", "--kind", "observed")).code).toBe(0);
-  expect((await one.run("tdd", "before", id, "AC-1", "--", "true")).code).toBe(0);
+  expect((await one.run("tdd", "before", id, "AC-1", "--", GREEN)).code).toBe(0);
   const [after, observed] = await Promise.all([
-    one.run("tdd", "after", id, "AC-1", "--", "sleep", "1"),
+    one.run("tdd", "after", id, "AC-1", "--", "sh", "tests/crew-slow.test.sh"),
     two.run("tdd", "observed", id, "AC-2", "--reason", "a measurement", "--", "true"),
   ]);
   expect(after.code, after.err).toBe(0);
@@ -5270,8 +5292,8 @@ async function judged(route: "standard" | "full") {
   work.phase = "build";
   saveWork(repoPaths(root, c.env), work);
   write(root, "src/a.ts", "x = 1");
-  expect((await c.run("tdd", "red", id, "AC-1", "--", "exit 1")).code).toBe(0);
-  expect((await c.run("tdd", "green", id, "AC-1", "--", "exit 0")).code).toBe(0);
+  expect((await c.run("tdd", "red", id, "AC-1", "--", RED)).code).toBe(0);
+  expect((await c.run("tdd", "green", id, "AC-1", "--", GREEN)).code).toBe(0);
   await c.run("skip", id, "gate:e2e", "--reason", "no environment in the fixture");
   // The ruling file sits in the tree the gate run fingerprints: written before the run.
   const ruling = join(root, "ruling.json");
@@ -5289,7 +5311,7 @@ test("SP3-T6 AC-1, AC-2, AC-5: crew judgement record asks Jev about the upheld d
   expect(plain.out).not.toContain("jev");
   expect(loadEvidence(repoPaths(root, c.env), id).evidence.verifications).toBeUndefined();
   write(root, "src/a.ts", "x = 2");
-  expect((await c.run("tdd", "green", id, "AC-1", "--", "exit 0")).code).toBe(0);
+  expect((await c.run("tdd", "green", id, "AC-1", "--", GREEN)).code).toBe(0);
   await c.run("gate", "run", id);
   await cannedJev(c, { d1: { type: "noul", noul: 0.04 } });
   const recorded = await c.run("judgement", id, "record", "--ruling", ruling);
@@ -5319,7 +5341,7 @@ test("SP3-T6 AC-1, AC-2, AC-5: crew judgement record asks Jev about the upheld d
   );
   // The verify.asks policy: with defect out, nothing is asked.
   write(root, "src/a.ts", "x = 3");
-  await c.run("tdd", "green", id, "AC-1", "--", "exit 0");
+  await c.run("tdd", "green", id, "AC-1", "--", GREEN);
   await c.run("gate", "run", id);
   expect((await c.run("policy", "set", "verify.asks", "triage")).code).toBe(0);
   // A third round: the user continues it (relayed under the default policy).
@@ -5355,7 +5377,7 @@ test("SP3-T6 AC-3: with Jev down, crew judgement record marks the sent defects u
   // An existing wait is kept.
   await cf.run("await", full.id, "role");
   write(full.root, "src/a.ts", "x = 2");
-  await cf.run("tdd", "green", full.id, "AC-1", "--", "exit 0");
+  await cf.run("tdd", "green", full.id, "AC-1", "--", GREEN);
   await cf.run("gate", "run", full.id);
   await cf.run("judgement", full.id, "record", "--ruling", full.ruling);
   expect((await cf.json("status")).data.awaiting).toBe("role");
@@ -5650,11 +5672,11 @@ test('SP8-T1 AC-1 (finding 91): crew tdd runs the words after -- as one quoted c
   expect(refused.err.trim()).toContain("quote the command string as one argument");
   const paths = repoPaths(root, c.env);
   expect(loadEvidence(paths, id).evidence.tdd).toEqual([]);
-  expect((await c.run("tdd", "red", id, "AC-1", "--", "sh", "-c", "exit 1")).code).toBe(0);
+  expect((await c.run("tdd", "red", id, "AC-1", "--", "sh", "-c", RED)).code).toBe(0);
   expect(loadEvidence(paths, id).evidence.tdd.find((t) => t.criterion === "AC-1")?.red?.exit).toBe(
     1,
   );
-  expect((await c.run("tdd", "green", id, "AC-1", "--", "sh -c 'exit 0'")).code).toBe(0);
+  expect((await c.run("tdd", "green", id, "AC-1", "--", `sh -c '${GREEN}'`)).code).toBe(0);
 });
 
 test("SP8-T1 AC-2 (finding 94): a Jev dispute of the validator's rule is held on the item: a second validator approval is refused naming it, a conclave edit and crew continue leave it set, crew resume --mode is refused, a person's crew resume clears it and the rule can be asked again, and a person's crew approve clears it as it proceeds", async () => {
@@ -5759,8 +5781,8 @@ test("SP8-T1 AC-7 (finding 87): crew profile unset removes a gate from a target,
   const id = (await c.json("start", "Unset gates", "--answers", answers, "--criterion", "a")).data
     .id as string;
   write(root, "src/a.ts", "y");
-  await c.run("tdd", "red", id, "AC-1", "--", "exit 1");
-  await c.run("tdd", "green", id, "AC-1", "--", "exit 0");
+  await c.run("tdd", "red", id, "AC-1", "--", RED);
+  await c.run("tdd", "green", id, "AC-1", "--", GREEN);
   const run = await c.json("gate", "run", id);
   const planned = (run.data.runs as { gate: string; target: string }[]).map(
     (r) => `${r.gate} ${r.target}`,
@@ -10387,8 +10409,8 @@ async function seatItem() {
   work.phase = "build";
   saveWork(repoPaths(root, env), work);
   write(root, "src/a.ts", "x = 1");
-  expect((await c.run("tdd", "red", id, "AC-1", "--", "exit 1")).code).toBe(0);
-  expect((await c.run("tdd", "green", id, "AC-1", "--", "exit 0")).code).toBe(0);
+  expect((await c.run("tdd", "red", id, "AC-1", "--", RED)).code).toBe(0);
+  expect((await c.run("tdd", "green", id, "AC-1", "--", GREEN)).code).toBe(0);
   await c.run("skip", id, "gate:e2e", "--reason", "no environment in the fixture");
   const workFile = join(root, ".crew", "work", id, "work.json");
   return { root, env, c, id, workFile };
@@ -10854,4 +10876,11 @@ test("AC-8 (finding 122): the register entry is written before the policy file: 
     texts.indexOf("mail.maxHops: 2 → 1, lowered by the validator"),
   );
   expect(loadPolicy(paths).policy.mail.maxHops).toBe(2);
+});
+
+test("AC-22 (finding 156): crew help's cto review line says to open the review item first, with --observed", async () => {
+  const root = makeRepo({ "package.json": JSON.stringify({ scripts: { test: "exit 0" } }) });
+  const out = (await io(root).run("help")).out;
+  const line = out.split("\n").find((l) => l.trim().startsWith("cto review --workspace"));
+  expect(line).toContain('open the review item first, with --observed "<the plan filed>"');
 });

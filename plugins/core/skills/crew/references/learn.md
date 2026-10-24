@@ -24,3 +24,7 @@ When `mail.workspace` is set, each other registered project of the workspace get
 ## 3. Then
 
 Say what entered the base, by id and kind. The item is at its last phase.
+
+## 4. The CTO review
+
+A workspace's review is a chore item of its own, and its criterion is a plan, not code: open it with `crew start "<request>" --answers '<json>' --observed "<the plan filed>"` before anything else. A behaviour criterion cannot be superseded by an observed one, so an item opened without `--observed` cannot be proven and is abandoned for a new one. Then `crew cto review --workspace <ws>` writes the inputs and prints the launch line; launch `wizardingcode-developer-crew:cto` with the inputs path and the reports it names, nothing else; file its plan with `crew cto record --workspace <ws> --file <plan.md>`; record the criterion with `crew tdd observed <id> AC-1 --reason "a plan, not code" -- "<a command that reads the filed plan>"` and run `crew gate run <id>`. The figures the plan quotes are the ones `crew cto review` printed; the review item itself is counted among them.

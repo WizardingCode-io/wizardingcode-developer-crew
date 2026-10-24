@@ -7,7 +7,7 @@
     "laravel": "13.x",
     "pest": "4.x",
     "pint": "1.32.1",
-    "larastan": "3.13.0"
+    "larastan": "3.13.2"
   },
   "detectors": [
     {

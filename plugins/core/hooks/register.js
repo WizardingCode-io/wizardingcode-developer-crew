@@ -47,6 +47,12 @@ const CREW_AGENT = 'wizardingcode-developer-crew:'
 // The store's key: { <alias>: { since, probeAt } }, the models at their limits
 const LIMITS = 'model-limits'
 const PROBE_EVERY_MS = 15 * 60_000
+// How long one probe may take before the model counts as at its limit (finding 158)
+const PROBE_TIMEOUT_MS = 20_000
+// A model with no mark is probed before a crew spawn runs on it (finding 154), unless it answered a
+// probe within FRESH_MS; the store's key: { <alias>: when it last answered }
+const ANSWERED = 'model-answered'
+const FRESH_MS = 5 * 60_000
 // The alias each crew spawn ran on, by its agentId, for the turn that ends it; dropped once its
 // error is read, and the oldest dropped past SPAWNED_MAX so a long session does not grow it
 const spawned = new Map()
@@ -434,10 +440,12 @@ function roleOf(type) {
   return Object.hasOwn(ROLE_MODELS, role) ? role : null
 }
 
-// One request of one token: `answered`, `limited` (the usage limit), or `other`
+// One request of one token, bounded by PROBE_TIMEOUT_MS: `answered`, `limited` (the usage limit, or
+// no answer in time: a model held at its limit can keep the call waiting, finding 158), or `other`
 async function probe($, model) {
-  const r = await $.model.complete({ model, prompt: 'ok', maxTokens: 1 })
+  const r = await $.model.complete({ model, prompt: 'ok', maxTokens: 1, timeoutMs: PROBE_TIMEOUT_MS })
   if (r.isAnswered) return 'answered'
+  if (r.reason === 'aborted') return 'limited'
   if (r.reason === 'api-error' && (r.error === 'rate_limit' || r.status === 429)) return 'limited'
   return 'other'
 }
@@ -449,18 +457,37 @@ async function ladderModel($, e) {
   const start = aliasOf(e.model ?? ROLE_MODELS[role])
   if (!start) return undefined
   const limits = await readLimits($)
+  const answeredAt = (await $.store.get(ANSWERED)) || {}
   const now = await $.clock.now()
   let pick
   let changed = false
+  let heard = false
+  const answered = (model) => {
+    answeredAt[model] = now
+    heard = true
+  }
   for (const model of LADDER.slice(LADDER.indexOf(start))) {
     const mark = limits[model]
     if (!mark) {
+      // Nobody has marked it: probed first, so a role never dies on a limit nobody knew of
+      if (now - (answeredAt[model] ?? -Infinity) < FRESH_MS) {
+        pick = model
+        break
+      }
+      const seen = await probe($, model)
+      if (seen === 'limited') {
+        limits[model] = marked(now, now)
+        changed = true
+        continue
+      }
+      if (seen === 'answered') answered(model)
       pick = model
       break
     }
     if (now < mark.probeAt) continue
     if ((await probe($, model)) === 'answered') {
       delete limits[model]
+      answered(model)
       changed = true
       pick = model
       break
@@ -469,12 +496,11 @@ async function ladderModel($, e) {
     limits[model] = marked(now, mark.since)
     changed = true
   }
-  if (changed) {
-    try {
-      await $.store.set(LIMITS, limits)
-    } catch {
-      /* the pick stands though the mark could not be kept */
-    }
+  try {
+    if (changed) await $.store.set(LIMITS, limits)
+    if (heard) await $.store.set(ANSWERED, answeredAt)
+  } catch {
+    /* the pick stands though the mark could not be kept */
   }
   return pick && pick !== start ? pick : undefined
 }

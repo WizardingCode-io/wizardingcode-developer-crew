@@ -525,11 +525,11 @@ test("H118 AC-3 (SP6-T5 AC-13 rewritten): without --from the script gives the ki
     PATH: path,
     WIZARDINGCODE_CREW_EVAL_RESULTS: OWN_REL,
     TZ: "Pacific/Kiritimati",
-    STUB_AGGREGATE: aggregatePath,
-    STUB_EXIT: "1",
-    STUB_LOG: log,
-    STUB_DECOY: decoy,
-    STUB_DECOY_AGGREGATE: decoyAggregate,
+    WIZARDINGCODE_STUB_AGGREGATE: aggregatePath,
+    WIZARDINGCODE_STUB_EXIT: "1",
+    WIZARDINGCODE_STUB_LOG: log,
+    WIZARDINGCODE_STUB_DECOY: decoy,
+    WIZARDINGCODE_STUB_DECOY_AGGREGATE: decoyAggregate,
   };
   expect(firstClaudeOn(composedPath(path))).toBe(bin);
   inOwnResults((before) => {
@@ -575,7 +575,12 @@ test("H118 AC-3 (SP6-T5 AC-13 rewritten): without --from the script gives the ki
     const gone = spawnSync("bun", ["scripts/benchmark.ts", "--out", join(dir, "out2")], {
       cwd: ROOT,
       encoding: "utf8",
-      env: { ...env, STUB_AGGREGATE: join(dir, "missing.json"), STUB_EXIT: "3", STUB_DECOY: "" },
+      env: {
+        ...env,
+        WIZARDINGCODE_STUB_AGGREGATE: join(dir, "missing.json"),
+        WIZARDINGCODE_STUB_EXIT: "3",
+        WIZARDINGCODE_STUB_DECOY: "",
+      },
     });
     expect(gone.status).toBe(1);
     const second = foldersSince(OWN, [...before, folder, basename(decoy)]);
@@ -607,8 +612,8 @@ test("SP6-T5 AC-14: a run the runner flags needs-rerun writes no record: the lin
         ...process.env,
         PATH: path,
         WIZARDINGCODE_CREW_EVAL_RESULTS: OWN_REL,
-        STUB_AGGREGATE: aggregatePath,
-        STUB_EXIT: "0",
+        WIZARDINGCODE_STUB_AGGREGATE: aggregatePath,
+        WIZARDINGCODE_STUB_EXIT: "0",
       },
     });
     expect(run.status).toBe(1);
@@ -724,11 +729,11 @@ test("H118 AC-8 (SP6-T5 AC-21 rewritten): a run whose own folder holds no aggreg
           ...process.env,
           PATH: path,
           WIZARDINGCODE_CREW_EVAL_RESULTS: OWN_REL,
-          STUB_AGGREGATE: join(dir, "missing.json"),
-          STUB_EXIT: "0",
-          STUB_LOG: log,
-          STUB_DECOY: newer,
-          STUB_DECOY_AGGREGATE: newerAggregate,
+          WIZARDINGCODE_STUB_AGGREGATE: join(dir, "missing.json"),
+          WIZARDINGCODE_STUB_EXIT: "0",
+          WIZARDINGCODE_STUB_LOG: log,
+          WIZARDINGCODE_STUB_DECOY: newer,
+          WIZARDINGCODE_STUB_DECOY_AGGREGATE: newerAggregate,
         },
       },
     );
@@ -755,8 +760,8 @@ test("H118 AC-8 (SP6-T5 AC-21 rewritten): a run whose own folder holds no aggreg
           PATH: path,
           WIZARDINGCODE_CREW_EVAL_RESULTS: OWN_REL,
           TZ: "Pacific/Kiritimati",
-          STUB_AGGREGATE: ownAggregate,
-          STUB_EXIT: "0",
+          WIZARDINGCODE_STUB_AGGREGATE: ownAggregate,
+          WIZARDINGCODE_STUB_EXIT: "0",
         },
       },
     );
