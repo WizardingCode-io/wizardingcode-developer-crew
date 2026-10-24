@@ -1191,6 +1191,46 @@ function knowledgePath(userDir) {
 // packages/engine/src/policy.ts
 import { join as join6 } from "node:path";
 
+// packages/engine/src/paths-kind.ts
+var INTERFACE_EXTENSIONS = [
+  ".vue",
+  ".svelte",
+  ".tsx",
+  ".jsx",
+  ".astro",
+  ".blade.php",
+  ".html",
+  ".css",
+  ".scss",
+  ".less"
+];
+function isInterfacePath(rel2) {
+  const lower = rel2.toLowerCase();
+  if (inTestsFolder(lower))
+    return false;
+  const name = lower.slice(lower.lastIndexOf("/") + 1);
+  if (isTestName(name) || /\.stories\./.test(name))
+    return false;
+  if (/(?:^|\/)resources\/views\//.test(lower))
+    return true;
+  return INTERFACE_EXTENSIONS.some((ext) => lower.endsWith(ext));
+}
+function isTestPath(rel2) {
+  const path = rel2.replace(/\\/g, "/");
+  if (/^(?:(?:packages|apps)\/[^/]+\/)?(?:tests?|spec)\//.test(path))
+    return true;
+  if (/^src\/test\//.test(path) || inTestsFolder(path))
+    return true;
+  const name = path.slice(path.lastIndexOf("/") + 1);
+  return isTestName(name) || /_test\.[^.]+$/.test(name) || /(?:Test\.php|Tests\.cs)$/.test(name);
+}
+function inTestsFolder(path) {
+  return /(?:^|\/)__tests__\//.test(path);
+}
+function isTestName(name) {
+  return /\.(?:test|spec)\./.test(name);
+}
+
 // packages/engine/src/classify.ts
 var WORK_TYPES = {
   audit: "an end-to-end audit of an existing codebase, delivered as a report a person signs (SP8)",
@@ -1384,11 +1424,75 @@ var DEFAULT_RISK_PATHS = {
   ],
   secrets: [".env*", "**/.env*", "**/secrets*", "**/*.pem", "**/*.key", "**/credentials*"]
 };
+var PERSONAL_DATA_TERMS = [
+  ["email", [["email"], ["e", "mail"]]],
+  ["password", [["password"], ["passwd"]]],
+  ["phone", [["phone"], ["telephone"], ["mobile", "number"], ["mobile", "phone"]]],
+  ["birth date", [["date", "of", "birth"], ["birth", "date"], ["birthday"], ["dob"]]],
+  ["iban", [["iban"], ["bic"], ["swift", "code"]]],
+  ["card", [["card", "number"], ["credit", "card"], ["cvv"], ["cvc"]]],
+  ["national id", [["national", "id"]]],
+  ["tax id", [["tax", "id"]]],
+  ["passport", [["passport"]]],
+  ["ssn", [["ssn"], ["social", "security"]]]
+];
+function wordsOf(line) {
+  return line.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2").toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+}
+function holds(words, sequence) {
+  for (let i = 0;i + sequence.length <= words.length; i++)
+    if (sequence.every((w, n) => words[i + n] === w))
+      return true;
+  return false;
+}
+function headerFile(rest) {
+  let path = rest.trim();
+  if (path === "/dev/null")
+    return null;
+  if (path.startsWith('"') && path.endsWith('"'))
+    path = path.slice(1, -1);
+  return path.startsWith("b/") ? path.slice(2) : path;
+}
+function personalDataTerms(patch) {
+  const hits = [];
+  let file = null;
+  let inHunk = false;
+  for (const line of patch.split(`
+`)) {
+    if (line.startsWith("diff --git ")) {
+      file = null;
+      inHunk = false;
+      continue;
+    }
+    if (line.startsWith("@@")) {
+      inHunk = true;
+      continue;
+    }
+    if (!inHunk && line.startsWith("+++ ")) {
+      file = headerFile(line.slice(4));
+      continue;
+    }
+    if (!inHunk || !file || !line.startsWith("+"))
+      continue;
+    const words = wordsOf(line.slice(1));
+    for (const [term, spellings] of PERSONAL_DATA_TERMS) {
+      if (hits.some((h) => h.term === term && h.file === file))
+        continue;
+      if (spellings.some((s) => holds(words, s)))
+        hits.push({ term, file });
+    }
+  }
+  return hits;
+}
 function riskPatterns(area, policy) {
   return [...DEFAULT_RISK_PATHS[area], ...policy.riskPaths[area] ?? []];
 }
 function isExcluded(path, policy) {
   return matchesAny(path, policy.riskPathExclusions);
+}
+function personalDataRisk(hits, policy) {
+  const unread = hits.filter((h) => isTestPath(h.file) || isExcluded(h.file, policy));
+  return { read: hits.filter((h) => !unread.includes(h)), unread };
 }
 function riskAreasForPaths(paths, policy) {
   const kept = paths.filter((path) => !isExcluded(path, policy));
@@ -1432,31 +1536,6 @@ function computeRoute(answers, pathRisk, policy) {
     reasons.push(`team policy minimum: ${policy.minimumRoute}`);
   }
   return { route, reasons, riskAreas };
-}
-
-// packages/engine/src/paths-kind.ts
-var INTERFACE_EXTENSIONS = [
-  ".vue",
-  ".svelte",
-  ".tsx",
-  ".jsx",
-  ".astro",
-  ".blade.php",
-  ".html",
-  ".css",
-  ".scss",
-  ".less"
-];
-function isInterfacePath(rel2) {
-  const lower = rel2.toLowerCase();
-  if (/(?:^|\/)__tests__\//.test(lower))
-    return false;
-  const name = lower.slice(lower.lastIndexOf("/") + 1);
-  if (/\.(?:test|spec|stories)\./.test(name))
-    return false;
-  if (/(?:^|\/)resources\/views\//.test(lower))
-    return true;
-  return INTERFACE_EXTENSIONS.some((ext) => lower.endsWith(ext));
 }
 
 // packages/engine/src/team.ts
@@ -8344,8 +8423,8 @@ function packNamed(packs, name) {
 }
 function knowledgeFilesFor(userDir, profile, changed, policy) {
   const packs = okPacks(userDir);
-  const holds = (targetPath, file) => targetPath === "." || file.startsWith(`${targetPath}/`);
-  const targets = changed.length ? profile.targets.filter((t) => changed.some((f) => holds(t.path, f))) : profile.targets;
+  const holds2 = (targetPath, file) => targetPath === "." || file.startsWith(`${targetPath}/`);
+  const targets = changed.length ? profile.targets.filter((t) => changed.some((f) => holds2(t.path, f))) : profile.targets;
   const keys = [...new Set(targets.flatMap((t) => [t.stack, ...t.tags ?? []]))];
   const paths = [];
   const labels = [];
@@ -10217,6 +10296,35 @@ function reviewPaths(all, watched) {
   const reviewed = all.filter((p) => !p.toLowerCase().startsWith(".crew/"));
   return reviewed.length ? reviewed : [...watched];
 }
+var hitText = (h) => `${h.term} (${h.file})`;
+function allHits(hits) {
+  return hits.map(hitText).join(", ");
+}
+function firstHit(first, others) {
+  return `${hitText(first)}${others ? ` and ${others} more` : ""}`;
+}
+function notePersonalData(root, work, changed, policy) {
+  const cut2 = reviewPatch(root, work.baseCommit, changed);
+  if (cut2.note)
+    noteOnce(work, `the change's lines were not read for personal data: ${cut2.note}`);
+  const { read, unread } = personalDataRisk(personalDataTerms(cut2.patch), policy);
+  if (unread.length)
+    noteOnce(work, `personal data in lines not read for risk (test or excluded): ${allHits(unread)}`);
+  return read;
+}
+function raiseForPersonalData(work, read) {
+  const first = read[0];
+  if (!first || work.riskAreas.includes("personal-data"))
+    return false;
+  work.riskAreas.push("personal-data");
+  const reason = `the change's lines name personal data: ${firstHit(first, read.length - 1)}`;
+  noteOnce(work, reason);
+  return raiseRoute(work, "standard", reason);
+}
+function noteOnce(work, reason) {
+  if (!work.routeReasons.includes(reason))
+    work.routeReasons.push(reason);
+}
 async function runGates(paths, work, profile, policy, options = {}) {
   const base = work;
   const changed = changedWatchedPaths(paths.root, profile, base);
@@ -10233,6 +10341,9 @@ async function runGates(paths, work, profile, policy, options = {}) {
     if (raiseRoute(work, "full", `the change touches ${pathRisk.join(", ")} paths`))
       raised = "full";
   }
+  const personal = notePersonalData(paths.root, work, changed, policy);
+  if (raiseForPersonalData(work, personal) && !raised)
+    raised = "standard";
   const planned = plannedGates(work.route, profile, policy, changed, paths.root);
   const read = loadEvidence(paths, work.id);
   const evidence = read.evidence;

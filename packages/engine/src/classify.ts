@@ -1,4 +1,5 @@
 import { matchesAny } from "./glob.ts";
+import { isTestPath } from "./paths-kind.ts";
 import type { MailPriority, Policy, RiskArea, Route, WorkKind, WorkType } from "./types.ts";
 import { ROUTE_ORDER } from "./types.ts";
 
@@ -240,12 +241,105 @@ export const DEFAULT_RISK_PATHS: Record<RiskArea, string[]> = {
   secrets: [".env*", "**/.env*", "**/secrets*", "**/*.pem", "**/*.key", "**/credentials*"],
 };
 
+/**
+ * The personal-data identifiers (finding 149), each as the word sequences that spell it once an
+ * identifier is split on its separators and camelCase edges: `userEmail` is `user email`,
+ * `iPhone` is `i phone`, so `email` and `phone` hit while `emailed` and `microphone` do not.
+ */
+const PERSONAL_DATA_TERMS: [string, string[][]][] = [
+  ["email", [["email"], ["e", "mail"]]],
+  ["password", [["password"], ["passwd"]]],
+  ["phone", [["phone"], ["telephone"], ["mobile", "number"], ["mobile", "phone"]]],
+  ["birth date", [["date", "of", "birth"], ["birth", "date"], ["birthday"], ["dob"]]],
+  ["iban", [["iban"], ["bic"], ["swift", "code"]]],
+  ["card", [["card", "number"], ["credit", "card"], ["cvv"], ["cvc"]]],
+  ["national id", [["national", "id"]]],
+  ["tax id", [["tax", "id"]]],
+  ["passport", [["passport"]]],
+  ["ssn", [["ssn"], ["social", "security"]]],
+];
+
+/** The words of a line: identifiers split on non-letters and on camelCase edges, lower-cased. */
+function wordsOf(line: string): string[] {
+  return line
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+}
+
+function holds(words: readonly string[], sequence: readonly string[]): boolean {
+  for (let i = 0; i + sequence.length <= words.length; i++)
+    if (sequence.every((w, n) => words[i + n] === w)) return true;
+  return false;
+}
+
+/** A personal-data identifier an added line names, and the file it is in (finding 149). */
+export type PersonalDataHit = { term: string; file: string };
+
+/** The file a `+++` header names, or null for `/dev/null`; a quoted path loses its quotes. */
+function headerFile(rest: string): string | null {
+  let path = rest.trim();
+  if (path === "/dev/null") return null;
+  if (path.startsWith('"') && path.endsWith('"')) path = path.slice(1, -1);
+  return path.startsWith("b/") ? path.slice(2) : path;
+}
+
+/**
+ * The personal-data identifiers the added lines of a unified diff name, once per term and file
+ * (finding 149): only `+` lines are read, never the `+++` header, a removed line or a context line;
+ * a note line (`# outside git, ...`) or an empty patch names none.
+ */
+export function personalDataTerms(patch: string): PersonalDataHit[] {
+  const hits: PersonalDataHit[] = [];
+  let file: string | null = null;
+  // A `+++` line is a header only between a `diff --git` line and its first `@@` hunk: inside a
+  // hunk it is an added line, so a change cannot name another file for its own lines (security
+  // review of finding 149).
+  let inHunk = false;
+  for (const line of patch.split("\n")) {
+    if (line.startsWith("diff --git ")) {
+      file = null;
+      inHunk = false;
+      continue;
+    }
+    if (line.startsWith("@@")) {
+      inHunk = true;
+      continue;
+    }
+    if (!inHunk && line.startsWith("+++ ")) {
+      file = headerFile(line.slice(4));
+      continue;
+    }
+    if (!inHunk || !file || !line.startsWith("+")) continue;
+    const words = wordsOf(line.slice(1));
+    for (const [term, spellings] of PERSONAL_DATA_TERMS) {
+      if (hits.some((h) => h.term === term && h.file === file)) continue;
+      if (spellings.some((s) => holds(words, s))) hits.push({ term, file });
+    }
+  }
+  return hits;
+}
+
 function riskPatterns(area: RiskArea, policy: Policy): string[] {
   return [...DEFAULT_RISK_PATHS[area], ...(policy.riskPaths[area] ?? [])];
 }
 
 function isExcluded(path: string, policy: Policy): boolean {
   return matchesAny(path, policy.riskPathExclusions);
+}
+
+/**
+ * The personal-data hits of a change's lines split by whether they may raise the risk (finding 149):
+ * a test file's or an excluded path's are kept apart, to be named, never to raise.
+ */
+export function personalDataRisk(
+  hits: readonly PersonalDataHit[],
+  policy: Policy,
+): { read: PersonalDataHit[]; unread: PersonalDataHit[] } {
+  const unread = hits.filter((h) => isTestPath(h.file) || isExcluded(h.file, policy));
+  return { read: hits.filter((h) => !unread.includes(h)), unread };
 }
 
 /** The risk areas the changed paths touch, less the paths the team policy excludes (ADR 0003). */

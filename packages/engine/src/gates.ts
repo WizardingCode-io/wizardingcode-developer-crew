@@ -2,7 +2,13 @@ import { accessSync, constants, mkdirSync, rmSync } from "node:fs";
 import { basename, delimiter, join } from "node:path";
 import { type AuditToolName, parseAudit } from "./audit.ts";
 import { auditState } from "./audit-state.ts";
-import { excludedRiskPaths, riskAreasForPaths } from "./classify.ts";
+import {
+  excludedRiskPaths,
+  type PersonalDataHit as Hit,
+  personalDataRisk,
+  personalDataTerms,
+  riskAreasForPaths,
+} from "./classify.ts";
 import { proposedByPack } from "./detect/index.ts";
 import { runE2e } from "./e2e.ts";
 import { computeVerdict, loadEvidence, type PlannedGate, updateEvidence } from "./evidence.ts";
@@ -14,6 +20,7 @@ import {
   gitHead,
   gitShowFile,
   MAX_WATCHED_FILES,
+  reviewPatch,
 } from "./fingerprint.ts";
 import { exists, nowIso, readTextQuietly, writeText } from "./fs.ts";
 import { plannedJudgementGates, plannedTaskJudgement, writeReviewInputs } from "./judgement.ts";
@@ -627,6 +634,57 @@ export function reviewPaths(all: readonly string[], watched: readonly string[]):
   return reviewed.length ? reviewed : [...watched];
 }
 
+const hitText = (h: Hit) => `${h.term} (${h.file})`;
+
+/** Every hit, named: `email (tests/a.test.ts), password (src/legacy/a.ts)`. */
+function allHits(hits: readonly Hit[]): string {
+  return hits.map(hitText).join(", ");
+}
+
+/** The first hit named and the others counted: `email (src/a.ts) and 2 more`. */
+function firstHit(first: Hit, others: number): string {
+  return `${hitText(first)}${others ? ` and ${others} more` : ""}`;
+}
+
+/**
+ * What a change's added lines say of personal data (finding 149), as reasons on the item, each
+ * written once and naming a term and a file, never a line: a patch that could not be cut, and the
+ * hits of a test file or an excluded path, which never raise. Returns the hits that may raise.
+ */
+function notePersonalData(
+  root: string,
+  work: WorkItem,
+  changed: readonly string[],
+  policy: Policy,
+): Hit[] {
+  const cut = reviewPatch(root, work.baseCommit, changed);
+  if (cut.note) noteOnce(work, `the change's lines were not read for personal data: ${cut.note}`);
+  const { read, unread } = personalDataRisk(personalDataTerms(cut.patch), policy);
+  if (unread.length)
+    noteOnce(
+      work,
+      `personal data in lines not read for risk (test or excluded): ${allHits(unread)}`,
+    );
+  return read;
+}
+
+/**
+ * The personal-data area and the security review whatever the agent answered (finding 149): a
+ * fast item is raised to standard, never to full (a path does that). True when the route rose.
+ */
+function raiseForPersonalData(work: WorkItem, read: readonly Hit[]): boolean {
+  const first = read[0];
+  if (!first || work.riskAreas.includes("personal-data")) return false;
+  work.riskAreas.push("personal-data");
+  const reason = `the change's lines name personal data: ${firstHit(first, read.length - 1)}`;
+  noteOnce(work, reason);
+  return raiseRoute(work, "standard", reason);
+}
+
+function noteOnce(work: WorkItem, reason: string): void {
+  if (!work.routeReasons.includes(reason)) work.routeReasons.push(reason);
+}
+
 export async function runGates(
   paths: CrewPaths,
   work: WorkItem,
@@ -653,6 +711,8 @@ export async function runGates(
     if (raiseRoute(work, "full", `the change touches ${pathRisk.join(", ")} paths`))
       raised = "full";
   }
+  const personal = notePersonalData(paths.root, work, changed, policy);
+  if (raiseForPersonalData(work, personal) && !raised) raised = "standard";
   const planned = plannedGates(work.route, profile, policy, changed, paths.root);
   const read = loadEvidence(paths, work.id);
   const evidence = read.evidence;

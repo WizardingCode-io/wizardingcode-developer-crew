@@ -31,6 +31,7 @@ import {
   runTaskGate,
   scopedTestCommand,
 } from "../src/gates.ts";
+import { plannedJudgementGates } from "../src/judgement.ts";
 import { isAlive } from "../src/open.ts";
 import { registerPack } from "../src/packs.ts";
 import { workDir } from "../src/paths.ts";
@@ -1691,4 +1692,115 @@ test("CON3-AC-1-case: the engine's folder as git names it in another case (.CREW
   const patch = readFileSync(join(review, "diff.patch"), "utf8");
   expect(patch).toContain("+++ b/src/a.ts");
   expect(patch.toLowerCase()).not.toContain(".crew/");
+});
+
+test("AC-7 (finding 149): a change whose added lines name personal data gets the area and the security review, never silently, never twice", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/accounts.mjs": "export const accounts = new Map();\n",
+    "src/legacy/old.mjs": "x\n",
+  });
+  const paths = repoPaths(root, testEnv());
+  const { profile } = ensureProfile(paths);
+  const policy = { ...DEFAULT_POLICY, riskPathExclusions: ["src/legacy/**"] };
+  const reasons = (w: { routeReasons: string[] }, start: string) =>
+    w.routeReasons.filter((r) => r.startsWith(start));
+  const NAMED = "the change's lines name personal data: ";
+  const UNREAD = "personal data in lines not read for risk (test or excluded): ";
+
+  // A standard item: the area, the reason, the security review; once over two runs
+  const standard = createWork(paths, "audit");
+  standard.route = "standard";
+  write(
+    root,
+    "src/accounts.mjs",
+    "export const accounts = new Map();\nexport const log = (a) => console.log(a.email, a.phoneNumber);\n",
+  );
+  await runGates(paths, standard, profile, policy, { only: ["test"] });
+  await runGates(paths, standard, profile, policy, { only: ["test"] });
+  expect(standard.route as string).toBe("standard");
+  expect(standard.riskAreas).toEqual(["personal-data"]);
+  expect(reasons(standard, NAMED)).toEqual([`${NAMED}email (src/accounts.mjs) and 1 more`]);
+  expect(
+    plannedJudgementGates(standard.route, standard.riskAreas, ["src/accounts.mjs"], policy).map(
+      (g) => g.gate,
+    ),
+  ).toContain("security");
+  // No reason holds the line's text
+  expect(standard.routeReasons.join("\n")).not.toContain("console.log");
+
+  // A fast item is raised to standard, its reason once over two runs
+  const fast = createWork(paths, "audit fast");
+  fast.route = "fast";
+  await runGates(paths, fast, profile, policy, { only: ["test"] });
+  await runGates(paths, fast, profile, policy, { only: ["test"] });
+  expect(fast.route as string).toBe("standard");
+  expect(reasons(fast, NAMED)).toHaveLength(1);
+  expect(reasons(fast, "raised to standard: ")).toHaveLength(1);
+
+  // An item whose answers already gave personal data gains nothing more
+  const answered = createWork(paths, "answered");
+  answered.route = "standard";
+  answered.riskAreas = ["personal-data"];
+  await runGates(paths, answered, profile, policy, { only: ["test"] });
+  expect(answered.riskAreas).toEqual(["personal-data"]);
+  expect(reasons(answered, NAMED)).toEqual([]);
+  git(root, "checkout", "--", "src/accounts.mjs");
+
+  // A test file's hit and an excluded path's hit raise nothing and are named once
+  const quiet = createWork(paths, "tests only");
+  quiet.route = "fast";
+  write(root, "tests/accounts.test.mjs", "const fixture = { email: 'a@example.invalid' };\n");
+  write(root, "src/legacy/old.mjs", "x\nexport const password = 1;\n");
+  await runGates(paths, quiet, profile, policy, { only: ["test"] });
+  await runGates(paths, quiet, profile, policy, { only: ["test"] });
+  expect(quiet.route as string).toBe("fast");
+  expect(quiet.riskAreas).toEqual([]);
+  expect(reasons(quiet, UNREAD)).toEqual([
+    // In the patch's order: the tracked files' diff, then the new files' additions
+    `${UNREAD}password (src/legacy/old.mjs), email (tests/accounts.test.mjs)`,
+  ]);
+
+  // A real hit beside a test file's: the area rises and the unread hit is named too
+  const mixed = createWork(paths, "mixed");
+  mixed.route = "standard";
+  write(
+    root,
+    "src/accounts.mjs",
+    "export const accounts = new Map();\nexport const log = (a) => console.log(a.email);\n",
+  );
+  await runGates(paths, mixed, profile, policy, { only: ["test"] });
+  expect(mixed.riskAreas).toEqual(["personal-data"]);
+  expect(reasons(mixed, NAMED)).toEqual([`${NAMED}email (src/accounts.mjs)`]);
+  expect(reasons(mixed, UNREAD)).toHaveLength(1);
+  // An item whose answers gave personal data still names the unread hits
+  const answeredUnread = createWork(paths, "answered, tests too");
+  answeredUnread.route = "standard";
+  answeredUnread.riskAreas = ["personal-data"];
+  await runGates(paths, answeredUnread, profile, policy, { only: ["test"] });
+  expect(reasons(answeredUnread, NAMED)).toEqual([]);
+  expect(reasons(answeredUnread, UNREAD)).toHaveLength(1);
+  git(root, "checkout", "--", "src/accounts.mjs");
+
+  // A change with no term keeps its route and its gates
+  rmSync(join(root, "tests"), { recursive: true });
+  git(root, "checkout", "--", "src/legacy/old.mjs");
+  const plain = createWork(paths, "plain");
+  plain.route = "fast";
+  write(root, "src/accounts.mjs", "export const accounts = new Map();\nexport const total = 1;\n");
+  await runGates(paths, plain, profile, policy, { only: ["test"] });
+  expect(plain.route as string).toBe("fast");
+  expect(plain.riskAreas).toEqual([]);
+  expect(plain.routeReasons.filter((r) => r.includes("personal data"))).toEqual([]);
+
+  // A patch that could not be cut: said once, never read as a hit
+  const unbased = createWork(paths, "no base");
+  unbased.route = "standard";
+  unbased.baseCommit = null;
+  await runGates(paths, unbased, profile, policy, { only: ["test"] });
+  await runGates(paths, unbased, profile, policy, { only: ["test"] });
+  expect(unbased.riskAreas).toEqual([]);
+  expect(reasons(unbased, "the change's lines were not read for personal data: ")).toEqual([
+    "the change's lines were not read for personal data: no base commit: 1 tracked file not shown, untracked ones as additions",
+  ]);
 });

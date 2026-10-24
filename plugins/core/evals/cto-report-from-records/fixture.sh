@@ -1,5 +1,5 @@
 #!/bin/sh
-# evals/cto-report-from-records/fixture.sh: the two-project workspace w of two-projects.sh with records: in a one chore proven and learned (K-1 its solution, K-2 the stack preference of w), in b two chores proven and learned (K-3 the first's solution; the second cites [K:K-1] in its spec, so its learn confirms K-1), and K-3 contradicted from a. The session runs the CTO's review of w: the inputs from the records and the base, the plan filed and entered (SP7 §6.5, SP4). The chores stay away from the router's risk paths (checkout, session), so the fast route proves them.
+# evals/cto-report-from-records/fixture.sh: the two-project workspace w of two-projects.sh with records: in a one chore proven and learned (K-1 its solution, K-2 the stack preference of w), in b two chores proven and learned (K-3 the first's solution; the second cites [K:K-1] in its spec, so its learn confirms K-1), and K-3 contradicted from a. The session runs the CTO's review of w: the inputs from the records and the base, the plan filed and entered (SP7 §6.5, SP4). The chores stay away from the router's risk paths (checkout, session), and b's policy excludes its customers module from the risk planning (finding 149: its lines name email and phone), so the fast route proves them.
 set -eu
 . "$(dirname "$0")/../fixtures/two-projects.sh"
 ANSWERS='{"work_type":"chore","is_vague":0,"scope":0,"touches_auth":0,"touches_payments":0,"touches_personal_data":0,"touches_data_migration":0,"touches_infra":0,"touches_public_api":0}'
@@ -34,6 +34,10 @@ fixture_commit "greeting: the banner greets by name, proven and learned"
 (
   cd peer/b
   mkdir -p tests
+  # The customers module handles email and phone by design; the team's policy excludes it from the
+  # risk planning (finding 149), so the chores stay on the fast route and the engine names the
+  # lines it did not read for risk.
+  node -e 'const fs=require("fs");const p=".crew/policy.json";const j=JSON.parse(fs.readFileSync(p,"utf8"));j.riskPathExclusions=["src/customers.mjs"];fs.writeFileSync(p,JSON.stringify(j)+"\n");'
   # b, first chore: a lookup by email, proven and learned (K-3).
   ID=$(crew start "Add a lookup of a customer by email" --answers "$ANSWERS" --criterion "findCustomer(email) returns the created customer" --json | read_id)
   cat > tests/find.test.mjs <<'EOF'

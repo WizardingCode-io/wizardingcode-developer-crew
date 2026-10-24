@@ -6,9 +6,11 @@ import {
   excludedRiskPaths,
   kindOf,
   PRIORITY_LEVELS,
+  personalDataTerms,
   riskAreasForPaths,
   validateAnswers,
 } from "../src/classify.ts";
+import { isTestPath } from "../src/paths-kind.ts";
 import { DEFAULT_POLICY } from "../src/policy.ts";
 
 const calm: Answers = {
@@ -162,4 +164,141 @@ test("SP8-T2 AC-1: audit is a work type and a kind derived from it alone; an ans
   expect(validateAnswers({ ...calm, work_type: "audit", kind: "audit" })).toMatchObject({
     kind: "audit",
   });
+});
+
+// A unified diff of one file whose added lines are `added`, with a removed line and a context line
+function patchOf(file: string, added: string[], header = `+++ b/${file}`): string {
+  return [
+    `diff --git a/${file} b/${file}`,
+    `--- a/${file}`,
+    header,
+    "@@ -1,2 +1,3 @@",
+    " const kept = email;",
+    "-const gone = password;",
+    ...added.map((l) => `+${l}`),
+    "",
+  ].join("\n");
+}
+const termsOf = (patch: string) => personalDataTerms(patch).map((h) => h.term);
+
+test("AC-5 (finding 149): the personal-data identifiers an added line names, with their files", () => {
+  const hits: [string, string][] = [
+    ["log(user.email)", "email"],
+    ["const e_mail = x", "email"],
+    ["data['e-mail']", "email"],
+    ["account.userEmail = x", "email"],
+    ["const passwd = x", "password"],
+    ["user.passwordHash = h", "password"],
+    ["PASSWORD: x", "password"],
+    ["const phoneNumber = x", "phone"],
+    ["phone_number: x", "phone"],
+    ["telephone = x", "phone"],
+    ["mobileNumber = x", "phone"],
+    ["mobile_phone = x", "phone"],
+    ["const iPhone = x", "phone"],
+    ["dateOfBirth: x", "birth date"],
+    ["birth_date = x", "birth date"],
+    ["birthday: x", "birth date"],
+    ["const dob = x", "birth date"],
+    ["iban: x", "iban"],
+    ["bic = x", "iban"],
+    ["swiftCode = x", "iban"],
+    ["swift_code = x", "iban"],
+    ["cardNumber = x", "card"],
+    ["credit_card = x", "card"],
+    ["cvv = x", "card"],
+    ["CVC: x", "card"],
+    ["nationalId = x", "national id"],
+    ["national_id = x", "national id"],
+    ["taxId = x", "tax id"],
+    ["tax-id: x", "tax id"],
+    ["passport = x", "passport"],
+    ["ssn = x", "ssn"],
+    ["socialSecurity = x", "ssn"],
+  ];
+  for (const [line, term] of hits) expect(termsOf(patchOf("src/a.ts", [line]))).toEqual([term]);
+  const misses = [
+    "was emailed",
+    "microphone.on()",
+    "address = x",
+    "name = x",
+    "id = 1",
+    "import SwiftUI",
+    "let swift = 5",
+    "bicycle = x",
+    "passports_of_ships_count",
+  ];
+  for (const line of misses) expect(termsOf(patchOf("src/a.ts", [line]))).toEqual([]);
+  // Removed and context lines and the +++ header are never read: the patch above holds both terms there
+  expect(personalDataTerms(patchOf("src/email/password.ts", ["const total = 1"]))).toEqual([]);
+  // Once per term and file, the files kept apart
+  const two =
+    patchOf("src/a.ts", ["a.email", "b.email", "c.phone"]) + patchOf("src/b.ts", ["d.email"]);
+  expect(personalDataTerms(two)).toEqual([
+    { term: "email", file: "src/a.ts" },
+    { term: "phone", file: "src/a.ts" },
+    { term: "email", file: "src/b.ts" },
+  ]);
+  // A new file's addition patch, and a quoted header
+  const added =
+    "diff --git a/src/n.ts b/src/n.ts\nnew file mode 100644\n--- /dev/null\n+++ b/src/n.ts\n@@ -0,0 +1 @@\n+x.email\n";
+  expect(personalDataTerms(added)).toEqual([{ term: "email", file: "src/n.ts" }]);
+  expect(
+    personalDataTerms(patchOf("src/my file.ts", ["x.email"], '+++ "b/src/my file.ts"')),
+  ).toEqual([{ term: "email", file: "src/my file.ts" }]);
+  // An added line that reads `++ b/tests/x` is a line, not a header: its file stays the real one
+  expect(personalDataTerms(patchOf("src/a.ts", ["++ b/tests/x.test.ts", "user.email"]))).toEqual([
+    { term: "email", file: "src/a.ts" },
+  ]);
+  // A removed `-- x` line (`--- x` in the patch) before it does not make it a header either
+  const forged = [
+    "diff --git a/src/a.ts b/src/a.ts",
+    "--- a/src/a.ts",
+    "+++ b/src/a.ts",
+    "@@ -1,1 +1,2 @@",
+    "--- x",
+    "+++ b/tests/x.test.ts",
+    "+user.email",
+    "",
+  ].join("\n");
+  expect(personalDataTerms(forged)).toEqual([{ term: "email", file: "src/a.ts" }]);
+  // A file section with no +++ header (a binary file) ends the previous file: its lines are no hit
+  const binary = `${patchOf("src/a.ts", ["const total = 1"])}diff --git a/logo.png b/logo.png\nBinary files differ\n+user.email\n`;
+  expect(personalDataTerms(binary)).toEqual([]);
+  // A note line and an empty patch: no hit, no throw
+  expect(personalDataTerms("# outside git, no diff can be cut\n")).toEqual([]);
+  expect(
+    personalDataTerms("# no base commit: 2 tracked files not shown, untracked ones as additions\n"),
+  ).toEqual([]);
+  expect(personalDataTerms("")).toEqual([]);
+});
+
+test("AC-6 (finding 149): a test file is told by its path alone, narrowly", () => {
+  for (const path of [
+    "tests/a.test.ts",
+    "tests/accounts.mjs",
+    "test/helper.js",
+    "spec/models/user_spec.rb",
+    "packages/engine/tests/gates.test.ts",
+    "apps/web/test/a.ts",
+    "src/test/java/AccountTest.java",
+    "src/components/__tests__/Button.tsx",
+    "src/a.test.ts",
+    "src/a.spec.js",
+    "pkg/a_test.go",
+    "app/Models/UserTest.php",
+    "Accounts/AccountTests.cs",
+  ])
+    expect(isTestPath(path)).toBe(true);
+  for (const path of [
+    "src/spec/a.ts",
+    "app/test/a.php",
+    "src/latest/a.ts",
+    "src/contest.ts",
+    "src/attest.php",
+    "protest/a.ts",
+    "src/accounts.mjs",
+    "packages/engine/src/gates.ts",
+  ])
+    expect(isTestPath(path)).toBe(false);
 });
