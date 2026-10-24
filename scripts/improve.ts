@@ -23,6 +23,7 @@ import {
   lessonsForCto,
   readBase,
 } from "../packages/engine/src/knowledge.ts";
+import { loadRegistry } from "../packages/engine/src/mail.ts";
 import { canonical, userDirOf } from "../packages/engine/src/paths.ts";
 import { scanText } from "../packages/engine/src/secrets.ts";
 import {
@@ -588,7 +589,7 @@ export async function runImprove(options: ImproveOptions, deps: ImproveDeps): Pr
       return refuse(
         `the repository has uncommitted changes (${dirty.slice(0, 3).join(", ")}): commit or stash them first`,
       );
-    return await improve(startRun(targets, options, deps, env, git, must));
+    return await improve(startRun(options, deps, { env, git, must }));
   } catch (error) {
     if (error instanceof Stop) return error.exit;
     throw error;
@@ -615,13 +616,11 @@ interface Run {
 }
 
 function startRun(
-  targets: string[],
   options: ImproveOptions,
   deps: ImproveDeps,
-  env: NodeJS.ProcessEnv,
-  git: Git,
-  must: Run["must"],
+  tools: Pick<Run, "env" | "git" | "must">,
 ): Run {
+  const targets = [...new Set(options.cases)];
   const now = deps.now();
   const folder = createImproveFolder(deps.root, now.toISOString().slice(0, 10));
   const record: ImproveRecord = {
@@ -638,7 +637,7 @@ function startRun(
     exit: 0,
     unmeasured: [],
   };
-  return { deps, options, targets, env, git, must, folder, record, trees: [], staged: new Map() };
+  return { ...tools, deps, options, targets, folder, record, trees: [], staged: new Map() };
 }
 
 function writeRecord(r: Run): void {
@@ -686,7 +685,7 @@ function stagedEntries(r: Run, tree: string): DiffEntry[] {
 }
 
 /** The editor's answer as the record keeps it (AC-30): cut, and withheld whole when it holds a secret. */
-function rationaleOf(answer: string): string {
+export function rationaleOf(answer: string): string {
   const secret = scanText(answer, "rationale")[0];
   return secret
     ? `withheld: the editor's answer held a secret (${secret.rule})`
@@ -711,7 +710,7 @@ function propose(r: Run, id: string, prompt: string): void {
   const tree = addTree(r, id);
   const before = mainState(root, r.git);
   const dotGit = hashOf(join(tree, ".git"));
-  proposal.rationale = rationaleOf(runEditor(r.deps, tree, prompt, r.env, r.deps.log));
+  proposal.rationale = rationaleOf(runEditor(r, tree, prompt));
   const moved =
     hashOf(join(tree, ".git")) !== dotGit
       ? "the worktree's .git changed while the editor ran"
@@ -928,13 +927,8 @@ function readLines(path: string): string[] | null {
 }
 
 /** The editor down the ladder (finding 152): the next model when one answers at its usage limit; any other failure stops the run. */
-function runEditor(
-  deps: ImproveDeps,
-  cwd: string,
-  prompt: string,
-  env: NodeJS.ProcessEnv,
-  log: (line: string) => void,
-): string {
+function runEditor(r: Run, cwd: string, prompt: string): string {
+  const { log } = r.deps;
   for (const model of EDITOR_LADDER) {
     const args = [
       "-p",
@@ -953,7 +947,7 @@ function runEditor(
       "--output-format",
       "text",
     ];
-    const out = deps.editor({ cwd, args, env });
+    const out = r.deps.editor({ cwd, args, env: r.env });
     if (out.status === 0) return out.output.trim();
     if (!LIMITED.test(out.output)) {
       log(`the editor failed on ${model}: ${out.output.trim().slice(0, 200)}`);
@@ -963,6 +957,24 @@ function runEditor(
   }
   log("every model of the ladder is at its limit");
   throw new Stop(3);
+}
+
+/**
+ * The last CTO plan of this repository's workspace, for the editor (AC-34): none when the
+ * repository is in no workspace or the workspace registers any other project, whose text would
+ * otherwise reach the editor and, through its answer, a record in this public repository.
+ */
+export function ctoPlanFor(root: string, userDir: string): string | null {
+  const policy = readJson<{ mail?: { workspace?: unknown } }>(join(root, ".crew", "policy.json"));
+  const ws = policy?.mail?.workspace;
+  if (typeof ws !== "string") return null;
+  const self = canonical(root);
+  const others = loadRegistry(userDir).projects.filter(
+    (p) => p.workspace === ws && !p.worktreeOf && canonical(p.root) !== self,
+  );
+  if (others.length) return null;
+  const plan = latestPlan(userDir, ws);
+  return plan ? readText(plan.path) : null;
 }
 
 /** The deps of a real run: the kit and claude spawned, git, the crew command, the base and the last CTO plan. */
@@ -1018,14 +1030,7 @@ function realDeps(root: string): ImproveDeps {
         project: "",
         projectRoot: canonical(root),
       }).entries,
-    ctoPlan: () => {
-      const policy = readJson<{ mail?: { workspace?: unknown } }>(
-        join(root, ".crew", "policy.json"),
-      );
-      const ws = policy?.mail?.workspace;
-      const plan = typeof ws === "string" ? latestPlan(userDir, ws) : null;
-      return plan ? readText(plan.path) : null;
-    },
+    ctoPlan: () => ctoPlanFor(root, userDir),
   };
 }
 

@@ -469,14 +469,25 @@ test("2026-10-24-012 AC-7 (the run): two winners are composed in a worktree of t
   expect(record.proposals.map((p: { verdict: string }) => p.verdict)).toEqual(["win", "win"]);
   expect(record.composition).toMatchObject({ ids: ["P-1", "P-2"], applied: false, verdict: null });
   expect(record.kept).toEqual({ kind: "single", id: "P-1" });
-  // Disjoint winners compose: P-1 rewrites gate.md, P-2 adds a reference beside it.
+  // Disjoint winners compose: P-1 rewrites gate.md; P-2 adds a reference beside it and edits
+  // judge.md, which u read in an earlier run, so P-2 probes t and u and the composition the union.
   const disjoint = fixture();
+  mkdirSync(join(disjoint.root, "docs/improve/2026-10-23-1"), { recursive: true });
+  writeFileSync(
+    join(disjoint.root, "docs/improve/2026-10-23-1/record.json"),
+    JSON.stringify({ baseline: { u: { reads: [JUDGE] } } }),
+  );
+  sh(disjoint.root, "add", "-A");
+  sh(disjoint.root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "u's reads");
   const extra = "plugins/core/skills/crew/references/extra.md";
   const both = deps(disjoint.root, disjoint.tmp, {
-    editor: (call, n) =>
-      n === 1
-        ? writeFileSync(join(call.cwd, GATE), "# Gate\nBETTER\n")
-        : writeFileSync(join(call.cwd, extra), "x\n"),
+    editor: (call, n) => {
+      if (n === 1) writeFileSync(join(call.cwd, GATE), "# Gate\nBETTER\n");
+      else {
+        writeFileSync(join(call.cwd, extra), "x\n");
+        writeFileSync(join(call.cwd, JUDGE), "# Judge\nmore\n");
+      }
+    },
     kit: (call) => {
       const better =
         existsSync(join(call.tree, extra)) ||
@@ -485,12 +496,18 @@ test("2026-10-24-012 AC-7 (the run): two winners are composed in a worktree of t
     },
   });
   expect(await runImprove({ cases: ["t"], proposals: 2 }, both.deps)).toBe(0);
-  const composed = recordOf(disjoint.root);
+  const composed = JSON.parse(
+    readFileSync(join(disjoint.root, "docs/improve/2026-10-24-1/record.json"), "utf8"),
+  );
+  expect(composed.proposals.map((p: { probeSet: string[] }) => p.probeSet)).toEqual([
+    ["t"],
+    ["t", "u"],
+  ]);
   expect(composed.composition).toMatchObject({
     ids: ["P-1", "P-2"],
     applied: true,
     verdict: "win",
-    probeSet: ["t"],
+    probeSet: ["t", "u"],
   });
   expect(composed.kept).toEqual({ kind: "composition", ids: ["P-1", "P-2"] });
   const kept = sh(disjoint.root, "ls-tree", "-r", "--name-only", "improve/2026-10-24-1");

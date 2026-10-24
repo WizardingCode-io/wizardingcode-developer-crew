@@ -7,11 +7,13 @@ import {
   type CaseFigures,
   caseFigures,
   createImproveFolder,
+  ctoPlanFor,
   editorPrompt,
   type ImproveRecord,
   keptHarness,
   lessonsOf,
   probeSet,
+  rationaleOf,
   recordMarkdown,
   verdictOf,
 } from "../../../scripts/improve.ts";
@@ -352,4 +354,47 @@ test("2026-10-24-012 AC-22: the editor's prompt holds the failing graders, the l
   expect(open).toBeGreaterThan(-1);
   expect(close).toBeGreaterThan(line);
   expect(lines.slice(open + 1, close).some((l) => /^`{5}/.test(l))).toBe(false);
+});
+
+test("2026-10-24-012 AC-34: the last CTO plan reaches the editor only when its workspace registers no project but this repository", () => {
+  const root = mkdtempSync(join(tmpdir(), "improve-root-"));
+  const userDir = mkdtempSync(join(tmpdir(), "improve-user-"));
+  const policy = (workspace: string | null) => {
+    mkdirSync(join(root, ".crew"), { recursive: true });
+    writeFileSync(
+      join(root, ".crew/policy.json"),
+      JSON.stringify(workspace ? { mail: { workspace } } : {}),
+    );
+  };
+  const registry = (roots: string[]) =>
+    writeFileSync(
+      join(userDir, "projects.json"),
+      JSON.stringify({
+        version: 1,
+        projects: roots.map((r, i) => ({
+          root: r,
+          name: `p${i}`,
+          workspace: "w",
+          lastSeen: "",
+          sessionId: "",
+        })),
+      }),
+    );
+  mkdirSync(join(userDir, "cto/w"), { recursive: true });
+  writeFileSync(join(userDir, "cto/w/2026-10-24-plan.md"), "Keep the gate table first.\n");
+  policy(null);
+  expect(ctoPlanFor(root, userDir)).toBeNull();
+  policy("w");
+  registry([root]);
+  expect(ctoPlanFor(root, userDir)).toBe("Keep the gate table first.\n");
+  registry([root, "/clients/shop"]);
+  expect(ctoPlanFor(root, userDir)).toBeNull();
+});
+
+test("2026-10-24-012 AC-30 (the scan): a clean answer is kept, cut at 2,000 characters; one holding a secret is withheld", () => {
+  expect(rationaleOf("I named the gate first.")).toBe("I named the gate first.");
+  expect(rationaleOf("x".repeat(2500))).toHaveLength(2000);
+  expect(rationaleOf(`key ${["AKIA", "ABCDEFGHIJKLMNOP"].join("")}`)).toBe(
+    "withheld: the editor's answer held a secret (AWS access key)",
+  );
 });
