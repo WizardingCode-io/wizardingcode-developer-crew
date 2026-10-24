@@ -55,3 +55,5 @@ Same file, with these sections: Problem, Design (the chosen approach and the alt
 Only in a headless session, or in bypassPermissions or dontAsk mode, the hook asks for `--mode <mode>`: the approval is recorded as the agent's or the validator's and satisfies the full route only if `policy.json` sets `unattendedDecisions` to `count` or `validator`.
 
 The engine checks that `spec.md` exists and has a non-empty "Acceptance criteria" section before the build phase; the quality of the spec is your responsibility.
+
+A spec that drives a command (a CLI, a script, a kit the engine runs) names the command's exit statuses among its facts: what 0 means, what each other code means, and what the item does with each (finding 115).

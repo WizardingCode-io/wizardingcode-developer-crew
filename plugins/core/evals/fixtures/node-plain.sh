@@ -9,6 +9,9 @@ cat > package.json <<'EOF'
 { "name": "fixture", "private": true, "type": "module", "scripts": { "test": "node --test" } }
 EOF
 mkdir -p src tests
+# The accounts module. A case that sets AUDIT_HOOK=1 before sourcing this file (only
+# rounds-bounded, whose fixture also writes src/audit.mjs; a test holds that no other case sets it)
+# gets createAccount recording its event through audit (finding 151's seed).
 cat > src/accounts.mjs <<'EOF'
 const accounts = new Map();
 
@@ -21,6 +24,23 @@ export function listAccounts() {
   return [...accounts.values()];
 }
 EOF
+if [ "${AUDIT_HOOK:-}" = 1 ]; then
+  cat > src/accounts.mjs <<'EOF'
+import { audit } from "./audit.mjs";
+
+const accounts = new Map();
+
+export function createAccount(id, email) {
+  accounts.set(id, { id, email, active: true, createdAt: new Date().toISOString() });
+  audit("account.created", accounts.get(id));
+  return accounts.get(id);
+}
+
+export function listAccounts() {
+  return [...accounts.values()];
+}
+EOF
+fi
 cat > tests/accounts.test.mjs <<'EOF'
 import test from "node:test";
 import assert from "node:assert/strict";

@@ -1914,9 +1914,13 @@ test("AC-4 (finding 149): rounds-bounded seeds a defect nobody chose, an existin
   const prompt = readFileSync(`${EVALS}rounds-bounded/prompt.md`, "utf8");
   const fixture = readFileSync(`${EVALS}rounds-bounded/fixture.sh`, "utf8");
   // The seed lives in the repository, not in the request: logging the email is nobody's decision.
+  // The case writes the audit module; the shared fixture's createAccount calls it (finding 151).
   expect(fixture).toContain("export function audit(event, account)");
   expect(fixture).toContain("JSON.stringify({ event, account })");
-  expect(fixture).toMatch(/createAccount[\s\S]*audit\("account\.created", account\)/);
+  expect(fixture).toContain("AUDIT_HOOK=1");
+  expect(readFileSync(`${EVALS}fixtures/node-plain.sh`, "utf8")).toContain(
+    `audit("account.created", accounts.get(id))`,
+  );
   // The email the log writes is the shared fixture's, on a reserved domain.
   expect(readFileSync(`${EVALS}fixtures/node-plain.sh`, "utf8")).toContain("a@example.invalid");
   expect(prompt).toContain("`deactivateAccount(id)`");
@@ -1939,4 +1943,46 @@ test("AC-10 (finding 62): personalities-differ's proposals-differ grader passes 
   expect(grader).not.toMatch(
     /at least two distinct storage designs for the plan and its history, or one design argued for opposite reasons/,
   );
+});
+
+test("AC-12 (finding 118): the agent's own words count as a denial only where one sentence names both the denial and the reference", () => {
+  const ref = "skills/crew/references/plan.md";
+  expect(deniedReferenceReads([agentText(`I was denied a read of ${ref}.`)])).toEqual([ref]);
+  // A denial and the reference in two sentences, or across a line break: nothing
+  expect(
+    deniedReferenceReads([agentText(`Permission denied. I then read ${ref} without trouble.`)]),
+  ).toEqual([]);
+  expect(
+    deniedReferenceReads([agentText(`The permission was denied\n${ref} is the plan reference`)]),
+  ).toEqual([]);
+  // A reference named with no denial word, and a denial with no reference: nothing
+  expect(deniedReferenceReads([agentText(`I read ${ref} and followed it.`)])).toEqual([]);
+  expect(deniedReferenceReads([agentText("A Bash call was denied by the sandbox.")])).toEqual([]);
+  // A metadata rejection whose tool input names no reference, the path in the error text alone
+  expect(
+    deniedReferenceReads([
+      toolUse("toolu_9", "Bash", { command: "cat the-plan" }),
+      toolResult("toolu_9", `cannot open ${ref}`, { decision: "reject" }),
+    ]),
+  ).toEqual([ref]);
+});
+
+test("AC-7 (finding 151): rounds-bounded takes the shared fixture's audit hook, and its scaffolded project's tests print the audit line with the email; no other fixture sets the hook", () => {
+  const dir = mkdtempSync(join(tmpdir(), "crew-rounds-"));
+  const scaffold = spawnSync("sh", [`${EVALS}rounds-bounded/fixture.sh`], {
+    cwd: dir,
+    encoding: "utf8",
+  });
+  expect(scaffold.status, scaffold.stderr).toBe(0);
+  const tests = spawnSync("node", ["--test"], { cwd: dir, encoding: "utf8" });
+  expect(tests.status, tests.stdout).toBe(0);
+  expect(tests.stdout).toContain('"email":"a@example.invalid"');
+  const fixture = readFileSync(`${EVALS}rounds-bounded/fixture.sh`, "utf8");
+  expect(fixture).not.toContain("cat > src/accounts.mjs");
+  expect(fixture).toContain("AUDIT_HOOK=");
+  for (const name of readdirSync(EVALS)) {
+    const file = join(EVALS, name, "fixture.sh");
+    if (name === "rounds-bounded" || !existsSync(file)) continue;
+    expect(readFileSync(file, "utf8"), name).not.toContain("AUDIT_HOOK=");
+  }
 });

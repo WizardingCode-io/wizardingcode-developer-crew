@@ -73,26 +73,26 @@ test("findings 1 and 14: a path the policy excludes raises nothing, and the excl
   const policy = {
     ...DEFAULT_POLICY,
     riskPaths: { payments: ["app/Billing/**"] },
-    riskPathExclusions: ["plugins/core/hooks/session-*.ts", "app/Billing/Invoice.php"],
+    riskPathExclusions: ["src/legacy/session-*.ts", "app/Billing/Invoice.php"],
   };
   // A default pattern (`**/session*`) and an added one, both kept out by the exclusions.
-  expect(riskAreasForPaths(["plugins/core/hooks/session-start.ts"], policy)).toEqual([]);
+  expect(riskAreasForPaths(["src/legacy/session-store.ts"], policy)).toEqual([]);
   expect(riskAreasForPaths(["app/Billing/Invoice.php"], policy)).toEqual([]);
   // Other paths keep raising, with or without an excluded neighbour in the change.
-  expect(
-    riskAreasForPaths(["plugins/core/hooks/session-start.ts", "app/Auth/Guard.ts"], policy),
-  ).toEqual(["auth"]);
-  expect(riskAreasForPaths(["plugins/core/hooks/session-start.ts"], DEFAULT_POLICY)).toEqual([
+  expect(riskAreasForPaths(["src/legacy/session-store.ts", "app/Auth/Guard.ts"], policy)).toEqual([
     "auth",
   ]);
+  expect(riskAreasForPaths(["src/legacy/session-store.ts"], DEFAULT_POLICY)).toEqual(["auth"]);
+  // A Claude Code event hook raises nothing by the engine's own rule, with no exclusion (AC-14).
+  expect(riskAreasForPaths(["plugins/core/hooks/session-start.ts"], DEFAULT_POLICY)).toEqual([]);
   // The paths an exclusion kept from raising, so the record can say so; a path that would not
   // have raised anything is not one of them.
   expect(
     excludedRiskPaths(
-      ["plugins/core/hooks/session-start.ts", "app/Billing/Invoice.php", "src/cart/total.ts"],
+      ["src/legacy/session-store.ts", "app/Billing/Invoice.php", "src/cart/total.ts"],
       { ...policy, riskPathExclusions: [...policy.riskPathExclusions, "src/**"] },
     ),
-  ).toEqual(["plugins/core/hooks/session-start.ts", "app/Billing/Invoice.php"]);
+  ).toEqual(["src/legacy/session-store.ts", "app/Billing/Invoice.php"]);
   expect(excludedRiskPaths(["app/Auth/Guard.ts"], policy)).toEqual([]);
 });
 
@@ -301,4 +301,48 @@ test("AC-6 (finding 149): a test file is told by its path alone, narrowly", () =
     "packages/engine/src/gates.ts",
   ])
     expect(isTestPath(path)).toBe(false);
+});
+
+test("AC-15 (findings 1, 14): the session patterns keep every session store and let go only the Claude Code event hooks in a hooks/ folder", () => {
+  const areas = (path: string, policy = DEFAULT_POLICY) => riskAreasForPaths([path], policy);
+  for (const path of [
+    "src/session-store.ts",
+    "src/session-manager.ts",
+    "src/sessionStore.ts",
+    "app/SessionStore.php",
+    "app/Http/SessionHandler.php",
+    "src/session-store/a.ts",
+    "src/session/a.ts",
+    "app/Http/Middleware/StartSession.php",
+    "src/auth/session-start.ts",
+    // An event hook's name inside a session folder: the folder pattern still counts
+    "src/session/hooks/session-start.ts",
+    "app/Auth/SessionStart.php",
+    // Near-misses in a hooks/ folder: not the event names
+    "src/hooks/session.ts",
+    "src/hooks/session-start-helper.ts",
+    // The old pattern's corpus: every one still matched
+    "lib/session_store.rb",
+    "src/session-token.ts",
+    "src/session-cookie.ts",
+    "src/sessionMiddleware.ts",
+    "app/Http/Controllers/SessionController.php",
+  ])
+    expect(areas(path), path).toContain("auth");
+  // Every other pattern still applies to an event hook: an auth folder raises auth, and a payments
+  // pattern the policy adds raises payments
+  expect(areas("src/auth/hooks/session-end.ts")).toContain("auth");
+  const billing = { ...DEFAULT_POLICY, riskPaths: { payments: ["src/billing/**"] } };
+  expect(areas("src/billing/hooks/session-end.ts", billing)).toEqual(["payments"]);
+  for (const path of [
+    "packages/engine/src/hooks/session-start.ts",
+    ".claude/hooks/sessionStart.js",
+    "src/hooks/session_end.py",
+    "hooks/SessionEnd.ts",
+  ])
+    expect(areas(path), path).toEqual([]);
+  // The rule is the engine's: a policy exclusion list neither undoes it nor is needed for it
+  const policy = { ...DEFAULT_POLICY, riskPathExclusions: ["src/other/**"] };
+  expect(areas("packages/engine/src/hooks/session-start.ts", policy)).toEqual([]);
+  expect(areas("src/session-store.ts", policy)).toContain("auth");
 });

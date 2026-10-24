@@ -61,7 +61,8 @@ const AUDIT_OWNED = String.raw`audit(?=\/|${PATH_END}|$)(?!\/${AUDIT_OPEN_FILES}
 // AC-9, finding 106: a shell redirect to `knowledge.md` passed while a Write to it was denied).
 const WORK_FILES = PROTECTED_WORK_FILES.map(escapeRegExp).join("|");
 const ENGINE_FILES = new RegExp(
-  String.raw`\.crew\/(?:profile\.json|policy\.json|decisions\.json|\.gitignore|local\b|work\/[^\s/]+\/(?:${WORK_FILES}|logs\b|${REVIEW_OWNED}|${AUDIT_OWNED}))|\.wizardingcode\/crew\b`,
+  // The run markers, `running/<pid>.json` and the old `running.json`, never a lead's `running-notes.md` (finding 146).
+  String.raw`\.crew\/(?:profile\.json|policy\.json|decisions\.json|\.gitignore|local\b|work\/[^\s/]+\/(?:${WORK_FILES}|logs\b|running(?:\.json|\/|(?=${PATH_END})|$)|${REVIEW_OWNED}|${AUDIT_OWNED}))|\.wizardingcode\/crew\b`,
   "i",
 );
 // The engine's folder itself, its work folder or an item's folder, as a whole path or by its

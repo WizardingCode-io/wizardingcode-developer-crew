@@ -198,13 +198,20 @@ export function riskAreasFromAnswers(answers: Answers): RiskArea[] {
   return areas;
 }
 
+/**
+ * The auth area's session patterns, named once: a session store by its name (case is ignored), a
+ * session folder, a `...Session.php` middleware; the ones a Claude Code event hook trips (findings 1, 14).
+ */
+const SESSION_NAME_RISK_PATHS = ["**/session*", "**/*Session.*"];
+const SESSION_RISK_PATHS = [...SESSION_NAME_RISK_PATHS, "**/session*/**"];
+
 export const DEFAULT_RISK_PATHS: Record<RiskArea, string[]> = {
   auth: [
     "**/auth/**",
     "**/*auth*",
     "**/Middleware/Authenticate*",
     "**/login*",
-    "**/session*",
+    ...SESSION_RISK_PATHS,
     "**/password*",
     "**/oauth*",
     "**/jwt*",
@@ -326,6 +333,27 @@ function riskPatterns(area: RiskArea, policy: Policy): string[] {
   return [...DEFAULT_RISK_PATHS[area], ...(policy.riskPaths[area] ?? [])];
 }
 
+// The session patterns that read a file's name, which an event hook's name trips; the folder form
+// (`**/session*/**`) still counts, so a hook inside a session folder stays auth (security review).
+const SESSION_NAME_PATTERNS = new Set(SESSION_NAME_RISK_PATHS);
+// A Claude Code event hook: `session-start` or `session-end`, any casing, in a hooks/ folder.
+const EVENT_HOOK =
+  /(?:^|\/)hooks\/(?:[^/]+\/)*(?:session[-_]?(?:start|end)|Session(?:Start|End))\.[^/]+$/i;
+
+/**
+ * Whether a path falls in a risk area: one of its patterns matches, the session patterns excepted
+ * for a Claude Code event hook (findings 1, 14), whose other patterns still count. The engine's
+ * rule, not a policy list: `riskPathExclusions` neither undoes nor replaces it.
+ */
+function inArea(path: string, area: RiskArea, policy: Policy): boolean {
+  const patterns = riskPatterns(area, policy);
+  if (area !== "auth" || !EVENT_HOOK.test(path)) return matchesAny(path, patterns);
+  return matchesAny(
+    path,
+    patterns.filter((p) => !SESSION_NAME_PATTERNS.has(p)),
+  );
+}
+
 function isExcluded(path: string, policy: Policy): boolean {
   return matchesAny(path, policy.riskPathExclusions);
 }
@@ -346,10 +374,8 @@ export function personalDataRisk(
 export function riskAreasForPaths(paths: readonly string[], policy: Policy): RiskArea[] {
   const kept = paths.filter((path) => !isExcluded(path, policy));
   const areas: RiskArea[] = [];
-  for (const area of Object.keys(DEFAULT_RISK_PATHS) as RiskArea[]) {
-    const patterns = riskPatterns(area, policy);
-    if (kept.some((path) => matchesAny(path, patterns))) areas.push(area);
-  }
+  for (const area of Object.keys(DEFAULT_RISK_PATHS) as RiskArea[])
+    if (kept.some((path) => inArea(path, area, policy))) areas.push(area);
   return areas;
 }
 
@@ -360,9 +386,7 @@ export function riskAreasForPaths(paths: readonly string[], policy: Policy): Ris
 export function excludedRiskPaths(paths: readonly string[], policy: Policy): string[] {
   const areas = Object.keys(DEFAULT_RISK_PATHS) as RiskArea[];
   return paths.filter(
-    (path) =>
-      isExcluded(path, policy) &&
-      areas.some((area) => matchesAny(path, riskPatterns(area, policy))),
+    (path) => isExcluded(path, policy) && areas.some((area) => inArea(path, area, policy)),
   );
 }
 

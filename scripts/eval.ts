@@ -168,6 +168,12 @@ const REFERENCE_PATH = /skills\/crew\/references(?:\/[\w.-]+)?/g;
 const DENIAL = /permission|denied|not allowed|can't read|cannot read|outside what I can read/i;
 
 const referencePaths = (text: string): string[] => text.match(REFERENCE_PATH) ?? [];
+// A sentence of the agent's words: cut at a full stop, a question or an exclamation mark followed by
+// whitespace or the text's end, or at a line break; a path's dots are never followed by whitespace, so it stays whole.
+const SENTENCE_BREAK = /[.?!](?=\s|$)|\n/;
+/** The references the agent's own words report denied: a sentence that names a denial and a reference (finding 118). */
+const reportedDenials = (text: string): string[] =>
+  text.split(SENTENCE_BREAK).flatMap((s) => (DENIAL.test(s) ? referencePaths(s) : []));
 /** Every string inside a value, however nested: a tool_use input's file_path, path, pattern or command. */
 const stringsOf = (value: unknown): string[] => {
   if (typeof value === "string") return [value];
@@ -239,8 +245,8 @@ export function readTrace(lines: readonly string[]): TraceReading {
             name: String(entry.name),
             paths: stringsOf(entry.input).flatMap(referencePaths),
           });
-        else if (entry.type === "text" && typeof entry.text === "string" && DENIAL.test(entry.text))
-          reported.push(...referencePaths(entry.text));
+        else if (entry.type === "text" && typeof entry.text === "string")
+          reported.push(...reportedDenials(entry.text));
       }
       continue;
     }

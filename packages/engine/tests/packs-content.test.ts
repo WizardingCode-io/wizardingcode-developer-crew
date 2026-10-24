@@ -409,6 +409,24 @@ test("SP6-T3 AC-3: the Laravel rule refines a fixture tree with artisan (the gat
   expect(existsSync(join(root, "test-ran.txt"))).toBe(false);
 });
 
+/**
+ * The documentation hosts whose URLs carry a version, one row per pack's key in `verifiedAgainst`
+ * (finding 112): a URL on such a host names the version the pack was verified against.
+ */
+const VERSIONED_DOCS: { key: string; pattern: RegExp }[] = [
+  { key: "laravel", pattern: /^https:\/\/laravel\.com\/docs\/([^/]+)\// },
+];
+
+/** Why a URL names another version than the pack's, or null. */
+function versionedUrlProblem(url: string, verified: Record<string, string>): string | null {
+  for (const { key, pattern } of VERSIONED_DOCS) {
+    const named = pattern.exec(url)?.[1];
+    if (named !== undefined && named !== verified[key])
+      return `${url} names ${key} ${named}, not the pack's ${verified[key]}`;
+  }
+  return null;
+}
+
 test("SP6-T3 AC-4: the packs' versions follow the engine's (the pack's version, plugin.json's, core; accepted at that version, refused at 0.10.0), every URL https and listed in the README's sources, every file scanned for secrets, no stray file, plugin:check validates both packs, the release section names the four files", () => {
   for (const [key, root] of Object.entries(ROOTS)) {
     const m = manifestOf(root);
@@ -437,8 +455,7 @@ test("SP6-T3 AC-4: the packs' versions follow the engine's (the pack's version, 
       for (const url of urlsIn(text)) {
         expect(url, rel).toMatch(/^https:\/\//);
         expect(sources.has(url), `${rel}: ${url} is not in the README's sources`).toBe(true);
-        if (url.includes("laravel.com/docs/"))
-          expect(url, rel).toContain(`/docs/${m.verifiedAgainst.laravel}/`);
+        expect(versionedUrlProblem(url, m.verifiedAgainst), rel).toBeNull();
       }
     }
   }
@@ -453,4 +470,21 @@ test("SP6-T3 AC-4: the packs' versions follow the engine's (the pack's version, 
     "packs/agentic-os/.claude-plugin/plugin.json",
   ])
     expect(claudeMd, rel).toContain(rel);
+});
+
+test("AC-10 (finding 112): a versioned documentation URL is checked by a row per pack, and a Laravel URL without the pack's version is refused", () => {
+  for (const [key, root] of Object.entries(ROOTS)) {
+    const m = manifestOf(root);
+    const declared = ["README.md", ...m.checklists, ...Object.values(m.knowledge)];
+    for (const rel of declared)
+      for (const url of urlsIn(read(join(root, rel))))
+        expect(versionedUrlProblem(url, m.verifiedAgainst), `${key} ${rel}`).toBeNull();
+  }
+  expect(versionedUrlProblem("https://laravel.com/docs/11.x/routing", { laravel: "13.x" })).toBe(
+    "https://laravel.com/docs/11.x/routing names laravel 11.x, not the pack's 13.x",
+  );
+  expect(
+    versionedUrlProblem("https://laravel.com/docs/13.x/routing", { laravel: "13.x" }),
+  ).toBeNull();
+  expect(versionedUrlProblem("https://owasp.org/x", {})).toBeNull();
 });

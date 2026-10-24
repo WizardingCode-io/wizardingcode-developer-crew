@@ -2476,6 +2476,127 @@ function statusView(env: Env, active: Opened): Outcome {
   });
 }
 
+/**
+ * `crew research <id> verify [--file <path>]`: the researcher's facts checked against their sources,
+ * then asked of Jev (SP3 decision 10); in its own function since finding 90.
+ */
+async function researchCommand(
+  env: Env,
+  parsed: Parsed,
+  args: string[],
+  io: CliIo,
+): Promise<Outcome> {
+  const usage = "usage: crew research <id> verify [--file <path>]";
+  const opened = openForChange(env, args[0]);
+  if (isOutcome(opened)) return opened;
+  if (args[1] !== "verify") return refuse(usage);
+  const dir = workDir(env.paths, opened.work.id);
+  const file =
+    typeof parsed.flags.file === "string"
+      ? resolve(env.paths.root, parsed.flags.file)
+      : join(dir, "conclave", "researcher.md");
+  const named = rel(env.paths, file);
+  if (named.startsWith("..") || isAbsolute(named))
+    return refuse(`${parsed.flags.file} is not under the root`);
+  const text = readText(file);
+  if (text === null) return refuse(`no researcher file at ${named}`);
+  const facts = parseFacts(text);
+  // A research with nothing to verify is not a blocker: the strategy's marks name its lines either way (SP8 Task 6).
+  if (!facts.length)
+    return ok(
+      `no fact to verify in ${named}: a code fact is "- <path from the root>:<line> · <sentence>", a documentation fact "- <URL or document> · "<quote>" · <meaning>"; the strategy's marks name the file's lines either way (crew strategy ${opened.work.id} check), so go on`,
+      { facts: [] },
+    );
+  const jev = jevConfig(io.env, env.config);
+  const asking = jev.configured && askAllowed(env.policy, "fact");
+  type Status = {
+    id: string;
+    source: string;
+    status: "verified" | "disputed" | "unverified" | "not-found";
+    reason?: string;
+    confidence?: number;
+  };
+  const statuses = new Map<string, Status>();
+  const found: FactInput[] = [];
+  for (const f of facts) {
+    const source = await fetchSource(f.source, env.paths.root);
+    if ("refused" in source) {
+      statuses.set(f.id, {
+        id: f.id,
+        source: f.source,
+        status: "not-found",
+        reason: source.refused,
+      });
+      continue;
+    }
+    const quote = findQuote(f.quote, source.text);
+    if (!quote) {
+      statuses.set(f.id, {
+        id: f.id,
+        source: f.source,
+        status: "not-found",
+        reason: `the quote is not in ${f.source}`,
+      });
+      continue;
+    }
+    found.push({ id: f.id, claim: f.claim, quote: f.quote, excerpt: quote.excerpt });
+  }
+  let tail: string | null = null;
+  let records: Verification[] = [];
+  if (found.length && !asking) {
+    const notAsked = jev.configured
+      ? "jev not asked: fact is not in verify.asks"
+      : "jev not configured";
+    for (const f of found)
+      statuses.set(f.id, {
+        id: f.id,
+        source: facts.find((x) => x.id === f.id)?.source ?? "",
+        status: "unverified",
+        reason: notAsked,
+      });
+    tail = notAsked;
+  } else if (found.length) {
+    const out = await verifyFacts(jev, env.policy, found);
+    records = out.records;
+    for (const f of found) {
+      const mark = out.marks[f.id];
+      statuses.set(f.id, {
+        id: f.id,
+        source: facts.find((x) => x.id === f.id)?.source ?? "",
+        status: mark?.status ?? "unverified",
+        ...(mark?.reason ? { reason: mark.reason } : {}),
+        ...(mark && mark.confidence !== null ? { confidence: mark.confidence } : {}),
+      });
+    }
+    if (out.unavailable) tail = `jev unavailable: ${out.unavailable}`;
+  }
+  const ordered = facts.map((f) => statuses.get(f.id) as Status);
+  writeProtectedJson(env.paths, join(dir, "conclave", "researcher.verification.json"), {
+    at: nowIso(),
+    hash: sha256(text),
+    facts: ordered,
+  });
+  if (records.length) {
+    const appended = updateEvidence(env.paths, opened.work.id, (fresh) => {
+      fresh.verifications = [...(fresh.verifications ?? []), ...records];
+    });
+    if ("refused" in appended) tail = tail ? `${tail}; ${appended.refused}` : appended.refused;
+  }
+  const counts = (["verified", "disputed", "unverified", "not-found"] as const)
+    .map((s) => [s, ordered.filter((x) => x.status === s).length] as const)
+    .filter(([, n]) => n > 0)
+    .map(([s, n]) => `${n} ${s}`);
+  const reasons = ordered
+    .filter((x) => x.status === "not-found")
+    .map((x) => `${x.id}: ${x.reason}`);
+  if (tail) reasons.push(tail);
+  const n = facts.length;
+  return ok(
+    `${n} fact${n === 1 ? "" : "s"}: ${counts.join(", ")}${reasons.length ? ` (${reasons.join("; ")})` : ""}`,
+    { facts: ordered, file: "conclave/researcher.verification.json" },
+  );
+}
+
 async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
   const [command, ...args] = parsed.positional;
   if (parsed.flags.version || command === "version") return ok(VERSION, { version: VERSION });
@@ -3583,118 +3704,8 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       return awaitCommand(env, args);
     case "resume":
       return resumeCommand(env, parsed, args);
-    case "research": {
-      // The researcher's facts checked against their sources, then asked of Jev (SP3 decision 10).
-      const usage = "usage: crew research <id> verify [--file <path>]";
-      const opened = openForChange(env, args[0]);
-      if (isOutcome(opened)) return opened;
-      if (args[1] !== "verify") return refuse(usage);
-      const dir = workDir(env.paths, opened.work.id);
-      const file =
-        typeof parsed.flags.file === "string"
-          ? resolve(env.paths.root, parsed.flags.file)
-          : join(dir, "conclave", "researcher.md");
-      const named = rel(env.paths, file);
-      if (named.startsWith("..") || isAbsolute(named))
-        return refuse(`${parsed.flags.file} is not under the root`);
-      const text = readText(file);
-      if (text === null) return refuse(`no researcher file at ${named}`);
-      const facts = parseFacts(text);
-      // A research with nothing to verify is not a blocker: the strategy's marks name its lines either way (SP8 Task 6).
-      if (!facts.length)
-        return ok(
-          `no fact to verify in ${named}: a code fact is "- <path from the root>:<line> · <sentence>", a documentation fact "- <URL or document> · "<quote>" · <meaning>"; the strategy's marks name the file's lines either way (crew strategy ${opened.work.id} check), so go on`,
-          { facts: [] },
-        );
-      const jev = jevConfig(io.env, env.config);
-      const asking = jev.configured && askAllowed(env.policy, "fact");
-      type Status = {
-        id: string;
-        source: string;
-        status: "verified" | "disputed" | "unverified" | "not-found";
-        reason?: string;
-        confidence?: number;
-      };
-      const statuses = new Map<string, Status>();
-      const found: FactInput[] = [];
-      for (const f of facts) {
-        const source = await fetchSource(f.source, env.paths.root);
-        if ("refused" in source) {
-          statuses.set(f.id, {
-            id: f.id,
-            source: f.source,
-            status: "not-found",
-            reason: source.refused,
-          });
-          continue;
-        }
-        const quote = findQuote(f.quote, source.text);
-        if (!quote) {
-          statuses.set(f.id, {
-            id: f.id,
-            source: f.source,
-            status: "not-found",
-            reason: `the quote is not in ${f.source}`,
-          });
-          continue;
-        }
-        found.push({ id: f.id, claim: f.claim, quote: f.quote, excerpt: quote.excerpt });
-      }
-      let tail: string | null = null;
-      let records: Verification[] = [];
-      if (found.length && !asking) {
-        const notAsked = jev.configured
-          ? "jev not asked: fact is not in verify.asks"
-          : "jev not configured";
-        for (const f of found)
-          statuses.set(f.id, {
-            id: f.id,
-            source: facts.find((x) => x.id === f.id)?.source ?? "",
-            status: "unverified",
-            reason: notAsked,
-          });
-        tail = notAsked;
-      } else if (found.length) {
-        const out = await verifyFacts(jev, env.policy, found);
-        records = out.records;
-        for (const f of found) {
-          const mark = out.marks[f.id];
-          statuses.set(f.id, {
-            id: f.id,
-            source: facts.find((x) => x.id === f.id)?.source ?? "",
-            status: mark?.status ?? "unverified",
-            ...(mark?.reason ? { reason: mark.reason } : {}),
-            ...(mark && mark.confidence !== null ? { confidence: mark.confidence } : {}),
-          });
-        }
-        if (out.unavailable) tail = `jev unavailable: ${out.unavailable}`;
-      }
-      const ordered = facts.map((f) => statuses.get(f.id) as Status);
-      writeProtectedJson(env.paths, join(dir, "conclave", "researcher.verification.json"), {
-        at: nowIso(),
-        hash: sha256(text),
-        facts: ordered,
-      });
-      if (records.length) {
-        const appended = updateEvidence(env.paths, opened.work.id, (fresh) => {
-          fresh.verifications = [...(fresh.verifications ?? []), ...records];
-        });
-        if ("refused" in appended) tail = tail ? `${tail}; ${appended.refused}` : appended.refused;
-      }
-      const counts = (["verified", "disputed", "unverified", "not-found"] as const)
-        .map((s) => [s, ordered.filter((x) => x.status === s).length] as const)
-        .filter(([, n]) => n > 0)
-        .map(([s, n]) => `${n} ${s}`);
-      const reasons = ordered
-        .filter((x) => x.status === "not-found")
-        .map((x) => `${x.id}: ${x.reason}`);
-      if (tail) reasons.push(tail);
-      const n = facts.length;
-      return ok(
-        `${n} fact${n === 1 ? "" : "s"}: ${counts.join(", ")}${reasons.length ? ` (${reasons.join("; ")})` : ""}`,
-        { facts: ordered, file: "conclave/researcher.verification.json" },
-      );
-    }
+    case "research":
+      return researchCommand(env, parsed, args, io);
     case "analyse": {
       // Where the defect came from (SP7 §7.4, rule 11): git and the records, written to the item.
       const usage = "usage: crew analyse <id> --paths <file,file>";

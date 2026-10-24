@@ -834,21 +834,25 @@ test("AC-1 (finding 121's debt): every shipped front matter is strict YAML, the 
 test("AC-5 (finding 119): the conclave and deliver references say where a resumed lead's answer lands and that the record is taken from that file", () => {
   const conclave = repoFile("plugins/core/skills/crew/references/conclave.md");
   const deliver = repoFile("plugins/core/skills/crew/references/deliver.md");
-  // The sentences' subjects and verbs, not the sentences verbatim (items C2a and C2b): a
-  // rewording that keeps the instruction keeps these; one that drops or inverts it fails.
-  for (const fragment of [
-    "A lead resumed for another round answers into `conclave/lead-<team>-reply.md`",
-    "the earlier reply archived beside it as `.round<n>.md`",
-    "record that file, never the round-1 file",
-    "the engine refuses a file whose content it already recorded for that lead",
-  ])
-    expect(conclave, fragment).toContain(fragment);
-  for (const fragment of [
-    "a resumed lead's answer lands in `conclave/lead-<team>.delivery-reply.md`",
-    "the earlier reply archived beside it as `.round<n>.md`",
-    "record that file, since the engine refuses one it already recorded",
-  ])
-    expect(deliver, fragment).toContain(fragment);
+  // Each instruction by its key words, in one sentence (finding 131): a rewording keeps them, a
+  // dropped or inverted instruction loses one. The sentences are the text between full stops.
+  const conclaveRules = [
+    /resumed[^.]*`conclave\/lead-<team>-reply\.md`/,
+    /earlier reply[^.]*archived[^.]*`\.round<n>\.md`/,
+    /record[^.]*that file[^.]*never the round-1 file/,
+    /refuses[^.]*already recorded/,
+  ];
+  const deliverRules = [
+    /resumed lead's answer[^.]*`conclave\/lead-<team>\.delivery-reply\.md`/,
+    /earlier reply[^.]*archived[^.]*`\.round<n>\.md`/,
+    /record[^.]*that file[^.]*refuses one it already recorded/,
+  ];
+  const missing = (text: string, rules: RegExp[]) => rules.filter((r) => !r.test(text));
+  expect(missing(conclave, conclaveRules)).toEqual([]);
+  expect(missing(deliver, deliverRules)).toEqual([]);
+  // The test fails when an instruction is cut: the same rules over the text with one removed
+  const cut = conclave.replace("never the round-1 file, ", "");
+  expect(missing(cut, conclaveRules).length).toBe(1);
 });
 
 // The outside testers of the other runtimes (the user's decision of 2026-10-21, item 2026-10-21-006):
@@ -1079,4 +1083,33 @@ test("AC-11 (finding 122): ADR 0012 records the policy's own rule for unattended
   expect(modes).toContain("unattendedPolicyChanges");
   for (const cap of caps) expect(modes).toContain(cap);
   expect(modes).toContain("crew policy set <cap> <value> --mode <mode> --validator policy-change");
+});
+
+test("AC-3 (finding 38): Understand records each decision only the user can take with crew decision add as it is asked, never in prose alone", () => {
+  const understand = readReference("understand.md");
+  const bullet =
+    understand.split("\n").find((l) => l.startsWith("- **Decisions only the user can take**")) ??
+    "";
+  expect(bullet).toContain("crew decision <id> add");
+  expect(bullet).toContain("never left in prose");
+});
+
+test("AC-4 (findings 115, 117): the process rules are in the skill's references", () => {
+  expect(readReference("specify.md")).toMatch(/drives a command[^\n]*exit statuses/);
+  const build = readReference("build.md");
+  expect(build).toMatch(
+    /end-to-end path differs from its unit path[^\n]*a CLI row through the real flow/,
+  );
+  expect(build).toMatch(/observed[^\n]*refused[^\n]*a stub/);
+  expect(readReference("gate.md")).toMatch(
+    /open question on a runtime's behaviour[^\n]*a probe[^\n]*before the judge rules/,
+  );
+});
+
+test("AC-7 (finding 151): the conclave's experts step names where the two experts of two decisions go", () => {
+  const step =
+    readReference("conclave.md")
+      .split("\n")
+      .find((line) => line.startsWith("2. **Experts**")) ?? "";
+  expect(step).toContain("(the two on the one with the most consequence)");
 });

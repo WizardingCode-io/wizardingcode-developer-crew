@@ -266,6 +266,13 @@ export interface Unreadable {
   wayOut: string;
   hidden: boolean;
 }
+// The marks the fold writes into a line, control characters so CONTROLS covers them and no written
+// line holds one unseen (`HIDDEN_MARKS` asks about one): the mark of a hand-on folded and not yet
+// read, the mark of one whose rest was joined, which a later pass leaves alone, and the mark the
+// comment drop leaves in place of a `#` it cannot place, which `unreadablePowershell` asks about
+// from any level.
+export const FOLD_MARKS = { handed: code(0), joined: code(1), ambiguous: code(2) } as const;
+
 /**
  * The PowerShell line the hook cannot read, or null, in this order: a mark that hides the written
  * text (PowerShell's own syntax, which changes everything the reader would read after it); a crew
@@ -429,12 +436,6 @@ const CMD_BUILTIN =
   /^(?:call\s+|start\s+(?:"[^"]*"\s+)?(?:\/(?:d|affinity|node|machine)\s+(?:"[^"]*"|\S+)\s+|\/\w+\s+)*)/i;
 /** The words cmd runs from the text behind `cmd /c`: its builtin gone. */
 const cmdRest = (rest: string): string => rest.replace(CMD_BUILTIN, "");
-// The marks the fold writes into a line, control characters so CONTROLS covers them and no written
-// line holds one unseen (`HIDDEN_MARKS` asks about one): the mark of a hand-on folded and not yet
-// read, the mark of one whose rest was joined, which a later pass leaves alone, and the mark the
-// comment drop leaves in place of a `#` it cannot place, which `unreadablePowershell` asks about
-// from any level.
-export const FOLD_MARKS = { handed: code(0), joined: code(1), ambiguous: code(2) } as const;
 const MARKS = new RegExp(`[${FOLD_MARKS.handed}${FOLD_MARKS.joined}]`, "g");
 const HANDED = `${FOLD_MARKS.handed}sh -c`;
 const HANDED_PREFIX = new RegExp(`${HANDED}[ \\t]*`, "g");

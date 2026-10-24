@@ -5,26 +5,12 @@
 # repository; the request copies it, and nobody chose to log the email. The email stays .invalid and
 # the log goes to the sandbox's console only.
 set -eu
+# The shared fixture writes createAccount with the audit call when this is set (not exported).
+AUDIT_HOOK=1
 . "$(dirname "$0")/../fixtures/node-plain.sh"
 cat > src/audit.mjs <<'EOF'
 export function audit(event, account) {
   console.log(JSON.stringify({ event, account }));
-}
-EOF
-cat > src/accounts.mjs <<'EOF'
-import { audit } from "./audit.mjs";
-
-const accounts = new Map();
-
-export function createAccount(id, email) {
-  const account = { id, email, active: true, createdAt: new Date().toISOString() };
-  accounts.set(id, account);
-  audit("account.created", account);
-  return account;
-}
-
-export function listAccounts() {
-  return [...accounts.values()];
 }
 EOF
 mkdir -p .crew

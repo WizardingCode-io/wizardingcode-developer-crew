@@ -10,6 +10,8 @@ For each criterion, in this order:
 
 Use `-- <command>` after the criterion to run a single test file instead of the whole suite; the full suite runs at the gate. The words after `--` keep their boundaries: one quoted string is the whole command line (`-- "bun run check && bun run plugin:check"`), several words are a command and its arguments, each quoted by the engine (`-- sh -c "a && b"` reaches the shell as `sh -c 'a && b'`). A shell given `-c` and more than one word after it is refused, since the shell would run only the first word; quote the command string as one argument.
 
+A feature whose end-to-end path differs from its unit path (a seat planned at two call sites, a watch filter upstream of a glob) is proven by a CLI row through the real flow, beside the unit test (finding 117). An `observed` criterion is refused where a stub makes a test possible: write the stub and the test instead (finding 115).
+
 For a `preserve` criterion: `crew tdd before <id> <criterion>` with the tests passing, make the change, `crew tdd after <id> <criterion>`.
 
 For an `observed` criterion: make the change, then `crew tdd observed <id> <criterion> --reason "<why no red run can exist>"` with the run passing. The reason is in the record and the report; a missing reason is refused.

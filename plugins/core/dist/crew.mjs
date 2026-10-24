@@ -1179,6 +1179,8 @@ function isProtectedPath(paths, absPath, worktrees = []) {
     return !REVIEW_OPEN.test(inner);
   if (inner === "audit" || inner.startsWith("audit/"))
     return !AUDIT_OPEN.test(inner);
+  if (inner === "running" || inner.startsWith("running/") || inner === "running.json")
+    return true;
   return PROTECTED_IN_WORK.has(inner) || inner.startsWith("logs/");
 }
 function knowledgeDir(userDir) {
@@ -1382,13 +1384,15 @@ function riskAreasFromAnswers(answers) {
   }
   return areas;
 }
+var SESSION_NAME_RISK_PATHS = ["**/session*", "**/*Session.*"];
+var SESSION_RISK_PATHS = [...SESSION_NAME_RISK_PATHS, "**/session*/**"];
 var DEFAULT_RISK_PATHS = {
   auth: [
     "**/auth/**",
     "**/*auth*",
     "**/Middleware/Authenticate*",
     "**/login*",
-    "**/session*",
+    ...SESSION_RISK_PATHS,
     "**/password*",
     "**/oauth*",
     "**/jwt*"
@@ -1487,6 +1491,14 @@ function personalDataTerms(patch) {
 function riskPatterns(area, policy) {
   return [...DEFAULT_RISK_PATHS[area], ...policy.riskPaths[area] ?? []];
 }
+var SESSION_NAME_PATTERNS = new Set(SESSION_NAME_RISK_PATHS);
+var EVENT_HOOK = /(?:^|\/)hooks\/(?:[^/]+\/)*(?:session[-_]?(?:start|end)|Session(?:Start|End))\.[^/]+$/i;
+function inArea(path, area, policy) {
+  const patterns = riskPatterns(area, policy);
+  if (area !== "auth" || !EVENT_HOOK.test(path))
+    return matchesAny(path, patterns);
+  return matchesAny(path, patterns.filter((p) => !SESSION_NAME_PATTERNS.has(p)));
+}
 function isExcluded(path, policy) {
   return matchesAny(path, policy.riskPathExclusions);
 }
@@ -1497,16 +1509,14 @@ function personalDataRisk(hits, policy) {
 function riskAreasForPaths(paths, policy) {
   const kept = paths.filter((path) => !isExcluded(path, policy));
   const areas = [];
-  for (const area of Object.keys(DEFAULT_RISK_PATHS)) {
-    const patterns = riskPatterns(area, policy);
-    if (kept.some((path) => matchesAny(path, patterns)))
+  for (const area of Object.keys(DEFAULT_RISK_PATHS))
+    if (kept.some((path) => inArea(path, area, policy)))
       areas.push(area);
-  }
   return areas;
 }
 function excludedRiskPaths(paths, policy) {
   const areas = Object.keys(DEFAULT_RISK_PATHS);
-  return paths.filter((path) => isExcluded(path, policy) && areas.some((area) => matchesAny(path, riskPatterns(area, policy))));
+  return paths.filter((path) => isExcluded(path, policy) && areas.some((area) => inArea(path, area, policy)));
 }
 function routeRank(route) {
   return ROUTE_ORDER.indexOf(route);
@@ -2607,8 +2617,11 @@ function saveState(paths, state) {
   writeJson(statePath(paths), state);
 }
 function liveSessions(paths, now = Date.now()) {
+  return liveOf(loadState(paths).sessions, now);
+}
+function liveOf(sessions, now = Date.now()) {
   const live2 = {};
-  for (const [id, session] of Object.entries(loadState(paths).sessions))
+  for (const [id, session] of Object.entries(sessions))
     if (session.seenAt && !session.endedAt && now - Date.parse(session.seenAt) <= SESSION_LIVE_MS)
       live2[id] = session;
   return live2;
@@ -10827,13 +10840,14 @@ function neighbours(ctx) {
 function lane(ctx) {
   if (ctx.openedBy)
     return { neighbours: [], holdsOpenItem: false };
-  const live2 = liveSessions(ctx.paths);
+  const sessions = loadState(ctx.paths).sessions;
+  const live2 = liveOf(sessions);
   const own = live2[ctx.sessionId]?.item;
   const others = Object.entries(live2).filter(([id, s]) => id !== ctx.sessionId && s.item && s.item !== own).sort(([a], [b]) => a.localeCompare(b));
   if (!others.length)
     return { neighbours: [], holdsOpenItem: false };
   const open = new Set(openItems(ctx.paths).map((w) => w.id));
-  const held = loadState(ctx.paths).sessions[ctx.sessionId]?.item;
+  const held = sessions[ctx.sessionId]?.item;
   return {
     neighbours: others.filter(([, s]) => open.has(s.item ?? "")).map(([id, s]) => ({ id, item: s.item ?? "" })),
     holdsOpenItem: !!held && open.has(held)
@@ -11409,6 +11423,7 @@ var hiddenLine = (hidden, wayOut = "write the line plainly, without it") => {
   const reason = `a PowerShell line whose text the hook cannot read (${hidden})`;
   return { reason, asked: `Crew: ${reason}, so a person decides: ${wayOut}`, wayOut, hidden: true };
 };
+var FOLD_MARKS = { handed: code(0), joined: code(1), ambiguous: code(2) };
 function unreadablePowershell(written, command2, read2) {
   const mark = markOn(written);
   if (mark)
@@ -11536,7 +11551,6 @@ var startProcessRewrite = (whole, pre, before, rest) => {
 };
 var CMD_BUILTIN = /^(?:call\s+|start\s+(?:"[^"]*"\s+)?(?:\/(?:d|affinity|node|machine)\s+(?:"[^"]*"|\S+)\s+|\/\w+\s+)*)/i;
 var cmdRest = (rest) => rest.replace(CMD_BUILTIN, "");
-var FOLD_MARKS = { handed: code(0), joined: code(1), ambiguous: code(2) };
 var MARKS = new RegExp(`[${FOLD_MARKS.handed}${FOLD_MARKS.joined}]`, "g");
 var HANDED = `${FOLD_MARKS.handed}sh -c`;
 var HANDED_PREFIX = new RegExp(`${HANDED}[ \\t]*`, "g");
@@ -12172,7 +12186,7 @@ var NOT_DOTDOT_SEGMENT = String.raw`(?!\.\.(?:\/|${PATH_END}|$))[^\s"'\x60;&|)/]
 var REVIEW_OWNED = String.raw`review(?!\/${REVIEW_OPEN_SEGMENT}(?:\/(?:${NOT_DOTDOT_SEGMENT})*)?(?=${PATH_END}|$))`;
 var AUDIT_OWNED = String.raw`audit(?=\/|${PATH_END}|$)(?!\/${AUDIT_OPEN_FILES}(?=${PATH_END}|$))`;
 var WORK_FILES = PROTECTED_WORK_FILES.map(escapeRegExp).join("|");
-var ENGINE_FILES = new RegExp(String.raw`\.crew\/(?:profile\.json|policy\.json|decisions\.json|\.gitignore|local\b|work\/[^\s/]+\/(?:${WORK_FILES}|logs\b|${REVIEW_OWNED}|${AUDIT_OWNED}))|\.wizardingcode\/crew\b`, "i");
+var ENGINE_FILES = new RegExp(String.raw`\.crew\/(?:profile\.json|policy\.json|decisions\.json|\.gitignore|local\b|work\/[^\s/]+\/(?:${WORK_FILES}|logs\b|running(?:\.json|\/|(?=${PATH_END})|$)|${REVIEW_OWNED}|${AUDIT_OWNED}))|\.wizardingcode\/crew\b`, "i");
 var ENGINE_FOLDER = new RegExp(String.raw`(?:^|[\s"'=(:\/\\])\.crew(?:[\/\\]work(?:[\/\\][^\s\/\\"'\x60;&|)*]+)?)?(?:[\/\\](?:\*\*?|\.))*[\/\\]?(?=${PATH_END}|$)`, "i");
 var REMOVE_OR_MOVE = /(?:^|[\s;&|("'/])(?:rm|rmdir|mv|chmod|chown)\b/i;
 var POWERSHELL_REMOVE_OR_MOVE = /(?:^|[\s;&|({])(?:Remove-Item|ri|rm|rmdir|rd|del|erase|Move-Item|mi|mv|move|Rename-Item|rni|ren)(?=\s|$)/i;
@@ -14385,14 +14399,21 @@ function onSessionStart(ctx, payload = {}) {
 }
 
 // packages/engine/src/running.ts
-import { rmSync as rmSync5 } from "node:fs";
+import { readdirSync as readdirSync9, rmSync as rmSync5 } from "node:fs";
 import { join as join43 } from "node:path";
-function runningFile(paths, id) {
+function runningDir(paths, id) {
+  return join43(workDir(paths, id), "running");
+}
+function runningFile(paths, id, pid = process.pid) {
+  return join43(runningDir(paths, id), `${pid}.json`);
+}
+function legacyFile(paths, id) {
   return join43(workDir(paths, id), "running.json");
 }
 async function withRunning(paths, id, session, command2, run) {
   if (!session)
     return run();
+  rmSync5(legacyFile(paths, id), { force: true });
   const file = runningFile(paths, id);
   const marker = {
     command: command2,
@@ -14419,18 +14440,26 @@ function parseMarker(text) {
   return null;
 }
 function runPermit(paths, id, session, spent) {
-  const file = runningFile(paths, id);
-  const text = readText(file);
-  if (text === null)
-    return null;
-  const marker = parseMarker(text);
-  if (!marker || !isAlive(marker.pid)) {
-    rmSync5(file, { force: true });
+  let names;
+  try {
+    names = readdirSync9(runningDir(paths, id)).filter((n) => n.endsWith(".json")).sort();
+  } catch {
     return null;
   }
-  if (marker.session !== session || spent.includes(marker.startedAt))
-    return null;
-  return processStart(marker.pid) === marker.processStart ? marker : null;
+  for (const name of names) {
+    const file = join43(runningDir(paths, id), name);
+    const text = readText(file);
+    const marker = text === null ? null : parseMarker(text);
+    if (!marker || name !== `${marker.pid}.json` || !isAlive(marker.pid)) {
+      rmSync5(file, { force: true });
+      continue;
+    }
+    if (marker.session !== session || spent.includes(marker.startedAt))
+      continue;
+    if (processStart(marker.pid) === marker.processStart)
+      return marker;
+  }
+  return null;
 }
 
 // packages/engine/src/hooks/stop.ts
@@ -14595,7 +14624,7 @@ function handleHook(event, payload, env = process.env) {
 }
 
 // packages/engine/src/knowledge.ts
-import { existsSync as existsSync21, readdirSync as readdirSync9, realpathSync as realpathSync7 } from "node:fs";
+import { existsSync as existsSync21, readdirSync as readdirSync10, realpathSync as realpathSync7 } from "node:fs";
 import { isAbsolute as isAbsolute10, join as join44, relative as relative11, resolve as resolve6 } from "node:path";
 
 // packages/engine/src/verify.ts
@@ -15107,7 +15136,7 @@ function latestPlan(userDir, workspace) {
   const dir = ctoDir(userDir, workspace);
   let names;
   try {
-    names = readdirSync9(dir);
+    names = readdirSync10(dir);
   } catch {
     return null;
   }
@@ -15618,7 +15647,7 @@ function tellWorkspace(paths, work, mail, scope, written) {
 }
 
 // packages/engine/src/metrics.ts
-import { readdirSync as readdirSync10 } from "node:fs";
+import { readdirSync as readdirSync11 } from "node:fs";
 import { join as join46 } from "node:path";
 function emptyKnowledge() {
   const entries = {};
@@ -15653,7 +15682,7 @@ function knowledgeFigures(base, scope, projects) {
 }
 function workIds(paths) {
   try {
-    return readdirSync10(join46(paths.crewDir, "work"));
+    return readdirSync11(join46(paths.crewDir, "work"));
   } catch {
     return [];
   }
@@ -15690,7 +15719,7 @@ function computeMetrics(projects, knowledge = emptyKnowledge()) {
     const policy = loadPolicy(paths).policy;
     let ids = [];
     try {
-      ids = readdirSync10(join46(paths.crewDir, "work"));
+      ids = readdirSync11(join46(paths.crewDir, "work"));
     } catch {
       continue;
     }
@@ -17634,6 +17663,99 @@ ${notes.join(`
     }))
   });
 }
+async function researchCommand(env, parsed, args, io) {
+  const usage = "usage: crew research <id> verify [--file <path>]";
+  const opened = openForChange(env, args[0]);
+  if (isOutcome(opened))
+    return opened;
+  if (args[1] !== "verify")
+    return refuse(usage);
+  const dir = workDir(env.paths, opened.work.id);
+  const file = typeof parsed.flags.file === "string" ? resolve7(env.paths.root, parsed.flags.file) : join50(dir, "conclave", "researcher.md");
+  const named2 = rel(env.paths, file);
+  if (named2.startsWith("..") || isAbsolute11(named2))
+    return refuse(`${parsed.flags.file} is not under the root`);
+  const text = readText(file);
+  if (text === null)
+    return refuse(`no researcher file at ${named2}`);
+  const facts = parseFacts(text);
+  if (!facts.length)
+    return ok(`no fact to verify in ${named2}: a code fact is "- <path from the root>:<line> · <sentence>", a documentation fact "- <URL or document> · "<quote>" · <meaning>"; the strategy's marks name the file's lines either way (crew strategy ${opened.work.id} check), so go on`, { facts: [] });
+  const jev = jevConfig(io.env, env.config);
+  const asking = jev.configured && askAllowed(env.policy, "fact");
+  const statuses = new Map;
+  const found = [];
+  for (const f of facts) {
+    const source = await fetchSource(f.source, env.paths.root);
+    if ("refused" in source) {
+      statuses.set(f.id, {
+        id: f.id,
+        source: f.source,
+        status: "not-found",
+        reason: source.refused
+      });
+      continue;
+    }
+    const quote = findQuote(f.quote, source.text);
+    if (!quote) {
+      statuses.set(f.id, {
+        id: f.id,
+        source: f.source,
+        status: "not-found",
+        reason: `the quote is not in ${f.source}`
+      });
+      continue;
+    }
+    found.push({ id: f.id, claim: f.claim, quote: f.quote, excerpt: quote.excerpt });
+  }
+  let tail = null;
+  let records = [];
+  if (found.length && !asking) {
+    const notAsked = jev.configured ? "jev not asked: fact is not in verify.asks" : "jev not configured";
+    for (const f of found)
+      statuses.set(f.id, {
+        id: f.id,
+        source: facts.find((x) => x.id === f.id)?.source ?? "",
+        status: "unverified",
+        reason: notAsked
+      });
+    tail = notAsked;
+  } else if (found.length) {
+    const out2 = await verifyFacts(jev, env.policy, found);
+    records = out2.records;
+    for (const f of found) {
+      const mark = out2.marks[f.id];
+      statuses.set(f.id, {
+        id: f.id,
+        source: facts.find((x) => x.id === f.id)?.source ?? "",
+        status: mark?.status ?? "unverified",
+        ...mark?.reason ? { reason: mark.reason } : {},
+        ...mark && mark.confidence !== null ? { confidence: mark.confidence } : {}
+      });
+    }
+    if (out2.unavailable)
+      tail = `jev unavailable: ${out2.unavailable}`;
+  }
+  const ordered = facts.map((f) => statuses.get(f.id));
+  writeProtectedJson(env.paths, join50(dir, "conclave", "researcher.verification.json"), {
+    at: nowIso(),
+    hash: sha256(text),
+    facts: ordered
+  });
+  if (records.length) {
+    const appended = updateEvidence(env.paths, opened.work.id, (fresh) => {
+      fresh.verifications = [...fresh.verifications ?? [], ...records];
+    });
+    if ("refused" in appended)
+      tail = tail ? `${tail}; ${appended.refused}` : appended.refused;
+  }
+  const counts = ["verified", "disputed", "unverified", "not-found"].map((s) => [s, ordered.filter((x) => x.status === s).length]).filter(([, n2]) => n2 > 0).map(([s, n2]) => `${n2} ${s}`);
+  const reasons = ordered.filter((x) => x.status === "not-found").map((x) => `${x.id}: ${x.reason}`);
+  if (tail)
+    reasons.push(tail);
+  const n = facts.length;
+  return ok(`${n} fact${n === 1 ? "" : "s"}: ${counts.join(", ")}${reasons.length ? ` (${reasons.join("; ")})` : ""}`, { facts: ordered, file: "conclave/researcher.verification.json" });
+}
 async function dispatch(parsed, io) {
   const [command2, ...args] = parsed.positional;
   if (parsed.flags.version || command2 === "version")
@@ -18535,99 +18657,8 @@ ${rendered.text}`, { approvals: opened.work.approvals, ...rendered.data });
       return awaitCommand(env, args);
     case "resume":
       return resumeCommand(env, parsed, args);
-    case "research": {
-      const usage = "usage: crew research <id> verify [--file <path>]";
-      const opened = openForChange(env, args[0]);
-      if (isOutcome(opened))
-        return opened;
-      if (args[1] !== "verify")
-        return refuse(usage);
-      const dir = workDir(env.paths, opened.work.id);
-      const file = typeof parsed.flags.file === "string" ? resolve7(env.paths.root, parsed.flags.file) : join50(dir, "conclave", "researcher.md");
-      const named2 = rel(env.paths, file);
-      if (named2.startsWith("..") || isAbsolute11(named2))
-        return refuse(`${parsed.flags.file} is not under the root`);
-      const text = readText(file);
-      if (text === null)
-        return refuse(`no researcher file at ${named2}`);
-      const facts = parseFacts(text);
-      if (!facts.length)
-        return ok(`no fact to verify in ${named2}: a code fact is "- <path from the root>:<line> · <sentence>", a documentation fact "- <URL or document> · "<quote>" · <meaning>"; the strategy's marks name the file's lines either way (crew strategy ${opened.work.id} check), so go on`, { facts: [] });
-      const jev = jevConfig(io.env, env.config);
-      const asking = jev.configured && askAllowed(env.policy, "fact");
-      const statuses = new Map;
-      const found = [];
-      for (const f of facts) {
-        const source = await fetchSource(f.source, env.paths.root);
-        if ("refused" in source) {
-          statuses.set(f.id, {
-            id: f.id,
-            source: f.source,
-            status: "not-found",
-            reason: source.refused
-          });
-          continue;
-        }
-        const quote = findQuote(f.quote, source.text);
-        if (!quote) {
-          statuses.set(f.id, {
-            id: f.id,
-            source: f.source,
-            status: "not-found",
-            reason: `the quote is not in ${f.source}`
-          });
-          continue;
-        }
-        found.push({ id: f.id, claim: f.claim, quote: f.quote, excerpt: quote.excerpt });
-      }
-      let tail = null;
-      let records = [];
-      if (found.length && !asking) {
-        const notAsked = jev.configured ? "jev not asked: fact is not in verify.asks" : "jev not configured";
-        for (const f of found)
-          statuses.set(f.id, {
-            id: f.id,
-            source: facts.find((x) => x.id === f.id)?.source ?? "",
-            status: "unverified",
-            reason: notAsked
-          });
-        tail = notAsked;
-      } else if (found.length) {
-        const out2 = await verifyFacts(jev, env.policy, found);
-        records = out2.records;
-        for (const f of found) {
-          const mark = out2.marks[f.id];
-          statuses.set(f.id, {
-            id: f.id,
-            source: facts.find((x) => x.id === f.id)?.source ?? "",
-            status: mark?.status ?? "unverified",
-            ...mark?.reason ? { reason: mark.reason } : {},
-            ...mark && mark.confidence !== null ? { confidence: mark.confidence } : {}
-          });
-        }
-        if (out2.unavailable)
-          tail = `jev unavailable: ${out2.unavailable}`;
-      }
-      const ordered = facts.map((f) => statuses.get(f.id));
-      writeProtectedJson(env.paths, join50(dir, "conclave", "researcher.verification.json"), {
-        at: nowIso(),
-        hash: sha256(text),
-        facts: ordered
-      });
-      if (records.length) {
-        const appended = updateEvidence(env.paths, opened.work.id, (fresh) => {
-          fresh.verifications = [...fresh.verifications ?? [], ...records];
-        });
-        if ("refused" in appended)
-          tail = tail ? `${tail}; ${appended.refused}` : appended.refused;
-      }
-      const counts = ["verified", "disputed", "unverified", "not-found"].map((s) => [s, ordered.filter((x) => x.status === s).length]).filter(([, n2]) => n2 > 0).map(([s, n2]) => `${n2} ${s}`);
-      const reasons = ordered.filter((x) => x.status === "not-found").map((x) => `${x.id}: ${x.reason}`);
-      if (tail)
-        reasons.push(tail);
-      const n = facts.length;
-      return ok(`${n} fact${n === 1 ? "" : "s"}: ${counts.join(", ")}${reasons.length ? ` (${reasons.join("; ")})` : ""}`, { facts: ordered, file: "conclave/researcher.verification.json" });
-    }
+    case "research":
+      return researchCommand(env, parsed, args, io);
     case "analyse": {
       const usage = "usage: crew analyse <id> --paths <file,file>";
       const opened = openForChange(env, args[0]);

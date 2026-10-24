@@ -3,7 +3,7 @@ import { sweepSafely } from "../open.ts";
 import { resolvePaths } from "../paths.ts";
 import { loadPolicy } from "../policy.ts";
 import { ensureProfile } from "../profile.ts";
-import { adoptMainFiles, liveSessions, loadState, recordSeen } from "../state.ts";
+import { adoptMainFiles, liveOf, loadState, recordSeen } from "../state.ts";
 import type { Message } from "../types.ts";
 import { openItems } from "../work.ts";
 import type { HookContext, HookPayload } from "./types.ts";
@@ -102,14 +102,16 @@ export function lane(ctx: HookContext): {
   holdsOpenItem: boolean;
 } {
   if (ctx.openedBy) return { neighbours: [], holdsOpenItem: false };
-  const live = liveSessions(ctx.paths);
+  // One read of the state for the live sessions and this session's own item (finding 131).
+  const sessions = loadState(ctx.paths).sessions;
+  const live = liveOf(sessions);
   const own = live[ctx.sessionId]?.item;
   const others = Object.entries(live)
     .filter(([id, s]) => id !== ctx.sessionId && s.item && s.item !== own)
     .sort(([a], [b]) => a.localeCompare(b));
   if (!others.length) return { neighbours: [], holdsOpenItem: false };
   const open = new Set(openItems(ctx.paths).map((w) => w.id));
-  const held = loadState(ctx.paths).sessions[ctx.sessionId]?.item;
+  const held = sessions[ctx.sessionId]?.item;
   return {
     neighbours: others
       .filter(([, s]) => open.has(s.item ?? ""))

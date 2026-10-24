@@ -1,4 +1,4 @@
-import { rmSync } from "node:fs";
+import { readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { nowIso, readText, writeText } from "./fs.ts";
 import { isAlive, processStart } from "./open.ts";
@@ -17,8 +17,18 @@ export interface RunningMarker {
   startedAt: string;
 }
 
-/** Where an item's engine run in progress leaves its marker. */
-export function runningFile(paths: CrewPaths, id: string): string {
+/** Where an item's engine runs in progress leave their markers: one file per run, by pid (finding 146). */
+export function runningDir(paths: CrewPaths, id: string): string {
+  return join(workDir(paths, id), "running");
+}
+
+/** The marker of one run of an item, this process's unless a pid is named. */
+export function runningFile(paths: CrewPaths, id: string, pid: number = process.pid): string {
+  return join(runningDir(paths, id), `${pid}.json`);
+}
+
+/** The single marker an engine before 0.14.0 wrote: read by no one now, cleared by the next run. */
+function legacyFile(paths: CrewPaths, id: string): string {
   return join(workDir(paths, id), "running.json");
 }
 
@@ -34,6 +44,8 @@ export async function withRunning<T>(
   run: () => Promise<T>,
 ): Promise<T> {
   if (!session) return run();
+  // The single marker of an engine before 0.14.0 is read by no one now: a new run clears it.
+  rmSync(legacyFile(paths, id), { force: true });
   const file = runningFile(paths, id);
   const marker: RunningMarker = {
     command,
@@ -64,9 +76,11 @@ function parseMarker(text: string): RunningMarker | null {
 }
 
 /**
- * The run that lets this session's turn end once (finding 146): the item's marker names this
- * session, its pid is alive with the start time recorded, and no earlier Stop spent it. A malformed
- * marker or a dead pid's is removed; another session's and a reused pid's are left and permit nothing.
+ * The run that lets this session's turn end once (finding 146): a marker of the item's running/
+ * folder that names this session, whose file name is its pid, whose pid is alive with the start time
+ * recorded, and that no earlier Stop spent. Two runs of one item keep two markers, each read alone.
+ * A malformed, misnamed or dead pid's marker is removed; another session's and a reused pid's are
+ * left and permit nothing; an old single running.json is never read (a new run clears it).
  */
 export function runPermit(
   paths: CrewPaths,
@@ -74,14 +88,24 @@ export function runPermit(
   session: string,
   spent: readonly string[],
 ): RunningMarker | null {
-  const file = runningFile(paths, id);
-  const text = readText(file);
-  if (text === null) return null;
-  const marker = parseMarker(text);
-  if (!marker || !isAlive(marker.pid)) {
-    rmSync(file, { force: true });
+  let names: string[];
+  try {
+    names = readdirSync(runningDir(paths, id))
+      .filter((n) => n.endsWith(".json"))
+      .sort();
+  } catch {
     return null;
   }
-  if (marker.session !== session || spent.includes(marker.startedAt)) return null;
-  return processStart(marker.pid) === marker.processStart ? marker : null;
+  for (const name of names) {
+    const file = join(runningDir(paths, id), name);
+    const text = readText(file);
+    const marker = text === null ? null : parseMarker(text);
+    if (!marker || name !== `${marker.pid}.json` || !isAlive(marker.pid)) {
+      rmSync(file, { force: true });
+      continue;
+    }
+    if (marker.session !== session || spent.includes(marker.startedAt)) continue;
+    if (processStart(marker.pid) === marker.processStart) return marker;
+  }
+  return null;
 }

@@ -186,8 +186,16 @@ export function saveState(paths: CrewPaths, state: LocalState): void {
 
 /** The sessions of this checkout seen within ten minutes of `now` and not ended, by id. */
 export function liveSessions(paths: CrewPaths, now = Date.now()): Record<string, SessionState> {
+  return liveOf(loadState(paths).sessions, now);
+}
+
+/** The live sessions among the state's records, for a caller that has read the state already. */
+export function liveOf(
+  sessions: Record<string, SessionState>,
+  now = Date.now(),
+): Record<string, SessionState> {
   const live: Record<string, SessionState> = {};
-  for (const [id, session] of Object.entries(loadState(paths).sessions))
+  for (const [id, session] of Object.entries(sessions))
     if (session.seenAt && !session.endedAt && now - Date.parse(session.seenAt) <= SESSION_LIVE_MS)
       live[id] = session;
   return live;

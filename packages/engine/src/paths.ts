@@ -167,6 +167,8 @@ export function isProtectedPath(
   // The audit folder is the engine's (the runs, the files, the scope, the report, the roles'
   // findings the hook files), except the three files the lead writes by hand.
   if (inner === "audit" || inner.startsWith("audit/")) return !AUDIT_OPEN.test(inner);
+  // The engine runs' markers (finding 146): a forged one would be a forged Stop permit.
+  if (inner === "running" || inner.startsWith("running/") || inner === "running.json") return true;
   return PROTECTED_IN_WORK.has(inner) || inner.startsWith("logs/");
 }
 

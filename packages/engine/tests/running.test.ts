@@ -84,7 +84,8 @@ test("AC-14 (finding 146): crew gate run and crew tdd write the marker while the
     "a says A",
   );
   const id = /started (\S+)/.exec(started.out)?.[1] as string;
-  const marker = `.crew/work/${id}/running.json`;
+  // The CLI runs in this process, so the marker is named by this process's pid (finding 146).
+  const marker = `.crew/work/${id}/running/${process.pid}.json`;
   // The test command copies the marker it finds while it runs.
   write(root, "t.sh", `cp ${marker} seen-gate.json 2>/dev/null; exit 0\n`);
   await run("gate", "run", id);
@@ -114,10 +115,11 @@ function stopSession() {
   saveWork(ctx.paths, work);
   write(root, "src/a.ts", "changed");
   const file = runningFile(ctx.paths, work.id);
-  const mark = (fields: Record<string, unknown>) =>
+  // A marker under running/, named by its pid unless `name` says otherwise (a misnamed one)
+  const mark = (fields: Record<string, unknown>, name?: string) =>
     write(
       root,
-      `.crew/work/${work.id}/running.json`,
+      `.crew/work/${work.id}/running/${name ?? String(fields.pid ?? process.pid)}.json`,
       JSON.stringify({
         command: `crew gate run ${work.id}`,
         pid: process.pid,
@@ -153,7 +155,7 @@ test("AC-14 (finding 146): the Stop hook lets the turn end once for this session
 });
 
 test("AC-14 (finding 146): another session's marker, a malformed one, a dead pid and a reused pid give no permit; the dead and the malformed are removed", () => {
-  const { ctx, file, mark } = stopSession();
+  const { ctx, work, file, mark } = stopSession();
   // Each Stop a new turn's, so the cap of blocks in a row never releases one.
   const stop = () => onStop(ctx, { stop_hook_active: false });
   mark({ session: "other" });
@@ -165,9 +167,59 @@ test("AC-14 (finding 146): another session's marker, a malformed one, a dead pid
   expect(existsSync(file)).toBe(true);
   mark({ startedAt: "2026-10-23T22:02:00.000Z", pid: 2_147_483_000 });
   expect(stop().decision).toBe("block");
-  expect(existsSync(file)).toBe(false);
+  expect(existsSync(runningFile(ctx.paths, work.id, 2_147_483_000))).toBe(false);
   write(ctx.paths.root, file.slice(ctx.paths.root.length + 1), "{ not json");
   expect(stop().decision).toBe("block");
   expect(existsSync(file)).toBe(false);
   expect(loadState(ctx.paths).sessions.s?.runPermits ?? []).toEqual([]);
+});
+
+test("AC-13 (finding 146): each run keeps its own marker under running/: two live runs of one item both permit, a misnamed marker and an old running.json permit nothing and are removed, and each run's end removes its own alone", async () => {
+  const { ctx, mark } = stopSession();
+  // Two live runs of one item: this process and its parent, both this session's
+  mark({ startedAt: "2026-10-24T10:00:00.000Z" });
+  mark({
+    pid: process.ppid,
+    processStart: processStart(process.ppid),
+    startedAt: "2026-10-24T10:01:00.000Z",
+  });
+  const stop = () => onStop(ctx, { stop_hook_active: false });
+  expect(stop().decision).toBeUndefined();
+  expect(stop().decision).toBeUndefined();
+  expect(stop().decision).toBe("block");
+  expect(loadState(ctx.paths).sessions.s?.runPermits?.length).toBe(2);
+  // A misnamed marker (its file name is not its pid) permits nothing and is removed
+  const fresh = stopSession();
+  fresh.mark({ startedAt: "2026-10-24T10:02:00.000Z" }, "12345");
+  expect(onStop(fresh.ctx, { stop_hook_active: false }).decision).toBe("block");
+  expect(
+    existsSync(join(fresh.ctx.paths.root, ".crew", "work", fresh.work.id, "running", "12345.json")),
+  ).toBe(false);
+  // An old running.json from an engine before this change permits nothing, and the next run clears it
+  const old = stopSession();
+  const legacy = `.crew/work/${old.work.id}/running.json`;
+  write(
+    old.root,
+    legacy,
+    JSON.stringify({
+      command: "crew gate run x",
+      pid: process.pid,
+      processStart: processStart(process.pid),
+      session: "s",
+      startedAt: "2026-10-24T10:03:00.000Z",
+    }),
+  );
+  expect(onStop(old.ctx, { stop_hook_active: false }).decision).toBe("block");
+  await withRunning(old.ctx.paths, old.work.id, "s", "crew gate run x", async () => undefined);
+  expect(existsSync(join(old.root, legacy))).toBe(false);
+  // Each run's end removes its own marker alone
+  const paths = repoPaths(makeRepo({ "package.json": "{}" }), testEnv());
+  const item = createWork(paths, "fix");
+  const other = runningFile(paths, item.id, process.ppid);
+  write(paths.root, other.slice(paths.root.length + 1), "{}");
+  await withRunning(paths, item.id, "s1", "crew gate run x", async () => {
+    expect(existsSync(runningFile(paths, item.id))).toBe(true);
+  });
+  expect(existsSync(runningFile(paths, item.id))).toBe(false);
+  expect(existsSync(other)).toBe(true);
 });

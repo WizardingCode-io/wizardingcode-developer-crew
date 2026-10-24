@@ -4776,3 +4776,32 @@ test("AC-10 (finding 122): where nobody watches, only one plain crew policy set 
   // A watched session is asked as today
   expect(decision(run(open, "crew policy set team.maxJudgementRounds 1", "default"))).toBe("ask");
 });
+
+test("AC-13 (finding 146): the run markers under an item's running/ folder are the engine's: a Write, an Edit and a shell write into them are denied", () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const ctx = hookContext({ session_id: "s", cwd: root }, testEnv());
+  const marker = ".crew/work/w1/running/123.json";
+  const call = (tool_name: string, tool_input: Record<string, unknown>) =>
+    onPreToolUse(ctx, { tool_name, tool_input });
+  expect(decision(call("Write", { file_path: join(root, marker), content: "{}" }))).toBe("deny");
+  expect(
+    decision(call("Edit", { file_path: join(root, marker), old_string: "a", new_string: "b" })),
+  ).toBe("deny");
+  expect(
+    decision(call("Write", { file_path: join(root, ".crew/work/w1/running.json"), content: "{}" })),
+  ).toBe("deny");
+  for (const command of [
+    `echo '{}' > ${marker}`,
+    `echo '{}' | tee ${marker}`,
+    `cp forged.json ${marker}`,
+    `mv forged.json ${marker}`,
+  ])
+    expect(decision(call("Bash", { command })), command).toBe("deny");
+  // A lead's own note beside the markers is not one
+  expect(
+    decision(call("Bash", { command: "echo note > .crew/work/w1/running-notes.md" })),
+  ).not.toBe("deny");
+});

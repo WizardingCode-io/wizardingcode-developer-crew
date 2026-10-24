@@ -1,6 +1,7 @@
 import { expect, setSystemTime, spyOn, test } from "bun:test";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { lane } from "../src/hooks/context.ts";
 import { handleHook } from "../src/hooks/index.ts";
 import type { HookPayload } from "../src/hooks/types.ts";
 import * as lockModule from "../src/lock.ts";
@@ -9,7 +10,7 @@ import * as stateModule from "../src/state.ts";
 import { loadState } from "../src/state.ts";
 import { VERSION } from "../src/version.ts";
 import { addCriterion, createWork, saveWork } from "../src/work.ts";
-import { makeRepo, repoPaths, testEnv } from "./helpers.ts";
+import { hookContext, makeRepo, repoPaths, testEnv } from "./helpers.ts";
 
 /** A session's record as the lanes design writes it (AC-1): read loosely, since today's type knows none of it. */
 type LaneRecord = { cwd?: unknown; seenAt?: unknown; endedAt?: unknown; item?: unknown };
@@ -194,4 +195,30 @@ test("LANE-AC-7-alone: a session alone gets today's PreToolUse answers and today
   work.phase = "build";
   saveWork(paths, work);
   expect(handleHook("pre-tool-use", write(), env)).toEqual({});
+});
+
+test("AC-1 (finding 131): lane reads the session state once, with a live neighbour to scan", () => {
+  const { root, env, paths } = lanesRepo();
+  const work = createWork(paths, "x");
+  addCriterion(work, "a");
+  saveWork(paths, work);
+  // A live neighbour on the open item, and this session on it too
+  stateModule.updateState(paths, (state) => {
+    const now = new Date().toISOString();
+    state.sessions.other = { seenAt: now, cwd: root, item: "another-item" } as never;
+    state.sessions.me = { seenAt: now, cwd: root, item: work.id } as never;
+  });
+  const ctx = hookContext({ session_id: "me", cwd: root }, env);
+  // liveSessions reads the state inside its own module, where a spy cannot count it: lane reads
+  // the state once itself and takes the live sessions from that one read.
+  const reads = spyOn(stateModule, "loadState");
+  const live = spyOn(stateModule, "liveSessions");
+  try {
+    lane(ctx);
+    expect(reads).toHaveBeenCalledTimes(1);
+    expect(live).not.toHaveBeenCalled();
+  } finally {
+    reads.mockRestore();
+    live.mockRestore();
+  }
 });
