@@ -19,6 +19,10 @@ export interface EvalOptions {
   maxCostUsd?: number;
   /** The judge of the llm graders (`--judge-model`, the user's decision of 2026-10-23): the suite's own when not given. */
   judgeModel?: string;
+  /** A one-case run's runs (the improvement loop's three, ADR 0013); one when not given. */
+  runs?: number;
+  /** A one-case run's full result file (`--json`, the per-run scores and graders the loop reads). */
+  json?: string;
 }
 
 /** The suite's judge: never a weaker model than the agent under test (the owner's rule). */
@@ -123,11 +127,12 @@ export function evalInvocation(options: EvalOptions): {
         "--case",
         options.caseName,
         "--runs",
-        "1",
+        String(options.runs ?? 1),
         "--ablation",
         "none",
         "--max-cost-usd",
-        String(options.maxCostUsd ?? 5),
+        String(options.maxCostUsd ?? 5 * (options.runs ?? 1)),
+        ...(options.json ? ["--json", options.json] : []),
         // The one-case run keeps its sandbox too (SP8's record ran blind on the first tries; SP4 Task 6),
         // and its llm graders are judged by the suite's judge: the kit's default is a smaller model
         // than the agent under test (the owner's rule: never a weaker judge), and it split 1 of 3 on
@@ -220,18 +225,29 @@ export interface TraceReading {
   denied: string[];
 }
 
-/**
- * Reads a kept trace line by line as JSON (finding 118, under the rule of finding 95). A reference
- * is denied when a tool result carries the kit's own marks, `is_error: true` or a
- * `permission_decision` other than `accept`, and its `tool_use` input (any tool: a Read's
- * file_path, a Bash command) or the error's text names the reference; or when the agent's own words
- * report the denial and no accepted Read of that same path is in the trace. The join on the id reads
- * the result before or after its `tool_use`, and a metadata entry with no content entry. An accepted
- * result's content and its metadata are never read for a denial: the references hold the denial
- * words themselves, and every accepted call carries `permission_decision: accept`.
- */
-export function readTrace(lines: readonly string[]): TraceReading {
-  const uses = new Map<string, { name: string; paths: string[] }>();
+interface TraceUse {
+  name: string;
+  /** The references the call's input names. */
+  paths: string[];
+  /** The input's `file_path`, as given, when it has one. */
+  filePath: string | null;
+}
+
+interface TraceCalls {
+  readable: boolean;
+  uses: Map<string, TraceUse>;
+  results: { id: string; denied: boolean; errorPaths: string[] }[];
+  reported: string[];
+}
+
+const filePathOf = (input: unknown): string | null => {
+  const value = (input as { file_path?: unknown } | null)?.file_path;
+  return typeof value === "string" ? value : null;
+};
+
+/** A kept trace's calls, their results and the agent's reported denials, read line by line as JSON: what `readTrace` and `acceptedReadPaths` judge. */
+function traceCalls(lines: readonly string[]): TraceCalls {
+  const uses = new Map<string, TraceUse>();
   const results: { id: string; denied: boolean; errorPaths: string[] }[] = [];
   const reported: string[] = [];
   let readable = false;
@@ -254,6 +270,7 @@ export function readTrace(lines: readonly string[]): TraceReading {
           uses.set(entry.id, {
             name: String(entry.name),
             paths: stringsOf(entry.input).flatMap(referencePaths),
+            filePath: filePathOf(entry.input),
           });
         else if (entry.type === "text" && typeof entry.text === "string")
           reported.push(...reportedDenials(entry.text));
@@ -283,6 +300,21 @@ export function readTrace(lines: readonly string[]): TraceReading {
     for (const id of rejected)
       if (!seen.has(id)) results.push({ id, denied: true, errorPaths: [] });
   }
+  return { readable, uses, results, reported };
+}
+
+/**
+ * Reads a kept trace line by line as JSON (finding 118, under the rule of finding 95). A reference
+ * is denied when a tool result carries the kit's own marks, `is_error: true` or a
+ * `permission_decision` other than `accept`, and its `tool_use` input (any tool: a Read's
+ * file_path, a Bash command) or the error's text names the reference; or when the agent's own words
+ * report the denial and no accepted Read of that same path is in the trace. The join on the id reads
+ * the result before or after its `tool_use`, and a metadata entry with no content entry. An accepted
+ * result's content and its metadata are never read for a denial: the references hold the denial
+ * words themselves, and every accepted call carries `permission_decision: accept`.
+ */
+export function readTrace(lines: readonly string[]): TraceReading {
+  const { readable, uses, results, reported } = traceCalls(lines);
   const denied = new Set<string>();
   const acceptedReads = new Set<string>();
   for (const result of results) {
@@ -298,6 +330,21 @@ export function readTrace(lines: readonly string[]): TraceReading {
   const covered = (path: string): boolean =>
     acceptedReads.has(path) || [...acceptedReads].some((read) => read.startsWith(`${path}/`));
   return { readable, denied: [...denied].filter((path) => !covered(path)) };
+}
+
+/**
+ * The files a trace's accepted `Read` calls named, as the calls gave them, once each in the order
+ * found (ADR 0013): what the improvement loop maps to the plugin's files a case read. A Read the kit
+ * denied is not a read.
+ */
+export function acceptedReadPaths(lines: readonly string[]): string[] {
+  const { uses, results } = traceCalls(lines);
+  const read = new Set<string>();
+  for (const result of results) {
+    const use = uses.get(result.id);
+    if (!result.denied && use?.name === "Read" && use.filePath !== null) read.add(use.filePath);
+  }
+  return [...read];
 }
 
 /** The plugin references a kept trace shows denied to the agent (finding 95), once each. Such a run cannot follow the method and is re-run rather than scored. */
