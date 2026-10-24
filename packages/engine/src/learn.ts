@@ -66,6 +66,7 @@ const SOURCE: Record<KnowledgeDraft["kind"], string> = {
   documentation: "conclave/researcher.md",
   "stack-preference": "the profiles",
   general: "general",
+  "harness-lesson": "the improvement run's record",
 };
 
 /** The drafts of an item, read from its records, git (the changed files, HEAD) and the registry's profiles; nothing written: the solution, an issue's cause, the facts with a URL source, the workspace's stack preference. */

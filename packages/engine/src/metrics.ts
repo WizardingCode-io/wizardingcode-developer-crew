@@ -1,11 +1,11 @@
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { loadEvidence } from "./evidence.ts";
-import { KNOWLEDGE_KINDS, type KnowledgeScope, visibleTo } from "./knowledge.ts";
+import { type KnowledgeScope, PROJECT_KINDS, visibleTo } from "./knowledge.ts";
 import { loadLedger, objectionStatus } from "./objections.ts";
 import type { CrewPaths } from "./paths.ts";
 import { loadPolicy } from "./policy.ts";
-import type { KnowledgeBase, KnowledgeKind, Phase } from "./types.ts";
+import type { KnowledgeBase, KnowledgeKind, Phase, ProjectKnowledgeKind } from "./types.ts";
 import { kindOfItem, loadWork } from "./work.ts";
 
 /** One visible entry of the base as the CTO's inputs list it (SP4 Task 5): never the text. */
@@ -20,7 +20,7 @@ export interface KnowledgeRow {
 
 /** The base's figures over the entries a scope reads, and the items of the given projects whose learn confirmed one. */
 export interface KnowledgeCounts {
-  entries: Record<KnowledgeKind, number>;
+  entries: Record<ProjectKnowledgeKind, number>;
   confirmed: number;
   contradicted: number;
   cited: number;
@@ -31,8 +31,8 @@ export interface KnowledgeFigures extends KnowledgeCounts {
 }
 
 function emptyKnowledge(): KnowledgeCounts {
-  const entries = {} as Record<KnowledgeKind, number>;
-  for (const kind of KNOWLEDGE_KINDS) entries[kind] = 0;
+  const entries = {} as Record<ProjectKnowledgeKind, number>;
+  for (const kind of PROJECT_KINDS) entries[kind] = 0;
   return { entries, confirmed: 0, contradicted: 0, cited: 0 };
 }
 
@@ -50,7 +50,8 @@ export function knowledgeFigures(
   const figures: KnowledgeFigures = { ...emptyKnowledge(), rows: [] };
   if (!base) return figures;
   for (const e of base.entries) {
-    if (!visibleTo(e, scope)) continue;
+    // A harness lesson is no figure of the projects: the CTO's inputs carry it apart (ADR 0013).
+    if (!visibleTo(e, scope) || e.kind === "harness-lesson") continue;
     figures.entries[e.kind] += 1;
     figures.confirmed += e.confirmedBy.length;
     figures.contradicted += e.contradictedBy.length;

@@ -964,12 +964,21 @@ export interface UserConfig {
 }
 
 /** The kinds of a knowledge entry (SP7 §12): three the engine writes at Learn, two a person adds. */
-export type KnowledgeKind =
+export type ProjectKnowledgeKind =
   | "stack-preference"
   | "validated-solution"
   | "documentation"
   | "root-cause"
   | "general";
+
+/** The project's kinds and the improvement loop's lessons about the crew itself (ADR 0013). */
+export type KnowledgeKind = ProjectKnowledgeKind | "harness-lesson";
+
+/** What a harness lesson adds to an entry: the proposal of the run's record it was learnt from, and how far the run supports it. */
+export interface HarnessLessonMark {
+  proposal: string;
+  confidence: "high" | "medium" | "low";
+}
 
 /** An item that confirmed or contradicted an entry: where, when, and why for a contradiction; `item` null for a contradiction recorded outside an item (SP6 Task 1 AC-3). */
 export interface KnowledgeRef {
@@ -1002,6 +1011,8 @@ export interface KnowledgeEntry {
   createdAt: string;
   confirmedBy: KnowledgeRef[];
   contradictedBy: KnowledgeRef[];
+  /** A `harness-lesson`'s proposal and confidence; absent on every other kind. */
+  harness?: HarnessLessonMark;
 }
 
 export interface KnowledgeBase {

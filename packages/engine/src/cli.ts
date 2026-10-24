@@ -89,10 +89,13 @@ import {
   entryLine,
   entryText,
   fileInsideRoot,
+  HARNESS_LESSON,
+  harnessLesson,
   KNOWLEDGE_KINDS,
   knowledgeText,
   knownRootCauses,
   latestPlan,
+  lessonsForCto,
   lookup,
   readBase,
   rerankHits,
@@ -4549,7 +4552,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       // The knowledge base's commands (SP4 Task 2, ADR 0009): what a person adds, reads, disputes
       // or, alone, unmarks; the engine's kinds enter at Learn. Rule 13 is `visibleTo`, read first.
       const usage =
-        'usage: crew knowledge <id> lookup | list [--kind <k>] | show K-n | add --kind general|documentation --title "<t>" --file <path> [--source <url>] | contradict K-n --reason "<why>" [--item <id>] | unmark K-n';
+        'usage: crew knowledge <id> lookup | list [--kind <k>] | show K-n | add --kind general|documentation --title "<t>" --file <path> [--source <url>] | contradict K-n --reason "<why>" [--item <id>] | unmark K-n | lesson add --cue "<t>" --lesson "<t>" --evidence docs/improve/<run>/record.json --proposal P-n --confidence high|medium|low';
       const sub = args[0];
       if (args[1] === "lookup") {
         // The base read again for an item (SP4 Task 3): after a kind raise, after an entry entered.
@@ -4572,8 +4575,11 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       if (sub === "list") {
         if (kindFlag !== undefined && !KNOWLEDGE_KINDS.includes(kindFlag as KnowledgeKind))
           return refuse(`unknown kind ${String(kindFlag)}: one of ${KNOWLEDGE_KINDS.join(", ")}`);
+        // A harness lesson is listed when asked for by its kind alone (ADR 0013, AC-2).
         const entries = (read.base?.entries ?? []).filter(
-          (e) => visibleTo(e, scope) && (kindFlag === undefined || e.kind === kindFlag),
+          (e) =>
+            visibleTo(e, scope) &&
+            (kindFlag === undefined ? e.kind !== HARNESS_LESSON : e.kind === kindFlag),
         );
         const text = entries.length
           ? entries.map(entryLine).join("\n")
@@ -4599,6 +4605,8 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         if (!KNOWLEDGE_KINDS.includes(kindFlag as KnowledgeKind))
           return refuse(`unknown kind ${kindFlag}: one of ${KNOWLEDGE_KINDS.join(", ")}`);
         const kind = kindFlag as KnowledgeKind;
+        if (kind === HARNESS_LESSON)
+          return refuse(`${kind} entries are written by crew knowledge lesson add`);
         if (!USER_KINDS.includes(kind)) return refuse(`${kind} entries are written by crew learn`);
         if (typeof title !== "string" || !title.trim())
           return refuse("a knowledge entry needs a title");
@@ -4638,6 +4646,56 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         register(`knowledge add ${added.id}: ${added.title}`, "the agent");
         return ok(
           `${added.id} added (${kind}, marked for ${scope.workspace ?? "this project"}): ${added.title}`,
+          { entry: added },
+        );
+      }
+      if (sub === "lesson") {
+        // The improvement loop's lesson about the crew (ADR 0013, AC-17): its run's record as the
+        // evidence, read from this repository's own docs/improve/, never from another tree.
+        const { cue, lesson, evidence, proposal, confidence } = parsed.flags;
+        if (
+          args[1] !== "add" ||
+          typeof cue !== "string" ||
+          typeof lesson !== "string" ||
+          typeof evidence !== "string" ||
+          typeof proposal !== "string" ||
+          typeof confidence !== "string"
+        )
+          return refuse(
+            'usage: crew knowledge lesson add --cue "<t>" --lesson "<t>" --evidence docs/improve/<run>/record.json --proposal P-n --confidence high|medium|low',
+          );
+        if (unreadable) return refuse(`the knowledge base cannot be read: ${unreadable}`);
+        const drafted = harnessLesson(env.paths.root, {
+          cue,
+          lesson,
+          evidence,
+          proposal,
+          confidence,
+        });
+        if ("refused" in drafted) return refuse(drafted.refused);
+        const secret = scanText(`${drafted.cue}\n${drafted.lesson}`, "lesson")[0];
+        if (secret)
+          return refuse(`the lesson holds a secret (${secret.rule}); nothing was written`);
+        const added = addEntry(env.paths.userDir, {
+          kind: HARNESS_LESSON,
+          title: drafted.cue,
+          workspace: scope.workspace,
+          project: scope.project,
+          projectRoot: scope.projectRoot,
+          confidential: false,
+          item: null,
+          commit: null,
+          stacks: [],
+          paths: [],
+          words: words(`${drafted.cue} ${drafted.lesson}`),
+          text: drafted.lesson,
+          source: drafted.evidence,
+          harness: drafted.mark,
+        });
+        if ("refused" in added) return refuse(added.refused);
+        register(`knowledge lesson ${added.id}: ${added.title}`, "the agent");
+        return ok(
+          `${added.id} added (harness-lesson, ${drafted.mark.proposal}, confidence ${drafted.mark.confidence}): ${added.title}`,
           { entry: added },
         );
       }
@@ -4957,7 +5015,14 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         const { metrics, figures: knowledge } = computed;
         const lastPlan = latestPlan(env.paths.userDir, ws);
         const target = join(dir, `${date}-inputs.json`);
-        writeJson(target, { at: nowIso(), workspace: ws, metrics, lastPlan, knowledge });
+        writeJson(target, {
+          at: nowIso(),
+          workspace: ws,
+          metrics,
+          lastPlan,
+          knowledge,
+          harnessLessons: lessonsForCto(readBase(env.paths.userDir).base, scope),
+        });
         // The figures the inputs carry are printed too, so the session and its trace hold what the
         // CTO reads (the CTO case's fourth run: the agent alone saw them, inside its own context).
         return ok(
