@@ -11070,7 +11070,30 @@ test("2026-10-24-012 AC-26: no reader or hook of a client project's session surf
     "prompt",
   );
   expect(leaks(prompted.out)).toEqual([]);
+  // Every other hook a session runs answers without the lesson either.
+  const tool = {
+    session_id: "s1",
+    cwd: client,
+    tool_name: "Read",
+    tool_input: { file_path: join(client, "README.md") },
+  };
+  for (const [event, payload] of [
+    ["pre-tool-use", tool],
+    ["post-tool-use", { ...tool, tool_response: "x" }],
+    ["stop", { session_id: "s1", cwd: client }],
+    ["subagent-stop", { session_id: "s1", cwd: client }],
+  ] as const)
+    expect(leaks((await hook(payload, event)).out), event).toEqual([]);
   const review = await cl.run("cto", "review", "--workspace", "crew");
   const inputsPath = (review.out.split("\n")[0] as string).replace("inputs: ", "");
   expect(leaks(readFileSync(inputsPath, "utf8"))).toEqual([]);
+});
+
+test("2026-10-24-012 AC-32: a harness lesson's cue and lesson drop Unicode format characters (bidirectional controls, zero-width characters)", async () => {
+  const { cc } = lessonProjects();
+  const added = await cc.json("knowledge", "lesson", "add", ...lessonWith("--cue", "a‮b​c⁦d﻿"));
+  expect(added.code, JSON.stringify(added)).toBe(0);
+  expect((added.data.entry as { title: string }).title).toBe("abcd");
+  const blank = await cc.run("knowledge", "lesson", "add", ...lessonWith("--lesson", "​‪"));
+  expect(blank.err.trim()).toBe("a harness lesson needs a lesson");
 });

@@ -95,6 +95,7 @@ function deps(
   options: {
     kit?: (call: KitCall, n: number) => { status: number | null; result: unknown };
     editor?: (call: EditorCall, n: number) => void;
+    output?: (n: number) => string;
     env?: NodeJS.ProcessEnv;
   } = {},
 ): { deps: ImproveDeps; seen: Seen } {
@@ -123,7 +124,11 @@ function deps(
           call,
           seen.editor.length,
         );
-        return { status: 0, output: `P-${seen.editor.length}: name the gate first` };
+        const n = seen.editor.length;
+        return {
+          status: 0,
+          output: options.output ? options.output(n) : `P-${n}: name the gate first`,
+        };
       },
       lessonAdd: (args) => {
         seen.lessons.push(args);
@@ -150,6 +155,8 @@ test("2026-10-24-012 AC-23: the estimate is printed before any spend; each refus
   const { root, tmp } = fixture();
   const ok = deps(root, tmp);
   expect(await runImprove({ cases: ["t"], proposals: 1 }, ok.deps)).toBe(0);
+  // AC-18: the baseline's kit call asks the kit for three runs.
+  expect(ok.seen.kit[0]).toMatchObject({ tree: root, caseName: "t", runs: 3 });
   const estimate = ok.seen.log.findIndex((l) => l.startsWith("estimated cost:"));
   expect(estimate).toBeGreaterThan(-1);
   expect(estimate).toBeLessThan(ok.seen.log.indexOf("kit t"));
@@ -292,22 +299,41 @@ test("2026-10-24-012 AC-20: the script commits the kept diff with the fixed iden
     for (const verb of ["push", "merge", "rebase", "reset", "checkout"])
       expect(call.args, call.args.join(" ")).not.toContain(verb);
   }
-  for (const [name, edit] of [
-    ["main", (c: EditorCall) => writeFileSync(join(root, "README.md"), "x")],
-    ["dotgit", (c: EditorCall) => writeFileSync(join(c.cwd, ".git"), "gitdir: /elsewhere\n")],
-  ] as const) {
+  // Each change the editor might make outside its worktree's files refuses the proposal.
+  const moved = "the main checkout changed while the editor ran";
+  const commit = ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty"];
+  const outside: [string, (root: string, cwd: string) => void, string][] = [
+    ["status", (r) => writeFileSync(join(r, "README.md"), "x"), moved],
+    [
+      "config",
+      (r) =>
+        writeFileSync(
+          join(r, ".git/config"),
+          `${readFileSync(join(r, ".git/config"), "utf8")}[x]\n`,
+        ),
+      moved,
+    ],
+    ["hooks", (r) => writeFileSync(join(r, ".git/hooks/pre-commit"), "#!/bin/sh\n"), moved],
+    ["head", (r) => sh(r, ...commit, "-m", "x"), moved],
+    ["branch", (r) => sh(r, "switch", "-q", "-c", "other"), moved],
+    [
+      "dotgit",
+      (_r, c) => writeFileSync(join(c, ".git"), "gitdir: /elsewhere\n"),
+      "the worktree's .git changed while the editor ran",
+    ],
+  ];
+  for (const [name, edit, reason] of outside) {
     const fresh = fixture();
-    const r = deps(fresh.root, fresh.tmp, {
-      editor: (call) =>
-        name === "main" ? writeFileSync(join(fresh.root, "README.md"), "x") : edit(call),
-    });
+    const r = deps(fresh.root, fresh.tmp, { editor: (call) => edit(fresh.root, call.cwd) });
     await runImprove({ cases: ["t"], proposals: 1 }, r.deps);
-    expect(recordOf(fresh.root).proposals[0].refusal, name).toBe(
-      name === "main"
-        ? "the main checkout changed while the editor ran"
-        : "the worktree's .git changed while the editor ran",
+    const record = JSON.parse(
+      readFileSync(join(fresh.root, "docs/improve/2026-10-24-1/record.json"), "utf8"),
     );
+    expect(record.proposals[0].refusal, name).toBe(reason);
   }
+  // The branch name is the one git accepts, checked before it is made.
+  const refs = run.seen.git.filter((c) => c.args.includes("check-ref-format"));
+  expect(refs.map((c) => c.args.slice(-2))).toEqual([["--branch", "improve/2026-10-24-1"]]);
 });
 
 test("2026-10-24-012 AC-24: the editor runs in its worktree with Read, Grep, Glob, Edit and Write alone, acceptEdits, no MCP server, no session kept, and never Bash or a bypass", async () => {
@@ -405,23 +431,18 @@ test("2026-10-24-012 AC-28: beyond its targets a proposal probes the cases an ea
   const { root, tmp } = fixture();
   mkdirSync(join(root, "plugins/core/evals/v"), { recursive: true });
   writeFileSync(join(root, "plugins/core/evals/v/case.yaml"), "name: v\n");
-  mkdirSync(join(root, "docs/improve/2026-10-23-1"), { recursive: true });
-  writeFileSync(
-    join(root, "docs/improve/2026-10-23-1/record.json"),
-    JSON.stringify({ baseline: { u: { reads: [JUDGE] } } }),
-  );
+  // Two earlier runs: the later one's reads of u stand (judge.md), the earlier one's (none) do not;
+  // and t's earlier reads (judge.md) give way to this run's own baseline (gate.md).
+  const earlier: [string, unknown][] = [
+    ["2026-10-22-1", { baseline: { u: { reads: [] }, t: { reads: [JUDGE] } } }],
+    ["2026-10-23-1", { baseline: { u: { reads: [JUDGE] } } }],
+  ];
+  for (const [name, record] of earlier) {
+    mkdirSync(join(root, "docs/improve", name), { recursive: true });
+    writeFileSync(join(root, "docs/improve", name, "record.json"), JSON.stringify(record));
+  }
   sh(root, "add", "-A");
-  sh(
-    root,
-    "-c",
-    "user.name=t",
-    "-c",
-    "user.email=t@t",
-    "commit",
-    "-q",
-    "-m",
-    "earlier run, case v",
-  );
+  sh(root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "earlier runs");
   const run = deps(root, tmp, {
     editor: (call) => {
       writeFileSync(join(call.cwd, GATE), "# Gate\nBETTER\n");
@@ -437,4 +458,117 @@ test("2026-10-24-012 AC-28: beyond its targets a proposal probes the cases an ea
   expect(readFileSync(join(dir, "record.md"), "utf8")).toContain(
     "- Cases no run has measured (never probed): v",
   );
+});
+
+test("2026-10-24-012 AC-7 (the run): two winners are composed in a worktree of their own and probed on the union of their probe sets; diffs that do not apply together leave the best single winner", async () => {
+  // Both proposals rewrite gate.md the same way: they win alone and do not apply together.
+  const clash = fixture();
+  const run = deps(clash.root, clash.tmp);
+  expect(await runImprove({ cases: ["t"], proposals: 2 }, run.deps)).toBe(0);
+  const record = recordOf(clash.root);
+  expect(record.proposals.map((p: { verdict: string }) => p.verdict)).toEqual(["win", "win"]);
+  expect(record.composition).toMatchObject({ ids: ["P-1", "P-2"], applied: false, verdict: null });
+  expect(record.kept).toEqual({ kind: "single", id: "P-1" });
+  // Disjoint winners compose: P-1 rewrites gate.md, P-2 adds a reference beside it.
+  const disjoint = fixture();
+  const extra = "plugins/core/skills/crew/references/extra.md";
+  const both = deps(disjoint.root, disjoint.tmp, {
+    editor: (call, n) =>
+      n === 1
+        ? writeFileSync(join(call.cwd, GATE), "# Gate\nBETTER\n")
+        : writeFileSync(join(call.cwd, extra), "x\n"),
+    kit: (call) => {
+      const better =
+        existsSync(join(call.tree, extra)) ||
+        readFileSync(join(call.tree, GATE), "utf8").includes("BETTER");
+      return kitResult(call, better ? [1, 1, 1] : [0.5, 0.5, 0.5]);
+    },
+  });
+  expect(await runImprove({ cases: ["t"], proposals: 2 }, both.deps)).toBe(0);
+  const composed = recordOf(disjoint.root);
+  expect(composed.composition).toMatchObject({
+    ids: ["P-1", "P-2"],
+    applied: true,
+    verdict: "win",
+    probeSet: ["t"],
+  });
+  expect(composed.kept).toEqual({ kind: "composition", ids: ["P-1", "P-2"] });
+  const kept = sh(disjoint.root, "ls-tree", "-r", "--name-only", "improve/2026-10-24-1");
+  expect(kept).toContain(extra);
+  expect(sh(disjoint.root, "show", `improve/2026-10-24-1:${GATE}`)).toContain("BETTER");
+  // A kept composition's lessons are high.
+  expect(both.seen.lessons.map((a) => a[a.indexOf("--confidence") + 1])).toEqual(["high", "high"]);
+});
+
+test("2026-10-24-012 AC-11 (the run): the record.json a run writes holds its targets, baseline, each proposal's diff stat, rationale, probe figures and verdict, the composition, the branch and the cost", async () => {
+  const { root, tmp } = fixture();
+  expect(await runImprove({ cases: ["t"], proposals: 1 }, deps(root, tmp).deps)).toBe(0);
+  const record = recordOf(root);
+  expect(record.run).toBe("2026-10-24-1");
+  expect(record.targets).toEqual(["t"]);
+  expect(record.baseline.t).toMatchObject({ mean: 0.5, spread: 0, reads: [GATE] });
+  expect(record.proposals[0]).toMatchObject({
+    id: "P-1",
+    status: "probed",
+    diffStat: [{ status: "M", path: GATE }],
+    rationale: "P-1: name the gate first",
+    probeSet: ["t"],
+    verdict: "win",
+  });
+  expect(record.proposals[0].probe.t).toMatchObject({ mean: 1, spread: 0 });
+  expect(record.composition).toBeNull();
+  expect(record.branch).toBe("improve/2026-10-24-1");
+  // Two kit calls at 0.6 USD each: the baseline and the probe.
+  expect(record.costUsd).toBeCloseTo(1.2);
+  const md = readFileSync(join(root, "docs/improve/2026-10-24-1/record.md"), "utf8");
+  for (const text of [
+    "- Targets: t",
+    "## P-1: win",
+    `- Diff: M ${GATE}`,
+    "- Kept: P-1 on improve/2026-10-24-1",
+    "- Cost: 1.20 USD",
+  ])
+    expect(md, text).toContain(text);
+});
+
+test("2026-10-24-012 AC-30: the editor's answer is scanned before the record is written; a rationale holding a secret is withheld, the record naming the rule alone", async () => {
+  const { root, tmp } = fixture();
+  const key = ["AKIA", "ABCDEFGHIJKLMNOP"].join("");
+  const run = deps(root, tmp, { output: () => `I edited gate.md; the key is ${key}` });
+  expect(await runImprove({ cases: ["t"], proposals: 1 }, run.deps)).toBe(0);
+  const dir = join(root, "docs/improve/2026-10-24-1");
+  expect(recordOf(root).proposals[0].rationale).toBe(
+    "withheld: the editor's answer held a secret (AWS access key)",
+  );
+  for (const file of ["record.json", "record.md"])
+    expect(readFileSync(join(dir, file), "utf8")).not.toContain(key);
+  for (const args of run.seen.lessons) expect(args.join(" ")).not.toContain(key);
+});
+
+test("2026-10-24-012 AC-31: a diff that adds or changes a file to a mode other than 100644 is refused", async () => {
+  const { root, tmp } = fixture();
+  const script = "plugins/core/skills/crew/references/run.sh";
+  const run = deps(root, tmp, {
+    editor: (call) => {
+      writeFileSync(join(call.cwd, script), "#!/bin/sh\n");
+      chmodSync(join(call.cwd, script), 0o755);
+    },
+  });
+  await runImprove({ cases: ["t"], proposals: 1 }, run.deps);
+  expect(recordOf(root).proposals[0].refusal).toBe(`${script} has mode 100755, not 100644`);
+  expect(diffRefusal([{ status: "A", path: GATE, oldMode: "000000", newMode: "100755" }])).toBe(
+    `${GATE} has mode 100755, not 100644`,
+  );
+  expect(
+    diffRefusal([{ status: "D", path: GATE, oldMode: "100644", newMode: "000000" }]),
+  ).toBeNull();
+});
+
+test("2026-10-24-012 AC-33: the editor runs with an empty list of setting sources", async () => {
+  const { root, tmp } = fixture();
+  const run = deps(root, tmp);
+  await runImprove({ cases: ["t"], proposals: 1 }, run.deps);
+  const args = (run.seen.editor[0] as EditorCall).args;
+  expect(args.indexOf("--setting-sources")).toBeGreaterThan(-1);
+  expect(args[args.indexOf("--setting-sources") + 1]).toBe("");
 });

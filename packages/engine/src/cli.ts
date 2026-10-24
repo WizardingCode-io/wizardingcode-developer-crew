@@ -4551,8 +4551,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
     case "knowledge": {
       // The knowledge base's commands (SP4 Task 2, ADR 0009): what a person adds, reads, disputes
       // or, alone, unmarks; the engine's kinds enter at Learn. Rule 13 is `visibleTo`, read first.
-      const usage =
-        'usage: crew knowledge <id> lookup | list [--kind <k>] | show K-n | add --kind general|documentation --title "<t>" --file <path> [--source <url>] | contradict K-n --reason "<why>" [--item <id>] | unmark K-n | lesson add --cue "<t>" --lesson "<t>" --evidence docs/improve/<run>/record.json --proposal P-n --confidence high|medium|low';
+      const usage = `usage: crew knowledge <id> lookup | list [--kind <k>] | show K-n | add --kind general|documentation --title "<t>" --file <path> [--source <url>] | contradict K-n --reason "<why>" [--item <id>] | unmark K-n | ${LESSON_ARGS}`;
       const sub = args[0];
       if (args[1] === "lookup") {
         // The base read again for an item (SP4 Task 3): after a kind raise, after an entry entered.
@@ -4661,9 +4660,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           typeof proposal !== "string" ||
           typeof confidence !== "string"
         )
-          return refuse(
-            'usage: crew knowledge lesson add --cue "<t>" --lesson "<t>" --evidence docs/improve/<run>/record.json --proposal P-n --confidence high|medium|low',
-          );
+          return refuse(`usage: crew knowledge ${LESSON_ARGS}`);
         if (unreadable) return refuse(`the knowledge base cannot be read: ${unreadable}`);
         const drafted = harnessLesson(env.paths.root, {
           cue,
@@ -5355,6 +5352,7 @@ const HELP = `crew ${VERSION}
   cto record --workspace <ws> --file <plan.md>   file the CTO's plan under the user's crew directory and enter it in the knowledge base, marked for the workspace
   knowledge list [--kind <k>] | show K-n   the knowledge base as this project reads it (rule 13: unmarked entries, and marked ones of this workspace)
   knowledge add --kind general|documentation --title "<t>" --file <path> [--source <url>]   a person's material, from the project's own tree, marked
+  knowledge lesson add --cue "<t>" --lesson "<t>" --evidence docs/improve/<run>/record.json --proposal P-n --confidence high|medium|low   the improvement loop's lesson about the crew, its run's record as evidence; read in this repository alone (ADR 0013)
   knowledge contradict K-n --reason "<why>" [--item <id>]   dispute an entry (recorded); knowledge unmark K-n   a person removes a mark (asks the user; never with --mode or --validator)
   learn <id> [--confirm K-n]           the proven item enters the base (in the learn phase): its solution, an issue's root cause, the facts with a source, the workspace's stack preference; what it cited is confirmed; a root cause the base holds is refused unless confirmed
   pack add <path> | remove <name> | list | show <name> | files checklists <kind> | files knowledge <key> | files knowledge --item <id> | sync   the packs the engine serves (references/packs.md)
@@ -5363,6 +5361,10 @@ const HELP = `crew ${VERSION}
   evidence <id>                         write and print the report
   status | mode [m] | config <key> [v]  state and settings
   --json on any command prints the machine form`;
+
+/** The arguments of `crew knowledge lesson add` (ADR 0013), in the command's usage and in its own refusal. */
+const LESSON_ARGS =
+  'lesson add --cue "<t>" --lesson "<t>" --evidence docs/improve/<run>/record.json --proposal P-n --confidence high|medium|low';
 
 export async function main(argv: string[], io: CliIo): Promise<number> {
   const parsed = parse(argv);

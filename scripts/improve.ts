@@ -17,8 +17,14 @@ import {
 import { tmpdir } from "node:os";
 import { basename, join, posix, relative } from "node:path";
 import { readJson, readText } from "../packages/engine/src/fs.ts";
-import { latestPlan, lessonsForCto, readBase } from "../packages/engine/src/knowledge.ts";
+import {
+  type HarnessLessonView,
+  latestPlan,
+  lessonsForCto,
+  readBase,
+} from "../packages/engine/src/knowledge.ts";
 import { canonical, userDirOf } from "../packages/engine/src/paths.ts";
+import { scanText } from "../packages/engine/src/secrets.ts";
 import {
   acceptedReadPaths,
   createRunFolder,
@@ -98,17 +104,11 @@ export interface ImproveRecord {
   lessons: string[];
   exit: number;
   /** The suite's cases with no known reads (never measured by a run): never probed, named so a person sees what no probe covered. */
-  unmeasured?: string[];
+  unmeasured: string[];
 }
 
-export interface LessonView {
-  id: string;
-  cue: string;
-  lesson: string;
-  evidence: string;
-  proposal: string;
-  confidence: string;
-}
+/** A harness lesson as the editor's prompt reads it: the base's view of the kind. */
+export type LessonView = HarnessLessonView;
 
 export interface LessonDraft {
   proposal: string;
@@ -388,7 +388,7 @@ export function recordMarkdown(record: ImproveRecord): string {
     `- Composition: ${c ? `${c.ids.join(" + ")}, ${c.applied ? (c.verdict ?? "unfinished") : "did not apply"}` : "none"}`,
     `- Kept: ${kept}`,
     `- Lessons: ${record.lessons.join(", ") || "none"}`,
-    `- Cases no run has measured (never probed): ${record.unmeasured?.join(", ") || "none"}`,
+    `- Cases no run has measured (never probed): ${record.unmeasured.join(", ") || "none"}`,
     `- Cost: ${two(record.costUsd)} USD`,
     `- Exit status: ${record.exit}`,
   );
@@ -428,6 +428,8 @@ export interface KitCall {
   /** The tree the kit runs in: the repository for a baseline, a worktree for a probe. */
   tree: string;
   caseName: string;
+  /** The kit's runs of the case (RUNS). */
+  runs: number;
   maxCostUsd?: number;
   judgeModel?: string;
 }
@@ -496,6 +498,8 @@ export function diffRefusal(entries: readonly DiffEntry[]): string | null {
     if (e.oldMode === "160000" || e.newMode === "160000") return `${e.path} is a submodule`;
     if (e.oldMode !== "000000" && e.newMode !== "000000" && e.oldMode !== e.newMode)
       return `${e.path} changes its mode`;
+    if (e.newMode !== "000000" && e.newMode !== "100644")
+      return `${e.path} has mode ${e.newMode}, not 100644`;
   }
   return null;
 }
@@ -584,7 +588,7 @@ export async function runImprove(options: ImproveOptions, deps: ImproveDeps): Pr
       return refuse(
         `the repository has uncommitted changes (${dirty.slice(0, 3).join(", ")}): commit or stash them first`,
       );
-    return await improve(targets, options, deps, git, must);
+    return await improve(startRun(targets, options, deps, env, git, must));
   } catch (error) {
     if (error instanceof Stop) return error.exit;
     throw error;
@@ -595,20 +599,33 @@ export async function runImprove(options: ImproveOptions, deps: ImproveDeps): Pr
 
 type Git = (args: string[], cwd: string, input?: string) => GitResult;
 
-async function improve(
+/** One run's state and the moves every step shares: its record, its worktrees, the kit and git. */
+interface Run {
+  deps: ImproveDeps;
+  options: ImproveOptions;
+  targets: string[];
+  env: NodeJS.ProcessEnv;
+  git: Git;
+  must: (args: string[], cwd: string, input?: string) => string;
+  folder: string;
+  record: ImproveRecord;
+  trees: string[];
+  /** Each checked proposal's worktree and staged patch. */
+  staged: Map<string, { tree: string; patch: string }>;
+}
+
+function startRun(
   targets: string[],
   options: ImproveOptions,
   deps: ImproveDeps,
+  env: NodeJS.ProcessEnv,
   git: Git,
-  must: (args: string[], cwd: string, input?: string) => string,
-): Promise<number> {
-  const { root, log } = deps;
-  const env = kitEnvironment(deps.env);
+  must: Run["must"],
+): Run {
   const now = deps.now();
-  const folder = createImproveFolder(root, now.toISOString().slice(0, 10));
-  const run = basename(folder);
+  const folder = createImproveFolder(deps.root, now.toISOString().slice(0, 10));
   const record: ImproveRecord = {
-    run,
+    run: basename(folder),
     at: now.toISOString(),
     targets,
     baseline: {},
@@ -619,53 +636,198 @@ async function improve(
     costUsd: 0,
     lessons: [],
     exit: 0,
+    unmeasured: [],
   };
-  const write = (): void => {
-    writeFileSync(join(folder, "record.json"), `${JSON.stringify(record, null, 2)}\n`);
-    writeFileSync(join(folder, "record.md"), recordMarkdown(record));
+  return { deps, options, targets, env, git, must, folder, record, trees: [], staged: new Map() };
+}
+
+function writeRecord(r: Run): void {
+  writeFileSync(join(r.folder, "record.json"), `${JSON.stringify(r.record, null, 2)}\n`);
+  writeFileSync(join(r.folder, "record.md"), recordMarkdown(r.record));
+}
+
+function addTree(r: Run, label: string): string {
+  const tree = join(r.deps.tmp, `${r.record.run}-${label}`);
+  r.must(["worktree", "add", "--detach", "-q", tree, "HEAD"], r.deps.root);
+  r.trees.push(tree);
+  return tree;
+}
+
+/** One case through the kit in a tree, three runs, its figures; the ceiling stops the run with 2, any other failure with 3. */
+function measure(r: Run, tree: string, name: string): CaseFigures {
+  const { maxCostUsd, judgeModel } = r.options;
+  const left = maxCostUsd === undefined ? undefined : Math.max(0, maxCostUsd - r.record.costUsd);
+  const out = r.deps.kit({ tree, caseName: name, runs: RUNS, maxCostUsd: left, judgeModel });
+  const cost = (out.result as { costUsd?: unknown } | null)?.costUsd;
+  if (typeof cost === "number") r.record.costUsd += cost;
+  if (out.status === 2) throw new Stop(2);
+  if ((out.status !== 0 && out.status !== 1) || out.result === null) throw new Stop(3);
+  const plugins = (out.result as { plugins?: { path?: unknown }[] }).plugins ?? [];
+  const roots = [
+    join(tree, "plugins/core"),
+    ...plugins.map((p) => p?.path).filter((p): p is string => typeof p === "string"),
+  ];
+  const figures = caseFigures(out.result, name, readLines, roots);
+  if (!figures) throw new Stop(3);
+  return figures;
+}
+
+function baselineOf(r: Run, name: string): CaseFigures {
+  const known = r.record.baseline[name];
+  if (known) return known;
+  const figures = measure(r, r.deps.root, name);
+  r.record.baseline[name] = figures;
+  return figures;
+}
+
+/** The staged diff of a tree, read from git alone (step 3). */
+function stagedEntries(r: Run, tree: string): DiffEntry[] {
+  return rawEntries(r.must(["diff", "--cached", "--no-renames", "--raw", "-z", "HEAD"], tree));
+}
+
+/** The editor's answer as the record keeps it (AC-30): cut, and withheld whole when it holds a secret. */
+function rationaleOf(answer: string): string {
+  const secret = scanText(answer, "rationale")[0];
+  return secret
+    ? `withheld: the editor's answer held a secret (${secret.rule})`
+    : answer.slice(0, RATIONALE_LIMIT);
+}
+
+/** One proposal (steps 2 to 5): the editor in a worktree of its own, the checks, the probe and the verdict. */
+function propose(r: Run, id: string, prompt: string): void {
+  const { root } = r.deps;
+  const proposal: ProposalRecord = {
+    id,
+    status: "inconclusive",
+    refusal: null,
+    diffStat: [],
+    rationale: "",
+    probeSet: [],
+    probe: {},
+    verdict: null,
+    gain: 0,
   };
-  const trees: string[] = [];
-  const addTree = (label: string): string => {
-    const tree = join(deps.tmp, `${run}-${label}`);
-    must(["worktree", "add", "--detach", "-q", tree, "HEAD"], root);
-    trees.push(tree);
-    return tree;
-  };
-  // One case through the kit in a tree, three runs, its figures; the ceiling stops the run with 2, any other failure with 3.
-  const measure = (tree: string, name: string): CaseFigures => {
-    const left =
-      options.maxCostUsd === undefined
-        ? undefined
-        : Math.max(0, options.maxCostUsd - record.costUsd);
-    const out = deps.kit({
-      tree,
-      caseName: name,
-      maxCostUsd: left,
-      judgeModel: options.judgeModel,
-    });
-    const cost = (out.result as { costUsd?: unknown } | null)?.costUsd;
-    if (typeof cost === "number") record.costUsd += cost;
-    if (out.status === 2) throw new Stop(2);
-    if ((out.status !== 0 && out.status !== 1) || out.result === null) throw new Stop(3);
-    const plugins = (out.result as { plugins?: { path?: unknown }[] }).plugins ?? [];
-    const roots = [
-      join(tree, "plugins/core"),
-      ...plugins.map((p) => p?.path).filter((p): p is string => typeof p === "string"),
-    ];
-    const figures = caseFigures(out.result, name, readLines, roots);
-    if (!figures) throw new Stop(3);
-    return figures;
-  };
-  const baselineOf = (name: string): CaseFigures => {
-    const known = record.baseline[name];
-    if (known) return known;
-    const figures = measure(root, name);
-    record.baseline[name] = figures;
-    return figures;
-  };
+  r.record.proposals.push(proposal);
+  const tree = addTree(r, id);
+  const before = mainState(root, r.git);
+  const dotGit = hashOf(join(tree, ".git"));
+  proposal.rationale = rationaleOf(runEditor(r.deps, tree, prompt, r.env, r.deps.log));
+  const moved =
+    hashOf(join(tree, ".git")) !== dotGit
+      ? "the worktree's .git changed while the editor ran"
+      : mainState(root, r.git) !== before
+        ? "the main checkout changed while the editor ran"
+        : null;
+  let entries: DiffEntry[] = [];
+  if (moved === null) {
+    r.must(["add", "-A", "-f"], tree);
+    entries = stagedEntries(r, tree);
+    proposal.diffStat = entries.map((e) => ({ status: e.status, path: e.path }));
+  }
+  const refusal = moved ?? diffRefusal(entries);
+  if (refusal) {
+    proposal.status = "refused";
+    proposal.refusal = refusal;
+    return;
+  }
+  r.staged.set(id, { tree, patch: r.must(["diff", "--cached", "--binary", "HEAD"], tree) });
+  // The reads each case is known by: earlier runs' baselines, this run's over them (D-8).
+  const reads = { ...knownReads(root, r.folder), ...r.record.baseline };
+  proposal.probeSet = probeSet(
+    r.targets,
+    entries.map((e) => e.path),
+    reads,
+  );
+  for (const name of proposal.probeSet) baselineOf(r, name);
+  for (const name of proposal.probeSet) proposal.probe[name] = measure(r, tree, name);
+  const verdict = verdictOf(r.targets, proposal.probeSet, r.record.baseline, proposal.probe);
+  proposal.verdict = verdict.verdict;
+  proposal.status = verdict.verdict === "inconclusive" ? "inconclusive" : "probed";
+  proposal.gain = gainOf(r.targets, r.record.baseline, proposal.probe);
+}
+
+/** Two or more winners applied together in a worktree of their own, checked and probed on the union of their sets (step 6); the tree, or null when it did not apply. */
+function compose(r: Run, ids: string[]): string | null {
+  const tree = addTree(r, "composition");
+  const applied = ids.every(
+    (id) => r.git(["apply", "--index", "-"], tree, r.staged.get(id)?.patch ?? "").status === 0,
+  );
+  const composition: CompositionRecord = { ids, applied, verdict: null, probeSet: [], probe: {} };
+  r.record.composition = composition;
+  if (!applied) return null;
+  if (diffRefusal(stagedEntries(r, tree)) !== null) {
+    composition.applied = false;
+    return null;
+  }
+  const sets = r.record.proposals.filter((p) => ids.includes(p.id)).flatMap((p) => p.probeSet);
+  composition.probeSet = [...new Set(sets)].sort();
+  for (const name of composition.probeSet) composition.probe[name] = measure(r, tree, name);
+  composition.verdict = verdictOf(
+    r.targets,
+    composition.probeSet,
+    r.record.baseline,
+    composition.probe,
+  ).verdict;
+  return tree;
+}
+
+/** The kept harness committed by the script on `improve/<run>` (step 7). */
+function keep(r: Run, kept: Kept, composedTree: string | null): void {
+  const tree =
+    kept.kind === "composition"
+      ? (composedTree as string)
+      : (r.staged.get(kept.id)?.tree as string);
+  const branch = `improve/${r.record.run}`;
+  r.must(["check-ref-format", "--branch", branch], r.deps.root);
+  const what = kept.kind === "composition" ? kept.ids.join(" + ") : kept.id;
+  r.must(
+    [
+      "-c",
+      `user.name=${IDENTITY.name}`,
+      "-c",
+      `user.email=${IDENTITY.email}`,
+      "commit",
+      "-q",
+      "--no-verify",
+      "-m",
+      `Improvement run ${r.record.run}: ${what}`,
+    ],
+    tree,
+  );
+  const sha = r.must(["rev-parse", "HEAD"], tree).trim();
+  r.must(["branch", branch, sha], r.deps.root);
+  r.record.branch = branch;
+}
+
+/** Each lesson through `crew knowledge lesson add`, the run's record as its evidence (step 8). */
+function enterLessons(r: Run): void {
+  const evidence = relative(r.deps.root, join(r.folder, "record.json")).split("\\").join("/");
+  for (const lesson of lessonsOf(r.record)) {
+    const out = r.deps.lessonAdd([
+      "--cue",
+      lesson.cue,
+      "--lesson",
+      lesson.lesson,
+      "--evidence",
+      evidence,
+      "--proposal",
+      lesson.proposal,
+      "--confidence",
+      lesson.confidence,
+    ]);
+    const id = /^(K-\d+) added/.exec(out.out.trim())?.[1];
+    if (out.status === 0 && id) r.record.lessons.push(id);
+    else r.deps.log(`the lesson of ${lesson.proposal} was not entered: ${out.out.trim()}`);
+  }
+}
+
+async function improve(r: Run): Promise<number> {
+  const { root, log } = r.deps;
+  const { record, targets } = r;
+  const where = relative(root, r.folder);
   try {
-    for (const name of targets) baselineOf(name);
-    const known = knownReads(root, folder);
+    for (const name of targets) baselineOf(r, name);
+    const known = knownReads(root, r.folder);
     record.unmeasured = allCases(root).filter((name) => !known[name] && !targets.includes(name));
     // AC-27: a target whose baseline errored cannot be judged; no proposal is made.
     const erroredTarget = targets.find((name) => record.baseline[name]?.errored);
@@ -675,152 +837,20 @@ async function improve(
     }
     const prompt = editorPrompt({
       targets: targets.map((name) => record.baseline[name] as CaseFigures),
-      ctoPlan: deps.ctoPlan(),
-      lessons: deps.lessons(),
+      ctoPlan: r.deps.ctoPlan(),
+      lessons: r.deps.lessons(),
     });
-    const staged = new Map<string, { tree: string; patch: string }>();
-    for (let n = 1; n <= options.proposals; n++) {
-      const id = `P-${n}`;
-      const proposal: ProposalRecord = {
-        id,
-        status: "inconclusive",
-        refusal: null,
-        diffStat: [],
-        rationale: "",
-        probeSet: [],
-        probe: {},
-        verdict: null,
-        gain: 0,
-      };
-      record.proposals.push(proposal);
-      const tree = addTree(id);
-      const before = mainState(root, git);
-      const dotGit = hashOf(join(tree, ".git"));
-      const edited = runEditor(deps, tree, prompt, env, log);
-      proposal.rationale = edited.slice(0, RATIONALE_LIMIT);
-      const refusal =
-        hashOf(join(tree, ".git")) !== dotGit
-          ? "the worktree's .git changed while the editor ran"
-          : mainState(root, git) !== before
-            ? "the main checkout changed while the editor ran"
-            : null;
-      if (refusal) {
-        proposal.status = "refused";
-        proposal.refusal = refusal;
-        continue;
-      }
-      must(["add", "-A", "-f"], tree);
-      const entries = rawEntries(
-        must(["diff", "--cached", "--no-renames", "--raw", "-z", "HEAD"], tree),
-      );
-      proposal.diffStat = entries.map((e) => ({ status: e.status, path: e.path }));
-      const refused = diffRefusal(entries);
-      if (refused) {
-        proposal.status = "refused";
-        proposal.refusal = refused;
-        continue;
-      }
-      staged.set(id, { tree, patch: must(["diff", "--cached", "--binary", "HEAD"], tree) });
-      // The reads each case is known by: earlier runs' baselines, this run's over them (D-8).
-      const reads = { ...knownReads(root, folder), ...record.baseline };
-      proposal.probeSet = probeSet(
-        targets,
-        entries.map((e) => e.path),
-        reads,
-      );
-      for (const name of proposal.probeSet) baselineOf(name);
-      for (const name of proposal.probeSet) proposal.probe[name] = measure(tree, name);
-      const verdict = verdictOf(targets, proposal.probeSet, record.baseline, proposal.probe);
-      proposal.verdict = verdict.verdict;
-      proposal.status = verdict.verdict === "inconclusive" ? "inconclusive" : "probed";
-      proposal.gain = gainOf(targets, record.baseline, proposal.probe);
-    }
+    for (let n = 1; n <= r.options.proposals; n++) propose(r, `P-${n}`, prompt);
     const winners = record.proposals
       .filter((p) => p.verdict === "win")
       .map((p) => ({ id: p.id, gain: p.gain }));
-    let composedTree: string | null = null;
-    if (winners.length >= 2) {
-      const ids = winners.map((w) => w.id).sort();
-      const tree = addTree("composition");
-      const applied = ids.every(
-        (id) => git(["apply", "--index", "-"], tree, staged.get(id)?.patch ?? "").status === 0,
-      );
-      const composition: CompositionRecord = {
-        ids,
-        applied,
-        verdict: null,
-        probeSet: [],
-        probe: {},
-      };
-      record.composition = composition;
-      if (applied) {
-        const entries = rawEntries(
-          must(["diff", "--cached", "--no-renames", "--raw", "-z", "HEAD"], tree),
-        );
-        if (diffRefusal(entries) === null) {
-          composition.probeSet = [
-            ...new Set(
-              record.proposals.filter((p) => ids.includes(p.id)).flatMap((p) => p.probeSet),
-            ),
-          ].sort();
-          for (const name of composition.probeSet) composition.probe[name] = measure(tree, name);
-          composition.verdict = verdictOf(
-            targets,
-            composition.probeSet,
-            record.baseline,
-            composition.probe,
-          ).verdict;
-          composedTree = tree;
-        } else composition.applied = false;
-      }
-    }
+    const composedTree = winners.length >= 2 ? compose(r, winners.map((w) => w.id).sort()) : null;
     record.kept = keptHarness(winners, record.composition);
-    if (record.kept) {
-      const tree =
-        record.kept.kind === "composition"
-          ? (composedTree as string)
-          : (staged.get(record.kept.id)?.tree as string);
-      const branch = `improve/${run}`;
-      must(["check-ref-format", "--branch", branch], root);
-      must(
-        [
-          "-c",
-          `user.name=${IDENTITY.name}`,
-          "-c",
-          `user.email=${IDENTITY.email}`,
-          "commit",
-          "-q",
-          "--no-verify",
-          "-m",
-          `Improvement run ${run}: ${record.kept.kind === "composition" ? record.kept.ids.join(" + ") : record.kept.id}`,
-        ],
-        tree,
-      );
-      const sha = must(["rev-parse", "HEAD"], tree).trim();
-      must(["branch", branch, sha], root);
-      record.branch = branch;
-    }
-    write();
-    const evidence = relative(root, join(folder, "record.json")).split("\\").join("/");
-    for (const lesson of lessonsOf(record)) {
-      const out = deps.lessonAdd([
-        "--cue",
-        lesson.cue,
-        "--lesson",
-        lesson.lesson,
-        "--evidence",
-        evidence,
-        "--proposal",
-        lesson.proposal,
-        "--confidence",
-        lesson.confidence,
-      ]);
-      const id = /^(K-\d+) added/.exec(out.out.trim())?.[1];
-      if (out.status === 0 && id) record.lessons.push(id);
-      else log(`the lesson of ${lesson.proposal} was not entered: ${out.out.trim()}`);
-    }
-    write();
-    log(`record: ${relative(root, folder)}/record.md`);
+    if (record.kept) keep(r, record.kept, composedTree);
+    writeRecord(r);
+    enterLessons(r);
+    writeRecord(r);
+    log(`record: ${where}/record.md`);
     return 0;
   } catch (error) {
     if (!(error instanceof Stop)) throw error;
@@ -830,15 +860,15 @@ async function improve(
         p.status = "inconclusive";
         p.verdict = "inconclusive";
       }
-    write();
-    log(`record (partial, exit ${error.exit}): ${relative(root, folder)}/record.md`);
+    writeRecord(r);
+    log(`record (partial, exit ${error.exit}): ${where}/record.md`);
     return error.exit;
   } finally {
-    for (const tree of trees) {
-      git(["worktree", "remove", "--force", tree], root);
+    for (const tree of r.trees) {
+      r.git(["worktree", "remove", "--force", tree], root);
       rmSync(tree, { recursive: true, force: true });
     }
-    git(["worktree", "prune"], root);
+    r.git(["worktree", "prune"], root);
   }
 }
 
@@ -915,6 +945,9 @@ function runEditor(
       "acceptEdits",
       "--strict-mcp-config",
       "--no-session-persistence",
+      // No user, project or local setting: no allow rule, added directory or hook reaches the editor.
+      "--setting-sources",
+      "",
       "--model",
       model,
       "--output-format",
@@ -954,7 +987,7 @@ function realDeps(root: string): ImproveDeps {
         path: process.env.PATH ?? "",
         realGitDir: realGitDir(process.platform),
         caseName: call.caseName,
-        runs: RUNS,
+        runs: call.runs,
         json: `${rel}/result.json`,
         outputDir: rel,
         maxCostUsd: call.maxCostUsd,
@@ -984,7 +1017,7 @@ function realDeps(root: string): ImproveDeps {
         workspace: null,
         project: "",
         projectRoot: canonical(root),
-      }).entries as unknown as LessonView[],
+      }).entries,
     ctoPlan: () => {
       const policy = readJson<{ mail?: { workspace?: unknown } }>(
         join(root, ".crew", "policy.json"),

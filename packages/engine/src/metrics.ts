@@ -1,7 +1,7 @@
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { loadEvidence } from "./evidence.ts";
-import { type KnowledgeScope, PROJECT_KINDS, visibleTo } from "./knowledge.ts";
+import { HARNESS_LESSON, type KnowledgeScope, PROJECT_KINDS, visibleTo } from "./knowledge.ts";
 import { loadLedger, objectionStatus } from "./objections.ts";
 import type { CrewPaths } from "./paths.ts";
 import { loadPolicy } from "./policy.ts";
@@ -51,7 +51,7 @@ export function knowledgeFigures(
   if (!base) return figures;
   for (const e of base.entries) {
     // A harness lesson is no figure of the projects: the CTO's inputs carry it apart (ADR 0013).
-    if (!visibleTo(e, scope) || e.kind === "harness-lesson") continue;
+    if (!visibleTo(e, scope) || e.kind === HARNESS_LESSON) continue;
     figures.entries[e.kind] += 1;
     figures.confirmed += e.confirmedBy.length;
     figures.contradicted += e.contradictedBy.length;

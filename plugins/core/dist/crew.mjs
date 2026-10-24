@@ -15124,7 +15124,7 @@ function lessonField(text, limit) {
   const kept = [...text].filter((c) => {
     const code2 = c.charCodeAt(0);
     return c === `
-` || code2 > 31 && code2 !== 127;
+` || code2 > 31 && code2 !== 127 && !/\p{Cf}/u.test(c);
   });
   return kept.join("").trim().slice(0, limit);
 }
@@ -15728,7 +15728,7 @@ function knowledgeFigures(base, scope, projects) {
   if (!base)
     return figures;
   for (const e of base.entries) {
-    if (!visibleTo(e, scope) || e.kind === "harness-lesson")
+    if (!visibleTo(e, scope) || e.kind === HARNESS_LESSON)
       continue;
     figures.entries[e.kind] += 1;
     figures.confirmed += e.confirmedBy.length;
@@ -19564,7 +19564,7 @@ ${filedLine}` : ""}`, {
       return ok(metricsText(computed.metrics), { ...computed.metrics });
     }
     case "knowledge": {
-      const usage = 'usage: crew knowledge <id> lookup | list [--kind <k>] | show K-n | add --kind general|documentation --title "<t>" --file <path> [--source <url>] | contradict K-n --reason "<why>" [--item <id>] | unmark K-n | lesson add --cue "<t>" --lesson "<t>" --evidence docs/improve/<run>/record.json --proposal P-n --confidence high|medium|low';
+      const usage = `usage: crew knowledge <id> lookup | list [--kind <k>] | show K-n | add --kind general|documentation --title "<t>" --file <path> [--source <url>] | contradict K-n --reason "<why>" [--item <id>] | unmark K-n | ${LESSON_ARGS}`;
       const sub = args[0];
       if (args[1] === "lookup") {
         const opened = openForChange(env, sub);
@@ -19650,7 +19650,7 @@ ${filedLine}` : ""}`, {
       if (sub === "lesson") {
         const { cue, lesson, evidence, proposal, confidence } = parsed.flags;
         if (args[1] !== "add" || typeof cue !== "string" || typeof lesson !== "string" || typeof evidence !== "string" || typeof proposal !== "string" || typeof confidence !== "string")
-          return refuse('usage: crew knowledge lesson add --cue "<t>" --lesson "<t>" --evidence docs/improve/<run>/record.json --proposal P-n --confidence high|medium|low');
+          return refuse(`usage: crew knowledge ${LESSON_ARGS}`);
         if (unreadable)
           return refuse(`the knowledge base cannot be read: ${unreadable}`);
         const drafted = harnessLesson(env.paths.root, {
@@ -20264,6 +20264,7 @@ var HELP = `crew ${VERSION}
   cto record --workspace <ws> --file <plan.md>   file the CTO's plan under the user's crew directory and enter it in the knowledge base, marked for the workspace
   knowledge list [--kind <k>] | show K-n   the knowledge base as this project reads it (rule 13: unmarked entries, and marked ones of this workspace)
   knowledge add --kind general|documentation --title "<t>" --file <path> [--source <url>]   a person's material, from the project's own tree, marked
+  knowledge lesson add --cue "<t>" --lesson "<t>" --evidence docs/improve/<run>/record.json --proposal P-n --confidence high|medium|low   the improvement loop's lesson about the crew, its run's record as evidence; read in this repository alone (ADR 0013)
   knowledge contradict K-n --reason "<why>" [--item <id>]   dispute an entry (recorded); knowledge unmark K-n   a person removes a mark (asks the user; never with --mode or --validator)
   learn <id> [--confirm K-n]           the proven item enters the base (in the learn phase): its solution, an issue's root cause, the facts with a source, the workspace's stack preference; what it cited is confirmed; a root cause the base holds is refused unless confirmed
   pack add <path> | remove <name> | list | show <name> | files checklists <kind> | files knowledge <key> | files knowledge --item <id> | sync   the packs the engine serves (references/packs.md)
@@ -20272,6 +20273,7 @@ var HELP = `crew ${VERSION}
   evidence <id>                         write and print the report
   status | mode [m] | config <key> [v]  state and settings
   --json on any command prints the machine form`;
+var LESSON_ARGS = 'lesson add --cue "<t>" --lesson "<t>" --evidence docs/improve/<run>/record.json --proposal P-n --confidence high|medium|low';
 async function main(argv, io) {
   const parsed = parse(argv);
   let outcome;
