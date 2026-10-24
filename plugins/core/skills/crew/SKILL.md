@@ -18,7 +18,7 @@ The `crew` command is the engine: it keeps the work's state in `.crew/work/<id>/
 | Strategy | A new project: `strategy.md` (five sections), claims marked with facts, checked, judged (`references/strategy.md`) | `crew strategy <id> check` |
 | Specify | The acceptance criteria; a spec on standard and full | `crew criteria <id> add "<text>"`, `spec.md` |
 | Conclave | The gap round from `checklists/<kind>.md` into `conclave.md`: ask what only the user can decide, file what breaks good practice as an objection; a decision with consequences gets a debate the judge closes (standard, full) | `crew decision <id> add`, `crew decide <id> D-n`, `crew objection <id> add|resolve|waive`, `crew phase <id> next` |
-| Plan | Tasks tied to criteria (`plan.md` on full); hand a task to an implementer when its files are disjoint (`references/plan.md`) | `crew phase <id> next`, `crew task <id> open T-n --criteria AC-k` |
+| Plan | Tasks tied to criteria (full: `plan.md`); todo in this checkout: `note`; to an implementer if disjoint: `open` (`references/plan.md`) | `crew task <id> note T-n`, `crew task <id> open T-n --criteria AC-k` |
 | Build | Per criterion: failing test, red, code, green; a handed task: list it, merge the proven child, then your gate run | `crew tdd red|green`, `crew task <id> list`, `crew task <id> merge T-n` |
 | Gate | Run the gates; fix what fails. Then the judgement gates: reviewers and judge as subagents, their ruling recorded (proven, not proven, not run with a reason), never passed by default | `crew gate run <id>`, `crew judgement <id> record` |
 | Deliver | Say what the report proves and what not | `crew evidence <id>` |

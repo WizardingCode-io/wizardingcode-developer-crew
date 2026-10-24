@@ -352,7 +352,8 @@ export function parseRulings(
       if (typeof f.text !== "string" || !f.text.trim()) return { refused: `${at}: needs a text` };
       if (f.severity !== "defect" && f.severity !== "advisory")
         return { refused: `${at}: severity is defect or advisory` };
-      const line = f.line;
+      // A line of 0 is how a judge says "no line" (finding 150): about the file, as an absent line.
+      const line = f.line === 0 ? undefined : f.line;
       if (line !== undefined && !(typeof line === "number" && Number.isInteger(line) && line > 0))
         return { refused: `${at}: line is a positive integer` };
       findings.push({

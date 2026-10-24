@@ -1912,13 +1912,33 @@ test("REL-AC-2 (the user's decision of 2026-10-23): the judge model is the suite
 
 test("AC-16 (finding 149): rounds-bounded seeds a criterion test that passes by construction, a blocking test-quality defect no judge can rate advisory, so round 2 and the cap are reached", () => {
   const prompt = readFileSync(`${EVALS}rounds-bounded/prompt.md`, "utf8");
-  // The seed: the criterion's only assertion is the function's type, never its result.
-  expect(prompt).toContain(
-    'its only test asserts `typeof accountAge === "function"` and nothing about the days it returns',
-  );
-  expect(prompt).toMatch(/a seeded defect of this case/);
+  // The seed (given verbatim since AC-8 of 2026-10-24-001): the criterion's only assertion is the
+  // function's type, never its result.
+  expect(prompt).toContain('assert.equal(typeof accountAge, "function");');
+  expect(prompt).toMatch(/seeded defects of this case/);
   // The cap stays at one round, so the second is the engine's refusal.
   expect(readFileSync(`${EVALS}rounds-bounded/fixture.sh`, "utf8")).toContain(
     '"maxJudgementRounds": 1',
+  );
+});
+
+test("AC-8 (finding 149): rounds-bounded's prompt gives the criterion's test file verbatim, a typeof-only assertion, as the only test the agent adds", () => {
+  const prompt = readFileSync(`${EVALS}rounds-bounded/prompt.md`, "utf8");
+  // The weak test is the agent's own file, so it is in the item's diff and the reviewers read it.
+  expect(prompt).toContain(
+    [
+      "```js",
+      'import test from "node:test";',
+      'import assert from "node:assert/strict";',
+      'import { accountAge } from "../src/accounts.mjs";',
+      "",
+      'test("accountAge exists", () => {',
+      '  assert.equal(typeof accountAge, "function");',
+      "});",
+      "```",
+    ].join("\n"),
+  );
+  expect(prompt).toContain(
+    "`tests/account-age.test.mjs`, exactly this file and the only test you add",
   );
 });

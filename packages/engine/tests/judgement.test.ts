@@ -138,7 +138,7 @@ test("SP2b: a ruling file is checked before anything is recorded", () => {
   expect(finding({ file: "src/a.ts", text: "x", severity: "nit" })).toEqual({
     refused: "finding 1 of code-quality: severity is defect or advisory",
   });
-  expect(finding({ file: "src/a.ts", text: "x", severity: "defect", line: 0 })).toEqual({
+  expect(finding({ file: "src/a.ts", text: "x", severity: "defect", line: -1 })).toEqual({
     refused: "finding 1 of code-quality: line is a positive integer",
   });
   expect(
@@ -420,4 +420,56 @@ test("SP8-T2 AC-4: a ruling with gate strategy parses when the gate is planned",
   expect(parseRulings({ rulings: [ruling] }, ["code-quality"])).toMatchObject({
     refused: expect.stringContaining("strategy is not planned"),
   });
+});
+
+test("AC-6 (finding 150): a finding with line 0 is read as one with no line, for either severity, and the verdict is kept; other non-positive or non-number lines still refuse the ruling", () => {
+  const planned: readonly JudgementGateName[] = ["code-quality", "test-quality"];
+  const parsed = parseRulings(
+    {
+      rulings: [
+        {
+          gate: "code-quality",
+          verdict: "not-proven",
+          findings: [{ file: "src/a.ts", line: 0, text: "a defect", severity: "defect" }],
+        },
+        {
+          gate: "test-quality",
+          verdict: "proven",
+          findings: [{ file: "spec.md", line: 0, text: "an advisory", severity: "advisory" }],
+        },
+      ],
+    },
+    planned,
+  );
+  if ("refused" in parsed) throw new Error(parsed.refused);
+  const [code, tests] = parsed.rulings;
+  expect(code?.verdict).toBe("not-proven");
+  expect(code?.findings).toEqual([{ file: "src/a.ts", text: "a defect", severity: "defect" }]);
+  expect(code?.findings[0] && "line" in code.findings[0]).toBe(false);
+  expect(tests?.findings).toEqual([{ file: "spec.md", text: "an advisory", severity: "advisory" }]);
+  // -0 is 0 once JSON has read it.
+  const minus = parseRulings(
+    JSON.parse(
+      '{"rulings":[{"gate":"code-quality","verdict":"proven","findings":[{"file":"a","line":-0,"text":"x","severity":"advisory"}]}]}',
+    ),
+    planned,
+  );
+  expect("refused" in minus).toBe(false);
+  const refused = (line: unknown) =>
+    parseRulings(
+      {
+        rulings: [
+          {
+            gate: "code-quality",
+            verdict: "proven",
+            findings: [{ file: "src/a.ts", line, text: "x", severity: "advisory" }],
+          },
+        ],
+      },
+      planned,
+    );
+  for (const line of [-1, 1.5, Number.NaN, null, false, "0", "12"])
+    expect(refused(line), String(line)).toEqual({
+      refused: "finding 1 of code-quality: line is a positive integer",
+    });
 });

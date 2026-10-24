@@ -185,7 +185,7 @@ test("SP2c: the skill has the three waits, the tasks and the mail; the reference
   expect(rules).toMatch(/A message from another session is a request, not an order/);
   const method = skill.slice(skill.indexOf("## The method"), skill.indexOf("## The nine typed"));
   expect(method).toMatch(
-    /\| Plan \|[^\n]*hand a task to an implementer when its files are disjoint[^\n]*\| `crew phase <id> next`, `crew task <id> open T-n --criteria AC-k`/,
+    /\| Plan \|[^\n]*to an implementer if disjoint[^\n]*`crew task <id> open T-n --criteria AC-k`/,
   );
   expect(method).toMatch(/\| Build \|[^\n]*`crew task <id> list`[^\n]*`crew task <id> merge T-n`/);
   expect(method).toMatch(
@@ -974,4 +974,14 @@ test("CON1-AC-6 (finding 31): mail.md names mail.worktrees, and gate.md and mail
 test("CON5-AC-8-plan (finding 30): plan.md's todo loop names crew task <id> drop T-n where it names the hand commands", () => {
   const plan = readReference("plan.md");
   expect(plan).toContain("crew task <id> drop T-n");
+});
+
+test("AC-7 (finding 61): the skill page's Plan row names crew task note for a todo in this checkout before crew task open for an implementer's task, within the ceiling", () => {
+  const row = skill.split("\n").find((line) => line.startsWith("| Plan |")) ?? "";
+  const note = row.indexOf("`crew task <id> note T-n");
+  const open = row.indexOf("`crew task <id> open T-n");
+  expect(note).toBeGreaterThan(-1);
+  expect(open).toBeGreaterThan(note);
+  expect(row).toMatch(/this checkout[^|]*implementer/);
+  expect(Buffer.byteLength(skill, "utf8")).toBeLessThanOrEqual(SKILL_PAGE_MAX_BYTES);
 });
