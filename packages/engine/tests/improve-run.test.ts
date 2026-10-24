@@ -332,7 +332,8 @@ test("2026-10-24-012 AC-24: the editor runs in its worktree with Read, Grep, Glo
 
 test("2026-10-24-012 AC-25: the editor and every git process get the kit's environment: a GITHUB_TOKEN of the parent reaches neither, nor the record", async () => {
   const { root, tmp } = fixture();
-  const token = "ghp_parentsecret0123456789";
+  // Built at run time, as the other tests build their planted keys, so the secret scan never reads one.
+  const token = ["ghp", "_parentsecret0123456789"].join("");
   const run = deps(root, tmp, {
     env: { PATH: process.env.PATH, HOME: process.env.HOME, GITHUB_TOKEN: token },
   });
