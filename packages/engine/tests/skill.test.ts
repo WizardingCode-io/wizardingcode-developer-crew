@@ -985,3 +985,33 @@ test("AC-7 (finding 61): the skill page's Plan row names crew task note for a to
   expect(row).toMatch(/this checkout[^|]*implementer/);
   expect(Buffer.byteLength(skill, "utf8")).toBeLessThanOrEqual(SKILL_PAGE_MAX_BYTES);
 });
+
+test("AC-2 (finding 61): the fast route gives a request in several parts a todo per part, note then gate then brief, within the ceiling", () => {
+  // The fast route reads nothing else (finding 61): the todo loop must be in its own section.
+  const fast = skill.slice(
+    skill.indexOf("## The fast route"),
+    skill.indexOf("## The other routes"),
+  );
+  expect(fast).toMatch(/several parts[^\n]*one item[^\n]*a todo per part/);
+  const note = fast.indexOf("`crew task <id> note T-n");
+  const gate = fast.indexOf("`crew task <id> gate T-n`");
+  const brief = fast.indexOf("`crew task <id> brief T-n`");
+  expect(note).toBeGreaterThan(-1);
+  expect(gate).toBeGreaterThan(note);
+  expect(brief).toBeGreaterThan(gate);
+  expect(Buffer.byteLength(skill, "utf8")).toBeLessThanOrEqual(SKILL_PAGE_MAX_BYTES);
+});
+
+test("AC-3 (finding 62, option A): the experts step shares the three lenses over the decisions, so one decision gets three experts and three designs", () => {
+  const conclave = readReference("conclave.md");
+  const step = conclave.split("\n").find((line) => line.startsWith("2. **Experts**")) ?? "";
+  expect(step).not.toContain("one per open decision");
+  expect(step).toMatch(/at most three/);
+  expect(step).toMatch(/one decision takes all three[^\n]*its own design/);
+  expect(step).toMatch(/two decisions take two and one/);
+  expect(step).toMatch(/three take one each/);
+  for (const lens of ["conservative", "creative", "adventurous"]) expect(step).toContain(lens);
+  expect(step).toContain("personality: <name>");
+  expect(step).toContain("never its `## Reasoning`");
+  expect(step).toMatch(/in parallel in one message/);
+});
