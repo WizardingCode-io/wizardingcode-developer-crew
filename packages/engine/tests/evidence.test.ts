@@ -30,6 +30,7 @@ import type {
   ObjectionLedger,
   QuestionRecord,
   RunRecord,
+  TaskRecord,
   WorkItem,
 } from "../src/types.ts";
 import {
@@ -1202,4 +1203,62 @@ test("AC-6 (finding 152): the report's Roles table shows the model each role ran
   expect(report).toContain(
     "| review-code-quality | - | - | 2026-10-24T11:50:00.000Z | 400 | review/code-quality.findings.md | hook |",
   );
+});
+
+test("AC-9 (finding 61): an item with parts gains a reason per part until its todo is noted, gated and briefed, on top of every other reason", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const work = workWith(paths);
+  const base: Evidence = {
+    ...emptyEvidence(),
+    fingerprint: "f",
+    tdd: [{ criterion: "AC-1", red: run, green: run }],
+    runs: [gate("test", "pass")],
+  };
+  const input = {
+    work,
+    evidence: base,
+    expected: [{ gate: "test" as const, target: "." }],
+    currentFingerprint: "f",
+    tampered: false,
+    policy: DEFAULT_POLICY,
+  };
+  // No parts: unchanged
+  expect(computeVerdict(input)).toEqual({ verdict: "proven", unproven: [] });
+  work.parts = [
+    { id: "P-1", text: "deactivate" },
+    { id: "P-2", text: "list" },
+  ];
+  const todo = (task: string, part: string, extra: Partial<TaskRecord> = {}): TaskRecord => ({
+    task,
+    part,
+    message: "",
+    criteria: ["AC-1"],
+    text: part,
+    branch: "",
+    worktree: "",
+    openedAt: "t",
+    inline: true,
+    scope: ["src/a.ts"],
+    state: "merged",
+    ...extra,
+  });
+  const NOTE = (p: string) =>
+    `part ${p} has no todo: crew task ${work.id} note T-n --part ${p} --criteria AC-j --scope <path>`;
+  // On top of a failing gate's reason, never in its place
+  const failing = { ...input, evidence: { ...base, runs: [gate("test", "fail")] } };
+  expect(computeVerdict(failing).unproven).toEqual(["gate test failing", NOTE("P-1"), NOTE("P-2")]);
+  // A todo in open, handed or merged keeps "not gated"; gated without a brief keeps "has no brief"
+  for (const state of ["open", "handed", "merged"] as const) {
+    work.tasks = [todo("T-1", "P-1", { state }), todo("T-2", "P-2", { state: "gated" })];
+    expect(computeVerdict(input).unproven).toEqual([
+      `todo T-1 of P-1 not gated: crew task ${work.id} gate T-1`,
+      `todo T-2 of P-2 has no brief: crew task ${work.id} brief T-2`,
+    ]);
+  }
+  // Every part's todo briefed and the rest proven: proven
+  work.tasks = [
+    todo("T-1", "P-1", { state: "briefed", brief: "tasks/T-1.brief.md" }),
+    todo("T-2", "P-2", { state: "briefed", brief: "tasks/T-2.brief.md" }),
+  ];
+  expect(computeVerdict(input)).toEqual({ verdict: "proven", unproven: [] });
 });

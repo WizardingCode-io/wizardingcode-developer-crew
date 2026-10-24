@@ -409,6 +409,8 @@ export interface TaskRecord {
   brief?: string;
   /** A todo done inline by the lead: no worktree, no message; its scope names its files. */
   inline?: true;
+  /** The part of the request this todo does (finding 61), P-n of the item's `parts`. */
+  part?: string;
   scope?: string[];
   text: string;
   branch: string;
@@ -770,6 +772,8 @@ export interface WorkItem {
   }[];
   createdAt: string;
   updatedAt: string;
+  /** The parts of a request in several parts (finding 61), fixed at start: each needs a todo noted, gated and briefed. */
+  parts?: { id: string; text: string }[];
 }
 
 export interface RunRecord {

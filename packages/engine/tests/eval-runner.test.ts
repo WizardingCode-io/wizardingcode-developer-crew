@@ -1928,3 +1928,15 @@ test("AC-4 (finding 149): rounds-bounded seeds a defect nobody chose, an existin
   // The cap stays at one round, so the second is the engine's refusal.
   expect(fixture).toContain('"maxJudgementRounds": 1');
 });
+
+test("AC-10 (finding 62): personalities-differ's proposals-differ grader passes on designs proposed or named as rejected alternatives, never on proposals alone", () => {
+  const grader = readFileSync(`${EVALS}personalities-differ/graders/proposals-differ.md`, "utf8");
+  expect(grader).toContain("rejected alternative");
+  expect(grader).toMatch(
+    /at least two distinct storage designs[^\n]*proposed by the experts or named as a rejected alternative with its reason/,
+  );
+  expect(grader).toMatch(/which the judge closed on/);
+  expect(grader).not.toMatch(
+    /at least two distinct storage designs for the plan and its history, or one design argued for opposite reasons/,
+  );
+});

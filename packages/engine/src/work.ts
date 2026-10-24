@@ -394,6 +394,37 @@ export function raiseRoute(work: WorkItem, to: Route, reason: string): boolean {
   return true;
 }
 
+/** The most parts a request is split into (finding 61). */
+export const MAX_PARTS = 10;
+/** The longest a part's text may be, so a part reads as one line of the status and the report. */
+export const MAX_PART_LENGTH = 200;
+
+/**
+ * The parts of `crew start --part` (finding 61), or why they cannot be stored: each trimmed is one
+ * line of at most 200 characters with no control character, none repeats another
+ * (case-insensitive), at most ten; two or more are P-1..P-n, one part is the item itself, so none.
+ */
+export function parseParts(
+  texts: readonly string[],
+): { parts: { id: string; text: string }[] | undefined } | { problem: string } {
+  if (texts.length > MAX_PARTS) return { problem: `at most ${MAX_PARTS} parts` };
+  const trimmed = texts.map((t) => t.trim());
+  const seen = new Set<string>();
+  for (const text of trimmed) {
+    if (!text) return { problem: "a part needs text" };
+    if (text.length > MAX_PART_LENGTH)
+      return { problem: `a part is at most ${MAX_PART_LENGTH} characters` };
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are what is refused
+    if (/[\u0000-\u001f\u007f]/.test(text))
+      return { problem: "a part is one line with no control character" };
+    const key = text.toLowerCase();
+    if (seen.has(key)) return { problem: `a part repeats another: ${key}` };
+    seen.add(key);
+  }
+  if (trimmed.length < 2) return { parts: undefined };
+  return { parts: trimmed.map((text, n) => ({ id: `P-${n + 1}`, text })) };
+}
+
 export function addCriterion(
   work: WorkItem,
   text: string,

@@ -307,6 +307,23 @@ export function computeVerdict(input: VerdictInput): {
         `blocking objection ${o.id} ${objectionStatus(o, work, evidence, policy)}: ${o.text}`,
       );
   }
+  // A request in several parts (finding 61): each part's todo noted, gated and briefed, on top of
+  // every other reason.
+  for (const part of work.parts ?? []) {
+    const todo = (work.tasks ?? []).find((t) => t.part === part.id);
+    if (!todo)
+      unproven.push(
+        `part ${part.id} has no todo: crew task ${work.id} note T-n --part ${part.id} --criteria AC-j --scope <path>`,
+      );
+    else if (todo.state !== "gated" && todo.state !== "briefed")
+      unproven.push(
+        `todo ${todo.task} of ${part.id} not gated: crew task ${work.id} gate ${todo.task}`,
+      );
+    else if (!todo.brief)
+      unproven.push(
+        `todo ${todo.task} of ${part.id} has no brief: crew task ${work.id} brief ${todo.task}`,
+      );
+  }
   // Test-first is proved per criterion, so an item with none would be proven by the gates alone.
   if (work.criteria.length === 0)
     unproven.push('no acceptance criteria (crew criteria <id> add "...")');

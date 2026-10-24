@@ -1025,3 +1025,28 @@ test("AC-7 (finding 152): a role that ended on an API error is launched once mor
     /model ladder[^\n]*Claude Code[^\n]*other runtimes[^\n]*as their runtime decides/,
   );
 });
+
+test("AC-5 (finding 61): the fast route starts a request in several parts with --part and notes each part's todo with --part P-n, within the ceiling; receive.md and plan.md say the same", () => {
+  const fast = skill.slice(
+    skill.indexOf("## The fast route"),
+    skill.indexOf("## The other routes"),
+  );
+  expect(fast).toMatch(/several parts[^\n]*`--part "<text>"` per part/);
+  expect(fast).toContain("`crew task <id> note T-n --part P-n");
+  expect(Buffer.byteLength(skill, "utf8")).toBeLessThanOrEqual(SKILL_PAGE_MAX_BYTES);
+  expect(readReference("receive.md")).toMatch(/several parts[^\n]*`--part "<text>"`/);
+  const plan = readReference("plan.md");
+  expect(plan).toContain("--part P-k");
+  expect(plan).toMatch(/a part's todo is noted inline[^\n]*never opened/);
+});
+
+test("AC-10 (finding 62): proposals.md holds each Proposal section with its rejected alternative and nothing else, and the user's screen lists the alternatives", () => {
+  const conclave = readReference("conclave.md");
+  const step2 = conclave.split("\n").find((line) => line.startsWith("2. **Experts**")) ?? "";
+  expect(step2).toMatch(
+    /proposals\.md[^\n]*each expert's `## Proposal` section only, its `Alternative rejected:` line with it[^\n]*never its `## Reasoning`/,
+  );
+  const step5 =
+    conclave.split("\n").find((line) => line.startsWith("5. **One screen to the user**")) ?? "";
+  expect(step5).toContain("each proposal's rejected alternative and why");
+});

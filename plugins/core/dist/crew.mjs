@@ -4693,6 +4693,29 @@ function raiseRoute(work, to, reason) {
   work.routeReasons.push(`raised to ${to}: ${reason}`);
   return true;
 }
+var MAX_PARTS = 10;
+var MAX_PART_LENGTH = 200;
+function parseParts(texts) {
+  if (texts.length > MAX_PARTS)
+    return { problem: `at most ${MAX_PARTS} parts` };
+  const trimmed = texts.map((t) => t.trim());
+  const seen = new Set;
+  for (const text of trimmed) {
+    if (!text)
+      return { problem: "a part needs text" };
+    if (text.length > MAX_PART_LENGTH)
+      return { problem: `a part is at most ${MAX_PART_LENGTH} characters` };
+    if (/[\u0000-\u001f\u007f]/.test(text))
+      return { problem: "a part is one line with no control character" };
+    const key = text.toLowerCase();
+    if (seen.has(key))
+      return { problem: `a part repeats another: ${key}` };
+    seen.add(key);
+  }
+  if (trimmed.length < 2)
+    return { parts: undefined };
+  return { parts: trimmed.map((text, n) => ({ id: `P-${n + 1}`, text })) };
+}
 function addCriterion(work, text, kind = "behavior", contract) {
   const taken = [...work.criteria, ...work.removedCriteria ?? []].map((c) => Number(c.id.slice("AC-".length))).filter((n) => Number.isFinite(n));
   const next = taken.length ? Math.max(...taken) + 1 : 1;
@@ -5201,6 +5224,15 @@ function computeVerdict(input) {
   if (input.ledger) {
     for (const o of blockingObjections(input.ledger, work, evidence, policy, ["open", "bound"]))
       unproven.push(`blocking objection ${o.id} ${objectionStatus(o, work, evidence, policy)}: ${o.text}`);
+  }
+  for (const part of work.parts ?? []) {
+    const todo = (work.tasks ?? []).find((t) => t.part === part.id);
+    if (!todo)
+      unproven.push(`part ${part.id} has no todo: crew task ${work.id} note T-n --part ${part.id} --criteria AC-j --scope <path>`);
+    else if (todo.state !== "gated" && todo.state !== "briefed")
+      unproven.push(`todo ${todo.task} of ${part.id} not gated: crew task ${work.id} gate ${todo.task}`);
+    else if (!todo.brief)
+      unproven.push(`todo ${todo.task} of ${part.id} has no brief: crew task ${work.id} brief ${todo.task}`);
   }
   if (work.criteria.length === 0)
     unproven.push('no acceptance criteria (crew criteria <id> add "...")');
@@ -13793,11 +13825,20 @@ Criteria: ${criteria.map((c) => `${c} ${work.criteria.find((k) => k.id === c)?.t
 function noTaskText(work, task, plan, what) {
   return plan === null ? `this item has no plan.md (route ${work.route}): give the ${what}'s text with --text "<${what}>"` : `plan.md names no task ${task}; give its text with --text "<${what}>"`;
 }
-function noteTask(work, task, criteria, scope, text, plan) {
+function noteTask(work, task, todo) {
+  const { criteria, scope, text, plan, part } = todo;
   if (!/^T-\d+$/.test(task))
     return { refused: `a task is named T-n, not ${task}` };
   if ((work.tasks ?? []).some((t) => t.task === task))
     return { refused: `${task} is already a task of this item` };
+  const ofPart = part === null ? null : (work.parts ?? []).find((p) => p.id === part);
+  if (part !== null && !ofPart)
+    return {
+      refused: `unknown part: ${part}${work.parts?.length ? "" : " (the item has no parts)"}`
+    };
+  const holder = part === null ? undefined : (work.tasks ?? []).find((t) => t.part === part);
+  if (holder)
+    return { refused: `${part} is held by ${holder.task}` };
   const unknown = criteria.find((c) => !work.criteria.some((k) => k.id === c));
   if (unknown)
     return { refused: `unknown criterion: ${unknown}` };
@@ -13806,13 +13847,15 @@ function noteTask(work, task, criteria, scope, text, plan) {
   const escaped2 = scopeRefusal(scope);
   if (escaped2)
     return { refused: escaped2 };
-  if (!text)
+  const todoText = text ?? ofPart?.text ?? null;
+  if (!todoText)
     return { refused: noTaskText(work, task, plan, "todo") };
   const record = {
     task,
     message: "",
     criteria,
-    text,
+    text: todoText,
+    ...ofPart ? { part: ofPart.id } : {},
     branch: "",
     worktree: "",
     openedAt: nowIso(),
@@ -16045,7 +16088,17 @@ var KNOWN_FLAGS = {
   profile: ["target", "stack", "force", "timeout", "mode"],
   policy: ["remove"],
   accept: [],
-  start: ["answers", "criterion", "preserve", "observed", "origin", "priority", "source", "reason"],
+  start: [
+    "answers",
+    "criterion",
+    "preserve",
+    "observed",
+    "part",
+    "origin",
+    "priority",
+    "source",
+    "reason"
+  ],
   classify: ["answers"],
   kind: ["reason"],
   strategy: [],
@@ -16066,7 +16119,7 @@ var KNOWN_FLAGS = {
   evidence: [],
   status: [],
   env: [],
-  task: ["criteria", "text", "scope", "force", "mode", "print"],
+  task: ["criteria", "text", "scope", "part", "force", "mode", "print"],
   workspace: ["file"],
   question: ["channel", "ref", "mode"],
   analyse: ["paths"],
@@ -17774,6 +17827,9 @@ async function dispatch(parsed, io) {
         return answers;
       if (answers.work_type === "question")
         return ok("question: answer the user; no work item is created", { id: null });
+      const partsRead = parseParts(parsed.ordered.filter((f) => f.key === "part").map((f) => f.value));
+      if ("problem" in partsRead)
+        return refuse(partsRead.problem);
       const originId = typeof parsed.flags.origin === "string" ? parsed.flags.origin : null;
       const inbox = originId ? ownInbox(env.mail) : null;
       if (inbox?.tampered)
@@ -17840,6 +17896,8 @@ async function dispatch(parsed, io) {
         }
       }
       const criteria = parsed.ordered.filter((f) => f.key === "criterion" || f.key === "preserve" || f.key === "observed").map((f) => addCriterion(work, f.value, f.key === "preserve" ? "preserve" : f.key === "observed" ? "observed" : "behavior"));
+      if (partsRead.parts)
+        work.parts = partsRead.parts;
       if (work.route === "fast" && criteria.length > 0)
         advancePhase(work, guardContext(env, work, false));
       saveWork(env.paths, work);
@@ -17882,7 +17940,8 @@ async function dispatch(parsed, io) {
         recordInItem(env.paths, work.id, "refused" in moved ? origin : moved);
       }
       const lines2 = criteria.map((c) => `
-  ${c.id} (${c.kind}): ${c.text}`).join("");
+  ${c.id} (${c.kind}): ${c.text}`).join("") + (work.parts ?? []).map((p) => `
+  part ${p.id}: ${p.text}`).join("");
       const kindLine = `
   ${kindLabel(work)}${work.kind === "issue" ? `
   issue: analysis.md (Origin, Cause, Blast radius) and a preserve criterion before build (references/analyse.md)` : ""}`;
@@ -18813,6 +18872,8 @@ ${report}`, {
         const criteria = commaList(parsed.flags.criteria);
         if (!task || !criteria.length || args.length > 3)
           return refuse(usage);
+        if (parsed.flags.part !== undefined)
+          return refuse("crew task open takes no part: a part's todo is noted inline (crew task <id> note T-n --part P-k)");
         const out2 = openTask(ctx, env, opened.work, task, criteria, typeof parsed.flags.text === "string" ? parsed.flags.text : undefined);
         if ("refused" in out2)
           return refuse(out2.refused);
@@ -18828,7 +18889,14 @@ ${out2.notes.join(`
         if (!task || !criteria.length || args.length > 3)
           return refuse(usage);
         const planText = readText(join50(workDir(env.paths, opened.work.id), "plan.md"));
-        const out2 = noteTask(opened.work, task, criteria, scope, typeof parsed.flags.text === "string" ? parsed.flags.text : taskText(planText, task), planText);
+        const part = typeof parsed.flags.part === "string" ? parsed.flags.part : null;
+        const out2 = noteTask(opened.work, task, {
+          criteria,
+          scope,
+          text: typeof parsed.flags.text === "string" ? parsed.flags.text : taskText(planText, task),
+          plan: planText,
+          part
+        });
         if ("refused" in out2)
           return refuse(out2.refused);
         saveWork(env.paths, opened.work);

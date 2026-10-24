@@ -10470,3 +10470,183 @@ test("DEBT-AC-15-refusals: crew team <id> seat refuses an unknown gate, a gate a
     expect(entriesNow().length, name).toBe(decisions);
   }
 });
+
+test("AC-7 (finding 61): crew start --part records two or more parts, trimmed, prints them, and refuses a bad part with nothing started", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const c = io(root);
+  const two = await c.run(
+    "start",
+    "Two changes",
+    "--answers",
+    answers,
+    "--criterion",
+    "a",
+    "--part",
+    "  deactivate an account ",
+    "--part",
+    "list the active accounts",
+  );
+  expect(two.code).toBe(0);
+  expect(two.out).toContain("part P-1: deactivate an account\n");
+  expect(two.out).toContain("part P-2: list the active accounts\n");
+  const id = (await c.json("status")).data.active as string;
+  const paths = repoPaths(root, c.env);
+  expect(loadWork(paths, id).work?.parts).toEqual([
+    { id: "P-1", text: "deactivate an account" },
+    { id: "P-2", text: "list the active accounts" },
+  ]);
+  await c.run("abandon", id, "--reason", "next case");
+  // One part is the item itself: none stored
+  const one = (
+    await c.json("start", "One change", "--answers", answers, "--criterion", "a", "--part", "only")
+  ).data.id as string;
+  expect(loadWork(paths, one).work?.parts).toBeUndefined();
+  await c.run("abandon", one, "--reason", "next case");
+  const refused: [string[], string][] = [
+    [["--part", ""], "a part needs text"],
+    [["--part", "a", "--part", ""], "a part needs text"],
+    [["--part", "a", "--part", "   "], "a part needs text"],
+    [["--part", "a", "--part", "x".repeat(201)], "a part is at most 200 characters"],
+    [["--part", "a", "--part", "b\nc"], "a part is one line with no control character"],
+    [["--part", "a", "--part", "b\u0007"], "a part is one line with no control character"],
+    [["--part", "Deactivate", "--part", " deactivate "], "a part repeats another: deactivate"],
+    [[...Array.from({ length: 11 }, (_, n) => ["--part", `p${n}`]).flat()], "at most 10 parts"],
+  ];
+  // The edges are accepted: 200 characters, ten parts
+  const edge = (
+    await c.json(
+      "start",
+      "Edges",
+      "--answers",
+      answers,
+      "--criterion",
+      "a",
+      "--part",
+      "x".repeat(200),
+      ...Array.from({ length: 9 }, (_, n) => ["--part", `q${n}`]).flat(),
+    )
+  ).data.id as string;
+  expect(loadWork(paths, edge).work?.parts).toHaveLength(10);
+  await c.run("abandon", edge, "--reason", "next case");
+  for (const [parts, message] of refused) {
+    const before = (await c.json("status")).data.active ?? null;
+    const r = await c.run("start", "Bad parts", "--answers", answers, "--criterion", "a", ...parts);
+    expect(r.code).toBe(1);
+    expect(r.err).toContain(message);
+    expect((await c.json("status")).data.active ?? null).toBe(before);
+  }
+});
+
+test("AC-8 (finding 61): crew task note --part ties a todo to its part, its text from --text, the plan line or the part, and refuses what cannot be tied", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const c = io(root);
+  const id = (
+    await c.json(
+      "start",
+      "Three changes",
+      "--answers",
+      answers,
+      "--criterion",
+      "a",
+      "--part",
+      "first part",
+      "--part",
+      "second part",
+      "--part",
+      "third part",
+    )
+  ).data.id as string;
+  const note = (t: string, ...rest: string[]) =>
+    c.run("task", id, "note", t, "--criteria", "AC-1", "--scope", "src/a.ts", ...rest);
+  expect((await note("T-1", "--part", "P-1", "--text", "my own text")).code).toBe(0);
+  write(root, `.crew/work/${id}/plan.md`, "# Plan\n\n1. x\n2. the plan's second line\n");
+  expect((await note("T-2", "--part", "P-2")).code).toBe(0);
+  expect((await note("T-3", "--part", "P-3")).code).toBe(0);
+  const tasks = loadWork(repoPaths(root, c.env), id).work?.tasks ?? [];
+  expect(tasks.map((t) => [t.task, t.part, t.text])).toEqual([
+    ["T-1", "P-1", "my own text"],
+    ["T-2", "P-2", "the plan's second line"],
+    ["T-3", "P-3", "third part"],
+  ]);
+  const unknown = await note("T-4", "--part", "P-9");
+  expect(unknown.code).toBe(1);
+  expect(unknown.err).toContain("unknown part: P-9");
+  const held = await note("T-5", "--part", "P-1");
+  expect(held.code).toBe(1);
+  expect(held.err).toContain("P-1 is held by T-1");
+  // A todo already noted cannot be noted again, so no part is tied to it later
+  const again = await note("T-1", "--part", "P-2");
+  expect(again.code).toBe(1);
+  expect(again.err).toContain("T-1 is already a task of this item");
+  // An item with no parts refuses --part
+  await c.run("abandon", id, "--reason", "next case");
+  const plain = (await c.json("start", "Plain", "--answers", answers, "--criterion", "a")).data
+    .id as string;
+  const none = await c.run(
+    "task",
+    plain,
+    "note",
+    "T-1",
+    "--criteria",
+    "AC-1",
+    "--scope",
+    "src/a.ts",
+    "--text",
+    "x",
+    "--part",
+    "P-1",
+  );
+  expect(none.code).toBe(1);
+  expect(none.err).toContain("unknown part: P-1 (the item has no parts)");
+});
+
+test("AC-8 (finding 61): a part's todo is never handed out or dropped: crew task open refuses --part, and a noted part's todo cannot be dropped", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const c = io(root);
+  const id = (
+    await c.json(
+      "start",
+      "Two changes",
+      "--answers",
+      answers,
+      "--criterion",
+      "a",
+      "--part",
+      "first",
+      "--part",
+      "second",
+    )
+  ).data.id as string;
+  const open = await c.run("task", id, "open", "T-1", "--criteria", "AC-1", "--part", "P-1");
+  expect(open.code).toBe(1);
+  expect(open.err).toContain("crew task open takes no part: a part's todo is noted inline");
+  expect(
+    (
+      await c.run(
+        "task",
+        id,
+        "note",
+        "T-1",
+        "--criteria",
+        "AC-1",
+        "--scope",
+        "src/a.ts",
+        "--part",
+        "P-1",
+      )
+    ).code,
+  ).toBe(0);
+  const drop = await c.run("task", id, "drop", "T-1");
+  expect(drop.code).toBe(1);
+  expect(drop.err).toContain("T-1 is an inline todo");
+  expect(loadWork(repoPaths(root, c.env), id).work?.tasks?.map((t) => t.part)).toEqual(["P-1"]);
+});

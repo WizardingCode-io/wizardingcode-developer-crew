@@ -353,6 +353,7 @@ import {
   noteRuntime,
   openDebate,
   openItems,
+  parseParts,
   phasesFor,
   plannedStrategyJudgement,
   raiseKind,
@@ -382,7 +383,17 @@ const KNOWN_FLAGS: Record<string, readonly string[]> = {
   profile: ["target", "stack", "force", "timeout", "mode"],
   policy: ["remove"],
   accept: [],
-  start: ["answers", "criterion", "preserve", "observed", "origin", "priority", "source", "reason"],
+  start: [
+    "answers",
+    "criterion",
+    "preserve",
+    "observed",
+    "part",
+    "origin",
+    "priority",
+    "source",
+    "reason",
+  ],
   classify: ["answers"],
   kind: ["reason"],
   strategy: [],
@@ -404,7 +415,7 @@ const KNOWN_FLAGS: Record<string, readonly string[]> = {
   evidence: [],
   status: [],
   env: [],
-  task: ["criteria", "text", "scope", "force", "mode", "print"],
+  task: ["criteria", "text", "scope", "part", "force", "mode", "print"],
   workspace: ["file"],
   question: ["channel", "ref", "mode"],
   analyse: ["paths"],
@@ -2768,6 +2779,11 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       if (isOutcome(answers)) return answers;
       if (answers.work_type === "question")
         return ok("question: answer the user; no work item is created", { id: null });
+      // The parts of a request in several parts (finding 61), checked before anything is created.
+      const partsRead = parseParts(
+        parsed.ordered.filter((f) => f.key === "part").map((f) => f.value),
+      );
+      if ("problem" in partsRead) return refuse(partsRead.problem);
       // An item that answers a message (a session opened by mail, SP2c §7, §8): the message must be
       // in this project's inbox and addressed to this agent, checked before anything is created.
       const originId = typeof parsed.flags.origin === "string" ? parsed.flags.origin : null;
@@ -2887,6 +2903,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
             f.key === "preserve" ? "preserve" : f.key === "observed" ? "observed" : "behavior",
           ),
         );
+      if (partsRead.parts) work.parts = partsRead.parts;
       // On the fast route the criteria are all that stands before build; with them given, go there.
       if (work.route === "fast" && criteria.length > 0)
         advancePhase(work, guardContext(env, work, false));
@@ -2931,7 +2948,9 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         if ("refused" in moved) originNotes.push(moved.refused);
         recordInItem(env.paths, work.id, "refused" in moved ? origin : moved);
       }
-      const lines = criteria.map((c) => `\n  ${c.id} (${c.kind}): ${c.text}`).join("");
+      const lines =
+        criteria.map((c) => `\n  ${c.id} (${c.kind}): ${c.text}`).join("") +
+        (work.parts ?? []).map((p) => `\n  part ${p.id}: ${p.text}`).join("");
       // The kind and where it came from (SP7 §7.1); an issue is told what comes before its build (rule 11).
       const kindLine = `\n  ${kindLabel(work)}${
         work.kind === "issue"
@@ -4085,6 +4104,11 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         const criteria = commaList(parsed.flags.criteria);
         // A word after the task's id is refused, not ignored (finding 114).
         if (!task || !criteria.length || args.length > 3) return refuse(usage);
+        // A part's todo is noted inline, never handed to an implementer (finding 61).
+        if (parsed.flags.part !== undefined)
+          return refuse(
+            "crew task open takes no part: a part's todo is noted inline (crew task <id> note T-n --part P-k)",
+          );
         const out = openTask(
           ctx,
           env,
@@ -4112,14 +4136,16 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         const scope = commaList(parsed.flags.scope);
         if (!task || !criteria.length || args.length > 3) return refuse(usage);
         const planText = readText(join(workDir(env.paths, opened.work.id), "plan.md"));
-        const out = noteTask(
-          opened.work,
-          task,
+        const part = typeof parsed.flags.part === "string" ? parsed.flags.part : null;
+        // The todo's text: --text, else the plan's line n, else its part's text (finding 61).
+        const out = noteTask(opened.work, task, {
           criteria,
           scope,
-          typeof parsed.flags.text === "string" ? parsed.flags.text : taskText(planText, task),
-          planText,
-        );
+          text:
+            typeof parsed.flags.text === "string" ? parsed.flags.text : taskText(planText, task),
+          plan: planText,
+          part,
+        });
         if ("refused" in out) return refuse(out.refused);
         saveWork(env.paths, opened.work);
         return ok(`${task} noted: inline, ${criteria.join(",")}, scope ${scope.join(",")}`, {

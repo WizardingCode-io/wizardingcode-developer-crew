@@ -308,3 +308,15 @@ test("AC-5 (finding 152): the mod's table of each crew role's declared model equ
   expect(Object.keys(files).length).toBeGreaterThan(0);
   expect(table).toEqual(files);
 });
+
+test("AC-10 (finding 62): the expert names the strongest alternative it rejected, its own other design, as the last line of its Proposal section", () => {
+  const { body } = agent("expert");
+  const proposal = /## Proposal\n([\s\S]*?)\n## Reasoning/.exec(body)?.[1] ?? "";
+  const lines = proposal.trim().split("\n");
+  expect(lines.at(-1)).toBe(
+    "Alternative rejected: <the strongest other design for D-n> because <why, with a fact>",
+  );
+  expect(body).toMatch(
+    /Alternative rejected[^\n]*your own other design[^\n]*never another expert's[^\n]*seen none/,
+  );
+});

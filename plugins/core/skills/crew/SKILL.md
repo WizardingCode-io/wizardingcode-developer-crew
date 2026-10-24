@@ -48,11 +48,11 @@ Answer them first; they go to `crew start` as `--answers`; 0.3 or more on a risk
 
 A clear request, one spot, no risk area: the engine answers `route fast`. All you need is on this page (a sourced request: `references/receive.md`): read nothing else; batch the commands.
 
-1. **Start with the criteria.** `crew start "<request>" --answers '<json>' --criterion "<observable result>"` (repeat `--criterion`; `--preserve "<text>"` for what stays green, proven with `tdd before` and `tdd after`; `--observed "<text>"` for what a person checks, proven with `tdd observed`). The output has the id; with criteria the item is in build. Not fast, or a fix (an issue: `analysis.md` and a preserve criterion come before build, `references/analyse.md`): follow the method table.
-2. **Test, then red.** Write the test for the criterion, then `crew tdd red <id> AC-1` (it must fail; `-- <cmd>` runs one file).
-3. **Code, then green and the gates in one call.** Write the least code that passes, then `crew tdd green <id> AC-1 && crew gate run <id>`. Say the verdict it prints: proven or not proven and why.
+1. **Start with the criteria.** `crew start "<request>" --answers '<json>' --criterion "<observable result>"` (repeat `--criterion`; `--preserve "<text>"` for what stays green, proven with `tdd before` and `tdd after`; `--observed "<text>"` for what a person checks, proven with `tdd observed`). With criteria the item is in build. Not fast, or a fix (an issue: `analysis.md` and a preserve criterion come before build, `references/analyse.md`): follow the method table.
+2. **Test, then red.** Write the test for the criterion, then `crew tdd red <id> AC-1` (it must fail; `-- <cmd>`: one file).
+3. **Code, then green and the gates in one call.** Write the least code that passes, then `crew tdd green <id> AC-1 && crew gate run <id>`. Say the verdict it prints: proven or not, and why.
 
-No `crew status` between steps, no brief, spec or plan. A request in several parts: one item, a todo per part; after each commit, `crew task <id> note T-n --criteria AC-k --scope <path> --text "<part>"`, `crew task <id> gate T-n`, `crew task <id> brief T-n`. Where Bash is restricted, use Edit and Write (no heredoc or `sed`) and spell the id in each `crew` command: `ID=…;` or a redirect stops the permission match.
+No `crew status` between steps, no brief, spec or plan. A request in several parts: one item, `--part "<text>"` per part at start, a todo per part; after each commit, `crew task <id> note T-n --part P-n --criteria AC-k --scope <path>`, `crew task <id> gate T-n`, `crew task <id> brief T-n`. Where Bash is restricted, use Edit and Write (no heredoc or `sed`) and spell the id in each `crew` command: `ID=…;` or a redirect stops the permission match.
 
 ## The other routes
 

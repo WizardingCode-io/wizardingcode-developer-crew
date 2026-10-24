@@ -30,6 +30,7 @@ What is built: <two to five sentences: components, data, who can do what, what h
 Criteria added or changed:
 - AC: <observable result> (behavior|preserve|observed)
 Out of scope: <what this proposal deliberately leaves alone>
+Alternative rejected: <the strongest other design for D-n> because <why, with a fact>
 ## Reasoning
 - <why this side; the fact from the research it rests on, cited as the researcher cited it>
 - <what the other side would cost, concretely>
@@ -39,6 +40,7 @@ Out of scope: <what this proposal deliberately leaves alone>
 ## Rules
 
 - One decision, one proposal. If the question is really two, say so in "Reasoning" and propose for the first.
+- Alternative rejected: the strongest design for D-n that you did not choose, your own other design, never another expert's: you have seen none. Name it so a reader sees what was weighed, and say why it lost with a fact (finding 62).
 - The second line of your answer is `personality: <name>`, the lens you were given; the engine records it, so three proposals are never the same lens.
 - The conservative side of a risk area (deny, soft, narrow, reversible) needs no justification to be proposed; the other side does, in "Reasoning", with a fact.
 - Criteria are observable results a test can check, never "the code is clean" or "the gates pass".

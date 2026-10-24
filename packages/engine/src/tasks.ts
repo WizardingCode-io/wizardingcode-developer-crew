@@ -240,26 +240,42 @@ export function noTaskText(
 export function noteTask(
   work: WorkItem,
   task: string,
-  criteria: string[],
-  scope: string[],
-  text: string | null,
-  plan: string | null,
+  todo: {
+    criteria: string[];
+    scope: string[];
+    /** --text, else the plan's line n; null when neither names the todo. */
+    text: string | null;
+    plan: string | null;
+    /** The part this todo does (finding 61), or null. */
+    part: string | null;
+  },
 ): { record: TaskRecord } | { refused: string } {
+  const { criteria, scope, text, plan, part } = todo;
   if (!/^T-\d+$/.test(task)) return { refused: `a task is named T-n, not ${task}` };
   if ((work.tasks ?? []).some((t) => t.task === task))
     return { refused: `${task} is already a task of this item` };
+  // The part this todo does (finding 61): one of the item's, held by no other todo.
+  const ofPart = part === null ? null : (work.parts ?? []).find((p) => p.id === part);
+  if (part !== null && !ofPart)
+    return {
+      refused: `unknown part: ${part}${work.parts?.length ? "" : " (the item has no parts)"}`,
+    };
+  const holder = part === null ? undefined : (work.tasks ?? []).find((t) => t.part === part);
+  if (holder) return { refused: `${part} is held by ${holder.task}` };
   const unknown = criteria.find((c) => !work.criteria.some((k) => k.id === c));
   if (unknown) return { refused: `unknown criterion: ${unknown}` };
   if (!scope.length)
     return { refused: "a scope names at least one file (--scope <path>[,<path>])" };
   const escaped = scopeRefusal(scope);
   if (escaped) return { refused: escaped };
-  if (!text) return { refused: noTaskText(work, task, plan, "todo") };
+  const todoText = text ?? ofPart?.text ?? null;
+  if (!todoText) return { refused: noTaskText(work, task, plan, "todo") };
   const record: TaskRecord = {
     task,
     message: "",
     criteria,
-    text,
+    text: todoText,
+    ...(ofPart ? { part: ofPart.id } : {}),
     branch: "",
     worktree: "",
     openedAt: nowIso(),
