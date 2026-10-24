@@ -1285,3 +1285,17 @@ Verdicts agree at every effort. Upheld findings: `high` reproduced Task 6's and 
 - Expected: an llm grader reads something short and whole: the final message or one file.
 - Evidence: the run's `aggregate-result.json` (the grader's evidence), the kept trace, the documentation page `code.claude.com/docs/en/plugin-evals` ("What a grader can look at").
 - Outcome: closed in `2026-10-24-009` (AC-22, AC-23): the CTO case's prompt has the plan written to `cto-plan.md` and `figures-quoted` judges that file with the fixture's figures, `proposals-differ` judges the final message again and its fixture runs under the unattended user's policy, so the run reaches it.
+
+### 160. A CTO plan is not tied to the inputs it was written from
+- Date: 2026-10-25. Project: this repository. Item: `2026-10-24-012` (the security reviewer's round-4 advisory, upheld as advisory by the judge). Category: `silent`. Severity: low.
+- What happened: `crew cto review` writes one `<date>-inputs.json` per workspace and day and a second review the same day rewrites it, while `crew cto record` files `<date>-plan[-n].md` with nothing that names the inputs it was made from. The improvement loop gives the editor the last plan only when its inputs list this repository alone (AC-35), and reads the inputs of the plan's date: a plan written in the morning over several projects passes once an afternoon review over this repository alone rewrote the file and no plan followed. Dormant today: this repository's policy names no workspace.
+- Expected: a plan carries its own inputs, so every reader judges the plan by what it was made from.
+- Evidence: the round-4 security findings and ruling of `2026-10-24-012` (`review/security.round*.md`, `review/ruling.round*.json`), `scripts/improve.ts` (`ctoPlanFor`), `packages/engine/src/cli.ts` (`cto review`, `cto record`).
+- Outcome: open; the user's decision of 2026-10-25 ("A"): its own engine item, `crew cto record` keeping beside each plan the inputs it was written from and `ctoPlanFor` reading that copy.
+
+### 161. Three slips of the session in item `2026-10-24-012`, each paid in a round or a record
+- Date: 2026-10-25. Project: this repository. Item: `2026-10-24-012`. Category: `process`. Severity: low.
+- What happened: (1) two criteria (AC-26, AC-27) were added after both leads had validated the spec, which made their validations stale and needed a third validation round and the user's `crew continue`; (2) the preserve criterion AC-13 had no `crew tdd before` at the start of the build, the engine refused a late one, and it was replaced by the observed AC-29 with the reason; (3) after the judgement gates were proven in round 2, every advisory was fixed in further rounds, each re-opening all three gates, and the third recorded round needed the user's `crew continue` (judgement rounds 3 and 4 of the reviewers).
+- Expected: the leads' notes are taken before their validation is recorded, or the change is put to them in the same round; `crew tdd before` for every preserve criterion is the first command of the build; advisories left after a proven ruling are batched into one round, or into the next item, and said to the user before a round is opened for them.
+- Evidence: the item's decision register (the two `continue` records), its criteria (AC-13 removed, AC-29 observed), the rulings of its four judgement rounds.
+- Outcome: recorded; the three rules are for the session to keep.
