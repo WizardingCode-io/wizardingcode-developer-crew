@@ -2,9 +2,32 @@
 // proposals by an editor session in worktrees of their own, each probed on the cases that read what
 // it edits, a verdict from the graders' scores alone, the winners composed, the kept harness left on
 // a branch for a person to adopt, and a lesson per proposal probed. Never shipped in the plugin.
-import { existsSync, mkdirSync, readdirSync } from "node:fs";
-import { join } from "node:path";
-import { acceptedReadPaths } from "./eval.ts";
+
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { basename, join, posix, relative } from "node:path";
+import { readJson, readText } from "../packages/engine/src/fs.ts";
+import { latestPlan, lessonsForCto, readBase } from "../packages/engine/src/knowledge.ts";
+import { canonical, userDirOf } from "../packages/engine/src/paths.ts";
+import {
+  acceptedReadPaths,
+  createRunFolder,
+  evalInvocation,
+  kitEnvironment,
+  realGitDir,
+  resultsDir,
+  runFolder,
+} from "./eval.ts";
 
 /** The plugin's text an editor may change; anything else in its diff refuses the proposal. */
 export const ALLOWED_PREFIXES = ["plugins/core/skills/crew/", "plugins/core/agents/"];
@@ -74,6 +97,8 @@ export interface ImproveRecord {
   /** The knowledge entries the run's lessons entered as. */
   lessons: string[];
   exit: number;
+  /** The suite's cases with no known reads (never measured by a run): never probed, named so a person sees what no probe covered. */
+  unmeasured?: string[];
 }
 
 export interface LessonView {
@@ -154,7 +179,7 @@ export function caseFigures(
 export function probeSet(
   targets: readonly string[],
   edited: readonly string[],
-  baseline: Record<string, CaseFigures>,
+  baseline: Record<string, Pick<CaseFigures, "name" | "reads">>,
 ): string[] {
   const set = new Set(targets);
   for (const figures of Object.values(baseline))
@@ -363,6 +388,7 @@ export function recordMarkdown(record: ImproveRecord): string {
     `- Composition: ${c ? `${c.ids.join(" + ")}, ${c.applied ? (c.verdict ?? "unfinished") : "did not apply"}` : "none"}`,
     `- Kept: ${kept}`,
     `- Lessons: ${record.lessons.join(", ") || "none"}`,
+    `- Cases no run has measured (never probed): ${record.unmeasured?.join(", ") || "none"}`,
     `- Cost: ${two(record.costUsd)} USD`,
     `- Exit status: ${record.exit}`,
   );
@@ -386,4 +412,617 @@ export function createImproveFolder(root: string, date: string): string {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
     }
   }
+}
+
+/** The editor's tools: it reads and edits files, nothing else (no Bash, no web, no agents; AC-24). */
+export const EDITOR_TOOLS = "Read,Grep,Glob,Edit,Write";
+/** The editor's models, the most capable first (finding 152): a model at its usage limit gives way to the next. */
+export const EDITOR_LADDER = ["fable", "opus", "sonnet"];
+/** One run of one case at the top of the one-case runs recorded in docs/evals/ (0.3 to 1.4 USD). */
+const RUN_USD = { low: 0.3, high: 1.4 };
+const IDENTITY = { name: "wizardingcode-improve", email: "noreply@wizardingcode.io" };
+const RATIONALE_LIMIT = 2000;
+const LIMITED = /usage limit|rate.?limit|\b429\b|overloaded/i;
+
+export interface KitCall {
+  /** The tree the kit runs in: the repository for a baseline, a worktree for a probe. */
+  tree: string;
+  caseName: string;
+  maxCostUsd?: number;
+  judgeModel?: string;
+}
+
+export interface EditorCall {
+  cwd: string;
+  args: string[];
+  env: NodeJS.ProcessEnv;
+}
+
+export interface GitResult {
+  status: number | null;
+  stdout: string;
+  stderr: string;
+}
+
+/** What a run reaches outside itself, injected so no test spends (AC-16). */
+export interface ImproveDeps {
+  root: string;
+  /** Where the run's worktrees are made; each is removed at the run's end. */
+  tmp: string;
+  env: NodeJS.ProcessEnv;
+  now: () => Date;
+  log: (line: string) => void;
+  git: (args: string[], cwd: string, env: NodeJS.ProcessEnv, input?: string) => GitResult;
+  kit: (call: KitCall) => { status: number | null; result: unknown };
+  editor: (call: EditorCall) => { status: number | null; output: string };
+  lessonAdd: (args: string[]) => { status: number | null; out: string };
+  lessons: () => LessonView[];
+  ctoPlan: () => string | null;
+}
+
+export interface ImproveOptions {
+  cases: string[];
+  proposals: number;
+  maxCostUsd?: number;
+  judgeModel?: string;
+}
+
+export interface DiffEntry {
+  status: string;
+  path: string;
+  oldMode: string;
+  newMode: string;
+}
+
+/** Git as the script runs it: no hooks, no credential helper, the environment given (AC-20, AC-25). */
+export function realGit(
+  args: string[],
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+  input?: string,
+): GitResult {
+  const r = spawnSync("git", args, { cwd, env, input, encoding: "utf8" });
+  return { status: r.status, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
+}
+
+/** Why a staged diff is refused (step 3, AC-19), or null: nothing changed, a path outside the harness by its normalised form, a symlink, a submodule, a mode change. */
+export function diffRefusal(entries: readonly DiffEntry[]): string | null {
+  if (!entries.length) return "the editor changed nothing";
+  for (const e of entries) {
+    const clean = posix.normalize(e.path) === e.path && !e.path.split("/").includes("..");
+    if (!clean || !ALLOWED_PREFIXES.some((prefix) => e.path.startsWith(prefix)))
+      return `${e.path} is outside the harness`;
+    if (e.oldMode === "120000" || e.newMode === "120000") return `${e.path} is a symlink`;
+    if (e.oldMode === "160000" || e.newMode === "160000") return `${e.path} is a submodule`;
+    if (e.oldMode !== "000000" && e.newMode !== "000000" && e.oldMode !== e.newMode)
+      return `${e.path} changes its mode`;
+  }
+  return null;
+}
+
+/** `git diff --raw -z`'s entries: a `:old new sha sha status` field, then the path. */
+function rawEntries(text: string): DiffEntry[] {
+  const fields = text.split("\0").filter((f) => f !== "");
+  const out: DiffEntry[] = [];
+  for (let i = 0; i < fields.length; i++) {
+    const meta = fields[i] as string;
+    if (!meta.startsWith(":")) continue;
+    const [oldMode, newMode, , , status] = meta.slice(1).split(" ");
+    out.push({
+      status: (status ?? "").slice(0, 1),
+      path: fields[++i] ?? "",
+      oldMode: oldMode ?? "",
+      newMode: newMode ?? "",
+    });
+  }
+  return out;
+}
+
+class Stop extends Error {
+  constructor(readonly exit: 2 | 3) {
+    super(`stop ${exit}`);
+  }
+}
+
+const hashOf = (path: string): string => {
+  try {
+    return createHash("sha256").update(readFileSync(path)).digest("hex");
+  } catch {
+    return "none";
+  }
+};
+
+/**
+ * One improvement run (ADR 0013): the refusals of step 0, the baseline, the proposals with their
+ * checks and probes, the composition, the kept branch, the lessons and the record; every worktree
+ * removed at the end. Returns the exit status (0 done, 1 refused before any spend, 2 the cost
+ * ceiling, 3 a failure), the record written for 0, 2 and 3.
+ */
+export async function runImprove(options: ImproveOptions, deps: ImproveDeps): Promise<number> {
+  const { root, log } = deps;
+  const env = kitEnvironment(deps.env);
+  const hooks = mkdtempSync(join(tmpdir(), "improve-hooks-"));
+  const git = (args: string[], cwd: string, input?: string): GitResult =>
+    deps.git(
+      ["-c", `core.hooksPath=${hooks}`, "-c", "credential.helper=", ...args],
+      cwd,
+      env,
+      input,
+    );
+  const must = (args: string[], cwd: string, input?: string): string => {
+    const r = git(args, cwd, input);
+    if (r.status !== 0) {
+      log(`git ${args[0]} failed: ${r.stderr.trim()}`);
+      throw new Stop(3);
+    }
+    return r.stdout;
+  };
+  try {
+    // Step 0: refused before any spend, nothing written.
+    const targets = [...new Set(options.cases)];
+    const refuse = (reason: string): number => {
+      log(reason);
+      return 1;
+    };
+    log(
+      `estimated cost: about ${(targets.length * RUNS * RUN_USD.low).toFixed(2)} to ${(targets.length * RUNS * RUN_USD.high).toFixed(2)} USD for the baseline (${targets.length} case${targets.length === 1 ? "" : "s"} × ${RUNS} runs), then ${(RUNS * RUN_USD.low).toFixed(2)} to ${(RUNS * RUN_USD.high).toFixed(2)} USD per case a proposal probes`,
+    );
+    if (!targets.length) return refuse("name at least one case: --case <a,b>");
+    for (const name of targets)
+      if (!/^[\w.-]+$/.test(name) || !existsSync(join(root, "plugins/core/evals", name)))
+        return refuse(`no eval case ${name} under plugins/core/evals/`);
+    const baselineHigh = targets.length * RUNS * RUN_USD.high;
+    if (options.maxCostUsd !== undefined && options.maxCostUsd < baselineHigh)
+      return refuse(
+        `--max-cost-usd ${options.maxCostUsd} is below the baseline's estimate (${baselineHigh.toFixed(2)} USD)`,
+      );
+    const dirty = git(["status", "--porcelain", "--untracked-files=all"], root)
+      .stdout.split("\n")
+      .map((line) => line.slice(3))
+      .filter((path) => path && !path.startsWith(".crew/"));
+    if (dirty.length)
+      return refuse(
+        `the repository has uncommitted changes (${dirty.slice(0, 3).join(", ")}): commit or stash them first`,
+      );
+    return await improve(targets, options, deps, git, must);
+  } catch (error) {
+    if (error instanceof Stop) return error.exit;
+    throw error;
+  } finally {
+    rmSync(hooks, { recursive: true, force: true });
+  }
+}
+
+type Git = (args: string[], cwd: string, input?: string) => GitResult;
+
+async function improve(
+  targets: string[],
+  options: ImproveOptions,
+  deps: ImproveDeps,
+  git: Git,
+  must: (args: string[], cwd: string, input?: string) => string,
+): Promise<number> {
+  const { root, log } = deps;
+  const env = kitEnvironment(deps.env);
+  const now = deps.now();
+  const folder = createImproveFolder(root, now.toISOString().slice(0, 10));
+  const run = basename(folder);
+  const record: ImproveRecord = {
+    run,
+    at: now.toISOString(),
+    targets,
+    baseline: {},
+    proposals: [],
+    composition: null,
+    kept: null,
+    branch: null,
+    costUsd: 0,
+    lessons: [],
+    exit: 0,
+  };
+  const write = (): void => {
+    writeFileSync(join(folder, "record.json"), `${JSON.stringify(record, null, 2)}\n`);
+    writeFileSync(join(folder, "record.md"), recordMarkdown(record));
+  };
+  const trees: string[] = [];
+  const addTree = (label: string): string => {
+    const tree = join(deps.tmp, `${run}-${label}`);
+    must(["worktree", "add", "--detach", "-q", tree, "HEAD"], root);
+    trees.push(tree);
+    return tree;
+  };
+  // One case through the kit in a tree, three runs, its figures; the ceiling stops the run with 2, any other failure with 3.
+  const measure = (tree: string, name: string): CaseFigures => {
+    const left =
+      options.maxCostUsd === undefined
+        ? undefined
+        : Math.max(0, options.maxCostUsd - record.costUsd);
+    const out = deps.kit({
+      tree,
+      caseName: name,
+      maxCostUsd: left,
+      judgeModel: options.judgeModel,
+    });
+    const cost = (out.result as { costUsd?: unknown } | null)?.costUsd;
+    if (typeof cost === "number") record.costUsd += cost;
+    if (out.status === 2) throw new Stop(2);
+    if ((out.status !== 0 && out.status !== 1) || out.result === null) throw new Stop(3);
+    const plugins = (out.result as { plugins?: { path?: unknown }[] }).plugins ?? [];
+    const roots = [
+      join(tree, "plugins/core"),
+      ...plugins.map((p) => p?.path).filter((p): p is string => typeof p === "string"),
+    ];
+    const figures = caseFigures(out.result, name, readLines, roots);
+    if (!figures) throw new Stop(3);
+    return figures;
+  };
+  const baselineOf = (name: string): CaseFigures => {
+    const known = record.baseline[name];
+    if (known) return known;
+    const figures = measure(root, name);
+    record.baseline[name] = figures;
+    return figures;
+  };
+  try {
+    for (const name of targets) baselineOf(name);
+    const known = knownReads(root, folder);
+    record.unmeasured = allCases(root).filter((name) => !known[name] && !targets.includes(name));
+    // AC-27: a target whose baseline errored cannot be judged; no proposal is made.
+    const erroredTarget = targets.find((name) => record.baseline[name]?.errored);
+    if (erroredTarget) {
+      log(`${erroredTarget}'s baseline errored: no proposal is made`);
+      throw new Stop(3);
+    }
+    const prompt = editorPrompt({
+      targets: targets.map((name) => record.baseline[name] as CaseFigures),
+      ctoPlan: deps.ctoPlan(),
+      lessons: deps.lessons(),
+    });
+    const staged = new Map<string, { tree: string; patch: string }>();
+    for (let n = 1; n <= options.proposals; n++) {
+      const id = `P-${n}`;
+      const proposal: ProposalRecord = {
+        id,
+        status: "inconclusive",
+        refusal: null,
+        diffStat: [],
+        rationale: "",
+        probeSet: [],
+        probe: {},
+        verdict: null,
+        gain: 0,
+      };
+      record.proposals.push(proposal);
+      const tree = addTree(id);
+      const before = mainState(root, git);
+      const dotGit = hashOf(join(tree, ".git"));
+      const edited = runEditor(deps, tree, prompt, env, log);
+      proposal.rationale = edited.slice(0, RATIONALE_LIMIT);
+      const refusal =
+        hashOf(join(tree, ".git")) !== dotGit
+          ? "the worktree's .git changed while the editor ran"
+          : mainState(root, git) !== before
+            ? "the main checkout changed while the editor ran"
+            : null;
+      if (refusal) {
+        proposal.status = "refused";
+        proposal.refusal = refusal;
+        continue;
+      }
+      must(["add", "-A", "-f"], tree);
+      const entries = rawEntries(
+        must(["diff", "--cached", "--no-renames", "--raw", "-z", "HEAD"], tree),
+      );
+      proposal.diffStat = entries.map((e) => ({ status: e.status, path: e.path }));
+      const refused = diffRefusal(entries);
+      if (refused) {
+        proposal.status = "refused";
+        proposal.refusal = refused;
+        continue;
+      }
+      staged.set(id, { tree, patch: must(["diff", "--cached", "--binary", "HEAD"], tree) });
+      // The reads each case is known by: earlier runs' baselines, this run's over them (D-8).
+      const reads = { ...knownReads(root, folder), ...record.baseline };
+      proposal.probeSet = probeSet(
+        targets,
+        entries.map((e) => e.path),
+        reads,
+      );
+      for (const name of proposal.probeSet) baselineOf(name);
+      for (const name of proposal.probeSet) proposal.probe[name] = measure(tree, name);
+      const verdict = verdictOf(targets, proposal.probeSet, record.baseline, proposal.probe);
+      proposal.verdict = verdict.verdict;
+      proposal.status = verdict.verdict === "inconclusive" ? "inconclusive" : "probed";
+      proposal.gain = gainOf(targets, record.baseline, proposal.probe);
+    }
+    const winners = record.proposals
+      .filter((p) => p.verdict === "win")
+      .map((p) => ({ id: p.id, gain: p.gain }));
+    let composedTree: string | null = null;
+    if (winners.length >= 2) {
+      const ids = winners.map((w) => w.id).sort();
+      const tree = addTree("composition");
+      const applied = ids.every(
+        (id) => git(["apply", "--index", "-"], tree, staged.get(id)?.patch ?? "").status === 0,
+      );
+      const composition: CompositionRecord = {
+        ids,
+        applied,
+        verdict: null,
+        probeSet: [],
+        probe: {},
+      };
+      record.composition = composition;
+      if (applied) {
+        const entries = rawEntries(
+          must(["diff", "--cached", "--no-renames", "--raw", "-z", "HEAD"], tree),
+        );
+        if (diffRefusal(entries) === null) {
+          composition.probeSet = [
+            ...new Set(
+              record.proposals.filter((p) => ids.includes(p.id)).flatMap((p) => p.probeSet),
+            ),
+          ].sort();
+          for (const name of composition.probeSet) composition.probe[name] = measure(tree, name);
+          composition.verdict = verdictOf(
+            targets,
+            composition.probeSet,
+            record.baseline,
+            composition.probe,
+          ).verdict;
+          composedTree = tree;
+        } else composition.applied = false;
+      }
+    }
+    record.kept = keptHarness(winners, record.composition);
+    if (record.kept) {
+      const tree =
+        record.kept.kind === "composition"
+          ? (composedTree as string)
+          : (staged.get(record.kept.id)?.tree as string);
+      const branch = `improve/${run}`;
+      must(["check-ref-format", "--branch", branch], root);
+      must(
+        [
+          "-c",
+          `user.name=${IDENTITY.name}`,
+          "-c",
+          `user.email=${IDENTITY.email}`,
+          "commit",
+          "-q",
+          "--no-verify",
+          "-m",
+          `Improvement run ${run}: ${record.kept.kind === "composition" ? record.kept.ids.join(" + ") : record.kept.id}`,
+        ],
+        tree,
+      );
+      const sha = must(["rev-parse", "HEAD"], tree).trim();
+      must(["branch", branch, sha], root);
+      record.branch = branch;
+    }
+    write();
+    const evidence = relative(root, join(folder, "record.json")).split("\\").join("/");
+    for (const lesson of lessonsOf(record)) {
+      const out = deps.lessonAdd([
+        "--cue",
+        lesson.cue,
+        "--lesson",
+        lesson.lesson,
+        "--evidence",
+        evidence,
+        "--proposal",
+        lesson.proposal,
+        "--confidence",
+        lesson.confidence,
+      ]);
+      const id = /^(K-\d+) added/.exec(out.out.trim())?.[1];
+      if (out.status === 0 && id) record.lessons.push(id);
+      else log(`the lesson of ${lesson.proposal} was not entered: ${out.out.trim()}`);
+    }
+    write();
+    log(`record: ${relative(root, folder)}/record.md`);
+    return 0;
+  } catch (error) {
+    if (!(error instanceof Stop)) throw error;
+    record.exit = error.exit;
+    for (const p of record.proposals)
+      if (p.status !== "refused" && p.verdict === null) {
+        p.status = "inconclusive";
+        p.verdict = "inconclusive";
+      }
+    write();
+    log(`record (partial, exit ${error.exit}): ${relative(root, folder)}/record.md`);
+    return error.exit;
+  } finally {
+    for (const tree of trees) {
+      git(["worktree", "remove", "--force", tree], root);
+      rmSync(tree, { recursive: true, force: true });
+    }
+    git(["worktree", "prune"], root);
+  }
+}
+
+/** The main checkout as the editor must leave it: its status, HEAD, branch, config and hooks. */
+function mainState(root: string, git: Git): string {
+  const hooksDir = join(root, ".git", "hooks");
+  const hooks = existsSync(hooksDir)
+    ? readdirSync(hooksDir).map((name) => `${name}:${hashOf(join(hooksDir, name))}`)
+    : [];
+  return JSON.stringify([
+    git(["status", "--porcelain", "--untracked-files=all"], root).stdout,
+    git(["rev-parse", "HEAD"], root).stdout,
+    git(["rev-parse", "--abbrev-ref", "HEAD"], root).stdout,
+    hashOf(join(root, ".git", "config")),
+    hooks,
+  ]);
+}
+
+/**
+ * The reads each case is known by from the earlier runs' records (D-8): the latest baseline of each
+ * case across `docs/improve/<run>/record.json`, the current run's folder left out. A case no run
+ * measured is not in it.
+ */
+export function knownReads(
+  root: string,
+  current: string,
+): Record<string, Pick<CaseFigures, "name" | "reads">> {
+  const dir = join(root, "docs", "improve");
+  const out: Record<string, Pick<CaseFigures, "name" | "reads">> = {};
+  if (!existsSync(dir)) return out;
+  for (const run of readdirSync(dir).sort()) {
+    if (join(dir, run) === current) continue;
+    const record = readJson<{ baseline?: Record<string, { reads?: unknown }> }>(
+      join(dir, run, "record.json"),
+    );
+    for (const [name, figures] of Object.entries(record?.baseline ?? {}))
+      out[name] = {
+        name,
+        reads: Array.isArray(figures?.reads) ? (figures.reads as string[]) : null,
+      };
+  }
+  return out;
+}
+
+/** The eval cases of the repository, by folder. */
+function allCases(root: string): string[] {
+  const dir = join(root, "plugins/core/evals");
+  return readdirSync(dir, { withFileTypes: true })
+    .filter((d) => d.isDirectory() && existsSync(join(dir, d.name, "case.yaml")))
+    .map((d) => d.name)
+    .sort();
+}
+
+function readLines(path: string): string[] | null {
+  const text = readText(path);
+  return text === null ? null : text.split("\n");
+}
+
+/** The editor down the ladder (finding 152): the next model when one answers at its usage limit; any other failure stops the run. */
+function runEditor(
+  deps: ImproveDeps,
+  cwd: string,
+  prompt: string,
+  env: NodeJS.ProcessEnv,
+  log: (line: string) => void,
+): string {
+  for (const model of EDITOR_LADDER) {
+    const args = [
+      "-p",
+      prompt,
+      "--tools",
+      EDITOR_TOOLS,
+      "--permission-mode",
+      "acceptEdits",
+      "--strict-mcp-config",
+      "--no-session-persistence",
+      "--model",
+      model,
+      "--output-format",
+      "text",
+    ];
+    const out = deps.editor({ cwd, args, env });
+    if (out.status === 0) return out.output.trim();
+    if (!LIMITED.test(out.output)) {
+      log(`the editor failed on ${model}: ${out.output.trim().slice(0, 200)}`);
+      throw new Stop(3);
+    }
+    log(`${model} is at its limit; the editor moves to the next model`);
+  }
+  log("every model of the ladder is at its limit");
+  throw new Stop(3);
+}
+
+/** The deps of a real run: the kit and claude spawned, git, the crew command, the base and the last CTO plan. */
+function realDeps(root: string): ImproveDeps {
+  const userDir = userDirOf(process.env);
+  return {
+    root,
+    tmp: mkdtempSync(join(tmpdir(), "improve-trees-")),
+    env: process.env,
+    now: () => new Date(),
+    log: (line) => console.log(line),
+    git: realGit,
+    kit: (call) => {
+      const dir = resultsDir();
+      const results = join(call.tree, dir);
+      const folder = runFolder(results, `improve-${call.caseName}`, new Date());
+      createRunFolder(folder, results);
+      const rel = `${dir}/${basename(folder)}`;
+      const { path, args, env } = evalInvocation({
+        root: call.tree,
+        platform: process.platform,
+        path: process.env.PATH ?? "",
+        realGitDir: realGitDir(process.platform),
+        caseName: call.caseName,
+        runs: RUNS,
+        json: `${rel}/result.json`,
+        outputDir: rel,
+        maxCostUsd: call.maxCostUsd,
+        judgeModel: call.judgeModel,
+      });
+      const r = spawnSync("claude", args, {
+        cwd: call.tree,
+        stdio: "inherit",
+        env: kitEnvironment({ ...process.env, ...env, PATH: path }),
+      });
+      return { status: r.status, result: readJson<unknown>(join(folder, "result.json")) };
+    },
+    editor: (call) => {
+      const r = spawnSync("claude", call.args, { cwd: call.cwd, env: call.env, encoding: "utf8" });
+      return { status: r.status, output: `${r.stdout ?? ""}${r.stderr ?? ""}` };
+    },
+    lessonAdd: (args) => {
+      const r = spawnSync(
+        "node",
+        [join(root, "plugins/core/dist/crew.mjs"), "knowledge", "lesson", "add", ...args],
+        { cwd: root, encoding: "utf8" },
+      );
+      return { status: r.status, out: `${r.stdout ?? ""}${r.stderr ?? ""}` };
+    },
+    lessons: () =>
+      lessonsForCto(readBase(userDir).base, {
+        workspace: null,
+        project: "",
+        projectRoot: canonical(root),
+      }).entries as unknown as LessonView[],
+    ctoPlan: () => {
+      const policy = readJson<{ mail?: { workspace?: unknown } }>(
+        join(root, ".crew", "policy.json"),
+      );
+      const ws = policy?.mail?.workspace;
+      const plan = typeof ws === "string" ? latestPlan(userDir, ws) : null;
+      return plan ? readText(plan.path) : null;
+    },
+  };
+}
+
+/** `bun scripts/improve.ts --case <a,b> [--proposals N] [--max-cost-usd <usd>] [--judge-model <m>]` */
+export function parseArgs(argv: readonly string[]): ImproveOptions | string {
+  const options: ImproveOptions = { cases: [], proposals: 2 };
+  for (let i = 0; i < argv.length; i++) {
+    const flag = argv[i];
+    const value = argv[i + 1];
+    if (value === undefined) return `${flag} needs a value`;
+    i++;
+    if (flag === "--case") options.cases.push(...value.split(",").filter(Boolean));
+    else if (flag === "--proposals" && /^[1-9]\d*$/.test(value)) options.proposals = Number(value);
+    else if (flag === "--max-cost-usd" && Number(value) > 0) options.maxCostUsd = Number(value);
+    else if (flag === "--judge-model") options.judgeModel = value;
+    else return `unknown or bad option ${flag} ${value}`;
+  }
+  return options;
+}
+
+if (import.meta.main) {
+  const parsed = parseArgs(process.argv.slice(2));
+  if (typeof parsed === "string") {
+    console.error(
+      `${parsed}\nusage: bun scripts/improve.ts --case <a,b> [--proposals N] [--max-cost-usd <usd>] [--judge-model <m>]`,
+    );
+    process.exit(1);
+  }
+  const deps = realDeps(join(import.meta.dir, ".."));
+  const exit = await runImprove(parsed, deps);
+  rmSync(deps.tmp, { recursive: true, force: true });
+  process.exit(exit);
 }
