@@ -5341,9 +5341,9 @@ function renderReport(work, evidence, policy, options = {}) {
     }
   }
   if (evidence.roles?.length) {
-    lines.push("", "## Roles", "", "| Role | Personality | At | Tokens | Answer | Filed by |", "| :- | :- | :- | -: | :- | :- |");
+    lines.push("", "## Roles", "", "| Role | Model | Personality | At | Tokens | Answer | Filed by |", "| :- | :- | :- | :- | -: | :- | :- |");
     for (const r of evidence.roles)
-      lines.push(`| ${r.agent} | ${r.personality ?? "-"} | ${r.at} | ${r.tokensFrom === "none" ? "not read" : r.tokens} | ${r.file ?? "not saved"} | ${r.filedBy ?? "hook"} |`);
+      lines.push(`| ${r.agent} | ${r.model ?? "-"} | ${r.personality ?? "-"} | ${r.at} | ${r.tokensFrom === "none" ? "not read" : r.tokens} | ${r.file ?? "not saved"} | ${r.filedBy ?? "hook"} |`);
   }
   if (work.tasks?.length) {
     lines.push("", "## Tasks", "", "| Task | Criteria | Branch | Child | Verdict | Merged | Report | State | Gate |", "| :- | :- | :- | :- | :- | :- | :- | :- | :- |");
@@ -11576,10 +11576,14 @@ function roleAnswer(transcriptPath, lastMessage, wait = { ms: 0 }) {
   return (lastMessage ?? "").trim();
 }
 var SPENT = ["input_tokens", "output_tokens", "cache_creation_input_tokens"];
-function roleTokens(transcriptPath) {
+function roleTranscript(transcriptPath) {
+  const parsed = lines(transcriptPath);
+  return { tokens: tokensOf(parsed), model: modelOf(parsed) };
+}
+function tokensOf(parsed) {
   const perRequest = new Map;
   let unnamed = 0;
-  for (const line of lines(transcriptPath)) {
+  for (const line of parsed) {
     const usage = line.type === "assistant" ? line.message?.usage : undefined;
     if (!usage)
       continue;
@@ -11595,6 +11599,13 @@ function roleTokens(transcriptPath) {
   if (!perRequest.size)
     return { tokens: 0, from: "none" };
   return { tokens: [...perRequest.values()].reduce((a, b) => a + b, 0), from: "transcript" };
+}
+function modelOf(parsed) {
+  let model;
+  for (const line of parsed)
+    if (line.type === "assistant" && typeof line.message?.model === "string")
+      model = line.message.model;
+  return model;
 }
 function unfenced(text) {
   const fence = /^```(?:json)?\s*\n([\s\S]*?)\n```\s*$/.exec(text.trim());
@@ -11727,11 +11738,13 @@ function onSubagentStop(ctx, payload) {
     return nothingSaved(tamperedItem(id));
   const progress = { saved: null, recorded: false, pending: null, reply: null };
   try {
+    const transcript = roleTranscript(payload.agent_transcript_path);
     const input = {
       answer,
       ...payload.agent_id ? { agentId: payload.agent_id } : {},
       filedBy: "hook",
-      tokens: roleTokens(payload.agent_transcript_path)
+      tokens: transcript.tokens,
+      model: transcript.model
     };
     let note = withLock(workDir(ctx.paths, id), () => fileAnswer(ctx, id, role, input, transcriptNote, progress), { what: "work folder" });
     note = relayAfterLock(ctx, id, progress, note);
@@ -11867,6 +11880,7 @@ function fileAnswer(ctx, id, role, input, transcriptNote, progress) {
       at: nowIso(),
       tokens,
       tokensFrom: from,
+      ...input.model ? { model: input.model } : {},
       file: saved.file,
       ...personality ? { personality } : {},
       ...team ? { team } : {},

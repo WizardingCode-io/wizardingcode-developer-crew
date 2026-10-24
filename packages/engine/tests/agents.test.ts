@@ -287,3 +287,24 @@ test("CON1-AC-2 (finding 51): the data and infra reviewers and their rubrics sit
 test("CON1-AC-3 (finding 52): the fault-finder names its personality file on its own page", () => {
   expect(agent("fault-finder").body).toContain("personalities/sceptical.md");
 });
+
+test("AC-5 (finding 152): the mod's table of each crew role's declared model equals every agent file's model line, both ways", () => {
+  const mod = readFileSync(
+    fileURLToPath(new URL("../../../plugins/core/hooks/register.js", import.meta.url)),
+    "utf8",
+  );
+  const block = /const ROLE_MODELS = \{([\s\S]*?)\n\}/.exec(mod)?.[1] ?? "";
+  const table = Object.fromEntries(
+    [...block.matchAll(/^\s*['"]?([a-z-]+)['"]?\s*:\s*['"]([a-z]+)['"],?\s*$/gm)].map((m) => [
+      m[1],
+      m[2],
+    ]),
+  );
+  const files = Object.fromEntries(
+    readdirSync(AGENTS)
+      .filter((f) => f.endsWith(".md"))
+      .map((f) => [f.replace(/\.md$/, ""), agent(f.replace(/\.md$/, "")).meta.model]),
+  );
+  expect(Object.keys(files).length).toBeGreaterThan(0);
+  expect(table).toEqual(files);
+});

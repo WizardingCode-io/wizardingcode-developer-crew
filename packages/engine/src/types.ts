@@ -430,6 +430,8 @@ export interface RoleRecord {
   at: string;
   tokens: number;
   tokensFrom: "transcript" | "none";
+  /** The model the role ran on, from its transcript's last assistant line (finding 152); absent when none was read. */
+  model?: string;
   /** Relative to the work folder, or null when the answer matched no known shape. */
   file: string | null;
   /** The lens the role was given (SP7 §6.3), read from its answer's `personality:` line; `unknown` for a name the registry does not have. */

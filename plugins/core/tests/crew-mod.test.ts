@@ -1,5 +1,5 @@
 // plugins/core/tests/crew-mod.test.ts
-import { expect, test } from "claude-code/testing";
+import { expect, mock, test } from "claude-code/testing";
 
 // What `crew status --json` prints for a proven fast-route item
 const PROVEN = {
@@ -929,4 +929,222 @@ test("CON7-AC-1", async ($, on) => {
   expect(await ui.find({ type: "Text", text: "Mail: 3 unread, 1 answered" })).toBeDefined();
   expect(await ui.find({ type: "Text", text: OLD })).toBeUndefined();
   await ui.unmount();
+});
+
+// The model ladder (finding 152): a crew role runs on the most capable model available.
+const LIMITS = "model-limits";
+const MIN = 60_000;
+const JUDGE = "wizardingcode-developer-crew:judge";
+const EXPERT = "wizardingcode-developer-crew:expert";
+const REVIEWER = "wizardingcode-developer-crew:review-code-quality";
+
+// The engine beneath the plugin: the spawn answers the model it was given (or the role's own),
+// the probe answers as `probe` says, and each probe's model is counted.
+function ladder(on, probe: (model: string) => Record<string, unknown>, given: string[] = [], probed: string[] = []) {
+  stubs(on, () => ({ exitCode: 0, stdout: JSON.stringify(NONE), stderr: "" }));
+  on("agent.spawn", (_$, e) => {
+    given.push(e.model ?? "-");
+    return { model: e.model ?? "claude-fable-5-1", agentId: `a-${given.length}` };
+  });
+  on("model.complete", (_$, e) => {
+    probed.push(e.model);
+    return { value: probe(e.model) };
+  });
+  return { given, probed };
+}
+const ANSWERED = { isAnswered: true, text: "ok", usage: { input_tokens: 1, output_tokens: 1 } };
+const LIMITED = { isAnswered: false, reason: "api-error", status: 429, error: "rate_limit", usage: { input_tokens: 0, output_tokens: 0 } };
+// The plugin's store in memory, read back by the test (a copy at each read, as the engine keeps it)
+function memory(on, initial: Record<string, unknown> = {}) {
+  const db: Record<string, unknown> = { ...initial };
+  on("store.get", (_$, e) => ({ value: db[e.key] === undefined ? undefined : structuredClone(db[e.key]) }));
+  on("store.set", (_$, e) => {
+    db[e.key] = structuredClone(e.value);
+    return { value: undefined };
+  });
+  return db;
+}
+const ended = (agentId: string, reason = "error") => ({ turnId: `t-${agentId}`, agentId, answer: "", durationMs: 5, isAborted: false, reason });
+
+test("AC-8 (finding 152): a crew role at its limit moves down the ladder, never above its start, and other agents are left alone", async ($, on) => {
+  const clock = mock.clock(on, { now: 1_000 * MIN });
+  const db = memory(on, { [LIMITS]: { fable: { since: clock.now(), probeAt: clock.now() + 15 * MIN } } });
+  const { given } = ladder(on, () => LIMITED);
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  await $.agent.spawn({ prompt: "rule", subagentType: JUDGE });
+  expect(given.at(-1)).toBe("opus");
+  // Nothing marked at its start: the input goes on unchanged
+  await $.agent.spawn({ prompt: "propose", subagentType: EXPERT });
+  expect(given.at(-1)).toBe("-");
+  await $.agent.spawn({ prompt: "review", subagentType: REVIEWER });
+  expect(given.at(-1)).toBe("-");
+  // A caller's own model is the start: sonnet is not raised to opus
+  await $.agent.spawn({ prompt: "rule", subagentType: JUDGE, model: "sonnet" });
+  expect(given.at(-1)).toBe("sonnet");
+  // A full id reads as its alias: claude-fable-5-1 is fable, at its limit
+  await $.agent.spawn({ prompt: "rule", subagentType: JUDGE, model: "claude-fable-5-1" });
+  expect(given.at(-1)).toBe("opus");
+  for (const other of ["general-purpose", "wizardingcode-developer-crew:nobody", "x-wizardingcode-developer-crew:judge"]) {
+    await $.agent.spawn({ prompt: "x", subagentType: other });
+    expect(given.at(-1)).toBe("-");
+  }
+});
+
+test("AC-8 (finding 152): with fable and opus at their limits the judge runs on sonnet; with every model marked it is left as declared", async ($, on) => {
+  const clock = mock.clock(on, { now: 1_000 * MIN });
+  const mark = { since: clock.now(), probeAt: clock.now() + 15 * MIN };
+  const db = memory(on, { [LIMITS]: { fable: mark, opus: mark } });
+  const { given } = ladder(on, () => LIMITED);
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  await $.agent.spawn({ prompt: "rule", subagentType: JUDGE });
+  expect(given.at(-1)).toBe("sonnet");
+  db[LIMITS] = { fable: mark, opus: mark, sonnet: mark, haiku: mark };
+  await $.agent.spawn({ prompt: "rule", subagentType: JUDGE });
+  expect(given.at(-1)).toBe("-");
+});
+
+test("AC-10 (finding 152): a crew role's turn that ends on the limit marks its model; overload, other errors, other turns and other agents mark nothing", async ($, on) => {
+  const clock = mock.clock(on, { now: 1_000 * MIN });
+  const db = memory(on);
+  let answer: Record<string, unknown> = LIMITED;
+  const { probed } = ladder(on, () => answer);
+  on("turn.complete", () => ({ text: "" }));
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  // Each case is a judge of its own: an agent's entry is read once, at its error
+  const judge = async () => (await $.agent.spawn({ prompt: "rule", subagentType: JUDGE })).agentId as string;
+  // The spawn answered a full id: kept as its alias
+  await $.turn.complete(ended(await judge()));
+  expect(probed).toEqual(["fable"]);
+  expect(db[LIMITS]).toEqual({ fable: { since: clock.now(), probeAt: clock.now() + 15 * MIN } });
+  // A 429 whose kind is unknown marks too
+  db[LIMITS] = {};
+  answer = { ...LIMITED, error: "unknown" };
+  await $.turn.complete(ended(await judge()));
+  expect(Object.keys(db[LIMITS] as object)).toEqual(["fable"]);
+  // Overload, a 529, an answered probe: nothing
+  for (const a of [{ ...LIMITED, status: 529, error: "overloaded" }, { ...LIMITED, status: 500, error: "server_error" }, ANSWERED]) {
+    db[LIMITS] = {};
+    answer = a;
+    await $.turn.complete(ended(await judge()));
+    expect(db[LIMITS]).toEqual({});
+  }
+  // A turn that answered, and an agent the crew did not spawn: no probe at all
+  const before = probed.length;
+  answer = LIMITED;
+  await $.turn.complete(ended(await judge(), "answer"));
+  await $.turn.complete(ended("a-unknown"));
+  expect(probed.length).toBe(before);
+  expect(db[LIMITS]).toEqual({});
+});
+
+test("AC-4 (finding 152): a mark is probed again only when due; an answered probe brings the declared model back, a refused one moves the next probe on", async ($, on) => {
+  const clock = mock.clock(on, { now: 1_000 * MIN });
+  const db = memory(on, { [LIMITS]: { fable: { since: clock.now(), probeAt: clock.now() + 15 * MIN } } });
+  let answer: Record<string, unknown> = LIMITED;
+  const { given, probed } = ladder(on, () => answer);
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  await clock.advance(14 * MIN);
+  await $.agent.spawn({ prompt: "rule", subagentType: JUDGE });
+  expect(probed).toEqual([]);
+  expect(given.at(-1)).toBe("opus");
+  await clock.advance(1 * MIN);
+  await $.agent.spawn({ prompt: "rule", subagentType: JUDGE });
+  expect(probed).toEqual(["fable"]);
+  expect(given.at(-1)).toBe("opus");
+  expect(db[LIMITS]).toEqual({ fable: { since: 1_000 * MIN, probeAt: clock.now() + 15 * MIN } });
+  await clock.advance(15 * MIN);
+  answer = ANSWERED;
+  await $.agent.spawn({ prompt: "rule", subagentType: JUDGE });
+  expect(given.at(-1)).toBe("-");
+  expect(db[LIMITS]).toEqual({});
+});
+
+test("AC-9 (finding 152): the ladder fails open: a store, clock or probe that throws or refuses leaves the spawn as it was and a turn's end marks nothing", async ($, on) => {
+  const { given } = ladder(on, () => {
+    throw new Error("probe down");
+  });
+  on("store.get", () => {
+    throw new Error("store down");
+  });
+  on("store.set", () => {
+    throw new Error("store down");
+  });
+  on("clock.now", () => {
+    throw new Error("clock down");
+  });
+  on("turn.complete", () => ({ text: "" }));
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  const spawned = await $.agent.spawn({ prompt: "rule", subagentType: JUDGE });
+  expect(given.at(-1)).toBe("-");
+  await expect($.turn.complete(ended(spawned.agentId as string))).resolves.toBeDefined();
+});
+
+test("AC-9 (finding 152): a probe that refuses with no error, and a store write that throws, mark nothing and block nothing", async ($, on) => {
+  mock.clock(on, { now: 1_000 * MIN });
+  const { given } = ladder(on, () => ({ isAnswered: false, reason: "aborted", usage: { input_tokens: 0, output_tokens: 0 } }));
+  let writes = 0;
+  on("store.get", () => ({ value: { fable: { since: 0, probeAt: 0 } } }));
+  on("store.set", () => {
+    writes++;
+    throw new Error("store down");
+  });
+  on("turn.complete", () => ({ text: "" }));
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  const spawned = await $.agent.spawn({ prompt: "rule", subagentType: JUDGE });
+  expect(given.at(-1)).toBe("opus");
+  // The spawn tried to keep the moved probe time; the turn's end, whose probe refused, writes nothing
+  const atSpawn = writes;
+  expect(atSpawn).toBeGreaterThan(0);
+  await expect($.turn.complete(ended(spawned.agentId as string))).resolves.toBeDefined();
+  expect(writes).toBe(atSpawn);
+});
+
+test("AC-9 (finding 152): a probe that throws alone leaves the spawn as it was", async ($, on) => {
+  mock.clock(on, { now: 1_000 * MIN });
+  memory(on, { [LIMITS]: { fable: { since: 0, probeAt: 0 } } });
+  const { given } = ladder(on, () => {
+    throw new Error("probe down");
+  });
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  await $.agent.spawn({ prompt: "rule", subagentType: JUDGE });
+  expect(given.at(-1)).toBe("-");
+});
+
+test("AC-9 (finding 152): a clock that throws alone leaves the spawn as it was", async ($, on) => {
+  memory(on, { [LIMITS]: { fable: { since: 0, probeAt: 0 } } });
+  const { given, probed } = ladder(on, () => LIMITED);
+  on("clock.now", () => {
+    throw new Error("clock down");
+  });
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  await $.agent.spawn({ prompt: "rule", subagentType: JUDGE });
+  expect(given.at(-1)).toBe("-");
+  expect(probed).toEqual([]);
+});
+
+test("AC-10 (finding 152): another plugin's agent that dies on an error is never probed", async ($, on) => {
+  mock.clock(on, { now: 1_000 * MIN });
+  const db = memory(on);
+  const { probed } = ladder(on, () => LIMITED);
+  on("turn.complete", () => ({ text: "" }));
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  const foreign = await $.agent.spawn({ prompt: "x", subagentType: "general-purpose" });
+  expect(foreign.agentId).toBeDefined();
+  await $.turn.complete(ended(foreign.agentId as string));
+  expect(probed).toEqual([]);
+  expect(db[LIMITS]).toBeUndefined();
+});
+
+test("AC-10 (finding 152): past 200 crew spawns the oldest entry is dropped, so its error is not probed while the newest is", async ($, on) => {
+  mock.clock(on, { now: 1_000 * MIN });
+  memory(on);
+  const { probed } = ladder(on, () => LIMITED);
+  on("turn.complete", () => ({ text: "" }));
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  const ids: string[] = [];
+  for (let n = 0; n < 201; n++) ids.push((await $.agent.spawn({ prompt: "r", subagentType: JUDGE })).agentId as string);
+  await $.turn.complete(ended(ids[0] as string));
+  expect(probed).toEqual([]);
+  await $.turn.complete(ended(ids[1] as string));
+  expect(probed).toEqual(["fable"]);
 });

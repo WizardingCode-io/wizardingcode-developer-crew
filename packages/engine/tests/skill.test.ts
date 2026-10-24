@@ -1015,3 +1015,13 @@ test("AC-3 (finding 62, option A): the experts step shares the three lenses over
   expect(step).toContain("never its `## Reasoning`");
   expect(step).toMatch(/in parallel in one message/);
 });
+
+test("AC-7 (finding 152): a role that ended on an API error is launched once more and the plugin moves it to the next model; other runtimes run roles as they decide", () => {
+  for (const page of ["gate.md", "conclave.md"]) {
+    const text = readReference(page);
+    expect(text).toMatch(/ended on an API error[^\n]*launched once more[^\n]*next model/);
+  }
+  expect(readReference("runtimes.md")).toMatch(
+    /model ladder[^\n]*Claude Code[^\n]*other runtimes[^\n]*as their runtime decides/,
+  );
+});

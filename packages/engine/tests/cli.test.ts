@@ -8575,9 +8575,9 @@ test("SP6-T4 AC-5: crew answer file files a role's answer as the hook does, mark
   );
   expect(judged.out).toContain("answers filed by the session: review-security, expert-1, judge");
   const report = (await c.run("evidence", first)).out;
-  expect(report).toContain("| Role | Personality | At | Tokens | Answer | Filed by |");
+  expect(report).toContain("| Role | Model | Personality | At | Tokens | Answer | Filed by |");
   expect(report).toMatch(
-    /\| review-security \| - \| [^|]+ \| not read \| review\/security\.findings\.md \| session \|/,
+    /\| review-security \| - \| - \| [^|]+ \| not read \| review\/security\.findings\.md \| session \|/,
   );
   expect(report).toContain(
     "- Runtimes: claude (context at start: enforced; the status line per prompt: enforced; the denial of engine files: enforced; the denial of forbidden commands: enforced; the hold at Stop: enforced; the roles' answers filed: enforced; the roles read-only: enforced); gemini (context at start: enforced; the status line per prompt: enforced; the denial of engine files: enforced; the denial of forbidden commands: enforced; the hold at Stop: enforced; the roles' answers filed: requested (no subagent event); the roles read-only: enforced)",
@@ -8595,7 +8595,7 @@ test("SP6-T4 AC-5: crew answer file files a role's answer as the hook does, mark
     "subagent-stop",
   );
   expect((await c.run("evidence", first)).out).toMatch(
-    /\| review-code-quality \| - \| [^|]+ \| not read \| review\/code-quality\.findings\.md \| hook \|/,
+    /\| review-code-quality \| - \| - \| [^|]+ \| not read \| review\/code-quality\.findings\.md \| hook \|/,
   );
   // The validation line, and a closed item refused.
   const lead = answer(

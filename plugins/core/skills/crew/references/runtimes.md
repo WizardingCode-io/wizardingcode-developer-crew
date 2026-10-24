@@ -44,6 +44,8 @@ To remove: `crew runtime remove <name> [--scope project|user]`, the rollback of 
 
 What `crew runtime check <name>` prints, from the pages (a requested line names what the page does not document).
 
+The model ladder (a role at its usage limit runs on the next model, fable, opus, sonnet, haiku, and on its own again once a probe finds it back) is the plugin's mod, so it holds in Claude Code alone; other runtimes have no mod, and their roles run on the models as their runtime decides.
+
 ### Claude Code
 - context at start: enforced
 - the status line per prompt: enforced

@@ -743,12 +743,12 @@ export function renderReport(
       "",
       "## Roles",
       "",
-      "| Role | Personality | At | Tokens | Answer | Filed by |",
-      "| :- | :- | :- | -: | :- | :- |",
+      "| Role | Model | Personality | At | Tokens | Answer | Filed by |",
+      "| :- | :- | :- | :- | -: | :- | :- |",
     );
     for (const r of evidence.roles)
       lines.push(
-        `| ${r.agent} | ${r.personality ?? "-"} | ${r.at} | ${r.tokensFrom === "none" ? "not read" : r.tokens} | ${r.file ?? "not saved"} | ${r.filedBy ?? "hook"} |`,
+        `| ${r.agent} | ${r.model ?? "-"} | ${r.personality ?? "-"} | ${r.at} | ${r.tokensFrom === "none" ? "not read" : r.tokens} | ${r.file ?? "not saved"} | ${r.filedBy ?? "hook"} |`,
       );
   }
   // The tasks handed to implementers (SP2c §7), filled by `crew task`.

@@ -22,6 +22,36 @@ let inboxUnread = null
 // The last answer of `crew workspace status --json`, fetched for the panel alone, or null (SP7b Task 6)
 let workspace = null
 
+// The model ladder (finding 152): a crew role runs on the most capable model available, from its
+// start down; a model at its usage limit is marked in the store and probed again when due.
+const LADDER = ['fable', 'opus', 'sonnet', 'haiku']
+// Each crew role's declared model, as its agent file's `model:` line says (a test holds the two equal)
+const ROLE_MODELS = {
+  cto: 'opus',
+  'devils-advocate': 'opus',
+  expert: 'opus',
+  'fault-finder': 'opus',
+  judge: 'fable',
+  researcher: 'opus',
+  'review-architecture': 'sonnet',
+  'review-code-quality': 'sonnet',
+  'review-data': 'sonnet',
+  'review-infra': 'sonnet',
+  'review-risk': 'sonnet',
+  'review-security': 'sonnet',
+  'review-test-quality': 'sonnet',
+  'review-ui-ux': 'sonnet',
+  'tech-lead': 'sonnet',
+}
+const CREW_AGENT = 'wizardingcode-developer-crew:'
+// The store's key: { <alias>: { since, probeAt } }, the models at their limits
+const LIMITS = 'model-limits'
+const PROBE_EVERY_MS = 15 * 60_000
+// The alias each crew spawn ran on, by its agentId, for the turn that ends it; dropped once its
+// error is read, and the oldest dropped past SPAWNED_MAX so a long session does not grow it
+const spawned = new Map()
+const SPAWNED_MAX = 200
+
 export function register(on) {
   on('session.start', async ($, e, next) => {
     await refresh($)
@@ -113,7 +143,33 @@ export function register(on) {
     return { text: statusText() }
   })
 
+  on('agent.spawn', async ($, e, next) => {
+    let model
+    try {
+      model = await ladderModel($, e)
+    } catch {
+      model = undefined
+    }
+    const started = await next(model ? { ...e, model } : e)
+    try {
+      if (roleOf(e.subagentType) && started?.agentId) {
+        spawned.set(started.agentId, aliasOf(started.model))
+        if (spawned.size > SPAWNED_MAX) spawned.delete(spawned.keys().next().value)
+      }
+    } catch {
+      /* the ladder never holds up a spawn */
+    }
+    return started
+  })
+
   on('turn.complete', async ($, e, next) => {
+    if (e.agentId && e.reason === 'error') {
+      try {
+        await markIfLimited($, e.agentId)
+      } catch {
+        /* a turn's end is never held up by the ladder */
+      }
+    }
     await refresh($)
     if (!hasWork()) return next(e)
     return { text: verdictLine() }
@@ -362,6 +418,87 @@ function conclaveText() {
 // "Crew: <the engine's message>", or the one line that says the engine gave none
 function crewText(answer) {
   return 'Crew: ' + ((answer && answer.message) ? answer.message : 'crew gave no answer')
+}
+
+// `fable` for fable, opus, sonnet or haiku and any full id holding one of them; null otherwise
+function aliasOf(model) {
+  if (typeof model !== 'string') return null
+  const name = model.toLowerCase()
+  return LADDER.find((alias) => name === alias || name.includes(alias)) ?? null
+}
+
+// The crew role an agent type names exactly, or null for another plugin's agent or an unknown role
+function roleOf(type) {
+  if (typeof type !== 'string' || !type.startsWith(CREW_AGENT)) return null
+  const role = type.slice(CREW_AGENT.length)
+  return Object.hasOwn(ROLE_MODELS, role) ? role : null
+}
+
+// One request of one token: `answered`, `limited` (the usage limit), or `other`
+async function probe($, model) {
+  const r = await $.model.complete({ model, prompt: 'ok', maxTokens: 1 })
+  if (r.isAnswered) return 'answered'
+  if (r.reason === 'api-error' && (r.error === 'rate_limit' || r.status === 429)) return 'limited'
+  return 'other'
+}
+
+// The model a crew spawn should run on when its start is at its limit, or undefined to leave it
+async function ladderModel($, e) {
+  const role = roleOf(e.subagentType)
+  if (!role) return undefined
+  const start = aliasOf(e.model ?? ROLE_MODELS[role])
+  if (!start) return undefined
+  const limits = await readLimits($)
+  const now = await $.clock.now()
+  let pick
+  let changed = false
+  for (const model of LADDER.slice(LADDER.indexOf(start))) {
+    const mark = limits[model]
+    if (!mark) {
+      pick = model
+      break
+    }
+    if (now < mark.probeAt) continue
+    if ((await probe($, model)) === 'answered') {
+      delete limits[model]
+      changed = true
+      pick = model
+      break
+    }
+    // Still at its limit, or not known: the mark stays and its next probe moves on
+    limits[model] = marked(now, mark.since)
+    changed = true
+  }
+  if (changed) {
+    try {
+      await $.store.set(LIMITS, limits)
+    } catch {
+      /* the pick stands though the mark could not be kept */
+    }
+  }
+  return pick && pick !== start ? pick : undefined
+}
+
+// A crew role's turn that died on an API error: its model is marked when a probe finds it at its limit
+async function markIfLimited($, agentId) {
+  const model = spawned.get(agentId)
+  spawned.delete(agentId)
+  if (!model) return
+  if ((await probe($, model)) !== 'limited') return
+  const limits = await readLimits($)
+  const now = await $.clock.now()
+  limits[model] = marked(now, now)
+  await $.store.set(LIMITS, limits)
+}
+
+// The marks in the store, an empty set when none were kept
+async function readLimits($) {
+  return (await $.store.get(LIMITS)) || {}
+}
+
+// A model's mark: when it was first found at its limit, and when it is probed again
+function marked(now, since) {
+  return { since, probeAt: now + PROBE_EVERY_MS }
 }
 
 // Runs the bundled CLI in the session's folder and returns its JSON answer.

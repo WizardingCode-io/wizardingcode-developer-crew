@@ -675,16 +675,16 @@ test("SP2c: the report's Roles section lists each role's end with its tokens and
   const report = renderReport(work, evidence, DEFAULT_POLICY);
   // The Filed by column since SP6 Task 4: a record without the field is the hook's.
   expect(report).toContain(
-    "## Roles\n\n| Role | Personality | At | Tokens | Answer | Filed by |\n| :- | :- | :- | -: | :- | :- |\n",
+    "## Roles\n\n| Role | Model | Personality | At | Tokens | Answer | Filed by |\n| :- | :- | :- | :- | -: | :- | :- |\n",
   );
   expect(report).toContain(
-    "| review-code-quality | - | 2026-10-15T11:20:00.000Z | 39912 | review/code-quality.findings.md | hook |",
+    "| review-code-quality | - | - | 2026-10-15T11:20:00.000Z | 39912 | review/code-quality.findings.md | hook |",
   );
   expect(report).toContain(
-    "| judge | - | 2026-10-15T11:25:00.000Z | not read | review/ruling.json | hook |",
+    "| judge | - | - | 2026-10-15T11:25:00.000Z | not read | review/ruling.json | hook |",
   );
   expect(report).toContain(
-    "| expert-1 | creative | 2026-10-15T11:10:00.000Z | 5000 | conclave/expert-1.md | hook |",
+    "| expert-1 | - | creative | 2026-10-15T11:10:00.000Z | 5000 | conclave/expert-1.md | hook |",
   );
 });
 
@@ -1166,5 +1166,40 @@ test("AC-1 (finding 118): the report names each knowledge file by its pack and t
   delete work.knowledgeLabels;
   expect(renderReport(work, evidence, DEFAULT_POLICY)).toContain(
     "- Knowledge files for the expert: /home/someone/.wizardingcode/crew/packs/laravel/knowledge/laravel.md\n",
+  );
+});
+
+test("AC-6 (finding 152): the report's Roles table shows the model each role ran on, a dash where none was read", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const work = createWork(paths, "Model column");
+  const evidence: Evidence = {
+    ...emptyEvidence(),
+    roles: [
+      {
+        agent: "judge",
+        at: "2026-10-24T12:00:00.000Z",
+        tokens: 900,
+        tokensFrom: "transcript" as const,
+        file: "review/ruling.json",
+        model: "claude-opus-5-5",
+      },
+      {
+        agent: "review-code-quality",
+        at: "2026-10-24T11:50:00.000Z",
+        tokens: 400,
+        tokensFrom: "transcript" as const,
+        file: "review/code-quality.findings.md",
+      },
+    ],
+  };
+  const report = renderReport(work, evidence, DEFAULT_POLICY);
+  expect(report).toContain(
+    "| Role | Model | Personality | At | Tokens | Answer | Filed by |\n| :- | :- | :- | :- | -: | :- | :- |\n",
+  );
+  expect(report).toContain(
+    "| judge | claude-opus-5-5 | - | 2026-10-24T12:00:00.000Z | 900 | review/ruling.json | hook |",
+  );
+  expect(report).toContain(
+    "| review-code-quality | - | - | 2026-10-24T11:50:00.000Z | 400 | review/code-quality.findings.md | hook |",
   );
 });

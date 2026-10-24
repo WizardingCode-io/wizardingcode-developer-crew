@@ -23,7 +23,7 @@ import {
   personalityOf,
   roleAnswer,
   roleOf,
-  roleTokens,
+  roleTranscript,
   teamOf,
 } from "../src/hooks/subagent-stop.ts";
 import { loadItemMail, mailbox, ROLE_AGENT, send } from "../src/mail.ts";
@@ -110,7 +110,7 @@ test("SP2c AC-3: the role of an agent type, the answer from the hand-back, the t
   expect(roleAnswer(file, "Done; see the report.")).toBe("# code-quality findings\n- F-1 …");
   expect(roleAnswer(join(dir, "missing.jsonl"), "the whole text")).toBe("the whole text");
   // Finding #27's measure: input + output + cache creation, once per request; cache reads are not spent tokens.
-  expect(roleTokens(file)).toEqual({ tokens: 22550, from: "transcript" });
+  expect(roleTranscript(file).tokens).toEqual({ tokens: 22550, from: "transcript" });
   // Two lines of one request (one usage object per content block) count once.
   const twoBlocks = transcript(
     tempDir("crew-transcript-"),
@@ -122,8 +122,8 @@ test("SP2c AC-3: the role of an agent type, the answer from the hand-back, the t
     ],
     ["req-1", "req-1", "req-2"],
   );
-  expect(roleTokens(twoBlocks)).toEqual({ tokens: 830, from: "transcript" });
-  expect(roleTokens(join(dir, "missing.jsonl"))).toEqual({ tokens: 0, from: "none" });
+  expect(roleTranscript(twoBlocks).tokens).toEqual({ tokens: 830, from: "transcript" });
+  expect(roleTranscript(join(dir, "missing.jsonl")).tokens).toEqual({ tokens: 0, from: "none" });
   // The name a record carries: the role, or the next expert number; the file, by the agent and the answer's shape.
   const none: RoleRecord[] = [];
   expect(agentName("review-security", none)).toBe("review-security");
@@ -1807,4 +1807,50 @@ test("AC-12 (finding 143): a tech lead's answer with no heading is filed as tech
     ["conclave/tech-lead-4.md", undefined],
     ["conclave/lead-qa-reply.md", "qa"],
   ]);
+});
+
+test("AC-6 (finding 152): the model a role ran on is read from its transcript's last assistant line and kept on its record", () => {
+  const dir = tempDir("crew-model-");
+  const file = join(dir, "agent-m.jsonl");
+  writeFileSync(
+    file,
+    [
+      {
+        type: "assistant",
+        message: { model: "claude-fable-5-1", content: [{ type: "text", text: "step" }] },
+      },
+      { type: "user", message: { content: "x" } },
+      {
+        type: "assistant",
+        message: { model: "claude-opus-5-5", content: [{ type: "text", text: "done" }] },
+      },
+    ]
+      .map((l) => JSON.stringify(l))
+      .join("\n"),
+  );
+  expect(roleTranscript(file).model).toBe("claude-opus-5-5");
+  expect(roleTranscript(join(dir, "missing.jsonl")).model).toBeUndefined();
+  const none = join(dir, "agent-n.jsonl");
+  writeFileSync(none, JSON.stringify({ type: "assistant", message: { content: [] } }));
+  expect(roleTranscript(none).model).toBeUndefined();
+  const { ctx, work } = session();
+  const judge = transcript(
+    dir,
+    '{"rulings":[{"gate":"code-quality","verdict":"proven","findings":[],"tokens":0}]}',
+    [[10, 2, 0, 0]],
+  );
+  const lines = readFileSync(judge, "utf8")
+    .trim()
+    .split("\n")
+    .map((l) => JSON.parse(l));
+  lines[lines.length - 1].message.model = "claude-opus-5-5";
+  writeFileSync(judge, lines.map((l) => JSON.stringify(l)).join("\n"));
+  onSubagentStop(ctx, {
+    agent_id: "j9",
+    agent_type: `${PLUGIN}:judge`,
+    agent_transcript_path: judge,
+    last_assistant_message: "Ruled.",
+  });
+  const roles = loadEvidence(ctx.paths, work.id).evidence.roles ?? [];
+  expect(roles.at(-1)?.model).toBe("claude-opus-5-5");
 });

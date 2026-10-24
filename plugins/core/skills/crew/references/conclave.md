@@ -25,6 +25,7 @@ What the request asks for that goes against good practice, and why. Each one is 
 ## When the debate opens
 
 The debate opens on consequences, never on the route alone: a blocking objection from the round, a warning the user wants to build anyway on a risk area, a decision whose answer changes a risk area (who holds a permission, what is hard-deleted, which side of a conflict wins), or the user asking for it. A choice the user's words leave to the team ("the team decides", "your call", "debate it") is debated, not asked: those words are the decision to debate, and the reason names them. It never stands for a decision whose answer changes a risk area: that one is still the user's. Say why in one line: `crew debate <id> open --reason "<the consequence>"`. It is capped: one research pass, at most three experts, one revision.
+A role of the debate that ended on an API error is launched once more with the same paths; in Claude Code the plugin moves it to the next model when its own is at its limit (`references/gate.md`, 4b).
 
 ## The debate, step by step
 

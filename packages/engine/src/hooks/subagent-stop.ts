@@ -60,7 +60,7 @@ export function teamOf(agent: string): TeamName | null {
 type Line = {
   type?: string;
   requestId?: string;
-  message?: { content?: unknown; usage?: Record<string, unknown> };
+  message?: { content?: unknown; usage?: Record<string, unknown>; model?: unknown };
 };
 
 function lines(transcriptPath: string | undefined): Line[] {
@@ -178,17 +178,23 @@ export function roleAnswer(
 const SPENT = ["input_tokens", "output_tokens", "cache_creation_input_tokens"];
 
 /**
- * The tokens the role spent: input, output and cache written, once per request (one usage object
- * repeats on every content block of a request; a cache read is not spent). Within a few percent of
- * the harness's own figure (finding #27).
+ * What a role's transcript says, read once (finding 152): the tokens it spent (input, output and
+ * cache written, once per request, since one usage object repeats on every content block of a
+ * request and a cache read is not spent; within a few percent of the harness's own figure, finding
+ * #27) and the model its last assistant line ran on.
  */
-export function roleTokens(transcriptPath: string | undefined): {
-  tokens: number;
-  from: "transcript" | "none";
+export function roleTranscript(transcriptPath: string | undefined): {
+  tokens: { tokens: number; from: "transcript" | "none" };
+  model: string | undefined;
 } {
+  const parsed = lines(transcriptPath);
+  return { tokens: tokensOf(parsed), model: modelOf(parsed) };
+}
+
+function tokensOf(parsed: Line[]): { tokens: number; from: "transcript" | "none" } {
   const perRequest = new Map<string, number>();
   let unnamed = 0;
-  for (const line of lines(transcriptPath)) {
+  for (const line of parsed) {
     const usage = line.type === "assistant" ? line.message?.usage : undefined;
     if (!usage) continue;
     const key = typeof line.requestId === "string" ? line.requestId : `line-${unnamed++}`;
@@ -200,6 +206,14 @@ export function roleTokens(transcriptPath: string | undefined): {
   }
   if (!perRequest.size) return { tokens: 0, from: "none" };
   return { tokens: [...perRequest.values()].reduce((a, b) => a + b, 0), from: "transcript" };
+}
+
+function modelOf(parsed: Line[]): string | undefined {
+  let model: string | undefined;
+  for (const line of parsed)
+    if (line.type === "assistant" && typeof line.message?.model === "string")
+      model = line.message.model;
+  return model;
 }
 
 function unfenced(text: string): string {
@@ -397,11 +411,14 @@ export function onSubagentStop(ctx: HookContext, payload: HookPayload): HookResp
     // Several roles stop at once (the reviewers run in parallel): the item's folder is read and
     // written under its lock, so no record is lost and the integrity record stays in step. A lock
     // held past the wait saves nothing rather than racing, and says so.
+    // The transcript is read once for the tokens and the model.
+    const transcript = roleTranscript(payload.agent_transcript_path);
     const input: AnswerInput = {
       answer,
       ...(payload.agent_id ? { agentId: payload.agent_id } : {}),
       filedBy: "hook",
-      tokens: roleTokens(payload.agent_transcript_path),
+      tokens: transcript.tokens,
+      model: transcript.model,
     };
     let note = withLock(
       workDir(ctx.paths, id),
@@ -510,6 +527,8 @@ export interface AnswerInput {
   filedBy: "hook" | "session";
   /** The transcript's tokens (the hook); the session has none. */
   tokens: { tokens: number; from: "transcript" | "none" };
+  /** The model the role ran on, from its transcript (the hook, finding 152); the session has none. */
+  model?: string;
 }
 
 /**
@@ -646,6 +665,7 @@ export function fileAnswer(
       at: nowIso(),
       tokens,
       tokensFrom: from,
+      ...(input.model ? { model: input.model } : {}),
       file: saved.file,
       ...(personality ? { personality } : {}),
       ...(team ? { team } : {}),
