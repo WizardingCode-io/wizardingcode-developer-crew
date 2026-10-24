@@ -23,8 +23,7 @@ import {
   lessonsForCto,
   readBase,
 } from "../packages/engine/src/knowledge.ts";
-import { loadRegistry } from "../packages/engine/src/mail.ts";
-import { canonical, userDirOf } from "../packages/engine/src/paths.ts";
+import { canonical, ctoDir, userDirOf } from "../packages/engine/src/paths.ts";
 import { scanText } from "../packages/engine/src/secrets.ts";
 import {
   acceptedReadPaths,
@@ -960,21 +959,26 @@ function runEditor(r: Run, cwd: string, prompt: string): string {
 }
 
 /**
- * The last CTO plan of this repository's workspace, for the editor (AC-34): none when the
- * repository is in no workspace or the workspace registers any other project, whose text would
- * otherwise reach the editor and, through its answer, a record in this public repository.
+ * The last CTO plan of this repository's workspace, for the editor (AC-35): only when the inputs
+ * the CTO wrote it from (`<date>-inputs.json` beside it) list this repository as their one project.
+ * A plan written over other projects carries their text, which would otherwise reach the editor
+ * and, through its answer, a record in this public repository; with no inputs, its origin is unknown.
  */
 export function ctoPlanFor(root: string, userDir: string): string | null {
   const policy = readJson<{ mail?: { workspace?: unknown } }>(join(root, ".crew", "policy.json"));
   const ws = policy?.mail?.workspace;
   if (typeof ws !== "string") return null;
-  const self = canonical(root);
-  const others = loadRegistry(userDir).projects.filter(
-    (p) => p.workspace === ws && !p.worktreeOf && canonical(p.root) !== self,
-  );
-  if (others.length) return null;
   const plan = latestPlan(userDir, ws);
-  return plan ? readText(plan.path) : null;
+  if (!plan) return null;
+  const inputs = readJson<{ metrics?: { projects?: unknown } }>(
+    join(ctoDir(userDir, ws), `${plan.date}-inputs.json`),
+  );
+  const projects = inputs?.metrics?.projects;
+  const alone =
+    Array.isArray(projects) &&
+    projects.length > 0 &&
+    projects.every((p) => typeof p === "string" && canonical(p) === canonical(root));
+  return alone ? readText(plan.path) : null;
 }
 
 /** The deps of a real run: the kit and claude spawned, git, the crew command, the base and the last CTO plan. */

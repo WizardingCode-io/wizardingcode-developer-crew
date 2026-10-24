@@ -356,38 +356,30 @@ test("2026-10-24-012 AC-22: the editor's prompt holds the failing graders, the l
   expect(lines.slice(open + 1, close).some((l) => /^`{5}/.test(l))).toBe(false);
 });
 
-test("2026-10-24-012 AC-34: the last CTO plan reaches the editor only when its workspace registers no project but this repository", () => {
+test("2026-10-24-012 AC-35: the last CTO plan reaches the editor only when the inputs it was written from list this repository alone", () => {
   const root = mkdtempSync(join(tmpdir(), "improve-root-"));
   const userDir = mkdtempSync(join(tmpdir(), "improve-user-"));
-  const policy = (workspace: string | null) => {
-    mkdirSync(join(root, ".crew"), { recursive: true });
+  const cto = join(userDir, "cto/w");
+  mkdirSync(cto, { recursive: true });
+  mkdirSync(join(root, ".crew"), { recursive: true });
+  const policy = (workspace: string | null) =>
     writeFileSync(
       join(root, ".crew/policy.json"),
       JSON.stringify(workspace ? { mail: { workspace } } : {}),
     );
-  };
-  const registry = (roots: string[]) =>
-    writeFileSync(
-      join(userDir, "projects.json"),
-      JSON.stringify({
-        version: 1,
-        projects: roots.map((r, i) => ({
-          root: r,
-          name: `p${i}`,
-          workspace: "w",
-          lastSeen: "",
-          sessionId: "",
-        })),
-      }),
-    );
-  mkdirSync(join(userDir, "cto/w"), { recursive: true });
-  writeFileSync(join(userDir, "cto/w/2026-10-24-plan.md"), "Keep the gate table first.\n");
+  const inputs = (date: string, projects: string[]) =>
+    writeFileSync(join(cto, `${date}-inputs.json`), JSON.stringify({ metrics: { projects } }));
+  writeFileSync(join(cto, "2026-10-24-plan.md"), "Keep the gate table first.\n");
   policy(null);
   expect(ctoPlanFor(root, userDir)).toBeNull();
   policy("w");
-  registry([root]);
+  // No inputs of the plan's date: where it came from is unknown.
+  expect(ctoPlanFor(root, userDir)).toBeNull();
+  inputs("2026-10-23", [root]);
+  expect(ctoPlanFor(root, userDir)).toBeNull();
+  inputs("2026-10-24", [root]);
   expect(ctoPlanFor(root, userDir)).toBe("Keep the gate table first.\n");
-  registry([root, "/clients/shop"]);
+  inputs("2026-10-24", [root, "/clients/shop"]);
   expect(ctoPlanFor(root, userDir)).toBeNull();
 });
 
