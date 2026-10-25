@@ -11,6 +11,7 @@ import {
   editorPrompt,
   type ImproveRecord,
   keptHarness,
+  lessonAdder,
   lessonCommand,
   lessonsOf,
   probeSet,
@@ -406,18 +407,32 @@ test("2026-10-24-013 AC-4: the crew command lessonAdd runs gets the kit's enviro
   expect(command.env.GITHUB_TOKEN).toBeUndefined();
   expect(command.env.PATH).toBe("/bin");
   expect(command.env.HOME).toBe("/h");
+  // The real lessonAdd spawns that command: its environment, not the parent's.
+  const seen: { args: readonly string[]; env: NodeJS.ProcessEnv | undefined }[] = [];
+  const add = lessonAdder("/repo", { PATH: "/bin", GITHUB_TOKEN: token }, (_cmd, args, options) => {
+    seen.push({ args, env: options.env });
+    return { status: 0, stdout: "K-1 added (harness-lesson)", stderr: "" };
+  });
+  expect(add(["--cue", "c"])).toEqual({ status: 0, out: "K-1 added (harness-lesson)" });
+  expect(seen[0]?.args).toEqual(command.args);
+  expect(seen[0]?.env?.GITHUB_TOKEN).toBeUndefined();
+  expect(seen[0]?.env?.PATH).toBe("/bin");
 });
 
 /** A call that runs claude: one of the six spawning functions with "claude" among its first arguments. */
-const SPAWNS_CLAUDE = /\b(?:spawn|spawnSync|execFile|execFileSync|exec|execSync)\(\s*["'`]claude\b/;
+const SPAWNS_CLAUDE =
+  /\b(?:spawn|spawnSync|execFile|execFileSync|exec|execSync)\(\s*["'`](?:[^"'`\n]*\/)?claude\b/;
 
 test("2026-10-24-013 AC-9: neither improve test file spawns claude, and the matcher catches such a call", () => {
   // The samples are built at run time, so the file's own text never holds a call the matcher reads.
   const call = (fn: string, rest: string) => `${fn}(${rest}`;
   for (const sample of [
+    call("spawn", '"claude", args)'),
     call("spawnSync", '"claude", args)'),
     call("execFile", "'claude', [])"),
+    call("execFileSync", '"/usr/local/bin/claude", [])'),
     call("exec", "`claude -p x`)"),
+    call("execSync", '"claude -p x")'),
   ])
     expect(SPAWNS_CLAUDE.test(sample), sample).toBe(true);
   expect(SPAWNS_CLAUDE.test(call("spawnSync", '"git", ["claude"])'))).toBe(false);

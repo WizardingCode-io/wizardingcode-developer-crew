@@ -1,5 +1,5 @@
 // packages/engine/src/cli.ts
-import { existsSync as existsSync24, readFileSync as readFileSync10, realpathSync as realpathSync9, rmSync as rmSync6, statSync as statSync13 } from "node:fs";
+import { existsSync as existsSync24, readFileSync as readFileSync10, realpathSync as realpathSync9, rmSync as rmSync6, statSync as statSync14 } from "node:fs";
 import { basename as basename9, isAbsolute as isAbsolute12, join as join50, relative as relative13, resolve as resolve8, sep as sep6 } from "node:path";
 
 // packages/engine/src/analysis.ts
@@ -14624,7 +14624,7 @@ function handleHook(event, payload, env = process.env) {
 }
 
 // packages/engine/src/knowledge.ts
-import { existsSync as existsSync21, readdirSync as readdirSync10, realpathSync as realpathSync7 } from "node:fs";
+import { existsSync as existsSync21, readdirSync as readdirSync10, realpathSync as realpathSync7, statSync as statSync12 } from "node:fs";
 import { basename as basename7, isAbsolute as isAbsolute10, join as join44, relative as relative11, resolve as resolve6 } from "node:path";
 
 // packages/engine/src/verify.ts
@@ -15199,12 +15199,21 @@ function knownRootCauses(base, scope, paths) {
   }));
 }
 var PLAN_FILE = /^(\d{4}-\d{2}-\d{2})-plan(?:-(\d+))?\.md$/;
+function planInputsPath(plan) {
+  return plan.replace(/\.md$/, ".inputs.json");
+}
+function nextFreeName(dir, base, ext) {
+  let target = join44(dir, `${base}${ext}`);
+  for (let n = 2;existsSync21(target); n++)
+    target = join44(dir, `${base}-${n}${ext}`);
+  return target;
+}
 var INPUTS_FILE = /^\d{4}-\d{2}-\d{2}-inputs(?:-\d+)?\.json$/;
 function ctoInputsFile(dir, file) {
   try {
     const real = realpathSync7(file);
     const folder = realpathSync7(dir);
-    return relative11(folder, real) === basename7(real) && INPUTS_FILE.test(basename7(real)) ? real : null;
+    return relative11(folder, real) === basename7(real) && INPUTS_FILE.test(basename7(real)) && statSync12(real).isFile() ? real : null;
   } catch {
     return null;
   }
@@ -16015,7 +16024,7 @@ import { spawnSync as spawnSync2 } from "node:child_process";
 import { join as join48 } from "node:path";
 
 // packages/engine/src/test-run.ts
-import { realpathSync as realpathSync8, statSync as statSync12 } from "node:fs";
+import { realpathSync as realpathSync8, statSync as statSync13 } from "node:fs";
 import { basename as basename8, isAbsolute as isAbsolute11, relative as relative12, resolve as resolve7, sep as sep5 } from "node:path";
 var RUNNERS = new Set(["vitest", "jest", "mocha", "ava", "pytest", "phpunit", "pest", "rspec"]);
 var SUBCOMMAND_TEST = new Set(["deno", "go", "cargo", "dotnet", "swift", "composer"]);
@@ -16063,7 +16072,7 @@ function fileRefusal(operand, cwd, root) {
   } catch {
     return `${operand} is no file`;
   }
-  if (!statSync12(real).isFile())
+  if (!statSync13(real).isFile())
     return `${operand} is no regular file`;
   const rel2 = relative12(realpathSync8(root), real);
   if (rel2 === ".." || rel2.startsWith(`..${sep5}`) || isAbsolute11(rel2))
@@ -16973,7 +16982,7 @@ async function recordStrategyJudgement(env, opened, parsed, gateWord, usage) {
       const cto = join50(dir, "conclave", "cto.md");
       if (!existsSync24(cto))
         return refuse("the CTO's review of the strategy comes before the ruling on the full route (conclave/cto.md, launched after crew strategy check)");
-      if (statSync13(cto).mtimeMs < Date.parse(inputs.at))
+      if (statSync14(cto).mtimeMs < Date.parse(inputs.at))
         return refuse("conclave/cto.md predates the check: the CTO reviews the strategy as it is now, then the judge rules");
       if (record2.reviewer !== "cto")
         return refuse("on the full route the CTO reviews the strategy: the ruling names reviewer cto");
@@ -19976,9 +19985,7 @@ ${drafted.lesson}`, "lesson")[0];
         const { metrics, figures: knowledge } = computed;
         const lastPlan = latestPlan(env.paths.userDir, ws);
         ensureDir(dir);
-        let target2 = join50(dir, `${date}-inputs.json`);
-        for (let n = 2;existsSync24(target2); n++)
-          target2 = join50(dir, `${date}-inputs-${n}.json`);
+        const target2 = nextFreeName(dir, `${date}-inputs`, ".json");
         writeJson(target2, {
           at: nowIso(),
           workspace: ws,
@@ -20016,18 +20023,17 @@ ${drafted.lesson}`, "lesson")[0];
         const given = resolve8(env.paths.root, inputsFlag);
         if (!existsSync24(given))
           return refuse(`no inputs file at ${given}; nothing was filed`);
-        inputs = ctoInputsFile(dir, given);
+        const real = ctoInputsFile(dir, given);
+        inputs = real === null ? null : readText(real);
         if (inputs === null)
           return refuse(`${given} is not an inputs file of workspace ${ws} (crew cto review writes <date>-inputs[-<n>].json in its CTO folder); nothing was filed`);
       }
       ensureDir(dir);
-      let target = join50(dir, `${date}-plan.md`);
-      for (let n = 2;existsSync24(target); n++)
-        target = join50(dir, `${date}-plan-${n}.md`);
+      const target = nextFreeName(dir, `${date}-plan`, ".md");
       writeText(target, text);
-      const copy = target.replace(/\.md$/, ".inputs.json");
+      const copy = planInputsPath(target);
       if (inputs !== null)
-        writeText(copy, readText(inputs) ?? "");
+        writeText(copy, inputs);
       const added = addEntry(env.paths.userDir, {
         kind: "general",
         title,

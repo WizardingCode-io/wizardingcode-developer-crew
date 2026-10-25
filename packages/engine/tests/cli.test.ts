@@ -11154,6 +11154,9 @@ test("2026-10-24-013 AC-7: crew cto record --inputs files an exact copy beside t
   writeFileSync(join(elsewhere, "2026-10-24-inputs.json"), "{}");
   symlinkSync(join(elsewhere, "2026-10-24-inputs.json"), join(cto, "2026-10-20-inputs.json"));
   writeFileSync(join(cto, "x-2026-10-24-inputs.json.bak"), "{}");
+  mkdirSync(join(cto, "../v"), { recursive: true });
+  writeFileSync(join(cto, "../v/2026-10-24-inputs.json"), "{}");
+  mkdirSync(join(cto, "2026-10-21-inputs.json"));
   const notInputs = (p: string) =>
     `${p} is not an inputs file of workspace w (crew cto review writes <date>-inputs[-<n>].json in its CTO folder); nothing was filed`;
   const cases: [string, string][] = [
@@ -11162,6 +11165,9 @@ test("2026-10-24-013 AC-7: crew cto record --inputs files an exact copy beside t
       `no inputs file at ${join(cto, "2026-01-01-inputs.json")}; nothing was filed`,
     ],
     ["../x-inputs.json", `no inputs file at ${resolve(a, "../x-inputs.json")}; nothing was filed`],
+    // A `..` out of the folder to a real inputs file of another workspace, and a folder named like one.
+    [`${cto}/../v/2026-10-24-inputs.json`, notInputs(resolve(cto, "../v/2026-10-24-inputs.json"))],
+    [join(cto, "2026-10-21-inputs.json"), notInputs(join(cto, "2026-10-21-inputs.json"))],
     [
       join(elsewhere, "2026-10-24-inputs.json"),
       notInputs(join(elsewhere, "2026-10-24-inputs.json")),

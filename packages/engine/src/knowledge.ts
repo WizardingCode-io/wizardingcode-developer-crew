@@ -5,7 +5,7 @@
  * itself (ADR 0013); one rule says what a project reads (rule 13); a deterministic lookup by
  * stacks, paths and words whose order a person can follow.
  */
-import { existsSync, readdirSync, realpathSync } from "node:fs";
+import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { errorText, nowIso, readText, writeJson } from "./fs.ts";
 import { type AskOptions, askJev, type JevConfig, type JevQuestion } from "./jev.ts";
@@ -443,6 +443,18 @@ export function knownRootCauses(
 
 /** `<date>-plan.md`, then `<date>-plan-2.md`, `-3`… for the same day's later plans (finding 53). */
 const PLAN_FILE = /^(\d{4}-\d{2}-\d{2})-plan(?:-(\d+))?\.md$/;
+/** Where `crew cto record --inputs` files a plan's inputs: beside the plan, `<plan stem>.inputs.json` (finding 160). */
+export function planInputsPath(plan: string): string {
+  return plan.replace(/\.md$/, ".inputs.json");
+}
+
+/** `<dir>/<base><ext>`, or the first free `<base>-<n><ext>` from 2 on: a file of the same day never goes over an earlier one (findings 53, 160). */
+export function nextFreeName(dir: string, base: string, ext: string): string {
+  let target = join(dir, `${base}${ext}`);
+  for (let n = 2; existsSync(target); n++) target = join(dir, `${base}-${n}${ext}`);
+  return target;
+}
+
 /** The name `crew cto review` gives its inputs: `<date>-inputs.json`, then `-2`, `-3` the same day. */
 const INPUTS_FILE = /^\d{4}-\d{2}-\d{2}-inputs(?:-\d+)?\.json$/;
 
@@ -455,7 +467,9 @@ export function ctoInputsFile(dir: string, file: string): string | null {
   try {
     const real = realpathSync(file);
     const folder = realpathSync(dir);
-    return relative(folder, real) === basename(real) && INPUTS_FILE.test(basename(real))
+    return relative(folder, real) === basename(real) &&
+      INPUTS_FILE.test(basename(real)) &&
+      statSync(real).isFile()
       ? real
       : null;
   } catch {

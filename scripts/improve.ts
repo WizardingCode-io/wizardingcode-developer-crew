@@ -21,6 +21,7 @@ import {
   type HarnessLessonView,
   latestPlan,
   lessonsForCto,
+  planInputsPath,
   readBase,
 } from "../packages/engine/src/knowledge.ts";
 import { canonical, userDirOf } from "../packages/engine/src/paths.ts";
@@ -971,9 +972,7 @@ export function ctoPlanFor(root: string, userDir: string): string | null {
   if (typeof ws !== "string") return null;
   const plan = latestPlan(userDir, ws);
   if (!plan) return null;
-  const inputs = readJson<{ metrics?: { projects?: unknown } }>(
-    plan.path.replace(/\.md$/, ".inputs.json"),
-  );
+  const inputs = readJson<{ metrics?: { projects?: unknown } }>(planInputsPath(plan.path));
   const projects = inputs?.metrics?.projects;
   const alone =
     Array.isArray(projects) &&
@@ -991,6 +990,25 @@ export function lessonCommand(
   return {
     args: [join(root, "plugins/core/dist/crew.mjs"), "knowledge", "lesson", "add", ...args],
     env: kitEnvironment(env),
+  };
+}
+
+type Spawn = (
+  command: string,
+  args: readonly string[],
+  options: { cwd: string; env: NodeJS.ProcessEnv; encoding: "utf8" },
+) => { status: number | null; stdout: string; stderr: string };
+
+/** A real run's `lessonAdd`: `lessonCommand` spawned, its environment and nothing else (AC-4 of 2026-10-24-013). */
+export function lessonAdder(
+  root: string,
+  env: NodeJS.ProcessEnv,
+  spawn: Spawn = spawnSync,
+): ImproveDeps["lessonAdd"] {
+  return (args) => {
+    const command = lessonCommand(root, args, env);
+    const r = spawn("node", command.args, { cwd: root, env: command.env, encoding: "utf8" });
+    return { status: r.status, out: `${r.stdout ?? ""}${r.stderr ?? ""}` };
   };
 }
 
@@ -1033,11 +1051,7 @@ function realDeps(root: string): ImproveDeps {
       const r = spawnSync("claude", call.args, { cwd: call.cwd, env: call.env, encoding: "utf8" });
       return { status: r.status, output: `${r.stdout ?? ""}${r.stderr ?? ""}` };
     },
-    lessonAdd: (args) => {
-      const command = lessonCommand(root, args, process.env);
-      const r = spawnSync("node", command.args, { cwd: root, env: command.env, encoding: "utf8" });
-      return { status: r.status, out: `${r.stdout ?? ""}${r.stderr ?? ""}` };
-    },
+    lessonAdd: lessonAdder(root, process.env),
     lessons: () =>
       lessonsForCto(readBase(userDir).base, {
         workspace: null,

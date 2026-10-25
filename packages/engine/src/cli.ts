@@ -98,6 +98,8 @@ import {
   latestPlan,
   lessonsForCto,
   lookup,
+  nextFreeName,
+  planInputsPath,
   readBase,
   rerankHits,
   scopeOf,
@@ -5015,8 +5017,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         // A second review the same day goes beside the first, never over it (finding 160), so each
         // plan can be tied to the inputs it was written from.
         ensureDir(dir);
-        let target = join(dir, `${date}-inputs.json`);
-        for (let n = 2; existsSync(target); n++) target = join(dir, `${date}-inputs-${n}.json`);
+        const target = nextFreeName(dir, `${date}-inputs`, ".json");
         writeJson(target, {
           at: nowIso(),
           workspace: ws,
@@ -5061,7 +5062,8 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       if (typeof inputsFlag === "string") {
         const given = resolve(env.paths.root, inputsFlag);
         if (!existsSync(given)) return refuse(`no inputs file at ${given}; nothing was filed`);
-        inputs = ctoInputsFile(dir, given);
+        const real = ctoInputsFile(dir, given);
+        inputs = real === null ? null : readText(real);
         if (inputs === null)
           return refuse(
             `${given} is not an inputs file of workspace ${ws} (crew cto review writes <date>-inputs[-<n>].json in its CTO folder); nothing was filed`,
@@ -5069,11 +5071,10 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       }
       ensureDir(dir);
       // A second plan the same day goes beside the first, never over it (finding 53).
-      let target = join(dir, `${date}-plan.md`);
-      for (let n = 2; existsSync(target); n++) target = join(dir, `${date}-plan-${n}.md`);
+      const target = nextFreeName(dir, `${date}-plan`, ".md");
       writeText(target, text);
-      const copy = target.replace(/\.md$/, ".inputs.json");
-      if (inputs !== null) writeText(copy, readText(inputs) ?? "");
+      const copy = planInputsPath(target);
+      if (inputs !== null) writeText(copy, inputs);
       const added = addEntry(env.paths.userDir, {
         kind: "general",
         title,
