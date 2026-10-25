@@ -1299,3 +1299,10 @@ Verdicts agree at every effort. Upheld findings: `high` reproduced Task 6's and 
 - Expected: the leads' notes are taken before their validation is recorded, or the change is put to them in the same round; `crew tdd before` for every preserve criterion is the first command of the build; advisories left after a proven ruling are batched into one round, or into the next item, and said to the user before a round is opened for them.
 - Evidence: the item's decision register (the two `continue` records), its criteria (AC-13 removed, AC-29 observed), the rulings of its four judgement rounds.
 - Outcome: recorded; the three rules are for the session to keep.
+
+### 162. The advisories left by the 0.15.0 release item, recorded by the user's rule of 2026-10-25
+- Date: 2026-10-25. Project: this repository. Item: `2026-10-25-002`. Category: `debt`. Severity: low.
+- What happened: the release item's one judgement round (the user's choice "A": the four advisories of `2026-10-25-001` taken there in one round, anything advisory after it recorded as a finding) proved both gates and upheld six advisories: (1) the copy's extension `.inputs.json` written as a literal at the `createFreePair` call while `planInputsPath` derives it (`cli.ts`); (2) `createFreePair` repeats `createFreeFile`'s stem formula (`fs.ts`); (3) the record branches between `createFreeFile` and `createFreePair` at the call site; (4) the `jsonText` test's expected value restates the formula rather than a literal (`free-file.test.ts`); (5) no test reads the release section of CLAUDE.md for a leftover old version, the packs' `core` bound pinned by `packs-content.test.ts`; (6) the bundle's `--version` assertion does not say "rebuild" when it fails (`version.test.ts`).
+- Expected: one shared constant for the copy's extension and one stem generator; a literal JSON form in the test; a failure message that names the rebuild.
+- Evidence: the ruling of `2026-10-25-002` (`review/ruling.json`), its findings files.
+- Outcome: open, for the real-use phase's next consolidation (none blocks: both gates proven, no behaviour unproven).
