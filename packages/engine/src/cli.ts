@@ -85,6 +85,7 @@ import {
 } from "./judgement.ts";
 import {
   addEntry,
+  createFreeFile,
   ctoInputsFile,
   defaultConfidential,
   entryLine,
@@ -98,7 +99,6 @@ import {
   latestPlan,
   lessonsForCto,
   lookup,
-  nextFreeName,
   planInputsPath,
   readBase,
   rerankHits,
@@ -5016,16 +5016,20 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         const lastPlan = latestPlan(env.paths.userDir, ws);
         // A second review the same day goes beside the first, never over it (finding 160), so each
         // plan can be tied to the inputs it was written from.
-        ensureDir(dir);
-        const target = nextFreeName(dir, `${date}-inputs`, ".json");
-        writeJson(target, {
+        const inputs = {
           at: nowIso(),
           workspace: ws,
           metrics,
           lastPlan,
           knowledge,
           harnessLessons: lessonsForCto(readBase(env.paths.userDir).base, scope),
-        });
+        };
+        const target = createFreeFile(
+          dir,
+          `${date}-inputs`,
+          ".json",
+          `${JSON.stringify(inputs, null, 2)}\n`,
+        );
         // The figures the inputs carry are printed too, so the session and its trace hold what the
         // CTO reads (the CTO case's fourth run: the agent alone saw them, inside its own context).
         return ok(
@@ -5063,16 +5067,20 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         const given = resolve(env.paths.root, inputsFlag);
         if (!existsSync(given)) return refuse(`no inputs file at ${given}; nothing was filed`);
         const real = ctoInputsFile(dir, given);
-        inputs = real === null ? null : readText(real);
-        if (inputs === null)
+        if (real === null)
           return refuse(
             `${given} is not an inputs file of workspace ${ws} (crew cto review writes <date>-inputs[-<n>].json in its CTO folder); nothing was filed`,
           );
+        try {
+          inputs = readText(real);
+        } catch {
+          inputs = null;
+        }
+        if (inputs === null) return refuse(`${given} cannot be read; nothing was filed`);
       }
       ensureDir(dir);
       // A second plan the same day goes beside the first, never over it (finding 53).
-      const target = nextFreeName(dir, `${date}-plan`, ".md");
-      writeText(target, text);
+      const target = createFreeFile(dir, `${date}-plan`, ".md", text);
       const copy = planInputsPath(target);
       if (inputs !== null) writeText(copy, inputs);
       const added = addEntry(env.paths.userDir, {

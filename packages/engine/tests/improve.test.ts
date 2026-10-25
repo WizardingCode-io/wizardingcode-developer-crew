@@ -440,3 +440,12 @@ test("2026-10-24-013 AC-9: neither improve test file spawns claude, and the matc
     expect(SPAWNS_CLAUDE.test(readFileSync(join(import.meta.dir, file), "utf8")), file).toBe(false);
   }
 });
+
+test("2026-10-25-001 AC-7: lessonAdder takes a spawn whose stdout and stderr are null and gives an empty out", () => {
+  const add = lessonAdder("/repo", { PATH: "/bin" }, () => ({
+    status: null,
+    stdout: null,
+    stderr: null,
+  }));
+  expect(add(["--cue", "c"])).toEqual({ status: null, out: "" });
+});

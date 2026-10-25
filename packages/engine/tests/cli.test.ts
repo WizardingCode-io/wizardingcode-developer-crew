@@ -11200,3 +11200,35 @@ test("2026-10-24-013 AC-7: crew cto record --inputs files an exact copy beside t
     expect(entries(), given).toBe(entriesBefore);
   }
 });
+
+test("2026-10-25-001 AC-5: crew cto record --inputs with an inputs file that cannot be read is refused as such, nothing filed", async () => {
+  // The gate runs as the user: as root the file stays readable and the test fails rather than skips.
+  expect(process.getuid?.()).not.toBe(0);
+  const { ca, a, paths } = await ctoWorkspace();
+  const cto = join(paths.userDir, "cto", "w");
+  const inputs = (
+    (await ca.run("cto", "review", "--workspace", "w")).out.split("\n")[0] as string
+  ).replace("inputs: ", "");
+  write(a, "cto-plan.md", "# CTO plan for w\n");
+  chmodSync(inputs, 0o000);
+  try {
+    const before = readdirSync(cto).sort();
+    const entries = readBase(paths.userDir).base?.entries.length;
+    const refused = await ca.run(
+      "cto",
+      "record",
+      "--workspace",
+      "w",
+      "--file",
+      "cto-plan.md",
+      "--inputs",
+      inputs,
+    );
+    expect(refused.code).toBe(1);
+    expect(refused.err.trim()).toBe(`${inputs} cannot be read; nothing was filed`);
+    expect(readdirSync(cto).sort()).toEqual(before);
+    expect(readBase(paths.userDir).base?.entries.length).toBe(entries);
+  } finally {
+    chmodSync(inputs, 0o644);
+  }
+});

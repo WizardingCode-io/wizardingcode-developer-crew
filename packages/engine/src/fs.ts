@@ -1,5 +1,13 @@
-import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import {
+  existsSync,
+  linkSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 
 /** What a caught value says: an error's message, anything else as a string. */
@@ -62,6 +70,25 @@ export function writeText(path: string, text: string): void {
   const tmp = join(dirname(path), `.${process.pid}.${Date.now()}.tmp`);
   writeFileSync(tmp, text);
   renameSync(tmp, path);
+}
+
+/**
+ * The text at a path that holds nothing yet: a temporary file created exclusively under a random
+ * name, hard-linked to the path, removed in every outcome. True when written; false when any entry
+ * (a dangling symlink included) has the name, so it never replaces one; any other error is thrown.
+ */
+export function writeTextNew(path: string, text: string): boolean {
+  const tmp = join(dirname(path), `.${randomUUID()}.tmp`);
+  writeFileSync(tmp, text, { flag: "wx" });
+  try {
+    linkSync(tmp, path);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") return false;
+    throw error;
+  } finally {
+    rmSync(tmp, { force: true });
+  }
 }
 
 export function writeJson(path: string, data: unknown): void {

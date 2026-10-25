@@ -1,5 +1,5 @@
 // packages/engine/src/cli.ts
-import { existsSync as existsSync24, readFileSync as readFileSync10, realpathSync as realpathSync9, rmSync as rmSync6, statSync as statSync14 } from "node:fs";
+import { existsSync as existsSync24, readFileSync as readFileSync10, realpathSync as realpathSync9, rmSync as rmSync7, statSync as statSync13 } from "node:fs";
 import { basename as basename9, isAbsolute as isAbsolute12, join as join50, relative as relative13, resolve as resolve8, sep as sep6 } from "node:path";
 
 // packages/engine/src/analysis.ts
@@ -13,8 +13,16 @@ import { join as join3 } from "node:path";
 import { basename, dirname as dirname2, relative } from "node:path";
 
 // packages/engine/src/fs.ts
-import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import {
+  existsSync,
+  linkSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync
+} from "node:fs";
 import { dirname, join } from "node:path";
 function errorText(error) {
   return error instanceof Error ? error.message : String(error);
@@ -59,6 +67,20 @@ function writeText(path, text) {
   const tmp = join(dirname(path), `.${process.pid}.${Date.now()}.tmp`);
   writeFileSync(tmp, text);
   renameSync(tmp, path);
+}
+function writeTextNew(path, text) {
+  const tmp = join(dirname(path), `.${randomUUID()}.tmp`);
+  writeFileSync(tmp, text, { flag: "wx" });
+  try {
+    linkSync(tmp, path);
+    return true;
+  } catch (error) {
+    if (error.code === "EEXIST")
+      return false;
+    throw error;
+  } finally {
+    rmSync(tmp, { force: true });
+  }
 }
 function writeJson(path, data) {
   writeText(path, `${JSON.stringify(data, null, 2)}
@@ -2848,7 +2870,7 @@ import {
   mkdirSync as mkdirSync3,
   readdirSync as readdirSync2,
   readFileSync as readFileSync4,
-  rmSync,
+  rmSync as rmSync2,
   statSync as statSync4
 } from "node:fs";
 import { dirname as dirname5, join as join13, relative as relative5, resolve as resolve4, sep as sep2 } from "node:path";
@@ -4088,7 +4110,7 @@ function removeRuntime(runtime, scope, dirs) {
   const strip = runtime.config.strip;
   if (existsSync6(configPath)) {
     if (strip === null) {
-      rmSync(configPath);
+      rmSync2(configPath);
       removed.push(configPath);
     } else {
       let existing;
@@ -4101,7 +4123,7 @@ function removeRuntime(runtime, scope, dirs) {
       if (!same(stripped, existing)) {
         const bare = strip(runtime.config.merge(null, runtime.config.entries("/")));
         if (same(stripped, bare)) {
-          rmSync(configPath);
+          rmSync2(configPath);
           removed.push(configPath);
         } else {
           writeText(configPath, `${JSON.stringify(stripped, null, 2)}
@@ -4113,14 +4135,14 @@ function removeRuntime(runtime, scope, dirs) {
   }
   const skillTarget = join13(resolveScoped(runtime.skillsDir[scope], dirs), SKILL_FOLDER);
   if (existsSync6(skillTarget)) {
-    rmSync(skillTarget, { recursive: true, force: true });
+    rmSync2(skillTarget, { recursive: true, force: true });
     removed.push(skillTarget);
   }
   if (runtime.agentsDir) {
     const agentsTarget = resolveScoped(runtime.agentsDir[scope], dirs);
     if (existsSync6(agentsTarget))
       for (const name of readdirSync2(agentsTarget).filter((f) => f.startsWith("crew-")).sort()) {
-        rmSync(join13(agentsTarget, name), { force: true });
+        rmSync2(join13(agentsTarget, name), { force: true });
         removed.push(join13(agentsTarget, name));
       }
   }
@@ -5568,7 +5590,7 @@ import { accessSync, constants, existsSync as existsSync9 } from "node:fs";
 import { basename as basename4, isAbsolute as isAbsolute4, join as join17, resolve as resolve5 } from "node:path";
 
 // packages/engine/src/opened.ts
-import { existsSync as existsSync8, rmSync as rmSync2 } from "node:fs";
+import { existsSync as existsSync8, rmSync as rmSync3 } from "node:fs";
 import { join as join16 } from "node:path";
 function openedMarkerFile(userDir, root) {
   return join16(userDir, "opened", `${sha256(canonical(root)).slice(0, 16)}.json`);
@@ -5580,7 +5602,7 @@ function writeOpenedMarker(paths, marker) {
   writeJson(openedMarkerPath(paths), marker);
 }
 function dropOpenedMarker(userDir, root) {
-  rmSync2(openedMarkerFile(userDir, root), { force: true });
+  rmSync3(openedMarkerFile(userDir, root), { force: true });
 }
 function readOpenedMarker(paths) {
   const file = openedMarkerPath(paths);
@@ -7448,7 +7470,7 @@ import { statSync as statSync10 } from "node:fs";
 import { join as join37 } from "node:path";
 
 // packages/engine/src/gates.ts
-import { accessSync as accessSync2, constants as constants2, mkdirSync as mkdirSync9, rmSync as rmSync4 } from "node:fs";
+import { accessSync as accessSync2, constants as constants2, mkdirSync as mkdirSync9, rmSync as rmSync5 } from "node:fs";
 import { basename as basename6, delimiter, join as join36 } from "node:path";
 
 // packages/engine/src/audit.ts
@@ -8128,7 +8150,7 @@ import { dirname as dirname7, join as join31 } from "node:path";
 import { join as join30 } from "node:path";
 
 // packages/engine/src/packs.ts
-import { existsSync as existsSync15, readdirSync as readdirSync6, readFileSync as readFileSync8, realpathSync as realpathSync5, rmSync as rmSync3 } from "node:fs";
+import { existsSync as existsSync15, readdirSync as readdirSync6, readFileSync as readFileSync8, realpathSync as realpathSync5, rmSync as rmSync4 } from "node:fs";
 import { homedir as homedir2 } from "node:os";
 import { basename as basename5, isAbsolute as isAbsolute7, join as join29, sep as sep3 } from "node:path";
 
@@ -8414,7 +8436,7 @@ function removePack(userDir, name) {
     const file = packPath(userDir, name);
     if (!existsSync15(file))
       return { refused: `no pack ${name} is registered (crew pack list)` };
-    rmSync3(file);
+    rmSync4(file);
     return { removed: true };
   });
 }
@@ -10114,7 +10136,7 @@ async function baselineAdvisories(paths, work, target, audit, where, env) {
   if (!work.baseCommit || audit.files.length === 0)
     return { readable: false, advisories: [] };
   const scratch = join36(paths.crewDir, "local", "audit-base", work.id, where || "root");
-  rmSync4(scratch, { recursive: true, force: true });
+  rmSync5(scratch, { recursive: true, force: true });
   mkdirSync9(scratch, { recursive: true });
   let lockfiles = 0;
   for (const [index, file] of audit.files.entries()) {
@@ -14399,7 +14421,7 @@ function onSessionStart(ctx, payload = {}) {
 }
 
 // packages/engine/src/running.ts
-import { readdirSync as readdirSync9, rmSync as rmSync5 } from "node:fs";
+import { readdirSync as readdirSync9, rmSync as rmSync6 } from "node:fs";
 import { join as join43 } from "node:path";
 function runningDir(paths, id) {
   return join43(workDir(paths, id), "running");
@@ -14413,7 +14435,7 @@ function legacyFile(paths, id) {
 async function withRunning(paths, id, session, command2, run) {
   if (!session)
     return run();
-  rmSync5(legacyFile(paths, id), { force: true });
+  rmSync6(legacyFile(paths, id), { force: true });
   const file = runningFile(paths, id);
   const marker = {
     command: command2,
@@ -14427,7 +14449,7 @@ async function withRunning(paths, id, session, command2, run) {
   try {
     return await run();
   } finally {
-    rmSync5(file, { force: true });
+    rmSync6(file, { force: true });
   }
 }
 function parseMarker(text) {
@@ -14451,7 +14473,7 @@ function runPermit(paths, id, session, spent) {
     const text = readText(file);
     const marker = text === null ? null : parseMarker(text);
     if (!marker || name !== `${marker.pid}.json` || !isAlive(marker.pid)) {
-      rmSync5(file, { force: true });
+      rmSync6(file, { force: true });
       continue;
     }
     if (marker.session !== session || spent.includes(marker.startedAt))
@@ -14624,8 +14646,8 @@ function handleHook(event, payload, env = process.env) {
 }
 
 // packages/engine/src/knowledge.ts
-import { existsSync as existsSync21, readdirSync as readdirSync10, realpathSync as realpathSync7, statSync as statSync12 } from "node:fs";
-import { basename as basename7, isAbsolute as isAbsolute10, join as join44, relative as relative11, resolve as resolve6 } from "node:path";
+import { existsSync as existsSync21, lstatSync as lstatSync3, readdirSync as readdirSync10, realpathSync as realpathSync7 } from "node:fs";
+import { basename as basename7, dirname as dirname11, isAbsolute as isAbsolute10, join as join44, relative as relative11, resolve as resolve6 } from "node:path";
 
 // packages/engine/src/verify.ts
 var RUBRIC_QUESTIONS = {
@@ -15202,18 +15224,20 @@ var PLAN_FILE = /^(\d{4}-\d{2}-\d{2})-plan(?:-(\d+))?\.md$/;
 function planInputsPath(plan) {
   return plan.replace(/\.md$/, ".inputs.json");
 }
-function nextFreeName(dir, base, ext) {
-  let target = join44(dir, `${base}${ext}`);
-  for (let n = 2;existsSync21(target); n++)
-    target = join44(dir, `${base}-${n}${ext}`);
-  return target;
+function createFreeFile(dir, base, ext, text, write = writeTextNew) {
+  ensureDir(dir);
+  for (let n = 1;; n++) {
+    const target = join44(dir, n === 1 ? `${base}${ext}` : `${base}-${n}${ext}`);
+    if (write(target, text))
+      return target;
+  }
 }
 var INPUTS_FILE = /^\d{4}-\d{2}-\d{2}-inputs(?:-\d+)?\.json$/;
 function ctoInputsFile(dir, file) {
   try {
-    const real = realpathSync7(file);
-    const folder = realpathSync7(dir);
-    return relative11(folder, real) === basename7(real) && INPUTS_FILE.test(basename7(real)) && statSync12(real).isFile() ? real : null;
+    const real = join44(realpathSync7(dirname11(file)), basename7(file));
+    const entry = lstatSync3(real);
+    return dirname11(real) === realpathSync7(dir) && INPUTS_FILE.test(basename7(real)) && entry.isFile() && !entry.isSymbolicLink() ? real : null;
   } catch {
     return null;
   }
@@ -16024,7 +16048,7 @@ import { spawnSync as spawnSync2 } from "node:child_process";
 import { join as join48 } from "node:path";
 
 // packages/engine/src/test-run.ts
-import { realpathSync as realpathSync8, statSync as statSync13 } from "node:fs";
+import { realpathSync as realpathSync8, statSync as statSync12 } from "node:fs";
 import { basename as basename8, isAbsolute as isAbsolute11, relative as relative12, resolve as resolve7, sep as sep5 } from "node:path";
 var RUNNERS = new Set(["vitest", "jest", "mocha", "ava", "pytest", "phpunit", "pest", "rspec"]);
 var SUBCOMMAND_TEST = new Set(["deno", "go", "cargo", "dotnet", "swift", "composer"]);
@@ -16072,7 +16096,7 @@ function fileRefusal(operand, cwd, root) {
   } catch {
     return `${operand} is no file`;
   }
-  if (!statSync13(real).isFile())
+  if (!statSync12(real).isFile())
     return `${operand} is no regular file`;
   const rel2 = relative12(realpathSync8(root), real);
   if (rel2 === ".." || rel2.startsWith(`..${sep5}`) || isAbsolute11(rel2))
@@ -16982,7 +17006,7 @@ async function recordStrategyJudgement(env, opened, parsed, gateWord, usage) {
       const cto = join50(dir, "conclave", "cto.md");
       if (!existsSync24(cto))
         return refuse("the CTO's review of the strategy comes before the ruling on the full route (conclave/cto.md, launched after crew strategy check)");
-      if (statSync14(cto).mtimeMs < Date.parse(inputs.at))
+      if (statSync13(cto).mtimeMs < Date.parse(inputs.at))
         return refuse("conclave/cto.md predates the check: the CTO reviews the strategy as it is now, then the judge rules");
       if (record2.reviewer !== "cto")
         return refuse("on the full route the CTO reviews the strategy: the ruling names reviewer cto");
@@ -17171,7 +17195,7 @@ async function renderAudit(env, io, work, signed) {
   writeProtectedText(env.paths, join50(auditDir, "report.md"), renderAuditMarkdown(inputs));
   writeProtectedText(env.paths, join50(auditDir, "report.html"), renderAuditHtml(inputs, brand));
   const pdfPath = join50(auditDir, "report.pdf");
-  rmSync6(pdfPath, { force: true });
+  rmSync7(pdfPath, { force: true });
   const printed = await printPdf(join50(auditDir, "report.html"), pdfPath, io.env, env.paths.root, {
     logPath: join50(dir, "logs", "audit-pdf.txt")
   });
@@ -19984,16 +20008,16 @@ ${drafted.lesson}`, "lesson")[0];
           return refuse(`no project of workspace ${ws} is registered (crew detect in each project)`);
         const { metrics, figures: knowledge } = computed;
         const lastPlan = latestPlan(env.paths.userDir, ws);
-        ensureDir(dir);
-        const target2 = nextFreeName(dir, `${date}-inputs`, ".json");
-        writeJson(target2, {
+        const inputs2 = {
           at: nowIso(),
           workspace: ws,
           metrics,
           lastPlan,
           knowledge,
           harnessLessons: lessonsForCto(readBase(env.paths.userDir).base, scope)
-        });
+        };
+        const target2 = createFreeFile(dir, `${date}-inputs`, ".json", `${JSON.stringify(inputs2, null, 2)}
+`);
         return ok([
           `inputs: ${target2}`,
           ...metricsText(metrics).split(`
@@ -20024,13 +20048,18 @@ ${drafted.lesson}`, "lesson")[0];
         if (!existsSync24(given))
           return refuse(`no inputs file at ${given}; nothing was filed`);
         const real = ctoInputsFile(dir, given);
-        inputs = real === null ? null : readText(real);
-        if (inputs === null)
+        if (real === null)
           return refuse(`${given} is not an inputs file of workspace ${ws} (crew cto review writes <date>-inputs[-<n>].json in its CTO folder); nothing was filed`);
+        try {
+          inputs = readText(real);
+        } catch {
+          inputs = null;
+        }
+        if (inputs === null)
+          return refuse(`${given} cannot be read; nothing was filed`);
       }
       ensureDir(dir);
-      const target = nextFreeName(dir, `${date}-plan`, ".md");
-      writeText(target, text);
+      const target = createFreeFile(dir, `${date}-plan`, ".md", text);
       const copy = planInputsPath(target);
       if (inputs !== null)
         writeText(copy, inputs);

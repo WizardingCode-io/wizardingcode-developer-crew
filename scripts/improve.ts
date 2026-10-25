@@ -997,7 +997,7 @@ type Spawn = (
   command: string,
   args: readonly string[],
   options: { cwd: string; env: NodeJS.ProcessEnv; encoding: "utf8" },
-) => { status: number | null; stdout: string; stderr: string };
+) => { status: number | null; stdout: string | null; stderr: string | null };
 
 /** A real run's `lessonAdd`: `lessonCommand` spawned, its environment and nothing else (AC-4 of 2026-10-24-013). */
 export function lessonAdder(

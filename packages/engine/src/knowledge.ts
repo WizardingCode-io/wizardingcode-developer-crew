@@ -5,9 +5,9 @@
  * itself (ADR 0013); one rule says what a project reads (rule 13); a deterministic lookup by
  * stacks, paths and words whose order a person can follow.
  */
-import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
-import { basename, isAbsolute, join, relative, resolve } from "node:path";
-import { errorText, nowIso, readText, writeJson } from "./fs.ts";
+import { existsSync, lstatSync, readdirSync, realpathSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { ensureDir, errorText, nowIso, readText, writeJson, writeTextNew } from "./fs.ts";
 import { type AskOptions, askJev, type JevConfig, type JevQuestion } from "./jev.ts";
 import { withLock } from "./lock.ts";
 import { type CrewPaths, canonical, ctoDir, knowledgeDir, knowledgePath } from "./paths.ts";
@@ -448,11 +448,24 @@ export function planInputsPath(plan: string): string {
   return plan.replace(/\.md$/, ".inputs.json");
 }
 
-/** `<dir>/<base><ext>`, or the first free `<base>-<n><ext>` from 2 on: a file of the same day never goes over an earlier one (findings 53, 160). */
-export function nextFreeName(dir: string, base: string, ext: string): string {
-  let target = join(dir, `${base}${ext}`);
-  for (let n = 2; existsSync(target); n++) target = join(dir, `${base}-${n}${ext}`);
-  return target;
+/**
+ * Writes the text at `<dir>/<base><ext>`, or at the first `<base>-<n><ext>` from 2 on that nobody
+ * holds when it is written, and returns that path: a file of the same day never goes over an earlier
+ * one, nor over one another writer created in the same instant (findings 53, 160). `write` is the
+ * exclusive write; a test passes one that races it.
+ */
+export function createFreeFile(
+  dir: string,
+  base: string,
+  ext: string,
+  text: string,
+  write: (path: string, text: string) => boolean = writeTextNew,
+): string {
+  ensureDir(dir);
+  for (let n = 1; ; n++) {
+    const target = join(dir, n === 1 ? `${base}${ext}` : `${base}-${n}${ext}`);
+    if (write(target, text)) return target;
+  }
 }
 
 /** The name `crew cto review` gives its inputs: `<date>-inputs.json`, then `-2`, `-3` the same day. */
@@ -460,16 +473,19 @@ const INPUTS_FILE = /^\d{4}-\d{2}-\d{2}-inputs(?:-\d+)?\.json$/;
 
 /**
  * The real path of an inputs file `crew cto review` wrote in a workspace's CTO folder, or null
- * (finding 160): the file's real path directly in the folder's real path, named as the review names
- * it; a `..`, a path elsewhere, a symlink out or another name (a plan's `.inputs.json` copy) is not.
+ * (finding 160): a regular file, never a symlink, directly in the folder's real path, named as the
+ * review names it; a `..`, a path elsewhere, a symlink or another name (a plan's `.inputs.json` copy) is not.
  */
 export function ctoInputsFile(dir: string, file: string): string | null {
   try {
-    const real = realpathSync(file);
-    const folder = realpathSync(dir);
-    return relative(folder, real) === basename(real) &&
+    // The folder's real path and the name, never the file's: Bun's realpath opens the file, so an
+    // unreadable one would read as not an inputs file instead of as unreadable.
+    const real = join(realpathSync(dirname(file)), basename(file));
+    const entry = lstatSync(real);
+    return dirname(real) === realpathSync(dir) &&
       INPUTS_FILE.test(basename(real)) &&
-      statSync(real).isFile()
+      entry.isFile() &&
+      !entry.isSymbolicLink()
       ? real
       : null;
   } catch {
