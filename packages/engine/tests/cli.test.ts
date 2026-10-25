@@ -11299,3 +11299,22 @@ test("2026-10-25-002 AC-5: crew cto record --inputs files the plan and its copy 
   expect(existsSync(join(cto, `${date}-plan-3.md`))).toBe(false);
   expect(readFileSync(join(cto, `${date}-plan-2.md`), "utf8")).toBe("# CTO plan for w\n");
 });
+
+test("2026-10-25-003 AC-1: crew cto record without --inputs never files a plan at a stem whose copy name is held (a regular file, a link to nothing); the holders stay as they were", async () => {
+  const { ca, a, paths } = await ctoWorkspace();
+  const cto = join(paths.userDir, "cto", "w");
+  const date = new Date().toISOString().slice(0, 10);
+  write(a, "cto-plan.md", "# CTO plan for w\n");
+  mkdirSync(cto, { recursive: true });
+  writeFileSync(join(cto, `${date}-plan.inputs.json`), "a hand-made copy");
+  symlinkSync(join(cto, "nowhere"), join(cto, `${date}-plan-2.inputs.json`));
+  const filed = await ca.run("cto", "record", "--workspace", "w", "--file", "cto-plan.md");
+  expect(filed.code, filed.err).toBe(0);
+  expect(filed.out.split("\n")[0]).toBe(`CTO plan of w filed: ${join(cto, `${date}-plan-3.md`)}`);
+  expect(filed.out).toContain("inputs: none");
+  expect(existsSync(join(cto, `${date}-plan.md`))).toBe(false);
+  expect(existsSync(join(cto, `${date}-plan-2.md`))).toBe(false);
+  expect(readFileSync(join(cto, `${date}-plan.inputs.json`), "utf8")).toBe("a hand-made copy");
+  expect(lstatSync(join(cto, `${date}-plan-2.inputs.json`)).isSymbolicLink()).toBe(true);
+  expect(existsSync(join(cto, `${date}-plan-3.inputs.json`))).toBe(false);
+});

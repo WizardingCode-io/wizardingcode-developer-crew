@@ -1,8 +1,10 @@
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { cpSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { releaseFiles, staleReleaseFiles } from "../../../scripts/release.ts";
 import { VERSION } from "../src/version.ts";
+import { tempDir } from "./helpers.ts";
 
 const root = join(import.meta.dir, "..", "..", "..");
 function versionOf(rel: string): string {
@@ -47,5 +49,36 @@ test("2026-10-25-002 AC-4: every file the release names carries the engine's ver
   const bundle = spawnSync("node", [join(root, "plugins/core/dist/crew.mjs"), "--version"], {
     encoding: "utf8",
   });
-  expect(bundle.stdout.trim()).toBe(VERSION);
+  expect(bundle.stdout.trim(), "the bundle is stale: run bun run build").toBe(VERSION);
+});
+
+test("2026-10-25-003 AC-6: every version file CLAUDE.md's release section names carries the engine's version, and a copy with one left behind is caught", () => {
+  const files = releaseFiles(root);
+  expect(files).toEqual([
+    "package.json",
+    "packages/engine/package.json",
+    "packages/engine/src/version.ts",
+    "packs/agentic-os/.claude-plugin/plugin.json",
+    "packs/agentic-os/pack.json",
+    "packs/laravel/.claude-plugin/plugin.json",
+    "packs/laravel/pack.json",
+    "plugins/core/.claude-plugin/plugin.json",
+  ]);
+  expect(staleReleaseFiles(root, VERSION)).toEqual([]);
+  const copy = tempDir();
+  for (const rel of ["CLAUDE.md", ...files]) {
+    mkdirSync(dirname(join(copy, rel)), { recursive: true });
+    cpSync(join(root, rel), join(copy, rel));
+  }
+  const left = "packs/laravel/pack.json";
+  const pack = JSON.parse(readFileSync(join(copy, left), "utf8")) as Record<string, unknown>;
+  writeFileSync(join(copy, left), JSON.stringify({ ...pack, version: "0.0.1" }));
+  expect(staleReleaseFiles(copy, VERSION)).toEqual([left]);
+  // version.ts is read by its VERSION constant: the version named anywhere else in it does not count.
+  const engine = "packages/engine/src/version.ts";
+  writeFileSync(
+    join(copy, engine),
+    `// The release before was "${VERSION}".\nexport const VERSION = "0.0.1";\n`,
+  );
+  expect(staleReleaseFiles(copy, VERSION)).toEqual([engine, left]);
 });

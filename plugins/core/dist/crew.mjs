@@ -3,7 +3,7 @@ import { existsSync as existsSync24, readFileSync as readFileSync10, realpathSyn
 import { basename as basename9, isAbsolute as isAbsolute12, join as join50, relative as relative13, resolve as resolve8, sep as sep6 } from "node:path";
 
 // packages/engine/src/analysis.ts
-import { existsSync as existsSync10, lstatSync as lstatSync2, mkdirSync as mkdirSync4 } from "node:fs";
+import { existsSync as existsSync10, lstatSync as lstatSync3, mkdirSync as mkdirSync4 } from "node:fs";
 import { dirname as dirname6, isAbsolute as isAbsolute5, join as join18 } from "node:path";
 
 // packages/engine/src/decisions.ts
@@ -17,6 +17,7 @@ import { createHash, randomUUID } from "node:crypto";
 import {
   existsSync,
   linkSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   renameSync,
@@ -83,29 +84,41 @@ function writeTextNew(path, text) {
   }
 }
 function createFreeFile(dir, base, ext, text, write = writeTextNew) {
-  ensureDir(dir);
-  for (let n = 1;; n++) {
-    const target = join(dir, n === 1 ? `${base}${ext}` : `${base}-${n}${ext}`);
-    if (write(target, text))
-      return target;
-  }
+  return createFreeFiles(dir, base, [[ext, text]], write);
 }
-function createFreePair(dir, base, first, second, write = writeTextNew) {
+function createFreeFiles(dir, base, files, write = writeTextNew) {
   ensureDir(dir);
   for (let n = 1;; n++) {
     const stem = join(dir, n === 1 ? base : `${base}-${n}`);
-    const head = `${stem}${first[0]}`;
-    if (!write(head, first[1]))
+    if (files.some(([ext, text]) => text === null && holds(`${stem}${ext}`)))
       continue;
-    let paired = false;
+    const written = [];
+    let complete = false;
     try {
-      paired = write(`${stem}${second[0]}`, second[1]);
+      complete = files.every(([ext, text]) => {
+        if (text === null)
+          return true;
+        const path = `${stem}${ext}`;
+        if (!write(path, text))
+          return false;
+        written.push(path);
+        return true;
+      });
     } finally {
-      if (!paired)
-        rmSync(head, { force: true });
+      if (!complete)
+        for (const path of written)
+          rmSync(path, { force: true });
     }
-    if (paired)
-      return head;
+    if (complete)
+      return `${stem}${files[0][0]}`;
+  }
+}
+function holds(path) {
+  try {
+    lstatSync(path);
+    return true;
+  } catch {
+    return false;
   }
 }
 function jsonText(data) {
@@ -1494,7 +1507,7 @@ var PERSONAL_DATA_TERMS = [
 function wordsOf(line) {
   return line.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2").toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
 }
-function holds(words, sequence) {
+function holds2(words, sequence) {
   for (let i = 0;i + sequence.length <= words.length; i++)
     if (sequence.every((w, n) => words[i + n] === w))
       return true;
@@ -1533,7 +1546,7 @@ function personalDataTerms(patch) {
     for (const [term, spellings] of PERSONAL_DATA_TERMS) {
       if (hits.some((h) => h.term === term && h.file === file))
         continue;
-      if (spellings.some((s) => holds(words, s)))
+      if (spellings.some((s) => holds2(words, s)))
         hits.push({ term, file });
     }
   }
@@ -2361,7 +2374,7 @@ function triageSummary(triage) {
 }
 
 // packages/engine/src/questions.ts
-import { appendFileSync, existsSync as existsSync5, lstatSync, realpathSync as realpathSync3 } from "node:fs";
+import { appendFileSync, existsSync as existsSync5, lstatSync as lstatSync2, realpathSync as realpathSync3 } from "node:fs";
 import { dirname as dirname4, isAbsolute as isAbsolute3, join as join12, relative as relative4 } from "node:path";
 
 // packages/engine/src/source.ts
@@ -2813,7 +2826,7 @@ function postDocumentQuestion(root, documentPath, question) {
   if (rel2.startsWith("..") || isAbsolute3(rel2))
     return { refused: `${file} resolves outside the root; nothing written` };
   try {
-    if (lstatSync(target).isSymbolicLink())
+    if (lstatSync2(target).isSymbolicLink())
       return { refused: `${file} is a symlink; nothing written` };
   } catch {}
   const quoted = question.text.split(`
@@ -6717,7 +6730,7 @@ function itemSummary(paths, id) {
   };
   const dir = workDir(paths, id);
   try {
-    if (!lstatSync2(dir).isDirectory())
+    if (!lstatSync3(dir).isDirectory())
       return empty;
   } catch {
     return empty;
@@ -8560,8 +8573,8 @@ function packNamed(packs, name) {
 }
 function knowledgeFilesFor(userDir, profile, changed, policy) {
   const packs = okPacks(userDir);
-  const holds2 = (targetPath, file) => targetPath === "." || file.startsWith(`${targetPath}/`);
-  const targets = changed.length ? profile.targets.filter((t) => changed.some((f) => holds2(t.path, f))) : profile.targets;
+  const holds3 = (targetPath, file) => targetPath === "." || file.startsWith(`${targetPath}/`);
+  const targets = changed.length ? profile.targets.filter((t) => changed.some((f) => holds3(t.path, f))) : profile.targets;
   const keys = [...new Set(targets.flatMap((t) => [t.stack, ...t.tags ?? []]))];
   const paths = [];
   const labels = [];
@@ -14675,7 +14688,7 @@ function handleHook(event, payload, env = process.env) {
 }
 
 // packages/engine/src/knowledge.ts
-import { existsSync as existsSync21, lstatSync as lstatSync3, readdirSync as readdirSync10, realpathSync as realpathSync7 } from "node:fs";
+import { existsSync as existsSync21, lstatSync as lstatSync4, readdirSync as readdirSync10, realpathSync as realpathSync7 } from "node:fs";
 import { basename as basename7, dirname as dirname11, isAbsolute as isAbsolute10, join as join44, relative as relative11, resolve as resolve6 } from "node:path";
 
 // packages/engine/src/verify.ts
@@ -15250,14 +15263,15 @@ function knownRootCauses(base, scope, paths) {
   }));
 }
 var PLAN_FILE = /^(\d{4}-\d{2}-\d{2})-plan(?:-(\d+))?\.md$/;
+var PLAN_INPUTS_EXT = ".inputs.json";
 function planInputsPath(plan) {
-  return plan.replace(/\.md$/, ".inputs.json");
+  return plan.replace(/\.md$/, PLAN_INPUTS_EXT);
 }
 var INPUTS_FILE = /^\d{4}-\d{2}-\d{2}-inputs(?:-\d+)?\.json$/;
 function ctoInputsFile(dir, file) {
   try {
     const real = join44(realpathSync7(dirname11(file)), basename7(file));
-    const entry = lstatSync3(real);
+    const entry = lstatSync4(real);
     return dirname11(real) === realpathSync7(dir) && INPUTS_FILE.test(basename7(real)) && entry.isFile() && !entry.isSymbolicLink() ? real : null;
   } catch {
     return null;
@@ -20074,7 +20088,10 @@ ${drafted.lesson}`, "lesson")[0];
         if (inputs === null)
           return refuse(`${given} cannot be read; nothing was filed`);
       }
-      const target = inputs === null ? createFreeFile(dir, `${date}-plan`, ".md", text) : createFreePair(dir, `${date}-plan`, [".md", text], [".inputs.json", inputs]);
+      const target = createFreeFiles(dir, `${date}-plan`, [
+        [".md", text],
+        [PLAN_INPUTS_EXT, inputs]
+      ]);
       const copy = planInputsPath(target);
       const added = addEntry(env.paths.userDir, {
         kind: "general",
@@ -20336,7 +20353,7 @@ var HELP = `crew ${VERSION}
   decisions [--grep <text>]   the project's decision register, newest first; --grep matches the id, the text and the answer, in any case
   metrics [--workspace <ws>]  the figures of this project, or of the workspace's registered projects, from the records and the base
   cto review --workspace <ws>          write the CTO's inputs (the workspace's metrics, the last plan, the base's figures and rows) under the user's crew directory and print the launch line; open the review item first, with --observed "<the plan filed>" (references/learn.md)
-  cto record --workspace <ws> --file <plan.md> [--inputs <file>]   file the CTO's plan under the user's crew directory and enter it in the knowledge base, marked for the workspace; --inputs (the file crew cto review named) is filed beside it as <plan>.inputs.json, what ties the plan to what it was written from
+  cto record --workspace <ws> --file <plan.md> [--inputs <file>]   file the CTO's plan under the user's crew directory and enter it in the knowledge base, marked for the workspace; --inputs (the file crew cto review named) is filed beside it as <plan>${PLAN_INPUTS_EXT}, what ties the plan to what it was written from
   knowledge list [--kind <k>] | show K-n   the knowledge base as this project reads it (rule 13: unmarked entries, and marked ones of this workspace)
   knowledge add --kind general|documentation --title "<t>" --file <path> [--source <url>]   a person's material, from the project's own tree, marked
   knowledge lesson add --cue "<t>" --lesson "<t>" --evidence docs/improve/<run>/record.json --proposal P-n --confidence high|medium|low   the improvement loop's lesson about the crew, its run's record as evidence; read in this repository alone (ADR 0013)

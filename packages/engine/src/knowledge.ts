@@ -443,9 +443,12 @@ export function knownRootCauses(
 
 /** `<date>-plan.md`, then `<date>-plan-2.md`, `-3`… for the same day's later plans (finding 53). */
 const PLAN_FILE = /^(\d{4}-\d{2}-\d{2})-plan(?:-(\d+))?\.md$/;
+/** The extension of the copy of a plan's inputs, beside the plan (finding 160). */
+export const PLAN_INPUTS_EXT = ".inputs.json";
+
 /** Where `crew cto record --inputs` files a plan's inputs: beside the plan, `<plan stem>.inputs.json` (finding 160). */
 export function planInputsPath(plan: string): string {
-  return plan.replace(/\.md$/, ".inputs.json");
+  return plan.replace(/\.md$/, PLAN_INPUTS_EXT);
 }
 
 /** The name `crew cto review` gives its inputs: `<date>-inputs.json`, then `-2`, `-3` the same day. */

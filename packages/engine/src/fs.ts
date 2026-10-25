@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import {
   existsSync,
   linkSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   renameSync,
@@ -104,39 +105,53 @@ export function createFreeFile(
   text: string,
   write: (path: string, text: string) => boolean = writeTextNew,
 ): string {
-  ensureDir(dir);
-  for (let n = 1; ; n++) {
-    const target = join(dir, n === 1 ? `${base}${ext}` : `${base}-${n}${ext}`);
-    if (write(target, text)) return target;
-  }
+  return createFreeFiles(dir, base, [[ext, text]], write);
 }
 
+/** One file of a free set: its extension, and its text, or null for a name only held free. */
+type FreeEntry = readonly [ext: string, text: string | null];
+
 /**
- * Two files under one free name, `<base><first ext>` and `<base><second ext>`, then `<base>-2…` and
- * on: the first written exclusively, then the second; when the second name is held, the first file
- * this call created is removed and the next name tried; when the second write fails otherwise, the
- * first is removed and the error stands. Returns the first file's path (2026-10-25-002, a CTO plan
- * and the inputs it was written from, never one without the other).
+ * A set of files under one free stem, `<base>` then `<base>-2` and on, and the first entry's path
+ * returned (2026-10-25-002, 2026-10-25-003). Each entry with text is written exclusively, in order;
+ * an entry with null text is only held free: a stem where anything has that name, a link to nothing
+ * included, is passed over. When a name is held, the files this call wrote at the stem are removed and
+ * the next stem tried; when a write fails otherwise, they are removed and the error stands.
  */
-export function createFreePair(
+export function createFreeFiles(
   dir: string,
   base: string,
-  first: [ext: string, text: string],
-  second: [ext: string, text: string],
+  files: readonly [FreeEntry, ...FreeEntry[]],
   write: (path: string, text: string) => boolean = writeTextNew,
 ): string {
   ensureDir(dir);
   for (let n = 1; ; n++) {
     const stem = join(dir, n === 1 ? base : `${base}-${n}`);
-    const head = `${stem}${first[0]}`;
-    if (!write(head, first[1])) continue;
-    let paired = false;
+    if (files.some(([ext, text]) => text === null && holds(`${stem}${ext}`))) continue;
+    const written: string[] = [];
+    let complete = false;
     try {
-      paired = write(`${stem}${second[0]}`, second[1]);
+      complete = files.every(([ext, text]) => {
+        if (text === null) return true;
+        const path = `${stem}${ext}`;
+        if (!write(path, text)) return false;
+        written.push(path);
+        return true;
+      });
     } finally {
-      if (!paired) rmSync(head, { force: true });
+      if (!complete) for (const path of written) rmSync(path, { force: true });
     }
-    if (paired) return head;
+    if (complete) return `${stem}${files[0][0]}`;
+  }
+}
+
+/** Whether anything has the name, a link to nothing included. */
+function holds(path: string): boolean {
+  try {
+    lstatSync(path);
+    return true;
+  } catch {
+    return false;
   }
 }
 

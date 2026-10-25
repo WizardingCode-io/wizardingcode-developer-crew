@@ -59,7 +59,7 @@ import {
 import { changedPaths, changedWatchedPaths, hashPaths, isGitRepo } from "./fingerprint.ts";
 import {
   createFreeFile,
-  createFreePair,
+  createFreeFiles,
   ensureDir,
   jsonText,
   nowIso,
@@ -110,6 +110,7 @@ import {
   latestPlan,
   lessonsForCto,
   lookup,
+  PLAN_INPUTS_EXT,
   planInputsPath,
   readBase,
   rerankHits,
@@ -5081,12 +5082,13 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         if (inputs === null) return refuse(`${given} cannot be read; nothing was filed`);
       }
       // A second plan the same day goes beside the first, never over it (finding 53).
-      // The plan and the copy of its inputs as a pair: never a plan without its copy, nothing over
-      // a file another writer holds (2026-10-25-002).
-      const target =
-        inputs === null
-          ? createFreeFile(dir, `${date}-plan`, ".md", text)
-          : createFreePair(dir, `${date}-plan`, [".md", text], [".inputs.json", inputs]);
+      // The plan and the copy of its inputs as a set: never a plan without its copy, nothing over
+      // a file another writer holds (2026-10-25-002); with no copy, its name is still held free, so
+      // a file already there is never read as this plan's inputs (2026-10-25-003).
+      const target = createFreeFiles(dir, `${date}-plan`, [
+        [".md", text],
+        [PLAN_INPUTS_EXT, inputs],
+      ]);
       const copy = planInputsPath(target);
       const added = addEntry(env.paths.userDir, {
         kind: "general",
@@ -5383,7 +5385,7 @@ const HELP = `crew ${VERSION}
   decisions [--grep <text>]   the project's decision register, newest first; --grep matches the id, the text and the answer, in any case
   metrics [--workspace <ws>]  the figures of this project, or of the workspace's registered projects, from the records and the base
   cto review --workspace <ws>          write the CTO's inputs (the workspace's metrics, the last plan, the base's figures and rows) under the user's crew directory and print the launch line; open the review item first, with --observed "<the plan filed>" (references/learn.md)
-  cto record --workspace <ws> --file <plan.md> [--inputs <file>]   file the CTO's plan under the user's crew directory and enter it in the knowledge base, marked for the workspace; --inputs (the file crew cto review named) is filed beside it as <plan>.inputs.json, what ties the plan to what it was written from
+  cto record --workspace <ws> --file <plan.md> [--inputs <file>]   file the CTO's plan under the user's crew directory and enter it in the knowledge base, marked for the workspace; --inputs (the file crew cto review named) is filed beside it as <plan>${PLAN_INPUTS_EXT}, what ties the plan to what it was written from
   knowledge list [--kind <k>] | show K-n   the knowledge base as this project reads it (rule 13: unmarked entries, and marked ones of this workspace)
   knowledge add --kind general|documentation --title "<t>" --file <path> [--source <url>]   a person's material, from the project's own tree, marked
   knowledge lesson add --cue "<t>" --lesson "<t>" --evidence docs/improve/<run>/record.json --proposal P-n --confidence high|medium|low   the improvement loop's lesson about the crew, its run's record as evidence; read in this repository alone (ADR 0013)
