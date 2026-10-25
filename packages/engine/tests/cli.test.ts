@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -11231,4 +11232,21 @@ test("2026-10-25-001 AC-5: crew cto record --inputs with an inputs file that can
   } finally {
     chmodSync(inputs, 0o644);
   }
+});
+
+test("2026-10-25-001 AC-8: crew cto review and crew cto record write their files exclusively: a name already held, even by a dangling link, is never written over", async () => {
+  const { ca, a, paths } = await ctoWorkspace();
+  const cto = join(paths.userDir, "cto", "w");
+  mkdirSync(cto, { recursive: true });
+  const date = new Date().toISOString().slice(0, 10);
+  // Another writer's names, held by links to nothing: a replacing write would take them over.
+  symlinkSync(join(cto, "nowhere-1"), join(cto, `${date}-inputs.json`));
+  symlinkSync(join(cto, "nowhere-2"), join(cto, `${date}-plan.md`));
+  const review = await ca.run("cto", "review", "--workspace", "w");
+  expect(review.out.split("\n")[0]).toBe(`inputs: ${join(cto, `${date}-inputs-2.json`)}`);
+  write(a, "cto-plan.md", "# CTO plan for w\n");
+  const filed = await ca.run("cto", "record", "--workspace", "w", "--file", "cto-plan.md");
+  expect(filed.out.split("\n")[0]).toBe(`CTO plan of w filed: ${join(cto, `${date}-plan-2.md`)}`);
+  for (const held of [`${date}-inputs.json`, `${date}-plan.md`])
+    expect(lstatSync(join(cto, held)).isSymbolicLink(), held).toBe(true);
 });

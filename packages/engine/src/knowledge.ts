@@ -7,7 +7,7 @@
  */
 import { existsSync, lstatSync, readdirSync, realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { ensureDir, errorText, nowIso, readText, writeJson, writeTextNew } from "./fs.ts";
+import { errorText, nowIso, readText, writeJson } from "./fs.ts";
 import { type AskOptions, askJev, type JevConfig, type JevQuestion } from "./jev.ts";
 import { withLock } from "./lock.ts";
 import { type CrewPaths, canonical, ctoDir, knowledgeDir, knowledgePath } from "./paths.ts";
@@ -446,26 +446,6 @@ const PLAN_FILE = /^(\d{4}-\d{2}-\d{2})-plan(?:-(\d+))?\.md$/;
 /** Where `crew cto record --inputs` files a plan's inputs: beside the plan, `<plan stem>.inputs.json` (finding 160). */
 export function planInputsPath(plan: string): string {
   return plan.replace(/\.md$/, ".inputs.json");
-}
-
-/**
- * Writes the text at `<dir>/<base><ext>`, or at the first `<base>-<n><ext>` from 2 on that nobody
- * holds when it is written, and returns that path: a file of the same day never goes over an earlier
- * one, nor over one another writer created in the same instant (findings 53, 160). `write` is the
- * exclusive write; a test passes one that races it.
- */
-export function createFreeFile(
-  dir: string,
-  base: string,
-  ext: string,
-  text: string,
-  write: (path: string, text: string) => boolean = writeTextNew,
-): string {
-  ensureDir(dir);
-  for (let n = 1; ; n++) {
-    const target = join(dir, n === 1 ? `${base}${ext}` : `${base}-${n}${ext}`);
-    if (write(target, text)) return target;
-  }
 }
 
 /** The name `crew cto review` gives its inputs: `<date>-inputs.json`, then `-2`, `-3` the same day. */

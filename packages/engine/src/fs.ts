@@ -91,6 +91,26 @@ export function writeTextNew(path: string, text: string): boolean {
   }
 }
 
+/**
+ * Writes the text at `<dir>/<base><ext>`, or at the first `<base>-<n><ext>` from 2 on that nobody
+ * holds when it is written, and returns that path: a file of the same day never goes over an earlier
+ * one, nor over one another writer created in the same instant (findings 53, 160). `write` is the
+ * exclusive write; a test passes one that races it.
+ */
+export function createFreeFile(
+  dir: string,
+  base: string,
+  ext: string,
+  text: string,
+  write: (path: string, text: string) => boolean = writeTextNew,
+): string {
+  ensureDir(dir);
+  for (let n = 1; ; n++) {
+    const target = join(dir, n === 1 ? `${base}${ext}` : `${base}-${n}${ext}`);
+    if (write(target, text)) return target;
+  }
+}
+
 export function writeJson(path: string, data: unknown): void {
   writeText(path, `${JSON.stringify(data, null, 2)}\n`);
 }

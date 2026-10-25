@@ -57,7 +57,17 @@ import {
   whoDecides,
 } from "./evidence.ts";
 import { changedPaths, changedWatchedPaths, hashPaths, isGitRepo } from "./fingerprint.ts";
-import { ensureDir, nowIso, readJson, readText, sha256, writeJson, writeText } from "./fs.ts";
+import {
+  createFreeFile,
+  ensureDir,
+  nowIso,
+  readJson,
+  readText,
+  readTextQuietly,
+  sha256,
+  writeJson,
+  writeText,
+} from "./fs.ts";
 import { assess, reassess, runGates, runTaskGate } from "./gates.ts";
 import { buildContext } from "./hooks/context.ts";
 import { handleHook } from "./hooks/index.ts";
@@ -85,7 +95,6 @@ import {
 } from "./judgement.ts";
 import {
   addEntry,
-  createFreeFile,
   ctoInputsFile,
   defaultConfidential,
   entryLine,
@@ -5071,14 +5080,9 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           return refuse(
             `${given} is not an inputs file of workspace ${ws} (crew cto review writes <date>-inputs[-<n>].json in its CTO folder); nothing was filed`,
           );
-        try {
-          inputs = readText(real);
-        } catch {
-          inputs = null;
-        }
+        inputs = readTextQuietly(real);
         if (inputs === null) return refuse(`${given} cannot be read; nothing was filed`);
       }
-      ensureDir(dir);
       // A second plan the same day goes beside the first, never over it (finding 53).
       const target = createFreeFile(dir, `${date}-plan`, ".md", text);
       const copy = planInputsPath(target);

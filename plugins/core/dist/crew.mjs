@@ -82,6 +82,14 @@ function writeTextNew(path, text) {
     rmSync(tmp, { force: true });
   }
 }
+function createFreeFile(dir, base, ext, text, write = writeTextNew) {
+  ensureDir(dir);
+  for (let n = 1;; n++) {
+    const target = join(dir, n === 1 ? `${base}${ext}` : `${base}-${n}${ext}`);
+    if (write(target, text))
+      return target;
+  }
+}
 function writeJson(path, data) {
   writeText(path, `${JSON.stringify(data, null, 2)}
 `);
@@ -15224,14 +15232,6 @@ var PLAN_FILE = /^(\d{4}-\d{2}-\d{2})-plan(?:-(\d+))?\.md$/;
 function planInputsPath(plan) {
   return plan.replace(/\.md$/, ".inputs.json");
 }
-function createFreeFile(dir, base, ext, text, write = writeTextNew) {
-  ensureDir(dir);
-  for (let n = 1;; n++) {
-    const target = join44(dir, n === 1 ? `${base}${ext}` : `${base}-${n}${ext}`);
-    if (write(target, text))
-      return target;
-  }
-}
 var INPUTS_FILE = /^\d{4}-\d{2}-\d{2}-inputs(?:-\d+)?\.json$/;
 function ctoInputsFile(dir, file) {
   try {
@@ -20050,15 +20050,10 @@ ${drafted.lesson}`, "lesson")[0];
         const real = ctoInputsFile(dir, given);
         if (real === null)
           return refuse(`${given} is not an inputs file of workspace ${ws} (crew cto review writes <date>-inputs[-<n>].json in its CTO folder); nothing was filed`);
-        try {
-          inputs = readText(real);
-        } catch {
-          inputs = null;
-        }
+        inputs = readTextQuietly(real);
         if (inputs === null)
           return refuse(`${given} cannot be read; nothing was filed`);
       }
-      ensureDir(dir);
       const target = createFreeFile(dir, `${date}-plan`, ".md", text);
       const copy = planInputsPath(target);
       if (inputs !== null)
