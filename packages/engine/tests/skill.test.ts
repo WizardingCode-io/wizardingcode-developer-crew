@@ -1113,3 +1113,19 @@ test("AC-7 (finding 151): the conclave's experts step names where the two expert
       .find((line) => line.startsWith("2. **Experts**")) ?? "";
   expect(step).toContain("(the two on the one with the most consequence)");
 });
+
+test("2026-10-25-004 AC-3 (finding 164): the skill says a red is traced to its origin, never skipped or passed, on the page and in build.md, and no longer offers the tdd skip", () => {
+  const build = readReference("build.md");
+  for (const text of [skill, build]) {
+    expect(text).toContain("never skipped or passed");
+    expect(text).not.toContain("let the user decide: `crew skip`");
+    expect(text).not.toContain("is for a `tdd:` step");
+  }
+  // Rule 4 keeps the pointer to the elaboration (the reviewers' note of the item's round 1).
+  expect(skill.slice(skill.indexOf("## Rules that do not bend"))).toContain(
+    "never skipped or passed (`references/build.md`)",
+  );
+  expect(build).toContain("`observed`");
+  expect(build).toContain("made real in code");
+  expect(Buffer.byteLength(skill, "utf8")).toBeLessThanOrEqual(SKILL_PAGE_MAX_BYTES);
+});

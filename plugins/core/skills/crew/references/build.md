@@ -24,7 +24,7 @@ For an `observed` criterion: make the change, then `crew tdd observed <id> <crit
 - **Keep it simple.** No configuration, abstraction or generality the criteria do not need. Three similar lines beat a premature helper.
 - **Follow the project's conventions** for naming, structure and error handling, even where you would choose differently.
 
-When a criterion cannot be tested automatically, say so and let the user decide: `crew skip <id> tdd:<criterion> --reason "<why>"`. The skip appears in the report.
+A red is traced to its origin and resolved, never skipped or passed. A red that cannot happen is a question about the design, answered before the code: a check that cannot fail is made real in code the test then drives (a guard over a state already correct becomes a function the project calls, whose absence is the red), or the criterion's kind is wrong (`observed` when no red run can exist, `preserve` for what stays green: `references/specify.md`). `crew skip` is only for a step `policy.json` lists, a person's decision, and it appears in the report.
 
 When a todo of the plan is done (a handed-out task merged, or an inline todo committed and noted with `crew task <id> note T-n --criteria AC-k --scope <path>`), close it: `crew task <id> gate T-n` runs the deterministic gates on the files it touched, then `crew task <id> brief T-n` writes what changed, what was proven and what is left (`references/plan.md`, "The todo loop"). Two failing gate rounds wait for a person.
 

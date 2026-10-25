@@ -598,6 +598,11 @@ test("status without an active item is a short answer", async () => {
   expect(status.data.criteria).toBeUndefined();
 });
 
+/** A team policy a person wrote to allow the tdd skip the default stopped allowing (2026-10-25-004): the shortcut the tests below take. */
+function allowTddSkip(root: string): void {
+  write(root, ".crew/policy.json", JSON.stringify({ allowSkips: ["tdd"] }));
+}
+
 /** A team policy that allows every skip, as the default did before 0.3.0; trusted on first use. */
 function allowAllSkips(root: string, extra: Record<string, unknown> = {}): void {
   mkdirSync(join(root, ".crew"), { recursive: true });
@@ -628,6 +633,7 @@ test("refusals: unknown work, skip without reason, invalid answers, pilot cannot
 test("profile set confirms in one step; a detector's guess stays proposed until confirmed", async () => {
   const root = makeRepo({ Makefile: "test:\n\ttrue\n", "src/a.c": "x" });
   const c = io(root);
+  allowTddSkip(root);
   const detect = await c.json("detect");
   expect(detect.data.missing).toEqual([{ target: ".", gate: "test" }]);
   const set = await c.json("profile", "set", "test", "make test");
@@ -659,6 +665,7 @@ test("profile set confirms in one step; a detector's guess stays proposed until 
     "src/a.ts": "x",
   });
   const g = io(guessed);
+  allowTddSkip(guessed);
   const gid = (await g.json("start", "fix", "--answers", answers, "--criterion", "x")).data
     .id as string;
   await g.run("skip", gid, "tdd:AC-1", "--reason", "manual");
@@ -676,6 +683,7 @@ test("0.3.0: crew gate run follows the manifests and never replaces a confirmed 
     "src/a.ts": "x",
   });
   const c = io(root);
+  allowTddSkip(root);
   const paths = repoPaths(root, c.env);
   const id = (await c.json("start", "Thing", "--answers", answers, "--criterion", "x")).data
     .id as string;
@@ -1147,6 +1155,7 @@ test("gate run exits 1 while the work is not proven and 0 once it is (finding 18
     "src/a.ts": "x",
   });
   const c = io(root);
+  allowTddSkip(root);
   const id = (await c.json("start", "Thing", "--answers", answers)).data.id as string;
   await c.run("criteria", id, "add", "x");
   await c.run("skip", id, "tdd:AC-1", "--reason", "manual");
@@ -1200,6 +1209,7 @@ test("criteria remove refuses a criterion with a test-first record, one with a s
     "src/a.ts": "x",
   });
   const c = io(root);
+  allowTddSkip(root);
   const start = await c.json(
     "start",
     "Three criteria",
@@ -1719,7 +1729,8 @@ test("0.3.0: a gate skip is refused by default and names the honest paths; a tdd
   );
   expect(refused.err).toContain("crew profile set");
   expect(refused.err).toContain("allowSkips");
-  expect((await c.run("skip", id, "tdd:AC-1", "--reason", "manual")).code).toBe(0);
+  // A tdd skip left the default on 2026-10-25-004 (finding 164, ADR 0014): refused too.
+  expect((await c.run("skip", id, "tdd:AC-1", "--reason", "manual")).code).toBe(1);
   write(root, ".crew/policy.json", JSON.stringify({ allowSkips: ["gate:lint"] }));
   expect((await c.run("policy", "accept")).code).toBe(0);
   expect((await c.run("skip", id, "gate:lint", "--reason", "legacy")).code).toBe(0);
@@ -7250,7 +7261,11 @@ test("SP4-T4 AC-5: crew status says what learning is left in deliver and in lear
     "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
     "src/a.ts": "x",
   });
-  write(root, ".crew/policy.json", JSON.stringify({ mail: { workspace: "acme", name: "shop" } }));
+  write(
+    root,
+    ".crew/policy.json",
+    JSON.stringify({ allowSkips: ["tdd"], mail: { workspace: "acme", name: "shop" } }),
+  );
   const c = io(root, env);
   const id = (
     await c.json("start", "Add a total", "--answers", answers, "--criterion", "the total adds up")
@@ -9736,6 +9751,7 @@ test("F138: an item in its learn phase learns on the verdict its last gate run r
     "src/a.ts": "x",
   });
   const c = io(root, env);
+  allowTddSkip(root);
   const id = (
     await c.json("start", "Add a total", "--answers", answers, "--criterion", "the total adds up")
   ).data.id as string;
@@ -10201,7 +10217,11 @@ test("LANE-AC-6: an item of a worktree that learns sends its project the lane no
     "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
     "src/a.ts": "x",
   });
-  write(root, ".crew/policy.json", JSON.stringify({ mail: { workspace: "acme", name: "shop" } }));
+  write(
+    root,
+    ".crew/policy.json",
+    JSON.stringify({ allowSkips: ["tdd"], mail: { workspace: "acme", name: "shop" } }),
+  );
   const c = io(root, env);
   expect((await c.run("status")).code).toBe(0);
   const inbox = () =>
@@ -10336,6 +10356,7 @@ test("DEBT-AC-9-active: crew learn leaves the active slot when the learned item 
   });
   const env = testEnv();
   const c = io(root, env);
+  allowTddSkip(root);
   const id = (await c.json("start", "Add a total", "--answers", answers, "--criterion", "it adds"))
     .data.id as string;
   write(root, "src/a.ts", "export const v = 1;\n");
@@ -11317,4 +11338,28 @@ test("2026-10-25-003 AC-1: crew cto record without --inputs never files a plan a
   expect(readFileSync(join(cto, `${date}-plan.inputs.json`), "utf8")).toBe("a hand-made copy");
   expect(lstatSync(join(cto, `${date}-plan-2.inputs.json`)).isSymbolicLink()).toBe(true);
   expect(existsSync(join(cto, `${date}-plan-3.inputs.json`))).toBe(false);
+});
+
+test("2026-10-25-004 AC-1 (finding 164): a tdd skip is refused under the default policy with the three ways out and leaves no skip; the e2e skip stays; a person who lists tdd allows it", async () => {
+  const root = makeRepo({ "package.json": JSON.stringify({ scripts: { test: "exit 0" } }) });
+  const c = io(root);
+  const id = (await c.json("start", "Thing", "--answers", answers, "--criterion", "x")).data
+    .id as string;
+  const refused = await c.run("skip", id, "tdd:AC-1", "--reason", "manual");
+  expect(refused.code).toBe(1);
+  expect(refused.err).toContain("a red is traced to its origin, never skipped");
+  expect(refused.err).toContain("--kind observed");
+  expect(refused.err).toContain("crew tdd observed");
+  expect(refused.err).toContain("belongs in code the test drives");
+  expect(refused.err).toContain("allowSkips");
+  expect(loadWork(repoPaths(root), id).work?.skips ?? []).toEqual([]);
+  expect((await c.run("skip", id, "gate:e2e", "--reason", "no e2e flow yet")).code).toBe(0);
+  write(root, ".crew/policy.json", JSON.stringify({ allowSkips: ["tdd"] }));
+  expect((await c.run("policy", "accept")).code).toBe(0);
+  const allowed = await c.run("skip", id, "tdd:AC-1", "--reason", "manual");
+  expect(allowed.code, allowed.err).toBe(0);
+  expect((loadWork(repoPaths(root), id).work?.skips ?? []).map((s) => s.step)).toEqual([
+    "gate:e2e",
+    "tdd:AC-1",
+  ]);
 });

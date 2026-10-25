@@ -206,7 +206,7 @@ export function onStop(ctx: HookContext, payload: HookPayload = {}): HookRespons
   return done(
     {
       decision: "block",
-      reason: `Crew: watched source files changed and the work is not proven. Missing: ${missing.join("; ")}. Run ${gate}, fix what fails, or ask the user to skip a step with crew skip.${judgement}${wait}${mailNote()}`,
+      reason: `Crew: watched source files changed and the work is not proven. Missing: ${missing.join("; ")}. Run ${gate} and fix what fails: a red is traced to its origin, never skipped.${judgement}${wait}${mailNote()}`,
     },
     true,
   );

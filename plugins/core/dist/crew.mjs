@@ -1920,7 +1920,7 @@ var DEFAULT_POLICY = {
   riskPaths: {},
   riskPathExclusions: [],
   minimumRoute: "fast",
-  allowSkips: ["tdd", "e2e"],
+  allowSkips: ["e2e"],
   artifacts: "commit",
   unattendedDecisions: "wait",
   unattendedPolicyChanges: "never",
@@ -14635,7 +14635,7 @@ function onStop(ctx, payload = {}) {
   const judgement = work && missing.some((m) => m.startsWith("judgement gate")) ? ` A judgement gate is cleared by its roles, not by the gate run: run the planned reviewers and the judge, then crew judgement ${work.id} record --ruling .crew/work/${work.id}/review/ruling.json.` : "";
   return done({
     decision: "block",
-    reason: `Crew: watched source files changed and the work is not proven. Missing: ${missing.join("; ")}. Run ${gate}, fix what fails, or ask the user to skip a step with crew skip.${judgement}${wait}${mailNote()}`
+    reason: `Crew: watched source files changed and the work is not proven. Missing: ${missing.join("; ")}. Run ${gate} and fix what fails: a red is traced to its origin, never skipped.${judgement}${wait}${mailNote()}`
   }, true);
 }
 
@@ -16728,6 +16728,14 @@ function skipStep(work, raw) {
   if (PHASE_ORDER.includes(raw))
     return raw;
   return null;
+}
+function skipRefusal(step) {
+  const base = `the team policy does not allow skipping ${step}`;
+  if (step.startsWith("gate:"))
+    return `${base}: gates are mandatory. Fix what fails, set the gate's command to the team's own flow (crew profile set ${step.slice(5)} "<cmd>"), or have a person list the gate in policy.json allowSkips.`;
+  if (step.startsWith("tdd:"))
+    return `a red is traced to its origin, never skipped: ${base}. A criterion that can have no red run is observed (crew criteria <id> add "<text>" --kind observed, proven with crew tdd observed); a check that cannot fail belongs in code the test drives; a person may list tdd in policy.json allowSkips.`;
+  return base;
 }
 function accept(env, target) {
   if (target === "profile" || target === "policy" || target === "decisions") {
@@ -19329,9 +19337,8 @@ ${outcome.saveRefused}` : ""),
       const step = skipStep(opened.work, raw);
       if (!step)
         return refuse(`unknown step: ${raw}`);
-      if (!skipAllowed(env.policy, step)) {
-        return refuse(step.startsWith("gate:") ? `the team policy does not allow skipping ${step}: gates are mandatory. Fix what fails, set the gate's command to the team's own flow (crew profile set ${step.slice(5)} "<cmd>"), or have a person list the gate in policy.json allowSkips.` : `the team policy does not allow skipping ${step}`);
-      }
+      if (!skipAllowed(env.policy, step))
+        return refuse(skipRefusal(step));
       if (env.config.mode === "pilot" && (step === "gate:secrets" || step === "gate:deps"))
         return refuse(`in pilot mode the ${step.slice(5)} gate cannot be skipped`);
       const decision = decisionFlag(parsed, env.policy);

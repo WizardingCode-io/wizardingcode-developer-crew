@@ -727,3 +727,20 @@ test("FIX141-AC-1-unlearned-blocks: a proven item that is neither active nor lea
   expect(response.decision).toBe("block");
   expect(String(response.reason)).toContain("no work item");
 });
+
+test("2026-10-25-004 AC-2 (finding 164): the block reason says to fix what fails, a red traced to its origin, and never suggests a skip", () => {
+  const { root, ctx, env } = session();
+  const work = createWork(ctx.paths, "fix");
+  addCriterion(work, "x");
+  saveWork(ctx.paths, work);
+  write(root, "src/a.ts", "changed");
+  const response = handleHook("stop", { session_id: "s", cwd: root }, env) as {
+    decision?: string;
+    reason?: string;
+  };
+  expect(response.decision).toBe("block");
+  expect(response.reason).toContain(
+    "and fix what fails: a red is traced to its origin, never skipped.",
+  );
+  expect(response.reason).not.toContain("crew skip");
+});

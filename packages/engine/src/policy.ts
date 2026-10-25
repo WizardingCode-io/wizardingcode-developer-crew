@@ -86,10 +86,11 @@ export const DEFAULT_POLICY: Policy = {
   riskPaths: {},
   riskPathExclusions: [],
   minimumRoute: "fast",
-  // Gates are mandatory: a tdd step may be skipped (the observed kind is the better path), a gate
-  // only when a person lists it here (0.3.0; finding 20). The e2e gate is the one exception by
-  // default (SP7b, decision 9): most projects cannot run it yet, and the skip is the user's, recorded.
-  allowSkips: ["tdd", "e2e"],
+  // Gates are mandatory: a gate is skipped only when a person lists it here (0.3.0; finding 20). The
+  // e2e gate is the one exception by default (SP7b, decision 9): most projects cannot run it yet, and
+  // the skip is the user's, recorded. A test-first step is not skipped by default either (finding
+  // 164, ADR 0014): a red is traced to its origin; a team that wants the skip lists `tdd` by hand.
+  allowSkips: ["e2e"],
   artifacts: "commit",
   unattendedDecisions: "wait",
   unattendedPolicyChanges: "never",

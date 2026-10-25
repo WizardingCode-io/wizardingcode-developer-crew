@@ -129,9 +129,10 @@ test("ADR 0005 (0.3.0): attendedDecisions is relay by default, prompt is the opt
     expect(decisionCounts({ ...DEFAULT_POLICY, unattendedDecisions: u }, relayed)).toBe(true);
 });
 
-test("gates are mandatory: allowSkips defaults to tdd and e2e, so a tdd step may be skipped and a gate only when listed", () => {
-  expect(DEFAULT_POLICY.allowSkips).toEqual(["tdd", "e2e"]);
-  expect(skipAllowed(DEFAULT_POLICY, "tdd:AC-1")).toBe(true);
+test("gates are mandatory: allowSkips defaults to e2e alone (tdd left it on 2026-10-25-004, finding 164), so a gate is skipped only when listed", () => {
+  expect(DEFAULT_POLICY.allowSkips).toEqual(["e2e"]);
+  expect(skipAllowed(DEFAULT_POLICY, "tdd:AC-1")).toBe(false);
+  expect(skipAllowed({ ...DEFAULT_POLICY, allowSkips: ["tdd"] }, "tdd:AC-1")).toBe(true);
   expect(skipAllowed(DEFAULT_POLICY, "gate:lint")).toBe(false);
   expect(skipAllowed(DEFAULT_POLICY, "gate:test")).toBe(false);
   expect(skipAllowed({ ...DEFAULT_POLICY, allowSkips: ["gate:lint"] }, "gate:lint")).toBe(true);
@@ -431,8 +432,8 @@ test("SP7b-T2 AC-1: mail.maxParties defaults to 4 and only tightens, to 2 at the
   expect(loadPolicy(paths).policy.mail.maxParties).toBe(3);
 });
 
-test("SP7b-T4 AC-1: allowSkips defaults to tdd and e2e: the user may skip the e2e gate by default, never the test gate", () => {
-  expect(DEFAULT_POLICY.allowSkips).toEqual(["tdd", "e2e"]);
+test("SP7b-T4 AC-1: allowSkips defaults to e2e (tdd left it on 2026-10-25-004): the user may skip the e2e gate by default, never the test gate", () => {
+  expect(DEFAULT_POLICY.allowSkips).toEqual(["e2e"]);
   expect(skipAllowed(DEFAULT_POLICY, "gate:e2e")).toBe(true);
   expect(skipAllowed(DEFAULT_POLICY, "gate:test")).toBe(false);
 });

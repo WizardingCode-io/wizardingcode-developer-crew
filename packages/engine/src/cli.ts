@@ -632,6 +632,16 @@ function skipStep(work: WorkItem, raw: string): string | null {
   return null;
 }
 
+/** Why a step the team policy does not list is not skipped, by the kind of step: a gate is mandatory, a red is traced to its origin (finding 164, ADR 0014), anything else is the policy's word. */
+function skipRefusal(step: string): string {
+  const base = `the team policy does not allow skipping ${step}`;
+  if (step.startsWith("gate:"))
+    return `${base}: gates are mandatory. Fix what fails, set the gate's command to the team's own flow (crew profile set ${step.slice(5)} "<cmd>"), or have a person list the gate in policy.json allowSkips.`;
+  if (step.startsWith("tdd:"))
+    return `a red is traced to its origin, never skipped: ${base}. A criterion that can have no red run is observed (crew criteria <id> add "<text>" --kind observed, proven with crew tdd observed); a check that cannot fail belongs in code the test drives; a person may list tdd in policy.json allowSkips.`;
+  return base;
+}
+
 /** The user trusts the current content of a target's protected files again. Asks the user (PreToolUse). */
 function accept(env: Env, target: string): Outcome {
   if (target === "profile" || target === "policy" || target === "decisions") {
@@ -4142,13 +4152,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       if (!raw || !reason) return refuse('usage: crew skip <id> <step> --reason "<text>"');
       const step = skipStep(opened.work, raw);
       if (!step) return refuse(`unknown step: ${raw}`);
-      if (!skipAllowed(env.policy, step)) {
-        return refuse(
-          step.startsWith("gate:")
-            ? `the team policy does not allow skipping ${step}: gates are mandatory. Fix what fails, set the gate's command to the team's own flow (crew profile set ${step.slice(5)} "<cmd>"), or have a person list the gate in policy.json allowSkips.`
-            : `the team policy does not allow skipping ${step}`,
-        );
-      }
+      if (!skipAllowed(env.policy, step)) return refuse(skipRefusal(step));
       if (env.config.mode === "pilot" && (step === "gate:secrets" || step === "gate:deps"))
         return refuse(`in pilot mode the ${step.slice(5)} gate cannot be skipped`);
       const decision = decisionFlag(parsed, env.policy);
