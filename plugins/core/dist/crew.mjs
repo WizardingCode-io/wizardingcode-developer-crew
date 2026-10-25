@@ -12250,12 +12250,13 @@ var NOT_DOTDOT_SEGMENT = String.raw`(?!\.\.(?:\/|${PATH_END}|$))[^\s"'\x60;&|)/]
 var REVIEW_OWNED = String.raw`review(?!\/${REVIEW_OPEN_SEGMENT}(?:\/(?:${NOT_DOTDOT_SEGMENT})*)?(?=${PATH_END}|$))`;
 var AUDIT_OWNED = String.raw`audit(?=\/|${PATH_END}|$)(?!\/${AUDIT_OPEN_FILES}(?=${PATH_END}|$))`;
 var WORK_FILES = PROTECTED_WORK_FILES.map(escapeRegExp).join("|");
-var ENGINE_FILES = new RegExp(String.raw`\.crew\/(?:profile\.json|policy\.json|decisions\.json|\.gitignore|local\b|work\/[^\s/]+\/(?:${WORK_FILES}|logs\b|running(?:\.json|\/|(?=${PATH_END})|$)|${REVIEW_OWNED}|${AUDIT_OWNED}))|\.wizardingcode\/crew\b`, "i");
+var USER_CREW = String.raw`\.wizardingcode\/crew(?=\/|${PATH_END}|$)`;
+var ENGINE_FILES = new RegExp(String.raw`\.crew\/(?:profile\.json|policy\.json|decisions\.json|\.gitignore|local\b|work\/[^\s/]+\/(?:${WORK_FILES}|logs\b|running(?:\.json|\/|(?=${PATH_END})|$)|${REVIEW_OWNED}|${AUDIT_OWNED}))|${USER_CREW}`, "i");
 var ENGINE_FOLDER = new RegExp(String.raw`(?:^|[\s"'=(:\/\\])\.crew(?:[\/\\]work(?:[\/\\][^\s\/\\"'\x60;&|)*]+)?)?(?:[\/\\](?:\*\*?|\.))*[\/\\]?(?=${PATH_END}|$)`, "i");
 var REMOVE_OR_MOVE = /(?:^|[\s;&|("'/])(?:rm|rmdir|mv|chmod|chown)\b/i;
 var POWERSHELL_REMOVE_OR_MOVE = /(?:^|[\s;&|({])(?:Remove-Item|ri|rm|rmdir|rd|del|erase|Move-Item|mi|mv|move|Rename-Item|rni|ren)(?=\s|$)/i;
 var HOOK_VERB_REASON = "Crew: crew hook runs from the runtime's hook configuration alone, never from a command";
-var WRITE_SHAPE = /(?:^|[\s;&|("'])(?:rm|mv|cp|tee|truncate|chmod|touch|dd|install)\b|sed\s+-i|>{1,2}\|?\s*["']?\S*(?:\.crew\/|\.wizardingcode\/crew\b)/i;
+var WRITE_SHAPE = new RegExp(String.raw`(?:^|[\s;&|("'])(?:rm|mv|cp|tee|truncate|chmod|touch|dd|install)\b|sed\s+-i|>{1,2}\|?\s*["']?\S*(?:\.crew\/|${USER_CREW})`, "i");
 var OPAQUE_REDIRECT = />{1,2}\|?\s*["']?[$`]/;
 var PROMPTLESS_MODES = new Set(["bypassPermissions", "dontAsk"]);
 var CREW_COMMAND = /^(?:.*[/\\])?crew(?:\.mjs)?$/i;
@@ -12935,7 +12936,9 @@ function answer(permissionDecision, reason) {
 var ENGINE_FOLDER_FORMS = [
   [".crew"],
   [".crew", "work"],
-  [".crew", "work", "*"]
+  [".crew", "work", "*"],
+  [".wizardingcode"],
+  [".wizardingcode", "crew"]
 ];
 function namesEngineFolder(word) {
   return braceExpand(word).some((expanded) => {
@@ -13515,7 +13518,7 @@ function findRemovesEngine(words) {
 function writesEngine(found) {
   if (found.program.toLowerCase() === "find" && findRemovesEngine(pathWords(found)))
     return true;
-  return writtenPaths(found).some(({ word, kind }) => kind === "remove" ? namesEngineFolder(word) : kind === "value" ? namesInsideEngine(word) : kind === "copy" && namesEngineTarget(word));
+  return writtenPaths(found).some(({ word, kind }) => kind === "remove" ? namesEngineFolder(word) || namesEngineTarget(word) : kind === "value" ? namesInsideEngine(word) : (kind === "copy" || kind === "write") && namesEngineTarget(word));
 }
 function copiesOut(found) {
   if (!["cp", "rsync", "install"].includes(found.program.toLowerCase()))
@@ -13675,7 +13678,10 @@ function onPreToolUse(ctx, payload) {
           return answer("deny", `${stays}: CDPATH is denied`);
         const named3 = tokens.filter((t) => handed === null || t.word !== handed && !HERE_STRING_OPERATOR.test(t.raw)).map((t) => t.word).flatMap((w) => ASSIGNMENT2.test(w) ? [w, w.slice(w.indexOf("=") + 1)] : [w]);
         for (const w of named3) {
-          if (w.includes(ctx.paths.userDir) || /(?:^|\/)\.wizardingcode(?:\/|$)/.test(w))
+          const path = normalizePathWord(w);
+          const at = path.indexOf(ctx.paths.userDir);
+          const namesUserDir = at >= 0 && (path.length === at + ctx.paths.userDir.length || path[at + ctx.paths.userDir.length] === "/");
+          if (namesUserDir || /(?:^|\/)\.wizardingcode(?:\/|$)/.test(path))
             return answer("deny", `${stays}: the engine's folder ${w} is denied`);
           if (unreadablePath(w))
             return answer("deny", `${stays}: ${w} cannot be read and may reach the engine's folder; it is denied`);

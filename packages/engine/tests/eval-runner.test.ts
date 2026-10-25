@@ -2112,3 +2112,34 @@ test("AC-23 (findings 149, 62): rounds-bounded's fixture leaves round 1 recorded
     '{ "unattendedDecisions": "count" }',
   );
 });
+
+test("2026-10-25-005 AC-2: the kit's environment admits the provider's names and the credentials it needs, drops the other secrets, and the kit's model is an option", () => {
+  const kept = {
+    PATH: "/bin",
+    HOME: "/h",
+    ANTHROPIC_BASE_URL: "https://openrouter.ai/api",
+    ANTHROPIC_AUTH_TOKEN: "t",
+    ANTHROPIC_API_KEY: "",
+    ANTHROPIC_DEFAULT_SONNET_MODEL: "anthropic/claude-sonnet-5.5",
+    CLAUDE_CODE_SUBAGENT_MODEL: "anthropic/claude-sonnet-5.5",
+    CLAUDE_CODE_OAUTH_TOKEN: "o",
+  };
+  const dropped = {
+    CLAUDE_CODE_MESSAGING_TOKEN: "m",
+    GITHUB_TOKEN: "g",
+    GH_TOKEN: "g",
+    OPENROUTER_API_KEY: "k",
+  };
+  expect(kitEnvironment({ ...kept, ...dropped })).toEqual(kept);
+  const withModel = evalInvocation({ ...base, model: "anthropic/claude-sonnet-5.5" }).args;
+  expect(withModel.slice(withModel.indexOf("--model"), withModel.indexOf("--model") + 2)).toEqual([
+    "--model",
+    "anthropic/claude-sonnet-5.5",
+  ]);
+  expect(withModel.filter((a) => a === "--model")).toHaveLength(1);
+  const plain = evalInvocation(base).args;
+  expect(plain.slice(plain.indexOf("--model"), plain.indexOf("--model") + 2)).toEqual([
+    "--model",
+    "claude-sonnet-5-5",
+  ]);
+});

@@ -19,6 +19,8 @@ export interface EvalOptions {
   maxCostUsd?: number;
   /** The judge of the llm graders (`--judge-model`, the user's decision of 2026-10-23): the suite's own when not given. */
   judgeModel?: string;
+  /** The model the agent under test runs on (`--model`): a provider's own id, `DEFAULT_AGENT_MODEL` when not given (2026-10-25-005). */
+  model?: string;
   /** A one-case run's runs (the improvement loop's three, ADR 0013); one when not given. */
   runs?: number;
   /** A one-case run's full result file (`--json`, the per-run scores and graders the loop reads). */
@@ -26,7 +28,7 @@ export interface EvalOptions {
 }
 
 /** The suite's judge: never a weaker model than the agent under test (the owner's rule). */
-const JUDGE_MODEL = "claude-fable-5-1";
+export const JUDGE_MODEL = "claude-fable-5-1";
 
 /**
  * The tools the kit's session may use without asking (findings 64 and 95): Bash whole, since the
@@ -38,15 +40,21 @@ export const ALLOW_TOOLS = ["Write", "Edit", "Bash"];
 
 /** The environment names the kit's session receives; every other name is dropped (finding 64, the security lead's R-2). */
 const KIT_ENVIRONMENT = [
-  /^(?:PATH|HOME|TMPDIR|LANG|TERM|SHELL|USER|LOGNAME|ANTHROPIC_API_KEY)$/,
+  /^(?:PATH|HOME|TMPDIR|LANG|TERM|SHELL|USER|LOGNAME)$/,
   /^LC_[A-Z_]+$/,
+  // The provider's names (2026-10-25-005): the endpoint, the aliases' models and the credentials.
+  /^ANTHROPIC_[A-Z0-9_]+$/,
   /^CLAUDE_[A-Z0-9_]+$/,
   /^WIZARDINGCODE_[A-Z0-9_]+$/,
 ];
 /** A name of the allowlist that still names a secret (`CLAUDE_CODE_MESSAGING_TOKEN`): dropped too, unless `NEEDED_SECRETS` holds it. */
 const SECRET_NAME = /TOKEN|SECRET|PASSWORD|CREDENTIAL|_KEY$/;
-/** The one secret the kit's session needs to run at all. */
-const NEEDED_SECRETS = new Set(["ANTHROPIC_API_KEY"]);
+/** The credentials the kit's session needs to reach its model provider: the key, a gateway's bearer token or the login's token (2026-10-25-005). */
+const NEEDED_SECRETS = new Set([
+  "ANTHROPIC_API_KEY",
+  "ANTHROPIC_AUTH_TOKEN",
+  "CLAUDE_CODE_OAUTH_TOKEN",
+]);
 
 /** The environment of the kit's session: the allowlist's names from `source`, and nothing else. */
 export function kitEnvironment(source: Record<string, string | undefined>): Record<string, string> {
@@ -91,16 +99,9 @@ export const SANDBOX_TAGS = [
   // Claude Code's and never the runner's).
   "packs",
 ];
-const COMMON = [
-  "plugin",
-  "eval",
-  "plugins/core",
-  "--scaffold",
-  "--trust-plugin",
-  "--no-publish",
-  "--model",
-  "claude-sonnet-5-5",
-];
+const COMMON = ["plugin", "eval", "plugins/core", "--scaffold", "--trust-plugin", "--no-publish"];
+/** The model the agent under test runs on when a run names none (2026-10-25-005: a provider names its own). */
+export const DEFAULT_AGENT_MODEL = "claude-sonnet-5-5";
 
 export function evalInvocation(options: EvalOptions): {
   path: string;
@@ -123,6 +124,8 @@ export function evalInvocation(options: EvalOptions): {
   const args = options.caseName
     ? [
         ...COMMON,
+        "--model",
+        options.model ?? DEFAULT_AGENT_MODEL,
         ...output,
         "--case",
         options.caseName,
@@ -143,6 +146,8 @@ export function evalInvocation(options: EvalOptions): {
       ]
     : [
         ...COMMON,
+        "--model",
+        options.model ?? DEFAULT_AGENT_MODEL,
         ...output,
         "--tag",
         ...(options.tags ?? SANDBOX_TAGS),

@@ -100,6 +100,8 @@ export interface ImproveRecord {
   composition: CompositionRecord | null;
   kept: Kept | null;
   branch: string | null;
+  /** The provider the run measured on, or null for the kit's own (2026-10-25-005): a verdict holds for the models it was measured on. */
+  provider: Omit<RunProvider, "env"> | null;
   costUsd: number;
   /** The knowledge entries the run's lessons entered as. */
   lessons: string[];
@@ -355,6 +357,7 @@ export function recordMarkdown(record: ImproveRecord): string {
     "",
     `- At: ${record.at}`,
     `- Targets: ${record.targets.join(", ")}`,
+    `- Provider: ${record.provider ? `${record.provider.name} (agent ${record.provider.agentModel}, judge ${record.provider.judgeModel}${record.provider.claudeModels ? "" : "; not Claude models, never released"})` : "the kit's own"}`,
     "",
     "## Baseline",
     "",
@@ -433,6 +436,18 @@ export interface KitCall {
   runs: number;
   maxCostUsd?: number;
   judgeModel?: string;
+  /** The provider's model for the agent under test and its environment (2026-10-25-005); absent, the kit's own. */
+  model?: string;
+  env?: Record<string, string>;
+}
+
+/** A run's model provider as the loop resolved it (2026-10-25-005 AC-3): its environment on top of the session's, the two models the kit names, whether they are Claude's (D-9). */
+export interface RunProvider {
+  name: string;
+  env: Record<string, string>;
+  agentModel: string;
+  judgeModel: string;
+  claudeModels: boolean;
 }
 
 export interface EditorCall {
@@ -468,6 +483,7 @@ export interface ImproveOptions {
   proposals: number;
   maxCostUsd?: number;
   judgeModel?: string;
+  provider?: RunProvider;
 }
 
 export interface DiffEntry {
@@ -545,7 +561,8 @@ const hashOf = (path: string): string => {
  */
 export async function runImprove(options: ImproveOptions, deps: ImproveDeps): Promise<number> {
   const { root, log } = deps;
-  const env = kitEnvironment(deps.env);
+  // The provider's environment on top of the session's, through the same allowlist (AC-3).
+  const env = kitEnvironment({ ...deps.env, ...options.provider?.env });
   const hooks = mkdtempSync(join(tmpdir(), "improve-hooks-"));
   const git = (args: string[], cwd: string, input?: string): GitResult =>
     deps.git(
@@ -632,6 +649,14 @@ function startRun(
     composition: null,
     kept: null,
     branch: null,
+    provider: options.provider
+      ? {
+          name: options.provider.name,
+          agentModel: options.provider.agentModel,
+          judgeModel: options.provider.judgeModel,
+          claudeModels: options.provider.claudeModels,
+        }
+      : null,
     costUsd: 0,
     lessons: [],
     exit: 0,
@@ -654,9 +679,17 @@ function addTree(r: Run, label: string): string {
 
 /** One case through the kit in a tree, three runs, its figures; the ceiling stops the run with 2, any other failure with 3. */
 function measure(r: Run, tree: string, name: string): CaseFigures {
-  const { maxCostUsd, judgeModel } = r.options;
+  const { maxCostUsd, judgeModel, provider } = r.options;
   const left = maxCostUsd === undefined ? undefined : Math.max(0, maxCostUsd - r.record.costUsd);
-  const out = r.deps.kit({ tree, caseName: name, runs: RUNS, maxCostUsd: left, judgeModel });
+  const out = r.deps.kit({
+    tree,
+    caseName: name,
+    runs: RUNS,
+    maxCostUsd: left,
+    judgeModel: judgeModel ?? provider?.judgeModel,
+    model: provider?.agentModel,
+    env: provider?.env,
+  });
   const cost = (out.result as { costUsd?: unknown } | null)?.costUsd;
   if (typeof cost === "number") r.record.costUsd += cost;
   if (out.status === 2) throw new Stop(2);
@@ -913,8 +946,9 @@ export function knownReads(
 }
 
 /** The eval cases of the repository, by folder. */
-function allCases(root: string): string[] {
+export function allCases(root: string): string[] {
   const dir = join(root, "plugins/core/evals");
+  if (!existsSync(dir)) return [];
   return readdirSync(dir, { withFileTypes: true })
     .filter((d) => d.isDirectory() && existsSync(join(dir, d.name, "case.yaml")))
     .map((d) => d.name)
@@ -944,11 +978,21 @@ function runEditor(r: Run, cwd: string, prompt: string): string {
       "",
       "--model",
       model,
+      // With a provider the answer comes as JSON, so the editor's spend joins the record (AC-3).
       "--output-format",
-      "text",
+      r.options.provider ? "json" : "text",
     ];
     const out = r.deps.editor({ cwd, args, env: r.env });
-    if (out.status === 0) return out.output.trim();
+    if (out.status === 0) {
+      if (!r.options.provider) return out.output.trim();
+      const answer = editorAnswer(out.output);
+      if (answer === null) {
+        log(`the editor's answer on ${model} is not the JSON it was asked for`);
+        throw new Stop(3);
+      }
+      r.record.costUsd += answer.cost;
+      return answer.result.trim();
+    }
     if (!LIMITED.test(out.output)) {
       log(`the editor failed on ${model}: ${out.output.trim().slice(0, 200)}`);
       throw new Stop(3);
@@ -957,6 +1001,20 @@ function runEditor(r: Run, cwd: string, prompt: string): string {
   }
   log("every model of the ladder is at its limit");
   throw new Stop(3);
+}
+
+/** The editor's JSON answer (`--output-format json`): its text and its spend, or null when it is not that. */
+function editorAnswer(output: string): { result: string; cost: number } | null {
+  try {
+    const parsed = JSON.parse(output) as { result?: unknown; total_cost_usd?: unknown };
+    if (typeof parsed !== "object" || parsed === null) return null;
+    return {
+      result: typeof parsed.result === "string" ? parsed.result : "",
+      cost: typeof parsed.total_cost_usd === "number" ? parsed.total_cost_usd : 0,
+    };
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -1012,8 +1070,8 @@ export function lessonAdder(
   };
 }
 
-/** The deps of a real run: the kit and claude spawned, git, the crew command, the base and the last CTO plan. */
-function realDeps(root: string): ImproveDeps {
+/** The deps of a real run in a checkout: the kit and the editor through `claude`, git, the crew command, the base and the last CTO plan; exported for the loop (2026-10-25-005). */
+export function realDeps(root: string): ImproveDeps {
   const userDir = userDirOf(process.env);
   return {
     root,
@@ -1039,11 +1097,12 @@ function realDeps(root: string): ImproveDeps {
         outputDir: rel,
         maxCostUsd: call.maxCostUsd,
         judgeModel: call.judgeModel,
+        model: call.model,
       });
       const r = spawnSync("claude", args, {
         cwd: call.tree,
         stdio: "inherit",
-        env: kitEnvironment({ ...process.env, ...env, PATH: path }),
+        env: kitEnvironment({ ...process.env, ...env, ...call.env, PATH: path }),
       });
       return { status: r.status, result: readJson<unknown>(join(folder, "result.json")) };
     },

@@ -1,6 +1,6 @@
 # 0013. The harness-improvement loop: proposals probed against the eval suite, adopted by a person
 
-- Status: accepted (the user, 2026-10-24)
+- Status: accepted (the user, 2026-10-24); points 2 and 4 superseded by [ADR 0015](0015-the-loop-runs-always-and-releases-what-it-proves.md) on 2026-10-25 (the loop runs always and releases what it proves)
 - Date: 2026-10-24
 
 ## Context

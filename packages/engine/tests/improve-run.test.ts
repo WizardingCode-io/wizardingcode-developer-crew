@@ -589,3 +589,59 @@ test("2026-10-24-012 AC-33: the editor runs with an empty list of setting source
   expect(args.indexOf("--setting-sources")).toBeGreaterThan(-1);
   expect(args[args.indexOf("--setting-sources") + 1]).toBe("");
 });
+
+test("2026-10-25-005 AC-3: a run with a provider gives the kit and the editor the provider's environment and models, counts the editor's cost and records the provider; without one the run is what it was", async () => {
+  const { root, tmp } = fixture();
+  const provider = {
+    name: "openrouter",
+    env: {
+      ANTHROPIC_BASE_URL: "https://openrouter.ai/api",
+      ANTHROPIC_AUTH_TOKEN: "sk-or-SECRET",
+      ANTHROPIC_API_KEY: "",
+    },
+    agentModel: "anthropic/claude-sonnet-5.5",
+    judgeModel: "anthropic/claude-fable-5.1",
+    claudeModels: true,
+  };
+  const withProvider = deps(root, tmp, {
+    output: () => JSON.stringify({ result: "P-1: name the gate first", total_cost_usd: 0.25 }),
+  });
+  expect(
+    await runImprove(
+      { cases: ["t"], proposals: 1, judgeModel: provider.judgeModel, provider },
+      withProvider.deps,
+    ),
+  ).toBe(0);
+  expect(withProvider.seen.kit.length).toBeGreaterThan(0);
+  for (const call of withProvider.seen.kit)
+    expect(call).toMatchObject({
+      model: "anthropic/claude-sonnet-5.5",
+      judgeModel: "anthropic/claude-fable-5.1",
+      env: provider.env,
+    });
+  const editor = withProvider.seen.editor[0] as EditorCall;
+  expect(editor.env).toMatchObject(provider.env);
+  const format = editor.args.indexOf("--output-format");
+  expect(editor.args.slice(format, format + 2)).toEqual(["--output-format", "json"]);
+  const record = recordOf(root);
+  expect(record.provider).toEqual({
+    name: "openrouter",
+    agentModel: "anthropic/claude-sonnet-5.5",
+    judgeModel: "anthropic/claude-fable-5.1",
+    claudeModels: true,
+  });
+  expect(record.costUsd).toBeCloseTo(withProvider.seen.kit.length * 0.6 + 0.25, 5);
+  expect(record.proposals[0].rationale).toBe("P-1: name the gate first");
+  // A fresh repository for the run without a provider: the first run's kept branch stays in the other.
+  const second = fixture();
+  const plain = deps(second.root, second.tmp);
+  expect(await runImprove({ cases: ["t"], proposals: 1 }, plain.deps)).toBe(0);
+  expect(plain.seen.kit[0]?.model).toBeUndefined();
+  expect(plain.seen.kit[0]?.env).toBeUndefined();
+  const plainEditor = plain.seen.editor[0] as EditorCall;
+  const plainFormat = plainEditor.args.indexOf("--output-format");
+  expect(plainEditor.args.slice(plainFormat, plainFormat + 2)).toEqual(["--output-format", "text"]);
+  expect(plainEditor.env.ANTHROPIC_BASE_URL).toBeUndefined();
+  expect(recordOf(second.root).provider).toBeNull();
+  expect(recordOf(second.root).costUsd).toBeCloseTo(plain.seen.kit.length * 0.6, 5);
+});

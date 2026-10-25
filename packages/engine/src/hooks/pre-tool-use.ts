@@ -60,9 +60,12 @@ const AUDIT_OWNED = String.raw`audit(?=\/|${PATH_END}|$)(?!\/${AUDIT_OPEN_FILES}
 // The work files only the engine writes come from the one list the Write rule reads (SP6 Task 1
 // AC-9, finding 106: a shell redirect to `knowledge.md` passed while a Write to it was denied).
 const WORK_FILES = PROTECTED_WORK_FILES.map(escapeRegExp).join("|");
+// The user's crew folder in a command's text, ended by a separator or a word end: `\b` would also
+// end it before the `-` of a sibling folder such as `crew-improve` (2026-10-25-005 AC-13).
+const USER_CREW = String.raw`\.wizardingcode\/crew(?=\/|${PATH_END}|$)`;
 const ENGINE_FILES = new RegExp(
   // The run markers, `running/<pid>.json` and the old `running.json`, never a lead's `running-notes.md` (finding 146).
-  String.raw`\.crew\/(?:profile\.json|policy\.json|decisions\.json|\.gitignore|local\b|work\/[^\s/]+\/(?:${WORK_FILES}|logs\b|running(?:\.json|\/|(?=${PATH_END})|$)|${REVIEW_OWNED}|${AUDIT_OWNED}))|\.wizardingcode\/crew\b`,
+  String.raw`\.crew\/(?:profile\.json|policy\.json|decisions\.json|\.gitignore|local\b|work\/[^\s/]+\/(?:${WORK_FILES}|logs\b|running(?:\.json|\/|(?=${PATH_END})|$)|${REVIEW_OWNED}|${AUDIT_OWNED}))|${USER_CREW}`,
   "i",
 );
 // The engine's folder itself, its work folder or an item's folder, as a whole path or by its
@@ -82,8 +85,10 @@ const HOOK_VERB_REASON =
   "Crew: crew hook runs from the runtime's hook configuration alone, never from a command";
 // A verb may follow a quote (`bash -c "rm ..."`). A redirect is a write only when its target is an
 // engine file (the `2>` of `2>/dev/null` after a read is not).
-const WRITE_SHAPE =
-  /(?:^|[\s;&|("'])(?:rm|mv|cp|tee|truncate|chmod|touch|dd|install)\b|sed\s+-i|>{1,2}\|?\s*["']?\S*(?:\.crew\/|\.wizardingcode\/crew\b)/i;
+const WRITE_SHAPE = new RegExp(
+  String.raw`(?:^|[\s;&|("'])(?:rm|mv|cp|tee|truncate|chmod|touch|dd|install)\b|sed\s+-i|>{1,2}\|?\s*["']?\S*(?:\.crew\/|${USER_CREW})`,
+  "i",
+);
 // A redirect whose target cannot be read from the text (`$F`, `$(...)`, a backtick) may reach an
 // engine file through a variable set in another simple command: a deny rule fails closed on it
 // whenever the whole command names one.
@@ -1151,6 +1156,10 @@ const ENGINE_FOLDER_FORMS: readonly (readonly string[])[] = [
   [".crew"],
   [".crew", "work"],
   [".crew", "work", "*"],
+  // The user's home of every WizardingCode tool and the crew's folder in it: removed or moved, the
+  // engine's records go with them (2026-10-25-005 AC-13); a sibling folder is not the engine's.
+  [".wizardingcode"],
+  [".wizardingcode", "crew"],
 ];
 /**
  * Whether a path word names the engine's folder, its work folder or an item's folder (triage 2j):
@@ -1810,12 +1819,14 @@ function findRemovesEngine(words: string[]): boolean {
 /** Whether a simple command removes or moves the engine's folder, copies or extracts into it or onto one of its files, or finds and removes in it (triage 2j, 2k). */
 function writesEngine(found: Found): boolean {
   if (found.program.toLowerCase() === "find" && findRemovesEngine(pathWords(found))) return true;
+  // Each word normalised before it is read (AC-13): a segment that climbs back into the engine's
+  // folder (`crew-improve/../crew/profile.json`) names the file the text rule does not see.
   return writtenPaths(found).some(({ word, kind }) =>
     kind === "remove"
-      ? namesEngineFolder(word)
+      ? namesEngineFolder(word) || namesEngineTarget(word)
       : kind === "value"
         ? namesInsideEngine(word)
-        : kind === "copy" && namesEngineTarget(word),
+        : (kind === "copy" || kind === "write") && namesEngineTarget(word),
   );
 }
 /** A plain cp, rsync or install with no redirect whose destination is not the engine's: an engine file among its sources is read, not written (the source of a copy out of `.crew` stays a read). */
@@ -2056,7 +2067,16 @@ export function onPreToolUse(ctx: HookContext, payload: HookPayload): HookRespon
           .map((t) => t.word)
           .flatMap((w) => (ASSIGNMENT.test(w) ? [w, w.slice(w.indexOf("=") + 1)] : [w]));
         for (const w of named) {
-          if (w.includes(ctx.paths.userDir) || /(?:^|\/)\.wizardingcode(?:\/|$)/.test(w))
+          // The engine's folder as the paths give it, ended by a separator or the word's end (a
+          // sibling such as `<home>/crew-improve` is another tool's, AC-13), and the WizardingCode
+          // home by its name, whole: an opened session stays in its checkout and reaches none of it.
+          const path = normalizePathWord(w);
+          const at = path.indexOf(ctx.paths.userDir);
+          const namesUserDir =
+            at >= 0 &&
+            (path.length === at + ctx.paths.userDir.length ||
+              path[at + ctx.paths.userDir.length] === "/");
+          if (namesUserDir || /(?:^|\/)\.wizardingcode(?:\/|$)/.test(path))
             return answer("deny", `${stays}: the engine's folder ${w} is denied`);
           if (unreadablePath(w))
             return answer(

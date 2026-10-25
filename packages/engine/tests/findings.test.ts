@@ -27,9 +27,8 @@ function openFindings(text: string): number[] {
 // What this release leaves open, each with its reason: git inside the eval kit's sandbox on macOS,
 // which waits for the upstream fix (77, measured by docs/evals/2026-10-24-sandbox-probe.md), and the
 // PowerShell layer, which waits for Windows users' issues (114, the user's decision of 2026-10-24).
-// After 0.15.0: the release check's caller, in the background improvement loop's item (163), and the
-// user's rule that a red is traced, never skipped, taken by 2026-10-25-004 (164).
-const OPEN = [77, 114, 163, 164];
+// After 0.15.0: 163 and 164 closed by 2026-10-25-005 and 2026-10-25-004.
+const OPEN = [77, 114];
 
 test("AC-9 (consolidation of 2026-10-24): the findings that read open are the named ones, and the thirteen closed by the consolidation read closed", () => {
   const open = openFindings(readFileSync(FINDINGS, "utf8"));

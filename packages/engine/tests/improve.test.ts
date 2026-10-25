@@ -232,6 +232,7 @@ function sampleRecord(): ImproveRecord {
     run: "2026-10-24-1",
     at: "2026-10-24T22:00:00.000Z",
     targets: ["false-done"],
+    provider: null,
     baseline: { "false-done": figures("false-done", [0.5, 0.5, 0.5]) },
     proposals: [
       probed("P-1", "win", [1, 1, 1]),

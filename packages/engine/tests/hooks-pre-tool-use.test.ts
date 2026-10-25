@@ -4805,3 +4805,67 @@ test("AC-13 (finding 146): the run markers under an item's running/ folder are t
     decision(call("Bash", { command: "echo note > .crew/work/w1/running-notes.md" })),
   ).not.toBe("deny");
 });
+
+test("2026-10-25-005 AC-13: the engine's home is matched at a word end: a sibling under .wizardingcode passes, the engine's own paths and the forms around them stay denied, in Bash, Write and Edit, under the tests' own home", () => {
+  const { root, ctx } = setup();
+  const bash = (command: string) =>
+    onPreToolUse(ctx, { tool_name: "Bash", tool_input: { command } });
+  const write = (file_path: string) =>
+    onPreToolUse(ctx, { tool_name: "Write", tool_input: { file_path } });
+  const edit = (file_path: string) =>
+    onPreToolUse(ctx, { tool_name: "Edit", tool_input: { file_path } });
+  // Bash reads the engine's home in the text: the sibling and another product pass.
+  expect(bash("echo x > ~/.wizardingcode/crew-improve/config.json")).toEqual({});
+  expect(bash("rm -rf ~/.wizardingcode/crew-improve")).toEqual({});
+  expect(bash("install -m 600 x ~/.wizardingcode/other-product/x")).toEqual({});
+  expect(
+    bash(
+      "crew criteria w1 add 'the loop reads ~/.wizardingcode/crew-improve/probe.json after install'",
+    ),
+  ).toEqual({});
+  // The engine's own folder and files stay denied, whatever follows the home.
+  expect(decision(bash("echo x > ~/.wizardingcode/crew/profile.json"))).toBe("deny");
+  expect(decision(bash("rm -rf ~/.wizardingcode/crew"))).toBe("deny");
+  expect(decision(bash("rm ~/.wizardingcode/crew && true"))).toBe("deny");
+  expect(decision(bash("echo x > ~/.wizardingcode/crew;"))).toBe("deny");
+  expect(decision(bash('cp a "~/.wizardingcode/crew"'))).toBe("deny");
+  expect(decision(bash("rm -rf ~/.wizardingcode"))).toBe("deny");
+  // A segment that climbs back into the home is read after normalisation.
+  expect(decision(bash("echo x > ~/.wizardingcode/crew-improve/../crew/profile.json"))).toBe(
+    "deny",
+  );
+  expect(decision(bash("rm -rf ~/.wizardingcode/crew-improve/../crew"))).toBe("deny");
+  // Write and Edit read the paths' own user dir (the tests' home is WIZARDINGCODE_HOME, never ~/.wizardingcode).
+  const home = join(ctx.paths.userDir, "..");
+  expect(write(join(home, "crew-improve", "config.json"))).toEqual({});
+  expect(edit(join(home, "crew-improve", "state.json"))).toEqual({});
+  expect(write(join(home, "other-product", "x"))).toEqual({});
+  expect(decision(write(join(ctx.paths.userDir, "config.json")))).toBe("deny");
+  expect(decision(write(ctx.paths.userDir))).toBe("deny");
+  expect(decision(edit(ctx.paths.userDir))).toBe("deny");
+  expect(decision(edit(join(home, "crew-improve", "..", "crew", "profile.json")))).toBe("deny");
+  // An opened session, which must stay in its checkout.
+  git(root, "checkout", "-q", "-b", "crew/2026-10-25-005/T-1");
+  const opened = hookContext(
+    { session_id: "s", cwd: root },
+    {
+      ...testEnv(),
+      WIZARDINGCODE_CREW_MAIL_ID: "M-2026-10-25-001-shop",
+      WIZARDINGCODE_CREW_MAIL_BRANCH: "crew/2026-10-25-005/T-1",
+      CLAUDE_CODE_SESSION_ATTENDED: "0",
+    },
+  );
+  const openedBash = (command: string) =>
+    onPreToolUse(opened, {
+      tool_name: "Bash",
+      tool_input: { command },
+      permission_mode: "dontAsk",
+    });
+  // An opened session reaches nothing under the WizardingCode home, siblings included (SP2c AC-5); the
+  // paths' user dir is matched at a separator, so a folder beside it by name is not the engine's.
+  expect(decision(openedBash("cat ~/.wizardingcode/crew-improve/state.json"))).toBe("deny");
+  expect(decision(openedBash("cat ~/.wizardingcode/crew/x"))).toBe("deny");
+  expect(decision(openedBash(`cat ${opened.paths.userDir}/x`))).toBe("deny");
+  expect(openedBash(`cat ${opened.paths.userDir}-improve/x`)).toEqual({});
+  expect(decision(openedBash(`tool --out=${opened.paths.userDir}/x`))).toBe("deny");
+});

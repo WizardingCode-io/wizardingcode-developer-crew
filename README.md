@@ -140,6 +140,8 @@ claude plugin install wizardingcode-developer-crew@wizardingcode-plugins
 
 Open a session inside a git repository and ask for a code change; the crew skill takes it from there. `crew status` shows where the work stands. The marketplace points at a released version; `claude plugin update wizardingcode-developer-crew` moves to the next one.
 
+The harness improves by itself ([ADR 0015](docs/adr/0015-the-loop-runs-always-and-releases-what-it-proves.md)): a launchd agent on the maintainer's Mac (`bun scripts/improve-loop.ts install`) runs the improvement loop every hour when there is something new or a case unmeasured for a week, has the judge validate a kept harness, and releases it as a patch when every gate passes, so each release carries the best proven harness; the records are under [`docs/improve/`](docs/improve/README.md).
+
 ## Develop
 
 ```bash
