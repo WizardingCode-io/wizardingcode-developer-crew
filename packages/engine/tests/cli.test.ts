@@ -4,6 +4,7 @@ import {
   chmodSync,
   existsSync,
   mkdirSync,
+  mkdtempSync,
   readdirSync,
   readFileSync,
   rmdirSync,
@@ -14,7 +15,8 @@ import {
   utimesSync,
   writeFileSync,
 } from "node:fs";
-import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
+import { tmpdir } from "node:os";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type CliIo, main } from "../src/cli.ts";
 import { listDecisions } from "../src/decisions.ts";
@@ -7549,6 +7551,7 @@ test("SP4-T5 AC-3: crew cto review writes the inputs of the project's own worksp
   const review = await ca.run("cto", "review", "--workspace", "w");
   expect(review.code, review.err).toBe(0);
   const lines = review.out.trim().split("\n");
+  const inputsPath = (lines[0] as string).replace("inputs: ", "");
   expect(lines[0]).toMatch(/^inputs: .*\/crew\/cto\/w\/\d{4}-\d{2}-\d{2}-inputs\.json$/);
   // The figures the inputs carry, printed between the path and the last plan (the CTO case's fourth run).
   expect(lines[1]).toBe("metrics of 2 projects");
@@ -7557,9 +7560,8 @@ test("SP4-T5 AC-3: crew cto review writes the inputs of the project's own worksp
   );
   expect(lines.at(-2)).toBe("last plan: none");
   expect(lines.at(-1)).toBe(
-    'launch wizardingcode-developer-crew:cto with the inputs path and the reports of the items it counts; file the plan with crew cto record --workspace w --file <plan.md>. The review item\'s criterion has no test: open it with crew start "<request>" --answers \'<json>\' --observed "<the plan filed>", record it once the plan is filed with crew tdd observed <id> AC-1 --reason "a plan, not code" -- "<a command that reads the filed plan>", then crew gate run <id>',
+    `launch wizardingcode-developer-crew:cto with the inputs path and the reports of the items it counts; file the plan with crew cto record --workspace w --file <plan.md> --inputs ${inputsPath}. The review item's criterion has no test: open it with crew start "<request>" --answers '<json>' --observed "<the plan filed>", record it once the plan is filed with crew tdd observed <id> AC-1 --reason "a plan, not code" -- "<a command that reads the filed plan>", then crew gate run <id>`,
   );
-  const inputsPath = (lines[0] as string).replace("inputs: ", "");
   type Inputs = {
     at: string;
     workspace: string;
@@ -11096,4 +11098,99 @@ test("2026-10-24-012 AC-32: a harness lesson's cue and lesson drop Unicode forma
   expect((added.data.entry as { title: string }).title).toBe("abcd");
   const blank = await cc.run("knowledge", "lesson", "add", ...lessonWith("--lesson", "​‪"));
   expect(blank.err.trim()).toBe("a harness lesson needs a lesson");
+});
+
+test("2026-10-24-013 AC-1: a second crew cto review the same day writes <date>-inputs-2.json beside the first, which keeps its content; the first line names it and the launch line names --inputs", async () => {
+  const { ca } = await ctoWorkspace();
+  const first = await ca.run("cto", "review", "--workspace", "w");
+  const firstPath = (first.out.split("\n")[0] as string).replace("inputs: ", "");
+  expect(firstPath).toMatch(/\/crew\/cto\/w\/\d{4}-\d{2}-\d{2}-inputs\.json$/);
+  const before = readFileSync(firstPath, "utf8");
+  const second = await ca.run("cto", "review", "--workspace", "w");
+  const lines = second.out.trim().split("\n");
+  const secondPath = (lines[0] as string).replace("inputs: ", "");
+  expect(secondPath).toBe(firstPath.replace(/-inputs\.json$/, "-inputs-2.json"));
+  expect(readFileSync(firstPath, "utf8")).toBe(before);
+  expect(existsSync(secondPath)).toBe(true);
+  expect(lines.at(-1)).toContain(
+    `file the plan with crew cto record --workspace w --file <plan.md> --inputs ${secondPath}`,
+  );
+});
+
+test("2026-10-24-013 AC-7: crew cto record --inputs files an exact copy beside the plan; without it the plan has no copy even with newer inputs; a bad --inputs is refused with nothing filed", async () => {
+  const { ca, a, paths } = await ctoWorkspace();
+  const cto = join(paths.userDir, "cto", "w");
+  const review = async () =>
+    ((await ca.run("cto", "review", "--workspace", "w")).out.split("\n")[0] as string).replace(
+      "inputs: ",
+      "",
+    );
+  const inputs = await review();
+  write(a, "cto-plan.md", "# CTO plan for w\n## Keep\n- the fast route\n");
+  const filed = await ca.run(
+    "cto",
+    "record",
+    "--workspace",
+    "w",
+    "--file",
+    "cto-plan.md",
+    "--inputs",
+    inputs,
+  );
+  expect(filed.code, filed.err).toBe(0);
+  const plan = (filed.out.split("\n")[0] as string).replace("CTO plan of w filed: ", "");
+  const copy = plan.replace(/\.md$/, ".inputs.json");
+  expect(filed.out.split("\n")).toContain(`inputs: ${copy}`);
+  expect(readFileSync(copy, "utf8")).toBe(readFileSync(inputs, "utf8"));
+  // Without --inputs, a newer inputs file is never taken.
+  await review();
+  const bare = await ca.run("cto", "record", "--workspace", "w", "--file", "cto-plan.md");
+  expect(bare.code, bare.err).toBe(0);
+  const barePlan = (bare.out.split("\n")[0] as string).replace("CTO plan of w filed: ", "");
+  expect(bare.out.split("\n")).toContain("inputs: none");
+  expect(existsSync(barePlan.replace(/\.md$/, ".inputs.json"))).toBe(false);
+  // Each bad --inputs: refused, and no plan, copy or entry is written.
+  const elsewhere = mkdtempSync(join(tmpdir(), "elsewhere-"));
+  writeFileSync(join(elsewhere, "2026-10-24-inputs.json"), "{}");
+  symlinkSync(join(elsewhere, "2026-10-24-inputs.json"), join(cto, "2026-10-20-inputs.json"));
+  writeFileSync(join(cto, "x-2026-10-24-inputs.json.bak"), "{}");
+  const notInputs = (p: string) =>
+    `${p} is not an inputs file of workspace w (crew cto review writes <date>-inputs[-<n>].json in its CTO folder); nothing was filed`;
+  const cases: [string, string][] = [
+    [
+      join(cto, "2026-01-01-inputs.json"),
+      `no inputs file at ${join(cto, "2026-01-01-inputs.json")}; nothing was filed`,
+    ],
+    ["../x-inputs.json", `no inputs file at ${resolve(a, "../x-inputs.json")}; nothing was filed`],
+    [
+      join(elsewhere, "2026-10-24-inputs.json"),
+      notInputs(join(elsewhere, "2026-10-24-inputs.json")),
+    ],
+    [join(cto, "2026-10-20-inputs.json"), notInputs(join(cto, "2026-10-20-inputs.json"))],
+    [
+      join(cto, "x-2026-10-24-inputs.json.bak"),
+      notInputs(join(cto, "x-2026-10-24-inputs.json.bak")),
+    ],
+    [copy, notInputs(copy)],
+  ];
+  const listing = () => readdirSync(cto).sort();
+  const entries = () => readBase(paths.userDir).base?.entries.length;
+  for (const [given, reason] of cases) {
+    const filesBefore = listing();
+    const entriesBefore = entries();
+    const refused = await ca.run(
+      "cto",
+      "record",
+      "--workspace",
+      "w",
+      "--file",
+      "cto-plan.md",
+      "--inputs",
+      given,
+    );
+    expect(refused.code, given).toBe(1);
+    expect(refused.err.trim(), given).toBe(reason);
+    expect(listing(), given).toEqual(filesBefore);
+    expect(entries(), given).toBe(entriesBefore);
+  }
 });

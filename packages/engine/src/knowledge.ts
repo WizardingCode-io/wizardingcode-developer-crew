@@ -443,6 +443,25 @@ export function knownRootCauses(
 
 /** `<date>-plan.md`, then `<date>-plan-2.md`, `-3`… for the same day's later plans (finding 53). */
 const PLAN_FILE = /^(\d{4}-\d{2}-\d{2})-plan(?:-(\d+))?\.md$/;
+/** The name `crew cto review` gives its inputs: `<date>-inputs.json`, then `-2`, `-3` the same day. */
+const INPUTS_FILE = /^\d{4}-\d{2}-\d{2}-inputs(?:-\d+)?\.json$/;
+
+/**
+ * The real path of an inputs file `crew cto review` wrote in a workspace's CTO folder, or null
+ * (finding 160): the file's real path directly in the folder's real path, named as the review names
+ * it; a `..`, a path elsewhere, a symlink out or another name (a plan's `.inputs.json` copy) is not.
+ */
+export function ctoInputsFile(dir: string, file: string): string | null {
+  try {
+    const real = realpathSync(file);
+    const folder = realpathSync(dir);
+    return relative(folder, real) === basename(real) && INPUTS_FILE.test(basename(real))
+      ? real
+      : null;
+  } catch {
+    return null;
+  }
+}
 
 /** The newest `<date>-plan.md` the CTO filed for a workspace (`crew cto record`), or null without one. */
 export function latestPlan(

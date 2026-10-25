@@ -15199,6 +15199,16 @@ function knownRootCauses(base, scope, paths) {
   }));
 }
 var PLAN_FILE = /^(\d{4}-\d{2}-\d{2})-plan(?:-(\d+))?\.md$/;
+var INPUTS_FILE = /^\d{4}-\d{2}-\d{2}-inputs(?:-\d+)?\.json$/;
+function ctoInputsFile(dir, file) {
+  try {
+    const real = realpathSync7(file);
+    const folder = realpathSync7(dir);
+    return relative11(folder, real) === basename7(real) && INPUTS_FILE.test(basename7(real)) ? real : null;
+  } catch {
+    return null;
+  }
+}
 function latestPlan(userDir, workspace) {
   const dir = ctoDir(userDir, workspace);
   let names;
@@ -19965,7 +19975,10 @@ ${drafted.lesson}`, "lesson")[0];
           return refuse(`no project of workspace ${ws} is registered (crew detect in each project)`);
         const { metrics, figures: knowledge } = computed;
         const lastPlan = latestPlan(env.paths.userDir, ws);
-        const target2 = join50(dir, `${date}-inputs.json`);
+        ensureDir(dir);
+        let target2 = join50(dir, `${date}-inputs.json`);
+        for (let n = 2;existsSync24(target2); n++)
+          target2 = join50(dir, `${date}-inputs-${n}.json`);
         writeJson(target2, {
           at: nowIso(),
           workspace: ws,
@@ -19979,7 +19992,7 @@ ${drafted.lesson}`, "lesson")[0];
           ...metricsText(metrics).split(`
 `),
           `last plan: ${lastPlan?.path ?? "none"}`,
-          `launch wizardingcode-developer-crew:cto with the inputs path and the reports of the items it counts; file the plan with crew cto record --workspace ${ws} --file <plan.md>. The review item's criterion has no test: open it with crew start "<request>" --answers '<json>' --observed "<the plan filed>", record it once the plan is filed with crew tdd observed <id> AC-1 --reason "a plan, not code" -- "<a command that reads the filed plan>", then crew gate run <id>`
+          `launch wizardingcode-developer-crew:cto with the inputs path and the reports of the items it counts; file the plan with crew cto record --workspace ${ws} --file <plan.md> --inputs ${target2}. The review item's criterion has no test: open it with crew start "<request>" --answers '<json>' --observed "<the plan filed>", record it once the plan is filed with crew tdd observed <id> AC-1 --reason "a plan, not code" -- "<a command that reads the filed plan>", then crew gate run <id>`
         ].join(`
 `), { path: target2, lastPlan, knowledge });
       }
@@ -19997,11 +20010,24 @@ ${drafted.lesson}`, "lesson")[0];
       const read2 = readBase(env.paths.userDir);
       if (read2.base === null && read2.reason !== "missing")
         return refuse(`the knowledge base cannot be read: ${read2.reason}; nothing was filed`);
+      const inputsFlag = parsed.flags.inputs;
+      let inputs = null;
+      if (typeof inputsFlag === "string") {
+        const given = resolve8(env.paths.root, inputsFlag);
+        if (!existsSync24(given))
+          return refuse(`no inputs file at ${given}; nothing was filed`);
+        inputs = ctoInputsFile(dir, given);
+        if (inputs === null)
+          return refuse(`${given} is not an inputs file of workspace ${ws} (crew cto review writes <date>-inputs[-<n>].json in its CTO folder); nothing was filed`);
+      }
       ensureDir(dir);
       let target = join50(dir, `${date}-plan.md`);
       for (let n = 2;existsSync24(target); n++)
         target = join50(dir, `${date}-plan-${n}.md`);
       writeText(target, text);
+      const copy = target.replace(/\.md$/, ".inputs.json");
+      if (inputs !== null)
+        writeText(copy, readText(inputs) ?? "");
       const added = addEntry(env.paths.userDir, {
         kind: "general",
         title,
@@ -20020,7 +20046,8 @@ ${drafted.lesson}`, "lesson")[0];
       if ("refused" in added)
         return refuse(added.refused);
       return ok(`CTO plan of ${ws} filed: ${target}
-entry ${added.id}: general, marked for ${ws}`, { path: target, entry: added });
+entry ${added.id}: general, marked for ${ws}
+inputs: ${inputs === null ? "none" : copy}`, { path: target, entry: added, inputs: inputs === null ? null : copy });
     }
     case "continue": {
       const opened = openForChange(env, args[0]);
@@ -20261,7 +20288,7 @@ var HELP = `crew ${VERSION}
   decisions [--grep <text>]   the project's decision register, newest first; --grep matches the id, the text and the answer, in any case
   metrics [--workspace <ws>]  the figures of this project, or of the workspace's registered projects, from the records and the base
   cto review --workspace <ws>          write the CTO's inputs (the workspace's metrics, the last plan, the base's figures and rows) under the user's crew directory and print the launch line; open the review item first, with --observed "<the plan filed>" (references/learn.md)
-  cto record --workspace <ws> --file <plan.md>   file the CTO's plan under the user's crew directory and enter it in the knowledge base, marked for the workspace
+  cto record --workspace <ws> --file <plan.md> [--inputs <file>]   file the CTO's plan under the user's crew directory and enter it in the knowledge base, marked for the workspace; --inputs (the file crew cto review named) is filed beside it as <plan>.inputs.json, what ties the plan to what it was written from
   knowledge list [--kind <k>] | show K-n   the knowledge base as this project reads it (rule 13: unmarked entries, and marked ones of this workspace)
   knowledge add --kind general|documentation --title "<t>" --file <path> [--source <url>]   a person's material, from the project's own tree, marked
   knowledge lesson add --cue "<t>" --lesson "<t>" --evidence docs/improve/<run>/record.json --proposal P-n --confidence high|medium|low   the improvement loop's lesson about the crew, its run's record as evidence; read in this repository alone (ADR 0013)

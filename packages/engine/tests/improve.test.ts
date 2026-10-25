@@ -11,6 +11,7 @@ import {
   editorPrompt,
   type ImproveRecord,
   keptHarness,
+  lessonCommand,
   lessonsOf,
   probeSet,
   rationaleOf,
@@ -356,37 +357,71 @@ test("2026-10-24-012 AC-22: the editor's prompt holds the failing graders, the l
   expect(lines.slice(open + 1, close).some((l) => /^`{5}/.test(l))).toBe(false);
 });
 
-test("2026-10-24-012 AC-35: the last CTO plan reaches the editor only when the inputs it was written from list this repository alone", () => {
-  const root = mkdtempSync(join(tmpdir(), "improve-root-"));
-  const userDir = mkdtempSync(join(tmpdir(), "improve-user-"));
-  const cto = join(userDir, "cto/w");
-  mkdirSync(cto, { recursive: true });
-  mkdirSync(join(root, ".crew"), { recursive: true });
-  const policy = (workspace: string | null) =>
-    writeFileSync(
-      join(root, ".crew/policy.json"),
-      JSON.stringify(workspace ? { mail: { workspace } } : {}),
-    );
-  const inputs = (date: string, projects: string[]) =>
-    writeFileSync(join(cto, `${date}-inputs.json`), JSON.stringify({ metrics: { projects } }));
-  writeFileSync(join(cto, "2026-10-24-plan.md"), "Keep the gate table first.\n");
-  policy(null);
-  expect(ctoPlanFor(root, userDir)).toBeNull();
-  policy("w");
-  // No inputs of the plan's date: where it came from is unknown.
-  expect(ctoPlanFor(root, userDir)).toBeNull();
-  inputs("2026-10-23", [root]);
-  expect(ctoPlanFor(root, userDir)).toBeNull();
-  inputs("2026-10-24", [root]);
-  expect(ctoPlanFor(root, userDir)).toBe("Keep the gate table first.\n");
-  inputs("2026-10-24", [root, "/clients/shop"]);
-  expect(ctoPlanFor(root, userDir)).toBeNull();
-});
-
 test("2026-10-24-012 AC-30 (the scan): a clean answer is kept, cut at 2,000 characters; one holding a secret is withheld", () => {
   expect(rationaleOf("I named the gate first.")).toBe("I named the gate first.");
   expect(rationaleOf("x".repeat(2500))).toHaveLength(2000);
   expect(rationaleOf(`key ${["AKIA", "ABCDEFGHIJKLMNOP"].join("")}`)).toBe(
     "withheld: the editor's answer held a secret (AWS access key)",
   );
+});
+
+test("2026-10-24-013 AC-8: the last CTO plan reaches the editor only when the inputs copy beside it parses and lists this repository alone; no copy or an unparseable one gives nothing", () => {
+  const root = mkdtempSync(join(tmpdir(), "improve-root-"));
+  const userDir = mkdtempSync(join(tmpdir(), "improve-user-"));
+  const cto = join(userDir, "cto/w");
+  mkdirSync(cto, { recursive: true });
+  mkdirSync(join(root, ".crew"), { recursive: true });
+  writeFileSync(join(root, ".crew/policy.json"), JSON.stringify({ mail: { workspace: "w" } }));
+  writeFileSync(join(cto, "2026-10-24-plan.md"), "Keep the gate table first.\n");
+  const alone = JSON.stringify({ metrics: { projects: [root] } });
+  // The inputs of the plan's date list this repository alone, but the plan has no copy: nothing.
+  writeFileSync(join(cto, "2026-10-24-inputs.json"), alone);
+  expect(ctoPlanFor(root, userDir)).toBeNull();
+  writeFileSync(join(cto, "2026-10-24-plan.inputs.json"), "{ not json");
+  expect(ctoPlanFor(root, userDir)).toBeNull();
+  writeFileSync(
+    join(cto, "2026-10-24-plan.inputs.json"),
+    JSON.stringify({ metrics: { projects: [root, "/clients/shop"] } }),
+  );
+  expect(ctoPlanFor(root, userDir)).toBeNull();
+  writeFileSync(join(cto, "2026-10-24-plan.inputs.json"), alone);
+  expect(ctoPlanFor(root, userDir)).toBe("Keep the gate table first.\n");
+});
+
+test("2026-10-24-013 AC-4: the crew command lessonAdd runs gets the kit's environment: a GITHUB_TOKEN of the parent is not in it", () => {
+  const token = ["ghp", "_parentsecret0123456789"].join("");
+  const command = lessonCommand("/repo", ["--cue", "c"], {
+    PATH: "/bin",
+    HOME: "/h",
+    GITHUB_TOKEN: token,
+  });
+  expect(command.args).toEqual([
+    "/repo/plugins/core/dist/crew.mjs",
+    "knowledge",
+    "lesson",
+    "add",
+    "--cue",
+    "c",
+  ]);
+  expect(command.env.GITHUB_TOKEN).toBeUndefined();
+  expect(command.env.PATH).toBe("/bin");
+  expect(command.env.HOME).toBe("/h");
+});
+
+/** A call that runs claude: one of the six spawning functions with "claude" among its first arguments. */
+const SPAWNS_CLAUDE = /\b(?:spawn|spawnSync|execFile|execFileSync|exec|execSync)\(\s*["'`]claude\b/;
+
+test("2026-10-24-013 AC-9: neither improve test file spawns claude, and the matcher catches such a call", () => {
+  // The samples are built at run time, so the file's own text never holds a call the matcher reads.
+  const call = (fn: string, rest: string) => `${fn}(${rest}`;
+  for (const sample of [
+    call("spawnSync", '"claude", args)'),
+    call("execFile", "'claude', [])"),
+    call("exec", "`claude -p x`)"),
+  ])
+    expect(SPAWNS_CLAUDE.test(sample), sample).toBe(true);
+  expect(SPAWNS_CLAUDE.test(call("spawnSync", '"git", ["claude"])'))).toBe(false);
+  for (const file of ["improve.test.ts", "improve-run.test.ts"]) {
+    expect(SPAWNS_CLAUDE.test(readFileSync(join(import.meta.dir, file), "utf8")), file).toBe(false);
+  }
 });

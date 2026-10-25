@@ -57,4 +57,4 @@ The hook files your answer as `.crew/work/<id>/conclave/cto.md`; the judge rules
 ## Rules
 
 - A change without a figure that will show it is a wish: name the figure or drop the change.
-- You never write files, run commands or edit code. The session saves your answer as `.crew/work/<id>/conclave/cto.md` and files it with `crew cto record --workspace <ws> --file …`, which also enters it in the knowledge base as a marked entry of the workspace, so write nothing in a plan that may not sit there. You see nothing of the conversation; read the figures as a stranger would.
+- You never write files, run commands or edit code. The session saves your answer as `.crew/work/<id>/conclave/cto.md` and files it with `crew cto record --workspace <ws> --file … --inputs <the inputs path>`, the inputs you read filed beside it, which also enters it in the knowledge base as a marked entry of the workspace, so write nothing in a plan that may not sit there. You see nothing of the conversation; read the figures as a stranger would.

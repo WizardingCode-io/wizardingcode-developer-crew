@@ -85,6 +85,7 @@ import {
 } from "./judgement.ts";
 import {
   addEntry,
+  ctoInputsFile,
   defaultConfidential,
   entryLine,
   entryText,
@@ -5011,7 +5012,11 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           );
         const { metrics, figures: knowledge } = computed;
         const lastPlan = latestPlan(env.paths.userDir, ws);
-        const target = join(dir, `${date}-inputs.json`);
+        // A second review the same day goes beside the first, never over it (finding 160), so each
+        // plan can be tied to the inputs it was written from.
+        ensureDir(dir);
+        let target = join(dir, `${date}-inputs.json`);
+        for (let n = 2; existsSync(target); n++) target = join(dir, `${date}-inputs-${n}.json`);
         writeJson(target, {
           at: nowIso(),
           workspace: ws,
@@ -5027,7 +5032,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
             `inputs: ${target}`,
             ...metricsText(metrics).split("\n"),
             `last plan: ${lastPlan?.path ?? "none"}`,
-            `launch wizardingcode-developer-crew:cto with the inputs path and the reports of the items it counts; file the plan with crew cto record --workspace ${ws} --file <plan.md>. The review item's criterion has no test: open it with crew start "<request>" --answers '<json>' --observed "<the plan filed>", record it once the plan is filed with crew tdd observed <id> AC-1 --reason "a plan, not code" -- "<a command that reads the filed plan>", then crew gate run <id>`,
+            `launch wizardingcode-developer-crew:cto with the inputs path and the reports of the items it counts; file the plan with crew cto record --workspace ${ws} --file <plan.md> --inputs ${target}. The review item's criterion has no test: open it with crew start "<request>" --answers '<json>' --observed "<the plan filed>", record it once the plan is filed with crew tdd observed <id> AC-1 --reason "a plan, not code" -- "<a command that reads the filed plan>", then crew gate run <id>`,
           ].join("\n"),
           { path: target, lastPlan, knowledge },
         );
@@ -5049,11 +5054,26 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       const read = readBase(env.paths.userDir);
       if (read.base === null && read.reason !== "missing")
         return refuse(`the knowledge base cannot be read: ${read.reason}; nothing was filed`);
+      // The inputs the plan was written from, checked before anything is written (finding 160):
+      // without --inputs the plan is filed alone, never tied to a guessed file.
+      const inputsFlag = parsed.flags.inputs;
+      let inputs: string | null = null;
+      if (typeof inputsFlag === "string") {
+        const given = resolve(env.paths.root, inputsFlag);
+        if (!existsSync(given)) return refuse(`no inputs file at ${given}; nothing was filed`);
+        inputs = ctoInputsFile(dir, given);
+        if (inputs === null)
+          return refuse(
+            `${given} is not an inputs file of workspace ${ws} (crew cto review writes <date>-inputs[-<n>].json in its CTO folder); nothing was filed`,
+          );
+      }
       ensureDir(dir);
       // A second plan the same day goes beside the first, never over it (finding 53).
       let target = join(dir, `${date}-plan.md`);
       for (let n = 2; existsSync(target); n++) target = join(dir, `${date}-plan-${n}.md`);
       writeText(target, text);
+      const copy = target.replace(/\.md$/, ".inputs.json");
+      if (inputs !== null) writeText(copy, readText(inputs) ?? "");
       const added = addEntry(env.paths.userDir, {
         kind: "general",
         title,
@@ -5071,8 +5091,8 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       });
       if ("refused" in added) return refuse(added.refused);
       return ok(
-        `CTO plan of ${ws} filed: ${target}\nentry ${added.id}: general, marked for ${ws}`,
-        { path: target, entry: added },
+        `CTO plan of ${ws} filed: ${target}\nentry ${added.id}: general, marked for ${ws}\ninputs: ${inputs === null ? "none" : copy}`,
+        { path: target, entry: added, inputs: inputs === null ? null : copy },
       );
     }
     case "continue": {
@@ -5349,7 +5369,7 @@ const HELP = `crew ${VERSION}
   decisions [--grep <text>]   the project's decision register, newest first; --grep matches the id, the text and the answer, in any case
   metrics [--workspace <ws>]  the figures of this project, or of the workspace's registered projects, from the records and the base
   cto review --workspace <ws>          write the CTO's inputs (the workspace's metrics, the last plan, the base's figures and rows) under the user's crew directory and print the launch line; open the review item first, with --observed "<the plan filed>" (references/learn.md)
-  cto record --workspace <ws> --file <plan.md>   file the CTO's plan under the user's crew directory and enter it in the knowledge base, marked for the workspace
+  cto record --workspace <ws> --file <plan.md> [--inputs <file>]   file the CTO's plan under the user's crew directory and enter it in the knowledge base, marked for the workspace; --inputs (the file crew cto review named) is filed beside it as <plan>.inputs.json, what ties the plan to what it was written from
   knowledge list [--kind <k>] | show K-n   the knowledge base as this project reads it (rule 13: unmarked entries, and marked ones of this workspace)
   knowledge add --kind general|documentation --title "<t>" --file <path> [--source <url>]   a person's material, from the project's own tree, marked
   knowledge lesson add --cue "<t>" --lesson "<t>" --evidence docs/improve/<run>/record.json --proposal P-n --confidence high|medium|low   the improvement loop's lesson about the crew, its run's record as evidence; read in this repository alone (ADR 0013)

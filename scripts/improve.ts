@@ -23,7 +23,7 @@ import {
   lessonsForCto,
   readBase,
 } from "../packages/engine/src/knowledge.ts";
-import { canonical, ctoDir, userDirOf } from "../packages/engine/src/paths.ts";
+import { canonical, userDirOf } from "../packages/engine/src/paths.ts";
 import { scanText } from "../packages/engine/src/secrets.ts";
 import {
   acceptedReadPaths,
@@ -959,10 +959,11 @@ function runEditor(r: Run, cwd: string, prompt: string): string {
 }
 
 /**
- * The last CTO plan of this repository's workspace, for the editor (AC-35): only when the inputs
- * the CTO wrote it from (`<date>-inputs.json` beside it) list this repository as their one project.
- * A plan written over other projects carries their text, which would otherwise reach the editor
- * and, through its answer, a record in this public repository; with no inputs, its origin is unknown.
+ * The last CTO plan of this repository's workspace, for the editor (AC-35, finding 160): only when
+ * the copy of the inputs it was written from, filed beside it by `crew cto record --inputs`, parses
+ * and lists this repository as its one project. A plan written over other projects carries their
+ * text, which would otherwise reach the editor and, through its answer, a record in this public
+ * repository; a plan with no copy (filed without --inputs, or before finding 160) gives nothing.
  */
 export function ctoPlanFor(root: string, userDir: string): string | null {
   const policy = readJson<{ mail?: { workspace?: unknown } }>(join(root, ".crew", "policy.json"));
@@ -971,7 +972,7 @@ export function ctoPlanFor(root: string, userDir: string): string | null {
   const plan = latestPlan(userDir, ws);
   if (!plan) return null;
   const inputs = readJson<{ metrics?: { projects?: unknown } }>(
-    join(ctoDir(userDir, ws), `${plan.date}-inputs.json`),
+    plan.path.replace(/\.md$/, ".inputs.json"),
   );
   const projects = inputs?.metrics?.projects;
   const alone =
@@ -979,6 +980,18 @@ export function ctoPlanFor(root: string, userDir: string): string | null {
     projects.length > 0 &&
     projects.every((p) => typeof p === "string" && canonical(p) === canonical(root));
   return alone ? readText(plan.path) : null;
+}
+
+/** The crew command a lesson is entered with: the repository's bundle, the kit's environment (finding 160, the security lead's observation). */
+export function lessonCommand(
+  root: string,
+  args: string[],
+  env: NodeJS.ProcessEnv,
+): { args: string[]; env: NodeJS.ProcessEnv } {
+  return {
+    args: [join(root, "plugins/core/dist/crew.mjs"), "knowledge", "lesson", "add", ...args],
+    env: kitEnvironment(env),
+  };
 }
 
 /** The deps of a real run: the kit and claude spawned, git, the crew command, the base and the last CTO plan. */
@@ -1021,11 +1034,8 @@ function realDeps(root: string): ImproveDeps {
       return { status: r.status, output: `${r.stdout ?? ""}${r.stderr ?? ""}` };
     },
     lessonAdd: (args) => {
-      const r = spawnSync(
-        "node",
-        [join(root, "plugins/core/dist/crew.mjs"), "knowledge", "lesson", "add", ...args],
-        { cwd: root, encoding: "utf8" },
-      );
+      const command = lessonCommand(root, args, process.env);
+      const r = spawnSync("node", command.args, { cwd: root, env: command.env, encoding: "utf8" });
       return { status: r.status, out: `${r.stdout ?? ""}${r.stderr ?? ""}` };
     },
     lessons: () =>
