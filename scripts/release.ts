@@ -312,7 +312,9 @@ export async function release(options: ReleaseOptions, deps: ReleaseDeps): Promi
       data: JSON.parse(Buffer.from(body.content, "base64").toString("utf8")) as Marketplace,
     };
   };
-  const entryAt = (data: Marketplace) => data.plugins.find((p) => p.name === PLUGIN_NAME);
+  /** The entries released from this repository at this tag: the core and every pack (finding 167). */
+  const ours = (data: Marketplace) =>
+    data.plugins.filter((p) => p.name === PLUGIN_NAME || p.name.startsWith("wizardingcode-pack-"));
   let marketplace: { sha: string; data: Marketplace } | null = null;
   const outcome = (code: number, failedStep: number | null): number => {
     deps.report?.({
@@ -430,15 +432,19 @@ export async function release(options: ReleaseOptions, deps: ReleaseDeps): Promi
         const read = readMarketplace();
         if (typeof read === "string") return false;
         marketplace = read;
-        return entryAt(read.data)?.version === version;
+        const entries = ours(read.data);
+        return entries.length > 0 && entries.every((p) => p.version === version);
       },
       run: () => {
         const read = marketplace ?? readMarketplace();
         if (typeof read === "string") return read;
-        const entry = entryAt(read.data);
-        if (!entry) return `the marketplace has no entry named ${PLUGIN_NAME}`;
-        entry.version = version;
-        entry.source.ref = tag;
+        const entries = ours(read.data);
+        if (!entries.some((p) => p.name === PLUGIN_NAME))
+          return `the marketplace has no entry named ${PLUGIN_NAME}`;
+        for (const entry of entries) {
+          entry.version = version;
+          entry.source.ref = tag;
+        }
         read.data.metadata.version = marketplaceVersion(version);
         const t = marketplaceToken() as string;
         const r = sh(

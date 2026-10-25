@@ -74,7 +74,7 @@ interface World {
     metadata: { version: string };
     plugins: { name: string; version: string; source: { ref: string } }[];
   };
-  puts: { message: string; version: string; ref: string; meta: string }[];
+  puts: { message: string; entries: [string, string, string][]; meta: string }[];
 }
 
 /** A runner that runs git for real and plays every other command: bun, gh, claude, tar and osascript are recorded, and a failing step is scripted. */
@@ -90,6 +90,8 @@ function runner(
       plugins: [
         { name: "wizardingcode-mem", version: "0.5.0", source: { ref: "v0.5.0" } },
         { name: "wizardingcode-developer-crew", version: OLD, source: { ref: `v${OLD}` } },
+        { name: "wizardingcode-pack-laravel", version: OLD, source: { ref: `v${OLD}` } },
+        { name: "wizardingcode-pack-agentic-os", version: OLD, source: { ref: `v${OLD}` } },
       ],
     },
     puts: [],
@@ -145,13 +147,9 @@ function runner(
       const next = JSON.parse(
         Buffer.from(body.content, "base64").toString("utf8"),
       ) as World["marketplace"];
-      const entry = next.plugins.find(
-        (p) => p.name === "wizardingcode-developer-crew",
-      ) as World["marketplace"]["plugins"][number];
       world.puts.push({
         message: body.message,
-        version: entry.version,
-        ref: entry.source.ref,
+        entries: next.plugins.map((p) => [p.name, p.version, p.source.ref]),
         meta: next.metadata.version,
       });
       world.marketplace = next;
@@ -243,11 +241,16 @@ test("2026-10-25-005 AC-7: a patch release writes the version into every release
   expect(create).toContain("--verify-tag");
   expect(create.indexOf("--notes-file")).toBeGreaterThan(-1);
   // Step 9: the entry and the marketplace's own version, in one PUT with the sha.
+  // Every entry released from this repository moves (the core and the packs); another product's stays.
   expect(world.puts).toEqual([
     {
       message: `wizardingcode-developer-crew ${NEW}`,
-      version: NEW,
-      ref: `v${NEW}`,
+      entries: [
+        ["wizardingcode-mem", "0.5.0", "v0.5.0"],
+        ["wizardingcode-developer-crew", NEW, `v${NEW}`],
+        ["wizardingcode-pack-laravel", NEW, `v${NEW}`],
+        ["wizardingcode-pack-agentic-os", NEW, `v${NEW}`],
+      ],
       meta: "2.15.1",
     },
   ]);
@@ -398,15 +401,16 @@ test("2026-10-25-005 AC-15: a failure before the push restores the tree, the com
     "tar xzf",
     "osascript -e",
   ]);
-  expect(resumed.world.puts.map((p) => p.version)).toEqual([NEW]);
+  expect(resumed.world.puts.map((p) => p.entries[1]?.[1])).toEqual([NEW]);
   // A resume from a step whose result exists skips it: the entry already at the version, nothing is put again.
   const again = runner(root);
   again.world.released.add(`v${NEW}`);
-  again.world.marketplace.plugins[1] = {
-    name: "wizardingcode-developer-crew",
-    version: NEW,
-    source: { ref: `v${NEW}` },
-  };
+  // Every entry of ours already at the version: nothing to put.
+  for (const entry of again.world.marketplace.plugins)
+    if (entry.name !== "wizardingcode-mem") {
+      entry.version = NEW;
+      entry.source.ref = `v${NEW}`;
+    }
   expect(
     await release(
       { root, resume: NEW, fromStep: 7, reason: "x", home },
