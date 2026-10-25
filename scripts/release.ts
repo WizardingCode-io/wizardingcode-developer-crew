@@ -86,10 +86,16 @@ export function bumpVersion(root: string, from: string, to: string): string[] {
   for (const rel of releaseFiles(root)) {
     const path = join(root, rel);
     if (rel.endsWith(".json")) {
-      const data = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
-      data.version = to;
-      if (typeof data.core === "string") data.core = `>=${to}`;
-      writeFileSync(path, `${JSON.stringify(data, null, 2)}\n`);
+      // The version strings alone, every other byte kept: a re-serialization would reshape the
+      // manifests the formatter keeps otherwise, and the check that guards the release would
+      // reject its own write (finding 166).
+      const text = readFileSync(path, "utf8");
+      writeFileSync(
+        path,
+        text
+          .replace(new RegExp(`("version"\\s*:\\s*")${escapeRegex(from)}(")`), `$1${to}$2`)
+          .replace(new RegExp(`("core"\\s*:\\s*">=)${escapeRegex(from)}(")`), `$1${to}$2`),
+      );
     } else {
       const text = readFileSync(path, "utf8");
       writeFileSync(

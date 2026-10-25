@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
+  bumpVersion,
   type CommandRunner,
   nextVersion,
   release,
@@ -41,7 +42,7 @@ function fixture(): { root: string; origin: string; home: string } {
     "packages/engine/package.json": `${JSON.stringify({ name: "e", version: OLD }, null, 2)}\n`,
     "packages/engine/src/version.ts": `export const VERSION = "${OLD}";\n`,
     "plugins/core/.claude-plugin/plugin.json": `${JSON.stringify({ name: "crew", version: OLD }, null, 2)}\n`,
-    "packs/laravel/pack.json": `${JSON.stringify({ name: "l", version: OLD, core: `>=${OLD}` }, null, 2)}\n`,
+    "packs/laravel/pack.json": `{\n  "name": "l",\n  "version": "${OLD}",\n  "core": ">=${OLD}",\n  "files": ["checklists/a.md", "knowledge/b.md"]\n}\n`,
     "packs/laravel/.claude-plugin/plugin.json": `${JSON.stringify({ name: "l", version: OLD }, null, 2)}\n`,
     "packs/agentic-os/pack.json": `${JSON.stringify({ name: "a", version: OLD, core: `>=${OLD}` }, null, 2)}\n`,
     "packs/agentic-os/.claude-plugin/plugin.json": `${JSON.stringify({ name: "a", version: OLD }, null, 2)}\n`,
@@ -442,4 +443,18 @@ test("2026-10-25-005 AC-15: a failure before the push restores the tree, the com
   ).toBe(1);
   expect(logB.join("\n")).toContain(`release ${NEW} is pending at step 9: resume it first`);
   expect(programs(blocked.seen)).toEqual([]);
+});
+
+test("2026-10-25-006 AC-1 (finding 166): the bump replaces the version strings alone, every other byte of a release file kept, so a manifest in the repository's own shape stays formatted", () => {
+  const { root } = fixture();
+  const before = Object.fromEntries(
+    releaseFiles(root).map((rel) => [rel, readFileSync(join(root, rel), "utf8")]),
+  );
+  expect(before["packs/laravel/pack.json"]).toContain(
+    '"files": ["checklists/a.md", "knowledge/b.md"]',
+  );
+  bumpVersion(root, OLD, NEW);
+  for (const [rel, text] of Object.entries(before))
+    expect(readFileSync(join(root, rel), "utf8"), rel).toBe(text.replaceAll(OLD, NEW));
+  expect(staleReleaseFiles(root, NEW)).toEqual([]);
 });
