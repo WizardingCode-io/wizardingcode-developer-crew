@@ -1,11 +1,13 @@
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   readdirSync,
   readFileSync,
   rmSync,
+  statSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
@@ -21,6 +23,7 @@ import {
   LABEL,
   type LoopConfig,
   launchdPlist,
+  launcherScript,
   parseRuling,
   pickTargets,
   providerEnv,
@@ -662,12 +665,19 @@ test("2026-10-25-005 AC-6: with the gate held the judge rules on the diff with t
 });
 
 /** The loop's world: a bare origin with the repository's shape, the user's checkout of it, the loop's home, a temp dir. */
-function loopWorld(): { origin: string; user: string; home: string; tmp: string } {
+function loopWorld(options: { loop?: boolean } = {}): {
+  origin: string;
+  user: string;
+  home: string;
+  tmp: string;
+} {
   const base = tempDir("loop-");
   const seed = join(base, "seed");
   const files: Record<string, string> = {
     "package.json": '{ "name": "r", "version": "0.15.0" }\n',
     "bun.lock": "lock 1\n",
+    // The loop itself, as origin/main holds it (finding 169: a main without it is never synced to).
+    ...(options.loop === false ? {} : { "scripts/improve-loop.ts": "export {};\n" }),
     "plugins/core/skills/crew/SKILL.md": "# Crew\n",
     "plugins/core/agents/judge.md": "# Judge\n\nYou decide on evidence.\n",
     "plugins/core/evals/t/case.yaml": "name: t\n",
@@ -1010,13 +1020,19 @@ function loopSeed(withScript = true): string {
 function installDeps(
   home: string,
   probe: Record<string, unknown> | null,
-  options: { bootoutStatus?: number; which?: Record<string, string | null> } = {},
+  options: {
+    bootoutStatus?: number;
+    which?: Record<string, string | null>;
+    /** The origin a heal fetches from (finding 169): a local one, never GitHub, in a test. */
+    originUrl?: string;
+  } = {},
 ) {
   const seen: string[][] = [];
   const log: string[] = [];
   const deps: InstallDeps = {
     home,
-    originUrl: "git@github.com:WizardingCode-io/wizardingcode-developer-crew.git",
+    originUrl:
+      options.originUrl ?? "git@github.com:WizardingCode-io/wizardingcode-developer-crew.git",
     userHome: join(home, "..", "user-home"),
     uid: 501,
     env: { PATH: "/usr/bin" },
@@ -1053,8 +1069,7 @@ function installDeps(
 
 test("2026-10-25-005 AC-8: the plist names the agent, the hourly tick with catch-up on wake, the tools' PATH and the two logs; install clones, bootstraps, boots the agent and prints the probe; uninstall boots it out; status says where the loop stands", async () => {
   const plist = launchdPlist({
-    bun: "/opt/tools/bun/bin/bun",
-    script: "/h/.wizardingcode/crew-improve/repo/scripts/improve-loop.ts",
+    launcher: "/h/.wizardingcode/crew-improve/tick.sh",
     home: "/h/.wizardingcode/crew-improve",
     path: [
       "/opt/tools/bun/bin",
@@ -1069,7 +1084,7 @@ test("2026-10-25-005 AC-8: the plist names the agent, the hourly tick with catch
   });
   expect(plist).toContain(`<string>${LABEL}</string>`);
   expect(plist).toContain(
-    "<string>/opt/tools/bun/bin/bun</string>\n\t\t<string>/h/.wizardingcode/crew-improve/repo/scripts/improve-loop.ts</string>\n\t\t<string>tick</string>",
+    "<string>/bin/sh</string>\n\t\t<string>/h/.wizardingcode/crew-improve/tick.sh</string>\n\t</array>",
   );
   expect(plist).toContain(
     "<key>StartCalendarInterval</key>\n\t<dict>\n\t\t<key>Minute</key>\n\t\t<integer>0</integer>\n\t</dict>",
@@ -1105,12 +1120,19 @@ test("2026-10-25-005 AC-8: the plist names the agent, the hourly tick with catch
   );
   expect(await install({ cloneFrom: seed }, ok.deps)).toBe(0);
   expect(existsSync(join(home, "repo/scripts/improve-loop.ts"))).toBe(true);
+  // The launcher, freshly written, is the agent's alone to read and run.
+  expect(statSync(join(home, "tick.sh")).mode & 0o777).toBe(0o700);
   expect(git(join(home, "repo"), "remote", "get-url", "origin").trim()).toBe(
     "git@github.com:WizardingCode-io/wizardingcode-developer-crew.git",
   );
   const plistPath = join(ok.deps.userHome, "Library/LaunchAgents", `${LABEL}.plist`);
   expect(existsSync(plistPath)).toBe(true);
-  expect(readFileSync(plistPath, "utf8")).toContain(join(home, "repo/scripts/improve-loop.ts"));
+  expect(readFileSync(plistPath, "utf8")).toContain(
+    `<string>/bin/sh</string>\n\t\t<string>${join(home, "tick.sh")}</string>`,
+  );
+  const launcher = readFileSync(join(home, "tick.sh"), "utf8");
+  expect(launcher).toContain("bun='/opt/tools/bun/bin/bun'");
+  expect(launcher).toContain(`repo='${join(home, "repo")}'`);
   expect(ok.seen.filter((c) => c[0] !== "git")).toEqual([
     ["bun", "install", "--frozen-lockfile"],
     ["launchctl", "bootout", `gui/501/${LABEL}`],
@@ -1137,8 +1159,10 @@ test("2026-10-25-005 AC-8: the plist names the agent, the hourly tick with catch
   expect(fallback).toContain("1. claude setup-token");
   expect(fallback).toContain("2. bun scripts/improve-loop.ts secret set oauth-token");
   expect(fallback).toContain('3. "oauthToken": { "keychain": "oauth-token" } in config.json');
-  // No script in the clone: refused, nothing booted.
-  const bare = installDeps(join(base, "crew-improve-3"), null);
+  // No script in the clone nor on origin/main (a local origin: the heal fetches from it): refused, nothing booted.
+  const bareOrigin = join(base, "origin-bare.git");
+  git(base, "clone", "-q", "--bare", loopSeed(false), bareOrigin);
+  const bare = installDeps(join(base, "crew-improve-3"), null, { originUrl: bareOrigin });
   expect(await install({ cloneFrom: loopSeed(false) }, bare.deps)).toBe(1);
   expect(bare.log.join("\n")).toContain("the clone has no scripts/improve-loop.ts");
   expect(bare.seen.filter((c) => c[0] === "launchctl")).toEqual([]);
@@ -1179,6 +1203,233 @@ test("2026-10-25-005 AC-8: the plist names the agent, the hourly tick with catch
   expect(text).toContain("pending release: 0.15.1 at step 9 (the marketplace entry)");
   expect(text).toContain("next: ");
   expect(text).toContain("today: ");
+});
+
+test("2026-10-25-010 AC-1: a tick never removes the loop it runs from: origin/main without scripts/improve-loop.ts leaves the clone at its commit, and the sync proceeds once the loop is on main", async () => {
+  const world = loopWorld({ loop: false });
+  // The clone as `install --clone-from` makes it: a commit ahead of origin, with the loop.
+  const repo = join(world.home, "repo");
+  git(world.home, "clone", "-q", world.origin, repo);
+  mkdirSync(join(repo, "scripts"), { recursive: true });
+  writeFileSync(join(repo, "scripts/improve-loop.ts"), "export {};\n");
+  git(repo, "add", "-A");
+  git(repo, "commit", "-q", "-m", "the loop");
+  const ahead = git(repo, "rev-parse", "HEAD").trim();
+  const first = tickDeps(world);
+  expect(await tick({}, first.deps)).toBe(0);
+  expect(first.seen.log.join("\n")).toContain(
+    `origin/main has no scripts/improve-loop.ts: the clone stays at ${ahead.slice(0, 7)}; waiting for the loop's commit`,
+  );
+  expect(git(repo, "rev-parse", "HEAD").trim()).toBe(ahead);
+  expect(existsSync(join(repo, "scripts/improve-loop.ts"))).toBe(true);
+  expect(first.seen.improve).toEqual([]);
+  const state = JSON.parse(readFileSync(join(world.home, "state.json"), "utf8"));
+  expect(state.lastTick).toBe("2026-10-25T20:00:00.000Z");
+  expect(state.backoffUntil).toBeUndefined();
+  expect(state.failures).toBeUndefined();
+  // The loop pushed to main: the next tick syncs the clone and runs.
+  mkdirSync(join(world.user, "scripts"), { recursive: true });
+  writeFileSync(join(world.user, "scripts/improve-loop.ts"), "export {};\n");
+  git(world.user, "add", "-A");
+  git(world.user, "commit", "-q", "-m", "the loop on main");
+  git(world.user, "push", "-q", "origin", "main");
+  const second = tickDeps(world, { now: "2026-10-25T21:00:00.000Z" });
+  expect(await tick({}, second.deps)).toBe(0);
+  expect(second.seen.log.join("\n")).not.toContain("has no scripts/improve-loop.ts");
+  expect(second.seen.improve).toHaveLength(1);
+  expect(git(repo, "branch", "--contains", ahead).trim()).toBe("");
+});
+
+test("2026-10-25-010 AC-2: the launcher brings a clone without the loop to origin/main before the tick, and launches a clone that has it as it is", () => {
+  const base = tempDir("launcher-");
+  // An origin whose first commit has no loop and whose main has it.
+  const seed = loopSeed(false);
+  writeFileSync(join(seed, "scripts/improve-loop.ts"), "export {};\n");
+  git(seed, "add", "-A");
+  git(seed, "commit", "-q", "-m", "the loop");
+  const origin = join(base, "origin.git");
+  git(base, "clone", "-q", "--bare", seed, origin);
+  const repo = join(base, "repo");
+  git(base, "clone", "-q", origin, repo);
+  // The clone as a sync to the older main left it: without the loop.
+  git(repo, "reset", "-q", "--hard", "HEAD~1");
+  expect(existsSync(join(repo, "scripts/improve-loop.ts"))).toBe(false);
+  // bun played by a script that records its calls.
+  const calls = join(base, "bun-calls");
+  const bun = join(base, "bun");
+  writeFileSync(bun, `#!/bin/sh\necho "$@" >> '${calls}'\n`);
+  chmodSync(bun, 0o755);
+  const launcher = join(base, "tick.sh");
+  writeFileSync(launcher, launcherScript({ bun, repo }));
+  const healed = spawnSync("sh", [launcher], { encoding: "utf8" });
+  expect(healed.status).toBe(0);
+  expect(git(repo, "rev-parse", "HEAD").trim()).toBe(git(repo, "rev-parse", "origin/main").trim());
+  expect(existsSync(join(repo, "scripts/improve-loop.ts"))).toBe(true);
+  expect(readFileSync(calls, "utf8")).toBe(
+    `install --frozen-lockfile\n${join(repo, "scripts/improve-loop.ts")} tick\n`,
+  );
+  // A clone that has the loop is launched as it is, origin ahead or not: the tick's own sync
+  // keeps an interrupted run's records.
+  git(seed, "commit", "-q", "--allow-empty", "-m", "ahead");
+  git(seed, "push", "-q", origin, "main");
+  const head = git(repo, "rev-parse", "HEAD").trim();
+  rmSync(calls);
+  expect(spawnSync("sh", [launcher], { encoding: "utf8" }).status).toBe(0);
+  expect(git(repo, "rev-parse", "HEAD").trim()).toBe(head);
+  expect(readFileSync(calls, "utf8")).toBe(`${join(repo, "scripts/improve-loop.ts")} tick\n`);
+});
+
+test("2026-10-25-010 AC-6: the launcher quotes its paths, runs no reset when the heal cannot complete, and ends with bun's status", () => {
+  const base = tempDir("launcher-quoting-");
+  // An origin whose main has no loop and moves ahead of the clone: a reset would move HEAD.
+  const seed = loopSeed(false);
+  const origin = join(base, "origin.git");
+  git(base, "clone", "-q", "--bare", seed, origin);
+  const repo = join(base, "it's $(x) repo");
+  git(base, "clone", "-q", origin, repo);
+  const head = git(repo, "rev-parse", "HEAD").trim();
+  git(seed, "commit", "-q", "--allow-empty", "-m", "ahead, still no loop");
+  git(seed, "push", "-q", origin, "main");
+  const calls = join(base, "bun-calls");
+  const bun = join(base, "bun");
+  writeFileSync(bun, `#!/bin/sh\necho "$@" >> '${calls}'\nexit "\${BUN_EXIT:-0}"\n`);
+  chmodSync(bun, 0o755);
+  const launcher = join(base, "tick.sh");
+  const script = launcherScript({ bun, repo });
+  writeFileSync(launcher, script);
+  expect(script).toContain(`repo='${join(base, "it'\\''s $(x) repo")}'`);
+  const noLoop = spawnSync("sh", [launcher], {
+    encoding: "utf8",
+    env: { ...process.env, BUN_EXIT: "3" },
+  });
+  expect(noLoop.status).toBe(3);
+  expect(git(repo, "rev-parse", "HEAD").trim()).toBe(head);
+  expect(readFileSync(calls, "utf8")).toBe(`${join(repo, "scripts/improve-loop.ts")} tick\n`);
+  // The fetch failing: no reset either, bun still run.
+  git(repo, "remote", "set-url", "origin", join(base, "gone.git"));
+  rmSync(calls);
+  const noFetch = spawnSync("sh", [launcher], { encoding: "utf8" });
+  expect(noFetch.status).toBe(0);
+  expect(git(repo, "rev-parse", "HEAD").trim()).toBe(head);
+  expect(readFileSync(calls, "utf8")).toBe(`${join(repo, "scripts/improve-loop.ts")} tick\n`);
+});
+
+test("2026-10-25-010 AC-3: install brings an existing clone without the loop to origin/main before its check and writes the launcher with mode 0700; an origin without the loop is still refused", async () => {
+  const base = tempDir("install-heal-");
+  const probe = {
+    loggedIn: true,
+    authMethod: "claude.ai",
+    github: "andreagroferreira",
+    remote: "ok",
+    push: "ok",
+    keychain: {},
+  };
+  // An origin whose main holds the loop, and a clone of it left at the commit before.
+  const seed = loopSeed(false);
+  writeFileSync(join(seed, "scripts/improve-loop.ts"), "export {};\n");
+  git(seed, "add", "-A");
+  git(seed, "commit", "-q", "-m", "the loop");
+  const origin = join(base, "origin.git");
+  git(base, "clone", "-q", "--bare", seed, origin);
+  const home = join(base, "crew-improve");
+  mkdirSync(home, { recursive: true });
+  git(home, "clone", "-q", origin, join(home, "repo"));
+  git(join(home, "repo"), "reset", "-q", "--hard", "HEAD~1");
+  // An earlier launcher left looser than it should be (AC-6).
+  writeFileSync(join(home, "tick.sh"), "stale\n");
+  chmodSync(join(home, "tick.sh"), 0o644);
+  const healed = installDeps(home, probe);
+  expect(await install({}, healed.deps)).toBe(0);
+  expect(existsSync(join(home, "repo/scripts/improve-loop.ts"))).toBe(true);
+  expect(git(join(home, "repo"), "rev-parse", "HEAD").trim()).toBe(
+    git(join(home, "repo"), "rev-parse", "origin/main").trim(),
+  );
+  expect(healed.log.join("\n")).toContain(
+    "the clone had no scripts/improve-loop.ts: brought to origin/main",
+  );
+  expect(healed.seen.filter((c) => c[0] !== "git").slice(0, 2)).toEqual([
+    ["bun", "install", "--frozen-lockfile"],
+    ["launchctl", "bootout", `gui/501/${LABEL}`],
+  ]);
+  expect(statSync(join(home, "tick.sh")).mode & 0o777).toBe(0o700);
+  expect(readFileSync(join(home, "tick.sh"), "utf8")).toContain(`repo='${join(home, "repo")}'`);
+  // An origin without the loop either: refused, nothing booted.
+  const bareOrigin = join(base, "origin-bare.git");
+  git(base, "clone", "-q", "--bare", loopSeed(false), bareOrigin);
+  const bareHome = join(base, "crew-improve-bare");
+  mkdirSync(bareHome, { recursive: true });
+  git(bareHome, "clone", "-q", bareOrigin, join(bareHome, "repo"));
+  const bare = installDeps(bareHome, null);
+  expect(await install({}, bare.deps)).toBe(1);
+  expect(bare.log.join("\n")).toContain(
+    "the clone has no scripts/improve-loop.ts and origin/main has no scripts/improve-loop.ts either",
+  );
+  expect(bare.log.join("\n")).toContain(
+    "the clone has no scripts/improve-loop.ts: push the loop's commit",
+  );
+  expect(bare.seen.filter((c) => c[0] === "launchctl")).toEqual([]);
+  // The fetch failing is named as such, not as a missing loop.
+  git(join(bareHome, "repo"), "remote", "set-url", "origin", join(base, "gone.git"));
+  const unreachable = installDeps(bareHome, null);
+  expect(await install({}, unreachable.deps)).toBe(1);
+  expect(unreachable.log.join("\n")).toContain(
+    "the clone has no scripts/improve-loop.ts and origin could not be fetched: ",
+  );
+});
+
+test("2026-10-25-010 AC-4: status reports the agent's stderr written after the last tick and nothing older; a paused tick records its time", async () => {
+  const base = tempDir("status-");
+  const home = join(base, "crew-improve");
+  mkdirSync(join(home, "log"), { recursive: true });
+  const errLog = join(home, "log", "tick.err.log");
+  const line =
+    'error: Module not found "/h/.wizardingcode/crew-improve/repo/scripts/improve-loop.ts"';
+  writeFileSync(errLog, `${line}\n${line}\n`);
+  // The last tick an hour before the log was written, whatever the clock says.
+  const written = statSync(errLog).mtimeMs;
+  writeFileSync(
+    join(home, "state.json"),
+    JSON.stringify({ lastTick: new Date(written - 3_600_000).toISOString() }),
+  );
+  expect(statusText(installDeps(home, null).deps)).toContain(
+    `agent stderr: 2 line(s) after the last tick (log/tick.err.log); last: ${line}`,
+  );
+  // (rotateLogs renames the file only above 5 MB, so the tick itself never touches its mtime.)
+  const older = new Date(written - 7_200_000);
+  utimesSync(errLog, older, older);
+  expect(statusText(installDeps(home, null).deps)).not.toContain("agent stderr");
+  // No tick yet: whatever the log holds is reported.
+  writeFileSync(join(home, "state.json"), "{}");
+  expect(statusText(installDeps(home, null).deps)).toContain(
+    "agent stderr: 2 line(s) with no tick yet (log/tick.err.log)",
+  );
+  // A paused tick is a tick: its time is recorded.
+  const world = loopWorld();
+  writeFileSync(join(world.home, "config.json"), JSON.stringify({ paused: true }));
+  const paused = tickDeps(world);
+  expect(await tick({}, paused.deps)).toBe(0);
+  expect(paused.seen.log.join("\n")).toContain("paused by config.json; nothing run");
+  expect(JSON.parse(readFileSync(join(world.home, "state.json"), "utf8")).lastTick).toBe(
+    "2026-10-25T20:00:00.000Z",
+  );
+});
+
+test("2026-10-25-010 AC-7: the status's stderr line is redacted, stripped of control characters and cut at 200 characters, in that order", () => {
+  const base = tempDir("status-redact-");
+  const home = join(base, "crew-improve");
+  mkdirSync(join(home, "log"), { recursive: true });
+  writeFileSync(join(home, "state.json"), "{}");
+  const errLog = join(home, "log", "tick.err.log");
+  // The URL's userinfo straddles the cut: redacted first, it never shows.
+  const long = `${"x".repeat(185)} https://u:tok@host/path`;
+  writeFileSync(errLog, `fatal: https://u:tok@host/repo \x1b[31mred\x1b[0m\n${long}\n`);
+  const text = statusText(installDeps(home, null).deps);
+  expect(text).toContain(`last: ${"x".repeat(185)} https://[redac\n`);
+  expect(text).not.toContain("tok");
+  writeFileSync(errLog, "fatal: https://u:tok@host/repo \x1b[31mred\x1b[0m\n");
+  const short = statusText(installDeps(home, null).deps);
+  expect(short).toContain("last: fatal: https://[redacted]@host/repo [31mred[0m");
+  expect(short).not.toContain("\x1b");
 });
 
 test("2026-10-25-005 AC-8 (the probe): the first tick records what the agent reaches, never a secret's value", () => {

@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   appendFileSync,
+  chmodSync,
   existsSync,
   mkdirSync,
   readdirSync,
@@ -859,6 +860,7 @@ export async function tick(options: { dryRun?: boolean }, deps: TickDeps): Promi
       state.probe = probe as unknown as Record<string, unknown>;
     }
     if (config.paused) {
+      state.lastTick = now.toISOString();
       log("paused by config.json; nothing run");
       return 0;
     }
@@ -868,6 +870,15 @@ export async function tick(options: { dryRun?: boolean }, deps: TickDeps): Promi
       existsSync(join(repo, "bun.lock")) ? readFileSync(join(repo, "bun.lock"), "utf8") : "";
     const before = lockfile();
     must(["fetch", "-q", "origin"]);
+    // The loop never removes itself from the clone (finding 169): an origin/main without the
+    // script is waited for, not synced to; nothing is pushed or reset until it holds the loop.
+    if (git(["cat-file", "-e", "origin/main:scripts/improve-loop.ts"]).status !== 0) {
+      state.lastTick = now.toISOString();
+      log(
+        `origin/main has no scripts/improve-loop.ts: the clone stays at ${must(["rev-parse", "--short", "HEAD"]).trim()}; waiting for the loop's commit`,
+      );
+      return 0;
+    }
     if (git(["rev-list", "--count", "origin/main..HEAD"]).stdout.trim() !== "0") {
       // Only the records go: a merge an interrupted adoption left behind never reaches origin ungated.
       const touched = git(["diff", "--name-only", "origin/main..HEAD"])
@@ -1080,13 +1091,65 @@ export async function tick(options: { dryRun?: boolean }, deps: TickDeps): Promi
 }
 
 export const LABEL = "io.wizardingcode.crew-improve";
+
+/** `text` as one `sh` word: single-quoted, an embedded `'` written as `'\''`. */
+function shQuote(text: string): string {
+  return `'${text.replace(/'/g, "'\\''")}'`;
+}
+
+/**
+ * The agent's launcher, `<home>/tick.sh`, run by launchd as `/bin/sh <path>` (finding 169): a clone
+ * without the loop's script (synced to an origin/main that had none) is brought to origin/main
+ * first, each step only after the one before, so the agent always finds the loop to run; a clone
+ * that has it is launched as it is, since the tick's own sync keeps an interrupted run's records.
+ * Whatever the heal did, bun runs and the launcher ends with its status, so a failure lands in
+ * the agent's stderr log, where `status` reports it.
+ */
+export function launcherScript(input: { bun: string; repo: string }): string {
+  return [
+    "#!/bin/sh",
+    "# The harness-improvement loop's launcher, written by `bun scripts/improve-loop.ts install`.",
+    `repo=${shQuote(input.repo)}`,
+    `bun=${shQuote(input.bun)}`,
+    'if [ ! -f "$repo/scripts/improve-loop.ts" ]; then',
+    '  git -C "$repo" fetch -q origin &&',
+    '    git -C "$repo" cat-file -e origin/main:scripts/improve-loop.ts 2>/dev/null &&',
+    '    git -C "$repo" reset -q --hard origin/main &&',
+    '    (cd "$repo" && "$bun" install --frozen-lockfile)',
+    "fi",
+    'exec "$bun" "$repo/scripts/improve-loop.ts" tick',
+    "",
+  ].join("\n");
+}
+
+/**
+ * A clone whose working tree lacks the loop's script, brought to origin/main when origin/main holds
+ * it (the launcher's heal, for `install`): the short sha it was brought to, or why it was not (the
+ * fetch failed, origin/main lacks the script too, the reset failed), for install to say. Called
+ * only on a clone without the script, so a clone with local edits is never touched.
+ */
+export function healClone(
+  repo: string,
+  git: InstallDeps["git"],
+): { sha: string } | { why: string } {
+  const firstLine = (text: string) => text.trim().split("\n")[0] ?? "";
+  const fetched = git(["fetch", "-q", "origin"], repo);
+  if (fetched.status !== 0)
+    return { why: `origin could not be fetched: ${firstLine(fetched.stderr)}` };
+  if (git(["cat-file", "-e", "origin/main:scripts/improve-loop.ts"], repo).status !== 0)
+    return { why: "origin/main has no scripts/improve-loop.ts either" };
+  const reset = git(["reset", "-q", "--hard", "origin/main"], repo);
+  if (reset.status !== 0)
+    return { why: `the reset to origin/main failed: ${firstLine(reset.stderr)}` };
+  return { sha: git(["rev-parse", "--short", "HEAD"], repo).stdout.trim() };
+}
+
 /** The tools the agent's PATH must reach: the loop, the engine's tests (php for the Laravel rows), the kit, the release. */
 export const TOOLS = ["bun", "node", "claude", "gh", "php", "git"] as const;
 
 /** The launchd agent (AC-8, D-8): hourly at minute 0 with catch-up on wake, once at load, the tools' PATH, the two fixed logs. */
 export function launchdPlist(input: {
-  bun: string;
-  script: string;
+  launcher: string;
   home: string;
   path: readonly string[];
   userHome: string;
@@ -1108,9 +1171,8 @@ export function launchdPlist(input: {
     `\t<string>${LABEL}</string>`,
     "\t<key>ProgramArguments</key>",
     "\t<array>",
-    `\t\t<string>${xml(input.bun)}</string>`,
-    `\t\t<string>${xml(input.script)}</string>`,
-    "\t\t<string>tick</string>",
+    "\t\t<string>/bin/sh</string>",
+    `\t\t<string>${xml(input.launcher)}</string>`,
     "\t</array>",
     "\t<key>StartCalendarInterval</key>",
     "\t<dict>",
@@ -1267,7 +1329,20 @@ export async function install(options: { cloneFrom?: string }, deps: InstallDeps
       return 1;
     }
   }
-  if (!existsSync(join(repo, "scripts", "improve-loop.ts"))) {
+  const script = join(repo, "scripts", "improve-loop.ts");
+  // A clone synced to an origin/main that had no loop yet (finding 169): brought to one that has it.
+  if (!existsSync(script)) {
+    const healed = healClone(repo, deps.git);
+    if ("sha" in healed) {
+      const error = bootstrapClone(repo, deps.sh);
+      if (error) {
+        log(error);
+        return 1;
+      }
+      log(`the clone had no scripts/improve-loop.ts: brought to origin/main (${healed.sha})`);
+    } else log(`the clone has no scripts/improve-loop.ts and ${healed.why}`);
+  }
+  if (!existsSync(script)) {
     log(
       "the clone has no scripts/improve-loop.ts: push the loop's commit to origin first, or install with --clone-from <checkout>",
     );
@@ -1276,13 +1351,16 @@ export async function install(options: { cloneFrom?: string }, deps: InstallDeps
   const path = [
     ...new Set([...TOOLS.map((t) => dirname(tools[t] as string)), "/usr/bin", "/bin", "/usr/sbin"]),
   ];
+  // The launcher, the agent's own and nobody else's to read or run (its mode set again on an existing file).
+  const launcher = join(home, "tick.sh");
+  writeFileSync(launcher, launcherScript({ bun: tools.bun as string, repo }), { mode: 0o700 });
+  chmodSync(launcher, 0o700);
   const plist = plistPath(deps);
   mkdirSync(dirname(plist), { recursive: true });
   writeFileSync(
     plist,
     launchdPlist({
-      bun: tools.bun as string,
-      script: join(repo, "scripts", "improve-loop.ts"),
+      launcher,
       home,
       path,
       userHome: deps.userHome,
@@ -1320,7 +1398,31 @@ export async function uninstall(deps: InstallDeps): Promise<number> {
   return 0;
 }
 
-/** Where the loop stands (AC-8): the job, the last tick and run, a pending release, the next due reason, the day's cost. */
+/**
+ * What the agent wrote to launchd's stderr log after the last tick (or with no tick yet): the only
+ * place a launch that never reached the loop lands (finding 169). The line shown is the file's
+ * text, not the loop's logger's, so it is redacted of URL userinfo, stripped of control
+ * characters and cut at 200 characters, in that order.
+ */
+export function agentStderrNote(home: string, lastTick: string | null): string | null {
+  const path = join(home, "log", LOG_NAMES[1]);
+  if (!existsSync(path)) return null;
+  const stat = statSync(path);
+  if (stat.size === 0 || (lastTick && stat.mtimeMs <= Date.parse(lastTick))) return null;
+  const lines = readFileSync(path, "utf8")
+    .split("\n")
+    .filter((l) => l.trim() !== "");
+  const last = lines[lines.length - 1];
+  if (last === undefined) return null;
+  const printable = Array.from(redact(last, []))
+    .filter((c) => c.charCodeAt(0) >= 0x20 && c.charCodeAt(0) !== 0x7f)
+    .join("")
+    .slice(0, 200);
+  const since = lastTick ? "after the last tick" : "with no tick yet";
+  return `agent stderr: ${lines.length} line(s) ${since} (log/${LOG_NAMES[1]}); last: ${printable}`;
+}
+
+/** Where the loop stands (AC-8): the job, the last tick and run, a pending release, the next due reason, the day's cost, the agent's stderr. */
 export function statusText(deps: InstallDeps): string {
   const { home } = deps;
   const repo = join(home, "repo");
@@ -1338,6 +1440,8 @@ export function statusText(deps: InstallDeps): string {
       ? `pending release: ${state.pendingRelease.version} at step ${state.pendingRelease.failedStep} (${RELEASE_STEP_NAMES[state.pendingRelease.failedStep - 1]})`
       : "pending release: none",
   );
+  const stderrNote = agentStderrNote(home, state.lastTick ?? null);
+  if (stderrNote) lines.push(stderrNote);
   if (existsSync(join(repo, ".git"))) {
     const cases = allCases(repo);
     const head = deps
