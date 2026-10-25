@@ -6,6 +6,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  rmdirSync,
   rmSync,
   symlinkSync,
   utimesSync,
@@ -507,13 +508,44 @@ for (let i = 0; i < 20; i++) {
       stderr: "pipe",
     }),
   );
-  const codes = runs.map((r) => r.exited);
-  return Promise.all(codes).then((exits) => {
-    expect(exits).toEqual([0, 0]);
+  // A writer that exits non-zero is named by its stderr, not by its code alone (finding 168).
+  const errors = Promise.all(runs.map((r) => new Response(r.stderr).text()));
+  const codes = Promise.all(runs.map((r) => r.exited));
+  return Promise.all([codes, errors]).then(([exits, stderrs]) => {
+    expect(exits.map((code, i) => (code === 0 ? 0 : `exit ${code}: ${stderrs[i]}`))).toEqual([
+      0, 0,
+    ]);
     const inbox = readBox(box.dir, "inbox").box;
     expect(inbox.messages).toHaveLength(40);
     expect(new Set(inbox.messages.map((m) => m.id)).size).toBe(40);
   });
+});
+
+test("2026-10-25-008 AC-1: a send waits for a mailbox lock another holder keeps for three seconds; a hook's wait stays at two", async () => {
+  const w = workspace();
+  const box = mailbox(w.b.paths.userDir, "shop", "crm");
+  mkdirSync(box.dir, { recursive: true });
+  const lock = join(box.dir, ".lock");
+  mkdirSync(lock);
+  // Another process holds the inbox's lock for three seconds: longer than a hook waits, shorter
+  // than the stale limit, so the lock is never broken, only released.
+  const holder = Bun.spawn(["sh", "-c", 'sleep 3; rmdir "$1"', "sh", lock], {
+    stdout: "ignore",
+    stderr: "ignore",
+  });
+  const started = Date.now();
+  const out = send(w.a.ctx, { to: "crm", type: "notice", text: "patient" }, null);
+  const waited = Date.now() - started;
+  await holder.exited;
+  expect("refused" in out ? out.refused : out.message.status).toBe("sent");
+  expect(waited).toBeGreaterThanOrEqual(2_000);
+  expect(readBox(box.dir, "inbox").box.messages.map((m) => m.body)).toEqual(["patient"]);
+  // A hook's lock keeps the two-second wait: a fresh lock still held after it is reported.
+  mkdirSync(lock);
+  expect(() => withMailLock(box.dir, () => "never")).toThrow(
+    `mailbox busy: ${lock} held for more than 2000 ms`,
+  );
+  rmdirSync(lock);
 });
 
 test("SP2c AC-7: the registry knows root, name, workspace, liveness and worktrees; a gone root is skipped and pruned", () => {

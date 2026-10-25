@@ -137,6 +137,7 @@ import { mkdirSync as mkdirSync2, rmdirSync, statSync } from "node:fs";
 import { join as join2 } from "node:path";
 var LOCK_STALE_MS = 1e4;
 var LOCK_WAIT_MS = 2000;
+var COMMAND_LOCK_WAIT_MS = LOCK_STALE_MS;
 function sleep(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
@@ -6070,7 +6071,7 @@ ${content}` : content };
 function tamperedBox(owner, which) {
   return `${owner}'s ${which} changed outside the engine; files under the user's crew directory are written only by the crew command`;
 }
-function appendToBox(dir, which, owner, build) {
+function appendToBox(dir, which, owner, build, waitMs) {
   return withMailLock(dir, () => {
     const { box, tampered } = readBox(dir, which);
     if (tampered)
@@ -6079,7 +6080,7 @@ function appendToBox(dir, which, owner, build) {
     box.messages.push(message);
     writeBox(dir, which, box);
     return message;
-  });
+  }, { waitMs });
 }
 function outboxMessage(self, itemId, at, fields) {
   return { at, from: party(self, itemId), hops: self.hops, opened: null, ...fields };
@@ -6151,7 +6152,7 @@ function send(ctx, request, work) {
       replyTo: request.replyTo ?? null,
       status: "refused",
       reason
-    }));
+    }), COMMAND_LOCK_WAIT_MS);
     if ("refused" in written)
       return { refused: written.refused, message: null };
     if (itemId)
@@ -6239,10 +6240,10 @@ function send(ctx, request, work) {
       status: "sent",
       ...relayed ? { relayed: true } : {}
     });
-  });
+  }, COMMAND_LOCK_WAIT_MS);
   if ("refused" in message)
     return { refused: message.refused, message: null };
-  const failed = deliver(ctx, dest.dir, entry.name, message);
+  const failed = deliver(ctx, dest.dir, entry.name, message, COMMAND_LOCK_WAIT_MS);
   if (failed)
     return {
       refused: failed.refused,
@@ -6252,8 +6253,8 @@ function send(ctx, request, work) {
     recordInItem(ctx.paths, itemId, message);
   return { message, delivery };
 }
-function deliver(ctx, dir, owner, message) {
-  const delivered = appendToBox(dir, "inbox", owner, () => message);
+function deliver(ctx, dir, owner, message, waitMs) {
+  const delivered = appendToBox(dir, "inbox", owner, () => message, waitMs);
   if (!("refused" in delivered))
     return null;
   const reason = delivered.refused;

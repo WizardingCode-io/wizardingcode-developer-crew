@@ -3,6 +3,13 @@ import { join } from "node:path";
 
 const LOCK_STALE_MS = 10_000;
 const LOCK_WAIT_MS = 2_000;
+/**
+ * A command's wait for a held lock: the stale limit itself, since a lock older than it is broken
+ * anyway. A hook keeps `LOCK_WAIT_MS`, two seconds, to answer the session at once; a command that
+ * sends mail has no session waiting on it, and under load two writers hold each other past two
+ * seconds (finding 168).
+ */
+export const COMMAND_LOCK_WAIT_MS = LOCK_STALE_MS;
 
 /** Blocks the thread for `ms`: the lock and the hooks are synchronous. */
 export function sleep(ms: number): void {

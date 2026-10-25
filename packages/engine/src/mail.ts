@@ -3,7 +3,7 @@ import { accessSync, constants, existsSync } from "node:fs";
 import { basename, isAbsolute, join, resolve } from "node:path";
 import { loadEvidence } from "./evidence.ts";
 import { nowIso, readJson, readText, writeJson, writeText } from "./fs.ts";
-import { LockBusy, withLock } from "./lock.ts";
+import { COMMAND_LOCK_WAIT_MS, LockBusy, withLock } from "./lock.ts";
 import {
   decidedPriority,
   insidePath,
@@ -708,21 +708,28 @@ export function tamperedBox(owner: string, which: "inbox" | "outbox"): string {
  * Appends a message to a box under the mailbox's lock; `build` gets the box as read, so an id can
  * be counted from it. A box changed outside the engine is left as the hand left it and the write
  * refused: the one tamper rule, as `recordInItem`, `updateEverywhere` and `syncMail` keep it.
+ * `waitMs` is how long a held lock is waited for: a command passes `COMMAND_LOCK_WAIT_MS`, a hook
+ * keeps the lock's default.
  */
 function appendToBox(
   dir: string,
   which: "inbox" | "outbox",
   owner: string,
   build: (box: Mailbox) => Message,
+  waitMs?: number,
 ): Message | { refused: string } {
-  return withMailLock(dir, (): Message | { refused: string } => {
-    const { box, tampered } = readBox(dir, which);
-    if (tampered) return { refused: tamperedBox(owner, which) };
-    const message = build(box);
-    box.messages.push(message);
-    writeBox(dir, which, box);
-    return message;
-  });
+  return withMailLock(
+    dir,
+    (): Message | { refused: string } => {
+      const { box, tampered } = readBox(dir, which);
+      if (tampered) return { refused: tamperedBox(owner, which) };
+      const message = build(box);
+      box.messages.push(message);
+      writeBox(dir, which, box);
+      return message;
+    },
+    { waitMs },
+  );
 }
 
 /** A message of this project's outbox: from this agent and the item, at its time and its hops, opening no session; `fields` carries the rest. */
@@ -822,19 +829,24 @@ export function send(
     reason: string,
     to: MailAddressee,
   ): { refused: string; message: Message | null } => {
-    const written = appendToBox(own.dir, "outbox", self.project, (box) =>
-      outboxMessage(self, itemId, at, {
-        id: newMessageId(box, self.project, at),
-        to,
-        type: request.type,
-        priority,
-        ...(root ? { thread: root.id } : {}),
-        subject,
-        body: text.slice(0, PREVIEW_CHARS),
-        replyTo: request.replyTo ?? null,
-        status: "refused",
-        reason,
-      }),
+    const written = appendToBox(
+      own.dir,
+      "outbox",
+      self.project,
+      (box) =>
+        outboxMessage(self, itemId, at, {
+          id: newMessageId(box, self.project, at),
+          to,
+          type: request.type,
+          priority,
+          ...(root ? { thread: root.id } : {}),
+          subject,
+          body: text.slice(0, PREVIEW_CHARS),
+          replyTo: request.replyTo ?? null,
+          status: "refused",
+          reason,
+        }),
+      COMMAND_LOCK_WAIT_MS,
     );
     if ("refused" in written) return { refused: written.refused, message: null };
     if (itemId) recordInItem(ctx.paths, itemId, written);
@@ -921,23 +933,29 @@ export function send(
     delivery = { kind: "open", mode, entry };
   }
   // The sender's outbox gives the id; the receiver's inbox gets the record; the item keeps its copy.
-  const message = appendToBox(own.dir, "outbox", self.project, (outbox) => {
-    const id = newMessageId(outbox, self.project, at);
-    return outboxMessage(self, itemId, at, {
-      id,
-      to,
-      type: request.type,
-      priority,
-      ...(root ? { thread: root.id } : {}),
-      subject,
-      ...placeBody(dest.dir, id, text),
-      replyTo: request.replyTo ?? null,
-      status: "sent",
-      ...(relayed ? { relayed: true } : {}),
-    });
-  });
+  const message = appendToBox(
+    own.dir,
+    "outbox",
+    self.project,
+    (outbox) => {
+      const id = newMessageId(outbox, self.project, at);
+      return outboxMessage(self, itemId, at, {
+        id,
+        to,
+        type: request.type,
+        priority,
+        ...(root ? { thread: root.id } : {}),
+        subject,
+        ...placeBody(dest.dir, id, text),
+        replyTo: request.replyTo ?? null,
+        status: "sent",
+        ...(relayed ? { relayed: true } : {}),
+      });
+    },
+    COMMAND_LOCK_WAIT_MS,
+  );
   if ("refused" in message) return { refused: message.refused, message: null };
-  const failed = deliver(ctx, dest.dir, entry.name, message);
+  const failed = deliver(ctx, dest.dir, entry.name, message, COMMAND_LOCK_WAIT_MS);
   if (failed)
     return {
       refused: failed.refused,
@@ -950,15 +968,16 @@ export function send(
 /**
  * Puts a message already in the sender's outbox into a destination inbox. When that inbox changed
  * under a hand between the sender's check and this write, the outbox copy is marked refused and
- * the refusal returned; null when delivered.
+ * the refusal returned; null when delivered. `waitMs` is the sender's wait for the inbox's lock.
  */
 function deliver(
   ctx: MailContext,
   dir: string,
   owner: string,
   message: Message,
+  waitMs?: number,
 ): { refused: string } | null {
-  const delivered = appendToBox(dir, "inbox", owner, () => message);
+  const delivered = appendToBox(dir, "inbox", owner, () => message, waitMs);
   if (!("refused" in delivered)) return null;
   const reason = delivered.refused;
   const skipped: string[] = [];
