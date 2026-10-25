@@ -23,7 +23,7 @@ import { type CliIo, main } from "../src/cli.ts";
 import { listDecisions } from "../src/decisions.ts";
 import { envRecordPath } from "../src/environment.ts";
 import { loadEvidence, saveEvidence } from "../src/evidence.ts";
-import { writeJson } from "../src/fs.ts";
+import { jsonText, writeJson } from "../src/fs.ts";
 import { readReviewInputs } from "../src/judgement.ts";
 import { readBase } from "../src/knowledge.ts";
 import * as mailModule from "../src/mail.ts";
@@ -531,7 +531,7 @@ test("a fast-route fix from start to a proven report", async () => {
     "src/a.ts": "x",
   });
   const c = io(root);
-  expect((await c.run("--version")).out.trim()).toBe("0.14.0");
+  expect((await c.run("--version")).out.trim()).toBe("0.15.0");
   const detect = await c.json("detect");
   expect(detect.code).toBe(0);
   expect((detect.data.profile as { targets: unknown[] }).targets).toHaveLength(1);
@@ -11249,4 +11249,53 @@ test("2026-10-25-001 AC-8: crew cto review and crew cto record write their files
   expect(filed.out.split("\n")[0]).toBe(`CTO plan of w filed: ${join(cto, `${date}-plan-2.md`)}`);
   for (const held of [`${date}-inputs.json`, `${date}-plan.md`])
     expect(lstatSync(join(cto, held)).isSymbolicLink(), held).toBe(true);
+  // The -2 files hold what was written: the review's JSON and the plan's text.
+  expect(JSON.parse(readFileSync(join(cto, `${date}-inputs-2.json`), "utf8")).workspace).toBe("w");
+  expect(readFileSync(join(cto, `${date}-plan-2.md`), "utf8")).toBe("# CTO plan for w\n");
+});
+
+test("2026-10-25-002 AC-5: crew cto record --inputs files the plan and its copy as a pair past a held copy name (a link to nothing, a regular file), leaving the holder and another plan untouched; the review's inputs are jsonText byte for byte", async () => {
+  const { ca, a, paths } = await ctoWorkspace();
+  const cto = join(paths.userDir, "cto", "w");
+  const date = new Date().toISOString().slice(0, 10);
+  const inputs = (
+    (await ca.run("cto", "review", "--workspace", "w")).out.split("\n")[0] as string
+  ).replace("inputs: ", "");
+  // AC-6: the inputs file is the engine's JSON form.
+  const text = readFileSync(inputs, "utf8");
+  expect(text).toBe(jsonText(JSON.parse(text)));
+  write(a, "cto-plan.md", "# CTO plan for w\n");
+  // A link to nothing holds the first pair's copy name.
+  symlinkSync(join(cto, "nowhere"), join(cto, `${date}-plan.inputs.json`));
+  const first = await ca.run(
+    "cto",
+    "record",
+    "--workspace",
+    "w",
+    "--file",
+    "cto-plan.md",
+    "--inputs",
+    inputs,
+  );
+  expect(first.code, first.err).toBe(0);
+  expect(first.out.split("\n")[0]).toBe(`CTO plan of w filed: ${join(cto, `${date}-plan-2.md`)}`);
+  expect(readFileSync(join(cto, `${date}-plan-2.inputs.json`), "utf8")).toBe(text);
+  expect(existsSync(join(cto, `${date}-plan.md`))).toBe(false);
+  expect(lstatSync(join(cto, `${date}-plan.inputs.json`)).isSymbolicLink()).toBe(true);
+  // A regular file holds the next copy name, and another plan holds the name before it.
+  writeFileSync(join(cto, `${date}-plan-3.inputs.json`), "a holder");
+  const second = await ca.run(
+    "cto",
+    "record",
+    "--workspace",
+    "w",
+    "--file",
+    "cto-plan.md",
+    "--inputs",
+    inputs,
+  );
+  expect(second.out.split("\n")[0]).toBe(`CTO plan of w filed: ${join(cto, `${date}-plan-4.md`)}`);
+  expect(readFileSync(join(cto, `${date}-plan-3.inputs.json`), "utf8")).toBe("a holder");
+  expect(existsSync(join(cto, `${date}-plan-3.md`))).toBe(false);
+  expect(readFileSync(join(cto, `${date}-plan-2.md`), "utf8")).toBe("# CTO plan for w\n");
 });

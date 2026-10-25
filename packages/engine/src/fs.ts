@@ -111,8 +111,42 @@ export function createFreeFile(
   }
 }
 
+/**
+ * Two files under one free name, `<base><first ext>` and `<base><second ext>`, then `<base>-2…` and
+ * on: the first written exclusively, then the second; when the second name is held, the first file
+ * this call created is removed and the next name tried; when the second write fails otherwise, the
+ * first is removed and the error stands. Returns the first file's path (2026-10-25-002, a CTO plan
+ * and the inputs it was written from, never one without the other).
+ */
+export function createFreePair(
+  dir: string,
+  base: string,
+  first: [ext: string, text: string],
+  second: [ext: string, text: string],
+  write: (path: string, text: string) => boolean = writeTextNew,
+): string {
+  ensureDir(dir);
+  for (let n = 1; ; n++) {
+    const stem = join(dir, n === 1 ? base : `${base}-${n}`);
+    const head = `${stem}${first[0]}`;
+    if (!write(head, first[1])) continue;
+    let paired = false;
+    try {
+      paired = write(`${stem}${second[0]}`, second[1]);
+    } finally {
+      if (!paired) rmSync(head, { force: true });
+    }
+    if (paired) return head;
+  }
+}
+
+/** The engine's JSON form: two-space indents and a closing newline. */
+export function jsonText(data: unknown): string {
+  return `${JSON.stringify(data, null, 2)}\n`;
+}
+
 export function writeJson(path: string, data: unknown): void {
-  writeText(path, `${JSON.stringify(data, null, 2)}\n`);
+  writeText(path, jsonText(data));
 }
 
 export function nowIso(): string {

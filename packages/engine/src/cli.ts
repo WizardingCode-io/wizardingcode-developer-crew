@@ -59,7 +59,9 @@ import {
 import { changedPaths, changedWatchedPaths, hashPaths, isGitRepo } from "./fingerprint.ts";
 import {
   createFreeFile,
+  createFreePair,
   ensureDir,
+  jsonText,
   nowIso,
   readJson,
   readText,
@@ -5033,12 +5035,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           knowledge,
           harnessLessons: lessonsForCto(readBase(env.paths.userDir).base, scope),
         };
-        const target = createFreeFile(
-          dir,
-          `${date}-inputs`,
-          ".json",
-          `${JSON.stringify(inputs, null, 2)}\n`,
-        );
+        const target = createFreeFile(dir, `${date}-inputs`, ".json", jsonText(inputs));
         // The figures the inputs carry are printed too, so the session and its trace hold what the
         // CTO reads (the CTO case's fourth run: the agent alone saw them, inside its own context).
         return ok(
@@ -5084,9 +5081,13 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         if (inputs === null) return refuse(`${given} cannot be read; nothing was filed`);
       }
       // A second plan the same day goes beside the first, never over it (finding 53).
-      const target = createFreeFile(dir, `${date}-plan`, ".md", text);
+      // The plan and the copy of its inputs as a pair: never a plan without its copy, nothing over
+      // a file another writer holds (2026-10-25-002).
+      const target =
+        inputs === null
+          ? createFreeFile(dir, `${date}-plan`, ".md", text)
+          : createFreePair(dir, `${date}-plan`, [".md", text], [".inputs.json", inputs]);
       const copy = planInputsPath(target);
-      if (inputs !== null) writeText(copy, inputs);
       const added = addEntry(env.paths.userDir, {
         kind: "general",
         title,

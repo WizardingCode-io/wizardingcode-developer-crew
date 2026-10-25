@@ -90,9 +90,30 @@ function createFreeFile(dir, base, ext, text, write = writeTextNew) {
       return target;
   }
 }
+function createFreePair(dir, base, first, second, write = writeTextNew) {
+  ensureDir(dir);
+  for (let n = 1;; n++) {
+    const stem = join(dir, n === 1 ? base : `${base}-${n}`);
+    const head = `${stem}${first[0]}`;
+    if (!write(head, first[1]))
+      continue;
+    let paired = false;
+    try {
+      paired = write(`${stem}${second[0]}`, second[1]);
+    } finally {
+      if (!paired)
+        rmSync(head, { force: true });
+    }
+    if (paired)
+      return head;
+  }
+}
+function jsonText(data) {
+  return `${JSON.stringify(data, null, 2)}
+`;
+}
 function writeJson(path, data) {
-  writeText(path, `${JSON.stringify(data, null, 2)}
-`);
+  writeText(path, jsonText(data));
 }
 function nowIso() {
   return new Date().toISOString();
@@ -8163,7 +8184,7 @@ import { homedir as homedir2 } from "node:os";
 import { basename as basename5, isAbsolute as isAbsolute7, join as join29, sep as sep3 } from "node:path";
 
 // packages/engine/src/version.ts
-var VERSION = "0.14.0";
+var VERSION = "0.15.0";
 
 // packages/engine/src/packs.ts
 var PACK_NAME = /^wizardingcode-pack-[a-z0-9][a-z0-9-]*$/;
@@ -20016,8 +20037,7 @@ ${drafted.lesson}`, "lesson")[0];
           knowledge,
           harnessLessons: lessonsForCto(readBase(env.paths.userDir).base, scope)
         };
-        const target2 = createFreeFile(dir, `${date}-inputs`, ".json", `${JSON.stringify(inputs2, null, 2)}
-`);
+        const target2 = createFreeFile(dir, `${date}-inputs`, ".json", jsonText(inputs2));
         return ok([
           `inputs: ${target2}`,
           ...metricsText(metrics).split(`
@@ -20054,10 +20074,8 @@ ${drafted.lesson}`, "lesson")[0];
         if (inputs === null)
           return refuse(`${given} cannot be read; nothing was filed`);
       }
-      const target = createFreeFile(dir, `${date}-plan`, ".md", text);
+      const target = inputs === null ? createFreeFile(dir, `${date}-plan`, ".md", text) : createFreePair(dir, `${date}-plan`, [".md", text], [".inputs.json", inputs]);
       const copy = planInputsPath(target);
-      if (inputs !== null)
-        writeText(copy, inputs);
       const added = addEntry(env.paths.userDir, {
         kind: "general",
         title,
