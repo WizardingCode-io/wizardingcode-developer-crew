@@ -7,19 +7,24 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import {
   diffRefusal,
   EDITOR_TOOLS,
   type EditorCall,
   type ImproveDeps,
   type KitCall,
+  keptSandboxes,
+  realDeps,
   realGit,
+  removeKeptSandboxes,
   runImprove,
 } from "../../../scripts/improve.ts";
 import { toolResult, toolUse } from "./kit-stub.ts";
@@ -55,25 +60,48 @@ function fixture(): { root: string; tmp: string } {
   return { root, tmp: mkdtempSync(join(tmpdir(), "improve-wt-")) };
 }
 
-/** The kit's result for one case in a tree: three runs scored from the tree's gate.md (BETTER scores 1), each with a trace of the case's read. */
+/**
+ * The kit's result for one case in a tree: three runs scored from the tree's gate.md (BETTER scores 1),
+ * each with a trace of the case's read where the kit keeps it, `<sandbox>/out/trace.jsonl` (finding
+ * 175): the with runs share two sandboxes, a without run has its own, and two more without runs
+ * carry a path of another shape, which names no sandbox. `boxes` are the three made.
+ */
 function kitResult(call: KitCall, scores?: number[], error: string | null = null) {
   const better = readFileSync(join(call.tree, GATE), "utf8").includes("BETTER");
   const file = call.caseName === "u" ? "agents/judge.md" : "skills/crew/references/gate.md";
-  const trace = join(mkdtempSync(join(tmpdir(), "trace-")), "t.jsonl");
-  writeFileSync(
-    trace,
-    `${[toolUse("a", "Read", { file_path: `${PLUGIN}/${file}` }), toolResult("a", "1\tx")].join("\n")}\n`,
-  );
+  const lines = `${[toolUse("a", "Read", { file_path: `${PLUGIN}/${file}` }), toolResult("a", "1\tx")].join("\n")}\n`;
+  const box = () => {
+    const dir = mkdtempSync(join(tmpdir(), "e-"));
+    mkdirSync(join(dir, "out"));
+    writeFileSync(join(dir, "out", "trace.jsonl"), lines);
+    return dir;
+  };
+  const boxes = [box(), box(), box()];
+  const traceOf = (dir: string) => join(dir, "out", "trace.jsonl");
+  const traces = [boxes[0], boxes[0], boxes[1]].map((dir) => traceOf(dir as string));
   const s = scores ?? (call.caseName === "u" ? [1, 1, 1] : better ? [1, 1, 1] : [0.5, 0.5, 0.5]);
   return {
     status: 0,
+    boxes,
     result: {
       costUsd: 0.6,
       plugins: [{ path: PLUGIN }],
       cases: [
         {
           name: call.caseName,
-          arms: { with: s.map((score) => ({ score, error, tracePath: trace, graders: [] })) },
+          arms: {
+            with: s.map((score, i) => ({ score, error, tracePath: traces[i % 3], graders: [] })),
+            without: [
+              { score: 0, error: null, tracePath: traceOf(boxes[2] as string), graders: [] },
+              { score: 0, error: null, tracePath: 7 as unknown, graders: [] },
+              {
+                score: 0,
+                error: null,
+                tracePath: join(boxes[2] as string, "other", "trace.jsonl"),
+                graders: [],
+              },
+            ],
+          },
         },
       ],
     },
@@ -86,6 +114,10 @@ interface Seen {
   git: { args: string[]; cwd: string; env: NodeJS.ProcessEnv }[];
   lessons: string[][];
   log: string[];
+  /** The sandboxes each kit call made (finding 175), in call order. */
+  boxes: string[][];
+  /** The paths each removal asked for, in call order. */
+  sandboxes: string[][];
 }
 
 /** The deps with the kit and the editor stubbed, real git recorded, lessons captured. */
@@ -97,9 +129,19 @@ function deps(
     editor?: (call: EditorCall, n: number) => void;
     output?: (n: number) => string;
     env?: NodeJS.ProcessEnv;
+    /** In place of the removal that deletes what it is given (finding 175). */
+    removeSandboxes?: (paths: string[]) => void;
   } = {},
 ): { deps: ImproveDeps; seen: Seen } {
-  const seen: Seen = { kit: [], editor: [], git: [], lessons: [], log: [] };
+  const seen: Seen = {
+    kit: [],
+    editor: [],
+    git: [],
+    lessons: [],
+    log: [],
+    boxes: [],
+    sandboxes: [],
+  };
   let lessonId = 0;
   return {
     seen,
@@ -116,7 +158,18 @@ function deps(
       kit: (call) => {
         seen.kit.push(call);
         seen.log.push(`kit ${call.caseName}`);
-        return options.kit ? options.kit(call, seen.kit.length) : kitResult(call);
+        const r = options.kit ? options.kit(call, seen.kit.length) : kitResult(call);
+        seen.boxes.push((r as { boxes?: string[] }).boxes ?? []);
+        return { status: r.status, result: r.result };
+      },
+      removeSandboxes: (paths) => {
+        seen.sandboxes.push(paths);
+        (
+          options.removeSandboxes ??
+          ((asked: string[]) => {
+            for (const dir of asked) rmSync(dir, { recursive: true, force: true });
+          })
+        )(paths);
       },
       editor: (call) => {
         seen.editor.push(call);
@@ -644,4 +697,185 @@ test("2026-10-25-005 AC-3: a run with a provider gives the kit and the editor th
   expect(plainEditor.env.ANTHROPIC_BASE_URL).toBeUndefined();
   expect(recordOf(second.root).provider).toBeNull();
   expect(recordOf(second.root).costUsd).toBeCloseTo(plain.seen.kit.length * 0.6, 5);
+});
+
+test("2026-10-26-005 AC-1: after a measurement the run asks for exactly the sandboxes the kit kept for it, once the traces were read: the distinct parents of the out folders across arms, for the baseline and for a probe; a result without trace paths asks for nothing", async () => {
+  const { root, tmp } = fixture();
+  const run = deps(root, tmp);
+  expect(await runImprove({ cases: ["t"], proposals: 1 }, run.deps)).toBe(0);
+  // The baseline and the probe: each asked for its own three sandboxes (the two the with runs share and the without run's), once each, after the figures read the traces.
+  expect(run.seen.kit).toHaveLength(2);
+  expect(run.seen.boxes.map((b) => b.length)).toEqual([3, 3]);
+  expect(run.seen.sandboxes).toEqual(run.seen.boxes);
+  for (const box of run.seen.boxes.flat()) expect(existsSync(box)).toBe(false);
+  const record = recordOf(root);
+  // The traces were read before the sandboxes went: the case's read is in the figures.
+  expect(record.baseline.t.reads).toContain("plugins/core/skills/crew/references/gate.md");
+  expect(record.proposals[0].probe.t.reads).toContain(
+    "plugins/core/skills/crew/references/gate.md",
+  );
+  // No trace paths in the result: nothing asked.
+  const bare = fixture();
+  const quiet = deps(bare.root, bare.tmp, {
+    kit: (call) => {
+      const r = kitResult(call);
+      for (const runs of Object.values(r.result.cases[0]?.arms ?? {}))
+        for (const x of runs) delete (x as { tracePath?: unknown }).tracePath;
+      return r;
+    },
+  });
+  expect(await runImprove({ cases: ["t"], proposals: 1 }, quiet.deps)).toBe(0);
+  expect(quiet.seen.sandboxes.flat()).toEqual([]);
+});
+
+test("2026-10-26-005 AC-1 (keptSandboxes): the distinct parents of the out folders of the string trace paths across arms and both arm shapes, in order of first appearance; nothing for null, a number, an empty object, no cases or paths of another shape", () => {
+  const box = (n: number) => `/private/tmp/e-${n}`;
+  const trace = (n: number) => `${box(n)}/out/trace.jsonl`;
+  const result = {
+    cases: [
+      {
+        name: "t",
+        arms: {
+          with: [{ tracePath: trace(1) }, { tracePath: trace(1) }, { tracePath: trace(2) }],
+          without: [
+            { tracePath: 7 },
+            { tracePath: `${box(3)}/other/trace.jsonl` },
+            { tracePath: trace(4) },
+          ],
+        },
+      },
+      { name: "u", arms: [{ runs: [{ tracePath: trace(5) }, { tracePath: trace(1) }] }] },
+    ],
+  };
+  expect(keptSandboxes(result)).toEqual([box(1), box(2), box(4), box(5)]);
+  const others: unknown[] = [
+    null,
+    7,
+    {},
+    { cases: null },
+    { cases: [{ arms: null }, { arms: { with: [{ tracePath: 3 }, {}] } }] },
+  ];
+  for (const other of others) expect(keptSandboxes(other)).toEqual([]);
+});
+
+test("2026-10-26-005 AC-6: a kit call that stops the run with a result still asks for its sandboxes, at the ceiling and for a result without the case; a null result asks for nothing; a removal that throws is logged and the figures stand", async () => {
+  const capped = fixture();
+  const atCeiling = deps(capped.root, capped.tmp, {
+    kit: (call) => ({ ...kitResult(call), status: 2 }),
+  });
+  expect(await runImprove({ cases: ["t"], proposals: 1 }, atCeiling.deps)).toBe(2);
+  expect(atCeiling.seen.boxes).toHaveLength(1);
+  expect(atCeiling.seen.sandboxes).toEqual(atCeiling.seen.boxes);
+  const elsewhere = fixture();
+  const missing = deps(elsewhere.root, elsewhere.tmp, {
+    kit: (call) => {
+      const r = kitResult(call);
+      const first = r.result.cases[0];
+      if (first) first.name = "elsewhere";
+      return r;
+    },
+  });
+  expect(await runImprove({ cases: ["t"], proposals: 1 }, missing.deps)).toBe(3);
+  expect(missing.seen.boxes).toHaveLength(1);
+  expect(missing.seen.sandboxes).toEqual(missing.seen.boxes);
+  const nothing = fixture();
+  const silent = deps(nothing.root, nothing.tmp, { kit: () => ({ status: 3, result: null }) });
+  expect(await runImprove({ cases: ["t"], proposals: 1 }, silent.deps)).toBe(3);
+  expect(silent.seen.sandboxes.flat()).toEqual([]);
+  const { root, tmp } = fixture();
+  const stuck = deps(root, tmp, {
+    removeSandboxes: () => {
+      throw new Error("busy");
+    },
+  });
+  expect(await runImprove({ cases: ["t"], proposals: 1 }, stuck.deps)).toBe(0);
+  expect(recordOf(root).baseline.t.mean).toBe(0.5);
+  expect(stuck.seen.log).toContain("sandboxes not removed: busy");
+});
+
+test("2026-10-26-005 AC-2: removeKeptSandboxes removes a kept sandbox (read-only, sealed at 000, a nested 000 folder with a file) and refuses, leaving untouched, a symlink named e-…, an e-… folder outside the roots, a folder without out, a path with .., and a folder of another name; a removal that fails is named and nothing throws", () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "roots-")));
+  const kept = join(root, "e-kept1");
+  mkdirSync(join(kept, "out"), { recursive: true });
+  writeFileSync(join(kept, "out", "trace.jsonl"), "");
+  mkdirSync(join(kept, "sealed", "home", "deep"), { recursive: true });
+  writeFileSync(join(kept, "sealed", "home", "deep", "f"), "x");
+  chmodSync(join(kept, "sealed", "home", "deep"), 0o000);
+  chmodSync(join(kept, "sealed"), 0o000);
+  chmodSync(kept, 0o500);
+  const target = join(root, "target");
+  mkdirSync(join(target, "out"), { recursive: true });
+  writeFileSync(join(target, "out", "keep.txt"), "keep");
+  chmodSync(target, 0o755);
+  const link = join(root, "e-link");
+  symlinkSync(target, link);
+  const outside = mkdtempSync(join(tmpdir(), "e-"));
+  mkdirSync(join(outside, "out"));
+  const noOut = join(root, "e-noout");
+  mkdirSync(noOut);
+  // An `out` that is a file or a symlink is no sandbox either (a folder of another owner cannot be staged without root).
+  const outFile = join(root, "e-outfile");
+  mkdirSync(outFile);
+  writeFileSync(join(outFile, "out"), "");
+  const outLink = join(root, "e-outlink");
+  mkdirSync(outLink);
+  symlinkSync(join(target, "out"), join(outLink, "out"));
+  const dotted = join(root, "e-kept1", "..", "e-noout");
+  const other = join(root, "other");
+  mkdirSync(join(other, "out"), { recursive: true });
+  const answer = removeKeptSandboxes(
+    [kept, link, outside, noOut, outFile, outLink, dotted, other],
+    [root],
+  );
+  expect(answer).toEqual({
+    removed: [kept],
+    refused: [link, outside, noOut, outFile, outLink, dotted, other],
+    failed: [],
+  });
+  expect(existsSync(kept)).toBe(false);
+  expect(existsSync(link)).toBe(true);
+  expect(readFileSync(join(target, "out", "keep.txt"), "utf8")).toBe("keep");
+  expect(statSync(target).mode & 0o777).toBe(0o755);
+  for (const left of [outside, noOut, outFile, outLink, other]) expect(existsSync(left)).toBe(true);
+  expect(existsSync(join(target, "out", "keep.txt"))).toBe(true);
+  // A sandbox whose parent cannot be written: opened, emptied, but not unlinked; named, not thrown.
+  const ro = realpathSync(mkdtempSync(join(tmpdir(), "ro-")));
+  const stuck = join(ro, "e-stuck");
+  mkdirSync(join(stuck, "out"), { recursive: true });
+  chmodSync(ro, 0o500);
+  try {
+    const failed = removeKeptSandboxes([stuck], [ro]);
+    // Root unlinks regardless, so the failure cannot be staged there.
+    if (process.getuid?.() !== 0)
+      expect(failed).toEqual({ removed: [], refused: [], failed: [stuck] });
+  } finally {
+    chmodSync(ro, 0o700);
+  }
+});
+
+test("2026-10-26-005 AC-4: realDeps makes no improve-trees folder until tmp is read, one then (the same path on a second read), and dispose removes it; dispose without a read makes and removes nothing, and twice does not throw", () => {
+  const { root } = fixture();
+  const own = mkdtempSync(join(tmpdir(), "own-tmp-"));
+  const before = process.env.TMPDIR;
+  process.env.TMPDIR = own;
+  try {
+    expect(realpathSync(tmpdir())).toBe(realpathSync(own));
+    const trees = () => readdirSync(own).filter((n) => n.startsWith("improve-trees-"));
+    const idle = realDeps(root);
+    idle.dispose();
+    idle.dispose();
+    expect(trees()).toEqual([]);
+    const live = realDeps(root);
+    expect(trees()).toEqual([]);
+    const first = live.tmp;
+    expect(live.tmp).toBe(first);
+    expect(trees()).toEqual([basename(first)]);
+    expect(realpathSync(dirname(first))).toBe(realpathSync(own));
+    live.dispose();
+    live.dispose();
+    expect(trees()).toEqual([]);
+  } finally {
+    if (before === undefined) delete process.env.TMPDIR;
+    else process.env.TMPDIR = before;
+  }
 });

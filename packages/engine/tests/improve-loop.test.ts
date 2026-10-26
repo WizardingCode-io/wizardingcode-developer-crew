@@ -1797,3 +1797,24 @@ test("2026-10-26-003 AC-5: a record without a lessons list, or with one that is 
   expect(next.seen.log.join("\n")).toContain("due: the harness lessons grew (1 to 2)");
   // Nine worlds with real git: past bun's default 5 s when the file runs alone, as the project's long tests.
 }, 30_000);
+
+test("2026-10-26-005 AC-3: the tick removes the improvement runs' result folders older than 14 days from the clone's results directory and keeps a young one and an old one of another name", async () => {
+  const world = loopWorld();
+  expect(await tick({}, tickDeps(world).deps)).toBe(0);
+  const results = join(world.home, "repo", "plugins", "core", "evals", "results");
+  const old = join(results, "2026-09-01T00-00-00-000Z-improve-t");
+  const young = join(results, "2026-10-25T00-00-00-000Z-improve-t");
+  const other = join(results, "2026-09-01T00-00-00-000Z-suite");
+  for (const folder of [old, young, other]) mkdirSync(folder, { recursive: true });
+  utimesSync(old, 1, 1);
+  utimesSync(other, 1, 1);
+  // Thirteen days before the tick's clock: inside the bound, so the age check is what keeps it.
+  const thirteenDaysBefore = Date.parse("2026-10-25T21:00:00.000Z") / 1000 - 13 * 86400;
+  utimesSync(young, thirteenDaysBefore, thirteenDaysBefore);
+  const second = tickDeps(world, { now: "2026-10-25T21:00:00.000Z" });
+  expect(await tick({}, second.deps)).toBe(0);
+  expect(second.seen.improve).toEqual([]);
+  expect(existsSync(old)).toBe(false);
+  expect(existsSync(young)).toBe(true);
+  expect(existsSync(other)).toBe(true);
+});

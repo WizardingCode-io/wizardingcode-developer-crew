@@ -4,6 +4,7 @@ import {
   appendFileSync,
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   readdirSync,
   readFileSync,
@@ -743,6 +744,10 @@ const LOOP_TEMP = /^improve-(?:trees|hooks)-/;
 /** A loop temp folder younger than this may be a run in progress by hand; older ones are leftovers. */
 const TEMP_AGE_MS = DAY_MS;
 const DATED_LOG_DAYS = 14;
+/** An improvement run's result folder in the clone, as `runFolder` names it; bounded like the dated logs (finding 175). */
+const IMPROVE_RESULT = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-improve-/;
+/** How long the clone keeps an improvement run's result folder: as long as a dated log. */
+const RESULT_FOLDER_DAYS = DATED_LOG_DAYS;
 
 /** The wait after `failures` failed ticks in a row, in hours: 1, 2, 4 … capped at a day, so a run that cannot be saved is not paid for every hour. */
 export function backoffHours(failures: number): number {
@@ -969,6 +974,14 @@ export async function tick(options: { dryRun?: boolean }, deps: TickDeps): Promi
         now.getTime() - statSync(join(deps.tmpdir, name)).mtimeMs > TEMP_AGE_MS
       )
         rmSync(join(deps.tmpdir, name), { recursive: true, force: true });
+    const results = join(repo, "plugins", "core", "evals", "results");
+    for (const name of existsSync(results) ? readdirSync(results) : []) {
+      if (!IMPROVE_RESULT.test(name)) continue;
+      const entry = join(results, name);
+      const stat = lstatSync(entry);
+      if (stat.isDirectory() && now.getTime() - stat.mtimeMs > RESULT_FOLDER_DAYS * DAY_MS)
+        rmSync(entry, { recursive: true, force: true });
+    }
     if (lockfile() !== before) bootstrap();
     // A release left pending after its push is resumed first; one with nothing to resume is cleared.
     if (state.pendingRelease) {
@@ -1591,7 +1604,7 @@ function realTickDeps(home: string, config: LoopConfig): TickDeps {
       try {
         return await runImprove(options, deps);
       } finally {
-        rmSync(deps.tmp, { recursive: true, force: true });
+        deps.dispose();
       }
     },
     judge: (call) => {

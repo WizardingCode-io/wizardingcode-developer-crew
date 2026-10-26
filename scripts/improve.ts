@@ -6,16 +6,20 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
+  chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
+  type Stats,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join, posix, relative } from "node:path";
+import { basename, dirname, isAbsolute, join, posix, relative, resolve } from "node:path";
 import { readJson, readText } from "../packages/engine/src/fs.ts";
 import {
   type HarnessLessonView,
@@ -28,6 +32,7 @@ import { canonical, userDirOf } from "../packages/engine/src/paths.ts";
 import { scanText } from "../packages/engine/src/secrets.ts";
 import {
   acceptedReadPaths,
+  armRuns,
   createRunFolder,
   evalInvocation,
   kitEnvironment,
@@ -176,6 +181,95 @@ export function caseFigures(
     reads: known ? [...new Set(figures.flatMap((f) => f.reads ?? []))].sort() : null,
     errored: figures.some((f) => f.errored),
   };
+}
+
+/** The sandboxes the kit kept for a result's runs (finding 175): the distinct parents of the `out/` folders of every run's `tracePath` across the result's cases and arms, in order of first appearance; nothing for a result of another shape. */
+export function keptSandboxes(result: unknown): string[] {
+  const cases = (result as { cases?: unknown } | null)?.cases;
+  if (!Array.isArray(cases)) return [];
+  const boxes: string[] = [];
+  for (const c of cases)
+    for (const run of armRuns((c as { arms?: unknown } | null)?.arms)) {
+      const trace: unknown = run?.tracePath;
+      if (typeof trace !== "string" || !trace.endsWith("/out/trace.jsonl")) continue;
+      const box = dirname(dirname(trace));
+      if (!boxes.includes(box)) boxes.push(box);
+    }
+  return boxes;
+}
+
+/** A kit sandbox's name, as the kit makes them under the temp root. */
+const SANDBOX_NAME = /^e-[A-Za-z0-9_-]+$/;
+
+/** The temp roots the kit makes its sandboxes under, by realpath: the process's and `/tmp` (`/private/tmp` on macOS); one that does not exist is left out. */
+function tempRoots(): string[] {
+  const roots = new Set<string>();
+  for (const root of [tmpdir(), "/tmp"]) {
+    try {
+      roots.add(realpathSync(root));
+    } catch {
+      // No such root on this platform.
+    }
+  }
+  return [...roots];
+}
+
+/**
+ * Removes the sandboxes the kit kept (finding 175) and nothing else: a path is taken only when it is
+ * absolute and normalised, named `e-…`, directly under one of the temp roots by realpath, a real
+ * directory (not a symlink) owned by the current user, with an `out/` folder that is a real
+ * directory; any other path is refused and left. A taken sandbox is opened first (every directory
+ * under it that is not a symlink gets mode 0700; a symlink is never followed nor changed), then
+ * removed; one that still fails is named under `failed`. Never throws.
+ */
+export function removeKeptSandboxes(
+  paths: string[],
+  roots: string[] = tempRoots(),
+): { removed: string[]; refused: string[]; failed: string[] } {
+  const answer = { removed: [] as string[], refused: [] as string[], failed: [] as string[] };
+  for (const path of paths) {
+    if (!isKeptSandbox(path, roots)) {
+      answer.refused.push(path);
+      continue;
+    }
+    try {
+      openForRemoval(path);
+      rmSync(path, { recursive: true, force: true });
+      answer.removed.push(path);
+    } catch {
+      answer.failed.push(path);
+    }
+  }
+  return answer;
+}
+
+/** A directory reached without following a symlink: what the guard and the opening both require. */
+const isRealDirectory = (stat: Stats): boolean => stat.isDirectory() && !stat.isSymbolicLink();
+
+/** Whether a path is a kit sandbox of ours to remove: see `removeKeptSandboxes`; a check that throws refuses. */
+function isKeptSandbox(path: string, roots: string[]): boolean {
+  if (!isAbsolute(path) || resolve(path) !== path || !SANDBOX_NAME.test(basename(path)))
+    return false;
+  try {
+    if (!roots.includes(realpathSync(dirname(path)))) return false;
+    const own = lstatSync(path);
+    const uid = process.getuid?.();
+    if (!isRealDirectory(own) || (uid !== undefined && own.uid !== uid)) return false;
+    const out = lstatSync(join(path, "out"));
+    return isRealDirectory(out);
+  } catch {
+    return false;
+  }
+}
+
+/** Opens a kept folder for removal: every directory under it that is not a symlink gets mode 0700 before its children are read; a symlink is never followed nor changed. */
+function openForRemoval(dir: string): void {
+  chmodSync(dir, 0o700);
+  for (const name of readdirSync(dir)) {
+    const child = join(dir, name);
+    const stat = lstatSync(child);
+    if (isRealDirectory(stat)) openForRemoval(child);
+  }
 }
 
 /** A proposal's probe set (AC-5): its targets, the cases whose baseline read a file it edits, and the cases whose reads are unknown; sorted. */
@@ -476,6 +570,14 @@ export interface ImproveDeps {
   lessonAdd: (args: string[]) => { status: number | null; out: string };
   lessons: () => LessonView[];
   ctoPlan: () => string | null;
+  /** Removes the sandboxes the kit kept for a measurement's runs, once their traces were read (finding 175). */
+  removeSandboxes: (paths: string[]) => void;
+}
+
+/** The real deps, with the worktrees' folder disposed of by their holder (finding 176). */
+export interface RealImproveDeps extends ImproveDeps {
+  /** Removes the worktrees' folder when one was made; nothing otherwise, and nothing twice. */
+  dispose: () => void;
 }
 
 export interface ImproveOptions {
@@ -690,18 +792,31 @@ function measure(r: Run, tree: string, name: string): CaseFigures {
     model: provider?.agentModel,
     env: provider?.env,
   });
-  const cost = (out.result as { costUsd?: unknown } | null)?.costUsd;
-  if (typeof cost === "number") r.record.costUsd += cost;
-  if (out.status === 2) throw new Stop(2);
-  if ((out.status !== 0 && out.status !== 1) || out.result === null) throw new Stop(3);
-  const plugins = (out.result as { plugins?: { path?: unknown }[] }).plugins ?? [];
-  const roots = [
-    join(tree, "plugins/core"),
-    ...plugins.map((p) => p?.path).filter((p): p is string => typeof p === "string"),
-  ];
-  const figures = caseFigures(out.result, name, readLines, roots);
-  if (!figures) throw new Stop(3);
-  return figures;
+  try {
+    const cost = (out.result as { costUsd?: unknown } | null)?.costUsd;
+    if (typeof cost === "number") r.record.costUsd += cost;
+    if (out.status === 2) throw new Stop(2);
+    if ((out.status !== 0 && out.status !== 1) || out.result === null) throw new Stop(3);
+    const plugins = (out.result as { plugins?: { path?: unknown }[] }).plugins ?? [];
+    const roots = [
+      join(tree, "plugins/core"),
+      ...plugins.map((p) => p?.path).filter((p): p is string => typeof p === "string"),
+    ];
+    const figures = caseFigures(out.result, name, readLines, roots);
+    if (!figures) throw new Stop(3);
+    return figures;
+  } finally {
+    // The sandboxes the kit kept for these runs go once their traces were read, on every path that
+    // has a result (finding 175); a removal that fails is logged and the figures stand.
+    if (out.result !== null && out.result !== undefined)
+      try {
+        r.deps.removeSandboxes(keptSandboxes(out.result));
+      } catch (error) {
+        r.deps.log(
+          `sandboxes not removed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+  }
 }
 
 function baselineOf(r: Run, name: string): CaseFigures {
@@ -1071,11 +1186,29 @@ export function lessonAdder(
 }
 
 /** The deps of a real run in a checkout: the kit and the editor through `claude`, git, the crew command, the base and the last CTO plan; exported for the loop (2026-10-25-005). */
-export function realDeps(root: string): ImproveDeps {
+export function realDeps(root: string): RealImproveDeps {
   const userDir = userDirOf(process.env);
+  // The worktrees' folder is made on the first worktree, not here (finding 176): the loop builds
+  // these deps only to read the base and the plan.
+  let trees: string | null = null;
   return {
     root,
-    tmp: mkdtempSync(join(tmpdir(), "improve-trees-")),
+    get tmp() {
+      trees ??= mkdtempSync(join(tmpdir(), "improve-trees-"));
+      return trees;
+    },
+    dispose: () => {
+      if (trees) rmSync(trees, { recursive: true, force: true });
+      trees = null;
+    },
+    removeSandboxes: (paths) => {
+      const { refused, failed } = removeKeptSandboxes(paths);
+      for (const [what, list] of [
+        ["refused", refused],
+        ["failed", failed],
+      ] as const)
+        if (list.length) console.log(`sandboxes ${what}: ${list.join(", ")}`);
+    },
     env: process.env,
     now: () => new Date(),
     log: (line) => console.log(line),
@@ -1147,7 +1280,6 @@ if (import.meta.main) {
     process.exit(1);
   }
   const deps = realDeps(join(import.meta.dir, ".."));
-  const exit = await runImprove(parsed, deps);
-  rmSync(deps.tmp, { recursive: true, force: true });
+  const exit = await runImprove(parsed, deps).finally(() => deps.dispose());
   process.exit(exit);
 }
