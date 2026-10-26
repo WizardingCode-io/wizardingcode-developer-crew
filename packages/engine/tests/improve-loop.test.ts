@@ -1771,7 +1771,7 @@ test("2026-10-26-003 AC-3: the stored count never exceeds what the base holds: a
 });
 
 test("2026-10-26-003 AC-5: a record without a lessons list, or with one that is not an array, leaves the tick at 0 with the base's count stored and discounts nothing; a padded list discounts its distinct string ids only", async () => {
-  for (const listed of [undefined, "K-1"]) {
+  for (const listed of [undefined, "K-1", {}, null]) {
     // The base unchanged: the count stored is the base's, and the tick ended clean.
     const still = loopWorld();
     const run = tickDeps(still, { lessons: { listed, gained: 0 } });
@@ -1795,4 +1795,5 @@ test("2026-10-26-003 AC-5: a record without a lessons list, or with one that is 
   const next = tickDeps(world, { now: "2026-10-25T21:00:00.000Z" });
   expect(await tick({}, next.deps)).toBe(0);
   expect(next.seen.log.join("\n")).toContain("due: the harness lessons grew (1 to 2)");
-});
+  // Nine worlds with real git: past bun's default 5 s when the file runs alone, as the project's long tests.
+}, 30_000);
