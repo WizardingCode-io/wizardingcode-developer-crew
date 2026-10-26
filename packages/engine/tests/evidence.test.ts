@@ -1264,6 +1264,34 @@ test("AC-9 (finding 61): an item with parts gains a reason per part until its to
   expect(computeVerdict(input)).toEqual({ verdict: "proven", unproven: [] });
 });
 
+// SP9 Task 5: the report's primary team line.
+
+test("SP9-T5 AC-6: the report's primary team line says the lead validates for a team whose lead does (frontend) and not for the backend", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const work = createWork(paths, "feature");
+  addCriterion(work, "x");
+  const evidence: Evidence = {
+    fingerprint: "f1",
+    tdd: [],
+    runs: [],
+    verdict: "unproven",
+    unproven: [],
+    judgement: [],
+  };
+  // The Team section renders with a seat planned, as a gate run leaves it.
+  work.seats = [
+    { role: "researcher", team: "researchers", kind: "debate", reason: "standard route" },
+  ];
+  work.primaryTeam = "frontend";
+  expect(renderReport(work, evidence, DEFAULT_POLICY)).toContain(
+    "- Primary team: frontend (the session; its lead validates)",
+  );
+  work.primaryTeam = "backend";
+  expect(renderReport(work, evidence, DEFAULT_POLICY)).toContain(
+    "- Primary team: backend (the session)",
+  );
+});
+
 // SP9 Task 4: the report's UI evidence section.
 
 test("SP9-T4 AC-4, AC-8: the report renders the UI evidence between the Gates and the Judgement gates from the manifest, escapes every cell, and shows nothing without one", () => {

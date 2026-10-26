@@ -27,7 +27,7 @@ import { plannedJudgementGates, plannedTaskJudgement, writeReviewInputs } from "
 import { loadLedger } from "./objections.ts";
 import { packTemplates, recordPackUse } from "./packs.ts";
 import { type CrewPaths, workDir } from "./paths.ts";
-import { isInterfacePath } from "./paths-kind.ts";
+import { isFrontendPath } from "./paths-kind.ts";
 import { namedFiles } from "./problems.ts";
 import { runCommand } from "./run.ts";
 import { scanSecrets } from "./secrets.ts";
@@ -297,11 +297,11 @@ function covers(target: Target, path: string): boolean {
   return target.path === "." || path === target.path || path.startsWith(`${target.path}/`);
 }
 
-/** Whether the item's change calls for the e2e gate (SP7 §8.2): an interface or a public-api path, or the policy requiring it. */
+/** Whether the item's change calls for the e2e gate (SP7 §8.2, SP9 Task 5): a frontend path (an interface file or a design contract), a public-api path, or the policy requiring it. */
 function wantsE2e(policy: Policy, changed: string[]): boolean {
   return (
     policy.requiredGates.includes("e2e") ||
-    changed.some(isInterfacePath) ||
+    changed.some(isFrontendPath) ||
     riskAreasForPaths(changed, policy).includes("public-api")
   );
 }

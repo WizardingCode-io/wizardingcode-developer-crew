@@ -191,6 +191,14 @@ test("SP7a AC-5 (Task 4): the tech lead validates with a verdict and numbered re
   expect(cto.body).toMatch(/never transcripts/);
 });
 
+test("SP9-T5 AC-7: the tech lead lists frontend among its teams, in the description and in the body's team line, with its model and tools unchanged", () => {
+  const lead = agent("tech-lead");
+  expect(lead.meta.description).toMatch(/QA, security, architects, ETL, DevOps, frontend/);
+  expect(lead.body).toMatch(/`etl`, `devops` or `frontend`/);
+  expect(lead.meta.model).toBe("sonnet");
+  expect(tools(lead.meta)).toEqual(["Read", "Grep", "Glob"]);
+});
+
 test("SP2b: one rubric per judgement gate, each judging the change and never the repository", () => {
   // The strategy's rubric (SP8) is the CTO's and the judge's: no reviewer agent carries its name.
   expect(readdirSync(RUBRICS).sort()).toEqual(

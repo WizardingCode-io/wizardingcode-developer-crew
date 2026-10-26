@@ -19,6 +19,7 @@ import {
   type StrategyReport,
   verdictText,
 } from "./strategy.ts";
+import { TEAMS } from "./team.ts";
 import type {
   CriterionKind,
   DecidedBy,
@@ -692,7 +693,12 @@ export function renderReport(
   // The seats the route planned, with their reasons, and the rounds spent against the caps (SP7 §6.6).
   if (work.seats?.length || work.rounds) {
     lines.push("", "## Team", "");
-    if (work.primaryTeam) lines.push(`- Primary team: ${work.primaryTeam} (the session)`, "");
+    if (work.primaryTeam) {
+      // The session leads its primary team; where the registry's lead validates (the frontend, SP9
+      // Task 5), the line says so.
+      const validates = TEAMS[work.primaryTeam].validates ? "; its lead validates" : "";
+      lines.push(`- Primary team: ${work.primaryTeam} (the session${validates})`, "");
+    }
     if (work.seats?.length) {
       lines.push("| Seat | Team | Reason |", "| :- | :- | :- |");
       for (const s of work.seats) lines.push(`| ${s.role} | ${s.team ?? ""} | ${s.reason} |`);

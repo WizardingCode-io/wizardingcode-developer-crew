@@ -30,9 +30,10 @@ test("SP7a AC-1: the registry names nine teams, their leads, their members and t
     "researchers",
     "security",
   ]);
+  // SP9-T5 AC-1 edits this row: review-ui-ux and the ui-ux gate moved to the frontend team.
   expect(TEAMS.qa).toMatchObject({
     lead: "lead-qa",
-    members: ["review-test-quality", "review-ui-ux"],
+    members: ["review-test-quality"],
     mandatory: { kind: "always" },
   });
   expect(TEAMS.etl).toMatchObject({
@@ -70,8 +71,9 @@ test("SP7a AC-1: the registry names nine teams, their leads, their members and t
 
 test("SP7a AC-1: the route decides the seats; the fast route plans no role", () => {
   expect(plannedSeats("fast", [], ["src/a.ts"], DEFAULT_POLICY)).toEqual([]);
-  // Fast with an interface file keeps SP2's one judgement gate: ui-ux is QA's seat, and the judge
-  // who rules it sits with it (a gate is never recorded without the judge).
+  // Fast with an interface file keeps SP2's one judgement gate: ui-ux is the frontend's seat
+  // (SP9-T5 edits this comment; it was QA's), and the judge who rules it sits with it (a gate is
+  // never recorded without the judge).
   expect(roles(plannedSeats("fast", [], ["src/App.vue"], DEFAULT_POLICY))).toEqual([
     "review-ui-ux",
     "judge",
@@ -194,9 +196,10 @@ test("SP7b-T5 AC-1: a todo's scope plans only the seats its files ask for: ui-ux
   const scoped = (scope: string[], policy = DEFAULT_POLICY) =>
     plannedSeats("standard", [], ["src/a.ts"], policy, { scope });
   expect(roles(scoped(["src/App.vue"]))).toEqual(["review-ui-ux", "judge"]);
+  // SP9-T5 AC-2 edits this row: the ui-ux reviewer sits in the frontend team (it was QA's).
   expect(scoped(["src/App.vue"])[0]).toEqual({
     role: "review-ui-ux",
-    team: "qa",
+    team: "frontend",
     kind: "gate",
     gate: "ui-ux",
     reason: "interface files: src/App.vue",
@@ -284,6 +287,125 @@ test("SP8-T4 AC-3: the audit's seats follow the scope: the researcher for the de
   ).toEqual(["review-infra"]);
 });
 
+test("SP9-T5 AC-1: the frontend team owns review-ui-ux and the ui-ux gate, is seated by interface paths and validates; QA keeps test quality alone; a template's globs keep the interface flag", () => {
+  expect(TEAMS.frontend).toEqual({
+    lead: "lead-frontend",
+    members: ["review-ui-ux"],
+    gates: ["ui-ux"],
+    mandatory: { kind: "paths", interface: true },
+    validates: true,
+  });
+  expect(TEAMS.qa.members).toEqual(["review-test-quality"]);
+  expect(TEAMS.qa.gates).toEqual(["test-quality"]);
+  const templates = [
+    {
+      pack: "wizardingcode-pack-frontend",
+      template: {
+        template: "frontend",
+        teams: { frontend: { mandatory: { kind: "paths" as const, globs: ["pages/**"] } } },
+      },
+    },
+  ];
+  const merged = teamsFor(
+    { ...DEFAULT_POLICY, team: { ...DEFAULT_POLICY.team, template: "frontend" } },
+    templates,
+  );
+  expect(merged.teams.frontend.mandatory).toEqual({
+    kind: "paths",
+    globs: ["pages/**"],
+    pack: "wizardingcode-pack-frontend",
+    interface: true,
+  });
+});
+
+test("SP9-T5 AC-2: a frontend change (an interface file or a design contract) seats the frontend lead on standard and full with the ui-ux reviewer in its team; fast seats the reviewer and the judge alone; nothing of the frontend without one", () => {
+  const standard = plannedSeats("standard", [], ["src/App.vue"], DEFAULT_POLICY);
+  expect(roles(standard)).toEqual([
+    "researcher",
+    "review-code-quality",
+    "review-test-quality",
+    "review-ui-ux",
+    "lead-qa",
+    "lead-security",
+    "lead-frontend",
+    "judge",
+  ]);
+  expect(standard.find((s) => s.role === "review-ui-ux")).toEqual({
+    role: "review-ui-ux",
+    team: "frontend",
+    kind: "gate",
+    gate: "ui-ux",
+    reason: "interface files: src/App.vue",
+  });
+  expect(standard.find((s) => s.role === "lead-frontend")).toEqual({
+    role: "lead-frontend",
+    team: "frontend",
+    kind: "lead",
+    reason: "interface files: src/App.vue",
+  });
+  // The whole full-route list: the frontend lead after the architects', before the judge.
+  expect(roles(plannedSeats("full", [], ["src/App.vue"], DEFAULT_POLICY))).toEqual([
+    "researcher",
+    "review-code-quality",
+    "review-test-quality",
+    "review-security",
+    "review-ui-ux",
+    "review-risk",
+    "review-architecture",
+    "lead-qa",
+    "lead-security",
+    "lead-architects",
+    "lead-frontend",
+    "judge",
+  ]);
+  const contract = plannedSeats("standard", [], ["DESIGN.md"], DEFAULT_POLICY);
+  expect(contract.find((s) => s.role === "review-ui-ux")?.reason).toBe(
+    "design contract: DESIGN.md",
+  );
+  expect(contract.find((s) => s.role === "lead-frontend")?.reason).toBe(
+    "design contract: DESIGN.md",
+  );
+  expect(
+    plannedSeats("standard", [], ["src/App.vue", "DESIGN.md"], DEFAULT_POLICY).find(
+      (s) => s.role === "lead-frontend",
+    )?.reason,
+  ).toBe("interface files: src/App.vue");
+  expect(roles(plannedSeats("fast", [], ["src/App.vue"], DEFAULT_POLICY))).toEqual([
+    "review-ui-ux",
+    "judge",
+  ]);
+  const fastContract = plannedSeats("fast", [], ["DESIGN.md"], DEFAULT_POLICY);
+  expect(roles(fastContract)).toEqual(["review-ui-ux", "judge"]);
+  expect(fastContract[0]?.reason).toBe("design contract: DESIGN.md");
+  expect(
+    plannedSeats("standard", [], ["src/a.ts"], DEFAULT_POLICY, { scope: ["src/App.vue"] })[0]?.team,
+  ).toBe("frontend");
+  expect(
+    roles(plannedSeats("standard", [], ["src/a.ts"], DEFAULT_POLICY)).filter(
+      (r) => r === "lead-frontend" || r === "review-ui-ux",
+    ),
+  ).toEqual([]);
+  // team.always seats the frontend on any route with the policy's reason; the gate keeps the paths' reason when one changed.
+  const always = {
+    ...DEFAULT_POLICY,
+    team: { ...DEFAULT_POLICY.team, always: ["frontend" as const] },
+  };
+  const fastAlways = plannedSeats("fast", [], ["src/a.ts"], always);
+  expect(fastAlways.find((s) => s.role === "review-ui-ux")?.reason).toBe("policy team.always");
+  expect(fastAlways.find((s) => s.role === "lead-frontend")?.reason).toBe("policy team.always");
+  const standardAlways = plannedSeats("standard", [], ["src/App.vue"], always);
+  expect(standardAlways.find((s) => s.role === "review-ui-ux")?.reason).toBe(
+    "interface files: src/App.vue",
+  );
+  expect(standardAlways.find((s) => s.role === "lead-frontend")?.reason).toBe("policy team.always");
+});
+
+test("SP9-T5 AC-5 (the primary team): a design-contract change makes the session the frontend's lead; a plain module keeps the backend", () => {
+  expect(primaryTeam(["tailwind.config.ts"])).toBe("frontend");
+  expect(primaryTeam(["docs/DESIGN.md", "src/a.ts"])).toBe("frontend");
+  expect(primaryTeam(["src/a.ts"])).toBe("backend");
+});
+
 test("SP6-T2 AC-4: teamsFor merges a registered template's globs into a paths team and warns on an unregistered one; plannedSeats seats the pack team's expert on a matching path, on standard and full alone", () => {
   const templates = [
     {
@@ -314,6 +436,7 @@ test("SP6-T2 AC-4: teamsFor merges a registered template's globs into a paths te
   });
   // Nothing else of the registry moves: a template adds globs and nothing more.
   expect(merged.teams.qa).toEqual(TEAMS.qa);
+  // SP9-T5 AC-1: the frontend's rule now carries `interface: true`; a template naming another team leaves it whole.
   expect(merged.teams.frontend.mandatory).toEqual(TEAMS.frontend.mandatory);
   expect(TEAMS["agentic-os"].mandatory).toEqual({ kind: "paths" });
   const unregistered = teamsFor(withTemplate, []);

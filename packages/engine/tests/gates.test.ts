@@ -1135,6 +1135,21 @@ function e2eRepo(e2e: string, environment: Environment | undefined = flagged()) 
   return { root, paths, profile, target, work };
 }
 
+test("SP9-T5 AC-5: a design-contract path plans the e2e gate as an interface file does, once and on the fast route too (which target runs it is the SP7b-T4 AC-1 row's)", () => {
+  const profile: Profile = {
+    version: 1,
+    detectedAt: "",
+    targets: [target, { ...target, path: "apps/api" }],
+    watch: { exclude: [] },
+  };
+  const root = tempDir();
+  const e2e = (route: "standard" | "fast", changed: string[]) =>
+    plannedGates(route, profile, DEFAULT_POLICY, changed, root).filter((p) => p.gate === "e2e");
+  expect(e2e("standard", ["DESIGN.md"])).toEqual([{ gate: "e2e", target: "." }]);
+  expect(e2e("fast", ["tailwind.config.ts"])).toEqual([{ gate: "e2e", target: "." }]);
+  expect(e2e("standard", ["src/a.ts"])).toEqual([]);
+});
+
 test("SP7b-T4 AC-1: the e2e gate is planned from the change and the policy, exactly once, on the first target with a command, never per target or on a todo's gate, and is unavailable with the command to set", async () => {
   const withE2e: Policy = { ...DEFAULT_POLICY, requiredGates: ["e2e"] };
   expect(gatesForTarget(target, withE2e, ["src/a.ts"])).not.toContain("e2e");

@@ -1282,16 +1282,40 @@ var INTERFACE_EXTENSIONS = [
   ".scss",
   ".less"
 ];
+var MODULE_EXTENSIONS = [".ts", ".js", ".mts", ".mjs"];
+var INTERFACE_SEGMENTS = /(?:^|\/)(?:components|composables|layouts|pages|animations|transitions|motion)\//;
+var NEVER_INTERFACE_SEGMENTS = /(?:^|\/)(?:pages\/api|server|hooks)\//;
+var CONTRACT_CONFIG = /^(?:(?:packages|apps)\/[^/]+\/)?(?:tailwind|uno)\.config\.[a-z]+$/;
+var CONTRACT_TOKENS_OR_THEME = /^(?:tokens\.s?css|theme\.(?:css|ts|json))$/;
+var CONTRACT_SEGMENTS = /(?:^|\/)(?:styles|assets|design)\//;
 function isInterfacePath(rel2) {
-  const lower = rel2.toLowerCase();
+  const { lower, name, folder } = parts(rel2);
   if (inTestsFolder(lower))
     return false;
-  const name = lower.slice(lower.lastIndexOf("/") + 1);
   if (isTestName(name) || /\.stories\./.test(name))
     return false;
   if (/(?:^|\/)resources\/views\//.test(lower))
     return true;
-  return INTERFACE_EXTENSIONS.some((ext) => lower.endsWith(ext));
+  if (INTERFACE_EXTENSIONS.some((ext) => lower.endsWith(ext)))
+    return true;
+  if (!MODULE_EXTENSIONS.some((ext) => lower.endsWith(ext)) || name.endsWith(".d.ts"))
+    return false;
+  return INTERFACE_SEGMENTS.test(folder) && !NEVER_INTERFACE_SEGMENTS.test(folder);
+}
+function isDesignContractPath(rel2) {
+  if (isTestPath(rel2))
+    return false;
+  const { lower, name, folder } = parts(rel2);
+  if (name === "design.md")
+    return folder === "" || folder.startsWith("docs/");
+  if (CONTRACT_CONFIG.test(lower) || name.endsWith(".tokens.json"))
+    return true;
+  if (!CONTRACT_TOKENS_OR_THEME.test(name))
+    return false;
+  return folder === "" || CONTRACT_SEGMENTS.test(folder);
+}
+function isFrontendPath(rel2) {
+  return isInterfacePath(rel2) || isDesignContractPath(rel2);
 }
 function isTestPath(rel2) {
   const path = rel2.replace(/\\/g, "/");
@@ -1301,6 +1325,11 @@ function isTestPath(rel2) {
     return true;
   const name = path.slice(path.lastIndexOf("/") + 1);
   return isTestName(name) || /_test\.[^.]+$/.test(name) || /(?:Test\.php|Tests\.cs)$/.test(name);
+}
+function parts(rel2) {
+  const lower = rel2.replace(/\\/g, "/").toLowerCase();
+  const cut = lower.lastIndexOf("/") + 1;
+  return { lower, name: lower.slice(cut), folder: lower.slice(0, cut) };
 }
 function inTestsFolder(path) {
   return /(?:^|\/)__tests__\//.test(path);
@@ -1635,8 +1664,8 @@ var TEAMS = {
   },
   qa: {
     lead: "lead-qa",
-    members: ["review-test-quality", "review-ui-ux"],
-    gates: ["test-quality", "ui-ux"],
+    members: ["review-test-quality"],
+    gates: ["test-quality"],
     mandatory: { kind: "always" },
     validates: true
   },
@@ -1677,10 +1706,10 @@ var TEAMS = {
   },
   frontend: {
     lead: "lead-frontend",
-    members: [],
-    gates: [],
-    mandatory: { kind: "paths" },
-    validates: false
+    members: ["review-ui-ux"],
+    gates: ["ui-ux"],
+    mandatory: { kind: "paths", interface: true },
+    validates: true
   },
   "agentic-os": {
     lead: "lead-agentic-os",
@@ -1708,7 +1737,7 @@ function teamsFor(policy, templates) {
     const team = teams[name];
     if (team?.mandatory.kind !== "paths")
       continue;
-    team.mandatory = { kind: "paths", globs: [...def.mandatory.globs], pack: found.pack };
+    team.mandatory = { ...team.mandatory, globs: [...def.mandatory.globs], pack: found.pack };
   }
   return { teams, warning: null };
 }
@@ -1744,9 +1773,9 @@ function rolePattern() {
   return new RegExp(`^(${names.join("|")})$`);
 }
 function primaryTeam(changed) {
-  return changed.some(isInterfacePath) ? "frontend" : "backend";
+  return changed.some(isFrontendPath) ? "frontend" : "backend";
 }
-function seated(team, def, route, riskAreas, policy) {
+function seated(team, def, route, riskAreas, changed, policy) {
   if (policy.team.always.includes(team))
     return "policy team.always";
   if (route === "fast")
@@ -1758,23 +1787,32 @@ function seated(team, def, route, riskAreas, policy) {
     return route === rule.route ? `${route} route` : null;
   if (rule.kind === "risk-area")
     return route === "full" && riskAreas.includes(rule.area) ? `risk area ${rule.area}` : null;
+  if (rule.kind === "paths" && rule.interface)
+    return frontendReason(changed);
   return null;
 }
-function interfaceReason(interfaces) {
-  const shown = interfaces.slice(0, 3).join(", ");
-  const more = interfaces.length > 3 ? `, +${interfaces.length - 3} more` : "";
-  return `interface files: ${shown}${more}`;
+function firstThree(paths) {
+  const shown = paths.slice(0, 3).join(", ");
+  const more = paths.length > 3 ? `, +${paths.length - 3} more` : "";
+  return `${shown}${more}`;
+}
+function frontendReason(changed) {
+  const interfaces = changed.filter(isInterfacePath);
+  if (interfaces.length)
+    return `interface files: ${firstThree(interfaces)}`;
+  const contracts = changed.filter(isDesignContractPath);
+  return contracts.length ? `design contract: ${firstThree(contracts)}` : null;
 }
 function taskSeats(scope, policy) {
   const seats = [];
-  const interfaces = scope.filter(isInterfacePath);
-  if (interfaces.length)
+  const frontend = frontendReason(scope);
+  if (frontend)
     seats.push({
       role: "review-ui-ux",
-      team: "qa",
+      team: "frontend",
       kind: "gate",
       gate: "ui-ux",
-      reason: interfaceReason(interfaces)
+      reason: frontend
     });
   const areas = riskAreasForPaths(scope, policy);
   if (areas.length)
@@ -1810,9 +1848,9 @@ function plannedSeats(route, riskAreas, changed, policy, options = {}) {
     gate("security", "full route");
   else if (route === "standard" && riskAreas.length)
     gate("security", `risk area${riskAreas.length === 1 ? "" : "s"} ${riskAreas.join(", ")}`);
-  const interfaces = changed.filter(isInterfacePath);
-  if (interfaces.length)
-    gate("ui-ux", interfaceReason(interfaces));
+  const frontend = frontendReason(changed);
+  if (frontend)
+    gate("ui-ux", frontend);
   if (route === "full") {
     gate("risk", "full route", "architects");
     gate("architecture", "full route");
@@ -1829,7 +1867,7 @@ function plannedSeats(route, riskAreas, changed, policy, options = {}) {
     for (const g of registry[team].gates)
       gate(g, "policy team.always", team);
   for (const team of ["etl", "devops"]) {
-    const reason = seated(team, registry[team], route, riskAreas, policy);
+    const reason = seated(team, registry[team], route, riskAreas, changed, policy);
     if (reason)
       for (const g of registry[team].gates)
         gate(g, reason, team);
@@ -1853,7 +1891,7 @@ function plannedSeats(route, riskAreas, changed, policy, options = {}) {
   for (const [name, def] of Object.entries(registry)) {
     if (!def.validates)
       continue;
-    const reason = seated(name, def, route, riskAreas, policy);
+    const reason = seated(name, def, route, riskAreas, changed, policy);
     if (reason)
       plan({ role: def.lead, team: name, kind: "lead", reason });
   }
@@ -5579,11 +5617,11 @@ var SIZE_MIN = 200;
 var SIZE_MAX = 4000;
 var VIEWPORTS_MAX = 6;
 function parseScreens(text) {
-  const parts = text.split(",").map((p) => p.trim()).filter((p) => p !== "");
-  if (parts.length === 0)
+  const parts2 = text.split(",").map((p) => p.trim()).filter((p) => p !== "");
+  if (parts2.length === 0)
     return { refused: SCREENS_RULE };
   const seen = new Map;
-  for (const part of parts) {
+  for (const part of parts2) {
     const [page, state, ...rest] = part.split(":");
     if (rest.length || !page || !state || !SCREEN_NAME.test(page) || !SCREEN_NAME.test(state)) {
       return { refused: SCREENS_RULE };
@@ -5611,12 +5649,12 @@ function viewportName(width) {
   return width < 600 ? "mobile" : width < 1024 ? "tablet" : "desktop";
 }
 function parseViewports(text) {
-  const parts = text.split(",").map((p) => p.trim()).filter((p) => p !== "");
-  if (parts.length === 0 || parts.length > VIEWPORTS_MAX)
+  const parts2 = text.split(",").map((p) => p.trim()).filter((p) => p !== "");
+  if (parts2.length === 0 || parts2.length > VIEWPORTS_MAX)
     return { refused: VIEWPORTS_RULE };
   const out2 = [];
   const taken = new Set;
-  for (const part of parts) {
+  for (const part of parts2) {
     const match = /^(\d+)x(\d+)$/.exec(part);
     if (!match)
       return { refused: VIEWPORTS_RULE };
@@ -5863,18 +5901,18 @@ function capturesLine(summary, silent) {
       return "";
     return `captures: ${summary.captures}${silentPart ? ` (${silentPart})` : ""}`;
   }
-  const parts = [
+  const parts2 = [
     `captures: ${summary.captured} of ${summary.expected} expected (fixture ${summary.fixture}, session ${summary.session})`
   ];
   if (summary.missing.length)
-    parts.push(`missing: ${summary.missing.join(", ")}`);
+    parts2.push(`missing: ${summary.missing.join(", ")}`);
   if (summary.extra.length)
-    parts.push(`extra: ${summary.extra.join(", ")}`);
+    parts2.push(`extra: ${summary.extra.join(", ")}`);
   if (summary.viewports.length)
-    parts.push(`viewports ${summary.viewports.join(", ")}`);
+    parts2.push(`viewports ${summary.viewports.join(", ")}`);
   if (silentPart)
-    parts.push(silentPart);
-  return parts.join("; ");
+    parts2.push(silentPart);
+  return parts2.join("; ");
 }
 var CLS_LIMIT = 0.1;
 var REDUCED_MOTION_OPACITY_MS = 300;
@@ -6372,12 +6410,12 @@ function runMatches(run, planned) {
   return run.gate === planned.gate && run.target === planned.target && (run.stack ?? null) === (planned.stack ?? null);
 }
 function gateLabel(planned, multiTarget) {
-  const parts = [];
+  const parts2 = [];
   if (multiTarget && planned.target !== ".")
-    parts.push(planned.target);
+    parts2.push(planned.target);
   if (planned.stack)
-    parts.push(planned.stack);
-  return parts.length ? `${planned.gate} (${parts.join(", ")})` : planned.gate;
+    parts2.push(planned.stack);
+  return parts2.length ? `${planned.gate} (${parts2.join(", ")})` : planned.gate;
 }
 function computeVerdict(input) {
   const { work, evidence, expected, currentFingerprint, tampered, policy } = input;
@@ -6650,8 +6688,10 @@ function renderReport(work, evidence, policy, options = {}) {
   }
   if (work.seats?.length || work.rounds) {
     lines.push("", "## Team", "");
-    if (work.primaryTeam)
-      lines.push(`- Primary team: ${work.primaryTeam} (the session)`, "");
+    if (work.primaryTeam) {
+      const validates = TEAMS[work.primaryTeam].validates ? "; its lead validates" : "";
+      lines.push(`- Primary team: ${work.primaryTeam} (the session${validates})`, "");
+    }
     if (work.seats?.length) {
       lines.push("| Seat | Team | Reason |", "| :- | :- | :- |");
       for (const s of work.seats)
@@ -7778,13 +7818,13 @@ function inboxSummary(ctx) {
   for (const m of unread)
     byType.set(m.type, (byType.get(m.type) ?? 0) + 1);
   const senders = [...new Set(unread.map((m) => m.from.project))].join(", ");
-  const parts = [];
+  const parts2 = [];
   if (unread.length)
-    parts.push(`${unread.length} unread ${[...byType].map(([t, n]) => `${t}${n === 1 ? "" : "s"}`).join(" and ")} from ${senders}`);
+    parts2.push(`${unread.length} unread ${[...byType].map(([t, n]) => `${t}${n === 1 ? "" : "s"}`).join(" and ")} from ${senders}`);
   if (answered.length)
-    parts.push(`${answered.length} answered`);
+    parts2.push(`${answered.length} answered`);
   if (waiting.length)
-    parts.push(`${waiting.length} waiting for a person`);
+    parts2.push(`${waiting.length} waiting for a person`);
   const where = ctx.self.workspace ?? "alone";
   return {
     messages,
@@ -7793,7 +7833,7 @@ function inboxSummary(ctx) {
     waiting: waiting.length,
     blockers,
     tampered,
-    line: parts.length ? `Mail (${where}): ${parts.join(", ")}` : null
+    line: parts2.length ? `Mail (${where}): ${parts2.join(", ")}` : null
   };
 }
 function readOpenSessions(ctx) {
@@ -8963,9 +9003,9 @@ var phpDetector = {
     if ("test" in scripts)
       gates.test = run("test");
     else {
-      const parts = [...convention.rest.map(run), ...runner ? [runner] : []];
-      if (parts.length)
-        gates.test = parts.join(" && ");
+      const parts2 = [...convention.rest.map(run), ...runner ? [runner] : []];
+      if (parts2.length)
+        gates.test = parts2.join(" && ");
     }
     if (convention.lint)
       gates.lint = run(convention.lint);
@@ -11104,7 +11144,7 @@ function covers(target, path) {
   return target.path === "." || path === target.path || path.startsWith(`${target.path}/`);
 }
 function wantsE2e(policy, changed) {
-  return policy.requiredGates.includes("e2e") || changed.some(isInterfacePath) || riskAreasForPaths(changed, policy).includes("public-api");
+  return policy.requiredGates.includes("e2e") || changed.some(isFrontendPath) || riskAreasForPaths(changed, policy).includes("public-api");
 }
 function plannedGates(route, profile, policy, changed, root) {
   const planned = [{ gate: "secrets", target: "." }];
@@ -14720,17 +14760,17 @@ function taskText(planText, task) {
     const line = lines2[i] ?? "";
     const numbered = new RegExp(`^${n}\\.\\s+(.*)$`).exec(line);
     if (numbered) {
-      const parts = [numbered[1] ?? ""];
+      const parts2 = [numbered[1] ?? ""];
       for (let j = i + 1;j < lines2.length && /^\s+\S/.test(lines2[j] ?? ""); j++)
-        parts.push((lines2[j] ?? "").trim());
-      return parts.join(`
+        parts2.push((lines2[j] ?? "").trim());
+      return parts2.join(`
 `).trim();
     }
     if (new RegExp(`^#{1,6}\\s*(?:T-${n}|Task ${n})\\b`).test(line)) {
-      const parts = [];
+      const parts2 = [];
       for (let j = i + 1;j < lines2.length && !/^#{1,6}\s/.test(lines2[j] ?? ""); j++)
-        parts.push(lines2[j] ?? "");
-      return parts.join(`
+        parts2.push(lines2[j] ?? "");
+      return parts2.join(`
 `).trim() || null;
     }
   }

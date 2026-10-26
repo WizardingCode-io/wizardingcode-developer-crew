@@ -1,6 +1,6 @@
 import { riskAreasForPaths } from "./classify.ts";
 import { matchesAny } from "./glob.ts";
-import { isInterfacePath } from "./paths-kind.ts";
+import { isDesignContractPath, isFrontendPath, isInterfacePath } from "./paths-kind.ts";
 import type {
   JudgementGateName,
   Personality,
@@ -11,12 +11,12 @@ import type {
   TeamName,
 } from "./types.ts";
 
-/** When a team sits at the table: always from standard up, on a risk area, on the full route, or on named paths (a pack's template gives the globs, SP6 Task 2). */
+/** When a team sits at the table: always from standard up, on a risk area, on the full route, or on named paths (a pack's template gives the globs, SP6 Task 2; `interface` seats the team on a frontend change, SP9 Task 5). */
 export type MandatoryRule =
   | { kind: "always" }
   | { kind: "risk-area"; area: RiskArea }
   | { kind: "route"; route: "full" }
-  | { kind: "paths"; globs?: string[]; pack?: string };
+  | { kind: "paths"; globs?: string[]; pack?: string; interface?: boolean };
 
 export interface TeamDef {
   lead: string;
@@ -40,8 +40,8 @@ export const TEAMS: Record<TeamName, TeamDef> = {
   },
   qa: {
     lead: "lead-qa",
-    members: ["review-test-quality", "review-ui-ux"],
-    gates: ["test-quality", "ui-ux"],
+    members: ["review-test-quality"],
+    gates: ["test-quality"],
     mandatory: { kind: "always" },
     validates: true,
   },
@@ -80,12 +80,15 @@ export const TEAMS: Record<TeamName, TeamDef> = {
     mandatory: { kind: "always" },
     validates: false,
   },
+  // The frontend owns the page review (SP9 Task 5): seated by a frontend change (an interface file
+  // or a design contract) on standard and full, where its lead validates the session's work as a
+  // stranger; a pack's template adds globs to the same rule.
   frontend: {
     lead: "lead-frontend",
-    members: [],
-    gates: [],
-    mandatory: { kind: "paths" },
-    validates: false,
+    members: ["review-ui-ux"],
+    gates: ["ui-ux"],
+    mandatory: { kind: "paths", interface: true },
+    validates: true,
   },
   "agentic-os": {
     lead: "lead-agentic-os",
@@ -137,7 +140,8 @@ export function teamsFor(
   ][]) {
     const team = teams[name];
     if (team?.mandatory.kind !== "paths") continue;
-    team.mandatory = { kind: "paths", globs: [...def.mandatory.globs], pack: found.pack };
+    // The core rule first, so its `interface` flag survives: a template adds globs and nothing else.
+    team.mandatory = { ...team.mandatory, globs: [...def.mandatory.globs], pack: found.pack };
   }
   return { teams, warning: null };
 }
@@ -187,9 +191,9 @@ export function subagentStopMatcher(): string {
   return `^wizardingcode-developer-crew:(${ROLE_NAMES.join("|")})$`;
 }
 
-/** The team whose lead the session is: frontend when the change touches an interface file, backend otherwise. */
+/** The team whose lead the session is: frontend when the change touches a frontend path (an interface file or a design contract), backend otherwise. */
 export function primaryTeam(changed: readonly string[]): "backend" | "frontend" {
-  return changed.some(isInterfacePath) ? "frontend" : "backend";
+  return changed.some(isFrontendPath) ? "frontend" : "backend";
 }
 
 function seated(
@@ -197,6 +201,7 @@ function seated(
   def: TeamDef,
   route: Route,
   riskAreas: readonly RiskArea[],
+  changed: readonly string[],
   policy: Policy,
 ): string | null {
   if (policy.team.always.includes(team)) return "policy team.always";
@@ -208,14 +213,28 @@ function seated(
   // standard a risk area seats the security reviewer, as SP2 did, and nothing more.
   if (rule.kind === "risk-area")
     return route === "full" && riskAreas.includes(rule.area) ? `risk area ${rule.area}` : null;
+  // The frontend (SP9 Task 5): a frontend change seats it on standard and full; a template's globs
+  // seat its expert elsewhere and never its lead.
+  if (rule.kind === "paths" && rule.interface) return frontendReason(changed);
   return null;
 }
 
-/** The reason the registry gives a page reviewer: the first three interface files, then how many more. */
-function interfaceReason(interfaces: readonly string[]): string {
-  const shown = interfaces.slice(0, 3).join(", ");
-  const more = interfaces.length > 3 ? `, +${interfaces.length - 3} more` : "";
-  return `interface files: ${shown}${more}`;
+/** The first three paths, then how many more. */
+function firstThree(paths: readonly string[]): string {
+  const shown = paths.slice(0, 3).join(", ");
+  const more = paths.length > 3 ? `, +${paths.length - 3} more` : "";
+  return `${shown}${more}`;
+}
+
+/**
+ * The reason a frontend change gives the page reviewer and the frontend lead: the interface files
+ * when any changed, else the design contracts; null when the change touches neither.
+ */
+function frontendReason(changed: readonly string[]): string | null {
+  const interfaces = changed.filter(isInterfacePath);
+  if (interfaces.length) return `interface files: ${firstThree(interfaces)}`;
+  const contracts = changed.filter(isDesignContractPath);
+  return contracts.length ? `design contract: ${firstThree(contracts)}` : null;
 }
 
 /**
@@ -225,14 +244,14 @@ function interfaceReason(interfaces: readonly string[]): string {
  */
 export function taskSeats(scope: readonly string[], policy: Policy): Seat[] {
   const seats: Seat[] = [];
-  const interfaces = scope.filter(isInterfacePath);
-  if (interfaces.length)
+  const frontend = frontendReason(scope);
+  if (frontend)
     seats.push({
       role: "review-ui-ux",
-      team: "qa",
+      team: "frontend",
       kind: "gate",
       gate: "ui-ux",
-      reason: interfaceReason(interfaces),
+      reason: frontend,
     });
   const areas = riskAreasForPaths(scope, policy);
   if (areas.length)
@@ -266,11 +285,13 @@ export interface SeatOptions {
 /**
  * Every seat of an item (SP7 §6.2): the researcher from standard up; the reviewers of the seated
  * teams (code and test quality from standard up; security on full or on a risk area; UI/UX on any
- * route when the change touches an interface file; risk, architecture on full; data and infra on
- * full when their risk area is touched); every reviewer of a team the policy always seats; the
- * validating leads of the seated teams; the judge whenever a gate is planned. The fast route seats
- * nothing but QA's UI/UX reviewer when an interface file changed (and the judge who rules it), so
- * it costs no more than it did. The reasons are the report's strings.
+ * route when the change touches a frontend path, an interface file or a design contract; risk,
+ * architecture on full; data and infra on full when their risk area is touched); every reviewer of
+ * a team the policy always seats; the validating leads of the seated teams, the frontend's on
+ * standard and full when a frontend path changed (SP9 Task 5); the judge whenever a gate is
+ * planned. The fast route seats nothing but the frontend's UI/UX reviewer when a frontend path
+ * changed (and the judge who rules it), so it costs no more than it did. The reasons are the
+ * report's strings.
  */
 export function plannedSeats(
   route: Route,
@@ -303,8 +324,10 @@ export function plannedSeats(
   if (route === "full") gate("security", "full route");
   else if (route === "standard" && riskAreas.length)
     gate("security", `risk area${riskAreas.length === 1 ? "" : "s"} ${riskAreas.join(", ")}`);
-  const interfaces = changed.filter(isInterfacePath);
-  if (interfaces.length) gate("ui-ux", interfaceReason(interfaces));
+  // The page review on any route when a frontend path changed (SP9 Task 5): its reviewer sits in
+  // the team that rules the gate, the frontend.
+  const frontend = frontendReason(changed);
+  if (frontend) gate("ui-ux", frontend);
   if (route === "full") {
     gate("risk", "full route", "architects");
     gate("architecture", "full route");
@@ -324,7 +347,7 @@ export function plannedSeats(
   for (const team of policy.team.always)
     for (const g of registry[team].gates) gate(g, "policy team.always", team);
   for (const team of ["etl", "devops"] as const) {
-    const reason = seated(team, registry[team], route, riskAreas, policy);
+    const reason = seated(team, registry[team], route, riskAreas, changed, policy);
     if (reason) for (const g of registry[team].gates) gate(g, reason, team);
   }
   for (const g of policy.judgementGates) gate(g, "policy");
@@ -346,7 +369,7 @@ export function plannedSeats(
   // The validating leads of the seated teams; on the fast route only a team the policy always seats.
   for (const [name, def] of Object.entries(registry) as [TeamName, TeamDef][]) {
     if (!def.validates) continue;
-    const reason = seated(name, def, route, riskAreas, policy);
+    const reason = seated(name, def, route, riskAreas, changed, policy);
     if (reason) plan({ role: def.lead, team: name, kind: "lead", reason });
   }
   if (seats.some((s) => s.kind === "gate"))
