@@ -272,6 +272,11 @@ function paneTree($, e) {
     for (const j of status.judgement || []) {
       lines.push(Text({ children: [judgementText(j)] }))
     }
+    // The captures against the declared screens (SP9 Task 3), from an engine that prints the ui block
+    if (status.ui && status.ui.expected > 0) {
+      const missing = status.ui.missing && status.ui.missing.length ? ' · missing ' + status.ui.missing.slice(0, 2).join(', ') : ''
+      lines.push(Text({ children: ['captures ' + status.ui.captured + '/' + status.ui.expected + missing] }))
+    }
     // The seats, the todo with its checks and the roles working, from an engine that prints them
     // (0.6.0, SP7 §14); an older engine's status has none of the fields and draws as before
     if (status.team && status.team.length) {

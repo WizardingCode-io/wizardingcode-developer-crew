@@ -3751,9 +3751,21 @@ test("SP7b-T4 AC-4: the gate run names the captures and the ones without a conso
   write(ui, "cart-error.png", "png");
   const run = await c.run("gate", "run", id);
   expect(run.out).toContain("captures: 2 (1 without a console file: cart-error.png)");
-  expect(readReviewInputs(repoPaths(root, c.env), id)?.captures).toEqual([
-    { file: "review/ui/cart-error.png", console: null },
-    { file: "review/ui/home-empty.png", console: "review/ui/console-home-empty.json" },
+  expect(readReviewInputs(repoPaths(root, c.env), id)?.captures).toMatchObject([
+    {
+      page: "cart",
+      state: "error",
+      file: "review/ui/cart-error.png",
+      console: null,
+      by: "session",
+    },
+    {
+      page: "home",
+      state: "empty",
+      file: "review/ui/home-empty.png",
+      console: "review/ui/console-home-empty.json",
+      by: "session",
+    },
   ]);
   // Without captures the line is not printed.
   const bare = (await c.json("start", "Another", "--answers", answers, "--criterion", "a")).data
@@ -11362,4 +11374,221 @@ test("2026-10-25-004 AC-1 (finding 164): a tdd skip is refused under the default
     "gate:e2e",
     "tdd:AC-1",
   ]);
+});
+
+// SP9 Task 3: the screens on the criteria, the profile's ui block, the gate run's captures line.
+
+test("SP9-T3 AC-1: --screen records the screens on a criterion at add and at start, bad names are refused with the rule, and criteria screen replaces them on an existing criterion only", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const c = io(root);
+  await c.json("detect");
+  const start = await c.json(
+    "start",
+    "Screens",
+    "--answers",
+    answers,
+    "--criterion",
+    "a",
+    "--screen",
+    "inbox:default",
+    "--criterion",
+    "b",
+  );
+  const id = start.data.id as string;
+  const added = await c.json(
+    "criteria",
+    id,
+    "add",
+    "The checkout shows its error",
+    "--screen",
+    "checkout:error,checkout:empty",
+  );
+  expect(added.code).toBe(0);
+  expect((added.data.criterion as { screens: unknown }).screens).toEqual([
+    { page: "checkout", state: "error" },
+    { page: "checkout", state: "empty" },
+  ]);
+  const plain = await c.run(
+    "criteria",
+    id,
+    "add",
+    "Another",
+    "--screen",
+    "checkout:error,checkout:empty",
+  );
+  expect(plain.out.trim().endsWith("· screens: checkout:error, checkout:empty")).toBe(true);
+  const rule = "screens: use page:state with [a-z0-9-]+ names, comma-separated";
+  for (const bad of ["Checkout:error", "checkout"]) {
+    const refused = await c.run("criteria", id, "add", "Bad", "--screen", bad);
+    expect(refused.code).toBe(1);
+    expect(refused.err).toContain(rule);
+  }
+  const work = JSON.parse(readFileSync(join(root, ".crew", "work", id, "work.json"), "utf8")) as {
+    criteria: { id: string; text: string; screens?: unknown }[];
+  };
+  expect(work.criteria.map((k) => [k.id, k.screens ?? null])).toEqual([
+    ["AC-1", [{ page: "inbox", state: "default" }]],
+    ["AC-2", null],
+    [
+      "AC-3",
+      [
+        { page: "checkout", state: "error" },
+        { page: "checkout", state: "empty" },
+      ],
+    ],
+    [
+      "AC-4",
+      [
+        { page: "checkout", state: "error" },
+        { page: "checkout", state: "empty" },
+      ],
+    ],
+  ]);
+  // A screen declared after the criterion exists: a replace, printed and on the register.
+  const replaced = await c.run("criteria", id, "screen", "AC-2", "cart:default,cart:empty");
+  expect(replaced.code).toBe(0);
+  expect(replaced.out.trim()).toBe("AC-2 screens: cart:default, cart:empty");
+  const again = JSON.parse(readFileSync(join(root, ".crew", "work", id, "work.json"), "utf8")) as {
+    criteria: { id: string; screens?: unknown }[];
+  };
+  expect(again.criteria.find((k) => k.id === "AC-2")?.screens).toEqual([
+    { page: "cart", state: "default" },
+    { page: "cart", state: "empty" },
+  ]);
+  expect(
+    register(root).some(
+      (e) => e.kind === "screens" && e.text.includes("AC-2") && e.text.includes("cart:default"),
+    ),
+  ).toBe(true);
+  expect((await c.run("criteria", id, "screen", "AC-9", "cart:default")).code).toBe(1);
+  expect((await c.run("criteria", id, "screen", "AC-2", "Cart:default")).err).toContain(rule);
+  expect((await c.run("criteria", id, "supersede", "AC-2", "--by", "AC-3")).code).toBe(0);
+  const superseded = await c.run("criteria", id, "screen", "AC-2", "cart:default");
+  expect(superseded.code).toBe(1);
+  expect(superseded.err).toContain("superseded");
+});
+
+test("SP9-T3 AC-3: crew profile set ui.viewports and ui.dark set the profile's ui block, refuse what is outside the rule, and crew profile prints it", async () => {
+  const root = makeRepo({ "package.json": JSON.stringify({ scripts: { test: "exit 0" } }) });
+  const c = io(root);
+  await c.json("detect");
+  const set = await c.run("profile", "set", "ui.viewports", "360x800,768x1024,1280x800");
+  expect(set.code).toBe(0);
+  expect(set.out.trim()).toBe(
+    "ui.viewports set: 360x800 mobile, 768x1024 tablet, 1280x800 desktop",
+  );
+  const dark = await c.run("profile", "set", "ui.dark", "true");
+  expect(dark.code).toBe(0);
+  expect(dark.out.trim()).toBe("ui.dark set: true");
+  const profile = JSON.parse(readFileSync(join(root, ".crew", "profile.json"), "utf8")) as {
+    ui: unknown;
+  };
+  expect(profile.ui).toEqual({
+    viewports: [
+      { name: "mobile", width: 360, height: 800 },
+      { name: "tablet", width: 768, height: 1024 },
+      { name: "desktop", width: 1280, height: 800 },
+    ],
+    dark: true,
+  });
+  const rule = "ui.viewports: one to six WxH pairs, integers 200 to 4000, comma-separated";
+  for (const bad of ["100x100", "abc", "360x800,360x800,360x800,360x800,360x800,360x800,360x800"]) {
+    const refused = await c.run("profile", "set", "ui.viewports", bad);
+    expect(refused.code).toBe(1);
+    expect(refused.err).toContain(rule);
+  }
+  const maybe = await c.run("profile", "set", "ui.dark", "maybe");
+  expect(maybe.code).toBe(1);
+  expect(maybe.err).toContain("ui.dark: true or false");
+  const printed = await c.run("profile");
+  expect(printed.out).toContain(
+    "ui: viewports 360x800 mobile, 768x1024 tablet, 1280x800 desktop; dark: true",
+  );
+  // A later refresh of the profile keeps the block (the manifest gains a script).
+  write(root, "package.json", JSON.stringify({ scripts: { test: "exit 0", lint: "eslint ." } }));
+  await c.json("detect", "--refresh");
+  const kept = JSON.parse(readFileSync(join(root, ".crew", "profile.json"), "utf8")) as {
+    ui: unknown;
+  };
+  expect(kept.ui).toEqual(profile.ui);
+});
+
+test("SP9-T3 AC-5: the gate run's captures line names what was captured of the declared screens, the missing, the extra, the viewports and the silent ones; status --json carries the ui block; nothing declared reads as before", async () => {
+  const seed = (root: string, id: string, withSession: boolean) => {
+    const ui = join(root, ".crew", "work", id, "review", "ui");
+    mkdirSync(ui, { recursive: true });
+    for (const width of [360, 768, 1280])
+      writeFileSync(join(ui, `checkout-error@${width}.png`), "png");
+    writeFileSync(join(ui, "console-checkout-error.json"), "[]");
+    writeFileSync(
+      join(ui, "checkout-error.json"),
+      JSON.stringify({
+        page: "checkout",
+        state: "error",
+        by: "fixture",
+        viewports: [360, 768, 1280].map((width) => ({
+          name: `v${width}`,
+          width,
+          height: 800,
+          light: `checkout-error@${width}.png`,
+          dark: null,
+        })),
+      }),
+    );
+    if (withSession) writeFileSync(join(ui, "home-default.png"), "png");
+  };
+  const build = async (screens: string[]) => {
+    const root = makeRepo({
+      "package.json": JSON.stringify({ scripts: { test: "sh t.sh" } }),
+      "t.sh": "exit 1\n",
+      "src/App.vue": "<template/>",
+    });
+    const c = io(root);
+    await c.json("detect");
+    const start = await c.json(
+      "start",
+      "A page",
+      "--answers",
+      answers,
+      "--criterion",
+      "x",
+      ...screens,
+    );
+    const id = start.data.id as string;
+    expect((await c.run("tdd", "red", id, "AC-1")).code).toBe(0);
+    write(root, "t.sh", "exit 0\n");
+    write(root, "src/App.vue", "<template>hi</template>");
+    expect((await c.run("tdd", "green", id, "AC-1")).code).toBe(0);
+    return { root, c, id };
+  };
+  const declared = await build(["--screen", "checkout:error,checkout:empty"]);
+  seed(declared.root, declared.id, true);
+  const run = await declared.c.run("gate", "run", declared.id);
+  expect(run.out).toContain(
+    "captures: 1 of 2 expected (fixture 1, session 1); missing: checkout-empty; extra: home-default; viewports 360, 768, 1280; 1 without a console file: home-default.png",
+  );
+  const status = await declared.c.json("status", declared.id);
+  expect(status.data.ui).toEqual({
+    captures: 2,
+    captured: 1,
+    expected: 2,
+    missing: ["checkout-empty"],
+    extra: ["home-default"],
+    fixture: 1,
+    session: 1,
+    viewports: [360, 768, 1280],
+  });
+  const plain = await build([]);
+  seed(plain.root, plain.id, true);
+  const asBefore = await plain.c.run("gate", "run", plain.id);
+  expect(asBefore.out).toContain("captures: 2 (1 without a console file: home-default.png)");
+  expect(asBefore.out).not.toContain("expected");
+  expect((await plain.c.json("status", plain.id)).data.ui).toMatchObject({
+    captures: 2,
+    expected: 0,
+    missing: [],
+  });
 });

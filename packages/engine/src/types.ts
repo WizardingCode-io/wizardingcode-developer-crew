@@ -166,6 +166,8 @@ export interface Profile {
   targets: Target[];
   watch: { exclude: string[] };
   environment?: Environment;
+  /** The UI evidence's viewports and dark scheme a person set (SP9 Task 3); the defaults otherwise. */
+  ui?: { viewports: Viewport[]; dark?: boolean };
 }
 
 export type Route = "fast" | "standard" | "full";
@@ -523,10 +525,25 @@ export type RiskArea =
 
 /** `observed`: proven by a passing run after the change plus the reason no red run can exist (SP2 §11). */
 export type CriterionKind = "behavior" | "preserve" | "observed";
+/** A page and a state a criterion declares (SP9 Task 3): what the UI evidence must show, in the fixture's names. */
+export interface Screen {
+  page: string;
+  state: string;
+}
+
+/** A viewport the UI evidence is captured at (SP9 Task 3): the profile's ui block or the standard's defaults. */
+export interface Viewport {
+  name: string;
+  width: number;
+  height: number;
+}
+
 export interface Criterion {
   id: string;
   kind: CriterionKind;
   text: string;
+  /** The screens the criterion declares (SP9 Task 3): the engine expects a capture of each. */
+  screens?: Screen[];
   /** A contract of a reply in the item's mail the criterion is bound to (SP7 §9): the message and the contract's 1-based index. */
   contract?: { message: string; index: number };
   /**

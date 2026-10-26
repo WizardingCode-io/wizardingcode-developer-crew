@@ -27,6 +27,7 @@ import type {
   Policy,
   RemovedCriterion,
   Route,
+  Screen,
   Source,
   ValidatorRule,
   WorkItem,
@@ -430,6 +431,7 @@ export function addCriterion(
   text: string,
   kind: CriterionKind = "behavior",
   contract?: Criterion["contract"],
+  screens?: Screen[],
 ): Criterion {
   // A number is taken for good, by a present or a removed criterion, so an id names one thing.
   const taken = [...work.criteria, ...(work.removedCriteria ?? [])]
@@ -441,6 +443,7 @@ export function addCriterion(
     kind,
     text: text.trim(),
     ...(contract ? { contract } : {}),
+    ...(screens?.length ? { screens } : {}),
   };
   work.criteria.push(criterion);
   return criterion;

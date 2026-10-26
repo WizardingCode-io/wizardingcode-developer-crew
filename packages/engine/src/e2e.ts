@@ -16,6 +16,7 @@ import { insidePath } from "./mail-status.ts";
 import { type CrewPaths, workDir } from "./paths.ts";
 import { runCommand } from "./run.ts";
 import type { GateRun, Profile, Target, WorkItem } from "./types.ts";
+import { planLine, sweepLine, sweepStaleFixtureFiles, writeUiPlan } from "./ui.ts";
 
 const LOGS_COMMAND_TIMEOUT_MS = 30_000;
 /** A logs value with whitespace or any of these is a command; anything else is a path inside the project. */
@@ -146,6 +147,12 @@ export async function runE2e(inputs: E2eInputs): Promise<GateRun> {
       // nothing of an earlier run
     }
   }
+  // The UI evidence's folder and plan for the crew's fixture (SP9 Task 3): an earlier fixture run's
+  // files swept, the session's kept; the plan derived from the criteria and the profile, never authored.
+  const ui = join(workDir(paths, work.id), "review", "ui");
+  mkdirSync(ui, { recursive: true });
+  const sweep = sweepStaleFixtureFiles(ui);
+  const plan = writeUiPlan(paths, work, profile);
   const started = await startEnvironment(paths, environment);
   if ("refused" in started) return { ...base, reason: started.refused };
   const environmentLine = started.managed
@@ -164,6 +171,8 @@ export async function runE2e(inputs: E2eInputs): Promise<GateRun> {
         ...process.env,
         WIZARDINGCODE_CREW_E2E_DIR: dir,
         WIZARDINGCODE_CREW_CONSOLE_FILE: join(dir, "console.json"),
+        WIZARDINGCODE_CREW_UI_DIR: ui,
+        WIZARDINGCODE_CREW_UI_PLAN: plan.file,
       },
     });
     logsText = await readLogs(paths, work, logs, join(dir, "logs.txt"), log);
@@ -195,7 +204,16 @@ export async function runE2e(inputs: E2eInputs): Promise<GateRun> {
     status: passed ? "pass" : "fail",
     durationMs: Date.now() - begun,
     log,
-    tail: [result.tail, environmentLine, consoleLine, logsLine].filter((l) => l !== "").join("\n"),
+    tail: [
+      result.tail,
+      environmentLine,
+      consoleLine,
+      logsLine,
+      planLine(plan.plan) ?? "",
+      sweepLine(sweep.skipped) ?? "",
+    ]
+      .filter((l) => l !== "")
+      .join("\n"),
     ...(result.timedOut ? { reason: "timed out" } : offence ? { reason: offence } : {}),
     artifacts: {
       dir: E2E_DIR,

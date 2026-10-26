@@ -1802,3 +1802,81 @@ test("AC-7 (finding 149): a change whose added lines name personal data gets the
     "the change's lines were not read for personal data: no base commit: 1 tracked file not shown, untracked ones as additions",
   ]);
 });
+
+// SP9 Task 3: the ui plan, the two ui variables and the stale sweep around the e2e run.
+
+test("SP9-T3 AC-2: the e2e run writes review/ui-plan.json first, names the ui folder and the plan to the command, sweeps an earlier fixture run's files and keeps the session's, and says the names it skipped", async () => {
+  const fs = await import("node:fs");
+  const { root, paths, profile, work } = e2eRepo(
+    `sh -c 'printf "%s\\n%s\\n" "$WIZARDINGCODE_CREW_UI_DIR" "$WIZARDINGCODE_CREW_UI_PLAN" > ui-vars.txt; test -d "$WIZARDINGCODE_CREW_UI_DIR" && test -f "$WIZARDINGCODE_CREW_UI_PLAN" && printf "[]" > "$WIZARDINGCODE_CREW_CONSOLE_FILE"'`,
+  );
+  addCriterion(work, "the error state", "behavior", undefined, [
+    { page: "checkout", state: "error" },
+  ]);
+  const review = join(workDir(paths, work.id), "review");
+  const ui = join(review, "ui");
+  fs.mkdirSync(ui, { recursive: true });
+  // An earlier fixture run's capture, a session capture, and a forged metadata naming a path outside.
+  fs.writeFileSync(join(ui, "old-default@360.png"), "png");
+  fs.writeFileSync(join(ui, "console-old-default.json"), "[]");
+  fs.writeFileSync(
+    join(ui, "old-default.json"),
+    JSON.stringify({
+      page: "old",
+      state: "default",
+      by: "fixture",
+      viewports: [{ light: "old-default@360.png", dark: null }],
+      console: "console-old-default.json",
+    }),
+  );
+  fs.writeFileSync(join(ui, "home-empty.png"), "png");
+  fs.writeFileSync(join(review, "victim.txt"), "keep");
+  fs.writeFileSync(
+    join(ui, "evil-default.json"),
+    JSON.stringify({
+      page: "evil",
+      state: "default",
+      by: "fixture",
+      viewports: [{ light: "../victim.txt", dark: null }],
+    }),
+  );
+  const run = e2eRun((await runGates(paths, work, profile, DEFAULT_POLICY)).evidence.runs);
+  if (!run) throw new Error("no e2e run");
+  expect(run.status).toBe("pass");
+  const vars = fs.readFileSync(join(root, "ui-vars.txt"), "utf8").trim().split("\n");
+  expect(vars).toEqual([ui, join(review, "ui-plan.json")]);
+  const plan = JSON.parse(fs.readFileSync(join(review, "ui-plan.json"), "utf8")) as Record<
+    string,
+    unknown
+  >;
+  expect(plan).toMatchObject({
+    id: work.id,
+    colorSchemes: ["light"],
+    darkFrom: "none",
+    screens: [{ page: "checkout", state: "error", criteria: ["AC-2"] }],
+  });
+  expect((plan.viewports as { width: number }[]).map((v) => v.width)).toEqual([360, 768, 1280]);
+  const names = fs.readdirSync(ui).sort();
+  expect(names).not.toContain("old-default@360.png");
+  expect(names).not.toContain("old-default.json");
+  expect(names).not.toContain("evil-default.json");
+  expect(names).toContain("home-empty.png");
+  expect(fs.existsSync(join(review, "victim.txt"))).toBe(true);
+  expect(run.tail).toContain("ui: skipped 1 stale name outside the fixture's shape: ../victim.txt");
+  expect(run.tail).toContain("ui plan: 1 screen declared; viewports 360, 768, 1280; schemes light");
+  // AC-6: a project with nothing declared sees the tail as before, the two existing variables as before.
+  const plain = e2eRepo(
+    `sh -c 'printf "%s\\n%s\\n" "$WIZARDINGCODE_CREW_E2E_DIR" "$WIZARDINGCODE_CREW_CONSOLE_FILE" > vars.txt; printf "[]" > "$WIZARDINGCODE_CREW_CONSOLE_FILE"'`,
+  );
+  const plainRun = e2eRun(
+    (await runGates(plain.paths, plain.work, plain.profile, DEFAULT_POLICY)).evidence.runs,
+  );
+  if (!plainRun) throw new Error("no e2e run");
+  expect(plainRun.status).toBe("pass");
+  expect(plainRun.tail.split("\n").filter((l) => l.startsWith("ui"))).toEqual([]);
+  const plainReview = join(workDir(plain.paths, plain.work.id), "review");
+  expect(fs.readFileSync(join(plain.root, "vars.txt"), "utf8").trim().split("\n")).toEqual([
+    join(plainReview, "e2e"),
+    join(plainReview, "e2e", "console.json"),
+  ]);
+}, 60_000);

@@ -311,6 +311,7 @@ import type {
   Profile,
   ProjectEntry,
   RoleRecord,
+  Screen,
   Stack,
   TaskRecord,
   Triage,
@@ -332,6 +333,16 @@ import {
   type QuestionRecord,
   VALIDATOR_RULES,
 } from "./types.ts";
+import {
+  capturesLine,
+  DARK_RULE,
+  DEFAULT_VIEWPORTS,
+  expectedScreens,
+  parseScreens,
+  parseViewports,
+  screensSummary,
+  uiLine,
+} from "./ui.ts";
 import {
   fileHash,
   leadHeading,
@@ -408,6 +419,7 @@ const KNOWN_FLAGS: Record<string, readonly string[]> = {
     "criterion",
     "preserve",
     "observed",
+    "screen",
     "part",
     "origin",
     "priority",
@@ -418,7 +430,7 @@ const KNOWN_FLAGS: Record<string, readonly string[]> = {
   kind: ["reason"],
   strategy: [],
   audit: ["only"],
-  criteria: ["kind", "contract", "by"],
+  criteria: ["kind", "contract", "by", "screen"],
   decision: ["default"],
   debate: ["reason", "tokens"],
   decide: ["mode", "validator"],
@@ -822,6 +834,60 @@ function rulingDecisions(
           }))
       : [],
   );
+}
+
+/** The profile as `crew detect` and a bare `crew profile` print it: the targets, the ui block (SP9 Task 3), the missing test commands, the registration. */
+function profileView(env: Env, profile: Profile): Outcome {
+  const missing = missingTestCommands(profile);
+  // A pack's command and a target's tags are said where the profile is read (SP6 Task 2 AC-3),
+  // the scoped test template with the same marks (round 3).
+  const shown = (g: string, c: GateCommand) =>
+    `${g}=${c.command}${c.source === "proposed" ? " [proposed]" : ""}${c.pack ? ` (pack ${c.pack})` : ""}`;
+  const lines = profile.targets.map((t) => {
+    const commands = [
+      ...Object.entries(t.gates).map(([g, c]) => shown(g, c)),
+      ...(t.testScoped ? [shown("testScoped", t.testScoped)] : []),
+    ];
+    return `  ${t.path} (${t.stack}, ${t.packageManager}${t.workspaceOf ? `, workspace of ${t.workspaceOf}` : ""}): ${
+      commands.join(", ") || "no commands"
+    }${t.tags?.length ? `\n    tags: ${t.tags.join(", ")}` : ""}`;
+  });
+  if (profile.ui) lines.push(`  ${uiLine(profile.ui)}`);
+  if (missing.length)
+    lines.push(
+      `No test command for: ${missing.map((m) => m.target).join(", ")}. Propose one: crew profile set test "<cmd>" [--target <path>]`,
+    );
+  // A project the fixtures scaffold is known to the mail before any session runs in it: this
+  // command registered it on its way in (`load`), and says so.
+  const entry = env.registered;
+  lines.push(`registered ${entry.name} (workspace ${entry.workspace ?? "none"})`);
+  return ok(lines.join("\n"), { profile, missing, registered: entry });
+}
+
+/** `page:state, page:state` as the ok lines print the screens. */
+function screensText(screens: readonly Screen[]): string {
+  return screens.map((s) => `${s.page}:${s.state}`).join(", ");
+}
+
+/**
+ * The --screen flags of `crew start`, each bound to the criterion flag before it by its index in the
+ * command line (SP9 Task 3); a flag with no criterion before it, or a bad pair, refuses the start.
+ */
+function screensFromFlags(
+  ordered: readonly { key: string; value: string }[],
+): Map<number, Screen[]> | { refused: string } {
+  const bound = new Map<number, Screen[]>();
+  let last = -1;
+  for (const [index, flag] of ordered.entries()) {
+    if (flag.key === "criterion" || flag.key === "preserve" || flag.key === "observed")
+      last = index;
+    if (flag.key !== "screen") continue;
+    if (last < 0) return { refused: "--screen follows a --criterion, --preserve or --observed" };
+    const screens = parseScreens(flag.value);
+    if ("refused" in screens) return screens;
+    bound.set(last, [...(bound.get(last) ?? []), ...screens]);
+  }
+  return bound;
 }
 
 /** One entry of the project's register for an item (or a name such as `policy`), stamped now unless the record carries its own time. */
@@ -2442,6 +2508,8 @@ function statusView(env: Env, active: Opened): Outcome {
     // The project's threads and the environment's record (SP7b decision 18): what the mod draws.
     threads,
     environment: environmentState(env.paths),
+    // The captures against the declared screens (SP9 Task 3): what the mod's panel draws.
+    ui: screensSummary(expectedScreens(work), readReviewInputs(env.paths, work.id)?.captures ?? []),
     tasks,
     // The team of the item (SP7 §14): the seats, the session's team, the rounds spent, the
     // branch, the todo and the roles working.
@@ -2714,29 +2782,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           recordIntegrity(env.paths, join(env.paths.crewDir, "policy.json"));
         }
       }
-      const missing = missingTestCommands(profile);
-      // A pack's command and a target's tags are said where the profile is read (SP6 Task 2 AC-3),
-      // the scoped test template with the same marks (round 3).
-      const shown = (g: string, c: GateCommand) =>
-        `${g}=${c.command}${c.source === "proposed" ? " [proposed]" : ""}${c.pack ? ` (pack ${c.pack})` : ""}`;
-      const lines = profile.targets.map((t) => {
-        const commands = [
-          ...Object.entries(t.gates).map(([g, c]) => shown(g, c)),
-          ...(t.testScoped ? [shown("testScoped", t.testScoped)] : []),
-        ];
-        return `  ${t.path} (${t.stack}, ${t.packageManager}${t.workspaceOf ? `, workspace of ${t.workspaceOf}` : ""}): ${
-          commands.join(", ") || "no commands"
-        }${t.tags?.length ? `\n    tags: ${t.tags.join(", ")}` : ""}`;
-      });
-      if (missing.length)
-        lines.push(
-          `No test command for: ${missing.map((m) => m.target).join(", ")}. Propose one: crew profile set test "<cmd>" [--target <path>]`,
-        );
-      // A project the fixtures scaffold is known to the mail before any session runs in it: this
-      // command registered it on its way in (`load`), and says so.
-      const entry = env.registered;
-      lines.push(`registered ${entry.name} (workspace ${entry.workspace ?? "none"})`);
-      return ok(lines.join("\n"), { profile, missing, registered: entry });
+      return profileView(env, profile);
     }
     case "profile": {
       const [sub, gate, cmd] = args;
@@ -2782,6 +2828,30 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           was: current.command,
           by,
         });
+      }
+      if (sub === "set" && gate?.startsWith("ui.")) {
+        // The UI evidence's viewports and dark scheme (SP9 Task 3): the person's, taken as given; the
+        // block is completed with the standard's viewports when only the dark word is set.
+        const key = gate.slice("ui.".length);
+        if (key !== "viewports" && key !== "dark")
+          return refuse(
+            'usage: crew profile set ui.viewports "WxH,WxH" | crew profile set ui.dark true|false',
+          );
+        const current = env.profile.ui ?? { viewports: DEFAULT_VIEWPORTS.map((v) => ({ ...v })) };
+        if (key === "viewports") {
+          const viewports = parseViewports(cmd ?? "");
+          if ("refused" in viewports) return refuse(viewports.refused);
+          env.profile.ui = { ...current, viewports };
+          saveProfile(env.paths, env.profile);
+          return ok(
+            `ui.viewports set: ${viewports.map((v) => `${v.width}x${v.height} ${v.name}`).join(", ")}`,
+            { ui: env.profile.ui },
+          );
+        }
+        if (cmd !== "true" && cmd !== "false") return refuse(DARK_RULE);
+        env.profile.ui = { ...current, dark: cmd === "true" };
+        saveProfile(env.paths, env.profile);
+        return ok(`ui.dark set: ${cmd}`, { ui: env.profile.ui });
       }
       if (sub === "set" && gate?.startsWith("environment.")) {
         // The environment, key by key (SP7 §8.2): a command is confirmed as it is set, a value is
@@ -2938,6 +3008,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           commands: confirmed,
         });
       }
+      if (sub === undefined) return profileView(env, env.profile);
       return refuse("usage: crew profile set|confirm");
     }
     case "policy": {
@@ -3064,6 +3135,9 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       // Other items still being worked on, while the tree holds uncommitted changes: a second
       // session on one checkout (finding 9). The proof covers the whole tree, so the record says so.
       const neighbours = uncommitted.length ? openItems(env.paths).map((w) => w.id) : [];
+      // A --screen binds to the criterion flag before it (SP9 Task 3), checked before the item exists.
+      const screensAt = screensFromFlags(parsed.ordered);
+      if ("refused" in screensAt) return refuse(screensAt.refused);
       const work = createWork(env.paths, input, baseFiles, source ?? undefined);
       if (neighbours.length)
         work.sharedCheckout = { with: neighbours, paths: uncommitted, at: work.createdAt };
@@ -3111,15 +3185,19 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       }
       // The three flags repeat and keep their command-line order, so the numbers read as typed;
       // --observed opens a criterion no test can fail first (a plan, a document: the CTO review's, SP4 Task 6).
-      const criteria = parsed.ordered
-        .filter((f) => f.key === "criterion" || f.key === "preserve" || f.key === "observed")
-        .map((f) =>
+      const criteria: Criterion[] = [];
+      for (const [index, f] of parsed.ordered.entries()) {
+        if (f.key !== "criterion" && f.key !== "preserve" && f.key !== "observed") continue;
+        criteria.push(
           addCriterion(
             work,
             f.value,
             f.key === "preserve" ? "preserve" : f.key === "observed" ? "observed" : "behavior",
+            undefined,
+            screensAt.get(index),
           ),
         );
+      }
       if (partsRead.parts) work.parts = partsRead.parts;
       // On the fast route the criteria are all that stands before build; with them given, go there.
       if (work.route === "fast" && criteria.length > 0)
@@ -3249,6 +3327,22 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         return ok(`${removed.id} (${removed.kind}) removed: ${removed.text}`, { removed });
       }
       if (args[1] === "supersede") return supersedeCommand(env, opened, parsed, args);
+      if (args[1] === "screen" && args[2]) {
+        // The screens of a criterion that exists, replaced (SP9 Task 3): a record, as a decision of the spec.
+        const screens = parseScreens(args.slice(3).join(","));
+        if ("refused" in screens) return refuse(screens.refused);
+        const target = opened.work.criteria.find((c) => c.id === args[2]);
+        if (!target) return refuse(`unknown criterion: ${args[2]}`);
+        if (target.supersededBy)
+          return refuse(
+            `${target.id} is superseded by ${target.supersededBy.id}: declare the screens on it`,
+          );
+        target.screens = screens;
+        saveWork(env.paths, opened.work);
+        const text = `${target.id} screens: ${screensText(screens)}`;
+        decide(env, opened.work.id, { kind: "screens", id: target.id, text, by: "the session" });
+        return ok(text, { criterion: target });
+      }
       const text = args.slice(2).join(" ").trim();
       if (args[1] !== "add" || !text)
         return refuse(
@@ -3274,9 +3368,18 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           );
         contract = { message, index };
       }
-      const criterion = addCriterion(opened.work, text, kind, contract);
+      let screens: Screen[] | undefined;
+      if (typeof parsed.flags.screen === "string") {
+        const read = parseScreens(parsed.flags.screen);
+        if ("refused" in read) return refuse(read.refused);
+        screens = read;
+      }
+      const criterion = addCriterion(opened.work, text, kind, contract, screens);
       saveWork(env.paths, opened.work);
-      return ok(`${criterion.id} (${kind}): ${criterion.text}`, { criterion });
+      return ok(
+        `${criterion.id} (${kind}): ${criterion.text}${screens ? ` · screens: ${screensText(screens)}` : ""}`,
+        { criterion },
+      );
     }
     case "objection": {
       const opened = openForChange(env, args[0]);
@@ -3927,9 +4030,9 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         ? (readReviewInputs(env.paths, opened.work.id)?.captures ?? [])
         : [];
       const silent = captures.filter((c) => c.console === null).map((c) => basename(c.file));
-      const capturesLine = captures.length
-        ? `\ncaptures: ${captures.length}${silent.length ? ` (${silent.length} without a console file: ${silent.join(", ")})` : ""}`
-        : "";
+      // Against the screens the criteria declare (SP9 Task 3): what was captured, what is missing.
+      const said = capturesLine(screensSummary(expectedScreens(opened.work), captures), silent);
+      const capturesNote = said ? `\n${said}` : "";
       return {
         code: outcome.verdict === "proven" ? 0 : 1,
         stdout: true,
@@ -3939,7 +4042,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           gateSummary(opened.work, outcome.verdict, outcome.unproven, outcome.evidence.runs) +
           judgementNote +
           reviewLine +
-          capturesLine +
+          capturesNote +
           (outcome.saveRefused ? `\n${outcome.saveRefused}` : ""),
         data: {
           verdict: outcome.verdict,

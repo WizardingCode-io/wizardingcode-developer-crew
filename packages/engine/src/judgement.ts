@@ -94,10 +94,23 @@ export function keepRound(
   if (existsSync(rulingFile)) copyFileSync(rulingFile, join(dir, `ruling.round${round}.json`));
 }
 
-/** One capture the session took under `review/ui/` (SP2 §10), with the console file saved beside it, or null without one (rule 5). */
+/**
+ * One capture under `review/ui/` (SP2 §10, SP9 Task 3): a page in a state, the fixture's images per
+ * width and scheme (`<page>-<state>@<w>[-dark].png`) or the session's one (`<page>-<state>.png`),
+ * the console file saved beside them or null (rule 5), the metadata file when the fixture wrote one,
+ * and who took it.
+ */
 export interface Capture {
+  page: string;
+  state: string;
+  /** The first light image: the narrowest width, or the session's bare file. */
   file: string;
+  files: string[];
+  widths: number[];
+  dark: boolean;
   console: string | null;
+  meta: string | null;
+  by: "fixture" | "session";
 }
 
 /** What the review inputs describe: the fingerprint of the code the diff was cut from, when, and the captures. */
@@ -107,39 +120,128 @@ export interface ReviewInputs {
   captures: Capture[];
 }
 
-const CAPTURE = /\.(?:png|jpe?g)$/i;
+const CAPTURE = /^(?<base>[a-z0-9-]+)(?:@(?<width>\d+))?(?<dark>-dark)?\.(?:png|jpe?g)$/i;
 
-/** The captures under `review/ui/` (or `review/T-n/ui/` for a todo), sorted by name, each with its `console-<name>.json` when the session saved one. */
+/** The page and the state of a joined name: the metadata's fields when the fixture wrote them, else the last dash splits (a dashless name is a page's default). */
+function pageAndState(
+  base: string,
+  meta: Record<string, unknown> | null,
+): { page: string; state: string } {
+  if (meta && typeof meta.page === "string" && typeof meta.state === "string") {
+    return { page: meta.page, state: meta.state };
+  }
+  const at = base.lastIndexOf("-");
+  return at > 0
+    ? { page: base.slice(0, at), state: base.slice(at + 1) }
+    : { page: base, state: "default" };
+}
+
+/**
+ * The captures under `review/ui/` (or `review/T-n/ui/` for a todo), grouped by page and state, sorted
+ * by page then state, each with its `console-<page>-<state>.json` when one was saved.
+ */
 export function listCaptures(paths: CrewPaths, id: string, task?: string): Capture[] {
+  const dir = join(reviewDir(paths, id, task), "ui");
   let names: string[];
   try {
-    names = readdirSync(join(reviewDir(paths, id, task), "ui"));
+    names = readdirSync(dir);
   } catch {
     return [];
   }
   const prefix = task ? `review/${task}/ui/` : "review/ui/";
-  return names
-    .filter((name) => CAPTURE.test(name))
-    .sort()
-    .map((name) => {
-      const consoleFile = `console-${name.replace(CAPTURE, "")}.json`;
-      return {
-        file: `${prefix}${name}`,
-        console: names.includes(consoleFile) ? `${prefix}${consoleFile}` : null,
+  const groups = new Map<
+    string,
+    {
+      page: string;
+      state: string;
+      images: { name: string; width: number | null; dark: boolean }[];
+      meta: string | null;
+      by: "fixture" | "session";
+    }
+  >();
+  for (const name of names) {
+    const match = CAPTURE.exec(name);
+    const base = match?.groups?.base;
+    if (!match || !base) continue;
+    let group = groups.get(base);
+    if (!group) {
+      const metaName = `${base}.json`;
+      const meta = names.includes(metaName)
+        ? readJson<Record<string, unknown>>(join(dir, metaName))
+        : null;
+      const { page, state } = pageAndState(base, meta);
+      group = {
+        page,
+        state,
+        images: [],
+        meta: meta ? metaName : null,
+        by: meta?.by === "fixture" ? "fixture" : "session",
       };
-    });
+      groups.set(base, group);
+    }
+    const width = match.groups?.width ? Number(match.groups.width) : null;
+    group.images.push({ name, width, dark: match.groups?.dark !== undefined });
+  }
+  return [...groups.entries()]
+    .map(([base, group]) => {
+      const ordered = [...group.images].sort(
+        (a, b) =>
+          Number(a.dark) - Number(b.dark) ||
+          (a.width ?? 0) - (b.width ?? 0) ||
+          a.name.localeCompare(b.name),
+      );
+      const light = ordered.find((i) => !i.dark) ?? ordered[0];
+      const consoleFile = `console-${base}.json`;
+      return {
+        page: group.page,
+        state: group.state,
+        file: `${prefix}${light?.name ?? ""}`,
+        files: ordered.map((i) => `${prefix}${i.name}`),
+        widths: [
+          ...new Set(ordered.map((i) => i.width).filter((w): w is number => w !== null)),
+        ].sort((a, b) => a - b),
+        dark: ordered.some((i) => i.dark),
+        console: names.includes(consoleFile) ? `${prefix}${consoleFile}` : null,
+        meta: group.meta ? `${prefix}${group.meta}` : null,
+        by: group.by,
+      };
+    })
+    .sort((a, b) => a.page.localeCompare(b.page) || a.state.localeCompare(b.state));
 }
 
-function isCapture(raw: unknown): raw is Capture {
+/** A capture as `inputs.json` holds it: the two fields every engine wrote (`file`, `console`), the rest from 0.16.0 on. */
+type StoredCapture = Partial<Capture> & { file: string; console: string | null };
+
+function isStoredCapture(raw: unknown): raw is StoredCapture {
   if (!raw || typeof raw !== "object") return false;
   const { file, console: consoleFile } = raw as Record<string, unknown>;
   return typeof file === "string" && (typeof consoleFile === "string" || consoleFile === null);
 }
 
+/** The full shape from a stored capture: an older engine's (`file`, `console`) gets the page and the state from its name and the rest defaulted. */
+function completeCapture(raw: StoredCapture): Capture {
+  const name = raw.file.slice(raw.file.lastIndexOf("/") + 1);
+  const match = CAPTURE.exec(name);
+  const fallback = pageAndState(match?.groups?.base ?? name.replace(/\.[^.]+$/, ""), null);
+  return {
+    page: typeof raw.page === "string" ? raw.page : fallback.page,
+    state: typeof raw.state === "string" ? raw.state : fallback.state,
+    file: raw.file,
+    files: Array.isArray(raw.files) ? raw.files : [raw.file],
+    widths: Array.isArray(raw.widths) ? raw.widths : [],
+    dark: raw.dark === true,
+    console: raw.console,
+    meta: typeof raw.meta === "string" ? raw.meta : null,
+    by: raw.by === "fixture" ? "fixture" : "session",
+  };
+}
+
 export function readReviewInputs(paths: CrewPaths, id: string, task?: string): ReviewInputs | null {
   const raw = readJson<Partial<ReviewInputs>>(join(reviewDir(paths, id, task), "inputs.json"));
   if (!raw || typeof raw.fingerprint !== "string" || typeof raw.at !== "string") return null;
-  const captures = Array.isArray(raw.captures) ? raw.captures.filter(isCapture) : [];
+  const captures = Array.isArray(raw.captures)
+    ? raw.captures.filter(isStoredCapture).map(completeCapture)
+    : [];
   return { fingerprint: raw.fingerprint, at: raw.at, captures };
 }
 

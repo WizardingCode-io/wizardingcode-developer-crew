@@ -1216,3 +1216,24 @@ test("AC-21 (finding 158): every probe is bounded by timeoutMs, and one that run
   await $.turn.complete(ended(spawned.agentId as string));
   expect(timeouts).toEqual([20_000, 20_000, 20_000]);
 });
+
+test("the panel prints the captures against the declared screens when the status carries the ui block (SP9 Task 3)", async ($, on) => {
+  const withUi = { ...JUDGED, ui: { captures: 2, captured: 1, expected: 4, missing: ["checkout-empty", "checkout-error", "inbox-default"], extra: ["home-default"], fixture: 1, session: 1, viewports: [360, 768, 1280] } };
+  stubs(on, () => ({ exitCode: 0, stdout: JSON.stringify(withUi), stderr: "" }));
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  const ui = await $.ui.mount({ ...PANE, surface: "terminal" });
+  // The first two missing screens are named, the third is cut.
+  expect(await ui.find({ type: "Text", text: "captures 1/4 · missing checkout-empty, checkout-error" })).toBeDefined();
+  expect(await ui.find({ type: "Text", text: "captures 1/4 · missing checkout-empty, checkout-error, inbox-default" })).toBeUndefined();
+  await ui.unmount();
+});
+
+test("the panel prints no captures line when the status has no ui block or no declared screen (SP9 Task 3)", async ($, on) => {
+  stubs(on, () => ({ exitCode: 0, stdout: JSON.stringify({ ...JUDGED, ui: { captures: 2, captured: 0, expected: 0, missing: [], extra: [], fixture: 0, session: 2, viewports: [] } }), stderr: "" }));
+  await $.session.start({ surface: "terminal", isInteractive: true, cwd: "/work" });
+  const plain = await $.ui.mount({ ...PANE, surface: "terminal" });
+  expect(await plain.find({ type: "Text", text: "ui-ux: not run (no browser)" })).toBeDefined();
+  expect(await plain.find({ type: "Text", text: "captures 0/0" })).toBeUndefined();
+  expect(await plain.find({ type: "Text", text: "captures 2/0" })).toBeUndefined();
+  await plain.unmount();
+});

@@ -24,7 +24,8 @@ export interface DecisionEntry {
     | "abandon"
     | "supersede"
     | "accept"
-    | "task";
+    | "task"
+    | "screens";
   id?: string;
   text: string;
   answer?: string;

@@ -227,6 +227,8 @@ export function mergeProfile(
     targets,
     watch: watchOf(previous),
     ...(kept ? { environment: kept } : {}),
+    // The ui block is the person's (SP9 Task 3): it outlives the detection as the environment does.
+    ...(previous?.ui ? { ui: previous.ui } : {}),
   };
 }
 

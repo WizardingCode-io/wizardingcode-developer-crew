@@ -70,6 +70,7 @@
 **Files:** `ui.ts` (`gradeUi`), `e2e.ts`, `types.ts` (`GateRun.artifacts.ui`), `evidence.ts` ("UI evidence" section from the manifest), `verify.ts` (the one-line summary); tests `gates.test.ts`, `evidence.test.ts`.
 
 - [ ] Tests first: an e2e command that writes the evidence files; the order of offences (exit, console, logs, missing screen, reduced motion, axe, CLS); the tail lines (`captures:`, `axe:`, `vitals:`, `reduced motion:`, `motion:`, `audit:`); review focus 1; the manifest `review/ui-evidence.json` (decision 3); the report section.
+- [ ] The sweep's hardening the security lead left at Task 3's delivery: `review/ui/motion` itself checked with `lstat` (a symlinked intermediate folder is skipped, as its leaves are), with its test beside the sweep's.
 - [ ] Code; the thresholds as constants with the module header saying a forged file fails and never passes.
 
 ### Task 5: The frontend team and the paths

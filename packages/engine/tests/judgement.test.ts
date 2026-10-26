@@ -370,9 +370,30 @@ test("SP7b-T4 AC-4: the review inputs list the captures under review/ui with the
   writeFileSync(join(ui, "cart-error.png"), "png");
   writeFileSync(join(ui, "notes.txt"), "not a capture");
   writeReviewInputs(paths, work, ["src/App.vue"], "f1");
+  // The session's captures, as before, in the shape SP9 Task 3 widened (page, state, files, widths, dark, meta, by).
   const captures = [
-    { file: "review/ui/cart-error.png", console: null },
-    { file: "review/ui/home-empty.png", console: "review/ui/console-home-empty.json" },
+    {
+      page: "cart",
+      state: "error",
+      file: "review/ui/cart-error.png",
+      files: ["review/ui/cart-error.png"],
+      widths: [],
+      dark: false,
+      console: null,
+      meta: null,
+      by: "session" as const,
+    },
+    {
+      page: "home",
+      state: "empty",
+      file: "review/ui/home-empty.png",
+      files: ["review/ui/home-empty.png"],
+      widths: [],
+      dark: false,
+      console: "review/ui/console-home-empty.json",
+      meta: null,
+      by: "session" as const,
+    },
   ];
   expect(readReviewInputs(paths, work.id)?.captures).toEqual(captures);
   const raw = JSON.parse(

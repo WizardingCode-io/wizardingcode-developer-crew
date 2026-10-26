@@ -1542,6 +1542,9 @@ test("SP7b-T5 AC-3 (review): the engine's review files are denied to the Write t
   expect(write("review/code-quality.findings.md")).toBe("deny");
   expect(write("review/T-3/ruling.json")).toBe("deny");
   expect(write("review/ui/../ruling.json")).toBe("deny");
+  // The ui plan and the ui evidence manifests sit beside the captures and are the engine's (SP9 Task 3).
+  expect(write("review/ui-plan.json")).toBe("deny");
+  expect(write("review/ui-evidence.json")).toBe("deny");
   expect(write("review/ui/home-empty.png")).toBeUndefined();
   expect(write("review/T-3/ui/console-home-empty.json")).toBeUndefined();
   const bash = (command: string) =>

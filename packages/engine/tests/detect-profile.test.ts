@@ -441,3 +441,25 @@ test("CON6-AC-4 (finding 111): a fresh detection replaces a core detector's own 
   // The scoped template follows the same rule: a guess nobody confirmed does not outlive detection.
   expect(merged.targets[0]?.testScoped).toBeUndefined();
 });
+
+test("SP9-T3 AC-3: a profile refresh keeps the ui block a person set, as it keeps the environment", () => {
+  const root = makeRepo({ "package.json": JSON.stringify({ scripts: { build: "vp build" } }) });
+  const paths = repoPaths(root, testEnv());
+  const first = ensureProfile(paths).profile;
+  first.ui = { viewports: [{ name: "mobile", width: 390, height: 844 }], dark: true };
+  saveProfile(paths, first);
+  write(
+    root,
+    "package.json",
+    JSON.stringify({ scripts: { build: "vp build", test: "vitest run" } }),
+  );
+  const current = loadProfile(paths).profile;
+  if (!current) throw new Error("no profile");
+  const refreshed = refreshProfile(paths, current);
+  expect(refreshed.changed).toContain("test (.): npm run test");
+  expect(refreshed.profile.ui).toEqual({
+    viewports: [{ name: "mobile", width: 390, height: 844 }],
+    dark: true,
+  });
+  expect(loadProfile(paths).profile?.ui).toEqual(first.ui);
+});
