@@ -1086,6 +1086,8 @@ export async function tick(options: { dryRun?: boolean }, deps: TickDeps): Promi
     return 1;
   } finally {
     rmSync(lockPath, { force: true });
+    // The stderr log's size as this tick ends: `status` reports what the agent writes after it (finding 171).
+    state.stderrBytes = agentStderrSize(home);
     saveState();
   }
 }
@@ -1398,18 +1400,28 @@ export async function uninstall(deps: InstallDeps): Promise<number> {
   return 0;
 }
 
+/** The size of launchd's stderr log, 0 when there is none. */
+function agentStderrSize(home: string): number {
+  const path = join(home, "log", LOG_NAMES[1]);
+  return existsSync(path) ? statSync(path).size : 0;
+}
+
 /**
- * What the agent wrote to launchd's stderr log after the last tick (or with no tick yet): the only
- * place a launch that never reached the loop lands (finding 169). The line shown is the file's
+ * What the agent wrote to launchd's stderr log after the last tick ended (or with no tick yet):
+ * the only place a launch that never reached the loop lands (finding 169). The lines are those
+ * beyond the size the last tick recorded as it ended (finding 171): a log rotated or shorter than
+ * that size is read from its start, as is one no tick has measured. The line shown is the file's
  * text, not the loop's logger's, so it is redacted of URL userinfo, stripped of control
  * characters and cut at 200 characters, in that order.
  */
-export function agentStderrNote(home: string, lastTick: string | null): string | null {
+export function agentStderrNote(home: string, state: ImproveState): string | null {
   const path = join(home, "log", LOG_NAMES[1]);
   if (!existsSync(path)) return null;
-  const stat = statSync(path);
-  if (stat.size === 0 || (lastTick && stat.mtimeMs <= Date.parse(lastTick))) return null;
-  const lines = readFileSync(path, "utf8")
+  const log = readFileSync(path);
+  const recorded = state.stderrBytes ?? 0;
+  const lines = log
+    .subarray(recorded <= log.length ? recorded : 0)
+    .toString("utf8")
     .split("\n")
     .filter((l) => l.trim() !== "");
   const last = lines[lines.length - 1];
@@ -1418,7 +1430,7 @@ export function agentStderrNote(home: string, lastTick: string | null): string |
     .filter((c) => c.charCodeAt(0) >= 0x20 && c.charCodeAt(0) !== 0x7f)
     .join("")
     .slice(0, 200);
-  const since = lastTick ? "after the last tick" : "with no tick yet";
+  const since = state.lastTick ? "after the last tick" : "with no tick yet";
   return `agent stderr: ${lines.length} line(s) ${since} (log/${LOG_NAMES[1]}); last: ${printable}`;
 }
 
@@ -1440,7 +1452,7 @@ export function statusText(deps: InstallDeps): string {
       ? `pending release: ${state.pendingRelease.version} at step ${state.pendingRelease.failedStep} (${RELEASE_STEP_NAMES[state.pendingRelease.failedStep - 1]})`
       : "pending release: none",
   );
-  const stderrNote = agentStderrNote(home, state.lastTick ?? null);
+  const stderrNote = agentStderrNote(home, state);
   if (stderrNote) lines.push(stderrNote);
   if (existsSync(join(repo, ".git"))) {
     const cases = allCases(repo);

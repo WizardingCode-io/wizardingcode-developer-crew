@@ -22,6 +22,8 @@ export interface DayState {
 
 export interface ImproveState {
   lastTick?: string;
+  /** The size of launchd's stderr log when the last tick ended: `status` reports what came after (finding 171). */
+  stderrBytes?: number;
   lastRun?: { at: string; head: string; plan: string | null; lessons: number; run: string };
   pendingRelease?: PendingRelease | null;
   /** The install's probe: what the agent could reach (D-8). */

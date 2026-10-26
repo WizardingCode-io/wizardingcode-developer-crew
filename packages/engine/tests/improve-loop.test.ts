@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import {
+  appendFileSync,
   chmodSync,
   existsSync,
   mkdirSync,
@@ -1385,18 +1386,16 @@ test("2026-10-25-010 AC-4: status reports the agent's stderr written after the l
   const line =
     'error: Module not found "/h/.wizardingcode/crew-improve/repo/scripts/improve-loop.ts"';
   writeFileSync(errLog, `${line}\n${line}\n`);
-  // The last tick an hour before the log was written, whatever the clock says.
-  const written = statSync(errLog).mtimeMs;
-  writeFileSync(
-    join(home, "state.json"),
-    JSON.stringify({ lastTick: new Date(written - 3_600_000).toISOString() }),
-  );
+  // A last tick that recorded no size (a state from before finding 171): every line is after it.
+  writeFileSync(join(home, "state.json"), JSON.stringify({ lastTick: "2026-10-25T19:00:00.000Z" }));
   expect(statusText(installDeps(home, null).deps)).toContain(
     `agent stderr: 2 line(s) after the last tick (log/tick.err.log); last: ${line}`,
   );
-  // (rotateLogs renames the file only above 5 MB, so the tick itself never touches its mtime.)
-  const older = new Date(written - 7_200_000);
-  utimesSync(errLog, older, older);
+  // Nothing written since the tick ended (its recorded size is the file's): nothing to report.
+  writeFileSync(
+    join(home, "state.json"),
+    JSON.stringify({ lastTick: "2026-10-25T19:00:00.000Z", stderrBytes: statSync(errLog).size }),
+  );
   expect(statusText(installDeps(home, null).deps)).not.toContain("agent stderr");
   // No tick yet: whatever the log holds is reported.
   writeFileSync(join(home, "state.json"), "{}");
@@ -1430,6 +1429,33 @@ test("2026-10-25-010 AC-7: the status's stderr line is redacted, stripped of con
   const short = statusText(installDeps(home, null).deps);
   expect(short).toContain("last: fatal: https://[redacted]@host/repo [31mred[0m");
   expect(short).not.toContain("\x1b");
+});
+
+test("2026-10-25-011 AC-1: status counts the agent's stderr from the size the tick recorded at its end: a tick's own lines are not reported, later ones are, a rotated log is read from its start", async () => {
+  const world = loopWorld();
+  mkdirSync(join(world.home, "log"), { recursive: true });
+  const errLog = join(world.home, "log", "tick.err.log");
+  // What the kit prints to stderr during a tick, before the tick ends.
+  writeFileSync(
+    errLog,
+    "Note: --scaffold runs each case's scaffold_script as you.\nNote: a second line\n",
+  );
+  writeFileSync(join(world.home, "config.json"), JSON.stringify({ paused: true }));
+  expect(await tick({}, tickDeps(world).deps)).toBe(0);
+  const state = JSON.parse(readFileSync(join(world.home, "state.json"), "utf8"));
+  expect(state.stderrBytes).toBe(statSync(errLog).size);
+  const status = () => statusText(installDeps(world.home, null).deps);
+  expect(status()).not.toContain("agent stderr");
+  // A launch that never reached the loop, after the tick: counted exactly.
+  const failed =
+    'error: Module not found "/h/.wizardingcode/crew-improve/repo/scripts/improve-loop.ts"';
+  appendFileSync(errLog, `${failed}\n${failed}\n${failed}\n`);
+  expect(status()).toContain(
+    `agent stderr: 3 line(s) after the last tick (log/tick.err.log); last: ${failed}`,
+  );
+  // The log rotated (shorter than the recorded size): read from its start.
+  writeFileSync(errLog, `${failed}\n`);
+  expect(status()).toContain("agent stderr: 1 line(s) after the last tick (log/tick.err.log)");
 });
 
 test("2026-10-25-005 AC-8 (the probe): the first tick records what the agent reaches, never a secret's value", () => {
