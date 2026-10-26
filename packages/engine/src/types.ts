@@ -849,8 +849,19 @@ export interface GateRun {
   problems?: { touched: string[]; untouched: number };
   /** The watched files a build gate rewrote; the stamp of the gate run was taken after it (finding 18). */
   wrote?: string[];
-  /** What an e2e run left under the work folder (SP7 §8.3): its folder, the console file it read and the logs it graded, or null for each it had not. */
-  artifacts?: { dir: string; console: string | null; logs: string | null };
+  /** What an e2e run left under the work folder (SP7 §8.3): its folder, the console file it read and the logs it graded, or null for each it had not; the UI evidence's summary when a screen was declared or a capture exists (SP9 Task 4). */
+  artifacts?: { dir: string; console: string | null; logs: string | null; ui?: UiArtifact };
+}
+
+/** The UI evidence's summary an e2e run carries (SP9 Task 4): the manifest's path and the counts the status and the panel read. */
+export interface UiArtifact {
+  manifest: string;
+  captures: number;
+  expected: number;
+  missing: string[];
+  axe: "clean" | "violations" | "not captured";
+  reducedMotion: "clean" | "running" | "not captured";
+  motion: number;
 }
 
 export type JudgementVerdict = "proven" | "not-proven" | "not-run";

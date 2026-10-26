@@ -16,7 +16,14 @@ import { insidePath } from "./mail-status.ts";
 import { type CrewPaths, workDir } from "./paths.ts";
 import { runCommand } from "./run.ts";
 import type { GateRun, Profile, Target, WorkItem } from "./types.ts";
-import { planLine, sweepLine, sweepStaleFixtureFiles, writeUiPlan } from "./ui.ts";
+import {
+  gradeUi,
+  planLine,
+  sweepLine,
+  sweepStaleFixtureFiles,
+  writeUiEvidence,
+  writeUiPlan,
+} from "./ui.ts";
 
 const LOGS_COMMAND_TIMEOUT_MS = 30_000;
 /** A logs value with whitespace or any of these is a command; anything else is a path inside the project. */
@@ -182,6 +189,10 @@ export async function runE2e(inputs: E2eInputs): Promise<GateRun> {
   }
   const consoleGrade = gradeConsole(dir);
   const graded = logsText === null ? null : gradeLogs(logsText);
+  // The UI evidence, the run's third measurement (SP9 Task 4): graded after the console and the
+  // logs whatever the exit, its manifest written for the reviewer, the lead and the report.
+  const uiGrade = gradeUi(paths, work.id, plan.plan);
+  writeUiEvidence(paths, work.id, uiGrade.manifest);
   // Each line says what its measurement found; the gate's reason is the first offence of the two.
   const consoleOffence =
     consoleGrade.status === "failed"
@@ -190,7 +201,7 @@ export async function runE2e(inputs: E2eInputs): Promise<GateRun> {
         ? "console file does not parse"
         : null;
   const logsOffence = graded?.status === "failed" ? `logs: ${graded.first}` : null;
-  const offence = consoleOffence ?? logsOffence;
+  const offence = consoleOffence ?? logsOffence ?? uiGrade.offence;
   const consoleLine =
     consoleOffence ?? (consoleGrade.status === "none" ? "console: not captured" : "console: clean");
   const logsLine = logsOffence ?? (graded === null ? (logs.note ?? "logs: none") : "logs: clean");
@@ -209,6 +220,7 @@ export async function runE2e(inputs: E2eInputs): Promise<GateRun> {
       environmentLine,
       consoleLine,
       logsLine,
+      ...uiGrade.lines,
       planLine(plan.plan) ?? "",
       sweepLine(sweep.skipped) ?? "",
     ]
@@ -222,6 +234,7 @@ export async function runE2e(inputs: E2eInputs): Promise<GateRun> {
           ? null
           : `${E2E_DIR}/${consoleGrade.file.endsWith(".jsonl") ? "console.jsonl" : "console.json"}`,
       logs: logsText === null ? null : `${E2E_DIR}/logs.txt`,
+      ...(uiGrade.artifacts ? { ui: uiGrade.artifacts } : {}),
     },
   };
 }

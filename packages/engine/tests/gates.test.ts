@@ -38,7 +38,15 @@ import { workDir } from "../src/paths.ts";
 import { DEFAULT_POLICY } from "../src/policy.ts";
 import { namedFiles } from "../src/problems.ts";
 import { ensureProfile, loadProfile, saveProfile } from "../src/profile.ts";
-import type { Environment, GateCommand, GateRun, Policy, Profile, Target } from "../src/types.ts";
+import type {
+  Environment,
+  GateCommand,
+  GateRun,
+  Policy,
+  Profile,
+  Target,
+  WorkItem,
+} from "../src/types.ts";
 import { addCriterion, addSkip, createWork } from "../src/work.ts";
 import { git, makeRepo, repoPaths, tempDir, testEnv, write } from "./helpers.ts";
 import { writePack } from "./pack-fixtures.ts";
@@ -1842,7 +1850,9 @@ test("SP9-T3 AC-2: the e2e run writes review/ui-plan.json first, names the ui fo
   );
   const run = e2eRun((await runGates(paths, work, profile, DEFAULT_POLICY)).evidence.runs);
   if (!run) throw new Error("no e2e run");
-  expect(run.status).toBe("pass");
+  // The declared screen has no capture: since SP9 Task 4 the run fails on it, after the console and the logs.
+  expect(run.status).toBe("fail");
+  expect(run.reason).toBe("ui: screen checkout-error declared by AC-2 not captured");
   const vars = fs.readFileSync(join(root, "ui-vars.txt"), "utf8").trim().split("\n");
   expect(vars).toEqual([ui, join(review, "ui-plan.json")]);
   const plan = JSON.parse(fs.readFileSync(join(review, "ui-plan.json"), "utf8")) as Record<
@@ -1880,3 +1890,137 @@ test("SP9-T3 AC-2: the e2e run writes review/ui-plan.json first, names the ui fo
     join(plainReview, "e2e", "console.json"),
   ]);
 }, 60_000);
+
+// SP9 Task 4: the UI evidence graded in the e2e run.
+
+/** An e2e command that seeds evidence under the ui folder from a case name, writes the console file and exits as told. */
+function seedingE2e(root: string): string {
+  write(
+    root,
+    "seed.mjs",
+    `import { mkdirSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+const ui = process.env.WIZARDINGCODE_CREW_UI_DIR;
+const mode = process.argv[2] ?? "clean";
+const meta = (page, state, extra = {}) => {
+  const base = page + "-" + state;
+  for (const w of [360, 1280]) writeFileSync(join(ui, base + "@" + w + ".png"), "png");
+  writeFileSync(join(ui, "console-" + base + ".json"), "[]");
+  writeFileSync(join(ui, base + ".json"), JSON.stringify({ page, state, by: "fixture", viewports: [360, 1280].map((width) => ({ name: "v" + width, width, height: 800, light: base + "@" + width + ".png", dark: null })), console: "console-" + base + ".json", aria: null, axe: { status: "not captured", reason: "@axe-core/playwright not installed", file: null, violations: [] }, vitals: { cls: 0.02, lcpMs: 820, inpMs: null, longTasks: 0 }, reducedMotion: { status: "clean", running: [] }, ...extra }));
+};
+if (mode !== "none") meta("checkout", "error");
+if (mode === "clean" || mode === "exit1") meta("checkout", "empty");
+if (mode === "reduced") meta("checkout", "empty", { reducedMotion: { status: "running", running: [{ target: "div.spinner", name: "spin", iterations: "Infinity", durationMs: 1000, properties: ["transform"] }] } });
+if (mode === "axe-and-missing") {
+  writeFileSync(join(ui, "axe-checkout-error.json"), JSON.stringify({ violations: [{ id: "color-contrast", impact: "serious", nodes: [{ target: ["button.pay"] }, { target: ["a.help"] }] }] }));
+  meta("checkout", "error", { axe: { status: "violations", reason: null, file: "axe-checkout-error.json", violations: [{ id: "color-contrast", impact: "serious", nodes: 2, targets: [] }] } });
+}
+if (mode === "clean") {
+  mkdirSync(join(ui, "motion", "checkout-open"), { recursive: true });
+  writeFileSync(join(ui, "motion", "checkout-open", "00.png"), "png");
+  writeFileSync(join(ui, "checkout-open.strip.png"), "png");
+  writeFileSync(join(ui, "checkout-open.motion.json"), JSON.stringify({ page: "checkout", interaction: "open", frames: { method: "cdp-screencast", dir: "motion/checkout-open", strip: "checkout-open.strip.png", count: 1, times: [0] }, frameTimes: { samples: 10, meanMs: 16, p95Ms: 17, maxMs: 20, over50ms: 0 }, animations: [], reducedMotion: { status: "not captured", reason: "no reset given", animations: [] } }));
+}
+writeFileSync(process.env.WIZARDINGCODE_CREW_CONSOLE_FILE, mode === "console-and-missing" ? JSON.stringify([{ page: "/checkout", type: "error", text: "boom" }]) : "[]");
+process.exit(mode === "exit1" ? 1 : 0);
+`,
+  );
+  return "node seed.mjs";
+}
+
+test("SP9-T4 AC-1, AC-3, AC-10: the e2e run grades the evidence after the console and the logs, says each measurement, writes the manifest and the ui artifact, and fails on the first offence in order", async () => {
+  const fs = await import("node:fs");
+  // `declare` is a TypeScript keyword: a helper of that name is stripped by the transpiler and never runs.
+  const declareScreens = (work: WorkItem) => {
+    addCriterion(work, "the error state", "behavior", undefined, [
+      { page: "checkout", state: "error" },
+    ]);
+    addCriterion(work, "the empty state", "behavior", undefined, [
+      { page: "checkout", state: "empty" },
+    ]);
+  };
+  const runWith = async (mode: string) => {
+    const repo = e2eRepo("placeholder");
+    repo.target.gates.e2e = confirmedCmd(`${seedingE2e(repo.root)} ${mode}`);
+    declareScreens(repo.work);
+    const run = e2eRun(
+      (await runGates(repo.paths, repo.work, repo.profile, DEFAULT_POLICY)).evidence.runs,
+    );
+    if (!run) throw new Error("no e2e run");
+    const manifestPath = join(workDir(repo.paths, repo.work.id), "review", "ui-evidence.json");
+    const manifest = fs.existsSync(manifestPath)
+      ? (JSON.parse(fs.readFileSync(manifestPath, "utf8")) as Record<string, unknown>)
+      : null;
+    return { run, manifest, repo };
+  };
+  const clean = await runWith("clean");
+  expect(clean.run.status).toBe("pass");
+  expect(clean.run.reason).toBeUndefined();
+  const tail = clean.run.tail.split("\n");
+  const at = (prefix: string) => tail.findIndex((l) => l.startsWith(prefix));
+  expect(at("console:")).toBeLessThan(at("axe:"));
+  expect(at("logs:")).toBeLessThan(at("axe:"));
+  expect(tail.slice(at("axe:"), at("axe:") + 4)).toEqual([
+    "axe: not captured (@axe-core/playwright not installed)",
+    "vitals: CLS max 0.02 (checkout-empty@360), LCP max 820 ms",
+    "reduced motion: clean",
+    "motion: 1 interaction sampled",
+  ]);
+  expect(at("motion:")).toBeLessThan(at("ui plan:"));
+  expect(tail.some((l) => l.startsWith("captures:"))).toBe(false);
+  expect(clean.manifest).toMatchObject({
+    summary: { captures: 2, captured: 2, expected: 2, missing: [], extra: [], offence: null },
+  });
+  expect(clean.run.artifacts).toMatchObject({
+    dir: "review/e2e",
+    console: "review/e2e/console.json",
+    ui: {
+      manifest: "review/ui-evidence.json",
+      captures: 2,
+      expected: 2,
+      missing: [],
+      axe: "not captured",
+      reducedMotion: "clean",
+      motion: 1,
+    },
+  });
+  // A declared screen not captured fails the run with its reason.
+  const missing = await runWith("missing");
+  expect(missing.run.status).toBe("fail");
+  expect(missing.run.reason).toBe("ui: screen checkout-empty declared by AC-3 not captured");
+  // Reduced motion ignored fails the run.
+  const reduced = await runWith("reduced");
+  expect(reduced.run.reason).toBe(
+    "ui: animation still running under reduced motion: div.spinner (checkout-empty)",
+  );
+  // Two offences: the missing screen comes before the axe one.
+  const both = await runWith("axe-and-missing");
+  expect(both.run.reason).toBe("ui: screen checkout-empty declared by AC-3 not captured");
+  expect(both.run.tail).toContain("axe: violations: color-contrast on checkout-error");
+  // A console error beside a missing screen: the console's reason comes first, the UI offence after it in the tail.
+  const consoleFirst = await runWith("console-and-missing");
+  expect(consoleFirst.run.reason).toBe("console error on /checkout: boom");
+  expect(consoleFirst.manifest).toMatchObject({
+    summary: { offence: "ui: screen checkout-empty declared by AC-3 not captured" },
+  });
+  // A command that exits 1 still gets its manifest; the exit is the reason.
+  const failed = await runWith("exit1");
+  expect(failed.run.status).toBe("fail");
+  expect(failed.manifest).not.toBeNull();
+  expect(failed.run.reason).toBeUndefined();
+  // Nothing declared, nothing captured: the artifacts as before.
+  const plain = e2eRepo(
+    `${seedingE2e(makeRepo()).replace("node seed.mjs", 'sh -c \'printf "[]" > "$WIZARDINGCODE_CREW_CONSOLE_FILE"\'')}`,
+  );
+  const plainRun = e2eRun(
+    (await runGates(plain.paths, plain.work, plain.profile, DEFAULT_POLICY)).evidence.runs,
+  );
+  expect(plainRun?.artifacts).toEqual({
+    dir: "review/e2e",
+    console: "review/e2e/console.json",
+    logs: null,
+  });
+  expect(
+    plainRun?.tail.split("\n").some((l) => /^(axe|vitals|reduced motion|motion):/.test(l)),
+  ).toBe(false);
+}, 120_000);

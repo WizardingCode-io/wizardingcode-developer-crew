@@ -65,6 +65,24 @@ export function readJson<T>(path: string): T | null {
   }
 }
 
+/**
+ * The size of a regular file, or null for anything else there (nothing, a directory, a symlink, a
+ * FIFO): the stat never follows a link, so a planted one is seen as a link and never as its target.
+ */
+export function regularFileSize(path: string): number | null {
+  try {
+    const stat = lstatSync(path);
+    return stat.isFile() ? stat.size : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Whether a regular file is there, by the rule of `regularFileSize`. */
+export function isRegularFile(path: string): boolean {
+  return regularFileSize(path) !== null;
+}
+
 /** Writes through a temporary file so a reader never sees a half-written file. */
 export function writeText(path: string, text: string): void {
   ensureDir(dirname(path));

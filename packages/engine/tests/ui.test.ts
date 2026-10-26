@@ -8,6 +8,7 @@ import {
   readdirSync,
   readFileSync,
   symlinkSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
@@ -19,8 +20,11 @@ import {
   DEFAULT_VIEWPORTS,
   darkScheme,
   expectedScreens,
+  gradeUi,
   parseScreens,
   parseViewports,
+  safeList,
+  safeText,
   screensSummary,
   sweepStaleFixtureFiles,
   uiPlanPath,
@@ -517,4 +521,692 @@ test("SP9-T3 AC-5: screensSummary counts the expected screens captured, the miss
   expect(capturesLine(screensSummary(expected, []), [])).toBe(
     "captures: 0 of 2 expected (fixture 0, session 0); missing: checkout-empty, checkout-error",
   );
+});
+
+// SP9 Task 4: the UI evidence graded in the e2e run.
+
+/** A metadata file of the fixture's shape with the given overrides, its console file and its images. */
+function seedCapture(
+  dir: string,
+  page: string,
+  state: string,
+  overrides: Record<string, unknown> = {},
+  options: { axeFile?: boolean; console?: unknown[] } = {},
+): void {
+  const base = `${page}-${state}`;
+  for (const width of [360, 1280]) writeFileSync(join(dir, `${base}@${width}.png`), "png");
+  writeFileSync(join(dir, `console-${base}.json`), JSON.stringify(options.console ?? []));
+  const axe = {
+    status: "not captured",
+    reason: "@axe-core/playwright not installed",
+    file: null,
+    violations: [],
+  };
+  const body = {
+    page,
+    state,
+    by: "fixture",
+    viewports: [360, 1280].map((width) => ({
+      name: `v${width}`,
+      width,
+      height: 800,
+      light: `${base}@${width}.png`,
+      dark: null,
+    })),
+    console: `console-${base}.json`,
+    aria: null,
+    axe,
+    vitals: { cls: 0.02, lcpMs: 820, inpMs: null, longTasks: 0 },
+    reducedMotion: { status: "clean", running: [] },
+    ...overrides,
+  };
+  const axeBody = body.axe as { file?: string | null; violations?: unknown[] };
+  if (options.axeFile !== false && typeof axeBody.file === "string")
+    writeFileSync(
+      join(dir, axeBody.file),
+      JSON.stringify({ violations: axeBody.violations ?? [] }),
+    );
+  writeFileSync(join(dir, `${base}.json`), JSON.stringify(body));
+}
+
+function seedMotion(
+  dir: string,
+  page: string,
+  interaction: string,
+  overrides: Record<string, unknown> = {},
+  options: { strip?: boolean } = {},
+): void {
+  const key = `${page}-${interaction}`;
+  mkdirSync(join(dir, "motion", key), { recursive: true });
+  writeFileSync(join(dir, "motion", key, "00.png"), "png");
+  if (options.strip !== false) writeFileSync(join(dir, `${key}.strip.png`), "png");
+  writeFileSync(
+    join(dir, `${key}.motion.json`),
+    JSON.stringify({
+      page,
+      interaction,
+      frames: {
+        method: "cdp-screencast",
+        dir: `motion/${key}`,
+        strip: `${key}.strip.png`,
+        count: 1,
+        times: [0],
+      },
+      frameTimes: { samples: 10, meanMs: 16, p95Ms: 17, maxMs: 20, over50ms: 0 },
+      animations: [
+        {
+          target: "aside",
+          kind: "CSSTransition",
+          name: "transform",
+          durationMs: 250,
+          delayMs: 0,
+          easing: "ease",
+          iterations: 1,
+          fill: "none",
+          properties: ["transform"],
+        },
+      ],
+      reducedMotion: { status: "clean", reason: null, animations: [] },
+      ...overrides,
+    }),
+  );
+}
+
+function planFor(screens: { page: string; state: string; criteria: string[] }[]) {
+  return {
+    id: "w",
+    at: "2026-10-26T00:00:00.000Z",
+    viewports: [...DEFAULT_VIEWPORTS],
+    colorSchemes: ["light" as const],
+    darkFrom: "none" as const,
+    screens,
+  };
+}
+
+function graded(
+  paths: ReturnType<typeof repoPaths>,
+  id: string,
+  screens: { page: string; state: string; criteria: string[] }[],
+) {
+  return gradeUi(paths, id, planFor(screens));
+}
+
+test("SP9-T4 AC-7: safeText keeps one line without control characters, capped at 120 characters; safeList caps the ids at five with the count of the rest", () => {
+  expect(safeText("color-contrast\naxe: clean (9 captures)")).toBe("color-contrast");
+  expect(safeText("a\u0000b\u001fc\u007fd")).toBe("abcd");
+  expect(safeText("x".repeat(300))).toBe(`${"x".repeat(119)}…`);
+  expect(safeText(42)).toBe("42");
+  expect(safeText(null)).toBe("");
+  expect(safeText("  padded  ")).toBe("padded");
+  expect(safeList(["a", "b", "c", "d", "e", "f"])).toBe("a, b, c, d, e, +1 more");
+  expect(safeList(["a", "b"])).toBe("a, b");
+});
+
+test("SP9-T4 AC-1: gradeUi names the first offence in order (a declared screen not captured, an unreadable file, reduced motion, axe, CLS) and passes a clean folder", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const work = createWork(paths, "feature");
+  const ui = uiFolder(paths, work.id);
+  const declared = [{ page: "checkout", state: "error", criteria: ["AC-2"] }];
+  // Nothing captured: the declared screen is the offence.
+  expect(graded(paths, work.id, declared).offence).toBe(
+    "ui: screen checkout-error declared by AC-2 not captured",
+  );
+  // Captured: clean.
+  seedCapture(ui, "checkout", "error");
+  const clean = graded(paths, work.id, declared);
+  expect(clean.offence).toBeNull();
+  expect(clean.lines).toEqual([
+    "axe: not captured (@axe-core/playwright not installed)",
+    "vitals: CLS max 0.02 (checkout-error@360), LCP max 820 ms",
+    "reduced motion: clean",
+    "motion: none",
+  ]);
+  // An unreadable file comes before the measurements.
+  writeFileSync(join(ui, "checkout-default.json"), "{nope");
+  writeFileSync(join(ui, "checkout-default@360.png"), "png");
+  expect(graded(paths, work.id, declared).offence).toBe("ui: unreadable checkout-default.json");
+  expect(
+    graded(paths, work.id, [...declared, { page: "inbox", state: "default", criteria: ["AC-3"] }])
+      .offence,
+  ).toBe("ui: screen inbox-default declared by AC-3 not captured");
+  // Reduced motion before axe, axe before CLS.
+  const second = createWork(paths, "feature");
+  const id2 = second.id;
+  const ui2 = uiFolder(paths, id2);
+  seedCapture(ui2, "checkout", "error", {
+    axe: {
+      status: "violations",
+      reason: null,
+      file: "axe-checkout-error.json",
+      violations: [{ id: "color-contrast", impact: "serious", nodes: 2, targets: ["button.pay"] }],
+    },
+    vitals: { cls: 0.18, lcpMs: 900, inpMs: null, longTasks: 0 },
+    reducedMotion: {
+      status: "running",
+      running: [
+        {
+          target: "div.spinner",
+          name: "spin",
+          iterations: "Infinity",
+          durationMs: 1000,
+          properties: ["transform"],
+        },
+      ],
+    },
+  });
+  const three = graded(paths, id2, declared);
+  expect(three.offence).toBe(
+    "ui: animation still running under reduced motion: div.spinner (checkout-error)",
+  );
+  expect(three.lines).toEqual([
+    "axe: violations: color-contrast on checkout-error",
+    "vitals: CLS max 0.18 (checkout-error@360), LCP max 900 ms",
+    "ui: animation still running under reduced motion: div.spinner (checkout-error)",
+    "motion: none",
+  ]);
+  seedCapture(ui2, "checkout", "error", {
+    axe: {
+      status: "violations",
+      reason: null,
+      file: "axe-checkout-error.json",
+      violations: [{ id: "color-contrast", impact: "serious", nodes: 2, targets: ["button.pay"] }],
+    },
+    vitals: { cls: 0.18, lcpMs: 900, inpMs: null, longTasks: 0 },
+  });
+  expect(graded(paths, id2, declared).offence).toBe(
+    "ui: axe serious color-contrast on checkout-error (2 nodes)",
+  );
+  seedCapture(ui2, "checkout", "error", {
+    vitals: { cls: 0.18, lcpMs: 900, inpMs: null, longTasks: 0 },
+  });
+  expect(graded(paths, id2, declared).offence).toBe(
+    "ui: CLS 0.18 on checkout-error@360 (limit 0.1)",
+  );
+  // A moderate axe hit, an opacity-only short animation under reduced motion and CLS at the limit pass.
+  seedCapture(ui2, "checkout", "error", {
+    axe: {
+      status: "violations",
+      reason: null,
+      file: "axe-checkout-error.json",
+      violations: [{ id: "region", impact: "moderate", nodes: 1, targets: ["main"] }],
+    },
+    vitals: { cls: 0.1, lcpMs: 900, inpMs: null, longTasks: 0 },
+    reducedMotion: {
+      status: "running",
+      running: [
+        {
+          target: "div.toast",
+          name: "fade",
+          iterations: 1,
+          durationMs: 200,
+          properties: ["opacity"],
+        },
+      ],
+    },
+  });
+  const passing = graded(paths, id2, declared);
+  expect(passing.offence).toBeNull();
+  expect(passing.lines[0]).toBe("axe: violations: region on checkout-error");
+  // A motion sample's rerun under reduced motion is judged the same, named by its interaction.
+  seedMotion(ui2, "checkout", "open", {
+    reducedMotion: {
+      status: "running",
+      reason: null,
+      animations: [
+        {
+          target: "aside.summary",
+          kind: "CSSTransition",
+          name: "transform",
+          durationMs: 250,
+          delayMs: 0,
+          easing: "ease",
+          iterations: 1,
+          fill: "none",
+          properties: ["transform"],
+        },
+      ],
+    },
+  });
+  expect(graded(paths, id2, declared).offence).toBe(
+    "ui: animation still running under reduced motion: aside.summary (checkout-open)",
+  );
+});
+
+test("SP9-T4 AC-10: the measurement lines read not captured for a forged or partial file, count the samples without a strip, and never pass what is not there", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const work = createWork(paths, "feature");
+  const ui = uiFolder(paths, work.id);
+  const declared = [{ page: "checkout", state: "default", criteria: ["AC-1"] }];
+  // A metadata claiming clean with no axe file: not captured, naming the file.
+  seedCapture(
+    ui,
+    "checkout",
+    "default",
+    { axe: { status: "clean", reason: null, file: "axe-checkout-default.json", violations: [] } },
+    { axeFile: false },
+  );
+  seedMotion(ui, "checkout", "open", {}, { strip: false });
+  const grade = graded(paths, work.id, declared);
+  expect(grade.offence).toBeNull();
+  expect(grade.lines).toEqual([
+    "axe: not captured (axe-checkout-default.json missing)",
+    "vitals: CLS max 0.02 (checkout-default@360), LCP max 820 ms",
+    "reduced motion: clean",
+    "motion: 1 interaction sampled (1 without a strip)",
+  ]);
+  // The file present: clean, counted.
+  seedCapture(ui, "checkout", "default", {
+    axe: { status: "clean", reason: null, file: "axe-checkout-default.json", violations: [] },
+  });
+  seedMotion(ui, "checkout", "open");
+  expect(graded(paths, work.id, declared).lines).toEqual([
+    "axe: clean (1 capture)",
+    "vitals: CLS max 0.02 (checkout-default@360), LCP max 820 ms",
+    "reduced motion: clean",
+    "motion: 1 interaction sampled",
+  ]);
+  // All-null vitals (the fixture's failure path) read not captured, never unreadable; a session's bare capture has nothing to read.
+  seedCapture(ui, "checkout", "default", {
+    vitals: { cls: null, lcpMs: null, inpMs: null, longTasks: null },
+    reducedMotion: { status: "not captured", reason: "no page", running: [] },
+  });
+  seedMotion(ui, "checkout", "open", {
+    reducedMotion: { status: "not captured", reason: "no reset given", animations: [] },
+  });
+  const nulls = graded(paths, work.id, declared);
+  expect(nulls.offence).toBeNull();
+  expect(nulls.lines[1]).toBe("vitals: not captured");
+  expect(nulls.lines[2]).toBe("reduced motion: not captured");
+  writeFileSync(join(ui, "home-empty.png"), "png");
+  const withSession = graded(paths, work.id, declared);
+  expect(withSession.manifest.screens.find((s) => s.page === "home")).toMatchObject({
+    page: "home",
+    state: "empty",
+    declared: false,
+    by: "session",
+    captured: { light: [], dark: [] },
+    console: "not captured",
+    axe: "not captured",
+    vitals: null,
+    reducedMotion: "not captured",
+  });
+});
+
+test("SP9-T4 AC-9: a file over the cap or of the wrong shape is unreadable and an offence, never a throw and never a pass; only the string Infinity is infinite; a cls that is not a finite number is never below the limit", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const work = createWork(paths, "feature");
+  const ui = uiFolder(paths, work.id);
+  const declared = [{ page: "checkout", state: "default", criteria: ["AC-1"] }];
+  const cases: [string, unknown][] = [
+    ["an array body", []],
+    ["running not an array", { reducedMotion: { status: "running", running: "yes" } }],
+    ["cls as a string", { vitals: { cls: "0.01", lcpMs: 1, inpMs: null, longTasks: 0 } }],
+    ["cls null beside a number", { vitals: { cls: null, lcpMs: 1, inpMs: null, longTasks: 0 } }],
+    ["vitals as a string", { vitals: "fast" }],
+    ["cls NaN", { vitals: { cls: "NaN", lcpMs: 1, inpMs: null, longTasks: 0 } }],
+  ];
+  for (const [label, body] of cases) {
+    seedCapture(ui, "checkout", "default");
+    if (Array.isArray(body)) writeFileSync(join(ui, "checkout-default.json"), "[]");
+    else seedCapture(ui, "checkout", "default", body as Record<string, unknown>);
+    const grade = graded(paths, work.id, declared);
+    expect([label, grade.offence]).toEqual([label, "ui: unreadable checkout-default.json"]);
+    expect(grade.manifest.unreadable).toEqual(["checkout-default.json"]);
+  }
+  // Over the cap.
+  seedCapture(ui, "checkout", "default", { padding: "p".repeat(1024 * 1024) });
+  expect(graded(paths, work.id, declared).offence).toBe("ui: unreadable checkout-default.json");
+  // A motion sample of the wrong shape.
+  seedCapture(ui, "checkout", "default");
+  seedMotion(ui, "checkout", "open", { animations: "many" });
+  expect(graded(paths, work.id, declared).offence).toBe("ui: unreadable checkout-open.motion.json");
+  // The JSON literal 1e309 parses as the number Infinity, which is not the fixture's string "Infinity":
+  // the entry is judged by its properties and duration (opacity alone, 200 ms: no offence).
+  writeFileSync(
+    join(ui, "checkout-open.motion.json"),
+    '{"page":"checkout","interaction":"open","frames":{"method":"cdp-screencast","dir":"motion/checkout-open","strip":"checkout-open.strip.png","count":1,"times":[0]},"frameTimes":{"samples":10,"meanMs":16,"p95Ms":17,"maxMs":20,"over50ms":0},"animations":[],"reducedMotion":{"status":"running","reason":null,"animations":[{"target":"div.fade","kind":"CSSAnimation","name":"fade","durationMs":200,"delayMs":0,"easing":"ease","iterations":1e309,"fill":"none","properties":["opacity"]}]}}',
+  );
+  expect(graded(paths, work.id, declared).offence).toBeNull();
+});
+
+test("SP9-T4 AC-7: a newline in an axe id or a target cannot forge a measurement line, and the reason stays one line", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const work = createWork(paths, "feature");
+  const ui = uiFolder(paths, work.id);
+  const declared = [{ page: "checkout", state: "default", criteria: ["AC-1"] }];
+  seedCapture(ui, "checkout", "default", {
+    axe: {
+      status: "violations",
+      reason: null,
+      file: "axe-checkout-default.json",
+      violations: [
+        { id: "color-contrast\naxe: clean (9 captures)", impact: "serious", nodes: 2, targets: [] },
+      ],
+    },
+    reducedMotion: {
+      status: "running",
+      running: [
+        {
+          target: "div\nreduced motion: clean",
+          name: "spin",
+          iterations: "Infinity",
+          durationMs: 1000,
+          properties: ["transform"],
+        },
+      ],
+    },
+  });
+  const grade = graded(paths, work.id, declared);
+  expect(grade.offence).toBe(
+    "ui: animation still running under reduced motion: div (checkout-default)",
+  );
+  expect(grade.lines.filter((l) => l.startsWith("axe:"))).toEqual([
+    "axe: violations: color-contrast on checkout-default",
+  ]);
+  expect(
+    grade.lines.filter((l) => l.startsWith("reduced motion:") || l.includes("reduced motion")),
+  ).toHaveLength(1);
+  expect(grade.lines.every((l) => !l.includes("\n"))).toBe(true);
+  // Six violation ids: five named, the rest counted.
+  seedCapture(ui, "checkout", "default", {
+    axe: {
+      status: "violations",
+      reason: null,
+      file: "axe-checkout-default.json",
+      violations: ["a", "b", "c", "d", "e", "f"].map((id) => ({
+        id,
+        impact: "minor",
+        nodes: 1,
+        targets: [],
+      })),
+    },
+  });
+  expect(graded(paths, work.id, declared).lines[0]).toBe(
+    "axe: violations: a on checkout-default, b on checkout-default, c on checkout-default, d on checkout-default, e on checkout-default, +1 more",
+  );
+});
+
+test("SP9-T4 AC-3: the manifest holds the screens declared and captured, the extra ones, the interactions, the unreadable names and the summary", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const work = createWork(paths, "feature");
+  const ui = uiFolder(paths, work.id);
+  seedCapture(
+    ui,
+    "checkout",
+    "error",
+    {},
+    { console: [{ page: "/checkout", type: "error", text: "boom" }] },
+  );
+  writeFileSync(join(ui, "home-default.png"), "png");
+  seedMotion(ui, "checkout", "open");
+  const grade = graded(paths, work.id, [
+    { page: "checkout", state: "error", criteria: ["AC-2"] },
+    { page: "checkout", state: "empty", criteria: ["AC-2", "AC-3"] },
+  ]);
+  expect(grade.manifest).toMatchObject({
+    id: work.id,
+    plan: { viewports: [...DEFAULT_VIEWPORTS], colorSchemes: ["light"] },
+    screens: [
+      {
+        page: "checkout",
+        state: "empty",
+        criteria: ["AC-2", "AC-3"],
+        declared: true,
+        by: null,
+        captured: null,
+        console: "not captured",
+        axe: "not captured",
+        vitals: null,
+        reducedMotion: "not captured",
+      },
+      {
+        page: "checkout",
+        state: "error",
+        criteria: ["AC-2"],
+        declared: true,
+        by: "fixture",
+        captured: { light: [360, 1280], dark: [] },
+        console: "error",
+        axe: "not captured",
+        vitals: { cls: 0.02, lcpMs: 820, inpMs: null },
+        reducedMotion: "clean",
+      },
+      { page: "home", state: "default", criteria: [], declared: false, by: "session" },
+    ],
+    interactions: [
+      {
+        page: "checkout",
+        interaction: "open",
+        strip: true,
+        animations: 1,
+        over50ms: 0,
+        reducedMotion: "clean",
+      },
+    ],
+    unreadable: [],
+    summary: {
+      captures: 2,
+      captured: 1,
+      expected: 2,
+      missing: ["checkout-empty"],
+      extra: ["home-default"],
+      offence: "ui: screen checkout-empty declared by AC-2, AC-3 not captured",
+    },
+  });
+  expect(typeof grade.manifest.at).toBe("string");
+  expect(grade.artifacts).toEqual({
+    manifest: "review/ui-evidence.json",
+    captures: 2,
+    expected: 2,
+    missing: ["checkout-empty"],
+    axe: "not captured",
+    reducedMotion: "clean",
+    motion: 1,
+  });
+  // Nothing declared and nothing captured: no artifact.
+  const bare = createWork(paths, "feature");
+  expect(graded(paths, bare.id, []).artifacts).toBeNull();
+});
+
+test("SP9-T4 AC-5: the sweep skips a symlinked motion folder whole, names what it would have removed and follows nothing", () => {
+  const root = makeRepo();
+  const paths = repoPaths(root, testEnv());
+  const work = createWork(paths, "feature");
+  const ui = uiFolder(paths, work.id);
+  const outside = tempDir();
+  mkdirSync(join(outside, "checkout-open"), { recursive: true });
+  writeFileSync(join(outside, "checkout-open", "00.png"), "png");
+  symlinkSync(outside, join(ui, "motion"));
+  writeFileSync(join(ui, "checkout-open.strip.png"), "png");
+  writeFileSync(
+    join(ui, "checkout-open.motion.json"),
+    JSON.stringify({
+      page: "checkout",
+      interaction: "open",
+      frames: { dir: "motion/checkout-open", strip: "checkout-open.strip.png", count: 1 },
+    }),
+  );
+  const result = sweepStaleFixtureFiles(ui);
+  expect(result.skipped).toEqual(["motion/checkout-open"]);
+  expect(existsSync(join(outside, "checkout-open", "00.png"))).toBe(true);
+  expect(readdirSync(ui)).toContain("motion");
+  expect(existsSync(join(ui, "checkout-open.strip.png"))).toBe(false);
+});
+
+test("SP9-T4 AC-1 (the order, paired): an unreadable file comes before a running animation, an axe violation and a CLS offence of another capture", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const work = createWork(paths, "feature");
+  const ui = uiFolder(paths, work.id);
+  const declared = [
+    { page: "checkout", state: "default", criteria: ["AC-1"] },
+    { page: "checkout", state: "error", criteria: ["AC-1"] },
+  ];
+  seedCapture(ui, "checkout", "error", {
+    axe: {
+      status: "violations",
+      reason: null,
+      file: "axe-checkout-error.json",
+      violations: [{ id: "color-contrast", impact: "serious", nodes: 2, targets: [] }],
+    },
+    vitals: { cls: 0.18, lcpMs: 900, inpMs: null, longTasks: 0 },
+    reducedMotion: {
+      status: "running",
+      running: [
+        {
+          target: "div.spinner",
+          name: "spin",
+          iterations: "Infinity",
+          durationMs: 1000,
+          properties: ["transform"],
+        },
+      ],
+    },
+  });
+  seedCapture(ui, "checkout", "default");
+  writeFileSync(join(ui, "checkout-default.json"), "{nope");
+  const grade = graded(paths, work.id, declared);
+  expect(grade.offence).toBe("ui: unreadable checkout-default.json");
+  expect(grade.lines[2]).toBe(
+    "ui: animation still running under reduced motion: div.spinner (checkout-error)",
+  );
+});
+
+test("SP9-T4 AC-3 (declared only, captured only): the artifact and the lines appear when a screen is declared with no capture, and when a capture exists with nothing declared", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const declaredOnly = createWork(paths, "feature");
+  uiFolder(paths, declaredOnly.id);
+  const first = graded(paths, declaredOnly.id, [
+    { page: "checkout", state: "error", criteria: ["AC-1"] },
+  ]);
+  expect(first.artifacts).toEqual({
+    manifest: "review/ui-evidence.json",
+    captures: 0,
+    expected: 1,
+    missing: ["checkout-error"],
+    axe: "not captured",
+    reducedMotion: "not captured",
+    motion: 0,
+  });
+  expect(first.lines).toEqual([
+    "axe: not captured (no capture)",
+    "vitals: not captured",
+    "reduced motion: not captured",
+    "motion: none",
+  ]);
+  const capturedOnly = createWork(paths, "feature");
+  const ui = uiFolder(paths, capturedOnly.id);
+  seedCapture(ui, "home", "default");
+  const second = graded(paths, capturedOnly.id, []);
+  expect(second.artifacts).toMatchObject({
+    captures: 1,
+    expected: 0,
+    missing: [],
+    reducedMotion: "clean",
+  });
+  expect(second.lines).toHaveLength(4);
+  expect(second.offence).toBeNull();
+});
+
+test("SP9-T4 AC-9 (the axe file): a metadata claiming clean or violations with an axe file of the wrong shape or over the cap reads unreadable and is an offence", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const work = createWork(paths, "feature");
+  const ui = uiFolder(paths, work.id);
+  const declared = [{ page: "checkout", state: "default", criteria: ["AC-1"] }];
+  seedCapture(ui, "checkout", "default", {
+    axe: { status: "clean", reason: null, file: "axe-checkout-default.json", violations: [] },
+  });
+  writeFileSync(join(ui, "axe-checkout-default.json"), "{}");
+  const wrong = graded(paths, work.id, declared);
+  expect(wrong.offence).toBe("ui: unreadable axe-checkout-default.json");
+  expect(wrong.lines[0]).toBe("axe: not captured (axe-checkout-default.json unreadable)");
+  writeFileSync(
+    join(ui, "axe-checkout-default.json"),
+    `{"violations":[],"padding":"${"p".repeat(1024 * 1024)}"}`,
+  );
+  expect(graded(paths, work.id, declared).offence).toBe("ui: unreadable axe-checkout-default.json");
+  // The file is the record: a metadata that claims clean over a file holding a serious violation is graded by the file.
+  writeFileSync(
+    join(ui, "axe-checkout-default.json"),
+    JSON.stringify({
+      violations: [{ id: "label", impact: "critical", nodes: [{ target: ["input#email"] }] }],
+    }),
+  );
+  expect(graded(paths, work.id, declared).offence).toBe(
+    "ui: axe critical label on checkout-default (0 nodes)",
+  );
+});
+
+test("SP9-T4 AC-9 (planted links): a symlinked axe file or metadata is unreadable and never followed by the grade, the capture list or the sweep", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const work = createWork(paths, "feature");
+  const ui = uiFolder(paths, work.id);
+  const outside = tempDir();
+  const declared = [{ page: "checkout", state: "default", criteria: ["AC-1"] }];
+  seedCapture(ui, "checkout", "default", {
+    axe: { status: "clean", reason: null, file: "axe-checkout-default.json", violations: [] },
+  });
+  // The seeded axe file replaced by a link to a well-formed one outside the folder: the link is what
+  // is there, not its target.
+  writeFileSync(join(outside, "axe.json"), JSON.stringify({ violations: [] }));
+  unlinkSync(join(ui, "axe-checkout-default.json"));
+  symlinkSync(join(outside, "axe.json"), join(ui, "axe-checkout-default.json"));
+  expect(graded(paths, work.id, declared).offence).toBe("ui: unreadable axe-checkout-default.json");
+  // The metadata itself as a link to a well-formed one naming another page: unreadable to the grade,
+  // no metadata to the capture list (the name splits), nothing for the sweep to act on.
+  const linked = JSON.parse(readFileSync(join(ui, "checkout-default.json"), "utf8"));
+  writeFileSync(
+    join(outside, "meta.json"),
+    JSON.stringify({ ...linked, page: "other", state: "thing", axe: { status: "not captured" } }),
+  );
+  unlinkSync(join(ui, "checkout-default.json"));
+  symlinkSync(join(outside, "meta.json"), join(ui, "checkout-default.json"));
+  expect(graded(paths, work.id, declared).offence).toBe("ui: unreadable checkout-default.json");
+  const captures = listCaptures(paths, work.id);
+  expect(captures.map((c) => `${c.page}/${c.state}/${c.by}`)).toEqual(["checkout/default/session"]);
+  const swept = sweepStaleFixtureFiles(ui);
+  expect(swept.removed).toEqual([]);
+  expect(existsSync(join(ui, "checkout-default@360.png"))).toBe(true);
+  expect(readFileSync(join(outside, "meta.json"), "utf8")).toContain('"other"');
+});
+
+test("SP9-T4 AC-4 (the manifest read back): readUiEvidence returns the manifest the engine wrote and null for one over the cap or of the wrong shape", async () => {
+  const { readUiEvidence, writeUiEvidence, uiEvidencePath } = await import("../src/ui.ts");
+  const paths = repoPaths(makeRepo(), testEnv());
+  const work = createWork(paths, "feature");
+  const ui = uiFolder(paths, work.id);
+  seedCapture(ui, "checkout", "default");
+  const grade = graded(paths, work.id, [
+    { page: "checkout", state: "default", criteria: ["AC-1"] },
+  ]);
+  writeUiEvidence(paths, work.id, grade.manifest);
+  expect(readUiEvidence(paths, work.id)).toEqual(grade.manifest);
+  writeFileSync(
+    uiEvidencePath(paths, work.id),
+    JSON.stringify({ ...grade.manifest, screens: [{ page: "x" }] }),
+  );
+  expect(readUiEvidence(paths, work.id)).toBeNull();
+  writeFileSync(
+    uiEvidencePath(paths, work.id),
+    JSON.stringify({ ...grade.manifest, summary: { missing: "none" } }),
+  );
+  expect(readUiEvidence(paths, work.id)).toBeNull();
+  // Every list and every row is checked, not the containers alone.
+  const first = grade.manifest.screens[0];
+  if (!first) throw new Error("no screen row");
+  for (const broken of [
+    { unreadable: ["x", 1] },
+    { interactions: [{ page: "x" }] },
+    { screens: [{ ...first, captured: { light: ["360"], dark: [] } }] },
+    { summary: { ...grade.manifest.summary, extra: [null] } },
+  ]) {
+    writeFileSync(uiEvidencePath(paths, work.id), JSON.stringify({ ...grade.manifest, ...broken }));
+    expect(readUiEvidence(paths, work.id)).toBeNull();
+  }
+  writeFileSync(
+    uiEvidencePath(paths, work.id),
+    `${JSON.stringify(grade.manifest).slice(0, -1)},"padding":"${"p".repeat(1024 * 1024)}"}`,
+  );
+  expect(readUiEvidence(paths, work.id)).toBeNull();
+  writeFileSync(uiEvidencePath(paths, work.id), "{nope");
+  expect(readUiEvidence(paths, work.id)).toBeNull();
 });

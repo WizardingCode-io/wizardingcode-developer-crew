@@ -36,6 +36,7 @@ import type {
   WorkItem,
 } from "./types.ts";
 import { partyLabel } from "./types.ts";
+import { safeText, type UiEvidence } from "./ui.ts";
 import { currentCriterion, isSkipped, kindOfItem, tddDone } from "./work.ts";
 
 type Decided = {
@@ -420,6 +421,48 @@ export interface ReportOptions {
   /** The text of the item's knowledge list, as the engine wrote it at classification. */
   knowledge?: string | null;
   ctoPlan?: { path: string; date: string } | null;
+  /** The UI evidence's manifest (`review/ui-evidence.json`, SP9 Task 4), read by the caller; the section is drawn from it. */
+  uiEvidence?: UiEvidence | null;
+}
+
+/** A table cell from a string a file may have written: one safe line, the bar escaped. */
+function uiCell(value: unknown): string {
+  // The bar would break the row; a backtick, a bracket or an angle bracket would start code, a link
+  // or HTML; a backslash would undo the escape after it and an ampersand would start an entity.
+  return safeText(value).replace(/[\\|`[<&]/g, (c) => `\\${c}`);
+}
+
+/** The UI evidence section (SP9 Task 4): the screens, the interactions, what is missing and what could not be read. */
+function uiEvidenceLines(ui: UiEvidence): string[] {
+  const lines = [
+    "## UI evidence",
+    "",
+    "| Page | State | Declared | Widths | Dark | Console | Axe | CLS | Reduced motion | By |",
+    "| :- | :- | :- | :- | :- | :- | :- | -: | :- | :- |",
+  ];
+  for (const s of ui.screens) {
+    const widths = s.captured?.light.length ? s.captured.light.join(", ") : "none";
+    const dark = s.captured?.dark.length ? s.captured.dark.join(", ") : "none";
+    lines.push(
+      `| ${uiCell(s.page)} | ${uiCell(s.state)} | ${s.declared ? "yes" : "extra"} | ${widths} | ${dark} | ${uiCell(s.console)} | ${uiCell(s.axe)} | ${s.vitals?.cls ?? ""} | ${uiCell(s.reducedMotion)} | ${uiCell(s.by ?? "")} |`,
+    );
+  }
+  if (ui.interactions.length) {
+    lines.push(
+      "",
+      "| Page | Interaction | Strip | Animations | Frames over 50 ms | Reduced motion |",
+      "| :- | :- | :- | -: | -: | :- |",
+    );
+    for (const i of ui.interactions) {
+      lines.push(
+        `| ${uiCell(i.page)} | ${uiCell(i.interaction)} | ${i.strip ? "yes" : "no"} | ${i.animations} | ${i.over50ms} | ${uiCell(i.reducedMotion)} |`,
+      );
+    }
+  }
+  if (ui.summary.missing.length)
+    lines.push("", `Missing: ${ui.summary.missing.map(uiCell).join(", ")}`);
+  if (ui.unreadable.length) lines.push("", `Unreadable: ${ui.unreadable.map(uiCell).join(", ")}`);
+  return lines;
 }
 
 /** Whom a turn end waited for, from the pause's kind (finding 123); no kind is the user's wait. */
@@ -440,7 +483,8 @@ export function renderReport(
   policy: Policy,
   options: ReportOptions = {},
 ): string {
-  const { ledger, mail, selfName, analysis, strategy, audit, knowledge, ctoPlan } = options;
+  const { ledger, mail, selfName, analysis, strategy, audit, knowledge, ctoPlan, uiEvidence } =
+    options;
   const lines: string[] = [];
   lines.push(`# Report: ${work.title}`, "");
   lines.push(`- Work: \`${work.id}\``);
@@ -597,6 +641,8 @@ export function renderReport(
       `| ${r.gate} | ${target} | ${status} | ${r.command ? `\`${r.command}\`` : ""} | ${r.durationMs} ms | ${r.log ?? ""} |`,
     );
   }
+  // The UI evidence the e2e run graded (SP9 Task 4), between the gates and the judgement that reads it.
+  if (uiEvidence) lines.push("", ...uiEvidenceLines(uiEvidence));
   // The rulings as the judge gave them; a finding outside the change is named as such, never hidden (ADR 0006).
   const judgement = evidence.judgement ?? [];
   if (judgement.length) {

@@ -1,7 +1,7 @@
 import { copyFileSync, existsSync, readdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { reviewPatch } from "./fingerprint.ts";
-import { nowIso, readJson, sha256, writeText } from "./fs.ts";
+import { isRegularFile, nowIso, readJson, sha256, writeText } from "./fs.ts";
 import { type CrewPaths, workDir } from "./paths.ts";
 import { plannedSeats, TEAMS, type TeamDef, taskSeats } from "./team.ts";
 import type {
@@ -166,9 +166,11 @@ export function listCaptures(paths: CrewPaths, id: string, task?: string): Captu
     let group = groups.get(base);
     if (!group) {
       const metaName = `${base}.json`;
-      const meta = names.includes(metaName)
-        ? readJson<Record<string, unknown>>(join(dir, metaName))
-        : null;
+      // A regular file only (the folder is the session's): a link or a FIFO there is no metadata.
+      const meta =
+        names.includes(metaName) && isRegularFile(join(dir, metaName))
+          ? readJson<Record<string, unknown>>(join(dir, metaName))
+          : null;
       const { page, state } = pageAndState(base, meta);
       group = {
         page,

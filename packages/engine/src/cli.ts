@@ -340,6 +340,7 @@ import {
   expectedScreens,
   parseScreens,
   parseViewports,
+  readUiEvidence,
   screensSummary,
   uiLine,
 } from "./ui.ts";
@@ -1432,6 +1433,7 @@ function reportOf(env: Env, work: WorkItem, evidence: Evidence): string {
     ctoPlan: env.mail.self.workspace
       ? latestPlan(env.paths.userDir, env.mail.self.workspace)
       : null,
+    uiEvidence: readUiEvidence(env.paths, work.id),
   });
 }
 

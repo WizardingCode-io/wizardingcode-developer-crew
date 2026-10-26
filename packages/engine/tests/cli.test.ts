@@ -11592,3 +11592,50 @@ test("SP9-T3 AC-5: the gate run's captures line names what was captured of the d
     missing: [],
   });
 });
+
+test("SP9-T4 AC-4 (the wiring): crew evidence prints the UI evidence section when the engine's manifest exists, and nothing of it otherwise", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const c = io(root);
+  await c.json("detect");
+  const start = await c.json("start", "A page", "--answers", answers, "--criterion", "x");
+  const id = start.data.id as string;
+  expect((await c.run("evidence", id)).out).not.toContain("## UI evidence");
+  const manifest = {
+    id,
+    at: "2026-10-26T10:00:00.000Z",
+    plan: { viewports: [{ name: "mobile", width: 360, height: 800 }], colorSchemes: ["light"] },
+    screens: [
+      {
+        page: "checkout",
+        state: "error",
+        criteria: ["AC-1"],
+        declared: true,
+        by: "fixture",
+        captured: { light: [360], dark: [] },
+        console: "clean",
+        axe: "clean",
+        vitals: { cls: 0.01, lcpMs: 500, inpMs: null },
+        reducedMotion: "clean",
+      },
+    ],
+    interactions: [],
+    unreadable: [],
+    summary: { captures: 1, captured: 1, expected: 1, missing: [], extra: [], offence: null },
+  };
+  // The engine's own file, written here as the gate run would write it.
+  mkdirSync(join(root, ".crew", "work", id, "review"), { recursive: true });
+  writeFileSync(
+    join(root, ".crew", "work", id, "review", "ui-evidence.json"),
+    JSON.stringify(manifest),
+  );
+  const shown = await c.run("evidence", id);
+  expect(shown.out).toContain("## UI evidence");
+  expect(shown.out).toContain(
+    "| checkout | error | yes | 360 | none | clean | clean | 0.01 | clean | fixture |",
+  );
+  writeFileSync(join(root, ".crew", "work", id, "review", "ui-evidence.json"), "{nope");
+  expect((await c.run("evidence", id)).out).not.toContain("## UI evidence");
+});

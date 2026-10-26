@@ -16,13 +16,13 @@ import {
   rmSync,
   unlinkSync,
 } from "node:fs";
-import { join, resolve, sep } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { isWatched } from "./fingerprint.ts";
-import { nowIso, writeText } from "./fs.ts";
-import type { Capture } from "./judgement.ts";
+import { isRegularFile, nowIso, regularFileSize, writeText } from "./fs.ts";
+import { type Capture, listCaptures, reviewDir } from "./judgement.ts";
 import { type CrewPaths, workDir } from "./paths.ts";
 import { SKIP_DIRS } from "./skip-dirs.ts";
-import type { Profile, Screen, Viewport, WorkItem } from "./types.ts";
+import type { Profile, Screen, UiArtifact, Viewport, WorkItem } from "./types.ts";
 
 /** The fixture's rule for a page, a state or an interaction: what the engine reads back from a file name. */
 export const SCREEN_NAME = /^[a-z0-9-]+$/;
@@ -259,6 +259,9 @@ function removeFile(target: string): boolean {
 /** Removes the fixture's frames folder: a real folder whose entries are frames, nothing else. */
 function removeFrames(target: string): boolean {
   try {
+    // The `motion` folder itself must be real: a symlinked intermediate folder is never followed.
+    const parent = lstatSync(dirname(target));
+    if (parent.isSymbolicLink() || !parent.isDirectory()) return false;
     const stat = lstatSync(target);
     if (!stat.isDirectory()) return false;
     const entries = readdirSync(target, { withFileTypes: true });
@@ -270,7 +273,17 @@ function removeFrames(target: string): boolean {
   }
 }
 
+function isLink(target: string): boolean {
+  try {
+    return lstatSync(target).isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
 function readJsonFile(path: string): Record<string, unknown> | null {
+  // A regular file only: a FIFO or a symlink planted there is never opened (the sweep reads data).
+  if (!isRegularFile(path)) return null;
   try {
     const body = JSON.parse(readFileSync(path, "utf8")) as unknown;
     return body && typeof body === "object" && !Array.isArray(body)
@@ -298,7 +311,10 @@ export function sweepStaleFixtureFiles(ui: string): { removed: string[]; skipped
       skipped.push(String(name));
       return;
     }
+    // A target the remover refuses (a folder where a file was named, a frames folder under a
+    // symlinked `motion`) is left alone and said; what is not there at all is no skip.
     if (remove(target)) removed.push(String(name));
+    else if (existsSync(target) || isLink(target)) skipped.push(String(name));
   };
   for (const name of readdirSync(ui).sort()) {
     if (!name.endsWith(".json")) continue;
@@ -397,4 +413,616 @@ export function capturesLine(summary: ScreensSummary, silent: readonly string[])
   if (summary.viewports.length) parts.push(`viewports ${summary.viewports.join(", ")}`);
   if (silentPart) parts.push(silentPart);
   return parts.join("; ");
+}
+
+// The grading (SP9 Task 4, design §4): the evidence read as data after the console and the logs.
+
+/** The standard's limits (design §6): Core Web Vitals' "good" for CLS; under reduced motion, opacity alone and short. */
+export const CLS_LIMIT = 0.1;
+export const REDUCED_MOTION_OPACITY_MS = 300;
+const LAYOUT_PROPERTIES = [
+  "width",
+  "height",
+  "top",
+  "left",
+  "right",
+  "bottom",
+  "margin",
+  "padding",
+  "inset",
+];
+const AXE_FAILING = new Set(["serious", "critical"]);
+/** A file under `review/ui/` is data: its size is capped, its strings are made safe, its lists are cut. */
+export const EVIDENCE_FILE_MAX = 1024 * 1024;
+export const SAFE_TEXT_MAX = 120;
+export const IDS_MAX = 5;
+
+/** One line of safe text from a file's string: the first line, no control characters, capped with an ellipsis. */
+export function safeText(value: unknown, max = SAFE_TEXT_MAX): string {
+  const text = value === null || value === undefined ? "" : String(value);
+  const line = text.split(/\r?\n/)[0] ?? "";
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: the control characters are what is stripped
+  const clean = line.replace(/[\u0000-\u001f\u007f]/g, "").trim();
+  return clean.length > max ? `${clean.slice(0, max - 1)}…` : clean;
+}
+
+/** At most `max` items, then the count of the rest. */
+export function safeList(items: readonly string[], max = IDS_MAX): string {
+  const shown = items.slice(0, max).map((item) => safeText(item));
+  const rest = items.length - shown.length;
+  return rest > 0 ? `${shown.join(", ")}, +${rest} more` : shown.join(", ");
+}
+
+export type ReducedMotionStatus = "clean" | "running" | "not captured";
+export type AxeStatus = "clean" | "violations" | "not captured";
+export type ConsoleStatus = "clean" | "error" | "not captured";
+
+export interface UiScreenRow {
+  page: string;
+  state: string;
+  criteria: string[];
+  declared: boolean;
+  by: "fixture" | "session" | null;
+  captured: { light: number[]; dark: number[] } | null;
+  console: ConsoleStatus;
+  axe: AxeStatus;
+  vitals: { cls: number | null; lcpMs: number | null; inpMs: number | null } | null;
+  reducedMotion: ReducedMotionStatus;
+}
+
+export interface UiInteractionRow {
+  page: string;
+  interaction: string;
+  strip: boolean;
+  animations: number;
+  over50ms: number;
+  reducedMotion: ReducedMotionStatus;
+}
+
+/** The manifest `review/ui-evidence.json` (design §4, decision 3 of the plan): what was declared, captured and measured. */
+export interface UiEvidence {
+  id: string;
+  at: string;
+  plan: { viewports: Viewport[]; colorSchemes: ("light" | "dark")[] };
+  screens: UiScreenRow[];
+  interactions: UiInteractionRow[];
+  unreadable: string[];
+  summary: {
+    captures: number;
+    captured: number;
+    expected: number;
+    missing: string[];
+    extra: string[];
+    offence: string | null;
+  };
+}
+
+export interface UiGrade {
+  offence: string | null;
+  lines: string[];
+  manifest: UiEvidence;
+  artifacts: UiArtifact | null;
+}
+
+export function uiEvidencePath(paths: CrewPaths, id: string): string {
+  return join(workDir(paths, id), "review", "ui-evidence.json");
+}
+
+type Json = Record<string, unknown>;
+
+/** The JSON of a regular file under the cap, whatever its shape; `undefined` for anything else (a link, a FIFO, too big, not JSON). */
+function readBoundedJson(path: string): unknown {
+  const size = regularFileSize(path);
+  if (size === null || size > EVIDENCE_FILE_MAX) return undefined;
+  try {
+    return JSON.parse(readFileSync(path, "utf8")) as unknown;
+  } catch {
+    return undefined;
+  }
+}
+
+const isObject = (v: unknown): v is Json => !!v && typeof v === "object" && !Array.isArray(v);
+const finiteOrNull = (v: unknown): v is number | null =>
+  v === null || (typeof v === "number" && Number.isFinite(v));
+const strings = (v: unknown): string[] =>
+  Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+
+/** A JSON object from a file under the cap; `null` for anything else. */
+function readBounded(path: string): Json | null {
+  const body = readBoundedJson(path);
+  return isObject(body) ? body : null;
+}
+
+interface Running {
+  target: string;
+  iterations: unknown;
+  durationMs: number | null;
+  properties: string[];
+}
+
+/** The shape of a reduced-motion entry (a capture's `running[]` or a sample's `animations[]`); null when it is not one. */
+function runningEntry(raw: unknown): Running | null {
+  if (!isObject(raw)) return null;
+  if (!finiteOrNull(raw.durationMs ?? null)) return null;
+  if (raw.properties !== undefined && !Array.isArray(raw.properties)) return null;
+  return {
+    target: safeText(raw.target ?? ""),
+    iterations: raw.iterations,
+    durationMs: (raw.durationMs as number | null | undefined) ?? null,
+    properties: strings(raw.properties),
+  };
+}
+
+type ReducedReading = { status: ReducedMotionStatus; entries: Running[] } | null;
+
+/**
+ * The reduced-motion block of a capture's metadata (`running`) or of a motion sample (`animations`):
+ * absent reads as not captured; a status other than clean or running reads as not captured; the
+ * list must be an array of entries of the shape above, else the block is the wrong shape (null).
+ */
+function readReduced(raw: unknown, key: "running" | "animations"): ReducedReading {
+  if (raw === undefined) return { status: "not captured", entries: [] };
+  if (!isObject(raw) || typeof raw.status !== "string") return null;
+  if (raw.status !== "clean" && raw.status !== "running")
+    return { status: "not captured", entries: [] };
+  const list = raw[key] ?? [];
+  if (!Array.isArray(list)) return null;
+  const entries: Running[] = [];
+  for (const item of list) {
+    const entry = runningEntry(item);
+    if (!entry) return null;
+    entries.push(entry);
+  }
+  return { status: raw.status, entries };
+}
+
+/** Whether an animation still running under reduced motion breaks the standard: infinite, moving, or long. Only the fixture's string "Infinity" is infinite. */
+function offendsReducedMotion(entry: Running): boolean {
+  if (entry.iterations === "Infinity") return true;
+  const moves = entry.properties.some(
+    (p) =>
+      p === "transform" ||
+      LAYOUT_PROPERTIES.some((layout) => p === layout || p.startsWith(`${layout}-`)),
+  );
+  if (moves) return true;
+  return entry.durationMs !== null && entry.durationMs > REDUCED_MOTION_OPACITY_MS;
+}
+
+/** AC-1's contract line for every entry that offends, named by the capture or the interaction. */
+function reducedMotionOffences(entries: readonly Running[], label: string): string[] {
+  return entries
+    .filter(offendsReducedMotion)
+    .map((entry) => `ui: animation still running under reduced motion: ${entry.target} (${label})`);
+}
+
+interface AxeReading {
+  status: AxeStatus;
+  reason: string | null;
+  violations: { id: string; impact: string | null; nodes: number }[];
+}
+
+/** The axe file named by a metadata that claims clean or violations: its violations, or `unreadable` when the file is missing, too big or of the wrong shape. */
+function readAxeFile(dir: string, name: string): AxeReading | "unreadable" | "missing" {
+  if (!/^axe-[a-z0-9-]+\.json$/.test(name) || !existsSync(join(dir, name))) return "missing";
+  const body = readBounded(join(dir, name));
+  if (!body || !Array.isArray(body.violations)) return "unreadable";
+  const violations: AxeReading["violations"] = [];
+  for (const v of body.violations) {
+    if (!isObject(v) || typeof v.id !== "string") return "unreadable";
+    violations.push({
+      id: safeText(v.id),
+      impact: typeof v.impact === "string" ? safeText(v.impact) : null,
+      nodes: typeof v.nodes === "number" && Number.isFinite(v.nodes) ? v.nodes : 0,
+    });
+  }
+  return { status: violations.length ? "violations" : "clean", reason: null, violations };
+}
+
+interface MetaReading {
+  axe: AxeReading;
+  /** The axe file that could not be read, when the metadata named one. */
+  axeUnreadable: string | null;
+  vitals: UiScreenRow["vitals"];
+  reducedMotion: { status: ReducedMotionStatus; entries: Running[] };
+}
+
+/** A capture's metadata read for its shape (the fixture's); null when the shape is wrong. */
+function readMeta(dir: string, meta: Json, base: string): MetaReading | null {
+  if (typeof meta.page !== "string" || typeof meta.state !== "string") return null;
+  if (meta.viewports !== undefined && !Array.isArray(meta.viewports)) return null;
+  let axe: AxeReading = { status: "not captured", reason: "not measured", violations: [] };
+  let axeUnreadable: string | null = null;
+  if (meta.axe !== undefined) {
+    if (!isObject(meta.axe) || typeof meta.axe.status !== "string") return null;
+    if (meta.axe.status === "clean" || meta.axe.status === "violations") {
+      // The file is the record; the metadata's summary is not trusted on its own.
+      const name = typeof meta.axe.file === "string" ? meta.axe.file : `axe-${base}.json`;
+      const read = readAxeFile(dir, name);
+      if (read === "missing")
+        axe = { status: "not captured", reason: `${safeText(name)} missing`, violations: [] };
+      else if (read === "unreadable") {
+        axeUnreadable = safeText(name);
+        axe = { status: "not captured", reason: `${safeText(name)} unreadable`, violations: [] };
+      } else axe = read;
+    } else {
+      axe = {
+        status: "not captured",
+        reason: safeText(meta.axe.reason ?? "not measured"),
+        violations: [],
+      };
+    }
+  }
+  // All-null vitals are the fixture's "not captured"; a cls that is not a finite number is the wrong shape.
+  let vitals: UiScreenRow["vitals"] = null;
+  if (meta.vitals !== undefined && meta.vitals !== null) {
+    if (!isObject(meta.vitals)) return null;
+    const { cls, lcpMs, inpMs } = meta.vitals;
+    const allNull = (cls ?? null) === null && (lcpMs ?? null) === null && (inpMs ?? null) === null;
+    if (!allNull) {
+      if (typeof cls !== "number" || !Number.isFinite(cls)) return null;
+      if (!finiteOrNull(lcpMs ?? null) || !finiteOrNull(inpMs ?? null)) return null;
+      vitals = {
+        cls,
+        lcpMs: (lcpMs as number | null | undefined) ?? null,
+        inpMs: (inpMs as number | null | undefined) ?? null,
+      };
+    }
+  }
+  const reducedMotion = readReduced(meta.reducedMotion, "running");
+  if (!reducedMotion) return null;
+  return { axe, axeUnreadable, vitals, reducedMotion };
+}
+
+interface SampleReading {
+  page: string;
+  interaction: string;
+  strip: boolean;
+  animations: number;
+  over50ms: number;
+  reducedMotion: { status: ReducedMotionStatus; entries: Running[] };
+}
+
+/** A motion sample read for its shape; null when the shape is wrong. */
+function readSample(dir: string, body: Json): SampleReading | null {
+  if (typeof body.page !== "string" || typeof body.interaction !== "string") return null;
+  if (body.frames !== undefined && !isObject(body.frames)) return null;
+  if (body.animations !== undefined && !Array.isArray(body.animations)) return null;
+  if (body.frameTimes !== undefined && !isObject(body.frameTimes)) return null;
+  const frames = isObject(body.frames) ? body.frames : {};
+  const stripName = typeof frames.strip === "string" ? frames.strip : null;
+  const strip =
+    stripName !== null && STRIP_NAME.test(stripName) && existsSync(join(dir, stripName));
+  const over = isObject(body.frameTimes) ? body.frameTimes.over50ms : 0;
+  const reducedMotion = readReduced(body.reducedMotion, "animations");
+  if (!reducedMotion) return null;
+  return {
+    page: safeText(body.page),
+    interaction: safeText(body.interaction),
+    strip,
+    animations: Array.isArray(body.animations) ? body.animations.length : 0,
+    over50ms: typeof over === "number" && Number.isFinite(over) ? over : 0,
+    reducedMotion,
+  };
+}
+
+/** The console file beside a capture: clean, an error or a warning in it, or nothing readable. */
+function consoleStatus(path: string | null): ConsoleStatus {
+  const entries = path ? readBoundedJson(path) : undefined;
+  if (!Array.isArray(entries)) return "not captured";
+  const failing = entries.some(
+    (e) => isObject(e) && (e.type === "error" || e.type === "warning" || e.type === "warn"),
+  );
+  return failing ? "error" : "clean";
+}
+
+function imageWidths(capture: Capture, dark: boolean): number[] {
+  const suffix = dark ? "-dark" : "";
+  return capture.widths.filter((w) =>
+    capture.files.some((f) => f.replace(/\.(png|jpe?g)$/i, "").endsWith(`@${w}${suffix}`)),
+  );
+}
+
+function emptyRow(page: string, state: string, criteria: string[], declared: boolean): UiScreenRow {
+  return {
+    page,
+    state,
+    criteria,
+    declared,
+    by: null,
+    captured: null,
+    console: "not captured",
+    axe: "not captured",
+    vitals: null,
+    reducedMotion: "not captured",
+  };
+}
+
+/** What the grading measured, before the lines, the manifest and the artifact are drawn from it. */
+interface Measured {
+  captures: Capture[];
+  rows: Map<string, UiScreenRow>;
+  interactions: UiInteractionRow[];
+  unreadable: string[];
+  reducedOffences: string[];
+  axeOffences: string[];
+  clsOffences: string[];
+  axeViolations: string[];
+  axeReasons: string[];
+  axeClean: number;
+  clsMax: { value: number; where: string } | null;
+  lcpMax: number | null;
+  reducedSeen: boolean;
+  withoutStrip: number;
+}
+
+/** Reads the captures' metadata and the motion samples under the folder into one measurement. */
+function measure(paths: CrewPaths, id: string, plan: UiPlan): Measured {
+  const dir = join(reviewDir(paths, id), "ui");
+  const m: Measured = {
+    captures: listCaptures(paths, id),
+    rows: new Map(),
+    interactions: [],
+    unreadable: [],
+    reducedOffences: [],
+    axeOffences: [],
+    clsOffences: [],
+    axeViolations: [],
+    axeReasons: [],
+    axeClean: 0,
+    clsMax: null,
+    lcpMax: null,
+    reducedSeen: false,
+    withoutStrip: 0,
+  };
+  for (const screen of plan.screens) {
+    m.rows.set(
+      `${screen.page}/${screen.state}`,
+      emptyRow(screen.page, screen.state, [...screen.criteria], true),
+    );
+  }
+  measureCaptures(m, paths, id, dir);
+  measureSamples(m, dir);
+  return m;
+}
+
+/** Each capture's row, with its console and its metadata (the axe, the vitals, the reduced-motion pass), added to the measurement. */
+function measureCaptures(m: Measured, paths: CrewPaths, id: string, dir: string): void {
+  for (const capture of m.captures) {
+    const key = `${capture.page}/${capture.state}`;
+    const label = `${capture.page}-${capture.state}`;
+    const row = m.rows.get(key) ?? emptyRow(capture.page, capture.state, [], false);
+    m.rows.set(key, row);
+    row.by = capture.by;
+    row.captured = {
+      light: imageWidths(capture, false),
+      dark: capture.dark ? imageWidths(capture, true) : [],
+    };
+    row.console = consoleStatus(capture.console ? join(workDir(paths, id), capture.console) : null);
+    // The metadata by its name: listCaptures drops one it could not parse, which is exactly what is unreadable here.
+    const metaName = `${label}.json`;
+    if (!existsSync(join(dir, metaName))) continue;
+    const body = readBounded(join(dir, metaName));
+    const reading = body ? readMeta(dir, body, label) : null;
+    if (!reading) {
+      m.unreadable.push(metaName);
+      continue;
+    }
+    if (reading.axeUnreadable) m.unreadable.push(reading.axeUnreadable);
+    row.axe = reading.axe.status;
+    row.vitals = reading.vitals;
+    row.reducedMotion = reading.reducedMotion.status;
+    if (reading.axe.status === "violations") {
+      for (const v of reading.axe.violations) {
+        m.axeViolations.push(`${v.id} on ${label}`);
+        if (v.impact && AXE_FAILING.has(v.impact)) {
+          m.axeOffences.push(`ui: axe ${v.impact} ${v.id} on ${label} (${v.nodes} nodes)`);
+        }
+      }
+    } else if (reading.axe.status === "clean") m.axeClean += 1;
+    else if (reading.axe.reason) m.axeReasons.push(reading.axe.reason);
+    if (reading.vitals) {
+      const where = basename(capture.file).replace(/\.[^.]+$/, "");
+      const { cls, lcpMs } = reading.vitals;
+      if (cls !== null && (m.clsMax === null || cls > m.clsMax.value))
+        m.clsMax = { value: cls, where };
+      if (cls !== null && cls > CLS_LIMIT)
+        m.clsOffences.push(`ui: CLS ${cls} on ${where} (limit ${CLS_LIMIT})`);
+      if (lcpMs !== null && (m.lcpMax === null || lcpMs > m.lcpMax)) m.lcpMax = lcpMs;
+    }
+    if (reading.reducedMotion.status !== "not captured") {
+      m.reducedSeen = true;
+      m.reducedOffences.push(...reducedMotionOffences(reading.reducedMotion.entries, label));
+    }
+  }
+}
+
+/** Each motion sample added to the measurement: its row, a missing strip counted, its reduced-motion rerun. */
+function measureSamples(m: Measured, dir: string): void {
+  const names = existsSync(dir) ? readdirSync(dir).sort() : [];
+  for (const name of names) {
+    if (!name.endsWith(".motion.json")) continue;
+    const body = readBounded(join(dir, name));
+    const sample = body ? readSample(dir, body) : null;
+    if (!sample) {
+      m.unreadable.push(name);
+      continue;
+    }
+    if (!sample.strip) m.withoutStrip += 1;
+    m.interactions.push({
+      page: sample.page,
+      interaction: sample.interaction,
+      strip: sample.strip,
+      animations: sample.animations,
+      over50ms: sample.over50ms,
+      reducedMotion: sample.reducedMotion.status,
+    });
+    if (sample.reducedMotion.status !== "not captured") {
+      m.reducedSeen = true;
+      m.reducedOffences.push(
+        ...reducedMotionOffences(
+          sample.reducedMotion.entries,
+          `${sample.page}-${sample.interaction}`,
+        ),
+      );
+    }
+  }
+}
+
+/** The tail's four lines, one per measurement (AC-10). */
+function measurementLines(m: Measured, axe: AxeStatus, reduced: ReducedMotionStatus): string[] {
+  const axeLine =
+    axe === "violations"
+      ? `axe: violations: ${safeList(m.axeViolations)}`
+      : axe === "clean"
+        ? `axe: clean (${m.axeClean} capture${m.axeClean === 1 ? "" : "s"})`
+        : `axe: not captured (${safeText(m.axeReasons[0] ?? (m.captures.length ? "not measured" : "no capture"))})`;
+  const vitalsLine = m.clsMax
+    ? `vitals: CLS max ${m.clsMax.value} (${m.clsMax.where})${m.lcpMax !== null ? `, LCP max ${m.lcpMax} ms` : ""}`
+    : "vitals: not captured";
+  const reducedLine =
+    reduced === "running"
+      ? (m.reducedOffences[0] ?? "reduced motion: running")
+      : reduced === "clean"
+        ? "reduced motion: clean"
+        : "reduced motion: not captured";
+  const n = m.interactions.length;
+  const motionLine = n
+    ? `motion: ${n} interaction${n === 1 ? "" : "s"} sampled${m.withoutStrip ? ` (${m.withoutStrip} without a strip)` : ""}`
+    : "motion: none";
+  return [axeLine, vitalsLine, reducedLine, motionLine];
+}
+
+/**
+ * The UI evidence graded against the plan (design §4): the first offence in order (a declared
+ * screen not captured, an unreadable file, an animation still running under reduced motion, an
+ * axe serious or critical violation, CLS over the limit), one tail line per measurement, the
+ * manifest to write and the artifact to carry. Nothing read here can pass a run on its own.
+ */
+export function gradeUi(paths: CrewPaths, id: string, plan: UiPlan): UiGrade {
+  const m = measure(paths, id, plan);
+  const missingScreens = plan.screens.filter((s) => !m.rows.get(`${s.page}/${s.state}`)?.captured);
+  const missing = missingScreens.map((s) => `${s.page}-${s.state}`);
+  const first = missingScreens[0];
+  const offence =
+    (first
+      ? `ui: screen ${first.page}-${first.state} declared by ${first.criteria.join(", ")} not captured`
+      : null) ??
+    (m.unreadable.length ? `ui: unreadable ${safeText(m.unreadable[0])}` : null) ??
+    m.reducedOffences[0] ??
+    m.axeOffences[0] ??
+    m.clsOffences[0] ??
+    null;
+  const screens = [...m.rows.values()].sort(
+    (a, b) => a.page.localeCompare(b.page) || a.state.localeCompare(b.state),
+  );
+  const axeStatus: AxeStatus = m.axeViolations.length
+    ? "violations"
+    : m.axeClean
+      ? "clean"
+      : "not captured";
+  const reducedStatus: ReducedMotionStatus = m.reducedOffences.length
+    ? "running"
+    : m.reducedSeen
+      ? "clean"
+      : "not captured";
+  const measured = m.captures.length > 0 || plan.screens.length > 0;
+  const manifest: UiEvidence = {
+    id,
+    at: nowIso(),
+    plan: {
+      viewports: plan.viewports.map((v) => ({ ...v })),
+      colorSchemes: [...plan.colorSchemes],
+    },
+    screens,
+    interactions: m.interactions,
+    unreadable: m.unreadable.map((n) => safeText(n)),
+    summary: {
+      captures: m.captures.length,
+      captured: plan.screens.length - missing.length,
+      expected: plan.screens.length,
+      missing,
+      extra: screens.filter((r) => !r.declared).map((r) => `${r.page}-${r.state}`),
+      offence,
+    },
+  };
+  const artifacts: UiArtifact | null = measured
+    ? {
+        manifest: "review/ui-evidence.json",
+        captures: m.captures.length,
+        expected: plan.screens.length,
+        missing,
+        axe: axeStatus,
+        reducedMotion: reducedStatus,
+        motion: m.interactions.length,
+      }
+    : null;
+  return {
+    offence,
+    lines: measured ? measurementLines(m, axeStatus, reducedStatus) : [],
+    manifest,
+    artifacts,
+  };
+}
+
+/** Writes the manifest the engine owns, beside the plan. */
+export function writeUiEvidence(paths: CrewPaths, id: string, manifest: UiEvidence): string {
+  const file = uiEvidencePath(paths, id);
+  writeText(file, `${JSON.stringify(manifest, null, 2)}\n`);
+  return file;
+}
+
+const numbersOnly = (v: unknown): v is number[] =>
+  Array.isArray(v) && v.every((n) => typeof n === "number");
+const stringsOnly = (v: unknown): v is string[] =>
+  Array.isArray(v) && v.every((s) => typeof s === "string");
+
+function isScreenRow(raw: unknown): raw is UiScreenRow {
+  if (!isObject(raw)) return false;
+  if (typeof raw.page !== "string" || typeof raw.state !== "string" || !stringsOnly(raw.criteria))
+    return false;
+  if (typeof raw.declared !== "boolean") return false;
+  if (
+    raw.captured !== null &&
+    !(isObject(raw.captured) && numbersOnly(raw.captured.light) && numbersOnly(raw.captured.dark))
+  )
+    return false;
+  if (
+    typeof raw.console !== "string" ||
+    typeof raw.axe !== "string" ||
+    typeof raw.reducedMotion !== "string"
+  )
+    return false;
+  if (raw.vitals !== null && !(isObject(raw.vitals) && finiteOrNull(raw.vitals.cls ?? null)))
+    return false;
+  return true;
+}
+
+function isInteractionRow(raw: unknown): raw is UiInteractionRow {
+  return (
+    isObject(raw) &&
+    typeof raw.page === "string" &&
+    typeof raw.interaction === "string" &&
+    typeof raw.strip === "boolean" &&
+    typeof raw.animations === "number" &&
+    typeof raw.over50ms === "number" &&
+    typeof raw.reducedMotion === "string"
+  );
+}
+
+/** The manifest read back for the report, with the same cap and the whole shape checked; null for anything less. */
+export function readUiEvidence(paths: CrewPaths, id: string): UiEvidence | null {
+  const body = readBounded(uiEvidencePath(paths, id));
+  if (
+    !body ||
+    typeof body.id !== "string" ||
+    !Array.isArray(body.screens) ||
+    !Array.isArray(body.interactions)
+  )
+    return null;
+  if (!body.screens.every(isScreenRow) || !body.interactions.every(isInteractionRow)) return null;
+  if (!stringsOnly(body.unreadable) || !isObject(body.summary)) return null;
+  const summary = body.summary;
+  if (!stringsOnly(summary.missing) || !stringsOnly(summary.extra)) return null;
+  if (typeof summary.captures !== "number" || typeof summary.expected !== "number") return null;
+  return body as unknown as UiEvidence;
 }

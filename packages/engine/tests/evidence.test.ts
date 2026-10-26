@@ -33,6 +33,7 @@ import type {
   TaskRecord,
   WorkItem,
 } from "../src/types.ts";
+import type { UiEvidence } from "../src/ui.ts";
 import {
   addCriterion,
   addDecision,
@@ -1261,4 +1262,128 @@ test("AC-9 (finding 61): an item with parts gains a reason per part until its to
     todo("T-2", "P-2", { state: "briefed", brief: "tasks/T-2.brief.md" }),
   ];
   expect(computeVerdict(input)).toEqual({ verdict: "proven", unproven: [] });
+});
+
+// SP9 Task 4: the report's UI evidence section.
+
+test("SP9-T4 AC-4, AC-8: the report renders the UI evidence between the Gates and the Judgement gates from the manifest, escapes every cell, and shows nothing without one", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const work = createWork(paths, "feature");
+  addCriterion(work, "x");
+  const evidence: Evidence = {
+    fingerprint: "f1",
+    tdd: [],
+    runs: [],
+    verdict: "unproven",
+    unproven: [],
+    judgement: [ruling("code-quality", "proven")],
+  };
+  const uiEvidence: UiEvidence = {
+    id: work.id,
+    at: "2026-10-26T10:00:00.000Z",
+    plan: { viewports: [{ name: "mobile", width: 360, height: 800 }], colorSchemes: ["light"] },
+    screens: [
+      {
+        page: "a|b",
+        state: "error",
+        criteria: ["AC-1"],
+        declared: true,
+        by: "fixture",
+        captured: { light: [360, 1280], dark: [1280] },
+        console: "clean",
+        axe: "violations",
+        vitals: { cls: 0.02, lcpMs: 820, inpMs: null },
+        reducedMotion: "clean",
+      },
+      {
+        page: "checkout",
+        state: "empty",
+        criteria: ["AC-1"],
+        declared: true,
+        by: null,
+        captured: null,
+        console: "not captured",
+        axe: "not captured",
+        vitals: null,
+        reducedMotion: "not captured",
+      },
+      {
+        page: "home",
+        state: "default",
+        criteria: [],
+        declared: false,
+        by: "session",
+        captured: { light: [], dark: [] },
+        console: "not captured",
+        axe: "not captured",
+        vitals: null,
+        reducedMotion: "not captured",
+      },
+    ],
+    interactions: [
+      {
+        page: "checkout",
+        interaction: "open",
+        strip: true,
+        animations: 2,
+        over50ms: 1,
+        reducedMotion: "clean",
+      },
+    ],
+    unreadable: ["x\n## Judgement gates"],
+    summary: {
+      captures: 2,
+      captured: 1,
+      expected: 2,
+      missing: ["checkout-empty", "a|b-c"],
+      extra: ["home-default"],
+      offence: "ui: screen checkout-empty declared by AC-1 not captured",
+    },
+  };
+  const report = renderReport(work, evidence, DEFAULT_POLICY, { uiEvidence });
+  expect(report).toContain("## UI evidence");
+  expect(report.indexOf("## Gates")).toBeLessThan(report.indexOf("## UI evidence"));
+  expect(report.indexOf("## UI evidence")).toBeLessThan(report.indexOf("## Judgement gates"));
+  expect(report).toContain(
+    "| Page | State | Declared | Widths | Dark | Console | Axe | CLS | Reduced motion | By |",
+  );
+  expect(report).toContain(
+    "| a\\|b | error | yes | 360, 1280 | 1280 | clean | violations | 0.02 | clean | fixture |",
+  );
+  expect(report).toContain(
+    "| checkout | empty | yes | none | none | not captured | not captured |  | not captured |  |",
+  );
+  expect(report).toContain(
+    "| home | default | extra | none | none | not captured | not captured |  | not captured | session |",
+  );
+  expect(report).toContain(
+    "| Page | Interaction | Strip | Animations | Frames over 50 ms | Reduced motion |",
+  );
+  expect(report).toContain("| checkout | open | yes | 2 | 1 | clean |");
+  expect(report).toContain("Missing: checkout-empty, a\\|b-c");
+  // Every cell of a row goes through the escape, not the page alone.
+  const first = uiEvidence.screens[0];
+  if (!first) throw new Error("no screen");
+  const forged: UiEvidence = {
+    ...uiEvidence,
+    screens: [
+      {
+        ...first,
+        // A backslash before a bar would undo the bar's escape; an ampersand would start an entity.
+        state: "e\\|r",
+        console: "c|d" as "clean",
+        by: "f|x" as "fixture",
+        page: "p`q[r<s\\&",
+      },
+    ],
+  };
+  const row = renderReport(work, evidence, DEFAULT_POLICY, { uiEvidence: forged })
+    .split("\n")
+    .find((l) => l.startsWith("| p\\`q"));
+  expect(row).toBe(
+    "| p\\`q\\[r\\<s\\\\\\& | e\\\\\\|r | yes | 360, 1280 | 1280 | c\\|d | violations | 0.02 | clean | f\\|x |",
+  );
+  expect(report).toContain("Unreadable: x");
+  expect(report.match(/^## Judgement gates$/gm)?.length).toBe(1);
+  expect(renderReport(work, evidence, DEFAULT_POLICY)).not.toContain("## UI evidence");
 });
