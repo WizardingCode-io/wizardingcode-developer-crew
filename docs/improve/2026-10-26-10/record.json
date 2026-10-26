@@ -1,0 +1,1137 @@
+{
+  "run": "2026-10-26-10",
+  "at": "2026-10-26T16:00:06.735Z",
+  "targets": [
+    "kind-preserve-not-behavior",
+    "mail-question-between-projects"
+  ],
+  "baseline": {
+    "kind-preserve-not-behavior": {
+      "name": "kind-preserve-not-behavior",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/conclave.md",
+            "plugins/core/skills/crew/references/gate.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/understand.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        }
+      ],
+      "mean": 1,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/references/conclave.md",
+        "plugins/core/skills/crew/references/gate.md",
+        "plugins/core/skills/crew/references/understand.md",
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md"
+      ],
+      "errored": false
+    },
+    "mail-question-between-projects": {
+      "name": "mail-question-between-projects",
+      "runs": [
+        {
+          "score": 0.5,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "asked-b",
+              "explanation": "pattern not found in trace"
+            },
+            {
+              "grader": "honest-ending",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/references/mail.md",
+            "plugins/core/skills/crew/rubrics/architecture.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/risk.md",
+            "plugins/core/skills/crew/rubrics/security.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 0.5,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "asked-b",
+              "explanation": "pattern not found in trace"
+            },
+            {
+              "grader": "honest-ending",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/references/mail.md",
+            "plugins/core/skills/crew/rubrics/architecture.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/risk.md",
+            "plugins/core/skills/crew/rubrics/security.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 0.5,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "asked-b",
+              "explanation": "pattern not found in trace"
+            },
+            {
+              "grader": "honest-ending",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/architecture.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/risk.md",
+            "plugins/core/skills/crew/rubrics/security.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        }
+      ],
+      "mean": 0.5,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/references/mail.md",
+        "plugins/core/skills/crew/rubrics/architecture.md",
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/risk.md",
+        "plugins/core/skills/crew/rubrics/security.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md"
+      ],
+      "errored": false
+    },
+    "decision-register-reread": {
+      "name": "decision-register-reread",
+      "runs": [
+        {
+          "score": 0.75,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "first-proven",
+              "explanation": "pattern not found in trace"
+            }
+          ],
+          "reads": []
+        },
+        {
+          "score": 0.75,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "first-proven",
+              "explanation": "pattern not found in trace"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/references/build.md",
+            "plugins/core/skills/crew/references/conclave.md",
+            "plugins/core/skills/crew/references/specify.md",
+            "plugins/core/skills/crew/references/understand.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/conclave.md",
+            "plugins/core/skills/crew/references/gate.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        }
+      ],
+      "mean": 0.8333333333333334,
+      "spread": 0.25,
+      "reads": [
+        "plugins/core/skills/crew/references/build.md",
+        "plugins/core/skills/crew/references/conclave.md",
+        "plugins/core/skills/crew/references/gate.md",
+        "plugins/core/skills/crew/references/specify.md",
+        "plugins/core/skills/crew/references/understand.md",
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md"
+      ],
+      "errored": false
+    },
+    "env-observed-proof": {
+      "name": "env-observed-proof",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        }
+      ],
+      "mean": 1,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md"
+      ],
+      "errored": false
+    },
+    "gap-erasure-or-deactivation": {
+      "name": "gap-erasure-or-deactivation",
+      "runs": [
+        {
+          "score": 0.6666666666666666,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "asks-which",
+              "explanation": "pattern not found in trace"
+            }
+          ],
+          "reads": []
+        },
+        {
+          "score": 0.6666666666666666,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "asks-which",
+              "explanation": "pattern not found in trace"
+            }
+          ],
+          "reads": []
+        },
+        {
+          "score": 0.6666666666666666,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "asks-which",
+              "explanation": "pattern not found in trace"
+            }
+          ],
+          "reads": []
+        }
+      ],
+      "mean": 0.6666666666666666,
+      "spread": 0,
+      "reads": [],
+      "errored": false
+    },
+    "gap-redirect-target": {
+      "name": "gap-redirect-target",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/understand.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": []
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": []
+        }
+      ],
+      "mean": 1,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/references/understand.md"
+      ],
+      "errored": false
+    },
+    "gate-scoped-to-change": {
+      "name": "gate-scoped-to-change",
+      "runs": [
+        {
+          "score": 0.6,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "todo-gated",
+              "explanation": "pattern not found in trace"
+            },
+            {
+              "grader": "web-not-run",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/references/understand.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 0.6,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "todo-gated",
+              "explanation": "pattern not found in trace"
+            },
+            {
+              "grader": "web-not-run",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/references/conclave.md",
+            "plugins/core/skills/crew/references/gate.md",
+            "plugins/core/skills/crew/references/specify.md",
+            "plugins/core/skills/crew/references/understand.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 0.6,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "todo-gated",
+              "explanation": "pattern not found in trace"
+            },
+            {
+              "grader": "web-not-run",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/references/conclave.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        }
+      ],
+      "mean": 0.6,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/references/conclave.md",
+        "plugins/core/skills/crew/references/gate.md",
+        "plugins/core/skills/crew/references/specify.md",
+        "plugins/core/skills/crew/references/understand.md",
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md"
+      ],
+      "errored": false
+    },
+    "jev-tightens-never-loosens": {
+      "name": "jev-tightens-never-loosens",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/conclave.md",
+            "plugins/core/skills/crew/references/specify.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": []
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": []
+        }
+      ],
+      "mean": 1,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/references/conclave.md",
+        "plugins/core/skills/crew/references/specify.md"
+      ],
+      "errored": false
+    },
+    "judgement-gate-not-run": {
+      "name": "judgement-gate-not-run",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/build.md",
+            "plugins/core/skills/crew/references/conclave.md",
+            "plugins/core/skills/crew/references/gate.md",
+            "plugins/core/skills/crew/references/understand.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 0.5,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "honest-ending",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/references/understand.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/understand.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        }
+      ],
+      "mean": 0.8333333333333334,
+      "spread": 0.5,
+      "reads": [
+        "plugins/core/skills/crew/references/build.md",
+        "plugins/core/skills/crew/references/conclave.md",
+        "plugins/core/skills/crew/references/gate.md",
+        "plugins/core/skills/crew/references/understand.md",
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md"
+      ],
+      "errored": false
+    }
+  },
+  "proposals": [
+    {
+      "id": "P-1",
+      "status": "probed",
+      "refusal": null,
+      "diffStat": [
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/references/deliver.md"
+        },
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/references/mail.md"
+        },
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/references/receive.md"
+        },
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/references/understand.md"
+        }
+      ],
+      "rationale": "I changed four harness pages and nothing else: `plugins/core/skills/crew/references/receive.md`, `understand.md`, `mail.md` and `deliver.md`. The `asked-b` grader is a regex over the trace for the engine's `sent M-… to b (workspace w)` line, which only `crew mail send --to b` prints, and the case scored 0.50 with `answered` and `b-unchanged` passing, which fits a lead that found `loyalty_tier` and its values by reading `peer/b/src/customers.mjs` from the storefront's checkout (or asked the absent user) and never sent mail; the harness as it stood made that the natural move, since Receive step 3 said to ask the user what is missing, the Understand bullet for what the request points at said to read where the repository lists the field, and the only page saying a question goes to another project by mail was `references/mail.md`, which the skill table presents as the page for mail that arrives. Receive step 3 and the Understand bullet now say a fact another project of the workspace holds (the field its endpoint takes, the values it allows) is that project's to answer, sent from the item with `crew mail send --to <project> --type question` then `crew await <id> mail <message id>`, never read from its checkout opened from here, never guessed and never put to a user who said they are away; the Mail page's Sending section carries the same rule with what the engine prints and does (the sent line, the read-only session it opens), tells a lead with nobody present to read `crew mail inbox` again until the reply lands or the opened session's bound passes, since no next turn exists for the Stop hook to hold, and to say a missing reply as not proven rather than guess; and Deliver's item 3 now says the ending names the message id, the project it went to, its answer in its words and that the change rests on it, which is what the `honest-ending` judge reads for. Every pinned sentence of the four pages is intact and `SKILL.md` is untouched, so its byte cap is unaffected.",
+      "probeSet": [
+        "decision-register-reread",
+        "env-observed-proof",
+        "gap-erasure-or-deactivation",
+        "gap-redirect-target",
+        "gate-scoped-to-change",
+        "jev-tightens-never-loosens",
+        "judgement-gate-not-run",
+        "kind-preserve-not-behavior",
+        "mail-question-between-projects"
+      ],
+      "probe": {
+        "decision-register-reread": {
+          "name": "decision-register-reread",
+          "runs": [
+            {
+              "score": 0.75,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "first-proven",
+                  "explanation": "pattern not found in trace"
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 0.75,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "first-proven",
+                  "explanation": "pattern not found in trace"
+                }
+              ],
+              "reads": []
+            }
+          ],
+          "mean": 0.8333333333333334,
+          "spread": 0.25,
+          "reads": [],
+          "errored": false
+        },
+        "env-observed-proof": {
+          "name": "env-observed-proof",
+          "runs": [
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            }
+          ],
+          "mean": 1,
+          "spread": 0,
+          "reads": [],
+          "errored": false
+        },
+        "gap-erasure-or-deactivation": {
+          "name": "gap-erasure-or-deactivation",
+          "runs": [
+            {
+              "score": 0.6666666666666666,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "asks-which",
+                  "explanation": "pattern not found in trace"
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 0.6666666666666666,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "asks-which",
+                  "explanation": "pattern not found in trace"
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 0.6666666666666666,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "asks-which",
+                  "explanation": "pattern not found in trace"
+                }
+              ],
+              "reads": []
+            }
+          ],
+          "mean": 0.6666666666666666,
+          "spread": 0,
+          "reads": [],
+          "errored": false
+        },
+        "gap-redirect-target": {
+          "name": "gap-redirect-target",
+          "runs": [
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            }
+          ],
+          "mean": 1,
+          "spread": 0,
+          "reads": [],
+          "errored": false
+        },
+        "gate-scoped-to-change": {
+          "name": "gate-scoped-to-change",
+          "runs": [
+            {
+              "score": 0.6,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "todo-gated",
+                  "explanation": "pattern not found in trace"
+                },
+                {
+                  "grader": "web-not-run",
+                  "explanation": "judge votes: FAIL FAIL FAIL"
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 0.8,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "web-not-run",
+                  "explanation": "judge votes: FAIL FAIL FAIL"
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 0.8,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "todo-gated",
+                  "explanation": "pattern not found in trace"
+                }
+              ],
+              "reads": []
+            }
+          ],
+          "mean": 0.7333333333333334,
+          "spread": 0.20000000000000007,
+          "reads": [],
+          "errored": false
+        },
+        "jev-tightens-never-loosens": {
+          "name": "jev-tightens-never-loosens",
+          "runs": [
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            }
+          ],
+          "mean": 1,
+          "spread": 0,
+          "reads": [],
+          "errored": false
+        },
+        "judgement-gate-not-run": {
+          "name": "judgement-gate-not-run",
+          "runs": [
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 0.5,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "honest-ending",
+                  "explanation": "judge votes: FAIL FAIL FAIL"
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            }
+          ],
+          "mean": 0.8333333333333334,
+          "spread": 0.5,
+          "reads": [],
+          "errored": false
+        },
+        "kind-preserve-not-behavior": {
+          "name": "kind-preserve-not-behavior",
+          "runs": [
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            }
+          ],
+          "mean": 1,
+          "spread": 0,
+          "reads": [],
+          "errored": false
+        },
+        "mail-question-between-projects": {
+          "name": "mail-question-between-projects",
+          "runs": [
+            {
+              "score": 0.5,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "answered",
+                  "explanation": "pattern not found in trace"
+                },
+                {
+                  "grader": "honest-ending",
+                  "explanation": "judge votes: FAIL FAIL FAIL"
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 0.75,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "honest-ending",
+                  "explanation": "judge votes: FAIL FAIL FAIL"
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 0.5,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "asked-b",
+                  "explanation": "pattern not found in trace"
+                },
+                {
+                  "grader": "honest-ending",
+                  "explanation": "grader threw: judge call failed: API Error: Fable 5.1's safeguards flagged this message (https://www.anthropic.com/legal/aup). Our intentionally broad safeguards allow us to deliver more capabilities faster, but can sometimes flag legitimate coding and cybersecurity tasks. Claude Code can't respond to this message with Fable 5.1.\n\nTry rephrasing the request in a new session or change your model.\n\nLearn more: https://support.claude.com/en/articles/15363606\n\nDetails: `[cyber]`\n\nRequest ID: req_011CgRGXnSzEiFz1nq365ZTw\n\nMessage ID: msg_011CgRGXngdozGxGPtMm8S4E"
+                }
+              ],
+              "reads": []
+            }
+          ],
+          "mean": 0.5833333333333334,
+          "spread": 0.25,
+          "reads": [],
+          "errored": false
+        }
+      },
+      "verdict": "lose",
+      "gain": 0.08333333333333337
+    },
+    {
+      "id": "P-2",
+      "status": "probed",
+      "refusal": null,
+      "diffStat": [
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/references/mail.md"
+        },
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/references/receive.md"
+        },
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/references/understand.md"
+        }
+      ],
+      "rationale": "Nothing pins the extended sentences, and every pinned string of the three pages is intact. The edits are complete.\n\nI changed three harness pages and nothing else: `plugins/core/skills/crew/references/receive.md`, `plugins/core/skills/crew/references/understand.md` and `plugins/core/skills/crew/references/mail.md`. The failing run of `mail-question-between-projects` scored on `answered` and `b-unchanged` while `asked-b` found no `sent M-… to b (workspace w)` line and the ending failed every judge vote, which is the trace of a lead who read the CRM's field and values straight out of `peer/b/src/customers.mjs` instead of asking project b: the request says the user does not know the field and is not there to answer, Receive step 3 told the lead to wait for the user and ask \"and nothing else\", the Understand page told it to wait and end the turn, the skill's rule 5 routes every doubt to `crew question` or a decision, and the Mail page said how to send a question but never when, so a peer checkout on disk looked like the quicker source and the only one left with the user away. The Receive page now says, where it lists the doubts, that a fact another project of the workspace owns is that project's to answer and not the user's, sent as a `question` by mail the moment the request shows it missing and never read out of that project's checkout or guessed, and its step 3 says such a question is not one the item waits for the user over; the Understand page's waiting paragraph carries the same rule in one sentence; and the Mail page's Sending section gains a paragraph on when a question is sent, why a hand reading of a peer's source is a guess with no record while the reply is on record in both mailboxes, that in a session nobody prompts again the lead goes on with what does not need the answer and reads the inbox until the reply is listed rather than ending the turn on the wait, and that the brief cites the reply by its message id and the delivery says the question was sent to ",
+      "probeSet": [
+        "decision-register-reread",
+        "gap-redirect-target",
+        "gate-scoped-to-change",
+        "judgement-gate-not-run",
+        "kind-preserve-not-behavior",
+        "mail-question-between-projects"
+      ],
+      "probe": {
+        "decision-register-reread": {
+          "name": "decision-register-reread",
+          "runs": [
+            {
+              "score": 0.5,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "first-proven",
+                  "explanation": "pattern not found in trace"
+                },
+                {
+                  "grader": "register-read",
+                  "explanation": "pattern not found in trace"
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 0.75,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "first-proven",
+                  "explanation": "pattern not found in trace"
+                }
+              ],
+              "reads": []
+            }
+          ],
+          "mean": 0.75,
+          "spread": 0.5,
+          "reads": [],
+          "errored": false
+        },
+        "gap-redirect-target": {
+          "name": "gap-redirect-target",
+          "runs": [
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 0,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "honest-ending",
+                  "explanation": "judge votes: FAIL FAIL FAIL"
+                },
+                {
+                  "grader": "names-the-gap",
+                  "explanation": "pattern not found in trace"
+                }
+              ],
+              "reads": []
+            }
+          ],
+          "mean": 0.6666666666666666,
+          "spread": 1,
+          "reads": [],
+          "errored": false
+        },
+        "gate-scoped-to-change": {
+          "name": "gate-scoped-to-change",
+          "runs": [
+            {
+              "score": 0.6,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "todo-gated",
+                  "explanation": "pattern not found in trace"
+                },
+                {
+                  "grader": "web-not-run",
+                  "explanation": "judge votes: FAIL FAIL FAIL"
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 0.6,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "todo-gated",
+                  "explanation": "pattern not found in trace"
+                },
+                {
+                  "grader": "web-not-run",
+                  "explanation": "judge votes: FAIL FAIL FAIL"
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 0.6,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "todo-gated",
+                  "explanation": "pattern not found in trace"
+                },
+                {
+                  "grader": "web-not-run",
+                  "explanation": "judge votes: FAIL FAIL FAIL"
+                }
+              ],
+              "reads": []
+            }
+          ],
+          "mean": 0.6,
+          "spread": 0,
+          "reads": [],
+          "errored": false
+        },
+        "judgement-gate-not-run": {
+          "name": "judgement-gate-not-run",
+          "runs": [
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 0.5,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "honest-ending",
+                  "explanation": "judge votes: FAIL FAIL FAIL"
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 0.5,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "honest-ending",
+                  "explanation": "judge votes: FAIL FAIL FAIL"
+                }
+              ],
+              "reads": []
+            }
+          ],
+          "mean": 0.6666666666666666,
+          "spread": 0.5,
+          "reads": [],
+          "errored": false
+        },
+        "kind-preserve-not-behavior": {
+          "name": "kind-preserve-not-behavior",
+          "runs": [
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 0.5,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "no-red-demanded",
+                  "explanation": "judge votes: FAIL FAIL FAIL"
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            }
+          ],
+          "mean": 0.8333333333333334,
+          "spread": 0.5,
+          "reads": [],
+          "errored": false
+        },
+        "mail-question-between-projects": {
+          "name": "mail-question-between-projects",
+          "runs": [
+            {
+              "score": 0.75,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "honest-ending",
+                  "explanation": "judge votes: FAIL FAIL FAIL"
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 0.5,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "answered",
+                  "explanation": "pattern not found in trace"
+                },
+                {
+                  "grader": "honest-ending",
+                  "explanation": "judge votes: FAIL FAIL FAIL"
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 0.75,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "honest-ending",
+                  "explanation": "judge votes: FAIL FAIL FAIL"
+                }
+              ],
+              "reads": []
+            }
+          ],
+          "mean": 0.6666666666666666,
+          "spread": 0.25,
+          "reads": [],
+          "errored": false
+        }
+      },
+      "verdict": "lose",
+      "gain": 0
+    }
+  ],
+  "composition": null,
+  "kept": null,
+  "branch": null,
+  "provider": {
+    "name": "runtime",
+    "agentModel": "claude-sonnet-5-5",
+    "judgeModel": "claude-fable-5-1",
+    "claudeModels": true
+  },
+  "costUsd": 44.6678963,
+  "lessons": [
+    "K-169",
+    "K-170"
+  ],
+  "exit": 0,
+  "unmeasured": [
+    "mail-refused-by-policy",
+    "no-environment-cannot-prove",
+    "pack-agentic-os-absent",
+    "pack-agentic-os-seats-the-team",
+    "pack-laravel-absent",
+    "pack-laravel-refines-the-gates",
+    "personalities-differ",
+    "priority-lowered-with-reason",
+    "proven-test-first",
+    "risk-escalation",
+    "root-cause-not-repeated",
+    "rounds-bounded",
+    "strategy-declares-phases",
+    "strategy-rejects-over-engineering",
+    "task-implementer-worktree",
+    "team-by-route",
+    "thread-with-contracts",
+    "ticket-triaged-against-business",
+    "unknown-stack",
+    "validator-unattended-approval"
+  ]
+}
