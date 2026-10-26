@@ -1,0 +1,761 @@
+{
+  "run": "2026-10-26-12",
+  "at": "2026-10-26T21:00:05.820Z",
+  "targets": [
+    "pack-agentic-os-absent",
+    "pack-agentic-os-seats-the-team"
+  ],
+  "baseline": {
+    "pack-agentic-os-absent": {
+      "name": "pack-agentic-os-absent",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/conclave.md",
+            "plugins/core/skills/crew/references/gate.md",
+            "plugins/core/skills/crew/references/specify.md",
+            "plugins/core/skills/crew/references/understand.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/understand.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        }
+      ],
+      "mean": 1,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/references/conclave.md",
+        "plugins/core/skills/crew/references/gate.md",
+        "plugins/core/skills/crew/references/specify.md",
+        "plugins/core/skills/crew/references/understand.md",
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md"
+      ],
+      "errored": false
+    },
+    "pack-agentic-os-seats-the-team": {
+      "name": "pack-agentic-os-seats-the-team",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 0.75,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "knowledge-path",
+              "explanation": "pattern not found in trace"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/references/build.md",
+            "plugins/core/skills/crew/references/gate.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        }
+      ],
+      "mean": 0.9166666666666666,
+      "spread": 0.25,
+      "reads": [
+        "plugins/core/skills/crew/references/build.md",
+        "plugins/core/skills/crew/references/gate.md",
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md"
+      ],
+      "errored": false
+    },
+    "brief-per-todo": {
+      "name": "brief-per-todo",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/build.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/build.md",
+            "plugins/core/skills/crew/references/conclave.md",
+            "plugins/core/skills/crew/references/gate.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        }
+      ],
+      "mean": 1,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/references/build.md",
+        "plugins/core/skills/crew/references/conclave.md",
+        "plugins/core/skills/crew/references/gate.md",
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md"
+      ],
+      "errored": false
+    },
+    "decision-register-reread": {
+      "name": "decision-register-reread",
+      "runs": [
+        {
+          "score": 0.75,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "first-proven",
+              "explanation": "pattern not found in trace"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/checklists/deletion.md",
+            "plugins/core/skills/crew/references/conclave.md",
+            "plugins/core/skills/crew/references/specify.md",
+            "plugins/core/skills/crew/references/understand.md"
+          ]
+        },
+        {
+          "score": 0.75,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "first-proven",
+              "explanation": "pattern not found in trace"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/references/specify.md",
+            "plugins/core/skills/crew/references/understand.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        }
+      ],
+      "mean": 0.8333333333333334,
+      "spread": 0.25,
+      "reads": [
+        "plugins/core/skills/crew/checklists/deletion.md",
+        "plugins/core/skills/crew/references/conclave.md",
+        "plugins/core/skills/crew/references/specify.md",
+        "plugins/core/skills/crew/references/understand.md",
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md"
+      ],
+      "errored": false
+    },
+    "jev-tightens-never-loosens": {
+      "name": "jev-tightens-never-loosens",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": []
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/conclave.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/conclave.md"
+          ]
+        }
+      ],
+      "mean": 1,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/references/conclave.md"
+      ],
+      "errored": false
+    },
+    "judgement-gate-not-run": {
+      "name": "judgement-gate-not-run",
+      "runs": [
+        {
+          "score": 0.5,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "honest-ending",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            }
+          ],
+          "reads": []
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/conclave.md",
+            "plugins/core/skills/crew/references/gate.md",
+            "plugins/core/skills/crew/references/specify.md",
+            "plugins/core/skills/crew/references/understand.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        }
+      ],
+      "mean": 0.8333333333333334,
+      "spread": 0.5,
+      "reads": [
+        "plugins/core/skills/crew/references/conclave.md",
+        "plugins/core/skills/crew/references/gate.md",
+        "plugins/core/skills/crew/references/specify.md",
+        "plugins/core/skills/crew/references/understand.md",
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md"
+      ],
+      "errored": false
+    }
+  },
+  "proposals": [
+    {
+      "id": "P-1",
+      "status": "probed",
+      "refusal": null,
+      "diffStat": [
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/references/conclave.md"
+        },
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/references/deliver.md"
+        }
+      ],
+      "rationale": "The size cap applies to SKILL.md alone, which I did not touch, and neither edited page names the pack or its file, so the absent case's not-contains graders stay clear. The edits are complete.\n\nI changed two harness pages and nothing else: `plugins/core/skills/crew/references/conclave.md` and `plugins/core/skills/crew/references/deliver.md`. The `knowledge-path` grader of `pack-agentic-os-seats-the-team` is a regex over the whole trace for `knowledge/agentic.md`, and the engine prints that string in only three places: the `knowledge for the expert:` line of `crew team <id>`, the output of `crew pack files knowledge --item <id>` (a debate step this feature never reaches), and the report's `Knowledge files for the expert` line, which `crew evidence <id>` or a read of `report.md` brings into the trace. The seat grader passed in the failing run while the path was missing, which fits a lead who took the seats from the prompt hook's status line or from `crew status --json` (whose `team` field carries the seats but no knowledge file), launched the QA lead without ever running `crew team`, and ended with a team table written from that rather than from the report; the Conclave page presented `crew team <id>` as a description of what prints, not a step to run, and the Deliver page described `crew evidence <id>` the same way and asked for gates and criteria in item 2 with no word about the team or the pack's file. The leads' validation paragraph now says to run `crew team <id>` rather than read the seats off the status line, and that its output carries the expert's knowledge file path when a registered pack serves one, which the debate's experts get and the delivery names; the Deliver page now says to run `crew evidence <id>` before writing and to write from the report, and item 2 asks for who proved the work: the report's Team table and, when the report has the line, the pack's file by its `<pack>:knowledge/<key>.md` label, with nothing named when no pack served one, so the a",
+      "probeSet": [
+        "brief-per-todo",
+        "decision-register-reread",
+        "jev-tightens-never-loosens",
+        "judgement-gate-not-run",
+        "pack-agentic-os-absent",
+        "pack-agentic-os-seats-the-team"
+      ],
+      "probe": {
+        "brief-per-todo": {
+          "name": "brief-per-todo",
+          "runs": [
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            }
+          ],
+          "mean": 1,
+          "spread": 0,
+          "reads": [],
+          "errored": false
+        },
+        "decision-register-reread": {
+          "name": "decision-register-reread",
+          "runs": [
+            {
+              "score": 0.5,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "first-proven",
+                  "explanation": "pattern not found in trace"
+                },
+                {
+                  "grader": "quotes-decision",
+                  "explanation": "judge votes: FAIL FAIL FAIL"
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 0.75,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "first-proven",
+                  "explanation": "pattern not found in trace"
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 0.75,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "first-proven",
+                  "explanation": "pattern not found in trace"
+                }
+              ],
+              "reads": []
+            }
+          ],
+          "mean": 0.6666666666666666,
+          "spread": 0.25,
+          "reads": [],
+          "errored": false
+        },
+        "jev-tightens-never-loosens": {
+          "name": "jev-tightens-never-loosens",
+          "runs": [
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            }
+          ],
+          "mean": 1,
+          "spread": 0,
+          "reads": [],
+          "errored": false
+        },
+        "judgement-gate-not-run": {
+          "name": "judgement-gate-not-run",
+          "runs": [
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            }
+          ],
+          "mean": 1,
+          "spread": 0,
+          "reads": [],
+          "errored": false
+        },
+        "pack-agentic-os-absent": {
+          "name": "pack-agentic-os-absent",
+          "runs": [
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            }
+          ],
+          "mean": 1,
+          "spread": 0,
+          "reads": [],
+          "errored": false
+        },
+        "pack-agentic-os-seats-the-team": {
+          "name": "pack-agentic-os-seats-the-team",
+          "runs": [
+            {
+              "score": 0.75,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "knowledge-path",
+                  "explanation": "pattern not found in trace"
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 0.75,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "knowledge-path",
+                  "explanation": "pattern not found in trace"
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            }
+          ],
+          "mean": 0.8333333333333334,
+          "spread": 0.25,
+          "reads": [],
+          "errored": false
+        }
+      },
+      "verdict": "lose",
+      "gain": -0.33333333333333326
+    },
+    {
+      "id": "P-2",
+      "status": "probed",
+      "refusal": null,
+      "diffStat": [
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/references/conclave.md"
+        },
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/references/deliver.md"
+        }
+      ],
+      "rationale": "I changed two harness pages and nothing else: `plugins/core/skills/crew/references/conclave.md` and `plugins/core/skills/crew/references/deliver.md`. The failing grader `knowledge-path` of `pack-agentic-os-seats-the-team` is a regex over the trace for `knowledge/agentic.md`, which the engine prints in exactly three places: the `crew team <id>` output (its `knowledge for the expert:` line, served from the policy's specialists whether or not a file has changed yet), the report's `Knowledge files for the expert:` line (printed by `crew evidence <id>` or a read of `report.md`), and the expert's `## Knowledge` prompt in a debate that this case never opens; the gate run records the seat and the knowledge files from the same pack listing, so a run that passes `seat` and misses `knowledge-path` is one where the lead launched the leads without running `crew team` and wrote its delivery from the gate run's `Proven:` tail without printing the report, the same shape the SP6 record saw on the Laravel pair (\"the agent never ran `crew team`, the one command that printed the expert's knowledge files\"). The Conclave page described `crew team <id>` as something that \"prints the seats\" rather than as a step to run, and the Deliver page said `crew evidence <id>` \"prints it\" in passing and never named the packs or the expert's files among what the message says. The leads' validation step now says to run `crew team <id>`, that it prints the seats, the template and the knowledge files the expert reads, and that the seats come from that output and are never guessed from the route; the Deliver page now says to run `crew evidence <id>` first and write the message from what it prints, never from the gate tail alone, and item 2 names the packs the item used and the expert's knowledge files as the report's Packs and Knowledge lines name them, with \"no pack\" when the report says none, so the absent case (which must never show the path) is unaffected and the literal path appears nowhere in the ha",
+      "probeSet": [
+        "brief-per-todo",
+        "decision-register-reread",
+        "jev-tightens-never-loosens",
+        "judgement-gate-not-run",
+        "pack-agentic-os-absent",
+        "pack-agentic-os-seats-the-team"
+      ],
+      "probe": {
+        "brief-per-todo": {
+          "name": "brief-per-todo",
+          "runs": [
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            }
+          ],
+          "mean": 1,
+          "spread": 0,
+          "reads": [],
+          "errored": false
+        },
+        "decision-register-reread": {
+          "name": "decision-register-reread",
+          "runs": [
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 0.75,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "first-proven",
+                  "explanation": "pattern not found in trace"
+                }
+              ],
+              "reads": []
+            }
+          ],
+          "mean": 0.9166666666666666,
+          "spread": 0.25,
+          "reads": [],
+          "errored": false
+        },
+        "jev-tightens-never-loosens": {
+          "name": "jev-tightens-never-loosens",
+          "runs": [
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            }
+          ],
+          "mean": 1,
+          "spread": 0,
+          "reads": [],
+          "errored": false
+        },
+        "judgement-gate-not-run": {
+          "name": "judgement-gate-not-run",
+          "runs": [
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 0,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "honest-ending",
+                  "explanation": "judge votes: FAIL FAIL FAIL"
+                },
+                {
+                  "grader": "ui-ux-not-run",
+                  "explanation": "pattern not found in trace"
+                }
+              ],
+              "reads": []
+            }
+          ],
+          "mean": 0.6666666666666666,
+          "spread": 1,
+          "reads": [],
+          "errored": false
+        },
+        "pack-agentic-os-absent": {
+          "name": "pack-agentic-os-absent",
+          "runs": [
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            }
+          ],
+          "mean": 1,
+          "spread": 0,
+          "reads": [],
+          "errored": false
+        },
+        "pack-agentic-os-seats-the-team": {
+          "name": "pack-agentic-os-seats-the-team",
+          "runs": [
+            {
+              "score": 0.5,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "knowledge-path",
+                  "explanation": "pattern not found in trace"
+                },
+                {
+                  "grader": "seat",
+                  "explanation": "pattern not found in trace"
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 0.75,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "knowledge-path",
+                  "explanation": "pattern not found in trace"
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            }
+          ],
+          "mean": 0.75,
+          "spread": 0.5,
+          "reads": [],
+          "errored": false
+        }
+      },
+      "verdict": "lose",
+      "gain": -0.41666666666666663
+    }
+  ],
+  "composition": null,
+  "kept": null,
+  "branch": null,
+  "provider": {
+    "name": "runtime",
+    "agentModel": "claude-sonnet-5-5",
+    "judgeModel": "claude-fable-5-1",
+    "claudeModels": true
+  },
+  "costUsd": 42.40324514999999,
+  "lessons": [
+    "K-205",
+    "K-206"
+  ],
+  "exit": 0,
+  "unmeasured": [
+    "pack-laravel-absent",
+    "pack-laravel-refines-the-gates",
+    "personalities-differ",
+    "priority-lowered-with-reason",
+    "proven-test-first",
+    "risk-escalation",
+    "root-cause-not-repeated",
+    "rounds-bounded",
+    "strategy-declares-phases",
+    "strategy-rejects-over-engineering",
+    "task-implementer-worktree",
+    "team-by-route",
+    "thread-with-contracts",
+    "ticket-triaged-against-business",
+    "unknown-stack",
+    "validator-unattended-approval"
+  ]
+}
