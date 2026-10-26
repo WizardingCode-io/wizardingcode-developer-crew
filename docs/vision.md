@@ -150,7 +150,7 @@ Gates run before delivery. There are two kinds.
 | Code quality | Review against SOLID and KISS, with complexity and duplication as inputs |
 | Test quality | Mutation testing, so test quality is measured and not argued |
 | Security | Review scaled to the risk the change touches, plus static analysis where a tool exists |
-| UI/UX | Review in a browser, only when the change touches the interface |
+| UI/UX | Review of the evidence the e2e gate produced in a browser (captures per state and viewport, console, accessibility, motion samples, the reduced-motion pass, vitals) against the frontend standard and the project's design contract, only when the change touches the interface; a design lint runs before it (SP9, ADR 0016) |
 | Risk | What can go wrong in production, and what would undo it |
 
 A gate that cannot run (a tool is missing) is reported as not proven. It is never reported as passed.
@@ -273,7 +273,7 @@ A requested cell means the runtime's page documents no mechanism for it; the ref
 
 ## 16. Roadmap
 
-Six subprojects, built in dependency order. Each has its own spec, plan and release. Each is used on real projects before the next begins. The first public release, 1.0, includes subprojects 1 and 2; 3 to 6 follow as 1.x releases ([ADR 0004](adr/0004-production-release-scope.md), 2026-10-14).
+The subprojects, built in dependency order. Each has its own spec, plan and release. Each is used on real projects before the next begins. The first public release, 1.0, includes subprojects 1 and 2; 3 to 6 follow as 1.x releases ([ADR 0004](adr/0004-production-release-scope.md), 2026-10-14).
 
 | # | Subproject | Depends on |
 | :- | :- | :- |
@@ -285,6 +285,7 @@ Six subprojects, built in dependency order. Each has its own spec, plan and rele
 | 6 | Packs, runtime adapters, public benchmark | 1 to 5 |
 | 7 | Teams: the organization (tech leads, CTO, judges, nine teams, personalities), the workflows per kind of work, the rules, the environment, visibility | 1, 2, 5 |
 | 8 | New projects: the strategy stage and the audit with a branded report | 2, 7 |
+| 9 | Frontend proven and with craft: the evidence from the e2e gate, the design lint, the deep audit, the frontend standard and team, the packs frontend, nuxt and next and Blade in laravel | 6, 7 |
 
 Subproject 5 can run in parallel with 2 to 4. After 2 the order is 7, 3, 8, 4, 6 ([ADR 0007](adr/0007-teams-first-roadmap-re-cut.md)): the team model is what reception, the knowledge base and the packs are expressed through, so it comes first, in two releases (0.6.0, 0.7.0), and 1.0 is cut after its first real use.
 
