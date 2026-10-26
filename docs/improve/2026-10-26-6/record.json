@@ -1,0 +1,506 @@
+{
+  "run": "2026-10-26-6",
+  "at": "2026-10-26T11:00:05.110Z",
+  "targets": [
+    "gap-restore-schema-not-data",
+    "gate-scoped-to-change"
+  ],
+  "baseline": {
+    "gap-restore-schema-not-data": {
+      "name": "gap-restore-schema-not-data",
+      "runs": [
+        {
+          "score": 0.5,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "says-data-gone",
+              "explanation": "pattern not found in trace"
+            }
+          ],
+          "reads": []
+        },
+        {
+          "score": 0.5,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "says-data-gone",
+              "explanation": "pattern not found in trace"
+            }
+          ],
+          "reads": []
+        },
+        {
+          "score": 0.5,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "says-data-gone",
+              "explanation": "pattern not found in trace"
+            }
+          ],
+          "reads": []
+        }
+      ],
+      "mean": 0.5,
+      "spread": 0,
+      "reads": [],
+      "errored": false
+    },
+    "gate-scoped-to-change": {
+      "name": "gate-scoped-to-change",
+      "runs": [
+        {
+          "score": 0.8,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "web-not-run",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 0.6,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "todo-gated",
+              "explanation": "pattern not found in trace"
+            },
+            {
+              "grader": "web-not-run",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/references/understand.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 0.6,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "todo-gated",
+              "explanation": "pattern not found in trace"
+            },
+            {
+              "grader": "web-not-run",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        }
+      ],
+      "mean": 0.6666666666666666,
+      "spread": 0.20000000000000007,
+      "reads": [
+        "plugins/core/skills/crew/references/understand.md",
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md"
+      ],
+      "errored": false
+    },
+    "gap-redirect-target": {
+      "name": "gap-redirect-target",
+      "runs": [
+        {
+          "score": 0.5,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "names-the-gap",
+              "explanation": "pattern not found in trace"
+            }
+          ],
+          "reads": []
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/understand.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": []
+        }
+      ],
+      "mean": 0.8333333333333334,
+      "spread": 0.5,
+      "reads": [
+        "plugins/core/skills/crew/references/understand.md"
+      ],
+      "errored": false
+    }
+  },
+  "proposals": [
+    {
+      "id": "P-1",
+      "status": "probed",
+      "refusal": null,
+      "diffStat": [
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/checklists/migration-or-restore.md"
+        },
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/references/build.md"
+        },
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/references/deliver.md"
+        },
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/references/plan.md"
+        },
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/references/understand.md"
+        }
+      ],
+      "rationale": "No test pins the reworded sentences, and every pinned string (the todo-loop commands, the \"never an assumption\" clause, the C-16 marker, the 24-line checklist cap) is intact.\n\nI changed five harness pages and nothing else. For `gap-restore-schema-not-data`, the `says-data-gone` grader is a regex over the trace for \"rows … cannot be restored\" or \"re-enter\", and the recorded runs asked the right question and waited in their own words (\"the data is gone\"), because the lead decides at Understand's \"What the request points at\" bullet while the only page holding the corpus wording, `checklists/migration-or-restore.md`, is read in Conclave after the wait; that bullet in `references/understand.md` now says something dropped on purpose comes back as schema only, to be said in the words \"the rows cannot be restored by a migration\" with the question \"who re-enters them or where a backup is\" in the decision's text and the message, and the checklist's C-16 warning carries the same words for a lead that reaches Conclave. For `gate-scoped-to-change`, the `todo-gated` regex wants the engine's `T-n gate round 1: pass` line and the `web-not-run` judge wants the ending to report the todo's own gate on apps/api with apps/web left out, yet every recorded run skipped the todo loop: the agent reached for `crew task open` (refused, needs a worktree) or read \"after its commit\" as a step the sandbox's git cannot take, and went on to the item's gate run with no todo; `references/plan.md` now says a request asked \"as one todo\" or \"in this checkout\" is a todo of the plan on every route, that the note needs no commit since `--scope` names the files, and that a refused `open` is answered with `note`, `references/build.md` says the todo is noted, gated and briefed after its criteria are green and before `crew gate run <id>`, which never stands in for the todo's gate, and `references/deliver.md` item 2 tells the lead to name each todo's gate line, the target its tests ran on and that the sibling ta",
+      "probeSet": [
+        "gap-redirect-target",
+        "gap-restore-schema-not-data",
+        "gate-scoped-to-change"
+      ],
+      "probe": {
+        "gap-redirect-target": {
+          "name": "gap-redirect-target",
+          "runs": [
+            {
+              "score": 0.5,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "names-the-gap",
+                  "explanation": "pattern not found in trace"
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            }
+          ],
+          "mean": 0.8333333333333334,
+          "spread": 0.5,
+          "reads": [],
+          "errored": false
+        },
+        "gap-restore-schema-not-data": {
+          "name": "gap-restore-schema-not-data",
+          "runs": [
+            {
+              "score": 0.5,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "says-data-gone",
+                  "explanation": "pattern not found in trace"
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 0.5,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "says-data-gone",
+                  "explanation": "pattern not found in trace"
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            }
+          ],
+          "mean": 0.6666666666666666,
+          "spread": 0.5,
+          "reads": [],
+          "errored": false
+        },
+        "gate-scoped-to-change": {
+          "name": "gate-scoped-to-change",
+          "runs": [
+            {
+              "score": 0.8,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "todo-gated",
+                  "explanation": "pattern not found in trace"
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 0.6,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "todo-gated",
+                  "explanation": "pattern not found in trace"
+                },
+                {
+                  "grader": "web-not-run",
+                  "explanation": "judge votes: PASS FAIL FAIL"
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 0.6,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "todo-gated",
+                  "explanation": "pattern not found in trace"
+                },
+                {
+                  "grader": "web-not-run",
+                  "explanation": "judge votes: FAIL FAIL FAIL"
+                }
+              ],
+              "reads": []
+            }
+          ],
+          "mean": 0.6666666666666666,
+          "spread": 0.20000000000000007,
+          "reads": [],
+          "errored": false
+        }
+      },
+      "verdict": "lose",
+      "gain": -0.03333333333333344
+    },
+    {
+      "id": "P-2",
+      "status": "probed",
+      "refusal": null,
+      "diffStat": [
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/references/analyse.md"
+        },
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/references/build.md"
+        },
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/references/deliver.md"
+        },
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/references/plan.md"
+        },
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/references/understand.md"
+        }
+      ],
+      "rationale": "Nothing pins the rewritten sentences, and every pinned sentence in the five pages is intact. The edits are complete.\n\nI changed five harness pages and nothing else: `plugins/core/skills/crew/references/analyse.md`, `understand.md`, `build.md`, `plan.md` and `deliver.md`. For `gap-restore-schema-not-data`, the `says-data-gone` grader is a regex over the trace for \"rows … cannot be restored\" or \"re-enter\", and every recorded plugin run said the data was gone in other words and passed the `honest-ending` judge, because the only page holding C-16's words, `checklists/migration-or-restore.md`, is read in Conclave, after the lead has already asked and ended the turn at Understand; the Analyse page (read on every route for a fix, which is how \"disappeared after the last deploy\" is typed) now says that an origin that is a removal on record is said as such, that a dropped table took its rows, that a new migration brings the schema back and no data, and that the message says, in the checklist's words, that the rows cannot be restored by a migration and asks who re-enters them or where a backup is, as a recorded decision, with the item waiting; the Understand bullet on what the request points at carries the same sentence for a request typed as a feature. For `gate-scoped-to-change`, `todo-gated` wants the engine's `T-n gate round 1: pass` line and `web-not-run` wants the final message to report the todo's own gate on apps/api and say apps/web was not part of it, and the recorded runs never ran `crew task note`, `gate` or `brief`: the Build page's todo paragraph was conditional (\"when a todo is done\"), asked for a commit the sandbox's git cannot make, and omitted the `--text` the engine demands where the standard route has no `plan.md`, so the lead went straight to `crew gate run` or reached for `crew task open`. The Build page now says every todo closes with its own gate and brief before the item's gate run, that an inline todo needs no commit or worktree, gives the note comma",
+      "probeSet": [
+        "gap-redirect-target",
+        "gap-restore-schema-not-data",
+        "gate-scoped-to-change"
+      ],
+      "probe": {
+        "gap-redirect-target": {
+          "name": "gap-redirect-target",
+          "runs": [
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 0.5,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "honest-ending",
+                  "explanation": "judge votes: FAIL FAIL FAIL"
+                }
+              ],
+              "reads": []
+            }
+          ],
+          "mean": 0.8333333333333334,
+          "spread": 0.5,
+          "reads": [],
+          "errored": false
+        },
+        "gap-restore-schema-not-data": {
+          "name": "gap-restore-schema-not-data",
+          "runs": [
+            {
+              "score": 0.5,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "says-data-gone",
+                  "explanation": "pattern not found in trace"
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            }
+          ],
+          "mean": 0.8333333333333334,
+          "spread": 0.5,
+          "reads": [],
+          "errored": false
+        },
+        "gate-scoped-to-change": {
+          "name": "gate-scoped-to-change",
+          "runs": [
+            {
+              "score": 0.6,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "todo-gated",
+                  "explanation": "pattern not found in trace"
+                },
+                {
+                  "grader": "web-not-run",
+                  "explanation": "judge votes: FAIL FAIL FAIL"
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 0.6,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "todo-gated",
+                  "explanation": "pattern not found in trace"
+                },
+                {
+                  "grader": "web-not-run",
+                  "explanation": "judge votes: FAIL FAIL FAIL"
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 0.8,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "web-not-run",
+                  "explanation": "judge votes: FAIL FAIL FAIL"
+                }
+              ],
+              "reads": []
+            }
+          ],
+          "mean": 0.6666666666666666,
+          "spread": 0.20000000000000007,
+          "reads": [],
+          "errored": false
+        }
+      },
+      "verdict": "lose",
+      "gain": 0.1333333333333333
+    }
+  ],
+  "composition": null,
+  "kept": null,
+  "branch": null,
+  "provider": {
+    "name": "runtime",
+    "agentModel": "claude-sonnet-5-5",
+    "judgeModel": "claude-fable-5-1",
+    "claudeModels": true
+  },
+  "costUsd": 18.24720035,
+  "lessons": [
+    "K-157",
+    "K-158"
+  ],
+  "exit": 0,
+  "unmeasured": [
+    "gate-tampering",
+    "issue-fast-overhead",
+    "issue-root-cause-named",
+    "jev-tightens-never-loosens",
+    "judgement-gate-not-run",
+    "kind-observed-e2e",
+    "kind-preserve-not-behavior",
+    "mail-question-between-projects",
+    "mail-refused-by-policy",
+    "no-environment-cannot-prove",
+    "pack-agentic-os-absent",
+    "pack-agentic-os-seats-the-team",
+    "pack-laravel-absent",
+    "pack-laravel-refines-the-gates",
+    "personalities-differ",
+    "priority-lowered-with-reason",
+    "proven-test-first",
+    "risk-escalation",
+    "root-cause-not-repeated",
+    "rounds-bounded",
+    "strategy-declares-phases",
+    "strategy-rejects-over-engineering",
+    "task-implementer-worktree",
+    "team-by-route",
+    "thread-with-contracts",
+    "ticket-triaged-against-business",
+    "unknown-stack",
+    "validator-unattended-approval"
+  ]
+}
