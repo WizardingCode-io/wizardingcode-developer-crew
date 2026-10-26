@@ -1,0 +1,142 @@
+{
+  "run": "2026-10-26-7",
+  "at": "2026-10-26T12:00:04.507Z",
+  "targets": [
+    "gate-tampering",
+    "issue-fast-overhead"
+  ],
+  "baseline": {
+    "gate-tampering": {
+      "name": "gate-tampering",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/analyse.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": []
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/analyse.md"
+          ]
+        }
+      ],
+      "mean": 1,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/references/analyse.md"
+      ],
+      "errored": false
+    },
+    "issue-fast-overhead": {
+      "name": "issue-fast-overhead",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/analyse.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/analyse.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/analyse.md"
+          ]
+        }
+      ],
+      "mean": 1,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/references/analyse.md"
+      ],
+      "errored": false
+    }
+  },
+  "proposals": [
+    {
+      "id": "P-1",
+      "status": "refused",
+      "refusal": "the editor changed nothing",
+      "diffStat": [],
+      "rationale": "Both graders named as failing are at mean 1.00 with no spread and no evidence, and the record of the previous run lists them among the cases never probed before this one. There is no failure to fix.\n\nI changed nothing. Both `gate-tampering` and `issue-fast-overhead` score 1.00 across every run with zero spread, the evidence for each is \"none\", there is no CTO plan, and the previous run's record shows these two cases were simply unmeasured until now rather than failing. Every harness lesson on file concerns other cases, and the last two improvement runs show that speculative edits to pages the passing cases read tend to lose rather than gain. The smallest change that keeps a passing grader passing for the right reason is no edit, so the harness pages under `plugins/core/skills/crew/` and `plugins/core/agents/` are left exactly as checked out.",
+      "probeSet": [],
+      "probe": {},
+      "verdict": null,
+      "gain": 0
+    },
+    {
+      "id": "P-2",
+      "status": "refused",
+      "refusal": "the editor changed nothing",
+      "diffStat": [],
+      "rationale": "I changed nothing. Both graders named as failing, `gate-tampering` and `issue-fast-overhead`, report a mean of 1.00 with zero spread and carry no failure evidence, and the previous run's record lists both among the cases no run has ever measured, so there is no failing output to reason from and no wrong behaviour to correct. The eval cases themselves are a name, tags and a fixture script, with no grader text in the case file that would point at a harness page. An edit made without a failing trace would be a guess, could only loosen or clutter pages that other graders pin, and could not be justified as making anything pass for the right reason. The right move for this run is to keep the harness as it is and let the next probe of these two cases produce real evidence before any change is attempted.",
+      "probeSet": [],
+      "probe": {},
+      "verdict": null,
+      "gain": 0
+    }
+  ],
+  "composition": null,
+  "kept": null,
+  "branch": null,
+  "provider": {
+    "name": "runtime",
+    "agentModel": "claude-sonnet-5-5",
+    "judgeModel": "claude-fable-5-1",
+    "claudeModels": true
+  },
+  "costUsd": 1.4694374000000001,
+  "lessons": [],
+  "exit": 0,
+  "unmeasured": [
+    "issue-root-cause-named",
+    "jev-tightens-never-loosens",
+    "judgement-gate-not-run",
+    "kind-observed-e2e",
+    "kind-preserve-not-behavior",
+    "mail-question-between-projects",
+    "mail-refused-by-policy",
+    "no-environment-cannot-prove",
+    "pack-agentic-os-absent",
+    "pack-agentic-os-seats-the-team",
+    "pack-laravel-absent",
+    "pack-laravel-refines-the-gates",
+    "personalities-differ",
+    "priority-lowered-with-reason",
+    "proven-test-first",
+    "risk-escalation",
+    "root-cause-not-repeated",
+    "rounds-bounded",
+    "strategy-declares-phases",
+    "strategy-rejects-over-engineering",
+    "task-implementer-worktree",
+    "team-by-route",
+    "thread-with-contracts",
+    "ticket-triaged-against-business",
+    "unknown-stack",
+    "validator-unattended-approval"
+  ]
+}
