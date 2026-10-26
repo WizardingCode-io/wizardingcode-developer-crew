@@ -463,6 +463,16 @@ function uiEvidenceLines(ui: UiEvidence): string[] {
   if (ui.summary.missing.length)
     lines.push("", `Missing: ${ui.summary.missing.map(uiCell).join(", ")}`);
   if (ui.unreadable.length) lines.push("", `Unreadable: ${ui.unreadable.map(uiCell).join(", ")}`);
+  // The deep audit's line (SP9 Task 7): its status, the pages it covered or the reason it did not run.
+  if (ui.audit) {
+    const n = ui.audit.pages.length;
+    lines.push(
+      "",
+      ui.audit.status === "captured"
+        ? `Audit: captured (${n} page${n === 1 ? "" : "s"}: ${ui.audit.pages.map(uiCell).join(", ")})`
+        : `Audit: not captured (${uiCell(ui.audit.reason ?? "")})`,
+    );
+  }
   return lines;
 }
 

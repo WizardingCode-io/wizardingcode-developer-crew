@@ -1376,9 +1376,14 @@ test("SP7b-T4 AC-2: the run starts the environment unless the user's is up, wait
   });
   expect(readFileSync(join(e2eDir, "console.json"), "utf8")).toBe("[]");
   const lines = started.tail.split("\n");
-  expect(lines.slice(-2)).toEqual(["console: clean", "logs: none"]);
+  // SP9-T7 AC-8 edits this line: the tail gains the audit's not-captured line after the logs'.
+  expect(lines.slice(-3)).toEqual([
+    "console: clean",
+    "logs: none",
+    'audit: not captured (no chrome-devtools in the profile: npm i -g chrome-devtools-mcp, then crew detect, or crew profile set browser.devtools "<cmd>")',
+  ]);
   const pid = Number(
-    /^environment: started by the engine \(pid (\d+)\)$/.exec(lines.at(-3) ?? "")?.[1],
+    /^environment: started by the engine \(pid (\d+)\)$/.exec(lines.at(-4) ?? "")?.[1],
   );
   expect(pid).toBeGreaterThan(0);
   expect(existsSync(join(root, "up.flag"))).toBe(false);
@@ -2074,6 +2079,119 @@ test("SP9-T3 AC-2: the e2e run writes review/ui-plan.json first, names the ui fo
     join(plainReview, "e2e", "console.json"),
   ]);
 }, 60_000);
+
+// SP9 Task 7: the deep audit inside the e2e run.
+
+test("SP9-T7 AC-2, AC-5, AC-6: the audit runs inside the e2e run after a passing command and before the stop when confirmed, says its line after the UI evidence's, fills the artifact and the manifest, and never outranks the console", async () => {
+  const fs = await import("node:fs");
+  const { fakeDevtoolsCli, DEVTOOLS_REPORT, DEVTOOLS_INSIGHTS } = await import("./helpers.ts");
+  // `declare` is a TypeScript keyword: a helper of that name is stripped by the transpiler and never runs.
+  const declareScreen = (work: WorkItem) =>
+    addCriterion(work, "the error state", "behavior", undefined, [
+      { page: "checkout", state: "error" },
+    ]);
+  const manifestOf = (repo: ReturnType<typeof e2eRepo>) =>
+    JSON.parse(
+      fs.readFileSync(
+        join(workDir(repo.paths, repo.work.id), "review", "ui-evidence.json"),
+        "utf8",
+      ),
+    ) as { audit?: unknown };
+  const tailOf = (run: GateRun) => run.tail.split("\n");
+  const at = (tail: string[], prefix: string) => tail.findIndex((l) => l.startsWith(prefix));
+  // No browser block: the first reason, the run passes on its other measurements.
+  const plain = e2eRepo("placeholder", flagged({ url: "http://localhost:3000/" }));
+  plain.target.gates.e2e = confirmedCmd(`${seedingE2e(plain.root)} missing`);
+  declareScreen(plain.work);
+  const plainRun = e2eRun(
+    (await runGates(plain.paths, plain.work, plain.profile, DEFAULT_POLICY)).evidence.runs,
+  );
+  expect(plainRun?.status).toBe("pass");
+  expect(tailOf(plainRun ?? ({ tail: "" } as GateRun))).toContain(
+    'audit: not captured (no chrome-devtools in the profile: npm i -g chrome-devtools-mcp, then crew detect, or crew profile set browser.devtools "<cmd>")',
+  );
+  expect(manifestOf(plain).audit).toMatchObject({ status: "not captured" });
+  // The fake CLI confirmed, the environment managed with a url: the audit runs while the flag is up.
+  const fake = fakeDevtoolsCli();
+  const withCli = (mode: string) => {
+    const repo = e2eRepo("placeholder", flagged({ url: "http://localhost:3000/" }));
+    repo.target.gates.e2e = confirmedCmd(`${seedingE2e(repo.root)} ${mode}`);
+    repo.profile.browser = { devtools: confirmedCmd(fake.bin) };
+    const fixtures = tempDir("crew-devtools-fixtures-");
+    fs.writeFileSync(join(fixtures, "report.json"), JSON.stringify(DEVTOOLS_REPORT));
+    fs.writeFileSync(join(fixtures, "insights.json"), JSON.stringify(DEVTOOLS_INSIGHTS));
+    const calls = join(fixtures, "calls.txt");
+    fs.writeFileSync(
+      join(fake.dir, "fake.env"),
+      `FAKE_CALLS=${calls}\nFAKE_REPORT=${join(fixtures, "report.json")}\nFAKE_INSIGHTS=${join(fixtures, "insights.json")}\nFAKE_FLAG=${join(repo.root, "up.flag")}\n`,
+    );
+    declareScreen(repo.work);
+    return { repo, calls };
+  };
+  const audited = withCli("missing");
+  const run = e2eRun(
+    (await runGates(audited.repo.paths, audited.repo.work, audited.repo.profile, DEFAULT_POLICY))
+      .evidence.runs,
+  );
+  if (!run) throw new Error("no e2e run");
+  const made = fs.readFileSync(audited.calls, "utf8");
+  expect(made).toContain("flag-up");
+  expect(made.trim().split("\n").at(-1)).toBe("stopped");
+  expect(run.status).toBe("fail");
+  expect(run.reason).toBe(
+    "audit: accessibility color-contrast scored 0 on http://localhost:3000/ (2 items)",
+  );
+  const tail = tailOf(run);
+  expect(at(tail, "motion:")).toBeLessThan(at(tail, "audit:"));
+  expect(at(tail, "audit:")).toBeLessThan(at(tail, "ui plan:"));
+  expect(tail).toContain("audit: captured (1 page; review/ui/audit/audit.json)");
+  expect(tail).toContain(
+    "audit: scores on http://localhost:3000/: performance 50, accessibility 80, best practices 100, seo 90",
+  );
+  expect(run.artifacts?.ui).toMatchObject({ audit: "captured" });
+  expect(manifestOf(audited.repo).audit).toEqual({
+    status: "captured",
+    reason: null,
+    pages: ["http://localhost:3000/"],
+  });
+  expect(
+    fs.existsSync(
+      join(workDir(audited.repo.paths, audited.repo.work.id), "review/ui/audit/audit.json"),
+    ),
+  ).toBe(true);
+  // A console error names the console first; the audit's offence stays in the tail.
+  const noisy = withCli("console-and-missing");
+  const noisyRun = e2eRun(
+    (await runGates(noisy.repo.paths, noisy.repo.work, noisy.repo.profile, DEFAULT_POLICY)).evidence
+      .runs,
+  );
+  expect(noisyRun?.reason).toBe("console error on /checkout: boom");
+  expect(noisyRun?.tail).toContain("audit: accessibility color-contrast scored 0");
+  // A failing e2e command: no audit call, the reason said.
+  const broken = withCli("exit1");
+  const brokenRun = e2eRun(
+    (await runGates(broken.repo.paths, broken.repo.work, broken.repo.profile, DEFAULT_POLICY))
+      .evidence.runs,
+  );
+  expect(brokenRun?.tail).toContain("audit: not captured (e2e command failed)");
+  expect(fs.existsSync(broken.calls)).toBe(false);
+  // Nothing declared and nothing captured: the artifacts as before, the status in the tail and the manifest.
+  const bare = e2eRepo(
+    `${seedingE2e(makeRepo()).replace("node seed.mjs", 'sh -c \'printf "[]" > "$WIZARDINGCODE_CREW_CONSOLE_FILE"\'')}`,
+    flagged({ url: "http://localhost:3000/" }),
+  );
+  bare.profile.browser = { devtools: confirmedCmd(fake.bin) };
+  const bareRun = e2eRun(
+    (await runGates(bare.paths, bare.work, bare.profile, DEFAULT_POLICY)).evidence.runs,
+  );
+  expect(bareRun?.artifacts).toEqual({
+    dir: "review/e2e",
+    console: "review/e2e/console.json",
+    logs: null,
+  });
+  expect(bareRun?.tail).toContain("audit: captured (1 page; review/ui/audit/audit.json)");
+  expect(manifestOf(bare).audit).toMatchObject({ status: "captured" });
+}, 120_000);
 
 // SP9 Task 4: the UI evidence graded in the e2e run.
 

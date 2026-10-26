@@ -11,7 +11,21 @@ export function profilePath(paths: CrewPaths): string {
 
 export function loadProfile(paths: CrewPaths): { profile: Profile | null; tampered: boolean } {
   const read = readProtectedJson<Profile>(paths, profilePath(paths));
+  // The deep audit's block (SP9 Task 7) is kept only in its shape: a non-empty command string and a
+  // source the engine knows; anything else is dropped, so a malformed block never reaches a run.
+  if (read.data?.browser && !isBrowserBlock(read.data.browser)) delete read.data.browser;
   return { profile: read.data, tampered: read.tampered };
+}
+
+function isBrowserBlock(value: unknown): value is Profile["browser"] {
+  const devtools = (value as { devtools?: unknown } | null)?.devtools;
+  if (!devtools || typeof devtools !== "object") return false;
+  const { command, source } = devtools as { command?: unknown; source?: unknown };
+  return (
+    typeof command === "string" &&
+    command.trim() !== "" &&
+    (source === "detected" || source === "proposed" || source === "confirmed")
+  );
 }
 
 export function saveProfile(paths: CrewPaths, profile: Profile): void {

@@ -32,7 +32,8 @@ export interface PdfOptions {
   candidates?: readonly string[];
 }
 
-function onPath(binary: string, env: NodeJS.ProcessEnv): string | null {
+/** The first folder of the environment's PATH holding the binary, or null (SP9 Task 7 reads it for the chrome-devtools CLI too). */
+export function onPath(binary: string, env: NodeJS.ProcessEnv): string | null {
   for (const dir of (env.PATH ?? "").split(delimiter)) {
     if (!dir) continue;
     const path = join(dir, binary);

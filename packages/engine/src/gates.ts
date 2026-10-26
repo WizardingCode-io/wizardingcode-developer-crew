@@ -30,7 +30,7 @@ import { packTemplates, recordPackUse } from "./packs.ts";
 import { type CrewPaths, workDir } from "./paths.ts";
 import { isFrontendPath } from "./paths-kind.ts";
 import { namedFiles } from "./problems.ts";
-import { runCommand } from "./run.ts";
+import { runCommand, shellWord } from "./run.ts";
 import { scanSecrets } from "./secrets.ts";
 import { plannedSeats, primaryTeam, teamsFor } from "./team.ts";
 import type {
@@ -380,17 +380,6 @@ function superseded(run: GateRun, planned: PlannedGate): boolean {
 }
 
 const SOURCE_EXTENSIONS = /\.(?:[cm]?[jt]sx?|vue|svelte|astro|php|py|rb|go|rs|java|kt|cs)$/i;
-
-/**
- * A path as one shell word: as it is when it has only safe characters, in POSIX single quotes
- * otherwise, so a file name on an implementer's branch adds no command to the lead's gate. A name
- * that starts with `-` is written `./<name>` first, so the runner never reads it as an option
- * (finding 56).
- */
-function shellWord(path: string): string {
-  const word = path.startsWith("-") ? `./${path}` : path;
-  return /^[A-Za-z0-9_./-]+$/.test(word) ? word : `'${word.replace(/'/g, "'\\''")}'`;
-}
 
 /**
  * The test command of a todo (SP7 §8.1): the target's scoped template with the todo's source files

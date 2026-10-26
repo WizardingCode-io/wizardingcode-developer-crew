@@ -1292,6 +1292,41 @@ test("SP9-T5 AC-6: the report's primary team line says the lead validates for a 
   );
 });
 
+// SP9 Task 7: the audit's line in the report's UI evidence section.
+
+test("SP9-T7 AC-6: the report's UI evidence section says the audit's status and reason from the manifest", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const work = createWork(paths, "feature");
+  addCriterion(work, "x");
+  const evidence: Evidence = {
+    fingerprint: "f1",
+    tdd: [],
+    runs: [],
+    verdict: "unproven",
+    unproven: [],
+    judgement: [],
+  };
+  const manifest: UiEvidence = {
+    id: work.id,
+    at: "2026-10-26T10:00:00.000Z",
+    plan: { viewports: [{ name: "mobile", width: 360, height: 800 }], colorSchemes: ["light"] },
+    screens: [],
+    interactions: [],
+    unreadable: [],
+    summary: { captures: 0, captured: 0, expected: 0, missing: [], extra: [], offence: null },
+    audit: { status: "not captured", reason: "no environment.url", pages: [] },
+  };
+  const report = renderReport(work, evidence, DEFAULT_POLICY, { uiEvidence: manifest });
+  expect(report).toContain("Audit: not captured (no environment.url)");
+  const captured = renderReport(work, evidence, DEFAULT_POLICY, {
+    uiEvidence: {
+      ...manifest,
+      audit: { status: "captured", reason: null, pages: ["http://localhost:3000/", "http://a|b/"] },
+    },
+  });
+  expect(captured).toContain("Audit: captured (2 pages: http://localhost:3000/, http://a\\|b/)");
+});
+
 // SP9 Task 4: the report's UI evidence section.
 
 test("SP9-T4 AC-4, AC-8: the report renders the UI evidence between the Gates and the Judgement gates from the manifest, escapes every cell, and shows nothing without one", () => {

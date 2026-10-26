@@ -163,3 +163,14 @@ export function runCommand(command: string, options: RunOptions): Promise<RunRes
     child.on("close", (code) => finish(code));
   });
 }
+
+/**
+ * A path or a value as one shell word: as it is when it has only safe characters, in POSIX single
+ * quotes otherwise (a `'` inside escaped), so a file name on an implementer's branch or a page's url
+ * adds no command to a gate; a name that starts with `-` is written `./<name>` first, so the runner
+ * never reads it as an option (finding 56). Shared by the todo's test command and the deep audit.
+ */
+export function shellWord(path: string): string {
+  const word = path.startsWith("-") ? `./${path}` : path;
+  return /^[A-Za-z0-9_./-]+$/.test(word) ? word : `'${word.replace(/'/g, "'\\''")}'`;
+}

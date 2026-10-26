@@ -37,7 +37,7 @@ import {
   ENVIRONMENT_TIMEOUT_MS,
   type EnvironmentCommand,
 } from "./detect/environment.ts";
-import { detectProfile, missingTestCommands } from "./detect/index.ts";
+import { commandText, detectProfile, missingTestCommands } from "./detect/index.ts";
 import {
   checkHealth,
   type EnvStatus,
@@ -844,7 +844,7 @@ function profileView(env: Env, profile: Profile): Outcome {
   // A pack's command and a target's tags are said where the profile is read (SP6 Task 2 AC-3),
   // the scoped test template with the same marks (round 3).
   const shown = (g: string, c: GateCommand) =>
-    `${g}=${c.command}${c.source === "proposed" ? " [proposed]" : ""}${c.pack ? ` (pack ${c.pack})` : ""}`;
+    `${g}=${commandText(c)}${c.pack ? ` (pack ${c.pack})` : ""}`;
   const lines = profile.targets.map((t) => {
     const commands = [
       ...Object.entries(t.gates).map(([g, c]) => shown(g, c)),
@@ -855,6 +855,7 @@ function profileView(env: Env, profile: Profile): Outcome {
     }${t.tags?.length ? `\n    tags: ${t.tags.join(", ")}` : ""}`;
   });
   if (profile.ui) lines.push(`  ${uiLine(profile.ui)}`);
+  if (profile.browser) lines.push(`  ${shown("browser: devtools", profile.browser.devtools)}`);
   if (missing.length)
     lines.push(
       `No test command for: ${missing.map((m) => m.target).join(", ")}. Propose one: crew profile set test "<cmd>" [--target <path>]`,
@@ -2775,7 +2776,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       }
       const previous = parsed.flags.refresh ? loadProfile(env.paths).profile : null;
       const profile = parsed.flags.refresh
-        ? detectProfile(env.paths.root, previous, packRules(env.paths.userDir))
+        ? detectProfile(env.paths.root, previous, packRules(env.paths.userDir), process.env)
         : env.profile;
       if (parsed.flags.refresh) {
         saveProfile(env.paths, profile);
@@ -2831,6 +2832,23 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           was: current.command,
           by,
         });
+      }
+      if (sub === "set" && gate?.startsWith("browser.")) {
+        // The deep audit's command (SP9 Task 7): the person's, confirmed as it is set, as the
+        // environment's commands are.
+        if (gate !== "browser.devtools" || !cmd)
+          return refuse('usage: crew profile set browser.devtools "<cmd>"');
+        env.profile.browser = { devtools: { command: cmd, source: "confirmed" } };
+        saveProfile(env.paths, env.profile);
+        return ok(`browser.devtools set and confirmed: ${cmd}`, { browser: env.profile.browser });
+      }
+      if (sub === "confirm" && gate === "browser") {
+        const block = env.profile.browser;
+        if (block?.devtools.source !== "proposed")
+          return refuse('no browser.devtools proposed (crew profile set browser.devtools "<cmd>")');
+        block.devtools.source = "confirmed";
+        saveProfile(env.paths, env.profile);
+        return ok(`confirmed browser.devtools: ${block.devtools.command}`, { browser: block });
       }
       if (sub === "set" && gate?.startsWith("ui.")) {
         // The UI evidence's viewports and dark scheme (SP9 Task 3): the person's, taken as given; the

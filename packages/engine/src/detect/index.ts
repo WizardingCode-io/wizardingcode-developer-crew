@@ -2,6 +2,7 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { nowIso } from "../fs.ts";
 import { matchesAny } from "../glob.ts";
+import { findBrowser, onPath } from "../pdf.ts";
 import { SKIP_DIRS } from "../skip-dirs.ts";
 import type { Environment, GateCommand, GateName, Profile, Target } from "../types.ts";
 import { confirmedEnvironment, detectEnvironment, environmentChanges } from "./environment.ts";
@@ -191,6 +192,7 @@ export function mergeProfile(
   previous: Profile | null,
   detected: Target[],
   environment: Environment | null = null,
+  browser: Profile["browser"] | null = null,
 ): Profile {
   const targets = detected.map((t) => ({ ...t, gates: { ...t.gates } }));
   if (previous) {
@@ -221,6 +223,8 @@ export function mergeProfile(
     previous?.environment && confirmedEnvironment(previous.environment)
       ? previous.environment
       : (environment ?? undefined);
+  const keptBrowser =
+    previous?.browser?.devtools.source === "confirmed" ? previous.browser : (browser ?? undefined);
   return {
     version: 1,
     detectedAt: nowIso(),
@@ -229,6 +233,8 @@ export function mergeProfile(
     ...(kept ? { environment: kept } : {}),
     // The ui block is the person's (SP9 Task 3): it outlives the detection as the environment does.
     ...(previous?.ui ? { ui: previous.ui } : {}),
+    // The deep audit's block (SP9 Task 7): a confirmed one outlives the detection, a proposed one follows it.
+    ...(keptBrowser ? { browser: keptBrowser } : {}),
   };
 }
 
@@ -236,9 +242,37 @@ export function detectProfile(
   root: string,
   previous: Profile | null = null,
   rules: readonly PackRule[] = [],
+  env?: NodeJS.ProcessEnv,
 ): Profile {
   const targets = detectTargets(root, rules);
-  return mergeProfile(previous, targets, detectEnvironment(root, targets));
+  // The deep audit's command is proposed only when detection is given an environment to read (the
+  // `crew detect` command's); `ensureProfile` and a test's detection give none, so no profile and
+  // no row depends on the machine's PATH (SP9 Task 7).
+  return mergeProfile(
+    previous,
+    targets,
+    detectEnvironment(root, targets),
+    env ? detectBrowser(env) : null,
+  );
+}
+
+/**
+ * The chrome-devtools CLI proposed (SP9 Task 7) when it is on the environment's PATH and a Chrome
+ * is there: the one `WIZARDINGCODE_CREW_BROWSER` names, which must exist, else the PDF's candidates.
+ */
+export function detectBrowser(
+  env: NodeJS.ProcessEnv,
+  candidates?: readonly string[],
+): Profile["browser"] | null {
+  if (!onPath("chrome-devtools", env)) return null;
+  const named = env.WIZARDINGCODE_CREW_BROWSER?.trim();
+  const chrome = named ? (existsSync(named) ? named : null) : findBrowser(env, candidates);
+  return chrome ? { devtools: { command: "chrome-devtools", source: "proposed" } } : null;
+}
+
+/** A command as the profile's views print it: the text, `[proposed]` until a person confirms it. */
+export function commandText(command: GateCommand): string {
+  return `${command.command}${command.source === "proposed" ? " [proposed]" : ""}`;
 }
 
 /**
@@ -272,6 +306,10 @@ export function profileChanges(previous: Profile, next: Profile): string[] {
     if (!next.targets.some((t) => same(t, old)))
       lines.push(`target (${old.path}, ${old.stack}): removed`);
   lines.push(...environmentChanges(previous.environment, next.environment));
+  const before = previous.browser?.devtools;
+  const after = next.browser?.devtools;
+  if (before?.command !== after?.command || before?.source !== after?.source)
+    lines.push(`browser.devtools: ${after ? commandText(after) : "removed"}`);
   return lines;
 }
 

@@ -1209,4 +1209,25 @@ test("SP9-T4 AC-4 (the manifest read back): readUiEvidence returns the manifest 
   expect(readUiEvidence(paths, work.id)).toBeNull();
   writeFileSync(uiEvidencePath(paths, work.id), "{nope");
   expect(readUiEvidence(paths, work.id)).toBeNull();
+  // SP9-T7 AC-6: the audit's field reads back; a pages list that is not strings refuses the manifest.
+  const audited = {
+    ...grade.manifest,
+    audit: { status: "captured", reason: null, pages: ["http://localhost:3000/"] },
+  };
+  writeFileSync(uiEvidencePath(paths, work.id), JSON.stringify(audited));
+  expect(readUiEvidence(paths, work.id)?.audit).toEqual({
+    status: "captured",
+    reason: null,
+    pages: ["http://localhost:3000/"],
+  });
+  writeFileSync(
+    uiEvidencePath(paths, work.id),
+    JSON.stringify({ ...grade.manifest, audit: { status: "captured", reason: null, pages: [1] } }),
+  );
+  expect(readUiEvidence(paths, work.id)).toBeNull();
+  writeFileSync(
+    uiEvidencePath(paths, work.id),
+    JSON.stringify({ ...grade.manifest, audit: { status: 1, reason: null, pages: [] } }),
+  );
+  expect(readUiEvidence(paths, work.id)).toBeNull();
 });

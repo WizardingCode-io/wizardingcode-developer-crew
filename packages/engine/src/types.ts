@@ -186,6 +186,8 @@ export interface Profile {
   environment?: Environment;
   /** The UI evidence's viewports and dark scheme a person set (SP9 Task 3); the defaults otherwise. */
   ui?: { viewports: Viewport[]; dark?: boolean };
+  /** The deep audit's command (SP9 Task 7): the chrome-devtools CLI, proposed by detection or set by a person, run only once confirmed. */
+  browser?: { devtools: GateCommand };
 }
 
 export type Route = "fast" | "standard" | "full";
@@ -890,6 +892,8 @@ export interface UiArtifact {
   axe: "clean" | "violations" | "not captured";
   reducedMotion: "clean" | "running" | "not captured";
   motion: number;
+  /** The deep audit's status (SP9 Task 7), set when the artifact exists. */
+  audit?: "captured" | "not captured";
 }
 
 export type JudgementVerdict = "proven" | "not-proven" | "not-run";

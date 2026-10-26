@@ -83,6 +83,21 @@ export function isRegularFile(path: string): boolean {
   return regularFileSize(path) !== null;
 }
 
+/**
+ * The text of a regular file under the cap, by the rule of `regularFileSize` (never through a
+ * link); null for anything else there, an oversize file or a read that fails. The one bounded read
+ * the engine's readers of a session's or a tool's files share (SP9 Task 7).
+ */
+export function readRegularText(path: string, cap: number): string | null {
+  const size = regularFileSize(path);
+  if (size === null || size > cap) return null;
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return null;
+  }
+}
+
 /** Writes through a temporary file so a reader never sees a half-written file. */
 export function writeText(path: string, text: string): void {
   ensureDir(dirname(path));

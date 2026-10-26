@@ -393,6 +393,56 @@ test("SP2b minors: a gate run whose patch has no diff content says so, with the 
   );
 });
 
+test("SP9-T7 AC-1: crew profile set browser.devtools sets and confirms the audit's command, confirm browser refuses when nothing is proposed, and crew profile prints the block", async () => {
+  const root = makeRepo({ "package.json": JSON.stringify({ scripts: { test: "exit 0" } }) });
+  const c = io(root);
+  const refused = await c.run("profile", "confirm", "browser");
+  expect(refused.code).toBe(1);
+  expect(refused.err).toContain(
+    'no browser.devtools proposed (crew profile set browser.devtools "<cmd>")',
+  );
+  const set = await c.json("profile", "set", "browser.devtools", "chrome-devtools");
+  expect(set.code).toBe(0);
+  expect(set.data.browser).toEqual({
+    devtools: { command: "chrome-devtools", source: "confirmed" },
+  });
+  const profile = JSON.parse(readFileSync(join(root, ".crew", "profile.json"), "utf8")) as {
+    browser?: unknown;
+  };
+  expect(profile.browser).toEqual({
+    devtools: { command: "chrome-devtools", source: "confirmed" },
+  });
+  expect((await c.run("profile")).out).toContain("browser: devtools=chrome-devtools");
+  expect((await c.run("profile", "set", "browser.devtools")).code).toBe(1);
+  expect((await c.run("profile", "set", "browser.other", "x")).code).toBe(1);
+});
+
+test("SP9-T7 AC-1 (a proposed block): crew profile prints it with [proposed], crew profile confirm browser confirms it, the marker goes and a second confirm is refused", async () => {
+  const root = makeRepo({ "package.json": JSON.stringify({ scripts: { test: "exit 0" } }) });
+  const c = io(root);
+  expect((await c.run("detect")).code).toBe(0);
+  const paths = repoPaths(root, c.env);
+  const detected = loadProfile(paths).profile;
+  if (!detected) throw new Error("no profile after crew detect");
+  saveProfile(paths, {
+    ...detected,
+    browser: { devtools: { command: "chrome-devtools", source: "proposed" } },
+  });
+  expect((await c.run("profile")).out).toContain("browser: devtools=chrome-devtools [proposed]");
+  const confirmed = await c.json("profile", "confirm", "browser");
+  expect(confirmed.code).toBe(0);
+  expect(confirmed.data.browser).toEqual({
+    devtools: { command: "chrome-devtools", source: "confirmed" },
+  });
+  expect(loadProfile(paths).profile?.browser).toEqual({
+    devtools: { command: "chrome-devtools", source: "confirmed" },
+  });
+  const view = (await c.run("profile")).out;
+  expect(view).toContain("browser: devtools=chrome-devtools");
+  expect(view).not.toContain("[proposed]");
+  expect((await c.run("profile", "confirm", "browser")).code).toBe(1);
+});
+
 test("SP9-T6 AC-1: design-lint has no command to set or unset, and its skip is refused until allowSkips lists it", async () => {
   const root = makeRepo({
     "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),

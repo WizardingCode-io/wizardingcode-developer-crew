@@ -18,7 +18,7 @@ import {
 } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { isWatched } from "./fingerprint.ts";
-import { isRegularFile, nowIso, regularFileSize, writeText } from "./fs.ts";
+import { isRegularFile, nowIso, readRegularText, writeText } from "./fs.ts";
 import { type Capture, listCaptures, reviewDir } from "./judgement.ts";
 import { type CrewPaths, workDir } from "./paths.ts";
 import { SKIP_DIRS } from "./skip-dirs.ts";
@@ -487,6 +487,8 @@ export interface UiEvidence {
   screens: UiScreenRow[];
   interactions: UiInteractionRow[];
   unreadable: string[];
+  /** The deep audit's status, reason and pages (SP9 Task 7), set by the e2e run when it ran the audit. */
+  audit?: { status: "captured" | "not captured"; reason: string | null; pages: string[] };
   summary: {
     captures: number;
     captured: number;
@@ -512,10 +514,10 @@ type Json = Record<string, unknown>;
 
 /** The JSON of a regular file under the cap, whatever its shape; `undefined` for anything else (a link, a FIFO, too big, not JSON). */
 function readBoundedJson(path: string): unknown {
-  const size = regularFileSize(path);
-  if (size === null || size > EVIDENCE_FILE_MAX) return undefined;
+  const text = readRegularText(path, EVIDENCE_FILE_MAX);
+  if (text === null) return undefined;
   try {
-    return JSON.parse(readFileSync(path, "utf8")) as unknown;
+    return JSON.parse(text) as unknown;
   } catch {
     return undefined;
   }
@@ -1024,5 +1026,56 @@ export function readUiEvidence(paths: CrewPaths, id: string): UiEvidence | null 
   const summary = body.summary;
   if (!stringsOnly(summary.missing) || !stringsOnly(summary.extra)) return null;
   if (typeof summary.captures !== "number" || typeof summary.expected !== "number") return null;
+  // The audit's field (SP9 Task 7), when the run set it: two strings and a string list.
+  if (body.audit !== undefined) {
+    const audit = body.audit;
+    if (
+      !isObject(audit) ||
+      (audit.status !== "captured" && audit.status !== "not captured") ||
+      (audit.reason !== null && typeof audit.reason !== "string") ||
+      !stringsOnly(audit.pages)
+    )
+      return null;
+  }
   return body as unknown as UiEvidence;
+}
+
+/** A capture's metadata as the fixture wrote it, whatever its shape. */
+export type CaptureMetadata = Record<string, unknown>;
+
+/**
+ * The captures' metadata (SP9 Task 7), read once for every reader of it, in the captures' order:
+ * each a regular file under the cap, parsed as a JSON object; a capture without one, over the cap
+ * or not a regular file gives nothing.
+ */
+export function captureMetadata(paths: CrewPaths, id: string): CaptureMetadata[] {
+  const bodies: CaptureMetadata[] = [];
+  for (const capture of listCaptures(paths, id)) {
+    if (!capture.meta) continue;
+    const body = readBounded(join(workDir(paths, id), capture.meta));
+    if (body) bodies.push(body);
+  }
+  return bodies;
+}
+
+/** The urls the captures' metadata name, distinct, in order: each `url` a string made safe; a metadata without one gives nothing. */
+export function captureUrls(metadata: readonly CaptureMetadata[]): string[] {
+  const seen = new Set<string>();
+  const urls: string[] = [];
+  for (const body of metadata) {
+    if (typeof body.url !== "string") continue;
+    const url = safeText(body.url);
+    if (!url || seen.has(url)) continue;
+    seen.add(url);
+    urls.push(url);
+  }
+  return urls;
+}
+
+/** Whether a capture's metadata carried a numeric CLS: the trace's figure is then advisory. */
+export function capturesMeasuredCls(metadata: readonly CaptureMetadata[]): boolean {
+  return metadata.some((body) => {
+    const vitals = isObject(body.vitals) ? body.vitals : null;
+    return typeof vitals?.cls === "number" && Number.isFinite(vitals.cls);
+  });
 }

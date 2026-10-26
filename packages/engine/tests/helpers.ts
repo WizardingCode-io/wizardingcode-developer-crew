@@ -131,3 +131,91 @@ export function spyMailReads(
     file: string,
   ) => onRead(file, realRead<Mailbox>(integrity, file))) as typeof store.readProtectedJsonAt);
 }
+
+/** A Lighthouse report as the chrome-devtools CLI writes one (SP9 Task 7): four categories, one accessibility audit at 0 with items. */
+export const DEVTOOLS_REPORT = {
+  categories: {
+    performance: { score: 0.5, auditRefs: [{ id: "uses-http2" }] },
+    accessibility: { score: 0.8, auditRefs: [{ id: "color-contrast" }, { id: "label" }] },
+    "best-practices": { score: 1, auditRefs: [{ id: "uses-http2" }] },
+    seo: { score: 0.9, auditRefs: [] },
+  },
+  audits: {
+    "color-contrast": {
+      id: "color-contrast",
+      title: "Background and foreground colors do not have a sufficient contrast ratio.",
+      score: 0,
+      details: { items: [{ node: "button.pay" }, { node: "a.help" }] },
+    },
+    label: {
+      id: "label",
+      title: "Form elements have associated labels",
+      score: 1,
+      details: { items: [{}] },
+    },
+    "uses-http2": { id: "uses-http2", title: "Use HTTP/2", score: 0, details: { items: [{}] } },
+  },
+};
+
+/** The trace command's insights as the CLI prints them: LCP and INP in ms, CLS as is. */
+export const DEVTOOLS_INSIGHTS = {
+  insights: { LCP: { lcp: 1234 }, CLS: { cls: 0.18 }, INP: { inp: 200 } },
+};
+
+/**
+ * A fake chrome-devtools CLI (SP9 Task 7): a script in a folder of its own that records every call
+ * (its argv and the telemetry variable) in `FAKE_CALLS` and answers each tool with canned JSON; its
+ * modes come from the environment, or from a `fake.env` file beside it when a run cannot set them.
+ */
+export function fakeDevtoolsCli(): { bin: string; dir: string } {
+  const dir = tempDir("crew-devtools-");
+  const bin = join(dir, "chrome-devtools");
+  writeFileSync(
+    bin,
+    `#!/bin/sh
+here="$(dirname "$0")"
+[ -f "$here/fake.env" ] && . "$here/fake.env"
+echo "$* NOUSAGE=$CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS" >> "$FAKE_CALLS"
+tool="$1"; shift
+case "$tool" in
+  start)
+    [ "$FAKE_START" = exit1 ] && exit 1
+    [ -n "$FAKE_FLAG" ] && [ -f "$FAKE_FLAG" ] && echo "flag-up" >> "$FAKE_CALLS"
+    echo '{"ok":true}' ;;
+  new_page)
+    case "$FAKE_PAGE_ID" in
+      bad) echo '{"pageId":"1; touch MARKER"}' ;;
+      big) head -c 1100000 /dev/zero | tr '\\0' 'x' ;;
+      none) echo '{}' ;;
+      *) echo '{"pageId":"p1"}' ;;
+    esac ;;
+  lighthouse_audit)
+    dir=""
+    while [ $# -gt 0 ]; do [ "$1" = --outputDirPath ] && dir="$2"; shift; done
+    case "$FAKE_LIGHTHOUSE" in
+      exit3) exit 3 ;;
+      hang) sleep 30 ;;
+      none) echo '{}' ;;
+      stdout) cat "$FAKE_REPORT" ;;
+      big) head -c 1100000 /dev/zero | tr '\\0' 'x' > "$dir/lhr-big.json"; echo '{}' ;;
+      *) cp "$FAKE_REPORT" "$dir/lhr-$$.json"; echo '{"ok":true}' ;;
+    esac ;;
+  performance_start_trace)
+    file=""
+    while [ $# -gt 0 ]; do [ "$1" = --filePath ] && file="$2"; shift; done
+    if [ "$FAKE_TRACE" = rmdir ]; then rm -rf "$(dirname "$file")"; exit 0; fi
+    echo '{"trace":true}' > "$file"
+    cat "$FAKE_INSIGHTS" ;;
+  stop) echo "stopped" >> "$FAKE_CALLS" ;;
+esac
+`,
+  );
+  chmodSync(bin, 0o755);
+  // A command an unquoted url would make the shell run (`$(pwn)` survives `new URL`, a space does
+  // not): it marks the file `FAKE_MARKER` names, so a marker that exists is a url that reached the
+  // shell unquoted.
+  const pwn = join(dir, "pwn");
+  writeFileSync(pwn, '#!/bin/sh\n[ -n "$FAKE_MARKER" ] && : > "$FAKE_MARKER"\nexit 0\n');
+  chmodSync(pwn, 0o755);
+  return { bin, dir };
+}

@@ -10,6 +10,7 @@ import {
 } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { gradeConsole, gradeLogs } from "./console.ts";
+import { auditPages, type DevtoolsAudit, runDevtoolsAudit } from "./devtools.ts";
 import { startEnvironment, stopEnvironment } from "./environment.ts";
 import { readTextQuietly, writeText } from "./fs.ts";
 import { insidePath } from "./mail-status.ts";
@@ -17,6 +18,9 @@ import { type CrewPaths, workDir } from "./paths.ts";
 import { runCommand } from "./run.ts";
 import type { GateRun, Profile, Target, WorkItem } from "./types.ts";
 import {
+  captureMetadata,
+  capturesMeasuredCls,
+  captureUrls,
   gradeUi,
   planLine,
   sweepLine,
@@ -169,6 +173,7 @@ export async function runE2e(inputs: E2eInputs): Promise<GateRun> {
   const begun = Date.now();
   let result: Awaited<ReturnType<typeof runCommand>>;
   let logsText: string | null = null;
+  let audit: DevtoolsAudit | null = null;
   try {
     result = await runCommand(command.command, {
       cwd: join(paths.root, target.path),
@@ -183,6 +188,20 @@ export async function runE2e(inputs: E2eInputs): Promise<GateRun> {
       },
     });
     logsText = await readLogs(paths, work, logs, join(dir, "logs.txt"), log);
+    // The deep audit (SP9 Task 7): after the command, while the environment is still up, only
+    // after a command that passed; the captures' urls and their CLS read from the metadata, read
+    // once; the audit answers `not captured` for its own failures and never throws out of the run.
+    const metadata = captureMetadata(paths, work.id);
+    audit = await runDevtoolsAudit({
+      paths,
+      work,
+      profile,
+      pages: auditPages(environment.url, captureUrls(metadata)),
+      env: process.env,
+      fixtureMeasuredCls: capturesMeasuredCls(metadata),
+      log,
+      e2eFailed: result.exit !== 0 || result.timedOut,
+    });
   } finally {
     // What the engine started is stopped whatever the run did (the user's environment is never).
     if (started.managed) await stopEnvironment(paths, environment);
@@ -192,6 +211,13 @@ export async function runE2e(inputs: E2eInputs): Promise<GateRun> {
   // The UI evidence, the run's third measurement (SP9 Task 4): graded after the console and the
   // logs whatever the exit, its manifest written for the reviewer, the lead and the report.
   const uiGrade = gradeUi(paths, work.id, plan.plan);
+  // The audit's status joins the manifest before it is written (the plan's decision 3).
+  if (audit)
+    uiGrade.manifest.audit = {
+      status: audit.status,
+      reason: audit.reason,
+      pages: audit.pages.map((p) => p.url),
+    };
   writeUiEvidence(paths, work.id, uiGrade.manifest);
   // Each line says what its measurement found; the gate's reason is the first offence of the two.
   const consoleOffence =
@@ -201,7 +227,7 @@ export async function runE2e(inputs: E2eInputs): Promise<GateRun> {
         ? "console file does not parse"
         : null;
   const logsOffence = graded?.status === "failed" ? `logs: ${graded.first}` : null;
-  const offence = consoleOffence ?? logsOffence ?? uiGrade.offence;
+  const offence = consoleOffence ?? logsOffence ?? uiGrade.offence ?? audit?.offence ?? null;
   const consoleLine =
     consoleOffence ?? (consoleGrade.status === "none" ? "console: not captured" : "console: clean");
   const logsLine = logsOffence ?? (graded === null ? (logs.note ?? "logs: none") : "logs: clean");
@@ -221,6 +247,7 @@ export async function runE2e(inputs: E2eInputs): Promise<GateRun> {
       consoleLine,
       logsLine,
       ...uiGrade.lines,
+      ...(audit?.lines ?? []),
       planLine(plan.plan) ?? "",
       sweepLine(sweep.skipped) ?? "",
     ]
@@ -234,7 +261,9 @@ export async function runE2e(inputs: E2eInputs): Promise<GateRun> {
           ? null
           : `${E2E_DIR}/${consoleGrade.file.endsWith(".jsonl") ? "console.jsonl" : "console.json"}`,
       logs: logsText === null ? null : `${E2E_DIR}/logs.txt`,
-      ...(uiGrade.artifacts ? { ui: uiGrade.artifacts } : {}),
+      ...(uiGrade.artifacts
+        ? { ui: { ...uiGrade.artifacts, ...(audit ? { audit: audit.status } : {}) } }
+        : {}),
     },
   };
 }
