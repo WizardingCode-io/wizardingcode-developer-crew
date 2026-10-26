@@ -3,6 +3,7 @@ import { type Dirent, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { exists, sha256 } from "./fs.ts";
 import { matchesAny } from "./glob.ts";
+import { isDesignContractPath } from "./paths-kind.ts";
 import { SKIP_DIRS } from "./skip-dirs.ts";
 import type { Profile, WorkItem } from "./types.ts";
 
@@ -162,6 +163,9 @@ export function reviewPatch(
 }
 
 export function isWatched(path: string, profile: Profile): boolean {
+  // A design contract is interface work (SP9 Task 6): watched even where the exclusions drop
+  // Markdown or docs, so a change to it is a change the gates, the seats and the fingerprint read.
+  if (isDesignContractPath(path)) return true;
   return !matchesAny(path, profile.watch.exclude);
 }
 

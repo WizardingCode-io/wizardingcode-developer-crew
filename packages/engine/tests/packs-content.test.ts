@@ -382,7 +382,16 @@ test("SP6-T3 AC-3: the Laravel rule refines a fixture tree with artisan (the gat
   t.testScoped = proposed("touch scoped-ran.txt && exit 0 # {files}");
   const changed = ["app/Models/User.php"];
   for (const gate of ["test", "lint", "typecheck"] as GateName[]) {
-    const run = await runOneGate(paths, work, profile, { gate, target: "." }, "fp", changed);
+    // SP9-T6 AC-9: runOneGate takes the policy after the change (the argument order, no behaviour).
+    const run = await runOneGate(
+      paths,
+      work,
+      profile,
+      { gate, target: "." },
+      "fp",
+      changed,
+      DEFAULT_POLICY,
+    );
     expect(run.status, gate).toBe("unavailable");
     expect(run.confirmed, gate).toBe(false);
     expect(run.reason, gate).toBe(
@@ -397,6 +406,7 @@ test("SP6-T3 AC-3: the Laravel rule refines a fixture tree with artisan (the gat
     { gate: "test", target: "." },
     "fp",
     changed,
+    DEFAULT_POLICY,
     changed,
   );
   expect(scoped.status).toBe("unavailable");

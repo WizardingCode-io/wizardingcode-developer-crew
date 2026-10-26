@@ -169,13 +169,15 @@ export async function runAudit(
   );
   // No base commit: the deps judge finds nothing to compare with and the secrets scan walks the tree.
   const unbased: WorkItem = { ...work, baseCommit: null };
+  // The design lint judges a change, not a repository (SP9 Task 6): planned out as the e2e run is.
   const planned = plannedGates("full", profile, policy, files, paths.root).filter(
-    (p) => p.gate !== "e2e" && (only === undefined || only.includes(p.gate)),
+    (p) =>
+      p.gate !== "e2e" && p.gate !== "design-lint" && (only === undefined || only.includes(p.gate)),
   );
   const runs: AuditRun[] = [];
   for (const one of planned) {
     const log = auditLogName(one.gate, one.target, one.stack);
-    const run = await runOneGate(paths, unbased, profile, one, head, files, undefined, log);
+    const run = await runOneGate(paths, unbased, profile, one, head, files, policy, undefined, log);
     // The scan writes no log of its own: its findings go under the item's logs, so the report names them.
     if (one.gate === "secrets") {
       writeText(join(dir, log), `${run.tail}\n`);

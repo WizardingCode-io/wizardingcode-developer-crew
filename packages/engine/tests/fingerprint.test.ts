@@ -9,6 +9,7 @@ import {
   fingerprintMethod,
   gitChangedPaths,
   hashPaths,
+  isWatched,
   MAX_WATCHED_FILES,
   reviewPatch,
 } from "../src/fingerprint.ts";
@@ -251,4 +252,13 @@ test("a base file reverted to its committed content, or an untracked base file d
   expect(computeFingerprint(root, profile, base)).not.toBe(clean);
   rmSync(join(root, "src/new.ts"));
   expect(changedWatchedPaths(root, profile, base)).toEqual(["src/a.ts", "src/new.ts"]);
+});
+
+test("SP9-T6 AC-5: a design contract is watched under the default exclusions (DESIGN.md, docs/DESIGN.md, a tokens file), while other Markdown and docs stay out", () => {
+  const profile = detectProfile(makeRepo());
+  expect(profile.watch.exclude).toContain("**/*.md");
+  for (const path of ["DESIGN.md", "docs/DESIGN.md", "design/brand.tokens.json", "src/a.ts"])
+    expect(isWatched(path, profile), path).toBe(true);
+  for (const path of ["README.md", "docs/notes.md", "docs/plans/x.md", ".crew/work/a.json"])
+    expect(isWatched(path, profile), path).toBe(false);
 });

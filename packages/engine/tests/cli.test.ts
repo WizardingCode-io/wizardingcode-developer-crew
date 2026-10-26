@@ -393,6 +393,31 @@ test("SP2b minors: a gate run whose patch has no diff content says so, with the 
   );
 });
 
+test("SP9-T6 AC-1: design-lint has no command to set or unset, and its skip is refused until allowSkips lists it", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/App.vue": "<template/>",
+  });
+  const c = io(root);
+  const id = (await c.json("start", "Empty state", "--answers", answers, "--criterion", "a")).data
+    .id as string;
+  const set = await c.run("profile", "set", "design-lint", "echo x");
+  expect(set.code).toBe(1);
+  expect(set.err).toContain("usage: crew profile set <build|test|lint|typecheck|deps|e2e>");
+  const unset = await c.run("profile", "unset", "design-lint");
+  expect(unset.code).toBe(1);
+  expect(unset.err).toContain("usage: crew profile unset <build|test|lint|typecheck|deps|e2e>");
+  const refused = await c.run("skip", id, "gate:design-lint", "--reason", "noise");
+  expect(refused.code).toBe(1);
+  expect(refused.err).toContain(
+    "the team policy does not allow skipping gate:design-lint: gates are mandatory",
+  );
+  write(root, ".crew/policy.json", JSON.stringify({ allowSkips: ["design-lint"] }));
+  expect((await c.run("policy", "accept")).code).toBe(0);
+  const skipped = await c.json("skip", id, "gate:design-lint", "--reason", "noise");
+  expect((skipped.data.skips as { step: string }[]).at(-1)?.step).toBe("gate:design-lint");
+});
+
 test("SP2b: a judgement gate is skipped only when the policy lists it, and the verdict then passes over it", async () => {
   const root = makeRepo({
     "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
@@ -451,8 +476,9 @@ test("SP2b: gate run names the judgement gates to run, accepts their names in --
   const json = await c.json("gate", "run", id, "--only", "ui-ux");
   expect(json.data.judgement).toEqual([{ gate: "ui-ux", reason: "interface files: src/App.vue" }]);
   expect(json.data.review).toBe(`.crew/work/${id}/review`);
-  // secrets, test and the skipped e2e row of the full run; --only ui-ux ran nothing new.
-  expect((json.data.runs as unknown[]).length).toBe(3);
+  // secrets, design-lint (SP9-T6 AC-9 edits this count: the interface file plans it), test and the
+  // skipped e2e row of the full run; --only ui-ux ran nothing new.
+  expect((json.data.runs as unknown[]).length).toBe(4);
   expect((await c.run("gate", "run", id, "--only", "ui-ux,bogus")).err.trim()).toBe(
     "unknown gate: bogus",
   );

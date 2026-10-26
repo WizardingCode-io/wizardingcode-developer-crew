@@ -12,6 +12,7 @@ import type {
   Route,
   TeamName,
   TeamPolicy,
+  UiPolicy,
   VerifyAsk,
   VerifyPolicy,
 } from "./types.ts";
@@ -105,6 +106,8 @@ export const DEFAULT_POLICY: Policy = {
     specialists: [...DEFAULT_TEAM_POLICY.specialists],
   },
   verify: { ...DEFAULT_VERIFY_POLICY, asks: [...DEFAULT_VERIFY_POLICY.asks] },
+  // The design lint's disabled rules (SP9 Task 6): a hand-written list, empty by default.
+  ui: { lint: { disabled: [] } },
 };
 
 /** How `crew policy set` checks a value: one of a list, a name, or a whole number in a range. */
@@ -473,6 +476,18 @@ function strings(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : [];
 }
 
+/** The design lint's block (SP9 Task 6): `ui.lint.disabled` keeps its strings; anything else, or no block, is the empty list. */
+function loadUiPolicy(raw: unknown): UiPolicy {
+  const ui = (typeof raw === "object" && raw !== null && !Array.isArray(raw) ? raw : {}) as Record<
+    string,
+    unknown
+  >;
+  const lint = (
+    typeof ui.lint === "object" && ui.lint !== null && !Array.isArray(ui.lint) ? ui.lint : {}
+  ) as Record<string, unknown>;
+  return { lint: { disabled: strings(lint.disabled) } };
+}
+
 /** The teams of the registry, named once (`TEAMS`). */
 const TEAM_NAMES = Object.keys(TEAMS) as readonly TeamName[];
 
@@ -550,6 +565,7 @@ export function loadPolicy(paths: CrewPaths): { policy: Policy; tampered: boolea
       mail: loadMailPolicy(raw.mail),
       team: loadTeamPolicy(raw.team),
       verify: loadVerifyPolicy(raw.verify),
+      ui: loadUiPolicy(raw.ui),
     },
     tampered: read.tampered,
   };

@@ -321,6 +321,7 @@ import type {
 } from "./types.ts";
 import {
   GATE_NAMES,
+  isBuiltInGate,
   isJudgementGateName,
   isMailPriority,
   isMailType,
@@ -2795,7 +2796,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       if (sub === "unset") {
         // A gate removed from a target (finding 87): the user's decision, recorded; the profile
         // keeps at least one test gate, counted across every target.
-        if (!GATE_NAMES.includes(gate as GateName) || gate === "secrets")
+        if (!GATE_NAMES.includes(gate as GateName) || isBuiltInGate(gate ?? ""))
           return refuse(
             "usage: crew profile unset <build|test|lint|typecheck|deps|e2e> [--target <path>] [--stack <s>]",
           );
@@ -2922,7 +2923,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         });
       }
       if (sub === "set") {
-        if (!GATE_NAMES.includes(gate as GateName) || gate === "secrets" || !cmd)
+        if (!GATE_NAMES.includes(gate as GateName) || isBuiltInGate(gate ?? "") || !cmd)
           return refuse(
             'usage: crew profile set <build|test|lint|typecheck|deps|e2e> "<cmd>" [--target <path>]',
           );

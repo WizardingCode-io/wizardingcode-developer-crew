@@ -1,13 +1,31 @@
-export type GateName = "build" | "test" | "lint" | "typecheck" | "secrets" | "deps" | "e2e";
+export type GateName =
+  | "build"
+  | "test"
+  | "lint"
+  | "typecheck"
+  | "secrets"
+  | "design-lint"
+  | "deps"
+  | "e2e";
 export const GATE_NAMES: readonly GateName[] = [
   "build",
   "test",
   "lint",
   "typecheck",
   "secrets",
+  "design-lint",
   "deps",
   "e2e",
 ];
+
+/** The gates the engine computes itself (SP9 Task 6): no command, nothing to set, unset or detect; planned by the change. */
+export type BuiltInGate = "secrets" | "design-lint";
+export const BUILT_IN_GATES: readonly BuiltInGate[] = ["secrets", "design-lint"];
+export function isBuiltInGate(gate: string): gate is BuiltInGate {
+  return (BUILT_IN_GATES as readonly string[]).includes(gate);
+}
+/** A gate a project's command runs: what detection proposes and `crew profile set` takes (the deps audit has its own tool). */
+export type CommandGate = Exclude<GateName, BuiltInGate | "deps">;
 
 /**
  * A gate whose verdict is a reviewer's ruling against a rubric and a judge's decision, not an exit
@@ -847,6 +865,16 @@ export interface GateRun {
   advisories?: { current: number; known: number; fresh: string[]; baselined: boolean };
   /** A lint or typecheck run read for the files it names (ADR 0006): the ones the item changed, and how many untouched files have problems. */
   problems?: { touched: string[]; untouched: number };
+  /** The design lint's counts (SP9 Task 6): its file (null on a todo's run), the standing defects, the advisories, the unresolved, the allowed and the disabled hits, the inventory's size. */
+  lint?: {
+    file: string | null;
+    defects: number;
+    advisories: number;
+    unresolved: number;
+    allowed: number;
+    disabled: number;
+    inventory: number;
+  };
   /** The watched files a build gate rewrote; the stamp of the gate run was taken after it (finding 18). */
   wrote?: string[];
   /** What an e2e run left under the work folder (SP7 §8.3): its folder, the console file it read and the logs it graded, or null for each it had not; the UI evidence's summary when a screen was declared or a capture exists (SP9 Task 4). */
@@ -981,6 +1009,13 @@ export interface Policy {
   verify: VerifyPolicy;
   /** The team: a template, teams added beyond the route, and the caps on experts and rounds (SP7 §6.1). */
   team: TeamPolicy;
+  /** The interface: the design lint's disabled rule ids (SP9 Task 6), a hand-written list. */
+  ui: UiPolicy;
+}
+
+/** The design lint's policy (SP9 Task 6): the rule ids whose hits are kept and never judged. */
+export interface UiPolicy {
+  lint: { disabled: string[] };
 }
 
 export type Mode = "partner" | "guide" | "pilot";

@@ -104,7 +104,12 @@ test("SP2b: --only with judgement names alone runs no deterministic gate and rew
   expect(only.evidence.runs).toEqual([]);
   expect(only.judgement.map((j) => j.gate)).toEqual(["ui-ux"]);
   expect(readFileSync(join(only.review ?? "", "files.txt"), "utf8")).toBe("src/App.vue\n");
-  expect(only.unproven.slice(0, 2)).toEqual(["gate secrets not run", "gate test not run"]);
+  // SP9-T6 AC-9 edits this line: design-lint is planned after secrets on the interface file.
+  expect(only.unproven.slice(0, 3)).toEqual([
+    "gate secrets not run",
+    "gate design-lint not run",
+    "gate test not run",
+  ]);
   // A deterministic name beside a judgement name runs that gate alone.
   const mixed = await runGates(paths, work, profile, DEFAULT_POLICY, {
     only: ["secrets", "ui-ux"],
@@ -1135,6 +1140,146 @@ function e2eRepo(e2e: string, environment: Environment | undefined = flagged()) 
   return { root, paths, profile, target, work };
 }
 
+test("SP9-T6 AC-1: design-lint is planned right after secrets on a frontend path, on every route, never otherwise nor from requiredGates; a todo's gate runs it and writes no file", async () => {
+  const profile: Profile = {
+    version: 1,
+    detectedAt: "",
+    targets: [target, { ...target, path: "apps/api" }],
+    watch: { exclude: [] },
+  };
+  const root = tempDir();
+  const head = (route: "standard" | "fast", changed: string[], policy = DEFAULT_POLICY) =>
+    plannedGates(route, profile, policy, changed, root)
+      .slice(0, 2)
+      .map((p) => p.gate);
+  expect(head("standard", ["src/App.vue"])).toEqual(["secrets", "design-lint"]);
+  expect(head("standard", ["DESIGN.md"])).toEqual(["secrets", "design-lint"]);
+  expect(head("fast", ["src/App.vue"])).toEqual(["secrets", "design-lint"]);
+  expect(head("standard", ["src/a.ts"])).toEqual(["secrets", "test"]);
+  const required: Policy = { ...DEFAULT_POLICY, requiredGates: ["design-lint"] };
+  expect(
+    plannedGates("standard", profile, required, ["src/a.ts"], root).some(
+      (p) => p.gate === "design-lint",
+    ),
+  ).toBe(false);
+  // A todo's gate lints its scope and leaves the item's file alone.
+  const repo = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/guard.ts": "export const reduced = useReducedMotion();\n",
+  });
+  const paths = repoPaths(repo, testEnv());
+  const { profile: detected } = ensureProfile(paths);
+  const work = createWork(paths, "feature");
+  addCriterion(work, "x");
+  write(repo, "src/App.vue", "<style>.a { transition: all 200ms; }</style>\n");
+  const task = await runTaskGate(paths, work, detected, DEFAULT_POLICY, ["src/App.vue"]);
+  const lint = task.runs.find((r) => r.gate === "design-lint");
+  expect(lint?.status).toBe("fail");
+  expect(lint?.reason).toBe("motion/transition-all src/App.vue:1");
+  expect(lint?.lint).toMatchObject({ file: null, defects: 1 });
+  expect(existsSync(join(workDir(paths, work.id), "review", "design-lint.json"))).toBe(false);
+});
+
+test("SP9-T6 AC-5, AC-7: an item's design-lint run fails on a standing defect with the first as its reason, says the tail in order, writes review/design-lint.json and carries the counts; a contract-only change passes with no interface file", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/guard.ts": "export const reduced = useReducedMotion();\n",
+  });
+  const paths = repoPaths(root, testEnv());
+  const { profile } = ensureProfile(paths);
+  const work = createWork(paths, "feature");
+  addCriterion(work, "x");
+  const filler = Array.from({ length: 11 }, (_, i) => `<!-- line ${i + 1} -->`).join("\n");
+  write(root, "src/App.vue", `${filler}\n<style>.a { transition: all 200ms; }</style>\n`);
+  write(root, "src/a.css", ".b { transition: opacity 900ms; }\n");
+  const first = await runGates(paths, work, profile, DEFAULT_POLICY);
+  const run = first.evidence.runs.find((r) => r.gate === "design-lint");
+  expect(run).toMatchObject({
+    target: ".",
+    command: "built-in design lint",
+    status: "fail",
+    reason: "motion/transition-all src/App.vue:12, +1 more",
+  });
+  expect(run?.tail.split("\n")).toEqual([
+    "motion/transition-all src/App.vue:12",
+    "motion/duration-over-500 src/a.css:1",
+    "unresolved: 0",
+    "inventory: 2 animated declarations (review/design-lint.json)",
+  ]);
+  expect(run?.durationMs ?? 1000).toBeLessThan(1000);
+  expect(run?.lint).toEqual({
+    file: "review/design-lint.json",
+    defects: 2,
+    advisories: 0,
+    unresolved: 0,
+    allowed: 0,
+    disabled: 0,
+    inventory: 2,
+  });
+  expect(first.unproven).toContain("gate design-lint failing");
+  const file = JSON.parse(
+    readFileSync(join(workDir(paths, work.id), "review", "design-lint.json"), "utf8"),
+  ) as Record<string, unknown>;
+  expect(Object.keys(file).sort()).toEqual([
+    "at",
+    "disabled",
+    "files",
+    "hits",
+    "inventory",
+    "skipped",
+    "unresolved",
+  ]);
+  expect(file.files).toEqual(["src/App.vue", "src/a.css"]);
+  expect((file.hits as { rule: string }[]).map((h) => h.rule)).toEqual([
+    "motion/transition-all",
+    "motion/duration-over-500",
+  ]);
+  // A contract-only change plans the gate and passes it with nothing to lint.
+  const contract = makeRepo({ "package.json": JSON.stringify({ scripts: { test: "exit 0" } }) });
+  const cPaths = repoPaths(contract, testEnv());
+  const { profile: cProfile } = ensureProfile(cPaths);
+  const cWork = createWork(cPaths, "feature");
+  addCriterion(cWork, "x");
+  write(contract, "DESIGN.md", "---\ncolors:\n  primary: '#000'\n---\n");
+  const cRun = (await runGates(cPaths, cWork, cProfile, DEFAULT_POLICY)).evidence.runs.find(
+    (r) => r.gate === "design-lint",
+  );
+  expect(cRun).toMatchObject({ status: "pass", tail: "no interface file in the change" });
+  expect(cRun?.lint).toMatchObject({ file: "review/design-lint.json", defects: 0, inventory: 0 });
+});
+
+test("SP9-T6 AC-6, AC-2 (the wiring): an item's run reads the policy's disabled rules and the project's design contract into the lint", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/guard.ts": "export const reduced = useReducedMotion();\n",
+  });
+  const paths = repoPaths(root, testEnv());
+  const { profile } = ensureProfile(paths);
+  const work = createWork(paths, "feature");
+  addCriterion(work, "x");
+  write(root, "src/App.vue", "<style>.a { transition: all 200ms; }</style>\n");
+  const disabled: Policy = {
+    ...DEFAULT_POLICY,
+    ui: { lint: { disabled: ["motion/transition-all"] } },
+  };
+  const run = (await runGates(paths, work, profile, disabled)).evidence.runs.find(
+    (r) => r.gate === "design-lint",
+  );
+  expect(run).toMatchObject({ status: "pass", lint: { defects: 0, disabled: 1 } });
+  expect(run?.tail.split("\n").slice(0, 2)).toEqual([
+    "rules disabled by policy: motion/transition-all",
+    "disabled: motion/transition-all src/App.vue:1",
+  ]);
+  // The contract declares colours: a raw colour in a changed stylesheet fails the run.
+  write(root, "src/App.vue", "<style>.a { color: red; }</style>\n");
+  write(root, "DESIGN.md", "---\ncolors:\n  primary: '#000'\n---\n");
+  write(root, "src/a.css", ".b { color: #fff; }\n");
+  const colour = (await runGates(paths, work, profile, DEFAULT_POLICY)).evidence.runs.find(
+    (r) => r.gate === "design-lint",
+  );
+  expect(colour).toMatchObject({ status: "fail", reason: "tokens/raw-colour src/a.css:1" });
+});
+
 test("SP9-T5 AC-5: a design-contract path plans the e2e gate as an interface file does, once and on the fast route too (which target runs it is the SP7b-T4 AC-1 row's)", () => {
   const profile: Profile = {
     version: 1,
@@ -1200,7 +1345,8 @@ test("SP7b-T4 AC-1: the e2e gate is planned from the change and the policy, exac
   addCriterion(work, "x");
   write(repo, "src/App.vue", "<template>hi</template>");
   const todo = await runTaskGate(paths, work, detected, withE2e, ["src/App.vue"]);
-  expect(todo.runs.map((r) => r.gate)).toEqual(["test"]);
+  // SP9-T6 AC-9 edits this line: a todo's gate lints its interface file (never the e2e run).
+  expect(todo.runs.map((r) => r.gate)).toEqual(["design-lint", "test"]);
   // The item's run: unavailable, with the command that would make it run.
   const noEnvironment =
     'no environment in the profile (crew profile set environment.start "<cmd>")';
@@ -1380,7 +1526,8 @@ test("SP7b-T5 AC-1: runTaskGate returns the judgement the todo's scope plans, an
   addCriterion(work, "x");
   write(root, "src/App.vue", "<template>hi</template>");
   const ui = await runTaskGate(paths, work, profile, DEFAULT_POLICY, ["src/App.vue"]);
-  expect(ui.runs.map((r) => r.gate)).toEqual(["test"]);
+  // SP9-T6 AC-9 edits this line: a todo's gate lints its interface file beside the scoped test.
+  expect(ui.runs.map((r) => r.gate)).toEqual(["design-lint", "test"]);
   expect(ui.judgement).toEqual([{ gate: "ui-ux", reason: "interface files: src/App.vue" }]);
   expect((await runTaskGate(paths, work, profile, DEFAULT_POLICY, ["src/a.ts"])).judgement).toEqual(
     [],
@@ -1524,7 +1671,9 @@ test("SP6-T2 AC-3 (round 2): a pack's scoped test template is not run while prop
     pack: "wizardingcode-pack-x",
   };
   const planned = { gate: "test" as const, target: "." };
-  const held = await runOneGate(paths, work, profile, planned, "fp", ["src/a.ts"], ["src/a.ts"]);
+  const held = await runOneGate(paths, work, profile, planned, "fp", ["src/a.ts"], DEFAULT_POLICY, [
+    "src/a.ts",
+  ]);
   expect(held.status).toBe("unavailable");
   expect(held.confirmed).toBe(false);
   expect(held.reason).toBe(
@@ -1541,17 +1690,21 @@ test("SP6-T2 AC-3 (round 2): a pack's scoped test template is not run while prop
     planned,
     "fp",
     ["src/a.ts"],
+    DEFAULT_POLICY,
     ["src/a.ts"],
   );
   expect(stillHeld.status).toBe("unavailable");
   expect(existsSync(scoped)).toBe(false);
   // The template confirmed: it runs.
   target.testScoped.source = "confirmed";
-  const ran = await runOneGate(paths, work, profile, planned, "fp", ["src/a.ts"], ["src/a.ts"]);
+  const ran = await runOneGate(paths, work, profile, planned, "fp", ["src/a.ts"], DEFAULT_POLICY, [
+    "src/a.ts",
+  ]);
   expect(ran.status).toBe("pass");
   expect(existsSync(scoped)).toBe(true);
   // Without a scope the whole command runs as before, the template untouched.
-  const whole = await runOneGate(paths, work, profile, planned, "fp", ["src/a.ts"]);
+  // SP9-T6 AC-9: runOneGate takes the policy after the change (the argument order, no behaviour).
+  const whole = await runOneGate(paths, work, profile, planned, "fp", ["src/a.ts"], DEFAULT_POLICY);
   expect(whole.status).toBe("pass");
   expect(existsSync(join(root, "whole.txt"))).toBe(true);
 });
@@ -1565,7 +1718,15 @@ test("SP6-T2 AC-3 (round 3): a pack's proposed e2e command is held before the en
     pack: "wizardingcode-pack-x",
   };
   const planned = { gate: "e2e" as const, target: "." };
-  const held = await runOneGate(paths, work, profile, planned, "fp", ["src/App.vue"]);
+  const held = await runOneGate(
+    paths,
+    work,
+    profile,
+    planned,
+    "fp",
+    ["src/App.vue"],
+    DEFAULT_POLICY,
+  );
   expect(held.status).toBe("unavailable");
   expect(held.confirmed).toBe(false);
   expect(held.reason).toBe(
@@ -1575,7 +1736,15 @@ test("SP6-T2 AC-3 (round 3): a pack's proposed e2e command is held before the en
   // The hold stands before the runner: the environment was never started.
   expect(existsSync(join(root, "up.flag"))).toBe(false);
   target.gates.e2e.source = "confirmed";
-  const ran = await runOneGate(paths, work, profile, planned, "fp", ["src/App.vue"]);
+  const ran = await runOneGate(
+    paths,
+    work,
+    profile,
+    planned,
+    "fp",
+    ["src/App.vue"],
+    DEFAULT_POLICY,
+  );
   expect(ran.status).toBe("pass");
   expect(existsSync(sentinel)).toBe(true);
 });

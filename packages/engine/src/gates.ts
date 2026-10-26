@@ -9,6 +9,7 @@ import {
   personalDataTerms,
   riskAreasForPaths,
 } from "./classify.ts";
+import { runDesignLint } from "./design-lint.ts";
 import { proposedByPack } from "./detect/index.ts";
 import { runE2e } from "./e2e.ts";
 import { computeVerdict, loadEvidence, type PlannedGate, updateEvidence } from "./evidence.ts";
@@ -45,7 +46,7 @@ import type {
   Target,
   WorkItem,
 } from "./types.ts";
-import { GATE_NAMES } from "./types.ts";
+import { GATE_NAMES, isBuiltInGate } from "./types.ts";
 import { isSkipped, raiseRoute } from "./work.ts";
 
 const MANIFESTS = new Set([
@@ -287,8 +288,10 @@ export function gatesForTarget(target: Target, policy: Policy, changed: string[]
   if (has("typecheck")) gates.push("typecheck");
   // On every route the audit looks at the change: dependencies the item did not touch are the owner's standing debt (ADR 0002).
   if (manifestChanged(changed)) gates.push("deps");
+  // The built-in gates are planned by the change, never required per target (secrets on every item,
+  // design-lint on a frontend path, e2e once per item).
   for (const gate of policy.requiredGates)
-    if (gate !== "secrets" && gate !== "e2e" && !gates.includes(gate)) gates.push(gate);
+    if (!isBuiltInGate(gate) && gate !== "e2e" && !gates.includes(gate)) gates.push(gate);
   return gates;
 }
 
@@ -314,6 +317,9 @@ export function plannedGates(
   root: string,
 ): PlannedGate[] {
   const planned: PlannedGate[] = [{ gate: "secrets", target: "." }];
+  // The design lint right after the scan, on a frontend path (an interface file or a design
+  // contract), on every route (SP9 Task 6).
+  if (changed.some(isFrontendPath)) planned.push({ gate: "design-lint", target: "." });
   const touched = profile.targets.filter(
     (t) => changed.length === 0 || changed.some((p) => covers(t, p)),
   );
@@ -428,7 +434,7 @@ export async function runTaskGate(
   const stamp = gitHead(paths.root) ?? "none";
   const runs: GateRun[] = [];
   for (const p of planned)
-    runs.push(await runOneGate(paths, work, profile, p, stamp, scope, scope));
+    runs.push(await runOneGate(paths, work, profile, p, stamp, scope, policy, scope));
   // The judgement the scope asks for is planned here and run by the roles, never by the engine (SP7b decision 14).
   return {
     status: runs.length && runs.every((r) => r.status === "pass") ? "pass" : "fail",
@@ -451,6 +457,7 @@ export async function runOneGate(
   planned: PlannedGate,
   fingerprint: string,
   changed: string[],
+  policy: Policy,
   scope?: readonly string[],
   logName?: string,
   env?: NodeJS.ProcessEnv,
@@ -482,6 +489,21 @@ export async function runOneGate(
       status: scan.status,
       durationMs: Date.now() - started,
       tail: scan.tail,
+    };
+  }
+  if (gate === "design-lint") {
+    // The design lint (SP9 Task 6): the item's change, or a todo's scope, read as text; the item's
+    // run writes the file the reviewer reads, a todo's run writes nothing.
+    return {
+      ...base,
+      ...runDesignLint({
+        paths,
+        work,
+        profile,
+        files: scope ?? changed,
+        policy,
+        writes: scope === undefined,
+      }),
     };
   }
   const target = targetOf(profile, planned);
@@ -754,6 +776,7 @@ export async function runGates(
       one,
       stamp,
       changed,
+      policy,
       undefined,
       undefined,
       options.env,

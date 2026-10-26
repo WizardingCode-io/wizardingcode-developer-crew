@@ -1,6 +1,14 @@
 import { expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import type { AuditRun, AuditRuns, AuditScope } from "../src/audit-run.ts";
 import { auditFiles, auditScope, cappedRefusal, runAudit, staleRefusal } from "../src/audit-run.ts";
@@ -188,4 +196,26 @@ test("SP8-T4 AC-1 (the security lead's return): a tree over the walk's cap is ne
   const atCap = await runAudit(paths, work, profile, DEFAULT_POLICY, { maxFiles: files.length });
   expect("capped" in atCap).toBe(false);
   expect(existsSync(join(workDir(paths, work.id), "audit", "files.txt"))).toBe(true);
+});
+
+test("SP9-T6 AC-1: the audit plans the design-lint gate out, as it plans e2e out, even when the tree holds an interface file", async () => {
+  const root = auditFixture();
+  mkdirSync(join(root, "src", "pages"), { recursive: true });
+  writeFileSync(
+    join(root, "src", "pages", "index.vue"),
+    "<style>.a { transition: all 200ms; }</style>\n",
+  );
+  git(root, "add", "-A");
+  git(root, "commit", "-qm", "a page");
+  const { paths, profile, work } = auditItem(root);
+  const result = await runAudit(paths, work, profile, DEFAULT_POLICY, {});
+  if (!("runs" in result)) throw new Error("the fixture is under the cap and HEAD unchanged");
+  expect(result.runs.map((r) => r.gate)).not.toContain("design-lint");
+  expect(result.runs.map((r) => r.gate).sort()).toEqual([
+    "build",
+    "deps",
+    "e2e",
+    "secrets",
+    "test",
+  ]);
 });

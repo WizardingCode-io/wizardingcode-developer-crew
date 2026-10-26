@@ -1551,6 +1551,8 @@ test("SP7b-T5 AC-3 (review): the engine's review files are denied to the Write t
     decision(onPreToolUse(ctx, { tool_name: "Bash", tool_input: { command } }));
   for (const denied of [
     "ruling.json",
+    // SP9-T6 AC-7 adds the lint's file: engine-owned under review/, as the rest.
+    "design-lint.json",
     "ui-ux.findings.md",
     "T-3/ui-ux.round1.md",
     "ui/../ruling.json",

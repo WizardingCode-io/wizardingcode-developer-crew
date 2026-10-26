@@ -29,6 +29,26 @@ Planned once per item when the change touches an interface file or a public-api 
 - **Unavailable** (`no environment in the profile`, `no e2e command`): the user sets what is missing (`crew profile set environment.start "<cmd>"`, `crew profile set e2e "<cmd>"`) or decides to skip the gate: `crew skip <id> gate:e2e --reason "<why>"` is the one gate skip the default policy allows (decision 9 of SP7b), recorded as the user's and named in the report.
 - **The UI/UX captures**: save the console file beside each capture, `review/ui/console-<page>-<state>.json`, from the browser's console tool; `crew gate run` prints `captures: <n> (<k> without a console file: <names>)`, and a capture without its file is not answerable for that page.
 
+## The design-lint gate
+
+A built-in gate like `secrets`: no command, nothing to set or unset, planned at the root right after the scan when the change touches a frontend path (an interface file or a design contract), on every route; a todo's gate runs it over the todo's files. It reads the changed interface files as text and judges only what text decides, one rule per line with its id in the tail:
+
+| Rule | Verdict | What it matches |
+| :- | :- | :- |
+| `motion/transition-all` | defect | `transition: all`, `transition-property: all`, the `transition-all` class |
+| `motion/scale-from-zero` | defect | `scale(0)`, `scale3d(0, …)`, `scaleX(0)`; a `scale-0` class beside a transition or animate class |
+| `motion/layout-property` | defect | a transition on width, height, top, left, right, bottom, margin or padding; such a declaration inside `@keyframes` |
+| `motion/duration-over-500` | defect | a literal over 500 ms in a transition or animation value, or a `duration-N` class over 500 |
+| `motion/ease-in` | advisory | `ease-in` (never `ease-in-out`) |
+| `motion/reduced-motion-missing` | defect | the change adds motion and no project file names `prefers-reduced-motion`, `useReducedMotion`, `reducedMotion` or `motion-reduce:` |
+| `hover/unguarded` | advisory | `:hover` in a file with no `(hover: hover)` query, once per file; a `hover:` class never |
+| `perf/will-change` | advisory | more than two `will-change` declarations in one file |
+| `tokens/raw-colour` | defect | a raw colour literal when `DESIGN.md`'s frontmatter declares `colors` |
+
+A duration written as `var(--x)`, `$name`, `@name`, `theme()`, `calc()` or `env()` is `unresolved`, counted and never judged. The run fails on a standing defect (`reason: <rule> <file>:<line>, +<n> more`) and passes with advisories alone; the tail lists every hit, the unresolved count and `inventory: <n> animated declarations (review/design-lint.json)`, the engine-owned file the UI/UX reviewer and the frontend lead read: the hits, the unresolved and every animated declaration of the change (file, line, kind, property, duration, easing). What text never decides is the reviewer's: whether to animate at all, springs, computed durations, GSAP timelines, Blade and Livewire runtime classes.
+
+A false positive carries its rule id: an inline comment `crew-lint: allow <rule> -- <why>` on the hit's line or the line above allows that one hit with its why (counted, named in the tail); `policy.json`'s `ui.lint.disabled: ["<rule>"]` keeps a rule's hits as disabled, named in the tail; `crew skip <id> gate:design-lint` only when a person lists the gate under `allowSkips` (it is not there by default). Never weaken a rule to pass: the values are the standard's (`references/frontend.md`).
+
 ## Judgement gates
 
 After the deterministic gates pass, `crew gate run <id>` cuts the change for review (`.crew/work/<id>/review/diff.patch`, `.crew/work/<id>/review/files.txt`) and prints the plan: `Judgement gates to run: code-quality (standard route), test-quality (standard route), security (risk area auth), ui-ux (interface files)`. Code quality and test quality run on standard and full; security on full, and on standard when a risk area is touched; UI/UX on any route when interface files changed; risk on full; architecture on full (the architects' seat); data when the change touches a data migration, on the full route (ETL's seat); infra when it touches infrastructure (a CI pipeline, a container, Terraform, Kubernetes or Helm, a deploy script), on the full route (DevOps's seat); and whatever the team policy adds (`team.always`, `judgementGates`). `crew team <id>` prints every seat the engine planned with its reason: launch exactly those, no other. The roles run as subagents with clean contexts; the engine records their ruling and judges the verdict from it. A judgement gate is never passed by default: it is proven, not proven with findings, or not run with a reason.

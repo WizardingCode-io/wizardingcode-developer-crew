@@ -203,5 +203,25 @@ test("SP7b-T4 AC-1: the e2e command comes from a test:e2e or e2e script (detecte
     command: "bun run e2e",
     source: "detected",
   });
-  expect(GATE_NAMES).toEqual(["build", "test", "lint", "typecheck", "secrets", "deps", "e2e"]);
+  // SP9-T6 AC-1 edits this line: design-lint joins right after secrets; the list still ends with e2e.
+  expect(GATE_NAMES).toEqual([
+    "build",
+    "test",
+    "lint",
+    "typecheck",
+    "secrets",
+    "design-lint",
+    "deps",
+    "e2e",
+  ]);
+  // A script named after the built-in gate proposes no command: the gate has none (SP9-T6 AC-1).
+  const lintScript = tempDir();
+  write(
+    lintScript,
+    "package.json",
+    JSON.stringify({ scripts: { "design-lint": "stylelint .", test: "vitest run" } }),
+  );
+  const gates = detectProfile(lintScript).targets[0]?.gates as Record<string, unknown> | undefined;
+  expect(gates?.["design-lint"]).toBeUndefined();
+  expect(gates?.test).toEqual({ command: "npm run test", source: "detected" });
 });

@@ -1129,3 +1129,25 @@ test("2026-10-25-004 AC-3 (finding 164): the skill says a red is traced to its o
   expect(build).toContain("made real in code");
   expect(Buffer.byteLength(skill, "utf8")).toBeLessThanOrEqual(SKILL_PAGE_MAX_BYTES);
 });
+
+test("SP9-T6 AC-8: gate.md names the design-lint gate, its nine rules by id, what text never decides, the allowances and the file the reviewer reads", () => {
+  const gate = readReference("gate.md");
+  expect(gate).toContain("## The design-lint gate");
+  for (const rule of [
+    "motion/transition-all",
+    "motion/scale-from-zero",
+    "motion/layout-property",
+    "motion/duration-over-500",
+    "motion/ease-in",
+    "motion/reduced-motion-missing",
+    "hover/unguarded",
+    "perf/will-change",
+    "tokens/raw-colour",
+  ])
+    expect(gate).toContain(`\`${rule}\``);
+  expect(gate).toContain("crew-lint: allow");
+  expect(gate).toContain("ui.lint.disabled");
+  expect(gate).toContain("review/design-lint.json");
+  expect(gate).toMatch(/whether to animate/);
+  expect(gate).toMatch(/allowSkips/);
+});

@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { exists, readJson } from "../fs.ts";
-import type { GateName } from "../types.ts";
+import type { CommandGate, GateName } from "../types.ts";
 import { hasTestFiles, testScripts } from "./scripts.ts";
 import type { DetectedTarget, Detector } from "./types.ts";
 
@@ -22,7 +22,7 @@ function workspaceGlobs(pkg: PackageJson): string[] {
 }
 
 // `test:*` scripts are read by the convention in scripts.ts, so only the plain names sit here.
-const SCRIPT_CANDIDATES: Record<Exclude<GateName, "secrets" | "deps">, string[]> = {
+const SCRIPT_CANDIDATES: Record<CommandGate, string[]> = {
   build: ["build"],
   test: ["test", "unit"],
   lint: ["lint", "lint:check", "eslint", "biome"],
