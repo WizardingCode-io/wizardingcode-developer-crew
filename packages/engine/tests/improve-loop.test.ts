@@ -499,7 +499,7 @@ test("2026-10-25-005 AC-14 (through the tick): a gateway's token and a base URL'
 
 test("2026-10-25-005 AC-16 (the back-off): a tick that fails after the run keeps the run on record and waits before the next, doubling up to a day; a later tick runs again", async () => {
   const world = loopWorld();
-  const raced = tickDeps(world, { raceOrigin: true });
+  const raced = tickDeps(world, { refusePush: true });
   expect(await tick({}, raced.deps)).toBe(1);
   const state = JSON.parse(readFileSync(join(world.home, "state.json"), "utf8"));
   expect(state.lastRun.run).toBe("2026-10-25-1");
@@ -508,13 +508,13 @@ test("2026-10-25-005 AC-16 (the back-off): a tick that fails after the run keeps
   expect((raced.seen.sh.find((c) => c[0] === "osascript") as string[]).join(" ")).toContain(
     "waits 1 h",
   );
-  const early = tickDeps(world, { now: "2026-10-25T20:30:00.000Z" });
+  const early = tickDeps(world, { now: "2026-10-25T20:30:00.000Z", refusePush: true });
   expect(await tick({}, early.deps)).toBe(0);
   expect(early.seen.log.join("\n")).toContain(
     "backing off until 2026-10-25T21:00:00.000Z after 1 failed tick(s)",
   );
   expect(early.seen.improve).toEqual([]);
-  // The clone is brought to origin even while backing off: the unpushed record could not go (origin moved) and is dropped.
+  // The clone is brought to origin even while backing off: the unpushed record could not go (the push refused) and is dropped.
   expect(early.seen.log.join("\n")).toContain(
     "an earlier run's commits could not be pushed and are dropped",
   );
@@ -724,8 +724,12 @@ function tickDeps(
     releaseStep?: number;
     /** A text the run's record carries (a secret the editor echoed, for AC-14). */
     echo?: string;
-    /** Origin moves during the run, so the tick's push is rejected (the back-off, AC-16). */
-    raceOrigin?: boolean;
+    /** Origin moves during the run by a commit writing this path on the user's clone (finding 172). */
+    raceTouching?: string;
+    /** Origin moves again, by a commit writing this path, between the adoption's release and the report's push. */
+    raceAfterAdoption?: string;
+    /** Origin refuses every push: the one failure the loop cannot heal (the back-off, AC-16). */
+    refusePush?: boolean;
     secret?: string;
   } = {},
 ): { deps: TickDeps; seen: Seen } {
@@ -740,6 +744,8 @@ function tickDeps(
     boot: () => "boot-1",
     alive: () => options.alive ?? false,
     git: (args, cwd) => {
+      if (options.refusePush && args[0] === "push")
+        return { status: 1, stdout: "", stderr: "! [remote rejected] main (refused)" };
       const r = spawnSync("git", args, {
         cwd,
         encoding: "utf8",
@@ -791,8 +797,11 @@ function tickDeps(
       };
       writeFileSync(join(folder, "record.json"), `${JSON.stringify(record, null, 2)}\n`);
       writeFileSync(join(folder, "record.md"), `# ${record.run}\n\n${options.echo ?? ""}\n`);
-      if (options.raceOrigin) {
-        git(world.user, "commit", "-q", "--allow-empty", "-m", "race");
+      if (options.raceTouching) {
+        mkdirSync(join(world.user, dirname(options.raceTouching)), { recursive: true });
+        writeFileSync(join(world.user, options.raceTouching), "moved during the run\n");
+        git(world.user, "add", "-A");
+        git(world.user, "commit", "-q", "-m", `race: ${options.raceTouching}`);
         git(world.user, "push", "-q", "origin", "main");
       }
       if (options.kept) {
@@ -818,6 +827,19 @@ function tickDeps(
         git(opts.root, "commit", "-q", "-m", `Release ${version}: ${opts.reason}`);
         git(opts.root, "tag", `v${version}`);
         git(opts.root, "push", "-q", "origin", "main", `v${version}`);
+        if (options.raceAfterAdoption) {
+          git(world.user, "pull", "-q", "--rebase", "origin", "main");
+          writeFileSync(join(world.user, options.raceAfterAdoption), "moved after the adoption\n");
+          git(world.user, "add", "-A");
+          git(
+            world.user,
+            "commit",
+            "-q",
+            "-m",
+            `race after the adoption: ${options.raceAfterAdoption}`,
+          );
+          git(world.user, "push", "-q", "origin", "main");
+        }
         return { version, code: 0, failedStep: null, pending: false };
       }
       const step = options.releaseStep ?? 9;
@@ -1456,6 +1478,187 @@ test("2026-10-25-011 AC-1: status counts the agent's stderr from the size the ti
   // The log rotated (shorter than the recorded size): read from its start.
   writeFileSync(errLog, `${failed}\n`);
   expect(status()).toContain("agent stderr: 1 line(s) after the last tick (log/tick.err.log)");
+});
+
+/** The record a tick that died after its commit leaves unpushed, committed on the clone's main. */
+function leaveRecordUnpushed(repo: string, run: string): void {
+  const left = join(repo, "docs/improve", run);
+  mkdirSync(left, { recursive: true });
+  writeFileSync(
+    join(left, "record.json"),
+    `${JSON.stringify({ run, at: "2026-10-25T23:30:00.000Z", targets: [], baseline: {}, proposals: [], composition: null, kept: null, branch: null, provider: null, costUsd: 0, exit: 0 })}\n`,
+  );
+  git(repo, "add", "-A", "docs/improve");
+  git(repo, "commit", "-q", "-m", `Improvement run ${run}: nothing kept`);
+}
+
+test("2026-10-26-001 AC-5: main moved during the run inside docs/ alone: the records are rebased and pushed, the adoption proceeds on the new main, no back-off", async () => {
+  const world = loopWorld();
+  const raced = tickDeps(world, {
+    kept: true,
+    raceTouching: "docs/notes.md",
+    raceAfterAdoption: "docs/notes-2.md",
+  });
+  expect(await tick({}, raced.deps)).toBe(0);
+  const state = JSON.parse(readFileSync(join(world.home, "state.json"), "utf8"));
+  expect(state.failures).toBe(0);
+  expect(state.backoffUntil).toBeNull();
+  const log = raced.seen.log.join("\n");
+  expect(log).toMatch(
+    /main moved during the run \([0-9a-f]{7}\.\.[0-9a-f]{7}\) in docs\/ alone: adopting on the new main/,
+  );
+  expect(raced.seen.judge).toBe(1);
+  expect(raced.seen.release).toHaveLength(1);
+  // Origin's main: the race commit, then the record on top of it.
+  const subjects = git(world.origin, "log", "--format=%s", "main").split("\n");
+  const record = subjects.findIndex((s) => s.startsWith("Improvement run 2026-10-25-1:"));
+  expect(record).toBeGreaterThanOrEqual(0);
+  expect(record).toBeLessThan(subjects.indexOf("race: docs/notes.md"));
+  expect(existsSync(join(world.home, "repo/docs/notes.md"))).toBe(true);
+  // The report's push after the adoption met a main that moved again: rebased onto it too.
+  const report = subjects.indexOf("Improvement run 2026-10-25-1: the day's report");
+  expect(report).toBeGreaterThanOrEqual(0);
+  expect(report).toBeLessThan(subjects.indexOf("race after the adoption: docs/notes-2.md"));
+  expect(existsSync(join(world.home, "repo/docs/notes-2.md"))).toBe(true);
+});
+
+test("2026-10-26-001 AC-5: main moved during the run beyond docs/: the records land, nothing is adopted, the branch is on origin, the next tick starts from the new main", async () => {
+  const world = loopWorld();
+  const raced = tickDeps(world, { kept: true, raceTouching: "scripts/x.ts" });
+  expect(await tick({}, raced.deps)).toBe(0);
+  const state = JSON.parse(readFileSync(join(world.home, "state.json"), "utf8"));
+  expect(state.failures).toBe(0);
+  expect(state.backoffUntil).toBeNull();
+  const waiting =
+    "beyond docs/ (scripts/x.ts): nothing adopted on the tree that was not measured; the next tick starts from the new main (branch improve/2026-10-25-1 kept)";
+  expect(raced.seen.log.join("\n")).toContain(waiting);
+  expect(raced.seen.judge).toBe(0);
+  expect(raced.seen.release).toEqual([]);
+  const notice = (raced.seen.sh.find((c) => c[0] === "osascript") as string[]).join(" ");
+  expect(notice).toContain("main moved during the run");
+  expect(notice).toContain(waiting);
+  const subjects = git(world.origin, "log", "--format=%s", "main");
+  expect(subjects).toContain("race: scripts/x.ts");
+  expect(subjects).toContain("Improvement run 2026-10-25-1:");
+  expect(git(world.origin, "branch", "--list", "improve/2026-10-25-1")).toContain(
+    "improve/2026-10-25-1",
+  );
+});
+
+test("2026-10-26-001 AC-7: a race on the day's report makes the records' rebase fail: aborted, the tick backs off naming the rebase, the clone stays on main; the next tick drops them naming the rebase too", async () => {
+  const world = loopWorld();
+  const raced = tickDeps(world, { raceTouching: "docs/improve/daily/2026-10-25.md" });
+  expect(await tick({}, raced.deps)).toBe(1);
+  const state = JSON.parse(readFileSync(join(world.home, "state.json"), "utf8"));
+  expect(state.failures).toBe(1);
+  expect(state.backoffUntil).toBe("2026-10-25T21:00:00.000Z");
+  // The message carries git's own line.
+  expect(raced.seen.log.join("\n")).toMatch(
+    /the tick failed: the records could not be rebased onto origin\/main: error: could not apply [0-9a-f]+/,
+  );
+  expect((raced.seen.sh.find((c) => c[0] === "osascript") as string[]).join(" ")).toContain(
+    "the tick failed: the records could not be rebased onto origin/main: error: could not apply",
+  );
+  const repo = join(world.home, "repo");
+  expect(git(repo, "symbolic-ref", "--short", "HEAD").trim()).toBe("main");
+  expect(existsSync(join(repo, ".git/rebase-merge"))).toBe(false);
+  expect(existsSync(join(repo, ".git/rebase-apply"))).toBe(false);
+  const lost = git(repo, "rev-parse", "HEAD").trim();
+  // The next tick's recovery meets the same conflict: dropped, the rebase named (AC-2); the
+  // cases are unmeasured again, so the tick runs anew on the moved main.
+  const later = tickDeps(world, { now: "2026-10-25T22:00:00.000Z" });
+  expect(await tick({}, later.deps)).toBe(0);
+  expect(later.seen.log.join("\n")).toContain(
+    "an earlier run's commits could not be rebased onto origin/main and are dropped: ",
+  );
+  expect(git(world.origin, "log", "--format=%H", "main")).not.toContain(lost);
+  expect(later.seen.improve).toHaveLength(1);
+});
+
+test("2026-10-26-001 AC-6: records left unpushed behind an origin that moved on the harness are rebased and pushed; a local commit touching scripts/ is dropped", async () => {
+  const world = loopWorld();
+  expect(await tick({}, tickDeps(world).deps)).toBe(0);
+  const repo = join(world.home, "repo");
+  leaveRecordUnpushed(repo, "2026-10-25-9");
+  git(world.user, "pull", "-q", "--rebase", "origin", "main");
+  writeFileSync(
+    join(world.user, "plugins/core/skills/crew/SKILL.md"),
+    "# Crew\n\nMoved by a person.\n",
+  );
+  git(world.user, "commit", "-q", "-am", "a person's push");
+  git(world.user, "push", "-q", "origin", "main");
+  const recovered = tickDeps(world, { now: "2026-10-26T01:00:00.000Z" });
+  expect(await tick({}, recovered.deps)).toBe(0);
+  expect(recovered.seen.log.join("\n")).toContain("an earlier run's commits pushed");
+  const subjects = git(world.origin, "log", "--format=%s", "main").split("\n");
+  expect(subjects.indexOf("Improvement run 2026-10-25-9: nothing kept")).toBeGreaterThanOrEqual(0);
+  expect(subjects.indexOf("Improvement run 2026-10-25-9: nothing kept")).toBeLessThan(
+    subjects.indexOf("a person's push"),
+  );
+  // A local commit touching scripts/ is beyond the records: dropped, never on origin.
+  writeFileSync(join(repo, "scripts/x.ts"), "export {};\n");
+  git(repo, "add", "-A");
+  git(repo, "commit", "-q", "-m", "not a record");
+  const cleaned = tickDeps(world, { now: "2026-10-26T02:00:00.000Z" });
+  expect(await tick({}, cleaned.deps)).toBe(0);
+  expect(cleaned.seen.log.join("\n")).toContain(
+    "local commits beyond the records dropped (scripts/x.ts)",
+  );
+  expect(git(world.origin, "log", "--format=%s", "main")).not.toContain("not a record");
+});
+
+test("2026-10-26-001 AC-2: the recovery drops records only when the rebase or the push fails, naming which", async () => {
+  const world = loopWorld();
+  expect(await tick({}, tickDeps(world).deps)).toBe(0);
+  const repo = join(world.home, "repo");
+  // A conflict: the record left unpushed writes the day's report, and origin moved on the same file.
+  leaveRecordUnpushed(repo, "2026-10-25-9");
+  writeFileSync(join(repo, "docs/improve/daily/2026-10-26.md"), "# the loop's report\n");
+  git(repo, "add", "-A", "docs/improve");
+  git(repo, "commit", "-q", "-m", "Improvement run 2026-10-25-9: the day's report");
+  git(world.user, "pull", "-q", "--rebase", "origin", "main");
+  mkdirSync(join(world.user, "docs/improve/daily"), { recursive: true });
+  writeFileSync(join(world.user, "docs/improve/daily/2026-10-26.md"), "# a person's report\n");
+  git(world.user, "add", "-A");
+  git(world.user, "commit", "-q", "-m", "a person's report");
+  git(world.user, "push", "-q", "origin", "main");
+  const conflicted = tickDeps(world, { now: "2026-10-26T01:00:00.000Z" });
+  expect(await tick({}, conflicted.deps)).toBe(0);
+  expect(conflicted.seen.log.join("\n")).toContain(
+    "an earlier run's commits could not be rebased onto origin/main and are dropped: ",
+  );
+  expect(git(world.origin, "log", "--format=%s", "main")).not.toContain("2026-10-25-9");
+  expect(git(repo, "symbolic-ref", "--short", "HEAD").trim()).toBe("main");
+  // A refused push: dropped, the refusal named.
+  leaveRecordUnpushed(repo, "2026-10-26-8");
+  const refused = tickDeps(world, { now: "2026-10-26T02:00:00.000Z", refusePush: true });
+  expect(await tick({}, refused.deps)).toBe(0);
+  expect(refused.seen.log.join("\n")).toContain(
+    "an earlier run's commits could not be pushed and are dropped: ! [remote rejected] main (refused)",
+  );
+});
+
+test("2026-10-26-001 AC-9: a refused push fails the tick naming the records' push, backs off as before, and on a moved origin leaves the records rebased for the next tick's recovery", async () => {
+  const world = loopWorld();
+  const refused = tickDeps(world, { raceTouching: "docs/notes.md", refusePush: true });
+  expect(await tick({}, refused.deps)).toBe(1);
+  const state = JSON.parse(readFileSync(join(world.home, "state.json"), "utf8"));
+  expect(state.failures).toBe(1);
+  expect(state.backoffUntil).toBe("2026-10-25T21:00:00.000Z");
+  expect(refused.seen.log.join("\n")).toContain(
+    "the tick failed: the records' push was refused: ! [remote rejected] main (refused); the next tick pushes them again; the next tick waits 1 h",
+  );
+  const repo = join(world.home, "repo");
+  // The rebase came before the refused push: the records sit on top of the moved origin/main.
+  expect(() => git(repo, "merge-base", "--is-ancestor", "origin/main", "HEAD")).not.toThrow();
+  // The next tick's recovery pushes them as they are.
+  const later = tickDeps(world, { now: "2026-10-25T22:00:00.000Z" });
+  expect(await tick({}, later.deps)).toBe(0);
+  expect(later.seen.log.join("\n")).toContain("an earlier run's commits pushed");
+  const subjects = git(world.origin, "log", "--format=%s", "main").split("\n");
+  const record = subjects.findIndex((s) => s.startsWith("Improvement run 2026-10-25-1:"));
+  expect(record).toBeGreaterThanOrEqual(0);
+  expect(record).toBeLessThan(subjects.indexOf("race: docs/notes.md"));
 });
 
 test("2026-10-25-005 AC-8 (the probe): the first tick records what the agent reaches, never a secret's value", () => {

@@ -839,6 +839,35 @@ export async function tick(options: { dryRun?: boolean }, deps: TickDeps): Promi
     must(["commit", "-q", "-m", message]);
     return true;
   };
+  /**
+   * The clone's main rebased onto origin/main when origin moved (finding 172): null, or git's first
+   * line when the rebase failed, the rebase aborted so the clone stays on main.
+   */
+  const rebaseOntoOrigin = (): string | null => {
+    if (git(["merge-base", "--is-ancestor", "origin/main", "HEAD"]).status === 0) return null;
+    const rebased = git(["rebase", "-q", "origin/main"]);
+    if (rebased.status === 0) return null;
+    git(["rebase", "--abort"]);
+    return rebased.stderr.trim().split("\n")[0] ?? "";
+  };
+  /**
+   * The clone's main pushed with `branches`, the records rebased onto origin/main first when a
+   * person moved it during the run (finding 172); a rebase or a push that fails throws, so the
+   * back-off applies. Returns where origin/main stood before the push.
+   */
+  const pushMain = (branches: string[]): string => {
+    must(["fetch", "-q", "origin"]);
+    const base = must(["rev-parse", "origin/main"]).trim();
+    const failed = rebaseOntoOrigin();
+    if (failed !== null)
+      throw new Error(`the records could not be rebased onto origin/main: ${failed}`);
+    const pushed = git(["push", "-q", "origin", "main", ...branches]);
+    if (pushed.status !== 0)
+      throw new Error(
+        `the records' push was refused: ${pushed.stderr.trim().split("\n")[0] ?? ""}; the next tick pushes them again`,
+      );
+    return base;
+  };
   const day: DayState = state.day?.date === date ? state.day : { date, releases: [], failures: [] };
   state.day = day;
 
@@ -881,7 +910,9 @@ export async function tick(options: { dryRun?: boolean }, deps: TickDeps): Promi
     }
     if (git(["rev-list", "--count", "origin/main..HEAD"]).stdout.trim() !== "0") {
       // Only the records go: a merge an interrupted adoption left behind never reaches origin ungated.
-      const touched = git(["diff", "--name-only", "origin/main..HEAD"])
+      // The local commits' own changes (three dots, from the merge base), so a moved origin's files
+      // are not counted against them (finding 172).
+      const touched = git(["diff", "--name-only", "origin/main...HEAD"])
         .stdout.split("\n")
         .filter((l) => l.trim() !== "");
       const beyond = touched.filter((path) => !path.startsWith("docs/improve/"));
@@ -894,15 +925,25 @@ export async function tick(options: { dryRun?: boolean }, deps: TickDeps): Promi
           .filter((l) => l.trim() !== "");
         const remote = git(["ls-remote", "--heads", "origin", "improve/*"]).stdout;
         const branches = local.filter((b) => !remote.includes(`refs/heads/${b}`));
-        const pushed = git(["push", "-q", "origin", "main", ...branches]);
-        log(
-          pushed.status === 0
-            ? `an earlier run's commits pushed${branches.length ? ` (with ${branches.join(", ")})` : ""}`
-            : `an earlier run's commits could not be pushed and are dropped: ${pushed.stderr.trim().split("\n")[0] ?? ""}`,
-        );
+        // Origin moved meanwhile: the records go on top of it, or are dropped when they cannot.
+        const unrebased = rebaseOntoOrigin();
+        if (unrebased !== null)
+          log(
+            `an earlier run's commits could not be rebased onto origin/main and are dropped: ${unrebased}`,
+          );
+        else {
+          const pushed = git(["push", "-q", "origin", "main", ...branches]);
+          log(
+            pushed.status === 0
+              ? `an earlier run's commits pushed${branches.length ? ` (with ${branches.join(", ")})` : ""}`
+              : `an earlier run's commits could not be pushed and are dropped: ${pushed.stderr.trim().split("\n")[0] ?? ""}`,
+          );
+        }
       }
     }
     must(["reset", "-q", "--hard", "origin/main"]);
+    // Where main stood when the run started: the base its figures were measured against (finding 172).
+    const syncedMain = must(["rev-parse", "HEAD"]).trim();
     git(["worktree", "prune"]);
     for (const name of existsSync(deps.tmpdir) ? readdirSync(deps.tmpdir) : [])
       if (
@@ -995,12 +1036,30 @@ export async function tick(options: { dryRun?: boolean }, deps: TickDeps): Promi
       );
     report();
     commitDocs(`Improvement run ${latest.run}: ${verdictText(latest)}`);
-    must(["push", "-q", "origin", "main", ...(latest.branch ? [latest.branch] : [])]);
+    const base = pushMain(latest.branch ? [latest.branch] : []);
     // The adoption (D-4, D-5, D-9): its merge is undone when the release fails before its push,
     // so nothing unreleased ever reaches origin/main.
     let released: string | null = null;
     let reason: string | null = latest.kept ? null : `run ${latest.run}: ${verdictText(latest)}`;
-    if (latest.kept) {
+    // Main moved during the run (finding 172): the figures were measured against the whole tree,
+    // so the adoption is made on the new main only when the move changed nothing outside docs/;
+    // otherwise nothing is adopted on a tree that was not measured, and the next tick starts anew.
+    let stale = false;
+    if (latest.kept && base !== syncedMain) {
+      const moved = git(["diff", "--name-only", "--no-renames", syncedMain, base])
+        .stdout.split("\n")
+        .filter((l) => l.trim() !== "");
+      const outside = moved.filter((path) => !path.startsWith("docs/"));
+      const span = `${syncedMain.slice(0, 7)}..${base.slice(0, 7)}`;
+      if (outside.length === 0)
+        log(`main moved during the run (${span}) in docs/ alone: adopting on the new main`);
+      else {
+        stale = true;
+        reason = `run ${latest.run}: kept, but main moved during the run (${span}) beyond docs/ (${outside[0]}): nothing adopted on the tree that was not measured; the next tick starts from the new main (branch ${latest.branch} kept)`;
+        log(reason);
+      }
+    }
+    if (latest.kept && !stale) {
       const judgeText = existsSync(join(repo, "plugins/core/agents/judge.md"))
         ? readFileSync(join(repo, "plugins/core/agents/judge.md"), "utf8").replace(
             /^---[\s\S]*?---\n/,
@@ -1061,8 +1120,7 @@ export async function tick(options: { dryRun?: boolean }, deps: TickDeps): Promi
       reason = adopted.reason;
       // The adoption's files and the day's report, with what the release did.
       report();
-      if (commitDocs(`Improvement run ${latest.run}: the day's report`))
-        must(["push", "-q", "origin", "main"]);
+      if (commitDocs(`Improvement run ${latest.run}: the day's report`)) pushMain([]);
     }
     const checkoutNote = deps.userCheckout
       ? fastForwardUserCheckout(deps.userCheckout, deps.git)
