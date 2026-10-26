@@ -28,8 +28,10 @@ function openFindings(text: string): number[] {
 // which waits for the upstream fix (77, measured by docs/evals/2026-10-24-sandbox-probe.md), and the
 // PowerShell layer, which waits for Windows users' issues (114, the user's decision of 2026-10-24).
 // After 0.15.0: 163 and 164 closed by 2026-10-25-005 and 2026-10-25-004; the mailbox lock's
-// two-writer test flaky under load (168), for the item after 2026-10-25-007.
-const OPEN = [77, 114];
+// two-writer test flaky under load (168), for the item after 2026-10-25-007. After 0.15.1: the tick's
+// own lessons making the next tick due (174, item 2026-10-26-003) and the eval kit's kept sandboxes
+// piling up in /private/tmp (175).
+const OPEN = [77, 114, 174, 175];
 
 test("AC-9 (consolidation of 2026-10-24): the findings that read open are the named ones, and the thirteen closed by the consolidation read closed", () => {
   const open = openFindings(readFileSync(FINDINGS, "utf8"));

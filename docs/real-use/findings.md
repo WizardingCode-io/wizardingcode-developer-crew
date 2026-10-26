@@ -1383,3 +1383,19 @@ Verdicts agree at every effort. Upheld findings: `high` reproduced Task 6's and 
 - Expected: one helper for git's first line, when the module is next consolidated.
 - Evidence: `.crew/work/2026-10-26-001-finding-172-a-push-to-main-while-a-tick/review/ruling.json` and `ruling.round1.json`.
 - Outcome: recorded as an advisory by the user's rule; it is for the next consolidation of `scripts/improve-loop.ts`.
+
+### 174. The tick records the lessons count it read at its start, so the lessons the run itself writes make the next tick due
+
+- Date: 2026-10-26. Project: this repository. Item: none yet (seen in `crew improve-loop status` after the restart). Category: `defect`. Severity: medium.
+- What happened: every tick of 2026-10-26 was due for "the harness lessons grew" (0 to 2, 2 to 4, 4 to 6, 6 to 8, the log of `~/.wizardingcode/crew-improve/log/2026-10-26.log`). The tick reads the count of harness lessons before the run (`facts.lessons`) and writes that same count into `state.lastRun.lessons` after it; the run itself records one or two harness lessons per proposal (K-141 to K-148 all point at `docs/improve/<run>/record.json`), so at the next tick the base holds more lessons than the state says and the run is due again, whatever the cases' measurements say. The state now says 8 and the base holds 9: the 10:00 tick is due by this alone. Once every case is measured, the loop runs every hour forever, 13 to 32 USD a run on the user's runtime quota (88.99 USD over four runs today, nothing kept).
+- Expected: the loop's own lessons never make it due; only lessons written outside it do (a proven item's `crew learn`, a session). The tick stores the count the base holds after the run, read again once the run ends, and the due rule stays as it is.
+- Evidence: `scripts/improve-loop.ts` (`facts.lessons` read before `deps.improve`, `state.lastRun.lessons: facts.lessons` after it; `dueRun`'s lessons branch), `~/.wizardingcode/crew-improve/state.json` (`lastRun.lessons: 8`), `~/.wizardingcode/crew/knowledge/base.json` (9 harness lessons, K-145 to K-148 from the runs of the day).
+- Outcome: open.
+
+### 175. The eval kit's kept sandboxes of the loop's runs pile up in `/private/tmp`
+
+- Date: 2026-10-26. Project: this repository. Item: none. Category: `debt`. Severity: low.
+- What happened: `/private/tmp` holds 309 `e-*` directories kept by `claude plugin eval` from the runs of the loop and of the sessions ("kept /private/tmp/e-…: home/ and tmp/ in it were written by the plugin under test and are sealed", `~/.wizardingcode/crew-improve/log/tick.err.log`, three in the 08:00 run alone); they are read-only and sealed (mode 000), nothing in the tick removes them once the run's record and result folders are written, and the kept results in `plugins/core/evals/results/` (128 folders, 5.4 MB) grow with them.
+- Expected: once a run's record is written, the tick removes the sandboxes its own runs kept (the record and the result folders hold what is read later), or the kit is asked not to keep them; the results folder is bounded the same way.
+- Evidence: `ls -d /private/tmp/e-* | wc -l` (309), `~/.wizardingcode/crew-improve/log/tick.err.log`, `plugins/core/evals/results/`.
+- Outcome: open.

@@ -171,7 +171,7 @@ export interface LastRun {
   head: string;
   /** The CTO plan the run read, by its identity (the file's path and date), or null. */
   plan: string | null;
-  /** How many harness lessons the base held. */
+  /** How many harness lessons the base held when the run ended, the run's own included (finding 174). */
   lessons: number;
 }
 
@@ -615,6 +615,24 @@ interface LoopRecord extends AdoptionRecord {
   provider: { name: string; claudeModels: boolean } | null;
   costUsd: number;
   exit: number;
+  /** The ids of the harness lessons the run recorded (`string[]` as `scripts/improve.ts` writes it); what the clone holds is not checked (finding 174). */
+  lessons?: unknown;
+}
+
+/** How many distinct harness lessons a record lists: the string ids of its `lessons` array, 0 for a record without one or with another shape (finding 174). */
+function listedLessons(record: Pick<LoopRecord, "lessons">): number {
+  return Array.isArray(record.lessons)
+    ? new Set(record.lessons.filter((id): id is string => typeof id === "string")).size
+    : 0;
+}
+
+/** The lessons count a tick stores after its run (finding 174): the count from before the run plus the lessons the record lists, never above what the base holds now; so the run's own lessons never make the next tick due, while one added from outside during the run still does. */
+function lessonsAfterRun(
+  before: number,
+  record: Pick<LoopRecord, "lessons">,
+  heldNow: number,
+): number {
+  return Math.min(heldNow, before + listedLessons(record));
 }
 
 function readRecords(repo: string): LoopRecord[] {
@@ -1020,7 +1038,8 @@ export async function tick(options: { dryRun?: boolean }, deps: TickDeps): Promi
       at: now.toISOString(),
       head: facts.pluginHead,
       plan: facts.plan,
-      lessons: facts.lessons,
+      // The base read again now the run ended (finding 174): see lessonsAfterRun.
+      lessons: lessonsAfterRun(facts.lessons, latest, deps.lessons(repo)),
       run: latest.run,
     };
     state.failures = 0;

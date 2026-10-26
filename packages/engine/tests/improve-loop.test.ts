@@ -671,6 +671,8 @@ function loopWorld(options: { loop?: boolean } = {}): {
   user: string;
   home: string;
   tmp: string;
+  /** The base's harness lessons as the tick's `lessons` dep counts them; the improvement stub adds the run's own (finding 174). */
+  lessons: { held: number };
 } {
   const base = tempDir("loop-");
   const seed = join(base, "seed");
@@ -700,7 +702,7 @@ function loopWorld(options: { loop?: boolean } = {}): {
   mkdirSync(home, { recursive: true });
   const tmp = join(base, "tmp");
   mkdirSync(tmp, { recursive: true });
-  return { origin, user, home, tmp };
+  return { origin, user, home, tmp, lessons: { held: 0 } };
 }
 
 type Seen = {
@@ -730,6 +732,8 @@ function tickDeps(
     raceAfterAdoption?: string;
     /** Origin refuses every push: the one failure the loop cannot heal (the back-off, AC-16). */
     refusePush?: boolean;
+    /** The base's harness lessons during the run (finding 174): what the record lists (written as given, absent for `undefined`) and how many the base gains; by default the run's own lesson, listed and gained. */
+    lessons?: { listed: unknown; gained: number };
     secret?: string;
   } = {},
 ): { deps: TickDeps; seen: Seen } {
@@ -773,6 +777,11 @@ function tickDeps(
       const run = `${date}-${taken + 1}`;
       const folder = join(repo, "docs/improve", run);
       mkdirSync(folder, { recursive: true });
+      const { listed, gained } = options.lessons ?? {
+        listed: [`K-${world.lessons.held + 1}`],
+        gained: 1,
+      };
+      world.lessons.held += gained;
       const record = {
         run,
         at: now.toISOString(),
@@ -794,6 +803,7 @@ function tickDeps(
           : null,
         costUsd: 1.5,
         exit: 0,
+        ...(listed === undefined ? {} : { lessons: listed }),
       };
       writeFileSync(join(folder, "record.json"), `${JSON.stringify(record, null, 2)}\n`);
       writeFileSync(join(folder, "record.md"), `# ${record.run}\n\n${options.echo ?? ""}\n`);
@@ -847,7 +857,7 @@ function tickDeps(
     },
     readSecret: () => options.secret ?? null,
     plan: () => null,
-    lessons: () => 0,
+    lessons: () => world.lessons.held,
     userCheckout: world.user,
     tmpdir: world.tmp,
     log: (line) => seen.log.push(line),
@@ -1711,4 +1721,78 @@ test("2026-10-25-005 AC-8 (the probe): the first tick records what the agent rea
     push: "ok",
     keychain: { "or-token": "found", "oauth-token": "missing" },
   });
+});
+
+const storedLessons = (home: string): number =>
+  JSON.parse(readFileSync(join(home, "state.json"), "utf8")).lastRun.lessons;
+
+test("2026-10-26-003 AC-1: a run's own lesson never makes the next tick due: the record lists it, the base holds it, the count stored is the base's, and the next tick with the same facts is not due and runs nothing", async () => {
+  const world = loopWorld();
+  // A base that already holds lessons, as a real loop's does: a count stored without the start's would be 1.
+  world.lessons.held = 3;
+  const first = tickDeps(world);
+  expect(await tick({}, first.deps)).toBe(0);
+  expect(world.lessons.held).toBe(4);
+  expect(storedLessons(world.home)).toBe(4);
+  const second = tickDeps(world, { now: "2026-10-25T21:00:00.000Z" });
+  expect(await tick({}, second.deps)).toBe(0);
+  expect(second.seen.improve).toEqual([]);
+  expect(second.seen.log.join("\n")).toContain(
+    "not due: nothing new since the last run and no case older than 7 days",
+  );
+});
+
+test("2026-10-26-003 AC-2: a lesson added from outside while the run was going still counts: the record lists one, the base gained two, the count stored is one, and the next tick is due for the growth of one", async () => {
+  const world = loopWorld();
+  const first = tickDeps(world, { lessons: { listed: ["K-1"], gained: 2 } });
+  expect(await tick({}, first.deps)).toBe(0);
+  expect(world.lessons.held).toBe(2);
+  expect(storedLessons(world.home)).toBe(1);
+  const second = tickDeps(world, { now: "2026-10-25T21:00:00.000Z" });
+  expect(await tick({}, second.deps)).toBe(0);
+  expect(second.seen.log.join("\n")).toContain("due: the harness lessons grew (1 to 2)");
+  expect(second.seen.improve).toHaveLength(1);
+});
+
+test("2026-10-26-003 AC-3: the stored count never exceeds what the base holds: a record listing a lesson the base does not hold leaves the base's count, the next tick is not due, and a lesson from outside after the run makes it due", async () => {
+  const world = loopWorld();
+  const first = tickDeps(world, { lessons: { listed: ["K-1", "K-2"], gained: 1 } });
+  expect(await tick({}, first.deps)).toBe(0);
+  expect(world.lessons.held).toBe(1);
+  expect(storedLessons(world.home)).toBe(1);
+  const second = tickDeps(world, { now: "2026-10-25T21:00:00.000Z" });
+  expect(await tick({}, second.deps)).toBe(0);
+  expect(second.seen.improve).toEqual([]);
+  expect(second.seen.log.join("\n")).toContain("not due: nothing new since the last run");
+  world.lessons.held += 1;
+  const third = tickDeps(world, { now: "2026-10-25T22:00:00.000Z" });
+  expect(await tick({}, third.deps)).toBe(0);
+  expect(third.seen.log.join("\n")).toContain("due: the harness lessons grew (1 to 2)");
+});
+
+test("2026-10-26-003 AC-5: a record without a lessons list, or with one that is not an array, leaves the tick at 0 with the base's count stored and discounts nothing; a padded list discounts its distinct string ids only", async () => {
+  for (const listed of [undefined, "K-1"]) {
+    // The base unchanged: the count stored is the base's, and the tick ended clean.
+    const still = loopWorld();
+    const run = tickDeps(still, { lessons: { listed, gained: 0 } });
+    expect(await tick({}, run.deps)).toBe(0);
+    expect(storedLessons(still.home)).toBe(0);
+    expect(existsSync(join(still.home, "lock.json"))).toBe(false);
+    // The base grown by two during the run: nothing listed is discounted, so the count stored stays at the
+    // start's and the next tick is due for both (a string's length would store 2 and hide them).
+    const grown = loopWorld();
+    const first = tickDeps(grown, { lessons: { listed, gained: 2 } });
+    expect(await tick({}, first.deps)).toBe(0);
+    expect(storedLessons(grown.home)).toBe(0);
+    const next = tickDeps(grown, { now: "2026-10-25T21:00:00.000Z" });
+    expect(await tick({}, next.deps)).toBe(0);
+    expect(next.seen.log.join("\n")).toContain("due: the harness lessons grew (0 to 2)");
+  }
+  const world = loopWorld();
+  const padded = tickDeps(world, { lessons: { listed: ["K-1", "K-1", 7], gained: 2 } });
+  expect(await tick({}, padded.deps)).toBe(0);
+  expect(storedLessons(world.home)).toBe(1);
+  const next = tickDeps(world, { now: "2026-10-25T21:00:00.000Z" });
+  expect(await tick({}, next.deps)).toBe(0);
+  expect(next.seen.log.join("\n")).toContain("due: the harness lessons grew (1 to 2)");
 });
