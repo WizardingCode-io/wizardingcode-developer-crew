@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tempDir } from "./helpers.ts";
@@ -68,18 +69,23 @@ test("SP7b-T4 AC-4: the Playwright module's page fixture records the console and
   expect(readFileSync(join(dir, "console.jsonl"), "utf8").trim().split("\n").length).toBe(2);
 });
 
-test("SP3-T1 (finding 73): without the project's @playwright/test the module's test and expect throw a message that names the package, from a working directory with no node_modules above it", async () => {
-  const cwd = process.cwd();
+test("SP3-T1 (finding 73): without the project's @playwright/test the module's test and expect throw a message that names the package, from a working directory with no node_modules above it", () => {
+  // Under Node, the runtime the project's Playwright runs the fixture in: Bun resolves a bare
+  // specifier from the repository's own node_modules whatever the working directory (SP9 Task 2
+  // installed @playwright/test at the root), so the empty working directory is only empty for Node.
   const empty = tempDir("crew-no-playwright-");
-  let mod: { test: unknown; expect: unknown };
-  try {
-    process.chdir(empty);
-    mod = (await import(`${MODULE}?no-playwright`)) as { test: unknown; expect: unknown };
-  } finally {
-    process.chdir(cwd);
-  }
+  const script = [
+    `const mod = await import(${JSON.stringify(`${MODULE}?no-playwright`)});`,
+    "for (const name of ['test', 'expect']) {",
+    "  try { mod[name](); console.log(name + ': no throw'); } catch (error) { console.log(name + ': ' + error.message); }",
+    "}",
+  ].join("\n");
+  const run = spawnSync("node", ["--input-type=module", "-e", script], {
+    cwd: empty,
+    encoding: "utf8",
+  });
+  expect(run.status).toBe(0);
   const message =
     "@playwright/test is not installed in this project: install it, or write the console file yourself (references/gate.md)";
-  expect(() => (mod.test as () => void)()).toThrow(message);
-  expect(() => (mod.expect as () => void)()).toThrow(message);
+  expect(run.stdout.trim().split("\n")).toEqual([`test: ${message}`, `expect: ${message}`]);
 });
