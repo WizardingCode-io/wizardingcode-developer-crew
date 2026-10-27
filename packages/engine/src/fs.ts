@@ -200,3 +200,6 @@ export function writeJson(path: string, data: unknown): void {
 export function nowIso(): string {
   return new Date().toISOString();
 }
+
+/** The buffer a git output the engine reads may fill: a porcelain blame or a status of the largest trees passes execFileSync's default 1 MB (2026-10-27-007 AC-5). */
+export const GIT_OUTPUT_BYTES = 64 * 1024 * 1024;

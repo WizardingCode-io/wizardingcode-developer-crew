@@ -2431,7 +2431,7 @@ test("SP7a AC-5: a third judgement round is refused; the user continues it once 
   const third = await c.run("judgement", id, "record", "--ruling", file);
   expect(third.code).toBe(1);
   expect(third.err.trim()).toBe(
-    `judgement round 3 of ${id}: the policy allows 2 (team.maxJudgementRounds); the user continues it once with crew continue ${id} judgement, or decides (crew skip <id> gate:<gate> where policy.json allows it)`,
+    `judgement round 3 of ${id}: the policy allows 2 (team.maxJudgementRounds); the user continues it once with crew continue ${id} judgement, or sets the standing grant once with crew policy set team.continuations granted, or decides (crew skip <id> gate:<gate> where policy.json allows it)`,
   );
   expect(loadWork(repoPaths(root, env), id).work?.rounds).toMatchObject({
     judgement: 2,
@@ -2461,7 +2461,7 @@ test("SP7a AC-5: a third judgement round is refused; the user continues it once 
   const fourth = await c.run("judgement", id, "record", "--ruling", file);
   expect(fourth.code).toBe(1);
   expect(fourth.err.trim()).toBe(
-    `judgement round 4 of ${id}: the policy allows 2 (team.maxJudgementRounds); the user continues it once with crew continue ${id} judgement, or decides (crew skip <id> gate:<gate> where policy.json allows it)`,
+    `judgement round 4 of ${id}: the policy allows 2 (team.maxJudgementRounds); the user continues it once with crew continue ${id} judgement, or sets the standing grant once with crew policy set team.continuations granted, or decides (crew skip <id> gate:<gate> where policy.json allows it)`,
   );
   expect(loadWork(repoPaths(root, env), id).work?.rounds).toMatchObject({
     judgement: 3,
@@ -2856,7 +2856,7 @@ test("SP7a AC-3: crew validation record parses the lead's file, refuses a lead n
     ),
   );
   expect(third.err.trim()).toBe(
-    `validation round 3 of ${id}: the policy allows 2 (team.maxValidationRounds); the user continues it once with crew continue ${id} validation, or decides`,
+    `validation round 3 of ${id}: the policy allows 2 (team.maxValidationRounds); the user continues it once with crew continue ${id} validation, or sets the standing grant once with crew policy set team.continuations granted, or decides`,
   );
   expect((await c.run("continue", id, "validation")).code).toBe(0);
   expect(
@@ -3864,7 +3864,7 @@ function register(root: string): { kind: string; text: string; by: string }[] {
   ).entries;
 }
 
-test("SP7b-T5 AC-2 (gate): under team.continuations granted a todo's gate runs two rounds past the cap, each the user's standing grant, and the fifth is refused until crew continue", async () => {
+test("SP7b-T5 AC-2 (gate), 2026-10-27-007 AC-1: under team.continuations granted a todo's gate runs every round past the cap, each the user's standing grant named with its round, and under ask the cap refuses naming the grant", async () => {
   const root = makeRepo({
     "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
     "src/a.ts": "x",
@@ -3903,22 +3903,37 @@ test("SP7b-T5 AC-2 (gate): under team.continuations granted a todo's gate runs t
   ]);
   expect(register(root).at(-1)).toMatchObject({
     kind: "continue",
-    text: "gate of T-5 continued under the standing grant (team.continuations: granted)",
+    text: "gate of T-5 round 3 continued under the standing grant (team.continuations: granted)",
     by: "the user",
   });
   expect((await gate()).out).toContain("T-5 gate round 4: pass");
   expect(continued().filter((e) => e.standing).length).toBe(2);
+  // The fifth and the sixth run under the grant too (2026-10-27-007 D-1): no stop at the cap plus two.
   const fifth = await gate();
-  expect(fifth.code).toBe(1);
-  expect(fifth.err.trim()).toBe(
-    `gate round 5 of T-5: the policy allows 2 (team.maxGateRounds); the user continues it once with crew continue ${id} gate T-5, or decides`,
+  expect(fifth.code).toBe(0);
+  expect(fifth.out).toContain("T-5 gate round 5: pass");
+  expect(register(root).at(-1)).toMatchObject({
+    kind: "continue",
+    text: "gate of T-5 round 5 continued under the standing grant (team.continuations: granted)",
+    by: "the user",
+  });
+  expect((await gate()).out).toContain("T-5 gate round 6: pass");
+  expect(continued().filter((e) => e.standing).length).toBe(4);
+  expect(continued().every((e) => e.standing)).toBe(true);
+  // Under ask the cap refuses, naming the grant beside crew continue; an explicit continue counts one round.
+  write(root, ".crew/policy.json", JSON.stringify({ team: { continuations: "ask" } }));
+  expect((await c.run("policy", "accept")).code).toBe(0);
+  const seventh = await gate();
+  expect(seventh.code).toBe(1);
+  expect(seventh.err.trim()).toBe(
+    `gate round 7 of T-5: the policy allows 2 (team.maxGateRounds); the user continues it once with crew continue ${id} gate T-5, or sets the standing grant once with crew policy set team.continuations granted, or decides`,
   );
   expect((await c.run("continue", id, "gate", "T-5")).code).toBe(0);
-  expect(continued().length).toBe(3);
-  expect(continued()[2]?.standing).toBeUndefined();
-  expect((await gate()).out).toContain("T-5 gate round 5: pass");
+  expect(continued().length).toBe(5);
+  expect(continued()[4]?.standing).toBeUndefined();
+  expect((await gate()).out).toContain("T-5 gate round 7: pass");
   expect((await gate()).err.trim()).toBe(
-    `gate round 6 of T-5: the policy allows 2 (team.maxGateRounds); the user continues it once with crew continue ${id} gate T-5, or decides`,
+    `gate round 8 of T-5: the policy allows 2 (team.maxGateRounds); the user continues it once with crew continue ${id} gate T-5, or sets the standing grant once with crew policy set team.continuations granted, or decides`,
   );
   // The policy set that grants it is in the register; another key appends nothing.
   const before = register(root).length;
@@ -3929,12 +3944,12 @@ test("SP7b-T5 AC-2 (gate): under team.continuations granted a todo's gate runs t
   );
   expect(register(root).at(-1)).toMatchObject({
     kind: "decision",
-    text: "team.continuations set to granted: rounds past a cap are the user's standing grant, up to the cap plus two",
+    text: "team.continuations set to granted: rounds past a cap are the user's standing grant, every one of them on record",
     by: "the user",
   });
 });
 
-test("SP7b-T5 AC-2 (validation): under the standing grant the spec's third and fourth rounds are accepted and recorded, the fifth refused until crew continue", async () => {
+test("SP7b-T5 AC-2 (validation), 2026-10-27-007 AC-1: under the standing grant the spec's third, fourth and fifth rounds are accepted and recorded, each named with its round", async () => {
   const root = makeRepo({
     "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
     "src/a.ts": "x",
@@ -3995,21 +4010,23 @@ test("SP7b-T5 AC-2 (validation): under the standing grant the spec's third and f
   expect(continued()).toMatchObject([{ what: "validation", by: { by: "user" }, standing: true }]);
   expect(register(root).at(-1)).toMatchObject({
     kind: "continue",
-    text: "validation continued under the standing grant (team.continuations: granted)",
+    text: "validation round 3 continued under the standing grant (team.continuations: granted)",
     by: "the user",
   });
   spec(4);
   expect((await validate(4)).out.trim()).toBe("validation of spec by lead-qa: validated (round 4)");
   expect(continued().filter((e) => e.standing).length).toBe(2);
   spec(5);
-  expect((await validate(5)).err.trim()).toBe(
-    `validation round 5 of ${id}: the policy allows 2 (team.maxValidationRounds); the user continues it once with crew continue ${id} validation, or decides`,
-  );
-  expect((await c.run("continue", id, "validation")).code).toBe(0);
   expect((await validate(5)).out.trim()).toBe("validation of spec by lead-qa: validated (round 5)");
+  expect(continued().filter((e) => e.standing).length).toBe(3);
+  expect(register(root).at(-1)).toMatchObject({
+    kind: "continue",
+    text: "validation round 5 continued under the standing grant (team.continuations: granted)",
+    by: "the user",
+  });
 });
 
-test("SP7b-T5 AC-2 (judgement): under the standing grant the third and fourth judgement rounds are accepted and recorded, the fifth refused until crew continue", async () => {
+test("SP7b-T5 AC-2 (judgement), 2026-10-27-007 AC-1: under the standing grant the third, fourth and fifth judgement rounds are accepted and recorded, each named with its round", async () => {
   const root = makeRepo({
     "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
     "src/a.ts": "x",
@@ -4058,21 +4075,23 @@ test("SP7b-T5 AC-2 (judgement): under the standing grant the third and fourth ju
   expect(
     register(root).some(
       (e) =>
-        e.text === "judgement continued under the standing grant (team.continuations: granted)",
+        e.text ===
+        "judgement round 3 continued under the standing grant (team.continuations: granted)",
     ),
   ).toBe(true);
   expect((await round(4, "not-proven")).out).toContain("code-quality: not proven (1 finding)");
   expect(continued().filter((e) => e.standing).length).toBe(2);
   expect(loadWork(repoPaths(root, env), id).work?.rounds).toMatchObject({ judgement: 4 });
   const fifth = await round(5, "proven");
-  expect(fifth.code).toBe(1);
-  expect(fifth.err.trim()).toBe(
-    `judgement round 5 of ${id}: the policy allows 2 (team.maxJudgementRounds); the user continues it once with crew continue ${id} judgement, or decides (crew skip <id> gate:<gate> where policy.json allows it)`,
-  );
-  expect((await c.run("continue", id, "judgement")).code).toBe(0);
-  expect((await c.run("judgement", id, "record", "--ruling", file)).out).toContain(
-    "code-quality: proven (0 findings)",
-  );
+  expect(fifth.out).toContain("code-quality: proven (0 findings)");
+  expect(continued().filter((e) => e.standing).length).toBe(3);
+  expect(
+    register(root).some(
+      (e) =>
+        e.text ===
+        "judgement round 5 continued under the standing grant (team.continuations: granted)",
+    ),
+  ).toBe(true);
   expect(loadWork(repoPaths(root, env), id).work?.rounds).toMatchObject({ judgement: 5 });
 }, 30_000);
 
@@ -6398,10 +6417,22 @@ test("SP8-T3 AC-2: a strategy ruling is recorded on its own path (stamped with t
   expect((await cycle(`${STRATEGY}\n`)).out).toContain("strategy round 2");
   const capped = await cycle(`${STRATEGY}\n\n`);
   expect(capped.code).toBe(1);
-  expect(capped.err).toContain(
-    `strategy round 3 of ${second}: the policy allows 2 (team.maxJudgementRounds)`,
+  // The whole refusal, the grant named beside crew continue (2026-10-27-007 AC-2).
+  expect(capped.err.trim()).toBe(
+    `strategy round 3 of ${second}: the policy allows 2 (team.maxJudgementRounds); the user continues it once with crew continue ${second} judgement, or sets the standing grant once with crew policy set team.continuations granted, or decides`,
   );
-  expect(capped.err).toContain(`crew continue ${second} judgement`);
+  // Under the standing grant the third strategy round runs and is on record as the judgement's (the cap it shares).
+  write(root, ".crew/policy.json", JSON.stringify({ team: { continuations: "granted" } }));
+  expect((await c.run("policy", "accept")).code).toBe(0);
+  expect((await cycle(`${STRATEGY}\n\n\n`)).out).toContain("strategy round 3");
+  expect(
+    listDecisions(paths).some(
+      (d) =>
+        d.kind === "continue" &&
+        d.text ===
+          "judgement round 3 continued under the standing grant (team.continuations: granted)",
+    ),
+  ).toBe(true);
 });
 
 test("SP8-T3 AC-2, AC-3: on the full route the strategy ruling needs the CTO's review written after the check and names the CTO as the reviewer; the check names the CTO; a mixed ruling file is refused", async () => {
@@ -7031,7 +7062,7 @@ test("SP6-T1 AC-1: a validation round is counted per revision each lead read, no
   const third = await record("lead-qa");
   expect(third.code).toBe(1);
   expect(third.err.trim()).toBe(
-    `validation round 3 of ${id}: the policy allows 2 (team.maxValidationRounds); the user continues it once with crew continue ${id} validation, or decides`,
+    `validation round 3 of ${id}: the policy allows 2 (team.maxValidationRounds); the user continues it once with crew continue ${id} validation, or sets the standing grant once with crew policy set team.continuations granted, or decides`,
   );
   expect(rounds()).toMatchObject({ validation: 2 });
   expect((await c.run("continue", id, "validation")).code).toBe(0);
@@ -7069,7 +7100,8 @@ test("SP6-T1 AC-1: under team.continuations granted the record that would open r
     listDecisions(repoPaths(root, env)).filter(
       (d) =>
         d.kind === "continue" &&
-        d.text === "validation continued under the standing grant (team.continuations: granted)",
+        d.text ===
+          "validation round 3 continued under the standing grant (team.continuations: granted)",
     ),
   ).toHaveLength(1);
 });

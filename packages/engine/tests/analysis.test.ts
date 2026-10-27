@@ -186,3 +186,21 @@ test("SP3-T5 AC-1: a work folder a commit names but which is gone or a symlink g
   expect(none).toMatchObject({ paths: [], items: [], note: "no git repository" });
   expect(originSummary(none as Origin)).toBe("0 commits, 0 items");
 });
+
+// 2026-10-27-007 AC-5: a porcelain blame past spawnSync's default buffer of 1 MB (the engine's largest
+// files: cli.ts, cli.test.ts) is read; gitRun runs git with the 64 MB buffer fingerprint.ts and
+// secrets.ts already use, so crew analyse never ends in "spawnSync git ENOBUFS".
+test("2026-10-27-007 AC-5: analyseOrigin reads a committed file of 30 000 lines, whose blame exceeds 1 MB", () => {
+  const big = Array.from(
+    { length: 30_000 },
+    (_, i) => `line ${i} of a file long enough to blame past the buffer`,
+  ).join("\n");
+  const root = makeRepo({ "big.txt": `${big}\n` });
+  const paths = repoPaths(root, testEnv());
+  const result = analyseOrigin(paths, ["big.txt"]);
+  expect("refused" in result).toBe(false);
+  const found = result as Origin;
+  expect(found.paths).toHaveLength(1);
+  expect(found.paths[0]?.path).toBe("big.txt");
+  expect(found.paths[0]?.commits.reduce((sum, c) => sum + c.lines, 0)).toBe(30_000);
+}, 60_000);

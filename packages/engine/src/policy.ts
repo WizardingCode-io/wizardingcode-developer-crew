@@ -525,9 +525,9 @@ function loadTeamPolicy(raw: unknown): TeamPolicy {
 
 /**
  * A policy can only tighten, with two exceptions: `riskPathExclusions` takes paths out of the risk
- * patterns (ADR 0003), and `team.continuations: granted` lets rounds past a cap run as the user's
- * standing grant, up to the cap plus two (SP7b decision 15). Anything it does not say falls back
- * to the default.
+ * patterns (ADR 0003), and `team.continuations: granted` lets every round past a cap run as the
+ * user's standing grant, each on record (SP7b decision 15, 2026-10-27-007). Anything it does not say
+ * falls back to the default.
  */
 export function loadPolicy(paths: CrewPaths): { policy: Policy; tampered: boolean } {
   const read = readProtectedJson<Record<string, unknown>>(paths, policyPath(paths));

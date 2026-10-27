@@ -339,7 +339,7 @@ describe("SP7a AC-3 (Task 6): a todo's gate runs the gates its diff touches, bou
       scope: ["src/a.ts"],
     });
     expect((await c.run("task", id, "gate", "T-2")).err.trim()).toBe(
-      `gate round 3 of T-2: the policy allows 2 (team.maxGateRounds); the user continues it once with crew continue ${id} gate T-2, or decides`,
+      `gate round 3 of T-2: the policy allows 2 (team.maxGateRounds); the user continues it once with crew continue ${id} gate T-2, or sets the standing grant once with crew policy set team.continuations granted, or decides`,
     );
     expect((await c.run("continue", id, "gate", "T-2")).code).toBe(0);
     expect((await c.json("task", id, "gate", "T-2")).data.gate).toMatchObject({ round: 3 });

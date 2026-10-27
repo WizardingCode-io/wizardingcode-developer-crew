@@ -2,6 +2,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { allWatchedFiles, isGitRepo, isWatched, untrackedPaths } from "./fingerprint.ts";
+import { GIT_OUTPUT_BYTES } from "./fs.ts";
 import type { Profile } from "./types.ts";
 
 export interface Finding {
@@ -98,7 +99,7 @@ export function changedText(
       env: process.env,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
-      maxBuffer: 64 * 1024 * 1024,
+      maxBuffer: GIT_OUTPUT_BYTES,
     });
   } catch {
     diff = null;

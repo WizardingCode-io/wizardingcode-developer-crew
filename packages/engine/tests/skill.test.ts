@@ -414,7 +414,7 @@ test("SP7b-T4 AC-4: the UI/UX rubric needs a console file beside each capture, r
 test("SP7b-T5 AC-2: rule 10 names the standing grant as the second loosening a policy may carry", () => {
   const rules = readReference("rules.md");
   expect(rules).toContain(
-    "Enforced by: the route and the seats; the gate per todo (`crew task <id> gate T-n`) with the judgement gates its files ask for; `team.maxJudgementRounds`, `team.maxValidationRounds` and `team.maxGateRounds` as refusals; `team.continuations: granted` is the second loosening a policy may carry, after `riskPathExclusions`: rounds past a cap up to the cap plus two, each recorded as the user's standing grant.",
+    "Enforced by: the route and the seats; the gate per todo (`crew task <id> gate T-n`) with the judgement gates its files ask for; `team.maxJudgementRounds`, `team.maxValidationRounds` and `team.maxGateRounds` as refusals; `team.continuations: granted` is the second loosening a policy may carry, after `riskPathExclusions`: every round past a cap recorded as the user's standing grant, with its number, so the register and the report count the rounds; under `relay`, a user's standing word (given once, in the conversation) is set as that grant with `crew policy set team.continuations granted`, the user's own words quoted in the message that runs it, never a `crew continue` asked per round.",
   );
   expect((rules.match(/Enforced by:/g) ?? []).length).toBe(20);
 });
@@ -435,7 +435,7 @@ test("SP7b-T5 AC-3: the gate reference says the engine owns review/ and keeps th
   );
   const readme = repoFile("README.md");
   expect(readme).toContain(
-    "A todo whose files touch a page or a risk path is judged by the reviewers its files ask for before it counts as gated, and a policy may carry a standing grant of two rounds past each cap (team.continuations: granted) so the user is not woken at every cap.",
+    "A todo whose files touch a page or a risk path is judged by the reviewers its files ask for before it counts as gated, and a policy may carry a standing grant of every round past a cap (team.continuations: granted), each on record, so the user is not woken at any cap.",
   );
 });
 
@@ -1359,4 +1359,25 @@ test("SP9-T8 AC-6: the method references carry the interface item, the gate keep
   const screen = repoFile("plugins/core/skills/crew/checklists/screen.md");
   for (const sentence of ["prefers-reduced-motion", "DESIGN.md", "100+"])
     expect(screen).toContain(sentence);
+});
+
+// 2026-10-27-007 AC-3: the method says the standing grant is set once from the user's standing word, never a continue asked per round (rule 10 and the README's sentence are pinned by their own rows above).
+test("2026-10-27-007 AC-3: gate.md's judgement step names the standing grant set once under relay, the README no longer names the bound of two, and ADR 0012 carries the dated note", () => {
+  const gate = readReference("gate.md");
+  expect(gate).toContain(
+    "A round past the cap (`team.maxJudgementRounds`) is the user's decision: under `relay` their standing word, given once in the conversation, is set as the policy's standing grant with `crew policy set team.continuations granted`, the user's own words quoted in the message that runs it, after which every round past a cap runs and is counted in the register and the report, never a `crew continue` asked per round.",
+  );
+  const readme = repoFile("README.md");
+  expect(readme).not.toContain("plus two");
+  expect(readme).not.toContain("two rounds past each cap");
+  expect(readme).toContain(
+    "`team.continuations: granted` is a standing grant of every round past a cap, each recorded as the user's with its number (the bound of two lifted on 2026-10-27)",
+  );
+  const adr = repoFile("docs/adr/0012-unattended-policy-changes.md");
+  expect(adr).toContain(
+    "## Note of 2026-10-27: the standing grant covers every round past a cap (item 2026-10-27-007)",
+  );
+  expect(adr).toContain(
+    "Under the grant every round past a cap now runs, each recorded as the user's standing grant with its round number",
+  );
 });

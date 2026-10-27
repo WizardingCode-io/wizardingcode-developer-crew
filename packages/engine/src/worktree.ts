@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { statSync } from "node:fs";
 import { basename, isAbsolute, join, resolve } from "node:path";
-import { readText } from "./fs.ts";
+import { GIT_OUTPUT_BYTES, readText } from "./fs.ts";
 import { canonical } from "./paths.ts";
 
 /** The main checkout of a git worktree (its `.git` is a file naming the parent's), or null for a checkout of its own. */
@@ -17,13 +17,19 @@ export function worktreeMainRoot(root: string): string | null {
   return match?.[1] ? canonical(isAbsolute(match[1]) ? match[1] : join(root, match[1])) : null;
 }
 
-/** Runs git in a folder and returns its output, trimmed; git's failure is thrown. Git speaks the C locale, so a reason the engine reads or shows is the one it knows. */
+/**
+ * Runs git in a folder and returns its output, trimmed; git's failure is thrown. Git speaks the C
+ * locale, so a reason the engine reads or shows is the one it knows. The buffer is the engine's one
+ * for a git output (GIT_OUTPUT_BYTES): a porcelain blame of the largest files passes the default
+ * 1 MB; past the bound the call still fails loudly.
+ */
 export function gitRun(cwd: string, ...args: string[]): string {
   return execFileSync("git", args, {
     cwd,
     encoding: "utf8",
     env: { ...process.env, LC_ALL: "C" },
     stdio: ["ignore", "pipe", "pipe"],
+    maxBuffer: GIT_OUTPUT_BYTES,
   }).trim();
 }
 
@@ -42,13 +48,14 @@ export function worktreeRoots(cwd: string): string[] {
   }
 }
 
-/** The bytes of a file at a branch's tip, or null when the branch or the file is not there; the revision goes after `--end-of-options`, so neither can be read as an option. */
+/** The bytes of a file at a branch's tip, or null when the branch or the file is not there; the revision goes after `--end-of-options`, so neither can be read as an option. The buffer is the engine's one for a git output, so a file over 1 MB reads as itself and not as absent. */
 export function gitShow(cwd: string, branch: string, path: string): Buffer | null {
   try {
     return execFileSync("git", ["show", "--end-of-options", `${branch}:${path}`], {
       cwd,
       env: { ...process.env, LC_ALL: "C" },
       stdio: ["ignore", "pipe", "pipe"],
+      maxBuffer: GIT_OUTPUT_BYTES,
     });
   } catch {
     return null;

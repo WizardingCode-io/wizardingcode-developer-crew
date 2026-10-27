@@ -114,7 +114,7 @@ export interface TeamPolicy {
   maxValidationRounds: number;
   maxJudgementRounds: number;
   maxGateRounds: number;
-  /** Whether rounds past a cap run as the user's standing grant, up to the cap plus two (SP7b decision 15), or wait for `crew continue` (`ask`, the default). */
+  /** Whether every round past a cap runs as the user's standing grant, each on record (SP7b decision 15, 2026-10-27-007), or waits for `crew continue` (`ask`, the default). */
   continuations: "ask" | "granted";
 }
 

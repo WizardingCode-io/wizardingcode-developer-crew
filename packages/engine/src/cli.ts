@@ -926,7 +926,7 @@ async function taskGate(
     task,
     env.policy.team.maxGateRounds,
     round,
-    `gate round ${round + 1} of ${task}: the policy allows ${env.policy.team.maxGateRounds} (team.maxGateRounds); the user continues it once with crew continue ${opened.work.id} gate ${task}, or decides`,
+    `gate round ${round + 1} of ${task}: the policy allows ${env.policy.team.maxGateRounds} (team.maxGateRounds); ${waysPastCap(opened.work.id, `gate ${task}`)}`,
   );
   if (held) return held;
   const result = await runTaskGate(env.paths, opened.work, env.profile, env.policy, scoped.scope);
@@ -970,11 +970,17 @@ async function taskGate(
   };
 }
 
+/** The ways past a cap, as every cap's refusal names them: one continue, the standing grant set once, or the user's decision. */
+function waysPastCap(id: string, what: string): string {
+  return `the user continues it once with crew continue ${id} ${what}, or sets the standing grant once with crew policy set team.continuations granted, or decides`;
+}
+
 /**
  * A round past a cap (SP7 §6.1): allowed within the cap plus the rounds the user continued; under
- * `team.continuations: granted` the engine records the user's standing grant for up to two more
- * rounds, saved before the round runs (SP7b decision 15); past that, refused with the text given,
- * which names `crew continue`. `round` is the rounds already spent.
+ * `team.continuations: granted` every round past the cap is the user's standing grant, recorded
+ * with its number and saved before the round runs, so the register and the report count the rounds
+ * (2026-10-27-007 D-1); under `ask`, refused with the text given. `round` is the rounds already
+ * spent, so the round at hand is `round + 1`.
  */
 function continueOrRefuse(
   env: Env,
@@ -988,8 +994,7 @@ function continueOrRefuse(
   const mine = (work.continued ?? []).filter((c) => c.what === what && c.task === task);
   const grants = mine.filter((c) => decisionCounts(env.policy, c.by)).length;
   if (round < cap + grants) return null;
-  if (env.policy.team.continuations !== "granted" || mine.filter((c) => c.standing).length >= 2)
-    return refuse(refusal);
+  if (env.policy.team.continuations !== "granted") return refuse(refusal);
   work.continued = [
     ...(work.continued ?? []),
     { what, ...(task ? { task } : {}), by: { by: "user" }, at: nowIso(), standing: true },
@@ -997,7 +1002,7 @@ function continueOrRefuse(
   saveWork(env.paths, work);
   decide(env, work.id, {
     kind: "continue",
-    text: `${what}${task ? ` of ${task}` : ""} continued under the standing grant (team.continuations: granted)`,
+    text: `${what}${task ? ` of ${task}` : ""} round ${round + 1} continued under the standing grant (team.continuations: granted)`,
     by: "the user",
   });
   return null;
@@ -1239,7 +1244,7 @@ async function recordStrategyJudgement(
       undefined,
       env.policy.team.maxJudgementRounds,
       round,
-      `strategy round ${round + 1} of ${work.id}: the policy allows ${env.policy.team.maxJudgementRounds} (team.maxJudgementRounds); the user continues it once with crew continue ${work.id} judgement, or decides`,
+      `strategy round ${round + 1} of ${work.id}: the policy allows ${env.policy.team.maxJudgementRounds} (team.maxJudgementRounds); ${waysPastCap(work.id, "judgement")}`,
     );
     if (held) return held;
   }
@@ -1801,7 +1806,7 @@ function setScalarKey(env: Env, key: string, value: string): Outcome {
   if (key === "team.continuations" && value === "granted")
     decide(env, "policy", {
       kind: "decision",
-      text: "team.continuations set to granted: rounds past a cap are the user's standing grant, up to the cap plus two",
+      text: "team.continuations set to granted: rounds past a cap are the user's standing grant, every one of them on record",
       by: "the user",
     });
   return ok(`policy ${key}: ${value}`, result);
@@ -4139,7 +4144,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           undefined,
           env.policy.team.maxJudgementRounds,
           rounds.judgement,
-          `judgement round ${rounds.judgement + 1} of ${opened.work.id}: the policy allows ${env.policy.team.maxJudgementRounds} (team.maxJudgementRounds); the user continues it once with crew continue ${opened.work.id} judgement, or decides (crew skip <id> gate:<gate> where policy.json allows it)`,
+          `judgement round ${rounds.judgement + 1} of ${opened.work.id}: the policy allows ${env.policy.team.maxJudgementRounds} (team.maxJudgementRounds); ${waysPastCap(opened.work.id, "judgement")} (crew skip <id> gate:<gate> where policy.json allows it)`,
         );
         if (held) return held;
       }
@@ -4650,7 +4655,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           undefined,
           env.policy.team.maxValidationRounds,
           round - 1,
-          `validation round ${round} of ${work.id}: the policy allows ${env.policy.team.maxValidationRounds} (team.maxValidationRounds); the user continues it once with crew continue ${work.id} validation, or decides`,
+          `validation round ${round} of ${work.id}: the policy allows ${env.policy.team.maxValidationRounds} (team.maxValidationRounds); ${waysPastCap(work.id, "validation")}`,
         );
         if (held) return held;
       }

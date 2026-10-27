@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { type Dirent, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { exists, sha256 } from "./fs.ts";
+import { exists, GIT_OUTPUT_BYTES, sha256 } from "./fs.ts";
 import { matchesAny } from "./glob.ts";
 import { isDesignContractPath } from "./paths-kind.ts";
 import { SKIP_DIRS } from "./skip-dirs.ts";
@@ -29,7 +29,7 @@ function gitOut(root: string, args: string[]): string {
     env: process.env,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "ignore"],
-    maxBuffer: 64 * 1024 * 1024,
+    maxBuffer: GIT_OUTPUT_BYTES,
   });
 }
 
