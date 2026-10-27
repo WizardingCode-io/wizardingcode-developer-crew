@@ -1,0 +1,155 @@
+{
+  "run": "2026-10-27-1",
+  "at": "2026-10-27T00:00:05.872Z",
+  "targets": [
+    "pack-laravel-absent",
+    "pack-laravel-refines-the-gates"
+  ],
+  "baseline": {
+    "pack-laravel-absent": {
+      "name": "pack-laravel-absent",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/conclave.md",
+            "plugins/core/skills/crew/references/deliver.md",
+            "plugins/core/skills/crew/references/gate.md",
+            "plugins/core/skills/crew/references/specify.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/conclave.md",
+            "plugins/core/skills/crew/references/gate.md",
+            "plugins/core/skills/crew/references/specify.md",
+            "plugins/core/skills/crew/references/understand.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        }
+      ],
+      "mean": 1,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/references/conclave.md",
+        "plugins/core/skills/crew/references/deliver.md",
+        "plugins/core/skills/crew/references/gate.md",
+        "plugins/core/skills/crew/references/specify.md",
+        "plugins/core/skills/crew/references/understand.md",
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md"
+      ],
+      "errored": false
+    },
+    "pack-laravel-refines-the-gates": {
+      "name": "pack-laravel-refines-the-gates",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/understand.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        }
+      ],
+      "mean": 1,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/references/understand.md",
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md"
+      ],
+      "errored": false
+    }
+  },
+  "proposals": [
+    {
+      "id": "P-1",
+      "status": "refused",
+      "refusal": "the editor changed nothing",
+      "diffStat": [],
+      "rationale": "Both cases already score a perfect mean of 1.00 with no spread, and the evidence block for each reads \"none\". There is no failing grader to fix, so I made no edit.\n\nI changed nothing. The two cases named as failing, pack-laravel-absent and pack-laravel-refines-the-gates, are reported at mean 1.00 and spread 0.00 with no evidence attached, which in this kit is a full pass on every grader across every run. Nothing in the last CTO plan or the harness lessons points at either case either. Editing a page under plugins/core/skills/crew/ or plugins/core/agents/ for a grader that already passes would risk regressing a pinned sentence or the SKILL.md size cap for no gain, so the smallest change that keeps these graders passing for the right reason is no change. If the improve run meant a different pair of cases, rerunning it with the actual failing scores and evidence will give me something to act on.",
+      "probeSet": [],
+      "probe": {},
+      "verdict": null,
+      "gain": 0
+    },
+    {
+      "id": "P-2",
+      "status": "refused",
+      "refusal": "the editor changed nothing",
+      "diffStat": [],
+      "rationale": "I changed nothing. Both cases named as failing, `pack-laravel-absent` and `pack-laravel-refines-the-gates`, report a mean of 1.00 with a spread of 0.00 and no failure evidence, so every grader in them passed on every run measured. Their trace graders are engine strings the harness cannot influence by wording: the absent case wants no `(pack wizardingcode-pack-laravel)` mark and no `knowledge/laravel.md` in the trace, and the refining case wants the pack's `test=php artisan test` gate line and that same knowledge path, all printed by `crew detect`, `crew team` and the report from the pack registration the fixture makes or omits. Editing a page under `plugins/core/skills/crew/` or `plugins/core/agents/` to chase a grader that already passes would risk the absent case's not-contains graders and the pinned sentences other cases rely on, for no gain, so the smallest change that keeps these graders passing for the right reason is none at all.",
+      "probeSet": [],
+      "probe": {},
+      "verdict": null,
+      "gain": 0
+    }
+  ],
+  "composition": null,
+  "kept": null,
+  "branch": null,
+  "provider": {
+    "name": "runtime",
+    "agentModel": "claude-sonnet-5-5",
+    "judgeModel": "claude-fable-5-1",
+    "claudeModels": true
+  },
+  "costUsd": 7.24151485,
+  "lessons": [],
+  "exit": 0,
+  "unmeasured": [
+    "personalities-differ",
+    "priority-lowered-with-reason",
+    "proven-test-first",
+    "risk-escalation",
+    "root-cause-not-repeated",
+    "rounds-bounded",
+    "strategy-declares-phases",
+    "strategy-rejects-over-engineering",
+    "task-implementer-worktree",
+    "team-by-route",
+    "thread-with-contracts",
+    "ticket-triaged-against-business",
+    "unknown-stack",
+    "validator-unattended-approval"
+  ]
+}
