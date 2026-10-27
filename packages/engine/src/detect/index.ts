@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { nowIso } from "../fs.ts";
-import { matchesAny } from "../glob.ts";
+import { braceExpand, matchesAny } from "../glob.ts";
 import { findBrowser, onPath } from "../pdf.ts";
 import { SKIP_DIRS } from "../skip-dirs.ts";
 import type { Environment, GateCommand, GateName, Profile, Target } from "../types.ts";
@@ -56,12 +56,18 @@ export interface PackRule {
   rule: DetectorRule;
 }
 
-/** A pack rule as a detector: every marker present under the folder, the rule's target returned. */
+/**
+ * A pack rule as a detector: every marker present under the folder, the rule's target returned. A
+ * marker with braces (`nuxt.config.{ts,js,mjs}`, SP9 Task 9) holds when any of its expansions is
+ * there; `readManifest` refused one past the cap or left unexpanded, so every name probed is whole.
+ */
 export function dataDetector(rule: DetectorRule): Detector {
   return {
     stack: rule.stack,
     detect(dir: string): DetectedTarget | null {
-      if (!rule.markers.every((marker) => existsSync(join(dir, marker)))) return null;
+      const present = (marker: string) =>
+        braceExpand(marker).some((name) => existsSync(join(dir, name)));
+      if (!rule.markers.every(present)) return null;
       return {
         stack: rule.stack,
         packageManager: rule.packageManager,
@@ -101,7 +107,8 @@ function applyRules(
         const core = targets.find((t) => t.path === rel && t.stack === rule.extends);
         if (!core) continue;
         Object.assign(core.gates, gates);
-        core.packageManager = found.packageManager;
+        // An empty manager on the rule keeps the core's (the lockfile's or the declared one, SP9 Task 9).
+        if (found.packageManager) core.packageManager = found.packageManager;
         if (testScoped) core.testScoped = testScoped;
         core.tags = [...new Set([...(core.tags ?? []), rule.stack])];
         continue;

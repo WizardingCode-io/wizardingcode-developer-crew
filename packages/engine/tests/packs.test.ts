@@ -649,3 +649,63 @@ test("SP6-T2 AC-6 (round 3): discovery reads the registry under CLAUDE_CONFIG_DI
   ]);
   expect(listPacks(dir).map((p) => p.name)).toEqual(["wizardingcode-pack-laravel"]);
 });
+
+test("SP9-T9 AC-1, AC-2: a braced marker is expanded before the climbing check, one past the cap or left unexpanded is refused, an empty package manager is refused on a rule without extends; a clean braced marker and an empty manager on an extends rule are accepted", () => {
+  const cases: [Record<string, unknown>, string][] = [
+    [
+      { detectors: [{ ...manifest().detectors[0], markers: ["{../a,b}"] }] as never },
+      "pack.json: markers holds a path that is absolute or climbs (../a)",
+    ],
+    [
+      {
+        detectors: [
+          {
+            ...manifest().detectors[0],
+            markers: ["{a,b}{a,b}{a,b}{a,b}{a,b}{a,b}{a,b}{a,b}{a,b}"],
+          },
+        ] as never,
+      },
+      "pack.json: markers holds a brace expansion past the cap of 256 words ({a,b}{a,b}{a,b}{a,b}{a,b}{a,b}{a,b}{a,b}{a,b})",
+    ],
+    [
+      { detectors: [{ ...manifest().detectors[0], markers: ["{x}"] }] as never },
+      "pack.json: markers holds a brace left unexpanded ({x})",
+    ],
+    [
+      {
+        detectors: [
+          { ...manifest().detectors[0], extends: undefined, packageManager: "" },
+        ] as never,
+      },
+      "pack.json: detector laravel: packageManager is empty on a rule without extends",
+    ],
+  ];
+  for (const [over, text] of cases) expect(refusal(writePack(over as never))).toBe(text);
+  // A multi-group marker under the cap (seven groups, 128 words) is accepted.
+  expect(
+    refusal(
+      writePack({
+        detectors: [
+          {
+            ...manifest().detectors[0],
+            markers: ["{a,b}{a,b}{a,b}{a,b}{a,b}{a,b}{a,b}", "artisan"],
+          },
+        ] as never,
+      }),
+    ),
+  ).toBe("");
+  expect(
+    refusal(
+      writePack({
+        detectors: [
+          {
+            ...manifest().detectors[0],
+            extends: "node",
+            markers: ["nuxt.config.{ts,js,mjs}", "package.json"],
+            packageManager: "",
+          },
+        ] as never,
+      }),
+    ),
+  ).toBe("");
+});

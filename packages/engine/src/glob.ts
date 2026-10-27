@@ -34,7 +34,7 @@ export function matchesAny(path: string, patterns: readonly string[]): boolean {
 }
 
 /** The most words one brace expansion yields before the reader stops expanding (a guard against `{a,b}{c,d}…` blowing up). */
-const MAX_BRACE_WORDS = 256;
+export const MAX_BRACE_WORDS = 256;
 /**
  * The words a shell's brace expansion makes of one word (`.{crew,x}` → `.crew`, `.x`; `w{1..3}` →
  * `w1`, `w2`, `w3`; a letter range too), the word itself when it holds none. Expansion stops at

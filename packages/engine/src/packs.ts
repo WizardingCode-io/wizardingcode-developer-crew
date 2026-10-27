@@ -12,6 +12,7 @@ import {
   sha256,
   writeJson,
 } from "./fs.ts";
+import { braceExpand, MAX_BRACE_WORDS } from "./glob.ts";
 import { withLock } from "./lock.ts";
 import { packPath, packsDir } from "./paths.ts";
 import { LOWERCASE_WORD } from "./policy.ts";
@@ -152,9 +153,23 @@ export function readManifest(root: string): { manifest: PackManifest } | { refus
     if (raw.extends !== undefined && !CORE_STACKS.includes(raw.extends as CoreStack))
       return rule(`extends ${String(raw.extends)} is not a core stack (${CORE_STACKS.join(", ")})`);
     if (!isStringList(raw.markers) || !raw.markers.length) return rule("markers is empty");
-    for (const marker of raw.markers)
-      if (climbs(marker)) return bad(`markers holds a path that is absolute or climbs (${marker})`);
+    for (const marker of raw.markers) {
+      // A marker's braces expand before the climbing check (SP9 Task 9): one that reaches the
+      // reader's cap or leaves a `{` is refused, so every name the detector probes is a whole one.
+      const names = braceExpand(marker);
+      if (names.length >= MAX_BRACE_WORDS)
+        return bad(
+          `markers holds a brace expansion past the cap of ${MAX_BRACE_WORDS} words (${marker})`,
+        );
+      if (names.some((name) => name.includes("{")))
+        return bad(`markers holds a brace left unexpanded (${marker})`);
+      for (const name of names)
+        if (climbs(name)) return bad(`markers holds a path that is absolute or climbs (${name})`);
+    }
     if (typeof raw.packageManager !== "string") return rule("packageManager is not a string");
+    // An empty manager means "the core's" and only an `extends` rule has a core target to keep it from (D-1 of SP9 Task 9).
+    if (!raw.packageManager && raw.extends === undefined)
+      return rule("packageManager is empty on a rule without extends");
     if (!isRecord(raw.gates)) return rule("gates is not an object of gate name to command");
     const gates: Partial<Record<GateName, string>> = {};
     for (const [gate, command] of Object.entries(raw.gates)) {

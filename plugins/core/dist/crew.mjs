@@ -5269,7 +5269,8 @@ function dataDetector(rule) {
   return {
     stack: rule.stack,
     detect(dir) {
-      if (!rule.markers.every((marker) => existsSync9(join20(dir, marker))))
+      const present = (marker) => braceExpand(marker).some((name) => existsSync9(join20(dir, name)));
+      if (!rule.markers.every(present))
         return null;
       return {
         stack: rule.stack,
@@ -5297,7 +5298,8 @@ function applyRules(root, dirs, targets, rules) {
         if (!core)
           continue;
         Object.assign(core.gates, gates);
-        core.packageManager = found.packageManager;
+        if (found.packageManager)
+          core.packageManager = found.packageManager;
         if (testScoped)
           core.testScoped = testScoped;
         core.tags = [...new Set([...core.tags ?? [], rule.stack])];
@@ -11637,11 +11639,20 @@ function readManifest(root) {
       return rule(`extends ${String(raw.extends)} is not a core stack (${CORE_STACKS.join(", ")})`);
     if (!isStringList(raw.markers) || !raw.markers.length)
       return rule("markers is empty");
-    for (const marker of raw.markers)
-      if (climbs(marker))
-        return bad(`markers holds a path that is absolute or climbs (${marker})`);
+    for (const marker of raw.markers) {
+      const names = braceExpand(marker);
+      if (names.length >= MAX_BRACE_WORDS)
+        return bad(`markers holds a brace expansion past the cap of ${MAX_BRACE_WORDS} words (${marker})`);
+      if (names.some((name) => name.includes("{")))
+        return bad(`markers holds a brace left unexpanded (${marker})`);
+      for (const name of names)
+        if (climbs(name))
+          return bad(`markers holds a path that is absolute or climbs (${name})`);
+    }
     if (typeof raw.packageManager !== "string")
       return rule("packageManager is not a string");
+    if (!raw.packageManager && raw.extends === undefined)
+      return rule("packageManager is empty on a rule without extends");
     if (!isRecord3(raw.gates))
       return rule("gates is not an object of gate name to command");
     const gates = {};

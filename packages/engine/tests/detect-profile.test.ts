@@ -463,3 +463,51 @@ test("SP9-T3 AC-3: a profile refresh keeps the ui block a person set, as it keep
   });
   expect(loadProfile(paths).profile?.ui).toEqual(first.ui);
 });
+
+test("SP9-T9 AC-1, AC-2: a pack rule's braced marker holds when any expansion exists, and an extends rule with an empty package manager keeps the core target's", () => {
+  const nuxt = {
+    pack: "wizardingcode-pack-nuxt",
+    rule: {
+      stack: "nuxt",
+      extends: "node" as const,
+      markers: ["nuxt.config.{ts,js,mjs}", "package.json"],
+      packageManager: "",
+      gates: { test: "npx vitest run", lint: "npx eslint ." },
+      testScoped: "npx vitest related {files} --run",
+    },
+  };
+  const pkg = JSON.stringify({ scripts: { test: "vitest", lint: "eslint ." } });
+  const lock = "lockfileVersion: 9\n";
+  const nodeOf = (root: string, rules: Parameters<typeof detectTargets>[1]) =>
+    detectTargets(root, rules).find((t) => t.path === "." && t.stack === "node") as Target;
+  // nuxt.config.mjs alone matches the braced marker; the pnpm lockfile's manager stays.
+  const mjs = makeRepo({
+    "package.json": pkg,
+    "pnpm-lock.yaml": lock,
+    "nuxt.config.mjs": "export default {}\n",
+  });
+  const refined = nodeOf(mjs, [nuxt]);
+  expect(refined.packageManager).toBe("pnpm");
+  expect(refined.gates.test).toEqual({
+    command: "npx vitest run",
+    source: "proposed",
+    pack: "wizardingcode-pack-nuxt",
+  });
+  expect(refined.tags).toEqual(["nuxt"]);
+  // nuxt.config.ts too.
+  const ts = makeRepo({
+    "package.json": pkg,
+    "pnpm-lock.yaml": lock,
+    "nuxt.config.ts": "export default {}\n",
+  });
+  expect(nodeOf(ts, [nuxt]).tags).toEqual(["nuxt"]);
+  // No config file: the rule is skipped, no tag, the core's own test command.
+  const plain = makeRepo({ "package.json": pkg, "pnpm-lock.yaml": lock });
+  const untouched = nodeOf(plain, [nuxt]);
+  expect(untouched.tags).toBeUndefined();
+  expect(untouched.gates.test?.pack).toBeUndefined();
+  expect(untouched.packageManager).toBe("pnpm");
+  // A non-empty manager on the rule replaces the core's, as today.
+  const yarn = nodeOf(mjs, [{ ...nuxt, rule: { ...nuxt.rule, packageManager: "yarn" } }]);
+  expect(yarn.packageManager).toBe("yarn");
+});

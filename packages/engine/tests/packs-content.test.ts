@@ -73,7 +73,33 @@ const CHECKLIST_HEADINGS = [
   "Proposals",
   "Warnings",
 ];
-const SOURCES_HEADING = "## Sources read on 2026-10-24";
+// SP9 Task 9 (2026-10-27-004) edits this: the one dated constant became the heading's form, read per pack.
+const SOURCES_FORM = /^## Sources read on (\S+)$/gm;
+const isoDay = (d: Date) => d.toISOString().slice(0, 10);
+
+/** A README's `## Sources read on <YYYY-MM-DD>` heading, with why it is not one real UTC date on or before today (null when it is). */
+function sourcesHeading(
+  readme: string,
+  today = new Date(),
+): { heading: RegExpMatchArray | null; problem: string | null } {
+  const found = [...readme.matchAll(SOURCES_FORM)];
+  const heading = found[0] ?? null;
+  if (found.length === 0) return { heading, problem: "no `## Sources read on <date>` heading" };
+  if (found.length > 1) return { heading, problem: `${found.length} sources headings` };
+  const date = heading?.[1] ?? "";
+  const parsed = new Date(`${date}T00:00:00Z`);
+  if (
+    !/^\d{4}-\d{2}-\d{2}$/.test(date) ||
+    Number.isNaN(parsed.getTime()) ||
+    isoDay(parsed) !== date
+  )
+    return { heading, problem: `${date} is not a date` };
+  if (date > isoDay(today))
+    return { heading, problem: `${date} is after today (${isoDay(today)})` };
+  return { heading, problem: null };
+}
+const sourcesHeadingProblem = (readme: string, today?: Date) =>
+  sourcesHeading(readme, today).problem;
 
 const read = (path: string) => readFileSync(path, "utf8");
 const h2 = (text: string) =>
@@ -181,9 +207,10 @@ function expectChecklistShape(path: string) {
 /** The URLs the README lists under its sources heading. */
 function sourcesOf(root: string): Set<string> {
   const readme = read(join(root, "README.md"));
-  const at = readme.indexOf(SOURCES_HEADING);
-  expect(at, "the sources heading").toBeGreaterThan(-1);
-  const rest = readme.slice(at + SOURCES_HEADING.length);
+  const { heading, problem } = sourcesHeading(readme);
+  expect(problem, "the sources heading").toBeNull();
+  const at = heading?.index ?? -1;
+  const rest = readme.slice(at + (heading?.[0].length ?? 0));
   const end = rest.search(/^## /m);
   return new Set(urlsIn(end === -1 ? rest : rest.slice(0, end)));
 }
@@ -425,6 +452,8 @@ test("SP6-T3 AC-3: the Laravel rule refines a fixture tree with artisan (the gat
  */
 const VERSIONED_DOCS: { key: string; pattern: RegExp }[] = [
   { key: "laravel", pattern: /^https:\/\/laravel\.com\/docs\/([^/]+)\// },
+  { key: "nuxt", pattern: /^https:\/\/nuxt\.com\/docs\/([^/]+)\// },
+  { key: "livewire", pattern: /^https:\/\/livewire\.laravel\.com\/docs\/([^/]+)\// },
 ];
 
 /** Why a URL names another version than the pack's, or null. */
@@ -497,4 +526,52 @@ test("AC-10 (finding 112): a versioned documentation URL is checked by a row per
     versionedUrlProblem("https://laravel.com/docs/13.x/routing", { laravel: "13.x" }),
   ).toBeNull();
   expect(versionedUrlProblem("https://owasp.org/x", {})).toBeNull();
+});
+
+test("SP9-T9 AC-3: the nuxt and livewire hosts name the pack's version, and the sources heading is read per pack by its form with a real UTC date on or before today", () => {
+  expect(versionedUrlProblem("https://nuxt.com/docs/3.x/getting-started", { nuxt: "4.x" })).toBe(
+    "https://nuxt.com/docs/3.x/getting-started names nuxt 3.x, not the pack's 4.x",
+  );
+  expect(
+    versionedUrlProblem("https://nuxt.com/docs/4.x/getting-started", { nuxt: "4.x" }),
+  ).toBeNull();
+  expect(
+    versionedUrlProblem("https://livewire.laravel.com/docs/3.x/forms", { livewire: "4.x" }),
+  ).toBe("https://livewire.laravel.com/docs/3.x/forms names livewire 3.x, not the pack's 4.x");
+  expect(
+    versionedUrlProblem("https://livewire.laravel.com/docs/4.x/forms", { livewire: "4.x" }),
+  ).toBeNull();
+  // The heading by its form: both packs of today, dated 2026-10-24.
+  for (const [key, root] of Object.entries(ROOTS))
+    expect(sourcesHeadingProblem(read(join(root, "README.md"))), key).toBeNull();
+  const today = new Date("2026-10-27T12:00:00Z");
+  const withDate = (date: string) => `# Pack\n\n## Sources read on ${date}\n- https://x\n`;
+  expect(sourcesHeadingProblem("# Pack\n\n## Sources\n", today)).toBe(
+    "no `## Sources read on <date>` heading",
+  );
+  expect(sourcesHeadingProblem(`${withDate("2026-10-24")}${withDate("2026-10-25")}`, today)).toBe(
+    "2 sources headings",
+  );
+  expect(sourcesHeadingProblem(withDate("2027-10-27"), today)).toBe(
+    "2027-10-27 is after today (2026-10-27)",
+  );
+  expect(sourcesHeadingProblem(withDate("2026-10-28"), today)).toBe(
+    "2026-10-28 is after today (2026-10-27)",
+  );
+  expect(sourcesHeadingProblem(withDate("2026-02-30"), today)).toBe("2026-02-30 is not a date");
+  expect(sourcesHeadingProblem(withDate("2026-13-01"), today)).toBe("2026-13-01 is not a date");
+  expect(sourcesHeadingProblem(withDate("2026-10-27"), today)).toBeNull();
+});
+
+test("SP9-T9 AC-4: ADR 0010 carries the dated note of the four prerequisites", () => {
+  const adr = read(join(REPO, "docs", "adr", "0010-packs-as-data-served-by-the-engine.md"));
+  for (const word of [
+    "2026-10-27",
+    "braces",
+    "packageManager",
+    "Sources read on",
+    "nuxt.com/docs/<version>/",
+    "livewire.laravel.com/docs/<version>/",
+  ])
+    expect(adr).toContain(word);
 });
