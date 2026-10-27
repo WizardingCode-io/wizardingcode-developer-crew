@@ -519,7 +519,11 @@ for (let i = 0; i < 20; i++) {
     expect(inbox.messages).toHaveLength(40);
     expect(new Set(inbox.messages.map((m) => m.id)).size).toBe(40);
   });
-});
+}, 180_000);
+// The budget above is the test's own, sized for a loaded machine (SP9 Task 10, 2026-10-27-005 AC-11):
+// the suite's 30 s timed the two writers out while the improvement loop's tick ran the eval kit
+// beside the gate run; alone the test takes under a second. The assertions still count every
+// message, so a lost one fails as before (finding 168).
 
 test("2026-10-25-008 AC-1: a send waits for a mailbox lock another holder keeps for three seconds; a hook's wait stays at two", async () => {
   const w = workspace();

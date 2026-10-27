@@ -14,7 +14,7 @@
     "build": "bun scripts/build.ts",
     "check": "bun run typecheck && bun run lint && bun run test",
     "eval": "bun scripts/eval.ts",
-    "plugin:check": "claude plugin validate plugins/core --strict && claude plugin validate packs/laravel --strict && claude plugin validate packs/agentic-os --strict && claude plugin test plugins/core"
+    "plugin:check": "claude plugin validate plugins/core --strict && claude plugin validate packs/laravel --strict && claude plugin validate packs/agentic-os --strict && claude plugin validate packs/frontend --strict && claude plugin test plugins/core"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.15",

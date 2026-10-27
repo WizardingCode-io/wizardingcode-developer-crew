@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
-import { createWriteStream, mkdirSync, type WriteStream } from "node:fs";
+import { createWriteStream, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import type { Writable } from "node:stream";
 import {
   COMMAND_WRAPPERS,
   type CommandWrapper,
@@ -27,6 +28,8 @@ export interface RunOptions {
   stdin?: string;
   /** Where stderr goes when it must not mix with stdout in the log (the e2e gate grades a logs command's stdout alone); the tail still holds both. */
   stderrLogPath?: string;
+  /** The stream a log path is written through: the file's by default; a test passes one whose end is slow, to see the promise wait for it (SP9 Task 10 AC-10). */
+  openLog?: (path: string) => Writable;
 }
 
 export interface RunResult {
@@ -107,16 +110,17 @@ export function shellRefusal(words: readonly string[]): string | null {
 }
 
 export function runCommand(command: string, options: RunOptions): Promise<RunResult> {
+  const open = options.openLog ?? ((path: string): Writable => createWriteStream(path));
   mkdirSync(dirname(options.logPath), { recursive: true });
-  const log = createWriteStream(options.logPath);
-  let errors: WriteStream | null = null;
+  const log = open(options.logPath);
+  let errors: Writable | null = null;
   if (options.stderrLogPath) {
     mkdirSync(dirname(options.stderrLogPath), { recursive: true });
-    errors = createWriteStream(options.stderrLogPath);
+    errors = open(options.stderrLogPath);
   }
   const lines: string[] = [];
   let partial = "";
-  const absorb = (chunk: Buffer, to: WriteStream = log): void => {
+  const absorb = (chunk: Buffer, to: Writable = log): void => {
     to.write(chunk);
     partial += chunk.toString("utf8");
     const pieces = partial.split("\n");
@@ -144,17 +148,29 @@ export function runCommand(command: string, options: RunOptions): Promise<RunRes
     child.stdout?.on("data", (chunk: Buffer) => absorb(chunk));
     child.stderr?.on("data", (chunk: Buffer) => absorb(chunk, errors ?? log));
     if (options.stdin !== undefined) child.stdin?.end(options.stdin);
+    // The promise resolves once the log streams have finished, so a caller that reads the log file
+    // right after (the deep audit reads a tool's reply from it) finds the whole output: ending the
+    // streams and resolving at once left a short file under load (SP9 Task 10). Finished once: the
+    // error and close events may both arrive.
+    let finished = false;
     const finish = (exit: number | null): void => {
+      if (finished) return;
+      finished = true;
       clearTimeout(timer);
       if (partial) lines.push(partial);
-      log.end();
-      errors?.end();
-      resolve({
+      const result = {
         exit,
         durationMs: Date.now() - started,
         tail: lines.slice(-TAIL_LINES).join("\n"),
         timedOut,
-      });
+      };
+      let pending = errors ? 2 : 1;
+      const closed = (): void => {
+        pending -= 1;
+        if (pending === 0) resolve(result);
+      };
+      log.end(closed);
+      errors?.end(closed);
     };
     child.on("error", (error) => {
       absorb(Buffer.from(`${error.message}\n`));

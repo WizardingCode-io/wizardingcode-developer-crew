@@ -1828,6 +1828,9 @@ function seated(team, def, route, riskAreas, changed, policy) {
     return frontendReason(changed);
   return null;
 }
+function teamLine(id, seats, primary) {
+  return `Team of ${id} (primary ${primary}): ${seats.map((s) => `${s.role} (${s.reason})`).join("; ")}`;
+}
 function firstThree(paths) {
   const shown = paths.slice(0, 3).join(", ");
   const more = paths.length > 3 ? `, +${paths.length - 3} more` : "";
@@ -4765,12 +4768,13 @@ function shellRefusal(words) {
   return `${after} words follow -c and the shell would run only the first (${words[j]}) with the rest as its parameters: quote the command string as one argument, -- ${name} -c "<command>"`;
 }
 function runCommand(command2, options) {
+  const open = options.openLog ?? ((path) => createWriteStream(path));
   mkdirSync4(dirname6(options.logPath), { recursive: true });
-  const log = createWriteStream(options.logPath);
+  const log = open(options.logPath);
   let errors = null;
   if (options.stderrLogPath) {
     mkdirSync4(dirname6(options.stderrLogPath), { recursive: true });
-    errors = createWriteStream(options.stderrLogPath);
+    errors = open(options.stderrLogPath);
   }
   const lines = [];
   let partial = "";
@@ -4804,19 +4808,29 @@ function runCommand(command2, options) {
     child.stderr?.on("data", (chunk) => absorb(chunk, errors ?? log));
     if (options.stdin !== undefined)
       child.stdin?.end(options.stdin);
+    let finished = false;
     const finish = (exit) => {
+      if (finished)
+        return;
+      finished = true;
       clearTimeout(timer);
       if (partial)
         lines.push(partial);
-      log.end();
-      errors?.end();
-      resolve5({
+      const result = {
         exit,
         durationMs: Date.now() - started,
         tail: lines.slice(-TAIL_LINES).join(`
 `),
         timedOut
-      });
+      };
+      let pending = errors ? 2 : 1;
+      const closed = () => {
+        pending -= 1;
+        if (pending === 0)
+          resolve5(result);
+      };
+      log.end(closed);
+      errors?.end(closed);
     };
     child.on("error", (error) => {
       absorb(Buffer.from(`${error.message}
@@ -20544,12 +20558,12 @@ async function dispatch(parsed, io) {
   source: ${sourceLine(source)}` : "";
       const triageLine = triage ? `
   ${triageText(work, "start")}` : "";
-      const teamLine = work.seats?.length ? `
+      const teamLine2 = work.seats?.length ? `
   team: ${work.seats.length} seats (crew team ${work.id})` : "";
       const registered = decisionsCount(env.paths);
       const registerLine = registered ? `
   decision register: ${registered} entr${registered === 1 ? "y" : "ies"} (crew decisions)` : "";
-      return ok(`${warning}${sharedWarning}${inheritedWarning}${provenNote}started ${work.id} (route ${work.route}: ${work.routeReasons.join("; ")})${kindLine}${sourceLines}${triageLine}${jevLine}${lines2}${teamLine}${registerLine}${originNotes.length ? `
+      return ok(`${warning}${sharedWarning}${inheritedWarning}${provenNote}started ${work.id} (route ${work.route}: ${work.routeReasons.join("; ")})${kindLine}${sourceLines}${triageLine}${jevLine}${lines2}${teamLine2}${registerLine}${originNotes.length ? `
 ${originNotes.join(`
 `)}` : ""}`, {
         id: work.id,
@@ -21192,7 +21206,9 @@ ${notes.join(`
       const review = outcome.review ? rel(env.paths, outcome.review) : null;
       const pending = judgementRows(opened.work, outcome.evidence, outcome.judgement, outcome.evidence.fingerprint ?? "", env.policy).filter((r) => r.status === "planned" || r.status === "stale");
       const filedBySession = sessionFiledLine(outcome.evidence.roles ?? []);
-      const judgementNote = pending.length ? `
+      const teamNote = pending.length ? `
+${teamLine(opened.work.id, opened.work.seats ?? [], opened.work.primaryTeam ?? "backend")}` : "";
+      const judgementNote = pending.length ? `${teamNote}
 Judgement gates to run: ${pending.map((r) => `${r.gate} (${r.planned})`).join(", ")}; inputs in ${review}/ (diff.patch, files.txt); record each with crew judgement ${opened.work.id} record --ruling <file>${filedBySession ? `
 ${filedBySession}` : ""}` : "";
       const reviewLine = outcome.reviewNote ? `
@@ -21560,8 +21576,7 @@ test-first not credited: ${out2.uncredited}` : "";
         registry: registry.teams
       });
       saveWork(env.paths, opened.work);
-      const listed = seats.map((s) => `${s.role} (${s.reason})`).join("; ");
-      const text = audit ? `Team of ${opened.work.id} (audit): ${listed}` : seats.length ? `Team of ${opened.work.id} (primary ${primary}): ${listed}` : `Team of ${opened.work.id}: no seat (fast route)`;
+      const text = audit ? `Team of ${opened.work.id} (audit): ${seats.map((s) => `${s.role} (${s.reason})`).join("; ")}` : seats.length ? teamLine(opened.work.id, seats, primary) : `Team of ${opened.work.id}: no seat (fast route)`;
       const extra = [
         registry.warning ?? (env.policy.team.template !== "core" ? `template: ${env.policy.team.template} (pack)` : null),
         served.paths.length ? `knowledge for the expert: ${served.paths.join(", ")}` : null

@@ -118,7 +118,10 @@ test("SP2b: the skill drives the debate through the roles and the judgement gate
     expect(gate).toContain(`wizardingcode-developer-crew:review-${g}`);
   // SP7a AC-3: the three new gates say when they run, and the lead launches the seats the engine planned.
   expect(gate).toMatch(/architecture on full[^\n]*data when[^\n]*data migration[^\n]*infra when/);
-  expect(gate).toContain("`crew team <id>` prints every seat the engine planned");
+  // SP9 Task 10 (2026-10-27-005) AC-8: the gate run prints the team it planned, in crew team's form.
+  expect(gate).toContain(
+    "The gate run prints the team it planned on the change, as `crew team <id>` does, with each seat's reason: launch exactly those, no other.",
+  );
   expect(gate).toMatch(/launch exactly those/);
   expect(gate).toContain("`model: opus`");
   expect(gate).toContain("wizardingcode-developer-crew:judge");

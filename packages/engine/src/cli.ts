@@ -288,7 +288,7 @@ import {
   writeBrief,
 } from "./tasks.ts";
 import { recordTdd, type TddStep } from "./tdd.ts";
-import { auditSeats, plannedSeats, primaryTeam, ROLE_NAMES, teamsFor } from "./team.ts";
+import { auditSeats, plannedSeats, primaryTeam, ROLE_NAMES, teamLine, teamsFor } from "./team.ts";
 import type {
   Criterion,
   Decision,
@@ -4039,8 +4039,18 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       ).filter((r) => r.status === "planned" || r.status === "stale");
       // The judge's launch line carries the answers the session filed (SP6 Task 4, decision 10).
       const filedBySession = sessionFiledLine(outcome.evidence.roles ?? []);
+      // The team the run planned on the actual change, in the form crew team prints, before the
+      // gates to run (SP9 Task 10): the seats crew start printed were planned on an empty change,
+      // so a pack's glob or an interface file seats its roles only here, and the session launches
+      // exactly these without a second command (references/gate.md).
+      // The seats runGates planned on this change, with the primary team it set (gates.ts); a planned
+      // judgement gate seats the judge, so the line is never empty here. The fallback narrows the
+      // optional field's type for records written before it existed.
+      const teamNote = pending.length
+        ? `\n${teamLine(opened.work.id, opened.work.seats ?? [], opened.work.primaryTeam ?? "backend")}`
+        : "";
       const judgementNote = pending.length
-        ? `\nJudgement gates to run: ${pending.map((r) => `${r.gate} (${r.planned})`).join(", ")}; inputs in ${review}/ (diff.patch, files.txt); record each with crew judgement ${opened.work.id} record --ruling <file>${filedBySession ? `\n${filedBySession}` : ""}`
+        ? `${teamNote}\nJudgement gates to run: ${pending.map((r) => `${r.gate} (${r.planned})`).join(", ")}; inputs in ${review}/ (diff.patch, files.txt); record each with crew judgement ${opened.work.id} record --ruling <file>${filedBySession ? `\n${filedBySession}` : ""}`
         : "";
       // What the reviewers' patch lacks is said here too, never found out from an empty file
       // (review of SP2b, findings 9 and 10).
@@ -4538,11 +4548,10 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
             registry: registry.teams,
           });
       saveWork(env.paths, opened.work);
-      const listed = seats.map((s) => `${s.role} (${s.reason})`).join("; ");
       const text = audit
-        ? `Team of ${opened.work.id} (audit): ${listed}`
+        ? `Team of ${opened.work.id} (audit): ${seats.map((s) => `${s.role} (${s.reason})`).join("; ")}`
         : seats.length
-          ? `Team of ${opened.work.id} (primary ${primary}): ${listed}`
+          ? teamLine(opened.work.id, seats, primary)
           : `Team of ${opened.work.id}: no seat (fast route)`;
       const extra = [
         registry.warning ??

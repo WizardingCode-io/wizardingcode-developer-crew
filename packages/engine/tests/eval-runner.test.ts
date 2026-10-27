@@ -128,10 +128,13 @@ const CASES = [
   "pack-laravel-absent",
   "pack-agentic-os-seats-the-team",
   "pack-agentic-os-absent",
+  // SP9 Task 10 (2026-10-27-005): the frontend team pack's pair.
+  "pack-frontend-seats-the-team",
+  "pack-frontend-absent",
 ];
-const PACK_CASES = CASES.slice(-4);
+const PACK_CASES = CASES.slice(-6);
 
-test("SP2c, SP7b-T7 AC-1, SP3-T1 AC-5, SP3-T7 AC-1, SP4-T6 AC-1: the forty-two cases each have their four parts, and the fixtures they share exist", () => {
+test("SP2c, SP7b-T7 AC-1, SP3-T1 AC-5, SP3-T7 AC-1, SP4-T6 AC-1: the forty-four cases each have their four parts, and the fixtures they share exist", () => {
   const folders = readdirSync(EVALS)
     // benchmark.json is the benchmark set (SP6 Task 5), not a case.
     .filter((f) => !["README.md", "benchmark.json", "fixtures", "results"].includes(f))
@@ -491,6 +494,32 @@ Object.assign(SCAFFOLD_STATE, {
     { file: ".crew/policy.json", absent: true },
     { file: "packs/wizardingcode-pack-agentic-os.json", home: true, absent: true },
   ],
+  // SP9 Task 10 (2026-10-27-005): the frontend pair on the Vue-shaped tree.
+  "pack-frontend-seats-the-team": [
+    { file: "components/Notice.vue", pattern: /<template>/ },
+    { file: "tests/notice.test.mjs", pattern: /transition/ },
+    { file: "pack.json", absent: true },
+    {
+      file: ".crew/policy.json",
+      pattern:
+        /"team":\s*\{\s*"template":\s*"frontend",\s*"specialists":\s*\["wizardingcode-pack-frontend:frontend",\s*"wizardingcode-pack-frontend:motion"\]\s*\}/,
+    },
+    {
+      file: "packs/wizardingcode-pack-frontend.json",
+      home: true,
+      assert: (text: string, dir: string) => {
+        const registration = JSON.parse(text) as { root: string; by: string };
+        expect(realpathSync(registration.root)).toBe(realpathSync(join(dir, ".packs", "frontend")));
+        expect(registration.by).toBe("command");
+      },
+    },
+  ],
+  "pack-frontend-absent": [
+    { file: "components/Notice.vue", pattern: /<template>/ },
+    { file: "pack.json", absent: true },
+    { file: ".crew/policy.json", absent: true },
+    { file: "packs/wizardingcode-pack-frontend.json", home: true, absent: true },
+  ],
 });
 
 const SP8_CASES = [
@@ -588,6 +617,8 @@ test("SP7a AC-8 (Task 8), SP7b-T7 AC-1, SP3-T7 AC-1: every fixture stays inside 
     `${EVALS}fixtures/two-projects.sh`,
     `${EVALS}fixtures/laravel-shaped.sh`,
     `${EVALS}fixtures/node-agentic.sh`,
+    // SP9 Task 10 (2026-10-27-005) edits this list: the Vue-shaped fixture.
+    `${EVALS}fixtures/node-vue.sh`,
     `${EVALS}fixtures/commit.sh`,
     ...CONFINED.map((name) => `${EVALS}${name}/fixture.sh`),
   ];
@@ -597,6 +628,8 @@ test("SP7a AC-8 (Task 8), SP7b-T7 AC-1, SP3-T7 AC-1: every fixture stays inside 
     '. "$(dirname "$0")/../fixtures/two-projects.sh"',
     '. "$(dirname "$0")/../fixtures/laravel-shaped.sh"',
     '. "$(dirname "$0")/../fixtures/node-agentic.sh"',
+    // SP9 Task 10 (2026-10-27-005) edits this list: the Vue-shaped fixture.
+    '. "$(dirname "$0")/../fixtures/node-vue.sh"',
     '. "$(dirname "$0")/../fixtures/commit.sh"',
   ];
   const forbidden = [
@@ -1264,6 +1297,74 @@ const PACK_GRADERS: Record<string, Record<string, Record<string, string>>> = {
     },
     "honest-ending": { type: "llm" },
   },
+  // SP9 Task 10 (2026-10-27-005): the frontend pair's graders (the reduced-motion one on both arms, D-1).
+  "pack-frontend-seats-the-team": {
+    // The seat in either form the engine prints it: the report's Team row (crew evidence) or the
+    // team line crew gate run prints before the judgement gates (AC-8), the form crew team prints;
+    // a frontend item ends not proven in the sandbox (no browser), so the report is never printed.
+    seat: {
+      type: "regex",
+      target: "trace",
+      pattern:
+        "(\\| expert \\| frontend \\| pack wizardingcode-pack-frontend \\(components/\\*\\*\\) \\||expert \\(pack wizardingcode-pack-frontend \\(components/\\*\\*\\)\\))",
+      arm: "with-only",
+    },
+    "knowledge-path": {
+      type: "regex",
+      target: "trace",
+      pattern: "knowledge/frontend\\.md",
+      arm: "with-only",
+    },
+    "motion-knowledge-path": {
+      type: "regex",
+      target: "trace",
+      pattern: "knowledge/motion\\.md",
+      arm: "with-only",
+    },
+    "transition-added": {
+      type: "regex",
+      target: "{ source: file, path: components/Notice.vue }",
+      pattern: "transition",
+      arm: "both",
+    },
+    "reduced-motion": {
+      type: "regex",
+      target: "{ source: file, path: components/Notice.vue }",
+      pattern: "prefers-reduced-motion",
+      arm: "both",
+    },
+    "no-transition-all": {
+      type: "regex",
+      target: "{ source: file, path: components/Notice.vue }",
+      pattern: "transition:\\s*all",
+      match: "not_contains",
+      arm: "both",
+    },
+    "honest-ending": { type: "llm" },
+  },
+  "pack-frontend-absent": {
+    "no-seat": {
+      type: "regex",
+      target: "trace",
+      pattern: "pack wizardingcode-pack-frontend",
+      match: "not_contains",
+      arm: "with-only",
+    },
+    "no-knowledge-path": {
+      type: "regex",
+      target: "trace",
+      pattern: "knowledge/frontend\\.md",
+      match: "not_contains",
+      arm: "with-only",
+    },
+    "transition-added": {
+      type: "regex",
+      target: "{ source: file, path: components/Notice.vue }",
+      pattern: "transition",
+      arm: "both",
+    },
+    "honest-ending": { type: "llm" },
+  },
 };
 /** A grader's front matter as key: value lines, the quotes of a pattern stripped. */
 const frontMatter = (text: string): Record<string, string> => {
@@ -1281,7 +1382,7 @@ const frontMatter = (text: string): Record<string, string> => {
   return out;
 };
 
-test("SP6-T6 AC-1: the four pack cases carry the tag packs, SANDBOX_TAGS holds it, the invocation carries the repository root as WIZARDINGCODE_CREW_REPO and nothing else, and the README's command line shows the PATH", () => {
+test("SP6-T6 AC-1: the six pack cases carry the tag packs, SANDBOX_TAGS holds it, the invocation carries the repository root as WIZARDINGCODE_CREW_REPO and nothing else, and the README's command line shows the PATH", () => {
   expect(SANDBOX_TAGS).toContain("packs");
   for (const name of PACK_CASES) {
     const tags =
@@ -1360,7 +1461,12 @@ test("SP6-T6 AC-11 (runKit): the kit runs with the allowlist's names of the call
 }, 60_000);
 
 test("SP6-T6 AC-12: the pack fixtures stay confined: set -eu, the variable alone as the pack's path, a loud refusal without it, crew pack add before crew detect, no copy of a pack, no gate confirmed or set by hand; a with fixture given an empty folder exits non-zero and leaves no commit", () => {
-  const withCases = ["pack-laravel-refines-the-gates", "pack-agentic-os-seats-the-team"];
+  // SP9 Task 10 (2026-10-27-005) edits this list: the frontend seat case.
+  const withCases = [
+    "pack-laravel-refines-the-gates",
+    "pack-agentic-os-seats-the-team",
+    "pack-frontend-seats-the-team",
+  ];
   for (const name of PACK_CASES) {
     const text = readFileSync(`${EVALS}${name}/fixture.sh`, "utf8");
     expect(text, name).toContain("set -eu");
@@ -1375,11 +1481,12 @@ test("SP6-T6 AC-12: the pack fixtures stay confined: set -eu, the variable alone
     // manifest check or a comment.
     for (const line of text.split("\n").filter((l) => /(^|[^.])packs\//.test(l)))
       expect(line.trim(), name).toMatch(
-        /^cp -R "\$REPO\/packs\/(laravel|agentic-os)" \.packs\/(laravel|agentic-os)$|pack\.json|^# /,
+        // SP9 Task 10 (2026-10-27-005) edits this regex: the frontend pack's copy.
+        /^cp -R "\$REPO\/packs\/(laravel|agentic-os|frontend)" \.packs\/(laravel|agentic-os|frontend)$|pack\.json|^# /,
       );
     for (const line of text.split("\n").filter((l) => l.includes("crew pack add")))
       expect(line.trim(), name).toMatch(
-        /^crew pack add \.packs\/(laravel|agentic-os)( > \/dev\/null)?$/,
+        /^crew pack add \.packs\/(laravel|agentic-os|frontend)( > \/dev\/null)?$/,
       );
     if (withCases.includes(name)) {
       expect(text, name).toMatch(/WIZARDINGCODE_CREW_REPO[^\n]*pack\.json is missing/);
@@ -1493,6 +1600,18 @@ test("SP6-T6 AC-3, AC-16, AC-17, AC-20, AC-24: the pack cases' graders, their pa
     expect(text, name).toMatch(/^---\nmax_turns: \d+\n/);
     expect(text, name).toContain("without waiting for me");
   }
+  // SP9 Task 10 (2026-10-27-005): a frontend item ends not proven in the sandbox (no browser), so the
+  // session never reaches the delivery that prints the report's Team table; the user asks for the team
+  // at the end, in both halves of the pair, and the seat grader reads what crew team or the report prints.
+  for (const name of ["pack-frontend-seats-the-team", "pack-frontend-absent"]) {
+    const text = readFileSync(`${EVALS}${name}/prompt.md`, "utf8");
+    expect(text, name).toContain(
+      "tell me who sat on the item's team and why each seat was planned",
+    );
+  }
+  expect(readFileSync(`${EVALS}pack-frontend-seats-the-team/prompt.md`, "utf8")).toBe(
+    readFileSync(`${EVALS}pack-frontend-absent/prompt.md`, "utf8"),
+  );
 });
 
 test("SP6-T6 AC-13: the committed records of the SP6 run hold no absolute path and no secret: the redacted aggregate copy, the evals record and the pack READMEs' figures paragraphs", () => {
@@ -1528,7 +1647,12 @@ test("SP6-T6 AC-26: the repository root reaches a pack fixture through PATH: the
   const helper = spawnSync("wizardingcode-crew-repo", [], { encoding: "utf8", env });
   expect(helper.status, helper.stderr).toBe(0);
   expect(realpathSync(helper.stdout.trim())).toBe(realpathSync(repoRoot));
-  for (const name of ["pack-laravel-refines-the-gates", "pack-agentic-os-seats-the-team"]) {
+  // SP9 Task 10 (2026-10-27-005) edits this list: the frontend seat case.
+  for (const name of [
+    "pack-laravel-refines-the-gates",
+    "pack-agentic-os-seats-the-team",
+    "pack-frontend-seats-the-team",
+  ]) {
     const text = readFileSync(`${EVALS}${name}/fixture.sh`, "utf8");
     expect(text, name).toContain(
       'REPO="${WIZARDINGCODE_CREW_REPO:-$(wizardingcode-crew-repo 2>/dev/null || true)}"',
@@ -1542,9 +1666,12 @@ test("SP6-T6 AC-26: the repository root reaches a pack fixture through PATH: the
         env: { ...env, WIZARDINGCODE_HOME: home },
       });
       expect(run.status, `${name}: ${run.stderr}`).toBe(0);
+      // SP9 Task 10 (2026-10-27-005) edits this branch: the frontend pack's registration.
       const pack = name.startsWith("pack-laravel")
         ? "wizardingcode-pack-laravel"
-        : "wizardingcode-pack-agentic-os";
+        : name.startsWith("pack-frontend")
+          ? "wizardingcode-pack-frontend"
+          : "wizardingcode-pack-agentic-os";
       expect(existsSync(join(home, "crew", "packs", `${pack}.json`)), name).toBe(true);
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -2143,3 +2270,37 @@ test("2026-10-25-005 AC-2: the kit's environment admits the provider's names and
     "claude-sonnet-5-5",
   ]);
 });
+
+test("SP9-T10 AC-3: the Vue-shaped fixture's test is red as committed in both halves of the pair, so the seat case's request is a real change", () => {
+  for (const name of ["pack-frontend-seats-the-team", "pack-frontend-absent"]) redAsCommitted(name);
+});
+
+/** The case's scaffold in a fresh folder and home, then node --test red on the notice's transition. */
+function redAsCommitted(name: string): void {
+  const dir = mkdtempSync(join(tmpdir(), "crew-eval-vue-red-"));
+  const home = mkdtempSync(join(tmpdir(), "crew-evals-home-"));
+  try {
+    const scaffold = spawnSync("sh", [`${EVALS}${name}/fixture.sh`], {
+      cwd: dir,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        PATH: `${FIXTURES_BIN}${delimiter}${PLUGIN_BIN}${delimiter}${process.env.PATH}`,
+        WIZARDINGCODE_HOME: home,
+      },
+    });
+    expect(scaffold.status, `${name}: ${scaffold.stderr}`).toBe(0);
+    const red = spawnSync("node", ["--test"], { cwd: dir, encoding: "utf8" });
+    expect(red.status, name).not.toBe(0);
+    // The failing test by name beside the runner's fail marker (TAP's `not ok`, or the spec
+    // reporter's cross), and the other test passing: the red is the transition's, not any failure.
+    const output = `${red.stdout}${red.stderr}`;
+    expect(output).toMatch(
+      /(not ok \d+ - |✖ )the notice animates its dismiss with a transition on transform or opacity/,
+    );
+    expect(output).toMatch(/(ok \d+ - |✔ )the notice has a dismiss button/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  }
+}

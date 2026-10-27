@@ -44,6 +44,9 @@ test("2026-10-25-002 AC-4: every file the release names carries the engine's ver
     "packs/laravel/.claude-plugin/plugin.json",
     "packs/agentic-os/pack.json",
     "packs/agentic-os/.claude-plugin/plugin.json",
+    // SP9 Task 10 (2026-10-27-005) edits this list: the frontend pack's two files.
+    "packs/frontend/pack.json",
+    "packs/frontend/.claude-plugin/plugin.json",
   ])
     expect(versionOf(rel), rel).toBe(VERSION);
   const bundle = spawnSync("node", [join(root, "plugins/core/dist/crew.mjs"), "--version"], {
@@ -60,6 +63,9 @@ test("2026-10-25-003 AC-6: every version file CLAUDE.md's release section names 
     "packages/engine/src/version.ts",
     "packs/agentic-os/.claude-plugin/plugin.json",
     "packs/agentic-os/pack.json",
+    // SP9 Task 10 (2026-10-27-005) edits this list: the frontend pack's two files.
+    "packs/frontend/.claude-plugin/plugin.json",
+    "packs/frontend/pack.json",
     "packs/laravel/.claude-plugin/plugin.json",
     "packs/laravel/pack.json",
     "plugins/core/.claude-plugin/plugin.json",

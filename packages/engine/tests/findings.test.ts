@@ -38,7 +38,11 @@ function openFindings(text: string): number[] {
 // 180 (the personal-data scan reading a moved line of the bundle) closed by 2026-10-27-002; 181 holds
 // the advisories 2026-10-27-001's round 2 left (recordTdd's guards, the command in a message, the
 // pytest pattern's bound), for the next touch of tdd.ts.
-const OPEN = [77, 114, 177, 178, 181];
+// 182 (crew decision add accepts `none`, the gap round's word, as a question) recorded open by SP9 Task 10
+// (2026-10-27-005) from the seat case's first run, for the next touch of the decision command; 183 (a role
+// wait lets the turn end where nobody watches, so a single-turn session ends with the roles unanswered)
+// recorded open by the same item from the seat case's third run, for the next touch of the Stop hook.
+const OPEN = [77, 114, 177, 178, 181, 182, 183];
 
 test("AC-9 (consolidation of 2026-10-24): the findings that read open are the named ones, and the thirteen closed by the consolidation read closed", () => {
   const open = openFindings(readFileSync(FINDINGS, "utf8"));

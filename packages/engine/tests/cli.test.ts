@@ -494,7 +494,10 @@ test("SP2b: a judgement gate is skipped only when the policy lists it, and the v
   expect((skipped.data.skips as { step: string }[]).at(-1)?.step).toBe("gate:ui-ux");
   await c.run("skip", id, "gate:e2e", "--reason", "no environment in the fixture");
   expect((await c.json("gate", "run", id)).data.verdict).toBe("proven");
-  expect((await c.run("gate", "run", id)).out).not.toContain("Judgement gates to run");
+  // No judgement gate planned: neither the gates line nor the team line (SP9 Task 10 AC-8).
+  const plainRun = await c.run("gate", "run", id);
+  expect(plainRun.out).not.toContain("Judgement gates to run");
+  expect(plainRun.out).not.toContain("Team of");
   expect((await c.json("status")).data.judgement).toEqual([
     {
       gate: "ui-ux",
@@ -519,8 +522,11 @@ test("SP2b: gate run names the judgement gates to run, accepts their names in --
   expect((await c.run("tdd", "green", id, "AC-1", "--", GREEN)).code).toBe(0);
   await c.run("skip", id, "gate:e2e", "--reason", "no environment in the fixture");
   const run = await c.run("gate", "run", id);
+  // SP9 Task 10 (2026-10-27-005) AC-8: the team the gate run planned on the actual change, in the
+  // form crew team prints, on the line before the judgement gates, so the session launches exactly
+  // those seats without a second command (the seats at crew start are planned on an empty change).
   expect(run.out).toContain(
-    `Judgement gates to run: ui-ux (interface files: src/App.vue); inputs in .crew/work/${id}/review/ (diff.patch, files.txt); record each with crew judgement ${id} record --ruling <file>`,
+    `\nTeam of ${id} (primary frontend): review-ui-ux (interface files: src/App.vue); judge (a gate is planned)\nJudgement gates to run: ui-ux (interface files: src/App.vue); inputs in .crew/work/${id}/review/ (diff.patch, files.txt); record each with crew judgement ${id} record --ruling <file>`,
   );
   expect(existsSync(join(root, ".crew", "work", id, "review", "diff.patch"))).toBe(true);
   const json = await c.json("gate", "run", id, "--only", "ui-ux");

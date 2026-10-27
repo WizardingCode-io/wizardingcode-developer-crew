@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { Writable } from "node:stream";
 import { joinWords, runCommand, shellRefusal } from "../src/run.ts";
 import { tempDir } from "./helpers.ts";
 
@@ -131,4 +132,75 @@ test("SP8-T1 AC-1 (finding 91): joinWords keeps the words' boundaries when there
   });
   expect(result.exit).toBe(3);
   expect(result.tail).not.toContain("never");
+});
+
+// SP9 Task 10 (2026-10-27-005) AC-10: the promise resolves only once the log is on disk. The fourth
+// gate run's test gate read the deep audit's new_page reply short under load ("new_page gave no page
+// id"), and a probe found one short read in ten of a 3 MB output: runCommand ended its log stream
+// and resolved without waiting for the stream to finish. Twenty runs of a large output, each log
+// complete the moment the promise resolves.
+test("SP9-T10 AC-10: the log file holds the whole output when runCommand resolves, twenty large runs in a row", async () => {
+  const dir = tempDir();
+  const bytes = 8_000_000;
+  for (let i = 0; i < 20; i++) {
+    const logPath = join(dir, "logs", `large-${i}.txt`);
+    const result = await runCommand(`head -c ${bytes} /dev/zero | tr '\\0' x`, {
+      cwd: dir,
+      timeoutMs: 20_000,
+      logPath,
+    });
+    expect(result.exit).toBe(0);
+    expect(statSync(logPath).size, `run ${i}`).toBe(bytes);
+  }
+}, 60_000);
+
+// The batched round of 2026-10-27-005: the stderr stream waited for as the log is, and the wait seen
+// deterministically through the seam (a stream whose end is slow), beside the twenty-run guard.
+test("SP9-T10 AC-10: a stderr log file holds the whole output when runCommand resolves", async () => {
+  const dir = tempDir();
+  const bytes = 4_000_000;
+  const logPath = join(dir, "logs", "out.txt");
+  const stderrLogPath = join(dir, "logs", "err.txt");
+  const result = await runCommand(`head -c ${bytes} /dev/zero | tr '\\0' x 1>&2; echo done`, {
+    cwd: dir,
+    timeoutMs: 20_000,
+    logPath,
+    stderrLogPath,
+  });
+  expect(result.exit).toBe(0);
+  expect(statSync(stderrLogPath).size).toBe(bytes);
+  expect(readFileSync(logPath, "utf8")).toBe("done\n");
+}, 60_000);
+
+test("SP9-T10 AC-10: the promise waits for both streams to finish, seen through a stream whose end is slow", async () => {
+  const dir = tempDir();
+  const finished: Record<string, number> = {};
+  const slow = (path: string): Writable =>
+    new Writable({
+      write(_chunk, _encoding, next) {
+        next();
+      },
+      final(done) {
+        setTimeout(() => {
+          finished[path] = Date.now();
+          done();
+        }, 40);
+      },
+    });
+  const logPath = join(dir, "logs", "slow-out.txt");
+  const stderrLogPath = join(dir, "logs", "slow-err.txt");
+  const result = await runCommand("echo out; echo err 1>&2", {
+    cwd: dir,
+    timeoutMs: 5000,
+    logPath,
+    stderrLogPath,
+    openLog: slow,
+  });
+  const resolvedAt = Date.now();
+  expect(result.exit).toBe(0);
+  expect(result.tail).toContain("out");
+  expect(finished[logPath]).toBeDefined();
+  expect(finished[stderrLogPath]).toBeDefined();
+  expect(resolvedAt).toBeGreaterThanOrEqual(finished[logPath] ?? Number.POSITIVE_INFINITY);
+  expect(resolvedAt).toBeGreaterThanOrEqual(finished[stderrLogPath] ?? Number.POSITIVE_INFINITY);
 });

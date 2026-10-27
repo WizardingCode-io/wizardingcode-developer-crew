@@ -1447,3 +1447,19 @@ Verdicts agree at every effort. Upheld findings: `high` reproduced Task 6's and 
 - Expected: the per-page guards of `recordTdd` as small functions at the next touch of `tdd.ts`; the message kept as it is unless a command is ever recorded with a credential inline (the record and the logs hold it already); the pytest pattern bounded in form at the next touch of `passCount`.
 - Evidence: `.crew/work/2026-10-27-001-finding-179-a-preserve-criterions-record/review/ruling.json` (round 2), `review/code-quality.findings.md`, `review/security.findings.md`.
 - Outcome: recorded as an advisory by the user's rule; open.
+### 182. `crew decision add` accepts `none`, the gap round's word for no decision, as a question, and the item then waits for a decision nobody asked
+
+- Date: 2026-10-27. Project: this repository, the eval kit's sandbox (the `pack-frontend-seats-the-team` case, first run). Item: `2026-10-27-005`. Category: `silent`. Severity: medium.
+- What happened: the session wrote the gap round with `## Decisions only the user can make` followed by `none`, then ran `crew decision add <id> "none"` as if the word were the decision. The engine filed D-1 with the question `none`, the phase stopped at the open decision, and the session, headless with nobody to decide, ended the run with the item at the spec: honest, but nothing built, 0.33 USD spent on a run that measured nothing of the pack. The rerun built the motion and reached the gates.
+- Expected: the engine refuses a decision whose text is `none`, `n/a`, `-` or empty with a sentence naming the gap round's word (`none` under the heading means no decision; a decision is a question with consequences), so no item ever waits on a question nobody asked.
+- Evidence: `docs/evals/2026-10-27-sp9-task-10-results.md` (the first run's row: the trace's `crew decision add … "none"` call and the session's last message naming the mistake).
+- Outcome: recorded by SP9 Task 10 for the next touch of the decision command; open.
+
+### 183. A role wait lets the turn end where nobody watches, so a single-turn session ends with the roles unanswered
+
+- Date: 2026-10-27. Project: this repository, the eval kit's sandbox (the `pack-frontend-seats-the-team` case, third run). Item: `2026-10-27-005`. Category: `silent`. Severity: medium.
+- What happened: at the spec's validation the session launched the two leads, recorded the security lead's answer, ran `crew await <id> role` for the QA lead's and ended its turn, as rule 5 of the skill page allows (a role wait lets one turn end; the Stop hook's design of SP2c §9). The eval kit gives a session one turn, as `claude -p` does, so the run ended there: "Security lead is recorded as validated. I'm still waiting on the QA lead." Nothing was built, 0.56 USD spent, the item at the spec with a lead's answer the SubagentStop hook had nobody to hand to. The second run of the same case had the QA lead's answer before the session chose to end its turn, and reached the gates.
+- Expected: where nobody watches (headless, `dontAsk`, `bypassPermissions`, the modes `references/modes.md` names) the Stop hook does not spend a role wait while a launched role has not answered (the SubagentStop hook knows which roles filed), and the skill says so: in a headless session the roles are waited for synchronously, never by ending the turn. A person's session keeps the one-turn permit.
+- Evidence: `docs/evals/2026-10-27-sp9-task-10-results.md` (the third run's row and the session's last message).
+- Outcome: recorded by SP9 Task 10 for the next touch of the Stop hook; open.
+

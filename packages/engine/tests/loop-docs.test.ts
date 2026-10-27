@@ -25,6 +25,9 @@ test("2026-10-25-005 AC-11: ADR 0015 records the decisions and supersedes ADR 00
     "packages/engine/src/version.ts",
     "packs/agentic-os/.claude-plugin/plugin.json",
     "packs/agentic-os/pack.json",
+    // SP9 Task 10 (2026-10-27-005) edits this list: the frontend pack's two files.
+    "packs/frontend/.claude-plugin/plugin.json",
+    "packs/frontend/pack.json",
     "packs/laravel/.claude-plugin/plugin.json",
     "packs/laravel/pack.json",
     "plugins/core/.claude-plugin/plugin.json",

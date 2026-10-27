@@ -219,6 +219,14 @@ function seated(
   return null;
 }
 
+/**
+ * The team line as `crew team` prints it and as the gate run prints it before the judgement gates
+ * (SP9 Task 10 AC-8): one formatter, so the two never drift.
+ */
+export function teamLine(id: string, seats: readonly Seat[], primary: TeamName): string {
+  return `Team of ${id} (primary ${primary}): ${seats.map((s) => `${s.role} (${s.reason})`).join("; ")}`;
+}
+
 /** The first three paths, then how many more. */
 function firstThree(paths: readonly string[]): string {
   const shown = paths.slice(0, 3).join(", ");

@@ -1,0 +1,107 @@
+{
+  "name": "wizardingcode-pack-frontend",
+  "version": "0.15.2",
+  "kind": "team",
+  "core": ">=0.15.2",
+  "verifiedAgainst": {
+    "wcag": "2.2",
+    "motion": "14.7.1",
+    "motion-v": "2.8.0",
+    "tailwindcss": "4.3.3",
+    "vue": "3.5.44",
+    "react": "19.3.1",
+    "nuxt": "4.x",
+    "livewire": "4.x"
+  },
+  "detectors": [],
+  "checklists": ["checklists/screen.md", "checklists/motion.md", "checklists/design-contract.md"],
+  "knowledge": {
+    "frontend": "knowledge/frontend.md",
+    "motion": "knowledge/motion.md"
+  },
+  "team": {
+    "template": "frontend",
+    "teams": {
+      "frontend": {
+        "mandatory": {
+          "kind": "paths",
+          "globs": [
+            "pages/**",
+            "components/**",
+            "layouts/**",
+            "composables/**",
+            "app.vue",
+            "assets/css/**",
+            "app/**/*.vue",
+            "app/**/*.tsx",
+            "app/**/*.jsx",
+            "app/**/*.ts",
+            "app/**/*.js",
+            "app/**/*.css",
+            "app/**/*.scss",
+            "src/app/**",
+            "src/components/**",
+            "styles/**",
+            "resources/views/**",
+            "resources/css/**",
+            "resources/js/**",
+            "tailwind.config.*",
+            "**/*.tokens.json",
+            "DESIGN.md"
+          ]
+        }
+      }
+    }
+  },
+  "evals": ["pack-frontend-seats-the-team", "pack-frontend-absent"],
+  "provenance": [
+    {
+      "source": "https://github.com/emilkowalski/skills",
+      "licence": "MIT",
+      "commit": "2d22863",
+      "measuredBy": "pack-frontend-seats-the-team"
+    },
+    {
+      "source": "https://github.com/jakubkrehel/skills",
+      "licence": "MIT",
+      "commit": "592aedc",
+      "measuredBy": "pack-frontend-seats-the-team"
+    },
+    {
+      "source": "https://github.com/pbakaus/impeccable",
+      "licence": "Apache-2.0",
+      "commit": "6743a34",
+      "measuredBy": "pack-frontend-seats-the-team"
+    },
+    {
+      "source": "https://github.com/codeswithroh/tastemaker",
+      "licence": "MIT",
+      "commit": "792a28a",
+      "measuredBy": "pack-frontend-seats-the-team"
+    },
+    {
+      "source": "https://github.com/nateherkai/scroll-craft",
+      "licence": "MIT",
+      "commit": "75d81f7",
+      "measuredBy": "pack-frontend-seats-the-team"
+    },
+    {
+      "source": "https://github.com/ConardLi/garden-skills",
+      "licence": "MIT",
+      "commit": "2b9a893",
+      "measuredBy": "pack-frontend-seats-the-team"
+    },
+    {
+      "source": "https://github.com/every-app/open-seo",
+      "licence": "MIT",
+      "commit": "89ad06c",
+      "measuredBy": "pack-frontend-seats-the-team"
+    },
+    {
+      "source": "https://github.com/blader/humanizer",
+      "licence": "MIT",
+      "commit": "8c307f3",
+      "measuredBy": "pack-frontend-seats-the-team"
+    }
+  ]
+}
