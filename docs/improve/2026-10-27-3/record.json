@@ -1,0 +1,137 @@
+{
+  "run": "2026-10-27-3",
+  "at": "2026-10-27T05:00:04.879Z",
+  "targets": [
+    "proven-test-first",
+    "risk-escalation"
+  ],
+  "baseline": {
+    "proven-test-first": {
+      "name": "proven-test-first",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/conclave.md",
+            "plugins/core/skills/crew/references/gate.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/gate.md",
+            "plugins/core/skills/crew/references/understand.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/build.md",
+            "plugins/core/skills/crew/references/conclave.md",
+            "plugins/core/skills/crew/references/gate.md",
+            "plugins/core/skills/crew/references/specify.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        }
+      ],
+      "mean": 1,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/references/build.md",
+        "plugins/core/skills/crew/references/conclave.md",
+        "plugins/core/skills/crew/references/gate.md",
+        "plugins/core/skills/crew/references/specify.md",
+        "plugins/core/skills/crew/references/understand.md",
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md"
+      ],
+      "errored": false
+    },
+    "risk-escalation": {
+      "name": "risk-escalation",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": []
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": []
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": []
+        }
+      ],
+      "mean": 1,
+      "spread": 0,
+      "reads": [],
+      "errored": false
+    }
+  },
+  "proposals": [
+    {
+      "id": "P-1",
+      "status": "refused",
+      "refusal": "the editor changed nothing",
+      "diffStat": [],
+      "rationale": "The pages that carry the test-first and risk-escalation rules are present and the graders that cover them pass in every run.\n\nI changed nothing. The two graders named as failing, `proven-test-first` and `risk-escalation`, each report a mean of 1.00 with zero spread and no evidence text, so every run in the kit already passes them, and the CTO plan is empty. With no observed failure there is no cause to repair, and an edit to the Build, Gate or Deliver pages would be a speculative rewording of sentences that are working, with the risk of disturbing text that other cases pin. The smallest change that makes these graders pass for the right reason is no change, which matches the two earlier runs on this date that also kept nothing.",
+      "probeSet": [],
+      "probe": {},
+      "verdict": null,
+      "gain": 0
+    },
+    {
+      "id": "P-2",
+      "status": "refused",
+      "refusal": "the editor changed nothing",
+      "diffStat": [],
+      "rationale": "I changed nothing. Both graders named in the brief, proven-test-first and risk-escalation, report a mean of 1.00 with zero spread and no failing evidence, so there is no failure to fix and no \"right reason\" a harness edit could serve. The last two improvement runs kept nothing for the same reason. Editing the skill or agent pages without a failing signal would risk breaking the pinned sentences earlier runs rely on (the Deliver, Understand, Gate and Analyse pages all carry wording that other cases' regex graders match), and that risk is not worth taking against graders that already pass. The harness under plugins/core/skills/crew/ and plugins/core/agents/ stays as it is in this checkout.",
+      "probeSet": [],
+      "probe": {},
+      "verdict": null,
+      "gain": 0
+    }
+  ],
+  "composition": null,
+  "kept": null,
+  "branch": null,
+  "provider": {
+    "name": "runtime",
+    "agentModel": "claude-sonnet-5-5",
+    "judgeModel": "claude-fable-5-1",
+    "claudeModels": true
+  },
+  "costUsd": 3.0736696500000003,
+  "lessons": [],
+  "exit": 0,
+  "unmeasured": [
+    "root-cause-not-repeated",
+    "rounds-bounded",
+    "strategy-declares-phases",
+    "strategy-rejects-over-engineering",
+    "task-implementer-worktree",
+    "team-by-route",
+    "thread-with-contracts",
+    "ticket-triaged-against-business",
+    "unknown-stack",
+    "validator-unattended-approval"
+  ]
+}
