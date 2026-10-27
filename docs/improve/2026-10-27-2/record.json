@@ -1,0 +1,889 @@
+{
+  "run": "2026-10-27-2",
+  "at": "2026-10-27T01:00:07.347Z",
+  "targets": [
+    "personalities-differ",
+    "priority-lowered-with-reason"
+  ],
+  "baseline": {
+    "personalities-differ": {
+      "name": "personalities-differ",
+      "runs": [
+        {
+          "score": 0.8,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "proposals-differ",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/personalities/adventurous.md",
+            "plugins/core/skills/crew/personalities/conservative.md",
+            "plugins/core/skills/crew/personalities/creative.md",
+            "plugins/core/skills/crew/rubrics/architecture.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/risk.md",
+            "plugins/core/skills/crew/rubrics/security.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/personalities/adventurous.md",
+            "plugins/core/skills/crew/personalities/conservative.md",
+            "plugins/core/skills/crew/personalities/creative.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/security.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/personalities/adventurous.md",
+            "plugins/core/skills/crew/personalities/conservative.md",
+            "plugins/core/skills/crew/personalities/creative.md",
+            "plugins/core/skills/crew/rubrics/architecture.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/risk.md",
+            "plugins/core/skills/crew/rubrics/security.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        }
+      ],
+      "mean": 0.9333333333333332,
+      "spread": 0.19999999999999996,
+      "reads": [
+        "plugins/core/skills/crew/personalities/adventurous.md",
+        "plugins/core/skills/crew/personalities/conservative.md",
+        "plugins/core/skills/crew/personalities/creative.md",
+        "plugins/core/skills/crew/rubrics/architecture.md",
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/risk.md",
+        "plugins/core/skills/crew/rubrics/security.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md"
+      ],
+      "errored": false
+    },
+    "priority-lowered-with-reason": {
+      "name": "priority-lowered-with-reason",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": []
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/mail.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/mail.md"
+          ]
+        }
+      ],
+      "mean": 1,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/references/mail.md"
+      ],
+      "errored": false
+    },
+    "pack-laravel-absent": {
+      "name": "pack-laravel-absent",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/conclave.md",
+            "plugins/core/skills/crew/references/gate.md",
+            "plugins/core/skills/crew/references/specify.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        }
+      ],
+      "mean": 1,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/references/conclave.md",
+        "plugins/core/skills/crew/references/gate.md",
+        "plugins/core/skills/crew/references/specify.md",
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md"
+      ],
+      "errored": false
+    },
+    "brief-per-todo": {
+      "name": "brief-per-todo",
+      "runs": [
+        {
+          "score": 0.4,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "brief-t1",
+              "explanation": "pattern not found in trace"
+            },
+            {
+              "grader": "brief-t2",
+              "explanation": "pattern not found in trace"
+            },
+            {
+              "grader": "briefs-say-changed",
+              "explanation": "pattern not found in trace"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/references/build.md",
+            "plugins/core/skills/crew/references/gate.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        }
+      ],
+      "mean": 0.7999999999999999,
+      "spread": 0.6,
+      "reads": [
+        "plugins/core/skills/crew/references/build.md",
+        "plugins/core/skills/crew/references/gate.md",
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md"
+      ],
+      "errored": false
+    },
+    "cto-report-from-records": {
+      "name": "cto-report-from-records",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/learn.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/learn.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": []
+        }
+      ],
+      "mean": 1,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/references/learn.md"
+      ],
+      "errored": false
+    },
+    "decision-register-reread": {
+      "name": "decision-register-reread",
+      "runs": [
+        {
+          "score": 0.75,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "first-proven",
+              "explanation": "pattern not found in trace"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/references/conclave.md"
+          ]
+        },
+        {
+          "score": 0.75,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "first-proven",
+              "explanation": "pattern not found in trace"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/checklists/deletion.md",
+            "plugins/core/skills/crew/references/specify.md",
+            "plugins/core/skills/crew/references/understand.md"
+          ]
+        },
+        {
+          "score": 0.75,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "first-proven",
+              "explanation": "pattern not found in trace"
+            }
+          ],
+          "reads": []
+        }
+      ],
+      "mean": 0.75,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/checklists/deletion.md",
+        "plugins/core/skills/crew/references/conclave.md",
+        "plugins/core/skills/crew/references/specify.md",
+        "plugins/core/skills/crew/references/understand.md"
+      ],
+      "errored": false
+    },
+    "jev-tightens-never-loosens": {
+      "name": "jev-tightens-never-loosens",
+      "runs": [
+        {
+          "score": 0.75,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "honest-ending",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/references/gate.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": []
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": []
+        }
+      ],
+      "mean": 0.9166666666666666,
+      "spread": 0.25,
+      "reads": [
+        "plugins/core/skills/crew/references/gate.md"
+      ],
+      "errored": false
+    },
+    "judgement-gate-not-run": {
+      "name": "judgement-gate-not-run",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/conclave.md",
+            "plugins/core/skills/crew/references/gate.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/understand.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/conclave.md",
+            "plugins/core/skills/crew/references/gate.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        }
+      ],
+      "mean": 1,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/references/conclave.md",
+        "plugins/core/skills/crew/references/gate.md",
+        "plugins/core/skills/crew/references/understand.md",
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md"
+      ],
+      "errored": false
+    },
+    "pack-agentic-os-absent": {
+      "name": "pack-agentic-os-absent",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/specify.md",
+            "plugins/core/skills/crew/references/understand.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/gate.md",
+            "plugins/core/skills/crew/references/understand.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        }
+      ],
+      "mean": 1,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/references/gate.md",
+        "plugins/core/skills/crew/references/specify.md",
+        "plugins/core/skills/crew/references/understand.md",
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md"
+      ],
+      "errored": false
+    }
+  },
+  "proposals": [
+    {
+      "id": "P-1",
+      "status": "probed",
+      "refusal": null,
+      "diffStat": [
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/references/deliver.md"
+        }
+      ],
+      "rationale": "I changed one harness page and nothing else: `plugins/core/skills/crew/references/deliver.md`, item 3's paragraph on what the report carries. The `proposals-differ` grader judges the final message alone and wants at least two storage designs, each proposed by an expert or named as a rejected alternative with its reason, plus the design the judge closed on; the three personality graders passed in the failing run, so the debate ran and the ending dropped it. That fits the harness as it stood: the engine's report prints only `Debate: opened (<reason>), closed` in its Gap round section and never the proposals, the Conclave page's \"one screen to the user\" is a mid-debate step that an unattended run passes through before building, and the Deliver page told the lead to say the decisions, the waivers, the tasks and the mail from the report without a word about the debate, so a lead writing its delivery from the report named the built design and nothing else. The paragraph now says that when the report's `Debate:` line says opened, the message is written from `conclave/proposals.md` and `conclave/judge.md`: one line per proposal with its lens, its design and its `Alternative rejected:` with the reason, then the ruling and the design the judge closed on, and that a message naming the built design alone reports no debate. The pinned sentences of the page (the resumed lead's reply file, the archived round, the \"Tasks\" and \"Mail\" sections, the findings file, `crew learn <id>`) are untouched, and the page has no size cap.",
+      "probeSet": [
+        "pack-laravel-absent",
+        "personalities-differ",
+        "priority-lowered-with-reason"
+      ],
+      "probe": {
+        "pack-laravel-absent": {
+          "name": "pack-laravel-absent",
+          "runs": [
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            }
+          ],
+          "mean": 1,
+          "spread": 0,
+          "reads": [],
+          "errored": false
+        },
+        "personalities-differ": {
+          "name": "personalities-differ",
+          "runs": [
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 0.8,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "proposals-differ",
+                  "explanation": "judge votes: FAIL FAIL FAIL"
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 0.4,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "adventurous",
+                  "explanation": "pattern not found in trace"
+                },
+                {
+                  "grader": "conservative",
+                  "explanation": "pattern not found in trace"
+                },
+                {
+                  "grader": "creative",
+                  "explanation": "pattern not found in trace"
+                }
+              ],
+              "reads": []
+            }
+          ],
+          "mean": 0.7333333333333334,
+          "spread": 0.6,
+          "reads": [],
+          "errored": false
+        },
+        "priority-lowered-with-reason": {
+          "name": "priority-lowered-with-reason",
+          "runs": [
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            }
+          ],
+          "mean": 1,
+          "spread": 0,
+          "reads": [],
+          "errored": false
+        }
+      },
+      "verdict": "lose",
+      "gain": -0.3999999999999998
+    },
+    {
+      "id": "P-2",
+      "status": "probed",
+      "refusal": null,
+      "diffStat": [
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/references/conclave.md"
+        },
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/references/deliver.md"
+        },
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/references/learn.md"
+        }
+      ],
+      "rationale": "I changed three harness pages and nothing else: `plugins/core/skills/crew/references/deliver.md`, `plugins/core/skills/crew/references/learn.md` and `plugins/core/skills/crew/references/conclave.md`. The `proposals-differ` grader of `personalities-differ` judges the final message alone, and the three regex graders for the personality headers passed in the same run, so the experts argued under their three lenses and the proposals with their `Alternative rejected:` lines reached `conclave/proposals.md`; what dropped them was the ending. The harness as it stood made that the natural result: the Conclave's step 5 shows the proposals and alternatives on a screen that goes by mid-run while the prompt's user is away, the Deliver page's items said what changed and what is proven but never the debate (the report's own `Debate:` line, rendered by the engine, gives only the reason and the close), and both Deliver's step 6 and Learn's closing section told the lead to \"say what entered the base\" as a step of its own, so an unattended run's last message was the chosen design or the knowledge entry with no alternative weighed, which is exactly what the judge fails. Deliver's item 3 paragraph now says that when a debate ran the lead says it from `conclave/proposals.md` and `conclave/judge.md`, a line per proposal with the design each expert proposed under its personality, its rejected alternative with the reason, and the proposal the judge closed on; Deliver's step 6 and Learn's section 3 say the learn line is the last line of the same delivery message, never a message of its own; and Conclave's step 5 gained one clause telling an unattended run that the delivery repeats the proposals, alternatives and ruling. Every pinned sentence (step 5's \"each proposal's rejected alternative and why\" on its own line, the Deliver page's resumed-lead rules, `crew learn <id>`, the Learn page's section 4) is intact, and nothing in the engine or the tests quotes the sentences I extended.",
+      "probeSet": [
+        "brief-per-todo",
+        "cto-report-from-records",
+        "decision-register-reread",
+        "jev-tightens-never-loosens",
+        "judgement-gate-not-run",
+        "pack-agentic-os-absent",
+        "pack-laravel-absent",
+        "personalities-differ",
+        "priority-lowered-with-reason"
+      ],
+      "probe": {
+        "brief-per-todo": {
+          "name": "brief-per-todo",
+          "runs": [
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 0.8,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "functions-exist",
+                  "explanation": "pattern not found in file src/accounts.mjs"
+                }
+              ],
+              "reads": []
+            }
+          ],
+          "mean": 0.9333333333333332,
+          "spread": 0.19999999999999996,
+          "reads": [],
+          "errored": false
+        },
+        "cto-report-from-records": {
+          "name": "cto-report-from-records",
+          "runs": [
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            }
+          ],
+          "mean": 1,
+          "spread": 0,
+          "reads": [],
+          "errored": false
+        },
+        "decision-register-reread": {
+          "name": "decision-register-reread",
+          "runs": [
+            {
+              "score": 0.75,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "first-proven",
+                  "explanation": "pattern not found in trace"
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 0.75,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "first-proven",
+                  "explanation": "pattern not found in trace"
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 0.75,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "first-proven",
+                  "explanation": "pattern not found in trace"
+                }
+              ],
+              "reads": []
+            }
+          ],
+          "mean": 0.75,
+          "spread": 0,
+          "reads": [],
+          "errored": false
+        },
+        "jev-tightens-never-loosens": {
+          "name": "jev-tightens-never-loosens",
+          "runs": [
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            }
+          ],
+          "mean": 1,
+          "spread": 0,
+          "reads": [],
+          "errored": false
+        },
+        "judgement-gate-not-run": {
+          "name": "judgement-gate-not-run",
+          "runs": [
+            {
+              "score": 0.5,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "honest-ending",
+                  "explanation": "judge votes: FAIL FAIL FAIL"
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 0.5,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "honest-ending",
+                  "explanation": "judge votes: FAIL FAIL FAIL"
+                }
+              ],
+              "reads": []
+            }
+          ],
+          "mean": 0.6666666666666666,
+          "spread": 0.5,
+          "reads": [],
+          "errored": false
+        },
+        "pack-agentic-os-absent": {
+          "name": "pack-agentic-os-absent",
+          "runs": [
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            }
+          ],
+          "mean": 1,
+          "spread": 0,
+          "reads": [],
+          "errored": false
+        },
+        "pack-laravel-absent": {
+          "name": "pack-laravel-absent",
+          "runs": [
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            }
+          ],
+          "mean": 1,
+          "spread": 0,
+          "reads": [],
+          "errored": false
+        },
+        "personalities-differ": {
+          "name": "personalities-differ",
+          "runs": [
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 0.8,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "proposals-differ",
+                  "explanation": "judge votes: FAIL FAIL FAIL"
+                }
+              ],
+              "reads": []
+            }
+          ],
+          "mean": 0.9333333333333332,
+          "spread": 0.19999999999999996,
+          "reads": [],
+          "errored": false
+        },
+        "priority-lowered-with-reason": {
+          "name": "priority-lowered-with-reason",
+          "runs": [
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            }
+          ],
+          "mean": 1,
+          "spread": 0,
+          "reads": [],
+          "errored": false
+        }
+      },
+      "verdict": "lose",
+      "gain": -0.19999999999999996
+    }
+  ],
+  "composition": null,
+  "kept": null,
+  "branch": null,
+  "provider": {
+    "name": "runtime",
+    "agentModel": "claude-sonnet-5-5",
+    "judgeModel": "claude-fable-5-1",
+    "claudeModels": true
+  },
+  "costUsd": 58.29299755,
+  "lessons": [
+    "K-209",
+    "K-210"
+  ],
+  "exit": 0,
+  "unmeasured": [
+    "proven-test-first",
+    "risk-escalation",
+    "root-cause-not-repeated",
+    "rounds-bounded",
+    "strategy-declares-phases",
+    "strategy-rejects-over-engineering",
+    "task-implementer-worktree",
+    "team-by-route",
+    "thread-with-contracts",
+    "ticket-triaged-against-business",
+    "unknown-stack",
+    "validator-unattended-approval"
+  ]
+}
