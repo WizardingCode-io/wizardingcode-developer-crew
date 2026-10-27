@@ -346,3 +346,42 @@ test("AC-15 (findings 1, 14): the session patterns keep every session store and 
   expect(areas("packages/engine/src/hooks/session-start.ts", policy)).toEqual([]);
   expect(areas("src/session-store.ts", policy)).toContain("auth");
 });
+
+test("F180: an added line whose text is also a removed line of the same file (a moved line) names no term; a line added without an equal removed one, and the same text moved between files, are read", () => {
+  // A reflow: the same line removed and added again in one hunk, and in another hunk of the same file.
+  const moved = [
+    "diff --git a/src/a.ts b/src/a.ts",
+    "--- a/src/a.ts",
+    "+++ b/src/a.ts",
+    "@@ -1,2 +1,2 @@",
+    "-user.email = x",
+    "+const total = 1",
+    "+user.email = x",
+    "@@ -10,2 +10,2 @@",
+    "-const phone = y",
+    " kept",
+    "+const phone = y",
+    "",
+  ].join("\n");
+  expect(personalDataTerms(moved)).toEqual([]);
+  // The removed line after the added one in the file's hunks still makes it a moved line.
+  const later = [
+    "diff --git a/src/a.ts b/src/a.ts",
+    "--- a/src/a.ts",
+    "+++ b/src/a.ts",
+    "@@ -1,1 +1,2 @@",
+    "+const passwd = x",
+    " kept",
+    "@@ -20,2 +21,1 @@",
+    "-const passwd = x",
+    " kept",
+    "",
+  ].join("\n");
+  expect(personalDataTerms(later)).toEqual([]);
+  // A line added without an equal removed one is read; so is the same text removed in one file and added in another.
+  expect(termsOf(patchOf("src/a.ts", ["user.email = x"]))).toEqual(["email"]);
+  const between =
+    patchOf("src/a.ts", ["const total = 1"]).replace("-const gone = password;", "-user.email = x") +
+    patchOf("src/b.ts", ["user.email = x"]);
+  expect(personalDataTerms(between)).toEqual([{ term: "email", file: "src/b.ts" }]);
+});

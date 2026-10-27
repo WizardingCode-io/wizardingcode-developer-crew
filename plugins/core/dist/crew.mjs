@@ -1581,6 +1581,23 @@ function headerFile(rest) {
 }
 function personalDataTerms(patch) {
   const hits = [];
+  const removed = removedLines(patch);
+  for (const { file, line } of hunkLines(patch)) {
+    if (!line.startsWith("+"))
+      continue;
+    if (removed.get(file)?.has(line.slice(1)))
+      continue;
+    const words = wordsOf(line.slice(1));
+    for (const [term, spellings] of PERSONAL_DATA_TERMS) {
+      if (hits.some((h) => h.term === term && h.file === file))
+        continue;
+      if (spellings.some((s) => holds2(words, s)))
+        hits.push({ term, file });
+    }
+  }
+  return hits;
+}
+function* hunkLines(patch) {
   let file = null;
   let inHunk = false;
   for (const line of patch.split(`
@@ -1598,17 +1615,20 @@ function personalDataTerms(patch) {
       file = headerFile(line.slice(4));
       continue;
     }
-    if (!inHunk || !file || !line.startsWith("+"))
-      continue;
-    const words = wordsOf(line.slice(1));
-    for (const [term, spellings] of PERSONAL_DATA_TERMS) {
-      if (hits.some((h) => h.term === term && h.file === file))
-        continue;
-      if (spellings.some((s) => holds2(words, s)))
-        hits.push({ term, file });
-    }
+    if (inHunk && file)
+      yield { file, line };
   }
-  return hits;
+}
+function removedLines(patch) {
+  const removed = new Map;
+  for (const { file, line } of hunkLines(patch)) {
+    if (!line.startsWith("-"))
+      continue;
+    const texts = removed.get(file) ?? new Set;
+    texts.add(line.slice(1));
+    removed.set(file, texts);
+  }
+  return removed;
 }
 function riskPatterns(area, policy) {
   return [...DEFAULT_RISK_PATHS[area], ...policy.riskPaths[area] ?? []];
@@ -7273,7 +7293,7 @@ function judgementRows(work, evidence, planned, currentFingerprint, policy) {
 function isRecord2(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
-function hunkLines(patch, file, line) {
+function hunkLines2(patch, file, line) {
   const lines = patch.split(`
 `);
   let current = null;
@@ -17141,7 +17161,7 @@ async function verifyDefects(cfg, policy, records, patch, options = {}) {
       unverified(c.finding, "no line");
       continue;
     }
-    const lines2 = hunkLines(patch, c.finding.file, c.finding.line);
+    const lines2 = hunkLines2(patch, c.finding.file, c.finding.line);
     if (!lines2) {
       unverified(c.finding, "line outside the change's hunks");
       continue;

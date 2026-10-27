@@ -35,7 +35,10 @@ function openFindings(text: string): number[] {
 // touch of those files.
 // 178 holds the advisories SP9 Task 2's batched round left (2026-10-26-009).
 // 179 (the preserve pair's history, its counts and the one-command rule) closed by 2026-10-27-001.
-const OPEN = [77, 114, 177, 178];
+// 180 (the personal-data scan reading a moved line of the bundle) closed by 2026-10-27-002; 181 holds
+// the advisories 2026-10-27-001's round 2 left (recordTdd's guards, the command in a message, the
+// pytest pattern's bound), for the next touch of tdd.ts.
+const OPEN = [77, 114, 177, 178, 181];
 
 test("AC-9 (consolidation of 2026-10-24): the findings that read open are the named ones, and the thirteen closed by the consolidation read closed", () => {
   const open = openFindings(readFileSync(FINDINGS, "utf8"));

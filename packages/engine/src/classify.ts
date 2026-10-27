@@ -300,10 +300,29 @@ function headerFile(rest: string): string | null {
  */
 export function personalDataTerms(patch: string): PersonalDataHit[] {
   const hits: PersonalDataHit[] = [];
+  const removed = removedLines(patch);
+  for (const { file, line } of hunkLines(patch)) {
+    if (!line.startsWith("+")) continue;
+    // A moved line (finding 180): the same text removed in this file is a reflow's line (a bundle,
+    // a formatter's pass, a block moved), not the change's content.
+    if (removed.get(file)?.has(line.slice(1))) continue;
+    const words = wordsOf(line.slice(1));
+    for (const [term, spellings] of PERSONAL_DATA_TERMS) {
+      if (hits.some((h) => h.term === term && h.file === file)) continue;
+      if (spellings.some((s) => holds(words, s))) hits.push({ term, file });
+    }
+  }
+  return hits;
+}
+
+/**
+ * The lines inside the hunks of a unified diff, each with its file: a `+++` line is a header only
+ * between a `diff --git` line and its first `@@` hunk, so inside a hunk it is a line and a change
+ * cannot name another file for its own lines (security review of finding 149); a section with no
+ * `+++` header (a binary file) ends the previous file.
+ */
+function* hunkLines(patch: string): Generator<{ file: string; line: string }> {
   let file: string | null = null;
-  // A `+++` line is a header only between a `diff --git` line and its first `@@` hunk: inside a
-  // hunk it is an added line, so a change cannot name another file for its own lines (security
-  // review of finding 149).
   let inHunk = false;
   for (const line of patch.split("\n")) {
     if (line.startsWith("diff --git ")) {
@@ -319,14 +338,20 @@ export function personalDataTerms(patch: string): PersonalDataHit[] {
       file = headerFile(line.slice(4));
       continue;
     }
-    if (!inHunk || !file || !line.startsWith("+")) continue;
-    const words = wordsOf(line.slice(1));
-    for (const [term, spellings] of PERSONAL_DATA_TERMS) {
-      if (hits.some((h) => h.term === term && h.file === file)) continue;
-      if (spellings.some((s) => holds(words, s))) hits.push({ term, file });
-    }
+    if (inHunk && file) yield { file, line };
   }
-  return hits;
+}
+
+/** The removed lines' texts per file (finding 180), read for the moved-line rule and for nothing else. */
+function removedLines(patch: string): Map<string, Set<string>> {
+  const removed = new Map<string, Set<string>>();
+  for (const { file, line } of hunkLines(patch)) {
+    if (!line.startsWith("-")) continue;
+    const texts = removed.get(file) ?? new Set<string>();
+    texts.add(line.slice(1));
+    removed.set(file, texts);
+  }
+  return removed;
 }
 
 function riskPatterns(area: RiskArea, policy: Policy): string[] {
