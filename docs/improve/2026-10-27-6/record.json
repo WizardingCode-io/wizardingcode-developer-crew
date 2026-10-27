@@ -1,0 +1,1439 @@
+{
+  "run": "2026-10-27-6",
+  "at": "2026-10-27T13:00:04.896Z",
+  "targets": [
+    "task-implementer-worktree",
+    "team-by-route"
+  ],
+  "baseline": {
+    "task-implementer-worktree": {
+      "name": "task-implementer-worktree",
+      "runs": [
+        {
+          "score": 0,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "farewell-exists",
+              "explanation": "grader threw: case \"task-implementer-worktree\" grader focus file \"src/farewell.mjs\": path \"src/farewell.mjs\" does not exist"
+            },
+            {
+              "grader": "honest-ending",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            },
+            {
+              "grader": "merged",
+              "explanation": "pattern not found in trace"
+            },
+            {
+              "grader": "proven-after-merge",
+              "explanation": "pattern not found in trace"
+            },
+            {
+              "grader": "task-opened",
+              "explanation": "pattern not found in trace"
+            }
+          ],
+          "reads": []
+        },
+        {
+          "score": 0,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "farewell-exists",
+              "explanation": "grader threw: case \"task-implementer-worktree\" grader focus file \"src/farewell.mjs\": path \"src/farewell.mjs\" does not exist"
+            },
+            {
+              "grader": "honest-ending",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            },
+            {
+              "grader": "merged",
+              "explanation": "pattern not found in trace"
+            },
+            {
+              "grader": "proven-after-merge",
+              "explanation": "pattern not found in trace"
+            },
+            {
+              "grader": "task-opened",
+              "explanation": "pattern not found in trace"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/references/plan.md"
+          ]
+        },
+        {
+          "score": 0,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "farewell-exists",
+              "explanation": "grader threw: case \"task-implementer-worktree\" grader focus file \"src/farewell.mjs\": path \"src/farewell.mjs\" does not exist"
+            },
+            {
+              "grader": "honest-ending",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            },
+            {
+              "grader": "merged",
+              "explanation": "pattern not found in trace"
+            },
+            {
+              "grader": "proven-after-merge",
+              "explanation": "pattern not found in trace"
+            },
+            {
+              "grader": "task-opened",
+              "explanation": "pattern not found in trace"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/references/plan.md"
+          ]
+        }
+      ],
+      "mean": 0,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/references/plan.md"
+      ],
+      "errored": false
+    },
+    "team-by-route": {
+      "name": "team-by-route",
+      "runs": [
+        {
+          "score": 0.3333333333333333,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "honest-ending",
+              "explanation": "grader threw: judge call failed: You've reached your Fable limit. Switch to another model, or manage usage credits at https://claude.ai/settings/usage?from=cc_cli_limit_message, to continue."
+            },
+            {
+              "grader": "no-cto-no-risk",
+              "explanation": "pattern not found in trace"
+            },
+            {
+              "grader": "team-security",
+              "explanation": "pattern not found in trace"
+            },
+            {
+              "grader": "team-standard",
+              "explanation": "pattern not found in trace"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/security.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 0.8333333333333334,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "honest-ending",
+              "explanation": "grader threw: judge call failed: You've reached your Fable limit. Switch to another model, or manage usage credits at https://claude.ai/settings/usage?from=cc_cli_limit_message, to continue."
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/security.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 0.16666666666666666,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "honest-ending",
+              "explanation": "grader threw: judge call failed: You've reached your Fable limit. Switch to another model, or manage usage credits at https://claude.ai/settings/usage?from=cc_cli_limit_message, to continue."
+            },
+            {
+              "grader": "no-cto-no-risk",
+              "explanation": "pattern not found in trace"
+            },
+            {
+              "grader": "team-security",
+              "explanation": "pattern not found in trace"
+            },
+            {
+              "grader": "team-standard",
+              "explanation": "pattern not found in trace"
+            },
+            {
+              "grader": "validations-recorded",
+              "explanation": "pattern not found in trace"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/security.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        }
+      ],
+      "mean": 0.4444444444444445,
+      "spread": 0.6666666666666667,
+      "reads": [
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/security.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md"
+      ],
+      "errored": false
+    },
+    "brief-per-todo": {
+      "name": "brief-per-todo",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/conclave.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 0.6,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "brief-t1",
+              "explanation": "pattern not found in trace"
+            },
+            {
+              "grader": "briefs-say-changed",
+              "explanation": "pattern not found in trace"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        }
+      ],
+      "mean": 0.8666666666666667,
+      "spread": 0.4,
+      "reads": [
+        "plugins/core/skills/crew/references/conclave.md",
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md"
+      ],
+      "errored": false
+    },
+    "decision-register-reread": {
+      "name": "decision-register-reread",
+      "runs": [
+        {
+          "score": 0.75,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "first-proven",
+              "explanation": "pattern not found in trace"
+            }
+          ],
+          "reads": []
+        },
+        {
+          "score": 0.75,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "first-proven",
+              "explanation": "pattern not found in trace"
+            }
+          ],
+          "reads": []
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/conclave.md",
+            "plugins/core/skills/crew/references/specify.md",
+            "plugins/core/skills/crew/references/understand.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        }
+      ],
+      "mean": 0.8333333333333334,
+      "spread": 0.25,
+      "reads": [
+        "plugins/core/skills/crew/references/conclave.md",
+        "plugins/core/skills/crew/references/specify.md",
+        "plugins/core/skills/crew/references/understand.md",
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md"
+      ],
+      "errored": false
+    },
+    "judgement-gate-not-run": {
+      "name": "judgement-gate-not-run",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 0.5,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "honest-ending",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/references/gate.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 0.5,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "honest-ending",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            }
+          ],
+          "reads": []
+        }
+      ],
+      "mean": 0.6666666666666666,
+      "spread": 0.5,
+      "reads": [
+        "plugins/core/skills/crew/references/gate.md",
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md"
+      ],
+      "errored": false
+    },
+    "mail-question-between-projects": {
+      "name": "mail-question-between-projects",
+      "runs": [
+        {
+          "score": 0.5,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "asked-b",
+              "explanation": "pattern not found in trace"
+            },
+            {
+              "grader": "honest-ending",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/references/mail.md"
+          ]
+        },
+        {
+          "score": 0.5,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "asked-b",
+              "explanation": "pattern not found in trace"
+            },
+            {
+              "grader": "honest-ending",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/architecture.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/risk.md",
+            "plugins/core/skills/crew/rubrics/security.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 0.5,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "asked-b",
+              "explanation": "pattern not found in trace"
+            },
+            {
+              "grader": "honest-ending",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/references/mail.md"
+          ]
+        }
+      ],
+      "mean": 0.5,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/references/mail.md",
+        "plugins/core/skills/crew/rubrics/architecture.md",
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/risk.md",
+        "plugins/core/skills/crew/rubrics/security.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md"
+      ],
+      "errored": false
+    },
+    "pack-agentic-os-seats-the-team": {
+      "name": "pack-agentic-os-seats-the-team",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/gate.md",
+            "plugins/core/skills/crew/references/understand.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        }
+      ],
+      "mean": 1,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/references/gate.md",
+        "plugins/core/skills/crew/references/understand.md",
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md"
+      ],
+      "errored": false
+    },
+    "pack-laravel-absent": {
+      "name": "pack-laravel-absent",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/conclave.md",
+            "plugins/core/skills/crew/references/understand.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        }
+      ],
+      "mean": 1,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/references/conclave.md",
+        "plugins/core/skills/crew/references/understand.md",
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md"
+      ],
+      "errored": false
+    },
+    "proven-test-first": {
+      "name": "proven-test-first",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/conclave.md",
+            "plugins/core/skills/crew/references/gate.md",
+            "plugins/core/skills/crew/references/specify.md",
+            "plugins/core/skills/crew/references/understand.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/conclave.md",
+            "plugins/core/skills/crew/references/gate.md",
+            "plugins/core/skills/crew/references/specify.md",
+            "plugins/core/skills/crew/references/understand.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/understand.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        }
+      ],
+      "mean": 1,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/references/conclave.md",
+        "plugins/core/skills/crew/references/gate.md",
+        "plugins/core/skills/crew/references/specify.md",
+        "plugins/core/skills/crew/references/understand.md",
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md"
+      ],
+      "errored": false
+    },
+    "pack-agentic-os-absent": {
+      "name": "pack-agentic-os-absent",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/understand.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        }
+      ],
+      "mean": 1,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/references/understand.md",
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md"
+      ],
+      "errored": false
+    },
+    "rounds-bounded": {
+      "name": "rounds-bounded",
+      "runs": [
+        {
+          "score": 0.75,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "cap-respected",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/references/gate.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/security.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 0.75,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "cap-respected",
+              "explanation": "judge votes: PASS FAIL FAIL"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/security.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/gate.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/security.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        }
+      ],
+      "mean": 0.8333333333333334,
+      "spread": 0.25,
+      "reads": [
+        "plugins/core/skills/crew/references/gate.md",
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/security.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md"
+      ],
+      "errored": false
+    }
+  },
+  "proposals": [
+    {
+      "id": "P-1",
+      "status": "probed",
+      "refusal": null,
+      "diffStat": [
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/references/conclave.md"
+        },
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/references/plan.md"
+        },
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/references/specify.md"
+        }
+      ],
+      "rationale": "I edited three harness pages, but I couldn't see the failing runs' traces, so the causes below are inferred and nothing has been re-run.\n\n**team-by-route.** The engine prints the `Team of <id>` line the graders look for only when `crew team <id>` is run. In the failing runs, the team line and both spec validations are missing, while the validators were written. That fits a lead who treated the request's stated decisions, with nobody present, as a reason to skip seating the team and getting the leads' validations. That step runs before the plan on every standard route. The Specify page's standard-route section never pointed to it. The Conclave page named `crew team <id>` only in passing. Its leads'-validation paragraph (`plugins/core/skills/crew/references/conclave.md`) now says the step runs on every standard and full item, including one whose request already decided everything and one with nobody present. It also says the lead runs `crew team <id>` itself and that seats read from `crew status --json` don't replace it. The Specify page (`plugins/core/skills/crew/references/specify.md`) now says the same in one line after the short-spec template. The `honest-ending` grader there failed because the judge's model hit its usage limit, which no harness change can fix.\n\n**task-implementer-worktree.** I'm least sure here. `crew task open` never printed its line, `src/farewell.mjs` doesn't exist, and every judge vote failed, so the lead never opened T-2. This case is tagged `needs-real-opener`, and earlier findings say the sandbox couldn't start the implementer session and the agent couldn't run git there. If so, the cause is the environment and my edit won't move this case's score. The engine refuses the open while watched files are uncommitted. The Plan page (`plugins/core/skills/crew/references/plan.md`) now says to open the handed-out task first, before touching any file of your own task. It also says the lead never writes that task's files itself, and says the refusal ",
+      "probeSet": [
+        "brief-per-todo",
+        "decision-register-reread",
+        "judgement-gate-not-run",
+        "mail-question-between-projects",
+        "pack-agentic-os-seats-the-team",
+        "pack-laravel-absent",
+        "proven-test-first",
+        "task-implementer-worktree",
+        "team-by-route"
+      ],
+      "probe": {
+        "brief-per-todo": {
+          "name": "brief-per-todo",
+          "runs": [
+            {
+              "score": 0.4,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "brief-t1",
+                  "explanation": "pattern not found in trace"
+                },
+                {
+                  "grader": "brief-t2",
+                  "explanation": "pattern not found in trace"
+                },
+                {
+                  "grader": "briefs-say-changed",
+                  "explanation": "pattern not found in trace"
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 0.4,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "brief-t1",
+                  "explanation": "pattern not found in trace"
+                },
+                {
+                  "grader": "brief-t2",
+                  "explanation": "pattern not found in trace"
+                },
+                {
+                  "grader": "briefs-say-changed",
+                  "explanation": "pattern not found in trace"
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            }
+          ],
+          "mean": 0.6,
+          "spread": 0.6,
+          "reads": [],
+          "errored": false
+        },
+        "decision-register-reread": {
+          "name": "decision-register-reread",
+          "runs": [
+            {
+              "score": 0.75,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "first-proven",
+                  "explanation": "pattern not found in trace"
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            }
+          ],
+          "mean": 0.9166666666666666,
+          "spread": 0.25,
+          "reads": [],
+          "errored": false
+        },
+        "judgement-gate-not-run": {
+          "name": "judgement-gate-not-run",
+          "runs": [
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 0.5,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "honest-ending",
+                  "explanation": "judge votes: FAIL FAIL FAIL"
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            }
+          ],
+          "mean": 0.8333333333333334,
+          "spread": 0.5,
+          "reads": [],
+          "errored": false
+        },
+        "mail-question-between-projects": {
+          "name": "mail-question-between-projects",
+          "runs": [
+            {
+              "score": 0.5,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "asked-b",
+                  "explanation": "pattern not found in trace"
+                },
+                {
+                  "grader": "honest-ending",
+                  "explanation": "judge votes: FAIL FAIL FAIL"
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 0.5,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "asked-b",
+                  "explanation": "pattern not found in trace"
+                },
+                {
+                  "grader": "honest-ending",
+                  "explanation": "judge votes: FAIL FAIL FAIL"
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 0.5,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "asked-b",
+                  "explanation": "pattern not found in trace"
+                },
+                {
+                  "grader": "honest-ending",
+                  "explanation": "judge votes: FAIL FAIL FAIL"
+                }
+              ],
+              "reads": []
+            }
+          ],
+          "mean": 0.5,
+          "spread": 0,
+          "reads": [],
+          "errored": false
+        },
+        "pack-agentic-os-seats-the-team": {
+          "name": "pack-agentic-os-seats-the-team",
+          "runs": [
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            }
+          ],
+          "mean": 1,
+          "spread": 0,
+          "reads": [],
+          "errored": false
+        },
+        "pack-laravel-absent": {
+          "name": "pack-laravel-absent",
+          "runs": [
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            }
+          ],
+          "mean": 1,
+          "spread": 0,
+          "reads": [],
+          "errored": false
+        },
+        "proven-test-first": {
+          "name": "proven-test-first",
+          "runs": [
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            }
+          ],
+          "mean": 1,
+          "spread": 0,
+          "reads": [],
+          "errored": false
+        },
+        "task-implementer-worktree": {
+          "name": "task-implementer-worktree",
+          "runs": [
+            {
+              "score": 0,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "farewell-exists",
+                  "explanation": "grader threw: case \"task-implementer-worktree\" grader focus file \"src/farewell.mjs\": path \"src/farewell.mjs\" does not exist"
+                },
+                {
+                  "grader": "honest-ending",
+                  "explanation": "judge votes: FAIL FAIL FAIL"
+                },
+                {
+                  "grader": "merged",
+                  "explanation": "pattern not found in trace"
+                },
+                {
+                  "grader": "proven-after-merge",
+                  "explanation": "pattern not found in trace"
+                },
+                {
+                  "grader": "task-opened",
+                  "explanation": "pattern not found in trace"
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 0,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "farewell-exists",
+                  "explanation": "grader threw: case \"task-implementer-worktree\" grader focus file \"src/farewell.mjs\": path \"src/farewell.mjs\" does not exist"
+                },
+                {
+                  "grader": "honest-ending",
+                  "explanation": "judge votes: FAIL FAIL FAIL"
+                },
+                {
+                  "grader": "merged",
+                  "explanation": "pattern not found in trace"
+                },
+                {
+                  "grader": "proven-after-merge",
+                  "explanation": "pattern not found in trace"
+                },
+                {
+                  "grader": "task-opened",
+                  "explanation": "pattern not found in trace"
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 0,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "farewell-exists",
+                  "explanation": "grader threw: case \"task-implementer-worktree\" grader focus file \"src/farewell.mjs\": path \"src/farewell.mjs\" does not exist"
+                },
+                {
+                  "grader": "honest-ending",
+                  "explanation": "judge votes: FAIL FAIL FAIL"
+                },
+                {
+                  "grader": "merged",
+                  "explanation": "pattern not found in trace"
+                },
+                {
+                  "grader": "proven-after-merge",
+                  "explanation": "pattern not found in trace"
+                },
+                {
+                  "grader": "task-opened",
+                  "explanation": "pattern not found in trace"
+                }
+              ],
+              "reads": []
+            }
+          ],
+          "mean": 0,
+          "spread": 0,
+          "reads": [],
+          "errored": false
+        },
+        "team-by-route": {
+          "name": "team-by-route",
+          "runs": [
+            {
+              "score": 0.5,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "no-cto-no-risk",
+                  "explanation": "pattern not found in trace"
+                },
+                {
+                  "grader": "team-security",
+                  "explanation": "pattern not found in trace"
+                },
+                {
+                  "grader": "team-standard",
+                  "explanation": "pattern not found in trace"
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 0.8333333333333334,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "validations-recorded",
+                  "explanation": "pattern not found in trace"
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 0.8333333333333334,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "validations-recorded",
+                  "explanation": "pattern not found in trace"
+                }
+              ],
+              "reads": []
+            }
+          ],
+          "mean": 0.7222222222222223,
+          "spread": 0.33333333333333337,
+          "reads": [],
+          "errored": false
+        }
+      },
+      "verdict": "lose",
+      "gain": -0.3888888888888889
+    },
+    {
+      "id": "P-2",
+      "status": "inconclusive",
+      "refusal": null,
+      "diffStat": [
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/SKILL.md"
+        },
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/references/conclave.md"
+        },
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/references/deliver.md"
+        },
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/references/gate.md"
+        },
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/references/plan.md"
+        }
+      ],
+      "rationale": "Every pinned sentence is intact on the five pages, and the skill page's Conclave row swapped 124 bytes for 124, so the byte ceiling holds.\n\nI changed five harness pages and nothing else: `plugins/core/skills/crew/SKILL.md` (the Conclave row, byte-neutral), `references/conclave.md`, `references/gate.md`, `references/plan.md` and `references/deliver.md`. For `team-by-route`, the four regex graders all anchor on lines only two commands print, and the engine explains how a run records both validations yet never prints `Team of`: `crew start` already seats the leads on every non-fast route (cli.ts:3184), so the Plan guard names `lead-qa` and `lead-security` and `crew validation record` accepts their files without `crew team`, and `crew gate run` prints its own \"Judgement gates to run\" line so the reviewers launch without it either; the only page that asked for `crew team` before Plan was a section of the Conclave page past the long debate steps, which a lead on a two-function refactor with nothing to decide skips to reach \"Then\". The skill row now names `crew team <id>` then the leads' validation as the Conclave's closing step, the Conclave page says why the call is not optional (its `Team of` line is the one print of the team the report and the delivery quote), records the leads in the order it lists them (qa before security, the regex's order), and its \"Then\" section makes the validation a step of every standard item, and the Gate page says the same where the plan line tempts the lead to skip it; the Deliver page's item 2 now carries the team and its validations, which the final-message judge asks for. For `task-implementer-worktree`, no harness change can make its graders pass in this sandbox: `crew task open` needs git for its head and its worktree and the session's git is the macOS shim that fails every call (finding 77, open, \"nothing in this repository can fix it\"), and the implementer's `claude -p` cannot log in there (the case is tagged `needs-real-opener`); I m",
+      "probeSet": [
+        "brief-per-todo",
+        "decision-register-reread",
+        "judgement-gate-not-run",
+        "pack-agentic-os-absent",
+        "pack-agentic-os-seats-the-team",
+        "pack-laravel-absent",
+        "proven-test-first",
+        "rounds-bounded",
+        "task-implementer-worktree",
+        "team-by-route"
+      ],
+      "probe": {
+        "brief-per-todo": {
+          "name": "brief-per-todo",
+          "runs": [
+            {
+              "score": 0.4,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "brief-t1",
+                  "explanation": "pattern not found in trace"
+                },
+                {
+                  "grader": "brief-t2",
+                  "explanation": "pattern not found in trace"
+                },
+                {
+                  "grader": "briefs-say-changed",
+                  "explanation": "pattern not found in trace"
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 0.4,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "brief-t1",
+                  "explanation": "pattern not found in trace"
+                },
+                {
+                  "grader": "brief-t2",
+                  "explanation": "pattern not found in trace"
+                },
+                {
+                  "grader": "briefs-say-changed",
+                  "explanation": "pattern not found in trace"
+                }
+              ],
+              "reads": []
+            }
+          ],
+          "mean": 0.6,
+          "spread": 0.6,
+          "reads": [],
+          "errored": false
+        },
+        "decision-register-reread": {
+          "name": "decision-register-reread",
+          "runs": [
+            {
+              "score": 0,
+              "errored": true,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 0,
+              "errored": true,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 0,
+              "errored": true,
+              "failing": [],
+              "reads": []
+            }
+          ],
+          "mean": 0,
+          "spread": 0,
+          "reads": [],
+          "errored": true
+        },
+        "judgement-gate-not-run": {
+          "name": "judgement-gate-not-run",
+          "runs": [
+            {
+              "score": 0,
+              "errored": true,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 0,
+              "errored": true,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 0,
+              "errored": true,
+              "failing": [],
+              "reads": []
+            }
+          ],
+          "mean": 0,
+          "spread": 0,
+          "reads": [],
+          "errored": true
+        },
+        "pack-agentic-os-absent": {
+          "name": "pack-agentic-os-absent",
+          "runs": [
+            {
+              "score": 0,
+              "errored": true,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 0,
+              "errored": true,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 0,
+              "errored": true,
+              "failing": [],
+              "reads": []
+            }
+          ],
+          "mean": 0,
+          "spread": 0,
+          "reads": [],
+          "errored": true
+        },
+        "pack-agentic-os-seats-the-team": {
+          "name": "pack-agentic-os-seats-the-team",
+          "runs": [
+            {
+              "score": 0,
+              "errored": true,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 0,
+              "errored": true,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 0,
+              "errored": true,
+              "failing": [],
+              "reads": []
+            }
+          ],
+          "mean": 0,
+          "spread": 0,
+          "reads": [],
+          "errored": true
+        },
+        "pack-laravel-absent": {
+          "name": "pack-laravel-absent",
+          "runs": [
+            {
+              "score": 0,
+              "errored": true,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 0,
+              "errored": true,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 0,
+              "errored": true,
+              "failing": [],
+              "reads": []
+            }
+          ],
+          "mean": 0,
+          "spread": 0,
+          "reads": [],
+          "errored": true
+        },
+        "proven-test-first": {
+          "name": "proven-test-first",
+          "runs": [
+            {
+              "score": 0,
+              "errored": true,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 0,
+              "errored": true,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 0,
+              "errored": true,
+              "failing": [],
+              "reads": []
+            }
+          ],
+          "mean": 0,
+          "spread": 0,
+          "reads": [],
+          "errored": true
+        },
+        "rounds-bounded": {
+          "name": "rounds-bounded",
+          "runs": [
+            {
+              "score": 0,
+              "errored": true,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 0,
+              "errored": true,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 0,
+              "errored": true,
+              "failing": [],
+              "reads": []
+            }
+          ],
+          "mean": 0,
+          "spread": 0,
+          "reads": [],
+          "errored": true
+        },
+        "task-implementer-worktree": {
+          "name": "task-implementer-worktree",
+          "runs": [
+            {
+              "score": 0,
+              "errored": true,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 0,
+              "errored": true,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 0,
+              "errored": true,
+              "failing": [],
+              "reads": []
+            }
+          ],
+          "mean": 0,
+          "spread": 0,
+          "reads": [],
+          "errored": true
+        },
+        "team-by-route": {
+          "name": "team-by-route",
+          "runs": [
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 0.8333333333333334,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "validations-recorded",
+                  "explanation": "pattern not found in trace"
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            }
+          ],
+          "mean": 0.9444444444444445,
+          "spread": 0.16666666666666663,
+          "reads": [],
+          "errored": false
+        }
+      },
+      "verdict": "inconclusive",
+      "gain": -0.16666666666666674
+    }
+  ],
+  "composition": null,
+  "kept": null,
+  "branch": null,
+  "provider": {
+    "name": "runtime",
+    "agentModel": "claude-sonnet-5-5",
+    "judgeModel": "claude-fable-5-1",
+    "claudeModels": true
+  },
+  "costUsd": 57.466589965,
+  "lessons": [
+    "K-223"
+  ],
+  "exit": 0,
+  "unmeasured": [
+    "thread-with-contracts",
+    "ticket-triaged-against-business",
+    "unknown-stack",
+    "validator-unattended-approval"
+  ]
+}
