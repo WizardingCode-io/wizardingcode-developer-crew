@@ -1,0 +1,142 @@
+{
+  "run": "2026-10-27-7",
+  "at": "2026-10-27T18:00:04.980Z",
+  "targets": [
+    "pack-frontend-absent",
+    "pack-frontend-seats-the-team"
+  ],
+  "baseline": {
+    "pack-frontend-absent": {
+      "name": "pack-frontend-absent",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/conclave.md",
+            "plugins/core/skills/crew/references/specify.md",
+            "plugins/core/skills/crew/references/understand.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        }
+      ],
+      "mean": 1,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/references/conclave.md",
+        "plugins/core/skills/crew/references/specify.md",
+        "plugins/core/skills/crew/references/understand.md",
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md"
+      ],
+      "errored": false
+    },
+    "pack-frontend-seats-the-team": {
+      "name": "pack-frontend-seats-the-team",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/frontend.md",
+            "plugins/core/skills/crew/references/packs.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md",
+            "plugins/core/skills/crew/rubrics/ui-ux.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        }
+      ],
+      "mean": 1,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/references/frontend.md",
+        "plugins/core/skills/crew/references/packs.md",
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md",
+        "plugins/core/skills/crew/rubrics/ui-ux.md"
+      ],
+      "errored": false
+    }
+  },
+  "proposals": [
+    {
+      "id": "P-1",
+      "status": "refused",
+      "refusal": "the editor changed nothing",
+      "diffStat": [],
+      "rationale": "Both listed cases score a mean of 1.00 with zero spread, and each lists no failing grader. There is nothing for an edit to fix, and any change to the Conclave, Deliver or pack-related pages would risk the seat, knowledge-path and honest-ending graders that currently pass for the right reason. I changed nothing: with no failing grader as evidence, the smallest change that keeps every passing grader passing is no change at all, and an unprompted edit to a harness page would be a guess, not a fix.",
+      "probeSet": [],
+      "probe": {},
+      "verdict": null,
+      "gain": 0
+    },
+    {
+      "id": "P-2",
+      "status": "refused",
+      "refusal": "the editor changed nothing",
+      "diffStat": [],
+      "rationale": "I'll check the evidence before touching anything: both named cases score a mean of 1.00 with zero spread, and their failing-grader lists read \"none\", so there is no failing grader to make pass.\n\nI changed nothing. Both cases in the evidence, pack-frontend-absent and pack-frontend-seats-the-team, passed every grader on every run, so any edit to the Conclave, Deliver, Gate or Team pages would be a change made without a failure to explain it, and the harness lessons above are low-confidence inferences from earlier runs rather than evidence of a defect in the current text. The smallest change that keeps the graders passing for the right reason is no change, which matches how this loop has recorded earlier runs with nothing to fix.",
+      "probeSet": [],
+      "probe": {},
+      "verdict": null,
+      "gain": 0
+    }
+  ],
+  "composition": null,
+  "kept": null,
+  "branch": null,
+  "provider": {
+    "name": "runtime",
+    "agentModel": "claude-sonnet-5-5",
+    "judgeModel": "claude-fable-5-1",
+    "claudeModels": true
+  },
+  "costUsd": 9.773941299999999,
+  "lessons": [],
+  "exit": 0,
+  "unmeasured": [
+    "thread-with-contracts",
+    "ticket-triaged-against-business",
+    "unknown-stack",
+    "validator-unattended-approval"
+  ]
+}
