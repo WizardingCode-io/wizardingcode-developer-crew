@@ -25,6 +25,7 @@ import {
   ctoPlanFor,
   type ImproveOptions,
   type Kept,
+  medianOf,
   realDeps,
   runImprove,
   verdictOf,
@@ -85,9 +86,70 @@ export interface LoopConfig {
   userCheckout?: string;
   /** True holds every tick after its probe, the agent left installed. */
   paused?: boolean;
-  /** A ceiling for one run's kit spend (`--max-cost-usd`); none by default (the user's decision: no cap, managed). */
+  /** A ceiling for one run's kit spend (`--max-cost-usd`): 20 USD by default, 0 for none (2026-10-27-006 D-2; no cap was the default until 154.85 USD went on one day with nothing kept). */
   maxRunUsd?: number;
+  /** A ceiling for a day's priced spend over its runs: 60 USD by default, 0 for none; a due tick at or above it runs nothing and says why (D-2). */
+  maxDayUsd?: number;
 }
+
+/** The ceilings' defaults (2026-10-27-006 D-2). */
+export const CEILING_DEFAULTS = { maxRunUsd: 20, maxDayUsd: 60 } as const;
+
+/**
+ * A ceiling as the configuration gives it (AC-6): 0 or a positive number as given; a value that is
+ * not a finite number at or above 0 is the default, with a note for the tick's log naming the key,
+ * the value and the default, so a typo never disables or inverts a ceiling in silence.
+ */
+export function ceilingOf(
+  config: { maxRunUsd?: number; maxDayUsd?: number },
+  key: "maxRunUsd" | "maxDayUsd",
+  fallback: number,
+): { value: number; note: string | null } {
+  const given = config[key];
+  if (given === undefined) return { value: fallback, note: null };
+  if (typeof given === "number" && Number.isFinite(given) && given >= 0)
+    return { value: given, note: null };
+  return {
+    value: fallback,
+    note: `config: ${key} ${JSON.stringify(given)} is not a number at or above 0; the default ${fallback} applies`,
+  };
+}
+
+/** A run's cost as the loop can price it: a finite number at or above 0, else null (2026-10-27-006 AC-6). The one rule the day ceiling, the daily report and the status share. */
+export const pricedCost = (cost: unknown): number | null =>
+  typeof cost === "number" && Number.isFinite(cost) && cost >= 0 ? cost : null;
+
+/**
+ * The day's cost as the ceiling reads it (AC-6): the priced costs summed; a null cost (a provider
+ * with no list price) and a malformed one add nothing and are counted as unpriced, so the
+ * comparison is between finite numbers and the skip's line says what it could not price.
+ */
+export function dayCostOf(runs: readonly DayRun[]): {
+  priced: number;
+  pricedRuns: number;
+  unpriced: number;
+} {
+  let priced = 0;
+  let pricedRuns = 0;
+  let unpriced = 0;
+  for (const run of runs) {
+    const cost = pricedCost(run.costUsd);
+    if (cost === null) unpriced += 1;
+    else {
+      priced += cost;
+      pricedRuns += 1;
+    }
+  }
+  return { priced, pricedRuns, unpriced };
+}
+
+/** The reason a day's budget skip gives, in its log line, its report line and its notice (one builder, CQ F-5 of the item's round 1). */
+export function budgetReason(ceilingUsd: number, cost: ReturnType<typeof dayCostOf>): string {
+  return `the day's budget of ${usd(ceilingUsd)} is spent (${usd(cost.priced)} over ${cost.pricedRuns} priced run(s); ${cost.unpriced} unpriced)`;
+}
+
+/** The hour and minute of an ISO time, as the report and the log name a skipped tick. */
+const hhmm = (iso: string): string => iso.slice(11, 16);
 
 /** What a run receives from its provider: the environment, the two models the kit names, and whether the models are Claude's (D-9). */
 export interface ResolvedProvider {
@@ -292,13 +354,18 @@ export function dailyReport(
   runs: readonly DayRun[],
   releases: readonly { version: string; run: string }[],
   failures: readonly { run: string; step: number; name: string }[],
+  skipped: { at: string; reason: string } | null = null,
 ): string {
+  // A provider without a list price (its runs' cost null) totals n/a; a malformed cost on a priced
+  // provider adds nothing to its total and shows n/a in its row (2026-10-27-006 AC-6).
   const totals = new Map<string, number | null>();
   for (const run of runs) {
     const before = totals.get(run.provider.name);
     totals.set(
       run.provider.name,
-      run.costUsd === null || before === null ? null : (before ?? 0) + run.costUsd,
+      run.costUsd === null || before === null
+        ? null
+        : (before ?? 0) + (pricedCost(run.costUsd) ?? 0),
     );
   }
   const lines = [
@@ -306,10 +373,10 @@ export function dailyReport(
     "",
     "| Run | Targets | Verdict | Provider | Cost |",
     "| :- | :- | :- | :- | :- |",
-    ...runs.map(
-      (r) =>
-        `| ${r.run} | ${r.targets.join(", ")} | ${r.verdict} | ${r.provider.name}${r.provider.claudeModels ? "" : " (not Claude models)"} | ${r.costUsd === null ? "n/a" : usd(r.costUsd)} |`,
-    ),
+    ...runs.map((r) => {
+      const cost = pricedCost(r.costUsd);
+      return `| ${r.run} | ${r.targets.join(", ")} | ${r.verdict} | ${r.provider.name}${r.provider.claudeModels ? "" : " (not Claude models)"} | ${cost === null ? "n/a" : usd(cost)} |`;
+    }),
     "",
     "## Cost by provider",
     "",
@@ -329,6 +396,13 @@ export function dailyReport(
       : ["- none"]),
     "",
   ];
+  if (skipped)
+    lines.push(
+      "",
+      "## Skipped ticks",
+      "",
+      `- ${hhmm(skipped.at)} UTC: ${skipped.reason}; every later tick of the day skips the same way until the budget or the day changes`,
+    );
   return lines.join("\n");
 }
 
@@ -377,7 +451,7 @@ function keptProbe(record: AdoptionRecord): Record<string, CaseFigures> | null {
 
 /**
  * The adoption's gate, in code before any judge (AC-17, security R-2): the kept harness's figures
- * are a win by the run's own rule (`verdictOf`: every target rose above its spread, no probed case
+ * are a win by the run's own rule (`verdictOf`: every target rose over its baseline's median, no probed case
  * fell) and every path of its diff lies under the harness roots. The judge rules only what code
  * cannot: whether a rule of the method was weakened.
  */
@@ -564,7 +638,7 @@ export async function adoptRun(
       ...record.targets.map((t) => {
         const before = record.baseline[t] as CaseFigures;
         const after = probe[t] as CaseFigures;
-        return `- ${t}: ${two(before.mean)} → ${two(after.mean)} (spread ${two(before.spread)})`;
+        return `- ${t}: ${two(before.mean)} → ${two(after.mean)} (median ${two(medianOf(before))})`;
       }),
       `- kept: ${what}`,
     ],
@@ -594,6 +668,8 @@ export function readConfig(home: string): LoopConfig {
     staleDays: 7,
     proposals: 2,
     marketplace: { account: "andreagroferreira" },
+    maxRunUsd: CEILING_DEFAULTS.maxRunUsd,
+    maxDayUsd: CEILING_DEFAULTS.maxDayUsd,
   };
   const given = readConfigFile(home);
   return { ...defaults, ...given, marketplace: { ...defaults.marketplace, ...given.marketplace } };
@@ -706,8 +782,8 @@ function dayRunsOf(records: readonly LoopRecord[], date: string): DayRun[] {
 }
 
 function dayTotalOf(runs: readonly DayRun[]): string {
-  const priced = runs.filter((r) => r.costUsd !== null);
-  return priced.length ? usd(priced.reduce((sum, r) => sum + (r.costUsd as number), 0)) : "n/a";
+  const priced = runs.map((r) => pricedCost(r.costUsd)).filter((c): c is number => c !== null);
+  return priced.length ? usd(priced.reduce((sum, c) => sum + c, 0)) : "n/a";
 }
 
 export interface TickDeps {
@@ -893,6 +969,39 @@ export async function tick(options: { dryRun?: boolean }, deps: TickDeps): Promi
   };
   const day: DayState = state.day?.date === date ? state.day : { date, releases: [], failures: [] };
   state.day = day;
+  /** The report of the day as it stands, with the day's budget skip when one happened (2026-10-27-006 AC-5). */
+  const writeDayReport = () =>
+    writeRedacted(
+      join(repo, "docs", "improve", "daily", `${date}.md`),
+      dailyReport(
+        date,
+        dayRunsOf(readRecords(repo), date),
+        day.releases,
+        day.failures,
+        day.budgetSkip ? { at: day.budgetSkip.at, reason: day.budgetSkip.reason } : null,
+      ),
+      secrets,
+    );
+  /**
+   * A due tick over the day's budget runs nothing (D-2, AC-5): the first skip of the day is kept in
+   * the state before anything that can fail, written into the report's Skipped ticks section,
+   * committed and pushed through the run's own path and notified once; a later skip of the day logs
+   * alone (the tick's finally saves the state). No record folder, no lastRun: the staleness that
+   * made the tick due is unchanged.
+   */
+  const skipForBudget = (reason: string, costUsd: number): void => {
+    if (day.budgetSkip) {
+      log(`skipped: ${reason}; reported at ${hhmm(day.budgetSkip.at)} UTC`);
+      return;
+    }
+    day.budgetSkip = { at: now.toISOString(), costUsd, reason };
+    saveState();
+    log(`skipped: ${reason}; every later tick of the day skips the same way`);
+    writeDayReport();
+    commitDocs(`Improvement tick ${date}: the day's budget is spent`);
+    pushMain([]);
+    notify("crew improve", `skipped: ${reason}. Every later tick of the day skips the same way.`);
+  };
 
   try {
     rotateLogs(home);
@@ -1032,6 +1141,18 @@ export async function tick(options: { dryRun?: boolean }, deps: TickDeps): Promi
       );
       return 0;
     }
+    // The two ceilings (2026-10-27-006 D-2): the run's goes to the run; the day's is read here from
+    // the day's priced records, after the due and dry-run decisions and before the run.
+    const runCeiling = ceilingOf(config, "maxRunUsd", CEILING_DEFAULTS.maxRunUsd);
+    const dayCeiling = ceilingOf(config, "maxDayUsd", CEILING_DEFAULTS.maxDayUsd);
+    for (const note of [runCeiling.note, dayCeiling.note]) if (note) log(note);
+    if (dayCeiling.value > 0) {
+      const cost = dayCostOf(dayRunsOf(readRecords(repo), date));
+      if (cost.priced >= dayCeiling.value) {
+        skipForBudget(budgetReason(dayCeiling.value, cost), cost.priced);
+        return 0;
+      }
+    }
     log(`due: ${due.reason}; targets: ${targets.join(", ")}; provider: ${provider.name}`);
     // The run; then the last run on record before anything can fail, its files through the
     // redaction, and the record and the day's report committed and pushed with the kept branch (D-3).
@@ -1041,7 +1162,7 @@ export async function tick(options: { dryRun?: boolean }, deps: TickDeps): Promi
         proposals: config.proposals,
         judgeModel: provider.judgeModel,
         provider,
-        maxCostUsd: config.maxRunUsd,
+        maxCostUsd: runCeiling.value > 0 ? runCeiling.value : undefined,
       },
       repo,
     );
@@ -1060,12 +1181,7 @@ export async function tick(options: { dryRun?: boolean }, deps: TickDeps): Promi
     saveState();
     const folder = join(repo, "docs", "improve", latest.run);
     redactRunFiles(folder, secrets);
-    const report = () =>
-      writeRedacted(
-        join(repo, "docs", "improve", "daily", `${date}.md`),
-        dailyReport(date, dayRunsOf(readRecords(repo), date), day.releases, day.failures),
-        secrets,
-      );
+    const report = writeDayReport;
     report();
     commitDocs(`Improvement run ${latest.run}: ${verdictText(latest)}`);
     const base = pushMain(latest.branch ? [latest.branch] : []);

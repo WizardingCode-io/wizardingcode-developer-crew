@@ -9,11 +9,13 @@ import {
   createImproveFolder,
   ctoPlanFor,
   editorPrompt,
+  gainOf,
   type ImproveRecord,
   keptHarness,
   lessonAdder,
   lessonCommand,
   lessonsOf,
+  medianOf,
   probeSet,
   rationaleOf,
   recordMarkdown,
@@ -146,7 +148,7 @@ test("2026-10-24-012 AC-5: a proposal's probe set is its targets, every case who
   expect(probeSet(["rounds-bounded"], [], baseline)).toEqual(["rounds-bounded", "unknown"]);
 });
 
-test("2026-10-24-012 AC-6: a win needs every target's mean above its baseline by more than the spread and no probe case falling beyond its spread; an errored run or an unfinished case is inconclusive", () => {
+test("2026-10-24-012 AC-6, 2026-10-27-006 AC-1: a win needs every target risen (its probe mean above the baseline's and its lowest probe run at least the baseline's median) and no probe case fallen (its mean below the baseline's with its highest run at most the median); an errored run or an unfinished case is inconclusive", () => {
   const baseline = {
     t: figures("t", [0.5, 0.5, 0.75]),
     u: figures("u", [1, 1, 1]),
@@ -155,18 +157,23 @@ test("2026-10-24-012 AC-6: a win needs every target's mean above its baseline by
   expect(
     verdictOf(["t"], set, baseline, { t: figures("t", [1, 1, 1]), u: baseline.u }).verdict,
   ).toBe("win");
-  // A rise within the spread is noise.
+  // A rise whose worst run is at least the baseline's typical run is a rise, whatever the range.
   expect(
     verdictOf(["t"], set, baseline, { t: figures("t", [0.75, 0.75, 0.75]), u: baseline.u }).verdict,
-  ).toBe("lose");
-  // A rise exactly the spread is noise, and equal means with no spread are no rise.
+  ).toBe("win");
   const once = (t: number[], p: number[]) =>
-    verdictOf(["t"], ["t"], { t: figures("t", t) }, { t: figures("t", p) }).verdict;
-  expect(once([0.5, 0.75, 0.75], [0.75, 1, 1])).toBe("lose");
-  expect(once([1, 1, 1], [1, 1, 1])).toBe("lose");
-  // A fall within the spread is noise: the proposal still wins.
+    verdictOf(["t"], ["t"], { t: figures("t", t) }, { t: figures("t", p) });
+  expect(once([0.5, 0.75, 0.75], [0.75, 1, 1]).verdict).toBe("win");
+  // Equal means are no rise; a higher mean whose worst run is under the median is no rise either.
+  expect(once([1, 1, 1], [1, 1, 1]).verdict).toBe("lose");
+  const dipped = once([1, 0.25, 1], [0.75, 0.75, 1]);
+  expect(dipped.verdict).toBe("lose");
+  expect(dipped.reasons).toEqual([
+    "t did not rise: 0.83 against 0.75 (median 1.00, lowest run 0.75)",
+  ]);
+  // Another case whose typical run got worse fell, whatever its range: the proposal loses.
   const u = figures("u", [0.5, 1, 1]);
-  const atSpread = verdictOf(
+  const fell = verdictOf(
     ["t"],
     set,
     { ...baseline, u },
@@ -175,14 +182,25 @@ test("2026-10-24-012 AC-6: a win needs every target's mean above its baseline by
       u: figures("u", [0.5, 0.5, 1]),
     },
   );
-  expect(atSpread.verdict).toBe("win");
-  // Another case falling beyond its spread (zero here) loses the proposal.
-  const fell = verdictOf(["t"], set, baseline, {
+  expect(fell.verdict).toBe("lose");
+  expect(fell.reasons).toEqual(["u fell: 0.67 against 0.83 (median 1.00, highest run 1.00)"]);
+  // A lower mean whose best run is above the median is noise, not a fall.
+  const spread = figures("u", [0.5, 0.75, 1]);
+  expect(
+    verdictOf(
+      ["t"],
+      set,
+      { ...baseline, u: spread },
+      { t: figures("t", [1, 1, 1]), u: figures("u", [0.5, 0.5, 1]) },
+    ).verdict,
+  ).toBe("win");
+  // A case at its ceiling falls on one dip run, as before.
+  const dip = verdictOf(["t"], set, baseline, {
     t: figures("t", [1, 1, 1]),
     u: figures("u", [1, 1, 0.5]),
   });
-  expect(fell.verdict).toBe("lose");
-  expect(fell.reasons).toContain("u fell: 0.83 against 1.00 (spread 0.00)");
+  expect(dip.verdict).toBe("lose");
+  expect(dip.reasons).toContain("u fell: 0.83 against 1.00 (median 1.00, highest run 1.00)");
   const errored = figures("t", [1, 1, 1]);
   errored.runs[2] = { score: 0, errored: true, failing: [], reads: [] };
   errored.errored = true;
@@ -192,6 +210,42 @@ test("2026-10-24-012 AC-6: a win needs every target's mean above its baseline by
   expect(verdictOf(["t"], set, baseline, { t: figures("t", [1, 1, 1]) }).verdict).toBe(
     "inconclusive",
   );
+  // Figures without runs (a record of another shape) read as one run at the mean.
+  const flat = { ...figures("t", [0.5]), runs: [] };
+  expect(
+    verdictOf(["t"], ["t"], { t: flat }, { t: { ...figures("t", [0.6]), runs: [] } }).verdict,
+  ).toBe("win");
+});
+
+test("2026-10-27-006 AC-1: run 2026-10-27-5's figures rule P-1 a win with gain 0.58 and P-2 a loss, where the old rule read both as losses; the gain is the sum of the targets' rises", () => {
+  const targets = ["strategy-declares-phases", "strategy-rejects-over-engineering"];
+  const baseline = {
+    "strategy-declares-phases": figures("strategy-declares-phases", [0.4, 1, 0.4]),
+    "strategy-rejects-over-engineering": figures("strategy-rejects-over-engineering", [1, 0.25, 1]),
+  };
+  const p1 = {
+    "strategy-declares-phases": figures("strategy-declares-phases", [1, 0.8, 1]),
+    "strategy-rejects-over-engineering": figures("strategy-rejects-over-engineering", [1, 1, 1]),
+  };
+  const p2 = {
+    "strategy-declares-phases": figures("strategy-declares-phases", [1, 0.8, 1]),
+    "strategy-rejects-over-engineering": figures(
+      "strategy-rejects-over-engineering",
+      [0.75, 0.75, 1],
+    ),
+  };
+  const first = verdictOf(targets, targets, baseline, p1);
+  expect(first.verdict).toBe("win");
+  expect(first.reasons).toEqual([]);
+  expect(gainOf(targets, baseline, p1)).toBeCloseTo(0.583, 2);
+  const second = verdictOf(targets, targets, baseline, p2);
+  expect(second.verdict).toBe("lose");
+  expect(second.reasons).toEqual([
+    "strategy-rejects-over-engineering did not rise: 0.83 against 0.75 (median 1.00, lowest run 0.75)",
+  ]);
+  expect(gainOf(targets, baseline, p2)).toBeCloseTo(0.417, 2);
+  // The median of an even count is the mean of the two middle scores.
+  expect(medianOf(figures("t", [0.2, 0.9, 0.4, 0.6]))).toBeCloseTo(0.5, 6);
 });
 
 test("2026-10-24-012 AC-7: two or more winners are kept as their composition only when it holds; diffs that do not apply together or a composition that fails leave the best single winner; one winner stands alone", () => {

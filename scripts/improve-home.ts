@@ -18,6 +18,8 @@ export interface DayState {
   date: string;
   releases: { version: string; run: string }[];
   failures: { run: string; step: number; name: string }[];
+  /** The first tick of the day that ran nothing because the day's budget was spent (2026-10-27-006 AC-5): when, the priced cost it read and the reason as it was written, so a report rewritten later in the day says the same words. */
+  budgetSkip?: { at: string; costUsd: number; reason: string };
 }
 
 export interface ImproveState {

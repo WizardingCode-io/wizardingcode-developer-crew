@@ -38,3 +38,20 @@ test("2026-10-25-005 AC-11: ADR 0015 records the decisions and supersedes ADR 00
   const section = findings.slice(findings.indexOf("### 163."), findings.indexOf("### 164."));
   expect(/\n- Outcome: closed in `2026-10-25-005`/.test(section)).toBe(true);
 });
+
+// 2026-10-27-006 AC-3: the verdict's rule and the two ceilings, where a reader looks.
+test("2026-10-27-006 AC-3: ADR 0013 carries the dated note on the verdict by dominance over the baseline's median and on the two ceilings; the loop's README names maxRunUsd and maxDayUsd with their defaults, the meaning of 0 and the report's Skipped ticks section", () => {
+  const adr = read("docs/adr/0013-harness-improvement-loop.md");
+  expect(adr).toContain("2026-10-27");
+  expect(adr).toMatch(/median/);
+  expect(adr).toContain("maxRunUsd");
+  expect(adr).toContain("maxDayUsd");
+  expect(adr).toContain("154.85 USD");
+  const readme = read("docs/improve/README.md");
+  expect(readme).toContain("`maxRunUsd`");
+  expect(readme).toContain("`maxDayUsd`");
+  expect(readme).toMatch(/20 USD/);
+  expect(readme).toMatch(/60 USD/);
+  expect(readme).toMatch(/`0`[^.\n]*no ceiling/);
+  expect(readme).toContain("Skipped ticks");
+});

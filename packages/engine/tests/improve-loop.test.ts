@@ -17,7 +17,9 @@ import {
   adoptionGate,
   adoptRun,
   backoffHours,
+  ceilingOf,
   dailyReport,
+  dayCostOf,
   dueRun,
   type InstallDeps,
   install,
@@ -28,6 +30,7 @@ import {
   parseRuling,
   pickTargets,
   providerEnv,
+  readConfig,
   redact,
   redactingLogger,
   runProbe,
@@ -404,8 +407,10 @@ test("2026-10-25-005 AC-17: the adoption gate is code before the judge: paths ou
     "paths outside the harness: scripts/x.ts",
   );
   expect(
-    adoptionGate(keptRecord("2026-10-25-1", 0.55), ["plugins/core/agents/judge.md"]).clause,
-  ).toBe("the figures are not a win: t did not rise: 0.55 against 0.50 (spread 0.10)");
+    adoptionGate(keptRecord("2026-10-25-1", 0.5), ["plugins/core/agents/judge.md"]).clause,
+  ).toBe(
+    "the figures are not a win: t did not rise: 0.50 against 0.50 (median 0.50, lowest run 0.50)",
+  );
   expect(adoptionGate({ ...good, kept: null }, []).clause).toBe("nothing kept");
   expect(parseRuling(holdsJson)).toEqual({ holds: true, text: "holds\n\nMissing: none." });
   expect(
@@ -618,7 +623,7 @@ test("2026-10-25-005 AC-6: with the gate held the judge rules on the diff with t
   expect(seen.release).toEqual([
     {
       reason: "improvement run 2026-10-25-1: t 0.50 → 0.90",
-      notes: ["- t: 0.50 → 0.90 (spread 0.10)", "- kept: P-1"],
+      notes: ["- t: 0.50 → 0.90 (median 0.50)", "- kept: P-1"],
     },
   ]);
   // Does not hold: the branch stays, main stays, nothing released, the reason names the judge's answer.
@@ -708,6 +713,8 @@ function loopWorld(options: { loop?: boolean } = {}): {
 type Seen = {
   sh: string[][];
   improve: { cases: string[]; provider: string }[];
+  /** The run ceiling each improvement received (2026-10-27-006 AC-2, AC-6). */
+  ceilings: (number | undefined)[];
   judge: number;
   release: string[];
   log: string[];
@@ -737,7 +744,7 @@ function tickDeps(
     secret?: string;
   } = {},
 ): { deps: TickDeps; seen: Seen } {
-  const seen: Seen = { sh: [], improve: [], judge: 0, release: [], log: [] };
+  const seen: Seen = { sh: [], improve: [], ceilings: [], judge: 0, release: [], log: [] };
   const now = new Date(options.now ?? "2026-10-25T20:00:00.000Z");
   const deps: TickDeps = {
     home: world.home,
@@ -769,6 +776,7 @@ function tickDeps(
     },
     improve: async (opts, repo) => {
       seen.improve.push({ cases: opts.cases, provider: opts.provider?.name ?? "none" });
+      seen.ceilings.push(opts.maxCostUsd);
       const date = now.toISOString().slice(0, 10);
       // The next free folder of the day, as createImproveFolder names it.
       const taken = existsSync(join(repo, "docs/improve"))
@@ -1817,4 +1825,204 @@ test("2026-10-26-005 AC-3: the tick removes the improvement runs' result folders
   expect(existsSync(old)).toBe(false);
   expect(existsSync(young)).toBe(true);
   expect(existsSync(other)).toBe(true);
+});
+
+// 2026-10-27-006 (the loop keeps nothing and spends without a ceiling): the two ceilings.
+test("2026-10-27-006 AC-2, AC-6: readConfig fills maxRunUsd 20 and maxDayUsd 60 for a config without the keys; ceilingOf reads 0 and a positive number as given, and a value that is not a finite number at or above 0 as the default with a note naming the key, the value and the default", () => {
+  const home = tempDir();
+  expect(readConfig(home).maxRunUsd).toBe(20);
+  expect(readConfig(home).maxDayUsd).toBe(60);
+  writeFileSync(join(home, "config.json"), JSON.stringify({ maxRunUsd: 0, maxDayUsd: 25 }));
+  expect(readConfig(home).maxRunUsd).toBe(0);
+  expect(readConfig(home).maxDayUsd).toBe(25);
+  expect(ceilingOf({ maxDayUsd: 25 }, "maxDayUsd", 60)).toEqual({ value: 25, note: null });
+  expect(ceilingOf({ maxDayUsd: 0 }, "maxDayUsd", 60)).toEqual({ value: 0, note: null });
+  expect(ceilingOf({}, "maxDayUsd", 60)).toEqual({ value: 60, note: null });
+  expect(ceilingOf({ maxDayUsd: "abc" as unknown as number }, "maxDayUsd", 60)).toEqual({
+    value: 60,
+    note: 'config: maxDayUsd "abc" is not a number at or above 0; the default 60 applies',
+  });
+  expect(ceilingOf({ maxRunUsd: -5 }, "maxRunUsd", 20)).toEqual({
+    value: 20,
+    note: "config: maxRunUsd -5 is not a number at or above 0; the default 20 applies",
+  });
+  expect(ceilingOf({ maxRunUsd: Number.NaN }, "maxRunUsd", 20).value).toBe(20);
+  // The day's cost: finite costs at or above 0 summed, null and malformed ones counted as unpriced.
+  const run = (costUsd: unknown) => ({
+    run: "r",
+    targets: [],
+    verdict: "nothing kept",
+    provider: { name: "runtime", claudeModels: true },
+    costUsd: costUsd as number | null,
+  });
+  expect(dayCostOf([run(1.5), run(null), run("x"), run(Number.NaN), run(-1), run(2)])).toEqual({
+    priced: 3.5,
+    pricedRuns: 2,
+    unpriced: 4,
+  });
+  expect(dayCostOf([])).toEqual({ priced: 0, pricedRuns: 0, unpriced: 0 });
+});
+
+test("2026-10-27-006 AC-2, AC-5, AC-6: the tick passes the run ceiling to the run (undefined for 0); a due tick with the day's priced cost at or above maxDayUsd runs nothing: the first skip of the day writes the report's Skipped ticks section, commits and pushes it, notifies once and saves state.day.budgetSkip; a later skip of the day only logs; no record folder and no lastRun; the skip's line counts the unpriced records", async () => {
+  const world = loopWorld();
+  // The default ceiling reaches the run; 0 reaches it as none; 7 as 7.
+  const first = tickDeps(world);
+  expect(await tick({}, first.deps)).toBe(0);
+  expect(first.seen.ceilings).toEqual([20]);
+  const stateAfterRun = JSON.parse(readFileSync(join(world.home, "state.json"), "utf8"));
+  expect(stateAfterRun.lastRun.run).toBe("2026-10-25-1");
+  // Two records of the day the ceiling cannot price: a provider with no list price, a malformed cost.
+  for (const [n, extra] of [
+    [8, { provider: { name: "local", claudeModels: false }, costUsd: 9 }],
+    [9, { provider: { name: "runtime", claudeModels: true }, costUsd: "x" }],
+  ] as const) {
+    const folder = join(world.user, "docs/improve", `2026-10-25-${n}`);
+    mkdirSync(folder, { recursive: true });
+    writeFileSync(
+      join(folder, "record.json"),
+      `${JSON.stringify({ run: `2026-10-25-${n}`, at: "2026-10-25T19:00:00.000Z", targets: ["t"], baseline: {}, proposals: [], composition: null, kept: null, branch: null, exit: 0, ...extra })}\n`,
+    );
+  }
+  writeFileSync(join(world.user, "plugins/core/skills/crew/SKILL.md"), "# Crew\n\nRule 2.\n");
+  git(world.user, "add", "-A");
+  git(world.user, "commit", "-q", "-m", "rule 2 and two records");
+  git(world.user, "push", "-q", "origin", "main");
+  writeFileSync(join(world.home, "config.json"), JSON.stringify({ maxRunUsd: 0, maxDayUsd: 1 }));
+  // Due (the plugin's text changed), the day's priced cost 1.50 at or above 1.00: the first skip.
+  const second = tickDeps(world, { now: "2026-10-25T21:00:00.000Z" });
+  expect(await tick({}, second.deps)).toBe(0);
+  expect(second.seen.improve).toEqual([]);
+  expect(second.seen.ceilings).toEqual([]);
+  const skipLine =
+    "skipped: the day's budget of 1.00 USD is spent (1.50 USD over 1 priced run(s); 2 unpriced)";
+  expect(second.seen.log.join("\n")).toContain(
+    `${skipLine}; every later tick of the day skips the same way`,
+  );
+  expect(originHead(world.origin)).toBe("Improvement tick 2026-10-25: the day's budget is spent");
+  const report = git(world.origin, "show", "main:docs/improve/daily/2026-10-25.md");
+  expect(report).toContain("## Skipped ticks");
+  expect(report).toContain(
+    "- 21:00 UTC: the day's budget of 1.00 USD is spent (1.50 USD over 1 priced run(s); 2 unpriced); every later tick of the day skips the same way until the budget or the day changes",
+  );
+  expect(report).toContain("| 2026-10-25-1 |");
+  const notices = second.seen.sh.filter((c) => c[0] === "osascript");
+  expect(notices).toHaveLength(1);
+  expect(notices[0]?.join(" ")).toContain(
+    `${skipLine}. Every later tick of the day skips the same way.`,
+  );
+  const state = JSON.parse(readFileSync(join(world.home, "state.json"), "utf8"));
+  expect(state.day.budgetSkip).toEqual({
+    at: "2026-10-25T21:00:00.000Z",
+    costUsd: 1.5,
+    reason: "the day's budget of 1.00 USD is spent (1.50 USD over 1 priced run(s); 2 unpriced)",
+  });
+  expect(state.lastRun.run).toBe("2026-10-25-1");
+  // The report prices only what it can: the malformed cost is n/a, the total counts the priced run.
+  expect(report).toContain("| 2026-10-25-9 | t | nothing kept | runtime | n/a |");
+  expect(report).toContain("| 2026-10-25-8 | t | nothing kept | local (not Claude models) | n/a |");
+  expect(report).toContain("- runtime: 1.50 USD");
+  expect(
+    readdirSync(join(world.home, "repo/docs/improve"))
+      .filter((n) => n.startsWith("2026-10-25-"))
+      .sort(),
+  ).toEqual(["2026-10-25-1", "2026-10-25-8", "2026-10-25-9"]);
+  // A later skip of the same day: the log alone, nothing committed, no second notice.
+  const third = tickDeps(world, { now: "2026-10-25T22:00:00.000Z" });
+  expect(await tick({}, third.deps)).toBe(0);
+  expect(third.seen.improve).toEqual([]);
+  expect(third.seen.log.join("\n")).toContain(`${skipLine}; reported at 21:00 UTC`);
+  expect(third.seen.sh.filter((c) => c[0] === "osascript")).toEqual([]);
+  expect(originHead(world.origin)).toBe("Improvement tick 2026-10-25: the day's budget is spent");
+  // A run ceiling of 0 reaches the run as none, 7 as 7, once the day ceiling is off.
+  writeFileSync(join(world.home, "config.json"), JSON.stringify({ maxRunUsd: 0, maxDayUsd: 0 }));
+  const fourth = tickDeps(world, { now: "2026-10-25T23:00:00.000Z" });
+  expect(await tick({}, fourth.deps)).toBe(0);
+  expect(fourth.seen.ceilings).toEqual([undefined]);
+  const rewritten = git(world.origin, "show", "main:docs/improve/daily/2026-10-25.md");
+  // The run's folder is the day's next free number: three folders exist (1, 8, 9), so the run is -4.
+  expect(rewritten).toContain("| 2026-10-25-4 |");
+  expect(rewritten).toContain(
+    "- 21:00 UTC: the day's budget of 1.00 USD is spent (1.50 USD over 1 priced run(s); 2 unpriced); every later tick of the day skips the same way until the budget or the day changes",
+  );
+  writeFileSync(join(world.home, "config.json"), JSON.stringify({ maxRunUsd: 7, maxDayUsd: 0 }));
+  git(world.user, "pull", "-q", "--rebase", "origin", "main");
+  writeFileSync(join(world.user, "plugins/core/agents/judge.md"), "# Judge\n\nMore.\n");
+  git(world.user, "commit", "-q", "-am", "judge");
+  git(world.user, "push", "-q", "origin", "main");
+  const fifth = tickDeps(world, { now: "2026-10-25T23:30:00.000Z" });
+  expect(await tick({}, fifth.deps)).toBe(0);
+  expect(fifth.seen.ceilings).toEqual([7]);
+});
+
+test("2026-10-27-006 AC-6, AC-7: a config value the tick cannot trust, for either key, is read as the default and said through the tick's log, redacted like every line the tick writes: a provider's token written as maxDayUsd reaches no log line and no log file (the skip's notice itself carries numbers alone and goes through the same notify, as the AC-5 row shows)", async () => {
+  const world = loopWorld();
+  writeFileSync(
+    join(world.home, "config.json"),
+    JSON.stringify({
+      provider: {
+        name: "openrouter",
+        baseUrl: "https://gateway.example/api",
+        authToken: { keychain: "or-token" },
+        models,
+      },
+      maxDayUsd: "sk-or-SECRET",
+      maxRunUsd: -1,
+    }),
+  );
+  const leaky = tickDeps(world, { secret: "sk-or-SECRET" });
+  expect(await tick({}, leaky.deps)).toBe(0);
+  const log = leaky.seen.log.join("\n");
+  expect(log).toContain(
+    'config: maxDayUsd "[redacted]" is not a number at or above 0; the default 60 applies',
+  );
+  expect(log).toContain(
+    "config: maxRunUsd -1 is not a number at or above 0; the default 20 applies",
+  );
+  expect(log).not.toContain("sk-or-SECRET");
+  expect(readFileSync(join(world.home, "log/2026-10-25.log"), "utf8")).not.toContain(
+    "sk-or-SECRET",
+  );
+  // The run went ahead under the default day ceiling of 60 with the default run ceiling.
+  expect(leaky.seen.ceilings).toEqual([20]);
+});
+
+// Round 1 of the judgement (test-quality F-1, a defect; F-2): the skip's place in the tick and the equal case.
+test("2026-10-27-006 AC-5: the day ceiling is read after the due decision and the dry run: a not-due tick with a spent day logs not due, a dry run logs the dry run, and neither commits a skip or notifies; the same facts on a plain tick skip; a day's cost equal to the ceiling is spent", async () => {
+  const world = loopWorld();
+  const first = tickDeps(world);
+  expect(await tick({}, first.deps)).toBe(0);
+  const spent = () => git(world.origin, "log", "-1", "--format=%s").trim();
+  expect(spent()).toBe("Improvement run 2026-10-25-1: nothing kept");
+  // 1.50 USD on record, the ceiling 1.50: at or above. Nothing new: not due, so no skip.
+  writeFileSync(join(world.home, "config.json"), JSON.stringify({ maxDayUsd: 1.5 }));
+  const notDue = tickDeps(world, { now: "2026-10-25T21:00:00.000Z" });
+  expect(await tick({}, notDue.deps)).toBe(0);
+  expect(notDue.seen.log.join("\n")).toContain("not due: nothing new since the last run");
+  expect(notDue.seen.log.join("\n")).not.toContain("skipped:");
+  expect(notDue.seen.sh.filter((c) => c[0] === "osascript")).toEqual([]);
+  expect(spent()).toBe("Improvement run 2026-10-25-1: nothing kept");
+  // Due by new plugin text, as a dry run: the decision and the targets, no skip.
+  writeFileSync(join(world.user, "plugins/core/skills/crew/SKILL.md"), "# Crew\n\nRule 2.\n");
+  git(world.user, "commit", "-q", "-am", "rule 2");
+  git(world.user, "push", "-q", "origin", "main");
+  const dry = tickDeps(world, { now: "2026-10-25T22:00:00.000Z" });
+  expect(await tick({ dryRun: true }, dry.deps)).toBe(0);
+  expect(dry.seen.log.join("\n")).toContain(
+    "dry run: due (the plugin's text changed on origin/main",
+  );
+  expect(dry.seen.log.join("\n")).not.toContain("skipped:");
+  expect(dry.seen.sh.filter((c) => c[0] === "osascript")).toEqual([]);
+  expect(spent()).toBe("rule 2");
+  expect(
+    JSON.parse(readFileSync(join(world.home, "state.json"), "utf8")).day.budgetSkip,
+  ).toBeUndefined();
+  // The same facts on a plain tick: the skip, at the equal case.
+  const plain = tickDeps(world, { now: "2026-10-25T23:00:00.000Z" });
+  expect(await tick({}, plain.deps)).toBe(0);
+  expect(plain.seen.improve).toEqual([]);
+  expect(plain.seen.log.join("\n")).toContain(
+    "skipped: the day's budget of 1.50 USD is spent (1.50 USD over 1 priced run(s); 0 unpriced); every later tick of the day skips the same way",
+  );
+  expect(spent()).toBe("Improvement tick 2026-10-25: the day's budget is spent");
+  expect(plain.seen.sh.filter((c) => c[0] === "osascript")).toHaveLength(1);
 });

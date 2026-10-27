@@ -65,7 +65,7 @@ export interface CaseFigures {
   name: string;
   runs: RunFigures[];
   mean: number;
-  /** The highest score less the lowest: the run-to-run noise a rise or a fall must exceed. */
+  /** The highest score less the lowest: the run-to-run range, shown in the record (the verdict reads the median, 2026-10-27-006). */
   spread: number;
   /** Every file any run read; null when one run's reads are unknown. */
   reads: string[] | null;
@@ -285,11 +285,28 @@ export function probeSet(
   return [...set].sort();
 }
 
+/** The scores of a case's runs; figures without runs (a record of another shape) read as one run at the mean. */
+function scoresOf(figures: CaseFigures): number[] {
+  return figures.runs.length ? figures.runs.map((r) => r.score) : [figures.mean];
+}
+
+/** The baseline's typical run (2026-10-27-006 D-1): the middle score, or the mean of the two middle ones. */
+export function medianOf(figures: CaseFigures): number {
+  const sorted = [...scoresOf(figures)].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2
+    ? (sorted[mid] as number)
+    : ((sorted[mid - 1] as number) + (sorted[mid] as number)) / 2;
+}
+
 /**
- * The verdict of a probe (D-4, D-6, AC-6, AC-27): inconclusive when a case of the set has no probe
- * figures (unfinished), a probe run errored, or a case's baseline errored; a win when every
- * target's mean rose by more than its baseline spread and no case fell below its baseline mean by
- * more than its spread; otherwise a loss. The reasons name what decided it.
+ * The verdict of a probe (D-4, D-6, AC-6, AC-27; the noise bound of 2026-10-27-006 D-1):
+ * inconclusive when a case of the set has no probe figures (unfinished), a probe run errored, or a
+ * case's baseline errored; a win when every target rose (its probe mean above the baseline's and
+ * its lowest probe run at least the baseline's median, the typical run) and no case fell (its mean
+ * below the baseline's with its highest run at most the median); otherwise a loss. The range of
+ * three runs was the bound before: a bimodal baseline (1.00, 0.25, 1.00) left no headroom to rise
+ * by more than it, so a win was unreachable for the noisiest targets. The reasons name what decided it.
  */
 export function verdictOf(
   targets: readonly string[],
@@ -310,20 +327,31 @@ export function verdictOf(
   for (const name of set) {
     const before = baseline[name] as CaseFigures;
     const after = probe[name] as CaseFigures;
-    const against = `${two(after.mean)} against ${two(before.mean)} (spread ${two(before.spread)})`;
-    if (targets.includes(name) && !(after.mean - before.mean > before.spread)) {
+    // The baseline's typical run and the probe's worst and best, once per case.
+    const median = medianOf(before);
+    const scores = scoresOf(after);
+    const lowest = Math.min(...scores);
+    const highest = Math.max(...scores);
+    const means = `${two(after.mean)} against ${two(before.mean)}`;
+    // A target rose when its probe mean is above the baseline's and its worst run is at least the median.
+    const rose = after.mean > before.mean && lowest >= median;
+    // A case fell when its probe mean is below the baseline's and its best run is at most the median.
+    const fell = after.mean < before.mean && highest <= median;
+    if (targets.includes(name) && !rose) {
       win = false;
-      reasons.push(`${name} did not rise: ${against}`);
+      reasons.push(
+        `${name} did not rise: ${means} (median ${two(median)}, lowest run ${two(lowest)})`,
+      );
     }
-    if (before.mean - after.mean > before.spread) {
+    if (fell) {
       win = false;
-      reasons.push(`${name} fell: ${against}`);
+      reasons.push(`${name} fell: ${means} (median ${two(median)}, highest run ${two(highest)})`);
     }
   }
   return { verdict: win ? "win" : "lose", reasons };
 }
 
-/** How far a probe rose over its targets' noise: the sum of each target's rise less its spread. */
+/** How far a probe rose its targets: the sum of each target's rise of the mean (2026-10-27-006 D-1). */
 export function gainOf(
   targets: readonly string[],
   baseline: Record<string, CaseFigures>,
@@ -333,7 +361,7 @@ export function gainOf(
   for (const name of targets) {
     const before = baseline[name];
     const after = probe[name];
-    if (before && after) gain += after.mean - before.mean - before.spread;
+    if (before && after) gain += after.mean - before.mean;
   }
   return gain;
 }
