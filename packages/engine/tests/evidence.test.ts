@@ -1450,3 +1450,84 @@ test("SP9-T4 AC-4, AC-8: the report renders the UI evidence between the Gates an
   expect(report.match(/^## Judgement gates$/gm)?.length).toBe(1);
   expect(renderReport(work, evidence, DEFAULT_POLICY)).not.toContain("## UI evidence");
 });
+
+test("F179 AC-1, AC-5: the Test-first cell says a preserve pair's counts, counts not recorded for the old shape, and how many times a step was recorded", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const work = workWith(paths);
+  addCriterion(work, "keep", "preserve");
+  const counted = (passed: number): RunRecord => ({ ...run, passed });
+  const red = { ...run, exit: 1 };
+  const evidence: Evidence = {
+    ...emptyEvidence(),
+    fingerprint: "f",
+    tdd: [
+      { criterion: "AC-1", red, reds: [red, red], green: run },
+      { criterion: "AC-2", before: counted(334), after: counted(338), afters: [counted(336)] },
+    ],
+    runs: [gate("test", "pass")],
+  };
+  const report = renderReport(work, evidence, DEFAULT_POLICY);
+  expect(report).toContain(
+    "| AC-1 | behavior | x | red then green; the red recorded 3 times (the latest decides) |",
+  );
+  expect(report).toContain(
+    "| AC-2 | preserve | keep | passing before and after (334 → 338 pass); the after recorded 2 times (the latest decides) |",
+  );
+  // The old shape (no count on either run) and one count missing: said as not recorded, the pair proven.
+  const expected = [{ gate: "test" as const, target: "." }];
+  const old: Evidence = {
+    ...evidence,
+    tdd: [
+      { criterion: "AC-1", red, green: run },
+      { criterion: "AC-2", before: run, after: run },
+    ],
+  };
+  expect(renderReport(work, old, DEFAULT_POLICY)).toContain(
+    "| AC-2 | preserve | keep | passing before and after (counts not recorded) |",
+  );
+  expect(
+    computeVerdict({
+      work,
+      evidence: old,
+      expected,
+      currentFingerprint: "f",
+      tampered: false,
+      policy: DEFAULT_POLICY,
+    }),
+  ).toEqual({ verdict: "proven", unproven: [] });
+  for (const pair of [
+    { before: counted(334), after: run },
+    { before: run, after: counted(338) },
+  ]) {
+    const half: Evidence = {
+      ...old,
+      tdd: [
+        { criterion: "AC-1", red, green: run },
+        { criterion: "AC-2", ...pair },
+      ],
+    };
+    expect(renderReport(work, half, DEFAULT_POLICY)).toContain(
+      "| AC-2 | preserve | keep | passing before and after (counts not recorded) |",
+    );
+  }
+  // Every step's label in the note, each with its own count: green, before, after and observed.
+  addCriterion(work, "seen", "observed");
+  const labelled: Evidence = {
+    ...old,
+    tdd: [
+      { criterion: "AC-1", red, green: run, greens: [run] },
+      { criterion: "AC-2", before: run, befores: [run], after: run, afters: [run, run] },
+      { criterion: "AC-3", observed: run, observeds: [run], reason: "a measurement" },
+    ],
+  };
+  const labels = renderReport(work, labelled, DEFAULT_POLICY);
+  expect(labels).toContain(
+    "| AC-1 | behavior | x | red then green; the green recorded 2 times (the latest decides) |",
+  );
+  expect(labels).toContain(
+    "| AC-2 | preserve | keep | passing before and after (counts not recorded); the before recorded 2 times (the latest decides); the after recorded 3 times (the latest decides) |",
+  );
+  expect(labels).toContain(
+    "| AC-3 | observed | seen | observed: passes after (a measurement); the observed recorded 2 times (the latest decides) |",
+  );
+});

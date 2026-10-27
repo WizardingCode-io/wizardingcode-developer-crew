@@ -1,10 +1,11 @@
 import { expect, test } from "bun:test";
-import { chmodSync, existsSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { tddDone } from "../src/criteria.ts";
 import { detectProfile } from "../src/detect/index.ts";
 import { emptyEvidence } from "../src/evidence.ts";
-import { recordTdd as record } from "../src/tdd.ts";
+import { workDir } from "../src/paths.ts";
+import { passCount, recordTdd as record } from "../src/tdd.ts";
 import { testRunRefusal } from "../src/test-run.ts";
 import type { RunRecord, Target } from "../src/types.ts";
 import { addCriterion, createWork } from "../src/work.ts";
@@ -747,4 +748,208 @@ test("AC-12 (finding 153): a red, green, before or after whose command is no tes
     "no red run can exist",
   );
   expect(seen.ok, seen.message).toBe(true);
+});
+
+// Finding 179 (2026-10-27-001): the record's history, the runners' counts and the pair as one run.
+
+test("F179 AC-1: a step recorded over an earlier record of the same step keeps the earlier runs in its history, oldest first, and the latest decides", async () => {
+  const s = setup();
+  const entry = () => s.evidence.tdd.find((t) => t.criterion === s.preserve.id);
+  const script = (count: number) =>
+    write(s.root, "run-tests.sh", `echo ' ${count} pass'\nexit 0\n`);
+  // Three befores on the base (the test script alone changed, which finding 79's rule allows): the first two kept in order.
+  for (const count of [2, 3, 4]) {
+    script(count);
+    expect(
+      (await recordTdd(s.paths, s.work, s.evidence, s.profile, s.preserve.id, "before")).ok,
+    ).toBe(true);
+  }
+  expect(entry()?.befores?.map((r) => r.passed)).toEqual([2, 3]);
+  expect(entry()?.before?.passed).toBe(4);
+  // Three afters, the first with the before's own count (the equal case is recorded): the first two kept in order, the latest decides.
+  for (const count of [4, 5, 6]) {
+    script(count);
+    expect(
+      (await recordTdd(s.paths, s.work, s.evidence, s.profile, s.preserve.id, "after")).ok,
+    ).toBe(true);
+  }
+  expect(entry()?.afters?.map((r) => r.passed)).toEqual([4, 5]);
+  expect(entry()?.after?.passed).toBe(6);
+  expect(tddDone(entry(), "preserve")).toBe(true);
+  // A red over a red (finding 29's rule) and three greens.
+  const behaviour = () => s.evidence.tdd.find((t) => t.criterion === s.behaviour.id);
+  write(s.root, "run-tests.sh", "echo ' 0 pass'\necho ' 1 fail'\nexit 1\n");
+  expect((await recordTdd(s.paths, s.work, s.evidence, s.profile, s.behaviour.id, "red")).ok).toBe(
+    true,
+  );
+  expect((await recordTdd(s.paths, s.work, s.evidence, s.profile, s.behaviour.id, "red")).ok).toBe(
+    true,
+  );
+  for (const count of [1, 2, 3]) {
+    script(count);
+    expect(
+      (await recordTdd(s.paths, s.work, s.evidence, s.profile, s.behaviour.id, "green")).ok,
+    ).toBe(true);
+  }
+  expect(behaviour()?.reds).toHaveLength(1);
+  expect(behaviour()?.greens?.map((r) => r.passed)).toEqual([1, 2]);
+  expect(behaviour()?.green?.passed).toBe(3);
+  // An observed recorded three times keeps its earlier runs the same way.
+  const seen = addCriterion(s.work, "seen", "observed");
+  for (const count of [1, 2, 3]) {
+    script(count);
+    const observed = await recordTdd(
+      s.paths,
+      s.work,
+      s.evidence,
+      s.profile,
+      seen.id,
+      "observed",
+      undefined,
+      "a measurement",
+    );
+    expect(observed.ok).toBe(true);
+  }
+  const seenRecord = s.evidence.tdd.find((t) => t.criterion === seen.id);
+  expect(seenRecord?.observeds?.map((r) => r.passed)).toEqual([1, 2]);
+  expect(seenRecord?.observed?.passed).toBe(3);
+});
+
+test("F179 AC-6: an after over another command, with fewer passing tests, or with no count after a counted before is refused with nothing recorded; the same command with more tests, and any after on a before without a count, are recorded", async () => {
+  const s = setup();
+  const entry = () => s.evidence.tdd.find((t) => t.criterion === s.preserve.id);
+  const logs = () => {
+    const dir = join(workDir(s.paths, s.work.id), "logs");
+    return existsSync(dir)
+      ? readdirSync(dir).filter((n) => n.startsWith(`tdd-${s.preserve.id}-after-`))
+      : [];
+  };
+  write(s.root, "run-tests.sh", "echo ' 3 pass'\nexit 0\n");
+  expect(
+    (await recordTdd(s.paths, s.work, s.evidence, s.profile, s.preserve.id, "before")).ok,
+  ).toBe(true);
+  // Another command (the profile's own is `npm run test`, the detector's guess for the script): refused before anything runs, no log, nothing recorded.
+  write(s.root, "tests/other.test.sh", "echo ' 9 pass'\ntouch other-ran.txt\nexit 0\n");
+  const other = await recordTdd(
+    s.paths,
+    s.work,
+    s.evidence,
+    s.profile,
+    s.preserve.id,
+    "after",
+    "sh tests/other.test.sh",
+  );
+  expect(other.ok).toBe(false);
+  expect(other.message).toBe(
+    `the after must run the before's command (npm run test): the pair proves the tests the before ran still pass; run that command, or make ${s.preserve.id} observed with the reason`,
+  );
+  expect(other.record).toBeUndefined();
+  expect(existsSync(join(s.root, "other-ran.txt"))).toBe(false);
+  expect(logs()).toEqual([]);
+  expect(entry()?.after).toBeUndefined();
+  // The same command with the before's own count: recorded (the boundary is equal or higher).
+  expect((await recordTdd(s.paths, s.work, s.evidence, s.profile, s.preserve.id, "after")).ok).toBe(
+    true,
+  );
+  expect(entry()?.after?.passed).toBe(3);
+  // Fewer passing tests: refused after the run, the record as it was.
+  write(s.root, "run-tests.sh", "echo ' 2 pass'\nexit 0\n");
+  const fewer = await recordTdd(s.paths, s.work, s.evidence, s.profile, s.preserve.id, "after");
+  expect(fewer.ok).toBe(false);
+  expect(fewer.message).toBe(
+    `the after passed fewer tests than the before (3 → 2): a test the before counted is gone; restore it, or make ${s.preserve.id} observed with the reason`,
+  );
+  expect(fewer.record?.passed).toBe(2);
+  expect(entry()?.after?.passed).toBe(3);
+  expect(entry()?.afters).toBeUndefined();
+  // No count after a counted before: refused, nothing recorded.
+  write(s.root, "run-tests.sh", "echo 'all good'\nexit 0\n");
+  const lost = await recordTdd(s.paths, s.work, s.evidence, s.profile, s.preserve.id, "after");
+  expect(lost.ok).toBe(false);
+  expect(lost.message).toBe(
+    `the after reported no count though the before did (3): its summary was lost (a test that exits early, an output cut short); run it again, or make ${s.preserve.id} observed with the reason`,
+  );
+  expect(entry()?.after?.passed).toBe(3);
+  // A run with a failure is refused by the failed-run rule before any count is compared, whatever its passed figure.
+  write(s.root, "run-tests.sh", "echo '      Tests  1 failed | 11 passed (12)'\nexit 1\n");
+  const failing = await recordTdd(s.paths, s.work, s.evidence, s.profile, s.preserve.id, "after");
+  expect(failing.ok).toBe(false);
+  expect(failing.message).toBe("after run failed (exit 1); nothing recorded");
+  expect(failing.record?.passed).toBe(11);
+  expect(entry()?.after?.passed).toBe(3);
+  // More passing tests: recorded with its count, the equal one kept in the history.
+  write(s.root, "run-tests.sh", "echo ' 4 pass'\nexit 0\n");
+  expect((await recordTdd(s.paths, s.work, s.evidence, s.profile, s.preserve.id, "after")).ok).toBe(
+    true,
+  );
+  expect(entry()?.after?.passed).toBe(4);
+  expect(entry()?.afters?.map((r) => r.passed)).toEqual([3]);
+  // A before without a count takes an after with one or without.
+  const keep = addCriterion(s.work, "keep too", "preserve");
+  write(s.root, "run-tests.sh", "echo 'all good'\nexit 0\n");
+  expect((await recordTdd(s.paths, s.work, s.evidence, s.profile, keep.id, "before")).ok).toBe(
+    true,
+  );
+  write(s.root, "run-tests.sh", "echo ' 1 pass'\nexit 0\n");
+  expect((await recordTdd(s.paths, s.work, s.evidence, s.profile, keep.id, "after")).ok).toBe(true);
+  write(s.root, "run-tests.sh", "echo 'all good'\nexit 0\n");
+  expect((await recordTdd(s.paths, s.work, s.evidence, s.profile, keep.id, "after")).ok).toBe(true);
+});
+
+test("F179 AC-5: passCount reads the runner's own summary line (bun, vitest, jest, pytest, PHPUnit), the last match wins, and a recorded run carries the count", async () => {
+  expect(
+    passCount("bun test v1.3.9\n\n 334 pass\n 0 fail\nRan 334 tests across 7 files. [1.00s]"),
+  ).toBe(334);
+  // A test's own line that looks like the summary can precede it, never follow it: the last match is the runner's.
+  expect(
+    passCount("999 pass\n 999 pass\n 334 pass\n 0 fail\nRan 334 tests across 7 files. [1.00s]"),
+  ).toBe(334);
+  expect(passCount("    334 pass\n")).toBeNull();
+  expect(passCount("Ran 334 tests across 7 files. [1.00s]")).toBeNull();
+  expect(passCount("")).toBeNull();
+  expect(
+    passCount(
+      " Test Files  1 passed (1)\n      Tests  11 passed | 1 skipped (12)\n   Start at  10:00:00\n   Duration  1.2s",
+    ),
+  ).toBe(11);
+  expect(
+    passCount(
+      "Tests:       1 skipped, 3 passed, 4 total\nSnapshots:   0 total\nTime:        1.2 s",
+    ),
+  ).toBe(3);
+  expect(passCount("Tests:       3 passed, 1 skipped, 4 total")).toBe(3);
+  expect(
+    passCount(
+      " Test Files  1 passed (1)\n      Tests  1 skipped | 11 passed (12)\n   Duration  1.2s",
+    ),
+  ).toBe(11);
+  expect(passCount("============ 3 passed, 1 skipped in 0.12s ============")).toBe(3);
+  expect(passCount("=== 3 passed in 0.12s ===")).toBe(3);
+  expect(passCount("===== 3 passed in 61.00s (0:01:01) =====")).toBe(3);
+  expect(
+    passCount(
+      "PHPUnit 11.0\n\n.....\n\nTime: 00:00.012, Memory: 6.00 MB\n\nOK (5 tests, 9 assertions)",
+    ),
+  ).toBe(5);
+  expect(passCount("OK, but there were issues!\nTests: 5, Assertions: 9, Skipped: 1.")).toBe(5);
+  // The `Tests:` form is read only when no passed form matched, wherever the lines sit.
+  expect(passCount("Tests: 7, Assertions: 9.\nOK (5 tests, 9 assertions)")).toBe(5);
+  expect(passCount("OK (5 tests, 9 assertions)\nTests: 7, Assertions: 9.")).toBe(5);
+  // A recorded run carries it; a run without a summary has none.
+  const s = setup();
+  write(s.root, "run-tests.sh", "echo ' 0 pass'\necho ' 1 fail'\nexit 1\n");
+  expect((await recordTdd(s.paths, s.work, s.evidence, s.profile, s.behaviour.id, "red")).ok).toBe(
+    true,
+  );
+  expect(s.evidence.tdd[0]?.red?.passed).toBe(0);
+  write(s.root, "run-tests.sh", "echo ' 2 pass'\nexit 0\n");
+  expect(
+    (await recordTdd(s.paths, s.work, s.evidence, s.profile, s.behaviour.id, "green")).ok,
+  ).toBe(true);
+  expect(s.evidence.tdd[0]?.green?.passed).toBe(2);
+  write(s.root, "run-tests.sh", "echo 'all good'\nexit 0\n");
+  expect(
+    (await recordTdd(s.paths, s.work, s.evidence, s.profile, s.preserve.id, "before")).ok,
+  ).toBe(true);
+  expect(s.evidence.tdd[1]?.before?.passed).toBeUndefined();
 });

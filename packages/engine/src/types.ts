@@ -823,18 +823,25 @@ export interface RunRecord {
   tail: string;
   timedOut: boolean;
   changedTests?: string[];
+  /** The tests the runner's own summary line counted as passing (finding 179); absent when no runner line was read. */
+  passed?: number;
 }
 
 export interface TddRecord {
   criterion: string;
   /** The latest red: the one the criterion's proof reads. */
   red?: RunRecord;
-  /** Every earlier red, oldest first (finding 29): a red recorded over one keeps it here; nothing else reads it. */
+  /** Every earlier red, oldest first (finding 29): a red recorded over one keeps it here; the report says how many times (finding 179). */
   reds?: RunRecord[];
   green?: RunRecord;
+  /** Every earlier green, before, after and observed, oldest first (finding 179): a step recorded over one keeps it here, the latest decides. */
+  greens?: RunRecord[];
   before?: RunRecord;
+  befores?: RunRecord[];
   after?: RunRecord;
+  afters?: RunRecord[];
   observed?: RunRecord;
+  observeds?: RunRecord[];
   /** For an observed criterion: why no red run can exist. */
   reason?: string;
   /** The proof is a merged task's child item: its red and green stand in the child's record (SP2c 8a). */

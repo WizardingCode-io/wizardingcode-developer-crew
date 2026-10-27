@@ -4289,7 +4289,10 @@ test("SP3-T1 AC-2 (finding 81): two tdd commands that overlap keep both records;
   const id = (await one.json("start", "Two records", "--answers", answers, "--preserve", "keep"))
     .data.id as string;
   expect((await one.run("criteria", id, "add", "measured", "--kind", "observed")).code).toBe(0);
-  expect((await one.run("tdd", "before", id, "AC-1", "--", GREEN)).code).toBe(0);
+  // The pair is one command (finding 179), so the before runs the slow test its after runs; 2026-10-27-001 edited this line.
+  expect(
+    (await one.run("tdd", "before", id, "AC-1", "--", "sh", "tests/crew-slow.test.sh")).code,
+  ).toBe(0);
   const [after, observed] = await Promise.all([
     one.run("tdd", "after", id, "AC-1", "--", "sh", "tests/crew-slow.test.sh"),
     two.run("tdd", "observed", id, "AC-2", "--reason", "a measurement", "--", "true"),

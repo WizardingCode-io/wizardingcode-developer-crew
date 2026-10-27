@@ -34,6 +34,7 @@ function openFindings(text: string): number[] {
 // item's round 2 left (the default temp roots untested, the guards without a failing case), for the next
 // touch of those files.
 // 178 holds the advisories SP9 Task 2's batched round left (2026-10-26-009).
+// 179 (the preserve pair's history, its counts and the one-command rule) closed by 2026-10-27-001.
 const OPEN = [77, 114, 177, 178];
 
 test("AC-9 (consolidation of 2026-10-24): the findings that read open are the named ones, and the thirteen closed by the consolidation read closed", () => {

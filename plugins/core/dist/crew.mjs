@@ -3,8 +3,8 @@ import { existsSync as existsSync26, readFileSync as readFileSync12, realpathSyn
 import { basename as basename10, isAbsolute as isAbsolute12, join as join53, relative as relative13, resolve as resolve9, sep as sep7 } from "node:path";
 
 // packages/engine/src/analysis.ts
-import { existsSync as existsSync12, lstatSync as lstatSync4, mkdirSync as mkdirSync4 } from "node:fs";
-import { dirname as dirname7, isAbsolute as isAbsolute5, join as join20 } from "node:path";
+import { existsSync as existsSync15, lstatSync as lstatSync4, mkdirSync as mkdirSync5 } from "node:fs";
+import { dirname as dirname8, isAbsolute as isAbsolute6, join as join28 } from "node:path";
 
 // packages/engine/src/decisions.ts
 import { join as join3 } from "node:path";
@@ -362,7 +362,7 @@ function decisionLine(e) {
 }
 
 // packages/engine/src/evidence.ts
-import { join as join17 } from "node:path";
+import { join as join25 } from "node:path";
 
 // packages/engine/src/fingerprint.ts
 import { execFileSync } from "node:child_process";
@@ -4521,27 +4521,1845 @@ function verdictText(verdict) {
   return verdict === "not-proven" ? "not proven" : verdict === "not-run" ? "not run" : "proven";
 }
 
+// packages/engine/src/tdd.ts
+import { spawnSync } from "node:child_process";
+import { join as join21 } from "node:path";
+
+// packages/engine/src/detect/index.ts
+import { existsSync as existsSync9, readdirSync as readdirSync4, statSync as statSync6 } from "node:fs";
+import { join as join20, relative as relative6 } from "node:path";
+
+// packages/engine/src/pdf.ts
+import { existsSync as existsSync7 } from "node:fs";
+import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
+import { delimiter, join as join14 } from "node:path";
+
+// packages/engine/src/run.ts
+import { spawn } from "node:child_process";
+import { createWriteStream, mkdirSync as mkdirSync4 } from "node:fs";
+import { dirname as dirname6 } from "node:path";
+
+// packages/engine/src/shell-words.ts
+var SHELL_NAMES = ["sh", "bash", "zsh", "dash", "ksh", "fish"];
+var SHELL_VALUED = {
+  short: "oO",
+  long: ["--rcfile", "--init-file"]
+};
+function shellTakesNext(option) {
+  if (option.startsWith("--"))
+    return SHELL_VALUED.long.includes(option);
+  return option.length > 1 && SHELL_VALUED.short.includes(option.charAt(option.length - 1));
+}
+var JS_RUNNERS = ["node", "bun"];
+var NPX_RUNNERS = ["npx", "bunx"];
+var RUNNER_SUFFIXES = { js: [".exe"], npx: [".cmd", ".exe"] };
+function runnerSuffix(suffixes) {
+  return `(?:${suffixes.map((s) => s.replace(".", "\\.")).join("|")})?`;
+}
+var COMMAND_WRAPPERS = [
+  {
+    name: "env",
+    valued: "uCPLU",
+    longValued: ["--unset", "--chdir", "--block-signal", "--default-signal", "--ignore-signal"],
+    positionals: 0,
+    assignments: true,
+    scriptOptions: ["-S", "--split-string"],
+    unsetOptions: ["-u", "--unset"]
+  },
+  { name: "command", valued: "", longValued: [], positionals: 0 }
+];
+function takesNext(wrapper, option) {
+  if (option.includes("="))
+    return false;
+  if (option.startsWith("--"))
+    return wrapper.longValued.includes(option);
+  for (let i = 1;i < option.length; i++)
+    if (wrapper.valued.includes(option.charAt(i)))
+      return i === option.length - 1;
+  return false;
+}
+var SAFE_WORD = /^[A-Za-z0-9_@%+=:,./-]+$/;
+function quoteWord(word) {
+  return SAFE_WORD.test(word) ? word : `'${word.replace(/'/g, "'\\''")}'`;
+}
+var WRAPPERS = [
+  { name: "function", valued: "", longValued: [], positionals: 1 },
+  { name: "case", valued: "", longValued: [], positionals: 1 },
+  { name: "nice", valued: "n", longValued: ["--adjustment"], positionals: 0 },
+  {
+    name: "timeout",
+    valued: "sk",
+    longValued: ["--signal", "--kill-after"],
+    positionals: 1
+  },
+  { name: "stdbuf", valued: "ioe", longValued: ["--input", "--output", "--error"], positionals: 0 },
+  {
+    name: "flock",
+    valued: "w",
+    longValued: ["--wait", "--timeout", "--conflict-exit-code"],
+    positionals: 1,
+    scriptOptions: ["-c", "--command"],
+    scriptTrailing: true
+  },
+  {
+    name: "script",
+    valued: "FtEBIOomT",
+    longValued: [
+      "--echo",
+      "--log-in",
+      "--log-out",
+      "--log-io",
+      "--log-timing",
+      "--logging-format",
+      "--output-limit"
+    ],
+    positionals: 1,
+    scriptOptions: ["-c", "--command"],
+    scriptStandsAlone: true
+  },
+  {
+    name: "su",
+    valued: "gGsw",
+    longValued: ["--group", "--supp-group", "--shell", "--whitelist-environment"],
+    positionals: 1,
+    scriptOptions: ["-c", "--command", "--session-command"],
+    scriptStandsAlone: true
+  },
+  {
+    name: "sudo",
+    valued: "ugpChDTrt",
+    longValued: [
+      "--user",
+      "--group",
+      "--prompt",
+      "--close-from",
+      "--host",
+      "--chdir",
+      "--command-timeout",
+      "--role",
+      "--type",
+      "--other-user"
+    ],
+    positionals: 0
+  },
+  { name: "doas", valued: "uC", longValued: [], positionals: 0 },
+  ...COMMAND_WRAPPERS,
+  { name: "exec", valued: "a", longValued: [], positionals: 0 },
+  {
+    name: "xargs",
+    valued: "nILPdEsa",
+    longValued: [
+      "--max-args",
+      "--replace",
+      "--max-lines",
+      "--max-procs",
+      "--delimiter",
+      "--eof",
+      "--max-chars",
+      "--arg-file",
+      "--process-slot-var"
+    ],
+    positionals: 0
+  },
+  { name: "nohup", valued: "", longValued: [], positionals: 0 },
+  { name: "time", valued: "fo", longValued: ["--format", "--output"], positionals: 0 },
+  { name: "builtin", valued: "", longValued: [], positionals: 0 },
+  { name: "caffeinate", valued: "tw", longValued: [], positionals: 0 },
+  {
+    name: "ionice",
+    valued: "cnp",
+    longValued: ["--class", "--classdata", "--pid"],
+    positionals: 0
+  },
+  { name: "noglob", valued: "", longValued: [], positionals: 0 },
+  { name: "nocorrect", valued: "", longValued: [], positionals: 0 },
+  { name: "coproc", valued: "", longValued: [], positionals: 0, namedBlock: true }
+];
+
+// packages/engine/src/run.ts
+function wrapperTakesNext(wrapper, option) {
+  if (takesNext(wrapper, option))
+    return true;
+  const scripts = wrapper.scriptOptions ?? [];
+  if (scripts.includes(option))
+    return true;
+  if (option.startsWith("--") || option.includes("="))
+    return false;
+  return scripts.some((s) => s.length === 2 && option.endsWith(s.charAt(1)));
+}
+var TAIL_LINES = 40;
+function killTree(pid) {
+  if (!pid)
+    return;
+  try {
+    if (process.platform === "win32")
+      spawn("taskkill", ["/pid", String(pid), "/T", "/F"]);
+    else
+      process.kill(-pid, "SIGKILL");
+  } catch {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {}
+  }
+}
+var WRAPPER_BY_NAME = new Map(COMMAND_WRAPPERS.map((w) => [w.name, w]));
+var ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
+function joinWords(words) {
+  if (words.length === 1)
+    return words[0] ?? "";
+  return words.map(quoteWord).join(" ");
+}
+function shellRefusal(words) {
+  const base = (word) => (word ?? "").split("/").pop() ?? "";
+  let i = 0;
+  let wrapper = null;
+  while (i < words.length) {
+    const word = words[i] ?? "";
+    const named = WRAPPER_BY_NAME.get(base(word));
+    if (named) {
+      wrapper = named;
+      i += 1;
+    } else if (ASSIGNMENT.test(word)) {
+      wrapper = null;
+      i += 1;
+    } else if (wrapper && word.startsWith("-"))
+      i += wrapperTakesNext(wrapper, word) ? 2 : 1;
+    else
+      break;
+  }
+  const name = base(words[i]);
+  if (!SHELL_NAMES.includes(name))
+    return null;
+  let j = i + 1;
+  let commandString = false;
+  while (j < words.length && /^[-+]/.test(words[j] ?? "")) {
+    const option = words[j] ?? "";
+    if (/^-[A-Za-z]*c[A-Za-z]*$/.test(option))
+      commandString = true;
+    j += shellTakesNext(option) ? 2 : 1;
+  }
+  const after = words.length - j;
+  if (!commandString || after <= 1)
+    return null;
+  return `${after} words follow -c and the shell would run only the first (${words[j]}) with the rest as its parameters: quote the command string as one argument, -- ${name} -c "<command>"`;
+}
+function runCommand(command2, options) {
+  mkdirSync4(dirname6(options.logPath), { recursive: true });
+  const log = createWriteStream(options.logPath);
+  let errors = null;
+  if (options.stderrLogPath) {
+    mkdirSync4(dirname6(options.stderrLogPath), { recursive: true });
+    errors = createWriteStream(options.stderrLogPath);
+  }
+  const lines = [];
+  let partial = "";
+  const absorb = (chunk, to = log) => {
+    to.write(chunk);
+    partial += chunk.toString("utf8");
+    const pieces = partial.split(`
+`);
+    partial = pieces.pop() ?? "";
+    for (const line of pieces) {
+      lines.push(line);
+      if (lines.length > TAIL_LINES)
+        lines.shift();
+    }
+  };
+  const started = Date.now();
+  return new Promise((resolve5) => {
+    const child = spawn(command2, {
+      cwd: options.cwd,
+      shell: true,
+      detached: process.platform !== "win32",
+      env: options.env ?? process.env,
+      stdio: [options.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"]
+    });
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      killTree(child.pid);
+    }, options.timeoutMs);
+    child.stdout?.on("data", (chunk) => absorb(chunk));
+    child.stderr?.on("data", (chunk) => absorb(chunk, errors ?? log));
+    if (options.stdin !== undefined)
+      child.stdin?.end(options.stdin);
+    const finish = (exit) => {
+      clearTimeout(timer);
+      if (partial)
+        lines.push(partial);
+      log.end();
+      errors?.end();
+      resolve5({
+        exit,
+        durationMs: Date.now() - started,
+        tail: lines.slice(-TAIL_LINES).join(`
+`),
+        timedOut
+      });
+    };
+    child.on("error", (error) => {
+      absorb(Buffer.from(`${error.message}
+`));
+      finish(null);
+    });
+    child.on("close", (code) => finish(code));
+  });
+}
+function shellWord(path) {
+  const word = path.startsWith("-") ? `./${path}` : path;
+  return /^[A-Za-z0-9_./-]+$/.test(word) ? word : `'${word.replace(/'/g, "'\\''")}'`;
+}
+
+// packages/engine/src/pdf.ts
+var NO_PDF = "PDF not produced: no Playwright in the project and no browser found (set WIZARDINGCODE_CREW_BROWSER)";
+var BROWSER_CANDIDATES = [
+  "google-chrome",
+  "chromium",
+  "chromium-browser",
+  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+  "/Applications/Chromium.app/Contents/MacOS/Chromium"
+];
+
+class PdfTimeout extends Error {
+}
+function onPath(binary, env) {
+  for (const dir of (env.PATH ?? "").split(delimiter)) {
+    if (!dir)
+      continue;
+    const path = join14(dir, binary);
+    if (existsSync7(path))
+      return path;
+  }
+  return null;
+}
+function findBrowser(env, candidates = BROWSER_CANDIDATES) {
+  const named = env.WIZARDINGCODE_CREW_BROWSER?.trim();
+  if (named)
+    return named;
+  for (const candidate of candidates) {
+    const found = candidate.includes("/") ? existsSync7(candidate) ? candidate : null : onPath(candidate, env);
+    if (found)
+      return found;
+  }
+  return null;
+}
+function projectPlaywright(root) {
+  const require2 = createRequire(`${root}/`);
+  for (const name of ["playwright", "@playwright/test"]) {
+    try {
+      const mod = require2(name);
+      if (mod?.chromium)
+        return mod;
+    } catch {}
+  }
+  return null;
+}
+async function printWithPlaywright(pw, html, out2) {
+  const browser = await pw.chromium.launch();
+  try {
+    const page = await browser.newPage();
+    await page.goto(`file://${html}`);
+    await page.pdf({ path: out2, format: "A4", printBackground: true });
+  } finally {
+    await browser.close();
+  }
+}
+function seconds(ms) {
+  return `${ms / 1000} s`;
+}
+async function printPdf(html, out2, env, root, options = {}) {
+  const timeoutMs = options.timeoutMs ?? 60000;
+  const playwright = projectPlaywright(root);
+  if (playwright) {
+    let timer;
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new PdfTimeout(`timed out after ${seconds(timeoutMs)}`)), timeoutMs);
+    });
+    try {
+      await Promise.race([printWithPlaywright(playwright, html, out2), timeout]);
+      return { ok: true, by: "playwright" };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const why = error instanceof PdfTimeout ? message : `failed: ${message}`;
+      return { ok: false, reason: `PDF not produced: Playwright ${why}` };
+    } finally {
+      if (timer)
+        clearTimeout(timer);
+    }
+  }
+  const browser = findBrowser(env, options.candidates);
+  if (!browser)
+    return { ok: false, reason: NO_PDF };
+  const command2 = joinWords([
+    browser,
+    "--headless=new",
+    "--disable-gpu",
+    "--no-pdf-header-footer",
+    `--print-to-pdf=${out2}`,
+    `file://${html}`
+  ]);
+  const result = await runCommand(command2, {
+    cwd: root,
+    timeoutMs,
+    logPath: options.logPath ?? join14(tmpdir(), `crew-pdf-${Date.now()}.log`),
+    env
+  });
+  if (result.timedOut)
+    return {
+      ok: false,
+      reason: `PDF not produced: the browser timed out after ${seconds(timeoutMs)}`
+    };
+  if (result.exit !== 0) {
+    const tail = result.tail.trim().split(`
+`).filter(Boolean).slice(-3).join(" ");
+    return { ok: false, reason: `PDF not produced: the browser exited ${result.exit}: ${tail}` };
+  }
+  if (!existsSync7(out2))
+    return {
+      ok: false,
+      reason: `PDF not produced: the browser exited 0 and wrote nothing at ${out2}`
+    };
+  return { ok: true, by: browser };
+}
+
+// packages/engine/src/detect/environment.ts
+import { existsSync as existsSync8 } from "node:fs";
+import { join as join15 } from "node:path";
+var ENVIRONMENT_TIMEOUT_MS = 120000;
+var ENVIRONMENT_COMMANDS = ["start", "health", "stop"];
+var COMPOSE_FILES = ["docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"];
+var MAKE_TARGETS = ["start", "serve", "dev"];
+var NODE_SCRIPTS = ["dev", "start"];
+var NODE_MANAGERS = ["npm", "pnpm", "yarn", "bun"];
+var DEFAULT_PORT = 3000;
+var proposed = (command2) => ({ command: command2, source: "proposed" });
+function onLocalhost(host, port) {
+  return { health: proposed(`curl -fsS http://${host}:${port}/`), url: `http://${host}:${port}` };
+}
+function composePort(text) {
+  const match = /^\s*ports:\s*\n\s*-\s*"?(\d{1,5})(?=:\d)/m.exec(text);
+  const port = match ? Number.parseInt(match[1], 10) : Number.NaN;
+  return Number.isInteger(port) && port >= 1 && port <= 65535 ? port : DEFAULT_PORT;
+}
+function detectEnvironment(root, targets) {
+  const compose = COMPOSE_FILES.map((f) => join15(root, f)).find((p) => existsSync8(p));
+  if (compose) {
+    return {
+      start: proposed("docker compose up -d"),
+      stop: proposed("docker compose down"),
+      ...onLocalhost("localhost", composePort(readTextQuietly(compose) ?? "")),
+      timeoutMs: ENVIRONMENT_TIMEOUT_MS
+    };
+  }
+  if (existsSync8(join15(root, "artisan"))) {
+    return {
+      start: proposed("php artisan serve --port 8000"),
+      ...onLocalhost("127.0.0.1", 8000),
+      timeoutMs: ENVIRONMENT_TIMEOUT_MS
+    };
+  }
+  const makefile = readTextQuietly(join15(root, "Makefile"));
+  const target = makefile ? MAKE_TARGETS.find((t) => new RegExp(`^${t}:`, "m").test(makefile)) : undefined;
+  if (target) {
+    return {
+      start: proposed(`make ${target}`),
+      ...onLocalhost("localhost", DEFAULT_PORT),
+      timeoutMs: ENVIRONMENT_TIMEOUT_MS
+    };
+  }
+  const pkg = readJson(join15(root, "package.json"));
+  const script = NODE_SCRIPTS.find((s) => typeof pkg?.scripts?.[s] === "string");
+  if (script) {
+    const detected = targets.find((t) => t.path === "." && t.stack === "node")?.packageManager;
+    const manager = detected && NODE_MANAGERS.includes(detected) ? detected : "npm";
+    return {
+      start: proposed(`${manager} run ${script}`),
+      ...onLocalhost("localhost", DEFAULT_PORT),
+      timeoutMs: ENVIRONMENT_TIMEOUT_MS
+    };
+  }
+  return null;
+}
+function confirmedEnvironment(environment) {
+  return ENVIRONMENT_COMMANDS.some((key) => environment[key]?.source === "confirmed");
+}
+function environmentChanges(previous, next) {
+  if (previous && !next)
+    return ["environment: removed"];
+  if (!next)
+    return [];
+  const lines = [];
+  for (const key of ENVIRONMENT_COMMANDS) {
+    const before = previous?.[key];
+    const after = next[key];
+    if (after && (before?.command !== after.command || before.source !== after.source))
+      lines.push(`environment.${key}: ${after.command}`);
+    else if (before && !after)
+      lines.push(`environment.${key}: removed`);
+  }
+  return lines;
+}
+
+// packages/engine/src/detect/node.ts
+import { join as join17 } from "node:path";
+
+// packages/engine/src/detect/scripts.ts
+import { readdirSync as readdirSync3, statSync as statSync5 } from "node:fs";
+import { join as join16 } from "node:path";
+var NEVER_A_GATE = /^test:(watch|ui|dev|debug|e2e|browser|visual)(?:[:-]|$)/;
+function testScripts(scripts) {
+  const names = Object.keys(scripts).filter((n) => n.startsWith("test:"));
+  const lint = names.find((n) => n === "test:lint");
+  const types = names.find((n) => n === "test:types" || n === "test:typecheck");
+  const rest = names.filter((n) => n !== lint && n !== types && !NEVER_A_GATE.test(n));
+  return { ...lint ? { lint } : {}, ...types ? { types } : {}, rest };
+}
+var TEST_FILE = /\.(test|spec)\.[cm]?[jt]sx?$/;
+function hasTestFiles(dir, depth = 0) {
+  let names;
+  try {
+    names = readdirSync3(dir);
+  } catch {
+    return false;
+  }
+  for (const name of names) {
+    if (name.startsWith(".") || SKIP_DIRS.has(name))
+      continue;
+    const path = join16(dir, name);
+    let isDir = false;
+    try {
+      isDir = statSync5(path).isDirectory();
+    } catch {
+      continue;
+    }
+    if (!isDir && TEST_FILE.test(name))
+      return true;
+    if (isDir && depth < 2 && hasTestFiles(path, depth + 1))
+      return true;
+  }
+  return false;
+}
+
+// packages/engine/src/detect/node.ts
+function workspaceGlobs(pkg) {
+  const raw = Array.isArray(pkg.workspaces) ? pkg.workspaces : pkg.workspaces?.packages;
+  return (raw ?? []).filter((glob) => typeof glob === "string").map((glob) => glob.replace(/^\.\//, "").replace(/\/$/, ""));
+}
+var SCRIPT_CANDIDATES = {
+  build: ["build"],
+  test: ["test", "unit"],
+  lint: ["lint", "lint:check", "eslint", "biome"],
+  typecheck: ["typecheck", "type-check", "types", "tsc"],
+  e2e: ["test:e2e", "e2e"]
+};
+var E2E_BY_CONFIG = [
+  ["playwright.config", "npx playwright test"],
+  ["cypress.config", "npx cypress run"]
+];
+var CONFIG_EXTENSIONS = ["ts", "js", "mjs", "cjs"];
+var TSC_BY_MANAGER = {
+  npm: "npx tsc --noEmit",
+  pnpm: "pnpm exec tsc --noEmit",
+  yarn: "yarn tsc --noEmit",
+  bun: "bunx tsc --noEmit"
+};
+var MANAGERS = ["npm", "pnpm", "yarn", "bun"];
+var LOCKFILES = [
+  ["bun", ["bun.lock", "bun.lockb"]],
+  ["pnpm", ["pnpm-lock.yaml"]],
+  ["yarn", ["yarn.lock"]],
+  ["npm", ["package-lock.json", "npm-shrinkwrap.json"]]
+];
+function packageManager(dir, pkg) {
+  const declared = typeof pkg.packageManager === "string" ? pkg.packageManager.split("@")[0] : "";
+  if (declared && MANAGERS.includes(declared))
+    return { manager: declared, sure: true };
+  const present = LOCKFILES.filter(([, files]) => files.some((f) => exists(join17(dir, f)))).map(([manager]) => manager);
+  return { manager: present[0] ?? "npm", sure: present.length <= 1 };
+}
+var nodeDetector = {
+  stack: "node",
+  detect(dir) {
+    const pkg = readJson(join17(dir, "package.json"));
+    if (!pkg)
+      return null;
+    const { manager, sure } = packageManager(dir, pkg);
+    const scripts = pkg.scripts ?? {};
+    const gates = {};
+    for (const [gate, names] of Object.entries(SCRIPT_CANDIDATES)) {
+      const name = names.find((candidate) => (candidate in scripts));
+      if (!name)
+        continue;
+      if (gate === "test" && /no test specified/.test(scripts[name] ?? ""))
+        continue;
+      gates[gate] = `${manager} run ${name}`;
+    }
+    const convention = testScripts(scripts);
+    if (convention.lint)
+      gates.lint = `${manager} run ${convention.lint}`;
+    if (convention.types)
+      gates.typecheck = `${manager} run ${convention.types}`;
+    if (!gates.test) {
+      if (convention.rest.length)
+        gates.test = convention.rest.map((n) => `${manager} run ${n}`).join(" && ");
+      else if (manager === "bun" && (exists(join17(dir, "bunfig.toml")) || hasTestFiles(dir)))
+        gates.test = "bun test";
+    }
+    if (!gates.typecheck && exists(join17(dir, "tsconfig.json"))) {
+      gates.typecheck = TSC_BY_MANAGER[manager];
+    }
+    const proposedGates = [];
+    if (!gates.e2e) {
+      const runner = E2E_BY_CONFIG.find(([config]) => CONFIG_EXTENSIONS.some((ext) => exists(join17(dir, `${config}.${ext}`))));
+      if (runner) {
+        gates.e2e = runner[1];
+        proposedGates.push("e2e");
+      }
+    }
+    const workspaces = workspaceGlobs(pkg);
+    const deps = { ...pkg.dependencies ?? {}, ...pkg.devDependencies ?? {} };
+    const testScoped = "vitest" in deps ? "vitest related {files} --run" : ("jest" in deps) ? "jest --findRelatedTests {files}" : undefined;
+    return {
+      stack: "node",
+      packageManager: manager,
+      gates,
+      ...testScoped ? { testScoped } : {},
+      ...workspaces.length ? { workspaces } : {},
+      ...sure ? {} : { proposed: true },
+      ...proposedGates.length ? { proposedGates } : {}
+    };
+  }
+};
+
+// packages/engine/src/detect/php.ts
+import { join as join18 } from "node:path";
+var phpDetector = {
+  stack: "php",
+  detect(dir) {
+    const composer = readJson(join18(dir, "composer.json"));
+    if (!composer)
+      return null;
+    const scripts = composer.scripts ?? {};
+    const installed = (tool) => exists(join18(dir, "vendor", "bin", tool));
+    const run = (name) => `composer run ${name}`;
+    const convention = testScripts(scripts);
+    const gates = {};
+    const runner = installed("pest") ? "vendor/bin/pest" : installed("phpunit") ? "vendor/bin/phpunit" : undefined;
+    if ("test" in scripts)
+      gates.test = run("test");
+    else {
+      const parts2 = [...convention.rest.map(run), ...runner ? [runner] : []];
+      if (parts2.length)
+        gates.test = parts2.join(" && ");
+    }
+    if (convention.lint)
+      gates.lint = run(convention.lint);
+    else if ("lint" in scripts)
+      gates.lint = run("lint");
+    else if (installed("pint"))
+      gates.lint = "vendor/bin/pint --test";
+    if (convention.types)
+      gates.typecheck = run(convention.types);
+    else if ("analyse" in scripts)
+      gates.typecheck = run("analyse");
+    else if ("analyze" in scripts)
+      gates.typecheck = run("analyze");
+    else if (installed("phpstan"))
+      gates.typecheck = "vendor/bin/phpstan analyse --no-progress";
+    return { stack: "php", packageManager: "composer", gates };
+  }
+};
+
+// packages/engine/src/detect/python.ts
+import { join as join19 } from "node:path";
+var PREFIX = {
+  uv: "uv run ",
+  poetry: "poetry run ",
+  pip: "python -m "
+};
+var pythonDetector = {
+  stack: "python",
+  detect(dir) {
+    const pyproject = readTextQuietly(join19(dir, "pyproject.toml"));
+    if (pyproject === null && !exists(join19(dir, "requirements.txt")))
+      return null;
+    const manager = exists(join19(dir, "uv.lock")) ? "uv" : exists(join19(dir, "poetry.lock")) ? "poetry" : "pip";
+    const prefix = PREFIX[manager] ?? "";
+    const text = pyproject ?? "";
+    const gates = {};
+    const hasPytest = /\[tool\.pytest/.test(text) || exists(join19(dir, "pytest.ini")) || exists(join19(dir, "conftest.py")) || exists(join19(dir, "tests"));
+    if (hasPytest)
+      gates.test = `${prefix}pytest`;
+    if (/\[tool\.ruff/.test(text) || exists(join19(dir, "ruff.toml"))) {
+      gates.lint = `${prefix}ruff check .`;
+    }
+    if (/\[tool\.mypy/.test(text))
+      gates.typecheck = `${prefix}mypy .`;
+    else if (/\[tool\.pyright/.test(text))
+      gates.typecheck = `${prefix}pyright`;
+    return {
+      stack: "python",
+      packageManager: manager,
+      gates,
+      ...hasPytest ? { testScoped: `${prefix}pytest {files}` } : {}
+    };
+  }
+};
+
+// packages/engine/src/detect/index.ts
+var DETECTORS = [nodeDetector, phpDetector, pythonDetector];
+var DEFAULT_WATCH_EXCLUDE = ["**/*.md", "docs/**", ".crew/**", ".claude/**"];
+var DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
+var FORMER_WATCH_EXCLUDES = [["**/*.md", "docs/**", ".crew/**"]];
+var MAX_DEPTH = 3;
+function isFormerWatchDefault(profile) {
+  const saved = JSON.stringify(profile.watch.exclude);
+  return FORMER_WATCH_EXCLUDES.some((list) => JSON.stringify(list) === saved);
+}
+function watchOf(previous) {
+  if (!previous)
+    return { exclude: [...DEFAULT_WATCH_EXCLUDE] };
+  return isFormerWatchDefault(previous) ? { exclude: [...DEFAULT_WATCH_EXCLUDE] } : previous.watch;
+}
+function* folders(root, depth = 0) {
+  yield root;
+  if (depth >= MAX_DEPTH)
+    return;
+  let names;
+  try {
+    names = readdirSync4(root).sort();
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    if (name.startsWith(".") || SKIP_DIRS.has(name))
+      continue;
+    const path = join20(root, name);
+    try {
+      if (!statSync6(path).isDirectory())
+        continue;
+    } catch {
+      continue;
+    }
+    yield* folders(path, depth + 1);
+  }
+}
+function dataDetector(rule) {
+  return {
+    stack: rule.stack,
+    detect(dir) {
+      if (!rule.markers.every((marker) => existsSync9(join20(dir, marker))))
+        return null;
+      return {
+        stack: rule.stack,
+        packageManager: rule.packageManager,
+        gates: { ...rule.gates },
+        ...rule.testScoped ? { testScoped: rule.testScoped } : {},
+        proposed: true
+      };
+    }
+  };
+}
+function applyRules(root, dirs, targets, rules) {
+  for (const dir of dirs) {
+    const rel2 = relative6(root, dir).replace(/\\/g, "/") || ".";
+    for (const { pack, rule } of rules) {
+      const found = dataDetector(rule).detect(dir);
+      if (!found)
+        continue;
+      const gates = {};
+      for (const [gate, command2] of Object.entries(found.gates))
+        gates[gate] = { command: command2, source: "proposed", pack };
+      const testScoped = found.testScoped ? { command: found.testScoped, source: "proposed", pack } : undefined;
+      if (rule.extends) {
+        const core = targets.find((t) => t.path === rel2 && t.stack === rule.extends);
+        if (!core)
+          continue;
+        Object.assign(core.gates, gates);
+        core.packageManager = found.packageManager;
+        if (testScoped)
+          core.testScoped = testScoped;
+        core.tags = [...new Set([...core.tags ?? [], rule.stack])];
+        continue;
+      }
+      targets.push({
+        path: rel2,
+        stack: rule.stack,
+        packageManager: found.packageManager,
+        gates,
+        timeoutMs: DEFAULT_TIMEOUT_MS,
+        ...testScoped ? { testScoped } : {}
+      });
+    }
+  }
+}
+function detectTargets(root, rules = []) {
+  const targets = [];
+  const workspaces = new Map;
+  const dirs = [...folders(root)];
+  for (const dir of dirs) {
+    for (const detector of DETECTORS) {
+      const found = detector.detect(dir);
+      if (!found)
+        continue;
+      const gates = {};
+      for (const [gate, command2] of Object.entries(found.gates)) {
+        const guessed = found.proposed || (found.proposedGates ?? []).includes(gate);
+        gates[gate] = { command: command2, source: guessed ? "proposed" : "detected" };
+      }
+      const rel2 = relative6(root, dir).replace(/\\/g, "/");
+      const target = {
+        path: rel2 === "" ? "." : rel2,
+        stack: found.stack,
+        packageManager: found.packageManager,
+        gates,
+        timeoutMs: DEFAULT_TIMEOUT_MS,
+        ...found.testScoped ? {
+          testScoped: {
+            command: found.testScoped,
+            source: found.proposed ? "proposed" : "detected"
+          }
+        } : {}
+      };
+      targets.push(target);
+      if (found.workspaces)
+        workspaces.set(target, found.workspaces);
+    }
+  }
+  for (const [parent, globs] of workspaces) {
+    const prefix = parent.path === "." ? "" : `${parent.path}/`;
+    for (const child of targets) {
+      if (child === parent || child.stack !== parent.stack || !child.path.startsWith(prefix))
+        continue;
+      if (matchesAny(child.path.slice(prefix.length), globs))
+        child.workspaceOf = parent.path;
+    }
+  }
+  if (rules.length)
+    applyRules(root, dirs, targets, rules);
+  return targets;
+}
+function proposedByPack(command2) {
+  return command2?.pack && command2.source === "proposed" ? command2.pack : null;
+}
+function theirs(command2) {
+  return command2.source === "confirmed";
+}
+function mergeProfile(previous, detected, environment = null, browser = null) {
+  const targets = detected.map((t) => ({ ...t, gates: { ...t.gates } }));
+  if (previous) {
+    for (const target of targets) {
+      const old = previous.targets.find((t) => t.path === target.path && t.stack === target.stack);
+      if (!old)
+        continue;
+      target.timeoutMs = old.timeoutMs;
+      if (old.unset?.length) {
+        target.unset = [...old.unset];
+        for (const gate of old.unset)
+          delete target.gates[gate];
+      }
+      for (const [gate, command2] of Object.entries(old.gates)) {
+        if (theirs(command2))
+          target.gates[gate] = command2;
+      }
+      if (old.testScoped && theirs(old.testScoped))
+        target.testScoped = old.testScoped;
+    }
+    for (const old of previous.targets) {
+      const found = targets.some((t) => t.path === old.path && t.stack === old.stack);
+      if (!found && Object.values(old.gates).some(theirs))
+        targets.push({ ...old, gates: { ...old.gates } });
+    }
+  }
+  const kept = previous?.environment && confirmedEnvironment(previous.environment) ? previous.environment : environment ?? undefined;
+  const keptBrowser = previous?.browser?.devtools.source === "confirmed" ? previous.browser : browser ?? undefined;
+  return {
+    version: 1,
+    detectedAt: nowIso(),
+    targets,
+    watch: watchOf(previous),
+    ...kept ? { environment: kept } : {},
+    ...previous?.ui ? { ui: previous.ui } : {},
+    ...keptBrowser ? { browser: keptBrowser } : {}
+  };
+}
+function detectProfile(root, previous = null, rules = [], env) {
+  const targets = detectTargets(root, rules);
+  return mergeProfile(previous, targets, detectEnvironment(root, targets), env ? detectBrowser(env) : null);
+}
+function detectBrowser(env, candidates) {
+  if (!onPath("chrome-devtools", env))
+    return null;
+  const named = env.WIZARDINGCODE_CREW_BROWSER?.trim();
+  const chrome = named ? existsSync9(named) ? named : null : findBrowser(env, candidates);
+  return chrome ? { devtools: { command: "chrome-devtools", source: "proposed" } } : null;
+}
+function commandText(command2) {
+  return `${command2.command}${command2.source === "proposed" ? " [proposed]" : ""}`;
+}
+function profileChanges(previous, next) {
+  const lines = [];
+  const same2 = (a, b) => a.path === b.path && a.stack === b.stack;
+  for (const target of next.targets) {
+    const old = previous.targets.find((t) => same2(t, target));
+    if (!old) {
+      const gates = Object.entries(target.gates).map(([g, c]) => `${g}=${c.command}`).join(", ");
+      lines.push(`target (${target.path}, ${target.stack}): ${gates || "no gates"}`);
+      continue;
+    }
+    if (old.packageManager !== target.packageManager)
+      lines.push(`packageManager (${target.path}): ${target.packageManager}`);
+    for (const [gate, command2] of Object.entries(target.gates)) {
+      const before2 = old.gates[gate];
+      if (before2?.command !== command2.command || before2.source !== command2.source)
+        lines.push(`${gate} (${target.path}): ${command2.command}`);
+    }
+    for (const gate of Object.keys(old.gates))
+      if (!target.gates[gate])
+        lines.push(`${gate} (${target.path}): removed`);
+  }
+  for (const old of previous.targets)
+    if (!next.targets.some((t) => same2(t, old)))
+      lines.push(`target (${old.path}, ${old.stack}): removed`);
+  lines.push(...environmentChanges(previous.environment, next.environment));
+  const before = previous.browser?.devtools;
+  const after = next.browser?.devtools;
+  if (before?.command !== after?.command || before?.source !== after?.source)
+    lines.push(`browser.devtools: ${after ? commandText(after) : "removed"}`);
+  return lines;
+}
+function missingTestCommands(profile) {
+  if (profile.targets.length === 0)
+    return [{ target: ".", gate: "test" }];
+  const byPath = new Map(profile.targets.map((t) => [t.path, t]));
+  const hasTest = (t) => !!t.gates.test || t.workspaceOf !== undefined && !!byPath.get(t.workspaceOf)?.gates.test;
+  const covered = new Set(profile.targets.filter(hasTest).map((t) => t.path));
+  const paths = [...new Set(profile.targets.map((t) => t.path))];
+  return paths.filter((p) => !covered.has(p)).map((target) => ({ target, gate: "test" }));
+}
+
+// packages/engine/src/test-run.ts
+import { realpathSync as realpathSync4, statSync as statSync7 } from "node:fs";
+import { basename as basename4, isAbsolute as isAbsolute4, relative as relative7, resolve as resolve5, sep as sep3 } from "node:path";
+
+// packages/engine/src/hooks/shell.ts
+var SUBSTITUTED = "${…}";
+var DESCRIPTOR = String.raw`\d+|\{\w+\}`;
+var OPERATOR_PREFIX = `(?:${DESCRIPTOR}|&)?`;
+var DOUBLE_QUOTE_ESCAPES = '$`"\\';
+var OPERATOR_OWN = new RegExp(`^${OPERATOR_PREFIX}[<>]*$`);
+var HEREDOC_OPERATOR = new RegExp(`^(?:${DESCRIPTOR})?<<(-?)(?!<)`);
+var LEADING_KEYWORDS = ["if", "then", "else", "elif", "do", "while", "until", "!"];
+var KEYWORDS_BEFORE = new Set([...LEADING_KEYWORDS, "{"]);
+var COMMAND_LEADS = new Set([...KEYWORDS_BEFORE, "time", "coproc"]);
+var MAX_DEPTH2 = 32;
+var ANSI_ESCAPES = {
+  a: "\x07",
+  b: "\b",
+  e: "\x1B",
+  E: "\x1B",
+  f: "\f",
+  n: `
+`,
+  r: "\r",
+  t: "\t",
+  v: "\v",
+  "\\": "\\",
+  "'": "'",
+  '"': '"',
+  "?": "?"
+};
+function ansiEscape(text, at) {
+  const rest = text.slice(at);
+  const fixed = ANSI_ESCAPES[rest.charAt(0)];
+  if (fixed !== undefined)
+    return { value: fixed, length: 1 };
+  const code = /^x([0-9A-Fa-f]{1,2})|^u([0-9A-Fa-f]{1,4})|^U([0-9A-Fa-f]{1,8})|^([0-7]{1,3})/.exec(rest);
+  if (code) {
+    const digits = code[1] ?? code[2] ?? code[3] ?? code[4] ?? "0";
+    const point = Number.parseInt(digits, code[4] !== undefined ? 8 : 16);
+    if (point <= 1114111)
+      return { value: String.fromCodePoint(point), length: code[0].length };
+  }
+  const control = /^c(.)/s.exec(rest);
+  if (control)
+    return {
+      value: String.fromCharCode((control[1] ?? "@").toUpperCase().charCodeAt(0) ^ 64),
+      length: 2
+    };
+  return { value: `\\${rest.charAt(0)}`, length: 1 };
+}
+function bracketEnd(text, open, close) {
+  const opener = text.charAt(open);
+  let depth = 1;
+  let quote = null;
+  for (let i = open + 1;i < text.length; i++) {
+    const ch = text.charAt(i);
+    if (quote !== null) {
+      if (ch === "\\" && quote === '"')
+        i++;
+      else if (ch === quote)
+        quote = null;
+    } else if (ch === "\\")
+      i++;
+    else if (ch === "'" || ch === '"')
+      quote = ch;
+    else if (ch === opener)
+      depth++;
+    else if (ch === close && --depth === 0)
+      return i + 1;
+  }
+  return -1;
+}
+function arithmeticEnd(text, open) {
+  let depth = 0;
+  for (let i = open;i < text.length; i++) {
+    const ch = text.charAt(i);
+    if (ch === "\\")
+      i++;
+    else if (ch === "'" || ch === '"')
+      return -1;
+    else if (ch === "$" && text.charAt(i + 1) === "(" && text.charAt(i + 2) !== "(")
+      return -1;
+    else if (ch === "`") {
+      i = backtickEnd(text, i);
+      if (i < 0)
+        return -1;
+    } else if (ch === "(")
+      depth++;
+    else if (ch === ")" && --depth === 1)
+      return text.charAt(i + 1) === ")" ? i + 2 : -1;
+  }
+  return -1;
+}
+function backtickEnd(text, open) {
+  for (let i = open + 1;i < text.length; i++) {
+    const ch = text.charAt(i);
+    if (ch === "\\")
+      i++;
+    else if (ch === "`")
+      return i;
+  }
+  return -1;
+}
+function read(text, start, closer, depth) {
+  const pieces = [];
+  let unclosed = null;
+  let tokens = [];
+  let inner = [];
+  let word = "";
+  let from = 0;
+  let started = false;
+  let expands = false;
+  let quote = null;
+  let arm = "none";
+  let armStart = 0;
+  let subshells = 0;
+  let cases = 0;
+  let commandAt = 0;
+  let piped = false;
+  let pipeIn = false;
+  const heredocs = [];
+  const begin = (i) => {
+    if (started)
+      return;
+    started = true;
+    from = i;
+    word = "";
+    expands = false;
+  };
+  const endWord = (i) => {
+    if (!started)
+      return;
+    started = false;
+    const raw = text.slice(from, i);
+    tokens.push({ word, raw, from, to: i, expands });
+    const lead = tokens.slice(commandAt, -1).every((t) => COMMAND_LEADS.has(t.raw));
+    if (raw === "case" && lead)
+      cases++;
+    else if (raw === "esac" && cases > 0 && (lead && !piped || arm === "pattern" && tokens.length - 1 === armStart))
+      cases--;
+    const operator = HEREDOC_OPERATOR.exec(raw);
+    const pending = heredocs[heredocs.length - 1];
+    if (operator) {
+      const delimiter2 = word.slice(operator[0].length);
+      heredocs.push({
+        delimiter: delimiter2 || null,
+        strip: operator[1] === "-",
+        expand: raw.slice(operator[0].length) === delimiter2,
+        owner: tokens
+      });
+    } else if (pending && pending.delimiter === null) {
+      pending.delimiter = word;
+      pending.expand = raw === word;
+    }
+    const third = tokens[tokens.length - 3];
+    if (raw === "in" && third?.raw === "case" && tokens.slice(0, -3).every((t) => KEYWORDS_BEFORE.has(t.raw))) {
+      arm = "pattern";
+      armStart = tokens.length;
+    } else if (raw === "esac" && arm === "pattern")
+      arm = "none";
+  };
+  const endPiece = (i) => {
+    endWord(i);
+    const first = tokens[0];
+    const last = tokens[tokens.length - 1];
+    if (first && last) {
+      pieces.push({
+        text: text.slice(first.from, last.to),
+        tokens,
+        inner,
+        heredocs: [],
+        piped: pipeIn
+      });
+      pipeIn = false;
+    }
+    tokens = [];
+    inner = [];
+    armStart = 0;
+    commandAt = 0;
+    piped = false;
+  };
+  const readInside = (at, inside, into) => {
+    if (depth >= MAX_DEPTH2) {
+      unclosed ??= "a substitution";
+      return text.length;
+    }
+    const frame = read(text, at, inside, depth + 1);
+    into.push(...frame.pieces);
+    unclosed ??= frame.unclosed;
+    return frame.end;
+  };
+  const scanSubstitutions = (from2, to, into, nested = depth) => {
+    for (let k = from2;k < to; k++) {
+      const ch = text.charAt(k);
+      const next = text.charAt(k + 1);
+      if (ch === "\\")
+        k++;
+      else if (ch === "$" && next === "(") {
+        const end = arithmeticAt(k + 1);
+        if (end === -1)
+          k = readInside(k + 2, ")", into) - 1;
+        else if (nested >= MAX_DEPTH2) {
+          unclosed ??= "a substitution";
+          return;
+        } else {
+          scanSubstitutions(k + 3, end - 2, into, nested + 1);
+          k = end - 1;
+        }
+      } else if ((ch === "<" || ch === ">") && next === "(")
+        k = readInside(k + 2, ")", into) - 1;
+      else if (ch === "`")
+        k = readInside(k + 1, "`", into) - 1;
+    }
+  };
+  const arithmeticAt = (open) => text.charAt(open) === "(" && text.charAt(open + 1) === "(" ? arithmeticEnd(text, open) : -1;
+  const bodies = (at) => {
+    let j = at;
+    for (const { delimiter: delimiter2, strip, expand, owner } of heredocs.splice(0)) {
+      const bodyFrom = j;
+      let bodyTo = j;
+      let body = "";
+      while (j < text.length) {
+        const lineEnd = text.indexOf(`
+`, j);
+        const line = text.slice(j, lineEnd === -1 ? text.length : lineEnd);
+        const lineStart = j;
+        j = lineEnd === -1 ? text.length : lineEnd + 1;
+        if ((strip ? line.replace(/^\t+/, "") : line) === (delimiter2 ?? ""))
+          break;
+        body += `${line}
+`;
+        bodyTo = lineStart + line.length;
+      }
+      const piece = pieces.find((p) => p.tokens === owner);
+      if (!piece)
+        continue;
+      piece.heredocs.push(body);
+      if (expand)
+        scanSubstitutions(bodyFrom, bodyTo, piece.inner);
+    }
+    return j;
+  };
+  const close = (i) => {
+    endPiece(i);
+    if (cases > 0)
+      unclosed ??= "a case";
+    return { pieces, end: i + 1, unclosed };
+  };
+  const openWord = (i) => started ? text.slice(from, i) : "";
+  const endOperand = (i) => {
+    if (started && !OPERATOR_OWN.test(openWord(i)))
+      endWord(i);
+  };
+  const continuesOperator = (i) => {
+    const open = openWord(i);
+    return /[<>]$/.test(open) && OPERATOR_OWN.test(open);
+  };
+  const substitution = (i, opener, inside) => {
+    begin(i);
+    word += SUBSTITUTED;
+    expands = true;
+    return readInside(i + opener, inside, inner) - 1;
+  };
+  const expansion = (i, close2) => {
+    begin(i);
+    expands = true;
+    const end = bracketEnd(text, i + 1, close2);
+    if (end === -1) {
+      unclosed ??= "an expansion";
+      word += text.slice(i);
+      return text.length - 1;
+    }
+    word += text.slice(i, end);
+    scanSubstitutions(i + 2, end - 1, inner);
+    return end - 1;
+  };
+  const arithmetic = (i, open, end) => {
+    begin(i);
+    expands = true;
+    word += text.slice(i, end);
+    scanSubstitutions(open + 2, end - 2, inner);
+    return end - 1;
+  };
+  const expansionAt = (i) => {
+    const next = text.charAt(i + 1);
+    if (text.charAt(i) === "`")
+      return substitution(i, 1, "`");
+    if (next === "(") {
+      const end = arithmeticAt(i + 1);
+      return end !== -1 ? arithmetic(i, i + 1, end) : substitution(i, 2, ")");
+    }
+    if (next === "{")
+      return expansion(i, "}");
+    if (next === "[")
+      return expansion(i, "]");
+    return -1;
+  };
+  for (let i = start;i < text.length; i++) {
+    const ch = text.charAt(i);
+    const next = text.charAt(i + 1);
+    if (closer === "`") {
+      if (ch === "\\" && next === "`") {
+        begin(i);
+        word += "`";
+        i++;
+        continue;
+      }
+      if (ch === "`") {
+        if (quote !== null)
+          unclosed ??= "a quote";
+        return close(i);
+      }
+    }
+    if (quote === "$'") {
+      if (ch === "'")
+        quote = null;
+      else if (ch === "\\" && i + 1 < text.length) {
+        const decoded = ansiEscape(text, i + 1);
+        word += decoded.value;
+        i += decoded.length;
+      } else
+        word += ch;
+    } else if (quote === "'") {
+      if (ch === "'")
+        quote = null;
+      else
+        word += ch;
+    } else if (quote === '"') {
+      if (ch === '"')
+        quote = null;
+      else if (ch === "\\" && next === `
+`)
+        i++;
+      else if (ch === "\\" && i + 1 < text.length && DOUBLE_QUOTE_ESCAPES.includes(next))
+        word += text.charAt(++i);
+      else if (ch === "$" || ch === "`") {
+        const opened = expansionAt(i);
+        if (opened !== -1)
+          i = opened;
+        else {
+          expands = true;
+          word += ch;
+        }
+      } else
+        word += ch;
+    } else if (ch === "\\" && next === `
+`) {
+      i++;
+    } else if (ch === "\\" && i + 1 < text.length) {
+      begin(i);
+      word += next;
+      i++;
+    } else if (ch === "'" || ch === '"') {
+      begin(i);
+      quote = ch;
+    } else if (ch === "$" && next === "'") {
+      begin(i);
+      quote = "$'";
+      i++;
+    } else if (ch === "$" || ch === "`") {
+      const opened = expansionAt(i);
+      if (opened !== -1)
+        i = opened;
+      else {
+        begin(i);
+        expands = true;
+        word += ch;
+      }
+    } else if ((ch === "<" || ch === ">") && next === "(") {
+      endOperand(i);
+      i = substitution(i, 2, ")");
+    } else if (ch === "#" && !started) {
+      while (i + 1 < text.length && text.charAt(i + 1) !== `
+`)
+        i++;
+    } else if (ch === `
+`) {
+      endPiece(i);
+      if (heredocs.length)
+        i = bodies(i + 1) - 1;
+    } else if (/\s/.test(ch)) {
+      endWord(i);
+    } else if (ch === ";") {
+      endPiece(i);
+      if (next === ";" || next === "&" || next === "|") {
+        i++;
+        arm = "pattern";
+      } else
+        arm = "none";
+    } else if (ch === "|" || ch === "&") {
+      if (ch === "&" && next === ">") {
+        endWord(i);
+        begin(i);
+        word += ch;
+      } else if (continuesOperator(i))
+        word += ch;
+      else if (arm === "pattern" && ch === "|")
+        endWord(i);
+      else {
+        endPiece(i);
+        piped = true;
+        if (ch === "|" && next !== "|" && text.charAt(i - 1) !== "|")
+          pipeIn = true;
+      }
+    } else if (ch === "(" && next === ")") {
+      if (started)
+        started = false;
+      else
+        tokens.pop();
+      i++;
+    } else if (ch === "(" && !started && arm !== "pattern" && arithmeticAt(i) !== -1) {
+      const end = arithmeticAt(i);
+      i = arithmetic(i, i, end);
+      endWord(end);
+    } else if (ch === "(") {
+      if (!(arm === "pattern" && !started && tokens.length === armStart)) {
+        endPiece(i);
+        subshells++;
+      }
+    } else if (ch === ")") {
+      endWord(i);
+      if (arm === "pattern") {
+        tokens.length = armStart;
+        commandAt = armStart;
+        arm = "none";
+      } else if (subshells > 0) {
+        subshells--;
+        endPiece(i);
+      } else if (closer === ")")
+        return close(i);
+      else
+        endPiece(i);
+    } else if (ch === "<" || ch === ">") {
+      endOperand(i);
+      begin(i);
+      word += ch;
+    } else {
+      begin(i);
+      word += ch;
+    }
+  }
+  if (quote !== null)
+    unclosed ??= "a quote";
+  if (closer !== null)
+    unclosed ??= "a substitution";
+  endPiece(text.length);
+  if (cases > 0)
+    unclosed ??= "a case";
+  if (heredocs.length)
+    bodies(text.length);
+  return { pieces, end: text.length, unclosed };
+}
+function readCommand(command2) {
+  const { pieces, unclosed } = read(command2, 0, null, 0);
+  return { pieces, unclosed };
+}
+
+// packages/engine/src/test-run.ts
+var RUNNERS = new Set(["vitest", "jest", "mocha", "ava", "pytest", "phpunit", "pest", "rspec"]);
+var SUBCOMMAND_TEST = new Set(["deno", "go", "cargo", "dotnet", "swift", "composer"]);
+var PACKAGE_MANAGERS = new Set(["npm", "pnpm", "yarn", "bun"]);
+var MANAGER_VALUED = new Set([
+  "--filter",
+  "-F",
+  "-C",
+  "--prefix",
+  "--dir",
+  "--cwd",
+  "--workspace"
+]);
+var INTERPRETERS = new Set(["sh", "bash", "node", "bun", "php", "ruby"]);
+var PYTHON = /^python(?:\d+(?:\.\d+)?)?$/;
+var SETUP = new Set(["cd", "export", "set"]);
+var AFTER = new Set(["tee", "cat"]);
+var ASSIGNMENT2 = /^[A-Za-z_][A-Za-z0-9_]*=/;
+var REDIRECT = /^(?:\d+|&)?(?:[<>]+&?)(\S*)$/;
+var TEST_FOLDERS = new Set(["test", "tests", "spec", "specs", "__tests__"]);
+var TEST_NAME = /\.test\.|\.spec\.|_test\.|-test\.|Test\.php$|Tests\.cs$|^test_.*\.py$/;
+var operandsOf = (args) => args.filter((a) => !a.startsWith("-"));
+function programWords(piece) {
+  const words = [];
+  const expands = [];
+  for (let i = 0;i < piece.tokens.length; i++) {
+    const token = piece.tokens[i];
+    if (!token)
+      continue;
+    const redirect = REDIRECT.exec(token.raw);
+    if (redirect) {
+      if (!redirect[1])
+        i++;
+      continue;
+    }
+    words.push(token.word);
+    expands.push(token.expands);
+  }
+  return { words, expands };
+}
+function fileRefusal(operand, cwd, root) {
+  let real;
+  try {
+    real = realpathSync4(resolve5(cwd, operand));
+  } catch {
+    return `${operand} is no file`;
+  }
+  if (!statSync7(real).isFile())
+    return `${operand} is no regular file`;
+  const rel2 = relative7(realpathSync4(root), real);
+  if (rel2 === ".." || rel2.startsWith(`..${sep3}`) || isAbsolute4(rel2))
+    return `${operand} is outside the repository`;
+  const segments = rel2.split(sep3);
+  const name = segments.pop() ?? "";
+  if (segments.some((s) => TEST_FOLDERS.has(s)) || TEST_NAME.test(name) || RUNNERS.has(name))
+    return null;
+  return `${operand} does not look like a test file`;
+}
+function testRefusal(words, cwd, root, nested) {
+  const name = basename4(words[0] ?? "");
+  const args = words.slice(1);
+  const operands = operandsOf(args);
+  if (RUNNERS.has(name))
+    return null;
+  if (SUBCOMMAND_TEST.has(name) && operands[0] === "test")
+    return null;
+  if (name === "make" && operands.includes("test"))
+    return null;
+  if (name === "mvn" && operands.some((a) => a === "test" || a === "verify"))
+    return null;
+  if ((name === "gradle" || name === "gradlew") && operands.some((a) => /(?:^|:)(?:test|check)$/.test(a)))
+    return null;
+  if (name === "bundle" && operands[0] === "exec") {
+    const [tool, task] = operands.slice(1);
+    if (tool === "rspec" || tool === "rake" && task === "test")
+      return null;
+  }
+  if (name === "npx" || name === "bunx") {
+    const tool = basename4(operands[0] ?? "");
+    return RUNNERS.has(tool) ? null : `${name} ${operands[0] ?? ""} runs no test runner`.trim();
+  }
+  if (PACKAGE_MANAGERS.has(name)) {
+    let i = 0;
+    while (i < args.length && (args[i] ?? "").startsWith("-"))
+      i += MANAGER_VALUED.has(args[i] ?? "") ? 2 : 1;
+    const [verb, script] = [args[i], args[i + 1]];
+    if (verb === "test")
+      return null;
+    if ((verb === "run" || verb === "run-script") && script?.includes("test"))
+      return null;
+    if (name !== "bun")
+      return `${name} ${verb ?? ""} is not the test script`.trim();
+  }
+  if (name === "node" && args.includes("--test"))
+    return null;
+  if (PYTHON.test(name) && args[0] === "-m" && (args[1] === "pytest" || args[1] === "unittest"))
+    return null;
+  if (name === "php" && operands[0] === "artisan" && operands[1] === "test")
+    return null;
+  if (name === "claude" && operands[0] === "plugin" && operands[1] === "test")
+    return null;
+  if (!INTERPRETERS.has(name) && !PYTHON.test(name))
+    return `${name || "the command"} is no test runner`;
+  let j = 0;
+  let commandString = false;
+  while (j < args.length && /^[-+]/.test(args[j] ?? "")) {
+    const option = args[j] ?? "";
+    if ((name === "sh" || name === "bash") && /^-[A-Za-z]*c[A-Za-z]*$/.test(option))
+      commandString = true;
+    j += (name === "sh" || name === "bash") && shellTakesNext(option) ? 2 : 1;
+  }
+  if (commandString) {
+    if (nested)
+      return "a shell's string runs another shell's string";
+    if (args.length > j + 1)
+      return `words follow ${name}'s string`;
+    const reading = readCommand(args[j] ?? "");
+    if (reading.unclosed)
+      return `${name}'s string leaves ${reading.unclosed} open`;
+    return linesRefusal(reading.pieces, cwd, root, true);
+  }
+  const operand = args[j];
+  if (operand === undefined)
+    return `${name} is given no file`;
+  return fileRefusal(operand, cwd, root);
+}
+function linesRefusal(pieces, start, root, nested) {
+  if (pieces.some((p) => p.inner.length || p.heredocs.length))
+    return "a substitution or a here-document runs or feeds a command of its own";
+  let cwd = start;
+  let i = 0;
+  for (;i < pieces.length; i++) {
+    const piece = pieces[i];
+    const { words: words2, expands: expands2 } = programWords(piece);
+    const first = words2.findIndex((w) => !ASSIGNMENT2.test(w));
+    if (first !== -1 && !SETUP.has(words2[first] ?? ""))
+      break;
+    if (piece.piped)
+      return "a setup command reads another command's output";
+    if (words2[first] === "cd") {
+      const target = words2[first + 1];
+      if (target === undefined || target === "-" || expands2[first + 1] || words2.length > first + 2)
+        return "cd is given no plain folder";
+      cwd = resolve5(cwd, target);
+    }
+  }
+  const test = pieces[i];
+  if (!test)
+    return "no command runs a test";
+  if (test.piped)
+    return "the test reads another command's output";
+  const { words, expands } = programWords(test);
+  let at = 0;
+  while (at < words.length && ASSIGNMENT2.test(words[at] ?? ""))
+    at++;
+  if (basename4(words[at] ?? "") === "env") {
+    at++;
+    while (at < words.length && ASSIGNMENT2.test(words[at] ?? ""))
+      at++;
+    if ((words[at] ?? "").startsWith("-"))
+      return "env is given options";
+  }
+  if (expands[at])
+    return "the command's name is an expansion";
+  const why = testRefusal(words.slice(at), cwd, root, nested);
+  if (why)
+    return why;
+  for (const after of pieces.slice(i + 1)) {
+    const name = basename4(programWords(after).words[0] ?? "");
+    if (!after.piped || !AFTER.has(name))
+      return `${name || "a command"} runs after the test`;
+  }
+  return null;
+}
+function testRunRefusal(command2, root, profileCommand) {
+  const reading = readCommand(command2);
+  if (reading.unclosed)
+    return null;
+  const own = profileCommand?.trim();
+  if (own && (command2 === own || command2.startsWith(`${own} `))) {
+    const mine = readCommand(own).pieces.length;
+    if (reading.pieces.length === mine && !reading.pieces.some((p) => p.inner.length))
+      return null;
+  }
+  return linesRefusal(reading.pieces, root, root, false);
+}
+
+// packages/engine/src/tdd.ts
+var NO_TEST_LINES = [
+  /^error: .*matched 0 tests\. Searched /,
+  /^Ran 0 tests across /,
+  /^No test files found/,
+  /^No tests found/,
+  /^=+ no tests ran in /,
+  /^No tests executed!?/
+];
+var PARSE_ERROR_LINE = /^(?:\/bin\/)?(?:sh|bash|zsh|dash): .*(?:syntax error|Syntax error|parse error)/;
+function firstLine(tail, rules) {
+  for (const line of tail.split(`
+`)) {
+    if (rules.some((rule) => rule.test(line)))
+      return line;
+  }
+  return null;
+}
+function ranNoTest(tail) {
+  return firstLine(tail, NO_TEST_LINES);
+}
+var PASS_LINES = [
+  /^ (\d+) pass$/,
+  /^ *Tests +(?:\d+ \w+ \| )*(\d+) passed(?: \| \d+ \w+)* \(\d+\)$/,
+  /^Tests: +(?:\d+ \w+, )*(\d+) passed(?:, \d+ \w+)*, \d+ total$/,
+  /^=+ (?:\d+ \w+, )*(\d+) passed(?:, [^=]+)? in [0-9.]+s(?: \([^)]*\))? =+$/,
+  /^OK \((\d+) tests?, \d+ assertions?\)$/
+];
+var PHPUNIT_TESTS_LINE = /^Tests: (\d+), Assertions: \d+/;
+var observedInstead = (criterionId) => `make ${criterionId} observed with the reason`;
+function passCount(tail) {
+  const lastMatch = (rules) => {
+    let found = null;
+    for (const line of tail.split(`
+`)) {
+      for (const rule of rules) {
+        const match = rule.exec(line);
+        if (match?.[1] !== undefined)
+          found = Number(match[1]);
+      }
+    }
+    return found;
+  };
+  return lastMatch(PASS_LINES) ?? lastMatch([PHPUNIT_TESTS_LINE]);
+}
+var HISTORY = {
+  red: "reds",
+  green: "greens",
+  before: "befores",
+  after: "afters",
+  observed: "observeds"
+};
+var STEPS_BY_KIND = {
+  behavior: { steps: ["red", "green"], how: "record red, then green" },
+  preserve: { steps: ["before", "after"], how: "record before, then after" },
+  observed: { steps: ["observed"], how: "record observed, with --reason" }
+};
+function parseRefusal(command2, cwd) {
+  if (process.platform === "win32")
+    return null;
+  const read2 = spawnSync("/bin/sh", ["-n", "-c", command2], { cwd, encoding: "utf8" });
+  if (read2.status === 0 || read2.error)
+    return null;
+  return firstLine(read2.stderr, [PARSE_ERROR_LINE]) ?? read2.stderr.trim().split(`
+`)[0] ?? "";
+}
+function article(kind) {
+  return /^[aeiou]/.test(kind) ? "an" : "a";
+}
+var TEST_PATTERNS = ["**/*test*", "**/*spec*", "tests/**", "test/**", "**/__tests__/**"];
+function defaultTestCommand(profile) {
+  const target = profile.targets.find((t) => t.path === "." && t.gates.test) ?? profile.targets.find((t) => t.gates.test);
+  const test = target?.gates.test;
+  if (!target || !test)
+    return null;
+  return {
+    command: test.command,
+    timeoutMs: target.timeoutMs,
+    heldBy: proposedByPack(test)
+  };
+}
+async function recordTdd(paths, work, evidence, profile, criterionId, step, override, reason) {
+  const criterion = work.criteria.find((c) => c.id === criterionId);
+  if (!criterion)
+    return { ok: false, message: `unknown criterion ${criterionId}` };
+  const expected = STEPS_BY_KIND[criterion.kind];
+  if (!expected.steps.includes(step)) {
+    return {
+      ok: false,
+      message: `${criterionId} is ${article(criterion.kind)} ${criterion.kind} criterion: ${expected.how}`
+    };
+  }
+  if (criterion.supersededBy)
+    return {
+      ok: false,
+      message: `${criterionId} is superseded by ${criterion.supersededBy.id}: record the proof on ${criterion.supersededBy.id}`
+    };
+  if (step === "observed" && !reason?.trim()) {
+    return { ok: false, message: "an observed run needs --reason: why no red run can exist" };
+  }
+  if (typeof override !== "string" && override) {
+    const why = shellRefusal(override);
+    if (why)
+      return { ok: false, message: why };
+  }
+  const fallback = defaultTestCommand(profile);
+  if (override === undefined && fallback?.heldBy)
+    return {
+      ok: false,
+      message: `pack ${fallback.heldBy}'s command is not confirmed (crew profile confirm test): pass -- <cmd> to run another`
+    };
+  const command2 = typeof override === "string" ? override : override ? joinWords(override) : fallback?.command;
+  if (!command2) {
+    return {
+      ok: false,
+      message: 'no test command: set one with crew profile set test "<cmd>" or pass -- <cmd>'
+    };
+  }
+  if (override !== undefined && step !== "observed") {
+    const unparsed2 = parseRefusal(command2, paths.root);
+    if (unparsed2 !== null)
+      return {
+        ok: false,
+        message: `the shell could not parse the command (${unparsed2}): fix the command (quote a pattern with parentheses) before recording`
+      };
+    const why = testRunRefusal(command2, paths.root, fallback?.command ?? null);
+    if (why !== null)
+      return {
+        ok: false,
+        message: `the command is no test run: ${why}; run the test (a runner in its test form, or an interpreter on a test file) before recording`
+      };
+  }
+  const entry = evidence.tdd.find((t) => t.criterion === criterionId);
+  if (step === "green" && !entry?.red)
+    return { ok: false, message: `no red run recorded for ${criterionId}: run crew tdd red first` };
+  if (step === "after" && !entry?.before)
+    return {
+      ok: false,
+      message: `no before run recorded for ${criterionId}: run crew tdd before first`
+    };
+  if (step === "after" && entry?.before && command2 !== entry.before.command)
+    return {
+      ok: false,
+      message: `the after must run the before's command (${entry.before.command}): the pair proves the tests the before ran still pass; run that command, or ${observedInstead(criterionId)}`
+    };
+  if (step === "before") {
+    const changed = changedWatchedPaths(paths.root, profile, work).filter((p) => !matchesAny(p, TEST_PATTERNS));
+    if (changed.length) {
+      const named = `${changed.slice(0, 3).join(", ")}${changed.length > 3 ? `, +${changed.length - 3} more` : ""}`;
+      return {
+        ok: false,
+        message: `the watched sources already differ from the item's base (${named}): a before recorded now is not a baseline; record it before the change, or ${observedInstead(criterionId)}`
+      };
+    }
+  }
+  const writeRecord = (recorded, record2) => (into) => {
+    let target = into.tdd.find((t) => t.criterion === criterionId);
+    if (!target) {
+      target = { criterion: criterionId };
+      into.tdd.push(target);
+    }
+    const earlier = target[recorded];
+    if (earlier)
+      target[HISTORY[recorded]] = [...target[HISTORY[recorded]] ?? [], earlier];
+    target[recorded] = record2;
+    if (recorded === "observed" && reason)
+      target.reason = reason.trim();
+  };
+  const log = `logs/tdd-${criterionId}-${step}-${Date.now()}.txt`;
+  const result = await runCommand(command2, {
+    cwd: paths.root,
+    timeoutMs: fallback?.timeoutMs ?? 10 * 60 * 1000,
+    logPath: join21(workDir(paths, work.id), log)
+  });
+  const counted = passCount(result.tail);
+  const record = {
+    command: command2,
+    exit: result.exit,
+    at: nowIso(),
+    durationMs: result.durationMs,
+    log,
+    tail: result.tail,
+    timedOut: result.timedOut,
+    ...counted === null ? {} : { passed: counted }
+  };
+  const passed = result.exit === 0 && !result.timedOut;
+  const unparsed = firstLine(result.tail, [PARSE_ERROR_LINE]);
+  if (unparsed !== null) {
+    return {
+      ok: false,
+      message: `the shell could not parse the command (${unparsed}): fix the command (quote a pattern with parentheses) before recording`,
+      record
+    };
+  }
+  const empty = ranNoTest(result.tail);
+  if (empty !== null) {
+    return {
+      ok: false,
+      message: `the run ran no test (${empty}): fix the command or the filter before recording`,
+      record
+    };
+  }
+  if (step === "red") {
+    if (passed) {
+      return {
+        ok: false,
+        message: `the test passed before the change; a test that passes before the code exists proves nothing: write a test that fails first, or, for what an end-to-end run or a person checks, prove it with crew tdd observed ${work.id} ${criterionId} -- <command> (a criterion of kind observed)`,
+        record
+      };
+    }
+    if (result.timedOut || result.exit === null || result.exit === 126 || result.exit === 127) {
+      return {
+        ok: false,
+        message: `the red run did not fail for the right reason (exit ${result.exit ?? "none"}${result.timedOut ? ", timed out" : ""}): fix the command before recording`,
+        record
+      };
+    }
+    record.changedTests = changedWatchedPaths(paths.root, profile, work).filter((p) => matchesAny(p, TEST_PATTERNS));
+    return {
+      ok: true,
+      message: `red recorded for ${criterionId} (exit ${result.exit})`,
+      record,
+      apply: writeRecord("red", record)
+    };
+  }
+  if (!passed) {
+    return {
+      ok: false,
+      message: `${step} run failed (exit ${result.exit}${result.timedOut ? ", timed out" : ""}); nothing recorded`,
+      record
+    };
+  }
+  const baseline = step === "after" ? entry?.before?.passed : undefined;
+  if (baseline !== undefined) {
+    if (record.passed === undefined)
+      return {
+        ok: false,
+        message: `the after reported no count though the before did (${baseline}): its summary was lost (a test that exits early, an output cut short); run it again, or ${observedInstead(criterionId)}`,
+        record
+      };
+    if (record.passed < baseline)
+      return {
+        ok: false,
+        message: `the after passed fewer tests than the before (${baseline} → ${record.passed}): a test the before counted is gone; restore it, or ${observedInstead(criterionId)}`,
+        record
+      };
+  }
+  return {
+    ok: true,
+    message: `${step} recorded for ${criterionId}`,
+    record,
+    apply: writeRecord(step, record)
+  };
+}
+
 // packages/engine/src/ui.ts
 import {
   closeSync,
-  existsSync as existsSync9,
+  existsSync as existsSync12,
   lstatSync as lstatSync3,
   openSync,
-  readdirSync as readdirSync5,
+  readdirSync as readdirSync7,
   readFileSync as readFileSync5,
   readSync,
   rmSync as rmSync3,
   unlinkSync as unlinkSync2
 } from "node:fs";
-import { basename as basename4, dirname as dirname6, join as join16, resolve as resolve5, sep as sep3 } from "node:path";
+import { basename as basename5, dirname as dirname7, join as join24, resolve as resolve6, sep as sep4 } from "node:path";
 
 // packages/engine/src/judgement.ts
-import { copyFileSync as copyFileSync2, existsSync as existsSync8, readdirSync as readdirSync4, unlinkSync } from "node:fs";
-import { join as join15 } from "node:path";
+import { copyFileSync as copyFileSync2, existsSync as existsSync11, readdirSync as readdirSync6, unlinkSync } from "node:fs";
+import { join as join23 } from "node:path";
 
 // packages/engine/src/work.ts
-import { existsSync as existsSync7, readdirSync as readdirSync3 } from "node:fs";
-import { join as join14 } from "node:path";
+import { existsSync as existsSync10, readdirSync as readdirSync5 } from "node:fs";
+import { join as join22 } from "node:path";
 
 // packages/engine/src/validation.ts
 import { createHash as createHash2 } from "node:crypto";
@@ -4735,13 +6553,13 @@ function slug(text) {
   return text.toLowerCase().normalize("NFKD").replace(/[^\w\s-]/g, "").trim().replace(/[\s_]+/g, "-").replace(/-+/g, "-");
 }
 function workJson(paths, id) {
-  return join14(workDir(paths, id), "work.json");
+  return join22(workDir(paths, id), "work.json");
 }
 function newWorkId(paths, title) {
   const date = nowIso().slice(0, 10);
   let existing = 0;
   try {
-    existing = readdirSync3(join14(paths.crewDir, "work")).filter((n) => n.startsWith(date)).length;
+    existing = readdirSync5(join22(paths.crewDir, "work")).filter((n) => n.startsWith(date)).length;
   } catch {
     existing = 0;
   }
@@ -4776,17 +6594,17 @@ function createWork(paths, input, baseFiles, source) {
   if (source) {
     const body = sourceText(source, paths.root, input);
     const text = typeof body === "string" ? body : body.refused;
-    const proposed = source.proposedPriority ? `, proposed priority ${source.proposedPriority}` : "";
+    const proposed2 = source.proposedPriority ? `, proposed priority ${source.proposedPriority}` : "";
     sourceSection = `
 ## Source
 
-${sourceLine(source)}${proposed}
+${sourceLine(source)}${proposed2}
 
 ${text.endsWith(`
 `) ? text : `${text}
 `}`;
   }
-  writeText(join14(workDir(paths, work.id), "brief.md"), `# Brief
+  writeText(join22(workDir(paths, work.id), "brief.md"), `# Brief
 
 ## Request
 
@@ -4802,8 +6620,8 @@ function saveWork(paths, work) {
   writeProtectedJson(paths, workJson(paths, work.id), work);
 }
 function loadWork(paths, id) {
-  const read = readProtectedJson(paths, workJson(paths, id));
-  return { work: read.data, tampered: read.tampered };
+  const read2 = readProtectedJson(paths, workJson(paths, id));
+  return { work: read2.data, tampered: read2.tampered };
 }
 function noteRuntime(paths, id, runtime) {
   return withLock(workDir(paths, id), () => {
@@ -4817,7 +6635,7 @@ function noteRuntime(paths, id, runtime) {
 }
 function activeWork(paths) {
   const id = loadState(paths).active;
-  if (!id || !existsSync7(workJson(paths, id)))
+  if (!id || !existsSync10(workJson(paths, id)))
     return null;
   const item = loadWork(paths, id);
   return item.work?.abandoned ? null : item;
@@ -4825,18 +6643,18 @@ function activeWork(paths) {
 function openItems(paths, except) {
   let ids = [];
   try {
-    ids = readdirSync3(join14(paths.crewDir, "work")).sort();
+    ids = readdirSync5(join22(paths.crewDir, "work")).sort();
   } catch {
     return [];
   }
   const open = [];
   for (const id of ids) {
-    if (id === except || !existsSync7(workJson(paths, id)))
+    if (id === except || !existsSync10(workJson(paths, id)))
       continue;
     const { work } = loadWork(paths, id);
     if (!work || work.abandoned || work.phase === "deliver" || work.phase === "learn")
       continue;
-    const evidence = readProtectedJson(paths, join14(workDir(paths, id), "evidence.json"));
+    const evidence = readProtectedJson(paths, join22(workDir(paths, id), "evidence.json"));
     if (evidence.data?.verdict === "proven")
       continue;
     open.push(work);
@@ -4846,13 +6664,13 @@ function openItems(paths, except) {
 function lastLearned(paths) {
   let ids = [];
   try {
-    ids = readdirSync3(join14(paths.crewDir, "work"));
+    ids = readdirSync5(join22(paths.crewDir, "work"));
   } catch {
     return null;
   }
   let latest = null;
   for (const id of ids) {
-    if (!existsSync7(workJson(paths, id)))
+    if (!existsSync10(workJson(paths, id)))
       continue;
     const { work, tampered } = loadWork(paths, id);
     if (!work?.learned || tampered || work.abandoned)
@@ -4862,7 +6680,7 @@ function lastLearned(paths) {
   }
   if (!latest)
     return null;
-  const evidence = readProtectedJson(paths, join14(workDir(paths, latest.id), "evidence.json"));
+  const evidence = readProtectedJson(paths, join22(workDir(paths, latest.id), "evidence.json"));
   const proven = !evidence.tampered && evidence.data?.verdict === "proven";
   return { work: latest, fingerprint: proven ? evidence.data?.fingerprint ?? null : null };
 }
@@ -5281,8 +7099,8 @@ function plannedJudgementGates(route, riskAreas, changed, policy, registry = TEA
   return plannedSeats(route, riskAreas, changed, policy, { registry }).filter((s) => s.kind === "gate" && s.gate !== undefined).map((s) => ({ gate: s.gate, reason: s.reason }));
 }
 function reviewDir(paths, id, task) {
-  const dir = join15(workDir(paths, id), "review");
-  return task ? join15(dir, task) : dir;
+  const dir = join23(workDir(paths, id), "review");
+  return task ? join23(dir, task) : dir;
 }
 function plannedTaskJudgement(scope, policy) {
   return taskSeats(scope, policy).flatMap((s) => s.kind === "gate" && s.gate ? [{ gate: s.gate, reason: s.reason }] : []);
@@ -5300,12 +7118,12 @@ function scopeHash(scope) {
 function keepRound(paths, id, round, gates, rulingFile, task) {
   const dir = reviewDir(paths, id, task);
   for (const gate of gates) {
-    const findings = join15(dir, `${gate}.findings.md`);
-    if (existsSync8(findings))
-      copyFileSync2(findings, join15(dir, `${gate}.round${round}.md`));
+    const findings = join23(dir, `${gate}.findings.md`);
+    if (existsSync11(findings))
+      copyFileSync2(findings, join23(dir, `${gate}.round${round}.md`));
   }
-  if (existsSync8(rulingFile))
-    copyFileSync2(rulingFile, join15(dir, `ruling.round${round}.json`));
+  if (existsSync11(rulingFile))
+    copyFileSync2(rulingFile, join23(dir, `ruling.round${round}.json`));
 }
 var CAPTURE = /^(?<base>[a-z0-9-]+)(?:@(?<width>\d+))?(?<dark>-dark)?\.(?:png|jpe?g)$/i;
 function pageAndState(base, meta) {
@@ -5316,10 +7134,10 @@ function pageAndState(base, meta) {
   return at > 0 ? { page: base.slice(0, at), state: base.slice(at + 1) } : { page: base, state: "default" };
 }
 function listCaptures(paths, id, task) {
-  const dir = join15(reviewDir(paths, id, task), "ui");
+  const dir = join23(reviewDir(paths, id, task), "ui");
   let names;
   try {
-    names = readdirSync4(dir);
+    names = readdirSync6(dir);
   } catch {
     return [];
   }
@@ -5333,7 +7151,7 @@ function listCaptures(paths, id, task) {
     let group = groups.get(base);
     if (!group) {
       const metaName = `${base}.json`;
-      const meta = names.includes(metaName) && isRegularFile(join15(dir, metaName)) ? readJson(join15(dir, metaName)) : null;
+      const meta = names.includes(metaName) && isRegularFile(join23(dir, metaName)) ? readJson(join23(dir, metaName)) : null;
       const { page, state } = pageAndState(base, meta);
       group = {
         page,
@@ -5389,7 +7207,7 @@ function completeCapture(raw) {
   };
 }
 function readReviewInputs(paths, id, task) {
-  const raw = readJson(join15(reviewDir(paths, id, task), "inputs.json"));
+  const raw = readJson(join23(reviewDir(paths, id, task), "inputs.json"));
   if (!raw || typeof raw.fingerprint !== "string" || typeof raw.at !== "string")
     return null;
   const captures = Array.isArray(raw.captures) ? raw.captures.filter(isStoredCapture).map(completeCapture) : [];
@@ -5401,21 +7219,21 @@ function writeReviewInputs(paths, work, changed, fingerprint, task) {
   if (previous && previous.fingerprint !== fingerprint) {
     let names = [];
     try {
-      names = readdirSync4(dir);
+      names = readdirSync6(dir);
     } catch {
       names = [];
     }
     for (const name of names) {
       if (name === "ruling.json" || name.endsWith(".findings.md"))
-        unlinkSync(join15(dir, name));
+        unlinkSync(join23(dir, name));
     }
   }
   const cut2 = reviewPatch(paths.root, work.baseCommit, changed);
-  writeText(join15(dir, "diff.patch"), cut2.patch);
-  writeText(join15(dir, "files.txt"), changed.length ? `${changed.join(`
+  writeText(join23(dir, "diff.patch"), cut2.patch);
+  writeText(join23(dir, "files.txt"), changed.length ? `${changed.join(`
 `)}
 ` : "");
-  writeText(join15(dir, "inputs.json"), `${JSON.stringify({ fingerprint, at: nowIso(), captures: listCaptures(paths, work.id, task) }, null, 2)}
+  writeText(join23(dir, "inputs.json"), `${JSON.stringify({ fingerprint, at: nowIso(), captures: listCaptures(paths, work.id, task) }, null, 2)}
 `);
   return { dir, note: cut2.note };
 }
@@ -5720,8 +7538,8 @@ function readHead(path, max) {
   const fd = openSync(path, "r");
   try {
     const buffer = Buffer.alloc(max);
-    const read = readSync(fd, buffer, 0, max, 0);
-    return buffer.subarray(0, read).toString("utf8");
+    const read2 = readSync(fd, buffer, 0, max, 0);
+    return buffer.subarray(0, read2).toString("utf8");
   } finally {
     closeSync(fd);
   }
@@ -5733,7 +7551,7 @@ function darkScheme(root, profile) {
   const walk = (dir, rel2) => {
     let entries;
     try {
-      entries = readdirSync5(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name));
+      entries = readdirSync7(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name));
     } catch {
       return false;
     }
@@ -5742,7 +7560,7 @@ function darkScheme(root, profile) {
         continue;
       const path = rel2 ? `${rel2}/${entry.name}` : entry.name;
       if (entry.isDirectory()) {
-        if (walk(join16(dir, entry.name), path))
+        if (walk(join24(dir, entry.name), path))
           return true;
         if (seen >= DARK_FILES_MAX)
           return false;
@@ -5756,7 +7574,7 @@ function darkScheme(root, profile) {
       if (++seen > DARK_FILES_MAX)
         return false;
       try {
-        if (DARK.test(readHead(join16(dir, entry.name), DARK_BYTES_MAX)))
+        if (DARK.test(readHead(join24(dir, entry.name), DARK_BYTES_MAX)))
           return true;
       } catch {}
     }
@@ -5765,7 +7583,7 @@ function darkScheme(root, profile) {
   return walk(root, "") ? { dark: true, from: "stylesheets" } : { dark: false, from: "none" };
 }
 function uiPlanPath(paths, id) {
-  return join16(workDir(paths, id), "review", "ui-plan.json");
+  return join24(workDir(paths, id), "review", "ui-plan.json");
 }
 function writeUiPlan(paths, work, profile) {
   const { dark, from } = darkScheme(paths.root, profile);
@@ -5791,8 +7609,8 @@ var FRAME_NAME = /^\d{2}\.png$/;
 function contained(ui, name, shape) {
   if (typeof name !== "string" || name.includes("\x00") || !shape.test(name))
     return null;
-  const target = resolve5(ui, name);
-  return target.startsWith(`${resolve5(ui)}${sep3}`) ? target : null;
+  const target = resolve6(ui, name);
+  return target.startsWith(`${resolve6(ui)}${sep4}`) ? target : null;
 }
 function removeFile(target) {
   try {
@@ -5807,13 +7625,13 @@ function removeFile(target) {
 }
 function removeFrames(target) {
   try {
-    const parent = lstatSync3(dirname6(target));
+    const parent = lstatSync3(dirname7(target));
     if (parent.isSymbolicLink() || !parent.isDirectory())
       return false;
     const stat = lstatSync3(target);
     if (!stat.isDirectory())
       return false;
-    const entries = readdirSync5(target, { withFileTypes: true });
+    const entries = readdirSync7(target, { withFileTypes: true });
     if (!entries.every((e) => e.isFile() && FRAME_NAME.test(e.name)))
       return false;
     rmSync3(target, { recursive: true, force: false });
@@ -5842,7 +7660,7 @@ function readJsonFile(path) {
 function sweepStaleFixtureFiles(ui) {
   const removed = [];
   const skipped = [];
-  if (!existsSync9(ui))
+  if (!existsSync12(ui))
     return { removed, skipped };
   const take = (name, shape, remove) => {
     if (name === null || name === undefined)
@@ -5854,13 +7672,13 @@ function sweepStaleFixtureFiles(ui) {
     }
     if (remove(target))
       removed.push(String(name));
-    else if (existsSync9(target) || isLink(target))
+    else if (existsSync12(target) || isLink(target))
       skipped.push(String(name));
   };
-  for (const name of readdirSync5(ui).sort()) {
+  for (const name of readdirSync7(ui).sort()) {
     if (!name.endsWith(".json"))
       continue;
-    const body = readJsonFile(join16(ui, name));
+    const body = readJsonFile(join24(ui, name));
     if (!body)
       continue;
     if (name.endsWith(".motion.json")) {
@@ -5869,7 +7687,7 @@ function sweepStaleFixtureFiles(ui) {
       const frames = body.frames && typeof body.frames === "object" ? body.frames : {};
       take(frames.dir, MOTION_DIR, removeFrames);
       take(frames.strip, STRIP_NAME, removeFile);
-      if (removeFile(join16(ui, name)))
+      if (removeFile(join24(ui, name)))
         removed.push(name);
       continue;
     }
@@ -5886,7 +7704,7 @@ function sweepStaleFixtureFiles(ui) {
     take(body.aria, ARIA_NAME, removeFile);
     const axe = body.axe && typeof body.axe === "object" ? body.axe : {};
     take(axe.file, CONSOLE_OR_AXE_NAME, removeFile);
-    if (removeFile(join16(ui, name)))
+    if (removeFile(join24(ui, name)))
       removed.push(name);
   }
   return { removed, skipped };
@@ -5967,7 +7785,7 @@ function safeList(items, max = IDS_MAX) {
   return rest > 0 ? `${shown.join(", ")}, +${rest} more` : shown.join(", ");
 }
 function uiEvidencePath(paths, id) {
-  return join16(workDir(paths, id), "review", "ui-evidence.json");
+  return join24(workDir(paths, id), "review", "ui-evidence.json");
 }
 function readBoundedJson(path) {
   const text = readRegularText(path, EVIDENCE_FILE_MAX);
@@ -6031,9 +7849,9 @@ function reducedMotionOffences(entries, label) {
   return entries.filter(offendsReducedMotion).map((entry) => `ui: animation still running under reduced motion: ${entry.target} (${label})`);
 }
 function readAxeFile(dir, name) {
-  if (!/^axe-[a-z0-9-]+\.json$/.test(name) || !existsSync9(join16(dir, name)))
+  if (!/^axe-[a-z0-9-]+\.json$/.test(name) || !existsSync12(join24(dir, name)))
     return "missing";
-  const body = readBounded(join16(dir, name));
+  const body = readBounded(join24(dir, name));
   if (!body || !Array.isArray(body.violations))
     return "unreadable";
   const violations = [];
@@ -6060,14 +7878,14 @@ function readMeta(dir, meta, base) {
       return null;
     if (meta.axe.status === "clean" || meta.axe.status === "violations") {
       const name = typeof meta.axe.file === "string" ? meta.axe.file : `axe-${base}.json`;
-      const read = readAxeFile(dir, name);
-      if (read === "missing")
+      const read2 = readAxeFile(dir, name);
+      if (read2 === "missing")
         axe = { status: "not captured", reason: `${safeText(name)} missing`, violations: [] };
-      else if (read === "unreadable") {
+      else if (read2 === "unreadable") {
         axeUnreadable = safeText(name);
         axe = { status: "not captured", reason: `${safeText(name)} unreadable`, violations: [] };
       } else
-        axe = read;
+        axe = read2;
     } else {
       axe = {
         status: "not captured",
@@ -6110,7 +7928,7 @@ function readSample(dir, body) {
     return null;
   const frames = isObject(body.frames) ? body.frames : {};
   const stripName = typeof frames.strip === "string" ? frames.strip : null;
-  const strip = stripName !== null && STRIP_NAME.test(stripName) && existsSync9(join16(dir, stripName));
+  const strip = stripName !== null && STRIP_NAME.test(stripName) && existsSync12(join24(dir, stripName));
   const over = isObject(body.frameTimes) ? body.frameTimes.over50ms : 0;
   const reducedMotion = readReduced(body.reducedMotion, "animations");
   if (!reducedMotion)
@@ -6150,7 +7968,7 @@ function emptyRow(page, state, criteria, declared) {
   };
 }
 function measure(paths, id, plan) {
-  const dir = join16(reviewDir(paths, id), "ui");
+  const dir = join24(reviewDir(paths, id), "ui");
   const m = {
     captures: listCaptures(paths, id),
     rows: new Map,
@@ -6185,11 +8003,11 @@ function measureCaptures(m, paths, id, dir) {
       light: imageWidths(capture, false),
       dark: capture.dark ? imageWidths(capture, true) : []
     };
-    row.console = consoleStatus(capture.console ? join16(workDir(paths, id), capture.console) : null);
+    row.console = consoleStatus(capture.console ? join24(workDir(paths, id), capture.console) : null);
     const metaName = `${label}.json`;
-    if (!existsSync9(join16(dir, metaName)))
+    if (!existsSync12(join24(dir, metaName)))
       continue;
-    const body = readBounded(join16(dir, metaName));
+    const body = readBounded(join24(dir, metaName));
     const reading = body ? readMeta(dir, body, label) : null;
     if (!reading) {
       m.unreadable.push(metaName);
@@ -6212,7 +8030,7 @@ function measureCaptures(m, paths, id, dir) {
     else if (reading.axe.reason)
       m.axeReasons.push(reading.axe.reason);
     if (reading.vitals) {
-      const where = basename4(capture.file).replace(/\.[^.]+$/, "");
+      const where = basename5(capture.file).replace(/\.[^.]+$/, "");
       const { cls, lcpMs } = reading.vitals;
       if (cls !== null && (m.clsMax === null || cls > m.clsMax.value))
         m.clsMax = { value: cls, where };
@@ -6228,11 +8046,11 @@ function measureCaptures(m, paths, id, dir) {
   }
 }
 function measureSamples(m, dir) {
-  const names = existsSync9(dir) ? readdirSync5(dir).sort() : [];
+  const names = existsSync12(dir) ? readdirSync7(dir).sort() : [];
   for (const name of names) {
     if (!name.endsWith(".motion.json"))
       continue;
-    const body = readBounded(join16(dir, name));
+    const body = readBounded(join24(dir, name));
     const sample = body ? readSample(dir, body) : null;
     if (!sample) {
       m.unreadable.push(name);
@@ -6358,7 +8176,7 @@ function captureMetadata(paths, id) {
   for (const capture of listCaptures(paths, id)) {
     if (!capture.meta)
       continue;
-    const body = readBounded(join16(workDir(paths, id), capture.meta));
+    const body = readBounded(join24(workDir(paths, id), capture.meta));
     if (body)
       bodies.push(body);
   }
@@ -6436,11 +8254,11 @@ function emptyEvidence() {
   };
 }
 function evidencePath(paths, id) {
-  return join17(workDir(paths, id), "evidence.json");
+  return join25(workDir(paths, id), "evidence.json");
 }
 function loadEvidence(paths, id) {
-  const read = readProtectedJson(paths, evidencePath(paths, id));
-  return { evidence: read.data ?? emptyEvidence(), tampered: read.tampered };
+  const read2 = readProtectedJson(paths, evidencePath(paths, id));
+  return { evidence: read2.data ?? emptyEvidence(), tampered: read2.tampered };
 }
 function saveEvidence(paths, id, evidence) {
   writeProtectedJson(paths, evidencePath(paths, id), evidence);
@@ -6449,14 +8267,14 @@ function updateEvidence(paths, id, apply, options = {}) {
   const nothing = `nothing ${options.verb ?? "recorded"}`;
   try {
     return withLock(workDir(paths, id), () => {
-      const read = loadEvidence(paths, id);
-      if (read.tampered)
+      const read2 = loadEvidence(paths, id);
+      if (read2.tampered)
         return {
           refused: `evidence.json of ${id} changed outside the engine (crew accept ${id}); ${nothing}`
         };
-      const result = apply(read.evidence);
-      saveEvidence(paths, id, read.evidence);
-      return { saved: read.evidence, result };
+      const result = apply(read2.evidence);
+      saveEvidence(paths, id, read2.evidence);
+      return { saved: read2.evidence, result };
     }, { what: "work folder" });
   } catch (error) {
     if (error instanceof LockBusy)
@@ -6580,16 +8398,30 @@ function ownSummary(work, evidence, criterionId, kind, policy) {
   const record = evidence.tdd.find((t) => t.criterion === criterionId);
   if (record?.merged)
     return `proven by ${record.merged.task} (child ${record.merged.child}, merged ${record.merged.commit.slice(0, 7)})`;
+  const history = historyNote(record);
   if (tddDone(record, kind)) {
     if (kind === "behavior")
-      return "red then green";
+      return `red then green${history}`;
     if (kind === "preserve")
-      return "passing before and after";
-    return `observed: passes after (${record?.reason ?? "no reason given"})`;
+      return `passing before and after (${pairCounts(record)})${history}`;
+    return `observed: passes after (${record?.reason ?? "no reason given"})${history}`;
   }
   if (record?.red || record?.before)
-    return kind === "behavior" ? "red only" : "before only";
+    return `${kind === "behavior" ? "red only" : "before only"}${history}`;
   return "missing";
+}
+function pairCounts(record) {
+  const before = record?.before?.passed;
+  const after = record?.after?.passed;
+  return before === undefined || after === undefined ? "counts not recorded" : `${before} → ${after} pass`;
+}
+function historyNote(record) {
+  if (!record)
+    return "";
+  return Object.entries(HISTORY).flatMap(([step, field]) => {
+    const earlier = record[field];
+    return earlier?.length ? [`; the ${step} recorded ${earlier.length + 1} times (the latest decides)`] : [];
+  }).join("");
 }
 function auditStatus(status, a) {
   const known = a.known ? `, ${a.known} known before` : "";
@@ -6865,14 +8697,14 @@ function renderReport(work, evidence, policy, options = {}) {
 
 // packages/engine/src/mail.ts
 import { createHash as createHash3 } from "node:crypto";
-import { accessSync, constants, existsSync as existsSync11 } from "node:fs";
-import { basename as basename5, isAbsolute as isAbsolute4, join as join19, resolve as resolve6 } from "node:path";
+import { accessSync, constants, existsSync as existsSync14 } from "node:fs";
+import { basename as basename6, isAbsolute as isAbsolute5, join as join27, resolve as resolve7 } from "node:path";
 
 // packages/engine/src/opened.ts
-import { existsSync as existsSync10, rmSync as rmSync4 } from "node:fs";
-import { join as join18 } from "node:path";
+import { existsSync as existsSync13, rmSync as rmSync4 } from "node:fs";
+import { join as join26 } from "node:path";
 function openedMarkerFile(userDir, root) {
-  return join18(userDir, "opened", `${sha256(canonical(root)).slice(0, 16)}.json`);
+  return join26(userDir, "opened", `${sha256(canonical(root)).slice(0, 16)}.json`);
 }
 function openedMarkerPath(paths) {
   return openedMarkerFile(paths.userDir, paths.root);
@@ -6885,7 +8717,7 @@ function dropOpenedMarker(userDir, root) {
 }
 function readOpenedMarker(paths) {
   const file = openedMarkerPath(paths);
-  if (!existsSync10(file))
+  if (!existsSync13(file))
     return null;
   const parsed = readJson(file);
   if (!parsed || typeof parsed.mail !== "string" || !parsed.mail)
@@ -6937,10 +8769,10 @@ function heldMessages(ctx) {
   const seen = new Set;
   const held = [];
   for (const which of ["inbox", "outbox"]) {
-    const read = readBox(dir, which);
-    if (read.tampered)
+    const read2 = readBox(dir, which);
+    if (read2.tampered)
       continue;
-    for (const m of read.box.messages) {
+    for (const m of read2.box.messages) {
       if (seen.has(m.id))
         continue;
       seen.add(m.id);
@@ -7044,12 +8876,12 @@ function effectiveMailPolicy(root, policy, env) {
   let mail = policy.mail;
   if (main && (mail.name === null || mail.workspace === null)) {
     const mainPaths = resolvePaths(main, env);
-    const theirs = mainPaths ? loadPolicy(mainPaths).policy.mail : null;
-    if (theirs)
+    const theirs2 = mainPaths ? loadPolicy(mainPaths).policy.mail : null;
+    if (theirs2)
       mail = {
         ...mail,
-        name: mail.name ?? theirs.name,
-        workspace: mail.workspace ?? theirs.workspace
+        name: mail.name ?? theirs2.name,
+        workspace: mail.workspace ?? theirs2.workspace
       };
   }
   return { mail, main };
@@ -7062,7 +8894,7 @@ function mailSelf(paths, policy, env) {
   const { mail, main } = effectiveMailPolicy(paths.root, policy, env);
   return {
     workspace: mail.workspace,
-    project: mail.name ?? basename5(main ?? paths.root),
+    project: mail.name ?? basename6(main ?? paths.root),
     agent: opener.agent,
     hops: opener.hops,
     openedBy: opener.mail,
@@ -7117,9 +8949,9 @@ function registerProject(ctx, sessionId, options = {}) {
 }
 function pruneRegistry(userDir) {
   const registry = loadRegistry(userDir);
-  const gone = registry.projects.filter((p) => !existsSync11(p.root)).map((p) => p.root);
+  const gone = registry.projects.filter((p) => !existsSync14(p.root)).map((p) => p.root);
   if (gone.length) {
-    registry.projects = registry.projects.filter((p) => existsSync11(p.root));
+    registry.projects = registry.projects.filter((p) => existsSync14(p.root));
     saveRegistry(userDir, registry);
   }
   return gone;
@@ -7144,7 +8976,7 @@ function resolveProject(ctx, to) {
   }
   const candidates = registry.projects.filter((p) => p.name === to && !p.worktreeOf);
   const inWorkspace = candidates.filter((p) => p.workspace === ctx.self.workspace);
-  const alive = inWorkspace.filter((p) => existsSync11(p.root));
+  const alive = inWorkspace.filter((p) => existsSync14(p.root));
   if (alive.length) {
     alive.sort((a, b) => b.lastSeen.localeCompare(a.lastSeen));
     const entry = alive[0];
@@ -7176,15 +9008,15 @@ function mailbox(userDir, workspace, project) {
   return { dir: mailboxDir(userDir, workspace, project) };
 }
 function boxFile(dir, name) {
-  return join19(dir, `${name}.json`);
+  return join27(dir, `${name}.json`);
 }
 function readBox(dir, which) {
   const file = boxFile(dir, which);
-  if (existsSync11(file))
+  if (existsSync14(file))
     accessSync(file, constants.R_OK);
-  const read = readProtectedJsonAt(boxFile(dir, "integrity"), file);
-  const box = read.data && Array.isArray(read.data.messages) ? read.data : { version: 1, messages: [] };
-  return { box, tampered: read.tampered };
+  const read2 = readProtectedJsonAt(boxFile(dir, "integrity"), file);
+  const box = read2.data && Array.isArray(read2.data.messages) ? read2.data : { version: 1, messages: [] };
+  return { box, tampered: read2.tampered };
 }
 function writeBox(dir, which, box) {
   writeProtectedJsonAt(boxFile(dir, "integrity"), boxFile(dir, which), box);
@@ -7230,14 +9062,14 @@ function newMessageId(outbox, project, at) {
   return `M-${day}-${String(next).padStart(3, "0")}-${project}`;
 }
 function itemMailPath(paths, id) {
-  return join19(workDir(paths, id), "mail.json");
+  return join27(workDir(paths, id), "mail.json");
 }
 function loadItemMail(paths, id) {
-  const read = readProtectedJson(paths, itemMailPath(paths, id));
-  return { box: read.data ?? { version: 1, messages: [] }, tampered: read.tampered };
+  const read2 = readProtectedJson(paths, itemMailPath(paths, id));
+  return { box: read2.data ?? { version: 1, messages: [] }, tampered: read2.tampered };
 }
 function recordInItem(paths, id, message) {
-  if (!existsSync11(join19(workDir(paths, id), "work.json")))
+  if (!existsSync14(join27(workDir(paths, id), "work.json")))
     return;
   const { box, tampered } = loadItemMail(paths, id);
   if (tampered)
@@ -7249,7 +9081,7 @@ function itemHome(ctx, registry, party, item, here) {
   const root = projectEntry(registry, party.workspace, party.project)?.root;
   const registered = root ? resolvePaths(root, ctx.env) : null;
   for (const paths of [registered, here]) {
-    if (paths && existsSync11(join19(workDir(paths, item), "work.json")))
+    if (paths && existsSync14(join27(workDir(paths, item), "work.json")))
       return paths;
   }
   return null;
@@ -7286,7 +9118,7 @@ function openIn(userDir, workspace, project) {
 function placeBody(dir, id, text) {
   if (Buffer.byteLength(text, "utf8") <= INLINE_BODY_LIMIT)
     return { body: text };
-  const file = join19(dir, `${id}.md`);
+  const file = join27(dir, `${id}.md`);
   writeText(file, text);
   return { body: `${text.slice(0, PREVIEW_CHARS)}...`, bodyFile: file };
 }
@@ -7296,7 +9128,7 @@ function party(self, item) {
 function attachFile(root, text, filePath) {
   if (!filePath)
     return { text };
-  const abs = isAbsolute4(filePath) ? filePath : resolve6(root, filePath);
+  const abs = isAbsolute5(filePath) ? filePath : resolve7(root, filePath);
   const content = readText(abs);
   if (content === null)
     return { refused: `no file at ${abs}` };
@@ -7333,8 +9165,8 @@ function agentRefusal(ctx, request, to) {
       return `a message to the judge comes from the lead (session), not from ${ctx.self.agent}`;
     if (CRITICS.has(agent)) {
       const proposals = itemId ? `.crew/work/${itemId}/conclave/proposals.md` : null;
-      const given = request.filePath ? canonical(resolve6(ctx.paths.root, request.filePath)) : null;
-      if (!proposals || !given || given !== canonical(join19(ctx.paths.root, proposals)) || request.text.trim())
+      const given = request.filePath ? canonical(resolve7(ctx.paths.root, request.filePath)) : null;
+      if (!proposals || !given || given !== canonical(join27(ctx.paths.root, proposals)) || request.text.trim())
         return `a message to ${agent} carries ${proposals ?? ".crew/work/<id>/conclave/proposals.md"} (--file) and nothing else`;
     }
     return null;
@@ -7526,7 +9358,7 @@ function recordEverywhere(ctx, id, change, skipped) {
   const holding = [];
   for (const dir of boxes) {
     for (const which of ["inbox", "outbox"]) {
-      if (!existsSync11(boxFile(dir, which)))
+      if (!existsSync14(boxFile(dir, which)))
         continue;
       try {
         if (readBox(dir, which).box.messages.some((m) => m.id === id))
@@ -7555,15 +9387,15 @@ function recordEverywhere(ctx, id, change, skipped) {
 }
 function recordInBox(dir, which, id, change, skipped) {
   return withMailLock(dir, () => {
-    let read;
+    let read2;
     try {
-      read = readBox(dir, which);
+      read2 = readBox(dir, which);
     } catch (error) {
       skipped(`${boxFile(dir, which)} (${error.message.split(`
 `)[0]})`);
       return null;
     }
-    const { box, tampered } = read;
+    const { box, tampered } = read2;
     if (tampered) {
       skipped(`${boxFile(dir, which)} (changed outside the engine)`);
       return null;
@@ -7615,10 +9447,10 @@ function withoutReason(m) {
   return copy;
 }
 function applyMove(m, to, at, extra) {
-  const read = readFirst(m, to, at);
-  if (to === "blocked" && mailStatus(read) === "blocked")
-    return { ...read, ...extra };
-  return transition(to === "done" ? withoutReason(read) : read, to, extra);
+  const read2 = readFirst(m, to, at);
+  if (to === "blocked" && mailStatus(read2) === "blocked")
+    return { ...read2, ...extra };
+  return transition(to === "done" ? withoutReason(read2) : read2, to, extra);
 }
 function moveMail(ctx, id, to, extra, notes) {
   const own = ownMessage(ctx, id);
@@ -7673,16 +9505,16 @@ function acceptMail(ctx, id, options, notes) {
     return { refused: `${id} is ${from}; accept applies to a request still sent or read` };
   if (options.priority !== undefined && !isMailPriority(options.priority))
     return { refused: badPriority(options.priority) };
-  const proposed = priorityOf(m);
-  const confirmed = options.priority ?? proposed;
-  if (priorityRank(confirmed) < priorityRank(proposed))
+  const proposed2 = priorityOf(m);
+  const confirmed = options.priority ?? proposed2;
+  if (priorityRank(confirmed) < priorityRank(proposed2))
     return {
-      refused: `${id} was proposed ${proposed}; the receiver confirms or lowers, never raises`
+      refused: `${id} was proposed ${proposed2}; the receiver confirms or lowers, never raises`
     };
   const reason = options.reason?.trim() ? oneLine(options.reason) : null;
-  if (priorityRank(confirmed) > priorityRank(proposed) && !reason)
+  if (priorityRank(confirmed) > priorityRank(proposed2) && !reason)
     return { refused: 'a lowering needs --reason "<why>"' };
-  const decision = { proposed, confirmed, by: options.by, reason, at: nowIso() };
+  const decision = { proposed: proposed2, confirmed, by: options.by, reason, at: nowIso() };
   const moved = moveMail(ctx, id, "accepted", { priorityDecision: decision }, notes);
   return "refused" in moved ? moved : { message: moved };
 }
@@ -7726,7 +9558,7 @@ function reply(ctx, id, text, options, notes) {
   if (typed.length && !options.item)
     return { refused: "a contract comes with the child item (--item)" };
   const carried = options.item && child ? {
-    report: existsSync11(join19(workDir(ctx.paths, options.item), "report.md")) ? `.crew/work/${options.item}/report.md` : null,
+    report: existsSync14(join27(workDir(ctx.paths, options.item), "report.md")) ? `.crew/work/${options.item}/report.md` : null,
     fingerprint: child.fingerprint,
     gatesPassed: [
       ...new Set(child.runs.filter((r) => r.status === "pass").map((r) => r.gate))
@@ -7818,9 +9650,9 @@ function syncMail(ctx, paths) {
         inboxes.set(theirsDir, inbox2);
         if (inbox2.tampered)
           continue;
-        const theirs = inbox2.box.messages.find((m) => m.id === sent.id);
-        if (theirs && JSON.stringify(theirs) !== JSON.stringify(sent)) {
-          Object.assign(sent, theirs);
+        const theirs2 = inbox2.box.messages.find((m) => m.id === sent.id);
+        if (theirs2 && JSON.stringify(theirs2) !== JSON.stringify(sent)) {
+          Object.assign(sent, theirs2);
           updated += 1;
           recordForParties(ctx, registry, sent, paths);
         }
@@ -7831,7 +9663,7 @@ function syncMail(ctx, paths) {
     const inbox = ownInbox(ctx);
     if (inbox.tampered)
       return { newMail: [], updated, tampered: true };
-    const marker = join19(own.dir, `synced-${ctx.self.agent}.json`);
+    const marker = join27(own.dir, `synced-${ctx.self.agent}.json`);
     const seen = new Set(readJson(marker) ?? []);
     const newMail = [];
     for (const m of inbox.messages) {
@@ -7915,7 +9747,7 @@ function git(root, ...args) {
 }
 function checkPath(root, path) {
   const bad = `unknown path: ${path} (not in the repository)`;
-  if (!path.trim() || isAbsolute5(path) || /[\0\n\r]/.test(path))
+  if (!path.trim() || isAbsolute6(path) || /[\0\n\r]/.test(path))
     return bad;
   if (path.split(/[\\/]/).includes(".."))
     return bad;
@@ -7972,7 +9804,7 @@ function itemSummary(paths, id) {
   } catch {
     return empty;
   }
-  if (!existsSync12(join20(dir, "work.json")))
+  if (!existsSync15(join28(dir, "work.json")))
     return empty;
   const { work } = loadWork(paths, id);
   if (!work)
@@ -8021,21 +9853,21 @@ function analyseOrigin(paths, pathsToBlame) {
   return { at, paths: result, items };
 }
 function originPath(paths, id) {
-  return join20(workDir(paths, id), "analysis", "origin.json");
+  return join28(workDir(paths, id), "analysis", "origin.json");
 }
 function writeOrigin(paths, id, origin) {
   const file = originPath(paths, id);
-  mkdirSync4(dirname7(file), { recursive: true });
+  mkdirSync5(dirname8(file), { recursive: true });
   writeProtectedJson(paths, file, origin);
 }
 function readOrigin(paths, id) {
   const file = originPath(paths, id);
-  if (!existsSync12(file))
+  if (!existsSync15(file))
     return null;
-  const read = readProtectedJson(paths, file);
-  if (read.tampered)
+  const read2 = readProtectedJson(paths, file);
+  if (read2.tampered)
     return { origin: null, tampered: true };
-  return { origin: read.data ?? null, tampered: false };
+  return { origin: read2.data ?? null, tampered: false };
 }
 function rolesAndTasks(item) {
   return `roles ${item.roles.join(", ") || "none"}; tasks ${item.tasks.join(", ") || "none"}`;
@@ -8090,12 +9922,12 @@ function parse(argv) {
 }
 
 // packages/engine/src/audit-report.ts
-import { existsSync as existsSync13, readFileSync as readFileSync7, realpathSync as realpathSync4, statSync as statSync5 } from "node:fs";
-import { isAbsolute as isAbsolute6, join as join23, relative as relative6 } from "node:path";
+import { existsSync as existsSync16, readFileSync as readFileSync7, realpathSync as realpathSync5, statSync as statSync8 } from "node:fs";
+import { isAbsolute as isAbsolute7, join as join31, relative as relative8 } from "node:path";
 
 // packages/engine/src/audit-state.ts
 import { createHash as createHash4 } from "node:crypto";
-import { join as join21 } from "node:path";
+import { join as join29 } from "node:path";
 var AUDIT_SECTIONS = [
   "business",
   "security",
@@ -8115,7 +9947,7 @@ var REPORT_INPUT_FILES = [
 function reportHash(auditDir) {
   const hash = createHash4("sha256");
   for (const name of REPORT_INPUT_FILES) {
-    const text = readText(join21(auditDir, name));
+    const text = readText(join29(auditDir, name));
     hash.update(`${name}
 ${text ?? "missing"}
 ---
@@ -8125,26 +9957,26 @@ ${text ?? "missing"}
 }
 var FINDING_LINE = /^- F-\d+ · (?:defect|advisory) · /gm;
 function auditState(paths, work) {
-  const dir = join21(workDir(paths, work.id), "audit");
-  const run = readJson(join21(dir, "runs.json"));
+  const dir = join29(workDir(paths, work.id), "audit");
+  const run = readJson(join29(dir, "runs.json"));
   const head = gitHead(paths.root);
   const runAtHead = run !== null && (run.head === null ? head === "none" : run.head === head);
   const filed = {};
   for (const section of AUDIT_SECTIONS) {
-    const text = readText(join21(dir, `${section}.findings.md`));
+    const text = readText(join29(dir, `${section}.findings.md`));
     if (text !== null)
       filed[section] = (text.match(FINDING_LINE) ?? []).length;
   }
-  const report = readJson(join21(dir, "report.json"));
+  const report = readJson(join29(dir, "report.json"));
   const reportCurrent = report !== null && report.hash === reportHash(dir);
   const signed = work.approvals.find((a) => a.what === "audit") ?? null;
   return { run, runAtHead, filed, report, reportCurrent, signed };
 }
 
 // packages/engine/src/secrets.ts
-import { execFileSync as execFileSync3, spawnSync } from "node:child_process";
+import { execFileSync as execFileSync3, spawnSync as spawnSync2 } from "node:child_process";
 import { readFileSync as readFileSync6 } from "node:fs";
-import { join as join22 } from "node:path";
+import { join as join30 } from "node:path";
 var RULES = [
   {
     rule: "private key",
@@ -8189,7 +10021,7 @@ function isBinary(buffer) {
 function fileSource(root, path) {
   let buffer;
   try {
-    buffer = readFileSync6(join22(root, path));
+    buffer = readFileSync6(join30(root, path));
   } catch {
     return null;
   }
@@ -8243,7 +10075,7 @@ function changedText(root, profile, base = "HEAD") {
   return sources;
 }
 function gitleaks(text) {
-  const result = spawnSync("gitleaks", ["stdin", "--no-banner", "--redact", "--exit-code", "1"], {
+  const result = spawnSync2("gitleaks", ["stdin", "--no-banner", "--redact", "--exit-code", "1"], {
     input: text,
     encoding: "utf8"
   });
@@ -8357,16 +10189,16 @@ function parseRecommendations(text) {
   return rows.sort((a, b) => COST_ORDER[a.cost] - COST_ORDER[b.cost] || a.days - b.days);
 }
 function inside(base, path) {
-  const rel2 = relative6(base, path);
-  return rel2 !== "" && !rel2.startsWith("..") && !isAbsolute6(rel2);
+  const rel2 = relative8(base, path);
+  return rel2 !== "" && !rel2.startsWith("..") && !isAbsolute7(rel2);
 }
 function realInside(base, rel2) {
-  const candidate = join23(base, rel2);
-  if (!existsSync13(candidate))
+  const candidate = join31(base, rel2);
+  if (!existsSync16(candidate))
     return null;
   try {
-    const real = realpathSync4(candidate);
-    return inside(realpathSync4(base), real) ? real : "";
+    const real = realpathSync5(candidate);
+    return inside(realpathSync5(base), real) ? real : "";
   } catch {
     return null;
   }
@@ -8677,18 +10509,18 @@ function renderAuditHtml(inputs, brand) {
   ].join(`
 `);
 }
-var TAIL_LINES = 20;
+var TAIL_LINES2 = 20;
 function assembleAuditReport(options) {
   const { auditDir, logsDir, root, id } = options;
-  const runs = readJson(join23(auditDir, "runs.json"));
+  const runs = readJson(join31(auditDir, "runs.json"));
   if (!runs)
     return { refused: `the audit run comes first (crew audit ${id} run)` };
-  const summary = readText(join23(auditDir, "summary.md"));
+  const summary = readText(join31(auditDir, "summary.md"));
   if (summary === null)
     return {
       refused: "the lead's summary comes before the report: audit/summary.md (references/audit.md)"
     };
-  const scope = readJson(join23(auditDir, "scope.json")) ?? {
+  const scope = readJson(join31(auditDir, "scope.json")) ?? {
     targets: [],
     files: 0,
     bytes: 0,
@@ -8698,7 +10530,7 @@ function assembleAuditReport(options) {
   const counts = {};
   const leftOut = [];
   for (const section of AUDIT_SECTIONS) {
-    const text = readText(join23(auditDir, `${section}.findings.md`));
+    const text = readText(join31(auditDir, `${section}.findings.md`));
     const parsed = text === null ? [] : parseFindingsFile(text);
     const checked = checkProof(parsed, root, logsDir, section);
     sections[section] = checked.kept;
@@ -8709,16 +10541,16 @@ function assembleAuditReport(options) {
     };
   }
   const logs = runs.runs.filter((r) => r.log !== null).map((r) => {
-    const file = join23(logsDir, r.log.startsWith("logs/") ? r.log.slice(5) : r.log);
+    const file = join31(logsDir, r.log.startsWith("logs/") ? r.log.slice(5) : r.log);
     let bytes = 0;
     let tail = [];
     try {
-      bytes = statSync5(file).size;
+      bytes = statSync8(file).size;
       const lines = readFileSync7(file, "utf8").split(`
 `);
       if (lines.at(-1) === "")
         lines.pop();
-      tail = lines.slice(-TAIL_LINES);
+      tail = lines.slice(-TAIL_LINES2);
     } catch {
       tail = ["(log not readable)"];
     }
@@ -8731,10 +10563,10 @@ function assembleAuditReport(options) {
     date: options.date,
     summary,
     sections,
-    dependencies: parseDependenciesTable(readText(join23(auditDir, "dependencies.findings.md")) ?? ""),
+    dependencies: parseDependenciesTable(readText(join31(auditDir, "dependencies.findings.md")) ?? ""),
     runs,
     scope,
-    recommendations: parseRecommendations(readText(join23(auditDir, "recommendations.md")) ?? ""),
+    recommendations: parseRecommendations(readText(join31(auditDir, "recommendations.md")) ?? ""),
     leftOut,
     verdict: auditVerdict(sections, secretsFound),
     signed: options.signed,
@@ -8745,12 +10577,12 @@ function assembleAuditReport(options) {
 }
 
 // packages/engine/src/audit-run.ts
-import { statSync as statSync10 } from "node:fs";
-import { join as join41 } from "node:path";
+import { statSync as statSync11 } from "node:fs";
+import { join as join42 } from "node:path";
 
 // packages/engine/src/gates.ts
 import { accessSync as accessSync2, constants as constants2, mkdirSync as mkdirSync10, rmSync as rmSync6 } from "node:fs";
-import { basename as basename7, delimiter as delimiter2, join as join40 } from "node:path";
+import { basename as basename8, delimiter as delimiter2, join as join41 } from "node:path";
 
 // packages/engine/src/audit.ts
 var NAMED_ID = /\b(GHSA-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{4}|CVE-\d{4}-\d{4,}|PKSA-[0-9a-z]{4}(?:-[0-9a-z]{4}){1,2}|PYSEC-\d{4}-\d+)\b/i;
@@ -8839,7 +10671,7 @@ function parseAudit(tool, text) {
 
 // packages/engine/src/design-lint.ts
 import { readFileSync as readFileSync8 } from "node:fs";
-import { join as join24 } from "node:path";
+import { join as join32 } from "node:path";
 var LINT_RULES = [
   "motion/transition-all",
   "motion/scale-from-zero",
@@ -8878,12 +10710,12 @@ function isSafeRelative(rel2) {
 function readSafe(root, rel2) {
   if (!isSafeRelative(rel2))
     return null;
-  const size = regularFileSize(join24(root, rel2));
+  const size = regularFileSize(join32(root, rel2));
   if (size === null || size > FILE_MAX)
     return null;
   let buffer;
   try {
-    buffer = readFileSync8(join24(root, rel2));
+    buffer = readFileSync8(join32(root, rel2));
   } catch {
     return null;
   }
@@ -9146,7 +10978,7 @@ function writeDesignLint(paths, id, result) {
     inventory: result.inventory,
     disabled: result.disabled
   };
-  writeText(join24(workDir(paths, id), DESIGN_LINT_FILE), `${JSON.stringify(record, null, 2)}
+  writeText(join32(workDir(paths, id), DESIGN_LINT_FILE), `${JSON.stringify(record, null, 2)}
 `);
   return DESIGN_LINT_FILE;
 }
@@ -9171,920 +11003,6 @@ function runDesignLint(options) {
   };
 }
 
-// packages/engine/src/detect/index.ts
-import { existsSync as existsSync16, readdirSync as readdirSync7, statSync as statSync7 } from "node:fs";
-import { join as join31, relative as relative7 } from "node:path";
-
-// packages/engine/src/pdf.ts
-import { existsSync as existsSync14 } from "node:fs";
-import { createRequire } from "node:module";
-import { tmpdir } from "node:os";
-import { delimiter, join as join25 } from "node:path";
-
-// packages/engine/src/run.ts
-import { spawn } from "node:child_process";
-import { createWriteStream, mkdirSync as mkdirSync5 } from "node:fs";
-import { dirname as dirname8 } from "node:path";
-
-// packages/engine/src/shell-words.ts
-var SHELL_NAMES = ["sh", "bash", "zsh", "dash", "ksh", "fish"];
-var SHELL_VALUED = {
-  short: "oO",
-  long: ["--rcfile", "--init-file"]
-};
-function shellTakesNext(option) {
-  if (option.startsWith("--"))
-    return SHELL_VALUED.long.includes(option);
-  return option.length > 1 && SHELL_VALUED.short.includes(option.charAt(option.length - 1));
-}
-var JS_RUNNERS = ["node", "bun"];
-var NPX_RUNNERS = ["npx", "bunx"];
-var RUNNER_SUFFIXES = { js: [".exe"], npx: [".cmd", ".exe"] };
-function runnerSuffix(suffixes) {
-  return `(?:${suffixes.map((s) => s.replace(".", "\\.")).join("|")})?`;
-}
-var COMMAND_WRAPPERS = [
-  {
-    name: "env",
-    valued: "uCPLU",
-    longValued: ["--unset", "--chdir", "--block-signal", "--default-signal", "--ignore-signal"],
-    positionals: 0,
-    assignments: true,
-    scriptOptions: ["-S", "--split-string"],
-    unsetOptions: ["-u", "--unset"]
-  },
-  { name: "command", valued: "", longValued: [], positionals: 0 }
-];
-function takesNext(wrapper, option) {
-  if (option.includes("="))
-    return false;
-  if (option.startsWith("--"))
-    return wrapper.longValued.includes(option);
-  for (let i = 1;i < option.length; i++)
-    if (wrapper.valued.includes(option.charAt(i)))
-      return i === option.length - 1;
-  return false;
-}
-var SAFE_WORD = /^[A-Za-z0-9_@%+=:,./-]+$/;
-function quoteWord(word) {
-  return SAFE_WORD.test(word) ? word : `'${word.replace(/'/g, "'\\''")}'`;
-}
-var WRAPPERS = [
-  { name: "function", valued: "", longValued: [], positionals: 1 },
-  { name: "case", valued: "", longValued: [], positionals: 1 },
-  { name: "nice", valued: "n", longValued: ["--adjustment"], positionals: 0 },
-  {
-    name: "timeout",
-    valued: "sk",
-    longValued: ["--signal", "--kill-after"],
-    positionals: 1
-  },
-  { name: "stdbuf", valued: "ioe", longValued: ["--input", "--output", "--error"], positionals: 0 },
-  {
-    name: "flock",
-    valued: "w",
-    longValued: ["--wait", "--timeout", "--conflict-exit-code"],
-    positionals: 1,
-    scriptOptions: ["-c", "--command"],
-    scriptTrailing: true
-  },
-  {
-    name: "script",
-    valued: "FtEBIOomT",
-    longValued: [
-      "--echo",
-      "--log-in",
-      "--log-out",
-      "--log-io",
-      "--log-timing",
-      "--logging-format",
-      "--output-limit"
-    ],
-    positionals: 1,
-    scriptOptions: ["-c", "--command"],
-    scriptStandsAlone: true
-  },
-  {
-    name: "su",
-    valued: "gGsw",
-    longValued: ["--group", "--supp-group", "--shell", "--whitelist-environment"],
-    positionals: 1,
-    scriptOptions: ["-c", "--command", "--session-command"],
-    scriptStandsAlone: true
-  },
-  {
-    name: "sudo",
-    valued: "ugpChDTrt",
-    longValued: [
-      "--user",
-      "--group",
-      "--prompt",
-      "--close-from",
-      "--host",
-      "--chdir",
-      "--command-timeout",
-      "--role",
-      "--type",
-      "--other-user"
-    ],
-    positionals: 0
-  },
-  { name: "doas", valued: "uC", longValued: [], positionals: 0 },
-  ...COMMAND_WRAPPERS,
-  { name: "exec", valued: "a", longValued: [], positionals: 0 },
-  {
-    name: "xargs",
-    valued: "nILPdEsa",
-    longValued: [
-      "--max-args",
-      "--replace",
-      "--max-lines",
-      "--max-procs",
-      "--delimiter",
-      "--eof",
-      "--max-chars",
-      "--arg-file",
-      "--process-slot-var"
-    ],
-    positionals: 0
-  },
-  { name: "nohup", valued: "", longValued: [], positionals: 0 },
-  { name: "time", valued: "fo", longValued: ["--format", "--output"], positionals: 0 },
-  { name: "builtin", valued: "", longValued: [], positionals: 0 },
-  { name: "caffeinate", valued: "tw", longValued: [], positionals: 0 },
-  {
-    name: "ionice",
-    valued: "cnp",
-    longValued: ["--class", "--classdata", "--pid"],
-    positionals: 0
-  },
-  { name: "noglob", valued: "", longValued: [], positionals: 0 },
-  { name: "nocorrect", valued: "", longValued: [], positionals: 0 },
-  { name: "coproc", valued: "", longValued: [], positionals: 0, namedBlock: true }
-];
-
-// packages/engine/src/run.ts
-function wrapperTakesNext(wrapper, option) {
-  if (takesNext(wrapper, option))
-    return true;
-  const scripts = wrapper.scriptOptions ?? [];
-  if (scripts.includes(option))
-    return true;
-  if (option.startsWith("--") || option.includes("="))
-    return false;
-  return scripts.some((s) => s.length === 2 && option.endsWith(s.charAt(1)));
-}
-var TAIL_LINES2 = 40;
-function killTree(pid) {
-  if (!pid)
-    return;
-  try {
-    if (process.platform === "win32")
-      spawn("taskkill", ["/pid", String(pid), "/T", "/F"]);
-    else
-      process.kill(-pid, "SIGKILL");
-  } catch {
-    try {
-      process.kill(pid, "SIGKILL");
-    } catch {}
-  }
-}
-var WRAPPER_BY_NAME = new Map(COMMAND_WRAPPERS.map((w) => [w.name, w]));
-var ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
-function joinWords(words) {
-  if (words.length === 1)
-    return words[0] ?? "";
-  return words.map(quoteWord).join(" ");
-}
-function shellRefusal(words) {
-  const base = (word) => (word ?? "").split("/").pop() ?? "";
-  let i = 0;
-  let wrapper = null;
-  while (i < words.length) {
-    const word = words[i] ?? "";
-    const named2 = WRAPPER_BY_NAME.get(base(word));
-    if (named2) {
-      wrapper = named2;
-      i += 1;
-    } else if (ASSIGNMENT.test(word)) {
-      wrapper = null;
-      i += 1;
-    } else if (wrapper && word.startsWith("-"))
-      i += wrapperTakesNext(wrapper, word) ? 2 : 1;
-    else
-      break;
-  }
-  const name = base(words[i]);
-  if (!SHELL_NAMES.includes(name))
-    return null;
-  let j = i + 1;
-  let commandString = false;
-  while (j < words.length && /^[-+]/.test(words[j] ?? "")) {
-    const option = words[j] ?? "";
-    if (/^-[A-Za-z]*c[A-Za-z]*$/.test(option))
-      commandString = true;
-    j += shellTakesNext(option) ? 2 : 1;
-  }
-  const after = words.length - j;
-  if (!commandString || after <= 1)
-    return null;
-  return `${after} words follow -c and the shell would run only the first (${words[j]}) with the rest as its parameters: quote the command string as one argument, -- ${name} -c "<command>"`;
-}
-function runCommand(command2, options) {
-  mkdirSync5(dirname8(options.logPath), { recursive: true });
-  const log = createWriteStream(options.logPath);
-  let errors = null;
-  if (options.stderrLogPath) {
-    mkdirSync5(dirname8(options.stderrLogPath), { recursive: true });
-    errors = createWriteStream(options.stderrLogPath);
-  }
-  const lines = [];
-  let partial = "";
-  const absorb = (chunk, to = log) => {
-    to.write(chunk);
-    partial += chunk.toString("utf8");
-    const pieces = partial.split(`
-`);
-    partial = pieces.pop() ?? "";
-    for (const line of pieces) {
-      lines.push(line);
-      if (lines.length > TAIL_LINES2)
-        lines.shift();
-    }
-  };
-  const started = Date.now();
-  return new Promise((resolve7) => {
-    const child = spawn(command2, {
-      cwd: options.cwd,
-      shell: true,
-      detached: process.platform !== "win32",
-      env: options.env ?? process.env,
-      stdio: [options.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"]
-    });
-    let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      killTree(child.pid);
-    }, options.timeoutMs);
-    child.stdout?.on("data", (chunk) => absorb(chunk));
-    child.stderr?.on("data", (chunk) => absorb(chunk, errors ?? log));
-    if (options.stdin !== undefined)
-      child.stdin?.end(options.stdin);
-    const finish = (exit) => {
-      clearTimeout(timer);
-      if (partial)
-        lines.push(partial);
-      log.end();
-      errors?.end();
-      resolve7({
-        exit,
-        durationMs: Date.now() - started,
-        tail: lines.slice(-TAIL_LINES2).join(`
-`),
-        timedOut
-      });
-    };
-    child.on("error", (error) => {
-      absorb(Buffer.from(`${error.message}
-`));
-      finish(null);
-    });
-    child.on("close", (code) => finish(code));
-  });
-}
-function shellWord(path) {
-  const word = path.startsWith("-") ? `./${path}` : path;
-  return /^[A-Za-z0-9_./-]+$/.test(word) ? word : `'${word.replace(/'/g, "'\\''")}'`;
-}
-
-// packages/engine/src/pdf.ts
-var NO_PDF = "PDF not produced: no Playwright in the project and no browser found (set WIZARDINGCODE_CREW_BROWSER)";
-var BROWSER_CANDIDATES = [
-  "google-chrome",
-  "chromium",
-  "chromium-browser",
-  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-  "/Applications/Chromium.app/Contents/MacOS/Chromium"
-];
-
-class PdfTimeout extends Error {
-}
-function onPath(binary, env) {
-  for (const dir of (env.PATH ?? "").split(delimiter)) {
-    if (!dir)
-      continue;
-    const path = join25(dir, binary);
-    if (existsSync14(path))
-      return path;
-  }
-  return null;
-}
-function findBrowser(env, candidates = BROWSER_CANDIDATES) {
-  const named2 = env.WIZARDINGCODE_CREW_BROWSER?.trim();
-  if (named2)
-    return named2;
-  for (const candidate of candidates) {
-    const found = candidate.includes("/") ? existsSync14(candidate) ? candidate : null : onPath(candidate, env);
-    if (found)
-      return found;
-  }
-  return null;
-}
-function projectPlaywright(root) {
-  const require2 = createRequire(`${root}/`);
-  for (const name of ["playwright", "@playwright/test"]) {
-    try {
-      const mod = require2(name);
-      if (mod?.chromium)
-        return mod;
-    } catch {}
-  }
-  return null;
-}
-async function printWithPlaywright(pw, html, out2) {
-  const browser = await pw.chromium.launch();
-  try {
-    const page = await browser.newPage();
-    await page.goto(`file://${html}`);
-    await page.pdf({ path: out2, format: "A4", printBackground: true });
-  } finally {
-    await browser.close();
-  }
-}
-function seconds(ms) {
-  return `${ms / 1000} s`;
-}
-async function printPdf(html, out2, env, root, options = {}) {
-  const timeoutMs = options.timeoutMs ?? 60000;
-  const playwright = projectPlaywright(root);
-  if (playwright) {
-    let timer;
-    const timeout = new Promise((_, reject) => {
-      timer = setTimeout(() => reject(new PdfTimeout(`timed out after ${seconds(timeoutMs)}`)), timeoutMs);
-    });
-    try {
-      await Promise.race([printWithPlaywright(playwright, html, out2), timeout]);
-      return { ok: true, by: "playwright" };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      const why = error instanceof PdfTimeout ? message : `failed: ${message}`;
-      return { ok: false, reason: `PDF not produced: Playwright ${why}` };
-    } finally {
-      if (timer)
-        clearTimeout(timer);
-    }
-  }
-  const browser = findBrowser(env, options.candidates);
-  if (!browser)
-    return { ok: false, reason: NO_PDF };
-  const command2 = joinWords([
-    browser,
-    "--headless=new",
-    "--disable-gpu",
-    "--no-pdf-header-footer",
-    `--print-to-pdf=${out2}`,
-    `file://${html}`
-  ]);
-  const result = await runCommand(command2, {
-    cwd: root,
-    timeoutMs,
-    logPath: options.logPath ?? join25(tmpdir(), `crew-pdf-${Date.now()}.log`),
-    env
-  });
-  if (result.timedOut)
-    return {
-      ok: false,
-      reason: `PDF not produced: the browser timed out after ${seconds(timeoutMs)}`
-    };
-  if (result.exit !== 0) {
-    const tail = result.tail.trim().split(`
-`).filter(Boolean).slice(-3).join(" ");
-    return { ok: false, reason: `PDF not produced: the browser exited ${result.exit}: ${tail}` };
-  }
-  if (!existsSync14(out2))
-    return {
-      ok: false,
-      reason: `PDF not produced: the browser exited 0 and wrote nothing at ${out2}`
-    };
-  return { ok: true, by: browser };
-}
-
-// packages/engine/src/detect/environment.ts
-import { existsSync as existsSync15 } from "node:fs";
-import { join as join26 } from "node:path";
-var ENVIRONMENT_TIMEOUT_MS = 120000;
-var ENVIRONMENT_COMMANDS = ["start", "health", "stop"];
-var COMPOSE_FILES = ["docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"];
-var MAKE_TARGETS = ["start", "serve", "dev"];
-var NODE_SCRIPTS = ["dev", "start"];
-var NODE_MANAGERS = ["npm", "pnpm", "yarn", "bun"];
-var DEFAULT_PORT = 3000;
-var proposed = (command2) => ({ command: command2, source: "proposed" });
-function onLocalhost(host, port) {
-  return { health: proposed(`curl -fsS http://${host}:${port}/`), url: `http://${host}:${port}` };
-}
-function composePort(text) {
-  const match = /^\s*ports:\s*\n\s*-\s*"?(\d{1,5})(?=:\d)/m.exec(text);
-  const port = match ? Number.parseInt(match[1], 10) : Number.NaN;
-  return Number.isInteger(port) && port >= 1 && port <= 65535 ? port : DEFAULT_PORT;
-}
-function detectEnvironment(root, targets) {
-  const compose = COMPOSE_FILES.map((f) => join26(root, f)).find((p) => existsSync15(p));
-  if (compose) {
-    return {
-      start: proposed("docker compose up -d"),
-      stop: proposed("docker compose down"),
-      ...onLocalhost("localhost", composePort(readTextQuietly(compose) ?? "")),
-      timeoutMs: ENVIRONMENT_TIMEOUT_MS
-    };
-  }
-  if (existsSync15(join26(root, "artisan"))) {
-    return {
-      start: proposed("php artisan serve --port 8000"),
-      ...onLocalhost("127.0.0.1", 8000),
-      timeoutMs: ENVIRONMENT_TIMEOUT_MS
-    };
-  }
-  const makefile = readTextQuietly(join26(root, "Makefile"));
-  const target = makefile ? MAKE_TARGETS.find((t) => new RegExp(`^${t}:`, "m").test(makefile)) : undefined;
-  if (target) {
-    return {
-      start: proposed(`make ${target}`),
-      ...onLocalhost("localhost", DEFAULT_PORT),
-      timeoutMs: ENVIRONMENT_TIMEOUT_MS
-    };
-  }
-  const pkg = readJson(join26(root, "package.json"));
-  const script = NODE_SCRIPTS.find((s) => typeof pkg?.scripts?.[s] === "string");
-  if (script) {
-    const detected = targets.find((t) => t.path === "." && t.stack === "node")?.packageManager;
-    const manager = detected && NODE_MANAGERS.includes(detected) ? detected : "npm";
-    return {
-      start: proposed(`${manager} run ${script}`),
-      ...onLocalhost("localhost", DEFAULT_PORT),
-      timeoutMs: ENVIRONMENT_TIMEOUT_MS
-    };
-  }
-  return null;
-}
-function confirmedEnvironment(environment) {
-  return ENVIRONMENT_COMMANDS.some((key) => environment[key]?.source === "confirmed");
-}
-function environmentChanges(previous, next) {
-  if (previous && !next)
-    return ["environment: removed"];
-  if (!next)
-    return [];
-  const lines = [];
-  for (const key of ENVIRONMENT_COMMANDS) {
-    const before = previous?.[key];
-    const after = next[key];
-    if (after && (before?.command !== after.command || before.source !== after.source))
-      lines.push(`environment.${key}: ${after.command}`);
-    else if (before && !after)
-      lines.push(`environment.${key}: removed`);
-  }
-  return lines;
-}
-
-// packages/engine/src/detect/node.ts
-import { join as join28 } from "node:path";
-
-// packages/engine/src/detect/scripts.ts
-import { readdirSync as readdirSync6, statSync as statSync6 } from "node:fs";
-import { join as join27 } from "node:path";
-var NEVER_A_GATE = /^test:(watch|ui|dev|debug|e2e|browser|visual)(?:[:-]|$)/;
-function testScripts(scripts) {
-  const names = Object.keys(scripts).filter((n) => n.startsWith("test:"));
-  const lint = names.find((n) => n === "test:lint");
-  const types = names.find((n) => n === "test:types" || n === "test:typecheck");
-  const rest = names.filter((n) => n !== lint && n !== types && !NEVER_A_GATE.test(n));
-  return { ...lint ? { lint } : {}, ...types ? { types } : {}, rest };
-}
-var TEST_FILE = /\.(test|spec)\.[cm]?[jt]sx?$/;
-function hasTestFiles(dir, depth = 0) {
-  let names;
-  try {
-    names = readdirSync6(dir);
-  } catch {
-    return false;
-  }
-  for (const name of names) {
-    if (name.startsWith(".") || SKIP_DIRS.has(name))
-      continue;
-    const path = join27(dir, name);
-    let isDir = false;
-    try {
-      isDir = statSync6(path).isDirectory();
-    } catch {
-      continue;
-    }
-    if (!isDir && TEST_FILE.test(name))
-      return true;
-    if (isDir && depth < 2 && hasTestFiles(path, depth + 1))
-      return true;
-  }
-  return false;
-}
-
-// packages/engine/src/detect/node.ts
-function workspaceGlobs(pkg) {
-  const raw = Array.isArray(pkg.workspaces) ? pkg.workspaces : pkg.workspaces?.packages;
-  return (raw ?? []).filter((glob) => typeof glob === "string").map((glob) => glob.replace(/^\.\//, "").replace(/\/$/, ""));
-}
-var SCRIPT_CANDIDATES = {
-  build: ["build"],
-  test: ["test", "unit"],
-  lint: ["lint", "lint:check", "eslint", "biome"],
-  typecheck: ["typecheck", "type-check", "types", "tsc"],
-  e2e: ["test:e2e", "e2e"]
-};
-var E2E_BY_CONFIG = [
-  ["playwright.config", "npx playwright test"],
-  ["cypress.config", "npx cypress run"]
-];
-var CONFIG_EXTENSIONS = ["ts", "js", "mjs", "cjs"];
-var TSC_BY_MANAGER = {
-  npm: "npx tsc --noEmit",
-  pnpm: "pnpm exec tsc --noEmit",
-  yarn: "yarn tsc --noEmit",
-  bun: "bunx tsc --noEmit"
-};
-var MANAGERS = ["npm", "pnpm", "yarn", "bun"];
-var LOCKFILES = [
-  ["bun", ["bun.lock", "bun.lockb"]],
-  ["pnpm", ["pnpm-lock.yaml"]],
-  ["yarn", ["yarn.lock"]],
-  ["npm", ["package-lock.json", "npm-shrinkwrap.json"]]
-];
-function packageManager(dir, pkg) {
-  const declared = typeof pkg.packageManager === "string" ? pkg.packageManager.split("@")[0] : "";
-  if (declared && MANAGERS.includes(declared))
-    return { manager: declared, sure: true };
-  const present = LOCKFILES.filter(([, files]) => files.some((f) => exists(join28(dir, f)))).map(([manager]) => manager);
-  return { manager: present[0] ?? "npm", sure: present.length <= 1 };
-}
-var nodeDetector = {
-  stack: "node",
-  detect(dir) {
-    const pkg = readJson(join28(dir, "package.json"));
-    if (!pkg)
-      return null;
-    const { manager, sure } = packageManager(dir, pkg);
-    const scripts = pkg.scripts ?? {};
-    const gates = {};
-    for (const [gate, names] of Object.entries(SCRIPT_CANDIDATES)) {
-      const name = names.find((candidate) => (candidate in scripts));
-      if (!name)
-        continue;
-      if (gate === "test" && /no test specified/.test(scripts[name] ?? ""))
-        continue;
-      gates[gate] = `${manager} run ${name}`;
-    }
-    const convention = testScripts(scripts);
-    if (convention.lint)
-      gates.lint = `${manager} run ${convention.lint}`;
-    if (convention.types)
-      gates.typecheck = `${manager} run ${convention.types}`;
-    if (!gates.test) {
-      if (convention.rest.length)
-        gates.test = convention.rest.map((n) => `${manager} run ${n}`).join(" && ");
-      else if (manager === "bun" && (exists(join28(dir, "bunfig.toml")) || hasTestFiles(dir)))
-        gates.test = "bun test";
-    }
-    if (!gates.typecheck && exists(join28(dir, "tsconfig.json"))) {
-      gates.typecheck = TSC_BY_MANAGER[manager];
-    }
-    const proposedGates = [];
-    if (!gates.e2e) {
-      const runner = E2E_BY_CONFIG.find(([config]) => CONFIG_EXTENSIONS.some((ext) => exists(join28(dir, `${config}.${ext}`))));
-      if (runner) {
-        gates.e2e = runner[1];
-        proposedGates.push("e2e");
-      }
-    }
-    const workspaces = workspaceGlobs(pkg);
-    const deps = { ...pkg.dependencies ?? {}, ...pkg.devDependencies ?? {} };
-    const testScoped = "vitest" in deps ? "vitest related {files} --run" : ("jest" in deps) ? "jest --findRelatedTests {files}" : undefined;
-    return {
-      stack: "node",
-      packageManager: manager,
-      gates,
-      ...testScoped ? { testScoped } : {},
-      ...workspaces.length ? { workspaces } : {},
-      ...sure ? {} : { proposed: true },
-      ...proposedGates.length ? { proposedGates } : {}
-    };
-  }
-};
-
-// packages/engine/src/detect/php.ts
-import { join as join29 } from "node:path";
-var phpDetector = {
-  stack: "php",
-  detect(dir) {
-    const composer = readJson(join29(dir, "composer.json"));
-    if (!composer)
-      return null;
-    const scripts = composer.scripts ?? {};
-    const installed = (tool) => exists(join29(dir, "vendor", "bin", tool));
-    const run = (name) => `composer run ${name}`;
-    const convention = testScripts(scripts);
-    const gates = {};
-    const runner = installed("pest") ? "vendor/bin/pest" : installed("phpunit") ? "vendor/bin/phpunit" : undefined;
-    if ("test" in scripts)
-      gates.test = run("test");
-    else {
-      const parts2 = [...convention.rest.map(run), ...runner ? [runner] : []];
-      if (parts2.length)
-        gates.test = parts2.join(" && ");
-    }
-    if (convention.lint)
-      gates.lint = run(convention.lint);
-    else if ("lint" in scripts)
-      gates.lint = run("lint");
-    else if (installed("pint"))
-      gates.lint = "vendor/bin/pint --test";
-    if (convention.types)
-      gates.typecheck = run(convention.types);
-    else if ("analyse" in scripts)
-      gates.typecheck = run("analyse");
-    else if ("analyze" in scripts)
-      gates.typecheck = run("analyze");
-    else if (installed("phpstan"))
-      gates.typecheck = "vendor/bin/phpstan analyse --no-progress";
-    return { stack: "php", packageManager: "composer", gates };
-  }
-};
-
-// packages/engine/src/detect/python.ts
-import { join as join30 } from "node:path";
-var PREFIX = {
-  uv: "uv run ",
-  poetry: "poetry run ",
-  pip: "python -m "
-};
-var pythonDetector = {
-  stack: "python",
-  detect(dir) {
-    const pyproject = readTextQuietly(join30(dir, "pyproject.toml"));
-    if (pyproject === null && !exists(join30(dir, "requirements.txt")))
-      return null;
-    const manager = exists(join30(dir, "uv.lock")) ? "uv" : exists(join30(dir, "poetry.lock")) ? "poetry" : "pip";
-    const prefix = PREFIX[manager] ?? "";
-    const text = pyproject ?? "";
-    const gates = {};
-    const hasPytest = /\[tool\.pytest/.test(text) || exists(join30(dir, "pytest.ini")) || exists(join30(dir, "conftest.py")) || exists(join30(dir, "tests"));
-    if (hasPytest)
-      gates.test = `${prefix}pytest`;
-    if (/\[tool\.ruff/.test(text) || exists(join30(dir, "ruff.toml"))) {
-      gates.lint = `${prefix}ruff check .`;
-    }
-    if (/\[tool\.mypy/.test(text))
-      gates.typecheck = `${prefix}mypy .`;
-    else if (/\[tool\.pyright/.test(text))
-      gates.typecheck = `${prefix}pyright`;
-    return {
-      stack: "python",
-      packageManager: manager,
-      gates,
-      ...hasPytest ? { testScoped: `${prefix}pytest {files}` } : {}
-    };
-  }
-};
-
-// packages/engine/src/detect/index.ts
-var DETECTORS = [nodeDetector, phpDetector, pythonDetector];
-var DEFAULT_WATCH_EXCLUDE = ["**/*.md", "docs/**", ".crew/**", ".claude/**"];
-var DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
-var FORMER_WATCH_EXCLUDES = [["**/*.md", "docs/**", ".crew/**"]];
-var MAX_DEPTH = 3;
-function isFormerWatchDefault(profile) {
-  const saved = JSON.stringify(profile.watch.exclude);
-  return FORMER_WATCH_EXCLUDES.some((list) => JSON.stringify(list) === saved);
-}
-function watchOf(previous) {
-  if (!previous)
-    return { exclude: [...DEFAULT_WATCH_EXCLUDE] };
-  return isFormerWatchDefault(previous) ? { exclude: [...DEFAULT_WATCH_EXCLUDE] } : previous.watch;
-}
-function* folders(root, depth = 0) {
-  yield root;
-  if (depth >= MAX_DEPTH)
-    return;
-  let names;
-  try {
-    names = readdirSync7(root).sort();
-  } catch {
-    return;
-  }
-  for (const name of names) {
-    if (name.startsWith(".") || SKIP_DIRS.has(name))
-      continue;
-    const path = join31(root, name);
-    try {
-      if (!statSync7(path).isDirectory())
-        continue;
-    } catch {
-      continue;
-    }
-    yield* folders(path, depth + 1);
-  }
-}
-function dataDetector(rule) {
-  return {
-    stack: rule.stack,
-    detect(dir) {
-      if (!rule.markers.every((marker) => existsSync16(join31(dir, marker))))
-        return null;
-      return {
-        stack: rule.stack,
-        packageManager: rule.packageManager,
-        gates: { ...rule.gates },
-        ...rule.testScoped ? { testScoped: rule.testScoped } : {},
-        proposed: true
-      };
-    }
-  };
-}
-function applyRules(root, dirs, targets, rules) {
-  for (const dir of dirs) {
-    const rel2 = relative7(root, dir).replace(/\\/g, "/") || ".";
-    for (const { pack, rule } of rules) {
-      const found = dataDetector(rule).detect(dir);
-      if (!found)
-        continue;
-      const gates = {};
-      for (const [gate, command2] of Object.entries(found.gates))
-        gates[gate] = { command: command2, source: "proposed", pack };
-      const testScoped = found.testScoped ? { command: found.testScoped, source: "proposed", pack } : undefined;
-      if (rule.extends) {
-        const core = targets.find((t) => t.path === rel2 && t.stack === rule.extends);
-        if (!core)
-          continue;
-        Object.assign(core.gates, gates);
-        core.packageManager = found.packageManager;
-        if (testScoped)
-          core.testScoped = testScoped;
-        core.tags = [...new Set([...core.tags ?? [], rule.stack])];
-        continue;
-      }
-      targets.push({
-        path: rel2,
-        stack: rule.stack,
-        packageManager: found.packageManager,
-        gates,
-        timeoutMs: DEFAULT_TIMEOUT_MS,
-        ...testScoped ? { testScoped } : {}
-      });
-    }
-  }
-}
-function detectTargets(root, rules = []) {
-  const targets = [];
-  const workspaces = new Map;
-  const dirs = [...folders(root)];
-  for (const dir of dirs) {
-    for (const detector of DETECTORS) {
-      const found = detector.detect(dir);
-      if (!found)
-        continue;
-      const gates = {};
-      for (const [gate, command2] of Object.entries(found.gates)) {
-        const guessed = found.proposed || (found.proposedGates ?? []).includes(gate);
-        gates[gate] = { command: command2, source: guessed ? "proposed" : "detected" };
-      }
-      const rel2 = relative7(root, dir).replace(/\\/g, "/");
-      const target = {
-        path: rel2 === "" ? "." : rel2,
-        stack: found.stack,
-        packageManager: found.packageManager,
-        gates,
-        timeoutMs: DEFAULT_TIMEOUT_MS,
-        ...found.testScoped ? {
-          testScoped: {
-            command: found.testScoped,
-            source: found.proposed ? "proposed" : "detected"
-          }
-        } : {}
-      };
-      targets.push(target);
-      if (found.workspaces)
-        workspaces.set(target, found.workspaces);
-    }
-  }
-  for (const [parent, globs] of workspaces) {
-    const prefix = parent.path === "." ? "" : `${parent.path}/`;
-    for (const child of targets) {
-      if (child === parent || child.stack !== parent.stack || !child.path.startsWith(prefix))
-        continue;
-      if (matchesAny(child.path.slice(prefix.length), globs))
-        child.workspaceOf = parent.path;
-    }
-  }
-  if (rules.length)
-    applyRules(root, dirs, targets, rules);
-  return targets;
-}
-function proposedByPack(command2) {
-  return command2?.pack && command2.source === "proposed" ? command2.pack : null;
-}
-function theirs(command2) {
-  return command2.source === "confirmed";
-}
-function mergeProfile(previous, detected, environment = null, browser = null) {
-  const targets = detected.map((t) => ({ ...t, gates: { ...t.gates } }));
-  if (previous) {
-    for (const target of targets) {
-      const old = previous.targets.find((t) => t.path === target.path && t.stack === target.stack);
-      if (!old)
-        continue;
-      target.timeoutMs = old.timeoutMs;
-      if (old.unset?.length) {
-        target.unset = [...old.unset];
-        for (const gate of old.unset)
-          delete target.gates[gate];
-      }
-      for (const [gate, command2] of Object.entries(old.gates)) {
-        if (theirs(command2))
-          target.gates[gate] = command2;
-      }
-      if (old.testScoped && theirs(old.testScoped))
-        target.testScoped = old.testScoped;
-    }
-    for (const old of previous.targets) {
-      const found = targets.some((t) => t.path === old.path && t.stack === old.stack);
-      if (!found && Object.values(old.gates).some(theirs))
-        targets.push({ ...old, gates: { ...old.gates } });
-    }
-  }
-  const kept = previous?.environment && confirmedEnvironment(previous.environment) ? previous.environment : environment ?? undefined;
-  const keptBrowser = previous?.browser?.devtools.source === "confirmed" ? previous.browser : browser ?? undefined;
-  return {
-    version: 1,
-    detectedAt: nowIso(),
-    targets,
-    watch: watchOf(previous),
-    ...kept ? { environment: kept } : {},
-    ...previous?.ui ? { ui: previous.ui } : {},
-    ...keptBrowser ? { browser: keptBrowser } : {}
-  };
-}
-function detectProfile(root, previous = null, rules = [], env) {
-  const targets = detectTargets(root, rules);
-  return mergeProfile(previous, targets, detectEnvironment(root, targets), env ? detectBrowser(env) : null);
-}
-function detectBrowser(env, candidates) {
-  if (!onPath("chrome-devtools", env))
-    return null;
-  const named2 = env.WIZARDINGCODE_CREW_BROWSER?.trim();
-  const chrome = named2 ? existsSync16(named2) ? named2 : null : findBrowser(env, candidates);
-  return chrome ? { devtools: { command: "chrome-devtools", source: "proposed" } } : null;
-}
-function commandText(command2) {
-  return `${command2.command}${command2.source === "proposed" ? " [proposed]" : ""}`;
-}
-function profileChanges(previous, next) {
-  const lines = [];
-  const same2 = (a, b) => a.path === b.path && a.stack === b.stack;
-  for (const target of next.targets) {
-    const old = previous.targets.find((t) => same2(t, target));
-    if (!old) {
-      const gates = Object.entries(target.gates).map(([g, c]) => `${g}=${c.command}`).join(", ");
-      lines.push(`target (${target.path}, ${target.stack}): ${gates || "no gates"}`);
-      continue;
-    }
-    if (old.packageManager !== target.packageManager)
-      lines.push(`packageManager (${target.path}): ${target.packageManager}`);
-    for (const [gate, command2] of Object.entries(target.gates)) {
-      const before2 = old.gates[gate];
-      if (before2?.command !== command2.command || before2.source !== command2.source)
-        lines.push(`${gate} (${target.path}): ${command2.command}`);
-    }
-    for (const gate of Object.keys(old.gates))
-      if (!target.gates[gate])
-        lines.push(`${gate} (${target.path}): removed`);
-  }
-  for (const old of previous.targets)
-    if (!next.targets.some((t) => same2(t, old)))
-      lines.push(`target (${old.path}, ${old.stack}): removed`);
-  lines.push(...environmentChanges(previous.environment, next.environment));
-  const before = previous.browser?.devtools;
-  const after = next.browser?.devtools;
-  if (before?.command !== after?.command || before?.source !== after?.source)
-    lines.push(`browser.devtools: ${after ? commandText(after) : "removed"}`);
-  return lines;
-}
-function missingTestCommands(profile) {
-  if (profile.targets.length === 0)
-    return [{ target: ".", gate: "test" }];
-  const byPath = new Map(profile.targets.map((t) => [t.path, t]));
-  const hasTest = (t) => !!t.gates.test || t.workspaceOf !== undefined && !!byPath.get(t.workspaceOf)?.gates.test;
-  const covered = new Set(profile.targets.filter(hasTest).map((t) => t.path));
-  const paths = [...new Set(profile.targets.map((t) => t.path))];
-  return paths.filter((p) => !covered.has(p)).map((target) => ({ target, gate: "test" }));
-}
-
 // packages/engine/src/e2e.ts
 import {
   closeSync as closeSync4,
@@ -10092,15 +11010,15 @@ import {
   mkdirSync as mkdirSync9,
   openSync as openSync4,
   readSync as readSync2,
-  realpathSync as realpathSync6,
-  statSync as statSync8,
+  realpathSync as realpathSync7,
+  statSync as statSync9,
   unlinkSync as unlinkSync5
 } from "node:fs";
-import { join as join38, relative as relative8, sep as sep5 } from "node:path";
+import { join as join39, relative as relative9, sep as sep6 } from "node:path";
 
 // packages/engine/src/console.ts
 import { existsSync as existsSync17, readFileSync as readFileSync9 } from "node:fs";
-import { join as join32 } from "node:path";
+import { join as join33 } from "node:path";
 function levelOf(type) {
   return type === "warn" ? "warning" : type;
 }
@@ -10121,8 +11039,8 @@ function entriesOf(parsed) {
   return entries;
 }
 function gradeConsole(dir) {
-  const array = join32(dir, "console.json");
-  const lines = join32(dir, "console.jsonl");
+  const array = join33(dir, "console.json");
+  const lines = join33(dir, "console.jsonl");
   let parsed;
   let file;
   if (existsSync17(array)) {
@@ -10170,7 +11088,7 @@ import {
   unlinkSync as unlinkSync3,
   writeFileSync as writeFileSync2
 } from "node:fs";
-import { join as join33 } from "node:path";
+import { join as join34 } from "node:path";
 var AUDIT_DIR = "review/ui/audit";
 var AUDIT_FILE = `${AUDIT_DIR}/audit.json`;
 var DEVTOOLS = {
@@ -10311,7 +11229,7 @@ function gradeReport(report, file, url) {
   };
 }
 function takeReport(dir, before, stdout, n) {
-  const target = join33(dir, `lighthouse-${n}.json`);
+  const target = join34(dir, `lighthouse-${n}.json`);
   let names = [];
   try {
     names = readdirSync8(dir).filter((name) => name.endsWith(".json") && !before.has(name)).sort();
@@ -10319,9 +11237,9 @@ function takeReport(dir, before, stdout, n) {
     names = [];
   }
   for (const name of names) {
-    const body = jsonOf(readRegularText(join33(dir, name), FILE_MAX2));
+    const body = jsonOf(readRegularText(join34(dir, name), FILE_MAX2));
     if (body?.categories && typeof body.categories === "object") {
-      renameSync2(join33(dir, name), target);
+      renameSync2(join34(dir, name), target);
       return body;
     }
   }
@@ -10392,7 +11310,7 @@ function writeNotCaptured(paths, id, command2, reason) {
 }
 async function auditRun(options) {
   const { paths, work, profile } = options;
-  const dir = join33(workDir(paths, work.id), AUDIT_DIR);
+  const dir = join34(workDir(paths, work.id), AUDIT_DIR);
   const block = profile.browser?.devtools;
   const command2 = block?.command.trim() ?? "";
   const notCaptured = (reason2) => {
@@ -10415,7 +11333,7 @@ async function auditRun(options) {
   const limits = { ...DEFAULT_LIMITS, ...options.limits };
   const env = { ...options.env, CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS: "1" };
   const logBase = options.log.replace(/\.txt$/, "");
-  const logFor = (name) => join33(workDir(paths, work.id), `${logBase}-audit-${name}.txt`);
+  const logFor = (name) => join34(workDir(paths, work.id), `${logBase}-audit-${name}.txt`);
   const run = async (name, args) => {
     mkdirSync6(dir, { recursive: true });
     const result = await runCommand(`${command2} ${args.join(" ")}`, {
@@ -10536,7 +11454,7 @@ async function auditPage(ctx, page, raw, n, overBudget) {
       offences = graded.offences;
     } else
       page.reason = "no Lighthouse report";
-    const traceFile = join33(ctx.dir, `trace-${n}.json`);
+    const traceFile = join34(ctx.dir, `trace-${n}.json`);
     const quotedTrace = quoteFor(ctx.platform, traceFile);
     if (!quotedTrace.ok) {
       page.reason ??= "path not shell-safe";
@@ -10556,7 +11474,7 @@ async function auditPage(ctx, page, raw, n, overBudget) {
       return offences;
     }
     step = `insights-${n}.txt`;
-    writeInsights(join33(ctx.dir, `insights-${n}.txt`), trace.stdout);
+    writeInsights(join34(ctx.dir, `insights-${n}.txt`), trace.stdout);
     page.trace = {
       file: existsSync18(traceFile) ? `trace-${n}.json` : null,
       ...metricsOf(trace.stdout)
@@ -10597,14 +11515,14 @@ function sweepEngineFiles(dir) {
     if (!ENGINE_FILES.test(name))
       continue;
     try {
-      unlinkSync3(join33(dir, name));
+      unlinkSync3(join34(dir, name));
     } catch {}
   }
 }
 function writeAudit(paths, id, record) {
-  const path = join33(workDir(paths, id), AUDIT_FILE);
+  const path = join34(workDir(paths, id), AUDIT_FILE);
   try {
-    mkdirSync6(join33(workDir(paths, id), AUDIT_DIR), { recursive: true });
+    mkdirSync6(join34(workDir(paths, id), AUDIT_DIR), { recursive: true });
     unlinkIfLink(path);
     writeText(path, `${JSON.stringify(record, null, 2)}
 `);
@@ -10616,20 +11534,20 @@ function writeAudit(paths, id, record) {
 // packages/engine/src/environment.ts
 import { spawn as spawn3 } from "node:child_process";
 import { closeSync as closeSync3, mkdirSync as mkdirSync8, openSync as openSync3, unlinkSync as unlinkSync4 } from "node:fs";
-import { dirname as dirname10, join as join37 } from "node:path";
+import { dirname as dirname10, join as join38 } from "node:path";
 
 // packages/engine/src/open.ts
 import { execFileSync as execFileSync4, spawn as spawn2 } from "node:child_process";
 import { closeSync as closeSync2, mkdirSync as mkdirSync7, openSync as openSync2 } from "node:fs";
-import { dirname as dirname9, join as join36 } from "node:path";
+import { dirname as dirname9, join as join37 } from "node:path";
 
 // packages/engine/src/profile.ts
-import { join as join35 } from "node:path";
+import { join as join36 } from "node:path";
 
 // packages/engine/src/packs.ts
-import { existsSync as existsSync19, readdirSync as readdirSync9, readFileSync as readFileSync10, realpathSync as realpathSync5, rmSync as rmSync5 } from "node:fs";
+import { existsSync as existsSync19, readdirSync as readdirSync9, readFileSync as readFileSync10, realpathSync as realpathSync6, rmSync as rmSync5 } from "node:fs";
 import { homedir as homedir2 } from "node:os";
-import { basename as basename6, isAbsolute as isAbsolute7, join as join34, sep as sep4 } from "node:path";
+import { basename as basename7, isAbsolute as isAbsolute8, join as join35, sep as sep5 } from "node:path";
 
 // packages/engine/src/version.ts
 var VERSION = "0.15.2";
@@ -10655,11 +11573,11 @@ function stateText(state) {
 }
 var isRecord3 = (v) => typeof v === "object" && v !== null && !Array.isArray(v);
 var isStringList = (v) => Array.isArray(v) && v.every((s) => typeof s === "string");
-var climbs = (p) => isAbsolute7(p) || p.split(/[\\/]/).some((segment) => segment === "..");
+var climbs = (p) => isAbsolute8(p) || p.split(/[\\/]/).some((segment) => segment === "..");
 function readManifest(root) {
   let text;
   try {
-    text = readText(join34(root, "pack.json"));
+    text = readText(join35(root, "pack.json"));
   } catch (error) {
     return { refused: `pack.json cannot be read: ${errorText(error)}` };
   }
@@ -10819,7 +11737,7 @@ function namedFiles(manifest) {
 }
 function readNamed(root, rel2) {
   try {
-    return { text: readFileSync10(join34(root, rel2), "utf8") };
+    return { text: readFileSync10(join35(root, rel2), "utf8") };
   } catch (error) {
     return { refused: `${rel2} cannot be read (${errorText(error)})` };
   }
@@ -10829,29 +11747,29 @@ function checkPack(root, manifest, engineVersion = VERSION) {
     return `core ${manifest.core} needs an engine at or above ${manifest.core.slice(2)}; this is ${engineVersion}`;
   let real;
   try {
-    real = realpathSync5(root);
+    real = realpathSync6(root);
   } catch (error) {
     return `the pack's root cannot be read (${errorText(error)})`;
   }
   for (const rel2 of namedFiles(manifest)) {
     let resolved;
     try {
-      resolved = realpathSync5(join34(root, rel2));
+      resolved = realpathSync6(join35(root, rel2));
     } catch {
       return `pack.json names ${rel2}, which is missing`;
     }
-    if (resolved !== real && !resolved.startsWith(real + sep4))
+    if (resolved !== real && !resolved.startsWith(real + sep5))
       return `pack.json names ${rel2}, which is outside the pack's root`;
   }
   const scanned = [
     ...namedFiles(manifest),
-    ...existsSync19(join34(root, "README.md")) ? ["README.md"] : []
+    ...existsSync19(join35(root, "README.md")) ? ["README.md"] : []
   ];
   for (const rel2 of scanned) {
-    const read = readNamed(root, rel2);
-    if ("refused" in read)
-      return read.refused;
-    const finding = scanText(read.text, rel2)[0];
+    const read2 = readNamed(root, rel2);
+    if ("refused" in read2)
+      return read2.refused;
+    const finding = scanText(read2.text, rel2)[0];
     if (finding)
       return `${rel2} holds a secret (${finding.rule}) at line ${finding.line}`;
   }
@@ -10866,20 +11784,20 @@ function checkPack(root, manifest, engineVersion = VERSION) {
 function hashes(root, manifest) {
   const out2 = {};
   for (const rel2 of namedFiles(manifest))
-    out2[rel2] = `sha256:${sha256(readFileSync10(join34(root, rel2)))}`;
+    out2[rel2] = `sha256:${sha256(readFileSync10(join35(root, rel2)))}`;
   return out2;
 }
 function registerPack(userDir, root, by, key = null) {
-  const read = readManifest(root);
-  if ("refused" in read)
-    return read;
-  const refused = checkPack(root, read.manifest);
+  const read2 = readManifest(root);
+  if ("refused" in read2)
+    return read2;
+  const refused = checkPack(root, read2.manifest);
   if (refused)
     return { refused };
-  const manifest = read.manifest;
+  const manifest = read2.manifest;
   let real;
   try {
-    real = realpathSync5(root);
+    real = realpathSync6(root);
   } catch (error) {
     return { refused: `${root} cannot be resolved: ${errorText(error)}` };
   }
@@ -10887,7 +11805,7 @@ function registerPack(userDir, root, by, key = null) {
   ensureDir(dir);
   return withLock(dir, () => {
     const earlier = readJson(packPath(userDir, manifest.name));
-    const latest = readdirSync9(dir).filter((n) => n.endsWith(".json")).map((n) => readJson(join34(dir, n))?.registeredAt ?? "").sort().at(-1);
+    const latest = readdirSync9(dir).filter((n) => n.endsWith(".json")).map((n) => readJson(join35(dir, n))?.registeredAt ?? "").sort().at(-1);
     const now = nowIso();
     const registeredAt = earlier?.registeredAt ?? (latest && latest >= now ? new Date(Date.parse(latest) + 1).toISOString() : now);
     const registration = {
@@ -10919,19 +11837,19 @@ function removePack(userDir, name) {
 }
 function stateOf(registration, quick) {
   try {
-    if (!existsSync19(registration.root) || !existsSync19(join34(registration.root, "pack.json")))
+    if (!existsSync19(registration.root) || !existsSync19(join35(registration.root, "pack.json")))
       return { kind: "missing" };
-    const read = readManifest(registration.root);
-    if ("refused" in read)
-      return { kind: "unreadable", reason: read.refused };
+    const read2 = readManifest(registration.root);
+    if ("refused" in read2)
+      return { kind: "unreadable", reason: read2.refused };
     if (quick)
       return { kind: "ok" };
-    const refused = checkPack(registration.root, read.manifest);
+    const refused = checkPack(registration.root, read2.manifest);
     if (refused)
       return { kind: "unreadable", reason: refused };
     const changed = [];
     for (const [rel2, hash] of Object.entries(registration.files)) {
-      const path = join34(registration.root, rel2);
+      const path = join35(registration.root, rel2);
       if (!existsSync19(path) || `sha256:${sha256(readFileSync10(path))}` !== hash)
         changed.push(rel2);
     }
@@ -10952,8 +11870,8 @@ function listPacks(userDir, options = {}) {
   }
   const listed = [];
   for (const file of names) {
-    const name = basename6(file, ".json");
-    const text = readTextQuietly(join34(dir, file)) ?? "";
+    const name = basename7(file, ".json");
+    const text = readTextQuietly(join35(dir, file)) ?? "";
     let registration = null;
     let reason = "";
     try {
@@ -10987,12 +11905,12 @@ function packFiles(userDir, kind, key) {
   for (const pack of okPacks(userDir)) {
     if (kind === "checklists") {
       for (const rel2 of pack.manifest.checklists)
-        if (basename6(rel2, ".md") === key)
-          paths.push(join34(pack.root, rel2));
+        if (basename7(rel2, ".md") === key)
+          paths.push(join35(pack.root, rel2));
     } else {
       const rel2 = pack.manifest.knowledge[key];
       if (rel2)
-        paths.push(join34(pack.root, rel2));
+        paths.push(join35(pack.root, rel2));
     }
   }
   return paths;
@@ -11015,7 +11933,7 @@ function knowledgeFilesFor(userDir, profile, changed, policy) {
   const labels = [];
   const served = new Set;
   const add = (pack, rel2) => {
-    const path = join34(pack.root, rel2);
+    const path = join35(pack.root, rel2);
     if (!paths.includes(path)) {
       paths.push(path);
       labels.push(`${pack.name}:${rel2}`);
@@ -11081,8 +11999,8 @@ function packLabel(listed, name) {
   return pack ? `${pack.name} ${pack.version}` : name;
 }
 function pluginRegistryPath(env) {
-  const configDir = env.CLAUDE_CONFIG_DIR ?? join34(env.HOME ?? homedir2(), ".claude");
-  return join34(configDir, "plugins", "installed_plugins.json");
+  const configDir = env.CLAUDE_CONFIG_DIR ?? join35(env.HOME ?? homedir2(), ".claude");
+  return join35(configDir, "plugins", "installed_plugins.json");
 }
 function discoverPacks(userDir, env) {
   if (!env.CLAUDE_PLUGIN_ROOT)
@@ -11109,31 +12027,31 @@ function discoverPacks(userDir, env) {
       continue;
     seenKeys.add(key);
     const entries = (Array.isArray(raw) ? raw : [raw]).filter(isRecord3);
-    const root = entries.map((e) => typeof e.installPath === "string" ? e.installPath : null).find((p) => p !== null && existsSync19(join34(p, "pack.json")));
+    const root = entries.map((e) => typeof e.installPath === "string" ? e.installPath : null).find((p) => p !== null && existsSync19(join35(p, "pack.json")));
     if (!root)
       continue;
-    const read = readManifest(root);
-    if ("refused" in read) {
-      lines.push(`${key}: ${read.refused}`);
+    const read2 = readManifest(root);
+    if ("refused" in read2) {
+      lines.push(`${key}: ${read2.refused}`);
       continue;
     }
-    if (read.manifest.name !== keyName) {
-      lines.push(`${key}: pack.json names ${read.manifest.name}, not ${keyName}`);
+    if (read2.manifest.name !== keyName) {
+      lines.push(`${key}: pack.json names ${read2.manifest.name}, not ${keyName}`);
       continue;
     }
-    const current = registered.find((p) => p.name === read.manifest.name)?.registration;
+    const current = registered.find((p) => p.name === read2.manifest.name)?.registration;
     if (current?.by === "command") {
-      lines.push(`${read.manifest.name}: registered by hand, left as it is`);
+      lines.push(`${read2.manifest.name}: registered by hand, left as it is`);
       continue;
     }
     let realRoot;
     try {
-      realRoot = realpathSync5(root);
+      realRoot = realpathSync6(root);
     } catch (error) {
       lines.push(`${key}: the pack's root cannot be read (${errorText(error)})`);
       continue;
     }
-    if (current && current.root === realRoot && current.version === read.manifest.version && current.key === key)
+    if (current && current.root === realRoot && current.version === read2.manifest.version && current.key === key)
       continue;
     const out2 = registerPack(userDir, root, "discovery", key);
     if ("refused" in out2)
@@ -11155,13 +12073,13 @@ function discoverPacks(userDir, env) {
 
 // packages/engine/src/profile.ts
 function profilePath(paths) {
-  return join35(paths.crewDir, "profile.json");
+  return join36(paths.crewDir, "profile.json");
 }
 function loadProfile(paths) {
-  const read = readProtectedJson(paths, profilePath(paths));
-  if (read.data?.browser && !isBrowserBlock(read.data.browser))
-    delete read.data.browser;
-  return { profile: read.data, tampered: read.tampered };
+  const read2 = readProtectedJson(paths, profilePath(paths));
+  if (read2.data?.browser && !isBrowserBlock(read2.data.browser))
+    delete read2.data.browser;
+  return { profile: read2.data, tampered: read2.tampered };
 }
 function isBrowserBlock(value) {
   const devtools = value?.devtools;
@@ -11268,7 +12186,7 @@ function openerArgs(request, options) {
   return args;
 }
 function sessionLog(ctx, id) {
-  return join36(mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project).dir, "opened", `${id}.log`);
+  return join37(mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project).dir, "opened", `${id}.log`);
 }
 function openSession(ctx, request, notes = []) {
   const env = { ...ctx.env };
@@ -11643,10 +12561,10 @@ var HEALTH_TIMEOUT_MS = 30000;
 var STOP_TIMEOUT_MS = 60000;
 var POLL_MS = 2000;
 function envRecordPath(paths) {
-  return join37(paths.localDir, "env.json");
+  return join38(paths.localDir, "env.json");
 }
 function envLog(paths, name) {
-  return join37(paths.localDir, "env", name);
+  return join38(paths.localDir, "env", name);
 }
 function stamp() {
   return nowIso().replace(/[:.]/g, "-");
@@ -11797,24 +12715,24 @@ function logsSource(root, logs) {
   const missing = `logs: ${logs} not found; not read`;
   if (!insidePath(logs))
     return { ...unread, note: outside };
-  const candidate = join38(root, logs);
+  const candidate = join39(root, logs);
   if (!existsSync20(candidate))
     return { ...unread, note: missing };
   let real;
   let rootReal;
   try {
-    real = realpathSync6(candidate);
-    rootReal = realpathSync6(root);
+    real = realpathSync7(candidate);
+    rootReal = realpathSync7(root);
   } catch {
     return { ...unread, note: missing };
   }
-  const rel2 = relative8(rootReal, real);
-  if (rel2 === "" || rel2.startsWith("..") || rel2.startsWith(sep5) || !statSync8(real).isFile())
+  const rel2 = relative9(rootReal, real);
+  if (rel2 === "" || rel2.startsWith("..") || rel2.startsWith(sep6) || !statSync9(real).isFile())
     return { ...unread, note: outside };
-  return { kind: "path", value: logs, file: real, note: null, sizeBefore: statSync8(real).size };
+  return { kind: "path", value: logs, file: real, note: null, sizeBefore: statSync9(real).size };
 }
 function readSince(file, from) {
-  const size = statSync8(file).size;
+  const size = statSync9(file).size;
   const start = Math.min(from, size);
   const length = size - start;
   if (length <= 0)
@@ -11839,7 +12757,7 @@ async function readLogs(paths, work, logs, logsFile, log) {
       cwd: paths.root,
       timeoutMs: LOGS_COMMAND_TIMEOUT_MS,
       logPath: logsFile,
-      stderrLogPath: join38(workDir(paths, work.id), log.replace(/\.txt$/, "-logs-stderr.txt"))
+      stderrLogPath: join39(workDir(paths, work.id), log.replace(/\.txt$/, "-logs-stderr.txt"))
     });
     return readTextQuietly(logsFile) ?? "";
   }
@@ -11853,14 +12771,14 @@ async function runE2e(inputs) {
   const command2 = target?.gates.e2e;
   if (!target || !command2)
     return { ...base, reason: NO_E2E_REASON };
-  const dir = join38(workDir(paths, work.id), E2E_DIR);
+  const dir = join39(workDir(paths, work.id), E2E_DIR);
   mkdirSync9(dir, { recursive: true });
   for (const name of STALE) {
     try {
-      unlinkSync5(join38(dir, name));
+      unlinkSync5(join39(dir, name));
     } catch {}
   }
-  const ui = join38(workDir(paths, work.id), "review", "ui");
+  const ui = join39(workDir(paths, work.id), "review", "ui");
   mkdirSync9(ui, { recursive: true });
   const sweep = sweepStaleFixtureFiles(ui);
   const plan = writeUiPlan(paths, work, profile);
@@ -11875,18 +12793,18 @@ async function runE2e(inputs) {
   let audit = null;
   try {
     result = await runCommand(command2.command, {
-      cwd: join38(paths.root, target.path),
+      cwd: join39(paths.root, target.path),
       timeoutMs,
-      logPath: join38(workDir(paths, work.id), log),
+      logPath: join39(workDir(paths, work.id), log),
       env: {
         ...process.env,
         WIZARDINGCODE_CREW_E2E_DIR: dir,
-        WIZARDINGCODE_CREW_CONSOLE_FILE: join38(dir, "console.json"),
+        WIZARDINGCODE_CREW_CONSOLE_FILE: join39(dir, "console.json"),
         WIZARDINGCODE_CREW_UI_DIR: ui,
         WIZARDINGCODE_CREW_UI_PLAN: plan.file
       }
     });
-    logsText = await readLogs(paths, work, logs, join38(dir, "logs.txt"), log);
+    logsText = await readLogs(paths, work, logs, join39(dir, "logs.txt"), log);
     const metadata = captureMetadata(paths, work.id);
     audit = await runDevtoolsAudit({
       paths,
@@ -11949,12 +12867,12 @@ async function runE2e(inputs) {
 }
 
 // packages/engine/src/problems.ts
-import { statSync as statSync9 } from "node:fs";
-import { isAbsolute as isAbsolute8, join as join39, relative as relative9 } from "node:path";
+import { statSync as statSync10 } from "node:fs";
+import { isAbsolute as isAbsolute9, join as join40, relative as relative10 } from "node:path";
 var SOURCE_FILE = /^(?:\.{0,2}\/)?[\w@./-]+\.(?:ts|tsx|js|jsx|mjs|cjs|vue|svelte|astro|php|py|rb|go|rs|kt|java|cs|json|css|scss|html)$/;
 function isFile(path) {
   try {
-    return statSync9(path).isFile();
+    return statSync10(path).isFile();
   } catch {
     return false;
   }
@@ -11966,11 +12884,11 @@ function namedFiles2(text, dirs, root) {
     const token = (raw.replace(/^[("'`[]+/, "").split(/[:(]/)[0] ?? "").replace(/[,;)\]"'`]+$/, "");
     if (!SOURCE_FILE.test(token))
       continue;
-    const candidates = isAbsolute8(token) ? [token] : dirs.map((dir) => join39(dir, token));
+    const candidates = isAbsolute9(token) ? [token] : dirs.map((dir) => join40(dir, token));
     for (const abs of candidates) {
       if (!isFile(abs))
         continue;
-      const rel2 = relative9(root, abs).replace(/\\/g, "/");
+      const rel2 = relative10(root, abs).replace(/\\/g, "/");
       if (!rel2.startsWith("..") && !seen.has(rel2)) {
         seen.add(rel2);
         found.push(rel2);
@@ -11997,7 +12915,7 @@ var MANIFESTS = new Set([
   "requirements.txt"
 ]);
 function manifestChanged(changed) {
-  return changed.some((p) => MANIFESTS.has(basename7(p)) || /^requirements.*\.txt$/.test(basename7(p)));
+  return changed.some((p) => MANIFESTS.has(basename8(p)) || /^requirements.*\.txt$/.test(basename8(p)));
 }
 function onPath2(binary, env) {
   const extensions = process.platform === "win32" ? ["", ...(env.PATHEXT ?? ".EXE;.CMD;.BAT").split(";")] : [""];
@@ -12006,7 +12924,7 @@ function onPath2(binary, env) {
       continue;
     for (const extension of extensions) {
       try {
-        accessSync2(join40(dir, binary + extension), constants2.X_OK);
+        accessSync2(join41(dir, binary + extension), constants2.X_OK);
         return true;
       } catch {}
     }
@@ -12056,7 +12974,7 @@ function gateTimeoutMs(target, gate) {
   return gate === "test" ? Math.max(target.timeoutMs, TEST_TIMEOUT_MS) : target.timeoutMs;
 }
 function depsAuditCommand(target, root, env = process.env) {
-  const dir = join40(root, target.path);
+  const dir = join41(root, target.path);
   if (target.stack === "python") {
     if (!onPath2("pip-audit", env))
       return { reason: "pip-audit not on PATH" };
@@ -12067,7 +12985,7 @@ function depsAuditCommand(target, root, env = process.env) {
   let tool;
   if (target.stack === "node") {
     tool = Object.hasOwn(NODE_AUDIT, target.packageManager) ? NODE_AUDIT[target.packageManager] : undefined;
-    if (tool && target.packageManager === "yarn" && exists(join40(dir, ".yarnrc.yml")))
+    if (tool && target.packageManager === "yarn" && exists(join41(dir, ".yarnrc.yml")))
       tool = { ...tool, command: "yarn npm audit --severity high --json" };
   } else if (target.stack === "php") {
     tool = {
@@ -12080,7 +12998,7 @@ function depsAuditCommand(target, root, env = process.env) {
   }
   if (!tool)
     return { reason: `no audit tool for ${target.packageManager}` };
-  const present = tool.lockfiles.filter((name) => exists(join40(dir, name)));
+  const present = tool.lockfiles.filter((name) => exists(join41(dir, name)));
   if (present.length === 0)
     return { reason: "no lockfile" };
   if (!onPath2(tool.binary, env))
@@ -12090,7 +13008,7 @@ function depsAuditCommand(target, root, env = process.env) {
 async function baselineAdvisories(paths, work, target, audit, where, env) {
   if (!work.baseCommit || audit.files.length === 0)
     return { readable: false, advisories: [] };
-  const scratch = join40(paths.crewDir, "local", "audit-base", work.id, where || "root");
+  const scratch = join41(paths.crewDir, "local", "audit-base", work.id, where || "root");
   rmSync6(scratch, { recursive: true, force: true });
   mkdirSync10(scratch, { recursive: true });
   let lockfiles = 0;
@@ -12099,13 +13017,13 @@ async function baselineAdvisories(paths, work, target, audit, where, env) {
     const text = gitShowFile(paths.root, work.baseCommit, rel2);
     if (text === null)
       continue;
-    writeText(join40(scratch, file), text);
+    writeText(join41(scratch, file), text);
     if (index > 0)
       lockfiles += 1;
   }
   if (lockfiles === 0)
     return { readable: true, advisories: [] };
-  const log = join40(workDir(paths, work.id), "logs", `deps-base-${where}-${Date.now()}.txt`);
+  const log = join41(workDir(paths, work.id), "logs", `deps-base-${where}-${Date.now()}.txt`);
   const result = await runCommand(audit.command, {
     cwd: scratch,
     timeoutMs: gateTimeoutMs(target, "deps"),
@@ -12116,7 +13034,7 @@ async function baselineAdvisories(paths, work, target, audit, where, env) {
   return { readable: report.readable && !result.timedOut, advisories: report.advisories };
 }
 async function judgeAudit(run, audit, paths, work, target, where, env) {
-  const text = run.log && readTextQuietly(join40(workDir(paths, work.id), run.log)) || run.tail;
+  const text = run.log && readTextQuietly(join41(workDir(paths, work.id), run.log)) || run.tail;
   const report = parseAudit(audit.tool, text);
   if (!report.readable)
     return { ...run, reason: "audit report unreadable; judged by exit code" };
@@ -12318,9 +13236,9 @@ async function runOneGate(paths, work, profile, planned, fingerprint, changed, p
   const where = targetPath.replace(/[^a-z0-9]+/gi, "_") + (planned.stack ? `-${planned.stack}` : "");
   const log = logName ?? `logs/${gate}-${where}-${Date.now()}.txt`;
   const result = await runCommand(command2, {
-    cwd: join40(paths.root, targetPath),
+    cwd: join41(paths.root, targetPath),
     timeoutMs: gateTimeoutMs(target, gate),
-    logPath: join40(workDir(paths, work.id), log),
+    logPath: join41(workDir(paths, work.id), log),
     env
   });
   const passed = result.exit === 0 && !result.timedOut;
@@ -12345,8 +13263,8 @@ async function runOneGate(paths, work, profile, planned, fingerprint, changed, p
   return run;
 }
 function judgeProblems(run, paths, work, targetPath, changed) {
-  const text = run.log && readTextQuietly(join40(workDir(paths, work.id), run.log)) || run.tail;
-  const named2 = namedFiles2(text, [join40(paths.root, targetPath), paths.root], paths.root);
+  const text = run.log && readTextQuietly(join41(workDir(paths, work.id), run.log)) || run.tail;
+  const named2 = namedFiles2(text, [join41(paths.root, targetPath), paths.root], paths.root);
   if (named2.length === 0)
     return run;
   const touched = named2.filter((file) => changed.includes(file));
@@ -12381,17 +13299,17 @@ function notePersonalData(root, work, changed, policy) {
   const cut2 = reviewPatch(root, work.baseCommit, changed);
   if (cut2.note)
     noteOnce(work, `the change's lines were not read for personal data: ${cut2.note}`);
-  const { read, unread } = personalDataRisk(personalDataTerms(cut2.patch), policy);
+  const { read: read2, unread } = personalDataRisk(personalDataTerms(cut2.patch), policy);
   if (unread.length)
     noteOnce(work, `personal data in lines not read for risk (test or excluded): ${allHits(unread)}`);
-  return read;
+  return read2;
 }
-function raiseForPersonalData(work, read) {
-  const first = read[0];
+function raiseForPersonalData(work, read2) {
+  const first = read2[0];
   if (!first || work.riskAreas.includes("personal-data"))
     return false;
   work.riskAreas.push("personal-data");
-  const reason = `the change's lines name personal data: ${firstHit(first, read.length - 1)}`;
+  const reason = `the change's lines name personal data: ${firstHit(first, read2.length - 1)}`;
   noteOnce(work, reason);
   return raiseRoute(work, "standard", reason);
 }
@@ -12419,9 +13337,9 @@ async function runGates(paths, work, profile, policy, options = {}) {
   if (raiseForPersonalData(work, personal) && !raised)
     raised = "standard";
   const planned = plannedGates(work.route, profile, policy, changed, paths.root);
-  const read = loadEvidence(paths, work.id);
-  const evidence = read.evidence;
-  const tampered = !!options.tampered || read.tampered || loadLedger(paths, work.id).tampered;
+  const read2 = loadEvidence(paths, work.id);
+  const evidence = read2.evidence;
+  const tampered = !!options.tampered || read2.tampered || loadLedger(paths, work.id).tampered;
   const fingerprintBefore = computeFingerprint(paths.root, profile, base);
   let stamp2 = fingerprintBefore;
   const onlyGates = options.only?.filter((g) => GATE_NAMES.includes(g));
@@ -12528,18 +13446,18 @@ function assess(paths, work, profile, policy, tampered = false) {
   const changed = changedWatchedPaths(paths.root, profile, base);
   const expected = plannedGates(work.route, profile, policy, changed, paths.root);
   const judgement = itemJudgement(work, changed, policy, teamsFor(policy, packTemplates(paths.userDir)).teams);
-  const read = loadEvidence(paths, work.id);
-  const currentFingerprint = computeFingerprint(paths.root, profile, base, MAX_WATCHED_FILES, fingerprintMethod(read.evidence.fingerprint));
+  const read2 = loadEvidence(paths, work.id);
+  const currentFingerprint = computeFingerprint(paths.root, profile, base, MAX_WATCHED_FILES, fingerprintMethod(read2.evidence.fingerprint));
   const led = loadLedger(paths, work.id);
   const audit = auditState(paths, work);
   return reassess({
-    evidence: read.evidence,
+    evidence: read2.evidence,
     expected,
     changed,
     judgement,
     currentFingerprint,
     ledger: led.ledger,
-    tampered: tampered || read.tampered || led.tampered,
+    tampered: tampered || read2.tampered || led.tampered,
     audit: {
       run: audit.run !== null,
       runAtHead: audit.runAtHead,
@@ -12573,7 +13491,7 @@ function auditScope(paths, profile, policy, files) {
   let bytes = 0;
   for (const file of files) {
     try {
-      bytes += statSync10(join41(paths.root, file)).size;
+      bytes += statSync11(join42(paths.root, file)).size;
     } catch {}
   }
   return {
@@ -12617,12 +13535,12 @@ function toAuditRun(run) {
 }
 async function runAudit(paths, work, profile, policy, options = {}) {
   const dir = workDir(paths, work.id);
-  const auditDir = join41(dir, "audit");
+  const auditDir = join42(dir, "audit");
   const head = gitHead(paths.root);
   const only = options.only;
   let earlier = null;
   if (only !== undefined) {
-    earlier = readJson(join41(auditDir, "runs.json"));
+    earlier = readJson(join42(auditDir, "runs.json"));
     if (earlier === null)
       return { stale: { reason: "no recorded run" } };
     const now = head === "none" ? null : head;
@@ -12633,10 +13551,10 @@ async function runAudit(paths, work, profile, policy, options = {}) {
   const files = auditFiles(paths.root, profile, cap);
   if (files === null)
     return { capped: cap };
-  writeProtectedText(paths, join41(auditDir, "files.txt"), `${files.join(`
+  writeProtectedText(paths, join42(auditDir, "files.txt"), `${files.join(`
 `)}
 `);
-  writeProtectedJson(paths, join41(auditDir, "scope.json"), auditScope(paths, profile, policy, files));
+  writeProtectedJson(paths, join42(auditDir, "scope.json"), auditScope(paths, profile, policy, files));
   const unbased = { ...work, baseCommit: null };
   const planned = plannedGates("full", profile, policy, files, paths.root).filter((p) => p.gate !== "e2e" && p.gate !== "design-lint" && (only === undefined || only.includes(p.gate)));
   const runs = [];
@@ -12644,7 +13562,7 @@ async function runAudit(paths, work, profile, policy, options = {}) {
     const log = auditLogName(one.gate, one.target, one.stack);
     const run = await runOneGate(paths, unbased, profile, one, head, files, policy, undefined, log);
     if (one.gate === "secrets") {
-      writeText(join41(dir, log), `${run.tail}
+      writeText(join42(dir, log), `${run.tail}
 `);
       run.log = log;
     }
@@ -12665,7 +13583,7 @@ async function runAudit(paths, work, profile, policy, options = {}) {
     head: head === "none" ? null : head,
     runs: [...kept, ...runs]
   };
-  writeProtectedJson(paths, join41(auditDir, "runs.json"), record);
+  writeProtectedJson(paths, join42(auditDir, "runs.json"), record);
   return record;
 }
 function auditRunLine(run) {
@@ -12684,7 +13602,7 @@ function auditSummary(runs) {
 
 // packages/engine/src/brand.ts
 import { existsSync as existsSync21, readFileSync as readFileSync11 } from "node:fs";
-import { dirname as dirname11, join as join42 } from "node:path";
+import { dirname as dirname11, join as join43 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 var BRAND_FILES = {
   lockup: "wizardingcode-lockup.svg",
@@ -12693,16 +13611,16 @@ var BRAND_FILES = {
 };
 var MODULE_DIR = dirname11(fileURLToPath2(import.meta.url));
 function holdsBrand(dir) {
-  return existsSync21(join42(dir, BRAND_FILES.lockup)) && existsSync21(join42(dir, BRAND_FILES.mark));
+  return existsSync21(join43(dir, BRAND_FILES.lockup)) && existsSync21(join43(dir, BRAND_FILES.mark));
 }
 function brandDir(env, root, bundleDir = MODULE_DIR) {
   const named2 = env.WIZARDINGCODE_CREW_BRAND_DIR?.trim();
   const pluginRoot2 = env.CLAUDE_PLUGIN_ROOT?.trim();
   const candidates = [
     named2 || null,
-    pluginRoot2 ? join42(pluginRoot2, "brand") : null,
-    join42(bundleDir, "..", "brand"),
-    join42(root, "docs", "brand")
+    pluginRoot2 ? join43(pluginRoot2, "brand") : null,
+    join43(bundleDir, "..", "brand"),
+    join43(root, "docs", "brand")
   ];
   for (const candidate of candidates)
     if (candidate && holdsBrand(candidate))
@@ -12714,8 +13632,8 @@ function loadBrand(dir) {
     return null;
   return {
     dir,
-    lockup: readFileSync11(join42(dir, BRAND_FILES.lockup), "utf8"),
-    mark: readFileSync11(join42(dir, BRAND_FILES.mark), "utf8")
+    lockup: readFileSync11(join43(dir, BRAND_FILES.lockup), "utf8"),
+    mark: readFileSync11(join43(dir, BRAND_FILES.mark), "utf8")
   };
 }
 function brandOf(env, root) {
@@ -12724,11 +13642,11 @@ function brandOf(env, root) {
 }
 
 // packages/engine/src/config.ts
-import { join as join43 } from "node:path";
+import { join as join44 } from "node:path";
 var DEFAULT_CONFIG = { mode: "partner", decisions: { log: true } };
 var MODES = ["partner", "guide", "pilot"];
 function configPath(paths) {
-  return join43(paths.userDir, "config.json");
+  return join44(paths.userDir, "config.json");
 }
 var MODEL_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 function loadConfig(paths) {
@@ -12781,9 +13699,9 @@ function refreshMail(ctx) {
     return { newMail: [], failed: error.message };
   }
 }
-function mailQuietly(read, fallback, notes) {
+function mailQuietly(read2, fallback, notes) {
   try {
-    return read();
+    return read2();
   } catch (error) {
     notes?.push(`mail: ${error.message}`);
     return fallback;
@@ -12868,461 +13786,7 @@ function takeNotices(session) {
 }
 
 // packages/engine/src/hooks/pre-tool-use.ts
-import { isAbsolute as isAbsolute9, join as join45, relative as relative10 } from "node:path";
-
-// packages/engine/src/hooks/shell.ts
-var SUBSTITUTED = "${…}";
-var DESCRIPTOR = String.raw`\d+|\{\w+\}`;
-var OPERATOR_PREFIX = `(?:${DESCRIPTOR}|&)?`;
-var DOUBLE_QUOTE_ESCAPES = '$`"\\';
-var OPERATOR_OWN = new RegExp(`^${OPERATOR_PREFIX}[<>]*$`);
-var HEREDOC_OPERATOR = new RegExp(`^(?:${DESCRIPTOR})?<<(-?)(?!<)`);
-var LEADING_KEYWORDS = ["if", "then", "else", "elif", "do", "while", "until", "!"];
-var KEYWORDS_BEFORE = new Set([...LEADING_KEYWORDS, "{"]);
-var COMMAND_LEADS = new Set([...KEYWORDS_BEFORE, "time", "coproc"]);
-var MAX_DEPTH2 = 32;
-var ANSI_ESCAPES = {
-  a: "\x07",
-  b: "\b",
-  e: "\x1B",
-  E: "\x1B",
-  f: "\f",
-  n: `
-`,
-  r: "\r",
-  t: "\t",
-  v: "\v",
-  "\\": "\\",
-  "'": "'",
-  '"': '"',
-  "?": "?"
-};
-function ansiEscape(text, at) {
-  const rest = text.slice(at);
-  const fixed = ANSI_ESCAPES[rest.charAt(0)];
-  if (fixed !== undefined)
-    return { value: fixed, length: 1 };
-  const code = /^x([0-9A-Fa-f]{1,2})|^u([0-9A-Fa-f]{1,4})|^U([0-9A-Fa-f]{1,8})|^([0-7]{1,3})/.exec(rest);
-  if (code) {
-    const digits = code[1] ?? code[2] ?? code[3] ?? code[4] ?? "0";
-    const point = Number.parseInt(digits, code[4] !== undefined ? 8 : 16);
-    if (point <= 1114111)
-      return { value: String.fromCodePoint(point), length: code[0].length };
-  }
-  const control = /^c(.)/s.exec(rest);
-  if (control)
-    return {
-      value: String.fromCharCode((control[1] ?? "@").toUpperCase().charCodeAt(0) ^ 64),
-      length: 2
-    };
-  return { value: `\\${rest.charAt(0)}`, length: 1 };
-}
-function bracketEnd(text, open, close) {
-  const opener = text.charAt(open);
-  let depth = 1;
-  let quote = null;
-  for (let i = open + 1;i < text.length; i++) {
-    const ch = text.charAt(i);
-    if (quote !== null) {
-      if (ch === "\\" && quote === '"')
-        i++;
-      else if (ch === quote)
-        quote = null;
-    } else if (ch === "\\")
-      i++;
-    else if (ch === "'" || ch === '"')
-      quote = ch;
-    else if (ch === opener)
-      depth++;
-    else if (ch === close && --depth === 0)
-      return i + 1;
-  }
-  return -1;
-}
-function arithmeticEnd(text, open) {
-  let depth = 0;
-  for (let i = open;i < text.length; i++) {
-    const ch = text.charAt(i);
-    if (ch === "\\")
-      i++;
-    else if (ch === "'" || ch === '"')
-      return -1;
-    else if (ch === "$" && text.charAt(i + 1) === "(" && text.charAt(i + 2) !== "(")
-      return -1;
-    else if (ch === "`") {
-      i = backtickEnd(text, i);
-      if (i < 0)
-        return -1;
-    } else if (ch === "(")
-      depth++;
-    else if (ch === ")" && --depth === 1)
-      return text.charAt(i + 1) === ")" ? i + 2 : -1;
-  }
-  return -1;
-}
-function backtickEnd(text, open) {
-  for (let i = open + 1;i < text.length; i++) {
-    const ch = text.charAt(i);
-    if (ch === "\\")
-      i++;
-    else if (ch === "`")
-      return i;
-  }
-  return -1;
-}
-function read(text, start, closer, depth) {
-  const pieces = [];
-  let unclosed = null;
-  let tokens = [];
-  let inner = [];
-  let word = "";
-  let from = 0;
-  let started = false;
-  let expands = false;
-  let quote = null;
-  let arm = "none";
-  let armStart = 0;
-  let subshells = 0;
-  let cases = 0;
-  let commandAt = 0;
-  let piped = false;
-  let pipeIn = false;
-  const heredocs = [];
-  const begin = (i) => {
-    if (started)
-      return;
-    started = true;
-    from = i;
-    word = "";
-    expands = false;
-  };
-  const endWord = (i) => {
-    if (!started)
-      return;
-    started = false;
-    const raw = text.slice(from, i);
-    tokens.push({ word, raw, from, to: i, expands });
-    const lead = tokens.slice(commandAt, -1).every((t) => COMMAND_LEADS.has(t.raw));
-    if (raw === "case" && lead)
-      cases++;
-    else if (raw === "esac" && cases > 0 && (lead && !piped || arm === "pattern" && tokens.length - 1 === armStart))
-      cases--;
-    const operator = HEREDOC_OPERATOR.exec(raw);
-    const pending = heredocs[heredocs.length - 1];
-    if (operator) {
-      const delimiter3 = word.slice(operator[0].length);
-      heredocs.push({
-        delimiter: delimiter3 || null,
-        strip: operator[1] === "-",
-        expand: raw.slice(operator[0].length) === delimiter3,
-        owner: tokens
-      });
-    } else if (pending && pending.delimiter === null) {
-      pending.delimiter = word;
-      pending.expand = raw === word;
-    }
-    const third = tokens[tokens.length - 3];
-    if (raw === "in" && third?.raw === "case" && tokens.slice(0, -3).every((t) => KEYWORDS_BEFORE.has(t.raw))) {
-      arm = "pattern";
-      armStart = tokens.length;
-    } else if (raw === "esac" && arm === "pattern")
-      arm = "none";
-  };
-  const endPiece = (i) => {
-    endWord(i);
-    const first = tokens[0];
-    const last = tokens[tokens.length - 1];
-    if (first && last) {
-      pieces.push({
-        text: text.slice(first.from, last.to),
-        tokens,
-        inner,
-        heredocs: [],
-        piped: pipeIn
-      });
-      pipeIn = false;
-    }
-    tokens = [];
-    inner = [];
-    armStart = 0;
-    commandAt = 0;
-    piped = false;
-  };
-  const readInside = (at, inside2, into) => {
-    if (depth >= MAX_DEPTH2) {
-      unclosed ??= "a substitution";
-      return text.length;
-    }
-    const frame = read(text, at, inside2, depth + 1);
-    into.push(...frame.pieces);
-    unclosed ??= frame.unclosed;
-    return frame.end;
-  };
-  const scanSubstitutions = (from2, to, into, nested = depth) => {
-    for (let k = from2;k < to; k++) {
-      const ch = text.charAt(k);
-      const next = text.charAt(k + 1);
-      if (ch === "\\")
-        k++;
-      else if (ch === "$" && next === "(") {
-        const end = arithmeticAt(k + 1);
-        if (end === -1)
-          k = readInside(k + 2, ")", into) - 1;
-        else if (nested >= MAX_DEPTH2) {
-          unclosed ??= "a substitution";
-          return;
-        } else {
-          scanSubstitutions(k + 3, end - 2, into, nested + 1);
-          k = end - 1;
-        }
-      } else if ((ch === "<" || ch === ">") && next === "(")
-        k = readInside(k + 2, ")", into) - 1;
-      else if (ch === "`")
-        k = readInside(k + 1, "`", into) - 1;
-    }
-  };
-  const arithmeticAt = (open) => text.charAt(open) === "(" && text.charAt(open + 1) === "(" ? arithmeticEnd(text, open) : -1;
-  const bodies = (at) => {
-    let j = at;
-    for (const { delimiter: delimiter3, strip, expand, owner } of heredocs.splice(0)) {
-      const bodyFrom = j;
-      let bodyTo = j;
-      let body = "";
-      while (j < text.length) {
-        const lineEnd = text.indexOf(`
-`, j);
-        const line = text.slice(j, lineEnd === -1 ? text.length : lineEnd);
-        const lineStart = j;
-        j = lineEnd === -1 ? text.length : lineEnd + 1;
-        if ((strip ? line.replace(/^\t+/, "") : line) === (delimiter3 ?? ""))
-          break;
-        body += `${line}
-`;
-        bodyTo = lineStart + line.length;
-      }
-      const piece = pieces.find((p) => p.tokens === owner);
-      if (!piece)
-        continue;
-      piece.heredocs.push(body);
-      if (expand)
-        scanSubstitutions(bodyFrom, bodyTo, piece.inner);
-    }
-    return j;
-  };
-  const close = (i) => {
-    endPiece(i);
-    if (cases > 0)
-      unclosed ??= "a case";
-    return { pieces, end: i + 1, unclosed };
-  };
-  const openWord = (i) => started ? text.slice(from, i) : "";
-  const endOperand = (i) => {
-    if (started && !OPERATOR_OWN.test(openWord(i)))
-      endWord(i);
-  };
-  const continuesOperator = (i) => {
-    const open = openWord(i);
-    return /[<>]$/.test(open) && OPERATOR_OWN.test(open);
-  };
-  const substitution = (i, opener, inside2) => {
-    begin(i);
-    word += SUBSTITUTED;
-    expands = true;
-    return readInside(i + opener, inside2, inner) - 1;
-  };
-  const expansion = (i, close2) => {
-    begin(i);
-    expands = true;
-    const end = bracketEnd(text, i + 1, close2);
-    if (end === -1) {
-      unclosed ??= "an expansion";
-      word += text.slice(i);
-      return text.length - 1;
-    }
-    word += text.slice(i, end);
-    scanSubstitutions(i + 2, end - 1, inner);
-    return end - 1;
-  };
-  const arithmetic = (i, open, end) => {
-    begin(i);
-    expands = true;
-    word += text.slice(i, end);
-    scanSubstitutions(open + 2, end - 2, inner);
-    return end - 1;
-  };
-  const expansionAt = (i) => {
-    const next = text.charAt(i + 1);
-    if (text.charAt(i) === "`")
-      return substitution(i, 1, "`");
-    if (next === "(") {
-      const end = arithmeticAt(i + 1);
-      return end !== -1 ? arithmetic(i, i + 1, end) : substitution(i, 2, ")");
-    }
-    if (next === "{")
-      return expansion(i, "}");
-    if (next === "[")
-      return expansion(i, "]");
-    return -1;
-  };
-  for (let i = start;i < text.length; i++) {
-    const ch = text.charAt(i);
-    const next = text.charAt(i + 1);
-    if (closer === "`") {
-      if (ch === "\\" && next === "`") {
-        begin(i);
-        word += "`";
-        i++;
-        continue;
-      }
-      if (ch === "`") {
-        if (quote !== null)
-          unclosed ??= "a quote";
-        return close(i);
-      }
-    }
-    if (quote === "$'") {
-      if (ch === "'")
-        quote = null;
-      else if (ch === "\\" && i + 1 < text.length) {
-        const decoded = ansiEscape(text, i + 1);
-        word += decoded.value;
-        i += decoded.length;
-      } else
-        word += ch;
-    } else if (quote === "'") {
-      if (ch === "'")
-        quote = null;
-      else
-        word += ch;
-    } else if (quote === '"') {
-      if (ch === '"')
-        quote = null;
-      else if (ch === "\\" && next === `
-`)
-        i++;
-      else if (ch === "\\" && i + 1 < text.length && DOUBLE_QUOTE_ESCAPES.includes(next))
-        word += text.charAt(++i);
-      else if (ch === "$" || ch === "`") {
-        const opened = expansionAt(i);
-        if (opened !== -1)
-          i = opened;
-        else {
-          expands = true;
-          word += ch;
-        }
-      } else
-        word += ch;
-    } else if (ch === "\\" && next === `
-`) {
-      i++;
-    } else if (ch === "\\" && i + 1 < text.length) {
-      begin(i);
-      word += next;
-      i++;
-    } else if (ch === "'" || ch === '"') {
-      begin(i);
-      quote = ch;
-    } else if (ch === "$" && next === "'") {
-      begin(i);
-      quote = "$'";
-      i++;
-    } else if (ch === "$" || ch === "`") {
-      const opened = expansionAt(i);
-      if (opened !== -1)
-        i = opened;
-      else {
-        begin(i);
-        expands = true;
-        word += ch;
-      }
-    } else if ((ch === "<" || ch === ">") && next === "(") {
-      endOperand(i);
-      i = substitution(i, 2, ")");
-    } else if (ch === "#" && !started) {
-      while (i + 1 < text.length && text.charAt(i + 1) !== `
-`)
-        i++;
-    } else if (ch === `
-`) {
-      endPiece(i);
-      if (heredocs.length)
-        i = bodies(i + 1) - 1;
-    } else if (/\s/.test(ch)) {
-      endWord(i);
-    } else if (ch === ";") {
-      endPiece(i);
-      if (next === ";" || next === "&" || next === "|") {
-        i++;
-        arm = "pattern";
-      } else
-        arm = "none";
-    } else if (ch === "|" || ch === "&") {
-      if (ch === "&" && next === ">") {
-        endWord(i);
-        begin(i);
-        word += ch;
-      } else if (continuesOperator(i))
-        word += ch;
-      else if (arm === "pattern" && ch === "|")
-        endWord(i);
-      else {
-        endPiece(i);
-        piped = true;
-        if (ch === "|" && next !== "|" && text.charAt(i - 1) !== "|")
-          pipeIn = true;
-      }
-    } else if (ch === "(" && next === ")") {
-      if (started)
-        started = false;
-      else
-        tokens.pop();
-      i++;
-    } else if (ch === "(" && !started && arm !== "pattern" && arithmeticAt(i) !== -1) {
-      const end = arithmeticAt(i);
-      i = arithmetic(i, i, end);
-      endWord(end);
-    } else if (ch === "(") {
-      if (!(arm === "pattern" && !started && tokens.length === armStart)) {
-        endPiece(i);
-        subshells++;
-      }
-    } else if (ch === ")") {
-      endWord(i);
-      if (arm === "pattern") {
-        tokens.length = armStart;
-        commandAt = armStart;
-        arm = "none";
-      } else if (subshells > 0) {
-        subshells--;
-        endPiece(i);
-      } else if (closer === ")")
-        return close(i);
-      else
-        endPiece(i);
-    } else if (ch === "<" || ch === ">") {
-      endOperand(i);
-      begin(i);
-      word += ch;
-    } else {
-      begin(i);
-      word += ch;
-    }
-  }
-  if (quote !== null)
-    unclosed ??= "a quote";
-  if (closer !== null)
-    unclosed ??= "a substitution";
-  endPiece(text.length);
-  if (cases > 0)
-    unclosed ??= "a case";
-  if (heredocs.length)
-    bodies(text.length);
-  return { pieces, end: text.length, unclosed };
-}
-function readCommand(command2) {
-  const { pieces, unclosed } = read(command2, 0, null, 0);
-  return { pieces, unclosed };
-}
+import { isAbsolute as isAbsolute10, join as join46, relative as relative11 } from "node:path";
 
 // packages/engine/src/hooks/powershell.ts
 var CREW_WORD = String.raw`(?:[^\s"']*[/\\])?crew(?:\.mjs)?`;
@@ -13654,8 +14118,8 @@ function powershellAsPosix(command2) {
 }
 
 // packages/engine/src/hooks/subagent-stop.ts
-import { existsSync as existsSync22, readdirSync as readdirSync10, statSync as statSync11 } from "node:fs";
-import { join as join44 } from "node:path";
+import { existsSync as existsSync22, readdirSync as readdirSync10, statSync as statSync12 } from "node:fs";
+import { join as join45 } from "node:path";
 var PLUGIN_PREFIX2 = "wizardingcode-developer-crew:";
 var BARE_ROLE = new RegExp(`^(${ROLE_NAMES.join("|")})$`);
 function roleOf(agentType) {
@@ -13892,7 +14356,7 @@ function answerItem(ctx, answer, active) {
   if (active?.awaiting !== "role") {
     let ids = [];
     try {
-      ids = readdirSync10(join44(ctx.paths.crewDir, "work"));
+      ids = readdirSync10(join45(ctx.paths.crewDir, "work"));
     } catch {}
     const waiting = ids.filter((id) => open(id)?.awaiting === "role");
     if (waiting.length === 1)
@@ -14024,7 +14488,7 @@ function fileAnswer(ctx, id, role, input, transcriptNote, progress) {
     const kept = file.startsWith("conclave/") || resumedRuling ? archiveExisting(dir, file) : { archived: null };
     if ("failed" in kept)
       return `Crew: ${agent}'s earlier answer could not be archived at ${kept.failed} (${kept.error}): the plain file was left as it was; save this answer from the transcript${transcriptNote} and run the role again if it is needed.`;
-    writeText(join44(dir, file), file.endsWith(".json") ? `${gatesRuling(answer)}
+    writeText(join45(dir, file), file.endsWith(".json") ? `${gatesRuling(answer)}
 ` : `${answer}
 `);
     saved = { file, agent };
@@ -14087,7 +14551,7 @@ function fileAnswer(ctx, id, role, input, transcriptNote, progress) {
 function headlessLeadStem(dir, roles) {
   for (let n = 1;; n++) {
     const file = `conclave/tech-lead-${n}.md`;
-    if (!roles.some((r) => r.file === file) && !existsSync22(join44(dir, file)))
+    if (!roles.some((r) => r.file === file) && !existsSync22(join45(dir, file)))
       return `tech-lead-${n}`;
   }
 }
@@ -14097,12 +14561,12 @@ function pendingQuestion(ctx, workId, agent) {
 function joinEarlierFile(dir, agent, answer, kind, earlierFile, roles) {
   if (agent.startsWith("review-")) {
     const file2 = answerFile(agent, answer, kind);
-    const current = (readText(join44(dir, file2)) ?? "").trimEnd();
+    const current = (readText(join45(dir, file2)) ?? "").trimEnd();
     const heading = `
 ## Clarifications`;
     const body = current.includes(heading) ? current : `${current}
 ${heading}`;
-    writeText(join44(dir, file2), `${body}
+    writeText(join45(dir, file2), `${body}
 - ${answer.replace(/\n/g, `
   `)}
 `);
@@ -14114,7 +14578,7 @@ ${heading}`;
   const kept = archiveExisting(dir, file);
   if ("failed" in kept)
     return kept;
-  writeText(join44(dir, file), `${answer}
+  writeText(join45(dir, file), `${answer}
 `);
   return { file, archived: kept.archived };
 }
@@ -14125,7 +14589,7 @@ function roundName(file, k) {
 function archiveExisting(dir, file) {
   let current;
   try {
-    current = readText(join44(dir, file));
+    current = readText(join45(dir, file));
   } catch (error) {
     return { failed: file, error: errorText(error) };
   }
@@ -14133,7 +14597,7 @@ function archiveExisting(dir, file) {
     return { archived: null };
   const archived = roundName(file, freeArchiveIndex(dir, file));
   try {
-    writeText(join44(dir, archived), current);
+    writeText(join45(dir, archived), current);
   } catch (error) {
     return { failed: archived, error: errorText(error) };
   }
@@ -14141,9 +14605,9 @@ function archiveExisting(dir, file) {
 }
 function freeArchiveIndex(dir, replyFile2) {
   for (let k = 2;; k++) {
-    const candidate = join44(dir, roundName(replyFile2, k));
+    const candidate = join45(dir, roundName(replyFile2, k));
     try {
-      if (!statSync11(candidate).isFile())
+      if (!statSync12(candidate).isFile())
         return k;
     } catch {
       return k;
@@ -14250,7 +14714,7 @@ var JS_RUNNER_VALUED = new Set([
   "--config",
   "-c"
 ]);
-var ASSIGNMENT2 = /^[A-Za-z_][A-Za-z0-9_]*\+?=/;
+var ASSIGNMENT3 = /^[A-Za-z_][A-Za-z0-9_]*\+?=/;
 var BRACKETS = ["{", "}"];
 var NEXT_WORD = "\x00next";
 var EXEC_ACTION = /^-(?:exec|execdir|ok|okdir)$/;
@@ -14278,7 +14742,7 @@ function withoutLead(words) {
   while (i < words.length) {
     const w = words[i] ?? "";
     const wrapper = WRAPPER_BY_NAME2.get(w.replace(/^.*\//, ""));
-    if (ASSIGNMENT2.test(w) || KEYWORDS.includes(w) || BRACKETS.includes(w))
+    if (ASSIGNMENT3.test(w) || KEYWORDS.includes(w) || BRACKETS.includes(w))
       i++;
     else if (wrapper) {
       viaXargs ||= wrapper.name === "xargs";
@@ -14307,7 +14771,7 @@ function withoutLead(words) {
           i++;
           if (takesNext(wrapper, word))
             i++;
-        } else if (i < words.length && wrapper.assignments && ASSIGNMENT2.test(word))
+        } else if (i < words.length && wrapper.assignments && ASSIGNMENT3.test(word))
           i++;
         else if (i < words.length && positionals > 0) {
           positionals--;
@@ -15459,9 +15923,9 @@ function writesWatched(ctx, cwd, found) {
     for (const { word, kind } of writtenPaths(f)) {
       if (kind === "value" || !word || /[$`~]|\{\}/.test(word))
         continue;
-      const abs = canonical(isAbsolute9(word) ? word : join45(cwd, word));
-      const rel2 = relative10(ctx.paths.root, abs).replace(/\\/g, "/");
-      if (!rel2.startsWith("..") && !isAbsolute9(rel2) && (rel2 === "" || isWatched(rel2, ctx.profile)))
+      const abs = canonical(isAbsolute10(word) ? word : join46(cwd, word));
+      const rel2 = relative11(ctx.paths.root, abs).replace(/\\/g, "/");
+      if (!rel2.startsWith("..") && !isAbsolute10(rel2) && (rel2 === "" || isWatched(rel2, ctx.profile)))
         return true;
     }
   }
@@ -15538,11 +16002,11 @@ function onPreToolUse(ctx, payload) {
     let watched = false;
     const worktrees = worktreeRoots(ctx.paths.root);
     for (const filePath of paths) {
-      const abs = canonical(isAbsolute9(filePath) ? filePath : join45(ctx.paths.root, filePath));
+      const abs = canonical(isAbsolute10(filePath) ? filePath : join46(ctx.paths.root, filePath));
       if (isProtectedPath(ctx.paths, abs, worktrees)) {
         return answer("deny", `Crew: ${filePath} is maintained by the engine and is changed through the crew command`);
       }
-      const rel2 = relative10(ctx.paths.root, abs).replace(/\\/g, "/");
+      const rel2 = relative11(ctx.paths.root, abs).replace(/\\/g, "/");
       if (rel2 !== "" && !rel2.startsWith("..") && isWatched(rel2, ctx.profile))
         watched = true;
     }
@@ -15600,7 +16064,7 @@ function onPreToolUse(ctx, payload) {
         }
         if (tokens.some((t) => /^CDPATH\+?=/.test(t.word)))
           return answer("deny", `${stays}: CDPATH is denied`);
-        const named3 = tokens.filter((t) => handed === null || t.word !== handed && !HERE_STRING_OPERATOR.test(t.raw)).map((t) => t.word).flatMap((w) => ASSIGNMENT2.test(w) ? [w, w.slice(w.indexOf("=") + 1)] : [w]);
+        const named3 = tokens.filter((t) => handed === null || t.word !== handed && !HERE_STRING_OPERATOR.test(t.raw)).map((t) => t.word).flatMap((w) => ASSIGNMENT3.test(w) ? [w, w.slice(w.indexOf("=") + 1)] : [w]);
         for (const w of named3) {
           const path = normalizePathWord(w);
           const at = path.indexOf(ctx.paths.userDir);
@@ -15767,7 +16231,7 @@ function onPostToolUse(ctx, payload = {}) {
 
 // packages/engine/src/tasks.ts
 import { cpSync, existsSync as existsSync23 } from "node:fs";
-import { join as join46 } from "node:path";
+import { join as join47 } from "node:path";
 function shortId(workId) {
   return workId.slice(0, 14);
 }
@@ -15837,7 +16301,7 @@ function openTask(ctx, env, work, task, criteria, text) {
     return {
       refused: `uncommitted changes in ${dirty.join(", ")}; commit what the implementer must see, then open the task`
     };
-  const plan = readText(join46(workDir(env.paths, work.id), "plan.md"));
+  const plan = readText(join47(workDir(env.paths, work.id), "plan.md"));
   const body = text?.trim() || taskText(plan, task);
   if (!body)
     return { refused: noTaskText(work, task, plan, "task") };
@@ -15886,7 +16350,7 @@ Criteria: ${criteria.map((c) => `${c} ${work.criteria.find((k) => k.id === c)?.t
     return { refused: notes2.length ? `${made.failed}; ${notes2.join("; ")}` : made.failed };
   }
   saveWork(env.paths, work);
-  const brief = readText(join46(workDir(env.paths, work.id), "brief.md"));
+  const brief = readText(join47(workDir(env.paths, work.id), "brief.md"));
   const notes = [];
   const opened = openSession(ctx, {
     message: sent.message,
@@ -16013,7 +16477,7 @@ function writeBrief(paths, work, record, evidence, policy) {
   ].join(`
 `);
   const file = `tasks/${record.task}.brief.md`;
-  writeText(join46(workDir(paths, work.id), file), text);
+  writeText(join47(workDir(paths, work.id), file), text);
   record.brief = file;
   record.state = "briefed";
   return text;
@@ -16120,7 +16584,7 @@ function mergeTask(ctx, env, work, task, options = {}) {
       errorOnExist: false
     });
   for (const name of CHILD_RECORD_FILES)
-    recordIntegrity(env.paths, join46(childDir, name));
+    recordIntegrity(env.paths, join47(childDir, name));
   const kept = removeWorktree(env.paths.root, record.worktree);
   if (!kept)
     dropOpenedMarker(ctx.paths.userDir, childPaths.root);
@@ -16394,15 +16858,15 @@ function onSessionStart(ctx, payload = {}) {
 
 // packages/engine/src/running.ts
 import { readdirSync as readdirSync11, rmSync as rmSync7 } from "node:fs";
-import { join as join47 } from "node:path";
+import { join as join48 } from "node:path";
 function runningDir(paths, id) {
-  return join47(workDir(paths, id), "running");
+  return join48(workDir(paths, id), "running");
 }
 function runningFile(paths, id, pid = process.pid) {
-  return join47(runningDir(paths, id), `${pid}.json`);
+  return join48(runningDir(paths, id), `${pid}.json`);
 }
 function legacyFile(paths, id) {
-  return join47(workDir(paths, id), "running.json");
+  return join48(workDir(paths, id), "running.json");
 }
 async function withRunning(paths, id, session, command2, run) {
   if (!session)
@@ -16441,7 +16905,7 @@ function runPermit(paths, id, session, spent) {
     return null;
   }
   for (const name of names) {
-    const file = join47(runningDir(paths, id), name);
+    const file = join48(runningDir(paths, id), name);
     const text = readText(file);
     const marker = text === null ? null : parseMarker(text);
     if (!marker || name !== `${marker.pid}.json` || !isAlive(marker.pid)) {
@@ -16618,8 +17082,8 @@ function handleHook(event, payload, env = process.env) {
 }
 
 // packages/engine/src/knowledge.ts
-import { existsSync as existsSync24, lstatSync as lstatSync6, readdirSync as readdirSync12, realpathSync as realpathSync7 } from "node:fs";
-import { basename as basename8, dirname as dirname12, isAbsolute as isAbsolute10, join as join48, relative as relative11, resolve as resolve7 } from "node:path";
+import { existsSync as existsSync24, lstatSync as lstatSync6, readdirSync as readdirSync12, realpathSync as realpathSync8 } from "node:fs";
+import { basename as basename9, dirname as dirname12, isAbsolute as isAbsolute11, join as join49, relative as relative12, resolve as resolve8 } from "node:path";
 
 // packages/engine/src/verify.ts
 var RUBRIC_QUESTIONS = {
@@ -17136,15 +17600,15 @@ function harnessLesson(root, input) {
     return { refused: `the proposal is P-<n>, not ${input.proposal}` };
   const file = input.evidence;
   const outside = { refused: `${file} is outside the repository: ${EVIDENCE_HINT}` };
-  if (isAbsolute10(file) || relative11(root, resolve7(root, file)).startsWith(".."))
+  if (isAbsolute11(file) || relative12(root, resolve8(root, file)).startsWith(".."))
     return outside;
   const real = fileInsideRoot(root, file);
   if (real === null)
     return { refused: `no file at ${file}` };
   if (real === "")
     return outside;
-  const evidence = relative11(realpathSync7(root), real).split("\\").join("/");
-  if (!evidence.startsWith("docs/improve/") || basename8(evidence) !== "record.json")
+  const evidence = relative12(realpathSync8(root), real).split("\\").join("/");
+  if (!evidence.startsWith("docs/improve/") || basename9(evidence) !== "record.json")
     return { refused: `${file} is not a run's record: ${EVIDENCE_HINT}` };
   let record2;
   try {
@@ -17171,13 +17635,13 @@ function lessonsForCto(base, scope) {
   return { note: LESSONS_NOTE, entries };
 }
 function fileInsideRoot(root, file) {
-  const candidate = resolve7(root, file);
+  const candidate = resolve8(root, file);
   if (!existsSync24(candidate))
     return null;
   try {
-    const real = realpathSync7(candidate);
-    const rel2 = relative11(realpathSync7(root), real);
-    return rel2 !== "" && !rel2.startsWith("..") && !isAbsolute10(rel2) ? real : "";
+    const real = realpathSync8(candidate);
+    const rel2 = relative12(realpathSync8(root), real);
+    return rel2 !== "" && !rel2.startsWith("..") && !isAbsolute11(rel2) ? real : "";
   } catch {
     return null;
   }
@@ -17200,9 +17664,9 @@ function planInputsPath(plan) {
 var INPUTS_FILE = /^\d{4}-\d{2}-\d{2}-inputs(?:-\d+)?\.json$/;
 function ctoInputsFile(dir, file) {
   try {
-    const real = join48(realpathSync7(dirname12(file)), basename8(file));
+    const real = join49(realpathSync8(dirname12(file)), basename9(file));
     const entry = lstatSync6(real);
-    return dirname12(real) === realpathSync7(dir) && INPUTS_FILE.test(basename8(real)) && entry.isFile() && !entry.isSymbolicLink() ? real : null;
+    return dirname12(real) === realpathSync8(dir) && INPUTS_FILE.test(basename9(real)) && entry.isFile() && !entry.isSymbolicLink() ? real : null;
   } catch {
     return null;
   }
@@ -17224,7 +17688,7 @@ function latestPlan(userDir, workspace) {
     const [db, nb] = order(b);
     return da === db ? na - nb : da.localeCompare(db);
   }).at(-1);
-  return last ? { path: join48(dir, last), date: last.slice(0, 10) } : null;
+  return last ? { path: join49(dir, last), date: last.slice(0, 10) } : null;
 }
 function entryLine(e) {
   return `${e.id} · ${e.kind} · "${e.title}" · ${e.workspace ?? "alone"} · ${e.confidential === false ? "unmarked" : "marked"} · confirmed ${e.confirmedBy.length}, contradicted ${e.contradictedBy.length}`;
@@ -17334,7 +17798,7 @@ function knowledgeText(id, hits, unreadable) {
 }
 
 // packages/engine/src/learn.ts
-import { join as join49 } from "node:path";
+import { join as join50 } from "node:path";
 
 // packages/engine/src/research.ts
 var SECTION = /^##\s+What the documentation says\s*$/m;
@@ -17490,7 +17954,7 @@ function draftsOf(paths, work, profile, policy, scope) {
   };
   const drafts = [];
   const skipped = [];
-  const problem = section(readText(join49(dir, "spec.md")), "Problem");
+  const problem = section(readText(join50(dir, "spec.md")), "Problem");
   const criteria = work.criteria.map((c) => `${c.id}: ${c.text}`);
   const solutionText = clipKnowledge([...problem ? [problem] : [], ...criteria].join(`
 `));
@@ -17509,7 +17973,7 @@ function draftsOf(paths, work, profile, policy, scope) {
     text: solutionText
   });
   if (kindOfItem(work) === "issue") {
-    const cause = section(readText(join49(dir, "analysis.md")), "Cause");
+    const cause = section(readText(join50(dir, "analysis.md")), "Cause");
     const origin = readOrigin(paths, work.id)?.origin ?? null;
     if (cause && origin) {
       const title = `Root cause: ${work.title}`;
@@ -17526,9 +17990,9 @@ function draftsOf(paths, work, profile, policy, scope) {
       });
     }
   }
-  const researcher = readText(join49(dir, "conclave", "researcher.md"));
+  const researcher = readText(join50(dir, "conclave", "researcher.md"));
   if (researcher !== null) {
-    const verification = readJson(join49(dir, "conclave", "researcher.verification.json"));
+    const verification = readJson(join50(dir, "conclave", "researcher.verification.json"));
     const status = new Map((verification?.facts ?? []).map((f) => [f.id, f.status ?? ""]));
     for (const fact of parseFacts(researcher)) {
       if (!/^https?:\/\//.test(fact.source))
@@ -17560,7 +18024,7 @@ function draftsOf(paths, work, profile, policy, scope) {
     for (const project of loadRegistry(paths.userDir).projects) {
       if (project.workspace !== scope.workspace)
         continue;
-      const other = readJson(join49(project.root, ".crew", "profile.json"));
+      const other = readJson(join50(project.root, ".crew", "profile.json"));
       if (!other || !Array.isArray(other.targets))
         continue;
       for (const stack of new Set(other.targets.map((t) => t.stack)))
@@ -17618,7 +18082,7 @@ function citedIds(dir, work) {
   const listed = work.knowledge?.listed ?? [];
   if (!listed.length)
     return [];
-  const text = ["spec.md", "strategy.md", "analysis.md"].map((f) => readText(join49(dir, f)) ?? "").join(`
+  const text = ["spec.md", "strategy.md", "analysis.md"].map((f) => readText(join50(dir, f)) ?? "").join(`
 `);
   const cited = citations(text);
   return listed.filter((id) => cited.has(id));
@@ -17668,7 +18132,7 @@ function learnItem(paths, work, profile, policy, mail, proven, options = {}) {
   }
   const cause = drafts.find((d) => d.kind === "root-cause");
   const contradicted = (e) => e.contradictedBy.some((r) => r.item === work.id && r.project === scope.project);
-  const cited = citations(readText(join49(dir, "analysis.md")) ?? "");
+  const cited = citations(readText(join50(dir, "analysis.md")) ?? "");
   const causes = entries.filter((e) => e.kind === "root-cause" && visibleTo(e, scope));
   const common = commonWords(causes);
   const duplicates = cause ? entries.filter((e) => e.kind === "root-cause" && visibleTo(e, scope) && !contradicted(e) && !cited.has(e.id) && sameRootCause(e, cause, common)) : [];
@@ -17724,7 +18188,7 @@ function tellWorkspace(paths, work, mail, scope, written) {
 
 // packages/engine/src/metrics.ts
 import { readdirSync as readdirSync13 } from "node:fs";
-import { join as join50 } from "node:path";
+import { join as join51 } from "node:path";
 function emptyKnowledge() {
   const entries = {};
   for (const kind of PROJECT_KINDS)
@@ -17758,7 +18222,7 @@ function knowledgeFigures(base, scope, projects) {
 }
 function workIds(paths) {
   try {
-    return readdirSync13(join50(paths.crewDir, "work"));
+    return readdirSync13(join51(paths.crewDir, "work"));
   } catch {
     return [];
   }
@@ -17795,7 +18259,7 @@ function computeMetrics(projects, knowledge = emptyKnowledge()) {
     const policy = loadPolicy(paths).policy;
     let ids = [];
     try {
-      ids = readdirSync13(join50(paths.crewDir, "work"));
+      ids = readdirSync13(join51(paths.crewDir, "work"));
     } catch {
       continue;
     }
@@ -17890,400 +18354,6 @@ function metricsText(m) {
     knowledgeLine(m.knowledge)
   ].join(`
 `);
-}
-
-// packages/engine/src/tdd.ts
-import { spawnSync as spawnSync2 } from "node:child_process";
-import { join as join51 } from "node:path";
-
-// packages/engine/src/test-run.ts
-import { realpathSync as realpathSync8, statSync as statSync12 } from "node:fs";
-import { basename as basename9, isAbsolute as isAbsolute11, relative as relative12, resolve as resolve8, sep as sep6 } from "node:path";
-var RUNNERS = new Set(["vitest", "jest", "mocha", "ava", "pytest", "phpunit", "pest", "rspec"]);
-var SUBCOMMAND_TEST = new Set(["deno", "go", "cargo", "dotnet", "swift", "composer"]);
-var PACKAGE_MANAGERS = new Set(["npm", "pnpm", "yarn", "bun"]);
-var MANAGER_VALUED = new Set([
-  "--filter",
-  "-F",
-  "-C",
-  "--prefix",
-  "--dir",
-  "--cwd",
-  "--workspace"
-]);
-var INTERPRETERS = new Set(["sh", "bash", "node", "bun", "php", "ruby"]);
-var PYTHON = /^python(?:\d+(?:\.\d+)?)?$/;
-var SETUP = new Set(["cd", "export", "set"]);
-var AFTER = new Set(["tee", "cat"]);
-var ASSIGNMENT3 = /^[A-Za-z_][A-Za-z0-9_]*=/;
-var REDIRECT = /^(?:\d+|&)?(?:[<>]+&?)(\S*)$/;
-var TEST_FOLDERS = new Set(["test", "tests", "spec", "specs", "__tests__"]);
-var TEST_NAME = /\.test\.|\.spec\.|_test\.|-test\.|Test\.php$|Tests\.cs$|^test_.*\.py$/;
-var operandsOf = (args) => args.filter((a) => !a.startsWith("-"));
-function programWords(piece) {
-  const words2 = [];
-  const expands = [];
-  for (let i = 0;i < piece.tokens.length; i++) {
-    const token = piece.tokens[i];
-    if (!token)
-      continue;
-    const redirect = REDIRECT.exec(token.raw);
-    if (redirect) {
-      if (!redirect[1])
-        i++;
-      continue;
-    }
-    words2.push(token.word);
-    expands.push(token.expands);
-  }
-  return { words: words2, expands };
-}
-function fileRefusal(operand, cwd, root) {
-  let real;
-  try {
-    real = realpathSync8(resolve8(cwd, operand));
-  } catch {
-    return `${operand} is no file`;
-  }
-  if (!statSync12(real).isFile())
-    return `${operand} is no regular file`;
-  const rel2 = relative12(realpathSync8(root), real);
-  if (rel2 === ".." || rel2.startsWith(`..${sep6}`) || isAbsolute11(rel2))
-    return `${operand} is outside the repository`;
-  const segments = rel2.split(sep6);
-  const name = segments.pop() ?? "";
-  if (segments.some((s) => TEST_FOLDERS.has(s)) || TEST_NAME.test(name) || RUNNERS.has(name))
-    return null;
-  return `${operand} does not look like a test file`;
-}
-function testRefusal(words2, cwd, root, nested) {
-  const name = basename9(words2[0] ?? "");
-  const args = words2.slice(1);
-  const operands = operandsOf(args);
-  if (RUNNERS.has(name))
-    return null;
-  if (SUBCOMMAND_TEST.has(name) && operands[0] === "test")
-    return null;
-  if (name === "make" && operands.includes("test"))
-    return null;
-  if (name === "mvn" && operands.some((a) => a === "test" || a === "verify"))
-    return null;
-  if ((name === "gradle" || name === "gradlew") && operands.some((a) => /(?:^|:)(?:test|check)$/.test(a)))
-    return null;
-  if (name === "bundle" && operands[0] === "exec") {
-    const [tool, task] = operands.slice(1);
-    if (tool === "rspec" || tool === "rake" && task === "test")
-      return null;
-  }
-  if (name === "npx" || name === "bunx") {
-    const tool = basename9(operands[0] ?? "");
-    return RUNNERS.has(tool) ? null : `${name} ${operands[0] ?? ""} runs no test runner`.trim();
-  }
-  if (PACKAGE_MANAGERS.has(name)) {
-    let i = 0;
-    while (i < args.length && (args[i] ?? "").startsWith("-"))
-      i += MANAGER_VALUED.has(args[i] ?? "") ? 2 : 1;
-    const [verb, script] = [args[i], args[i + 1]];
-    if (verb === "test")
-      return null;
-    if ((verb === "run" || verb === "run-script") && script?.includes("test"))
-      return null;
-    if (name !== "bun")
-      return `${name} ${verb ?? ""} is not the test script`.trim();
-  }
-  if (name === "node" && args.includes("--test"))
-    return null;
-  if (PYTHON.test(name) && args[0] === "-m" && (args[1] === "pytest" || args[1] === "unittest"))
-    return null;
-  if (name === "php" && operands[0] === "artisan" && operands[1] === "test")
-    return null;
-  if (name === "claude" && operands[0] === "plugin" && operands[1] === "test")
-    return null;
-  if (!INTERPRETERS.has(name) && !PYTHON.test(name))
-    return `${name || "the command"} is no test runner`;
-  let j = 0;
-  let commandString = false;
-  while (j < args.length && /^[-+]/.test(args[j] ?? "")) {
-    const option = args[j] ?? "";
-    if ((name === "sh" || name === "bash") && /^-[A-Za-z]*c[A-Za-z]*$/.test(option))
-      commandString = true;
-    j += (name === "sh" || name === "bash") && shellTakesNext(option) ? 2 : 1;
-  }
-  if (commandString) {
-    if (nested)
-      return "a shell's string runs another shell's string";
-    if (args.length > j + 1)
-      return `words follow ${name}'s string`;
-    const reading = readCommand(args[j] ?? "");
-    if (reading.unclosed)
-      return `${name}'s string leaves ${reading.unclosed} open`;
-    return linesRefusal(reading.pieces, cwd, root, true);
-  }
-  const operand = args[j];
-  if (operand === undefined)
-    return `${name} is given no file`;
-  return fileRefusal(operand, cwd, root);
-}
-function linesRefusal(pieces, start, root, nested) {
-  if (pieces.some((p) => p.inner.length || p.heredocs.length))
-    return "a substitution or a here-document runs or feeds a command of its own";
-  let cwd = start;
-  let i = 0;
-  for (;i < pieces.length; i++) {
-    const piece = pieces[i];
-    const { words: words3, expands: expands2 } = programWords(piece);
-    const first = words3.findIndex((w) => !ASSIGNMENT3.test(w));
-    if (first !== -1 && !SETUP.has(words3[first] ?? ""))
-      break;
-    if (piece.piped)
-      return "a setup command reads another command's output";
-    if (words3[first] === "cd") {
-      const target = words3[first + 1];
-      if (target === undefined || target === "-" || expands2[first + 1] || words3.length > first + 2)
-        return "cd is given no plain folder";
-      cwd = resolve8(cwd, target);
-    }
-  }
-  const test = pieces[i];
-  if (!test)
-    return "no command runs a test";
-  if (test.piped)
-    return "the test reads another command's output";
-  const { words: words2, expands } = programWords(test);
-  let at = 0;
-  while (at < words2.length && ASSIGNMENT3.test(words2[at] ?? ""))
-    at++;
-  if (basename9(words2[at] ?? "") === "env") {
-    at++;
-    while (at < words2.length && ASSIGNMENT3.test(words2[at] ?? ""))
-      at++;
-    if ((words2[at] ?? "").startsWith("-"))
-      return "env is given options";
-  }
-  if (expands[at])
-    return "the command's name is an expansion";
-  const why = testRefusal(words2.slice(at), cwd, root, nested);
-  if (why)
-    return why;
-  for (const after of pieces.slice(i + 1)) {
-    const name = basename9(programWords(after).words[0] ?? "");
-    if (!after.piped || !AFTER.has(name))
-      return `${name || "a command"} runs after the test`;
-  }
-  return null;
-}
-function testRunRefusal(command2, root, profileCommand) {
-  const reading = readCommand(command2);
-  if (reading.unclosed)
-    return null;
-  const own = profileCommand?.trim();
-  if (own && (command2 === own || command2.startsWith(`${own} `))) {
-    const mine = readCommand(own).pieces.length;
-    if (reading.pieces.length === mine && !reading.pieces.some((p) => p.inner.length))
-      return null;
-  }
-  return linesRefusal(reading.pieces, root, root, false);
-}
-
-// packages/engine/src/tdd.ts
-var NO_TEST_LINES = [
-  /^error: .*matched 0 tests\. Searched /,
-  /^Ran 0 tests across /,
-  /^No test files found/,
-  /^No tests found/,
-  /^=+ no tests ran in /,
-  /^No tests executed!?/
-];
-var PARSE_ERROR_LINE = /^(?:\/bin\/)?(?:sh|bash|zsh|dash): .*(?:syntax error|Syntax error|parse error)/;
-function firstLine(tail, rules) {
-  for (const line of tail.split(`
-`)) {
-    if (rules.some((rule) => rule.test(line)))
-      return line;
-  }
-  return null;
-}
-function ranNoTest(tail) {
-  return firstLine(tail, NO_TEST_LINES);
-}
-var STEPS_BY_KIND = {
-  behavior: { steps: ["red", "green"], how: "record red, then green" },
-  preserve: { steps: ["before", "after"], how: "record before, then after" },
-  observed: { steps: ["observed"], how: "record observed, with --reason" }
-};
-function parseRefusal(command2, cwd) {
-  if (process.platform === "win32")
-    return null;
-  const read2 = spawnSync2("/bin/sh", ["-n", "-c", command2], { cwd, encoding: "utf8" });
-  if (read2.status === 0 || read2.error)
-    return null;
-  return firstLine(read2.stderr, [PARSE_ERROR_LINE]) ?? read2.stderr.trim().split(`
-`)[0] ?? "";
-}
-function article(kind) {
-  return /^[aeiou]/.test(kind) ? "an" : "a";
-}
-var TEST_PATTERNS = ["**/*test*", "**/*spec*", "tests/**", "test/**", "**/__tests__/**"];
-function defaultTestCommand(profile) {
-  const target = profile.targets.find((t) => t.path === "." && t.gates.test) ?? profile.targets.find((t) => t.gates.test);
-  const test = target?.gates.test;
-  if (!target || !test)
-    return null;
-  return {
-    command: test.command,
-    timeoutMs: target.timeoutMs,
-    heldBy: proposedByPack(test)
-  };
-}
-async function recordTdd(paths, work, evidence, profile, criterionId, step, override, reason) {
-  const criterion = work.criteria.find((c) => c.id === criterionId);
-  if (!criterion)
-    return { ok: false, message: `unknown criterion ${criterionId}` };
-  const expected = STEPS_BY_KIND[criterion.kind];
-  if (!expected.steps.includes(step)) {
-    return {
-      ok: false,
-      message: `${criterionId} is ${article(criterion.kind)} ${criterion.kind} criterion: ${expected.how}`
-    };
-  }
-  if (criterion.supersededBy)
-    return {
-      ok: false,
-      message: `${criterionId} is superseded by ${criterion.supersededBy.id}: record the proof on ${criterion.supersededBy.id}`
-    };
-  if (step === "observed" && !reason?.trim()) {
-    return { ok: false, message: "an observed run needs --reason: why no red run can exist" };
-  }
-  if (typeof override !== "string" && override) {
-    const why = shellRefusal(override);
-    if (why)
-      return { ok: false, message: why };
-  }
-  const fallback = defaultTestCommand(profile);
-  if (override === undefined && fallback?.heldBy)
-    return {
-      ok: false,
-      message: `pack ${fallback.heldBy}'s command is not confirmed (crew profile confirm test): pass -- <cmd> to run another`
-    };
-  const command2 = typeof override === "string" ? override : override ? joinWords(override) : fallback?.command;
-  if (!command2) {
-    return {
-      ok: false,
-      message: 'no test command: set one with crew profile set test "<cmd>" or pass -- <cmd>'
-    };
-  }
-  if (override !== undefined && step !== "observed") {
-    const unparsed2 = parseRefusal(command2, paths.root);
-    if (unparsed2 !== null)
-      return {
-        ok: false,
-        message: `the shell could not parse the command (${unparsed2}): fix the command (quote a pattern with parentheses) before recording`
-      };
-    const why = testRunRefusal(command2, paths.root, fallback?.command ?? null);
-    if (why !== null)
-      return {
-        ok: false,
-        message: `the command is no test run: ${why}; run the test (a runner in its test form, or an interpreter on a test file) before recording`
-      };
-  }
-  const entry = evidence.tdd.find((t) => t.criterion === criterionId);
-  if (step === "green" && !entry?.red)
-    return { ok: false, message: `no red run recorded for ${criterionId}: run crew tdd red first` };
-  if (step === "after" && !entry?.before)
-    return {
-      ok: false,
-      message: `no before run recorded for ${criterionId}: run crew tdd before first`
-    };
-  if (step === "before") {
-    const changed = changedWatchedPaths(paths.root, profile, work).filter((p) => !matchesAny(p, TEST_PATTERNS));
-    if (changed.length) {
-      const named2 = `${changed.slice(0, 3).join(", ")}${changed.length > 3 ? `, +${changed.length - 3} more` : ""}`;
-      return {
-        ok: false,
-        message: `the watched sources already differ from the item's base (${named2}): a before recorded now is not a baseline; record it before the change, or make ${criterionId} observed with the reason`
-      };
-    }
-  }
-  const writeRecord = (recorded, record3) => (into) => {
-    let target = into.tdd.find((t) => t.criterion === criterionId);
-    if (!target) {
-      target = { criterion: criterionId };
-      into.tdd.push(target);
-    }
-    if (recorded === "red" && target.red)
-      target.reds = [...target.reds ?? [], target.red];
-    target[recorded] = record3;
-    if (recorded === "observed" && reason)
-      target.reason = reason.trim();
-  };
-  const log = `logs/tdd-${criterionId}-${step}-${Date.now()}.txt`;
-  const result = await runCommand(command2, {
-    cwd: paths.root,
-    timeoutMs: fallback?.timeoutMs ?? 10 * 60 * 1000,
-    logPath: join51(workDir(paths, work.id), log)
-  });
-  const record2 = {
-    command: command2,
-    exit: result.exit,
-    at: nowIso(),
-    durationMs: result.durationMs,
-    log,
-    tail: result.tail,
-    timedOut: result.timedOut
-  };
-  const passed = result.exit === 0 && !result.timedOut;
-  const unparsed = firstLine(result.tail, [PARSE_ERROR_LINE]);
-  if (unparsed !== null) {
-    return {
-      ok: false,
-      message: `the shell could not parse the command (${unparsed}): fix the command (quote a pattern with parentheses) before recording`,
-      record: record2
-    };
-  }
-  const empty = ranNoTest(result.tail);
-  if (empty !== null) {
-    return {
-      ok: false,
-      message: `the run ran no test (${empty}): fix the command or the filter before recording`,
-      record: record2
-    };
-  }
-  if (step === "red") {
-    if (passed) {
-      return {
-        ok: false,
-        message: `the test passed before the change; a test that passes before the code exists proves nothing: write a test that fails first, or, for what an end-to-end run or a person checks, prove it with crew tdd observed ${work.id} ${criterionId} -- <command> (a criterion of kind observed)`,
-        record: record2
-      };
-    }
-    if (result.timedOut || result.exit === null || result.exit === 126 || result.exit === 127) {
-      return {
-        ok: false,
-        message: `the red run did not fail for the right reason (exit ${result.exit ?? "none"}${result.timedOut ? ", timed out" : ""}): fix the command before recording`,
-        record: record2
-      };
-    }
-    record2.changedTests = changedWatchedPaths(paths.root, profile, work).filter((p) => matchesAny(p, TEST_PATTERNS));
-    return {
-      ok: true,
-      message: `red recorded for ${criterionId} (exit ${result.exit})`,
-      record: record2,
-      apply: writeRecord("red", record2)
-    };
-  }
-  if (!passed) {
-    return {
-      ok: false,
-      message: `${step} run failed (exit ${result.exit}${result.timedOut ? ", timed out" : ""}); nothing recorded`,
-      record: record2
-    };
-  }
-  return {
-    ok: true,
-    message: `${step} recorded for ${criterionId}`,
-    record: record2,
-    apply: writeRecord(step, record2)
-  };
 }
 
 // packages/engine/src/workspace.ts

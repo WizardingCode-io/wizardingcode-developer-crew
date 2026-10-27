@@ -7,7 +7,7 @@ import { matchesAny } from "./glob.ts";
 import { type CrewPaths, workDir } from "./paths.ts";
 import { joinWords, runCommand, shellRefusal } from "./run.ts";
 import { testRunRefusal } from "./test-run.ts";
-import type { CriterionKind, Evidence, Profile, RunRecord, WorkItem } from "./types.ts";
+import type { CriterionKind, Evidence, Profile, RunRecord, TddRecord, WorkItem } from "./types.ts";
 
 /**
  * The runners' own summary lines for a run that found nothing to run (finding 126), anchored per
@@ -44,7 +44,59 @@ function ranNoTest(tail: string): string | null {
   return firstLine(tail, NO_TEST_LINES);
 }
 
+/**
+ * The runners' own summary lines with the passing count (finding 179), one anchored pattern per
+ * runner over a whole line with the runner's own indentation: bun (` 334 pass`), vitest (its
+ * reporter indents; `Tests  11 passed | 1 skipped (12)`, the other counts on either side), jest (`Tests:       3 passed, 1 skipped,
+ * 4 total`, in either order), pytest (`=== 3 passed, 1 skipped in 0.12s ===`) and PHPUnit's `OK (5
+ * tests, 9 assertions)`. The `failed` forms are never read: a run with a failure exits non-zero and
+ * is refused before any count.
+ */
+const PASS_LINES: readonly RegExp[] = [
+  /^ (\d+) pass$/,
+  /^ *Tests +(?:\d+ \w+ \| )*(\d+) passed(?: \| \d+ \w+)* \(\d+\)$/,
+  /^Tests: +(?:\d+ \w+, )*(\d+) passed(?:, \d+ \w+)*, \d+ total$/,
+  /^=+ (?:\d+ \w+, )*(\d+) passed(?:, [^=]+)? in [0-9.]+s(?: \([^)]*\))? =+$/,
+  /^OK \((\d+) tests?, \d+ assertions?\)$/,
+];
+/** PHPUnit's summary when the run had issues (`OK, but there were issues!`), read only when no line above matched. */
+const PHPUNIT_TESTS_LINE = /^Tests: (\d+), Assertions: \d+/;
+
+/** The way out every refusal of a run that cannot be recorded names: the criterion as an observed one, with the reason. */
+const observedInstead = (criterionId: string): string =>
+  `make ${criterionId} observed with the reason`;
+
+/**
+ * The passing count a run's tail reports, by the runner's own summary line, or null when no line
+ * matches. The last matching line wins: the summary is the last thing a runner prints, so a test's
+ * own line that looks like one can precede it and never follow it. The count guards against an
+ * accidental loss of tests between a before and an after, not against a test that fakes the
+ * runner's output.
+ */
+export function passCount(tail: string): number | null {
+  const lastMatch = (rules: readonly RegExp[]): number | null => {
+    let found: number | null = null;
+    for (const line of tail.split("\n")) {
+      for (const rule of rules) {
+        const match = rule.exec(line);
+        if (match?.[1] !== undefined) found = Number(match[1]);
+      }
+    }
+    return found;
+  };
+  return lastMatch(PASS_LINES) ?? lastMatch([PHPUNIT_TESTS_LINE]);
+}
+
 export type TddStep = "red" | "green" | "before" | "after" | "observed";
+
+/** Where each step's earlier runs are kept on the record (finding 179); the report reads the same table. */
+export const HISTORY = {
+  red: "reds",
+  green: "greens",
+  before: "befores",
+  after: "afters",
+  observed: "observeds",
+} as const satisfies Record<TddStep, keyof TddRecord>;
 
 const STEPS_BY_KIND: Record<CriterionKind, { steps: TddStep[]; how: string }> = {
   behavior: { steps: ["red", "green"], how: "record red, then green" },
@@ -160,6 +212,14 @@ export async function recordTdd(
       ok: false,
       message: `no before run recorded for ${criterionId}: run crew tdd before first`,
     };
+  // The pair is one run (finding 179): an after over another command would prove nothing about
+  // the tests the before ran, so it is refused before anything runs, on the final command text
+  // whether the words came from `--` or from the profile.
+  if (step === "after" && entry?.before && command !== entry.before.command)
+    return {
+      ok: false,
+      message: `the after must run the before's command (${entry.before.command}): the pair proves the tests the before ran still pass; run that command, or ${observedInstead(criterionId)}`,
+    };
   // A baseline is the tests green before the change (finding 79): with a watched source already
   // differing from the item's base, a before recorded now proves nothing the after does not, and
   // is refused. The tests may differ: the red test of a behaviour criterion comes first.
@@ -171,7 +231,7 @@ export async function recordTdd(
       const named = `${changed.slice(0, 3).join(", ")}${changed.length > 3 ? `, +${changed.length - 3} more` : ""}`;
       return {
         ok: false,
-        message: `the watched sources already differ from the item's base (${named}): a before recorded now is not a baseline; record it before the change, or make ${criterionId} observed with the reason`,
+        message: `the watched sources already differ from the item's base (${named}): a before recorded now is not a baseline; record it before the change, or ${observedInstead(criterionId)}`,
       };
     }
   }
@@ -183,8 +243,10 @@ export async function recordTdd(
       target = { criterion: criterionId };
       into.tdd.push(target);
     }
-    // A red over an earlier one keeps the earlier in the history (finding 29); the latest decides.
-    if (recorded === "red" && target.red) target.reds = [...(target.reds ?? []), target.red];
+    // A step recorded over an earlier one keeps the earlier in its history, oldest first (finding
+    // 29 for the red, finding 179 for every step); the latest decides.
+    const earlier = target[recorded];
+    if (earlier) target[HISTORY[recorded]] = [...(target[HISTORY[recorded]] ?? []), earlier];
     target[recorded] = record;
     if (recorded === "observed" && reason) target.reason = reason.trim();
   };
@@ -195,6 +257,7 @@ export async function recordTdd(
     timeoutMs: fallback?.timeoutMs ?? 10 * 60 * 1000,
     logPath: join(workDir(paths, work.id), log),
   });
+  const counted = passCount(result.tail);
   const record: RunRecord = {
     command,
     exit: result.exit,
@@ -203,6 +266,7 @@ export async function recordTdd(
     log,
     tail: result.tail,
     timedOut: result.timedOut,
+    ...(counted === null ? {} : { passed: counted }),
   };
   const passed = result.exit === 0 && !result.timedOut;
   // A run the shell could not parse never started a test (finding 144): refused for every step. A
@@ -260,6 +324,24 @@ export async function recordTdd(
       message: `${step} run failed (exit ${result.exit}${result.timedOut ? ", timed out" : ""}); nothing recorded`,
       record,
     };
+  }
+  // The after keeps the before's count (finding 179): the same runner ran both, so a count that
+  // went missing is a summary lost (a test that exits early, an output cut short) and a lower one
+  // is a test gone; either way nothing is recorded. A before without a count compares nothing.
+  const baseline = step === "after" ? entry?.before?.passed : undefined;
+  if (baseline !== undefined) {
+    if (record.passed === undefined)
+      return {
+        ok: false,
+        message: `the after reported no count though the before did (${baseline}): its summary was lost (a test that exits early, an output cut short); run it again, or ${observedInstead(criterionId)}`,
+        record,
+      };
+    if (record.passed < baseline)
+      return {
+        ok: false,
+        message: `the after passed fewer tests than the before (${baseline} → ${record.passed}): a test the before counted is gone; restore it, or ${observedInstead(criterionId)}`,
+        record,
+      };
   }
   return {
     ok: true,

@@ -19,6 +19,7 @@ import {
   type StrategyReport,
   verdictText,
 } from "./strategy.ts";
+import { HISTORY } from "./tdd.ts";
 import { TEAMS } from "./team.ts";
 import type {
   CriterionKind,
@@ -33,6 +34,7 @@ import type {
   PlannedJudgement,
   Policy,
   Stack,
+  TddRecord,
   ValidatorRule,
   WorkItem,
 } from "./types.ts";
@@ -373,13 +375,37 @@ function ownSummary(
   const record = evidence.tdd.find((t) => t.criterion === criterionId);
   if (record?.merged)
     return `proven by ${record.merged.task} (child ${record.merged.child}, merged ${record.merged.commit.slice(0, 7)})`;
+  const history = historyNote(record);
   if (tddDone(record, kind)) {
-    if (kind === "behavior") return "red then green";
-    if (kind === "preserve") return "passing before and after";
-    return `observed: passes after (${record?.reason ?? "no reason given"})`;
+    if (kind === "behavior") return `red then green${history}`;
+    if (kind === "preserve") return `passing before and after (${pairCounts(record)})${history}`;
+    return `observed: passes after (${record?.reason ?? "no reason given"})${history}`;
   }
-  if (record?.red || record?.before) return kind === "behavior" ? "red only" : "before only";
+  if (record?.red || record?.before)
+    return `${kind === "behavior" ? "red only" : "before only"}${history}`;
   return "missing";
+}
+
+/** A preserve pair's passing counts as the runners reported them, or that they were not recorded (a runner whose summary the engine does not read, or a record written before finding 179). */
+function pairCounts(record: TddRecord | undefined): string {
+  const before = record?.before?.passed;
+  const after = record?.after?.passed;
+  return before === undefined || after === undefined
+    ? "counts not recorded"
+    : `${before} → ${after} pass`;
+}
+
+/** How many times each step recorded more than once was recorded (finding 179): the history's length plus one, the latest deciding. */
+function historyNote(record: TddRecord | undefined): string {
+  if (!record) return "";
+  return Object.entries(HISTORY)
+    .flatMap(([step, field]) => {
+      const earlier = record[field];
+      return earlier?.length
+        ? [`; the ${step} recorded ${earlier.length + 1} times (the latest decides)`]
+        : [];
+    })
+    .join("");
 }
 
 /** The deps gate's status with what it judged: the new advisories, and the known ones that are the repository's standing debt (ADR 0006). */
