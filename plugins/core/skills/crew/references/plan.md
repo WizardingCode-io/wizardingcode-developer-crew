@@ -15,6 +15,8 @@ Each task names the criterion it serves and ends with something the engine can c
 
 Keep tasks small enough that each has its own red and green. Then `crew phase <id> next` to enter the build phase.
 
+An interface item has the capture spec as a task of the plan: `tests/e2e/<page>.crew.spec.ts`, one `capture()` per declared state and viewport and one `captureMotion()` per interaction of the thesis, written red first like any test (the e2e gate runs it and grades its evidence); more than three pages make one todo per page.
+
 ## The todo loop
 
 A request in several parts done in this checkout, one after the other, is one item with a todo per part, never an item per part: each part is a line of the plan and runs the loop below; a separate item is for a part the user wants proven and delivered on its own. An item started with `--part` per part ties each todo to its part with `crew task <id> note T-n --part P-k` (the todo's text is the part's when neither `--text` nor the plan names it), and the verdict waits for each part's todo to be gated and briefed; a part's todo is noted inline, in this checkout, never opened for an implementer (`crew task open` takes no part).

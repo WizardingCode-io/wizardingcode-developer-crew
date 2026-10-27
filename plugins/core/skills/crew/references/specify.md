@@ -57,3 +57,7 @@ Only in a headless session, or in bypassPermissions or dontAsk mode, the hook as
 The engine checks that `spec.md` exists and has a non-empty "Acceptance criteria" section before the build phase; the quality of the spec is your responsibility.
 
 A spec that drives a command (a CLI, a script, a kit the engine runs) names the command's exit statuses among its facts: what 0 means, what each other code means, and what the item does with each (finding 115).
+
+## A criterion on a page
+
+A criterion whose result a person sees carries its page's lines under it in `spec.md`: `screen: /checkout · states: default, empty, error, success · viewports: 360, 768, 1280 · scheme: light, dark`; `motion: <what animates, its job, the value from the table> · rejected: <candidate, why>` or `motion: none`; `design: DESIGN.md` or `design: none (D-n)`. The `--screen` flag is the record (`crew criteria <id> add "<text>" --screen checkout:error,checkout:empty`, `page:state` pairs; `crew start … --criterion "<text>" --screen …`): the engine derives the expected captures from it and writes `review/ui-plan.json`; the viewports, the scheme and the thesis live in `spec.md`, read by the reviewer and the frontend lead. The values come from the standard (`references/frontend.md`); the fast route takes its defaults and no thesis.
