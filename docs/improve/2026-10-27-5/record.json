@@ -1,0 +1,318 @@
+{
+  "run": "2026-10-27-5",
+  "at": "2026-10-27T10:00:04.424Z",
+  "targets": [
+    "strategy-declares-phases",
+    "strategy-rejects-over-engineering"
+  ],
+  "baseline": {
+    "strategy-declares-phases": {
+      "name": "strategy-declares-phases",
+      "runs": [
+        {
+          "score": 0.4,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "ruling-recorded",
+              "explanation": "pattern not found in trace"
+            },
+            {
+              "grader": "specify-reached",
+              "explanation": "pattern not found in trace"
+            },
+            {
+              "grader": "triggers-with-figures",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/references/receive.md",
+            "plugins/core/skills/crew/references/strategy.md",
+            "plugins/core/skills/crew/references/understand.md",
+            "plugins/core/skills/crew/rubrics/strategy.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/strategy.md"
+          ]
+        },
+        {
+          "score": 0.4,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "ruling-recorded",
+              "explanation": "pattern not found in trace"
+            },
+            {
+              "grader": "specify-reached",
+              "explanation": "pattern not found in trace"
+            },
+            {
+              "grader": "triggers-with-figures",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/strategy.md"
+          ]
+        }
+      ],
+      "mean": 0.6,
+      "spread": 0.6,
+      "reads": [
+        "plugins/core/skills/crew/references/receive.md",
+        "plugins/core/skills/crew/references/strategy.md",
+        "plugins/core/skills/crew/references/understand.md",
+        "plugins/core/skills/crew/rubrics/strategy.md"
+      ],
+      "errored": false
+    },
+    "strategy-rejects-over-engineering": {
+      "name": "strategy-rejects-over-engineering",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/strategy.md"
+          ]
+        },
+        {
+          "score": 0.25,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "over-engineering-named",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            },
+            {
+              "grader": "ruling-recorded",
+              "explanation": "pattern not found in trace"
+            },
+            {
+              "grader": "specify-reached",
+              "explanation": "pattern not found in trace"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/strategy.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/strategy.md"
+          ]
+        }
+      ],
+      "mean": 0.75,
+      "spread": 0.75,
+      "reads": [
+        "plugins/core/skills/crew/rubrics/strategy.md"
+      ],
+      "errored": false
+    }
+  },
+  "proposals": [
+    {
+      "id": "P-1",
+      "status": "probed",
+      "refusal": null,
+      "diffStat": [
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/references/strategy.md"
+        }
+      ],
+      "rationale": "The edits are in place and every pinned substring of the Strategy page is intact; I'm finishing with the summary.\n\nI changed one harness page and nothing else: `plugins/core/skills/crew/references/strategy.md`. Both failing cases pass their check graders (`strategy ok` with the rows) and fail `ruling-recorded`, `specify-reached` and the final-message judge together, which is the trace of a strategy that was written and checked but never got a proven ruling recorded: the judge's final-message graders fail by their own text whenever the ruling is missing. The engine makes that the likely end of any run that needs a second round: the ruling is stamped with the check's hash, an edit after the check is refused at the record, a `conclave/cto.md` older than the check is refused, the policy's cap is two rounds and nobody present can grant a third, and a proven ruling goes stale on a later edit, while the page as it stood gave one linear sequence (check, CTO, judge, record), said only \"two strategy rounds\" without saying what a second round is, and never told the lead to read the rubric it hands the CTO before the check. The page now says, before the check, that the first ruling is the one to get right and lists the five defects the rubric upholds (an unsourced stack element, a mark that outruns its fact, a figure with no basis, a row with no figure, a bundled change or an empty cost, a smaller answer asserted without the request's reasons answered) so the lead fixes them before the check; that the check stamps the hash, so edit first and check last; that the CTO is launched after the check and alone, never beside the judge; that a missing `ruling.json` is filed by resuming the judge; that a not-proven ruling means fixing the named lines and running the whole sequence again as round 2, the last, with no gate run and no edit after a proven ruling; and that the ending of a run asked to stop at the spec carries the engine's `strategy: proven` and `phase specify` lines, then the",
+      "probeSet": [
+        "strategy-declares-phases",
+        "strategy-rejects-over-engineering"
+      ],
+      "probe": {
+        "strategy-declares-phases": {
+          "name": "strategy-declares-phases",
+          "runs": [
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 0.8,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "triggers-with-figures",
+                  "explanation": "judge votes: FAIL FAIL FAIL"
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            }
+          ],
+          "mean": 0.9333333333333332,
+          "spread": 0.19999999999999996,
+          "reads": [],
+          "errored": false
+        },
+        "strategy-rejects-over-engineering": {
+          "name": "strategy-rejects-over-engineering",
+          "runs": [
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            }
+          ],
+          "mean": 1,
+          "spread": 0,
+          "reads": [],
+          "errored": false
+        }
+      },
+      "verdict": "lose",
+      "gain": -0.7666666666666667
+    },
+    {
+      "id": "P-2",
+      "status": "probed",
+      "refusal": null,
+      "diffStat": [
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/references/strategy.md"
+        }
+      ],
+      "rationale": "The engine prints `<id>: phase specify` at the phase step, so the page's words match. Nothing further depends on another lookup: the pinned strings are intact, the engine's refusal and print texts quoted on the page are the ones in `cli.ts`, and the edits are complete.\n\nI changed one harness page and nothing else: `plugins/core/skills/crew/references/strategy.md`. Both failing cases are new products on the full route with nobody present, and their failing runs got past `crew strategy check` (the `strategy-checked`, `two-scaling-rows` and `trigger-figures-in-table` regexes passed) but never printed `strategy: proven` or `phase specify`, which is the shape of a first ruling the judge finds wanting followed by a second round that is lost: the page's step 4 said only \"check and judge again\", while the engine refuses a record whose `conclave/cto.md` predates the new check, a fresh judge's answer writes over `review/ruling.json` with no archive, a re-recorded old ruling spends the round on the old text, and the policy allows two rounds with no third for a session that cannot `crew continue`; the SP8 record of the same case shows exactly that path (the ruling refused on a stale CTO file, round 2 left four small defects, the cap reached), and a two-round run cost 62 of the case's 80 turns. The page now has a paragraph under the document's shape saying how a draft passes the five rubric questions the first time in a bare repository (each claim says what its README fact says and no more, cost and time as budgets or ranges whose basis is a count a fact gives and never a provider's price no fact quotes, every row's three cells filled with a figure and its unit, one stack element per Viability need, the request's extras refused with their fact), step 4 names the engine's `strategy: proven` or `strategy: not proven` line, and a new \"A round that is not proven\" paragraph gives the loop in the engine's words: fix each defect at its line and nothing else, check again, the CTO again ",
+      "probeSet": [
+        "strategy-declares-phases",
+        "strategy-rejects-over-engineering"
+      ],
+      "probe": {
+        "strategy-declares-phases": {
+          "name": "strategy-declares-phases",
+          "runs": [
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 0.8,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "triggers-with-figures",
+                  "explanation": "grader threw: judge call failed: API Error: 529 Overloaded. This is a server-side issue, usually temporary — try again in a moment. If it persists, check https://status.claude.com."
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            }
+          ],
+          "mean": 0.9333333333333332,
+          "spread": 0.19999999999999996,
+          "reads": [],
+          "errored": false
+        },
+        "strategy-rejects-over-engineering": {
+          "name": "strategy-rejects-over-engineering",
+          "runs": [
+            {
+              "score": 0.75,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "over-engineering-named",
+                  "explanation": "judge votes: FAIL FAIL FAIL"
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 0.75,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "over-engineering-named",
+                  "explanation": "judge votes: FAIL FAIL FAIL"
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            }
+          ],
+          "mean": 0.8333333333333334,
+          "spread": 0.25,
+          "reads": [],
+          "errored": false
+        }
+      },
+      "verdict": "lose",
+      "gain": -0.9333333333333333
+    }
+  ],
+  "composition": null,
+  "kept": null,
+  "branch": null,
+  "provider": {
+    "name": "runtime",
+    "agentModel": "claude-sonnet-5-5",
+    "judgeModel": "claude-fable-5-1",
+    "claudeModels": true
+  },
+  "costUsd": 36.334936150000004,
+  "lessons": [
+    "K-217",
+    "K-218"
+  ],
+  "exit": 0,
+  "unmeasured": [
+    "task-implementer-worktree",
+    "team-by-route",
+    "thread-with-contracts",
+    "ticket-triaged-against-business",
+    "unknown-stack",
+    "validator-unattended-approval"
+  ]
+}
