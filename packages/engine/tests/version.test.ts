@@ -47,6 +47,9 @@ test("2026-10-25-002 AC-4: every file the release names carries the engine's ver
     // SP9 Task 10 (2026-10-27-005) edits this list: the frontend pack's two files.
     "packs/frontend/pack.json",
     "packs/frontend/.claude-plugin/plugin.json",
+    // SP9 Task 11 (2026-10-28-003) edits this list: the nuxt pack's two files.
+    "packs/nuxt/pack.json",
+    "packs/nuxt/.claude-plugin/plugin.json",
   ])
     expect(versionOf(rel), rel).toBe(VERSION);
   const bundle = spawnSync("node", [join(root, "plugins/core/dist/crew.mjs"), "--version"], {
@@ -68,6 +71,9 @@ test("2026-10-25-003 AC-6: every version file CLAUDE.md's release section names 
     "packs/frontend/pack.json",
     "packs/laravel/.claude-plugin/plugin.json",
     "packs/laravel/pack.json",
+    // SP9 Task 11 (2026-10-28-003) edits this list: the nuxt pack's two files.
+    "packs/nuxt/.claude-plugin/plugin.json",
+    "packs/nuxt/pack.json",
     "plugins/core/.claude-plugin/plugin.json",
   ]);
   expect(staleReleaseFiles(root, VERSION)).toEqual([]);

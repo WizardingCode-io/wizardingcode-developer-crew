@@ -11,7 +11,7 @@ import {
   redact,
   topLevel,
 } from "../src/jev.ts";
-import { tempDir } from "./helpers.ts";
+import { tempDir, testEnv } from "./helpers.ts";
 
 const REQUEST: JevRequest = {
   state: { findings: { d1: { file: "src/a.ts", line: 3, text: "x" } } },
@@ -318,4 +318,28 @@ test("SP3-T6 AC-2: markOf on the thresholds' edges, compared on four decimals; a
       "blocker",
     ]),
   ).toEqual({ level: "normal", probability: 0.5 });
+});
+
+test("SP9-T11 AC-11 (finding 193): testEnv() hands the engine no Jev variable of the developer's environment, whatever process.env holds, so no test reaches the real service unless it sets its own", () => {
+  const names = [
+    "WIZARDINGCODE_JEV_API_KEY",
+    "WIZARDINGCODE_JEV_ENDPOINT",
+    "WIZARDINGCODE_JEV_MODEL",
+  ] as const;
+  const saved = names.map((n) => [n, process.env[n]] as const);
+  process.env.WIZARDINGCODE_JEV_API_KEY = KEY;
+  process.env.WIZARDINGCODE_JEV_ENDPOINT = "https://jev.invalid/v1";
+  process.env.WIZARDINGCODE_JEV_MODEL = "jev-test";
+  try {
+    const env = testEnv();
+    for (const n of names) expect(env[n], n).toBeUndefined();
+    expect(env.WIZARDINGCODE_HOME).toBeDefined();
+    expect(env.WIZARDINGCODE_CREW_CLAUDE).toBeDefined();
+    expect(jevConfig(env, DEFAULT_CONFIG).configured).toBe(false);
+  } finally {
+    for (const [n, v] of saved) {
+      if (v === undefined) delete process.env[n];
+      else process.env[n] = v;
+    }
+  }
 });

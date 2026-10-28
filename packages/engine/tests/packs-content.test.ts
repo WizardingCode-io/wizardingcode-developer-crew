@@ -42,10 +42,13 @@ const ROOTS = {
   laravel: join(REPO, "packs", "laravel"),
   agentic: join(REPO, "packs", "agentic-os"),
   frontend: join(REPO, "packs", "frontend"),
+  // SP9 Task 11 (2026-10-28-003) edits this list: the nuxt stack pack joins the three.
+  nuxt: join(REPO, "packs", "nuxt"),
 } as const;
 const LARAVEL = "wizardingcode-pack-laravel";
 const AGENTIC = "wizardingcode-pack-agentic-os";
 const FRONTEND = "wizardingcode-pack-frontend";
+const NUXT = "wizardingcode-pack-nuxt";
 /** The frontend template's globs (SP9 Task 10, design §8), one line per extension under app/ since the team glob reader has no braces. */
 const FRONTEND_GLOBS = [
   "pages/**",
@@ -98,6 +101,19 @@ const RULE = {
     typecheck: "vendor/bin/phpstan analyse --no-progress",
   },
   testScoped: "php artisan test {files}",
+};
+/**
+ * Design §8's rule for Nuxt (SP9 Task 11), pinned whole: a brace marker, an empty manager that keeps
+ * the core's, and `nuxi` for the type check (D-1 of 2026-10-28-003: the documentation's `nuxt` is the
+ * same bin of the `nuxt` package).
+ */
+const NUXT_RULE = {
+  stack: "nuxt",
+  extends: "node" as const,
+  markers: ["nuxt.config.{ts,js,mjs}", "package.json"],
+  packageManager: "",
+  gates: { test: "npx vitest run", lint: "npx eslint .", typecheck: "npx nuxi typecheck" },
+  testScoped: "npx vitest related {files} --run",
 };
 const GLOBS = ["agents/**", "skills/**", "prompts/**", "hooks/**", "**/*.prompt.md", ".claude/**"];
 /** Decision 7's template, pinned whole: teams alone, no always, no cap. */
@@ -576,6 +592,9 @@ test("SP6-T3 AC-4: the packs' versions follow the engine's (the pack's version, 
     "packs/agentic-os/.claude-plugin/plugin.json",
     "packs/frontend/pack.json",
     "packs/frontend/.claude-plugin/plugin.json",
+    // SP9 Task 11 (2026-10-28-003) edits this list: the nuxt pack's two files.
+    "packs/nuxt/pack.json",
+    "packs/nuxt/.claude-plugin/plugin.json",
   ])
     expect(claudeMd, rel).toContain(rel);
 });
@@ -832,4 +851,189 @@ test("SP9-T10 AC-2: the frontend pack is in the repository's lists: plugin:check
   const evalsReadme = read(join(REPO, "plugins", "core", "evals", "README.md"));
   expect(evalsReadme).toContain("`pack-frontend-seats-the-team`");
   expect(evalsReadme).toContain("`pack-frontend-absent`");
+});
+
+test("SP9-T11 AC-1: the nuxt pack is complete: design §8's rule and its one file, the shapes, Verified against, the cases and the knowledge facts; it registers clean and packRules yields its rule", () => {
+  const root = ROOTS.nuxt;
+  const m = manifestOf(root);
+  expect(m.name).toBe(NUXT);
+  expect(m.kind).toBe("stack");
+  expect(m.detectors).toEqual([NUXT_RULE]);
+  expect(m.checklists).toEqual([]);
+  expect(m.knowledge).toEqual({ nuxt: "knowledge/nuxt.md" });
+  expect(m.team).toBeNull();
+  expect(m.evals).toEqual(["pack-nuxt-refines-the-gates", "pack-nuxt-absent"]);
+  expect(m.provenance).toEqual([]);
+  const v = m.verifiedAgainst;
+  expect(Object.keys(v).sort()).toEqual([
+    "@nuxt/eslint",
+    "@nuxt/test-utils",
+    "eslint",
+    "nuxt",
+    "vitest",
+  ]);
+  // The documentation host carries the major (`nuxt.com/docs/4.x/`); the tools their exact versions.
+  expect(v.nuxt).toBe("4.x");
+  for (const key of ["vitest", "eslint", "@nuxt/eslint", "@nuxt/test-utils"])
+    expect(v[key], key).toMatch(/^\d+\.\d+\.\d+$/);
+  expect(checkPack(root, m, m.version)).toBeNull();
+  expectPluginShape(root, { name: NUXT, author: "WizardingCode", license: true, keywords: true });
+  const readme = read(join(root, "README.md"));
+  expect(readme).toContain(
+    `Verified against: Nuxt ${v.nuxt}, Vitest ${v.vitest}, ESLint ${v.eslint}, @nuxt/eslint ${v["@nuxt/eslint"]}, @nuxt/test-utils ${v["@nuxt/test-utils"]}`,
+  );
+  for (const c of m.evals) expect(readme).toContain(c);
+  // The hold, the documentation's name of the type check (D-1) and the team pack beside it.
+  for (const words of ["crew profile confirm", "npx nuxt typecheck", FRONTEND])
+    expect(readme).toContain(words);
+  expectKnowledgeShape(join(root, "knowledge", "nuxt.md"), `# Nuxt ${v.nuxt}`);
+  expectKnowledgeFactsOnly(join(root, "knowledge", "nuxt.md"), sourcesOf(root));
+  const dir = userDir();
+  register(dir, root);
+  expect(listPacks(dir).map((p) => [p.name, p.state.kind])).toEqual([[NUXT, "ok"]]);
+  expect(packRules(dir)).toEqual([{ pack: NUXT, rule: NUXT_RULE }]);
+  expect(packTemplates(dir)).toEqual([]);
+});
+
+/** A Nuxt 4 skeleton's shape (SP9 Task 11): the scripts, the dependencies, `app/`, a util and its test; the config and a lockfile when asked. */
+function nuxtTree(withConfig: boolean, lockfile?: string): string {
+  return makeRepo({
+    "package.json": JSON.stringify({
+      name: "acme/site",
+      private: true,
+      type: "module",
+      scripts: {
+        build: "nuxt build",
+        dev: "nuxt dev",
+        generate: "nuxt generate",
+        preview: "nuxt preview",
+        postinstall: "nuxt prepare",
+      },
+      dependencies: { nuxt: "^4.6.3", vue: "^3.5.44" },
+      devDependencies: { vitest: "^5.0.5", eslint: "^10.13.0" },
+    }),
+    ...(withConfig
+      ? {
+          "nuxt.config.ts":
+            "export default defineNuxtConfig({ compatibilityDate: '2026-10-28' })\n",
+        }
+      : {}),
+    ...(lockfile ? { [lockfile]: "" } : {}),
+    "app/app.vue": "<template><NuxtPage /></template>\n",
+    "app/utils/x.ts": "export const x = 1;\n",
+    "tests/x.test.ts": "import { x } from '../app/utils/x';\n",
+  });
+}
+
+test("SP9-T11 AC-2: the nuxt rule refines a Nuxt-shaped Node tree (the tag, the gates and the scoped template proposed with the pack, the core's manager kept with no lockfile and with pnpm's, the environment from the dev script, the knowledge file served) and leaves a plain Node tree to the core; the proposed commands are held at the gate run and at crew tdd", async () => {
+  const env = testEnv();
+  const root = nuxtTree(true);
+  const paths = repoPaths(root, env);
+  const copy = register(paths.userDir, ROOTS.nuxt);
+  const profile = detectProfile(root, null, packRules(paths.userDir));
+  expect(profile.targets).toHaveLength(1);
+  const t = profile.targets[0] as Target;
+  expect(t.path).toBe(".");
+  expect(t.stack).toBe("node");
+  // The rule's empty manager keeps the core's (SP9 Task 9): npm with no lockfile.
+  expect(t.packageManager).toBe("npm");
+  expect(t.tags).toEqual(["nuxt"]);
+  const proposed = (command: string) => ({ command, source: "proposed" as const, pack: NUXT });
+  expect(t.gates.test).toEqual(proposed("npx vitest run"));
+  expect(t.gates.lint).toEqual(proposed("npx eslint ."));
+  expect(t.gates.typecheck).toEqual(proposed("npx nuxi typecheck"));
+  expect(t.testScoped).toEqual(proposed("npx vitest related {files} --run"));
+  // The core's own reading of the skeleton stays: the build script, the dev script as the environment.
+  expect(t.gates.build).toEqual({ command: "npm run build", source: "detected" });
+  expect(t.gates.e2e).toBeUndefined();
+  expect(profile.environment?.start).toEqual({ command: "npm run dev", source: "proposed" });
+  const served = knowledgeFilesFor(paths.userDir, profile, ["app/utils/x.ts"], DEFAULT_POLICY);
+  expect(served.paths.map(real)).toEqual([real(join(copy, "knowledge", "nuxt.md"))]);
+  expect(served.packs).toEqual([NUXT]);
+  expect(served.skipped).toEqual([]);
+  // With pnpm's lockfile the core's manager is pnpm, and the rule keeps it.
+  const pnpm = detectProfile(nuxtTree(true, "pnpm-lock.yaml"), null, packRules(paths.userDir));
+  const tp = pnpm.targets[0] as Target;
+  expect(tp.packageManager).toBe("pnpm");
+  expect(tp.tags).toEqual(["nuxt"]);
+  expect(tp.gates.test).toEqual(proposed("npx vitest run"));
+  expect(pnpm.environment?.start).toEqual({ command: "pnpm run dev", source: "proposed" });
+  // Without nuxt.config: the core's node target, nothing of the pack.
+  const plain = nuxtTree(false);
+  const plainProfile = detectProfile(plain, null, packRules(paths.userDir));
+  expect(plainProfile.targets).toHaveLength(1);
+  const p = plainProfile.targets[0] as Target;
+  expect(p.stack).toBe("node");
+  expect(p.tags).toBeUndefined();
+  expect(p.gates.test).toBeUndefined();
+  expect(p.gates.build).toEqual({ command: "npm run build", source: "detected" });
+  expect(Object.values(p.gates).some((g) => "pack" in g)).toBe(false);
+  expect(p.testScoped).toEqual({ command: "vitest related {files} --run", source: "detected" });
+  expect(
+    knowledgeFilesFor(paths.userDir, plainProfile, ["app/utils/x.ts"], DEFAULT_POLICY),
+  ).toEqual({ paths: [], labels: [], packs: [], skipped: [] });
+  // The hold on the real pack's commands: sentinel commands keep the source and the pack.
+  const work = createWork(paths, "feature");
+  work.route = "fast";
+  const criterion = addCriterion(work, "x");
+  write(root, "app/utils/x.ts", "export const x = 2;\n");
+  for (const gate of ["test", "lint", "typecheck"] as const)
+    t.gates[gate] = proposed(`touch ${gate}-ran.txt && exit 0`);
+  t.testScoped = proposed("touch scoped-ran.txt && exit 0 # {files}");
+  const changed = ["app/utils/x.ts"];
+  for (const gate of ["test", "lint", "typecheck"] as GateName[]) {
+    const run = await runOneGate(
+      paths,
+      work,
+      profile,
+      { gate, target: "." },
+      "fp",
+      changed,
+      DEFAULT_POLICY,
+    );
+    expect(run.status, gate).toBe("unavailable");
+    expect(run.confirmed, gate).toBe(false);
+    expect(run.reason, gate).toBe(
+      `pack ${NUXT}'s command is not confirmed (crew profile confirm ${gate})`,
+    );
+    expect(existsSync(join(root, `${gate}-ran.txt`)), gate).toBe(false);
+  }
+  const scoped = await runOneGate(
+    paths,
+    work,
+    profile,
+    { gate: "test", target: "." },
+    "fp",
+    changed,
+    DEFAULT_POLICY,
+    changed,
+  );
+  expect(scoped.status).toBe("unavailable");
+  expect(existsSync(join(root, "scoped-ran.txt"))).toBe(false);
+  const tdd = await recordTdd(paths, work, emptyEvidence(), profile, criterion.id, "red");
+  expect(tdd.ok).toBe(false);
+  expect(tdd.message).toBe(
+    `pack ${NUXT}'s command is not confirmed (crew profile confirm test): pass -- <cmd> to run another`,
+  );
+  expect(existsSync(join(root, "test-ran.txt"))).toBe(false);
+});
+
+test("SP9-T11 AC-3: the nuxt pack is in the repository's lists: plugin:check validates it, CLAUDE.md names its two files, the evals README has its two cases, and the release section names two files per pack of ROOTS (the twelve release files in order are version.test.ts's and loop-docs.test.ts's pins)", () => {
+  const pkg = JSON.parse(read(join(REPO, "package.json")));
+  expect(pkg.scripts["plugin:check"]).toContain("claude plugin validate packs/nuxt --strict");
+  const claudeMd = read(join(REPO, "CLAUDE.md"));
+  expect(claudeMd).toContain("packs/nuxt/pack.json");
+  expect(claudeMd).toContain("packs/nuxt/.claude-plugin/plugin.json");
+  const evalsReadme = read(join(REPO, "plugins", "core", "evals", "README.md"));
+  expect(evalsReadme).toContain("`pack-nuxt-refines-the-gates`");
+  expect(evalsReadme).toContain("`pack-nuxt-absent`");
+  // The packs' files as CLAUDE.md's release section lists them; version.test.ts and loop-docs.test.ts pin the twelve in order.
+  const section = claudeMd.slice(
+    claudeMd.indexOf("## Releasing"),
+    claudeMd.indexOf("## Conventions"),
+  );
+  const packFiles =
+    section.match(/`packs\/[a-z-]+\/(?:pack\.json|\.claude-plugin\/plugin\.json)`/g) ?? [];
+  // Two files per pack of ROOTS: the count follows the packs, never a number edited by hand.
+  expect(packFiles).toHaveLength(Object.keys(ROOTS).length * 2);
 });

@@ -100,6 +100,11 @@ export function testEnv(): NodeJS.ProcessEnv {
   // discovery on in every fixture (SP6 Task 2, round 3): a test that wants them sets them.
   delete env.CLAUDE_PLUGIN_ROOT;
   delete env.CLAUDE_CONFIG_DIR;
+  // The developer's Jev (finding 193, SP9 Task 11): a test that wants Jev sets its own key, endpoint
+  // or model; the real service is never reached from the suite, as the real claude binary is not.
+  delete env.WIZARDINGCODE_JEV_API_KEY;
+  delete env.WIZARDINGCODE_JEV_ENDPOINT;
+  delete env.WIZARDINGCODE_JEV_MODEL;
   return env;
 }
 

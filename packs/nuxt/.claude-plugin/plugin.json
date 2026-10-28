@@ -1,0 +1,11 @@
+{
+  "name": "wizardingcode-pack-nuxt",
+  "displayName": "WizardingCode Pack: Nuxt",
+  "version": "0.15.2",
+  "description": "Knowledge and verification for Nuxt 4.x, served by the crew engine of wizardingcode-developer-crew: a detector rule that proposes the project's test, lint and type-check commands and the scoped test template, and one knowledge file for the expert. Data only: no code, no skill, no agent, no hook.",
+  "author": { "name": "WizardingCode", "url": "https://wizardingcode.io" },
+  "homepage": "https://github.com/WizardingCode-io/wizardingcode-developer-crew",
+  "repository": "https://github.com/WizardingCode-io/wizardingcode-developer-crew",
+  "license": "MIT",
+  "keywords": ["wizardingcode", "pack", "nuxt", "vue", "crew"]
+}
