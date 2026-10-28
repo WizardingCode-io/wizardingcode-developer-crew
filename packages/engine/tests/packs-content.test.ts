@@ -44,11 +44,14 @@ const ROOTS = {
   frontend: join(REPO, "packs", "frontend"),
   // SP9 Task 11 (2026-10-28-003) edits this list: the nuxt stack pack joins the three.
   nuxt: join(REPO, "packs", "nuxt"),
+  // SP9 Task 12 (2026-10-28-005) edits this list: the next stack pack joins the four.
+  next: join(REPO, "packs", "next"),
 } as const;
 const LARAVEL = "wizardingcode-pack-laravel";
 const AGENTIC = "wizardingcode-pack-agentic-os";
 const FRONTEND = "wizardingcode-pack-frontend";
 const NUXT = "wizardingcode-pack-nuxt";
+const NEXT = "wizardingcode-pack-next";
 /** The frontend template's globs (SP9 Task 10, design §8), one line per extension under app/ since the team glob reader has no braces. */
 const FRONTEND_GLOBS = [
   "pages/**",
@@ -113,6 +116,18 @@ const NUXT_RULE = {
   markers: ["nuxt.config.{ts,js,mjs}", "package.json"],
   packageManager: "",
   gates: { test: "npx vitest run", lint: "npx eslint .", typecheck: "npx nuxi typecheck" },
+  testScoped: "npx vitest related {files} --run",
+};
+/**
+ * Design §8's rule for Next (SP9 Task 12), pinned whole: two gates and no type check (`next lint`
+ * is gone in Next 16, and the core detects `tsc --noEmit` from a project's `tsconfig.json`).
+ */
+const NEXT_RULE = {
+  stack: "next",
+  extends: "node" as const,
+  markers: ["next.config.{js,mjs,ts}", "package.json"],
+  packageManager: "",
+  gates: { test: "npx vitest run", lint: "npx eslint ." },
   testScoped: "npx vitest related {files} --run",
 };
 const GLOBS = ["agents/**", "skills/**", "prompts/**", "hooks/**", "**/*.prompt.md", ".claude/**"];
@@ -1035,5 +1050,203 @@ test("SP9-T11 AC-3: the nuxt pack is in the repository's lists: plugin:check val
   const packFiles =
     section.match(/`packs\/[a-z-]+\/(?:pack\.json|\.claude-plugin\/plugin\.json)`/g) ?? [];
   // Two files per pack of ROOTS: the count follows the packs, never a number edited by hand.
+  expect(packFiles).toHaveLength(Object.keys(ROOTS).length * 2);
+});
+
+test("SP9-T12 AC-9: the next pack is complete: design §8's rule and its one file, the shapes, Verified against, the cases and the knowledge facts; it registers clean and packRules yields its rule", () => {
+  const root = ROOTS.next;
+  const m = manifestOf(root);
+  expect(m.name).toBe(NEXT);
+  expect(m.kind).toBe("stack");
+  expect(m.detectors).toEqual([NEXT_RULE]);
+  expect(m.checklists).toEqual([]);
+  expect(m.knowledge).toEqual({ next: "knowledge/next.md" });
+  expect(m.team).toBeNull();
+  expect(m.evals).toEqual(["pack-next-refines-the-gates", "pack-next-absent"]);
+  expect(m.provenance).toEqual([]);
+  const v = m.verifiedAgainst;
+  expect(Object.keys(v).sort()).toEqual([
+    "@vitejs/plugin-react",
+    "eslint",
+    "eslint-config-next",
+    "next",
+    "vitest",
+  ]);
+  // The documentation host carries no version (nextjs.org serves the current major), so the pack
+  // names the major it read; the tools their exact versions.
+  expect(v.next).toBe("16.x");
+  for (const key of ["vitest", "eslint", "eslint-config-next", "@vitejs/plugin-react"])
+    expect(v[key], key).toMatch(/^\d+\.\d+\.\d+$/);
+  expect(checkPack(root, m, m.version)).toBeNull();
+  expectPluginShape(root, { name: NEXT, author: "WizardingCode", license: true, keywords: true });
+  const readme = read(join(root, "README.md"));
+  expect(readme).toContain(
+    `Verified against: Next.js ${v.next}, Vitest ${v.vitest}, ESLint ${v.eslint}, eslint-config-next ${v["eslint-config-next"]}, @vitejs/plugin-react ${v["@vitejs/plugin-react"]}`,
+  );
+  for (const c of m.evals) expect(readme).toContain(c);
+  // The hold, the core's type check, the removed command and the team pack beside it.
+  for (const words of [
+    "crew profile confirm",
+    "the type check the core detects from `tsconfig.json` as `npx tsc --noEmit`",
+    "`next lint` is gone in Next.js 16 and `next build` runs no linter",
+    FRONTEND,
+  ])
+    expect(readme).toContain(words);
+  expectKnowledgeShape(join(root, "knowledge", "next.md"), `# Next.js ${v.next}`);
+  expectKnowledgeFactsOnly(join(root, "knowledge", "next.md"), sourcesOf(root));
+  const dir = userDir();
+  register(dir, root);
+  expect(listPacks(dir).map((p) => [p.name, p.state.kind])).toEqual([[NEXT, "ok"]]);
+  expect(packRules(dir)).toEqual([{ pack: NEXT, rule: NEXT_RULE }]);
+  expect(packTemplates(dir)).toEqual([]);
+});
+
+/** A Next 16 skeleton's shape (SP9 Task 12): the scripts, the dependencies, `app/`, a util under `lib/` and its test; the config, a lockfile and a tsconfig when asked. */
+function nextTree(withConfig: boolean, lockfile?: string, tsconfig = false): string {
+  return makeRepo({
+    "package.json": JSON.stringify({
+      name: "acme/site",
+      private: true,
+      scripts: { dev: "next dev", build: "next build", start: "next start" },
+      dependencies: { next: "^16.4.3", react: "^19.3.1", "react-dom": "^19.3.1" },
+      devDependencies: {
+        vitest: "^5.0.5",
+        eslint: "^10.13.0",
+        "eslint-config-next": "^16.4.3",
+        "@vitejs/plugin-react": "^6.1.2",
+      },
+    }),
+    ...(withConfig
+      ? { "next.config.ts": "const nextConfig = {};\nexport default nextConfig;\n" }
+      : {}),
+    ...(lockfile ? { [lockfile]: "" } : {}),
+    ...(tsconfig ? { "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true } }) } : {}),
+    "app/layout.tsx": "export default function RootLayout({ children }) { return children; }\n",
+    "app/page.tsx": "export default function Page() { return null; }\n",
+    "lib/x.ts": "export const x = 1;\n",
+    "tests/x.test.ts": "import { x } from '../lib/x';\n",
+  });
+}
+
+test("SP9-T12 AC-10: the next rule refines a Next-shaped Node tree (the tag, the two gates and the scoped template proposed with the pack, no type check without tsconfig.json and the core's detected one with it, the core's build gate and manager, the environment from the dev script, the knowledge file served) and leaves a plain Node tree to the core; the proposed commands are held at the gate run and at crew tdd", async () => {
+  const env = testEnv();
+  const root = nextTree(true);
+  const paths = repoPaths(root, env);
+  const copy = register(paths.userDir, ROOTS.next);
+  const profile = detectProfile(root, null, packRules(paths.userDir));
+  expect(profile.targets).toHaveLength(1);
+  const t = profile.targets[0] as Target;
+  expect(t.path).toBe(".");
+  expect(t.stack).toBe("node");
+  expect(t.packageManager).toBe("npm");
+  expect(t.tags).toEqual(["next"]);
+  const proposed = (command: string) => ({ command, source: "proposed" as const, pack: NEXT });
+  expect(t.gates.test).toEqual(proposed("npx vitest run"));
+  expect(t.gates.lint).toEqual(proposed("npx eslint ."));
+  expect(t.testScoped).toEqual(proposed("npx vitest related {files} --run"));
+  // The rule names no type check: none without tsconfig.json, the core's detected one with it.
+  expect(t.gates.typecheck).toBeUndefined();
+  expect(t.gates.build).toEqual({ command: "npm run build", source: "detected" });
+  expect(t.gates.e2e).toBeUndefined();
+  expect(profile.environment?.start).toEqual({ command: "npm run dev", source: "proposed" });
+  const typed = detectProfile(nextTree(true, undefined, true), null, packRules(paths.userDir));
+  const tt = typed.targets[0] as Target;
+  expect(tt.gates.typecheck).toEqual({ command: "npx tsc --noEmit", source: "detected" });
+  expect(tt.gates.test).toEqual(proposed("npx vitest run"));
+  const served = knowledgeFilesFor(paths.userDir, profile, ["lib/x.ts"], DEFAULT_POLICY);
+  expect(served.paths.map(real)).toEqual([real(join(copy, "knowledge", "next.md"))]);
+  expect(served.packs).toEqual([NEXT]);
+  expect(served.skipped).toEqual([]);
+  // With pnpm's lockfile the core's manager is pnpm, and the rule keeps it; the core's type check follows the manager.
+  const pnpm = detectProfile(
+    nextTree(true, "pnpm-lock.yaml", true),
+    null,
+    packRules(paths.userDir),
+  );
+  const tp = pnpm.targets[0] as Target;
+  expect(tp.packageManager).toBe("pnpm");
+  expect(tp.tags).toEqual(["next"]);
+  expect(tp.gates.test).toEqual(proposed("npx vitest run"));
+  expect(tp.gates.typecheck).toEqual({ command: "pnpm exec tsc --noEmit", source: "detected" });
+  expect(pnpm.environment?.start).toEqual({ command: "pnpm run dev", source: "proposed" });
+  // Without next.config: the core's node target, nothing of the pack.
+  const plain = nextTree(false);
+  const plainProfile = detectProfile(plain, null, packRules(paths.userDir));
+  expect(plainProfile.targets).toHaveLength(1);
+  const p = plainProfile.targets[0] as Target;
+  expect(p.stack).toBe("node");
+  expect(p.tags).toBeUndefined();
+  expect(p.gates.test).toBeUndefined();
+  expect(p.gates.lint).toBeUndefined();
+  expect(p.gates.build).toEqual({ command: "npm run build", source: "detected" });
+  expect(Object.values(p.gates).some((g) => "pack" in g)).toBe(false);
+  expect(p.testScoped).toEqual({ command: "vitest related {files} --run", source: "detected" });
+  expect(knowledgeFilesFor(paths.userDir, plainProfile, ["lib/x.ts"], DEFAULT_POLICY)).toEqual({
+    paths: [],
+    labels: [],
+    packs: [],
+    skipped: [],
+  });
+  // The hold on the real pack's commands: sentinel commands keep the source and the pack.
+  const work = createWork(paths, "feature");
+  work.route = "fast";
+  const criterion = addCriterion(work, "x");
+  write(root, "lib/x.ts", "export const x = 2;\n");
+  for (const gate of ["test", "lint"] as const)
+    t.gates[gate] = proposed(`touch ${gate}-ran.txt && exit 0`);
+  t.testScoped = proposed("touch scoped-ran.txt && exit 0 # {files}");
+  const changed = ["lib/x.ts"];
+  for (const gate of ["test", "lint"] as GateName[]) {
+    const run = await runOneGate(
+      paths,
+      work,
+      profile,
+      { gate, target: "." },
+      "fp",
+      changed,
+      DEFAULT_POLICY,
+    );
+    expect(run.status, gate).toBe("unavailable");
+    expect(run.confirmed, gate).toBe(false);
+    expect(run.reason, gate).toBe(
+      `pack ${NEXT}'s command is not confirmed (crew profile confirm ${gate})`,
+    );
+    expect(existsSync(join(root, `${gate}-ran.txt`)), gate).toBe(false);
+  }
+  const scoped = await runOneGate(
+    paths,
+    work,
+    profile,
+    { gate: "test", target: "." },
+    "fp",
+    changed,
+    DEFAULT_POLICY,
+    changed,
+  );
+  expect(scoped.status).toBe("unavailable");
+  expect(existsSync(join(root, "scoped-ran.txt"))).toBe(false);
+  const tdd = await recordTdd(paths, work, emptyEvidence(), profile, criterion.id, "red");
+  expect(tdd.ok).toBe(false);
+  expect(tdd.message).toBe(
+    `pack ${NEXT}'s command is not confirmed (crew profile confirm test): pass -- <cmd> to run another`,
+  );
+  expect(existsSync(join(root, "test-ran.txt"))).toBe(false);
+});
+
+test("SP9-T12 AC-11: the next pack is in the repository's lists: plugin:check validates it, CLAUDE.md names its two files, the evals README has its two cases, and the release section names two files per pack of ROOTS (the fourteen release files in order are version.test.ts's and loop-docs.test.ts's pins)", () => {
+  const pkg = JSON.parse(read(join(REPO, "package.json")));
+  expect(pkg.scripts["plugin:check"]).toContain("claude plugin validate packs/next --strict");
+  const claudeMd = read(join(REPO, "CLAUDE.md"));
+  expect(claudeMd).toContain("packs/next/pack.json");
+  expect(claudeMd).toContain("packs/next/.claude-plugin/plugin.json");
+  const evalsReadme = read(join(REPO, "plugins", "core", "evals", "README.md"));
+  expect(evalsReadme).toContain("`pack-next-refines-the-gates`");
+  expect(evalsReadme).toContain("`pack-next-absent`");
+  const section = claudeMd.slice(
+    claudeMd.indexOf("## Releasing"),
+    claudeMd.indexOf("## Conventions"),
+  );
+  const packFiles =
+    section.match(/`packs\/[a-z-]+\/(?:pack\.json|\.claude-plugin\/plugin\.json)`/g) ?? [];
   expect(packFiles).toHaveLength(Object.keys(ROOTS).length * 2);
 });

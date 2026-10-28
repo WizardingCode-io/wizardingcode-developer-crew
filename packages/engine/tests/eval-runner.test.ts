@@ -12,7 +12,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, delimiter, join } from "node:path";
+import { basename, delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   ALLOW_TOOLS,
@@ -135,6 +135,9 @@ const CASES = [
   // SP9 Task 11 (2026-10-28-003): the nuxt stack pack's pair.
   "pack-nuxt-refines-the-gates",
   "pack-nuxt-absent",
+  // SP9 Task 12 (2026-10-28-005): the next stack pack's pair.
+  "pack-next-refines-the-gates",
+  "pack-next-absent",
 ];
 /** The pack pairs' cases, by their prefix (SP9 Task 11: derived, so a new pair edits no count). */
 const PACK_CASES = CASES.filter((name) => name.startsWith("pack-"));
@@ -144,11 +147,12 @@ const PACK_BY_PREFIX: Record<string, string> = {
   "pack-agentic-os": "wizardingcode-pack-agentic-os",
   "pack-frontend": "wizardingcode-pack-frontend",
   "pack-nuxt": "wizardingcode-pack-nuxt",
+  "pack-next": "wizardingcode-pack-next",
 };
 /** The with halves of the pack pairs, the cases that register a pack (SP9 Task 11): derived once for the two tests that read them. */
 const WITH_CASES = PACK_CASES.filter((name) => !name.endsWith("-absent"));
 
-test("SP2c, SP7b-T7 AC-1, SP3-T1 AC-5, SP3-T7 AC-1, SP4-T6 AC-1: the forty-six cases each have their four parts, and the fixtures they share exist", () => {
+test("SP2c, SP7b-T7 AC-1, SP3-T1 AC-5, SP3-T7 AC-1, SP4-T6 AC-1: the forty-eight cases each have their four parts, and the fixtures they share exist", () => {
   const folders = readdirSync(EVALS)
     // benchmark.json is the benchmark set (SP6 Task 5), not a case.
     .filter((f) => !["README.md", "benchmark.json", "fixtures", "results"].includes(f))
@@ -433,6 +437,8 @@ const CORE_GATE = (gate: string, command: string, source: string) =>
   packGate("")(gate, command, source, false);
 /** The nuxt profile's gates (SP9 Task 11), the same shape with the nuxt pack's name. */
 const NUXT_GATE = packGate(PACK_BY_PREFIX["pack-nuxt"] as string);
+/** The next profile's gates (SP9 Task 12), the same shape with the next pack's name. */
+const NEXT_GATE = packGate(PACK_BY_PREFIX["pack-next"] as string);
 Object.assign(SCAFFOLD_STATE, {
   // SP6 Task 6 (AC-19): the pack pairs' state. The with cases copy the repository's pack into the
   // scaffold's .packs/ at scaffold time and register the copy under the home (the kit's sandbox reads the
@@ -582,6 +588,46 @@ Object.assign(SCAFFOLD_STATE, {
     { file: ".crew/profile.json", pattern: /^(?![\s\S]*"pack")(?![\s\S]*"nuxt")[\s\S]*$/ },
     { file: "packs/wizardingcode-pack-nuxt.json", home: true, absent: true },
   ],
+  // SP9 Task 12 (2026-10-28-005): the next pair on the Next-shaped tree: the faked packages committed
+  // under node_modules/, no tsconfig.json (D-2), the with half's profile with the two gates proposed with
+  // the pack and the tag, the absent half's with the core's detected build gate and nothing of the pack.
+  "pack-next-refines-the-gates": [
+    { file: "next.config.ts", pattern: /nextConfig/ },
+    { file: "app/layout.tsx", pattern: /<html/ },
+    { file: "app/page.tsx", pattern: /export default function/ },
+    { file: "node_modules/vitest/vitest.mjs", pattern: /slugify/ },
+    { file: "node_modules/eslint/bin/eslint.js", pattern: /process\.exit\(0\)/ },
+    { file: "node_modules/next/dist/bin/next", pattern: /build/ },
+    { file: "lib/slugify.ts", absent: true },
+    { file: "tsconfig.json", absent: true },
+    { file: "pack.json", absent: true },
+    { file: ".packs/next/pack.json", pattern: /"name":\s*"wizardingcode-pack-next"/ },
+    { file: ".gitignore", pattern: /^\.packs\/$/m },
+    { file: ".crew/profile.json", pattern: NEXT_GATE("test", "npx vitest run", "proposed", true) },
+    { file: ".crew/profile.json", pattern: NEXT_GATE("lint", "npx eslint .", "proposed", true) },
+    { file: ".crew/profile.json", pattern: /^(?![\s\S]*"typecheck":\s*\{)[\s\S]*"build":/ },
+    { file: ".crew/profile.json", pattern: /"tags":\s*\[\s*"next"\s*\]/ },
+    {
+      file: "packs/wizardingcode-pack-next.json",
+      home: true,
+      assert: (text: string, dir: string) => {
+        const registration = JSON.parse(text) as { root: string; by: string };
+        expect(realpathSync(registration.root)).toBe(realpathSync(join(dir, ".packs", "next")));
+        expect(registration.by).toBe("command");
+      },
+    },
+  ],
+  "pack-next-absent": [
+    { file: "next.config.ts", pattern: /nextConfig/ },
+    { file: "node_modules/vitest/vitest.mjs", pattern: /slugify/ },
+    { file: "lib/slugify.ts", absent: true },
+    { file: "tsconfig.json", absent: true },
+    { file: "pack.json", absent: true },
+    { file: ".crew/profile.json", pattern: /^(?![\s\S]*"test":\s*\{)[\s\S]*"build":/ },
+    { file: ".crew/profile.json", pattern: CORE_GATE("build", "npm run build", "detected") },
+    { file: ".crew/profile.json", pattern: /^(?![\s\S]*"pack")(?![\s\S]*"next")[\s\S]*$/ },
+    { file: "packs/wizardingcode-pack-next.json", home: true, absent: true },
+  ],
 });
 
 const SP8_CASES = [
@@ -683,6 +729,8 @@ test("SP7a AC-8 (Task 8), SP7b-T7 AC-1, SP3-T7 AC-1: every fixture stays inside 
     `${EVALS}fixtures/node-vue.sh`,
     // SP9 Task 11 (2026-10-28-003) edits this list: the Nuxt-shaped fixture.
     `${EVALS}fixtures/nuxt-shaped.sh`,
+    // SP9 Task 12 (2026-10-28-005) edits this list: the Next-shaped fixture.
+    `${EVALS}fixtures/next-shaped.sh`,
     `${EVALS}fixtures/commit.sh`,
     ...CONFINED.map((name) => `${EVALS}${name}/fixture.sh`),
   ];
@@ -696,6 +744,8 @@ test("SP7a AC-8 (Task 8), SP7b-T7 AC-1, SP3-T7 AC-1: every fixture stays inside 
     '. "$(dirname "$0")/../fixtures/node-vue.sh"',
     // SP9 Task 11 (2026-10-28-003) edits this list: the Nuxt-shaped fixture.
     '. "$(dirname "$0")/../fixtures/nuxt-shaped.sh"',
+    // SP9 Task 12 (2026-10-28-005) edits this list: the Next-shaped fixture.
+    '. "$(dirname "$0")/../fixtures/next-shaped.sh"',
     '. "$(dirname "$0")/../fixtures/commit.sh"',
   ];
   const forbidden = [
@@ -1431,6 +1481,86 @@ const PACK_GRADERS: Record<string, Record<string, Record<string, string>>> = {
     },
     "honest-ending": { type: "llm" },
   },
+  // SP9 Task 12 (2026-10-28-005): the next pair's graders, the nuxt pair's shape with the util under lib/
+  // (the relayed test command confirmed in the profile is the with half's proof of D-1).
+  "pack-next-refines-the-gates": {
+    "pack-gate": {
+      type: "regex",
+      target: "trace",
+      pattern:
+        "test=npx vitest run( \\[proposed\\])? \\(pack wizardingcode-pack-next\\)|pack wizardingcode-pack-next's command is not confirmed",
+      arm: "with-only",
+    },
+    "gate-ran": {
+      type: "regex",
+      target: "trace",
+      pattern: "test \\(\\.\\): pass",
+      arm: "with-only",
+    },
+    "profile-tag": {
+      type: "regex",
+      target: "{ source: file, path: .crew/profile.json }",
+      pattern: '"tags":\\s*\\[\\s*"next"\\s*\\]',
+      arm: "with-only",
+    },
+    "profile-set": {
+      type: "regex",
+      target: "{ source: file, path: .crew/profile.json }",
+      pattern:
+        '"command":\\s*"node node_modules/vitest/vitest\\.mjs run",\\s*"source":\\s*"confirmed"',
+      arm: "with-only",
+    },
+    "knowledge-path": {
+      type: "regex",
+      target: "trace",
+      pattern: "knowledge/next\\.md",
+      arm: "with-only",
+    },
+    "util-added": {
+      type: "regex",
+      target: "{ source: file, path: lib/slugify.ts }",
+      pattern: "export (function|const) slugify",
+      arm: "both",
+    },
+    "honest-ending": { type: "llm" },
+  },
+  "pack-next-absent": {
+    "no-pack-gate": {
+      type: "regex",
+      target: "trace",
+      pattern: "\\(pack wizardingcode-pack-next\\)",
+      match: "not_contains",
+      arm: "with-only",
+    },
+    "no-pack-in-profile": {
+      type: "regex",
+      target: "{ source: file, path: .crew/profile.json }",
+      pattern: '"pack":',
+      match: "not_contains",
+      arm: "with-only",
+    },
+    "no-next-tag": {
+      type: "regex",
+      target: "{ source: file, path: .crew/profile.json }",
+      pattern: '"next"',
+      match: "not_contains",
+      arm: "with-only",
+    },
+    "no-knowledge-path": {
+      type: "regex",
+      target: "trace",
+      pattern: "knowledge/next\\.md",
+      match: "not_contains",
+      arm: "with-only",
+    },
+    "util-added": {
+      type: "regex",
+      target: "{ source: file, path: lib/slugify.ts }",
+      pattern: "export (function|const) slugify",
+      arm: "both",
+    },
+    "honest-ending": { type: "llm" },
+  },
   // SP9 Task 11 (2026-10-28-003): the nuxt pair's graders (the util on both arms; the relayed test command
   // confirmed in the profile is the with half's proof of D-2).
   "pack-nuxt-refines-the-gates": {
@@ -1622,12 +1752,12 @@ test("SP6-T6 AC-12: the pack fixtures stay confined: set -eu, the variable alone
     // manifest check or a comment.
     for (const line of text.split("\n").filter((l) => /(^|[^.])packs\//.test(l)))
       expect(line.trim(), name).toMatch(
-        // SP9 Task 10 (2026-10-27-005) and Task 11 (2026-10-28-003) edit this regex: the frontend and nuxt packs' copies.
-        /^cp -R "\$REPO\/packs\/(laravel|agentic-os|frontend|nuxt)" \.packs\/(laravel|agentic-os|frontend|nuxt)$|pack\.json|^# /,
+        // SP9 Task 10 (2026-10-27-005), Task 11 (2026-10-28-003) and Task 12 (2026-10-28-005) edit this regex: the frontend, nuxt and next packs' copies.
+        /^cp -R "\$REPO\/packs\/(laravel|agentic-os|frontend|nuxt|next)" \.packs\/(laravel|agentic-os|frontend|nuxt|next)$|pack\.json|^# /,
       );
     for (const line of text.split("\n").filter((l) => l.includes("crew pack add")))
       expect(line.trim(), name).toMatch(
-        /^crew pack add \.packs\/(laravel|agentic-os|frontend|nuxt)( > \/dev\/null)?$/,
+        /^crew pack add \.packs\/(laravel|agentic-os|frontend|nuxt|next)( > \/dev\/null)?$/,
       );
     if (WITH_CASES.includes(name)) {
       expect(text, name).toMatch(/WIZARDINGCODE_CREW_REPO[^\n]*pack\.json is missing/);
@@ -2443,32 +2573,86 @@ function redAsCommitted(name: string): void {
   }
 }
 
-/** The forbidden shapes of a fixture stub (SP9 Task 11, AC-9): a process, network or worker module, an fs write, a URL. */
+/**
+ * The forbidden shapes of a fixture stub (SP9 Task 11, AC-9; SP9 Task 12, AC-16): a process,
+ * network or worker module; an fs write in its synchronous, callback or promise form, `copyFile`
+ * and `symlink` in both forms, each matched as a call so an ordinary word in a stub's printed lines
+ * does not trip it; a `fetch` call; a URL.
+ */
 const STUB_MODULES =
   /(?:from\s*|require\(\s*|import\(\s*)["'](?:node:)?(?:child_process|net|http|https|dns|worker_threads|vm)["']/;
 const STUB_WRITES =
-  /\b(?:writeFileSync|appendFileSync|mkdirSync|rmSync|unlinkSync|renameSync|createWriteStream|cpSync)\b/;
-const STUB_FILES = [
-  "node_modules/vitest/vitest.mjs",
-  "node_modules/eslint/bin/eslint.js",
-  "node_modules/nuxt/bin/nuxt.mjs",
-];
-const STUB_READS = ["app/utils/slugify.ts", "tests/slugify.test.ts"];
+  /\b(?:writeFileSync|writeFile|appendFileSync|appendFile|mkdirSync|mkdir|rmSync|rm|unlinkSync|unlink|renameSync|rename|createWriteStream|cpSync|cp|copyFileSync|copyFile|symlinkSync|symlink)\s*\(/;
+const STUB_FETCH = /\bfetch\s*\(/;
 /**
- * A readFileSync call whose argument is a string literal in single or double quotes (SP9 Task 11,
- * AC-9; the judge's defect at round 1): a template literal, a variable or a call is not one, so a
- * stub that computes a path has fewer literal calls than calls and the scan refuses it.
+ * A pack pair's faked packages (SP9 Task 12, the code-quality round 1: one shape for the nuxt and
+ * the next pairs): the scaffold's prefix, the stubs' sources the scan reads, the two files its vitest
+ * reads as literals, the util the request writes and the path a test imports it by, and the stubs
+ * run beside vitest, each with its arguments and what its output must be (`stdout` whole, `says` a
+ * part) when the row checks it.
  */
-const READ_LITERAL = /readFileSync\(\s*(["'])([^"']*)\1/g;
-const READ_CALL = /readFileSync\(/g;
+interface PairStubs {
+  prefix: string;
+  files: readonly string[];
+  reads: readonly string[];
+  util: string;
+  importPath: string;
+  others: readonly { args: readonly string[]; stdout?: string; says?: string }[];
+}
+const NUXT_PAIR: PairStubs = {
+  prefix: "nuxt",
+  files: [
+    "node_modules/vitest/vitest.mjs",
+    "node_modules/eslint/bin/eslint.js",
+    "node_modules/nuxt/bin/nuxt.mjs",
+  ],
+  reads: ["app/utils/slugify.ts", "tests/slugify.test.ts"],
+  util: "app/utils/slugify.ts",
+  importPath: "../app/utils/slugify",
+  others: [
+    { args: ["node_modules/eslint/bin/eslint.js", "."], stdout: "" },
+    { args: ["node_modules/nuxt/bin/nuxt.mjs", "typecheck"], says: "typecheck" },
+    { args: ["node_modules/nuxt/bin/nuxt.mjs", "build"] },
+  ],
+};
+const NEXT_PAIR: PairStubs = {
+  prefix: "next",
+  files: [
+    "node_modules/vitest/vitest.mjs",
+    "node_modules/eslint/bin/eslint.js",
+    "node_modules/next/dist/bin/next",
+  ],
+  reads: ["lib/slugify.ts", "tests/slugify.test.ts"],
+  util: "lib/slugify.ts",
+  importPath: "../lib/slugify",
+  others: [
+    { args: ["node_modules/eslint/bin/eslint.js", "."], stdout: "" },
+    {
+      args: ["node_modules/next/dist/bin/next", "build"],
+      stdout: "[next] build: the fixture's stub, nothing run\n",
+    },
+    { args: ["node_modules/next/dist/bin/next", "typegen"] },
+  ],
+};
+/**
+ * A readFileSync or readFile call whose argument is a string literal in single or double quotes
+ * (SP9 Task 11, AC-9; the judge's defect at round 1; SP9 Task 12, AC-16: both forms): a template
+ * literal, a variable or a call is not one, so a stub that computes a path has fewer literal calls
+ * than calls and the scan refuses it.
+ */
+const READ_LITERAL = /readFile(?:Sync)?\(\s*(["'])([^"']*)\1/g;
+const READ_CALL = /readFile(?:Sync)?\(/g;
 
-/** The case's scaffold in a fresh folder and home, and a runner of the three stubs from the scaffold. */
-function nuxtScaffold(name: string): {
+/** A pack pair's scaffold in a fresh folder and home, and a runner of its stubs from the scaffold (SP9 Task 12: one helper for the nuxt and the next pairs). */
+function packScaffold(
+  prefix: string,
+  name: string,
+): {
   dir: string;
   home: string;
   stub: (...args: string[]) => ReturnType<typeof spawnSync>;
 } {
-  const dir = mkdtempSync(join(tmpdir(), "crew-eval-nuxt-"));
+  const dir = mkdtempSync(join(tmpdir(), `crew-eval-${prefix}-`));
   const home = mkdtempSync(join(tmpdir(), "crew-evals-home-"));
   const scaffold = spawnSync("sh", [`${EVALS}${name}/fixture.sh`], {
     cwd: dir,
@@ -2484,58 +2668,63 @@ function nuxtScaffold(name: string): {
   return { dir, home, stub };
 }
 
-test("SP9-T11 AC-5: the fixture's faked vitest is red as committed in both halves of the pair, naming the slugify test, and green once the util exports slugify and the test names it; the faked eslint and nuxt typecheck exit 0", () => {
-  for (const name of ["pack-nuxt-refines-the-gates", "pack-nuxt-absent"]) {
-    const { dir, home, stub } = nuxtScaffold(name);
-    try {
-      const red = stub("node_modules/vitest/vitest.mjs", "run");
-      expect(red.status, name).toBe(1);
-      expect(`${red.stdout}${red.stderr}`, name).toMatch(
-        /FAIL\s+tests\/slugify\.test\.ts > slugify turns a title into a slug/,
-      );
-      // The util alone is not green: the test has to name it (the request asks for both).
-      writeFileSync(
-        join(dir, "app", "utils", "slugify.ts"),
-        "export function slugify(title: string): string {\n  return title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');\n}\n",
-      );
-      const half = stub("node_modules/vitest/vitest.mjs", "run");
-      expect(half.status, name).toBe(1);
-      expect(`${half.stdout}${half.stderr}`, name).toContain(
-        "tests/slugify.test.ts does not name slugify",
-      );
-      mkdirSync(join(dir, "tests"), { recursive: true });
-      writeFileSync(
-        join(dir, "tests", "slugify.test.ts"),
-        "import { describe, expect, it } from 'vitest';\nimport { slugify } from '../app/utils/slugify';\n\ndescribe('slugify', () => {\n  it('turns a title into a slug', () => {\n    expect(slugify('Hello, World!')).toBe('hello-world');\n  });\n});\n",
-      );
-      const green = stub("node_modules/vitest/vitest.mjs", "run");
-      expect(green.status, `${name}: ${green.stdout}${green.stderr}`).toBe(0);
-      expect(green.stdout, name).toContain("1 passed");
-      const related = stub(
-        "node_modules/vitest/vitest.mjs",
-        "related",
-        "app/utils/slugify.ts",
-        "--run",
-      );
-      expect(related.status, name).toBe(0);
-      expect(related.stdout, name).toContain("related: app/utils/slugify.ts");
-      const lint = stub("node_modules/eslint/bin/eslint.js", ".");
-      expect(lint.status, name).toBe(0);
-      expect(lint.stdout, name).toBe("");
-      const types = stub("node_modules/nuxt/bin/nuxt.mjs", "typecheck");
-      expect(types.status, name).toBe(0);
-      expect(types.stdout, name).toContain("typecheck");
-      const build = stub("node_modules/nuxt/bin/nuxt.mjs", "build");
-      expect(build.status, name).toBe(0);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-      rmSync(home, { recursive: true, force: true });
+/**
+ * A pair's faked vitest red as committed and green on the request (SP9 Task 11 AC-5, SP9 Task 12
+ * AC-13): red naming the slugify test, still red with the util alone, green with the test naming it,
+ * `related` run, and the other stubs exiting 0 with the output the pair says.
+ */
+function expectStubRedThenGreen(pair: PairStubs, name: string): void {
+  const { dir, home, stub } = packScaffold(pair.prefix, name);
+  try {
+    const red = stub("node_modules/vitest/vitest.mjs", "run");
+    expect(red.status, name).toBe(1);
+    expect(`${red.stdout}${red.stderr}`, name).toMatch(
+      /FAIL\s+tests\/slugify\.test\.ts > slugify turns a title into a slug/,
+    );
+    // The util alone is not green: the test has to name it (the request asks for both).
+    mkdirSync(join(dir, dirname(pair.util)), { recursive: true });
+    writeFileSync(
+      join(dir, pair.util),
+      "export function slugify(title: string): string {\n  return title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');\n}\n",
+    );
+    const half = stub("node_modules/vitest/vitest.mjs", "run");
+    expect(half.status, name).toBe(1);
+    expect(`${half.stdout}${half.stderr}`, name).toContain(
+      "tests/slugify.test.ts does not name slugify",
+    );
+    mkdirSync(join(dir, "tests"), { recursive: true });
+    writeFileSync(
+      join(dir, "tests", "slugify.test.ts"),
+      `import { describe, expect, it } from 'vitest';\nimport { slugify } from '${pair.importPath}';\n\ndescribe('slugify', () => {\n  it('turns a title into a slug', () => {\n    expect(slugify('Hello, World!')).toBe('hello-world');\n  });\n});\n`,
+    );
+    const green = stub("node_modules/vitest/vitest.mjs", "run");
+    expect(green.status, `${name}: ${green.stdout}${green.stderr}`).toBe(0);
+    expect(green.stdout, name).toContain("1 passed");
+    const related = stub("node_modules/vitest/vitest.mjs", "related", pair.util, "--run");
+    expect(related.status, name).toBe(0);
+    expect(related.stdout, name).toContain(`related: ${pair.util}`);
+    for (const other of pair.others) {
+      const run = stub(...other.args);
+      const label = `${name}: ${other.args.join(" ")}`;
+      expect(run.status, label).toBe(0);
+      if (other.stdout !== undefined) expect(run.stdout, label).toBe(other.stdout);
+      if (other.says !== undefined) expect(run.stdout, label).toContain(other.says);
     }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
   }
-});
+}
 
-test("SP9-T11 AC-9: the three faked packages are inert: no process, network or worker module, no fs write, no URL, the vitest stub's reads the two named files alone as literals, and a red run then a green one leave the scaffold's tree unchanged but for the util and the test", () => {
-  const { dir, home, stub } = nuxtScaffold("pack-nuxt-absent");
+/**
+ * A pair's faked packages inert (SP9 Task 11 AC-9, SP9 Task 12 AC-16; the security lead's rounds of
+ * both items): no process, network or worker module, no fs write in any form, no fetch, no URL, the
+ * vitest stub's reads the two named files alone as literals in either form (each refused shape a
+ * test string the regexes must match), and a red run then a green one leaving the scaffold's tree
+ * unchanged but for the util and the test.
+ */
+function expectInertStubs(pair: PairStubs, name: string): void {
+  const { dir, home, stub } = packScaffold(pair.prefix, name);
   try {
     const reads: string[] = [];
     // The three forms a module enters by, each refused on a string of its own.
@@ -2545,24 +2734,54 @@ test("SP9-T11 AC-9: the three faked packages are inert: no process, network or w
       'const { exec } = await import("node:child_process");',
     ])
       expect(shape, shape).toMatch(STUB_MODULES);
-    for (const rel of STUB_FILES) {
+    // The writes in every form, each refused on a string of its own; a bare word that is not a call is not.
+    for (const shape of [
+      'writeFileSync("a", "b")',
+      'await writeFile("a", "b")',
+      "fs.promises.appendFile(p, d)",
+      "await mkdir(dir, { recursive: true })",
+      "rm(target)",
+      "await unlink(p)",
+      "rename(a, b)",
+      "createWriteStream(p)",
+      "await cp(a, b)",
+      "copyFile(a, b)",
+      "copyFileSync(a, b)",
+      "symlink(a, b)",
+      "symlinkSync(a, b)",
+    ])
+      expect(shape, shape).toMatch(STUB_WRITES);
+    for (const shape of ["the rm word in a line", "a cp of the file", "rename it later"])
+      expect(shape, shape).not.toMatch(STUB_WRITES);
+    expect("await fetch(url)").toMatch(STUB_FETCH);
+    expect("const res = fetch (target)").toMatch(STUB_FETCH);
+    for (const rel of pair.files) {
       const src = readFileSync(join(dir, rel), "utf8");
       expect(src, rel).not.toMatch(STUB_MODULES);
       expect(src, rel).not.toMatch(STUB_WRITES);
+      expect(src, rel).not.toMatch(STUB_FETCH);
       expect(src, rel).not.toMatch(/https?:\/\//);
-      // Every readFileSync call takes a string literal (the QA lead's advisory: a computed path would slip a scan).
+      // Every read, in either form, takes a string literal (the QA lead's advisory at Task 11: a computed path would slip a scan).
       const calls = src.match(READ_CALL) ?? [];
       const literals = [...src.matchAll(READ_LITERAL)].map((m) => m[2] as string);
       expect(literals, rel).toHaveLength(calls.length);
       reads.push(...literals);
     }
-    expect([...new Set(reads)].sort()).toEqual([...STUB_READS].sort());
-    // The same two regexes refuse a computed path: one call, no literal, so the counts differ.
-    const computed = 'readFileSync(`${base}/x.ts`, "utf8")';
-    expect(computed.match(READ_CALL)).toHaveLength(1);
-    expect([...computed.matchAll(READ_LITERAL)]).toHaveLength(0);
-    for (const shape of ['readFileSync(path, "utf8")', 'readFileSync(join(a, "b"), "utf8")'])
-      expect([...shape.matchAll(READ_LITERAL)], shape).toHaveLength(0);
+    expect([...new Set(reads)].sort()).toEqual([...pair.reads].sort());
+    // The same two regexes refuse a computed path in either form: one call, no literal, so the counts differ.
+    for (const computed of [
+      'readFileSync(`${base}/x.ts`, "utf8")',
+      'await readFile(`${base}/x.ts`, "utf8")',
+      'readFile(join(a, "b"), "utf8")',
+      'readFileSync(path, "utf8")',
+      'readFileSync(join(a, "b"), "utf8")',
+    ]) {
+      expect(computed.match(READ_CALL), computed).toHaveLength(1);
+      expect([...computed.matchAll(READ_LITERAL)], computed).toHaveLength(0);
+    }
+    expect(
+      [...'readFile("lib/slugify.ts", "utf8")'.matchAll(READ_LITERAL)].map((m) => m[2]),
+    ).toEqual(["lib/slugify.ts"]);
     // The scaffold's own state is the baseline (the fixture's crew detect leaves .crew/ untracked); the stubs add nothing to it.
     const status = () =>
       spawnSync("git", ["status", "--porcelain"], { cwd: dir, encoding: "utf8" })
@@ -2572,27 +2791,43 @@ test("SP9-T11 AC-9: the three faked packages are inert: no process, network or w
         .sort();
     const baseline = status();
     expect(stub("node_modules/vitest/vitest.mjs", "run").status).toBe(1);
-    expect(stub("node_modules/eslint/bin/eslint.js", ".").status).toBe(0);
-    expect(stub("node_modules/nuxt/bin/nuxt.mjs", "typecheck").status).toBe(0);
+    for (const other of pair.others)
+      expect(stub(...other.args).status, other.args.join(" ")).toBe(0);
     expect(status()).toEqual(baseline);
+    mkdirSync(join(dir, dirname(pair.util)), { recursive: true });
     mkdirSync(join(dir, "tests"), { recursive: true });
-    writeFileSync(
-      join(dir, "app", "utils", "slugify.ts"),
-      "export const slugify = (t: string) => t;\n",
-    );
+    writeFileSync(join(dir, pair.util), "export const slugify = (t: string) => t;\n");
     writeFileSync(
       join(dir, "tests", "slugify.test.ts"),
-      "import { slugify } from '../app/utils/slugify';\n",
+      `import { slugify } from '${pair.importPath}';\n`,
     );
     expect(stub("node_modules/vitest/vitest.mjs", "run").status).toBe(0);
     expect(status().filter((line) => !baseline.includes(line))).toEqual([
-      "?? app/utils/",
+      `?? ${dirname(pair.util)}/`,
       "?? tests/",
     ]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
     rmSync(home, { recursive: true, force: true });
   }
+}
+
+test("SP9-T11 AC-5: the fixture's faked vitest is red as committed in both halves of the pair, naming the slugify test, and green once the util exports slugify and the test names it; the faked eslint and nuxt typecheck exit 0", () => {
+  for (const name of ["pack-nuxt-refines-the-gates", "pack-nuxt-absent"])
+    expectStubRedThenGreen(NUXT_PAIR, name);
+});
+
+test("SP9-T11 AC-9: the three faked packages are inert: no process, network or worker module, no fs write in any form, no fetch, no URL, the vitest stub's reads the two named files alone as literals, and a red run then a green one leave the scaffold's tree unchanged but for the util and the test", () => {
+  expectInertStubs(NUXT_PAIR, "pack-nuxt-absent");
+});
+
+test("SP9-T12 AC-13: the next fixture's faked vitest is red as committed in both halves of the pair, naming the slugify test, and green once the util under lib/ exports slugify and the test names it; the faked eslint and next build exit 0 with the stub's one line", () => {
+  for (const name of ["pack-next-refines-the-gates", "pack-next-absent"])
+    expectStubRedThenGreen(NEXT_PAIR, name);
+});
+
+test("SP9-T12 AC-16: the next fixture's three faked packages are inert: no process, network or worker module, no fs write in any form, no fetch, no URL, the vitest stub's reads the two named files alone as literals in either form, and a red run then a green one leave the scaffold's tree unchanged but for the util and the test", () => {
+  expectInertStubs(NEXT_PAIR, "pack-next-absent");
 });
 
 test("2026-10-28-004 AC-10: the gate matchers read their pack names from PACK_BY_PREFIX and CORE_GATE takes the gate, the command and the source alone", () => {

@@ -1,0 +1,6 @@
+# evals/pack-next-absent/case.yaml
+schema_version: "1.1"
+name: pack-next-absent
+tags: [packs]
+context:
+  scaffold_script: fixture.sh

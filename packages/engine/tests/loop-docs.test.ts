@@ -30,6 +30,9 @@ test("2026-10-25-005 AC-11: ADR 0015 records the decisions and supersedes ADR 00
     "packs/frontend/pack.json",
     "packs/laravel/.claude-plugin/plugin.json",
     "packs/laravel/pack.json",
+    // SP9 Task 12 (2026-10-28-005) edits this list: the next pack's two files, before nuxt's in order.
+    "packs/next/.claude-plugin/plugin.json",
+    "packs/next/pack.json",
     // SP9 Task 11 (2026-10-28-003) edits this list: the nuxt pack's two files.
     "packs/nuxt/.claude-plugin/plugin.json",
     "packs/nuxt/pack.json",
