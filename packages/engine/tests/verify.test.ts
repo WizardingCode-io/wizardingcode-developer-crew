@@ -4,15 +4,20 @@ import { join } from "node:path";
 import { DEFAULT_CONFIG } from "../src/config.ts";
 import { jevConfig } from "../src/jev.ts";
 import { hunkLines } from "../src/judgement.ts";
-import { DEFAULT_POLICY } from "../src/policy.ts";
+import { DEFAULT_POLICY, disputedDefault, disputedDefaultText, lowerBound } from "../src/policy.ts";
 import type { JudgementRecord, Policy } from "../src/types.ts";
 import {
+  answerArea,
   applyDefectMarks,
   CAPS,
   clipAt,
+  decisionMarkText,
   RUBRIC_QUESTIONS,
+  verifyAnswer,
+  verifyDecision,
   verifyDefects,
   verifyFacts,
+  verifyRoute,
   verifyTriage,
   verifyValidator,
 } from "../src/verify.ts";
@@ -401,6 +406,7 @@ test("SP8-T1 AC-5 (finding 90): clipAt keeps a text within its cap with an ellip
     conclave: 16 * 1024,
     request: 8 * 1024,
     priorities: 8 * 1024,
+    decision: 2 * 1024,
   });
   const bodies: { state: { conclave: string } }[] = [];
   const spy = jevConfig(
@@ -425,4 +431,306 @@ test("SP8-T1 AC-5 (finding 90): clipAt keeps a text within its cap with an ellip
   );
   expect(out.status).toBe("verified");
   expect(bodies[0]?.state.conclave.length).toBe(16 * 1024 + 1);
+});
+
+/** A keyed config over a fake fetch, for the rows that read the request body (2026-10-28-004). */
+function keyed(): ReturnType<typeof jevConfig> {
+  return jevConfig({ WIZARDINGCODE_JEV_API_KEY: "sk-test" } as NodeJS.ProcessEnv, DEFAULT_CONFIG);
+}
+function capturing(answers: unknown): { fetch: typeof fetch; bodies: string[] } {
+  const bodies: string[] = [];
+  const fetchFn = (async (_url: string | URL | Request, init?: RequestInit) => {
+    bodies.push(String(init?.body ?? ""));
+    return new Response(JSON.stringify({ answers, model: "fake" }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  }) as typeof fetch;
+  return { fetch: fetchFn, bodies };
+}
+const ROUTE_ANSWERS = {
+  work_type: {
+    type: "choice",
+    choice: "feature",
+    probabilities: { feature: 0.9, fix: 0.1 },
+    confidence: 0.9,
+  },
+  is_vague: { type: "noul", noul: 0.1 },
+  scope: {
+    type: "score",
+    score: 1.2,
+    legend: { "0": "one spot", "1": "one module", "2": "several modules", "3": "the whole system" },
+    probabilities: { "0": 0.1, "1": 0.7, "2": 0.2, "3": 0 },
+    confidence: 0.8,
+  },
+  touches_auth: { type: "noul", noul: 0.9 },
+  touches_payments: { type: "noul", noul: 0.05 },
+  touches_personal_data: { type: "noul", noul: 0.1 },
+  touches_data_migration: { type: "noul", noul: 0.0 },
+  touches_infra: { type: "noul", noul: 0.1 },
+  touches_public_api: { type: "noul", noul: 0.2 },
+};
+
+test("2026-10-28-004 AC-1: verifyRoute asks the nine typed questions over the request's text in one request, returns every answer typed with one record each, says why a judgement is missing, and redacts a token-shaped string before it leaves", async () => {
+  const typed = await verifyRoute(canned(ROUTE_ANSWERS), { text: "Add a login" });
+  expect(typed.judgement).toEqual({
+    work_type: { choice: "feature", confidence: 0.9 },
+    is_vague: 0.1,
+    scope: { score: 1.2, confidence: 0.8 },
+    touches_auth: 0.9,
+    touches_payments: 0.05,
+    touches_personal_data: 0.1,
+    touches_data_migration: 0,
+    touches_infra: 0.1,
+    touches_public_api: 0.2,
+  });
+  expect(typed.records.map((r) => [r.what, r.ref, r.confidence, r.model])).toEqual([
+    ["route", "work_type", 0.9, "file"],
+    ["route", "is_vague", 0.1, "file"],
+    ["route", "scope", 0.8, "file"],
+    ["route", "touches_auth", 0.9, "file"],
+    ["route", "touches_payments", 0.05, "file"],
+    ["route", "touches_personal_data", 0.1, "file"],
+    ["route", "touches_data_migration", 0, "file"],
+    ["route", "touches_infra", 0.1, "file"],
+    ["route", "touches_public_api", 0.2, "file"],
+  ]);
+  // The questions are classify.ts's own: the choice names the seven types, the score the four levels.
+  expect(typed.records[0]?.question).toBe("What kind of work does this request ask for?");
+  expect(typed.records[2]?.question).toBe("How much of the codebase does this change touch?");
+  // Jev down: the reason, no record, no judgement.
+  const off = await verifyRoute(down, { text: "Add a login" });
+  expect(off.judgement).toBeNull();
+  expect(off.reason).toMatch(/^jev unavailable: /);
+  expect(off.records).toEqual([]);
+  // A malformed answer (the score missing) is unavailable with the records that were read.
+  const { scope: _dropped, ...withoutScope } = ROUTE_ANSWERS;
+  const half = await verifyRoute(canned(withoutScope), { text: "x" });
+  expect(half.judgement).toBeNull();
+  expect(half.reason).toBe("jev unavailable: no canned answer for scope");
+  // What leaves the machine: the request's text after the secrets scanner, clipped after the scan.
+  const { fetch: fetchFn, bodies } = capturing(ROUTE_ANSWERS);
+  const token = `ghp_${"A".repeat(36)}`;
+  await verifyRoute(keyed(), { text: `Rotate the token ${token} today` }, { fetch: fetchFn });
+  expect(bodies).toHaveLength(1);
+  expect(bodies[0]).not.toContain(token);
+  expect(JSON.parse(bodies[0] as string).state).toEqual({
+    request: { text: "[redacted: GitHub token]" },
+  });
+  const { fetch: plainFetch, bodies: plain } = capturing(ROUTE_ANSWERS);
+  await verifyRoute(keyed(), { text: "x".repeat(CAPS.request + 10) }, { fetch: plainFetch });
+  expect(JSON.parse(plain[0] as string).state.request.text).toHaveLength(CAPS.request + 1);
+  expect(Object.keys(JSON.parse(bodies[0] as string).questions)).toEqual([
+    "work_type",
+    "is_vague",
+    "scope",
+    "touches_auth",
+    "touches_payments",
+    "touches_personal_data",
+    "touches_data_migration",
+    "touches_infra",
+    "touches_public_api",
+  ]);
+});
+
+test("2026-10-28-004 AC-4 (the pure part): verifyDecision asks whether the default is the conservative answer and whether the question is the user's, the first only with a default, records each, and redacts what it sends", async () => {
+  const input = {
+    title: "Checkout",
+    id: "D-1",
+    question: "Erasure or deactivation?",
+    default: "deactivation",
+  };
+  const marked = await verifyDecision(
+    canned({
+      default_is_conservative: { type: "noul", noul: 0.91 },
+      users_call: { type: "noul", noul: 0.84 },
+    }),
+    input,
+  );
+  expect(marked.marks).toEqual({ conservative: 0.91, usersCall: 0.84, model: "file" });
+  expect(marked.records.map((r) => [r.what, r.ref, r.confidence])).toEqual([
+    ["decision", "D-1 default_is_conservative", 0.91],
+    ["decision", "D-1 users_call", 0.84],
+  ]);
+  // Without a default the conservative question is not asked: a canned file without it answers.
+  const bare = await verifyDecision(canned({ users_call: { type: "noul", noul: 0.4 } }), {
+    title: "Checkout",
+    id: "D-2",
+    question: "Which?",
+  });
+  expect(bare.marks).toEqual({ conservative: null, usersCall: 0.4, model: "file" });
+  expect(bare.records.map((r) => r.ref)).toEqual(["D-2 users_call"]);
+  const off = await verifyDecision(down, input);
+  expect(off.marks).toBeNull();
+  expect(off.reason).toMatch(/^jev unavailable: /);
+  // An answer that is not a noul is malformed, as the route's and the answer's asks say (round 2).
+  const { fetch: oddFetch } = capturing({
+    default_is_conservative: {
+      type: "choice",
+      choice: "x",
+      probabilities: { x: 1 },
+      confidence: 1,
+    },
+    users_call: { type: "noul", noul: 0.5 },
+  });
+  const odd = await verifyDecision(keyed(), input, { fetch: oddFetch });
+  expect(odd.marks).toBeNull();
+  expect(odd.reason).toBe("jev unavailable: malformed answer");
+  expect(odd.records).toEqual([]);
+  const { fetch: fetchFn, bodies } = capturing({
+    default_is_conservative: { type: "noul", noul: 0.5 },
+    users_call: { type: "noul", noul: 0.5 },
+  });
+  const token = `ghp_${"B".repeat(36)}`;
+  await verifyDecision(
+    keyed(),
+    { ...input, question: `Keep ${token}?`, default: `rotate ${token}` },
+    { fetch: fetchFn },
+  );
+  expect(bodies[0]).not.toContain(token);
+  expect(JSON.parse(bodies[0] as string).state).toEqual({
+    request: { title: "Checkout" },
+    decision: { question: "[redacted: GitHub token]", default: "[redacted: GitHub token]" },
+  });
+  // A long question or default leaves cut at the decision cap, after the scan (the security lead's round 2).
+  const { fetch: longFetch, bodies: long } = capturing({
+    default_is_conservative: { type: "noul", noul: 0.5 },
+    users_call: { type: "noul", noul: 0.5 },
+  });
+  await verifyDecision(
+    keyed(),
+    { ...input, question: "q".repeat(CAPS.decision + 10), default: "d".repeat(CAPS.decision + 10) },
+    { fetch: longFetch },
+  );
+  const sent = JSON.parse(long[0] as string).state.decision;
+  expect(sent.question).toHaveLength(CAPS.decision + 1);
+  expect(sent.default).toHaveLength(CAPS.decision + 1);
+  // The title too (the security lead's delivery return): scanned, then cut at the same cap.
+  const { fetch: titleFetch, bodies: titled } = capturing({
+    default_is_conservative: { type: "noul", noul: 0.5 },
+    users_call: { type: "noul", noul: 0.5 },
+  });
+  await verifyDecision(
+    keyed(),
+    { ...input, title: "t".repeat(CAPS.decision + 10) },
+    { fetch: titleFetch },
+  );
+  expect(JSON.parse(titled[0] as string).state.request.title).toHaveLength(CAPS.decision + 1);
+});
+
+test("2026-10-28-004 AC-5 (the pure part): verifyAnswer asks whether the answer changes a risk area and which, records both, and redacts the answer", async () => {
+  const input = {
+    title: "Checkout",
+    id: "D-1",
+    question: "Who may delete an account?",
+    default: "the owner alone",
+    answer: "any admin, without a confirmation",
+    riskAreas: ["payments"] as const,
+  };
+  const marked = await verifyAnswer(
+    canned({
+      changes_risk: { type: "noul", noul: 0.9 },
+      area: {
+        type: "choice",
+        choice: "auth",
+        probabilities: { auth: 0.9, none: 0.1 },
+        confidence: 0.9,
+      },
+    }),
+    input,
+  );
+  expect(marked.marks).toEqual({
+    changesRisk: 0.9,
+    area: "auth",
+    areaConfidence: 0.9,
+    model: "file",
+  });
+  expect(marked.records.map((r) => [r.what, r.ref, r.confidence])).toEqual([
+    ["decision", "D-1 changes_risk", 0.9],
+    ["decision", "D-1 area", 0.9],
+  ]);
+  expect(marked.records[1]?.question).toBe(
+    "Which risk area does `decision.answer` change, if any?",
+  );
+  const off = await verifyAnswer(down, input);
+  expect(off.marks).toBeNull();
+  const { fetch: fetchFn, bodies } = capturing({
+    changes_risk: { type: "noul", noul: 0.1 },
+    area: { type: "choice", choice: "none", probabilities: { none: 1 }, confidence: 1 },
+  });
+  const token = `ghp_${"C".repeat(36)}`;
+  await verifyAnswer(keyed(), { ...input, answer: `use ${token}` }, { fetch: fetchFn });
+  expect(bodies[0]).not.toContain(token);
+  const { fetch: longFetch, bodies: long } = capturing({
+    changes_risk: { type: "noul", noul: 0.1 },
+    area: { type: "choice", choice: "none", probabilities: { none: 1 }, confidence: 1 },
+  });
+  await verifyAnswer(
+    keyed(),
+    { ...input, answer: "a".repeat(CAPS.decision + 10) },
+    { fetch: longFetch },
+  );
+  expect(JSON.parse(long[0] as string).state.decision.answer).toHaveLength(CAPS.decision + 1);
+  const { fetch: titleFetch, bodies: titled } = capturing({
+    changes_risk: { type: "noul", noul: 0.1 },
+    area: { type: "choice", choice: "none", probabilities: { none: 1 }, confidence: 1 },
+  });
+  await verifyAnswer(
+    keyed(),
+    { ...input, title: "t".repeat(CAPS.decision + 10) },
+    { fetch: titleFetch },
+  );
+  expect(JSON.parse(titled[0] as string).state.request.title).toHaveLength(CAPS.decision + 1);
+  const state = JSON.parse(bodies[0] as string).state;
+  expect(state.decision.answer).toBe("[redacted: GitHub token]");
+  expect(state.risk_areas).toEqual(["payments"]);
+  expect(Object.keys(JSON.parse(bodies[0] as string).questions.area.criteria)).toEqual([
+    "auth",
+    "payments",
+    "personal-data",
+    "data-migration",
+    "infra",
+    "public-api",
+    "none",
+  ]);
+});
+
+test("2026-10-28-004 round 1 (code-quality): one place for the marks' rules: the lower bound, the disputed default, the answer's area with both marks at the threshold and a named area, and the one line the command and the report print", () => {
+  const policy = DEFAULT_POLICY;
+  expect(lowerBound(policy)).toBe(0.2);
+  expect(disputedDefault({ conservative: 0.2, model: "file" }, policy)).toBe(true);
+  expect(disputedDefault({ conservative: 0.21, model: "file" }, policy)).toBe(false);
+  expect(disputedDefault(undefined, policy)).toBe(false);
+  expect(disputedDefaultText(0.1, "the default of D-1")).toBe(
+    "disputed by jev: the default of D-1 is not the conservative answer (conservative 0.10)",
+  );
+  expect(decisionMarkText(undefined, policy)).toBe("");
+  expect(decisionMarkText({ model: "file" }, policy)).toBe("");
+  expect(decisionMarkText({ conservative: 0.91, usersCall: 0.84, model: "file" }, policy)).toBe(
+    "jev: default conservative 0.91; the user's call 0.84",
+  );
+  expect(decisionMarkText({ conservative: 0.1, usersCall: 0.84, model: "file" }, policy)).toBe(
+    "disputed by jev: the default is not the conservative answer (conservative 0.10); the user's call 0.84",
+  );
+  expect(
+    decisionMarkText(
+      { usersCall: 0.84, changesRisk: 0.9, area: "auth", areaConfidence: 0.9, model: "file" },
+      policy,
+    ),
+  ).toBe("jev: the user's call 0.84; the answer changes auth (0.90)");
+  expect(
+    decisionMarkText(
+      { changesRisk: 0.9, area: "none", areaConfidence: 0.95, model: "file" },
+      policy,
+    ),
+  ).toBe("jev: the answer changes no risk area (0.90)");
+  expect(answerArea({ changesRisk: 0.9, area: "auth", areaConfidence: 0.9 }, policy)).toBe("auth");
+  expect(answerArea({ changesRisk: 0.8, area: "public-api", areaConfidence: 0.8 }, policy)).toBe(
+    "public-api",
+  );
+  expect(answerArea({ changesRisk: 0.5, area: "auth", areaConfidence: 0.9 }, policy)).toBeNull();
+  expect(answerArea({ changesRisk: 0.9, area: "auth", areaConfidence: 0.79 }, policy)).toBeNull();
+  expect(answerArea({ changesRisk: 0.9, area: "none", areaConfidence: 1 }, policy)).toBeNull();
+  expect(answerArea({ changesRisk: 0.9, area: "secrets", areaConfidence: 1 }, policy)).toBeNull();
+  expect(answerArea(undefined, policy)).toBeNull();
 });

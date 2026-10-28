@@ -7,11 +7,14 @@ import {
   kindOf,
   PRIORITY_LEVELS,
   personalDataTerms,
+  type RouteJudgement,
   riskAreasForPaths,
+  tightenAnswers,
   validateAnswers,
 } from "../src/classify.ts";
 import { isTestPath } from "../src/paths-kind.ts";
 import { DEFAULT_POLICY } from "../src/policy.ts";
+import type { Policy } from "../src/types.ts";
 
 const calm: Answers = {
   work_type: "fix",
@@ -384,4 +387,129 @@ test("F180: an added line whose text is also a removed line of the same file (a 
     patchOf("src/a.ts", ["const total = 1"]).replace("-const gone = password;", "-user.email = x") +
     patchOf("src/b.ts", ["user.email = x"]);
   expect(personalDataTerms(between)).toEqual([{ term: "email", file: "src/b.ts" }]);
+});
+
+/** The session's answers of a clear feature in one module, nothing risky. */
+const SESSION: Answers = {
+  work_type: "feature",
+  is_vague: 0.1,
+  scope: 1,
+  touches_auth: 0.1,
+  touches_payments: 0,
+  touches_personal_data: 0,
+  touches_data_migration: 0,
+  touches_infra: 0,
+  touches_public_api: 0.2,
+};
+/** Jev agreeing with the session everywhere: nothing tightens. */
+const AGREES: RouteJudgement = {
+  work_type: { choice: "feature", confidence: 0.9 },
+  is_vague: 0.1,
+  scope: { score: 1.1, confidence: 0.9 },
+  touches_auth: 0.1,
+  touches_payments: 0.05,
+  touches_personal_data: 0.1,
+  touches_data_migration: 0.0,
+  touches_infra: 0.1,
+  touches_public_api: 0.2,
+};
+
+test("2026-10-28-004 AC-2: tightenAnswers applies the four tightening rules and nothing else, each change carrying its reason with the session's value", () => {
+  const policy = DEFAULT_POLICY;
+  const same = tightenAnswers(SESSION, AGREES, policy);
+  expect(same).toEqual({ answers: SESSION, changes: [] });
+  // A risk noul at or above the threshold where the session's is under 0.3: the answer takes Jev's value.
+  const auth = tightenAnswers(SESSION, { ...AGREES, touches_auth: 0.9 }, policy);
+  expect(auth.answers.touches_auth).toBe(0.9);
+  expect(auth.changes).toEqual(["touches_auth 0.90 (the session's 0.10)"]);
+  expect(computeRoute(auth.answers, [], policy).riskAreas).toEqual(["auth"]);
+  // Exactly the threshold tightens; just under it does not; a session already at or above 0.3 is left as it is.
+  expect(tightenAnswers(SESSION, { ...AGREES, touches_auth: 0.8 }, policy).changes).toEqual([
+    "touches_auth 0.80 (the session's 0.10)",
+  ]);
+  expect(tightenAnswers(SESSION, { ...AGREES, touches_auth: 0.79 }, policy).changes).toEqual([]);
+  expect(
+    tightenAnswers({ ...SESSION, touches_auth: 0.3 }, { ...AGREES, touches_auth: 0.95 }, policy)
+      .changes,
+  ).toEqual([]);
+  // The scope: the rounded score above the session's with the score's confidence at or above the threshold.
+  const wider = tightenAnswers(
+    SESSION,
+    { ...AGREES, scope: { score: 2.4, confidence: 0.85 } },
+    policy,
+  );
+  expect(wider.answers.scope).toBe(2);
+  expect(wider.changes).toEqual(["scope 2 (the session's 1)"]);
+  expect(
+    tightenAnswers(SESSION, { ...AGREES, scope: { score: 2.6, confidence: 0.5 } }, policy).changes,
+  ).toEqual([]);
+  expect(
+    tightenAnswers(SESSION, { ...AGREES, scope: { score: 0.2, confidence: 0.99 } }, policy).changes,
+  ).toEqual([]);
+  // A score past the last level is held at it.
+  expect(
+    tightenAnswers(SESSION, { ...AGREES, scope: { score: 3.6, confidence: 0.9 } }, policy).answers
+      .scope,
+  ).toBe(3);
+  // Vagueness at or above the threshold where the session's is under 0.5.
+  const vague = tightenAnswers(SESSION, { ...AGREES, is_vague: 0.85 }, policy);
+  expect(vague.answers.is_vague).toBe(0.85);
+  expect(vague.changes).toEqual(["is_vague 0.85 (the session's 0.10)"]);
+  expect(
+    tightenAnswers({ ...SESSION, is_vague: 0.5 }, { ...AGREES, is_vague: 0.95 }, policy).changes,
+  ).toEqual([]);
+  // A fix with confidence at or above the threshold where the session said feature, refactor or chore.
+  for (const type of ["feature", "refactor", "chore"] as const) {
+    const fix = tightenAnswers(
+      { ...SESSION, work_type: type },
+      { ...AGREES, work_type: { choice: "fix", confidence: 0.9 } },
+      policy,
+    );
+    expect(fix.answers.work_type).toBe("fix");
+    expect(fix.changes).toEqual([`work_type fix (the session's ${type})`]);
+  }
+  expect(
+    tightenAnswers(SESSION, { ...AGREES, work_type: { choice: "fix", confidence: 0.6 } }, policy)
+      .changes,
+  ).toEqual([]);
+  // A loosening or another type changes nothing: a feature over a fix, a question, an audit, a new product.
+  for (const choice of ["feature", "question", "audit", "new-product", "refactor"]) {
+    const other = tightenAnswers(
+      { ...SESSION, work_type: "fix" },
+      { ...AGREES, work_type: { choice, confidence: 0.99 } },
+      policy,
+    );
+    expect(other.answers.work_type, choice).toBe("fix");
+    expect(other.changes, choice).toEqual([]);
+  }
+  expect(
+    tightenAnswers(
+      SESSION,
+      { ...AGREES, work_type: { choice: "new-product", confidence: 0.99 } },
+      policy,
+    ).changes,
+  ).toEqual([]);
+  // Several rules at once: each change in the order of the rules.
+  const all = tightenAnswers(
+    SESSION,
+    {
+      ...AGREES,
+      touches_payments: 0.9,
+      scope: { score: 3, confidence: 0.9 },
+      is_vague: 0.9,
+      work_type: { choice: "fix", confidence: 0.9 },
+    },
+    policy,
+  );
+  expect(all.changes).toEqual([
+    "touches_payments 0.90 (the session's 0.00)",
+    "scope 3 (the session's 1)",
+    "is_vague 0.90 (the session's 0.10)",
+    "work_type fix (the session's feature)",
+  ]);
+  // The policy's threshold is the bound: at 0.6, a 0.7 tightens.
+  const loose: Policy = { ...policy, verify: { ...policy.verify, threshold: 0.6 } };
+  expect(tightenAnswers(SESSION, { ...AGREES, touches_infra: 0.7 }, loose).changes).toEqual([
+    "touches_infra 0.70 (the session's 0.00)",
+  ]);
 });

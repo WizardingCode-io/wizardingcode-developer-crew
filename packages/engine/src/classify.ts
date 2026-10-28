@@ -1,4 +1,5 @@
 import { matchesAny } from "./glob.ts";
+import { two } from "./jev.ts";
 import { isTestPath } from "./paths-kind.ts";
 import type { MailPriority, Policy, RiskArea, Route, WorkKind, WorkType } from "./types.ts";
 import { ROUTE_ORDER } from "./types.ts";
@@ -119,6 +120,92 @@ export class AnswerError extends Error {
 export const RISK_THRESHOLD = 0.3;
 export const VAGUE_THRESHOLD = 0.5;
 
+/** Jev's reading of the nine typed questions over the request's text (2026-10-28-004): the choice and the score with their confidence, the seven nouls. */
+export interface RouteJudgement {
+  work_type: { choice: string; confidence: number };
+  is_vague: number;
+  scope: { score: number; confidence: number };
+  touches_auth: number;
+  touches_payments: number;
+  touches_personal_data: number;
+  touches_data_migration: number;
+  touches_infra: number;
+  touches_public_api: number;
+}
+
+/** The risk area each risk question names: the six questions and the six areas in one place. */
+const AREA_BY_QUESTION = {
+  touches_auth: "auth",
+  touches_payments: "payments",
+  touches_personal_data: "personal-data",
+  touches_data_migration: "data-migration",
+  touches_infra: "infra",
+  touches_public_api: "public-api",
+} as const satisfies Partial<Record<QuestionId, RiskArea>>;
+/** The six risk questions, the keys of `AREA_BY_QUESTION` (the judge's round 1 of 2026-10-28-004). */
+export type RiskQuestionId = keyof typeof AREA_BY_QUESTION;
+export const RISK_QUESTIONS = Object.keys(AREA_BY_QUESTION) as readonly RiskQuestionId[];
+/** One of the six areas a question names; `policy.ts`'s own list adds `secrets`, which paths raise and no question asks. */
+export type QuestionArea = (typeof AREA_BY_QUESTION)[RiskQuestionId];
+export const QUESTION_AREAS: readonly QuestionArea[] = Object.values(AREA_BY_QUESTION);
+/** Whether `name` is one of the six areas a question names, as Jev's `area` choice is read (2026-10-28-004). */
+export function isQuestionArea(name: string): name is QuestionArea {
+  return (QUESTION_AREAS as readonly string[]).includes(name);
+}
+/** The nine typed questions in the order the skill page lists them: the three of the shape, then the six risk questions. */
+export const ROUTE_QUESTIONS: readonly (keyof RouteJudgement)[] = [
+  "work_type",
+  "is_vague",
+  "scope",
+  ...RISK_QUESTIONS,
+];
+const TIGHTENED_TO_FIX: readonly WorkType[] = ["feature", "refactor", "chore"];
+
+/**
+ * The session's answers tightened by Jev's (D-1 of 2026-10-28-004), each rule alone and only where
+ * it tightens: a risk noul at or above the policy's threshold where the session's is under 0.3 takes
+ * Jev's value (the area joins at the route); a scope whose rounded score is above the session's,
+ * with the score's confidence at or above the threshold, takes the rounded level; a vagueness at or
+ * above the threshold where the session's is under 0.5 takes Jev's value; a `fix` with confidence at
+ * or above the threshold where the session said feature, refactor or chore makes the type `fix`. A
+ * lower value, a `feature` over a `fix`, a question, an audit, a new product or a confidence under
+ * the threshold change nothing. Each change carries its reason with the session's value.
+ */
+export function tightenAnswers(
+  answers: Answers,
+  judgement: RouteJudgement,
+  policy: Policy,
+): { answers: Answers; changes: string[] } {
+  const threshold = policy.verify.threshold;
+  const adjusted: Answers = { ...answers };
+  const changes: string[] = [];
+  for (const id of RISK_QUESTIONS) {
+    const j = judgement[id];
+    if (j >= threshold && answers[id] < RISK_THRESHOLD) {
+      adjusted[id] = j;
+      changes.push(`${id} ${two(j)} (the session's ${two(answers[id])})`);
+    }
+  }
+  const level = Math.min(Math.round(judgement.scope.score), QUESTIONS.scope.criteria.length - 1);
+  if (level > answers.scope && judgement.scope.confidence >= threshold) {
+    adjusted.scope = level;
+    changes.push(`scope ${level} (the session's ${answers.scope})`);
+  }
+  if (judgement.is_vague >= threshold && answers.is_vague < VAGUE_THRESHOLD) {
+    adjusted.is_vague = judgement.is_vague;
+    changes.push(`is_vague ${two(judgement.is_vague)} (the session's ${two(answers.is_vague)})`);
+  }
+  if (
+    judgement.work_type.choice === "fix" &&
+    judgement.work_type.confidence >= threshold &&
+    TIGHTENED_TO_FIX.includes(answers.work_type)
+  ) {
+    adjusted.work_type = "fix";
+    changes.push(`work_type fix (the session's ${answers.work_type})`);
+  }
+  return { answers: adjusted, changes };
+}
+
 export function validateAnswers(raw: unknown): Answers {
   const problems: string[] = [];
   if (typeof raw !== "object" || raw === null) throw new AnswerError(["answers must be an object"]);
@@ -180,15 +267,6 @@ export function kindOf(answers: Answers, context: KindContext): { kind: WorkKind
     return { kind: "client-request", from: `source: ${context.sourceChannel}` };
   return { kind: "feature", from: `work_type ${answers.work_type}` };
 }
-
-const AREA_BY_QUESTION: Partial<Record<QuestionId, RiskArea>> = {
-  touches_auth: "auth",
-  touches_payments: "payments",
-  touches_personal_data: "personal-data",
-  touches_data_migration: "data-migration",
-  touches_infra: "infra",
-  touches_public_api: "public-api",
-};
 
 export function riskAreasFromAnswers(answers: Answers): RiskArea[] {
   const areas: RiskArea[] = [];

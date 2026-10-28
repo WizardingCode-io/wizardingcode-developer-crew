@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
-import { writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { DEFAULT_CONFIG } from "../src/config.ts";
 import {
   askJev,
@@ -11,7 +12,7 @@ import {
   redact,
   topLevel,
 } from "../src/jev.ts";
-import { tempDir, testEnv } from "./helpers.ts";
+import { childEnv, tempDir, testEnv } from "./helpers.ts";
 
 const REQUEST: JevRequest = {
   state: { findings: { d1: { file: "src/a.ts", line: 3, text: "x" } } },
@@ -320,7 +321,7 @@ test("SP3-T6 AC-2: markOf on the thresholds' edges, compared on four decimals; a
   ).toEqual({ level: "normal", probability: 0.5 });
 });
 
-test("SP9-T11 AC-11 (finding 193): testEnv() hands the engine no Jev variable of the developer's environment, whatever process.env holds, so no test reaches the real service unless it sets its own", () => {
+test("SP9-T11 AC-11 (finding 193): testEnv() hands the engine no Jev variable of the developer's environment, whatever the process's own holds, so no test reaches the real service unless it sets its own", () => {
   const names = [
     "WIZARDINGCODE_JEV_API_KEY",
     "WIZARDINGCODE_JEV_ENDPOINT",
@@ -342,4 +343,57 @@ test("SP9-T11 AC-11 (finding 193): testEnv() hands the engine no Jev variable of
       else process.env[n] = v;
     }
   }
+});
+
+test("2026-10-28-004 AC-9 (the residual of finding 193): childEnv() hands a child none of the three Jev variables and keeps the rest, testEnv() builds on it, and no test file but helpers.ts spreads or passes the process environment", () => {
+  const names = [
+    "WIZARDINGCODE_JEV_API_KEY",
+    "WIZARDINGCODE_JEV_ENDPOINT",
+    "WIZARDINGCODE_JEV_MODEL",
+  ] as const;
+  const saved = names.map((n) => [n, process.env[n]] as const);
+  process.env.WIZARDINGCODE_JEV_API_KEY = KEY;
+  process.env.WIZARDINGCODE_JEV_ENDPOINT = "https://jev.invalid/v1";
+  process.env.WIZARDINGCODE_JEV_MODEL = "jev-test";
+  process.env.WIZARDINGCODE_CHILD_MARK = "kept";
+  try {
+    const env = childEnv({ EXTRA: "x" });
+    for (const n of names) expect(env[n], n).toBeUndefined();
+    expect(env.WIZARDINGCODE_CHILD_MARK).toBe("kept");
+    expect(env.EXTRA).toBe("x");
+    expect(env.PATH).toBe(process.env.PATH);
+    // An extra that names a Jev variable is stripped too: a child never carries the key by accident.
+    expect(
+      childEnv({ WIZARDINGCODE_JEV_API_KEY: "other" }).WIZARDINGCODE_JEV_API_KEY,
+    ).toBeUndefined();
+    expect(testEnv().WIZARDINGCODE_JEV_API_KEY).toBeUndefined();
+  } finally {
+    delete process.env.WIZARDINGCODE_CHILD_MARK;
+    for (const [n, v] of saved) {
+      if (v === undefined) delete process.env[n];
+      else process.env[n] = v;
+    }
+  }
+  // The scan: the process environment taken as a value (a spread, a value, an argument) is refused
+  // outside helpers.ts; the pattern is built from parts so this row's own source passes it.
+  const dir = fileURLToPath(new URL("./", import.meta.url));
+  const pattern = new RegExp(["process", "\\.", "env", "(?![.\\[\\w])"].join(""));
+  const offenders: string[] = [];
+  for (const name of readdirSync(dir).filter((f) => f.endsWith(".ts") && f !== "helpers.ts")) {
+    const text = readFileSync(join(dir, name), "utf8");
+    text.split("\n").forEach((line, i) => {
+      if (pattern.test(line)) offenders.push(`${name}:${i + 1}: ${line.trim()}`);
+    });
+  }
+  expect(offenders).toEqual([]);
+  // The shapes the scan refuses, on strings of their own; a property read passes.
+  const pe = ["process", "env"].join(".");
+  for (const shape of [
+    `{ ...${pe}, X: 1 }`,
+    `env: ${pe},`,
+    `Object.assign({}, ${pe})`,
+    `const e = ${pe};`,
+  ])
+    expect(shape, shape).toMatch(pattern);
+  for (const shape of [`${pe}.HOME`, `${pe}["HOME"]`]) expect(shape, shape).not.toMatch(pattern);
 });

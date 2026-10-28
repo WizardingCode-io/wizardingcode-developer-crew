@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildTarball } from "../../../scripts/tarball.ts";
 import { VERSION } from "../src/version.ts";
-import { makeRepo, tempDir } from "./helpers.ts";
+import { childEnv, makeRepo, tempDir } from "./helpers.ts";
 
 // SP6 Task 4 AC-6: the plugin folder as the distribution on every runtime.
 
@@ -97,7 +97,7 @@ test("SP6-T4 AC-8: crew runtime install and check run from the extracted tarball
   const home = tempDir("home-");
   mkdirSync(join(home, ".wizardingcode"), { recursive: true });
   const env: NodeJS.ProcessEnv = {
-    ...process.env,
+    ...childEnv(),
     HOME: home,
     WIZARDINGCODE_HOME: join(home, ".wizardingcode"),
   };

@@ -48,7 +48,7 @@ import type {
   WorkItem,
 } from "../src/types.ts";
 import { addCriterion, addSkip, createWork } from "../src/work.ts";
-import { git, makeRepo, repoPaths, tempDir, testEnv, write } from "./helpers.ts";
+import { childEnv, git, makeRepo, repoPaths, tempDir, testEnv, write } from "./helpers.ts";
 import { writePack } from "./pack-fixtures.ts";
 
 test("SP2b: a gate run writes the review inputs when a judgement gate is planned, and nothing on a fast item without an interface file", async () => {
@@ -242,7 +242,7 @@ function pathWith(...names: string[]): NodeJS.ProcessEnv {
     write(dir, name, "#!/bin/sh\nexit 0\n");
     chmodSync(join(dir, name), 0o755);
   }
-  return { ...process.env, PATH: dir };
+  return { ...childEnv(), PATH: dir };
 }
 
 test("I9: the dependency audit says why it cannot run: no lockfile, no binary", () => {
@@ -415,7 +415,7 @@ test("0.3.0: the deps gate fails only on advisories absent from the base commit,
   // The fake tools reach the gates through the env given to runGates, never through the process's
   // own PATH, which a concurrent row may read (finding 147).
   const savedPath = process.env.PATH;
-  const gateEnv = { ...process.env, PATH: `${bin}:${savedPath}` };
+  const gateEnv = { ...childEnv(), PATH: `${bin}:${savedPath}` };
   const old = "GHSA-old0-0000-0000";
   const fresh = "GHSA-new0-0000-0000";
   const known = JSON.stringify({
@@ -536,7 +536,7 @@ test("AC-7 (finding 147): the deps gate finds its audit tool through the env giv
   work.route = "full";
   // The item touches the manifest, so the deps gate is planned.
   write(root, "requirements.txt", "requests==2.1\n");
-  const env = { ...process.env, PATH: `${bin}:/usr/bin:/bin` };
+  const env = { ...childEnv(), PATH: `${bin}:/usr/bin:/bin` };
   const outcome = await runGates(paths, work, profile, DEFAULT_POLICY, { only: ["deps"], env });
   const run = outcome.evidence.runs.find((r) => r.gate === "deps");
   expect(run?.reason).not.toBe("pip-audit not on PATH");

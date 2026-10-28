@@ -21,6 +21,8 @@ import {
   type KindContext,
   kindOf,
   PRIORITY_LEVELS,
+  routeRank,
+  tightenAnswers,
   validateAnswers,
 } from "./classify.ts";
 import { loadConfig, saveConfig, setConfigValue } from "./config.ts";
@@ -363,13 +365,18 @@ import {
   validationRound,
 } from "./validation.ts";
 import {
+  answerArea,
   applyDefectMarks,
   askAllowed,
   type DefectsOutcome,
+  decisionMarkText,
   type FactInput,
   type TriageOutcome,
+  verifyAnswer,
+  verifyDecision,
   verifyDefects,
   verifyFacts,
+  verifyRoute,
   verifyTriage,
   verifyValidator,
 } from "./verify.ts";
@@ -401,6 +408,7 @@ import {
   phasesFor,
   plannedStrategyJudgement,
   raiseKind,
+  raiseRoute,
   removeCriterion,
   saveWork,
   supersedeCriterion,
@@ -1129,6 +1137,7 @@ function rulingRecords(
   workId: string,
   subject: string,
   usage: string,
+  roles: readonly RoleRecord[],
 ): RulingInput | Outcome {
   const records: JudgementRecord[] = [];
   if (parsed.flags["not-run"] && typeof parsed.flags.ruling === "string")
@@ -1147,6 +1156,9 @@ function rulingRecords(
   }
   if (typeof parsed.flags.ruling !== "string") return refuse(usage);
   const rulingPath = resolve(env.paths.root, parsed.flags.ruling);
+  if (!existsSync(rulingPath)) return refuse(`no ruling file at ${rulingPath}`);
+  const unbound = rulingBinding(env, roles, workId, rulingPath);
+  if (unbound) return refuse(unbound);
   const text = readText(rulingPath);
   if (text === null) return refuse(`no ruling file at ${rulingPath}`);
   let raw: unknown;
@@ -1166,11 +1178,43 @@ function rulingRecords(
   return { records, rulingPath };
 }
 
-/** The gates a judgement command names, read before anything is checked: the --not-run gate word, or every gate of the ruling file (none when the file cannot be read or parsed: the normal path says why). */
-function rulingGates(env: Env, parsed: Parsed, gateWord: string | undefined): string[] {
+/**
+ * Why `rulingPath` is not the judge's filed answer (finding 192, 2026-10-28-004), null when it is:
+ * the path, by its real path, has to be the file a judge role record of the item names, an earlier
+ * round's archived copy (`.round<n>`) excluded. The two readers of a ruling file ask this first, so
+ * a file the session wrote is never opened, let alone recorded (the security lead's rounds 1 and 2).
+ */
+function rulingBinding(
+  env: Env,
+  roles: readonly RoleRecord[],
+  workId: string,
+  rulingPath: string,
+): string | null {
+  const judgeFiles = roles
+    .filter((r) => r.agent === "judge" && typeof r.file === "string")
+    .map((r) => r.file as string)
+    .filter((f) => !/\.round\d+\.[a-z]+$/.test(f));
+  if (!judgeFiles.length)
+    return `no ruling of the judge on record for ${workId}: launch the judge; the hook files its answer`;
+  const dir = workDir(env.paths, workId);
+  if (!judgeFiles.some((f) => realOrSelf(join(dir, f)) === realOrSelf(rulingPath)))
+    return `the ruling is the judge's filed answer (${judgeFiles.map((f) => `.crew/work/${workId}/${f}`).join(", ")}), never a file the session wrote: resume the judge when its ruling is missing`;
+  return null;
+}
+
+/** The gates a judgement command names, read before anything is checked: the --not-run gate word, or every gate of the ruling file (none when the file is not the judge's, cannot be read or parsed: the normal path says why). */
+function rulingGates(
+  env: Env,
+  parsed: Parsed,
+  gateWord: string | undefined,
+  roles: readonly RoleRecord[],
+  workId: string,
+): string[] {
   if (parsed.flags["not-run"]) return gateWord ? [gateWord] : [];
   if (typeof parsed.flags.ruling !== "string") return [];
-  const text = readText(resolve(env.paths.root, parsed.flags.ruling));
+  const rulingPath = resolve(env.paths.root, parsed.flags.ruling);
+  if (!existsSync(rulingPath) || rulingBinding(env, roles, workId, rulingPath)) return [];
+  const text = readText(rulingPath);
   if (text === null) return [];
   try {
     const raw = JSON.parse(text) as { rulings?: { gate?: unknown }[] };
@@ -1229,6 +1273,7 @@ async function recordStrategyJudgement(
     work.id,
     "the strategy",
     usage,
+    loadEvidence(env.paths, work.id).evidence.roles ?? [],
   );
   if (isOutcome(input)) return input;
   const record = input.records[0];
@@ -1326,6 +1371,7 @@ async function recordTaskJudgement(
     work.id,
     task,
     usage,
+    before.evidence.roles ?? [],
   );
   if (isOutcome(input)) return input;
   const { records, rulingPath } = input;
@@ -2046,17 +2092,106 @@ function parseAnswers(raw: string): Answers | Outcome {
   }
 }
 
+/** What the route ask left for the caller (2026-10-28-004): the records for the evidence and the line under the start line, if any. */
+interface Classified {
+  records: Verification[];
+  /** The tightening Jev made, among the route's reasons; null when nothing moved. */
+  line: string | null;
+  /** Why Jev gave no reading (down, a malformed answer), said under the start line; null when it answered or was not asked. */
+  unavailable: string | null;
+}
+
+/**
+ * The seats the route plans before any path is known (SP7 §6.2), at the start and when a decision's
+ * answer raises the route (2026-10-28-004): the leads' validation guard names them from here; the
+ * gate run rewrites them with the paths the change touched. The fast route seats nobody.
+ */
+function planRouteSeats(env: Env, work: WorkItem): void {
+  if (work.route === "fast") return;
+  work.seats = plannedSeats(work.route, work.riskAreas, [], env.policy, {
+    registry: teamsFor(env.policy, packTemplates(env.paths.userDir)).teams,
+  });
+  work.primaryTeam = primaryTeam([]);
+}
+
+/**
+ * The line under a decision command's output for an ask of Jev (2026-10-28-004): the mark's own
+ * line, or `unverified: <reason>` when Jev gave none; the item saved, the ask's records on the
+ * evidence, a refused record said last. `crew decision add` and `crew decide` end on it.
+ */
+function askLine(
+  env: Env,
+  work: WorkItem,
+  outcome: { records: Verification[]; reason?: string },
+  marked: string | null,
+): string {
+  const line = marked ?? `unverified: ${outcome.reason ?? "jev unavailable"}`;
+  saveWork(env.paths, work);
+  const refusal = appendVerifications(env, work.id, outcome.records);
+  return `\n  ${line}${refusal ? `\n  ${refusal}` : ""}`;
+}
+
+/**
+ * Jev's mark on a decision's answer applied (2026-10-28-004, D-2): the area the answer changes joins
+ * the item's risk areas, the route rises to full with the reason and the seats are planned again;
+ * the line the command prints under the answer, an area the item has or no area said as such.
+ */
+function answerRaise(
+  env: Env,
+  work: WorkItem,
+  id: string,
+  m: { changesRisk: number; area: string; areaConfidence: number },
+): string {
+  const area = answerArea(m, env.policy);
+  if (!area)
+    return `jev: ${id}'s answer changes no risk area (${two(m.changesRisk)}; ${m.area} ${two(m.areaConfidence)})`;
+  const line = `jev: ${id}'s answer changes ${area} (${two(m.changesRisk)})`;
+  if (work.riskAreas.includes(area)) return `${line}: already among the item's risk areas`;
+  work.riskAreas.push(area);
+  const from = work.route;
+  const raised = raiseRoute(work, "full", line);
+  planRouteSeats(env, work);
+  return `${line}${raised ? `; route ${from} → full` : ""}`;
+}
+
+/**
+ * The route from the answers, with Jev's reading of the nine questions first when the ask is on
+ * (2026-10-28-004, D-1): a disagreement that tightens moves the answer and the route, said in one
+ * reason with the session's value beside Jev's; a loosening is recorded and changes nothing; Jev
+ * down is said under the start line and the session's route stands.
+ */
 async function classify(
   env: Env,
   work: WorkItem,
   answers: Answers,
   context: KindContext,
   ioEnv: NodeJS.ProcessEnv,
-): Promise<void> {
-  const decision = computeRoute(answers, [], env.policy);
-  applyClassification(work, answers.work_type, decision, kindOf(answers, context));
-  logDecision(env, work, answers);
+): Promise<Classified> {
+  let taken = answers;
+  const out: Classified = { records: [], line: null, unavailable: null };
+  const jev = jevConfig(ioEnv, env.config);
+  if (jev.configured && askAllowed(env.policy, "route")) {
+    const outcome = await verifyRoute(jev, { text: work.input });
+    out.records = outcome.records;
+    if (outcome.judgement) {
+      const tightened = tightenAnswers(answers, outcome.judgement, env.policy);
+      if (tightened.changes.length) {
+        taken = tightened.answers;
+        const before = computeRoute(answers, [], env.policy).route;
+        const after = computeRoute(taken, [], env.policy).route;
+        out.line =
+          routeRank(after) > routeRank(before)
+            ? `route ${before} → ${after} (jev: ${tightened.changes.join(", ")})`
+            : `jev: ${tightened.changes.join(", ")}`;
+      }
+    } else out.unavailable = outcome.reason ?? "jev unavailable";
+  }
+  const decision = computeRoute(taken, [], env.policy);
+  if (out.line) decision.reasons.push(out.line);
+  applyClassification(work, taken.work_type, decision, kindOf(taken, context));
+  logDecision(env, work, taken);
   await lookupForItem(env, work, ioEnv);
+  return out;
 }
 
 /**
@@ -2568,6 +2703,7 @@ function statusView(env: Env, active: Opened): Outcome {
     kindFrom: work.kindFrom ?? null,
     phase: work.phase,
     route: work.route,
+    routeReasons: work.routeReasons,
     priority: work.priority ?? "normal",
     source: work.source ?? null,
     triage: work.triage ?? null,
@@ -3234,7 +3370,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       const sharedWarning = neighbours.length
         ? `warning: this checkout is shared with ${neighbours.join(", ")}, which ${neighbours.length === 1 ? "is" : "are"} open with uncommitted changes in ${uncommitted.join(", ")}; a second session on one checkout blocks turn ends and proves half-written code: work in a worktree (git worktree add ../<name> -b <branch>)\n`
         : "";
-      await classify(
+      const classified = await classify(
         env,
         work,
         answers,
@@ -3249,12 +3385,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       } else work.priority = startPriority(priorityFlag, origin, answers);
       // The seats the route plans, before any path is known (SP7 §6.2): the leads' validation guard
       // names them from here; the gate run rewrites them with the paths the change touched.
-      if (work.route !== "fast") {
-        work.seats = plannedSeats(work.route, work.riskAreas, [], env.policy, {
-          registry: teamsFor(env.policy, packTemplates(env.paths.userDir)).teams,
-        });
-        work.primaryTeam = primaryTeam([]);
-      }
+      planRouteSeats(env, work);
       if (origin) {
         work.origin = { mail: origin.id };
         // A change request from this project to one of its tasks: the item is an implementer's child.
@@ -3293,9 +3424,13 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       if (work.route === "fast" && criteria.length > 0)
         advancePhase(work, guardContext(env, work, false));
       saveWork(env.paths, work);
+      // The route ask's records (2026-10-28-004) go on the evidence once the item is saved; a line
+      // under the start line says Jev was down, since a raise already reads in the route's reasons.
+      const routeRefusal = appendVerifications(env, work.id, classified.records);
+      let jevLine = classified.unavailable ? `\n  route unverified: ${classified.unavailable}` : "";
+      if (routeRefusal) jevLine += `\n  ${routeRefusal}`;
       // The source's urgency judged by Jev (SP3 decision 10): a proposal to the lead, capped at the
       // source's, never the record; its answers on the item's evidence.
-      let jevLine = "";
       if (source?.proposedPriority) {
         const jev = jevConfig(io.env, env.config);
         if (jev.configured && askAllowed(env.policy, "triage")) {
@@ -3315,7 +3450,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
             })),
           });
           appendVerifications(env, work.id, outcome.records);
-          jevLine = `\n  ${triageProposalText(outcome, source.proposedPriority)}`;
+          jevLine += `\n  ${triageProposalText(outcome, source.proposedPriority)}`;
         }
       }
       // A lowering is the lead's decision about the item (SP7 §10.2, §6.6).
@@ -3381,7 +3516,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         return refuse("usage: crew classify <id> --answers <json>");
       const answers = parseAnswers(parsed.flags.answers);
       if (isOutcome(answers)) return answers;
-      await classify(
+      const reclassified = await classify(
         env,
         opened.work,
         answers,
@@ -3389,8 +3524,17 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         io.env,
       );
       saveWork(env.paths, opened.work);
+      // Jev down and a record refused are said under the line, as crew start says them.
+      const refusal = appendVerifications(env, opened.work.id, reclassified.records);
+      const under = [
+        reclassified.unavailable ? `route unverified: ${reclassified.unavailable}` : null,
+        refusal,
+      ]
+        .filter((l): l is string => !!l)
+        .map((l) => `\n  ${l}`)
+        .join("");
       return ok(
-        `${opened.work.id}: route ${opened.work.route} (${opened.work.routeReasons.join("; ")}); ${kindLabel(opened.work)}`,
+        `${opened.work.id}: route ${opened.work.route} (${opened.work.routeReasons.join("; ")}); ${kindLabel(opened.work)}${under}`,
         {
           id: opened.work.id,
           route: opened.work.route,
@@ -3537,10 +3681,29 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         return refuse('usage: crew decision <id> add "<question>" [--default "<answer>"]');
       const dflt = typeof parsed.flags.default === "string" ? parsed.flags.default : undefined;
       const decision = addDecision(opened.work, question, dflt);
-      saveWork(env.paths, opened.work);
-      return ok(`${decision.id}: ${decision.question}${dflt ? ` (default: ${dflt})` : ""}`, {
-        decision,
-      });
+      // Jev's marks on the decision (2026-10-28-004, D-3): the default conservative or not, the
+      // question the user's or not; printed under the line and kept on the record.
+      let markLine = "";
+      const jev = jevConfig(io.env, env.config);
+      if (jev.configured && askAllowed(env.policy, "decision")) {
+        const outcome = await verifyDecision(jev, {
+          title: opened.work.title,
+          id: decision.id,
+          question: decision.question,
+          ...(decision.default !== undefined ? { default: decision.default } : {}),
+        });
+        if (outcome.marks) decision.jev = { ...outcome.marks };
+        markLine = askLine(
+          env,
+          opened.work,
+          outcome,
+          outcome.marks ? decisionMarkText(decision.jev, env.policy) : null,
+        );
+      } else saveWork(env.paths, opened.work);
+      return ok(
+        `${decision.id}: ${decision.question}${dflt ? ` (default: ${dflt})` : ""}${markLine}`,
+        { decision },
+      );
     }
     case "debate": {
       const opened = openForChange(env, args[0]);
@@ -3600,8 +3763,17 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           "a decision's default is taken by the validator under the stated-default rule",
         );
       const answer = args.slice(2).join(" ").trim() || undefined;
-      const result = answerDecision(opened.work, id, answer, who);
-      if ("refused" in result) return refuse(result.refused);
+      const result = answerDecision(opened.work, id, answer, who, env.policy);
+      if ("refused" in result) {
+        // A default Jev disputed waits for a person (2026-10-28-004, D-3): the one refusal that
+        // moves the item; every other leaves it as it was.
+        if (result.disputed) {
+          opened.work.awaiting = "user";
+          delete opened.work.awaitingMessage;
+          saveWork(env.paths, opened.work);
+        }
+        return refuse(result.refused);
+      }
       saveWork(env.paths, opened.work);
       decide(env, opened.work.id, {
         kind: "decision",
@@ -3610,7 +3782,36 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         ...(result.answer ? { answer: result.answer } : {}),
         by: whoDecides(result),
       });
-      return ok(`${result.id} answered ${decidedBy(result)}: ${result.answer}`, {
+      // Jev's mark on the answer (2026-10-28-004, D-2): a risk area the answer changes joins the
+      // item's and raises the route; the marks stay on the record either way.
+      let answerLine = "";
+      const jev = jevConfig(io.env, env.config);
+      if (jev.configured && askAllowed(env.policy, "decision") && result.answer) {
+        const outcome = await verifyAnswer(jev, {
+          title: opened.work.title,
+          id: result.id,
+          question: result.question,
+          ...(result.default !== undefined ? { default: result.default } : {}),
+          answer: result.answer,
+          riskAreas: opened.work.riskAreas,
+        });
+        const m = outcome.marks;
+        if (m)
+          result.jev = {
+            ...(result.jev ?? {}),
+            changesRisk: m.changesRisk,
+            area: m.area,
+            areaConfidence: m.areaConfidence,
+            model: m.model,
+          };
+        answerLine = askLine(
+          env,
+          opened.work,
+          outcome,
+          m ? answerRaise(env, opened.work, result.id, m) : null,
+        );
+      }
+      return ok(`${result.id} answered ${decidedBy(result)}: ${result.answer}${answerLine}`, {
         decision: result,
       });
     }
@@ -4166,7 +4367,13 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       if (args[1] !== "record") return refuse(usage);
       // A strategy ruling (SP8 Task 3) is recorded on its own path: against the hash of the two
       // files, never the code's fingerprint, and in its own rounds.
-      const strategyGate = rulingGates(env, parsed, args[2]);
+      const strategyGate = rulingGates(
+        env,
+        parsed,
+        args[2],
+        loadEvidence(env.paths, opened.work.id).evidence.roles ?? [],
+        opened.work.id,
+      );
       if (strategyGate.includes("strategy")) {
         if (strategyGate.length !== 1)
           return refuse(
@@ -4236,6 +4443,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         opened.work.id,
         "this item",
         usage,
+        before.evidence.roles ?? [],
       );
       if (isOutcome(input)) return input;
       const { records } = input;

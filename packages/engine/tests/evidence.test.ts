@@ -443,12 +443,18 @@ test("SP2a: the report lists the gap round's decisions and who took each", () =>
   const evidence: Evidence = { ...emptyEvidence(), fingerprint: "f" };
   addDecision(work, "Erasure or deactivation?", "deactivation");
   addDecision(work, "Delete the provider profile too?");
-  answerDecision(work, "D-1", undefined, {
-    by: "validator",
-    mode: "dontAsk",
-    rule: "stated-default",
-  });
-  answerDecision(work, "D-2", "yes", { by: "user" });
+  answerDecision(
+    work,
+    "D-1",
+    undefined,
+    {
+      by: "validator",
+      mode: "dontAsk",
+      rule: "stated-default",
+    },
+    DEFAULT_POLICY,
+  );
+  answerDecision(work, "D-2", "yes", { by: "user" }, DEFAULT_POLICY);
   const report = renderReport(work, evidence, {
     ...DEFAULT_POLICY,
     unattendedDecisions: "validator",
@@ -513,7 +519,7 @@ test("ADR 0005: a relayed decision reads by the user, relayed by the agent, ever
   approve(work, "spec", relayed);
   addSkip(work, "gate:lint", "legacy", relayed);
   addDecision(work, "Which?");
-  answerDecision(work, "D-1", "this", relayed);
+  answerDecision(work, "D-1", "this", relayed, DEFAULT_POLICY);
   const ledger: ObjectionLedger = { objections: [] };
   const o1 = addObjection(ledger, "re-subscribes everyone", "fault-finder", "blocking");
   waiveObjection(ledger, o1.id, "chosen knowingly", relayed);

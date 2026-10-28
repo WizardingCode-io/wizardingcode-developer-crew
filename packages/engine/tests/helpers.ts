@@ -1,9 +1,20 @@
 import { spyOn } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, sep } from "node:path";
+import { dirname, isAbsolute, join, sep } from "node:path";
+import { loadEvidence } from "../src/evidence.ts";
 import { buildContext } from "../src/hooks/context.ts";
+import { fileAnswerBySession } from "../src/hooks/subagent-stop.ts";
 import type { HookContext, HookPayload } from "../src/hooks/types.ts";
 import { type CrewPaths, resolvePaths } from "../src/paths.ts";
 import * as store from "../src/store.ts";
@@ -62,7 +73,7 @@ export function git(cwd: string, ...args: string[]): string {
   return execFileSync("git", args, {
     cwd,
     encoding: "utf8",
-    env: { ...process.env, ...GIT_ENV },
+    env: childEnv(GIT_ENV),
     stdio: ["ignore", "pipe", "pipe"],
   }).trim();
 }
@@ -91,17 +102,26 @@ export function testEnv(): NodeJS.ProcessEnv {
   const fake = join(home, "claude");
   writeFileSync(fake, "#!/bin/sh\nexit 0\n");
   chmodSync(fake, 0o755);
-  const env: NodeJS.ProcessEnv = {
-    ...process.env,
+  const env: NodeJS.ProcessEnv = childEnv({
     WIZARDINGCODE_HOME: home,
     WIZARDINGCODE_CREW_CLAUDE: fake,
-  };
+  });
   // A suite run under Claude Code inherits the plugin's variables, which would turn the pack
   // discovery on in every fixture (SP6 Task 2, round 3): a test that wants them sets them.
   delete env.CLAUDE_PLUGIN_ROOT;
   delete env.CLAUDE_CONFIG_DIR;
-  // The developer's Jev (finding 193, SP9 Task 11): a test that wants Jev sets its own key, endpoint
-  // or model; the real service is never reached from the suite, as the real claude binary is not.
+  return env;
+}
+
+/**
+ * The environment a test hands a child process (2026-10-28-004, the residual of finding 193): the
+ * developer's own without the three Jev variables, merged with `extra`; a test that wants Jev sets
+ * its own key, endpoint or model, and the real service is never reached from the suite, as the
+ * real claude binary is not (finding 89). Every spread of the process environment in the tests
+ * goes through here; a row of jev.test.ts refuses any other.
+ */
+export function childEnv(extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env, ...extra };
   delete env.WIZARDINGCODE_JEV_API_KEY;
   delete env.WIZARDINGCODE_JEV_ENDPOINT;
   delete env.WIZARDINGCODE_JEV_MODEL;
@@ -223,4 +243,43 @@ esac
   writeFileSync(pwn, '#!/bin/sh\n[ -n "$FAKE_MARKER" ] && : > "$FAKE_MARKER"\nexit 0\n');
   chmodSync(pwn, 0o755);
   return { bin, dir };
+}
+
+/**
+ * A judge's ruling filed as the SubagentStop hook files it (finding 192, 2026-10-28-004): the role
+ * record and its file under the work folder, the path a `crew judgement record` takes. The first
+ * ruling of an item goes through the hook's filing; a later one is written into the file that record
+ * names, as a resumed judge's is, unless `how` is `file`: then it goes through the hook's filing
+ * again, which archives the earlier ruling with its record as a resumed judge's stop does. A source
+ * that does not exist is returned as it is, so a row that expects `no ruling file at` keeps its path.
+ */
+export function filedRuling(
+  env: NodeJS.ProcessEnv,
+  root: string,
+  id: string,
+  from: string,
+  how: "write" | "file" = "write",
+): string {
+  // A relative source is the test's path from the repository root, as `--ruling` reads one.
+  const source = isAbsolute(from) ? from : join(root, from);
+  if (!existsSync(source)) return from;
+  const text = readFileSync(source, "utf8");
+  const judge = (loadEvidence(repoPaths(root, env), id).evidence.roles ?? []).find(
+    (r) => r.agent === "judge" && typeof r.file === "string",
+  );
+  if (judge?.file && how === "write") {
+    const target = join(root, ".crew", "work", id, judge.file);
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, text);
+    return target;
+  }
+  const ctx = buildContext({ session_id: "crew-test-judge", cwd: root }, env);
+  if (!ctx) throw new Error(`crew is inactive in ${root}`);
+  // A judge on record filed again resumes its record (`as`), so the hook archives the earlier ruling.
+  const done = fileAnswerBySession(ctx, id, "judge", {
+    answer: text.replace(/\n$/, ""),
+    ...(judge ? { as: "judge" } : {}),
+  });
+  if (!done.file) throw new Error(done.note ?? "the ruling was not filed");
+  return join(root, ".crew", "work", id, done.file);
 }

@@ -531,3 +531,22 @@ test("DEBT-AC-10-plan-number: latestPlan reads a numbered plan of the same day a
     date: "2026-10-19",
   });
 });
+
+test("2026-10-28-004 AC-7 (finding 191): the lookup's line prints an answered noul between the bounds as `unverified <noul>`, and keeps `unverified (<reason>)` for a mark with a reason", () => {
+  const ranked: RankedHit[] = [
+    {
+      ...hit("K-4", 1, "Login sessions", T1),
+      reasons: ["word login"],
+      jev: { noul: 0.56, verdict: "unverified" },
+    },
+    {
+      ...hit("K-6", 1, "Cookies", T3),
+      reasons: ["word cookies"],
+      jev: { noul: null, verdict: "unverified", reason: "over maxClaimsPerItem" },
+    },
+  ];
+  const text = knowledgeText("2026-10-28-004-x", ranked, null);
+  expect(text).toContain('"Login sessions" · acme · word login · unverified 0.56');
+  expect(text).toContain('"Cookies" · acme · word cookies · unverified (over maxClaimsPerItem)');
+  expect(text).not.toContain("no answer");
+});

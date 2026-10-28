@@ -1,9 +1,11 @@
 import { join } from "node:path";
+import { two } from "./jev.ts";
 import type { CrewPaths } from "./paths.ts";
 import { readProtectedJson, writeProtectedJson } from "./store.ts";
 import { TEAMS } from "./team.ts";
 import type {
   DecidedBy,
+  DecisionMarks,
   GateName,
   MailPolicy,
   PermissionMode,
@@ -16,7 +18,14 @@ import type {
   VerifyAsk,
   VerifyPolicy,
 } from "./types.ts";
-import { GATE_NAMES, isJudgementGateName, isMailType, ROUTE_ORDER, VERIFY_ASKS } from "./types.ts";
+import {
+  DEFAULT_VERIFY_ASKS,
+  GATE_NAMES,
+  isJudgementGateName,
+  isMailType,
+  ROUTE_ORDER,
+  VERIFY_ASKS,
+} from "./types.ts";
 
 export const MAIL_NAME = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 /** A lowercase word: a template's name, a pack's stack or knowledge key; one spelling for the policy and the packs. */
@@ -53,7 +62,7 @@ export const DEFAULT_VERIFY_POLICY: VerifyPolicy = {
   send: "claims",
   maxClaimsPerItem: 50,
   threshold: 0.8,
-  asks: [...VERIFY_ASKS],
+  asks: [...DEFAULT_VERIFY_ASKS],
 };
 
 /** The verify block key by key (SP3 decision 9): a value out of its range, or an unknown name, falls back alone. */
@@ -577,4 +586,23 @@ export function skipAllowed(policy: Policy, step: string): boolean {
   return policy.allowSkips.some(
     (s) => s === "*" || s === step || s === bare || (s === "tdd" && step.startsWith("tdd:")),
   );
+}
+
+/** The lower bound of the policy's threshold, read as the threshold is (two decimals): 0.2 at 0.8. */
+export function lowerBound(policy: Policy): number {
+  return Number((1 - policy.verify.threshold).toFixed(2));
+}
+
+/** A default Jev marked at or under the lower bound: not the conservative answer (D-3 of 2026-10-28-004). */
+export function disputedDefault(marks: DecisionMarks | undefined, policy: Policy): boolean {
+  const c = marks?.conservative;
+  return typeof c === "number" && c <= lowerBound(policy);
+}
+
+/**
+ * The one sentence of a disputed default, `what` naming it (`the default`, `the default of D-1`):
+ * the command, the report and the validator's refusal print it (the judge's round 2 of 2026-10-28-004).
+ */
+export function disputedDefaultText(conservative: number, what: string): string {
+  return `disputed by jev: ${what} is not the conservative answer (conservative ${two(conservative)})`;
 }

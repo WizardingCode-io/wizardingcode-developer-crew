@@ -1,3 +1,11 @@
+import {
+  isQuestionArea,
+  QUESTIONS,
+  type QuestionArea,
+  RISK_QUESTIONS,
+  ROUTE_QUESTIONS,
+  type RouteJudgement,
+} from "./classify.ts";
 import { nowIso } from "./fs.ts";
 import {
   type AskOptions,
@@ -12,12 +20,16 @@ import {
   two,
 } from "./jev.ts";
 import { hunkLines } from "./judgement.ts";
+import { disputedDefault, disputedDefaultText } from "./policy.ts";
+import { scanText } from "./secrets.ts";
 import type {
+  DecisionMarks,
   FindingVerification,
   JudgementGateName,
   JudgementRecord,
   MailPriority,
   Policy,
+  RiskArea,
   Verification,
   VerifyAsk,
 } from "./types.ts";
@@ -47,6 +59,8 @@ export const CAPS = {
   conclave: 16 * 1024,
   request: 8 * 1024,
   priorities: 8 * 1024,
+  /** A decision's question, default or answer (the security lead's round 2 of 2026-10-28-004). */
+  decision: 2 * 1024,
 };
 
 export function clipAt(text: string, max: number): string {
@@ -415,7 +429,7 @@ export async function verifyTriage(
   options: AskOptions = {},
 ): Promise<TriageOutcome> {
   const state = {
-    request: { ...input.request, text: clipAt(input.request.text, CAPS.request) },
+    request: { ...input.request, text: safeField(input.request.text, "request", CAPS.request) },
     business_priorities:
       input.business_priorities === null
         ? null
@@ -470,6 +484,290 @@ export async function verifyTriage(
       probabilities: byLevel,
       flags,
       capped,
+    },
+    records,
+  };
+}
+
+/**
+ * A text field as it may leave the machine (2026-10-28-004, the security lead's rule): a secret in it
+ * replaced by its rule, never its value, as the knowledge ask's titles are; the clip comes after.
+ */
+export function safeField(text: string, source: string, max?: number): string {
+  const finding = scanText(text, source)[0];
+  const safe = finding ? `[redacted: ${finding.rule}]` : text;
+  return max === undefined ? safe : clipAt(safe, max);
+}
+
+/**
+ * The risk area an answer changes (D-2 of 2026-10-28-004): the noul and the choice's confidence
+ * both at or above the threshold and the choice one of the six areas a question names; null
+ * otherwise, `none` included.
+ */
+export function answerArea(
+  marks: Pick<DecisionMarks, "changesRisk" | "area" | "areaConfidence"> | undefined,
+  policy: Policy,
+): QuestionArea | null {
+  const t = policy.verify.threshold;
+  if (!marks || typeof marks.changesRisk !== "number" || marks.changesRisk < t) return null;
+  if ((marks.areaConfidence ?? 0) < t || !marks.area || !isQuestionArea(marks.area)) return null;
+  return marks.area;
+}
+
+/**
+ * Jev's marks of a decision in one line, the form the command and the report print
+ * (2026-10-28-004): `jev: default conservative 0.91; the user's call 0.84; the answer changes auth
+ * (0.90)`, a disputed default opening it as `disputed by jev: …`; empty without marks.
+ */
+export function decisionMarkText(marks: DecisionMarks | undefined, policy: Policy): string {
+  if (!marks) return "";
+  const disputed = disputedDefault(marks, policy);
+  const parts: string[] = [];
+  if (typeof marks.conservative === "number")
+    parts.push(
+      disputed
+        ? disputedDefaultText(marks.conservative, "the default")
+        : `default conservative ${two(marks.conservative)}`,
+    );
+  if (typeof marks.usersCall === "number") parts.push(`the user's call ${two(marks.usersCall)}`);
+  if (typeof marks.changesRisk === "number") {
+    const area = answerArea(marks, policy);
+    parts.push(
+      area
+        ? `the answer changes ${area} (${two(marks.changesRisk)})`
+        : `the answer changes no risk area (${two(marks.changesRisk)})`,
+    );
+  }
+  if (!parts.length) return "";
+  return disputed ? parts.join("; ") : `jev: ${parts.join("; ")}`;
+}
+
+export interface RouteOutcome {
+  judgement: RouteJudgement | null;
+  reason?: string;
+  records: Verification[];
+}
+
+/**
+ * The route ask (2026-10-28-004, D-1): the nine typed questions of `QUESTIONS` over the request's
+ * text, one request, every answer recorded; the judgement typed, or the reason it is missing.
+ */
+export async function verifyRoute(
+  cfg: JevConfig,
+  input: { text: string },
+  options: AskOptions = {},
+): Promise<RouteOutcome> {
+  const questions: Record<string, JevQuestion> = {};
+  for (const id of ROUTE_QUESTIONS) questions[id] = QUESTIONS[id] as JevQuestion;
+  const state = { request: { text: safeField(input.text, "request", CAPS.request) } };
+  const result = await askJev(cfg, { state, questions }, options);
+  if (!result.ok) return { judgement: null, reason: UNAVAILABLE(result.unavailable), records: [] };
+  const records: Verification[] = [];
+  const confidenceOf = (a: JevAnswer): number => (a.type === "noul" ? a.noul : a.confidence);
+  for (const id of ROUTE_QUESTIONS) {
+    const answer = result.answers[id];
+    if (answer)
+      records.push(
+        record(
+          "route",
+          id,
+          QUESTIONS[id] as JevQuestion,
+          answer,
+          confidenceOf(answer),
+          result.model,
+        ),
+      );
+  }
+  const type = result.answers.work_type;
+  const scope = result.answers.scope;
+  const vague = result.answers.is_vague;
+  if (type?.type !== "choice" || scope?.type !== "score" || vague?.type !== "noul")
+    return { judgement: null, reason: UNAVAILABLE("malformed answer"), records };
+  const judgement: RouteJudgement = {
+    work_type: { choice: type.choice, confidence: type.confidence },
+    is_vague: vague.noul,
+    scope: { score: scope.score, confidence: scope.confidence },
+    touches_auth: 0,
+    touches_payments: 0,
+    touches_personal_data: 0,
+    touches_data_migration: 0,
+    touches_infra: 0,
+    touches_public_api: 0,
+  };
+  for (const id of RISK_QUESTIONS) {
+    const answer = result.answers[id];
+    if (answer?.type !== "noul")
+      return { judgement: null, reason: UNAVAILABLE("malformed answer"), records };
+    judgement[id] = answer.noul;
+  }
+  return { judgement, records };
+}
+
+export interface DecisionInput {
+  title: string;
+  id: string;
+  question: string;
+  default?: string;
+}
+
+export interface DecisionOutcome {
+  marks: { conservative: number | null; usersCall: number | null; model: string } | null;
+  reason?: string;
+  records: Verification[];
+}
+
+const CONSERVATIVE_QUESTION =
+  "Among the answers `decision.question` allows, is `decision.default` the more cautious one: the answer that changes less, keeps what exists, or adds a guard rather than removes one?";
+const USERS_CALL_QUESTION =
+  "Is `decision.question` one whose answer belongs to the product's owner rather than to the engineer: two competent engineers would build different things, and no good practice settles it?";
+
+/**
+ * The decision ask at `crew decision add` (2026-10-28-004, D-3): whether the stated default is the
+ * conservative answer (asked only with a default) and whether the question is the user's to take.
+ */
+export async function verifyDecision(
+  cfg: JevConfig,
+  input: DecisionInput,
+  options: AskOptions = {},
+): Promise<DecisionOutcome> {
+  const usersCall: JevQuestion = { type: "noul", instructions: USERS_CALL_QUESTION };
+  const conservative: JevQuestion | null =
+    input.default === undefined ? null : { type: "noul", instructions: CONSERVATIVE_QUESTION };
+  const questions: Record<string, JevQuestion> = {
+    users_call: usersCall,
+    ...(conservative ? { default_is_conservative: conservative } : {}),
+  };
+  const state = {
+    request: { title: safeField(input.title, "title", CAPS.decision) },
+    decision: {
+      question: safeField(input.question, "decision", CAPS.decision),
+      ...(input.default !== undefined
+        ? { default: safeField(input.default, "default", CAPS.decision) }
+        : {}),
+    },
+  };
+  const result = await askJev(cfg, { state, questions }, options);
+  if (!result.ok) return { marks: null, reason: UNAVAILABLE(result.unavailable), records: [] };
+  // An answer that is not a noul is malformed, as the route's and the answer's asks say; null
+  // stays the mark of a question not asked (the judge's round 2).
+  const malformed = { marks: null, reason: UNAVAILABLE("malformed answer"), records: [] };
+  const usersCallAnswer = result.answers.users_call;
+  if (usersCallAnswer?.type !== "noul") return malformed;
+  const records: Verification[] = [];
+  let conservativeMark: number | null = null;
+  if (conservative) {
+    const answer = result.answers.default_is_conservative;
+    if (answer?.type !== "noul") return malformed;
+    conservativeMark = answer.noul;
+    records.push(
+      record(
+        "decision",
+        `${input.id} default_is_conservative`,
+        conservative,
+        answer,
+        answer.noul,
+        result.model,
+      ),
+    );
+  }
+  records.push(
+    record(
+      "decision",
+      `${input.id} users_call`,
+      usersCall,
+      usersCallAnswer,
+      usersCallAnswer.noul,
+      result.model,
+    ),
+  );
+  return {
+    marks: { conservative: conservativeMark, usersCall: usersCallAnswer.noul, model: result.model },
+    records,
+  };
+}
+
+export interface AnswerInput {
+  title: string;
+  id: string;
+  question: string;
+  default?: string;
+  answer: string;
+  riskAreas: readonly RiskArea[];
+}
+
+export interface AnswerOutcome {
+  marks: { changesRisk: number; area: string; areaConfidence: number; model: string } | null;
+  reason?: string;
+  records: Verification[];
+}
+
+const CHANGES_RISK_QUESTION =
+  "Does `decision.answer` change who holds a permission or a session, what is paid or priced, which personal data is read, stored or exposed, a database schema or a migration, the infrastructure or the deployment, or an interface other systems depend on?";
+/** The choice's criteria, one per area a question names and `none`; the type ties the list to `QUESTION_AREAS`. */
+const AREA_CRITERIA: Record<QuestionArea | "none", string> = {
+  auth: "authentication, authorization or sessions",
+  payments: "payments, billing or pricing",
+  "personal-data": "personal data read, stored or exposed",
+  "data-migration": "a database schema or a data migration",
+  infra: "infrastructure, deployment or CI",
+  "public-api": "an interface other systems depend on",
+  none: "no risk area: the answer changes none of the six",
+};
+
+/**
+ * The answer ask at `crew decide` (2026-10-28-004, D-2): whether the answer changes a risk area and
+ * which; the area is read by the caller when both marks reach the threshold and the choice is not
+ * `none` (the documentation's pairing of a choice with a noul that says whether anything fits).
+ */
+export async function verifyAnswer(
+  cfg: JevConfig,
+  input: AnswerInput,
+  options: AskOptions = {},
+): Promise<AnswerOutcome> {
+  const changesRisk: JevQuestion = { type: "noul", instructions: CHANGES_RISK_QUESTION };
+  const areaQuestion: JevQuestion = {
+    type: "choice",
+    instructions: "Which risk area does `decision.answer` change, if any?",
+    criteria: AREA_CRITERIA,
+  };
+  const questions: Record<string, JevQuestion> = { changes_risk: changesRisk, area: areaQuestion };
+  const state = {
+    request: { title: safeField(input.title, "title", CAPS.decision) },
+    decision: {
+      question: safeField(input.question, "decision", CAPS.decision),
+      ...(input.default !== undefined
+        ? { default: safeField(input.default, "default", CAPS.decision) }
+        : {}),
+      answer: safeField(input.answer, "answer", CAPS.decision),
+    },
+    risk_areas: [...input.riskAreas],
+  };
+  const result = await askJev(cfg, { state, questions }, options);
+  if (!result.ok) return { marks: null, reason: UNAVAILABLE(result.unavailable), records: [] };
+  const records: Verification[] = [];
+  const changes = result.answers.changes_risk;
+  const area = result.answers.area;
+  if (changes?.type !== "noul" || area?.type !== "choice")
+    return { marks: null, reason: UNAVAILABLE("malformed answer"), records };
+  records.push(
+    record(
+      "decision",
+      `${input.id} changes_risk`,
+      changesRisk,
+      changes,
+      changes.noul,
+      result.model,
+    ),
+  );
+  records.push(
+    record("decision", `${input.id} area`, areaQuestion, area, area.confidence, result.model),
+  );
+  return {
+    marks: {
+      changesRisk: changes.noul,
+      area: area.choice,
+      areaConfidence: area.confidence,
+      model: result.model,
     },
     records,
   };

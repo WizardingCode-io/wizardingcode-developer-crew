@@ -10,7 +10,7 @@ import { depsAuditCommand } from "../src/gates.ts";
 import { registerPack } from "../src/packs.ts";
 import { ensureProfile, loadProfile, refreshProfile, saveProfile } from "../src/profile.ts";
 import type { GateCommand, Profile, Target } from "../src/types.ts";
-import { makeRepo, repoPaths, tempDir, testEnv, write } from "./helpers.ts";
+import { childEnv, makeRepo, repoPaths, tempDir, testEnv, write } from "./helpers.ts";
 import { writePack } from "./pack-fixtures.ts";
 
 function monorepo(): string {
@@ -90,7 +90,7 @@ test("0.3.0: refreshProfile follows the manifests; a person's commands and targe
     source: "confirmed",
   });
   if (!dot) throw new Error("no root target");
-  expect(depsAuditCommand(dot, root, process.env)).toEqual({
+  expect(depsAuditCommand(dot, root, childEnv())).toEqual({
     command: "bun audit --json",
     tool: "bun",
     files: ["package.json", "bun.lock"],

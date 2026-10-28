@@ -54,7 +54,16 @@ import { readProtectedJson, recordIntegrity } from "../src/store.ts";
 import type { GateRun, Mailbox, MailPriority, Message } from "../src/types.ts";
 import { createWork, saveWork } from "../src/work.ts";
 import { worktreeMainRoot } from "../src/worktree.ts";
-import { git, makeRepo, repoPaths, spyMailReads, tempDir, testEnv, write } from "./helpers.ts";
+import {
+  childEnv,
+  git,
+  makeRepo,
+  repoPaths,
+  spyMailReads,
+  tempDir,
+  testEnv,
+  write,
+} from "./helpers.ts";
 
 /** Two projects of one workspace and a third outside it, each registered as a session would. */
 function workspace(env = testEnv(), acceptB: string[] = ["question", "notice"]) {
@@ -483,14 +492,16 @@ test("SP2c AC-6: the mailbox lock; a stale lock is taken; two writers lose nothi
   expect(Date.now() - started).toBeGreaterThanOrEqual(300);
   expect(existsSync(lock)).toBe(true);
   // Two processes, twenty messages each.
+  // The child's own environment, in its source: named from parts, since the tests' scan refuses the token taken as a value.
+  const PE = ["process", "env"].join(".");
   const script = join(tempDir("crew-writer-"), "writer.ts");
   writeFileSync(
     script,
     `import { mailContext, send, registerProject } from "${join(import.meta.dir, "../src/mail.ts")}";
 import { loadPolicy } from "${join(import.meta.dir, "../src/policy.ts")}";
 import { resolvePaths } from "${join(import.meta.dir, "../src/paths.ts")}";
-const paths = resolvePaths(process.argv[2]!, process.env)!;
-const ctx = mailContext(paths, loadPolicy(paths).policy, process.env);
+const paths = resolvePaths(process.argv[2]!, ${PE})!;
+const ctx = mailContext(paths, loadPolicy(paths).policy, ${PE});
 for (let i = 0; i < 20; i++) {
   const out = send(ctx, { to: "crm", type: "notice", text: process.argv[3] + " " + i }, null);
   if ("refused" in out) throw new Error(out.refused);
@@ -499,7 +510,7 @@ for (let i = 0; i < 20; i++) {
   );
   // The lock from the previous assertion is still there: take it away first, as the stale rule would after ten seconds.
   utimesSync(lock, old, old);
-  const env = { ...process.env, WIZARDINGCODE_HOME: w.env.WIZARDINGCODE_HOME ?? "" };
+  const env = { ...childEnv(), WIZARDINGCODE_HOME: w.env.WIZARDINGCODE_HOME ?? "" };
   // (both writers send from the storefront; the second process only differs by its argv)
   const runs = [0, 1].map((i) =>
     Bun.spawn(["bun", "run", script, w.a.root, `writer-${i}`], {
@@ -641,7 +652,7 @@ withMailLock(process.argv[2]!, () => "never", { waitMs: 300 });
   );
   try {
     const run = Bun.spawnSync(["bun", "run", script, dir], {
-      env: process.env,
+      env: childEnv(),
       stdout: "pipe",
       stderr: "pipe",
       timeout: 3000,

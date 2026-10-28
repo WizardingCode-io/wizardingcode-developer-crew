@@ -47,8 +47,8 @@ function openFindings(text: string): number[] {
 // stop or pause command) and 188 (a pushed fix enters the loop one tick late) recorded open by the same item
 // and closed by 2026-10-28-001, which also recorded and closed 189 (a probe set the ceiling could not pay,
 // probed until the ceiling and called errored) and 190 (a dead tick leaving no trace).
-// SP9 Task 11 (2026-10-28-003) edits this list: findings 191 and 192 recorded open.
-const OPEN = [77, 114, 177, 178, 181, 182, 183, 191, 192];
+// 2026-10-28-004 edits this list: findings 191 and 192 closed by it.
+const OPEN = [77, 114, 177, 178, 181, 182, 183];
 
 test("AC-9 (consolidation of 2026-10-24): the findings that read open are the named ones, and the thirteen closed by the consolidation read closed", () => {
   const open = openFindings(readFileSync(FINDINGS, "utf8"));
@@ -70,4 +70,10 @@ test("AC-23 (the QA lead's delivery return R-1): a last clause that starts with 
     const line = /\n- Outcome:(.*)/.exec(section)?.[1] ?? "";
     expect((line.split(";").at(-1) ?? "").trim(), String(n)).toMatch(/^(?:closed|open|waits)\b/);
   }
+});
+
+test("2026-10-28-004 AC-12: finding 193's residual sentence reads closed by the item", () => {
+  expect(readFileSync(FINDINGS, "utf8")).toContain(
+    "The residual the security lead named at the spec's round 4 (the tests' own child processes) is closed by `2026-10-28-004`",
+  );
 });

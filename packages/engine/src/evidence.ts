@@ -26,6 +26,7 @@ import type {
   DecidedBy,
   Evidence,
   FindingVerification,
+  GapDecision,
   GateName,
   GateRun,
   Mailbox,
@@ -40,6 +41,7 @@ import type {
 } from "./types.ts";
 import { partyLabel } from "./types.ts";
 import { safeText, type UiEvidence } from "./ui.ts";
+import { decisionMarkText } from "./verify.ts";
 import { currentCriterion, isSkipped, kindOfItem, tddDone } from "./work.ts";
 
 type Decided = {
@@ -776,7 +778,7 @@ export function renderReport(
         d.answer === undefined
           ? "no answer yet"
           : `${d.answer}, ${decidedBy(d)}${countedNote(policy, d)}`;
-      lines.push(`- ${d.id}: ${d.question} → ${answer}`);
+      lines.push(`- ${d.id}: ${d.question} → ${answer}${decisionMarks(d, policy)}`);
     }
     // Whether the round found a decision with consequences (SP2 §7): the debate, its reason, its close.
     const debate = work.debate;
@@ -932,4 +934,10 @@ export function renderReport(
   }
   lines.push("", `Fingerprint: ${evidence.fingerprint ?? "none"}`, "");
   return lines.join("\n");
+}
+
+/** Jev's marks of a decision for the report's Gap round (2026-10-28-004): the one line `decisionMarkText` prints. */
+function decisionMarks(d: GapDecision, policy: Policy): string {
+  const text = decisionMarkText(d.jev, policy);
+  return text ? ` · ${text}` : "";
 }

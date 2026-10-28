@@ -11,6 +11,7 @@ import {
   releaseFiles,
   staleReleaseFiles,
 } from "../../../scripts/release.ts";
+import { childEnv } from "./helpers.ts";
 
 const OLD = "0.15.0";
 const NEW = "0.15.1";
@@ -104,7 +105,7 @@ function runner(
         cwd: opts.cwd,
         encoding: "utf8",
         env: {
-          ...process.env,
+          ...childEnv(),
           ...opts.env,
           GIT_AUTHOR_NAME: "t",
           GIT_AUTHOR_EMAIL: "t@t",

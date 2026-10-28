@@ -59,9 +59,12 @@ none
 ## Not answerable
 none
 EOF
-cat > "$REVIEW/ruling.json" <<EOF
-{"rulings":[{"gate":"code-quality","verdict":"not-proven","reviewer":"review-code-quality","judge":"judge","findings":[{"file":"src/accounts.mjs","line":$LINE,"text":"Upheld as a defect: the debug line prints the account's email on every call; remove it.","severity":"defect"}]},{"gate":"test-quality","verdict":"proven","reviewer":"review-test-quality","judge":"judge","findings":[]},{"gate":"security","verdict":"not-proven","reviewer":"review-security","judge":"judge","findings":[{"file":"src/accounts.mjs","line":$LINE,"text":"Upheld as a defect: the account's email is written to the console, personal data in the output with no reason.","severity":"defect"}]}]}
-EOF
+# The judge's ruling filed as the SubagentStop hook files it (finding 192): the engine records a
+# ruling only from a file a judge role record names, so the fixture hands the ruling to the hook as
+# the judge's last message, and the hook writes review/ruling.json with its record.
+RULING="{\"rulings\":[{\"gate\":\"code-quality\",\"verdict\":\"not-proven\",\"reviewer\":\"review-code-quality\",\"judge\":\"judge\",\"findings\":[{\"file\":\"src/accounts.mjs\",\"line\":$LINE,\"text\":\"Upheld as a defect: the debug line prints the account's email on every call; remove it.\",\"severity\":\"defect\"}]},{\"gate\":\"test-quality\",\"verdict\":\"proven\",\"reviewer\":\"review-test-quality\",\"judge\":\"judge\",\"findings\":[]},{\"gate\":\"security\",\"verdict\":\"not-proven\",\"reviewer\":\"review-security\",\"judge\":\"judge\",\"findings\":[{\"file\":\"src/accounts.mjs\",\"line\":$LINE,\"text\":\"Upheld as a defect: the account's email is written to the console, personal data in the output with no reason.\",\"severity\":\"defect\"}]}]}"
+printf '{"cwd":"%s","session_id":"fixture","agent_id":"judge-1","agent_type":"wizardingcode-developer-crew:judge","last_assistant_message":"%s"}' "$(pwd)" "$(printf '%s' "$RULING" | sed 's/\\/\\\\/g; s/"/\\"/g')" | crew hook subagent-stop > /dev/null
+test -f "$REVIEW/ruling.json"
 # A ruling that is not proven exits 1; the record is checked, so a refusal still stops the fixture.
 crew judgement "$ID" record --ruling "$REVIEW/ruling.json" > /dev/null ||
   crew status "$ID" | grep -q "judgement gate code-quality not proven"

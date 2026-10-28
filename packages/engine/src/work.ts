@@ -9,7 +9,7 @@ import { escapeRegExp } from "./glob.ts";
 import { withLock } from "./lock.ts";
 import { blockingObjections } from "./objections.ts";
 import { type CrewPaths, workDir } from "./paths.ts";
-import { decisionCounts } from "./policy.ts";
+import { decisionCounts, disputedDefault, disputedDefaultText } from "./policy.ts";
 import { sourceLine, sourceText } from "./source.ts";
 import { loadState, updateState } from "./state.ts";
 import { readProtectedJson, writeProtectedJson } from "./store.ts";
@@ -588,14 +588,17 @@ export function addDecision(work: WorkItem, question: string, dflt?: string): Ga
 
 /**
  * Records an answer. A person answers anything; the validator takes only the stated default, under
- * the rule that says so, and the record names it (SP2 §9).
+ * the rule that says so, and the record names it (SP2 §9); a default Jev disputed (2026-10-28-004,
+ * D-3) is refused to the validator with `disputed`, the one refusal the caller makes the item wait
+ * for a person on. Every refusal leaves the record as it was.
  */
 export function answerDecision(
   work: WorkItem,
   id: string,
   answer: string | undefined,
   decision: Decision,
-): GapDecision | { refused: string } {
+  policy: Policy,
+): GapDecision | { refused: string; disputed?: true } {
   const found = (work.decisions ?? []).find((d) => d.id === id);
   if (!found) return { refused: `unknown decision: ${id}` };
   if (decision.by === "validator") {
@@ -612,6 +615,13 @@ export function answerDecision(
     if (answer !== undefined && answer.trim() !== found.default) {
       return {
         refused: `the validator may only take the stated default of ${id} (${found.default})`,
+      };
+    }
+    const conservative = found.jev?.conservative;
+    if (typeof conservative === "number" && disputedDefault(found.jev, policy)) {
+      return {
+        refused: `${disputedDefaultText(conservative, `the default of ${id}`)}; a person decides`,
+        disputed: true,
       };
     }
   } else if (!answer?.trim()) {

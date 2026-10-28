@@ -43,7 +43,16 @@ import { openedMarkerFile, openedMarkerPath } from "../src/opened.ts";
 import { loadPolicy } from "../src/policy.ts";
 import { saveProfile } from "../src/profile.ts";
 import type { Message, OpenedSession } from "../src/types.ts";
-import { git, hookContext, makeRepo, repoPaths, tempDir, testEnv, write } from "./helpers.ts";
+import {
+  childEnv,
+  git,
+  hookContext,
+  makeRepo,
+  repoPaths,
+  tempDir,
+  testEnv,
+  write,
+} from "./helpers.ts";
 
 const FAKE = fileURLToPath(new URL("./fixtures/fake-claude.sh", import.meta.url));
 
@@ -90,7 +99,7 @@ function groupGone(pid: number): boolean {
 function psStart(pid: number): string {
   return execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], {
     encoding: "utf8",
-    env: { ...process.env, LC_ALL: "C", TZ: "UTC" },
+    env: { ...childEnv(), LC_ALL: "C", TZ: "UTC" },
   }).trim();
 }
 

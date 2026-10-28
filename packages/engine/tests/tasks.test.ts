@@ -30,7 +30,7 @@ import { loadPolicy } from "../src/policy.ts";
 import { scopeRefusal, shortId, taskNames, taskScope, taskText, writeBrief } from "../src/tasks.ts";
 import type { Message, TaskRecord } from "../src/types.ts";
 import { createWork, loadWork, saveWork } from "../src/work.ts";
-import { git, makeRepo, repoPaths, tempDir, testEnv, write } from "./helpers.ts";
+import { filedRuling, git, makeRepo, repoPaths, tempDir, testEnv, write } from "./helpers.ts";
 
 const FAKE = fileURLToPath(new URL("./fixtures/fake-claude.sh", import.meta.url));
 
@@ -1343,7 +1343,16 @@ test("SP7b-T5 AC-1: a todo's gate plans the judgement its scope asks for, cuts i
   const judge = `.crew/work/${id}/judge.json`;
   const ruling = (rulings: unknown[]) => write(root, judge, JSON.stringify({ rulings }));
   const record = (task: string, ...more: string[]) =>
-    c.run("judgement", id, "record", "--task", task, "--ruling", judge, ...more);
+    c.run(
+      "judgement",
+      id,
+      "record",
+      "--task",
+      task,
+      "--ruling",
+      filedRuling(env, root, id, judge),
+      ...more,
+    );
   const note = (task: string, scope: string, text: string) =>
     c.run("task", id, "note", task, "--criteria", "AC-1", "--scope", scope, "--text", text);
   // A backend todo: no judgement, gated as today.

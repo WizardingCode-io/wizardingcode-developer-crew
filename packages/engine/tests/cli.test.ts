@@ -19,6 +19,7 @@ import {
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { ROUTE_QUESTIONS } from "../src/classify.ts";
 import { type CliIo, main } from "../src/cli.ts";
 import { listDecisions } from "../src/decisions.ts";
 import { envRecordPath } from "../src/environment.ts";
@@ -57,6 +58,7 @@ import { adoptRecord, applyChangedFields, loadWork, saveWork } from "../src/work
 import { auditFixture, PLANTED_KEY } from "./audit-run.test.ts";
 import {
   makeRepo as bareRepo,
+  filedRuling,
   git,
   repoPaths,
   spyMailReads,
@@ -139,17 +141,17 @@ test("SP2b: judgement rulings are recorded from a file, judged by the verdict, s
   const ruling = (rulings: unknown[]) => writeFileSync(file, JSON.stringify({ rulings }));
   // A gate not planned for this item, and a malformed file, are refused with the reason.
   ruling([{ gate: "code-quality", verdict: "proven" }]);
-  expect((await c.run("judgement", id, "record", "--ruling", file)).err.trim()).toBe(
-    "ruling 1: code-quality is not planned for this item (planned: ui-ux)",
-  );
+  expect(
+    (await c.run("judgement", id, "record", "--ruling", judgeFiled(c, id, file))).err.trim(),
+  ).toBe("ruling 1: code-quality is not planned for this item (planned: ui-ux)");
   writeFileSync(file, "{not json");
-  expect((await c.run("judgement", id, "record", "--ruling", file)).err.trim()).toBe(
-    `the ruling file is not valid JSON: ${file}`,
-  );
+  expect(
+    (await c.run("judgement", id, "record", "--ruling", judgeFiled(c, id, file))).err.trim(),
+  ).toBe(`the ruling file is not valid JSON: ${file}`);
   const missing = join(root, "nope.json");
-  expect((await c.run("judgement", id, "record", "--ruling", missing)).err.trim()).toBe(
-    `no ruling file at ${missing}`,
-  );
+  expect(
+    (await c.run("judgement", id, "record", "--ruling", judgeFiled(c, id, missing))).err.trim(),
+  ).toBe(`no ruling file at ${missing}`);
   ruling([
     {
       gate: "ui-ux",
@@ -157,9 +159,9 @@ test("SP2b: judgement rulings are recorded from a file, judged by the verdict, s
       findings: [{ file: "src/App.vue", text: "no loading state", severity: "advisory" }],
     },
   ]);
-  expect((await c.run("judgement", id, "record", "--ruling", file)).err).toContain(
-    "not proven with no defect finding",
-  );
+  expect(
+    (await c.run("judgement", id, "record", "--ruling", judgeFiled(c, id, file))).err,
+  ).toContain("not proven with no defect finding");
   // Not proven, with a finding outside the change: recorded as the judge ruled, the finding marked.
   ruling([
     {
@@ -174,7 +176,7 @@ test("SP2b: judgement rulings are recorded from a file, judged by the verdict, s
       ],
     },
   ]);
-  const notProven = await c.json("judgement", id, "record", "--ruling", file);
+  const notProven = await c.json("judgement", id, "record", "--ruling", judgeFiled(c, id, file));
   expect(notProven.code).toBe(1);
   expect(notProven.data.unproven).toEqual(["judgement gate ui-ux not proven (2 findings)"]);
   const records = notProven.data.records as { findings: { outside?: boolean }[] }[];
@@ -198,7 +200,7 @@ test("SP2b: judgement rulings are recorded from a file, judged by the verdict, s
       findings: [],
     },
   ]);
-  const proven = await c.json("judgement", id, "record", "--ruling", file);
+  const proven = await c.json("judgement", id, "record", "--ruling", judgeFiled(c, id, file));
   expect(proven.code).toBe(0);
   expect(proven.data.verdict).toBe("proven");
   expect((await c.json("status")).data.phase).toBe("deliver");
@@ -263,7 +265,9 @@ test("SP2b review: a ruling is accepted only while the review inputs describe th
   // No gate run yet: no inputs, so no ruling can be about them.
   mkdirSync(review, { recursive: true });
   writeFileSync(file, proven);
-  expect((await c.run("judgement", id, "record", "--ruling", file)).err.trim()).toBe(
+  expect(
+    (await c.run("judgement", id, "record", "--ruling", judgeFiled(c, id, file))).err.trim(),
+  ).toBe(
     `no review inputs for this item: run crew gate run ${id} first, then the reviewers and the judge`,
   );
   await c.run("skip", id, "gate:e2e", "--reason", "no environment in the fixture");
@@ -272,7 +276,9 @@ test("SP2b review: a ruling is accepted only while the review inputs describe th
   writeFileSync(file, proven);
   // The code changes after the judge looked and before the record: the inputs describe other code.
   write(root, "src/App.vue", "<template>empty, again</template>");
-  expect((await c.run("judgement", id, "record", "--ruling", file)).err.trim()).toBe(
+  expect(
+    (await c.run("judgement", id, "record", "--ruling", judgeFiled(c, id, file))).err.trim(),
+  ).toBe(
     `the review inputs describe other code than the current one: run crew gate run ${id}, then the reviewers and the judge again`,
   );
   // The next gate run rewrites the inputs for the new code and removes what was written for the old.
@@ -284,7 +290,9 @@ test("SP2b review: a ruling is accepted only while the review inputs describe th
   writeFileSync(file, proven);
   await c.run("gate", "run", id, "--only", "ui-ux");
   expect(existsSync(file)).toBe(true);
-  expect((await c.json("judgement", id, "record", "--ruling", file)).data.verdict).toBe("proven");
+  expect(
+    (await c.json("judgement", id, "record", "--ruling", judgeFiled(c, id, file))).data.verdict,
+  ).toBe("proven");
 });
 
 test("SP2b minors: a relative --ruling path resolves from the repository root and the refusal prints the resolved path (D-1)", async () => {
@@ -356,7 +364,7 @@ test("SP2b minors: a proven ruling with a defect inside the change is refused an
     { file: "src/legacy.vue", line: 1, text: "unlabelled button", severity: "defect" },
     { file: "src/App.vue", line: 3, text: "no empty state", severity: "defect" },
   ]);
-  const refused = await c.run("judgement", id, "record", "--ruling", file);
+  const refused = await c.run("judgement", id, "record", "--ruling", judgeFiled(c, id, file));
   expect(refused.code).toBe(1);
   expect(refused.err.trim()).toBe(
     "ui-ux: proven with a defect on src/App.vue:3; the judge rules not proven on a defect inside the change, or lowers it to advisory",
@@ -366,7 +374,9 @@ test("SP2b minors: a proven ruling with a defect inside the change is refused an
   ]);
   // A defect outside the change is debt, named and never a failure (ADR 0006): proven stands.
   ruling([{ file: "src/legacy.vue", line: 1, text: "unlabelled button", severity: "defect" }]);
-  expect((await c.json("judgement", id, "record", "--ruling", file)).data.verdict).toBe("proven");
+  expect(
+    (await c.json("judgement", id, "record", "--ruling", judgeFiled(c, id, file))).data.verdict,
+  ).toBe("proven");
 }, 30_000);
 
 test("SP2b minors: a gate run whose patch has no diff content says so, with the reason", async () => {
@@ -589,8 +599,12 @@ function io(cwd: string, env = testEnv(), stdin = "") {
     const result = await run(...argv, "--json");
     return { code: result.code, data: JSON.parse(result.out) as Record<string, unknown> };
   };
-  return { run, json, env };
+  return { run, json, env, cwd };
 }
+
+/** The judge's ruling filed as the hook files it, then its path for `--ruling` (finding 192): see `filedRuling`. */
+const judgeFiled = (c: { env: NodeJS.ProcessEnv; cwd: string }, id: string, from: string): string =>
+  filedRuling(c.env, c.cwd, id, from);
 
 // A chore in one spot: fast, and a feature by kind, so the fast-route tests land in build as they did when the
 // constant said fix (a fix is an issue from SP3 Task 2 on, and an issue walks through analyse first).
@@ -2233,7 +2247,7 @@ test("SP2c AC-5: crew judgement record fills tokens from the engine's role recor
     }),
   );
   // The judge's 70000 is shared by the two rulings recorded together: 35000 each.
-  const recorded = await c.json("judgement", id, "record", "--ruling", file);
+  const recorded = await c.json("judgement", id, "record", "--ruling", judgeFiled(c, id, file));
   expect(recorded.data.records).toMatchObject([
     { gate: "ui-ux", tokens: 75000 },
     { gate: "code-quality", tokens: 65000 },
@@ -2255,7 +2269,9 @@ test("SP2c AC-5: crew judgement record fills tokens from the engine's role recor
       ],
     }),
   );
-  expect((await c.json("judgement", id, "record", "--ruling", file)).data.records).toMatchObject([
+  expect(
+    (await c.json("judgement", id, "record", "--ruling", judgeFiled(c, id, file))).data.records,
+  ).toMatchObject([
     { gate: "ui-ux", tokens: 500 },
     { gate: "code-quality", tokens: 65001 },
   ]);
@@ -2269,7 +2285,9 @@ test("SP2c AC-5: crew judgement record fills tokens from the engine's role recor
       rulings: [ruling("ui-ux", "review-ui-ux"), ruling("code-quality", "review-code-quality")],
     }),
   );
-  expect((await c.json("judgement", id, "record", "--ruling", file)).data.records).toMatchObject([
+  expect(
+    (await c.json("judgement", id, "record", "--ruling", judgeFiled(c, id, file))).data.records,
+  ).toMatchObject([
     { gate: "ui-ux", tokens: 0 },
     { gate: "code-quality", tokens: 0 },
   ]);
@@ -2277,7 +2295,9 @@ test("SP2c AC-5: crew judgement record fills tokens from the engine's role recor
   const judgeOnly = loadEvidence(paths, id).evidence;
   judgeOnly.roles = [record("judge", "j3", after(7), 70001)];
   saveEvidence(paths, id, judgeOnly);
-  expect((await c.json("judgement", id, "record", "--ruling", file)).data.records).toMatchObject([
+  expect(
+    (await c.json("judgement", id, "record", "--ruling", judgeFiled(c, id, file))).data.records,
+  ).toMatchObject([
     { gate: "ui-ux", tokens: 35001 },
     { gate: "code-quality", tokens: 35001 },
   ]);
@@ -2303,9 +2323,9 @@ test("SP2c AC-5: crew judgement record fills tokens from the engine's role recor
     file,
     JSON.stringify({ rulings: [{ gate: "ui-ux", verdict: "proven", findings: [], tokens: 123 }] }),
   );
-  expect((await c.json("judgement", id, "record", "--ruling", file)).data.records).toMatchObject([
-    { tokens: 123 },
-  ]);
+  expect(
+    (await c.json("judgement", id, "record", "--ruling", judgeFiled(c, id, file))).data.records,
+  ).toMatchObject([{ tokens: 123 }]);
 }, 30_000);
 
 test("SP7a AC-4: crew team prints the seats with their reasons and records them; the gate run and the status carry them; the report has the Team table", async () => {
@@ -2404,11 +2424,13 @@ test("SP7a AC-5: a third judgement round is refused; the user continues it once 
       ],
     });
   write(root, file, ruling("not-proven"));
-  expect((await c.run("judgement", id, "record", "--ruling", file)).out).toContain(
-    "code-quality: not proven (1 finding)",
-  );
+  expect(
+    (await c.run("judgement", id, "record", "--ruling", judgeFiled(c, id, file))).out,
+  ).toContain("code-quality: not proven (1 finding)");
   // A record on the same code is the same round: a not-run beside a ruling, or a ruling re-filed.
-  expect((await c.run("judgement", id, "record", "--ruling", file)).code).toBe(1);
+  expect((await c.run("judgement", id, "record", "--ruling", judgeFiled(c, id, file))).code).toBe(
+    1,
+  );
   expect(loadWork(repoPaths(root, env), id).work?.rounds).toMatchObject({
     judgement: 1,
     validation: 0,
@@ -2417,9 +2439,9 @@ test("SP7a AC-5: a third judgement round is refused; the user continues it once 
   write(root, "src/a.ts", "y2");
   await c.run("gate", "run", id);
   write(root, file, ruling("not-proven"));
-  expect((await c.run("judgement", id, "record", "--ruling", file)).out).toContain(
-    "code-quality: not proven (1 finding)",
-  );
+  expect(
+    (await c.run("judgement", id, "record", "--ruling", judgeFiled(c, id, file))).out,
+  ).toContain("code-quality: not proven (1 finding)");
   expect(loadWork(repoPaths(root, env), id).work?.rounds).toMatchObject({
     judgement: 2,
     validation: 0,
@@ -2428,7 +2450,7 @@ test("SP7a AC-5: a third judgement round is refused; the user continues it once 
   write(root, "src/a.ts", "y3");
   await c.run("gate", "run", id);
   write(root, file, ruling("proven"));
-  const third = await c.run("judgement", id, "record", "--ruling", file);
+  const third = await c.run("judgement", id, "record", "--ruling", judgeFiled(c, id, file));
   expect(third.code).toBe(1);
   expect(third.err.trim()).toBe(
     `judgement round 3 of ${id}: the policy allows 2 (team.maxJudgementRounds); the user continues it once with crew continue ${id} judgement, or sets the standing grant once with crew policy set team.continuations granted, or decides (crew skip <id> gate:<gate> where policy.json allows it)`,
@@ -2447,9 +2469,9 @@ test("SP7a AC-5: a third judgement round is refused; the user continues it once 
     what: "judgement",
     by: { by: "user", relayed: true },
   });
-  expect((await c.run("judgement", id, "record", "--ruling", file)).out).toContain(
-    "code-quality: proven (0 findings)",
-  );
+  expect(
+    (await c.run("judgement", id, "record", "--ruling", judgeFiled(c, id, file))).out,
+  ).toContain("code-quality: proven (0 findings)");
   expect(loadWork(repoPaths(root, env), id).work?.rounds).toMatchObject({
     judgement: 3,
     validation: 0,
@@ -2458,7 +2480,7 @@ test("SP7a AC-5: a third judgement round is refused; the user continues it once 
   write(root, "src/a.ts", "y4");
   await c.run("gate", "run", id);
   write(root, file, ruling("proven"));
-  const fourth = await c.run("judgement", id, "record", "--ruling", file);
+  const fourth = await c.run("judgement", id, "record", "--ruling", judgeFiled(c, id, file));
   expect(fourth.code).toBe(1);
   expect(fourth.err.trim()).toBe(
     `judgement round 4 of ${id}: the policy allows 2 (team.maxJudgementRounds); the user continues it once with crew continue ${id} judgement, or sets the standing grant once with crew policy set team.continuations granted, or decides (crew skip <id> gate:<gate> where policy.json allows it)`,
@@ -2615,7 +2637,7 @@ test("SP7a-Task5 AC-2: every decision taken or recorded lands in the project's r
       ],
     }),
   );
-  await c.run("judgement", id, "record", "--ruling", rulingFile);
+  await c.run("judgement", id, "record", "--ruling", judgeFiled(c, id, rulingFile));
   const listed = await c.run("decisions");
   const lines = listed.out.split("\n").filter((l) => l.includes(" · "));
   expect(lines.length).toBe(7);
@@ -4064,7 +4086,7 @@ test("SP7b-T5 AC-2 (judgement), 2026-10-27-007 AC-1: under the standing grant th
     write(root, "src/a.ts", `y${n}`);
     await c.run("gate", "run", id);
     write(root, file, ruling(verdict));
-    return c.run("judgement", id, "record", "--ruling", file);
+    return c.run("judgement", id, "record", "--ruling", judgeFiled(c, id, file));
   };
   const continued = () => loadWork(repoPaths(root, env), id).work?.continued ?? [];
   expect((await round(1, "not-proven")).code).toBe(1);
@@ -4125,11 +4147,13 @@ test("SP7b-T5 AC-3: the engine keeps each judgement round's findings and ruling 
     "# ui-ux findings\n- F-1 · src/App.vue:1 · no empty state\n",
   );
   writeFileSync(file, notProven);
-  expect((await c.run("judgement", id, "record", "--ruling", file)).code).toBe(1);
+  expect((await c.run("judgement", id, "record", "--ruling", judgeFiled(c, id, file))).code).toBe(
+    1,
+  );
   expect(readFileSync(join(review, "ui-ux.round1.md"), "utf8")).toBe(
     "# ui-ux findings\n- F-1 · src/App.vue:1 · no empty state\n",
   );
-  expect(readFileSync(join(review, "ruling.round1.json"), "utf8")).toBe(notProven);
+  expect(readFileSync(join(review, "ruling.round1.json"), "utf8").trim()).toBe(notProven);
   // The code changes and the gate run cuts the inputs again: the originals go, the copies stay.
   write(root, "src/App.vue", "<template>empty, with copy</template>");
   await c.run("gate", "run", id);
@@ -4139,10 +4163,12 @@ test("SP7b-T5 AC-3: the engine keeps each judgement round's findings and ruling 
   expect(existsSync(join(review, "ruling.round1.json"))).toBe(true);
   writeFileSync(join(review, "ui-ux.findings.md"), "# ui-ux findings\n- none\n");
   writeFileSync(file, proven);
-  expect((await c.run("judgement", id, "record", "--ruling", file)).code).toBe(0);
+  expect((await c.run("judgement", id, "record", "--ruling", judgeFiled(c, id, file))).code).toBe(
+    0,
+  );
   expect(readFileSync(join(review, "ui-ux.round2.md"), "utf8")).toBe("# ui-ux findings\n- none\n");
   expect(readFileSync(join(review, "ruling.round2.json"), "utf8")).toBe(proven);
-  expect(readFileSync(join(review, "ruling.round1.json"), "utf8")).toBe(notProven);
+  expect(readFileSync(join(review, "ruling.round1.json"), "utf8").trim()).toBe(notProven);
   // A not-run record on the same code copies nothing.
   await c.run("judgement", id, "record", "ui-ux", "--not-run", "--reason", "no browser");
   expect(readFileSync(join(review, "ruling.round2.json"), "utf8")).toBe(proven);
@@ -5435,7 +5461,7 @@ async function judged(route: "standard" | "full") {
 
 test("SP3-T6 AC-1, AC-2, AC-5: crew judgement record asks Jev about the upheld defects through the canned transport, marks them under the gate's line and in the report, records the answers with the model, and a disputed defect stays a defect with the verdict and the exit code unchanged; without Jev nothing is asked", async () => {
   const { root, c, id, ruling } = await judged("standard");
-  const plain = await c.run("judgement", id, "record", "--ruling", ruling);
+  const plain = await c.run("judgement", id, "record", "--ruling", judgeFiled(c, id, ruling));
   expect(plain.err).toBe("");
   expect(plain.code).toBe(1);
   expect(plain.out).not.toContain("jev");
@@ -5444,7 +5470,7 @@ test("SP3-T6 AC-1, AC-2, AC-5: crew judgement record asks Jev about the upheld d
   expect((await c.run("tdd", "green", id, "AC-1", "--", GREEN)).code).toBe(0);
   await c.run("gate", "run", id);
   await cannedJev(c, { d1: { type: "noul", noul: 0.04 } });
-  const recorded = await c.run("judgement", id, "record", "--ruling", ruling);
+  const recorded = await c.run("judgement", id, "record", "--ruling", judgeFiled(c, id, ruling));
   expect(recorded.code).toBe(1);
   expect(recorded.out).toContain(
     "  code-quality: not proven (2 findings)\n    src/a.ts:1 disputed by jev (0.96)\n    src/a.ts unverified: no line\nNot proven: judgement gate code-quality not proven (2 findings)",
@@ -5476,7 +5502,7 @@ test("SP3-T6 AC-1, AC-2, AC-5: crew judgement record asks Jev about the upheld d
   expect((await c.run("policy", "set", "verify.asks", "triage")).code).toBe(0);
   // A third round: the user continues it (relayed under the default policy).
   expect((await c.run("continue", id, "judgement")).code).toBe(0);
-  const quiet = await c.run("judgement", id, "record", "--ruling", ruling);
+  const quiet = await c.run("judgement", id, "record", "--ruling", judgeFiled(c, id, ruling));
   expect(quiet.err).toBe("");
   expect(quiet.out).not.toContain("jev");
   expect(loadEvidence(repoPaths(root, c.env), id).evidence.verifications).toHaveLength(1);
@@ -5491,7 +5517,13 @@ test("SP3-T6 AC-3: with Jev down, crew judgement record marks the sent defects u
   expect((await full.c.run("config", "jev.endpoint", "http://127.0.0.1:1/v1")).code).toBe(0);
   const fullEnv = { ...full.c.env, WIZARDINGCODE_JEV_API_KEY: "sk-test" };
   const cf = io(full.root, fullEnv);
-  const recorded = await cf.run("judgement", full.id, "record", "--ruling", full.ruling);
+  const recorded = await cf.run(
+    "judgement",
+    full.id,
+    "record",
+    "--ruling",
+    judgeFiled(cf, full.id, full.ruling),
+  );
   expect(recorded.err).toBe("");
   expect(recorded.code).toBe(1);
   expect(recorded.out).toMatch(
@@ -5509,12 +5541,18 @@ test("SP3-T6 AC-3: with Jev down, crew judgement record marks the sent defects u
   write(full.root, "src/a.ts", "x = 2");
   await cf.run("tdd", "green", full.id, "AC-1", "--", GREEN);
   await cf.run("gate", "run", full.id);
-  await cf.run("judgement", full.id, "record", "--ruling", full.ruling);
+  await cf.run("judgement", full.id, "record", "--ruling", judgeFiled(cf, full.id, full.ruling));
   expect((await cf.json("status")).data.awaiting).toBe("role");
   const standard = await judged("standard");
   expect((await standard.c.run("config", "jev.endpoint", "http://127.0.0.1:1/v1")).code).toBe(0);
   const cs = io(standard.root, { ...standard.c.env, WIZARDINGCODE_JEV_API_KEY: "sk-test" });
-  const out = await cs.run("judgement", standard.id, "record", "--ruling", standard.ruling);
+  const out = await cs.run(
+    "judgement",
+    standard.id,
+    "record",
+    "--ruling",
+    judgeFiled(cs, standard.id, standard.ruling),
+  );
   expect(out.out).toMatch(/\njev unavailable: network error: .+\n?$/);
   expect(out.out).not.toContain("waits for a person");
   expect((await cs.json("status")).data.awaiting).toBeNull();
@@ -6332,20 +6370,20 @@ test("SP8-T3 AC-2: a strategy ruling is recorded on its own path (stamped with t
   const id = await strategyItem(c, root);
   const file = join(root, "ruling.json");
   writeFileSync(file, strategyRuling("judge"));
-  const unchecked = await c.run("judgement", id, "record", "--ruling", file);
+  const unchecked = await c.run("judgement", id, "record", "--ruling", judgeFiled(c, id, file));
   expect(unchecked.code).toBe(1);
   expect(unchecked.err.trim()).toBe(
     `no strategy check for this item: run crew strategy ${id} check first, then the reviewer and the judge`,
   );
   expect((await c.run("strategy", id, "check")).code).toBe(0);
   write(root, `.crew/work/${id}/strategy.md`, `${STRATEGY}\n`);
-  const changed = await c.run("judgement", id, "record", "--ruling", file);
+  const changed = await c.run("judgement", id, "record", "--ruling", judgeFiled(c, id, file));
   expect(changed.code).toBe(1);
   expect(changed.err.trim()).toBe(
     `strategy.md or conclave/researcher.md changed after the check: run crew strategy ${id} check again, then the reviewer and the judge`,
   );
   write(root, `.crew/work/${id}/strategy.md`, STRATEGY);
-  const recorded = await c.run("judgement", id, "record", "--ruling", file);
+  const recorded = await c.run("judgement", id, "record", "--ruling", judgeFiled(c, id, file));
   expect(recorded.code, recorded.err).toBe(0);
   expect(recorded.out.trim()).toBe(
     "strategy: proven (0 findings, reviewer judge); strategy round 1",
@@ -6377,7 +6415,9 @@ test("SP8-T3 AC-2: a strategy ruling is recorded on its own path (stamped with t
       ],
     }),
   );
-  expect((await c.run("judgement", id, "record", "--ruling", file)).code).toBe(0);
+  expect((await c.run("judgement", id, "record", "--ruling", judgeFiled(c, id, file))).code).toBe(
+    0,
+  );
   const marked = loadEvidence(paths, id).evidence.judgement?.find((j) => j.gate === "strategy");
   expect(marked?.findings.map((f) => f.outside ?? false)).toEqual([false, true]);
   expect((loadWork(paths, id).work as WorkItem).rounds?.strategy).toBe(1);
@@ -6401,7 +6441,13 @@ test("SP8-T3 AC-2: a strategy ruling is recorded on its own path (stamped with t
   const feature = (await c.json("start", "A feature", "--answers", answers, "--criterion", "a"))
     .data.id as string;
   writeFileSync(file, strategyRuling("judge"));
-  const refused = await c.run("judgement", feature, "record", "--ruling", file);
+  const refused = await c.run(
+    "judgement",
+    feature,
+    "record",
+    "--ruling",
+    judgeFiled(c, feature, file),
+  );
   expect(refused.code).toBe(1);
   expect(refused.err.trim()).toBe(
     "strategy is not a phase of this item: a strategy ruling is recorded on a new project alone",
@@ -6411,7 +6457,7 @@ test("SP8-T3 AC-2: a strategy ruling is recorded on its own path (stamped with t
   const cycle = async (text: string) => {
     write(root, `.crew/work/${second}/strategy.md`, text);
     expect((await c.run("strategy", second, "check")).code).toBe(0);
-    return c.run("judgement", second, "record", "--ruling", file);
+    return c.run("judgement", second, "record", "--ruling", judgeFiled(c, second, file));
   };
   expect((await cycle(STRATEGY)).out).toContain("strategy round 1");
   expect((await cycle(`${STRATEGY}\n`)).out).toContain("strategy round 2");
@@ -6457,7 +6503,7 @@ test("SP8-T3 AC-2, AC-3: on the full route the strategy ruling needs the CTO's r
   );
   const file = join(root, "ruling.json");
   writeFileSync(file, strategyRuling("cto"));
-  const noCto = await c.run("judgement", id, "record", "--ruling", file);
+  const noCto = await c.run("judgement", id, "record", "--ruling", judgeFiled(c, id, file));
   expect(noCto.code).toBe(1);
   expect(noCto.err.trim()).toBe(
     "the CTO's review of the strategy comes before the ruling on the full route (conclave/cto.md, launched after crew strategy check)",
@@ -6469,14 +6515,14 @@ test("SP8-T3 AC-2, AC-3: on the full route the strategy ruling needs the CTO's r
     "# strategy findings for x\nreviewer: cto\n\n## Findings\n(or: none)\n",
   );
   utimesSync(cto, new Date(at - 60_000), new Date(at - 60_000));
-  const old = await c.run("judgement", id, "record", "--ruling", file);
+  const old = await c.run("judgement", id, "record", "--ruling", judgeFiled(c, id, file));
   expect(old.code).toBe(1);
   expect(old.err.trim()).toBe(
     "conclave/cto.md predates the check: the CTO reviews the strategy as it is now, then the judge rules",
   );
   utimesSync(cto, new Date(at + 1_000), new Date(at + 1_000));
   writeFileSync(file, strategyRuling("judge"));
-  const wrong = await c.run("judgement", id, "record", "--ruling", file);
+  const wrong = await c.run("judgement", id, "record", "--ruling", judgeFiled(c, id, file));
   expect(wrong.code).toBe(1);
   expect(wrong.err.trim()).toBe(
     "on the full route the CTO reviews the strategy: the ruling names reviewer cto",
@@ -6497,18 +6543,22 @@ test("SP8-T3 AC-2, AC-3: on the full route the strategy ruling needs the CTO's r
       ],
     }),
   );
-  expect((await c.run("judgement", id, "record", "--ruling", file)).err.trim()).toBe(
-    "a strategy ruling is recorded on its own: one ruling with gate strategy and no other",
-  );
+  expect(
+    (await c.run("judgement", id, "record", "--ruling", judgeFiled(c, id, file))).err.trim(),
+  ).toBe("a strategy ruling is recorded on its own: one ruling with gate strategy and no other");
   writeFileSync(file, strategyRuling("cto"));
-  const recorded = await c.run("judgement", id, "record", "--ruling", file);
+  const recorded = await c.run("judgement", id, "record", "--ruling", judgeFiled(c, id, file));
   expect(recorded.code, recorded.err).toBe(0);
   expect(recorded.out.trim()).toBe("strategy: proven (0 findings, reviewer cto); strategy round 1");
   expect((await c.json("phase", id, "next")).data.phase).toBe("specify");
   // A standard item's ruling names the judge; the CTO's name is refused there.
   const standard = await strategyItem(c, root);
   expect((await c.run("strategy", standard, "check")).code).toBe(0);
-  expect((await c.run("judgement", standard, "record", "--ruling", file)).err.trim()).toBe(
+  expect(
+    (
+      await c.run("judgement", standard, "record", "--ruling", judgeFiled(c, standard, file))
+    ).err.trim(),
+  ).toBe(
     "on the standard route the judge rules the strategy from the files: the ruling names reviewer judge",
   );
 });
@@ -8743,7 +8793,7 @@ test("SP6-T4 AC-5: crew answer file files a role's answer as the hook does, mark
     first,
     "record",
     "--ruling",
-    join(root, ".crew", "work", first, "review", "ruling.json"),
+    judgeFiled(c, first, join(root, ".crew", "work", first, "review", "ruling.json")),
   );
   expect(judged.out).toContain("answers filed by the session: review-security, expert-1, judge");
   const report = (await c.run("evidence", first)).out;
@@ -10607,7 +10657,7 @@ test("DEBT-AC-15-seat: crew team <id> seat <gate> --reason seats an unplanned ju
     file,
     JSON.stringify({ rulings: ["code-quality", "test-quality", "security"].map(proven) }),
   );
-  const recorded = await c.run("judgement", id, "record", "--ruling", file);
+  const recorded = await c.run("judgement", id, "record", "--ruling", judgeFiled(c, id, file));
   expect(recorded.err).not.toContain("not planned");
   expect(recorded.code, recorded.err).toBe(0);
   const judgement = (await c.json("status")).data.judgement as { gate: string; status: string }[];
@@ -11978,3 +12028,423 @@ test("2026-10-27-008 AC-3: a lock left in the work folder refuses the run's save
   expect(after.work).toEqual(before);
   expect(existsSync(lock)).toBe(true);
 }, 40_000);
+
+/** Jev's reading of the nine questions, canned: a feature in one module, the auth noul as given. */
+const ROUTE_JEV = (auth: number) => ({
+  work_type: {
+    type: "choice",
+    choice: "feature",
+    probabilities: { feature: 0.9, fix: 0.1 },
+    confidence: 0.9,
+  },
+  is_vague: { type: "noul", noul: 0.1 },
+  scope: {
+    type: "score",
+    score: 1.0,
+    legend: { "0": "one spot", "1": "one module", "2": "several modules", "3": "the whole system" },
+    probabilities: { "0": 0.05, "1": 0.9, "2": 0.05, "3": 0 },
+    confidence: 0.9,
+  },
+  touches_auth: { type: "noul", noul: auth },
+  touches_payments: { type: "noul", noul: 0.05 },
+  touches_personal_data: { type: "noul", noul: 0.05 },
+  touches_data_migration: { type: "noul", noul: 0.0 },
+  touches_infra: { type: "noul", noul: 0.05 },
+  touches_public_api: { type: "noul", noul: 0.1 },
+});
+const SEVEN_ASKS = "defect,validator,fact,triage,knowledge,route,decision";
+const standardAnswers = JSON.stringify({ ...JSON.parse(answers), work_type: "feature", scope: 1 });
+
+test("2026-10-28-004 AC-3: crew start asks Jev the route and tightens: an auth area at 0.90 on a request answered 0 raises the route to full with the line and the nine records, answers under the bounds keep the route, Jev down says unverified, and route out of the asks asks nothing", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const c = io(root);
+  const paths = repoPaths(root, c.env);
+  expect((await c.run("policy", "set", "verify.asks", SEVEN_ASKS)).code).toBe(0);
+  const file = await cannedJev(c, ROUTE_JEV(0.9));
+  const started = await c.run("start", "Add a login form", "--answers", standardAnswers);
+  expect(started.code).toBe(0);
+  expect(started.out).toContain(
+    "(route full: risk areas: auth; route standard → full (jev: touches_auth 0.90 (the session's 0.00)))",
+  );
+  const id = (await c.json("status")).data.active as string;
+  const work = loadWork(paths, id).work as WorkItem;
+  expect(work.route).toBe("full");
+  expect(work.riskAreas).toEqual(["auth"]);
+  expect(work.routeReasons).toEqual([
+    "risk areas: auth",
+    "route standard → full (jev: touches_auth 0.90 (the session's 0.00))",
+  ]);
+  expect(work.seats?.some((s) => s.gate === "security")).toBe(true);
+  expect((await c.json("status")).data.routeReasons).toEqual(work.routeReasons);
+  expect(
+    loadEvidence(paths, id)
+      .evidence.verifications?.filter((v) => v.what === "route")
+      .map((v) => [v.ref, v.model]),
+  ).toEqual(ROUTE_QUESTIONS.map((ref) => [ref, "file"]));
+  expect((await c.run("evidence", id)).out).toContain(
+    "| route | touches_auth | yes 0.90 | 0.90 | file |",
+  );
+  // Every answer under the bounds: the session's route stands, the nine records kept, no line.
+  writeFileSync(file, JSON.stringify(ROUTE_JEV(0.1)));
+  const kept = await c.run("start", "Add a login form", "--answers", standardAnswers);
+  expect(kept.out).toContain("(route standard: feature, scope level 1, clear request)");
+  expect(kept.out).not.toContain("jev");
+  const second = (await c.json("status")).data.active as string;
+  expect(loadWork(paths, second).work?.route).toBe("standard");
+  expect(loadEvidence(paths, second).evidence.verifications?.map((v) => v.what)).toEqual(
+    ROUTE_QUESTIONS.map(() => "route"),
+  );
+  // Jev down: said under the line, the route as the session gave it, no record.
+  writeFileSync(file, "{not json");
+  const down = await c.run("start", "Add a login form", "--answers", standardAnswers);
+  expect(down.out).toContain("\n  route unverified: jev unavailable: canned answers unreadable: ");
+  const third = (await c.json("status")).data.active as string;
+  expect(loadWork(paths, third).work?.route).toBe("standard");
+  expect(loadEvidence(paths, third).evidence.verifications).toBeUndefined();
+  // The ask off: nothing asked, nothing recorded, whatever Jev would say.
+  writeFileSync(file, JSON.stringify(ROUTE_JEV(0.9)));
+  expect(
+    (await c.run("policy", "set", "verify.asks", "defect,validator,fact,triage,knowledge")).code,
+  ).toBe(0);
+  const quiet = await c.run("start", "Add a login form", "--answers", standardAnswers);
+  expect(quiet.out).not.toContain("jev");
+  const fourth = (await c.json("status")).data.active as string;
+  expect(loadWork(paths, fourth).work?.route).toBe("standard");
+  expect(loadEvidence(paths, fourth).evidence.verifications).toBeUndefined();
+}, 30_000);
+
+test("2026-10-28-004 AC-4: crew decision add prints and records Jev's marks, says a disputed default, asks no conservative question without a default, and the validator's stated-default rule is refused on a disputed default while a person's decide is taken", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const c = io(root);
+  const paths = repoPaths(root, c.env);
+  expect((await c.run("policy", "set", "verify.asks", SEVEN_ASKS)).code).toBe(0);
+  const file = await cannedJev(c, {
+    default_is_conservative: { type: "noul", noul: 0.91 },
+    users_call: { type: "noul", noul: 0.84 },
+  });
+  const id = (await c.json("start", "Erase accounts", "--answers", standardAnswers)).data
+    .id as string;
+  const added = await c.run(
+    "decision",
+    id,
+    "add",
+    "Erasure or deactivation?",
+    "--default",
+    "deactivation",
+  );
+  expect(added.code).toBe(0);
+  expect(added.out).toBe(
+    "D-1: Erasure or deactivation? (default: deactivation)\n  jev: default conservative 0.91; the user's call 0.84\n",
+  );
+  expect(loadWork(paths, id).work?.decisions?.[0]?.jev).toEqual({
+    conservative: 0.91,
+    usersCall: 0.84,
+    model: "file",
+  });
+  expect(
+    loadEvidence(paths, id)
+      .evidence.verifications?.filter((v) => v.what === "decision")
+      .map((v) => [v.ref, v.confidence]),
+  ).toEqual([
+    ["D-1 default_is_conservative", 0.91],
+    ["D-1 users_call", 0.84],
+  ]);
+  // Without a default the conservative question is not asked: a canned file without it answers.
+  writeFileSync(file, JSON.stringify({ users_call: { type: "noul", noul: 0.4 } }));
+  const bare = await c.run("decision", id, "add", "Which copy?");
+  expect(bare.out).toBe("D-2: Which copy?\n  jev: the user's call 0.40\n");
+  // A disputed default: printed, recorded, and refused to the validator's rule; a person's decide is taken.
+  writeFileSync(
+    file,
+    JSON.stringify({
+      default_is_conservative: { type: "noul", noul: 0.1 },
+      users_call: { type: "noul", noul: 0.84 },
+    }),
+  );
+  const disputed = await c.run(
+    "decision",
+    id,
+    "add",
+    "Delete at once or after thirty days?",
+    "--default",
+    "at once",
+  );
+  expect(disputed.out).toBe(
+    "D-3: Delete at once or after thirty days? (default: at once)\n  disputed by jev: the default is not the conservative answer (conservative 0.10); the user's call 0.84\n",
+  );
+  const refused = await c.run(
+    "decide",
+    id,
+    "D-3",
+    "--mode",
+    "dontAsk",
+    "--validator",
+    "stated-default",
+  );
+  expect(refused.code).toBe(1);
+  expect(refused.err.trim()).toBe(
+    "disputed by jev: the default of D-3 is not the conservative answer (conservative 0.10); a person decides",
+  );
+  expect(loadWork(paths, id).work?.awaiting).toBe("user");
+  expect(loadWork(paths, id).work?.decisions?.[2]?.answer).toBeUndefined();
+  writeFileSync(
+    file,
+    JSON.stringify({
+      changes_risk: { type: "noul", noul: 0.1 },
+      area: {
+        type: "choice",
+        choice: "none",
+        probabilities: { none: 0.95, auth: 0.05 },
+        confidence: 0.95,
+      },
+    }),
+  );
+  const taken = await c.run("decide", id, "D-3", "after thirty days");
+  expect(taken.code).toBe(0);
+  expect(taken.out).toContain(
+    "D-3 answered by the user, relayed by the agent: after thirty days\n  jev: D-3's answer changes no risk area (0.10; none 0.95)\n",
+  );
+  // The validator on the answered decision gets the standing refusal, and nothing moves (the
+  // judge's round 2): the dispute is read after the record's own refusals.
+  const before = JSON.stringify(loadWork(paths, id).work);
+  const again = await c.run(
+    "decide",
+    id,
+    "D-3",
+    "--mode",
+    "dontAsk",
+    "--validator",
+    "stated-default",
+  );
+  expect(again.code).toBe(1);
+  expect(again.err.trim()).toBe(
+    "D-3 is already answered by the user; the validator never overwrites an answer",
+  );
+  expect(JSON.stringify(loadWork(paths, id).work)).toBe(before);
+  // A default the validator may take (not disputed): taken as before.
+  writeFileSync(
+    file,
+    JSON.stringify({
+      default_is_conservative: { type: "noul", noul: 0.9 },
+      users_call: { type: "noul", noul: 0.84 },
+    }),
+  );
+  await c.run("decision", id, "add", "Keep the audit log?", "--default", "yes, ninety days");
+  writeFileSync(
+    file,
+    JSON.stringify({
+      changes_risk: { type: "noul", noul: 0.1 },
+      area: { type: "choice", choice: "none", probabilities: { none: 1 }, confidence: 1 },
+    }),
+  );
+  const byValidator = await c.json(
+    "decide",
+    id,
+    "D-4",
+    "--mode",
+    "dontAsk",
+    "--validator",
+    "stated-default",
+  );
+  expect(byValidator.data.decision).toMatchObject({ answer: "yes, ninety days", by: "validator" });
+  // The ask off: the decision reads as today.
+  expect((await c.run("policy", "set", "verify.asks", "defect")).code).toBe(0);
+  const quiet = await c.run("decision", id, "add", "Which?", "--default", "x");
+  expect(quiet.out).toBe("D-5: Which? (default: x)\n");
+  expect(loadWork(paths, id).work?.decisions?.[4]?.jev).toBeUndefined();
+}, 30_000);
+
+test("2026-10-28-004 AC-5: crew decide asks Jev whether the answer changes a risk area: the area joins the item's and raises the route with the reason and the line; none or a low confidence records and changes nothing; an area the item has adds nothing and says so", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const c = io(root);
+  const paths = repoPaths(root, c.env);
+  expect((await c.run("policy", "set", "verify.asks", SEVEN_ASKS)).code).toBe(0);
+  const file = await cannedJev(c, {
+    default_is_conservative: { type: "noul", noul: 0.91 },
+    users_call: { type: "noul", noul: 0.84 },
+  });
+  const id = (await c.json("start", "Who may delete", "--answers", standardAnswers)).data
+    .id as string;
+  for (const q of ["Who may delete an account?", "Which copy?", "Who may export?", "Which cache?"])
+    await c.run("decision", id, "add", q, "--default", "the owner alone");
+  const area = (choice: string, confidence: number, changes = 0.9) => ({
+    changes_risk: { type: "noul", noul: changes },
+    area: {
+      type: "choice",
+      choice,
+      probabilities: { [choice]: confidence, none: 1 - confidence },
+      confidence,
+    },
+  });
+  writeFileSync(file, JSON.stringify(area("auth", 0.9)));
+  const decided = await c.run("decide", id, "D-1", "any admin, without a confirmation");
+  expect(decided.code).toBe(0);
+  expect(decided.out).toBe(
+    "D-1 answered by the user, relayed by the agent: any admin, without a confirmation\n  jev: D-1's answer changes auth (0.90); route standard → full\n",
+  );
+  const work = loadWork(paths, id).work as WorkItem;
+  expect(work.riskAreas).toEqual(["auth"]);
+  expect(work.route).toBe("full");
+  expect(work.routeReasons.at(-1)).toBe("raised to full: jev: D-1's answer changes auth (0.90)");
+  expect(work.seats?.some((s) => s.gate === "security")).toBe(true);
+  expect(work.decisions?.[0]?.jev).toMatchObject({
+    changesRisk: 0.9,
+    area: "auth",
+    areaConfidence: 0.9,
+  });
+  expect(
+    loadEvidence(paths, id)
+      .evidence.verifications?.filter((v) => v.ref.startsWith("D-1 "))
+      .map((v) => v.ref),
+  ).toEqual(["D-1 default_is_conservative", "D-1 users_call", "D-1 changes_risk", "D-1 area"]);
+  // None, or a confidence under the threshold: recorded, nothing moves.
+  writeFileSync(file, JSON.stringify(area("none", 0.95)));
+  const none = await c.run("decide", id, "D-2", "the product's voice");
+  expect(none.out).toContain("\n  jev: D-2's answer changes no risk area (0.90; none 0.95)\n");
+  writeFileSync(file, JSON.stringify(area("payments", 0.5)));
+  const unsure = await c.run("decide", id, "D-3", "any admin");
+  expect(unsure.out).toContain(
+    "\n  jev: D-3's answer changes no risk area (0.90; payments 0.50)\n",
+  );
+  // A change under the threshold with an area at high confidence: the noul rules, nothing moves.
+  writeFileSync(file, JSON.stringify(area("auth", 0.9, 0.5)));
+  const weak = await c.run("decide", id, "D-4", "any admin");
+  expect(weak.out).toContain("\n  jev: D-4's answer changes no risk area (0.50; auth 0.90)\n");
+  const after = loadWork(paths, id).work as WorkItem;
+  expect(after.riskAreas).toEqual(["auth"]);
+  expect(after.routeReasons).toEqual(work.routeReasons);
+  // An area the item already has: said, nothing added.
+  await c.run("decision", id, "add", "Who resets a password?", "--default", "the owner alone");
+  writeFileSync(file, JSON.stringify(area("auth", 0.9)));
+  const again = await c.run("decide", id, "D-5", "any admin");
+  expect(again.out).toContain(
+    "\n  jev: D-5's answer changes auth (0.90): already among the item's risk areas\n",
+  );
+  expect(loadWork(paths, id).work?.riskAreas).toEqual(["auth"]);
+  expect(loadWork(paths, id).work?.routeReasons).toEqual(work.routeReasons);
+  // The report prints the marks in the Gap round and the records in the Verifications table.
+  const report = (await c.run("evidence", id)).out;
+  expect(report).toContain(
+    "- D-1: Who may delete an account? → any admin, without a confirmation, by the user, relayed by the agent · jev: default conservative 0.91; the user's call 0.84; the answer changes auth (0.90)",
+  );
+  expect(report).toContain("| decision | D-1 area | auth 0.90 |");
+}, 30_000);
+
+test("2026-10-28-004 AC-6: a policy with no asks key, or an empty one, asks neither the route nor the decision; the two names are accepted in a list and an unknown one refused", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const c = io(root);
+  const paths = repoPaths(root, c.env);
+  await cannedJev(c, ROUTE_JEV(0.9));
+  expect(loadPolicy(paths).policy.verify.asks).toEqual([
+    "defect",
+    "validator",
+    "fact",
+    "triage",
+    "knowledge",
+  ]);
+  const started = await c.run("start", "Add a login form", "--answers", standardAnswers);
+  expect(started.out).not.toContain("jev");
+  const id = (await c.json("status")).data.active as string;
+  expect(loadWork(paths, id).work?.route).toBe("standard");
+  expect(loadEvidence(paths, id).evidence.verifications).toBeUndefined();
+  expect((await c.run("decision", id, "add", "Which?", "--default", "x")).out).toBe(
+    "D-1: Which? (default: x)\n",
+  );
+  expect((await c.run("policy", "set", "verify.asks", "jev")).code).toBe(1);
+  expect((await c.run("policy", "set", "verify.asks", "route,decision")).code).toBe(0);
+  expect(loadPolicy(paths).policy.verify.asks).toEqual(["route", "decision"]);
+  expect((await c.run("policy", "set", "verify.asks", "")).code).toBe(1);
+}, 30_000);
+
+test("2026-10-28-004 round 1 (test-quality): with the seven asks listed and no Jev configured, crew start, decision add and decide ask nothing, print no mark and record nothing", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const c = io(root);
+  const paths = repoPaths(root, c.env);
+  expect(c.env.WIZARDINGCODE_JEV_API_KEY).toBeUndefined();
+  expect((await c.run("policy", "set", "verify.asks", SEVEN_ASKS)).code).toBe(0);
+  const started = await c.run("start", "Add a login form", "--answers", standardAnswers);
+  expect(started.code).toBe(0);
+  expect(started.out).toContain("(route standard: feature, scope level 1, clear request)");
+  expect(started.out).not.toContain("jev");
+  expect(started.out).not.toContain("unverified");
+  const id = (await c.json("status")).data.active as string;
+  expect(loadEvidence(paths, id).evidence.verifications).toBeUndefined();
+  expect((await c.run("decision", id, "add", "Which?", "--default", "x")).out).toBe(
+    "D-1: Which? (default: x)\n",
+  );
+  expect((await c.run("decide", id, "D-1", "y")).out).toBe(
+    "D-1 answered by the user, relayed by the agent: y\n",
+  );
+  expect(loadWork(paths, id).work?.decisions?.[0]?.jev).toBeUndefined();
+  expect(loadEvidence(paths, id).evidence.verifications).toBeUndefined();
+}, 30_000);
+
+test("2026-10-28-004 AC-8 (finding 192): crew judgement record takes the judge's filed ruling alone: with no judge on record it says so, and a file the session wrote, a symlink to it and a .. path are refused naming the judge's files", async () => {
+  const { root, c, id, ruling } = await judged("standard");
+  const none = await c.run("judgement", id, "record", "--ruling", ruling);
+  expect(none.code).toBe(1);
+  expect(none.err.trim()).toBe(
+    `no ruling of the judge on record for ${id}: launch the judge; the hook files its answer`,
+  );
+  const filedPath = judgeFiled(c, id, ruling);
+  expect(filedPath).toBe(join(root, ".crew", "work", id, "review", "ruling.json"));
+  const link = join(tempDir("crew-link-"), "ruling.json");
+  symlinkSync(ruling, link);
+  const dotted = `${root}/.crew/work/${id}/review/../../../../ruling.json`;
+  for (const path of [ruling, link, dotted]) {
+    const refused = await c.run("judgement", id, "record", "--ruling", path);
+    expect(refused.code, path).toBe(1);
+    expect(refused.err.trim(), path).toBe(
+      `the ruling is the judge's filed answer (.crew/work/${id}/review/ruling.json), never a file the session wrote: resume the judge when its ruling is missing`,
+    );
+  }
+  expect(loadEvidence(repoPaths(root, c.env), id).evidence.judgement ?? []).toEqual([]);
+  // A judge resumed files again: the earlier ruling is archived with its record, and the archived
+  // copy is no judge's file either (the security lead's round 1).
+  filedRuling(c.env, root, id, ruling, "file");
+  const archivedFile = (loadEvidence(repoPaths(root, c.env), id).evidence.roles ?? []).find(
+    (r) => r.agent === "judge" && /\.round\d+\.json$/.test(r.file ?? ""),
+  )?.file as string;
+  expect(archivedFile).toMatch(/^review\/ruling\.round\d+\.json$/);
+  const archived = await c.run(
+    "judgement",
+    id,
+    "record",
+    "--ruling",
+    `.crew/work/${id}/${archivedFile}`,
+  );
+  expect(archived.code).toBe(1);
+  expect(archived.err.trim()).toBe(
+    `the ruling is the judge's filed answer (.crew/work/${id}/review/ruling.json), never a file the session wrote: resume the judge when its ruling is missing`,
+  );
+  // The filed file, by its absolute or its relative path, is taken.
+  const taken = await c.run(
+    "judgement",
+    id,
+    "record",
+    "--ruling",
+    `.crew/work/${id}/review/ruling.json`,
+  );
+  expect(taken.code).toBe(1);
+  expect(taken.out).toContain("code-quality: not proven");
+  expect(
+    loadEvidence(repoPaths(root, c.env), id).evidence.judgement?.find(
+      (j) => j.gate === "code-quality",
+    )?.verdict,
+  ).toBe("not-proven");
+}, 30_000);

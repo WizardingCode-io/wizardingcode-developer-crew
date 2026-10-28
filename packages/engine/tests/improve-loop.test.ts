@@ -53,7 +53,7 @@ import {
   writeRedacted,
 } from "../../../scripts/improve-loop.ts";
 import { notificationCommand } from "../../../scripts/release.ts";
-import { tempDir } from "./helpers.ts";
+import { childEnv, tempDir } from "./helpers.ts";
 
 /** A keychain with two accounts, read by account name; anything else is absent. */
 const keychain = (account: string): string | null =>
@@ -295,7 +295,7 @@ function git(cwd: string, ...args: string[]): string {
     cwd,
     encoding: "utf8",
     env: {
-      ...process.env,
+      ...childEnv(),
       GIT_AUTHOR_NAME: "t",
       GIT_AUTHOR_EMAIL: "t@t",
       GIT_COMMITTER_NAME: "t",
@@ -383,7 +383,7 @@ function adoptDeps(answer: string | (() => string)) {
           cwd,
           encoding: "utf8",
           env: {
-            ...process.env,
+            ...childEnv(),
             GIT_AUTHOR_NAME: "t",
             GIT_AUTHOR_EMAIL: "t@t",
             GIT_COMMITTER_NAME: "t",
@@ -799,7 +799,7 @@ function tickDeps(
         cwd,
         encoding: "utf8",
         env: {
-          ...process.env,
+          ...childEnv(),
           GIT_AUTHOR_NAME: "t",
           GIT_AUTHOR_EMAIL: "t@t",
           GIT_COMMITTER_NAME: "t",
@@ -1380,7 +1380,7 @@ test("2026-10-25-010 AC-6: the launcher quotes its paths, runs no reset when the
   expect(script).toContain(`repo='${join(base, "it'\\''s $(x) repo")}'`);
   const noLoop = spawnSync("sh", [launcher], {
     encoding: "utf8",
-    env: { ...process.env, BUN_EXIT: "3" },
+    env: { ...childEnv(), BUN_EXIT: "3" },
   });
   expect(noLoop.status).toBe(3);
   expect(git(repo, "rev-parse", "HEAD").trim()).toBe(head);

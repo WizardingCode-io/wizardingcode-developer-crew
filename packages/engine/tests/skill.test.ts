@@ -1381,3 +1381,22 @@ test("2026-10-27-007 AC-3: gate.md's judgement step names the standing grant set
     "Under the grant every round past a cap now runs, each recorded as the user's standing grant with its round number",
   );
 });
+
+test("2026-10-28-004 AC-11: the references say the seven asks, what the two new ones send and their effects, the route line's raise, the decision's marks and how a project opts in", () => {
+  const jev = repoFile("plugins/core/skills/crew/references/jev.md");
+  for (const phrase of [
+    "defect,validator,fact,triage,knowledge,route,decision",
+    "off until a project lists them",
+    "the request's text (cut at 8 KiB) after the secrets scanner",
+    "the question, the default and the answer, scanned",
+    "only tightens",
+    "[redacted:",
+  ])
+    expect(jev, phrase).toContain(phrase);
+  expect(repoFile("plugins/core/skills/crew/references/receive.md")).toContain(
+    "route standard → full (jev:",
+  );
+  const conclave = repoFile("plugins/core/skills/crew/references/conclave.md");
+  expect(conclave).toContain("disputed by jev: the default");
+  expect(conclave).toContain("changes a risk area");
+});

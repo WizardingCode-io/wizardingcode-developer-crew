@@ -11,7 +11,7 @@ import { errorText, nowIso, readText, writeJson } from "./fs.ts";
 import { type AskOptions, askJev, type JevConfig, type JevQuestion } from "./jev.ts";
 import { withLock } from "./lock.ts";
 import { type CrewPaths, canonical, ctoDir, knowledgeDir, knowledgePath } from "./paths.ts";
-import { scanText } from "./secrets.ts";
+import { lowerBound } from "./policy.ts";
 import type {
   HarnessLessonMark,
   KnowledgeBase,
@@ -24,7 +24,7 @@ import type {
   Stack,
   Verification,
 } from "./types.ts";
-import { askAllowed } from "./verify.ts";
+import { askAllowed, safeField } from "./verify.ts";
 import { worktreeMainRoot } from "./worktree.ts";
 
 /** The kinds a project reads, writes and counts. */
@@ -543,12 +543,6 @@ export interface RankedHit extends LookupHit {
   jev: JevMark | null;
 }
 
-/** A title as it may leave the machine: a secret in it replaced by its rule, never its value (the security lead's return at Task 3). */
-function safeTitle(title: string): string {
-  const finding = scanText(title, "title")[0];
-  return finding ? `[redacted: ${finding.rule}]` : title;
-}
-
 /**
  * Jev over the lookup's hits (SP4 Task 3, the re-ranking cookbook): one noul per hit, the first
  * `maxClaimsPerItem`, over the request's title and kind and the entry's id, kind and title (the
@@ -572,7 +566,7 @@ export async function rerankHits(
     entries[id] = {
       id: h.entry.id,
       kind: h.entry.kind,
-      title: safeTitle(h.entry.title),
+      title: safeField(h.entry.title, "title"),
       ...(policy.verify.send === "claims-and-snippets"
         ? { text: h.entry.text.slice(0, KNOWLEDGE_TEXT_LIMIT) }
         : {}),
@@ -586,7 +580,10 @@ export async function rerankHits(
       },
     };
   });
-  const state = { request: { title: safeTitle(request.title), kind: request.kind }, entries };
+  const state = {
+    request: { title: safeField(request.title, "title"), kind: request.kind },
+    entries,
+  };
   const result = await askJev(cfg, { state, questions }, options);
   if (!result.ok) {
     const reason = `jev unavailable: ${result.unavailable}`;
@@ -597,8 +594,7 @@ export async function rerankHits(
     };
   }
   const threshold = policy.verify.threshold;
-  // The policy's threshold has at most two decimals: the lower bound is read the same way, so 0.2 is at 1 − 0.8.
-  const lower = Number((1 - threshold).toFixed(2));
+  const lower = lowerBound(policy);
   const records: Verification[] = [];
   const ranked: RankedHit[] = hits.map((h, i) => {
     if (i >= cap)
@@ -636,7 +632,11 @@ export async function rerankHits(
 
 function jevWord(mark: JevMark | null): string {
   if (!mark) return "jev not asked";
-  if (mark.verdict === "unverified") return `unverified (${mark.reason ?? "no answer"})`;
+  // An answered noul between the bounds prints its value (finding 191); a reason stands for a mark with one.
+  if (mark.verdict === "unverified")
+    return mark.noul === null
+      ? `unverified (${mark.reason ?? "no answer"})`
+      : `unverified ${mark.noul}`;
   return `${mark.verdict} ${mark.noul}`;
 }
 

@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { DEFAULT_CONFIG, loadConfig, saveConfig, setConfigValue } from "../src/config.ts";
 import {
   DEFAULT_MAIL_POLICY,
@@ -23,6 +24,7 @@ import {
   WORKING_MAX,
   workingRoles,
 } from "../src/state.ts";
+import { DEFAULT_VERIFY_ASKS, VERIFY_ASKS } from "../src/types.ts";
 import { makeRepo, repoPaths, testEnv, write } from "./helpers.ts";
 
 test("SP2b: judgementGates lists the judgement gates a team requires, empty by default, unknown names dropped", () => {
@@ -470,6 +472,17 @@ test("SP3-T6 AC-4: policy.verify has its defaults when absent, falls back key by
     threshold: 0.8,
     asks: ["defect", "validator", "fact", "triage", "knowledge"],
   });
+  // 2026-10-28-004 (D-4): the two new asks are accepted names, off until a project lists them.
+  expect(VERIFY_ASKS).toEqual([
+    "defect",
+    "validator",
+    "fact",
+    "triage",
+    "knowledge",
+    "route",
+    "decision",
+  ]);
+  expect(DEFAULT_VERIFY_ASKS).toEqual(["defect", "validator", "fact", "triage", "knowledge"]);
   expect(loadPolicy(paths).policy.verify).toEqual(DEFAULT_POLICY.verify);
   mkdirSync(paths.crewDir, { recursive: true });
   writeFileSync(
@@ -528,7 +541,7 @@ test("SP3-T6 AC-4: policy.verify has its defaults when absent, falls back key by
   expect(loadPolicy(paths).policy.verify.asks).toEqual(["defect", "triage"]);
   expect(setPolicyValue(paths, "verify.asks", "defect,x")).toEqual({
     refused:
-      "verify.asks is a comma-separated subset of defect, validator, fact, triage, knowledge, not defect,x",
+      "verify.asks is a comma-separated subset of defect, validator, fact, triage, knowledge, route, decision, not defect,x",
   });
   expect("refused" in setPolicyValue(paths, "verify.asks", "")).toBe(true);
   // The config: where Jev is reached, never its key.
@@ -678,3 +691,16 @@ test("AC-7 (finding 122): the validator may only lower one of eight caps, and on
     refused: "the policy keeps its changes a person's (unattendedPolicyChanges: never)",
   });
 });
+
+/** This repository's own policy file: the engine's, ignored by git, so a clone without it skips the row that reads it. */
+const REPO_POLICY = fileURLToPath(new URL("../../../.crew/policy.json", import.meta.url));
+
+test.skipIf(!existsSync(REPO_POLICY))(
+  "2026-10-28-004 AC-6: this repository's own policy lists the seven asks (the test-quality round 1)",
+  () => {
+    const policy = JSON.parse(readFileSync(REPO_POLICY, "utf8")) as {
+      verify?: { asks?: string[] };
+    };
+    expect(policy.verify?.asks).toEqual([...VERIFY_ASKS]);
+  },
+);

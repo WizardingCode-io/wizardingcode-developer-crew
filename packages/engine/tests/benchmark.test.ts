@@ -26,6 +26,7 @@ import {
 } from "../../../scripts/benchmark.ts";
 import { evalInvocation, realGitDir, SANDBOX_TAGS } from "../../../scripts/eval.ts";
 import { scanText } from "../src/secrets.ts";
+import { childEnv } from "./helpers.ts";
 import {
   composedPath as composed,
   deniedRead,
@@ -254,7 +255,7 @@ test("SP6-T5 AC-4, AC-8: bun scripts/benchmark.ts --from <aggregate> --out <dir>
   const run = spawnSync("bun", ["scripts/benchmark.ts", "--from", aggregatePath, "--out", out], {
     cwd: ROOT,
     encoding: "utf8",
-    env: { ...process.env, TZ: "Pacific/Kiritimati" },
+    env: { ...childEnv(), TZ: "Pacific/Kiritimati" },
   });
   expect(run.status, run.stderr).toBe(0);
   expect(readdirSync(out).sort()).toEqual([
@@ -521,7 +522,7 @@ test("H118 AC-3 (SP6-T5 AC-13 rewritten): without --from the script gives the ki
   const path = [bin, process.env.PATH ?? ""].join(delimiter);
   const log = join(dir, "stub.log");
   const env = {
-    ...process.env,
+    ...childEnv(),
     PATH: path,
     WIZARDINGCODE_CREW_EVAL_RESULTS: OWN_REL,
     TZ: "Pacific/Kiritimati",
@@ -609,7 +610,7 @@ test("SP6-T5 AC-14: a run the runner flags needs-rerun writes no record: the lin
       cwd: ROOT,
       encoding: "utf8",
       env: {
-        ...process.env,
+        ...childEnv(),
         PATH: path,
         WIZARDINGCODE_CREW_EVAL_RESULTS: OWN_REL,
         WIZARDINGCODE_STUB_AGGREGATE: aggregatePath,
@@ -726,7 +727,7 @@ test("H118 AC-8 (SP6-T5 AC-21 rewritten): a run whose own folder holds no aggreg
         cwd: dir,
         encoding: "utf8",
         env: {
-          ...process.env,
+          ...childEnv(),
           PATH: path,
           WIZARDINGCODE_CREW_EVAL_RESULTS: OWN_REL,
           WIZARDINGCODE_STUB_AGGREGATE: join(dir, "missing.json"),
@@ -756,7 +757,7 @@ test("H118 AC-8 (SP6-T5 AC-21 rewritten): a run whose own folder holds no aggreg
         cwd: dir,
         encoding: "utf8",
         env: {
-          ...process.env,
+          ...childEnv(),
           PATH: path,
           WIZARDINGCODE_CREW_EVAL_RESULTS: OWN_REL,
           TZ: "Pacific/Kiritimati",

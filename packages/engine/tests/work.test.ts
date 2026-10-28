@@ -370,13 +370,13 @@ test("SP2a: decisions are numbered once, answered by the user or by the validato
     mode: "dontAsk" as const,
     rule: "stated-default" as const,
   };
-  expect(answerDecision(work, "D-1", "everyone", validator)).toEqual({
+  expect(answerDecision(work, "D-1", "everyone", validator, DEFAULT_POLICY)).toEqual({
     refused: "the validator may only take the stated default of D-1 (admins only)",
   });
-  expect(answerDecision(work, "D-2", undefined, validator)).toEqual({
+  expect(answerDecision(work, "D-2", undefined, validator, DEFAULT_POLICY)).toEqual({
     refused: "D-2 has no stated default; a person answers it",
   });
-  expect(answerDecision(work, "D-1", undefined, validator)).toMatchObject({
+  expect(answerDecision(work, "D-1", undefined, validator, DEFAULT_POLICY)).toMatchObject({
     answer: "admins only",
     by: "validator",
   });
@@ -392,12 +392,12 @@ test("SP2a: decisions are numbered once, answered by the user or by the validato
   expect(guardFor(work, "plan", counting)).toEqual([
     'an answer to D-2 (crew decide <id> D-2 "<answer>")',
   ]);
-  expect(answerDecision(work, "D-2", "yes, 410", { by: "user" })).toMatchObject({
+  expect(answerDecision(work, "D-2", "yes, 410", { by: "user" }, DEFAULT_POLICY)).toMatchObject({
     answer: "yes, 410",
     by: "user",
   });
   expect(guardFor(work, "plan", counting)).toEqual([]);
-  expect(answerDecision(work, "D-9", "x", { by: "user" })).toEqual({
+  expect(answerDecision(work, "D-9", "x", { by: "user" }, DEFAULT_POLICY)).toEqual({
     refused: "unknown decision: D-9",
   });
 });
@@ -464,7 +464,7 @@ test("SP2a: the complete-gap-round rule holds only with the four sections, defau
     "blocking objection O-1 bound to a criterion or waived by a person",
   ]);
   const full = `${partial}## Warnings\nnone\n`;
-  answerDecision(work, "D-1", "admins", { by: "user" });
+  answerDecision(work, "D-1", "admins", { by: "user" }, DEFAULT_POLICY);
   bindObjection(ledger, work, o1.id, ac.id);
   expect(
     validatorPreconditions("complete-gap-round", work, { ...empty, conclaveText: full, ledger }),
@@ -599,20 +599,26 @@ test("SP2a review: the validator never overwrites an answer; a person may change
   const paths = repoPaths(makeRepo(), testEnv());
   const work = createWork(paths, "feature");
   addDecision(work, "Which roles?", "admins only");
-  expect(answerDecision(work, "D-1", "everyone", { by: "user" })).toMatchObject({
+  expect(answerDecision(work, "D-1", "everyone", { by: "user" }, DEFAULT_POLICY)).toMatchObject({
     answer: "everyone",
   });
   expect(
-    answerDecision(work, "D-1", undefined, {
-      by: "validator",
-      mode: "dontAsk",
-      rule: "stated-default",
-    }),
+    answerDecision(
+      work,
+      "D-1",
+      undefined,
+      {
+        by: "validator",
+        mode: "dontAsk",
+        rule: "stated-default",
+      },
+      DEFAULT_POLICY,
+    ),
   ).toEqual({
     refused: "D-1 is already answered by the user; the validator never overwrites an answer",
   });
   expect(work.decisions?.[0]).toMatchObject({ answer: "everyone", by: "user" });
-  expect(answerDecision(work, "D-1", "admins only", { by: "user" })).toMatchObject({
+  expect(answerDecision(work, "D-1", "admins only", { by: "user" }, DEFAULT_POLICY)).toMatchObject({
     answer: "admins only",
     by: "user",
   });
@@ -1142,4 +1148,41 @@ test("2026-10-28-001 AC-5: asRecord is the work item itself read key by key, and
   expect(asRecord(fresh)).toEqual({ id: "w", phase: "build", route: "standard", criteria: [1] });
   adoptRecord(inHand, fresh);
   expect(asRecord(inHand)).toEqual(asRecord(fresh));
+});
+
+test("2026-10-28-004 round 2 (code-quality): answerDecision refuses the validator a default Jev disputed, after its own refusals and changing nothing, and a person's answer is taken", () => {
+  const work = createWork(repoPaths(makeRepo(), testEnv()), "feature");
+  const validator = {
+    by: "validator" as const,
+    mode: "dontAsk" as const,
+    rule: "stated-default" as const,
+  };
+  const d1 = addDecision(work, "Erase or deactivate?", "deactivate");
+  d1.jev = { conservative: 0.1, usersCall: 0.8, model: "file" };
+  const before = JSON.stringify(work);
+  expect(answerDecision(work, "D-1", undefined, validator, DEFAULT_POLICY)).toEqual({
+    refused:
+      "disputed by jev: the default of D-1 is not the conservative answer (conservative 0.10); a person decides",
+    disputed: true,
+  });
+  expect(JSON.stringify(work)).toBe(before);
+  // Another answer than the default is refused as before the marks, without the dispute.
+  expect(answerDecision(work, "D-1", "erase", validator, DEFAULT_POLICY)).toEqual({
+    refused: "the validator may only take the stated default of D-1 (deactivate)",
+  });
+  // A person answers; the validator then gets the standing refusal, not the dispute.
+  expect(answerDecision(work, "D-1", "erase", { by: "user" }, DEFAULT_POLICY)).toMatchObject({
+    answer: "erase",
+    by: "user",
+  });
+  expect(answerDecision(work, "D-1", undefined, validator, DEFAULT_POLICY)).toEqual({
+    refused: "D-1 is already answered by the user; the validator never overwrites an answer",
+  });
+  // A default marked conservative is taken as before.
+  const d2 = addDecision(work, "Keep the index?", "yes");
+  d2.jev = { conservative: 0.9, usersCall: 0.2, model: "file" };
+  expect(answerDecision(work, "D-2", undefined, validator, DEFAULT_POLICY)).toMatchObject({
+    answer: "yes",
+    by: "validator",
+  });
 });

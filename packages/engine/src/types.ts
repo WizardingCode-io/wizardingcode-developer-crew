@@ -662,6 +662,18 @@ export interface GapDecision {
   mode?: PermissionMode;
   rule?: ValidatorRule;
   relayed?: boolean;
+  /** Jev's marks (2026-10-28-004): at `decision add`, whether the stated default is the conservative answer and whether the question is the user's; at `decide`, whether the answer changes a risk area and which. */
+  jev?: DecisionMarks;
+}
+
+/** Jev's marks on a decision; a noul is null when the question was not asked (no default) and absent when Jev was not asked. */
+export interface DecisionMarks {
+  conservative?: number | null;
+  usersCall?: number | null;
+  changesRisk?: number;
+  area?: string;
+  areaConfidence?: number;
+  model: string;
 }
 
 export type ObjectionSeverity = "blocking" | "advisory";
@@ -924,7 +936,7 @@ export interface JudgementFinding {
 
 /** One answer of Jev on the record (SP3 decision 11): what was asked, of what, the answer as returned, its confidence, the model, when. */
 export interface Verification {
-  what: "defect" | "validator" | "fact" | "triage" | "knowledge";
+  what: "defect" | "validator" | "fact" | "triage" | "knowledge" | "route" | "decision";
   ref: string;
   question: string;
   answer: unknown;
@@ -934,8 +946,26 @@ export interface Verification {
 }
 
 /** The asks the engine may make of Jev (security review of SP3 Task 6): the key alone is not consent to every one. */
-export type VerifyAsk = "defect" | "validator" | "fact" | "triage" | "knowledge";
+export type VerifyAsk =
+  | "defect"
+  | "validator"
+  | "fact"
+  | "triage"
+  | "knowledge"
+  | "route"
+  | "decision";
+/** The names a policy may list (2026-10-28-004: `route` and `decision` joined, off until a project lists them). */
 export const VERIFY_ASKS: readonly VerifyAsk[] = [
+  "defect",
+  "validator",
+  "fact",
+  "triage",
+  "knowledge",
+  "route",
+  "decision",
+];
+/** The asks a policy makes with no `asks` key: the key alone is no consent to an ask that sends every request's text (D-4 of 2026-10-28-004). */
+export const DEFAULT_VERIFY_ASKS: readonly VerifyAsk[] = [
   "defect",
   "validator",
   "fact",

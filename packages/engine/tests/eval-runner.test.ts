@@ -30,6 +30,7 @@ import {
 import { CEILINGS } from "../../../scripts/eval-overhead.ts";
 import { scanText } from "../src/secrets.ts";
 import type { KnowledgeEntry } from "../src/types.ts";
+import { childEnv } from "./helpers.ts";
 import {
   acceptedRead,
   agentText,
@@ -426,11 +427,12 @@ const packGate =
     new RegExp(
       `"${gate}":\\s*\\{\\s*"command":\\s*"${escapeRegExp(command)}",\\s*"source":\\s*"${source}"${pack ? `,\\s*"pack":\\s*"${packName}"` : "\\s*\\}"}`,
     );
-const LARAVEL_GATE = packGate("wizardingcode-pack-laravel");
-/** A gate the core detected or proposed on its own: the same shape with no pack name (the absent halves). */
-const CORE_GATE = packGate("");
+const LARAVEL_GATE = packGate(PACK_BY_PREFIX["pack-laravel"] as string);
+/** A gate the core detected or proposed on its own: the same shape with no pack name (the absent halves); no flag, since none of its rows names a pack. */
+const CORE_GATE = (gate: string, command: string, source: string) =>
+  packGate("")(gate, command, source, false);
 /** The nuxt profile's gates (SP9 Task 11), the same shape with the nuxt pack's name. */
-const NUXT_GATE = packGate("wizardingcode-pack-nuxt");
+const NUXT_GATE = packGate(PACK_BY_PREFIX["pack-nuxt"] as string);
 Object.assign(SCAFFOLD_STATE, {
   // SP6 Task 6 (AC-19): the pack pairs' state. The with cases copy the repository's pack into the
   // scaffold's .packs/ at scaffold time and register the copy under the home (the kit's sandbox reads the
@@ -476,16 +478,11 @@ Object.assign(SCAFFOLD_STATE, {
     { file: ".crew/profile.json", pattern: /^(?![\s\S]*"test":\s*\{)[\s\S]*"lint":/ },
     {
       file: ".crew/profile.json",
-      pattern: CORE_GATE("lint", "vendor/bin/pint --test", "detected", false),
+      pattern: CORE_GATE("lint", "vendor/bin/pint --test", "detected"),
     },
     {
       file: ".crew/profile.json",
-      pattern: CORE_GATE(
-        "typecheck",
-        "vendor/bin/phpstan analyse --no-progress",
-        "detected",
-        false,
-      ),
+      pattern: CORE_GATE("typecheck", "vendor/bin/phpstan analyse --no-progress", "detected"),
     },
     { file: ".crew/profile.json", pattern: /^(?![\s\S]*"pack")(?![\s\S]*"laravel")[\s\S]*$/ },
     { file: "packs/wizardingcode-pack-laravel.json", home: true, absent: true },
@@ -581,7 +578,7 @@ Object.assign(SCAFFOLD_STATE, {
     { file: "tsconfig.json", absent: true },
     { file: "pack.json", absent: true },
     { file: ".crew/profile.json", pattern: /^(?![\s\S]*"test":\s*\{)[\s\S]*"build":/ },
-    { file: ".crew/profile.json", pattern: CORE_GATE("build", "npm run build", "detected", false) },
+    { file: ".crew/profile.json", pattern: CORE_GATE("build", "npm run build", "detected") },
     { file: ".crew/profile.json", pattern: /^(?![\s\S]*"pack")(?![\s\S]*"nuxt")[\s\S]*$/ },
     { file: "packs/wizardingcode-pack-nuxt.json", home: true, absent: true },
   ],
@@ -607,7 +604,7 @@ test("SP2c, SP3-T1 AC-5: every fixture scaffolds under sh into a committed repos
           cwd: dir,
           encoding: "utf8",
           env: {
-            ...process.env,
+            ...childEnv(),
             PATH: `${FIXTURES_BIN}${delimiter}${PLUGIN_BIN}${delimiter}${process.env.PATH}`,
             WIZARDINGCODE_HOME: caseHome,
             WIZARDINGCODE_CREW_REPO: repoRoot,
@@ -793,7 +790,7 @@ const runEval = (bin: string, args: string[], env: Record<string, string>, cwd =
   return spawnSync("bun", [join(repoRoot, "scripts", "eval.ts"), ...args], {
     cwd,
     encoding: "utf8",
-    env: { ...process.env, ...env, PATH: path },
+    env: { ...childEnv(), ...env, PATH: path },
   });
 };
 
@@ -1648,7 +1645,7 @@ test("SP6-T6 AC-12: the pack fixtures stay confined: set -eu, the variable alone
         cwd: dir,
         encoding: "utf8",
         env: {
-          ...process.env,
+          ...childEnv(),
           PATH: `${FIXTURES_BIN}${delimiter}${PLUGIN_BIN}${delimiter}${process.env.PATH}`,
           WIZARDINGCODE_HOME: home,
           WIZARDINGCODE_CREW_REPO: empty,
@@ -1673,7 +1670,7 @@ test("SP6-T6 AC-18, AC-28: the laravel fixture's artisan is a PHP script that fa
   const dir = mkdtempSync(join(tmpdir(), "crew-eval-artisan-"));
   const home = mkdtempSync(join(tmpdir(), "crew-evals-home-"));
   const env = {
-    ...process.env,
+    ...childEnv(),
     PATH: `${FIXTURES_BIN}${delimiter}${PLUGIN_BIN}${delimiter}${process.env.PATH}`,
     WIZARDINGCODE_HOME: home,
     WIZARDINGCODE_CREW_REPO: repoRoot,
@@ -1784,7 +1781,7 @@ test("SP6-T6 AC-13: the committed records of the SP6 run hold no absolute path a
 
 test("SP6-T6 AC-26: the repository root reaches a pack fixture through PATH: the helper prints the root of the repository it lives in, a with fixture run without the variable registers the pack, and the fixtures take the variable first", () => {
   const env = {
-    ...process.env,
+    ...childEnv(),
     PATH: `${FIXTURES_BIN}${delimiter}${PLUGIN_BIN}${delimiter}${process.env.PATH}`,
   };
   delete (env as Record<string, string | undefined>).WIZARDINGCODE_CREW_REPO;
@@ -1821,7 +1818,7 @@ test("SP6-T6 AC-24: the profile-pack grader's pattern holds after a person's con
   const dir = mkdtempSync(join(tmpdir(), "crew-eval-confirm-"));
   const home = mkdtempSync(join(tmpdir(), "crew-evals-home-"));
   const env = {
-    ...process.env,
+    ...childEnv(),
     PATH: `${FIXTURES_BIN}${delimiter}${PLUGIN_BIN}${delimiter}${process.env.PATH}`,
     WIZARDINGCODE_HOME: home,
     WIZARDINGCODE_CREW_REPO: repoRoot,
@@ -2091,7 +2088,7 @@ test("CON7-AC-5 (finding 37): the kind-observed-e2e fixture opens no socket, and
       cwd: dir,
       encoding: "utf8",
       env: {
-        ...process.env,
+        ...childEnv(),
         PATH: `${FIXTURES_BIN}${delimiter}${PLUGIN_BIN}${delimiter}${process.env.PATH}`,
         WIZARDINGCODE_HOME: home,
       },
@@ -2338,7 +2335,7 @@ test("AC-23 (findings 149, 62): rounds-bounded's fixture leaves round 1 recorded
     cwd: dir,
     encoding: "utf8",
     env: {
-      ...process.env,
+      ...childEnv(),
       PATH: [join(repoRoot, "plugins/core/bin"), process.env.PATH ?? ""].join(delimiter),
       WIZARDINGCODE_HOME: home,
     },
@@ -2421,7 +2418,7 @@ function redAsCommitted(name: string): void {
       cwd: dir,
       encoding: "utf8",
       env: {
-        ...process.env,
+        ...childEnv(),
         PATH: `${FIXTURES_BIN}${delimiter}${PLUGIN_BIN}${delimiter}${process.env.PATH}`,
         WIZARDINGCODE_HOME: home,
       },
@@ -2477,7 +2474,7 @@ function nuxtScaffold(name: string): {
     cwd: dir,
     encoding: "utf8",
     env: {
-      ...process.env,
+      ...childEnv(),
       PATH: `${FIXTURES_BIN}${delimiter}${PLUGIN_BIN}${delimiter}${process.env.PATH}`,
       WIZARDINGCODE_HOME: home,
     },
@@ -2596,4 +2593,22 @@ test("SP9-T11 AC-9: the three faked packages are inert: no process, network or w
     rmSync(dir, { recursive: true, force: true });
     rmSync(home, { recursive: true, force: true });
   }
+});
+
+test("2026-10-28-004 AC-10: the gate matchers read their pack names from PACK_BY_PREFIX and CORE_GATE takes the gate, the command and the source alone", () => {
+  expect(LARAVEL_GATE("test", "php artisan test", "proposed", true).source).toContain(
+    PACK_BY_PREFIX["pack-laravel"] as string,
+  );
+  expect(NUXT_GATE("test", "npx vitest run", "proposed", true).source).toContain(
+    PACK_BY_PREFIX["pack-nuxt"] as string,
+  );
+  expect(CORE_GATE.length).toBe(3);
+  // Read, never spelled: this file's own source holds no pack name at a packGate call (the
+  // test-quality round 1 of 2026-10-28-004).
+  const source = readFileSync(fileURLToPath(import.meta.url), "utf8");
+  expect(source).not.toContain(["packGate(", '"wizardingcode-pack-'].join(""));
+  expect(CORE_GATE("build", "npm run build", "detected").source).toContain(
+    '"source":\\s*"detected"\\s*\\}',
+  );
+  expect(CORE_GATE("build", "npm run build", "detected").source).not.toContain("pack");
 });
