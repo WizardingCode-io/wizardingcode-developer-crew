@@ -1,0 +1,157 @@
+{
+  "run": "2026-10-28-1",
+  "at": "2026-10-28T00:00:02.187Z",
+  "targets": [
+    "thread-with-contracts",
+    "ticket-triaged-against-business"
+  ],
+  "baseline": {
+    "thread-with-contracts": {
+      "name": "thread-with-contracts",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/gate.md",
+            "plugins/core/skills/crew/rubrics/architecture.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/risk.md",
+            "plugins/core/skills/crew/rubrics/security.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/architecture.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/risk.md",
+            "plugins/core/skills/crew/rubrics/security.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/mail.md",
+            "plugins/core/skills/crew/references/specify.md",
+            "plugins/core/skills/crew/rubrics/architecture.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/risk.md",
+            "plugins/core/skills/crew/rubrics/security.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        }
+      ],
+      "mean": 1,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/references/gate.md",
+        "plugins/core/skills/crew/references/mail.md",
+        "plugins/core/skills/crew/references/specify.md",
+        "plugins/core/skills/crew/rubrics/architecture.md",
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/risk.md",
+        "plugins/core/skills/crew/rubrics/security.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md"
+      ],
+      "errored": false
+    },
+    "ticket-triaged-against-business": {
+      "name": "ticket-triaged-against-business",
+      "runs": [
+        {
+          "score": 0.6666666666666666,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "lowered",
+              "explanation": "pattern not found in trace"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/references/receive.md"
+          ]
+        },
+        {
+          "score": 0.6666666666666666,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "lowered",
+              "explanation": "pattern not found in trace"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/references/receive.md"
+          ]
+        },
+        {
+          "score": 0.6666666666666666,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "lowered",
+              "explanation": "pattern not found in trace"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/references/receive.md"
+          ]
+        }
+      ],
+      "mean": 0.6666666666666666,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/references/receive.md"
+      ],
+      "errored": false
+    }
+  },
+  "proposals": [
+    {
+      "id": "P-1",
+      "status": "refused",
+      "refusal": "the editor changed nothing",
+      "diffStat": [],
+      "rationale": "I changed no harness page, because no edit under `plugins/core/skills/crew/` or `plugins/core/agents/` can make the `lowered` grader of `ticket-triaged-against-business` pass for the right reason: the grader's regex wants the engine's triage line in the words `priority normal (proposed high, against the signed business priorities): <reason>`, which is what `crew start` printed when the case was written on 2026-10-19 (the SP3 results record it firing on exactly that line), but since the SP7 triage work the engine prints `priority normal (proposed high, confirmed normal against the signed business priorities: <reason>)` through `triageSummary` in `packages/engine/src/priorities.ts`, pinned by the SP3-T3 AC-3 row of `cli.test.ts`, and neither the report's `- Triage:` line, the status line nor the register entry carries the old shape either. The case's steady 0.67 with zero spread is `source-recorded` and `honest-ending` passing every run, so the lead already opens the ticket with its ClickUp source and lowers the urgency to normal with the release-freeze reason; only the stale pattern misses, and the one way to fire it from my scope (planting the old wording in the Receive page or telling the lead to say it in prose) would pass by a reference read or the agent's own words, which the eval README rules out as an anchor for a trace regex. The fix belongs in `plugins/core/evals/ticket-triaged-against-business/graders/lowered.md` (its pattern brought to the engine's current line), which is an eval file I must not edit; `thread-with-contracts` is at 1.00 and needed nothing.",
+      "probeSet": [],
+      "probe": {},
+      "verdict": null,
+      "gain": 0
+    },
+    {
+      "id": "P-2",
+      "status": "refused",
+      "refusal": "the editor changed nothing",
+      "diffStat": [],
+      "rationale": "I made no change to the harness. The `lowered` grader of `ticket-triaged-against-business` is a trace regex that wants the engine's SP3 triage line, `priority normal (proposed high, against the signed business priorities): <reason>`, and since SP7 §10.2 the engine prints `priority normal (proposed high, confirmed normal against the signed business priorities: <reason>)` from `triageText` and `triageSummary` in `packages/engine/src/priorities.ts`, a wording pinned by two rows of `cli.test.ts`, so the pattern's `, against` can never match what `crew start` runs. The case's other two graders pass with spread 0, which shows the lead already records the ClickUp source and lowers the urgency to normal with the freeze as its reason, so there is no harness defect to fix; the only edit that would fire the regex is planting the old sentence in a reference page or the lead's prose, which the evals README rules out because trace regexes anchor on what ran and never on an agent's or a reference's words. The fix is the grader's pattern, which lies outside the folders I may edit, and `thread-with-contracts` sits at 1.00 and needs nothing.",
+      "probeSet": [],
+      "probe": {},
+      "verdict": null,
+      "gain": 0
+    }
+  ],
+  "composition": null,
+  "kept": null,
+  "branch": null,
+  "provider": {
+    "name": "runtime",
+    "agentModel": "claude-sonnet-5-5",
+    "judgeModel": "claude-fable-5-1",
+    "claudeModels": true
+  },
+  "costUsd": 8.927513,
+  "lessons": [],
+  "exit": 0,
+  "unmeasured": [
+    "unknown-stack",
+    "validator-unattended-approval"
+  ]
+}
