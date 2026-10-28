@@ -45,8 +45,9 @@ function openFindings(text: string): number[] {
 // 184 (the six advisories of 2026-10-27-005 and -006), 185 (rule 17 refusing crew learn on a hub file) and
 // 186 (the gate run saving the work it loaded at its start) closed by 2026-10-27-008; 187 (the loop has no
 // stop or pause command) and 188 (a pushed fix enters the loop one tick late) recorded open by the same item
-// for the loop's own item.
-const OPEN = [77, 114, 177, 178, 181, 182, 183, 187, 188];
+// and closed by 2026-10-28-001, which also recorded and closed 189 (a probe set the ceiling could not pay,
+// probed until the ceiling and called errored) and 190 (a dead tick leaving no trace).
+const OPEN = [77, 114, 177, 178, 181, 182, 183];
 
 test("AC-9 (consolidation of 2026-10-24): the findings that read open are the named ones, and the thirteen closed by the consolidation read closed", () => {
   const open = openFindings(readFileSync(FINDINGS, "utf8"));
