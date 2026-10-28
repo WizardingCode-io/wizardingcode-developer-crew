@@ -1,0 +1,421 @@
+{
+  "run": "2026-10-28-5",
+  "at": "2026-10-28T22:00:09.104Z",
+  "targets": [
+    "audit-report-three-formats",
+    "confidential-entry-not-reused"
+  ],
+  "baseline": {
+    "audit-report-three-formats": {
+      "name": "audit-report-three-formats",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/audit.md",
+            "plugins/core/skills/crew/rubrics/architecture.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/security.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/audit.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/audit.md",
+            "plugins/core/skills/crew/rubrics/architecture.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/security.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        }
+      ],
+      "mean": 1,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/references/audit.md",
+        "plugins/core/skills/crew/rubrics/architecture.md",
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/security.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md"
+      ],
+      "errored": false,
+      "costUsd": 1.2374965000000002
+    },
+    "confidential-entry-not-reused": {
+      "name": "confidential-entry-not-reused",
+      "runs": [
+        {
+          "score": 0.8333333333333334,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "goes-on",
+              "explanation": "pattern not found in trace"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 0.8333333333333334,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "goes-on",
+              "explanation": "pattern not found in trace"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 0.8333333333333334,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "goes-on",
+              "explanation": "pattern not found in trace"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        }
+      ],
+      "mean": 0.8333333333333334,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md"
+      ],
+      "errored": false,
+      "costUsd": 1.517763
+    },
+    "gap-erasure-or-deactivation": {
+      "name": "gap-erasure-or-deactivation",
+      "runs": [
+        {
+          "score": 0.6666666666666666,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "asks-which",
+              "explanation": "pattern not found in trace"
+            }
+          ],
+          "reads": []
+        },
+        {
+          "score": 0.6666666666666666,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "asks-which",
+              "explanation": "pattern not found in trace"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/references/receive.md"
+          ]
+        },
+        {
+          "score": 0.6666666666666666,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "asks-which",
+              "explanation": "pattern not found in trace"
+            }
+          ],
+          "reads": []
+        }
+      ],
+      "mean": 0.6666666666666666,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/references/receive.md"
+      ],
+      "errored": false,
+      "costUsd": 0.40253629999999996
+    },
+    "strategy-declares-phases": {
+      "name": "strategy-declares-phases",
+      "runs": [
+        {
+          "score": 0.4,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "ruling-recorded",
+              "explanation": "pattern not found in trace"
+            },
+            {
+              "grader": "specify-reached",
+              "explanation": "pattern not found in trace"
+            },
+            {
+              "grader": "triggers-with-figures",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/references/receive.md",
+            "plugins/core/skills/crew/references/strategy.md",
+            "plugins/core/skills/crew/rubrics/strategy.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/strategy.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/receive.md",
+            "plugins/core/skills/crew/references/strategy.md",
+            "plugins/core/skills/crew/rubrics/strategy.md"
+          ]
+        }
+      ],
+      "mean": 0.7999999999999999,
+      "spread": 0.6,
+      "reads": [
+        "plugins/core/skills/crew/references/receive.md",
+        "plugins/core/skills/crew/references/strategy.md",
+        "plugins/core/skills/crew/rubrics/strategy.md"
+      ],
+      "errored": false,
+      "costUsd": 5.709018049999999
+    },
+    "ticket-triaged-against-business": {
+      "name": "ticket-triaged-against-business",
+      "runs": [
+        {
+          "score": 0.3333333333333333,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "honest-ending",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            },
+            {
+              "grader": "lowered",
+              "explanation": "pattern not found in trace"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/references/receive.md"
+          ]
+        },
+        {
+          "score": 0.6666666666666666,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "lowered",
+              "explanation": "pattern not found in trace"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/references/receive.md"
+          ]
+        },
+        {
+          "score": 0.6666666666666666,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "lowered",
+              "explanation": "pattern not found in trace"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/references/receive.md"
+          ]
+        }
+      ],
+      "mean": 0.5555555555555555,
+      "spread": 0.3333333333333333,
+      "reads": [
+        "plugins/core/skills/crew/references/receive.md"
+      ],
+      "errored": false,
+      "costUsd": 0.6121374
+    }
+  },
+  "proposals": [
+    {
+      "id": "P-1",
+      "status": "inconclusive",
+      "refusal": null,
+      "diffStat": [
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/SKILL.md"
+        },
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/references/receive.md"
+        }
+      ],
+      "rationale": "All pinned patterns still match, and nothing further depends on another lookup. The edits are complete.\n\nI changed two harness pages and nothing else: `plugins/core/skills/crew/SKILL.md` and `plugins/core/skills/crew/references/receive.md`. The `goes-on` grader of `confidential-entry-not-reused` is a regex over the trace for `phase (specify|conclave|plan|build)`, and the engine prints that word only from `crew phase <id> next` (the single place in `work.ts` that moves a phase) or from `crew status`; a standard-route item cannot reach build without printing it, since the hook denies source edits before build on that route. The failing runs did the work and the gates (the record shows both judgement rubrics read and the honest-ending judge passed on a red-then-green story), so the only shape that fits is the fast route, which the router grants to a `fix` or a `chore` in one spot and never to a feature. The skill page, the one page every run reads, invited exactly that: its fast-route line said \"A clear request, one spot, no risk area: `route fast`\" with no word on the type, and the typed-questions table listed `chore` beside `feature` with no rule between them, so a lead reading \"add cache expiry to one file\" as a small one-spot change typed it as a chore, got `route fast`, and never saw a phase word. The two earlier proposals on this case rewrote the Understand page's wait, a page the failing runs never read, and left the case's scores unchanged. The fast-route line now names the router's own condition and adds that a behaviour the code lacks, however small, is a `feature`, never fast; the Receive page's step 1, where the answers are given, carries the same rule in full (fix or chore in one spot goes fast, a new behaviour is a feature and goes standard, a chore or a refactor changes no behaviour, pointing to the Specify page that already says so). The skill page sits at its 9254-byte ceiling, so the 85 bytes added were paid for by trims of wording no test pins (the \"",
+      "probeSet": [
+        "audit-report-three-formats",
+        "confidential-entry-not-reused",
+        "gap-erasure-or-deactivation",
+        "strategy-declares-phases",
+        "ticket-triaged-against-business"
+      ],
+      "probe": {
+        "audit-report-three-formats": {
+          "name": "audit-report-three-formats",
+          "runs": [
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            }
+          ],
+          "mean": 1,
+          "spread": 0,
+          "reads": [],
+          "errored": false,
+          "costUsd": 0.9212362
+        },
+        "confidential-entry-not-reused": {
+          "name": "confidential-entry-not-reused",
+          "runs": [
+            {
+              "score": 0.8333333333333334,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "goes-on",
+                  "explanation": "pattern not found in trace"
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 0.8333333333333334,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "goes-on",
+                  "explanation": "pattern not found in trace"
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            }
+          ],
+          "mean": 0.888888888888889,
+          "spread": 0.16666666666666663,
+          "reads": [],
+          "errored": false,
+          "costUsd": 2.1973987999999993
+        },
+        "gap-erasure-or-deactivation": {
+          "name": "gap-erasure-or-deactivation",
+          "runs": [
+            {
+              "score": 0.6666666666666666,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "asks-which",
+                  "explanation": "pattern not found in trace"
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 0.6666666666666666,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "asks-which",
+                  "explanation": "pattern not found in trace"
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 0.6666666666666666,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "asks-which",
+                  "explanation": "pattern not found in trace"
+                }
+              ],
+              "reads": []
+            }
+          ],
+          "mean": 0.6666666666666666,
+          "spread": 0,
+          "reads": [],
+          "errored": false,
+          "costUsd": 0.3889206
+        }
+      },
+      "verdict": "inconclusive",
+      "gain": 0
+    }
+  ],
+  "composition": null,
+  "kept": null,
+  "branch": null,
+  "provider": {
+    "name": "runtime",
+    "agentModel": "claude-sonnet-5-5",
+    "judgeModel": "claude-fable-5-1",
+    "claudeModels": true
+  },
+  "costUsd": 21.683523849999997,
+  "lessons": [],
+  "exit": 2,
+  "unmeasured": []
+}
