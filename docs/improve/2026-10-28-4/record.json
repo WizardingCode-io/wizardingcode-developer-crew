@@ -1,0 +1,195 @@
+{
+  "run": "2026-10-28-4",
+  "at": "2026-10-28T19:00:07.315Z",
+  "targets": [
+    "pack-nuxt-absent",
+    "pack-nuxt-refines-the-gates"
+  ],
+  "baseline": {
+    "pack-nuxt-absent": {
+      "name": "pack-nuxt-absent",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        }
+      ],
+      "mean": 1,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md"
+      ],
+      "errored": false,
+      "costUsd": 2.06953815
+    },
+    "pack-nuxt-refines-the-gates": {
+      "name": "pack-nuxt-refines-the-gates",
+      "runs": [
+        {
+          "score": 0.5714285714285714,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "gate-ran",
+              "explanation": "pattern not found in trace"
+            },
+            {
+              "grader": "knowledge-path",
+              "explanation": "pattern not found in trace"
+            },
+            {
+              "grader": "util-added",
+              "explanation": "grader threw: case \"pack-nuxt-refines-the-gates\" grader focus file \"app/utils/slugify.ts\": path \"app/utils/slugify.ts\" does not exist"
+            }
+          ],
+          "reads": []
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/conclave.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/specify.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        }
+      ],
+      "mean": 0.8571428571428571,
+      "spread": 0.4285714285714286,
+      "reads": [
+        "plugins/core/skills/crew/references/conclave.md",
+        "plugins/core/skills/crew/references/specify.md",
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md"
+      ],
+      "errored": false,
+      "costUsd": 1.8217855999999997
+    }
+  },
+  "proposals": [
+    {
+      "id": "P-1",
+      "status": "unprobed",
+      "refusal": "the probe set (17 cases, about 62.26 USD by the baseline's costs) is above what is left under the ceiling (12.12 USD); not probed",
+      "diffStat": [
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/references/conclave.md"
+        },
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/references/understand.md"
+        }
+      ],
+      "rationale": "I changed two harness pages and nothing else: `plugins/core/skills/crew/references/understand.md` (the \"Decisions only the user can take\" bullet and the paragraph that follows it) and `plugins/core/skills/crew/references/conclave.md` (the opening of \"Decisions only the user can make\"). The failing run of `pack-nuxt-refines-the-gates` is one of three (1.00, 1.00, 0.57 give the recorded mean 0.86 and spread 0.43) in which `pack-gate`, `profile-tag`, `profile-set` and `honest-ending` passed while `gate-ran`, `knowledge-path` and `util-added` failed together, which is the trace of a standard-route run that printed the pack's proposals, set the three relayed gate commands, and then ended honestly before Build: no test gate ran, `crew team` and `crew evidence` never printed `knowledge/nuxt.md`, and `app/utils/slugify.ts` was never written. The harness as it stood led a headless lead there in two ways: the Understand page said unconditionally \"Mark the work as waiting (`crew await <id> user`), ask, and end the turn\", and the Stop hook releases a waiting turn once, which in the kit ends the session; and both the Understand bullet and the Conclave section told the lead to record every user-only choice with `crew decision <id> add`, while the prompt's choices (the three `node` commands, \"take these as my decisions\") can only be answered in a headless session as the agent's with `--mode`, which the engine's default `unattendedDecisions: wait` never counts (`decisionCounts` in `policy.ts`), so the guard out of Conclave refuses Plan with \"an answer to D-n\" and the Conclave page itself said \"the item waits for a person\". The pages now say that a point the request settles in the user's own words is settled: it goes into the brief's Constraints and the spec, is never re-asked and never recorded as a decision for an answer; that the wait at Understand applies only when something is left to ask, and a request that answers every point and says the user will not be there goes on with `",
+      "probeSet": [
+        "brief-per-todo",
+        "decision-register-reread",
+        "env-observed-proof",
+        "gap-redirect-target",
+        "gate-scoped-to-change",
+        "jev-tightens-never-loosens",
+        "kind-preserve-not-behavior",
+        "pack-agentic-os-absent",
+        "pack-agentic-os-seats-the-team",
+        "pack-frontend-absent",
+        "pack-laravel-absent",
+        "pack-laravel-refines-the-gates",
+        "pack-nuxt-absent",
+        "pack-nuxt-refines-the-gates",
+        "proven-test-first",
+        "strategy-declares-phases",
+        "validator-unattended-approval"
+      ],
+      "probe": {},
+      "verdict": null,
+      "gain": 0
+    },
+    {
+      "id": "P-2",
+      "status": "unprobed",
+      "refusal": "the probe set (17 cases, about 62.26 USD by the baseline's costs) is above what is left under the ceiling (9.44 USD); not probed",
+      "diffStat": [
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/references/conclave.md"
+        },
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/references/understand.md"
+        }
+      ],
+      "rationale": "I changed two harness pages and nothing else: `plugins/core/skills/crew/references/understand.md` and `plugins/core/skills/crew/references/conclave.md`. The failing run of `pack-nuxt-refines-the-gates` scored on the pack's proposals, the tag, the confirmed test command and an honest ending, while `gate-ran`, `knowledge-path` and `util-added` all missed together, and the engine shows what that shape is: `crew team <id>` prints `knowledge/nuxt.md` from the profile's targets even before a file changes, so a run with no knowledge path, no `test (.): pass` and no `app/utils/slugify.ts` is one that stopped after the profile was set and before the team was seated, which on the standard route is the Understand phase. The harness as it stood made that stop the obedient move: Understand said, unconditionally, \"Mark the work as waiting, ask, and end the turn\", and the Conclave's decisions section said an unattended session with a recorded decision and no validator \"waits for a person\", so a lead facing a prompt that spelled out the util's rule, the three commands and \"I will not be here\" either asked anyway and ended the turn, or recorded the prompt's answers as decisions it could not count under the default policy, and the kit's single turn ended there with an honest \"waiting\" message. Understand's paragraph now makes the wait conditional on having something to ask and says that a request answering its own questions with the user absent has decided them, that those answers are constraints and criteria in the request's words and never a recorded decision (which, agent-signed, is not counted and blocks Plan), and that the item is carried through every phase of its route in the same turn, naming `crew team <id>`, the build, the gate run and the delivery; the Conclave's decisions section gains one sentence saying a question the request already answers is a criterion, not a decision, and the round records only what was left open. No test pins the reworded sentences, and every pinn",
+      "probeSet": [
+        "brief-per-todo",
+        "decision-register-reread",
+        "env-observed-proof",
+        "gap-redirect-target",
+        "gate-scoped-to-change",
+        "jev-tightens-never-loosens",
+        "kind-preserve-not-behavior",
+        "pack-agentic-os-absent",
+        "pack-agentic-os-seats-the-team",
+        "pack-frontend-absent",
+        "pack-laravel-absent",
+        "pack-laravel-refines-the-gates",
+        "pack-nuxt-absent",
+        "pack-nuxt-refines-the-gates",
+        "proven-test-first",
+        "strategy-declares-phases",
+        "validator-unattended-approval"
+      ],
+      "probe": {},
+      "verdict": null,
+      "gain": 0
+    }
+  ],
+  "composition": null,
+  "kept": null,
+  "branch": null,
+  "provider": {
+    "name": "runtime",
+    "agentModel": "claude-sonnet-5-5",
+    "judgeModel": "claude-fable-5-1",
+    "claudeModels": true
+  },
+  "costUsd": 10.55773525,
+  "lessons": [],
+  "exit": 0,
+  "unmeasured": []
+}
