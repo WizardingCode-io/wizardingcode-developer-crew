@@ -224,7 +224,12 @@ function seated(
  * (SP9 Task 10 AC-8): one formatter, so the two never drift.
  */
 export function teamLine(id: string, seats: readonly Seat[], primary: TeamName): string {
-  return `Team of ${id} (primary ${primary}): ${seats.map((s) => `${s.role} (${s.reason})`).join("; ")}`;
+  return `Team of ${id} (primary ${primary}): ${seatList(seats)}`;
+}
+
+/** The seats as every team line lists them, `role (reason); …` (2026-10-27-008 AC-1): the audit's line reads it too. */
+export function seatList(seats: readonly Seat[]): string {
+  return seats.map((s) => `${s.role} (${s.reason})`).join("; ");
 }
 
 /** The first three paths, then how many more. */

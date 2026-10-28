@@ -143,10 +143,13 @@ export function dayCostOf(runs: readonly DayRun[]): {
   return { priced, pricedRuns, unpriced };
 }
 
-/** The reason a day's budget skip gives, in its log line, its report line and its notice (one builder, CQ F-5 of the item's round 1). */
+/** The reason a day's budget skip gives, in its log line, its report line and its notice: one builder, so the three never drift. */
 export function budgetReason(ceilingUsd: number, cost: ReturnType<typeof dayCostOf>): string {
   return `the day's budget of ${usd(ceilingUsd)} is spent (${usd(cost.priced)} over ${cost.pricedRuns} priced run(s); ${cost.unpriced} unpriced)`;
 }
+
+/** A run of a provider whose models have no list price (a local server): its cost is null by design, never malformed. */
+export const providerUnpriced = (run: Pick<DayRun, "costUsd">): boolean => run.costUsd === null;
 
 /** The hour and minute of an ISO time, as the report and the log name a skipped tick. */
 const hhmm = (iso: string): string => iso.slice(11, 16);
@@ -356,14 +359,14 @@ export function dailyReport(
   failures: readonly { run: string; step: number; name: string }[],
   skipped: { at: string; reason: string } | null = null,
 ): string {
-  // A provider without a list price (its runs' cost null) totals n/a; a malformed cost on a priced
-  // provider adds nothing to its total and shows n/a in its row (2026-10-27-006 AC-6).
+  // A provider without a list price totals n/a; a malformed cost on a priced provider adds nothing
+  // to its total and shows n/a in its row (2026-10-27-006 AC-6).
   const totals = new Map<string, number | null>();
   for (const run of runs) {
     const before = totals.get(run.provider.name);
     totals.set(
       run.provider.name,
-      run.costUsd === null || before === null
+      providerUnpriced(run) || before === null
         ? null
         : (before ?? 0) + (pricedCost(run.costUsd) ?? 0),
     );
@@ -1181,8 +1184,7 @@ export async function tick(options: { dryRun?: boolean }, deps: TickDeps): Promi
     saveState();
     const folder = join(repo, "docs", "improve", latest.run);
     redactRunFiles(folder, secrets);
-    const report = writeDayReport;
-    report();
+    writeDayReport();
     commitDocs(`Improvement run ${latest.run}: ${verdictText(latest)}`);
     const base = pushMain(latest.branch ? [latest.branch] : []);
     // The adoption (D-4, D-5, D-9): its merge is undone when the release fails before its push,
@@ -1267,7 +1269,7 @@ export async function tick(options: { dryRun?: boolean }, deps: TickDeps): Promi
       released = adopted.released;
       reason = adopted.reason;
       // The adoption's files and the day's report, with what the release did.
-      report();
+      writeDayReport();
       if (commitDocs(`Improvement run ${latest.run}: the day's report`)) pushMain([]);
     }
     const checkoutNote = deps.userCheckout

@@ -30,6 +30,7 @@ import {
   parseRuling,
   pickTargets,
   providerEnv,
+  providerUnpriced,
   readConfig,
   redact,
   redactingLogger,
@@ -2025,4 +2026,40 @@ test("2026-10-27-006 AC-5: the day ceiling is read after the due decision and th
   );
   expect(spent()).toBe("Improvement tick 2026-10-25: the day's budget is spent");
   expect(plain.seen.sh.filter((c) => c[0] === "osascript")).toHaveLength(1);
+});
+
+// 2026-10-27-008 AC-1 (finding 184): the three advisories of 2026-10-27-006's round 2, pinned.
+test("2026-10-27-008 AC-1: the loop calls writeDayReport by name, budgetReason's comment says what it is for, and the totals name the unpriced provider's rule", () => {
+  const src = readFileSync(join(import.meta.dir, "../../../scripts/improve-loop.ts"), "utf8");
+  expect(src).not.toContain("const report = writeDayReport");
+  expect(src.match(/writeDayReport\(\);/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
+  const at = src.indexOf("export function budgetReason(");
+  expect(at).toBeGreaterThan(0);
+  const comment = src.slice(src.lastIndexOf("/**", at), at);
+  expect(comment).toContain("The reason a day's budget skip gives");
+  expect(comment).not.toMatch(/\bF-\d+\b|\bround \d+\b/);
+  expect(src).toContain("providerUnpriced(run) || before === null");
+  expect(src).not.toContain("run.costUsd === null || before === null");
+});
+
+// 2026-10-27-008 AC-1 (finding 184): the rule itself, and the daily report's total through it.
+test("2026-10-27-008 AC-1: providerUnpriced is true of a run whose cost is null and of nothing else, and the daily report totals such a provider as n/a through it", () => {
+  expect(providerUnpriced({ costUsd: null })).toBe(true);
+  expect(providerUnpriced({ costUsd: 0 })).toBe(false);
+  expect(providerUnpriced({ costUsd: 2.5 })).toBe(false);
+  const run = (provider: string, costUsd: number | null) => ({
+    run: `2026-10-28-${provider}`,
+    targets: ["t"],
+    verdict: "nothing kept",
+    provider: { name: provider, claudeModels: provider === "runtime" },
+    costUsd,
+  });
+  const report = dailyReport(
+    "2026-10-28",
+    [run("runtime", 1.25), run("ollama", null), run("runtime", 0.75)],
+    [],
+    [],
+  );
+  expect(report).toContain("- runtime: 2.00 USD");
+  expect(report).toContain("- ollama: n/a (no list price for its models)");
 });

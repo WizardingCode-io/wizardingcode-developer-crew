@@ -724,3 +724,57 @@ test("AC-15 (finding 139): commonWords holds a word at least half of four or mor
   expect(sameRootCause(existing, draft)).toBe(true);
   expect(sameRootCause(existing, draft, new Set(["hook"]))).toBe(false);
 });
+
+// 2026-10-27-008 AC-2 (finding 185): a hub file's causes share three words with any long draft on
+// that file; sameness needs the shared words to be a quarter of the shorter word list as well.
+test("2026-10-27-008 AC-2: three shared words on a shared path are no sameness under a quarter of the shorter list; a re-worded cause keeping most of its words is; the quarter exactly counts and one short does not", () => {
+  const list = (prefix: string, n: number) =>
+    Array.from({ length: n }, (_, i) => `${prefix}${i + 1}`);
+  const path = "packages/engine/src/cli.ts";
+  // The 2026-10-27-007 draft: a hundred words (its title carries the request whole) on the hub file.
+  const draft = {
+    paths: [path, "packages/engine/src/policy.ts"],
+    words: [...list("shared", 19), ...list("draft", 81)],
+  };
+  // Eight causes on cli.ts shaped as K-49 to K-119 were on 2026-10-27: forty to a hundred words,
+  // seven to nineteen of them the draft's; each shares the path and more than three words, none a
+  // quarter of its own list.
+  const hub = [
+    [40, 7],
+    [48, 9],
+    [57, 11],
+    [66, 12],
+    [74, 14],
+    [83, 15],
+    [91, 17],
+    [100, 19],
+  ].map(([size, shared], i) => ({
+    paths: [path],
+    words: [
+      ...list("shared", shared as number),
+      ...list(`own${i + 1}-`, (size as number) - (shared as number)),
+    ],
+  }));
+  for (const existing of hub) {
+    expect(draft.words.filter((w) => existing.words.includes(w)).length).toBeGreaterThanOrEqual(3);
+    expect(sameRootCause(existing, draft)).toBe(false);
+  }
+  // The same cause re-worded, seven of its ten words kept: the same.
+  const cause = { paths: [path], words: [...list("kept", 7), ...list("old", 3)] };
+  const reworded = { paths: [path], words: [...list("kept", 7), ...list("new", 3)] };
+  expect(sameRootCause(cause, reworded)).toBe(true);
+  // Exactly a quarter of the shorter list is sameness; one word short of it is not; a common word
+  // counts toward neither.
+  const twelve = { paths: ["x"], words: list("w", 12) };
+  const three = (rest: number) => ({ paths: ["x"], words: [...list("w", 3), ...list("z", rest)] });
+  expect(sameRootCause(twelve, three(9))).toBe(true);
+  expect(sameRootCause({ paths: ["x"], words: list("w", 13) }, three(10))).toBe(false);
+  expect(sameRootCause(twelve, three(9), new Set(["w1"]))).toBe(false);
+  // The quarter is of the shorter list, whichever side it is on: a ten-word cause sharing three words
+  // with a forty-word draft is the same cause (12 >= 10), as is its mirror; by the longer list, by the
+  // draft's or by the entry's alone, one of the two would not be (12 < 40).
+  const ten = { paths: ["x"], words: [...list("w", 3), ...list("own", 7)] };
+  const forty = { paths: ["x"], words: [...list("w", 3), ...list("other", 37)] };
+  expect(sameRootCause(ten, forty)).toBe(true);
+  expect(sameRootCause(forty, ten)).toBe(true);
+});

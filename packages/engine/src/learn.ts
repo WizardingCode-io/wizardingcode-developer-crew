@@ -202,7 +202,13 @@ export function commonWords(entries: readonly Pick<KnowledgeEntry, "words">[]): 
   return common;
 }
 
-/** The same root cause: at least one shared path and at least three shared words, the base's common words not counted (rule 17). */
+/**
+ * The same root cause (rule 17): at least one shared path and at least three shared words, the
+ * base's common words not counted, the shared words at least a quarter of the shorter of the two word
+ * lists (finding 185): on a hub file every cause shares the path, and a long title shares three words
+ * with each of them; the proportion scales with the title's length and keeps a short re-worded cause
+ * caught.
+ */
 export function sameRootCause(
   existing: Pick<KnowledgeEntry, "paths" | "words">,
   draft: Pick<KnowledgeDraft, "paths" | "words">,
@@ -210,7 +216,8 @@ export function sameRootCause(
 ): boolean {
   const path = draft.paths.some((p) => existing.paths.includes(p));
   const shared = draft.words.filter((w) => existing.words.includes(w) && !common.has(w)).length;
-  return path && shared >= 3;
+  const shorter = Math.min(existing.words.length, draft.words.length);
+  return path && shared >= 3 && shared * 4 >= shorter;
 }
 
 /** The refusal for the first secret in a draft's title or text, naming the source and the field; null when clean. */

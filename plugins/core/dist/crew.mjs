@@ -1830,7 +1830,10 @@ function seated(team, def, route, riskAreas, changed, policy) {
   return null;
 }
 function teamLine(id, seats, primary) {
-  return `Team of ${id} (primary ${primary}): ${seats.map((s) => `${s.role} (${s.reason})`).join("; ")}`;
+  return `Team of ${id} (primary ${primary}): ${seatList(seats)}`;
+}
+function seatList(seats) {
+  return seats.map((s) => `${s.role} (${s.reason})`).join("; ");
 }
 function firstThree(paths) {
   const shown = paths.slice(0, 3).join(", ");
@@ -6661,6 +6664,28 @@ function saveWork(paths, work) {
 function loadWork(paths, id) {
   const read = readProtectedJson(paths, workJson(paths, id));
   return { work: read.data, tampered: read.tampered };
+}
+function applyChangedFields(record, inHand, loaded) {
+  const target = record;
+  const now = inHand;
+  const then = loaded;
+  for (const key of new Set([...Object.keys(now), ...Object.keys(then)])) {
+    const value = JSON.stringify(now[key]);
+    if (value === JSON.stringify(then[key]))
+      continue;
+    if (value === undefined)
+      delete target[key];
+    else
+      target[key] = now[key];
+  }
+}
+function adoptRecord(inHand, record) {
+  const target = inHand;
+  const source = record;
+  for (const key of Object.keys(target))
+    if (!(key in source))
+      delete target[key];
+  Object.assign(target, source);
 }
 function noteRuntime(paths, id, runtime) {
   return withLock(workDir(paths, id), () => {
@@ -18111,7 +18136,8 @@ function commonWords(entries) {
 function sameRootCause(existing, draft, common = new Set) {
   const path = draft.paths.some((p) => existing.paths.includes(p));
   const shared = draft.words.filter((w) => existing.words.includes(w) && !common.has(w)).length;
-  return path && shared >= 3;
+  const shorter = Math.min(existing.words.length, draft.words.length);
+  return path && shared >= 3 && shared * 4 >= shorter;
 }
 function scanDrafts(drafts) {
   for (const draft of drafts) {
@@ -18718,7 +18744,7 @@ function openForChange(env, id) {
     return opened;
   if (opened.work.abandoned)
     return refuse(`${abandonedLine(opened.work.id, opened.work.abandoned)}; start a new item`);
-  return opened;
+  return { ...opened, loaded: structuredClone(opened.work) };
 }
 function abandonedLine(id, closed) {
   return `${id} was abandoned on ${closed.at.slice(0, 10)}: ${closed.reason}`;
@@ -19151,14 +19177,35 @@ function guardContext(env, work, tampered) {
   };
 }
 function deliver2(env, opened, evidence) {
-  for (const target of ["gate", "deliver"]) {
-    if (nextPhaseOf(opened.work) !== target)
-      continue;
-    if (!advancePhase(opened.work, guardContext(env, opened.work, opened.tampered)).ok)
-      break;
-  }
-  saveWork(env.paths, opened.work);
+  const refused = saveWorkAsItStands(env, opened);
   writeProtectedText(env.paths, join53(workDir(env.paths, opened.work.id), "report.md"), reportOf(env, opened.work, evidence));
+  return refused;
+}
+function saveWorkAsItStands(env, opened) {
+  const id = opened.work.id;
+  try {
+    return withLock(workDir(env.paths, id), () => {
+      const fresh = loadWork(env.paths, id);
+      if (fresh.tampered)
+        return `work.json of ${id} changed outside the engine (crew accept ${id}); the run's record of the work is not saved`;
+      if (!fresh.work)
+        return `work.json of ${id} is gone from its folder; the run's record of the work is not saved`;
+      applyChangedFields(fresh.work, opened.work, opened.loaded);
+      for (const target of ["gate", "deliver"]) {
+        if (nextPhaseOf(fresh.work) !== target)
+          continue;
+        if (!advancePhase(fresh.work, guardContext(env, fresh.work, fresh.tampered)).ok)
+          break;
+      }
+      saveWork(env.paths, fresh.work);
+      adoptRecord(opened.work, fresh.work);
+      return null;
+    }, { what: "work folder" });
+  } catch (error) {
+    if (error instanceof LockBusy)
+      return `the work folder of ${id} is busy; the run's record of the work is not saved, run the command again`;
+    throw error;
+  }
 }
 function reportOf(env, work, evidence) {
   return renderReport(work, evidence, env.policy, {
@@ -21204,7 +21251,7 @@ ${notes.join(`
         only,
         tampered: env.tampered || opened.tampered
       }));
-      deliver2(env, opened, outcome.evidence);
+      const workNotSaved = deliver2(env, opened, outcome.evidence);
       const raised = outcome.raised ? `Route raised to ${outcome.raised}: ${opened.work.routeReasons.at(-1)}
 ` : "";
       const picked = refreshed.changed.length ? `profile refreshed: ${refreshed.changed.join("; ")}
@@ -21228,7 +21275,8 @@ ${said}` : "";
         code: outcome.verdict === "proven" ? 0 : 1,
         stdout: true,
         text: picked + raised + gateSummary(opened.work, outcome.verdict, outcome.unproven, outcome.evidence.runs) + judgementNote + reviewLine + capturesNote + (outcome.saveRefused ? `
-${outcome.saveRefused}` : ""),
+${outcome.saveRefused}` : "") + (workNotSaved ? `
+${workNotSaved}` : ""),
         data: {
           verdict: outcome.verdict,
           unproven: outcome.unproven,
@@ -21308,7 +21356,7 @@ ${outcome.saveRefused}` : ""),
       const rulingFile = typeof parsed.flags.ruling === "string" ? rel(env.paths, resolve9(env.paths.root, parsed.flags.ruling)) : undefined;
       for (const fields of rulingDecisions(records, rulingFile))
         decide(env, opened.work.id, fields);
-      deliver2(env, opened, result.evidence);
+      const workNotSaved = deliver2(env, opened, result.evidence);
       const lines = records.flatMap((r) => {
         const outside = r.findings.filter((f) => f.outside).length;
         const detail = r.verdict === "not-run" ? `: ${r.reason}` : ` (${findingsText(r.findings.length)}${outside ? `, ${outside} outside the change` : ""})`;
@@ -21320,6 +21368,8 @@ ${outcome.saveRefused}` : ""),
         lines.push(filedBySession);
       if (jevWait)
         lines.push(jevWait);
+      if (workNotSaved)
+        lines.push(workNotSaved);
       return {
         code: result.verdict === "proven" ? 0 : 1,
         stdout: true,
@@ -21582,7 +21632,7 @@ test-first not credited: ${out.uncredited}` : "";
         registry: registry.teams
       });
       saveWork(env.paths, opened.work);
-      const text = audit ? `Team of ${opened.work.id} (audit): ${seats.map((s) => `${s.role} (${s.reason})`).join("; ")}` : seats.length ? teamLine(opened.work.id, seats, primary) : `Team of ${opened.work.id}: no seat (fast route)`;
+      const text = audit ? `Team of ${opened.work.id} (audit): ${seatList(seats)}` : seats.length ? teamLine(opened.work.id, seats, primary) : `Team of ${opened.work.id}: no seat (fast route)`;
       const extra = [
         registry.warning ?? (env.policy.team.template !== "core" ? `template: ${env.policy.team.template} (pack)` : null),
         served.paths.length ? `knowledge for the expert: ${served.paths.join(", ")}` : null

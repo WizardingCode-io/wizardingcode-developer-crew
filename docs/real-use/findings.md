@@ -1463,3 +1463,43 @@ Verdicts agree at every effort. Upheld findings: `high` reproduced Task 6's and 
 - Evidence: `docs/evals/2026-10-27-sp9-task-10-results.md` (the third run's row and the session's last message).
 - Outcome: recorded by SP9 Task 10 for the next touch of the Stop hook; open.
 
+
+### 184. The advisories left by 2026-10-27-005 and 2026-10-27-006 after their batched rounds, recorded by the user's rule of 2026-10-25
+
+- Date: 2026-10-27. Project: this repository. Items: `2026-10-27-005`, `2026-10-27-006`. Category: `debt`. Severity: low.
+- What happened: the judges ruled both items' gates proven at their round 2 with six advisories left, each named with a line: in `packages/engine/src/cli.ts` a comment in two paragraphs above `teamNote` and the audit branch's inline `role (reason)` map and join beside `teamLine`; in `packages/engine/tests/eval-runner.test.ts` the red-as-committed row's passing-test pattern `(ok \d+ - |✔ )…`, which a `not ok` line satisfies as well; in `scripts/improve-loop.ts` the `report` alias of `writeDayReport`, `budgetReason`'s doc comment citing a review finding (`CQ F-5 of the item's round 1`), and the daily report's totals testing `run.costUsd === null` by hand beside `pricedCost`.
+- Expected: each taken at the next touch of its file: one paragraph above `teamNote`; one helper listing the seats, read by `teamLine` and the audit's line; the pattern anchored at a line start; `writeDayReport` called by name; the comment saying what the helper is for; a named rule for a provider without a list price beside `pricedCost`.
+- Evidence: `.crew/work/2026-10-27-005-sp9-task-10-packsfrontend-and-its-eval-p/review/ruling.json` and `.crew/work/2026-10-27-006-the-improvement-loop-keeps-nothing-and-s/review/ruling.json` (round 2), their `review/code-quality.findings.md` and `review/test-quality.findings.md`.
+- Outcome: closed by `2026-10-27-008` (`seatList` in `team.ts` read by `teamLine` and the audit's line, one paragraph above `teamNote`; the anchored pattern with its `not ok` pin; `writeDayReport()` called where the alias stood, `budgetReason`'s comment, `providerUnpriced(run)` in the totals; pinned in `cli.test.ts`, `eval-runner.test.ts` and `improve-loop.test.ts`).
+
+### 185. Rule 17 refused `crew learn` for 2026-10-27-007: eight root causes on `cli.ts` share three words with any long draft on that file
+
+- Date: 2026-10-27. Project: this repository. Item: `2026-10-27-007`. Category: `blocks`. Severity: medium.
+- What happened: at the item's close `crew learn 2026-10-27-007-the-standing-grant-of-rounds-past-a-cap` was refused: `sameRootCause` (`packages/engine/src/learn.ts`) named K-49, K-74, K-76, K-78, K-85, K-89, K-117 and K-119 as already recording the cause, each sharing `packages/engine/src/cli.ts` and at least three words with the draft, none about the standing grant. The base held 50 root causes, 8 on `cli.ts`, 6 on `scripts/improve-loop.ts`, 6 on its test, 5 on `hooks/subagent-stop.ts`: the engine's hub files. The draft (title and clipped cause) had 109 words; the eight entries 29 to 120, sharing 7 to 19 with it. A path most causes share makes the path test a constant, and a long title (this repository's items carry the whole request as their title) makes three shared words a certainty; `commonWords` removes words half the base shares, not words a file's causes share. The item stayed in its learn phase.
+- Expected: sameness needs the shared words to be a share of the cause, not a count alone: a long title on a hub file is no duplicate of every cause on that file, while a short re-worded cause stays caught.
+- Evidence: the refusal's text in the session of 2026-10-27 (the eight ids and their origins); `.crew/work/2026-10-27-007-the-standing-grant-of-rounds-past-a-cap/work.json` (the learn phase).
+- Outcome: closed by `2026-10-27-008` (D-1: the shared words at least three and at least a quarter of the shorter of the two word lists, `shared * 4 >= shorter`; against the eight entries the draft shares 7 to 19 where the quarter needs 8 to 28, so none is the same, K-74 the closest at 7 of 8; a cause re-worded with seven of its ten words kept is; pinned in `learn.test.ts`; `crew learn` of `2026-10-27-007` then ran in this item's delivery).
+
+### 186. The gate run saved the work it loaded at its start, so a criterion added while it ran was lost
+
+- Date: 2026-10-27. Project: this repository. Item: `2026-10-27-005`. Category: `silent`. Severity: high.
+- What happened: during `2026-10-27-005` a `crew criteria add` and a `crew tdd` pair recorded while the second gate run was in progress were gone when it ended: the record's AC-8 had become another criterion's text and was re-added as AC-9. `deliver` (`packages/engine/src/cli.ts`) advanced the phase on the work the command loaded at its start and called `saveWork` with that copy, after minutes of gates; finding 81 closed the same class for the evidence through `updateEvidence` (the fresh read under the work folder's lock, which the gate run uses), but `work.json` had no merge. The SubagentStop hook's save is not of this class: `fileAnswer` runs under the lock from its read to its save.
+- Expected: a proving step saves the work as it stands at the save: the record read again under the lock, the command's own changes put onto it, the phase judged on that copy; a hand edit never re-sealed, a lock never broken.
+- Evidence: `.crew/work/2026-10-27-005-sp9-task-10-packsfrontend-and-its-eval-p/work.json` (AC-8's text and AC-9), the session of 2026-10-27.
+- Outcome: closed by `2026-10-27-008` (`openForChange` keeps the work as loaded beside the copy in hand; `deliver` saves through `saveWorkAsItStands`: under the lock the record is read again, every top-level field whose value differs from the loaded copy is applied onto the fresh record, the phase guards run on it and the merge is saved; a tampered fresh read or a lock held past the wait saves nothing of `work.json` and the command's output says so in one line; both callers print it; pinned in `cli.test.ts` by a gate whose test command adds a criterion and records a red through the bundle mid-run, a `work.json` hand-edited mid-run, and a `.lock` left in the work folder).
+
+### 187. The improvement loop has no stop or pause command of its own
+
+- Date: 2026-10-27. Project: this repository, the harness-improvement loop. Item: `2026-10-27-006`. Category: `friction`. Severity: medium.
+- What happened: while the fix of the loop's verdict rule and ceilings (`2026-10-27-006`) was being proven, a tick was running old code and spending; the user asked for it to stop. The loop's `paused` in its configuration holds the next ticks and never the one running, and `bun scripts/improve-loop.ts` has no `stop` or `pause` command: the running tick was left to end by itself (it did, after about an hour), the only alternative being to kill the process by hand, outside the loop's own records.
+- Expected: `bun scripts/improve-loop.ts pause` holds the next ticks and is recorded; `stop` ends the running tick cleanly (its run recorded as stopped, its clone and sandboxes removed, the state saved) and holds the next ones; `resume` lifts the hold; the status says which stands.
+- Evidence: `docs/improve/README.md` (the commands, no stop), `scripts/improve-loop.ts` (`paused` read at the tick's start only), the session of 2026-10-27.
+- Outcome: recorded by `2026-10-27-008` for the loop's own item; open.
+
+### 188. A fix pushed to main enters the loop one tick late, because the tick loads its script at launch and resets its clone after
+
+- Date: 2026-10-27. Project: this repository, the harness-improvement loop. Item: `2026-10-27-006`. Category: `friction`. Severity: low.
+- What happened: the fix of `2026-10-27-006` reached `origin/main` while a tick was running; that tick ran the old script to its end (its clone was reset to the new main only at the next tick's start, and the script it had loaded was the old one), so the day's budget ceiling it fixed took effect one tick later than the push.
+- Expected: a tick reads the fix at its next start, said as such in the loop's README (one tick of latency by design), or the tick checks `origin/main` before its run and relaunches itself on a moved main; either way the latency is written down, never met by surprise.
+- Evidence: `scripts/improve-loop.ts` (the clone's reset at the tick's start), the run records of 2026-10-27 in `docs/improve/`.
+- Outcome: recorded by `2026-10-27-008` for the loop's own item; open.

@@ -121,6 +121,7 @@ import {
   words,
 } from "./knowledge.ts";
 import { learnItem } from "./learn.ts";
+import { LockBusy, withLock } from "./lock.ts";
 import {
   acceptBox,
   acceptMail,
@@ -288,7 +289,15 @@ import {
   writeBrief,
 } from "./tasks.ts";
 import { recordTdd, type TddStep } from "./tdd.ts";
-import { auditSeats, plannedSeats, primaryTeam, ROLE_NAMES, teamLine, teamsFor } from "./team.ts";
+import {
+  auditSeats,
+  plannedSeats,
+  primaryTeam,
+  ROLE_NAMES,
+  seatList,
+  teamLine,
+  teamsFor,
+} from "./team.ts";
 import type {
   Criterion,
   Decision,
@@ -370,8 +379,10 @@ import {
   addCriterion,
   addDecision,
   addSkip,
+  adoptRecord,
   advancePhase,
   answerDecision,
+  applyChangedFields,
   applyClassification,
   approve,
   closeDebate,
@@ -538,6 +549,15 @@ interface TamperedFile {
 interface Opened {
   work: WorkItem;
   tampered: boolean;
+}
+
+/**
+ * An item opened by a command that saves it (finding 186): `loaded` is the work as it was read, kept
+ * apart from `work`, which the command changes in hand; `deliver` reads the command's changes
+ * against it and puts them onto the record as it stands at the save.
+ */
+interface OpenedForChange extends Opened {
+  loaded: WorkItem;
 }
 
 const INACTIVE =
@@ -712,13 +732,13 @@ function openUntampered(env: Env, id: string | undefined): Opened | Outcome {
 }
 
 /** Opens a work item for a command that saves it; refuses when its state cannot be trusted. */
-function openForChange(env: Env, id: string | undefined): Opened | Outcome {
+function openForChange(env: Env, id: string | undefined): OpenedForChange | Outcome {
   const opened = openUntampered(env, id);
   if (isOutcome(opened)) return opened;
   // An abandoned item is read, never changed again (finding 124): one door for every command.
   if (opened.work.abandoned)
     return refuse(`${abandonedLine(opened.work.id, opened.work.abandoned)}; start a new item`);
-  return opened;
+  return { ...opened, loaded: structuredClone(opened.work) };
 }
 
 /** `<id> was abandoned on <date>: <reason>`, the refusal every command gives an item the user dropped. */
@@ -1412,19 +1432,63 @@ function guardContext(env: Env, work: WorkItem, tampered: boolean): GuardContext
 /**
  * A proving step is also the work's delivery: the phase moves as far as the guards allow (a gate run
  * is the work entering its gate phase; an item already in gate is delivered by the step that proves
- * it, finding 18) and the report is written. Shared by the gate run and the judgement record.
+ * it, finding 18) and the report is written. Shared by the gate run and the judgement record. The
+ * work is saved as it stands at the save (`saveWorkAsItStands`, finding 186); the report is written
+ * either way, from the saved record or, when the save was refused, from the copy in hand. Returns the
+ * refusal's line for the caller to print, null when the work was saved.
  */
-function deliver(env: Env, opened: Opened, evidence: Evidence): void {
-  for (const target of ["gate", "deliver"] as const) {
-    if (nextPhaseOf(opened.work) !== target) continue;
-    if (!advancePhase(opened.work, guardContext(env, opened.work, opened.tampered)).ok) break;
-  }
-  saveWork(env.paths, opened.work);
+function deliver(env: Env, opened: OpenedForChange, evidence: Evidence): string | null {
+  const refused = saveWorkAsItStands(env, opened);
   writeProtectedText(
     env.paths,
     join(workDir(env.paths, opened.work.id), "report.md"),
     reportOf(env, opened.work, evidence),
   );
+  return refused;
+}
+
+/**
+ * The work saved as it stands at the save (finding 186, finding 81's class on `work.json`): under the
+ * work folder's lock the record is read again, this command's changes against the copy
+ * `openForChange` loaded are put onto that fresh copy (`applyChangedFields`), the phase guards are
+ * judged on the fresh copy and the phase advances only where they pass there, and the merge is saved
+ * through `saveWork`; so a criterion, a decision or a continuation another command recorded while
+ * this one ran survives, and the phase never advances over a criterion the guards would refuse.
+ * Refused, nothing of `work.json` saved, when the fresh read is tampered (a hand edit is never
+ * re-sealed as the engine's own), when the file is gone (nothing is written in a deletion's place)
+ * or when the lock is held past the wait (never broken, never bypassed), each said in one line. On
+ * a save the copy in hand becomes the saved record (`adoptRecord`), so the caller's later reads of
+ * `opened.work` see what the file holds; on a refusal it stays as the command left it, the
+ * report's source then. Returns the refusal's line, null on a save.
+ */
+function saveWorkAsItStands(env: Env, opened: OpenedForChange): string | null {
+  const id = opened.work.id;
+  try {
+    return withLock(
+      workDir(env.paths, id),
+      (): string | null => {
+        const fresh = loadWork(env.paths, id);
+        if (fresh.tampered)
+          return `work.json of ${id} changed outside the engine (crew accept ${id}); the run's record of the work is not saved`;
+        // Read at the start, gone now: removed while the command ran; nothing is written in its place.
+        if (!fresh.work)
+          return `work.json of ${id} is gone from its folder; the run's record of the work is not saved`;
+        applyChangedFields(fresh.work, opened.work, opened.loaded);
+        for (const target of ["gate", "deliver"] as const) {
+          if (nextPhaseOf(fresh.work) !== target) continue;
+          if (!advancePhase(fresh.work, guardContext(env, fresh.work, fresh.tampered)).ok) break;
+        }
+        saveWork(env.paths, fresh.work);
+        adoptRecord(opened.work, fresh.work);
+        return null;
+      },
+      { what: "work folder" },
+    );
+  } catch (error) {
+    if (error instanceof LockBusy)
+      return `the work folder of ${id} is busy; the run's record of the work is not saved, run the command again`;
+    throw error;
+  }
 }
 
 /** The item's report: its evidence, its objections, its mail and the name this project carries in the mail. */
@@ -4021,8 +4085,9 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           }),
       );
       // A gate run is the work entering its gate phase, and its delivery when it proves the work;
-      // the guards still decide, so a missing record or document keeps the phase where it is.
-      deliver(env, opened, outcome.evidence);
+      // the guards still decide, so a missing record or document keeps the phase where it is. The
+      // work is saved as it stands at the end of the run (finding 186); a refused save is said last.
+      const workNotSaved = deliver(env, opened, outcome.evidence);
       const raised = outcome.raised
         ? `Route raised to ${outcome.raised}: ${opened.work.routeReasons.at(-1)}\n`
         : "";
@@ -4044,13 +4109,12 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       ).filter((r) => r.status === "planned" || r.status === "stale");
       // The judge's launch line carries the answers the session filed (SP6 Task 4, decision 10).
       const filedBySession = sessionFiledLine(outcome.evidence.roles ?? []);
-      // The team the run planned on the actual change, in the form crew team prints, before the
-      // gates to run (SP9 Task 10): the seats crew start printed were planned on an empty change,
-      // so a pack's glob or an interface file seats its roles only here, and the session launches
-      // exactly these without a second command (references/gate.md).
-      // The seats runGates planned on this change, with the primary team it set (gates.ts); a planned
-      // judgement gate seats the judge, so the line is never empty here. The fallback narrows the
-      // optional field's type for records written before it existed.
+      // The seats runGates planned on this change, with the primary team it set (gates.ts), in the
+      // form crew team prints and before the gates to run (SP9 Task 10): the seats crew start printed
+      // were planned on an empty change, so a pack's glob or an interface file seats its roles only
+      // here, and the session launches exactly these without a second command (references/gate.md);
+      // a planned judgement gate seats the judge, so the line is never empty, and the fallback narrows
+      // the optional field's type for records written before it existed.
       const teamNote = pending.length
         ? `\n${teamLine(opened.work.id, opened.work.seats ?? [], opened.work.primaryTeam ?? "backend")}`
         : "";
@@ -4079,7 +4143,8 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           judgementNote +
           reviewLine +
           capturesNote +
-          (outcome.saveRefused ? `\n${outcome.saveRefused}` : ""),
+          (outcome.saveRefused ? `\n${outcome.saveRefused}` : "") +
+          (workNotSaved ? `\n${workNotSaved}` : ""),
         data: {
           verdict: outcome.verdict,
           unproven: outcome.unproven,
@@ -4228,7 +4293,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           : undefined;
       for (const fields of rulingDecisions(records, rulingFile))
         decide(env, opened.work.id, fields);
-      deliver(env, opened, result.evidence);
+      const workNotSaved = deliver(env, opened, result.evidence);
       const lines = records.flatMap((r) => {
         const outside = r.findings.filter((f) => f.outside).length;
         const detail =
@@ -4246,6 +4311,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       const filedBySession = sessionFiledLine(before.evidence.roles ?? []);
       if (filedBySession) lines.push(filedBySession);
       if (jevWait) lines.push(jevWait);
+      if (workNotSaved) lines.push(workNotSaved);
       // Like gate run: the exit code says whether the work is proven, so a chain stops at "Not proven".
       return {
         code: result.verdict === "proven" ? 0 : 1,
@@ -4554,7 +4620,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           });
       saveWork(env.paths, opened.work);
       const text = audit
-        ? `Team of ${opened.work.id} (audit): ${seats.map((s) => `${s.role} (${s.reason})`).join("; ")}`
+        ? `Team of ${opened.work.id} (audit): ${seatList(seats)}`
         : seats.length
           ? teamLine(opened.work.id, seats, primary)
           : `Team of ${opened.work.id}: no seat (fast route)`;

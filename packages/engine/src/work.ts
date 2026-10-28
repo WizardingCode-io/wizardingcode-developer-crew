@@ -263,6 +263,37 @@ export function loadWork(
 }
 
 /**
+ * A command's changes put onto the record as it stands (finding 186): every top-level field whose
+ * value differs between `inHand` (the copy the command changed) and `loaded` (that copy as the
+ * command read it), compared as JSON, is written onto `record`; a field the command removed is
+ * deleted from it; a field the command left alone keeps the record's own value, so what another
+ * command wrote meanwhile survives.
+ */
+export function applyChangedFields(record: WorkItem, inHand: WorkItem, loaded: WorkItem): void {
+  const target = record as unknown as Record<string, unknown>;
+  const now = inHand as unknown as Record<string, unknown>;
+  const then = loaded as unknown as Record<string, unknown>;
+  for (const key of new Set([...Object.keys(now), ...Object.keys(then)])) {
+    const value = JSON.stringify(now[key]);
+    if (value === JSON.stringify(then[key])) continue;
+    if (value === undefined) delete target[key];
+    else target[key] = now[key];
+  }
+}
+
+/**
+ * The copy in hand becomes the record (finding 186): every key of `inHand` is replaced by `record`'s
+ * and a key the record lacks is removed, so a caller's later reads of the copy it holds see what the
+ * file holds after a save.
+ */
+export function adoptRecord(inHand: WorkItem, record: WorkItem): void {
+  const target = inHand as unknown as Record<string, unknown>;
+  const source = record as unknown as Record<string, unknown>;
+  for (const key of Object.keys(target)) if (!(key in source)) delete target[key];
+  Object.assign(target, source);
+}
+
+/**
  * The runtime a hook observed the active item under (SP6 Task 4): written once per name, under the
  * work folder's lock so a parallel role's record is never raced; a name already present writes
  * nothing. Returns whether the item changed.

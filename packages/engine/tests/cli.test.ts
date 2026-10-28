@@ -16,7 +16,7 @@ import {
   utimesSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type CliIo, main } from "../src/cli.ts";
@@ -53,7 +53,7 @@ import { taskNames } from "../src/tasks.ts";
 import type { GateRun, KnowledgeEntry, Mailbox, Message, WorkItem } from "../src/types.ts";
 import { fileHash } from "../src/validation.ts";
 import { VERSION } from "../src/version.ts";
-import { loadWork, saveWork } from "../src/work.ts";
+import { adoptRecord, applyChangedFields, loadWork, saveWork } from "../src/work.ts";
 import { auditFixture, PLANTED_KEY } from "./audit-run.test.ts";
 import {
   makeRepo as bareRepo,
@@ -11756,3 +11756,225 @@ test("SP9-T4 AC-4 (the wiring): crew evidence prints the UI evidence section whe
   writeFileSync(join(root, ".crew", "work", id, "review", "ui-evidence.json"), "{nope");
   expect((await c.run("evidence", id)).out).not.toContain("## UI evidence");
 });
+
+// 2026-10-27-008 AC-1 (finding 184): the seats are listed by one helper, seatList (team.ts), read by
+// the gate run's team line and the audit's; the comment above teamNote is one paragraph.
+test("2026-10-27-008 AC-1: cli.ts lists seats through seatList alone and keeps one paragraph above teamNote", () => {
+  const src = readFileSync(join(import.meta.dir, "../src/cli.ts"), "utf8");
+  expect(src).not.toMatch(/\$\{s\.role\} \(\$\{s\.reason\}\)/);
+  expect(src).toMatch(/\(audit\): \$\{seatList\(seats\)\}/);
+  const team = readFileSync(join(import.meta.dir, "../src/team.ts"), "utf8");
+  expect(team).toMatch(/\(primary \$\{primary\}\): \$\{seatList\(seats\)\}/);
+  const lines = src.split("\n");
+  const at = lines.findIndex((l) => l.includes("const teamNote = pending.length"));
+  expect(at).toBeGreaterThan(0);
+  const comment: string[] = [];
+  for (let i = at - 1; i >= 0 && /^\s*\/\//.test(lines[i] ?? ""); i--)
+    comment.unshift(lines[i] ?? "");
+  // One paragraph: one topic sentence, no second one beginning a new paragraph.
+  expect(comment.filter((l) => /^\s*\/\/ The /.test(l))).toHaveLength(1);
+  expect(comment.length).toBeLessThanOrEqual(6);
+});
+
+/** The engine's bundled command, as a project's test command runs it (a process of its own). */
+const CREW_BUNDLE = join(import.meta.dir, "../../../plugins/core/dist/crew.mjs");
+
+/** A shell word, single-quoted. */
+const shellWord = (s: string) => `'${s.replace(/'/g, "'\\''")}'`;
+
+/**
+ * The gate's test command as a script of this test (2026-10-27-008 AC-3, finding 186): the gate's
+ * command inherits none of the test's variables, so the test's crew home and claude fake are baked
+ * in, the plugin's variables unset so no pack discovery turns on; `lines` run against the item while
+ * the gate run is in progress. Written as `tests/mid.sh` of the repository.
+ */
+function midRunScript(root: string, env: NodeJS.ProcessEnv, lines: string[]): void {
+  const text = [
+    "#!/bin/sh",
+    "set -e",
+    "unset CLAUDE_PLUGIN_ROOT CLAUDE_CONFIG_DIR",
+    `export WIZARDINGCODE_HOME=${shellWord(env.WIZARDINGCODE_HOME as string)}`,
+    `export WIZARDINGCODE_CREW_CLAUDE=${shellWord(env.WIZARDINGCODE_CREW_CLAUDE as string)}`,
+    ...lines,
+    "exit 0",
+    "",
+  ].join("\n");
+  write(root, "tests/mid.sh", text);
+}
+
+// 2026-10-27-008 AC-3 (finding 186): the gate run saves the work as it stands at its end.
+test("2026-10-27-008 AC-3: a criterion added and a red recorded by crew commands while the gates ran survive the run's save beside the run's own fields, and the phase stays where the guards leave it", async () => {
+  const env = testEnv();
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "sh tests/mid.sh" } }),
+    "src/a.ts": "x",
+    "src/App.vue": "<template/>",
+  });
+  const c = io(root, env);
+  const id = (await c.json("start", "Mid-run records", "--answers", answers, "--criterion", "a"))
+    .data.id as string;
+  // A pack added after the start, whose knowledge the run serves to the node change: knowledgeFiles
+  // is a field this run writes; the interface file changed below seats the page reviewer and the
+  // judge, so seats and primaryTeam are fields it writes too (the fast route seats nobody otherwise).
+  const pack = writePack(
+    { name: "wizardingcode-pack-node-notes", knowledge: { node: "knowledge/node.md" }, evals: [] },
+    { "knowledge/node.md": "# Node\n\nWhat the model gets wrong: nothing yet.\n" },
+  );
+  expect((await c.run("pack", "add", pack)).code).toBe(0);
+  write(root, "src/a.ts", "y");
+  write(root, "src/App.vue", "<template>y</template>");
+  // AC-1 proven before the run: the copy in hand would enter gate on its own.
+  expect((await c.run("tdd", "red", id, "AC-1", "--", RED)).code).toBe(0);
+  expect((await c.run("tdd", "green", id, "AC-1", "--", GREEN)).code).toBe(0);
+  const crew = `node ${shellWord(CREW_BUNDLE)}`;
+  midRunScript(root, env, [
+    `${crew} criteria ${shellWord(id)} add 'added while the gates ran' > /dev/null`,
+    `${crew} tdd red ${shellWord(id)} AC-2 -- sh tests/crew-red.test.sh > /dev/null`,
+    `${crew} decision ${shellWord(id)} add 'asked while the gates ran' > /dev/null`,
+  ]);
+  const script = readFileSync(join(root, "tests", "mid.sh"), "utf8");
+  expect(script).toContain(env.WIZARDINGCODE_HOME as string);
+  expect(script).not.toContain(join(homedir(), ".wizardingcode"));
+  const run = await c.run("gate", "run", id);
+  expect(run.out).toContain("test (.): pass");
+  const after = loadWork(repoPaths(root, env), id);
+  expect(after.tampered).toBe(false);
+  const work = after.work as WorkItem;
+  // The records made mid-run.
+  expect(work.criteria.map((a) => a.text)).toEqual(["a", "added while the gates ran"]);
+  const tdd = loadEvidence(repoPaths(root, env), id).evidence.tdd;
+  expect(tdd.find((t) => t.criterion === "AC-2")?.red?.exit).toBe(1);
+  expect(work.decisions?.map((d) => d.question)).toEqual(["asked while the gates ran"]);
+  // The run's own fields, planned on the change.
+  expect(work.knowledgeFiles?.some((f) => f.endsWith("/knowledge/node.md"))).toBe(true);
+  expect(work.seats?.map((s) => s.role)).toEqual(["review-ui-ux", "judge"]);
+  expect(work.primaryTeam).toBe("frontend");
+  // The added criterion has no proof: the guards, judged on the fresh copy, keep the item in build.
+  expect(work.phase).toBe("build");
+  // The report, written from the copy in hand after the save, lists the criterion added mid-run: the
+  // copy in hand became the saved record.
+  const report = readFileSync(join(root, ".crew", "work", id, "report.md"), "utf8");
+  expect(report).toContain("added while the gates ran");
+  expect(report).toContain("asked while the gates ran");
+}, 30_000);
+
+// 2026-10-27-008 AC-3 (finding 186): the merge rule on its own, each of its three branches.
+test("2026-10-27-008 AC-3: applyChangedFields writes a field the command set or changed, deletes one it removed, and leaves alone what it did not touch", () => {
+  const loaded: Record<string, unknown> = {
+    id: "w",
+    phase: "build",
+    seats: [],
+    route: "fast",
+    awaiting: "user",
+  };
+  const inHand: Record<string, unknown> = {
+    id: "w",
+    phase: "build",
+    seats: [{ role: "judge" }],
+    route: "standard",
+  };
+  // What another command wrote meanwhile: a criterion, and a field the command in hand never saw.
+  const record: Record<string, unknown> = {
+    ...loaded,
+    criteria: [{ id: "AC-1" }],
+    updatedAt: "later",
+  };
+  applyChangedFields(
+    record as unknown as WorkItem,
+    inHand as unknown as WorkItem,
+    loaded as unknown as WorkItem,
+  );
+  expect(record).toEqual({
+    id: "w",
+    phase: "build",
+    seats: [{ role: "judge" }],
+    route: "standard",
+    criteria: [{ id: "AC-1" }],
+    updatedAt: "later",
+  });
+  expect("awaiting" in record).toBe(false);
+});
+
+test("2026-10-27-008 AC-3: adoptRecord makes the copy in hand the saved record, key for key, dropping what the record lacks", () => {
+  const inHand: Record<string, unknown> = { id: "w", phase: "build", awaiting: "user", seats: [] };
+  const saved: Record<string, unknown> = {
+    id: "w",
+    phase: "gate",
+    seats: [{ role: "judge" }],
+    updatedAt: "later",
+  };
+  adoptRecord(inHand as unknown as WorkItem, saved as unknown as WorkItem);
+  expect(inHand).toEqual(saved);
+  expect(inHand.seats).toBe(saved.seats);
+});
+
+test("2026-10-27-008 AC-3: a work.json removed while the gates ran is said as gone, nothing is written in its place, and the run's record of the work is not saved", async () => {
+  const env = testEnv();
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "sh tests/mid.sh" } }),
+    "src/a.ts": "x",
+  });
+  const c = io(root, env);
+  const id = (await c.json("start", "Removed mid-run", "--answers", answers, "--criterion", "a"))
+    .data.id as string;
+  write(root, "src/a.ts", "y");
+  const file = join(root, ".crew", "work", id, "work.json");
+  midRunScript(root, env, [`rm ${shellWord(file)}`]);
+  const run = await c.run("gate", "run", id);
+  expect(run.out).toContain("test (.): pass");
+  expect(run.out).toContain(
+    `work.json of ${id} is gone from its folder; the run's record of the work is not saved`,
+  );
+  expect(existsSync(file)).toBe(false);
+}, 30_000);
+
+test("2026-10-27-008 AC-3: a work.json edited by hand while the gates ran keeps the edit, reads as tampered, and the run says its record of the work is not saved", async () => {
+  const env = testEnv();
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "sh tests/mid.sh" } }),
+    "src/a.ts": "x",
+  });
+  const c = io(root, env);
+  const id = (await c.json("start", "Hand edit mid-run", "--answers", answers, "--criterion", "a"))
+    .data.id as string;
+  write(root, "src/a.ts", "y");
+  const file = join(root, ".crew", "work", id, "work.json");
+  // The hand edit: a field no command writes, put in by a script with no engine in it.
+  const edit = `const fs=require("node:fs");const f=${JSON.stringify(file)};const w=JSON.parse(fs.readFileSync(f,"utf8"));w.handEdited=true;fs.writeFileSync(f,JSON.stringify(w,null,2)+"\\n");`;
+  midRunScript(root, env, [`node -e ${shellWord(edit)}`]);
+  const run = await c.run("gate", "run", id);
+  expect(run.out).toContain("test (.): pass");
+  expect(run.out).toContain(
+    `work.json of ${id} changed outside the engine (crew accept ${id}); the run's record of the work is not saved`,
+  );
+  const after = loadWork(repoPaths(root, env), id);
+  expect(after.tampered).toBe(true);
+  expect((after.work as WorkItem & { handEdited?: boolean }).handEdited).toBe(true);
+  expect(after.work?.phase).toBe("build");
+}, 30_000);
+
+test("2026-10-27-008 AC-3: a lock left in the work folder refuses the run's save of the work, said in one line, and leaves the record as it was", async () => {
+  const env = testEnv();
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "sh tests/mid.sh" } }),
+    "src/a.ts": "x",
+  });
+  const c = io(root, env);
+  const id = (await c.json("start", "Lock held mid-run", "--answers", answers, "--criterion", "a"))
+    .data.id as string;
+  write(root, "src/a.ts", "y");
+  const lock = join(root, ".crew", "work", id, ".lock");
+  // Another process's lock, taken while the gates ran and held past their end: its stamp a minute
+  // ahead keeps it fresh for the whole run whatever the machine's load (a stale one is broken).
+  const hold = `const fs=require("node:fs");fs.mkdirSync(${JSON.stringify(lock)});const t=new Date(Date.now()+60000);fs.utimesSync(${JSON.stringify(lock)},t,t);`;
+  midRunScript(root, env, [`node -e ${shellWord(hold)}`]);
+  const before = loadWork(repoPaths(root, env), id).work;
+  const run = await c.run("gate", "run", id);
+  expect(run.out).toContain(
+    `the work folder of ${id} is busy; the run's record of the work is not saved, run the command again`,
+  );
+  const after = loadWork(repoPaths(root, env), id);
+  expect(after.tampered).toBe(false);
+  expect(after.work).toEqual(before);
+  expect(existsSync(lock)).toBe(true);
+}, 40_000);

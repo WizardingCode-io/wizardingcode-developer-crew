@@ -10,8 +10,10 @@ import {
   primaryTeam,
   ROLE_NAMES,
   rolePattern,
+  seatList,
   subagentStopMatcher,
   TEAMS,
+  teamLine,
   teamsFor,
 } from "../src/team.ts";
 import { JUDGEMENT_GATES, type Seat } from "../src/types.ts";
@@ -469,4 +471,21 @@ test("SP6-T2 AC-4: teamsFor merges a registered template's globs into a paths te
   expect(roles(plannedSeats("standard", [], ["agents/triage.md"], DEFAULT_POLICY))).not.toContain(
     "expert",
   );
+});
+
+// 2026-10-27-008 AC-1 (finding 184): one list of the seats, read by the team line and by the audit's line.
+test("2026-10-27-008 AC-1: seatList lists the seats as role (reason) joined by a semicolon, and teamLine ends with that list", () => {
+  const seats: Seat[] = [
+    {
+      role: "review-code-quality",
+      team: "backend",
+      kind: "gate",
+      gate: "code-quality",
+      reason: "standard route",
+    },
+    { role: "judge", team: null, kind: "gate", reason: "a gate is planned" },
+  ];
+  expect(seatList(seats)).toBe("review-code-quality (standard route); judge (a gate is planned)");
+  expect(seatList([])).toBe("");
+  expect(teamLine("w", seats, "backend")).toBe(`Team of w (primary backend): ${seatList(seats)}`);
 });

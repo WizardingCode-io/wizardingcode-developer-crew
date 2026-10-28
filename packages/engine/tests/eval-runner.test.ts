@@ -2298,7 +2298,11 @@ function redAsCommitted(name: string): void {
     expect(output).toMatch(
       /(not ok \d+ - |✖ )the notice animates its dismiss with a transition on transform or opacity/,
     );
-    expect(output).toMatch(/(ok \d+ - |✔ )the notice has a dismiss button/);
+    // Anchored at a line start (finding 184): a `not ok` line never satisfies it.
+    const passLine = /(^|\n)\s*(ok \d+ - |✔ )the notice has a dismiss button/;
+    expect(output).toMatch(passLine);
+    expect(output).not.toMatch(/(^|\n)\s*(not ok \d+ - |✖ )the notice has a dismiss button/);
+    expect("not ok 1 - the notice has a dismiss button").not.toMatch(passLine);
   } finally {
     rmSync(dir, { recursive: true, force: true });
     rmSync(home, { recursive: true, force: true });
