@@ -30,7 +30,13 @@ import {
   runImprove,
   verdictOf,
 } from "./improve.ts";
-import { type DayState, type ImproveState, improveHome, readStateAt } from "./improve-home.ts";
+import {
+  type DayState,
+  type DeadTick,
+  type ImproveState,
+  improveHome,
+  readStateAt,
+} from "./improve-home.ts";
 import {
   notificationCommand,
   RELEASE_STEP_NAMES,
@@ -358,7 +364,10 @@ export function dailyReport(
   releases: readonly { version: string; run: string }[],
   failures: readonly { run: string; step: number; name: string }[],
   skipped: { at: string; reason: string } | null = null,
+  extras: { deadTicks?: readonly DeadTick[]; stoppedRuns?: readonly string[] } = {},
 ): string {
+  const deadTicks = extras.deadTicks ?? [];
+  const stoppedRuns = extras.stoppedRuns ?? [];
   // A provider without a list price totals n/a; a malformed cost on a priced provider adds nothing
   // to its total and shows n/a in its row (2026-10-27-006 AC-6).
   const totals = new Map<string, number | null>();
@@ -378,7 +387,9 @@ export function dailyReport(
     "| :- | :- | :- | :- | :- |",
     ...runs.map((r) => {
       const cost = pricedCost(r.costUsd);
-      return `| ${r.run} | ${r.targets.join(", ")} | ${r.verdict} | ${r.provider.name}${r.provider.claudeModels ? "" : " (not Claude models)"} | ${cost === null ? "n/a" : usd(cost)} |`;
+      // A run the user stopped after it ended on its own reads as stopped (2026-10-28-001 AC-7).
+      const verdict = stoppedRuns.includes(r.run) ? STOPPED_BY_USER : r.verdict;
+      return `| ${r.run} | ${r.targets.join(", ")} | ${verdict} | ${r.provider.name}${r.provider.claudeModels ? "" : " (not Claude models)"} | ${cost === null ? "n/a" : usd(cost)} |`;
     }),
     "",
     "## Cost by provider",
@@ -406,7 +417,199 @@ export function dailyReport(
       "",
       `- ${hhmm(skipped.at)} UTC: ${skipped.reason}; every later tick of the day skips the same way until the budget or the day changes`,
     );
+  // The ticks that died before their run ended (2026-10-28-001 AC-9), each by what its lock said once checked.
+  if (deadTicks.length)
+    lines.push("", "## Dead ticks", "", ...deadTicks.map((d) => `- ${deadTickText(d)}`));
   return lines.join("\n");
+}
+
+/** `pid 849, started 00:32 UTC, run 2026-10-28-2 left without a record, folder removed`: a dead tick as the report and the status say it (2026-10-28-001 AC-9). */
+function deadTickText(d: DeadTick): string {
+  const p = deadTickParts(d);
+  const run = p.run ? `run ${p.run} left without a record, folder removed` : "left no run";
+  return `pid ${p.pid}, started ${p.start ?? "at an unknown time"}, ${run}`;
+}
+
+/** The notification a dead tick gets, once: `a tick died: pid 849 started at 00:32 UTC left run 2026-10-28-2 without a record`. */
+function deadTickNotice(d: DeadTick): string {
+  const p = deadTickParts(d);
+  const run = p.run ? `left run ${p.run} without a record` : "left no run";
+  return `a tick died: pid ${p.pid} started ${p.start ? `at ${p.start}` : "at an unknown time"} ${run}`;
+}
+
+/** What every line about a dead tick says of it: the pid or `unknown`, the start as `hh:mm UTC` or null, the run. */
+function deadTickParts(d: DeadTick): { pid: string; start: string | null; run: string | null } {
+  return {
+    pid: String(d.pid ?? "unknown"),
+    start: d.startedAt ? `${hhmm(d.startedAt)} UTC` : null,
+    run: d.run,
+  };
+}
+
+/** The run folders of the clone a tick left without a record, newest first: a direct child of `docs/improve/` named by the run pattern, a real directory, no `record.json` (2026-10-28-001 AC-9). */
+function deadRunFolders(repo: string): string[] {
+  const dir = join(repo, "docs", "improve");
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir)
+    .filter((name) => RUN_FOLDER.test(name))
+    .filter((name) => {
+      try {
+        return (
+          lstatSync(join(dir, name)).isDirectory() && !existsSync(join(dir, name, "record.json"))
+        );
+      } catch {
+        return false;
+      }
+    })
+    .sort((a, b) => {
+      // Newest first: the later date, then the higher number (`-10` after `-9`, as createImproveFolder counts).
+      const [dateA, nA] = splitRun(a);
+      const [dateB, nB] = splitRun(b);
+      return dateA === dateB ? nB - nA : dateA < dateB ? 1 : -1;
+    });
+}
+
+/** A run folder's name as its date and its number. */
+function splitRun(name: string): [string, number] {
+  const at = name.lastIndexOf("-");
+  return [name.slice(0, at), Number(name.slice(at + 1))];
+}
+
+/** A run folder's name, `<date>-<n>`, as `createImproveFolder` names it. */
+const RUN_FOLDER = /^\d{4}-\d{2}-\d{2}-\d+$/;
+
+/** An integer pid above 1, else null: never 0 (the caller's group), 1 (launchd), a negative number (another group) or a string. */
+function validPid(value: unknown): number | null {
+  return typeof value === "number" && Number.isInteger(value) && value > 1 ? value : null;
+}
+
+/** An ISO date, else null. */
+function validIso(value: unknown): string | null {
+  return typeof value === "string" &&
+    /^\d{4}-\d{2}-\d{2}T/.test(value) &&
+    !Number.isNaN(Date.parse(value))
+    ? value
+    : null;
+}
+
+/**
+ * The lock as `stop` may act on it (2026-10-28-001 AC-7, the security lead's R-1): an object whose pid is
+ * an integer above 1, whose boot is this boot's and whose start is an ISO date; anything else is null,
+ * and nothing is signalled on it.
+ */
+export function validLock(raw: unknown, boot: string): TickLock | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const { pid, startedAt } = raw as Record<string, unknown>;
+  const ownPid = validPid(pid);
+  const start = validIso(startedAt);
+  if (ownPid === null || start === null || (raw as Record<string, unknown>).boot !== boot)
+    return null;
+  return { pid: ownPid, startedAt: start, boot };
+}
+
+/** What a tick that died left, from its lock once checked and from the clone (2026-10-28-001 AC-9): the newest dead run folder is removed. */
+function deadTickOf(held: unknown, repo: string): DeadTick {
+  const lock = typeof held === "object" && held !== null ? (held as Record<string, unknown>) : {};
+  const [run] = deadRunFolders(repo);
+  if (run) rmSync(join(repo, "docs", "improve", run), { recursive: true, force: true });
+  return { pid: validPid(lock.pid), startedAt: validIso(lock.startedAt), run: run ?? null };
+}
+
+/** The configuration file with `patch` written over its keys, the others kept, mode 0600 as the install writes it. */
+function writeConfigPatch(home: string, patch: Partial<LoopConfig>): void {
+  mkdirSync(home, { recursive: true });
+  const path = join(home, "config.json");
+  writeFileSync(path, `${JSON.stringify({ ...readConfigFile(home), ...patch }, null, 2)}\n`, {
+    mode: 0o600,
+  });
+  chmodSync(path, 0o600);
+}
+
+/** The stop marker the `stop` command leaves for the tick (2026-10-28-001 AC-7). */
+const stopMarkerOf = (home: string) => join(home, "stop.json");
+
+/** `bun scripts/improve-loop.ts pause`: no tick runs until `resume` (2026-10-28-001 AC-7). */
+export function pauseLoop(home: string): string {
+  writeConfigPatch(home, { paused: true });
+  return "paused: no tick runs until bun scripts/improve-loop.ts resume";
+}
+
+/** `bun scripts/improve-loop.ts resume`: the ticks run again; a stop marker left behind goes. */
+export function resumeLoop(home: string): string {
+  writeConfigPatch(home, { paused: false });
+  rmSync(stopMarkerOf(home), { force: true });
+  return "resumed";
+}
+
+/** What `stop` reaches: the lock and the configuration in the home, `ps` and the signal, a wait. */
+export interface StopDeps {
+  home: string;
+  boot: () => string;
+  alive: (pid: number) => boolean;
+  sh: TickDeps["sh"];
+  kill: (pid: number, signal: "SIGTERM") => void;
+  wait: (ms: number) => Promise<void>;
+  now: () => Date;
+}
+
+const STOP_WAIT_MS = 30_000;
+const STOP_POLL_MS = 500;
+
+/**
+ * `bun scripts/improve-loop.ts stop` (2026-10-28-001 AC-7, D-1): the loop paused, the marker written for
+ * the tick, and the live tick ended with SIGTERM: only a lock that passes every check is acted on (an
+ * integer pid above 1, this boot, an ISO start, the process alive and running the tick's own command
+ * line), its group when the pid is the group's id, the pid alone otherwise; then the lock is waited
+ * for up to thirty seconds. A lock that fails a check signals nothing and stays as it is.
+ */
+export async function stopLoop(deps: StopDeps): Promise<string> {
+  const { home } = deps;
+  writeConfigPatch(home, { paused: true });
+  writeFileSync(
+    stopMarkerOf(home),
+    `${JSON.stringify({ at: deps.now().toISOString(), by: "stop" })}\n`,
+    { mode: 0o600 },
+  );
+  const lock = validLock(readJson<unknown>(join(home, "lock.json")), deps.boot());
+  const none = "no tick is running; the loop is paused";
+  if (!lock || !deps.alive(lock.pid)) return none;
+  const pid = String(lock.pid);
+  const command = deps.sh(["ps", "-o", "command=", "-p", pid], { cwd: home }).stdout;
+  if (!(command.includes("improve-loop.ts") && /\btick\b/.test(command))) return none;
+  const pgid = deps.sh(["ps", "-o", "pgid=", "-p", pid], { cwd: home }).stdout.trim();
+  deps.kill(pgid === pid ? -lock.pid : lock.pid, "SIGTERM");
+  const ended = () => !existsSync(join(home, "lock.json"));
+  for (let waited = 0; waited < STOP_WAIT_MS && !ended(); waited += STOP_POLL_MS)
+    await deps.wait(STOP_POLL_MS);
+  return ended()
+    ? `stopped: the tick (pid ${pid}) ended; the loop is paused (bun scripts/improve-loop.ts resume)`
+    : `stop requested: the tick (pid ${pid}) is still ending; the loop is paused`;
+}
+
+/** The command a relaunched tick runs (2026-10-28-001 AC-2): this bun, this script, the arguments given. */
+export function relaunchCommand(args: readonly string[]): { cmd: string; args: string[] } {
+  return { cmd: process.execPath, args: [process.argv[1] as string, ...args] };
+}
+
+/** What a command needs of this machine (2026-10-28-001 AC-7): the shell, this boot's identity, whether a pid is alive. */
+function machineDeps(home: string): {
+  run: ReturnType<typeof spawnRunner>;
+  boot: TickDeps["boot"];
+  alive: TickDeps["alive"];
+} {
+  const run = spawnRunner(false);
+  return {
+    run,
+    boot: () => run(["/usr/sbin/sysctl", "-n", "kern.boottime"], { cwd: home }).stdout.trim(),
+    alive: (pid) => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+  };
 }
 
 /** The notification's title and body after a tick (AC-10): the version released, or `crew improve` and why nothing was. */
@@ -415,11 +618,15 @@ export function tickNotification(summary: {
   improved: readonly string[];
   reason: string | null;
   dayTotal: string;
+  /** The run the user stopped (2026-10-28-001 AC-7): the notice says so in place of the verdict. */
+  stopped?: string | null;
 }): [title: string, body: string] {
   const title = summary.released ? `crew ${summary.released}` : "crew improve";
-  const what = summary.released
-    ? summary.improved.join("; ")
-    : (summary.reason ?? "nothing to report");
+  const what = summary.stopped
+    ? `${STOPPED_BY_USER}: run ${summary.stopped}`
+    : summary.released
+      ? summary.improved.join("; ")
+      : (summary.reason ?? "nothing to report");
   return [title, `${what}. Today: ${summary.dayTotal}.`];
 }
 
@@ -723,7 +930,11 @@ function readRecords(repo: string): LoopRecord[] {
     const path = join(dir, name, "record.json");
     if (!existsSync(path)) continue;
     try {
-      out.push(JSON.parse(readFileSync(path, "utf8")) as LoopRecord);
+      const record = JSON.parse(readFileSync(path, "utf8")) as LoopRecord;
+      // A record of another shape (no run, no time) is no measurement either: read as one, it would
+      // sort as the latest run through its missing time and the tick would read its run as undefined
+      // (2026-10-28-001 AC-9, a `{}` record beside the dead folders).
+      if (typeof record.run === "string" && typeof record.at === "string") out.push(record);
     } catch {
       // A record that is not JSON is no measurement.
     }
@@ -765,8 +976,15 @@ function keptLabel(record: AdoptionRecord): string | null {
   return record.kept.kind === "composition" ? record.kept.ids.join(" + ") : record.kept.id;
 }
 
-function verdictText(record: LoopRecord): string {
-  if (record.exit !== 0) return `errored (exit ${record.exit})`;
+/** The words of a run the user stopped (2026-10-28-001 AC-7), in the verdict, the commit, the report's row and the notification. */
+export const STOPPED_BY_USER = "stopped by the user";
+
+/** A run's verdict in words, by what `runImprove` documents each exit as (2026-10-28-001 AC-8): the ceiling is a stop the loop set, not an error. */
+export function verdictText(record: LoopRecord): string {
+  if (record.exit === 2) return `stopped at the ceiling (${usd(record.costUsd)})`;
+  if (record.exit === 3) return "failed (exit 3)";
+  if (record.exit === 4) return STOPPED_BY_USER;
+  if (record.exit !== 0) return `ended with exit ${record.exit}`;
   if (!record.kept) return "nothing kept";
   return `kept ${keptLabel(record)} (${gainTexts(record).join(", ")})`;
 }
@@ -806,6 +1024,10 @@ export interface TickDeps {
   ) => { status: number; stdout: string; stderr: string };
   /** The improvement itself (`runImprove` with the real deps of the clone). */
   improve: (options: ImproveOptions, repo: string) => Promise<number>;
+  /** A signal handler for the tick's duration (2026-10-28-001 AC-7): installed, and removed by what it returns. */
+  onSignal: (signal: "SIGTERM", handler: () => void) => () => void;
+  /** The tick run again on the code the sync brought (2026-10-28-001 AC-2): its status. */
+  relaunch: (args: string[]) => number;
   judge: AdoptDeps["judge"];
   release: (options: ReleaseOptions) => Promise<ReleaseOutcome>;
   readSecret: SecretReader;
@@ -884,11 +1106,18 @@ function pruneDatedLogs(home: string, now: Date): void {
  * with its merge undone when the release fails before its push, the user's checkout, the state
  * and the notification.
  */
-export async function tick(options: { dryRun?: boolean }, deps: TickDeps): Promise<number> {
+export async function tick(
+  options: { dryRun?: boolean; relaunched?: boolean },
+  deps: TickDeps,
+): Promise<number> {
   const { home } = deps;
   const repo = join(home, "repo");
   const now = deps.now();
   const date = now.toISOString().slice(0, 10);
+  // A tick that died before this one (2026-10-28-001 AC-9), recorded once the day's state exists.
+  let dead: DeadTick | null = null;
+  // This tick handed over to one on the code the sync brought (2026-10-28-001 AC-2): its state is the other's to save.
+  let relaunched = false;
   mkdirSync(join(home, "log"), { recursive: true });
   const config = readConfig(home);
   const state: ImproveState = readStateAt(home);
@@ -909,18 +1138,32 @@ export async function tick(options: { dryRun?: boolean }, deps: TickDeps): Promi
       `${JSON.stringify({ pid: deps.pid, startedAt: now.toISOString(), boot: deps.boot() })}\n`,
     );
   if (!takeLock()) {
-    const held = readLock(home);
-    if (held && held.boot === deps.boot() && deps.alive(held.pid)) {
-      log(`another tick holds the lock (pid ${held.pid}); leaving`);
+    const held = readJson<unknown>(lockPath);
+    const shown = (held as Record<string, unknown> | null)?.pid;
+    // A live tick is an integer pid alive on this boot, as before; the checks of `stop` and of the
+    // dead tick's record (an integer above 1) are theirs, since only they act on the pid.
+    const heldPid = typeof shown === "number" && Number.isInteger(shown) ? shown : null;
+    const sameBoot = (held as Record<string, unknown> | null)?.boot === deps.boot();
+    if (heldPid !== null && sameBoot && deps.alive(heldPid)) {
+      log(`another tick holds the lock (pid ${heldPid}); leaving`);
       return 0;
     }
-    log(`a stale lock (pid ${held?.pid ?? "unknown"}) is taken over`);
+    // A dead pid on this boot, or a lock from another boot: the tick that wrote it died (finding 190).
+    dead = deadTickOf(held, repo);
+    log(
+      `a stale lock (pid ${heldPid ?? "unknown"}) is taken over; ${dead.run ? `run ${dead.run} left without a record, folder removed` : "no run left"}`,
+    );
     rmSync(lockPath, { force: true });
     if (!takeLock()) {
       log("another tick took the lock first; leaving");
       return 0;
     }
   }
+  // The handler keeps the tick alive through a stop's SIGTERM so the record is written; the kit's
+  // child dies with the group signal and the run ends at its next step (2026-10-28-001 AC-7, D-1).
+  const offSignal = deps.onSignal("SIGTERM", () =>
+    log("stop requested: the run ends at its next step"),
+  );
   const notify = (title: string, body: string) =>
     deps.sh(notificationCommand(title, redact(body, secrets)), { cwd: home });
   const git = (args: string[], cwd = repo) => deps.git(args, cwd);
@@ -972,7 +1215,7 @@ export async function tick(options: { dryRun?: boolean }, deps: TickDeps): Promi
   };
   const day: DayState = state.day?.date === date ? state.day : { date, releases: [], failures: [] };
   state.day = day;
-  /** The report of the day as it stands, with the day's budget skip when one happened (2026-10-27-006 AC-5). */
+  /** The report of the day as it stands, with the day's budget skip when one happened (2026-10-27-006 AC-5), its dead ticks and its stopped runs. */
   const writeDayReport = () =>
     writeRedacted(
       join(repo, "docs", "improve", "daily", `${date}.md`),
@@ -982,9 +1225,20 @@ export async function tick(options: { dryRun?: boolean }, deps: TickDeps): Promi
         day.releases,
         day.failures,
         day.budgetSkip ? { at: day.budgetSkip.at, reason: day.budgetSkip.reason } : null,
+        { deadTicks: day.deadTicks ?? [], stoppedRuns: day.stoppedRuns ?? [] },
       ),
       secrets,
     );
+  if (dead) {
+    day.deadTicks = [...(day.deadTicks ?? []), dead];
+    saveState();
+    notify("crew improve", deadTickNotice(dead));
+    // The day's report carries it now, as the budget skip's does; without a clone yet, the state does.
+    if (existsSync(join(repo, ".git"))) {
+      writeDayReport();
+      if (commitDocs(`Improvement tick ${date}: a tick died`)) pushMain([]);
+    }
+  }
   /**
    * A due tick over the day's budget runs nothing (D-2, AC-5): the first skip of the day is kept in
    * the state before anything that can fail, written into the report's Skipped ticks section,
@@ -1076,6 +1330,7 @@ export async function tick(options: { dryRun?: boolean }, deps: TickDeps): Promi
         }
       }
     }
+    const headBefore = must(["rev-parse", "HEAD"]).trim();
     must(["reset", "-q", "--hard", "origin/main"]);
     // Where main stood when the run started: the base its figures were measured against (finding 172).
     const syncedMain = must(["rev-parse", "HEAD"]).trim();
@@ -1095,6 +1350,27 @@ export async function tick(options: { dryRun?: boolean }, deps: TickDeps): Promi
         rmSync(entry, { recursive: true, force: true });
     }
     if (lockfile() !== before) bootstrap();
+    // The code this tick runs is the one bun loaded at launch; when the sync brought another, the
+    // tick hands over to one on the new code, once (2026-10-28-001 AC-2, D-2, finding 188).
+    if (!options.relaunched && headBefore !== syncedMain) {
+      const changed = git([
+        "diff",
+        "--name-only",
+        headBefore,
+        syncedMain,
+        "--",
+        "scripts",
+        "packages/engine/src",
+      ]).stdout.trim();
+      if (changed) {
+        log(
+          `the loop's code changed at the sync (${headBefore.slice(0, 7)}..${syncedMain.slice(0, 7)}); relaunched on the new code`,
+        );
+        relaunched = true;
+        rmSync(lockPath, { force: true });
+        return deps.relaunch(["tick", "--relaunched"]);
+      }
+    }
     // A release left pending after its push is resumed first; one with nothing to resume is cleared.
     if (state.pendingRelease) {
       const { version, failedStep } = state.pendingRelease;
@@ -1171,6 +1447,15 @@ export async function tick(options: { dryRun?: boolean }, deps: TickDeps): Promi
     );
     const latest = readRecords(repo).sort((a, b) => (a.at < b.at ? 1 : -1))[0] ?? null;
     if (!latest) throw new Error(`the improvement exited ${code} and left no record`);
+    // The user stopped the run (2026-10-28-001 AC-7): exit 4, or the marker present at its end. The
+    // run is on record as stopped, nothing is adopted, no failure is counted; the marker goes.
+    const stoppedRun = code === 4 || existsSync(stopMarkerOf(home));
+    if (stoppedRun) {
+      state.stopped = { at: now.toISOString(), run: latest.run };
+      day.stoppedRuns = [...(day.stoppedRuns ?? []), latest.run];
+      rmSync(stopMarkerOf(home), { force: true });
+      latest.kept = null;
+    }
     state.lastRun = {
       at: now.toISOString(),
       head: facts.pluginHead,
@@ -1185,7 +1470,9 @@ export async function tick(options: { dryRun?: boolean }, deps: TickDeps): Promi
     const folder = join(repo, "docs", "improve", latest.run);
     redactRunFiles(folder, secrets);
     writeDayReport();
-    commitDocs(`Improvement run ${latest.run}: ${verdictText(latest)}`);
+    commitDocs(
+      `Improvement run ${latest.run}: ${stoppedRun ? STOPPED_BY_USER : verdictText(latest)}`,
+    );
     const base = pushMain(latest.branch ? [latest.branch] : []);
     // The adoption (D-4, D-5, D-9): its merge is undone when the release fails before its push,
     // so nothing unreleased ever reaches origin/main.
@@ -1276,11 +1563,13 @@ export async function tick(options: { dryRun?: boolean }, deps: TickDeps): Promi
       ? fastForwardUserCheckout(deps.userCheckout, deps.git)
       : "";
     if (checkoutNote) log(checkoutNote);
+    const dayTotal = dayTotalOf(dayRunsOf(readRecords(repo), date));
     const [title, body] = tickNotification({
       released,
       improved: gainTexts(latest),
       reason: reason ?? null,
-      dayTotal: dayTotalOf(dayRunsOf(readRecords(repo), date)),
+      dayTotal,
+      stopped: stoppedRun ? latest.run : null,
     });
     notify(title, checkoutNote ? `${body} ${checkoutNote}.` : body);
     return 0;
@@ -1293,10 +1582,14 @@ export async function tick(options: { dryRun?: boolean }, deps: TickDeps): Promi
     notify("crew improve", `the tick failed: ${message}. The next tick waits ${hours} h.`);
     return 1;
   } finally {
+    offSignal();
     rmSync(lockPath, { force: true });
-    // The stderr log's size as this tick ends: `status` reports what the agent writes after it (finding 171).
-    state.stderrBytes = agentStderrSize(home);
-    saveState();
+    // The stderr log's size as this tick ends: `status` reports what the agent writes after it
+    // (finding 171); a tick that handed over saves nothing, the state is the relaunched tick's.
+    if (!relaunched) {
+      state.stderrBytes = agentStderrSize(home);
+      saveState();
+    }
   }
 }
 
@@ -1651,7 +1944,22 @@ export function statusText(deps: InstallDeps): string {
   const printed = deps.sh(["launchctl", "print", `gui/${deps.uid}/${LABEL}`], { cwd: home });
   const job =
     printed.status === 0 ? (/state = [^\n]+/.exec(printed.stdout)?.[0] ?? "loaded") : "not loaded";
-  const lines = [`job: ${job}`, `last tick: ${state.lastTick ?? "never"}`];
+  const lines = [
+    `job: ${job}`,
+    `paused: ${config.paused ? "yes (bun scripts/improve-loop.ts resume)" : "no"}`,
+    `last tick: ${state.lastTick ?? "never"}`,
+  ];
+  if (state.stopped)
+    lines.push(`last stop: run ${state.stopped.run ?? "none"} at ${state.stopped.at}`);
+  const today = deps.now().toISOString().slice(0, 10);
+  const deadToday = state.day?.date === today ? (state.day.deadTicks ?? []) : [];
+  const lastDead = deadToday.at(-1);
+  if (lastDead) {
+    const p = deadTickParts(lastDead);
+    lines.push(
+      `dead ticks today: ${deadToday.length} (last pid ${p.pid} at ${p.start ?? "an unknown time"})`,
+    );
+  }
   lines.push(
     state.lastRun ? `last run: ${state.lastRun.run} at ${state.lastRun.at}` : "last run: none",
   );
@@ -1697,7 +2005,8 @@ export function statusText(deps: InstallDeps): string {
 
 /** The real deps of a tick on this machine: git and the commands through spawnSync, the improvement through `runImprove`, the judge and the kit through `claude`. */
 function realTickDeps(home: string, config: LoopConfig): TickDeps {
-  const run = spawnRunner(false);
+  const machine = machineDeps(home);
+  const run = machine.run;
   const git: TickDeps["git"] = (args, cwd) => run(["git", ...args], { cwd });
   const userDir = userDirOf(process.env);
   return {
@@ -1706,24 +2015,30 @@ function realTickDeps(home: string, config: LoopConfig): TickDeps {
     env: process.env,
     now: () => new Date(),
     pid: process.pid,
-    boot: () => run(["/usr/sbin/sysctl", "-n", "kern.boottime"], { cwd: home }).stdout.trim(),
-    alive: (pid) => {
-      try {
-        process.kill(pid, 0);
-        return true;
-      } catch {
-        return false;
-      }
-    },
+    boot: machine.boot,
+    alive: machine.alive,
     git,
     sh: run,
     improve: async (options, repo) => {
       const deps = realDeps(repo);
+      deps.stopRequested = () => existsSync(stopMarkerOf(home));
       try {
         return await runImprove(options, deps);
       } finally {
         deps.dispose();
       }
+    },
+    onSignal: (signal, handler) => {
+      process.on(signal, handler);
+      return () => {
+        process.off(signal, handler);
+      };
+    },
+    relaunch: (args) => {
+      const command = relaunchCommand(args);
+      return (
+        spawnSync(command.cmd, command.args, { stdio: "inherit", env: process.env }).status ?? 1
+      );
     },
     judge: (call) => {
       const r = spawnSync("claude", call.args, {
@@ -1769,7 +2084,7 @@ function realTickDeps(home: string, config: LoopConfig): TickDeps {
 
 export const ORIGIN_URL = "git@github.com:WizardingCode-io/wizardingcode-developer-crew.git";
 
-const USAGE = `usage: bun scripts/improve-loop.ts tick [--dry-run] | install [--clone-from <checkout>] | uninstall | status | secret set <account>`;
+const USAGE = `usage: bun scripts/improve-loop.ts tick [--dry-run] | install [--clone-from <checkout>] | uninstall | status | pause | resume | stop | secret set <account>`;
 
 if (import.meta.main) {
   const [command, ...rest] = process.argv.slice(2);
@@ -1797,8 +2112,26 @@ if (import.meta.main) {
   };
   let code = 0;
   if (command === "tick")
-    code = await tick({ dryRun: rest.includes("--dry-run") }, realTickDeps(home, config));
-  else if (command === "install") {
+    code = await tick(
+      { dryRun: rest.includes("--dry-run"), relaunched: rest.includes("--relaunched") },
+      realTickDeps(home, config),
+    );
+  else if (command === "pause") console.log(pauseLoop(home));
+  else if (command === "resume") console.log(resumeLoop(home));
+  else if (command === "stop") {
+    const machine = machineDeps(home);
+    console.log(
+      await stopLoop({
+        home,
+        sh: machine.run,
+        boot: machine.boot,
+        alive: machine.alive,
+        kill: (pid, signal) => process.kill(pid, signal),
+        wait: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+        now: () => new Date(),
+      }),
+    );
+  } else if (command === "install") {
     const at = rest.indexOf("--clone-from");
     const cloneFrom = at >= 0 ? rest[at + 1] : undefined;
     // The checkout the install clones from is the user's, fast-forwarded after each run (D-1), when the configuration names none.

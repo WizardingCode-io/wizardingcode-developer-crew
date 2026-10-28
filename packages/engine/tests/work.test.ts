@@ -8,7 +8,7 @@ import { DEFAULT_POLICY } from "../src/policy.ts";
 import { loadState } from "../src/state.ts";
 import { strategyHash } from "../src/strategy.ts";
 import { plannedSeats } from "../src/team.ts";
-import type { Evidence, ObjectionLedger, RunRecord } from "../src/types.ts";
+import type { Evidence, ObjectionLedger, RunRecord, WorkItem } from "../src/types.ts";
 import { PHASE_ORDER } from "../src/types.ts";
 import { validationHash } from "../src/validation.ts";
 import {
@@ -16,10 +16,13 @@ import {
   addCriterion,
   addDecision,
   addSkip,
+  adoptRecord,
   advancePhase,
   answerDecision,
+  applyChangedFields,
   applyClassification,
   approve,
+  asRecord,
   closeDebate,
   createWork,
   debateState,
@@ -1125,4 +1128,18 @@ test("F135: the gate guard reads a superseded criterion through its replacement,
   expect(guardFor(work, "gate", evidence([{ criterion: "AC-2", red: run, green: run }]))).toEqual(
     [],
   );
+});
+
+// 2026-10-28-001 AC-5: one cast for the two merges of a work item (the advisory of 2026-10-27-008's round 4).
+test("2026-10-28-001 AC-5: asRecord is the work item itself read key by key, and the two merges still write, delete and adopt through it", () => {
+  const work = { id: "w", phase: "build", seats: [] } as unknown as WorkItem;
+  const record = asRecord(work);
+  expect(record).toBe(work as unknown as Record<string, unknown>);
+  const loaded = { id: "w", phase: "build", awaiting: "user" } as unknown as WorkItem;
+  const inHand = { id: "w", phase: "build", route: "standard" } as unknown as WorkItem;
+  const fresh = { id: "w", phase: "build", awaiting: "user", criteria: [1] } as unknown as WorkItem;
+  applyChangedFields(fresh, inHand, loaded);
+  expect(asRecord(fresh)).toEqual({ id: "w", phase: "build", route: "standard", criteria: [1] });
+  adoptRecord(inHand, fresh);
+  expect(asRecord(inHand)).toEqual(asRecord(fresh));
 });

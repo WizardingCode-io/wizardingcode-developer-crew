@@ -16,6 +16,7 @@ import {
   lessonCommand,
   lessonsOf,
   medianOf,
+  probeEstimate,
   probeSet,
   rationaleOf,
   recordMarkdown,
@@ -503,4 +504,17 @@ test("2026-10-25-001 AC-7: lessonAdder takes a spawn whose stdout and stderr are
     stderr: null,
   }));
   expect(add(["--cue", "c"])).toEqual({ status: null, out: "" });
+});
+
+// 2026-10-28-001 AC-8 (finding 189): what a probe set costs, before the first probe run.
+test("2026-10-28-001 AC-8: probeEstimate reads a case's cost from this run's baseline, else the latest earlier record, else the mean of this run's baseline, twice for a case without a baseline in this run", () => {
+  const baseline = { t: { costUsd: 1.5 }, v: { costUsd: 2.5 } };
+  const earlier = { c1: { costUsd: 1 }, c2: { costUsd: null }, t: { costUsd: 9 } };
+  // t: its own 1.50; c1: twice the earlier 1.00; c2: no cost on record, twice the mean 2.00; u: twice the mean.
+  expect(probeEstimate(["t", "c1", "c2", "u"], baseline, earlier)).toBe(1.5 + 2 + 4 + 4);
+  // A baseline the kit left unpriced: the earlier record's cost once (it has a baseline), else the mean once.
+  expect(probeEstimate(["w"], { ...baseline, w: {} }, { w: { costUsd: 3 } })).toBe(3);
+  expect(probeEstimate(["w"], { ...baseline, w: {} }, {})).toBe(2);
+  expect(probeEstimate([], baseline, earlier)).toBe(0);
+  expect(probeEstimate(["u"], {}, {})).toBe(0);
 });

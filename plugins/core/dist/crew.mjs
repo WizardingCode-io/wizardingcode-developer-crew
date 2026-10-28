@@ -6666,9 +6666,9 @@ function loadWork(paths, id) {
   return { work: read.data, tampered: read.tampered };
 }
 function applyChangedFields(record, inHand, loaded) {
-  const target = record;
-  const now = inHand;
-  const then = loaded;
+  const target = asRecord(record);
+  const now = asRecord(inHand);
+  const then = asRecord(loaded);
   for (const key of new Set([...Object.keys(now), ...Object.keys(then)])) {
     const value = JSON.stringify(now[key]);
     if (value === JSON.stringify(then[key]))
@@ -6679,9 +6679,12 @@ function applyChangedFields(record, inHand, loaded) {
       target[key] = now[key];
   }
 }
+function asRecord(work) {
+  return work;
+}
 function adoptRecord(inHand, record) {
-  const target = inHand;
-  const source = record;
+  const target = asRecord(inHand);
+  const source = asRecord(record);
   for (const key of Object.keys(target))
     if (!(key in source))
       delete target[key];

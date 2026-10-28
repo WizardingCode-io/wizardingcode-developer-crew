@@ -55,3 +55,26 @@ test("2026-10-27-006 AC-3: ADR 0013 carries the dated note on the verdict by dom
   expect(readme).toMatch(/`0`[^.\n]*no ceiling/);
   expect(readme).toContain("Skipped ticks");
 });
+
+// 2026-10-28-001 AC-5: the loop's README names the three commands, the relaunch, the unprobed status, the five exit statuses and the dead ticks; ADR 0015 carries the dated note.
+test("2026-10-28-001 AC-5: the README documents pause, resume and stop (kill -KILL the last resort), the relaunch, unprobed, the five exit statuses and Dead ticks; ADR 0015 has the note of 2026-10-28", () => {
+  const readme = read("docs/improve/README.md");
+  for (const word of [
+    "`pause`",
+    "`resume`",
+    "`stop`",
+    "kill -KILL",
+    "--relaunched",
+    "`unprobed`",
+    "Dead ticks",
+    "stopped by the user",
+  ])
+    expect(readme, word).toContain(word);
+  expect(readme).toMatch(
+    /\b0\b[^.\n]*done[^.\n]*\b1\b[^.\n]*refused[^.\n]*\b2\b[^.\n]*ceiling[^.\n]*\b3\b[^.\n]*failure[^.\n]*\b4\b[^.\n]*stopped by the user/,
+  );
+  const adr = read("docs/adr/0015-the-loop-runs-always-and-releases-what-it-proves.md");
+  expect(adr).toContain("2026-10-28");
+  for (const word of ["`stop`", "relaunch", "unprobed", "dead tick"])
+    expect(adr, word).toContain(word);
+});

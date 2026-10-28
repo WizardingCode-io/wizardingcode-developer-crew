@@ -270,9 +270,9 @@ export function loadWork(
  * command wrote meanwhile survives.
  */
 export function applyChangedFields(record: WorkItem, inHand: WorkItem, loaded: WorkItem): void {
-  const target = record as unknown as Record<string, unknown>;
-  const now = inHand as unknown as Record<string, unknown>;
-  const then = loaded as unknown as Record<string, unknown>;
+  const target = asRecord(record);
+  const now = asRecord(inHand);
+  const then = asRecord(loaded);
   for (const key of new Set([...Object.keys(now), ...Object.keys(then)])) {
     const value = JSON.stringify(now[key]);
     if (value === JSON.stringify(then[key])) continue;
@@ -281,14 +281,19 @@ export function applyChangedFields(record: WorkItem, inHand: WorkItem, loaded: W
   }
 }
 
+/** A work item read as a plain record, key by key, for the two merges above (2026-10-28-001 AC-5): the same object, typed for its keys. */
+export function asRecord(work: WorkItem): Record<string, unknown> {
+  return work as unknown as Record<string, unknown>;
+}
+
 /**
  * The copy in hand becomes the record (finding 186): every key of `inHand` is replaced by `record`'s
  * and a key the record lacks is removed, so a caller's later reads of the copy it holds see what the
  * file holds after a save.
  */
 export function adoptRecord(inHand: WorkItem, record: WorkItem): void {
-  const target = inHand as unknown as Record<string, unknown>;
-  const source = record as unknown as Record<string, unknown>;
+  const target = asRecord(inHand);
+  const source = asRecord(record);
   for (const key of Object.keys(target)) if (!(key in source)) delete target[key];
   Object.assign(target, source);
 }

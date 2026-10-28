@@ -22,6 +22,7 @@ import {
   type ImproveDeps,
   type KitCall,
   keptSandboxes,
+  probeEstimate,
   realDeps,
   realGit,
   removeKeptSandboxes,
@@ -878,4 +879,112 @@ test("2026-10-26-005 AC-4: realDeps makes no improve-trees folder until tmp is r
     if (before === undefined) delete process.env.TMPDIR;
     else process.env.TMPDIR = before;
   }
+});
+
+// 2026-10-28-001 AC-7 (finding 187): a stop the user asked for ends the run with 4 and a partial record.
+test("2026-10-28-001 AC-7: stopRequested before a measure exits 4 with the partial record and no kit call; after a measure whose child ended by a signal, 4 in place of 3", async () => {
+  const { root, tmp } = fixture();
+  const early = deps(root, tmp);
+  early.deps.stopRequested = () => true;
+  expect(await runImprove({ cases: ["t"], proposals: 1 }, early.deps)).toBe(4);
+  expect(early.seen.kit).toEqual([]);
+  expect(recordOf(root).exit).toBe(4);
+  rmSync(join(root, "docs"), { recursive: true });
+  // The baseline runs; the first probe's child ends by a signal while the stop is requested: 4.
+  let asked = false;
+  const late = deps(root, tmp, {
+    kit: (call, n) => {
+      if (n === 1) return kitResult(call);
+      asked = true;
+      return { status: null, result: null };
+    },
+  });
+  late.deps.stopRequested = () => asked;
+  expect(await runImprove({ cases: ["t"], proposals: 1 }, late.deps)).toBe(4);
+  const record = recordOf(root);
+  expect(record.exit).toBe(4);
+  expect(record.proposals[0].status).toBe("inconclusive");
+  rmSync(join(root, "docs"), { recursive: true });
+  // The same ended child with no stop requested: a failure, 3.
+  const failed = deps(root, tmp, {
+    kit: (call, n) => (n === 1 ? kitResult(call) : { status: null, result: null }),
+  });
+  expect(await runImprove({ cases: ["t"], proposals: 1 }, failed.deps)).toBe(3);
+});
+
+// 2026-10-28-001 AC-8 (finding 189): a probe set the ceiling cannot pay is not probed, and said.
+test("2026-10-28-001 AC-8: a proposal whose probe set's estimate is above what the ceiling leaves is unprobed with the refusal's text, no kit call, the next proposal probed, the run ending 0 with nothing kept; within the ceiling the set is probed as before", async () => {
+  const { root, tmp } = fixture();
+  // An earlier record: six cases and u read the judge's page, each at 1.00 USD; their reads are known.
+  const earlier = join(root, "docs", "improve", "2026-10-20-1");
+  mkdirSync(earlier, { recursive: true });
+  const seven = Object.fromEntries(
+    ["c1", "c2", "c3", "c4", "c5", "c6", "u"].map((name) => [
+      name,
+      { name, runs: [], mean: 0.5, spread: 0, reads: [JUDGE], costUsd: 1, errored: false },
+    ]),
+  );
+  writeFileSync(
+    join(earlier, "record.json"),
+    JSON.stringify({ run: "2026-10-20-1", at: "2026-10-20T10:00:00.000Z", baseline: seven }),
+  );
+  sh(root, "add", "-A");
+  sh(root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "earlier record");
+  // The baseline of t costs 1.50 of the 4.20 the ceiling allows: 2.70 left. P-1 edits the gate's page
+  // and the judge's: t (its own 1.50) and the seven readers of the judge's page (no baseline this run,
+  // their earlier cost twice): 1.50 + 14.00 = 15.50, above 2.70. P-2 edits the gate's page alone: t, 1.50.
+  const run = deps(root, tmp, {
+    kit: (call, n) => {
+      const r = kitResult(call);
+      return n === 1 ? { ...r, result: { ...r.result, costUsd: 1.5 } } : r;
+    },
+    editor: (call, n) => {
+      writeFileSync(join(call.cwd, GATE), "# Gate\nchanged\n");
+      if (n === 1) writeFileSync(join(call.cwd, JUDGE), "# Judge\nchanged\n");
+    },
+  });
+  expect(await runImprove({ cases: ["t"], proposals: 2, maxCostUsd: 4.2 }, run.deps)).toBe(0);
+  // The newest record: the earlier one sits beside it.
+  const latestRecord = () => {
+    const dir = join(root, "docs/improve");
+    const run = readdirSync(dir).sort().at(-1) as string;
+    return JSON.parse(readFileSync(join(dir, run, "record.json"), "utf8"));
+  };
+  const record = latestRecord();
+  expect(record.proposals[0]).toMatchObject({
+    id: "P-1",
+    status: "unprobed",
+    refusal:
+      "the probe set (8 cases, about 15.50 USD by the baseline's costs) is above what is left under the ceiling (2.70 USD); not probed",
+    verdict: null,
+    gain: 0,
+    probe: {},
+  });
+  expect(record.proposals[0].probeSet).toEqual(["c1", "c2", "c3", "c4", "c5", "c6", "t", "u"]);
+  expect(record.proposals[1]).toMatchObject({ id: "P-2", status: "probed", probeSet: ["t"] });
+  expect(run.seen.kit.map((c) => c.caseName)).toEqual(["t", "t"]);
+  expect(record.kept).toBe(null);
+  expect(record.exit).toBe(0);
+  const md = readFileSync(join(root, "docs/improve", record.run, "record.md"), "utf8");
+  expect(md).toContain(
+    "## P-1: unprobed (the probe set (8 cases, about 15.50 USD by the baseline's costs) is above what is left under the ceiling (2.70 USD); not probed)",
+  );
+  expect(md).toContain("## P-2: lose");
+  rmSync(join(root, "docs", "improve", record.run), { recursive: true });
+  // Within the ceiling: probed as before.
+  const roomy = deps(root, tmp, {
+    editor: (call) => writeFileSync(join(call.cwd, GATE), "# Gate\nBETTER\n"),
+  });
+  expect(await runImprove({ cases: ["t"], proposals: 1, maxCostUsd: 40 }, roomy.deps)).toBe(0);
+  expect(latestRecord().proposals[0]).toMatchObject({
+    id: "P-1",
+    status: "probed",
+    verdict: "win",
+  });
+  // probeEstimate itself: the three sources and the double count.
+  expect(probeEstimate(["t", "c1", "u"], { t: { costUsd: 1.5 } }, { c1: { costUsd: 1 } })).toBe(
+    6.5,
+  );
+  expect(probeEstimate(["u"], {}, {})).toBe(0);
+  expect(probeEstimate(["t"], { t: { costUsd: 2 } }, { t: { costUsd: 9 } })).toBe(2);
 });

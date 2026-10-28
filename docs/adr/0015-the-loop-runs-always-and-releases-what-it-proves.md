@@ -25,3 +25,7 @@ ADR 0013 made the loop a development script run on demand, whose kept harness wa
 - A run's verdict holds for the models it was measured on; the record says which.
 - A tick that fails after the model was paid keeps the run on record and backs off (an hour, then double, up to a day), so a run that cannot be saved is not paid for every hour; `config.maxRunUsd` is a ceiling a person may set on one run, none by default.
 - The marketplace call uses the personal account's `gh` token, which carries more authority than the one file needs; a token limited to the marketplace repository is the better key and the next step.
+
+## Note of 2026-10-28 (item 2026-10-28-001)
+
+The loop gained the person's levers point 2 left out: `pause`, `resume` and `stop` (`stop` pauses, writes a marker and ends the running tick with `SIGTERM` to its group after checking the lock, the run recorded as stopped by the user with exit 4; finding 187). A tick whose sync changed the loop's code relaunches itself once on the new code (finding 188), so a fix is taken at once rather than one tick late. A proposal whose probe set the run's ceiling cannot pay is `unprobed` before any spend, and the commit names a ceiling stop as such, never as an error (finding 189). A stale lock's takeover records the dead tick, removes the run folder it left without a record, notifies once and reports it (finding 190).

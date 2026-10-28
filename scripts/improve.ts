@@ -70,13 +70,16 @@ export interface CaseFigures {
   /** Every file any run read; null when one run's reads are unknown. */
   reads: string[] | null;
   errored: boolean;
+  /** What the kit charged for the case's runs (2026-10-28-001 AC-8), for a probe's estimate; absent in records before it. */
+  costUsd?: number;
 }
 
 export type Verdict = "win" | "lose" | "inconclusive";
 
 export interface ProposalRecord {
   id: string;
-  status: "refused" | "probed" | "inconclusive";
+  /** `unprobed`: the probe set's estimate was above what the ceiling left, nothing run (2026-10-28-001 AC-8). */
+  status: "refused" | "probed" | "inconclusive" | "unprobed";
   refusal: string | null;
   diffStat: { status: string; path: string }[];
   rationale: string;
@@ -270,6 +273,34 @@ function openForRemoval(dir: string): void {
     const stat = lstatSync(child);
     if (isRealDirectory(stat)) openForRemoval(child);
   }
+}
+
+/**
+ * What a probe set will cost, by the baseline's costs (2026-10-28-001 AC-8): each case's cost is this
+ * run's baseline figure, else the latest earlier record's, else the mean of this run's baseline
+ * costs; a case this run has no baseline for counts twice, since its baseline runs before its probe.
+ */
+export function probeEstimate(
+  set: readonly string[],
+  baseline: Record<string, { costUsd?: number }>,
+  earlier: Record<string, { costUsd: number | null }>,
+): number {
+  const measured = Object.values(baseline)
+    .map((f) => f.costUsd)
+    .filter((c): c is number => typeof c === "number");
+  const mean = measured.length ? measured.reduce((a, b) => a + b, 0) / measured.length : 0;
+  let total = 0;
+  for (const name of set) {
+    const own = baseline[name];
+    if (own) {
+      // A baseline the kit left unpriced takes the latest earlier record's cost, else the mean.
+      total += own.costUsd ?? earlier[name]?.costUsd ?? mean;
+      continue;
+    }
+    const known = earlier[name]?.costUsd;
+    total += 2 * (typeof known === "number" ? known : mean);
+  }
+  return total;
 }
 
 /** A proposal's probe set (AC-5): its targets, the cases whose baseline read a file it edits, and the cases whose reads are unknown; sorted. */
@@ -486,7 +517,10 @@ export function recordMarkdown(record: ImproveRecord): string {
     ...figuresTable(record.baseline),
   ];
   for (const p of record.proposals) {
-    const head = p.status === "refused" ? `refused (${p.refusal})` : (p.verdict ?? p.status);
+    const head =
+      p.status === "refused" || p.status === "unprobed"
+        ? `${p.status} (${p.refusal})`
+        : (p.verdict ?? p.status);
     lines.push(
       "",
       `## ${p.id}: ${head}`,
@@ -494,7 +528,7 @@ export function recordMarkdown(record: ImproveRecord): string {
       `- Diff: ${p.diffStat.map((d) => `${d.status} ${d.path}`).join(", ") || "none"}`,
       `- Rationale: ${p.rationale || "none"}`,
     );
-    if (p.status !== "refused")
+    if (p.status !== "refused" && p.status !== "unprobed")
       lines.push(
         `- Probe set: ${p.probeSet.join(", ")}`,
         `- Gain: ${two(p.gain)}`,
@@ -600,6 +634,8 @@ export interface ImproveDeps {
   ctoPlan: () => string | null;
   /** Removes the sandboxes the kit kept for a measurement's runs, once their traces were read (finding 175). */
   removeSandboxes: (paths: string[]) => void;
+  /** Whether the user asked the run to stop (2026-10-28-001 AC-7): read before each measure, and after one whose child ended by a signal or a failure. */
+  stopRequested?: () => boolean;
 }
 
 /** The real deps, with the worktrees' folder disposed of by their holder (finding 176). */
@@ -670,7 +706,7 @@ function rawEntries(text: string): DiffEntry[] {
 }
 
 class Stop extends Error {
-  constructor(readonly exit: 2 | 3) {
+  constructor(readonly exit: 2 | 3 | 4) {
     super(`stop ${exit}`);
   }
 }
@@ -687,7 +723,7 @@ const hashOf = (path: string): string => {
  * One improvement run (ADR 0013): the refusals of step 0, the baseline, the proposals with their
  * checks and probes, the composition, the kept branch, the lessons and the record; every worktree
  * removed at the end. Returns the exit status (0 done, 1 refused before any spend, 2 the cost
- * ceiling, 3 a failure), the record written for 0, 2 and 3.
+ * ceiling, 3 a failure, 4 stopped by the user), the record written for 0, 2, 3 and 4.
  */
 export async function runImprove(options: ImproveOptions, deps: ImproveDeps): Promise<number> {
   const { root, log } = deps;
@@ -807,10 +843,21 @@ function addTree(r: Run, label: string): string {
   return tree;
 }
 
-/** One case through the kit in a tree, three runs, its figures; the ceiling stops the run with 2, any other failure with 3. */
+/** What the run's ceiling leaves at this point; undefined with no ceiling. */
+function ceilingLeft(r: Run): number | undefined {
+  const { maxCostUsd } = r.options;
+  return maxCostUsd === undefined ? undefined : Math.max(0, maxCostUsd - r.record.costUsd);
+}
+
+/**
+ * One case through the kit in a tree, three runs, its figures; the ceiling stops the run with 2, a
+ * stop the user asked for with 4 (read before the kit runs, and when its child ended by a signal or
+ * a failure), any other failure with 3.
+ */
 function measure(r: Run, tree: string, name: string): CaseFigures {
-  const { maxCostUsd, judgeModel, provider } = r.options;
-  const left = maxCostUsd === undefined ? undefined : Math.max(0, maxCostUsd - r.record.costUsd);
+  const { judgeModel, provider } = r.options;
+  if (r.deps.stopRequested?.()) throw new Stop(4);
+  const left = ceilingLeft(r);
   const out = r.deps.kit({
     tree,
     caseName: name,
@@ -824,7 +871,8 @@ function measure(r: Run, tree: string, name: string): CaseFigures {
     const cost = (out.result as { costUsd?: unknown } | null)?.costUsd;
     if (typeof cost === "number") r.record.costUsd += cost;
     if (out.status === 2) throw new Stop(2);
-    if ((out.status !== 0 && out.status !== 1) || out.result === null) throw new Stop(3);
+    if ((out.status !== 0 && out.status !== 1) || out.result === null)
+      throw new Stop(r.deps.stopRequested?.() ? 4 : 3);
     const plugins = (out.result as { plugins?: { path?: unknown }[] }).plugins ?? [];
     const roots = [
       join(tree, "plugins/core"),
@@ -832,6 +880,7 @@ function measure(r: Run, tree: string, name: string): CaseFigures {
     ];
     const figures = caseFigures(out.result, name, readLines, roots);
     if (!figures) throw new Stop(3);
+    if (typeof cost === "number") figures.costUsd = cost;
     return figures;
   } finally {
     // The sandboxes the kit kept for these runs go once their traces were read, on every path that
@@ -907,12 +956,23 @@ function propose(r: Run, id: string, prompt: string): void {
   }
   r.staged.set(id, { tree, patch: r.must(["diff", "--cached", "--binary", "HEAD"], tree) });
   // The reads each case is known by: earlier runs' baselines, this run's over them (D-8).
-  const reads = { ...knownReads(root, r.folder), ...r.record.baseline };
+  const known = knownReads(root, r.folder);
+  const reads = { ...known, ...r.record.baseline };
   proposal.probeSet = probeSet(
     r.targets,
     entries.map((e) => e.path),
     reads,
   );
+  // The set's cost against what the ceiling leaves, before the first probe run (2026-10-28-001
+  // AC-8, D-3): a set the ceiling cannot pay is not probed at all, and the record says so.
+  const left = ceilingLeft(r);
+  const estimate = probeEstimate(proposal.probeSet, r.record.baseline, known);
+  if (left !== undefined && estimate > left) {
+    const n = proposal.probeSet.length;
+    proposal.status = "unprobed";
+    proposal.refusal = `the probe set (${n} case${n === 1 ? "" : "s"}, about ${two(estimate)} USD by the baseline's costs) is above what is left under the ceiling (${two(left)} USD); not probed`;
+    return;
+  }
   for (const name of proposal.probeSet) baselineOf(r, name);
   for (const name of proposal.probeSet) proposal.probe[name] = measure(r, tree, name);
   const verdict = verdictOf(r.targets, proposal.probeSet, r.record.baseline, proposal.probe);
@@ -1031,7 +1091,7 @@ async function improve(r: Run): Promise<number> {
     if (!(error instanceof Stop)) throw error;
     record.exit = error.exit;
     for (const p of record.proposals)
-      if (p.status !== "refused" && p.verdict === null) {
+      if (p.status !== "refused" && p.status !== "unprobed" && p.verdict === null) {
         p.status = "inconclusive";
         p.verdict = "inconclusive";
       }
@@ -1070,19 +1130,21 @@ function mainState(root: string, git: Git): string {
 export function knownReads(
   root: string,
   current: string,
-): Record<string, Pick<CaseFigures, "name" | "reads">> {
+): Record<string, Pick<CaseFigures, "name" | "reads"> & { costUsd: number | null }> {
   const dir = join(root, "docs", "improve");
-  const out: Record<string, Pick<CaseFigures, "name" | "reads">> = {};
+  const out: Record<string, Pick<CaseFigures, "name" | "reads"> & { costUsd: number | null }> = {};
   if (!existsSync(dir)) return out;
   for (const run of readdirSync(dir).sort()) {
     if (join(dir, run) === current) continue;
-    const record = readJson<{ baseline?: Record<string, { reads?: unknown }> }>(
-      join(dir, run, "record.json"),
-    );
+    const record = readJson<{
+      baseline?: Record<string, { reads?: unknown; costUsd?: unknown }>;
+    }>(join(dir, run, "record.json"));
     for (const [name, figures] of Object.entries(record?.baseline ?? {}))
       out[name] = {
         name,
         reads: Array.isArray(figures?.reads) ? (figures.reads as string[]) : null,
+        // The latest record's cost of the case, for a probe's estimate (2026-10-28-001 AC-8).
+        costUsd: typeof figures?.costUsd === "number" ? figures.costUsd : null,
       };
   }
   return out;

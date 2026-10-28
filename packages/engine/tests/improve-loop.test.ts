@@ -4,11 +4,13 @@ import {
   appendFileSync,
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   readdirSync,
   readFileSync,
   rmSync,
   statSync,
+  symlinkSync,
   utimesSync,
   writeFileSync,
 } from "node:fs";
@@ -28,20 +30,26 @@ import {
   launchdPlist,
   launcherScript,
   parseRuling,
+  pauseLoop,
   pickTargets,
   providerEnv,
   providerUnpriced,
   readConfig,
   redact,
   redactingLogger,
+  relaunchCommand,
+  resumeLoop,
   runProbe,
   secretReadCommand,
   secretSetCommand,
   statusText,
+  stopLoop,
   type TickDeps,
   tick,
   tickNotification,
   uninstall,
+  validLock,
+  verdictText,
   writeRedacted,
 } from "../../../scripts/improve-loop.ts";
 import { notificationCommand } from "../../../scripts/release.ts";
@@ -713,6 +721,11 @@ function loopWorld(options: { loop?: boolean } = {}): {
 
 type Seen = {
   sh: string[][];
+  /** The signal handler's installs and removals, in order (2026-10-28-001 AC-7), and the handler itself. */
+  signals: string[];
+  handler?: () => void;
+  /** Each relaunch's arguments, and whether the lock was gone when it ran (2026-10-28-001 AC-2). */
+  relaunch: { args: string[]; lockGone: boolean }[];
   improve: { cases: string[]; provider: string }[];
   /** The run ceiling each improvement received (2026-10-27-006 AC-2, AC-6). */
   ceilings: (number | undefined)[];
@@ -743,9 +756,24 @@ function tickDeps(
     /** The base's harness lessons during the run (finding 174): what the record lists (written as given, absent for `undefined`) and how many the base gains; by default the run's own lesson, listed and gained. */
     lessons?: { listed: unknown; gained: number };
     secret?: string;
+    /** The exit status the run's record carries (2026-10-28-001 AC-7, AC-8): 0 when not given. */
+    exit?: number;
+    /** What a relaunch returns (2026-10-28-001 AC-2). */
+    relaunchStatus?: number;
+    /** The run receives the stop's SIGTERM: the improve stub invokes the tick's handler (2026-10-28-001 AC-7). */
+    signalDuringRun?: boolean;
   } = {},
 ): { deps: TickDeps; seen: Seen } {
-  const seen: Seen = { sh: [], improve: [], ceilings: [], judge: 0, release: [], log: [] };
+  const seen: Seen = {
+    sh: [],
+    signals: [],
+    relaunch: [],
+    improve: [],
+    ceilings: [],
+    judge: 0,
+    release: [],
+    log: [],
+  };
   const now = new Date(options.now ?? "2026-10-25T20:00:00.000Z");
   const deps: TickDeps = {
     home: world.home,
@@ -755,6 +783,15 @@ function tickDeps(
     pid: 4242,
     boot: () => "boot-1",
     alive: () => options.alive ?? false,
+    onSignal: (signal, handler) => {
+      seen.signals.push(`on ${signal}`);
+      seen.handler = handler;
+      return () => seen.signals.push(`off ${signal}`);
+    },
+    relaunch: (args) => {
+      seen.relaunch.push({ args, lockGone: !existsSync(join(world.home, "lock.json")) });
+      return options.relaunchStatus ?? 0;
+    },
     git: (args, cwd) => {
       if (options.refusePush && args[0] === "push")
         return { status: 1, stdout: "", stderr: "! [remote rejected] main (refused)" };
@@ -778,6 +815,7 @@ function tickDeps(
     improve: async (opts, repo) => {
       seen.improve.push({ cases: opts.cases, provider: opts.provider?.name ?? "none" });
       seen.ceilings.push(opts.maxCostUsd);
+      if (options.signalDuringRun) seen.handler?.();
       const date = now.toISOString().slice(0, 10);
       // The next free folder of the day, as createImproveFolder names it.
       const taken = existsSync(join(repo, "docs/improve"))
@@ -811,7 +849,7 @@ function tickDeps(
           ? { name: opts.provider.name, claudeModels: opts.provider.claudeModels }
           : null,
         costUsd: 1.5,
-        exit: 0,
+        exit: options.exit ?? 0,
         ...(listed === undefined ? {} : { lessons: listed }),
       };
       writeFileSync(join(folder, "record.json"), `${JSON.stringify(record, null, 2)}\n`);
@@ -2062,4 +2100,384 @@ test("2026-10-27-008 AC-1: providerUnpriced is true of a run whose cost is null 
   );
   expect(report).toContain("- runtime: 2.00 USD");
   expect(report).toContain("- ollama: n/a (no list price for its models)");
+});
+
+// 2026-10-28-001 (the loop's own frictions). The stop deps of a test: the lock read from the world's
+// home, `ps` answered by the stub, the kill seen, the wait ending the tick when asked.
+function stopDeps(
+  world: ReturnType<typeof loopWorld>,
+  options: {
+    alive?: boolean;
+    boot?: string;
+    /** What `ps -o command=` answers for the pid; the tick's own line when not given. */
+    command?: string;
+    /** What `ps -o pgid=` answers; the pid itself when not given. */
+    pgid?: string;
+    /** Whether the tick removes its lock while the stop waits (true when not given). */
+    ends?: boolean;
+  } = {},
+) {
+  const kills: { pid: number; signal: string }[] = [];
+  const ps: string[][] = [];
+  let waited = 0;
+  const deps = {
+    home: world.home,
+    boot: () => options.boot ?? "boot-1",
+    alive: () => options.alive ?? true,
+    sh: (cmd: string[]) => {
+      ps.push([...cmd]);
+      if (cmd[0] === "ps" && cmd[2] === "pgid=")
+        return { status: 0, stdout: `${options.pgid ?? cmd[4]}\n`, stderr: "" };
+      if (cmd[0] === "ps" && cmd[2] === "command=")
+        return {
+          status: 0,
+          stdout: `${options.command ?? "/Users/t/.bun/bin/bun /Users/t/.wizardingcode/crew-improve/repo/scripts/improve-loop.ts tick"}\n`,
+          stderr: "",
+        };
+      return { status: 0, stdout: "", stderr: "" };
+    },
+    kill: (pid: number, signal: "SIGTERM") => {
+      kills.push({ pid, signal });
+    },
+    wait: async () => {
+      waited += 1;
+      if (options.ends ?? true) rmSync(join(world.home, "lock.json"), { force: true });
+    },
+    now: () => new Date("2026-10-28T03:00:00.000Z"),
+  };
+  return { deps, kills, ps, waited: () => waited };
+}
+
+test("2026-10-28-001 AC-7: pause and resume write paused into the configuration, keep its other keys and say so; resume removes a stop marker", () => {
+  const world = loopWorld();
+  mkdirSync(world.home, { recursive: true });
+  writeFileSync(
+    join(world.home, "config.json"),
+    JSON.stringify({ provider: "runtime", casesPerRun: 3 }),
+  );
+  expect(pauseLoop(world.home)).toBe(
+    "paused: no tick runs until bun scripts/improve-loop.ts resume",
+  );
+  const paused = JSON.parse(readFileSync(join(world.home, "config.json"), "utf8"));
+  expect(paused).toEqual({ provider: "runtime", casesPerRun: 3, paused: true });
+  expect(statSync(join(world.home, "config.json")).mode & 0o777).toBe(0o600);
+  writeFileSync(join(world.home, "stop.json"), JSON.stringify({ at: "x", by: "stop" }));
+  expect(resumeLoop(world.home)).toBe("resumed");
+  expect(JSON.parse(readFileSync(join(world.home, "config.json"), "utf8"))).toEqual({
+    provider: "runtime",
+    casesPerRun: 3,
+    paused: false,
+  });
+  expect(existsSync(join(world.home, "stop.json"))).toBe(false);
+});
+
+test("2026-10-28-001 AC-7: stop pauses, writes the marker, signals the live tick's own group with SIGTERM and says it ended; the pid alone when the group is not its own; still ending when the wait runs out", async () => {
+  const world = loopWorld();
+  mkdirSync(world.home, { recursive: true });
+  writeFileSync(join(world.home, "config.json"), JSON.stringify({ provider: "runtime" }));
+  const lock = { pid: 4242, startedAt: "2026-10-28T02:00:00.000Z", boot: "boot-1" };
+  writeFileSync(join(world.home, "lock.json"), JSON.stringify(lock));
+  const own = stopDeps(world);
+  expect(await stopLoop(own.deps)).toBe(
+    "stopped: the tick (pid 4242) ended; the loop is paused (bun scripts/improve-loop.ts resume)",
+  );
+  expect(own.kills).toEqual([{ pid: -4242, signal: "SIGTERM" }]);
+  expect(JSON.parse(readFileSync(join(world.home, "config.json"), "utf8")).paused).toBe(true);
+  expect(JSON.parse(readFileSync(join(world.home, "stop.json"), "utf8"))).toEqual({
+    at: "2026-10-28T03:00:00.000Z",
+    by: "stop",
+  });
+  // The group is another's: the pid alone.
+  writeFileSync(join(world.home, "lock.json"), JSON.stringify(lock));
+  const shared = stopDeps(world, { pgid: "100" });
+  expect(await stopLoop(shared.deps)).toContain("stopped: the tick (pid 4242) ended");
+  expect(shared.kills).toEqual([{ pid: 4242, signal: "SIGTERM" }]);
+  // The tick does not end within the wait: said, the loop paused all the same.
+  writeFileSync(join(world.home, "lock.json"), JSON.stringify(lock));
+  const slow = stopDeps(world, { ends: false });
+  expect(await stopLoop(slow.deps)).toBe(
+    "stop requested: the tick (pid 4242) is still ending; the loop is paused",
+  );
+  expect(slow.waited()).toBe(60);
+  expect(existsSync(join(world.home, "lock.json"))).toBe(true);
+});
+
+test("2026-10-28-001 AC-7: a lock that fails a check signals nothing, stays as it is, and stop says no tick is running: pid 1, 0, a negative number or a string, another boot, a dead pid, a live pid whose command is not the tick's", async () => {
+  const world = loopWorld();
+  mkdirSync(world.home, { recursive: true });
+  writeFileSync(join(world.home, "config.json"), JSON.stringify({ provider: "runtime" }));
+  const cases: [string, Record<string, unknown>, Parameters<typeof stopDeps>[1]][] = [
+    ["pid 1", { pid: 1, startedAt: "2026-10-28T02:00:00.000Z", boot: "boot-1" }, {}],
+    ["pid 0", { pid: 0, startedAt: "2026-10-28T02:00:00.000Z", boot: "boot-1" }, {}],
+    ["negative", { pid: -4242, startedAt: "2026-10-28T02:00:00.000Z", boot: "boot-1" }, {}],
+    ["string", { pid: "4242", startedAt: "2026-10-28T02:00:00.000Z", boot: "boot-1" }, {}],
+    ["no start", { pid: 4242, startedAt: "x", boot: "boot-1" }, {}],
+    ["another boot", { pid: 4242, startedAt: "2026-10-28T02:00:00.000Z", boot: "boot-0" }, {}],
+    [
+      "dead",
+      { pid: 4242, startedAt: "2026-10-28T02:00:00.000Z", boot: "boot-1" },
+      { alive: false },
+    ],
+    [
+      "not the tick",
+      { pid: 4242, startedAt: "2026-10-28T02:00:00.000Z", boot: "boot-1" },
+      { command: "node /Users/t/other/server.js" },
+    ],
+  ];
+  for (const [name, lock, options] of cases) {
+    const text = JSON.stringify(lock);
+    writeFileSync(join(world.home, "lock.json"), text);
+    const d = stopDeps(world, options);
+    expect(await stopLoop(d.deps), name).toBe("no tick is running; the loop is paused");
+    expect(d.kills, name).toEqual([]);
+    expect(readFileSync(join(world.home, "lock.json"), "utf8"), name).toBe(text);
+    expect(JSON.parse(readFileSync(join(world.home, "config.json"), "utf8")).paused, name).toBe(
+      true,
+    );
+  }
+  rmSync(join(world.home, "lock.json"));
+  const none = stopDeps(world);
+  expect(await stopLoop(none.deps)).toBe("no tick is running; the loop is paused");
+  expect(none.kills).toEqual([]);
+  // validLock on its own: what the lock must hold.
+  expect(validLock({ pid: 4242, startedAt: "2026-10-28T02:00:00.000Z", boot: "b" }, "b")).toEqual({
+    pid: 4242,
+    startedAt: "2026-10-28T02:00:00.000Z",
+    boot: "b",
+  });
+  expect(validLock({ pid: 4242.5, startedAt: "2026-10-28T02:00:00.000Z", boot: "b" }, "b")).toBe(
+    null,
+  );
+  expect(validLock(null, "b")).toBe(null);
+  expect(validLock("x", "b")).toBe(null);
+});
+
+test("2026-10-28-001 AC-7: a run the user stopped is recorded as stopped by the user in the commit, the day's report and the notification, with no failure and no back-off; the marker goes, state.stopped stays; the tick keeps a SIGTERM handler for its duration", async () => {
+  const world = loopWorld();
+  mkdirSync(world.home, { recursive: true });
+  writeFileSync(
+    join(world.home, "stop.json"),
+    JSON.stringify({ at: "2026-10-25T19:59:00.000Z", by: "stop" }),
+  );
+  const stopped = tickDeps(world, { exit: 4, signalDuringRun: true });
+  // The SIGTERM reaches the tick's handler while the run is in progress: the tick lives on to record.
+  expect(await tick({}, stopped.deps)).toBe(0);
+  expect(stopped.seen.log.join("\n")).toContain("stop requested: the run ends at its next step");
+  const state = JSON.parse(readFileSync(join(world.home, "state.json"), "utf8"));
+  expect(state.stopped).toEqual({ at: "2026-10-25T20:00:00.000Z", run: "2026-10-25-1" });
+  expect(state.failures).toBe(0);
+  expect(state.backoffUntil).toBe(null);
+  expect(existsSync(join(world.home, "stop.json"))).toBe(false);
+  const repo = join(world.home, "repo");
+  expect(git(repo, "log", "-1", "--format=%s").trim()).toBe(
+    "Improvement run 2026-10-25-1: stopped by the user",
+  );
+  const report = readFileSync(join(repo, "docs/improve/daily/2026-10-25.md"), "utf8");
+  expect(report).toContain("| 2026-10-25-1 | t, u | stopped by the user |");
+  const notice = stopped.seen.sh.find((c) => c[0] === "osascript")?.join(" ") ?? "";
+  expect(notice).toContain("stopped by the user: run 2026-10-25-1");
+  expect(stopped.seen.release).toEqual([]);
+  expect(stopped.seen.signals).toEqual(["on SIGTERM", "off SIGTERM"]);
+  // A marker present at the end of a run that ended on its own: recorded as stopped too, no adoption.
+  writeFileSync(join(world.home, "stop.json"), JSON.stringify({ at: "x", by: "stop" }));
+  moveOrigin(world, "plugins/core/skills/crew/SKILL.md", "# Crew\n\nv2\n");
+  const late = tickDeps(world, { kept: true, now: "2026-10-25T21:00:00.000Z" });
+  expect(await tick({}, late.deps)).toBe(0);
+  expect(git(repo, "log", "-1", "--format=%s").trim()).toBe(
+    "Improvement run 2026-10-25-2: stopped by the user",
+  );
+  expect(late.seen.release).toEqual([]);
+  expect(existsSync(join(world.home, "stop.json"))).toBe(false);
+});
+
+/** Origin moves by a commit writing `path` on the user's checkout, before a tick (2026-10-28-001 AC-2). */
+function moveOrigin(world: ReturnType<typeof loopWorld>, path: string, text: string): void {
+  mkdirSync(join(world.user, dirname(path)), { recursive: true });
+  writeFileSync(join(world.user, path), text);
+  git(world.user, "add", "-A");
+  git(world.user, "commit", "-q", "-m", `move: ${path}`);
+  git(world.user, "push", "-q", "origin", "main");
+}
+
+test("2026-10-28-001 AC-2: a tick whose sync changed the loop's code releases its lock and relaunches itself once with --relaunched, returning the relaunch's status; a relaunched tick never relaunches; a move of docs/ alone runs on", async () => {
+  const world = loopWorld();
+  // A first tick makes the clone.
+  const first = tickDeps(world);
+  expect(await tick({}, first.deps)).toBe(0);
+  expect(first.seen.relaunch).toEqual([]);
+  // The loop's code moves on origin: the next tick syncs, sees it, and relaunches instead of running.
+  moveOrigin(world, "scripts/improve-loop.ts", "export {};\n// v2\n");
+  const relaunching = tickDeps(world, { now: "2026-10-25T21:00:00.000Z", relaunchStatus: 7 });
+  expect(await tick({}, relaunching.deps)).toBe(7);
+  expect(relaunching.seen.relaunch).toEqual([{ args: ["tick", "--relaunched"], lockGone: true }]);
+  // The command the real dep runs: this bun, this script, the arguments.
+  expect(relaunchCommand(["tick", "--relaunched"])).toEqual({
+    cmd: process.execPath,
+    args: [process.argv[1] as string, "tick", "--relaunched"],
+  });
+  expect(relaunching.seen.improve).toEqual([]);
+  expect(relaunching.seen.log.join("\n")).toMatch(
+    /the loop's code changed at the sync \([0-9a-f]{7}\.\.[0-9a-f]{7}\); relaunched on the new code/,
+  );
+  // The same kind of move, with the plugin's text (so the tick is due), read by a relaunched tick: it runs.
+  moveOrigin(world, "packages/engine/src/x.ts", "export const x = 1;\n");
+  moveOrigin(world, "plugins/core/skills/crew/SKILL.md", "# Crew\n\nv2\n");
+  const relaunched = tickDeps(world, { now: "2026-10-25T22:00:00.000Z" });
+  expect(await tick({ relaunched: true }, relaunched.deps)).toBe(0);
+  expect(relaunched.seen.relaunch).toEqual([]);
+  expect(relaunched.seen.improve).toHaveLength(1);
+  // A move outside the code the tick runs (docs/ and the plugin's text): no relaunch, the tick runs.
+  moveOrigin(world, "docs/notes.md", "notes\n");
+  moveOrigin(world, "plugins/core/skills/crew/SKILL.md", "# Crew\n\nv3\n");
+  const docsOnly = tickDeps(world, { now: "2026-10-25T23:00:00.000Z" });
+  expect(await tick({}, docsOnly.deps)).toBe(0);
+  expect(docsOnly.seen.relaunch).toEqual([]);
+  expect(docsOnly.seen.improve).toHaveLength(1);
+});
+
+test("2026-10-28-001 AC-8: verdictText names each exit by what runImprove documents it as, and the ceiling's stop reaches the commit message and the day's report", async () => {
+  const record = (exit: number, kept = false) =>
+    ({
+      ...keptRecord("2026-10-28-1"),
+      kept: kept ? { kind: "single", id: "P-1" } : null,
+      exit,
+      costUsd: 20.74,
+    }) as unknown as Parameters<typeof verdictText>[0];
+  expect(verdictText(record(0, true))).toMatch(/^kept P-1/);
+  expect(verdictText(record(0))).toBe("nothing kept");
+  expect(verdictText(record(2))).toBe("stopped at the ceiling (20.74 USD)");
+  expect(verdictText(record(3))).toBe("failed (exit 3)");
+  expect(verdictText(record(4))).toBe("stopped by the user");
+  expect(verdictText(record(5))).toBe("ended with exit 5");
+  const world = loopWorld();
+  const capped = tickDeps(world, { exit: 2 });
+  expect(await tick({}, capped.deps)).toBe(0);
+  const repo = join(world.home, "repo");
+  expect(git(repo, "log", "-1", "--format=%s").trim()).toBe(
+    "Improvement run 2026-10-25-1: stopped at the ceiling (1.50 USD)",
+  );
+  expect(readFileSync(join(repo, "docs/improve/daily/2026-10-25.md"), "utf8")).toContain(
+    "| 2026-10-25-1 | t, u | stopped at the ceiling (1.50 USD) |",
+  );
+});
+
+test("2026-10-28-001 AC-9: a stale lock taken over records the dead tick (its checked pid and start, the dead run folder), removes that folder alone, notifies once, reports it, and the tick runs on with no failure; other-boot, symlink, pattern, record and token cases", async () => {
+  const world = loopWorld();
+  const first = tickDeps(world);
+  expect(await tick({}, first.deps)).toBe(0);
+  const repo = join(world.home, "repo");
+  const improve = join(repo, "docs/improve");
+  // What dead ticks left: three empty run folders, the newest by number `-10` (which a string order
+  // would put before `-7`); beside them a folder with a record, a symlink and a name outside the pattern.
+  mkdirSync(join(improve, "2026-10-25-10"));
+  mkdirSync(join(improve, "2026-10-25-7"));
+  mkdirSync(join(improve, "2026-10-25-5"));
+  mkdirSync(join(improve, "2026-10-25-6"));
+  writeFileSync(join(improve, "2026-10-25-6", "record.json"), "{}");
+  symlinkSync(join(improve, "2026-10-25-1"), join(improve, "2026-10-25-8"));
+  mkdirSync(join(improve, "notes"));
+  writeFileSync(
+    join(world.home, "lock.json"),
+    JSON.stringify({ pid: 849, startedAt: "2026-10-25T20:32:00.000Z", boot: "boot-1" }),
+  );
+  moveOrigin(world, "plugins/core/skills/crew/SKILL.md", "# Crew\n\nv2\n");
+  const dead = tickDeps(world, { alive: false, now: "2026-10-25T21:00:00.000Z" });
+  expect(await tick({}, dead.deps)).toBe(0);
+  expect(dead.seen.improve).toHaveLength(1);
+  const state = JSON.parse(readFileSync(join(world.home, "state.json"), "utf8"));
+  expect(state.day.deadTicks).toEqual([
+    { pid: 849, startedAt: "2026-10-25T20:32:00.000Z", run: "2026-10-25-10" },
+  ]);
+  expect(state.failures).toBe(0);
+  expect(state.backoffUntil).toBe(null);
+  // The newest dead folder alone is removed; the two older ones stay.
+  expect(existsSync(join(improve, "2026-10-25-10"))).toBe(false);
+  expect(existsSync(join(improve, "2026-10-25-7"))).toBe(true);
+  expect(existsSync(join(improve, "2026-10-25-5"))).toBe(true);
+  expect(existsSync(join(improve, "2026-10-25-6", "record.json"))).toBe(true);
+  expect(lstatSync(join(improve, "2026-10-25-8")).isSymbolicLink()).toBe(true);
+  expect(existsSync(join(improve, "notes"))).toBe(true);
+  const notices = dead.seen.sh.filter((c) => c[0] === "osascript").map((c) => c.join(" "));
+  expect(notices.filter((n) => n.includes("a tick died"))).toEqual([
+    expect.stringContaining(
+      "a tick died: pid 849 started at 20:32 UTC left run 2026-10-25-10 without a record",
+    ),
+  ]);
+  const report = readFileSync(join(repo, "docs/improve/daily/2026-10-25.md"), "utf8");
+  expect(report).toContain("## Dead ticks");
+  expect(report).toContain(
+    "- pid 849, started 20:32 UTC, run 2026-10-25-10 left without a record, folder removed",
+  );
+  // The two older dead folders cleared by hand, so the next takeovers find no run.
+  rmSync(join(improve, "2026-10-25-7"), { recursive: true });
+  rmSync(join(improve, "2026-10-25-5"), { recursive: true });
+  // A lock from another boot with no dead folder, its start a token-shaped string: pid kept, start unknown, no run. The
+  // guarantee that the string reaches no line is the validators' (an ISO date or null; the lines then carry no free text);
+  // the redaction behind them has nothing left to redact, so this row pins the validators. Token-shaped by its prefix, as
+  // the file's other fixtures are; never a real token's shape, so the secrets gate reads the diff as clean.
+  const odd = "ghp_SECRET-not-a-date";
+  writeFileSync(
+    join(world.home, "lock.json"),
+    JSON.stringify({ pid: 777, startedAt: odd, boot: "boot-0" }),
+  );
+  const rebooted = tickDeps(world, { alive: true, now: "2026-10-25T22:00:00.000Z" });
+  expect(await tick({}, rebooted.deps)).toBe(0);
+  const later = JSON.parse(readFileSync(join(world.home, "state.json"), "utf8"));
+  expect(later.day.deadTicks[1]).toEqual({ pid: 777, startedAt: null, run: null });
+  const everything = [
+    rebooted.seen.log.join("\n"),
+    rebooted.seen.sh.map((c) => c.join(" ")).join("\n"),
+    readFileSync(join(repo, "docs/improve/daily/2026-10-25.md"), "utf8"),
+  ].join("\n");
+  expect(everything).not.toContain(odd);
+  expect(everything).toContain("- pid 777, started at an unknown time, left no run");
+  expect(everything).toContain("a tick died: pid 777 started at an unknown time left no run");
+  // A lock whose pid is a string, on this boot: no pid to check alive, taken over; recorded as pid unknown with its start.
+  writeFileSync(
+    join(world.home, "lock.json"),
+    JSON.stringify({ pid: "x", startedAt: "2026-10-25T20:40:00.000Z", boot: "boot-1" }),
+  );
+  const unknownPid = tickDeps(world, { alive: true, now: "2026-10-25T22:30:00.000Z" });
+  expect(await tick({}, unknownPid.deps)).toBe(0);
+  const third = JSON.parse(readFileSync(join(world.home, "state.json"), "utf8"));
+  expect(third.day.deadTicks[2]).toEqual({
+    pid: null,
+    startedAt: "2026-10-25T20:40:00.000Z",
+    run: null,
+  });
+  expect(readFileSync(join(repo, "docs/improve/daily/2026-10-25.md"), "utf8")).toContain(
+    "- pid unknown, started 20:40 UTC, left no run",
+  );
+  // The report's own row, two dead ticks given.
+  const text = dailyReport("2026-10-28", [], [], [], null, {
+    deadTicks: [
+      { pid: 849, startedAt: "2026-10-28T00:32:51.040Z", run: "2026-10-28-2" },
+      { pid: null, startedAt: null, run: null },
+    ],
+  });
+  expect(text).toContain("## Dead ticks");
+  expect(text).toContain(
+    "- pid 849, started 00:32 UTC, run 2026-10-28-2 left without a record, folder removed",
+  );
+  expect(text).toContain("- pid unknown, started at an unknown time, left no run");
+  // The status: paused, the last stop, the dead ticks of the day.
+  writeFileSync(
+    join(world.home, "config.json"),
+    JSON.stringify({ provider: "runtime", paused: true }),
+  );
+  const status = statusText({
+    ...installDeps(world.home, null).deps,
+    now: () => new Date("2026-10-25T23:00:00.000Z"),
+  });
+  expect(status).toContain("paused: yes (bun scripts/improve-loop.ts resume)");
+  expect(status).toContain("dead ticks today: 3 (last pid unknown at 20:40 UTC)");
+  writeFileSync(join(world.home, "config.json"), JSON.stringify({ provider: "runtime" }));
+  const stopped = { ...later, stopped: { at: "2026-10-25T22:30:00.000Z", run: "2026-10-25-3" } };
+  writeFileSync(join(world.home, "state.json"), JSON.stringify(stopped));
+  const after = statusText({
+    ...installDeps(world.home, null).deps,
+    now: () => new Date("2026-10-25T23:00:00.000Z"),
+  });
+  expect(after).toContain("paused: no");
+  expect(after).toContain("last stop: run 2026-10-25-3 at 2026-10-25T22:30:00.000Z");
 });
