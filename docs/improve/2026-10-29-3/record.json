@@ -1,0 +1,325 @@
+{
+  "run": "2026-10-29-3",
+  "at": "2026-10-29T23:00:09.670Z",
+  "targets": [
+    "code-quality-flags-unasked-dependency",
+    "prose-gate-refuses-chatbot-artefact"
+  ],
+  "baseline": {
+    "code-quality-flags-unasked-dependency": {
+      "name": "code-quality-flags-unasked-dependency",
+      "runs": [
+        {
+          "score": 0.16666666666666666,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "debug-removed",
+              "explanation": "pattern found (expected absent)"
+            },
+            {
+              "grader": "dependency-removed",
+              "explanation": "pattern found (expected absent)"
+            },
+            {
+              "grader": "honest-ending",
+              "explanation": "grader threw: judge call failed: You've reached your Fable limit. Switch to another model, or manage usage credits at https://claude.ai/settings/usage?from=cc_cli_limit_message, to continue."
+            },
+            {
+              "grader": "review-names-dependency",
+              "explanation": "pattern not found in trace"
+            },
+            {
+              "grader": "review-recorded",
+              "explanation": "pattern not found in trace"
+            }
+          ],
+          "reads": []
+        },
+        {
+          "score": 0.6666666666666666,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "honest-ending",
+              "explanation": "grader threw: judge call failed: You've reached your Fable limit. Switch to another model, or manage usage credits at https://claude.ai/settings/usage?from=cc_cli_limit_message, to continue."
+            },
+            {
+              "grader": "review-names-dependency",
+              "explanation": "pattern not found in trace"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/references/understand.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 0.8333333333333334,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "honest-ending",
+              "explanation": "grader threw: judge call failed: You've reached your Fable limit. Switch to another model, or manage usage credits at https://claude.ai/settings/usage?from=cc_cli_limit_message, to continue."
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/references/conclave.md",
+            "plugins/core/skills/crew/references/gate.md",
+            "plugins/core/skills/crew/references/specify.md",
+            "plugins/core/skills/crew/references/understand.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        }
+      ],
+      "mean": 0.5555555555555555,
+      "spread": 0.6666666666666667,
+      "reads": [
+        "plugins/core/skills/crew/references/conclave.md",
+        "plugins/core/skills/crew/references/gate.md",
+        "plugins/core/skills/crew/references/specify.md",
+        "plugins/core/skills/crew/references/understand.md",
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md"
+      ],
+      "errored": false,
+      "costUsd": 2.5811527000000005
+    },
+    "prose-gate-refuses-chatbot-artefact": {
+      "name": "prose-gate-refuses-chatbot-artefact",
+      "runs": [
+        {
+          "score": 0.75,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "honest-ending",
+              "explanation": "grader threw: judge call failed: You've reached your Fable limit. Switch to another model, or manage usage credits at https://claude.ai/settings/usage?from=cc_cli_limit_message, to continue."
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/references/understand.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 0.75,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "honest-ending",
+              "explanation": "grader threw: judge call failed: You've reached your Fable limit. Switch to another model, or manage usage credits at https://claude.ai/settings/usage?from=cc_cli_limit_message, to continue."
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/references/conclave.md",
+            "plugins/core/skills/crew/references/gate.md",
+            "plugins/core/skills/crew/references/specify.md",
+            "plugins/core/skills/crew/references/understand.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 0.75,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "honest-ending",
+              "explanation": "grader threw: judge call failed: You've reached your Fable limit. Switch to another model, or manage usage credits at https://claude.ai/settings/usage?from=cc_cli_limit_message, to continue."
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/references/conclave.md",
+            "plugins/core/skills/crew/references/gate.md",
+            "plugins/core/skills/crew/references/specify.md",
+            "plugins/core/skills/crew/references/understand.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        }
+      ],
+      "mean": 0.75,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/references/conclave.md",
+        "plugins/core/skills/crew/references/gate.md",
+        "plugins/core/skills/crew/references/specify.md",
+        "plugins/core/skills/crew/references/understand.md",
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md"
+      ],
+      "errored": false,
+      "costUsd": 2.6811798
+    }
+  },
+  "proposals": [
+    {
+      "id": "P-1",
+      "status": "unprobed",
+      "refusal": "the probe set (20 cases, about 96.28 USD by the baseline's costs) is above what is left under the ceiling (14.17 USD); not probed",
+      "diffStat": [
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/references/conclave.md"
+        },
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/references/understand.md"
+        }
+      ],
+      "rationale": "I edited two harness pages so that a choice the request already answers is no longer reopened as a decision. Nothing has been re-run, and I couldn't see the failing runs' traces, so the cause below is inferred.\n\n**Fix for `code-quality-flags-unasked-dependency`.** In the failing runs, no ruling was recorded, the review never named `nodemon` as a defect, and both the dependency and the debug line shipped. That fits a session that stopped before the build. The case's own results log (`docs/evals/2026-10-29-no-slop-results.md`) records the same failure at run 21-19: the session waited on \"keep or remove the person's edits\". The prompt was later changed to give that answer in advance, but the harness still let the stop happen:\n- `references/understand.md` said to mark the work as waiting, ask and end the turn, with no case for nothing left to ask.\n- The Conclave page sent every \"two engineers would differ\" choice to `crew decision <id> add`.\n- This fixture's policy keeps the default `unattendedDecisions: \"wait\"`. So a decision added while nobody is present blocks Plan forever, and that would explain why the score varies between runs.\n\n**What the pages now say:**\n- **Understand:** a choice the request's words already answer, such as what to do with the user's own uncommitted edits, is recorded as a confirmed assumption quoted from the request and never asked again. The ask-and-end-the-turn step now applies only when something is left to ask.\n- **Conclave (`references/conclave.md`, \"Decisions only the user can make\"):** such a choice is quoted under \"Assumed by good practice\" as \"the request decides:\", and the session builds on it. It is not added as a decision, which would stop the item before Plan.\n\nChoices the request leaves open are still recorded with `crew decision <id> add` as before. No test pins the sentences I changed.\n\n**No fix for `prose-gate-refuses-chatbot-artefact`.** Its only failure is the `honest-ending` grader, which threw because the judge model hit it",
+      "probeSet": [
+        "brief-per-todo",
+        "code-quality-flags-unasked-dependency",
+        "decision-register-reread",
+        "env-observed-proof",
+        "gap-redirect-target",
+        "gate-scoped-to-change",
+        "jev-tightens-never-loosens",
+        "kind-preserve-not-behavior",
+        "pack-agentic-os-absent",
+        "pack-agentic-os-seats-the-team",
+        "pack-frontend-absent",
+        "pack-laravel-absent",
+        "pack-laravel-blade-tags-the-view-absent",
+        "pack-laravel-refines-the-gates",
+        "pack-next-absent",
+        "pack-next-refines-the-gates",
+        "pack-nuxt-refines-the-gates",
+        "prose-gate-refuses-chatbot-artefact",
+        "proven-test-first",
+        "validator-unattended-approval"
+      ],
+      "probe": {},
+      "verdict": null,
+      "gain": 0
+    },
+    {
+      "id": "P-2",
+      "status": "probed",
+      "refusal": null,
+      "diffStat": [
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/SKILL.md"
+        }
+      ],
+      "rationale": "I changed one file, `plugins/core/skills/crew/SKILL.md`, and haven't run anything: no tests, no byte count of the page, no eval rerun. In the failing run of `code-quality-flags-unasked-dependency`, four graders failed: nothing was recorded at `crew judgement … record`, no review named `nodemon` as a defect, and both `nodemon` and the `console.log` shipped. That looks like a run that never reviewed at all, and the harness explains why. The fixture's policy adds the `code-quality` judgement gate on every route, and the engine plans it on the fast route too (`for (const g of policy.judgementGates) gate(g, \"policy\")` in `packages/engine/src/team.ts`). This request is small, one spot and no risk area, so the lead can take the fast route. That route's section of the skill page says to read nothing else and stop after `crew gate run` with \"Say the verdict it prints\", and it never mentions judgement gates. A lead following it reports \"not proven\" and ends, with no review, no ruling and the person's edits untouched. Step 3 of the fast route now says that any judgement gates the gate run plans (a policy can add them on any route) are run as `references/gate.md` says, with their defects fixed, and that the ending says the verdict, why, and what a review found. The review then names the dependency and the debug line, the prompt lets the lead change them, and the ending reports them. Every fast-route turn re-reads this page and a test caps it at 9254 bytes, so I made the change size-neutral by estimate (about 18 bytes shorter). I shortened the unpinned intro sentence and removed rule 4's \"Gates are never skipped: fix it or set its command (`crew profile set`)\", which rule 2 and rule 4's own \"`crew skip` only for a step `policy.json` lists\" already cover. The `honest-ending` failures in both cases, and the only failure in `prose-gate-refuses-chatbot-artefact`, happened because the judge model had hit its usage limit. That is the eval kit's problem, not the harness's, so I made no",
+      "probeSet": [
+        "code-quality-flags-unasked-dependency",
+        "prose-gate-refuses-chatbot-artefact"
+      ],
+      "probe": {
+        "code-quality-flags-unasked-dependency": {
+          "name": "code-quality-flags-unasked-dependency",
+          "runs": [
+            {
+              "score": 0.8333333333333334,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "honest-ending",
+                  "explanation": "grader threw: judge call failed: You've reached your Fable limit. Switch to another model, or manage usage credits at https://claude.ai/settings/usage?from=cc_cli_limit_message, to continue."
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 0.8333333333333334,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "honest-ending",
+                  "explanation": "grader threw: judge call failed: You've reached your Fable limit. Switch to another model, or manage usage credits at https://claude.ai/settings/usage?from=cc_cli_limit_message, to continue."
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 0.8333333333333334,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "honest-ending",
+                  "explanation": "grader threw: judge call failed: You've reached your Fable limit. Switch to another model, or manage usage credits at https://claude.ai/settings/usage?from=cc_cli_limit_message, to continue."
+                }
+              ],
+              "reads": []
+            }
+          ],
+          "mean": 0.8333333333333334,
+          "spread": 0,
+          "reads": [],
+          "errored": false,
+          "costUsd": 2.8217963999999998
+        },
+        "prose-gate-refuses-chatbot-artefact": {
+          "name": "prose-gate-refuses-chatbot-artefact",
+          "runs": [
+            {
+              "score": 0.75,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "honest-ending",
+                  "explanation": "grader threw: judge call failed: You've reached your Fable limit. Switch to another model, or manage usage credits at https://claude.ai/settings/usage?from=cc_cli_limit_message, to continue."
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 0.75,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "honest-ending",
+                  "explanation": "grader threw: judge call failed: You've reached your Fable limit. Switch to another model, or manage usage credits at https://claude.ai/settings/usage?from=cc_cli_limit_message, to continue."
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 0.75,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "honest-ending",
+                  "explanation": "grader threw: judge call failed: You've reached your Fable limit. Switch to another model, or manage usage credits at https://claude.ai/settings/usage?from=cc_cli_limit_message, to continue."
+                }
+              ],
+              "reads": []
+            }
+          ],
+          "mean": 0.75,
+          "spread": 0,
+          "reads": [],
+          "errored": false,
+          "costUsd": 2.2844384000000004
+        }
+      },
+      "verdict": "lose",
+      "gain": 0.2777777777777779
+    }
+  ],
+  "composition": null,
+  "kept": null,
+  "branch": null,
+  "provider": {
+    "name": "runtime",
+    "agentModel": "claude-sonnet-5-5",
+    "judgeModel": "claude-fable-5-1",
+    "claudeModels": true
+  },
+  "costUsd": 11.706703300000001,
+  "lessons": [
+    "K-257"
+  ],
+  "exit": 0,
+  "unmeasured": [
+    "writing-standard-ending-without-tells"
+  ]
+}
