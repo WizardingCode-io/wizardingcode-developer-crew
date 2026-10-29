@@ -1083,7 +1083,7 @@ function planTaskJudgement(
     ),
   };
   if (result.status === "pass" && planned.length)
-    writeReviewInputs(env.paths, work, cut, current, task);
+    writeReviewInputs(env.paths, work, cut, current, { task });
   return planned;
 }
 

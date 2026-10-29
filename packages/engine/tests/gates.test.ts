@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import {
   chmodSync,
   existsSync,
@@ -18,6 +18,7 @@ import {
   saveEvidence,
   updateEvidence,
 } from "../src/evidence.ts";
+import * as fingerprintModule from "../src/fingerprint.ts";
 import { changedPaths, changedWatchedPaths, computeFingerprint } from "../src/fingerprint.ts";
 import {
   assess,
@@ -31,13 +32,14 @@ import {
   runTaskGate,
   scopedTestCommand,
 } from "../src/gates.ts";
-import { plannedJudgementGates } from "../src/judgement.ts";
+import { plannedJudgementGates, readReviewInputs, writeReviewInputs } from "../src/judgement.ts";
 import { isAlive } from "../src/open.ts";
 import { registerPack } from "../src/packs.ts";
 import { workDir } from "../src/paths.ts";
 import { DEFAULT_POLICY } from "../src/policy.ts";
 import { namedFiles } from "../src/problems.ts";
 import { ensureProfile, loadProfile, saveProfile } from "../src/profile.ts";
+import { dependencyInputs, phraseInputs, type ReviewSignals } from "../src/review-signals.ts";
 import type {
   Environment,
   GateCommand,
@@ -105,8 +107,10 @@ test("SP2b: --only with judgement names alone runs no deterministic gate and rew
   expect(only.judgement.map((j) => j.gate)).toEqual(["ui-ux"]);
   expect(readFileSync(join(only.review ?? "", "files.txt"), "utf8")).toBe("src/App.vue\n");
   // SP9-T6 AC-9 edits this line: design-lint is planned after secrets on the interface file.
-  expect(only.unproven.slice(0, 3)).toEqual([
+  // 2026-10-29-001 edits this line: the prose scan is planned right after secrets.
+  expect(only.unproven.slice(0, 4)).toEqual([
     "gate secrets not run",
+    "gate prose not run",
     "gate design-lint not run",
     "gate test not run",
   ]);
@@ -227,12 +231,13 @@ test("planned gates follow the route table", () => {
   const root = tempDir();
   expect(plannedGates("fast", profile, DEFAULT_POLICY, ["src/a.ts"], root)).toEqual([
     { gate: "secrets", target: "." },
+    { gate: "prose", target: "." },
     { gate: "test", target: "." },
     { gate: "lint", target: "." },
   ]);
   expect(
     plannedGates("fast", profile, DEFAULT_POLICY, ["apps/api/x.php"], root).map((g) => g.target),
-  ).toEqual([".", ".", ".", "apps/api", "apps/api"]);
+  ).toEqual([".", ".", ".", ".", "apps/api", "apps/api"]);
 });
 
 /** A PATH that holds exactly these programs. */
@@ -323,7 +328,7 @@ test("I9: standard plans no audit it cannot run; full records it unavailable wit
   const { profile } = ensureProfile(paths);
   expect(
     plannedGates("standard", profile, DEFAULT_POLICY, ["src/a.ts"], root).map((g) => g.gate),
-  ).toEqual(["secrets", "test"]);
+  ).toEqual(["secrets", "prose", "test"]);
   const work = createWork(paths, "feature");
   work.route = "full";
   write(root, "package.json", JSON.stringify({ name: "x", scripts: { test: "exit 0" } }));
@@ -702,7 +707,7 @@ test("finding 10: on every route the audit is planned only when the change touch
   for (const route of ["fast", "standard", "full"] as const) {
     expect(
       plannedGates(route, profile, DEFAULT_POLICY, ["src/a.ts"], tempDir()).map((g) => g.gate),
-    ).toEqual(["secrets", "test", "lint"]);
+    ).toEqual(["secrets", "prose", "test", "lint"]);
   }
 });
 
@@ -721,6 +726,7 @@ test("runGates records results, replaces old runs and computes the verdict", asy
   const first = await runGates(paths, work, profile, DEFAULT_POLICY);
   expect(first.evidence.runs.map((r) => `${r.gate}:${r.status}`)).toEqual([
     "secrets:pass",
+    "prose:pass",
     "test:pass",
     "lint:fail",
   ]);
@@ -755,7 +761,10 @@ test("C1: --only never launders runs recorded on older code", async () => {
   write(root, "src/a.ts", "broken");
   const partial = await runGates(paths, work, profile, DEFAULT_POLICY, { only: ["secrets"] });
   expect(partial.verdict).toBe("unproven");
-  expect(partial.unproven).toEqual(["gate test not run on the current code"]);
+  expect(partial.unproven).toEqual([
+    "gate prose not run on the current code",
+    "gate test not run on the current code",
+  ]);
   expect(partial.evidence.runs.every((r) => typeof r.fingerprint === "string")).toBe(true);
 });
 
@@ -909,6 +918,7 @@ test("a workspace member plans only the gates it defines; the rest run once, at 
   const changed = ["packages/engine/src/a.ts", "packages/web/src/b.ts"];
   expect(plannedGates("fast", profile, DEFAULT_POLICY, changed, tempDir())).toEqual([
     { gate: "secrets", target: "." },
+    { gate: "prose", target: "." },
     { gate: "test", target: "." },
     { gate: "lint", target: "." },
     { gate: "test", target: "packages/web" },
@@ -936,6 +946,7 @@ test("finding 8: two targets at one path plan each target's gates once, keyed by
   const planned = plannedGates("fast", profile, DEFAULT_POLICY, ["src/a.ts"], tempDir());
   expect(planned).toEqual([
     { gate: "secrets", target: "." },
+    { gate: "prose", target: "." },
     { gate: "test", target: ".", stack: "node" },
     { gate: "lint", target: ".", stack: "node" },
     { gate: "test", target: ".", stack: "php" },
@@ -947,6 +958,7 @@ test("finding 8: two targets at one path plan each target's gates once, keyed by
   const alone = { ...profile, targets: [target, { ...php, path: "api" }] };
   expect(plannedGates("fast", alone, DEFAULT_POLICY, ["api/x.php"], tempDir())).toEqual([
     { gate: "secrets", target: "." },
+    { gate: "prose", target: "." },
     { gate: "test", target: "." },
     { gate: "lint", target: "." },
     { gate: "test", target: "api" },
@@ -1003,6 +1015,7 @@ test("finding 8: each target at a shared path runs its own command, recorded and
     outcome.evidence.runs.map((r) => `${r.gate}@${r.stack ?? "-"}:${r.command}:${r.status}`),
   ).toEqual([
     "secrets@-:built-in secret scan:pass",
+    "prose@-:built-in prose scan:pass",
     "test@node:sh node.sh:pass",
     "lint@node:sh node.sh:pass",
     "test@php:sh pest.sh:pass",
@@ -1022,17 +1035,19 @@ test("SP2c 8a AC-1: a profile with no target, or a change no target covers, plan
   const root = tempDir();
   expect(plannedGates("fast", none, DEFAULT_POLICY, ["src/greet.sh"], root)).toEqual([
     { gate: "secrets", target: "." },
+    { gate: "prose", target: "." },
     { gate: "test", target: "." },
   ]);
   const api = { ...none, targets: [{ ...target, path: "apps/api" }] };
   expect(plannedGates("fast", api, DEFAULT_POLICY, ["scripts/x.sh"], root)).toEqual([
     { gate: "secrets", target: "." },
+    { gate: "prose", target: "." },
     { gate: "test", target: "." },
   ]);
   // A change inside the target plans that target's gates and no root gate.
   expect(
     plannedGates("fast", api, DEFAULT_POLICY, ["apps/api/x.ts"], root).map((g) => g.target),
-  ).toEqual([".", "apps/api", "apps/api"]);
+  ).toEqual([".", ".", "apps/api", "apps/api"]);
   // A Makefile-only project: the engine detects no target, so the test gate at the root is
   // unavailable until a command is set, and the item is never proven by the secrets gate alone.
   const repo = makeRepo({ Makefile: "test:\n\tsh tests/run.sh\n", "src/greet.sh": "echo hi\n" });
@@ -1150,12 +1165,12 @@ test("SP9-T6 AC-1: design-lint is planned right after secrets on a frontend path
   const root = tempDir();
   const head = (route: "standard" | "fast", changed: string[], policy = DEFAULT_POLICY) =>
     plannedGates(route, profile, policy, changed, root)
-      .slice(0, 2)
+      .slice(0, 3)
       .map((p) => p.gate);
-  expect(head("standard", ["src/App.vue"])).toEqual(["secrets", "design-lint"]);
-  expect(head("standard", ["DESIGN.md"])).toEqual(["secrets", "design-lint"]);
-  expect(head("fast", ["src/App.vue"])).toEqual(["secrets", "design-lint"]);
-  expect(head("standard", ["src/a.ts"])).toEqual(["secrets", "test"]);
+  expect(head("standard", ["src/App.vue"])).toEqual(["secrets", "prose", "design-lint"]);
+  expect(head("standard", ["DESIGN.md"])).toEqual(["secrets", "prose", "design-lint"]);
+  expect(head("fast", ["src/App.vue"])).toEqual(["secrets", "prose", "design-lint"]);
+  expect(head("standard", ["src/a.ts"])).toEqual(["secrets", "prose", "test"]);
   const required: Policy = { ...DEFAULT_POLICY, requiredGates: ["design-lint"] };
   expect(
     plannedGates("standard", profile, required, ["src/a.ts"], root).some(
@@ -2326,3 +2341,308 @@ test("SP9-T4 AC-1, AC-3, AC-10: the e2e run grades the evidence after the consol
     plainRun?.tail.split("\n").some((l) => /^(axe|vitals|reduced motion|motion):/.test(l)),
   ).toBe(false);
 }, 120_000);
+
+test("2026-10-29-001 AC-3: the prose gate is built in, planned right after secrets on every route and every change, run by the item's gate run and not by a todo's, and named with its allowances in the gate reference", async () => {
+  const profile: Profile = {
+    version: 1,
+    detectedAt: "",
+    targets: [target],
+    watch: { exclude: [] },
+  };
+  const root = tempDir();
+  for (const route of ["fast", "standard", "full"] as const)
+    for (const changed of [["src/a.ts"], ["src/App.vue"], ["docs/x.md"], []])
+      expect(
+        plannedGates(route, profile, DEFAULT_POLICY, changed, root)
+          .map((p) => p.gate)
+          .indexOf("prose"),
+        `${route} ${changed.join(",")}`,
+      ).toBe(1);
+  const repo = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "export const a = 1;\n",
+  });
+  const paths = repoPaths(repo, testEnv());
+  const work = createWork(paths, "fix");
+  addCriterion(work, "x");
+  write(repo, "src/a.ts", "export const a = 1;\n// Certain" + "ly! Here is the change.\n");
+  const detected = ensureProfile(paths).profile;
+  const out = await runGates(paths, work, detected, DEFAULT_POLICY);
+  const prose = out.evidence.runs.find((r) => r.gate === "prose");
+  expect(prose?.status).toBe("fail");
+  expect(prose?.command).toBe("built-in prose scan");
+  expect(prose?.tail).toBe(
+    'prose/chatbot-artefact src/a.ts:2: "// Certain' + 'ly! Here is the change."',
+  );
+  // The report renders the prose run as a row of its gates table and names it among the unproven
+  // (the test-quality advisory at round 1).
+  const report = renderReport(work, out.evidence, DEFAULT_POLICY);
+  expect(report).toContain("| prose | . | fail | `built-in prose scan` |");
+  expect(report).toContain("- gate prose failing");
+  const todo = await runTaskGate(paths, work, detected, DEFAULT_POLICY, ["src/a.ts"]);
+  expect(todo.runs.some((r) => r.gate === "prose")).toBe(false);
+  const reference = readFileSync(
+    join(
+      import.meta.dir,
+      "..",
+      "..",
+      "..",
+      "plugins",
+      "core",
+      "skills",
+      "crew",
+      "references",
+      "gate.md",
+    ),
+    "utf8",
+  );
+  expect(reference).toContain("`prose`");
+  expect(reference).toContain("allowed prose/<rule> <file>:<line> -- <why>");
+});
+
+test("2026-10-29-001 AC-5: the gate run writes the reviewer's dependency and phrase inputs: added names per manifest section, a new manifest whole, a deleted one none, the hostile and malformed ones bounded and never thrown, and the action-shaped fallback phrases on added lines as whole words, Markdown excluded", async () => {
+  const many = Object.fromEntries(
+    Array.from({ length: 500 }, (_, i) => [`pkg-${String(i).padStart(3, "0")}`, "1.0.0"]),
+  );
+  const root = makeRepo({
+    "package.json": JSON.stringify({
+      name: "x",
+      scripts: { test: "exit 0" },
+      dependencies: { a: "1" },
+      devDependencies: { b: "1" },
+    }),
+    "apps/api/composer.json": JSON.stringify({
+      require: { php: "^8.3", "ext-json": "*", "laravel/framework": "^13.0" },
+    }),
+    "apps/old/package.json": JSON.stringify({ dependencies: { gone: "1" } }),
+    "apps/bad/package.json": JSON.stringify({ dependencies: { kept: "1" } }),
+    "apps/odd/package.json": JSON.stringify({ dependencies: { fine: "1" } }),
+    "apps/big/package.json": JSON.stringify({ dependencies: {} }),
+    "src/a.ts": "export const a = 1;\n",
+  });
+  const paths = repoPaths(root, testEnv());
+  const work = createWork(paths, "feature");
+  work.route = "standard";
+  addCriterion(work, "x");
+  write(
+    root,
+    "package.json",
+    JSON.stringify({
+      name: "x",
+      scripts: { test: "exit 0" },
+      dependencies: { a: "1", zod: "3" },
+      devDependencies: { b: "1", vitest: "5" },
+    }),
+  );
+  write(
+    root,
+    "apps/api/composer.json",
+    JSON.stringify({
+      require: {
+        php: "^8.4",
+        "ext-mbstring": "*",
+        "laravel/framework": "^13.0",
+        "livewire/livewire": "^4.0",
+      },
+      "require-dev": { "laravel/dusk": "^8.7" },
+    }),
+  );
+  write(root, "apps/new/package.json", JSON.stringify({ dependencies: { left: "1", right: "1" } }));
+  git(root, "rm", "-q", "apps/old/package.json");
+  write(root, "apps/bad/package.json", "{ not json");
+  write(
+    root,
+    "apps/odd/package.json",
+    '{"dependencies": ["a", "b"], "devDependencies": {"__proto__": {"x": 1}, "constructor": "1", "real": "1"}}',
+  );
+  write(root, "apps/big/package.json", JSON.stringify({ dependencies: many }));
+  write(
+    root,
+    "apps/huge/package.json",
+    `{"dependencies": {"x": "${"1".repeat(1024 * 1024 + 10)}"}}`,
+  );
+  write(
+    root,
+    "src/a.ts",
+    [
+      "export const a = 1;",
+      "// add a fallback when the API is down",
+      "const b = 2; // fall back to the cache, default value 0",
+      "const shimmer = 1; // workarounds of the past",
+      "// workaround for #123 in the upstream",
+      "export const c = shim(a);",
+    ].join("\n"),
+  );
+  write(root, "docs/notes.md", "We add a fallback here.\n");
+  const profile = ensureProfile(paths).profile;
+  const out = await runGates(paths, work, profile, DEFAULT_POLICY);
+  const inputs = JSON.parse(readFileSync(join(out.review ?? "", "inputs.json"), "utf8"));
+  expect(inputs.dependencies).toEqual([
+    {
+      file: "apps/api/composer.json",
+      added: { require: ["livewire/livewire"], "require-dev": ["laravel/dusk"] },
+    },
+    { file: "apps/bad/package.json", unreadable: true },
+    {
+      file: "apps/big/package.json",
+      added: { dependencies: Object.keys(many).slice(0, 50) },
+      more: 450,
+    },
+    { file: "apps/huge/package.json", unreadable: true },
+    { file: "apps/new/package.json", added: { dependencies: ["left", "right"] } },
+    { file: "apps/odd/package.json", added: { devDependencies: ["real"] } },
+    { file: "package.json", added: { dependencies: ["zod"], devDependencies: ["vitest"] } },
+  ]);
+  expect(inputs.phrases).toEqual([
+    { file: "src/a.ts", line: 2, phrase: "add a fallback" },
+    { file: "src/a.ts", line: 3, phrase: "fall back to" },
+    { file: "src/a.ts", line: 6, phrase: "shim" },
+  ]);
+  // The inputs never change the gates' verdict.
+  expect(out.evidence.runs.find((r) => r.gate === "test")?.status).toBe("pass");
+});
+
+test("2026-10-29-001 AC-5 (the round-1 rulings): phraseInputs skips a Markdown line and keeps one phrase per line; a manifest that cannot be read is unreadable and never throws; inputs.json's two fields are typed beside the engine's keys, which they never shadow", () => {
+  expect(
+    phraseInputs([
+      { file: "DESIGN.md", line: 1, text: "We add a fallback here." },
+      { file: "src/a.ts", line: 2, text: "// add a fallback, then a shim" },
+    ]),
+  ).toEqual([{ file: "src/a.ts", line: 2, phrase: "add a fallback" }]);
+  const root = makeRepo({
+    "package.json": JSON.stringify({ name: "x", dependencies: { a: "1" } }),
+  });
+  write(root, "package.json", JSON.stringify({ name: "x", dependencies: { a: "1", b: "1" } }));
+  chmodSync(join(root, "package.json"), 0o000);
+  try {
+    expect(dependencyInputs(root, "HEAD", ["package.json"])).toEqual([
+      { file: "package.json", unreadable: true },
+    ]);
+  } finally {
+    chmodSync(join(root, "package.json"), 0o644);
+  }
+  const paths = repoPaths(root, testEnv());
+  const work = createWork(paths, "feature");
+  const signals: ReviewSignals = {
+    dependencies: [{ file: "package.json", added: { dependencies: ["b"] } }],
+    phrases: [],
+  };
+  const { dir } = writeReviewInputs(paths, work, ["package.json"], "fp-1", { signals });
+  const inputs = JSON.parse(readFileSync(join(dir, "inputs.json"), "utf8"));
+  expect(inputs.fingerprint).toBe("fp-1");
+  expect(inputs.dependencies).toEqual(signals.dependencies);
+  expect(inputs.phrases).toEqual([]);
+  expect(readReviewInputs(paths, work.id)).toMatchObject({
+    fingerprint: "fp-1",
+    dependencies: signals.dependencies,
+  });
+});
+
+test("2026-10-29-001 AC-3 (the test-quality advisories at round 2): the item's gate run hands the prose scan the item's own change, so a file dirty at the base and unchanged is not read; a change the scan cannot read is recorded unavailable with a non-zero exit and its reason", async () => {
+  const repo = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "export const a = 1;\n",
+  });
+  const paths = repoPaths(repo, testEnv());
+  const hope = ["I hope", "this helps"].join(" ");
+  write(repo, "src/earlier.ts", `// ${hope}\n`);
+  const work = createWork(paths, "fix", fingerprintModule.hashPaths(repo, ["src/earlier.ts"]));
+  addCriterion(work, "x");
+  write(repo, "src/a.ts", `export const a = 1;\n// ${hope}\n`);
+  const detected = ensureProfile(paths).profile;
+  const out = await runGates(paths, work, detected, DEFAULT_POLICY);
+  const prose = out.evidence.runs.find((r) => r.gate === "prose");
+  expect(prose?.status).toBe("fail");
+  expect(prose?.tail).toBe(`prose/chatbot-artefact src/a.ts:2: "// ${hope}"`);
+  // No base and a tree over the walk's cap: the gate is unavailable, never a pass.
+  const capped = spyOn(fingerprintModule, "allWatchedFiles").mockReturnValue(null);
+  try {
+    const run = await runOneGate(
+      paths,
+      { ...work, baseCommit: null },
+      detected,
+      { gate: "prose", target: "." },
+      "sha256:x",
+      ["src/a.ts"],
+      DEFAULT_POLICY,
+    );
+    expect(run.status).toBe("unavailable");
+    expect(run.exit).toBe(1);
+    expect(run.reason).toBe(
+      "the change could not be read: no base commit, and the tree is over the walk's cap",
+    );
+  } finally {
+    capped.mockRestore();
+  }
+});
+
+test("2026-10-29-001 AC-16: the secrets gate records a change it cannot read as unavailable with a non-zero exit and its reason, never a clean pass", async () => {
+  const repo = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "export const a = 1;\n",
+  });
+  const paths = repoPaths(repo, testEnv());
+  const work = createWork(paths, "fix");
+  addCriterion(work, "x");
+  const detected = ensureProfile(paths).profile;
+  const capped = spyOn(fingerprintModule, "allWatchedFiles").mockReturnValue(null);
+  try {
+    const run = await runOneGate(
+      paths,
+      { ...work, baseCommit: null },
+      detected,
+      { gate: "secrets", target: "." },
+      "sha256:x",
+      [],
+      DEFAULT_POLICY,
+    );
+    expect(run.status).toBe("unavailable");
+    expect(run.exit).toBe(1);
+    expect(run.reason).toBe(
+      "the change could not be read: no base commit, and the tree is over the walk's cap",
+    );
+  } finally {
+    capped.mockRestore();
+  }
+});
+
+test("2026-10-29-001 AC-5 (the architecture advisory at round 2): the reviewer's inputs read back keep only the elements of the shape the engine writes, as the captures beside them; only the two named fields are taken from the signals", () => {
+  const repo = makeRepo({ "package.json": JSON.stringify({ name: "x" }) });
+  const paths = repoPaths(repo, testEnv());
+  const work = createWork(paths, "fix");
+  const good = { file: "package.json", added: { dependencies: ["left-pad"] } };
+  const unreadable = { file: "composer.json", unreadable: true as const };
+  const phrase = { file: "src/a.ts", line: 3, phrase: "workaround" };
+  writeReviewInputs(paths, work, ["package.json"], "sha256:x", {
+    signals: {
+      dependencies: [
+        good,
+        unreadable,
+        { file: 3 },
+        { file: "x.json", added: { dependencies: [4] } },
+      ],
+      phrases: [phrase, { file: "src/a.ts", line: "3", phrase: "shim" }, null],
+    } as unknown as ReviewSignals,
+  });
+  const read = readReviewInputs(paths, work.id);
+  expect(read?.dependencies).toEqual([good, unreadable]);
+  expect(read?.phrases).toEqual([phrase]);
+  // Only the two named fields are taken from the signals: a key beside them never reaches the
+  // file, so no signal can overwrite the fingerprint the findings and the ruling are tied to.
+  const { dir } = writeReviewInputs(paths, work, ["package.json"], "sha256:engine", {
+    signals: {
+      dependencies: [],
+      phrases: [],
+      fingerprint: "sha256:forged",
+    } as unknown as ReviewSignals,
+  });
+  const written = JSON.parse(readFileSync(join(dir, "inputs.json"), "utf8"));
+  expect(written.fingerprint).toBe("sha256:engine");
+  expect(Object.keys(written).sort()).toEqual([
+    "at",
+    "captures",
+    "dependencies",
+    "fingerprint",
+    "phrases",
+  ]);
+});

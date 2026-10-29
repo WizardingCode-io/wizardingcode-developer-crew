@@ -100,3 +100,8 @@ function inTestsFolder(path: string): boolean {
 function isTestName(name: string): boolean {
   return /\.(?:test|spec)\./.test(name);
 }
+
+/** A Markdown file: prose the prose gate and the review's phrase inputs treat as text (2026-10-29-001). */
+export function isMarkdownPath(rel: string): boolean {
+  return /\.(?:md|mdx)$/i.test(rel);
+}

@@ -1,0 +1,6 @@
+# evals/prose-gate-refuses-chatbot-artefact/case.yaml
+schema_version: "1.1"
+name: prose-gate-refuses-chatbot-artefact
+tags: [enforcement]
+context:
+  scaffold_script: fixture.sh

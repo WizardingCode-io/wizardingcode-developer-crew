@@ -34,9 +34,9 @@ crew pack add packs/frontend
 
 The pack ships with the cases that show its difference (`plugins/core/evals` of the core repository, SP9 Task 10): `pack-frontend-seats-the-team` (a Node tree with a Vue component under `components/`, the pack registered and the policy set: `crew team <id>` lists the expert's seat with the reason `pack wizardingcode-pack-frontend (components/**)`, the trace names `knowledge/frontend.md` and `knowledge/motion.md`, the notice gains its dismiss transition with a `prefers-reduced-motion` branch and no `transition: all`, and the ending says what the report proves) and `pack-frontend-absent` (the same tree with no pack and no policy: no seat, no knowledge path, the same transition, the same honest ending). Every entry under `provenance` in `pack.json` names the seat case as the one that measured it.
 
-## Sources read on 2026-10-27
+## Sources read on 2026-10-29
 
-Every URL the pack's files name, with the claim it supports.
+Every URL the pack's files name, with the claim it supports. The entries were read on 2026-10-27 unless they say otherwise.
 
 - https://www.w3.org/TR/WCAG22/ · WCAG 2.2, the success criteria the standard cites by number (2.1.1, 2.4.3, 2.1.2, 2.4.7, 2.4.11, 1.3.1, 4.1.2, 1.4.3, 1.4.11, 1.4.10, 1.4.4, 2.5.8, 2.3.3).
 - https://developer.mozilla.org/en-US/docs/Web/CSS/@media/prefers-reduced-motion · the media feature `prefers-reduced-motion: reduce`, set by the user's system, read by a stylesheet or `matchMedia`.
@@ -59,6 +59,7 @@ Every URL the pack's files name, with the claim it supports.
 - https://github.com/ConardLi/garden-skills · the acceptance protocol and the failure patterns folded into the standard (MIT, commit `2b9a893`).
 - https://github.com/every-app/open-seo · the states enumerated before any capture, folded into the standard (MIT, commit `89ad06c`).
 - https://github.com/blader/humanizer · the copy tells folded into the standard (MIT, commit `8c307f3`).
+- https://github.com/Leonxlnx/taste-skill · read on 2026-10-29 at tag v2.1.2: the dated tells of a generated interface folded into the knowledge file, the overflow, image, font and reduced-motion probes into the fixture's measurements (MIT, commit `b9ca2fd`).
 - https://github.com/WizardingCode-io/wizardingcode-developer-crew · the core repository (the plugin manifest's homepage and repository).
 - https://wizardingcode.io · the author.
 

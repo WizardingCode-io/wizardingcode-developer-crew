@@ -52,6 +52,8 @@ function openFindings(text: string): number[] {
 // SP9 Task 13 (2026-10-28-006) from the Blade case's first run, for the next touch of crew pack files.
 // 194 to 197 recorded and closed by the same item (the gap round's read, the uncounted note's way, the
 // account after a blocked turn end, the unattended case's standing grant).
+// 198 (the Stop hook counting a learned item's committed change against the next item) recorded and
+// closed by 2026-10-29-001 (AC-1).
 const OPEN = [77, 114, 177, 178, 181, 182, 183];
 
 test("AC-9 (consolidation of 2026-10-24): the findings that read open are the named ones, and the thirteen closed by the consolidation read closed", () => {
@@ -80,4 +82,12 @@ test("2026-10-28-004 AC-12: finding 193's residual sentence reads closed by the 
   expect(readFileSync(FINDINGS, "utf8")).toContain(
     "The residual the security lead named at the spec's round 4 (the tests' own child processes) is closed by `2026-10-28-004`",
   );
+});
+
+test("2026-10-29-001 AC-12 (the test-quality advisory at round 1): finding 198's outcome names the item and the criterion that closed it", () => {
+  const section =
+    readFileSync(FINDINGS, "utf8")
+      .split(/\n(?=### \d+\. )/)
+      .find((s) => s.startsWith("### 198. ")) ?? "";
+  expect(section).toContain("- Outcome: closed by `2026-10-29-001` (AC-1)");
 });

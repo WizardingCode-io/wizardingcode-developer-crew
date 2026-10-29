@@ -6,12 +6,12 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { allWatchedFiles } from "./fingerprint.ts";
+import { allWatchedFiles, gitShowFile } from "./fingerprint.ts";
 import { nowIso, regularFileSize, writeText } from "./fs.ts";
 import { type CrewPaths, workDir } from "./paths.ts";
-import { isInterfacePath } from "./paths-kind.ts";
+import { isInterfacePath, isTestPath } from "./paths-kind.ts";
+import { safeText } from "./quote.ts";
 import type { Policy, Profile, WorkItem } from "./types.ts";
-import { safeText } from "./ui.ts";
 
 /** The rules, in the order their hits are listed within one line. */
 export const LINT_RULES = [
@@ -24,6 +24,13 @@ export const LINT_RULES = [
   "hover/unguarded",
   "perf/will-change",
   "tokens/raw-colour",
+  // 2026-10-29-001 (P-2): the standard's Refused list, from taste-skill (MIT, Leonxlnx, v2.1.2) and
+  // ai-slop-cleaner (MIT, oh-my-claudecode, 8690a21), distilled.
+  "craft/gradient-text",
+  "craft/emoji",
+  "copy/placeholder",
+  "craft/glass",
+  "layout/100vh",
 ] as const;
 export type LintRule = (typeof LINT_RULES)[number];
 
@@ -31,7 +38,17 @@ const ADVISORY_RULES: ReadonlySet<string> = new Set([
   "motion/ease-in",
   "hover/unguarded",
   "perf/will-change",
+  "craft/glass",
+  "layout/100vh",
 ]);
+
+/** The device a contract declares to turn a craft rule off (`devices:` in `DESIGN.md`'s front matter). */
+const RULE_DEVICE: Partial<Record<LintRule, string>> = {
+  "craft/gradient-text": "gradient-text",
+  "craft/emoji": "emoji",
+  "craft/glass": "glass",
+  "layout/100vh": "full-viewport",
+};
 
 export type LintVerdictKind = "defect" | "advisory" | "disabled";
 
@@ -65,8 +82,10 @@ export interface LintInventoryEntry {
 export interface LintOptions {
   /** The rule ids `policy.json` disables (`ui.lint.disabled`): their hits are kept and never judged. */
   disabled?: readonly string[];
-  /** The design contract, when the project has one: whether it declares colour tokens. */
-  contract?: { colours: boolean } | null;
+  /** The design contract, when the project has one: whether it declares colour tokens, and the devices it adopts. */
+  contract?: { colours: boolean; devices?: readonly string[] } | null;
+  /** The devices the base commit's contract declared; a device counts only when it is there too. Absent: the contract's own (no history to compare). */
+  baseDevices?: readonly string[];
   /** The project's watched files, searched for the reduced-motion guard when the change adds motion. */
   projectFiles?: readonly string[];
 }
@@ -83,6 +102,10 @@ export interface LintResult {
   disabled: string[];
   /** The ids the policy named that no rule has. */
   unknownDisabled: string[];
+  /** The craft rules the project's design contract turns off, with the device it declares (2026-10-29-001). */
+  offByContract?: { rule: string; device: string }[];
+  /** The devices this change's contract declares that its base did not: their rules stay on until the declaration is committed. */
+  pendingByContract?: { rule: string; device: string }[];
 }
 
 /** The counts a gate run carries (`GateRun.lint`). */
@@ -112,6 +135,24 @@ const MOTION_ADDED =
 const GUARD = /prefers-reduced-motion|useReducedMotion|reducedMotion|motion-reduce:/;
 const RAW_COLOUR = /#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})\b|\b(?:rgba?|hsla?)\(/i;
 const ALLOWANCE = /crew-lint:\s*allow\s+(\S+)\s+--\s*(.*?)\s*(?:\*\/|-->|$)/;
+const GRADIENT_TEXT = /(?:-webkit-)?background-clip\s*:\s*text\b|(?<![\w-])bg-clip-text(?![\w-])/;
+/** A pictograph (the Unicode property), never a symbol a page uses as text: ©, ®, ™, arrows, •, ✓. */
+const EMOJI = /\p{Extended_Pictographic}/u;
+const NOT_EMOJI = /[\u00a9\u00ae\u2122\u2190-\u21ff\u2022\u2713]/gu;
+const PLACEHOLDER =
+  /\blorem ipsum\b|\bjohn doe\b|\bjane doe\b|(?<![\p{L}\p{N}])acme(?![\p{L}\p{N}])|(?:^|[@/.\s'"])example\.com(?=$|[/:"'\s])/u;
+/** An input's `placeholder` attribute with its quoted value. */
+const PLACEHOLDER_ATTRIBUTE = /\bplaceholder\s*=\s*(["'])[^"']*\1/g;
+const GLASS = /\bbackdrop-filter\s*:|(?<![\w-])backdrop-blur(?:-[a-z0-9]+)?(?![\w-])/;
+const FULL_VIEWPORT = /\b100vh\b|(?<![\w-])(?:min-)?h-screen(?![\w-])/;
+/** A line without its comments (a line comment not after a scheme's colon, a block comment, an HTML or a Blade comment): what the copy rules read. */
+function outsideComments(line: string): string {
+  return line
+    .replace(/<!--.*?(?:-->|$)/g, "")
+    .replace(/\{\{--.*?(?:--\}\}|$)/g, "")
+    .replace(/\/\*.*?(?:\*\/|$)/g, "")
+    .replace(/(?<!:)\/\/.*$/, "");
+}
 
 /** A relative path with no `..` segment: the only kind the lint opens. */
 function isSafeRelative(rel: string): boolean {
@@ -164,7 +205,13 @@ function values(line: string, pattern: RegExp): string[] {
 }
 
 /** The hits one line gives, each rule once per line, in the rules' order. */
-function lineHits(lower: string, inKeyframes: boolean, colours: boolean): LintRule[] {
+function lineHits(
+  lower: string,
+  inKeyframes: boolean,
+  colours: boolean,
+  raw: string,
+  testFile: boolean,
+): LintRule[] {
   const hits: LintRule[] = [];
   if (/\btransition(?:-property)?\s*:\s*all\b/.test(lower) || /\btransition-all\b/.test(lower))
     hits.push("motion/transition-all");
@@ -188,6 +235,15 @@ function lineHits(lower: string, inKeyframes: boolean, colours: boolean): LintRu
   if (over || (tailwind && Number(tailwind[1]) > 500)) hits.push("motion/duration-over-500");
   if (/\bease-in\b(?!-out)/.test(lower)) hits.push("motion/ease-in");
   if (colours && RAW_COLOUR.test(lower)) hits.push("tokens/raw-colour");
+  if (GRADIENT_TEXT.test(lower)) hits.push("craft/gradient-text");
+  // The copy rules read the line outside its comments, once; an input's placeholder attribute is
+  // the convention for an example value, not shipped copy.
+  const copy = outsideComments(raw);
+  if (EMOJI.test(copy.replace(NOT_EMOJI, ""))) hits.push("craft/emoji");
+  if (!testFile && PLACEHOLDER.test(copy.toLowerCase().replace(PLACEHOLDER_ATTRIBUTE, "")))
+    hits.push("copy/placeholder");
+  if (GLASS.test(lower)) hits.push("craft/glass");
+  if (FULL_VIEWPORT.test(lower)) hits.push("layout/100vh");
   return hits;
 }
 
@@ -264,6 +320,16 @@ export function lintInterfaceFiles(
   const disabled = wanted.filter((id) => known.has(id));
   const unknownDisabled = wanted.filter((id) => !known.has(id));
   const colours = options.contract?.colours === true;
+  // A device the contract adopts turns its rule off for the project (2026-10-29-001, P-2), once
+  // the base commit's contract declared it too: a change cannot switch a rule off for itself.
+  const devices = new Set(options.contract?.devices ?? []);
+  const atBase = new Set(options.baseDevices ?? options.contract?.devices ?? []);
+  const declared = (Object.entries(RULE_DEVICE) as [LintRule, string][]).filter(([, device]) =>
+    devices.has(device),
+  );
+  const offPairs = declared.filter(([, device]) => atBase.has(device));
+  const pendingPairs = declared.filter(([, device]) => !atBase.has(device));
+  const offByContract = new Set<string>(offPairs.map(([rule]) => rule));
   const files: string[] = [];
   const skipped: string[] = [];
   const texts = new Map<string, string>();
@@ -301,7 +367,13 @@ export function lintInterfaceFiles(
         keyframesDepth = depth;
       }
       const text = safeText(raw);
-      const rules: string[] = lineHits(lower, inKeyframes, colours);
+      const rules: string[] = lineHits(
+        lower,
+        inKeyframes,
+        colours,
+        raw.replace(/crew-lint:[^*\n]*/g, ""),
+        isTestPath(file),
+      ).filter((rule) => !offByContract.has(rule));
       if (/:hover\b/.test(lower) && !guarded && !hoverSaid) {
         hoverSaid = true;
         rules.push("hover/unguarded");
@@ -359,18 +431,63 @@ export function lintInterfaceFiles(
       a.line - b.line ||
       order(a.rule) - order(b.rule),
   );
-  return { files, skipped, hits, unresolved, inventory, disabled, unknownDisabled };
+  return {
+    files,
+    skipped,
+    hits,
+    unresolved,
+    inventory,
+    disabled,
+    unknownDisabled,
+    offByContract: offPairs.map(([rule, device]) => ({ rule, device })),
+    pendingByContract: pendingPairs.map(([rule, device]) => ({ rule, device })),
+  };
 }
 
-/** The design contract's colour declaration: `DESIGN.md` at the root or under `docs/`, read as a regular file; null without one. */
-export function readDesignContract(root: string): { colours: boolean } | null {
+/** The `devices:` list of a front matter, inline (`[a, b]`) or as `- a` lines; only `[a-z-]` names. */
+function frontDevices(front: string): string[] {
+  const inline = /^devices\s*:\s*\[([^\]\n]*)\]/m.exec(front);
+  const block = /^devices\s*:\s*\n((?:[ \t]+-[ \t]*[^\n]*\n?)+)/m.exec(front);
+  const raw = inline
+    ? (inline[1] ?? "").split(",")
+    : block
+      ? (block[1] ?? "").split("\n").map((l) => l.replace(/^[ \t]+-[ \t]*/, ""))
+      : [];
+  return raw.map((d) => d.trim().replace(/^["']|["']$/g, "")).filter((d) => /^[a-z-]+$/.test(d));
+}
+
+/** The contract's text and its declarations: its colour tokens and the devices its front matter adopts. */
+function contractOf(text: string): { colours: boolean; devices: string[] } {
+  const front = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text);
+  return {
+    colours: front !== null && /^colou?rs\s*:/m.test(front[1] ?? ""),
+    devices: front ? frontDevices(`${front[1] ?? ""}\n`) : [],
+  };
+}
+
+/** The first contract's text a reader finds, `DESIGN.md` at the root then under `docs/`; null without one. */
+function firstContract(read: (path: string) => string | null): string | null {
   for (const candidate of ["DESIGN.md", "docs/DESIGN.md"]) {
-    const text = readSafe(root, candidate);
-    if (text === null) continue;
-    const front = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text);
-    return { colours: front !== null && /^colou?rs\s*:/m.test(front[1] ?? "") };
+    const text = read(candidate);
+    if (text !== null) return text;
   }
   return null;
+}
+
+/** The devices the contract declared at the base commit, read from git; the working tree's when there is no base. */
+function baseContractDevices(root: string, base: string | null): string[] | undefined {
+  if (base === null) return undefined;
+  const text = firstContract((path) => {
+    const shown = gitShowFile(root, base, path);
+    return shown !== null && shown.length <= FILE_MAX ? shown : null;
+  });
+  return text === null ? [] : contractOf(text).devices;
+}
+
+/** The design contract's declarations: `DESIGN.md` at the root or under `docs/`, read as a regular file; its colour tokens and the devices it adopts; null without one. */
+export function readDesignContract(root: string): { colours: boolean; devices: string[] } | null {
+  const text = firstContract((path) => readSafe(root, path));
+  return text === null ? null : contractOf(text);
 }
 
 /** The hits by what they count as: the standing defects, the advisories, the allowed and the disabled; one place says what stands. */
@@ -409,6 +526,12 @@ export function lintVerdict(result: LintResult): {
   }
   if (result.unknownDisabled.length)
     lines.push(`unknown rule in ui.lint.disabled: ${result.unknownDisabled.join(", ")}`);
+  for (const off of result.offByContract ?? [])
+    lines.push(`${off.rule} off: DESIGN.md declares ${off.device}`);
+  for (const pending of result.pendingByContract ?? [])
+    lines.push(
+      `${pending.rule} on: DESIGN.md declares ${pending.device} in this change; it takes effect once committed`,
+    );
   if (result.skipped.length) lines.push(`skipped: ${result.skipped.join(", ")}`);
   lines.push(`unresolved: ${result.unresolved.length}`);
   lines.push(`inventory: ${result.inventory.length} animated declarations (${DESIGN_LINT_FILE})`);
@@ -478,6 +601,7 @@ export function runDesignLint(options: {
   const result = lintInterfaceFiles(paths.root, files, {
     disabled: policy.ui.lint.disabled,
     contract: readDesignContract(paths.root),
+    baseDevices: baseContractDevices(paths.root, work.baseCommit),
     projectFiles: allWatchedFiles(paths.root, profile) ?? [],
   });
   const verdict = lintVerdict(result);

@@ -32,7 +32,7 @@ Why 40 ms and not 100 for the stagger: both motion sources (emilkowalski/skills 
 
 ## Interface floor
 
-Every control has its hover, focus-visible, active, disabled, loading, error, empty and success state where the page can reach it. Contrast 4.5:1 for body text, 3:1 for large text and non-text. Targets 24 px, 44 on touch. A focus ring from the tokens, never removed without a replacement. A body measure of 65 to 75 characters. Icons from one set, never emoji. Refused: identical card grids, alternating left-right sections, eyebrows, gradient text, glass by default, side-stripe borders, counts or testimonials with no source, motion for spectacle, a page whose error and empty branches cannot be reached.
+Every control has its hover, focus-visible, active, disabled, loading, error, empty and success state where the page can reach it. Contrast 4.5:1 for body text, 3:1 for large text and non-text. Targets 24 px, 44 on touch. A focus ring from the tokens, never removed without a replacement. A body measure of 65 to 75 characters. Icons from one set, never emoji. Refused: identical card grids, alternating left-right sections, eyebrows, gradient text, glass by default, side-stripe borders, counts or testimonials with no source, motion for spectacle, a page whose error and empty branches cannot be reached. The design lint enforces what text alone can see of it: `craft/gradient-text`, `craft/emoji` and `copy/placeholder` (lorem ipsum, John Doe, Acme, example.com in a shipped view) are defects, `craft/glass` and `layout/100vh` (use `svh` or `dvh`) advisories, each off for a project whose `DESIGN.md` front matter declares the device under `devices:` (`references/gate.md`).
 
 ## Accessibility
 

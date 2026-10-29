@@ -86,6 +86,9 @@ export function untrackedPaths(root: string): string[] | null {
   return out === null ? null : out.split("\0").filter(Boolean);
 }
 
+/** A unified diff's hunk header; its first group is the hunk's first line in the new file (the review's cut and the scans' reading). */
+export const HUNK_HEADER = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
+
 /** Paths that differ from a base commit, committed since or not, plus untracked files. Null when git could not run. */
 export function gitChangedSince(root: string, base: string): string[] | null {
   const diff = gitTry(root, ["diff", "--name-only", "--no-renames", "-z", base, "--"]);

@@ -45,6 +45,8 @@ test("SP6-T4 AC-6: buildTarball writes the archive of plugins/core under one fol
     `${TOP}/agents`,
     `${TOP}/bin`,
     `${TOP}/dist`,
+    // 2026-10-29-001 edits this list: the e2e fixture ships with the plugin.
+    `${TOP}/e2e`,
     `${TOP}/hooks`,
     `${TOP}/skills`,
   ]);
@@ -134,4 +136,17 @@ test("SP6-T4 AC-8: crew runtime install and check run from the extracted tarball
     permission: "deny",
     agent_message: `Crew: ${join(repo, ".crew", "profile.json")} is maintained by the engine and is changed through the crew command`,
   });
+});
+
+test("2026-10-29-001 (the risk reviewer's debt note at round 1): the archive ships the e2e fixture the gate reference imports from the plugin root, playwright.mjs and the measure.mjs it imports", () => {
+  const archive = buildTarball(VERSION, tempDir("tarball-e2e-"));
+  const paths = entries(archive).map((e) => e.path);
+  expect(paths).toContain(`${TOP}/e2e/playwright.mjs`);
+  expect(paths).toContain(`${TOP}/e2e/measure.mjs`);
+  const reference = readFileSync(
+    join(REPO, "plugins", "core", "skills", "crew", "references", "gate.md"),
+    "utf8",
+  );
+  // The import line as gate.md writes it, the variable spelled in parts so no template is read.
+  expect(reference).toContain(`${"$"}{CLAUDE_PLUGIN_ROOT}/e2e/playwright.mjs`);
 });

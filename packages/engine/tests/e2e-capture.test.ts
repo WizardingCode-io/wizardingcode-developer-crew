@@ -56,6 +56,14 @@ interface Options {
   screenshotThrowsAt?: number;
   /** The strip composition fails in the page. */
   stripFails?: boolean;
+  /** The answers of `measure.mjs`'s functions by name (2026-10-29-001); absent, each throws and its field is absent. */
+  measures?: {
+    overflow?: unknown[];
+    images?: unknown;
+    fonts?: unknown;
+    app?: unknown;
+    blocks?: unknown[];
+  };
 }
 
 interface Shot {
@@ -152,6 +160,13 @@ function fakePage(options: Options = {}) {
         return PNG_DATA_URL;
       }
       if (src.includes("crewSettle")) return undefined;
+      // The measurements of measure.mjs, by their function's name, in the order the fixture asks.
+      const m = options.measures;
+      if (m && src.includes("function measureOverflow")) return m.overflow?.shift() ?? null;
+      if (m && src.includes("function brokenImages")) return m.images;
+      if (m && src.includes("function fontsNotLoaded")) return m.fonts;
+      if (m && src.includes("function appMeasures")) return m.app;
+      if (m && src.includes("function textBlocks")) return m.blocks?.shift() ?? null;
       throw new Error(`unexpected evaluate: ${src.slice(0, 60)}`);
     },
   };
@@ -702,4 +717,52 @@ test("SP9-T2 AC-9: a joined name another pair already owns is refused before any
   // The same pair again is not a clash: a capture may be retaken.
   await capture(fake.page, "a-b", "c");
   await captureMotion(fake.page, "a-b", "c", async () => {});
+});
+
+test("2026-10-29-001 AC-6: capture() carries the page's measurements into the metadata: the overflow per viewport, the broken images, the fonts not loaded, the app measures and the text the reduced-motion pass hides", async () => {
+  const { capture } = await helpers();
+  const root = tempDir();
+  const ui = join(root, "review", "ui");
+  process.env.WIZARDINGCODE_CREW_UI_DIR = ui;
+  process.env.WIZARDINGCODE_CREW_UI_PLAN = plan(root, THREE);
+  const block = (visible: boolean) => ({ target: "p.lead", text: "Your order", visible });
+  const fake = fakePage({
+    measures: {
+      overflow: [
+        { overflowPx: 40, offenders: [{ target: "div.row", right: 400 }] },
+        { overflowPx: 0, offenders: [] },
+        { overflowPx: 0, offenders: [] },
+      ],
+      images: ["https://cdn.example/a.png"],
+      fonts: ["Brand Sans"],
+      app: {
+        width: 360,
+        numericCells: 0,
+        rightAlignedShare: 0,
+        tabularShare: 0,
+        chartHues: [],
+        sidebarShare: 0,
+      },
+      blocks: [[block(true)], [block(false)]],
+    },
+  });
+  const meta = (await capture(fake.page, "checkout", "default")) as {
+    viewports: { width: number; overflow?: unknown }[];
+    images?: unknown;
+    fonts?: unknown;
+    app?: unknown;
+    reducedMotion: { hidden?: unknown };
+  };
+  expect(meta.viewports.map((v) => [v.width, v.overflow])).toEqual([
+    [360, { overflowPx: 40, offenders: [{ target: "div.row", right: 400 }] }],
+    [768, { overflowPx: 0, offenders: [] }],
+    [1280, { overflowPx: 0, offenders: [] }],
+  ]);
+  expect(meta.images).toEqual(["https://cdn.example/a.png"]);
+  expect(meta.fonts).toEqual(["Brand Sans"]);
+  expect(meta.app).toMatchObject({ width: 360 });
+  expect(meta.reducedMotion.hidden).toEqual([{ target: "p.lead", text: "Your order" }]);
+  // A page that cannot answer leaves the fields absent, never empty: the engine reads them as not captured.
+  const quiet = (await capture(fakePage().page, "checkout", "empty")) as Record<string, unknown>;
+  expect("images" in quiet || "fonts" in quiet || "app" in quiet).toBe(false);
 });

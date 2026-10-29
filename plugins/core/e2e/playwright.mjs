@@ -19,6 +19,14 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
+import {
+  appMeasures,
+  brokenImages,
+  fontsNotLoaded,
+  hiddenText,
+  measureOverflow,
+  textBlocks,
+} from "./measure.mjs";
 
 const NAME = /^[a-z0-9-]+$/;
 const NAME_RULE = "use [a-z0-9-]+ (the engine reads the name from the file)";
@@ -405,11 +413,22 @@ async function sampleAnimations(page, onlyRunning) {
   );
 }
 
-/** The reduced-motion pass: what still runs under `prefers-reduced-motion: reduce`; `not captured` with the reason when the page cannot say. */
-async function reducedMotionPass(page) {
+/** One measurement of `measure.mjs` run in the page with its `document` and `window`; null when the page cannot say. */
+async function inPage(page, fn) {
+  try {
+    return await page.evaluate(`(${fn.toString()})(document, window)`);
+  } catch {
+    return null;
+  }
+}
+
+/** The reduced-motion pass: what still runs under `prefers-reduced-motion: reduce`, and the text it hides (2026-10-29-001); `not captured` with the reason when the page cannot say. */
+async function reducedMotionPass(page, before) {
   try {
     await page.emulateMedia({ reducedMotion: "reduce" });
     await page.evaluate(crewSettle);
+    const after = await inPage(page, textBlocks);
+    const hidden = Array.isArray(before) && Array.isArray(after) ? hiddenText(before, after) : null;
     const running = (await sampleAnimations(page, true)).map((a) => ({
       target: a.target,
       name: a.name,
@@ -417,7 +436,7 @@ async function reducedMotionPass(page) {
       durationMs: a.durationMs,
       properties: a.properties,
     }));
-    return { status: running.length ? "running" : "clean", running };
+    return { status: running.length ? "running" : "clean", running, ...(hidden ? { hidden } : {}) };
   } catch (error) {
     return { status: "not captured", reason: String(error?.message ?? error), running: [] };
   }
@@ -476,19 +495,30 @@ export async function capture(page, pageName, state, options = {}) {
   const log = attachConsole(page, consoleFile());
   const original = page.viewportSize();
   const shots = [];
+  let app = null;
   try {
     for (const viewport of viewports) {
       await page.setViewportSize({ width: viewport.width, height: viewport.height });
       await page.emulateMedia({ colorScheme: "light" });
       const light = `${base}@${viewport.width}.png`;
       await shoot(page, selector, join(dir, light));
+      // The overflow at this width and, at the narrowest, the app measures (2026-10-29-001, P-1, P-3).
+      const overflow = await inPage(page, measureOverflow);
+      if (viewport === viewports[0]) app = await inPage(page, appMeasures);
       let darkFile = null;
       if (dark && viewport === widest) {
         await page.emulateMedia({ colorScheme: "dark" });
         darkFile = `${base}@${viewport.width}-dark.png`;
         await shoot(page, selector, join(dir, darkFile));
       }
-      shots.push({ name: viewport.name, width: viewport.width, height: viewport.height, light, dark: darkFile });
+      shots.push({
+        name: viewport.name,
+        width: viewport.width,
+        height: viewport.height,
+        light,
+        dark: darkFile,
+        ...(overflow ? { overflow } : {}),
+      });
     }
     const entries = log.entries.slice(log.cursor);
     log.cursor = log.entries.length;
@@ -509,7 +539,12 @@ export async function capture(page, pageName, state, options = {}) {
     } catch {
       vitals = { cls: null, lcpMs: null, inpMs: null, longTasks: null };
     }
-    const reducedMotion = await reducedMotionPass(page);
+    // The page's images and fonts (2026-10-29-001, P-1), then the first reading of the text blocks
+    // the reduced-motion pass compares.
+    const images = await inPage(page, brokenImages);
+    const fonts = await inPage(page, fontsNotLoaded);
+    const before = await inPage(page, textBlocks);
+    const reducedMotion = await reducedMotionPass(page, before);
     const meta = {
       page: pageName,
       state,
@@ -522,6 +557,9 @@ export async function capture(page, pageName, state, options = {}) {
       axe,
       vitals,
       reducedMotion,
+      ...(images ? { images } : {}),
+      ...(fonts ? { fonts } : {}),
+      ...(app ? { app } : {}),
     };
     writeFileSync(join(dir, `${base}.json`), `${JSON.stringify(meta, null, 1)}\n`);
     return meta;

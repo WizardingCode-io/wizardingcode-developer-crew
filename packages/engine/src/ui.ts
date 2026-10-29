@@ -21,6 +21,7 @@ import { isWatched } from "./fingerprint.ts";
 import { isRegularFile, nowIso, readRegularText, writeText } from "./fs.ts";
 import { type Capture, listCaptures, reviewDir } from "./judgement.ts";
 import { type CrewPaths, workDir } from "./paths.ts";
+import { quotedText, SAFE_TEXT_MAX, safeText } from "./quote.ts";
 import { SKIP_DIRS } from "./skip-dirs.ts";
 import type { Profile, Screen, UiArtifact, Viewport, WorkItem } from "./types.ts";
 
@@ -434,17 +435,10 @@ const LAYOUT_PROPERTIES = [
 const AXE_FAILING = new Set(["serious", "critical"]);
 /** A file under `review/ui/` is data: its size is capped, its strings are made safe, its lists are cut. */
 export const EVIDENCE_FILE_MAX = 1024 * 1024;
-export const SAFE_TEXT_MAX = 120;
 export const IDS_MAX = 5;
 
-/** One line of safe text from a file's string: the first line, no control characters, capped with an ellipsis. */
-export function safeText(value: unknown, max = SAFE_TEXT_MAX): string {
-  const text = value === null || value === undefined ? "" : String(value);
-  const line = text.split(/\r?\n/)[0] ?? "";
-  // biome-ignore lint/suspicious/noControlCharactersInRegex: the control characters are what is stripped
-  const clean = line.replace(/[\u0000-\u001f\u007f]/g, "").trim();
-  return clean.length > max ? `${clean.slice(0, max - 1)}…` : clean;
-}
+// The quoting rules live in quote.ts (no imports), so the scans can quote without the UI module.
+export { quotedText, SAFE_TEXT_MAX, safeText };
 
 /** At most `max` items, then the count of the rest. */
 export function safeList(items: readonly string[], max = IDS_MAX): string {
@@ -468,6 +462,28 @@ export interface UiScreenRow {
   axe: AxeStatus;
   vitals: { cls: number | null; lcpMs: number | null; inpMs: number | null } | null;
   reducedMotion: ReducedMotionStatus;
+  /** The page's own measurements (2026-10-29-001, P-1), set on a captured row: `not captured` where the capture has no field. */
+  measures?: UiPageMeasures;
+}
+
+/** What the fixture measured in the page itself, per captured screen (2026-10-29-001). */
+export interface UiPageMeasures {
+  overflow: "clean" | "overflow" | "not captured";
+  images: "clean" | "broken" | "not captured";
+  fonts: "loaded" | "not loaded" | "not captured";
+  hiddenText: "clean" | "hidden" | "not captured";
+  /** The app-screen evidence the fixture measured at the narrowest width, numbers only (P-3); absent when not captured. */
+  app?: UiAppMeasures;
+}
+
+/** The numbers of an app screen the ui-ux reviewer reads (rubric question 11): never a finding on their own. */
+export interface UiAppMeasures {
+  width: number;
+  numericCells: number;
+  rightAlignedShare: number;
+  tabularShare: number;
+  chartHues: number[];
+  sidebarShare: number;
 }
 
 export interface UiInteractionRow {
@@ -626,6 +642,8 @@ interface MetaReading {
   axeUnreadable: string | null;
   vitals: UiScreenRow["vitals"];
   reducedMotion: { status: ReducedMotionStatus; entries: Running[] };
+  /** The page's own measurements (2026-10-29-001, P-1). */
+  page: PageReading;
 }
 
 /** A capture's metadata read for its shape (the fixture's); null when the shape is wrong. */
@@ -672,7 +690,7 @@ function readMeta(dir: string, meta: Json, base: string): MetaReading | null {
   }
   const reducedMotion = readReduced(meta.reducedMotion, "running");
   if (!reducedMotion) return null;
-  return { axe, axeUnreadable, vitals, reducedMotion };
+  return { axe, axeUnreadable, vitals, reducedMotion, page: readPage(meta) };
 }
 
 interface SampleReading {
@@ -748,6 +766,11 @@ interface Measured {
   reducedOffences: string[];
   axeOffences: string[];
   clsOffences: string[];
+  /** The page's own offences (2026-10-29-001, P-1), graded after axe and before CLS, and the fonts' advisory lines. */
+  overflowOffences: string[];
+  imageOffences: string[];
+  hiddenOffences: string[];
+  fontLines: string[];
   axeViolations: string[];
   axeReasons: string[];
   axeClean: number;
@@ -768,6 +791,10 @@ function measure(paths: CrewPaths, id: string, plan: UiPlan): Measured {
     reducedOffences: [],
     axeOffences: [],
     clsOffences: [],
+    overflowOffences: [],
+    imageOffences: [],
+    hiddenOffences: [],
+    fontLines: [],
     axeViolations: [],
     axeReasons: [],
     axeClean: 0,
@@ -835,7 +862,132 @@ function measureCaptures(m: Measured, paths: CrewPaths, id: string, dir: string)
       m.reducedSeen = true;
       m.reducedOffences.push(...reducedMotionOffences(reading.reducedMotion.entries, label));
     }
+    row.measures = reading.page.measures;
+    pageOffences(m, reading.page, label);
   }
+}
+
+/** The page's strings from a field, at most ten, each quoted (`quotedText`); null when the field is not a list. */
+function quotedStrings(value: unknown): string[] | null {
+  if (!Array.isArray(value)) return null;
+  return value
+    .filter((v): v is string => typeof v === "string")
+    .slice(0, 10)
+    .map((v) => quotedText(v));
+}
+
+/** A finite number at or above zero, or null. */
+function nonNegative(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+/** The app measures from the metadata, numbers only, every field checked; null when absent or malformed. */
+function appMeasuresOf(value: unknown): UiAppMeasures | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const a = value as Json;
+  const width = nonNegative(a.width);
+  const numericCells = nonNegative(a.numericCells);
+  const rightAlignedShare = nonNegative(a.rightAlignedShare);
+  const tabularShare = nonNegative(a.tabularShare);
+  const sidebarShare = nonNegative(a.sidebarShare);
+  const hues = Array.isArray(a.chartHues) ? a.chartHues.map(nonNegative) : null;
+  if (
+    width === null ||
+    numericCells === null ||
+    rightAlignedShare === null ||
+    tabularShare === null ||
+    sidebarShare === null ||
+    hues === null ||
+    hues.some((h) => h === null)
+  )
+    return null;
+  return {
+    width,
+    numericCells,
+    rightAlignedShare,
+    tabularShare,
+    chartHues: (hues as number[]).slice(0, 20),
+    sidebarShare,
+  };
+}
+
+/** What one capture's page measured, read once with its metadata: the statuses and the defects behind them. */
+interface PageReading {
+  measures: UiPageMeasures;
+  /** Each viewport that overflowed: its width, the pixels and the widest offender. */
+  overflow: { width: number; px: number; offender: string }[];
+  images: string[];
+  fonts: string[];
+  hidden: string[];
+}
+
+/**
+ * The page's own measurements of one capture (2026-10-29-001, P-1): the overflow per viewport, the
+ * broken images, the fonts not loaded and the text hidden under reduced motion, each `not captured`
+ * where the metadata has no field, and the app measures where it has them. Every string is the
+ * page's, quoted through `quotedText`; every number is checked. Nothing is graded here.
+ */
+function readPage(meta: Json): PageReading {
+  const page: PageReading = {
+    measures: {
+      overflow: "not captured",
+      images: "not captured",
+      fonts: "not captured",
+      hiddenText: "not captured",
+    },
+    overflow: [],
+    images: [],
+    fonts: [],
+    hidden: [],
+  };
+  const viewports = Array.isArray(meta.viewports) ? (meta.viewports as Json[]) : [];
+  const measured = viewports.filter((v) => isObject(v) && isObject(v.overflow));
+  if (measured.length) page.measures.overflow = "clean";
+  for (const v of measured) {
+    const o = v.overflow as Json;
+    const px = typeof o.overflowPx === "number" ? Math.round(o.overflowPx) : 0;
+    if (px <= 0) continue;
+    page.measures.overflow = "overflow";
+    const first = Array.isArray(o.offenders) ? (o.offenders[0] as Json | undefined) : undefined;
+    const offender =
+      first && typeof first.target === "string" ? quotedText(first.target) : "unknown";
+    page.overflow.push({ width: Number(v.width) || 0, px, offender });
+  }
+  const images = quotedStrings(meta.images);
+  if (images) {
+    page.measures.images = images.length ? "broken" : "clean";
+    page.images = images;
+  }
+  const fonts = quotedStrings(meta.fonts);
+  if (fonts) {
+    page.measures.fonts = fonts.length ? "not loaded" : "loaded";
+    page.fonts = fonts;
+  }
+  const reduced = isObject(meta.reducedMotion) ? meta.reducedMotion : null;
+  if (reduced && Array.isArray(reduced.hidden)) {
+    const hidden = (reduced.hidden as Json[])
+      .filter((h) => isObject(h) && typeof h.target === "string")
+      .slice(0, 10)
+      .map((h) => quotedText(h.target));
+    page.measures.hiddenText = hidden.length ? "hidden" : "clean";
+    page.hidden = hidden;
+  }
+  const app = appMeasuresOf(meta.app);
+  if (app) page.measures.app = app;
+  return page;
+}
+
+/** The capture's page defects added to the measurement as the gate's offence lines, and its fonts as an advisory line. */
+function pageOffences(m: Measured, page: PageReading, label: string): void {
+  for (const o of page.overflow)
+    m.overflowOffences.push(
+      `ui: horizontal overflow ${o.px}px on ${label}@${o.width} (${o.offender})`,
+    );
+  for (const src of page.images) m.imageOffences.push(`ui: broken image ${src} on ${label}`);
+  if (page.fonts.length)
+    m.fontLines.push(`ui: fonts not loaded on ${label}: ${page.fonts.join(", ")}`);
+  for (const target of page.hidden)
+    m.hiddenOffences.push(`ui: text hidden under reduced motion: ${target} (${label})`);
 }
 
 /** Each motion sample added to the measurement: its row, a missing strip counted, its reduced-motion rerun. */
@@ -912,6 +1064,9 @@ export function gradeUi(paths: CrewPaths, id: string, plan: UiPlan): UiGrade {
     (m.unreadable.length ? `ui: unreadable ${safeText(m.unreadable[0])}` : null) ??
     m.reducedOffences[0] ??
     m.axeOffences[0] ??
+    m.overflowOffences[0] ??
+    m.imageOffences[0] ??
+    m.hiddenOffences[0] ??
     m.clsOffences[0] ??
     null;
   const screens = [...m.rows.values()].sort(
@@ -960,7 +1115,16 @@ export function gradeUi(paths: CrewPaths, id: string, plan: UiPlan): UiGrade {
     : null;
   return {
     offence,
-    lines: measured ? measurementLines(m, axeStatus, reducedStatus) : [],
+    // The page's own offences and the fonts' advisory lines follow the four measurement lines (2026-10-29-001).
+    lines: measured
+      ? [
+          ...measurementLines(m, axeStatus, reducedStatus),
+          ...[m.overflowOffences[0], m.imageOffences[0], m.hiddenOffences[0]].filter(
+            (l): l is string => typeof l === "string",
+          ),
+          ...m.fontLines,
+        ]
+      : [],
     manifest,
     artifacts,
   };
@@ -996,7 +1160,16 @@ function isScreenRow(raw: unknown): raw is UiScreenRow {
     return false;
   if (raw.vitals !== null && !(isObject(raw.vitals) && finiteOrNull(raw.vitals.cls ?? null)))
     return false;
+  if (raw.measures !== undefined && !isPageMeasures(raw.measures)) return false;
   return true;
+}
+
+/** A screen's page measures as the engine writes them: four statuses, and the app measures when present. */
+function isPageMeasures(raw: unknown): raw is UiPageMeasures {
+  if (!isObject(raw)) return false;
+  const statuses = [raw.overflow, raw.images, raw.fonts, raw.hiddenText];
+  if (!statuses.every((s) => typeof s === "string")) return false;
+  return raw.app === undefined || appMeasuresOf(raw.app) !== null;
 }
 
 function isInteractionRow(raw: unknown): raw is UiInteractionRow {

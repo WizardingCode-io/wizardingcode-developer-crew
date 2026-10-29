@@ -139,7 +139,7 @@
 
 ### Task 14: The evals' sandbox browser and the core's cases
 
-**Files:** `plugins/core/evals/fixtures/playwright-page.sh` (new: the packages copied from the root's `node_modules`, the headless shell under `node_modules/.cache/ms-playwright` from `PLAYWRIGHT_BROWSERS_PATH` of the repository or `~/Library/Caches/ms-playwright`, the config, the `file://` page, the socketless environment extracted into `fixtures/flag-env.sh`, the spec importing the crew's fixture by the plugin folder's absolute path), `scripts/eval.ts` (`SANDBOX_TAGS` + `ui`; `eval-runner.test.ts`), the seven cases of the design §9, `judgement-gate-not-run/graders/*` ("no evidence"), `plugins/core/evals/README.md`.
+**Files:** `plugins/core/evals/fixtures/playwright-page.sh` (new: the packages copied from the root's `node_modules`, the headless shell under `node_modules/.cache/ms-playwright` from `PLAYWRIGHT_BROWSERS_PATH` of the repository or `~/Library/Caches/ms-playwright`, the config, the `file://` page, the socketless environment extracted into `fixtures/flag-env.sh`, the spec importing the crew's fixture by the plugin folder's absolute path), `scripts/eval.ts` (`SANDBOX_TAGS` + `ui`; `eval-runner.test.ts`), the eight cases of the design §9 (the seven, and `ui-ux-generic-tells`, which measures the UI/UX rubric's question 11 of item 2026-10-29-001 by the user's decision D-3, red with that rubric's base text and green with the current one), `judgement-gate-not-run/graders/*` ("no evidence"), `plugins/core/evals/README.md`.
 
 - [ ] Tests first: the runner's tag list pinned; each case's graders written before its fixture.
 - [ ] The fixture and the cases; each run once with `--case`.

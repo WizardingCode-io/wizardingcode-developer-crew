@@ -102,6 +102,12 @@
       "licence": "MIT",
       "commit": "8c307f3",
       "measuredBy": "pack-frontend-seats-the-team"
+    },
+    {
+      "source": "https://github.com/Leonxlnx/taste-skill",
+      "licence": "MIT",
+      "commit": "b9ca2fd",
+      "measuredBy": "pack-frontend-seats-the-team"
     }
   ]
 }

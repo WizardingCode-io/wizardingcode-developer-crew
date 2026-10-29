@@ -141,6 +141,11 @@ const CASES = [
   // SP9 Task 13 (2026-10-28-006): the laravel pack's Blade pair (the dusk rule, the screen checklist).
   "pack-laravel-blade-tags-the-view",
   "pack-laravel-blade-tags-the-view-absent",
+  // 2026-10-29-001 (AC-15, which superseded AC-10): the prose gate's measuring case.
+  "prose-gate-refuses-chatbot-artefact",
+  // 2026-10-29-001 (D-3, AC-18): the measuring cases of the writing standard and of the code-quality questions.
+  "writing-standard-ending-without-tells",
+  "code-quality-flags-unasked-dependency",
 ];
 /** The pack pairs' cases, by their prefix (SP9 Task 11: derived, so a new pair edits no count). */
 const PACK_CASES = CASES.filter((name) => name.startsWith("pack-"));
@@ -155,7 +160,7 @@ const PACK_BY_PREFIX: Record<string, string> = {
 /** The with halves of the pack pairs, the cases that register a pack (SP9 Task 11): derived once for the two tests that read them. */
 const WITH_CASES = PACK_CASES.filter((name) => !name.endsWith("-absent"));
 
-test("SP2c, SP7b-T7 AC-1, SP3-T1 AC-5, SP3-T7 AC-1, SP4-T6 AC-1: the fifty cases each have their four parts, and the fixtures they share exist", () => {
+test("SP2c, SP7b-T7 AC-1, SP3-T1 AC-5, SP3-T7 AC-1, SP4-T6 AC-1: the fifty-three cases each have their four parts, and the fixtures they share exist", () => {
   const folders = readdirSync(EVALS)
     // benchmark.json is the benchmark set (SP6 Task 5), not a case.
     .filter((f) => !["README.md", "benchmark.json", "fixtures", "results"].includes(f))
@@ -545,6 +550,28 @@ Object.assign(SCAFFOLD_STATE, {
     },
     { file: "packs/wizardingcode-pack-laravel.json", home: true, absent: true },
   ],
+  // 2026-10-29-001 (AC-15): the planted line is in the working tree, uncommitted, above the function.
+  "prose-gate-refuses-chatbot-artefact": [
+    { file: "src/greet.mjs", pattern: /^\/\/ I hope this he[l]ps!/ },
+    { committed: /^tests\/greet\.test\.mjs$/ },
+  ],
+  // 2026-10-29-001 (D-3, AC-18): the person's draft README, committed, with its unsourced claim and its scope limits.
+  "writing-standard-ending-without-tells": [
+    { file: "src/accounts.mjs", pattern: /export function listAccounts/ },
+    {
+      file: "README.md",
+      pattern: /Studies show[\s\S]*Node 20 or later[\s\S]*not measured on Windows/,
+    },
+    { committed: /^README\.md$/ },
+  ],
+  // 2026-10-29-001 (D-3, AC-18): the person's uncommitted edits: a development dependency no criterion
+  // needs and a debug line behind an environment flag, above a committed module.
+  "code-quality-flags-unasked-dependency": [
+    { file: "package.json", pattern: /"devDependencies":\s*\{\s*"nodemon":/ },
+    { file: "src/names.mjs", pattern: /console\.log\(/ },
+    { file: ".crew/policy.json", pattern: /"judgementGates":\s*\[\s*"code-quality"\s*\]/ },
+    { committed: /^src\/names\.mjs$/ },
+  ],
   "pack-agentic-os-seats-the-team": [
     { file: "agents/triage.md", pattern: /^# Triage/ },
     { file: "tests/triage.test.mjs", pattern: /on-call/ },
@@ -680,6 +707,19 @@ Object.assign(SCAFFOLD_STATE, {
     { file: ".crew/profile.json", pattern: /^(?![\s\S]*"pack")(?![\s\S]*"next")[\s\S]*$/ },
     { file: "packs/wizardingcode-pack-next.json", home: true, absent: true },
   ],
+});
+
+test("2026-10-29-001 AC-18 (D-3): the two measuring cases are listed in the evals README with their graders", () => {
+  const readme = readFileSync(`${EVALS}README.md`, "utf8");
+  for (const name of [
+    "writing-standard-ending-without-tells",
+    "code-quality-flags-unasked-dependency",
+  ]) {
+    const line = readme.split("\n").find((l) => l.startsWith(`| \`${name}\` |`));
+    expect(line, `${name}: no README row`).toBeDefined();
+    for (const grader of readdirSync(`${EVALS}${name}/graders`).filter((g) => g.endsWith(".md")))
+      expect(line, `${name}: ${grader}`).toContain(`\`${grader.replace(/\.md$/, "")}\``);
+  }
 });
 
 const SP8_CASES = [
@@ -3364,4 +3404,31 @@ test("SP9-T13 AC-9: the Blade fixture's artisan is inert, deny by default: every
     rmSync(dir, { recursive: true, force: true });
     rmSync(home, { recursive: true, force: true });
   }
+});
+
+test("2026-10-29-001 AC-18 (the test-quality advisories at round 5): the D-3 cases' discriminating graders pass what the standard asks and fail what it refuses", () => {
+  // review-names-dependency: a findings line naming nodemon as a defect, read from the trace.
+  const named = graderPattern("code-quality-flags-unasked-dependency", "review-names-dependency");
+  const findings = (lines: string, outside = "none") =>
+    `# code-quality findings for 2026-10-29-001-x\nreviewer: review-code-quality\n\n## Findings\n${lines}\n\n## Outside the change\n${outside}\n`;
+  const read = (text: string) =>
+    traceText(ranBash("b1", "cat review/code-quality.findings.md", text));
+  const defect =
+    "- F-1 · defect · package.json:11 · nodemon is a dependency no criterion asks for (question 7).";
+  const advisory =
+    "- F-1 · advisory · package.json:11 · nodemon is unrelated to initials (question 5).";
+  expect(read(findings(defect))).toMatch(named);
+  expect(read(findings(advisory))).not.toMatch(named);
+  expect(
+    read(findings("- F-1 · defect · src/names.mjs:3 · a name could be sharper.\n" + advisory)),
+  ).not.toMatch(named);
+  expect(read(findings("none", `- package.json:11 · defect · nodemon`))).not.toMatch(named);
+  expect(traceText([agentText("The review named nodemon as a defect.")])).not.toMatch(named);
+  // scope-kept: both scope limits as the draft states them, never reversed or loosened.
+  const kept = graderPattern("writing-standard-ending-without-tells", "scope-kept");
+  expect("It runs on Node 20 or later and was not measured on Windows.").toMatch(kept);
+  expect("It runs on Node 20 or later and has not been measured on Windows.").toMatch(kept);
+  expect("It needs Node 20 or later and has not been tested on Windows.").not.toMatch(kept);
+  expect("It runs on Node 18 or later and was not measured on Windows.").not.toMatch(kept);
+  expect("It runs on Node 20 or later and was measured on Windows.").not.toMatch(kept);
 });

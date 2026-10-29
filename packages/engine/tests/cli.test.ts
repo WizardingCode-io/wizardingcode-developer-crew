@@ -545,9 +545,10 @@ test("SP2b: gate run names the judgement gates to run, accepts their names in --
   const json = await c.json("gate", "run", id, "--only", "ui-ux");
   expect(json.data.judgement).toEqual([{ gate: "ui-ux", reason: "interface files: src/App.vue" }]);
   expect(json.data.review).toBe(`.crew/work/${id}/review`);
-  // secrets, design-lint (SP9-T6 AC-9 edits this count: the interface file plans it), test and the
-  // skipped e2e row of the full run; --only ui-ux ran nothing new.
-  expect((json.data.runs as unknown[]).length).toBe(4);
+  // secrets, prose (2026-10-29-001 edits this count: planned on every item), design-lint (SP9-T6
+  // AC-9 edits this count: the interface file plans it), test and the skipped e2e row of the full
+  // run; --only ui-ux ran nothing new.
+  expect((json.data.runs as unknown[]).length).toBe(5);
   expect((await c.run("gate", "run", id, "--only", "ui-ux,bogus")).err.trim()).toBe(
     "unknown gate: bogus",
   );
@@ -686,8 +687,8 @@ test("a fast-route fix from start to a proven report", async () => {
   ]);
   expect(
     (status.data.runs as { gate: string; status: string }[]).map((r) => `${r.gate}:${r.status}`),
-  ).toEqual(["secrets:pass", "test:pass"]);
-  expect(status.data.expected).toEqual(["secrets", "test"]);
+  ).toEqual(["secrets:pass", "prose:pass", "test:pass"]);
+  expect(status.data.expected).toEqual(["secrets", "prose", "test"]);
   expect(status.data.skips).toEqual([]);
   expect(status.data.awaiting).toBeNull();
   expect(typeof status.data.baseCommit).toBe("string");
@@ -8352,7 +8353,9 @@ test("SP6-T4 AC-2: crew hook --runtime reads the runtime's payload, answers in i
     err: "",
   });
   // A systemMessage on an event whose writer drops it (judgement round 2): Cursor's stop releases
-  // the fourth turn end with the engine's note alone; the note reaches the next context.
+  // the fourth turn end with the engine's note alone; the note reaches the next context. The item
+  // changes a watched file first: since finding 198 an item that changed nothing ends its turn.
+  writeFileSync(join(root, "src", "a.ts"), "the item's change");
   const cursorStop = () =>
     hook(
       {

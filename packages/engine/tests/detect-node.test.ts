@@ -210,6 +210,7 @@ test("SP7b-T4 AC-1: the e2e command comes from a test:e2e or e2e script (detecte
     "lint",
     "typecheck",
     "secrets",
+    "prose",
     "design-lint",
     "deps",
     "e2e",

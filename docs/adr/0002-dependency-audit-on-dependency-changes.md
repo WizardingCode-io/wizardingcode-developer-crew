@@ -18,3 +18,5 @@ On every route the dependency audit is planned when the change, measured from th
 - The moment the lockfile changes is the moment the audit fails on standing advisories as well as new ones. That is the right moment to look at the debt, and the user's skip then says so once.
 - A team that wants the audit on every item says so in `policy.json`, as for any gate.
 - Rejected: a baseline of the advisories present at the base commit (it needs the audit tool to run against a checkout of the base, per tool), and an accepted list of advisory ids in `policy.json` (it needs a parser per tool's output). Both can come later without undoing this rule.
+
+Note of 2026-10-29 (item `2026-10-29-001`, the user's decision D-2): the gates every route plans gained a second built-in gate beside the secret scan. `prose` runs on every item and every route right after `secrets`, over the change's added lines, and fails on the artefacts a chat model leaves in shipped text (`references/gate.md`); like `secrets` it needs no command and is planned out of an audit, since it judges a change, not a repository.

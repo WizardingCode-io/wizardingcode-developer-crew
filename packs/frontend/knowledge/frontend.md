@@ -10,6 +10,7 @@ What a model gets wrong when it builds a page, how such work is verified by the 
 - An icon set mixed with emoji, a heading that announces instead of naming, an empty state that explains the product instead of giving the next action.
 - Motion added for spectacle on a control used many times a day, when the standard's first row asks for feedback at most.
 - A focus ring removed with no replacement, a target under the sizes WCAG 2.2 names, contrast under 4.5:1 on body text.
+- The tells of a generated interface, as taste-skill's registry dated them on 2026-10-29: violet or indigo as the accent nobody chose, cream with terracotta as the palette, an icon in a tinted square on every card, an eyebrow above every heading, grey body text that fails its contrast.
 
 ## How work is verified
 

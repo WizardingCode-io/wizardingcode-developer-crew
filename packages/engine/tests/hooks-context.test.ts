@@ -39,6 +39,29 @@ test("finding 22: the session context says who runs crew commands and how the us
   expect(text).toContain("signed by the permission prompt");
 });
 
+test("2026-10-29-001 AC-21: the session context carries the writing standard's line, under either decision policy", () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const line =
+    "Every text you write, your ending too, follows the skill's references/writing.md: no filler or inflation, every fact and scope limit kept, a missing source marked [source?], never invented or dropped.";
+  const relay = (onSessionStart(context(root)).hookSpecificOutput as { additionalContext: string })
+    .additionalContext;
+  expect(relay).toContain(line);
+  mkdirSync(join(root, ".crew"), { recursive: true });
+  writeFileSync(
+    join(root, ".crew", "policy.json"),
+    JSON.stringify({ attendedDecisions: "prompt" }),
+  );
+  const prompt = (onSessionStart(context(root)).hookSpecificOutput as { additionalContext: string })
+    .additionalContext;
+  expect(prompt).toContain(line);
+  // The budget the default-policy row holds, here under the longer permission-prompt sentence.
+  expect(relay.length).toBeLessThan(900);
+  expect(prompt.length).toBeLessThan(900);
+});
+
 test("0.3.0: a session start follows the manifests and says what the profile picked up", () => {
   const root = makeRepo({
     "package.json": JSON.stringify({ scripts: { build: "true" } }),

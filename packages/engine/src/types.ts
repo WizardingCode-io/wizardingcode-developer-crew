@@ -4,6 +4,7 @@ export type GateName =
   | "lint"
   | "typecheck"
   | "secrets"
+  | "prose"
   | "design-lint"
   | "deps"
   | "e2e";
@@ -13,14 +14,15 @@ export const GATE_NAMES: readonly GateName[] = [
   "lint",
   "typecheck",
   "secrets",
+  "prose",
   "design-lint",
   "deps",
   "e2e",
 ];
 
 /** The gates the engine computes itself (SP9 Task 6): no command, nothing to set, unset or detect; planned by the change. */
-export type BuiltInGate = "secrets" | "design-lint";
-export const BUILT_IN_GATES: readonly BuiltInGate[] = ["secrets", "design-lint"];
+export type BuiltInGate = "secrets" | "prose" | "design-lint";
+export const BUILT_IN_GATES: readonly BuiltInGate[] = ["secrets", "prose", "design-lint"];
 export function isBuiltInGate(gate: string): gate is BuiltInGate {
   return (BUILT_IN_GATES as readonly string[]).includes(gate);
 }

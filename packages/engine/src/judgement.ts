@@ -1,8 +1,9 @@
 import { copyFileSync, existsSync, readdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { reviewPatch } from "./fingerprint.ts";
+import { HUNK_HEADER, reviewPatch } from "./fingerprint.ts";
 import { isRegularFile, nowIso, readJson, sha256, writeText } from "./fs.ts";
 import { type CrewPaths, workDir } from "./paths.ts";
+import { isDependencyInput, isPhraseInput, type ReviewSignals } from "./review-signals.ts";
 import { plannedSeats, TEAMS, type TeamDef, taskSeats } from "./team.ts";
 import type {
   Evidence,
@@ -118,6 +119,9 @@ export interface ReviewInputs {
   fingerprint: string;
   at: string;
   captures: Capture[];
+  /** The code-quality reviewer's inputs (2026-10-29-001, P-6): the dependencies the change adds, the fallback phrases of its added lines. */
+  dependencies?: ReviewSignals["dependencies"];
+  phrases?: ReviewSignals["phrases"];
 }
 
 const CAPTURE = /^(?<base>[a-z0-9-]+)(?:@(?<width>\d+))?(?<dark>-dark)?\.(?:png|jpe?g)$/i;
@@ -244,7 +248,18 @@ export function readReviewInputs(paths: CrewPaths, id: string, task?: string): R
   const captures = Array.isArray(raw.captures)
     ? raw.captures.filter(isStoredCapture).map(completeCapture)
     : [];
-  return { fingerprint: raw.fingerprint, at: raw.at, captures };
+  return {
+    fingerprint: raw.fingerprint,
+    at: raw.at,
+    captures,
+    // The reviewer's inputs, each element checked as the captures are (the architecture advisory at round 2).
+    ...(Array.isArray(raw.dependencies)
+      ? { dependencies: (raw.dependencies as unknown[]).filter(isDependencyInput) }
+      : {}),
+    ...(Array.isArray(raw.phrases)
+      ? { phrases: (raw.phrases as unknown[]).filter(isPhraseInput) }
+      : {}),
+  };
 }
 
 /**
@@ -262,8 +277,10 @@ export function writeReviewInputs(
   work: WorkItem,
   changed: readonly string[],
   fingerprint: string,
-  task?: string,
+  /** A todo's review folder, and the code-quality reviewer's inputs when the gate run gives them (2026-10-29-001, P-6). */
+  options: { task?: string; signals?: ReviewSignals } = {},
 ): { dir: string; note: string | null } {
+  const { task, signals } = options;
   const dir = reviewDir(paths, work.id, task);
   const previous = readReviewInputs(paths, work.id, task);
   if (previous && previous.fingerprint !== fingerprint) {
@@ -282,7 +299,16 @@ export function writeReviewInputs(
   writeText(join(dir, "files.txt"), changed.length ? `${changed.join("\n")}\n` : "");
   writeText(
     join(dir, "inputs.json"),
-    `${JSON.stringify({ fingerprint, at: nowIso(), captures: listCaptures(paths, work.id, task) }, null, 2)}\n`,
+    `${JSON.stringify(
+      {
+        ...(signals ? { dependencies: signals.dependencies, phrases: signals.phrases } : {}),
+        fingerprint,
+        at: nowIso(),
+        captures: listCaptures(paths, work.id, task),
+      },
+      null,
+      2,
+    )}\n`,
   );
   return { dir, note: cut.note };
 }
@@ -383,7 +409,7 @@ export function hunkLines(
       hunkRows = [];
       continue;
     }
-    const hunk = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(raw);
+    const hunk = HUNK_HEADER.exec(raw);
     if (hunk) {
       settle();
       if (found) break;

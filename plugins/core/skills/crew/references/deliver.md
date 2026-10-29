@@ -13,7 +13,7 @@ The gate run that proved the work already wrote `.crew/work/<id>/report.md`; `cr
 
 An audit delivers its report, not a change: say the verdict (`critical`, `attention` or `sound`) and what it rests on, the counts per section, what was left out for want of proof, the three files (`audit/report.md`, `audit/report.html`, `audit/report.pdf`, or why the PDF was not produced), the signature line, and that a remote test environment like production is recommended where the project declares none; the items 1 to 4 above do not apply, item 5 does (`references/audit.md`).
 
-Say "proven" only when the report says so. If the report says not proven, the first line of your message says not proven and why. Never soften it.
+Say "proven" only when the report says so. If the report says not proven, the first line of your message says not proven and why. Never soften it. Write the message, the commit message and the report's prose as `references/writing.md` says: no filler, no tell of generated text, every fact kept.
 
 The work artefacts under `.crew/work/<id>/` are committed with the change by default, so the pull request carries its own evidence.
 

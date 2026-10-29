@@ -1416,3 +1416,96 @@ test("SP9-T13 AC-14: the conclave reference names crew pack files checklists <ki
     expect(packs, words).toContain(words);
   expect(KINDS).toHaveLength(10);
 });
+
+test("2026-10-29-001 AC-5: the code-quality rubric asks about an unasked dependency, unused exports and debug leftovers, an unasked fallback or workaround, and a narrating comment, and says its inputs never decide alone", () => {
+  const rubric = repoFile("plugins/core/skills/crew/rubrics/code-quality.md");
+  for (const words of [
+    "7. A dependency the criteria did not ask for",
+    "8. Unused exports and debug leftovers",
+    "9. A fallback, a workaround or a shim the criteria did not ask for",
+    "10. A comment that narrates the change",
+    "`dependencies` and `phrases` of `inputs.json` are inputs, never a finding on their own",
+  ])
+    expect(rubric, words).toContain(words);
+});
+
+test("2026-10-29-001 AC-22: the code-quality rubric's question 11 reads the change's prose against the writing standard: a dropped or altered fact a defect, a tell an advisory", () => {
+  const rubric = repoFile("plugins/core/skills/crew/rubrics/code-quality.md");
+  for (const words of [
+    "11. The prose the change writes or rewrites",
+    "`references/writing.md`",
+    "marking it `[source?]`",
+    "question 11, a rewrite that drops or alters a fact, a hedge or a scope limit",
+    "a tell of generated text in the change's prose (question 11)",
+  ])
+    expect(rubric, words).toContain(words);
+});
+
+test("2026-10-29-001 AC-23: the code-quality rubric rules an unasked dependency (question 7) a defect, beside a debug leftover (question 8)", () => {
+  const rubric = repoFile("plugins/core/skills/crew/rubrics/code-quality.md");
+  const defects = rubric.slice(rubric.indexOf("A **defect**"), rubric.indexOf("An **advisory**"));
+  expect(defects).toContain("question 7, a dependency no criterion needs");
+  expect(defects).toContain("question 8, a debug leftover");
+});
+
+test("2026-10-29-001 AC-8: the UI/UX rubric asks question 11 on generic tells with its three passes and the advisory line, and the standard's Refused list names the design-lint rules that enforce it", () => {
+  const rubric = repoFile("plugins/core/skills/crew/rubrics/ui-ux.md");
+  for (const words of [
+    "11. Generic tells:",
+    "squint",
+    "left edges",
+    "one word per section",
+    "shadow on every surface",
+    "equal-weight card grids",
+    "an eyebrow, a title and a description stacked above every block",
+    "the `app` measures of a capture are evidence, never graded",
+  ])
+    expect(rubric, words).toContain(words);
+  const standard = readReference("frontend.md");
+  for (const rule of [
+    "craft/gradient-text",
+    "craft/emoji",
+    "copy/placeholder",
+    "craft/glass",
+    "layout/100vh",
+  ])
+    expect(standard, rule).toContain(`\`${rule}\``);
+});
+
+test("2026-10-29-001 AC-9: the writing standard holds the tells of prose with their guards, the fact-preservation rule, where it applies and its provenance; build.md, deliver.md and CLAUDE.md point to it", () => {
+  const writing = readReference("writing.md");
+  expect(writing.split("\n")[0]).toBe("# Writing");
+  for (const heading of [
+    "## The tells of prose",
+    "## Facts are kept",
+    "## Where it applies",
+    "## Provenance",
+  ])
+    expect(writing, heading).toContain(`\n${heading}\n`);
+  const tells = writing
+    .slice(writing.indexOf("## The tells of prose"), writing.indexOf("## Facts are kept"))
+    .split("\n")
+    .filter((l) => l.startsWith("- "));
+  expect(tells.length).toBeGreaterThanOrEqual(12);
+  for (const tell of tells) expect(tell, tell).toContain("Guard:");
+  for (const words of [
+    "A listed word alone is never a finding",
+    "never invents a source",
+    "`[source?]`",
+    "commit messages",
+    "the session's ending",
+    "taste-skill",
+    "`b9ca2fd`",
+    "oh-my-claudecode",
+    "`8690a21`",
+    "department-of-prose",
+    "`60ef0cc`",
+    "CC BY-SA 4.0",
+    "nothing of either is quoted",
+    "slop-review",
+  ])
+    expect(writing, words).toContain(words);
+  for (const reference of ["build.md", "deliver.md"])
+    expect(readReference(reference), reference).toContain("`references/writing.md`");
+  expect(repoFile("CLAUDE.md")).toContain("`plugins/core/skills/crew/references/writing.md`");
+});

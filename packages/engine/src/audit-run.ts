@@ -169,10 +169,14 @@ export async function runAudit(
   );
   // No base commit: the deps judge finds nothing to compare with and the secrets scan walks the tree.
   const unbased: WorkItem = { ...work, baseCommit: null };
-  // The design lint judges a change, not a repository (SP9 Task 6): planned out as the e2e run is.
+  // The design lint and the prose scan judge a change, not a repository (SP9 Task 6;
+  // 2026-10-29-001): planned out as the e2e run is.
   const planned = plannedGates("full", profile, policy, files, paths.root).filter(
     (p) =>
-      p.gate !== "e2e" && p.gate !== "design-lint" && (only === undefined || only.includes(p.gate)),
+      p.gate !== "e2e" &&
+      p.gate !== "design-lint" &&
+      p.gate !== "prose" &&
+      (only === undefined || only.includes(p.gate)),
   );
   const runs: AuditRun[] = [];
   for (const one of planned) {

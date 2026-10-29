@@ -30,6 +30,8 @@ import { packTemplates, recordPackUse } from "./packs.ts";
 import { type CrewPaths, workDir } from "./paths.ts";
 import { isFrontendPath } from "./paths-kind.ts";
 import { namedFiles } from "./problems.ts";
+import { runProse } from "./prose.ts";
+import { reviewSignals } from "./review-signals.ts";
 import { runCommand, shellWord } from "./run.ts";
 import { scanSecrets } from "./secrets.ts";
 import { plannedSeats, primaryTeam, teamsFor } from "./team.ts";
@@ -316,7 +318,11 @@ export function plannedGates(
   changed: string[],
   root: string,
 ): PlannedGate[] {
-  const planned: PlannedGate[] = [{ gate: "secrets", target: "." }];
+  // The prose scan right after the secret scan, on every item and route (2026-10-29-001, D-2).
+  const planned: PlannedGate[] = [
+    { gate: "secrets", target: "." },
+    { gate: "prose", target: "." },
+  ];
   // The design lint right after the scan, on a frontend path (an interface file or a design
   // contract), on every route (SP9 Task 6).
   if (changed.some(isFrontendPath)) planned.push({ gate: "design-lint", target: "." });
@@ -418,7 +424,7 @@ export async function runTaskGate(
   scope: string[],
 ): Promise<{ status: "pass" | "fail"; runs: GateRun[]; judgement: PlannedJudgement[] }> {
   const planned = plannedGates(work.route, profile, policy, scope, paths.root).filter(
-    (p) => p.gate !== "secrets" && p.gate !== "e2e",
+    (p) => p.gate !== "secrets" && p.gate !== "prose" && p.gate !== "e2e",
   );
   const stamp = gitHead(paths.root) ?? "none";
   const runs: GateRun[] = [];
@@ -469,6 +475,8 @@ export async function runOneGate(
     fingerprint,
   };
   if (gate === "secrets") {
+    // A change the scan could not read leaves the gate unavailable with the reason, as the prose
+    // scan does (2026-10-29-001, AC-16).
     const started = Date.now();
     const scan = await scanSecrets(paths.root, profile, work.baseCommit);
     return {
@@ -478,6 +486,22 @@ export async function runOneGate(
       status: scan.status,
       durationMs: Date.now() - started,
       tail: scan.tail,
+      ...(scan.status === "unavailable" ? { reason: scan.tail } : {}),
+    };
+  }
+  if (gate === "prose") {
+    // The prose scan (2026-10-29-001, P-5): the item's own change since its base; a change it
+    // could not read leaves the gate unavailable with the reason, never a clean pass.
+    const started = Date.now();
+    const scan = runProse(paths.root, profile, work.baseCommit, changed);
+    return {
+      ...base,
+      command: "built-in prose scan",
+      exit: scan.status === "pass" ? 0 : 1,
+      status: scan.status,
+      durationMs: Date.now() - started,
+      tail: scan.tail,
+      ...(scan.status === "unavailable" ? { reason: scan.tail } : {}),
     };
   }
   if (gate === "design-lint") {
@@ -812,7 +836,9 @@ export async function runGates(
   recordPackUse(work, { userDir: paths.userDir, profile, changed, policy, registry });
   work.primaryTeam = primaryTeam(changed);
   const reviewInputs = judgement.length
-    ? writeReviewInputs(paths, work, reviewPaths(allChanged, changed), stamp)
+    ? writeReviewInputs(paths, work, reviewPaths(allChanged, changed), stamp, {
+        signals: reviewSignals(paths.root, profile, work.baseCommit, changed),
+      })
     : null;
   const currentFingerprint = computeFingerprint(
     paths.root,

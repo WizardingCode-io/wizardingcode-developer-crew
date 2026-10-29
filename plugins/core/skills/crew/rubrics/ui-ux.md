@@ -18,6 +18,7 @@ The engine's manifest `review/ui-evidence.json`, read first: declared, captured 
 8. Motion against the standard: does each motion sample follow the standard's table (duration, easing, properties, interruptibility, the reduced-motion pass, the hover gate, the frames)?
 9. Motion against the thesis: does every animation the diff adds have its line in the thesis of `spec.md`; is a control of the standard's first frequency row animated past feedback; was a candidate the thesis rejected built anyway?
 10. Console and vitals: is the console clean of errors and warnings on every capture, and are the vitals within the limits (CLS 0.1)?
+11. Generic tells: does the screen read as made for this product, or as a template? Three passes over the captures, each finding naming its capture: squint (with the detail blurred, does the hierarchy still say what matters first); edges (how many distinct left edges does the screen have, and does each have a reason); sameness (one word per section for its layout, and the same word three times in a row is a tell). An advisory names, where the change adds it: shadow on every surface, equal-weight card grids, an eyebrow, a title and a description stacked above every block; and the `app` measures of a capture are evidence, never graded: the share of numeric cells right-aligned and tabular, the hues of a chart, a sidebar's share of a phone's width are read here and cited, and decide nothing alone.
 
 ## Defect or advisory
 
@@ -32,3 +33,5 @@ Every finding names its evidence file beside the line (the capture, the snapshot
 ## Only the change
 
 The reviewer judges only the change, never the repository: a finding outside the changed files is advisory and marked debt. A page the diff did not touch, a component the project already had with a missing label, a site-wide copy problem: debt, under "Outside the change".
+
+Provenance (ADR 0017): question 11 distils the critique passes of taste-skill v2.1.2 (MIT, Leonxlnx, read on 2026-10-29: squint, edge count, layout sameness) and the UI signals of ai-slop-cleaner (MIT, oh-my-claudecode, 8690a21), in the crew's words; nothing of either's house rules enters. Its measuring case is SP9 Task 14's `ui-ux-generic-tells`, after the change (the user's decision D-3; ADR 0017's note of 2026-10-29).

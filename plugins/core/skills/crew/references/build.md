@@ -20,6 +20,8 @@ For an interface item, read `references/frontend.md` and the project's `DESIGN.m
 
 ## Design rules
 
+Comments, docstrings, documents and commit messages follow `references/writing.md`: a comment says why, never narrates the change; the prose gate refuses the artefacts a chat model leaves.
+
 - **Single responsibility.** A function or a class does one thing; a file holds things that change together.
 - **Open for extension, closed for modification.** Add behaviour by adding code, not by editing every caller.
 - **Depend on abstractions** at the boundaries that will change (storage, network, time), and on concrete code everywhere else.

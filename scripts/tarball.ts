@@ -3,12 +3,13 @@ import { chmodSync, cpSync, mkdirSync, mkdtempSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-/** What the archive carries of `plugins/core`: the plugin as it runs, never its evals, its tooling or a local file beside the manifest. */
+/** What the archive carries of `plugins/core`: the plugin as it runs (the e2e fixture a project imports from the plugin root among it), never its evals, its tooling or a local file beside the manifest. */
 const SHIPPED = [
   ".claude-plugin/plugin.json",
   "agents",
   "bin",
   "dist/crew.mjs",
+  "e2e",
   "hooks",
   "skills",
 ] as const;

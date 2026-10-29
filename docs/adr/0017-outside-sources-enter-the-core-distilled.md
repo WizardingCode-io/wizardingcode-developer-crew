@@ -22,3 +22,7 @@ Three shapes were on the table: invoke the installed plugins (impeccable, taste,
 - Shape 1 is rejected: it would depend on what each user's machine holds, the loop could not measure it, and a second method would run beside the crew's. Shape 2 is rejected for the same reason ADR 0010 rejected a second copy of the method: two texts to keep in step, and a tone that is not the house's.
 - The standard (`references/frontend.md`) is the crew's text with a provenance footer; a reader who wants the sources finds them there.
 - A later source enters the same way: distilled, footnoted, measured. The CTO's review and the harness-improvement loop can change the distilled text as any other text of the method; the footer keeps where it came from.
+
+## Note of 2026-10-29 (item 2026-10-29-001, the user's decision D-3)
+
+Item 2026-10-29-001 (no AI slop) measured P-4 (the writing standard) and P-6 (the code-quality rubric's questions 7 to 11) before the change, each with a kit case red on the base text and green on the item's (`docs/evals/2026-10-29-no-slop-results.md`). Question 11 of the UI/UX rubric (taste-skill's squint, edge and sameness passes) entered before its case, by the user's decision D-3: the ui-ux gate needs a browser's captures, which the kit's sandbox has not. SP9 Task 14's `ui-ux-generic-tells` measures it. That is the one departure from rule 3 here, and it is said on the record.

@@ -1,7 +1,8 @@
 import { expect, spyOn, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, rmdirSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, rmdirSync, rmSync } from "node:fs";
 import { basename, join } from "node:path";
 import { loadEvidence, renderReport } from "../src/evidence.ts";
+import * as fingerprint from "../src/fingerprint.ts";
 import { runGates } from "../src/gates.ts";
 import { handleHook } from "../src/hooks/index.ts";
 import { onPrompt } from "../src/hooks/prompt.ts";
@@ -23,7 +24,7 @@ import {
   loadWork,
   saveWork,
 } from "../src/work.ts";
-import { hookContext, makeRepo, repoPaths, tempDir, testEnv, write } from "./helpers.ts";
+import { git, hookContext, makeRepo, repoPaths, tempDir, testEnv, write } from "./helpers.ts";
 
 function session() {
   const root = makeRepo({
@@ -757,4 +758,64 @@ test("2026-10-25-004 AC-2 (finding 164): the block reason says to fix what fails
     "and fix what fails: a red is traced to its origin, never skipped.",
   );
   expect(response.reason).not.toContain("crew skip");
+});
+
+test("2026-10-29-001 AC-1 (finding 198): with an active item, the Stop rule counts the item's own change: a clean tree after an earlier committed item ends the turn, a change blocks, a file dirty at the base blocks once edited again; no base commit or an unavailable fingerprint keep blocking while unproven; without an item the earlier rules stand", () => {
+  // The session's baseline is taken at its start; an earlier item's work is then committed.
+  const { root, ctx } = session();
+  write(root, "src/a.ts", "the earlier item's change");
+  git(root, "add", "-A");
+  git(root, "commit", "-q", "-m", "an earlier item, proven and learned");
+  // Without an active item, the baseline rule stands: the committed change counts.
+  expect(onStop(ctx).decision).toBe("block");
+  // A new item, started on the clean tree: it changed nothing, so the turn ends.
+  const work = createWork(ctx.paths, "fix");
+  addCriterion(work, "x");
+  saveWork(ctx.paths, work);
+  expect(onStop(ctx).decision).toBeUndefined();
+  // A change of the new item to a watched file blocks.
+  write(root, "src/c.ts", "the new item's change");
+  expect(onStop(ctx).decision).toBe("block");
+  rmSync(join(root, "src", "c.ts"));
+  // A file dirty at the new item's base and unchanged does not count; edited again, it does.
+  write(root, "src/b.ts", "left dirty by an earlier item");
+  // As crew start records it after a proven item: the uncommitted files with their hashes.
+  const dirty = createWork(ctx.paths, "fix", fingerprint.hashPaths(root, ["src/b.ts"]));
+  addCriterion(dirty, "y");
+  saveWork(ctx.paths, dirty);
+  expect(onStop(ctx).decision).toBeUndefined();
+  write(root, "src/b.ts", "edited by the new item");
+  expect(onStop(ctx).decision).toBe("block");
+  write(root, "src/b.ts", "left dirty by an earlier item");
+  // The guards' branches on a clean tree (the test-quality defects at round 1): src/b.ts committed,
+  // so the item's own change is empty, and only the guard keeps an unproven item blocking.
+  git(root, "add", "-A");
+  git(root, "commit", "-q", "-m", "the dirty file, committed");
+  const clean = createWork(ctx.paths, "fix");
+  addCriterion(clean, "c");
+  saveWork(ctx.paths, clean);
+  expect(onStop(ctx).decision).toBeUndefined();
+  // No base commit: the item's change cannot be read, so the session's baseline rule decides (the
+  // tree moved since the session began) and the unproven item blocks.
+  const baseless = createWork(ctx.paths, "fix");
+  addCriterion(baseless, "z");
+  baseless.baseCommit = null;
+  saveWork(ctx.paths, baseless);
+  expect(onStop(ctx).decision).toBe("block");
+  // A released turn between, so the block count never reaches its cap in this row.
+  const after = createWork(ctx.paths, "fix");
+  addCriterion(after, "a");
+  saveWork(ctx.paths, after);
+  expect(onStop(ctx).decision).toBeUndefined();
+  // An unavailable fingerprint (a tree over the walk's cap): the unproven item blocks.
+  const unavailable = spyOn(fingerprint, "computeFingerprint").mockReturnValue(
+    fingerprint.UNAVAILABLE,
+  );
+  try {
+    expect(onStop(ctx).decision).toBe("block");
+  } finally {
+    unavailable.mockRestore();
+  }
+  // The same item with the fingerprint back: nothing of its own changed, so the turn ends.
+  expect(onStop(ctx).decision).toBeUndefined();
 });

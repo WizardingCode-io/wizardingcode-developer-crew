@@ -1,6 +1,8 @@
 import {
+  changedWatchedPaths,
   computeFingerprint,
   fingerprintMethod,
+  isGitRepo,
   MAX_WATCHED_FILES,
   UNAVAILABLE,
 } from "../fingerprint.ts";
@@ -147,12 +149,22 @@ export function onStop(ctx: HookContext, payload: HookPayload = {}): HookRespons
     ? assess(ctx.paths, work, ctx.profile, ctx.policy, ctx.tampered || !!active?.tampered)
     : null;
   const proven = result?.verdict === "proven";
-  // Without a usable baseline (the plugin was enabled mid-session, or the folder is too big to
-  // fingerprint) only an unproven work item counts as a change.
+  // With an active item whose base is known, the change is the item's own (finding 198): a
+  // session's earlier item, proven and committed, counts nothing against the next. Where the base
+  // cannot be read (no base commit, no git, an unavailable fingerprint) the rules below stand. A
+  // tree over the walk's cap leaves the fingerprint unavailable too (the same cap), so an empty
+  // list here is never a walk that read nothing.
+  const itemChange =
+    work?.baseCommit && current !== UNAVAILABLE && isGitRepo(ctx.paths.root)
+      ? changedWatchedPaths(ctx.paths.root, ctx.profile, work).length > 0
+      : null;
   const changed =
-    session.baseline !== null && current !== UNAVAILABLE
+    itemChange ??
+    // Without a usable baseline (the plugin was enabled mid-session, or the folder is too big to
+    // fingerprint) only an unproven work item counts as a change.
+    (session.baseline !== null && current !== UNAVAILABLE
       ? current !== session.baseline
-      : work !== null && !proven;
+      : work !== null && !proven);
   if (!changed || proven || (!work && learnedHolds(ctx))) {
     session.stopBlocks = 0;
     return release(notes.length ? { systemMessage: `Crew: ${notes.join("; ")}.` } : {});

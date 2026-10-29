@@ -141,7 +141,7 @@ test("LANE-AC-1: every hook records its session at most once a minute, SessionEn
   expect(hooks.hooks.SessionEnd?.[0]?.hooks[0]?.args.slice(1)).toEqual(["hook", "session-end"]);
 });
 
-const SESSION_START_HEAD = `WizardingCode Developer Crew is active in this repository. Work is proven by the \`crew\` command and the crew skill, and a turn cannot end while watched source files have unproven changes. You run every crew command; the user never types one: a decision that is theirs (crew approve, skip, decide, accept, profile confirm) is relayed by you from the conversation under this repository's policy (attendedDecisions: relay), so run the command once the user has said yes, with no prompt; the record says relayed by the agent. Engine: crew ${VERSION}.`;
+const SESSION_START_HEAD = `WizardingCode Developer Crew is active in this repository. Work is proven by the \`crew\` command and the crew skill, and a turn cannot end while watched source files have unproven changes. You run every crew command; the user never types one: a decision that is theirs (crew approve, skip, decide, accept, profile confirm) is relayed by you from the conversation under this repository's policy (attendedDecisions: relay), so run the command once the user has said yes, with no prompt; the record says relayed by the agent. Every text you write, your ending too, follows the skill's references/writing.md: no filler or inflation, every fact and scope limit kept, a missing source marked [source?], never invented or dropped. Engine: crew ${VERSION}.`;
 
 test("LANE-AC-7-alone: a session alone gets today's PreToolUse answers and today's SessionStart and prompt context texts", () => {
   // The texts captured from the engine before the lanes change (2026-10-23), pinned as literals.

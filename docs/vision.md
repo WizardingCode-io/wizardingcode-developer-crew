@@ -141,7 +141,7 @@ The debate includes the user: the panel presents, the user answers, the panel re
 
 Gates run before delivery. There are two kinds.
 
-**Deterministic gates** cost no tokens: build, tests, lint, type checks, secret scanning, dependency audit. The engine discovers the commands from the project and runs the gates the route requires. Tests and secret scanning run on every route.
+**Deterministic gates** cost no tokens: build, tests, lint, type checks, secret scanning, the prose scan, design lint, dependency audit. The engine discovers the commands from the project and runs the gates the route requires. Tests, secret scanning and the prose scan run on every route; design lint runs when the change touches an interface or a design-contract path.
 
 **Judgement gates** use reviewer agents with a rubric and a judge:
 

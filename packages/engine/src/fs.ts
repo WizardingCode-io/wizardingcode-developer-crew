@@ -89,10 +89,17 @@ export function isRegularFile(path: string): boolean {
  * the engine's readers of a session's or a tool's files share (SP9 Task 7).
  */
 export function readRegularText(path: string, cap: number): string | null {
+  const bytes = readRegular(path, cap);
+  return bytes instanceof Buffer ? bytes.toString("utf8") : null;
+}
+
+/** A regular file's bytes (never through a link), the cap checked before the read: `over cap` when larger, null when absent or unreadable. */
+export function readRegular(path: string, cap: number): Buffer | "over cap" | null {
   const size = regularFileSize(path);
-  if (size === null || size > cap) return null;
+  if (size === null) return null;
+  if (size > cap) return "over cap";
   try {
-    return readFileSync(path, "utf8");
+    return readFileSync(path);
   } catch {
     return null;
   }

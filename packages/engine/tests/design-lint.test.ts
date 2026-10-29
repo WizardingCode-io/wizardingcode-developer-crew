@@ -2,7 +2,7 @@
 // durations, the allowances, the inventory and the file's safety.
 
 import { expect, test } from "bun:test";
-import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   LINT_RULES,
@@ -11,10 +11,13 @@ import {
   lintInterfaceFiles,
   lintVerdict,
   readDesignContract,
+  runDesignLint,
 } from "../src/design-lint.ts";
-import { loadPolicy } from "../src/policy.ts";
+import { detectProfile } from "../src/detect/index.ts";
+import { DEFAULT_POLICY, loadPolicy } from "../src/policy.ts";
 import { GATE_NAMES } from "../src/types.ts";
-import { makeRepo, repoPaths, tempDir, testEnv } from "./helpers.ts";
+import { addCriterion, createWork } from "../src/work.ts";
+import { git, makeRepo, repoPaths, tempDir, testEnv, write } from "./helpers.ts";
 
 /** A project file that names the reduced-motion guard, so a rule's fixture is judged for its own rule alone. */
 const GUARD = { "src/guard.ts": "export const reduced = useReducedMotion();\n" };
@@ -197,9 +200,10 @@ test("SP9-T6 AC-2: tokens/raw-colour hits a raw colour literal only when the con
   const withColours = makeRepo({
     "DESIGN.md": "---\ncolors:\n  primary: '#0f0'\n---\n# Design\n",
   });
-  expect(readDesignContract(withColours)).toEqual({ colours: true });
+  // 2026-10-29-001 edits these two lines: the contract also says the devices it adopts.
+  expect(readDesignContract(withColours)).toEqual({ colours: true, devices: [] });
   const underDocs = makeRepo({ "docs/DESIGN.md": "---\ntypography:\n  base: 16\n---\n" });
-  expect(readDesignContract(underDocs)).toEqual({ colours: false });
+  expect(readDesignContract(underDocs)).toEqual({ colours: false, devices: [] });
   expect(readDesignContract(makeRepo({ "README.md": "x" }))).toBeNull();
   // A linked contract is no contract.
   const linked = makeRepo({ "README.md": "x" });
@@ -451,7 +455,212 @@ test("SP9-T6 AC-7: the inventory lists every animated declaration with its kind,
     "hover/unguarded",
     "perf/will-change",
     "tokens/raw-colour",
+    // 2026-10-29-001 edits this list: the five craft rules.
+    "craft/gradient-text",
+    "craft/emoji",
+    "copy/placeholder",
+    "craft/glass",
+    "layout/100vh",
   ]);
-  expect(GATE_NAMES.indexOf("design-lint")).toBe(GATE_NAMES.indexOf("secrets") + 1);
+  // 2026-10-29-001: the prose scan sits between them.
+  expect(GATE_NAMES.indexOf("design-lint")).toBe(GATE_NAMES.indexOf("prose") + 1);
+  expect(GATE_NAMES.indexOf("prose")).toBe(GATE_NAMES.indexOf("secrets") + 1);
   expect(GATE_NAMES.at(-1)).toBe("e2e");
+});
+
+test("2026-10-29-001 AC-4: the five craft rules hit their refused strings with their severities, stay silent on the accepted ones, turn off for a DESIGN.md that declares the device and never for prose that names it, are allowed inline, and copy/placeholder never reads a test file", () => {
+  const refused: [string, string, string][] = [
+    ["craft/gradient-text", "src/a.css", ".h { background-clip: text; }"],
+    ["craft/gradient-text", "src/a.css", ".h { -webkit-background-clip: text; }"],
+    ["craft/gradient-text", "src/A.vue", '<h1 class="bg-clip-text text-transparent">Hi</h1>'],
+    ["craft/emoji", "src/A.vue", "<p>Ready 🚀</p>"],
+    ["craft/emoji", "src/A.tsx", "const label = 'Done ✅';"],
+    ["copy/placeholder", "src/A.vue", "<p>Lorem ipsum dolor sit amet</p>"],
+    ["copy/placeholder", "src/A.vue", "<p>Signed by John Doe</p>"],
+    ["copy/placeholder", "src/A.vue", "<p>Jane Doe, admin</p>"],
+    ["copy/placeholder", "src/A.vue", "<p>Acme ships today</p>"],
+    ["copy/placeholder", "src/A.tsx", "const mail = 'ana@example.com';"],
+    ["copy/placeholder", "src/A.tsx", "const url = 'https://example.com/a';"],
+    ["craft/glass", "src/a.css", ".nav { backdrop-filter: blur(8px); }"],
+    ["craft/glass", "src/A.vue", '<nav class="backdrop-blur-md">x</nav>'],
+    ["layout/100vh", "src/a.css", ".hero { height: 100vh; }"],
+    ["layout/100vh", "src/A.vue", '<div class="h-screen">x</div>'],
+    ["layout/100vh", "src/A.vue", '<div class="min-h-screen">x</div>'],
+  ];
+  for (const [rule, file, text] of refused) {
+    const result = lint({ [file]: `${text}\n` });
+    const verdict = rule === "craft/glass" || rule === "layout/100vh" ? "advisory" : "defect";
+    expect(hitsOf(result, rule), text).toEqual([`${file}:1:${verdict}`]);
+  }
+  const accepted: [string, string, string][] = [
+    ["craft/gradient-text", "src/a.css", ".h { background-clip: padding-box; }"],
+    ["craft/emoji", "src/A.vue", "<p>© 2026 Shop™ ® • ✓ → 3 items</p>"],
+    ["craft/emoji", "src/A.vue", "<!-- 🚀 a note in a comment -->"],
+    ["copy/placeholder", "src/A.vue", "<p>Pacmed and acmeCorp and AcmeWidget</p>"],
+    [
+      "copy/placeholder",
+      "src/A.tsx",
+      "const host = 'myexample.community'; const b = 'example.co';",
+    ],
+    ["copy/placeholder", "src/A.tsx", "// lorem ipsum in a comment"],
+    ["craft/glass", "src/a.css", ".nav { filter: blur(2px); }"],
+    ["layout/100vh", "src/a.css", ".hero { height: 100svh; min-height: 100dvh; }"],
+  ];
+  for (const [rule, file, text] of accepted)
+    expect(hitsOf(lint({ [file]: `${text}\n` }), rule), text).toEqual([]);
+  // A test file is never read for placeholder data.
+  expect(
+    hitsOf(lint({ "src/A.test.tsx": "const name = 'John Doe';\n" }), "copy/placeholder"),
+  ).toEqual([]);
+  // The contract's front matter declares a device: its rule is off, the tail says so.
+  // The front matter's devices, inline or as a list.
+  const root = makeRepo({ "DESIGN.md": "---\ndevices:\n  - glass\n---\n" });
+  expect(readDesignContract(root)).toEqual({ colours: false, devices: ["glass"] });
+  const withContract = (contract: string) => {
+    const r = makeRepo({
+      ...GUARD,
+      "DESIGN.md": contract,
+      "src/A.vue": '<p class="bg-clip-text">Ready 🚀</p>\n',
+    });
+    return lintInterfaceFiles(r, ["src/A.vue"], {
+      contract: readDesignContract(r),
+      projectFiles: Object.keys(GUARD),
+    });
+  };
+  const on = withContract("---\ndevices: [gradient-text, emoji]\n---\n# Shop\n");
+  expect(hitsOf(on, "craft/gradient-text")).toEqual([]);
+  expect(hitsOf(on, "craft/emoji")).toEqual([]);
+  expect(lintVerdict(on).tail).toContain(
+    "craft/gradient-text off: DESIGN.md declares gradient-text",
+  );
+  expect(lintVerdict(on).tail).toContain("craft/emoji off: DESIGN.md declares emoji");
+  // Prose that names a device changes nothing.
+  const prose = withContract("# Shop\n\nNever use emoji. No gradient text.\n");
+  expect(hitsOf(prose, "craft/gradient-text")).toEqual(["src/A.vue:1:defect"]);
+  expect(hitsOf(prose, "craft/emoji")).toEqual(["src/A.vue:1:defect"]);
+  // An allowance with its why allows the one hit.
+  const allowed = lint({
+    "src/A.vue":
+      "<!-- crew-lint: allow craft/emoji -- the brand's mark is an emoji -->\n<p>Ready 🚀</p>\n",
+  });
+  expect(allowed.hits.find((h) => h.rule === "craft/emoji")?.allowed).toBe(
+    "the brand's mark is an emoji",
+  );
+});
+
+test("2026-10-29-001 AC-4 (the round-1 rulings): every craft rule is allowed inline; each device turns its own rule off only when the base commit's contract declared it too, a device declared in this change saying it takes effect once committed; an input's placeholder attribute is not placeholder copy", () => {
+  const strings: [string, string, string][] = [
+    ["craft/gradient-text", "src/a.css", ".h { background-clip: text; }"],
+    ["craft/emoji", "src/A.vue", "<p>Ready 🚀</p>"],
+    ["copy/placeholder", "src/A.vue", "<p>Lorem ipsum</p>"],
+    ["craft/glass", "src/a.css", ".nav { backdrop-filter: blur(8px); }"],
+    ["layout/100vh", "src/a.css", ".hero { height: 100vh; }"],
+  ];
+  for (const [rule, file, text] of strings) {
+    const comment = file.endsWith(".css")
+      ? `/* crew-lint: allow ${rule} -- the brand asks for it */`
+      : `<!-- crew-lint: allow ${rule} -- the brand asks for it -->`;
+    const hit = lint({ [file]: `${comment}\n${text}\n` }).hits.find((h) => h.rule === rule);
+    expect(hit?.allowed, rule).toBe("the brand asks for it");
+  }
+  const devices: [string, string, string][] = [
+    ["craft/gradient-text", "gradient-text", ".h { background-clip: text; }"],
+    ["craft/emoji", "emoji", ".i::after { content: '🚀'; }"],
+    ["craft/glass", "glass", ".nav { backdrop-filter: blur(8px); }"],
+    ["layout/100vh", "full-viewport", ".hero { height: 100vh; }"],
+  ];
+  for (const [rule, device, text] of devices) {
+    const contract = { colours: false, devices: [device] };
+    const off = lint({ "src/a.css": `${text}\n` }, GUARD, { contract, baseDevices: [device] });
+    expect(hitsOf(off, rule), `${rule} off`).toEqual([]);
+    expect(lintVerdict(off).tail, rule).toContain(`${rule} off: DESIGN.md declares ${device}`);
+    const pending = lint({ "src/a.css": `${text}\n` }, GUARD, { contract, baseDevices: [] });
+    expect(hitsOf(pending, rule).length, `${rule} pending`).toBe(1);
+    expect(lintVerdict(pending).tail, rule).toContain(
+      `${rule} on: DESIGN.md declares ${device} in this change; it takes effect once committed`,
+    );
+  }
+  expect(
+    hitsOf(
+      lint({ "src/A.vue": '<input type="email" placeholder="you@example.com">\n' }),
+      "copy/placeholder",
+    ),
+  ).toEqual([]);
+});
+
+test("2026-10-29-001 AC-4 (the architecture defect at round 1): the gate reference's design-lint table carries the five craft rules with their verdicts, the devices: declaration and where the rules came from", () => {
+  const reference = readFileSync(
+    join(
+      import.meta.dir,
+      "..",
+      "..",
+      "..",
+      "plugins",
+      "core",
+      "skills",
+      "crew",
+      "references",
+      "gate.md",
+    ),
+    "utf8",
+  );
+  for (const [rule, verdict] of [
+    ["craft/gradient-text", "defect"],
+    ["craft/emoji", "defect"],
+    ["copy/placeholder", "defect"],
+    ["craft/glass", "advisory"],
+    ["layout/100vh", "advisory"],
+  ] as const)
+    expect(reference, rule).toMatch(
+      new RegExp(`\\| \`${rule.replace("/", "\\/")}\` \\| ${verdict} \\|`),
+    );
+  for (const words of [
+    "`devices:`",
+    "`gradient-text`, `emoji`, `glass`, `full-viewport`",
+    "a mention in its prose changes nothing",
+    "once committed",
+    "taste-skill",
+  ])
+    expect(reference, words).toContain(words);
+});
+
+test("2026-10-29-001 AC-4 (the test-quality advisory at round 2): the gate's run reads the devices from the base commit's DESIGN.md through git: a device added uncommitted keeps its rule on and says so; once committed, the next item's base turns it off", () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ name: "x" }),
+    "DESIGN.md": "---\nname: shop\n---\n# Shop\n",
+    "src/A.vue": "<p>Ready</p>\n",
+  });
+  const paths = repoPaths(root, testEnv());
+  const profile = detectProfile(root);
+  const policy = DEFAULT_POLICY;
+  write(root, "DESIGN.md", "---\nname: shop\ndevices: [emoji]\n---\n# Shop\n");
+  write(root, "src/A.vue", "<p>Ready 🚀</p>\n");
+  const work = createWork(paths, "feature");
+  addCriterion(work, "x");
+  const pending = runDesignLint({
+    paths,
+    work,
+    profile,
+    files: ["src/A.vue"],
+    policy,
+    writes: false,
+  });
+  expect(pending.status).toBe("fail");
+  expect(pending.tail).toContain(
+    "craft/emoji on: DESIGN.md declares emoji in this change; it takes effect once committed",
+  );
+  git(root, "add", "-A");
+  git(root, "commit", "-q", "-m", "the contract adopts emoji");
+  const next = createWork(paths, "feature");
+  addCriterion(next, "y");
+  const off = runDesignLint({
+    paths,
+    work: next,
+    profile,
+    files: ["src/A.vue"],
+    policy,
+    writes: false,
+  });
+  expect(off.tail).toContain("craft/emoji off: DESIGN.md declares emoji");
+  expect(off.tail).not.toContain("craft/emoji src/A.vue");
 });

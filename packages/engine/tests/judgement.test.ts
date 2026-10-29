@@ -418,7 +418,8 @@ test("SP7b-T5 AC-1: the todo's judgement is planned from its scope, its scope ha
   const work = createWork(paths, "fix");
   expect(reviewDir(paths, "w1", "T-3").endsWith(join("review", "T-3"))).toBe(true);
   write(root, "src/App.vue", "<template>hi</template>");
-  writeReviewInputs(paths, work, ["src/App.vue"], "f1", "T-3");
+  // 2026-10-29-001 edits this line: the todo goes by name with the reviewer's inputs beside it.
+  writeReviewInputs(paths, work, ["src/App.vue"], "f1", { task: "T-3" });
   expect(
     readFileSync(join(paths.crewDir, "work", work.id, "review", "T-3", "files.txt"), "utf8"),
   ).toBe("src/App.vue\n");

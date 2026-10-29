@@ -89,6 +89,9 @@ export function onSessionStart(ctx: HookContext, payload: HookPayload = {}): Hoo
     ctx.policy.attendedDecisions === "relay"
       ? "You run every crew command; the user never types one: a decision that is theirs (crew approve, skip, decide, accept, profile confirm) is relayed by you from the conversation under this repository's policy (attendedDecisions: relay), so run the command once the user has said yes, with no prompt; the record says relayed by the agent."
       : "You run every crew command; the user never types one: a decision that is theirs (crew approve, skip, decide, accept, profile confirm) is signed by the permission prompt your command raises, in auto mode too.",
+    // The writing standard where every session reads it: a session opens build.md and deliver.md
+    // only when it needs them, and the measuring case's run wrote its texts having opened neither (2026-10-29-001, AC-21).
+    "Every text you write, your ending too, follows the skill's references/writing.md: no filler or inflation, every fact and scope limit kept, a missing source marked [source?], never invented or dropped.",
     // The engine that runs, so a stale plugin shows at the start, not in the cache (finding 66).
     `Engine: crew ${VERSION}.`,
   ];

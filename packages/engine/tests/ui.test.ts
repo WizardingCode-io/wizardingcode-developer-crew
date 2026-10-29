@@ -1231,3 +1231,138 @@ test("SP9-T4 AC-4 (the manifest read back): readUiEvidence returns the manifest 
   );
   expect(readUiEvidence(paths, work.id)).toBeNull();
 });
+
+test("2026-10-29-001 AC-7: gradeUi fails on a horizontal overflow, a broken image or text hidden under reduced motion, in that order after reduced motion and axe and before CLS; fonts not loaded are an advisory line; a capture without the fields reads not captured", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const declared = [{ page: "checkout", state: "error", criteria: ["AC-2"] }];
+  const viewports = (overflowPx: number) =>
+    [360, 1280].map((width) => ({
+      name: `v${width}`,
+      width,
+      height: 800,
+      light: `checkout-error@${width}.png`,
+      dark: null,
+      overflow:
+        width === 360 && overflowPx
+          ? { overflowPx, offenders: [{ target: "div.row", right: 400 }] }
+          : { overflowPx: 0, offenders: [] },
+    }));
+  const seeded = (overrides: Record<string, unknown>) => {
+    const work = createWork(paths, "feature");
+    seedCapture(uiFolder(paths, work.id), "checkout", "error", overrides);
+    return graded(paths, work.id, declared);
+  };
+  const all = {
+    axe: {
+      status: "violations",
+      reason: null,
+      file: "axe-checkout-error.json",
+      violations: [{ id: "color-contrast", impact: "serious", nodes: 2, targets: ["button.pay"] }],
+    },
+    vitals: { cls: 0.18, lcpMs: 900, inpMs: null, longTasks: 0 },
+    viewports: viewports(40),
+    images: ["https://cdn.example/a.png"],
+    fonts: ["Brand Sans"],
+    reducedMotion: {
+      status: "clean",
+      running: [],
+      hidden: [{ target: "p.lead", text: "Your order" }],
+    },
+  };
+  expect(seeded(all).offence).toBe("ui: axe serious color-contrast on checkout-error (2 nodes)");
+  const noAxe = {
+    ...all,
+    axe: { status: "not captured", reason: "x", file: null, violations: [] },
+  };
+  expect(seeded(noAxe).offence).toBe(
+    "ui: horizontal overflow 40px on checkout-error@360 (div.row)",
+  );
+  const noOverflow = { ...noAxe, viewports: viewports(0) };
+  expect(seeded(noOverflow).offence).toBe(
+    "ui: broken image https://cdn.example/a.png on checkout-error",
+  );
+  const noImage = { ...noOverflow, images: [] };
+  expect(seeded(noImage).offence).toBe(
+    "ui: text hidden under reduced motion: p.lead (checkout-error)",
+  );
+  const noHidden = { ...noImage, reducedMotion: { status: "clean", running: [], hidden: [] } };
+  const cls = seeded(noHidden);
+  expect(cls.offence).toBe("ui: CLS 0.18 on checkout-error@360 (limit 0.1)");
+  // Fonts not loaded: an advisory line, never an offence.
+  const fontsOnly = seeded({
+    ...noHidden,
+    vitals: { cls: 0.02, lcpMs: 820, inpMs: null, longTasks: 0 },
+  });
+  expect(fontsOnly.offence).toBeNull();
+  expect(fontsOnly.lines).toContain("ui: fonts not loaded on checkout-error: Brand Sans");
+  expect(fontsOnly.manifest.screens[0]?.measures).toEqual({
+    overflow: "clean",
+    images: "clean",
+    fonts: "not loaded",
+    hiddenText: "clean",
+  });
+  // A capture written before this item: no field, so not captured, never clean.
+  const old = seeded({});
+  expect(old.offence).toBeNull();
+  expect(old.manifest.screens[0]?.measures).toEqual({
+    overflow: "not captured",
+    images: "not captured",
+    fonts: "not captured",
+    hiddenText: "not captured",
+  });
+  expect(old.lines.some((l) => l.startsWith("ui: fonts"))).toBe(false);
+});
+
+test("2026-10-29-001 AC-8: extreme app measures in a capture leave the offence and the lines unchanged: nothing grades them", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const declared = [{ page: "checkout", state: "error", criteria: ["AC-2"] }];
+  const plain = createWork(paths, "feature");
+  seedCapture(uiFolder(paths, plain.id), "checkout", "error");
+  const extreme = createWork(paths, "feature");
+  seedCapture(uiFolder(paths, extreme.id), "checkout", "error", {
+    app: {
+      width: 360,
+      numericCells: 40,
+      rightAlignedShare: 0,
+      tabularShare: 0,
+      chartHues: [12],
+      sidebarShare: 0.9,
+    },
+  });
+  const a = graded(paths, plain.id, declared);
+  const b = graded(paths, extreme.id, declared);
+  expect(b.offence).toBe(a.offence);
+  expect(b.lines).toEqual(a.lines);
+});
+
+test("2026-10-29-001 AC-7 (the round-1 rulings): the page's strings in the UI lines are quoted through one rule (no bidi, no zero-width), and the manifest carries the app measures beside the statuses, checked when read back", async () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const declared = [{ page: "checkout", state: "error", criteria: ["AC-2"] }];
+  const work = createWork(paths, "feature");
+  const app = {
+    width: 360,
+    numericCells: 4,
+    rightAlignedShare: 0.5,
+    tabularShare: 0.25,
+    chartHues: [3],
+    sidebarShare: 0,
+  };
+  seedCapture(uiFolder(paths, work.id), "checkout", "error", {
+    images: ["https://cdn.example/‮a.png​"],
+    app,
+  });
+  const out = graded(paths, work.id, declared);
+  expect(out.offence).toBe("ui: broken image https://cdn.example/a.png on checkout-error");
+  expect(out.manifest.screens[0]?.measures?.app).toEqual(app);
+  // Read back, a screen whose measures are malformed makes the manifest unreadable.
+  const { readUiEvidence, writeUiEvidence } = await import("../src/ui.ts");
+  writeUiEvidence(paths, work.id, out.manifest);
+  expect(readUiEvidence(paths, work.id)?.screens[0]?.measures?.app).toEqual(app);
+  const bad = structuredClone(out.manifest);
+  (bad.screens[0] as { measures: unknown }).measures = {
+    ...out.manifest.screens[0]?.measures,
+    app: { ...app, width: "wide" },
+  };
+  writeUiEvidence(paths, work.id, bad);
+  expect(readUiEvidence(paths, work.id)).toBeNull();
+});

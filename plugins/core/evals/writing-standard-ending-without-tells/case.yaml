@@ -1,0 +1,6 @@
+# evals/writing-standard-ending-without-tells/case.yaml
+schema_version: "1.1"
+name: writing-standard-ending-without-tells
+tags: [method]
+context:
+  scaffold_script: fixture.sh

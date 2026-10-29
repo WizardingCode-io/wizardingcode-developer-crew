@@ -92,6 +92,8 @@ const FRONTEND_SOURCES: [string, string, string][] = [
   ["https://github.com/ConardLi/garden-skills", "MIT", "2b9a893"],
   ["https://github.com/every-app/open-seo", "MIT", "89ad06c"],
   ["https://github.com/blader/humanizer", "MIT", "8c307f3"],
+  // 2026-10-29-001 edits this list: taste-skill's dated tells enter the knowledge file.
+  ["https://github.com/Leonxlnx/taste-skill", "MIT", "b9ca2fd"],
 ];
 /** Decision 7's rule, pinned whole. */
 const RULE = {
@@ -1388,4 +1390,20 @@ test("SP9-T13 AC-2: the dusk rule refines a Laravel tree with tests/DuskTestCase
   expect(run.confirmed).toBe(false);
   expect(run.reason).toBe(`pack ${LARAVEL}'s command is not confirmed (crew profile confirm e2e)`);
   expect(existsSync(join(root, "e2e-ran.txt"))).toBe(false);
+});
+
+test("2026-10-29-001 AC-9: the frontend pack's knowledge holds the dated UI tells as facts over its sources, taste-skill among them", () => {
+  const root = ROOTS.frontend;
+  const knowledge = join(root, "knowledge", "frontend.md");
+  expectKnowledgeFactsOnly(knowledge, sourcesOf(root));
+  const facts = read(knowledge);
+  for (const words of [
+    "violet or indigo",
+    "cream with terracotta",
+    "an icon in a tinted square",
+    "an eyebrow above every heading",
+    "grey body text",
+  ])
+    expect(facts, words).toContain(words);
+  expect([...sourcesOf(root)]).toContain("https://github.com/Leonxlnx/taste-skill");
 });

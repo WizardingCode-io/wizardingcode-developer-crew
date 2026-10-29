@@ -40,4 +40,4 @@ The harness-improvement loop runs on this Mac by itself (ADR 0015): `bun scripts
 - Lint and format with biome; imports with an explicit `.ts` extension.
 - The files the engine owns, in `.crew/` and `~/.wizardingcode/crew`, are written only by the `crew` command; the PreToolUse hook denies anything else.
 - Hooks fail open: a hook that cannot decide answers `{}`, so a bug in the engine never blocks the user's session (`packages/engine/src/hooks/index.ts`).
-- Repository documents (README, vision, specs, plans, ADRs, this file) are written in English.
+- Repository documents (README, vision, specs, plans, ADRs, this file) are written in English, and every text the crew writes (documents, comments, commit messages, reports) follows `plugins/core/skills/crew/references/writing.md`.
