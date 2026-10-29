@@ -73,12 +73,22 @@ const empty: GuardContext = {
   unproven: [],
   policy: DEFAULT_POLICY,
 };
+/** A gap round's read, as crew pack files checklists records it (SP9 Task 13, finding 194): the rows that reach Plan on a non-fast route carry one. */
+const READ = {
+  kind: "endpoint",
+  paths: ["/plugin/skills/crew/checklists/endpoint.md"],
+  at: "2026-10-29T00:00:00.000Z",
+};
+/** The line Plan and the validator name until the read is recorded. */
+const MISSING_READ =
+  "a checklist read for the gap round (crew pack files checklists <kind>: the core's checklist of that kind and the packs'; crew pack files checklists none --reason \"<why>\" when no kind applies)";
 
 test("SP2b: the debate opens once with a reason, closes with its cost, and holds the plan while open", () => {
   const paths = repoPaths(makeRepo(), testEnv());
   const work = createWork(paths, "feature");
   applyClassification(work, "feature", { route: "standard", reasons: [], riskAreas: [] });
   work.phase = "conclave";
+  work.checklists = [READ];
   const conclave =
     "## Assumed by good practice\nnone\n## Decisions only the user can make\nnone\n## Proposals\nnone\n## Warnings\nnone\n";
   const ctx = { ...empty, conclaveText: conclave };
@@ -323,13 +333,14 @@ test("SP2a: the conclave sits between specify and plan on standard and full, not
   expect(PHASES_BY_ROUTE.full).toEqual(PHASES_BY_ROUTE.standard);
 });
 
-test("SP2a: plan needs conclave.md with content under the four headings; 'none' is content", () => {
+test("SP2a, SP9-T13 AC-17: plan needs conclave.md with content under the four headings ('none' is content) and a checklist read, the two named at once; a read alone still asks for the sections, none with its reason is a read, and the fast route needs neither", () => {
   const paths = repoPaths(makeRepo(), testEnv());
   const work = createWork(paths, "feature");
   applyClassification(work, "feature", { route: "standard", reasons: [], riskAreas: [] });
   work.phase = "conclave";
   expect(guardFor(work, "plan", empty)).toEqual([
     "conclave.md in the work folder (the gap round: four sections)",
+    MISSING_READ,
   ]);
   const partial =
     "# Gap round\n\n## Assumed by good practice\n- auth\n\n## Decisions only the user can make\n\n## Proposals\nnone\n";
@@ -340,11 +351,22 @@ test("SP2a: plan needs conclave.md with content under the four headings; 'none' 
   expect(guardFor(work, "plan", { ...empty, conclaveText: partial })).toEqual([
     'a "Decisions only the user can make" section with content in conclave.md (write "none" when there is nothing)',
     'a "Warnings" section with content in conclave.md (write "none" when there is nothing)',
+    MISSING_READ,
   ]);
   const full =
     "# Gap round\n\n## Assumed by good practice\n- auth\n\n## Decisions only the user can make\n- D-1 which roles\n\n## Proposals\nnone\n\n## Warnings\nnone\n";
   expect(missingConclaveSections(full)).toEqual([]);
+  expect(guardFor(work, "plan", { ...empty, conclaveText: full })).toEqual([MISSING_READ]);
+  // A read alone: the sections are still asked for (nothing loosens); with both, the way is open.
+  work.checklists = [READ];
+  expect(guardFor(work, "plan", empty)).toEqual([
+    "conclave.md in the work folder (the gap round: four sections)",
+  ]);
   expect(guardFor(work, "plan", { ...empty, conclaveText: full })).toEqual([]);
+  // none with its reason is a record too.
+  work.checklists = [{ kind: "none", paths: [], reason: "a refactor of the parser", at: READ.at }];
+  expect(guardFor(work, "plan", { ...empty, conclaveText: full })).toEqual([]);
+  work.checklists = undefined;
   work.route = "fast";
   expect(guardFor(work, "plan", empty)).toEqual([]);
 });
@@ -354,6 +376,7 @@ test("SP2a: decisions are numbered once, answered by the user or by the validato
   const work = createWork(paths, "feature");
   applyClassification(work, "feature", { route: "standard", reasons: [], riskAreas: [] });
   work.phase = "conclave";
+  work.checklists = [READ];
   const conclave =
     "## Assumed by good practice\nnone\n## Decisions only the user can make\nD-1\n## Proposals\nnone\n## Warnings\nnone\n";
   const ctx = { ...empty, conclaveText: conclave };
@@ -407,6 +430,7 @@ test("SP2a: plan needs every blocking objection bound or waived; a bound criteri
   const work = createWork(paths, "feature");
   applyClassification(work, "feature", { route: "standard", reasons: [], riskAreas: [] });
   work.phase = "conclave";
+  work.checklists = [READ];
   const ac = addCriterion(work, "the sync is gated");
   const conclave =
     "## Assumed by good practice\nnone\n## Decisions only the user can make\nnone\n## Proposals\nnone\n## Warnings\nnone\n";
@@ -454,6 +478,7 @@ test("SP2a: the complete-gap-round rule holds only with the four sections, defau
   const ledger: ObjectionLedger = { objections: [] };
   const o1 = addObjection(ledger, "re-subscribes everyone", "fault-finder", "blocking");
   addDecision(work, "Which roles?");
+  work.checklists = [READ];
   const partial =
     "## Assumed by good practice\nnone\n## Decisions only the user can make\nD-1\n## Proposals\nnone\n";
   expect(
@@ -477,6 +502,7 @@ test("SP7a AC-2: on standard and full the plan waits for the mandatory leads' va
   const work = createWork(paths, "Validate me");
   work.route = "standard";
   work.phase = "conclave";
+  work.checklists = [READ];
   work.seats = plannedSeats("standard", [], ["src/a.ts"], DEFAULT_POLICY);
   addCriterion(work, "a");
   const spec = "# Spec\n\n## Acceptance criteria\n- AC-1 a\n";
@@ -526,6 +552,7 @@ test("SP7a AC-2: on standard and full the plan waits for the mandatory leads' va
   expect(typeof work.phaseAt?.plan).toBe("string");
   // The spec changed after the validations: stale, asked again.
   work.phase = "conclave";
+  work.checklists = [READ];
   const stale = advancePhase(work, { ...ctx, specText: `${spec}- AC-2 b\n` });
   expect(stale.ok).toBe(false);
   if (!stale.ok)
@@ -591,6 +618,7 @@ test("SP7a AC-2: on standard and full the plan waits for the mandatory leads' va
   const unseated = createWork(paths, "Old standard item");
   unseated.route = "standard";
   unseated.phase = "conclave";
+  unseated.checklists = [READ];
   addCriterion(unseated, "a");
   expect(advancePhase(unseated, ctx)).toEqual({ ok: true, phase: "plan" });
 });

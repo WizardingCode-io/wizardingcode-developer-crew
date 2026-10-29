@@ -106,9 +106,10 @@ export function countedNote(policy: Policy, decision: Decided): string {
   // A rule the validator applied with a person present: the person was there to object.
   if (decision.by === "validator" && decision.mode === undefined)
     return ": counted, a person was present";
-  return decisionCounts(policy, decision)
-    ? ": counted by policy"
-    : ": not counted, the policy waits for a person";
+  if (decisionCounts(policy, decision)) return ": counted by policy";
+  // How it counts, named (finding 195): a session told the user `crew accept` where the note said only that a person was awaited.
+  const word = decision.by === "validator" ? "validator" : "count";
+  return `: not counted, the policy waits for a person (a person runs the same command, or policy.json sets unattendedDecisions to "${word}")`;
 }
 
 export function emptyEvidence(): Evidence {
@@ -534,6 +535,19 @@ export function renderReport(
   lines.push(ctoPlan ? `- CTO plan: ${ctoPlan.path} (${ctoPlan.date})` : "- CTO plan: none");
   // The packs the item used (SP6 Task 2): the knowledge files served to the expert, the template that seated a team.
   lines.push(work.packs?.length ? `- Packs: ${work.packs.join(", ")}` : "- Packs: none");
+  // The gap round's reads (SP9 Task 13, finding 194): the kinds with their counts and the none
+  // form's reason, never a path of the record (finding 118's rule for the knowledge labels).
+  lines.push(
+    work.checklists?.length
+      ? `- Checklists: ${work.checklists
+          .map((r) =>
+            r.kind === "none"
+              ? `none (${r.reason ?? ""})`
+              : `${r.kind} (${r.paths.length} file${r.paths.length === 1 ? "" : "s"})`,
+          )
+          .join(", ")}`
+      : "- Checklists: none read",
+  );
   // The files by their pack and the path inside it (finding 118), never a machine's path; a record
   // older than the labels prints the paths it holds.
   if (work.knowledgeFiles?.length)

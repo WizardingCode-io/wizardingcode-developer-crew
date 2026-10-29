@@ -127,6 +127,8 @@ async function lead(options: LeadOptions = {}) {
     `.crew/work/${id}/conclave.md`,
     "# Gap round\n\n## Assumed by good practice\nnone\n\n## Decisions only the user can make\nnone\n\n## Proposals\nnone\n\n## Warnings\nnone\n",
   );
+  // SP9 Task 13 (2026-10-28-006, finding 194): the gap round reads a checklist before Plan, so the rows that advance past the conclave record the read as a session does.
+  await c.run("pack", "files", "checklists", "endpoint", "--item", id);
   await c.run("phase", id, "next");
   await c.run("phase", id, "next");
   await c.run("approve", id, "spec", "--validator", "complete-gap-round");

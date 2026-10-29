@@ -11,6 +11,7 @@ import { join } from "node:path";
 import type { Origin } from "../src/analysis.ts";
 import {
   computeVerdict,
+  countedNote,
   emptyEvidence,
   loadEvidence,
   renderReport,
@@ -361,7 +362,11 @@ test("the report says who took each decision, in which mode, and whether it coun
   expect(waiting).toContain(
     "- `gate:deps` skipped by the agent in bypassPermissions mode: offline (",
   );
-  expect(waiting.match(/\): not counted, the policy waits for a person/g)).toHaveLength(2);
+  expect(
+    waiting.match(
+      /\): not counted, the policy waits for a person \(a person runs the same command, or policy\.json sets unattendedDecisions to "count"\)/g,
+    ),
+  ).toHaveLength(2);
   expect(waiting).not.toContain("counted by policy");
 
   const counting = renderReport(work, evidence, {
@@ -556,7 +561,9 @@ test("SP2a: the report names the validator's approval and whether the policy cou
   const evidence: Evidence = { ...emptyEvidence(), fingerprint: "f" };
   const waiting = renderReport(work, evidence, DEFAULT_POLICY);
   expect(waiting).toContain("- spec approved by the validator (rule: complete-gap-round) (");
-  expect(waiting).toContain("): not counted, the policy waits for a person");
+  expect(waiting).toContain(
+    '): not counted, the policy waits for a person (a person runs the same command, or policy.json sets unattendedDecisions to "validator")',
+  );
   expect(
     renderReport(work, evidence, { ...DEFAULT_POLICY, unattendedDecisions: "validator" }),
   ).toContain("): counted by policy");
@@ -1536,4 +1543,22 @@ test("F179 AC-1, AC-5: the Test-first cell says a preserve pair's counts, counts
   expect(labels).toContain(
     "| AC-3 | observed | seen | observed: passes after (a measurement); the observed recorded 2 times (the latest decides) |",
   );
+});
+
+test("SP9-T13 AC-19 (finding 195): an uncounted decision's note names how it counts, the validator's with its own policy word; a counted or a person's decision is unchanged", () => {
+  expect(countedNote(DEFAULT_POLICY, { by: "agent", mode: "dontAsk" })).toBe(
+    ': not counted, the policy waits for a person (a person runs the same command, or policy.json sets unattendedDecisions to "count")',
+  );
+  expect(
+    countedNote(DEFAULT_POLICY, { by: "validator", mode: "dontAsk", rule: "stated-default" }),
+  ).toBe(
+    ': not counted, the policy waits for a person (a person runs the same command, or policy.json sets unattendedDecisions to "validator")',
+  );
+  expect(
+    countedNote(
+      { ...DEFAULT_POLICY, unattendedDecisions: "count" },
+      { by: "agent", mode: "dontAsk" },
+    ),
+  ).toBe(": counted by policy");
+  expect(countedNote(DEFAULT_POLICY, { by: "user" })).toBe("");
 });

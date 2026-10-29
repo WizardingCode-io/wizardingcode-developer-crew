@@ -1400,3 +1400,19 @@ test("2026-10-28-004 AC-11: the references say the seven asks, what the two new 
   expect(conclave).toContain("disputed by jev: the default");
   expect(conclave).toContain("changes a risk area");
 });
+
+test("SP9-T13 AC-14: the conclave reference names crew pack files checklists <kind> as the way to the core's checklist and the packs', the none --reason form and the refusal into Plan, and keeps checklists/<kind>.md; the packs reference says the command prints the core's first and records the kinds; the kinds stay the ten", () => {
+  const conclave = readReference("conclave.md");
+  for (const words of [
+    "crew pack files checklists <kind>",
+    "the core's checklist of that kind first",
+    'crew pack files checklists none --reason "<why>"',
+    "a checklist read for the gap round",
+    "checklists/<kind>.md",
+  ])
+    expect(conclave, words).toContain(words);
+  const packs = readReference("packs.md");
+  for (const words of ["the core's checklist of that kind first", "records the kind"])
+    expect(packs, words).toContain(words);
+  expect(KINDS).toHaveLength(10);
+});

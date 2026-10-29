@@ -799,16 +799,24 @@ function routeDocuments(work: WorkItem, ctx: GuardContext): string[] {
   return missing;
 }
 
-/** The gap round's record, asked for once, on the way into Plan (SP2 §6). */
+/** The line Plan and the validator name until the gap round recorded a read (SP9 Task 13, finding 194). */
+const MISSING_CHECKLIST_READ =
+  "a checklist read for the gap round (crew pack files checklists <kind>: the core's checklist of that kind and the packs'; crew pack files checklists none --reason \"<why>\" when no kind applies)";
+
+/** The gap round's record, asked for once, on the way into Plan (SP2 §6): the document's four sections and a checklist read, named together so a session learns both at once. */
 function conclaveDocument(work: WorkItem, ctx: GuardContext): string[] {
   if (work.route === "fast") return [];
-  if (ctx.conclaveText === null) {
-    return ["conclave.md in the work folder (the gap round: four sections)"];
-  }
-  return missingConclaveSections(ctx.conclaveText).map(
-    (name) =>
-      `a "${name}" section with content in conclave.md (write "none" when there is nothing)`,
-  );
+  const missing =
+    ctx.conclaveText === null
+      ? ["conclave.md in the work folder (the gap round: four sections)"]
+      : missingConclaveSections(ctx.conclaveText).map(
+          (name) =>
+            `a "${name}" section with content in conclave.md (write "none" when there is nothing)`,
+        );
+  // The gap round reads the checklists, not the request alone (SP9 Task 13, finding 194): a kind
+  // served by crew pack files checklists, or none with its reason, recorded on the item.
+  if (!work.checklists?.length) missing.push(MISSING_CHECKLIST_READ);
+  return missing;
 }
 
 /**

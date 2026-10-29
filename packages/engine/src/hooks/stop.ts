@@ -196,6 +196,11 @@ export function onStop(ctx: HookContext, payload: HookPayload = {}): HookRespons
   const wait = work
     ? ` To end the turn with a question for the user, run crew await ${work.id} user first; while the roles answer, crew await ${work.id} role; while a reply is due, crew await ${work.id} mail <message id>.`
     : "";
+  // The message after the wait is the one read last (finding 196): a session that wrote its account
+  // before the block ended on a thinner recap, so the account is asked for again there.
+  const account = work
+    ? " The message after the wait is the one the user reads last: give the whole account again there (what the report proves, what is not proven and why), never a pointer to an earlier message."
+    : "";
   // A judgement reason is not cleared by another gate run, and a judgement gate is not skipped by
   // default: the way out is the roles and the record (review of SP2b, finding 2).
   const judgement =
@@ -206,7 +211,7 @@ export function onStop(ctx: HookContext, payload: HookPayload = {}): HookRespons
   return done(
     {
       decision: "block",
-      reason: `Crew: watched source files changed and the work is not proven. Missing: ${missing.join("; ")}. Run ${gate} and fix what fails: a red is traced to its origin, never skipped.${judgement}${wait}${mailNote()}`,
+      reason: `Crew: watched source files changed and the work is not proven. Missing: ${missing.join("; ")}. Run ${gate} and fix what fails: a red is traced to its origin, never skipped.${judgement}${wait}${account}${mailNote()}`,
     },
     true,
   );

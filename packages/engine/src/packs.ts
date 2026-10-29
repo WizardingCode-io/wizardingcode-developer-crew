@@ -19,6 +19,7 @@ import { LOWERCASE_WORD } from "./policy.ts";
 import { scanText } from "./secrets.ts";
 import { type RegistryTemplate, TEAMS, type TeamDef, type TeamTemplate } from "./team.ts";
 import {
+  type ChecklistRecord,
   CORE_STACKS,
   type CoreStack,
   GATE_NAMES,
@@ -600,6 +601,40 @@ export function knowledgeFilesFor(
     packs: packs.filter((p) => served.has(p.name)).map((p) => p.name),
     skipped,
   };
+}
+
+/** The core's checklist kinds (SP9 Task 13, finding 194): the `*.md` names of the skill's checklists folder under the plugin root, sorted; none where the folder is absent. */
+export function coreChecklistKinds(pluginRoot: string): string[] {
+  try {
+    return readdirSync(join(pluginRoot, "skills", "crew", "checklists"))
+      .filter((f) => f.endsWith(".md"))
+      .map((f) => f.slice(0, -3))
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * The core's checklist of a kind, or null: resolved by exact membership in the folder's names,
+ * never by joining the kind into a path (the security lead's rule at the spec), so a separator, a
+ * `..`, a suffix, a dot, an empty string or a NUL in the kind resolves nothing.
+ */
+export function coreChecklist(pluginRoot: string, kind: string): string | null {
+  const name = coreChecklistKinds(pluginRoot).find((k) => k === kind);
+  return name === undefined ? null : join(pluginRoot, "skills", "crew", "checklists", `${name}.md`);
+}
+
+/** The most a `none` read's reason keeps (SP9 Task 13): session text, cut with the marker and scanned before it is kept. */
+export const CHECKLIST_REASON_MAX = 500;
+
+/** A gap round's read on the item (SP9 Task 13): the kinds appended in the order read, a kind read again kept once in its place with its latest paths and reason. */
+export function recordChecklist(work: WorkItem, record: ChecklistRecord): void {
+  const list = work.checklists ?? [];
+  const at = list.findIndex((r) => r.kind === record.kind);
+  if (at === -1) list.push(record);
+  else list[at] = record;
+  work.checklists = list;
 }
 
 /** The packs an item used (SP6 Task 2), as `<name> <version>`, each once: the report's Packs line reads them. */

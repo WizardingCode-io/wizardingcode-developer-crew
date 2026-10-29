@@ -174,6 +174,9 @@ import {
   sweepSafely,
 } from "./open.ts";
 import {
+  CHECKLIST_REASON_MAX,
+  coreChecklist,
+  coreChecklistKinds,
   discoverPacks,
   knowledgeFilesFor,
   listPacks,
@@ -182,6 +185,7 @@ import {
   packLabel,
   packRules,
   packTemplates,
+  recordChecklist,
   recordPacks,
   recordPackUse,
   registerPack,
@@ -301,6 +305,7 @@ import {
   teamsFor,
 } from "./team.ts";
 import type {
+  ChecklistRecord,
   Criterion,
   Decision,
   Environment,
@@ -371,6 +376,7 @@ import {
   type DefectsOutcome,
   decisionMarkText,
   type FactInput,
+  safeField,
   type TriageOutcome,
   verifyAnswer,
   verifyDecision,
@@ -5281,7 +5287,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       // The packs the engine serves (SP6 Task 2, ADR 0010): registered from a path or by Claude
       // Code's discovery, checked whole, listed with their states, their files served by path.
       const usage =
-        "usage: crew pack add <path> | remove <name> | list | show <name> | files checklists <kind> | files knowledge <key> | files knowledge --item <id> | sync";
+        'usage: crew pack add <path> | remove <name> | list | show <name> | files checklists <kind> [--item <id>] | files checklists none --reason "<why>" | files knowledge <key> | files knowledge --item <id> | sync';
       const sub = args[0];
       const userDir = env.paths.userDir;
       const register = (text: string) =>
@@ -5403,6 +5409,52 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         const key = args[2];
         if ((kind !== "checklists" && kind !== "knowledge") || key === undefined)
           return refuse(usage);
+        if (kind === "checklists") {
+          // The gap round's checklists (SP9 Task 13, finding 194): the core's of that kind first,
+          // each registered pack's after it; a kind that is neither refused with the core's kinds;
+          // the read recorded on the item --item names (through openForChange, as every writing
+          // command, never the active item in its place) or on the active one, the way into Plan;
+          // none with its reason, bounded and scanned, when no kind of the core's applies.
+          const target =
+            typeof item === "string" ? item : (activeWork(env.paths)?.work?.id ?? null);
+          const at = new Date().toISOString();
+          const recordOn = (record: ChecklistRecord): Outcome | null => {
+            if (target === null) return null;
+            const opened = openForChange(env, target);
+            if (isOutcome(opened)) return opened;
+            recordChecklist(opened.work, record);
+            saveWork(env.paths, opened.work);
+            return null;
+          };
+          if (key === "none") {
+            const reason =
+              typeof parsed.flags.reason === "string" ? parsed.flags.reason.trim() : "";
+            if (!reason)
+              return refuse(
+                'crew pack files checklists none needs --reason "<why no kind applies>"',
+              );
+            const kept = safeField(reason, "checklist reason", CHECKLIST_REASON_MAX);
+            const refused = recordOn({ kind: "none", paths: [], reason: kept, at });
+            if (refused) return refused;
+            return ok(`no checklist: ${kept}${target ? ` (recorded on ${target})` : ""}`, {
+              paths: [],
+              kind: "none",
+              reason: kept,
+              recorded: target,
+            });
+          }
+          const root = pluginRoot();
+          const core = coreChecklist(root, key);
+          const packPaths = packFiles(userDir, "checklists", key);
+          if (core === null && packPaths.length === 0)
+            return refuse(
+              `no checklist of kind ${key}: the core's kinds are ${coreChecklistKinds(root).join(", ")}; a registered pack's are in its manifest (crew pack show <name>)`,
+            );
+          const paths = core === null ? packPaths : [core, ...packPaths];
+          const refused = recordOn({ kind: key, paths, at });
+          if (refused) return refused;
+          return ok(paths.join("\n"), { paths, kind: key, core, recorded: target });
+        }
         const paths = packFiles(userDir, kind, key);
         return ok(paths.join("\n"), { paths });
       }
@@ -5807,7 +5859,7 @@ const HELP = `crew ${VERSION}
   knowledge lesson add --cue "<t>" --lesson "<t>" --evidence docs/improve/<run>/record.json --proposal P-n --confidence high|medium|low   the improvement loop's lesson about the crew, its run's record as evidence; read in this repository alone (ADR 0013)
   knowledge contradict K-n --reason "<why>" [--item <id>]   dispute an entry (recorded); knowledge unmark K-n   a person removes a mark (asks the user; never with --mode or --validator)
   learn <id> [--confirm K-n]           the proven item enters the base (in the learn phase): its solution, an issue's root cause, the facts with a source, the workspace's stack preference; what it cited is confirmed; a root cause the base holds is refused unless confirmed
-  pack add <path> | remove <name> | list | show <name> | files checklists <kind> | files knowledge <key> | files knowledge --item <id> | sync   the packs the engine serves (references/packs.md)
+  pack add <path> | remove <name> | list | show <name> | files checklists <kind> [--item <id>] | files checklists none --reason "<why>" | files knowledge <key> | files knowledge --item <id> | sync   the packs the engine serves; the gap round's checklists read and recorded (references/packs.md)
   runtime list | install <name> [--scope project|user] | remove <name> [--scope project|user] | check <name> [--scope project|user]   the runtime adapters: the table, a runtime's hook configuration merged in with the skill and the agents, crew's entries and files taken out again, and the configuration read back with the guarantee table (references/runtimes.md)
   skip <id> <step> --reason "<text>"    record a skip of a tdd step, a gate or a judgement gate (asks the user; --mode as for approve)
   evidence <id>                         write and print the report

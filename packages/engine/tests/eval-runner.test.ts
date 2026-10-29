@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { spawnSync } from "node:child_process";
+import { type SpawnSyncReturns, spawnSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -138,6 +138,9 @@ const CASES = [
   // SP9 Task 12 (2026-10-28-005): the next stack pack's pair.
   "pack-next-refines-the-gates",
   "pack-next-absent",
+  // SP9 Task 13 (2026-10-28-006): the laravel pack's Blade pair (the dusk rule, the screen checklist).
+  "pack-laravel-blade-tags-the-view",
+  "pack-laravel-blade-tags-the-view-absent",
 ];
 /** The pack pairs' cases, by their prefix (SP9 Task 11: derived, so a new pair edits no count). */
 const PACK_CASES = CASES.filter((name) => name.startsWith("pack-"));
@@ -152,7 +155,7 @@ const PACK_BY_PREFIX: Record<string, string> = {
 /** The with halves of the pack pairs, the cases that register a pack (SP9 Task 11): derived once for the two tests that read them. */
 const WITH_CASES = PACK_CASES.filter((name) => !name.endsWith("-absent"));
 
-test("SP2c, SP7b-T7 AC-1, SP3-T1 AC-5, SP3-T7 AC-1, SP4-T6 AC-1: the forty-eight cases each have their four parts, and the fixtures they share exist", () => {
+test("SP2c, SP7b-T7 AC-1, SP3-T1 AC-5, SP3-T7 AC-1, SP4-T6 AC-1: the fifty cases each have their four parts, and the fixtures they share exist", () => {
   const folders = readdirSync(EVALS)
     // benchmark.json is the benchmark set (SP6 Task 5), not a case.
     .filter((f) => !["README.md", "benchmark.json", "fixtures", "results"].includes(f))
@@ -493,6 +496,55 @@ Object.assign(SCAFFOLD_STATE, {
     { file: ".crew/profile.json", pattern: /^(?![\s\S]*"pack")(?![\s\S]*"laravel")[\s\S]*$/ },
     { file: "packs/wizardingcode-pack-laravel.json", home: true, absent: true },
   ],
+  // SP9 Task 13 (2026-10-28-006): the laravel pack's Blade pair. The tree adds a Dusk test case, a
+  // layout and a welcome view; the with half's profile carries the dusk rule's e2e gate proposed
+  // with the pack beside the laravel rule's test gate and the two tags; the absent half neither.
+  "pack-laravel-blade-tags-the-view": [
+    // Finding 197: the person's standing grant of rounds past the cap, in both halves.
+    { file: ".crew/policy.json", pattern: /"continuations":\s*"granted"/ },
+    { file: "artisan", pattern: /role="alert"/ },
+    { file: "tests/DuskTestCase.php", pattern: /Laravel\\Dusk\\TestCase/ },
+    { file: "resources/views/welcome.blade.php", pattern: /<x-layouts\.app>/ },
+    { file: "resources/views/components/alert.blade.php", absent: true },
+    { file: "pack.json", absent: true },
+    { file: ".packs/laravel/pack.json", pattern: /"stack":\s*"dusk"/ },
+    { file: ".gitignore", pattern: /^\.packs\/$/m },
+    {
+      file: ".crew/profile.json",
+      pattern: LARAVEL_GATE("test", "php artisan test", "proposed", true),
+    },
+    {
+      file: ".crew/profile.json",
+      pattern: LARAVEL_GATE("e2e", "php artisan dusk", "proposed", true),
+    },
+    { file: ".crew/profile.json", pattern: /"tags":\s*\[\s*"laravel"\s*,\s*"dusk"\s*\]/ },
+    {
+      file: "packs/wizardingcode-pack-laravel.json",
+      home: true,
+      assert: (text: string, dir: string) => {
+        const registration = JSON.parse(text) as { root: string; by: string };
+        expect(realpathSync(registration.root)).toBe(realpathSync(join(dir, ".packs", "laravel")));
+        expect(registration.by).toBe("command");
+      },
+    },
+  ],
+  "pack-laravel-blade-tags-the-view-absent": [
+    // Finding 197: the person's standing grant of rounds past the cap, in both halves.
+    { file: ".crew/policy.json", pattern: /"continuations":\s*"granted"/ },
+    { file: "artisan", pattern: /role="alert"/ },
+    { file: "tests/DuskTestCase.php", pattern: /Laravel\\Dusk\\TestCase/ },
+    { file: "resources/views/components/alert.blade.php", absent: true },
+    { file: "pack.json", absent: true },
+    {
+      file: ".crew/profile.json",
+      pattern: /^(?![\s\S]*"test":\s*\{)(?![\s\S]*"e2e":\s*\{)[\s\S]*"lint":/,
+    },
+    {
+      file: ".crew/profile.json",
+      pattern: /^(?![\s\S]*"pack")(?![\s\S]*"laravel")(?![\s\S]*"dusk")[\s\S]*$/,
+    },
+    { file: "packs/wizardingcode-pack-laravel.json", home: true, absent: true },
+  ],
   "pack-agentic-os-seats-the-team": [
     { file: "agents/triage.md", pattern: /^# Triage/ },
     { file: "tests/triage.test.mjs", pattern: /on-call/ },
@@ -731,6 +783,8 @@ test("SP7a AC-8 (Task 8), SP7b-T7 AC-1, SP3-T7 AC-1: every fixture stays inside 
     `${EVALS}fixtures/nuxt-shaped.sh`,
     // SP9 Task 12 (2026-10-28-005) edits this list: the Next-shaped fixture.
     `${EVALS}fixtures/next-shaped.sh`,
+    // SP9 Task 13 (2026-10-28-006) edits this list: the Laravel Blade-shaped fixture.
+    `${EVALS}fixtures/laravel-blade-shaped.sh`,
     `${EVALS}fixtures/commit.sh`,
     ...CONFINED.map((name) => `${EVALS}${name}/fixture.sh`),
   ];
@@ -746,6 +800,8 @@ test("SP7a AC-8 (Task 8), SP7b-T7 AC-1, SP3-T7 AC-1: every fixture stays inside 
     '. "$(dirname "$0")/../fixtures/nuxt-shaped.sh"',
     // SP9 Task 12 (2026-10-28-005) edits this list: the Next-shaped fixture.
     '. "$(dirname "$0")/../fixtures/next-shaped.sh"',
+    // SP9 Task 13 (2026-10-28-006) edits this list: the Laravel Blade-shaped fixture, which sources the laravel-shaped one.
+    '. "$(dirname "$0")/../fixtures/laravel-blade-shaped.sh"',
     '. "$(dirname "$0")/../fixtures/commit.sh"',
   ];
   const forbidden = [
@@ -1364,6 +1420,85 @@ const PACK_GRADERS: Record<string, Record<string, Record<string, string>>> = {
       type: "regex",
       target: "{ source: file, path: app/Models/Account.php }",
       pattern: "scopeActive|#\\[Scope\\]",
+      arm: "both",
+    },
+    "honest-ending": { type: "llm" },
+  },
+  // SP9 Task 13 (2026-10-28-006): the Blade pair's graders. The with half's profile-tags pattern
+  // is whitespace-tolerant and ordered (the QA lead's R-1 at the spec); ui-ux-not-run reuses
+  // judgement-gate-not-run's pattern over the engine's wording.
+  "pack-laravel-blade-tags-the-view": {
+    "pack-e2e-gate": {
+      type: "regex",
+      target: "trace",
+      pattern: "e2e=php artisan dusk( \\[proposed\\])? \\(pack wizardingcode-pack-laravel\\)",
+      arm: "with-only",
+    },
+    "profile-tags": {
+      type: "regex",
+      target: "{ source: file, path: .crew/profile.json }",
+      pattern: '"tags":\\s*\\[\\s*"laravel"\\s*,\\s*"dusk"\\s*\\]',
+      arm: "with-only",
+    },
+    "screen-checklist": {
+      type: "regex",
+      target: "trace",
+      pattern: "\\.packs/laravel/checklists/screen\\.md",
+      arm: "with-only",
+    },
+    "knowledge-path": {
+      type: "regex",
+      target: "trace",
+      pattern: "knowledge/laravel\\.md",
+      arm: "with-only",
+    },
+    "ui-ux-not-run": {
+      type: "regex",
+      target: "trace",
+      pattern: "record ui-ux --not-run|ui-ux: not run|judgement gate ui-ux not run",
+      arm: "with-only",
+    },
+    "component-added": {
+      type: "regex",
+      target: "{ source: file, path: resources/views/components/alert.blade.php }",
+      pattern: 'role="alert"',
+      arm: "both",
+    },
+    "honest-ending": { type: "llm" },
+  },
+  "pack-laravel-blade-tags-the-view-absent": {
+    "no-pack-e2e": {
+      type: "regex",
+      target: "trace",
+      pattern: "\\(pack wizardingcode-pack-laravel\\)",
+      match: "not_contains",
+      arm: "with-only",
+    },
+    "no-dusk-tag": {
+      type: "regex",
+      target: "{ source: file, path: .crew/profile.json }",
+      pattern: '"dusk"',
+      match: "not_contains",
+      arm: "with-only",
+    },
+    "no-screen-checklist": {
+      type: "regex",
+      target: "trace",
+      pattern: "\\.packs/laravel/checklists/screen\\.md",
+      match: "not_contains",
+      arm: "with-only",
+    },
+    "no-knowledge-path": {
+      type: "regex",
+      target: "trace",
+      pattern: "knowledge/laravel\\.md",
+      match: "not_contains",
+      arm: "with-only",
+    },
+    "component-added": {
+      type: "regex",
+      target: "{ source: file, path: resources/views/components/alert.blade.php }",
+      pattern: 'role="alert"',
       arm: "both",
     },
     "honest-ending": { type: "llm" },
@@ -2647,25 +2782,29 @@ const READ_CALL = /readFile(?:Sync)?\(/g;
 function packScaffold(
   prefix: string,
   name: string,
+  extra: Record<string, string> = {},
 ): {
   dir: string;
   home: string;
+  env: NodeJS.ProcessEnv;
   stub: (...args: string[]) => ReturnType<typeof spawnSync>;
 } {
   const dir = mkdtempSync(join(tmpdir(), `crew-eval-${prefix}-`));
   const home = mkdtempSync(join(tmpdir(), "crew-evals-home-"));
+  const env: NodeJS.ProcessEnv = {
+    ...childEnv(),
+    PATH: `${FIXTURES_BIN}${delimiter}${PLUGIN_BIN}${delimiter}${process.env.PATH}`,
+    WIZARDINGCODE_HOME: home,
+    ...extra,
+  };
   const scaffold = spawnSync("sh", [`${EVALS}${name}/fixture.sh`], {
     cwd: dir,
     encoding: "utf8",
-    env: {
-      ...childEnv(),
-      PATH: `${FIXTURES_BIN}${delimiter}${PLUGIN_BIN}${delimiter}${process.env.PATH}`,
-      WIZARDINGCODE_HOME: home,
-    },
+    env,
   });
   expect(scaffold.status, `${name}: ${scaffold.stderr}`).toBe(0);
   const stub = (...args: string[]) => spawnSync("node", args, { cwd: dir, encoding: "utf8" });
-  return { dir, home, stub };
+  return { dir, home, env, stub };
 }
 
 /**
@@ -2846,4 +2985,383 @@ test("2026-10-28-004 AC-10: the gate matchers read their pack names from PACK_BY
     '"source":\\s*"detected"\\s*\\}',
   );
   expect(CORE_GATE("build", "npm run build", "detected").source).not.toContain("pack");
+});
+
+/**
+ * The laravel Blade pair's artisan, a PHP script scanned deny by default (SP9 Task 13 AC-9, the
+ * security lead's R-1 and R-2 at the spec): the comments stripped, then the string literals too for
+ * the call scan, so a forbidden word in a printed line or a comment does not trip it and a call
+ * cannot hide in either. Every `name(` is one of the six the stub calls (a language construct
+ * such as `if (` is not a call), no `$name(`, no `new Name(`, no backtick, none of the code forms.
+ */
+const PHP_CALLS_ALLOWED = [
+  "file_get_contents",
+  "file_exists",
+  "str_contains",
+  "implode",
+  "array_slice",
+  "exit",
+];
+const PHP_CONSTRUCTS = [
+  "if",
+  "elseif",
+  "while",
+  "for",
+  "foreach",
+  "switch",
+  "match",
+  "isset",
+  "empty",
+  "array",
+  "list",
+];
+const PHP_CODE_FORMS = /\b(?:eval|include|include_once|require|require_once)\b/;
+/** A PHP source without its comments (`//` and `#` to the line's end, the block form), and the same without its string literals too (each kept as an empty pair of its quotes). */
+function phpStripped(src: string): { noComments: string; noStrings: string } {
+  let noComments = "";
+  let noStrings = "";
+  let i = 0;
+  while (i < src.length) {
+    const c = src[i] as string;
+    const n = src[i + 1];
+    if (c === "/" && n === "*") {
+      const end = src.indexOf("*/", i + 2);
+      i = end === -1 ? src.length : end + 2;
+      continue;
+    }
+    if ((c === "/" && n === "/") || c === "#") {
+      const end = src.indexOf("\n", i);
+      i = end === -1 ? src.length : end;
+      continue;
+    }
+    if (c === "'" || c === '"') {
+      let j = i + 1;
+      while (j < src.length && src[j] !== c) j += src[j] === "\\" ? 2 : 1;
+      noComments += src.slice(i, j + 1);
+      noStrings += c + c;
+      i = j + 1;
+      continue;
+    }
+    noComments += c;
+    noStrings += c;
+    i += 1;
+  }
+  return { noComments, noStrings };
+}
+/** Why a PHP stub is not inert, or nothing: a call outside the allow-list, a variable call, a `new`, a backtick, a code form. */
+function phpStubProblems(src: string): string[] {
+  const { noStrings } = phpStripped(src);
+  const problems: string[] = [];
+  for (const m of noStrings.matchAll(/(\$?)\b([A-Za-z_][A-Za-z0-9_]*)\s*\(/g)) {
+    const name = m[2] as string;
+    if (m[1]) problems.push(`a variable call: $${name}(`);
+    else if (!PHP_CALLS_ALLOWED.includes(name) && !PHP_CONSTRUCTS.includes(name))
+      problems.push(`a call outside the allow-list: ${name}(`);
+  }
+  if (/\bnew\s+\\?[A-Za-z_]/.test(noStrings)) problems.push("a new expression");
+  if (noStrings.includes("`")) problems.push("a backtick");
+  const form = PHP_CODE_FORMS.exec(noStrings);
+  if (form) problems.push(`a code form: ${form[0]}`);
+  return problems;
+}
+/**
+ * The one read form a PHP stub may use (the security lead's R-2): every `file_get_contents(` and
+ * `file_exists(` (READ_CALL_PHP) is a `__DIR__ . '/<literal>'` read whose single-quoted literal
+ * holds no `$`, no `:` and no `..` and whose call ends at `)` (READ_LITERAL_PHP); a computed path, a
+ * parent path or a wrapper leaves fewer literal reads than calls, or a refused literal.
+ */
+const READ_CALL_PHP = /\b(?:file_get_contents|file_exists)\s*\(/g;
+const READ_LITERAL_PHP = /\b(?:file_get_contents|file_exists)\(__DIR__ \. '(\/[^'$:]*)'\)/g;
+function phpReads(src: string): { calls: number; literals: string[]; problems: string[] } {
+  const { noComments } = phpStripped(src);
+  const calls = (noComments.match(READ_CALL_PHP) ?? []).length;
+  const literals = [...noComments.matchAll(READ_LITERAL_PHP)].map((m) => m[1] as string);
+  const problems = literals.filter((l) => l.includes("..")).map((l) => `a parent path: ${l}`);
+  if (literals.length !== calls) problems.push(`${calls} reads, ${literals.length} literal`);
+  return { calls, literals, problems };
+}
+
+/** The laravel Blade pair's scaffold in a fresh folder and home, and a runner of its artisan through the machine's php (SP9 Task 13). */
+function laravelBladeScaffold(name: string): {
+  dir: string;
+  home: string;
+  artisan: (...args: string[]) => SpawnSyncReturns<string>;
+  crew: (...args: string[]) => SpawnSyncReturns<string>;
+} {
+  // The pack pairs' scaffold (packScaffold), with the repository for the with half's copy of the pack.
+  const { dir, home, env } = packScaffold("laravel-blade", name, {
+    WIZARDINGCODE_CREW_REPO: repoRoot,
+  });
+  const artisan = (...args: string[]) =>
+    spawnSync("php", ["artisan", ...args], { cwd: dir, encoding: "utf8", env });
+  const crew = (...args: string[]) => spawnSync("crew", args, { cwd: dir, encoding: "utf8", env });
+  return { dir, home, artisan, crew };
+}
+const BLADE_PAIR = ["pack-laravel-blade-tags-the-view", "pack-laravel-blade-tags-the-view-absent"];
+const BLADE_FIXTURE = `${EVALS}fixtures/laravel-blade-shaped.sh`;
+/** The anonymous component the request asks, and the welcome view rendering it with the session's status. */
+const ALERT_COMPONENT =
+  "@props(['type' => 'success'])\n<div role=\"alert\" {{ $attributes->class([$type]) }}>{{ $slot }}</div>\n";
+function renderAlert(dir: string): void {
+  const welcome = join(dir, "resources", "views", "welcome.blade.php");
+  writeFileSync(
+    welcome,
+    readFileSync(welcome, "utf8").replace(
+      "<h1>",
+      "<x-alert type=\"success\">{{ session('status') }}</x-alert>\n    <h1>",
+    ),
+  );
+}
+
+test("SP9-T13 AC-3: the Blade pair's profile-tags grader matches a pretty-printed profile with the two tags in order and not one with laravel alone or the tags reversed; both fixtures source the Blade-shaped fixture, which sources the laravel-shaped one", () => {
+  const pattern = new RegExp(
+    frontMatter(
+      readFileSync(`${EVALS}pack-laravel-blade-tags-the-view/graders/profile-tags.md`, "utf8"),
+    ).pattern as string,
+  );
+  const profile = (tags: string[]) =>
+    JSON.stringify({ targets: [{ path: ".", stack: "php", tags }] }, null, 2);
+  expect(profile(["laravel", "dusk"])).toMatch(pattern);
+  expect(profile(["laravel"])).not.toMatch(pattern);
+  expect(profile(["dusk", "laravel"])).not.toMatch(pattern);
+  for (const name of BLADE_PAIR)
+    expect(readFileSync(`${EVALS}${name}/fixture.sh`, "utf8"), name).toContain(
+      '. "$(dirname "$0")/../fixtures/laravel-blade-shaped.sh"',
+    );
+  expect(readFileSync(BLADE_FIXTURE, "utf8")).toContain(
+    '. "$(dirname "$0")/../fixtures/laravel-shaped.sh"',
+  );
+});
+
+test("SP9-T13 AC-3 (the test-quality defect at round 1): the pack-e2e-gate and ui-ux-not-run patterns match the lines the engine prints on the with case's scaffold, and not the same lines without the pack's mark or with another gate", () => {
+  const pattern = (grader: string) =>
+    new RegExp(
+      frontMatter(
+        readFileSync(`${EVALS}pack-laravel-blade-tags-the-view/graders/${grader}.md`, "utf8"),
+      ).pattern as string,
+    );
+  const e2e = pattern("pack-e2e-gate");
+  const notRun = pattern("ui-ux-not-run");
+  const { dir, home, crew } = laravelBladeScaffold("pack-laravel-blade-tags-the-view");
+  try {
+    // The profile as crew detect prints it: the dusk rule's e2e line with the pack's mark.
+    const detected = crew("detect");
+    expect(detected.status, detected.stderr).toBe(0);
+    expect(detected.stdout).toMatch(e2e);
+    expect(detected.stdout.replace(/ \(pack wizardingcode-pack-laravel\)/g, "")).not.toMatch(e2e);
+    // A Blade change on an item: the not-run record's own line and the verdict's line.
+    writeFileSync(
+      join(dir, "resources", "views", "welcome.blade.php"),
+      "<x-layouts.app>\n</x-layouts.app>\n",
+    );
+    const started = crew(
+      "start",
+      "Edit the welcome view",
+      "--answers",
+      JSON.stringify({
+        work_type: "fix",
+        is_vague: 0,
+        scope: 0,
+        touches_auth: 0,
+        touches_payments: 0,
+        touches_personal_data: 0,
+        touches_data_migration: 0,
+        touches_infra: 0,
+        touches_public_api: 0,
+      }),
+      "--criterion",
+      "a",
+    );
+    expect(started.status, started.stderr).toBe(0);
+    const id = readdirSync(join(dir, ".crew", "work"))[0] as string;
+    const recorded = crew(
+      "judgement",
+      id,
+      "record",
+      "ui-ux",
+      "--not-run",
+      "--reason",
+      "no evidence",
+    );
+    // The record is written and the item stays not proven, so the command exits 1 with both lines.
+    expect(recorded.status, `${recorded.stdout}${recorded.stderr}`).toBe(1);
+    expect(recorded.stdout).toContain("  ui-ux: not run: no evidence");
+    expect(recorded.stdout).toMatch(notRun);
+    expect(recorded.stdout.replace(/ui-ux/g, "code-quality")).not.toMatch(notRun);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("SP9-T13 AC-4: the Blade fixture's artisan is red as committed in both halves of the pair, naming the welcome test and the missing component, still red with the component alone, green once the welcome view renders <x-alert>; dusk and serve exit 0 with the stub's one line", () => {
+  for (const name of BLADE_PAIR) {
+    const { dir, home, artisan } = laravelBladeScaffold(name);
+    try {
+      const red = artisan("test");
+      expect(red.status, name).toBe(1);
+      expect(red.stdout, name).toContain("FAIL  Tests\\Feature\\WelcomeTest");
+      expect(red.stdout, name).toContain("View [components.alert] not found");
+      mkdirSync(join(dir, "resources", "views", "components"), { recursive: true });
+      writeFileSync(
+        join(dir, "resources", "views", "components", "alert.blade.php"),
+        ALERT_COMPONENT,
+      );
+      const half = artisan("test");
+      expect(half.status, name).toBe(1);
+      expect(half.stdout, name).toContain("FAIL  Tests\\Feature\\WelcomeTest");
+      expect(half.stdout, name).toContain("the welcome view does not render <x-alert>");
+      renderAlert(dir);
+      const green = artisan("test");
+      expect(green.status, `${name}: ${green.stdout}${green.stderr}`).toBe(0);
+      expect(green.stdout, name).toContain("PASS  Tests\\Feature\\WelcomeTest");
+      for (const args of [["dusk"], ["serve", "--port", "8000"]]) {
+        const run = artisan(...args);
+        expect(run.status, args.join(" ")).toBe(0);
+        expect(run.stdout, args.join(" ")).toBe(`artisan: ${args.join(" ")}\n`);
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      rmSync(home, { recursive: true, force: true });
+    }
+  }
+});
+
+test("SP9-T13 AC-9: the Blade fixture's artisan is inert, deny by default: every name the security lead listed is a refused string and a bare word in a printed line or a comment is not; its reads are the three files by literal path and the refused read shapes are strings of their own; no URL; the shell stubs are laravel-shaped.sh's; test, dusk and serve leave the scaffold's tree as it was, and the green run adds the component and changes the welcome view alone", () => {
+  // The processes, the code forms, the network, the writes and the reads that bypass the rule (R-1).
+  for (const shape of [
+    "exec($cmd)",
+    "shell_exec('ls')",
+    "system('ls')",
+    "passthru('ls')",
+    "proc_open('ls', [], $pipes)",
+    "popen('ls', 'r')",
+    "`ls`",
+    "eval($code)",
+    "include 'x.php';",
+    "include_once 'x.php';",
+    "require 'x.php';",
+    "require_once __DIR__ . '/x.php';",
+    "pcntl_exec('/bin/sh')",
+    "proc_nice(1)",
+    "mail($to, $subject, $body)",
+    "assert('1 === 1')",
+    "call_user_func($f)",
+    "call_user_func_array($f, [])",
+    "create_function('', '')",
+    "unserialize($s)",
+    "putenv('A=1')",
+    "ini_set('a', '1')",
+    "dl('x.so')",
+    "$f()",
+    "$this->run()",
+    "curl_init()",
+    "curl_exec($ch)",
+    "curl_multi_init()",
+    "fsockopen('h', 80)",
+    "stream_socket_client('tcp://h:80')",
+    "stream_socket_server('tcp://0:80')",
+    "socket_create(AF_INET, SOCK_STREAM, 0)",
+    "socket_connect($s, 'h', 80)",
+    "stream_context_create([])",
+    "new SoapClient('x')",
+    "mysqli_connect('h')",
+    "new PDO('sqlite::memory:')",
+    "file_put_contents('x', 'y')",
+    "fwrite($h, 'x')",
+    "fputs($h, 'x')",
+    "touch('x')",
+    "chmod('x', 0644)",
+    "chown('x', 'u')",
+    "rmdir('x')",
+    "tempnam('/tmp', 'x')",
+    "tmpfile()",
+    "new SplFileObject('x', 'w')",
+    "new SplTempFileObject()",
+    "move_uploaded_file('a', 'b')",
+    "ftruncate($h, 0)",
+    "rename('a', 'b')",
+    "unlink('x')",
+    "mkdir('x')",
+    "copy('a', 'b')",
+    "symlink('a', 'b')",
+    "file('x')",
+    "readfile('x')",
+    "fopen('x', 'r')",
+    "parse_ini_file('x')",
+    "highlight_file('x')",
+    "show_source('x')",
+    "glob('*')",
+    "scandir('.')",
+    "opendir('.')",
+    "new DirectoryIterator('.')",
+  ])
+    expect(phpStubProblems(shape), shape).not.toEqual([]);
+  for (const shape of [
+    'echo "the exec word in a line";',
+    "// unlink here, in a comment",
+    "# and fopen in a hash comment",
+    "/* require inside a block */",
+    "echo 'artisan: ' . implode(' ', array_slice($argv, 1)) . \"\\n\";",
+    "if (file_exists(__DIR__ . '/x')) { exit(0); }",
+  ])
+    expect(phpStubProblems(shape), shape).toEqual([]);
+  // The read shapes refused (R-2), each on a string of its own; the one accepted shape counted.
+  for (const shape of [
+    "file_get_contents(__DIR__ . '/x' . $y)",
+    "file_get_contents(dirname(__DIR__) . '/x')",
+    'file_get_contents(__DIR__ . "/{$x}")',
+    "file_get_contents(__DIR__ . <<<EOT\n/x\nEOT)",
+    "file_exists(__DIR__ . '../x')",
+    "file_exists(__DIR__ . '/../x')",
+    "file_get_contents('php://stdin')",
+    "file_get_contents(__DIR__ . '/php://x')",
+    "file_get_contents($path)",
+  ])
+    expect(phpReads(shape).problems, shape).not.toEqual([]);
+  expect(
+    phpReads("file_exists(__DIR__ . '/a.php') && file_get_contents(__DIR__ . '/b.php') // c('/d')"),
+  ).toEqual({ calls: 2, literals: ["/a.php", "/b.php"], problems: [] });
+  const fixture = readFileSync(BLADE_FIXTURE, "utf8");
+  expect(fixture).not.toContain("vendor/bin/pint");
+  expect(fixture).not.toContain("vendor/bin/phpstan");
+  const { dir, home, artisan } = laravelBladeScaffold("pack-laravel-blade-tags-the-view-absent");
+  try {
+    const src = readFileSync(join(dir, "artisan"), "utf8");
+    expect(phpStubProblems(src)).toEqual([]);
+    expect(src).not.toMatch(/https?:\/\//);
+    const reads = phpReads(src);
+    expect(reads.problems).toEqual([]);
+    expect([...new Set(reads.literals)].sort()).toEqual([
+      "/resources/views/components/alert.blade.php",
+      "/resources/views/welcome.blade.php",
+      "/tests/Feature/WelcomeTest.php",
+    ]);
+    // The scaffold's own state is the baseline; the stubs add nothing to it (the lines whole, since a modified file's line starts with a space).
+    const status = () =>
+      spawnSync("git", ["status", "--porcelain"], { cwd: dir, encoding: "utf8" })
+        .stdout.split("\n")
+        .filter(Boolean)
+        .sort();
+    const baseline = status();
+    expect(artisan("test").status).toBe(1);
+    expect(artisan("dusk").status).toBe(0);
+    expect(artisan("serve", "--port", "8000").status).toBe(0);
+    expect(status()).toEqual(baseline);
+    mkdirSync(join(dir, "resources", "views", "components"), { recursive: true });
+    writeFileSync(
+      join(dir, "resources", "views", "components", "alert.blade.php"),
+      ALERT_COMPONENT,
+    );
+    renderAlert(dir);
+    expect(artisan("test").status).toBe(0);
+    expect(status().filter((line) => !baseline.includes(line))).toEqual([
+      " M resources/views/welcome.blade.php",
+      // The components folder holds the layout already, so the new file is listed by its name.
+      "?? resources/views/components/alert.blade.php",
+    ]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  }
 });

@@ -19,6 +19,7 @@ import {
   knowledgeFilesFor,
   listPacks,
   type PackManifest,
+  packFiles as packFilesServed,
   packRules,
   packTemplates,
   readManifest,
@@ -104,6 +105,18 @@ const RULE = {
     typecheck: "vendor/bin/phpstan analyse --no-progress",
   },
   testScoped: "php artisan test {files}",
+};
+/**
+ * Design §8's second rule of the laravel pack (SP9 Task 13), pinned whole: a project with a Dusk
+ * test case gets its end-to-end gate proposed with the pack and the tag `dusk` beside `laravel`;
+ * the engine stacks it on the php target the laravel rule refined (detect/index.ts).
+ */
+const DUSK_RULE = {
+  stack: "dusk",
+  extends: "php" as const,
+  markers: ["artisan", "tests/DuskTestCase.php"],
+  packageManager: "composer",
+  gates: { e2e: "php artisan dusk" },
 };
 /**
  * Design §8's rule for Nuxt (SP9 Task 11), pinned whole: a brace marker, an empty manager that keeps
@@ -312,26 +325,46 @@ function sourcesOf(root: string): Set<string> {
   return new Set(urlsIn(end === -1 ? rest : rest.slice(0, end)));
 }
 
-test("SP6-T3 AC-1: the Laravel pack is complete: decision 7's rule and files, the shapes, Verified against, the cases; it registers clean and packRules yields its rule", () => {
+// SP9 Task 13 (2026-10-28-006) grows this row's pins: the dusk rule, the screen checklist, the Blade
+// pair and the two keys of `verifiedAgainst`.
+test("SP6-T3 AC-1, SP9-T13 AC-1: the Laravel pack is complete: decision 7's rule and design §8's dusk rule, the four checklists, the shapes, Verified against with Livewire and Dusk, the four cases; it registers clean and packRules yields its two rules in order", () => {
   const root = ROOTS.laravel;
   const m = manifestOf(root);
   expect(m.name).toBe(LARAVEL);
   expect(m.kind).toBe("stack");
-  expect(m.detectors).toEqual([RULE]);
+  expect(m.detectors).toEqual([RULE, DUSK_RULE]);
   expect(m.checklists).toEqual([
     "checklists/eloquent-model.md",
     "checklists/job-or-listener.md",
     "checklists/artisan-command.md",
+    "checklists/screen.md",
   ]);
   expect(m.knowledge).toEqual({ laravel: "knowledge/laravel.md" });
   expect(m.team).toBeNull();
-  expect(m.evals).toEqual(["pack-laravel-refines-the-gates", "pack-laravel-absent"]);
+  expect(m.evals).toEqual([
+    "pack-laravel-refines-the-gates",
+    "pack-laravel-absent",
+    "pack-laravel-blade-tags-the-view",
+    "pack-laravel-blade-tags-the-view-absent",
+  ]);
   expect(m.provenance).toEqual([]);
   const v = m.verifiedAgainst;
+  expect(Object.keys(v).sort()).toEqual([
+    "dusk",
+    "larastan",
+    "laravel",
+    "livewire",
+    "pest",
+    "pint",
+  ]);
   expect(v.laravel).toMatch(/^\d+(\.\d+|\.x)?$/);
   expect(v.pest).toMatch(/^\d+\.x$/);
   expect(v.pint).toMatch(/^\d+\.\d+\.\d+$/);
   expect(v.larastan).toMatch(/^\d+\.\d+\.\d+$/);
+  // Livewire's documentation host is versioned (VERSIONED_DOCS), so the pack names the major it
+  // read; Dusk's is the Laravel page, so the pack names the package's version on the day.
+  expect(v.livewire).toMatch(/^\d+\.x$/);
+  expect(v.dusk).toMatch(/^\d+\.\d+\.\d+$/);
   expect(checkPack(root, m, m.version)).toBeNull();
   expectPluginShape(root, {
     name: LARAVEL,
@@ -341,7 +374,7 @@ test("SP6-T3 AC-1: the Laravel pack is complete: decision 7's rule and files, th
   });
   const readme = read(join(root, "README.md"));
   expect(readme).toContain(
-    `Verified against: Laravel ${v.laravel}, Pest ${v.pest}, Pint ${v.pint}, Larastan ${v.larastan}`,
+    `Verified against: Laravel ${v.laravel}, Pest ${v.pest}, Pint ${v.pint}, Larastan ${v.larastan}, Livewire ${v.livewire}, Dusk ${v.dusk}`,
   );
   for (const c of m.evals) expect(readme).toContain(c);
   expect(readme).toContain("crew profile confirm");
@@ -350,7 +383,10 @@ test("SP6-T3 AC-1: the Laravel pack is complete: decision 7's rule and files, th
   const dir = userDir();
   register(dir, root);
   expect(listPacks(dir).map((p) => [p.name, p.state.kind])).toEqual([[LARAVEL, "ok"]]);
-  expect(packRules(dir)).toEqual([{ pack: LARAVEL, rule: RULE }]);
+  expect(packRules(dir)).toEqual([
+    { pack: LARAVEL, rule: RULE },
+    { pack: LARAVEL, rule: DUSK_RULE },
+  ]);
   expect(packTemplates(dir)).toEqual([]);
 });
 
@@ -450,10 +486,12 @@ test("SP6-T3 AC-2: the agentic-os pack is complete: the template with its six gl
 });
 
 /** A Laravel-shaped tree, or the same without `artisan`. */
-function laravelTree(withArtisan: boolean): string {
+function laravelTree(withArtisan: boolean, dusk = false): string {
   return makeRepo({
     "composer.json": JSON.stringify({ name: "acme/shop", scripts: { test: "phpunit" } }),
     ...(withArtisan ? { artisan: "#!/usr/bin/env php\n<?php\n" } : {}),
+    // SP9 Task 13: a Dusk test case marks the tree for the pack's second rule.
+    ...(dusk ? { "tests/DuskTestCase.php": "<?php\nabstract class DuskTestCase {}\n" } : {}),
     "phpunit.xml": "<phpunit/>\n",
     "app/Models/User.php": "<?php\nclass User {}\n",
     "tests/Feature/ExampleTest.php": "<?php\n",
@@ -1249,4 +1287,105 @@ test("SP9-T12 AC-11: the next pack is in the repository's lists: plugin:check va
   const packFiles =
     section.match(/`packs\/[a-z-]+\/(?:pack\.json|\.claude-plugin\/plugin\.json)`/g) ?? [];
   expect(packFiles).toHaveLength(Object.keys(ROOTS).length * 2);
+});
+
+/** The words the laravel README owes the view layer (SP9 Task 13): the end-to-end gate, the console said honestly with the snippet's bounds, the gap round's screen checklist, the frontend pack beside it. */
+const LARAVEL_VIEW_README_WORDS = [
+  "php artisan dusk",
+  "storeConsoleLog",
+  "console: not captured",
+  "WIZARDINGCODE_CREW_CONSOLE_FILE",
+  "set and non-empty",
+  "used as given",
+  "2 KiB",
+  "200 entries",
+  "redact",
+  "crew skip",
+  "Route::livewire",
+  "crew pack files checklists screen",
+  FRONTEND,
+];
+/** The facts the knowledge file owes the view layer (SP9 Task 13): Blade, Livewire 4, Dusk, Vite with Tailwind. */
+const LARAVEL_VIEW_KNOWLEDGE_WORDS = [
+  "Route::livewire",
+  "wire:model",
+  "data-loading",
+  "wire:navigate",
+  "View Transitions",
+  "storeConsoleLog",
+  "@props",
+  "@tailwindcss/vite",
+];
+
+test("SP9-T13 AC-1, AC-8: the laravel pack's view layer: the README names the end-to-end gate, the console file and the snippet's bounds, the skip, the screen checklist and the frontend pack, its one sources heading is dated 2026-10-28; the knowledge file keeps its shape, holds facts only over the sources and names the view layer; the screen checklist has the four headings and names Blade, Livewire, wire:key and dusk; registered, crew pack files serves it by its kind; the evals README has the Blade pair's rows", () => {
+  const root = ROOTS.laravel;
+  const readme = read(join(root, "README.md"));
+  for (const words of LARAVEL_VIEW_README_WORDS) expect(readme, words).toContain(words);
+  expect(sourcesHeading(readme).heading?.[1]).toBe("2026-10-28");
+  const knowledge = join(root, "knowledge", "laravel.md");
+  expectKnowledgeShape(knowledge, "# Laravel 13.x");
+  expectKnowledgeFactsOnly(knowledge, sourcesOf(root));
+  const facts = read(knowledge);
+  for (const words of LARAVEL_VIEW_KNOWLEDGE_WORDS) expect(facts, words).toContain(words);
+  const screen = join(root, "checklists", "screen.md");
+  expectChecklistShape(screen);
+  const checklist = read(screen);
+  for (const words of ["Blade", "Livewire", "wire:key", "dusk"])
+    expect(checklist, words).toContain(words);
+  const dir = userDir();
+  const copy = register(dir, root);
+  expect(packFilesServed(dir, "checklists", "screen").map(real)).toEqual([
+    real(join(copy, "checklists", "screen.md")),
+  ]);
+  expect(packFilesServed(dir, "checklists", "eloquent-model").map(real)).toEqual([
+    real(join(copy, "checklists", "eloquent-model.md")),
+  ]);
+  const evalsReadme = read(join(REPO, "plugins", "core", "evals", "README.md"));
+  expect(evalsReadme).toContain("`pack-laravel-blade-tags-the-view`");
+  expect(evalsReadme).toContain("`pack-laravel-blade-tags-the-view-absent`");
+});
+
+test("SP9-T13 AC-2: the dusk rule refines a Laravel tree with tests/DuskTestCase.php (the e2e gate proposed with the pack beside the laravel rule's three, the tags laravel and dusk) and leaves one without it alone (the tag laravel, no e2e gate); the e2e command is held at the gate run", async () => {
+  const env = testEnv();
+  const root = laravelTree(true, true);
+  const paths = repoPaths(root, env);
+  register(paths.userDir, ROOTS.laravel);
+  const profile = detectProfile(root, null, packRules(paths.userDir));
+  expect(profile.targets).toHaveLength(1);
+  const t = profile.targets[0] as Target;
+  expect(t.path).toBe(".");
+  expect(t.stack).toBe("php");
+  expect(t.packageManager).toBe("composer");
+  expect(t.tags).toEqual(["laravel", "dusk"]);
+  const proposed = (command: string) => ({ command, source: "proposed" as const, pack: LARAVEL });
+  expect(t.gates.test).toEqual(proposed("php artisan test"));
+  expect(t.gates.lint).toEqual(proposed("vendor/bin/pint --test"));
+  expect(t.gates.typecheck).toEqual(proposed("vendor/bin/phpstan analyse --no-progress"));
+  expect(t.gates.e2e).toEqual(proposed("php artisan dusk"));
+  expect(t.testScoped).toEqual(proposed("php artisan test {files}"));
+  // Without the Dusk test case: the laravel rule alone, as SP6-T3 AC-3 pins it.
+  const plain = detectProfile(laravelTree(true), null, packRules(paths.userDir));
+  const p = plain.targets[0] as Target;
+  expect(p.tags).toEqual(["laravel"]);
+  expect(p.gates.e2e).toBeUndefined();
+  expect(p.gates.test).toEqual(proposed("php artisan test"));
+  // The hold on the pack's e2e command: a sentinel command keeps the source and the pack, and nothing runs.
+  const work = createWork(paths, "fix");
+  work.route = "fast";
+  addCriterion(work, "x");
+  write(root, "resources/views/welcome.blade.php", "<x-layouts.app>\n</x-layouts.app>\n");
+  t.gates.e2e = proposed("touch e2e-ran.txt && exit 0");
+  const run = await runOneGate(
+    paths,
+    work,
+    profile,
+    { gate: "e2e", target: "." },
+    "fp",
+    ["resources/views/welcome.blade.php"],
+    DEFAULT_POLICY,
+  );
+  expect(run.status).toBe("unavailable");
+  expect(run.confirmed).toBe(false);
+  expect(run.reason).toBe(`pack ${LARAVEL}'s command is not confirmed (crew profile confirm e2e)`);
+  expect(existsSync(join(root, "e2e-ran.txt"))).toBe(false);
 });

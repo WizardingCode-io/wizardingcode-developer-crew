@@ -123,6 +123,20 @@ test("finding 11: the block names crew await as the way to end a turn with a que
   );
 });
 
+test("SP9-T13 AC-20 (finding 196): the block says the message after the wait carries the whole account again, after the wait's way out; no item, no sentence", () => {
+  const { root, ctx } = session();
+  write(root, "src/a.ts", "changed");
+  const sentence =
+    "The message after the wait is the one the user reads last: give the whole account again there (what the report proves, what is not proven and why), never a pointer to an earlier message.";
+  expect(String(onStop(ctx).reason)).not.toContain(sentence);
+  const work = createWork(ctx.paths, "fix");
+  const reason = String(onStop(ctx).reason);
+  expect(reason).toContain(sentence);
+  expect(reason.indexOf(sentence)).toBeGreaterThan(
+    reason.indexOf(`crew await ${work.id} mail <message id>.`),
+  );
+});
+
 test("case 3: a work item waiting for the user lets the turn end with a notice", () => {
   const { root, ctx } = session();
   const work = createWork(ctx.paths, "fix");

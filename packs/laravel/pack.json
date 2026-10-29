@@ -7,7 +7,9 @@
     "laravel": "13.x",
     "pest": "4.x",
     "pint": "1.32.1",
-    "larastan": "3.13.2"
+    "larastan": "3.13.2",
+    "livewire": "4.x",
+    "dusk": "8.7.2"
   },
   "detectors": [
     {
@@ -21,15 +23,28 @@
         "typecheck": "vendor/bin/phpstan analyse --no-progress"
       },
       "testScoped": "php artisan test {files}"
+    },
+    {
+      "stack": "dusk",
+      "extends": "php",
+      "markers": ["artisan", "tests/DuskTestCase.php"],
+      "packageManager": "composer",
+      "gates": { "e2e": "php artisan dusk" }
     }
   ],
   "checklists": [
     "checklists/eloquent-model.md",
     "checklists/job-or-listener.md",
-    "checklists/artisan-command.md"
+    "checklists/artisan-command.md",
+    "checklists/screen.md"
   ],
   "knowledge": { "laravel": "knowledge/laravel.md" },
   "team": null,
-  "evals": ["pack-laravel-refines-the-gates", "pack-laravel-absent"],
+  "evals": [
+    "pack-laravel-refines-the-gates",
+    "pack-laravel-absent",
+    "pack-laravel-blade-tags-the-view",
+    "pack-laravel-blade-tags-the-view-absent"
+  ],
   "provenance": []
 }

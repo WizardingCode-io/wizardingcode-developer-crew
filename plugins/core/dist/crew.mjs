@@ -7091,13 +7091,14 @@ function routeDocuments(work, ctx) {
   }
   return missing;
 }
+var MISSING_CHECKLIST_READ = `a checklist read for the gap round (crew pack files checklists <kind>: the core's checklist of that kind and the packs'; crew pack files checklists none --reason "<why>" when no kind applies)`;
 function conclaveDocument(work, ctx) {
   if (work.route === "fast")
     return [];
-  if (ctx.conclaveText === null) {
-    return ["conclave.md in the work folder (the gap round: four sections)"];
-  }
-  return missingConclaveSections(ctx.conclaveText).map((name) => `a "${name}" section with content in conclave.md (write "none" when there is nothing)`);
+  const missing = ctx.conclaveText === null ? ["conclave.md in the work folder (the gap round: four sections)"] : missingConclaveSections(ctx.conclaveText).map((name) => `a "${name}" section with content in conclave.md (write "none" when there is nothing)`);
+  if (!work.checklists?.length)
+    missing.push(MISSING_CHECKLIST_READ);
+  return missing;
 }
 function validatorPreconditions(rule, work, ctx) {
   if (rule !== "complete-gap-round")
@@ -8950,7 +8951,10 @@ function countedNote(policy, decision) {
     return "";
   if (decision.by === "validator" && decision.mode === undefined)
     return ": counted, a person was present";
-  return decisionCounts(policy, decision) ? ": counted by policy" : ": not counted, the policy waits for a person";
+  if (decisionCounts(policy, decision))
+    return ": counted by policy";
+  const word = decision.by === "validator" ? "validator" : "count";
+  return `: not counted, the policy waits for a person (a person runs the same command, or policy.json sets unattendedDecisions to "${word}")`;
 }
 function emptyEvidence() {
   return {
@@ -9196,6 +9200,7 @@ function renderReport(work, evidence, policy, options = {}) {
   lines.push(`- Type: ${work.type}. Kind: ${kindOfItem(work)}${work.kindFrom ? ` (from ${work.kindFrom})` : ""}. Route: ${work.route} (${work.routeReasons.join("; ")})`);
   lines.push(ctoPlan ? `- CTO plan: ${ctoPlan.path} (${ctoPlan.date})` : "- CTO plan: none");
   lines.push(work.packs?.length ? `- Packs: ${work.packs.join(", ")}` : "- Packs: none");
+  lines.push(work.checklists?.length ? `- Checklists: ${work.checklists.map((r) => r.kind === "none" ? `none (${r.reason ?? ""})` : `${r.kind} (${r.paths.length} file${r.paths.length === 1 ? "" : "s"})`).join(", ")}` : "- Checklists: none read");
   if (work.knowledgeFiles?.length)
     lines.push(`- Knowledge files for the expert: ${((work.knowledgeLabels?.length) ? work.knowledgeLabels : work.knowledgeFiles).join(", ")}`);
   if (work.source)
@@ -12556,6 +12561,27 @@ function knowledgeFilesFor(userDir, profile, changed, policy) {
     packs: packs.filter((p) => served.has(p.name)).map((p) => p.name),
     skipped
   };
+}
+function coreChecklistKinds(pluginRoot) {
+  try {
+    return readdirSync9(join35(pluginRoot, "skills", "crew", "checklists")).filter((f) => f.endsWith(".md")).map((f) => f.slice(0, -3)).sort();
+  } catch {
+    return [];
+  }
+}
+function coreChecklist(pluginRoot, kind) {
+  const name = coreChecklistKinds(pluginRoot).find((k) => k === kind);
+  return name === undefined ? null : join35(pluginRoot, "skills", "crew", "checklists", `${name}.md`);
+}
+var CHECKLIST_REASON_MAX = 500;
+function recordChecklist(work, record) {
+  const list = work.checklists ?? [];
+  const at = list.findIndex((r) => r.kind === record.kind);
+  if (at === -1)
+    list.push(record);
+  else
+    list[at] = record;
+  work.checklists = list;
 }
 function recordPacks(work, labels) {
   const packs = [...new Set([...work.packs ?? [], ...labels])];
@@ -17610,10 +17636,11 @@ function onStop(ctx, payload = {}) {
   session.stopBlocks += 1;
   const gate = work ? `crew gate run ${work.id}` : 'crew start "<request>"';
   const wait = work ? ` To end the turn with a question for the user, run crew await ${work.id} user first; while the roles answer, crew await ${work.id} role; while a reply is due, crew await ${work.id} mail <message id>.` : "";
+  const account = work ? " The message after the wait is the one the user reads last: give the whole account again there (what the report proves, what is not proven and why), never a pointer to an earlier message." : "";
   const judgement = work && missing.some((m) => m.startsWith("judgement gate")) ? ` A judgement gate is cleared by its roles, not by the gate run: run the planned reviewers and the judge, then crew judgement ${work.id} record --ruling .crew/work/${work.id}/review/ruling.json.` : "";
   return done({
     decision: "block",
-    reason: `Crew: watched source files changed and the work is not proven. Missing: ${missing.join("; ")}. Run ${gate} and fix what fails: a red is traced to its origin, never skipped.${judgement}${wait}${mailNote()}`
+    reason: `Crew: watched source files changed and the work is not proven. Missing: ${missing.join("; ")}. Run ${gate} and fix what fails: a red is traced to its origin, never skipped.${judgement}${wait}${account}${mailNote()}`
   }, true);
 }
 
@@ -22336,7 +22363,7 @@ ${drafted.lesson}`, "lesson")[0];
       };
     }
     case "pack": {
-      const usage = "usage: crew pack add <path> | remove <name> | list | show <name> | files checklists <kind> | files knowledge <key> | files knowledge --item <id> | sync";
+      const usage = 'usage: crew pack add <path> | remove <name> | list | show <name> | files checklists <kind> [--item <id>] | files checklists none --reason "<why>" | files knowledge <key> | files knowledge --item <id> | sync';
       const sub = args[0];
       const userDir = env.paths.userDir;
       const register = (text) => decide(env, "pack", {
@@ -22434,6 +22461,46 @@ ${drafted.lesson}`, "lesson")[0];
         const key = args[2];
         if (kind !== "checklists" && kind !== "knowledge" || key === undefined)
           return refuse(usage);
+        if (kind === "checklists") {
+          const target = typeof item === "string" ? item : activeWork(env.paths)?.work?.id ?? null;
+          const at = new Date().toISOString();
+          const recordOn = (record) => {
+            if (target === null)
+              return null;
+            const opened = openForChange(env, target);
+            if (isOutcome(opened))
+              return opened;
+            recordChecklist(opened.work, record);
+            saveWork(env.paths, opened.work);
+            return null;
+          };
+          if (key === "none") {
+            const reason = typeof parsed.flags.reason === "string" ? parsed.flags.reason.trim() : "";
+            if (!reason)
+              return refuse('crew pack files checklists none needs --reason "<why no kind applies>"');
+            const kept = safeField(reason, "checklist reason", CHECKLIST_REASON_MAX);
+            const refused = recordOn({ kind: "none", paths: [], reason: kept, at });
+            if (refused)
+              return refused;
+            return ok(`no checklist: ${kept}${target ? ` (recorded on ${target})` : ""}`, {
+              paths: [],
+              kind: "none",
+              reason: kept,
+              recorded: target
+            });
+          }
+          const root = pluginRoot();
+          const core = coreChecklist(root, key);
+          const packPaths = packFiles(userDir, "checklists", key);
+          if (core === null && packPaths.length === 0)
+            return refuse(`no checklist of kind ${key}: the core's kinds are ${coreChecklistKinds(root).join(", ")}; a registered pack's are in its manifest (crew pack show <name>)`);
+          const paths = core === null ? packPaths : [core, ...packPaths];
+          const refused = recordOn({ kind: key, paths, at });
+          if (refused)
+            return refused;
+          return ok(paths.join(`
+`), { paths, kind: key, core, recorded: target });
+        }
         const paths = packFiles(userDir, kind, key);
         return ok(paths.join(`
 `), { paths });
@@ -22784,7 +22851,7 @@ var HELP = `crew ${VERSION}
   knowledge lesson add --cue "<t>" --lesson "<t>" --evidence docs/improve/<run>/record.json --proposal P-n --confidence high|medium|low   the improvement loop's lesson about the crew, its run's record as evidence; read in this repository alone (ADR 0013)
   knowledge contradict K-n --reason "<why>" [--item <id>]   dispute an entry (recorded); knowledge unmark K-n   a person removes a mark (asks the user; never with --mode or --validator)
   learn <id> [--confirm K-n]           the proven item enters the base (in the learn phase): its solution, an issue's root cause, the facts with a source, the workspace's stack preference; what it cited is confirmed; a root cause the base holds is refused unless confirmed
-  pack add <path> | remove <name> | list | show <name> | files checklists <kind> | files knowledge <key> | files knowledge --item <id> | sync   the packs the engine serves (references/packs.md)
+  pack add <path> | remove <name> | list | show <name> | files checklists <kind> [--item <id>] | files checklists none --reason "<why>" | files knowledge <key> | files knowledge --item <id> | sync   the packs the engine serves; the gap round's checklists read and recorded (references/packs.md)
   runtime list | install <name> [--scope project|user] | remove <name> [--scope project|user] | check <name> [--scope project|user]   the runtime adapters: the table, a runtime's hook configuration merged in with the skill and the agents, crew's entries and files taken out again, and the configuration read back with the guarantee table (references/runtimes.md)
   skip <id> <step> --reason "<text>"    record a skip of a tdd step, a gate or a judgement gate (asks the user; --mode as for approve)
   evidence <id>                         write and print the report

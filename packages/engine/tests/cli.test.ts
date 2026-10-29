@@ -23,7 +23,7 @@ import { ROUTE_QUESTIONS } from "../src/classify.ts";
 import { type CliIo, main } from "../src/cli.ts";
 import { listDecisions } from "../src/decisions.ts";
 import { envRecordPath } from "../src/environment.ts";
-import { loadEvidence, saveEvidence } from "../src/evidence.ts";
+import { emptyEvidence, loadEvidence, renderReport, saveEvidence } from "../src/evidence.ts";
 import { jsonText, writeJson } from "../src/fs.ts";
 import { readReviewInputs } from "../src/judgement.ts";
 import { readBase } from "../src/knowledge.ts";
@@ -38,8 +38,9 @@ import {
   writeBox,
 } from "../src/mail.ts";
 import { isAlive } from "../src/open.ts";
+import { coreChecklist } from "../src/packs.ts";
 import { isProtectedPath, knowledgePath } from "../src/paths.ts";
-import { loadPolicy } from "../src/policy.ts";
+import { DEFAULT_POLICY, loadPolicy } from "../src/policy.ts";
 import { loadProfile, saveProfile } from "../src/profile.ts";
 import { guaranteeLines, pluginRoot, RUNTIMES } from "../src/runtimes.ts";
 import { loadState, recordWorking } from "../src/state.ts";
@@ -99,6 +100,8 @@ test("SP2b: debate open and close through the command; plan waits while the deba
     `.crew/work/${id}/conclave.md`,
     "# Gap round\n\n## Assumed by good practice\nnone\n\n## Decisions only the user can make\nnone\n\n## Proposals\nnone\n\n## Warnings\nnone\n",
   );
+  // SP9 Task 13 (2026-10-28-006, finding 194): the gap round reads a checklist before Plan, so the rows that advance past the conclave record the read as a session does.
+  await readChecklist(c, id);
   expect((await c.json("status")).data.debate).toBe("none");
   expect((await c.run("debate", id, "open")).code).toBe(1);
   const opened = await c.json("debate", id, "open", "--reason", "erasure or deactivation");
@@ -578,6 +581,11 @@ test("SP2b: gate run names the judgement gates to run, accepts their names in --
     },
   ]);
 });
+
+/** The gap round's read a row records before Plan on a non-fast route (SP9 Task 13, finding 194). */
+async function readChecklist(c: ReturnType<typeof io>, id: string): Promise<void> {
+  expect((await c.run("pack", "files", "checklists", "endpoint", "--item", id)).code).toBe(0);
+}
 
 function io(cwd: string, env = testEnv(), stdin = "") {
   const out: string[] = [];
@@ -1607,6 +1615,7 @@ test("SP2a: an item in specify moves to conclave, and plan asks for conclave.md 
     `.crew/work/${id}/conclave.md`,
     "# Gap round\n\n## Assumed by good practice\nnone\n\n## Decisions only the user can make\nnone\n\n## Proposals\nnone\n\n## Warnings\nnone\n",
   );
+  await readChecklist(c, id);
   // SP7a: the plan also waits for the leads' validation of the spec.
   const blockedByLeads = await c.run("phase", id, "next");
   expect(blockedByLeads.err).toContain("validation of spec by lead-qa");
@@ -1777,6 +1786,7 @@ test("0.3.0: with a person present the spec is approved under the complete-gap-r
     `.crew/work/${id}/conclave.md`,
     "## Assumed by good practice\nnone\n## Decisions only the user can make\nnone\n## Proposals\nnone\n## Warnings\nnone\n",
   );
+  await readChecklist(c, id);
   const approved = await c.json("approve", id, "spec", "--validator", "complete-gap-round");
   expect(approved.code).toBe(0);
   expect(approved.data.message).toContain("by the validator (rule: complete-gap-round)");
@@ -1799,6 +1809,7 @@ test("0.3.0: with a person present the spec is approved under the complete-gap-r
     `.crew/work/${second}/conclave.md`,
     "## Assumed by good practice\nnone\n## Decisions only the user can make\n- D-1\n## Proposals\nnone\n## Warnings\nnone\n",
   );
+  await readChecklist(c, second);
   await c.run("decision", second, "add", "Who gets the permission?");
   const pending = await c.run("approve", second, "spec", "--validator", "complete-gap-round");
   expect(pending.code).toBe(1);
@@ -1863,6 +1874,7 @@ test("SP2a: the validator's approval is refused until the rule holds, then count
     `.crew/work/${id}/conclave.md`,
     "## Assumed by good practice\nnone\n## Decisions only the user can make\nnone\n## Proposals\nnone\n## Warnings\nnone\n",
   );
+  await readChecklist(c, id);
   const approved = await c.json(
     "approve",
     id,
@@ -2596,6 +2608,7 @@ test("SP7a-Task5 AC-2: every decision taken or recorded lands in the project's r
     `.crew/work/${id}/conclave.md`,
     "# Gap round\n\n## Assumed by good practice\n- none\n\n## Decisions only the user can make\n- D-1\n\n## Proposals\n- none\n\n## Warnings\n- none\n",
   );
+  await readChecklist(c, id);
   for (let i = 0; i < 3; i++) await c.run("phase", id, "next");
   expect((await c.run("approve", id, "spec", "--validator", "complete-gap-round")).code).toBe(0);
   const returned = `# security lead's validation of ${id}: spec\nverdict: returned\n## Returns\n- R-1 · spec.md:4 · AC-1 is not observable\n## Notes\n- none\n`;
@@ -2716,6 +2729,7 @@ test("SP7a AC-3: crew validation record parses the lead's file, refuses a lead n
     `.crew/work/${id}/conclave.md`,
     "# Gap round\n\n## Assumed by good practice\n- none\n\n## Decisions only the user can make\n- none\n\n## Proposals\n- none\n\n## Warnings\n- none\n",
   );
+  await readChecklist(c, id);
   await c.run("phase", id, "next"); // understand
   await c.run("phase", id, "next"); // specify
   await c.run("phase", id, "next"); // conclave
@@ -3994,6 +4008,7 @@ test("SP7b-T5 AC-2 (validation), 2026-10-27-007 AC-1: under the standing grant t
     `.crew/work/${id}/conclave.md`,
     "# Gap round\n\n## Assumed by good practice\n- none\n\n## Decisions only the user can make\n- none\n\n## Proposals\n- none\n\n## Warnings\n- none\n",
   );
+  await readChecklist(c, id);
   const spec = (n: number) =>
     write(
       root,
@@ -5574,6 +5589,7 @@ test("SP3-T6 AC-1, AC-2, AC-3, AC-5: crew approve --validator asks the rule of J
     `.crew/work/${id}/conclave.md`,
     "# Conclave\n\n## Assumed by good practice\n- x\n\n## Decisions only the user can make\n- none\n\n## Proposals\n- y\n\n## Warnings\n- none\n",
   );
+  await readChecklist(c, id);
   for (let i = 0; i < 3; i++) await c.run("phase", id, "next");
   expect((await c.json("status")).data.phase).toBe("conclave");
   const plain = await c.run("approve", id, "spec", "--validator", "complete-gap-round");
@@ -5655,6 +5671,7 @@ test("SP3-T6 AC-1, AC-3, AC-5: crew research verify checks the quotes, asks Jev 
     `.crew/work/${id}/conclave.md`,
     "# Conclave\n\n## Assumed by good practice\n- x\n\n## Decisions only the user can make\n- none\n\n## Proposals\n- y\n\n## Warnings\n- none\n",
   );
+  await readChecklist(c, id);
   for (let i = 0; i < 3; i++) await c.run("phase", id, "next");
   await c.run("decision", id, "add", "Cache or not?");
   expect((await c.json("debate", id, "open", "--reason", "cache")).code).toBe(0);
@@ -5861,6 +5878,7 @@ test("SP8-T1 AC-2 (finding 94): a Jev dispute of the validator's rule is held on
   const conclave = (warnings: string) =>
     `# Conclave\n\n## Assumed by good practice\n- x\n\n## Decisions only the user can make\n- none\n\n## Proposals\n- y\n\n## Warnings\n- ${warnings}\n`;
   write(root, `.crew/work/${id}/conclave.md`, conclave("none"));
+  await readChecklist(c, id);
   for (let i = 0; i < 3; i++) await c.run("phase", id, "next");
   await cannedJev(c, {
     v1: { type: "noul", noul: 0.9 },
@@ -6046,6 +6064,7 @@ test("SP8-T1 AC-5 (finding 90): with validator and fact out of verify.asks, the 
     `.crew/work/${id}/conclave.md`,
     "# Conclave\n\n## Assumed by good practice\n- x\n\n## Decisions only the user can make\n- none\n\n## Proposals\n- y\n\n## Warnings\n- none\n",
   );
+  await readChecklist(c, id);
   for (let i = 0; i < 3; i++) await c.run("phase", id, "next");
   await cannedJev(c, {
     v1: { type: "noul", noul: 0.9 },
@@ -7044,6 +7063,7 @@ async function specAtValidation(team: Record<string, unknown>) {
     `.crew/work/${id}/conclave.md`,
     "# Gap round\n\n## Assumed by good practice\n- none\n\n## Decisions only the user can make\n- none\n\n## Proposals\n- none\n\n## Warnings\n- none\n",
   );
+  await readChecklist(c, id);
   await c.run("phase", id, "next"); // understand
   await c.run("phase", id, "next"); // specify
   await c.run("phase", id, "next"); // conclave
@@ -7964,7 +7984,12 @@ test("SP6-T2 AC-2, AC-3, AC-4, AC-5, AC-6: the pack commands end to end (add wit
   expect((await c.run("pack", "list")).out.trim()).toBe(
     "no pack registered (crew pack add <path>)",
   );
-  expect((await c.run("pack", "files", "checklists", "agent")).out).toBe("");
+  // SP9 Task 13 (finding 194): a kind that is neither the core's nor a pack's is refused with the core's kinds.
+  const unknown = await c.run("pack", "files", "checklists", "agent");
+  expect(unknown.code).toBe(1);
+  expect(unknown.err.trim()).toBe(
+    "no checklist of kind agent: the core's kinds are auth, deletion, endpoint, link-target, merge, migration-or-restore, payment, screen, sync, upload; a registered pack's are in its manifest (crew pack show <name>)",
+  );
   // add: a refusal names the field and registers nothing.
   const bad = await c.run("pack", "add", writePack({ core: ">=99.0.0" }));
   expect(bad.code).toBe(1);
@@ -7975,7 +8000,7 @@ test("SP6-T2 AC-2, AC-3, AC-4, AC-5, AC-6: the pack commands end to end (add wit
     "no pack registered (crew pack add <path>)",
   );
   expect((await c.run("pack", "add")).err.trim()).toBe(
-    "usage: crew pack add <path> | remove <name> | list | show <name> | files checklists <kind> | files knowledge <key> | files knowledge --item <id> | sync",
+    'usage: crew pack add <path> | remove <name> | list | show <name> | files checklists <kind> [--item <id>] | files checklists none --reason "<why>" | files knowledge <key> | files knowledge --item <id> | sync',
   );
   const added = await c.run("pack", "add", laravel);
   expect(added.code, added.err).toBe(0);
@@ -12448,3 +12473,286 @@ test("2026-10-28-004 AC-8 (finding 192): crew judgement record takes the judge's
     )?.verdict,
   ).toBe("not-proven");
 }, 30_000);
+
+/** The line Plan and the validator name until the gap round recorded a read (SP9 Task 13, finding 194). */
+const MISSING_READ =
+  "a checklist read for the gap round (crew pack files checklists <kind>: the core's checklist of that kind and the packs'; crew pack files checklists none --reason \"<why>\" when no kind applies)";
+const FOUR_SECTIONS =
+  "# Gap round\n\n## Assumed by good practice\nnone\n\n## Decisions only the user can make\nnone\n\n## Proposals\nnone\n\n## Warnings\nnone\n";
+const standardScreenAnswers = JSON.stringify({
+  ...JSON.parse(answers),
+  work_type: "feature",
+  scope: 1,
+});
+
+test("SP9-T13 AC-16: crew pack files checklists prints the core's checklist of the kind first and each pack's after it, refuses a kind outside the folder's names with nothing recorded, takes none with a bounded and scanned reason, records on --item through openForChange or on the active item, records nothing without an item, and leaves knowledge as it was", async () => {
+  const env = testEnv();
+  const root = makeRepo({
+    "src/a.ts": "export const a = 1;\n",
+    "tests/a.test.ts": "import { a } from '../src/a';\n",
+  });
+  const c = io(root, env);
+  const paths = repoPaths(root, env);
+  const core = join(pluginRoot(), "skills", "crew", "checklists");
+  const kinds = readdirSync(core)
+    .filter((f) => f.endsWith(".md"))
+    .map((f) => f.slice(0, -3))
+    .sort();
+  // No item and no pack: the core's path alone, recorded nowhere.
+  const alone = await c.json("pack", "files", "checklists", "screen");
+  expect(alone.code).toBe(0);
+  expect(alone.data).toMatchObject({
+    paths: [join(core, "screen.md")],
+    kind: "screen",
+    core: join(core, "screen.md"),
+    recorded: null,
+  });
+  // A pack with its own screen checklist: the core's first, the pack's after it; knowledge as it was.
+  const pack = writePack(
+    { name: "wizardingcode-pack-x", checklists: ["checklists/screen.md"] },
+    { "checklists/screen.md": "# Screen\n\n- one root element\n" },
+  );
+  expect((await c.run("pack", "add", pack)).code).toBe(0);
+  expect((await c.run("pack", "files", "checklists", "screen")).out.trim().split("\n")).toEqual([
+    join(core, "screen.md"),
+    join(pack, "checklists", "screen.md"),
+  ]);
+  expect((await c.run("pack", "files", "knowledge", "laravel")).out.trim()).toBe(
+    join(pack, "knowledge", "laravel.md"),
+  );
+  // Every real kind resolves to the core's file; the bad shapes resolve nothing, through coreChecklist itself (an argument cannot carry a NUL or an empty string).
+  for (const kind of kinds)
+    expect(coreChecklist(pluginRoot(), kind), kind).toBe(join(core, `${kind}.md`));
+  for (const bad of [
+    "../SKILL",
+    "../../dist/crew",
+    "/etc/passwd",
+    "screen/../auth",
+    "screen.md",
+    ".",
+    "..",
+    "",
+    "screen\0",
+  ])
+    expect(coreChecklist(pluginRoot(), bad), JSON.stringify(bad)).toBeNull();
+  // An item: a refused kind records nothing; a read is recorded by --item; the active item without --item; a kind repeated is kept once with its latest paths.
+  const id = (
+    await c.json("start", "Screen", "--answers", standardScreenAnswers, "--criterion", "a")
+  ).data.id as string;
+  const records = (of = id) => (loadWork(paths, of).work as WorkItem).checklists ?? [];
+  expect(records()).toEqual([]);
+  for (const bad of ["../SKILL", "screen.md", "screen/../auth", "/etc/passwd", "."]) {
+    const refused = await c.run("pack", "files", "checklists", bad, "--item", id);
+    expect(refused.code, bad).toBe(1);
+    expect(refused.err.trim(), bad).toBe(
+      `no checklist of kind ${bad}: the core's kinds are ${kinds.join(", ")}; a registered pack's are in its manifest (crew pack show <name>)`,
+    );
+    expect(records(), bad).toEqual([]);
+  }
+  const read = await c.json("pack", "files", "checklists", "screen", "--item", id);
+  expect(read.code).toBe(0);
+  expect(read.data).toMatchObject({
+    paths: [join(core, "screen.md"), join(pack, "checklists", "screen.md")],
+    kind: "screen",
+    core: join(core, "screen.md"),
+    recorded: id,
+  });
+  expect(records()).toMatchObject([
+    { kind: "screen", paths: [join(core, "screen.md"), join(pack, "checklists", "screen.md")] },
+  ]);
+  expect(records()[0]?.at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  expect((await c.run("pack", "files", "checklists", "auth")).code).toBe(0);
+  expect(records().map((r) => [r.kind, r.paths.length])).toEqual([
+    ["screen", 2],
+    ["auth", 1],
+  ]);
+  expect((await c.run("pack", "remove", "wizardingcode-pack-x")).code).toBe(0);
+  expect((await c.run("pack", "files", "checklists", "screen")).code).toBe(0);
+  expect(records().map((r) => [r.kind, r.paths.length])).toEqual([
+    ["screen", 1],
+    ["auth", 1],
+  ]);
+  // none with its reason: trimmed, refused empty or whitespace-only, cut at 500 with the marker, scanned.
+  expect((await c.run("pack", "files", "checklists", "none", "--item", id)).err.trim()).toBe(
+    'crew pack files checklists none needs --reason "<why no kind applies>"',
+  );
+  expect(
+    (await c.run("pack", "files", "checklists", "none", "--reason", "   ", "--item", id)).code,
+  ).toBe(1);
+  expect(records().map((r) => r.kind)).toEqual(["screen", "auth"]);
+  const long = "a refactor of the parser, no kind of the ten applies; ".repeat(12).trim();
+  expect(long.length).toBeGreaterThan(500);
+  const none = await c.run(
+    "pack",
+    "files",
+    "checklists",
+    "none",
+    "--reason",
+    `  ${long}  `,
+    "--item",
+    id,
+  );
+  expect(none.code).toBe(0);
+  const kept = records().find((r) => r.kind === "none");
+  expect(kept).toMatchObject({ kind: "none", paths: [], reason: `${long.slice(0, 500)}…` });
+  expect(none.out.trim()).toBe(`no checklist: ${long.slice(0, 500)}… (recorded on ${id})`);
+  expect(
+    (
+      await c.run(
+        "pack",
+        "files",
+        "checklists",
+        "none",
+        "--reason",
+        `the key is ${PLANTED_KEY}`,
+        "--item",
+        id,
+      )
+    ).code,
+  ).toBe(0);
+  expect(records().find((r) => r.kind === "none")?.reason).toMatch(/^\[redacted: /);
+  expect(records().map((r) => r.kind)).toEqual(["screen", "auth", "none"]);
+  // --item through openForChange: an unknown id refused with nothing recorded and never the active item instead; an item other than the active one records on that item; an abandoned item refused.
+  const before = JSON.stringify(records());
+  const unknownItem = await c.run(
+    "pack",
+    "files",
+    "checklists",
+    "screen",
+    "--item",
+    "2026-01-01-099-nope",
+  );
+  expect(unknownItem.code).toBe(1);
+  expect(JSON.stringify(records())).toBe(before);
+  const other = (
+    await c.json("start", "Other", "--answers", standardScreenAnswers, "--criterion", "b")
+  ).data.id as string;
+  expect((await c.run("pack", "files", "checklists", "auth", "--item", id)).code).toBe(0);
+  expect(records(other)).toEqual([]);
+  expect(records().map((r) => r.kind)).toEqual(["screen", "auth", "none"]);
+  expect((await c.run("abandon", other, "--reason", "dropped")).code).toBe(0);
+  const closed = await c.run("pack", "files", "checklists", "auth", "--item", other);
+  expect(closed.code).toBe(1);
+  expect(closed.err).toContain("was abandoned");
+  expect(records(other)).toEqual([]);
+  // The item --item named kept its three kinds, the abandoned one nothing; the auth read's stamp moved, nothing else.
+  const unstamped = (text: string) => text.replace(/"at":"[^"]*"/g, '"at":""');
+  expect(unstamped(JSON.stringify(records()))).toBe(unstamped(before));
+  // A hand-edited item (openForChange's other door): refused, nothing recorded.
+  const third = (
+    await c.json("start", "Third", "--answers", standardScreenAnswers, "--criterion", "c")
+  ).data.id as string;
+  const workFile = join(root, ".crew", "work", third, "work.json");
+  writeFileSync(
+    workFile,
+    readFileSync(workFile, "utf8").replace('"title": "Third"', '"title": "Edited"'),
+  );
+  const edited = await c.run("pack", "files", "checklists", "auth", "--item", third);
+  expect(edited.code).toBe(1);
+  // The tamper door's own refusal, naming the hand-edited file (the test-quality advisory at round 2).
+  expect(edited.err).toContain(`.crew/work/${third}/work.json`);
+  expect(JSON.parse(readFileSync(workFile, "utf8")).checklists).toBeUndefined();
+});
+
+test("SP9-T13 AC-17: on the standard route, Plan and the validator's complete-gap-round rule are refused until a checklist record exists, the refusal naming the command and the none form beside the four sections; a record alone with the sections missing still refuses; a kind, or none with its reason, opens the way", async () => {
+  const env = testEnv();
+  const root = makeRepo({
+    "src/a.ts": "export const a = 1;\n",
+    "tests/a.test.ts": "import { a } from '../src/a';\n",
+  });
+  const c = io(root, env);
+  const id = (
+    await c.json("start", "Screen", "--answers", standardScreenAnswers, "--criterion", "a")
+  ).data.id as string;
+  write(root, `.crew/work/${id}/spec.md`, "# Spec\n\n## Acceptance criteria\n- AC-1 a\n");
+  for (let i = 0; i < 3; i++) await c.run("phase", id, "next");
+  expect((await c.json("status")).data.phase).toBe("conclave");
+  // No conclave.md and no record: both named at once, at Plan and at the validator's rule.
+  const refused = await c.run("phase", id, "next");
+  expect(refused.err).toContain("conclave.md in the work folder (the gap round: four sections)");
+  expect(refused.err).toContain(MISSING_READ);
+  const rule = await c.run("approve", id, "spec", "--validator", "complete-gap-round");
+  expect(rule.code).toBe(1);
+  expect(rule.err).toContain(MISSING_READ);
+  // A record alone: the sections still asked for (nothing loosens).
+  expect((await c.run("pack", "files", "checklists", "screen", "--item", id)).code).toBe(0);
+  const sectionsStill = await c.run("phase", id, "next");
+  expect(sectionsStill.err).toContain(
+    "conclave.md in the work folder (the gap round: four sections)",
+  );
+  expect(sectionsStill.err).not.toContain("a checklist read");
+  // The sections and the record: the line gone (the leads' validation remains, SP7a), the rule satisfied.
+  write(root, `.crew/work/${id}/conclave.md`, FOUR_SECTIONS);
+  const after = await c.run("phase", id, "next");
+  expect(after.err).not.toContain("a checklist read");
+  expect(after.err).not.toContain("conclave.md in the work folder");
+  expect((await c.run("approve", id, "spec", "--validator", "complete-gap-round")).code).toBe(0);
+  // none with its reason is a record too.
+  const second = (
+    await c.json("start", "Parser", "--answers", standardScreenAnswers, "--criterion", "b")
+  ).data.id as string;
+  write(root, `.crew/work/${second}/spec.md`, "# Spec\n\n## Acceptance criteria\n- AC-1 b\n");
+  write(root, `.crew/work/${second}/conclave.md`, FOUR_SECTIONS);
+  for (let i = 0; i < 3; i++) await c.run("phase", second, "next");
+  expect((await c.run("phase", second, "next")).err).toContain(MISSING_READ);
+  expect(
+    (
+      await c.run(
+        "pack",
+        "files",
+        "checklists",
+        "none",
+        "--reason",
+        "a refactor of the parser: no kind of the ten applies",
+        "--item",
+        second,
+      )
+    ).code,
+  ).toBe(0);
+  expect((await c.run("phase", second, "next")).err).not.toContain("a checklist read");
+});
+
+test("SP9-T13 AC-18: the report prints the checklists read as kinds and counts, none with its reason, none read without a record, and never a path of the record", async () => {
+  const env = testEnv();
+  const root = makeRepo({
+    "src/a.ts": "export const a = 1;\n",
+    "tests/a.test.ts": "import { a } from '../src/a';\n",
+  });
+  const c = io(root, env);
+  const paths = repoPaths(root, env);
+  const core = join(pluginRoot(), "skills", "crew", "checklists");
+  const pack = writePack(
+    { name: "wizardingcode-pack-x", checklists: ["checklists/screen.md"] },
+    { "checklists/screen.md": "# Screen\n\n- one root element\n" },
+  );
+  expect((await c.run("pack", "add", pack)).code).toBe(0);
+  const id = (
+    await c.json("start", "Screen", "--answers", standardScreenAnswers, "--criterion", "a")
+  ).data.id as string;
+  const report = (of: string) =>
+    renderReport(loadWork(paths, of).work as WorkItem, emptyEvidence(), DEFAULT_POLICY);
+  expect(report(id)).toContain("- Checklists: none read\n");
+  await c.run("pack", "files", "checklists", "screen", "--item", id);
+  await c.run("pack", "files", "checklists", "auth", "--item", id);
+  const text = report(id);
+  expect(text).toContain("- Checklists: screen (2 files), auth (1 file)\n");
+  for (const path of (loadWork(paths, id).work as WorkItem).checklists?.flatMap((r) => r.paths) ??
+    [])
+    expect(text).not.toContain(path);
+  expect(text).not.toContain(core);
+  expect(text).not.toContain(pack);
+  const second = (
+    await c.json("start", "Parser", "--answers", standardScreenAnswers, "--criterion", "b")
+  ).data.id as string;
+  await c.run(
+    "pack",
+    "files",
+    "checklists",
+    "none",
+    "--reason",
+    "a refactor of the parser",
+    "--item",
+    second,
+  );
+  expect(report(second)).toContain("- Checklists: none (a refactor of the parser)\n");
+});

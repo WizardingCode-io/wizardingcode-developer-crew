@@ -716,6 +716,14 @@ export interface Debate {
   tokens?: number;
 }
 
+/** One read of the gap round (SP9 Task 13, finding 194): a kind and the absolute paths `crew pack files checklists` printed (the core's first, then the packs'), or `none` with the reason no kind applies. */
+export interface ChecklistRecord {
+  kind: string;
+  paths: string[];
+  reason?: string;
+  at: string;
+}
+
 export interface WorkItem {
   id: string;
   title: string;
@@ -729,6 +737,8 @@ export interface WorkItem {
   knowledge?: KnowledgeRecord;
   /** The packs the item used (SP6 Task 2), as `<name> <version>`: the knowledge files served to the expert, the template that seated a team. */
   packs?: string[];
+  /** The checklists the gap round read (SP9 Task 13, finding 194), each kind once in the order read, or `none` with its reason: the way into Plan on the standard and full routes. */
+  checklists?: ChecklistRecord[];
   /** The expert's knowledge files the packs served for the item's paths and specialists (SP6 Task 6), recorded at crew team and at the gate run. */
   knowledgeFiles?: string[];
   /** The same files as `<pack>:<path inside the pack>` (finding 118): what the report prints, never a machine's path. */

@@ -47,7 +47,11 @@ function openFindings(text: string): number[] {
 // stop or pause command) and 188 (a pushed fix enters the loop one tick late) recorded open by the same item
 // and closed by 2026-10-28-001, which also recorded and closed 189 (a probe set the ceiling could not pay,
 // probed until the ceiling and called errored) and 190 (a dead tick leaving no trace).
-// 2026-10-28-004 edits this list: findings 191 and 192 closed by it.
+// 2026-10-28-004 edits this list: findings 191 and 192 closed by it. 194 (a standard-route session wrote
+// the gap round without reading a checklist, the engine accepting the four headings) recorded open by
+// SP9 Task 13 (2026-10-28-006) from the Blade case's first run, for the next touch of crew pack files.
+// 194 to 197 recorded and closed by the same item (the gap round's read, the uncounted note's way, the
+// account after a blocked turn end, the unattended case's standing grant).
 const OPEN = [77, 114, 177, 178, 181, 182, 183];
 
 test("AC-9 (consolidation of 2026-10-24): the findings that read open are the named ones, and the thirteen closed by the consolidation read closed", () => {

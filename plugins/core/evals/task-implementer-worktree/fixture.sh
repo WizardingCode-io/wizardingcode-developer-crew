@@ -42,6 +42,8 @@ cat > "$item/conclave.md" <<EOF
 ## Warnings
 - none
 EOF
+# The gap round reads its checklist before Plan (SP9 Task 13, finding 194).
+crew pack files checklists endpoint --item "$id" > /dev/null
 crew approve "$id" spec --validator complete-gap-round > /dev/null
 crew phase "$id" next > /dev/null
 crew phase "$id" next > /dev/null
