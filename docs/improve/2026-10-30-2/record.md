@@ -1,0 +1,31 @@
+# Improvement run 2026-10-30-2
+
+- At: 2026-10-30T15:00:15.097Z
+- Targets: ui-audit-not-captured, ui-captures-by-fixture
+- Provider: runtime (agent claude-sonnet-5-5, judge claude-fable-5-1)
+
+## Baseline
+
+| Case | Scores | Mean | Spread |
+| :- | :- | -: | -: |
+| ui-audit-not-captured | 0.33, 0.33, 0.00 | 0.22 | 0.33 |
+| ui-captures-by-fixture | 0.20, 0.20, 0.20 | 0.20 | 0.00 |
+
+## P-1: refused (the editor changed nothing)
+
+- Diff: none
+- Rationale: I changed nothing: no file under `plugins/core/skills/crew/` or `plugins/core/agents/` is edited, because I found no harness text that explains these failures, and an edit would only be a guess. I couldn't read the failing runs' traces (reads outside this worktree were denied) and I ran nothing, so the cause below is inferred from the scores, the case files and the engine source. Both `honest-ending` failures are the Fable quota throw, which no text can fix; until a rerun gets a working judge, even a perfect run tops out at 0.80 on `ui-captures-by-fixture` and 0.67 on `ui-audit-not-captured`. The rest points away from the harness: `ui-captures-by-fixture` scored 0.20 in all three runs, so only one of its five graders passed, and that can only be `empty-state`. The code was written, but `e2e (.): pass` never appeared, and the engine prints that line at the gate run, before any review or ruling. `docs/evals/2026-10-30-sp9-ui-results.md` records both cases at 1.00 earlier the same day (`2026-10-30T12-16-44-187Z` and `T12-25-34-538Z`), and the later changes it lists are to the engine and graders, not this text, though I didn't diff the pages to confirm that. Six failing runs against those passes look like a difference in the environment, and the same document says no loop probe of a ui case had run yet. I ruled out three environment causes: the committed bundle has the `public/` interface rule from finding 201, the loop's 20 USD ceiling is well above these cases' cost of about 1 USD a run, and the scaffold evidently worked because the code got written. That leaves the e2e run itself in the loop's setup as my main suspect, but it is unconfirmed, and a session that stopped before its gate run would look the same in these scores. The one real gap I found is that the skill page's fast route never mentions `--screen` or the judgement gates, but I left it because it can't explain a missing e2e line, and the Stop hook already sends a lead back to the planned reviewers. The nex
+
+## P-2: refused (the editor changed nothing)
+
+- Diff: none
+- Rationale: I changed nothing, because I found no harness text that would make these graders pass for the right reason, and any edit would rest on a guess. In `ui-captures-by-fixture`, 0.20 in all three runs means only the `empty-state` file grader passed. The code was written, but `e2e (.): pass`, `captures: 2 of 2 expected` and `Proven:` never appeared in any trace. In `ui-audit-not-captured`, 0.22 with a 0.33 spread fits `count` passing in two of three runs and the audit line in none, so those sessions show the same pattern. The `honest-ending` throws are the eval kit's Fable quota and need a rerun, not an edit. I can't see these runs' traces, so I don't know whether the sessions never reached `crew gate run` or the e2e gate ran and failed. What points away from the text is that `docs/evals/2026-10-30-sp9-ui-results.md` records both cases at 1.00 on 2026-10-30 (runs `12-16-44-187Z` and `12-25-34-538Z`), on the SP9 Task 14 item that HEAD commits; I couldn't diff the pages against that recording because I have no git here. The same file says no loop probe of a ui case has run and that no tick has run the loop's shell install (finding 206 is still open), so these baselines look like the first measure in the loop's environment, and that environment is my leading suspect, though unconfirmed. The next step is to read the `e2e (.)` lines and the last commands in a kept baseline trace, then rerun with a judge that has quota. If the sessions stopped before the gate run or the e2e failed in the loop's environment, the fix belongs in the eval kit or the loop, which this run may not edit; only a trace showing a lead misled by a page would justify a harness edit.
+
+## Outcome
+
+- Composition: none
+- Kept: nothing
+- Lessons: none
+- Cases no run has measured (never probed): ui-design-token-drift, ui-missing-screen-named, ui-motion-frequency-found, ui-motion-thesis-built, ui-reduced-motion-fails, ui-ux-generic-tells
+- Cost: 4.65 USD
+- Exit status: 0
