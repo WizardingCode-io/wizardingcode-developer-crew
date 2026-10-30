@@ -17,6 +17,7 @@ import { fileURLToPath } from "node:url";
 import {
   ALLOW_TOOLS,
   armRuns,
+  costEstimate,
   createRunFolder,
   deniedReferenceReads,
   evalInvocation,
@@ -2499,7 +2500,7 @@ test("CON7-AC-8 (finding 63): the runner caps a case at 5 USD and the suite at n
       WIZARDINGCODE_STUB_LOG: log,
     });
     expect(run.status, run.stderr).toBe(0);
-    const estimate = run.stdout.match(/estimated cost: about 38\.80 USD \(([^)]*)\)/);
+    const estimate = run.stdout.match(/estimated cost: about 95 USD \(([^)]*)\)/);
     expect(estimate?.[1] ?? "").toContain("SP7a");
     expect(run.stdout.indexOf("estimated cost:")).toBeLessThan(
       run.stdout.indexOf("claude plugin eval"),
@@ -4090,3 +4091,13 @@ test("2026-10-30-002 AC-1: the scaffold carries the crew's fixture, byte for byt
     rmSync(root, { recursive: true, force: true });
   }
 }, 60_000);
+
+test("2026-10-30-003 AC-2: the estimates carry the ui cases' recorded figures", () => {
+  expect(costEstimate({ caseName: "x" })).toContain("0.3 to 2.3 USD");
+  const suite = costEstimate({});
+  expect(suite).toContain("about 95 USD");
+  expect(suite).toContain("docs/evals/2026-10-30-sp9-ui-results.md");
+  expect(readFileSync(join(repoRoot, "CLAUDE.md"), "utf8")).toContain(
+    "the suite is about 95 USD a run",
+  );
+});

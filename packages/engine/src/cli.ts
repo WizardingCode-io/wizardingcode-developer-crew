@@ -4324,6 +4324,16 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       ).filter((r) => r.status === "planned" || r.status === "stale");
       // The judge's launch line carries the answers the session filed (SP6 Task 4, decision 10).
       const filedBySession = sessionFiledLine(outcome.evidence.roles ?? []);
+      // The pack's knowledge beside the team, as crew team prints it: a session that runs no crew team still
+      // has the path (2026-10-30-003 AC-5).
+      const knowledge = pending.length
+        ? knowledgeFilesFor(
+            env.paths.userDir,
+            env.profile,
+            changedWatchedPaths(env.paths.root, env.profile, opened.work),
+            env.policy,
+          ).paths
+        : [];
       // The seats runGates planned on this change, with the primary team it set (gates.ts), in the
       // form crew team prints and before the gates to run (SP9 Task 10): the seats crew start printed
       // were planned on an empty change, so a pack's glob or an interface file seats its roles only
@@ -4331,7 +4341,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       // a planned judgement gate seats the judge, so the line is never empty, and the fallback narrows
       // the optional field's type for records written before it existed.
       const teamNote = pending.length
-        ? `\n${teamLine(opened.work.id, opened.work.seats ?? [], opened.work.primaryTeam ?? "backend")}`
+        ? `\n${teamLine(opened.work.id, opened.work.seats ?? [], opened.work.primaryTeam ?? "backend")}${knowledge.length ? `\nknowledge for the expert: ${knowledge.join(", ")}` : ""}`
         : "";
       const judgementNote = pending.length
         ? `${teamNote}\nJudgement gates to run: ${pending.map((r) => `${r.gate} (${r.planned})`).join(", ")}; inputs in ${review}/ (diff.patch, files.txt); record each with crew judgement ${opened.work.id} record --ruling <file>${filedBySession ? `\n${filedBySession}` : ""}`

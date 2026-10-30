@@ -47,10 +47,13 @@ Jev, TypeSafe's System One model, is the crew's second reader when a key is set 
 
 ## Packs
 
-A pack is knowledge that installs apart from the core (vision §11), as data the engine serves (ADR 0010): a folder with `pack.json`, checklists for the gap round, knowledge files for the expert, a detector rule and a team template. It has no code, no agent, no hook and no skill; the crew skill reads what the engine prints for it. The two first packs live in this repository under `packs/`:
+A pack is knowledge that installs apart from the core (vision §11), as data the engine serves (ADR 0010): a folder with `pack.json`, checklists for the gap round, knowledge files for the expert, a detector rule and a team template. It has no code, no agent, no hook and no skill; the crew skill reads what the engine prints for it. The packs live in this repository under `packs/`:
 
 - `wizardingcode-pack-laravel`, a stack pack: its rule proposes Laravel's test, lint and type-check commands and the scoped test template, tags the target `laravel`, and the expert reads its knowledge file (verified against Laravel 13.x).
 - `wizardingcode-pack-agentic-os`, a team pack: its template seats the agentic team as the expert's knowledge seat on the paths where agents, skills, prompts and hooks live.
+- `wizardingcode-pack-frontend`, a team pack: its template seats the frontend team's expert on the component and page paths, with the knowledge of motion and of the interface floor.
+- `wizardingcode-pack-nuxt`, a stack pack: its rule proposes Nuxt's test, lint and type-check commands, with Nuxt 4's knowledge.
+- `wizardingcode-pack-next`, a stack pack: its rule proposes Next's test and lint commands, with Next 16's knowledge.
 
 Each pack ships with a with/without pair of eval cases that shows its difference on the same tree (the pack's gate proposed with its name and the knowledge path served; the seat and the knowledge path), run and recorded in [`docs/evals/2026-10-21-sp6-results.md`](docs/evals/2026-10-21-sp6-results.md).
 

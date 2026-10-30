@@ -578,8 +578,8 @@ export function createImproveFolder(root: string, date: string): string {
 export const EDITOR_TOOLS = "Read,Grep,Glob,Edit,Write";
 /** The editor's models, the most capable first (finding 152): a model at its usage limit gives way to the next. */
 export const EDITOR_LADDER = ["fable", "opus", "sonnet"];
-/** One run of one case at the top of the one-case runs recorded in docs/evals/ (0.3 to 1.4 USD). */
-const RUN_USD = { low: 0.3, high: 1.4 };
+/** One run of one case at the top of the one-case runs recorded in docs/evals/ (0.3 to 2.3 USD: the ui cases' top is 2.24, docs/evals/2026-10-30-sp9-ui-results.md). */
+const RUN_USD = { low: 0.3, high: 2.3 };
 const IDENTITY = { name: "wizardingcode-improve", email: "noreply@wizardingcode.io" };
 const RATIONALE_LIMIT = 2000;
 const LIMITED = /usage limit|rate.?limit|\b429\b|overloaded/i;

@@ -1407,3 +1407,10 @@ test("2026-10-29-001 AC-9: the frontend pack's knowledge holds the dated UI tell
     expect(facts, words).toContain(words);
   expect([...sourcesOf(root)]).toContain("https://github.com/Leonxlnx/taste-skill");
 });
+
+test("2026-10-30-003 AC-1: the README names the five packs and says no fewer", () => {
+  const readme = read(join(REPO, "README.md"));
+  for (const pack of ["laravel", "agentic-os", "frontend", "nuxt", "next"])
+    expect(readme, pack).toContain(`- \`wizardingcode-pack-${pack}\``);
+  expect(readme).not.toContain("two first packs");
+});

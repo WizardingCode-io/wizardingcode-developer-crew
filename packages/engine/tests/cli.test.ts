@@ -12780,3 +12780,33 @@ test("SP9-T13 AC-18: the report prints the checklists read as kinds and counts, 
   );
   expect(report(second)).toContain("- Checklists: none (a refactor of the parser)\n");
 });
+
+test("2026-10-30-003 AC-5: crew gate run prints the pack's knowledge for the expert beside the team it plans, as crew team does", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "nuxt.config.ts": "export default {};\n",
+    "app/utils/a.ts": "export const a = 1;\n",
+  });
+  const c = io(root);
+  const pack = fileURLToPath(new URL("../../../packs/nuxt", import.meta.url));
+  expect((await c.run("pack", "add", pack)).code).toBe(0);
+  expect((await c.run("detect", "--refresh")).code).toBe(0);
+  const id = (
+    await c.json(
+      "start",
+      "Change the util",
+      "--answers",
+      JSON.stringify({ ...JSON.parse(answers), work_type: "feature", scope: 1 }),
+      "--criterion",
+      "x",
+    )
+  ).data.id as string;
+  write(root, "app/utils/a.ts", "export const a = 2;\n");
+  const line = `knowledge for the expert: ${join(pack, "knowledge", "nuxt.md")}`;
+  expect((await c.run("team", id)).out).toContain(line);
+  const run = await c.run("gate", "run", id);
+  expect(run.out).toContain(line);
+  // Beside the team it plans, so a reader of the team has it.
+  const lines = run.out.split("\n");
+  expect(lines[lines.findIndex((l) => l.startsWith("Team of ")) + 1]).toBe(line);
+});

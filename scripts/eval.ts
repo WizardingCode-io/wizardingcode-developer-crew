@@ -178,10 +178,10 @@ export function evalInvocation(options: EvalOptions): {
  */
 export function costEstimate(options: { caseName?: string; tags?: string[] }): string {
   if (options.caseName)
-    return "estimated cost: about 0.3 to 2.3 USD (the one-case runs recorded in docs/evals/; the case's cap is 5 USD)";
+    return "estimated cost: about 0.3 to 2.3 USD (the one-case runs recorded in docs/evals/; ui-motion-frequency-found reaches 4.2; the case's cap is 5 USD)";
   if (options.tags?.includes("benchmark"))
     return "estimated cost: about 35 USD (the benchmark run of 2026-10-21, docs/benchmark/2026-10-21-0.11.0.md: 9.10 + 2.57 USD a run of the set, three runs and the judges)";
-  return "estimated cost: about 38.80 USD (the SP7a suite run, docs/evals/2026-10-18-sp7a-results.md; the suite has grown since, so more)";
+  return "estimated cost: about 95 USD (the SP7a suite run's 38.80 USD, docs/evals/2026-10-18-sp7a-results.md, and the eight ui cases' 9.37 USD a set at three runs and two arms, docs/evals/2026-10-30-sp9-ui-results.md; the other cases added since are not in it, so more)";
 }
 
 // A reference's path as a trace holds it, absolute or relative, matched by suffix: the file, or the

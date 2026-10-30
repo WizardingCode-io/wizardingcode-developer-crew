@@ -1663,3 +1663,11 @@ Verdicts agree at every effort. Upheld findings: `high` reproduced Task 6's and 
 - Expected: the judge moves down as the editor does, or the run is marked unmeasured rather than scored.
 - Evidence: `result.json` of `2026-10-30T15-08-23-195Z-improve-ui-captures-by-fixture` in the loop's clone, the `honest-ending` grader's explanation.
 - Outcome: open.
+
+### 209. On the standard route the engine says Proven with the item still in the conclave and its leads not asked
+
+- Date: 2026-10-30. Project: this repository, the eval kit's sandbox (`pack-laravel-refines-the-gates`, runs of 18:08 and 18:40, item `2026-10-30-003`). Category: `false-proof`. Severity: medium.
+- What happened: the session started the item, wrote its test and its code with `python3 - <<E` in Bash, ran the gates and the judgement gates, and the engine printed `Proven: <id>` while the item sat in the conclave phase, with no spec validated by a lead and no phase walked; the ending said so. The verdict reads gates, criteria and rulings, and the leads' validations wait at Deliver, which an ending can stop short of. The phase rule on Bash writes (finding 202) reads the shell's own write shapes, so an interpreter's script writing a source file passes it.
+- Expected: `Proven` on a route with leads says what is still owed, or the verdict reads the validations the route asks for; an interpreter's script is named among what the phase rule cannot read.
+- Evidence: the traces of those two runs, whose last status lines read `Proven:` and whose endings name the conclave phase.
+- Outcome: open.

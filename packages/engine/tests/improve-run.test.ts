@@ -218,7 +218,7 @@ test("2026-10-24-012 AC-23: the estimate is printed before any spend; each refus
   const refusals: [string[], number | undefined, string, () => void][] = [
     [[], undefined, "name at least one case: --case <a,b>", () => {}],
     [["nope"], undefined, "no eval case nope under plugins/core/evals/", () => {}],
-    [["t"], 1, "--max-cost-usd 1 is below the baseline's estimate (4.20 USD)", () => {}],
+    [["t"], 1, "--max-cost-usd 1 is below the baseline's estimate (6.90 USD)", () => {}],
     [
       ["t"],
       undefined,
@@ -930,9 +930,9 @@ test("2026-10-28-001 AC-8: a proposal whose probe set's estimate is above what t
   );
   sh(root, "add", "-A");
   sh(root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "earlier record");
-  // The baseline of t costs 1.50 of the 4.20 the ceiling allows: 2.70 left. P-1 edits the gate's page
+  // The baseline of t costs 1.50 of the 6.90 the ceiling allows: 5.40 left. P-1 edits the gate's page
   // and the judge's: t (its own 1.50) and the seven readers of the judge's page (no baseline this run,
-  // their earlier cost twice): 1.50 + 14.00 = 15.50, above 2.70. P-2 edits the gate's page alone: t, 1.50.
+  // their earlier cost twice): 1.50 + 14.00 = 15.50, above 5.40. P-2 edits the gate's page alone: t, 1.50.
   const run = deps(root, tmp, {
     kit: (call, n) => {
       const r = kitResult(call);
@@ -943,7 +943,7 @@ test("2026-10-28-001 AC-8: a proposal whose probe set's estimate is above what t
       if (n === 1) writeFileSync(join(call.cwd, JUDGE), "# Judge\nchanged\n");
     },
   });
-  expect(await runImprove({ cases: ["t"], proposals: 2, maxCostUsd: 4.2 }, run.deps)).toBe(0);
+  expect(await runImprove({ cases: ["t"], proposals: 2, maxCostUsd: 6.9 }, run.deps)).toBe(0);
   // The newest record: the earlier one sits beside it.
   const latestRecord = () => {
     const dir = join(root, "docs/improve");
@@ -955,7 +955,7 @@ test("2026-10-28-001 AC-8: a proposal whose probe set's estimate is above what t
     id: "P-1",
     status: "unprobed",
     refusal:
-      "the probe set (8 cases, about 15.50 USD by the baseline's costs) is above what is left under the ceiling (2.70 USD); not probed",
+      "the probe set (8 cases, about 15.50 USD by the baseline's costs) is above what is left under the ceiling (5.40 USD); not probed",
     verdict: null,
     gain: 0,
     probe: {},
@@ -967,7 +967,7 @@ test("2026-10-28-001 AC-8: a proposal whose probe set's estimate is above what t
   expect(record.exit).toBe(0);
   const md = readFileSync(join(root, "docs/improve", record.run, "record.md"), "utf8");
   expect(md).toContain(
-    "## P-1: unprobed (the probe set (8 cases, about 15.50 USD by the baseline's costs) is above what is left under the ceiling (2.70 USD); not probed)",
+    "## P-1: unprobed (the probe set (8 cases, about 15.50 USD by the baseline's costs) is above what is left under the ceiling (5.40 USD); not probed)",
   );
   expect(md).toContain("## P-2: lose");
   rmSync(join(root, "docs", "improve", record.run), { recursive: true });

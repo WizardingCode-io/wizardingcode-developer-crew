@@ -22222,8 +22222,10 @@ ${notes.join(`
       const review = outcome.review ? rel(env.paths, outcome.review) : null;
       const pending = judgementRows(opened.work, outcome.evidence, outcome.judgement, outcome.evidence.fingerprint ?? "", env.policy).filter((r) => r.status === "planned" || r.status === "stale");
       const filedBySession = sessionFiledLine(outcome.evidence.roles ?? []);
+      const knowledge = pending.length ? knowledgeFilesFor(env.paths.userDir, env.profile, changedWatchedPaths(env.paths.root, env.profile, opened.work), env.policy).paths : [];
       const teamNote = pending.length ? `
-${teamLine(opened.work.id, opened.work.seats ?? [], opened.work.primaryTeam ?? "backend")}` : "";
+${teamLine(opened.work.id, opened.work.seats ?? [], opened.work.primaryTeam ?? "backend")}${knowledge.length ? `
+knowledge for the expert: ${knowledge.join(", ")}` : ""}` : "";
       const judgementNote = pending.length ? `${teamNote}
 Judgement gates to run: ${pending.map((r) => `${r.gate} (${r.planned})`).join(", ")}; inputs in ${review}/ (diff.patch, files.txt); record each with crew judgement ${opened.work.id} record --ruling <file>${filedBySession ? `
 ${filedBySession}` : ""}` : "";
