@@ -98,6 +98,9 @@ export const SANDBOX_TAGS = [
   // the scaffold and registers it; the Laravel pair needs php on the machine, since a session's PATH is
   // Claude Code's and never the runner's).
   "packs",
+  // SP9 (Task 14): the ui cases run in the sandbox with the browser fixtures/playwright-page.sh copies into
+  // the scaffold (Playwright's headless shell, single-process; design §9's spike).
+  "ui",
 ];
 const COMMON = ["plugin", "eval", "plugins/core", "--scaffold", "--trust-plugin", "--no-publish"];
 /** The model the agent under test runs on when a run names none (2026-10-25-005: a provider names its own). */
@@ -175,7 +178,7 @@ export function evalInvocation(options: EvalOptions): {
  */
 export function costEstimate(options: { caseName?: string; tags?: string[] }): string {
   if (options.caseName)
-    return "estimated cost: about 0.3 to 1.4 USD (the one-case runs recorded in docs/evals/; the case's cap is 5 USD)";
+    return "estimated cost: about 0.3 to 2.3 USD (the one-case runs recorded in docs/evals/; the case's cap is 5 USD)";
   if (options.tags?.includes("benchmark"))
     return "estimated cost: about 35 USD (the benchmark run of 2026-10-21, docs/benchmark/2026-10-21-0.11.0.md: 9.10 + 2.57 USD a run of the set, three runs and the judges)";
   return "estimated cost: about 38.80 USD (the SP7a suite run, docs/evals/2026-10-18-sp7a-results.md; the suite has grown since, so more)";

@@ -526,6 +526,9 @@ var INTERFACE_EXTENSIONS = [
 ];
 var MODULE_EXTENSIONS = [".ts", ".js", ".mts", ".mjs"];
 var INTERFACE_SEGMENTS = /(?:^|\/)(?:components|composables|layouts|pages|animations|transitions|motion)\//;
+var PUBLIC_ROOT = "^(?:(?:packages|apps)/[^/]+/)?public/";
+var PUBLIC_FOLDER = new RegExp(PUBLIC_ROOT);
+var PUBLIC_NOT_INTERFACE = new RegExp(`${PUBLIC_ROOT}(?:build|dist|vendor|assets|api)/`);
 var NEVER_INTERFACE_SEGMENTS = /(?:^|\/)(?:pages\/api|server|hooks)\//;
 var CONTRACT_CONFIG = /^(?:(?:packages|apps)\/[^/]+\/)?(?:tailwind|uno)\.config\.[a-z]+$/;
 var CONTRACT_TOKENS_OR_THEME = /^(?:tokens\.s?css|theme\.(?:css|ts|json))$/;
@@ -542,7 +545,9 @@ function isInterfacePath(rel) {
     return true;
   if (!MODULE_EXTENSIONS.some((ext) => lower.endsWith(ext)) || name.endsWith(".d.ts"))
     return false;
-  return INTERFACE_SEGMENTS.test(folder) && !NEVER_INTERFACE_SEGMENTS.test(folder);
+  if (NEVER_INTERFACE_SEGMENTS.test(folder) || PUBLIC_NOT_INTERFACE.test(folder))
+    return false;
+  return INTERFACE_SEGMENTS.test(folder) || PUBLIC_FOLDER.test(folder);
 }
 function isDesignContractPath(rel) {
   if (isTestPath(rel))
@@ -16265,8 +16270,9 @@ function knowledgeUnmark(parsed, permissionMode, headless, policy) {
     return null;
   if (what !== "unmark" && !UNREADABLE_VERB.test(what))
     return null;
+  const wayOut = what === "unmark" ? "" : "; write the id out: crew knowledge <id> lookup";
   return personOnly(parsed, permissionMode, headless, policy, {
-    unwatched: (where) => `Crew: a mark is removed by a person and no person is watching this session (${where}): run crew await <id> user and end the turn`,
+    unwatched: (where) => `Crew: a mark is removed by a person and no person is watching this session (${where}): run crew await <id> user and end the turn${wayOut}`,
     withMode: (mode) => `Crew: a mark is removed by a person (${mode} mode); run the command without --mode so they are asked`,
     ask: "Crew: a mark is removed by a person: this command records their decision"
   });
@@ -17113,6 +17119,12 @@ function copiesOut(found) {
   const targets = writtenPaths(found);
   return targets.length > 0 && !targets.some(({ word }) => namesEngineTarget(word));
 }
+function beforeBuildDenial(ctx) {
+  const work = activeWork(ctx.paths)?.work;
+  if (!work || work.route === "fast" || !isBeforeBuild(work))
+    return null;
+  return answer("deny", `Crew: work ${work.id} is in phase ${work.phase} on the ${work.route} route; source files change in the build phase (crew phase ${work.id} next)`);
+}
 function writesWatched(ctx, cwd, found) {
   for (const f of found) {
     if (["chmod", "chown"].includes(f.program.toLowerCase()))
@@ -17209,12 +17221,7 @@ function onPreToolUse(ctx, payload) {
     }
     if (!watched)
       return {};
-    const active = activeWork(ctx.paths);
-    const work = active?.work;
-    if (work && work.route !== "fast" && isBeforeBuild(work)) {
-      return answer("deny", `Crew: work ${work.id} is in phase ${work.phase} on the ${work.route} route; source files change in the build phase (crew phase ${work.id} next)`);
-    }
-    return laneDenial(ctx, "edit") ?? {};
+    return beforeBuildDenial(ctx) ?? laneDenial(ctx, "edit") ?? {};
   }
   if (tool === "Bash") {
     const written = typeof input.command === "string" ? input.command : "";
@@ -17359,6 +17366,11 @@ function onPreToolUse(ctx, payload) {
       writes = writesWatched(ctx, payload.cwd ?? ctx.paths.root, found);
     } catch {}
     if (writes) {
+      const moved = found.findIndex((f) => f.program.toLowerCase() === "cd");
+      const here = moved < 0 ? found : found.slice(0, moved);
+      const phase = writesWatched(ctx, payload.cwd ?? ctx.paths.root, here) ? beforeBuildDenial(ctx) : null;
+      if (phase)
+        return phase;
       const lane = laneDenial(ctx, "bash");
       if (lane)
         return lane;
@@ -20577,7 +20589,7 @@ function knowledgeLine2(env, work) {
   return `  knowledge: ${record.listed.length} listed (${marked} marked)`;
 }
 function gateSummary(work, verdict, unproven, runs) {
-  const lines = runs.map((r) => `  ${r.gate} (${r.target}${r.stack ? `, ${r.stack}` : ""}): ${r.status} in ${(r.durationMs / 1000).toFixed(1)}s`);
+  const lines = runs.map((r) => `  ${r.gate} (${r.target}${r.stack ? `, ${r.stack}` : ""}): ${r.status} in ${(r.durationMs / 1000).toFixed(1)}s${r.status === "fail" && r.reason ? ` (${r.reason})` : ""}`);
   lines.push(verdict === "proven" ? `Proven: ${work.id}` : `Not proven: ${unproven.join("; ")}`);
   return lines.join(`
 `);

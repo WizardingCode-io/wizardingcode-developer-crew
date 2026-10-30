@@ -22,6 +22,13 @@ const MODULE_EXTENSIONS = [".ts", ".js", ".mts", ".mjs"];
 const INTERFACE_SEGMENTS =
   /(?:^|\/)(?:components|composables|layouts|pages|animations|transitions|motion)\//;
 
+/** A site's `public` folder, served to the browser as it is, at the root or at a workspace's root (2026-10-30-001, design §7's note); deeper it is a route's name. */
+const PUBLIC_ROOT = "^(?:(?:packages|apps)/[^/]+/)?public/";
+const PUBLIC_FOLDER = new RegExp(PUBLIC_ROOT);
+
+/** The modules of that folder that are no interface code: what a build or a vendor leaves, an API. A stylesheet there still counts, by its extension. */
+const PUBLIC_NOT_INTERFACE = new RegExp(`${PUBLIC_ROOT}(?:build|dist|vendor|assets|api)/`);
+
 /** A segment that is never interface code, wherever it sits above the file: an API route, the server, React hooks. */
 const NEVER_INTERFACE_SEGMENTS = /(?:^|\/)(?:pages\/api|server|hooks)\//;
 
@@ -37,7 +44,7 @@ const CONTRACT_SEGMENTS = /(?:^|\/)(?:styles|assets|design)\//;
 /**
  * A file the user sees: a component, a template, a stylesheet, anything under resources/views/, or
  * a module (`.ts`, `.js`, `.mts`, `.mjs`) under a `components`, `composables`, `layouts`, `pages`,
- * `animations`, `transitions` or `motion` segment, never under `pages/api/`, `server/` or `hooks/`.
+ * `animations`, `transitions` or `motion` segment or in a `public` folder at the root or a workspace's root, never under `pages/api/`, `public/api/`, `server/` or `hooks/` nor in a `public` folder's build, dist, vendor or assets.
  * A test, a spec, a story or a declaration of one is not one: nobody expects a UI review of a test file.
  */
 export function isInterfacePath(rel: string): boolean {
@@ -47,7 +54,8 @@ export function isInterfacePath(rel: string): boolean {
   if (/(?:^|\/)resources\/views\//.test(lower)) return true;
   if (INTERFACE_EXTENSIONS.some((ext) => lower.endsWith(ext))) return true;
   if (!MODULE_EXTENSIONS.some((ext) => lower.endsWith(ext)) || name.endsWith(".d.ts")) return false;
-  return INTERFACE_SEGMENTS.test(folder) && !NEVER_INTERFACE_SEGMENTS.test(folder);
+  if (NEVER_INTERFACE_SEGMENTS.test(folder) || PUBLIC_NOT_INTERFACE.test(folder)) return false;
+  return INTERFACE_SEGMENTS.test(folder) || PUBLIC_FOLDER.test(folder);
 }
 
 /**

@@ -11,7 +11,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { tmpdir, userInfo } from "node:os";
 import { basename, delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -146,9 +146,20 @@ const CASES = [
   // 2026-10-29-001 (D-3, AC-18): the measuring cases of the writing standard and of the code-quality questions.
   "writing-standard-ending-without-tells",
   "code-quality-flags-unasked-dependency",
+  // 2026-10-30-001 (SP9 Task 14): the ui cases, with the browser of fixtures/playwright-page.sh.
+  "ui-captures-by-fixture",
+  "ui-reduced-motion-fails",
+  "ui-audit-not-captured",
+  "ui-missing-screen-named",
+  "ui-motion-frequency-found",
+  "ui-motion-thesis-built",
+  "ui-design-token-drift",
+  "ui-ux-generic-tells",
 ];
 /** The pack pairs' cases, by their prefix (SP9 Task 11: derived, so a new pair edits no count). */
 const PACK_CASES = CASES.filter((name) => name.startsWith("pack-"));
+/** The cases of SP9 Task 14 (design §9), by their prefix, as the pack pairs' are. */
+const UI_CASES = CASES.filter((name) => name.startsWith("ui-"));
 /** The pack each with case registers, by the case's name prefix (SP9 Task 11). */
 const PACK_BY_PREFIX: Record<string, string> = {
   "pack-laravel": "wizardingcode-pack-laravel",
@@ -160,7 +171,7 @@ const PACK_BY_PREFIX: Record<string, string> = {
 /** The with halves of the pack pairs, the cases that register a pack (SP9 Task 11): derived once for the two tests that read them. */
 const WITH_CASES = PACK_CASES.filter((name) => !name.endsWith("-absent"));
 
-test("SP2c, SP7b-T7 AC-1, SP3-T1 AC-5, SP3-T7 AC-1, SP4-T6 AC-1: the fifty-three cases each have their four parts, and the fixtures they share exist", () => {
+test("SP2c, SP7b-T7 AC-1, SP3-T1 AC-5, SP3-T7 AC-1, SP4-T6 AC-1: the sixty-one cases each have their four parts, and the fixtures they share exist", () => {
   const folders = readdirSync(EVALS)
     // benchmark.json is the benchmark set (SP6 Task 5), not a case.
     .filter((f) => !["README.md", "benchmark.json", "fixtures", "results"].includes(f))
@@ -249,6 +260,19 @@ function itemsOf(dir: string, project = "."): string[] {
     return [];
   }
 }
+
+/** What every ui case's scaffold leaves (2026-10-30-001): the standing grant of the leads' rounds (finding 197), the flag environment and the page's file:// url in the profile, the browser and the crew fixture beside the spec. */
+const UI_STATE = [
+  { file: "DESIGN.md", pattern: /--color-line/ },
+  { file: ".crew/policy.json", pattern: /"continuations":\s*"granted"/ },
+  { file: ".crew/profile.json", pattern: /node scripts\/env\.mjs start/ },
+  { file: ".crew/profile.json", pattern: /"url":\s*"file:\/\/[^"]*\/public\/index\.html"/ },
+  { file: "tests/e2e/crew.mjs", pattern: /plugins\/core\/e2e\/playwright\.mjs/ },
+  {
+    file: "node_modules/.cache/ms-playwright/chromium_headless_shell-1248/INSTALLATION_COMPLETE",
+    pattern: /^/,
+  },
+];
 
 const SCAFFOLD_STATE: Record<
   string,
@@ -426,6 +450,33 @@ const SCAFFOLD_STATE: Record<
         expect(itemsOf(dir, "peer/b")).toHaveLength(2);
       },
     },
+  ],
+  // 2026-10-30-001 (SP9 Task 14): the ui cases, each on the shared state and its own planted change.
+  "ui-captures-by-fixture": UI_STATE,
+  "ui-reduced-motion-fails": [
+    ...UI_STATE,
+    { file: "public/styles/inbox.css", pattern: /animation: spin 1s linear infinite/ },
+  ],
+  "ui-audit-not-captured": [
+    ...UI_STATE,
+    { file: ".crew/profile.json", pattern: /^(?![\s\S]*"browser")/ },
+  ],
+  "ui-missing-screen-named": UI_STATE,
+  "ui-motion-frequency-found": [
+    ...UI_STATE,
+    { file: "public/styles/inbox.css", pattern: /transition: background-color 300ms ease-out/ },
+    { file: "DESIGN.md", pattern: /a hundred times a day/ },
+  ],
+  "ui-motion-thesis-built": UI_STATE,
+  "ui-design-token-drift": [
+    ...UI_STATE,
+    { file: "public/styles/inbox.css", pattern: /background: var\(--color-danger\)/ },
+    { file: "public/index.html", pattern: /class="archive"/ },
+    { file: "DESIGN.md", pattern: /--color-danger/ },
+  ],
+  "ui-ux-generic-tells": [
+    ...UI_STATE,
+    { file: "public/index.html", pattern: /class="eyebrow">Labels/ },
   ],
 };
 const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -733,6 +784,8 @@ test("SP2c, SP3-T1 AC-5: every fixture scaffolds under sh into a committed repos
   const home = mkdtempSync(join(tmpdir(), "crew-evals-home-"));
   try {
     for (const name of CASES) {
+      // A machine with no headless shell cannot scaffold a ui case: their own row below reports the skip.
+      if (UI_CASES.includes(name) && !HAS_SHELL) continue;
       const dir = mkdtempSync(join(tmpdir(), `crew-eval-${name}-`));
       // One crew home per case, as the sandbox gives each run its own: a knowledge fixture's base
       // starts at K-1, which its graders name (SP4 Task 6).
@@ -811,6 +864,7 @@ test("SP7a AC-8 (Task 8), SP7b-T7 AC-1, SP3-T7 AC-1: every fixture stays inside 
     "root-cause-not-repeated",
     "cto-report-from-records",
     ...PACK_CASES,
+    ...UI_CASES,
   ];
   const files = [
     `${EVALS}fixtures/node-plain.sh`,
@@ -825,6 +879,11 @@ test("SP7a AC-8 (Task 8), SP7b-T7 AC-1, SP3-T7 AC-1: every fixture stays inside 
     `${EVALS}fixtures/next-shaped.sh`,
     // SP9 Task 13 (2026-10-28-006) edits this list: the Laravel Blade-shaped fixture.
     `${EVALS}fixtures/laravel-blade-shaped.sh`,
+    // SP9 Task 14 (2026-10-30-001) edits this list: the flag environment, extracted from env-observed-proof.
+    // playwright-page.sh alone is not listed: it reads the machine's Playwright cache under the home by
+    // design (design §9); what it leaves in the scaffold is pinned by AC-1, what it refuses by AC-2.
+    `${EVALS}fixtures/flag-env.sh`,
+    `${EVALS}fixtures/inbox-page.sh`,
     `${EVALS}fixtures/commit.sh`,
     ...CONFINED.map((name) => `${EVALS}${name}/fixture.sh`),
   ];
@@ -842,6 +901,10 @@ test("SP7a AC-8 (Task 8), SP7b-T7 AC-1, SP3-T7 AC-1: every fixture stays inside 
     '. "$(dirname "$0")/../fixtures/next-shaped.sh"',
     // SP9 Task 13 (2026-10-28-006) edits this list: the Laravel Blade-shaped fixture, which sources the laravel-shaped one.
     '. "$(dirname "$0")/../fixtures/laravel-blade-shaped.sh"',
+    // SP9 Task 14 (2026-10-30-001) edits this list: the flag environment.
+    '. "$(dirname "$0")/../fixtures/flag-env.sh"',
+    '. "$(dirname "$0")/../fixtures/inbox-page.sh"',
+    '. "$(dirname "$0")/../fixtures/playwright-page.sh"',
     '. "$(dirname "$0")/../fixtures/commit.sh"',
   ];
   const forbidden = [
@@ -2818,7 +2881,7 @@ const NEXT_PAIR: PairStubs = {
 const READ_LITERAL = /readFile(?:Sync)?\(\s*(["'])([^"']*)\1/g;
 const READ_CALL = /readFile(?:Sync)?\(/g;
 
-/** A pack pair's scaffold in a fresh folder and home, and a runner of its stubs from the scaffold (SP9 Task 12: one helper for the nuxt and the next pairs). */
+/** A case's scaffold (a pack pair's above all) in a fresh folder and home, and a runner of its stubs from the scaffold (SP9 Task 12: one helper for the nuxt and the next pairs). */
 function packScaffold(
   prefix: string,
   name: string,
@@ -3432,3 +3495,551 @@ test("2026-10-29-001 AC-18 (the test-quality advisories at round 5): the D-3 cas
   expect("It runs on Node 18 or later and was not measured on Windows.").not.toMatch(kept);
   expect("It runs on Node 20 or later and was measured on Windows.").not.toMatch(kept);
 });
+
+test("2026-10-30-001 AC-3 (preserve): env-observed-proof's scaffold writes the same scripts/env.mjs and the same four environment keys", () => {
+  const { dir, home } = packScaffold("env-observed", "env-observed-proof", {
+    WIZARDINGCODE_CREW_REPO: repoRoot,
+  });
+  try {
+    const env = readFileSync(join(dir, "scripts", "env.mjs"));
+    expect(
+      new Bun.CryptoHasher("sha256").update(env).digest("hex"),
+      "scripts/env.mjs is not the text env-observed-proof wrote before the extraction",
+    ).toBe("3cd774152b1c25eb5ada3ed3c7af2e7024fbe4b80072617c4492d66c5d2913f1");
+    const profile = JSON.parse(readFileSync(join(dir, ".crew", "profile.json"), "utf8"));
+    expect(profile.environment).toEqual({
+      start: { command: "node scripts/env.mjs start", source: "confirmed" },
+      health: { command: "node scripts/env.mjs health", source: "confirmed" },
+      timeoutMs: 20000,
+      stop: { command: "node scripts/env.mjs stop", source: "confirmed" },
+    });
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  }
+}, 30_000);
+
+// 2026-10-30-001 (SP9 Task 14): the shared browser fixture. The headless shell is the machine's (design
+// §9); a machine without it cannot run AC-1's browser row, and the row says so in its name rather than
+// passing: an unmet condition, reported by bun as a skip with this reason.
+const SHELL_BUILD = "chromium_headless_shell-1248";
+const SHELL_HOME =
+  [
+    process.env.PLAYWRIGHT_BROWSERS_PATH,
+    join(repoRoot, "node_modules", ".cache", "ms-playwright"),
+    join(userInfo().homedir, "Library", "Caches", "ms-playwright"),
+  ].find((folder) => folder && existsSync(join(folder, SHELL_BUILD))) ?? "";
+const HAS_SHELL = SHELL_HOME !== "";
+/** How a row that needs the shell names the condition in its title, where a skip reports it. */
+const NEEDS_SHELL = HAS_SHELL
+  ? `${SHELL_BUILD} under ${SHELL_HOME}`
+  : `${SHELL_BUILD}, on no folder of this machine`;
+
+/** The real packages under a repository's `node_modules`, and nothing else of the real one. */
+function linkPackages(repo: string): void {
+  mkdirSync(join(repo, "node_modules"), { recursive: true });
+  spawnSync("ln", [
+    "-s",
+    join(repoRoot, "node_modules", ".bun"),
+    join(repo, "node_modules", ".bun"),
+  ]);
+}
+
+/** A case folder in a temporary evals tree whose fixtures/ is the real one, so the fixtures' `$0` paths hold. */
+function browserCase(body: string): { root: string; script: string } {
+  const root = mkdtempSync(join(tmpdir(), "crew-eval-browser-"));
+  mkdirSync(join(root, "evals", "case"), { recursive: true });
+  spawnSync("ln", ["-s", join(EVALS, "fixtures"), join(root, "evals", "fixtures")]);
+  const script = join(root, "evals", "case", "fixture.sh");
+  writeFileSync(
+    script,
+    `#!/bin/sh\nset -eu\n. "$(dirname "$0")/../fixtures/node-plain.sh"\n. "$(dirname "$0")/../fixtures/playwright-page.sh"\n${body}`,
+  );
+  return { root, script };
+}
+
+function runBrowserCase(script: string, cwd: string, env: NodeJS.ProcessEnv = {}) {
+  return spawnSync("sh", [script], {
+    cwd,
+    encoding: "utf8",
+    env: {
+      ...childEnv(),
+      PATH: `${FIXTURES_BIN}${delimiter}${PLUGIN_BIN}${delimiter}${process.env.PATH}`,
+      WIZARDINGCODE_CREW_REPO: repoRoot,
+      ...env,
+    },
+  });
+}
+
+test.skipIf(!HAS_SHELL)(
+  `2026-10-30-001 AC-1: playwright-page.sh leaves the packages, the headless shell and a single-process config, and its e2e script passes a file:// spec (needs ${NEEDS_SHELL})`,
+  () => {
+    const page = [
+      "mkdir -p public tests/e2e",
+      `printf '<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Inbox</title></head><body><h1>Inbox</h1></body></html>\\n' > public/index.html`,
+      "cat > tests/e2e/page.spec.mjs <<'SPEC'",
+      'import { resolve } from "node:path";',
+      'import { pathToFileURL } from "node:url";',
+      'import { expect, test } from "./crew.mjs";',
+      'test("the page opens by file://", async ({ page }) => {',
+      '  await page.goto(pathToFileURL(resolve("public/index.html")).href);',
+      '  await expect(page.locator("h1")).toHaveText("Inbox");',
+      "});",
+      // A second test: the single-process shell ends with its first context, so each test needs its own browser.
+      'test("the page opens again in a second test", async ({ page }) => {',
+      '  await page.goto(pathToFileURL(resolve("public/index.html")).href);',
+      '  await expect(page.locator("h1")).toHaveText("Inbox");',
+      "});",
+      "SPEC",
+    ].join("\n");
+    const { root, script } = browserCase(`${page}\n`);
+    const dir = mkdtempSync(join(tmpdir(), "crew-eval-browser-scaffold-"));
+    try {
+      const run = runBrowserCase(script, dir);
+      expect(run.status, run.stderr).toBe(0);
+      for (const pkg of ["@playwright/test", "playwright", "playwright-core"])
+        expect(
+          JSON.parse(readFileSync(join(dir, "node_modules", pkg, "package.json"), "utf8")).version,
+        ).toBe("1.64.1");
+      expect(existsSync(join(dir, "node_modules", ".cache", "ms-playwright", SHELL_BUILD))).toBe(
+        true,
+      );
+      const config = readFileSync(join(dir, "playwright.config.mjs"), "utf8");
+      expect(config).toContain('"--single-process"');
+      expect(config).toContain('"--no-zygote"');
+      expect(config).not.toContain("channel");
+      expect(readFileSync(join(dir, "tests", "e2e", "crew.mjs"), "utf8")).toContain(
+        join(repoRoot, "plugins", "core", "e2e", "playwright.mjs"),
+      );
+      expect(JSON.parse(readFileSync(join(dir, "package.json"), "utf8")).scripts["test:e2e"]).toBe(
+        "node scripts/e2e.mjs",
+      );
+      const e2e = spawnSync("node", ["scripts/e2e.mjs"], {
+        cwd: dir,
+        encoding: "utf8",
+        env: { ...childEnv(), PLAYWRIGHT_BROWSERS_PATH: "/nonexistent" },
+      });
+      expect(e2e.status, `${e2e.stdout}\n${e2e.stderr}`).toBe(0);
+      expect(e2e.stdout).toMatch(/2 passed/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+  120_000,
+);
+
+test("2026-10-30-001 AC-2: playwright-page.sh exits 1 and names what is missing, where it looked and the install command", () => {
+  const { root, script } = browserCase("");
+  const empty = mkdtempSync(join(tmpdir(), "crew-eval-empty-"));
+  const repo = mkdtempSync(join(tmpdir(), "crew-eval-repo-"));
+  try {
+    // No package: a repository with no node_modules.
+    const dir1 = mkdtempSync(join(tmpdir(), "crew-eval-nopkg-"));
+    const noPackage = runBrowserCase(script, dir1, { WIZARDINGCODE_CREW_REPO: empty });
+    rmSync(dir1, { recursive: true, force: true });
+    expect(noPackage.status).toBe(1);
+    expect(noPackage.stderr).toContain("@playwright/test 1.64.1 not found");
+    expect(noPackage.stderr).toContain(join(empty, "node_modules"));
+    expect(noPackage.stderr).toContain("bun install");
+    // No shell: the packages found, the shell neither under PLAYWRIGHT_BROWSERS_PATH nor the home's cache.
+    linkPackages(repo);
+    const dir2 = mkdtempSync(join(tmpdir(), "crew-eval-noshell-"));
+    const noShell = runBrowserCase(script, dir2, {
+      WIZARDINGCODE_CREW_REPO: repo,
+      PLAYWRIGHT_BROWSERS_PATH: empty,
+      WIZARDINGCODE_CREW_ACCOUNT_HOME: empty,
+      HOME: empty,
+    });
+    rmSync(dir2, { recursive: true, force: true });
+    expect(noShell.status).toBe(1);
+    expect(noShell.stderr).toContain(`${SHELL_BUILD} not found`);
+    expect(noShell.stderr).toContain(empty);
+    expect(noShell.stderr).toContain(join(empty, "Library", "Caches", "ms-playwright"));
+    expect(noShell.stderr).toContain("playwright install chromium-headless-shell");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(empty, { recursive: true, force: true });
+    rmSync(repo, { recursive: true, force: true });
+  }
+}, 60_000);
+
+test("2026-10-30-001 AC-4: the runner's sandbox tags carry ui, and the eight ui cases are pinned with their four parts and the two shared fixtures", () => {
+  expect(SANDBOX_TAGS).toContain("ui");
+  expect(UI_CASES.length).toBe(8);
+  for (const name of UI_CASES) {
+    const dir = `${EVALS}${name}/`;
+    expect(readFileSync(`${dir}case.yaml`, "utf8")).toMatch(/^tags:\s*\[[^\]]*\bui\b/m);
+    const fixture = readFileSync(`${dir}fixture.sh`, "utf8");
+    expect(fixture).toContain("fixtures/node-plain.sh");
+    expect(fixture).toContain("fixtures/playwright-page.sh");
+  }
+});
+
+/** A repository whose packages are the real ones and whose own browser folder is empty. */
+function repoWithoutShell(base: string): string {
+  const repo = join(base, "repo");
+  linkPackages(repo);
+  return repo;
+}
+
+test("2026-10-30-001 AC-15: with the kit's own HOME and no named folder, the account's home is read from the system", () => {
+  const { root, script } = browserCase("");
+  const base = mkdtempSync(join(tmpdir(), "crew-eval-account-"));
+  const account = join(userInfo().homedir, "Library", "Caches", "ms-playwright");
+  try {
+    const dir = mkdtempSync(join(base, "scaffold-"));
+    const run = runBrowserCase(script, dir, {
+      WIZARDINGCODE_CREW_REPO: repoWithoutShell(base),
+      HOME: join(base, "kit-home"),
+      PLAYWRIGHT_BROWSERS_PATH: undefined,
+      WIZARDINGCODE_CREW_ACCOUNT_HOME: undefined,
+    });
+    // Either the account's cache holds the build and it is copied, or the error names that cache: both read it.
+    if (run.status === 0)
+      expect(existsSync(join(dir, "node_modules", ".cache", "ms-playwright", SHELL_BUILD))).toBe(
+        true,
+      );
+    else expect(run.stderr).toContain(account);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 60_000);
+
+test("2026-10-30-001 AC-4: the ui cases' discriminating graders pass what the case asks and fail what it refuses", () => {
+  // thesis-in-spec: a motion line that says what it is for, in what the session writes to spec.md, never its words.
+  const thesis = graderPattern("ui-motion-thesis-built", "thesis-in-spec");
+  const spec = "/a/.crew/work/x/spec.md";
+  const written = (text: string) => JSON.stringify({ input: { file_path: spec, content: text } });
+  expect(
+    written("# T\n\nmotion: a fade, its job is to say this one is new · rejected: a slide\n"),
+  ).toMatch(thesis);
+  expect(written("# T\n\n- motion: a fade to draw the eye\n")).toMatch(thesis);
+  expect(
+    JSON.stringify({
+      input: { command: `cat > ${spec} <<E\nmotion: a fade so a person notices\nE` },
+    }),
+  ).toMatch(thesis);
+  expect(written("# T\n\n- motion: fade\n")).not.toMatch(thesis);
+  expect(written("# T\n\nmotion: 200 ms, opacity\n\nAC-1: draw the row, to show it\n")).not.toMatch(
+    thesis,
+  );
+  expect(written("# T\n\nmotion: none\n")).not.toMatch(thesis);
+  expect(
+    JSON.stringify({ type: "text", text: "spec.md has\nmotion: a fade to draw the eye" }),
+  ).not.toMatch(thesis);
+  // A purpose word in the rejected clause is no purpose of the motion's.
+  expect(written("# T\n\nmotion: 200 ms, opacity · rejected: a slide, to show less\n")).not.toMatch(
+    thesis,
+  );
+  // no-fake-capture: the failure faked in the spec fails; a staging test that only reads the flag's absence passes.
+  const fake = graderPattern("ui-missing-screen-named", "no-fake-capture");
+  expect("test.skip(!process.env.INBOX_STAGING_URL);").toMatch(fake);
+  expect("window.inboxError = true;").not.toMatch(fake);
+  // hover-not-300ms and danger-gone: the planted value gone, whatever replaced it.
+  const hover = graderPattern("ui-motion-frequency-found", "hover-not-300ms");
+  expect(".row {\n  transition: background-color 120ms ease;\n}").toMatch(hover);
+  expect(".row {\n  transition: background-color 300ms ease-out;\n}").not.toMatch(hover);
+  const danger = graderPattern("ui-design-token-drift", "danger-gone");
+  expect(".archive {\n  background: var(--color-accent);\n}").toMatch(danger);
+  expect(".archive {\n  background: var(--color-danger);\n}").not.toMatch(danger);
+  // The reviewer's graders: a findings line of severity defect on the planted thing, never an advisory or the agent's words.
+  const findings = (line: string) =>
+    JSON.stringify(
+      `# ui-ux findings for x\nreviewer: review-ui-ux\n\n## Findings\n${line}\n\n## Not answerable\n- none\n`,
+    );
+  const named = graderPattern("ui-motion-frequency-found", "review-names-hover");
+  expect(
+    findings("- F-1 · defect · public/styles/inbox.css:41 · 300 ms on a row (question 9)."),
+  ).toMatch(named);
+  expect(
+    findings("- F-1 · defect · /tmp/e/public/styles/inbox.css:41 · the hover eases too long."),
+  ).toMatch(named);
+  expect(findings("- F-1 · advisory · public/styles/inbox.css:41 · 300 ms on a row.")).not.toMatch(
+    named,
+  );
+  expect(
+    findings("- F-1 · advisory · public/styles/inbox.css:41 · 300 ms, not a defect."),
+  ).not.toMatch(named);
+  expect(
+    findings("- F-1 · defect · public/styles/inbox.css:9 · the time's contrast is low."),
+  ).not.toMatch(named);
+  expect(
+    findings("- F-1 · defect · public/styles/inbox.css:44 · the hover's contrast is low."),
+  ).not.toMatch(named);
+  expect(
+    findings("- F-1 · defect · public/styles/inbox.css:300 · the time's contrast is low."),
+  ).not.toMatch(named);
+  // missing-named and not-proven: the engine's lines, never a sentence of the session's.
+  const missing = graderPattern("ui-missing-screen-named", "missing-named");
+  expect(
+    JSON.stringify(
+      "captures: 1 of 2 expected (fixture 1, session 0); missing: inbox-error; viewports 360",
+    ),
+  ).toMatch(missing);
+  expect(JSON.stringify("The run says missing: inbox-error.")).not.toMatch(missing);
+  const notProven = graderPattern("ui-missing-screen-named", "not-proven");
+  expect(JSON.stringify("  e2e (.): fail\nNot proven: gate e2e failing; x")).toMatch(notProven);
+  expect(JSON.stringify("I would say Not proven: e2e is open.")).not.toMatch(notProven);
+  const token = graderPattern("ui-design-token-drift", "review-names-token");
+  expect(
+    findings(
+      "- F-1 · defect · public/styles/inbox.css:50 · --color-danger against DESIGN.md (question 6).",
+    ),
+  ).toMatch(token);
+  expect(
+    findings("- F-1 · defect · DESIGN.md:12 · public/styles/inbox.css:50 wears the danger token."),
+  ).toMatch(token);
+  expect(
+    findings("- F-1 · defect · public/styles/inbox.css:50 · the button is too small."),
+  ).not.toMatch(token);
+  expect(
+    findings("- F-1 · defect · public/index.html:12 · --color-danger against DESIGN.md."),
+  ).not.toMatch(token);
+  expect(
+    findings("- F-1 · advisory · public/styles/inbox.css:50 · DESIGN.md, not a defect."),
+  ).not.toMatch(token);
+  const tells = graderPattern("ui-ux-generic-tells", "review-names-tells");
+  expect(
+    findings(
+      "- F-1 · advisory · public/index.html:40 · sameness, question 11 (inbox-default@1280.png).",
+    ),
+  ).toMatch(tells);
+  expect(findings("- F-1 · advisory · public/index.html:40 · sameness, question 11.")).not.toMatch(
+    tells,
+  );
+  expect(
+    findings("- F-1 · advisory · public/index.html:40 · spacing (inbox-default@1280.png)."),
+  ).not.toMatch(tells);
+  // The red's finding, as the base rubric's reviewer wrote it: an eyebrow repeated, not the sameness.
+  expect(
+    findings(
+      '- F-1 · advisory · public/index.html:43 · the Folders section repeats the eyebrow "Labels" from Topics (inbox-default@1280.png).',
+    ),
+  ).not.toMatch(tells);
+  // The prompt's own words are no tell: a reviewer echoing the request does not pass.
+  expect(
+    findings(
+      "- F-1 · advisory · public/index.html:43 · the section is in the same shape as the others (inbox-default@1280.png).",
+    ),
+  ).not.toMatch(tells);
+  expect(
+    findings(
+      "- F-1 · advisory · public/index.html:42 · the fourth section with the same layout, the template tell (review/ui/inbox-default@1280.png).",
+    ),
+  ).toMatch(tells);
+  // proven: the engine's line with the work id, never a sentence of the session's.
+  const proven = graderPattern("ui-captures-by-fixture", "proven");
+  expect("Proven: 2026-10-30-001-add-an-empty-state").toMatch(proven);
+  expect("Proven: the empty state").not.toMatch(proven);
+});
+
+test("2026-10-30-001 AC-15: the shell is looked for under PLAYWRIGHT_BROWSERS_PATH, then the home's cache, then the account's", () => {
+  const { root, script } = browserCase("");
+  const base = mkdtempSync(join(tmpdir(), "crew-eval-order-"));
+  const cache = (name: string) => join(base, name, "Library", "Caches", "ms-playwright");
+  const shell = (folder: string, mark: string) => {
+    mkdirSync(join(folder, SHELL_BUILD), { recursive: true });
+    writeFileSync(join(folder, SHELL_BUILD, "mark"), mark);
+    writeFileSync(join(folder, SHELL_BUILD, "INSTALLATION_COMPLETE"), "");
+  };
+  shell(join(base, "named"), "named");
+  shell(cache("home"), "home");
+  shell(cache("account"), "account");
+  const copied = (env: NodeJS.ProcessEnv) => {
+    const dir = mkdtempSync(join(base, "scaffold-"));
+    const run = runBrowserCase(script, dir, { WIZARDINGCODE_CREW_REPO: repo, ...env });
+    expect(run.status, run.stderr).toBe(0);
+    return readFileSync(
+      join(dir, "node_modules", ".cache", "ms-playwright", SHELL_BUILD, "mark"),
+      "utf8",
+    );
+  };
+  const repo = repoWithoutShell(base);
+  const home = join(base, "home");
+  const account = join(base, "account");
+  try {
+    expect(
+      copied({
+        PLAYWRIGHT_BROWSERS_PATH: join(base, "named"),
+        HOME: home,
+        WIZARDINGCODE_CREW_ACCOUNT_HOME: account,
+      }),
+    ).toBe("named");
+    expect(
+      copied({
+        PLAYWRIGHT_BROWSERS_PATH: undefined,
+        HOME: home,
+        WIZARDINGCODE_CREW_ACCOUNT_HOME: account,
+      }),
+    ).toBe("home");
+    expect(
+      copied({
+        PLAYWRIGHT_BROWSERS_PATH: undefined,
+        HOME: join(base, "nobody"),
+        WIZARDINGCODE_CREW_ACCOUNT_HOME: account,
+      }),
+    ).toBe("account");
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 60_000);
+
+test("2026-10-30-001 AC-24: in a git worktree with no node_modules, as the improvement loop's probe is, playwright-page.sh reads the packages from the main checkout and points the spec at the worktree's plugin", () => {
+  const { root, script } = browserCase("");
+  const base = realpathSync(mkdtempSync(join(tmpdir(), "crew-eval-worktree-")));
+  const main = join(base, "main");
+  const tree = join(base, "probe");
+  const git = (...args: string[]) => {
+    const run = spawnSync(
+      "git",
+      ["-c", "user.name=Row", "-c", "user.email=row@example.invalid", ...args],
+      { encoding: "utf8" },
+    );
+    expect(run.status, run.stderr).toBe(0);
+  };
+  const shells = mkdtempSync(join(base, "shells-"));
+  mkdirSync(join(shells, SHELL_BUILD), { recursive: true });
+  writeFileSync(join(shells, SHELL_BUILD, "INSTALLATION_COMPLETE"), "");
+  try {
+    mkdirSync(main);
+    git("-C", main, "init", "-q", "-b", "main");
+    git("-C", main, "commit", "-q", "--allow-empty", "-m", "base");
+    git("-C", main, "worktree", "add", "-q", tree);
+    spawnSync("ln", ["-s", join(repoRoot, "node_modules"), join(main, "node_modules")]);
+    expect(existsSync(join(tree, "node_modules"))).toBe(false);
+    const dir = mkdtempSync(join(base, "scaffold-"));
+    const run = runBrowserCase(script, dir, {
+      WIZARDINGCODE_CREW_REPO: tree,
+      PLAYWRIGHT_BROWSERS_PATH: shells,
+    });
+    expect(run.status, run.stderr).toBe(0);
+    expect(existsSync(join(dir, "node_modules", "@playwright", "test", "package.json"))).toBe(true);
+    expect(readFileSync(join(dir, "tests", "e2e", "crew.mjs"), "utf8")).toContain(
+      join(tree, "plugins", "core", "e2e", "playwright.mjs"),
+    );
+    // With no named folder the shell is the main checkout's own too, never the shared caches'.
+    rmSync(join(main, "node_modules"));
+    linkPackages(main);
+    mkdirSync(join(main, "node_modules", ".cache", "ms-playwright", SHELL_BUILD), {
+      recursive: true,
+    });
+    writeFileSync(
+      join(main, "node_modules", ".cache", "ms-playwright", SHELL_BUILD, "mark"),
+      "main",
+    );
+    writeFileSync(
+      join(main, "node_modules", ".cache", "ms-playwright", SHELL_BUILD, "INSTALLATION_COMPLETE"),
+      "",
+    );
+    const viaMain = mkdtempSync(join(base, "scaffold-"));
+    const fromMain = runBrowserCase(script, viaMain, {
+      WIZARDINGCODE_CREW_REPO: tree,
+      PLAYWRIGHT_BROWSERS_PATH: undefined,
+      HOME: join(base, "nobody"),
+      WIZARDINGCODE_CREW_ACCOUNT_HOME: join(base, "nobody"),
+    });
+    expect(fromMain.status, fromMain.stderr).toBe(0);
+    expect(
+      readFileSync(
+        join(viaMain, "node_modules", ".cache", "ms-playwright", SHELL_BUILD, "mark"),
+        "utf8",
+      ),
+    ).toBe("main");
+    // A tree that is no worktree and has no packages still fails and says why.
+    const plain = mkdtempSync(join(base, "plain-"));
+    const none = runBrowserCase(script, mkdtempSync(join(base, "scaffold-")), {
+      WIZARDINGCODE_CREW_REPO: plain,
+      PLAYWRIGHT_BROWSERS_PATH: shells,
+    });
+    expect(none.status).toBe(1);
+    expect(none.stderr).toContain("@playwright/test 1.64.1 not found");
+    // No root at all says which names were read.
+    const unnamed = runBrowserCase(script, mkdtempSync(join(base, "scaffold-")), {
+      WIZARDINGCODE_CREW_REPO: undefined,
+      PATH: `${dirname(process.execPath)}:/usr/bin:/bin`,
+    });
+    expect(unnamed.status).toBe(1);
+    expect(unnamed.stderr).toContain("WIZARDINGCODE_CREW_REPO");
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 60_000);
+
+test.skipIf(!HAS_SHELL)(
+  `2026-10-30-001 AC-4: every ui case scaffolds with its browser (needs ${NEEDS_SHELL})`,
+  () => {
+    for (const name of UI_CASES) {
+      const { dir, home } = packScaffold("ui", name, { WIZARDINGCODE_CREW_REPO: repoRoot });
+      try {
+        expect(
+          existsSync(join(dir, "node_modules", ".cache", "ms-playwright", SHELL_BUILD)),
+          name,
+        ).toBe(true);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+        rmSync(home, { recursive: true, force: true });
+      }
+    }
+  },
+  120_000,
+);
+
+test("2026-10-30-001 AC-25: the repository's own folder is read after PLAYWRIGHT_BROWSERS_PATH and before the shared caches, and the error's install command names it", () => {
+  const { root, script } = browserCase("");
+  const base = realpathSync(mkdtempSync(join(tmpdir(), "crew-eval-own-")));
+  const repo = join(base, "repo");
+  const own = join(repo, "node_modules", ".cache", "ms-playwright");
+  linkPackages(repo);
+  const shell = (folder: string, mark: string) => {
+    mkdirSync(join(folder, SHELL_BUILD), { recursive: true });
+    writeFileSync(join(folder, SHELL_BUILD, "mark"), mark);
+    writeFileSync(join(folder, SHELL_BUILD, "INSTALLATION_COMPLETE"), "");
+  };
+  shell(own, "own");
+  shell(join(base, "named"), "named");
+  const home = join(base, "home");
+  shell(join(home, "Library", "Caches", "ms-playwright"), "shared");
+  const copied = (env: NodeJS.ProcessEnv) => {
+    const dir = mkdtempSync(join(base, "scaffold-"));
+    const run = runBrowserCase(script, dir, {
+      WIZARDINGCODE_CREW_REPO: repo,
+      HOME: home,
+      WIZARDINGCODE_CREW_ACCOUNT_HOME: home,
+      ...env,
+    });
+    expect(run.status, run.stderr).toBe(0);
+    return readFileSync(
+      join(dir, "node_modules", ".cache", "ms-playwright", SHELL_BUILD, "mark"),
+      "utf8",
+    );
+  };
+  try {
+    expect(copied({ PLAYWRIGHT_BROWSERS_PATH: join(base, "named") })).toBe("named");
+    expect(copied({ PLAYWRIGHT_BROWSERS_PATH: undefined })).toBe("own");
+    // A build with no mark is an install killed midway: it is passed over.
+    rmSync(join(own, SHELL_BUILD, "INSTALLATION_COMPLETE"));
+    expect(copied({ PLAYWRIGHT_BROWSERS_PATH: undefined })).toBe("shared");
+    writeFileSync(join(own, SHELL_BUILD, "INSTALLATION_COMPLETE"), "");
+    rmSync(join(own, SHELL_BUILD), { recursive: true, force: true });
+    expect(copied({ PLAYWRIGHT_BROWSERS_PATH: undefined })).toBe("shared");
+    rmSync(join(home, "Library"), { recursive: true, force: true });
+    const none = runBrowserCase(script, mkdtempSync(join(base, "scaffold-")), {
+      WIZARDINGCODE_CREW_REPO: repo,
+      HOME: home,
+      WIZARDINGCODE_CREW_ACCOUNT_HOME: home,
+      PLAYWRIGHT_BROWSERS_PATH: undefined,
+    });
+    expect(none.status).toBe(1);
+    expect(none.stderr).toContain(own);
+    expect(none.stderr).toContain(
+      "PLAYWRIGHT_BROWSERS_PATH=node_modules/.cache/ms-playwright bunx playwright install chromium-headless-shell",
+    );
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 60_000);

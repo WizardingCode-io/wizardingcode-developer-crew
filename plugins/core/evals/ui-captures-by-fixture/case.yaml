@@ -1,0 +1,6 @@
+# evals/ui-captures-by-fixture/case.yaml
+schema_version: "1.1"
+name: ui-captures-by-fixture
+tags: [ui]
+context:
+  scaffold_script: fixture.sh

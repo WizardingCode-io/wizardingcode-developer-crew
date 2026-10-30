@@ -2300,11 +2300,19 @@ function gateSummary(
   work: WorkItem,
   verdict: string,
   unproven: string[],
-  runs: { gate: string; target: string; stack?: string; status: string; durationMs: number }[],
+  runs: {
+    gate: string;
+    target: string;
+    stack?: string;
+    status: string;
+    durationMs: number;
+    reason?: string;
+  }[],
 ): string {
+  // A failing gate says why on its line, as the todo gate does (2026-10-30-001): the session reads it without the report.
   const lines = runs.map(
     (r) =>
-      `  ${r.gate} (${r.target}${r.stack ? `, ${r.stack}` : ""}): ${r.status} in ${(r.durationMs / 1000).toFixed(1)}s`,
+      `  ${r.gate} (${r.target}${r.stack ? `, ${r.stack}` : ""}): ${r.status} in ${(r.durationMs / 1000).toFixed(1)}s${r.status === "fail" && r.reason ? ` (${r.reason})` : ""}`,
   );
   lines.push(verdict === "proven" ? `Proven: ${work.id}` : `Not proven: ${unproven.join("; ")}`);
   return lines.join("\n");

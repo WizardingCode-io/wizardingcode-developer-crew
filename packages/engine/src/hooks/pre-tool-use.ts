@@ -751,9 +751,12 @@ function knowledgeUnmark(
   const [verb, what] = parsed.positional;
   if (verb !== "knowledge" || what === undefined) return null;
   if (what !== "unmark" && !UNREADABLE_VERB.test(what)) return null;
+  // A word the hook cannot read may expand to a removal, whatever follows it (`{unmark,K-4} lookup`), so it
+  // stays denied; the denial says how a read goes through, since a session reads the base by a variable too.
+  const wayOut = what === "unmark" ? "" : "; write the id out: crew knowledge <id> lookup";
   return personOnly(parsed, permissionMode, headless, policy, {
     unwatched: (where) =>
-      `Crew: a mark is removed by a person and no person is watching this session (${where}): run crew await <id> user and end the turn`,
+      `Crew: a mark is removed by a person and no person is watching this session (${where}): run crew await <id> user and end the turn${wayOut}`,
     withMode: (mode) =>
       `Crew: a mark is removed by a person (${mode} mode); run the command without --mode so they are asked`,
     ask: "Crew: a mark is removed by a person: this command records their decision",
@@ -1836,6 +1839,15 @@ function copiesOut(found: Found): boolean {
   const targets = writtenPaths(found);
   return targets.length > 0 && !targets.some(({ word }) => namesEngineTarget(word));
 }
+/** The phase rule on a watched file, for an Edit and for a Bash write alike: on the standard and full routes source files change in the build phase. */
+function beforeBuildDenial(ctx: HookContext): HookResponse | null {
+  const work = activeWork(ctx.paths)?.work;
+  if (!work || work.route === "fast" || !isBeforeBuild(work)) return null;
+  return answer(
+    "deny",
+    `Crew: work ${work.id} is in phase ${work.phase} on the ${work.route} route; source files change in the build phase (crew phase ${work.id} next)`,
+  );
+}
 /**
  * Whether a command writes or removes a watched file of this checkout (triage L1, the user's
  * decision of 2026-10-23): a path `writtenPaths` reads (chmod and chown aside), resolved against
@@ -1970,15 +1982,7 @@ export function onPreToolUse(ctx: HookContext, payload: HookPayload): HookRespon
       if (rel !== "" && !rel.startsWith("..") && isWatched(rel, ctx.profile)) watched = true;
     }
     if (!watched) return {};
-    const active = activeWork(ctx.paths);
-    const work = active?.work;
-    if (work && work.route !== "fast" && isBeforeBuild(work)) {
-      return answer(
-        "deny",
-        `Crew: work ${work.id} is in phase ${work.phase} on the ${work.route} route; source files change in the build phase (crew phase ${work.id} next)`,
-      );
-    }
-    return laneDenial(ctx, "edit") ?? {};
+    return beforeBuildDenial(ctx) ?? laneDenial(ctx, "edit") ?? {};
   }
   if (tool === "Bash") {
     const written = typeof input.command === "string" ? input.command : "";
@@ -2244,6 +2248,15 @@ export function onPreToolUse(ctx: HookContext, payload: HookPayload): HookRespon
       // no write read: the cooperative rule covers it
     }
     if (writes) {
+      // The phase rule first, as for an Edit (finding 202: the same write through Bash went through). Only
+      // what the line writes before a cd: the reader resolves a word against the session's cwd, so after a
+      // cd it would deny a spike elsewhere; the cooperative rule covers the rest, as for a variable.
+      const moved = found.findIndex((f) => f.program.toLowerCase() === "cd");
+      const here = moved < 0 ? found : found.slice(0, moved);
+      const phase = writesWatched(ctx, payload.cwd ?? ctx.paths.root, here)
+        ? beforeBuildDenial(ctx)
+        : null;
+      if (phase) return phase;
       const lane = laneDenial(ctx, "bash");
       if (lane) return lane;
     }

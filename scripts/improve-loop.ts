@@ -1081,14 +1081,45 @@ export interface TickLock {
   boot: string;
 }
 
+/** Whether a clone holds a finished headless shell in its own folder: an install killed midway leaves a build with no mark. A new Playwright comes with a lockfile, which bootstraps anyway. */
+function cloneHasShell(repo: string): boolean {
+  const folder = join(repo, "node_modules/.cache/ms-playwright");
+  try {
+    return readdirSync(folder).some(
+      (name) =>
+        name.startsWith("chromium_headless_shell-") &&
+        existsSync(join(folder, name, "INSTALLATION_COMPLETE")),
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** Installs the shell into the clone's `node_modules/.cache/ms-playwright`; a no-op once it is there. */
+export const CLONE_SHELL_INSTALL = [
+  "env",
+  "PLAYWRIGHT_BROWSERS_PATH=node_modules/.cache/ms-playwright",
+  // The clone's own bin, pinned by its lockfile: `bun x` would fetch one if the package ever left it.
+  "node_modules/.bin/playwright",
+  "install",
+  "chromium-headless-shell",
+];
+
 export function readLock(home: string): TickLock | null {
   return readJson<TickLock>(join(home, "lock.json"));
 }
 
-/** The repository's clone bootstrapped (`bun install --frozen-lockfile`): the error's first line, or null. */
+/**
+ * The repository's clone bootstrapped (`bun install --frozen-lockfile`, then the headless shell the ui cases copy,
+ * in the clone's own folder, since the shared cache's clean-up can take it): the error's first line, or null.
+ */
 export function bootstrapClone(repo: string, sh: TickDeps["sh"]): string | null {
   const r = sh(["bun", "install", "--frozen-lockfile"], { cwd: repo });
-  return r.status === 0 ? null : `bun install failed: ${r.stderr.trim().split("\n")[0] ?? ""}`;
+  if (r.status !== 0) return `bun install failed: ${r.stderr.trim().split("\n")[0] ?? ""}`;
+  const shell = sh(CLONE_SHELL_INSTALL, { cwd: repo });
+  return shell.status === 0
+    ? null
+    : `the headless shell's install failed: ${shell.stderr.trim().split("\n")[0] ?? ""}`;
 }
 
 /** The dated logs older than two weeks, removed. */
@@ -1433,6 +1464,10 @@ export async function tick(
       }
     }
     log(`due: ${due.reason}; targets: ${targets.join(", ")}; provider: ${provider.name}`);
+    // A run needs the browser the ui cases copy. Here and not at the sync, so a download gates no tick that would
+    // not run, no pending release and no dry run: the clone deployed before the ui cases gets it, a failed install
+    // fails this tick under the back-off, and the next due tick tries again (2026-10-30-001 AC-28).
+    if (!cloneHasShell(repo)) bootstrap();
     // The run; then the last run on record before anything can fail, its files through the
     // redaction, and the record and the day's report committed and pushed with the kept branch (D-3).
     const code = await deps.improve(

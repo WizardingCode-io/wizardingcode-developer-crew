@@ -1,0 +1,6 @@
+# evals/ui-motion-frequency-found/case.yaml
+schema_version: "1.1"
+name: ui-motion-frequency-found
+tags: [ui]
+context:
+  scaffold_script: fixture.sh

@@ -19,6 +19,8 @@ import {
   adoptionGate,
   adoptRun,
   backoffHours,
+  bootstrapClone,
+  CLONE_SHELL_INSTALL,
   ceilingOf,
   dailyReport,
   dayCostOf,
@@ -751,6 +753,8 @@ function tickDeps(
     raceTouching?: string;
     /** Origin moves again, by a commit writing this path, between the adoption's release and the report's push. */
     raceAfterAdoption?: string;
+    /** The headless shell's install fails, as a download can (2026-10-30-001 AC-27). */
+    shellInstallFails?: boolean;
     /** Origin refuses every push: the one failure the loop cannot heal (the back-off, AC-16). */
     refusePush?: boolean;
     /** The base's harness lessons during the run (finding 174): what the record lists (written as given, absent for `undefined`) and how many the base gains; by default the run's own lesson, listed and gained. */
@@ -808,8 +812,20 @@ function tickDeps(
       });
       return { status: r.status ?? 1, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
     },
-    sh: (cmd) => {
+    sh: (cmd, shOptions) => {
       seen.sh.push([...cmd]);
+      if (cmd[0] === "env" && cmd.includes("install") && shOptions?.cwd) {
+        if (options.shellInstallFails)
+          return { status: 1, stdout: "", stderr: "the download failed\nmore" };
+        const build = join(
+          shOptions.cwd,
+          "node_modules/.cache/ms-playwright/chromium_headless_shell-1",
+        );
+        mkdirSync(build, { recursive: true });
+        writeFileSync(join(build, "INSTALLATION_COMPLETE"), "");
+        // The real repository ignores node_modules; this world's has no .gitignore.
+        appendFileSync(join(shOptions.cwd, ".git/info/exclude"), "node_modules/\n");
+      }
       return { status: 0, stdout: "", stderr: "" };
     },
     improve: async (opts, repo) => {
@@ -1215,6 +1231,7 @@ test("2026-10-25-005 AC-8: the plist names the agent, the hourly tick with catch
   expect(launcher).toContain(`repo='${join(home, "repo")}'`);
   expect(ok.seen.filter((c) => c[0] !== "git")).toEqual([
     ["bun", "install", "--frozen-lockfile"],
+    CLONE_SHELL_INSTALL,
     ["launchctl", "bootout", `gui/501/${LABEL}`],
     ["launchctl", "bootstrap", "gui/501", plistPath],
     ["launchctl", "kickstart", "-k", `gui/501/${LABEL}`],
@@ -1427,8 +1444,9 @@ test("2026-10-25-010 AC-3: install brings an existing clone without the loop to 
   expect(healed.log.join("\n")).toContain(
     "the clone had no scripts/improve-loop.ts: brought to origin/main",
   );
-  expect(healed.seen.filter((c) => c[0] !== "git").slice(0, 2)).toEqual([
+  expect(healed.seen.filter((c) => c[0] !== "git").slice(0, 3)).toEqual([
     ["bun", "install", "--frozen-lockfile"],
+    CLONE_SHELL_INSTALL,
     ["launchctl", "bootout", `gui/501/${LABEL}`],
   ]);
   expect(statSync(join(home, "tick.sh")).mode & 0o777).toBe(0o700);
@@ -2480,4 +2498,119 @@ test("2026-10-28-001 AC-9: a stale lock taken over records the dead tick (its ch
   });
   expect(after).toContain("paused: no");
   expect(after).toContain("last stop: run 2026-10-25-3 at 2026-10-25T22:30:00.000Z");
+});
+
+test("2026-10-30-001 AC-26: the clone's bootstrap installs the headless shell in the clone's own folder after its packages, and a failed install is the tick's error", () => {
+  const calls: { argv: string[]; cwd?: string }[] = [];
+  const answers = (failing: string) => (argv: string[], options?: { cwd?: string }) => {
+    calls.push({ argv, cwd: options?.cwd });
+    return { status: argv[0] === failing ? 1 : 0, stdout: "", stderr: `${failing} broke\nmore` };
+  };
+  expect(bootstrapClone("/r", answers("none") as never)).toBeNull();
+  // The literal command: the clone's own pinned bin, never a fetch through `bun x`, in the clone's folder.
+  expect(calls).toEqual([
+    { argv: ["bun", "install", "--frozen-lockfile"], cwd: "/r" },
+    {
+      argv: [
+        "env",
+        "PLAYWRIGHT_BROWSERS_PATH=node_modules/.cache/ms-playwright",
+        "node_modules/.bin/playwright",
+        "install",
+        "chromium-headless-shell",
+      ],
+      cwd: "/r",
+    },
+  ]);
+  expect(bootstrapClone("/r", answers("env") as never)).toBe(
+    "the headless shell's install failed: env broke",
+  );
+  calls.length = 0;
+  expect(bootstrapClone("/r", answers("bun") as never)).toBe("bun install failed: bun broke");
+  expect(calls.map((c) => c.argv)).toEqual([["bun", "install", "--frozen-lockfile"]]);
+});
+
+test("2026-10-30-001 AC-28: a tick about to run bootstraps a clone with no installed shell; a tick not due, a dry run and a paused tick install nothing; a failed install fails the tick before the run and the next due tick tries again", async () => {
+  const shellOf = (repo: string) => join(repo, "node_modules/.cache/ms-playwright");
+  const installs = (seen: { sh: string[][] }) => seen.sh.filter((c) => c[0] === "env").length;
+  const world = loopWorld();
+  const first = tickDeps(world);
+  expect(await tick({}, first.deps)).toBe(0);
+  const repo = join(world.home, "repo");
+  expect(installs(first.seen)).toBe(1);
+  expect(first.seen.improve.length).toBe(1);
+  const removeShell = () => rmSync(shellOf(repo), { recursive: true, force: true });
+  let edition = 1;
+  const moveText = () => {
+    edition += 1;
+    moveOrigin(world, "plugins/core/skills/crew/SKILL.md", `# Crew\n\nRule ${edition}.\n`);
+  };
+  const at = (hour: number) => ({ now: `2026-10-25T${hour}:00:00.000Z` });
+
+  // The clone deployed before this change: it exists, the lockfile is the same, the shell is not there.
+  removeShell();
+  // Not due: nothing is installed, so a download gates no tick that would not run.
+  const idle = tickDeps(world, at(20));
+  expect(await tick({}, idle.deps)).toBe(0);
+  expect(idle.seen.log.join("\n")).toContain("not due:");
+  expect(installs(idle.seen)).toBe(0);
+  expect(idle.seen.sh.filter((c) => c[0] === "bun")).toEqual([]);
+  // A dry run says what it would do and installs nothing.
+  moveText();
+  const dry = tickDeps(world, at(20));
+  expect(await tick({ dryRun: true }, dry.deps)).toBe(0);
+  expect(dry.seen.log.join("\n")).toContain("dry run: due");
+  expect(installs(dry.seen)).toBe(0);
+  // Paused: nothing.
+  const config = join(world.home, "config.json");
+  const unpaused = existsSync(config) ? readFileSync(config, "utf8") : null;
+  writeFileSync(config, JSON.stringify({ paused: true }));
+  const paused = tickDeps(world, at(20));
+  expect(await tick({}, paused.deps)).toBe(0);
+  expect(installs(paused.seen)).toBe(0);
+  if (unpaused === null) rmSync(config);
+  else writeFileSync(config, unpaused);
+
+  // Due: the install fails, the tick fails and the run does not start.
+  const failing = tickDeps(world, { ...at(21), shellInstallFails: true });
+  expect(await tick({}, failing.deps)).toBe(1);
+  expect(installs(failing.seen)).toBe(1);
+  expect(failing.seen.improve).toEqual([]);
+  expect(failing.seen.log.join("\n")).toContain(
+    "the headless shell's install failed: the download failed",
+  );
+  // A folder with no finished build is no shell: an install killed midway is installed again.
+  mkdirSync(join(shellOf(repo), "chromium_headless_shell-1"), { recursive: true });
+  // The failed tick's back-off holds the next hour, with no install: the notice that it waits is true.
+  const held = tickDeps(world, { now: "2026-10-25T21:30:00.000Z" });
+  expect(await tick({}, held.deps)).toBe(0);
+  expect(held.seen.log.join("\n")).toContain("backing off until");
+  expect(installs(held.seen)).toBe(0);
+  // Past it the next due tick tries again, and runs.
+  const again = tickDeps(world, { now: "2026-10-26T12:00:00.000Z" });
+  expect(await tick({}, again.deps)).toBe(0);
+  expect(installs(again.seen)).toBe(1);
+  expect(again.seen.improve.length).toBe(1);
+  // With the shell in place a due tick installs nothing.
+  moveText();
+  const settled = tickDeps(world, { now: "2026-10-26T13:00:00.000Z" });
+  expect(await tick({}, settled.deps)).toBe(0);
+  expect(installs(settled.seen)).toBe(0);
+  expect(settled.seen.improve.length).toBe(1);
+});
+
+test("2026-10-30-001 AC-28: a pending release resumes whatever the shell's state, since the install comes after it", async () => {
+  const world = loopWorld();
+  const first = tickDeps(world);
+  expect(await tick({}, first.deps)).toBe(0);
+  const repo = join(world.home, "repo");
+  rmSync(join(repo, "node_modules/.cache/ms-playwright"), { recursive: true, force: true });
+  const stateFile = join(world.home, "state.json");
+  const state = JSON.parse(readFileSync(stateFile, "utf8"));
+  writeFileSync(
+    stateFile,
+    JSON.stringify({ ...state, pendingRelease: { version: "9.9.9", failedStep: 3 } }),
+  );
+  const resumed = tickDeps(world, { now: "2026-10-25T21:00:00.000Z", shellInstallFails: true });
+  await tick({}, resumed.deps);
+  expect(resumed.seen.log.join("\n")).toContain("resuming release 9.9.9 from step 3");
 });

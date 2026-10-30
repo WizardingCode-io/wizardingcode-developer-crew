@@ -1303,7 +1303,7 @@ test("SP9-T8 AC-5: the tech lead's page lists the frontend lead's checks at the 
     "its motion thesis (or none)",
     "the capture spec as a task",
     "review/ui-evidence.json lists no missing state",
-    "captured widths match the plan's viewports",
+    "captured widths match the widths its state is captured at",
     "interactions[] row",
     "proven on the report's fingerprint",
     "never on the session's words",
@@ -1508,4 +1508,37 @@ test("2026-10-29-001 AC-9: the writing standard holds the tells of prose with th
   for (const reference of ["build.md", "deliver.md"])
     expect(readReference(reference), reference).toContain("`references/writing.md`");
   expect(repoFile("CLAUDE.md")).toContain("`plugins/core/skills/crew/references/writing.md`");
+});
+
+test("2026-10-30-001 AC-17: the judge and the frontend lead compare a row's captured widths with the widths its state is captured at, never with every plan viewport", () => {
+  // The capture fixture takes the default state at every plan viewport and another state at the narrowest and
+  // the widest (plugins/core/e2e/playwright.mjs, viewportsFor); a rule against every viewport fails a state no spec can fill.
+  const fixture = repoFile("plugins/core/e2e/playwright.mjs");
+  expect(fixture).toContain(
+    'state === "default" ? sorted : [sorted[0], sorted[sorted.length - 1]]',
+  );
+  const rule =
+    "the widths its state is captured at (every plan viewport for `default`, the plan's narrowest and widest for any other state)";
+  for (const file of ["plugins/core/agents/judge.md", "plugins/core/agents/tech-lead.md"]) {
+    const text = repoFile(file);
+    expect(text, file).toContain(rule);
+    expect(text, file).not.toContain("against the plan's viewports");
+    expect(text, file).not.toContain("match the plan's viewports");
+  }
+});
+
+test("2026-10-30-001 AC-20: a motion the thesis names carries its sample, said where the thesis is written and ruled like a missing state", () => {
+  const sample = "has its `captureMotion()` in the capture spec";
+  for (const file of [
+    "plugins/core/skills/crew/references/frontend.md",
+    "plugins/core/skills/crew/references/specify.md",
+  ])
+    expect(repoFile(file), file).toContain(sample);
+  const rubric = repoFile("plugins/core/skills/crew/rubrics/ui-ux.md");
+  expect(rubric).toContain(
+    "an interaction of the thesis with no row in the manifest's `interactions` (the judge's defect at the capture spec, filed by the reviewer under Not answerable)",
+  );
+  expect(repoFile("plugins/core/agents/judge.md")).toContain(
+    "an interaction of the thesis with no `interactions[]` row is a defect at the line of the capture spec",
+  );
 });

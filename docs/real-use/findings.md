@@ -1583,3 +1583,67 @@ Verdicts agree at every effort. Upheld findings: `high` reproduced Task 6's and 
 - Expected: with an active item, the change the Stop rule counts is the change since the item's start (its base), so a turn of a new item that changed nothing ends freely; a session's earlier, proven and committed item counts nothing against the next.
 - Evidence: this session's Stop hook block at the start of `2026-10-29-001`, the clean `git status` beside it, `stop.ts` (`session.baseline`, `learnedHolds`).
 - Outcome: closed by `2026-10-29-001` (AC-1): with an active item whose base the engine knows, the Stop rule counts the item's own change (`changedWatchedPaths`), so a session's earlier item, proven and committed, counts nothing against the next; no base commit, no git or an unavailable fingerprint keep blocking an unproven item, and without an active item the baseline rule and `learnedHolds` stand (`hooks-stop.test.ts`, one assertion per branch).
+
+### 199. The item's gate run printed a failing gate with no reason, so a session read the report or the log to learn why
+
+- Date: 2026-10-30. Project: this repository, a local rehearsal of the `ui-reduced-motion-fails` case (item `2026-10-30-001`). Category: `friction`. Severity: medium.
+- What happened: `crew gate run` printed `design-lint (.): fail in 0.0s` and `e2e (.): fail in 3.0s` and nothing else about either; the rule (`motion/duration-over-500 public/styles/inbox.css:47`) and the offence (`ui: animation still running under reduced motion: span.spinner (inbox-default)`) were in the report's table only. The todo gate (`crew task <id> gate`) already printed the reason beside its line.
+- Expected: the item's gate run and `crew status` say a failing gate's reason on its line, as the todo gate does.
+- Evidence: the rehearsal's `crew evidence` (lines 36 and 38 of its report), `packages/engine/src/cli.ts` (`gateSummary`, the todo gate's line at 984).
+- Outcome: closed by `2026-10-30-001` (AC-16): `gateSummary` adds ` (<reason>)` to a failing gate's line; a passing gate keeps its plain line (`cli.test.ts`).
+
+### 200. The judge and the frontend lead held a non-default state to every plan viewport, which the capture fixture never takes
+
+- Date: 2026-10-30. Project: this repository, the eval kit's sandbox (`ui-captures-by-fixture`, run `2026-10-30T09-07-35-675Z`, item `2026-10-30-001`). Category: `false-red`. Severity: high.
+- What happened: the e2e gate passed with `captures: 2 of 2 expected`; the judge upheld `inbox:empty`'s missing 768 capture as a defect, so the ui-ux gate was not proven and the session stopped to ask. The capture fixture takes the `default` state at every plan viewport and another state at the narrowest and the widest only (`plugins/core/e2e/playwright.mjs`, `viewportsFor`, design §4); `agents/judge.md` and `agents/tech-lead.md` compared a row's widths with every plan viewport, a rule no capture spec can satisfy.
+- Expected: both compare a row's captured widths with the widths its state is captured at.
+- Evidence: the run's trace (the session's ending names `playwright.mjs:175-180`), `agents/judge.md:30`, `agents/tech-lead.md:20`.
+- Outcome: closed by `2026-10-30-001` (AC-17): both texts name the widths per state, pinned by `skill.test.ts` beside the fixture's own line; the next run's ui-ux ruling was proven (`docs/evals/2026-10-30-sp9-ui-results.md`).
+
+### 201. A page's script under public/ was not an interface file, so a change to it alone planned neither the e2e run nor the ui-ux review
+
+- Date: 2026-10-30. Project: this repository, the eval kit's sandbox (`ui-audit-not-captured`, run `2026-10-30T09-14-18-445Z`, item `2026-10-30-001`). Category: `false-proof`. Severity: medium.
+- What happened: the session changed `public/inbox.js` (the script that renders the inbox's rows and heading) and the gate run planned no e2e gate and no ui-ux review; it added a class to `public/index.html` to get them. `isInterfacePath` counted a module as interface code only under a `components`, `composables`, `layouts`, `pages`, `animations`, `transitions` or `motion` segment.
+- Expected: a module in a site's `public` folder, which it serves to the browser as it is, is an interface file.
+- Evidence: the run's ending ("my `public/inbox.js` edit alone doesn't count as an interface file"), `packages/engine/src/paths-kind.ts`.
+- Outcome: closed by `2026-10-30-001` (AC-23, which superseded AC-18 after the judgement's round 1): a `public` folder at the root or a workspace's root counts, its `build`, `dist`, `vendor` and `assets` do not, `public/api/` never does, and design §7 carries the dated note (`paths-kind.test.ts`).
+
+### 202. Before the build phase the PreToolUse hook denies an Edit of a source file but not the same write through Bash
+
+- Date: 2026-10-30. Project: this repository, the eval kit's sandbox (`ui-reduced-motion-fails`, run `2026-10-30T09-14-18-345Z`, item `2026-10-30-001`). Category: `bypass`. Severity: medium.
+- What happened: on the standard route, in the specify phase, the hook refused the session's `Edit` of `public/index.html` (`source files change in the build phase`); the session then wrote `public/styles/inbox.css` through a Bash script and said so in its ending ("My CSS edit went in through a Bash script that the hook didn't stop"). The Bash branch of `hooks/pre-tool-use.ts` reads the line's write shapes for the engine's own files only; the phase rule is checked for Write and Edit.
+- Expected: a write to a watched source file through Bash (a redirect, `tee`, `sed -i`, `perl -i`, `cp`, `mv` onto it) is denied before the build phase on the standard and full routes, as an Edit is, with the same reason.
+- Evidence: the run's trace (the denied Edit, the Bash write after it, the ending), `packages/engine/src/hooks/pre-tool-use.ts` (the Write and Edit branch at 1975, the Bash branch at 1983).
+- Outcome: closed by `2026-10-30-001` (AC-19): the phase rule is one function, `beforeBuildDenial`, read by the Write and Edit branch and by the Bash branch when `writesWatched` finds a write (`hooks-pre-tool-use.test.ts`). A word the reader cannot read (a variable, a substitution) stays uncaught, as for the lane rule. Anything after the line's first `cd` stays uncaught too, the phase rule's own limit, since the reader resolves a word against the session's cwd and would otherwise deny a spike elsewhere: `cd src && echo x > a.ts` and `cd . && echo x > src/a.ts` pass. The cooperative rule covers both. An older row whose `find . -execdir rm` ran on an item before build moved its item to build: it reads the group, not the phase.
+
+### 203. An item with a motion in its thesis ended proven with no motion sample
+
+- Date: 2026-10-30. Project: this repository, the eval kit's sandbox (`ui-motion-thesis-built`, kept folder `e-454JuA`, item `2026-10-30-001`). Category: `false-proof`. Severity: high.
+- What happened: the session wrote the thesis, built the motion and proved it with assertions on the animation; the spec never called `captureMotion()`, the manifest's `interactions` stayed empty, the reviewer filed what it could not read under Not answerable and the judge ruled the ui-ux gate proven. `captureMotion()` was named only in `references/plan.md`, which a standard-route session need not open, and the rubric's defect list did not say what to do with the absence, though `agents/judge.md` did.
+- Expected: the instruction sits where the thesis is written, and an interaction of the thesis with no row in the manifest is ruled as a missing state is.
+- Evidence: the run's trace, `references/plan.md:18`, `rubrics/ui-ux.md` (question 9's defect), `agents/judge.md:30`.
+- Outcome: closed by `2026-10-30-001` (AC-20): `references/frontend.md` and `references/specify.md` say each interaction of the thesis has its `captureMotion()`, and the rubric's question 9 names the absence as the judge's defect at the capture spec. It stays a judgement, not a gate: the engine does not read the thesis's prose.
+
+### 204. Where nobody watches, a read of the knowledge base through a variable was denied as a mark's removal
+
+- Date: 2026-10-30. Project: this repository, the eval kit's sandbox (`ui-captures-by-fixture`, kept folder `e-oeAMeV`, item `2026-10-30-001`). Category: `blocks`. Severity: medium.
+- What happened: `I=<id>; crew knowledge $I lookup` was denied with `a mark is removed by a person and no person is watching this session`; the rule read any unreadable word after `knowledge` as a possible `unmark`. The session stopped before writing any code.
+- Expected: the session is told how to read the base. The word stays denied: an unreadable word before `lookup` can expand to a removal (`{unmark,K-4} lookup`), which the first fix, AC-21, let through until the security gate found it.
+- Evidence: the run's trace (both denied lines), `packages/engine/src/hooks/pre-tool-use.ts` (the decision table and `knowledgeUnmark`).
+- Outcome: closed by `2026-10-30-001` (AC-22, which superseded AC-21): the denial stands in every form and names the way out, `write the id out: crew knowledge <id> lookup` (`hooks-pre-tool-use.test.ts`).
+
+### 205. An install in another project deleted the headless shell the ui cases copy, from the shared cache
+
+- Date: 2026-10-30. Project: this repository and `cf-ecommerce-v2` (a worktree's Playwright 1.57 install at 13:20), item `2026-10-30-001`. Category: `blocks`. Severity: medium.
+- What happened: `playwright install` deletes every browser in the shared cache that no live package links; this repository had never linked build 1248, so that install removed it. Every ui case then failed at its scaffold with the shell not found, and the rows that need the shell were skipped, so a green `bun test` of the runner's file said nothing about them for that one run.
+- Expected: the repository keeps its own shell where another project's install cannot reach it, and the improvement loop's clone does too, since the ui cases are its next targets.
+- Evidence: the mtime of `~/Library/Caches/ms-playwright/.links/0f7f96ba…` and of `chromium_headless_shell-1200` (13:20), the runs of 13:32 to 13:33 in `docs/evals/2026-10-30-sp9-ui-results.md`.
+- Outcome: closed by `2026-10-30-001` (AC-25, AC-26): `node_modules/.cache/ms-playwright` is read after `PLAYWRIGHT_BROWSERS_PATH` and before the shared caches, the error's install command names it, and the loop's clone holds its own (AC-26, and AC-28 after the judgement's rounds 3 and 4: a tick about to run bootstraps a clone with no finished shell, so the clone deployed before this change gets it and a failed download is tried again on the next due tick, the run not starting without it). The folder is gitignored, so a fresh clone of the repository installs it once by hand; the row that needs it says so in its name when it skips. No real tick has run the install: its rows stub the shell, so its first proof is the live loop's next tick.
+
+### 206. What the loop's headless shell leaves open after item 2026-10-30-001
+
+- Date: 2026-10-30. Project: this repository, the judgement's rounds 4 and 5 of item `2026-10-30-001` (all advisory: the six gates are proven). Category: `friction`. Severity: low.
+- What happened: four paths around AC-28 stay as they are, since each needs a rare double failure or belongs to the loop as a whole, and each change to the item's code reopened six reviews. (1) A changed lockfile still bootstraps at the sync, shell included, before a pending release's resume, the back-off and a dry run, so a failed download on that one tick delays them. (2) `cloneHasShell` accepts a finished build of any number while the fixture names 1248, so a Playwright bump whose bootstrap fails at the shell step is not retried, and the ui scaffolds fail at the new build's name. (3) The install has no timeout of its own, so a stalled download holds the tick and its lock for as long as Playwright's limits allow. (4) An errored baseline counts as measured (`lastMeasuredOf`), so a ui case that errors for another reason leaves the never-measured list and waits out the seven-day window; and every due run needs the download, so a long outage stops non-ui cases too.
+- Expected: the lockfile path leaves the shell to the check before the run; the check reads the build the lockfile's Playwright names; the install has a limit; an errored baseline does not count as measured.
+- Evidence: `scripts/improve-loop.ts` (the sync's bootstrap, `cloneHasShell`, `lastMeasuredOf`), the rulings under `.crew/work/2026-10-30-001-*/review/`.
+- Outcome: open. None of the four has happened; no real tick has run the install yet.

@@ -3538,7 +3538,11 @@ test("SP6-T4 AC-30 (judgement round-22): a shell behind a quote is folded only w
     expect(reasonOf(response), command).toBe(userOnly);
   }
   // GNU's reading alone closes -execdir's group at + after x{} (BSD's needs {} exactly), so the
-  // -exec after it is read as its own command under that reading.
+  // -exec after it is read as its own command under that reading. The item in build: this row reads the
+  // -execdir's group, and `find . -execdir rm` before build is the phase rule's deny (finding 202).
+  expect(decision(bash(`find . -execdir rm x{} + -exec ${merge} --force ';'`))).toBe("deny");
+  work.phase = "build";
+  saveWork(ctx.paths, work);
   const execdir = bash(`find . -execdir rm x{} + -exec ${merge} --force ';'`);
   expect(decision(execdir)).toBe("ask");
   expect(reasonOf(execdir)).toBe(userOnly);
@@ -4873,4 +4877,75 @@ test("2026-10-25-005 AC-13: the engine's home is matched at a word end: a siblin
   expect(decision(openedBash(`cat ${opened.paths.userDir}/x`))).toBe("deny");
   expect(openedBash(`cat ${opened.paths.userDir}-improve/x`)).toEqual({});
   expect(decision(openedBash(`tool --out=${opened.paths.userDir}/x`))).toBe("deny");
+});
+
+test("2026-10-30-001 AC-19 (finding 202): before the build phase a Bash write to a watched source file is denied as an Edit is; an unwatched file, a read, the build phase and the fast route stay free", () => {
+  const { ctx } = setup(null);
+  const work = createWork(ctx.paths, "feature");
+  work.route = "standard";
+  work.phase = "specify";
+  saveWork(ctx.paths, work);
+  const bash = (command: string) =>
+    onPreToolUse(ctx, { tool_name: "Bash", tool_input: { command } });
+  const reason = `Crew: work ${work.id} is in phase specify on the standard route; source files change in the build phase (crew phase ${work.id} next)`;
+  for (const command of [
+    "echo x > src/a.ts",
+    "echo x >> src/a.ts",
+    "echo x | tee src/a.ts",
+    "sed -i '' 's/a/b/' src/a.ts",
+    "cp /tmp/x src/a.ts",
+    "mv /tmp/x src/a.ts",
+  ]) {
+    const denied = bash(command);
+    expect(decision(denied), command).toBe("deny");
+    expect(
+      (denied.hookSpecificOutput as { permissionDecisionReason: string }).permissionDecisionReason,
+      command,
+    ).toBe(reason);
+  }
+  for (const command of ["cat src/a.ts", "echo x > docs/note.md", "echo x > /tmp/out.txt"])
+    expect(decision(bash(command)), command).toBeUndefined();
+  // After a cd the reader cannot place a relative word, so the phase rule reads none (a spike elsewhere is free).
+  expect(decision(bash("cd /tmp/spike && echo x > a.ts"))).toBeUndefined();
+  // What the line writes before its first cd is still read.
+  expect(decision(bash("echo x > src/a.ts; cd /tmp"))).toBe("deny");
+  // The full route as the standard.
+  work.route = "full";
+  saveWork(ctx.paths, work);
+  expect(decision(bash("echo x > src/a.ts"))).toBe("deny");
+  work.route = "standard";
+  saveWork(ctx.paths, work);
+  work.phase = "build";
+  saveWork(ctx.paths, work);
+  expect(decision(bash("echo x > src/a.ts"))).toBeUndefined();
+  work.phase = "specify";
+  work.route = "fast";
+  saveWork(ctx.paths, work);
+  expect(decision(bash("echo x > src/a.ts"))).toBeUndefined();
+});
+
+test("2026-10-30-001 AC-22: where nobody watches every form with a word the hook cannot read stays denied and names the way out; a written id before lookup passes", () => {
+  const { ctx } = setup();
+  const run = (command: string) =>
+    onPreToolUse(ctx, { tool_name: "Bash", tool_input: { command }, permission_mode: "dontAsk" });
+  const reasonOf = (command: string) =>
+    (run(command).hookSpecificOutput as { permissionDecisionReason: string })
+      .permissionDecisionReason;
+  // The forms a shell expands to a mark's removal (the security gate's F-1, round 1), and the plain ones.
+  for (const command of [
+    "crew knowledge {unmark,K-4} lookup",
+    "crew knowledge $(echo unmark K-4) lookup",
+    "crew knowledge $V lookup",
+    'crew knowledge "$I" lookup',
+    "crew knowledge $V K-4",
+    "crew knowledge $V",
+  ]) {
+    expect(decision(run(command)), command).toBe("deny");
+    expect(reasonOf(command), command).toContain("write the id out: crew knowledge <id> lookup");
+  }
+  // The word written: the removal is the person's, its reason unchanged.
+  expect(decision(run("crew knowledge unmark K-4"))).toBe("deny");
+  expect(reasonOf("crew knowledge unmark K-4")).toContain("a mark is removed by a person");
+  expect(reasonOf("crew knowledge unmark K-4")).not.toContain("write the id out");
+  expect(decision(run("crew knowledge 2026-10-30-001-x lookup"))).toBeUndefined();
 });

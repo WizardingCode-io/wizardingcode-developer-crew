@@ -1,0 +1,6 @@
+# evals/ui-audit-not-captured/case.yaml
+schema_version: "1.1"
+name: ui-audit-not-captured
+tags: [ui]
+context:
+  scaffold_script: fixture.sh

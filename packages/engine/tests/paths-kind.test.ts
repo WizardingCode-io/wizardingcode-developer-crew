@@ -84,3 +84,35 @@ test("SP9-T5 AC-4: a design contract is DESIGN.md at the root or under docs, a t
   // A test path is read first, as isInterfacePath reads it.
   expect(isTestPath("tests/fixtures/brand.tokens.json")).toBe(true);
 });
+
+test("2026-10-30-001 AC-23: a module under a public folder at the root or at a workspace's root is an interface file; deeper, built, vendored, an API or a test is not", () => {
+  for (const path of [
+    "public/inbox.js",
+    "public/js/app.mjs",
+    "packages/site/public/menu.ts",
+    "apps/web/public/menu.js",
+    // A page's own folder named public or vendor keeps counting: the exclusions are the root public folder's.
+    "pages/public/vendor/list.ts",
+    "src/components/public/assets/icon.ts",
+    "public\\inbox.js",
+  ])
+    expect(isInterfacePath(path), path).toBe(true);
+  for (const path of [
+    "public/inbox.test.js",
+    "public/inbox.spec.mjs",
+    "src/publicity.js",
+    "src/republic/a.js",
+    "public/server/x.js",
+    "public/api/x.js",
+    "src/routes/public/orders.ts",
+    "app/api/public/x.ts",
+    "public/build/assets/app-abc.js",
+    "public/dist/app.js",
+    "public/vendor/livewire.js",
+    "public/assets/app.js",
+    "apps/web/public/build/app.js",
+  ])
+    expect(isInterfacePath(path), path).toBe(false);
+  // A stylesheet or a page stays an interface file wherever it sits, by its extension.
+  expect(isInterfacePath("public/build/app.css")).toBe(true);
+});

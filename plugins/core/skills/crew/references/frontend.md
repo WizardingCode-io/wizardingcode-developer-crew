@@ -28,6 +28,8 @@ One value per rule; the band the reviewer accepts is in parentheses. The session
 | Hover | behind `@media (hover: hover) and (pointer: fine)`; never the only way to see information |
 | Frames | 16.7 ms per frame in the sample; more than two consecutive dropped frames is a defect |
 
+Each interaction the motion thesis names has its `captureMotion()` in the capture spec: without its sample the UI/UX gate is not proven.
+
 Why 40 ms and not 100 for the stagger: both motion sources (emilkowalski/skills and jakubkrehel/skills) keep UI motion under 300 ms; at 100 ms a list of six lands its last item at 600 ms, past that ceiling; 40 ms times five keeps the list inside 200 ms. Why 0.97 and not 0.96 for the press: the press is the most frequent animation of the table, so it must be the least visible; on a 40 px control 0.97 is 1.2 px.
 
 ## Interface floor

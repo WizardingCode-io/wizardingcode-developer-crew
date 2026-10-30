@@ -481,6 +481,27 @@ test("SP9-T6 AC-1: design-lint has no command to set or unset, and its skip is r
   expect((skipped.data.skips as { step: string }[]).at(-1)?.step).toBe("gate:design-lint");
 });
 
+test("2026-10-30-001 AC-16: crew gate run and crew status print a failing gate's reason beside its line", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/app.css": "a {\n  color: red;\n}\n",
+  });
+  const c = io(root);
+  const id = (await c.json("start", "Fade the links", "--answers", answers, "--criterion", "a"))
+    .data.id as string;
+  write(root, "src/app.css", "a {\n  color: red;\n  transition: all 200ms ease-out;\n}\n");
+  const run = await c.run("gate", "run", id);
+  expect(run.out).toMatch(
+    / {2}design-lint \(\.\): fail in \d+\.\ds \(motion\/transition-all src\/app\.css:3/,
+  );
+  // A passing gate keeps its plain line.
+  expect(run.out).toMatch(/ {2}test \(\.\): pass in \d+\.\ds\n/);
+  const status = await c.run("status", id);
+  expect(status.out).toMatch(
+    / {2}design-lint \(\.\): fail in \d+\.\ds \(motion\/transition-all src\/app\.css:3/,
+  );
+});
+
 test("SP2b: a judgement gate is skipped only when the policy lists it, and the verdict then passes over it", async () => {
   const root = makeRepo({
     "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
