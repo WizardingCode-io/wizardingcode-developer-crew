@@ -85,13 +85,24 @@ const env = { ...process.env, PLAYWRIGHT_BROWSERS_PATH: resolve("node_modules/.c
 const run = spawnSync(process.execPath, ["node_modules/@playwright/test/cli.js", "test", ...process.argv.slice(2)], { stdio: "inherit", env });
 process.exit(run.status ?? 1);
 EOF
+# The crew's fixture, copied from the tree under test so a probe measures its own text: a spec reads nothing outside
+# the scaffold. Loading a file, Playwright looks for a tsconfig.json beside it, and the sandbox denies that read under
+# ~/.wizardingcode, where the improvement loop's clone lives (finding 207).
+mkdir -p tests/e2e/crew-fixture
+for pw_file in playwright.mjs measure.mjs; do
+  if [ ! -f "$PW_REPO/plugins/core/e2e/$pw_file" ]; then
+    echo "playwright-page.sh: the crew's fixture is not there ($PW_REPO/plugins/core/e2e/$pw_file)" >&2
+    exit 1
+  fi
+  cp "$PW_REPO/plugins/core/e2e/$pw_file" "tests/e2e/crew-fixture/$pw_file"
+done
 cat > tests/e2e/crew.mjs <<EOF
 // The crew's Playwright fixture, from the plugin under test, with a browser of its own per test: the
 // single-process headless shell (the sandbox's only browser) ends with its first context.
 import { test as base } from "@playwright/test";
-import { withConsole } from "$PW_REPO/plugins/core/e2e/playwright.mjs";
+import { withConsole } from "./crew-fixture/playwright.mjs";
 
-export * from "$PW_REPO/plugins/core/e2e/playwright.mjs";
+export * from "./crew-fixture/playwright.mjs";
 export const test = withConsole(
   base.extend({
     context: async ({ playwright, launchOptions }, use) => {

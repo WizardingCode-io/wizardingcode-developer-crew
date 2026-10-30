@@ -267,7 +267,8 @@ const UI_STATE = [
   { file: ".crew/policy.json", pattern: /"continuations":\s*"granted"/ },
   { file: ".crew/profile.json", pattern: /node scripts\/env\.mjs start/ },
   { file: ".crew/profile.json", pattern: /"url":\s*"file:\/\/[^"]*\/public\/index\.html"/ },
-  { file: "tests/e2e/crew.mjs", pattern: /plugins\/core\/e2e\/playwright\.mjs/ },
+  { file: "tests/e2e/crew.mjs", pattern: /from "\.\/crew-fixture\/playwright\.mjs"/ },
+  { file: "tests/e2e/crew-fixture/measure.mjs", pattern: /export function/ },
   {
     file: "node_modules/.cache/ms-playwright/chromium_headless_shell-1248/INSTALLATION_COMPLETE",
     pattern: /^/,
@@ -3538,6 +3539,12 @@ const NEEDS_SHELL = HAS_SHELL
 /** The real packages under a repository's `node_modules`, and nothing else of the real one. */
 function linkPackages(repo: string): void {
   mkdirSync(join(repo, "node_modules"), { recursive: true });
+  mkdirSync(join(repo, "plugins", "core", "e2e"), { recursive: true });
+  for (const file of ["playwright.mjs", "measure.mjs"])
+    writeFileSync(
+      join(repo, "plugins", "core", "e2e", file),
+      readFileSync(join(repoRoot, "plugins", "core", "e2e", file)),
+    );
   spawnSync("ln", [
     "-s",
     join(repoRoot, "node_modules", ".bun"),
@@ -3609,7 +3616,7 @@ test.skipIf(!HAS_SHELL)(
       expect(config).toContain('"--no-zygote"');
       expect(config).not.toContain("channel");
       expect(readFileSync(join(dir, "tests", "e2e", "crew.mjs"), "utf8")).toContain(
-        join(repoRoot, "plugins", "core", "e2e", "playwright.mjs"),
+        'from "./crew-fixture/playwright.mjs"',
       );
       expect(JSON.parse(readFileSync(join(dir, "package.json"), "utf8")).scripts["test:e2e"]).toBe(
         "node scripts/e2e.mjs",
@@ -3908,6 +3915,12 @@ test("2026-10-30-001 AC-24: in a git worktree with no node_modules, as the impro
     git("-C", main, "init", "-q", "-b", "main");
     git("-C", main, "commit", "-q", "--allow-empty", "-m", "base");
     git("-C", main, "worktree", "add", "-q", tree);
+    mkdirSync(join(tree, "plugins", "core", "e2e"), { recursive: true });
+    writeFileSync(
+      join(tree, "plugins", "core", "e2e", "playwright.mjs"),
+      "// the tree's fixture\n",
+    );
+    writeFileSync(join(tree, "plugins", "core", "e2e", "measure.mjs"), "// the tree's measures\n");
     spawnSync("ln", ["-s", join(repoRoot, "node_modules"), join(main, "node_modules")]);
     expect(existsSync(join(tree, "node_modules"))).toBe(false);
     const dir = mkdtempSync(join(base, "scaffold-"));
@@ -3917,8 +3930,9 @@ test("2026-10-30-001 AC-24: in a git worktree with no node_modules, as the impro
     });
     expect(run.status, run.stderr).toBe(0);
     expect(existsSync(join(dir, "node_modules", "@playwright", "test", "package.json"))).toBe(true);
-    expect(readFileSync(join(dir, "tests", "e2e", "crew.mjs"), "utf8")).toContain(
-      join(tree, "plugins", "core", "e2e", "playwright.mjs"),
+    // The plugin under test stays the tree's: a probe measures its own text.
+    expect(readFileSync(join(dir, "tests", "e2e", "crew-fixture", "playwright.mjs"), "utf8")).toBe(
+      "// the tree's fixture\n",
     );
     // With no named folder the shell is the main checkout's own too, never the shared caches'.
     rmSync(join(main, "node_modules"));
@@ -4038,6 +4052,39 @@ test("2026-10-30-001 AC-25: the repository's own folder is read after PLAYWRIGHT
     expect(none.stderr).toContain(
       "PLAYWRIGHT_BROWSERS_PATH=node_modules/.cache/ms-playwright bunx playwright install chromium-headless-shell",
     );
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 60_000);
+
+test("2026-10-30-002 AC-1: the scaffold carries the crew's fixture, byte for byte the tree's, and its spec names no path outside the scaffold; a tree with no fixture file fails the scaffold, naming it", () => {
+  const { root, script } = browserCase("");
+  const base = realpathSync(mkdtempSync(join(tmpdir(), "crew-eval-copy-")));
+  const shells = join(base, "shells");
+  mkdirSync(join(shells, SHELL_BUILD), { recursive: true });
+  writeFileSync(join(shells, SHELL_BUILD, "INSTALLATION_COMPLETE"), "");
+  try {
+    const dir = mkdtempSync(join(base, "scaffold-"));
+    const run = runBrowserCase(script, dir, { PLAYWRIGHT_BROWSERS_PATH: shells });
+    expect(run.status, run.stderr).toBe(0);
+    for (const file of ["playwright.mjs", "measure.mjs"])
+      expect(readFileSync(join(dir, "tests", "e2e", "crew-fixture", file), "utf8"), file).toBe(
+        readFileSync(join(repoRoot, "plugins", "core", "e2e", file), "utf8"),
+      );
+    const spec = readFileSync(join(dir, "tests", "e2e", "crew.mjs"), "utf8");
+    expect(spec).not.toContain(repoRoot);
+    expect(spec).not.toMatch(/from "\//);
+    // A tree whose fixture is gone: the scaffold says which file.
+    const repo = join(base, "repo");
+    linkPackages(repo);
+    rmSync(join(repo, "plugins", "core", "e2e", "measure.mjs"));
+    const gone = runBrowserCase(script, mkdtempSync(join(base, "scaffold-")), {
+      WIZARDINGCODE_CREW_REPO: repo,
+      PLAYWRIGHT_BROWSERS_PATH: shells,
+    });
+    expect(gone.status).toBe(1);
+    expect(gone.stderr).toContain(join(repo, "plugins", "core", "e2e", "measure.mjs"));
   } finally {
     rmSync(base, { recursive: true, force: true });
     rmSync(root, { recursive: true, force: true });

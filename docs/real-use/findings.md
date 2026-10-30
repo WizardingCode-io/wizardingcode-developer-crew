@@ -1646,4 +1646,20 @@ Verdicts agree at every effort. Upheld findings: `high` reproduced Task 6's and 
 - What happened: four paths around AC-28 stay as they are, since each needs a rare double failure or belongs to the loop as a whole, and each change to the item's code reopened six reviews. (1) A changed lockfile still bootstraps at the sync, shell included, before a pending release's resume, the back-off and a dry run, so a failed download on that one tick delays them. (2) `cloneHasShell` accepts a finished build of any number while the fixture names 1248, so a Playwright bump whose bootstrap fails at the shell step is not retried, and the ui scaffolds fail at the new build's name. (3) The install has no timeout of its own, so a stalled download holds the tick and its lock for as long as Playwright's limits allow. (4) An errored baseline counts as measured (`lastMeasuredOf`), so a ui case that errors for another reason leaves the never-measured list and waits out the seven-day window; and every due run needs the download, so a long outage stops non-ui cases too.
 - Expected: the lockfile path leaves the shell to the check before the run; the check reads the build the lockfile's Playwright names; the install has a limit; an errored baseline does not count as measured.
 - Evidence: `scripts/improve-loop.ts` (the sync's bootstrap, `cloneHasShell`, `lastMeasuredOf`), the rulings under `.crew/work/2026-10-30-001-*/review/`.
-- Outcome: open. None of the four has happened; no real tick has run the install yet.
+- Outcome: open. None of the four has happened.
+
+### 207. The ui cases could not run from the improvement loop's clone, so its first real run of them measured nothing
+
+- Date: 2026-10-30. Project: this repository, the loop's run `2026-10-30-2` (`ui-audit-not-captured` 0.22, `ui-captures-by-fixture` 0.20, 4.65 USD, nothing kept), item `2026-10-30-002`. Category: `blocks`. Severity: high.
+- What happened: the scaffold's spec imported the crew's fixture by the plugin's absolute path. Loading it, Playwright looked for a `tsconfig.json` beside it; the kit's sandbox denies that read under `~/.wizardingcode`, so the e2e run ended with "No tests found". Every recorded run of item `2026-10-30-001` ran from this checkout, where the read is allowed, and AC-24's row built the worktree's shape with a stand-in shell and launched no browser. Five judgement rounds named the path as unmeasured; none could reach this by reading. The first real tick found it within minutes, which is why the push was recommended.
+- Expected: a scaffold reads nothing outside itself at test time, and a claim about a tree is proven by a run from that tree.
+- Evidence: kept folders `e-zQwrFd` (the checkout under the launchd environment, 1.00) and `e-Ap2Ld9` (the clone under the same environment, 0.40, its ending quoting the `EPERM`).
+- Outcome: closed by `2026-10-30-002` (AC-1, AC-2): the fixture is copied into the scaffold from the tree under test, and `ui-captures-by-fixture` passed in the kit from a git worktree under `~/.wizardingcode` with no `node_modules` of its own, under the launchd environment.
+
+### 208. Where Fable is at its limit, the loop's llm graders throw and count as failed
+
+- Date: 2026-10-30. Project: this repository, the loop's run `2026-10-30-2`. Category: `false-red`. Severity: medium.
+- What happened: the judge of the llm graders is `claude-fable-5-1`; at its limit each one ended "grader threw: judge call failed: You've reached your Fable limit" and was scored as failed, lowering the baseline for a reason that has nothing to do with the case. The editor already moves to the next model at its limit (finding 152); the judge does not. The same failure hit item `2026-10-30-001`'s first recording by hand (runs of 10-16 to 10-22).
+- Expected: the judge moves down as the editor does, or the run is marked unmeasured rather than scored.
+- Evidence: `result.json` of `2026-10-30T15-08-23-195Z-improve-ui-captures-by-fixture` in the loop's clone, the `honest-ending` grader's explanation.
+- Outcome: open.

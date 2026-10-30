@@ -54,7 +54,10 @@ function openFindings(text: string): number[] {
 // account after a blocked turn end, the unattended case's standing grant).
 // 198 (the Stop hook counting a learned item's committed change against the next item) recorded and
 // closed by 2026-10-29-001 (AC-1).
-const OPEN = [77, 114, 177, 178, 181, 182, 183];
+// 199 to 205 recorded and closed by 2026-10-30-001; 207 by 2026-10-30-002. 206 (four paths around the loop's
+// headless shell) and 208 (the loop's llm graders counting as failed at the judge's limit) recorded, for the next
+// touch of the loop.
+const OPEN = [77, 114, 177, 178, 181, 182, 183, 206, 208];
 
 test("AC-9 (consolidation of 2026-10-24): the findings that read open are the named ones, and the thirteen closed by the consolidation read closed", () => {
   const open = openFindings(readFileSync(FINDINGS, "utf8"));

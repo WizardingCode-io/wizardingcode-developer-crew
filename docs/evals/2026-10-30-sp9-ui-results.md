@@ -116,3 +116,9 @@ Run 2026-10-30T11-22-41-case-ui-motion-thesis-built-arms, `--ablation with-witho
 ## Aggregates
 
 Sixty-eight result folders, 52.82 USD by the sixty-five that hold an aggregate; the three runs killed at the limit have no figure, so the true total is somewhat higher. The estimate confirmed with the user was 15 to 30 USD: the difference is the repeats the defects above caused, and the set recorded more than once.
+
+## The first real tick, and finding 207
+
+Pushed at about 15:00, the live loop's first due tick proved half of what the rows could not: the sync relaunched on the new code, `bun install` brought the packages the deployed clone lacked, and the shell installed into the clone's own folder under launchd (AC-26, AC-28). The other half failed: `ui-audit-not-captured` 0.22 and `ui-captures-by-fixture` 0.20 over three runs each, 4.65 USD, nothing kept, since the e2e run never started from a tree under `~/.wizardingcode` (finding 207). The loop was paused until the fix. Its judge also failed at Fable's limit (finding 208).
+
+From the checkout under the launchd agent's environment the case passed at 1.00 (0.87 USD); from the clone under the same environment, 0.40 (0.52 USD). Item `2026-10-30-002` copies the crew's fixture into the scaffold. From a git worktree under `~/.wizardingcode` with no `node_modules` of its own, under that environment, the case then passed at 1.00, twice (1.05 and 0.93 USD; the first run's record was lost to a script's error). Those three figures are the item's AC-2 and its red; every other ui case from such a tree is for the whole-tag run and the loop.
