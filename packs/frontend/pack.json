@@ -1,8 +1,8 @@
 {
   "name": "wizardingcode-pack-frontend",
-  "version": "0.15.2",
+  "version": "0.16.0",
   "kind": "team",
-  "core": ">=0.15.2",
+  "core": ">=0.16.0",
   "verifiedAgainst": {
     "wcag": "2.2",
     "motion": "14.7.1",

@@ -1,7 +1,7 @@
 {
   "name": "wizardingcode-pack-frontend",
   "displayName": "WizardingCode Pack: Frontend",
-  "version": "0.15.2",
+  "version": "0.16.0",
   "description": "A team pack for frontend work, served by the crew engine of wizardingcode-developer-crew: a team template that seats the frontend team on the paths where pages, components, styles and design tokens live, three checklists for the gap round (screen, motion, design contract) and two knowledge files for the expert. Data only: no code, no skill, no agent, no hook.",
   "author": {
     "name": "WizardingCode",

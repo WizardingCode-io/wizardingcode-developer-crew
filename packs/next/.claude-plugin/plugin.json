@@ -1,7 +1,7 @@
 {
   "name": "wizardingcode-pack-next",
   "displayName": "WizardingCode Pack: Next.js",
-  "version": "0.15.2",
+  "version": "0.16.0",
   "description": "Knowledge and verification for Next.js 16.x, served by the crew engine of wizardingcode-developer-crew: a detector rule that proposes the project's test and lint commands and the scoped test template (the type check is the core's, from tsconfig.json), and one knowledge file for the expert. Data only: no code, no skill, no agent, no hook.",
   "author": { "name": "WizardingCode", "url": "https://wizardingcode.io" },
   "homepage": "https://github.com/WizardingCode-io/wizardingcode-developer-crew",
