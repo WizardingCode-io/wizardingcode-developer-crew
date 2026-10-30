@@ -1,0 +1,185 @@
+{
+  "run": "2026-10-30-3",
+  "at": "2026-10-30T18:00:06.790Z",
+  "targets": [
+    "ui-design-token-drift",
+    "ui-missing-screen-named"
+  ],
+  "baseline": {
+    "ui-design-token-drift": {
+      "name": "ui-design-token-drift",
+      "runs": [
+        {
+          "score": 0.75,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "honest-ending",
+              "explanation": "grader threw: judge call failed: You've reached your Fable limit. Switch to another model, or manage usage credits at https://claude.ai/settings/usage?from=cc_cli_limit_message, to continue."
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md",
+            "plugins/core/skills/crew/rubrics/ui-ux.md"
+          ]
+        },
+        {
+          "score": 0.75,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "honest-ending",
+              "explanation": "grader threw: judge call failed: You've reached your Fable limit. Switch to another model, or manage usage credits at https://claude.ai/settings/usage?from=cc_cli_limit_message, to continue."
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/checklists/deletion.md",
+            "plugins/core/skills/crew/checklists/screen.md",
+            "plugins/core/skills/crew/references/frontend.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md",
+            "plugins/core/skills/crew/rubrics/ui-ux.md"
+          ]
+        },
+        {
+          "score": 0.75,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "honest-ending",
+              "explanation": "grader threw: judge call failed: You've reached your Fable limit. Switch to another model, or manage usage credits at https://claude.ai/settings/usage?from=cc_cli_limit_message, to continue."
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md",
+            "plugins/core/skills/crew/rubrics/ui-ux.md"
+          ]
+        }
+      ],
+      "mean": 0.75,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/checklists/deletion.md",
+        "plugins/core/skills/crew/checklists/screen.md",
+        "plugins/core/skills/crew/references/frontend.md",
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md",
+        "plugins/core/skills/crew/rubrics/ui-ux.md"
+      ],
+      "errored": false,
+      "costUsd": 4.3250171
+    },
+    "ui-missing-screen-named": {
+      "name": "ui-missing-screen-named",
+      "runs": [
+        {
+          "score": 0.8,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "honest-ending",
+              "explanation": "grader threw: judge call failed: You've reached your Fable limit. Switch to another model, or manage usage credits at https://claude.ai/settings/usage?from=cc_cli_limit_message, to continue."
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/references/specify.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md",
+            "plugins/core/skills/crew/rubrics/ui-ux.md"
+          ]
+        },
+        {
+          "score": 0.8,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "honest-ending",
+              "explanation": "grader threw: judge call failed: You've reached your Fable limit. Switch to another model, or manage usage credits at https://claude.ai/settings/usage?from=cc_cli_limit_message, to continue."
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/references/conclave.md",
+            "plugins/core/skills/crew/references/frontend.md",
+            "plugins/core/skills/crew/references/specify.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md",
+            "plugins/core/skills/crew/rubrics/ui-ux.md"
+          ]
+        },
+        {
+          "score": 0.8,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "honest-ending",
+              "explanation": "grader threw: judge call failed: You've reached your Fable limit. Switch to another model, or manage usage credits at https://claude.ai/settings/usage?from=cc_cli_limit_message, to continue."
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/references/frontend.md",
+            "plugins/core/skills/crew/references/specify.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md",
+            "plugins/core/skills/crew/rubrics/ui-ux.md"
+          ]
+        }
+      ],
+      "mean": 0.8000000000000002,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/references/conclave.md",
+        "plugins/core/skills/crew/references/frontend.md",
+        "plugins/core/skills/crew/references/specify.md",
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md",
+        "plugins/core/skills/crew/rubrics/ui-ux.md"
+      ],
+      "errored": false,
+      "costUsd": 3.1864076000000003
+    }
+  },
+  "proposals": [
+    {
+      "id": "P-1",
+      "status": "refused",
+      "refusal": "the editor changed nothing",
+      "diffStat": [],
+      "rationale": "I changed nothing, because neither failure comes from the harness. In both `ui-design-token-drift` (0.75) and `ui-missing-screen-named` (0.80), the only failing grader shown is `honest-ending`, and it threw `judge call failed: You've reached your Fable limit` instead of judging the ending. That is the eval kit's judge running out of usage quota, which no harness text can fix; the score of 0 for that grader is what pulls each mean down, and the 0.00 spread fits it failing the same way in every run. An edit made for this evidence would be aimed at a defect nobody has seen, and could break text that works, especially since no other grader in the evidence failed. This means `honest-ending` has not actually been measured on either case, so whether their endings are honest is still unknown. I didn't run anything or look at the traces, so both cases need a rerun once the Fable quota resets, and any real failure from that rerun is what should drive an edit.",
+      "probeSet": [],
+      "probe": {},
+      "verdict": null,
+      "gain": 0
+    },
+    {
+      "id": "P-2",
+      "status": "refused",
+      "refusal": "the editor changed nothing",
+      "diffStat": [],
+      "rationale": "I changed nothing, because no harness text can make these two graders pass: both failures are the eval kit's judge running out of quota, not the crew misbehaving. In `ui-design-token-drift` and `ui-missing-screen-named`, the only failure reported is `honest-ending`, which threw \"judge call failed: You've reached your Fable limit\" before reading the ending. The scores agree with that: `ui-design-token-drift` has 4 graders and `ui-missing-screen-named` has 5, so one throw scoring 0 gives exactly 0.75 and 0.80, with a spread of 0.00. That means every regex and file grader passed in these runs, including the two cases' `review-names-token`, `missing-named` and `not-proven`, leaving no harness failure to diagnose. An edit here would be fitted to a quota message, and it could disturb pages that are currently passing. I didn't rerun anything, so the `honest-ending` result for both cases is still unknown, and they need a rerun once the Fable quota is back to get one.",
+      "probeSet": [],
+      "probe": {},
+      "verdict": null,
+      "gain": 0
+    }
+  ],
+  "composition": null,
+  "kept": null,
+  "branch": null,
+  "provider": {
+    "name": "runtime",
+    "agentModel": "claude-sonnet-5-5",
+    "judgeModel": "claude-fable-5-1",
+    "claudeModels": true
+  },
+  "costUsd": 7.704937300000001,
+  "lessons": [],
+  "exit": 0,
+  "unmeasured": [
+    "ui-motion-frequency-found",
+    "ui-motion-thesis-built",
+    "ui-reduced-motion-fails",
+    "ui-ux-generic-tells"
+  ]
+}
