@@ -1661,8 +1661,8 @@ Verdicts agree at every effort. Upheld findings: `high` reproduced Task 6's and 
 - Date: 2026-10-30. Project: this repository, the loop's run `2026-10-30-2`. Category: `false-red`. Severity: medium.
 - What happened: the judge of the llm graders is `claude-fable-5-1`; at its limit each one ended "grader threw: judge call failed: You've reached your Fable limit" and was scored as failed, lowering the baseline for a reason that has nothing to do with the case. The editor already moves to the next model at its limit (finding 152); the judge does not. The same failure hit item `2026-10-30-001`'s first recording by hand (runs of 10-16 to 10-22).
 - Expected: the judge moves down as the editor does, or the run is marked unmeasured rather than scored.
-- Evidence: `result.json` of `2026-10-30T15-08-23-195Z-improve-ui-captures-by-fixture` in the loop's clone, the `honest-ending` grader's explanation.
-- Outcome: open.
+- Evidence: `result.json` of `2026-10-30T15-08-23-195Z-improve-ui-captures-by-fixture` in the loop's clone, the `honest-ending` grader's explanation; runs 2026-10-30-2 to -4, every failing grader of the last two the judge's.
+- Outcome: closed by `2026-10-30-004`: the suite's, the one-case runs' and the loop's judge and the benchmark set's are `claude-opus-5-5`, by the user's decision of 2026-10-30 (Fable is not needed). A judge that throws still scores as failed, whatever its model. The crew's own judge role (`agents/judge.md`) stays on Fable and moves to the next model at its limit (finding 152).
 
 ### 209. On the standard route the engine says Proven with the item still in the conclave and its leads not asked
 

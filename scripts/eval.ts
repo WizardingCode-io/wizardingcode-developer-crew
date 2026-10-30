@@ -27,8 +27,8 @@ export interface EvalOptions {
   json?: string;
 }
 
-/** The suite's judge: never a weaker model than the agent under test (the owner's rule). */
-export const JUDGE_MODEL = "claude-fable-5-1";
+/** The suite's judge: never a weaker model than the agent under test (the owner's rule); Opus by the user's decision of 2026-10-30, since at Fable's limit every llm grader threw and counted as failed (finding 208). */
+export const JUDGE_MODEL = "claude-opus-5-5";
 
 /**
  * The tools the kit's session may use without asking (findings 64 and 95): Bash whole, since the

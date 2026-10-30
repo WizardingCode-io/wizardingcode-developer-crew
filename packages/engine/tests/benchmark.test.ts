@@ -141,7 +141,7 @@ test("SP6-T5 AC-1: benchmark.json names decision 11's eighteen cases with their 
   for (const name of FUNCTIONAL) expect(s.cases[name], name).toBe("functional");
   for (const name of SECURITY) expect(s.cases[name], name).toBe("security");
   for (const name of COST) expect(s.cases[name], name).toBe("cost");
-  expect(s.models).toEqual({ agent: "claude-sonnet-5-5", judge: "claude-fable-5-1" });
+  expect(s.models).toEqual({ agent: "claude-sonnet-5-5", judge: "claude-opus-5-5" });
   expect(s.runs).toBe(3);
   for (const name of EIGHTEEN) expect(tagsOf(name), name).toContain("benchmark");
   expect(SANDBOX_TAGS).toContain("benchmark");
@@ -432,16 +432,23 @@ test("SP6-T5 AC-11: the benchmark invocation deep-equals the whole suite's with 
   expect(set().runs).toBe(reference.cases[0]?.runsPerCase ?? 0);
   expect(record().run.drift).toEqual([
     "agent model claude-opus-5-5 (the set names claude-sonnet-5-5)",
-    "judge model claude-opus-5-5 (the set names claude-fable-5-1)",
     "runsPerCase 2 (the set names 3)",
   ]);
   const agg = fixture();
   const matching: Aggregate = {
     ...agg,
-    suite: { ...agg.suite, modelOverride: "claude-sonnet-5-5", judgeModel: "claude-fable-5-1" },
+    suite: { ...agg.suite, modelOverride: "claude-sonnet-5-5", judgeModel: "claude-opus-5-5" },
     cases: agg.cases.map((c) => ({ ...c, runsPerCase: 3 })),
   };
   expect(benchmarkRecord(matching, set(), META).run.drift).toEqual([]);
+  // A judge other than the set's drifts as the agent does.
+  const judged: Aggregate = {
+    ...matching,
+    suite: { ...matching.suite, judgeModel: "claude-sonnet-5-5" },
+  };
+  expect(benchmarkRecord(judged, set(), META).run.drift).toEqual([
+    "judge model claude-sonnet-5-5 (the set names claude-opus-5-5)",
+  ]);
 });
 
 test("SP6-T5 AC-12: the expected figures are distinct hand literals; the Markdown holds fmt of every numeric leaf; the two written files read back as the record; the real reference aggregate reads without refusing, its missing set cases not run, no figure NaN", () => {

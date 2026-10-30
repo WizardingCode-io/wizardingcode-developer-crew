@@ -19,6 +19,6 @@
     "fast-route-overhead": "cost",
     "issue-fast-overhead": "cost"
   },
-  "models": { "agent": "claude-sonnet-5-5", "judge": "claude-fable-5-1" },
+  "models": { "agent": "claude-sonnet-5-5", "judge": "claude-opus-5-5" },
   "runs": 3
 }

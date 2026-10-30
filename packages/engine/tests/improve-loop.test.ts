@@ -76,7 +76,7 @@ test("2026-10-25-005 AC-1 (runtime): the runtime provider adds nothing to the en
     name: "runtime",
     env: {},
     agentModel: "claude-sonnet-5-5",
-    judgeModel: "claude-fable-5-1",
+    judgeModel: "claude-opus-5-5",
     claudeModels: true,
     secrets: [],
   });
@@ -365,7 +365,7 @@ const claude = {
   name: "runtime",
   env: {},
   agentModel: "claude-sonnet-5-5",
-  judgeModel: "claude-fable-5-1",
+  judgeModel: "claude-opus-5-5",
   claudeModels: true,
   secrets: [],
 };

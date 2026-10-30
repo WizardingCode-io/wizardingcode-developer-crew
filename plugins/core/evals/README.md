@@ -21,7 +21,7 @@ It prints the `claude plugin eval` command it runs, which is:
 PATH="$PWD/plugins/core/evals/fixtures/bin:$PWD/plugins/core/bin:$(dirname "$(xcrun --find git)"):$PATH" WIZARDINGCODE_CREW_REPO="$PWD" claude plugin eval plugins/core \
   --scaffold --trust-plugin --no-publish --keep-temp \
   --output-dir plugins/core/evals/results/<UTC stamp>-suite \
-  --model claude-sonnet-5-5 --judge-model claude-fable-5-1 \
+  --model claude-sonnet-5-5 --judge-model claude-opus-5-5 \
   --concurrency 3 \
   --tag cost enforcement method risk stacks gap kind validator judgement team environment priority contracts reception jev issue strategy audit knowledge benchmark packs ui \
   <the tool grant> \

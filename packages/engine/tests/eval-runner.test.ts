@@ -21,6 +21,7 @@ import {
   createRunFolder,
   deniedReferenceReads,
   evalInvocation,
+  JUDGE_MODEL,
   kitEnvironment,
   resultsDir,
   runFolder,
@@ -76,12 +77,12 @@ test("the eval PATH puts the plugin's bin first and, on macOS, the real git next
 test("the suite runs with the judge and the reports; one case runs once, without a baseline, with the same judge", () => {
   const suite = evalInvocation(base).args;
   expect(suite.slice(0, 3)).toEqual(["plugin", "eval", "plugins/core"]);
-  expect(suite.join(" ")).toContain("--judge-model claude-fable-5-1");
+  expect(suite.join(" ")).toContain("--judge-model claude-opus-5-5");
   expect(suite.join(" ")).toContain("--json plugins/core/evals/results/last.json");
   const one = evalInvocation({ ...base, caseName: "false-done" }).args;
   expect(one.join(" ")).toContain("--case false-done --runs 1 --ablation none");
   // One case runs once with no baseline arm, judged by the suite's judge (SP4 Task 6: never a weaker judge).
-  expect(one.join(" ")).toContain("--judge-model claude-fable-5-1");
+  expect(one.join(" ")).toContain("--judge-model claude-opus-5-5");
   expect(one.slice(one.indexOf("--allow-tools"))).toEqual(["--allow-tools", ...ALLOW_TOOLS]);
 });
 
@@ -2539,14 +2540,14 @@ test("CON7-AC-8 (finding 63): the runner caps a case at 5 USD and the suite at n
 test("REL-AC-2 (the user's decision of 2026-10-23): the judge model is the suite's own unless one is given, for a case and for the suite alike", () => {
   const judges = (args: string[]) => args.filter((_, i) => args[i - 1] === "--judge-model");
   expect(judges(evalInvocation({ ...base, caseName: "false-done" }).args)).toEqual([
-    "claude-fable-5-1",
-  ]);
-  expect(judges(evalInvocation(base).args)).toEqual(["claude-fable-5-1"]);
-  const opus = { ...base, judgeModel: "claude-opus-5-5" };
-  expect(judges(evalInvocation({ ...opus, caseName: "false-done" }).args)).toEqual([
     "claude-opus-5-5",
   ]);
-  expect(judges(evalInvocation(opus).args)).toEqual(["claude-opus-5-5"]);
+  expect(judges(evalInvocation(base).args)).toEqual(["claude-opus-5-5"]);
+  const opus = { ...base, judgeModel: "claude-sonnet-5-5" };
+  expect(judges(evalInvocation({ ...opus, caseName: "false-done" }).args)).toEqual([
+    "claude-sonnet-5-5",
+  ]);
+  expect(judges(evalInvocation(opus).args)).toEqual(["claude-sonnet-5-5"]);
   const refused = spawnSync("bun", ["scripts/eval.ts", "--judge-model", "x y"], {
     cwd: join(import.meta.dir, "../../.."),
     encoding: "utf8",
@@ -4099,5 +4100,23 @@ test("2026-10-30-003 AC-2: the estimates carry the ui cases' recorded figures", 
   expect(suite).toContain("docs/evals/2026-10-30-sp9-ui-results.md");
   expect(readFileSync(join(repoRoot, "CLAUDE.md"), "utf8")).toContain(
     "the suite is about 95 USD a run",
+  );
+});
+
+test("2026-10-30-004 AC-1: the llm graders' judge is claude-opus-5-5, by default, in every place a person reads it", () => {
+  expect(JUDGE_MODEL).toBe("claude-opus-5-5");
+  const judges = (args: string[]) => args.filter((_, i) => args[i - 1] === "--judge-model");
+  expect(judges(evalInvocation(base).args)).toEqual(["claude-opus-5-5"]);
+  expect(judges(evalInvocation({ ...base, caseName: "false-done" }).args)).toEqual([
+    "claude-opus-5-5",
+  ]);
+  const claude = readFileSync(join(repoRoot, "CLAUDE.md"), "utf8");
+  expect(claude).toContain(
+    "the llm graders' judge is `claude-opus-5-5` unless `--judge-model` names another",
+  );
+  expect(claude).not.toContain("claude-fable-5-1");
+  expect(readFileSync(`${EVALS}README.md`, "utf8")).toContain("--judge-model claude-opus-5-5");
+  expect(JSON.parse(readFileSync(`${EVALS}benchmark.json`, "utf8")).models.judge).toBe(
+    "claude-opus-5-5",
   );
 });
