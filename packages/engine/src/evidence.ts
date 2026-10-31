@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { type Origin, type OriginItem, rolesAndTasks } from "./analysis.ts";
+import { designScoreLines, type ScoreRecord } from "./design.ts";
 import { UNAVAILABLE } from "./fingerprint.ts";
 import { two } from "./jev.ts";
 import { LockBusy, withLock } from "./lock.ts";
@@ -220,6 +221,8 @@ export interface VerdictInput {
   expectedJudgement?: PlannedJudgement[];
   /** An audit's records as they stand (SP7 §7.5, SP8 Task 5): the run and whether it is at HEAD, the report and whether it is current against its inputs. */
   audit?: { run: boolean; runAtHead: boolean; report: boolean; reportCurrent: boolean };
+  /** Why a new site is not yet at the bar (item 2026-10-30-005, D-5): the design's reasons, already worked out. */
+  design?: readonly string[];
 }
 
 /** An audit as the report shows it (SP8 Task 5): the run's summary, the findings' counts, the report's files, the signature. */
@@ -307,6 +310,7 @@ export function computeVerdict(input: VerdictInput): {
     } else if (record.verdict === "not-run")
       unproven.push(`judgement gate ${gate} not run: ${record.reason ?? "no reason given"}`);
   }
+  unproven.push(...(input.design ?? []));
   // A blocking objection is a reason of its own: open, or bound to a criterion not yet proven (SP2 §8).
   if (input.ledger) {
     for (const o of blockingObjections(input.ledger, work, evidence, policy, ["open", "bound"]))
@@ -453,6 +457,8 @@ export interface ReportOptions {
   ctoPlan?: { path: string; date: string } | null;
   /** The UI evidence's manifest (`review/ui-evidence.json`, SP9 Task 4), read by the caller; the section is drawn from it. */
   uiEvidence?: UiEvidence | null;
+  /** The design review's score, when a new site has one (item 2026-10-30-005). */
+  designScore?: ScoreRecord | null;
 }
 
 /** A table cell from a string a file may have written: one safe line, the bar escaped. */
@@ -523,8 +529,18 @@ export function renderReport(
   policy: Policy,
   options: ReportOptions = {},
 ): string {
-  const { ledger, mail, selfName, analysis, strategy, audit, knowledge, ctoPlan, uiEvidence } =
-    options;
+  const {
+    ledger,
+    mail,
+    selfName,
+    analysis,
+    strategy,
+    audit,
+    knowledge,
+    ctoPlan,
+    uiEvidence,
+    designScore,
+  } = options;
   const lines: string[] = [];
   lines.push(`# Report: ${work.title}`, "");
   lines.push(`- Work: \`${work.id}\``);
@@ -696,6 +712,7 @@ export function renderReport(
   }
   // The UI evidence the e2e run graded (SP9 Task 4), between the gates and the judgement that reads it.
   if (uiEvidence) lines.push("", ...uiEvidenceLines(uiEvidence));
+  if (designScore) lines.push("", ...designScoreLines(designScore));
   // The rulings as the judge gave them; a finding outside the change is named as such, never hidden (ADR 0006).
   const judgement = evidence.judgement ?? [];
   if (judgement.length) {

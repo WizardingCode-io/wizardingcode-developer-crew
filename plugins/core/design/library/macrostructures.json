@@ -1,0 +1,86 @@
+[
+ {
+  "id": "macro-feature-stack",
+  "source": "codeswithroh/tastemaker",
+  "licence": "MIT",
+  "name": "Feature Stack",
+  "text": "Hero, then features revealed one full-width band at a time down the scroll, each an alternating text/visual split. The workhorse product page — but built as bands, not a 3-up card grid, and every band leads with a real mockup/chart, not a paragraph. When: a product with 3-6 distinct capabilities that each deserve a real visual. Mood: any; the default reach for premium/technical SaaS."
+ },
+ {
+  "id": "macro-bento-showcase",
+  "source": "codeswithroh/tastemaker",
+  "licence": "MIT",
+  "name": "Bento Showcase",
+  "text": "An asymmetric grid of mixed-span tiles (1×1, 2×1, 2×2) where each tile shows one capability as a small live-looking UI fragment. Visual rhythm comes from tile size, not repetition. When: a product with many small features that are more compelling shown-at-a-glance than explained in sequence. Mood: premium, technical, playful."
+ },
+ {
+  "id": "macro-editorial-index",
+  "source": "codeswithroh/tastemaker",
+  "licence": "MIT",
+  "name": "Editorial Index",
+  "text": "Reads like a well-set magazine or a studio's index page: a masthead, a numbered or categorized list of work/sections, generous type, hairline rules. Content-led, not conversion-led. When: portfolios, agencies, publications, \"this is who we are\" pages. Mood: elegant, premium."
+ },
+ {
+  "id": "macro-long-scroll-narrative",
+  "source": "codeswithroh/tastemaker",
+  "licence": "MIT",
+  "name": "Long-Scroll Narrative",
+  "text": "the narrative arc from  told top to bottom, one full-section beat at a time, with a scroll-linked reveal between them. The page is a story, not a menu — this is the macrostructure where the arc is most visually literal, but the arc itself applies to every macrostructure, not just this one. When: a non-obvious product that needs explaining before the pitch lands; a manifesto; a launch. Mood: any; strong for warm, elegant, technical."
+ },
+ {
+  "id": "macro-stat-led",
+  "source": "codeswithroh/tastemaker",
+  "licence": "MIT",
+  "name": "Stat-Led",
+  "text": "A single dominant number or a tight row of real metrics is the hero and the spine of the page; everything else supports the figures. When: the product's story is genuinely quantitative and the numbers are real (never invented — see the honesty rule below). Mood: premium, technical."
+ },
+ {
+  "id": "macro-gallery-grid",
+  "source": "codeswithroh/tastemaker",
+  "licence": "MIT",
+  "name": "Gallery Grid",
+  "text": "The work is the pitch: a grid of real photography, product shots, or case tiles fills the page, chrome kept minimal. When: commerce, photography, food, travel, physical product, anything where the imagery sells. Mood: elegant, warm, playful."
+ },
+ {
+  "id": "macro-product-demo-workbench",
+  "source": "codeswithroh/tastemaker",
+  "licence": "MIT",
+  "name": "Product Demo / Workbench",
+  "text": "The hero is the product in use (a real annotated mockup, an interactive-looking capture, a clipped-by-viewport demo), and the page is organized around doing, not describing. When: dev tools, apps, anything where seeing it work is the strongest argument. Mood: technical, premium."
+ },
+ {
+  "id": "macro-split-diptych",
+  "source": "codeswithroh/tastemaker",
+  "licence": "MIT",
+  "name": "Split Diptych",
+  "text": "The page runs as a two-column composition — a persistent statement/nav column beside a scrolling content column, or a hard left/right split fold. When: studios, single-voice products, anything wanting an art-directed rather than stacked feel. Mood: elegant, premium, playful."
+ },
+ {
+  "id": "macro-conversational-faq",
+  "source": "codeswithroh/tastemaker",
+  "licence": "MIT",
+  "name": "Conversational FAQ",
+  "text": "The page is built around real questions the audience actually asks, answered directly, with proof and CTA folded into the answers. When: products fighting a specific objection or a trust gap (regulated, high-consideration, \"is this legit\"). Mood: warm, technical."
+ },
+ {
+  "id": "macro-manifesto",
+  "source": "codeswithroh/tastemaker",
+  "licence": "MIT",
+  "name": "Manifesto",
+  "text": "Type-forward, few images, one strong point of view carried by big statements and short lines. The restraint is the design. When: brand-led launches, opinionated products, a studio staking a position. Mood: elegant, premium, technical."
+ },
+ {
+  "id": "macro-catalogue",
+  "source": "codeswithroh/tastemaker",
+  "licence": "MIT",
+  "name": "Catalogue",
+  "text": "A structured, almost tabular listing (products, plans, specs, releases) presented with editorial care rather than as a bare table. When: commerce with many SKUs, pricing-as-page, changelogs, spec-heavy products. Mood: technical, elegant."
+ },
+ {
+  "id": "macro-poster-fold",
+  "source": "codeswithroh/tastemaker",
+  "licence": "MIT",
+  "name": "Poster Fold",
+  "text": "One full-bleed art-directed fold (a photograph, a hand-built illustration, a bold type composition) carries the whole first screen; the page below becomes something quieter. When: the brand or a single image is the message — events, fashion, a hero launch moment. Mood: elegant, playful, warm."
+ }
+]

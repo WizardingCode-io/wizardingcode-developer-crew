@@ -35,6 +35,43 @@ import {
   registerTampered,
 } from "./decisions.ts";
 import {
+  compDir,
+  DESIGN_FILE_MAX,
+  type DealRecord,
+  dealDirections,
+  designProblems,
+  extendRefusal,
+  freshSeed,
+  INVENTIONS,
+  type Invention,
+  loadLibrary,
+  parseScore,
+  QUERY_MAX,
+  queryRefusal,
+  REASON_MAX,
+  readDeal,
+  readHistory,
+  readScore,
+  readSurface,
+  recentDealt,
+  recordSurface,
+  redrawSlot,
+  SURFACES,
+  type Surface,
+  saveComp,
+  saveDeal,
+  saveScore,
+  validItemId,
+  validRegions,
+  validSlot,
+} from "./design.ts";
+import {
+  readPictures,
+  savePicture,
+  savePictureResults,
+  searchPictures,
+} from "./design-pictures.ts";
+import {
   ENVIRONMENT_COMMANDS,
   ENVIRONMENT_TIMEOUT_MS,
   type EnvironmentCommand,
@@ -63,9 +100,11 @@ import {
   createFreeFile,
   createFreeFiles,
   ensureDir,
+  errorText,
   jsonText,
   nowIso,
   readJson,
+  readRegularText,
   readText,
   readTextQuietly,
   sha256,
@@ -238,7 +277,9 @@ import {
   questionLine,
   questionsSorted,
 } from "./questions.ts";
+import { quotedText } from "./quote.ts";
 import { fetchSource, findQuote, parseFacts } from "./research.ts";
+import { runCommand } from "./run.ts";
 import { withRunning } from "./running.ts";
 import {
   checkRuntime,
@@ -253,6 +294,7 @@ import {
   type Scope,
 } from "./runtimes.ts";
 import { scanText } from "./secrets.ts";
+import { quoteWord } from "./shell-words.ts";
 import { parseSource, sourceLine } from "./source.ts";
 import {
   adoptMainFiles,
@@ -456,6 +498,7 @@ const KNOWN_FLAGS: Record<string, readonly string[]> = {
   classify: ["answers"],
   kind: ["reason"],
   strategy: [],
+  design: ["invention", "seed", "redraw", "reason", "regions"],
   audit: ["only"],
   criteria: ["kind", "contract", "by", "screen"],
   decision: ["default"],
@@ -1557,6 +1600,7 @@ function reportOf(env: Env, work: WorkItem, evidence: Evidence): string {
       ? latestPlan(env.paths.userDir, env.mail.self.workspace)
       : null,
     uiEvidence: readUiEvidence(env.paths, work.id),
+    designScore: readScore(env.paths, work.id),
   });
 }
 
@@ -2916,6 +2960,222 @@ async function researchCommand(
   );
 }
 
+/** `crew design <id> surface|check|deal|choose`: what a new site is built from (item 2026-10-30-005). */
+async function designCommand(env: Env, args: string[], parsed: Parsed): Promise<Outcome> {
+  const usage =
+    'usage: crew design <id> surface <persuade|operate|read|experience> --invention <extend|surface|world> | check | deal [--seed n] [--redraw <slot> --reason "<why>"] | choose <n> | pictures "<query>" | picture <n> | score | comp generate "<prompt>" | comp approve <n> --regions <file>';
+  const id = args[0] ?? "";
+  if (!validItemId(id)) return refuse(usage);
+  const opened = openForChange(env, id);
+  if (isOutcome(opened)) return opened;
+  const { work } = opened;
+  const flag = (name: string): string | undefined => {
+    const value = parsed.flags[name];
+    return typeof value === "string" ? value : undefined;
+  };
+  switch (args[1]) {
+    case "surface": {
+      const surface = args[2] as Surface;
+      const invention = flag("invention") as Invention;
+      if (!SURFACES.includes(surface) || !INVENTIONS.includes(invention)) return refuse(usage);
+      if (invention === "extend") {
+        const why = extendRefusal(env.paths, work);
+        if (why) return refuse(why);
+      }
+      const record = recordSurface(env.paths, work.id, surface, invention, nowIso());
+      return ok(`${work.id}: surface ${surface}, invention ${invention}`, { ...record });
+    }
+    case "check": {
+      const record = readSurface(env.paths, work.id);
+      if (!record) return refuse(`no surface recorded (crew design ${work.id} surface …)`);
+      const problems = designProblems(env.paths, work.id, record);
+      if (problems.length) return refuse(problems.map((p) => `${p.rule}: ${p.text}`).join("\n"));
+      return ok(`${work.id}: the design files hold their shape (${record.invention})`, {
+        ...record,
+      });
+    }
+    case "deal": {
+      const slot = flag("redraw");
+      const reason = flag("reason") ?? "";
+      if (slot !== undefined) {
+        if (!validSlot(slot)) return refuse("unknown slot");
+        if (!reason.trim()) return refuse('a redraw needs its reason: --reason "<why>"');
+      }
+      if (reason.length > REASON_MAX) return refuse(`--reason is over ${REASON_MAX} characters`);
+      const seedFlag = flag("seed");
+      const seed = seedFlag === undefined ? freshSeed() : Number(seedFlag);
+      if (!Number.isInteger(seed) || seed < 1)
+        return refuse("--seed takes a positive whole number");
+      const library = loadLibrary();
+      const history = readHistory(env.paths.userDir);
+      const earlier = readDeal(env.paths, work.id);
+      const deal: DealRecord = earlier ?? {
+        ...dealDirections(library, { seed, recent: recentDealt(history.rows) }),
+        redraws: [],
+        chosen: null,
+      };
+      const next = slot !== undefined ? redrawSlot(library, deal, slot, reason, nowIso()) : deal;
+      saveDeal(env.paths, work.id, next);
+      const lines = next.options.map(
+        (o, i) =>
+          `${i + 1}. direction ${o.direction}, hero ${o.hero}, type ${o.type}, palette ${o.palette}, structure ${o.macrostructure}, grammar ${o.grammar}`,
+      );
+      return ok(
+        [`deal ${next.seed}:`, ...lines, ...(history.warning ? [history.warning] : [])].join("\n"),
+        { ...next },
+      );
+    }
+    case "choose": {
+      const deal = readDeal(env.paths, work.id);
+      const n = Number(args[2]);
+      if (!deal) return refuse(`no deal (crew design ${work.id} deal)`);
+      if (!Number.isInteger(n) || n < 1 || n > deal.options.length)
+        return refuse(`choose takes 1 to ${deal.options.length}`);
+      saveDeal(env.paths, work.id, { ...deal, chosen: n - 1 });
+      return ok(`${work.id}: direction ${deal.options[n - 1]?.direction} chosen`, {
+        chosen: n - 1,
+      });
+    }
+    case "pictures": {
+      const query = args[2] ?? "";
+      if (!query.trim() || query.length > QUERY_MAX)
+        return refuse(`a query of 1 to ${QUERY_MAX} characters`);
+      if (!env.policy.design.pictures)
+        return ok(
+          "the search of the open archives is off: the user sets design.pictures in the policy; the code path stands",
+          { status: "off" },
+        );
+      const leaves = queryRefusal(env.paths, work.id, query);
+      if (leaves) return refuse(leaves);
+      const found = await searchPictures(query);
+      if (found.status === "ok") savePictureResults(env.paths, work.id, found.results);
+      if (found.status === "unavailable")
+        return ok(`pictures: unavailable (${found.reason ?? "no network"}); nothing fails`, {
+          ...found,
+        });
+      const lines = found.results.map(
+        (r, i) =>
+          `${i + 1}. ${quotedText(r.title)} · ${quotedText(r.creator)} · ${r.licence} · ${r.archive} · ${quotedText(r.page)}`,
+      );
+      return ok(lines.join("\n") || "pictures: no result under an allowed licence", { ...found });
+    }
+    case "picture": {
+      const results = readPictures(env.paths, work.id);
+      const picked = results?.found[Number(args[2]) - 1];
+      if (!results || !picked) return refuse("crew design <id> picture <n>, after a search");
+      try {
+        const saved = await savePicture(env.paths, work.id, picked);
+        return ok(`saved ${saved}: ${picked.licence}, credit ${quotedText(picked.creator)}`, {
+          file: saved,
+        });
+      } catch (error) {
+        return ok(`pictures: not saved (${errorText(error)}); nothing fails`, {
+          status: "unavailable",
+        });
+      }
+    }
+    case "score": {
+      const text = readTextQuietly(
+        join(workDir(env.paths, work.id), "review", "ui-ux.findings.md"),
+      );
+      if (text === null) return refuse("no ui-ux findings yet: run the review first");
+      const parsedScore = parseScore(text);
+      if (!parsedScore)
+        return refuse(
+          "the ui-ux findings hold no score line (score: n · caps: … · disposition: …)",
+        );
+      const fingerprint = assess(
+        env.paths,
+        work,
+        env.profile,
+        env.policy,
+        env.tampered,
+      ).currentFingerprint;
+      const round = (readScore(env.paths, work.id)?.round ?? 0) + 1;
+      saveScore(env.paths, work.id, { ...parsedScore, fingerprint, at: nowIso(), round });
+      const next =
+        parsedScore.disposition === "ship"
+          ? "at the bar"
+          : `not at the bar: apply the material fixes in the rubric's order, recapture and review again; two rounds at least with nobody present`;
+      return ok(
+        `${work.id}: design score ${parsedScore.score}, round ${round}, ${parsedScore.disposition}${parsedScore.caps.length ? `, caps: ${parsedScore.caps.join(", ")}` : ""}; ${next}`,
+        { ...parsedScore, round },
+      );
+    }
+    case "comp": {
+      if (args[2] === "generate") {
+        const tool = env.policy.design.imageTool;
+        // A placeholder inside the tool's own quotes would hand the shell the prompt unquoted.
+        if (tool && /["'][^"']*\{(?:prompt|out)\}[^"']*["']/.test(tool))
+          return refuse(
+            "design.imageTool: leave {prompt} and {out} unquoted; the engine quotes them",
+          );
+        const prompt = args[3] ?? "";
+        if (!prompt.trim() || prompt.length > REASON_MAX)
+          return refuse(`a prompt of 1 to ${REASON_MAX} characters`);
+        if (!tool)
+          return ok("no image tool in the policy (design.imageTool): the code path stands", {
+            status: "no tool",
+          });
+        const dir = compDir(env.paths, work.id);
+        ensureDir(dir);
+        for (const n of [1, 2, 3]) {
+          const out = join(dir, `comp-${n}.png`);
+          const command = tool
+            .split(/(\{prompt\}|\{out\})/)
+            .map((part) =>
+              part === "{prompt}"
+                ? quoteWord(`${prompt} (composition ${n} of 3)`)
+                : part === "{out}"
+                  ? quoteWord(out)
+                  : part,
+            )
+            .join("");
+          const run = await runCommand(command, {
+            cwd: env.paths.root,
+            timeoutMs: 300000,
+            logPath: join(dir, `comp-${n}.log`),
+          });
+          if (run.exit !== 0)
+            return refuse(`the image tool failed on comp ${n} (exit ${run.exit})`);
+        }
+        return ok(
+          `${work.id}: three comps under design/comps/; show them, then crew design ${work.id} comp approve <n> --regions <file>`,
+        );
+      }
+      if (args[2] === "approve") {
+        const n = Number(args[3]);
+        if (![1, 2, 3].includes(n)) return refuse("approve takes 1 to 3");
+        const comp = `comp-${n}.png`;
+        if (!existsSync(join(compDir(env.paths, work.id), comp)))
+          return refuse(`no ${comp} (crew design ${work.id} comp generate "<prompt>")`);
+        const file = flag("regions");
+        if (!file)
+          return refuse(
+            "approve needs --regions <file>: each region's id and box in percent of the first screen",
+          );
+        const regionsPath = resolve(env.paths.root, file);
+        if (!regionsPath.startsWith(env.paths.root + sep))
+          return refuse("--regions names a file in the project");
+        const text = readRegularText(regionsPath, DESIGN_FILE_MAX);
+        let body: unknown = null;
+        try {
+          body = text === null ? null : JSON.parse(text);
+        } catch {
+          body = null;
+        }
+        const regions = validRegions(body);
+        if (!regions) return refuse("the regions file holds no valid regions");
+        saveComp(env.paths, work.id, comp, regions);
+        return ok(`${work.id}: ${comp} approved with ${regions.length} regions`);
+      }
+      return refuse(usage);
+    }
+    default:
+      return refuse(usage);
+  }
+}
+
 async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
   const [command, ...args] = parsed.positional;
   if (parsed.flags.version || command === "version") return ok(VERSION, { version: VERSION });
@@ -3907,6 +4167,8 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         { hash, reviewer, claims, rows },
       );
     }
+    case "design":
+      return designCommand(env, args, parsed);
     case "kind": {
       // A feature raised to a new project while its spec is open (SP7 §7.3, SP8 decision 2): the
       // lead's call, recorded as the agent's.

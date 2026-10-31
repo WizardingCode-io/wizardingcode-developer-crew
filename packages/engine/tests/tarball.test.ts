@@ -44,6 +44,8 @@ test("SP6-T4 AC-6: buildTarball writes the archive of plugins/core under one fol
     `${TOP}/.claude-plugin`,
     `${TOP}/agents`,
     `${TOP}/bin`,
+    // 2026-10-30-005 edits this list: the open design library ships with the plugin.
+    `${TOP}/design`,
     `${TOP}/dist`,
     // 2026-10-29-001 edits this list: the e2e fixture ships with the plugin.
     `${TOP}/e2e`,

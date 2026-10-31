@@ -21,6 +21,7 @@ Text only, in this shape, nothing before or after it:
 # ui-ux findings for <id>
 reviewer: review-ui-ux
 read: <n> images, <n> files, contract: <DESIGN.md | none>, audit: <captured | not captured>
+(only when the prompt names rubrics/design-finish.md) score: <n> · caps: <none or a comma list> · disposition: <recapture|rebuild|fix|ship>
 
 ## Findings
 - F-1 · defect · <path>:<line> · <one sentence: the page and state, what the criterion or the standard says, what the evidence shows> (<evidence file>)
@@ -41,6 +42,6 @@ read: <n> images, <n> files, contract: <DESIGN.md | none>, audit: <captured | no
 - The file and line of a finding is the template, component or stylesheet line that draws what the evidence shows wrong; every finding names its evidence file in parentheses; a finding with neither goes under "Not answerable".
 - A declared state the manifest lists as missing is "Not answerable" for its questions: the judge reads it as a defect of the capture spec, not of the page; an undeclared reachable branch is a defect of the spec.
 - Copy is judged in the project's language and voice as the neighbouring pages have it: a string in the wrong language is a defect, a sentence longer than needed is advisory.
-- You give no verdict line: the ruling is the judge's, from your findings against the rubric.
+- You give no verdict line: the ruling is the judge's, from your findings against the rubric. The score line of `rubrics/design-finish.md`, when the prompt names it, is the finish review's reading, not a verdict.
 - If the manifest and the evidence folder are both empty or missing, return the header and one line under "Not answerable": `all · no evidence`; the session records the gate as not run.
 - You never write files, run commands or edit code. The session saves your answer as `.crew/work/<id>/review/ui-ux.findings.md`. You see nothing of the conversation.

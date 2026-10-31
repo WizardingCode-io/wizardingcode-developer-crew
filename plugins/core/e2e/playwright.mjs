@@ -22,9 +22,12 @@ import { dirname, join } from "node:path";
 import {
   appMeasures,
   brokenImages,
+  crewMotionInit,
   fontsNotLoaded,
   hiddenText,
   measureOverflow,
+  motionReading,
+  pageProbe,
   textBlocks,
 } from "./measure.mjs";
 
@@ -89,6 +92,8 @@ export function withConsole(base) {
     page: async ({ page }, use) => {
       const file = consoleFile();
       if (file) attachConsole(page, file);
+      // The moving elements and the title's timing are read from before the page's own scripts (item 2026-10-30-005).
+      if (uiDir()) await page.addInitScript(crewMotionInit).catch(() => {});
       await use(page);
     },
   });
@@ -158,6 +163,7 @@ function readPlan() {
     if (typeof v.name !== "string" || !NAME.test(v.name)) throw planError("name", v.name, "[a-z0-9-]+");
     return { name: v.name, width: checkSize("width", v.width), height: checkSize("height", v.height) };
   });
+  const fullPage = raw.fullPage === true;
   const schemes = raw.colorSchemes === undefined ? ["light"] : raw.colorSchemes;
   if (!Array.isArray(schemes) || schemes.length === 0) {
     throw planError("colorSchemes", JSON.stringify(schemes), "light or dark");
@@ -165,7 +171,7 @@ function readPlan() {
   for (const scheme of schemes) {
     if (!SCHEMES.includes(scheme)) throw planError("colorSchemes", scheme, "light or dark");
   }
-  return { viewports, schemes };
+  return { viewports, schemes, fullPage };
 }
 
 /**
@@ -248,8 +254,10 @@ function checkClash(dir, name, file, pair) {
   throw new Error(`name clash: ${name} is ${describe(owner)} already; ${describe(pair)} would overwrite it: rename one`);
 }
 
-async function shoot(page, selector, path) {
-  const png = selector ? await page.locator(selector).screenshot() : await page.screenshot();
+async function shoot(page, selector, path, fullPage = false) {
+  const png = selector
+    ? await page.locator(selector).screenshot()
+    : await page.screenshot({ fullPage });
   writeFileSync(path, png);
 }
 
@@ -414,6 +422,22 @@ async function sampleAnimations(page, onlyRunning) {
 }
 
 /** One measurement of `measure.mjs` run in the page with its `document` and `window`; null when the page cannot say. */
+/** Down the page a screen at a time and back to the top, so what enters on scroll has entered before a measure. */
+async function scrollThrough(page) {
+  try {
+    const height = await page.evaluate("Math.max(document.documentElement.scrollHeight, innerHeight)");
+    const step = page.viewportSize()?.height ?? 800;
+    for (let y = 0, n = 0; y < height && n < 11; y += step, n += 1) {
+      await page.evaluate(`window.scrollTo(0, ${y})`);
+      await page.waitForTimeout(300);
+    }
+    await page.evaluate("window.scrollTo(0, 0)");
+    await page.waitForTimeout(100);
+  } catch {
+    // A page that cannot scroll is measured as it stands.
+  }
+}
+
 async function inPage(page, fn) {
   try {
     return await page.evaluate(`(${fn.toString()})(document, window)`);
@@ -501,10 +525,17 @@ export async function capture(page, pageName, state, options = {}) {
       await page.setViewportSize({ width: viewport.width, height: viewport.height });
       await page.emulateMedia({ colorScheme: "light" });
       const light = `${base}@${viewport.width}.png`;
-      await shoot(page, selector, join(dir, light));
+      // A new site is reviewed whole (item 2026-10-30-005): what enters on scroll has entered, the whole page in the image.
+      const whole = plan.fullPage === true && state === "default" && !selector;
+      if (whole) await scrollThrough(page);
+      await shoot(page, selector, join(dir, light), whole);
       // The overflow at this width and, at the narrowest, the app measures (2026-10-29-001, P-1, P-3).
       const overflow = await inPage(page, measureOverflow);
       if (viewport === viewports[0]) app = await inPage(page, appMeasures);
+      // A site's own proportions at this width, after a scroll through it so what enters on scroll has entered.
+      if (viewport === widest) await scrollThrough(page);
+      const probe = selector ? null : await inPage(page, pageProbe);
+      if (probe && viewport === widest) probe.motion = await inPage(page, motionReading);
       let darkFile = null;
       if (dark && viewport === widest) {
         await page.emulateMedia({ colorScheme: "dark" });
@@ -518,6 +549,7 @@ export async function capture(page, pageName, state, options = {}) {
         light,
         dark: darkFile,
         ...(overflow ? { overflow } : {}),
+        ...(probe ? { page: probe } : {}),
       });
     }
     const entries = log.entries.slice(log.cursor);

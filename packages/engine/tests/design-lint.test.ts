@@ -461,6 +461,23 @@ test("SP9-T6 AC-7: the inventory lists every animated declaration with its kind,
     "copy/placeholder",
     "craft/glass",
     "layout/100vh",
+    // 2026-10-30-005 edits this list: the rules a new site is held to.
+    "font/overused",
+    "colour/ai-palette",
+    "label/eyebrow",
+    "label/micro",
+    "label/numbered",
+    "craft/costume-mono",
+    "link/dead",
+    "a11y/missing-alt",
+    "craft/side-border",
+    "copy/stock-phrase",
+    "copy/generic-action",
+    "craft/gradient",
+    "craft/resting-shadow",
+    "craft/hairline",
+    "motion/looping",
+    "a11y/no-zoom",
   ]);
   // 2026-10-29-001: the prose scan sits between them.
   expect(GATE_NAMES.indexOf("design-lint")).toBe(GATE_NAMES.indexOf("prose") + 1);

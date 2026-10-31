@@ -26,3 +26,7 @@ Three shapes were on the table: invoke the installed plugins (impeccable, taste,
 ## Note of 2026-10-29 (item 2026-10-29-001, the user's decision D-3)
 
 Item 2026-10-29-001 (no AI slop) measured P-4 (the writing standard) and P-6 (the code-quality rubric's questions 7 to 11) before the change, each with a kit case red on the base text and green on the item's (`docs/evals/2026-10-29-no-slop-results.md`). Question 11 of the UI/UX rubric (taste-skill's squint, edge and sameness passes) entered before its case, by the user's decision D-3: the ui-ux gate needs a browser's captures, which the kit's sandbox has not. SP9 Task 14's `ui-ux-generic-tells` measures it. That is the one departure from rule 3 here, and it is said on the record.
+
+## Note of 2026-10-30 (item 2026-10-30-005)
+
+The art-direction dealer, the Awwwards-weighted score and the image search that item 2026-10-29-001 listed as "not taken" enter by the user's decisions D-1 to D-5, and ADR 0018 says how. What a source holds now leaves it only by a decision on record in `docs/sources/ledger.json`.

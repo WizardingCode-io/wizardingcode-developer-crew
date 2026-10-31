@@ -1,0 +1,120 @@
+{
+ "note": "Open design data vendored at build time (ADR 0017, item 2026-10-30-005). Each source's MIT licence applies to its rows; the notices are below. No code runs from here and nothing is fetched. Photos and third-party site names are left out; type sizes are brought to the crew's proportion limits.",
+ "files": [
+  {
+   "file": "directions.json",
+   "rows": 16,
+   "sha256": "434d83074e9abe69d0656dbfb46db19c7e3064ccc18323559166bdd70a7d88c5",
+   "sources": [
+    {
+     "source": "Leonxlnx/taste-skill",
+     "licence": "MIT",
+     "commit": "b9ca2fd"
+    }
+   ]
+  },
+  {
+   "file": "heroes.json",
+   "rows": 33,
+   "sha256": "6e487215e6402c864dfb0b67dc59574f487d7d3ebad06fda7f4da8639022b486",
+   "sources": [
+    {
+     "source": "Leonxlnx/taste-skill",
+     "licence": "MIT",
+     "commit": "b9ca2fd"
+    }
+   ]
+  },
+  {
+   "file": "sections.json",
+   "rows": 166,
+   "sha256": "6dff964adada9617bb8adbcac529794b073b71a5614af8ea4c4dd71305dcf5dd",
+   "sources": [
+    {
+     "source": "Leonxlnx/taste-skill",
+     "licence": "MIT",
+     "commit": "b9ca2fd"
+    }
+   ]
+  },
+  {
+   "file": "palettes.json",
+   "rows": 56,
+   "sha256": "dda851adda42f250fb90c23ae44ed69c96ae9d99432411002fb2043fbcea75b7",
+   "sources": [
+    {
+     "source": "Leonxlnx/taste-skill",
+     "licence": "MIT",
+     "commit": "b9ca2fd"
+    }
+   ]
+  },
+  {
+   "file": "type.json",
+   "rows": 42,
+   "sha256": "a8dee039b0271548adab91577b581fe64416c3e0c25201c9348d7c395c53ac83",
+   "sources": [
+    {
+     "source": "Leonxlnx/taste-skill",
+     "licence": "MIT",
+     "commit": "b9ca2fd"
+    }
+   ]
+  },
+  {
+   "file": "motions.json",
+   "rows": 18,
+   "sha256": "0f2bda6f4bd5fdf477fd780b45adb5a7cb6141ebfa77293c87118ee411f3a62a",
+   "sources": [
+    {
+     "source": "Leonxlnx/taste-skill",
+     "licence": "MIT",
+     "commit": "b9ca2fd"
+    }
+   ]
+  },
+  {
+   "file": "recipes.json",
+   "rows": 21,
+   "sha256": "50d292e217e6f71f631fd491a66a6f652f3a0d8503a1304b63a5e140bc75d5f9",
+   "sources": [
+    {
+     "source": "ConardLi/garden-skills",
+     "licence": "MIT",
+     "commit": "2b9a893"
+    }
+   ]
+  },
+  {
+   "file": "grammars.json",
+   "rows": 7,
+   "sha256": "4690dd79efe165ed561d1733e29efc8119db0275a4f3dbd50c94ec825af190f8",
+   "sources": [
+    {
+     "source": "nateherkai/scroll-craft",
+     "licence": "MIT",
+     "commit": "75d81f7"
+    }
+   ]
+  },
+  {
+   "file": "macrostructures.json",
+   "rows": 12,
+   "sha256": "c0ac28960a43c39b4649b156ac3f63a9cca944605fbc4ee08402e0faa1018e7b",
+   "sources": [
+    {
+     "source": "codeswithroh/tastemaker",
+     "licence": "MIT",
+     "commit": "792a28a"
+    }
+   ]
+  }
+ ],
+ "copyright": {
+  "Leonxlnx/taste-skill": "Copyright (c) 2026 Leonxlnx",
+  "ConardLi/garden-skills": "Copyright (c) ConardLi",
+  "nateherkai/scroll-craft": "Copyright (c) nateherkai",
+  "codeswithroh/tastemaker": "Copyright (c) codeswithroh"
+ },
+ "licence": "Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the Software), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions: The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software. THE SOFTWARE IS PROVIDED AS IS, WITHOUT WARRANTY OF ANY KIND."
+}

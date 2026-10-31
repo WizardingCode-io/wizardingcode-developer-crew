@@ -166,3 +166,50 @@ test.skipIf("skip" in found)(
   },
   60_000,
 );
+
+test.skipIf("skip" in found)(
+  "item 2026-10-30-005: a plan with fullPage captures the default state whole, and another state as the viewport",
+  async () => {
+    if ("skip" in found) return;
+    const { capture } = (await import(MODULE)) as {
+      capture: (page: unknown, p: string, s: string) => Promise<unknown>;
+    };
+    const root = tempDir();
+    const ui = join(root, "review", "ui");
+    const plan = join(root, "ui-plan.json");
+    writeFileSync(
+      plan,
+      JSON.stringify({ viewports: [{ name: "wide", width: 1000, height: 600 }], fullPage: true }),
+    );
+    writeFileSync(
+      join(root, "long.html"),
+      '<!doctype html><body style="margin:0"><h1 style="height:2400px">Long</h1></body>',
+    );
+    const previous = {
+      dir: process.env.WIZARDINGCODE_CREW_UI_DIR,
+      plan: process.env.WIZARDINGCODE_CREW_UI_PLAN,
+    };
+    process.env.WIZARDINGCODE_CREW_UI_DIR = ui;
+    process.env.WIZARDINGCODE_CREW_UI_PLAN = plan;
+    const own = await launch();
+    if ("skip" in own) return;
+    const page = await own.browser.newPage();
+    try {
+      await page.goto(pathToFileURL(join(root, "long.html")).href);
+      await capture(page, "long", "default");
+      await capture(page, "long", "error");
+      expect(
+        pngSize(readFileSync(join(ui, "long-default@1000.png"))).height,
+      ).toBeGreaterThanOrEqual(2400);
+      expect(pngSize(readFileSync(join(ui, "long-error@1000.png"))).height).toBe(600);
+    } finally {
+      await page.close();
+      if (previous.dir === undefined) delete process.env.WIZARDINGCODE_CREW_UI_DIR;
+      else process.env.WIZARDINGCODE_CREW_UI_DIR = previous.dir;
+      if (previous.plan === undefined) delete process.env.WIZARDINGCODE_CREW_UI_PLAN;
+      else process.env.WIZARDINGCODE_CREW_UI_PLAN = previous.plan;
+      await own.browser.close();
+    }
+  },
+  60000,
+);

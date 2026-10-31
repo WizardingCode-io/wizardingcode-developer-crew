@@ -9,6 +9,7 @@ import {
   personalDataTerms,
   riskAreasForPaths,
 } from "./classify.ts";
+import { designReasons, readScore, readSurface } from "./design.ts";
 import { runDesignLint } from "./design-lint.ts";
 import { proposedByPack } from "./detect/index.ts";
 import { runE2e } from "./e2e.ts";
@@ -858,6 +859,11 @@ export async function runGates(
       ledger,
       currentFingerprint,
       tampered,
+      design: designReasons(
+        readSurface(paths, work.id),
+        readScore(paths, work.id),
+        currentFingerprint,
+      ),
     });
   // Saved into the evidence as it stands now, under the lock (finding 81): the runs and the stamp
   // are this run's, the test-first and the roles' records are whatever landed meanwhile, and the
@@ -891,6 +897,8 @@ export async function runGates(
 }
 
 export interface Assessment {
+  /** Why a new site is not yet at the bar (item 2026-10-30-005). */
+  design?: readonly string[];
   evidence: Evidence;
   verdict: "proven" | "unproven";
   unproven: string[];
@@ -963,6 +971,11 @@ export function assess(
       currentFingerprint,
       ledger: led.ledger,
       tampered: tampered || read.tampered || led.tampered,
+      design: designReasons(
+        readSurface(paths, work.id),
+        readScore(paths, work.id),
+        currentFingerprint,
+      ),
       audit: {
         run: audit.run !== null,
         runAtHead: audit.runAtHead,
@@ -994,6 +1007,7 @@ export function reassess(a: AssessmentInputs, work: WorkItem, policy: Policy): A
     tampered: a.tampered,
     audit: a.audit,
     policy,
+    ...(a.design ? { design: a.design } : {}),
   });
   return { ...a, ...verdict };
 }

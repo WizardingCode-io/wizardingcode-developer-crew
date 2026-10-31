@@ -1671,3 +1671,12 @@ Verdicts agree at every effort. Upheld findings: `high` reproduced Task 6's and 
 - Expected: `Proven` on a route with leads says what is still owed, or the verdict reads the validations the route asks for; an interpreter's script is named among what the phase rule cannot read.
 - Evidence: the traces of those two runs, whose last status lines read `Proven:` and whose endings name the conclave phase.
 - Outcome: open.
+
+### 210. Three whole sites on the design skills end different from each other, and none reaches the bar
+
+- Date: 2026-10-31. Project: this repository, the kit's sandbox, item `2026-10-30-005`. Category: `friction`. Severity: high.
+- What happened: on 0.16.0 three unlike clients gave one cream-and-rust look, and two ended proven. On the item's method the pages are unlike each other and none reaches 8.5: scores 7.5 and 7.8 at best, one session stopped on a decision the validator should have taken, and one site timed out at the kit's 3600 s. Whole sites cost 2 to 18 USD a run.
+- Expected: a site at the user's bar of 10K, proven with nobody present.
+- Evidence: `docs/evals/2026-10-31-site-results.md`, which also lists what no run measured (Opus, a client's real pictures, the last engine change).
+- Outcome: open. Released with the bar active by the user's decision D-7 of that item, so a new site stays not proven below it. Next: a real project in Opus with real pictures, the fix rounds exercised, and the case's time and cost.
+

@@ -12,16 +12,16 @@ The `crew` command is the engine: it keeps the state in `.crew/work/<id>/`, reco
 | Phase | What you do | Command |
 | :- | :- | :- |
 | Receive | Answer the typed questions, ask what is missing, write the brief; a ticket or a document is a source: `references/receive.md` first, every route | `crew start "<request>" --answers '<json>' [--source '<json>']` |
-| Recognize | Read the profile; propose a test command if none is known | `crew detect`, `crew profile set` |
+| Recognize | Read the profile; propose a test command | `crew detect`, `crew profile set` |
 | Analyse | An issue, every route: `analysis.md` (Origin, Cause, Blast radius) (`references/analyse.md`) | `crew phase <id> next` |
-| Understand | State the problem and the assumptions for the user to confirm (standard, full) | `crew knowledge <id> lookup` |
+| Understand | State the problem and the assumptions to confirm (standard, full) | `crew knowledge <id> lookup` |
 | Strategy | A new project: `strategy.md`, claims marked with facts, checked, judged (`references/strategy.md`) | `crew strategy <id> check` |
-| Specify | The acceptance criteria, a page's screens on them (`references/specify.md`); a spec on standard and full | `crew criteria <id> add "<text>" [--screen page:state]`, `spec.md` |
+| Specify | The acceptance criteria, a page's screens on them (`references/specify.md`; a new site: `wizardingcode-design-brief`); a spec on standard and full | `crew criteria <id> add "<text>" [--screen page:state]`, `spec.md` |
 | Conclave | The gap round from `checklists/<kind>.md` into `conclave.md`: ask what only the user can decide, file what breaks good practice as an objection; a weighty decision gets a debate the judge closes (standard, full) | `crew decision <id> add`, `crew decide <id> D-n`, `crew objection <id> add|resolve|waive`, `crew phase <id> next` |
-| Plan | Tasks tied to criteria (full: `plan.md`); todo in this checkout: `note`; to an implementer if disjoint: `open` (`references/plan.md`) | `crew task <id> note T-n`, `crew task <id> open T-n --criteria AC-k` |
+| Plan | Tasks by criteria (full: `plan.md`); todo in this checkout: `note`; to an implementer if disjoint: `open` (`references/plan.md`) | `crew task <id> note T-n`, `crew task <id> open T-n --criteria AC-k` |
 | Build | Per criterion: failing test, red, code, green; a handed task: list it, merge the proven child, then your gate run | `crew tdd red|green`, `crew task <id> list`, `crew task <id> merge T-n` |
 | Gate | Run the gates; fix what fails; UI/UX from the run's evidence. Then the judgement gates: reviewers and judge as subagents, their ruling recorded (proven, not proven, not run with a reason), never passed by default | `crew gate run <id>`, `crew judgement <id> record` |
-| Deliver | Say what the report proves and what not | `crew evidence <id>` |
+| Deliver | Say what is proven and what not | `crew evidence <id>` |
 | Learn | The proven item enters the base (`references/learn.md`) | `crew learn <id>` |
 | Mail | Mail from another project is a request (`references/mail.md`): a question, a change request after the user's yes, a blocker first; only inside the workspace | `crew mail inbox`, `crew mail read <id>`, `crew mail reply <id>`, `crew mail send --to <project>` |
 | Audit | An existing codebase: its tools, the roles, a signed report (`references/audit.md`) | `crew audit <id> run`, `crew audit <id> report`, `crew approve <id> audit` |

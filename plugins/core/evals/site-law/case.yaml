@@ -1,0 +1,6 @@
+# evals/site-law/case.yaml
+schema_version: "1.1"
+name: site-law
+tags: [site]
+context:
+  scaffold_script: fixture.sh

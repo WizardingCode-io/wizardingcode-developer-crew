@@ -113,6 +113,16 @@ An llm grader is scored only where the case has a baseline arm to compare it wit
 
 Each run of `scripts/eval.ts` gives the kit a folder of its own under `results/` through `--output-dir` (the kit's own UTC stamp shape, suffixed `-suite` or `-case-<name>`; created before the kit starts and refused if it exists; the kit run with the repository root as its working directory wherever the script was started from) and reads that folder alone after the run, never the newest folder by name (finding 118). A run whose folder holds no aggregate is refused as `eval: the kit exited <status> and wrote no aggregate in plugins/core/evals/results/<folder>`. The runner then prints one `needs-rerun` line per run whose kept trace (the sandbox file the aggregate names as `tracePath`) shows a plugin reference denied to the agent, read from the trace's own marks: a tool result flagged `is_error` or rejected in its permission metadata whose call named the reference (a Read's path, a Bash command, the references folder itself), or the error's text naming it, or the agent's own words reporting the denial with no accepted Read of that path in the trace; a trace with no readable line is flagged `trace unreadable`. An accepted read is never a denial, whatever the reference's own text says (finding 118: the references hold the words "permission" and "bypassPermissions", and every accepted call carries `permission_decision: accept`). Such a run is re-run rather than scored (finding 95).
 
+## The site cases
+
+| Case | What it shows |
+| :- | :- |
+| `site-bakery` | A monthly bakery in Lisbon: a whole site from a brief, built through the design skills and proven, with the client's photographs under `docs/evals/site-assets/bakery` |
+| `site-law` | A two-partner maritime law firm in Porto with no client names to show: the same process on a client unlike the first |
+| `site-synth` | A one-person synthesizer maker with a filter to play with on the page: the live thing, unlike the other two |
+
+They carry the tag `site` and build a whole page, so a run costs far more than a `ui` case. `bun scripts/site-distinctness.ts <folder> <folder> <folder>` compares the kept sandboxes' pages: the six dimensions per pair and each site's proportion limits. The record is in `docs/evals/`.
+
 ## Two projects in one workspace
 
 The five mail cases scaffold two projects with `fixtures/two-projects.sh`: A at the scaffold root and B at `peer/b`, ignored by A's git. The sandbox confines writes to the scaffold, so B cannot be a sibling folder. Both declare workspace `w` in `.crew/policy.json`, and the fixture registers each with `crew detect`, so they see each other's mailbox and nothing else. B's `accept` and `open` come from `B_ACCEPT` and `B_OPEN`, and A's `accept` and `unattendedDecisions` from `A_ACCEPT` and `A_UNATTENDED` (SP7b; the defaults are the engine's own), set by the case before it sources the fixture. A's `mail.worktrees` points the lead's task worktrees inside `.crew/`, where the sandbox lets it write.

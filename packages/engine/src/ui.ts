@@ -4,6 +4,7 @@
 // earlier fixture run left under `review/ui/`, the viewports a person sets, and what the gate run says
 // of the captures against the declared screens. The folder `review/ui/` is the session's and the
 // fixture's; the plan beside it is the engine's.
+
 import {
   closeSync,
   type Dirent,
@@ -17,6 +18,7 @@ import {
   unlinkSync,
 } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
+import { isNewSite, readSurface } from "./design.ts";
 import { isWatched } from "./fingerprint.ts";
 import { isRegularFile, nowIso, readRegularText, writeText } from "./fs.ts";
 import { type Capture, listCaptures, reviewDir } from "./judgement.ts";
@@ -203,6 +205,8 @@ export interface UiPlan {
   colorSchemes: ("light" | "dark")[];
   darkFrom: "profile" | "stylesheets" | "none";
   screens: ExpectedScreen[];
+  /** A new site is captured whole (item 2026-10-30-005): the fixture's default state, the full page. */
+  fullPage?: boolean;
 }
 
 export function uiPlanPath(paths: CrewPaths, id: string): string {
@@ -223,6 +227,7 @@ export function writeUiPlan(
     colorSchemes: dark ? ["light", "dark"] : ["light"],
     darkFrom: from,
     screens: expectedScreens(work),
+    ...(isNewSite(readSurface(paths, work.id)) ? { fullPage: true } : {}),
   };
   const file = uiPlanPath(paths, work.id);
   writeText(file, `${JSON.stringify(plan, null, 2)}\n`);

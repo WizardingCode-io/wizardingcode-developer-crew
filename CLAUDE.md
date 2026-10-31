@@ -13,6 +13,7 @@ Brand conventions: products, plugins and skills are called `wizardingcode-<thing
 - The plugin: `plugins/core` (`dist/crew.mjs` is the bundled `crew` command, `hooks/` the hook wiring and the mod, `skills/crew` the method)
 - The eval suite: `plugins/core/evals/` (inside the plugin, where `claude plugin eval` looks for it; `results/` there is ignored, the recorded runs live in `docs/evals/`)
 - The real-use phase between subprojects: `docs/real-use/` (the plan of the phase, the findings, the corpus of real requests)
+- The rules taken from outside sources, each with where it lives and what proves it: `docs/sources/ledger.json`
 - The brand's lockup and mark, as the README uses them: `docs/brand/` (not covered by the MIT licence)
 
 ## Commands
@@ -22,6 +23,7 @@ Brand conventions: products, plugins and skills are called `wizardingcode-<thing
 - `bun run format` — formats and fixes lint
 - `bun run plugin:check` — `claude plugin validate --strict` and the mod's tests (they need the plugin runtime; `bun run check` does not run them)
 - `bun scripts/eval.ts [--case <name>] [--max-cost-usd <usd>] [--judge-model <model>]` — runs the eval suite with the PATH and the environment it needs and prints an estimate first; the whole suite has no default cap since the user's decision of 2026-10-22 (finding 63: no hard limit, managed), so run only the affected cases with `--case` (about 0.3 to 2.3 USD each, capped at 5 unless given); the suite is about 95 USD a run at three runs and two arms; the llm graders' judge is `claude-opus-5-5` unless `--judge-model` names another (the user's decision of 2026-10-30)
+- `bun scripts/site-distinctness.ts <folder> <folder> ...` — compares built sites: the six dimensions per pair and each site's proportion limits (exit 1 on a pair too alike or a limit broken); `bun scripts/build-design-library.ts` regenerates `plugins/core/design/library/` from checkouts of its sources
 - `bun scripts/benchmark.ts [--from <aggregate.json>] [--out <dir>]` — runs the benchmark set through the kit (about 35 USD, no default cap; `--max-cost-usd` sets one) and writes `docs/benchmark/<date>-<version>.{md,json}` from the aggregate alone (`docs/benchmark/README.md`)
 - `claude --plugin-dir ./plugins/core` — loads the plugin for one session
 - `node plugins/core/dist/crew.mjs status` — where the work stands (`crew help` lists the commands)

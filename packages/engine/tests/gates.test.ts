@@ -10,6 +10,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { parseAudit } from "../src/audit.ts";
+import { recordSurface } from "../src/design.ts";
 import { readEnvRecord } from "../src/environment.ts";
 import {
   emptyEvidence,
@@ -1185,6 +1186,7 @@ test("SP9-T6 AC-1: design-lint is planned right after secrets on a frontend path
   const paths = repoPaths(repo, testEnv());
   const { profile: detected } = ensureProfile(paths);
   const work = createWork(paths, "feature");
+  recordSurface(paths, work.id, "operate", "extend", "2026-10-30");
   addCriterion(work, "x");
   write(repo, "src/App.vue", "<style>.a { transition: all 200ms; }</style>\n");
   const task = await runTaskGate(paths, work, detected, DEFAULT_POLICY, ["src/App.vue"]);
@@ -1203,6 +1205,7 @@ test("SP9-T6 AC-5, AC-7: an item's design-lint run fails on a standing defect wi
   const paths = repoPaths(root, testEnv());
   const { profile } = ensureProfile(paths);
   const work = createWork(paths, "feature");
+  recordSurface(paths, work.id, "operate", "extend", "2026-10-30");
   addCriterion(work, "x");
   const filler = Array.from({ length: 11 }, (_, i) => `<!-- line ${i + 1} -->`).join("\n");
   write(root, "src/App.vue", `${filler}\n<style>.a { transition: all 200ms; }</style>\n`);
@@ -1254,6 +1257,7 @@ test("SP9-T6 AC-5, AC-7: an item's design-lint run fails on a standing defect wi
   const cPaths = repoPaths(contract, testEnv());
   const { profile: cProfile } = ensureProfile(cPaths);
   const cWork = createWork(cPaths, "feature");
+  recordSurface(cPaths, cWork.id, "operate", "extend", "2026-10-30");
   addCriterion(cWork, "x");
   write(contract, "DESIGN.md", "---\ncolors:\n  primary: '#000'\n---\n");
   const cRun = (await runGates(cPaths, cWork, cProfile, DEFAULT_POLICY)).evidence.runs.find(
@@ -1271,6 +1275,7 @@ test("SP9-T6 AC-6, AC-2 (the wiring): an item's run reads the policy's disabled 
   const paths = repoPaths(root, testEnv());
   const { profile } = ensureProfile(paths);
   const work = createWork(paths, "feature");
+  recordSurface(paths, work.id, "operate", "extend", "2026-10-30");
   addCriterion(work, "x");
   write(root, "src/App.vue", "<style>.a { transition: all 200ms; }</style>\n");
   const disabled: Policy = {

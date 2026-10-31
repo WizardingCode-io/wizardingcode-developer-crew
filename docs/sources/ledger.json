@@ -1,0 +1,1407 @@
+{
+ "note": "One row per rule taken from the outside sources (item 2026-10-30-005), checked by skill.test.ts AC-16: an in-row names the file and text that hold it; a refused row names the decision.",
+ "sources": [
+  {
+   "name": "taste-skill",
+   "licence": "MIT",
+   "commit": "b9ca2fd"
+  },
+  {
+   "name": "impeccable",
+   "licence": "Apache-2.0",
+   "commit": "6743a34"
+  },
+  {
+   "name": "elayadesign",
+   "licence": "MIT",
+   "commit": "4fdcdd5"
+  },
+  {
+   "name": "garden-skills",
+   "licence": "MIT",
+   "commit": "2b9a893"
+  },
+  {
+   "name": "tastemaker",
+   "licence": "MIT",
+   "commit": "792a28a"
+  },
+  {
+   "name": "scroll-craft",
+   "licence": "MIT",
+   "commit": "75d81f7"
+  },
+  {
+   "name": "emilkowalski",
+   "licence": "MIT",
+   "commit": "a81dbca"
+  },
+  {
+   "name": "jakubkrehel",
+   "licence": "MIT",
+   "commit": "592aedc"
+  },
+  {
+   "name": "open-seo",
+   "licence": "MIT",
+   "commit": "beca5c1"
+  },
+  {
+   "name": "humanizer",
+   "licence": "MIT",
+   "commit": "0ef9fe5"
+  },
+  {
+   "name": "designer-skills",
+   "licence": "MIT",
+   "commit": "9a6930c"
+  },
+  {
+   "name": "expo-skills",
+   "licence": "MIT",
+   "commit": "05754e7"
+  },
+  {
+   "name": "diagram-design",
+   "licence": "MIT",
+   "commit": "0cf73c3"
+  },
+  {
+   "name": "ai-slop-cleaner",
+   "licence": "MIT",
+   "commit": "7e02a84"
+  },
+  {
+   "name": "department-of-prose",
+   "licence": "MIT",
+   "commit": "60ef0cc"
+  },
+  {
+   "name": "ui-ux-pro-max",
+   "licence": "MIT",
+   "commit": "2.13.0"
+  },
+  {
+   "name": "frontend-design",
+   "licence": "Apache-2.0",
+   "commit": "1.1.1"
+  }
+ ],
+ "unread": [
+  "garden-skills: 20 of 25 recipes unopened; they enter as data through the build script, scanned, not read one by one",
+  "tastemaker: component-patterns.md:65-117, ideagram references and scripts",
+  "scroll-craft: worlds.md and assets.md past :140, devices.md past :189, worldflight.md outside :119-148 and :297-309",
+  "emilkowalski: RECIPES.md, emil-design-eng past :409, break-ui/CATALOG.md past :120, mobile-native",
+  "jakubkrehel: teardown, state-machine and explain-interface past the lines cited, variant",
+  "humanizer: past :389",
+  "designer-skills: governance past :25; research, ops and toolkit bodies",
+  "diagram-design: SKILL.md outside :170-239, animation.md, every ADR but 0003",
+  "taste-skill: palettes, photos, sites and app JSON unopened by the reader; rows enter through the build script, scanned",
+  "impeccable: live.md past :90, live-setup.md past :50, manual-edit-applier past :25, the native references",
+  "ui-ux-pro-max: brand and design-system references by heading, design, slides, banner-design, ui-styling"
+ ],
+ "rows": [
+  {
+   "source": "taste-skill",
+   "rule": "inventory 8-12",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-brief/SKILL.md",
+   "text": "8 to 12 bullets",
+   "proof": "design.test.ts"
+  },
+  {
+   "source": "taste-skill",
+   "rule": "argument claims with proof",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-brief/SKILL.md",
+   "text": "a section with no claim is deleted",
+   "proof": "design.test.ts"
+  },
+  {
+   "source": "taste-skill",
+   "rule": "vague brief: state a reading",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-brief/SKILL.md",
+   "text": "answered with your reading in one line",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "taste-skill",
+   "rule": "three directions dealt",
+   "status": "in",
+   "file": "packages/engine/src/design.ts",
+   "text": "export const DEAL_OPTIONS = 3",
+   "proof": "design.test.ts"
+  },
+  {
+   "source": "taste-skill",
+   "rule": "redraw only with a reason",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-direction/SKILL.md",
+   "text": "never for comfort",
+   "proof": "design.test.ts"
+  },
+  {
+   "source": "taste-skill",
+   "rule": "idea sentence",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-direction/SKILL.md",
+   "text": "On this page, <what belongs",
+   "proof": "design.test.ts"
+  },
+  {
+   "source": "taste-skill",
+   "rule": "competitor test",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-direction/SKILL.md",
+   "text": "nearest real competitor",
+   "proof": "design.test.ts"
+  },
+  {
+   "source": "taste-skill",
+   "rule": "one live thing",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-direction/SKILL.md",
+   "text": "one thing the visitor can do",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "taste-skill",
+   "rule": "copy deck before markup",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-copy/SKILL.md",
+   "text": "After the direction and before any markup",
+   "proof": "design.test.ts"
+  },
+  {
+   "source": "taste-skill",
+   "rule": "headline budget",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-copy/SKILL.md",
+   "text": "about 32 characters",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "taste-skill",
+   "rule": "first question answered",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-copy/SKILL.md",
+   "text": "answers the visitor's first question",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "taste-skill",
+   "rule": "full content",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-copy/SKILL.md",
+   "text": "Every section delivers",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "taste-skill",
+   "rule": "proof never invented",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-copy/SKILL.md",
+   "text": "Proof is never invented",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "taste-skill",
+   "rule": "build still",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-build/SKILL.md",
+   "text": "Build it still",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "taste-skill",
+   "rule": "carry the idea into every section",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-build/SKILL.md",
+   "text": "Carry the idea into every section",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "taste-skill",
+   "rule": "fullness",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-build/SKILL.md",
+   "text": "one deliberate rest per page",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "taste-skill",
+   "rule": "picture order",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-build/SKILL.md",
+   "text": "in this order: the project",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "taste-skill",
+   "rule": "picture floor",
+   "status": "in",
+   "file": "packages/engine/src/design-grade.ts",
+   "text": "picture/few",
+   "proof": "design-grade.test.ts"
+  },
+  {
+   "source": "taste-skill",
+   "rule": "motion layer",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-build/SKILL.md",
+   "text": "one signature move",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "taste-skill",
+   "rule": "motion floor eight",
+   "status": "in",
+   "file": "packages/engine/src/design-grade.ts",
+   "text": "motion/still",
+   "proof": "design-grade.test.ts"
+  },
+  {
+   "source": "taste-skill",
+   "rule": "look rounds and critique",
+   "status": "in",
+   "file": "plugins/core/skills/crew/rubrics/design-finish.md",
+   "text": "## The fourteen passes",
+   "proof": "skill.test.ts AC-15"
+  },
+  {
+   "source": "taste-skill",
+   "rule": "score weights",
+   "status": "in",
+   "file": "plugins/core/skills/crew/rubrics/design-finish.md",
+   "text": "Design 40, usability 30, creativity 20, content 10",
+   "proof": "skill.test.ts AC-15"
+  },
+  {
+   "source": "taste-skill",
+   "rule": "caps",
+   "status": "in",
+   "file": "plugins/core/skills/crew/rubrics/design-finish.md",
+   "text": "The caps, each named",
+   "proof": "skill.test.ts AC-15"
+  },
+  {
+   "source": "taste-skill",
+   "rule": "lint default-font",
+   "status": "in",
+   "file": "packages/engine/src/design-lint.ts",
+   "text": "\"font/overused\"",
+   "proof": "design-lint-craft.test.ts"
+  },
+  {
+   "source": "taste-skill",
+   "rule": "lint purple and claude-palette",
+   "status": "in",
+   "file": "packages/engine/src/design-lint.ts",
+   "text": "\"colour/ai-palette\"",
+   "proof": "design-lint-craft.test.ts"
+  },
+  {
+   "source": "taste-skill",
+   "rule": "lint eyebrow",
+   "status": "in",
+   "file": "packages/engine/src/design-lint.ts",
+   "text": "\"label/eyebrow\"",
+   "proof": "design-lint-craft.test.ts"
+  },
+  {
+   "source": "taste-skill",
+   "rule": "lint micro-label",
+   "status": "in",
+   "file": "packages/engine/src/design-lint.ts",
+   "text": "\"label/micro\"",
+   "proof": "design-lint-craft.test.ts"
+  },
+  {
+   "source": "taste-skill",
+   "rule": "lint numbering",
+   "status": "in",
+   "file": "packages/engine/src/design-lint.ts",
+   "text": "\"label/numbered\"",
+   "proof": "design-lint-craft.test.ts"
+  },
+  {
+   "source": "taste-skill",
+   "rule": "lint mono",
+   "status": "in",
+   "file": "packages/engine/src/design-lint.ts",
+   "text": "\"craft/costume-mono\"",
+   "proof": "design-lint-craft.test.ts"
+  },
+  {
+   "source": "taste-skill",
+   "rule": "lint copy",
+   "status": "in",
+   "file": "packages/engine/src/design-lint.ts",
+   "text": "\"copy/stock-phrase\"",
+   "proof": "design-lint-craft.test.ts"
+  },
+  {
+   "source": "taste-skill",
+   "rule": "lint cta-copy",
+   "status": "in",
+   "file": "packages/engine/src/design-lint.ts",
+   "text": "\"copy/generic-action\"",
+   "proof": "design-lint-craft.test.ts"
+  },
+  {
+   "source": "taste-skill",
+   "rule": "lint gradient",
+   "status": "in",
+   "file": "packages/engine/src/design-lint.ts",
+   "text": "\"craft/gradient\"",
+   "proof": "design-lint-craft.test.ts"
+  },
+  {
+   "source": "taste-skill",
+   "rule": "lint shadow",
+   "status": "in",
+   "file": "packages/engine/src/design-lint.ts",
+   "text": "\"craft/resting-shadow\"",
+   "proof": "design-lint-craft.test.ts"
+  },
+  {
+   "source": "taste-skill",
+   "rule": "lint hairline",
+   "status": "in",
+   "file": "packages/engine/src/design-lint.ts",
+   "text": "\"craft/hairline\"",
+   "proof": "design-lint-craft.test.ts"
+  },
+  {
+   "source": "taste-skill",
+   "rule": "lint bounce",
+   "status": "in",
+   "file": "packages/engine/src/design-lint.ts",
+   "text": "\"motion/looping\"",
+   "proof": "design-lint-craft.test.ts"
+  },
+  {
+   "source": "taste-skill",
+   "rule": "inspect no-title",
+   "status": "in",
+   "file": "packages/engine/src/design-grade.ts",
+   "text": "page/no-title",
+   "proof": "design-grade.test.ts"
+  },
+  {
+   "source": "taste-skill",
+   "rule": "inspect headline-lines",
+   "status": "in",
+   "file": "packages/engine/src/design-grade.ts",
+   "text": "page/headline-lines",
+   "proof": "design-grade.test.ts"
+  },
+  {
+   "source": "taste-skill",
+   "rule": "inspect late-title",
+   "status": "in",
+   "file": "packages/engine/src/design-grade.ts",
+   "text": "page/late-title",
+   "proof": "design-grade.test.ts"
+  },
+  {
+   "source": "taste-skill",
+   "rule": "inspect covered-text",
+   "status": "in",
+   "file": "packages/engine/src/design-grade.ts",
+   "text": "page/covered-text",
+   "proof": "design-grade.test.ts"
+  },
+  {
+   "source": "taste-skill",
+   "rule": "inspect clipped-text",
+   "status": "in",
+   "file": "packages/engine/src/design-grade.ts",
+   "text": "page/clipped-text",
+   "proof": "design-grade.test.ts"
+  },
+  {
+   "source": "taste-skill",
+   "rule": "inspect off-centre",
+   "status": "in",
+   "file": "packages/engine/src/design-grade.ts",
+   "text": "frame/off-centre",
+   "proof": "design-grade.test.ts"
+  },
+  {
+   "source": "taste-skill",
+   "rule": "inspect lopsided",
+   "status": "in",
+   "file": "packages/engine/src/design-grade.ts",
+   "text": "frame/lopsided",
+   "proof": "design-grade.test.ts"
+  },
+  {
+   "source": "taste-skill",
+   "rule": "inspect blank-gap",
+   "status": "in",
+   "file": "packages/engine/src/design-grade.ts",
+   "text": "frame/blank-gap",
+   "proof": "design-grade.test.ts"
+  },
+  {
+   "source": "taste-skill",
+   "rule": "inspect empty-screens",
+   "status": "in",
+   "file": "packages/engine/src/design-grade.ts",
+   "text": "frame/empty-screens",
+   "proof": "design-grade.test.ts"
+  },
+  {
+   "source": "taste-skill",
+   "rule": "inspect untitled-section",
+   "status": "in",
+   "file": "packages/engine/src/design-grade.ts",
+   "text": "frame/untitled-section",
+   "proof": "design-grade.test.ts"
+  },
+  {
+   "source": "taste-skill",
+   "rule": "inspect icon-cards",
+   "status": "in",
+   "file": "packages/engine/src/design-grade.ts",
+   "text": "craft/icon-cards",
+   "proof": "design-grade.test.ts"
+  },
+  {
+   "source": "taste-skill",
+   "rule": "inspect font-count",
+   "status": "in",
+   "file": "packages/engine/src/design-grade.ts",
+   "text": "type/font-count",
+   "proof": "design-grade.test.ts"
+  },
+  {
+   "source": "taste-skill",
+   "rule": "inspect size-count",
+   "status": "in",
+   "file": "packages/engine/src/design-grade.ts",
+   "text": "type/size-count",
+   "proof": "design-grade.test.ts"
+  },
+  {
+   "source": "taste-skill",
+   "rule": "inspect contrast",
+   "status": "in",
+   "file": "packages/engine/src/design-grade.ts",
+   "text": "colour/contrast",
+   "proof": "design-grade.test.ts"
+  },
+  {
+   "source": "taste-skill",
+   "rule": "inspect micro-label in the page",
+   "status": "in",
+   "file": "packages/engine/src/design-grade.ts",
+   "text": "label/micro",
+   "proof": "design-grade.test.ts"
+  },
+  {
+   "source": "taste-skill",
+   "rule": "library data",
+   "status": "in",
+   "file": "scripts/build-design-library.ts",
+   "text": "Leonxlnx/taste-skill",
+   "proof": "design.test.ts AC-24"
+  },
+  {
+   "source": "taste-skill",
+   "rule": "history against repeats",
+   "status": "in",
+   "file": "packages/engine/src/design.ts",
+   "text": "recentDealt",
+   "proof": "design.test.ts"
+  },
+  {
+   "source": "taste-skill",
+   "rule": "scroll scenes (scenes.mjs, stage.js, scenes.json)",
+   "status": "refused",
+   "decision": "D-6",
+   "reason": "the release ships no scenes.json and its own changelog defers them to 2.2; nothing to take yet"
+  },
+  {
+   "source": "taste-skill",
+   "rule": "app-screen dealer (app.json, app-draw.mjs)",
+   "status": "refused",
+   "decision": "D-6",
+   "reason": "this item is the site path; app screens keep the frontend standard and appMeasures"
+  },
+  {
+   "source": "taste-skill",
+   "rule": "photos.json and sites.json",
+   "status": "refused",
+   "decision": "D-3",
+   "reason": "third-party photos and site names; D-3"
+  },
+  {
+   "source": "impeccable",
+   "rule": "PRODUCT.md",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-brief/SKILL.md",
+   "text": "Write `PRODUCT.md`",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "impeccable",
+   "rule": "decide what is already true",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-brief/SKILL.md",
+   "text": "Decide what is already true",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "impeccable",
+   "rule": "amount of invention",
+   "status": "in",
+   "file": "packages/engine/src/design.ts",
+   "text": "export const INVENTIONS",
+   "proof": "design.test.ts"
+  },
+  {
+   "source": "impeccable",
+   "rule": "modes",
+   "status": "in",
+   "file": "packages/engine/src/design.ts",
+   "text": "export const SURFACES",
+   "proof": "design.test.ts"
+  },
+  {
+   "source": "impeccable",
+   "rule": "questions per mode",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-brief/SKILL.md",
+   "text": "Ask what changes the work",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "impeccable",
+   "rule": "seven candidates",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-direction/SKILL.md",
+   "text": "List seven candidates",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "impeccable",
+   "rule": "rut excluded",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-direction/SKILL.md",
+   "text": "Name the rut",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "impeccable",
+   "rule": "weigh on two axes",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-direction/SKILL.md",
+   "text": "audience identification and product clarity",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "impeccable",
+   "rule": "category standard exit",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-direction/SKILL.md",
+   "text": "quiet exit",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "impeccable",
+   "rule": "colour strategies",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-direction/SKILL.md",
+   "text": "Restrained, Committed, Full palette or Drenched",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "impeccable",
+   "rule": "calibration looks",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-direction/SKILL.md",
+   "text": "Refuse the four looks",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "impeccable",
+   "rule": "contract blocks",
+   "status": "in",
+   "file": "packages/engine/src/design.ts",
+   "text": "\"OWN-WORLD\"",
+   "proof": "design.test.ts"
+  },
+  {
+   "source": "impeccable",
+   "rule": "overused fonts list",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-system/SKILL.md",
+   "text": "Fraunces, Playfair Display",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "impeccable",
+   "rule": "DESIGN.md after the build",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-system/SKILL.md",
+   "text": "Write `DESIGN.md` at the end of the build",
+   "proof": "design.test.ts"
+  },
+  {
+   "source": "impeccable",
+   "rule": "fresh reviewer",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-review/SKILL.md",
+   "text": "with a fresh context",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "impeccable",
+   "rule": "dispositions",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-review/SKILL.md",
+   "text": "`recapture`: the evidence failed",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "impeccable",
+   "rule": "capture validity",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-review/SKILL.md",
+   "text": "Validate the captures first",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "impeccable",
+   "rule": "comp path",
+   "status": "in",
+   "file": "packages/engine/src/design.ts",
+   "text": "export function gradeComp",
+   "proof": "design.test.ts"
+  },
+  {
+   "source": "impeccable",
+   "rule": "type, material, ground rows",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-review/SKILL.md",
+   "text": "TYPE, MATERIAL, GROUND",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "impeccable",
+   "rule": "documenter limits",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-system/SKILL.md",
+   "text": "a value written to make a finding vanish",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "impeccable",
+   "rule": "verdict pass",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-review/SKILL.md",
+   "text": "resolved, partial or unresolved",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "impeccable",
+   "rule": "picture under a wash",
+   "status": "in",
+   "file": "plugins/core/e2e/measure.mjs",
+   "text": "does not count as shipped",
+   "proof": "design-grade.test.ts"
+  },
+  {
+   "source": "impeccable",
+   "rule": "concept-seed binary and paid catalogue",
+   "status": "refused",
+   "decision": "D-3",
+   "reason": "closed binary and a private paid catalogue (ADR 0017, D-3); our deal over open data replaces it"
+  },
+  {
+   "source": "impeccable",
+   "rule": "live browser editor (live, generate)",
+   "status": "refused",
+   "decision": "D-6",
+   "reason": "an interactive editor outside the proof path"
+  },
+  {
+   "source": "impeccable",
+   "rule": "font-match and comp-diff pixel gates",
+   "status": "refused",
+   "decision": "D-6",
+   "reason": "closed binary; the comp path measures marked regions instead"
+  },
+  {
+   "source": "impeccable",
+   "rule": "native iOS and Android references",
+   "status": "refused",
+   "decision": "D-6",
+   "reason": "Expo and native are out of scope (SP9 design §11)"
+  },
+  {
+   "source": "elayadesign",
+   "rule": "assumption in one line",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-brief/SKILL.md",
+   "text": "answered with your reading in one line",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "elayadesign",
+   "rule": "banned fonts",
+   "status": "in",
+   "file": "packages/engine/src/design-lint.ts",
+   "text": "OVERUSED_FACES",
+   "proof": "design-lint-craft.test.ts"
+  },
+  {
+   "source": "elayadesign",
+   "rule": "missing fact as a placeholder",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-copy/SKILL.md",
+   "text": "{{price}}",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "elayadesign",
+   "rule": "nested radius",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-system/SKILL.md",
+   "text": "an inner corner is the outer minus the gap",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "elayadesign",
+   "rule": "dead link",
+   "status": "in",
+   "file": "packages/engine/src/design-lint.ts",
+   "text": "\"link/dead\"",
+   "proof": "design-lint-craft.test.ts"
+  },
+  {
+   "source": "elayadesign",
+   "rule": "stagger 60",
+   "status": "in",
+   "file": "plugins/core/skills/crew/references/frontend-site.md",
+   "text": "60 ms, 240 ms in all",
+   "proof": "skill.test.ts AC-15"
+  },
+  {
+   "source": "elayadesign",
+   "rule": "gradient text on the hero, glass nav, reveal on every section",
+   "status": "refused",
+   "decision": "D-6",
+   "reason": "contradict the refused list and the user's bar"
+  },
+  {
+   "source": "garden-skills",
+   "rule": "recipes",
+   "status": "in",
+   "file": "scripts/build-design-library.ts",
+   "text": "ConardLi/garden-skills",
+   "proof": "design.test.ts AC-24"
+  },
+  {
+   "source": "garden-skills",
+   "rule": "modern and clean refused",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-direction/SKILL.md",
+   "text": "\"Clean and modern\" is not an idea",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "garden-skills",
+   "rule": "says when hollow",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-direction/SKILL.md",
+   "text": "Say when it is hollow",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "garden-skills",
+   "rule": "focal point at every width",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-build/SKILL.md",
+   "text": "keep their crop and focal point",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "garden-skills",
+   "rule": "motion pausable",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-build/SKILL.md",
+   "text": "looping motion can be paused",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "garden-skills",
+   "rule": "orphaned controls",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-review/SKILL.md",
+   "text": "orphaned controls",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "garden-skills",
+   "rule": "five 1-10 dials and 0-10 per dimension scoring",
+   "status": "refused",
+   "decision": "D-6",
+   "reason": "the weights and caps of the finish rubric answer the same question; one score, not two"
+  },
+  {
+   "source": "tastemaker",
+   "rule": "macrostructures",
+   "status": "in",
+   "file": "scripts/build-design-library.ts",
+   "text": "codeswithroh/tastemaker",
+   "proof": "design.test.ts AC-24"
+  },
+  {
+   "source": "tastemaker",
+   "rule": "picture cast",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-direction/SKILL.md",
+   "text": "The picture cast: 4 to 6 roles",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "tastemaker",
+   "rule": "swap test",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-copy/SKILL.md",
+   "text": "Swap test",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "tastemaker",
+   "rule": "accent under 5%",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-system/SKILL.md",
+   "text": "accent under 5%",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "tastemaker",
+   "rule": "one separation mechanism",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-system/SKILL.md",
+   "text": "One section-separation mechanism",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "tastemaker",
+   "rule": "unequal columns",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-build/SKILL.md",
+   "text": "unequal columns take one treatment",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "tastemaker",
+   "rule": "rotation against earlier builds",
+   "status": "in",
+   "file": "packages/engine/src/design.ts",
+   "text": "MIN_DIFFERENT = 4",
+   "proof": "design.test.ts"
+  },
+  {
+   "source": "tastemaker",
+   "rule": "alt",
+   "status": "in",
+   "file": "packages/engine/src/design-lint.ts",
+   "text": "\"a11y/missing-alt\"",
+   "proof": "design-lint-craft.test.ts"
+  },
+  {
+   "source": "tastemaker",
+   "rule": "no licence no rights",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-build/SKILL.md",
+   "text": "no licence means no rights",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "tastemaker",
+   "rule": "proof needs a visual",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-review/SKILL.md",
+   "text": "A proof section needs a real visual",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "tastemaker",
+   "rule": "GSAP and ScrollTrigger by default",
+   "status": "refused",
+   "decision": "D-6",
+   "reason": "a dependency no project asked for; the project chooses its motion engine"
+  },
+  {
+   "source": "scroll-craft",
+   "rule": "grammars",
+   "status": "in",
+   "file": "scripts/build-design-library.ts",
+   "text": "nateherkai/scroll-craft",
+   "proof": "design.test.ts AC-24"
+  },
+  {
+   "source": "scroll-craft",
+   "rule": "fingerprint gate",
+   "status": "in",
+   "file": "packages/engine/src/design-grade.ts",
+   "text": "compareFingerprints",
+   "proof": "design-grade.test.ts"
+  },
+  {
+   "source": "scroll-craft",
+   "rule": "premium-minimal only when asked",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-direction/SKILL.md",
+   "text": "Premium-minimal only when asked",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "scroll-craft",
+   "rule": "generated image preamble",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-build/SKILL.md",
+   "text": "one preamble",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "scroll-craft",
+   "rule": "poster first frame",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-build/SKILL.md",
+   "text": "clip's own first frame",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "scroll-craft",
+   "rule": "pin and cue values",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-build/SKILL.md",
+   "text": "a pin spans at least 1.2 screens",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "scroll-craft",
+   "rule": "open supplied assets",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-brief/SKILL.md",
+   "text": "a filename is no proof of content",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "scroll-craft",
+   "rule": "no false success",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-copy/SKILL.md",
+   "text": "never show false success",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "scroll-craft",
+   "rule": "no GET of personal input",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-build/SKILL.md",
+   "text": "must not GET personal input",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "scroll-craft",
+   "rule": "nav, close and signature-move fingerprint dimensions",
+   "status": "refused",
+   "decision": "D-6",
+   "reason": "the six measured dimensions hold; these three need a judgement a measure cannot make"
+  },
+  {
+   "source": "scroll-craft",
+   "rule": "scroll-craft engine, data-sc attributes, ffmpeg",
+   "status": "refused",
+   "decision": "D-6",
+   "reason": "code and tools no project asked for"
+  },
+  {
+   "source": "emilkowalski",
+   "rule": "frequency table",
+   "status": "in",
+   "file": "plugins/core/skills/crew/references/frontend.md",
+   "text": "100+ uses a day",
+   "proof": "SP9-T8"
+  },
+  {
+   "source": "emilkowalski",
+   "rule": "decoration animations",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-build/SKILL.md",
+   "text": "counters on load",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "emilkowalski",
+   "rule": "hidden start state",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-build/SKILL.md",
+   "text": "removing an animation removes its hidden start state",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "emilkowalski",
+   "rule": "worst-case content",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-review/SKILL.md",
+   "text": "plausible worst-case content",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "emilkowalski",
+   "rule": "truncation",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-build/SKILL.md",
+   "text": "never truncate numbers, amounts or dates",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "emilkowalski",
+   "rule": "springs for native gestures and mobile-native",
+   "status": "refused",
+   "decision": "D-6",
+   "reason": "native; web springs stay the reviewer's judgement"
+  },
+  {
+   "source": "jakubkrehel",
+   "rule": "line-height and tracking",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-system/SKILL.md",
+   "text": "tracking -0.01 to -0.04em",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "jakubkrehel",
+   "rule": "between-group gap",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-system/SKILL.md",
+   "text": "at least twice the gap inside one",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "jakubkrehel",
+   "rule": "stress axes",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-review/SKILL.md",
+   "text": "kept only when a cue matches",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "jakubkrehel",
+   "rule": "mock data",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-review/SKILL.md",
+   "text": "mock data looks like the product",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "jakubkrehel",
+   "rule": "reference labels",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-direction/SKILL.md",
+   "text": "measured, derived or inferred",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "jakubkrehel",
+   "rule": "drawn object classes",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-build/SKILL.md",
+   "text": "supplied, estimated or illustrative",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "open-seo",
+   "rule": "states before capture",
+   "status": "in",
+   "file": "plugins/core/skills/crew/references/frontend.md",
+   "text": "enumerated before any capture",
+   "proof": "SP9-T8"
+  },
+  {
+   "source": "open-seo",
+   "rule": "declaratives that name nothing",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-copy/SKILL.md",
+   "text": "declaratives that name nothing",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "humanizer",
+   "rule": "four copy tells",
+   "status": "in",
+   "file": "plugins/core/skills/crew/references/frontend.md",
+   "text": "Four tells",
+   "proof": "SP9-T8"
+  },
+  {
+   "source": "humanizer",
+   "rule": "more tells",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-copy/SKILL.md",
+   "text": "The clipped negative tail",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "humanizer",
+   "rule": "sales words for places",
+   "status": "in",
+   "file": "packages/engine/src/design-lint.ts",
+   "text": "nestled",
+   "proof": "design-lint-craft.test.ts"
+  },
+  {
+   "source": "humanizer",
+   "rule": "keep the odd detail",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-copy/SKILL.md",
+   "text": "Keep the odd specific detail",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "designer-skills",
+   "rule": "severity reading",
+   "status": "in",
+   "file": "plugins/core/skills/crew/rubrics/ui-ux.md",
+   "text": "impact order",
+   "proof": "SP9-T8"
+  },
+  {
+   "source": "designer-skills",
+   "rule": "critique tells",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-review/SKILL.md",
+   "text": "Colour as the sole state signal",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "designer-skills",
+   "rule": "localisation",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-copy/SKILL.md",
+   "text": "German and Finnish as the worst case",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "designer-skills",
+   "rule": "dark scheme",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-system/SKILL.md",
+   "text": "lifts elevation with lighter surfaces",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "designer-skills",
+   "rule": "logical properties",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-system/SKILL.md",
+   "text": "Logical properties for direction",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "designer-skills",
+   "rule": "design-research, design-ops and designer-toolkit skills",
+   "status": "refused",
+   "decision": "D-6",
+   "reason": "process and career prose, nothing about the page"
+  },
+  {
+   "source": "expo-skills",
+   "rule": "native design, Expo UI, native animation",
+   "status": "refused",
+   "decision": "D-6",
+   "reason": "native is out of scope (SP9 design §11)"
+  },
+  {
+   "source": "expo-skills",
+   "rule": "grep tells on the web",
+   "status": "in",
+   "file": "packages/engine/src/design-grade.ts",
+   "text": "craft/icon-cards",
+   "proof": "design-grade.test.ts"
+  },
+  {
+   "source": "diagram-design",
+   "rule": "diagrams and their ADRs",
+   "status": "refused",
+   "decision": "D-6",
+   "reason": "diagrams, not pages"
+  },
+  {
+   "source": "diagram-design",
+   "rule": "accent on focal elements",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-system/SKILL.md",
+   "text": "accent under 5%",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "ai-slop-cleaner",
+   "rule": "signals in the rubric",
+   "status": "in",
+   "file": "plugins/core/skills/crew/rubrics/code-quality.md",
+   "text": "A fallback, a workaround or a shim",
+   "proof": "2026-10-29-001"
+  },
+  {
+   "source": "department-of-prose",
+   "rule": "fact preservation",
+   "status": "in",
+   "file": "plugins/core/skills/crew/rubrics/code-quality.md",
+   "text": "references/writing.md",
+   "proof": "2026-10-29-001"
+  },
+  {
+   "source": "department-of-prose",
+   "rule": "remaining tells",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-copy/SKILL.md",
+   "text": "a coined label with no definition",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "department-of-prose",
+   "rule": "0-100 score and rhythm meter as gates",
+   "status": "refused",
+   "decision": "D-6",
+   "reason": "a lexical score is not proof (item 2026-10-29-001)"
+  },
+  {
+   "source": "ui-ux-pro-max",
+   "rule": "zoom",
+   "status": "in",
+   "file": "packages/engine/src/design-lint.ts",
+   "text": "\"a11y/no-zoom\"",
+   "proof": "design-lint-craft.test.ts"
+  },
+  {
+   "source": "ui-ux-pro-max",
+   "rule": "image attributes",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-build/SKILL.md",
+   "text": "width and height or `aspect-ratio`",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "ui-ux-pro-max",
+   "rule": "overflow wrap",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-build/SKILL.md",
+   "text": "never `break-all`",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "ui-ux-pro-max",
+   "rule": "voice traits",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-copy/SKILL.md",
+   "text": "Three to five voice traits",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "ui-ux-pro-max",
+   "rule": "logo rules",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-build/SKILL.md",
+   "text": "clear space equal to its height",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "ui-ux-pro-max",
+   "rule": "skip link",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-build/SKILL.md",
+   "text": "skip link",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "ui-ux-pro-max",
+   "rule": "its data sets as defaults",
+   "status": "refused",
+   "decision": "D-3",
+   "reason": "38 colour lines with the indigo and violet hexes and 15 reasoning rows with glassmorphism recommend what the others ban"
+  },
+  {
+   "source": "frontend-design",
+   "rule": "subject as the source",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-brief/SKILL.md",
+   "text": "Inventory the subject",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "frontend-design",
+   "rule": "one boldness place",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-direction/SKILL.md",
+   "text": "one idea and the default arrangement it refuses",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "frontend-design",
+   "rule": "action keeps its name",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-copy/SKILL.md",
+   "text": "Publish becomes Published",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "frontend-design",
+   "rule": "errors do not apologise",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-design-copy/SKILL.md",
+   "text": "with no apology",
+   "proof": "skill.test.ts AC-21"
+  },
+  {
+   "source": "frontend-design",
+   "rule": "palette hexes",
+   "status": "in",
+   "file": "packages/engine/src/design-lint.ts",
+   "text": "f4f1ea",
+   "proof": "design-lint-craft.test.ts"
+  },
+  {
+   "source": "taste-skill",
+   "rule": "sameness between sections",
+   "status": "in",
+   "file": "packages/engine/src/design-grade.ts",
+   "text": "frame/same-layout",
+   "proof": "design-grade.test.ts"
+  },
+  {
+   "source": "taste-skill",
+   "rule": "hero differs",
+   "status": "in",
+   "file": "packages/engine/src/design-grade.ts",
+   "text": "design/hero-repeat",
+   "proof": "design-grade.test.ts"
+  },
+  {
+   "source": "taste-skill",
+   "rule": "palette differs",
+   "status": "in",
+   "file": "packages/engine/src/design-grade.ts",
+   "text": "design/palette-repeat",
+   "proof": "design-grade.test.ts"
+  },
+  {
+   "source": "taste-skill",
+   "rule": "ai look measured",
+   "status": "in",
+   "file": "packages/engine/src/design-grade.ts",
+   "text": "colour/ai-look",
+   "proof": "design-grade.test.ts"
+  }
+ ]
+}

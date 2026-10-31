@@ -9,6 +9,7 @@ const SHIPPED = [
   "agents",
   "bin",
   "dist/crew.mjs",
+  "design",
   "e2e",
   "hooks",
   "skills",

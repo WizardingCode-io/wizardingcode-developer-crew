@@ -1,0 +1,6 @@
+# evals/site-bakery/case.yaml
+schema_version: "1.1"
+name: site-bakery
+tags: [site]
+context:
+  scaffold_script: fixture.sh

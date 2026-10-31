@@ -117,6 +117,8 @@ export const DEFAULT_POLICY: Policy = {
   verify: { ...DEFAULT_VERIFY_POLICY, asks: [...DEFAULT_VERIFY_POLICY.asks] },
   // The design lint's disabled rules (SP9 Task 6): a hand-written list, empty by default.
   ui: { lint: { disabled: [] } },
+  // The open archives' search and the image tool (item 2026-10-30-005): off until the user sets them.
+  design: { pictures: false, imageTool: null },
 };
 
 /** How `crew policy set` checks a value: one of a list, a name, or a whole number in a range. */
@@ -497,6 +499,18 @@ function loadUiPolicy(raw: unknown): UiPolicy {
   return { lint: { disabled: strings(lint.disabled) } };
 }
 
+/** The design block: the search of the open archives and the image tool are the user's to turn on. */
+function loadDesignPolicy(raw: unknown): { pictures: boolean; imageTool: string | null } {
+  const d = (typeof raw === "object" && raw !== null && !Array.isArray(raw) ? raw : {}) as Record<
+    string,
+    unknown
+  >;
+  return {
+    pictures: d.pictures === true,
+    imageTool: typeof d.imageTool === "string" && d.imageTool.trim() ? d.imageTool : null,
+  };
+}
+
 /** The teams of the registry, named once (`TEAMS`). */
 const TEAM_NAMES = Object.keys(TEAMS) as readonly TeamName[];
 
@@ -575,6 +589,7 @@ export function loadPolicy(paths: CrewPaths): { policy: Policy; tampered: boolea
       team: loadTeamPolicy(raw.team),
       verify: loadVerifyPolicy(raw.verify),
       ui: loadUiPolicy(raw.ui),
+      design: loadDesignPolicy(raw.design),
     },
     tampered: read.tampered,
   };

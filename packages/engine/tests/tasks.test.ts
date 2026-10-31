@@ -1340,6 +1340,7 @@ test("SP7b-T5 AC-1: a todo's gate plans the judgement its scope asks for, cuts i
   write(root, "src/App.vue", "<template/>");
   git(root, "add", "-A");
   git(root, "commit", "-q", "-m", "the page");
+  await c.run("design", id, "surface", "operate", "--invention", "extend");
   const paths = repoPaths(root, env);
   const taskOf = (task: string) => loadWork(paths, id).work?.tasks?.find((t) => t.task === task);
   const judge = `.crew/work/${id}/judge.json`;

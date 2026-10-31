@@ -16,7 +16,7 @@ For a `preserve` criterion: `crew tdd before <id> <criterion>` with the tests pa
 
 For an `observed` criterion: make the change, then `crew tdd observed <id> <criterion> --reason "<why no red run can exist>"` with the run passing. The reason is in the record and the report; a missing reason is refused.
 
-For an interface item, read `references/frontend.md` and the project's `DESIGN.md` before the first interface file; write no raw value where a token exists; give every declared state its branch and its `capture()`; animate only from the thesis, with the table's values.
+A new site is built through `wizardingcode-design-build`. For an interface item, read `references/frontend.md` and the project's `DESIGN.md` before the first interface file; write no raw value where a token exists; give every declared state its branch and its `capture()`; animate only from the thesis, with the table's values.
 
 ## Design rules
 

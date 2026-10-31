@@ -202,7 +202,7 @@ test("SP9-T5 AC-7: the tech lead lists frontend among its teams, in the descript
 test("SP2b: one rubric per judgement gate, each judging the change and never the repository", () => {
   // The strategy's rubric (SP8) is the CTO's and the judge's: no reviewer agent carries its name.
   expect(readdirSync(RUBRICS).sort()).toEqual(
-    [...REVIEWERS.map((g) => `${g}.md`), "strategy.md"].sort(),
+    [...REVIEWERS.map((g) => `${g}.md`), "design-finish.md", "strategy.md"].sort(),
   );
   for (const gate of REVIEWERS) {
     const rubric = readFileSync(`${RUBRICS}${gate}.md`, "utf8");

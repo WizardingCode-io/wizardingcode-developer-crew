@@ -6,10 +6,17 @@
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import {
+  designProblems,
+  extendRefusal,
+  type ProcessProblem,
+  readSurface,
+  type SurfaceRecord,
+} from "./design.ts";
 import { allWatchedFiles, gitShowFile } from "./fingerprint.ts";
 import { nowIso, regularFileSize, writeText } from "./fs.ts";
 import { type CrewPaths, workDir } from "./paths.ts";
-import { isInterfacePath, isTestPath } from "./paths-kind.ts";
+import { isFrontendPath, isInterfacePath, isTestPath } from "./paths-kind.ts";
 import { safeText } from "./quote.ts";
 import type { Policy, Profile, WorkItem } from "./types.ts";
 
@@ -31,6 +38,24 @@ export const LINT_RULES = [
   "copy/placeholder",
   "craft/glass",
   "layout/100vh",
+  // Item 2026-10-30-005: what a new site is held to, from taste-skill, Impeccable, tastemaker and
+  // frontend-design, distilled; these run only on a surface or world item (`strict`).
+  "font/overused",
+  "colour/ai-palette",
+  "label/eyebrow",
+  "label/micro",
+  "label/numbered",
+  "craft/costume-mono",
+  "link/dead",
+  "a11y/missing-alt",
+  "craft/side-border",
+  "copy/stock-phrase",
+  "copy/generic-action",
+  "craft/gradient",
+  "craft/resting-shadow",
+  "craft/hairline",
+  "motion/looping",
+  "a11y/no-zoom",
 ] as const;
 export type LintRule = (typeof LINT_RULES)[number];
 
@@ -40,7 +65,74 @@ const ADVISORY_RULES: ReadonlySet<string> = new Set([
   "perf/will-change",
   "craft/glass",
   "layout/100vh",
+  "craft/gradient",
+  "craft/resting-shadow",
+  "craft/hairline",
+  "motion/looping",
 ]);
+
+// The faces a generated page falls back on (the union of the sources' lists): a project that wants
+// one says so in `DESIGN.md`'s `devices:` as `overused-font`.
+const OVERUSED_FACES =
+  "inter|inter tight|roboto|open sans|lato|montserrat|poppins|arial|helvetica|fraunces|playfair display|cormorant|lora|crimson|newsreader|syne|space grotesk|space mono|ibm plex[a-z ]*|dm sans|dm serif[a-z ]*|outfit|plus jakarta sans|instrument sans|instrument serif|geist[a-z ]*|mona sans|recoleta|sora|nunito|raleway";
+const OVERUSED_FONT = new RegExp(
+  `font-family\\s*:\\s*["']?(?:${OVERUSED_FACES})\\b|family=(?:${OVERUSED_FACES.replace(/ /g, "\\+")})\\b|\\b(?:inter|poppins|space_grotesk|instrument_serif|playfair_display|plus_jakarta_sans|outfit|sora|montserrat)\\s*\\(\\s*\\{`,
+);
+const AI_PALETTE =
+  /\b(?:bg|text|from|to|via|border|ring|fill|stroke|shadow|decoration|outline)-(?:purple|violet|indigo|fuchsia)-\d{2,3}\b|#(?:6366f1|8b5cf6|7c3aed|a855f7|4f46e5|a78bfa|818cf8|9333ea|6d28d9|c084fc|d97757|da7756|c15f3c|cc785c|bd5d3a|f0eee6|faf9f5|f5f4ed|eeece2|e8e6dc|f4f1ea)\b/;
+const EYEBROW =
+  /class(?:name)?\s*=\s*["'`{][^"'`}]*\b(?:eyebrow|kicker|overline|pretitle|pre-title|suptitle|section-label|section-tag)\b|\.(?:eyebrow|kicker|overline|pretitle|section-label|section-tag)\b\s*[{,]/;
+const MICRO_LABEL =
+  /(?=[^"'`]*\buppercase\b)(?=[^"'`]*\btracking-(?:wide|wider|widest|\[[^\]]+\])(?![\w-]))(?=[^"'`]*\btext-(?:xs|\[1[0-3]px\])(?![\w-]))[^"'`]+/;
+const NUMBERED =
+  />\s*[([]?0[1-9][)\]]?\.?\s*<|decimal-leading-zero|>\s*(?:step|phase|no\.?|chapter)\s*0?\d\s*</;
+const COSTUME_MONO =
+  /\bfont-mono\b|font-family\s*:[^;{}]*(?:\bmono\b|monospace|courier|consolas|menlo|monaco)|(?:jetbrains|geist|ibm\+?plex|space|dm|roboto|fragment|azeret|red\+?hat|martian|commit|departure|fira)[+_ ]?mono|ui-monospace/;
+const CODE_CONTEXT = /<(?:pre|code|kbd|samp)\b|^\s*(?:pre|code|kbd|samp)\b/;
+const DEAD_LINK = /href\s*=\s*["']#["']/;
+const IMG_TAG = /<img\b[^>]*>/g;
+const SIDE_BORDER =
+  /border-(?:left|right)\s*:\s*(?:[2-9]|\d{2,})px[^;]*;[^}]*border-radius|border-radius[^;]*;[^}]*border-(?:left|right)\s*:\s*(?:[2-9]|\d{2,})px|\bborder-[lr]-[2-8]\b(?=[^"'`]*\brounded)/;
+const VISIBLE_TEXT = />([^<]+)</g;
+const STOCK_PHRASE =
+  /\b(?:unlock|unleash|supercharge|seamless(?:ly)?|elevate|empower(?:s|ing)?|revolutioni[sz]e|game[- ]chang(?:er|ing)|cutting[- ]edge|next[- ]gen(?:eration)?|world[- ]class|best[- ]in[- ]class|all[- ]in[- ]one|effortless(?:ly)?|blazing(?:ly)?[- ]fast|lightning[- ]fast|reimagin(?:e|ed|ing)|tapestry|synergy|streamline|holistic|turbocharge|transform the way|take your .{1,30} to the next level|say goodbye to|the future of|built for the modern|more than (?:just )?a|nestled|in the heart of|renowned|breathtaking|must-visit|stunning)\b/;
+const NO_ZOOM = /user-scalable\s*=\s*no|maximum-scale\s*=\s*1(?:\.0)?\b/;
+const GENERIC_ACTION =
+  />\s*(?:learn more|get started|click here|read more|discover more|explore now|submit)\s*</;
+const GRADIENT_FILL = /(?:linear|radial|conic)-gradient\(|\bbg-(?:gradient|linear|radial|conic)-/;
+const RESTING_SHADOW =
+  /box-shadow\s*:(?!\s*(?:none|0 0 #0000|var\(--tw))|text-shadow\s*:(?!\s*none)|\bshadow-(?:sm|md|lg|xl|2xl)\b/;
+const HAIRLINE = /<hr\b|\bdivide-[xy]\b|border-(?:top|bottom)\s*:\s*(?:0?\.5|1)px/;
+const LOOPING = /\banimate-(?:bounce|ping|pulse)\b/;
+
+/** The strict rules' hits on one line: what a new site is held to and an ordinary change is not. */
+function strictHits(lower: string, raw: string, testFile: boolean): LintRule[] {
+  const hits: LintRule[] = [];
+  if (OVERUSED_FONT.test(lower)) hits.push("font/overused");
+  if (AI_PALETTE.test(lower)) hits.push("colour/ai-palette");
+  if (EYEBROW.test(lower)) hits.push("label/eyebrow");
+  if (MICRO_LABEL.test(lower)) hits.push("label/micro");
+  if (NUMBERED.test(lower)) hits.push("label/numbered");
+  if (COSTUME_MONO.test(lower) && !CODE_CONTEXT.test(lower)) hits.push("craft/costume-mono");
+  if (DEAD_LINK.test(lower)) hits.push("link/dead");
+  if ([...lower.matchAll(IMG_TAG)].some((m) => !/\balt\s*=/.test(m[0])))
+    hits.push("a11y/missing-alt");
+  if (SIDE_BORDER.test(lower)) hits.push("craft/side-border");
+  if (!testFile) {
+    const visible = [...raw.matchAll(VISIBLE_TEXT)]
+      .map((m) => m[1] ?? "")
+      .join(" ")
+      .toLowerCase();
+    if (STOCK_PHRASE.test(visible)) hits.push("copy/stock-phrase");
+    if (GENERIC_ACTION.test(lower)) hits.push("copy/generic-action");
+  }
+  if (GRADIENT_FILL.test(lower)) hits.push("craft/gradient");
+  if (RESTING_SHADOW.test(lower)) hits.push("craft/resting-shadow");
+  if (HAIRLINE.test(lower)) hits.push("craft/hairline");
+  if (LOOPING.test(lower)) hits.push("motion/looping");
+  if (NO_ZOOM.test(lower)) hits.push("a11y/no-zoom");
+  return hits;
+}
 
 /** The device a contract declares to turn a craft rule off (`devices:` in `DESIGN.md`'s front matter). */
 const RULE_DEVICE: Partial<Record<LintRule, string>> = {
@@ -48,6 +140,13 @@ const RULE_DEVICE: Partial<Record<LintRule, string>> = {
   "craft/emoji": "emoji",
   "craft/glass": "glass",
   "layout/100vh": "full-viewport",
+  "font/overused": "overused-font",
+  "colour/ai-palette": "ai-palette",
+  "label/eyebrow": "eyebrow",
+  "craft/costume-mono": "mono",
+  "craft/gradient": "gradient",
+  "craft/resting-shadow": "shadow",
+  "craft/hairline": "hairline",
 };
 
 export type LintVerdictKind = "defect" | "advisory" | "disabled";
@@ -88,6 +187,8 @@ export interface LintOptions {
   baseDevices?: readonly string[];
   /** The project's watched files, searched for the reduced-motion guard when the change adds motion. */
   projectFiles?: readonly string[];
+  /** A surface or world item (item 2026-10-30-005): the craft rules a new site is held to run too. */
+  strict?: boolean;
 }
 
 export interface LintResult {
@@ -211,6 +312,7 @@ function lineHits(
   colours: boolean,
   raw: string,
   testFile: boolean,
+  strict = false,
 ): LintRule[] {
   const hits: LintRule[] = [];
   if (/\btransition(?:-property)?\s*:\s*all\b/.test(lower) || /\btransition-all\b/.test(lower))
@@ -230,9 +332,11 @@ function lineHits(
   if (layout || (inKeyframes && LAYOUT_DECLARATION.test(lower)))
     hits.push("motion/layout-property");
   const durations = values(lower, DURATION_VALUE);
-  const over = durations.some((value) => (literalMs(value) ?? 0) > 500);
+  // A reveal on a site is longer than a control's feedback (the standard's site regime, D-1).
+  const limit = strict ? 900 : 500;
+  const over = durations.some((value) => (literalMs(value) ?? 0) > limit);
   const tailwind = /\bduration-(\d+)\b/.exec(lower);
-  if (over || (tailwind && Number(tailwind[1]) > 500)) hits.push("motion/duration-over-500");
+  if (over || (tailwind && Number(tailwind[1]) > limit)) hits.push("motion/duration-over-500");
   if (/\bease-in\b(?!-out)/.test(lower)) hits.push("motion/ease-in");
   if (colours && RAW_COLOUR.test(lower)) hits.push("tokens/raw-colour");
   if (GRADIENT_TEXT.test(lower)) hits.push("craft/gradient-text");
@@ -373,7 +477,10 @@ export function lintInterfaceFiles(
         colours,
         raw.replace(/crew-lint:[^*\n]*/g, ""),
         isTestPath(file),
-      ).filter((rule) => !offByContract.has(rule));
+        options.strict === true,
+      )
+        .concat(options.strict ? strictHits(lower, raw, isTestPath(file)) : [])
+        .filter((rule) => !offByContract.has(rule));
       if (/:hover\b/.test(lower) && !guarded && !hoverSaid) {
         hoverSaid = true;
         rules.push("hover/unguarded");
@@ -514,7 +621,8 @@ export function lintVerdict(result: LintResult): {
   if (result.files.length === 0 && result.skipped.length === 0)
     return { status: "pass", reason: null, tail: "no interface file in the change" };
   const { defects, advisories, allowed, disabled: disabledHits } = partition(result.hits);
-  const where = (h: LintHit) => `${h.rule} ${h.file}:${h.line}`;
+  const where = (h: LintHit) =>
+    h.rule.startsWith("process/") ? `${h.rule}: ${h.text}` : `${h.rule} ${h.file}:${h.line}`;
   const lines: string[] = [
     ...defects.map(where),
     ...advisories.map((h) => `advisory: ${where(h)}`),
@@ -571,6 +679,32 @@ export function writeDesignLint(paths: CrewPaths, id: string, result: LintResult
   return DESIGN_LINT_FILE;
 }
 
+/** What the process requires of an interface change (item 2026-10-30-005): the surface recorded, and the files the amount of invention asks for. */
+function processHits(
+  paths: CrewPaths,
+  work: WorkItem,
+  files: readonly string[],
+  surface: SurfaceRecord | null,
+): LintHit[] {
+  if (work.route === "fast" || !files.some(isFrontendPath)) return [];
+  const at = (rule: string, text: string): LintHit => ({
+    rule,
+    file: `design/${rule.replace("process/", "")}`,
+    line: 0,
+    text: safeText(text),
+    verdict: "defect",
+    allowed: null,
+  });
+  if (!surface)
+    return [at("process/no-surface", `crew design ${work.id} surface <mode> --invention <amount>`)];
+  const problems: ProcessProblem[] = designProblems(paths, work.id, surface);
+  if (surface.invention === "extend") {
+    const why = extendRefusal(paths, work);
+    if (why) problems.push({ rule: "process/no-surface", text: why });
+  }
+  return problems.map((p) => at(p.rule, p.text));
+}
+
 /** What a gate run takes from one design-lint run. */
 export interface DesignLintRun {
   command: string;
@@ -598,12 +732,18 @@ export function runDesignLint(options: {
 }): DesignLintRun {
   const { paths, work, profile, files, policy, writes } = options;
   const started = Date.now();
+  const surface = readSurface(paths, work.id);
   const result = lintInterfaceFiles(paths.root, files, {
     disabled: policy.ui.lint.disabled,
     contract: readDesignContract(paths.root),
     baseDevices: baseContractDevices(paths.root, work.baseCommit),
     projectFiles: allWatchedFiles(paths.root, profile) ?? [],
+    strict:
+      !!surface &&
+      surface.invention !== "extend" &&
+      (surface.surface === "persuade" || surface.surface === "experience"),
   });
+  result.hits.unshift(...processHits(paths, work, files, surface));
   const verdict = lintVerdict(result);
   const file = writes ? writeDesignLint(paths, work.id, result) : null;
   return {

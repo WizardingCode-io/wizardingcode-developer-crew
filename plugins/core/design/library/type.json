@@ -1,0 +1,1414 @@
+[
+ {
+  "id": "switzer-semibold",
+  "name": "Switzer",
+  "class": "grotesk-tight",
+  "display": {
+   "family": "Switzer",
+   "source": "fontshare",
+   "slug": "switzer",
+   "weights": [
+    600
+   ],
+   "italic": false,
+   "settings": "weight 600 · tracking -0.04em · leading 0.95 · sentence case; charcoal rather than pure black"
+  },
+  "text": {
+   "family": "Switzer",
+   "source": "fontshare",
+   "slug": "switzer",
+   "weights": [
+    400,
+    500
+   ],
+   "italic": false,
+   "settings": "400 for body, 500 for emphasis · leading 1.5 · tracking -0.005em"
+  },
+  "note": "One neo-grotesk doing everything: semibold headings pulled tight, small regular text, no capitals and no second voice. Suits software, hardware and studio pages that want to look exact and unshowy.",
+  "scale": {
+   "step-small": "clamp(0.8125rem, 0.79rem + 0.1vw, 0.875rem)",
+   "step-body": "clamp(1.0625rem, 1rem + 0.25vw, 1.1875rem)",
+   "step-lead": "clamp(1.25rem, 1.1rem + 0.7vw, 1.625rem)",
+   "step-head": "clamp(2rem, 1.3rem + 3.2vw, 4rem)"
+  },
+  "source": "Leonxlnx/taste-skill",
+  "licence": "MIT"
+ },
+ {
+  "id": "general-sans-bold",
+  "name": "General Sans",
+  "class": "grotesk-tight",
+  "display": {
+   "family": "General Sans",
+   "source": "fontshare",
+   "slug": "general-sans",
+   "weights": [
+    700
+   ],
+   "italic": false,
+   "settings": "weight 700 · tracking -0.02em · leading 0.9 · sentence case; sizes jump straight from 16px text to 10vw and larger"
+  },
+  "text": {
+   "family": "General Sans",
+   "source": "fontshare",
+   "slug": "general-sans",
+   "weights": [
+    400,
+    500
+   ],
+   "italic": false,
+   "settings": "400 for body and lists, 500 for emphasis · leading 1.45 · tracking 0"
+  },
+  "note": "A grotesk with slightly geometric bowls, set bold and very large against plain 16px text with nothing in between. Suits studios, type and product launches, and finance or tech brands that lead with the name.",
+  "scale": {
+   "step-small": "clamp(0.8125rem, 0.79rem + 0.1vw, 0.875rem)",
+   "step-body": "clamp(1.0625rem, 1rem + 0.25vw, 1.1875rem)",
+   "step-lead": "clamp(1.25rem, 1.1rem + 0.7vw, 1.625rem)",
+   "step-head": "clamp(2rem, 1.3rem + 3.2vw, 4rem)"
+  },
+  "source": "Leonxlnx/taste-skill",
+  "licence": "MIT"
+ },
+ {
+  "id": "schibsted-heavy",
+  "name": "Schibsted Grotesk",
+  "class": "grotesk-tight",
+  "display": {
+   "family": "Schibsted Grotesk",
+   "source": "google",
+   "weights": [
+    800
+   ],
+   "italic": false,
+   "settings": "weight 800 · tracking -0.05em · leading 0.88 · sentence case or all lowercase"
+  },
+  "text": {
+   "family": "Schibsted Grotesk",
+   "source": "google",
+   "weights": [
+    400,
+    600
+   ],
+   "italic": false,
+   "settings": "400 for paragraphs, 600 for navigation and other functional text · leading 1.4 · tracking -0.01em"
+  },
+  "note": "A compact, warm grotesk set heavy with letters almost touching; small text stays in the same family at semibold. Suits music, events and culture pages where the type is the image.",
+  "scale": {
+   "step-small": "clamp(0.8125rem, 0.79rem + 0.1vw, 0.875rem)",
+   "step-body": "clamp(1.0625rem, 1rem + 0.25vw, 1.1875rem)",
+   "step-lead": "clamp(1.25rem, 1.1rem + 0.7vw, 1.625rem)",
+   "step-head": "clamp(2rem, 1.3rem + 3.2vw, 4rem)"
+  },
+  "source": "Leonxlnx/taste-skill",
+  "licence": "MIT"
+ },
+ {
+  "id": "hanken-medium",
+  "name": "Hanken Grotesk",
+  "class": "grotesk-tight",
+  "display": {
+   "family": "Hanken Grotesk",
+   "source": "google",
+   "weights": [
+    500
+   ],
+   "italic": false,
+   "settings": "weight 500 · tracking -0.05em · leading 0.9 · sentence case; one statement size (about 6vw) used for every heading"
+  },
+  "text": {
+   "family": "Hanken Grotesk",
+   "source": "google",
+   "weights": [
+    400,
+    500
+   ],
+   "italic": false,
+   "settings": "400 for body, 500 for emphasis · leading 1.45 · tracking -0.005em"
+  },
+  "note": "Medium-weight grotesk statements at one large size against caption-size text: a two-size system with no bold. Suits portfolios, agencies and tools that speak in short declarative lines.",
+  "scale": {
+   "step-small": "clamp(0.8125rem, 0.79rem + 0.1vw, 0.875rem)",
+   "step-body": "clamp(1.0625rem, 1rem + 0.25vw, 1.1875rem)",
+   "step-lead": "clamp(1.25rem, 1.1rem + 0.7vw, 1.625rem)",
+   "step-head": "clamp(2rem, 1.3rem + 3.2vw, 4rem)"
+  },
+  "source": "Leonxlnx/taste-skill",
+  "licence": "MIT"
+ },
+ {
+  "id": "bricolage-contrast",
+  "name": "Bricolage Grotesque",
+  "class": "grotesk-tight",
+  "display": {
+   "family": "Bricolage Grotesque",
+   "source": "google",
+   "weights": [
+    600
+   ],
+   "italic": false,
+   "settings": "weight 600 · tracking -0.04em · leading 0.92 · sentence case; leave optical sizing on so large sizes tighten and gain contrast"
+  },
+  "text": {
+   "family": "Bricolage Grotesque",
+   "source": "google",
+   "weights": [
+    400,
+    500
+   ],
+   "italic": false,
+   "settings": "400 for body, 500 for emphasis · leading 1.5 · tracking 0"
+  },
+  "note": "A grotesk with visible stroke contrast and slightly irregular curves, so headings look drawn rather than engineered. Suits reports, consultancies and design-led software that want warmth without a serif.",
+  "scale": {
+   "step-small": "clamp(0.8125rem, 0.79rem + 0.1vw, 0.875rem)",
+   "step-body": "clamp(1.0625rem, 1rem + 0.25vw, 1.1875rem)",
+   "step-lead": "clamp(1.25rem, 1.1rem + 0.7vw, 1.625rem)",
+   "step-head": "clamp(2rem, 1.3rem + 3.2vw, 4rem)"
+  },
+  "source": "Leonxlnx/taste-skill",
+  "licence": "MIT"
+ },
+ {
+  "id": "franklin-source",
+  "name": "Libre Franklin / Source Serif 4",
+  "class": "grotesk-tight",
+  "display": {
+   "family": "Libre Franklin",
+   "source": "google",
+   "weights": [
+    700
+   ],
+   "italic": false,
+   "settings": "weight 700 · tracking -0.035em · leading 0.92 · uppercase for the title, sentence case for section headings"
+  },
+  "text": {
+   "family": "Source Serif 4",
+   "source": "google",
+   "weights": [
+    400,
+    600
+   ],
+   "italic": true,
+   "settings": "400 for body, 600 for emphasis, italic for quotations · leading 1.55 · tracking 0"
+  },
+  "note": "An American gothic for headings over a sober transitional serif for reading, the pairing of a newspaper front page. Suits essays, annual reports, archives and finance pages that have real paragraphs.",
+  "scale": {
+   "step-small": "clamp(0.8125rem, 0.79rem + 0.1vw, 0.875rem)",
+   "step-body": "clamp(1.0625rem, 1rem + 0.25vw, 1.1875rem)",
+   "step-lead": "clamp(1.25rem, 1.1rem + 0.7vw, 1.625rem)",
+   "step-head": "clamp(2rem, 1.3rem + 3.2vw, 4rem)"
+  },
+  "source": "Leonxlnx/taste-skill",
+  "licence": "MIT"
+ },
+ {
+  "id": "switzer-roman",
+  "name": "Switzer",
+  "class": "grotesk-light",
+  "display": {
+   "family": "Switzer",
+   "source": "fontshare",
+   "slug": "switzer",
+   "weights": [
+    400
+   ],
+   "italic": false,
+   "settings": "weight 400 · tracking -0.03em · leading 1.1 · sentence case; headings stay small (28–40px) and at most one line jumps to 5vw"
+  },
+  "text": {
+   "family": "Switzer",
+   "source": "fontshare",
+   "slug": "switzer",
+   "weights": [
+    400,
+    500
+   ],
+   "italic": false,
+   "settings": "400 for everything, 500 only for names and links · leading 1.45 · tracking -0.01em; hierarchy by ink against mid-grey"
+  },
+  "note": "A single roman weight of a Swiss neo-grotesk at two or three modest sizes; position and grey value do the work that size and bold usually do. Suits architects, galleries, studios and any quiet page where photographs carry the scale.",
+  "scale": {
+   "step-small": "clamp(0.8125rem, 0.79rem + 0.1vw, 0.875rem)",
+   "step-body": "clamp(1.0625rem, 1rem + 0.25vw, 1.1875rem)",
+   "step-lead": "clamp(1.25rem, 1.1rem + 0.7vw, 1.625rem)",
+   "step-head": "clamp(2rem, 1.3rem + 3.2vw, 4rem)"
+  },
+  "source": "Leonxlnx/taste-skill",
+  "licence": "MIT"
+ },
+ {
+  "id": "archivo-regular",
+  "name": "Archivo",
+  "class": "grotesk-light",
+  "display": {
+   "family": "Archivo",
+   "source": "google",
+   "weights": [
+    400
+   ],
+   "italic": false,
+   "settings": "weight 400 · tracking -0.02em · leading 1.0 · sentence case; never bold, inactive items fade to grey"
+  },
+  "text": {
+   "family": "Archivo",
+   "source": "google",
+   "weights": [
+    400,
+    600
+   ],
+   "italic": false,
+   "settings": "400 for body, 600 for buttons and short emphasis · leading 1.5 · tracking 0"
+  },
+  "note": "A sturdy grotesque kept at regular weight even at 88px, so the page reads as composed rather than loud. Suits finance, infrastructure and research pages that need to look sober and current.",
+  "scale": {
+   "step-small": "clamp(0.8125rem, 0.79rem + 0.1vw, 0.875rem)",
+   "step-body": "clamp(1.0625rem, 1rem + 0.25vw, 1.1875rem)",
+   "step-lead": "clamp(1.25rem, 1.1rem + 0.7vw, 1.625rem)",
+   "step-head": "clamp(2rem, 1.3rem + 3.2vw, 4rem)"
+  },
+  "source": "Leonxlnx/taste-skill",
+  "licence": "MIT"
+ },
+ {
+  "id": "clash-grotesk-regular",
+  "name": "Clash Grotesk",
+  "class": "grotesk-light",
+  "display": {
+   "family": "Clash Grotesk",
+   "source": "fontshare",
+   "slug": "clash-grotesk",
+   "weights": [
+    400
+   ],
+   "italic": false,
+   "settings": "weight 400 · tracking -0.03em · leading 0.95 · sentence case, or uppercase for one statement"
+  },
+  "text": {
+   "family": "Clash Grotesk",
+   "source": "fontshare",
+   "slug": "clash-grotesk",
+   "weights": [
+    400,
+    500
+   ],
+   "italic": false,
+   "settings": "400 for body, 500 for emphasis · leading 1.4 · tracking 0"
+  },
+  "note": "A slightly narrow neo-grotesk with closed apertures, used at regular weight from marquee size down to paragraphs. Suits agencies and digital studios that want large type without heaviness.",
+  "scale": {
+   "step-small": "clamp(0.8125rem, 0.79rem + 0.1vw, 0.875rem)",
+   "step-body": "clamp(1.0625rem, 1rem + 0.25vw, 1.1875rem)",
+   "step-lead": "clamp(1.25rem, 1.1rem + 0.7vw, 1.625rem)",
+   "step-head": "clamp(2rem, 1.3rem + 3.2vw, 4rem)"
+  },
+  "source": "Leonxlnx/taste-skill",
+  "licence": "MIT"
+ },
+ {
+  "id": "work-sans-light",
+  "name": "Work Sans",
+  "class": "grotesk-light",
+  "display": {
+   "family": "Work Sans",
+   "source": "google",
+   "weights": [
+    300
+   ],
+   "italic": false,
+   "settings": "weight 300 · tracking -0.035em · leading 1.0 · sentence case"
+  },
+  "text": {
+   "family": "Work Sans",
+   "source": "google",
+   "weights": [
+    400,
+    500
+   ],
+   "italic": false,
+   "settings": "400 for body, 500 for emphasis · leading 1.55 · tracking 0"
+  },
+  "note": "A light grotesque with open, slightly old-fashioned shapes; large headings look airy and the text weight beneath stays easy to read. Suits AI and research products, fashion houses and calm brand sites.",
+  "scale": {
+   "step-small": "clamp(0.8125rem, 0.79rem + 0.1vw, 0.875rem)",
+   "step-body": "clamp(1.0625rem, 1rem + 0.25vw, 1.1875rem)",
+   "step-lead": "clamp(1.25rem, 1.1rem + 0.7vw, 1.625rem)",
+   "step-head": "clamp(2rem, 1.3rem + 3.2vw, 4rem)"
+  },
+  "source": "Leonxlnx/taste-skill",
+  "licence": "MIT"
+ },
+ {
+  "id": "anton-work",
+  "name": "Anton / Work Sans",
+  "class": "condensed-heavy",
+  "display": {
+   "family": "Anton",
+   "source": "google",
+   "weights": [
+    400
+   ],
+   "italic": false,
+   "settings": "weight 400 (single heavy cut) · tracking -0.01em · leading 0.86 · uppercase"
+  },
+  "text": {
+   "family": "Work Sans",
+   "source": "google",
+   "weights": [
+    400,
+    600
+   ],
+   "italic": false,
+   "settings": "400 for body, 600 for links and short emphasis · leading 1.5 · tracking 0"
+  },
+  "note": "Compressed heavy capitals stacked tight, with a neutral grotesque kept small beneath. Suits fashion drops, sport, nightlife and any page built as a poster.",
+  "scale": {
+   "step-small": "clamp(0.8125rem, 0.79rem + 0.1vw, 0.875rem)",
+   "step-body": "clamp(1.0625rem, 1rem + 0.25vw, 1.1875rem)",
+   "step-lead": "clamp(1.25rem, 1.1rem + 0.7vw, 1.625rem)",
+   "step-head": "clamp(2.5rem, 1.2rem + 5vw, 5.5rem)"
+  },
+  "source": "Leonxlnx/taste-skill",
+  "licence": "MIT"
+ },
+ {
+  "id": "big-shoulders-public",
+  "name": "Big Shoulders / Public Sans",
+  "class": "condensed-heavy",
+  "display": {
+   "family": "Big Shoulders",
+   "source": "google",
+   "weights": [
+    800
+   ],
+   "italic": false,
+   "settings": "weight 800 · tracking -0.005em · leading 0.88 · uppercase"
+  },
+  "text": {
+   "family": "Public Sans",
+   "source": "google",
+   "weights": [
+    400,
+    600
+   ],
+   "italic": false,
+   "settings": "400 for body, 600 for emphasis · leading 1.5 · tracking 0"
+  },
+  "note": "A tall American gothic taken from city signage, blunt and civic, over a plain public-service sans. Suits culture indexes, community projects, bars, sport clubs and local campaigns.",
+  "scale": {
+   "step-small": "clamp(0.8125rem, 0.79rem + 0.1vw, 0.875rem)",
+   "step-body": "clamp(1.0625rem, 1rem + 0.25vw, 1.1875rem)",
+   "step-lead": "clamp(1.25rem, 1.1rem + 0.7vw, 1.625rem)",
+   "step-head": "clamp(2.5rem, 1.2rem + 5vw, 5.5rem)"
+  },
+  "source": "Leonxlnx/taste-skill",
+  "licence": "MIT"
+ },
+ {
+  "id": "archivo-compressed",
+  "name": "Archivo",
+  "class": "condensed-heavy",
+  "display": {
+   "family": "Archivo",
+   "source": "google",
+   "weights": [
+    800
+   ],
+   "italic": false,
+   "settings": "weight 800 at font-stretch 62% (load the wdth axis and use its narrowest setting) · tracking -0.01em · leading 0.86 · uppercase"
+  },
+  "text": {
+   "family": "Archivo",
+   "source": "google",
+   "weights": [
+    400,
+    500
+   ],
+   "italic": false,
+   "settings": "normal width · 400 for body, 500 for buttons and emphasis · leading 1.5 · tracking 0"
+  },
+  "note": "One variable family pushed to its narrowest, heaviest setting for headlines and relaxed to normal width for text, so display and body share a skeleton. Suits sportswear, campaigns and fintech pages that speak in capitals.",
+  "scale": {
+   "step-small": "clamp(0.8125rem, 0.79rem + 0.1vw, 0.875rem)",
+   "step-body": "clamp(1.0625rem, 1rem + 0.25vw, 1.1875rem)",
+   "step-lead": "clamp(1.25rem, 1.1rem + 0.7vw, 1.625rem)",
+   "step-head": "clamp(2.5rem, 1.2rem + 5vw, 5.5rem)"
+  },
+  "source": "Leonxlnx/taste-skill",
+  "licence": "MIT"
+ },
+ {
+  "id": "bebas-garamond",
+  "name": "Bebas Neue / EB Garamond",
+  "class": "condensed-heavy",
+  "display": {
+   "family": "Bebas Neue",
+   "source": "google",
+   "weights": [
+    400
+   ],
+   "italic": false,
+   "settings": "weight 400 (single cut, capitals only) · tracking -0.02em, tightening to -0.06em above 15vw · leading 0.85 · uppercase"
+  },
+  "text": {
+   "family": "EB Garamond",
+   "source": "google",
+   "weights": [
+    400,
+    500
+   ],
+   "italic": true,
+   "settings": "leading 1.45 · tracking 0"
+  },
+  "note": "Huge condensed capitals against a light old-style serif with italics: an industrial voice and a literary one, with a twenty-fold size gap between them. Suits crafted physical products, spirits, outdoor goods and hospitality.",
+  "scale": {
+   "step-small": "clamp(0.8125rem, 0.79rem + 0.1vw, 0.875rem)",
+   "step-body": "clamp(1.0625rem, 1rem + 0.25vw, 1.1875rem)",
+   "step-lead": "clamp(1.25rem, 1.1rem + 0.7vw, 1.625rem)",
+   "step-head": "clamp(2.5rem, 1.2rem + 5vw, 5.5rem)"
+  },
+  "source": "Leonxlnx/taste-skill",
+  "licence": "MIT"
+ },
+ {
+  "id": "barlow-condensed",
+  "name": "Barlow Condensed / Barlow",
+  "class": "condensed-heavy",
+  "display": {
+   "family": "Barlow Condensed",
+   "source": "google",
+   "weights": [
+    700
+   ],
+   "italic": false,
+   "settings": "weight 700 · tracking -0.02em · leading 0.9 · uppercase for statements, mixed case for item titles"
+  },
+  "text": {
+   "family": "Barlow",
+   "source": "google",
+   "weights": [
+    400,
+    500
+   ],
+   "italic": false,
+   "settings": "400 for body, 500 for emphasis · leading 1.5 · tracking 0"
+  },
+  "note": "Road-sign condensed type with squared curves, bold but not compressed into a wall, with its normal-width sibling for text. Suits logistics, motorsport, hardware and directories with many short titles.",
+  "scale": {
+   "step-small": "clamp(0.8125rem, 0.79rem + 0.1vw, 0.875rem)",
+   "step-body": "clamp(1.0625rem, 1rem + 0.25vw, 1.1875rem)",
+   "step-lead": "clamp(1.25rem, 1.1rem + 0.7vw, 1.625rem)",
+   "step-head": "clamp(2.5rem, 1.2rem + 5vw, 5.5rem)"
+  },
+  "source": "Leonxlnx/taste-skill",
+  "licence": "MIT"
+ },
+ {
+  "id": "tiktok-sans-wide",
+  "name": "TikTok Sans",
+  "class": "extended-heavy",
+  "display": {
+   "family": "TikTok Sans",
+   "source": "google",
+   "weights": [
+    800
+   ],
+   "italic": false,
+   "settings": "weight 800 at font-stretch 150% (load the wdth axis and use its widest setting) · tracking -0.01em · leading 1.0 · uppercase"
+  },
+  "text": {
+   "family": "TikTok Sans",
+   "source": "google",
+   "weights": [
+    400,
+    500
+   ],
+   "italic": false,
+   "settings": "normal width · 400 for body, 500 for emphasis · leading 1.45 · tracking 0"
+  },
+  "note": "One variable grotesk stretched wide and bold for the headline and the closing statement, then returned to normal width for reading. Suits personal portfolios, apps and tech brands that want width without a second family.",
+  "scale": {
+   "step-small": "clamp(0.8125rem, 0.79rem + 0.1vw, 0.875rem)",
+   "step-body": "clamp(1.0625rem, 1rem + 0.25vw, 1.1875rem)",
+   "step-lead": "clamp(1.25rem, 1.1rem + 0.7vw, 1.625rem)",
+   "step-head": "clamp(2rem, 1.3rem + 3.2vw, 4rem)"
+  },
+  "source": "Leonxlnx/taste-skill",
+  "licence": "MIT"
+ },
+ {
+  "id": "unbounded-onest",
+  "name": "Unbounded / Onest",
+  "class": "extended-heavy",
+  "display": {
+   "family": "Unbounded",
+   "source": "google",
+   "weights": [
+    800
+   ],
+   "italic": false,
+   "settings": "weight 800 · tracking -0.03em · leading 1.0 · uppercase"
+  },
+  "text": {
+   "family": "Onest",
+   "source": "google",
+   "weights": [
+    400,
+    500
+   ],
+   "italic": false,
+   "settings": "400 for body, 500 for emphasis · leading 1.5 · tracking 0"
+  },
+  "note": "A wide display sans built from rounded squares, heavy and a little architectural, beside a clean text grotesk. Suits architecture indexes, watches, mobility and events that want a title with a constructed feel.",
+  "scale": {
+   "step-small": "clamp(0.8125rem, 0.79rem + 0.1vw, 0.875rem)",
+   "step-body": "clamp(1.0625rem, 1rem + 0.25vw, 1.1875rem)",
+   "step-lead": "clamp(1.25rem, 1.1rem + 0.7vw, 1.625rem)",
+   "step-head": "clamp(2rem, 1.3rem + 3.2vw, 4rem)"
+  },
+  "source": "Leonxlnx/taste-skill",
+  "licence": "MIT"
+ },
+ {
+  "id": "chivo-black",
+  "name": "Chivo",
+  "class": "heavy-black",
+  "display": {
+   "family": "Chivo",
+   "source": "google",
+   "weights": [
+    900
+   ],
+   "italic": false,
+   "settings": "weight 900 · tracking -0.05em · leading 0.88 · uppercase"
+  },
+  "text": {
+   "family": "Chivo",
+   "source": "google",
+   "weights": [
+    400,
+    700
+   ],
+   "italic": false,
+   "settings": "400 for paragraphs, 700 for navigation, tags and links · leading 1.35 · tracking -0.01em"
+  },
+  "note": "A black grotesque in capitals with letters nearly colliding, and only two sizes on the page: enormous and small. Suits agencies, city and culture projects and musicians who want the type to land like a headline.",
+  "scale": {
+   "step-small": "clamp(0.8125rem, 0.79rem + 0.1vw, 0.875rem)",
+   "step-body": "clamp(1.0625rem, 1rem + 0.25vw, 1.1875rem)",
+   "step-lead": "clamp(1.25rem, 1.1rem + 0.7vw, 1.625rem)",
+   "step-head": "clamp(2.5rem, 1.2rem + 5vw, 5.5rem)"
+  },
+  "source": "Leonxlnx/taste-skill",
+  "licence": "MIT"
+ },
+ {
+  "id": "cabinet-grotesk-black",
+  "name": "Cabinet Grotesk",
+  "class": "heavy-black",
+  "display": {
+   "family": "Cabinet Grotesk",
+   "source": "fontshare",
+   "slug": "cabinet-grotesk",
+   "weights": [
+    800
+   ],
+   "italic": false,
+   "settings": "weight 800 · tracking -0.035em · leading 0.9 · lowercase or sentence case, one or two words per line"
+  },
+  "text": {
+   "family": "Cabinet Grotesk",
+   "source": "fontshare",
+   "slug": "cabinet-grotesk",
+   "weights": [
+    400,
+    500
+   ],
+   "italic": false,
+   "settings": "400 for body, 500 for emphasis · leading 1.5 · tracking 0"
+  },
+  "note": "A heavy sans with tight joins and an eccentric lowercase, friendly but loud. Suits bookshops, food, consumer subscriptions and marketing studios.",
+  "scale": {
+   "step-small": "clamp(0.8125rem, 0.79rem + 0.1vw, 0.875rem)",
+   "step-body": "clamp(1.0625rem, 1rem + 0.25vw, 1.1875rem)",
+   "step-lead": "clamp(1.25rem, 1.1rem + 0.7vw, 1.625rem)",
+   "step-head": "clamp(2.5rem, 1.2rem + 5vw, 5.5rem)"
+  },
+  "source": "Leonxlnx/taste-skill",
+  "licence": "MIT"
+ },
+ {
+  "id": "epilogue-black",
+  "name": "Epilogue",
+  "class": "heavy-black",
+  "display": {
+   "family": "Epilogue",
+   "source": "google",
+   "weights": [
+    900
+   ],
+   "italic": false,
+   "settings": "weight 900 · tracking -0.04em · leading 0.9 · sentence case or title case"
+  },
+  "text": {
+   "family": "Epilogue",
+   "source": "google",
+   "weights": [
+    400,
+    500
+   ],
+   "italic": false,
+   "settings": "400 for body, 500 for emphasis · leading 1.5 · tracking 0"
+  },
+  "note": "A broad black grotesque with a slightly uneven rhythm, at its best as a name set very large in mixed case. Suits entertainers, podcasts, consumer apps and blunt SaaS pages; emphasis comes from colour, not from a change of weight.",
+  "scale": {
+   "step-small": "clamp(0.8125rem, 0.79rem + 0.1vw, 0.875rem)",
+   "step-body": "clamp(1.0625rem, 1rem + 0.25vw, 1.1875rem)",
+   "step-lead": "clamp(1.25rem, 1.1rem + 0.7vw, 1.625rem)",
+   "step-head": "clamp(2.5rem, 1.2rem + 5vw, 5.5rem)"
+  },
+  "source": "Leonxlnx/taste-skill",
+  "licence": "MIT"
+ },
+ {
+  "id": "red-hat-black",
+  "name": "Red Hat Display / Red Hat Text",
+  "class": "heavy-black",
+  "display": {
+   "family": "Red Hat Display",
+   "source": "google",
+   "weights": [
+    900
+   ],
+   "italic": false,
+   "settings": "weight 900 · tracking -0.03em · leading 0.92 · uppercase; centred three-line stacks work well"
+  },
+  "text": {
+   "family": "Red Hat Text",
+   "source": "google",
+   "weights": [
+    400,
+    500
+   ],
+   "italic": false,
+   "settings": "400 for body, 500 for emphasis · leading 1.5 · tracking 0"
+  },
+  "note": "A geometric black with round bowls and flat terminals, cleaner and more even than a grotesque at the same weight. Suits fintech, apps and portfolios that want heavy type with a tidy, technical finish.",
+  "scale": {
+   "step-small": "clamp(0.8125rem, 0.79rem + 0.1vw, 0.875rem)",
+   "step-body": "clamp(1.0625rem, 1rem + 0.25vw, 1.1875rem)",
+   "step-lead": "clamp(1.25rem, 1.1rem + 0.7vw, 1.625rem)",
+   "step-head": "clamp(2.5rem, 1.2rem + 5vw, 5.5rem)"
+  },
+  "source": "Leonxlnx/taste-skill",
+  "licence": "MIT"
+ },
+ {
+  "id": "jost-caps",
+  "name": "Jost",
+  "class": "geometric",
+  "display": {
+   "family": "Jost",
+   "source": "google",
+   "weights": [
+    700
+   ],
+   "italic": false,
+   "settings": "weight 700 · tracking -0.03em · leading 0.9 · uppercase"
+  },
+  "text": {
+   "family": "Jost",
+   "source": "google",
+   "weights": [
+    400,
+    500
+   ],
+   "italic": false,
+   "settings": "400 for body, 500 for emphasis · leading 1.5 · tracking 0"
+  },
+  "note": "The pointed, circular geometry of the 1920s in bold capitals, with the same family at reading size. Suits space, science, museums, architecture and anything that should feel like a mid-century poster.",
+  "scale": {
+   "step-small": "clamp(0.8125rem, 0.79rem + 0.1vw, 0.875rem)",
+   "step-body": "clamp(1.0625rem, 1rem + 0.25vw, 1.1875rem)",
+   "step-lead": "clamp(1.25rem, 1.1rem + 0.7vw, 1.625rem)",
+   "step-head": "clamp(2rem, 1.3rem + 3.2vw, 4rem)"
+  },
+  "source": "Leonxlnx/taste-skill",
+  "licence": "MIT"
+ },
+ {
+  "id": "stack-sans-light",
+  "name": "Stack Sans Headline / Stack Sans Text",
+  "class": "geometric",
+  "display": {
+   "family": "Stack Sans Headline",
+   "source": "google",
+   "weights": [
+    300
+   ],
+   "italic": false,
+   "settings": "weight 300 · tracking -0.022em · leading 1.05 · sentence case; a heading may be two-tone, grey then full ink"
+  },
+  "text": {
+   "family": "Stack Sans Text",
+   "source": "google",
+   "weights": [
+    400,
+    500
+   ],
+   "italic": false,
+   "settings": "400 for body, 500 for emphasis · leading 1.5 · tracking 0"
+  },
+  "note": "A geometric sans in a light weight at large size, soft and exact at once, with its text cut underneath. Suits consumer apps, utilities and developer tools that want to feel calm and modern.",
+  "scale": {
+   "step-small": "clamp(0.8125rem, 0.79rem + 0.1vw, 0.875rem)",
+   "step-body": "clamp(1.0625rem, 1rem + 0.25vw, 1.1875rem)",
+   "step-lead": "clamp(1.25rem, 1.1rem + 0.7vw, 1.625rem)",
+   "step-head": "clamp(2rem, 1.3rem + 3.2vw, 4rem)"
+  },
+  "source": "Leonxlnx/taste-skill",
+  "licence": "MIT"
+ },
+ {
+  "id": "albert-sans-semibold",
+  "name": "Albert Sans",
+  "class": "geometric",
+  "display": {
+   "family": "Albert Sans",
+   "source": "google",
+   "weights": [
+    600
+   ],
+   "italic": false,
+   "settings": "weight 600 · tracking -0.035em · leading 1.0 · sentence case"
+  },
+  "text": {
+   "family": "Albert Sans",
+   "source": "google",
+   "weights": [
+    400,
+    500
+   ],
+   "italic": false,
+   "settings": "400 for body, 500 for emphasis · leading 1.5 · tracking 0"
+  },
+  "note": "A geometric grotesque with Scandinavian restraint: round letters, even colour, nothing decorative. Suits logistics, health, property and corporate sites that need to look clear and dependable.",
+  "scale": {
+   "step-small": "clamp(0.8125rem, 0.79rem + 0.1vw, 0.875rem)",
+   "step-body": "clamp(1.0625rem, 1rem + 0.25vw, 1.1875rem)",
+   "step-lead": "clamp(1.25rem, 1.1rem + 0.7vw, 1.625rem)",
+   "step-head": "clamp(2rem, 1.3rem + 3.2vw, 4rem)"
+  },
+  "source": "Leonxlnx/taste-skill",
+  "licence": "MIT"
+ },
+ {
+  "id": "spartan-figtree",
+  "name": "League Spartan / Figtree",
+  "class": "geometric",
+  "display": {
+   "family": "League Spartan",
+   "source": "google",
+   "weights": [
+    700
+   ],
+   "italic": false,
+   "settings": "weight 700 · tracking -0.04em · leading 0.88 · lowercase or sentence case"
+  },
+  "text": {
+   "family": "Figtree",
+   "source": "google",
+   "weights": [
+    400,
+    600
+   ],
+   "italic": false,
+   "settings": "400 for body, 600 for emphasis · leading 1.5 · tracking 0"
+  },
+  "note": "A compact bold geometric with a low waist, punchy in short lowercase lines, over a friendly open text sans. Suits newsletters, consumer products, creators and small shops.",
+  "scale": {
+   "step-small": "clamp(0.8125rem, 0.79rem + 0.1vw, 0.875rem)",
+   "step-body": "clamp(1.0625rem, 1rem + 0.25vw, 1.1875rem)",
+   "step-lead": "clamp(1.25rem, 1.1rem + 0.7vw, 1.625rem)",
+   "step-head": "clamp(2rem, 1.3rem + 3.2vw, 4rem)"
+  },
+  "source": "Leonxlnx/taste-skill",
+  "licence": "MIT"
+ },
+ {
+  "id": "pilcrow-rounded",
+  "name": "Pilcrow Rounded",
+  "class": "rounded-friendly",
+  "display": {
+   "family": "Pilcrow Rounded",
+   "source": "fontshare",
+   "slug": "pilcrow-rounded",
+   "weights": [
+    700
+   ],
+   "italic": false,
+   "settings": "weight 700 · tracking -0.05em · leading 0.9 · all lowercase, one or two words per line"
+  },
+  "text": {
+   "family": "Pilcrow Rounded",
+   "source": "fontshare",
+   "slug": "pilcrow-rounded",
+   "weights": [
+    400,
+    500
+   ],
+   "italic": false,
+   "settings": "400 for body, 500 for emphasis · leading 1.5 · tracking 0; lowercase throughout is fine"
+  },
+  "note": "A sturdy sans with fully rounded stroke ends, set bold and tight in lowercase with one small size for everything else. Suits toys, gadgets, cosmetics and other objects with soft moulded edges.",
+  "scale": {
+   "step-small": "clamp(0.8125rem, 0.79rem + 0.1vw, 0.875rem)",
+   "step-body": "clamp(1.0625rem, 1rem + 0.25vw, 1.1875rem)",
+   "step-lead": "clamp(1.25rem, 1.1rem + 0.7vw, 1.625rem)",
+   "step-head": "clamp(2rem, 1.3rem + 3.2vw, 4rem)"
+  },
+  "source": "Leonxlnx/taste-skill",
+  "licence": "MIT"
+ },
+ {
+  "id": "roundo-soft",
+  "name": "Roundo",
+  "class": "rounded-friendly",
+  "display": {
+   "family": "Roundo",
+   "source": "fontshare",
+   "slug": "roundo",
+   "weights": [
+    500
+   ],
+   "italic": false,
+   "settings": "weight 500 · tracking -0.025em · leading 1.05 · sentence case; colour the type to its section instead of black"
+  },
+  "text": {
+   "family": "Roundo",
+   "source": "fontshare",
+   "slug": "roundo",
+   "weights": [
+    400,
+    600
+   ],
+   "italic": false,
+   "settings": "400 for body, 600 for emphasis · leading 1.5 · tracking 0"
+  },
+  "note": "A rounded geometric sans at medium weight and a generous text size, gentle without looking childish. Suits wellness, home goods, family apps and everyday money tools.",
+  "scale": {
+   "step-small": "clamp(0.8125rem, 0.79rem + 0.1vw, 0.875rem)",
+   "step-body": "clamp(1.0625rem, 1rem + 0.25vw, 1.1875rem)",
+   "step-lead": "clamp(1.25rem, 1.1rem + 0.7vw, 1.625rem)",
+   "step-head": "clamp(2rem, 1.3rem + 3.2vw, 4rem)"
+  },
+  "source": "Leonxlnx/taste-skill",
+  "licence": "MIT"
+ },
+ {
+  "id": "chillax-semibold",
+  "name": "Chillax",
+  "class": "rounded-friendly",
+  "display": {
+   "family": "Chillax",
+   "source": "fontshare",
+   "slug": "chillax",
+   "weights": [
+    600
+   ],
+   "italic": false,
+   "settings": "weight 600 · tracking -0.03em · leading 1.0 · sentence case"
+  },
+  "text": {
+   "family": "Chillax",
+   "source": "fontshare",
+   "slug": "chillax",
+   "weights": [
+    400,
+    500
+   ],
+   "italic": false,
+   "settings": "400 for body, 500 for emphasis · leading 1.5 · tracking 0"
+  },
+  "note": "A soft geometric sans with wide round letters and relaxed joins, warm at semibold and easy at text size. Suits consumer apps, community products, cafes and small friendly brands.",
+  "scale": {
+   "step-small": "clamp(0.8125rem, 0.79rem + 0.1vw, 0.875rem)",
+   "step-body": "clamp(1.0625rem, 1rem + 0.25vw, 1.1875rem)",
+   "step-lead": "clamp(1.25rem, 1.1rem + 0.7vw, 1.625rem)",
+   "step-head": "clamp(2rem, 1.3rem + 3.2vw, 4rem)"
+  },
+  "source": "Leonxlnx/taste-skill",
+  "licence": "MIT"
+ },
+ {
+  "id": "gambarino-general",
+  "name": "Gambarino / General Sans",
+  "class": "serif-display",
+  "display": {
+   "family": "Gambarino",
+   "source": "fontshare",
+   "slug": "gambarino",
+   "weights": [
+    400
+   ],
+   "italic": false,
+   "settings": "weight 400 (single cut) · tracking -0.02em · leading 0.92 · sentence case"
+  },
+  "text": {
+   "family": "General Sans",
+   "source": "fontshare",
+   "slug": "general-sans",
+   "weights": [
+    400,
+    500
+   ],
+   "italic": false,
+   "settings": "400 for body, navigation and buttons, 500 for emphasis · leading 1.5"
+  },
+  "note": "A narrow, sharp display serif for headlines against a small plain sans: a five-to-one jump with nothing between. Suits agencies, bakeries and restaurants, fashion and editorial brands.",
+  "scale": {
+   "step-small": "clamp(0.8125rem, 0.79rem + 0.1vw, 0.875rem)",
+   "step-body": "clamp(1.0625rem, 1rem + 0.25vw, 1.1875rem)",
+   "step-lead": "clamp(1.25rem, 1.1rem + 0.7vw, 1.625rem)",
+   "step-head": "clamp(2rem, 1.3rem + 3.2vw, 4rem)"
+  },
+  "source": "Leonxlnx/taste-skill",
+  "licence": "MIT"
+ },
+ {
+  "id": "bodoni-jost",
+  "name": "Bodoni Moda / Jost",
+  "class": "serif-display",
+  "display": {
+   "family": "Bodoni Moda",
+   "source": "google",
+   "weights": [
+    500
+   ],
+   "italic": true,
+   "settings": "weight 500 with optical sizing on · tracking -0.02em · leading 0.95 · uppercase or sentence case; italic for a whole line, never for one word"
+  },
+  "text": {
+   "family": "Jost",
+   "source": "google",
+   "weights": [
+    400,
+    500
+   ],
+   "italic": false,
+   "settings": "400 for body, 500 for emphasis · leading 1.6 · tracking 0.01em"
+  },
+  "note": "A true didone with hairline serifs and vertical stress over a light geometric sans, the classic fashion-magazine pairing. Suits luxury property, jewellery, fragrance and fashion.",
+  "scale": {
+   "step-small": "clamp(0.8125rem, 0.79rem + 0.1vw, 0.875rem)",
+   "step-body": "clamp(1.0625rem, 1rem + 0.25vw, 1.1875rem)",
+   "step-lead": "clamp(1.25rem, 1.1rem + 0.7vw, 1.625rem)",
+   "step-head": "clamp(2rem, 1.3rem + 3.2vw, 4rem)"
+  },
+  "source": "Leonxlnx/taste-skill",
+  "licence": "MIT"
+ },
+ {
+  "id": "imbue-albert",
+  "name": "Imbue / Albert Sans",
+  "class": "serif-display",
+  "display": {
+   "family": "Imbue",
+   "source": "google",
+   "weights": [
+    400
+   ],
+   "italic": false,
+   "settings": "weight 400 with optical sizing on · tracking -0.01em · leading 0.9 · uppercase, sized so one short word fills its column (6–12vw)"
+  },
+  "text": {
+   "family": "Albert Sans",
+   "source": "google",
+   "weights": [
+    400,
+    500
+   ],
+   "italic": false,
+   "settings": "400 for body, 500 for emphasis · leading 1.55 · tracking 0"
+  },
+  "note": "A tall, condensed high-contrast serif whose capitals read like a masthead or a shop fascia. Suits residences, hotels, restaurants and wine, where a short name can stand floor to ceiling.",
+  "scale": {
+   "step-small": "clamp(0.8125rem, 0.79rem + 0.1vw, 0.875rem)",
+   "step-body": "clamp(1.0625rem, 1rem + 0.25vw, 1.1875rem)",
+   "step-lead": "clamp(1.25rem, 1.1rem + 0.7vw, 1.625rem)",
+   "step-head": "clamp(2rem, 1.3rem + 3.2vw, 4rem)"
+  },
+  "source": "Leonxlnx/taste-skill",
+  "licence": "MIT"
+ },
+ {
+  "id": "erode-sharp",
+  "name": "Erode",
+  "class": "serif-display",
+  "display": {
+   "family": "Erode",
+   "source": "fontshare",
+   "slug": "erode",
+   "weights": [
+    500
+   ],
+   "italic": false,
+   "settings": "weight 500 · tracking -0.025em · leading 0.95 · sentence case, or tight capitals at 32–40px for a single statement"
+  },
+  "text": {
+   "family": "Erode",
+   "source": "fontshare",
+   "slug": "erode",
+   "weights": [
+    400,
+    600
+   ],
+   "italic": true,
+   "settings": "400 for body, 600 for emphasis, italic for titles of works · leading 1.5 · tracking 0"
+  },
+  "note": "A serif with chiselled, angular curves and wedge serifs, sharp at display size and firm in text. Suits studios, galleries, advisory firms and written guides.",
+  "scale": {
+   "step-small": "clamp(0.8125rem, 0.79rem + 0.1vw, 0.875rem)",
+   "step-body": "clamp(1.0625rem, 1rem + 0.25vw, 1.1875rem)",
+   "step-lead": "clamp(1.25rem, 1.1rem + 0.7vw, 1.625rem)",
+   "step-head": "clamp(2rem, 1.3rem + 3.2vw, 4rem)"
+  },
+  "source": "Leonxlnx/taste-skill",
+  "licence": "MIT"
+ },
+ {
+  "id": "boska-roman-italic",
+  "name": "Boska",
+  "class": "serif-display",
+  "display": {
+   "family": "Boska",
+   "source": "fontshare",
+   "slug": "boska",
+   "weights": [
+    400
+   ],
+   "italic": true,
+   "settings": "weight 400 · tracking -0.02em · leading 0.95 · roman capitals for the main words with lowercase italic for the connecting words at the same size, or sentence case throughout; centred lines work"
+  },
+  "text": {
+   "family": "Boska",
+   "source": "fontshare",
+   "slug": "boska",
+   "weights": [
+    400,
+    500
+   ],
+   "italic": true,
+   "settings": "400 for body, 500 for emphasis · leading 1.5 · tracking 0.005em"
+  },
+  "note": "A high-contrast serif with pointed serifs and a lively italic, used roman and italic together at one size. Suits perfume, jewellery, lodges, weddings and other occasions for ceremony.",
+  "scale": {
+   "step-small": "clamp(0.8125rem, 0.79rem + 0.1vw, 0.875rem)",
+   "step-body": "clamp(1.0625rem, 1rem + 0.25vw, 1.1875rem)",
+   "step-lead": "clamp(1.25rem, 1.1rem + 0.7vw, 1.625rem)",
+   "step-head": "clamp(2rem, 1.3rem + 3.2vw, 4rem)"
+  },
+  "source": "Leonxlnx/taste-skill",
+  "licence": "MIT"
+ },
+ {
+  "id": "zodiak-hairline",
+  "name": "Zodiak / Hanken Grotesk",
+  "class": "serif-light-large",
+  "display": {
+   "family": "Zodiak",
+   "source": "fontshare",
+   "slug": "zodiak",
+   "weights": [
+    100,
+    300
+   ],
+   "italic": false,
+   "settings": "weight 100 above 96px, 300 for 28–36px statements · tracking -0.01em · leading 1.0 · capitals for the headline, sentence case for statements; never bold"
+  },
+  "text": {
+   "family": "Hanken Grotesk",
+   "source": "google",
+   "weights": [
+    400,
+    500
+   ],
+   "italic": false,
+   "settings": "400 for body, 500 for emphasis · leading 1.5 · tracking 0"
+  },
+  "note": "Hairline serif capitals set large enough that the thin strokes read as drawing, with a small neutral sans for everything practical. Suits lodges, spas, architecture and interiors; keep it on flat pale or dark fields where the strokes have full contrast.",
+  "scale": {
+   "step-small": "clamp(0.8125rem, 0.79rem + 0.1vw, 0.875rem)",
+   "step-body": "clamp(1.125rem, 1.05rem + 0.3vw, 1.3125rem)",
+   "step-lead": "clamp(1.25rem, 1.1rem + 0.7vw, 1.625rem)",
+   "step-head": "clamp(2rem, 1.3rem + 3.2vw, 4rem)"
+  },
+  "source": "Leonxlnx/taste-skill",
+  "licence": "MIT"
+ },
+ {
+  "id": "sentient-light",
+  "name": "Sentient",
+  "class": "serif-light-large",
+  "display": {
+   "family": "Sentient",
+   "source": "fontshare",
+   "slug": "sentient",
+   "weights": [
+    300
+   ],
+   "italic": false,
+   "settings": "weight 300 · tracking -0.015em · leading 1.0 · sentence case; about 8vw for the headline, 40px for statements"
+  },
+  "text": {
+   "family": "Sentient",
+   "source": "fontshare",
+   "slug": "sentient",
+   "weights": [
+    400,
+    500
+   ],
+   "italic": true,
+   "settings": "400 for body, 500 for emphasis · leading 1.55 · tracking 0"
+  },
+  "note": "A soft, low-contrast serif in a light weight, more book than fashion magazine, large and calm in sentence case. Suits outdoor and craft products, restaurants, cameras and slow consumer goods.",
+  "scale": {
+   "step-small": "clamp(0.8125rem, 0.79rem + 0.1vw, 0.875rem)",
+   "step-body": "clamp(1.125rem, 1.05rem + 0.3vw, 1.3125rem)",
+   "step-lead": "clamp(1.25rem, 1.1rem + 0.7vw, 1.625rem)",
+   "step-head": "clamp(2rem, 1.3rem + 3.2vw, 4rem)"
+  },
+  "source": "Leonxlnx/taste-skill",
+  "licence": "MIT"
+ },
+ {
+  "id": "eb-garamond-quiet",
+  "name": "EB Garamond",
+  "class": "serif-text",
+  "display": {
+   "family": "EB Garamond",
+   "source": "google",
+   "weights": [
+    400
+   ],
+   "italic": true,
+   "settings": "weight 400, italic for the title · tracking -0.01em · leading 1.1 · sentence case or all lowercase; the largest size stays near 40px"
+  },
+  "text": {
+   "family": "EB Garamond",
+   "source": "google",
+   "weights": [
+    400,
+    500
+   ],
+   "italic": true,
+   "settings": "400 for body, 500 for emphasis · leading 1.5 · tracking 0"
+  },
+  "note": "A humanist Garamond in roman and italic at two modest sizes, with no capitals and no bold. Suits set designers, antique dealers, wine, publishers and portfolios that whisper.",
+  "scale": {
+   "step-small": "clamp(0.8125rem, 0.79rem + 0.1vw, 0.875rem)",
+   "step-body": "clamp(1.125rem, 1.05rem + 0.3vw, 1.3125rem)",
+   "step-lead": "clamp(1.25rem, 1.1rem + 0.7vw, 1.625rem)",
+   "step-head": "clamp(2rem, 1.3rem + 3.2vw, 4rem)"
+  },
+  "source": "Leonxlnx/taste-skill",
+  "licence": "MIT"
+ },
+ {
+  "id": "literata-book",
+  "name": "Literata",
+  "class": "serif-text",
+  "display": {
+   "family": "Literata",
+   "source": "google",
+   "weights": [
+    500
+   ],
+   "italic": false,
+   "settings": "weight 500 with optical sizing on · tracking -0.02em · leading 1.05 · sentence case"
+  },
+  "text": {
+   "family": "Literata",
+   "source": "google",
+   "weights": [
+    400,
+    600
+   ],
+   "italic": true,
+   "settings": "400 for body, 600 for emphasis, italic for titles · leading 1.6 · tracking 0"
+  },
+  "note": "A sturdy screen-reading serif with a large x-height; headings are simply the text face at medium weight and a larger size. Suits essays, reports, newsletters and knowledge products.",
+  "scale": {
+   "step-small": "clamp(0.8125rem, 0.79rem + 0.1vw, 0.875rem)",
+   "step-body": "clamp(1.125rem, 1.05rem + 0.3vw, 1.3125rem)",
+   "step-lead": "clamp(1.25rem, 1.1rem + 0.7vw, 1.625rem)",
+   "step-head": "clamp(2rem, 1.3rem + 3.2vw, 4rem)"
+  },
+  "source": "Leonxlnx/taste-skill",
+  "licence": "MIT"
+ },
+ {
+  "id": "stix-plain-roman",
+  "name": "STIX Two Text",
+  "class": "serif-text",
+  "display": {
+   "family": "STIX Two Text",
+   "source": "google",
+   "weights": [
+    400
+   ],
+   "italic": true,
+   "settings": "weight 400 · tracking -0.026em · leading 1.1 · sentence case at 2.6–3.6vw; one running line may be set in italic capitals"
+  },
+  "text": {
+   "family": "STIX Two Text",
+   "source": "google",
+   "weights": [
+    400,
+    600
+   ],
+   "italic": false,
+   "settings": "400 for body, 600 for emphasis · leading 1.45 · tracking 0"
+  },
+  "note": "The plain Times-style roman of a typed document, slightly tightened and never larger than a few vw. Suits vehicles and tools presented dryly, artists' pages, investment memos and anything meant to look undesigned on purpose.",
+  "scale": {
+   "step-small": "clamp(0.8125rem, 0.79rem + 0.1vw, 0.875rem)",
+   "step-body": "clamp(1.125rem, 1.05rem + 0.3vw, 1.3125rem)",
+   "step-lead": "clamp(1.25rem, 1.1rem + 0.7vw, 1.625rem)",
+   "step-head": "clamp(2rem, 1.3rem + 3.2vw, 4rem)"
+  },
+  "source": "Leonxlnx/taste-skill",
+  "licence": "MIT"
+ },
+ {
+  "id": "young-source",
+  "name": "Young Serif / Source Serif 4",
+  "class": "serif-text",
+  "display": {
+   "family": "Young Serif",
+   "source": "google",
+   "weights": [
+    400
+   ],
+   "italic": false,
+   "settings": "weight 400 (single heavy cut) · tracking -0.02em · leading 0.95 · sentence case"
+  },
+  "text": {
+   "family": "Source Serif 4",
+   "source": "google",
+   "weights": [
+    400,
+    600
+   ],
+   "italic": true,
+   "settings": "400 for body, 600 for emphasis, italic for quotations · leading 1.55 · tracking 0"
+  },
+  "note": "A heavy, round old-style headline face with soft bracketed serifs over a clear transitional text serif. Suits essays, food, independent publishers and personal sites that want warmth with weight.",
+  "scale": {
+   "step-small": "clamp(0.8125rem, 0.79rem + 0.1vw, 0.875rem)",
+   "step-body": "clamp(1.125rem, 1.05rem + 0.3vw, 1.3125rem)",
+   "step-lead": "clamp(1.25rem, 1.1rem + 0.7vw, 1.625rem)",
+   "step-head": "clamp(2rem, 1.3rem + 3.2vw, 4rem)"
+  },
+  "source": "Leonxlnx/taste-skill",
+  "licence": "MIT"
+ },
+ {
+  "id": "zilla-slab-even",
+  "name": "Zilla Slab",
+  "class": "slab",
+  "display": {
+   "family": "Zilla Slab",
+   "source": "google",
+   "weights": [
+    600
+   ],
+   "italic": false,
+   "settings": "weight 600 · tracking -0.025em · leading 1.0 · sentence case"
+  },
+  "text": {
+   "family": "Zilla Slab",
+   "source": "google",
+   "weights": [
+    400,
+    500
+   ],
+   "italic": true,
+   "settings": "400 for body, 500 for emphasis · leading 1.5 · tracking 0"
+  },
+  "note": "A contemporary slab with smooth curves and unbracketed serifs, even enough to carry headings and paragraphs alike. Suits developer tools, personal sites, open-source and nonprofit projects.",
+  "scale": {
+   "step-small": "clamp(0.8125rem, 0.79rem + 0.1vw, 0.875rem)",
+   "step-body": "clamp(1.125rem, 1.05rem + 0.3vw, 1.3125rem)",
+   "step-lead": "clamp(1.25rem, 1.1rem + 0.7vw, 1.625rem)",
+   "step-head": "clamp(2rem, 1.3rem + 3.2vw, 4rem)"
+  },
+  "source": "Leonxlnx/taste-skill",
+  "licence": "MIT"
+ },
+ {
+  "id": "besley-franklin",
+  "name": "Besley / Libre Franklin",
+  "class": "slab",
+  "display": {
+   "family": "Besley",
+   "source": "google",
+   "weights": [
+    800
+   ],
+   "italic": false,
+   "settings": "weight 800 · tracking -0.02em · leading 0.95 · sentence case or uppercase"
+  },
+  "text": {
+   "family": "Libre Franklin",
+   "source": "google",
+   "weights": [
+    400,
+    600
+   ],
+   "italic": false,
+   "settings": "400 for body, 600 for emphasis · leading 1.5 · tracking 0"
+  },
+  "note": "A fat Clarendon with ball terminals and bracketed slabs over a plain gothic, the look of a nineteenth-century bill poster. Suits breweries, barbers, markets, fairs and heritage goods.",
+  "scale": {
+   "step-small": "clamp(0.8125rem, 0.79rem + 0.1vw, 0.875rem)",
+   "step-body": "clamp(1.125rem, 1.05rem + 0.3vw, 1.3125rem)",
+   "step-lead": "clamp(1.25rem, 1.1rem + 0.7vw, 1.625rem)",
+   "step-head": "clamp(2rem, 1.3rem + 3.2vw, 4rem)"
+  },
+  "source": "Leonxlnx/taste-skill",
+  "licence": "MIT"
+ },
+ {
+  "id": "rokkitt-literata",
+  "name": "Rokkitt / Literata",
+  "class": "slab",
+  "display": {
+   "family": "Rokkitt",
+   "source": "google",
+   "weights": [
+    800
+   ],
+   "italic": false,
+   "settings": "weight 800 · tracking -0.01em · leading 0.85 · uppercase, sized by cap height (about 14vw)"
+  },
+  "text": {
+   "family": "Literata",
+   "source": "google",
+   "weights": [
+    400,
+    600
+   ],
+   "italic": true,
+   "settings": "400 for body, 600 for emphasis · leading 1.6 · tracking 0"
+  },
+  "note": "Narrow geometric slab capitals as a tall title block, then a bookish serif for a long essay beneath. Suits manufacturing, trades, manifestos and industrial history.",
+  "scale": {
+   "step-small": "clamp(0.8125rem, 0.79rem + 0.1vw, 0.875rem)",
+   "step-body": "clamp(1.125rem, 1.05rem + 0.3vw, 1.3125rem)",
+   "step-lead": "clamp(1.25rem, 1.1rem + 0.7vw, 1.625rem)",
+   "step-head": "clamp(2rem, 1.3rem + 3.2vw, 4rem)"
+  },
+  "source": "Leonxlnx/taste-skill",
+  "licence": "MIT"
+ }
+]

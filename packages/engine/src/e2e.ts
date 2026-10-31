@@ -10,6 +10,7 @@ import {
 } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { gradeConsole, gradeLogs } from "./console.ts";
+import { gradeDesign, recordDesignHistory } from "./design-grade.ts";
 import { auditPages, type DevtoolsAudit, runDevtoolsAudit } from "./devtools.ts";
 import { startEnvironment, stopEnvironment } from "./environment.ts";
 import { readTextQuietly, writeText } from "./fs.ts";
@@ -227,11 +228,23 @@ export async function runE2e(inputs: E2eInputs): Promise<GateRun> {
         ? "console file does not parse"
         : null;
   const logsOffence = graded?.status === "failed" ? `logs: ${graded.first}` : null;
-  const offence = consoleOffence ?? logsOffence ?? uiGrade.offence ?? audit?.offence ?? null;
+  // A new site's page and its likeness to the earlier ones (item 2026-10-30-005): after the UI grade.
+  const designGrade = gradeDesign(paths, work);
+  const offence =
+    consoleOffence ??
+    logsOffence ??
+    uiGrade.offence ??
+    designGrade.offences[0] ??
+    audit?.offence ??
+    null;
   const consoleLine =
     consoleOffence ?? (consoleGrade.status === "none" ? "console: not captured" : "console: clean");
   const logsLine = logsOffence ?? (graded === null ? (logs.note ?? "logs: none") : "logs: clean");
   const passed = result.exit === 0 && !result.timedOut && offence === null;
+  const historyNote =
+    passed && designGrade.fingerprint
+      ? recordDesignHistory(paths, work, designGrade.fingerprint)
+      : null;
   return {
     ...base,
     command: command.command,
@@ -247,6 +260,9 @@ export async function runE2e(inputs: E2eInputs): Promise<GateRun> {
       consoleLine,
       logsLine,
       ...uiGrade.lines,
+      ...designGrade.lines,
+      ...designGrade.offences,
+      historyNote ?? "",
       ...(audit?.lines ?? []),
       planLine(plan.plan) ?? "",
       sweepLine(sweep.skipped) ?? "",

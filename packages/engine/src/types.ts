@@ -1024,6 +1024,8 @@ export interface Evidence {
 }
 
 export interface Policy {
+  /** The open archives' search and the image tool (item 2026-10-30-005): the user's to turn on. */
+  design: { pictures: boolean; imageTool: string | null };
   requiredGates: GateName[];
   /** Judgement gates the team requires on every item beyond the route's own (SP2 §10). */
   judgementGates: JudgementGateName[];

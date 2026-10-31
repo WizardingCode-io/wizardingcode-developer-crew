@@ -157,6 +157,9 @@ const CASES = [
   "ui-motion-thesis-built",
   "ui-design-token-drift",
   "ui-ux-generic-tells",
+  "site-bakery",
+  "site-law",
+  "site-synth",
 ];
 /** The pack pairs' cases, by their prefix (SP9 Task 11: derived, so a new pair edits no count). */
 const PACK_CASES = CASES.filter((name) => name.startsWith("pack-"));

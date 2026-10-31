@@ -1542,3 +1542,115 @@ test("2026-10-30-001 AC-20: a motion the thesis names carries its sample, said w
     "an interaction of the thesis with no `interactions[]` row is a defect at the line of the capture spec",
   );
 });
+
+const DESIGN_SKILLS = ["brief", "direction", "system", "copy", "build", "review"].map(
+  (s) => `wizardingcode-design-${s}`,
+);
+
+test("AC-21: the six design skills have the five headings and a short description, and the method names when each is read", () => {
+  for (const name of DESIGN_SKILLS) {
+    const text = repoFile(`plugins/core/skills/${name}/SKILL.md`);
+    expect(text).toContain(`name: ${name}`);
+    for (const heading of ["When", "Inputs", "Steps", "Output", "Done when"])
+      expect(text, `${name} ${heading}`).toContain(`## ${heading}`);
+    const description = /^description: "(.*)"$/m.exec(text)?.[1] ?? "";
+    expect(description.length, name).toBeGreaterThan(0);
+    expect(description.length, name).toBeLessThanOrEqual(200);
+  }
+  const method = repoFile("plugins/core/skills/crew/references/frontend.md");
+  for (const name of DESIGN_SKILLS) expect(method, name).toContain(name);
+  for (const when of [
+    "the brief when the item starts",
+    "before the first interface file",
+    "before any markup",
+    "after the e2e gate passes",
+  ])
+    expect(method, when).toContain(when);
+  expect(skill).toContain("wizardingcode-design-brief");
+  expect(skill.length).toBeLessThanOrEqual(SKILL_PAGE_MAX_BYTES);
+});
+
+test("AC-15: the standard holds the two motion regimes with each conflicting value and its reason, and the rubric makes the tells defects on a site", () => {
+  const standard = repoFile("plugins/core/skills/crew/references/frontend-site.md");
+  expect(repoFile("plugins/core/skills/crew/references/frontend.md")).toContain(
+    "references/frontend-site.md",
+  );
+  expect(standard).toContain("## Motion on a site");
+  for (const words of ["at least eight", "signature move", "Why", "Proportion", "96 px"])
+    expect(standard, words).toContain(words);
+  const table = standard.slice(
+    standard.indexOf("| Rule | Value | Why"),
+    standard.indexOf("## Proportion"),
+  );
+  const rows = table
+    .split("\n")
+    .filter((l) => l.startsWith("| ") && !l.startsWith("| Rule") && !l.startsWith("| :-"));
+  expect(rows.length).toBeGreaterThanOrEqual(6);
+  for (const row of rows) expect(row.split("|").filter((c) => c.trim()).length, row).toBe(3);
+  const rubric = repoFile("plugins/core/skills/crew/rubrics/ui-ux.md");
+  expect(rubric).toMatch(/Persuade or Experience page[^\n]*(?:defect)/);
+  const reviewer = repoFile("plugins/core/agents/review-ui-ux.md");
+  expect(reviewer).toContain("design-finish");
+  expect(reviewer).toContain("score:");
+});
+
+interface LedgerRow {
+  source: string;
+  rule: string;
+  status: "in" | "refused";
+  file?: string;
+  text?: string;
+  proof?: string;
+  decision?: string;
+  reason?: string;
+}
+
+test("AC-16: every row of the coverage ledger holds its text at its file or a refusal with a decision, and every source has rows", () => {
+  const ledger = JSON.parse(repoFile("docs/sources/ledger.json")) as {
+    sources: { name: string; licence: string; commit: string }[];
+    unread: string[];
+    rows: LedgerRow[];
+  };
+  expect(ledger.rows.length).toBeGreaterThan(100);
+  const broken: string[] = [];
+  for (const row of ledger.rows) {
+    if (row.status === "in") {
+      if (!row.file || !row.text || row.text.length < 5 || !row.proof)
+        broken.push(`${row.rule}: incomplete`);
+      else if (!existsSync(repoPath(row.file))) broken.push(`${row.rule}: no ${row.file}`);
+      else if (!repoFile(row.file).includes(row.text))
+        broken.push(`${row.rule}: ${row.file} lacks "${row.text}"`);
+    } else if (row.status === "refused") {
+      if (!/^D-\d+$/.test(row.decision ?? "") || !row.reason)
+        broken.push(`${row.rule}: a refusal with no decision`);
+    } else broken.push(`${row.rule}: status`);
+  }
+  expect(broken).toEqual([]);
+  const names = new Set(ledger.rows.map((r) => r.source));
+  for (const source of ledger.sources) {
+    expect(source.commit.length, source.name).toBeGreaterThan(0);
+    expect(source.licence, source.name).toMatch(/MIT|Apache-2\.0/);
+    expect(names.has(source.name), source.name).toBe(true);
+  }
+  for (const name of [
+    "taste-skill",
+    "impeccable",
+    "elayadesign",
+    "garden-skills",
+    "tastemaker",
+    "scroll-craft",
+    "emilkowalski",
+    "jakubkrehel",
+    "open-seo",
+    "humanizer",
+    "designer-skills",
+    "expo-skills",
+    "diagram-design",
+    "ai-slop-cleaner",
+    "department-of-prose",
+    "ui-ux-pro-max",
+    "frontend-design",
+  ])
+    expect(names.has(name), name).toBe(true);
+  expect(ledger.unread.length).toBeGreaterThan(0);
+});

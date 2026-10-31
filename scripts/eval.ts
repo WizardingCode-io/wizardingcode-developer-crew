@@ -69,6 +69,8 @@ export function kitEnvironment(source: Record<string, string | undefined>): Reco
 // The tags the sandbox can run: the three mail cases are tagged needs-real-opener (spike A6, the
 // sandbox's temporary config holds no login) and are recorded from an end-to-end run instead.
 export const SANDBOX_TAGS = [
+  // Item 2026-10-30-005: a whole site from a brief, the costliest cases of the suite.
+  "site",
   "cost",
   "enforcement",
   "method",
