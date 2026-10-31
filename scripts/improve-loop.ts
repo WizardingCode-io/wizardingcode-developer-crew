@@ -1411,7 +1411,7 @@ export async function tick(
         resume: version,
         fromStep: failedStep,
         reason: `resumed release ${version}`,
-        marketplaceAccount: config.marketplace.account,
+        githubAccount: config.marketplace.account,
       });
       if (resumed.code === 0) {
         state.pendingRelease = null;
@@ -1554,7 +1554,7 @@ export async function tick(
               bump: "patch",
               reason: why,
               notes,
-              marketplaceAccount: config.marketplace.account,
+              githubAccount: config.marketplace.account,
               pending: state.pendingRelease ?? null,
               rollbackTo: mainBefore,
             });

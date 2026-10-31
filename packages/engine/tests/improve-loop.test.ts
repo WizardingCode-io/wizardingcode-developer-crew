@@ -583,6 +583,7 @@ test("2026-10-25-005 AC-16 (the back-off): a tick that fails after the run keeps
   const resumed = tickDeps(world, { now: "2026-10-26T00:00:00.000Z" });
   expect(await tick({}, resumed.deps)).toBe(0);
   expect(resumed.seen.release).toEqual(["resumed release 0.15.1"]);
+  expect(resumed.seen.accounts).toEqual(["andreagroferreira"]);
   expect(resumed.seen.log.join("\n")).toContain("backing off until 2026-10-26T12:00:00.000Z");
   expect(resumed.seen.improve).toEqual([]);
   expect(backoffHours(1)).toBe(1);
@@ -733,6 +734,7 @@ type Seen = {
   ceilings: (number | undefined)[];
   judge: number;
   release: string[];
+  accounts: (string | undefined)[];
   log: string[];
 };
 
@@ -776,6 +778,7 @@ function tickDeps(
     ceilings: [],
     judge: 0,
     release: [],
+    accounts: [],
     log: [],
   };
   const now = new Date(options.now ?? "2026-10-25T20:00:00.000Z");
@@ -891,6 +894,7 @@ function tickDeps(
     },
     release: async (opts) => {
       seen.release.push(opts.reason);
+      seen.accounts.push(opts.githubAccount);
       const version = "0.15.1";
       if (opts.resume) return { version, code: 0, failedStep: null, pending: false };
       if ((options.releaseCode ?? 0) === 0) {
@@ -1007,6 +1011,7 @@ test("2026-10-25-005 AC-5 (adoption in the tick): a kept harness goes through th
   expect(await tick({}, kept.deps)).toBe(0);
   expect(kept.seen.judge).toBe(1);
   expect(kept.seen.release).toEqual(["improvement run 2026-10-25-1: t 0.50 → 0.90, u 0.50 → 0.90"]);
+  expect(kept.seen.accounts).toEqual(["andreagroferreira"]);
   // The release's commit is on origin, under the report that records it.
   expect(git(world.origin, "log", "--format=%s", "main")).toContain(
     "Release 0.15.1: improvement run 2026-10-25-1",

@@ -1680,3 +1680,18 @@ Verdicts agree at every effort. Upheld findings: `high` reproduced Task 6's and 
 - Evidence: `docs/evals/2026-10-31-site-results.md`, which also lists what no run measured (Opus, a client's real pictures, the last engine change).
 - Outcome: open. Released with the bar active by the user's decision D-7 of that item, so a new site stays not proven below it. Next: a real project in Opus with real pictures, the fix rounds exercised, and the case's time and cost.
 
+### 211. The release's GitHub release step ran under the account active in gh
+
+- Date: 2026-10-31. Project: this repository, the release of 0.17.0. Category: `friction`. Severity: medium.
+- What happened: step 8 of `scripts/release.ts` called `gh release view` and `gh release create` with no token, while step 9 used the personal account's. With another account active the release stopped at step 8 and was finished by hand with `GH_TOKEN`.
+- Expected: a release that does not depend on the account active in `gh`.
+- Evidence: `.crew/work/2026-10-31-002-the-releases-github-steps-use-the-person/analysis.md`, `packages/engine/tests/release.test.ts`.
+- Outcome: closed by item `2026-10-31-002`. Both GitHub steps use the named account's token, and with none the release stops at step 8.
+
+### 212. A release finds out that its account has no token after the push
+
+- Date: 2026-10-31. Project: this repository, the reviews of item `2026-10-31-002`. Category: `friction`. Severity: low.
+- What happened: `scripts/release.ts` reads the named account's token first at step 8, after the commit and the tag are on origin. The loop's probe (`runProbe` in `scripts/improve-loop.ts`) reads `gh auth status`, which does not say whether `marketplace.account` has a token. `spawnRunner` sets no timeout, so a `gh` call that never returns holds the release or a tick with nothing logged.
+- Expected: a logged-out account stops the release before step 1, with nothing pushed, and the probe says so; a call that hangs is a failed step.
+- Evidence: `scripts/release.ts`, `scripts/improve-loop.ts`, the risk and architecture rulings of that item.
+- Outcome: open. A missing token fails with a logged step and is resumed with `--resume`; a hung call logs nothing. Next touch of the release script or the loop's probe.

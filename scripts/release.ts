@@ -150,7 +150,7 @@ export interface ReleaseOptions {
   rollbackTo?: string;
   /** The home whose `.local/share/wizardingcode-developer-crew` the tarball refreshes; the user's when not given. */
   home?: string;
-  marketplaceAccount?: string;
+  githubAccount?: string;
   /** Lines for the GitHub release's notes beside the reason (the run's gains). */
   notes?: string[];
   dryRun?: boolean;
@@ -240,7 +240,7 @@ export async function release(options: ReleaseOptions, deps: ReleaseDeps): Promi
   const { root, reason } = options;
   const { log } = deps;
   const home = options.home ?? homedir();
-  const account = options.marketplaceAccount ?? "andreagroferreira";
+  const account = options.githubAccount ?? "andreagroferreira";
   const git = (...args: string[]) => deps.run(["git", ...args], { cwd: root });
   const sh = (cmd: string[], env?: Record<string, string>, input?: string, quiet?: boolean) =>
     deps.run(cmd, { cwd: root, env, input, quiet });
@@ -293,15 +293,17 @@ export async function release(options: ReleaseOptions, deps: ReleaseDeps): Promi
   const install = join(home, ".local", "share", PLUGIN_NAME);
   let written: string[] = [];
   let token: string | null = null;
-  const marketplaceToken = (): string | null => {
+  /** The named account's token, for every GitHub step: never the account active in gh. */
+  const githubToken = (): string | null => {
     if (token !== null) return token;
     const r = sh(["gh", "auth", "token", "-u", account], undefined, undefined, true);
-    token = r.status === 0 ? r.stdout.trim() : null;
+    token = r.status === 0 ? r.stdout.trim() || null : null;
     return token;
   };
+  const noTokenMessage = `gh auth token -u ${account} gave no token`;
   const readMarketplace = (): { sha: string; data: Marketplace } | string => {
-    const t = marketplaceToken();
-    if (t === null) return `gh auth token -u ${account} gave no token`;
+    const t = githubToken();
+    if (t === null) return noTokenMessage;
     const r = sh(["gh", "api", `repos/${MARKETPLACE_REPO}/contents/${MARKETPLACE_FILE}`], {
       GH_TOKEN: t,
     });
@@ -399,27 +401,35 @@ export async function release(options: ReleaseOptions, deps: ReleaseDeps): Promi
     {
       n: 8,
       name: RELEASE_STEP_NAMES[7],
-      command: `gh release create ${tag} ${archive} --verify-tag --title ${version} --notes-file ${notesFile}`,
-      done: () => sh(["gh", "release", "view", tag]).status === 0,
+      command: `gh release create ${tag} ${archive} --verify-tag --title ${version} --notes-file ${notesFile} with GH_TOKEN from gh auth token -u ${account}`,
+      done: () => {
+        const t = githubToken();
+        return t !== null && sh(["gh", "release", "view", tag], { GH_TOKEN: t }).status === 0;
+      },
       run: () => {
+        const t = githubToken();
+        if (t === null) return noTokenMessage;
         mkdirSync(join(root, "dist"), { recursive: true });
         writeFileSync(
           join(root, notesFile),
           `${[`${reason}.`, "", ...(options.notes ?? [])].join("\n").trim()}\n`,
         );
         return ok(
-          sh([
-            "gh",
-            "release",
-            "create",
-            tag,
-            archive,
-            "--verify-tag",
-            "--title",
-            version,
-            "--notes-file",
-            notesFile,
-          ]),
+          sh(
+            [
+              "gh",
+              "release",
+              "create",
+              tag,
+              archive,
+              "--verify-tag",
+              "--title",
+              version,
+              "--notes-file",
+              notesFile,
+            ],
+            { GH_TOKEN: t },
+          ),
           "gh release create",
         );
       },
@@ -446,7 +456,7 @@ export async function release(options: ReleaseOptions, deps: ReleaseDeps): Promi
           entry.source.ref = tag;
         }
         read.data.metadata.version = marketplaceVersion(version);
-        const t = marketplaceToken() as string;
+        const t = githubToken() as string;
         const r = sh(
           [
             "gh",

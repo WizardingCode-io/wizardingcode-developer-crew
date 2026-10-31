@@ -76,6 +76,10 @@ interface World {
     plugins: { name: string; version: string; source: { ref: string } }[];
   };
   puts: { message: string; entries: [string, string, string][]; meta: string }[];
+  /** Each command that ran with a token in its environment. */
+  tokened: string[][];
+  /** What `gh auth token -u` prints, when not the token. */
+  tokenOutput?: string;
 }
 
 /** A runner that runs git for real and plays every other command: bun, gh, claude, tar and osascript are recorded, and a failing step is scripted. */
@@ -96,10 +100,12 @@ function runner(
       ],
     },
     puts: [],
+    tokened: [],
   };
   const ok = (stdout = "") => ({ status: 0, stdout, stderr: "" });
   const run: CommandRunner = (cmd, opts) => {
     seen.push([...cmd]);
+    if (opts.env?.GH_TOKEN) world.tokened.push([...cmd]);
     if (cmd[0] === "git") {
       const r = spawnSync("git", cmd.slice(1), {
         cwd: opts.cwd,
@@ -121,12 +127,20 @@ function runner(
       writeFileSync(join(root, "dist", `wizardingcode-developer-crew-${NEW}.tar.gz`), "tgz");
       return ok();
     }
-    if (cmd[0] === "gh" && cmd[1] === "auth" && cmd[2] === "token") return ok("ghp_SECRET\n");
-    if (cmd[0] === "gh" && cmd[1] === "release" && cmd[2] === "view")
+    if (cmd[0] === "gh" && cmd[1] === "auth" && cmd[2] === "token") {
+      // A real run prints a command's output unless it is quiet: the token never goes that way.
+      expect(opts.quiet).toBe(true);
+      // Only a call that names an account gets the token the calls below expect.
+      return ok(cmd.includes("-u") ? (world.tokenOutput ?? "ghp_SECRET\n") : "ghp_ACTIVE\n");
+    }
+    if (cmd[0] === "gh" && cmd[1] === "release" && cmd[2] === "view") {
+      expect(opts.env?.GH_TOKEN).toBe("ghp_SECRET");
       return world.released.has(cmd[3] as string)
         ? ok("ok")
         : { status: 1, stdout: "", stderr: "release not found" };
+    }
     if (cmd[0] === "gh" && cmd[1] === "release" && cmd[2] === "create") {
+      expect(opts.env?.GH_TOKEN).toBe("ghp_SECRET");
       world.released.add(cmd[3] as string);
       return ok();
     }
@@ -184,6 +198,56 @@ test("2026-10-25-005 AC-7: nextVersion bumps patch, minor and major, or takes a 
   expect(() => nextVersion("0.15.0", { version: "0.14.9" })).toThrow("0.14.9 is not above 0.15.0");
 });
 
+test("2026-10-31-002 AC-1: with another account active in gh, the GitHub release is created with the named account's token", async () => {
+  const { root, home } = fixture();
+  const { run, seen, world } = runner(root);
+  const log: string[] = [];
+  const code = await release(
+    { root, bump: "patch", reason: "x", home, githubAccount: "personal" },
+    { run, log: (l) => log.push(l) },
+  );
+  expect(code, log.join("\n")).toBe(0);
+  expect(world.released.has(`v${NEW}`)).toBe(true);
+  // The runner refuses a gh release call without the token; here, the account it came from and the calls it reached.
+  expect(seen).toContainEqual(["gh", "auth", "token", "-u", "personal"]);
+  const steps = world.tokened.map((c) => c.slice(0, 3).join(" "));
+  expect(steps).toContain("gh release view");
+  expect(steps).toContain("gh release create");
+});
+
+test("2026-10-31-002 AC-2: with no token for the account, the release stops at the GitHub release step, names the account and creates nothing under the active account", async () => {
+  const { root, origin, home } = fixture();
+  const { run, seen, world } = runner(root, (cmd) => cmd.join(" ").startsWith("gh auth token"));
+  const log: string[] = [];
+  const code = await release(
+    { root, bump: "patch", reason: "x", home, githubAccount: "personal" },
+    { run, log: (l) => log.push(l) },
+  );
+  expect(code).toBe(1);
+  const said = log.join("\n");
+  expect(said).toContain("step 8");
+  expect(said).toContain("gh auth token -u personal gave no token");
+  expect(said).toContain(`resume with: bun scripts/release.ts --resume v${NEW} --from-step 8`);
+  expect(seen.filter((c) => c[0] === "gh" && c[1] === "release")).toEqual([]);
+  expect(world.released.size).toBe(0);
+  // The push came first: the tag is out, so the resume above applies.
+  expect(sh(origin, "tag", "--list").trim()).toBe(`v${NEW}`);
+});
+
+test("2026-10-31-002 AC-4: a zero exit with empty output is no token: the release stops at the GitHub release step and calls no gh release", async () => {
+  const { root, home } = fixture();
+  const { run, seen, world } = runner(root);
+  world.tokenOutput = "\n";
+  const log: string[] = [];
+  const code = await release(
+    { root, bump: "patch", reason: "x", home, githubAccount: "personal" },
+    { run, log: (l) => log.push(l) },
+  );
+  expect(code).toBe(1);
+  expect(log.join("\n")).toContain("gh auth token -u personal gave no token");
+  expect(seen.filter((c) => c[0] === "gh" && c[1] === "release")).toEqual([]);
+});
+
 test("2026-10-25-005 AC-7: a patch release writes the version into every release file, the two test literals and the packs' bound, runs the twelve steps in order, and the marketplace, the tag and the local install follow", async () => {
   const { root, origin, home } = fixture();
   const { run, seen, world } = runner(root);
@@ -194,7 +258,7 @@ test("2026-10-25-005 AC-7: a patch release writes the version into every release
       bump: "patch",
       reason: "improvement run 2026-10-25-1: false-done 0.60 → 0.90",
       home,
-      marketplaceAccount: "andreagroferreira",
+      githubAccount: "andreagroferreira",
     },
     { run, log: (l) => log.push(l) },
   );
@@ -217,9 +281,9 @@ test("2026-10-25-005 AC-7: a patch release writes the version into every release
     "bun run check",
     "bun run plugin:check",
     "bun scripts/build.ts --tarball",
+    "gh auth token",
     "gh release view",
     "gh release create",
-    "gh auth token",
     "gh api repos/WizardingCode-io/wizardingcode-plugins/contents/.claude-plugin/marketplace.json",
     "gh api -X",
     "claude plugin marketplace",
@@ -255,9 +319,11 @@ test("2026-10-25-005 AC-7: a patch release writes the version into every release
       meta: "2.15.1",
     },
   ]);
-  // The token reaches the marketplace calls alone.
-  for (const c of seen)
-    if (!(c[0] === "gh" && c[1] === "api")) expect(JSON.stringify(c)).not.toContain("ghp_SECRET");
+  // The token reaches gh's calls alone, through the environment: never a command line or the log.
+  for (const c of seen) expect(JSON.stringify(c)).not.toContain("ghp_SECRET");
+  expect(log.join("\n")).not.toContain("ghp_SECRET");
+  expect(world.tokened.length).toBeGreaterThan(0);
+  for (const c of world.tokened) expect(c[0]).toBe("gh");
   // Step 11: the local install swapped by rename, nothing of the old left beside it.
   expect(
     readFileSync(join(home, ".local/share/wizardingcode-developer-crew/bin/crew"), "utf8"),
@@ -388,7 +454,7 @@ test("2026-10-25-005 AC-15: a failure before the push restores the tree, the com
         fromStep: 9,
         reason: "x",
         home,
-        marketplaceAccount: "andreagroferreira",
+        githubAccount: "andreagroferreira",
       },
       { run: resumed.run, log: (l) => logR.push(l) },
     ),
@@ -420,8 +486,8 @@ test("2026-10-25-005 AC-15: a failure before the push restores the tree, the com
   ).toBe(0);
   expect(again.world.puts).toEqual([]);
   expect(programs(again.seen)).toEqual([
-    "gh release view",
     "gh auth token",
+    "gh release view",
     "gh api repos/WizardingCode-io/wizardingcode-plugins/contents/.claude-plugin/marketplace.json",
     "claude plugin marketplace",
     "claude plugin update",
