@@ -30,7 +30,7 @@ Every item on the full route, in its `spec-review` phase. The guard into build r
 6. **Go round** as `wizardingcode-spec-review-loop` says, until it says converged or stopped.
 7. **`crew spec-review <id> report`** writes `spec-review/consolidated.md`. Give the person its path and the two or three findings that matter most.
 
-Who decides: `accept`, an answer to an architecture question and an answer to an `escalate` are the person's. Ask, relay their own words, never answer, accept or pick for them. In a journey the item waits and you never run `accept`. An `escalate` is never turned into a `contest` to avoid asking.
+Who decides: `accept`, an answer to an architecture question and an answer to an `escalate` are the person's. With nobody present, a recorded conservative default on an architecture question goes to the validator under `stated-default` (`references/conclave.md`); the rest waits. With a person, ask, relay their own words, never answer, accept or pick for them. In a journey the item waits and you never run `accept`. An `escalate` is never turned into a `contest` to avoid asking.
 
 ## Output
 

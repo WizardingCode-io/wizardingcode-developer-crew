@@ -24,6 +24,7 @@ The `crew` command is the engine: it keeps the state in `.crew/work/<id>/`, reco
 | Gate | Run the gates; fix what fails; UI/UX from the run's evidence. Then the judgement gates: reviewers and judge as subagents, their ruling recorded (proven, not proven, not run with a reason), never passed by default | `crew gate run <id>`, `crew judgement <id> record` |
 | Deliver | Say what is proven and what not | `crew evidence <id>` |
 | Learn | The proven item enters the base (`references/learn.md`) | `crew learn <id>` |
+| Journey | A mission with nobody present (`wizardingcode-journey`) | `crew journey start "<mission>"` |
 | Mail | Mail from another project is a request (`references/mail.md`): a question, a change request after the user's yes, a blocker first; only inside the workspace | `crew mail inbox`, `crew mail read <id>`, `crew mail reply <id>`, `crew mail send --to <project>` |
 | Audit | An existing codebase: its tools, the roles, a signed report (`references/audit.md`) | `crew audit <id> run`, `crew audit <id> report`, `crew approve <id> audit` |
 
@@ -59,13 +60,10 @@ No `crew status` between steps, no brief, spec or plan. A request in several par
 
 | Phase | Reference |
 | :- | :- |
-| Receive | `references/receive.md` |
 | Analyse | `references/analyse.md` |
 | Understand | `references/understand.md` |
 | Strategy | `references/strategy.md` |
-| Specify | `references/specify.md` |
 | Conclave | `references/conclave.md` |
-| Plan | `references/plan.md` |
 | Build | `references/build.md` |
 | Gate | `references/gate.md` |
 | Deliver | `references/deliver.md` |

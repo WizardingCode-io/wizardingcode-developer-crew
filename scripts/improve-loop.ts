@@ -15,6 +15,7 @@ import {
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { backoffHours } from "../packages/engine/src/backoff.ts";
 import { readJson, writeTextNew } from "../packages/engine/src/fs.ts";
 import { userDirOf } from "../packages/engine/src/paths.ts";
 import { scanText } from "../packages/engine/src/secrets.ts";
@@ -1051,9 +1052,7 @@ const IMPROVE_RESULT = /^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z-improve-/;
 const RESULT_FOLDER_DAYS = DATED_LOG_DAYS;
 
 /** The wait after `failures` failed ticks in a row, in hours: 1, 2, 4 … capped at a day, so a run that cannot be saved is not paid for every hour. */
-export function backoffHours(failures: number): number {
-  return Math.min(2 ** Math.max(0, failures - 1), 24);
-}
+export { backoffHours };
 
 /** The run's own files, written by `runImprove`, rewritten through the redaction (AC-14). */
 function redactRunFiles(folder: string, secrets: readonly string[]): void {

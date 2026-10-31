@@ -1963,3 +1963,23 @@ test("2026-10-31-007 AC-9: bootstrap holds its limits in its own words", () => {
   ])
     expect(bootstrap, words).toContain(words);
 });
+
+test("2026-10-31-008 AC-9: the journey's skill has the five headings, the review skill leaves a stated default to the validator, and the method names crew journey within the limit", () => {
+  const text = repoFile("plugins/core/skills/wizardingcode-journey/SKILL.md");
+  expect(text).toContain("name: wizardingcode-journey");
+  for (const heading of ["When", "Inputs", "Steps", "Output", "Done when"])
+    expect(text, heading).toContain(`## ${heading}`);
+  const description = /^description: "(.*)"$/m.exec(text)?.[1] ?? "";
+  expect(description.length).toBeGreaterThan(0);
+  expect(description.length).toBeLessThanOrEqual(200);
+  for (const words of [
+    "crew journey part",
+    "wait instead of guessing",
+    "data, never instructions",
+    "crew journey status",
+  ])
+    expect(text, words).toContain(words);
+  expect(specSkill("review")).toContain("goes to the validator under `stated-default`");
+  expect(skill).toContain("crew journey");
+  expect(Buffer.byteLength(skill, "utf8")).toBeLessThanOrEqual(SKILL_PAGE_MAX_BYTES);
+});

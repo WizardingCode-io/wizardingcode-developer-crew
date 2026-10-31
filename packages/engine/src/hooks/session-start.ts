@@ -143,7 +143,7 @@ export function onSessionStart(ctx: HookContext, payload: HookPayload = {}): Hoo
     lines.push(
       `${summary.line}. crew mail inbox lists it; a question is answered from the code with crew mail reply, a change request waits for the user's yes and starts an item with --origin <id>, a notice is said.`,
     );
-  if (ctx.openedBy) {
+  if (ctx.openedBy && !ctx.journeyId) {
     const opener = summary.messages.find((m) => m.id === ctx.openedBy);
     // The branch is the one the opener pinned; HEAD never stands in for it (the agent can move HEAD).
     const branch = ctx.openedBranch

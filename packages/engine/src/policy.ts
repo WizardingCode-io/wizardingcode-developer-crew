@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { two } from "./jev.ts";
+import { journeyForRoot } from "./journey-record.ts";
 import type { CrewPaths } from "./paths.ts";
 import { readProtectedJson, writeProtectedJson } from "./store.ts";
 import { TEAMS } from "./team.ts";
@@ -553,6 +554,20 @@ function loadTeamPolicy(raw: unknown): TeamPolicy {
  * falls back to the default.
  */
 export function loadPolicy(paths: CrewPaths): { policy: Policy; tampered: boolean } {
+  const loaded = loadPolicyFile(paths);
+  // A running journey's worktree (ADR 0020): decided from its record, which a session cannot write.
+  if (!journeyForRoot(paths.userDir, paths.root)) return loaded;
+  return {
+    tampered: loaded.tampered,
+    policy: {
+      ...loaded.policy,
+      unattendedDecisions: "validator",
+      team: { ...loaded.policy.team, continuations: "granted" },
+    },
+  };
+}
+
+function loadPolicyFile(paths: CrewPaths): { policy: Policy; tampered: boolean } {
   const read = readProtectedJson<Record<string, unknown>>(paths, policyPath(paths));
   const raw = read.data ?? {};
   const riskPaths: Policy["riskPaths"] = {};

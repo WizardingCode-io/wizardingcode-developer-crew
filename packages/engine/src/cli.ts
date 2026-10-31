@@ -119,6 +119,19 @@ import { fileAnswerBySession } from "./hooks/subagent-stop.ts";
 import type { HookPayload } from "./hooks/types.ts";
 import { JEV_ENDPOINT, JEV_MODEL, jevConfig, two } from "./jev.ts";
 import {
+  addPart,
+  donePart,
+  readJourney,
+  renderJourneyReport,
+  startJourney,
+  stopJourney,
+  tickJourneys,
+  waitPart,
+  writeJourneyReport,
+} from "./journey.ts";
+import { realJourneyDeps } from "./journey-real.ts";
+import { listJourneys } from "./journey-record.ts";
+import {
   contradiction,
   fillTokens,
   findingsText,
@@ -525,6 +538,7 @@ const KNOWN_FLAGS: Record<string, readonly string[]> = {
   kind: ["reason"],
   strategy: [],
   "spec-review": ["not-run", "reason", "evidence", "earlier", "churn", "mode"],
+  journey: ["until", "max-usd", "allow", "item", "reason", "mode"],
   design: ["invention", "seed", "redraw", "reason", "regions"],
   audit: ["only"],
   criteria: ["kind", "contract", "by", "screen"],
@@ -3230,6 +3244,111 @@ function specReviewCommand(env: Env, args: string[], parsed: Parsed): Outcome {
   }
 }
 
+/** `crew journey ...`: a mission that keeps working with nobody present (ADR 0020). */
+function journeyCommand(env: Env, args: string[], parsed: Parsed): Outcome {
+  const usage =
+    'usage: crew journey start "<mission>" [--until <time>] [--max-usd <n>] [--allow push] | status [<id>] | stop <id> | report <id> | tick | part <id> add "<text>" | part <id> done P-n --item <item> | part <id> wait P-n --reason "<why>"';
+  const processEnv = env.mail.env;
+  const deps = realJourneyDeps(processEnv);
+  const { userDir } = env.paths;
+  const reason = typeof parsed.flags.reason === "string" ? parsed.flags.reason.trim() : "";
+  switch (args[0]) {
+    case "start": {
+      const mission = args[1];
+      if (!mission) return refuse(usage);
+      const maxUsd =
+        typeof parsed.flags["max-usd"] === "string" ? Number(parsed.flags["max-usd"]) : undefined;
+      if (maxUsd !== undefined && !(maxUsd > 0)) return refuse("--max-usd is a number above 0");
+      const decision = decisionFlag(parsed, env.policy);
+      if (isOutcome(decision)) return decision;
+      const started = startJourney(
+        userDir,
+        env.paths.root,
+        {
+          mission,
+          ...(typeof parsed.flags.until === "string" ? { until: parsed.flags.until } : {}),
+          ...(maxUsd !== undefined ? { maxUsd } : {}),
+          allow: commaList(parsed.flags.allow),
+        },
+        deps,
+      );
+      if ("refused" in started) return refuse(started.refused);
+      decide(env, started.id, {
+        kind: "decision",
+        text: `journey begun: ${mission}`,
+        by: whoDecides(decision),
+      });
+      const record = readJourney(userDir, started.id);
+      return ok(
+        `journey ${started.id} is running on branch ${record?.branch}, until ${record?.until}, up to ${record?.maxUsd} USD`,
+        { id: started.id },
+      );
+    }
+    case "status": {
+      const list = listJourneys(userDir).filter((j) => !args[1] || j.id === args[1]);
+      if (!list.length) return ok("no journey", { journeys: [] });
+      return ok(
+        list
+          .map(
+            (j) =>
+              `${j.id}: ${j.status}${j.endedBecause ? ` (${j.endedBecause})` : ""}, ${j.parts.filter((p) => p.state !== "open").length} of ${j.parts.length} parts settled, ${j.sessions.length} sessions, until ${j.until}`,
+          )
+          .join("\n"),
+        { journeys: list },
+      );
+    }
+    case "stop": {
+      if (!args[1]) return refuse(usage);
+      const stopped = stopJourney(userDir, args[1], deps);
+      if ("refused" in stopped) return refuse(stopped.refused);
+      return ok([`journey ${args[1]} stopped`, ...stopped.notes].join("\n"), {});
+    }
+    case "tick":
+      return ok(tickJourneys(userDir, deps).join("\n"), {});
+    case "report": {
+      const id = args[1];
+      const record = id ? readJourney(userDir, id) : null;
+      if (!id || !record) return refuse(usage);
+      const worktreePaths = resolvePaths(record.worktree, processEnv);
+      const decisions = worktreePaths
+        ? listDecisions(worktreePaths).filter((e) => /validator/.test(e.by))
+        : [];
+      const text = renderJourneyReport(
+        userDir,
+        id,
+        deps,
+        decisions.map((e) => ({
+          item: e.item,
+          text: `${e.id ? `${e.id} ` : ""}${e.text}${e.answer ? ` → ${e.answer}` : ""}`,
+          by: e.by,
+        })),
+      );
+      writeJourneyReport(userDir, id, text);
+      return ok(text, {});
+    }
+    case "part": {
+      const [, id, verb, target] = args;
+      if (!id || !verb || !target) return refuse(usage);
+      const record = readJourney(userDir, id);
+      if (!record) return refuse(`no journey ${id}`);
+      if (realpathSync(record.worktree) !== realpathSync(env.paths.root))
+        return refuse(`the parts of journey ${id} are written from its worktree`);
+      const outcome =
+        verb === "add"
+          ? addPart(userDir, id, target)
+          : verb === "done" && typeof parsed.flags.item === "string"
+            ? donePart(userDir, id, target, parsed.flags.item, processEnv)
+            : verb === "wait" && reason
+              ? waitPart(userDir, id, target, reason)
+              : { refused: usage };
+      if ("refused" in outcome) return refuse(outcome.refused);
+      return ok(`${outcome.id}: ${outcome.state}`, { part: outcome });
+    }
+    default:
+      return refuse(usage);
+  }
+}
+
 /** The approved document published, when the review converged or a person accepted it (ADR 0019). */
 function publishedDesign(
   env: Env,
@@ -4474,6 +4593,8 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
       return designCommand(env, args, parsed);
     case "spec-review":
       return specReviewCommand(env, args, parsed);
+    case "journey":
+      return journeyCommand(env, args, parsed);
     case "kind": {
       // A feature raised to a new project while its spec is open (SP7 §7.3, SP8 decision 2): the
       // lead's call, recorded as the agent's.

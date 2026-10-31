@@ -1,3 +1,4 @@
+import { journeyForRoot } from "../journey-record.ts";
 import { mailContext, registerProject, syncMail } from "../mail.ts";
 import { sweepSafely } from "../open.ts";
 import { resolvePaths } from "../paths.ts";
@@ -68,6 +69,10 @@ export function buildContext(
   // What opened this session: the variables, narrowed by the engine's record (`resolveOpener`, the
   // one place the rule is written, read once through `mailSelf`).
   const mail = mailContext(paths, policy.policy, env);
+  // A headless session in a running journey's worktree is confined as an opened session is
+  // (ADR 0020); a person's own session there is nobody's child.
+  const journey =
+    env.CLAUDE_CODE_SESSION_ATTENDED === "0" ? journeyForRoot(paths.userDir, paths.root) : null;
   return {
     paths,
     sessionId: payload.session_id ?? "default",
@@ -76,8 +81,9 @@ export function buildContext(
     tampered: profile.tampered || policy.tampered,
     headless: env.CLAUDE_CODE_SESSION_ATTENDED === "0",
     mail,
-    openedBy: mail.self.openedBy,
-    openedBranch: mail.self.openedBranch,
+    openedBy: mail.self.openedBy ?? (journey ? `journey ${journey.id}` : null),
+    openedBranch: journey?.allow.includes("push") ? journey.branch : mail.self.openedBranch,
+    journeyId: journey?.id ?? null,
     openedMode: mail.self.openedMode,
     env,
   };

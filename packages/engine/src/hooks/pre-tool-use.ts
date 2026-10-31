@@ -665,6 +665,8 @@ function userOnlyCommand(
     // A verb the hook cannot read after the id (finding 86) takes the deciding form: asked, or
     // --mode demanded, never let through on the words around it.
     (verb === "objection" && (parsed.positional.includes("waive") || unreadable(third))) ||
+    // A mission is begun by a person's word, so a journey cannot start a journey (ADR 0020).
+    (verb === "journey" && (second === "start" || unreadable(second))) ||
     // A person's answer to a reviewer, and their acceptance of a review that stopped (ADR 0019).
     (verb === "spec-review" && (third === "accept" || third === "answer" || unreadable(third))) ||
     (verb === "profile" && (second === "confirm" || second === "set" || second === "unset")) ||
@@ -761,6 +763,25 @@ function specReviewSigned(
   });
 }
 
+/** `crew journey start` has no unattended form: a person begins a mission (ADR 0020). */
+function journeySigned(
+  parsed: Parsed,
+  permissionMode: string | undefined,
+  headless: boolean,
+  policy: Policy,
+): Decision | null {
+  const [verb, what] = parsed.positional;
+  if (verb !== "journey" || what === undefined) return null;
+  if (what !== "start" && !UNREADABLE_VERB.test(what)) return null;
+  return personOnly(parsed, permissionMode, headless, policy, {
+    unwatched: (where) =>
+      `Crew: a person begins a journey and no person is watching this session (${where})`,
+    withMode: (mode) =>
+      `Crew: a person is present (${mode} mode); run the command without --mode so they are asked`,
+    ask: "Crew: this command begins a mission that runs with nobody present",
+  });
+}
+
 /**
  * `crew knowledge unmark K-n`, or an unreadable word where `unmark` would be, has no unattended form
  * (rule 13, ADR 0009): a mark leaves a client's entry readable in every workspace, so where nobody
@@ -838,6 +859,10 @@ const GIT = `${GIT_CMD}${GIT_OPTS}*`;
 // `_KEY_n`/`_VALUE_n`, `GIT_CONFIG_PARAMETERS`); git's keys are case-insensitive, so the patterns
 // are too (security review of SP2c task 3).
 const SETTING = String.raw`(?:alias\.|push\.followTags|remote\.[^\s=]+\.(?:push|mirror)|url\.[^\s=]+\.(?:push)?insteadOf)`;
+const SHARED_SETTING = String.raw`(?:core\.|credential\.|include(?:if)?\.|remote\.[^\s=]+\.(?:url|pushurl)\b)`;
+// A read of a setting, decided from the words right after `config`: a flag later on the line may be
+// a value's text, since the quotes are gone by here (security review of ADR 0020).
+const CONFIG_READ = String.raw`(?:--(?:local|worktree|show-origin|show-scope|name-only)\s+)*(?:--get|--get-all|--get-regexp|--get-urlmatch|--list|-l|get|list)(?:\s|$)`;
 const GIT_CONFIG_ENV = /(?:^|\s)GIT_CONFIG_(?:COUNT|KEY_\d+|VALUE_\d+|PARAMETERS)=/;
 const OPENED_VERBS: { re: RegExp; what: string }[] = [
   // Another repository by path, before any verb: the session works in its own checkout and nowhere else.
@@ -862,6 +887,27 @@ const OPENED_VERBS: { re: RegExp; what: string }[] = [
   { re: new RegExp(`${GIT_CMD}${GIT_OPTS}*?-c\\s*${SETTING}`, "i"), what: "git -c" },
   { re: new RegExp(`${GIT_CMD}${GIT_OPTS}*?--config-env\\b`), what: "git --config-env" },
   { re: new RegExp(`${GIT}config\\b.*\\b${SETTING}`, "i"), what: "git config" },
+  // What would outlive the session in the shared repository's config, or run code at the person's
+  // next command: the remote it points at, and a hook, a command or an included file (security
+  // review of ADR 0020). A read of the same key passes.
+  {
+    re: new RegExp(`${GIT_CMD}${GIT_OPTS}*?-c\\s*${SHARED_SETTING}`, "i"),
+    what: "git -c",
+  },
+  {
+    re: new RegExp(`${GIT}config\\s+(?!${CONFIG_READ})(?:.*\\s)?${SHARED_SETTING}`, "i"),
+    what: "git config",
+  },
+  {
+    re: new RegExp(`${GIT}config\\b.*\\s(?:--global|--system|--file|-f|--edit|-e)(?:[\\s=]|$)`),
+    what: "git config outside this checkout",
+  },
+  {
+    re: new RegExp(
+      `${GIT}remote\\s+(?:-\\S+\\s+)*(?:add|set-url|rename|remove|rm|set-head|prune)\\b`,
+    ),
+    what: "git remote",
+  },
   // Git's other verbs that update a remote ref (security review, rounds 2 and 3).
   { re: new RegExp(`${GIT}subtree\\s+push\\b`), what: "git subtree push" },
   { re: new RegExp(`${GIT}send-pack\\b`), what: "git send-pack" },
@@ -1997,6 +2043,16 @@ export function onPreToolUse(ctx: HookContext, payload: HookPayload): HookRespon
     const worktrees = worktreeRoots(ctx.paths.root);
     for (const filePath of paths) {
       const abs = canonical(isAbsolute(filePath) ? filePath : join(ctx.paths.root, filePath));
+      // A journey's session writes in its worktree alone: the crew's protection would leave the home
+      // and the main repository's hooks open to a session nobody watches (ADR 0020).
+      if (ctx.journeyId) {
+        const inside = relative(canonical(ctx.paths.root), abs);
+        if (inside.startsWith("..") || isAbsolute(inside))
+          return answer(
+            "deny",
+            `Crew: this session works on ${ctx.openedBy} and writes in its worktree alone: ${filePath} is denied`,
+          );
+      }
       if (isProtectedPath(ctx.paths, abs, worktrees)) {
         return answer(
           "deny",
@@ -2052,9 +2108,13 @@ export function onPreToolUse(ctx: HookContext, payload: HookPayload): HookRespon
     if (crewCommands.some((c) => c.args[0] === "hook")) return answer("deny", HOOK_VERB_REASON);
     if (ctx.openedBy) {
       const cleanedCommand = command.replace(QUOTES, "");
-      const opened = `Crew: this session was opened by mail (${ctx.openedBy})`;
+      const opened = ctx.journeyId
+        ? `Crew: this session works on ${ctx.openedBy}`
+        : `Crew: this session was opened by mail (${ctx.openedBy})`;
       const never = `${opened} and never merges, pushes to another branch, releases or deploys`;
-      const ending = `it ends with crew mail reply ${ctx.openedBy} --branch ${ctx.openedBranch ?? "<branch>"} --item <child id>`;
+      const ending = ctx.journeyId
+        ? 'what it cannot do waits for the person: crew journey part <id> wait P-n --reason "<why>"'
+        : `it ends with crew mail reply ${ctx.openedBy} --branch ${ctx.openedBranch ?? "<branch>"} --item <child id>`;
       if (unreadable)
         return answer("deny", `${opened} and ${unreadable.reason} is denied: ${unreadable.wayOut}`);
       const variables = `${opened} and the opener's variables are not its to change`;
@@ -2212,6 +2272,7 @@ export function onPreToolUse(ctx: HookContext, payload: HookPayload): HookRespon
         auditApproval(userOnly.parsed, payload.permission_mode, ctx.headless, ctx.policy) ??
         knowledgeUnmark(userOnly.parsed, payload.permission_mode, ctx.headless, ctx.policy) ??
         specReviewSigned(userOnly.parsed, payload.permission_mode, ctx.headless, ctx.policy) ??
+        journeySigned(userOnly.parsed, payload.permission_mode, ctx.headless, ctx.policy) ??
         userOnlyDecision(userOnly, payload.permission_mode, ctx.headless, ctx.policy, {
           text: command,
           policyTampered: loadPolicy(ctx.paths).tampered,

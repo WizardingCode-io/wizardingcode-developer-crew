@@ -1695,3 +1695,12 @@ Verdicts agree at every effort. Upheld findings: `high` reproduced Task 6's and 
 - Expected: a logged-out account stops the release before step 1, with nothing pushed, and the probe says so; a call that hangs is a failed step.
 - Evidence: `scripts/release.ts`, `scripts/improve-loop.ts`, the risk and architecture rulings of that item.
 - Outcome: open. A missing token fails with a logged step and is resumed with `--resume`, while a hung call logs nothing. Next touch of the release script or the loop's probe.
+
+### 213. A confined session's granted command can still write outside its checkout by itself
+
+- Date: 2026-10-31. Project: this repository, the security lead's review of item `2026-10-31-008`. Category: `friction`. Severity: medium.
+- What happened: the hook reads a command line, and a journey's session holds `Bash(git *)` and the profile's runners. `git log --output=<path>`, a shell redirect, or a test run by a granted runner can write a file outside the worktree, and a script can unset the push redirection. The Write and Edit tools are denied outside the worktree, and `git config` and `git remote` no longer reach the shared config, while these routes stay open.
+- Expected: a session nobody watches writes nowhere but its worktree, by any route.
+- Evidence: ADR 0020, `packages/engine/src/hooks/pre-tool-use.ts`, the design's §6.
+- Outcome: open. It needs an operating-system sandbox, which the crew does not run today, and the report's check of the remote is the only catch for a push made this way.
+

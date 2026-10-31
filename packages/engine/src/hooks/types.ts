@@ -39,6 +39,8 @@ export interface HookContext {
   openedBy: string | null;
   /** The branch the opener made for this session (`WIZARDINGCODE_CREW_MAIL_BRANCH`): the one branch it may push, whatever HEAD says now. */
   openedBranch: string | null;
+  /** The running journey this headless session belongs to (ADR 0020), by its worktree. */
+  journeyId: string | null;
   /** How the opener let the session act (`WIZARDINGCODE_CREW_MAIL_MODE`): read-only sessions read and reply, nothing else. */
   openedMode: OpenMode | null;
   /** The environment the hook was given (SP6 Task 2): the plugin root and the home the pack discovery reads. */
