@@ -27,6 +27,7 @@ import {
   teamOf,
 } from "../src/hooks/subagent-stop.ts";
 import { loadItemMail, mailbox, ROLE_AGENT, send } from "../src/mail.ts";
+import { workDir } from "../src/paths.ts";
 import { clearWorking, recordWorking, workingRoles } from "../src/state.ts";
 import * as store from "../src/store.ts";
 import { ROLE_NAMES } from "../src/team.ts";
@@ -1861,4 +1862,39 @@ test("AC-6 (finding 152): the model a role ran on is read from its transcript's 
   });
   const roles = loadEvidence(ctx.paths, work.id).evidence.roles ?? [];
   expect(roles.at(-1)?.model).toBe("claude-opus-5-5");
+});
+
+test("2026-10-31-005 AC-8: a fresh goldfish's answer lands at its file with the earlier one archived, and a resumed one lands apart", () => {
+  const { ctx, work } = session();
+  work.route = "full";
+  work.specReview = true;
+  work.phase = "spec-review";
+  saveWork(ctx.paths, work);
+  const dir = tempDir("crew-transcript-");
+  const stop = (id: string, answer: string) =>
+    onSubagentStop(ctx, {
+      agent_id: id,
+      agent_type: `${PLUGIN}:goldfish-zoom-out`,
+      agent_transcript_path: transcript(dir, answer, [[100, 10, 0, 0]]),
+      last_assistant_message: "Done.",
+    });
+  const item = workDir(ctx.paths, work.id);
+  const plain = join(item, "spec-review/goldfish-zoom-out.md");
+  stop("g1", "# zoom-out findings\n## Findings\nfirst\n");
+  expect(readFileSync(plain, "utf8")).toContain("first");
+  stop("g2", "# zoom-out findings\n## Findings\nsecond\n");
+  expect(readFileSync(plain, "utf8")).toContain("second");
+  const roles = () => loadEvidence(ctx.paths, work.id).evidence.roles ?? [];
+  const first = roles().find((r) => r.agentId === "g1");
+  // The first answer went to an archive beside it, whole, and its record followed it.
+  expect(first?.file).not.toBe("spec-review/goldfish-zoom-out.md");
+  expect(readFileSync(join(item, first?.file ?? ""), "utf8")).toContain("first");
+  expect(roles().find((r) => r.agentId === "g2")?.file).toBe("spec-review/goldfish-zoom-out.md");
+  // The same agent again is a resumed reviewer: its answer does not take the plain file.
+  stop("g2", "# zoom-out findings\n## Findings\nthird\n");
+  expect(readFileSync(plain, "utf8")).toContain("second");
+  const resumed = roles()
+    .filter((r) => r.agentId === "g2")
+    .at(-1);
+  expect(resumed?.file).not.toBe("spec-review/goldfish-zoom-out.md");
 });

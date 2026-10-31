@@ -176,6 +176,8 @@ export function isProtectedPath(
   if (inner === "audit" || inner.startsWith("audit/")) return !AUDIT_OPEN.test(inner);
   // The engine runs' markers (finding 146): a forged one would be a forged Stop permit.
   if (inner === "running" || inner.startsWith("running/") || inner === "running.json") return true;
+  // The reviewers' answers before the code (ADR 0019): written by the hook and the command alone.
+  if (inner === "spec-review" || inner.startsWith("spec-review/")) return true;
   return PROTECTED_IN_WORK.has(inner) || inner.startsWith("logs/");
 }
 

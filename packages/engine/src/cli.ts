@@ -297,6 +297,26 @@ import { scanText } from "./secrets.ts";
 import { quoteWord } from "./shell-words.ts";
 import { parseSource, sourceLine } from "./source.ts";
 import {
+  acceptSpecReview,
+  answerSpecFinding,
+  closeSpecRound,
+  dueStage,
+  emptySpecReview,
+  openSpecRound,
+  type ParsedAnswer,
+  parseSpecAnswer,
+  recordSpecStage,
+  renderSpecReview,
+  resolveSpecFinding,
+  SPEC_DISPOSITIONS,
+  type SpecDisposition,
+  type SpecRound,
+  specReviewConverged,
+  specReviewHash,
+  specReviewLine,
+  specReviewStop,
+} from "./spec-review.ts";
+import {
   adoptMainFiles,
   ensureCrewDir,
   loadState,
@@ -498,6 +518,7 @@ const KNOWN_FLAGS: Record<string, readonly string[]> = {
   classify: ["answers"],
   kind: ["reason"],
   strategy: [],
+  "spec-review": ["not-run", "reason", "evidence", "earlier", "churn", "mode"],
   design: ["invention", "seed", "redraw", "reason", "regions"],
   audit: ["only"],
   criteria: ["kind", "contract", "by", "screen"],
@@ -1517,6 +1538,7 @@ function guardContext(env: Env, work: WorkItem, tampered: boolean): GuardContext
     conclaveText: readText(join(dir, "conclave.md")),
     ledger: loadLedger(env.paths, work.id).ledger,
     planExists: existsSync(join(dir, "plan.md")),
+    planText: readText(join(dir, "plan.md")),
     evidence: result.evidence,
     proven: result.verdict === "proven",
     unproven: result.unproven,
@@ -2698,6 +2720,9 @@ function statusView(env: Env, active: Opened): Outcome {
   // What the base listed at classification (SP4 Task 3), and what is left to learn (Task 4).
   const knowledge = knowledgeLine(env, work);
   if (knowledge) extra.push(knowledge);
+  // The document's review before the code (ADR 0019), once it has begun.
+  const specReview = result.evidence.specReview;
+  if (specReview?.rounds.length) extra.push(`  spec review: ${specReviewLine(specReview)}`);
   const learned = work.learned;
   const learnLine = learned
     ? `  learn: ${learnedText(learned.entries, learned.confirmed)}`
@@ -2958,6 +2983,227 @@ async function researchCommand(
     `${n} fact${n === 1 ? "" : "s"}: ${counts.join(", ")}${reasons.length ? ` (${reasons.join("; ")})` : ""}`,
     { facts: ordered, file: "conclave/researcher.verification.json" },
   );
+}
+
+/** `crew spec-review <id> ...`: the document's review before the code (ADR 0019). */
+function specReviewCommand(env: Env, args: string[], parsed: Parsed): Outcome {
+  const usage =
+    'usage: crew spec-review <id> check | record <stage> [<role>[,<role>] --not-run --reason "<why>"] | resolve <finding> <propose-fix|contest|escalate|decline|settled> --reason "<why>" [--evidence <file:symbol>] [--earlier <finding>] [--churn] | answer <finding> <confirm|add-fact> --reason "<their words>" | close | accept --reason "<their words>" | report | status';
+  const opened = openForChange(env, args[0]);
+  if (isOutcome(opened)) return opened;
+  const { work } = opened;
+  if (!work.specReview)
+    return refuse(`${work.id} has no spec review: it belongs to an item on the full route`);
+  const verb = args[1];
+  const dir = workDir(env.paths, work.id);
+  const specText = readText(join(dir, "spec.md"));
+  const planText = readText(join(dir, "plan.md"));
+  const hash = specReviewHash(specText ?? "", planText ?? "");
+  const { evidence } = loadEvidence(env.paths, work.id);
+  const record = evidence.specReview ?? emptySpecReview();
+  /** The record saved under the evidence's lock; a refusal leaves everything as it was. */
+  const save = (): string | null => {
+    const saved = updateEvidence(env.paths, work.id, (e) => {
+      e.specReview = record;
+    });
+    return "refused" in saved ? saved.refused : null;
+  };
+  const reason = typeof parsed.flags.reason === "string" ? parsed.flags.reason.trim() : "";
+  const openFor = (): SpecRound | Outcome => {
+    const round = record.rounds.at(-1);
+    if (!round || round.closedAt) return refuse("no round is open (crew spec-review <id> check)");
+    return round;
+  };
+  switch (verb) {
+    case "status":
+      return ok(`${work.id} spec review: ${specReviewLine(record)}`, { specReview: record });
+    case "report": {
+      writeText(join(dir, "spec-review", "consolidated.md"), renderSpecReview(record));
+      return ok(`.crew/work/${work.id}/spec-review/consolidated.md`, {});
+    }
+    case "check": {
+      if (specText === null || planText === null)
+        return refuse("the spec review reads spec.md and plan.md: write both first");
+      const opening = openSpecRound(record, hash, nowIso());
+      if ("refused" in opening) return refuse(opening.refused);
+      const unsaved = save();
+      if (unsaved) return refuse(unsaved);
+      const due = dueStage(opening.round);
+      if (!due)
+        return ok(
+          `round ${opening.round.n}: all stages recorded (crew spec-review ${work.id} close)`,
+          {},
+        );
+      const ranges = {
+        both: "spec.md and plan.md",
+        feature: "spec.md",
+        detailed: "plan.md",
+      } as const;
+      const standards = due.standards.length
+        ? `standards ${due.standards.map((s) => `rubrics/${s}.md`).join(", ")}`
+        : "no standard";
+      return ok(
+        `round ${opening.round.n}, stage ${due.stage} (${due.name}): launch ${due.reviewers.join(", ")}, each fresh, in parallel, on ${ranges[due.range]}; ${standards}; then crew spec-review ${work.id} record ${due.stage}`,
+        { round: opening.round.n, stage: due.stage, reviewers: due.reviewers },
+      );
+    }
+    case "record": {
+      const round = openFor();
+      if (isOutcome(round)) return round;
+      if (round.hash !== hash)
+        return refuse(
+          "spec.md or plan.md changed since this round opened: its stages read another text (crew spec-review <id> check opens a new round)",
+        );
+      const due = dueStage(round);
+      if (!due)
+        return refuse(`round ${round.n} has all its stages (crew spec-review ${work.id} close)`);
+      if (args[2] !== String(due.stage))
+        return refuse(`stage ${due.stage} (${due.name}) is due, not ${args[2] ?? "none"}`);
+      const notRun = parsed.flags["not-run"] === true ? commaList(args[3]) : [];
+      if (parsed.flags["not-run"] === true && (!notRun.length || !reason)) return refuse(usage);
+      const strange = notRun.find((r) => !due.reviewers.includes(r));
+      if (strange) return refuse(`${strange} is not a reviewer of stage ${due.stage}`);
+      const roles = evidence.roles ?? [];
+      const answers: {
+        role: string;
+        parsed: ParsedAnswer | null;
+        text: string;
+        agentId: string;
+      }[] = [];
+      for (const role of due.reviewers) {
+        if (notRun.includes(role)) {
+          answers.push({ role, parsed: null, text: "", agentId: "" });
+          continue;
+        }
+        const row = roles.filter((r) => r.agent === role).at(-1);
+        const file = `spec-review/${role}.md`;
+        const text = readText(join(dir, file));
+        const notRunWay = `record it as not run: crew spec-review ${work.id} record ${due.stage} ${role} --not-run --reason "<why>"`;
+        if (!row || text === null)
+          return refuse(`${role} has not answered this stage: launch it fresh, or ${notRunWay}`);
+        if (row.filedBy === "session" || !row.agentId || row.file !== file)
+          return refuse(
+            `${role}'s answer was not filed by the hook from a role of its own, so it cannot show it had no context: it counts as not run: ${notRunWay}`,
+          );
+        if (record.agentIds.includes(row.agentId))
+          return refuse(
+            `${role}'s answer comes from an agent already recorded: a reviewer is fresh every time: launch a new one, never resume it`,
+          );
+        const answer = parseSpecAnswer(text);
+        if (!answer)
+          return refuse(
+            `${role}'s answer is no review: it has no ## Findings section with lines of the shape, launch it again or ${notRunWay}`,
+          );
+        answers.push({ role, parsed: answer, text, agentId: row.agentId });
+      }
+      recordSpecStage(round, due, answers);
+      for (const a of answers) {
+        if (!a.parsed) continue;
+        record.agentIds.push(a.agentId);
+        writeText(
+          join(dir, "spec-review", `round${round.n}-stage${due.stage}-${a.role}.md`),
+          a.text,
+        );
+      }
+      const unsaved = save();
+      if (unsaved) return refuse(unsaved);
+      const next = dueStage(round);
+      const count = round.findings.filter((f) => f.stage === due.stage).length;
+      return ok(
+        `stage ${due.stage} recorded: ${count} finding${count === 1 ? "" : "s"}; ${next ? `next: crew spec-review ${work.id} check` : `next: crew spec-review ${work.id} close`}`,
+        {},
+      );
+    }
+    case "resolve": {
+      const finding = args[2];
+      const disposition = args[3] as SpecDisposition | undefined;
+      if (!finding || !disposition || !SPEC_DISPOSITIONS.includes(disposition) || !reason)
+        return refuse(usage);
+      const wrong = resolveSpecFinding(record, {
+        finding,
+        disposition,
+        reason,
+        ...(typeof parsed.flags.evidence === "string" ? { evidence: parsed.flags.evidence } : {}),
+        ...(typeof parsed.flags.earlier === "string" ? { earlier: parsed.flags.earlier } : {}),
+        ...(parsed.flags.churn === true ? { churn: true } : {}),
+        evidenceHolds: (text) => specEvidenceProblem(env.paths.root, dir, text),
+      });
+      if (wrong) return refuse(wrong);
+      const unsaved = save();
+      if (unsaved) return refuse(unsaved);
+      return ok(`${finding}: ${disposition}`, {});
+    }
+    case "answer": {
+      const finding = args[2];
+      const choice = args[3];
+      if (!finding || (choice !== "confirm" && choice !== "add-fact") || !reason)
+        return refuse(usage);
+      const decision = decisionFlag(parsed, env.policy);
+      if (isOutcome(decision)) return decision;
+      const by = whoDecides(decision);
+      const wrong = answerSpecFinding(record, finding, choice, reason, by);
+      if (wrong) return refuse(wrong);
+      const unsaved = save();
+      if (unsaved) return refuse(unsaved);
+      decide(env, work.id, {
+        kind: "decision",
+        text: `spec review ${finding}: ${choice}: ${reason}`,
+        by,
+      });
+      return ok(`${finding}: ${choice} ${decisionText(env.policy, decision)}`, {});
+    }
+    case "close": {
+      const wrong = closeSpecRound(record, nowIso());
+      if (wrong) return refuse(wrong);
+      const unsaved = save();
+      if (unsaved) return refuse(unsaved);
+      const round = record.rounds.at(-1) as SpecRound;
+      const verdict = round.clean ? "clean" : "not clean";
+      if (specReviewConverged(record, hash))
+        return ok(
+          `round ${round.n}: ${verdict}; converged: two consecutive clean rounds on the document as it is`,
+          {},
+        );
+      const stop = specReviewStop(record);
+      return ok(
+        `round ${round.n}: ${verdict}; ${stop ? `stopped (${stop}): a person chooses (crew spec-review ${work.id} accept) or the document goes back to drafting` : `next: apply the fixes, then crew spec-review ${work.id} check`}`,
+        {},
+      );
+    }
+    case "accept": {
+      if (!reason) return refuse(usage);
+      const decision = decisionFlag(parsed, env.policy);
+      if (isOutcome(decision)) return decision;
+      const by = whoDecides(decision);
+      const wrong = acceptSpecReview(record, hash, reason, by, nowIso());
+      if (wrong) return refuse(wrong);
+      const unsaved = save();
+      if (unsaved) return refuse(unsaved);
+      decide(env, work.id, { kind: "decision", text: `spec review accepted: ${reason}`, by });
+      return ok(
+        `the spec review is accepted on the document as it is ${decisionText(env.policy, decision)}`,
+        {},
+      );
+    }
+    default:
+      return refuse(usage);
+  }
+}
+
+/** Why a contest's `<file:symbol>` does not hold, or null: the file exists and the symbol is in it. */
+function specEvidenceProblem(root: string, itemDir: string, evidence: string): string | null {
+  const at = evidence.lastIndexOf(":");
+  const file = at > 0 ? evidence.slice(0, at) : "";
+  const symbol = at > 0 ? evidence.slice(at + 1).trim() : "";
+  if (!file || !symbol) return `--evidence is <file:symbol>, not "${evidence}"`;
+  const own = file === "spec.md" || file === "plan.md";
+  const path = own ? join(itemDir, file) : resolve(root, file);
+  const inside = relative(root, path);
+  if (inside.startsWith("..") || isAbsolute(inside)) return `${file} is outside the repository`;
+  const text = readText(path);
+  if (text === null) return `${file} cannot be read`;
+  if (!text.includes(symbol)) return `"${symbol}" is not in ${file}`;
+  return null;
 }
 
 /** `crew design <id> surface|check|deal|choose`: what a new site is built from (item 2026-10-30-005). */
@@ -4169,6 +4415,8 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
     }
     case "design":
       return designCommand(env, args, parsed);
+    case "spec-review":
+      return specReviewCommand(env, args, parsed);
     case "kind": {
       // A feature raised to a new project while its spec is open (SP7 §7.3, SP8 decision 2): the
       // lead's call, recorded as the agent's.

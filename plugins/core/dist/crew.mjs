@@ -963,6 +963,8 @@ function isProtectedPath(paths, absPath, worktrees = []) {
     return !AUDIT_OPEN.test(inner);
   if (inner === "running" || inner.startsWith("running/") || inner === "running.json")
     return true;
+  if (inner === "spec-review" || inner.startsWith("spec-review/"))
+    return true;
   return PROTECTED_IN_WORK.has(inner) || inner.startsWith("logs/");
 }
 function knowledgeDir(userDir) {
@@ -1385,6 +1387,7 @@ var PHASE_ORDER = [
   "specify",
   "conclave",
   "plan",
+  "spec-review",
   "build",
   "gate",
   "deliver",
@@ -4998,6 +5001,311 @@ function questionJson(question) {
   return { ...question, open: question.answer === null };
 }
 
+// packages/engine/src/spec-review.ts
+import { createHash as createHash3 } from "node:crypto";
+var STAGES = [
+  {
+    stage: 5,
+    name: "zoom out",
+    reviewers: ["goldfish-zoom-out"],
+    range: "both",
+    standards: ["spec-zoom-out"]
+  },
+  {
+    stage: 6,
+    name: "comprehension",
+    reviewers: ["goldfish-comprehension"],
+    range: "both",
+    standards: []
+  },
+  {
+    stage: 7,
+    name: "critic",
+    reviewers: ["goldfish-design", "goldfish-structural", "goldfish-style"],
+    range: "feature",
+    standards: ["spec-feature", "spec-heilmeier"]
+  },
+  {
+    stage: 8,
+    name: "second zoom out",
+    reviewers: ["goldfish-zoom-out"],
+    range: "both",
+    standards: ["spec-zoom-out"]
+  },
+  {
+    stage: 9,
+    name: "readiness",
+    reviewers: ["goldfish-readiness", "goldfish-codebase", "goldfish-style"],
+    range: "detailed",
+    standards: ["spec-readiness", "spec-reimplementation"]
+  }
+];
+var MAX_SPEC_ROUNDS = 5;
+var SPEC_DISPOSITIONS = [
+  "propose-fix",
+  "contest",
+  "escalate",
+  "decline",
+  "settled"
+];
+function emptySpecReview() {
+  return { rounds: [], agentIds: [] };
+}
+function specReviewHash(specText, planText) {
+  return createHash3("sha256").update(`${specText}
+---
+${planText}`).digest("hex");
+}
+var openRound = (record) => {
+  const last = record.rounds.at(-1);
+  return last && !last.closedAt ? last : null;
+};
+var closedRounds = (record) => record.rounds.filter((r) => r.closedAt);
+function specReviewStop(record) {
+  const closed = closedRounds(record);
+  const last = closed.at(-1);
+  if (!last)
+    return null;
+  if (last.findings.some((f) => f.churn))
+    return "churn";
+  if (closed.length >= MAX_SPEC_ROUNDS)
+    return "cap";
+  if (last.stages.some((s) => Object.values(s.reviewers).includes("not run")))
+    return "not run";
+  return null;
+}
+var stopBlocks = (record, stop) => (stop === "cap" || stop === "churn") && record.accepted?.round !== closedRounds(record).length;
+function openSpecRound(record, hash, at) {
+  const open = openRound(record);
+  if (open?.hash === hash)
+    return { round: open };
+  const stop = specReviewStop(record);
+  if (stopBlocks(record, stop))
+    return {
+      refused: stop === "cap" ? `the review reached its cap of ${MAX_SPEC_ROUNDS} rounds: a person chooses (crew spec-review <id> accept, or return the document to drafting)` : "a churn mark stops the rounds: a new finding that reverting an earlier fix would resolve; a person chooses (crew spec-review <id> accept)"
+    };
+  if (open)
+    record.rounds.pop();
+  const round = {
+    n: record.rounds.length + 1,
+    hash,
+    openedAt: at,
+    stages: [],
+    findings: []
+  };
+  record.rounds.push(round);
+  return { round };
+}
+function dueStage(round) {
+  return STAGES.find((s) => !round.stages.some((r) => r.stage === s.stage)) ?? null;
+}
+function parseSpecAnswer(answer) {
+  const at = answer.search(/^## Findings\s*$/m);
+  if (at === -1)
+    return null;
+  const body = answer.slice(at).replace(/^## Findings\s*$/m, "");
+  const end = body.search(/^## /m);
+  const lines = (end === -1 ? body : body.slice(0, end)).split(`
+`);
+  const findings = [];
+  const prose = [];
+  for (const line of lines) {
+    if (!/^- F-\d+\b/.test(line)) {
+      prose.push(line);
+      continue;
+    }
+    const match = /^- F-\d+ · (Blocker|Major|Nit) · (.+?) · (.+)$/.exec(line.trim());
+    if (!match)
+      return null;
+    findings.push({
+      severity: match[1],
+      scope: match[2],
+      text: match[3]
+    });
+  }
+  const text = prose.join(`
+`).trim();
+  return { findings, prose: text === "none" || text === "(or: none)" ? "" : text };
+}
+function recordSpecStage(round, stage, answers) {
+  const reviewers = {};
+  for (const { role, parsed } of answers) {
+    reviewers[role] = parsed ? "completed" : "not run";
+    if (!parsed)
+      continue;
+    const short = role.replace(/^goldfish-/, "");
+    let n = 0;
+    for (const f of parsed.findings) {
+      n += 1;
+      round.findings.push({
+        id: `${short}-${round.n}.${stage.stage}-${n}`,
+        reviewer: role,
+        round: round.n,
+        stage: stage.stage,
+        ...f
+      });
+    }
+    if (role === "goldfish-comprehension" && parsed.prose)
+      round.paraphrase = parsed.prose;
+  }
+  round.stages.push({ stage: stage.stage, reviewers });
+}
+var findSpecFinding = (record, id) => record.rounds.flatMap((r) => r.findings).find((f) => f.id === id);
+function closes(f) {
+  if (f.disposition === "contest" || f.disposition === "settled" || f.disposition === "decline")
+    return true;
+  return f.disposition === "escalate" && f.answer?.choice === "confirm";
+}
+var sameScope = (a, b) => a.trim().toLowerCase() === b.trim().toLowerCase();
+function resolveSpecFinding(record, input) {
+  const f = findSpecFinding(record, input.finding);
+  if (!f)
+    return `no finding ${input.finding} in this review`;
+  if (openRound(record)?.n !== f.round)
+    return `${f.id} belongs to round ${f.round}, which is closed`;
+  if (input.disposition === "contest") {
+    if (f.reviewer === "goldfish-comprehension")
+      return "a comprehension finding is never contested: if a fresh reader could not follow the document, the document is missing context";
+    if (!input.evidence)
+      return "contest needs --evidence <file:symbol>, evidence the reviewer could read";
+    const wrong = input.evidenceHolds?.(input.evidence);
+    if (wrong)
+      return wrong;
+  }
+  if (input.disposition === "decline" && f.severity !== "Nit")
+    return `decline is for a Nit, and ${f.id} is a ${f.severity}: to dispute it, contest it`;
+  if (input.disposition === "settled") {
+    if (!input.earlier)
+      return "settled needs --earlier <finding>, the one it repeats";
+    const earlier = findSpecFinding(record, input.earlier);
+    if (!earlier)
+      return `no finding ${input.earlier} in this review`;
+    if (earlier.round >= f.round)
+      return `${earlier.id} is not of an earlier round`;
+    if (!closes(earlier))
+      return `${earlier.id} was not contested, confirmed or declined: a fixed finding raised again stays open`;
+    if (!sameScope(earlier.scope, f.scope))
+      return `${earlier.id} has another scope ("${earlier.scope}", here "${f.scope}")`;
+  }
+  f.disposition = input.disposition;
+  f.reason = input.reason;
+  if (input.evidence)
+    f.evidence = input.evidence;
+  if (input.earlier)
+    f.earlier = input.earlier;
+  if (input.churn)
+    f.churn = true;
+  return null;
+}
+function answerSpecFinding(record, id, choice, reason, by) {
+  const f = findSpecFinding(record, id);
+  if (!f)
+    return `no finding ${id} in this review`;
+  if (f.disposition !== "escalate")
+    return `${f.id} is not escalated`;
+  f.answer = { choice, reason, by };
+  return null;
+}
+function keepsOpen(f) {
+  if (f.severity === "Nit")
+    return false;
+  if (f.disposition === "propose-fix")
+    return true;
+  return f.disposition === "escalate" && f.answer?.choice !== "confirm";
+}
+function closeSpecRound(record, at) {
+  const round = openRound(record);
+  if (!round)
+    return "no round is open (crew spec-review <id> check)";
+  const due = dueStage(round);
+  if (due)
+    return `stage ${due.stage} (${due.name}) is not recorded`;
+  const undecided = round.findings.filter((f) => f.severity !== "Nit" && !f.disposition);
+  if (undecided.length)
+    return `no disposition on ${undecided.map((f) => f.id).join(", ")} (crew spec-review <id> resolve)`;
+  const unanswered = round.findings.filter((f) => f.severity !== "Nit" && f.disposition === "escalate" && !f.answer);
+  if (unanswered.length)
+    return `${unanswered.map((f) => f.id).join(", ")} escalated and not answered: a person answers (crew spec-review <id> answer)`;
+  const everyoneRan = round.stages.every((s) => Object.values(s.reviewers).every((status) => status === "completed"));
+  round.clean = everyoneRan && !round.findings.some(keepsOpen);
+  round.closedAt = at;
+  return null;
+}
+function specReviewConverged(record, hash) {
+  if (openRound(record))
+    return false;
+  const closed = closedRounds(record);
+  const [before, last] = closed.slice(-2);
+  return closed.length >= 2 && !!before?.clean && !!last?.clean && last.hash === hash;
+}
+function acceptSpecReview(record, hash, reason, by, at) {
+  const stop = specReviewStop(record);
+  if (!stop)
+    return "nothing to accept: only the cap, a churn mark or a reviewer not run stops a review";
+  record.accepted = { hash, round: closedRounds(record).length, reason, by, at };
+  return null;
+}
+function specReviewMissing(record, hash) {
+  if (record?.accepted?.hash === hash)
+    return [];
+  if (record && specReviewConverged(record, hash))
+    return [];
+  const prefix = "the spec review";
+  if (!record || record.rounds.length === 0)
+    return [`${prefix} has not run (crew spec-review <id> check)`];
+  const last = closedRounds(record).at(-1);
+  if (!openRound(record) && last?.clean && last.hash !== hash)
+    return [`${prefix} is stale: spec.md or plan.md changed after it; review again`];
+  if (record.accepted && record.accepted.hash !== hash && !openRound(record))
+    return [`${prefix} is stale: the acceptance was on another text of spec.md or plan.md`];
+  return [`${prefix} has not converged: ${specReviewLine(record)}`];
+}
+function specReviewLine(record) {
+  const round = record.rounds.at(-1);
+  if (!round)
+    return "not started";
+  if (!round.closedAt) {
+    const due = dueStage(round);
+    return `round ${round.n} open, ${due ? `stage ${due.stage} (${due.name}) due` : "all stages recorded, close it"}`;
+  }
+  const clean = record.rounds.filter((r) => r.clean).length;
+  return `round ${round.n} ${round.clean ? "clean" : "not clean"}, ${clean} clean of ${record.rounds.length}`;
+}
+var SEVERITIES = ["Blocker", "Major", "Nit"];
+function renderSpecReview(record) {
+  const lines = ["# Spec review", "", `Where it stands: ${specReviewLine(record)}.`];
+  if (record.accepted)
+    lines.push("", `Accepted by ${record.accepted.by} at round ${record.accepted.round}: ${record.accepted.reason}`);
+  for (const round of record.rounds) {
+    lines.push("", `## Round ${round.n}`, "", "| Stage | Reviewer | Status |", "| --- | --- | --- |");
+    for (const s of round.stages)
+      for (const [role, status] of Object.entries(s.reviewers))
+        lines.push(`| ${s.stage} | \`${role}\` | ${status} |`);
+    if (round.paraphrase)
+      lines.push("", "### What a new reader understood", "", round.paraphrase);
+    const folded = new Map;
+    for (const f of round.findings) {
+      const key = `${f.severity}|${f.scope.toLowerCase()}|${f.text}`;
+      folded.set(key, [...folded.get(key) ?? [], f]);
+    }
+    for (const severity of SEVERITIES) {
+      const rows = [...folded.values()].filter((g) => g[0]?.severity === severity);
+      if (!rows.length)
+        continue;
+      lines.push("", `### ${severity}`, "");
+      for (const group of rows) {
+        const f = group[0];
+        const who = group.map((g) => `\`${g.reviewer}\` ${g.id}`).join(", ");
+        const what = f.disposition ? `${f.disposition}${f.answer ? ` (${f.answer.choice}, by ${f.answer.by})` : ""}: ${f.reason ?? ""}${f.evidence ? ` [${f.evidence}]` : ""}${f.earlier ? ` [as ${f.earlier}]` : ""}${f.churn ? " [churn]" : ""}` : "no disposition";
+        lines.push(`- ${who} · ${f.scope} · ${f.text}`, `  - ${what}`);
+      }
+    }
+  }
+  return `${lines.join(`
+`)}
+`;
+}
+
 // packages/engine/src/strategy.ts
 var STRATEGY_SECTIONS = ["Viability", "Cost", "Time", "Stack", "Scaling phases"];
 var RESEARCH_AND_BASE = "from the research and the base";
@@ -7386,7 +7694,7 @@ import { existsSync as existsSync10, readdirSync as readdirSync5 } from "node:fs
 import { join as join25 } from "node:path";
 
 // packages/engine/src/validation.ts
-import { createHash as createHash3 } from "node:crypto";
+import { createHash as createHash4 } from "node:crypto";
 var LEAD_TEAMS = Object.entries(TEAMS).filter(([, team]) => team.validates).map(([name]) => name).join("|");
 var LEAD_OPENING = `# (${LEAD_TEAMS}) lead's validation of `;
 var LEAD_HEADING = new RegExp(`^(?=${LEAD_OPENING})`, "m");
@@ -7426,7 +7734,7 @@ function parseValidation(text) {
   return { verdict, returns };
 }
 function fileHash(text) {
-  return `sha256:${createHash3("sha256").update(text).digest("hex")}`;
+  return `sha256:${createHash4("sha256").update(text).digest("hex")}`;
 }
 function leadSuffix(what) {
   return what === "plan" || what === "delivery" ? `.${what}` : "";
@@ -7438,7 +7746,7 @@ function validationHash(what, specText, planText, evidenceFingerprint) {
   if (what === "delivery")
     return evidenceFingerprint;
   const text = what === "spec" ? specText : planText;
-  return `sha256:${createHash3("sha256").update(text ?? "").digest("hex")}`;
+  return `sha256:${createHash4("sha256").update(text ?? "").digest("hex")}`;
 }
 function validationRound(validations, what, by, hash, spentSpecRounds) {
   const same = validations.filter((v) => v.what === what);
@@ -7493,6 +7801,14 @@ var PHASES_BY_ROUTE = {
   full: [...DELIBERATE]
 };
 function phasesFor(work) {
+  const phases = phasesOfKind(work);
+  if (work.specReview && work.route === "full" && phases.includes("plan")) {
+    const at = phases.indexOf("plan") + 1;
+    return [...phases.slice(0, at), "spec-review", ...phases.slice(at)];
+  }
+  return phases;
+}
+function phasesOfKind(work) {
   const base = PHASES_BY_ROUTE[work.route];
   const kind = kindOfItem(work);
   if (kind === "audit")
@@ -7740,6 +8056,8 @@ function applyClassification(work, type, decision, kind) {
     work.route = decision.route;
     work.routeReasons = [...decision.reasons];
     work.riskAreas = [...decision.riskAreas];
+    if (decision.route === "full")
+      work.specReview = true;
   } else {
     const route = higherRoute(work.route, decision.route);
     if (route !== work.route) {
@@ -7747,6 +8065,8 @@ function applyClassification(work, type, decision, kind) {
     } else if (decision.route !== work.route) {
       work.routeReasons.push(`reclassified as ${decision.route}; kept ${work.route}: a route is never lowered`);
     }
+    if (route === "full" && work.route !== "full")
+      work.specReview = true;
     work.route = route;
     work.riskAreas = [...new Set([...work.riskAreas, ...decision.riskAreas])];
   }
@@ -7767,6 +8087,8 @@ function raiseRoute(work, to, reason) {
   if (routeRank(to) <= routeRank(work.route))
     return false;
   work.route = to;
+  if (to === "full")
+    work.specReview = true;
   work.routeReasons.push(`raised to ${to}: ${reason}`);
   return true;
 }
@@ -7998,6 +8320,8 @@ function routeDocuments(work, ctx) {
   const missing = [];
   if (kindOfItem(work) === "audit")
     return missing;
+  if (work.specReview && work.route === "full")
+    missing.push(...specReviewMissing(ctx.evidence?.specReview, specReviewHash(ctx.specText ?? "", ctx.planText ?? "")));
   if (work.route !== "fast") {
     if (ctx.specText === null)
       missing.push("spec.md in the work folder");
@@ -10151,6 +10475,15 @@ function renderReport(work, evidence, policy, options = {}) {
     }
     lines.push("");
   }
+  if (evidence.specReview?.rounds.length) {
+    const review = evidence.specReview;
+    lines.push("## Spec review", "", `- ${specReviewLine(review)}.`);
+    if (review.accepted)
+      lines.push(`- Accepted by ${review.accepted.by}: ${review.accepted.reason}`);
+    for (const f of review.rounds.flatMap((r) => r.findings).filter((f) => f.disposition === "contest"))
+      lines.push(`- Contested ${f.id}: ${f.text} (${f.reason}) [${f.evidence}]`);
+    lines.push("", "The file: `spec-review/consolidated.md`.", "");
+  }
   if (strategy) {
     lines.push("## Strategy", "");
     lines.push(`- ${RESEARCH_AND_BASE.charAt(0).toUpperCase()}${RESEARCH_AND_BASE.slice(1)}.`);
@@ -10328,7 +10661,7 @@ function decisionMarks(d, policy) {
 }
 
 // packages/engine/src/mail.ts
-import { createHash as createHash4 } from "node:crypto";
+import { createHash as createHash5 } from "node:crypto";
 import { accessSync, constants, existsSync as existsSync14 } from "node:fs";
 import { basename as basename7, isAbsolute as isAbsolute5, join as join30, resolve as resolve7 } from "node:path";
 
@@ -10459,7 +10792,7 @@ function checkContracts(root, branch, base, contracts, body) {
     const content = gitShow(root, tip, path);
     if (content === null)
       return { refused: `contract ${c.kind}:${path} is not at the tip of ${tip}` };
-    const hash = createHash4("sha256").update(content).digest("hex");
+    const hash = createHash5("sha256").update(content).digest("hex");
     if (c.kind === "openapi" || c.kind === "schema") {
       const text = content.toString("utf8");
       if (path.endsWith(".json")) {
@@ -11519,6 +11852,7 @@ var BOOLEAN_FLAGS = new Set([
   "refresh",
   "force",
   "not-run",
+  "churn",
   "all",
   "remove"
 ]);
@@ -11558,7 +11892,7 @@ import { existsSync as existsSync16, readFileSync as readFileSync7, realpathSync
 import { isAbsolute as isAbsolute7, join as join33, relative as relative8 } from "node:path";
 
 // packages/engine/src/audit-state.ts
-import { createHash as createHash5 } from "node:crypto";
+import { createHash as createHash6 } from "node:crypto";
 import { join as join32 } from "node:path";
 var AUDIT_SECTIONS = [
   "business",
@@ -11577,7 +11911,7 @@ var REPORT_INPUT_FILES = [
   "recommendations.md"
 ];
 function reportHash(auditDir) {
-  const hash = createHash5("sha256");
+  const hash = createHash6("sha256");
   for (const name of REPORT_INPUT_FILES) {
     const text = readText(join32(auditDir, name));
     hash.update(`${name}
@@ -15749,7 +16083,7 @@ function setConfigValue(config, key, value) {
 }
 
 // packages/engine/src/design-pictures.ts
-import { createHash as createHash6 } from "node:crypto";
+import { createHash as createHash7 } from "node:crypto";
 import { lookup as dnsLookup } from "node:dns/promises";
 import { lstatSync as lstatSync6, renameSync as renameSync4, writeFileSync as writeFileSync4 } from "node:fs";
 import { join as join49 } from "node:path";
@@ -15946,7 +16280,7 @@ async function downloadPicture(result, dir, options = {}) {
   const ext = EXTENSIONS[type.split(";")[0]?.trim().toLowerCase() ?? ""];
   if (!ext)
     throw new Error("pictures: the file's type is not an image or a video");
-  const name = createHash6("sha256").update(`${result.archive}:${result.id}:${result.url}`).digest("hex").slice(0, 12);
+  const name = createHash7("sha256").update(`${result.archive}:${result.id}:${result.url}`).digest("hex").slice(0, 12);
   const file = `picture-${name}.${ext}`;
   ensureDir(dir);
   if (lstatSync6(dir).isSymbolicLink())
@@ -16591,6 +16925,8 @@ function answerFile(agent, answer, kind) {
   }
   if (agent.startsWith("review-"))
     return `review/${agent.slice("review-".length)}.findings.md`;
+  if (agent.startsWith("goldfish-") && agent !== "goldfish-explorer")
+    return `spec-review/${agent}.md`;
   if (agent === "tech-lead") {
     const lead = leadAnswer(answer);
     return lead ? `conclave/lead-${lead.team}${leadSuffix(lead.what)}.md` : "conclave/tech-lead.md";
@@ -16770,7 +17106,7 @@ function fileAnswer(ctx, id, role, input, transcriptNote, progress) {
     }
   } else {
     const file = headless ? `conclave/${headlessLeadStem(dir, roles)}.md` : answerFile(agent, answer, kindOfItem(work));
-    const kept = file.startsWith("conclave/") || resumedRuling ? archiveExisting(dir, file) : { archived: null };
+    const kept = file.startsWith("conclave/") || file.startsWith("spec-review/") || resumedRuling ? archiveExisting(dir, file) : { archived: null };
     if ("failed" in kept)
       return `Crew: ${agent}'s earlier answer could not be archived at ${kept.failed} (${kept.error}): the plain file was left as it was; save this answer from the transcript${transcriptNote} and run the role again if it is needed.`;
     writeText(join50(dir, file), file.endsWith(".json") ? `${gatesRuling(answer)}
@@ -16924,7 +17260,7 @@ var REVIEW_OWNED = String.raw`review(?!\/${REVIEW_OPEN_SEGMENT}(?:\/(?:${NOT_DOT
 var AUDIT_OWNED = String.raw`audit(?=\/|${PATH_END}|$)(?!\/${AUDIT_OPEN_FILES}(?=${PATH_END}|$))`;
 var WORK_FILES = PROTECTED_WORK_FILES.map(escapeRegExp).join("|");
 var USER_CREW = String.raw`\.wizardingcode\/crew(?=\/|${PATH_END}|$)`;
-var ENGINE_FILES2 = new RegExp(String.raw`\.crew\/(?:profile\.json|policy\.json|decisions\.json|\.gitignore|local\b|work\/[^\s/]+\/(?:${WORK_FILES}|logs\b|running(?:\.json|\/|(?=${PATH_END})|$)|${REVIEW_OWNED}|${AUDIT_OWNED}))|${USER_CREW}`, "i");
+var ENGINE_FILES2 = new RegExp(String.raw`\.crew\/(?:profile\.json|policy\.json|decisions\.json|\.gitignore|local\b|work\/[^\s/]+\/(?:${WORK_FILES}|logs\b|spec-review\b|running(?:\.json|\/|(?=${PATH_END})|$)|${REVIEW_OWNED}|${AUDIT_OWNED}))|${USER_CREW}`, "i");
 var ENGINE_FOLDER = new RegExp(String.raw`(?:^|[\s"'=(:\/\\])\.crew(?:[\/\\]work(?:[\/\\][^\s\/\\"'\x60;&|)*]+)?)?(?:[\/\\](?:\*\*?|\.))*[\/\\]?(?=${PATH_END}|$)`, "i");
 var REMOVE_OR_MOVE = /(?:^|[\s;&|("'/])(?:rm|rmdir|mv|chmod|chown)\b/i;
 var POWERSHELL_REMOVE_OR_MOVE = /(?:^|[\s;&|({])(?:Remove-Item|ri|rm|rmdir|rd|del|erase|Move-Item|mi|mv|move|Rename-Item|rni|ren)(?=\s|$)/i;
@@ -17315,7 +17651,7 @@ function userOnlyCommand(args) {
   const [verb, second, third] = parsed.positional;
   const presence = verb === "question" && third === "add";
   const unreadable = (word) => word !== undefined && UNREADABLE_VERB.test(word);
-  const userOnly = unreadable(verb) || (verb === "profile" || verb === "policy") && unreadable(second) || verb === "skip" || verb === "approve" || verb === "accept" || verb === "decide" || verb === "continue" || verb === "abandon" || verb === "objection" && (parsed.positional.includes("waive") || unreadable(third)) || verb === "profile" && (second === "confirm" || second === "set" || second === "unset") || verb === "policy" && (second === "accept" || second === "set") || verb === "workspace" && (unreadable(second) || second === "priorities" && (parsed.positional.includes("accept") || unreadable(third))) || verb === "question" && (third === "answer" || unreadable(third)) || verb === "config" && typeof second === "string" && second.startsWith("jev.") && third !== undefined || verb === "knowledge" && (second === "unmark" || unreadable(second)) || verb === "task" && (parsed.positional.includes("merge") && parsed.flags.force === true || parsed.positional.includes("drop") || unreadable(third));
+  const userOnly = unreadable(verb) || (verb === "profile" || verb === "policy") && unreadable(second) || verb === "skip" || verb === "approve" || verb === "accept" || verb === "decide" || verb === "continue" || verb === "abandon" || verb === "objection" && (parsed.positional.includes("waive") || unreadable(third)) || verb === "spec-review" && (third === "accept" || third === "answer" || unreadable(third)) || verb === "profile" && (second === "confirm" || second === "set" || second === "unset") || verb === "policy" && (second === "accept" || second === "set") || verb === "workspace" && (unreadable(second) || second === "priorities" && (parsed.positional.includes("accept") || unreadable(third))) || verb === "question" && (third === "answer" || unreadable(third)) || verb === "config" && typeof second === "string" && second.startsWith("jev.") && third !== undefined || verb === "knowledge" && (second === "unmark" || unreadable(second)) || verb === "task" && (parsed.positional.includes("merge") && parsed.flags.force === true || parsed.positional.includes("drop") || unreadable(third));
   if (!userOnly && !presence)
     return null;
   return {
@@ -17345,6 +17681,18 @@ function auditApproval(parsed, permissionMode, headless, policy) {
     unwatched: (where) => `Crew: an audit's report is signed by a person and no person is watching this session (${where}): run crew await <id> user and end the turn`,
     withMode: (mode) => `Crew: a person is present (${mode} mode); run the command without --mode so they are asked`,
     ask: "Crew: an audit's report is signed by a person: this command records their signature"
+  });
+}
+function specReviewSigned(parsed, permissionMode, headless, policy) {
+  const [verb, , what] = parsed.positional;
+  if (verb !== "spec-review" || what === undefined)
+    return null;
+  if (what !== "accept" && what !== "answer" && !UNREADABLE_VERB.test(what))
+    return null;
+  return personOnly(parsed, permissionMode, headless, policy, {
+    unwatched: (where) => `Crew: this is a person's decision on a document review and no person is watching this session (${where}): the item waits (crew await <id> user)`,
+    withMode: (mode) => `Crew: a person is present (${mode} mode); run the command without --mode so they are asked`,
+    ask: "Crew: this command records a person's decision on a document review"
   });
 }
 function knowledgeUnmark(parsed, permissionMode, headless, policy) {
@@ -18419,7 +18767,7 @@ function onPreToolUse(ctx, payload) {
       const userOnly = userOnlyCommand(args) ?? resumeDecision(ctx, args);
       if (!userOnly)
         continue;
-      const decided = auditApproval(userOnly.parsed, payload.permission_mode, ctx.headless, ctx.policy) ?? knowledgeUnmark(userOnly.parsed, payload.permission_mode, ctx.headless, ctx.policy) ?? userOnlyDecision(userOnly, payload.permission_mode, ctx.headless, ctx.policy, {
+      const decided = auditApproval(userOnly.parsed, payload.permission_mode, ctx.headless, ctx.policy) ?? knowledgeUnmark(userOnly.parsed, payload.permission_mode, ctx.headless, ctx.policy) ?? specReviewSigned(userOnly.parsed, payload.permission_mode, ctx.headless, ctx.policy) ?? userOnlyDecision(userOnly, payload.permission_mode, ctx.headless, ctx.policy, {
         text: command,
         policyTampered: loadPolicy(ctx.paths).tampered
       });
@@ -20457,6 +20805,7 @@ var KNOWN_FLAGS = {
   classify: ["answers"],
   kind: ["reason"],
   strategy: [],
+  "spec-review": ["not-run", "reason", "evidence", "earlier", "churn", "mode"],
   design: ["invention", "seed", "redraw", "reason", "regions"],
   audit: ["only"],
   criteria: ["kind", "contract", "by", "screen"],
@@ -21122,6 +21471,7 @@ function guardContext(env, work, tampered) {
     conclaveText: readText(join58(dir, "conclave.md")),
     ledger: loadLedger(env.paths, work.id).ledger,
     planExists: existsSync27(join58(dir, "plan.md")),
+    planText: readText(join58(dir, "plan.md")),
     evidence: result.evidence,
     proven: result.verdict === "proven",
     unproven: result.unproven,
@@ -21952,6 +22302,9 @@ function statusView(env, active) {
   const knowledge = knowledgeLine2(env, work);
   if (knowledge)
     extra.push(knowledge);
+  const specReview = result.evidence.specReview;
+  if (specReview?.rounds.length)
+    extra.push(`  spec review: ${specReviewLine(specReview)}`);
   const learned = work.learned;
   const learnLine = learned ? `  learn: ${learnedText(learned.entries, learned.confirmed)}` : work.phase === "learn" ? `  learn: proven, not learned: crew learn ${work.id}` : work.phase === "deliver" && result.verdict === "proven" ? `  learn: proven; crew phase ${work.id} next, then crew learn ${work.id} writes the base` : null;
   if (learnLine)
@@ -22154,6 +22507,209 @@ async function researchCommand(env, parsed, args, io) {
     reasons.push(tail);
   const n = facts.length;
   return ok(`${n} fact${n === 1 ? "" : "s"}: ${counts.join(", ")}${reasons.length ? ` (${reasons.join("; ")})` : ""}`, { facts: ordered, file: "conclave/researcher.verification.json" });
+}
+function specReviewCommand(env, args, parsed) {
+  const usage = 'usage: crew spec-review <id> check | record <stage> [<role>[,<role>] --not-run --reason "<why>"] | resolve <finding> <propose-fix|contest|escalate|decline|settled> --reason "<why>" [--evidence <file:symbol>] [--earlier <finding>] [--churn] | answer <finding> <confirm|add-fact> --reason "<their words>" | close | accept --reason "<their words>" | report | status';
+  const opened = openForChange(env, args[0]);
+  if (isOutcome(opened))
+    return opened;
+  const { work } = opened;
+  if (!work.specReview)
+    return refuse(`${work.id} has no spec review: it belongs to an item on the full route`);
+  const verb = args[1];
+  const dir = workDir(env.paths, work.id);
+  const specText = readText(join58(dir, "spec.md"));
+  const planText = readText(join58(dir, "plan.md"));
+  const hash = specReviewHash(specText ?? "", planText ?? "");
+  const { evidence } = loadEvidence(env.paths, work.id);
+  const record = evidence.specReview ?? emptySpecReview();
+  const save = () => {
+    const saved = updateEvidence(env.paths, work.id, (e) => {
+      e.specReview = record;
+    });
+    return "refused" in saved ? saved.refused : null;
+  };
+  const reason = typeof parsed.flags.reason === "string" ? parsed.flags.reason.trim() : "";
+  const openFor = () => {
+    const round = record.rounds.at(-1);
+    if (!round || round.closedAt)
+      return refuse("no round is open (crew spec-review <id> check)");
+    return round;
+  };
+  switch (verb) {
+    case "status":
+      return ok(`${work.id} spec review: ${specReviewLine(record)}`, { specReview: record });
+    case "report": {
+      writeText(join58(dir, "spec-review", "consolidated.md"), renderSpecReview(record));
+      return ok(`.crew/work/${work.id}/spec-review/consolidated.md`, {});
+    }
+    case "check": {
+      if (specText === null || planText === null)
+        return refuse("the spec review reads spec.md and plan.md: write both first");
+      const opening = openSpecRound(record, hash, nowIso());
+      if ("refused" in opening)
+        return refuse(opening.refused);
+      const unsaved = save();
+      if (unsaved)
+        return refuse(unsaved);
+      const due = dueStage(opening.round);
+      if (!due)
+        return ok(`round ${opening.round.n}: all stages recorded (crew spec-review ${work.id} close)`, {});
+      const ranges = {
+        both: "spec.md and plan.md",
+        feature: "spec.md",
+        detailed: "plan.md"
+      };
+      const standards = due.standards.length ? `standards ${due.standards.map((s) => `rubrics/${s}.md`).join(", ")}` : "no standard";
+      return ok(`round ${opening.round.n}, stage ${due.stage} (${due.name}): launch ${due.reviewers.join(", ")}, each fresh, in parallel, on ${ranges[due.range]}; ${standards}; then crew spec-review ${work.id} record ${due.stage}`, { round: opening.round.n, stage: due.stage, reviewers: due.reviewers });
+    }
+    case "record": {
+      const round = openFor();
+      if (isOutcome(round))
+        return round;
+      if (round.hash !== hash)
+        return refuse("spec.md or plan.md changed since this round opened: its stages read another text (crew spec-review <id> check opens a new round)");
+      const due = dueStage(round);
+      if (!due)
+        return refuse(`round ${round.n} has all its stages (crew spec-review ${work.id} close)`);
+      if (args[2] !== String(due.stage))
+        return refuse(`stage ${due.stage} (${due.name}) is due, not ${args[2] ?? "none"}`);
+      const notRun = parsed.flags["not-run"] === true ? commaList(args[3]) : [];
+      if (parsed.flags["not-run"] === true && (!notRun.length || !reason))
+        return refuse(usage);
+      const strange = notRun.find((r) => !due.reviewers.includes(r));
+      if (strange)
+        return refuse(`${strange} is not a reviewer of stage ${due.stage}`);
+      const roles = evidence.roles ?? [];
+      const answers = [];
+      for (const role of due.reviewers) {
+        if (notRun.includes(role)) {
+          answers.push({ role, parsed: null, text: "", agentId: "" });
+          continue;
+        }
+        const row = roles.filter((r) => r.agent === role).at(-1);
+        const file = `spec-review/${role}.md`;
+        const text = readText(join58(dir, file));
+        const notRunWay = `record it as not run: crew spec-review ${work.id} record ${due.stage} ${role} --not-run --reason "<why>"`;
+        if (!row || text === null)
+          return refuse(`${role} has not answered this stage: launch it fresh, or ${notRunWay}`);
+        if (row.filedBy === "session" || !row.agentId || row.file !== file)
+          return refuse(`${role}'s answer was not filed by the hook from a role of its own, so it cannot show it had no context: it counts as not run: ${notRunWay}`);
+        if (record.agentIds.includes(row.agentId))
+          return refuse(`${role}'s answer comes from an agent already recorded: a reviewer is fresh every time: launch a new one, never resume it`);
+        const answer = parseSpecAnswer(text);
+        if (!answer)
+          return refuse(`${role}'s answer is no review: it has no ## Findings section with lines of the shape, launch it again or ${notRunWay}`);
+        answers.push({ role, parsed: answer, text, agentId: row.agentId });
+      }
+      recordSpecStage(round, due, answers);
+      for (const a of answers) {
+        if (!a.parsed)
+          continue;
+        record.agentIds.push(a.agentId);
+        writeText(join58(dir, "spec-review", `round${round.n}-stage${due.stage}-${a.role}.md`), a.text);
+      }
+      const unsaved = save();
+      if (unsaved)
+        return refuse(unsaved);
+      const next = dueStage(round);
+      const count = round.findings.filter((f) => f.stage === due.stage).length;
+      return ok(`stage ${due.stage} recorded: ${count} finding${count === 1 ? "" : "s"}; ${next ? `next: crew spec-review ${work.id} check` : `next: crew spec-review ${work.id} close`}`, {});
+    }
+    case "resolve": {
+      const finding = args[2];
+      const disposition = args[3];
+      if (!finding || !disposition || !SPEC_DISPOSITIONS.includes(disposition) || !reason)
+        return refuse(usage);
+      const wrong = resolveSpecFinding(record, {
+        finding,
+        disposition,
+        reason,
+        ...typeof parsed.flags.evidence === "string" ? { evidence: parsed.flags.evidence } : {},
+        ...typeof parsed.flags.earlier === "string" ? { earlier: parsed.flags.earlier } : {},
+        ...parsed.flags.churn === true ? { churn: true } : {},
+        evidenceHolds: (text) => specEvidenceProblem(env.paths.root, dir, text)
+      });
+      if (wrong)
+        return refuse(wrong);
+      const unsaved = save();
+      if (unsaved)
+        return refuse(unsaved);
+      return ok(`${finding}: ${disposition}`, {});
+    }
+    case "answer": {
+      const finding = args[2];
+      const choice = args[3];
+      if (!finding || choice !== "confirm" && choice !== "add-fact" || !reason)
+        return refuse(usage);
+      const decision = decisionFlag(parsed, env.policy);
+      if (isOutcome(decision))
+        return decision;
+      const by = whoDecides(decision);
+      const wrong = answerSpecFinding(record, finding, choice, reason, by);
+      if (wrong)
+        return refuse(wrong);
+      const unsaved = save();
+      if (unsaved)
+        return refuse(unsaved);
+      decide(env, work.id, {
+        kind: "decision",
+        text: `spec review ${finding}: ${choice}: ${reason}`,
+        by
+      });
+      return ok(`${finding}: ${choice} ${decisionText(env.policy, decision)}`, {});
+    }
+    case "close": {
+      const wrong = closeSpecRound(record, nowIso());
+      if (wrong)
+        return refuse(wrong);
+      const unsaved = save();
+      if (unsaved)
+        return refuse(unsaved);
+      const round = record.rounds.at(-1);
+      const verdict = round.clean ? "clean" : "not clean";
+      if (specReviewConverged(record, hash))
+        return ok(`round ${round.n}: ${verdict}; converged: two consecutive clean rounds on the document as it is`, {});
+      const stop = specReviewStop(record);
+      return ok(`round ${round.n}: ${verdict}; ${stop ? `stopped (${stop}): a person chooses (crew spec-review ${work.id} accept) or the document goes back to drafting` : `next: apply the fixes, then crew spec-review ${work.id} check`}`, {});
+    }
+    case "accept": {
+      if (!reason)
+        return refuse(usage);
+      const decision = decisionFlag(parsed, env.policy);
+      if (isOutcome(decision))
+        return decision;
+      const by = whoDecides(decision);
+      const wrong = acceptSpecReview(record, hash, reason, by, nowIso());
+      if (wrong)
+        return refuse(wrong);
+      const unsaved = save();
+      if (unsaved)
+        return refuse(unsaved);
+      decide(env, work.id, { kind: "decision", text: `spec review accepted: ${reason}`, by });
+      return ok(`the spec review is accepted on the document as it is ${decisionText(env.policy, decision)}`, {});
+    }
+    default:
+      return refuse(usage);
+  }
+}
+function specEvidenceProblem(root, itemDir, evidence) {
+  const at = evidence.lastIndexOf(":");
+  const file = at > 0 ? evidence.slice(0, at) : "";
+  const symbol = at > 0 ? evidence.slice(at + 1).trim() : "";
+  if (!file || !symbol)
+    return `--evidence is <file:symbol>, not "${evidence}"`;
+  const own = file === "spec.md" || file === "plan.md";
+  const path = own ? join58(itemDir, file) : resolve9(root, file);
+  const inside = relative13(root, path);
+  if (inside.startsWith("..") || isAbsolute12(inside))
+    return `${file} is outside the repository`;
+  const text = readText(path);
+  if (text === null)
+    return `${file} cannot be read`;
+  if (!text.includes(symbol))
+    return `"${symbol}" is not in ${file}`;
+  return null;
 }
 async function designCommand(env, args, parsed) {
   const usage = 'usage: crew design <id> surface <persuade|operate|read|experience> --invention <extend|surface|world> | check | deal [--seed n] [--redraw <slot> --reason "<why>"] | choose <n> | pictures "<query>" | picture <n> | score | comp generate "<prompt>" | comp approve <n> --regions <file>';
@@ -23158,6 +23714,8 @@ ${originNotes.join(`
     }
     case "design":
       return designCommand(env, args, parsed);
+    case "spec-review":
+      return specReviewCommand(env, args, parsed);
     case "kind": {
       const usage = 'usage: crew kind <id> raise --reason "<why>"';
       const opened = openForChange(env, args[0]);

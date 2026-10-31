@@ -276,6 +276,9 @@ export function answerFile(agent: string, answer: string, kind?: WorkKind): stri
     if (agent === "researcher") return "audit/dependencies.findings.md";
   }
   if (agent.startsWith("review-")) return `review/${agent.slice("review-".length)}.findings.md`;
+  // A stage's reviewer of the document (ADR 0019), outside review/, which a gate run resets.
+  if (agent.startsWith("goldfish-") && agent !== "goldfish-explorer")
+    return `spec-review/${agent}.md`;
   // A lead's validation and the CTO's plan sit beside the debate's files (SP7 §6.4, §6.5). The tech
   // lead is one agent for five teams: its answer's first line names the team and what it validated.
   if (agent === "tech-lead") {
@@ -612,7 +615,7 @@ export function fileAnswer(
       ? `conclave/${headlessLeadStem(dir, roles)}.md`
       : answerFile(agent, answer, kindOfItem(work));
     const kept =
-      file.startsWith("conclave/") || resumedRuling
+      file.startsWith("conclave/") || file.startsWith("spec-review/") || resumedRuling
         ? archiveExisting(dir, file)
         : { archived: null };
     if ("failed" in kept)

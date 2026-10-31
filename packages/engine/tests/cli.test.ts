@@ -1819,10 +1819,10 @@ test("0.3.0: with a person present the spec is approved under the complete-gap-r
     by: "validator",
     rule: "complete-gap-round",
   });
-  // It counts under the default policy, so the full route reaches build with no question asked.
+  // It counts under the default policy, so the full route reaches its spec review with no question asked.
   await validateLeads(c, root, id);
   for (let i = 0; i < 5; i++) expect((await c.run("phase", id, "next")).code).toBe(0);
-  expect(JSON.parse(readFileSync(workFile, "utf8")).phase).toBe("build");
+  expect(JSON.parse(readFileSync(workFile, "utf8")).phase).toBe("spec-review");
   // A pending decision keeps the rule from holding; the person answers it, in words, relayed.
   const second = (await c.json("start", "Keys again", "--answers", full)).data.id as string;
   write(root, `.crew/work/${second}/spec.md`, "# Spec\n\n## Acceptance criteria\n- AC-1 x\n");
@@ -1921,7 +1921,7 @@ test("SP2a: the validator's approval is refused until the rule holds, then count
   );
   write(root, ".crew/policy.json", JSON.stringify({ unattendedDecisions: "validator" }));
   expect((await c.run("policy", "accept")).code).toBe(0);
-  expect((await c.json("phase", id, "next")).data.phase).toBe("build");
+  expect((await c.json("phase", id, "next")).data.phase).toBe("spec-review");
 });
 
 test("SP2a review: a hand-edited ledger reaches the verdict, not only the saving commands", async () => {

@@ -50,10 +50,10 @@ The full route becomes `specify → conclave → plan → spec-review → build`
 | 9 Readiness | readiness, codebase, style | detailed | spec-readiness, spec-reimplementation |
 
 - **The guard into build** requires the five stages closed on the document's current hash. It also lives in `routeDocuments`, so the gate and the delivery check it again.
-- **Commands**: `crew spec-review <id> check|record|report|status`. Answers land in `review/spec/`.
+- **Commands**: `crew spec-review <id> check|record|resolve|answer|close|accept|report|status`. Answers land in `spec-review/`, engine-owned and outside `review/`, which a gate run resets.
 - **A reviewer that fails** is launched once more, then counts as `not run`, never as zero findings. A `not run` keeps the round from being clean.
 - **Convergence is EGM's**: two consecutive clean rounds, a cap of 5, the churn rule. Clean means no unsettled Blocker or Major; a contested or recorded finding stays settled; a fixed finding raised again re-opens. It has its own counter, because `team.maxJudgementRounds` allows 1 or 2. At the cap or on churn the person chooses to accept, continue or return to drafting; a journey leaves the item waiting.
-- **Fresh every time**: the SubagentStop hook refuses a resumed goldfish. This is the one exception to "resume, never relaunch", and nothing forces a fresh role today.
+- **Fresh every time**: the record refuses a resumed goldfish, by the agent id the SubagentStop hook filed. This is the one exception to "resume, never relaunch", and nothing forces a fresh role today.
 - **Resolve**: `PROPOSE FIX`, `CONTEST` (with evidence the reviewer could read), `ESCALATE` (the evidence lies outside what it could read), `DECLINE` (a Nit). A comprehension gap is never contested and a severity is never changed.
 - **Brainstorm**: required for `feature` and `new-project` on the full route, with the six lenses in brainstorm mode. On an issue, `analysis.md` is the predecessor.
 - **Publication**: `crew learn` writes the approved spec and plan to the project's `docs/designs/<slug>.md`, which `wizardingcode-spec-drift` compares with the code. The weekly cadence is a recommendation, as in EGM.

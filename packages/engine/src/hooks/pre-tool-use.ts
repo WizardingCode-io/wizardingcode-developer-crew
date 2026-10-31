@@ -65,7 +65,7 @@ const WORK_FILES = PROTECTED_WORK_FILES.map(escapeRegExp).join("|");
 const USER_CREW = String.raw`\.wizardingcode\/crew(?=\/|${PATH_END}|$)`;
 const ENGINE_FILES = new RegExp(
   // The run markers, `running/<pid>.json` and the old `running.json`, never a lead's `running-notes.md` (finding 146).
-  String.raw`\.crew\/(?:profile\.json|policy\.json|decisions\.json|\.gitignore|local\b|work\/[^\s/]+\/(?:${WORK_FILES}|logs\b|running(?:\.json|\/|(?=${PATH_END})|$)|${REVIEW_OWNED}|${AUDIT_OWNED}))|${USER_CREW}`,
+  String.raw`\.crew\/(?:profile\.json|policy\.json|decisions\.json|\.gitignore|local\b|work\/[^\s/]+\/(?:${WORK_FILES}|logs\b|spec-review\b|running(?:\.json|\/|(?=${PATH_END})|$)|${REVIEW_OWNED}|${AUDIT_OWNED}))|${USER_CREW}`,
   "i",
 );
 // The engine's folder itself, its work folder or an item's folder, as a whole path or by its
@@ -665,6 +665,8 @@ function userOnlyCommand(
     // A verb the hook cannot read after the id (finding 86) takes the deciding form: asked, or
     // --mode demanded, never let through on the words around it.
     (verb === "objection" && (parsed.positional.includes("waive") || unreadable(third))) ||
+    // A person's answer to a reviewer, and their acceptance of a review that stopped (ADR 0019).
+    (verb === "spec-review" && (third === "accept" || third === "answer" || unreadable(third))) ||
     (verb === "profile" && (second === "confirm" || second === "set" || second === "unset")) ||
     (verb === "policy" && (second === "accept" || second === "set")) ||
     // The business priorities are signed by the user once (SP7 §10.2).
@@ -733,6 +735,29 @@ function auditApproval(
     withMode: (mode) =>
       `Crew: a person is present (${mode} mode); run the command without --mode so they are asked`,
     ask: "Crew: an audit's report is signed by a person: this command records their signature",
+  });
+}
+
+/**
+ * `crew spec-review <id> accept|answer`, or an unreadable word in that place, has no unattended form
+ * (ADR 0019): where nobody watches it is denied whatever the flags, so a journey leaves the item
+ * waiting; with a person present the attended policy decides. Null for every other command.
+ */
+function specReviewSigned(
+  parsed: Parsed,
+  permissionMode: string | undefined,
+  headless: boolean,
+  policy: Policy,
+): Decision | null {
+  const [verb, , what] = parsed.positional;
+  if (verb !== "spec-review" || what === undefined) return null;
+  if (what !== "accept" && what !== "answer" && !UNREADABLE_VERB.test(what)) return null;
+  return personOnly(parsed, permissionMode, headless, policy, {
+    unwatched: (where) =>
+      `Crew: this is a person's decision on a document review and no person is watching this session (${where}): the item waits (crew await <id> user)`,
+    withMode: (mode) =>
+      `Crew: a person is present (${mode} mode); run the command without --mode so they are asked`,
+    ask: "Crew: this command records a person's decision on a document review",
   });
 }
 
@@ -2186,6 +2211,7 @@ export function onPreToolUse(ctx: HookContext, payload: HookPayload): HookRespon
       const decided =
         auditApproval(userOnly.parsed, payload.permission_mode, ctx.headless, ctx.policy) ??
         knowledgeUnmark(userOnly.parsed, payload.permission_mode, ctx.headless, ctx.policy) ??
+        specReviewSigned(userOnly.parsed, payload.permission_mode, ctx.headless, ctx.policy) ??
         userOnlyDecision(userOnly, payload.permission_mode, ctx.headless, ctx.policy, {
           text: command,
           policyTampered: loadPolicy(ctx.paths).tampered,

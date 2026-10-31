@@ -21,6 +21,7 @@ export const BOOLEAN_FLAGS = new Set([
   "refresh",
   "force",
   "not-run",
+  "churn",
   "all",
   // `crew policy set <list key> <value> --remove` (finding 120): in either position, never a value.
   "remove",

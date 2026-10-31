@@ -1,3 +1,4 @@
+import type { SpecReviewRecord } from "./spec-review.ts";
 export type GateName =
   | "build"
   | "test"
@@ -516,6 +517,7 @@ export type Phase =
   | "specify"
   | "conclave"
   | "plan"
+  | "spec-review"
   | "build"
   | "gate"
   | "deliver"
@@ -530,6 +532,7 @@ export const PHASE_ORDER: readonly Phase[] = [
   "specify",
   "conclave",
   "plan",
+  "spec-review",
   "build",
   "gate",
   "deliver",
@@ -833,6 +836,8 @@ export interface WorkItem {
   }[];
   createdAt: string;
   updatedAt: string;
+  /** This item passes the spec-review phase: stamped when its route becomes full (ADR 0019). */
+  specReview?: boolean;
   /** The parts of a request in several parts (finding 61), fixed at start: each needs a todo noted, gated and briefed. */
   parts?: { id: string; text: string }[];
 }
@@ -1021,6 +1026,8 @@ export interface Evidence {
   roles?: RoleRecord[];
   /** Jev's answers on this item (SP3 Task 6); absent before 0.8.0 and until the first ask. */
   verifications?: Verification[];
+  /** The document's review before the code (ADR 0019); absent until `crew spec-review` first writes it. */
+  specReview?: SpecReviewRecord;
 }
 
 export interface Policy {

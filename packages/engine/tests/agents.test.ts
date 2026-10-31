@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { ROLE_NAMES } from "../src/team.ts";
+import { GOLDFISH_ROLES, ROLE_NAMES } from "../src/team.ts";
 
 const AGENTS = fileURLToPath(new URL("../../../plugins/core/agents/", import.meta.url));
 const RUBRICS = fileURLToPath(
@@ -19,16 +19,7 @@ const REVIEWERS = [
   "infra",
 ];
 const DEBATE_ROLES = ["researcher", "expert", "devils-advocate", "fault-finder"];
-const GOLDFISH = [
-  "goldfish-zoom-out",
-  "goldfish-comprehension",
-  "goldfish-design",
-  "goldfish-structural",
-  "goldfish-style",
-  "goldfish-readiness",
-  "goldfish-codebase",
-  "goldfish-explorer",
-];
+const GOLDFISH = [...GOLDFISH_ROLES];
 const SPEC_RUBRICS = [
   "spec-zoom-out",
   "spec-feature",

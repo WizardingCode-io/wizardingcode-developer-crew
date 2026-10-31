@@ -12,6 +12,7 @@ import { triageSummary } from "./priorities.ts";
 import { questionChannelsCell } from "./questions.ts";
 import { guaranteeLines, runtimeOf } from "./runtimes.ts";
 import { sourceLine } from "./source.ts";
+import { specReviewLine } from "./spec-review.ts";
 import { oneLine } from "./state.ts";
 import { readProtectedJson, writeProtectedJson } from "./store.ts";
 import {
@@ -622,6 +623,18 @@ export function renderReport(
       if (o.note) lines.push(`- Note: ${o.note}`);
     }
     lines.push("");
+  }
+  // The document's review before the code (ADR 0019): every contest is named for a person to read.
+  if (evidence.specReview?.rounds.length) {
+    const review = evidence.specReview;
+    lines.push("## Spec review", "", `- ${specReviewLine(review)}.`);
+    if (review.accepted)
+      lines.push(`- Accepted by ${review.accepted.by}: ${review.accepted.reason}`);
+    for (const f of review.rounds
+      .flatMap((r) => r.findings)
+      .filter((f) => f.disposition === "contest"))
+      lines.push(`- Contested ${f.id}: ${f.text} (${f.reason}) [${f.evidence}]`);
+    lines.push("", "The file: `spec-review/consolidated.md`.", "");
   }
   // A new project's strategy as it stands (SP7 §7.3, §13.1): from the research alone until SP4.
   if (strategy) {

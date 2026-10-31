@@ -5,6 +5,7 @@ import { emptyEvidence } from "../src/evidence.ts";
 import { addObjection, bindObjection } from "../src/objections.ts";
 import { workDir } from "../src/paths.ts";
 import { DEFAULT_POLICY } from "../src/policy.ts";
+import { specReviewHash } from "../src/spec-review.ts";
 import { loadState } from "../src/state.ts";
 import { strategyHash } from "../src/strategy.ts";
 import { plannedSeats } from "../src/team.ts";
@@ -67,6 +68,7 @@ const empty: GuardContext = {
   gitRepository: false,
   conclaveText: null,
   ledger: null,
+  planText: null,
   planExists: false,
   evidence: null,
   proven: false,
@@ -271,6 +273,7 @@ test("I2: a route raised during build is felt at the gate and at delivery", () =
   expect(atGate).toEqual({
     ok: false,
     missing: [
+      "the spec review has not run (crew spec-review <id> check)",
       "spec.md in the work folder",
       "the user's approval of the spec (crew approve <id> spec)",
       "plan.md in the work folder",
@@ -280,7 +283,16 @@ test("I2: a route raised during build is felt at the gate and at delivery", () =
     "spec.md in the work folder",
   );
   approve(work, "spec");
-  const ready = { ...empty, evidence, specText: "## Acceptance criteria\n- x\n", planExists: true };
+  const specText = "## Acceptance criteria\n- x\n";
+  const reviewed: Evidence = {
+    ...evidence,
+    specReview: {
+      rounds: [],
+      agentIds: [],
+      accepted: { hash: specReviewHash(specText, ""), round: 5, reason: "r", by: "user", at: "t" },
+    },
+  };
+  const ready = { ...empty, evidence: reviewed, specText, planExists: true };
   expect(advancePhase(work, ready)).toEqual({ ok: true, phase: "gate" });
   expect(guardFor(work, "deliver", { ...ready, proven: true })).toEqual([]);
 });

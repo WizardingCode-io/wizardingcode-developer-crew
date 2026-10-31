@@ -11,6 +11,7 @@ import { blockingObjections } from "./objections.ts";
 import { type CrewPaths, workDir } from "./paths.ts";
 import { decisionCounts, disputedDefault, disputedDefaultText } from "./policy.ts";
 import { sourceLine, sourceText } from "./source.ts";
+import { specReviewHash, specReviewMissing } from "./spec-review.ts";
 import { loadState, updateState } from "./state.ts";
 import { readProtectedJson, writeProtectedJson } from "./store.ts";
 import { checkStrategy, RESEARCHER_FIRST, strategyHash, verdictText } from "./strategy.ts";
@@ -60,7 +61,17 @@ export const PHASES_BY_ROUTE: Record<Route, Phase[]> = {
  * The phases of an item (SP7 §7.1): its route's list with its kind's phases inserted, `analyse`
  * after `recognize` for an issue on every route. A record without a kind (before 0.8.0) is a feature.
  */
-export function phasesFor(work: Pick<WorkItem, "route" | "kind">): Phase[] {
+export function phasesFor(work: Pick<WorkItem, "route" | "kind" | "specReview">): Phase[] {
+  const phases = phasesOfKind(work);
+  // The document reviewed before the code (ADR 0019), for an item stamped when its route became full.
+  if (work.specReview && work.route === "full" && phases.includes("plan")) {
+    const at = phases.indexOf("plan") + 1;
+    return [...phases.slice(0, at), "spec-review", ...phases.slice(at)];
+  }
+  return phases;
+}
+
+function phasesOfKind(work: Pick<WorkItem, "route" | "kind">): Phase[] {
   const base = PHASES_BY_ROUTE[work.route];
   const kind = kindOfItem(work);
   // An audit has its own four phases on every route (SP7 §7.5): nothing is built, the report is proven.
@@ -397,6 +408,7 @@ export function applyClassification(
     work.route = decision.route;
     work.routeReasons = [...decision.reasons];
     work.riskAreas = [...decision.riskAreas];
+    if (decision.route === "full") work.specReview = true;
   } else {
     const route = higherRoute(work.route, decision.route);
     if (route !== work.route) {
@@ -406,6 +418,7 @@ export function applyClassification(
         `reclassified as ${decision.route}; kept ${work.route}: a route is never lowered`,
       );
     }
+    if (route === "full" && work.route !== "full") work.specReview = true;
     work.route = route;
     work.riskAreas = [...new Set([...work.riskAreas, ...decision.riskAreas])];
   }
@@ -427,6 +440,7 @@ export function applyClassification(
 export function raiseRoute(work: WorkItem, to: Route, reason: string): boolean {
   if (routeRank(to) <= routeRank(work.route)) return false;
   work.route = to;
+  if (to === "full") work.specReview = true;
   work.routeReasons.push(`raised to ${to}: ${reason}`);
   return true;
 }
@@ -764,6 +778,8 @@ export interface GuardContext {
   conclaveText: string | null;
   ledger: ObjectionLedger | null;
   planExists: boolean;
+  /** `plan.md` of the work folder, which the spec review hashes with the spec (ADR 0019). */
+  planText: string | null;
   evidence: Evidence | null;
   proven: boolean;
   unproven: string[];
@@ -778,6 +794,14 @@ function routeDocuments(work: WorkItem, ctx: GuardContext): string[] {
   const missing: string[] = [];
   // An audit has no spec and no plan: its report is the document (SP7 §7.5).
   if (kindOfItem(work) === "audit") return missing;
+  // The document reviewed before the code (ADR 0019), felt at build, at the gate and at delivery.
+  if (work.specReview && work.route === "full")
+    missing.push(
+      ...specReviewMissing(
+        ctx.evidence?.specReview,
+        specReviewHash(ctx.specText ?? "", ctx.planText ?? ""),
+      ),
+    );
   if (work.route !== "fast") {
     if (ctx.specText === null) missing.push("spec.md in the work folder");
     else if (!hasAcceptanceSection(ctx.specText)) {

@@ -11,7 +11,7 @@ The judgement gates review the diff after the code, and the leads validate the s
 
 1. **Every item on the full route passes a `spec-review` phase** between plan and build: five stages in order over `spec.md` and `plan.md`. The agent recommended a trigger by work type, since EGM itself excludes a small clear bug fix; the user chose the whole route.
 2. **The guard into build requires the stages closed on the document's hash**, as `strategy` does. An edit makes them stale.
-3. **Reviewers have no context**: read-only, `omitClaudeMd: true`, fresh on every round. The hook refuses a resumed one. This is the one exception to "resume, never relaunch".
+3. **Reviewers have no context**: read-only, `omitClaudeMd: true`, fresh on every round. The record refuses a resumed one, by the agent id the hook filed. This is the one exception to "resume, never relaunch".
 4. **Convergence is the source's**: two consecutive clean rounds, a cap of 5, the churn rule, on a counter of its own beside `team.maxJudgementRounds`.
 5. **The source enters rewritten**, one ledger row per rule, as ADR 0017 and ADR 0018 ask. The synthesizer and the bootstrap orchestrator have no agent, because a role here may not write or launch; the session does their work and the rows record the refusal. The site, the packaging, the release scripts and the contribution rules are refused by the user's word.
 

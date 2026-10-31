@@ -38,7 +38,7 @@ reviewer: goldfish-design
 read: <the document's range, the standard, the files you read>
 
 ## Findings
-- F-1 · Blocker|Major|Nit · <section heading or line> · <the flaw or the gap, and what to do about it>
+- F-1 · Blocker|Major|Nit · <section heading or line> · <the flaw or the gap, and why it matters>
 (or: none)
 
 ## Not answerable
