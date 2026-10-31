@@ -56,7 +56,7 @@ function openFindings(text: string): number[] {
 // closed by 2026-10-29-001 (AC-1).
 // 199 to 205 recorded and closed by 2026-10-30-001; 207 by 2026-10-30-002; 208 by 2026-10-30-004. 206 (four paths
 // around the loop's headless shell) recorded, for the next touch of the loop. 209 (Proven on the standard route before the leads) recorded, for the next touch of the verdict.
-const OPEN = [77, 114, 177, 178, 181, 182, 183, 206, 209];
+const OPEN = [77, 114, 177, 178, 181, 182, 183, 206, 209, 210];
 
 test("AC-9 (consolidation of 2026-10-24): the findings that read open are the named ones, and the thirteen closed by the consolidation read closed", () => {
   const open = openFindings(readFileSync(FINDINGS, "utf8"));
