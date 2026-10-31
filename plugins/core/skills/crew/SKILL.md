@@ -19,6 +19,7 @@ The `crew` command is the engine: it keeps the state in `.crew/work/<id>/`, reco
 | Specify | The acceptance criteria, a page's screens on them (`references/specify.md`; a new site: `wizardingcode-design-brief`); a spec on standard and full | `crew criteria <id> add "<text>" [--screen page:state]`, `spec.md` |
 | Conclave | The gap round from `checklists/<kind>.md` into `conclave.md`: ask what only the user can decide, file what breaks good practice as an objection; a weighty decision gets a debate the judge closes (standard, full) | `crew decision <id> add`, `crew decide <id> D-n`, `crew objection <id> add|resolve|waive`, `crew phase <id> next` |
 | Plan | Tasks by criteria (full: `plan.md`); todo in this checkout: `note`; to an implementer if disjoint: `open` (`references/plan.md`) | `crew task <id> note T-n`, `crew task <id> open T-n --criteria AC-k` |
+| Spec review | Full route: `wizardingcode-spec-review` | `crew spec-review <id> check` |
 | Build | Per criterion: failing test, red, code, green; a handed task: list it, merge the proven child, then your gate run | `crew tdd red|green`, `crew task <id> list`, `crew task <id> merge T-n` |
 | Gate | Run the gates; fix what fails; UI/UX from the run's evidence. Then the judgement gates: reviewers and judge as subagents, their ruling recorded (proven, not proven, not run with a reason), never passed by default | `crew gate run <id>`, `crew judgement <id> record` |
 | Deliver | Say what is proven and what not | `crew evidence <id>` |
@@ -56,15 +57,12 @@ No `crew status` between steps, no brief, spec or plan. A request in several par
 
 ## The other routes
 
-The phase references:
-
 | Phase | Reference |
 | :- | :- |
 | Receive | `references/receive.md` |
 | Analyse | `references/analyse.md` |
 | Understand | `references/understand.md` |
 | Strategy | `references/strategy.md` |
-| Audit | `references/audit.md` |
 | Specify | `references/specify.md` |
 | Conclave | `references/conclave.md` |
 | Plan | `references/plan.md` |
@@ -72,7 +70,6 @@ The phase references:
 | Gate | `references/gate.md` |
 | Deliver | `references/deliver.md` |
 | Learn | `references/learn.md` |
-| Mail | `references/mail.md` |
 | Packs | `references/packs.md` |
 | Runtimes | `references/runtimes.md` |
 | Rules | `references/rules.md` |

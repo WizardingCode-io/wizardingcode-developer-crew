@@ -1694,3 +1694,188 @@ test("2026-10-31-004 AC-4: the Elephant-Goldfish Model has a row per rule of its
   ])
     expect(refused.find((r) => r.rule === rule)?.decision, rule).toBe(decision);
 });
+
+const SPEC_SKILLS = ["draft", "review", "review-loop", "resolve"].map(
+  (s) => `wizardingcode-spec-${s}`,
+);
+const specSkill = (s: string) => repoFile(`plugins/core/skills/wizardingcode-spec-${s}/SKILL.md`);
+
+test("2026-10-31-006 AC-1: the four skills have the five headings and a short description, and each names what it must", () => {
+  for (const name of SPEC_SKILLS) {
+    const text = repoFile(`plugins/core/skills/${name}/SKILL.md`);
+    expect(text).toContain(`name: ${name}`);
+    for (const heading of ["When", "Inputs", "Steps", "Output", "Done when"])
+      expect(text, `${name} ${heading}`).toContain(`## ${heading}`);
+    const description = /^description: "(.*)"$/m.exec(text)?.[1] ?? "";
+    expect(description.length, name).toBeGreaterThan(0);
+    expect(description.length, name).toBeLessThanOrEqual(200);
+  }
+  const review = specSkill("review");
+  // The five stages, in order, in the steps.
+  const steps = review.slice(review.indexOf("## Steps"), review.indexOf("## Output"));
+  const stages = [
+    "5, zoom out",
+    "6, comprehension",
+    "7, critic",
+    "8, second zoom out",
+    "9, readiness",
+  ];
+  for (const stage of stages) expect(steps, stage).toContain(stage);
+  const places = stages.map((stage) => steps.indexOf(stage));
+  expect(places).toEqual([...places].sort((a, b) => a - b));
+  expect(review).toContain("crew spec-review");
+  const resolve = specSkill("resolve");
+  for (const words of [
+    "`propose-fix`",
+    "`contest`",
+    "`escalate`",
+    "`decline`",
+    "A contest needs evidence the reviewer could read",
+    "A comprehension gap is never contested",
+  ])
+    expect(resolve, words).toContain(words);
+  const loop = specSkill("review-loop");
+  for (const words of ["two consecutive clean rounds", "cap of 5", "churn"])
+    expect(loop, words).toContain(words);
+  const draft = specSkill("draft");
+  expect(draft).toContain("The owner decides the architecture");
+  expect(draft).toContain("Reconcile with the predecessor");
+});
+
+test("2026-10-31-006 AC-2: the references hold the document's sections, the plan's rules and who decides", () => {
+  const specify = repoFile("plugins/core/skills/crew/references/specify.md");
+  for (const words of [
+    "wizardingcode-spec-draft",
+    "Goals",
+    "Non-Goals",
+    "Open Questions",
+    "Critical User Journeys",
+    "Alternatives",
+    "Non-Functional Requirements",
+  ])
+    expect(specify, words).toContain(words);
+  const plan = repoFile("plugins/core/skills/crew/references/plan.md");
+  for (const words of ["zero choices", "`Create`, `Modify` or `Delete`", "no implementation code"])
+    expect(plan, words).toContain(words);
+  const conclave = repoFile("plugins/core/skills/crew/references/conclave.md");
+  for (const words of [
+    "up to three options",
+    "unranked",
+    "one question at a time",
+    "the default is never shown",
+    "a change to a gate or a risk area is always asked",
+  ])
+    expect(conclave, words).toContain(words);
+});
+
+test("2026-10-31-006 AC-3: the method's table has the Spec review row within the limit, losing no command and no reference", () => {
+  expect(skill).toContain("| Spec review |");
+  expect(skill).toContain("crew spec-review <id> check");
+  // What a trim must not lose: the engine's duties and the three outcomes of a ruling.
+  expect(skill).toContain("writes the evidence");
+  expect(skill).toContain("(proven, not proven, not run with a reason)");
+  expect(skill).toContain("Answer them first");
+  expect(Buffer.byteLength(skill, "utf8")).toBeLessThanOrEqual(SKILL_PAGE_MAX_BYTES);
+  for (const named of [
+    "crew start",
+    "crew detect",
+    "crew profile set",
+    "crew phase <id> next",
+    "crew knowledge <id> lookup",
+    "crew strategy <id> check",
+    "crew criteria <id> add",
+    "crew decision <id> add",
+    "crew decide <id> D-n",
+    "crew objection <id> add",
+    "crew task <id> note T-n",
+    "crew task <id> open T-n",
+    "crew tdd red",
+    "crew task <id> list",
+    "crew task <id> merge T-n",
+    "crew gate run <id>",
+    "crew judgement <id> record",
+    "crew evidence <id>",
+    "crew learn <id>",
+    "crew mail inbox",
+    "crew audit <id> run",
+    "crew approve <id> audit",
+    "references/receive.md",
+    "references/analyse.md",
+    "references/strategy.md",
+    "references/specify.md",
+    "references/plan.md",
+    "references/learn.md",
+    "references/mail.md",
+    "references/audit.md",
+    "wizardingcode-design-brief",
+  ])
+    expect(skill, named).toContain(named);
+});
+
+test("2026-10-31-006 AC-4: the ledger has a row for each rule of the four skills, and the refused rows carry D-1 or D-2", () => {
+  const ledger = JSON.parse(repoFile("docs/sources/ledger.json")) as { rows: LedgerRow[] };
+  const rows = ledger.rows.filter((r) => r.source === "egm");
+  const taken = new Set(rows.filter((r) => r.status === "in").map((r) => r.rule));
+  for (const rule of [
+    "draft: the owner decides the architecture",
+    "draft: design only, no production code",
+    "draft: every file with what changes and why",
+    "draft: alternatives from the predecessor",
+    "draft: reconcile with the predecessor",
+    "draft: contradiction auditing",
+    "review: the five stages in order",
+    "review: delegation only to a fresh subagent",
+    "review: a stage's reviewers run in parallel",
+    "review-loop: a failed reviewer is retried once, then not run",
+    "review-loop: the settled list",
+    "review-loop: a fixed finding raised again re-opens",
+    "review-loop: two clean rounds, the cap, churn",
+    "resolve: four categories",
+    "resolve: a contest must be checkable",
+    "resolve: no context added only for a reviewer",
+    "resolve: a comprehension gap is never contested",
+    "resolve: a severity is never changed",
+    "artifact-first delivery",
+    "stress-test, critique first, no flattery",
+  ])
+    expect(taken.has(rule), rule).toBe(true);
+  const refused = rows.filter((r) => r.status === "refused");
+  for (const [rule, decision] of [
+    ["the section approval gate in drafting", "D-1"],
+    ["the preset selection gate", "D-1"],
+    ["the interactive per-stage checkpoints", "D-1"],
+    ["the presets for a part of the document", "D-1"],
+    ["no default on any gate, even when asked", "D-2"],
+  ])
+    expect(refused.find((r) => r.rule === rule)?.decision, rule).toBe(decision);
+});
+
+test("2026-10-31-006 AC-6: the skills say the session never writes a reviewer's answer, and a reviewer that did not run stays not run", () => {
+  for (const name of ["review", "review-loop"]) {
+    const text = specSkill(name);
+    expect(text, name).toContain("only through `crew spec-review record`");
+    expect(text, name).toContain("You never write or edit a reviewer's answer or its findings");
+    expect(text, name).toContain("recorded `not run` and never filled in");
+  }
+});
+
+test("2026-10-31-006 AC-7: the skills say every reviewer in every round is a fresh launch, never resumed", () => {
+  for (const name of ["review", "review-loop"]) {
+    const text = specSkill(name);
+    expect(text, name).toContain("a fresh launch");
+    expect(text, name).toContain("never resumed by `SendMessage` or `crew resume`");
+    expect(text, name).toContain("a refused record means launching a new one");
+    expect(text, name).toContain("the one exception to the method's");
+  }
+});
+
+test("2026-10-31-006 AC-8: the skills keep a person's decisions for the person", () => {
+  for (const name of ["review", "review-loop", "resolve"]) {
+    const text = specSkill(name);
+    expect(text, name).toContain("relay their own words");
+    expect(text, name).toContain("never answer, accept or pick for them");
+    expect(text, name).toContain("In a journey the item waits and you never run `accept`");
+  }
+  for (const name of ["review", "review-loop", "resolve"])
+    expect(specSkill(name), name).toContain("An `escalate` is never turned into a `contest`");
+});

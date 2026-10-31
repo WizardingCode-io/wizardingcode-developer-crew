@@ -2,6 +2,8 @@
 
 Standard route: list the tasks in the conversation. Full route: write `.crew/work/<id>/plan.md`.
 
+On the full route `wizardingcode-spec-review` reads the plan with no context, so it leaves zero choices to the implementer: every file marked `Create`, `Modify` or `Delete`, with what changes and why, the test cases, and no implementation code (`wizardingcode-spec-draft`).
+
 Each task names the criterion it serves and ends with something the engine can check:
 
 ```markdown

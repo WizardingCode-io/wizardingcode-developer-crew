@@ -1586,6 +1586,209 @@
    "status": "refused",
    "decision": "D-2",
    "reason": "a role here may not write or launch; the session runs the bootstrap (the plan the user approved on 2026-10-31)"
+  },
+  {
+   "source": "egm",
+   "rule": "draft: the owner decides the architecture",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-spec-draft/SKILL.md",
+   "text": "The owner decides the architecture",
+   "proof": "skill.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "draft: design only, no production code",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-spec-draft/SKILL.md",
+   "text": "No production file changes in this skill",
+   "proof": "skill.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "draft: every file with what changes and why",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-spec-draft/SKILL.md",
+   "text": "every file marked `Create`, `Modify` or `Delete`",
+   "proof": "skill.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "draft: alternatives from the predecessor",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-spec-draft/SKILL.md",
+   "text": "copied from the predecessor; absent there, ask",
+   "proof": "skill.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "draft: reconcile with the predecessor",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-spec-draft/SKILL.md",
+   "text": "Reconcile with the predecessor",
+   "proof": "skill.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "draft: contradiction auditing",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-spec-draft/SKILL.md",
+   "text": "Stop at a contradiction",
+   "proof": "skill.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "review: the five stages in order",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-spec-review/SKILL.md",
+   "text": "8, second zoom out",
+   "proof": "skill.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "review: delegation only to a fresh subagent",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-spec-review/SKILL.md",
+   "text": "a fresh launch",
+   "proof": "skill.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "review: a stage's reviewers run in parallel",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-spec-review/SKILL.md",
+   "text": "in parallel within the stage, never across stages",
+   "proof": "skill.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "review-loop: a failed reviewer is retried once, then not run",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-spec-review-loop/SKILL.md",
+   "text": "it never counts as zero findings",
+   "proof": "skill.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "review-loop: the settled list",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-spec-review-loop/SKILL.md",
+   "text": "Keep the settled list",
+   "proof": "skill.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "review-loop: a fixed finding raised again re-opens",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-spec-review-loop/SKILL.md",
+   "text": "A fixed finding raised again re-opens",
+   "proof": "skill.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "review-loop: two clean rounds, the cap, churn",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-spec-review-loop/SKILL.md",
+   "text": "Converged is two consecutive clean rounds",
+   "proof": "skill.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "resolve: four categories",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-spec-resolve/SKILL.md",
+   "text": "Give each finding one disposition",
+   "proof": "skill.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "resolve: a contest must be checkable",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-spec-resolve/SKILL.md",
+   "text": "A contest needs evidence the reviewer could read",
+   "proof": "skill.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "resolve: no context added only for a reviewer",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-spec-resolve/SKILL.md",
+   "text": "Do not add context only to satisfy a reviewer",
+   "proof": "skill.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "resolve: a comprehension gap is never contested",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-spec-resolve/SKILL.md",
+   "text": "A comprehension gap is never contested",
+   "proof": "skill.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "resolve: a severity is never changed",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-spec-resolve/SKILL.md",
+   "text": "A severity is never changed",
+   "proof": "skill.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "artifact-first delivery",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-spec-draft/SKILL.md",
+   "text": "Long text goes in the file",
+   "proof": "skill.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "stress-test, critique first, no flattery",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-spec-draft/SKILL.md",
+   "text": "Critique first, no flattery",
+   "proof": "skill.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "plain-English and banned adjectives",
+   "status": "in",
+   "file": "plugins/core/skills/crew/references/writing.md",
+   "text": "robust, seamless, elegant",
+   "proof": "skill.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "the section approval gate in drafting",
+   "status": "refused",
+   "decision": "D-1",
+   "reason": "item 2026-10-31-006: the user chose hybrid on 2026-10-31; it stops for a person where the stages run on"
+  },
+  {
+   "source": "egm",
+   "rule": "the preset selection gate",
+   "status": "refused",
+   "decision": "D-1",
+   "reason": "item 2026-10-31-006: the user chose hybrid; the engine always runs the whole review"
+  },
+  {
+   "source": "egm",
+   "rule": "the interactive per-stage checkpoints",
+   "status": "refused",
+   "decision": "D-1",
+   "reason": "item 2026-10-31-006: the user chose hybrid; only an architecture decision and an escalation stop"
+  },
+  {
+   "source": "egm",
+   "rule": "the presets for a part of the document",
+   "status": "refused",
+   "decision": "D-1",
+   "reason": "item 2026-10-31-006: the guard requires the five stages; review-loop runs chosen reviewers on its own, outside an item"
+  },
+  {
+   "source": "egm",
+   "rule": "no default on any gate, even when asked",
+   "status": "refused",
+   "decision": "D-2",
+   "reason": "item 2026-10-31-006: unranked for an architecture question, and rule 4 keeps its proposed default for every other decision (the plan the user approved on 2026-10-31)"
   }
  ]
 }
