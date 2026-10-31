@@ -13442,7 +13442,7 @@ import { homedir as homedir2 } from "node:os";
 import { basename as basename8, isAbsolute as isAbsolute8, join as join38, sep as sep5 } from "node:path";
 
 // packages/engine/src/version.ts
-var VERSION = "0.16.0";
+var VERSION = "0.17.0";
 
 // packages/engine/src/packs.ts
 var PACK_NAME = /^wizardingcode-pack-[a-z0-9][a-z0-9-]*$/;
