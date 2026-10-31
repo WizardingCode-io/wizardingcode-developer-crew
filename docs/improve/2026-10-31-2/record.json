@@ -1,0 +1,85 @@
+{
+  "run": "2026-10-31-2",
+  "at": "2026-10-31T12:00:04.978Z",
+  "targets": [
+    "site-law",
+    "site-synth"
+  ],
+  "baseline": {
+    "site-law": {
+      "name": "site-law",
+      "runs": [
+        {
+          "score": 0.5,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "not-generic",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            },
+            {
+              "grader": "proven",
+              "explanation": "pattern not found in trace"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/references/receive.md",
+            "plugins/core/skills/crew/rubrics/strategy.md"
+          ]
+        },
+        {
+          "score": 0.75,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "proven",
+              "explanation": "pattern not found in trace"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/references/receive.md"
+          ]
+        },
+        {
+          "score": 0.5,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "not-generic",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            },
+            {
+              "grader": "proven",
+              "explanation": "pattern not found in trace"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/strategy.md"
+          ]
+        }
+      ],
+      "mean": 0.5833333333333334,
+      "spread": 0.25,
+      "reads": [
+        "plugins/core/skills/crew/references/receive.md",
+        "plugins/core/skills/crew/rubrics/strategy.md"
+      ],
+      "errored": false,
+      "costUsd": 8.917864735000002
+    }
+  },
+  "proposals": [],
+  "composition": null,
+  "kept": null,
+  "branch": null,
+  "provider": {
+    "name": "runtime",
+    "agentModel": "claude-sonnet-5-5",
+    "judgeModel": "claude-opus-5-5",
+    "claudeModels": true
+  },
+  "costUsd": 29.652863835,
+  "lessons": [],
+  "exit": 2,
+  "unmeasured": []
+}
