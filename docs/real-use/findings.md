@@ -1694,4 +1694,4 @@ Verdicts agree at every effort. Upheld findings: `high` reproduced Task 6's and 
 - What happened: `scripts/release.ts` reads the named account's token first at step 8, after the commit and the tag are on origin. The loop's probe (`runProbe` in `scripts/improve-loop.ts`) reads `gh auth status`, which does not say whether `marketplace.account` has a token. `spawnRunner` sets no timeout, so a `gh` call that never returns holds the release or a tick with nothing logged.
 - Expected: a logged-out account stops the release before step 1, with nothing pushed, and the probe says so; a call that hangs is a failed step.
 - Evidence: `scripts/release.ts`, `scripts/improve-loop.ts`, the risk and architecture rulings of that item.
-- Outcome: open. A missing token fails with a logged step and is resumed with `--resume`; a hung call logs nothing. Next touch of the release script or the loop's probe.
+- Outcome: open. A missing token fails with a logged step and is resumed with `--resume`, while a hung call logs nothing. Next touch of the release script or the loop's probe.
