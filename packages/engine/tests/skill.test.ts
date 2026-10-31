@@ -807,12 +807,12 @@ test("finding 121: the skill page's front matter is strict YAML (Bun.YAML), with
   );
 });
 
-test("AC-1 (finding 121's debt): every shipped front matter is strict YAML, the skill page and the fifteen agent pages, with the descriptions of cto.md and review-risk.md quoted", () => {
+test("AC-1 (finding 121's debt): every shipped front matter is strict YAML, the skill page and the agent pages, with the descriptions of cto.md and review-risk.md quoted", () => {
   const agents = repoPath("plugins/core/agents/");
   const pages = readdirSync(agents)
     .filter((f) => f.endsWith(".md"))
     .sort();
-  expect(pages).toHaveLength(15);
+  expect(pages).toHaveLength(23);
   const frontMatter = (text: string): Record<string, unknown> => {
     const match = /^---\n([\s\S]*?)\n---\n/.exec(text);
     if (!match?.[1]) throw new Error("no front matter");
@@ -1653,4 +1653,44 @@ test("AC-16: every row of the coverage ledger holds its text at its file or a re
   ])
     expect(names.has(name), name).toBe(true);
   expect(ledger.unread.length).toBeGreaterThan(0);
+});
+
+test("2026-10-31-004 AC-4: the Elephant-Goldfish Model has a row per rule of its agents and standards, and what the user left out is refused with a decision", () => {
+  const ledger = JSON.parse(repoFile("docs/sources/ledger.json")) as {
+    sources: { name: string; licence: string; commit: string }[];
+    rows: LedgerRow[];
+  };
+  expect(ledger.sources).toContainEqual({ name: "egm", licence: "Apache-2.0", commit: "403d888" });
+  const rows = ledger.rows.filter((r) => r.source === "egm");
+  const taken = new Set(rows.filter((r) => r.status === "in").map((r) => r.rule));
+  for (const rule of [
+    "zoom-out persona: YAGNI, reuse by code search, altitude",
+    "comprehension persona: paraphrase first",
+    "comprehension persona: flags only what is specific to this project",
+    "design persona: unbacked assumptions and unmitigated risks",
+    "structural persona: headings against the standard",
+    "style persona: fluff, subjective judgement, synonym redundancy",
+    "readiness persona: no choice left to the implementer",
+    "codebase persona: contradicts the code is a Blocker",
+    "codebase persona: a planned file is not a finding",
+    "explorer scout: every entry cited, never inferred from a name",
+    "brainstorm lenses in six personas",
+    "zoom-out standard",
+    "heilmeier standard",
+    "feature-spec standard: the alternatives rule",
+    "implementation-readiness standard: the zero-decision rule",
+    "re-implementation standard: the zero-assumption rule",
+    "reviewer adapters: read-only tools and omitClaudeMd",
+    "a reviewer that cannot read its input gives no verdict",
+  ])
+    expect(taken.has(rule), rule).toBe(true);
+  const refused = rows.filter((r) => r.status === "refused");
+  for (const [rule, decision] of [
+    ["the egm.dev site", "D-1"],
+    ["the packaging and release scripts", "D-1"],
+    ["the contribution rules (AI_POLICY, the 100-line PR limit)", "D-1"],
+    ["the synthesizer persona as an agent", "D-2"],
+    ["the bootstrap orchestrator persona as an agent", "D-2"],
+  ])
+    expect(refused.find((r) => r.rule === rule)?.decision, rule).toBe(decision);
 });

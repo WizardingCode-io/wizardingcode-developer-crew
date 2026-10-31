@@ -85,6 +85,11 @@
    "name": "frontend-design",
    "licence": "Apache-2.0",
    "commit": "1.1.1"
+  },
+  {
+   "name": "egm",
+   "licence": "Apache-2.0",
+   "commit": "403d888"
   }
  ],
  "unread": [
@@ -1402,6 +1407,185 @@
    "file": "packages/engine/src/design-grade.ts",
    "text": "colour/ai-look",
    "proof": "design-grade.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "zoom-out persona: YAGNI, reuse by code search, altitude",
+   "status": "in",
+   "file": "plugins/core/agents/goldfish-zoom-out.md",
+   "text": "You must search; a match is a finding",
+   "proof": "agents.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "comprehension persona: paraphrase first",
+   "status": "in",
+   "file": "plugins/core/agents/goldfish-comprehension.md",
+   "text": "A section you cannot paraphrase is a Blocker",
+   "proof": "agents.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "comprehension persona: flags only what is specific to this project",
+   "status": "in",
+   "file": "plugins/core/agents/goldfish-comprehension.md",
+   "text": "A general engineering term is not a finding",
+   "proof": "agents.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "design persona: unbacked assumptions and unmitigated risks",
+   "status": "in",
+   "file": "plugins/core/agents/goldfish-design.md",
+   "text": "A claim about how a system behaves, performs or is limited needs a reason",
+   "proof": "agents.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "structural persona: headings against the standard",
+   "status": "in",
+   "file": "plugins/core/agents/goldfish-structural.md",
+   "text": "Heading levels nest in order",
+   "proof": "agents.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "style persona: fluff, subjective judgement, synonym redundancy",
+   "status": "in",
+   "file": "plugins/core/agents/goldfish-style.md",
+   "text": "Flag nearby words that repeat one idea",
+   "proof": "agents.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "readiness persona: no choice left to the implementer",
+   "status": "in",
+   "file": "plugins/core/agents/goldfish-readiness.md",
+   "text": "A step that forces a design choice on you",
+   "proof": "agents.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "codebase persona: contradicts the code is a Blocker",
+   "status": "in",
+   "file": "plugins/core/agents/goldfish-codebase.md",
+   "text": "every later reader inherits the false statement",
+   "proof": "agents.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "codebase persona: a planned file is not a finding",
+   "status": "in",
+   "file": "plugins/core/agents/goldfish-codebase.md",
+   "text": "**A planned file is not a finding.**",
+   "proof": "agents.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "explorer scout: every entry cited, never inferred from a name",
+   "status": "in",
+   "file": "plugins/core/agents/goldfish-explorer.md",
+   "text": "Never infer a method, a route, a status value or an invariant from a file or directory name",
+   "proof": "agents.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "brainstorm lenses in six personas",
+   "status": "in",
+   "file": "plugins/core/agents/goldfish-design.md",
+   "text": "cost, quota and token economics",
+   "proof": "agents.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "zoom-out standard",
+   "status": "in",
+   "file": "plugins/core/skills/crew/rubrics/spec-zoom-out.md",
+   "text": "uses what exists and the codebase's conventions",
+   "proof": "agents.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "heilmeier standard",
+   "status": "in",
+   "file": "plugins/core/skills/crew/rubrics/spec-heilmeier.md",
+   "text": "What is being attempted, with no jargon at all?",
+   "proof": "agents.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "feature-spec standard: the alternatives rule",
+   "status": "in",
+   "file": "plugins/core/skills/crew/rubrics/spec-feature.md",
+   "text": "It must weigh alternatives",
+   "proof": "agents.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "implementation-readiness standard: the zero-decision rule",
+   "status": "in",
+   "file": "plugins/core/skills/crew/rubrics/spec-readiness.md",
+   "text": "zero design choices",
+   "proof": "agents.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "re-implementation standard: the zero-assumption rule",
+   "status": "in",
+   "file": "plugins/core/skills/crew/rubrics/spec-reimplementation.md",
+   "text": "It fails if the reader must guess a default",
+   "proof": "agents.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "reviewer adapters: read-only tools and omitClaudeMd",
+   "status": "in",
+   "file": "plugins/core/agents/goldfish-zoom-out.md",
+   "text": "omitClaudeMd: true",
+   "proof": "agents.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "a reviewer that cannot read its input gives no verdict",
+   "status": "in",
+   "file": "plugins/core/agents/goldfish-zoom-out.md",
+   "text": "stop with no verdict",
+   "proof": "agents.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "the egm.dev site",
+   "status": "refused",
+   "decision": "D-1",
+   "reason": "the user left the source's website out on 2026-10-31: it is not the method"
+  },
+  {
+   "source": "egm",
+   "rule": "the packaging and release scripts",
+   "status": "refused",
+   "decision": "D-1",
+   "reason": "the user left them out on 2026-10-31: the crew's runtimes follow ADR 0011 and its release ADR 0015"
+  },
+  {
+   "source": "egm",
+   "rule": "the contribution rules (AI_POLICY, the 100-line PR limit)",
+   "status": "refused",
+   "decision": "D-1",
+   "reason": "the user left them out on 2026-10-31: they govern contributions to the source's repository"
+  },
+  {
+   "source": "egm",
+   "rule": "the synthesizer persona as an agent",
+   "status": "refused",
+   "decision": "D-2",
+   "reason": "a role here may not write or launch; the session dispatches and `crew spec-review report` deduplicates (the plan the user approved on 2026-10-31)"
+  },
+  {
+   "source": "egm",
+   "rule": "the bootstrap orchestrator persona as an agent",
+   "status": "refused",
+   "decision": "D-2",
+   "reason": "a role here may not write or launch; the session runs the bootstrap (the plan the user approved on 2026-10-31)"
   }
  ]
 }

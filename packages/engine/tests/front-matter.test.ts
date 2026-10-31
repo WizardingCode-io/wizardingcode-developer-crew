@@ -31,7 +31,7 @@ test("AC-3 (finding 121's debt), never wider: every value the rule passes is rea
       .map((f) => `${agents}${f}`),
     fileURLToPath(new URL("../../../plugins/core/skills/crew/SKILL.md", import.meta.url)),
   ];
-  expect(shipped).toHaveLength(16);
+  expect(shipped).toHaveLength(24);
   const passing = [
     page([
       "name: crew-method",
@@ -50,6 +50,11 @@ test("AC-3 (finding 121's debt), never wider: every value the rule passes is rea
       const at = line.indexOf(": ");
       const key = line.slice(0, at);
       const value = line.slice(at + 2);
+      // The one key Claude Code reads as a boolean: quoted, it would not isolate the role (ADR 0019).
+      if (key === "omitClaudeMd") {
+        expect((parsed as Record<string, unknown>)[key], line).toBe(true);
+        continue;
+      }
       expect((parsed as Record<string, unknown>)[key], line).toBe(engineReads(value));
     }
   }

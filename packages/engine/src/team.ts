@@ -169,6 +169,18 @@ const REVIEW_ROLES = [
 ] as const;
 const LEAD_ROLES = Object.values(TEAMS).map((t) => t.lead);
 
+/** The reviewers of a document, with no context (ADR 0019), and the bootstrap's scout. */
+export const GOLDFISH_ROLES: readonly string[] = [
+  "goldfish-zoom-out",
+  "goldfish-comprehension",
+  "goldfish-design",
+  "goldfish-structural",
+  "goldfish-style",
+  "goldfish-readiness",
+  "goldfish-codebase",
+  "goldfish-explorer",
+];
+
 /** Every role the hook records and the mail addresses, `expert` bare (the mail numbers it). */
 export const ROLE_NAMES: readonly string[] = [
   "judge",
@@ -178,6 +190,7 @@ export const ROLE_NAMES: readonly string[] = [
   ...DEBATE_ROLES,
   ...REVIEW_ROLES,
   ...LEAD_ROLES,
+  ...GOLDFISH_ROLES,
 ];
 
 /** The anchored pattern of a role's name as the mail knows it: `expert-<n>` numbered, every other role as is. */

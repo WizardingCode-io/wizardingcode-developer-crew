@@ -8475,7 +8475,7 @@ test("SP6-T4 AC-3: crew runtime list; install merges the hook configuration, cop
   expect(files).toContain(join(root, ".agents", "skills", "crew-method", "SKILL.md"));
   expect(files).toContain(join(root, ".agents", "skills", "crew-method", "references", "rules.md"));
   expect(files).toContain(join(root, ".cursor", "agents", "crew-tech-lead.md"));
-  expect(files.filter((f) => f.includes("/.cursor/agents/"))).toHaveLength(15);
+  expect(files.filter((f) => f.includes("/.cursor/agents/"))).toHaveLength(23);
   expect(installed.out).not.toContain("trust:");
   expect(filesBelow(join(root, ".agents", "skills", "crew-method")).sort()).toEqual(
     filesBelow(join(plugin, "skills", "crew")).sort(),
@@ -8626,7 +8626,7 @@ test("SP6-T4 AC-3: crew runtime list; install merges the hook configuration, cop
   expect(cursorLines[0]).toBe(`rewritten ${join(root, ".cursor", "hooks.json")}`);
   expect(cursorLines).toContain(`removed ${join(root, ".agents", "skills", "crew-method")}`);
   expect(cursorLines).toContain(`removed ${join(root, ".cursor", "agents", "crew-tech-lead.md")}`);
-  expect(cursorLines.filter((l) => l.includes("/.cursor/agents/"))).toHaveLength(15);
+  expect(cursorLines.filter((l) => l.includes("/.cursor/agents/"))).toHaveLength(23);
   expect(JSON.parse(readFileSync(join(root, ".cursor", "hooks.json"), "utf8"))).toEqual({
     version: 1,
     hooks: { stop: [mine] },

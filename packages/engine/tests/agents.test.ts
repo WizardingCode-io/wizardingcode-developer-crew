@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { ROLE_NAMES } from "../src/team.ts";
 
 const AGENTS = fileURLToPath(new URL("../../../plugins/core/agents/", import.meta.url));
 const RUBRICS = fileURLToPath(
@@ -18,6 +19,23 @@ const REVIEWERS = [
   "infra",
 ];
 const DEBATE_ROLES = ["researcher", "expert", "devils-advocate", "fault-finder"];
+const GOLDFISH = [
+  "goldfish-zoom-out",
+  "goldfish-comprehension",
+  "goldfish-design",
+  "goldfish-structural",
+  "goldfish-style",
+  "goldfish-readiness",
+  "goldfish-codebase",
+  "goldfish-explorer",
+];
+const SPEC_RUBRICS = [
+  "spec-zoom-out",
+  "spec-feature",
+  "spec-readiness",
+  "spec-reimplementation",
+  "spec-heilmeier",
+];
 const NEVER = ["Write", "Edit", "MultiEdit", "NotebookEdit", "Bash", "Agent", "Task"];
 const LISTS = [
   "## What the reviewer receives",
@@ -55,6 +73,7 @@ test("SP2b: every agent is a read-only role that says what it receives and retur
     "cto",
     ...REVIEWERS.map((g) => `review-${g}`),
     ...DEBATE_ROLES,
+    ...GOLDFISH,
   ]
     .map((n) => `${n}.md`)
     .sort();
@@ -202,7 +221,12 @@ test("SP9-T5 AC-7: the tech lead lists frontend among its teams, in the descript
 test("SP2b: one rubric per judgement gate, each judging the change and never the repository", () => {
   // The strategy's rubric (SP8) is the CTO's and the judge's: no reviewer agent carries its name.
   expect(readdirSync(RUBRICS).sort()).toEqual(
-    [...REVIEWERS.map((g) => `${g}.md`), "design-finish.md", "strategy.md"].sort(),
+    [
+      ...REVIEWERS.map((g) => `${g}.md`),
+      "design-finish.md",
+      "strategy.md",
+      ...SPEC_RUBRICS.map((r) => `${r}.md`),
+    ].sort(),
   );
   for (const gate of REVIEWERS) {
     const rubric = readFileSync(`${RUBRICS}${gate}.md`, "utf8");
@@ -327,4 +351,64 @@ test("AC-10 (finding 62): the expert names the strongest alternative it rejected
   expect(body).toMatch(
     /Alternative rejected[^\n]*your own other design[^\n]*never another expert's[^\n]*seen none/,
   );
+});
+
+test("2026-10-31-004 AC-1: each goldfish is read-only, omits CLAUDE.md, gets nothing of the conversation and gives no verdict on what it cannot read", () => {
+  for (const name of GOLDFISH) {
+    const text = readFileSync(`${AGENTS}${name}.md`, "utf8");
+    const { meta, body } = agent(name);
+    expect(tools(meta), name).toEqual(["Read", "Grep", "Glob"]);
+    expect(meta.omitClaudeMd, name).toBe("true");
+    expect(body, name).toContain("nothing of the conversation");
+    expect(body, name).toContain("no verdict");
+    expect(text, name).not.toContain("SendMessage");
+    expect(text, name).not.toContain("crew mail");
+  }
+  // The seven reviewers answer in the shape the phase reads, with the source's severities.
+  for (const name of GOLDFISH.filter((n) => n !== "goldfish-explorer")) {
+    const { body } = agent(name);
+    for (const word of ["Blocker", "Major", "Nit"]) expect(body, name).toContain(word);
+    expect(body, name).toContain("## Findings");
+  }
+  // Six reviewers also read a raw concept: the source's brainstorm lenses.
+  for (const name of [
+    "goldfish-design",
+    "goldfish-codebase",
+    "goldfish-zoom-out",
+    "goldfish-comprehension",
+    "goldfish-readiness",
+    "goldfish-structural",
+  ])
+    expect(agent(name).body, name).toContain("## Brainstorm mode");
+  // The comprehension reviewer paraphrases first: a gap a list of terms cannot find.
+  expect(agent("goldfish-comprehension").body).toContain("**What this proposes**");
+  // The explorer cites what it reports and never infers from a name.
+  expect(agent("goldfish-explorer").body).toContain("[file:symbol]");
+});
+
+test("2026-10-31-004 AC-2: each document rubric states its core principle and where it came from", () => {
+  for (const name of SPEC_RUBRICS) {
+    const text = readFileSync(`${RUBRICS}${name}.md`, "utf8");
+    expect(text, name).toContain("## Core principle");
+    expect(text, name).toContain("Provenance (ADR 0017)");
+    expect(text, name).toContain("403d888");
+  }
+  expect(readFileSync(`${RUBRICS}spec-readiness.md`, "utf8")).toContain("zero design choices");
+  expect(readFileSync(`${RUBRICS}spec-feature.md`, "utf8")).toContain("Alternatives");
+});
+
+test("2026-10-31-004 AC-3: the hook, the mail and the model table know every goldfish", () => {
+  const hooks = readFileSync(
+    fileURLToPath(new URL("../../../plugins/core/hooks/hooks.json", import.meta.url)),
+    "utf8",
+  );
+  const mod = readFileSync(
+    fileURLToPath(new URL("../../../plugins/core/hooks/register.js", import.meta.url)),
+    "utf8",
+  );
+  for (const name of GOLDFISH) {
+    expect(ROLE_NAMES, name).toContain(name);
+    expect(hooks, name).toContain(name);
+    expect(mod, name).toContain(`'${name}'`);
+  }
 });

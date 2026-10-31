@@ -1902,13 +1902,24 @@ var REVIEW_ROLES = [
   "review-infra"
 ];
 var LEAD_ROLES = Object.values(TEAMS).map((t) => t.lead);
+var GOLDFISH_ROLES = [
+  "goldfish-zoom-out",
+  "goldfish-comprehension",
+  "goldfish-design",
+  "goldfish-structural",
+  "goldfish-style",
+  "goldfish-readiness",
+  "goldfish-codebase",
+  "goldfish-explorer"
+];
 var ROLE_NAMES = [
   "judge",
   "cto",
   "tech-lead",
   ...DEBATE_ROLES,
   ...REVIEW_ROLES,
-  ...LEAD_ROLES
+  ...LEAD_ROLES,
+  ...GOLDFISH_ROLES
 ];
 function rolePattern() {
   const names = ROLE_NAMES.map((n) => n === "expert" ? "expert-\\d+" : n.replace(/-/g, "\\-"));

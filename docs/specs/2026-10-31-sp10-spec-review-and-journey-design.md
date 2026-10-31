@@ -92,6 +92,6 @@ Rule 4 stays for every other decision. The default stays on record for architect
 
 - EGM is v0.1.0. Its FAQ says finishing the workflow "does not demonstrate a productivity improvement". The gain here is known only from the measure above, reported as it comes out.
 - EGM's isolation probe covers one reviewer, not the workflow. `omitClaudeMd` isolates context, not the file system.
-- `omitClaudeMd` belongs to Claude Code (2.1.271 or later; this machine has 2.1.316). The generators for the other runtimes probably do not carry the key, to be confirmed in the item that adds the agents; where they do not, the report says isolation is not proven there.
+- `omitClaudeMd` belongs to Claude Code (2.1.271 or later; this machine has 2.1.316). The generators for the other runtimes do not carry the key (`readAgentPage` in `runtimes.ts` reads name, description, tools and body), so the report says isolation is not proven there.
 - **Cost**: one pass uses 9 to 16 reviewers (EGM's `TESTING.md` records), up to 5 rounds, on the whole full route, small fixes included. The 30 cases cost about 9 to 69 USD, estimated from the per-case figures in `CLAUDE.md`.
 - The existing roles (`review-*`, judge, leads) keep receiving `CLAUDE.md`, and some reviewers may rely on the conventions there. It is left for a decision after the measure, recorded as a finding.

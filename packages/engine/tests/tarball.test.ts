@@ -58,7 +58,7 @@ test("SP6-T4 AC-6: buildTarball writes the archive of plugins/core under one fol
   expect(paths).toContain(`${TOP}/hooks/register.js`);
   expect(paths).toContain(`${TOP}/skills/crew/SKILL.md`);
   expect(paths).toContain(`${TOP}/skills/crew/references/rules.md`);
-  expect(paths.filter((p) => p.startsWith(`${TOP}/agents/`))).toHaveLength(15);
+  expect(paths.filter((p) => p.startsWith(`${TOP}/agents/`))).toHaveLength(23);
   expect(paths.some((p) => p.includes("/evals/"))).toBe(false);
   expect(paths.some((p) => p.endsWith("tsconfig.json"))).toBe(false);
   expect(paths.some((p) => p.includes("/dist/") && !p.endsWith("crew.mjs"))).toBe(false);
