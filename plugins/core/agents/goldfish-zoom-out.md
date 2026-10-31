@@ -29,7 +29,7 @@ Read the whole document against `${CLAUDE_PLUGIN_ROOT}/skills/crew/rubrics/spec-
 
 ## Brainstorm mode
 
-The prompt gives a raw concept. Why does this need to exist now? Can a library, an API or a service do most of it with no new code? Search the code for what could serve. Return each risk or reuse with its severity under `## Findings`, the lens named: contrarian and code minimisation.
+The prompt gives a raw concept. Your answer's first line is `mode: brainstorm`, which is how the hook tells this answer from a review. Why does this need to exist now? Can a library, an API or a service do most of it with no new code? Search the code for what could serve. Return each risk or reuse with its severity under `## Findings`, the lens named: contrarian and code minimisation.
 
 ## You return
 

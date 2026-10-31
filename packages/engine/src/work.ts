@@ -919,6 +919,18 @@ export function guardFor(work: WorkItem, next: Phase, ctx: GuardContext): string
     missing.push(...ctx.unproven.map((reason) => `not proven: ${reason}`));
     return missing;
   }
+  // The brainstorm comes before the spec on a stamped feature or new project (ADR 0019); an issue's
+  // predecessor is its analysis.
+  if (
+    (next === "specify" || next === "strategy") &&
+    work.specReview &&
+    work.route === "full" &&
+    ["feature", "new-project"].includes(kindOfItem(work)) &&
+    !ctx.evidence?.specReview?.brief
+  )
+    missing.push(
+      "the brainstorm's brief (wizardingcode-spec-brainstorm, then crew spec-review <id> brief)",
+    );
   if (next === "plan") {
     missing.push(...conclaveDocument(work, ctx));
     for (const d of unansweredDecisions(work, ctx.policy))

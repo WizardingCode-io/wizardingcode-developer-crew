@@ -296,9 +296,12 @@ import {
 import { scanText } from "./secrets.ts";
 import { quoteWord } from "./shell-words.ts";
 import { parseSource, sourceLine } from "./source.ts";
+import { publishDesign } from "./spec-publish.ts";
 import {
   acceptSpecReview,
   answerSpecFinding,
+  briefHash,
+  briefProblems,
   closeSpecRound,
   dueStage,
   emptySpecReview,
@@ -309,11 +312,14 @@ import {
   renderSpecReview,
   resolveSpecFinding,
   SPEC_DISPOSITIONS,
+  SPEC_LENSES,
   type SpecDisposition,
+  type SpecReviewRecord,
   type SpecRound,
   specReviewConverged,
   specReviewHash,
   specReviewLine,
+  specReviewMissing,
   specReviewStop,
 } from "./spec-review.ts";
 import {
@@ -2988,7 +2994,7 @@ async function researchCommand(
 /** `crew spec-review <id> ...`: the document's review before the code (ADR 0019). */
 function specReviewCommand(env: Env, args: string[], parsed: Parsed): Outcome {
   const usage =
-    'usage: crew spec-review <id> check | record <stage> [<role>[,<role>] --not-run --reason "<why>"] | resolve <finding> <propose-fix|contest|escalate|decline|settled> --reason "<why>" [--evidence <file:symbol>] [--earlier <finding>] [--churn] | answer <finding> <confirm|add-fact> --reason "<their words>" | close | accept --reason "<their words>" | report | status';
+    'usage: crew spec-review <id> check | record <stage> [<role>[,<role>] --not-run --reason "<why>"] | resolve <finding> <propose-fix|contest|escalate|decline|settled> --reason "<why>" [--evidence <file:symbol>] [--earlier <finding>] [--churn] | answer <finding> <confirm|add-fact> --reason "<their words>" | close | accept --reason "<their words>" | report | status | brief | publish';
   const opened = openForChange(env, args[0]);
   if (isOutcome(opened)) return opened;
   const { work } = opened;
@@ -3114,6 +3120,40 @@ function specReviewCommand(env: Env, args: string[], parsed: Parsed): Outcome {
         {},
       );
     }
+    case "brief": {
+      const text = readText(join(dir, "concepts_brief.md"));
+      if (text === null) return refuse("concepts_brief.md is not in the item's folder");
+      const missing = briefProblems(text);
+      if (missing.length)
+        return refuse(`concepts_brief.md has no content under: ${missing.join(", ")}`);
+      const roles = evidence.roles ?? [];
+      const earlier = record.brief?.agents ?? {};
+      const agents: Record<string, string> = {};
+      for (const role of SPEC_LENSES) {
+        const row = roles.filter((r) => r.agent === role).at(-1);
+        const file = `spec-review/brainstorm-${role}.md`;
+        if (!row || row.filedBy === "session" || !row.agentId || row.file !== file)
+          return refuse(
+            `${role} has no brainstorm answer filed by the hook at ${file}: launch it fresh, with its answer's first line mode: brainstorm`,
+          );
+        const taken =
+          (record.agentIds.includes(row.agentId) && earlier[role] !== row.agentId) ||
+          Object.values(agents).includes(row.agentId);
+        if (taken)
+          return refuse(`${role}'s agent ${row.agentId} is already recorded: launch a fresh one`);
+        agents[role] = row.agentId;
+      }
+      record.brief = { hash: briefHash(text), agents, at: nowIso() };
+      record.agentIds = [...new Set([...record.agentIds, ...Object.values(agents)])];
+      const unsaved = save();
+      if (unsaved) return refuse(unsaved);
+      return ok(`the brief is recorded with its ${SPEC_LENSES.length} lenses`, {});
+    }
+    case "publish": {
+      const published = publishedDesign(env, work, record, specText, planText);
+      if ("refused" in published) return refuse(published.refused);
+      return ok(`${published.path}: commit it; it is outside what the proof covers`, {});
+    }
     case "resolve": {
       const finding = args[2];
       const disposition = args[3] as SpecDisposition | undefined;
@@ -3188,6 +3228,23 @@ function specReviewCommand(env: Env, args: string[], parsed: Parsed): Outcome {
     default:
       return refuse(usage);
   }
+}
+
+/** The approved document published, when the review converged or a person accepted it (ADR 0019). */
+function publishedDesign(
+  env: Env,
+  work: WorkItem,
+  record: SpecReviewRecord | undefined,
+  specText: string | null,
+  planText: string | null,
+): { path: string } | { refused: string } {
+  const hash = specReviewHash(specText ?? "", planText ?? "");
+  if (specText === null || planText === null || specReviewMissing(record, hash).length)
+    return {
+      refused:
+        "the spec review has not closed on spec.md and plan.md as they are: nothing published",
+    };
+  return publishDesign(env.paths.root, work.id, work.title, specText, planText);
 }
 
 /** Why a contest's `<file:symbol>` does not hold, or null: the file exists and the symbol is in it. */
@@ -4630,6 +4687,22 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           n.refused ? `notice to ${n.to} refused: ${n.refused}` : `notice ${n.id} to ${n.to}`,
         ),
       ];
+      // A stamped item's approved document (ADR 0019); a refusal is said and the learn holds.
+      if (opened.work.specReview) {
+        const dir = workDir(env.paths, opened.work.id);
+        const published = publishedDesign(
+          env,
+          opened.work,
+          loadEvidence(env.paths, opened.work.id).evidence.specReview,
+          readText(join(dir, "spec.md")),
+          readText(join(dir, "plan.md")),
+        );
+        lines.push(
+          "refused" in published
+            ? `not published: ${published.refused}`
+            : `${published.path}: commit it; it is outside what the proof covers`,
+        );
+      }
       const text = [lines.join("\n") || "learned none", ...laneEnd(env, opened.work)].join("\n");
       return ok(text, { learned: opened.work.learned, ...outcome });
     }

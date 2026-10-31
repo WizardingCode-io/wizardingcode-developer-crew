@@ -26,7 +26,7 @@ Read the detailed range against `${CLAUDE_PLUGIN_ROOT}/skills/crew/rubrics/spec-
 
 ## Brainstorm mode
 
-The prompt gives a raw concept. How do existing clients and stored data move across? What does it break in a saved format or an API? How is a rollback handled halfway? Return each hazard with its severity under `## Findings`, the lens named: migration and backward compatibility.
+The prompt gives a raw concept. Your answer's first line is `mode: brainstorm`, which is how the hook tells this answer from a review. How do existing clients and stored data move across? What does it break in a saved format or an API? How is a rollback handled halfway? Return each hazard with its severity under `## Findings`, the lens named: migration and backward compatibility.
 
 ## You return
 

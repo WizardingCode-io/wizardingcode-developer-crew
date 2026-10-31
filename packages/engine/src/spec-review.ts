@@ -102,6 +102,41 @@ export interface SpecReviewRecord {
   /** Every agent recorded in this review: a resumed reviewer is not a fresh one. */
   agentIds: string[];
   accepted?: { hash: string; round: number; reason: string; by: string; at: string };
+  /** The brainstorm's brief as recorded, and the lens agents behind it. */
+  brief?: { hash: string; agents: Record<string, string>; at: string };
+}
+
+/** The six reviewers that read a raw concept, in brainstorm mode. */
+export const SPEC_LENSES: readonly string[] = [
+  "goldfish-design",
+  "goldfish-codebase",
+  "goldfish-zoom-out",
+  "goldfish-comprehension",
+  "goldfish-readiness",
+  "goldfish-structural",
+];
+
+const BRIEF_SECTIONS = [
+  "Overview",
+  "Analysis",
+  "Goals vs. Non-Goals",
+  "Alternatives Weighed",
+  "Key Decisions",
+];
+
+/** The brief's sections missing or empty. */
+export function briefProblems(text: string): string[] {
+  return BRIEF_SECTIONS.filter((name) => {
+    const heading = new RegExp(`^## ${name.replace(/[.]/g, "\\.")}\\s*$`, "m").exec(text);
+    if (!heading) return true;
+    const rest = text.slice(heading.index + heading[0].length);
+    const next = rest.search(/^## /m);
+    return (next === -1 ? rest : rest.slice(0, next)).trim() === "";
+  });
+}
+
+export function briefHash(text: string): string {
+  return createHash("sha256").update(text).digest("hex");
 }
 
 export function emptySpecReview(): SpecReviewRecord {

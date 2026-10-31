@@ -278,7 +278,9 @@ export function answerFile(agent: string, answer: string, kind?: WorkKind): stri
   if (agent.startsWith("review-")) return `review/${agent.slice("review-".length)}.findings.md`;
   // A stage's reviewer of the document (ADR 0019), outside review/, which a gate run resets.
   if (agent.startsWith("goldfish-") && agent !== "goldfish-explorer")
-    return `spec-review/${agent}.md`;
+    return /^\s*mode: brainstorm\b/i.test(answer)
+      ? `spec-review/brainstorm-${agent}.md`
+      : `spec-review/${agent}.md`;
   // A lead's validation and the CTO's plan sit beside the debate's files (SP7 §6.4, §6.5). The tech
   // lead is one agent for five teams: its answer's first line names the team and what it validated.
   if (agent === "tech-lead") {

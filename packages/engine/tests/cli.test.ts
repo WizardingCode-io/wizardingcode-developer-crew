@@ -43,6 +43,7 @@ import { isProtectedPath, knowledgePath } from "../src/paths.ts";
 import { DEFAULT_POLICY, loadPolicy } from "../src/policy.ts";
 import { loadProfile, saveProfile } from "../src/profile.ts";
 import { guaranteeLines, pluginRoot, RUNTIMES } from "../src/runtimes.ts";
+import { SPEC_LENSES } from "../src/spec-review.ts";
 import { loadState, recordWorking } from "../src/state.ts";
 import * as store from "../src/store.ts";
 import {
@@ -1786,6 +1787,30 @@ test("SP2a: an observed criterion through the command, and in the report", async
   );
 });
 
+/** The brainstorm's brief of a stamped feature, with the six lenses as the hook files them (ADR 0019). */
+async function recordBrief(c: ReturnType<typeof io>, root: string, id: string): Promise<void> {
+  write(
+    root,
+    `.crew/work/${id}/concepts_brief.md`,
+    "## Overview\nx\n## Analysis\nx\n## Goals vs. Non-Goals\nx\n## Alternatives Weighed\nx\n## Key Decisions\nx\n",
+  );
+  const paths = repoPaths(root, c.env);
+  const { evidence } = loadEvidence(paths, id);
+  evidence.roles = [
+    ...(evidence.roles ?? []),
+    ...SPEC_LENSES.map((agent) => ({
+      agent,
+      agentId: `lens-${agent}`,
+      at: "2026-10-31T00:00:00.000Z",
+      tokens: 0,
+      tokensFrom: "none" as const,
+      file: `spec-review/brainstorm-${agent}.md`,
+    })),
+  ];
+  saveEvidence(paths, id, evidence);
+  expect((await c.run("spec-review", id, "brief")).code).toBe(0);
+}
+
 test("0.3.0: with a person present the spec is approved under the complete-gap-round rule when nothing is pending", async () => {
   const root = makeRepo({
     "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
@@ -1794,6 +1819,7 @@ test("0.3.0: with a person present the spec is approved under the complete-gap-r
   const c = io(root);
   const full = JSON.stringify({ ...JSON.parse(answers), touches_auth: 0.9 });
   const id = (await c.json("start", "Keys in the profile", "--answers", full)).data.id as string;
+  await recordBrief(c, root, id);
   const workFile = join(root, ".crew", "work", id, "work.json");
   write(root, `.crew/work/${id}/spec.md`, "# Spec\n\n## Acceptance criteria\n- AC-1 x\n");
   write(root, `.crew/work/${id}/plan.md`, "# Plan\n1. AC-1\n");
@@ -1874,6 +1900,7 @@ test("SP2a: the validator's approval is refused until the rule holds, then count
   const c = io(root);
   const full = JSON.stringify({ ...JSON.parse(answers), touches_auth: 0.9 });
   const id = (await c.json("start", "Keys in the profile", "--answers", full)).data.id as string;
+  await recordBrief(c, root, id);
   write(root, `.crew/work/${id}/spec.md`, "# Spec\n\n## Acceptance criteria\n- AC-1 x\n");
   write(root, `.crew/work/${id}/plan.md`, "# Plan\n1. AC-1\n");
   expect((await c.run("criteria", id, "add", "x")).code).toBe(0);
@@ -6304,6 +6331,7 @@ async function strategyItem(
   if (options.full) {
     id = (await c.json("start", "A new product", "--answers", newProduct(), "--criterion", "a"))
       .data.id as string;
+    await recordBrief(c, root, id);
     for (let i = 0; i < 2; i++) await c.run("phase", id, "next");
   } else {
     const standard = JSON.stringify({ ...JSON.parse(answers), work_type: "feature", scope: 1 });

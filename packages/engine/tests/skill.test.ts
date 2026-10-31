@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { guaranteeLines, RUNTIME_NAMES, RUNTIMES } from "../src/runtimes.ts";
+import { SPEC_LENSES } from "../src/spec-review.ts";
 import { SKILL_PAGE_MAX_BYTES } from "./helpers.ts";
 
 /** A repository path, absolute, by its path from the repository's root. */
@@ -1878,4 +1879,87 @@ test("2026-10-31-006 AC-8: the skills keep a person's decisions for the person",
   }
   for (const name of ["review", "review-loop", "resolve"])
     expect(specSkill(name), name).toContain("An `escalate` is never turned into a `contest`");
+});
+
+test("2026-10-31-007 AC-1: the three skills have the five headings and a short description, and each names what it must", () => {
+  for (const name of ["brainstorm", "drift", "bootstrap"]) {
+    const text = specSkill(name);
+    expect(text).toContain(`name: wizardingcode-spec-${name}`);
+    for (const heading of ["When", "Inputs", "Steps", "Output", "Done when"])
+      expect(text, `${name} ${heading}`).toContain(`## ${heading}`);
+    const description = /^description: "(.*)"$/m.exec(text)?.[1] ?? "";
+    expect(description.length, name).toBeGreaterThan(0);
+    expect(description.length, name).toBeLessThanOrEqual(200);
+  }
+  const brainstorm = specSkill("brainstorm");
+  for (const lens of SPEC_LENSES) expect(brainstorm, lens).toContain(lens);
+  for (const words of ["a fresh launch", "mode: brainstorm", "crew spec-review <id> brief"])
+    expect(brainstorm, words).toContain(words);
+  const drift = specSkill("drift");
+  expect(drift).toContain("No drift detected");
+  expect(drift).toContain("A person chooses");
+  const bootstrap = specSkill("bootstrap");
+  for (const words of ["more than 15", "goldfish-explorer", "No commit", "references/templates.md"])
+    expect(bootstrap, words).toContain(words);
+  const templates = repoFile(
+    "plugins/core/skills/wizardingcode-spec-bootstrap/references/templates.md",
+  );
+  for (const words of ["## Component", "## Root blueprint", "## Intermediate blueprint"])
+    expect(templates, words).toContain(words);
+  // The six lenses say how the hook tells a brainstorm from a review.
+  for (const lens of SPEC_LENSES)
+    expect(repoFile(`plugins/core/agents/${lens}.md`), lens).toContain(
+      "Your answer's first line is `mode: brainstorm`",
+    );
+});
+
+test("2026-10-31-007 AC-5: the ledger has a row per rule of the three skills, and each refusal is named", () => {
+  const ledger = JSON.parse(repoFile("docs/sources/ledger.json")) as { rows: LedgerRow[] };
+  const rows = ledger.rows.filter((r) => r.source === "egm");
+  const taken = new Set(rows.filter((r) => r.status === "in").map((r) => r.rule));
+  for (const rule of [
+    "brainstorm: open questions, one at a time, no canned options",
+    "brainstorm: the anchored hypothesis",
+    "brainstorm: six lenses in parallel",
+    "brainstorm: the brief's five sections",
+    "brainstorm: alternatives weighed carried to the draft",
+    "drift: report only the differences",
+    "drift: a person chooses which side changes",
+    "drift: code no document covers is drift",
+    "bootstrap: level-by-level discovery, no recursive search",
+    "bootstrap: the safety gate over 15 directories",
+    "bootstrap: a scout per chunk at definitions",
+    "bootstrap: deepest directories first",
+    "bootstrap: the three templates",
+    "bootstrap: an existing README corrected, notes kept",
+    "bootstrap: links only to files that exist",
+    "bootstrap: every file read back and checked",
+    "bootstrap: no commit",
+    "the watermark as a provenance line",
+    "severity definitions",
+  ])
+    expect(taken.has(rule), rule).toBe(true);
+  const refused = rows.filter((r) => r.status === "refused");
+  for (const [rule, decision] of [
+    ["the sentinel upsert", "D-1"],
+    ["the scout's byte cap", "D-1"],
+    ["the approval threshold of 5", "D-1"],
+    ["the fixed lens list of the synthesizer's design", "D-1"],
+    ["the project elephant skill", "D-2"],
+  ])
+    expect(refused.find((r) => r.rule === rule)?.decision, rule).toBe(decision);
+});
+
+test("2026-10-31-007 AC-9: bootstrap holds its limits in its own words", () => {
+  const bootstrap = specSkill("bootstrap");
+  for (const words of [
+    "counted over the whole tree",
+    "100 directories, 100 scouts or 200,000 lines",
+    "inside the project root",
+    "never through a symlink",
+    "read whole",
+    "the person's notes",
+    "the item's secrets gate",
+  ])
+    expect(bootstrap, words).toContain(words);
 });

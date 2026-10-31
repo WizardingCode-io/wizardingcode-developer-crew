@@ -1,12 +1,12 @@
 import { expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { type CliIo, main } from "../src/cli.ts";
 import { loadEvidence, saveEvidence } from "../src/evidence.ts";
 import { onPreToolUse } from "../src/hooks/pre-tool-use.ts";
 import { answerFile } from "../src/hooks/subagent-stop.ts";
 import { isProtectedPath } from "../src/paths.ts";
-import { STAGES } from "../src/spec-review.ts";
+import { briefHash, SPEC_LENSES, STAGES } from "../src/spec-review.ts";
 import { hookContext, makeRepo, repoPaths, testEnv } from "./helpers.ts";
 
 const ANSWERS = (touches_infra: number, scope = 1) =>
@@ -587,4 +587,280 @@ test("2026-10-31-005 AC-16: an answer with no hook record, or a row with no agen
   const filed = await t.run("spec-review", t.id, "record", "5");
   expect(filed.code).toBe(1);
   expect(filed.text).toContain("not run");
+});
+
+const LENSES = [...SPEC_LENSES];
+
+const BRIEF = [
+  "# A feature",
+  "## Overview",
+  "What it is.",
+  "## Analysis",
+  "What the lenses said.",
+  "## Goals vs. Non-Goals",
+  "In and out.",
+  "## Alternatives Weighed",
+  "What was rejected.",
+  "## Key Decisions",
+  "What was decided.",
+  "",
+].join("\n");
+
+/** What the hook leaves for a lens launched in brainstorm mode. */
+function lens(
+  t: Awaited<ReturnType<typeof item>>,
+  role: string,
+  agentId: string,
+  file = `spec-review/brainstorm-${role}.md`,
+) {
+  mkdirSync(join(t.dir, "spec-review"), { recursive: true });
+  writeFileSync(join(t.dir, file), "mode: brainstorm\n\n## Findings\nnone\n");
+  const { evidence } = loadEvidence(t.paths, t.id);
+  evidence.roles = [
+    ...(evidence.roles ?? []),
+    { agent: role, agentId, at: new Date().toISOString(), tokens: 0, tokensFrom: "none", file },
+  ];
+  saveEvidence(t.paths, t.id, evidence);
+}
+
+const allLenses = (t: Awaited<ReturnType<typeof item>>) => {
+  for (const role of LENSES) lens(t, role, `lens-${role}`);
+};
+
+test("2026-10-31-007 AC-2: brief refuses a missing section and a lens with no hook-filed row, and records the hash and the agents when all hold", async () => {
+  const t = await item();
+  expect((await t.run("spec-review", t.id, "brief")).code).toBe(1);
+  allLenses(t);
+  writeFileSync(
+    join(t.dir, "concepts_brief.md"),
+    BRIEF.replace("## Analysis\nWhat the lenses said.\n", ""),
+  );
+  const missing = await t.run("spec-review", t.id, "brief");
+  expect(missing.code).toBe(1);
+  expect(missing.text).toContain("Analysis");
+  // A heading with nothing under it, and one level too deep, are missing too.
+  writeFileSync(join(t.dir, "concepts_brief.md"), BRIEF.replace("What the lenses said.\n", ""));
+  expect((await t.run("spec-review", t.id, "brief")).text).toContain("Analysis");
+  writeFileSync(join(t.dir, "concepts_brief.md"), BRIEF.replace("## Analysis", "### Analysis"));
+  expect((await t.run("spec-review", t.id, "brief")).text).toContain("Analysis");
+  writeFileSync(join(t.dir, "concepts_brief.md"), BRIEF);
+  // A lens filed by the session does not count.
+  const { evidence } = loadEvidence(t.paths, t.id);
+  const row = (evidence.roles ?? []).at(-1);
+  if (row) row.filedBy = "session";
+  saveEvidence(t.paths, t.id, evidence);
+  const filed = await t.run("spec-review", t.id, "brief");
+  expect(filed.code).toBe(1);
+  expect(filed.text).toContain(LENSES.at(-1) as string);
+  allLenses(t);
+  expect((await t.run("spec-review", t.id, "brief")).code).toBe(0);
+  const brief = record(t)?.brief;
+  expect(Object.keys(brief?.agents ?? {}).sort()).toEqual([...LENSES].sort());
+  expect(brief?.hash).toBe(briefHash(BRIEF));
+});
+
+test("2026-10-31-007 AC-3: the guard into specify requires a recorded brief on a stamped feature; an issue, an unstamped item and a standard item pass", async () => {
+  const { guardFor } = await import("../src/work.ts");
+  const t = await item();
+  const work = JSON.parse(readFileSync(join(t.dir, "work.json"), "utf8"));
+  work.phase = "understand";
+  const guard = (w: typeof work) =>
+    guardFor(w, "specify", {
+      evidence: loadEvidence(t.paths, t.id).evidence,
+    } as unknown as Parameters<typeof guardFor>[2]).filter((m) => m.includes("brief"));
+  expect(guard(work).join()).toContain("crew spec-review");
+  expect(guard({ ...work, kind: "new-project" }).length).toBe(1);
+  expect(guard({ ...work, kind: "issue" })).toEqual([]);
+  expect(guard({ ...work, specReview: undefined })).toEqual([]);
+  expect(guard({ ...work, route: "standard" })).toEqual([]);
+  allLenses(t);
+  writeFileSync(join(t.dir, "concepts_brief.md"), BRIEF);
+  await t.run("spec-review", t.id, "brief");
+  expect(guard(work)).toEqual([]);
+});
+
+test("2026-10-31-007 AC-7: a lens's answer lands apart, brief refuses a review-mode row and a shared id, accepts its own, and a stage refuses its agents", async () => {
+  expect(answerFile("goldfish-design", "mode: brainstorm\n\n## Findings\n")).toBe(
+    "spec-review/brainstorm-goldfish-design.md",
+  );
+  expect(answerFile("goldfish-design", "# design findings\n\n## Findings\n")).toBe(
+    "spec-review/goldfish-design.md",
+  );
+  const t = await item();
+  writeFileSync(join(t.dir, "concepts_brief.md"), BRIEF);
+  // A review-mode row for one lens.
+  for (const role of LENSES.slice(1)) lens(t, role, `lens-${role}`);
+  lens(t, LENSES[0] as string, "review-agent", `spec-review/${LENSES[0]}.md`);
+  const review = await t.run("spec-review", t.id, "brief");
+  expect(review.code).toBe(1);
+  expect(review.text).toContain(LENSES[0] as string);
+  // One agent id for two lenses.
+  lens(t, LENSES[0] as string, "shared");
+  lens(t, LENSES[1] as string, "shared");
+  const shared = await t.run("spec-review", t.id, "brief");
+  expect(shared.code).toBe(1);
+  expect(shared.text).toContain("shared");
+  lens(t, LENSES[1] as string, `lens-${LENSES[1]}`);
+  expect((await t.run("spec-review", t.id, "brief")).code).toBe(0);
+  // An agent a stage already recorded does not count as a lens.
+  const other = await item();
+  writeFileSync(join(other.dir, "concepts_brief.md"), BRIEF);
+  await other.run("spec-review", other.id, "check");
+  other.answer("goldfish-zoom-out", clean("goldfish-zoom-out"), "stage-agent");
+  expect((await other.run("spec-review", other.id, "record", "5")).code).toBe(0);
+  for (const role of LENSES) lens(other, role, `lens-${role}`);
+  lens(other, LENSES[0] as string, "stage-agent");
+  const used = await other.run("spec-review", other.id, "brief");
+  expect(used.code).toBe(1);
+  expect(used.text).toContain("stage-agent");
+  // A revised brief is recorded again with the same agents.
+  writeFileSync(join(t.dir, "concepts_brief.md"), `${BRIEF}\nRevised.\n`);
+  expect((await t.run("spec-review", t.id, "brief")).code).toBe(0);
+  // A lens's agent does not count in a stage.
+  await t.run("spec-review", t.id, "check");
+  t.answer("goldfish-zoom-out", clean("goldfish-zoom-out"), "lens-goldfish-zoom-out");
+  const stage = await t.run("spec-review", t.id, "record", "5");
+  expect(stage.code).toBe(1);
+  expect(stage.text).toContain("fresh");
+});
+
+/** A review that converged, so an item may publish. */
+async function converged(t: Awaited<ReturnType<typeof item>>) {
+  await t.quietRound();
+  await t.quietRound();
+}
+
+test("2026-10-31-007 AC-4: publish writes the document with the provenance and the sitemap row, and an unstamped item writes nothing", async () => {
+  const t = await item();
+  await converged(t);
+  const first = await t.run("spec-review", t.id, "publish");
+  expect(first.code).toBe(0);
+  const file = join(t.root, "docs/designs", `${t.id}.md`);
+  expect(first.text).toContain(`docs/designs/${t.id}.md`);
+  expect(first.text).toContain("commit");
+  const text = readFileSync(file, "utf8");
+  expect(text).toContain("The spec.");
+  expect(text).toContain("The plan.");
+  expect(text).toContain(t.id);
+  // No sitemap appears by itself.
+  expect(existsSync(join(t.root, "docs/designs/SITEMAP.md"))).toBe(false);
+  const standard = await item(0);
+  expect((await standard.run("spec-review", standard.id, "publish")).code).toBe(1);
+  expect(existsSync(join(standard.root, "docs/designs"))).toBe(false);
+});
+
+test("2026-10-31-007 AC-8: a secret or a symlink writes nothing and is said, the sitemap row appears once, neutralised, and a review neither converged nor accepted writes nothing", async () => {
+  const t = await item();
+  const none = await t.run("spec-review", t.id, "publish");
+  expect(none.code).toBe(1);
+  expect(none.text).toContain("spec review");
+  expect(existsSync(join(t.root, "docs/designs"))).toBe(false);
+  await converged(t);
+  const planFile = join(t.dir, "plan.md");
+  const plan = readFileSync(planFile, "utf8");
+  const file = join(t.root, "docs/designs", `${t.id}.md`);
+  const { publishDesign } = await import("../src/spec-publish.ts");
+  const secret = publishDesign(t.root, t.id, "T", "# S\n", `key AKIA${"ABCDEFGHIJKLMNOP"}\n`);
+  expect("refused" in secret).toBe(true);
+  expect(existsSync(file)).toBe(false);
+  // The folder a symlink out of the repository.
+  const outside = makeRepo({ "x.md": "x\n" });
+  mkdirSync(join(t.root, "docs"), { recursive: true });
+  symlinkSync(outside, join(t.root, "docs/designs"));
+  const linked = publishDesign(t.root, t.id, "T", "# S\n", plan);
+  expect("refused" in linked).toBe(true);
+  expect(existsSync(join(outside, `${t.id}.md`))).toBe(false);
+  rmSync(join(t.root, "docs/designs"));
+  // The file a symlink.
+  mkdirSync(join(t.root, "docs/designs"), { recursive: true });
+  symlinkSync(join(outside, "x.md"), file);
+  expect("refused" in publishDesign(t.root, t.id, "T", "# S\n", plan)).toBe(true);
+  expect(readFileSync(join(outside, "x.md"), "utf8")).toBe("x\n");
+  rmSync(file);
+  expect(publishDesign(t.root, "../escape", "T", "# S\n", plan)).toHaveProperty("refused");
+  // The sitemap gets one row, its title neutralised, and the file is replaced on a second run.
+  writeFileSync(join(t.root, "docs/designs/SITEMAP.md"), "# Sitemap\n");
+  publishDesign(t.root, t.id, "A | title\nwith a break", "# S\n", plan);
+  publishDesign(t.root, t.id, "A | title\nwith a break", "# S2\n", plan);
+  const sitemap = readFileSync(join(t.root, "docs/designs/SITEMAP.md"), "utf8");
+  expect(sitemap.split(t.id).length - 1).toBe(2); // the id and the file name, one row
+  expect(sitemap).toContain("A / title with a break");
+  expect(readFileSync(file, "utf8")).toContain("# S2");
+});
+
+/** A fast item proven through the CLI, stamped as a full item would be, ready to learn. */
+async function provenStamped(reviewed: boolean) {
+  const root = makeRepo({
+    "README.md": "# t\n",
+    "package.json": JSON.stringify({ name: "t", scripts: { test: "exit 0" } }),
+    ".crew/policy.json": JSON.stringify({ allowSkips: ["tdd"] }),
+  });
+  const env = testEnv();
+  const paths = repoPaths(root, env);
+  const run = async (...args: string[]) => {
+    const lines: string[] = [];
+    const code = await main(args, {
+      cwd: root,
+      env,
+      stdout: (t: string) => void lines.push(t),
+      stderr: (t: string) => void lines.push(t),
+      stdin: async () => "",
+    });
+    return { code, text: lines.join("\n") };
+  };
+  await run("detect");
+  const answers = JSON.stringify({
+    work_type: "chore",
+    is_vague: 0,
+    scope: 0,
+    touches_auth: 0,
+    touches_payments: 0,
+    touches_personal_data: 0,
+    touches_data_migration: 0,
+    touches_infra: 0,
+    touches_public_api: 0,
+  });
+  const started = await run("start", "A chore", "--answers", answers, "--criterion", "it holds");
+  const id = /(\d{4}-\d{2}-\d{2}-\d{3}-[a-z0-9-]+)/.exec(started.text)?.[1] ?? "";
+  const dir = join(root, ".crew", "work", id);
+  await run("skip", id, "tdd:AC-1", "--reason", "manual");
+  expect((await run("gate", "run", id)).text).toContain(`Proven: ${id}`);
+  expect((await run("phase", id, "next")).code).toBe(0);
+  writeFileSync(join(dir, "spec.md"), "# Spec\n\nThe spec.\n");
+  writeFileSync(join(dir, "plan.md"), "# Plan\n\n1. The plan.\n");
+  const { loadWork, saveWork } = await import("../src/work.ts");
+  const work = loadWork(paths, id).work;
+  if (!work) throw new Error("no work");
+  work.specReview = true;
+  saveWork(paths, work);
+  if (reviewed) {
+    const { evidence } = loadEvidence(paths, id);
+    const { specReviewHash } = await import("../src/spec-review.ts");
+    evidence.specReview = {
+      rounds: [],
+      agentIds: [],
+      accepted: {
+        hash: specReviewHash("# Spec\n\nThe spec.\n", "# Plan\n\n1. The plan.\n"),
+        round: 5,
+        reason: "r",
+        by: "user",
+        at: "t",
+      },
+    };
+    saveEvidence(paths, id, evidence);
+  }
+  return { root, id, run };
+}
+
+test("2026-10-31-007 AC-4: crew learn publishes a stamped item's document, says it needs committing, and holds when it cannot publish", async () => {
+  const t = await provenStamped(true);
+  const learned = await t.run("learn", t.id);
+  expect(learned.code).toBe(0);
+  expect(learned.text).toContain(`docs/designs/${t.id}.md: commit it`);
+  expect(readFileSync(join(t.root, "docs/designs", `${t.id}.md`), "utf8")).toContain("The plan.");
+  const open = await provenStamped(false);
+  const held = await open.run("learn", open.id);
+  expect(held.code).toBe(0);
+  expect(held.text).toContain("not published");
+  expect(existsSync(join(open.root, "docs/designs"))).toBe(false);
 });

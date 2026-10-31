@@ -26,7 +26,7 @@ Read the range against the standard the prompt names, usually `${CLAUDE_PLUGIN_R
 
 ## Brainstorm mode
 
-The prompt gives a raw concept. What does it couple tightly? Which state machine will be brittle? What will be a burden to keep in two years? Return each risk with its severity under `## Findings`, the lens named: long-term debt and maintenance.
+The prompt gives a raw concept. Your answer's first line is `mode: brainstorm`, which is how the hook tells this answer from a review. What does it couple tightly? Which state machine will be brittle? What will be a burden to keep in two years? Return each risk with its severity under `## Findings`, the lens named: long-term debt and maintenance.
 
 ## You return
 

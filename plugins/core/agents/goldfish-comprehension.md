@@ -29,7 +29,7 @@ Start your answer's `## Findings` with the paraphrase, under two headings, **Wha
 
 ## Brainstorm mode
 
-The prompt gives a raw concept. Is the proposed interface or workflow what a developer would expect? Are its errors actionable? What load does it put on the person using it? Return each issue with its severity under `## Findings`, the lens named: usability and developer ergonomics.
+The prompt gives a raw concept. Your answer's first line is `mode: brainstorm`, which is how the hook tells this answer from a review. Is the proposed interface or workflow what a developer would expect? Are its errors actionable? What load does it put on the person using it? Return each issue with its severity under `## Findings`, the lens named: usability and developer ergonomics.
 
 ## You return
 

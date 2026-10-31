@@ -1789,6 +1789,193 @@
    "status": "refused",
    "decision": "D-2",
    "reason": "item 2026-10-31-006: unranked for an architecture question, and rule 4 keeps its proposed default for every other decision (the plan the user approved on 2026-10-31)"
+  },
+  {
+   "source": "egm",
+   "rule": "brainstorm: open questions, one at a time, no canned options",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-spec-brainstorm/SKILL.md",
+   "text": "one at a time, with no canned options",
+   "proof": "skill.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "brainstorm: the anchored hypothesis",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-spec-brainstorm/SKILL.md",
+   "text": "State the hypothesis",
+   "proof": "skill.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "brainstorm: six lenses in parallel",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-spec-brainstorm/SKILL.md",
+   "text": "Launch the six lenses in parallel",
+   "proof": "skill.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "brainstorm: the brief's five sections",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-spec-brainstorm/SKILL.md",
+   "text": "`## Goals vs. Non-Goals`",
+   "proof": "skill.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "brainstorm: alternatives weighed carried to the draft",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-spec-brainstorm/SKILL.md",
+   "text": "the draft copies them from here",
+   "proof": "skill.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "drift: report only the differences",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-spec-drift/SKILL.md",
+   "text": "Never describe what matches",
+   "proof": "skill.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "drift: a person chooses which side changes",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-spec-drift/SKILL.md",
+   "text": "A person chooses which side changes",
+   "proof": "skill.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "drift: code no document covers is drift",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-spec-drift/SKILL.md",
+   "text": "code no document covers is drift",
+   "proof": "skill.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "bootstrap: level-by-level discovery, no recursive search",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-spec-bootstrap/SKILL.md",
+   "text": "never a recursive search",
+   "proof": "skill.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "bootstrap: the safety gate over 15 directories",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-spec-bootstrap/SKILL.md",
+   "text": "With more than 15, ask a person",
+   "proof": "skill.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "bootstrap: a scout per chunk at definitions",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-spec-bootstrap/SKILL.md",
+   "text": "cut at top-level definitions",
+   "proof": "skill.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "bootstrap: deepest directories first",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-spec-bootstrap/SKILL.md",
+   "text": "Go deepest first",
+   "proof": "skill.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "bootstrap: the three templates",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-spec-bootstrap/references/templates.md",
+   "text": "## Intermediate blueprint",
+   "proof": "skill.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "bootstrap: an existing README corrected, notes kept",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-spec-bootstrap/SKILL.md",
+   "text": "keeping the person's notes",
+   "proof": "skill.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "bootstrap: links only to files that exist",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-spec-bootstrap/SKILL.md",
+   "text": "Link only to files that exist",
+   "proof": "skill.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "bootstrap: every file read back and checked",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-spec-bootstrap/SKILL.md",
+   "text": "Read back every file you wrote",
+   "proof": "skill.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "bootstrap: no commit",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-spec-bootstrap/SKILL.md",
+   "text": "**No commit.**",
+   "proof": "skill.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "the watermark as a provenance line",
+   "status": "in",
+   "file": "packages/engine/src/spec-publish.ts",
+   "text": "Published by",
+   "proof": "skill.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "severity definitions",
+   "status": "in",
+   "file": "plugins/core/agents/goldfish-design.md",
+   "text": "Blocker: the document cannot be built as written",
+   "proof": "skill.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "the sentinel upsert",
+   "status": "refused",
+   "decision": "D-1",
+   "reason": "item 2026-10-31-007: only in the source's design, and its skill corrects a file while keeping the person's notes; the skill holds"
+  },
+  {
+   "source": "egm",
+   "rule": "the scout's byte cap",
+   "status": "refused",
+   "decision": "D-1",
+   "reason": "item 2026-10-31-007: design and skill disagree; the skill's 1,500 lines per scout holds, bounded by the ceiling of 100 scouts"
+  },
+  {
+   "source": "egm",
+   "rule": "the approval threshold of 5",
+   "status": "refused",
+   "decision": "D-1",
+   "reason": "item 2026-10-31-007: the design says 5, the skill 15; the skill holds"
+  },
+  {
+   "source": "egm",
+   "rule": "the fixed lens list of the synthesizer's design",
+   "status": "refused",
+   "decision": "D-1",
+   "reason": "item 2026-10-31-007: the two designs list different lenses; the skill's six hold"
+  },
+  {
+   "source": "egm",
+   "rule": "the project elephant skill",
+   "status": "refused",
+   "decision": "D-2",
+   "reason": "item 2026-10-31-007: left out with what the user left out on 2026-10-31; knowledge.md and CLAUDE.md serve it"
   }
  ]
 }

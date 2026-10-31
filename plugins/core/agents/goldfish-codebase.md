@@ -30,7 +30,7 @@ Read the detailed range against `${CLAUDE_PLUGIN_ROOT}/skills/crew/rubrics/spec-
 
 ## Brainstorm mode
 
-The prompt gives a raw concept. Can each key operation be traced? Are its metrics actionable? How would someone on call find the fault at 3 AM? Return each gap with its severity under `## Findings`, the lens named: observability and debugging.
+The prompt gives a raw concept. Your answer's first line is `mode: brainstorm`, which is how the hook tells this answer from a review. Can each key operation be traced? Are its metrics actionable? How would someone on call find the fault at 3 AM? Return each gap with its severity under `## Findings`, the lens named: observability and debugging.
 
 ## You return
 

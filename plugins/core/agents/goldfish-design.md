@@ -26,7 +26,7 @@ Read the feature range against `${CLAUDE_PLUGIN_ROOT}/skills/crew/rubrics/spec-f
 
 ## Brainstorm mode
 
-The prompt gives a raw concept. What are its peak load, storage, query load and token budget, and what ceiling do they meet? Where is the bottleneck or the single point of failure? Return each risk with its severity under `## Findings`, the lens named: cost, quota and token economics.
+The prompt gives a raw concept. Your answer's first line is `mode: brainstorm`, which is how the hook tells this answer from a review. What are its peak load, storage, query load and token budget, and what ceiling do they meet? Where is the bottleneck or the single point of failure? Return each risk with its severity under `## Findings`, the lens named: cost, quota and token economics.
 
 ## You return
 
