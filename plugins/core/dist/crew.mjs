@@ -8297,6 +8297,10 @@ function answerDecision(work, id, answer, decision, policy) {
     }
   } else if (!answer?.trim()) {
     return { refused: `an answer is required: crew decide <id> ${id} "<answer>"` };
+  } else if (decision.by === "agent" && policy.unattendedDecisions === "validator") {
+    return {
+      refused: `under this policy an agent's answer does not count: take the stated default with --validator stated-default, or leave ${id} for a person`
+    };
   }
   found.answer = (answer ?? found.default ?? "").trim();
   found.at = nowIso();
@@ -19947,6 +19951,14 @@ function journeyPlist(input) {
     `		<string>${xml(input.path.join(":"))}</string>`,
     "\t\t<key>HOME</key>",
     `		<string>${xml(input.home)}</string>`,
+    ...input.wizardingcodeHome ? [
+      "\t\t<key>WIZARDINGCODE_HOME</key>",
+      `		<string>${xml(input.wizardingcodeHome)}</string>`
+    ] : [],
+    ...input.pluginDir ? [
+      "\t\t<key>WIZARDINGCODE_CREW_PLUGIN_DIR</key>",
+      `		<string>${xml(input.pluginDir)}</string>`
+    ] : [],
     "\t</dict>",
     "\t<key>StandardOutPath</key>",
     `	<string>${xml(join55(input.logDir, "agent.log"))}</string>`,
@@ -19967,7 +19979,9 @@ function installAgent(userDir, deps) {
     bundle: deps.bundle,
     home: deps.home,
     path: deps.pathEntries,
-    logDir
+    logDir,
+    wizardingcodeHome: deps.baseEnv.WIZARDINGCODE_HOME,
+    pluginDir: deps.pluginDir
   }));
   deps.launchctl(["bootstrap", `gui/${deps.uid}`, path]);
 }
@@ -23415,9 +23429,6 @@ function journeyCommand(env, args, parsed) {
       return ok([`journey ${args[1]} stopped`, ...stopped.notes].join(`
 `), {});
     }
-    case "tick":
-      return ok(tickJourneys(userDir, deps).join(`
-`), {});
     case "report": {
       const id = args[1];
       const record = id ? readJourney(userDir, id) : null;
@@ -23706,6 +23717,9 @@ async function dispatch(parsed, io) {
     return ok(HELP);
   if (command === "mode" || command === "config")
     return settings(command, args, { userDir: userDirOf(io.env) });
+  if (command === "journey" && args[0] === "tick")
+    return ok(tickJourneys(userDirOf(io.env), realJourneyDeps(io.env)).join(`
+`), {});
   let paths = resolvePaths(io.cwd, io.env);
   if (!paths && command === "detect") {
     ensureDir(join61(resolve9(io.cwd), ".crew"));

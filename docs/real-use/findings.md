@@ -1704,3 +1704,19 @@ Verdicts agree at every effort. Upheld findings: `high` reproduced Task 6's and 
 - Evidence: ADR 0020, `packages/engine/src/hooks/pre-tool-use.ts`, the design's §6.
 - Outcome: open. It needs an operating-system sandbox, which the crew does not run today, and the report's check of the remote is the only catch for a push made this way.
 
+
+### 214. The document review of a small real feature did not converge in four rounds
+
+- Date: 2026-10-31. Project: this repository, item `2026-10-31-009`, the real full item run outside the kit (`docs/evals/2026-10-31-spec-review-results.md`). Category: `method`. Severity: high.
+- What happened: a nightly CSV export of the accounts, in a repository of one module, went through the five stages four times. Blocker and Major findings per round: 61, 37, 22, 32; Nits: 46, 57, 61, 61. Every Blocker and Major got its disposition and the fixes were applied between rounds, and each round's fixes gave the next round new text to find Majors in, so the count rose again at round 4. No round was clean, two clean rounds in a row could not come before the cap of 5, and the document review alone cost about 13 USD of the item's 16.83. `goldfish-style` runs in stage 7 and in stage 9, so its findings are counted twice a round (14 Majors of round 1's 57), and a style reviewer rated as Major what a design reviewer would weigh. Two escalations were right: what the CSV is for and who reads it are the owner's to say.
+- Expected: a review that converges on a feature this size, or stops by a rule when it will not.
+- Evidence: the sandbox's `spec-review/round{1..4}-stage{5..9}-*.md` and `consolidated.md`, the session's own count in its final message, `packages/engine/src/spec-review.ts` (the churn stop is a mark the session puts on one finding, not a rule on the counts).
+- Outcome: open. The method is the source's, brought whole by the user's decision of 2026-10-31. What would change it is a calibration the user decides: one style stage a round, the severity definitions tightened on the agents' pages, a stop when the count of Blockers and Majors does not fall between rounds, or a smaller review for a feature of this size. Until then a full item costs this.
+
+### 215. A daemon another plugin starts in a journey's session outlives the journey
+
+- Date: 2026-10-31. Project: this repository, item `2026-10-31-009`, the real journey (`docs/evals/2026-10-31-spec-review-results.md`). Category: `silent`. Severity: low.
+- What happened: the journey's session loads the installed plugins, and the memory plugin started its server (`wizardingcode-mem ui --auto`) under the journey's home. `crew journey stop` and the tick kill the session's process group, which that server had left, so it was still running after the journey was `done` and the agent removed. The driver's listing found it and it was stopped by hand.
+- Expected: when a journey ends, nothing its sessions started is left running.
+- Evidence: `packages/engine/src/journey-real.ts` (`kill: killGroup`), the driver's `pgrep` listing in the results file.
+- Outcome: open. The crew cannot know what a plugin starts. The session could run with the other plugins off, or the record could list the processes a session leaves, for the report to name.

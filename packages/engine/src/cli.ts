@@ -3303,8 +3303,7 @@ function journeyCommand(env: Env, args: string[], parsed: Parsed): Outcome {
       if ("refused" in stopped) return refuse(stopped.refused);
       return ok([`journey ${args[1]} stopped`, ...stopped.notes].join("\n"), {});
     }
-    case "tick":
-      return ok(tickJourneys(userDir, deps).join("\n"), {});
+    // "tick" never reaches here: dispatch runs it before the repository check, from any folder.
     case "report": {
       const id = args[1];
       const record = id ? readJourney(userDir, id) : null;
@@ -3652,6 +3651,9 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
   if (!command || command === "help") return ok(HELP);
   if (command === "mode" || command === "config")
     return settings(command, args, { userDir: userDirOf(io.env) });
+  // launchd runs the tick from the root of the disk: it reads the user's journeys, not a repository.
+  if (command === "journey" && args[0] === "tick")
+    return ok(tickJourneys(userDirOf(io.env), realJourneyDeps(io.env)).join("\n"), {});
   let paths = resolvePaths(io.cwd, io.env);
   if (!paths && command === "detect") {
     // `crew detect` is how a folder without git becomes a crew project.

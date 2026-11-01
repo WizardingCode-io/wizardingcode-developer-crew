@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { main } from "../src/cli.ts";
 import { loadEvidence, saveEvidence } from "../src/evidence.ts";
 import { onPreToolUse, openedSessionDenial } from "../src/hooks/pre-tool-use.ts";
 import {
@@ -23,7 +24,9 @@ import {
   tickJourneys,
   waitPart,
 } from "../src/journey.ts";
-import { loadPolicy } from "../src/policy.ts";
+import { DEFAULT_POLICY, loadPolicy } from "../src/policy.ts";
+import type { WorkItem } from "../src/types.ts";
+import { answerDecision } from "../src/work.ts";
 import { childEnv, hookContext, makeRepo, repoPaths, testEnv } from "./helpers.ts";
 
 const T0 = new Date("2026-10-31T20:00:00.000Z");
@@ -588,4 +591,84 @@ test("2026-10-31-008 AC-19: a confined session cannot rewrite the shared reposit
     "git config remote.origin.fetch +refs/heads/*:refs/remotes/origin/*",
   ])
     expect(openedSessionDenial(command, null), command).toBeNull();
+});
+
+test("2026-10-31-009 AC-6: the plist carries WIZARDINGCODE_HOME when one is set", () => {
+  const input = { node: "/n", bundle: "/b", home: "/h", path: ["/p"], logDir: "/l" };
+  expect(journeyPlist(input)).not.toContain("WIZARDINGCODE_HOME");
+  const plist = journeyPlist({ ...input, wizardingcodeHome: "/tmp/run/home" });
+  expect(plist).toContain("<key>WIZARDINGCODE_HOME</key>");
+  expect(plist).toContain("<string>/tmp/run/home</string>");
+  // The agent is installed with the home the journey was started under.
+  const root = makeRepo({ "README.md": "# t\n" });
+  const env = testEnv();
+  const { d, state } = deps(root);
+  d.baseEnv = { ...d.baseEnv, WIZARDINGCODE_HOME: "/tmp/run/home" };
+  startJourney(repoPaths(root, env).userDir, root, { mission: "m", allow: [] }, d);
+  expect(state.plists.join()).toContain("<string>/tmp/run/home</string>");
+});
+
+test("2026-10-31-009 AC-9: a tick's session loads the plugin the first session loaded", () => {
+  const input = { node: "/n", bundle: "/b", home: "/h", path: ["/p"], logDir: "/l" };
+  expect(journeyPlist(input)).not.toContain("WIZARDINGCODE_CREW_PLUGIN_DIR");
+  const plist = journeyPlist({ ...input, pluginDir: "/repo/plugins/core" });
+  expect(plist).toContain("<key>WIZARDINGCODE_CREW_PLUGIN_DIR</key>");
+  expect(plist).toContain("<string>/repo/plugins/core</string>");
+  const root = makeRepo({ "README.md": "# t\n" });
+  const env = testEnv();
+  const { d, state } = deps(root);
+  d.pluginDir = "/repo/plugins/core";
+  startJourney(repoPaths(root, env).userDir, root, { mission: "m", allow: [] }, d);
+  expect(state.plists.join()).toContain("<string>/repo/plugins/core</string>");
+});
+
+test("2026-10-31-009 AC-12: the tick works from the folder launchd runs it in", async () => {
+  const root = makeRepo({ "README.md": "# t\n" });
+  const env = testEnv();
+  const { d } = deps(root);
+  const userDir = repoPaths(root, env).userDir;
+  const started = startJourney(userDir, root, { mission: "m", allow: [] }, d);
+  if ("refused" in started) throw new Error(started.refused);
+  const file = join(userDir, "journeys", started.id, "journey.json");
+  const record = JSON.parse(readFileSync(file, "utf8"));
+  writeFileSync(file, JSON.stringify({ ...record, until: "2020-01-01T00:00:00.000Z" }));
+  // The real calls behind a tick stay away from this Mac's agents: its launchctl and osascript are these.
+  const stub = join(root, ".stub-bin");
+  mkdirSync(stub);
+  for (const name of ["launchctl", "osascript"]) {
+    writeFileSync(join(stub, name), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  }
+  const err: string[] = [];
+  const code = await main(["journey", "tick"], {
+    stdout: () => {},
+    stderr: (text) => err.push(text),
+    stdin: async () => "",
+    env: { ...env, HOME: root, PATH: `${stub}:/usr/bin:/bin` },
+    cwd: "/",
+  });
+  expect(err.join()).not.toContain("inactive here");
+  expect(code).toBe(0);
+  expect(JSON.parse(readFileSync(file, "utf8")).status).toBe("ended");
+});
+
+test("2026-10-31-009 AC-13: under the validator's policy an agent's own answer is refused, not stored", () => {
+  const work = {
+    decisions: [{ id: "D-1", question: "Which store?", default: "the table" }],
+  } as unknown as WorkItem;
+  const policy = { ...DEFAULT_POLICY, unattendedDecisions: "validator" as const };
+  const refused = answerDecision(work, "D-1", "a stream", { by: "agent", mode: "dontAsk" }, policy);
+  expect("refused" in refused && refused.refused).toContain("--validator stated-default");
+  expect(work.decisions?.[0]?.answer).toBeUndefined();
+  // The validator and a person still answer.
+  expect(
+    answerDecision(work, "D-1", undefined, { by: "validator", rule: "stated-default" }, policy),
+  ).toMatchObject({ answer: "the table" });
+  expect(answerDecision(work, "D-1", "a stream", { by: "user" }, policy)).toMatchObject({
+    answer: "a stream",
+  });
+  // Under another policy the agent's answer is recorded as it was.
+  const other = { decisions: [{ id: "D-1", question: "q" }] } as unknown as WorkItem;
+  expect(
+    answerDecision(other, "D-1", "x", { by: "agent", mode: "dontAsk" }, DEFAULT_POLICY),
+  ).toMatchObject({ answer: "x" });
 });

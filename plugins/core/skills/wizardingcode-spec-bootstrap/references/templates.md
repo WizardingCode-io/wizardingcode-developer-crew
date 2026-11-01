@@ -11,7 +11,7 @@ For a directory with source files.
 <What this component does and why it exists>
 
 ## Interface
-- <Public classes, functions and symbols, each cited>
+- <Public classes, functions and symbols, each cited as `[file:symbol]`>
 - <Child directories, each a link to its contract>
 
 ## Invariants

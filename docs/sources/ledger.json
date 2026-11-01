@@ -1976,6 +1976,256 @@
    "status": "refused",
    "decision": "D-2",
    "reason": "item 2026-10-31-007: left out with what the user left out on 2026-10-31; knowledge.md and CLAUDE.md serve it"
+  },
+  {
+   "source": "egm",
+   "rule": "scenario comprehension_auditor_undefined_jargon",
+   "status": "in",
+   "file": "plugins/core/evals/spec-review-planted/case.yaml",
+   "text": "name: spec-review-planted",
+   "proof": "eval-runner.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "scenario design_critic_missing_slo",
+   "status": "in",
+   "file": "plugins/core/evals/spec-review-planted/case.yaml",
+   "text": "name: spec-review-planted",
+   "proof": "eval-runner.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "scenario readiness_reviewer_vague_tasks",
+   "status": "in",
+   "file": "plugins/core/evals/spec-review-planted/case.yaml",
+   "text": "name: spec-review-planted",
+   "proof": "eval-runner.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "scenario structural_and_style_audit",
+   "status": "in",
+   "file": "plugins/core/evals/spec-review-planted/case.yaml",
+   "text": "name: spec-review-planted",
+   "proof": "eval-runner.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "scenario comprehension_without_reimplementation_standard",
+   "status": "in",
+   "file": "plugins/core/evals/spec-review-planted/case.yaml",
+   "text": "name: spec-review-planted",
+   "proof": "eval-runner.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "scenario comprehension_report_keeps_paraphrase",
+   "status": "in",
+   "file": "plugins/core/evals/spec-review-planted/case.yaml",
+   "text": "name: spec-review-planted",
+   "proof": "eval-runner.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "scenario orchestrate_parallel_critiques",
+   "status": "in",
+   "file": "plugins/core/evals/spec-review-planted/case.yaml",
+   "text": "name: spec-review-planted",
+   "proof": "eval-runner.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "scenario resolve_findings_gate",
+   "status": "in",
+   "file": "plugins/core/evals/spec-resolve-rules/case.yaml",
+   "text": "name: spec-resolve-rules",
+   "proof": "eval-runner.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "scenario escalate_uncheckable_contest",
+   "status": "in",
+   "file": "plugins/core/evals/spec-resolve-rules/case.yaml",
+   "text": "name: spec-resolve-rules",
+   "proof": "eval-runner.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "scenario convergence_not_zero_findings",
+   "status": "in",
+   "file": "plugins/core/evals/spec-loop-rules/case.yaml",
+   "text": "name: spec-loop-rules",
+   "proof": "eval-runner.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "scenario missing_reviewer_status_not_clean",
+   "status": "in",
+   "file": "plugins/core/evals/spec-loop-rules/case.yaml",
+   "text": "name: spec-loop-rules",
+   "proof": "eval-runner.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "scenario polymorphic_intake_concepts_brief",
+   "status": "in",
+   "file": "plugins/core/evals/spec-draft-write/case.yaml",
+   "text": "name: spec-draft-write",
+   "proof": "eval-runner.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "scenario owner_delegates_architecture_choice",
+   "status": "in",
+   "file": "plugins/core/evals/spec-draft-owner/case.yaml",
+   "text": "name: spec-draft-owner",
+   "proof": "eval-runner.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "scenario draft_and_write_design_doc",
+   "status": "in",
+   "file": "plugins/core/evals/spec-draft-write/case.yaml",
+   "text": "name: spec-draft-write",
+   "proof": "eval-runner.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "scenario artifact_first_delivery",
+   "status": "in",
+   "file": "plugins/core/evals/spec-draft-write/case.yaml",
+   "text": "name: spec-draft-write",
+   "proof": "eval-runner.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "scenario relative_link_formatting_spec",
+   "status": "in",
+   "file": "plugins/core/evals/spec-draft-write/case.yaml",
+   "text": "name: spec-draft-write",
+   "proof": "eval-runner.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "scenario finalize_reconciles_instead_of_self_grading",
+   "status": "in",
+   "file": "plugins/core/evals/spec-draft-write/case.yaml",
+   "text": "name: spec-draft-write",
+   "proof": "eval-runner.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "scenario open_ended_discovery_divergence",
+   "status": "in",
+   "file": "plugins/core/evals/spec-brainstorm-open/case.yaml",
+   "text": "name: spec-brainstorm-open",
+   "proof": "eval-runner.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "scenario decision_matrix_generation",
+   "status": "in",
+   "file": "plugins/core/evals/spec-brainstorm-open/case.yaml",
+   "text": "name: spec-brainstorm-open",
+   "proof": "eval-runner.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "scenario detect_all_drift",
+   "status": "in",
+   "file": "plugins/core/evals/spec-drift-detect/case.yaml",
+   "text": "name: spec-drift-detect",
+   "proof": "eval-runner.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "scenario bootstrap_small_tree",
+   "status": "in",
+   "file": "plugins/core/evals/spec-bootstrap-small/case.yaml",
+   "text": "name: spec-bootstrap-small",
+   "proof": "eval-runner.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "scenario bootstrap_code_grounding",
+   "status": "in",
+   "file": "plugins/core/evals/spec-bootstrap-small/case.yaml",
+   "text": "name: spec-bootstrap-small",
+   "proof": "eval-runner.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "scenario bootstrap_bazel_target_syntax",
+   "status": "in",
+   "file": "plugins/core/evals/spec-bootstrap-small/case.yaml",
+   "text": "name: spec-bootstrap-small",
+   "proof": "eval-runner.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "scenario bootstrap_safety_gate",
+   "status": "in",
+   "file": "plugins/core/evals/spec-bootstrap-gate/case.yaml",
+   "text": "name: spec-bootstrap-gate",
+   "proof": "eval-runner.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "scenario readiness_gate_modal",
+   "status": "refused",
+   "decision": "D-1",
+   "reason": "item 2026-10-31-009: it tests a stop the user left out when they chose hybrid on 2026-10-31"
+  },
+  {
+   "source": "egm",
+   "rule": "scenario handoff_gate_modal_routing",
+   "status": "refused",
+   "decision": "D-1",
+   "reason": "item 2026-10-31-009: it tests a stop the user left out when they chose hybrid on 2026-10-31"
+  },
+  {
+   "source": "egm",
+   "rule": "scenario section_approval_modal_empty_write_in_guard",
+   "status": "refused",
+   "decision": "D-1",
+   "reason": "item 2026-10-31-009: it tests a stop the user left out when they chose hybrid on 2026-10-31"
+  },
+  {
+   "source": "egm",
+   "rule": "scenario directory_finalize_modal_selection",
+   "status": "refused",
+   "decision": "D-1",
+   "reason": "item 2026-10-31-009: it tests a stop the user left out when they chose hybrid on 2026-10-31"
+  },
+  {
+   "source": "egm",
+   "rule": "scenario intake_preset_selection_before_split_discovery",
+   "status": "refused",
+   "decision": "D-1",
+   "reason": "item 2026-10-31-009: it tests a stop the user left out when they chose hybrid on 2026-10-31"
+  },
+  {
+   "source": "egm",
+   "rule": "scenario feature_spec_gates_only_bypass_flow",
+   "status": "refused",
+   "decision": "D-1",
+   "reason": "item 2026-10-31-009: it tests a stop the user left out when they chose hybrid on 2026-10-31"
+  },
+  {
+   "source": "egm",
+   "rule": "bootstrap: Bazel target syntax",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-spec-bootstrap/SKILL.md",
+   "text": "never `//pkg...` or `//pkg:...`",
+   "proof": "skill.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "draft: relative links",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-spec-draft/SKILL.md",
+   "text": "relative paths inside a package and to a sibling",
+   "proof": "skill.test.ts"
   }
  ]
 }

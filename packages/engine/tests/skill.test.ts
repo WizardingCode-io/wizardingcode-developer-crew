@@ -1983,3 +1983,70 @@ test("2026-10-31-008 AC-9: the journey's skill has the five headings, the review
   expect(skill).toContain("crew journey");
   expect(Buffer.byteLength(skill, "utf8")).toBeLessThanOrEqual(SKILL_PAGE_MAX_BYTES);
 });
+
+test("2026-10-31-009 AC-2: the ledger has a row for each of the source's 30 scenarios", () => {
+  const ledger = JSON.parse(repoFile("docs/sources/ledger.json")) as { rows: LedgerRow[] };
+  const rows = ledger.rows.filter((r) => r.source === "egm");
+  const inCase: Record<string, string[]> = {
+    "spec-review-planted": [
+      "comprehension_auditor_undefined_jargon",
+      "design_critic_missing_slo",
+      "readiness_reviewer_vague_tasks",
+      "structural_and_style_audit",
+      "comprehension_without_reimplementation_standard",
+      "comprehension_report_keeps_paraphrase",
+      "orchestrate_parallel_critiques",
+    ],
+    "spec-resolve-rules": ["resolve_findings_gate", "escalate_uncheckable_contest"],
+    "spec-loop-rules": ["convergence_not_zero_findings", "missing_reviewer_status_not_clean"],
+    "spec-draft-owner": ["owner_delegates_architecture_choice"],
+    "spec-draft-write": [
+      "polymorphic_intake_concepts_brief",
+      "draft_and_write_design_doc",
+      "artifact_first_delivery",
+      "relative_link_formatting_spec",
+      "finalize_reconciles_instead_of_self_grading",
+    ],
+    "spec-brainstorm-open": ["open_ended_discovery_divergence", "decision_matrix_generation"],
+    "spec-drift-detect": ["detect_all_drift"],
+    "spec-bootstrap-small": [
+      "bootstrap_small_tree",
+      "bootstrap_code_grounding",
+      "bootstrap_bazel_target_syntax",
+    ],
+    "spec-bootstrap-gate": ["bootstrap_safety_gate"],
+  };
+  const listed = Object.values(inCase).flat();
+  expect(listed).toHaveLength(24);
+  for (const [name, scenarios] of Object.entries(inCase))
+    for (const scenario of scenarios) {
+      const row = rows.find((r) => r.rule === `scenario ${scenario}`);
+      expect(row?.status, scenario).toBe("in");
+      expect(row?.file, scenario).toBe(`plugins/core/evals/${name}/case.yaml`);
+    }
+  for (const scenario of [
+    "readiness_gate_modal",
+    "handoff_gate_modal_routing",
+    "section_approval_modal_empty_write_in_guard",
+    "directory_finalize_modal_selection",
+    "intake_preset_selection_before_split_discovery",
+    "feature_spec_gates_only_bypass_flow",
+  ]) {
+    const row = rows.find((r) => r.rule === `scenario ${scenario}`);
+    expect(row?.status, scenario).toBe("refused");
+    expect(row?.reason, scenario).toContain("2026-10-31-009");
+    expect(row?.decision, scenario).toBe("D-1");
+  }
+});
+
+test("2026-10-31-009 AC-3: bootstrap states the Bazel target syntax and draft the relative links", () => {
+  expect(specSkill("bootstrap")).toContain("never `//pkg...` or `//pkg:...`");
+  expect(specSkill("draft")).toContain("relative paths inside a package and to a sibling");
+});
+
+test("2026-10-31-009 AC-10: the bootstrap opens an item, keeps the citations and reads back with Read", () => {
+  const text = specSkill("bootstrap");
+  expect(text).toContain("Open the crew item first");
+  expect(text).toContain("Keep the scout's `[file:symbol]` citations");
+  expect(text).toContain("with the Read tool, after the last write");
+});

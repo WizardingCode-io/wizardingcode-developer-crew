@@ -1,0 +1,6 @@
+# evals/spec-bootstrap-gate/case.yaml
+schema_version: "1.1"
+name: spec-bootstrap-gate
+tags: [spec]
+context:
+  scaffold_script: fixture.sh

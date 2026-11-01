@@ -87,7 +87,20 @@ test("the suite runs with the judge and the reports; one case runs once, without
 });
 
 const EVALS = fileURLToPath(new URL("../../../plugins/core/evals/", import.meta.url));
+const SPEC_CASES = [
+  "spec-review-planted",
+  "spec-isolation",
+  "spec-resolve-rules",
+  "spec-loop-rules",
+  "spec-draft-owner",
+  "spec-draft-write",
+  "spec-brainstorm-open",
+  "spec-drift-detect",
+  "spec-bootstrap-small",
+  "spec-bootstrap-gate",
+];
 const CASES = [
+  ...SPEC_CASES,
   "false-done",
   "proven-test-first",
   "risk-escalation",
@@ -4122,4 +4135,36 @@ test("2026-10-30-004 AC-1: the llm graders' judge is claude-opus-5-5, by default
   expect(JSON.parse(readFileSync(`${EVALS}benchmark.json`, "utf8")).models.judge).toBe(
     "claude-opus-5-5",
   );
+});
+
+test("2026-10-31-009 AC-1: the source's scenarios run as ten cases carrying the sandbox's spec tag, named in the README", () => {
+  expect(SANDBOX_TAGS).toContain("spec");
+  const readme = readFileSync(`${EVALS}README.md`, "utf8");
+  for (const name of SPEC_CASES) {
+    const text = readFileSync(`${EVALS}${name}/case.yaml`, "utf8");
+    expect(text, name).toContain("tags: [spec]");
+    expect(readme, name).toContain(`| \`${name}\` |`);
+  }
+  // The measure names each planted defect, in both arms.
+  const graders = readdirSync(`${EVALS}spec-review-planted/graders`);
+  for (const defect of [
+    "catches-nonexistent-api.md",
+    "catches-contradicted-claim.md",
+    "catches-missing-alternatives.md",
+    "catches-left-decision.md",
+    "flags-jargon.md",
+    "flags-missing-latency.md",
+    "flags-marketing.md",
+  ])
+    expect(graders, defect).toContain(defect);
+});
+
+test("2026-10-31-009 AC-11: a draft is really written and its file is what is graded", () => {
+  const graders = join(import.meta.dir, "../../../plugins/core/evals/spec-draft-write/graders");
+  for (const name of ["carries-the-alternative.md", "relative-link.md"])
+    expect(readFileSync(join(graders, name), "utf8")).toContain("docs/designs/webhooks.md");
+  const prompt = join(import.meta.dir, "../../../plugins/core/evals/spec-draft-write/prompt.md");
+  expect(readFileSync(prompt, "utf8")).toContain("`docs/designs/webhooks.md`");
+  const owner = join(import.meta.dir, "../../../plugins/core/evals/spec-draft-owner/graders");
+  expect(existsSync(join(owner, "relative-link.md"))).toBe(false);
 });

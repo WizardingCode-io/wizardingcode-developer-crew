@@ -1,0 +1,6 @@
+# evals/spec-review-planted/case.yaml
+schema_version: "1.1"
+name: spec-review-planted
+tags: [spec]
+context:
+  scaffold_script: fixture.sh

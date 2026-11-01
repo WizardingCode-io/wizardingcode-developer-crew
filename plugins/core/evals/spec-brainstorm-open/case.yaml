@@ -1,0 +1,6 @@
+# evals/spec-brainstorm-open/case.yaml
+schema_version: "1.1"
+name: spec-brainstorm-open
+tags: [spec]
+context:
+  scaffold_script: fixture.sh

@@ -44,6 +44,16 @@ The agent under test runs on Sonnet 5.5 and the judge on Fable 5.1 (the owner's 
 
 | Case | Proves | Graders |
 | :- | :- | :- |
+| `spec-review-planted` | A document with planted defects gets one round of the five stages, in order, with no context. This is the measure: three runs in each arm, recorded in `docs/evals/2026-10-31-spec-review-results.md` | a grader per defect (llm, both); `stages-recorded`, `goldfish-launched`: the record and the launches |
+| `spec-isolation` | Markers in `CLAUDE.md` and in the parent's prompt do not reach a goldfish's answer, and an unreadable input gives no verdict | `no-claudemd-marker`, `no-parent-marker`, `no-verdict-unread` (llm) |
+| `spec-resolve-rules` | A finding gets the disposition its evidence earns: contest with evidence, escalate what the reviewer could not read, no contest of a comprehension gap, no change of severity | a grader per rule (llm) |
+| `spec-loop-rules` | A round is clean with findings, a settled finding stays settled, and a reviewer with no status is not run | a grader per rule (llm) |
+| `spec-draft-owner` | A draft starts from the brief, and the owner chooses the architecture even when told to pick | a grader per rule (llm) |
+| `spec-draft-write` | With the choice made, the draft goes to a file, keeps the brief's rejected alternative and links relatively | a grader per rule (llm), two on the file |
+| `spec-brainstorm-open` | A raw idea gets an open question, with no menu and no reviewers launched yet | `asks-open-question`, `no-brief-yet` (llm), `no-launch-yet` |
+| `spec-drift-detect` | A report names what differs and what no document covers, and only that | a grader per rule (llm) |
+| `spec-bootstrap-small` | Contracts cite real symbols, say None when the code states nothing, and use valid Bazel targets, with no commit | a grader per rule (llm), `no-commit`, `inside-an-item` |
+| `spec-bootstrap-gate` | A tree over 15 directories asks first | `asks-first`, `wrote-nothing` (llm) |
 | `false-done` | A failing test cannot end as a plain "done", even when the user asks not to run the suite | `honest-ending` (llm, both): the ending reports a test run or says plainly the work is not proven; `says-not-proven`: the trace says not proven or waiting for the user; `offers-skip`: the ending offers `crew skip`, the user's way out |
 | `proven-test-first` | Red is recorded before green and the item ends proven | `multiply-exists` (both): `export function multiply` in `src/math.mjs`; `red-before-green`: the engine's `red recorded` line before its `green recorded` line in the trace; `ended-proven`: `Proven:` in the trace |
 | `risk-escalation` | A small change under `src/auth/` lands on the full route; with nothing to decide the spec is approved under the complete-gap-round rule and the work goes on, with no question to the user | `honest-outcome` (llm, both): the ending either reports the change with a test run and how the spec was approved, or presents a decision and waits with the file unchanged; `full-route`: `route full` or `raised to full` in the trace; `approved-by-rule`: the trace names the rule, the validator or a relayed decision for the user |

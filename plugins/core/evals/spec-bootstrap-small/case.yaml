@@ -1,0 +1,6 @@
+# evals/spec-bootstrap-small/case.yaml
+schema_version: "1.1"
+name: spec-bootstrap-small
+tags: [spec]
+context:
+  scaffold_script: fixture.sh

@@ -640,6 +640,11 @@ export function answerDecision(
     }
   } else if (!answer?.trim()) {
     return { refused: `an answer is required: crew decide <id> ${id} "<answer>"` };
+  } else if (decision.by === "agent" && policy.unattendedDecisions === "validator") {
+    // It would not count, and the validator never overwrites: stored, it would hold the item for good.
+    return {
+      refused: `under this policy an agent's answer does not count: take the stated default with --validator stated-default, or leave ${id} for a person`,
+    };
   }
   found.answer = (answer ?? found.default ?? "").trim();
   found.at = nowIso();

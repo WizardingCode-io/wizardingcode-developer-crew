@@ -160,6 +160,8 @@ export function journeyPlist(input: {
   home: string;
   path: readonly string[];
   logDir: string;
+  wizardingcodeHome?: string | undefined;
+  pluginDir?: string | null | undefined;
 }): string {
   const xml = (text: string) =>
     text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -185,6 +187,18 @@ export function journeyPlist(input: {
     `\t\t<string>${xml(input.path.join(":"))}</string>`,
     "\t\t<key>HOME</key>",
     `\t\t<string>${xml(input.home)}</string>`,
+    ...(input.wizardingcodeHome
+      ? [
+          "\t\t<key>WIZARDINGCODE_HOME</key>",
+          `\t\t<string>${xml(input.wizardingcodeHome)}</string>`,
+        ]
+      : []),
+    ...(input.pluginDir
+      ? [
+          "\t\t<key>WIZARDINGCODE_CREW_PLUGIN_DIR</key>",
+          `\t\t<string>${xml(input.pluginDir)}</string>`,
+        ]
+      : []),
     "\t</dict>",
     "\t<key>StandardOutPath</key>",
     `\t<string>${xml(join(input.logDir, "agent.log"))}</string>`,
@@ -208,6 +222,8 @@ function installAgent(userDir: string, deps: JourneyDeps): void {
       home: deps.home,
       path: deps.pathEntries,
       logDir,
+      wizardingcodeHome: deps.baseEnv.WIZARDINGCODE_HOME,
+      pluginDir: deps.pluginDir,
     }),
   );
   deps.launchctl(["bootstrap", `gui/${deps.uid}`, path]);
