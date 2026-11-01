@@ -1,0 +1,300 @@
+{
+  "run": "2026-11-01-1",
+  "at": "2026-11-01T12:00:08.766Z",
+  "targets": [
+    "spec-bootstrap-gate",
+    "spec-bootstrap-small"
+  ],
+  "baseline": {
+    "spec-bootstrap-gate": {
+      "name": "spec-bootstrap-gate",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": []
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": []
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": []
+        }
+      ],
+      "mean": 1,
+      "spread": 0,
+      "reads": [],
+      "errored": false,
+      "costUsd": 0.34411369999999997
+    },
+    "spec-bootstrap-small": {
+      "name": "spec-bootstrap-small",
+      "runs": [
+        {
+          "score": 0.8571428571428571,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "reads-back",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            }
+          ],
+          "reads": []
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": []
+        },
+        {
+          "score": 0.8571428571428571,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "reads-back",
+              "explanation": "judge votes: FAIL PASS FAIL"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/wizardingcode-spec-bootstrap/references/templates.md"
+          ]
+        }
+      ],
+      "mean": 0.9047619047619048,
+      "spread": 0.1428571428571429,
+      "reads": [
+        "plugins/core/skills/wizardingcode-spec-bootstrap/references/templates.md"
+      ],
+      "errored": false,
+      "costUsd": 1.8502966
+    },
+    "writing-standard-ending-without-tells": {
+      "name": "writing-standard-ending-without-tells",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 0.8333333333333334,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "deactivate-added",
+              "explanation": "pattern not found in file src/accounts.mjs"
+            }
+          ],
+          "reads": []
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/understand.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        }
+      ],
+      "mean": 0.9444444444444445,
+      "spread": 0.16666666666666663,
+      "reads": [
+        "plugins/core/skills/crew/references/understand.md",
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md"
+      ],
+      "errored": false,
+      "costUsd": 2.22789265
+    }
+  },
+  "proposals": [
+    {
+      "id": "P-1",
+      "status": "probed",
+      "refusal": null,
+      "diffStat": [
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/references/writing.md"
+        }
+      ],
+      "rationale": "That cap is on the frontend standard, not on writing.md, so the edit breaks no pinned test. Nothing else is needed.\n\nI changed one harness page and nothing else: `plugins/core/skills/crew/references/writing.md`, a new section \"Read back what you wrote\" between \"Facts are kept\" and \"Where it applies\". The `reads-back` grader of `spec-bootstrap-small` judges the trace and wants a Read of a written README after the last Write; in the two failing runs the other six graders passed (the item was opened, the symbols cited, nothing committed), so the lead wrote the contracts and ended with no Read after its last write, which fits a read-back followed by a correction that was never re-read, a read-back through `cat`, or a read of only the last file. The page that governs that step, `plugins/core/skills/wizardingcode-spec-bootstrap/SKILL.md` step 8, is outside the folders I may edit, and no other page in my folders is read by a bootstrap session at that moment: the Stop hook never forces a gate run on READMEs, since `**/*.md` is in the engine's default watch exclusions, and the crew method's Build and Deliver pages are not opened for a documentation chore. The one page every session is pointed to when it writes a text is `references/writing.md`, named by the session-start hook and by `build.md` and `deliver.md`, so the rule now lives there in the crew's words: a hand-written file is read back whole with the Read tool after its last write, the read is the last call on the file, a correction is followed by another read, a shell read or a memory of the sent text does not count, and the ending says the files were read back. The test's pins on writing.md (its four headings, the tells slice, the quoted phrases) are intact, and the only byte cap near it is on the frontend standard. I did not run the tests or the eval, and the fix for the right reason in full belongs in the bootstrap skill's step 8, which I left untouched because it is out of scope.",
+      "probeSet": [
+        "spec-bootstrap-gate",
+        "spec-bootstrap-small",
+        "writing-standard-ending-without-tells"
+      ],
+      "probe": {
+        "spec-bootstrap-gate": {
+          "name": "spec-bootstrap-gate",
+          "runs": [
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            }
+          ],
+          "mean": 1,
+          "spread": 0,
+          "reads": [],
+          "errored": false,
+          "costUsd": 0.3427397
+        },
+        "spec-bootstrap-small": {
+          "name": "spec-bootstrap-small",
+          "runs": [
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            }
+          ],
+          "mean": 1,
+          "spread": 0,
+          "reads": [],
+          "errored": false,
+          "costUsd": 1.7746818
+        },
+        "writing-standard-ending-without-tells": {
+          "name": "writing-standard-ending-without-tells",
+          "runs": [
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            }
+          ],
+          "mean": 1,
+          "spread": 0,
+          "reads": [],
+          "errored": false,
+          "costUsd": 2.92308565
+        }
+      },
+      "verdict": "lose",
+      "gain": 0.09523809523809523
+    },
+    {
+      "id": "P-2",
+      "status": "unprobed",
+      "refusal": "the probe set (20 cases, about 178.26 USD by the baseline's costs) is above what is left under the ceiling (3.67 USD); not probed",
+      "diffStat": [
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/references/deliver.md"
+        },
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/references/gate.md"
+        },
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/references/receive.md"
+        }
+      ],
+      "rationale": "Nothing pins the three extended sentences, and the Gate page's round-cap sentence that a test quotes whole is untouched since my sentence sits before it. The edits are complete.\n\nI changed three harness pages and nothing else: `plugins/core/skills/crew/references/gate.md` (one sentence in step 4 of the judgement gates, after \"Fix them\"), `plugins/core/skills/crew/references/deliver.md` (one sentence in the opening paragraph, before \"Tell the user\") and `plugins/core/skills/crew/references/receive.md` (one sentence after the `--criterion` line of section 2). The `reads-back` grader of `spec-bootstrap-small` judges the trace and wants a Read tool call on a written README after the last write to one, and the other six graders passed in the failing runs, so the contracts were written inside an item with the right citations and the ending is where the read-back was lost. The bootstrap skill (outside my folders) already says to read back with the Read tool after the last write, but its step 8 ends on \"remove what does not hold\", and the crew's own loop adds more writes after that read-back on the route this request takes (scope above one spot, so standard): a judgement-gate finding fixed with Edit before the next gate run, a lead's `returned` at delivery, each followed by the ending with no read of the corrected file, which is exactly what a unanimous FAIL and a split vote look like. Markdown is outside the watch, so no hook blocks the turn or names the gap. The three sentences now say that a document the item delivers is read back with the Read tool after every write to it, a correction included, so the read-back is the last thing done to the file; the gate's own scan is not one. The crew skill page itself was ruled out by measurement: it holds 9252 bytes against its 9254-byte ceiling. `spec-bootstrap-gate` reads none of these pages before it asks and writes nothing, so its score stands. I ran no tests and no eval, since this session has no shell; the only pinned sentenc",
+      "probeSet": [
+        "code-quality-flags-unasked-dependency",
+        "document-entry-opens-item",
+        "gap-erasure-or-deactivation",
+        "judgement-gate-not-run",
+        "pack-agentic-os-seats-the-team",
+        "pack-laravel-blade-tags-the-view-absent",
+        "pack-next-refines-the-gates",
+        "prose-gate-refuses-chatbot-artefact",
+        "proven-test-first",
+        "rounds-bounded",
+        "site-bakery",
+        "site-law",
+        "site-synth",
+        "spec-bootstrap-gate",
+        "spec-bootstrap-small",
+        "strategy-declares-phases",
+        "thread-with-contracts",
+        "ticket-triaged-against-business",
+        "ui-motion-frequency-found",
+        "ui-reduced-motion-fails"
+      ],
+      "probe": {},
+      "verdict": null,
+      "gain": 0
+    }
+  ],
+  "composition": null,
+  "kept": null,
+  "branch": null,
+  "provider": {
+    "name": "runtime",
+    "agentModel": "claude-sonnet-5-5",
+    "judgeModel": "claude-opus-5-5",
+    "claudeModels": true
+  },
+  "costUsd": 16.32671135,
+  "lessons": [
+    "K-291"
+  ],
+  "exit": 0,
+  "unmeasured": [
+    "spec-brainstorm-open",
+    "spec-draft-owner",
+    "spec-draft-write",
+    "spec-drift-detect",
+    "spec-isolation",
+    "spec-loop-rules",
+    "spec-resolve-rules",
+    "spec-review-planted"
+  ]
+}
