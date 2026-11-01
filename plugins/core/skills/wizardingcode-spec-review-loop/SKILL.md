@@ -1,6 +1,6 @@
 ---
 name: wizardingcode-spec-review-loop
-description: "The rounds of a document review: what makes a round clean, when it has converged, the settled list, the cap of 5 and churn. Also runs any chosen reviewers over any document."
+description: "The rounds of a document review: what makes a round clean, when it has converged, the settled list, the cap of 5, no progress and churn. Also runs any chosen reviewers over any document."
 ---
 
 # Spec review loop
@@ -21,7 +21,7 @@ The document, the part of it under review by heading (a heading survives edits, 
 4. **A fixed finding raised again re-opens.** The fix failed, or a later edit undid it. A fixed finding is not settled.
 5. **Judge the round from its reviews, before the fixes.** It is clean when every reviewer ran and no Blocker or Major is unsettled. Nits do not block.
 6. **Converged is two consecutive clean rounds.** One is not enough: the next fresh reviewer can find a different gap in the same text.
-7. **The stops.** A cap of 5 rounds, and churn: a new finding at the scope of an applied fix, which reverting that fix would resolve (`--churn` on `crew spec-review resolve`). Write the open findings by severity, then ask the person one question: accept, go on past the cap, or return the document to drafting.
+7. **The stops.** A cap of 5 rounds; no progress: a round that raises no fewer Blockers and Majors than the last round in which every reviewer ran, above zero (the engine counts what the reviewers raised, never the dispositions; ADR 0021); and churn: a new finding at the scope of an applied fix, which reverting that fix would resolve (`--churn` on `crew spec-review resolve`). Write the open findings by severity, then ask the person one question: accept, go on past the cap, or return the document to drafting.
 
 Who decides: that choice is the person's. Ask, relay their own words, never answer, accept or pick for them. In a journey the item waits and you never run `accept`. An `escalate` is never turned into a `contest` to avoid asking.
 

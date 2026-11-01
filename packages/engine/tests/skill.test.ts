@@ -2050,3 +2050,82 @@ test("2026-10-31-009 AC-10: the bootstrap opens an item, keeps the citations and
   expect(text).toContain("Keep the scout's `[file:symbol]` citations");
   expect(text).toContain("with the Read tool, after the last write");
 });
+
+const SEVERITY_LINE =
+  "Blocker: the document cannot be built as written, or states something false. Major: on the finding you name what a competent reader would build wrong, or the real risk they would miss; a finding you cannot write that sentence for is a Nit. Nit: wording, structure, repetition, headings, and anything that reads worse than it should.";
+
+test("2026-11-01-002 AC-1: the spec-review skill lists stage 9 without the style reviewer", () => {
+  const review = specSkill("review");
+  expect(review).toContain(
+    "- 7, critic: `goldfish-design`, `goldfish-structural`, `goldfish-style`",
+  );
+  expect(review).toContain("- 9, readiness: `goldfish-readiness`, `goldfish-codebase`, `plan.md`");
+  expect(review).not.toContain("`goldfish-codebase`, `goldfish-style`");
+});
+
+test("2026-11-01-002 AC-8: the seven goldfish pages carry the severity line word for word, and the codebase page's Major says what would be built wrong", () => {
+  for (const role of [
+    "zoom-out",
+    "comprehension",
+    "design",
+    "structural",
+    "style",
+    "readiness",
+    "codebase",
+  ]) {
+    const page = repoFile(`plugins/core/agents/goldfish-${role}.md`);
+    expect(page, role).toContain(SEVERITY_LINE);
+    expect(page, role).not.toContain("Major: a competent reader would build the wrong thing");
+  }
+  expect(repoFile("plugins/core/agents/goldfish-codebase.md")).toContain(
+    "created over an existing one, or changed when it should be new",
+  );
+  const rows = (
+    JSON.parse(repoFile("docs/sources/ledger.json")) as { rows: Record<string, string>[] }
+  ).rows;
+  const row = rows.find(
+    (r) => r.rule === "severity: a Major names what would be built wrong (calibration, ADR 0021)",
+  );
+  expect(row?.status).toBe("in");
+  expect(row?.text).toBe("on the finding you name what a competent reader would build wrong");
+  expect(row?.file && repoFile(row.file)).toContain(row?.text ?? "\u0000");
+});
+
+test("2026-11-01-002 AC-4: the calibration is on record: ADR 0021, the loop skill, the README and the ledger", () => {
+  const adr = readdirSync(repoPath("docs/adr")).find((f) => f.startsWith("0021-"));
+  expect(adr).toBeDefined();
+  expect(repoFile(`docs/adr/${adr}`)).toContain("no progress");
+  expect(specSkill("review-loop")).toContain("no progress");
+  expect(repoFile("README.md")).toContain("when the count of Blockers and Majors does not fall");
+  const rows = (
+    JSON.parse(repoFile("docs/sources/ledger.json")) as { rows: Record<string, string>[] }
+  ).rows;
+  for (const rule of [
+    "stage 9: readiness and codebase, style in stage 7 only (calibration, ADR 0021)",
+    "stop: no progress when the count does not fall (calibration, ADR 0021)",
+  ]) {
+    const row = rows.find((r) => r.rule === rule);
+    expect(row?.status, rule).toBe("in");
+    expect(row?.file && repoFile(row.file), rule).toContain(row?.text ?? "\u0000");
+  }
+  // The source's row keeps its own proof; the stop has a row of its own.
+  expect(rows.find((r) => r.rule === "review-loop: two clean rounds, the cap, churn")?.text).toBe(
+    "Converged is two consecutive clean rounds",
+  );
+  const loopStop = rows.find(
+    (r) => r.rule === "review-loop: the stop on no progress (calibration, ADR 0021)",
+  );
+  expect(loopStop?.file && repoFile(loopStop.file)).toContain(loopStop?.text ?? "\u0000");
+  // Finding 214's outcome is written from the measure, and the measure's record holds the table.
+  const findings = repoFile("docs/real-use/findings.md");
+  const outcome = /### 214\.[\s\S]*?- Outcome: ([^\n]*)/.exec(findings)?.[1] ?? "";
+  expect(outcome).toContain("38, 22, 14 and 16");
+  expect(outcome).toContain("stays open");
+  const results = repoFile("docs/evals/2026-10-31-spec-review-results.md");
+  expect(results).toContain("## The calibrated review on the same item, 2026-11-01");
+  for (const row of [
+    "| 1 | 0/3 | 1/6 | 0/12 | 0/3 | 1/12 | 38 | 61 |",
+    "| 4 | 0/2 | 0/2 | 0/7 | 0/0 | 0/5 | 16 | 32 |",
+  ])
+    expect(results).toContain(row);
+});

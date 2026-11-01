@@ -2226,6 +2226,38 @@
    "file": "plugins/core/skills/wizardingcode-spec-draft/SKILL.md",
    "text": "relative paths inside a package and to a sibling",
    "proof": "skill.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "stage 9: readiness and codebase, style in stage 7 only (calibration, ADR 0021)",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-spec-review/SKILL.md",
+   "text": "9, readiness: `goldfish-readiness`, `goldfish-codebase`, `plan.md`",
+   "proof": "skill.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "stop: no progress when the count does not fall (calibration, ADR 0021)",
+   "status": "in",
+   "file": "packages/engine/src/spec-review.ts",
+   "text": "no progress",
+   "proof": "spec-review.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "severity: a Major names what would be built wrong (calibration, ADR 0021)",
+   "status": "in",
+   "file": "plugins/core/agents/goldfish-design.md",
+   "text": "on the finding you name what a competent reader would build wrong",
+   "proof": "skill.test.ts"
+  },
+  {
+   "source": "egm",
+   "rule": "review-loop: the stop on no progress (calibration, ADR 0021)",
+   "status": "in",
+   "file": "plugins/core/skills/wizardingcode-spec-review-loop/SKILL.md",
+   "text": "no progress: a round that raises no fewer Blockers and Majors",
+   "proof": "skill.test.ts"
   }
  ]
 }

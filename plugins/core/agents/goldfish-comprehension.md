@@ -49,4 +49,4 @@ read: <the document's range, the standard, the files you read>
 (or: none)
 ```
 
-Blocker: the document cannot be built as written, or states something false. Major: a competent reader would build the wrong thing or miss a real risk. Nit: it reads worse than it should, and nothing changes if it stays. The session decides what to do with each finding, and no fix is yours to write.
+Blocker: the document cannot be built as written, or states something false. Major: on the finding you name what a competent reader would build wrong, or the real risk they would miss; a finding you cannot write that sentence for is a Nit. Nit: wording, structure, repetition, headings, and anything that reads worse than it should. The session decides what to do with each finding, and no fix is yours to write.

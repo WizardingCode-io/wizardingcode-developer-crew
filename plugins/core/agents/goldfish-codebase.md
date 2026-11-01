@@ -26,7 +26,7 @@ Read the detailed range against `${CLAUDE_PLUGIN_ROOT}/skills/crew/rubrics/spec-
 4. Flag logic, validation, constants, environment variables, null checks, retry limits and failure paths in the code that the text needs and omits.
 5. Skip simple unit tests. Shared mocks, helpers and base classes count as code.
 
-**A planned file is not a finding.** A plan lists files it will create, and their absence is no defect. If the plan lists files without marking each `Create`, `Modify` or `Delete`, say so once as Major and do not flag each path.
+**A planned file is not a finding.** A plan lists files it will create, and their absence is no defect. If the plan lists files without marking each `Create`, `Modify` or `Delete`, say so once as Major, since a file not marked can be created over an existing one, or changed when it should be new, and do not flag each path.
 
 ## Brainstorm mode
 
@@ -50,4 +50,4 @@ read: <the document's range, the standard, the files you read>
 (or: none)
 ```
 
-Blocker: the document cannot be built as written, or states something false. Major: a competent reader would build the wrong thing or miss a real risk. Nit: it reads worse than it should, and nothing changes if it stays. The session decides what to do with each finding, and no fix is yours to write.
+Blocker: the document cannot be built as written, or states something false. Major: on the finding you name what a competent reader would build wrong, or the real risk they would miss; a finding you cannot write that sentence for is a Nit. Nit: wording, structure, repetition, headings, and anything that reads worse than it should. The session decides what to do with each finding, and no fix is yours to write.

@@ -21,7 +21,7 @@ Every item on the full route, in its `spec-review` phase. The guard into build r
    - 6, comprehension: `goldfish-comprehension`, both files, no standard. Its paraphrase is compared with what you meant: a wrong one is a finding.
    - 7, critic: `goldfish-design`, `goldfish-structural`, `goldfish-style`, `spec.md`, `rubrics/spec-feature.md`, `rubrics/spec-heilmeier.md`.
    - 8, second zoom out: `goldfish-zoom-out`, both files, on what stages 6 and 7 added; name stage 5's findings so what was accepted is left alone.
-   - 9, readiness: `goldfish-readiness`, `goldfish-codebase`, `goldfish-style`, `plan.md`, `rubrics/spec-readiness.md`, `rubrics/spec-reimplementation.md`.
+   - 9, readiness: `goldfish-readiness`, `goldfish-codebase`, `plan.md`, `rubrics/spec-readiness.md`, `rubrics/spec-reimplementation.md`.
 
    Pass paths and the task, never your reasoning, the conversation or logs. A reviewer cannot open a URL: save the page in the workspace and pass its path.
 3. **Fresh every time.** Every reviewer in every round is a fresh launch, never resumed by `SendMessage` or `crew resume`: this is the one exception to the method's "resume, never relaunch", and a refused record means launching a new one.
