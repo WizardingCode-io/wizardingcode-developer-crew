@@ -1,0 +1,35 @@
+# Improvement run 2026-11-01-3
+
+- At: 2026-11-01T14:00:04.193Z
+- Targets: spec-draft-write, spec-drift-detect
+- Provider: runtime (agent claude-sonnet-5-5, judge claude-opus-5-5)
+
+## Baseline
+
+| Case | Scores | Mean | Spread |
+| :- | :- | -: | -: |
+| spec-draft-write | 1.00, 1.00, 1.00 | 1.00 | 0.00 |
+| spec-drift-detect | 1.00, 1.00, 1.00 | 1.00 | 0.00 |
+
+## P-1: refused (the editor changed nothing)
+
+- Diff: none
+- Rationale: Both graders listed are already at mean 1.00 with no spread and no failure evidence, so there is nothing to fix. I'm making no edits.
+
+I changed nothing. The two cases named as failing, spec-draft-write and spec-drift-detect, both score a mean of 1.00 with a spread of 0.00, and the evidence block for each reads "none", so no grader is failing and there is no trace, file or final message pointing at a harness sentence that misleads a lead. The last CTO plan is also empty. The instruction is to make the smallest change that would make the failing graders pass for the right reason, and when nothing fails the smallest such change is none: any edit to the skill pages or agents under plugins/core would be speculative, could disturb a pinned string or the SKILL.md size cap, and could lower a score that is currently perfect. The lessons from earlier runs are all low-confidence and concern other cases, so they give no reason to touch these pages either. The worktree stays clean at commit 7d0d280.
+
+## P-2: refused (the editor changed nothing)
+
+- Diff: none
+- Rationale: Both graders named as failing report a mean of 1.00 with zero spread, so they already pass on every run. The evidence blocks are empty, there is no CTO plan, and none of the harness lessons mention `spec-draft-write` or `spec-drift-detect`. There is no failure to diagnose, and an edit made without a failing trace would be a guess that risks breaking pinned text in the crew pages.
+
+I changed nothing. The two graders listed, `spec-draft-write` and `spec-drift-detect`, score 1.00 with a spread of 0.00, which means they pass in every recorded run, and the evidence, the CTO plan and the lessons give no failing trace, grader text or cause to act on. The instruction was to make the smallest change that would make the failing graders pass for the right reason, and when nothing fails the smallest such change is none: any edit to the spec pages under `plugins/core/skills/crew/` or `plugins/core/agents/` would be unmotivated and could disturb strings the skill tests pin. If a later run shows these graders dropping, the record from that run with the failing vote and its trace is what a fix should start from.
+
+## Outcome
+
+- Composition: none
+- Kept: nothing
+- Lessons: none
+- Cases no run has measured (never probed): spec-isolation, spec-loop-rules, spec-resolve-rules, spec-review-planted
+- Cost: 2.11 USD
+- Exit status: 0
