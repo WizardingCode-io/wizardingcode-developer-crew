@@ -10,7 +10,7 @@ Brand conventions: products, plugins and skills are called `wizardingcode-<thing
 - Designs: `docs/specs/`; implementation plans, task by task: `docs/plans/`
 - Decisions: `docs/adr/` (read the latest before changing a name, a path or a convention)
 - The engine: `packages/engine` (dependency-free TypeScript; `src/hooks/` is what each Claude Code event runs, `src/cli.ts` the `crew` command)
-- The plugin: `plugins/core` (`dist/crew.mjs` is the bundled `crew` command, `hooks/` the hook wiring and the mod, `skills/crew` the method)
+- The plugin: `plugins/core` (`dist/crew.mjs` is the bundled `crew` command, `hooks/` the hook wiring and the mod, `skills/crew` the method, `agents/` the roles, the goldfish reviewers of a document among them, `skills/wizardingcode-spec-*` the document review's seven skills and `skills/wizardingcode-journey` the session of a mission with nobody present; ADR 0019 and ADR 0020)
 - The eval suite: `plugins/core/evals/` (inside the plugin, where `claude plugin eval` looks for it; `results/` there is ignored, the recorded runs live in `docs/evals/`)
 - The real-use phase between subprojects: `docs/real-use/` (the plan of the phase, the findings, the corpus of real requests)
 - The rules taken from outside sources, each with where it lives and what proves it: `docs/sources/ledger.json`
