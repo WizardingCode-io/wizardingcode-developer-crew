@@ -1728,3 +1728,27 @@ Verdicts agree at every effort. Upheld findings: `high` reproduced Task 6's and 
 - Expected: a session reads the record before refusing what the record grants, and `crew status` shows a continuation or a grant where it stands.
 - Evidence: the sandbox's `session3.json` to `session5.json`, `packages/engine/src/cli.ts` (`status` prints no continuation).
 - Outcome: open. `crew status` could print the continuations on record and the policy's grant, and the skill could say that a refusal to continue is read from the engine, never from memory.
+
+### 217. The release script hides which test failed in the check
+
+- Date: 2026-11-01. Project: this repository, release 0.18.1. Category: `silent`. Severity: medium.
+- What happened: the first run of `bun scripts/release.ts --patch` failed at step 3 with `the check: $ bun run typecheck && bun run lint && bun run test`: the `ok` helper prints the first line of the captured output, which is bun's echo of the command. The lint had passed (223 files, no error) and the tests had run for about ten minutes, so a test failed or timed out, and its name is lost. The same check passed twice afterwards: under the Bash tool (1517 tests, 0 failures, 490 s) and in the release's third run. The run that failed was a `!` command Claude Code moved to the background after 120 s; whether that matters is not known. Step 9, by contrast, prints the whole JSON response of the contents API.
+- Expected: a failed check prints the lines that name the failure (bun test's `(fail)` lines, biome's error block, tsc's errors), and a step that succeeds prints one line.
+- Evidence: `scripts/release.ts` (`ok`, `firstLine`, step 9's `run`), the release's log in this session (2026-11-01, 14:15Z to 14:26Z).
+- Outcome: open. The fix is in the script: on a failure, print the failing lines of stderr and stdout, and keep the raw output in a file for the loop's runs. The red of the first run stays untraced until it recurs with the output kept.
+
+### 218. The lint fails on `.claude/settings.local.json`, which Claude Code writes
+
+- Date: 2026-11-01. Project: this repository, release 0.18.1. Category: `friction`. Severity: medium.
+- What happened: the second run of the release failed at the lint: `biome check .` checked 224 files instead of 223 and found one error. `.claude/settings.local.json`, created by Claude Code when the user allowed three Bash commands after leaving auto mode, is not formatted as biome wants (the `allow` array on one line). The file is ignored only by the user's global git ignore (`~/.config/git/ignore`), which biome's `vcs.useIgnoreFile` does not read; the repository's `.gitignore` does not name it. Formatting the file by hand unblocked the third run; Claude Code rewrites it at the next permission allowed.
+- Expected: a file Claude Code writes for the user's own permissions is neither tracked nor linted.
+- Evidence: `biome.json` (`vcs.useIgnoreFile: true`, `files.includes`), `.gitignore`, the second run's log in this session.
+- Outcome: open. The fix is one line in `.gitignore` (`.claude/settings.local.json`), which git and biome both honour; the release's clean-tree precondition is unchanged, since git already ignored the file.
+
+### 219. The Stop hook blocks the turn while a background release holds the version files changed
+
+- Date: 2026-11-01. Project: this repository, release 0.18.1. Category: `friction`. Severity: low.
+- What happened: the release ran in the background (its check takes about nine minutes) and the session tried to end its turn. The Stop hook answered "watched source files changed and the work is not proven" for the 17 files the release's steps 1 and 2 had written (the version files, the two tests, the bundle), and asked for a work item. The release committed them at step 5. The session waited in the foreground, with an until-loop on the release's log, until the twelve steps ended.
+- Expected: a release in progress is not unproven work. Today nothing tells the hook so: the engine keeps no record of a release a person started.
+- Evidence: the Stop hook's message in this session, `scripts/release.ts` (steps 1, 2 and 5), `packages/engine/src/hooks/` (the stop hook's fingerprint).
+- Outcome: open. Workaround: run the release in the foreground, or wait on its log before ending the turn.
