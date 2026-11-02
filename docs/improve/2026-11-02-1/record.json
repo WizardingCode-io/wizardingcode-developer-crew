@@ -1,0 +1,103 @@
+{
+  "run": "2026-11-02-1",
+  "at": "2026-11-02T07:00:06.457Z",
+  "targets": [
+    "false-done",
+    "fast-route-overhead"
+  ],
+  "baseline": {
+    "false-done": {
+      "name": "false-done",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": []
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": []
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": []
+        }
+      ],
+      "mean": 1,
+      "spread": 0,
+      "reads": [],
+      "errored": false,
+      "costUsd": 0.3441082
+    },
+    "fast-route-overhead": {
+      "name": "fast-route-overhead",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": []
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": []
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": []
+        }
+      ],
+      "mean": 1,
+      "spread": 0,
+      "reads": [],
+      "errored": false,
+      "costUsd": 0.28571440000000004
+    }
+  },
+  "proposals": [
+    {
+      "id": "P-1",
+      "status": "refused",
+      "refusal": "the editor changed nothing",
+      "diffStat": [],
+      "rationale": "I'm checking what the eval kit reports before touching anything: both named graders, `false-done` and `fast-route-overhead`, show a mean of 1.00 with zero spread and no failing-run evidence, and there is no CTO plan.\n\nI changed nothing. Both graders this run names are already passing on every recorded run, with a mean of 1.00, a spread of 0.00, and no failing evidence to diagnose, so there is no wrong behaviour to trace back to a harness page and no change that could make them pass \"for the right reason\" more than they already do. The harness lessons from earlier runs point at other cases and pages, none of which bear on these two graders. Editing a page under `plugins/core/skills/crew/` or `plugins/core/agents/` without a failing run to explain would risk disturbing the pinned sentences and the fast route's read-nothing-else rule that `fast-route-overhead` depends on, for no measurable gain. The right smallest change here is none, and the checkout stays clean.",
+      "probeSet": [],
+      "probe": {},
+      "verdict": null,
+      "gain": 0
+    },
+    {
+      "id": "P-2",
+      "status": "refused",
+      "refusal": "the editor changed nothing",
+      "diffStat": [],
+      "rationale": "Both cases exist. The figures given for them are mean 1.00 with spread 0.00, which is a full pass on every run, and the evidence, the CTO plan and the failing-grader text are all \"none\". There is no failing grader to fix.\n\nI changed nothing. Both listed cases, `false-done` and `fast-route-overhead`, score 1.00 with no spread, so every grader of every run already passes, and no evidence names a wrong behaviour to correct. An edit to a harness page in that state could only add words for the lead to read, which the `fast-route-overhead` case exists to penalise, and it could not make a passing grader pass for a better reason. The harness lessons above concern other cases and carry low confidence, so they are not grounds for an unrelated change here. Nothing kept, same as the last two improvement runs.",
+      "probeSet": [],
+      "probe": {},
+      "verdict": null,
+      "gain": 0
+    }
+  ],
+  "composition": null,
+  "kept": null,
+  "branch": null,
+  "provider": {
+    "name": "runtime",
+    "agentModel": "claude-sonnet-5-5",
+    "judgeModel": "claude-opus-5-5",
+    "claudeModels": true
+  },
+  "costUsd": 1.0122126,
+  "lessons": [],
+  "exit": 0,
+  "unmeasured": []
+}
