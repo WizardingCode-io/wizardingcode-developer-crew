@@ -3,18 +3,18 @@
 For each criterion, in this order:
 
 1. Write the test that expresses the criterion. It must fail because the behaviour does not exist yet.
-2. `crew tdd red <id> <criterion>`: the engine runs the test command and records the failure. If the test passes, the engine rejects the run: a test that passes before the code exists proves nothing. Rewrite the test.
+2. `crew tdd red <id> <criterion>`: the engine runs the test command and records the failure. If the test passes, the engine rejects the run: a test that passes before the code exists proves nothing. Rewrite the test, or, where nothing is missing (an end-to-end test that a stub already answers), make the criterion observed: add the text again with `--kind observed`, `crew criteria <id> remove AC-n` (a criterion with no record goes), and record it as below. Never break the code or the stub to see a red.
 3. Write the smallest code that makes the test pass.
 4. `crew tdd green <id> <criterion>`: the engine records the pass. A green with no earlier red is rejected.
 5. Refactor if the code asks for it, keeping the tests green.
 
 Use `-- <command>` after the criterion to run a single test file instead of the whole suite; the full suite runs at the gate. The words after `--` keep their boundaries: one quoted string is the whole command line (`-- "cd packages/api && bun test tests/cart.test.ts"`), several words are a command and its arguments, each quoted by the engine (`-- sh -c "a && b"` reaches the shell as `sh -c 'a && b'`). A shell given `-c` and more than one word after it is refused, since the shell would run only the first word; quote the command string as one argument. The command must be a test run, read before it runs (finding 153): before the test only `cd`, `export`, `set` or `VAR=value`; the test a runner in its test form (`bun test`, `node --test`, `npm test`, `npm run <script naming test>`, `vitest`, `jest`, `pytest`, `php artisan test`, `go test`, `cargo test` and the like) or an interpreter on a test file of the repository (`sh tests/run.sh`, `node tests/x.test.mjs`); after it only `| tee` or `| cat`; the profile's own test command always counts. `sh -c 'exit 1'`, `false`, `npm run build` are refused, with nothing run or recorded.
 
-A feature whose end-to-end path differs from its unit path (a seat planned at two call sites, a watch filter upstream of a glob) is proven by a CLI row through the real flow, beside the unit test (finding 117). An `observed` criterion is refused where a stub makes a test possible: write the stub and the test instead (finding 115).
+A feature whose end-to-end path differs from its unit path (a seat planned at two call sites, a watch filter upstream of a glob) is proven by a CLI row through the real flow, beside the unit test (finding 117). An `observed` criterion is refused where a stub makes a test possible: write the stub and the test instead (finding 115); a test that then passes as written, because the stub already answers, is that criterion's observed run with its reason, never a red forced by breaking the stub.
 
 For a `preserve` criterion: `crew tdd before <id> <criterion>` with the tests passing, make the change, `crew tdd after <id> <criterion>`.
 
-For an `observed` criterion: make the change, then `crew tdd observed <id> <criterion> --reason "<why no red run can exist>"` with the run passing. The reason is in the record and the report; a missing reason is refused.
+For an `observed` criterion: make the change, then `crew tdd observed <id> <criterion> --reason "<why no red run can exist>" -- <the command that runs it>` with the run passing. The reason is in the record, the report and the ending; a missing reason, or a missing command, is refused.
 
 A new site is built through `wizardingcode-design-build`. For an interface item, read `references/frontend.md` and the project's `DESIGN.md` before the first interface file; write no raw value where a token exists; give every declared state its branch and its `capture()`; animate only from the thesis, with the table's values.
 

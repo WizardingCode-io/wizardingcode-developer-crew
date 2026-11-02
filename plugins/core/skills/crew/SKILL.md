@@ -5,8 +5,6 @@ description: "Use when the user asks for a code change in this repository: a fix
 
 # Crew: deliver a change that is proven done
 
-The `crew` command is the engine: it keeps the state in `.crew/work/<id>/`, records test-first runs, runs the gates, writes the evidence and says when the work is done.
-
 ## The method
 
 | Phase | What you do | Command |
@@ -48,10 +46,10 @@ Answer them first; they go to `crew start` as `--answers`; 0.3 or more on a risk
 
 ## The fast route, in three calls
 
-A clear request, one spot, no risk area: `route fast`. All you need is on this page (a sourced request: `references/receive.md`): read nothing else; batch the commands.
+A clear request, one spot, no risk area: `route fast`. This page alone (a sourced request: `references/receive.md`); batch the commands.
 
 1. **Start with the criteria.** `crew start "<request>" --answers '<json>' --criterion "<observable result>"` (repeat `--criterion`; `--preserve "<text>"` for what stays green, proven with `tdd before` and `tdd after`; `--observed "<text>"` for what a person checks, proven with `tdd observed`). With criteria the item is in build. Not fast, or a fix (an issue: `analysis.md` and a preserve criterion come before build, `references/analyse.md`): follow the method table.
-2. **Test, then red.** Write the test for the criterion, then `crew tdd red <id> AC-1` (it must fail; `-- <cmd>`: one file).
+2. **Test, then red.** Write the test for the criterion, then `crew tdd red <id> AC-1` (it must fail; `-- <cmd>`: one file). A test that passes as written has no red to force: add it again `--kind observed`, `crew criteria <id> remove AC-1`, `crew tdd observed <id> AC-2 --reason "<why>" -- <cmd>`, and say its reason.
 3. **Code, then green and the gates in one call.** The least code that passes, then `crew tdd green <id> AC-1 && crew gate run <id>`. Say the verdict it prints: proven or not, and why.
 
 No `crew status` between steps, no brief, spec or plan. A request in several parts: one item, `--part "<text>"` per part at start, a todo per part; after each commit, `crew task <id> note T-n --part P-n --criteria AC-k --scope <path>`, `crew task <id> gate T-n`, `crew task <id> brief T-n`. Where Bash is restricted, use Edit and Write and spell the id in each `crew` command: `ID=…;` or a redirect stops the permission match.

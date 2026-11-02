@@ -21,3 +21,7 @@ One screen on the fast route. Then `crew phase <id> next`: the engine reads the 
 ## 3. The criteria of a fix
 
 Before build an issue needs both: the regression test as a behaviour criterion (`crew criteria <id> add "<the behaviour the defect broke>"`, red first) and what works kept as a preserve criterion (`crew criteria <id> add "<what stays green>" --kind preserve`, proven with `tdd before` and `tdd after`). The engine refuses build without them, and the root cause goes to the knowledge base at Learn (SP4).
+
+## 4. The ending
+
+The last message is the delivery of an issue, on the fast route too, where no other page is read. It says the origin as `analysis.md` found it (the earlier item by id and title, the commit by sha and what it changed, or "outside the records"), never one the analysis did not record; that the analysis came before the fix; the regression test red then green; the preserve criterion before and after; the verdict the gate printed and what is not proven. After a proven gate, `crew phase <id> next` and `crew learn <id>` run first, and what entered the base is one line of that message, not a message of its own.
