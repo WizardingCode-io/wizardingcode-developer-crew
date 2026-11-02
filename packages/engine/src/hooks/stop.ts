@@ -1,18 +1,11 @@
-import {
-  changedWatchedPaths,
-  computeFingerprint,
-  fingerprintMethod,
-  isGitRepo,
-  MAX_WATCHED_FILES,
-  UNAVAILABLE,
-} from "../fingerprint.ts";
+import { changedWatchedPaths, computeFingerprint, isGitRepo, UNAVAILABLE } from "../fingerprint.ts";
 import { nowIso } from "../fs.ts";
 import { assess } from "../gates.ts";
 import { emptyInboxSummary, inboxSummary, markNoticed, subjectQuoted } from "../mail.ts";
-import { runPermit } from "../running.ts";
+import { releasePermit, runPermit } from "../running.ts";
 import { loadState, sessionState, updateSession } from "../state.ts";
 import { takeReplies } from "../tasks.ts";
-import { activeWork, lastLearned, saveWork, waitingPhrase } from "../work.ts";
+import { activeWork, noItemTurnEnds, saveWork, waitingPhrase } from "../work.ts";
 import { mailQuietly, refreshMail, sweepLines } from "./context.ts";
 import { takeNotices } from "./notices.ts";
 import type { HookContext, HookPayload, HookResponse } from "./types.ts";
@@ -30,23 +23,6 @@ export function asksUserToTypeCrew(message: string | undefined): boolean {
 }
 
 /**
- * With no active item, whether the checkout's last learned item still vouches for the tree: its
- * last gate run proved, untampered, the code as it is now (finding 141: `crew learn` frees the slot).
- */
-function learnedHolds(ctx: HookContext): boolean {
-  const learned = lastLearned(ctx.paths);
-  if (!learned?.fingerprint) return false;
-  const now = computeFingerprint(
-    ctx.paths.root,
-    ctx.profile,
-    learned.work,
-    MAX_WATCHED_FILES,
-    fingerprintMethod(learned.fingerprint),
-  );
-  return now !== UNAVAILABLE && now === learned.fingerprint;
-}
-
-/**
  * The Stop rule (spec, section 12). It compares fingerprints and reads evidence; it never runs gates.
  * 1. nothing changed: allow. 2. changed and proven: allow. 3. changed, unproven, waiting (for the
  * user, for the roles, or for a reply by mail; SP2c §9): allow with the wait's notice. 4. changed and
@@ -54,6 +30,10 @@ function learnedHolds(ctx: HookContext): boolean {
  * turn to end, and the Stop that lets the turn end spends it. The prompt hook does not: a prompt can
  * be queued while the agent still works, and that prompt must not end a wait the Stop has not
  * honoured yet. Before the rule, the mail: a landed reply or an unread blocker holds the turn once.
+ * Beside the cases, two permits: an engine run of this session (finding 146, one turn per run,
+ * with an item) and a release marker of this session (2026-11-01-003, every turn while it holds,
+ * with no item). With no item, the decision is `noItemTurnEnds`, shared with the release's start
+ * record (finding 141's `learnedHolds` is part of it).
  */
 export function onStop(ctx: HookContext, payload: HookPayload = {}): HookResponse {
   // Read for the rule's decisions; written once, at the end, by `done`.
@@ -158,14 +138,15 @@ export function onStop(ctx: HookContext, payload: HookPayload = {}): HookRespons
     work?.baseCommit && current !== UNAVAILABLE && isGitRepo(ctx.paths.root)
       ? changedWatchedPaths(ctx.paths.root, ctx.profile, work).length > 0
       : null;
-  const changed =
-    itemChange ??
-    // Without a usable baseline (the plugin was enabled mid-session, or the folder is too big to
-    // fingerprint) only an unproven work item counts as a change.
-    (session.baseline !== null && current !== UNAVAILABLE
-      ? current !== session.baseline
-      : work !== null && !proven);
-  if (!changed || proven || (!work && learnedHolds(ctx))) {
+  const changed = work
+    ? (itemChange ??
+      // Without a usable baseline (the plugin was enabled mid-session, or the folder is too big to
+      // fingerprint) only an unproven work item counts as a change.
+      (session.baseline !== null && current !== UNAVAILABLE
+        ? current !== session.baseline
+        : !proven))
+    : !noItemTurnEnds(ctx.paths, ctx.profile, session, current);
+  if (!changed || proven) {
     session.stopBlocks = 0;
     return release(notes.length ? { systemMessage: `Crew: ${notes.join("; ")}.` } : {});
   }
@@ -182,6 +163,16 @@ export function onStop(ctx: HookContext, payload: HookPayload = {}): HookRespons
     session.runPermits = [...(session.runPermits ?? []), running.startedAt];
     return done({
       systemMessage: `Crew: ${running.command} is still running (started ${running.startedAt}); the turn ends while it runs, and the next one is held to the Stop rule again.${mailNote()}`,
+    });
+  }
+  // A release this session's script recorded (2026-11-01-003): every turn ends while its process
+  // lives, the permit never spent, since the script's end record takes the pushed commit as the
+  // session's baseline; read with no item alone, and the read removes what is dead, aged or malformed.
+  const releasing = work ? null : releasePermit(ctx.paths, ctx.sessionId);
+  if (releasing) {
+    session.stopBlocks = 0;
+    return done({
+      systemMessage: `Crew: release ${releasing.version} is in progress (started ${releasing.startedAt}): the turn ends while its process lives; change no file, commit nothing and start no item until it ends: a failure before the push resets the tree, and a change before the push makes the final record refuse.${mailNote()}`,
     });
   }
   // The three waits (SP2c §9): the user, the roles, a reply. Each lets one turn end, with its notice.

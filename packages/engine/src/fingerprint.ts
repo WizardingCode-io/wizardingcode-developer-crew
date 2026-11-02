@@ -311,3 +311,13 @@ export function computeFingerprint(
   const parts = files.map((path) => `${path}:${hashFile(join(root, path))}`);
   return `${WALK_PREFIX}${sha256(parts.join("\n"))}`;
 }
+
+/** HEAD's first parent, or "" at a root commit or where git cannot run (the release's end record, 2026-11-01-003). */
+export function gitParent(root: string): string {
+  return gitTry(root, ["rev-parse", "HEAD^"])?.trim() ?? "";
+}
+
+/** The tags on HEAD, none at a commit with no tag or where git cannot run. */
+export function gitTagsAt(root: string): string[] {
+  return (gitTry(root, ["tag", "--points-at", "HEAD"]) ?? "").trim().split("\n").filter(Boolean);
+}

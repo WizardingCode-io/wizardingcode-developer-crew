@@ -8577,6 +8577,17 @@ function waitingPhrase(work) {
     return `waiting for a reply to ${work.awaitingMessage ?? "a message"}`;
   return null;
 }
+function learnedHolds(paths, profile) {
+  const learned = lastLearned(paths);
+  if (!learned?.fingerprint)
+    return false;
+  const now = computeFingerprint(paths.root, profile, learned.work, MAX_WATCHED_FILES, fingerprintMethod(learned.fingerprint));
+  return now !== UNAVAILABLE && now === learned.fingerprint;
+}
+function noItemTurnEnds(paths, profile, session, current) {
+  const changed = session.baseline !== null && current !== UNAVAILABLE ? current !== session.baseline : false;
+  return !changed || learnedHolds(paths, profile);
+}
 
 // packages/engine/src/judgement.ts
 function plannedJudgementGates(route, riskAreas, changed, policy, registry = TEAMS) {
@@ -19638,8 +19649,12 @@ function onSessionStart(ctx, payload = {}) {
 }
 
 // packages/engine/src/running.ts
-import { readdirSync as readdirSync13, rmSync as rmSync7 } from "node:fs";
+import { mkdirSync as mkdirSync11, readdirSync as readdirSync13, rmSync as rmSync7 } from "node:fs";
 import { join as join54 } from "node:path";
+function releaseDir(paths) {
+  return join54(paths.localDir, "running");
+}
+var RELEASE_MARKER_MAX_AGE_MS = 45 * 60 * 1000;
 function runningDir(paths, id) {
   return join54(workDir(paths, id), "running");
 }
@@ -19678,18 +19693,20 @@ function parseMarker(text) {
   } catch {}
   return null;
 }
-function runPermit(paths, id, session, spent) {
+function permitIn(dir, session, spent, options = {}) {
   let names;
   try {
-    names = readdirSync13(runningDir(paths, id)).filter((n) => n.endsWith(".json")).sort();
+    names = readdirSync13(dir).filter((n) => n.endsWith(".json")).sort();
   } catch {
     return null;
   }
   for (const name of names) {
-    const file = join54(runningDir(paths, id), name);
+    const file = join54(dir, name);
     const text = readText(file);
     const marker = text === null ? null : parseMarker(text);
-    if (!marker || name !== `${marker.pid}.json` || !isAlive(marker.pid)) {
+    const shaped = marker !== null && !Number.isNaN(Date.parse(marker.startedAt)) && (!options.release || typeof marker.version === "string" && typeof marker.head === "string");
+    const aged = marker !== null && options.maxAgeMs !== undefined && Date.now() - Date.parse(marker.startedAt) > options.maxAgeMs;
+    if (!marker || !shaped || name !== `${marker.pid}.json` || aged || !isAlive(marker.pid)) {
       rmSync7(file, { force: true });
       continue;
     }
@@ -19700,19 +19717,21 @@ function runPermit(paths, id, session, spent) {
   }
   return null;
 }
+function runPermit(paths, id, session, spent) {
+  return permitIn(runningDir(paths, id), session, spent);
+}
+function releasePermit(paths, session) {
+  return permitIn(releaseDir(paths), session, [], {
+    maxAgeMs: RELEASE_MARKER_MAX_AGE_MS,
+    release: true
+  });
+}
 
 // packages/engine/src/hooks/stop.ts
 var MAX_STOP_BLOCKS = 3;
 var TYPED_CREW = /(?:^|[^\w!])!\s?(?:(?:node|bun)\s+)?(?:\S*\/)?crew(?:\.mjs)?\s+[a-z]/m;
 function asksUserToTypeCrew(message) {
   return message !== undefined && TYPED_CREW.test(message);
-}
-function learnedHolds(ctx) {
-  const learned = lastLearned(ctx.paths);
-  if (!learned?.fingerprint)
-    return false;
-  const now = computeFingerprint(ctx.paths.root, ctx.profile, learned.work, MAX_WATCHED_FILES, fingerprintMethod(learned.fingerprint));
-  return now !== UNAVAILABLE && now === learned.fingerprint;
 }
 function onStop(ctx, payload = {}) {
   const session = sessionState(loadState(ctx.paths), ctx.sessionId);
@@ -19778,8 +19797,8 @@ function onStop(ctx, payload = {}) {
   const result = work ? assess(ctx.paths, work, ctx.profile, ctx.policy, ctx.tampered || !!active?.tampered) : null;
   const proven = result?.verdict === "proven";
   const itemChange = work?.baseCommit && current !== UNAVAILABLE && isGitRepo(ctx.paths.root) ? changedWatchedPaths(ctx.paths.root, ctx.profile, work).length > 0 : null;
-  const changed = itemChange ?? (session.baseline !== null && current !== UNAVAILABLE ? current !== session.baseline : work !== null && !proven);
-  if (!changed || proven || !work && learnedHolds(ctx)) {
+  const changed = work ? itemChange ?? (session.baseline !== null && current !== UNAVAILABLE ? current !== session.baseline : !proven) : !noItemTurnEnds(ctx.paths, ctx.profile, session, current);
+  if (!changed || proven) {
     session.stopBlocks = 0;
     return release(notes.length ? { systemMessage: `Crew: ${notes.join("; ")}.` } : {});
   }
@@ -19790,6 +19809,13 @@ function onStop(ctx, payload = {}) {
     session.runPermits = [...session.runPermits ?? [], running.startedAt];
     return done({
       systemMessage: `Crew: ${running.command} is still running (started ${running.startedAt}); the turn ends while it runs, and the next one is held to the Stop rule again.${mailNote()}`
+    });
+  }
+  const releasing = work ? null : releasePermit(ctx.paths, ctx.sessionId);
+  if (releasing) {
+    session.stopBlocks = 0;
+    return done({
+      systemMessage: `Crew: release ${releasing.version} is in progress (started ${releasing.startedAt}): the turn ends while its process lives; change no file, commit nothing and start no item until it ends: a failure before the push resets the tree, and a change before the push makes the final record refuse.${mailNote()}`
     });
   }
   const what = work ? waitingPhrase(work) : null;
@@ -19865,7 +19891,7 @@ function handleHook(event, payload, env = process.env) {
 }
 
 // packages/engine/src/journey.ts
-import { existsSync as existsSync25, mkdirSync as mkdirSync11, writeFileSync as writeFileSync5 } from "node:fs";
+import { existsSync as existsSync25, mkdirSync as mkdirSync12, writeFileSync as writeFileSync5 } from "node:fs";
 import { join as join55 } from "node:path";
 
 // packages/engine/src/backoff.ts
@@ -20000,7 +20026,7 @@ function journeyPlist(input) {
 }
 function installAgent(userDir, deps) {
   const logDir = join55(userDir, "journeys");
-  mkdirSync11(logDir, { recursive: true });
+  mkdirSync12(logDir, { recursive: true });
   const path = plistPath(deps.home);
   deps.writePlist(path, journeyPlist({
     node: deps.node,
@@ -20289,7 +20315,7 @@ function writeJourneyReport(userDir, id, text) {
 
 // packages/engine/src/journey-real.ts
 import { spawn as spawn4, spawnSync as spawnSync3 } from "node:child_process";
-import { closeSync as closeSync5, mkdirSync as mkdirSync12, openSync as openSync5, rmSync as rmSync8, writeFileSync as writeFileSync6 } from "node:fs";
+import { closeSync as closeSync5, mkdirSync as mkdirSync13, openSync as openSync5, rmSync as rmSync8, writeFileSync as writeFileSync6 } from "node:fs";
 import { dirname as dirname13 } from "node:path";
 function realJourneyDeps(processEnv) {
   const home = processEnv.HOME ?? "";
@@ -20305,7 +20331,7 @@ function realJourneyDeps(processEnv) {
     pluginDir: pluginDirOf(processEnv),
     baseEnv: processEnv,
     spawn: (args, options) => {
-      mkdirSync12(dirname13(options.log), { recursive: true });
+      mkdirSync13(dirname13(options.log), { recursive: true });
       const fd = openSync5(options.log, "a");
       try {
         const child = spawn4(claudeBinary(processEnv), args, {
@@ -20329,7 +20355,7 @@ function realJourneyDeps(processEnv) {
       run("launchctl", args);
     },
     writePlist: (path, text) => {
-      mkdirSync12(dirname13(path), { recursive: true });
+      mkdirSync13(dirname13(path), { recursive: true });
       writeFileSync6(path, text);
     },
     removePlist: (path) => rmSync8(path, { force: true }),
@@ -21335,7 +21361,7 @@ function metricsText(m) {
 import {
   existsSync as existsSync27,
   lstatSync as lstatSync8,
-  mkdirSync as mkdirSync13,
+  mkdirSync as mkdirSync14,
   readFileSync as readFileSync12,
   realpathSync as realpathSync9,
   writeFileSync as writeFileSync7
@@ -21375,7 +21401,7 @@ ${provenance}
     if (isLink2(path))
       return { refused: `${relative13(root, path)} is a symlink: nothing written` };
   try {
-    mkdirSync13(folder, { recursive: true });
+    mkdirSync14(folder, { recursive: true });
     const inside = relative13(realpathSync9(root), realpathSync9(folder));
     if (inside.startsWith("..") || isAbsolute12(inside))
       return { refused: "docs/designs resolves outside the repository: nothing written" };

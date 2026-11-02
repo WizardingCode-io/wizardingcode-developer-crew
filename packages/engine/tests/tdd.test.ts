@@ -18,6 +18,12 @@ async function recordTdd(...args: Parameters<typeof record>): ReturnType<typeof 
   return out;
 }
 
+/** A step that must record: the failure names the engine's refusal and the run's tail, never `ok` alone (finding 220). */
+async function recorded(...args: Parameters<typeof record>): Promise<void> {
+  const out = await recordTdd(...args);
+  expect(out.ok, `${out.message}; tail: ${out.record?.tail ?? ""}`).toBe(true);
+}
+
 function setup() {
   const root = makeRepo({
     "package.json": JSON.stringify({ scripts: { test: "sh run-tests.sh" } }),
@@ -879,21 +885,17 @@ test("F179 AC-6: an after over another command, with fewer passing tests, or wit
   expect(entry()?.after?.passed).toBe(3);
   // More passing tests: recorded with its count, the equal one kept in the history.
   write(s.root, "run-tests.sh", "echo ' 4 pass'\nexit 0\n");
-  expect((await recordTdd(s.paths, s.work, s.evidence, s.profile, s.preserve.id, "after")).ok).toBe(
-    true,
-  );
+  await recorded(s.paths, s.work, s.evidence, s.profile, s.preserve.id, "after");
   expect(entry()?.after?.passed).toBe(4);
   expect(entry()?.afters?.map((r) => r.passed)).toEqual([3]);
   // A before without a count takes an after with one or without.
   const keep = addCriterion(s.work, "keep too", "preserve");
   write(s.root, "run-tests.sh", "echo 'all good'\nexit 0\n");
-  expect((await recordTdd(s.paths, s.work, s.evidence, s.profile, keep.id, "before")).ok).toBe(
-    true,
-  );
+  await recorded(s.paths, s.work, s.evidence, s.profile, keep.id, "before");
   write(s.root, "run-tests.sh", "echo ' 1 pass'\nexit 0\n");
-  expect((await recordTdd(s.paths, s.work, s.evidence, s.profile, keep.id, "after")).ok).toBe(true);
+  await recorded(s.paths, s.work, s.evidence, s.profile, keep.id, "after");
   write(s.root, "run-tests.sh", "echo 'all good'\nexit 0\n");
-  expect((await recordTdd(s.paths, s.work, s.evidence, s.profile, keep.id, "after")).ok).toBe(true);
+  await recorded(s.paths, s.work, s.evidence, s.profile, keep.id, "after");
 });
 
 test("F179 AC-5: passCount reads the runner's own summary line (bun, vitest, jest, pytest, PHPUnit), the last match wins, and a recorded run carries the count", async () => {

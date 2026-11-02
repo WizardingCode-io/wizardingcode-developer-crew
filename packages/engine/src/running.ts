@@ -1,4 +1,4 @@
-import { readdirSync, rmSync } from "node:fs";
+import { mkdirSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { nowIso, readText, writeText } from "./fs.ts";
 import { isAlive, processStart } from "./open.ts";
@@ -15,7 +15,37 @@ export interface RunningMarker {
   processStart: string;
   session: string;
   startedAt: string;
+  /** A release marker's two more fields (2026-11-01-003): the version released and the commit HEAD was at. */
+  version?: string;
+  head?: string;
 }
+
+/** A release marker (2026-11-01-003): a running marker with the version released and the commit HEAD was at. */
+export type ReleaseMarker = RunningMarker & { version: string; head: string };
+
+/** The folder of a session's release markers, beside the items' running folders (2026-11-01-003): the guard denies a session's own writes there. */
+function releaseDir(paths: CrewPaths): string {
+  return join(paths.localDir, "running");
+}
+
+/** A process's release marker, in the release folder. */
+function releaseFile(paths: CrewPaths, pid: number): string {
+  return join(releaseDir(paths), `${pid}.json`);
+}
+
+/** Writes a release marker as its process's file, the folder made first. */
+export function writeReleaseMarker(paths: CrewPaths, marker: ReleaseMarker): void {
+  mkdirSync(releaseDir(paths), { recursive: true });
+  writeText(releaseFile(paths, marker.pid), `${JSON.stringify(marker)}\n`);
+}
+
+/** Removes a process's release marker, present or not. */
+export function removeReleaseMarker(paths: CrewPaths, pid: number): void {
+  rmSync(releaseFile(paths, pid), { force: true });
+}
+
+/** How long a release marker holds: this repository's release takes 12 to 20 minutes, and a marker past this is removed when read. */
+const RELEASE_MARKER_MAX_AGE_MS = 45 * 60 * 1000;
 
 /** Where an item's engine runs in progress leave their markers: one file per run, by pid (finding 146). */
 export function runningDir(paths: CrewPaths, id: string): string {
@@ -76,31 +106,41 @@ function parseMarker(text: string): RunningMarker | null {
 }
 
 /**
- * The run that lets this session's turn end once (finding 146): a marker of the item's running/
- * folder that names this session, whose file name is its pid, whose pid is alive with the start time
- * recorded, and that no earlier Stop spent. Two runs of one item keep two markers, each read alone.
- * A malformed, misnamed or dead pid's marker is removed; another session's and a reused pid's are
- * left and permit nothing; an old single running.json is never read (a new run clears it).
+ * The marker of a folder that lets this session's turn end: one that names this session, whose
+ * file name is its pid, whose pid is alive with the start time recorded, and that no earlier Stop
+ * spent. Two runs of one item keep two markers, each read alone. In this order per file: a
+ * malformed (the shape, a time that does not parse, a release marker without its version or head)
+ * or misnamed marker is removed; one past `maxAgeMs`, whatever its session, is removed; a dead
+ * pid's is removed; another session's, a reused pid's and a spent one are left and permit nothing;
+ * an old single running.json is never read (a new run clears it).
  */
-export function runPermit(
-  paths: CrewPaths,
-  id: string,
+function permitIn(
+  dir: string,
   session: string,
   spent: readonly string[],
+  options: { maxAgeMs?: number; release?: boolean } = {},
 ): RunningMarker | null {
   let names: string[];
   try {
-    names = readdirSync(runningDir(paths, id))
+    names = readdirSync(dir)
       .filter((n) => n.endsWith(".json"))
       .sort();
   } catch {
     return null;
   }
   for (const name of names) {
-    const file = join(runningDir(paths, id), name);
+    const file = join(dir, name);
     const text = readText(file);
     const marker = text === null ? null : parseMarker(text);
-    if (!marker || name !== `${marker.pid}.json` || !isAlive(marker.pid)) {
+    const shaped =
+      marker !== null &&
+      !Number.isNaN(Date.parse(marker.startedAt)) &&
+      (!options.release || (typeof marker.version === "string" && typeof marker.head === "string"));
+    const aged =
+      marker !== null &&
+      options.maxAgeMs !== undefined &&
+      Date.now() - Date.parse(marker.startedAt) > options.maxAgeMs;
+    if (!marker || !shaped || name !== `${marker.pid}.json` || aged || !isAlive(marker.pid)) {
       rmSync(file, { force: true });
       continue;
     }
@@ -108,4 +148,30 @@ export function runPermit(
     if (processStart(marker.pid) === marker.processStart) return marker;
   }
   return null;
+}
+
+/**
+ * The run that lets this session's turn end once (finding 146): a marker of the item's running/
+ * folder, as `permitIn` reads it, with no age.
+ */
+export function runPermit(
+  paths: CrewPaths,
+  id: string,
+  session: string,
+  spent: readonly string[],
+): RunningMarker | null {
+  return permitIn(runningDir(paths, id), session, spent);
+}
+
+/**
+ * The release that lets this session's every turn end while it runs (2026-11-01-003): a marker of
+ * the release folder, as `permitIn` reads it, with its version and head, under the age bound and
+ * with nothing spent, since the release's end record ends it.
+ */
+export function releasePermit(paths: CrewPaths, session: string): ReleaseMarker | null {
+  // The release shape is checked by the read: a marker without its version or head is removed.
+  return permitIn(releaseDir(paths), session, [], {
+    maxAgeMs: RELEASE_MARKER_MAX_AGE_MS,
+    release: true,
+  }) as ReleaseMarker | null;
 }

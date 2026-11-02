@@ -335,6 +335,8 @@ All hooks call `crew hook <event>`. The engine decides; the hook configuration c
 4. Changes exist, not proven, not waiting: block, and tell the agent what is missing.
 5. After three consecutive blocks in a session: allow, with a notice to the user: "Not proven", followed by the failing or missing gates.
 
+Beside the cases, two permits read when the tree changed: an engine run of this session in progress (finding 146, with an item) lets one turn end per run, and a release marker (written only by this repository's release script through the engine's module, with no item active) lets every turn end while its process lives and the marker is under 45 minutes old, until the script's end record takes the pushed commit's fingerprint as the session's baseline (2026-11-01-003).
+
 The baseline is kept across a resume, and a session that starts with an unproven item and uncommitted changes has no baseline, so those changes count.
 
 The Stop hook only compares fingerprints and reads evidence, which takes milliseconds. It never runs the gates itself. The agent runs them with `crew gate run`.

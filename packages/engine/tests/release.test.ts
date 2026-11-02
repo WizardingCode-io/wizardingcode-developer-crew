@@ -6,11 +6,16 @@ import { dirname, join } from "node:path";
 import {
   bumpVersion,
   type CommandRunner,
+  failureLines,
   nextVersion,
+  type ReleaseRecord,
   release,
   releaseFiles,
+  spawnRunner,
   staleReleaseFiles,
+  statusLine,
 } from "../../../scripts/release.ts";
+import type { RecordResult } from "../src/release-record.ts";
 import { childEnv } from "./helpers.ts";
 
 const OLD = "0.15.0";
@@ -23,7 +28,11 @@ function sh(cwd: string, ...args: string[]): string {
 }
 
 /** A repository with the release's files at OLD, committed on main and pushed to a bare origin beside it. */
-function fixture(): { root: string; origin: string; home: string } {
+function fixture(extra: Record<string, string> = {}): {
+  root: string;
+  origin: string;
+  home: string;
+} {
   const base = mkdtempSync(join(tmpdir(), "release-"));
   const root = join(base, "repo");
   const files: Record<string, string> = {
@@ -49,9 +58,9 @@ function fixture(): { root: string; origin: string; home: string } {
     "packs/agentic-os/.claude-plugin/plugin.json": `${JSON.stringify({ name: "a", version: OLD }, null, 2)}\n`,
     "packages/engine/tests/version.test.ts": `test("v", () => {\n  expect(VERSION).toBe("${OLD}");\n});\n`,
     "packages/engine/tests/cli.test.ts": `test("c", async () => {\n  expect((await c.run("--version")).out.trim()).toBe("${OLD}");\n});\n`,
-    ".gitignore": "dist/\n",
+    ".gitignore": "/dist/\n",
   };
-  for (const [rel, text] of Object.entries(files)) {
+  for (const [rel, text] of Object.entries({ ...files, ...extra })) {
     mkdirSync(dirname(join(root, rel)), { recursive: true });
     writeFileSync(join(root, rel), text);
   }
@@ -82,12 +91,51 @@ interface World {
   tokenOutput?: string;
 }
 
-/** A runner that runs git for real and plays every other command: bun, gh, claude, tar and osascript are recorded, and a failing step is scripted. */
+/** What `fail` scripts for a command: today's failure line, or the whole result a step reads (2026-11-01-003). */
+type Scripted = boolean | ReturnType<CommandRunner>;
+
+/**
+ * A runner that runs git for real and plays every other command: bun, gh, claude, tar and
+ * osascript are recorded, and a failing step is scripted. `fail` is consulted before git runs, so a
+ * scripted git failure is reached; `before` sees each command first, so a row can touch the tree
+ * between two steps (2026-11-01-003).
+ */
 function runner(
   root: string,
-  fail: (cmd: readonly string[]) => boolean = () => false,
-): { run: CommandRunner; seen: string[][]; world: World } {
+  fail: (cmd: readonly string[]) => Scripted = () => false,
+  before: (cmd: readonly string[]) => void = () => {},
+  answers: Partial<Record<"start" | "done", (version: string) => RecordResult>> = {},
+): {
+  run: CommandRunner;
+  seen: string[][];
+  world: World;
+  /** The commands and the record calls in one order, the records as `record:start` and `record:done`. */
+  events: string[];
+  recorded: [string, string][];
+  record: ReleaseRecord;
+} {
   const seen: string[][] = [];
+  const events: string[] = [];
+  const recorded: [string, string][] = [];
+  const answer = (what: "start" | "done", version: string): RecordResult => {
+    events.push(`record:${what}`);
+    recorded.push([what, version]);
+    const scripted = answers[what];
+    if (scripted) return scripted(version);
+    return what === "start"
+      ? {
+          recorded: true,
+          text: `release ${version} recorded for session s: the turn may end while it runs`,
+        }
+      : {
+          recorded: true,
+          text: `release ${version} done: the session's baseline is now commit abc1234`,
+        };
+  };
+  const record: ReleaseRecord = {
+    start: (v) => answer("start", v),
+    done: (v) => answer("done", v),
+  };
   const world: World = {
     released: new Set(),
     marketplace: {
@@ -102,10 +150,16 @@ function runner(
     puts: [],
     tokened: [],
   };
-  const ok = (stdout = "") => ({ status: 0, stdout, stderr: "" });
+  const ok = (stdout = "") => ({ status: 0, exit: 0, stdout, stderr: "" });
   const run: CommandRunner = (cmd, opts) => {
     seen.push([...cmd]);
+    events.push(cmd.join(" "));
     if (opts.env?.GH_TOKEN) world.tokened.push([...cmd]);
+    before(cmd);
+    const scripted = fail(cmd);
+    if (scripted === true)
+      return { status: 1, exit: 1, stdout: "", stderr: `${cmd.join(" ")} failed` };
+    if (scripted !== false) return scripted;
     if (cmd[0] === "git") {
       const r = spawnSync("git", cmd.slice(1), {
         cwd: opts.cwd,
@@ -119,9 +173,13 @@ function runner(
           GIT_COMMITTER_EMAIL: "t@t",
         },
       });
-      return { status: r.status ?? 1, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
+      return {
+        status: r.status ?? 1,
+        exit: r.status,
+        stdout: r.stdout ?? "",
+        stderr: r.stderr ?? "",
+      };
     }
-    if (fail(cmd)) return { status: 1, stdout: "", stderr: `${cmd.join(" ")} failed` };
     if (cmd[0] === "bun" && cmd.includes("--tarball")) {
       mkdirSync(join(root, "dist"), { recursive: true });
       writeFileSync(join(root, "dist", `wizardingcode-developer-crew-${NEW}.tar.gz`), "tgz");
@@ -137,7 +195,7 @@ function runner(
       expect(opts.env?.GH_TOKEN).toBe("ghp_SECRET");
       return world.released.has(cmd[3] as string)
         ? ok("ok")
-        : { status: 1, stdout: "", stderr: "release not found" };
+        : { status: 1, exit: 1, stdout: "", stderr: "release not found" };
     }
     if (cmd[0] === "gh" && cmd[1] === "release" && cmd[2] === "create") {
       expect(opts.env?.GH_TOKEN).toBe("ghp_SECRET");
@@ -179,7 +237,7 @@ function runner(
     }
     return ok();
   };
-  return { run, seen, world };
+  return { run, seen, world, events, recorded, record };
 }
 
 const versionsIn = (root: string): string[] =>
@@ -528,4 +586,446 @@ test("2026-10-25-006 AC-1 (finding 166): the bump replaces the version strings a
   for (const [rel, text] of Object.entries(before))
     expect(readFileSync(join(root, rel), "utf8"), rel).toBe(text.replaceAll(OLD, NEW));
   expect(staleReleaseFiles(root, NEW)).toEqual([]);
+});
+
+const stepLog = (root: string, step: number) =>
+  join(root, "dist", `release-${NEW}-step-${step}.log`);
+const startSha = (root: string) => sh(root, "rev-parse", "HEAD").trim().slice(0, 7);
+const failing =
+  (program: string, result: ReturnType<CommandRunner>) =>
+  (cmd: readonly string[]): Scripted =>
+    cmd.join(" ") === program ? result : false;
+const releaseLog = async (root: string, home: string, run: CommandRunner) => {
+  const log: string[] = [];
+  const code = await release(
+    { root, bump: "patch", reason: "x", home },
+    { run, log: (l) => log.push(l) },
+  );
+  return { code, lines: log.join("\n").split("\n") };
+};
+
+test("2026-11-01-003 AC-40, AC-37: a failed check logs the failure lines, the summary and the tail under a first line naming the step, the exit and the output file, kept after the rollback; the notification carries the first line alone", async () => {
+  const { root, home } = fixture();
+  const stdout = "src/x.ts(3,5): error TS2322: x\n";
+  const stderr =
+    "$ bun run typecheck && bun run lint && bun run test\n(pass) cli > an error path is refused\n(fail) hooks-stop > case 4 [0.11ms]\nerror: expect(received).toBe(expected)\n 1516 pass\n 1 fail\nRan 1517 tests across 90 files.\n";
+  const at = runner(root, failing("bun run check", { status: 1, exit: 1, stdout, stderr }));
+  const { code, lines } = await releaseLog(root, home, at.run);
+  expect(code).toBe(1);
+  const first = lines.findIndex((l) => l.startsWith("step 3 (bun run check) failed"));
+  expect(lines[first]).toBe(
+    `step 3 (bun run check) failed: the check (exit 1): lines that name a failure, then the output's last lines (the whole output in dist/release-${NEW}-step-3.log); the tree is back at ${startSha(root)}, nothing released`,
+  );
+  const tail = [...stdout.split("\n"), ...stderr.split("\n")]
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .slice(-10);
+  expect(lines.slice(first + 1)).toEqual([
+    "  (fail) hooks-stop > case 4 [0.11ms]",
+    "  src/x.ts(3,5): error TS2322: x",
+    "  error: expect(received).toBe(expected)",
+    "  1 fail",
+    "  last lines:",
+    ...tail.map((l) => `  ${l}`),
+  ]);
+  expect(readFileSync(stepLog(root, 3), "utf8")).toBe(`exit 1\n${stdout}--- stderr ---\n${stderr}`);
+  const body = (at.seen.find((c) => c[0] === "osascript") as string[]).join(" ");
+  expect(body).toContain("step 3 (bun run check) failed");
+  expect(body).toContain("nothing released");
+  expect(body).not.toContain("(fail)");
+});
+
+test("2026-11-01-003 AC-37: biome's header leads the groups, a line is printed once, a (pass) line never, the cap cuts at 20 and the summary follows whatever the cap", async () => {
+  const { root, home } = fixture();
+  const fails = Array.from({ length: 25 }, (_, i) => `(fail) t${i + 1}`);
+  const stderr = `✗ a cross line   \n(skip) t-skipped error TS1234\n.claude/settings.local.json format ━━━━   \n\n  × Formatter would have printed the following content:\n  × Formatter would have printed the following content:\n(pass) t0 > error TS9999 in a name\nFound 1 error.\n${fails.join("\n")}\n 25 fail\n`;
+  const at = runner(root, failing("bun run check", { status: 1, exit: 1, stdout: "", stderr }));
+  const { lines } = await releaseLog(root, home, at.run);
+  const first = lines.findIndex((l) => l.startsWith("step 3 (bun run check) failed"));
+  const body = lines.slice(first + 1);
+  expect(body).toEqual([
+    "  .claude/settings.local.json format ━━━━",
+    ...fails.slice(0, 19).map((l) => `  ${l}`),
+    "  … and 9 more",
+    "  25 fail",
+    "  last lines:",
+    ...fails.slice(16).map((l) => `  ${l}`),
+    "  25 fail",
+  ]);
+  const named = failureLines(stderr);
+  expect(named.lines[0]).toBe(".claude/settings.local.json format ━━━━");
+  expect(named.lines).toContain("✗ a cross line");
+  expect(named.lines.some((l) => l.includes("(skip)"))).toBe(false);
+});
+
+test("2026-11-01-003 AC-40: the notification's failure is logged with its head and its body, not fatal, and the release is out", async () => {
+  const { root, home } = fixture();
+  const at = runner(root, (cmd) =>
+    cmd[0] === "osascript"
+      ? {
+          status: 1,
+          exit: 1,
+          stdout: "",
+          stderr: "execution error: no notification centre (-1708)\n",
+        }
+      : false,
+  );
+  const { code, lines } = await releaseLog(root, home, at.run);
+  expect(code).toBe(0);
+  const head = lines.findIndex((l) => l.startsWith("step 12 (the notification) failed: "));
+  expect(head).toBeGreaterThan(0);
+  expect(lines[head]).toContain(`dist/release-${NEW}-step-12.log`);
+  expect(lines[head]?.endsWith(" (not fatal: the release is out)")).toBe(true);
+  expect(lines.slice(head + 1, head + 3)).toEqual([
+    "  last lines:",
+    "  execution error: no notification centre (-1708)",
+  ]);
+  expect(lines[lines.length - 1]).toBe(`released ${NEW}`);
+});
+
+test("2026-11-01-003 AC-40: an output with no failure line prints its last lines alone, and an empty output prints no body", async () => {
+  const cases: [string, string, string[]][] = [
+    [
+      "nothing special\n",
+      "no line names a failure; the output's last lines",
+      ["  last lines:", "  nothing special"],
+    ],
+    ["", "no output", []],
+  ];
+  for (const [stdout, head, bodyLines] of cases) {
+    const { root, home } = fixture();
+    const at = runner(root, failing("bun run check", { status: 1, exit: 1, stdout, stderr: "" }));
+    const { lines } = await releaseLog(root, home, at.run);
+    const first = lines.findIndex((l) => l.startsWith("step 3 (bun run check) failed"));
+    expect(lines[first]).toBe(
+      `step 3 (bun run check) failed: the check (exit 1): ${head} (the whole output in dist/release-${NEW}-step-3.log); the tree is back at ${startSha(root)}, nothing released`,
+    );
+    expect(lines.slice(first + 1)).toEqual(bodyLines);
+  }
+});
+
+test("2026-11-01-003 AC-40, AC-41: a command ended by a signal names it with a null exit, in the log and in the file", async () => {
+  const { root, home } = fixture();
+  const at = runner(
+    root,
+    failing("git push -q --atomic origin main v0.15.1", {
+      status: 1,
+      exit: null,
+      stdout: "",
+      stderr: "",
+      signal: "SIGKILL",
+    }),
+  );
+  const { code, lines } = await releaseLog(root, home, at.run);
+  expect(code).toBe(1);
+  expect(lines).toContain(
+    `step 6 (the push) failed: git push (exit null, signal SIGKILL): no output (the whole output in dist/release-${NEW}-step-6.log); the tree is back at ${startSha(root)}, nothing released`,
+  );
+  expect(readFileSync(stepLog(root, 6), "utf8")).toBe(
+    "exit null, signal SIGKILL\n--- stderr ---\n",
+  );
+});
+
+test("2026-11-01-003 AC-40, AC-41: after the push the resume line stays its own line, the notification carries the resume suffix, and the marketplace read of the run goes through the same helper", async () => {
+  const { root, home } = fixture();
+  const at = runner(root, (cmd) =>
+    cmd[0] === "gh" && cmd.includes("PUT")
+      ? { status: 1, exit: 1, stdout: "", stderr: "gh: HTTP 422\n" }
+      : false,
+  );
+  const { code, lines } = await releaseLog(root, home, at.run);
+  expect(code).toBe(1);
+  const first = lines.findIndex((l) => l.startsWith("step 9 (the marketplace entry) failed"));
+  expect(lines.slice(first, first + 4)).toEqual([
+    `step 9 (the marketplace entry) failed: the marketplace PUT (exit 1): no line names a failure; the output's last lines (the whole output in dist/release-${NEW}-step-9.log)`,
+    "  last lines:",
+    "  gh: HTTP 422",
+    `resume with: bun scripts/release.ts --resume v${NEW} --from-step 9`,
+  ]);
+  expect(readFileSync(stepLog(root, 9), "utf8")).toBe("exit 1\n--- stderr ---\ngh: HTTP 422\n");
+  const body = (at.seen.find((c) => c[0] === "osascript") as string[]).join(" ");
+  expect(body).toContain("step 9 (the marketplace entry) failed: the marketplace PUT (exit 1)");
+  expect(body).toContain(`; resume with --resume v${NEW} --from-step 9`);
+  // The read inside the step's run, failing: the same shape under its own label.
+  const second = fixture();
+  const atRead = runner(second.root, (cmd) =>
+    cmd[0] === "gh" && cmd[1] === "api" && !cmd.includes("PUT")
+      ? { status: 1, exit: 1, stdout: "", stderr: "gh: HTTP 500\n" }
+      : false,
+  );
+  const read = await releaseLog(second.root, second.home, atRead.run);
+  expect(read.code).toBe(1);
+  expect(read.lines).toContain(
+    `step 9 (the marketplace entry) failed: the marketplace read (exit 1): no line names a failure; the output's last lines (the whole output in dist/release-${NEW}-step-9.log)`,
+  );
+  expect(readFileSync(stepLog(second.root, 9), "utf8")).toBe(
+    "exit 1\n--- stderr ---\ngh: HTTP 500\n",
+  );
+});
+
+test("2026-11-01-003 AC-40: a green run leaves no step file", async () => {
+  const { root, home } = fixture();
+  const { run } = runner(root);
+  expect(await release({ root, bump: "patch", reason: "x", home }, { run, log: () => {} })).toBe(0);
+  for (let n = 1; n <= 12; n++) expect(existsSync(stepLog(root, n)), `step ${n}`).toBe(false);
+});
+
+test("2026-11-01-003 AC-41: the real runner captures 64 MiB per stream and names a signal with a null exit while the status stays a number", () => {
+  const run = spawnRunner(false);
+  const big = run(["sh", "-c", "head -c 3000000 /dev/zero | tr '\\0' x"], { cwd: tmpdir() });
+  expect(big.exit).toBe(0);
+  expect(big.status).toBe(0);
+  expect(big.stdout.length).toBe(3_000_000);
+  const killed = run(["sh", "-c", "kill -9 $$"], { cwd: tmpdir() });
+  expect(killed.status).toBe(1);
+  expect(killed.exit).toBeNull();
+  expect(killed.signal).toBe("SIGKILL");
+  const missing = run(["/nonexistent/2026-11-01-003/binary"], { cwd: tmpdir() });
+  expect(missing.exit).toBeNull();
+  expect(missing.status).toBe(1);
+  expect(missing.signal).toBeUndefined();
+  expect(missing.error).toContain("ENOENT");
+  expect(statusLine(missing)).toBe(`exit null, ${missing.error}`);
+  const overrun = run(["sh", "-c", "head -c 70000000 /dev/zero | tr '\\0' x"], { cwd: tmpdir() });
+  expect(overrun.exit).toBeNull();
+  expect(overrun.status).toBe(1);
+  expect(overrun.error).toContain("ENOBUFS");
+});
+
+const recordedRelease = async (
+  root: string,
+  home: string,
+  at: ReturnType<typeof runner>,
+  options: Partial<Parameters<typeof release>[0]> = {},
+) => {
+  const log: string[] = [];
+  const code = await release(
+    { root, bump: "patch", reason: "x", home, ...options },
+    { run: at.run, log: (l) => log.push(l), record: at.record },
+  );
+  return { code, lines: log.join("\n").split("\n") };
+};
+
+test("2026-11-01-003 AC-43: the script records the start after its title line and the end right after the push's ok line, and the pinned program lists are untouched", async () => {
+  const { root, home } = fixture();
+  const at = runner(root);
+  const { code, lines } = await recordedRelease(root, home, at);
+  expect(code).toBe(0);
+  expect(at.recorded).toEqual([
+    ["start", NEW],
+    ["done", NEW],
+  ]);
+  expect(at.events.indexOf("record:start")).toBeLessThan(at.events.indexOf("bun run build"));
+  const push = at.events.findIndex((e) => e.startsWith("git push"));
+  expect(at.events[push + 1]).toBe("record:done");
+  expect(lines.slice(0, 3)).toEqual([
+    `Release ${NEW}: x`,
+    `  release start: release ${NEW} recorded for session s: the turn may end while it runs`,
+    "  1. the version files: ok",
+  ]);
+  const pushed = lines.indexOf("  6. the push: ok");
+  expect(lines[pushed + 1]).toBe(
+    `  release done: release ${NEW} done: the session's baseline is now commit abc1234`,
+  );
+  expect(programs(at.seen)).toEqual([
+    "bun run build",
+    "bun run check",
+    "bun run plugin:check",
+    "bun scripts/build.ts --tarball",
+    "gh auth token",
+    "gh release view",
+    "gh release create",
+    "gh api repos/WizardingCode-io/wizardingcode-plugins/contents/.claude-plugin/marketplace.json",
+    "gh api -X",
+    "claude plugin marketplace",
+    "claude plugin update",
+    "tar xzf",
+    "osascript -e",
+  ]);
+});
+
+test("2026-11-01-003 AC-43: a start that recorded nothing, refused or threw is logged, calls no end record and never fails the release; an end record that throws is logged and the release goes on", async () => {
+  const cases: [
+    Partial<Record<"start" | "done", (v: string) => RecordResult>>,
+    string[],
+    number,
+  ][] = [
+    [
+      { start: (v) => ({ recorded: false, text: `release ${v}: no session, nothing recorded` }) },
+      [`  release start: release ${NEW}: no session, nothing recorded`],
+      1,
+    ],
+    [
+      {
+        start: (v) => ({
+          recorded: false,
+          text: `release ${v}: work item x is active; a release is recorded with no item open`,
+        }),
+      },
+      [
+        `  release start: release ${NEW}: work item x is active; a release is recorded with no item open`,
+      ],
+      1,
+    ],
+    [
+      {
+        start: () => {
+          throw new Error("boom");
+        },
+      },
+      ["  release start: failed: boom"],
+      1,
+    ],
+    [
+      {
+        done: () => {
+          throw new Error("boom");
+        },
+      },
+      [
+        `  release start: release ${NEW} recorded for session s: the turn may end while it runs`,
+        "  release done: failed: boom",
+      ],
+      2,
+    ],
+  ];
+  for (const [answers, logged, calls] of cases) {
+    const { root, home } = fixture();
+    const at = runner(root, undefined, undefined, answers);
+    const { code, lines } = await recordedRelease(root, home, at);
+    expect(code, lines.join("\n")).toBe(0);
+    for (const line of logged) expect(lines).toContain(line);
+    expect(at.recorded.length).toBe(calls);
+    expect(lines).toContain("  12. the notification: ok");
+  }
+});
+
+test("2026-11-01-003 AC-43: no record pair, a dry run and a resume call no record, and a failure before the push calls the start alone", async () => {
+  const bare = fixture();
+  const none = runner(bare.root);
+  const log: string[] = [];
+  expect(
+    await release(
+      { root: bare.root, bump: "patch", reason: "x", home: bare.home },
+      { run: none.run, log: (l) => log.push(l) },
+    ),
+  ).toBe(0);
+  expect(none.recorded).toEqual([]);
+  expect(log.some((l) => l.startsWith("  release "))).toBe(false);
+  const dry = fixture();
+  const atDry = runner(dry.root);
+  expect((await recordedRelease(dry.root, dry.home, atDry, { dryRun: true })).code).toBe(0);
+  expect(atDry.recorded).toEqual([]);
+  const { root, home } = fixture();
+  const first = runner(root, (cmd) => cmd[0] === "gh" && cmd.includes("PUT"));
+  expect((await recordedRelease(root, home, first)).code).toBe(1);
+  const resumed = runner(root);
+  resumed.world.released.add(`v${NEW}`);
+  expect(
+    (await recordedRelease(root, home, resumed, { bump: undefined, resume: NEW, fromStep: 7 }))
+      .code,
+  ).toBe(0);
+  expect(resumed.recorded).toEqual([]);
+  const failing = fixture();
+  const atCheck = runner(failing.root, (cmd) => cmd.join(" ") === "bun run check");
+  expect((await recordedRelease(failing.root, failing.home, atCheck)).code).toBe(1);
+  expect(atCheck.recorded).toEqual([["start", NEW]]);
+});
+
+test("2026-11-01-003 AC-43: step 5 commits only what the release wrote on the commit it started from: a written file changed since step 1 or a commit made meanwhile fails the step before any commit, and the tree goes back", async () => {
+  const { root, home } = fixture();
+  const start = sh(root, "rev-parse", "HEAD").trim();
+  const touched = runner(root, undefined, (cmd) => {
+    if (cmd.join(" ") !== "bun run check") return;
+    writeFileSync(join(root, "packages/engine/tests/version.test.ts"), "touched by the suite\n");
+    writeFileSync(
+      join(root, "CLAUDE.md"),
+      `${readFileSync(join(root, "CLAUDE.md"), "utf8")}\nan edit under the permit\n`,
+    );
+  });
+  const { code, lines } = await recordedRelease(root, home, touched);
+  expect(code).toBe(1);
+  expect(lines).toContain(
+    `step 5 (the commit and the tag) failed: changed since the release wrote it: packages/engine/tests/version.test.ts; the tree is back at ${start.slice(0, 7)}, nothing released`,
+  );
+  expect(sh(root, "rev-parse", "HEAD").trim()).toBe(start);
+  expect(sh(root, "status", "--porcelain").trim()).toBe("");
+  expect(lines).toContain(
+    "  discarded by the rollback: CLAUDE.md, packages/engine/tests/version.test.ts",
+  );
+  expect(touched.recorded).toEqual([["start", NEW]]);
+  const other = fixture();
+  const begun = sh(other.root, "rev-parse", "HEAD").trim();
+  let moved = "";
+  const committed = runner(other.root, undefined, (cmd) => {
+    if (cmd.join(" ") !== "bun run check") return;
+    writeFileSync(join(other.root, "docs-note.md"), "a note\n");
+    sh(other.root, "add", "docs-note.md");
+    sh(other.root, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "note");
+    moved = sh(other.root, "rev-parse", "HEAD").trim();
+  });
+  const second = await recordedRelease(other.root, other.home, committed);
+  expect(second.code).toBe(1);
+  expect(second.lines).toContain(
+    `step 5 (the commit and the tag) failed: HEAD moved since the release started: ${moved.slice(0, 7)}; the tree is back at ${begun.slice(0, 7)}, nothing released`,
+  );
+  expect(sh(other.root, "rev-parse", "HEAD").trim()).toBe(begun);
+  expect(sh(other.root, "reflog")).toContain(moved.slice(0, 7));
+  expect(second.lines).toContain(
+    `  the commit ${moved.slice(0, 7)} is off main, kept in the reflog`,
+  );
+  const bundle = "plugins/core/dist/crew.mjs";
+  const bundleFailure = `step 5 (the commit and the tag) failed: changed since the release wrote it: ${bundle}; the tree is back at`;
+  const rebuilt = fixture();
+  const builtAt = join(rebuilt.root, bundle);
+  const twice = runner(rebuilt.root, undefined, (cmd) => {
+    const c = cmd.join(" ");
+    if (c === "bun run build") {
+      mkdirSync(dirname(builtAt), { recursive: true });
+      writeFileSync(builtAt, "built\n");
+    }
+    if (c === "bun run check") writeFileSync(builtAt, "rebuilt by the check\n");
+  });
+  const third = await recordedRelease(rebuilt.root, rebuilt.home, twice);
+  expect(third.code).toBe(1);
+  expect(third.lines.some((l) => l.startsWith(bundleFailure))).toBe(true);
+  const appeared = fixture();
+  const lateAt = join(appeared.root, bundle);
+  const late = runner(appeared.root, undefined, (cmd) => {
+    if (cmd.join(" ") !== "bun run check") return;
+    mkdirSync(dirname(lateAt), { recursive: true });
+    writeFileSync(lateAt, "late\n");
+  });
+  const fourth = await recordedRelease(appeared.root, appeared.home, late);
+  expect(fourth.code).toBe(1);
+  expect(fourth.lines.some((l) => l.startsWith(bundleFailure))).toBe(true);
+  // A version file the release wrote, edited under the permit, wiped by a failure before step 5: named.
+  const edited = fixture();
+  const versionTs = join(edited.root, "packages/engine/src/version.ts");
+  const checkFails = runner(
+    edited.root,
+    (cmd) => cmd.join(" ") === "bun run check",
+    (cmd) => {
+      if (cmd.join(" ") === "bun run check")
+        writeFileSync(versionTs, `${readFileSync(versionTs, "utf8")}// edited under the permit\n`);
+    },
+  );
+  const fifth = await recordedRelease(edited.root, edited.home, checkFails);
+  expect(fifth.code).toBe(1);
+  expect(fifth.lines).toContain("  discarded by the rollback: packages/engine/src/version.ts");
+  expect(sh(edited.root, "status", "--porcelain").trim()).toBe("");
+  // The bundle, tracked and rewritten before a failing step, is the build's own output: never named.
+  const tracked = fixture({ [bundle]: "the committed bundle\n" });
+  const bundleAt = join(tracked.root, bundle);
+  const rewritten = runner(
+    tracked.root,
+    (cmd) => cmd.join(" ") === "bun run check",
+    (cmd) => {
+      if (cmd.join(" ") === "bun run check") writeFileSync(bundleAt, "rebuilt under the permit\n");
+    },
+  );
+  const sixth = await recordedRelease(tracked.root, tracked.home, rewritten);
+  expect(sixth.code).toBe(1);
+  expect(sixth.lines.some((l) => l.startsWith("  discarded by the rollback"))).toBe(false);
+  expect(sh(tracked.root, "status", "--porcelain").trim()).toBe("");
 });

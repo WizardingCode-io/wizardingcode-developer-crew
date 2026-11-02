@@ -61,7 +61,10 @@ function openFindings(text: string): number[] {
 // 214 (the document review of a small feature did not converge in four rounds) recorded by 2026-10-31-009, the user's calibration.
 // 215 (another plugin's daemon outlives a journey's session) recorded by 2026-10-31-009.
 // 216 (a resumed session keeps refusing a round the record grants) recorded by 2026-11-01-002.
-const OPEN = [77, 114, 177, 178, 181, 182, 183, 206, 209, 210, 212, 213, 214, 215, 216];
+// 217 to 219 recorded by the 0.18.1 release and closed by 2026-11-01-003, which recorded 220 (the preserve
+// pair's row failing once under the whole suite with its cause lost; the row now names the refusal and the
+// tail, for the next occurrence) and 221 (the advisories its judgement's round 3 left), for the next hardening item.
+const OPEN = [77, 114, 177, 178, 181, 182, 183, 206, 209, 210, 212, 213, 214, 215, 216, 220, 221];
 
 test("AC-9 (consolidation of 2026-10-24): the findings that read open are the named ones, and the thirteen closed by the consolidation read closed", () => {
   const open = openFindings(readFileSync(FINDINGS, "utf8"));

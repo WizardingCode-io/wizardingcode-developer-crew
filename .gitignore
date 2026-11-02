@@ -16,3 +16,6 @@ graphify-out/
 
 # The release asset bun scripts/build.ts --tarball writes (SP6 Task 4).
 /dist/
+
+# Claude Code's local permissions file, written by the tool when the user allows a command (finding 218).
+.claude/settings.local.json

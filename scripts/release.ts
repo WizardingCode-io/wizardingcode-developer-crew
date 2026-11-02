@@ -10,7 +10,18 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { sha256 } from "../packages/engine/src/fs.ts";
+import { resolvePaths } from "../packages/engine/src/paths.ts";
+import { loadProfile } from "../packages/engine/src/profile.ts";
+import {
+  type RecordResult,
+  recordReleaseDone,
+  recordReleaseStart,
+} from "../packages/engine/src/release-record.ts";
 import { improveState } from "./improve-home.ts";
+
+/** The bundle the build writes and the release commits beside the version files. */
+const BUNDLE = "plugins/core/dist/crew.mjs";
 
 /**
  * The version files CLAUDE.md's `## Releasing` section names, sorted: its backticked `.json` paths and
@@ -118,6 +129,20 @@ export function bumpVersion(root: string, from: string, to: string): string[] {
   return written;
 }
 
+/**
+ * What a command ended with. `status` is the exit, or 1 when there is none, as every reader of it
+ * expects; `exit` is the exit as it was, null when a signal ended the command or the capture
+ * overran, so a failed step names its cause instead of a made-up 1 (finding 217).
+ */
+export interface CommandResult {
+  status: number;
+  exit: number | null;
+  stdout: string;
+  stderr: string;
+  signal?: string;
+  error?: string;
+}
+
 export type CommandRunner = (
   cmd: readonly string[],
   opts: {
@@ -127,13 +152,106 @@ export type CommandRunner = (
     /** The command's output is a secret (a token): never printed. */
     quiet?: boolean;
   },
-) => { status: number; stdout: string; stderr: string };
+) => CommandResult;
+
+/** The capture per stream: spawnSync's own 1 MiB stops a check's output with ENOBUFS (finding 217). */
+const CAPTURE_BYTES = 64 * 1024 * 1024;
+const NAMED_LINES = 20;
+const TAIL_LINES = 10;
+
+/** `exit <n>` with the signal and the spawn error when they apply: the first fact of a failed step. */
+export function statusLine(r: CommandResult): string {
+  return `exit ${r.exit}${r.signal ? `, signal ${r.signal}` : ""}${r.error ? `, ${r.error}` : ""}`;
+}
+
+/**
+ * The lines of a step's output that name a failure, each trimmed at both ends: bun
+ * test's `(fail)` lines and biome's `━━━` headers first, then the `error`, `×`, `✗`, `error TS`
+ * and `Found N error` lines, a `(pass)` or `(skip)` line never, each kept once; bun test's `N fail`
+ * summary apart, since it must survive the cap; and the output's last lines, which the message
+ * prints whatever matched, so a runner with other markers still shows its ending.
+ */
+export function failureLines(text: string): {
+  lines: string[];
+  summary: string | null;
+  tail: string[];
+} {
+  const all = text
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l !== "");
+  const first = all.filter((l) => l.startsWith("(fail)") || l.includes("━━━"));
+  const second = all.filter(
+    (l) =>
+      (/^[×✗]/.test(l) ||
+        /^error\b/.test(l) ||
+        /\berror TS\d+/.test(l) ||
+        /^Found \d+ error/.test(l)) &&
+      !/^\((pass|skip)\)/.test(l),
+  );
+  const summary = [...all].reverse().find((l) => /^\d+ fail$/.test(l)) ?? null;
+  return { lines: [...new Set([...first, ...second])], summary, tail: all.slice(-TAIL_LINES) };
+}
+
+/** The message a failed step logs: a first line naming the label, the status and the file, then the named lines, the summary and the tail, each indented. */
+function failureMessage(
+  text: string,
+  what: string,
+  status: string,
+  file: string,
+  note = "",
+): string {
+  const { lines, summary, tail } = failureLines(text);
+  const kind = lines.length
+    ? "lines that name a failure, then the output's last lines"
+    : tail.length
+      ? "no line names a failure; the output's last lines"
+      : "no output";
+  const head = `${what} (${status}): ${kind} (the whole output in ${file})${note}`;
+  if (tail.length === 0) return head;
+  const body = lines.slice(0, NAMED_LINES);
+  if (lines.length > NAMED_LINES) body.push(`… and ${lines.length - NAMED_LINES} more`);
+  if (summary) body.push(summary);
+  body.push("last lines:", ...tail);
+  return [head, ...body.map((l) => `  ${l}`)].join("\n");
+}
+
+/**
+ * A failed step's whole output, kept under `dist/` (git-ignored, so the rollback leaves it) with
+ * the status line in front: the file is written only here, for a failed step, and a write that
+ * fails is a note on the message, never a thrown error.
+ */
+function failedStep(root: string, file: string, r: CommandResult, what: string): string {
+  const status = statusLine(r);
+  const nl = r.stdout && !r.stdout.endsWith("\n") ? "\n" : "";
+  let note = "";
+  try {
+    mkdirSync(join(root, "dist"), { recursive: true });
+    writeFileSync(join(root, file), `${status}\n${r.stdout}${nl}--- stderr ---\n${r.stderr}`);
+  } catch (error) {
+    note = ` (the output file could not be written: ${(error as Error).message})`;
+  }
+  return failureMessage(`${r.stdout}\n${r.stderr}`, what, status, file, note);
+}
+
+/**
+ * The engine's two records of a release run inside a Claude Code session (finding 219): the
+ * start, after the title line, and the end, right after the push; each answers whether it
+ * recorded and a text the log carries. Wired by the entry point, by nothing in the loop, and by
+ * the tests' fakes.
+ */
+export interface ReleaseRecord {
+  start(version: string): RecordResult;
+  done(version: string): RecordResult;
+}
 
 export interface ReleaseDeps {
   run: CommandRunner;
   log: (line: string) => void;
   /** Told what the release did, for the loop's state (the pending step after a failure past the push). */
   report?: (outcome: ReleaseOutcome) => void;
+  /** The engine's records of the release, when the run is a session's (2026-11-01-003). */
+  record?: ReleaseRecord;
 }
 
 export interface ReleaseOptions {
@@ -301,18 +419,33 @@ export async function release(options: ReleaseOptions, deps: ReleaseDeps): Promi
     return token;
   };
   const noTokenMessage = `gh auth token -u ${account} gave no token`;
-  const readMarketplace = (): { sha: string; data: Marketplace } | string => {
+  /** The marketplace file fetched with the token: the command's result, or the no-token text. */
+  const fetchMarketplace = (): CommandResult | string => {
     const t = githubToken();
     if (t === null) return noTokenMessage;
-    const r = sh(["gh", "api", `repos/${MARKETPLACE_REPO}/contents/${MARKETPLACE_FILE}`], {
+    return sh(["gh", "api", `repos/${MARKETPLACE_REPO}/contents/${MARKETPLACE_FILE}`], {
       GH_TOKEN: t,
     });
-    if (r.status !== 0) return `the marketplace file could not be read: ${firstLine(r.stderr)}`;
+  };
+  const parseMarketplace = (r: CommandResult): { sha: string; data: Marketplace } => {
     const body = JSON.parse(r.stdout) as { sha: string; content: string };
     return {
       sha: body.sha,
       data: JSON.parse(Buffer.from(body.content, "base64").toString("utf8")) as Marketplace,
     };
+  };
+  /** The read of step 9's `done`: a failure is one line, since the check decides nothing. */
+  const readMarketplace = (): { sha: string; data: Marketplace } | string => {
+    const got = fetchMarketplace();
+    if (typeof got === "string") return got;
+    if (got.status !== 0) return `the marketplace file could not be read: ${firstLine(got.stderr)}`;
+    return parseMarketplace(got);
+  };
+  /** The read of step 9's `run`: a failure is the step's, its output kept (AC-41). */
+  const readMarketplaceStep = (): { sha: string; data: Marketplace } | string => {
+    const got = fetchMarketplace();
+    if (typeof got === "string") return got;
+    return ok(got, "the marketplace read", 9) ?? parseMarketplace(got);
   };
   /** The entries released from this repository at this tag: the core and every pack (finding 167). */
   const ours = (data: Marketplace) =>
@@ -327,10 +460,38 @@ export async function release(options: ReleaseOptions, deps: ReleaseDeps): Promi
     });
     return code;
   };
-  const ok = (
-    r: { status: number; stderr: string; stdout: string },
-    what: string,
-  ): string | null => (r.status === 0 ? null : `${what}: ${firstLine(r.stderr || r.stdout)}`);
+  /** The step's output file, relative to the root, named by the version and the step (AC-40). */
+  const stepOutputPath = (step: number) => join("dist", `release-${version}-step-${step}.log`);
+  /** Null when the command succeeded; otherwise the failed step's message, its output kept (AC-40). */
+  const ok = (r: CommandResult, what: string, step: number): string | null =>
+    r.status === 0 ? null : failedStep(root, stepOutputPath(step), r, what);
+  /**
+   * What step 1 wrote and step 2 built, by hash, so step 5 commits that and nothing else (AC-43):
+   * a change to one of these files between the write and the commit would land inside the
+   * release's commit, where the engine's end record cannot see it. An absent file is recorded as
+   * absent and must still be absent.
+   */
+  const hashes = new Map<string, string | null>();
+  const hashOf = (rel: string): string | null =>
+    existsSync(join(root, rel)) ? sha256(readFileSync(join(root, rel))) : null;
+  const guardWritten = (): string | null => {
+    for (const [rel, hash] of hashes)
+      if (hashOf(rel) !== hash) return `changed since the release wrote it: ${rel}`;
+    if (options.resume) return null;
+    const head = git("rev-parse", "HEAD").stdout.trim();
+    return head === startHead ? null : `HEAD moved since the release started: ${head.slice(0, 7)}`;
+  };
+  /** One of the engine's two records, logged and never fatal: a throw is a failed record, not a failed step. */
+  const record = (what: "start" | "done"): boolean => {
+    try {
+      const r = (deps.record as ReleaseRecord)[what](version);
+      log(`  release ${what}: ${r.text}`);
+      return r.recorded;
+    } catch (error) {
+      log(`  release ${what}: failed: ${(error as Error).message}`);
+      return false;
+    }
+  };
   const notify = (body: string) => sh(notificationCommand(`crew ${version}`, body));
 
   const steps: Step[] = [
@@ -343,6 +504,7 @@ export async function release(options: ReleaseOptions, deps: ReleaseDeps): Promi
           JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { version: string }
         ).version;
         written = bumpVersion(root, current, version);
+        for (const rel of written) hashes.set(rel, hashOf(rel));
         const stale = staleReleaseFiles(root, version);
         return stale.length ? `still at another version: ${stale.join(", ")}` : null;
       },
@@ -351,19 +513,24 @@ export async function release(options: ReleaseOptions, deps: ReleaseDeps): Promi
       n: 2,
       name: RELEASE_STEP_NAMES[1],
       command: "bun run build",
-      run: () => ok(sh(["bun", "run", "build"]), "the build"),
+      run: () => {
+        const built = ok(sh(["bun", "run", "build"]), "the build", 2);
+        if (built) return built;
+        hashes.set(BUNDLE, hashOf(BUNDLE));
+        return null;
+      },
     },
     {
       n: 3,
       name: RELEASE_STEP_NAMES[2],
       command: "bun run check",
-      run: () => ok(sh(["bun", "run", "check"]), "the check"),
+      run: () => ok(sh(["bun", "run", "check"]), "the check", 3),
     },
     {
       n: 4,
       name: RELEASE_STEP_NAMES[3],
       command: "bun run plugin:check",
-      run: () => ok(sh(["bun", "run", "plugin:check"]), "the plugin check"),
+      run: () => ok(sh(["bun", "run", "plugin:check"]), "the plugin check", 4),
     },
     {
       n: 5,
@@ -371,32 +538,28 @@ export async function release(options: ReleaseOptions, deps: ReleaseDeps): Promi
       // The files the release wrote and the bundle the build made, nothing else the checks left.
       command: `git add <the version files, the two tests, dist/crew.mjs> && git commit -m "${title}" && git tag -a ${tag} -m "${reason}"`,
       run: () =>
+        guardWritten() ??
         ok(
-          git(
-            "add",
-            "--",
-            ...[...written, "plugins/core/dist/crew.mjs"].filter((rel) =>
-              existsSync(join(root, rel)),
-            ),
-          ),
+          git("add", "--", ...[...written, BUNDLE].filter((rel) => existsSync(join(root, rel)))),
           "git add",
+          5,
         ) ??
-        ok(git("commit", "-q", "-m", title), "git commit") ??
-        ok(git("tag", "-a", tag, "-m", reason), "git tag"),
+        ok(git("commit", "-q", "-m", title), "git commit", 5) ??
+        ok(git("tag", "-a", tag, "-m", reason), "git tag", 5),
     },
     {
       n: 6,
       name: RELEASE_STEP_NAMES[5],
       // Atomic: main and the tag land together or not at all.
       command: `git push --atomic origin main ${tag}`,
-      run: () => ok(git("push", "-q", "--atomic", "origin", "main", tag), "git push"),
+      run: () => ok(git("push", "-q", "--atomic", "origin", "main", tag), "git push", 6),
     },
     {
       n: 7,
       name: RELEASE_STEP_NAMES[6],
       command: "bun scripts/build.ts --tarball",
       done: () => existsSync(join(root, archive)),
-      run: () => ok(sh(["bun", "scripts/build.ts", "--tarball"]), "the tarball"),
+      run: () => ok(sh(["bun", "scripts/build.ts", "--tarball"]), "the tarball", 7),
     },
     {
       n: 8,
@@ -431,6 +594,7 @@ export async function release(options: ReleaseOptions, deps: ReleaseDeps): Promi
             { GH_TOKEN: t },
           ),
           "gh release create",
+          8,
         );
       },
     },
@@ -446,7 +610,7 @@ export async function release(options: ReleaseOptions, deps: ReleaseDeps): Promi
         return entries.length > 0 && entries.every((p) => p.version === version);
       },
       run: () => {
-        const read = marketplace ?? readMarketplace();
+        const read = marketplace ?? readMarketplaceStep();
         if (typeof read === "string") return read;
         const entries = ours(read.data);
         if (!entries.some((p) => p.name === PLUGIN_NAME))
@@ -474,7 +638,7 @@ export async function release(options: ReleaseOptions, deps: ReleaseDeps): Promi
             sha: read.sha,
           }),
         );
-        return ok(r, "the marketplace PUT");
+        return ok(r, "the marketplace PUT", 9);
       },
     },
     {
@@ -485,10 +649,12 @@ export async function release(options: ReleaseOptions, deps: ReleaseDeps): Promi
         ok(
           sh(["claude", "plugin", "marketplace", "update", "wizardingcode-plugins"]),
           "the marketplace update",
+          10,
         ) ??
         ok(
           sh(["claude", "plugin", "update", `${PLUGIN_NAME}@wizardingcode-plugins`]),
           "the plugin update",
+          10,
         ),
     },
     {
@@ -504,6 +670,7 @@ export async function release(options: ReleaseOptions, deps: ReleaseDeps): Promi
           const extracted = ok(
             sh(["tar", "xzf", join(root, archive), "-C", staging]),
             "the extraction",
+            11,
           );
           if (extracted) return extracted;
           rmSync(previous, { recursive: true, force: true });
@@ -527,7 +694,7 @@ export async function release(options: ReleaseOptions, deps: ReleaseDeps): Promi
       command: `osascript: crew ${version}: ${reason}`,
       soft: true,
       run: () =>
-        ok(notify(`${reason}. Released, published and installed here.`), "the notification"),
+        ok(notify(`${reason}. Released, published and installed here.`), "the notification", 12),
     },
   ];
 
@@ -538,6 +705,9 @@ export async function release(options: ReleaseOptions, deps: ReleaseDeps): Promi
   }
   const from = options.resume ? (options.fromStep ?? PUSH_STEP + 1) : 1;
   log(options.resume ? `resuming release ${version} from step ${from}` : title);
+  // The engine's start record (2026-11-01-003): a session's run, never a resume (its commit is
+  // pushed already); the end is recorded only when this one did.
+  const recorded = deps.record && !options.resume ? record("start") : false;
   for (const step of steps) {
     if (step.n < from) continue;
     let error: string | null;
@@ -552,25 +722,47 @@ export async function release(options: ReleaseOptions, deps: ReleaseDeps): Promi
     }
     if (error === null) {
       log(`  ${step.n}. ${step.name}: ok`);
+      // The engine's end record (2026-11-01-003), right after the push went through: the pushed
+      // commit becomes the session's baseline; a refusal is logged and the release goes on.
+      if (step.n === PUSH_STEP && recorded) record("done");
       continue;
     }
+    // A failed step's message is several lines (AC-40): the first names the cause, the file and the
+    // branch's sentence and is what the notification carries; the body follows on its own lines.
+    const [head, ...body] = error.split("\n") as [string, ...string[]];
     if (step.soft) {
-      log(`  ${step.n}. ${step.name}: ${error} (not fatal: the release is out)`);
+      log(`step ${step.n} (${step.name}) failed: ${head} (not fatal: the release is out)`);
+      for (const line of body) log(line);
       continue;
     }
     if (step.n <= PUSH_STEP && !options.resume) {
       // Before the push: the tree back where it started (or before the loop's merge), the tag gone,
       // every branch kept, nothing of the release left.
       const back = options.rollbackTo ?? startHead;
+      // What the rollback takes with it, named (2026-11-01-003): a tracked file edited under the
+      // release's permit (a file the release wrote counts when its hash moved since the write; the
+      // bundle, the build's own output, never), and a commit made since the start, which the reflog
+      // alone keeps.
+      const headNow = git("rev-parse", "HEAD").stdout.trim();
+      const discarded = git("status", "--porcelain")
+        .stdout.split("\n")
+        .filter((l) => l.length > 3 && !l.startsWith("??"))
+        .map((l) => l.slice(3).trim())
+        .filter((rel) => rel !== BUNDLE && (!hashes.has(rel) || hashOf(rel) !== hashes.get(rel)));
       git("reset", "-q", "--hard", back);
       git("tag", "-d", tag);
-      const message = `step ${step.n} (${step.name}) failed: ${error}; the tree is back at ${back.slice(0, 7)}, nothing released`;
+      const message = `step ${step.n} (${step.name}) failed: ${head}; the tree is back at ${back.slice(0, 7)}, nothing released`;
       log(message);
+      for (const line of body) log(line);
+      if (discarded.length) log(`  discarded by the rollback: ${discarded.join(", ")}`);
+      if (headNow !== startHead)
+        log(`  the commit ${headNow.slice(0, 7)} is off main, kept in the reflog`);
       notify(message);
       return outcome(1, step.n);
     }
-    const message = `step ${step.n} (${step.name}) failed: ${error}`;
+    const message = `step ${step.n} (${step.name}) failed: ${head}`;
     log(message);
+    for (const line of body) log(line);
     log(`resume with: bun scripts/release.ts --resume ${tag} --from-step ${step.n}`);
     notify(`${message}; resume with --resume ${tag} --from-step ${step.n}`);
     return outcome(1, step.n);
@@ -618,14 +810,64 @@ export function spawnRunner(print: boolean): CommandRunner {
       input: opts.input,
       encoding: "utf8",
       stdio: opts.input === undefined ? ["inherit", "pipe", "pipe"] : ["pipe", "pipe", "pipe"],
+      maxBuffer: CAPTURE_BYTES,
     });
     if (print && r.stdout && !opts.quiet) process.stdout.write(r.stdout);
-    return { status: r.status ?? 1, stdout: r.stdout ?? "", stderr: r.stderr ?? "" };
+    return {
+      status: r.status ?? 1,
+      exit: r.status,
+      stdout: r.stdout ?? "",
+      stderr: r.stderr ?? "",
+      ...(r.signal ? { signal: r.signal } : {}),
+      ...(r.error ? { error: r.error.message } : {}),
+    };
   };
 }
 
 /** The runner of a real release by hand: its output shown. */
 export const realRunner: CommandRunner = spawnRunner(true);
+
+/**
+ * The engine's records wired for a run by hand (2026-11-01-003): the repository's paths are
+ * resolved and its profile read, never written, inside each call, so a folder that is no
+ * repository, or one with no profile, answers an unrecorded result and a throw is the record's,
+ * never the release's; the session is the one Claude Code names in the environment, none when the
+ * id is absent or empty.
+ */
+export function engineRecord(root: string, env: NodeJS.ProcessEnv): ReleaseRecord {
+  const call = (what: "start" | "done", version: string): RecordResult => {
+    const paths = resolvePaths(root, env);
+    if (!paths)
+      return {
+        recorded: false,
+        text: `release ${version}: no record: the repository's paths could not be resolved`,
+      };
+    const { profile, tampered } = loadProfile(paths);
+    if (!profile)
+      return {
+        recorded: false,
+        text: `release ${version}: no record: the repository has no profile`,
+      };
+    if (tampered)
+      return {
+        recorded: false,
+        text: `release ${version}: no record: the profile changed outside the engine`,
+      };
+    const session = env.CLAUDE_CODE_SESSION_ID || null;
+    return (what === "start" ? recordReleaseStart : recordReleaseDone)(
+      paths,
+      profile,
+      session,
+      version,
+    );
+  };
+  return { start: (v) => call("start", v), done: (v) => call("done", v) };
+}
+
+/** The deps of a release run by hand: the real runner, the console, and the engine's records from this process's environment. */
+export function handDeps(root: string, env: NodeJS.ProcessEnv): ReleaseDeps {
+  return { run: realRunner, log: (line) => console.log(line), record: engineRecord(root, env) };
+}
 
 if (import.meta.main) {
   const parsed = parseReleaseArgs(process.argv.slice(2));
@@ -637,7 +879,7 @@ if (import.meta.main) {
   }
   const code = await release(
     { ...parsed, pending: improveState(process.env).pendingRelease ?? null },
-    { run: realRunner, log: (line) => console.log(line) },
+    handDeps(parsed.root, process.env),
   );
   process.exit(code);
 }

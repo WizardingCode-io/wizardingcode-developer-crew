@@ -1,32 +1,13 @@
 import { expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { type CliIo, main } from "../src/cli.ts";
 import { onSessionStart } from "../src/hooks/session-start.ts";
 import { onStop } from "../src/hooks/stop.ts";
 import { processStart } from "../src/open.ts";
 import { runningFile, withRunning } from "../src/running.ts";
 import { loadState } from "../src/state.ts";
 import { addCriterion, createWork, saveWork } from "../src/work.ts";
-import { hookContext, makeRepo, repoPaths, testEnv, write } from "./helpers.ts";
-
-function io(cwd: string, env: NodeJS.ProcessEnv) {
-  const out: string[] = [];
-  const err: string[] = [];
-  const cli: CliIo = {
-    stdout: (t) => out.push(t),
-    stderr: (t) => err.push(t),
-    stdin: async () => "",
-    env,
-    cwd,
-  };
-  return async (...argv: string[]) => {
-    out.length = 0;
-    err.length = 0;
-    const code = await main(argv, cli);
-    return { code, out: out.join(""), err: err.join("") };
-  };
-}
+import { cliIo, hookContext, makeRepo, repoPaths, testEnv, write } from "./helpers.ts";
 
 test("AC-14 (finding 146): withRunning writes the marker for the run's length and removes it when the run ends or throws; with no session it writes none", async () => {
   const root = makeRepo({ "package.json": JSON.stringify({ scripts: { test: "exit 0" } }) });
@@ -63,7 +44,7 @@ test("AC-14 (finding 146): crew gate run and crew tdd write the marker while the
     "src/a.ts": "x",
   });
   const env = { ...testEnv(), CLAUDE_CODE_SESSION_ID: "sess-9" };
-  const run = io(root, env);
+  const run = cliIo(root, env);
   await run("detect");
   const started = await run(
     "start",

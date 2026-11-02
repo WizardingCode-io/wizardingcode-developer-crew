@@ -12,13 +12,19 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, sep } from "node:path";
+import { type CliIo, main } from "../src/cli.ts";
 import { loadEvidence } from "../src/evidence.ts";
+import { runGates } from "../src/gates.ts";
 import { buildContext } from "../src/hooks/context.ts";
+import { onSessionStart } from "../src/hooks/session-start.ts";
 import { fileAnswerBySession } from "../src/hooks/subagent-stop.ts";
 import type { HookContext, HookPayload } from "../src/hooks/types.ts";
+import { learnItem } from "../src/learn.ts";
 import { type CrewPaths, resolvePaths } from "../src/paths.ts";
+import { updateState } from "../src/state.ts";
 import * as store from "../src/store.ts";
-import type { Mailbox } from "../src/types.ts";
+import type { Mailbox, WorkItem } from "../src/types.ts";
+import { addCriterion, addSkip, createWork, loadWork, saveWork } from "../src/work.ts";
 
 const GIT_ENV = {
   GIT_AUTHOR_NAME: "Crew Test",
@@ -282,4 +288,68 @@ export function filedRuling(
   });
   if (!done.file) throw new Error(done.note ?? "the ruling was not filed");
   return join(root, ".crew", "work", id, done.file);
+}
+
+/**
+ * The CLI run in this process against a folder: stdout and stderr collected per call, the code
+ * answered (2026-11-01-003: shared by the running and the release-record rows).
+ */
+export function cliIo(
+  cwd: string,
+  env: NodeJS.ProcessEnv,
+): (...argv: string[]) => Promise<{ code: number; out: string; err: string }> {
+  const out: string[] = [];
+  const err: string[] = [];
+  const cli: CliIo = {
+    stdout: (t) => out.push(t),
+    stderr: (t) => err.push(t),
+    stdin: async () => "",
+    env,
+    cwd,
+  };
+  return async (...argv: string[]) => {
+    out.length = 0;
+    err.length = 0;
+    const code = await main(argv, cli);
+    return { code, out: out.join(""), err: err.join("") };
+  };
+}
+
+/**
+ * A session `s` whose one item was proven and left the active slot (finding 141's shape): a fast
+ * item with a criterion and a skip, a change, the gates run and proven, learned when `learned`,
+ * the slot freed. The env is the one the repository, its evidence and the engine's integrity
+ * record live under, so a row that reads them passes it on (2026-11-01-003).
+ */
+export async function learnedFreedSession(
+  learned: boolean,
+): Promise<{ root: string; ctx: HookContext; env: NodeJS.ProcessEnv; work: WorkItem }> {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const env = testEnv();
+  const ctx = hookContext({ session_id: "s", cwd: root }, env);
+  onSessionStart(ctx);
+  const work = createWork(ctx.paths, "fix");
+  work.route = "fast";
+  addCriterion(work, "x");
+  addSkip(work, "tdd:AC-1", "manual");
+  write(root, "src/a.ts", "changed");
+  const outcome = await runGates(ctx.paths, work, ctx.profile, ctx.policy);
+  if (outcome.verdict !== "proven")
+    throw new Error(`the fixture's gates did not prove: ${outcome.verdict}`);
+  work.phase = "learn";
+  saveWork(ctx.paths, work);
+  if (learned) {
+    const out = learnItem(ctx.paths, work, ctx.profile, ctx.policy, ctx.mail, true);
+    if ("refused" in out) throw new Error(`the fixture's learn was refused: ${out.refused}`);
+    saveWork(ctx.paths, work);
+    if (!loadWork(ctx.paths, work.id).work?.learned)
+      throw new Error("the fixture's item is not learned");
+  }
+  updateState(ctx.paths, (state) => {
+    state.active = null;
+  });
+  return { root, ctx, env, work };
 }

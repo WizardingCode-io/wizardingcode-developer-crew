@@ -3,7 +3,13 @@ import { join } from "node:path";
 import type { RouteDecision } from "./classify.ts";
 import { higherRoute, routeRank } from "./classify.ts";
 import { tddDone } from "./criteria.ts";
-import { baseCommitOf } from "./fingerprint.ts";
+import {
+  baseCommitOf,
+  computeFingerprint,
+  fingerprintMethod,
+  MAX_WATCHED_FILES,
+  UNAVAILABLE,
+} from "./fingerprint.ts";
 import { nowIso, writeText } from "./fs.ts";
 import { escapeRegExp } from "./glob.ts";
 import { withLock } from "./lock.ts";
@@ -12,7 +18,7 @@ import { type CrewPaths, workDir } from "./paths.ts";
 import { decisionCounts, disputedDefault, disputedDefaultText } from "./policy.ts";
 import { sourceLine, sourceText } from "./source.ts";
 import { specReviewHash, specReviewMissing } from "./spec-review.ts";
-import { loadState, updateState } from "./state.ts";
+import { loadState, type SessionState, updateState } from "./state.ts";
 import { readProtectedJson, writeProtectedJson } from "./store.ts";
 import { checkStrategy, RESEARCHER_FIRST, strategyHash, verdictText } from "./strategy.ts";
 import type {
@@ -26,6 +32,7 @@ import type {
   Phase,
   PlannedStrategyJudgement,
   Policy,
+  Profile,
   RemovedCriterion,
   Route,
   Screen,
@@ -1040,4 +1047,40 @@ export function waitingPhrase(work: WorkItem): string | null {
   if (work.awaiting === "mail")
     return `waiting for a reply to ${work.awaitingMessage ?? "a message"}`;
   return null;
+}
+
+/**
+ * With no active item, whether the checkout's last learned item still vouches for the tree: its
+ * last gate run proved, untampered, the code as it is now (finding 141: `crew learn` frees the
+ * slot). Reached through `noItemTurnEnds` by the Stop hook and by the release's start record
+ * (2026-11-01-003).
+ */
+function learnedHolds(paths: CrewPaths, profile: Profile): boolean {
+  const learned = lastLearned(paths);
+  if (!learned?.fingerprint) return false;
+  const now = computeFingerprint(
+    paths.root,
+    profile,
+    learned.work,
+    MAX_WATCHED_FILES,
+    fingerprintMethod(learned.fingerprint),
+  );
+  return now !== UNAVAILABLE && now === learned.fingerprint;
+}
+
+/**
+ * The Stop rule's decision with no item active, in one place for the hook and the release's start
+ * record (2026-11-01-003): the tree lets the turn end when nothing changed against the session's
+ * baseline, or when there is no usable baseline (the plugin was enabled mid-session, the folder is
+ * too big to fingerprint), or when the last learned item's proof holds the current fingerprint.
+ */
+export function noItemTurnEnds(
+  paths: CrewPaths,
+  profile: Profile,
+  session: SessionState,
+  current: string,
+): boolean {
+  const changed =
+    session.baseline !== null && current !== UNAVAILABLE ? current !== session.baseline : false;
+  return !changed || learnedHolds(paths, profile);
 }
