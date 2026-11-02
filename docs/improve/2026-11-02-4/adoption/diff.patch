@@ -1,0 +1,64 @@
+diff --git a/plugins/core/skills/crew/SKILL.md b/plugins/core/skills/crew/SKILL.md
+index ed290d8..fb3f792 100644
+--- a/plugins/core/skills/crew/SKILL.md
++++ b/plugins/core/skills/crew/SKILL.md
+@@ -5,8 +5,6 @@ description: "Use when the user asks for a code change in this repository: a fix
+ 
+ # Crew: deliver a change that is proven done
+ 
+-The `crew` command is the engine: it keeps the state in `.crew/work/<id>/`, records test-first runs, runs the gates, writes the evidence and says when the work is done.
+-
+ ## The method
+ 
+ | Phase | What you do | Command |
+@@ -48,10 +46,10 @@ Answer them first; they go to `crew start` as `--answers`; 0.3 or more on a risk
+ 
+ ## The fast route, in three calls
+ 
+-A clear request, one spot, no risk area: `route fast`. All you need is on this page (a sourced request: `references/receive.md`): read nothing else; batch the commands.
++A clear request, one spot, no risk area: `route fast`. This page alone (a sourced request: `references/receive.md`); batch the commands.
+ 
+ 1. **Start with the criteria.** `crew start "<request>" --answers '<json>' --criterion "<observable result>"` (repeat `--criterion`; `--preserve "<text>"` for what stays green, proven with `tdd before` and `tdd after`; `--observed "<text>"` for what a person checks, proven with `tdd observed`). With criteria the item is in build. Not fast, or a fix (an issue: `analysis.md` and a preserve criterion come before build, `references/analyse.md`): follow the method table.
+-2. **Test, then red.** Write the test for the criterion, then `crew tdd red <id> AC-1` (it must fail; `-- <cmd>`: one file).
++2. **Test, then red.** Write the test for the criterion, then `crew tdd red <id> AC-1` (it must fail; `-- <cmd>`: one file). A test that passes as written has no red to force: add it again `--kind observed`, `crew criteria <id> remove AC-1`, `crew tdd observed <id> AC-2 --reason "<why>" -- <cmd>`, and say its reason.
+ 3. **Code, then green and the gates in one call.** The least code that passes, then `crew tdd green <id> AC-1 && crew gate run <id>`. Say the verdict it prints: proven or not, and why.
+ 
+ No `crew status` between steps, no brief, spec or plan. A request in several parts: one item, `--part "<text>"` per part at start, a todo per part; after each commit, `crew task <id> note T-n --part P-n --criteria AC-k --scope <path>`, `crew task <id> gate T-n`, `crew task <id> brief T-n`. Where Bash is restricted, use Edit and Write and spell the id in each `crew` command: `ID=…;` or a redirect stops the permission match.
+diff --git a/plugins/core/skills/crew/references/analyse.md b/plugins/core/skills/crew/references/analyse.md
+index 776dbdd..f71bc67 100644
+--- a/plugins/core/skills/crew/references/analyse.md
++++ b/plugins/core/skills/crew/references/analyse.md
+@@ -21,3 +21,7 @@ One screen on the fast route. Then `crew phase <id> next`: the engine reads the
+ ## 3. The criteria of a fix
+ 
+ Before build an issue needs both: the regression test as a behaviour criterion (`crew criteria <id> add "<the behaviour the defect broke>"`, red first) and what works kept as a preserve criterion (`crew criteria <id> add "<what stays green>" --kind preserve`, proven with `tdd before` and `tdd after`). The engine refuses build without them, and the root cause goes to the knowledge base at Learn (SP4).
++
++## 4. The ending
++
++The last message is the delivery of an issue, on the fast route too, where no other page is read. It says the origin as `analysis.md` found it (the earlier item by id and title, the commit by sha and what it changed, or "outside the records"), never one the analysis did not record; that the analysis came before the fix; the regression test red then green; the preserve criterion before and after; the verdict the gate printed and what is not proven. After a proven gate, `crew phase <id> next` and `crew learn <id>` run first, and what entered the base is one line of that message, not a message of its own.
+diff --git a/plugins/core/skills/crew/references/build.md b/plugins/core/skills/crew/references/build.md
+index 4d51514..523b876 100644
+--- a/plugins/core/skills/crew/references/build.md
++++ b/plugins/core/skills/crew/references/build.md
+@@ -3,18 +3,18 @@
+ For each criterion, in this order:
+ 
+ 1. Write the test that expresses the criterion. It must fail because the behaviour does not exist yet.
+-2. `crew tdd red <id> <criterion>`: the engine runs the test command and records the failure. If the test passes, the engine rejects the run: a test that passes before the code exists proves nothing. Rewrite the test.
++2. `crew tdd red <id> <criterion>`: the engine runs the test command and records the failure. If the test passes, the engine rejects the run: a test that passes before the code exists proves nothing. Rewrite the test, or, where nothing is missing (an end-to-end test that a stub already answers), make the criterion observed: add the text again with `--kind observed`, `crew criteria <id> remove AC-n` (a criterion with no record goes), and record it as below. Never break the code or the stub to see a red.
+ 3. Write the smallest code that makes the test pass.
+ 4. `crew tdd green <id> <criterion>`: the engine records the pass. A green with no earlier red is rejected.
+ 5. Refactor if the code asks for it, keeping the tests green.
+ 
+ Use `-- <command>` after the criterion to run a single test file instead of the whole suite; the full suite runs at the gate. The words after `--` keep their boundaries: one quoted string is the whole command line (`-- "cd packages/api && bun test tests/cart.test.ts"`), several words are a command and its arguments, each quoted by the engine (`-- sh -c "a && b"` reaches the shell as `sh -c 'a && b'`). A shell given `-c` and more than one word after it is refused, since the shell would run only the first word; quote the command string as one argument. The command must be a test run, read before it runs (finding 153): before the test only `cd`, `export`, `set` or `VAR=value`; the test a runner in its test form (`bun test`, `node --test`, `npm test`, `npm run <script naming test>`, `vitest`, `jest`, `pytest`, `php artisan test`, `go test`, `cargo test` and the like) or an interpreter on a test file of the repository (`sh tests/run.sh`, `node tests/x.test.mjs`); after it only `| tee` or `| cat`; the profile's own test command always counts. `sh -c 'exit 1'`, `false`, `npm run build` are refused, with nothing run or recorded.
+ 
+-A feature whose end-to-end path differs from its unit path (a seat planned at two call sites, a watch filter upstream of a glob) is proven by a CLI row through the real flow, beside the unit test (finding 117). An `observed` criterion is refused where a stub makes a test possible: write the stub and the test instead (finding 115).
++A feature whose end-to-end path differs from its unit path (a seat planned at two call sites, a watch filter upstream of a glob) is proven by a CLI row through the real flow, beside the unit test (finding 117). An `observed` criterion is refused where a stub makes a test possible: write the stub and the test instead (finding 115); a test that then passes as written, because the stub already answers, is that criterion's observed run with its reason, never a red forced by breaking the stub.
+ 
+ For a `preserve` criterion: `crew tdd before <id> <criterion>` with the tests passing, make the change, `crew tdd after <id> <criterion>`.
+ 
+-For an `observed` criterion: make the change, then `crew tdd observed <id> <criterion> --reason "<why no red run can exist>"` with the run passing. The reason is in the record and the report; a missing reason is refused.
++For an `observed` criterion: make the change, then `crew tdd observed <id> <criterion> --reason "<why no red run can exist>" -- <the command that runs it>` with the run passing. The reason is in the record, the report and the ending; a missing reason, or a missing command, is refused.
+ 
+ A new site is built through `wizardingcode-design-build`. For an interface item, read `references/frontend.md` and the project's `DESIGN.md` before the first interface file; write no raw value where a token exists; give every declared state its branch and its `capture()`; animate only from the thesis, with the table's values.
+ 
