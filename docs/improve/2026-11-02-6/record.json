@@ -1,0 +1,246 @@
+{
+  "run": "2026-11-02-6",
+  "at": "2026-11-02T18:00:07.221Z",
+  "targets": [
+    "gate-scoped-to-change",
+    "kind-preserve-not-behavior"
+  ],
+  "baseline": {
+    "gate-scoped-to-change": {
+      "name": "gate-scoped-to-change",
+      "runs": [
+        {
+          "score": 0.6,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "todo-gated",
+              "explanation": "pattern not found in trace"
+            },
+            {
+              "grader": "web-not-run",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 0.6,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "todo-gated",
+              "explanation": "pattern not found in trace"
+            },
+            {
+              "grader": "web-not-run",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 0.6,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "todo-gated",
+              "explanation": "pattern not found in trace"
+            },
+            {
+              "grader": "web-not-run",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/references/gate.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        }
+      ],
+      "mean": 0.6,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/references/gate.md",
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md"
+      ],
+      "errored": false,
+      "costUsd": 3.22932975
+    },
+    "kind-preserve-not-behavior": {
+      "name": "kind-preserve-not-behavior",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        }
+      ],
+      "mean": 1,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md"
+      ],
+      "errored": false,
+      "costUsd": 2.1434898000000002
+    }
+  },
+  "proposals": [
+    {
+      "id": "P-1",
+      "status": "probed",
+      "refusal": null,
+      "diffStat": [
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/SKILL.md"
+        }
+      ],
+      "rationale": "I changed one harness page and nothing else: `plugins/core/skills/crew/SKILL.md`. The `todo-gated` grader wants the engine's `T-n gate round 1: pass` line, which only `crew task <id> gate T-n` prints, and the `web-not-run` judge wants the ending to report that todo gate with its apps/api test run and say apps/web's tests were not part of it; every recorded run of the case shows `reads: []`, so the lead takes the fast route and reads nothing but the skill page, which is why the earlier edits to `plan.md` and `build.md` never moved the score. That page covered the todo loop only for \"a request in several parts\" started with `--part`, \"after each commit\", so a request asked as one todo in this checkout read as plain work (the engine would also refuse `--part` on an item with no parts and refuse `note` without `--text` where there is no plan.md), and the lead went from green straight to `crew gate run`. The fast-route paragraph now says a request asked as a todo runs the loop too, between green and the gate run with no commit, gives `--text \"<todo>\"` for the no-part case, and says the todo's gate runs its target's tests alone and that the ending says so and that a sibling's ran only in the item's gate run; step 3 points at that loop. The addition is about 190 bytes on a page measured at 9252 against its 9254-byte ceiling, so I trimmed about 210 bytes of wording no test pins (the intro's \"The `crew` command\", the Gate row's \"as subagents\", the Conclave and Build rows' spare words, rule 4's parenthetical on \"nothing to decide\", its \"Gates are never skipped\" sentence that rules 2 and 4 already cover, its `claude -p` and \"the default\" asides, and rule 5's \"of the gap round\"), counted by hand since this session has no shell; every pinned regex and sentence of the skill tests stays intact, and no test or eval was run.",
+      "probeSet": [
+        "gate-scoped-to-change",
+        "kind-preserve-not-behavior"
+      ],
+      "probe": {
+        "gate-scoped-to-change": {
+          "name": "gate-scoped-to-change",
+          "runs": [
+            {
+              "score": 0.8,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "web-not-run",
+                  "explanation": "judge votes: FAIL FAIL FAIL"
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 0.8,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "web-not-run",
+                  "explanation": "judge votes: FAIL FAIL FAIL"
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 0.8,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "web-not-run",
+                  "explanation": "judge votes: FAIL FAIL FAIL"
+                }
+              ],
+              "reads": []
+            }
+          ],
+          "mean": 0.8000000000000002,
+          "spread": 0,
+          "reads": [],
+          "errored": false,
+          "costUsd": 3.19796285
+        },
+        "kind-preserve-not-behavior": {
+          "name": "kind-preserve-not-behavior",
+          "runs": [
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            }
+          ],
+          "mean": 1,
+          "spread": 0,
+          "reads": [],
+          "errored": false,
+          "costUsd": 2.03266115
+        }
+      },
+      "verdict": "lose",
+      "gain": 0.20000000000000018
+    },
+    {
+      "id": "P-2",
+      "status": "unprobed",
+      "refusal": "the probe set (2 cases, about 5.37 USD by the baseline's costs) is above what is left under the ceiling (0.00 USD); not probed",
+      "diffStat": [
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/SKILL.md"
+        }
+      ],
+      "rationale": "I changed one file and nothing else: `plugins/core/skills/crew/SKILL.md`. The `gate-scoped-to-change` case is a one-spot feature with nobody present, so the lead takes the fast route and reads only the skill page (every recorded run shows `reads: []`), and its stable 0.60 is exactly the two graders that depend on the todo loop: `todo-gated` is a regex for `T-n gate round 1: pass`, which the engine prints only at `crew task <id> gate T-n`, and `web-not-run` is a judge that wants the ending to report that todo gate with its apps/api test run and to say apps/web's tests were not in it. The fast-route paragraph covered only \"a request in several parts\" with `--part` \"after each commit\", so a lead asked to \"plan it as one todo\" had no command that fit (a one-todo item has no parts and no plan.md, so `crew task note` without `--text` is refused), did the three calls and ended on the item's verdict, which is the trace the baseline shows. The paragraph now says a request for a todo in this checkout, or one in several parts, runs `crew task <id> note T-n` (with `--text \"<todo>\"` when there is no part), `gate T-n` and `brief T-n` after each green, with no commit needed since an inline todo's gate and brief run on the declared scope, and that the todo gate tests its files' target alone, so the ending says its runs and that the sibling target's tests were not in it while the item's gate run covers the whole tree. Every pinned regex and sentence of the fast-route section and the rules is intact (the \"several parts … one item … a todo per part\" and `--part \"<text>\"` orders, note before gate before brief, the fix parenthetical, the sourced-request pointer, the `--observed` sentence, rule 5's question-and-decision regex, rule 8 whole). The page sits at the 9254-byte ceiling, so the addition (about 214 bytes by hand count) is paid for by trimming unpinned clauses that other pages or the engine's own output carry (about 266 bytes): step 1's \"With criteria the item is in build\", rule ",
+      "probeSet": [
+        "gate-scoped-to-change",
+        "kind-preserve-not-behavior"
+      ],
+      "probe": {},
+      "verdict": null,
+      "gain": 0
+    }
+  ],
+  "composition": null,
+  "kept": null,
+  "branch": null,
+  "provider": {
+    "name": "runtime",
+    "agentModel": "claude-sonnet-5-5",
+    "judgeModel": "claude-opus-5-5",
+    "claudeModels": true
+  },
+  "costUsd": 21.135657799999997,
+  "lessons": [
+    "K-298"
+  ],
+  "exit": 0,
+  "unmeasured": []
+}
