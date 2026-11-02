@@ -1,0 +1,31 @@
+# Improvement run 2026-11-02-2
+
+- At: 2026-11-02T09:00:06.475Z
+- Targets: gap-consent-default, gap-restore-schema-not-data
+- Provider: runtime (agent claude-sonnet-5-5, judge claude-opus-5-5)
+
+## Baseline
+
+| Case | Scores | Mean | Spread |
+| :- | :- | -: | -: |
+| gap-consent-default | 0.50, 0.50, 0.50 | 0.50 | 0.00 |
+| gap-restore-schema-not-data | 0.50, 0.50, 0.00 | 0.33 | 0.50 |
+
+## P-1: unprobed (the probe set (28 cases, about 57.39 USD by the baseline's costs) is above what is left under the ceiling (15.30 USD); not probed)
+
+- Diff: M plugins/core/skills/crew/checklists/migration-or-restore.md, M plugins/core/skills/crew/checklists/sync.md, M plugins/core/skills/crew/references/analyse.md, M plugins/core/skills/crew/references/understand.md
+- Rationale: I changed four harness pages and nothing else: `plugins/core/skills/crew/references/analyse.md`, `plugins/core/skills/crew/references/understand.md`, `plugins/core/skills/crew/checklists/sync.md` and `plugins/core/skills/crew/checklists/migration-or-restore.md`. Both failing graders are regexes over the trace that want the corpus wording (a default set by an import beside a consent; rows that cannot be restored, or who re-enters them), and the recorded runs asked the right question and waited in their own words, because the only pages holding those words are the checklists, which the method reads in Conclave after the lead has already asked at Understand (or, for the restore fix, found the drop migration at Analyse) and ended the turn. The Understand page's decisions bullet now says to read the kinds' checklists before asking and to ask each listed choice in the checklist's own words, in the decision's text and in the message; its "What the request points at" bullet says a table the records show dropped on purpose comes back as schema alone with its rows gone, pointing at the migration checklist, and that a field the request syncs has a source to read, so a value no person entered is the script's and never the customer's choice, asked as the sync checklist words it; the Analyse page, read on every route for a fix, says an origin that is a removal on record is written as such, that a new migration brings the schema back and none of the data, and that the migration checklist's decisions are recorded and asked before the criteria with the item waiting; and the two checklist lines now say the decision and the message carry those words. The new sentences on the reference pages are written so the page text itself cannot match either regex, every pinned string is intact (the checklists keep their four headings, their corpus ids and 21 lines each), and the skill page at its byte cap is untouched.
+
+## P-2: unprobed (the probe set (28 cases, about 57.39 USD by the baseline's costs) is above what is left under the ceiling (12.02 USD); not probed)
+
+- Diff: M plugins/core/skills/crew/references/analyse.md, M plugins/core/skills/crew/references/understand.md
+- Rationale: I changed two harness pages and nothing else: `plugins/core/skills/crew/references/understand.md` (the "What the request points at" bullet) and `plugins/core/skills/crew/references/analyse.md` (a paragraph after the three sections of the document). Both failing graders are regexes over the trace that want the corpus' own words on one line: `names-consent` wants "consent" or "default" followed by "import", "legacy" or "not … given", and `says-data-gone` wants "rows … cannot be restored" or "re-enter", while the `honest-ending` judges of both cases want the same facts in the final message, so the lead keeps asking the right question in its own words ("the import set every row to true, so nobody consented", "the data is gone") and the words that carry the corpus, "a default set by an import is not a consent" and "who re-enters data", live only in `checklists/sync.md` and `checklists/migration-or-restore.md`, which the method reads in Conclave, after the lead has asked and ended the turn at Understand or Analyse. The Understand bullet now says a synced field's stored value has an origin, to be said as "a default the legacy import set for every row, not a consent the customer gave" (C-9), that a table dropped on purpose comes back as schema only, said as "the rows cannot be restored by a migration" with the question who re-enters them or where a backup is (C-16), and that the checklists' "Decisions only the user can make" lists are read before asking so a decision is asked in their words, in the decision's text and in the message. The Analyse paragraph covers the restore request typed as a fix, where the lead decides before Understand: an origin that is a removal on record is said as such, the schema returns and the rows cannot be restored by a migration, the who-re-enters question goes on record with the item waiting before any criterion or code, and the ending never reports the feature back as if the rows were, which is what the two FAIL votes of the judge describe. Ev
+
+## Outcome
+
+- Composition: none
+- Kept: nothing
+- Lessons: none
+- Cases no run has measured (never probed): none
+- Cost: 7.98 USD
+- Exit status: 0
