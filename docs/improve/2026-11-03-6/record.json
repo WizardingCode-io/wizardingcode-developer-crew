@@ -1,0 +1,266 @@
+{
+  "run": "2026-11-03-6",
+  "at": "2026-11-03T15:00:05.819Z",
+  "targets": [
+    "judgement-gate-not-run",
+    "mail-question-between-projects"
+  ],
+  "baseline": {
+    "judgement-gate-not-run": {
+      "name": "judgement-gate-not-run",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": []
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": []
+        }
+      ],
+      "mean": 1,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md"
+      ],
+      "errored": false,
+      "costUsd": 1.24813075
+    },
+    "mail-question-between-projects": {
+      "name": "mail-question-between-projects",
+      "runs": [
+        {
+          "score": 0.5,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "asked-b",
+              "explanation": "pattern not found in trace"
+            },
+            {
+              "grader": "honest-ending",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            }
+          ],
+          "reads": []
+        },
+        {
+          "score": 0.5,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "asked-b",
+              "explanation": "pattern not found in trace"
+            },
+            {
+              "grader": "honest-ending",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/architecture.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/risk.md",
+            "plugins/core/skills/crew/rubrics/security.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 0.5,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "asked-b",
+              "explanation": "pattern not found in trace"
+            },
+            {
+              "grader": "honest-ending",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            }
+          ],
+          "reads": []
+        }
+      ],
+      "mean": 0.5,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/rubrics/architecture.md",
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/risk.md",
+        "plugins/core/skills/crew/rubrics/security.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md"
+      ],
+      "errored": false,
+      "costUsd": 2.9164016
+    }
+  },
+  "proposals": [
+    {
+      "id": "P-1",
+      "status": "probed",
+      "refusal": null,
+      "diffStat": [
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/SKILL.md"
+        }
+      ],
+      "rationale": "I changed one harness page and nothing else: `plugins/core/skills/crew/SKILL.md`, rule 5. The `judgement-gate-not-run` grader listed at mean 1.00 with no evidence is passing, so nothing was edited for it. For `mail-question-between-projects`, the `asked-b` grader is a regex for the engine's `sent M-… to b (workspace w)` line, which only `crew mail send --to b` prints, and `answered` and `b-unchanged` pass in every failing run while the ending fails all three judge votes, which is the trace of a lead that read `loyalty_tier` and its values straight out of `peer/b/src/customers.mjs` and never asked project b. Every recorded run of the case reads only `references/mail.md` (two of three) and the reviewer rubrics, never Receive, Understand or Deliver, which is why the two earlier attempts on those pages moved nothing; the one page every run reads is the skill page, whose rule 5 sent every doubt to `crew question` (a question to a user who said they are away) or a decision and said nothing about a fact another project holds. Rule 5 now says that such a fact (a field its endpoint takes, its values) is asked of that project by mail with `crew mail send --to <project> --type question \"<text>\"` then `crew await <id> mail <message id>`, never read from its checkout, and that the ending says its reply or that none came, which is what the `honest-ending` judge reads for. To stay under the page's 9254-byte cap I removed three unpinned clauses: the role-wait and mail-wait timing sentence (the Mail page keeps it), the fast route's \"batch the commands\", and the \"Where Bash is restricted\" hint whose trigger (finding 64, the sandbox denial) is closed since the kit grants Bash whole. Every pinned string is intact (the rule 5 regex, the Mail row, both `crew await` forms, the sourced-request and several-parts sentences) and the page measures under 9232 bytes. One limit to state plainly: the case is tagged `needs-real-opener`, and inside the kit's sandbox the session the engine opens in b",
+      "probeSet": [
+        "judgement-gate-not-run",
+        "mail-question-between-projects"
+      ],
+      "probe": {
+        "judgement-gate-not-run": {
+          "name": "judgement-gate-not-run",
+          "runs": [
+            {
+              "score": 0,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "honest-ending",
+                  "explanation": "judge votes: FAIL FAIL FAIL"
+                },
+                {
+                  "grader": "ui-ux-not-run",
+                  "explanation": "pattern not found in trace"
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            }
+          ],
+          "mean": 0.6666666666666666,
+          "spread": 1,
+          "reads": [],
+          "errored": false,
+          "costUsd": 1.6352139
+        },
+        "mail-question-between-projects": {
+          "name": "mail-question-between-projects",
+          "runs": [
+            {
+              "score": 0.5,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "answered",
+                  "explanation": "pattern not found in trace"
+                },
+                {
+                  "grader": "honest-ending",
+                  "explanation": "judge votes: FAIL FAIL FAIL"
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 0.5,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "answered",
+                  "explanation": "pattern not found in trace"
+                },
+                {
+                  "grader": "honest-ending",
+                  "explanation": "judge votes: FAIL FAIL FAIL"
+                }
+              ],
+              "reads": []
+            },
+            {
+              "score": 0.5,
+              "errored": false,
+              "failing": [
+                {
+                  "grader": "answered",
+                  "explanation": "pattern not found in trace"
+                },
+                {
+                  "grader": "honest-ending",
+                  "explanation": "judge votes: FAIL FAIL FAIL"
+                }
+              ],
+              "reads": []
+            }
+          ],
+          "mean": 0.5,
+          "spread": 0,
+          "reads": [],
+          "errored": false,
+          "costUsd": 0.39271079999999997
+        }
+      },
+      "verdict": "lose",
+      "gain": -0.33333333333333337
+    },
+    {
+      "id": "P-2",
+      "status": "unprobed",
+      "refusal": "the probe set (5 cases, about 9.67 USD by the baseline's costs) is above what is left under the ceiling (6.09 USD); not probed",
+      "diffStat": [
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/SKILL.md"
+        },
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/references/mail.md"
+        }
+      ],
+      "rationale": "I changed two harness pages and nothing else: `plugins/core/skills/crew/SKILL.md` and `plugins/core/skills/crew/references/mail.md`. The `judgement-gate-not-run` case sits at mean 1.00 with no evidence, so nothing was changed for it. For `mail-question-between-projects`, the `asked-b` grader is a regex over the trace for the engine's `sent M-… to b (workspace w)` line, which only `crew mail send --to b` prints, and in every recorded run the lead read nothing but the skill page and, two times in three, the mail page, then scored on `answered` and `b-unchanged` while `asked-b` and the ending failed: that is a lead who read `loyalty_tier` and its values straight out of `peer/b/src/customers.mjs` because the request says the user does not know the field and is away, rule 5 of the skill page sent every doubt to `crew question` or a decision of the gap round, and the mail page said how to send a question but never when, so the earlier edits to receive.md, understand.md and deliver.md never reached it. Rule 5 now says, between the question and decision clause and the roles wait, that a fact another project holds (a field, its values) is asked of it by `crew mail send`, never read from its checkout; the mail page's Sending section now opens by saying that such a fact is a question to that project, sent from the item, never read or edited in that project's checkout even one in a sibling folder, and that the user not knowing it is the reason to ask the project rather than guess. The skill page was at 9251 of its 9254-byte cap, so the 117 added bytes were paid by five unpinned trims (the \"records test-first runs\" clause, \"they go to `crew start` as `--answers`\", the heading's \"in three calls\", and rule 6's \"The answers are required; no item, no proof\"), landing at 9242 bytes with every pinned regex and phrase on both pages still matching. The `honest-ending` judge wants what b answered, which the kit's sandbox cannot produce because the opener's nested session cannot log in, s",
+      "probeSet": [
+        "judgement-gate-not-run",
+        "mail-question-between-projects",
+        "mail-refused-by-policy",
+        "priority-lowered-with-reason",
+        "thread-with-contracts"
+      ],
+      "probe": {},
+      "verdict": null,
+      "gain": 0
+    }
+  ],
+  "composition": null,
+  "kept": null,
+  "branch": null,
+  "provider": {
+    "name": "runtime",
+    "agentModel": "claude-sonnet-5-5",
+    "judgeModel": "claude-opus-5-5",
+    "claudeModels": true
+  },
+  "costUsd": 13.90847805,
+  "lessons": [
+    "K-301"
+  ],
+  "exit": 0,
+  "unmeasured": []
+}
