@@ -1,0 +1,123 @@
+{
+  "run": "2026-11-03-1",
+  "at": "2026-11-03T00:00:02.422Z",
+  "targets": [
+    "mail-refused-by-policy",
+    "no-environment-cannot-prove"
+  ],
+  "baseline": {
+    "mail-refused-by-policy": {
+      "name": "mail-refused-by-policy",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/mail.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/mail.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/mail.md"
+          ]
+        }
+      ],
+      "mean": 1,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/references/mail.md"
+      ],
+      "errored": false,
+      "costUsd": 0.3208762
+    },
+    "no-environment-cannot-prove": {
+      "name": "no-environment-cannot-prove",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        }
+      ],
+      "mean": 1,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md"
+      ],
+      "errored": false,
+      "costUsd": 2.4813389000000003
+    }
+  },
+  "proposals": [
+    {
+      "id": "P-1",
+      "status": "refused",
+      "refusal": "the editor changed nothing",
+      "diffStat": [],
+      "rationale": "I changed nothing. Both graders named as failing, `mail-refused-by-policy` and `no-environment-cannot-prove`, are reported at a mean of 1.00 with a spread of 0.00 and no failing evidence, which is a full pass on every run, not a failure. The two eval cases exist under `plugins/core/evals/` and carry only a name, tags and a fixture script, so there is no grader output pointing at any page the lead reads. The last CTO plan is empty too. The smallest change that keeps these graders passing for the right reason is no change at all, since any edit to the skill page or a reference page would be a change without a cause to attribute it to and would risk moving other cases that are not named here. No files under `plugins/core/skills/crew/` or `plugins/core/agents/` were touched, and the worktree remains clean.",
+      "probeSet": [],
+      "probe": {},
+      "verdict": null,
+      "gain": 0
+    },
+    {
+      "id": "P-2",
+      "status": "refused",
+      "refusal": "the editor changed nothing",
+      "diffStat": [],
+      "rationale": "I changed nothing. Both graders named in the task, `mail-refused-by-policy` and `no-environment-cannot-prove`, report a mean of 1.00 with a spread of 0.00 and carry no evidence of a failing vote. The one earlier run that targeted this same pair, recorded on 2026-10-26, measured them at 1.00 on every run before and after an edit, and kept nothing. There is no failing grader here, so no edit to a page under `plugins/core/skills/crew/` or `plugins/core/agents/` could make anything pass for the right reason, and the only possible effect of a change would be a regression on the fragile cases the harness lessons describe. The smallest change that keeps these two graders passing is no change at all.",
+      "probeSet": [],
+      "probe": {},
+      "verdict": null,
+      "gain": 0
+    }
+  ],
+  "composition": null,
+  "kept": null,
+  "branch": null,
+  "provider": {
+    "name": "runtime",
+    "agentModel": "claude-sonnet-5-5",
+    "judgeModel": "claude-opus-5-5",
+    "claudeModels": true
+  },
+  "costUsd": 3.3649923500000005,
+  "lessons": [],
+  "exit": 0,
+  "unmeasured": []
+}
