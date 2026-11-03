@@ -1,18 +1,31 @@
 import { expect, test } from "bun:test";
-import { readFileSync, statSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { Writable } from "node:stream";
-import { joinWords, runCommand, shellRefusal } from "../src/run.ts";
-import { tempDir } from "./helpers.ts";
+import { eventsPathOf, joinWords, runCommand, shellRefusal } from "../src/run.ts";
+import { newestEvents, tempDir, within } from "./helpers.ts";
 
 test("captures exit code, tail and a log file", async () => {
   const dir = tempDir();
   const log = join(dir, "logs", "a.txt");
-  const result = await runCommand("echo one; echo two; echo err 1>&2; exit 3", {
-    cwd: dir,
-    timeoutMs: 5000,
-    logPath: log,
-  });
+  const result = await within(
+    runCommand("echo one; echo two; echo err 1>&2; exit 3", {
+      cwd: dir,
+      timeoutMs: 5000,
+      logPath: log,
+      events: true,
+    }),
+    20_000,
+    eventsPathOf(log),
+  );
   expect(result.exit).toBe(3);
   expect(result.timedOut).toBe(false);
   expect(result.tail).toContain("two");
@@ -203,4 +216,221 @@ test("SP9-T10 AC-10: the promise waits for both streams to finish, seen through 
   expect(finished[stderrLogPath]).toBeDefined();
   expect(resolvedAt).toBeGreaterThanOrEqual(finished[logPath] ?? Number.POSITIVE_INFINITY);
   expect(resolvedAt).toBeGreaterThanOrEqual(finished[stderrLogPath] ?? Number.POSITIVE_INFINITY);
+});
+
+/** The events file's lines, each split into its name and its milliseconds (finding 220). */
+function eventLines(path: string): { text: string; name: string; ms: number | null }[] {
+  return readFileSync(path, "utf8")
+    .trimEnd()
+    .split("\n")
+    .map((text) => {
+      const timed = /^(.+?) \+(\d+)ms\b/.exec(text);
+      return {
+        text,
+        name: timed?.[1] ?? text.split(" ")[0] ?? "",
+        ms: timed ? Number(timed[2]) : null,
+      };
+    });
+}
+
+test("2026-11-02-002 AC-1: with events, runCommand writes each event of its child beside the log as it comes, timed from the spawn", async () => {
+  const dir = tempDir();
+  const log = join(dir, "logs", "a.txt");
+  const command = "echo one; echo err 1>&2; exit 3";
+  await runCommand(command, { cwd: dir, timeoutMs: 5000, logPath: log, events: true });
+  expect(eventsPathOf(log)).toBe(join(dir, "logs", "a.events.txt"));
+  expect(eventsPathOf(join(dir, "x.d", "b"))).toBe(join(dir, "x.d", "b.events.txt"));
+  const lines = eventLines(eventsPathOf(log));
+  const [word, at, ...rest] = (lines[0]?.text ?? "").split(" ");
+  expect(word).toBe("start");
+  expect(Number.isNaN(Date.parse(at ?? ""))).toBe(false);
+  expect(at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  expect(rest.join(" ")).toBe(JSON.stringify(command));
+  const names = lines.slice(1).map((l) => l.name);
+  for (const name of [
+    "spawn",
+    "stdout end",
+    "stdout close",
+    "stderr end",
+    "stderr close",
+    "exit",
+    "close",
+    "logs ended",
+  ])
+    expect(names).toContain(name);
+  for (const line of lines.slice(1)) expect(line.ms).not.toBeNull();
+  expect(names.at(-1)).toBe("logs ended");
+  expect(lines.find((l) => l.name === "spawn")?.text).toMatch(/^spawn \+\d+ms pid \d+$/);
+  expect(lines.find((l) => l.name === "exit")?.text).toMatch(/^exit \+\d+ms code 3 signal null$/);
+  expect(lines.find((l) => l.name === "close")?.text).toMatch(/^close \+\d+ms code 3 signal null$/);
+  // Without events, nothing is written beside the log.
+  const plain = join(dir, "plain", "p.txt");
+  await runCommand("echo x", { cwd: dir, timeoutMs: 5000, logPath: plain });
+  expect(readdirSync(join(dir, "plain"))).toEqual(["p.txt"]);
+});
+
+test("2026-11-02-002 AC-1: a timed-out run leaves a timeout line, and a run whose cwd is missing leaves an error line", async () => {
+  const dir = tempDir();
+  const hung = join(dir, "logs", "hung.txt");
+  const timed = await runCommand("sleep 5", {
+    cwd: dir,
+    timeoutMs: 300,
+    logPath: hung,
+    events: true,
+  });
+  expect(timed.timedOut).toBe(true);
+  expect(eventLines(eventsPathOf(hung)).map((l) => l.text)).toContainEqual(
+    expect.stringMatching(/^timeout \+\d+ms killed the group$/),
+  );
+  const lost = join(dir, "logs", "lost.txt");
+  const failed = await runCommand("echo hi", {
+    cwd: join(dir, "missing"),
+    timeoutMs: 5000,
+    logPath: lost,
+    events: true,
+  });
+  expect(failed.exit).toBeNull();
+  const names = eventLines(eventsPathOf(lost)).map((l) => l.name);
+  expect(names).toContain("error");
+  expect(names).not.toContain("spawn");
+});
+
+test("2026-11-02-002 AC-2: while the run is pending, the file already holds the exit, and a pipe a grandchild holds shows no close until it ends", async () => {
+  const dir = tempDir();
+  const log = join(dir, "logs", "held.txt");
+  const path = eventsPathOf(log);
+  const run = runCommand("sleep 1 & echo x", {
+    cwd: dir,
+    timeoutMs: 10_000,
+    logPath: log,
+    events: true,
+  });
+  let settled = false;
+  void run.then(() => {
+    settled = true;
+  });
+  const deadline = Date.now() + 900;
+  while (
+    Date.now() < deadline &&
+    !(existsSync(path) && readFileSync(path, "utf8").includes("\nexit "))
+  )
+    await new Promise((r) => setTimeout(r, 10));
+  const pending = eventLines(path).map((l) => l.name);
+  expect(settled).toBe(false);
+  expect(pending).toContain("spawn");
+  expect(pending).toContain("exit");
+  expect(pending).not.toContain("stdout close");
+  expect(pending).not.toContain("close");
+  await run;
+  const after = eventLines(path);
+  const exit = after.find((l) => l.name === "exit")?.ms ?? 0;
+  const close = after.find((l) => l.name === "close")?.ms ?? 0;
+  expect(close - exit).toBeGreaterThanOrEqual(500);
+});
+
+test("2026-11-02-002 AC-5: an events path that cannot be written changes nothing in the run", async () => {
+  const dir = tempDir();
+  const blocked = join(dir, "logs", "blocked.txt");
+  mkdirSync(eventsPathOf(blocked), { recursive: true });
+  const result = await within(
+    runCommand("echo one; echo two; exit 3", {
+      cwd: dir,
+      timeoutMs: 5000,
+      logPath: blocked,
+      events: true,
+    }),
+    10_000,
+    null,
+  );
+  expect(result.exit).toBe(3);
+  expect(result.timedOut).toBe(false);
+  expect(result.tail).toBe("one\ntwo");
+  expect(readFileSync(blocked, "utf8")).toBe("one\ntwo\n");
+});
+
+test("2026-11-02-002 AC-7: within names the events file when the promise has no result in time, and newestEvents picks by modification time", async () => {
+  const dir = tempDir();
+  const path = join(dir, "a.events.txt");
+  writeFileSync(path, "start x\nspawn +1ms pid 1\n");
+  const never = new Promise<number>(() => {});
+  await expect(within(never, 50, path)).rejects.toThrow(
+    /no result in 50 ms; events: a\.events\.txt: start x\nspawn \+1ms pid 1/,
+  );
+  await expect(within(never, 50, () => null)).rejects.toThrow(/no result in 50 ms; events: none/);
+  await expect(within(never, 50, join(dir, "absent.events.txt"))).rejects.toThrow(/events: none/);
+  expect(await within(Promise.resolve(7), 50, path)).toBe(7);
+  // The older file's name sorts after the newer one's.
+  const logs = join(dir, "logs");
+  mkdirSync(logs);
+  expect(newestEvents(logs)).toBeNull();
+  writeFileSync(join(logs, "tdd-AC-2-after-1.events.txt"), "start old\n");
+  writeFileSync(join(logs, "tdd-AC-1-red-2.events.txt"), "start new\n");
+  writeFileSync(join(logs, "tdd-AC-9-red-3.txt"), "a log\n");
+  utimesSync(join(logs, "tdd-AC-2-after-1.events.txt"), new Date(1_000_000), new Date(1_000_000));
+  utimesSync(join(logs, "tdd-AC-1-red-2.events.txt"), new Date(2_000_000), new Date(2_000_000));
+  expect(newestEvents(logs)).toBe(join(logs, "tdd-AC-1-red-2.events.txt"));
+  expect(newestEvents(join(dir, "none"))).toBeNull();
+});
+
+test("2026-11-02-002 AC-9: a run whose close does not come after the timeout's kill resolves after the grace, timed out, with a gave up line", async () => {
+  const dir = tempDir();
+  const log = join(dir, "logs", "escaped.txt");
+  const started = Date.now();
+  // A descendant that leaves the group survives the group kill and holds the pipes for 4 s.
+  const result = await within(
+    runCommand(`perl -e 'use POSIX; setsid(); exec "sleep", "4"' & echo before; sleep 10`, {
+      cwd: dir,
+      timeoutMs: 300,
+      logPath: log,
+      events: true,
+    }),
+    8000,
+    eventsPathOf(log),
+  );
+  const took = Date.now() - started;
+  expect(result.timedOut).toBe(true);
+  expect(result.exit).toBeNull();
+  expect(took).toBeGreaterThanOrEqual(2000);
+  expect(took).toBeLessThan(5000);
+  const lines = eventLines(eventsPathOf(log));
+  const kill = lines.find((l) => l.name === "timeout")?.ms ?? 0;
+  const gaveUp = lines.find((l) => l.name === "gave up");
+  expect(gaveUp?.text).toMatch(/^gave up \+\d+ms no close after the kill$/);
+  expect((gaveUp?.ms ?? 0) - kill).toBeGreaterThanOrEqual(1900);
+  expect(readFileSync(log, "utf8")).toContain("before");
+});
+
+test("2026-11-02-002 AC-10: at the timeout, before the kill, the events file says whether the pid and its group were alive", async () => {
+  const dir = tempDir();
+  const log = join(dir, "logs", "probe.txt");
+  await runCommand("sleep 5", { cwd: dir, timeoutMs: 300, logPath: log, events: true });
+  const lines = eventLines(eventsPathOf(log));
+  const probe = lines.findIndex((l) => l.name === "probe");
+  expect(lines[probe]?.text).toMatch(/^probe \+\d+ms pid alive group alive$/);
+  expect(probe).toBeLessThan(lines.findIndex((l) => l.name === "timeout"));
+});
+
+test("2026-11-02-002 AC-9: the run releases the pipes it gave up on, so what a descendant writes later is refused, and nothing throws", async () => {
+  const dir = tempDir();
+  const log = join(dir, "logs", "late.txt");
+  // The descendant ignores SIGPIPE and leaves a marker: `refused` when its write found no reader.
+  const late = `trap "" PIPE; sleep 3; if echo late; then touch ${dir}/wrote; else touch ${dir}/refused; fi`;
+  const result = await runCommand(
+    `perl -e 'use POSIX; setsid(); exec "sh", "-c", $ARGV[0]' '${late}' & echo early; sleep 10`,
+    { cwd: dir, timeoutMs: 300, logPath: log, events: true },
+  );
+  expect(result.timedOut).toBe(true);
+  // The descendant writes about 0.7 s after the run gave up (300 ms + 2 s grace, at 3 s).
+  const deadline = Date.now() + 3000;
+  while (
+    Date.now() < deadline &&
+    !existsSync(join(dir, "refused")) &&
+    !existsSync(join(dir, "wrote"))
+  )
+    await new Promise((r) => setTimeout(r, 50));
+  expect(existsSync(join(dir, "refused"))).toBe(true);
+  expect(existsSync(join(dir, "wrote"))).toBe(false);
+  const text = readFileSync(log, "utf8");
+  expect(text).toContain("early");
+  expect(text).not.toContain("late");
 });

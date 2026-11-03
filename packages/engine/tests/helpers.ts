@@ -5,13 +5,15 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, isAbsolute, join, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, sep } from "node:path";
 import { type CliIo, main } from "../src/cli.ts";
 import { loadEvidence } from "../src/evidence.ts";
 import { runGates } from "../src/gates.ts";
@@ -352,4 +354,59 @@ export async function learnedFreedSession(
     state.active = null;
   });
   return { root, ctx, env, work };
+}
+
+/**
+ * The `*.events.txt` file with the newest modification time in a folder, or null: names do not
+ * sort in time, because their prefixes differ (`tdd-AC-1-red-…`, `tdd-AC-2-after-…`) (finding 220).
+ */
+export function newestEvents(dir: string): string | null {
+  let names: string[];
+  try {
+    names = readdirSync(dir).filter((name) => name.endsWith(".events.txt"));
+  } catch {
+    return null;
+  }
+  let newest: { path: string; at: number } | null = null;
+  for (const name of names) {
+    const path = join(dir, name);
+    try {
+      const at = statSync(path).mtimeMs;
+      if (!newest || at > newest.at) newest = { path, at };
+    } catch {
+      // Gone since the listing.
+    }
+  }
+  return newest?.path ?? null;
+}
+
+/** An events file as a failure message shows it: `<name>: <text>`, or `none` when there is no file to read (finding 220). */
+export function eventsReport(path: string | null): string {
+  if (!path) return "none";
+  try {
+    return `${basename(path)}: ${readFileSync(path, "utf8")}`;
+  } catch {
+    return "none";
+  }
+}
+
+/**
+ * The promise's result, or a failure when it has none within `ms` that holds the events file's
+ * text, so a run that stalls says which of its child's events came before the test runner's own
+ * limit kills the row (finding 220). `events` is the file's path, or a function that names it when
+ * the timer fires. The run given up on is not killed: its own timeout does that.
+ */
+export function within<T>(
+  promise: Promise<T>,
+  ms: number,
+  events: string | null | (() => string | null),
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      const path = typeof events === "function" ? events() : events;
+      reject(new Error(`no result in ${ms} ms; events: ${eventsReport(path)}`));
+    }, ms);
+  });
+  return Promise.race([promise, late]).finally(() => clearTimeout(timer));
 }

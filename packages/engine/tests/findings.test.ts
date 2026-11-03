@@ -64,7 +64,10 @@ function openFindings(text: string): number[] {
 // 217 to 219 recorded by the 0.18.1 release and closed by 2026-11-01-003, which recorded 220 (the preserve
 // pair's row failing once under the whole suite with its cause lost; the row now names the refusal and the
 // tail, for the next occurrence) and 221 (the advisories its judgement's round 3 left), for the next hardening item.
-const OPEN = [77, 114, 177, 178, 181, 182, 183, 206, 209, 210, 212, 213, 214, 215, 216, 220, 221];
+// 222 (a task gate row failing once under the whole suite with its output lost) recorded by 2026-11-02-002.
+const OPEN = [
+  77, 114, 177, 178, 181, 182, 183, 206, 209, 210, 212, 213, 214, 215, 216, 220, 221, 222,
+];
 
 test("AC-9 (consolidation of 2026-10-24): the findings that read open are the named ones, and the thirteen closed by the consolidation read closed", () => {
   const open = openFindings(readFileSync(FINDINGS, "utf8"));

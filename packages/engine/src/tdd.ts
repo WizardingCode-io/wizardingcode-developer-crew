@@ -256,6 +256,8 @@ export async function recordTdd(
     cwd: paths.root,
     timeoutMs: fallback?.timeoutMs ?? 10 * 60 * 1000,
     logPath: join(workDir(paths, work.id), log),
+    // The child's events beside the log, so a refused or stalled run says which came (finding 220).
+    events: true,
   });
   const counted = passCount(result.tail);
   const record: RunRecord = {

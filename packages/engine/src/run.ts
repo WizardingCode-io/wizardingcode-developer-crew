@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
-import { createWriteStream, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { appendFileSync, createWriteStream, mkdirSync, writeFileSync } from "node:fs";
+import { basename, dirname, extname, join } from "node:path";
 import type { Writable } from "node:stream";
 import {
   COMMAND_WRAPPERS,
@@ -30,6 +30,8 @@ export interface RunOptions {
   stderrLogPath?: string;
   /** The stream a log path is written through: the file's by default; a test passes one whose end is slow, to see the promise wait for it (SP9 Task 10 AC-10). */
   openLog?: (path: string) => Writable;
+  /** Write the child's events, each with its time, to `eventsPathOf(logPath)` as they come (finding 220). */
+  events?: boolean;
 }
 
 export interface RunResult {
@@ -40,6 +42,59 @@ export interface RunResult {
 }
 
 const TAIL_LINES = 40;
+
+/**
+ * How long a run waits for its child's `close` after the timeout's kill: a descendant that left the
+ * group keeps the pipes, and a runtime can lose the child's end (finding 220), so the run then
+ * resolves timed out instead of hanging.
+ */
+export const KILL_GRACE_MS = 2000;
+
+/** Whether a process (a pid) or a process group (a negative pid) exists: signal 0, `EPERM` counting as alive. */
+function exists(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/**
+ * Whether a timed-out child and its group still exist, before the kill: `gone` means the runtime
+ * lost an end that came, `alive` that the kill has something to reach (finding 220).
+ */
+function probe(pid: number | undefined): string {
+  if (!pid || process.platform === "win32") return "pid unknown";
+  return `pid ${exists(pid) ? "alive" : "gone"} group ${exists(-pid) ? "alive" : "gone"}`;
+}
+
+/** Where a run's events go: beside its log, the last extension replaced by `.events.txt` (finding 220). */
+export function eventsPathOf(logPath: string): string {
+  const name = basename(logPath);
+  const ext = extname(name);
+  return join(dirname(logPath), `${ext ? name.slice(0, -ext.length) : name}.events.txt`);
+}
+
+/**
+ * The writer of a run's events file, or one that writes nothing: each line is written at once, so
+ * a run whose promise never resolves leaves on disk every event that came; the first truncates. A
+ * failed write is swallowed, so the trace can never throw out of a listener, the timer or the run.
+ */
+function eventsWriter(options: RunOptions): (line: string) => void {
+  if (!options.events) return () => {};
+  const path = eventsPathOf(options.logPath);
+  let first = true;
+  return (line) => {
+    try {
+      if (first) writeFileSync(path, `${line}\n`);
+      else appendFileSync(path, `${line}\n`);
+    } catch {
+      // The trace is a witness, never a cause: the run goes on without it.
+    }
+    first = false;
+  };
+}
 
 function killTree(pid: number | undefined): void {
   if (!pid) return;
@@ -130,7 +185,10 @@ export function runCommand(command: string, options: RunOptions): Promise<RunRes
       if (lines.length > TAIL_LINES) lines.shift();
     }
   };
+  const note = eventsWriter(options);
+  note(`start ${new Date().toISOString()} ${JSON.stringify(command)}`);
   const started = Date.now();
+  const at = (): string => `+${Date.now() - started}ms`;
   return new Promise((resolve) => {
     // A detached child leads its own process group, so the timeout can kill it and everything it started.
     const child = spawn(command, {
@@ -140,10 +198,30 @@ export function runCommand(command: string, options: RunOptions): Promise<RunRes
       env: options.env ?? process.env,
       stdio: [options.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
     });
+    child.on("spawn", () => note(`spawn ${at()} pid ${child.pid}`));
+    child.on("exit", (code, signal) => note(`exit ${at()} code ${code} signal ${signal}`));
+    for (const [name, stream] of [
+      ["stdout", child.stdout],
+      ["stderr", child.stderr],
+    ] as const) {
+      stream?.on("end", () => note(`${name} end ${at()}`));
+      stream?.on("close", () => note(`${name} close ${at()}`));
+    }
     let timedOut = false;
+    let grace: ReturnType<typeof setTimeout> | undefined;
     const timer = setTimeout(() => {
       timedOut = true;
+      if (options.events) note(`probe ${at()} ${probe(child.pid)}`);
       killTree(child.pid);
+      note(`timeout ${at()} killed the group`);
+      grace = setTimeout(() => {
+        note(`gave up ${at()} no close after the kill`);
+        // The pipes go first, so nothing a descendant writes later reaches a log stream that
+        // finish ends.
+        child.stdout?.destroy();
+        child.stderr?.destroy();
+        finish(null);
+      }, KILL_GRACE_MS);
     }, options.timeoutMs);
     child.stdout?.on("data", (chunk: Buffer) => absorb(chunk));
     child.stderr?.on("data", (chunk: Buffer) => absorb(chunk, errors ?? log));
@@ -151,12 +229,13 @@ export function runCommand(command: string, options: RunOptions): Promise<RunRes
     // The promise resolves once the log streams have finished, so a caller that reads the log file
     // right after (the deep audit reads a tool's reply from it) finds the whole output: ending the
     // streams and resolving at once left a short file under load (SP9 Task 10). Finished once: the
-    // error and close events may both arrive.
+    // error and close events may both arrive, and the grace after the timeout's kill may end it first.
     let finished = false;
     const finish = (exit: number | null): void => {
       if (finished) return;
       finished = true;
       clearTimeout(timer);
+      clearTimeout(grace);
       if (partial) lines.push(partial);
       const result = {
         exit,
@@ -167,16 +246,22 @@ export function runCommand(command: string, options: RunOptions): Promise<RunRes
       let pending = errors ? 2 : 1;
       const closed = (): void => {
         pending -= 1;
-        if (pending === 0) resolve(result);
+        if (pending > 0) return;
+        note(`logs ended ${at()}`);
+        resolve(result);
       };
       log.end(closed);
       errors?.end(closed);
     };
     child.on("error", (error) => {
+      note(`error ${at()} ${error.message}`);
       absorb(Buffer.from(`${error.message}\n`));
       finish(null);
     });
-    child.on("close", (code) => finish(code));
+    child.on("close", (code, signal) => {
+      note(`close ${at()} code ${code} signal ${signal}`);
+      finish(code);
+    });
   });
 }
 

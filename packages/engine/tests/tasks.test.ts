@@ -1504,7 +1504,11 @@ test("SP7b-T5 AC-1: a todo's gate plans the judgement its scope asks for, cuts i
   expect((await c.run("skip", id, "gate:ui-ux", "--reason", "no browser")).code).toBe(0);
   expect((await c.run("continue", id, "gate", "T-5")).code).toBe(0);
   const skipped = await c.run("task", id, "gate", "T-5");
-  expect(skipped.out.trim().endsWith("T-5 gate round 4: pass")).toBe(true);
+  // The output in the message: one failure under the whole suite showed nothing else (finding 222).
+  expect(
+    skipped.out.trim().endsWith("T-5 gate round 4: pass"),
+    `out: ${skipped.out}; err: ${skipped.err}`,
+  ).toBe(true);
   expect(taskOf("T-5")).toMatchObject({ state: "briefed", gate: { round: 4, judgement: [] } });
   expect((await c.run("task", id, "brief", "T-5")).code).toBe(0);
   expect(loadWork(paths, id).work?.rounds?.judgement ?? 0).toBe(0);

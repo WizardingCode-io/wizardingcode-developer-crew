@@ -1,5 +1,15 @@
 import { expect, test } from "bun:test";
-import { chmodSync, existsSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { basename, join } from "node:path";
 import { tddDone } from "../src/criteria.ts";
 import { detectProfile } from "../src/detect/index.ts";
@@ -9,7 +19,15 @@ import { passCount, recordTdd as record } from "../src/tdd.ts";
 import { testRunRefusal } from "../src/test-run.ts";
 import type { RunRecord, Target } from "../src/types.ts";
 import { addCriterion, createWork } from "../src/work.ts";
-import { makeRepo, repoPaths, testEnv, write } from "./helpers.ts";
+import {
+  eventsReport,
+  makeRepo,
+  newestEvents,
+  repoPaths,
+  testEnv,
+  within,
+  write,
+} from "./helpers.ts";
 
 /** The engine's record, applied to the evidence it was given, as the CLI applies it under the lock (finding 81). */
 async function recordTdd(...args: Parameters<typeof record>): ReturnType<typeof record> {
@@ -18,11 +36,24 @@ async function recordTdd(...args: Parameters<typeof record>): ReturnType<typeof 
   return out;
 }
 
-/** A step that must record: the failure names the engine's refusal and the run's tail, never `ok` alone (finding 220). */
-async function recorded(...args: Parameters<typeof record>): Promise<void> {
-  const out = await recordTdd(...args);
-  expect(out.ok, `${out.message}; tail: ${out.record?.tail ?? ""}`).toBe(true);
+/**
+ * A step that must record, awaited for at most `ms`: the failure names the engine's refusal, the
+ * run's tail and the newest events file under the item's logs, never `ok` alone, and a step that
+ * stalls fails through `within` with that file before bun's 30-second limit (finding 220).
+ */
+function recordedWithin(ms: number): (...args: Parameters<typeof record>) => Promise<void> {
+  return async (...args) => {
+    const [paths, work] = args;
+    const logs = join(workDir(paths, work.id), "logs");
+    const out = await within(recordTdd(...args), ms, () => newestEvents(logs));
+    expect(
+      out.ok,
+      `${out.message}; tail: ${out.record?.tail ?? ""}; events: ${eventsReport(newestEvents(logs))}`,
+    ).toBe(true);
+  };
 }
+
+const recorded = recordedWithin(20_000);
 
 function setup() {
   const root = makeRepo({
@@ -954,4 +985,53 @@ test("F179 AC-5: passCount reads the runner's own summary line (bun, vitest, jes
     (await recordTdd(s.paths, s.work, s.evidence, s.profile, s.preserve.id, "before")).ok,
   ).toBe(true);
   expect(s.evidence.tdd[1]?.before?.passed).toBeUndefined();
+});
+
+test("2026-11-02-002 AC-1: a tdd run writes its events file beside its log, naming the command", async () => {
+  const s = setup();
+  const red = await recordTdd(s.paths, s.work, s.evidence, s.profile, s.behaviour.id, "red");
+  expect(red.ok).toBe(true);
+  const logs = join(workDir(s.paths, s.work.id), "logs");
+  const traces = readdirSync(logs).filter((f) => f.endsWith(".events.txt"));
+  expect(traces).toHaveLength(1);
+  const trace = traces[0] ?? "";
+  expect(readdirSync(logs)).toContain(trace.replace(/\.events\.txt$/, ".txt"));
+  const text = readFileSync(join(logs, trace), "utf8");
+  expect(text.split("\n")[0]).toMatch(/^start \S+ "npm run test"$/);
+  expect(text).toMatch(/\nexit \+\d+ms code 1 signal null\n/);
+});
+
+test("2026-11-02-002 AC-7: recorded's failure holds the newest events file, even when an older one's name sorts after it", async () => {
+  const s = setup();
+  write(s.root, "run-tests.sh", "exit 0\n");
+  const logs = join(workDir(s.paths, s.work.id), "logs");
+  mkdirSync(logs, { recursive: true });
+  const stale = join(logs, "tdd-zz-stale.events.txt");
+  writeFileSync(stale, 'start 2000-01-01T00:00:00.000Z "stale"\n');
+  utimesSync(stale, new Date(1_000_000), new Date(1_000_000));
+  let message = "";
+  try {
+    await recorded(s.paths, s.work, s.evidence, s.profile, s.behaviour.id, "red");
+  } catch (error) {
+    message = String(error);
+  }
+  expect(message).toMatch(/events: tdd-AC-\d+-red-\d+\.events\.txt: start \S+ "npm run test"/);
+  expect(message).not.toContain("stale");
+});
+
+test("2026-11-02-002 AC-7: a step that stalls fails through within with its run's events file, before the run ends", async () => {
+  const s = setup();
+  write(s.root, "run-tests.sh", "sleep 3; exit 1\n");
+  const started = Date.now();
+  let message = "";
+  try {
+    await recordedWithin(500)(s.paths, s.work, s.evidence, s.profile, s.behaviour.id, "red");
+  } catch (error) {
+    message = String(error);
+  }
+  expect(Date.now() - started).toBeLessThan(2500);
+  expect(message).toMatch(
+    /no result in 500 ms; events: tdd-AC-\d+-red-\d+\.events\.txt: start \S+ "npm run test"\nspawn \+\d+ms pid \d+/,
+  );
+  expect(message).not.toMatch(/\nclose /);
 });
