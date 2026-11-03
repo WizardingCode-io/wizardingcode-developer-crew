@@ -1,0 +1,143 @@
+{
+  "run": "2026-11-03-4",
+  "at": "2026-11-03T05:00:07.244Z",
+  "targets": [
+    "risk-escalation",
+    "strategy-rejects-over-engineering"
+  ],
+  "baseline": {
+    "risk-escalation": {
+      "name": "risk-escalation",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/conclave.md"
+          ]
+        },
+        {
+          "score": 0.6666666666666666,
+          "errored": true,
+          "failing": [
+            {
+              "grader": "honest-outcome",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/references/writing.md",
+            "plugins/core/skills/crew/rubrics/spec-feature.md",
+            "plugins/core/skills/crew/rubrics/spec-heilmeier.md",
+            "plugins/core/skills/crew/rubrics/spec-readiness.md",
+            "plugins/core/skills/crew/rubrics/spec-reimplementation.md",
+            "plugins/core/skills/crew/rubrics/spec-zoom-out.md"
+          ]
+        },
+        {
+          "score": 0.6666666666666666,
+          "errored": true,
+          "failing": [
+            {
+              "grader": "honest-outcome",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/references/writing.md",
+            "plugins/core/skills/crew/rubrics/spec-feature.md",
+            "plugins/core/skills/crew/rubrics/spec-heilmeier.md",
+            "plugins/core/skills/crew/rubrics/spec-readiness.md",
+            "plugins/core/skills/crew/rubrics/spec-reimplementation.md",
+            "plugins/core/skills/crew/rubrics/spec-zoom-out.md"
+          ]
+        }
+      ],
+      "mean": 0.7777777777777777,
+      "spread": 0.33333333333333337,
+      "reads": [
+        "plugins/core/skills/crew/references/conclave.md",
+        "plugins/core/skills/crew/references/writing.md",
+        "plugins/core/skills/crew/rubrics/spec-feature.md",
+        "plugins/core/skills/crew/rubrics/spec-heilmeier.md",
+        "plugins/core/skills/crew/rubrics/spec-readiness.md",
+        "plugins/core/skills/crew/rubrics/spec-reimplementation.md",
+        "plugins/core/skills/crew/rubrics/spec-zoom-out.md"
+      ],
+      "errored": true,
+      "costUsd": 3.6179273999999984
+    },
+    "strategy-rejects-over-engineering": {
+      "name": "strategy-rejects-over-engineering",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/strategy.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/receive.md",
+            "plugins/core/skills/crew/references/strategy.md",
+            "plugins/core/skills/crew/references/understand.md",
+            "plugins/core/skills/crew/references/writing.md",
+            "plugins/core/skills/crew/rubrics/strategy.md"
+          ]
+        },
+        {
+          "score": 0.25,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "over-engineering-named",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            },
+            {
+              "grader": "ruling-recorded",
+              "explanation": "pattern not found in trace"
+            },
+            {
+              "grader": "specify-reached",
+              "explanation": "pattern not found in trace"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/strategy.md"
+          ]
+        }
+      ],
+      "mean": 0.75,
+      "spread": 0.75,
+      "reads": [
+        "plugins/core/skills/crew/references/receive.md",
+        "plugins/core/skills/crew/references/strategy.md",
+        "plugins/core/skills/crew/references/understand.md",
+        "plugins/core/skills/crew/references/writing.md",
+        "plugins/core/skills/crew/rubrics/strategy.md"
+      ],
+      "errored": false,
+      "costUsd": 9.392188600000003
+    }
+  },
+  "proposals": [],
+  "composition": null,
+  "kept": null,
+  "branch": null,
+  "provider": {
+    "name": "runtime",
+    "agentModel": "claude-sonnet-5-5",
+    "judgeModel": "claude-opus-5-5",
+    "claudeModels": true
+  },
+  "costUsd": 13.010116,
+  "lessons": [],
+  "exit": 3,
+  "unmeasured": []
+}
