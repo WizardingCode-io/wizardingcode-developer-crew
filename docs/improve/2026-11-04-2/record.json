@@ -1,0 +1,137 @@
+{
+  "run": "2026-11-04-2",
+  "at": "2026-11-04T01:00:07.286Z",
+  "targets": [
+    "pack-laravel-absent",
+    "proven-test-first"
+  ],
+  "baseline": {
+    "pack-laravel-absent": {
+      "name": "pack-laravel-absent",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        }
+      ],
+      "mean": 1,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md"
+      ],
+      "errored": false,
+      "costUsd": 2.71236605
+    },
+    "proven-test-first": {
+      "name": "proven-test-first",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/conclave.md",
+            "plugins/core/skills/crew/references/gate.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/conclave.md",
+            "plugins/core/skills/crew/references/gate.md",
+            "plugins/core/skills/crew/references/specify.md",
+            "plugins/core/skills/crew/references/understand.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        }
+      ],
+      "mean": 1,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/references/conclave.md",
+        "plugins/core/skills/crew/references/gate.md",
+        "plugins/core/skills/crew/references/specify.md",
+        "plugins/core/skills/crew/references/understand.md",
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md"
+      ],
+      "errored": false,
+      "costUsd": 1.8185810999999998
+    }
+  },
+  "proposals": [
+    {
+      "id": "P-1",
+      "status": "refused",
+      "refusal": "the editor changed nothing",
+      "diffStat": [],
+      "rationale": "Both graders in this run, `pack-laravel-absent` and `proven-test-first`, are listed at mean 1.00 with spread 0.00 and no evidence, which means every recorded run passed them. There is no failing behaviour to trace and no page whose wording could be the cause of a miss, so I changed nothing: no file under `plugins/core/skills/crew/` or `plugins/core/agents/` was edited. Editing a harness page against a passing grader risks breaking a pinned string or shifting the skill page past its byte cap for no gain, and the earlier runs' lessons confirm that passing graders listed this way are left alone. The checkout is as it was at the start of the session.",
+      "probeSet": [],
+      "probe": {},
+      "verdict": null,
+      "gain": 0
+    },
+    {
+      "id": "P-2",
+      "status": "refused",
+      "refusal": "the editor changed nothing",
+      "diffStat": [],
+      "rationale": "I changed no file. Both graders named as failing, `pack-laravel-absent` and `proven-test-first`, are listed at mean 1.00 with spread 0.00 and evidence `none`, and the last CTO plan is also `none`, so there is no failing run, no trace and no final message to explain: both already pass for the right reason across every run in the kit. An edit to the skill page or a reference page without a failing behaviour behind it would be a change made on speculation, and the recent history of this checkout (five consecutive \"nothing kept\" runs) shows such edits are dropped; the lesson pages above likewise record that the `pack-…-absent` graders are not-contains regexes over the trace, which an untouched harness keeps clear by construction, while the proven-test-first flow already prints its red before its green under the Build page as it stands. The smallest change that keeps these graders passing for the right reason is therefore none, and the harness under `plugins/core/skills/crew/` and `plugins/core/agents/` is left exactly as committed at 3be6b7c.",
+      "probeSet": [],
+      "probe": {},
+      "verdict": null,
+      "gain": 0
+    }
+  ],
+  "composition": null,
+  "kept": null,
+  "branch": null,
+  "provider": {
+    "name": "runtime",
+    "agentModel": "claude-sonnet-5-5",
+    "judgeModel": "claude-opus-5-5",
+    "claudeModels": true
+  },
+  "costUsd": 4.845339399999999,
+  "lessons": [],
+  "exit": 0,
+  "unmeasured": []
+}
