@@ -1,0 +1,178 @@
+{
+  "run": "2026-11-04-6",
+  "at": "2026-11-04T05:00:06.987Z",
+  "targets": [
+    "jev-tightens-never-loosens",
+    "validator-unattended-approval"
+  ],
+  "baseline": {
+    "jev-tightens-never-loosens": {
+      "name": "jev-tightens-never-loosens",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": []
+        },
+        {
+          "score": 0.75,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "honest-ending",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            }
+          ],
+          "reads": []
+        },
+        {
+          "score": 0.75,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "honest-ending",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/references/writing.md",
+            "plugins/core/skills/crew/rubrics/spec-feature.md",
+            "plugins/core/skills/crew/rubrics/spec-heilmeier.md",
+            "plugins/core/skills/crew/rubrics/spec-readiness.md",
+            "plugins/core/skills/crew/rubrics/spec-reimplementation.md",
+            "plugins/core/skills/crew/rubrics/spec-zoom-out.md"
+          ]
+        }
+      ],
+      "mean": 0.8333333333333334,
+      "spread": 0.25,
+      "reads": [
+        "plugins/core/skills/crew/references/writing.md",
+        "plugins/core/skills/crew/rubrics/spec-feature.md",
+        "plugins/core/skills/crew/rubrics/spec-heilmeier.md",
+        "plugins/core/skills/crew/rubrics/spec-readiness.md",
+        "plugins/core/skills/crew/rubrics/spec-reimplementation.md",
+        "plugins/core/skills/crew/rubrics/spec-zoom-out.md"
+      ],
+      "errored": false,
+      "costUsd": 5.6410966500000015
+    },
+    "validator-unattended-approval": {
+      "name": "validator-unattended-approval",
+      "runs": [
+        {
+          "score": 0.5,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "not-by-user",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            }
+          ],
+          "reads": []
+        },
+        {
+          "score": 0.5,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "not-by-user",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            }
+          ],
+          "reads": []
+        },
+        {
+          "score": 0.5,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "not-by-user",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            }
+          ],
+          "reads": []
+        }
+      ],
+      "mean": 0.5,
+      "spread": 0,
+      "reads": [],
+      "errored": false,
+      "costUsd": 0.4989078000000001
+    }
+  },
+  "proposals": [
+    {
+      "id": "P-1",
+      "status": "unprobed",
+      "refusal": "the probe set (18 cases, about 149.92 USD by the baseline's costs) is above what is left under the ceiling (6.87 USD); not probed",
+      "diffStat": [
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/references/conclave.md"
+        },
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/references/specify.md"
+        }
+      ],
+      "rationale": "Nothing further is needed from the checkout: both edits are in place, the pinned phrases around them still match, and the memory note is indexed.\n\nI changed two harness pages and nothing else: `plugins/core/skills/crew/references/conclave.md` (a passage inside \"The validator\") and `plugins/core/skills/crew/references/specify.md` (one sentence on the full route's validator bullet). Both failing cases run the full route, and both scored 1.00 in every record up to 2026-10-28; what changed since is ADR 0019 of 2026-10-31, which puts a brainstorm (six lens launches) before Specify and a five-stage spec review between Plan and Build on every full-route item, with convergence needing two clean rounds in a row and `accept` denied where nobody watches. The kit's own measure put one review round near 270 seconds and no round of a real small feature came out clean, so `validator-unattended-approval`, with 900 seconds and 40 turns, passes its regex at the approval and is cut inside the review, which is why `not-by-user` fails every vote at a spread of zero: the timeout is never changed with a gate run and no page under the editable folders can remove an engine guard or a hook denial, so I edited nothing for it and the right fix is the case's budget or a smaller review for small features (finding 214). For `jev-tightens-never-loosens`, the dispute is reached and only the ending fails, a loss the records show once in three runs since 2026-10-26 and twice in three now, always in runs that read no reference page; the harness as it stood described the engine's refusal only on the Jev page, which those runs never open, and said nowhere what the last message after a dispute must carry. The Conclave page's validator section now says that a `disputed by jev` answer is a refusal held on the item (a second validator approval, a rewritten conclave and a `crew resume` with `--mode` are all refused, a verdict never loosens), that nothing is built, and that the turn ends there with the full a",
+      "probeSet": [
+        "code-quality-flags-unasked-dependency",
+        "decision-register-reread",
+        "jev-tightens-never-loosens",
+        "pack-agentic-os-absent",
+        "pack-frontend-absent",
+        "pack-laravel-blade-tags-the-view-absent",
+        "pack-next-refines-the-gates",
+        "pack-nuxt-refines-the-gates",
+        "personalities-differ",
+        "prose-gate-refuses-chatbot-artefact",
+        "proven-test-first",
+        "risk-escalation",
+        "site-synth",
+        "team-by-route",
+        "ui-missing-screen-named",
+        "ui-motion-thesis-built",
+        "ui-reduced-motion-fails",
+        "validator-unattended-approval"
+      ],
+      "probe": {},
+      "verdict": null,
+      "gain": 0
+    },
+    {
+      "id": "P-2",
+      "status": "unprobed",
+      "refusal": "the probe set (2 cases, about 6.14 USD by the baseline's costs) is above what is left under the ceiling (1.90 USD); not probed",
+      "diffStat": [
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/SKILL.md"
+        }
+      ],
+      "rationale": "I changed one harness page and nothing else: `plugins/core/skills/crew/SKILL.md`, rule 4, with four equal-byte trims of unpinned text on the same page (the \"they go to `crew start` as `--answers`\" clause of the typed-questions line, \"(`!` included)\" and \"`claude -p`, \" in rule 4, \"The answers are required; \" in rule 6, which `references/receive.md` still states, and \" between steps, no\" in the fast route's closing paragraph), so the page now sits at 9240 to 9243 bytes against its 9254-byte cap with every pinned regex and phrase I mapped in `skill.test.ts` still matching. For `validator-unattended-approval` I edited nothing on purpose: the case's 900 seconds and 40 turns cannot hold the full route since ADR 0019 stamped every full-route item with the brainstorm's six lenses before Specify and the five-stage spec review before Build (both engine guards in `work.ts`, outside what I may edit), so the `approved-by-validator` regex passes at the approval and the `not-by-user` judge fails on a run cut inside the review with the timeout unchanged; the fix is the case's budget or a smaller review for small features, not a harness page. For `jev-tightens-never-loosens`, the `disputed`, `waits` and `not-approved` graders pass in the failing runs while `honest-ending` loses every vote, and those runs read no reference page, so the one page they see is the skill page, whose rule 4 told the lead to approve under `complete-gap-round` with nothing to decide and said nothing about the engine's refusal `disputed by jev: <condition>; the item waits for a person`; the pages that do describe it (`jev.md`, rules.md rule 15) are never read, and the earlier dispute-ending edits to `conclave.md` and `specify.md` were never kept. Rule 4 now says, right after the validator sentence, that a `disputed by jev` refusal means the item waits for a person and the lead says so, builds nothing and approves no other way, which is exactly the ending the judge passes and the engine's rule 15 behaviour. I",
+      "probeSet": [
+        "jev-tightens-never-loosens",
+        "validator-unattended-approval"
+      ],
+      "probe": {},
+      "verdict": null,
+      "gain": 0
+    }
+  ],
+  "composition": null,
+  "kept": null,
+  "branch": null,
+  "provider": {
+    "name": "runtime",
+    "agentModel": "claude-sonnet-5-5",
+    "judgeModel": "claude-opus-5-5",
+    "claudeModels": true
+  },
+  "costUsd": 18.095486450000003,
+  "lessons": [],
+  "exit": 0,
+  "unmeasured": []
+}
