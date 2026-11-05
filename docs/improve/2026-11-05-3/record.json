@@ -1,0 +1,200 @@
+{
+  "run": "2026-11-05-3",
+  "at": "2026-11-05T02:00:05.128Z",
+  "targets": [
+    "gap-erasure-or-deactivation",
+    "strategy-declares-phases"
+  ],
+  "baseline": {
+    "gap-erasure-or-deactivation": {
+      "name": "gap-erasure-or-deactivation",
+      "runs": [
+        {
+          "score": 0.6666666666666666,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "asks-which",
+              "explanation": "pattern not found in trace"
+            }
+          ],
+          "reads": []
+        },
+        {
+          "score": 0.6666666666666666,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "asks-which",
+              "explanation": "pattern not found in trace"
+            }
+          ],
+          "reads": []
+        },
+        {
+          "score": 0.6666666666666666,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "asks-which",
+              "explanation": "pattern not found in trace"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/references/receive.md"
+          ]
+        }
+      ],
+      "mean": 0.6666666666666666,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/references/receive.md"
+      ],
+      "errored": false,
+      "costUsd": 0.40107
+    },
+    "strategy-declares-phases": {
+      "name": "strategy-declares-phases",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/conclave.md",
+            "plugins/core/skills/crew/references/specify.md",
+            "plugins/core/skills/crew/references/strategy.md",
+            "plugins/core/skills/crew/references/understand.md",
+            "plugins/core/skills/crew/rubrics/strategy.md",
+            "plugins/core/skills/wizardingcode-spec-brainstorm/SKILL.md",
+            "plugins/core/skills/wizardingcode-spec-draft/SKILL.md"
+          ]
+        },
+        {
+          "score": 0.4,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "ruling-recorded",
+              "explanation": "pattern not found in trace"
+            },
+            {
+              "grader": "specify-reached",
+              "explanation": "pattern not found in trace"
+            },
+            {
+              "grader": "triggers-with-figures",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/references/strategy.md",
+            "plugins/core/skills/crew/rubrics/strategy.md"
+          ]
+        },
+        {
+          "score": 0.8,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "triggers-with-figures",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/spec-zoom-out.md",
+            "plugins/core/skills/crew/rubrics/strategy.md"
+          ]
+        }
+      ],
+      "mean": 0.7333333333333334,
+      "spread": 0.6,
+      "reads": [
+        "plugins/core/skills/crew/references/conclave.md",
+        "plugins/core/skills/crew/references/specify.md",
+        "plugins/core/skills/crew/references/strategy.md",
+        "plugins/core/skills/crew/references/understand.md",
+        "plugins/core/skills/crew/rubrics/spec-zoom-out.md",
+        "plugins/core/skills/crew/rubrics/strategy.md",
+        "plugins/core/skills/wizardingcode-spec-brainstorm/SKILL.md",
+        "plugins/core/skills/wizardingcode-spec-draft/SKILL.md"
+      ],
+      "errored": false,
+      "costUsd": 11.642433999999998
+    }
+  },
+  "proposals": [
+    {
+      "id": "P-1",
+      "status": "unprobed",
+      "refusal": "the probe set (4 cases, about 76.38 USD by the baseline's costs) is above what is left under the ceiling (0.95 USD); not probed",
+      "diffStat": [
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/SKILL.md"
+        },
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/references/strategy.md"
+        }
+      ],
+      "rationale": "The edits are in place and every pinned string on both pages still matches. I did not run tests or an eval rerun in this session, which has no shell. The skill page is within its cap, measured by regex probes.\n\nI changed two harness pages and nothing else: `plugins/core/skills/crew/SKILL.md` (rule 5, paid for by trims of unpinned wording elsewhere on the page) and `plugins/core/skills/crew/references/strategy.md` (steps 4 and 5 of the check-and-ruling section). For `gap-erasure-or-deactivation`, the `asks-which` grader is a trace regex for a typed `crew decision … add` whose question names erasure or deactivation, and every recorded run reads only the skill page (two of three with no reference read at all) while `waits` and `honest-ending` pass, so the lead asks the right question in prose, waits, and records it as `crew question … add` or not at all, because rule 5 sent every doubt about the request to `crew question` and called a decision a thing \"of the gap round\"; the earlier edits to Receive, Understand and Analyse never reached these runs. Rule 5 now says a design choice is a decision on every route, recorded with `crew decision <id> add` and a conservative `--default` before asking, with a ticket's \"delete\" named as erasure (data gone) or deactivation (account kept), never \"soft or hard\", written so the page text itself cannot match the grader. For `strategy-declares-phases`, the failing run passed the check graders and lost `ruling-recorded`, `specify-reached` and the final-message judge together, the shape of a first ruling found not proven followed by a lost second round under the engine's rules (a record refused after an edit without a new check, a CTO file older than the check refused, two rounds and no third with nobody present). Step 4 now names those refusals and gives the second-round sequence in order, says the first ruling is the one to get right by answering the rubric's five questions on the draft before the first check, and lists what costs a ro",
+      "probeSet": [
+        "gap-erasure-or-deactivation",
+        "site-synth",
+        "strategy-declares-phases",
+        "strategy-rejects-over-engineering"
+      ],
+      "probe": {},
+      "verdict": null,
+      "gain": 0
+    },
+    {
+      "id": "P-2",
+      "status": "unprobed",
+      "refusal": "the probe set (9 cases, about 150.97 USD by the baseline's costs) is above what is left under the ceiling (0.00 USD); not probed",
+      "diffStat": [
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/SKILL.md"
+        },
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/references/receive.md"
+        },
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/references/strategy.md"
+        }
+      ],
+      "rationale": "All edits and checks are done; nothing further depends on another lookup, so I'm closing with the summary.\n\nI changed three harness pages and nothing else: `plugins/core/skills/crew/SKILL.md` (rule 5, with trims elsewhere on the page to pay for it), `plugins/core/skills/crew/references/receive.md` (one sentence in the \"A doubt about the request\" paragraph) and `plugins/core/skills/crew/references/strategy.md` (a rubric-first paragraph under the document's shape, the route named in the judge's prompt, and the not-proven loop and the ending in steps 4 and 5). For `gap-erasure-or-deactivation`, `waits` and `honest-ending` pass in every recorded run and only `asks-which` fails, a trace regex for a typed `crew decision <id> add \"…\"` naming erasure or deactivation; every run shows `reads: []` (one adds receive.md), so the skill page is the one lever, and its rule 5 sent \"a missing fact of the request\" to `crew question` and only \"a design choice of the gap round\" to a decision, which is how a lead reading an ambiguous ticket asked the right question in prose and typed a question or nothing. Rule 5 now says a design choice is a decision recorded with `crew decision <id> add` and a conservative `--default`, and that a request two engineers would build differently (a ticket's \"delete\": data gone, or account closed and kept) holds a choice, not a missing fact; the pinned regex over that sentence still matches, the page sits at 9250 or 9251 bytes under the 9254 cap (measured by regex probes, this session having no shell), and no editable page matches the grader's pattern, so a pass comes from the typed command alone. For `strategy-declares-phases`, the check graders pass and one run in three loses `ruling-recorded`, `specify-reached` and the judge together, the shape of a ruling never recorded: the engine prints `strategy:` only at `crew judgement record`, refuses a `conclave/cto.md` older than the check, a ruling naming the wrong reviewer and a third round with nobody present",
+      "probeSet": [
+        "document-entry-opens-item",
+        "gap-erasure-or-deactivation",
+        "site-bakery",
+        "site-law",
+        "site-synth",
+        "strategy-declares-phases",
+        "strategy-rejects-over-engineering",
+        "ticket-triaged-against-business",
+        "ui-motion-frequency-found"
+      ],
+      "probe": {},
+      "verdict": null,
+      "gain": 0
+    }
+  ],
+  "composition": null,
+  "kept": null,
+  "branch": null,
+  "provider": {
+    "name": "runtime",
+    "agentModel": "claude-sonnet-5-5",
+    "judgeModel": "claude-opus-5-5",
+    "claudeModels": true
+  },
+  "costUsd": 24.14193575,
+  "lessons": [],
+  "exit": 0,
+  "unmeasured": []
+}
