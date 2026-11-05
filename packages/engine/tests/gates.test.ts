@@ -2,6 +2,7 @@ import { expect, spyOn, test } from "bun:test";
 import {
   chmodSync,
   existsSync,
+  mkdirSync,
   readFileSync,
   renameSync,
   rmSync,
@@ -2650,4 +2651,139 @@ test("2026-10-29-001 AC-5 (the architecture advisory at round 2): the reviewer's
     "fingerprint",
     "phrases",
   ]);
+});
+
+/**
+ * A fast item whose change is a page (`src/App.vue`), so the e2e gate is planned, in a project with
+ * no e2e command; the ui-ux seat is skipped by a person's per-item skip so the e2e line is the only
+ * one that decides (finding 223).
+ */
+async function standingFixture() {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/App.vue": "<template><main>a</main></template>\n",
+  });
+  const paths = repoPaths(root, testEnv());
+  const { profile } = ensureProfile(paths);
+  const node = profile.targets[0];
+  if (!node) throw new Error("no target");
+  node.gates.test = { command: "exit 0", source: "confirmed" };
+  delete node.gates.e2e;
+  saveProfile(paths, profile);
+  const work = createWork(paths, "fix");
+  work.route = "fast";
+  addCriterion(work, "x");
+  addSkip(work, "tdd:AC-1", "manual");
+  addSkip(work, "gate:ui-ux", "not this row's concern");
+  write(root, "src/App.vue", "<template><main>b</main></template>\n");
+  const decision = { reason: "no suite", at: "2026-11-04T18:00:00.000Z", by: "user" as const };
+  const policy: Policy = { ...DEFAULT_POLICY, standingE2eSkip: decision };
+  return { root, paths, profile, work, policy, decision };
+}
+
+test("2026-11-04-001 AC-35: a standing e2e skip records the run and proves the item", async () => {
+  const { paths, profile, work, policy, decision } = await standingFixture();
+  const skipsBefore = JSON.stringify(work.skips);
+  const outcome = await runGates(paths, work, profile, policy);
+  const e2e = outcome.evidence.runs.find((r) => r.gate === "e2e");
+  expect(e2e).toMatchObject({
+    target: ".",
+    status: "skipped",
+    reason: "no suite",
+    standing: decision.at,
+  });
+  expect(JSON.stringify(work.skips)).toBe(skipsBefore);
+  expect(work.skips.some((s) => s.step === "gate:e2e")).toBe(false);
+  expect(outcome.unproven.filter((l) => l.includes("e2e"))).toEqual([]);
+  expect(outcome.verdict).toBe("proven");
+  expect(renderReport(work, outcome.evidence, policy)).toContain(
+    "- `gate:e2e` skipped by the user (standing decision of 2026-11-04): no suite",
+  );
+});
+
+test("2026-11-04-001 AC-35: a counted per-item skip wins over the standing one", async () => {
+  const { paths, profile, work, policy } = await standingFixture();
+  addSkip(work, "gate:e2e", "the person's own word for this item");
+  const outcome = await runGates(paths, work, profile, policy);
+  const e2e = outcome.evidence.runs.find((r) => r.gate === "e2e");
+  expect(e2e?.reason).toBe("the person's own word for this item");
+  expect(e2e?.standing).toBeUndefined();
+});
+
+test("2026-11-04-001 AC-36: each way the standing e2e skip stops holding un-proves the item", async () => {
+  const cases: [string, (f: Awaited<ReturnType<typeof standingFixture>>) => [Policy, Profile]][] = [
+    [
+      "the profile has an e2e command",
+      (f) => {
+        const p = structuredClone(f.profile);
+        const t = p.targets[0];
+        if (t) t.gates.e2e = { command: "exit 1", source: "confirmed" };
+        return [f.policy, p];
+      },
+    ],
+    ["no standing e2e skip is held", (f) => [{ ...f.policy, standingE2eSkip: null }, f.profile]],
+    ["allowSkips does not list e2e", (f) => [{ ...f.policy, allowSkips: [] }, f.profile]],
+    ["the policy requires e2e", (f) => [{ ...f.policy, requiredGates: ["e2e"] }, f.profile]],
+  ];
+  for (const [why, change] of cases) {
+    const f = await standingFixture();
+    await runGates(f.paths, f.work, f.profile, f.policy);
+    const [policy, profile] = change(f);
+    const after = assess(f.paths, f.work, profile, policy);
+    expect(after.verdict).toBe("unproven");
+    expect(after.unproven.join("\n")).toContain(
+      `gate e2e: the standing e2e skip no longer holds (${why}): run crew gate run ${f.work.id} again`,
+    );
+  }
+});
+
+test("2026-11-04-001 AC-37: the next gate run runs the e2e gate and says why; a replaced decision stays proven", async () => {
+  const f = await standingFixture();
+  await runGates(f.paths, f.work, f.profile, f.policy);
+  // A replaced decision: another reason and date, still eligible, still proven.
+  const replaced: Policy = {
+    ...f.policy,
+    standingE2eSkip: { reason: "still none", at: "2026-11-05T09:00:00.000Z", by: "user" },
+  };
+  expect(assess(f.paths, f.work, f.profile, replaced).verdict).toBe("proven");
+  // A command set: the next run runs the gate, which fails, and says why the skip stopped.
+  const withSuite = structuredClone(f.profile);
+  const t = withSuite.targets[0];
+  if (!t) throw new Error("no target");
+  t.gates.e2e = { command: "exit 1", source: "confirmed" };
+  withSuite.environment = {
+    start: { command: "true", source: "confirmed" },
+    health: { command: "true", source: "confirmed" },
+    timeoutMs: 1000,
+  };
+  saveProfile(f.paths, withSuite);
+  const run = await runGates(f.paths, f.work, withSuite, f.policy);
+  expect(run.standingNotes).toEqual([
+    "standing e2e skip no longer holds: the profile has an e2e command",
+  ]);
+  const e2e = run.evidence.runs.filter((r) => r.gate === "e2e");
+  expect(e2e.map((r) => r.status)).toEqual(["fail"]);
+  expect(run.verdict).toBe("unproven");
+});
+
+test("2026-11-04-001 AC-37: a command on another target removes the standing run at the root", async () => {
+  const f = await standingFixture();
+  await runGates(f.paths, f.work, f.profile, f.policy);
+  const withWeb = structuredClone(f.profile);
+  const t = withWeb.targets[0];
+  if (!t) throw new Error("no target");
+  withWeb.targets.push({
+    ...t,
+    path: "web",
+    gates: { e2e: { command: "exit 1", source: "confirmed" } },
+  });
+  withWeb.environment = {
+    start: { command: "true", source: "confirmed" },
+    health: { command: "true", source: "confirmed" },
+    timeoutMs: 1000,
+  };
+  mkdirSync(join(f.root, "web"), { recursive: true });
+  const run = await runGates(f.paths, f.work, withWeb, f.policy);
+  const e2e = run.evidence.runs.filter((r) => r.gate === "e2e");
+  expect(e2e.map((r) => r.target)).toEqual(["web"]);
 });

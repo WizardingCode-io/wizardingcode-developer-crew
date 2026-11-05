@@ -704,3 +704,23 @@ test.skipIf(!existsSync(REPO_POLICY))(
     expect(policy.verify?.asks).toEqual([...VERIFY_ASKS]);
   },
 );
+
+test("2026-11-04-001 AC-34: the loader keeps a well-formed standingE2eSkip", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  expect(DEFAULT_POLICY.standingE2eSkip).toBeNull();
+  expect(loadPolicy(paths).policy.standingE2eSkip).toBeNull();
+  mkdirSync(paths.crewDir, { recursive: true });
+  const file = join(paths.crewDir, "policy.json");
+  const good = { reason: "no suite", at: "2026-11-04T18:00:00.000Z", by: "user" as const };
+  writeFileSync(file, JSON.stringify({ standingE2eSkip: good }));
+  expect(loadPolicy(paths).policy.standingE2eSkip).toEqual(good);
+  for (const bad of [
+    { ...good, reason: "  " },
+    { ...good, at: "yesterday" },
+    { ...good, by: "agent" },
+    "no suite",
+  ]) {
+    writeFileSync(file, JSON.stringify({ standingE2eSkip: bad }));
+    expect(loadPolicy(paths).policy.standingE2eSkip).toBeNull();
+  }
+});

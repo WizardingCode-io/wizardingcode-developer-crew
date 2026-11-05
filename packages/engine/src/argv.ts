@@ -25,6 +25,8 @@ export const BOOLEAN_FLAGS = new Set([
   "all",
   // `crew policy set <list key> <value> --remove` (finding 120): in either position, never a value.
   "remove",
+  // `crew projects standingE2eSkip --dry-run` (finding 223): a boolean, so the guard and the command read it alike.
+  "dry-run",
 ]);
 
 /** A comma-separated flag as its trimmed non-empty words; a flag absent, boolean or empty gives none (finding 88). */

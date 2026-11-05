@@ -1,10 +1,11 @@
 // packages/engine/src/cli.ts
-import { existsSync as existsSync29, readFileSync as readFileSync13, realpathSync as realpathSync10, rmSync as rmSync9, statSync as statSync13 } from "node:fs";
+import { existsSync as existsSync29, lstatSync as lstatSync9, readFileSync as readFileSync13, realpathSync as realpathSync10, rmSync as rmSync9, statSync as statSync13 } from "node:fs";
+import { tmpdir as tmpdir2 } from "node:os";
 import { basename as basename12, isAbsolute as isAbsolute13, join as join62, relative as relative14, resolve as resolve9, sep as sep7 } from "node:path";
 
 // packages/engine/src/analysis.ts
-import { existsSync as existsSync15, lstatSync as lstatSync4, mkdirSync as mkdirSync5 } from "node:fs";
-import { dirname as dirname9, isAbsolute as isAbsolute6, join as join33 } from "node:path";
+import { existsSync as existsSync20, lstatSync as lstatSync5, mkdirSync as mkdirSync9 } from "node:fs";
+import { dirname as dirname11, isAbsolute as isAbsolute7, join as join41 } from "node:path";
 
 // packages/engine/src/decisions.ts
 import { join as join3 } from "node:path";
@@ -369,7 +370,7 @@ function decisionLine(e) {
 }
 
 // packages/engine/src/evidence.ts
-import { join as join30 } from "node:path";
+import { join as join40 } from "node:path";
 
 // packages/engine/src/design.ts
 import { execFileSync as execFileSync2 } from "node:child_process";
@@ -1407,6 +1408,9 @@ function isPermissionMode(value) {
 var VALIDATOR_RULES = ["complete-gap-round", "stated-default"];
 function isValidatorRule(value) {
   return VALIDATOR_RULES.includes(value);
+}
+function e2eTarget(profile) {
+  return profile.targets.find((t) => t.gates.e2e);
 }
 var VERIFY_ASKS = [
   "defect",
@@ -3842,88 +3846,1086 @@ function queryRefusal(paths, id, query) {
   return hit ? "a query with a word of the client's name or address stays on this machine: search the trade, the materials or the kind of place" : null;
 }
 
-// packages/engine/src/mail-status.ts
-var MAIL_TRANSITIONS = {
-  sent: ["read", "done", "refused", "expired", "in-progress", "blocked"],
-  read: ["accepted", "refused", "in-progress", "done", "blocked", "expired"],
-  accepted: ["in-progress", "blocked", "done", "refused"],
-  "in-progress": ["blocked", "done"],
-  blocked: ["in-progress", "done", "refused", "expired"],
-  done: [],
-  refused: [],
-  expired: []
-};
-var BEFORE_0_7 = {
-  answered: "done",
-  "waiting-for-person": "blocked",
-  stopped: "refused"
-};
-function mailStatus(m) {
-  const raw = m.status;
-  if (Object.hasOwn(MAIL_TRANSITIONS, raw))
-    return raw;
-  return BEFORE_0_7[raw] ?? "sent";
+// packages/engine/src/e2e.ts
+import {
+  closeSync as closeSync4,
+  existsSync as existsSync17,
+  mkdirSync as mkdirSync8,
+  openSync as openSync4,
+  readSync as readSync2,
+  realpathSync as realpathSync4,
+  statSync as statSync7,
+  unlinkSync as unlinkSync5
+} from "node:fs";
+import { join as join36, relative as relative6, sep as sep5 } from "node:path";
+
+// packages/engine/src/console.ts
+import { existsSync as existsSync3, readFileSync as readFileSync6 } from "node:fs";
+import { join as join8 } from "node:path";
+function levelOf(type) {
+  return type === "warn" ? "warning" : type;
 }
-function priorityOf(m) {
-  if (isMailPriority(m.priority))
-    return m.priority;
-  return m.type === "blocker" ? "blocker" : "normal";
-}
-function decidedPriority(m) {
-  const confirmed = m.priorityDecision?.confirmed;
-  return isMailPriority(confirmed) ? confirmed : priorityOf(m);
-}
-function priorityRank(priority) {
-  return MAIL_PRIORITIES.indexOf(priority);
-}
-function transition(m, to, extra = {}) {
-  const from = mailStatus(m);
-  const allowed = MAIL_TRANSITIONS[from].includes(to) && !(from === "sent" && to === "done" && m.type !== "notice");
-  if (!allowed)
-    return { refused: `${m.id} is ${from}; it cannot become ${to}` };
-  return { ...m, ...extra, status: to };
-}
-var MESSAGE_ID = /^M-\d{4}-\d{2}-\d{2}-\d{3}-[A-Za-z0-9._-]+$/;
-var SHA256 = /^[0-9a-f]{64}$/;
-function threadOf(m) {
-  return typeof m.thread === "string" && MESSAGE_ID.test(m.thread) ? m.thread : m.id;
-}
-function insidePath(path) {
-  return typeof path === "string" && path.length > 0 && !path.startsWith("/") && !path.includes("\\") && !path.split("/").includes("..");
-}
-function readContracts(m) {
-  if (!Array.isArray(m.contracts))
-    return [];
-  const kept = [];
-  for (const raw of m.contracts) {
+function entriesOf(parsed) {
+  const entries = [];
+  for (const raw of parsed) {
     if (!raw || typeof raw !== "object")
       continue;
-    const { kind, path, hash, summary } = raw;
-    if (!CONTRACT_KINDS.includes(kind) || typeof summary !== "string")
+    const { page, type, text } = raw;
+    if (typeof type !== "string")
       continue;
-    if (hash !== null && (typeof hash !== "string" || !SHA256.test(hash)))
-      continue;
-    if (kind === "clause" ? path !== null : !insidePath(path))
-      continue;
-    kept.push({ kind, path, hash, summary });
+    entries.push({
+      page: typeof page === "string" ? page : "",
+      type: levelOf(type),
+      text: typeof text === "string" ? text : ""
+    });
   }
-  return kept;
+  return entries;
 }
-function readEvidence(m) {
-  const raw = m.evidence;
-  if (!raw || typeof raw !== "object")
+function gradeConsole(dir) {
+  const array = join8(dir, "console.json");
+  const lines = join8(dir, "console.jsonl");
+  let parsed;
+  let file;
+  if (existsSync3(array)) {
+    file = array;
+    try {
+      const data = JSON.parse(readFileSync6(array, "utf8"));
+      if (!Array.isArray(data))
+        return { status: "invalid", file };
+      parsed = data;
+    } catch {
+      return { status: "invalid", file };
+    }
+  } else if (existsSync3(lines)) {
+    file = lines;
+    try {
+      parsed = readFileSync6(lines, "utf8").split(`
+`).filter((l) => l.trim()).map((l) => JSON.parse(l));
+    } catch {
+      return { status: "invalid", file };
+    }
+  } else
+    return { status: "none", file: null };
+  const first = entriesOf(parsed).find((e) => e.type === "error" || e.type === "warning");
+  return first ? { status: "failed", file, first } : { status: "clean", file };
+}
+var LEVEL_AT_START = /^\W*(?:\[?\d[\dT:\-./Z ]*\]?\s*)?\[?(error|warn|warning)\b/i;
+var LEVEL_FIELD = /"level"\s*:\s*"(error|warn|warning)"/i;
+var LEVEL_PAIR = /\blevel=(error|warn|warning)\b/i;
+function gradeLogs(text) {
+  for (const line of text.split(`
+`)) {
+    if (LEVEL_AT_START.test(line) || LEVEL_FIELD.test(line) || LEVEL_PAIR.test(line))
+      return { status: "failed", first: line.trim() };
+  }
+  return { status: "clean" };
+}
+
+// packages/engine/src/design-grade.ts
+import { existsSync as existsSync4, readdirSync as readdirSync3 } from "node:fs";
+import { join as join9 } from "node:path";
+var LIMITS = {
+  displayMaxPx: DISPLAY_MAX_PX,
+  displayMaxVw: DISPLAY_MAX_VW,
+  phoneDisplayMaxVw: PHONE_DISPLAY_MAX_VW,
+  ratioMin: 2.5,
+  ratioMax: 6,
+  titleBoxMax: 0.4,
+  bodyMin: 16,
+  bodyMax: 20,
+  controlMin: 36,
+  phoneControlMin: 44,
+  controlMax: 64,
+  iconMax: 64,
+  gapDesktop: [120, 240],
+  gapPhone: [72, 112],
+  navShareMax: 0.1,
+  picturesMin: 4,
+  movingMin: 8,
+  phoneWidth: 480
+};
+function sameRun(sections) {
+  let best = 0;
+  let run = 0;
+  let last = "";
+  for (const shape of sections.split(",")) {
+    run = shape && shape === last ? run + 1 : 1;
+    last = shape;
+    best = Math.max(best, run);
+  }
+  return best;
+}
+function readLimits(contract, answered) {
+  const front = /^---\n([\s\S]*?)\n---/.exec(contract)?.[1] ?? "";
+  const look = /^devices\s*:.*\bai-look\b/m.test(front);
+  const decision = /^proportion-decision:\s*(D-\d+)\s*$/m.exec(front)?.[1];
+  const declared = look ? { look } : {};
+  if (!decision || !answered.has(decision))
+    return declared;
+  const max = /^proportion-display-max-px:\s*(\d+)\s*$/m.exec(front)?.[1];
+  return max ? { ...declared, displayMaxPx: Number(max) } : declared;
+}
+var PAGE_LEVEL = new Set(["persuade", "experience"]);
+function gradeProbe(probe, surface, limits) {
+  if (!PAGE_LEVEL.has(surface))
+    return [];
+  const out = [];
+  const add = (id, text) => out.push({ id, text: `${id}: ${text} at ${probe.width}` });
+  const phone = probe.width <= LIMITS.phoneWidth;
+  const L = LIMITS;
+  const size = probe.title.sizePx || probe.displayPx;
+  const maxPx = phone ? L.phoneDisplayMaxVw * probe.width / 100 : limits.displayMaxPx ?? Math.min(L.displayMaxPx, L.displayMaxVw * probe.width / 100);
+  if (size > maxPx)
+    add("proportion/display-size", `display type ${size}px (limit ${Math.round(maxPx)}px)`);
+  if (probe.bodyPx > 0) {
+    const ratio = size / probe.bodyPx;
+    if (size > 0 && (ratio < L.ratioMin || ratio > L.ratioMax))
+      add("proportion/display-ratio", `display is ${ratio.toFixed(1)} times body (${L.ratioMin} to ${L.ratioMax})`);
+    if (probe.bodyPx < L.bodyMin || probe.bodyPx > L.bodyMax)
+      add("proportion/body-size", `body ${probe.bodyPx}px (${L.bodyMin} to ${L.bodyMax})`);
+  }
+  if (probe.title.boxShare > L.titleBoxMax)
+    add("proportion/title-box", `the title takes ${Math.round(probe.title.boxShare * 100)}% of the first screen (limit ${L.titleBoxMax * 100}%)`);
+  const minControl = phone ? L.phoneControlMin : L.controlMin;
+  const badControl = probe.controls.find((h) => h < minControl || h > L.controlMax);
+  if (badControl !== undefined)
+    add("proportion/control-height", `a control ${badControl}px high (${minControl} to ${L.controlMax})`);
+  const bigIcon = probe.icons.find((w) => w > L.iconMax);
+  if (bigIcon !== undefined)
+    add("proportion/icon-size", `an icon ${bigIcon}px wide (limit ${L.iconMax})`);
+  const maxGap = (phone ? L.gapPhone : L.gapDesktop)[1];
+  const bigGap = probe.sectionGaps.find((g) => g > maxGap);
+  if (bigGap !== undefined)
+    add("proportion/section-gap", `sections ${bigGap}px apart (limit ${maxGap})`);
+  if (probe.navShare > L.navShareMax)
+    add("proportion/nav-share", `navigation takes ${Math.round(probe.navShare * 100)}% of the first screen (limit 10%)`);
+  if (probe.title.count === 0)
+    add("page/no-title", "the page has no visible h1");
+  if (probe.title.lines > 2)
+    add("page/headline-lines", `the title runs to ${probe.title.lines} lines (limit 2)`);
+  if (probe.motion?.titleLate)
+    add("page/late-title", "the title is hidden 1.2 s after load");
+  if (probe.covered > 0)
+    add("page/covered-text", `${probe.covered} text blocks covered by another element`);
+  if (probe.clipped > 0)
+    add("page/clipped-text", `${probe.clipped} text blocks clipped`);
+  const diff = Math.abs(probe.margins.left - probe.margins.right);
+  if (diff >= Math.max(phone ? 14 : 40, 0.045 * probe.width) && Math.max(probe.margins.left, probe.margins.right) >= (phone ? 28 : 0.07 * probe.width))
+    add("frame/off-centre", `margins ${probe.margins.left} and ${probe.margins.right}`);
+  if (probe.lopsided >= 2)
+    add("frame/lopsided", `${probe.lopsided} sections huddle on one side`);
+  const gapLimit = 0.6 * probe.height;
+  const blank = probe.blankGaps.filter((g) => g >= gapLimit);
+  if (blank.length || probe.blankGaps.filter((g) => g >= 0.42 * probe.height).length >= 2)
+    add("frame/blank-gap", `a stretch of ${Math.max(...probe.blankGaps)}px holds nothing`);
+  if (probe.emptyScreens >= 2)
+    add("frame/empty-screens", `${probe.emptyScreens} screens nearly empty`);
+  if (probe.untitled >= 2)
+    add("frame/untitled-section", `${probe.untitled} sections with no heading`);
+  const run = sameRun(probe.fingerprint?.sections ?? "");
+  if (run >= 3)
+    add("frame/same-layout", `${run} sections in a row share one layout`);
+  if (probe.iconCards > 0)
+    add("craft/icon-cards", "a row of identical boxed cards, each with an icon");
+  if (probe.families > 3)
+    add("type/font-count", `${probe.families} font families (limit 3)`);
+  if (probe.sizes > 9)
+    add("type/size-count", `${probe.sizes} text sizes (limit 9)`);
+  if (probe.lowContrast > 0)
+    add("colour/contrast", `${probe.lowContrast} text blocks under 2.6:1`);
+  if (probe.aiLook && !limits.look)
+    add("colour/ai-look", `${probe.aiLook}: the look a generated page falls into`);
+  if (probe.eyebrows > 0)
+    add("label/eyebrow", `${probe.eyebrows} eyebrow labels above a heading`);
+  if (probe.microLabels >= 3)
+    add("label/micro", `${probe.microLabels} tiny uppercase tracked labels`);
+  if (!phone && probe.pictures < L.picturesMin)
+    add("picture/few", `${probe.pictures} pictures (a site carries at least ${L.picturesMin})`);
+  if (!phone && probe.motion && probe.motion.count < L.movingMin)
+    add("motion/still", `${probe.motion.count} moving elements (at least ${L.movingMin})`);
+  return out;
+}
+function probesOf(meta) {
+  const viewports = meta?.viewports;
+  if (!Array.isArray(viewports))
+    return [];
+  return viewports.map((v) => v.page).filter(validProbe);
+}
+function validProbe(p) {
+  if (!p || typeof p !== "object")
+    return false;
+  const r = p;
+  const number = (v) => typeof v === "number" && Number.isFinite(v);
+  const numbers = (v) => Array.isArray(v) && v.every(number);
+  const text = (v) => typeof v === "string";
+  return number(r.width) && number(r.height) && !!r.title && number(r.title.count) && number(r.title.sizePx) && number(r.title.lines) && number(r.title.boxShare) && number(r.displayPx) && number(r.bodyPx) && numbers(r.controls) && numbers(r.icons) && numbers(r.sectionGaps) && numbers(r.blankGaps) && !!r.margins && number(r.margins.left) && number(r.margins.right) && (r.motion === undefined || r.motion === null || number(r.motion.count) && Array.isArray(r.motion.kinds) && r.motion.kinds.every(text)) && (r.fingerprint === undefined || !!r.fingerprint && Object.values(r.fingerprint).length === 5 && Object.values(r.fingerprint).every(text)) && (r.compRegions === undefined || Array.isArray(r.compRegions));
+}
+function gradeDesign(paths, work) {
+  const record = readSurface(paths, work.id);
+  const none = { offences: [], lines: [], fingerprint: null };
+  if (!record || record.invention === "extend")
+    return none;
+  const contract = readRegularText(join9(paths.root, "DESIGN.md"), DESIGN_FILE_MAX) ?? "";
+  const answered = new Set((work.decisions ?? []).filter((d) => d.answer).map((d) => d.id));
+  const limits = readLimits(contract, answered);
+  const dir = join9(workDir(paths, work.id), "review", "ui");
+  const names = existsSync4(dir) ? readdirSync3(dir).filter((n) => /^[a-z0-9-]+-default\.json$/.test(n)) : [];
+  const offences = [];
+  let widest = null;
+  for (const name of names.sort()) {
+    const meta = readJsonQuiet(join9(dir, name));
+    for (const probe of probesOf(meta)) {
+      for (const o of gradeProbe(probe, record.surface, limits))
+        offences.push(`${o.text} (${name.replace(/-default\.json$/, "")})`);
+      if (!widest || probe.width > widest.width)
+        widest = probe;
+    }
+  }
+  const comp = readComp(paths, work.id);
+  if (comp && widest)
+    for (const o of gradeComp(comp.regions, widest.compRegions ?? []))
+      offences.push(o.text);
+  const lines = [
+    `design: ${names.length} page${names.length === 1 ? "" : "s"} measured, surface ${record.surface}, invention ${record.invention}`
+  ];
+  if (!widest?.fingerprint || !PAGE_LEVEL.has(record.surface))
+    return { offences, lines, fingerprint: null };
+  const print = {
+    ...widest.fingerprint,
+    motion: (widest.motion?.kinds ?? []).sort().join(",") || "none"
+  };
+  writeProtectedJson(paths, join9(designDir(paths, work.id), "fingerprint.json"), print);
+  const self = itemHash(`${paths.root}:${work.id}`);
+  const history = readHistory(paths.userDir);
+  if (history.warning)
+    lines.push(history.warning);
+  const alike = compareFingerprints(historyPrint(print), history.rows.filter((r) => r.item !== self));
+  if (alike)
+    offences.push(alike);
+  const earlier = history.rows.filter((r) => r.item !== self).slice(-RECENT_ROWS);
+  const repeat = earlier.find((r) => r.palette === print.palette);
+  if (repeat)
+    offences.push(`design/palette-repeat: palette ${print.palette} repeats ${repeat.item} (${repeat.at}); a site's palette differs from the last ${RECENT_ROWS}`);
+  const lastHero = earlier.slice(-2).find((r) => r.hero === print.hero);
+  if (lastHero)
+    offences.push(`design/hero-repeat: first screen ${print.hero} repeats ${lastHero.item} (${lastHero.at}); it differs from the last 2`);
+  lines.push(`fingerprint: ${print.display}, ${print.body}, ${print.palette}, ${print.hero}, ${print.sections}, ${print.motion}`);
+  return { offences, lines, fingerprint: print };
+}
+function recordDesignHistory(paths, work, print) {
+  try {
+    const deal = readDeal(paths, work.id);
+    const chosen = deal ? deal.options[deal.chosen ?? 0] : undefined;
+    addHistoryRow(paths.userDir, {
+      at: nowIso(),
+      item: `${paths.root}:${work.id}`,
+      fingerprint: print,
+      ...chosen ? { dealt: [chosen.direction, chosen.hero, chosen.type, chosen.palette] } : {}
+    });
     return null;
-  const { report, fingerprint, gatesPassed } = raw;
-  const reportInside = typeof report === "string" && report.startsWith(".crew/work/") && insidePath(report);
+  } catch (error) {
+    return `design history: ${errorText(error)}`;
+  }
+}
+function readJsonQuiet(path) {
+  const text = readRegularText(path, 1024 * 1024);
+  if (text === null)
+    return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
+// packages/engine/src/devtools.ts
+import {
+  existsSync as existsSync10,
+  lstatSync as lstatSync3,
+  mkdirSync as mkdirSync5,
+  readdirSync as readdirSync8,
+  renameSync as renameSync3,
+  unlinkSync as unlinkSync3,
+  writeFileSync as writeFileSync4
+} from "node:fs";
+import { join as join22 } from "node:path";
+
+// packages/engine/src/run.ts
+import { spawn } from "node:child_process";
+import { appendFileSync, createWriteStream, mkdirSync as mkdirSync4, writeFileSync as writeFileSync3 } from "node:fs";
+import { basename as basename3, dirname as dirname6, extname, join as join10 } from "node:path";
+
+// packages/engine/src/shell-words.ts
+var SHELL_NAMES = ["sh", "bash", "zsh", "dash", "ksh", "fish"];
+var SHELL_VALUED = {
+  short: "oO",
+  long: ["--rcfile", "--init-file"]
+};
+function shellTakesNext(option) {
+  if (option.startsWith("--"))
+    return SHELL_VALUED.long.includes(option);
+  return option.length > 1 && SHELL_VALUED.short.includes(option.charAt(option.length - 1));
+}
+var JS_RUNNERS = ["node", "bun"];
+var NPX_RUNNERS = ["npx", "bunx"];
+var RUNNER_SUFFIXES = { js: [".exe"], npx: [".cmd", ".exe"] };
+function runnerSuffix(suffixes) {
+  return `(?:${suffixes.map((s) => s.replace(".", "\\.")).join("|")})?`;
+}
+var COMMAND_WRAPPERS = [
+  {
+    name: "env",
+    valued: "uCPLU",
+    longValued: ["--unset", "--chdir", "--block-signal", "--default-signal", "--ignore-signal"],
+    positionals: 0,
+    assignments: true,
+    scriptOptions: ["-S", "--split-string"],
+    unsetOptions: ["-u", "--unset"]
+  },
+  { name: "command", valued: "", longValued: [], positionals: 0 }
+];
+function takesNext(wrapper, option) {
+  if (option.includes("="))
+    return false;
+  if (option.startsWith("--"))
+    return wrapper.longValued.includes(option);
+  for (let i = 1;i < option.length; i++)
+    if (wrapper.valued.includes(option.charAt(i)))
+      return i === option.length - 1;
+  return false;
+}
+var SAFE_WORD = /^[A-Za-z0-9_@%+=:,./-]+$/;
+function quoteWord(word) {
+  return SAFE_WORD.test(word) ? word : `'${word.replace(/'/g, "'\\''")}'`;
+}
+var WRAPPERS = [
+  { name: "function", valued: "", longValued: [], positionals: 1 },
+  { name: "case", valued: "", longValued: [], positionals: 1 },
+  { name: "nice", valued: "n", longValued: ["--adjustment"], positionals: 0 },
+  {
+    name: "timeout",
+    valued: "sk",
+    longValued: ["--signal", "--kill-after"],
+    positionals: 1
+  },
+  { name: "stdbuf", valued: "ioe", longValued: ["--input", "--output", "--error"], positionals: 0 },
+  {
+    name: "flock",
+    valued: "w",
+    longValued: ["--wait", "--timeout", "--conflict-exit-code"],
+    positionals: 1,
+    scriptOptions: ["-c", "--command"],
+    scriptTrailing: true
+  },
+  {
+    name: "script",
+    valued: "FtEBIOomT",
+    longValued: [
+      "--echo",
+      "--log-in",
+      "--log-out",
+      "--log-io",
+      "--log-timing",
+      "--logging-format",
+      "--output-limit"
+    ],
+    positionals: 1,
+    scriptOptions: ["-c", "--command"],
+    scriptStandsAlone: true
+  },
+  {
+    name: "su",
+    valued: "gGsw",
+    longValued: ["--group", "--supp-group", "--shell", "--whitelist-environment"],
+    positionals: 1,
+    scriptOptions: ["-c", "--command", "--session-command"],
+    scriptStandsAlone: true
+  },
+  {
+    name: "sudo",
+    valued: "ugpChDTrt",
+    longValued: [
+      "--user",
+      "--group",
+      "--prompt",
+      "--close-from",
+      "--host",
+      "--chdir",
+      "--command-timeout",
+      "--role",
+      "--type",
+      "--other-user"
+    ],
+    positionals: 0
+  },
+  { name: "doas", valued: "uC", longValued: [], positionals: 0 },
+  ...COMMAND_WRAPPERS,
+  { name: "exec", valued: "a", longValued: [], positionals: 0 },
+  {
+    name: "xargs",
+    valued: "nILPdEsa",
+    longValued: [
+      "--max-args",
+      "--replace",
+      "--max-lines",
+      "--max-procs",
+      "--delimiter",
+      "--eof",
+      "--max-chars",
+      "--arg-file",
+      "--process-slot-var"
+    ],
+    positionals: 0
+  },
+  { name: "nohup", valued: "", longValued: [], positionals: 0 },
+  { name: "time", valued: "fo", longValued: ["--format", "--output"], positionals: 0 },
+  { name: "builtin", valued: "", longValued: [], positionals: 0 },
+  { name: "caffeinate", valued: "tw", longValued: [], positionals: 0 },
+  {
+    name: "ionice",
+    valued: "cnp",
+    longValued: ["--class", "--classdata", "--pid"],
+    positionals: 0
+  },
+  { name: "noglob", valued: "", longValued: [], positionals: 0 },
+  { name: "nocorrect", valued: "", longValued: [], positionals: 0 },
+  { name: "coproc", valued: "", longValued: [], positionals: 0, namedBlock: true }
+];
+
+// packages/engine/src/run.ts
+function wrapperTakesNext(wrapper, option) {
+  if (takesNext(wrapper, option))
+    return true;
+  const scripts = wrapper.scriptOptions ?? [];
+  if (scripts.includes(option))
+    return true;
+  if (option.startsWith("--") || option.includes("="))
+    return false;
+  return scripts.some((s) => s.length === 2 && option.endsWith(s.charAt(1)));
+}
+var TAIL_LINES = 40;
+var KILL_GRACE_MS = 2000;
+function exists2(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code === "EPERM";
+  }
+}
+function probe(pid) {
+  if (!pid || process.platform === "win32")
+    return "pid unknown";
+  return `pid ${exists2(pid) ? "alive" : "gone"} group ${exists2(-pid) ? "alive" : "gone"}`;
+}
+function eventsPathOf(logPath) {
+  const name = basename3(logPath);
+  const ext = extname(name);
+  return join10(dirname6(logPath), `${ext ? name.slice(0, -ext.length) : name}.events.txt`);
+}
+function eventsWriter(options) {
+  if (!options.events)
+    return () => {};
+  const path = eventsPathOf(options.logPath);
+  let first = true;
+  return (line) => {
+    try {
+      if (first)
+        writeFileSync3(path, `${line}
+`);
+      else
+        appendFileSync(path, `${line}
+`);
+    } catch {}
+    first = false;
+  };
+}
+function killTree(pid) {
+  if (!pid)
+    return;
+  try {
+    if (process.platform === "win32")
+      spawn("taskkill", ["/pid", String(pid), "/T", "/F"]);
+    else
+      process.kill(-pid, "SIGKILL");
+  } catch {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {}
+  }
+}
+var WRAPPER_BY_NAME = new Map(COMMAND_WRAPPERS.map((w) => [w.name, w]));
+var ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
+function joinWords(words) {
+  if (words.length === 1)
+    return words[0] ?? "";
+  return words.map(quoteWord).join(" ");
+}
+function shellRefusal(words) {
+  const base = (word) => (word ?? "").split("/").pop() ?? "";
+  let i = 0;
+  let wrapper = null;
+  while (i < words.length) {
+    const word = words[i] ?? "";
+    const named = WRAPPER_BY_NAME.get(base(word));
+    if (named) {
+      wrapper = named;
+      i += 1;
+    } else if (ASSIGNMENT.test(word)) {
+      wrapper = null;
+      i += 1;
+    } else if (wrapper && word.startsWith("-"))
+      i += wrapperTakesNext(wrapper, word) ? 2 : 1;
+    else
+      break;
+  }
+  const name = base(words[i]);
+  if (!SHELL_NAMES.includes(name))
+    return null;
+  let j = i + 1;
+  let commandString = false;
+  while (j < words.length && /^[-+]/.test(words[j] ?? "")) {
+    const option = words[j] ?? "";
+    if (/^-[A-Za-z]*c[A-Za-z]*$/.test(option))
+      commandString = true;
+    j += shellTakesNext(option) ? 2 : 1;
+  }
+  const after = words.length - j;
+  if (!commandString || after <= 1)
+    return null;
+  return `${after} words follow -c and the shell would run only the first (${words[j]}) with the rest as its parameters: quote the command string as one argument, -- ${name} -c "<command>"`;
+}
+function runCommand(command, options) {
+  const open = options.openLog ?? ((path) => createWriteStream(path));
+  mkdirSync4(dirname6(options.logPath), { recursive: true });
+  const log = open(options.logPath);
+  let errors = null;
+  if (options.stderrLogPath) {
+    mkdirSync4(dirname6(options.stderrLogPath), { recursive: true });
+    errors = open(options.stderrLogPath);
+  }
+  const lines = [];
+  let partial = "";
+  const absorb = (chunk, to = log) => {
+    to.write(chunk);
+    partial += chunk.toString("utf8");
+    const pieces = partial.split(`
+`);
+    partial = pieces.pop() ?? "";
+    for (const line of pieces) {
+      lines.push(line);
+      if (lines.length > TAIL_LINES)
+        lines.shift();
+    }
+  };
+  const note = eventsWriter(options);
+  note(`start ${new Date().toISOString()} ${JSON.stringify(command)}`);
+  const started = Date.now();
+  const at = () => `+${Date.now() - started}ms`;
+  return new Promise((resolve) => {
+    const child = spawn(command, {
+      cwd: options.cwd,
+      shell: true,
+      detached: process.platform !== "win32",
+      env: options.env ?? process.env,
+      stdio: [options.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"]
+    });
+    child.on("spawn", () => note(`spawn ${at()} pid ${child.pid}`));
+    child.on("exit", (code, signal) => note(`exit ${at()} code ${code} signal ${signal}`));
+    for (const [name, stream] of [
+      ["stdout", child.stdout],
+      ["stderr", child.stderr]
+    ]) {
+      stream?.on("end", () => note(`${name} end ${at()}`));
+      stream?.on("close", () => note(`${name} close ${at()}`));
+    }
+    let timedOut = false;
+    let grace;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      if (options.events)
+        note(`probe ${at()} ${probe(child.pid)}`);
+      killTree(child.pid);
+      note(`timeout ${at()} killed the group`);
+      grace = setTimeout(() => {
+        note(`gave up ${at()} no close after the kill`);
+        child.stdout?.destroy();
+        child.stderr?.destroy();
+        finish(null);
+      }, KILL_GRACE_MS);
+    }, options.timeoutMs);
+    child.stdout?.on("data", (chunk) => absorb(chunk));
+    child.stderr?.on("data", (chunk) => absorb(chunk, errors ?? log));
+    if (options.stdin !== undefined)
+      child.stdin?.end(options.stdin);
+    let finished = false;
+    const finish = (exit) => {
+      if (finished)
+        return;
+      finished = true;
+      clearTimeout(timer);
+      clearTimeout(grace);
+      if (partial)
+        lines.push(partial);
+      const result = {
+        exit,
+        durationMs: Date.now() - started,
+        tail: lines.slice(-TAIL_LINES).join(`
+`),
+        timedOut
+      };
+      let pending = errors ? 2 : 1;
+      const closed = () => {
+        pending -= 1;
+        if (pending > 0)
+          return;
+        note(`logs ended ${at()}`);
+        resolve(result);
+      };
+      log.end(closed);
+      errors?.end(closed);
+    };
+    child.on("error", (error) => {
+      note(`error ${at()} ${error.message}`);
+      absorb(Buffer.from(`${error.message}
+`));
+      finish(null);
+    });
+    child.on("close", (code, signal) => {
+      note(`close ${at()} code ${code} signal ${signal}`);
+      finish(code);
+    });
+  });
+}
+function shellWord(path) {
+  const word = path.startsWith("-") ? `./${path}` : path;
+  return /^[A-Za-z0-9_./-]+$/.test(word) ? word : `'${word.replace(/'/g, "'\\''")}'`;
+}
+
+// packages/engine/src/ui.ts
+import {
+  closeSync,
+  existsSync as existsSync9,
+  lstatSync as lstatSync2,
+  openSync,
+  readdirSync as readdirSync7,
+  readFileSync as readFileSync7,
+  readSync,
+  rmSync as rmSync3,
+  unlinkSync as unlinkSync2
+} from "node:fs";
+import { basename as basename6, dirname as dirname7, join as join21, resolve as resolve5, sep as sep3 } from "node:path";
+
+// packages/engine/src/judgement.ts
+import { copyFileSync as copyFileSync2, existsSync as existsSync8, readdirSync as readdirSync6, unlinkSync } from "node:fs";
+import { join as join20 } from "node:path";
+
+// packages/engine/src/review-signals.ts
+import { basename as basename4, join as join12 } from "node:path";
+
+// packages/engine/src/quote.ts
+var SAFE_TEXT_MAX = 120;
+function quotedText(value) {
+  const text = value === null || value === undefined ? "" : String(value);
+  return safeText(text.replace(/[\u0080-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, ""));
+}
+function safeText(value, max = SAFE_TEXT_MAX) {
+  const text = value === null || value === undefined ? "" : String(value);
+  const line = text.split(/\r?\n/)[0] ?? "";
+  const clean = line.replace(/[\u0000-\u001f\u007f]/g, "").trim();
+  return clean.length > max ? `${clean.slice(0, max - 1)}…` : clean;
+}
+
+// packages/engine/src/secrets.ts
+import { execFileSync as execFileSync3, spawnSync } from "node:child_process";
+import { join as join11 } from "node:path";
+var RULES = [
+  {
+    rule: "private key",
+    pattern: /-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY(?: BLOCK)?-----/
+  },
+  { rule: "AWS access key", pattern: /\bAKIA[0-9A-Z]{16,}\b/ },
+  {
+    rule: "GitHub token",
+    pattern: /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,}\b|\bgithub_pat_[A-Za-z0-9_]{22,}\b/
+  },
+  { rule: "Stripe key", pattern: /\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}\b/ },
+  { rule: "Slack token", pattern: /\bxox[abprs]-[A-Za-z0-9-]{10,}\b/ },
+  { rule: "Anthropic key", pattern: /\bsk-ant-[A-Za-z0-9_-]{20,}\b/ },
+  { rule: "OpenAI key", pattern: /\bsk-(?:proj-)?[A-Za-z0-9_-]{32,}\b/ },
+  { rule: "Google API key", pattern: /\bAIza[0-9A-Za-z_-]{35}\b/ },
+  {
+    rule: "generic secret assignment",
+    pattern: /(?:api[_-]?key|secret|token|password|passwd)\s*[:=]\s*['"][A-Za-z0-9_\-/+=]{16,}['"]/i,
+    generic: true
+  }
+];
+var PLACEHOLDER = /example|placeholder|your[_-]|xxx|changeme|dummy|<[^>]+>/i;
+var MAX_BYTES = 1024 * 1024;
+function scanText(text, source) {
+  const findings = [];
+  text.split(`
+`).forEach((line, index) => {
+    for (const { rule, pattern, generic } of RULES) {
+      if (generic && PLACEHOLDER.test(line))
+        continue;
+      if (pattern.test(line)) {
+        findings.push({ source, line: index + 1, rule });
+        break;
+      }
+    }
+  });
+  return findings;
+}
+function isBinary(buffer) {
+  return buffer.subarray(0, 8000).includes(0);
+}
+function diffPath(raw) {
+  if (!raw.startsWith('"') || !raw.endsWith('"'))
+    return raw;
+  const bytes = [];
+  const body = raw.slice(1, -1);
+  const named = {
+    t: 9,
+    n: 10,
+    r: 13,
+    a: 7,
+    b: 8,
+    f: 12,
+    v: 11,
+    '"': 34,
+    "\\": 92
+  };
+  for (let i = 0;i < body.length; i++) {
+    const c = body[i];
+    if (c !== "\\") {
+      bytes.push(...Buffer.from(c, "utf8"));
+      continue;
+    }
+    const next = body[i + 1] ?? "";
+    const octal = /^[0-7]{3}/.exec(body.slice(i + 1));
+    if (octal) {
+      bytes.push(Number.parseInt(octal[0], 8));
+      i += 3;
+    } else {
+      bytes.push(named[next] ?? next.charCodeAt(0));
+      i += 1;
+    }
+  }
+  return Buffer.from(bytes).toString("utf8");
+}
+function headerPath(raw) {
+  const target = raw.replace(/\t$/, "");
+  return target === "/dev/null" ? null : diffPath(target).replace(/^[ab]\//, "");
+}
+function numbered(path, text) {
+  const lines = text.split(`
+`).map((t, i) => ({ file: path, line: i + 1, text: t }));
+  if (lines.length && lines[lines.length - 1]?.text === "")
+    lines.pop();
+  return lines;
+}
+function readChange(root, profile, base, keepUntracked) {
+  const reading = {
+    mode: { kind: "diff" },
+    tracked: new Map,
+    untracked: new Map,
+    overCap: new Set,
+    skipped: []
+  };
+  const whole = (path, into) => {
+    const buffer = readRegular(join11(root, path), MAX_BYTES);
+    if (buffer === null)
+      return;
+    if (buffer === "over cap")
+      reading.skipped.push({ file: path, reason: "over cap" });
+    else if (isBinary(buffer))
+      reading.skipped.push({ file: path, reason: "binary" });
+    else
+      into.set(path, numbered(path, buffer.toString("utf8")));
+  };
+  const everything = (why) => {
+    const files = allWatchedFiles(root, profile);
+    if (files === null) {
+      reading.mode = { kind: "unreadable", why: `${why}, and the tree is over the walk's cap` };
+      return reading;
+    }
+    reading.mode = { kind: "whole tree", why };
+    for (const path of files)
+      if (keepUntracked(path))
+        whole(path, reading.untracked);
+    return reading;
+  };
+  if (base === null)
+    return everything("no base commit");
+  if (!isGitRepo(root))
+    return everything("no git repository");
+  let diff;
+  try {
+    diff = execFileSync3("git", [
+      "-c",
+      "core.quotePath=false",
+      "diff",
+      base,
+      "--no-renames",
+      "--unified=0",
+      "--no-color",
+      "--",
+      "."
+    ], {
+      cwd: root,
+      env: process.env,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      maxBuffer: GIT_OUTPUT_BYTES
+    });
+  } catch {
+    diff = null;
+  }
+  const untracked = untrackedPaths(root);
+  if (diff === null || untracked === null)
+    return everything("the base's diff could not be read");
+  let file = null;
+  let inHeader = false;
+  let next = 0;
+  let size = 0;
+  for (const raw of diff.split(`
+`)) {
+    if (raw.startsWith("diff --git ")) {
+      inHeader = true;
+      file = null;
+      size = 0;
+      continue;
+    }
+    if (inHeader) {
+      if (raw.startsWith("+++ "))
+        file = headerPath(raw.slice(4));
+      const binary = /^Binary files .* and (.+) differ$/.exec(raw);
+      if (binary) {
+        const target = headerPath(binary[1] ?? "");
+        if (target !== null)
+          reading.skipped.push({ file: target, reason: "binary" });
+        file = null;
+      }
+      if (!raw.startsWith("@@"))
+        continue;
+      inHeader = false;
+    }
+    const hunk = HUNK_HEADER.exec(raw);
+    if (hunk) {
+      next = Number(hunk[1]);
+      continue;
+    }
+    if (file === null || !raw.startsWith("+"))
+      continue;
+    size += raw.length;
+    if (size > MAX_BYTES)
+      reading.overCap.add(file);
+    const list = reading.tracked.get(file) ?? [];
+    list.push({ file, line: next, text: raw.slice(1) });
+    reading.tracked.set(file, list);
+    next += 1;
+  }
+  for (const path of [...untracked].sort())
+    if (keepUntracked(path))
+      whole(path, reading.untracked);
+  return reading;
+}
+function changeSources(root, profile, base) {
+  const reading = readChange(root, profile, base, (path) => isWatched(path, profile));
+  const sources = [];
+  const added = [...reading.tracked.keys()].sort().flatMap((path) => (reading.tracked.get(path) ?? []).map((l) => l.text)).join(`
+`);
+  if (added && base !== null)
+    sources.push({ source: `git diff ${base.slice(0, 12)} (added lines)`, text: added });
+  for (const path of [...reading.untracked.keys()].sort())
+    sources.push({
+      source: path,
+      text: (reading.untracked.get(path) ?? []).map((l) => l.text).join(`
+`)
+    });
+  const skipped = [...reading.skipped].sort((a, b) => a.file.localeCompare(b.file));
+  return { sources, mode: reading.mode, skipped };
+}
+function addedLines(root, profile, base = "HEAD", keep = (path) => isWatched(path, profile)) {
+  const reading = readChange(root, profile, base, keep);
+  const lines = [];
+  const skipped = reading.skipped.filter((s) => keep(s.file));
+  for (const path of [...reading.overCap].sort())
+    if (keep(path))
+      skipped.push({ file: path, reason: "over cap" });
+  const files = new Map([...reading.tracked, ...reading.untracked]);
+  for (const path of [...files.keys()].sort()) {
+    if (!keep(path) || reading.overCap.has(path))
+      continue;
+    lines.push(...files.get(path) ?? []);
+  }
+  skipped.sort((a, b) => a.file.localeCompare(b.file));
+  return { lines, skipped, mode: reading.mode };
+}
+function gitleaks(text) {
+  const result = spawnSync("gitleaks", ["stdin", "--no-banner", "--redact", "--exit-code", "1"], {
+    input: text,
+    encoding: "utf8"
+  });
+  if (result.error || result.status === null || result.status !== 0 && result.status !== 1)
+    return { ran: false, leaked: false, tail: "" };
+  const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
+  if (result.status === 1 && !/leak/i.test(output))
+    return { ran: false, leaked: false, tail: "" };
   return {
-    report: reportInside ? report : null,
-    fingerprint: typeof fingerprint === "string" ? fingerprint : null,
-    gatesPassed: Array.isArray(gatesPassed) ? gatesPassed.filter((g) => GATE_NAMES.includes(g)) : []
+    ran: true,
+    leaked: result.status === 1,
+    tail: output.trim().split(`
+`).slice(-20).join(`
+`)
+  };
+}
+async function scanSecrets(root, profile, base = "HEAD") {
+  const { sources, mode, skipped } = changeSources(root, profile, base);
+  if (mode.kind === "unreadable")
+    return {
+      status: "unavailable",
+      findings: [],
+      tail: `the change could not be read: ${mode.why}`,
+      usedGitleaks: false
+    };
+  const findings = sources.flatMap((s) => scanText(s.text, s.source));
+  const lines = findings.map((f) => `${quotedText(f.source)}:${f.line}: ${f.rule}`);
+  const extra = gitleaks(sources.map((s) => s.text).join(`
+`));
+  if (extra.ran && extra.leaked)
+    lines.push("gitleaks:", extra.tail);
+  const status = findings.length === 0 && !(extra.ran && extra.leaked) ? "pass" : "fail";
+  const verdict = lines.join(`
+`) || "no secrets found in the change";
+  const named = skipped.map((s) => `skipped ${quotedText(s.file)} (${s.reason})`);
+  return {
+    status,
+    findings,
+    tail: [verdict, ...named].join(`
+`),
+    usedGitleaks: extra.ran
   };
 }
 
-// packages/engine/src/objections.ts
-import { join as join10 } from "node:path";
+// packages/engine/src/review-signals.ts
+var MANIFEST_MAX = 1024 * 1024;
+var NAMES_MAX = 50;
+var PHRASES_MAX = 50;
+var SECTIONS = {
+  "package.json": ["dependencies", "devDependencies"],
+  "composer.json": ["require", "require-dev"]
+};
+var IGNORED_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+function parsed(text) {
+  if (text.length > MANIFEST_MAX)
+    return "unreadable";
+  try {
+    const value = JSON.parse(text);
+    return value && typeof value === "object" && !Array.isArray(value) ? value : "unreadable";
+  } catch {
+    return "unreadable";
+  }
+}
+function names(manifest, section, composer) {
+  const value = manifest?.[section];
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    return [];
+  return Object.keys(value).filter((key) => Object.hasOwn(value, key) && !IGNORED_KEYS.has(key) && !(composer && (key === "php" || key.startsWith("ext-"))));
+}
+function dependencyInputs(root, base, changed) {
+  const out = [];
+  for (const file of [...changed].sort()) {
+    const kind = basename4(file);
+    const sections = SECTIONS[kind];
+    if (!sections)
+      continue;
+    if (regularFileSize(join12(root, file)) === null)
+      continue;
+    const shown = base ? gitShowFile(root, base, file) : null;
+    const before = shown === null ? null : parsed(shown);
+    const bytes = readRegular(join12(root, file), MANIFEST_MAX);
+    const now = bytes instanceof Buffer ? parsed(bytes.toString("utf8")) : "unreadable";
+    if (now === "unreadable" || before === "unreadable") {
+      out.push({ file: safeText(file), unreadable: true });
+      continue;
+    }
+    const composer = kind === "composer.json";
+    const added = {};
+    let total = 0;
+    for (const section of sections) {
+      const had = new Set(names(before, section, composer));
+      const fresh = names(now, section, composer).filter((n) => !had.has(n)).sort();
+      if (!fresh.length)
+        continue;
+      const room = Math.max(0, NAMES_MAX - total);
+      added[section] = fresh.slice(0, room).map((n) => safeText(n));
+      total += fresh.length;
+    }
+    if (!Object.keys(added).length)
+      continue;
+    out.push(total > NAMES_MAX ? { file: safeText(file), added, more: total - NAMES_MAX } : { file: safeText(file), added });
+  }
+  return out;
+}
+var FALLBACK = /(?<![\p{L}\p{N}])(add a fallback|fall back to|fallback to|workaround|shim)(?![\p{L}\p{N}])/giu;
+var BENIGN = /fallback value|default value|workaround for #\d+/giu;
+function phraseInputs(lines) {
+  const out = [];
+  for (const added of lines) {
+    if (isMarkdownPath(added.file))
+      continue;
+    const benign = [...added.text.matchAll(BENIGN)].map((m) => [
+      m.index ?? 0,
+      (m.index ?? 0) + m[0].length
+    ]);
+    for (const m of added.text.matchAll(FALLBACK)) {
+      const at = m.index ?? 0;
+      if (benign.some(([from, to]) => at >= from && at < to))
+        continue;
+      out.push({ file: added.file, line: added.line, phrase: safeText(m[0].toLowerCase()) });
+      break;
+    }
+    if (out.length >= PHRASES_MAX)
+      break;
+  }
+  return out;
+}
+function reviewSignals(root, profile, base, changed) {
+  const wanted = new Set(changed);
+  const { lines } = addedLines(root, profile, base, (path) => wanted.has(path));
+  return {
+    dependencies: dependencyInputs(root, base, changed),
+    phrases: phraseInputs(lines)
+  };
+}
+function isDependencyInput(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    return false;
+  const v = value;
+  if (typeof v.file !== "string")
+    return false;
+  if (v.unreadable === true)
+    return true;
+  const added = v.added;
+  if (!added || typeof added !== "object" || Array.isArray(added))
+    return false;
+  const lists = Object.values(added);
+  if (!lists.every((l) => Array.isArray(l) && l.every((n) => typeof n === "string")))
+    return false;
+  return v.more === undefined || typeof v.more === "number";
+}
+function isPhraseInput(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    return false;
+  const v = value;
+  return typeof v.file === "string" && typeof v.line === "number" && typeof v.phrase === "string";
+}
+
+// packages/engine/src/work.ts
+import { existsSync as existsSync7, readdirSync as readdirSync5 } from "node:fs";
+import { join as join19 } from "node:path";
 
 // packages/engine/src/criteria.ts
 function tddDone(record, kind) {
@@ -3938,22 +4940,25 @@ function tddDone(record, kind) {
   return !!record.observed;
 }
 
+// packages/engine/src/objections.ts
+import { join as join15 } from "node:path";
+
 // packages/engine/src/policy.ts
-import { join as join9 } from "node:path";
+import { join as join14 } from "node:path";
 
 // packages/engine/src/journey-record.ts
-import { readdirSync as readdirSync3 } from "node:fs";
-import { join as join8 } from "node:path";
-var journeysDir = (userDir) => join8(userDir, "journeys");
-var journeyDir = (userDir, id) => join8(journeysDir(userDir), id);
-var journeyFile = (userDir, id) => join8(journeyDir(userDir, id), "journey.json");
+import { readdirSync as readdirSync4 } from "node:fs";
+import { join as join13 } from "node:path";
+var journeysDir = (userDir) => join13(userDir, "journeys");
+var journeyDir = (userDir, id) => join13(journeysDir(userDir), id);
+var journeyFile = (userDir, id) => join13(journeyDir(userDir, id), "journey.json");
 function readJourney(userDir, id) {
   return readJson(journeyFile(userDir, id));
 }
 function listJourneys(userDir) {
   let names = [];
   try {
-    names = readdirSync3(journeysDir(userDir));
+    names = readdirSync4(journeysDir(userDir));
   } catch {
     return [];
   }
@@ -4017,6 +5022,7 @@ var DEFAULT_POLICY = {
   riskPathExclusions: [],
   minimumRoute: "fast",
   allowSkips: ["e2e"],
+  standingE2eSkip: null,
   artifacts: "commit",
   unattendedDecisions: "wait",
   unattendedPolicyChanges: "never",
@@ -4118,7 +5124,7 @@ function unattendedPolicyChange(policy, key, value, flags) {
 var LIST_POLICY_KEYS = Object.entries(SETTABLE_POLICY_KEYS).filter(([, rule]) => ("list" in rule)).map(([key]) => key);
 var TAMPERED_POLICY = "state changed outside the engine: .crew/policy.json; the user can accept it with crew policy accept";
 function policyPath(paths) {
-  return join9(paths.crewDir, "policy.json");
+  return join14(paths.crewDir, "policy.json");
 }
 function checkSettable(key, rule, value) {
   if ("decimal" in rule) {
@@ -4310,6 +5316,7 @@ function loadPolicyFile(paths) {
       riskPathExclusions: strings(raw.riskPathExclusions),
       minimumRoute,
       allowSkips,
+      standingE2eSkip: standingE2eSkipOf(raw.standingE2eSkip),
       artifacts: raw.artifacts === "local" ? "local" : "commit",
       unattendedDecisions: raw.unattendedDecisions === "count" || raw.unattendedDecisions === "validator" ? raw.unattendedDecisions : "wait",
       unattendedPolicyChanges: raw.unattendedPolicyChanges === "validator" ? "validator" : "never",
@@ -4337,10 +5344,85 @@ function disputedDefault(marks, policy) {
 function disputedDefaultText(conservative, what) {
   return `disputed by jev: ${what} is not the conservative answer (conservative ${two(conservative)})`;
 }
+function standingE2eSkipOf(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw))
+    return null;
+  const v = raw;
+  if (typeof v.reason !== "string" || v.reason.trim() === "")
+    return null;
+  if (typeof v.at !== "string" || Number.isNaN(Date.parse(v.at)))
+    return null;
+  if (v.by !== "user")
+    return null;
+  return { reason: v.reason, at: v.at, by: "user" };
+}
+function policyIneligible(policy) {
+  if (!skipAllowed(policy, "gate:e2e"))
+    return "allowSkips does not list e2e";
+  if (policy.requiredGates.includes("e2e"))
+    return "the policy requires e2e";
+  return null;
+}
+function standingEligible(policy, profile) {
+  return policyIneligible(policy) ?? (e2eTarget(profile) ? "the profile has an e2e command" : null);
+}
+function standingState(policy, profile) {
+  const why = standingEligible(policy, profile);
+  if (why)
+    return { eligible: false, why };
+  return policy.standingE2eSkip ? { holds: policy.standingE2eSkip } : { eligible: true };
+}
+function standingWhy(state) {
+  if ("holds" in state)
+    return "";
+  return state.eligible ? "no standing e2e skip is held" : state.why;
+}
+function planStandingE2eSkip(paths, policy, reason, remove) {
+  const file = readPolicyFile(paths);
+  if ("refused" in file)
+    return { refused: "tampered", text: file.refused };
+  const held = standingE2eSkipOf(file.raw.standingE2eSkip);
+  if (remove) {
+    if (!held)
+      return { refused: "none held", text: "no standing e2e skip is held" };
+    return { action: "removed", raw: file.raw, entry: null };
+  }
+  const why = policyIneligible(policy);
+  if (why)
+    return { refused: "ineligible", text: `cannot take a standing e2e skip: ${why}` };
+  const given = reason?.trim() ?? "";
+  if (given === "")
+    return {
+      refused: "no reason",
+      text: `a standing e2e skip needs the person's reason (--reason "<their words>")`
+    };
+  if (held && held.reason === given)
+    return { action: "already set", raw: file.raw, entry: held };
+  const entry = { reason: given, at: nowIso(), by: "user" };
+  return { action: held ? "replaced" : "added", raw: file.raw, entry };
+}
+function writeStandingE2eSkip(paths, change) {
+  if (change.action === "already set")
+    return;
+  const { standingE2eSkip: _old, ...rest } = change.raw;
+  const data = change.action === "removed" ? rest : { ...rest, standingE2eSkip: change.entry };
+  writeProtectedJson(paths, policyPath(paths), data);
+}
+function standingText(change) {
+  const reason = change.entry?.reason ?? "";
+  const scope = "the e2e gate is skipped on every item while the project cannot run it";
+  if (change.action === "added")
+    return `standingE2eSkip added (${reason}): ${scope}`;
+  if (change.action === "replaced")
+    return `standingE2eSkip replaced (${reason}): ${scope}`;
+  if (change.action === "removed")
+    return "standingE2eSkip removed: the e2e gate runs again on every item";
+  return `standingE2eSkip already set (${reason})`;
+}
 
 // packages/engine/src/objections.ts
 function ledgerPath(paths, id) {
-  return join10(workDir(paths, id), "objections.json");
+  return join15(workDir(paths, id), "objections.json");
 }
 function emptyLedger() {
   return { objections: [] };
@@ -4409,112 +5491,9 @@ function blockingObjections(ledger, work, evidence, policy, statuses) {
   return ledger.objections.filter((o) => o.severity === "blocking" && statuses.includes(objectionStatus(o, work, evidence, policy)));
 }
 
-// packages/engine/src/priorities.ts
-import { existsSync as existsSync3 } from "node:fs";
-import { join as join11 } from "node:path";
-function prioritiesDir(userDir, workspace) {
-  return join11(userDir, "workspaces", workspace);
-}
-function hashOf(text) {
-  return `sha256:${sha256(text)}`;
-}
-function readSignature(dir) {
-  const file = join11(dir, "priorities.json");
-  if (!existsSync3(file))
-    return;
-  const raw = readJson(file);
-  if (!raw || typeof raw.hash !== "string")
-    return null;
-  return { hash: raw.hash, by: String(raw.by ?? ""), at: String(raw.at ?? "") };
-}
-function prioritiesState(userDir, workspace) {
-  const dir = prioritiesDir(userDir, workspace);
-  const path = join11(dir, "priorities.md");
-  const text = readText(path);
-  if (text === null)
-    return { state: "none", path, text: null, signedAt: null };
-  const signature = readSignature(dir);
-  if (signature === undefined)
-    return { state: "unsigned", path, text, signedAt: null };
-  if (signature === null || signature.hash !== hashOf(text))
-    return { state: "changed", path, text, signedAt: null };
-  return { state: "signed", path, text, signedAt: signature.at };
-}
-function acceptPriorities(userDir, workspace, options) {
-  const dir = prioritiesDir(userDir, workspace);
-  const path = join11(dir, "priorities.md");
-  if (options.file !== undefined) {
-    const copied = readTextQuietly(options.file);
-    if (copied === null)
-      return { refused: `${options.file} cannot be read` };
-    if (!copied.trim())
-      return { refused: `${options.file} is empty` };
-    writeText(path, copied);
-  }
-  const text = readText(path);
-  if (text === null || !text.trim())
-    return {
-      refused: `no priorities to sign: write ${path}, or crew workspace priorities accept --file <path>`
-    };
-  const hash = hashOf(text);
-  const at = nowIso();
-  writeJson(join11(dir, "priorities.json"), { hash, by: options.by, at });
-  return { state: "signed", path, text, signedAt: at, hash };
-}
-function prioritiesLine(status) {
-  switch (status.state) {
-    case "signed":
-      return `priorities: signed (${status.signedAt})`;
-    case "changed":
-      return "priorities: changed since signing (crew workspace priorities accept)";
-    case "unsigned":
-      return "priorities: unsigned (crew workspace priorities accept)";
-    default:
-      return `priorities: none (write ${status.path}, or crew workspace priorities accept --file <path>)`;
-  }
-}
-function triageText(work, where) {
-  const t = work.triage;
-  if (!t)
-    return `priority ${work.priority ?? "normal"}`;
-  if (t.confirmed === null)
-    return `priority ${t.proposed} (proposed, unconfirmed: no signed business priorities)`;
-  if (where === "status")
-    return `priority ${work.priority ?? "normal"}`;
-  return `priority ${t.confirmed} (${triageSummary(t)})`;
-}
-var NOT_SIGNED = "the business priorities are not signed (crew workspace priorities accept [--file <path>]): the proposal stays unconfirmed";
-function triagePriority(proposed, flag, reason, state, by) {
-  const cleaned = reason?.trim() ? reason.trim().replace(/\s*\n\s*/g, " ") : null;
-  const against = state === "signed" ? "signed" : state === "none" ? "none" : "unsigned";
-  if (against !== "signed") {
-    if (flag !== undefined)
-      return { refused: NOT_SIGNED };
-    return { proposed, confirmed: null, by, reason: cleaned, against, at: nowIso() };
-  }
-  const confirmed = flag ?? proposed;
-  if (priorityRank(confirmed) < priorityRank(proposed))
-    return {
-      refused: `the source proposed ${proposed}; the lead confirms or lowers, never raises`
-    };
-  if (priorityRank(confirmed) > priorityRank(proposed) && !cleaned)
-    return { refused: 'a lowering needs --reason "<why>"' };
-  return { proposed, confirmed, by, reason: cleaned, against, at: nowIso() };
-}
-function triageSummary(triage) {
-  if (triage.confirmed === null)
-    return `proposed ${triage.proposed}, unconfirmed (no signed business priorities)`;
-  const reason = triage.reason ? `: ${triage.reason}` : "";
-  return `proposed ${triage.proposed}, confirmed ${triage.confirmed} against the signed business priorities${reason}`;
-}
-
-// packages/engine/src/questions.ts
-import { appendFileSync, existsSync as existsSync6, lstatSync as lstatSync2, realpathSync as realpathSync3 } from "node:fs";
-import { dirname as dirname6, isAbsolute as isAbsolute3, join as join15, relative as relative5 } from "node:path";
-
 // packages/engine/src/source.ts
-import { existsSync as existsSync4, realpathSync as realpathSync2, statSync as statSync3 } from "node:fs";
-import { isAbsolute, join as join12, relative as relative4 } from "node:path";
+import { existsSync as existsSync5, realpathSync as realpathSync2, statSync as statSync3 } from "node:fs";
+import { isAbsolute, join as join16, relative as relative4 } from "node:path";
 var CONNECTORS = ["clickup", "jira", "notion", "other"];
 var KEYS = new Set([
   "channel",
@@ -4528,11 +5507,11 @@ function confinedDocument(root, documentPath) {
   const bad = `source: documentPath ${documentPath}`;
   if (!documentPath.trim() || isAbsolute(documentPath) || documentPath.split(/[\\/]/).includes(".."))
     return { refused: `${bad} is not a relative path under the root` };
-  const candidate = join12(root, documentPath);
+  const candidate = join16(root, documentPath);
   let real;
   let rootReal;
   try {
-    if (!existsSync4(candidate) || !statSync3(candidate).isFile())
+    if (!existsSync5(candidate) || !statSync3(candidate).isFile())
       return { refused: `${bad} is not a file under the root` };
     real = realpathSync2(candidate);
     rootReal = realpathSync2(root);
@@ -4605,441 +5584,6 @@ function sourceText(source, root, input) {
   if ("refused" in file)
     return file;
   return readText(file.file) ?? "";
-}
-
-// packages/engine/src/state.ts
-import { existsSync as existsSync5 } from "node:fs";
-import { join as join14, resolve as resolve4 } from "node:path";
-
-// packages/engine/src/worktree.ts
-import { execFileSync as execFileSync3 } from "node:child_process";
-import { statSync as statSync4 } from "node:fs";
-import { basename as basename3, isAbsolute as isAbsolute2, join as join13, resolve as resolve3 } from "node:path";
-function worktreeMainRoot(root) {
-  const gitFile = join13(root, ".git");
-  try {
-    if (!statSync4(gitFile).isFile())
-      return null;
-  } catch {
-    return null;
-  }
-  const line = readText(gitFile)?.trim() ?? "";
-  const match = /^gitdir:\s*(.+?)\/\.git\/worktrees\/[^/]+\/?$/.exec(line);
-  return match?.[1] ? canonical(isAbsolute2(match[1]) ? match[1] : join13(root, match[1])) : null;
-}
-function gitRun(cwd, ...args) {
-  return execFileSync3("git", args, {
-    cwd,
-    encoding: "utf8",
-    env: { ...process.env, LC_ALL: "C" },
-    stdio: ["ignore", "pipe", "pipe"],
-    maxBuffer: GIT_OUTPUT_BYTES
-  }).trim();
-}
-function worktreeRoots(cwd) {
-  try {
-    return gitRun(cwd, "worktree", "list", "--porcelain").split(`
-`).filter((line) => line.startsWith("worktree ")).map((line) => canonical(line.slice("worktree ".length)));
-  } catch {
-    return [];
-  }
-}
-function gitShow(cwd, branch, path) {
-  try {
-    return execFileSync3("git", ["show", "--end-of-options", `${branch}:${path}`], {
-      cwd,
-      env: { ...process.env, LC_ALL: "C" },
-      stdio: ["ignore", "pipe", "pipe"],
-      maxBuffer: GIT_OUTPUT_BYTES
-    });
-  } catch {
-    return null;
-  }
-}
-function gitError(error) {
-  const failed = error;
-  const stderr = failed.stderr?.toString().trim().split(`
-`)[0];
-  return stderr || (failed.message.split(`
-`)[0] ?? "");
-}
-function worktreePath(root, worktrees, name) {
-  return resolve3(root, worktrees, `${basename3(root)}-${name}`);
-}
-function addWorktree(root, branch, path) {
-  try {
-    gitRun(root, "worktree", "add", "-q", "-b", branch, path, "HEAD");
-    return null;
-  } catch (error) {
-    return { failed: `git worktree add failed in ${root}: ${gitError(error)}` };
-  }
-}
-function dropBranch(root, branch) {
-  try {
-    gitRun(root, "branch", "-D", branch);
-  } catch {}
-}
-var ENGINE_DIR = ".crew/";
-function dirtyPaths(path) {
-  return gitRun(path, "status", "--porcelain", "--untracked-files=all").split(`
-`).map((line) => /^\s*[MADRCU?]{0,2}\s+(.+)$/.exec(line)?.[1] ?? "").filter((p) => p.length > 0).flatMap((p) => p.split(" -> "));
-}
-function onlyEngineDirt(path) {
-  try {
-    const dirty = dirtyPaths(path);
-    return dirty.length > 0 && dirty.every((p) => p.startsWith(ENGINE_DIR));
-  } catch {
-    return false;
-  }
-}
-function removeWorktree(root, path) {
-  try {
-    gitRun(root, "worktree", "remove", path);
-    return null;
-  } catch (error) {
-    if (!onlyEngineDirt(path))
-      return { kept: gitError(error) };
-    try {
-      gitRun(root, "worktree", "remove", "--force", path);
-      return null;
-    } catch (forced) {
-      return { kept: gitError(forced) };
-    }
-  }
-}
-
-// packages/engine/src/state.ts
-var SESSION_LIVE_MS = 600000;
-var SEEN_EVERY_MS = 60000;
-var SESSION_TTL_MS = 86400000;
-var WORK_ID = /^\d{4}-\d{2}-\d{2}-\d{3}-[a-z0-9-]*$/;
-var WORKING_TTL_MS = 3600000;
-var WORKING_MAX = 50;
-var DESCRIPTION_MAX = 120;
-function cut(text, max = DESCRIPTION_MAX) {
-  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
-}
-function oneLine(text) {
-  const line = text.replace(/(?:\x1b\[|\x9b)[0-?]*[ -/]*[@-~]/g, "").replace(/[\u200b-\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff]/g, "").replace(/[\x00-\x1f\x7f-\x9f]+/g, " ").replace(/\s+/g, " ").trim();
-  return cut(line);
-}
-function wellShaped(raw) {
-  if (!Array.isArray(raw))
-    return [];
-  const kept = [];
-  for (const entry of raw) {
-    if (!entry || typeof entry !== "object")
-      continue;
-    const w = entry;
-    if (typeof w.agent !== "string" || typeof w.since !== "string")
-      continue;
-    if (w.team !== null && !(typeof w.team === "string" && Object.hasOwn(TEAMS, w.team)))
-      continue;
-    const description = typeof w.description === "string" ? oneLine(w.description) : undefined;
-    if (description === "")
-      continue;
-    kept.push({
-      agent: w.agent,
-      team: w.team,
-      since: w.since,
-      sessionId: typeof w.sessionId === "string" ? w.sessionId : "",
-      ...description !== undefined ? { description } : {}
-    });
-  }
-  return kept.slice(-WORKING_MAX);
-}
-function live(working, now) {
-  return (working ?? []).filter((w) => now - Date.parse(w.since) < WORKING_TTL_MS);
-}
-function recordWorking(paths, role) {
-  const entry = {
-    ...role,
-    ...role.description === undefined ? {} : { description: oneLine(role.description) }
-  };
-  if (entry.description === "")
-    delete entry.description;
-  updateState(paths, (state) => {
-    state.working = [...live(state.working, Date.parse(role.since)), entry].slice(-WORKING_MAX);
-  });
-}
-function clearWorking(paths, agent) {
-  updateState(paths, (state) => {
-    const working = live(state.working, Date.now());
-    const index = working.findIndex((w) => w.agent === agent);
-    if (index !== -1)
-      working.splice(index, 1);
-    state.working = working;
-  });
-}
-function workingRoles(paths, now = Date.now()) {
-  return live(loadState(paths).working, now);
-}
-function statePath(paths) {
-  return join14(paths.localDir, "state.json");
-}
-var isDate = (value) => typeof value === "string" && !Number.isNaN(Date.parse(value));
-function wellShapedSessions(raw) {
-  const kept = {};
-  if (!raw || typeof raw !== "object" || Array.isArray(raw))
-    return kept;
-  for (const [id, entry] of Object.entries(raw)) {
-    if (!entry || typeof entry !== "object" || Array.isArray(entry))
-      continue;
-    const s = entry;
-    if (s.seenAt !== undefined && !isDate(s.seenAt))
-      continue;
-    if (s.endedAt !== undefined && !isDate(s.endedAt))
-      continue;
-    if (s.startAt !== undefined && !isDate(s.startAt))
-      continue;
-    if (s.cwd !== undefined && typeof s.cwd !== "string")
-      continue;
-    if (s.item !== undefined && !(typeof s.item === "string" && WORK_ID.test(s.item)))
-      continue;
-    if (s.startActive !== undefined && !(typeof s.startActive === "string" && WORK_ID.test(s.startActive)))
-      continue;
-    kept[id] = entry;
-  }
-  return kept;
-}
-function loadState(paths) {
-  const raw = readJson(statePath(paths)) ?? {};
-  return {
-    active: typeof raw.active === "string" ? raw.active : null,
-    sessions: wellShapedSessions(raw.sessions),
-    ...Array.isArray(raw.working) ? { working: wellShaped(raw.working) } : {}
-  };
-}
-function saveState(paths, state) {
-  const now = Date.now();
-  for (const [id, session] of Object.entries(state.sessions))
-    if (session.seenAt && now - Date.parse(session.seenAt) > SESSION_TTL_MS)
-      delete state.sessions[id];
-  writeJson(statePath(paths), state);
-}
-function liveSessions(paths, now = Date.now()) {
-  return liveOf(loadState(paths).sessions, now);
-}
-function liveOf(sessions, now = Date.now()) {
-  const live = {};
-  for (const [id, session] of Object.entries(sessions))
-    if (session.seenAt && !session.endedAt && now - Date.parse(session.seenAt) <= SESSION_LIVE_MS)
-      live[id] = session;
-  return live;
-}
-function recordSeen(paths, sessionId, cwd, now = Date.now()) {
-  const seen = loadState(paths).sessions[sessionId];
-  if (seen?.seenAt && !seen.endedAt && seen.cwd === cwd && now - Date.parse(seen.seenAt) < SEEN_EVERY_MS)
-    return;
-  updateSession(paths, sessionId, (session) => {
-    session.cwd = cwd;
-    session.seenAt = new Date(now).toISOString();
-    delete session.endedAt;
-  });
-}
-function sessionState(state, sessionId) {
-  const existing = state.sessions[sessionId];
-  if (existing)
-    return existing;
-  const created = { baseline: null, stopBlocks: 0 };
-  state.sessions[sessionId] = created;
-  return created;
-}
-var STATE_LOCK_WAIT_MS = 500;
-function updateState(paths, change) {
-  const run = () => {
-    const state = loadState(paths);
-    const result = change(state);
-    saveState(paths, state);
-    return result;
-  };
-  try {
-    return withLock(paths.localDir, run, { what: "session state", waitMs: STATE_LOCK_WAIT_MS });
-  } catch (error) {
-    if (!(error instanceof LockBusy))
-      throw error;
-    return run();
-  }
-}
-function updateSession(paths, sessionId, change) {
-  return updateState(paths, (state) => change(sessionState(state, sessionId)));
-}
-function ensureCrewDir(paths, policy) {
-  const wanted = `local/
-work/*/logs/
-work/*/review/ui/
-worktrees/
-${policy.artifacts === "local" ? `work/
-` : ""}`;
-  const file = join14(paths.crewDir, ".gitignore");
-  if (readText(file) !== wanted)
-    writeProtectedText(paths, file, wanted);
-}
-function isWorktreeOf(root, main) {
-  try {
-    const common = gitRun(root, "rev-parse", "--git-common-dir");
-    if (canonical(resolve4(root, common)) !== canonical(join14(main, ".git")))
-      return false;
-    const line = readText(join14(root, ".git"))?.trim() ?? "";
-    const name = line.replace(/^gitdir:\s*/, "").replace(/[/\\]+$/, "").split(/[/\\]/).pop() ?? "";
-    const record = join14(main, ".git", "worktrees", name);
-    const back = readText(join14(record, "gitdir"))?.trim() ?? "";
-    return back !== "" && canonical(resolve4(record, back)) === canonical(join14(root, ".git"));
-  } catch {
-    return false;
-  }
-}
-function adoptMainFiles(paths) {
-  const main = worktreeMainRoot(paths.root);
-  if (!main)
-    return [];
-  const names = ["policy.json", "profile.json"].filter((name) => !existsSync5(join14(paths.crewDir, name)) && existsSync5(join14(main, ".crew", name)));
-  if (!names.length)
-    return [];
-  if (!isWorktreeOf(paths.root, main))
-    return [`${names.join(" and ")} not copied: ${paths.root} is not a worktree of ${main}`];
-  const mainPaths = pathsFor(main, paths.userDir);
-  const notes = [];
-  for (const name of names) {
-    const read = readProtectedText(mainPaths, join14(mainPaths.crewDir, name));
-    if (read.tampered)
-      notes.push(`${name} not copied: ${main}'s was changed outside the engine`);
-    else if (read.data !== null && read.text !== null)
-      writeProtectedText(paths, join14(paths.crewDir, name), read.text);
-  }
-  return notes;
-}
-
-// packages/engine/src/questions.ts
-var KINDS = ["cli", "ticket", "document", "mail"];
-function isQuestionChannelKind(value) {
-  return typeof value === "string" && KINDS.includes(value);
-}
-function questionsFile(documentPath) {
-  return `${documentPath}.questions.md`;
-}
-function questionChannels(work, context) {
-  const channels = [];
-  if (context.personPresent)
-    channels.push({ kind: "cli", posted: true, ref: null });
-  const source = work.source;
-  if (source?.channel === "task-manager")
-    channels.push({ kind: "ticket", posted: false, ref: source.url ?? source.externalId ?? null });
-  if (source?.channel === "document" && source.documentPath)
-    channels.push({ kind: "document", posted: false, ref: questionsFile(source.documentPath) });
-  if (context.workspace !== null)
-    channels.push({ kind: "mail", posted: false, ref: null });
-  return channels;
-}
-function addQuestion(work, text, channels) {
-  const questions = work.questions ?? [];
-  const question = {
-    id: `Q-${questions.length + 1}`,
-    text,
-    askedAt: nowIso(),
-    channels: channels.map((c) => ({ ...c })),
-    answer: null,
-    by: null,
-    answeredAt: null
-  };
-  work.questions = [...questions, question];
-  return question;
-}
-function postDocumentQuestion(root, documentPath, question) {
-  const document = confinedDocument(root, documentPath);
-  if ("refused" in document)
-    return document;
-  const file = questionsFile(documentPath);
-  const target = join15(root, file);
-  let rootReal;
-  let parentReal;
-  try {
-    rootReal = realpathSync3(root);
-    parentReal = realpathSync3(dirname6(target));
-  } catch {
-    return { refused: `${file} cannot be written: its folder is not under the root` };
-  }
-  const rel = relative5(rootReal, parentReal);
-  if (rel.startsWith("..") || isAbsolute3(rel))
-    return { refused: `${file} resolves outside the root; nothing written` };
-  try {
-    if (lstatSync2(target).isSymbolicLink())
-      return { refused: `${file} is a symlink; nothing written` };
-  } catch {}
-  const quoted = question.text.split(`
-`).map((line) => `> ${line}`).join(`
-`);
-  try {
-    if (!existsSync6(target))
-      appendFileSync(target, `# Questions on ${documentPath}
-`);
-    appendFileSync(target, `
-## ${question.id} (${question.askedAt})
-
-${quoted}
-`);
-  } catch (error) {
-    return {
-      refused: `${file} cannot be written: ${errorText(error)}`
-    };
-  }
-  return { file };
-}
-function markPosted(work, id, kind, ref) {
-  const question = work.questions?.find((q) => q.id === id);
-  if (!question)
-    return { refused: `no question ${id} on this item` };
-  const channel = question.channels.find((c) => c.kind === kind);
-  if (!channel)
-    return {
-      refused: `${id} has no ${kind} channel (${question.channels.map((c) => c.kind).join(", ")})`
-    };
-  if (channel.posted)
-    return {
-      refused: `${id} was posted to ${kind} already${channel.ref ? ` (${channel.ref})` : ""}`
-    };
-  channel.posted = true;
-  channel.ref = ref;
-  return question;
-}
-function answerQuestion(work, id, answer, by) {
-  const question = work.questions?.find((q) => q.id === id);
-  if (!question)
-    return { refused: `no question ${id} on this item` };
-  if (question.answer !== null)
-    return { refused: `${id} was answered by ${question.by} (${question.answeredAt}) already` };
-  const text = answer.trim();
-  if (!text)
-    return { refused: "an answer needs a text" };
-  const answered = { answer: text, by, answeredAt: nowIso() };
-  return Object.assign(question, answered);
-}
-function openQuestions(work) {
-  return (work.questions ?? []).filter((q) => q.answer === null);
-}
-function questionsSorted(work) {
-  const all = work.questions ?? [];
-  return [...all.filter((q) => q.answer === null), ...all.filter((q) => q.answer !== null)];
-}
-function channelList(channels, posted) {
-  return channels.filter((c) => c.posted === posted).map((c) => c.ref ? `${c.kind} (${c.ref})` : c.kind).join(", ");
-}
-function channelsText(question) {
-  const posted = channelList(question.channels, true) || "none";
-  const toPost = channelList(question.channels, false);
-  return `posted: ${posted}${toPost ? `; to post: ${toPost}` : ""}`;
-}
-function questionChannelsCell(question) {
-  return question.channels.map((c) => `${c.kind}${c.ref ? ` ${c.ref}` : ""} (${c.posted ? "posted" : "to post"})`).join(", ") || "none";
-}
-function questionLine(question) {
-  const text = oneLine(question.text);
-  if (question.answer === null)
-    return `${question.id} · open · ${text} · ${channelsText(question)}`;
-  return `${question.id} · answered by ${question.by} (${question.answeredAt}) · ${text} → ${oneLine(question.answer)}`;
-}
-function questionJson(question) {
-  return { ...question, open: question.answer === null };
 }
 
 // packages/engine/src/spec-review.ts
@@ -5403,6 +5947,309 @@ function renderSpecReview(record) {
 `;
 }
 
+// packages/engine/src/state.ts
+import { existsSync as existsSync6 } from "node:fs";
+import { join as join18, resolve as resolve4 } from "node:path";
+
+// packages/engine/src/worktree.ts
+import { execFileSync as execFileSync4 } from "node:child_process";
+import { statSync as statSync4 } from "node:fs";
+import { basename as basename5, isAbsolute as isAbsolute2, join as join17, resolve as resolve3 } from "node:path";
+function worktreeMainRoot(root) {
+  const gitFile = join17(root, ".git");
+  try {
+    if (!statSync4(gitFile).isFile())
+      return null;
+  } catch {
+    return null;
+  }
+  const line = readText(gitFile)?.trim() ?? "";
+  const match = /^gitdir:\s*(.+?)\/\.git\/worktrees\/[^/]+\/?$/.exec(line);
+  return match?.[1] ? canonical(isAbsolute2(match[1]) ? match[1] : join17(root, match[1])) : null;
+}
+function gitRun(cwd, ...args) {
+  return execFileSync4("git", args, {
+    cwd,
+    encoding: "utf8",
+    env: { ...process.env, LC_ALL: "C" },
+    stdio: ["ignore", "pipe", "pipe"],
+    maxBuffer: GIT_OUTPUT_BYTES
+  }).trim();
+}
+function worktreeRoots(cwd) {
+  try {
+    return gitRun(cwd, "worktree", "list", "--porcelain").split(`
+`).filter((line) => line.startsWith("worktree ")).map((line) => canonical(line.slice("worktree ".length)));
+  } catch {
+    return [];
+  }
+}
+function gitShow(cwd, branch, path) {
+  try {
+    return execFileSync4("git", ["show", "--end-of-options", `${branch}:${path}`], {
+      cwd,
+      env: { ...process.env, LC_ALL: "C" },
+      stdio: ["ignore", "pipe", "pipe"],
+      maxBuffer: GIT_OUTPUT_BYTES
+    });
+  } catch {
+    return null;
+  }
+}
+function gitError(error) {
+  const failed = error;
+  const stderr = failed.stderr?.toString().trim().split(`
+`)[0];
+  return stderr || (failed.message.split(`
+`)[0] ?? "");
+}
+function worktreePath(root, worktrees, name) {
+  return resolve3(root, worktrees, `${basename5(root)}-${name}`);
+}
+function addWorktree(root, branch, path) {
+  try {
+    gitRun(root, "worktree", "add", "-q", "-b", branch, path, "HEAD");
+    return null;
+  } catch (error) {
+    return { failed: `git worktree add failed in ${root}: ${gitError(error)}` };
+  }
+}
+function dropBranch(root, branch) {
+  try {
+    gitRun(root, "branch", "-D", branch);
+  } catch {}
+}
+var ENGINE_DIR = ".crew/";
+function dirtyPaths(path) {
+  return gitRun(path, "status", "--porcelain", "--untracked-files=all").split(`
+`).map((line) => /^\s*[MADRCU?]{0,2}\s+(.+)$/.exec(line)?.[1] ?? "").filter((p) => p.length > 0).flatMap((p) => p.split(" -> "));
+}
+function onlyEngineDirt(path) {
+  try {
+    const dirty = dirtyPaths(path);
+    return dirty.length > 0 && dirty.every((p) => p.startsWith(ENGINE_DIR));
+  } catch {
+    return false;
+  }
+}
+function removeWorktree(root, path) {
+  try {
+    gitRun(root, "worktree", "remove", path);
+    return null;
+  } catch (error) {
+    if (!onlyEngineDirt(path))
+      return { kept: gitError(error) };
+    try {
+      gitRun(root, "worktree", "remove", "--force", path);
+      return null;
+    } catch (forced) {
+      return { kept: gitError(forced) };
+    }
+  }
+}
+
+// packages/engine/src/state.ts
+var SESSION_LIVE_MS = 600000;
+var SEEN_EVERY_MS = 60000;
+var SESSION_TTL_MS = 86400000;
+var WORK_ID = /^\d{4}-\d{2}-\d{2}-\d{3}-[a-z0-9-]*$/;
+var WORKING_TTL_MS = 3600000;
+var WORKING_MAX = 50;
+var DESCRIPTION_MAX = 120;
+function cut(text, max = DESCRIPTION_MAX) {
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+function oneLine(text) {
+  const line = text.replace(/(?:\x1b\[|\x9b)[0-?]*[ -/]*[@-~]/g, "").replace(/[\u200b-\u200f\u202a-\u202e\u2060\u2066-\u2069\ufeff]/g, "").replace(/[\x00-\x1f\x7f-\x9f]+/g, " ").replace(/\s+/g, " ").trim();
+  return cut(line);
+}
+function wellShaped(raw) {
+  if (!Array.isArray(raw))
+    return [];
+  const kept = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== "object")
+      continue;
+    const w = entry;
+    if (typeof w.agent !== "string" || typeof w.since !== "string")
+      continue;
+    if (w.team !== null && !(typeof w.team === "string" && Object.hasOwn(TEAMS, w.team)))
+      continue;
+    const description = typeof w.description === "string" ? oneLine(w.description) : undefined;
+    if (description === "")
+      continue;
+    kept.push({
+      agent: w.agent,
+      team: w.team,
+      since: w.since,
+      sessionId: typeof w.sessionId === "string" ? w.sessionId : "",
+      ...description !== undefined ? { description } : {}
+    });
+  }
+  return kept.slice(-WORKING_MAX);
+}
+function live(working, now) {
+  return (working ?? []).filter((w) => now - Date.parse(w.since) < WORKING_TTL_MS);
+}
+function recordWorking(paths, role) {
+  const entry = {
+    ...role,
+    ...role.description === undefined ? {} : { description: oneLine(role.description) }
+  };
+  if (entry.description === "")
+    delete entry.description;
+  updateState(paths, (state) => {
+    state.working = [...live(state.working, Date.parse(role.since)), entry].slice(-WORKING_MAX);
+  });
+}
+function clearWorking(paths, agent) {
+  updateState(paths, (state) => {
+    const working = live(state.working, Date.now());
+    const index = working.findIndex((w) => w.agent === agent);
+    if (index !== -1)
+      working.splice(index, 1);
+    state.working = working;
+  });
+}
+function workingRoles(paths, now = Date.now()) {
+  return live(loadState(paths).working, now);
+}
+function statePath(paths) {
+  return join18(paths.localDir, "state.json");
+}
+var isDate = (value) => typeof value === "string" && !Number.isNaN(Date.parse(value));
+function wellShapedSessions(raw) {
+  const kept = {};
+  if (!raw || typeof raw !== "object" || Array.isArray(raw))
+    return kept;
+  for (const [id, entry] of Object.entries(raw)) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry))
+      continue;
+    const s = entry;
+    if (s.seenAt !== undefined && !isDate(s.seenAt))
+      continue;
+    if (s.endedAt !== undefined && !isDate(s.endedAt))
+      continue;
+    if (s.startAt !== undefined && !isDate(s.startAt))
+      continue;
+    if (s.cwd !== undefined && typeof s.cwd !== "string")
+      continue;
+    if (s.item !== undefined && !(typeof s.item === "string" && WORK_ID.test(s.item)))
+      continue;
+    if (s.startActive !== undefined && !(typeof s.startActive === "string" && WORK_ID.test(s.startActive)))
+      continue;
+    kept[id] = entry;
+  }
+  return kept;
+}
+function loadState(paths) {
+  const raw = readJson(statePath(paths)) ?? {};
+  return {
+    active: typeof raw.active === "string" ? raw.active : null,
+    sessions: wellShapedSessions(raw.sessions),
+    ...Array.isArray(raw.working) ? { working: wellShaped(raw.working) } : {}
+  };
+}
+function saveState(paths, state) {
+  const now = Date.now();
+  for (const [id, session] of Object.entries(state.sessions))
+    if (session.seenAt && now - Date.parse(session.seenAt) > SESSION_TTL_MS)
+      delete state.sessions[id];
+  writeJson(statePath(paths), state);
+}
+function liveSessions(paths, now = Date.now()) {
+  return liveOf(loadState(paths).sessions, now);
+}
+function liveOf(sessions, now = Date.now()) {
+  const live = {};
+  for (const [id, session] of Object.entries(sessions))
+    if (session.seenAt && !session.endedAt && now - Date.parse(session.seenAt) <= SESSION_LIVE_MS)
+      live[id] = session;
+  return live;
+}
+function recordSeen(paths, sessionId, cwd, now = Date.now()) {
+  const seen = loadState(paths).sessions[sessionId];
+  if (seen?.seenAt && !seen.endedAt && seen.cwd === cwd && now - Date.parse(seen.seenAt) < SEEN_EVERY_MS)
+    return;
+  updateSession(paths, sessionId, (session) => {
+    session.cwd = cwd;
+    session.seenAt = new Date(now).toISOString();
+    delete session.endedAt;
+  });
+}
+function sessionState(state, sessionId) {
+  const existing = state.sessions[sessionId];
+  if (existing)
+    return existing;
+  const created = { baseline: null, stopBlocks: 0 };
+  state.sessions[sessionId] = created;
+  return created;
+}
+var STATE_LOCK_WAIT_MS = 500;
+function updateState(paths, change) {
+  const run = () => {
+    const state = loadState(paths);
+    const result = change(state);
+    saveState(paths, state);
+    return result;
+  };
+  try {
+    return withLock(paths.localDir, run, { what: "session state", waitMs: STATE_LOCK_WAIT_MS });
+  } catch (error) {
+    if (!(error instanceof LockBusy))
+      throw error;
+    return run();
+  }
+}
+function updateSession(paths, sessionId, change) {
+  return updateState(paths, (state) => change(sessionState(state, sessionId)));
+}
+function ensureCrewDir(paths, policy) {
+  const wanted = `local/
+work/*/logs/
+work/*/review/ui/
+worktrees/
+${policy.artifacts === "local" ? `work/
+` : ""}`;
+  const file = join18(paths.crewDir, ".gitignore");
+  if (readText(file) !== wanted)
+    writeProtectedText(paths, file, wanted);
+}
+function isWorktreeOf(root, main) {
+  try {
+    const common = gitRun(root, "rev-parse", "--git-common-dir");
+    if (canonical(resolve4(root, common)) !== canonical(join18(main, ".git")))
+      return false;
+    const line = readText(join18(root, ".git"))?.trim() ?? "";
+    const name = line.replace(/^gitdir:\s*/, "").replace(/[/\\]+$/, "").split(/[/\\]/).pop() ?? "";
+    const record = join18(main, ".git", "worktrees", name);
+    const back = readText(join18(record, "gitdir"))?.trim() ?? "";
+    return back !== "" && canonical(resolve4(record, back)) === canonical(join18(root, ".git"));
+  } catch {
+    return false;
+  }
+}
+function adoptMainFiles(paths) {
+  const main = worktreeMainRoot(paths.root);
+  if (!main)
+    return [];
+  const names = ["policy.json", "profile.json"].filter((name) => !existsSync6(join18(paths.crewDir, name)) && existsSync6(join18(main, ".crew", name)));
+  if (!names.length)
+    return [];
+  if (!isWorktreeOf(paths.root, main))
+    return [`${names.join(" and ")} not copied: ${paths.root} is not a worktree of ${main}`];
+  const mainPaths = pathsFor(main, paths.userDir);
+  const notes = [];
+  for (const name of names) {
+    const read = readProtectedText(mainPaths, join18(mainPaths.crewDir, name));
+    if (read.tampered)
+      notes.push(`${name} not copied: ${main}'s was changed outside the engine`);
+    else if (read.data !== null && read.text !== null)
+      writeProtectedText(paths, join18(paths.crewDir, name), read.text);
+  }
+  return notes;
+}
+
 // packages/engine/src/strategy.ts
 var STRATEGY_SECTIONS = ["Viability", "Cost", "Time", "Stack", "Scaling phases"];
 var RESEARCH_AND_BASE = "from the research and the base";
@@ -5534,373 +6381,3615 @@ function verdictText(verdict) {
   return verdict === "not-proven" ? "not proven" : verdict === "not-run" ? "not run" : "proven";
 }
 
-// packages/engine/src/tdd.ts
-import { spawnSync } from "node:child_process";
-import { join as join24 } from "node:path";
-
-// packages/engine/src/detect/index.ts
-import { existsSync as existsSync9, readdirSync as readdirSync5, statSync as statSync6 } from "node:fs";
-import { join as join23, relative as relative6 } from "node:path";
-
-// packages/engine/src/pdf.ts
-import { existsSync as existsSync7 } from "node:fs";
-import { createRequire } from "node:module";
-import { tmpdir } from "node:os";
-import { delimiter, join as join17 } from "node:path";
-
-// packages/engine/src/run.ts
-import { spawn } from "node:child_process";
-import { appendFileSync as appendFileSync2, createWriteStream, mkdirSync as mkdirSync4, writeFileSync as writeFileSync3 } from "node:fs";
-import { basename as basename4, dirname as dirname7, extname, join as join16 } from "node:path";
-
-// packages/engine/src/shell-words.ts
-var SHELL_NAMES = ["sh", "bash", "zsh", "dash", "ksh", "fish"];
-var SHELL_VALUED = {
-  short: "oO",
-  long: ["--rcfile", "--init-file"]
-};
-function shellTakesNext(option) {
-  if (option.startsWith("--"))
-    return SHELL_VALUED.long.includes(option);
-  return option.length > 1 && SHELL_VALUED.short.includes(option.charAt(option.length - 1));
-}
-var JS_RUNNERS = ["node", "bun"];
-var NPX_RUNNERS = ["npx", "bunx"];
-var RUNNER_SUFFIXES = { js: [".exe"], npx: [".cmd", ".exe"] };
-function runnerSuffix(suffixes) {
-  return `(?:${suffixes.map((s) => s.replace(".", "\\.")).join("|")})?`;
-}
-var COMMAND_WRAPPERS = [
-  {
-    name: "env",
-    valued: "uCPLU",
-    longValued: ["--unset", "--chdir", "--block-signal", "--default-signal", "--ignore-signal"],
-    positionals: 0,
-    assignments: true,
-    scriptOptions: ["-S", "--split-string"],
-    unsetOptions: ["-u", "--unset"]
-  },
-  { name: "command", valued: "", longValued: [], positionals: 0 }
-];
-function takesNext(wrapper, option) {
-  if (option.includes("="))
-    return false;
-  if (option.startsWith("--"))
-    return wrapper.longValued.includes(option);
-  for (let i = 1;i < option.length; i++)
-    if (wrapper.valued.includes(option.charAt(i)))
-      return i === option.length - 1;
-  return false;
-}
-var SAFE_WORD = /^[A-Za-z0-9_@%+=:,./-]+$/;
-function quoteWord(word) {
-  return SAFE_WORD.test(word) ? word : `'${word.replace(/'/g, "'\\''")}'`;
-}
-var WRAPPERS = [
-  { name: "function", valued: "", longValued: [], positionals: 1 },
-  { name: "case", valued: "", longValued: [], positionals: 1 },
-  { name: "nice", valued: "n", longValued: ["--adjustment"], positionals: 0 },
-  {
-    name: "timeout",
-    valued: "sk",
-    longValued: ["--signal", "--kill-after"],
-    positionals: 1
-  },
-  { name: "stdbuf", valued: "ioe", longValued: ["--input", "--output", "--error"], positionals: 0 },
-  {
-    name: "flock",
-    valued: "w",
-    longValued: ["--wait", "--timeout", "--conflict-exit-code"],
-    positionals: 1,
-    scriptOptions: ["-c", "--command"],
-    scriptTrailing: true
-  },
-  {
-    name: "script",
-    valued: "FtEBIOomT",
-    longValued: [
-      "--echo",
-      "--log-in",
-      "--log-out",
-      "--log-io",
-      "--log-timing",
-      "--logging-format",
-      "--output-limit"
-    ],
-    positionals: 1,
-    scriptOptions: ["-c", "--command"],
-    scriptStandsAlone: true
-  },
-  {
-    name: "su",
-    valued: "gGsw",
-    longValued: ["--group", "--supp-group", "--shell", "--whitelist-environment"],
-    positionals: 1,
-    scriptOptions: ["-c", "--command", "--session-command"],
-    scriptStandsAlone: true
-  },
-  {
-    name: "sudo",
-    valued: "ugpChDTrt",
-    longValued: [
-      "--user",
-      "--group",
-      "--prompt",
-      "--close-from",
-      "--host",
-      "--chdir",
-      "--command-timeout",
-      "--role",
-      "--type",
-      "--other-user"
-    ],
-    positionals: 0
-  },
-  { name: "doas", valued: "uC", longValued: [], positionals: 0 },
-  ...COMMAND_WRAPPERS,
-  { name: "exec", valued: "a", longValued: [], positionals: 0 },
-  {
-    name: "xargs",
-    valued: "nILPdEsa",
-    longValued: [
-      "--max-args",
-      "--replace",
-      "--max-lines",
-      "--max-procs",
-      "--delimiter",
-      "--eof",
-      "--max-chars",
-      "--arg-file",
-      "--process-slot-var"
-    ],
-    positionals: 0
-  },
-  { name: "nohup", valued: "", longValued: [], positionals: 0 },
-  { name: "time", valued: "fo", longValued: ["--format", "--output"], positionals: 0 },
-  { name: "builtin", valued: "", longValued: [], positionals: 0 },
-  { name: "caffeinate", valued: "tw", longValued: [], positionals: 0 },
-  {
-    name: "ionice",
-    valued: "cnp",
-    longValued: ["--class", "--classdata", "--pid"],
-    positionals: 0
-  },
-  { name: "noglob", valued: "", longValued: [], positionals: 0 },
-  { name: "nocorrect", valued: "", longValued: [], positionals: 0 },
-  { name: "coproc", valued: "", longValued: [], positionals: 0, namedBlock: true }
-];
-
-// packages/engine/src/run.ts
-function wrapperTakesNext(wrapper, option) {
-  if (takesNext(wrapper, option))
-    return true;
-  const scripts = wrapper.scriptOptions ?? [];
-  if (scripts.includes(option))
-    return true;
-  if (option.startsWith("--") || option.includes("="))
-    return false;
-  return scripts.some((s) => s.length === 2 && option.endsWith(s.charAt(1)));
-}
-var TAIL_LINES = 40;
-var KILL_GRACE_MS = 2000;
-function exists2(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return error.code === "EPERM";
-  }
-}
-function probe(pid) {
-  if (!pid || process.platform === "win32")
-    return "pid unknown";
-  return `pid ${exists2(pid) ? "alive" : "gone"} group ${exists2(-pid) ? "alive" : "gone"}`;
-}
-function eventsPathOf(logPath) {
-  const name = basename4(logPath);
-  const ext = extname(name);
-  return join16(dirname7(logPath), `${ext ? name.slice(0, -ext.length) : name}.events.txt`);
-}
-function eventsWriter(options) {
-  if (!options.events)
-    return () => {};
-  const path = eventsPathOf(options.logPath);
-  let first = true;
-  return (line) => {
-    try {
-      if (first)
-        writeFileSync3(path, `${line}
-`);
-      else
-        appendFileSync2(path, `${line}
-`);
-    } catch {}
-    first = false;
+// packages/engine/src/validation.ts
+import { createHash as createHash4 } from "node:crypto";
+var LEAD_TEAMS = Object.entries(TEAMS).filter(([, team]) => team.validates).map(([name]) => name).join("|");
+var LEAD_OPENING = `# (${LEAD_TEAMS}) lead's validation of `;
+var LEAD_HEADING = new RegExp(`^(?=${LEAD_OPENING})`, "m");
+var LEAD_LINE = `^${LEAD_OPENING}(\\S+): (spec|plan|delivery)\\b`;
+function leadHeading(text) {
+  const last = [...text.matchAll(new RegExp(LEAD_LINE, "gm"))].pop();
+  if (!last)
+    return null;
+  return {
+    team: last[1],
+    item: last[2],
+    what: last[3]
   };
 }
-function killTree(pid) {
-  if (!pid)
-    return;
-  try {
-    if (process.platform === "win32")
-      spawn("taskkill", ["/pid", String(pid), "/T", "/F"]);
-    else
-      process.kill(-pid, "SIGKILL");
-  } catch {
-    try {
-      process.kill(pid, "SIGKILL");
-    } catch {}
-  }
-}
-var WRAPPER_BY_NAME = new Map(COMMAND_WRAPPERS.map((w) => [w.name, w]));
-var ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
-function joinWords(words) {
-  if (words.length === 1)
-    return words[0] ?? "";
-  return words.map(quoteWord).join(" ");
-}
-function shellRefusal(words) {
-  const base = (word) => (word ?? "").split("/").pop() ?? "";
-  let i = 0;
-  let wrapper = null;
-  while (i < words.length) {
-    const word = words[i] ?? "";
-    const named = WRAPPER_BY_NAME.get(base(word));
-    if (named) {
-      wrapper = named;
-      i += 1;
-    } else if (ASSIGNMENT.test(word)) {
-      wrapper = null;
-      i += 1;
-    } else if (wrapper && word.startsWith("-"))
-      i += wrapperTakesNext(wrapper, word) ? 2 : 1;
-    else
-      break;
-  }
-  const name = base(words[i]);
-  if (!SHELL_NAMES.includes(name))
-    return null;
-  let j = i + 1;
-  let commandString = false;
-  while (j < words.length && /^[-+]/.test(words[j] ?? "")) {
-    const option = words[j] ?? "";
-    if (/^-[A-Za-z]*c[A-Za-z]*$/.test(option))
-      commandString = true;
-    j += shellTakesNext(option) ? 2 : 1;
-  }
-  const after = words.length - j;
-  if (!commandString || after <= 1)
-    return null;
-  return `${after} words follow -c and the shell would run only the first (${words[j]}) with the rest as its parameters: quote the command string as one argument, -- ${name} -c "<command>"`;
-}
-function runCommand(command, options) {
-  const open = options.openLog ?? ((path) => createWriteStream(path));
-  mkdirSync4(dirname7(options.logPath), { recursive: true });
-  const log = open(options.logPath);
-  let errors = null;
-  if (options.stderrLogPath) {
-    mkdirSync4(dirname7(options.stderrLogPath), { recursive: true });
-    errors = open(options.stderrLogPath);
-  }
-  const lines = [];
-  let partial = "";
-  const absorb = (chunk, to = log) => {
-    to.write(chunk);
-    partial += chunk.toString("utf8");
-    const pieces = partial.split(`
+function parseValidation(text) {
+  const blocks = text.split(LEAD_HEADING);
+  const lines = (blocks.length > 1 ? blocks[blocks.length - 1] ?? text : text).split(`
 `);
-    partial = pieces.pop() ?? "";
-    for (const line of pieces) {
-      lines.push(line);
-      if (lines.length > TAIL_LINES)
-        lines.shift();
-    }
-  };
-  const note = eventsWriter(options);
-  note(`start ${new Date().toISOString()} ${JSON.stringify(command)}`);
-  const started = Date.now();
-  const at = () => `+${Date.now() - started}ms`;
-  return new Promise((resolve) => {
-    const child = spawn(command, {
-      cwd: options.cwd,
-      shell: true,
-      detached: process.platform !== "win32",
-      env: options.env ?? process.env,
-      stdio: [options.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"]
-    });
-    child.on("spawn", () => note(`spawn ${at()} pid ${child.pid}`));
-    child.on("exit", (code, signal) => note(`exit ${at()} code ${code} signal ${signal}`));
-    for (const [name, stream] of [
-      ["stdout", child.stdout],
-      ["stderr", child.stderr]
-    ]) {
-      stream?.on("end", () => note(`${name} end ${at()}`));
-      stream?.on("close", () => note(`${name} close ${at()}`));
-    }
-    let timedOut = false;
-    let grace;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      if (options.events)
-        note(`probe ${at()} ${probe(child.pid)}`);
-      killTree(child.pid);
-      note(`timeout ${at()} killed the group`);
-      grace = setTimeout(() => {
-        note(`gave up ${at()} no close after the kill`);
-        child.stdout?.destroy();
-        child.stderr?.destroy();
-        finish(null);
-      }, KILL_GRACE_MS);
-    }, options.timeoutMs);
-    child.stdout?.on("data", (chunk) => absorb(chunk));
-    child.stderr?.on("data", (chunk) => absorb(chunk, errors ?? log));
-    if (options.stdin !== undefined)
-      child.stdin?.end(options.stdin);
-    let finished = false;
-    const finish = (exit) => {
-      if (finished)
-        return;
-      finished = true;
-      clearTimeout(timer);
-      clearTimeout(grace);
-      if (partial)
-        lines.push(partial);
-      const result = {
-        exit,
-        durationMs: Date.now() - started,
-        tail: lines.slice(-TAIL_LINES).join(`
-`),
-        timedOut
-      };
-      let pending = errors ? 2 : 1;
-      const closed = () => {
-        pending -= 1;
-        if (pending > 0)
-          return;
-        note(`logs ended ${at()}`);
-        resolve(result);
-      };
-      log.end(closed);
-      errors?.end(closed);
+  const verdictLine = lines.slice(0, 4).find((l) => /^verdict:\s*(validated|returned)\s*$/.test(l.trim()));
+  if (!verdictLine)
+    return {
+      refused: "no verdict line: the second line is `verdict: validated` or `verdict: returned`"
     };
-    child.on("error", (error) => {
-      note(`error ${at()} ${error.message}`);
-      absorb(Buffer.from(`${error.message}
+  const verdict = verdictLine.trim().endsWith("validated") ? "validated" : "returned";
+  const start = lines.findIndex((l) => l.trim() === "## Returns");
+  const end = lines.findIndex((l, i) => i > start && l.startsWith("## "));
+  const section = start === -1 ? [] : lines.slice(start + 1, end === -1 ? undefined : end);
+  const returns = section.filter((l) => /^- R-\d+\s*·/.test(l.trim())).length;
+  if (verdict === "validated" && returns > 0)
+    return {
+      refused: `validated with ${returns} open return${returns === 1 ? "" : "s"} under ## Returns: the lead returns the spec, or closes the return in its file; the engine records neither as validated`
+    };
+  if (verdict === "returned" && returns === 0)
+    return {
+      refused: "returned with no return under ## Returns: a return names what must change at a file and a line"
+    };
+  return { verdict, returns };
+}
+function fileHash(text) {
+  return `sha256:${createHash4("sha256").update(text).digest("hex")}`;
+}
+function leadSuffix(what) {
+  return what === "plan" || what === "delivery" ? `.${what}` : "";
+}
+function replyFile(name, what) {
+  return `conclave/${name}${leadSuffix(what)}-reply.md`;
+}
+function validationHash(what, specText, planText, evidenceFingerprint) {
+  if (what === "delivery")
+    return evidenceFingerprint;
+  const text = what === "spec" ? specText : planText;
+  return `sha256:${createHash4("sha256").update(text ?? "").digest("hex")}`;
+}
+function validationRound(validations, what, by, hash, spentSpecRounds) {
+  const same = validations.filter((v) => v.what === what);
+  if (what === "spec") {
+    const lastMine = same.filter((v) => v.by === by).at(-1);
+    const round = !lastMine ? 1 : lastMine.hash === hash ? lastMine.round : lastMine.round + 1;
+    return { round, newRound: round > spentSpecRounds };
+  }
+  const last = same.at(-1);
+  const newRound = !last || last.hash !== hash;
+  return { round: newRound ? (last?.round ?? 0) + 1 : last?.round ?? 1, newRound };
+}
+function leadSeats(work) {
+  return (work.seats ?? []).filter((s) => s.kind === "lead");
+}
+function leadsMissing(work, ctx, what) {
+  if (work.route === "fast")
+    return [];
+  const hash = validationHash(what, ctx.specText, null, ctx.evidence?.fingerprint ?? "");
+  const missing = [];
+  for (const seat of leadSeats(work)) {
+    const mine = (work.validations ?? []).filter((v) => v.what === what && v.by === seat.role);
+    const latest = mine[mine.length - 1];
+    const file = `conclave/${seat.role}${what === "delivery" ? ".delivery" : ""}.md`;
+    if (!latest) {
+      missing.push(`validation of ${what} by ${seat.role} (crew validation <id> record --what ${what} --by ${seat.role} --file ${file})`);
+    } else if (latest.hash !== hash) {
+      missing.push(`validation of ${what} by ${seat.role}: stale (${what === "spec" ? "spec" : "the evidence"} changed); record the lead again`);
+    } else if (latest.verdict === "returned") {
+      missing.push(`validation of ${what} by ${seat.role}: returned ${latest.returns} return${latest.returns === 1 ? "" : "s"} (${latest.file}); revise the ${what === "spec" ? "spec" : "delivery"} and record the lead again (a resumed lead's answer: its -reply.md file)`);
+    }
+  }
+  return missing;
+}
+
+// packages/engine/src/work.ts
+var DELIBERATE = [
+  "receive",
+  "recognize",
+  "understand",
+  "specify",
+  "conclave",
+  "plan",
+  "build",
+  "gate",
+  "deliver",
+  "learn"
+];
+var PHASES_BY_ROUTE = {
+  fast: ["receive", "recognize", "build", "gate", "deliver", "learn"],
+  standard: [...DELIBERATE],
+  full: [...DELIBERATE]
+};
+function phasesFor(work) {
+  const phases = phasesOfKind(work);
+  if (work.specReview && work.route === "full" && phases.includes("plan")) {
+    const at = phases.indexOf("plan") + 1;
+    return [...phases.slice(0, at), "spec-review", ...phases.slice(at)];
+  }
+  return phases;
+}
+function phasesOfKind(work) {
+  const base = PHASES_BY_ROUTE[work.route];
+  const kind = kindOfItem(work);
+  if (kind === "audit")
+    return ["receive", "recognize", "audit", "deliver"];
+  if (kind === "issue") {
+    const at = base.indexOf("recognize") + 1;
+    return [...base.slice(0, at), "analyse", ...base.slice(at)];
+  }
+  if (kind === "new-project") {
+    const at = base.indexOf("specify");
+    if (at !== -1)
+      return [...base.slice(0, at), "strategy", ...base.slice(at)];
+  }
+  return [...base];
+}
+function plannedStrategyJudgement(work) {
+  if (!phasesFor(work).includes("strategy"))
+    return [];
+  return work.route === "full" ? [
+    {
+      gate: "strategy",
+      reviewer: "cto",
+      reason: "new project, full route: the CTO reviews, the judge rules"
+    }
+  ] : [
+    {
+      gate: "strategy",
+      reviewer: "judge",
+      reason: "new project, standard route: the judge rules from the files"
+    }
+  ];
+}
+function kindFloor(work) {
+  if (work.kind === "new-project" && work.route === "fast") {
+    work.route = "standard";
+    work.routeReasons.push("kind new-project is never fast");
+  }
+  if (work.kind === "audit" && work.route !== "full") {
+    work.route = "full";
+    work.routeReasons.push("kind audit is always full");
+  }
+}
+var RAISABLE = ["feature", "client-request", "cross-project"];
+var RAISE_PHASES = ["understand", "specify", "conclave"];
+function raiseKind(work, reason) {
+  if (!RAISABLE.includes(kindOfItem(work)))
+    return {
+      ok: false,
+      reason: `only a feature is raised to a strategy: this item is ${kindLabel(work)}`
+    };
+  if (phaseIndex(work.phase) >= phaseIndex("plan"))
+    return { ok: false, reason: "a strategy comes before the plan; from plan on, a new item" };
+  if (!RAISE_PHASES.includes(work.phase))
+    return {
+      ok: false,
+      reason: `a feature is raised to a strategy from understand, specify or conclave, not ${work.phase}`
+    };
+  work.kind = "new-project";
+  work.kindFrom = `raised: ${reason}`;
+  work.routeReasons.push(`kind raised to new-project: ${reason}`);
+  kindFloor(work);
+  if (work.phase === "understand")
+    return { ok: true, movedTo: null };
+  work.phase = "strategy";
+  work.phaseAt = { ...work.phaseAt ?? {}, strategy: nowIso() };
+  return { ok: true, movedTo: "strategy" };
+}
+function kindOfItem(work) {
+  return work.kind ?? "feature";
+}
+function kindLabel(work) {
+  return `kind ${kindOfItem(work)} (from ${work.kindFrom ?? "default"})`;
+}
+var ANALYSIS_SECTIONS = ["Origin", "Cause", "Blast radius"];
+var CONCLAVE_SECTIONS = [
+  "Assumed by good practice",
+  "Decisions only the user can make",
+  "Proposals",
+  "Warnings"
+];
+function slug(text) {
+  return text.toLowerCase().normalize("NFKD").replace(/[^\w\s-]/g, "").trim().replace(/[\s_]+/g, "-").replace(/-+/g, "-");
+}
+function workJson(paths, id) {
+  return join19(workDir(paths, id), "work.json");
+}
+function newWorkId(paths, title) {
+  const date = nowIso().slice(0, 10);
+  let existing = 0;
+  try {
+    existing = readdirSync5(join19(paths.crewDir, "work")).filter((n) => n.startsWith(date)).length;
+  } catch {
+    existing = 0;
+  }
+  const seq = String(existing + 1).padStart(3, "0");
+  return `${date}-${seq}-${slug(title).slice(0, 40).replace(/-$/, "")}`;
+}
+function createWork(paths, input, baseFiles, source) {
+  const title = (input.split(`
+`).find((line) => line.trim()) ?? "untitled").trim().slice(0, 80);
+  const at = nowIso();
+  const work = {
+    id: newWorkId(paths, title),
+    title,
+    input,
+    type: "feature",
+    route: "standard",
+    routeReasons: ["not classified yet: standard by default"],
+    riskAreas: [],
+    phase: "receive",
+    awaiting: null,
+    criteria: [],
+    approvals: [],
+    skips: [],
+    baseCommit: baseCommitOf(paths.root),
+    ...baseFiles && Object.keys(baseFiles).length > 0 ? { baseFiles } : {},
+    ...source ? { source } : {},
+    createdAt: at,
+    updatedAt: at
+  };
+  writeProtectedJson(paths, workJson(paths, work.id), work);
+  let sourceSection = "";
+  if (source) {
+    const body = sourceText(source, paths.root, input);
+    const text = typeof body === "string" ? body : body.refused;
+    const proposed = source.proposedPriority ? `, proposed priority ${source.proposedPriority}` : "";
+    sourceSection = `
+## Source
+
+${sourceLine(source)}${proposed}
+
+${text.endsWith(`
+`) ? text : `${text}
+`}`;
+  }
+  writeText(join19(workDir(paths, work.id), "brief.md"), `# Brief
+
+## Request
+
+${input.trim()}
+${sourceSection}`);
+  updateState(paths, (state) => {
+    state.active = work.id;
+  });
+  return work;
+}
+function saveWork(paths, work) {
+  work.updatedAt = nowIso();
+  writeProtectedJson(paths, workJson(paths, work.id), work);
+}
+function loadWork(paths, id) {
+  const read = readProtectedJson(paths, workJson(paths, id));
+  return { work: read.data, tampered: read.tampered };
+}
+function applyChangedFields(record, inHand, loaded) {
+  const target = asRecord(record);
+  const now = asRecord(inHand);
+  const then = asRecord(loaded);
+  for (const key of new Set([...Object.keys(now), ...Object.keys(then)])) {
+    const value = JSON.stringify(now[key]);
+    if (value === JSON.stringify(then[key]))
+      continue;
+    if (value === undefined)
+      delete target[key];
+    else
+      target[key] = now[key];
+  }
+}
+function asRecord(work) {
+  return work;
+}
+function adoptRecord(inHand, record) {
+  const target = asRecord(inHand);
+  const source = asRecord(record);
+  for (const key of Object.keys(target))
+    if (!(key in source))
+      delete target[key];
+  Object.assign(target, source);
+}
+function noteRuntime(paths, id, runtime) {
+  return withLock(workDir(paths, id), () => {
+    const { work, tampered } = loadWork(paths, id);
+    if (!work || tampered || work.runtimes?.includes(runtime))
+      return false;
+    work.runtimes = [...work.runtimes ?? [], runtime];
+    saveWork(paths, work);
+    return true;
+  }, { what: "work folder" });
+}
+function activeWork(paths) {
+  const id = loadState(paths).active;
+  if (!id || !existsSync7(workJson(paths, id)))
+    return null;
+  const item = loadWork(paths, id);
+  return item.work?.abandoned ? null : item;
+}
+function openItems(paths, except) {
+  let ids = [];
+  try {
+    ids = readdirSync5(join19(paths.crewDir, "work")).sort();
+  } catch {
+    return [];
+  }
+  const open = [];
+  for (const id of ids) {
+    if (id === except || !existsSync7(workJson(paths, id)))
+      continue;
+    const { work } = loadWork(paths, id);
+    if (!work || work.abandoned || work.phase === "deliver" || work.phase === "learn")
+      continue;
+    const evidence = readProtectedJson(paths, join19(workDir(paths, id), "evidence.json"));
+    if (evidence.data?.verdict === "proven")
+      continue;
+    open.push(work);
+  }
+  return open;
+}
+function lastLearned(paths) {
+  let ids = [];
+  try {
+    ids = readdirSync5(join19(paths.crewDir, "work"));
+  } catch {
+    return null;
+  }
+  let latest = null;
+  for (const id of ids) {
+    if (!existsSync7(workJson(paths, id)))
+      continue;
+    const { work, tampered } = loadWork(paths, id);
+    if (!work?.learned || tampered || work.abandoned)
+      continue;
+    if (!latest || (latest.learned?.at ?? "") < work.learned.at)
+      latest = work;
+  }
+  if (!latest)
+    return null;
+  const evidence = readProtectedJson(paths, join19(workDir(paths, latest.id), "evidence.json"));
+  const proven = !evidence.tampered && evidence.data?.verdict === "proven";
+  return { work: latest, fingerprint: proven ? evidence.data?.fingerprint ?? null : null };
+}
+function applyClassification(work, type, decision, kind) {
+  const first = work.phase === "receive";
+  work.type = type;
+  if (first) {
+    work.route = decision.route;
+    work.routeReasons = [...decision.reasons];
+    work.riskAreas = [...decision.riskAreas];
+    if (decision.route === "full")
+      work.specReview = true;
+  } else {
+    const route = higherRoute(work.route, decision.route);
+    if (route !== work.route) {
+      work.routeReasons.push(`raised to ${route}: ${decision.reasons.join("; ")}`);
+    } else if (decision.route !== work.route) {
+      work.routeReasons.push(`reclassified as ${decision.route}; kept ${work.route}: a route is never lowered`);
+    }
+    if (route === "full" && work.route !== "full")
+      work.specReview = true;
+    work.route = route;
+    work.riskAreas = [...new Set([...work.riskAreas, ...decision.riskAreas])];
+  }
+  if (kind) {
+    const kept = work.kind === "issue" || work.kind === "new-project";
+    if (kept && kind.kind !== work.kind) {
+      work.routeReasons.push(`kept kind ${work.kind}: a kind is never lowered`);
+    } else {
+      work.kind = kind.kind;
+      work.kindFrom = kind.from;
+    }
+  }
+  kindFloor(work);
+  if (work.phase === "receive")
+    work.phase = "recognize";
+}
+function raiseRoute(work, to, reason) {
+  if (routeRank(to) <= routeRank(work.route))
+    return false;
+  work.route = to;
+  if (to === "full")
+    work.specReview = true;
+  work.routeReasons.push(`raised to ${to}: ${reason}`);
+  return true;
+}
+var MAX_PARTS = 10;
+var MAX_PART_LENGTH = 200;
+function parseParts(texts) {
+  if (texts.length > MAX_PARTS)
+    return { problem: `at most ${MAX_PARTS} parts` };
+  const trimmed = texts.map((t) => t.trim());
+  const seen = new Set;
+  for (const text of trimmed) {
+    if (!text)
+      return { problem: "a part needs text" };
+    if (text.length > MAX_PART_LENGTH)
+      return { problem: `a part is at most ${MAX_PART_LENGTH} characters` };
+    if (/[\u0000-\u001f\u007f]/.test(text))
+      return { problem: "a part is one line with no control character" };
+    const key = text.toLowerCase();
+    if (seen.has(key))
+      return { problem: `a part repeats another: ${key}` };
+    seen.add(key);
+  }
+  if (trimmed.length < 2)
+    return { parts: undefined };
+  return { parts: trimmed.map((text, n) => ({ id: `P-${n + 1}`, text })) };
+}
+function addCriterion(work, text, kind = "behavior", contract, screens) {
+  const taken = [...work.criteria, ...work.removedCriteria ?? []].map((c) => Number(c.id.slice("AC-".length))).filter((n) => Number.isFinite(n));
+  const next = taken.length ? Math.max(...taken) + 1 : 1;
+  const criterion = {
+    id: `AC-${next}`,
+    kind,
+    text: text.trim(),
+    ...contract ? { contract } : {},
+    ...screens?.length ? { screens } : {}
+  };
+  work.criteria.push(criterion);
+  return criterion;
+}
+function removeCriterion(work, evidence, id, ledger) {
+  const index = work.criteria.findIndex((c) => c.id === id);
+  if (index === -1)
+    return { refused: `unknown criterion: ${id}` };
+  const bound = ledger?.objections.find((o) => o.criterion === id && !o.waived);
+  if (bound)
+    return { refused: `${id} is bound to objection ${bound.id}; it stays` };
+  const target = work.criteria[index];
+  if (target.supersededBy)
+    return { refused: `${id} is superseded by ${target.supersededBy.id}; it stays` };
+  const replaced = work.criteria.find((c) => c.supersededBy?.id === id);
+  if (replaced)
+    return { refused: `${id} supersedes ${replaced.id}; it stays` };
+  if (evidence.tdd.some((t) => t.criterion === id)) {
+    return { refused: `${id} has a test-first record; it stays` };
+  }
+  if (work.skips.some((s) => s.step === `tdd:${id}`)) {
+    return { refused: `${id} has a skip; it stays` };
+  }
+  const [criterion] = work.criteria.splice(index, 1);
+  const removed = { ...criterion, at: nowIso() };
+  work.removedCriteria = [...work.removedCriteria ?? [], removed];
+  return { removed };
+}
+var PROOF_RANK = { behavior: 2, preserve: 1, observed: 0 };
+function supersedeCriterion(work, from, by, ledger) {
+  const old = work.criteria.find((c) => c.id === from);
+  if (!old)
+    return { refused: `unknown criterion: ${from}` };
+  const replacement = work.criteria.find((c) => c.id === by);
+  if (!replacement)
+    return { refused: `unknown criterion: ${by}` };
+  if (from === by)
+    return { refused: `${from} cannot supersede itself` };
+  if (old.supersededBy)
+    return { refused: `${from} is already superseded by ${old.supersededBy.id}` };
+  if (replacement.supersededBy)
+    return {
+      refused: `${by} is superseded by ${replacement.supersededBy.id}: supersede by ${replacement.supersededBy.id} instead`
+    };
+  const bound = ledger?.objections.find((o) => o.criterion === from && !o.waived);
+  if (bound)
+    return { refused: `${bound.id} is bound to ${from}: resolve it against ${by} first` };
+  if (PROOF_RANK[replacement.kind] < PROOF_RANK[old.kind])
+    return {
+      refused: `${by} (${replacement.kind}) cannot replace ${from} (${old.kind}): a replacement proves at least as much`
+    };
+  const at = nowIso();
+  old.supersededBy = { id: by, at };
+  return { criterion: old, at };
+}
+function currentCriterion(work, criterion) {
+  let current = criterion;
+  const seen = new Set;
+  while (current.supersededBy && !seen.has(current.id)) {
+    seen.add(current.id);
+    current = work.criteria.find((c) => c.id === current.supersededBy?.id) ?? current;
+  }
+  return current;
+}
+var USER = { by: "user" };
+function addDecision(work, question, dflt) {
+  const taken = (work.decisions ?? []).map((d) => Number(d.id.slice("D-".length))).filter(Number.isFinite);
+  const next = taken.length ? Math.max(...taken) + 1 : 1;
+  const decision = {
+    id: `D-${next}`,
+    question: question.trim(),
+    ...dflt?.trim() ? { default: dflt.trim() } : {}
+  };
+  work.decisions = [...work.decisions ?? [], decision];
+  return decision;
+}
+function answerDecision(work, id, answer, decision, policy) {
+  const found = (work.decisions ?? []).find((d) => d.id === id);
+  if (!found)
+    return { refused: `unknown decision: ${id}` };
+  if (decision.by === "validator") {
+    if (found.answer !== undefined) {
+      const who = found.by === "validator" ? "the validator" : `the ${found.by ?? "user"}`;
+      return {
+        refused: `${id} is already answered by ${who}; the validator never overwrites an answer`
+      };
+    }
+    if (found.default === undefined) {
+      return { refused: `${id} has no stated default; a person answers it` };
+    }
+    if (answer !== undefined && answer.trim() !== found.default) {
+      return {
+        refused: `the validator may only take the stated default of ${id} (${found.default})`
+      };
+    }
+    const conservative = found.jev?.conservative;
+    if (typeof conservative === "number" && disputedDefault(found.jev, policy)) {
+      return {
+        refused: `${disputedDefaultText(conservative, `the default of ${id}`)}; a person decides`,
+        disputed: true
+      };
+    }
+  } else if (!answer?.trim()) {
+    return { refused: `an answer is required: crew decide <id> ${id} "<answer>"` };
+  } else if (decision.by === "agent" && policy.unattendedDecisions === "validator") {
+    return {
+      refused: `under this policy an agent's answer does not count: take the stated default with --validator stated-default, or leave ${id} for a person`
+    };
+  }
+  found.answer = (answer ?? found.default ?? "").trim();
+  found.at = nowIso();
+  found.by = decision.by;
+  if (decision.mode)
+    found.mode = decision.mode;
+  else
+    delete found.mode;
+  if (decision.rule)
+    found.rule = decision.rule;
+  else
+    delete found.rule;
+  if (decision.relayed)
+    found.relayed = true;
+  else
+    delete found.relayed;
+  return found;
+}
+function unansweredDecisions(work, policy) {
+  return (work.decisions ?? []).filter((d) => d.answer === undefined || !decisionCounts(policy, d));
+}
+function debateState(work) {
+  if (!work.debate)
+    return "none";
+  return work.debate.closedAt ? "closed" : "open";
+}
+function openDebate(work, reason) {
+  const current = work.debate;
+  if (current) {
+    return {
+      refused: current.closedAt ? "the debate is closed; it opens once per item" : `the debate is already open (${current.openedAt}): ${current.reason}`
+    };
+  }
+  if (!reason.trim())
+    return { refused: "a debate opens for a reason: the decision with consequences" };
+  work.debate = { openedAt: nowIso(), reason: reason.trim() };
+  return work.debate;
+}
+function closeDebate(work, tokens) {
+  const debate = work.debate;
+  if (!debate)
+    return { refused: 'no debate is open (crew debate <id> open --reason "<why>")' };
+  if (debate.closedAt)
+    return { refused: "the debate is already closed" };
+  debate.closedAt = nowIso();
+  if (tokens !== undefined)
+    debate.tokens = tokens;
+  return debate;
+}
+function approve(work, what, decision = USER) {
+  work.approvals.push({ what, at: nowIso(), ...decision });
+}
+function addSkip(work, step, reason, decision = USER) {
+  work.skips.push({ step, reason, at: nowIso(), ...decision });
+}
+function isSkipped(work, step, policy) {
+  return work.skips.some((s) => s.step === step && decisionCounts(policy, s));
+}
+function phaseIndex(phase) {
+  return PHASE_ORDER.indexOf(phase);
+}
+function isBeforeBuild(work) {
+  return phaseIndex(work.phase) < phaseIndex("build");
+}
+function sectionBodies(text, heading) {
+  const escaped = escapeRegExp(heading);
+  const bodies = [];
+  for (const match of text.matchAll(new RegExp(`^(#{1,6})\\s*${escaped}\\s*$`, "gim"))) {
+    const level = (match[1] ?? "#").length;
+    const rest = text.slice((match.index ?? 0) + match[0].length);
+    const next = new RegExp(`^#{1,${level}}\\s`, "m").exec(rest);
+    const body = next ? rest.slice(0, next.index) : rest;
+    bodies.push(body.replace(/^#{1,6}\s.*$/gm, "").trim());
+  }
+  return bodies;
+}
+function hasSection(text, heading) {
+  return sectionBodies(text, heading).some((body) => body.length > 0);
+}
+function hasAcceptanceSection(text) {
+  return hasSection(text, "acceptance criteria");
+}
+function missingConclaveSections(text) {
+  return CONCLAVE_SECTIONS.filter((name) => !hasSection(text, name));
+}
+function missingAnalysisSections(text) {
+  return ANALYSIS_SECTIONS.filter((name) => !hasSection(text, name));
+}
+function routeDocuments(work, ctx) {
+  const missing = [];
+  if (kindOfItem(work) === "audit")
+    return missing;
+  if (work.specReview && work.route === "full")
+    missing.push(...specReviewMissing(ctx.evidence?.specReview, specReviewHash(ctx.specText ?? "", ctx.planText ?? "")));
+  if (work.route !== "fast") {
+    if (ctx.specText === null)
+      missing.push("spec.md in the work folder");
+    else if (!hasAcceptanceSection(ctx.specText)) {
+      missing.push('an "Acceptance criteria" section with content in spec.md');
+    }
+  }
+  if (work.route === "full") {
+    const approvals = work.approvals.filter((a) => a.what === "spec");
+    if (!approvals.some((a) => decisionCounts(ctx.policy, a))) {
+      const uncounted = approvals.find((a) => a.by && a.by !== "user");
+      missing.push(uncounted ? `the user's approval of the spec: recorded by the ${uncounted.by} in ${uncounted.mode} mode and not counted (a person runs crew approve <id> spec, or policy.json sets unattendedDecisions to "${uncounted.by === "validator" ? "validator" : "count"}")` : "the user's approval of the spec (crew approve <id> spec)");
+    }
+    if (!ctx.planExists)
+      missing.push("plan.md in the work folder");
+  }
+  return missing;
+}
+var MISSING_CHECKLIST_READ = `a checklist read for the gap round (crew pack files checklists <kind>: the core's checklist of that kind and the packs'; crew pack files checklists none --reason "<why>" when no kind applies)`;
+function conclaveDocument(work, ctx) {
+  if (work.route === "fast")
+    return [];
+  const missing = ctx.conclaveText === null ? ["conclave.md in the work folder (the gap round: four sections)"] : missingConclaveSections(ctx.conclaveText).map((name) => `a "${name}" section with content in conclave.md (write "none" when there is nothing)`);
+  if (!work.checklists?.length)
+    missing.push(MISSING_CHECKLIST_READ);
+  return missing;
+}
+function validatorPreconditions(rule, work, ctx) {
+  if (rule !== "complete-gap-round")
+    return [];
+  const missing = conclaveDocument(work, ctx);
+  for (const d of work.decisions ?? []) {
+    const answered = d.answer !== undefined && decisionCounts(ctx.policy, d);
+    if (!answered && d.default === undefined)
+      missing.push(`a stated default or an answer for ${d.id}`);
+  }
+  if (ctx.ledger) {
+    for (const o of blockingObjections(ctx.ledger, work, ctx.evidence, ctx.policy, ["open"]))
+      missing.push(`blocking objection ${o.id} bound to a criterion or waived by a person`);
+  }
+  return missing;
+}
+function guardFor(work, next, ctx) {
+  const missing = [];
+  if (work.phase === "analyse") {
+    for (const name of missingAnalysisSections(ctx.analysisText ?? ""))
+      missing.push(`${/^[aeiou]/i.test(name) ? "an" : "a"} "${name}" section with content in analysis.md (write "none" when there is nothing)`);
+    if (ctx.gitRepository && !ctx.originRecorded)
+      missing.push("analysis/origin.json in the work folder (crew analyse <id> --paths <files>)");
+    for (const k of ctx.knownRootCauses)
+      if (!k.contradicted && !(ctx.analysisText ?? "").includes(`[K:${k.id}]`))
+        missing.push(`${k.id} is a known root cause of ${k.paths.join(", ")} ("${k.title}"): cite it in analysis.md as [K:${k.id}] with what this fix does differently, or crew knowledge contradict ${k.id} --reason "<why>" --item ${work.id}`);
+  }
+  if (work.phase === "strategy") {
+    if (ctx.researcherText === null)
+      missing.push(RESEARCHER_FIRST);
+    else if (ctx.strategyText === null)
+      missing.push("strategy.md in the work folder");
+    else {
+      missing.push(...checkStrategy(ctx.strategyText, ctx.researcherText, work.knowledge?.listed ?? []).map((f) => `strategy.md: ${f}`));
+      const hash = strategyHash(ctx.strategyText, ctx.researcherText);
+      const record = ctx.evidence?.judgement?.find((j) => j.gate === "strategy");
+      if (!record)
+        missing.push("a proven strategy ruling (crew strategy <id> check, the reviewer and the judge, crew judgement <id> record --ruling <file>)");
+      else if (record.fingerprint !== hash)
+        missing.push("the strategy ruling is stale: strategy.md or conclave/researcher.md changed after it; check and judge again");
+      else if (record.verdict !== "proven")
+        missing.push(`the strategy ruling is ${verdictText(record.verdict)} (${record.findings.length} findings)`);
+    }
+  }
+  if (next === "deliver" && kindOfItem(work) === "audit") {
+    missing.push(...ctx.unproven.map((reason) => `not proven: ${reason}`));
+    return missing;
+  }
+  if ((next === "specify" || next === "strategy") && work.specReview && work.route === "full" && ["feature", "new-project"].includes(kindOfItem(work)) && !ctx.evidence?.specReview?.brief)
+    missing.push("the brainstorm's brief (wizardingcode-spec-brainstorm, then crew spec-review <id> brief)");
+  if (next === "plan") {
+    missing.push(...conclaveDocument(work, ctx));
+    for (const d of unansweredDecisions(work, ctx.policy))
+      missing.push(`an answer to ${d.id} (crew decide <id> ${d.id} "<answer>")`);
+    if (ctx.ledger) {
+      for (const o of blockingObjections(ctx.ledger, work, ctx.evidence, ctx.policy, ["open"]))
+        missing.push(`a criterion bound to blocking objection ${o.id}, or the user's waiver (crew objection <id> resolve ${o.id} --criterion AC-k | waive ${o.id} --reason "<why>")`);
+    }
+    if (debateState(work) === "open")
+      missing.push(`the debate is open (${work.debate?.reason ?? ""}); close it with the judge's ruling (crew debate <id> close [--tokens n])`);
+    missing.push(...leadsMissing(work, ctx, "spec"));
+  } else if (next === "build") {
+    if (work.criteria.length === 0) {
+      missing.push('at least one acceptance criterion (crew criteria <id> add "...")');
+    }
+    missing.push(...routeDocuments(work, ctx));
+    if (kindOfItem(work) === "issue") {
+      if (!work.criteria.some((c) => c.kind === "behavior"))
+        missing.push('an issue needs a regression test: at least one behavior criterion (crew criteria <id> add "<text>")');
+      if (!work.criteria.some((c) => c.kind === "preserve"))
+        missing.push('an issue keeps what works: at least one preserve criterion (crew criteria <id> add "<text>" --kind preserve)');
+    }
+  } else if (next === "gate") {
+    missing.push(...routeDocuments(work, ctx));
+    for (const criterion of work.criteria) {
+      if (criterion.supersededBy)
+        continue;
+      if (isSkipped(work, `tdd:${criterion.id}`, ctx.policy))
+        continue;
+      const record = ctx.evidence?.tdd.find((t) => t.criterion === criterion.id);
+      if (!tddDone(record, criterion.kind)) {
+        const how = criterion.kind === "behavior" ? "red/green" : criterion.kind === "preserve" ? "before/after" : "observed --reason";
+        missing.push(`test-first record for ${criterion.id} (crew tdd ${how})`);
+      }
+    }
+  } else if (next === "deliver") {
+    missing.push(...routeDocuments(work, ctx));
+    if (!ctx.proven) {
+      const reasons = ctx.unproven.map((reason) => `not proven: ${reason}`);
+      missing.push(...reasons.length ? reasons : ["not proven: run crew gate run <id>"]);
+    }
+    missing.push(...leadsMissing(work, ctx, "delivery"));
+  } else if (next === "learn") {
+    if (!ctx.proven)
+      missing.push(`not proven: the proof is on earlier code (crew gate run ${work.id})`);
+  }
+  return missing;
+}
+function nextPhaseOf(work) {
+  const phases = phasesFor(work);
+  const index = phases.indexOf(work.phase);
+  const current = index === -1 ? phases.findIndex((p) => phaseIndex(p) > phaseIndex(work.phase)) - 1 : index;
+  return phases[current + 1] ?? null;
+}
+function advancePhase(work, ctx) {
+  const next = nextPhaseOf(work);
+  if (!next)
+    return { ok: false, missing: ["already at the last phase"] };
+  const missing = guardFor(work, next, ctx);
+  if (missing.length)
+    return { ok: false, missing };
+  work.phase = next;
+  work.phaseAt = { ...work.phaseAt ?? {}, [next]: nowIso() };
+  return { ok: true, phase: next };
+}
+function waitingText(work) {
+  const phrase = waitingPhrase(work);
+  return phrase ? `, ${phrase}` : "";
+}
+function waitingPhrase(work) {
+  if (work.awaiting === "user")
+    return "waiting for the user";
+  if (work.awaiting === "role")
+    return "waiting for the roles";
+  if (work.awaiting === "mail")
+    return `waiting for a reply to ${work.awaitingMessage ?? "a message"}`;
+  return null;
+}
+function learnedHolds(paths, profile) {
+  const learned = lastLearned(paths);
+  if (!learned?.fingerprint)
+    return false;
+  const now = computeFingerprint(paths.root, profile, learned.work, MAX_WATCHED_FILES, fingerprintMethod(learned.fingerprint));
+  return now !== UNAVAILABLE && now === learned.fingerprint;
+}
+function noItemTurnEnds(paths, profile, session, current) {
+  const changed = session.baseline !== null && current !== UNAVAILABLE ? current !== session.baseline : false;
+  return !changed || learnedHolds(paths, profile);
+}
+
+// packages/engine/src/judgement.ts
+function plannedJudgementGates(route, riskAreas, changed, policy, registry = TEAMS) {
+  return plannedSeats(route, riskAreas, changed, policy, { registry }).filter((s) => s.kind === "gate" && s.gate !== undefined).map((s) => ({ gate: s.gate, reason: s.reason }));
+}
+function reviewDir(paths, id, task) {
+  const dir = join20(workDir(paths, id), "review");
+  return task ? join20(dir, task) : dir;
+}
+function plannedTaskJudgement(scope, policy) {
+  return taskSeats(scope, policy).flatMap((s) => s.kind === "gate" && s.gate ? [{ gate: s.gate, reason: s.reason }] : []);
+}
+function verdictWord(verdict) {
+  return verdict === "not-proven" ? "not proven" : verdict === "not-run" ? "not run" : "proven";
+}
+function findingsText(n) {
+  return `${n} finding${n === 1 ? "" : "s"}`;
+}
+function scopeHash(scope) {
+  return sha256([...new Set(scope)].sort().join(`
 `));
-      finish(null);
-    });
-    child.on("close", (code, signal) => {
-      note(`close ${at()} code ${code} signal ${signal}`);
-      finish(code);
-    });
+}
+function keepRound(paths, id, round, gates, rulingFile, task) {
+  const dir = reviewDir(paths, id, task);
+  for (const gate of gates) {
+    const findings = join20(dir, `${gate}.findings.md`);
+    if (existsSync8(findings))
+      copyFileSync2(findings, join20(dir, `${gate}.round${round}.md`));
+  }
+  if (existsSync8(rulingFile))
+    copyFileSync2(rulingFile, join20(dir, `ruling.round${round}.json`));
+}
+var CAPTURE = /^(?<base>[a-z0-9-]+)(?:@(?<width>\d+))?(?<dark>-dark)?\.(?:png|jpe?g)$/i;
+function pageAndState(base, meta) {
+  if (meta && typeof meta.page === "string" && typeof meta.state === "string") {
+    return { page: meta.page, state: meta.state };
+  }
+  const at = base.lastIndexOf("-");
+  return at > 0 ? { page: base.slice(0, at), state: base.slice(at + 1) } : { page: base, state: "default" };
+}
+function listCaptures(paths, id, task) {
+  const dir = join20(reviewDir(paths, id, task), "ui");
+  let names;
+  try {
+    names = readdirSync6(dir);
+  } catch {
+    return [];
+  }
+  const prefix = task ? `review/${task}/ui/` : "review/ui/";
+  const groups = new Map;
+  for (const name of names) {
+    const match = CAPTURE.exec(name);
+    const base = match?.groups?.base;
+    if (!match || !base)
+      continue;
+    let group = groups.get(base);
+    if (!group) {
+      const metaName = `${base}.json`;
+      const meta = names.includes(metaName) && isRegularFile(join20(dir, metaName)) ? readJson(join20(dir, metaName)) : null;
+      const { page, state } = pageAndState(base, meta);
+      group = {
+        page,
+        state,
+        images: [],
+        meta: meta ? metaName : null,
+        by: meta?.by === "fixture" ? "fixture" : "session"
+      };
+      groups.set(base, group);
+    }
+    const width = match.groups?.width ? Number(match.groups.width) : null;
+    group.images.push({ name, width, dark: match.groups?.dark !== undefined });
+  }
+  return [...groups.entries()].map(([base, group]) => {
+    const ordered = [...group.images].sort((a, b) => Number(a.dark) - Number(b.dark) || (a.width ?? 0) - (b.width ?? 0) || a.name.localeCompare(b.name));
+    const light = ordered.find((i) => !i.dark) ?? ordered[0];
+    const consoleFile = `console-${base}.json`;
+    return {
+      page: group.page,
+      state: group.state,
+      file: `${prefix}${light?.name ?? ""}`,
+      files: ordered.map((i) => `${prefix}${i.name}`),
+      widths: [
+        ...new Set(ordered.map((i) => i.width).filter((w) => w !== null))
+      ].sort((a, b) => a - b),
+      dark: ordered.some((i) => i.dark),
+      console: names.includes(consoleFile) ? `${prefix}${consoleFile}` : null,
+      meta: group.meta ? `${prefix}${group.meta}` : null,
+      by: group.by
+    };
+  }).sort((a, b) => a.page.localeCompare(b.page) || a.state.localeCompare(b.state));
+}
+function isStoredCapture(raw) {
+  if (!raw || typeof raw !== "object")
+    return false;
+  const { file, console: consoleFile } = raw;
+  return typeof file === "string" && (typeof consoleFile === "string" || consoleFile === null);
+}
+function completeCapture(raw) {
+  const name = raw.file.slice(raw.file.lastIndexOf("/") + 1);
+  const match = CAPTURE.exec(name);
+  const fallback = pageAndState(match?.groups?.base ?? name.replace(/\.[^.]+$/, ""), null);
+  return {
+    page: typeof raw.page === "string" ? raw.page : fallback.page,
+    state: typeof raw.state === "string" ? raw.state : fallback.state,
+    file: raw.file,
+    files: Array.isArray(raw.files) ? raw.files : [raw.file],
+    widths: Array.isArray(raw.widths) ? raw.widths : [],
+    dark: raw.dark === true,
+    console: raw.console,
+    meta: typeof raw.meta === "string" ? raw.meta : null,
+    by: raw.by === "fixture" ? "fixture" : "session"
+  };
+}
+function readReviewInputs(paths, id, task) {
+  const raw = readJson(join20(reviewDir(paths, id, task), "inputs.json"));
+  if (!raw || typeof raw.fingerprint !== "string" || typeof raw.at !== "string")
+    return null;
+  const captures = Array.isArray(raw.captures) ? raw.captures.filter(isStoredCapture).map(completeCapture) : [];
+  return {
+    fingerprint: raw.fingerprint,
+    at: raw.at,
+    captures,
+    ...Array.isArray(raw.dependencies) ? { dependencies: raw.dependencies.filter(isDependencyInput) } : {},
+    ...Array.isArray(raw.phrases) ? { phrases: raw.phrases.filter(isPhraseInput) } : {}
+  };
+}
+function writeReviewInputs(paths, work, changed, fingerprint, options = {}) {
+  const { task, signals } = options;
+  const dir = reviewDir(paths, work.id, task);
+  const previous = readReviewInputs(paths, work.id, task);
+  if (previous && previous.fingerprint !== fingerprint) {
+    let names = [];
+    try {
+      names = readdirSync6(dir);
+    } catch {
+      names = [];
+    }
+    for (const name of names) {
+      if (name === "ruling.json" || name.endsWith(".findings.md"))
+        unlinkSync(join20(dir, name));
+    }
+  }
+  const cut = reviewPatch(paths.root, work.baseCommit, changed);
+  writeText(join20(dir, "diff.patch"), cut.patch);
+  writeText(join20(dir, "files.txt"), changed.length ? `${changed.join(`
+`)}
+` : "");
+  writeText(join20(dir, "inputs.json"), `${JSON.stringify({
+    ...signals ? { dependencies: signals.dependencies, phrases: signals.phrases } : {},
+    fingerprint,
+    at: nowIso(),
+    captures: listCaptures(paths, work.id, task)
+  }, null, 2)}
+`);
+  return { dir, note: cut.note };
+}
+function judgementRows(work, evidence, planned, currentFingerprint, policy) {
+  return planned.map((p) => {
+    const record = (evidence.judgement ?? []).find((j) => j.gate === p.gate);
+    const findings = record?.findings.length ?? 0;
+    if (isSkipped(work, `gate:${p.gate}`, policy)) {
+      const skip = work.skips.find((s) => s.step === `gate:${p.gate}`);
+      return {
+        gate: p.gate,
+        status: "skipped",
+        planned: p.reason,
+        findings,
+        ...skip?.reason ? { reason: skip.reason } : {}
+      };
+    }
+    if (!record)
+      return { gate: p.gate, status: "planned", planned: p.reason, findings: 0 };
+    if (record.fingerprint !== currentFingerprint)
+      return {
+        gate: p.gate,
+        status: "stale",
+        planned: p.reason,
+        findings,
+        reason: "ruling on earlier code"
+      };
+    return {
+      gate: p.gate,
+      status: record.verdict,
+      planned: p.reason,
+      findings,
+      ...record.reason ? { reason: record.reason } : {}
+    };
   });
 }
-function shellWord(path) {
-  const word = path.startsWith("-") ? `./${path}` : path;
-  return /^[A-Za-z0-9_./-]+$/.test(word) ? word : `'${word.replace(/'/g, "'\\''")}'`;
+function isRecord2(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function hunkLines2(patch, file, line) {
+  const lines = patch.split(`
+`);
+  let current = null;
+  let newLine = 0;
+  let inHunk = false;
+  let hunkRows = [];
+  let found = null;
+  const settle = () => {
+    if (current === file && hunkRows.some((r) => r.n === line))
+      found = hunkRows;
+  };
+  for (const raw of lines) {
+    const header = /^diff --git a\/(.+?) b\/(.+)$/.exec(raw);
+    if (header) {
+      settle();
+      if (found)
+        break;
+      current = header[2] ?? null;
+      inHunk = false;
+      hunkRows = [];
+      continue;
+    }
+    const hunk = HUNK_HEADER.exec(raw);
+    if (hunk) {
+      settle();
+      if (found)
+        break;
+      newLine = Number(hunk[1]);
+      inHunk = true;
+      hunkRows = [];
+      continue;
+    }
+    if (!inHunk || current !== file)
+      continue;
+    if (raw.startsWith("+") || raw.startsWith(" ")) {
+      hunkRows.push({ n: newLine, text: raw.slice(1) });
+      newLine += 1;
+    } else if (raw.startsWith("\\")) {}
+  }
+  settle();
+  if (!found)
+    return null;
+  const rows = found.filter((r) => r.n >= line - 5 && r.n <= line + 5);
+  const first = rows[0];
+  const last = rows[rows.length - 1];
+  if (!first || !last)
+    return null;
+  return { from: first.n, to: last.n, text: rows.map((r) => `${r.n}: ${r.text}`).join(`
+`) };
+}
+function plannedNote(planned) {
+  return planned.length ? ` (planned: ${planned.join(", ")})` : " (none is planned)";
+}
+function parseRulings(raw, planned, subject = "this item") {
+  if (!isRecord2(raw) || !Array.isArray(raw.rulings))
+    return { refused: 'the ruling file is a JSON object with a "rulings" list' };
+  if (raw.rulings.length === 0)
+    return { refused: "the ruling file has no rulings" };
+  const rulings = [];
+  for (const [index, entry] of raw.rulings.entries()) {
+    const where = `ruling ${index + 1}`;
+    if (!isRecord2(entry))
+      return { refused: `${where}: not an object` };
+    const gate = entry.gate;
+    if (!isJudgementGateName(gate))
+      return {
+        refused: `${where}: unknown judgement gate: ${String(gate)} (${JUDGEMENT_GATES.join(", ")})`
+      };
+    if (!planned.includes(gate))
+      return { refused: `${where}: ${gate} is not planned for ${subject}${plannedNote(planned)}` };
+    const verdict = entry.verdict;
+    if (verdict !== "proven" && verdict !== "not-proven")
+      return {
+        refused: `${where} (${gate}): verdict is proven or not-proven, not ${String(verdict)}; a gate that could not run is recorded with crew judgement <id> record ${gate} --not-run --reason "<why>"`
+      };
+    const rawFindings = entry.findings ?? [];
+    if (!Array.isArray(rawFindings))
+      return { refused: `${where} (${gate}): findings is a list` };
+    const findings = [];
+    for (const [n, f] of rawFindings.entries()) {
+      const at = `finding ${n + 1} of ${gate}`;
+      if (!isRecord2(f))
+        return { refused: `${at}: not an object` };
+      if (typeof f.file !== "string" || !f.file.trim())
+        return { refused: `${at}: needs a file` };
+      if (typeof f.text !== "string" || !f.text.trim())
+        return { refused: `${at}: needs a text` };
+      if (f.severity !== "defect" && f.severity !== "advisory")
+        return { refused: `${at}: severity is defect or advisory` };
+      const line = f.line === 0 ? undefined : f.line;
+      if (line !== undefined && !(typeof line === "number" && Number.isInteger(line) && line > 0))
+        return { refused: `${at}: line is a positive integer` };
+      findings.push({
+        file: f.file.trim().replace(/^\.\//, ""),
+        ...typeof line === "number" ? { line } : {},
+        text: f.text.trim(),
+        severity: f.severity
+      });
+    }
+    if (verdict === "not-proven" && !findings.some((f) => f.severity === "defect"))
+      return {
+        refused: `${where} (${gate}): not proven with no defect finding; the judge rules not proven on defects, or rules proven`
+      };
+    const tokens = entry.tokens;
+    if (tokens !== undefined && !(typeof tokens === "number" && Number.isFinite(tokens) && tokens >= 0))
+      return { refused: `${where} (${gate}): tokens is a number` };
+    if (rulings.some((r) => r.gate === gate))
+      return { refused: `two rulings for ${gate} in one file` };
+    rulings.push({
+      gate,
+      verdict,
+      ...typeof entry.reviewer === "string" ? { reviewer: entry.reviewer } : {},
+      ...typeof entry.judge === "string" ? { judge: entry.judge } : {},
+      findings,
+      ...typeof tokens === "number" ? { tokens } : {}
+    });
+  }
+  return { rulings };
+}
+function stampRuling(ruling, fingerprint, changed, workId) {
+  const own = `.crew/work/${workId}/`;
+  return {
+    gate: ruling.gate,
+    verdict: ruling.verdict,
+    ...ruling.reviewer ? { reviewer: ruling.reviewer } : {},
+    ...ruling.judge ? { judge: ruling.judge } : {},
+    findings: ruling.findings.map((f) => changed.includes(f.file) || f.file.startsWith(own) ? { ...f } : { ...f, outside: true }),
+    ...ruling.tokens !== undefined ? { tokens: ruling.tokens } : {},
+    at: nowIso(),
+    fingerprint
+  };
+}
+function fillTokens(records, roles, since) {
+  const thisRound = since ? roles.filter((r) => r.at >= since) : [];
+  const latest = (agent) => [...thisRound].reverse().find((r) => r.agent === agent && r.tokensFrom === "transcript");
+  const judge = latest("judge");
+  const ruled = records.filter((r) => r.verdict !== "not-run");
+  for (const record of ruled) {
+    if ((record.tokens ?? 0) !== 0)
+      continue;
+    const reviewer = latest(`review-${record.gate}`);
+    if (reviewer || judge)
+      record.tokens = (reviewer?.tokens ?? 0) + Math.round((judge?.tokens ?? 0) / ruled.length);
+  }
+}
+function contradiction(record) {
+  if (record.verdict !== "proven")
+    return null;
+  const defect = record.findings.find((f) => f.severity === "defect" && !f.outside);
+  if (!defect)
+    return null;
+  const where = defect.line ? `${defect.file}:${defect.line}` : defect.file;
+  return `${record.gate}: proven with a defect on ${where}; the judge rules not proven on a defect inside the change, or lowers it to advisory`;
+}
+function notRunRecord(gate, reason, fingerprint) {
+  return {
+    gate,
+    verdict: "not-run",
+    reason: reason.trim(),
+    findings: [],
+    at: nowIso(),
+    fingerprint
+  };
+}
+function recordJudgement(evidence, record) {
+  evidence.judgement = [
+    ...(evidence.judgement ?? []).filter((j) => j.gate !== record.gate),
+    record
+  ];
 }
 
+// packages/engine/src/ui.ts
+var SCREEN_NAME = /^[a-z0-9-]+$/;
+var SCREENS_RULE = "screens: use page:state with [a-z0-9-]+ names, comma-separated";
+var VIEWPORTS_RULE = "ui.viewports: one to six WxH pairs, integers 200 to 4000, comma-separated";
+var DARK_RULE = "ui.dark: true or false";
+var DEFAULT_VIEWPORTS = [
+  { name: "mobile", width: 360, height: 800 },
+  { name: "tablet", width: 768, height: 1024 },
+  { name: "desktop", width: 1280, height: 800 }
+];
+var SIZE_MIN = 200;
+var SIZE_MAX = 4000;
+var VIEWPORTS_MAX = 6;
+function parseScreens(text) {
+  const parts = text.split(",").map((p) => p.trim()).filter((p) => p !== "");
+  if (parts.length === 0)
+    return { refused: SCREENS_RULE };
+  const seen = new Map;
+  for (const part of parts) {
+    const [page, state, ...rest] = part.split(":");
+    if (rest.length || !page || !state || !SCREEN_NAME.test(page) || !SCREEN_NAME.test(state)) {
+      return { refused: SCREENS_RULE };
+    }
+    seen.set(part, { page, state });
+  }
+  return [...seen.values()];
+}
+function expectedScreens(work) {
+  const byKey = new Map;
+  for (const criterion of work.criteria) {
+    if (criterion.supersededBy || !criterion.screens)
+      continue;
+    for (const screen of criterion.screens) {
+      const key = `${screen.page}-${screen.state}`;
+      const entry = byKey.get(key) ?? { page: screen.page, state: screen.state, criteria: [] };
+      if (!entry.criteria.includes(criterion.id))
+        entry.criteria.push(criterion.id);
+      byKey.set(key, entry);
+    }
+  }
+  return [...byKey.values()].sort((a, b) => a.page.localeCompare(b.page) || a.state.localeCompare(b.state));
+}
+function viewportName(width) {
+  return width < 600 ? "mobile" : width < 1024 ? "tablet" : "desktop";
+}
+function parseViewports(text) {
+  const parts = text.split(",").map((p) => p.trim()).filter((p) => p !== "");
+  if (parts.length === 0 || parts.length > VIEWPORTS_MAX)
+    return { refused: VIEWPORTS_RULE };
+  const out = [];
+  const taken = new Set;
+  for (const part of parts) {
+    const match = /^(\d+)x(\d+)$/.exec(part);
+    if (!match)
+      return { refused: VIEWPORTS_RULE };
+    const width = Number(match[1]);
+    const height = Number(match[2]);
+    for (const size of [width, height]) {
+      if (!Number.isInteger(size) || size < SIZE_MIN || size > SIZE_MAX)
+        return { refused: VIEWPORTS_RULE };
+    }
+    const base = viewportName(width);
+    const name = taken.has(base) ? `${base}-${width}` : base;
+    if (taken.has(name))
+      return { refused: VIEWPORTS_RULE };
+    taken.add(name);
+    out.push({ name, width, height });
+  }
+  return out;
+}
+function uiLine(ui) {
+  const viewports = ui.viewports.map((v) => `${v.width}x${v.height} ${v.name}`).join(", ");
+  return `ui: viewports ${viewports}; dark: ${ui.dark === undefined ? "unset" : String(ui.dark)}`;
+}
+var STYLE_EXTENSIONS = [
+  ".css",
+  ".scss",
+  ".less",
+  ".vue",
+  ".svelte",
+  ".tsx",
+  ".jsx",
+  ".astro",
+  ".html",
+  ".blade.php"
+];
+var DARK_FILES_MAX = 400;
+var DARK_BYTES_MAX = 256 * 1024;
+var DARK = /prefers-color-scheme:\s*dark|\.dark(?![\w-])|data-theme=["']dark["']/;
+function readHead(path, max) {
+  const fd = openSync(path, "r");
+  try {
+    const buffer = Buffer.alloc(max);
+    const read = readSync(fd, buffer, 0, max, 0);
+    return buffer.subarray(0, read).toString("utf8");
+  } finally {
+    closeSync(fd);
+  }
+}
+function darkScheme(root, profile) {
+  if (typeof profile.ui?.dark === "boolean")
+    return { dark: profile.ui.dark, from: "profile" };
+  let seen = 0;
+  const walk = (dir, rel) => {
+    let entries;
+    try {
+      entries = readdirSync7(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name));
+    } catch {
+      return false;
+    }
+    for (const entry of entries) {
+      if (entry.isSymbolicLink() || SKIP_DIRS.has(entry.name))
+        continue;
+      const path = rel ? `${rel}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) {
+        if (walk(join21(dir, entry.name), path))
+          return true;
+        if (seen >= DARK_FILES_MAX)
+          return false;
+        continue;
+      }
+      if (!entry.isFile())
+        continue;
+      const lower = entry.name.toLowerCase();
+      if (!STYLE_EXTENSIONS.some((ext) => lower.endsWith(ext)) || !isWatched(path, profile))
+        continue;
+      if (++seen > DARK_FILES_MAX)
+        return false;
+      try {
+        if (DARK.test(readHead(join21(dir, entry.name), DARK_BYTES_MAX)))
+          return true;
+      } catch {}
+    }
+    return false;
+  };
+  return walk(root, "") ? { dark: true, from: "stylesheets" } : { dark: false, from: "none" };
+}
+function uiPlanPath(paths, id) {
+  return join21(workDir(paths, id), "review", "ui-plan.json");
+}
+function writeUiPlan(paths, work, profile) {
+  const { dark, from } = darkScheme(paths.root, profile);
+  const plan = {
+    id: work.id,
+    at: nowIso(),
+    viewports: (profile.ui?.viewports ?? DEFAULT_VIEWPORTS).map((v) => ({ ...v })),
+    colorSchemes: dark ? ["light", "dark"] : ["light"],
+    darkFrom: from,
+    screens: expectedScreens(work),
+    ...isNewSite(readSurface(paths, work.id)) ? { fullPage: true } : {}
+  };
+  const file = uiPlanPath(paths, work.id);
+  writeText(file, `${JSON.stringify(plan, null, 2)}
+`);
+  return { file, plan };
+}
+var IMAGE_NAME = /^[a-z0-9-]+-[a-z0-9-]+@\d+(?:-dark)?\.(?:png|jpe?g)$/;
+var CONSOLE_OR_AXE_NAME = /^(?:console|axe)-[a-z0-9-]+\.json$/;
+var ARIA_NAME = /^[a-z0-9-]+\.aria\.yml$/;
+var STRIP_NAME = /^[a-z0-9-]+\.strip\.png$/;
+var MOTION_DIR = /^motion\/[a-z0-9-]+$/;
+var FRAME_NAME = /^\d{2}\.png$/;
+function contained(ui, name, shape) {
+  if (typeof name !== "string" || name.includes("\x00") || !shape.test(name))
+    return null;
+  const target = resolve5(ui, name);
+  return target.startsWith(`${resolve5(ui)}${sep3}`) ? target : null;
+}
+function removeFile(target) {
+  try {
+    const stat = lstatSync2(target);
+    if (stat.isDirectory())
+      return false;
+    unlinkSync2(target);
+    return true;
+  } catch {
+    return false;
+  }
+}
+function removeFrames(target) {
+  try {
+    const parent = lstatSync2(dirname7(target));
+    if (parent.isSymbolicLink() || !parent.isDirectory())
+      return false;
+    const stat = lstatSync2(target);
+    if (!stat.isDirectory())
+      return false;
+    const entries = readdirSync7(target, { withFileTypes: true });
+    if (!entries.every((e) => e.isFile() && FRAME_NAME.test(e.name)))
+      return false;
+    rmSync3(target, { recursive: true, force: false });
+    return true;
+  } catch {
+    return false;
+  }
+}
+function isLink(target) {
+  try {
+    return lstatSync2(target).isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+function readJsonFile(path) {
+  if (!isRegularFile(path))
+    return null;
+  try {
+    const body = JSON.parse(readFileSync7(path, "utf8"));
+    return body && typeof body === "object" && !Array.isArray(body) ? body : null;
+  } catch {
+    return null;
+  }
+}
+function sweepStaleFixtureFiles(ui) {
+  const removed = [];
+  const skipped = [];
+  if (!existsSync9(ui))
+    return { removed, skipped };
+  const take = (name, shape, remove) => {
+    if (name === null || name === undefined)
+      return;
+    const target = contained(ui, name, shape);
+    if (!target) {
+      skipped.push(String(name));
+      return;
+    }
+    if (remove(target))
+      removed.push(String(name));
+    else if (existsSync9(target) || isLink(target))
+      skipped.push(String(name));
+  };
+  for (const name of readdirSync7(ui).sort()) {
+    if (!name.endsWith(".json"))
+      continue;
+    const body = readJsonFile(join21(ui, name));
+    if (!body)
+      continue;
+    if (name.endsWith(".motion.json")) {
+      if (typeof body.page !== "string" || typeof body.interaction !== "string")
+        continue;
+      const frames = body.frames && typeof body.frames === "object" ? body.frames : {};
+      take(frames.dir, MOTION_DIR, removeFrames);
+      take(frames.strip, STRIP_NAME, removeFile);
+      if (removeFile(join21(ui, name)))
+        removed.push(name);
+      continue;
+    }
+    if (body.by !== "fixture" || typeof body.page !== "string" || typeof body.state !== "string")
+      continue;
+    for (const viewport of Array.isArray(body.viewports) ? body.viewports : []) {
+      if (!viewport || typeof viewport !== "object")
+        continue;
+      const v = viewport;
+      take(v.light, IMAGE_NAME, removeFile);
+      take(v.dark, IMAGE_NAME, removeFile);
+    }
+    take(body.console, CONSOLE_OR_AXE_NAME, removeFile);
+    take(body.aria, ARIA_NAME, removeFile);
+    const axe = body.axe && typeof body.axe === "object" ? body.axe : {};
+    take(axe.file, CONSOLE_OR_AXE_NAME, removeFile);
+    if (removeFile(join21(ui, name)))
+      removed.push(name);
+  }
+  return { removed, skipped };
+}
+function planLine(plan) {
+  if (plan.screens.length === 0)
+    return null;
+  const screens = `${plan.screens.length} screen${plan.screens.length === 1 ? "" : "s"} declared`;
+  return `ui plan: ${screens}; viewports ${plan.viewports.map((v) => v.width).join(", ")}; schemes ${plan.colorSchemes.join(", ")}`;
+}
+function sweepLine(skipped) {
+  if (skipped.length === 0)
+    return null;
+  return `ui: skipped ${skipped.length} stale name${skipped.length === 1 ? "" : "s"} outside the fixture's shape: ${skipped.join(", ")}`;
+}
+function screensSummary(expected, captures) {
+  const have = new Set(captures.map((c) => `${c.page}-${c.state}`));
+  const wanted = expected.map((s) => `${s.page}-${s.state}`);
+  const wantedSet = new Set(wanted);
+  const widths = [...new Set(captures.flatMap((c) => c.widths))].sort((a, b) => a - b);
+  return {
+    captures: captures.length,
+    captured: wanted.filter((key) => have.has(key)).length,
+    expected: wanted.length,
+    missing: wanted.filter((key) => !have.has(key)),
+    extra: wanted.length ? [...have].filter((key) => !wantedSet.has(key)).sort() : [],
+    fixture: captures.filter((c) => c.by === "fixture").length,
+    session: captures.filter((c) => c.by !== "fixture").length,
+    viewports: widths
+  };
+}
+function capturesLine(summary, silent) {
+  const silentPart = silent.length ? `${silent.length} without a console file: ${silent.join(", ")}` : null;
+  if (summary.expected === 0) {
+    if (summary.captures === 0)
+      return "";
+    return `captures: ${summary.captures}${silentPart ? ` (${silentPart})` : ""}`;
+  }
+  const parts = [
+    `captures: ${summary.captured} of ${summary.expected} expected (fixture ${summary.fixture}, session ${summary.session})`
+  ];
+  if (summary.missing.length)
+    parts.push(`missing: ${summary.missing.join(", ")}`);
+  if (summary.extra.length)
+    parts.push(`extra: ${summary.extra.join(", ")}`);
+  if (summary.viewports.length)
+    parts.push(`viewports ${summary.viewports.join(", ")}`);
+  if (silentPart)
+    parts.push(silentPart);
+  return parts.join("; ");
+}
+var CLS_LIMIT = 0.1;
+var REDUCED_MOTION_OPACITY_MS = 300;
+var LAYOUT_PROPERTIES = [
+  "width",
+  "height",
+  "top",
+  "left",
+  "right",
+  "bottom",
+  "margin",
+  "padding",
+  "inset"
+];
+var AXE_FAILING = new Set(["serious", "critical"]);
+var EVIDENCE_FILE_MAX = 1024 * 1024;
+var IDS_MAX = 5;
+function safeList(items, max = IDS_MAX) {
+  const shown = items.slice(0, max).map((item) => safeText(item));
+  const rest = items.length - shown.length;
+  return rest > 0 ? `${shown.join(", ")}, +${rest} more` : shown.join(", ");
+}
+function uiEvidencePath(paths, id) {
+  return join21(workDir(paths, id), "review", "ui-evidence.json");
+}
+function readBoundedJson(path) {
+  const text = readRegularText(path, EVIDENCE_FILE_MAX);
+  if (text === null)
+    return;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return;
+  }
+}
+var isObject = (v) => !!v && typeof v === "object" && !Array.isArray(v);
+var finiteOrNull = (v) => v === null || typeof v === "number" && Number.isFinite(v);
+var strings2 = (v) => Array.isArray(v) ? v.filter((x) => typeof x === "string") : [];
+function readBounded(path) {
+  const body = readBoundedJson(path);
+  return isObject(body) ? body : null;
+}
+function runningEntry(raw) {
+  if (!isObject(raw))
+    return null;
+  if (!finiteOrNull(raw.durationMs ?? null))
+    return null;
+  if (raw.properties !== undefined && !Array.isArray(raw.properties))
+    return null;
+  return {
+    target: safeText(raw.target ?? ""),
+    iterations: raw.iterations,
+    durationMs: raw.durationMs ?? null,
+    properties: strings2(raw.properties)
+  };
+}
+function readReduced(raw, key) {
+  if (raw === undefined)
+    return { status: "not captured", entries: [] };
+  if (!isObject(raw) || typeof raw.status !== "string")
+    return null;
+  if (raw.status !== "clean" && raw.status !== "running")
+    return { status: "not captured", entries: [] };
+  const list = raw[key] ?? [];
+  if (!Array.isArray(list))
+    return null;
+  const entries = [];
+  for (const item of list) {
+    const entry = runningEntry(item);
+    if (!entry)
+      return null;
+    entries.push(entry);
+  }
+  return { status: raw.status, entries };
+}
+function offendsReducedMotion(entry) {
+  if (entry.iterations === "Infinity")
+    return true;
+  const moves = entry.properties.some((p) => p === "transform" || LAYOUT_PROPERTIES.some((layout) => p === layout || p.startsWith(`${layout}-`)));
+  if (moves)
+    return true;
+  return entry.durationMs !== null && entry.durationMs > REDUCED_MOTION_OPACITY_MS;
+}
+function reducedMotionOffences(entries, label) {
+  return entries.filter(offendsReducedMotion).map((entry) => `ui: animation still running under reduced motion: ${entry.target} (${label})`);
+}
+function readAxeFile(dir, name) {
+  if (!/^axe-[a-z0-9-]+\.json$/.test(name) || !existsSync9(join21(dir, name)))
+    return "missing";
+  const body = readBounded(join21(dir, name));
+  if (!body || !Array.isArray(body.violations))
+    return "unreadable";
+  const violations = [];
+  for (const v of body.violations) {
+    if (!isObject(v) || typeof v.id !== "string")
+      return "unreadable";
+    violations.push({
+      id: safeText(v.id),
+      impact: typeof v.impact === "string" ? safeText(v.impact) : null,
+      nodes: typeof v.nodes === "number" && Number.isFinite(v.nodes) ? v.nodes : 0
+    });
+  }
+  return { status: violations.length ? "violations" : "clean", reason: null, violations };
+}
+function readMeta(dir, meta, base) {
+  if (typeof meta.page !== "string" || typeof meta.state !== "string")
+    return null;
+  if (meta.viewports !== undefined && !Array.isArray(meta.viewports))
+    return null;
+  let axe = { status: "not captured", reason: "not measured", violations: [] };
+  let axeUnreadable = null;
+  if (meta.axe !== undefined) {
+    if (!isObject(meta.axe) || typeof meta.axe.status !== "string")
+      return null;
+    if (meta.axe.status === "clean" || meta.axe.status === "violations") {
+      const name = typeof meta.axe.file === "string" ? meta.axe.file : `axe-${base}.json`;
+      const read = readAxeFile(dir, name);
+      if (read === "missing")
+        axe = { status: "not captured", reason: `${safeText(name)} missing`, violations: [] };
+      else if (read === "unreadable") {
+        axeUnreadable = safeText(name);
+        axe = { status: "not captured", reason: `${safeText(name)} unreadable`, violations: [] };
+      } else
+        axe = read;
+    } else {
+      axe = {
+        status: "not captured",
+        reason: safeText(meta.axe.reason ?? "not measured"),
+        violations: []
+      };
+    }
+  }
+  let vitals = null;
+  if (meta.vitals !== undefined && meta.vitals !== null) {
+    if (!isObject(meta.vitals))
+      return null;
+    const { cls, lcpMs, inpMs } = meta.vitals;
+    const allNull = (cls ?? null) === null && (lcpMs ?? null) === null && (inpMs ?? null) === null;
+    if (!allNull) {
+      if (typeof cls !== "number" || !Number.isFinite(cls))
+        return null;
+      if (!finiteOrNull(lcpMs ?? null) || !finiteOrNull(inpMs ?? null))
+        return null;
+      vitals = {
+        cls,
+        lcpMs: lcpMs ?? null,
+        inpMs: inpMs ?? null
+      };
+    }
+  }
+  const reducedMotion = readReduced(meta.reducedMotion, "running");
+  if (!reducedMotion)
+    return null;
+  return { axe, axeUnreadable, vitals, reducedMotion, page: readPage(meta) };
+}
+function readSample(dir, body) {
+  if (typeof body.page !== "string" || typeof body.interaction !== "string")
+    return null;
+  if (body.frames !== undefined && !isObject(body.frames))
+    return null;
+  if (body.animations !== undefined && !Array.isArray(body.animations))
+    return null;
+  if (body.frameTimes !== undefined && !isObject(body.frameTimes))
+    return null;
+  const frames = isObject(body.frames) ? body.frames : {};
+  const stripName = typeof frames.strip === "string" ? frames.strip : null;
+  const strip = stripName !== null && STRIP_NAME.test(stripName) && existsSync9(join21(dir, stripName));
+  const over = isObject(body.frameTimes) ? body.frameTimes.over50ms : 0;
+  const reducedMotion = readReduced(body.reducedMotion, "animations");
+  if (!reducedMotion)
+    return null;
+  return {
+    page: safeText(body.page),
+    interaction: safeText(body.interaction),
+    strip,
+    animations: Array.isArray(body.animations) ? body.animations.length : 0,
+    over50ms: typeof over === "number" && Number.isFinite(over) ? over : 0,
+    reducedMotion
+  };
+}
+function consoleStatus(path) {
+  const entries = path ? readBoundedJson(path) : undefined;
+  if (!Array.isArray(entries))
+    return "not captured";
+  const failing = entries.some((e) => isObject(e) && (e.type === "error" || e.type === "warning" || e.type === "warn"));
+  return failing ? "error" : "clean";
+}
+function imageWidths(capture, dark) {
+  const suffix = dark ? "-dark" : "";
+  return capture.widths.filter((w) => capture.files.some((f) => f.replace(/\.(png|jpe?g)$/i, "").endsWith(`@${w}${suffix}`)));
+}
+function emptyRow(page, state, criteria, declared) {
+  return {
+    page,
+    state,
+    criteria,
+    declared,
+    by: null,
+    captured: null,
+    console: "not captured",
+    axe: "not captured",
+    vitals: null,
+    reducedMotion: "not captured"
+  };
+}
+function measure(paths, id, plan) {
+  const dir = join21(reviewDir(paths, id), "ui");
+  const m = {
+    captures: listCaptures(paths, id),
+    rows: new Map,
+    interactions: [],
+    unreadable: [],
+    reducedOffences: [],
+    axeOffences: [],
+    clsOffences: [],
+    overflowOffences: [],
+    imageOffences: [],
+    hiddenOffences: [],
+    fontLines: [],
+    axeViolations: [],
+    axeReasons: [],
+    axeClean: 0,
+    clsMax: null,
+    lcpMax: null,
+    reducedSeen: false,
+    withoutStrip: 0
+  };
+  for (const screen of plan.screens) {
+    m.rows.set(`${screen.page}/${screen.state}`, emptyRow(screen.page, screen.state, [...screen.criteria], true));
+  }
+  measureCaptures(m, paths, id, dir);
+  measureSamples(m, dir);
+  return m;
+}
+function measureCaptures(m, paths, id, dir) {
+  for (const capture of m.captures) {
+    const key = `${capture.page}/${capture.state}`;
+    const label = `${capture.page}-${capture.state}`;
+    const row = m.rows.get(key) ?? emptyRow(capture.page, capture.state, [], false);
+    m.rows.set(key, row);
+    row.by = capture.by;
+    row.captured = {
+      light: imageWidths(capture, false),
+      dark: capture.dark ? imageWidths(capture, true) : []
+    };
+    row.console = consoleStatus(capture.console ? join21(workDir(paths, id), capture.console) : null);
+    const metaName = `${label}.json`;
+    if (!existsSync9(join21(dir, metaName)))
+      continue;
+    const body = readBounded(join21(dir, metaName));
+    const reading = body ? readMeta(dir, body, label) : null;
+    if (!reading) {
+      m.unreadable.push(metaName);
+      continue;
+    }
+    if (reading.axeUnreadable)
+      m.unreadable.push(reading.axeUnreadable);
+    row.axe = reading.axe.status;
+    row.vitals = reading.vitals;
+    row.reducedMotion = reading.reducedMotion.status;
+    if (reading.axe.status === "violations") {
+      for (const v of reading.axe.violations) {
+        m.axeViolations.push(`${v.id} on ${label}`);
+        if (v.impact && AXE_FAILING.has(v.impact)) {
+          m.axeOffences.push(`ui: axe ${v.impact} ${v.id} on ${label} (${v.nodes} nodes)`);
+        }
+      }
+    } else if (reading.axe.status === "clean")
+      m.axeClean += 1;
+    else if (reading.axe.reason)
+      m.axeReasons.push(reading.axe.reason);
+    if (reading.vitals) {
+      const where = basename6(capture.file).replace(/\.[^.]+$/, "");
+      const { cls, lcpMs } = reading.vitals;
+      if (cls !== null && (m.clsMax === null || cls > m.clsMax.value))
+        m.clsMax = { value: cls, where };
+      if (cls !== null && cls > CLS_LIMIT)
+        m.clsOffences.push(`ui: CLS ${cls} on ${where} (limit ${CLS_LIMIT})`);
+      if (lcpMs !== null && (m.lcpMax === null || lcpMs > m.lcpMax))
+        m.lcpMax = lcpMs;
+    }
+    if (reading.reducedMotion.status !== "not captured") {
+      m.reducedSeen = true;
+      m.reducedOffences.push(...reducedMotionOffences(reading.reducedMotion.entries, label));
+    }
+    row.measures = reading.page.measures;
+    pageOffences(m, reading.page, label);
+  }
+}
+function quotedStrings(value) {
+  if (!Array.isArray(value))
+    return null;
+  return value.filter((v) => typeof v === "string").slice(0, 10).map((v) => quotedText(v));
+}
+function nonNegative(value) {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
+}
+function appMeasuresOf(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    return null;
+  const a = value;
+  const width = nonNegative(a.width);
+  const numericCells = nonNegative(a.numericCells);
+  const rightAlignedShare = nonNegative(a.rightAlignedShare);
+  const tabularShare = nonNegative(a.tabularShare);
+  const sidebarShare = nonNegative(a.sidebarShare);
+  const hues = Array.isArray(a.chartHues) ? a.chartHues.map(nonNegative) : null;
+  if (width === null || numericCells === null || rightAlignedShare === null || tabularShare === null || sidebarShare === null || hues === null || hues.some((h) => h === null))
+    return null;
+  return {
+    width,
+    numericCells,
+    rightAlignedShare,
+    tabularShare,
+    chartHues: hues.slice(0, 20),
+    sidebarShare
+  };
+}
+function readPage(meta) {
+  const page = {
+    measures: {
+      overflow: "not captured",
+      images: "not captured",
+      fonts: "not captured",
+      hiddenText: "not captured"
+    },
+    overflow: [],
+    images: [],
+    fonts: [],
+    hidden: []
+  };
+  const viewports = Array.isArray(meta.viewports) ? meta.viewports : [];
+  const measured = viewports.filter((v) => isObject(v) && isObject(v.overflow));
+  if (measured.length)
+    page.measures.overflow = "clean";
+  for (const v of measured) {
+    const o = v.overflow;
+    const px = typeof o.overflowPx === "number" ? Math.round(o.overflowPx) : 0;
+    if (px <= 0)
+      continue;
+    page.measures.overflow = "overflow";
+    const first = Array.isArray(o.offenders) ? o.offenders[0] : undefined;
+    const offender = first && typeof first.target === "string" ? quotedText(first.target) : "unknown";
+    page.overflow.push({ width: Number(v.width) || 0, px, offender });
+  }
+  const images = quotedStrings(meta.images);
+  if (images) {
+    page.measures.images = images.length ? "broken" : "clean";
+    page.images = images;
+  }
+  const fonts = quotedStrings(meta.fonts);
+  if (fonts) {
+    page.measures.fonts = fonts.length ? "not loaded" : "loaded";
+    page.fonts = fonts;
+  }
+  const reduced = isObject(meta.reducedMotion) ? meta.reducedMotion : null;
+  if (reduced && Array.isArray(reduced.hidden)) {
+    const hidden = reduced.hidden.filter((h) => isObject(h) && typeof h.target === "string").slice(0, 10).map((h) => quotedText(h.target));
+    page.measures.hiddenText = hidden.length ? "hidden" : "clean";
+    page.hidden = hidden;
+  }
+  const app = appMeasuresOf(meta.app);
+  if (app)
+    page.measures.app = app;
+  return page;
+}
+function pageOffences(m, page, label) {
+  for (const o of page.overflow)
+    m.overflowOffences.push(`ui: horizontal overflow ${o.px}px on ${label}@${o.width} (${o.offender})`);
+  for (const src of page.images)
+    m.imageOffences.push(`ui: broken image ${src} on ${label}`);
+  if (page.fonts.length)
+    m.fontLines.push(`ui: fonts not loaded on ${label}: ${page.fonts.join(", ")}`);
+  for (const target of page.hidden)
+    m.hiddenOffences.push(`ui: text hidden under reduced motion: ${target} (${label})`);
+}
+function measureSamples(m, dir) {
+  const names = existsSync9(dir) ? readdirSync7(dir).sort() : [];
+  for (const name of names) {
+    if (!name.endsWith(".motion.json"))
+      continue;
+    const body = readBounded(join21(dir, name));
+    const sample = body ? readSample(dir, body) : null;
+    if (!sample) {
+      m.unreadable.push(name);
+      continue;
+    }
+    if (!sample.strip)
+      m.withoutStrip += 1;
+    m.interactions.push({
+      page: sample.page,
+      interaction: sample.interaction,
+      strip: sample.strip,
+      animations: sample.animations,
+      over50ms: sample.over50ms,
+      reducedMotion: sample.reducedMotion.status
+    });
+    if (sample.reducedMotion.status !== "not captured") {
+      m.reducedSeen = true;
+      m.reducedOffences.push(...reducedMotionOffences(sample.reducedMotion.entries, `${sample.page}-${sample.interaction}`));
+    }
+  }
+}
+function measurementLines(m, axe, reduced) {
+  const axeLine = axe === "violations" ? `axe: violations: ${safeList(m.axeViolations)}` : axe === "clean" ? `axe: clean (${m.axeClean} capture${m.axeClean === 1 ? "" : "s"})` : `axe: not captured (${safeText(m.axeReasons[0] ?? (m.captures.length ? "not measured" : "no capture"))})`;
+  const vitalsLine = m.clsMax ? `vitals: CLS max ${m.clsMax.value} (${m.clsMax.where})${m.lcpMax !== null ? `, LCP max ${m.lcpMax} ms` : ""}` : "vitals: not captured";
+  const reducedLine = reduced === "running" ? m.reducedOffences[0] ?? "reduced motion: running" : reduced === "clean" ? "reduced motion: clean" : "reduced motion: not captured";
+  const n = m.interactions.length;
+  const motionLine = n ? `motion: ${n} interaction${n === 1 ? "" : "s"} sampled${m.withoutStrip ? ` (${m.withoutStrip} without a strip)` : ""}` : "motion: none";
+  return [axeLine, vitalsLine, reducedLine, motionLine];
+}
+function gradeUi(paths, id, plan) {
+  const m = measure(paths, id, plan);
+  const missingScreens = plan.screens.filter((s) => !m.rows.get(`${s.page}/${s.state}`)?.captured);
+  const missing = missingScreens.map((s) => `${s.page}-${s.state}`);
+  const first = missingScreens[0];
+  const offence = (first ? `ui: screen ${first.page}-${first.state} declared by ${first.criteria.join(", ")} not captured` : null) ?? (m.unreadable.length ? `ui: unreadable ${safeText(m.unreadable[0])}` : null) ?? m.reducedOffences[0] ?? m.axeOffences[0] ?? m.overflowOffences[0] ?? m.imageOffences[0] ?? m.hiddenOffences[0] ?? m.clsOffences[0] ?? null;
+  const screens = [...m.rows.values()].sort((a, b) => a.page.localeCompare(b.page) || a.state.localeCompare(b.state));
+  const axeStatus = m.axeViolations.length ? "violations" : m.axeClean ? "clean" : "not captured";
+  const reducedStatus = m.reducedOffences.length ? "running" : m.reducedSeen ? "clean" : "not captured";
+  const measured = m.captures.length > 0 || plan.screens.length > 0;
+  const manifest = {
+    id,
+    at: nowIso(),
+    plan: {
+      viewports: plan.viewports.map((v) => ({ ...v })),
+      colorSchemes: [...plan.colorSchemes]
+    },
+    screens,
+    interactions: m.interactions,
+    unreadable: m.unreadable.map((n) => safeText(n)),
+    summary: {
+      captures: m.captures.length,
+      captured: plan.screens.length - missing.length,
+      expected: plan.screens.length,
+      missing,
+      extra: screens.filter((r) => !r.declared).map((r) => `${r.page}-${r.state}`),
+      offence
+    }
+  };
+  const artifacts = measured ? {
+    manifest: "review/ui-evidence.json",
+    captures: m.captures.length,
+    expected: plan.screens.length,
+    missing,
+    axe: axeStatus,
+    reducedMotion: reducedStatus,
+    motion: m.interactions.length
+  } : null;
+  return {
+    offence,
+    lines: measured ? [
+      ...measurementLines(m, axeStatus, reducedStatus),
+      ...[m.overflowOffences[0], m.imageOffences[0], m.hiddenOffences[0]].filter((l) => typeof l === "string"),
+      ...m.fontLines
+    ] : [],
+    manifest,
+    artifacts
+  };
+}
+function writeUiEvidence(paths, id, manifest) {
+  const file = uiEvidencePath(paths, id);
+  writeText(file, `${JSON.stringify(manifest, null, 2)}
+`);
+  return file;
+}
+var numbersOnly = (v) => Array.isArray(v) && v.every((n) => typeof n === "number");
+var stringsOnly = (v) => Array.isArray(v) && v.every((s) => typeof s === "string");
+function isScreenRow(raw) {
+  if (!isObject(raw))
+    return false;
+  if (typeof raw.page !== "string" || typeof raw.state !== "string" || !stringsOnly(raw.criteria))
+    return false;
+  if (typeof raw.declared !== "boolean")
+    return false;
+  if (raw.captured !== null && !(isObject(raw.captured) && numbersOnly(raw.captured.light) && numbersOnly(raw.captured.dark)))
+    return false;
+  if (typeof raw.console !== "string" || typeof raw.axe !== "string" || typeof raw.reducedMotion !== "string")
+    return false;
+  if (raw.vitals !== null && !(isObject(raw.vitals) && finiteOrNull(raw.vitals.cls ?? null)))
+    return false;
+  if (raw.measures !== undefined && !isPageMeasures(raw.measures))
+    return false;
+  return true;
+}
+function isPageMeasures(raw) {
+  if (!isObject(raw))
+    return false;
+  const statuses = [raw.overflow, raw.images, raw.fonts, raw.hiddenText];
+  if (!statuses.every((s) => typeof s === "string"))
+    return false;
+  return raw.app === undefined || appMeasuresOf(raw.app) !== null;
+}
+function isInteractionRow(raw) {
+  return isObject(raw) && typeof raw.page === "string" && typeof raw.interaction === "string" && typeof raw.strip === "boolean" && typeof raw.animations === "number" && typeof raw.over50ms === "number" && typeof raw.reducedMotion === "string";
+}
+function readUiEvidence(paths, id) {
+  const body = readBounded(uiEvidencePath(paths, id));
+  if (!body || typeof body.id !== "string" || !Array.isArray(body.screens) || !Array.isArray(body.interactions))
+    return null;
+  if (!body.screens.every(isScreenRow) || !body.interactions.every(isInteractionRow))
+    return null;
+  if (!stringsOnly(body.unreadable) || !isObject(body.summary))
+    return null;
+  const summary = body.summary;
+  if (!stringsOnly(summary.missing) || !stringsOnly(summary.extra))
+    return null;
+  if (typeof summary.captures !== "number" || typeof summary.expected !== "number")
+    return null;
+  if (body.audit !== undefined) {
+    const audit = body.audit;
+    if (!isObject(audit) || audit.status !== "captured" && audit.status !== "not captured" || audit.reason !== null && typeof audit.reason !== "string" || !stringsOnly(audit.pages))
+      return null;
+  }
+  return body;
+}
+function captureMetadata(paths, id) {
+  const bodies = [];
+  for (const capture of listCaptures(paths, id)) {
+    if (!capture.meta)
+      continue;
+    const body = readBounded(join21(workDir(paths, id), capture.meta));
+    if (body)
+      bodies.push(body);
+  }
+  return bodies;
+}
+function captureUrls(metadata) {
+  const seen = new Set;
+  const urls = [];
+  for (const body of metadata) {
+    if (typeof body.url !== "string")
+      continue;
+    const url = safeText(body.url);
+    if (!url || seen.has(url))
+      continue;
+    seen.add(url);
+    urls.push(url);
+  }
+  return urls;
+}
+function capturesMeasuredCls(metadata) {
+  return metadata.some((body) => {
+    const vitals = isObject(body.vitals) ? body.vitals : null;
+    return typeof vitals?.cls === "number" && Number.isFinite(vitals.cls);
+  });
+}
+
+// packages/engine/src/devtools.ts
+var AUDIT_DIR = "review/ui/audit";
+var AUDIT_FILE = `${AUDIT_DIR}/audit.json`;
+var DEVTOOLS = {
+  start: ["start", "--headless", "--isolated", "--no-usage-statistics", "--no-performance-crux"],
+  newPage: "new_page",
+  lighthouse: ["lighthouse_audit", "--mode", "navigation", "--device", "mobile"],
+  trace: ["performance_start_trace", "--reload", "--autoStop"],
+  stop: "stop",
+  output: "--output-format=json"
+};
+var NO_DEVTOOLS_REASON = 'no chrome-devtools in the profile: npm i -g chrome-devtools-mcp, then crew detect, or crew profile set browser.devtools "<cmd>"';
+var PROPOSED_REASON = "chrome-devtools proposed; crew profile confirm browser";
+var NO_URL_REASON = "no environment.url";
+var E2E_FAILED_REASON = "e2e command failed";
+var DEFAULT_LIMITS = { commandMs: 60000, totalMs: 300000 };
+var PAGE_CAP = 5;
+var URL_MAX = 2048;
+var FILE_MAX = 1024 * 1024;
+var CLS_LIMIT2 = 0.1;
+var PAGE_ID = /^[A-Za-z0-9_-]{1,64}$/;
+var WIN32_UNSAFE = /[&|<>^%"\r\n]/;
+var ENGINE_FILES = /^(?:lighthouse-\d+\.json|trace-\d+\.json|insights-\d+\.txt)$/;
+function auditPages(environmentUrl, captureUrls) {
+  const seen = new Set;
+  const pages = [];
+  for (const raw of [environmentUrl ?? "", ...captureUrls]) {
+    const url = raw.trim();
+    if (!url || seen.has(url))
+      continue;
+    seen.add(url);
+    pages.push(url);
+    if (pages.length === PAGE_CAP)
+      break;
+  }
+  return pages;
+}
+function quoteFor(platform, word) {
+  if (platform === "win32")
+    return WIN32_UNSAFE.test(word) ? { ok: false } : { ok: true, text: `"${word}"` };
+  return word.includes("'") || /[\r\n]/.test(word) ? { ok: false } : { ok: true, text: shellWord(word) };
+}
+function validUrl(raw) {
+  let url;
+  try {
+    url = new URL(raw);
+  } catch {
+    return { reason: "url not http(s)" };
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:")
+    return { reason: "url not http(s)" };
+  if (url.href.length > URL_MAX)
+    return { reason: "url not shell-safe" };
+  return { href: url.href };
+}
+function jsonOf(text) {
+  if (text === null)
+    return null;
+  const parse = (s) => {
+    try {
+      const value = JSON.parse(s);
+      return value && typeof value === "object" && !Array.isArray(value) ? value : null;
+    } catch {
+      return null;
+    }
+  };
+  const whole = parse(text.trim());
+  if (whole)
+    return whole;
+  const from = text.indexOf("{");
+  const to = text.lastIndexOf("}");
+  return from >= 0 && to > from ? parse(text.slice(from, to + 1)) : null;
+}
+function pageIdOf(stdout) {
+  const json = jsonOf(stdout);
+  if (!json)
+    return null;
+  const page = json.page && typeof json.page === "object" ? json.page : null;
+  const id = json.pageId ?? json.id ?? page?.id;
+  return typeof id === "string" && PAGE_ID.test(id) ? id : null;
+}
+function numberNamed(value, name, depth = 0) {
+  if (!value || typeof value !== "object" || depth > 8)
+    return null;
+  for (const [key, inner] of Object.entries(value)) {
+    if (key.toLowerCase() === name && typeof inner === "number" && Number.isFinite(inner))
+      return inner;
+  }
+  for (const inner of Object.values(value)) {
+    const found = numberNamed(inner, name, depth + 1);
+    if (found !== null)
+      return found;
+  }
+  return null;
+}
+function metricsOf(stdout) {
+  const json = jsonOf(stdout);
+  const fromText = (name) => {
+    const match = new RegExp(`\\b${name}\\b[^0-9\\n]*([0-9]+(?:\\.[0-9]+)?)`, "i").exec(stdout ?? "");
+    return match ? Number(match[1]) : null;
+  };
+  return {
+    lcpMs: json ? numberNamed(json, "lcp") : fromText("LCP"),
+    cls: json ? numberNamed(json, "cls") : fromText("CLS"),
+    inpMs: json ? numberNamed(json, "inp") : fromText("INP")
+  };
+}
+var percent = (score) => typeof score === "number" && Number.isFinite(score) ? Math.round(score * 100) : null;
+function gradeReport(report, file, url) {
+  const categories = report.categories ?? {};
+  const audits = report.audits ?? {};
+  const refs = Array.isArray(categories.accessibility?.auditRefs) ? categories.accessibility?.auditRefs : [];
+  const failed = [];
+  const offences = [];
+  for (const ref of refs) {
+    const id = typeof ref?.id === "string" ? ref.id : null;
+    const audit = id ? audits[id] : undefined;
+    if (!id || !audit || audit.score !== 0)
+      continue;
+    const details = audit.details;
+    if (!Array.isArray(details?.items) || details.items.length === 0)
+      continue;
+    const safeId = safeText(id);
+    failed.push({ id: safeId, title: safeText(audit.title ?? id), score: 0 });
+    offences.push(`audit: accessibility ${safeId} scored 0 on ${url} (${details.items.length} items)`);
+  }
+  return {
+    lighthouse: {
+      file,
+      scores: {
+        performance: percent(categories.performance?.score),
+        accessibility: percent(categories.accessibility?.score),
+        bestPractices: percent(categories["best-practices"]?.score),
+        seo: percent(categories.seo?.score)
+      },
+      failed
+    },
+    offences
+  };
+}
+function takeReport(dir, before, stdout, n) {
+  const target = join22(dir, `lighthouse-${n}.json`);
+  let names = [];
+  try {
+    names = readdirSync8(dir).filter((name) => name.endsWith(".json") && !before.has(name)).sort();
+  } catch {
+    names = [];
+  }
+  for (const name of names) {
+    const body = jsonOf(readRegularText(join22(dir, name), FILE_MAX));
+    if (body?.categories && typeof body.categories === "object") {
+      renameSync3(join22(dir, name), target);
+      return body;
+    }
+  }
+  const printed = jsonOf(stdout);
+  if (printed?.categories && typeof printed.categories === "object") {
+    writeText(target, `${JSON.stringify(printed, null, 2)}
+`);
+    return printed;
+  }
+  return null;
+}
+function writeInsights(path, stdout) {
+  const text = stripControl(stdout ?? "").slice(0, FILE_MAX);
+  unlinkIfLink(path);
+  writeFileSync4(path, text.endsWith(`
+`) ? text : `${text}
+`);
+}
+function stripControl(text) {
+  let kept = "";
+  for (const c of text) {
+    const code = c.charCodeAt(0);
+    if (code < 32 && code !== 9 && code !== 10 || code === 127)
+      continue;
+    kept += c;
+  }
+  return kept;
+}
+function unlinkIfLink(path) {
+  try {
+    if (lstatSync3(path).isSymbolicLink())
+      unlinkSync3(path);
+  } catch {}
+}
+function failure(tool, url, result) {
+  return `${tool} failed on ${safeText(url)} (${result.timedOut ? "timed out" : `exit ${result.exit}`})`;
+}
+async function runDevtoolsAudit(options) {
+  try {
+    return await auditRun(options);
+  } catch (error) {
+    const reason = safeText(errorText(error));
+    try {
+      writeNotCaptured(options.paths, options.work.id, options.profile.browser?.devtools.command ?? null, reason);
+    } catch {}
+    return notCapturedResult(reason);
+  }
+}
+function notCapturedResult(reason) {
+  return {
+    status: "not captured",
+    reason,
+    offence: null,
+    lines: [`audit: not captured (${reason})`],
+    pages: []
+  };
+}
+function writeNotCaptured(paths, id, command, reason) {
+  writeAudit(paths, id, {
+    at: nowIso(),
+    command,
+    status: "not captured",
+    reason,
+    pages: [],
+    offences: [],
+    advisories: []
+  });
+}
+async function auditRun(options) {
+  const { paths, work, profile } = options;
+  const dir = join22(workDir(paths, work.id), AUDIT_DIR);
+  const block = profile.browser?.devtools;
+  const command = block?.command.trim() ?? "";
+  const notCaptured = (reason) => {
+    writeNotCaptured(paths, work.id, command || null, reason);
+    return notCapturedResult(reason);
+  };
+  sweepEngineFiles(dir);
+  if (!block)
+    return notCaptured(NO_DEVTOOLS_REASON);
+  if (block.source !== "confirmed" || !command)
+    return notCaptured(PROPOSED_REASON);
+  if (!profile.environment?.url)
+    return notCaptured(NO_URL_REASON);
+  if (options.e2eFailed)
+    return notCaptured(E2E_FAILED_REASON);
+  const platform = options.platform ?? process.platform;
+  const quotedDir = quoteFor(platform, dir);
+  if (!quotedDir.ok)
+    return notCaptured("path not shell-safe");
+  const limits = { ...DEFAULT_LIMITS, ...options.limits };
+  const env = { ...options.env, CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS: "1" };
+  const logBase = options.log.replace(/\.txt$/, "");
+  const logFor = (name) => join22(workDir(paths, work.id), `${logBase}-audit-${name}.txt`);
+  const run = async (name, args) => {
+    mkdirSync5(dir, { recursive: true });
+    const result = await runCommand(`${command} ${args.join(" ")}`, {
+      cwd: paths.root,
+      timeoutMs: limits.commandMs,
+      logPath: logFor(name),
+      env
+    });
+    return { ...result, stdout: readRegularText(logFor(name), FILE_MAX) };
+  };
+  const context = { dir, quotedDir: quotedDir.text, platform, run };
+  const deadline = Date.now() + limits.totalMs;
+  const pages = [];
+  const offencesOfPage = [];
+  let reason = null;
+  try {
+    const start = await run("start", [...DEVTOOLS.start, DEVTOOLS.output]);
+    if (start.exit !== 0 || start.timedOut) {
+      reason = `start failed (${start.timedOut ? "timed out" : `exit ${start.exit}`})`;
+    } else {
+      for (const [index, raw] of options.pages.entries()) {
+        const page = {
+          url: safeText(raw),
+          id: null,
+          lighthouse: null,
+          trace: null,
+          reason: null
+        };
+        pages.push(page);
+        const overBudget = index > 0 && Date.now() > deadline;
+        offencesOfPage.push(await auditPage(context, page, raw, index + 1, overBudget));
+      }
+    }
+  } finally {
+    try {
+      await run("stop", [DEVTOOLS.stop]);
+    } catch {}
+  }
+  if (reason !== null)
+    return notCaptured(reason);
+  const { offences, advisories } = gradeAudit(pages, offencesOfPage, options.fixtureMeasuredCls);
+  writeAudit(paths, work.id, {
+    at: nowIso(),
+    command,
+    status: "captured",
+    reason: null,
+    pages,
+    offences,
+    advisories
+  });
+  const head = `audit: captured (${pages.length} page${pages.length === 1 ? "" : "s"}; ${AUDIT_FILE})`;
+  return {
+    status: "captured",
+    reason: null,
+    offence: offences[0] ?? null,
+    lines: [head, ...offences, ...advisories],
+    pages
+  };
+}
+async function auditPage(ctx, page, raw, n, overBudget) {
+  const valid = validUrl(raw);
+  if ("reason" in valid) {
+    page.reason = valid.reason;
+    return [];
+  }
+  const quotedUrl = quoteFor(ctx.platform, valid.href);
+  if (!quotedUrl.ok) {
+    page.reason = "url not shell-safe";
+    return [];
+  }
+  if (overBudget) {
+    page.reason = "time budget";
+    return [];
+  }
+  let step = DEVTOOLS.newPage;
+  let offences = [];
+  try {
+    const opened = await ctx.run(`new-page-${n}`, [
+      DEVTOOLS.newPage,
+      "--url",
+      quotedUrl.text,
+      DEVTOOLS.output
+    ]);
+    if (opened.exit !== 0 || opened.timedOut) {
+      page.reason = failure(DEVTOOLS.newPage, raw, opened);
+      return [];
+    }
+    const id = pageIdOf(opened.stdout);
+    if (!id) {
+      page.reason = "new_page gave no page id";
+      return [];
+    }
+    page.id = id;
+    step = DEVTOOLS.lighthouse[0];
+    let before;
+    try {
+      before = new Set(readdirSync8(ctx.dir));
+    } catch {
+      before = new Set;
+    }
+    const lighthouse = await ctx.run(`lighthouse-${n}`, [
+      DEVTOOLS.lighthouse[0],
+      id,
+      ...DEVTOOLS.lighthouse.slice(1),
+      "--outputDirPath",
+      ctx.quotedDir,
+      DEVTOOLS.output
+    ]);
+    if (lighthouse.exit !== 0 || lighthouse.timedOut) {
+      page.reason = failure(DEVTOOLS.lighthouse[0], raw, lighthouse);
+      return [];
+    }
+    step = `lighthouse-${n}.json`;
+    const report = takeReport(ctx.dir, before, lighthouse.stdout, n);
+    if (report) {
+      const graded = gradeReport(report, `lighthouse-${n}.json`, page.url);
+      page.lighthouse = graded.lighthouse;
+      offences = graded.offences;
+    } else
+      page.reason = "no Lighthouse report";
+    const traceFile = join22(ctx.dir, `trace-${n}.json`);
+    const quotedTrace = quoteFor(ctx.platform, traceFile);
+    if (!quotedTrace.ok) {
+      page.reason ??= "path not shell-safe";
+      return offences;
+    }
+    step = DEVTOOLS.trace[0];
+    const trace = await ctx.run(`trace-${n}`, [
+      DEVTOOLS.trace[0],
+      id,
+      ...DEVTOOLS.trace.slice(1),
+      "--filePath",
+      quotedTrace.text,
+      DEVTOOLS.output
+    ]);
+    if (trace.exit !== 0 || trace.timedOut) {
+      page.reason ??= failure(DEVTOOLS.trace[0], raw, trace);
+      return offences;
+    }
+    step = `insights-${n}.txt`;
+    writeInsights(join22(ctx.dir, `insights-${n}.txt`), trace.stdout);
+    page.trace = {
+      file: existsSync10(traceFile) ? `trace-${n}.json` : null,
+      ...metricsOf(trace.stdout)
+    };
+  } catch (error) {
+    page.reason ??= `${step}: ${safeText(errorText(error))}`;
+  }
+  return offences;
+}
+function gradeAudit(pages, offencesOfPage, fixtureMeasuredCls) {
+  const offences = [];
+  const advisories = [];
+  for (const [index, page] of pages.entries()) {
+    offences.push(...offencesOfPage[index] ?? []);
+    const cls = page.trace?.cls ?? null;
+    if (cls !== null && cls > CLS_LIMIT2 && !fixtureMeasuredCls)
+      offences.push(`audit: CLS ${cls} on ${page.url} (limit ${CLS_LIMIT2})`);
+    if (page.lighthouse) {
+      const s = page.lighthouse.scores;
+      const show = (v) => v === null ? "n/a" : String(v);
+      advisories.push(`audit: scores on ${page.url}: performance ${show(s.performance)}, accessibility ${show(s.accessibility)}, best practices ${show(s.bestPractices)}, seo ${show(s.seo)}`);
+    }
+    if (page.trace && (page.trace.lcpMs !== null || page.trace.inpMs !== null))
+      advisories.push(`audit: LCP ${page.trace.lcpMs ?? "n/a"} ms, INP ${page.trace.inpMs ?? "n/a"} ms on ${page.url}`);
+    if (page.reason)
+      advisories.push(`audit: not captured on ${page.url} (${page.reason})`);
+  }
+  return { offences, advisories };
+}
+function sweepEngineFiles(dir) {
+  let names;
+  try {
+    names = readdirSync8(dir);
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    if (!ENGINE_FILES.test(name))
+      continue;
+    try {
+      unlinkSync3(join22(dir, name));
+    } catch {}
+  }
+}
+function writeAudit(paths, id, record) {
+  const path = join22(workDir(paths, id), AUDIT_FILE);
+  try {
+    mkdirSync5(join22(workDir(paths, id), AUDIT_DIR), { recursive: true });
+    unlinkIfLink(path);
+    writeText(path, `${JSON.stringify(record, null, 2)}
+`);
+  } catch (error) {
+    throw new Error(`audit.json: ${errorText(error)}`);
+  }
+}
+
+// packages/engine/src/environment.ts
+import { spawn as spawn3 } from "node:child_process";
+import { closeSync as closeSync3, mkdirSync as mkdirSync7, openSync as openSync3, unlinkSync as unlinkSync4 } from "node:fs";
+import { dirname as dirname9, join as join35 } from "node:path";
+
+// packages/engine/src/open.ts
+import { execFileSync as execFileSync5, spawn as spawn2 } from "node:child_process";
+import { closeSync as closeSync2, mkdirSync as mkdirSync6, openSync as openSync2 } from "node:fs";
+import { dirname as dirname8, join as join34 } from "node:path";
+
+// packages/engine/src/mail.ts
+import { createHash as createHash5 } from "node:crypto";
+import { accessSync, constants, existsSync as existsSync12 } from "node:fs";
+import { basename as basename7, isAbsolute as isAbsolute3, join as join24, resolve as resolve6 } from "node:path";
+
+// packages/engine/src/mail-status.ts
+var MAIL_TRANSITIONS = {
+  sent: ["read", "done", "refused", "expired", "in-progress", "blocked"],
+  read: ["accepted", "refused", "in-progress", "done", "blocked", "expired"],
+  accepted: ["in-progress", "blocked", "done", "refused"],
+  "in-progress": ["blocked", "done"],
+  blocked: ["in-progress", "done", "refused", "expired"],
+  done: [],
+  refused: [],
+  expired: []
+};
+var BEFORE_0_7 = {
+  answered: "done",
+  "waiting-for-person": "blocked",
+  stopped: "refused"
+};
+function mailStatus(m) {
+  const raw = m.status;
+  if (Object.hasOwn(MAIL_TRANSITIONS, raw))
+    return raw;
+  return BEFORE_0_7[raw] ?? "sent";
+}
+function priorityOf(m) {
+  if (isMailPriority(m.priority))
+    return m.priority;
+  return m.type === "blocker" ? "blocker" : "normal";
+}
+function decidedPriority(m) {
+  const confirmed = m.priorityDecision?.confirmed;
+  return isMailPriority(confirmed) ? confirmed : priorityOf(m);
+}
+function priorityRank(priority) {
+  return MAIL_PRIORITIES.indexOf(priority);
+}
+function transition(m, to, extra = {}) {
+  const from = mailStatus(m);
+  const allowed = MAIL_TRANSITIONS[from].includes(to) && !(from === "sent" && to === "done" && m.type !== "notice");
+  if (!allowed)
+    return { refused: `${m.id} is ${from}; it cannot become ${to}` };
+  return { ...m, ...extra, status: to };
+}
+var MESSAGE_ID = /^M-\d{4}-\d{2}-\d{2}-\d{3}-[A-Za-z0-9._-]+$/;
+var SHA256 = /^[0-9a-f]{64}$/;
+function threadOf(m) {
+  return typeof m.thread === "string" && MESSAGE_ID.test(m.thread) ? m.thread : m.id;
+}
+function insidePath(path) {
+  return typeof path === "string" && path.length > 0 && !path.startsWith("/") && !path.includes("\\") && !path.split("/").includes("..");
+}
+function readContracts(m) {
+  if (!Array.isArray(m.contracts))
+    return [];
+  const kept = [];
+  for (const raw of m.contracts) {
+    if (!raw || typeof raw !== "object")
+      continue;
+    const { kind, path, hash, summary } = raw;
+    if (!CONTRACT_KINDS.includes(kind) || typeof summary !== "string")
+      continue;
+    if (hash !== null && (typeof hash !== "string" || !SHA256.test(hash)))
+      continue;
+    if (kind === "clause" ? path !== null : !insidePath(path))
+      continue;
+    kept.push({ kind, path, hash, summary });
+  }
+  return kept;
+}
+function readEvidence(m) {
+  const raw = m.evidence;
+  if (!raw || typeof raw !== "object")
+    return null;
+  const { report, fingerprint, gatesPassed } = raw;
+  const reportInside = typeof report === "string" && report.startsWith(".crew/work/") && insidePath(report);
+  return {
+    report: reportInside ? report : null,
+    fingerprint: typeof fingerprint === "string" ? fingerprint : null,
+    gatesPassed: Array.isArray(gatesPassed) ? gatesPassed.filter((g) => GATE_NAMES.includes(g)) : []
+  };
+}
+
+// packages/engine/src/opened.ts
+import { existsSync as existsSync11, rmSync as rmSync4 } from "node:fs";
+import { join as join23 } from "node:path";
+function openedMarkerFile(userDir, root) {
+  return join23(userDir, "opened", `${sha256(canonical(root)).slice(0, 16)}.json`);
+}
+function openedMarkerPath(paths) {
+  return openedMarkerFile(paths.userDir, paths.root);
+}
+function writeOpenedMarker(paths, marker) {
+  writeJson(openedMarkerPath(paths), marker);
+}
+function dropOpenedMarker(userDir, root) {
+  rmSync4(openedMarkerFile(userDir, root), { force: true });
+}
+function readOpenedMarker(paths) {
+  const file = openedMarkerPath(paths);
+  if (!existsSync11(file))
+    return null;
+  const parsed = readJson(file);
+  if (!parsed || typeof parsed.mail !== "string" || !parsed.mail)
+    return null;
+  return {
+    mail: parsed.mail,
+    agent: typeof parsed.agent === "string" && parsed.agent ? parsed.agent : "session",
+    hops: typeof parsed.hops === "number" && Number.isInteger(parsed.hops) && parsed.hops >= 0 ? parsed.hops : 0
+  };
+}
+function modeOf(value) {
+  return value === "read-only" || value === "branch" ? value : null;
+}
+function resolveOpener(paths, env) {
+  const marker = readOpenedMarker(paths);
+  const headless = env.CLAUDE_CODE_SESSION_ATTENDED === "0";
+  const fromEnv = env.WIZARDINGCODE_CREW_MAIL_ID?.trim() || null;
+  const fromMarker = headless && marker ? marker : null;
+  const mail = fromEnv ?? fromMarker?.mail ?? null;
+  const envHops = Number(env.WIZARDINGCODE_CREW_MAIL_HOPS ?? "0");
+  const hops = Number.isInteger(envHops) && envHops >= 0 ? envHops : 0;
+  return {
+    mail,
+    agent: env.WIZARDINGCODE_CREW_MAIL_AGENT?.trim() || (mail ? fromMarker?.agent : null) || "session",
+    hops: mail ? Math.max(hops, fromMarker?.hops ?? 0) : hops,
+    mode: modeOf(env.WIZARDINGCODE_CREW_MAIL_MODE) ?? (fromEnv || !fromMarker ? null : "branch"),
+    branch: env.WIZARDINGCODE_CREW_MAIL_BRANCH?.trim() || null
+  };
+}
+
+// packages/engine/src/mail.ts
+var WORK_ID2 = /^\d{4}-\d{2}-\d{2}-\d{3}-[a-z0-9-]*$/;
+var REASONS_CHARS = 500;
+var BRANCH_NAME = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
+function threadParties(messages, root) {
+  const parties = [];
+  const key = (p) => p.agent && TASK_AGENT.test(p.agent) ? `${p.project}/${p.agent}` : p.project;
+  for (const m of messages) {
+    if (threadOf(m) !== root)
+      continue;
+    for (const p of [key(m.from), key(m.to)])
+      if (!parties.includes(p))
+        parties.push(p);
+  }
+  return parties.sort();
+}
+function heldMessages(ctx) {
+  const dir = mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project).dir;
+  const seen = new Set;
+  const held = [];
+  for (const which of ["inbox", "outbox"]) {
+    const read = readBox(dir, which);
+    if (read.tampered)
+      continue;
+    for (const m of read.box.messages) {
+      if (seen.has(m.id))
+        continue;
+      seen.add(m.id);
+      held.push(m);
+    }
+  }
+  return held;
+}
+function threadMessages(ctx, root) {
+  const held = heldMessages(ctx);
+  if (!MESSAGE_ID.test(root) || !held.some((m) => m.id === root))
+    return { refused: `no message ${root} in this project's mail` };
+  const messages = held.filter((m) => threadOf(m) === root).sort((a, b) => a.at.localeCompare(b.at));
+  return { messages, parties: threadParties(messages, root) };
+}
+function parseContract(text) {
+  const match = /^(openapi|types|schema|clause):([\s\S]*)$/.exec(text);
+  if (!match)
+    return {
+      refused: `a contract is openapi:<path>, types:<path>, schema:<path> or clause:<summary>, not ${text}`
+    };
+  const kind = match[1];
+  const rest = match[2] ?? "";
+  if (kind === "clause")
+    return { kind, path: null, summary: rest.trim() };
+  const colon = rest.indexOf(":");
+  const path = colon === -1 ? rest : rest.slice(0, colon);
+  const summary = colon === -1 ? "" : rest.slice(colon + 1).trim();
+  if (!insidePath(path))
+    return { refused: `contract ${kind}:${path} names a path outside the project` };
+  return { kind, path, summary };
+}
+function checkContracts(root, branch, base, contracts, body) {
+  let tip = "";
+  if (contracts.some((c) => c.path !== null)) {
+    if (!branch)
+      return { refused: "a contract needs --branch <b>: the file is checked at its tip" };
+    if (!BRANCH_NAME.test(branch) || branch.includes(".."))
+      return { refused: `--branch ${branch} is not a branch name` };
+    tip = branch;
+  }
+  const checked = [];
+  let changed = null;
+  for (const c of contracts) {
+    if (c.kind === "clause") {
+      if (!/^## Contracts\s*$/m.test(body))
+        return { refused: 'contract clause needs a "## Contracts" section in the reply' };
+      checked.push({ kind: c.kind, path: null, hash: null, summary: c.summary });
+      continue;
+    }
+    const path = c.path;
+    const content = gitShow(root, tip, path);
+    if (content === null)
+      return { refused: `contract ${c.kind}:${path} is not at the tip of ${tip}` };
+    const hash = createHash5("sha256").update(content).digest("hex");
+    if (c.kind === "openapi" || c.kind === "schema") {
+      const text = content.toString("utf8");
+      if (path.endsWith(".json")) {
+        try {
+          JSON.parse(text);
+        } catch {
+          return { refused: `contract ${c.kind}:${path} does not parse as JSON` };
+        }
+      } else if (!text.trim() || !/^(openapi|swagger|\$schema)\s*:/m.test(text)) {
+        return { refused: `contract ${c.kind}:${path} has no openapi, swagger or $schema line` };
+      }
+    } else {
+      if (!base)
+        return {
+          refused: `contract types:${path} cannot be checked: the child has no base commit`
+        };
+      if (changed === null) {
+        try {
+          changed = gitRun(root, "diff", "--name-only", "--end-of-options", base, tip).split(`
+`).filter(Boolean);
+        } catch (error) {
+          return {
+            refused: `contract types:${path} cannot be checked: git diff failed (${gitError(error)})`
+          };
+        }
+      }
+      if (!changed.includes(path))
+        return { refused: `contract types:${path} is not in the child's diff` };
+    }
+    checked.push({ kind: c.kind, path, hash, summary: c.summary });
+  }
+  return { contracts: checked };
+}
+function badPriority(value) {
+  return `priority is one of ${MAIL_PRIORITIES.join(", ")}, not ${String(value)}`;
+}
+var LIVE_MS = 10 * 60 * 1000;
+var INLINE_BODY_LIMIT = 2048;
+var PREVIEW_CHARS = 200;
+var SUBJECT_CHARS = 80;
+var ROLE_AGENT = rolePattern();
+var TASK_AGENT = /^T-\d+$/;
+var CRITICS = new Set(["devils-advocate", "fault-finder"]);
+function effectiveMailPolicy(root, policy, env) {
+  const main = worktreeMainRoot(root);
+  let mail = policy.mail;
+  if (main && (mail.name === null || mail.workspace === null)) {
+    const mainPaths = resolvePaths(main, env);
+    const theirs = mainPaths ? loadPolicy(mainPaths).policy.mail : null;
+    if (theirs)
+      mail = {
+        ...mail,
+        name: mail.name ?? theirs.name,
+        workspace: mail.workspace ?? theirs.workspace
+      };
+  }
+  return { mail, main };
+}
+function subjectQuoted(subject) {
+  return JSON.stringify(subject.replace(/\p{Cc}+/gu, " ").trim());
+}
+function mailSelf(paths, policy, env) {
+  const opener = resolveOpener(paths, env);
+  const { mail, main } = effectiveMailPolicy(paths.root, policy, env);
+  return {
+    workspace: mail.workspace,
+    project: mail.name ?? basename7(main ?? paths.root),
+    agent: opener.agent,
+    hops: opener.hops,
+    openedBy: opener.mail,
+    openedMode: opener.mode,
+    openedBranch: opener.branch
+  };
+}
+function mailContext(paths, policy, env) {
+  return { paths, policy, env, self: mailSelf(paths, policy, env) };
+}
+function loadRegistry(userDir) {
+  const raw = readJson(registryPath(userDir));
+  const projects = Array.isArray(raw?.projects) ? raw.projects.filter((p) => typeof p === "object" && p !== null && typeof p.root === "string" && typeof p.name === "string") : [];
+  return { version: 1, projects };
+}
+function saveRegistry(userDir, registry) {
+  writeJson(registryPath(userDir), registry);
+}
+function projectEntry(registry, workspace, name) {
+  const ws = workspace === "_alone" ? null : workspace;
+  return registry.projects.find((p) => p.name === name && p.workspace === ws && !p.worktreeOf);
+}
+function seenWithin(at, ms, now) {
+  const seen = at === undefined ? Number.NaN : Date.parse(at);
+  return Number.isFinite(seen) && now - seen <= ms;
+}
+function isLive(entry, now = Date.now()) {
+  return seenWithin(entry.lastHook, LIVE_MS, now);
+}
+function registerProject(ctx, sessionId, options = {}) {
+  const registry = loadRegistry(ctx.paths.userDir);
+  const existing = registry.projects.find((p) => p.root === ctx.paths.root);
+  const recent = (at) => options.minIntervalMs !== undefined && seenWithin(at, options.minIntervalMs, Date.now());
+  if (existing && recent(existing.lastSeen) && existing.sessionId === sessionId && (!options.hook || recent(existing.lastHook)))
+    return existing;
+  const main = worktreeMainRoot(ctx.paths.root);
+  const now = nowIso();
+  const lastHook = options.hook ? now : existing?.lastHook;
+  const entry = {
+    root: ctx.paths.root,
+    name: ctx.self.project,
+    workspace: ctx.self.workspace,
+    lastSeen: now,
+    sessionId,
+    ...lastHook ? { lastHook } : {},
+    ...main ? { worktreeOf: main } : {},
+    ...ctx.self.openedBy ? { mail: ctx.self.openedBy } : {}
+  };
+  registry.projects = [...registry.projects.filter((p) => p.root !== entry.root), entry];
+  saveRegistry(ctx.paths.userDir, registry);
+  return entry;
+}
+function pruneRegistry(userDir) {
+  const registry = loadRegistry(userDir);
+  const gone = registry.projects.filter((p) => !existsSync12(p.root)).map((p) => p.root);
+  if (gone.length) {
+    registry.projects = registry.projects.filter((p) => existsSync12(p.root));
+    saveRegistry(userDir, registry);
+  }
+  return gone;
+}
+function resolveProject(ctx, to) {
+  const registry = loadRegistry(ctx.paths.userDir);
+  const main = worktreeMainRoot(ctx.paths.root) ?? ctx.paths.root;
+  if (to === "." || to === ctx.self.project) {
+    const own = registry.projects.find((p) => p.root === main) ?? {
+      root: main,
+      name: ctx.self.project,
+      workspace: ctx.self.workspace,
+      lastSeen: nowIso(),
+      sessionId: ""
+    };
+    return { entry: own, toSelf: true };
+  }
+  if (ctx.self.workspace === null) {
+    return {
+      refused: "this project has no workspace (crew policy set mail.workspace <name>); it can only mail itself (--to .)"
+    };
+  }
+  const candidates = registry.projects.filter((p) => p.name === to && !p.worktreeOf);
+  const inWorkspace = candidates.filter((p) => p.workspace === ctx.self.workspace);
+  const alive = inWorkspace.filter((p) => existsSync12(p.root));
+  if (alive.length) {
+    alive.sort((a, b) => b.lastSeen.localeCompare(a.lastSeen));
+    const entry = alive[0];
+    return { entry, toSelf: entry.root === main };
+  }
+  const where = `in workspace ${ctx.self.workspace}`;
+  if (inWorkspace.length) {
+    return {
+      refused: `no project named ${to} ${where}; the registry knew one at ${inWorkspace[0]?.root}, which is gone`
+    };
+  }
+  const elsewhere = candidates.find((p) => p.workspace !== null);
+  if (elsewhere) {
+    return {
+      refused: `${to} is not in workspace ${ctx.self.workspace} (it is in ${elsewhere.workspace}); mail never leaves the workspace`
+    };
+  }
+  if (candidates.length) {
+    return {
+      refused: `${to} is not in workspace ${ctx.self.workspace} (it has no workspace); mail never leaves the workspace`
+    };
+  }
+  const known = [
+    ...new Set(registry.projects.filter((p) => p.workspace === ctx.self.workspace && !p.worktreeOf).map((p) => p.name))
+  ].sort();
+  return { refused: `no project named ${to} ${where} (known: ${known.join(", ") || "none"})` };
+}
+function mailbox(userDir, workspace, project) {
+  return { dir: mailboxDir(userDir, workspace, project) };
+}
+function boxFile(dir, name) {
+  return join24(dir, `${name}.json`);
+}
+function readBox(dir, which) {
+  const file = boxFile(dir, which);
+  if (existsSync12(file))
+    accessSync(file, constants.R_OK);
+  const read = readProtectedJsonAt(boxFile(dir, "integrity"), file);
+  const box = read.data && Array.isArray(read.data.messages) ? read.data : { version: 1, messages: [] };
+  return { box, tampered: read.tampered };
+}
+function writeBox(dir, which, box) {
+  writeProtectedJsonAt(boxFile(dir, "integrity"), boxFile(dir, which), box);
+}
+function withMailLock(dir, fn, options = {}) {
+  return withLock(dir, fn, { ...options, what: "mailbox" });
+}
+function acceptBox(ctx, which) {
+  const { mail } = effectiveMailPolicy(ctx.paths.root, ctx.policy, ctx.env);
+  if (mail.name === null && mail.workspace === null)
+    return {
+      refused: "this project has no mail identity (crew policy set mail.workspace <name>); it has no mailbox to accept"
+    };
+  const dir = mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project).dir;
+  const file = boxFile(dir, which);
+  try {
+    return withMailLock(dir, () => {
+      const text = readText(file);
+      if (text === null)
+        return { refused: `no ${which} at ${file} to accept` };
+      let parsed;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        return { refused: `${which} not accepted: ${file} is not valid JSON` };
+      }
+      const messages = parsed?.messages;
+      if (!Array.isArray(messages))
+        return { refused: `${which} not accepted: ${file} is not a mailbox (no messages array)` };
+      recordIntegrityAt(boxFile(dir, "integrity"), file, text);
+      return { file, messages };
+    });
+  } catch (error) {
+    if (!(error instanceof LockBusy))
+      throw error;
+    return { refused: `${which} not accepted: ${error.message}` };
+  }
+}
+function newMessageId(outbox, project, at) {
+  const day = at.slice(0, 10);
+  const taken = outbox.messages.filter((m) => m.at.slice(0, 10) === day).map((m) => Number(/^M-\d{4}-\d{2}-\d{2}-(\d{3})-/.exec(m.id)?.[1])).filter(Number.isFinite);
+  const next = taken.length ? Math.max(...taken) + 1 : 1;
+  return `M-${day}-${String(next).padStart(3, "0")}-${project}`;
+}
+function itemMailPath(paths, id) {
+  return join24(workDir(paths, id), "mail.json");
+}
+function loadItemMail(paths, id) {
+  const read = readProtectedJson(paths, itemMailPath(paths, id));
+  return { box: read.data ?? { version: 1, messages: [] }, tampered: read.tampered };
+}
+function recordInItem(paths, id, message) {
+  if (!existsSync12(join24(workDir(paths, id), "work.json")))
+    return;
+  const { box, tampered } = loadItemMail(paths, id);
+  if (tampered)
+    return;
+  box.messages = [...box.messages.filter((m) => m.id !== message.id), message].sort((a, b) => a.at.localeCompare(b.at));
+  writeProtectedJson(paths, itemMailPath(paths, id), box);
+}
+function itemHome(ctx, registry, party, item, here) {
+  const root = projectEntry(registry, party.workspace, party.project)?.root;
+  const registered = root ? resolvePaths(root, ctx.env) : null;
+  for (const paths of [registered, here]) {
+    if (paths && existsSync12(join24(workDir(paths, item), "work.json")))
+      return paths;
+  }
+  return null;
+}
+function recordForParties(ctx, registry, m, here = ctx.paths) {
+  const copies = [
+    [m.from.item, m.from],
+    [m.to.item, m.to]
+  ];
+  for (const [item, party] of copies) {
+    if (!item)
+      continue;
+    const home = itemHome(ctx, registry, party, item, here);
+    if (home)
+      recordInItem(home, item, m);
+  }
+}
+function subjectOf(request) {
+  const given = request.subject?.replace(/\s+/g, " ").trim();
+  if (given)
+    return given.slice(0, SUBJECT_CHARS);
+  const first = request.text.split(`
+`).find((l) => l.trim()) ?? "";
+  return first.length > SUBJECT_CHARS - 3 ? `${first.slice(0, SUBJECT_CHARS - 3)}...` : first;
+}
+function destinationPolicy(entry, env) {
+  const paths = resolvePaths(entry.root, env);
+  return paths ? loadPolicy(paths) : null;
+}
+function openIn(userDir, workspace, project) {
+  const { box } = readBox(mailbox(userDir, workspace, project).dir, "inbox");
+  return box.messages.filter((m) => m.opened && !m.opened.endedAt).length;
+}
+function placeBody(dir, id, text) {
+  if (Buffer.byteLength(text, "utf8") <= INLINE_BODY_LIMIT)
+    return { body: text };
+  const file = join24(dir, `${id}.md`);
+  writeText(file, text);
+  return { body: `${text.slice(0, PREVIEW_CHARS)}...`, bodyFile: file };
+}
+function party(self, item) {
+  return { workspace: self.workspace ?? "_alone", project: self.project, item, agent: self.agent };
+}
+function attachFile(root, text, filePath) {
+  if (!filePath)
+    return { text };
+  const abs = isAbsolute3(filePath) ? filePath : resolve6(root, filePath);
+  const content = readText(abs);
+  if (content === null)
+    return { refused: `no file at ${abs}` };
+  return { text: text.trim() ? `${text.trim()}
+
+${content}` : content };
+}
+function tamperedBox(owner, which) {
+  return `${owner}'s ${which} changed outside the engine; files under the user's crew directory are written only by the crew command`;
+}
+function appendToBox(dir, which, owner, build, waitMs) {
+  return withMailLock(dir, () => {
+    const { box, tampered } = readBox(dir, which);
+    if (tampered)
+      return { refused: tamperedBox(owner, which) };
+    const message = build(box);
+    box.messages.push(message);
+    writeBox(dir, which, box);
+    return message;
+  }, { waitMs });
+}
+function outboxMessage(self, itemId, at, fields) {
+  return { at, from: party(self, itemId), hops: self.hops, opened: null, ...fields };
+}
+function agentRefusal(ctx, request, to) {
+  const { name, toSelf, itemId, work } = to;
+  const agent = request.agent;
+  if (!agent)
+    return null;
+  if (!toSelf)
+    return `--agent addresses a role or a task of this project; ${name} is another project`;
+  if (ROLE_AGENT.test(agent)) {
+    if (agent === "judge" && ctx.self.agent !== "session")
+      return `a message to the judge comes from the lead (session), not from ${ctx.self.agent}`;
+    if (CRITICS.has(agent)) {
+      const proposals = itemId ? `.crew/work/${itemId}/conclave/proposals.md` : null;
+      const given = request.filePath ? canonical(resolve6(ctx.paths.root, request.filePath)) : null;
+      if (!proposals || !given || given !== canonical(join24(ctx.paths.root, proposals)) || request.text.trim())
+        return `a message to ${agent} carries ${proposals ?? ".crew/work/<id>/conclave/proposals.md"} (--file) and nothing else`;
+    }
+    return null;
+  }
+  if (TASK_AGENT.test(agent)) {
+    if (!(work?.tasks ?? []).some((t) => t.task === agent))
+      return `${agent} is not a task of ${work?.id ?? "the active item"} (crew task <id> open ${agent} …)`;
+    return null;
+  }
+  if (agent !== "session")
+    return `--agent is session, a task (T-n) or a role, not ${agent}`;
+  return null;
+}
+function send(ctx, request, work) {
+  const at = nowIso();
+  const self = ctx.self;
+  const own = mailbox(ctx.paths.userDir, self.workspace, self.project);
+  const itemId = request.item ?? work?.id ?? null;
+  const attached = attachFile(ctx.paths.root, request.text, request.filePath);
+  if ("refused" in attached)
+    return { refused: attached.refused, message: null };
+  const text = attached.text;
+  if (!text.trim())
+    return { refused: "a message needs a text (or --file)", message: null };
+  if (request.priority !== undefined && !isMailPriority(request.priority))
+    return { refused: badPriority(request.priority), message: null };
+  const priority = request.priority ?? (request.type === "blocker" ? "blocker" : "normal");
+  let root = null;
+  if (request.thread !== undefined) {
+    if (request.agent && ROLE_AGENT.test(request.agent))
+      return { refused: "a thread joins projects and tasks, never roles", message: null };
+    const held = heldMessages(ctx);
+    root = MESSAGE_ID.test(request.thread) && held.find((m) => m.id === request.thread) || null;
+    if (!root)
+      return { refused: `no message ${request.thread} in this project's mail`, message: null };
+  }
+  const resolved = resolveProject(ctx, request.to);
+  const subject = subjectOf({
+    subject: request.subject ?? (root ? subjectQuoted(root.subject) : undefined),
+    text
+  });
+  const refuse = (reason, to) => {
+    const written = appendToBox(own.dir, "outbox", self.project, (box) => outboxMessage(self, itemId, at, {
+      id: newMessageId(box, self.project, at),
+      to,
+      type: request.type,
+      priority,
+      ...root ? { thread: root.id } : {},
+      subject,
+      body: text.slice(0, PREVIEW_CHARS),
+      replyTo: request.replyTo ?? null,
+      status: "refused",
+      reason
+    }), COMMAND_LOCK_WAIT_MS);
+    if ("refused" in written)
+      return { refused: written.refused, message: null };
+    if (itemId)
+      recordInItem(ctx.paths, itemId, written);
+    return { refused: reason, message: written };
+  };
+  const unknownTo = {
+    workspace: self.workspace ?? "_alone",
+    project: request.to,
+    item: null,
+    agent: request.agent ?? null
+  };
+  if ("refused" in resolved)
+    return refuse(resolved.refused, unknownTo);
+  const entry = resolved.entry;
+  if (root) {
+    const parties = threadParties(heldMessages(ctx), root.id);
+    const joining = request.agent && TASK_AGENT.test(request.agent) ? `${entry.name}/${request.agent}` : entry.name;
+    const cap = ctx.policy.mail.maxParties;
+    if (!parties.includes(joining) && parties.length >= cap)
+      return {
+        refused: `thread ${root.id} has ${parties.length} parties (mail.maxParties ${cap}); ${joining} cannot join`,
+        message: null
+      };
+  }
+  const toSelf = resolved.toSelf;
+  const to = {
+    workspace: self.workspace ?? "_alone",
+    project: entry.name,
+    item: null,
+    agent: request.agent ?? null
+  };
+  const agentRefused = agentRefusal(ctx, request, {
+    name: entry.name,
+    toSelf,
+    itemId,
+    work
+  });
+  if (agentRefused)
+    return refuse(agentRefused, to);
+  const relayed = request.agent !== undefined && ROLE_AGENT.test(request.agent);
+  const destination = destinationPolicy(entry, ctx.env);
+  if (!destination)
+    return refuse(`${entry.name} at ${entry.root} is not a crew project any more`, to);
+  if (destination.tampered)
+    return refuse(`${entry.name}'s policy changed outside the engine; its user accepts it with crew policy accept`, to);
+  const rules = destination.policy.mail;
+  if (!toSelf && !rules.accept.includes(request.type))
+    return refuse(`${entry.name} does not accept ${request.type} (its policy accepts ${rules.accept.join(", ")})`, to);
+  if (!request.replyTo && self.hops >= rules.maxHops && self.openedBy)
+    return refuse(`this session is ${self.hops} hops from the first message and ${entry.name} allows ${rules.maxHops} (mail.maxHops); only a reply may go out`, to);
+  const dest = mailbox(ctx.paths.userDir, entry.workspace, entry.name);
+  if (readBox(dest.dir, "inbox").tampered)
+    return refuse(tamperedBox(entry.name, "inbox"), to);
+  let delivery;
+  if (toSelf)
+    delivery = { kind: "self" };
+  else if (isLive(entry))
+    delivery = { kind: "live", entry };
+  else if (request.type === "notice")
+    delivery = { kind: "queued", reason: "a notice waits in the inbox" };
+  else if (request.type === "change-request" && rules.open !== "branch")
+    delivery = {
+      kind: "queued",
+      reason: `${entry.name} accepts change requests only with a person present (mail.open is read-only)`
+    };
+  else {
+    const mode = request.type === "question" ? "read-only" : rules.open;
+    const open = openIn(ctx.paths.userDir, entry.workspace, entry.name);
+    if (open >= rules.maxConcurrent)
+      return refuse(`${entry.name} has ${open} session${open === 1 ? "" : "s"} open (mail.maxConcurrent ${rules.maxConcurrent}); try again when one ends`, to);
+    delivery = { kind: "open", mode, entry };
+  }
+  const message = appendToBox(own.dir, "outbox", self.project, (outbox) => {
+    const id = newMessageId(outbox, self.project, at);
+    return outboxMessage(self, itemId, at, {
+      id,
+      to,
+      type: request.type,
+      priority,
+      ...root ? { thread: root.id } : {},
+      subject,
+      ...placeBody(dest.dir, id, text),
+      replyTo: request.replyTo ?? null,
+      status: "sent",
+      ...relayed ? { relayed: true } : {}
+    });
+  }, COMMAND_LOCK_WAIT_MS);
+  if ("refused" in message)
+    return { refused: message.refused, message: null };
+  const failed = deliver(ctx, dest.dir, entry.name, message, COMMAND_LOCK_WAIT_MS);
+  if (failed)
+    return {
+      refused: failed.refused,
+      message: { ...message, status: "refused", reason: failed.refused }
+    };
+  if (itemId)
+    recordInItem(ctx.paths, itemId, message);
+  return { message, delivery };
+}
+function deliver(ctx, dir, owner, message, waitMs) {
+  const delivered = appendToBox(dir, "inbox", owner, () => message, waitMs);
+  if (!("refused" in delivered))
+    return null;
+  const reason = delivered.refused;
+  const skipped = [];
+  updateEverywhere(ctx, message.id, (m) => ({ ...m, status: "refused", reason }), (w) => skipped.push(w));
+  return {
+    refused: skipped.length ? `${reason}; a copy was not marked: ${skipped.join(", ")}` : reason
+  };
+}
+function recordOpened(ctx, id, opened, skipped) {
+  const pass = recordEverywhere(ctx, id, (m) => ({ ...m, opened }), skipped);
+  if (pass.ownBusy)
+    throw new LockBusy(pass.ownBusy);
+  const result = pass.changed;
+  const own = readBox(mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project).dir, "outbox");
+  const copy = own.box.messages.find((m) => m.id === id);
+  return result && !own.tampered && copy?.opened?.pid === opened.pid ? result : null;
+}
+function updateEverywhere(ctx, id, change, skipped) {
+  return recordEverywhere(ctx, id, change, skipped).changed;
+}
+function recordEverywhere(ctx, id, change, skipped) {
+  let result = null;
+  let ownBusy = null;
+  const ownDir = mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project).dir;
+  const registry = loadRegistry(ctx.paths.userDir);
+  const boxes = new Set;
+  for (const p of registry.projects) {
+    if (!p.worktreeOf)
+      boxes.add(mailbox(ctx.paths.userDir, p.workspace, p.name).dir);
+  }
+  boxes.add(ownDir);
+  const holding = [];
+  for (const dir of boxes) {
+    for (const which of ["inbox", "outbox"]) {
+      if (!existsSync12(boxFile(dir, which)))
+        continue;
+      try {
+        if (readBox(dir, which).box.messages.some((m) => m.id === id))
+          holding.push([dir, which]);
+      } catch (error) {
+        skipped(`${boxFile(dir, which)} (${error.message.split(`
+`)[0]})`);
+      }
+    }
+  }
+  for (const [dir, which] of holding) {
+    try {
+      const changed = recordInBox(dir, which, id, change, skipped);
+      result = result ?? changed;
+    } catch (error) {
+      if (!(error instanceof LockBusy))
+        throw error;
+      skipped(`${boxFile(dir, which)} (${error.message})`);
+      if (dir === ownDir)
+        ownBusy = error.message;
+    }
+  }
+  if (result && !ownBusy)
+    recordForParties(ctx, registry, result);
+  return { changed: result, ownBusy };
+}
+function recordInBox(dir, which, id, change, skipped) {
+  return withMailLock(dir, () => {
+    let read;
+    try {
+      read = readBox(dir, which);
+    } catch (error) {
+      skipped(`${boxFile(dir, which)} (${error.message.split(`
+`)[0]})`);
+      return null;
+    }
+    const { box, tampered } = read;
+    if (tampered) {
+      skipped(`${boxFile(dir, which)} (changed outside the engine)`);
+      return null;
+    }
+    const index = box.messages.findIndex((m) => m.id === id);
+    if (index === -1)
+      return null;
+    const changed = change(box.messages[index]);
+    box.messages[index] = changed;
+    writeBox(dir, which, box);
+    return changed;
+  });
+}
+function ownInbox(ctx) {
+  const { box, tampered } = readBox(mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project).dir, "inbox");
+  const mine = box.messages.filter((m) => (m.to.agent ?? "session") === ctx.self.agent);
+  return {
+    messages: mine.sort((a, b) => priorityRank(decidedPriority(a)) - priorityRank(decidedPriority(b)) || a.at.localeCompare(b.at)),
+    tampered
+  };
+}
+function addressed(ctx, m) {
+  if (m.to.project !== ctx.self.project)
+    return `${m.id} is addressed to ${m.to.project}, not to ${ctx.self.project}`;
+  const agent = m.to.agent ?? "session";
+  if (agent !== ctx.self.agent && !(ctx.self.agent === "session" && ROLE_AGENT.test(agent)))
+    return `${m.id} is addressed to ${agent}, not to ${ctx.self.agent}`;
+  return null;
+}
+function ownMessage(ctx, id) {
+  const { messages, tampered } = ownInbox(ctx);
+  if (tampered)
+    return { refused: tamperedBox(ctx.self.project, "inbox") };
+  const found = messages.find((m) => m.id === id);
+  return found ? { found } : { refused: `no message ${id} in this inbox` };
+}
+function whyOwnCopyUnwritten(pass) {
+  return pass.ownBusy ? `its mailbox is busy (${pass.ownBusy})` : "its mailbox changed while it was being written";
+}
+function skippedLine(id) {
+  return (what) => `a copy of ${id} was not changed: ${what}`;
+}
+function readFirst(m, to, at) {
+  return mailStatus(m) === "sent" && to !== "read" ? { ...m, status: "read", readAt: m.readAt ?? at } : m;
+}
+function withoutReason(m) {
+  const copy = { ...m };
+  delete copy.reason;
+  return copy;
+}
+function applyMove(m, to, at, extra) {
+  const read = readFirst(m, to, at);
+  if (to === "blocked" && mailStatus(read) === "blocked")
+    return { ...read, ...extra };
+  return transition(to === "done" ? withoutReason(read) : read, to, extra);
+}
+function moveMail(ctx, id, to, extra, notes) {
+  const own = ownMessage(ctx, id);
+  if ("refused" in own)
+    return own;
+  const at = nowIso();
+  const check = applyMove(own.found, to, at, extra);
+  if ("refused" in check)
+    return check;
+  const pass = recordEverywhere(ctx, id, (m) => {
+    const moved = applyMove(m, to, at, extra);
+    return "refused" in moved ? m : moved;
+  }, (w) => notes.push(skippedLine(id)(w)));
+  if (!pass.changed || pass.ownBusy)
+    return { refused: `${id} could not be updated: ${whyOwnCopyUnwritten(pass)}` };
+  return pass.changed;
+}
+function markRead(ctx, id, notes) {
+  const own = ownMessage(ctx, id);
+  if ("refused" in own)
+    return own;
+  if (mailStatus(own.found) !== "sent")
+    return own.found;
+  return moveMail(ctx, id, own.found.type === "notice" ? "done" : "read", { readAt: nowIso() }, notes);
+}
+function refuseMail(ctx, id, reason, notes) {
+  const own = ownMessage(ctx, id);
+  if ("refused" in own)
+    return own;
+  const from = mailStatus(own.found);
+  if (!MAIL_TRANSITIONS[from].includes("refused"))
+    return { refused: `${id} is ${from}; nothing to refuse` };
+  if (!reason.trim())
+    return { refused: 'a refusal needs --reason "<why>"' };
+  return moveMail(ctx, id, "refused", { reason: reason.trim() }, notes);
+}
+function acceptMail(ctx, id, options, notes) {
+  const own = ownMessage(ctx, id);
+  if ("refused" in own)
+    return own;
+  const m = own.found;
+  if (m.type === "question")
+    return {
+      refused: "a question is done by its reply; accept applies to a change request or a blocker"
+    };
+  if (m.type === "notice")
+    return {
+      refused: "a notice is done when read; accept applies to a change request or a blocker"
+    };
+  const from = mailStatus(m);
+  if (from !== "sent" && from !== "read")
+    return { refused: `${id} is ${from}; accept applies to a request still sent or read` };
+  if (options.priority !== undefined && !isMailPriority(options.priority))
+    return { refused: badPriority(options.priority) };
+  const proposed = priorityOf(m);
+  const confirmed = options.priority ?? proposed;
+  if (priorityRank(confirmed) < priorityRank(proposed))
+    return {
+      refused: `${id} was proposed ${proposed}; the receiver confirms or lowers, never raises`
+    };
+  const reason = options.reason?.trim() ? oneLine(options.reason) : null;
+  if (priorityRank(confirmed) > priorityRank(proposed) && !reason)
+    return { refused: 'a lowering needs --reason "<why>"' };
+  const decision = { proposed, confirmed, by: options.by, reason, at: nowIso() };
+  const moved = moveMail(ctx, id, "accepted", { priorityDecision: decision }, notes);
+  return "refused" in moved ? moved : { message: moved };
+}
+function reply(ctx, id, text, options, notes) {
+  const ownDir = mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project).dir;
+  const inbox = readBox(ownDir, "inbox");
+  if (inbox.tampered)
+    return { refused: tamperedBox(ctx.self.project, "inbox") };
+  const original = inbox.box.messages.find((m) => m.id === id) ?? readBox(ownDir, "outbox").box.messages.find((m) => m.id === id);
+  if (!original)
+    return { refused: `no message ${id} in this inbox` };
+  const wrong = addressed(ctx, original);
+  if (wrong)
+    return { refused: wrong };
+  const standing = mailStatus(original);
+  if (standing === "done")
+    return { refused: `${id} is done; a second answer is a new message` };
+  if (standing === "refused")
+    return { refused: `${id} is refused; it has no answer` };
+  if (standing === "expired")
+    return { refused: `${id} is expired; its session is over` };
+  if (options.as !== undefined && !ROLE_AGENT.test(options.as))
+    return {
+      refused: "--as names a role: judge, researcher, expert-<n>, devils-advocate, fault-finder or review-<gate>"
+    };
+  if (options.as && (original.to.agent ?? "session") !== options.as)
+    return {
+      refused: `${id} is addressed to ${original.to.agent ?? "session"}, not to ${options.as}`
+    };
+  if (options.item !== undefined && (!WORK_ID2.test(options.item) || !loadWork(ctx.paths, options.item).work))
+    return { refused: `unknown work item: ${options.item}` };
+  const child = options.item ? loadEvidence(ctx.paths, options.item).evidence : undefined;
+  const verdict = child?.verdict;
+  const typed = [];
+  for (const text of options.contracts ?? []) {
+    const parsed = parseContract(text);
+    if ("refused" in parsed)
+      return parsed;
+    typed.push(parsed);
+  }
+  if (typed.length && !options.item)
+    return { refused: "a contract comes with the child item (--item)" };
+  const carried = options.item && child ? {
+    report: existsSync12(join24(workDir(ctx.paths, options.item), "report.md")) ? `.crew/work/${options.item}/report.md` : null,
+    fingerprint: child.fingerprint,
+    gatesPassed: [
+      ...new Set(child.runs.filter((r) => r.status === "pass").map((r) => r.gate))
+    ].filter((g) => GATE_NAMES.includes(g))
+  } : undefined;
+  const closing = original.type === "question" || original.type === "notice";
+  const to = closing || verdict === "proven" ? "done" : "blocked";
+  const reason = to === "done" ? undefined : options.item ? `unproven: ${(child?.unproven ?? []).map(oneLine).join("; ")}`.slice(0, REASONS_CHARS) : "the reply names no child item (--item)";
+  const attached = attachFile(ctx.paths.root, text, options.filePath);
+  if ("refused" in attached)
+    return { refused: attached.refused };
+  const body = attached.text;
+  if (!body.trim())
+    return { refused: "a reply needs a text (or --file)" };
+  const checked = checkContracts(ctx.paths.root, options.branch, options.item ? loadWork(ctx.paths, options.item).work?.baseCommit ?? null : null, typed, body);
+  if ("refused" in checked)
+    return checked;
+  const at = nowIso();
+  const own = mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project);
+  const dest = mailbox(ctx.paths.userDir, original.from.workspace === "_alone" ? null : original.from.workspace, original.from.project);
+  const from = options.as ? { ...party(ctx.self, original.to.item ?? original.from.item), agent: options.as } : party(ctx.self, original.to.item);
+  if (readBox(dest.dir, "inbox").tampered)
+    return { refused: tamperedBox(original.from.project, "inbox") };
+  const replyMessage = appendToBox(own.dir, "outbox", ctx.self.project, (outbox) => {
+    const replyId = newMessageId(outbox, ctx.self.project, at);
+    return outboxMessage(ctx.self, original.to.item, at, {
+      id: replyId,
+      from,
+      to: {
+        workspace: original.from.workspace,
+        project: original.from.project,
+        item: original.from.item,
+        agent: original.from.agent
+      },
+      type: original.type,
+      subject: original.subject.startsWith("Re: ") ? original.subject : `Re: ${original.subject}`,
+      ...placeBody(dest.dir, replyId, body),
+      replyTo: original.id,
+      status: "sent",
+      ...options.as || original.relayed ? { relayed: true } : {},
+      ...options.branch ? { branch: options.branch } : {},
+      ...options.item ? { item: options.item } : {},
+      ...verdict ? { verdict } : {},
+      thread: threadOf(original),
+      ...checked.contracts.length ? { contracts: checked.contracts } : {},
+      ...carried ? { evidence: carried } : {}
+    });
+  });
+  if ("refused" in replyMessage)
+    return { refused: replyMessage.refused };
+  const failed = deliver(ctx, dest.dir, original.from.project, replyMessage);
+  if (failed)
+    return failed;
+  const extra = {
+    answeredAt: at,
+    ...options.branch ? { branch: options.branch } : {},
+    ...options.item ? { item: options.item } : {},
+    ...verdict ? { verdict } : {},
+    ...reason !== undefined ? { reason } : {}
+  };
+  const answered = recordEverywhere(ctx, id, (m) => {
+    const moved = applyMove(m, to, at, extra);
+    return "refused" in moved ? m : moved;
+  }, (w) => notes.push(skippedLine(id)(w)));
+  if (!answered.changed || answered.ownBusy)
+    return {
+      refused: `${id} could not be marked answered: ${whyOwnCopyUnwritten(answered)}`,
+      delivered: replyMessage.id
+    };
+  withMailLock(ownDir, () => {
+    recordForParties(ctx, loadRegistry(ctx.paths.userDir), replyMessage);
+  });
+  return { reply: replyMessage, original: answered.changed };
+}
+function syncMail(ctx, paths) {
+  const own = mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project);
+  const registry = loadRegistry(ctx.paths.userDir);
+  return withMailLock(own.dir, () => {
+    let updated = 0;
+    const { box: outbox, tampered } = readBox(own.dir, "outbox");
+    const inboxes = new Map;
+    if (!tampered) {
+      for (const sent of outbox.messages) {
+        if (sent.status === "refused")
+          continue;
+        const entry = projectEntry(registry, sent.to.workspace, sent.to.project);
+        const theirsDir = entry ? mailbox(ctx.paths.userDir, entry.workspace, entry.name).dir : own.dir;
+        const inbox = inboxes.get(theirsDir) ?? readBox(theirsDir, "inbox");
+        inboxes.set(theirsDir, inbox);
+        if (inbox.tampered)
+          continue;
+        const theirs = inbox.box.messages.find((m) => m.id === sent.id);
+        if (theirs && JSON.stringify(theirs) !== JSON.stringify(sent)) {
+          Object.assign(sent, theirs);
+          updated += 1;
+          recordForParties(ctx, registry, sent, paths);
+        }
+      }
+      if (updated)
+        writeBox(own.dir, "outbox", outbox);
+    }
+    const inbox = ownInbox(ctx);
+    if (inbox.tampered)
+      return { newMail: [], updated, tampered: true };
+    const marker = join24(own.dir, `synced-${ctx.self.agent}.json`);
+    const seen = new Set(readJson(marker) ?? []);
+    const newMail = [];
+    for (const m of inbox.messages) {
+      recordForParties(ctx, registry, m, paths);
+      if (!seen.has(m.id))
+        newMail.push(m);
+      seen.add(m.id);
+    }
+    writeJson(marker, [...seen]);
+    return { newMail, updated, tampered: false };
+  });
+}
+function markNoticed(ctx, id, notes) {
+  updateEverywhere(ctx, id, (m) => ({ ...m, noticedAt: nowIso() }), (w) => notes.push(skippedLine(id)(w)));
+}
+function updateStatusEverywhere(ctx, id, status, reason, notes) {
+  updateEverywhere(ctx, id, (m) => ({
+    ...m,
+    status,
+    ...reason !== undefined ? { reason } : {}
+  }), (w) => notes.push(skippedLine(id)(w)));
+}
+function emptyInboxSummary() {
+  return {
+    messages: [],
+    unread: 0,
+    answered: 0,
+    waiting: 0,
+    blockers: [],
+    tampered: false,
+    line: null
+  };
+}
+function unanswered(m) {
+  return mailStatus(m) === "sent" && !m.replyTo;
+}
+function inboxSummary(ctx) {
+  const { messages, tampered } = ownInbox(ctx);
+  if (tampered)
+    return { ...emptyInboxSummary(), tampered, line: tamperedBox(ctx.self.project, "inbox") };
+  const unread = messages.filter(unanswered);
+  const answered = messages.filter((m) => m.replyTo && mailStatus(m) === "sent");
+  const waiting = messages.filter((m) => mailStatus(m) === "blocked");
+  const blockers = unread.filter((m) => m.type === "blocker");
+  if (!messages.length)
+    return emptyInboxSummary();
+  const byType = new Map;
+  for (const m of unread)
+    byType.set(m.type, (byType.get(m.type) ?? 0) + 1);
+  const senders = [...new Set(unread.map((m) => m.from.project))].join(", ");
+  const parts = [];
+  if (unread.length)
+    parts.push(`${unread.length} unread ${[...byType].map(([t, n]) => `${t}${n === 1 ? "" : "s"}`).join(" and ")} from ${senders}`);
+  if (answered.length)
+    parts.push(`${answered.length} answered`);
+  if (waiting.length)
+    parts.push(`${waiting.length} waiting for a person`);
+  const where = ctx.self.workspace ?? "alone";
+  return {
+    messages,
+    unread: unread.length,
+    answered: answered.length,
+    waiting: waiting.length,
+    blockers,
+    tampered,
+    line: parts.length ? `Mail (${where}): ${parts.join(", ")}` : null
+  };
+}
+function readOpenSessions(ctx) {
+  const { box, tampered } = readBox(mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project).dir, "outbox");
+  const open = box.messages.filter((m) => m.opened && !m.opened.endedAt);
+  return tampered ? { messages: [], tampered: tamperedBox(ctx.self.project, "outbox"), untrusted: open } : { messages: open, tampered: null, untrusted: [] };
+}
+
+// packages/engine/src/profile.ts
+import { join as join33 } from "node:path";
+
+// packages/engine/src/detect/index.ts
+import { existsSync as existsSync15, readdirSync as readdirSync10, statSync as statSync6 } from "node:fs";
+import { join as join31, relative as relative5 } from "node:path";
+
 // packages/engine/src/pdf.ts
+import { existsSync as existsSync13 } from "node:fs";
+import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
+import { delimiter, join as join25 } from "node:path";
 var NO_PDF = "PDF not produced: no Playwright in the project and no browser found (set WIZARDINGCODE_CREW_BROWSER)";
 var BROWSER_CANDIDATES = [
   "google-chrome",
@@ -5916,8 +10005,8 @@ function onPath(binary, env) {
   for (const dir of (env.PATH ?? "").split(delimiter)) {
     if (!dir)
       continue;
-    const path = join17(dir, binary);
-    if (existsSync7(path))
+    const path = join25(dir, binary);
+    if (existsSync13(path))
       return path;
   }
   return null;
@@ -5927,7 +10016,7 @@ function findBrowser(env, candidates = BROWSER_CANDIDATES) {
   if (named)
     return named;
   for (const candidate of candidates) {
-    const found = candidate.includes("/") ? existsSync7(candidate) ? candidate : null : onPath(candidate, env);
+    const found = candidate.includes("/") ? existsSync13(candidate) ? candidate : null : onPath(candidate, env);
     if (found)
       return found;
   }
@@ -5991,7 +10080,7 @@ async function printPdf(html, out, env, root, options = {}) {
   const result = await runCommand(command, {
     cwd: root,
     timeoutMs,
-    logPath: options.logPath ?? join17(tmpdir(), `crew-pdf-${Date.now()}.log`),
+    logPath: options.logPath ?? join25(tmpdir(), `crew-pdf-${Date.now()}.log`),
     env
   });
   if (result.timedOut)
@@ -6004,7 +10093,7 @@ async function printPdf(html, out, env, root, options = {}) {
 `).filter(Boolean).slice(-3).join(" ");
     return { ok: false, reason: `PDF not produced: the browser exited ${result.exit}: ${tail}` };
   }
-  if (!existsSync7(out))
+  if (!existsSync13(out))
     return {
       ok: false,
       reason: `PDF not produced: the browser exited 0 and wrote nothing at ${out}`
@@ -6013,8 +10102,8 @@ async function printPdf(html, out, env, root, options = {}) {
 }
 
 // packages/engine/src/detect/environment.ts
-import { existsSync as existsSync8 } from "node:fs";
-import { join as join18 } from "node:path";
+import { existsSync as existsSync14 } from "node:fs";
+import { join as join26 } from "node:path";
 var ENVIRONMENT_TIMEOUT_MS = 120000;
 var ENVIRONMENT_COMMANDS = ["start", "health", "stop"];
 var COMPOSE_FILES = ["docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"];
@@ -6032,7 +10121,7 @@ function composePort(text) {
   return Number.isInteger(port) && port >= 1 && port <= 65535 ? port : DEFAULT_PORT;
 }
 function detectEnvironment(root, targets) {
-  const compose = COMPOSE_FILES.map((f) => join18(root, f)).find((p) => existsSync8(p));
+  const compose = COMPOSE_FILES.map((f) => join26(root, f)).find((p) => existsSync14(p));
   if (compose) {
     return {
       start: proposed("docker compose up -d"),
@@ -6041,14 +10130,14 @@ function detectEnvironment(root, targets) {
       timeoutMs: ENVIRONMENT_TIMEOUT_MS
     };
   }
-  if (existsSync8(join18(root, "artisan"))) {
+  if (existsSync14(join26(root, "artisan"))) {
     return {
       start: proposed("php artisan serve --port 8000"),
       ...onLocalhost("127.0.0.1", 8000),
       timeoutMs: ENVIRONMENT_TIMEOUT_MS
     };
   }
-  const makefile = readTextQuietly(join18(root, "Makefile"));
+  const makefile = readTextQuietly(join26(root, "Makefile"));
   const target = makefile ? MAKE_TARGETS.find((t) => new RegExp(`^${t}:`, "m").test(makefile)) : undefined;
   if (target) {
     return {
@@ -6057,7 +10146,7 @@ function detectEnvironment(root, targets) {
       timeoutMs: ENVIRONMENT_TIMEOUT_MS
     };
   }
-  const pkg = readJson(join18(root, "package.json"));
+  const pkg = readJson(join26(root, "package.json"));
   const script = NODE_SCRIPTS.find((s) => typeof pkg?.scripts?.[s] === "string");
   if (script) {
     const detected = targets.find((t) => t.path === "." && t.stack === "node")?.packageManager;
@@ -6091,11 +10180,11 @@ function environmentChanges(previous, next) {
 }
 
 // packages/engine/src/detect/node.ts
-import { join as join20 } from "node:path";
+import { join as join28 } from "node:path";
 
 // packages/engine/src/detect/scripts.ts
-import { readdirSync as readdirSync4, statSync as statSync5 } from "node:fs";
-import { join as join19 } from "node:path";
+import { readdirSync as readdirSync9, statSync as statSync5 } from "node:fs";
+import { join as join27 } from "node:path";
 var NEVER_A_GATE = /^test:(watch|ui|dev|debug|e2e|browser|visual)(?:[:-]|$)/;
 function testScripts(scripts) {
   const names = Object.keys(scripts).filter((n) => n.startsWith("test:"));
@@ -6108,14 +10197,14 @@ var TEST_FILE = /\.(test|spec)\.[cm]?[jt]sx?$/;
 function hasTestFiles(dir, depth = 0) {
   let names;
   try {
-    names = readdirSync4(dir);
+    names = readdirSync9(dir);
   } catch {
     return false;
   }
   for (const name of names) {
     if (name.startsWith(".") || SKIP_DIRS.has(name))
       continue;
-    const path = join19(dir, name);
+    const path = join27(dir, name);
     let isDir = false;
     try {
       isDir = statSync5(path).isDirectory();
@@ -6164,13 +10253,13 @@ function packageManager(dir, pkg) {
   const declared = typeof pkg.packageManager === "string" ? pkg.packageManager.split("@")[0] : "";
   if (declared && MANAGERS.includes(declared))
     return { manager: declared, sure: true };
-  const present = LOCKFILES.filter(([, files]) => files.some((f) => exists(join20(dir, f)))).map(([manager]) => manager);
+  const present = LOCKFILES.filter(([, files]) => files.some((f) => exists(join28(dir, f)))).map(([manager]) => manager);
   return { manager: present[0] ?? "npm", sure: present.length <= 1 };
 }
 var nodeDetector = {
   stack: "node",
   detect(dir) {
-    const pkg = readJson(join20(dir, "package.json"));
+    const pkg = readJson(join28(dir, "package.json"));
     if (!pkg)
       return null;
     const { manager, sure } = packageManager(dir, pkg);
@@ -6192,15 +10281,15 @@ var nodeDetector = {
     if (!gates.test) {
       if (convention.rest.length)
         gates.test = convention.rest.map((n) => `${manager} run ${n}`).join(" && ");
-      else if (manager === "bun" && (exists(join20(dir, "bunfig.toml")) || hasTestFiles(dir)))
+      else if (manager === "bun" && (exists(join28(dir, "bunfig.toml")) || hasTestFiles(dir)))
         gates.test = "bun test";
     }
-    if (!gates.typecheck && exists(join20(dir, "tsconfig.json"))) {
+    if (!gates.typecheck && exists(join28(dir, "tsconfig.json"))) {
       gates.typecheck = TSC_BY_MANAGER[manager];
     }
     const proposedGates = [];
     if (!gates.e2e) {
-      const runner = E2E_BY_CONFIG.find(([config]) => CONFIG_EXTENSIONS.some((ext) => exists(join20(dir, `${config}.${ext}`))));
+      const runner = E2E_BY_CONFIG.find(([config]) => CONFIG_EXTENSIONS.some((ext) => exists(join28(dir, `${config}.${ext}`))));
       if (runner) {
         gates.e2e = runner[1];
         proposedGates.push("e2e");
@@ -6222,15 +10311,15 @@ var nodeDetector = {
 };
 
 // packages/engine/src/detect/php.ts
-import { join as join21 } from "node:path";
+import { join as join29 } from "node:path";
 var phpDetector = {
   stack: "php",
   detect(dir) {
-    const composer = readJson(join21(dir, "composer.json"));
+    const composer = readJson(join29(dir, "composer.json"));
     if (!composer)
       return null;
     const scripts = composer.scripts ?? {};
-    const installed = (tool) => exists(join21(dir, "vendor", "bin", tool));
+    const installed = (tool) => exists(join29(dir, "vendor", "bin", tool));
     const run = (name) => `composer run ${name}`;
     const convention = testScripts(scripts);
     const gates = {};
@@ -6261,7 +10350,7 @@ var phpDetector = {
 };
 
 // packages/engine/src/detect/python.ts
-import { join as join22 } from "node:path";
+import { join as join30 } from "node:path";
 var PREFIX = {
   uv: "uv run ",
   poetry: "poetry run ",
@@ -6270,17 +10359,17 @@ var PREFIX = {
 var pythonDetector = {
   stack: "python",
   detect(dir) {
-    const pyproject = readTextQuietly(join22(dir, "pyproject.toml"));
-    if (pyproject === null && !exists(join22(dir, "requirements.txt")))
+    const pyproject = readTextQuietly(join30(dir, "pyproject.toml"));
+    if (pyproject === null && !exists(join30(dir, "requirements.txt")))
       return null;
-    const manager = exists(join22(dir, "uv.lock")) ? "uv" : exists(join22(dir, "poetry.lock")) ? "poetry" : "pip";
+    const manager = exists(join30(dir, "uv.lock")) ? "uv" : exists(join30(dir, "poetry.lock")) ? "poetry" : "pip";
     const prefix = PREFIX[manager] ?? "";
     const text = pyproject ?? "";
     const gates = {};
-    const hasPytest = /\[tool\.pytest/.test(text) || exists(join22(dir, "pytest.ini")) || exists(join22(dir, "conftest.py")) || exists(join22(dir, "tests"));
+    const hasPytest = /\[tool\.pytest/.test(text) || exists(join30(dir, "pytest.ini")) || exists(join30(dir, "conftest.py")) || exists(join30(dir, "tests"));
     if (hasPytest)
       gates.test = `${prefix}pytest`;
-    if (/\[tool\.ruff/.test(text) || exists(join22(dir, "ruff.toml"))) {
+    if (/\[tool\.ruff/.test(text) || exists(join30(dir, "ruff.toml"))) {
       gates.lint = `${prefix}ruff check .`;
     }
     if (/\[tool\.mypy/.test(text))
@@ -6317,14 +10406,14 @@ function* folders(root, depth = 0) {
     return;
   let names;
   try {
-    names = readdirSync5(root).sort();
+    names = readdirSync10(root).sort();
   } catch {
     return;
   }
   for (const name of names) {
     if (name.startsWith(".") || SKIP_DIRS.has(name))
       continue;
-    const path = join23(root, name);
+    const path = join31(root, name);
     try {
       if (!statSync6(path).isDirectory())
         continue;
@@ -6338,7 +10427,7 @@ function dataDetector(rule) {
   return {
     stack: rule.stack,
     detect(dir) {
-      const present = (marker) => braceExpand(marker).some((name) => existsSync9(join23(dir, name)));
+      const present = (marker) => braceExpand(marker).some((name) => existsSync15(join31(dir, name)));
       if (!rule.markers.every(present))
         return null;
       return {
@@ -6353,7 +10442,7 @@ function dataDetector(rule) {
 }
 function applyRules(root, dirs, targets, rules) {
   for (const dir of dirs) {
-    const rel = relative6(root, dir).replace(/\\/g, "/") || ".";
+    const rel = relative5(root, dir).replace(/\\/g, "/") || ".";
     for (const { pack, rule } of rules) {
       const found = dataDetector(rule).detect(dir);
       if (!found)
@@ -6399,7 +10488,7 @@ function detectTargets(root, rules = []) {
         const guessed = found.proposed || (found.proposedGates ?? []).includes(gate);
         gates[gate] = { command, source: guessed ? "proposed" : "detected" };
       }
-      const rel = relative6(root, dir).replace(/\\/g, "/");
+      const rel = relative5(root, dir).replace(/\\/g, "/");
       const target = {
         path: rel === "" ? "." : rel,
         stack: found.stack,
@@ -6483,7 +10572,7 @@ function detectBrowser(env, candidates) {
   if (!onPath("chrome-devtools", env))
     return null;
   const named = env.WIZARDINGCODE_CREW_BROWSER?.trim();
-  const chrome = named ? existsSync9(named) ? named : null : findBrowser(env, candidates);
+  const chrome = named ? existsSync15(named) ? named : null : findBrowser(env, candidates);
   return chrome ? { devtools: { command: "chrome-devtools", source: "proposed" } } : null;
 }
 function commandText(command) {
@@ -6530,9 +10619,1603 @@ function missingTestCommands(profile) {
   return paths.filter((p) => !covered.has(p)).map((target) => ({ target, gate: "test" }));
 }
 
+// packages/engine/src/packs.ts
+import { existsSync as existsSync16, readdirSync as readdirSync11, readFileSync as readFileSync8, realpathSync as realpathSync3, rmSync as rmSync5 } from "node:fs";
+import { homedir as homedir2 } from "node:os";
+import { basename as basename8, isAbsolute as isAbsolute4, join as join32, sep as sep4 } from "node:path";
+
+// packages/engine/src/version.ts
+var VERSION = "0.19.0";
+
+// packages/engine/src/packs.ts
+var PACK_NAME = /^wizardingcode-pack-[a-z0-9][a-z0-9-]*$/;
+var SEMVER = /^\d+\.\d+\.\d+$/;
+var CORE_RANGE = /^>=(\d+)\.(\d+)\.(\d+)$/;
+var PACK_KINDS = ["stack", "domain", "team"];
+var TEMPLATE_KEYS = new Set(["template", "teams"]);
+var PROVENANCE_KEYS = ["source", "licence", "commit", "measuredBy"];
+function stateText(state) {
+  switch (state.kind) {
+    case "ok":
+      return "ok";
+    case "missing":
+      return "missing";
+    case "unreadable":
+      return `unreadable (${state.reason})`;
+    case "changed":
+      return `changed since registration (${state.files.join(", ")})`;
+  }
+}
+var isRecord3 = (v) => typeof v === "object" && v !== null && !Array.isArray(v);
+var isStringList = (v) => Array.isArray(v) && v.every((s) => typeof s === "string");
+var climbs = (p) => isAbsolute4(p) || p.split(/[\\/]/).some((segment) => segment === "..");
+function readManifest(root) {
+  let text;
+  try {
+    text = readText(join32(root, "pack.json"));
+  } catch (error) {
+    return { refused: `pack.json cannot be read: ${errorText(error)}` };
+  }
+  if (text === null)
+    return { refused: "pack.json names nothing: the file is missing" };
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch (error) {
+    return { refused: `pack.json: not JSON (${errorText(error)})` };
+  }
+  if (!isRecord3(data))
+    return { refused: "pack.json: not an object" };
+  const m = data;
+  const bad = (what) => ({ refused: `pack.json: ${what}` });
+  if (typeof m.name !== "string" || !PACK_NAME.test(m.name))
+    return bad("name is not wizardingcode-pack-<name> (lowercase letters, digits and dashes)");
+  if (typeof m.version !== "string" || !SEMVER.test(m.version))
+    return bad("version is not X.Y.Z");
+  if (!PACK_KINDS.includes(m.kind))
+    return bad("kind is not stack, domain or team");
+  if (typeof m.core !== "string" || !CORE_RANGE.test(m.core))
+    return bad("core is not of the form >=X.Y.Z");
+  if (!isRecord3(m.verifiedAgainst) || !Object.keys(m.verifiedAgainst).length || !Object.values(m.verifiedAgainst).every((v) => typeof v === "string"))
+    return bad("verifiedAgainst needs at least one technology with its version");
+  if (!Array.isArray(m.detectors))
+    return bad("detectors is not a list of rules");
+  const detectors = [];
+  for (const raw of m.detectors) {
+    if (!isRecord3(raw))
+      return bad("detectors is not a list of rules");
+    const stack = typeof raw.stack === "string" ? raw.stack : "?";
+    const rule = (what) => bad(`detector ${stack}: ${what}`);
+    if (typeof raw.stack !== "string" || !LOWERCASE_WORD.test(raw.stack))
+      return rule("stack is not a lowercase word");
+    if (raw.extends !== undefined && !CORE_STACKS.includes(raw.extends))
+      return rule(`extends ${String(raw.extends)} is not a core stack (${CORE_STACKS.join(", ")})`);
+    if (!isStringList(raw.markers) || !raw.markers.length)
+      return rule("markers is empty");
+    for (const marker of raw.markers) {
+      const names = braceExpand(marker);
+      if (names.length >= MAX_BRACE_WORDS)
+        return bad(`markers holds a brace expansion past the cap of ${MAX_BRACE_WORDS} words (${marker})`);
+      if (names.some((name) => name.includes("{")))
+        return bad(`markers holds a brace left unexpanded (${marker})`);
+      for (const name of names)
+        if (climbs(name))
+          return bad(`markers holds a path that is absolute or climbs (${name})`);
+    }
+    if (typeof raw.packageManager !== "string")
+      return rule("packageManager is not a string");
+    if (!raw.packageManager && raw.extends === undefined)
+      return rule("packageManager is empty on a rule without extends");
+    if (!isRecord3(raw.gates))
+      return rule("gates is not an object of gate name to command");
+    const gates = {};
+    for (const [gate, command] of Object.entries(raw.gates)) {
+      if (!GATE_NAMES.includes(gate))
+        return rule(`${gate} is not a gate name`);
+      if (typeof command !== "string" || !command.trim())
+        return rule(`the ${gate} gate has no command`);
+      gates[gate] = command;
+    }
+    if (raw.testScoped !== undefined && (typeof raw.testScoped !== "string" || !raw.testScoped.includes("{files}")))
+      return rule("testScoped has no {files}");
+    detectors.push({
+      stack: raw.stack,
+      ...raw.extends !== undefined ? { extends: raw.extends } : {},
+      markers: raw.markers,
+      packageManager: raw.packageManager,
+      gates,
+      ...typeof raw.testScoped === "string" ? { testScoped: raw.testScoped } : {}
+    });
+  }
+  if (!isStringList(m.checklists))
+    return bad("checklists is not a list of checklists/<name>.md paths");
+  for (const p of m.checklists)
+    if (climbs(p))
+      return bad(`checklists holds a path that is absolute or climbs (${p})`);
+  if (!m.checklists.every((p) => /^checklists\/[a-z0-9-]+\.md$/.test(p)))
+    return bad("checklists is not a list of checklists/<name>.md paths");
+  if (!isRecord3(m.knowledge) || !Object.values(m.knowledge).every((v) => typeof v === "string"))
+    return bad("knowledge is not an object of lowercase keys to knowledge/<name>.md paths");
+  for (const v of Object.values(m.knowledge))
+    if (climbs(v))
+      return bad(`knowledge holds a path that is absolute or climbs (${v})`);
+  if (!Object.entries(m.knowledge).every(([k, v]) => LOWERCASE_WORD.test(k) && /^knowledge\/[a-z0-9-]+\.md$/.test(v)))
+    return bad("knowledge is not an object of lowercase keys to knowledge/<name>.md paths");
+  let team = null;
+  if (m.team !== null) {
+    if (!isRecord3(m.team))
+      return bad("team is not null or a template");
+    const t = m.team;
+    if (typeof t.template !== "string" || !LOWERCASE_WORD.test(t.template))
+      return bad("template: template is not a lowercase word");
+    for (const key of Object.keys(t))
+      if (!TEMPLATE_KEYS.has(key))
+        return bad(`template: a template sets no cap, removes no team and seats nothing always (${key})`);
+    if (!isRecord3(t.teams))
+      return bad("template: teams is not an object");
+    const teams = {};
+    for (const [name, def] of Object.entries(t.teams)) {
+      const core = TEAMS[name];
+      if (!core)
+        return bad(`template: ${name} is not a team of the registry`);
+      if (core.mandatory.kind !== "paths")
+        return bad(`template: ${name} takes no globs (its rule is ${core.mandatory.kind})`);
+      const mandatory = isRecord3(def) && isRecord3(def.mandatory) ? def.mandatory : null;
+      if (mandatory?.kind !== "paths" || !isStringList(mandatory.globs))
+        return bad(`template: ${name}: mandatory is not { kind: "paths", globs }`);
+      if (!mandatory.globs.length)
+        return bad(`template: ${name}: globs is empty`);
+      for (const g of mandatory.globs)
+        if (climbs(g))
+          return bad(`globs holds a path that is absolute or climbs (${g})`);
+      teams[name] = { mandatory: { kind: "paths", globs: mandatory.globs } };
+    }
+    team = { template: t.template, teams };
+  }
+  if (!isStringList(m.evals))
+    return bad("evals is not a list of case names");
+  if (!Array.isArray(m.provenance))
+    return bad("provenance is not a list of { source, licence, commit, measuredBy }");
+  const provenance = [];
+  for (const p of m.provenance) {
+    if (!isRecord3(p) || !PROVENANCE_KEYS.every((k) => (k in p)) || typeof p.source !== "string" || typeof p.licence !== "string" || p.commit !== null && typeof p.commit !== "string" || typeof p.measuredBy !== "string")
+      return bad("provenance is not a list of { source, licence, commit, measuredBy }");
+    if (!/^https?:\/\//.test(p.source))
+      return bad(`provenance: source ${p.source} is not an http(s) URL`);
+    provenance.push({
+      source: p.source,
+      licence: p.licence,
+      commit: p.commit,
+      measuredBy: p.measuredBy
+    });
+  }
+  return {
+    manifest: {
+      name: m.name,
+      version: m.version,
+      kind: m.kind,
+      core: m.core,
+      verifiedAgainst: m.verifiedAgainst,
+      detectors,
+      checklists: m.checklists,
+      knowledge: m.knowledge,
+      team,
+      evals: m.evals,
+      provenance
+    }
+  };
+}
+function coreSatisfied(range, version) {
+  const want = CORE_RANGE.exec(range)?.slice(1).map(Number) ?? [0, 0, 0];
+  const have = version.split(".").map(Number);
+  for (let i = 0;i < 3; i++) {
+    if ((have[i] ?? 0) > (want[i] ?? 0))
+      return true;
+    if ((have[i] ?? 0) < (want[i] ?? 0))
+      return false;
+  }
+  return true;
+}
+function namedFiles(manifest) {
+  return ["pack.json", ...manifest.checklists, ...Object.values(manifest.knowledge)];
+}
+function readNamed(root, rel) {
+  try {
+    return { text: readFileSync8(join32(root, rel), "utf8") };
+  } catch (error) {
+    return { refused: `${rel} cannot be read (${errorText(error)})` };
+  }
+}
+function checkPack(root, manifest, engineVersion = VERSION) {
+  if (!coreSatisfied(manifest.core, engineVersion))
+    return `core ${manifest.core} needs an engine at or above ${manifest.core.slice(2)}; this is ${engineVersion}`;
+  let real;
+  try {
+    real = realpathSync3(root);
+  } catch (error) {
+    return `the pack's root cannot be read (${errorText(error)})`;
+  }
+  for (const rel of namedFiles(manifest)) {
+    let resolved;
+    try {
+      resolved = realpathSync3(join32(root, rel));
+    } catch {
+      return `pack.json names ${rel}, which is missing`;
+    }
+    if (resolved !== real && !resolved.startsWith(real + sep4))
+      return `pack.json names ${rel}, which is outside the pack's root`;
+  }
+  const scanned = [
+    ...namedFiles(manifest),
+    ...existsSync16(join32(root, "README.md")) ? ["README.md"] : []
+  ];
+  for (const rel of scanned) {
+    const read = readNamed(root, rel);
+    if ("refused" in read)
+      return read.refused;
+    const finding = scanText(read.text, rel)[0];
+    if (finding)
+      return `${rel} holds a secret (${finding.rule}) at line ${finding.line}`;
+  }
+  for (const rule of manifest.detectors)
+    if (CORE_STACKS.includes(rule.stack))
+      return `detector ${rule.stack}: a core stack is not a pack's`;
+  for (const p of manifest.provenance)
+    if (!manifest.evals.includes(p.measuredBy))
+      return `folded in without proof: ${p.source} names no case of this pack`;
+  return null;
+}
+function hashes(root, manifest) {
+  const out = {};
+  for (const rel of namedFiles(manifest))
+    out[rel] = `sha256:${sha256(readFileSync8(join32(root, rel)))}`;
+  return out;
+}
+function registerPack(userDir, root, by, key = null) {
+  const read = readManifest(root);
+  if ("refused" in read)
+    return read;
+  const refused = checkPack(root, read.manifest);
+  if (refused)
+    return { refused };
+  const manifest = read.manifest;
+  let real;
+  try {
+    real = realpathSync3(root);
+  } catch (error) {
+    return { refused: `${root} cannot be resolved: ${errorText(error)}` };
+  }
+  const dir = packsDir(userDir);
+  ensureDir(dir);
+  return withLock(dir, () => {
+    const earlier = readJson(packPath(userDir, manifest.name));
+    const latest = readdirSync11(dir).filter((n) => n.endsWith(".json")).map((n) => readJson(join32(dir, n))?.registeredAt ?? "").sort().at(-1);
+    const now = nowIso();
+    const registeredAt = earlier?.registeredAt ?? (latest && latest >= now ? new Date(Date.parse(latest) + 1).toISOString() : now);
+    const registration = {
+      name: manifest.name,
+      version: manifest.version,
+      root: real,
+      registeredAt,
+      by,
+      key,
+      files: hashes(root, manifest),
+      manifest
+    };
+    writeJson(packPath(userDir, manifest.name), registration);
+    return registration;
+  });
+}
+function removePack(userDir, name) {
+  if (!PACK_NAME.test(name))
+    return { refused: `${name} is not a pack name (wizardingcode-pack-<name>)` };
+  const dir = packsDir(userDir);
+  ensureDir(dir);
+  return withLock(dir, () => {
+    const file = packPath(userDir, name);
+    if (!existsSync16(file))
+      return { refused: `no pack ${name} is registered (crew pack list)` };
+    rmSync5(file);
+    return { removed: true };
+  });
+}
+function stateOf(registration, quick) {
+  try {
+    if (!existsSync16(registration.root) || !existsSync16(join32(registration.root, "pack.json")))
+      return { kind: "missing" };
+    const read = readManifest(registration.root);
+    if ("refused" in read)
+      return { kind: "unreadable", reason: read.refused };
+    if (quick)
+      return { kind: "ok" };
+    const refused = checkPack(registration.root, read.manifest);
+    if (refused)
+      return { kind: "unreadable", reason: refused };
+    const changed = [];
+    for (const [rel, hash] of Object.entries(registration.files)) {
+      const path = join32(registration.root, rel);
+      if (!existsSync16(path) || `sha256:${sha256(readFileSync8(path))}` !== hash)
+        changed.push(rel);
+    }
+    if (changed.length)
+      return { kind: "changed", files: changed };
+    return { kind: "ok" };
+  } catch (error) {
+    return { kind: "unreadable", reason: errorText(error) };
+  }
+}
+function listPacks(userDir, options = {}) {
+  const dir = packsDir(userDir);
+  let names;
+  try {
+    names = readdirSync11(dir).filter((n) => n.endsWith(".json"));
+  } catch {
+    return [];
+  }
+  const listed = [];
+  for (const file of names) {
+    const name = basename8(file, ".json");
+    const text = readTextQuietly(join32(dir, file)) ?? "";
+    let registration = null;
+    let reason = "";
+    try {
+      const data = JSON.parse(text);
+      if (isRecord3(data) && typeof data.name === "string" && typeof data.root === "string" && isRecord3(data.manifest) && isRecord3(data.files))
+        registration = data;
+      else
+        reason = "registration of another shape";
+    } catch (error) {
+      reason = errorText(error);
+    }
+    listed.push({
+      name: registration?.name ?? name,
+      registration,
+      state: registration ? stateOf(registration, options.quick ?? false) : { kind: "unreadable", reason }
+    });
+  }
+  const key = (p) => p.registration?.registeredAt ?? "~";
+  return listed.sort((a, b) => {
+    const [x, y] = [key(a), key(b)];
+    if (x !== y)
+      return x < y ? -1 : 1;
+    return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+  });
+}
+function okPacks(userDir) {
+  return listPacks(userDir).filter((p) => p.state.kind === "ok" && p.registration !== null).map((p) => p.registration);
+}
+function packFiles(userDir, kind, key) {
+  const paths = [];
+  for (const pack of okPacks(userDir)) {
+    if (kind === "checklists") {
+      for (const rel of pack.manifest.checklists)
+        if (basename8(rel, ".md") === key)
+          paths.push(join32(pack.root, rel));
+    } else {
+      const rel = pack.manifest.knowledge[key];
+      if (rel)
+        paths.push(join32(pack.root, rel));
+    }
+  }
+  return paths;
+}
+function packRules(userDir) {
+  return okPacks(userDir).flatMap((p) => p.manifest.detectors.map((rule) => ({ pack: p.name, rule })));
+}
+function packTemplates(userDir) {
+  return okPacks(userDir).flatMap((p) => p.manifest.team ? [{ pack: p.name, template: p.manifest.team }] : []);
+}
+function packNamed(packs, name) {
+  return packs.find((p) => p.name === name || p.name === `wizardingcode-pack-${name}`);
+}
+function knowledgeFilesFor(userDir, profile, changed, policy) {
+  const packs = okPacks(userDir);
+  const holds = (targetPath, file) => targetPath === "." || file.startsWith(`${targetPath}/`);
+  const targets = changed.length ? profile.targets.filter((t) => changed.some((f) => holds(t.path, f))) : profile.targets;
+  const keys = [...new Set(targets.flatMap((t) => [t.stack, ...t.tags ?? []]))];
+  const paths = [];
+  const labels = [];
+  const served = new Set;
+  const add = (pack, rel) => {
+    const path = join32(pack.root, rel);
+    if (!paths.includes(path)) {
+      paths.push(path);
+      labels.push(`${pack.name}:${rel}`);
+    }
+    served.add(pack.name);
+  };
+  for (const pack of packs)
+    for (const key of keys) {
+      const rel = pack.manifest.knowledge[key];
+      if (rel)
+        add(pack, rel);
+    }
+  const skipped = [];
+  for (const entry of policy.team.specialists) {
+    const match = /^([a-z0-9-]+):([a-z0-9-]+)$/.exec(entry);
+    if (!match) {
+      skipped.push(`${entry}: not of the form <pack>:<key>`);
+      continue;
+    }
+    const [, name, key] = match;
+    const pack = packNamed(packs, name);
+    if (!pack) {
+      skipped.push(`${entry}: no pack ${name} is registered`);
+      continue;
+    }
+    const rel = pack.manifest.knowledge[key];
+    if (!rel) {
+      skipped.push(`${entry}: ${pack.name} has no knowledge file ${key}`);
+      continue;
+    }
+    add(pack, rel);
+  }
+  return {
+    paths,
+    labels,
+    packs: packs.filter((p) => served.has(p.name)).map((p) => p.name),
+    skipped
+  };
+}
+function coreChecklistKinds(pluginRoot) {
+  try {
+    return readdirSync11(join32(pluginRoot, "skills", "crew", "checklists")).filter((f) => f.endsWith(".md")).map((f) => f.slice(0, -3)).sort();
+  } catch {
+    return [];
+  }
+}
+function coreChecklist(pluginRoot, kind) {
+  const name = coreChecklistKinds(pluginRoot).find((k) => k === kind);
+  return name === undefined ? null : join32(pluginRoot, "skills", "crew", "checklists", `${name}.md`);
+}
+var CHECKLIST_REASON_MAX = 500;
+function recordChecklist(work, record) {
+  const list = work.checklists ?? [];
+  const at = list.findIndex((r) => r.kind === record.kind);
+  if (at === -1)
+    list.push(record);
+  else
+    list[at] = record;
+  work.checklists = list;
+}
+function recordPacks(work, labels) {
+  const packs = [...new Set([...work.packs ?? [], ...labels])];
+  if (packs.length)
+    work.packs = packs;
+}
+function recordPackUse(work, use) {
+  const { userDir, profile, changed, policy, registry } = use;
+  const served = knowledgeFilesFor(userDir, profile, changed, policy);
+  const seated = (work.seats ?? []).flatMap((s) => {
+    const rule = s.team ? registry[s.team].mandatory : null;
+    return s.role === "expert" && rule?.kind === "paths" && rule.pack ? [rule.pack] : [];
+  });
+  work.knowledgeFiles = served.paths;
+  work.knowledgeLabels = served.labels;
+  const names = [...served.packs, ...seated];
+  if (names.length) {
+    const listing = listPacks(userDir, { quick: true });
+    recordPacks(work, names.map((name) => packLabel(listing, name)));
+  }
+  return served;
+}
+function packLabel(listed, name) {
+  const pack = listed.find((p) => p.name === name)?.registration;
+  return pack ? `${pack.name} ${pack.version}` : name;
+}
+function pluginRegistryPath(env) {
+  const configDir = env.CLAUDE_CONFIG_DIR ?? join32(env.HOME ?? homedir2(), ".claude");
+  return join32(configDir, "plugins", "installed_plugins.json");
+}
+function discoverPacks(userDir, env) {
+  if (!env.CLAUDE_PLUGIN_ROOT)
+    return [];
+  const text = readTextQuietly(pluginRegistryPath(env));
+  if (text === null)
+    return [];
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    return [];
+  }
+  if (!isRecord3(data) || !isRecord3(data.plugins))
+    return [];
+  const plugins = data.plugins;
+  const lines = [];
+  const registered = listPacks(userDir, { quick: true });
+  const seenKeys = new Set;
+  const touched = new Set;
+  for (const [key, raw] of Object.entries(plugins)) {
+    const keyName = key.split("@")[0] ?? key;
+    if (!keyName.startsWith("wizardingcode-pack-"))
+      continue;
+    seenKeys.add(key);
+    const entries = (Array.isArray(raw) ? raw : [raw]).filter(isRecord3);
+    const root = entries.map((e) => typeof e.installPath === "string" ? e.installPath : null).find((p) => p !== null && existsSync16(join32(p, "pack.json")));
+    if (!root)
+      continue;
+    const read = readManifest(root);
+    if ("refused" in read) {
+      lines.push(`${key}: ${read.refused}`);
+      continue;
+    }
+    if (read.manifest.name !== keyName) {
+      lines.push(`${key}: pack.json names ${read.manifest.name}, not ${keyName}`);
+      continue;
+    }
+    const current = registered.find((p) => p.name === read.manifest.name)?.registration;
+    if (current?.by === "command") {
+      lines.push(`${read.manifest.name}: registered by hand, left as it is`);
+      continue;
+    }
+    let realRoot;
+    try {
+      realRoot = realpathSync3(root);
+    } catch (error) {
+      lines.push(`${key}: the pack's root cannot be read (${errorText(error)})`);
+      continue;
+    }
+    if (current && current.root === realRoot && current.version === read.manifest.version && current.key === key)
+      continue;
+    const out = registerPack(userDir, root, "discovery", key);
+    if ("refused" in out)
+      lines.push(`${key}: ${out.refused}`);
+    else {
+      touched.add(out.name);
+      lines.push(`${out.name} ${out.version} registered (${key})`);
+    }
+  }
+  for (const p of registered) {
+    const r = p.registration;
+    if (r?.by === "discovery" && r.key && !seenKeys.has(r.key) && !touched.has(r.name)) {
+      const gone = removePack(userDir, r.name);
+      lines.push("refused" in gone ? `${r.name}: ${gone.refused}` : `${r.name} removed: ${r.key} is no longer installed`);
+    }
+  }
+  return lines;
+}
+
+// packages/engine/src/profile.ts
+function profilePath(paths) {
+  return join33(paths.crewDir, "profile.json");
+}
+function loadProfile(paths) {
+  const read = readProtectedJson(paths, profilePath(paths));
+  if (read.data?.browser && !isBrowserBlock(read.data.browser))
+    delete read.data.browser;
+  return { profile: read.data, tampered: read.tampered };
+}
+function isBrowserBlock(value) {
+  const devtools = value?.devtools;
+  if (!devtools || typeof devtools !== "object")
+    return false;
+  const { command, source } = devtools;
+  return typeof command === "string" && command.trim() !== "" && (source === "detected" || source === "proposed" || source === "confirmed");
+}
+function saveProfile(paths, profile) {
+  writeProtectedJson(paths, profilePath(paths), profile);
+}
+function refreshProfile(paths, current, tampered = false) {
+  if (tampered)
+    return { profile: current, changed: [] };
+  const next = detectProfile(paths.root, current, packRules(paths.userDir));
+  const changed = profileChanges(current, next);
+  if (changed.length === 0)
+    return { profile: current, changed };
+  saveProfile(paths, next);
+  return { profile: next, changed };
+}
+function ensureProfile(paths) {
+  const existing = loadProfile(paths);
+  if (existing.profile)
+    return { profile: existing.profile, tampered: existing.tampered };
+  const profile = detectProfile(paths.root, null, packRules(paths.userDir));
+  if (existing.tampered)
+    return { profile, tampered: true };
+  saveProfile(paths, profile);
+  return { profile, tampered: false };
+}
+
+// packages/engine/src/open.ts
+var OPENER_STRIPS = [
+  "CLAUDECODE",
+  "CLAUDE_CODE_ENTRYPOINT",
+  "CLAUDE_CODE_CHILD_SESSION",
+  "CLAUDE_CODE_SESSION_ID",
+  "CLAUDE_CODE_SESSION_ATTENDED",
+  "CLAUDE_CODE_MESSAGING_SOCKET",
+  "CLAUDE_CODE_MESSAGING_TOKEN"
+];
+var READ_ONLY_FLAGS = [
+  "--allowedTools",
+  "Read",
+  "Glob",
+  "Grep",
+  "Bash(crew *)",
+  "--disallowedTools",
+  "Write",
+  "Edit",
+  "MultiEdit",
+  "NotebookEdit"
+];
+var BRANCH_FLAGS = [
+  "--allowedTools",
+  "Read",
+  "Glob",
+  "Grep",
+  "Write",
+  "Edit",
+  "MultiEdit",
+  "NotebookEdit",
+  "Skill",
+  "Agent",
+  "Bash(crew *)",
+  "Bash(git *)"
+];
+function commandGrants(profile) {
+  const words = [];
+  for (const target of profile?.targets ?? [])
+    for (const gate of Object.values(target.gates)) {
+      const word = gate?.command.trim().split(/\s+/).find((w) => !w.includes("="));
+      if (word && !words.includes(word))
+        words.push(word);
+    }
+  return words.map((w) => `Bash(${w} *)`);
+}
+function claudeBinary(env) {
+  return env.WIZARDINGCODE_CREW_CLAUDE?.trim() || "claude";
+}
+function pluginDirOf(env) {
+  return env.WIZARDINGCODE_CREW_PLUGIN_DIR?.trim() || null;
+}
+function openerArgs(request, options) {
+  const args = [
+    "--name",
+    `crew-${request.message.id}`,
+    "-p",
+    request.prompt,
+    "--permission-mode",
+    "dontAsk",
+    "--max-turns",
+    String(request.maxTurns),
+    "--output-format",
+    "json"
+  ];
+  if (options.pluginDir)
+    args.push("--plugin-dir", options.pluginDir);
+  if (request.mode === "read-only")
+    args.push(...READ_ONLY_FLAGS);
+  else
+    args.push(...BRANCH_FLAGS, ...commandGrants(options.profile));
+  return args;
+}
+function sessionLog(ctx, id) {
+  return join34(mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project).dir, "opened", `${id}.log`);
+}
+function openSession(ctx, request, notes = []) {
+  const env = { ...ctx.env };
+  for (const key of OPENER_STRIPS)
+    delete env[key];
+  env.WIZARDINGCODE_CREW_MAIL_ID = request.message.id;
+  env.WIZARDINGCODE_CREW_MAIL_AGENT = request.agent;
+  env.WIZARDINGCODE_CREW_MAIL_HOPS = String(request.hops);
+  env.WIZARDINGCODE_CREW_MAIL_MODE = request.mode;
+  if (request.branch)
+    env.WIZARDINGCODE_CREW_MAIL_BRANCH = request.branch;
+  else
+    delete env.WIZARDINGCODE_CREW_MAIL_BRANCH;
+  const paths = request.mode === "branch" ? resolvePaths(request.cwd, ctx.env) : null;
+  if (request.mode === "branch") {
+    if (!paths)
+      return { failed: `${request.cwd} is not a checkout the engine can read` };
+    try {
+      writeOpenedMarker(paths, {
+        mail: request.message.id,
+        agent: request.agent,
+        hops: request.hops
+      });
+    } catch (error) {
+      return {
+        failed: `could not record the opener of ${request.cwd}: ${error.message}`
+      };
+    }
+  }
+  const undone = (failed, stopped) => {
+    if (paths)
+      dropOpenedMarker(paths.userDir, paths.root);
+    return stopped ? { failed, stopped } : { failed };
+  };
+  let fd;
+  try {
+    mkdirSync6(dirname8(request.log), { recursive: true });
+    fd = openSync2(request.log, "a");
+  } catch (error) {
+    return undone(`could not open the log ${request.log}: ${error.message}`);
+  }
+  let child;
+  try {
+    const projectPaths = resolvePaths(worktreeMainRoot(request.cwd) ?? request.cwd, ctx.env);
+    const args = openerArgs(request, {
+      pluginDir: pluginDirOf(ctx.env),
+      profile: projectPaths ? loadProfile(projectPaths).profile : null
+    });
+    child = spawn2(claudeBinary(ctx.env), args, {
+      cwd: request.cwd,
+      env,
+      detached: true,
+      stdio: ["ignore", fd, fd]
+    });
+    child.on("error", () => {});
+    child.unref();
+  } catch (error) {
+    closeSync2(fd);
+    return undone(`could not start ${claudeBinary(ctx.env)}: ${error.message}`);
+  }
+  closeSync2(fd);
+  if (child.pid === undefined)
+    return undone("the session did not start (no pid)");
+  const opened = {
+    mode: request.mode,
+    cwd: request.cwd,
+    branch: request.branch,
+    pid: child.pid,
+    name: `crew-${request.message.id}`,
+    processStart: processStart(child.pid),
+    maxTurns: request.maxTurns,
+    maxMinutes: request.maxMinutes,
+    startedAt: nowIso(),
+    log: request.log
+  };
+  let cause = null;
+  try {
+    if (!recordOpened(ctx, request.message.id, opened, (what) => notes.push(`a copy of ${request.message.id} was not changed: ${what}`)))
+      cause = "a mailbox changed outside the engine";
+  } catch (error) {
+    cause = error.message;
+  }
+  if (cause) {
+    killGroup(child.pid);
+    const at = nowIso();
+    try {
+      updateEverywhere(ctx, request.message.id, (m) => ({
+        ...m,
+        reason: UNRECORDED,
+        opened: ended(opened, "stopped", at)
+      }), () => {});
+    } catch {}
+    return undone(`the session started but the outbox could not record it (${cause}), so it was stopped`, true);
+  }
+  return opened;
+}
+function ended(opened, outcome, at) {
+  return { ...opened, endedAt: at, outcome };
+}
+var UNRECORDED = "a session was started and stopped: the opener's outbox could not record it";
+var RULES2 = "Rules of a session opened by mail: you never merge, push to another branch, release or deploy; you never approve a full-route spec (crew await <id> user instead); you may send mail with crew mail send only within the hop limit; you end with the reply, nothing after it.";
+function questionPrompt(message, projectName) {
+  return [
+    `You are answering mail ${message.id} from ${message.from.project} in project ${projectName}, as its engineer, through the WizardingCode Developer Crew plugin.`,
+    `Read the message first: crew mail read ${message.id}. Read the code; change nothing. Answer the question from what the code and the documentation of this repository say, with file paths and lines where they help, and say plainly what you could not find.`,
+    `Then reply with crew mail reply ${message.id} "<your answer>" (or --file <path> for a long answer). ${RULES2}`
+  ].join(`
+
+`);
+}
+function changePrompt(message, projectName, branch) {
+  return [
+    `You are building mail ${message.id} from ${message.from.project} in project ${projectName}, on branch ${branch}, through the WizardingCode Developer Crew plugin and its crew skill.`,
+    `Read the message first: crew mail read ${message.id}. Then run the method: answer the nine typed questions and start a work item with crew start "<the request>" --answers '<json>' --origin ${message.id}; follow the route the engine gives (criteria, red, green, gates, the judgement gates); commit on this branch.`,
+    `End with crew mail reply ${message.id} --branch ${branch} --item <the work item id> "<what is proven and what is not>". ${RULES2}`
+  ].join(`
+
+`);
+}
+function taskPrompt(parent, task, message, briefText, branch) {
+  return [
+    `You are the implementer of task ${task.task} of work item ${parent.id} ("${parent.title}"), in a worktree on branch ${branch}, through the WizardingCode Developer Crew plugin and its crew skill. The lead opened this task as mail ${message.id}.`,
+    `The task: ${task.text}`,
+    `Its criteria, from the lead's item: ${task.criteria.join(", ")}. The lead's brief follows between the lines.
+---
+${briefText?.trim() ?? "(no brief)"}
+---`,
+    `Start with crew start "${task.task} of ${parent.id}: ${task.text.split(`
+`)[0]}" --answers '<json>' --origin ${message.id} and one --criterion per criterion the task covers, in the lead's words; follow the route the engine gives; commit on this branch; touch only the files the task names.`,
+    `A question to the lead: crew mail send --to . --agent session --type question "<question>" then crew await <id> mail <message id>. A question to another task: --agent T-n. A question only the user can answer: crew await <id> user.`,
+    `End with crew mail reply ${message.id} --branch ${branch} --item <your work item id> "<what is proven and what is not>". ${RULES2}`
+  ].join(`
+
+`);
+}
+function isAlive(pid) {
+  if (!pid)
+    return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+function psColumn(pid, column) {
+  try {
+    return execFileSync5("ps", ["-o", column, "-p", String(pid)], {
+      encoding: "utf8",
+      env: { ...process.env, LC_ALL: "C", TZ: "UTC" },
+      stdio: ["ignore", "pipe", "ignore"]
+    }).trim();
+  } catch {
+    return "";
+  }
+}
+function processStart(pid) {
+  return psColumn(pid, "lstart=");
+}
+function pidState(opened) {
+  if (opened.pid === null || processGone(opened.pid))
+    return "gone";
+  const start = processStart(opened.pid);
+  return !start || !opened.processStart || start === opened.processStart ? "session" : "another";
+}
+function isSession(opened) {
+  return pidState(opened) === "session";
+}
+function processGone(pid) {
+  return !isAlive(pid) || psColumn(pid, "stat=").startsWith("Z");
+}
+function readOutcome(log) {
+  const text = readText(log);
+  if (!text)
+    return { ended: false };
+  for (const line of text.trim().split(`
+`).reverse()) {
+    try {
+      const parsed = JSON.parse(line);
+      if (!("result" in parsed) && !("session_id" in parsed))
+        continue;
+      const failed = parsed.is_error === true || typeof parsed.subtype === "string" && parsed.subtype !== "success";
+      const reason = typeof parsed.subtype === "string" && parsed.subtype !== "success" ? parsed.subtype : typeof parsed.result === "string" && parsed.result.trim() ? parsed.result.trim().split(`
+`)[0] : "an error result";
+      return {
+        ended: true,
+        ...typeof parsed.num_turns === "number" ? { turns: parsed.num_turns } : {},
+        ...typeof parsed.total_cost_usd === "number" ? { costUsd: parsed.total_cost_usd } : {},
+        ...failed ? { error: reason } : {}
+      };
+    } catch {}
+  }
+  return { ended: false };
+}
+var KILL_WAIT_MS = 1000;
+var KILL_STEP_MS = 50;
+function killGroup(pid) {
+  const signal = (name) => {
+    try {
+      process.kill(-pid, name);
+    } catch {}
+  };
+  signal("SIGTERM");
+  const until = Date.now() + KILL_WAIT_MS;
+  while (!processGone(pid) && Date.now() < until)
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, KILL_STEP_MS);
+  signal("SIGKILL");
+}
+function minutesRun(opened, now = Date.now()) {
+  return (now - Date.parse(opened.startedAt)) / 60000;
+}
+function minutesText(minutes) {
+  return `${minutes} minute${minutes === 1 ? "" : "s"}`;
+}
+function unanswered2(status) {
+  return status === "sent" || status === "read";
+}
+function sweepOne(ctx, m, now, result) {
+  const opened = m.opened;
+  const at = new Date(now).toISOString();
+  const settle = (kind, end, reason, line) => {
+    const recorded = updateEverywhere(ctx, m.id, (x) => ({
+      ...x,
+      ...reason && unanswered2(mailStatus(x)) ? { status: "expired", reason } : {},
+      opened: { ...ended(opened, end.outcome, at), ...end }
+    }), (what) => result.lines.push(`the record of ${m.id} skipped a box it could not read: ${what}`));
+    if (recorded === null) {
+      result.lines.push(`the sweep could not record ${m.id}: no copy of the message was written`);
+      return;
+    }
+    if (opened.mode === "branch")
+      dropOpenedMarker(ctx.paths.userDir, opened.cwd);
+    result[kind].push(m.id);
+    result.lines.push(line);
+  };
+  const state = pidState(opened);
+  if (state === "session") {
+    if (minutesRun(opened, now) > opened.maxMinutes) {
+      killGroup(opened.pid);
+      const limit = minutesText(opened.maxMinutes);
+      settle("expired", { outcome: "expired" }, `the session ran past ${limit} (mail.maxMinutes) and was stopped`, `${m.id} ran past ${limit} and was stopped (expired)`);
+    }
+    return;
+  }
+  const outcome = readOutcome(opened.log);
+  const measured = {
+    ...outcome.turns !== undefined ? { turns: outcome.turns } : {},
+    ...outcome.costUsd !== undefined ? { costUsd: outcome.costUsd } : {}
+  };
+  if (outcome.ended && outcome.error) {
+    settle("expired", { ...measured, outcome: "failed" }, `the session ended with ${outcome.error}`, `${m.id} ended with ${outcome.error} (expired)`);
+    return;
+  }
+  if (outcome.ended) {
+    const replied = !unanswered2(mailStatus(m));
+    settle("ended", { ...measured, outcome: "ended" }, replied ? null : "the session ended without a reply", replied ? `${m.id} ended (${outcome.turns ?? "?"} turns, ${outcome.costUsd ?? "?"} USD)` : `${m.id} ended without a reply (expired)`);
+    return;
+  }
+  const remains = state === "another" ? "its pid is now another process's, and nothing of the session remains in its group" : `a member of its process group may remain (ps -g ${opened.pid})`;
+  settle("expired", { outcome: "failed" }, "the session ended without a reply", `${m.id} is gone without a reply (expired); ${remains}`);
+}
+function sweepOpened(ctx, now = Date.now()) {
+  const result = { ended: [], expired: [], lines: [] };
+  if (ctx.self.openedBy)
+    return result;
+  const { messages, tampered } = readOpenSessions(ctx);
+  if (tampered)
+    result.lines.push(tampered);
+  for (const m of messages) {
+    try {
+      sweepOne(ctx, m, now, result);
+    } catch (error) {
+      result.lines.push(`the sweep of ${m.id} failed: ${error.message.split(`
+`)[0]}`);
+    }
+  }
+  return result;
+}
+function sweepSafely(ctx, now = Date.now()) {
+  try {
+    return sweepOpened(ctx, now);
+  } catch (error) {
+    return {
+      ended: [],
+      expired: [],
+      lines: [`the sweep failed: ${error.message.split(`
+`)[0]}`]
+    };
+  }
+}
+function stopSession(ctx, id, notes) {
+  if (ctx.self.openedBy)
+    return { refused: `a session opened by mail (${ctx.self.openedBy}) stops no sessions` };
+  const { messages, tampered } = readOpenSessions(ctx);
+  if (tampered)
+    return { refused: tampered };
+  const m = messages.find((x) => x.id === id);
+  if (!m?.opened)
+    return { refused: `${id} has no session running` };
+  if (!isSession(m.opened)) {
+    const swept = { ended: [], expired: [], lines: [] };
+    try {
+      sweepOne(ctx, m, Date.now(), swept);
+    } catch (error) {
+      const failed = `the settle of ${id} failed: ${error.message.split(`
+`)[0]}`;
+      return {
+        refused: `${id} has no session running (${[...swept.lines, failed].join("; ")})`
+      };
+    }
+    return {
+      refused: `${id} has no session running: it ${readOutcome(m.opened.log).ended ? "ended" : "is gone"}${swept.lines.length ? ` (${swept.lines.join("; ")})` : ""}`
+    };
+  }
+  killGroup(m.opened.pid);
+  if (m.opened.mode === "branch")
+    dropOpenedMarker(ctx.paths.userDir, m.opened.cwd);
+  const at = nowIso();
+  return updateEverywhere(ctx, id, (x) => ({
+    ...x,
+    ...unanswered2(mailStatus(x)) ? { status: "refused", reason: "stopped by crew mail stop" } : {},
+    opened: ended(x.opened, "stopped", at)
+  }), (what) => notes.push(`a copy of ${id} was not changed: ${what}`)) ?? {
+    refused: `${id} was stopped but could not be updated: its mailbox changed while it was being written`
+  };
+}
+function openForMail(ctx, fallback, message, delivery) {
+  const dest = delivery.entry;
+  const limits = (destinationPolicy(dest, ctx.env)?.policy ?? fallback).mail;
+  let cwd = dest.root;
+  let branch = null;
+  let prompt = questionPrompt(message, dest.name);
+  if (delivery.mode === "branch") {
+    branch = `crew/mail/${message.id}`;
+    cwd = worktreePath(dest.root, limits.worktrees, `mail-${message.id}`);
+    const made = addWorktree(dest.root, branch, cwd);
+    if (made) {
+      dropBranch(dest.root, branch);
+      return `could not open a session: ${made.failed}; queued`;
+    }
+    prompt = changePrompt(message, dest.name, branch);
+  }
+  const notes = [];
+  const opened = openSession(ctx, {
+    message,
+    mode: delivery.mode,
+    cwd,
+    branch,
+    prompt,
+    maxTurns: limits.maxTurns,
+    maxMinutes: limits.maxMinutes,
+    hops: ctx.self.hops + 1,
+    agent: "session",
+    log: sessionLog(ctx, message.id)
+  }, notes);
+  const skipped = notes.length ? `; ${notes.join("; ")}` : "";
+  if ("failed" in opened) {
+    if (branch) {
+      const kept = removeWorktree(dest.root, cwd);
+      if (kept)
+        return `could not open a session: ${opened.failed}; queued; the worktree ${cwd} is kept, with its branch ${branch}: ${kept.kept.replace(/,?\s*use --force[^.]*\.?$/, "")}${skipped}`;
+      dropBranch(dest.root, branch);
+    }
+    return `could not open a session: ${opened.failed}; queued${skipped}`;
+  }
+  const bounds = `${opened.maxTurns} turns, ${minutesText(opened.maxMinutes)}`;
+  return delivery.mode === "read-only" ? `read-only session opened (${opened.name}, pid ${opened.pid}, ${bounds})${skipped}` : `session opened on branch ${branch} (${opened.name}, pid ${opened.pid}, ${bounds})${skipped}`;
+}
+
+// packages/engine/src/environment.ts
+var HEALTH_TIMEOUT_MS = 30000;
+var STOP_TIMEOUT_MS = 60000;
+var POLL_MS = 2000;
+function envRecordPath(paths) {
+  return join35(paths.localDir, "env.json");
+}
+function envLog(paths, name) {
+  return join35(paths.localDir, "env", name);
+}
+function stamp() {
+  return nowIso().replace(/[:.]/g, "-");
+}
+function readEnvRecord(paths) {
+  const raw = readJson(envRecordPath(paths));
+  if (!raw || typeof raw !== "object")
+    return null;
+  if (typeof raw.managed !== "boolean" || typeof raw.startedAt !== "string")
+    return null;
+  return {
+    pid: typeof raw.pid === "number" ? raw.pid : null,
+    processStart: typeof raw.processStart === "string" ? raw.processStart : null,
+    startedAt: raw.startedAt,
+    managed: raw.managed,
+    log: typeof raw.log === "string" ? raw.log : null,
+    command: typeof raw.command === "string" ? raw.command : ""
+  };
+}
+function removeRecord(paths) {
+  try {
+    unlinkSync4(envRecordPath(paths));
+  } catch {}
+}
+async function checkHealth(paths, environment) {
+  const result = await runCommand(environment.health.command, {
+    cwd: paths.root,
+    timeoutMs: HEALTH_TIMEOUT_MS,
+    logPath: envLog(paths, "health.txt")
+  });
+  return { up: result.exit === 0 && !result.timedOut, exit: result.exit, tail: result.tail };
+}
+function stillOurs(record) {
+  if (record.pid === null || !isAlive(record.pid))
+    return false;
+  return !!record.processStart && processStart(record.pid) === record.processStart;
+}
+async function startEnvironment(paths, environment, sleep = (ms) => new Promise((r) => setTimeout(r, ms))) {
+  const before = await checkHealth(paths, environment);
+  if (before.up) {
+    writeJson(envRecordPath(paths), {
+      pid: null,
+      processStart: null,
+      startedAt: nowIso(),
+      managed: false,
+      log: null,
+      command: environment.health.command
+    });
+    return { started: false, managed: false, pid: null, log: null };
+  }
+  const log = envLog(paths, `start-${stamp()}.txt`);
+  mkdirSync7(dirname9(log), { recursive: true });
+  const fd = openSync3(log, "a");
+  let pid;
+  try {
+    const child = spawn3(environment.start.command, {
+      cwd: paths.root,
+      shell: true,
+      detached: true,
+      stdio: ["ignore", fd, fd]
+    });
+    child.on("error", () => {});
+    child.unref();
+    pid = child.pid;
+  } finally {
+    closeSync3(fd);
+  }
+  if (pid === undefined)
+    return { refused: `the environment did not start (${environment.start.command})` };
+  const record = {
+    pid,
+    processStart: processStart(pid),
+    startedAt: nowIso(),
+    managed: true,
+    log,
+    command: environment.start.command
+  };
+  writeJson(envRecordPath(paths), record);
+  const until = Date.now() + environment.timeoutMs;
+  for (;; ) {
+    if ((await checkHealth(paths, environment)).up)
+      return { started: true, managed: true, pid, log };
+    const left = until - Date.now();
+    if (left <= 0)
+      break;
+    await sleep(Math.min(POLL_MS, left));
+  }
+  if (stillOurs(record))
+    killGroup(pid);
+  removeRecord(paths);
+  return {
+    refused: `the environment did not answer health in ${Math.round(environment.timeoutMs / 1000)} s (${environment.health.command})`
+  };
+}
+async function stopEnvironment(paths, environment) {
+  const record = readEnvRecord(paths);
+  if (!record)
+    return { refused: "nothing was started by the engine (crew env start)" };
+  if (!record.managed)
+    return {
+      refused: "the environment was up before crew env start: it is the user's, and the engine never stops it"
+    };
+  const ours = stillOurs(record);
+  if (!ours && !environment.stop) {
+    removeRecord(paths);
+    return {
+      refused: `the recorded process (pid ${record.pid}) is gone; the record was removed and nothing was signalled`
+    };
+  }
+  if (environment.stop) {
+    await runCommand(environment.stop.command, {
+      cwd: paths.root,
+      timeoutMs: STOP_TIMEOUT_MS,
+      logPath: envLog(paths, `stop-${stamp()}.txt`)
+    });
+  }
+  const signalled = ours && stillOurs(record);
+  if (signalled)
+    killGroup(record.pid);
+  removeRecord(paths);
+  return { stopped: true, pid: record.pid, signalled };
+}
+async function envStatus(paths, environment) {
+  const health = await checkHealth(paths, environment);
+  const record = readEnvRecord(paths);
+  return {
+    state: health.up ? "up" : "down",
+    managed: record ? record.managed : null,
+    pid: record?.pid ?? null,
+    since: record?.startedAt ?? null
+  };
+}
+
+// packages/engine/src/e2e.ts
+var LOGS_COMMAND_TIMEOUT_MS = 30000;
+var COMMAND_CHARS = /[\s;&|<>$`()*?[\]{}]/;
+var E2E_DIR = "review/e2e";
+var STALE = ["console.json", "console.jsonl", "logs.txt"];
+var NO_ENVIRONMENT_REASON = 'no environment in the profile (crew profile set environment.start "<cmd>")';
+var NO_E2E_REASON = 'no e2e command (crew profile set e2e "<cmd>")';
+function logsSource(root, logs) {
+  if (!logs?.trim())
+    return { kind: "none", note: null };
+  if (COMMAND_CHARS.test(logs))
+    return { kind: "command", value: logs, note: null };
+  const unread = { kind: "path", value: logs, file: null, sizeBefore: 0 };
+  const outside = `logs: ${logs} is outside the project; not read`;
+  const missing = `logs: ${logs} not found; not read`;
+  if (!insidePath(logs))
+    return { ...unread, note: outside };
+  const candidate = join36(root, logs);
+  if (!existsSync17(candidate))
+    return { ...unread, note: missing };
+  let real;
+  let rootReal;
+  try {
+    real = realpathSync4(candidate);
+    rootReal = realpathSync4(root);
+  } catch {
+    return { ...unread, note: missing };
+  }
+  const rel = relative6(rootReal, real);
+  if (rel === "" || rel.startsWith("..") || rel.startsWith(sep5) || !statSync7(real).isFile())
+    return { ...unread, note: outside };
+  return { kind: "path", value: logs, file: real, note: null, sizeBefore: statSync7(real).size };
+}
+function readSince(file, from) {
+  const size = statSync7(file).size;
+  const start = Math.min(from, size);
+  const length = size - start;
+  if (length <= 0)
+    return "";
+  const fd = openSync4(file, "r");
+  try {
+    const buffer = Buffer.alloc(length);
+    readSync2(fd, buffer, 0, length, start);
+    return buffer.toString("utf8");
+  } finally {
+    closeSync4(fd);
+  }
+}
+async function readLogs(paths, work, logs, logsFile, log) {
+  if (logs.kind === "path" && logs.file) {
+    const text = readSince(logs.file, logs.sizeBefore);
+    writeText(logsFile, text);
+    return text;
+  }
+  if (logs.kind === "command") {
+    await runCommand(logs.value, {
+      cwd: paths.root,
+      timeoutMs: LOGS_COMMAND_TIMEOUT_MS,
+      logPath: logsFile,
+      stderrLogPath: join36(workDir(paths, work.id), log.replace(/\.txt$/, "-logs-stderr.txt"))
+    });
+    return readTextQuietly(logsFile) ?? "";
+  }
+  return null;
+}
+async function runE2e(inputs) {
+  const { paths, work, profile, target, base, timeoutMs, log } = inputs;
+  const environment = profile.environment;
+  if (!environment)
+    return { ...base, reason: NO_ENVIRONMENT_REASON };
+  const command = target?.gates.e2e;
+  if (!target || !command)
+    return { ...base, reason: NO_E2E_REASON };
+  const dir = join36(workDir(paths, work.id), E2E_DIR);
+  mkdirSync8(dir, { recursive: true });
+  for (const name of STALE) {
+    try {
+      unlinkSync5(join36(dir, name));
+    } catch {}
+  }
+  const ui = join36(workDir(paths, work.id), "review", "ui");
+  mkdirSync8(ui, { recursive: true });
+  const sweep = sweepStaleFixtureFiles(ui);
+  const plan = writeUiPlan(paths, work, profile);
+  const started = await startEnvironment(paths, environment);
+  if ("refused" in started)
+    return { ...base, reason: started.refused };
+  const environmentLine = started.managed ? `environment: started by the engine (pid ${started.pid})` : "environment: the user's";
+  const logs = logsSource(paths.root, environment.logs);
+  const begun = Date.now();
+  let result;
+  let logsText = null;
+  let audit = null;
+  try {
+    result = await runCommand(command.command, {
+      cwd: join36(paths.root, target.path),
+      timeoutMs,
+      logPath: join36(workDir(paths, work.id), log),
+      env: {
+        ...process.env,
+        WIZARDINGCODE_CREW_E2E_DIR: dir,
+        WIZARDINGCODE_CREW_CONSOLE_FILE: join36(dir, "console.json"),
+        WIZARDINGCODE_CREW_UI_DIR: ui,
+        WIZARDINGCODE_CREW_UI_PLAN: plan.file
+      }
+    });
+    logsText = await readLogs(paths, work, logs, join36(dir, "logs.txt"), log);
+    const metadata = captureMetadata(paths, work.id);
+    audit = await runDevtoolsAudit({
+      paths,
+      work,
+      profile,
+      pages: auditPages(environment.url, captureUrls(metadata)),
+      env: process.env,
+      fixtureMeasuredCls: capturesMeasuredCls(metadata),
+      log,
+      e2eFailed: result.exit !== 0 || result.timedOut
+    });
+  } finally {
+    if (started.managed)
+      await stopEnvironment(paths, environment);
+  }
+  const consoleGrade = gradeConsole(dir);
+  const graded = logsText === null ? null : gradeLogs(logsText);
+  const uiGrade = gradeUi(paths, work.id, plan.plan);
+  if (audit)
+    uiGrade.manifest.audit = {
+      status: audit.status,
+      reason: audit.reason,
+      pages: audit.pages.map((p) => p.url)
+    };
+  writeUiEvidence(paths, work.id, uiGrade.manifest);
+  const consoleOffence = consoleGrade.status === "failed" ? `console ${consoleGrade.first.type} on ${consoleGrade.first.page}: ${consoleGrade.first.text}` : consoleGrade.status === "invalid" ? "console file does not parse" : null;
+  const logsOffence = graded?.status === "failed" ? `logs: ${graded.first}` : null;
+  const designGrade = gradeDesign(paths, work);
+  const offence = consoleOffence ?? logsOffence ?? uiGrade.offence ?? designGrade.offences[0] ?? audit?.offence ?? null;
+  const consoleLine = consoleOffence ?? (consoleGrade.status === "none" ? "console: not captured" : "console: clean");
+  const logsLine = logsOffence ?? (graded === null ? logs.note ?? "logs: none" : "logs: clean");
+  const passed = result.exit === 0 && !result.timedOut && offence === null;
+  const historyNote = passed && designGrade.fingerprint ? recordDesignHistory(paths, work, designGrade.fingerprint) : null;
+  return {
+    ...base,
+    command: command.command,
+    commandSource: command.source,
+    confirmed: command.source !== "proposed",
+    exit: result.exit,
+    status: passed ? "pass" : "fail",
+    durationMs: Date.now() - begun,
+    log,
+    tail: [
+      result.tail,
+      environmentLine,
+      consoleLine,
+      logsLine,
+      ...uiGrade.lines,
+      ...designGrade.lines,
+      ...designGrade.offences,
+      historyNote ?? "",
+      ...audit?.lines ?? [],
+      planLine(plan.plan) ?? "",
+      sweepLine(sweep.skipped) ?? ""
+    ].filter((l) => l !== "").join(`
+`),
+    ...result.timedOut ? { reason: "timed out" } : offence ? { reason: offence } : {},
+    artifacts: {
+      dir: E2E_DIR,
+      console: consoleGrade.file === null ? null : `${E2E_DIR}/${consoleGrade.file.endsWith(".jsonl") ? "console.jsonl" : "console.json"}`,
+      logs: logsText === null ? null : `${E2E_DIR}/logs.txt`,
+      ...uiGrade.artifacts ? { ui: { ...uiGrade.artifacts, ...audit ? { audit: audit.status } : {} } } : {}
+    }
+  };
+}
+
+// packages/engine/src/priorities.ts
+import { existsSync as existsSync18 } from "node:fs";
+import { join as join37 } from "node:path";
+function prioritiesDir(userDir, workspace) {
+  return join37(userDir, "workspaces", workspace);
+}
+function hashOf(text) {
+  return `sha256:${sha256(text)}`;
+}
+function readSignature(dir) {
+  const file = join37(dir, "priorities.json");
+  if (!existsSync18(file))
+    return;
+  const raw = readJson(file);
+  if (!raw || typeof raw.hash !== "string")
+    return null;
+  return { hash: raw.hash, by: String(raw.by ?? ""), at: String(raw.at ?? "") };
+}
+function prioritiesState(userDir, workspace) {
+  const dir = prioritiesDir(userDir, workspace);
+  const path = join37(dir, "priorities.md");
+  const text = readText(path);
+  if (text === null)
+    return { state: "none", path, text: null, signedAt: null };
+  const signature = readSignature(dir);
+  if (signature === undefined)
+    return { state: "unsigned", path, text, signedAt: null };
+  if (signature === null || signature.hash !== hashOf(text))
+    return { state: "changed", path, text, signedAt: null };
+  return { state: "signed", path, text, signedAt: signature.at };
+}
+function acceptPriorities(userDir, workspace, options) {
+  const dir = prioritiesDir(userDir, workspace);
+  const path = join37(dir, "priorities.md");
+  if (options.file !== undefined) {
+    const copied = readTextQuietly(options.file);
+    if (copied === null)
+      return { refused: `${options.file} cannot be read` };
+    if (!copied.trim())
+      return { refused: `${options.file} is empty` };
+    writeText(path, copied);
+  }
+  const text = readText(path);
+  if (text === null || !text.trim())
+    return {
+      refused: `no priorities to sign: write ${path}, or crew workspace priorities accept --file <path>`
+    };
+  const hash = hashOf(text);
+  const at = nowIso();
+  writeJson(join37(dir, "priorities.json"), { hash, by: options.by, at });
+  return { state: "signed", path, text, signedAt: at, hash };
+}
+function prioritiesLine(status) {
+  switch (status.state) {
+    case "signed":
+      return `priorities: signed (${status.signedAt})`;
+    case "changed":
+      return "priorities: changed since signing (crew workspace priorities accept)";
+    case "unsigned":
+      return "priorities: unsigned (crew workspace priorities accept)";
+    default:
+      return `priorities: none (write ${status.path}, or crew workspace priorities accept --file <path>)`;
+  }
+}
+function triageText(work, where) {
+  const t = work.triage;
+  if (!t)
+    return `priority ${work.priority ?? "normal"}`;
+  if (t.confirmed === null)
+    return `priority ${t.proposed} (proposed, unconfirmed: no signed business priorities)`;
+  if (where === "status")
+    return `priority ${work.priority ?? "normal"}`;
+  return `priority ${t.confirmed} (${triageSummary(t)})`;
+}
+var NOT_SIGNED = "the business priorities are not signed (crew workspace priorities accept [--file <path>]): the proposal stays unconfirmed";
+function triagePriority(proposed, flag, reason, state, by) {
+  const cleaned = reason?.trim() ? reason.trim().replace(/\s*\n\s*/g, " ") : null;
+  const against = state === "signed" ? "signed" : state === "none" ? "none" : "unsigned";
+  if (against !== "signed") {
+    if (flag !== undefined)
+      return { refused: NOT_SIGNED };
+    return { proposed, confirmed: null, by, reason: cleaned, against, at: nowIso() };
+  }
+  const confirmed = flag ?? proposed;
+  if (priorityRank(confirmed) < priorityRank(proposed))
+    return {
+      refused: `the source proposed ${proposed}; the lead confirms or lowers, never raises`
+    };
+  if (priorityRank(confirmed) > priorityRank(proposed) && !cleaned)
+    return { refused: 'a lowering needs --reason "<why>"' };
+  return { proposed, confirmed, by, reason: cleaned, against, at: nowIso() };
+}
+function triageSummary(triage) {
+  if (triage.confirmed === null)
+    return `proposed ${triage.proposed}, unconfirmed (no signed business priorities)`;
+  const reason = triage.reason ? `: ${triage.reason}` : "";
+  return `proposed ${triage.proposed}, confirmed ${triage.confirmed} against the signed business priorities${reason}`;
+}
+
+// packages/engine/src/questions.ts
+import { appendFileSync as appendFileSync2, existsSync as existsSync19, lstatSync as lstatSync4, realpathSync as realpathSync5 } from "node:fs";
+import { dirname as dirname10, isAbsolute as isAbsolute5, join as join38, relative as relative7 } from "node:path";
+var KINDS = ["cli", "ticket", "document", "mail"];
+function isQuestionChannelKind(value) {
+  return typeof value === "string" && KINDS.includes(value);
+}
+function questionsFile(documentPath) {
+  return `${documentPath}.questions.md`;
+}
+function questionChannels(work, context) {
+  const channels = [];
+  if (context.personPresent)
+    channels.push({ kind: "cli", posted: true, ref: null });
+  const source = work.source;
+  if (source?.channel === "task-manager")
+    channels.push({ kind: "ticket", posted: false, ref: source.url ?? source.externalId ?? null });
+  if (source?.channel === "document" && source.documentPath)
+    channels.push({ kind: "document", posted: false, ref: questionsFile(source.documentPath) });
+  if (context.workspace !== null)
+    channels.push({ kind: "mail", posted: false, ref: null });
+  return channels;
+}
+function addQuestion(work, text, channels) {
+  const questions = work.questions ?? [];
+  const question = {
+    id: `Q-${questions.length + 1}`,
+    text,
+    askedAt: nowIso(),
+    channels: channels.map((c) => ({ ...c })),
+    answer: null,
+    by: null,
+    answeredAt: null
+  };
+  work.questions = [...questions, question];
+  return question;
+}
+function postDocumentQuestion(root, documentPath, question) {
+  const document = confinedDocument(root, documentPath);
+  if ("refused" in document)
+    return document;
+  const file = questionsFile(documentPath);
+  const target = join38(root, file);
+  let rootReal;
+  let parentReal;
+  try {
+    rootReal = realpathSync5(root);
+    parentReal = realpathSync5(dirname10(target));
+  } catch {
+    return { refused: `${file} cannot be written: its folder is not under the root` };
+  }
+  const rel = relative7(rootReal, parentReal);
+  if (rel.startsWith("..") || isAbsolute5(rel))
+    return { refused: `${file} resolves outside the root; nothing written` };
+  try {
+    if (lstatSync4(target).isSymbolicLink())
+      return { refused: `${file} is a symlink; nothing written` };
+  } catch {}
+  const quoted = question.text.split(`
+`).map((line) => `> ${line}`).join(`
+`);
+  try {
+    if (!existsSync19(target))
+      appendFileSync2(target, `# Questions on ${documentPath}
+`);
+    appendFileSync2(target, `
+## ${question.id} (${question.askedAt})
+
+${quoted}
+`);
+  } catch (error) {
+    return {
+      refused: `${file} cannot be written: ${errorText(error)}`
+    };
+  }
+  return { file };
+}
+function markPosted(work, id, kind, ref) {
+  const question = work.questions?.find((q) => q.id === id);
+  if (!question)
+    return { refused: `no question ${id} on this item` };
+  const channel = question.channels.find((c) => c.kind === kind);
+  if (!channel)
+    return {
+      refused: `${id} has no ${kind} channel (${question.channels.map((c) => c.kind).join(", ")})`
+    };
+  if (channel.posted)
+    return {
+      refused: `${id} was posted to ${kind} already${channel.ref ? ` (${channel.ref})` : ""}`
+    };
+  channel.posted = true;
+  channel.ref = ref;
+  return question;
+}
+function answerQuestion(work, id, answer, by) {
+  const question = work.questions?.find((q) => q.id === id);
+  if (!question)
+    return { refused: `no question ${id} on this item` };
+  if (question.answer !== null)
+    return { refused: `${id} was answered by ${question.by} (${question.answeredAt}) already` };
+  const text = answer.trim();
+  if (!text)
+    return { refused: "an answer needs a text" };
+  const answered = { answer: text, by, answeredAt: nowIso() };
+  return Object.assign(question, answered);
+}
+function openQuestions(work) {
+  return (work.questions ?? []).filter((q) => q.answer === null);
+}
+function questionsSorted(work) {
+  const all = work.questions ?? [];
+  return [...all.filter((q) => q.answer === null), ...all.filter((q) => q.answer !== null)];
+}
+function channelList(channels, posted) {
+  return channels.filter((c) => c.posted === posted).map((c) => c.ref ? `${c.kind} (${c.ref})` : c.kind).join(", ");
+}
+function channelsText(question) {
+  const posted = channelList(question.channels, true) || "none";
+  const toPost = channelList(question.channels, false);
+  return `posted: ${posted}${toPost ? `; to post: ${toPost}` : ""}`;
+}
+function questionChannelsCell(question) {
+  return question.channels.map((c) => `${c.kind}${c.ref ? ` ${c.ref}` : ""} (${c.posted ? "posted" : "to post"})`).join(", ") || "none";
+}
+function questionLine(question) {
+  const text = oneLine(question.text);
+  if (question.answer === null)
+    return `${question.id} · open · ${text} · ${channelsText(question)}`;
+  return `${question.id} · answered by ${question.by} (${question.answeredAt}) · ${text} → ${oneLine(question.answer)}`;
+}
+function questionJson(question) {
+  return { ...question, open: question.answer === null };
+}
+
+// packages/engine/src/tdd.ts
+import { spawnSync as spawnSync2 } from "node:child_process";
+import { join as join39 } from "node:path";
+
 // packages/engine/src/test-run.ts
-import { realpathSync as realpathSync4, statSync as statSync7 } from "node:fs";
-import { basename as basename5, isAbsolute as isAbsolute4, relative as relative7, resolve as resolve5, sep as sep3 } from "node:path";
+import { realpathSync as realpathSync6, statSync as statSync8 } from "node:fs";
+import { basename as basename9, isAbsolute as isAbsolute6, relative as relative8, resolve as resolve7, sep as sep6 } from "node:path";
 
 // packages/engine/src/hooks/shell.ts
 var SUBSTITUTED = "${…}";
@@ -7031,23 +12714,23 @@ function programWords(piece) {
 function fileRefusal(operand, cwd, root) {
   let real;
   try {
-    real = realpathSync4(resolve5(cwd, operand));
+    real = realpathSync6(resolve7(cwd, operand));
   } catch {
     return `${operand} is no file`;
   }
-  if (!statSync7(real).isFile())
+  if (!statSync8(real).isFile())
     return `${operand} is no regular file`;
-  const rel = relative7(realpathSync4(root), real);
-  if (rel === ".." || rel.startsWith(`..${sep3}`) || isAbsolute4(rel))
+  const rel = relative8(realpathSync6(root), real);
+  if (rel === ".." || rel.startsWith(`..${sep6}`) || isAbsolute6(rel))
     return `${operand} is outside the repository`;
-  const segments = rel.split(sep3);
+  const segments = rel.split(sep6);
   const name = segments.pop() ?? "";
   if (segments.some((s) => TEST_FOLDERS.has(s)) || TEST_NAME.test(name) || RUNNERS.has(name))
     return null;
   return `${operand} does not look like a test file`;
 }
 function testRefusal(words, cwd, root, nested) {
-  const name = basename5(words[0] ?? "");
+  const name = basename9(words[0] ?? "");
   const args = words.slice(1);
   const operands = operandsOf(args);
   if (RUNNERS.has(name))
@@ -7066,7 +12749,7 @@ function testRefusal(words, cwd, root, nested) {
       return null;
   }
   if (name === "npx" || name === "bunx") {
-    const tool = basename5(operands[0] ?? "");
+    const tool = basename9(operands[0] ?? "");
     return RUNNERS.has(tool) ? null : `${name} ${operands[0] ?? ""} runs no test runner`.trim();
   }
   if (PACKAGE_MANAGERS.has(name)) {
@@ -7131,7 +12814,7 @@ function linesRefusal(pieces, start, root, nested) {
       const target = words[first + 1];
       if (target === undefined || target === "-" || expands[first + 1] || words.length > first + 2)
         return "cd is given no plain folder";
-      cwd = resolve5(cwd, target);
+      cwd = resolve7(cwd, target);
     }
   }
   const test = pieces[i];
@@ -7143,7 +12826,7 @@ function linesRefusal(pieces, start, root, nested) {
   let at = 0;
   while (at < words.length && ASSIGNMENT2.test(words[at] ?? ""))
     at++;
-  if (basename5(words[at] ?? "") === "env") {
+  if (basename9(words[at] ?? "") === "env") {
     at++;
     while (at < words.length && ASSIGNMENT2.test(words[at] ?? ""))
       at++;
@@ -7156,7 +12839,7 @@ function linesRefusal(pieces, start, root, nested) {
   if (why)
     return why;
   for (const after of pieces.slice(i + 1)) {
-    const name = basename5(programWords(after).words[0] ?? "");
+    const name = basename9(programWords(after).words[0] ?? "");
     if (!after.piped || !AFTER.has(name))
       return `${name || "a command"} runs after the test`;
   }
@@ -7235,7 +12918,7 @@ var STEPS_BY_KIND = {
 function parseRefusal(command, cwd) {
   if (process.platform === "win32")
     return null;
-  const read = spawnSync("/bin/sh", ["-n", "-c", command], { cwd, encoding: "utf8" });
+  const read = spawnSync2("/bin/sh", ["-n", "-c", command], { cwd, encoding: "utf8" });
   if (read.status === 0 || read.error)
     return null;
   return firstLine(read.stderr, [PARSE_ERROR_LINE]) ?? read.stderr.trim().split(`
@@ -7347,7 +13030,7 @@ async function recordTdd(paths, work, evidence, profile, criterionId, step, over
   const result = await runCommand(command, {
     cwd: paths.root,
     timeoutMs: fallback?.timeoutMs ?? 10 * 60 * 1000,
-    logPath: join24(workDir(paths, work.id), log),
+    logPath: join39(workDir(paths, work.id), log),
     events: true
   });
   const counted = passCount(result.tail);
@@ -7429,2452 +13112,6 @@ async function recordTdd(paths, work, evidence, profile, criterionId, step, over
     record,
     apply: writeRecord(step, record)
   };
-}
-
-// packages/engine/src/ui.ts
-import {
-  closeSync,
-  existsSync as existsSync12,
-  lstatSync as lstatSync3,
-  openSync,
-  readdirSync as readdirSync8,
-  readFileSync as readFileSync6,
-  readSync,
-  rmSync as rmSync3,
-  unlinkSync as unlinkSync2
-} from "node:fs";
-import { basename as basename7, dirname as dirname8, join as join29, resolve as resolve6, sep as sep4 } from "node:path";
-
-// packages/engine/src/judgement.ts
-import { copyFileSync as copyFileSync2, existsSync as existsSync11, readdirSync as readdirSync7, unlinkSync } from "node:fs";
-import { join as join28 } from "node:path";
-
-// packages/engine/src/review-signals.ts
-import { basename as basename6, join as join26 } from "node:path";
-
-// packages/engine/src/quote.ts
-var SAFE_TEXT_MAX = 120;
-function quotedText(value) {
-  const text = value === null || value === undefined ? "" : String(value);
-  return safeText(text.replace(/[\u0080-\u009f\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, ""));
-}
-function safeText(value, max = SAFE_TEXT_MAX) {
-  const text = value === null || value === undefined ? "" : String(value);
-  const line = text.split(/\r?\n/)[0] ?? "";
-  const clean = line.replace(/[\u0000-\u001f\u007f]/g, "").trim();
-  return clean.length > max ? `${clean.slice(0, max - 1)}…` : clean;
-}
-
-// packages/engine/src/secrets.ts
-import { execFileSync as execFileSync4, spawnSync as spawnSync2 } from "node:child_process";
-import { join as join25 } from "node:path";
-var RULES = [
-  {
-    rule: "private key",
-    pattern: /-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY(?: BLOCK)?-----/
-  },
-  { rule: "AWS access key", pattern: /\bAKIA[0-9A-Z]{16,}\b/ },
-  {
-    rule: "GitHub token",
-    pattern: /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36,}\b|\bgithub_pat_[A-Za-z0-9_]{22,}\b/
-  },
-  { rule: "Stripe key", pattern: /\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}\b/ },
-  { rule: "Slack token", pattern: /\bxox[abprs]-[A-Za-z0-9-]{10,}\b/ },
-  { rule: "Anthropic key", pattern: /\bsk-ant-[A-Za-z0-9_-]{20,}\b/ },
-  { rule: "OpenAI key", pattern: /\bsk-(?:proj-)?[A-Za-z0-9_-]{32,}\b/ },
-  { rule: "Google API key", pattern: /\bAIza[0-9A-Za-z_-]{35}\b/ },
-  {
-    rule: "generic secret assignment",
-    pattern: /(?:api[_-]?key|secret|token|password|passwd)\s*[:=]\s*['"][A-Za-z0-9_\-/+=]{16,}['"]/i,
-    generic: true
-  }
-];
-var PLACEHOLDER = /example|placeholder|your[_-]|xxx|changeme|dummy|<[^>]+>/i;
-var MAX_BYTES = 1024 * 1024;
-function scanText(text, source) {
-  const findings = [];
-  text.split(`
-`).forEach((line, index) => {
-    for (const { rule, pattern, generic } of RULES) {
-      if (generic && PLACEHOLDER.test(line))
-        continue;
-      if (pattern.test(line)) {
-        findings.push({ source, line: index + 1, rule });
-        break;
-      }
-    }
-  });
-  return findings;
-}
-function isBinary(buffer) {
-  return buffer.subarray(0, 8000).includes(0);
-}
-function diffPath(raw) {
-  if (!raw.startsWith('"') || !raw.endsWith('"'))
-    return raw;
-  const bytes = [];
-  const body = raw.slice(1, -1);
-  const named = {
-    t: 9,
-    n: 10,
-    r: 13,
-    a: 7,
-    b: 8,
-    f: 12,
-    v: 11,
-    '"': 34,
-    "\\": 92
-  };
-  for (let i = 0;i < body.length; i++) {
-    const c = body[i];
-    if (c !== "\\") {
-      bytes.push(...Buffer.from(c, "utf8"));
-      continue;
-    }
-    const next = body[i + 1] ?? "";
-    const octal = /^[0-7]{3}/.exec(body.slice(i + 1));
-    if (octal) {
-      bytes.push(Number.parseInt(octal[0], 8));
-      i += 3;
-    } else {
-      bytes.push(named[next] ?? next.charCodeAt(0));
-      i += 1;
-    }
-  }
-  return Buffer.from(bytes).toString("utf8");
-}
-function headerPath(raw) {
-  const target = raw.replace(/\t$/, "");
-  return target === "/dev/null" ? null : diffPath(target).replace(/^[ab]\//, "");
-}
-function numbered(path, text) {
-  const lines = text.split(`
-`).map((t, i) => ({ file: path, line: i + 1, text: t }));
-  if (lines.length && lines[lines.length - 1]?.text === "")
-    lines.pop();
-  return lines;
-}
-function readChange(root, profile, base, keepUntracked) {
-  const reading = {
-    mode: { kind: "diff" },
-    tracked: new Map,
-    untracked: new Map,
-    overCap: new Set,
-    skipped: []
-  };
-  const whole = (path, into) => {
-    const buffer = readRegular(join25(root, path), MAX_BYTES);
-    if (buffer === null)
-      return;
-    if (buffer === "over cap")
-      reading.skipped.push({ file: path, reason: "over cap" });
-    else if (isBinary(buffer))
-      reading.skipped.push({ file: path, reason: "binary" });
-    else
-      into.set(path, numbered(path, buffer.toString("utf8")));
-  };
-  const everything = (why) => {
-    const files = allWatchedFiles(root, profile);
-    if (files === null) {
-      reading.mode = { kind: "unreadable", why: `${why}, and the tree is over the walk's cap` };
-      return reading;
-    }
-    reading.mode = { kind: "whole tree", why };
-    for (const path of files)
-      if (keepUntracked(path))
-        whole(path, reading.untracked);
-    return reading;
-  };
-  if (base === null)
-    return everything("no base commit");
-  if (!isGitRepo(root))
-    return everything("no git repository");
-  let diff;
-  try {
-    diff = execFileSync4("git", [
-      "-c",
-      "core.quotePath=false",
-      "diff",
-      base,
-      "--no-renames",
-      "--unified=0",
-      "--no-color",
-      "--",
-      "."
-    ], {
-      cwd: root,
-      env: process.env,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-      maxBuffer: GIT_OUTPUT_BYTES
-    });
-  } catch {
-    diff = null;
-  }
-  const untracked = untrackedPaths(root);
-  if (diff === null || untracked === null)
-    return everything("the base's diff could not be read");
-  let file = null;
-  let inHeader = false;
-  let next = 0;
-  let size = 0;
-  for (const raw of diff.split(`
-`)) {
-    if (raw.startsWith("diff --git ")) {
-      inHeader = true;
-      file = null;
-      size = 0;
-      continue;
-    }
-    if (inHeader) {
-      if (raw.startsWith("+++ "))
-        file = headerPath(raw.slice(4));
-      const binary = /^Binary files .* and (.+) differ$/.exec(raw);
-      if (binary) {
-        const target = headerPath(binary[1] ?? "");
-        if (target !== null)
-          reading.skipped.push({ file: target, reason: "binary" });
-        file = null;
-      }
-      if (!raw.startsWith("@@"))
-        continue;
-      inHeader = false;
-    }
-    const hunk = HUNK_HEADER.exec(raw);
-    if (hunk) {
-      next = Number(hunk[1]);
-      continue;
-    }
-    if (file === null || !raw.startsWith("+"))
-      continue;
-    size += raw.length;
-    if (size > MAX_BYTES)
-      reading.overCap.add(file);
-    const list = reading.tracked.get(file) ?? [];
-    list.push({ file, line: next, text: raw.slice(1) });
-    reading.tracked.set(file, list);
-    next += 1;
-  }
-  for (const path of [...untracked].sort())
-    if (keepUntracked(path))
-      whole(path, reading.untracked);
-  return reading;
-}
-function changeSources(root, profile, base) {
-  const reading = readChange(root, profile, base, (path) => isWatched(path, profile));
-  const sources = [];
-  const added = [...reading.tracked.keys()].sort().flatMap((path) => (reading.tracked.get(path) ?? []).map((l) => l.text)).join(`
-`);
-  if (added && base !== null)
-    sources.push({ source: `git diff ${base.slice(0, 12)} (added lines)`, text: added });
-  for (const path of [...reading.untracked.keys()].sort())
-    sources.push({
-      source: path,
-      text: (reading.untracked.get(path) ?? []).map((l) => l.text).join(`
-`)
-    });
-  const skipped = [...reading.skipped].sort((a, b) => a.file.localeCompare(b.file));
-  return { sources, mode: reading.mode, skipped };
-}
-function addedLines(root, profile, base = "HEAD", keep = (path) => isWatched(path, profile)) {
-  const reading = readChange(root, profile, base, keep);
-  const lines = [];
-  const skipped = reading.skipped.filter((s) => keep(s.file));
-  for (const path of [...reading.overCap].sort())
-    if (keep(path))
-      skipped.push({ file: path, reason: "over cap" });
-  const files = new Map([...reading.tracked, ...reading.untracked]);
-  for (const path of [...files.keys()].sort()) {
-    if (!keep(path) || reading.overCap.has(path))
-      continue;
-    lines.push(...files.get(path) ?? []);
-  }
-  skipped.sort((a, b) => a.file.localeCompare(b.file));
-  return { lines, skipped, mode: reading.mode };
-}
-function gitleaks(text) {
-  const result = spawnSync2("gitleaks", ["stdin", "--no-banner", "--redact", "--exit-code", "1"], {
-    input: text,
-    encoding: "utf8"
-  });
-  if (result.error || result.status === null || result.status !== 0 && result.status !== 1)
-    return { ran: false, leaked: false, tail: "" };
-  const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
-  if (result.status === 1 && !/leak/i.test(output))
-    return { ran: false, leaked: false, tail: "" };
-  return {
-    ran: true,
-    leaked: result.status === 1,
-    tail: output.trim().split(`
-`).slice(-20).join(`
-`)
-  };
-}
-async function scanSecrets(root, profile, base = "HEAD") {
-  const { sources, mode, skipped } = changeSources(root, profile, base);
-  if (mode.kind === "unreadable")
-    return {
-      status: "unavailable",
-      findings: [],
-      tail: `the change could not be read: ${mode.why}`,
-      usedGitleaks: false
-    };
-  const findings = sources.flatMap((s) => scanText(s.text, s.source));
-  const lines = findings.map((f) => `${quotedText(f.source)}:${f.line}: ${f.rule}`);
-  const extra = gitleaks(sources.map((s) => s.text).join(`
-`));
-  if (extra.ran && extra.leaked)
-    lines.push("gitleaks:", extra.tail);
-  const status = findings.length === 0 && !(extra.ran && extra.leaked) ? "pass" : "fail";
-  const verdict = lines.join(`
-`) || "no secrets found in the change";
-  const named = skipped.map((s) => `skipped ${quotedText(s.file)} (${s.reason})`);
-  return {
-    status,
-    findings,
-    tail: [verdict, ...named].join(`
-`),
-    usedGitleaks: extra.ran
-  };
-}
-
-// packages/engine/src/review-signals.ts
-var MANIFEST_MAX = 1024 * 1024;
-var NAMES_MAX = 50;
-var PHRASES_MAX = 50;
-var SECTIONS = {
-  "package.json": ["dependencies", "devDependencies"],
-  "composer.json": ["require", "require-dev"]
-};
-var IGNORED_KEYS = new Set(["__proto__", "constructor", "prototype"]);
-function parsed(text) {
-  if (text.length > MANIFEST_MAX)
-    return "unreadable";
-  try {
-    const value = JSON.parse(text);
-    return value && typeof value === "object" && !Array.isArray(value) ? value : "unreadable";
-  } catch {
-    return "unreadable";
-  }
-}
-function names(manifest, section, composer) {
-  const value = manifest?.[section];
-  if (!value || typeof value !== "object" || Array.isArray(value))
-    return [];
-  return Object.keys(value).filter((key) => Object.hasOwn(value, key) && !IGNORED_KEYS.has(key) && !(composer && (key === "php" || key.startsWith("ext-"))));
-}
-function dependencyInputs(root, base, changed) {
-  const out = [];
-  for (const file of [...changed].sort()) {
-    const kind = basename6(file);
-    const sections = SECTIONS[kind];
-    if (!sections)
-      continue;
-    if (regularFileSize(join26(root, file)) === null)
-      continue;
-    const shown = base ? gitShowFile(root, base, file) : null;
-    const before = shown === null ? null : parsed(shown);
-    const bytes = readRegular(join26(root, file), MANIFEST_MAX);
-    const now = bytes instanceof Buffer ? parsed(bytes.toString("utf8")) : "unreadable";
-    if (now === "unreadable" || before === "unreadable") {
-      out.push({ file: safeText(file), unreadable: true });
-      continue;
-    }
-    const composer = kind === "composer.json";
-    const added = {};
-    let total = 0;
-    for (const section of sections) {
-      const had = new Set(names(before, section, composer));
-      const fresh = names(now, section, composer).filter((n) => !had.has(n)).sort();
-      if (!fresh.length)
-        continue;
-      const room = Math.max(0, NAMES_MAX - total);
-      added[section] = fresh.slice(0, room).map((n) => safeText(n));
-      total += fresh.length;
-    }
-    if (!Object.keys(added).length)
-      continue;
-    out.push(total > NAMES_MAX ? { file: safeText(file), added, more: total - NAMES_MAX } : { file: safeText(file), added });
-  }
-  return out;
-}
-var FALLBACK = /(?<![\p{L}\p{N}])(add a fallback|fall back to|fallback to|workaround|shim)(?![\p{L}\p{N}])/giu;
-var BENIGN = /fallback value|default value|workaround for #\d+/giu;
-function phraseInputs(lines) {
-  const out = [];
-  for (const added of lines) {
-    if (isMarkdownPath(added.file))
-      continue;
-    const benign = [...added.text.matchAll(BENIGN)].map((m) => [
-      m.index ?? 0,
-      (m.index ?? 0) + m[0].length
-    ]);
-    for (const m of added.text.matchAll(FALLBACK)) {
-      const at = m.index ?? 0;
-      if (benign.some(([from, to]) => at >= from && at < to))
-        continue;
-      out.push({ file: added.file, line: added.line, phrase: safeText(m[0].toLowerCase()) });
-      break;
-    }
-    if (out.length >= PHRASES_MAX)
-      break;
-  }
-  return out;
-}
-function reviewSignals(root, profile, base, changed) {
-  const wanted = new Set(changed);
-  const { lines } = addedLines(root, profile, base, (path) => wanted.has(path));
-  return {
-    dependencies: dependencyInputs(root, base, changed),
-    phrases: phraseInputs(lines)
-  };
-}
-function isDependencyInput(value) {
-  if (!value || typeof value !== "object" || Array.isArray(value))
-    return false;
-  const v = value;
-  if (typeof v.file !== "string")
-    return false;
-  if (v.unreadable === true)
-    return true;
-  const added = v.added;
-  if (!added || typeof added !== "object" || Array.isArray(added))
-    return false;
-  const lists = Object.values(added);
-  if (!lists.every((l) => Array.isArray(l) && l.every((n) => typeof n === "string")))
-    return false;
-  return v.more === undefined || typeof v.more === "number";
-}
-function isPhraseInput(value) {
-  if (!value || typeof value !== "object" || Array.isArray(value))
-    return false;
-  const v = value;
-  return typeof v.file === "string" && typeof v.line === "number" && typeof v.phrase === "string";
-}
-
-// packages/engine/src/work.ts
-import { existsSync as existsSync10, readdirSync as readdirSync6 } from "node:fs";
-import { join as join27 } from "node:path";
-
-// packages/engine/src/validation.ts
-import { createHash as createHash4 } from "node:crypto";
-var LEAD_TEAMS = Object.entries(TEAMS).filter(([, team]) => team.validates).map(([name]) => name).join("|");
-var LEAD_OPENING = `# (${LEAD_TEAMS}) lead's validation of `;
-var LEAD_HEADING = new RegExp(`^(?=${LEAD_OPENING})`, "m");
-var LEAD_LINE = `^${LEAD_OPENING}(\\S+): (spec|plan|delivery)\\b`;
-function leadHeading(text) {
-  const last = [...text.matchAll(new RegExp(LEAD_LINE, "gm"))].pop();
-  if (!last)
-    return null;
-  return {
-    team: last[1],
-    item: last[2],
-    what: last[3]
-  };
-}
-function parseValidation(text) {
-  const blocks = text.split(LEAD_HEADING);
-  const lines = (blocks.length > 1 ? blocks[blocks.length - 1] ?? text : text).split(`
-`);
-  const verdictLine = lines.slice(0, 4).find((l) => /^verdict:\s*(validated|returned)\s*$/.test(l.trim()));
-  if (!verdictLine)
-    return {
-      refused: "no verdict line: the second line is `verdict: validated` or `verdict: returned`"
-    };
-  const verdict = verdictLine.trim().endsWith("validated") ? "validated" : "returned";
-  const start = lines.findIndex((l) => l.trim() === "## Returns");
-  const end = lines.findIndex((l, i) => i > start && l.startsWith("## "));
-  const section = start === -1 ? [] : lines.slice(start + 1, end === -1 ? undefined : end);
-  const returns = section.filter((l) => /^- R-\d+\s*·/.test(l.trim())).length;
-  if (verdict === "validated" && returns > 0)
-    return {
-      refused: `validated with ${returns} open return${returns === 1 ? "" : "s"} under ## Returns: the lead returns the spec, or closes the return in its file; the engine records neither as validated`
-    };
-  if (verdict === "returned" && returns === 0)
-    return {
-      refused: "returned with no return under ## Returns: a return names what must change at a file and a line"
-    };
-  return { verdict, returns };
-}
-function fileHash(text) {
-  return `sha256:${createHash4("sha256").update(text).digest("hex")}`;
-}
-function leadSuffix(what) {
-  return what === "plan" || what === "delivery" ? `.${what}` : "";
-}
-function replyFile(name, what) {
-  return `conclave/${name}${leadSuffix(what)}-reply.md`;
-}
-function validationHash(what, specText, planText, evidenceFingerprint) {
-  if (what === "delivery")
-    return evidenceFingerprint;
-  const text = what === "spec" ? specText : planText;
-  return `sha256:${createHash4("sha256").update(text ?? "").digest("hex")}`;
-}
-function validationRound(validations, what, by, hash, spentSpecRounds) {
-  const same = validations.filter((v) => v.what === what);
-  if (what === "spec") {
-    const lastMine = same.filter((v) => v.by === by).at(-1);
-    const round = !lastMine ? 1 : lastMine.hash === hash ? lastMine.round : lastMine.round + 1;
-    return { round, newRound: round > spentSpecRounds };
-  }
-  const last = same.at(-1);
-  const newRound = !last || last.hash !== hash;
-  return { round: newRound ? (last?.round ?? 0) + 1 : last?.round ?? 1, newRound };
-}
-function leadSeats(work) {
-  return (work.seats ?? []).filter((s) => s.kind === "lead");
-}
-function leadsMissing(work, ctx, what) {
-  if (work.route === "fast")
-    return [];
-  const hash = validationHash(what, ctx.specText, null, ctx.evidence?.fingerprint ?? "");
-  const missing = [];
-  for (const seat of leadSeats(work)) {
-    const mine = (work.validations ?? []).filter((v) => v.what === what && v.by === seat.role);
-    const latest = mine[mine.length - 1];
-    const file = `conclave/${seat.role}${what === "delivery" ? ".delivery" : ""}.md`;
-    if (!latest) {
-      missing.push(`validation of ${what} by ${seat.role} (crew validation <id> record --what ${what} --by ${seat.role} --file ${file})`);
-    } else if (latest.hash !== hash) {
-      missing.push(`validation of ${what} by ${seat.role}: stale (${what === "spec" ? "spec" : "the evidence"} changed); record the lead again`);
-    } else if (latest.verdict === "returned") {
-      missing.push(`validation of ${what} by ${seat.role}: returned ${latest.returns} return${latest.returns === 1 ? "" : "s"} (${latest.file}); revise the ${what === "spec" ? "spec" : "delivery"} and record the lead again (a resumed lead's answer: its -reply.md file)`);
-    }
-  }
-  return missing;
-}
-
-// packages/engine/src/work.ts
-var DELIBERATE = [
-  "receive",
-  "recognize",
-  "understand",
-  "specify",
-  "conclave",
-  "plan",
-  "build",
-  "gate",
-  "deliver",
-  "learn"
-];
-var PHASES_BY_ROUTE = {
-  fast: ["receive", "recognize", "build", "gate", "deliver", "learn"],
-  standard: [...DELIBERATE],
-  full: [...DELIBERATE]
-};
-function phasesFor(work) {
-  const phases = phasesOfKind(work);
-  if (work.specReview && work.route === "full" && phases.includes("plan")) {
-    const at = phases.indexOf("plan") + 1;
-    return [...phases.slice(0, at), "spec-review", ...phases.slice(at)];
-  }
-  return phases;
-}
-function phasesOfKind(work) {
-  const base = PHASES_BY_ROUTE[work.route];
-  const kind = kindOfItem(work);
-  if (kind === "audit")
-    return ["receive", "recognize", "audit", "deliver"];
-  if (kind === "issue") {
-    const at = base.indexOf("recognize") + 1;
-    return [...base.slice(0, at), "analyse", ...base.slice(at)];
-  }
-  if (kind === "new-project") {
-    const at = base.indexOf("specify");
-    if (at !== -1)
-      return [...base.slice(0, at), "strategy", ...base.slice(at)];
-  }
-  return [...base];
-}
-function plannedStrategyJudgement(work) {
-  if (!phasesFor(work).includes("strategy"))
-    return [];
-  return work.route === "full" ? [
-    {
-      gate: "strategy",
-      reviewer: "cto",
-      reason: "new project, full route: the CTO reviews, the judge rules"
-    }
-  ] : [
-    {
-      gate: "strategy",
-      reviewer: "judge",
-      reason: "new project, standard route: the judge rules from the files"
-    }
-  ];
-}
-function kindFloor(work) {
-  if (work.kind === "new-project" && work.route === "fast") {
-    work.route = "standard";
-    work.routeReasons.push("kind new-project is never fast");
-  }
-  if (work.kind === "audit" && work.route !== "full") {
-    work.route = "full";
-    work.routeReasons.push("kind audit is always full");
-  }
-}
-var RAISABLE = ["feature", "client-request", "cross-project"];
-var RAISE_PHASES = ["understand", "specify", "conclave"];
-function raiseKind(work, reason) {
-  if (!RAISABLE.includes(kindOfItem(work)))
-    return {
-      ok: false,
-      reason: `only a feature is raised to a strategy: this item is ${kindLabel(work)}`
-    };
-  if (phaseIndex(work.phase) >= phaseIndex("plan"))
-    return { ok: false, reason: "a strategy comes before the plan; from plan on, a new item" };
-  if (!RAISE_PHASES.includes(work.phase))
-    return {
-      ok: false,
-      reason: `a feature is raised to a strategy from understand, specify or conclave, not ${work.phase}`
-    };
-  work.kind = "new-project";
-  work.kindFrom = `raised: ${reason}`;
-  work.routeReasons.push(`kind raised to new-project: ${reason}`);
-  kindFloor(work);
-  if (work.phase === "understand")
-    return { ok: true, movedTo: null };
-  work.phase = "strategy";
-  work.phaseAt = { ...work.phaseAt ?? {}, strategy: nowIso() };
-  return { ok: true, movedTo: "strategy" };
-}
-function kindOfItem(work) {
-  return work.kind ?? "feature";
-}
-function kindLabel(work) {
-  return `kind ${kindOfItem(work)} (from ${work.kindFrom ?? "default"})`;
-}
-var ANALYSIS_SECTIONS = ["Origin", "Cause", "Blast radius"];
-var CONCLAVE_SECTIONS = [
-  "Assumed by good practice",
-  "Decisions only the user can make",
-  "Proposals",
-  "Warnings"
-];
-function slug(text) {
-  return text.toLowerCase().normalize("NFKD").replace(/[^\w\s-]/g, "").trim().replace(/[\s_]+/g, "-").replace(/-+/g, "-");
-}
-function workJson(paths, id) {
-  return join27(workDir(paths, id), "work.json");
-}
-function newWorkId(paths, title) {
-  const date = nowIso().slice(0, 10);
-  let existing = 0;
-  try {
-    existing = readdirSync6(join27(paths.crewDir, "work")).filter((n) => n.startsWith(date)).length;
-  } catch {
-    existing = 0;
-  }
-  const seq = String(existing + 1).padStart(3, "0");
-  return `${date}-${seq}-${slug(title).slice(0, 40).replace(/-$/, "")}`;
-}
-function createWork(paths, input, baseFiles, source) {
-  const title = (input.split(`
-`).find((line) => line.trim()) ?? "untitled").trim().slice(0, 80);
-  const at = nowIso();
-  const work = {
-    id: newWorkId(paths, title),
-    title,
-    input,
-    type: "feature",
-    route: "standard",
-    routeReasons: ["not classified yet: standard by default"],
-    riskAreas: [],
-    phase: "receive",
-    awaiting: null,
-    criteria: [],
-    approvals: [],
-    skips: [],
-    baseCommit: baseCommitOf(paths.root),
-    ...baseFiles && Object.keys(baseFiles).length > 0 ? { baseFiles } : {},
-    ...source ? { source } : {},
-    createdAt: at,
-    updatedAt: at
-  };
-  writeProtectedJson(paths, workJson(paths, work.id), work);
-  let sourceSection = "";
-  if (source) {
-    const body = sourceText(source, paths.root, input);
-    const text = typeof body === "string" ? body : body.refused;
-    const proposed = source.proposedPriority ? `, proposed priority ${source.proposedPriority}` : "";
-    sourceSection = `
-## Source
-
-${sourceLine(source)}${proposed}
-
-${text.endsWith(`
-`) ? text : `${text}
-`}`;
-  }
-  writeText(join27(workDir(paths, work.id), "brief.md"), `# Brief
-
-## Request
-
-${input.trim()}
-${sourceSection}`);
-  updateState(paths, (state) => {
-    state.active = work.id;
-  });
-  return work;
-}
-function saveWork(paths, work) {
-  work.updatedAt = nowIso();
-  writeProtectedJson(paths, workJson(paths, work.id), work);
-}
-function loadWork(paths, id) {
-  const read = readProtectedJson(paths, workJson(paths, id));
-  return { work: read.data, tampered: read.tampered };
-}
-function applyChangedFields(record, inHand, loaded) {
-  const target = asRecord(record);
-  const now = asRecord(inHand);
-  const then = asRecord(loaded);
-  for (const key of new Set([...Object.keys(now), ...Object.keys(then)])) {
-    const value = JSON.stringify(now[key]);
-    if (value === JSON.stringify(then[key]))
-      continue;
-    if (value === undefined)
-      delete target[key];
-    else
-      target[key] = now[key];
-  }
-}
-function asRecord(work) {
-  return work;
-}
-function adoptRecord(inHand, record) {
-  const target = asRecord(inHand);
-  const source = asRecord(record);
-  for (const key of Object.keys(target))
-    if (!(key in source))
-      delete target[key];
-  Object.assign(target, source);
-}
-function noteRuntime(paths, id, runtime) {
-  return withLock(workDir(paths, id), () => {
-    const { work, tampered } = loadWork(paths, id);
-    if (!work || tampered || work.runtimes?.includes(runtime))
-      return false;
-    work.runtimes = [...work.runtimes ?? [], runtime];
-    saveWork(paths, work);
-    return true;
-  }, { what: "work folder" });
-}
-function activeWork(paths) {
-  const id = loadState(paths).active;
-  if (!id || !existsSync10(workJson(paths, id)))
-    return null;
-  const item = loadWork(paths, id);
-  return item.work?.abandoned ? null : item;
-}
-function openItems(paths, except) {
-  let ids = [];
-  try {
-    ids = readdirSync6(join27(paths.crewDir, "work")).sort();
-  } catch {
-    return [];
-  }
-  const open = [];
-  for (const id of ids) {
-    if (id === except || !existsSync10(workJson(paths, id)))
-      continue;
-    const { work } = loadWork(paths, id);
-    if (!work || work.abandoned || work.phase === "deliver" || work.phase === "learn")
-      continue;
-    const evidence = readProtectedJson(paths, join27(workDir(paths, id), "evidence.json"));
-    if (evidence.data?.verdict === "proven")
-      continue;
-    open.push(work);
-  }
-  return open;
-}
-function lastLearned(paths) {
-  let ids = [];
-  try {
-    ids = readdirSync6(join27(paths.crewDir, "work"));
-  } catch {
-    return null;
-  }
-  let latest = null;
-  for (const id of ids) {
-    if (!existsSync10(workJson(paths, id)))
-      continue;
-    const { work, tampered } = loadWork(paths, id);
-    if (!work?.learned || tampered || work.abandoned)
-      continue;
-    if (!latest || (latest.learned?.at ?? "") < work.learned.at)
-      latest = work;
-  }
-  if (!latest)
-    return null;
-  const evidence = readProtectedJson(paths, join27(workDir(paths, latest.id), "evidence.json"));
-  const proven = !evidence.tampered && evidence.data?.verdict === "proven";
-  return { work: latest, fingerprint: proven ? evidence.data?.fingerprint ?? null : null };
-}
-function applyClassification(work, type, decision, kind) {
-  const first = work.phase === "receive";
-  work.type = type;
-  if (first) {
-    work.route = decision.route;
-    work.routeReasons = [...decision.reasons];
-    work.riskAreas = [...decision.riskAreas];
-    if (decision.route === "full")
-      work.specReview = true;
-  } else {
-    const route = higherRoute(work.route, decision.route);
-    if (route !== work.route) {
-      work.routeReasons.push(`raised to ${route}: ${decision.reasons.join("; ")}`);
-    } else if (decision.route !== work.route) {
-      work.routeReasons.push(`reclassified as ${decision.route}; kept ${work.route}: a route is never lowered`);
-    }
-    if (route === "full" && work.route !== "full")
-      work.specReview = true;
-    work.route = route;
-    work.riskAreas = [...new Set([...work.riskAreas, ...decision.riskAreas])];
-  }
-  if (kind) {
-    const kept = work.kind === "issue" || work.kind === "new-project";
-    if (kept && kind.kind !== work.kind) {
-      work.routeReasons.push(`kept kind ${work.kind}: a kind is never lowered`);
-    } else {
-      work.kind = kind.kind;
-      work.kindFrom = kind.from;
-    }
-  }
-  kindFloor(work);
-  if (work.phase === "receive")
-    work.phase = "recognize";
-}
-function raiseRoute(work, to, reason) {
-  if (routeRank(to) <= routeRank(work.route))
-    return false;
-  work.route = to;
-  if (to === "full")
-    work.specReview = true;
-  work.routeReasons.push(`raised to ${to}: ${reason}`);
-  return true;
-}
-var MAX_PARTS = 10;
-var MAX_PART_LENGTH = 200;
-function parseParts(texts) {
-  if (texts.length > MAX_PARTS)
-    return { problem: `at most ${MAX_PARTS} parts` };
-  const trimmed = texts.map((t) => t.trim());
-  const seen = new Set;
-  for (const text of trimmed) {
-    if (!text)
-      return { problem: "a part needs text" };
-    if (text.length > MAX_PART_LENGTH)
-      return { problem: `a part is at most ${MAX_PART_LENGTH} characters` };
-    if (/[\u0000-\u001f\u007f]/.test(text))
-      return { problem: "a part is one line with no control character" };
-    const key = text.toLowerCase();
-    if (seen.has(key))
-      return { problem: `a part repeats another: ${key}` };
-    seen.add(key);
-  }
-  if (trimmed.length < 2)
-    return { parts: undefined };
-  return { parts: trimmed.map((text, n) => ({ id: `P-${n + 1}`, text })) };
-}
-function addCriterion(work, text, kind = "behavior", contract, screens) {
-  const taken = [...work.criteria, ...work.removedCriteria ?? []].map((c) => Number(c.id.slice("AC-".length))).filter((n) => Number.isFinite(n));
-  const next = taken.length ? Math.max(...taken) + 1 : 1;
-  const criterion = {
-    id: `AC-${next}`,
-    kind,
-    text: text.trim(),
-    ...contract ? { contract } : {},
-    ...screens?.length ? { screens } : {}
-  };
-  work.criteria.push(criterion);
-  return criterion;
-}
-function removeCriterion(work, evidence, id, ledger) {
-  const index = work.criteria.findIndex((c) => c.id === id);
-  if (index === -1)
-    return { refused: `unknown criterion: ${id}` };
-  const bound = ledger?.objections.find((o) => o.criterion === id && !o.waived);
-  if (bound)
-    return { refused: `${id} is bound to objection ${bound.id}; it stays` };
-  const target = work.criteria[index];
-  if (target.supersededBy)
-    return { refused: `${id} is superseded by ${target.supersededBy.id}; it stays` };
-  const replaced = work.criteria.find((c) => c.supersededBy?.id === id);
-  if (replaced)
-    return { refused: `${id} supersedes ${replaced.id}; it stays` };
-  if (evidence.tdd.some((t) => t.criterion === id)) {
-    return { refused: `${id} has a test-first record; it stays` };
-  }
-  if (work.skips.some((s) => s.step === `tdd:${id}`)) {
-    return { refused: `${id} has a skip; it stays` };
-  }
-  const [criterion] = work.criteria.splice(index, 1);
-  const removed = { ...criterion, at: nowIso() };
-  work.removedCriteria = [...work.removedCriteria ?? [], removed];
-  return { removed };
-}
-var PROOF_RANK = { behavior: 2, preserve: 1, observed: 0 };
-function supersedeCriterion(work, from, by, ledger) {
-  const old = work.criteria.find((c) => c.id === from);
-  if (!old)
-    return { refused: `unknown criterion: ${from}` };
-  const replacement = work.criteria.find((c) => c.id === by);
-  if (!replacement)
-    return { refused: `unknown criterion: ${by}` };
-  if (from === by)
-    return { refused: `${from} cannot supersede itself` };
-  if (old.supersededBy)
-    return { refused: `${from} is already superseded by ${old.supersededBy.id}` };
-  if (replacement.supersededBy)
-    return {
-      refused: `${by} is superseded by ${replacement.supersededBy.id}: supersede by ${replacement.supersededBy.id} instead`
-    };
-  const bound = ledger?.objections.find((o) => o.criterion === from && !o.waived);
-  if (bound)
-    return { refused: `${bound.id} is bound to ${from}: resolve it against ${by} first` };
-  if (PROOF_RANK[replacement.kind] < PROOF_RANK[old.kind])
-    return {
-      refused: `${by} (${replacement.kind}) cannot replace ${from} (${old.kind}): a replacement proves at least as much`
-    };
-  const at = nowIso();
-  old.supersededBy = { id: by, at };
-  return { criterion: old, at };
-}
-function currentCriterion(work, criterion) {
-  let current = criterion;
-  const seen = new Set;
-  while (current.supersededBy && !seen.has(current.id)) {
-    seen.add(current.id);
-    current = work.criteria.find((c) => c.id === current.supersededBy?.id) ?? current;
-  }
-  return current;
-}
-var USER = { by: "user" };
-function addDecision(work, question, dflt) {
-  const taken = (work.decisions ?? []).map((d) => Number(d.id.slice("D-".length))).filter(Number.isFinite);
-  const next = taken.length ? Math.max(...taken) + 1 : 1;
-  const decision = {
-    id: `D-${next}`,
-    question: question.trim(),
-    ...dflt?.trim() ? { default: dflt.trim() } : {}
-  };
-  work.decisions = [...work.decisions ?? [], decision];
-  return decision;
-}
-function answerDecision(work, id, answer, decision, policy) {
-  const found = (work.decisions ?? []).find((d) => d.id === id);
-  if (!found)
-    return { refused: `unknown decision: ${id}` };
-  if (decision.by === "validator") {
-    if (found.answer !== undefined) {
-      const who = found.by === "validator" ? "the validator" : `the ${found.by ?? "user"}`;
-      return {
-        refused: `${id} is already answered by ${who}; the validator never overwrites an answer`
-      };
-    }
-    if (found.default === undefined) {
-      return { refused: `${id} has no stated default; a person answers it` };
-    }
-    if (answer !== undefined && answer.trim() !== found.default) {
-      return {
-        refused: `the validator may only take the stated default of ${id} (${found.default})`
-      };
-    }
-    const conservative = found.jev?.conservative;
-    if (typeof conservative === "number" && disputedDefault(found.jev, policy)) {
-      return {
-        refused: `${disputedDefaultText(conservative, `the default of ${id}`)}; a person decides`,
-        disputed: true
-      };
-    }
-  } else if (!answer?.trim()) {
-    return { refused: `an answer is required: crew decide <id> ${id} "<answer>"` };
-  } else if (decision.by === "agent" && policy.unattendedDecisions === "validator") {
-    return {
-      refused: `under this policy an agent's answer does not count: take the stated default with --validator stated-default, or leave ${id} for a person`
-    };
-  }
-  found.answer = (answer ?? found.default ?? "").trim();
-  found.at = nowIso();
-  found.by = decision.by;
-  if (decision.mode)
-    found.mode = decision.mode;
-  else
-    delete found.mode;
-  if (decision.rule)
-    found.rule = decision.rule;
-  else
-    delete found.rule;
-  if (decision.relayed)
-    found.relayed = true;
-  else
-    delete found.relayed;
-  return found;
-}
-function unansweredDecisions(work, policy) {
-  return (work.decisions ?? []).filter((d) => d.answer === undefined || !decisionCounts(policy, d));
-}
-function debateState(work) {
-  if (!work.debate)
-    return "none";
-  return work.debate.closedAt ? "closed" : "open";
-}
-function openDebate(work, reason) {
-  const current = work.debate;
-  if (current) {
-    return {
-      refused: current.closedAt ? "the debate is closed; it opens once per item" : `the debate is already open (${current.openedAt}): ${current.reason}`
-    };
-  }
-  if (!reason.trim())
-    return { refused: "a debate opens for a reason: the decision with consequences" };
-  work.debate = { openedAt: nowIso(), reason: reason.trim() };
-  return work.debate;
-}
-function closeDebate(work, tokens) {
-  const debate = work.debate;
-  if (!debate)
-    return { refused: 'no debate is open (crew debate <id> open --reason "<why>")' };
-  if (debate.closedAt)
-    return { refused: "the debate is already closed" };
-  debate.closedAt = nowIso();
-  if (tokens !== undefined)
-    debate.tokens = tokens;
-  return debate;
-}
-function approve(work, what, decision = USER) {
-  work.approvals.push({ what, at: nowIso(), ...decision });
-}
-function addSkip(work, step, reason, decision = USER) {
-  work.skips.push({ step, reason, at: nowIso(), ...decision });
-}
-function isSkipped(work, step, policy) {
-  return work.skips.some((s) => s.step === step && decisionCounts(policy, s));
-}
-function phaseIndex(phase) {
-  return PHASE_ORDER.indexOf(phase);
-}
-function isBeforeBuild(work) {
-  return phaseIndex(work.phase) < phaseIndex("build");
-}
-function sectionBodies(text, heading) {
-  const escaped = escapeRegExp(heading);
-  const bodies = [];
-  for (const match of text.matchAll(new RegExp(`^(#{1,6})\\s*${escaped}\\s*$`, "gim"))) {
-    const level = (match[1] ?? "#").length;
-    const rest = text.slice((match.index ?? 0) + match[0].length);
-    const next = new RegExp(`^#{1,${level}}\\s`, "m").exec(rest);
-    const body = next ? rest.slice(0, next.index) : rest;
-    bodies.push(body.replace(/^#{1,6}\s.*$/gm, "").trim());
-  }
-  return bodies;
-}
-function hasSection(text, heading) {
-  return sectionBodies(text, heading).some((body) => body.length > 0);
-}
-function hasAcceptanceSection(text) {
-  return hasSection(text, "acceptance criteria");
-}
-function missingConclaveSections(text) {
-  return CONCLAVE_SECTIONS.filter((name) => !hasSection(text, name));
-}
-function missingAnalysisSections(text) {
-  return ANALYSIS_SECTIONS.filter((name) => !hasSection(text, name));
-}
-function routeDocuments(work, ctx) {
-  const missing = [];
-  if (kindOfItem(work) === "audit")
-    return missing;
-  if (work.specReview && work.route === "full")
-    missing.push(...specReviewMissing(ctx.evidence?.specReview, specReviewHash(ctx.specText ?? "", ctx.planText ?? "")));
-  if (work.route !== "fast") {
-    if (ctx.specText === null)
-      missing.push("spec.md in the work folder");
-    else if (!hasAcceptanceSection(ctx.specText)) {
-      missing.push('an "Acceptance criteria" section with content in spec.md');
-    }
-  }
-  if (work.route === "full") {
-    const approvals = work.approvals.filter((a) => a.what === "spec");
-    if (!approvals.some((a) => decisionCounts(ctx.policy, a))) {
-      const uncounted = approvals.find((a) => a.by && a.by !== "user");
-      missing.push(uncounted ? `the user's approval of the spec: recorded by the ${uncounted.by} in ${uncounted.mode} mode and not counted (a person runs crew approve <id> spec, or policy.json sets unattendedDecisions to "${uncounted.by === "validator" ? "validator" : "count"}")` : "the user's approval of the spec (crew approve <id> spec)");
-    }
-    if (!ctx.planExists)
-      missing.push("plan.md in the work folder");
-  }
-  return missing;
-}
-var MISSING_CHECKLIST_READ = `a checklist read for the gap round (crew pack files checklists <kind>: the core's checklist of that kind and the packs'; crew pack files checklists none --reason "<why>" when no kind applies)`;
-function conclaveDocument(work, ctx) {
-  if (work.route === "fast")
-    return [];
-  const missing = ctx.conclaveText === null ? ["conclave.md in the work folder (the gap round: four sections)"] : missingConclaveSections(ctx.conclaveText).map((name) => `a "${name}" section with content in conclave.md (write "none" when there is nothing)`);
-  if (!work.checklists?.length)
-    missing.push(MISSING_CHECKLIST_READ);
-  return missing;
-}
-function validatorPreconditions(rule, work, ctx) {
-  if (rule !== "complete-gap-round")
-    return [];
-  const missing = conclaveDocument(work, ctx);
-  for (const d of work.decisions ?? []) {
-    const answered = d.answer !== undefined && decisionCounts(ctx.policy, d);
-    if (!answered && d.default === undefined)
-      missing.push(`a stated default or an answer for ${d.id}`);
-  }
-  if (ctx.ledger) {
-    for (const o of blockingObjections(ctx.ledger, work, ctx.evidence, ctx.policy, ["open"]))
-      missing.push(`blocking objection ${o.id} bound to a criterion or waived by a person`);
-  }
-  return missing;
-}
-function guardFor(work, next, ctx) {
-  const missing = [];
-  if (work.phase === "analyse") {
-    for (const name of missingAnalysisSections(ctx.analysisText ?? ""))
-      missing.push(`${/^[aeiou]/i.test(name) ? "an" : "a"} "${name}" section with content in analysis.md (write "none" when there is nothing)`);
-    if (ctx.gitRepository && !ctx.originRecorded)
-      missing.push("analysis/origin.json in the work folder (crew analyse <id> --paths <files>)");
-    for (const k of ctx.knownRootCauses)
-      if (!k.contradicted && !(ctx.analysisText ?? "").includes(`[K:${k.id}]`))
-        missing.push(`${k.id} is a known root cause of ${k.paths.join(", ")} ("${k.title}"): cite it in analysis.md as [K:${k.id}] with what this fix does differently, or crew knowledge contradict ${k.id} --reason "<why>" --item ${work.id}`);
-  }
-  if (work.phase === "strategy") {
-    if (ctx.researcherText === null)
-      missing.push(RESEARCHER_FIRST);
-    else if (ctx.strategyText === null)
-      missing.push("strategy.md in the work folder");
-    else {
-      missing.push(...checkStrategy(ctx.strategyText, ctx.researcherText, work.knowledge?.listed ?? []).map((f) => `strategy.md: ${f}`));
-      const hash = strategyHash(ctx.strategyText, ctx.researcherText);
-      const record = ctx.evidence?.judgement?.find((j) => j.gate === "strategy");
-      if (!record)
-        missing.push("a proven strategy ruling (crew strategy <id> check, the reviewer and the judge, crew judgement <id> record --ruling <file>)");
-      else if (record.fingerprint !== hash)
-        missing.push("the strategy ruling is stale: strategy.md or conclave/researcher.md changed after it; check and judge again");
-      else if (record.verdict !== "proven")
-        missing.push(`the strategy ruling is ${verdictText(record.verdict)} (${record.findings.length} findings)`);
-    }
-  }
-  if (next === "deliver" && kindOfItem(work) === "audit") {
-    missing.push(...ctx.unproven.map((reason) => `not proven: ${reason}`));
-    return missing;
-  }
-  if ((next === "specify" || next === "strategy") && work.specReview && work.route === "full" && ["feature", "new-project"].includes(kindOfItem(work)) && !ctx.evidence?.specReview?.brief)
-    missing.push("the brainstorm's brief (wizardingcode-spec-brainstorm, then crew spec-review <id> brief)");
-  if (next === "plan") {
-    missing.push(...conclaveDocument(work, ctx));
-    for (const d of unansweredDecisions(work, ctx.policy))
-      missing.push(`an answer to ${d.id} (crew decide <id> ${d.id} "<answer>")`);
-    if (ctx.ledger) {
-      for (const o of blockingObjections(ctx.ledger, work, ctx.evidence, ctx.policy, ["open"]))
-        missing.push(`a criterion bound to blocking objection ${o.id}, or the user's waiver (crew objection <id> resolve ${o.id} --criterion AC-k | waive ${o.id} --reason "<why>")`);
-    }
-    if (debateState(work) === "open")
-      missing.push(`the debate is open (${work.debate?.reason ?? ""}); close it with the judge's ruling (crew debate <id> close [--tokens n])`);
-    missing.push(...leadsMissing(work, ctx, "spec"));
-  } else if (next === "build") {
-    if (work.criteria.length === 0) {
-      missing.push('at least one acceptance criterion (crew criteria <id> add "...")');
-    }
-    missing.push(...routeDocuments(work, ctx));
-    if (kindOfItem(work) === "issue") {
-      if (!work.criteria.some((c) => c.kind === "behavior"))
-        missing.push('an issue needs a regression test: at least one behavior criterion (crew criteria <id> add "<text>")');
-      if (!work.criteria.some((c) => c.kind === "preserve"))
-        missing.push('an issue keeps what works: at least one preserve criterion (crew criteria <id> add "<text>" --kind preserve)');
-    }
-  } else if (next === "gate") {
-    missing.push(...routeDocuments(work, ctx));
-    for (const criterion of work.criteria) {
-      if (criterion.supersededBy)
-        continue;
-      if (isSkipped(work, `tdd:${criterion.id}`, ctx.policy))
-        continue;
-      const record = ctx.evidence?.tdd.find((t) => t.criterion === criterion.id);
-      if (!tddDone(record, criterion.kind)) {
-        const how = criterion.kind === "behavior" ? "red/green" : criterion.kind === "preserve" ? "before/after" : "observed --reason";
-        missing.push(`test-first record for ${criterion.id} (crew tdd ${how})`);
-      }
-    }
-  } else if (next === "deliver") {
-    missing.push(...routeDocuments(work, ctx));
-    if (!ctx.proven) {
-      const reasons = ctx.unproven.map((reason) => `not proven: ${reason}`);
-      missing.push(...reasons.length ? reasons : ["not proven: run crew gate run <id>"]);
-    }
-    missing.push(...leadsMissing(work, ctx, "delivery"));
-  } else if (next === "learn") {
-    if (!ctx.proven)
-      missing.push(`not proven: the proof is on earlier code (crew gate run ${work.id})`);
-  }
-  return missing;
-}
-function nextPhaseOf(work) {
-  const phases = phasesFor(work);
-  const index = phases.indexOf(work.phase);
-  const current = index === -1 ? phases.findIndex((p) => phaseIndex(p) > phaseIndex(work.phase)) - 1 : index;
-  return phases[current + 1] ?? null;
-}
-function advancePhase(work, ctx) {
-  const next = nextPhaseOf(work);
-  if (!next)
-    return { ok: false, missing: ["already at the last phase"] };
-  const missing = guardFor(work, next, ctx);
-  if (missing.length)
-    return { ok: false, missing };
-  work.phase = next;
-  work.phaseAt = { ...work.phaseAt ?? {}, [next]: nowIso() };
-  return { ok: true, phase: next };
-}
-function waitingText(work) {
-  const phrase = waitingPhrase(work);
-  return phrase ? `, ${phrase}` : "";
-}
-function waitingPhrase(work) {
-  if (work.awaiting === "user")
-    return "waiting for the user";
-  if (work.awaiting === "role")
-    return "waiting for the roles";
-  if (work.awaiting === "mail")
-    return `waiting for a reply to ${work.awaitingMessage ?? "a message"}`;
-  return null;
-}
-function learnedHolds(paths, profile) {
-  const learned = lastLearned(paths);
-  if (!learned?.fingerprint)
-    return false;
-  const now = computeFingerprint(paths.root, profile, learned.work, MAX_WATCHED_FILES, fingerprintMethod(learned.fingerprint));
-  return now !== UNAVAILABLE && now === learned.fingerprint;
-}
-function noItemTurnEnds(paths, profile, session, current) {
-  const changed = session.baseline !== null && current !== UNAVAILABLE ? current !== session.baseline : false;
-  return !changed || learnedHolds(paths, profile);
-}
-
-// packages/engine/src/judgement.ts
-function plannedJudgementGates(route, riskAreas, changed, policy, registry = TEAMS) {
-  return plannedSeats(route, riskAreas, changed, policy, { registry }).filter((s) => s.kind === "gate" && s.gate !== undefined).map((s) => ({ gate: s.gate, reason: s.reason }));
-}
-function reviewDir(paths, id, task) {
-  const dir = join28(workDir(paths, id), "review");
-  return task ? join28(dir, task) : dir;
-}
-function plannedTaskJudgement(scope, policy) {
-  return taskSeats(scope, policy).flatMap((s) => s.kind === "gate" && s.gate ? [{ gate: s.gate, reason: s.reason }] : []);
-}
-function verdictWord(verdict) {
-  return verdict === "not-proven" ? "not proven" : verdict === "not-run" ? "not run" : "proven";
-}
-function findingsText(n) {
-  return `${n} finding${n === 1 ? "" : "s"}`;
-}
-function scopeHash(scope) {
-  return sha256([...new Set(scope)].sort().join(`
-`));
-}
-function keepRound(paths, id, round, gates, rulingFile, task) {
-  const dir = reviewDir(paths, id, task);
-  for (const gate of gates) {
-    const findings = join28(dir, `${gate}.findings.md`);
-    if (existsSync11(findings))
-      copyFileSync2(findings, join28(dir, `${gate}.round${round}.md`));
-  }
-  if (existsSync11(rulingFile))
-    copyFileSync2(rulingFile, join28(dir, `ruling.round${round}.json`));
-}
-var CAPTURE = /^(?<base>[a-z0-9-]+)(?:@(?<width>\d+))?(?<dark>-dark)?\.(?:png|jpe?g)$/i;
-function pageAndState(base, meta) {
-  if (meta && typeof meta.page === "string" && typeof meta.state === "string") {
-    return { page: meta.page, state: meta.state };
-  }
-  const at = base.lastIndexOf("-");
-  return at > 0 ? { page: base.slice(0, at), state: base.slice(at + 1) } : { page: base, state: "default" };
-}
-function listCaptures(paths, id, task) {
-  const dir = join28(reviewDir(paths, id, task), "ui");
-  let names;
-  try {
-    names = readdirSync7(dir);
-  } catch {
-    return [];
-  }
-  const prefix = task ? `review/${task}/ui/` : "review/ui/";
-  const groups = new Map;
-  for (const name of names) {
-    const match = CAPTURE.exec(name);
-    const base = match?.groups?.base;
-    if (!match || !base)
-      continue;
-    let group = groups.get(base);
-    if (!group) {
-      const metaName = `${base}.json`;
-      const meta = names.includes(metaName) && isRegularFile(join28(dir, metaName)) ? readJson(join28(dir, metaName)) : null;
-      const { page, state } = pageAndState(base, meta);
-      group = {
-        page,
-        state,
-        images: [],
-        meta: meta ? metaName : null,
-        by: meta?.by === "fixture" ? "fixture" : "session"
-      };
-      groups.set(base, group);
-    }
-    const width = match.groups?.width ? Number(match.groups.width) : null;
-    group.images.push({ name, width, dark: match.groups?.dark !== undefined });
-  }
-  return [...groups.entries()].map(([base, group]) => {
-    const ordered = [...group.images].sort((a, b) => Number(a.dark) - Number(b.dark) || (a.width ?? 0) - (b.width ?? 0) || a.name.localeCompare(b.name));
-    const light = ordered.find((i) => !i.dark) ?? ordered[0];
-    const consoleFile = `console-${base}.json`;
-    return {
-      page: group.page,
-      state: group.state,
-      file: `${prefix}${light?.name ?? ""}`,
-      files: ordered.map((i) => `${prefix}${i.name}`),
-      widths: [
-        ...new Set(ordered.map((i) => i.width).filter((w) => w !== null))
-      ].sort((a, b) => a - b),
-      dark: ordered.some((i) => i.dark),
-      console: names.includes(consoleFile) ? `${prefix}${consoleFile}` : null,
-      meta: group.meta ? `${prefix}${group.meta}` : null,
-      by: group.by
-    };
-  }).sort((a, b) => a.page.localeCompare(b.page) || a.state.localeCompare(b.state));
-}
-function isStoredCapture(raw) {
-  if (!raw || typeof raw !== "object")
-    return false;
-  const { file, console: consoleFile } = raw;
-  return typeof file === "string" && (typeof consoleFile === "string" || consoleFile === null);
-}
-function completeCapture(raw) {
-  const name = raw.file.slice(raw.file.lastIndexOf("/") + 1);
-  const match = CAPTURE.exec(name);
-  const fallback = pageAndState(match?.groups?.base ?? name.replace(/\.[^.]+$/, ""), null);
-  return {
-    page: typeof raw.page === "string" ? raw.page : fallback.page,
-    state: typeof raw.state === "string" ? raw.state : fallback.state,
-    file: raw.file,
-    files: Array.isArray(raw.files) ? raw.files : [raw.file],
-    widths: Array.isArray(raw.widths) ? raw.widths : [],
-    dark: raw.dark === true,
-    console: raw.console,
-    meta: typeof raw.meta === "string" ? raw.meta : null,
-    by: raw.by === "fixture" ? "fixture" : "session"
-  };
-}
-function readReviewInputs(paths, id, task) {
-  const raw = readJson(join28(reviewDir(paths, id, task), "inputs.json"));
-  if (!raw || typeof raw.fingerprint !== "string" || typeof raw.at !== "string")
-    return null;
-  const captures = Array.isArray(raw.captures) ? raw.captures.filter(isStoredCapture).map(completeCapture) : [];
-  return {
-    fingerprint: raw.fingerprint,
-    at: raw.at,
-    captures,
-    ...Array.isArray(raw.dependencies) ? { dependencies: raw.dependencies.filter(isDependencyInput) } : {},
-    ...Array.isArray(raw.phrases) ? { phrases: raw.phrases.filter(isPhraseInput) } : {}
-  };
-}
-function writeReviewInputs(paths, work, changed, fingerprint, options = {}) {
-  const { task, signals } = options;
-  const dir = reviewDir(paths, work.id, task);
-  const previous = readReviewInputs(paths, work.id, task);
-  if (previous && previous.fingerprint !== fingerprint) {
-    let names = [];
-    try {
-      names = readdirSync7(dir);
-    } catch {
-      names = [];
-    }
-    for (const name of names) {
-      if (name === "ruling.json" || name.endsWith(".findings.md"))
-        unlinkSync(join28(dir, name));
-    }
-  }
-  const cut = reviewPatch(paths.root, work.baseCommit, changed);
-  writeText(join28(dir, "diff.patch"), cut.patch);
-  writeText(join28(dir, "files.txt"), changed.length ? `${changed.join(`
-`)}
-` : "");
-  writeText(join28(dir, "inputs.json"), `${JSON.stringify({
-    ...signals ? { dependencies: signals.dependencies, phrases: signals.phrases } : {},
-    fingerprint,
-    at: nowIso(),
-    captures: listCaptures(paths, work.id, task)
-  }, null, 2)}
-`);
-  return { dir, note: cut.note };
-}
-function judgementRows(work, evidence, planned, currentFingerprint, policy) {
-  return planned.map((p) => {
-    const record = (evidence.judgement ?? []).find((j) => j.gate === p.gate);
-    const findings = record?.findings.length ?? 0;
-    if (isSkipped(work, `gate:${p.gate}`, policy)) {
-      const skip = work.skips.find((s) => s.step === `gate:${p.gate}`);
-      return {
-        gate: p.gate,
-        status: "skipped",
-        planned: p.reason,
-        findings,
-        ...skip?.reason ? { reason: skip.reason } : {}
-      };
-    }
-    if (!record)
-      return { gate: p.gate, status: "planned", planned: p.reason, findings: 0 };
-    if (record.fingerprint !== currentFingerprint)
-      return {
-        gate: p.gate,
-        status: "stale",
-        planned: p.reason,
-        findings,
-        reason: "ruling on earlier code"
-      };
-    return {
-      gate: p.gate,
-      status: record.verdict,
-      planned: p.reason,
-      findings,
-      ...record.reason ? { reason: record.reason } : {}
-    };
-  });
-}
-function isRecord2(value) {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-function hunkLines2(patch, file, line) {
-  const lines = patch.split(`
-`);
-  let current = null;
-  let newLine = 0;
-  let inHunk = false;
-  let hunkRows = [];
-  let found = null;
-  const settle = () => {
-    if (current === file && hunkRows.some((r) => r.n === line))
-      found = hunkRows;
-  };
-  for (const raw of lines) {
-    const header = /^diff --git a\/(.+?) b\/(.+)$/.exec(raw);
-    if (header) {
-      settle();
-      if (found)
-        break;
-      current = header[2] ?? null;
-      inHunk = false;
-      hunkRows = [];
-      continue;
-    }
-    const hunk = HUNK_HEADER.exec(raw);
-    if (hunk) {
-      settle();
-      if (found)
-        break;
-      newLine = Number(hunk[1]);
-      inHunk = true;
-      hunkRows = [];
-      continue;
-    }
-    if (!inHunk || current !== file)
-      continue;
-    if (raw.startsWith("+") || raw.startsWith(" ")) {
-      hunkRows.push({ n: newLine, text: raw.slice(1) });
-      newLine += 1;
-    } else if (raw.startsWith("\\")) {}
-  }
-  settle();
-  if (!found)
-    return null;
-  const rows = found.filter((r) => r.n >= line - 5 && r.n <= line + 5);
-  const first = rows[0];
-  const last = rows[rows.length - 1];
-  if (!first || !last)
-    return null;
-  return { from: first.n, to: last.n, text: rows.map((r) => `${r.n}: ${r.text}`).join(`
-`) };
-}
-function plannedNote(planned) {
-  return planned.length ? ` (planned: ${planned.join(", ")})` : " (none is planned)";
-}
-function parseRulings(raw, planned, subject = "this item") {
-  if (!isRecord2(raw) || !Array.isArray(raw.rulings))
-    return { refused: 'the ruling file is a JSON object with a "rulings" list' };
-  if (raw.rulings.length === 0)
-    return { refused: "the ruling file has no rulings" };
-  const rulings = [];
-  for (const [index, entry] of raw.rulings.entries()) {
-    const where = `ruling ${index + 1}`;
-    if (!isRecord2(entry))
-      return { refused: `${where}: not an object` };
-    const gate = entry.gate;
-    if (!isJudgementGateName(gate))
-      return {
-        refused: `${where}: unknown judgement gate: ${String(gate)} (${JUDGEMENT_GATES.join(", ")})`
-      };
-    if (!planned.includes(gate))
-      return { refused: `${where}: ${gate} is not planned for ${subject}${plannedNote(planned)}` };
-    const verdict = entry.verdict;
-    if (verdict !== "proven" && verdict !== "not-proven")
-      return {
-        refused: `${where} (${gate}): verdict is proven or not-proven, not ${String(verdict)}; a gate that could not run is recorded with crew judgement <id> record ${gate} --not-run --reason "<why>"`
-      };
-    const rawFindings = entry.findings ?? [];
-    if (!Array.isArray(rawFindings))
-      return { refused: `${where} (${gate}): findings is a list` };
-    const findings = [];
-    for (const [n, f] of rawFindings.entries()) {
-      const at = `finding ${n + 1} of ${gate}`;
-      if (!isRecord2(f))
-        return { refused: `${at}: not an object` };
-      if (typeof f.file !== "string" || !f.file.trim())
-        return { refused: `${at}: needs a file` };
-      if (typeof f.text !== "string" || !f.text.trim())
-        return { refused: `${at}: needs a text` };
-      if (f.severity !== "defect" && f.severity !== "advisory")
-        return { refused: `${at}: severity is defect or advisory` };
-      const line = f.line === 0 ? undefined : f.line;
-      if (line !== undefined && !(typeof line === "number" && Number.isInteger(line) && line > 0))
-        return { refused: `${at}: line is a positive integer` };
-      findings.push({
-        file: f.file.trim().replace(/^\.\//, ""),
-        ...typeof line === "number" ? { line } : {},
-        text: f.text.trim(),
-        severity: f.severity
-      });
-    }
-    if (verdict === "not-proven" && !findings.some((f) => f.severity === "defect"))
-      return {
-        refused: `${where} (${gate}): not proven with no defect finding; the judge rules not proven on defects, or rules proven`
-      };
-    const tokens = entry.tokens;
-    if (tokens !== undefined && !(typeof tokens === "number" && Number.isFinite(tokens) && tokens >= 0))
-      return { refused: `${where} (${gate}): tokens is a number` };
-    if (rulings.some((r) => r.gate === gate))
-      return { refused: `two rulings for ${gate} in one file` };
-    rulings.push({
-      gate,
-      verdict,
-      ...typeof entry.reviewer === "string" ? { reviewer: entry.reviewer } : {},
-      ...typeof entry.judge === "string" ? { judge: entry.judge } : {},
-      findings,
-      ...typeof tokens === "number" ? { tokens } : {}
-    });
-  }
-  return { rulings };
-}
-function stampRuling(ruling, fingerprint, changed, workId) {
-  const own = `.crew/work/${workId}/`;
-  return {
-    gate: ruling.gate,
-    verdict: ruling.verdict,
-    ...ruling.reviewer ? { reviewer: ruling.reviewer } : {},
-    ...ruling.judge ? { judge: ruling.judge } : {},
-    findings: ruling.findings.map((f) => changed.includes(f.file) || f.file.startsWith(own) ? { ...f } : { ...f, outside: true }),
-    ...ruling.tokens !== undefined ? { tokens: ruling.tokens } : {},
-    at: nowIso(),
-    fingerprint
-  };
-}
-function fillTokens(records, roles, since) {
-  const thisRound = since ? roles.filter((r) => r.at >= since) : [];
-  const latest = (agent) => [...thisRound].reverse().find((r) => r.agent === agent && r.tokensFrom === "transcript");
-  const judge = latest("judge");
-  const ruled = records.filter((r) => r.verdict !== "not-run");
-  for (const record of ruled) {
-    if ((record.tokens ?? 0) !== 0)
-      continue;
-    const reviewer = latest(`review-${record.gate}`);
-    if (reviewer || judge)
-      record.tokens = (reviewer?.tokens ?? 0) + Math.round((judge?.tokens ?? 0) / ruled.length);
-  }
-}
-function contradiction(record) {
-  if (record.verdict !== "proven")
-    return null;
-  const defect = record.findings.find((f) => f.severity === "defect" && !f.outside);
-  if (!defect)
-    return null;
-  const where = defect.line ? `${defect.file}:${defect.line}` : defect.file;
-  return `${record.gate}: proven with a defect on ${where}; the judge rules not proven on a defect inside the change, or lowers it to advisory`;
-}
-function notRunRecord(gate, reason, fingerprint) {
-  return {
-    gate,
-    verdict: "not-run",
-    reason: reason.trim(),
-    findings: [],
-    at: nowIso(),
-    fingerprint
-  };
-}
-function recordJudgement(evidence, record) {
-  evidence.judgement = [
-    ...(evidence.judgement ?? []).filter((j) => j.gate !== record.gate),
-    record
-  ];
-}
-
-// packages/engine/src/ui.ts
-var SCREEN_NAME = /^[a-z0-9-]+$/;
-var SCREENS_RULE = "screens: use page:state with [a-z0-9-]+ names, comma-separated";
-var VIEWPORTS_RULE = "ui.viewports: one to six WxH pairs, integers 200 to 4000, comma-separated";
-var DARK_RULE = "ui.dark: true or false";
-var DEFAULT_VIEWPORTS = [
-  { name: "mobile", width: 360, height: 800 },
-  { name: "tablet", width: 768, height: 1024 },
-  { name: "desktop", width: 1280, height: 800 }
-];
-var SIZE_MIN = 200;
-var SIZE_MAX = 4000;
-var VIEWPORTS_MAX = 6;
-function parseScreens(text) {
-  const parts = text.split(",").map((p) => p.trim()).filter((p) => p !== "");
-  if (parts.length === 0)
-    return { refused: SCREENS_RULE };
-  const seen = new Map;
-  for (const part of parts) {
-    const [page, state, ...rest] = part.split(":");
-    if (rest.length || !page || !state || !SCREEN_NAME.test(page) || !SCREEN_NAME.test(state)) {
-      return { refused: SCREENS_RULE };
-    }
-    seen.set(part, { page, state });
-  }
-  return [...seen.values()];
-}
-function expectedScreens(work) {
-  const byKey = new Map;
-  for (const criterion of work.criteria) {
-    if (criterion.supersededBy || !criterion.screens)
-      continue;
-    for (const screen of criterion.screens) {
-      const key = `${screen.page}-${screen.state}`;
-      const entry = byKey.get(key) ?? { page: screen.page, state: screen.state, criteria: [] };
-      if (!entry.criteria.includes(criterion.id))
-        entry.criteria.push(criterion.id);
-      byKey.set(key, entry);
-    }
-  }
-  return [...byKey.values()].sort((a, b) => a.page.localeCompare(b.page) || a.state.localeCompare(b.state));
-}
-function viewportName(width) {
-  return width < 600 ? "mobile" : width < 1024 ? "tablet" : "desktop";
-}
-function parseViewports(text) {
-  const parts = text.split(",").map((p) => p.trim()).filter((p) => p !== "");
-  if (parts.length === 0 || parts.length > VIEWPORTS_MAX)
-    return { refused: VIEWPORTS_RULE };
-  const out = [];
-  const taken = new Set;
-  for (const part of parts) {
-    const match = /^(\d+)x(\d+)$/.exec(part);
-    if (!match)
-      return { refused: VIEWPORTS_RULE };
-    const width = Number(match[1]);
-    const height = Number(match[2]);
-    for (const size of [width, height]) {
-      if (!Number.isInteger(size) || size < SIZE_MIN || size > SIZE_MAX)
-        return { refused: VIEWPORTS_RULE };
-    }
-    const base = viewportName(width);
-    const name = taken.has(base) ? `${base}-${width}` : base;
-    if (taken.has(name))
-      return { refused: VIEWPORTS_RULE };
-    taken.add(name);
-    out.push({ name, width, height });
-  }
-  return out;
-}
-function uiLine(ui) {
-  const viewports = ui.viewports.map((v) => `${v.width}x${v.height} ${v.name}`).join(", ");
-  return `ui: viewports ${viewports}; dark: ${ui.dark === undefined ? "unset" : String(ui.dark)}`;
-}
-var STYLE_EXTENSIONS = [
-  ".css",
-  ".scss",
-  ".less",
-  ".vue",
-  ".svelte",
-  ".tsx",
-  ".jsx",
-  ".astro",
-  ".html",
-  ".blade.php"
-];
-var DARK_FILES_MAX = 400;
-var DARK_BYTES_MAX = 256 * 1024;
-var DARK = /prefers-color-scheme:\s*dark|\.dark(?![\w-])|data-theme=["']dark["']/;
-function readHead(path, max) {
-  const fd = openSync(path, "r");
-  try {
-    const buffer = Buffer.alloc(max);
-    const read = readSync(fd, buffer, 0, max, 0);
-    return buffer.subarray(0, read).toString("utf8");
-  } finally {
-    closeSync(fd);
-  }
-}
-function darkScheme(root, profile) {
-  if (typeof profile.ui?.dark === "boolean")
-    return { dark: profile.ui.dark, from: "profile" };
-  let seen = 0;
-  const walk = (dir, rel) => {
-    let entries;
-    try {
-      entries = readdirSync8(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name));
-    } catch {
-      return false;
-    }
-    for (const entry of entries) {
-      if (entry.isSymbolicLink() || SKIP_DIRS.has(entry.name))
-        continue;
-      const path = rel ? `${rel}/${entry.name}` : entry.name;
-      if (entry.isDirectory()) {
-        if (walk(join29(dir, entry.name), path))
-          return true;
-        if (seen >= DARK_FILES_MAX)
-          return false;
-        continue;
-      }
-      if (!entry.isFile())
-        continue;
-      const lower = entry.name.toLowerCase();
-      if (!STYLE_EXTENSIONS.some((ext) => lower.endsWith(ext)) || !isWatched(path, profile))
-        continue;
-      if (++seen > DARK_FILES_MAX)
-        return false;
-      try {
-        if (DARK.test(readHead(join29(dir, entry.name), DARK_BYTES_MAX)))
-          return true;
-      } catch {}
-    }
-    return false;
-  };
-  return walk(root, "") ? { dark: true, from: "stylesheets" } : { dark: false, from: "none" };
-}
-function uiPlanPath(paths, id) {
-  return join29(workDir(paths, id), "review", "ui-plan.json");
-}
-function writeUiPlan(paths, work, profile) {
-  const { dark, from } = darkScheme(paths.root, profile);
-  const plan = {
-    id: work.id,
-    at: nowIso(),
-    viewports: (profile.ui?.viewports ?? DEFAULT_VIEWPORTS).map((v) => ({ ...v })),
-    colorSchemes: dark ? ["light", "dark"] : ["light"],
-    darkFrom: from,
-    screens: expectedScreens(work),
-    ...isNewSite(readSurface(paths, work.id)) ? { fullPage: true } : {}
-  };
-  const file = uiPlanPath(paths, work.id);
-  writeText(file, `${JSON.stringify(plan, null, 2)}
-`);
-  return { file, plan };
-}
-var IMAGE_NAME = /^[a-z0-9-]+-[a-z0-9-]+@\d+(?:-dark)?\.(?:png|jpe?g)$/;
-var CONSOLE_OR_AXE_NAME = /^(?:console|axe)-[a-z0-9-]+\.json$/;
-var ARIA_NAME = /^[a-z0-9-]+\.aria\.yml$/;
-var STRIP_NAME = /^[a-z0-9-]+\.strip\.png$/;
-var MOTION_DIR = /^motion\/[a-z0-9-]+$/;
-var FRAME_NAME = /^\d{2}\.png$/;
-function contained(ui, name, shape) {
-  if (typeof name !== "string" || name.includes("\x00") || !shape.test(name))
-    return null;
-  const target = resolve6(ui, name);
-  return target.startsWith(`${resolve6(ui)}${sep4}`) ? target : null;
-}
-function removeFile(target) {
-  try {
-    const stat = lstatSync3(target);
-    if (stat.isDirectory())
-      return false;
-    unlinkSync2(target);
-    return true;
-  } catch {
-    return false;
-  }
-}
-function removeFrames(target) {
-  try {
-    const parent = lstatSync3(dirname8(target));
-    if (parent.isSymbolicLink() || !parent.isDirectory())
-      return false;
-    const stat = lstatSync3(target);
-    if (!stat.isDirectory())
-      return false;
-    const entries = readdirSync8(target, { withFileTypes: true });
-    if (!entries.every((e) => e.isFile() && FRAME_NAME.test(e.name)))
-      return false;
-    rmSync3(target, { recursive: true, force: false });
-    return true;
-  } catch {
-    return false;
-  }
-}
-function isLink(target) {
-  try {
-    return lstatSync3(target).isSymbolicLink();
-  } catch {
-    return false;
-  }
-}
-function readJsonFile(path) {
-  if (!isRegularFile(path))
-    return null;
-  try {
-    const body = JSON.parse(readFileSync6(path, "utf8"));
-    return body && typeof body === "object" && !Array.isArray(body) ? body : null;
-  } catch {
-    return null;
-  }
-}
-function sweepStaleFixtureFiles(ui) {
-  const removed = [];
-  const skipped = [];
-  if (!existsSync12(ui))
-    return { removed, skipped };
-  const take = (name, shape, remove) => {
-    if (name === null || name === undefined)
-      return;
-    const target = contained(ui, name, shape);
-    if (!target) {
-      skipped.push(String(name));
-      return;
-    }
-    if (remove(target))
-      removed.push(String(name));
-    else if (existsSync12(target) || isLink(target))
-      skipped.push(String(name));
-  };
-  for (const name of readdirSync8(ui).sort()) {
-    if (!name.endsWith(".json"))
-      continue;
-    const body = readJsonFile(join29(ui, name));
-    if (!body)
-      continue;
-    if (name.endsWith(".motion.json")) {
-      if (typeof body.page !== "string" || typeof body.interaction !== "string")
-        continue;
-      const frames = body.frames && typeof body.frames === "object" ? body.frames : {};
-      take(frames.dir, MOTION_DIR, removeFrames);
-      take(frames.strip, STRIP_NAME, removeFile);
-      if (removeFile(join29(ui, name)))
-        removed.push(name);
-      continue;
-    }
-    if (body.by !== "fixture" || typeof body.page !== "string" || typeof body.state !== "string")
-      continue;
-    for (const viewport of Array.isArray(body.viewports) ? body.viewports : []) {
-      if (!viewport || typeof viewport !== "object")
-        continue;
-      const v = viewport;
-      take(v.light, IMAGE_NAME, removeFile);
-      take(v.dark, IMAGE_NAME, removeFile);
-    }
-    take(body.console, CONSOLE_OR_AXE_NAME, removeFile);
-    take(body.aria, ARIA_NAME, removeFile);
-    const axe = body.axe && typeof body.axe === "object" ? body.axe : {};
-    take(axe.file, CONSOLE_OR_AXE_NAME, removeFile);
-    if (removeFile(join29(ui, name)))
-      removed.push(name);
-  }
-  return { removed, skipped };
-}
-function planLine(plan) {
-  if (plan.screens.length === 0)
-    return null;
-  const screens = `${plan.screens.length} screen${plan.screens.length === 1 ? "" : "s"} declared`;
-  return `ui plan: ${screens}; viewports ${plan.viewports.map((v) => v.width).join(", ")}; schemes ${plan.colorSchemes.join(", ")}`;
-}
-function sweepLine(skipped) {
-  if (skipped.length === 0)
-    return null;
-  return `ui: skipped ${skipped.length} stale name${skipped.length === 1 ? "" : "s"} outside the fixture's shape: ${skipped.join(", ")}`;
-}
-function screensSummary(expected, captures) {
-  const have = new Set(captures.map((c) => `${c.page}-${c.state}`));
-  const wanted = expected.map((s) => `${s.page}-${s.state}`);
-  const wantedSet = new Set(wanted);
-  const widths = [...new Set(captures.flatMap((c) => c.widths))].sort((a, b) => a - b);
-  return {
-    captures: captures.length,
-    captured: wanted.filter((key) => have.has(key)).length,
-    expected: wanted.length,
-    missing: wanted.filter((key) => !have.has(key)),
-    extra: wanted.length ? [...have].filter((key) => !wantedSet.has(key)).sort() : [],
-    fixture: captures.filter((c) => c.by === "fixture").length,
-    session: captures.filter((c) => c.by !== "fixture").length,
-    viewports: widths
-  };
-}
-function capturesLine(summary, silent) {
-  const silentPart = silent.length ? `${silent.length} without a console file: ${silent.join(", ")}` : null;
-  if (summary.expected === 0) {
-    if (summary.captures === 0)
-      return "";
-    return `captures: ${summary.captures}${silentPart ? ` (${silentPart})` : ""}`;
-  }
-  const parts = [
-    `captures: ${summary.captured} of ${summary.expected} expected (fixture ${summary.fixture}, session ${summary.session})`
-  ];
-  if (summary.missing.length)
-    parts.push(`missing: ${summary.missing.join(", ")}`);
-  if (summary.extra.length)
-    parts.push(`extra: ${summary.extra.join(", ")}`);
-  if (summary.viewports.length)
-    parts.push(`viewports ${summary.viewports.join(", ")}`);
-  if (silentPart)
-    parts.push(silentPart);
-  return parts.join("; ");
-}
-var CLS_LIMIT = 0.1;
-var REDUCED_MOTION_OPACITY_MS = 300;
-var LAYOUT_PROPERTIES = [
-  "width",
-  "height",
-  "top",
-  "left",
-  "right",
-  "bottom",
-  "margin",
-  "padding",
-  "inset"
-];
-var AXE_FAILING = new Set(["serious", "critical"]);
-var EVIDENCE_FILE_MAX = 1024 * 1024;
-var IDS_MAX = 5;
-function safeList(items, max = IDS_MAX) {
-  const shown = items.slice(0, max).map((item) => safeText(item));
-  const rest = items.length - shown.length;
-  return rest > 0 ? `${shown.join(", ")}, +${rest} more` : shown.join(", ");
-}
-function uiEvidencePath(paths, id) {
-  return join29(workDir(paths, id), "review", "ui-evidence.json");
-}
-function readBoundedJson(path) {
-  const text = readRegularText(path, EVIDENCE_FILE_MAX);
-  if (text === null)
-    return;
-  try {
-    return JSON.parse(text);
-  } catch {
-    return;
-  }
-}
-var isObject = (v) => !!v && typeof v === "object" && !Array.isArray(v);
-var finiteOrNull = (v) => v === null || typeof v === "number" && Number.isFinite(v);
-var strings2 = (v) => Array.isArray(v) ? v.filter((x) => typeof x === "string") : [];
-function readBounded(path) {
-  const body = readBoundedJson(path);
-  return isObject(body) ? body : null;
-}
-function runningEntry(raw) {
-  if (!isObject(raw))
-    return null;
-  if (!finiteOrNull(raw.durationMs ?? null))
-    return null;
-  if (raw.properties !== undefined && !Array.isArray(raw.properties))
-    return null;
-  return {
-    target: safeText(raw.target ?? ""),
-    iterations: raw.iterations,
-    durationMs: raw.durationMs ?? null,
-    properties: strings2(raw.properties)
-  };
-}
-function readReduced(raw, key) {
-  if (raw === undefined)
-    return { status: "not captured", entries: [] };
-  if (!isObject(raw) || typeof raw.status !== "string")
-    return null;
-  if (raw.status !== "clean" && raw.status !== "running")
-    return { status: "not captured", entries: [] };
-  const list = raw[key] ?? [];
-  if (!Array.isArray(list))
-    return null;
-  const entries = [];
-  for (const item of list) {
-    const entry = runningEntry(item);
-    if (!entry)
-      return null;
-    entries.push(entry);
-  }
-  return { status: raw.status, entries };
-}
-function offendsReducedMotion(entry) {
-  if (entry.iterations === "Infinity")
-    return true;
-  const moves = entry.properties.some((p) => p === "transform" || LAYOUT_PROPERTIES.some((layout) => p === layout || p.startsWith(`${layout}-`)));
-  if (moves)
-    return true;
-  return entry.durationMs !== null && entry.durationMs > REDUCED_MOTION_OPACITY_MS;
-}
-function reducedMotionOffences(entries, label) {
-  return entries.filter(offendsReducedMotion).map((entry) => `ui: animation still running under reduced motion: ${entry.target} (${label})`);
-}
-function readAxeFile(dir, name) {
-  if (!/^axe-[a-z0-9-]+\.json$/.test(name) || !existsSync12(join29(dir, name)))
-    return "missing";
-  const body = readBounded(join29(dir, name));
-  if (!body || !Array.isArray(body.violations))
-    return "unreadable";
-  const violations = [];
-  for (const v of body.violations) {
-    if (!isObject(v) || typeof v.id !== "string")
-      return "unreadable";
-    violations.push({
-      id: safeText(v.id),
-      impact: typeof v.impact === "string" ? safeText(v.impact) : null,
-      nodes: typeof v.nodes === "number" && Number.isFinite(v.nodes) ? v.nodes : 0
-    });
-  }
-  return { status: violations.length ? "violations" : "clean", reason: null, violations };
-}
-function readMeta(dir, meta, base) {
-  if (typeof meta.page !== "string" || typeof meta.state !== "string")
-    return null;
-  if (meta.viewports !== undefined && !Array.isArray(meta.viewports))
-    return null;
-  let axe = { status: "not captured", reason: "not measured", violations: [] };
-  let axeUnreadable = null;
-  if (meta.axe !== undefined) {
-    if (!isObject(meta.axe) || typeof meta.axe.status !== "string")
-      return null;
-    if (meta.axe.status === "clean" || meta.axe.status === "violations") {
-      const name = typeof meta.axe.file === "string" ? meta.axe.file : `axe-${base}.json`;
-      const read = readAxeFile(dir, name);
-      if (read === "missing")
-        axe = { status: "not captured", reason: `${safeText(name)} missing`, violations: [] };
-      else if (read === "unreadable") {
-        axeUnreadable = safeText(name);
-        axe = { status: "not captured", reason: `${safeText(name)} unreadable`, violations: [] };
-      } else
-        axe = read;
-    } else {
-      axe = {
-        status: "not captured",
-        reason: safeText(meta.axe.reason ?? "not measured"),
-        violations: []
-      };
-    }
-  }
-  let vitals = null;
-  if (meta.vitals !== undefined && meta.vitals !== null) {
-    if (!isObject(meta.vitals))
-      return null;
-    const { cls, lcpMs, inpMs } = meta.vitals;
-    const allNull = (cls ?? null) === null && (lcpMs ?? null) === null && (inpMs ?? null) === null;
-    if (!allNull) {
-      if (typeof cls !== "number" || !Number.isFinite(cls))
-        return null;
-      if (!finiteOrNull(lcpMs ?? null) || !finiteOrNull(inpMs ?? null))
-        return null;
-      vitals = {
-        cls,
-        lcpMs: lcpMs ?? null,
-        inpMs: inpMs ?? null
-      };
-    }
-  }
-  const reducedMotion = readReduced(meta.reducedMotion, "running");
-  if (!reducedMotion)
-    return null;
-  return { axe, axeUnreadable, vitals, reducedMotion, page: readPage(meta) };
-}
-function readSample(dir, body) {
-  if (typeof body.page !== "string" || typeof body.interaction !== "string")
-    return null;
-  if (body.frames !== undefined && !isObject(body.frames))
-    return null;
-  if (body.animations !== undefined && !Array.isArray(body.animations))
-    return null;
-  if (body.frameTimes !== undefined && !isObject(body.frameTimes))
-    return null;
-  const frames = isObject(body.frames) ? body.frames : {};
-  const stripName = typeof frames.strip === "string" ? frames.strip : null;
-  const strip = stripName !== null && STRIP_NAME.test(stripName) && existsSync12(join29(dir, stripName));
-  const over = isObject(body.frameTimes) ? body.frameTimes.over50ms : 0;
-  const reducedMotion = readReduced(body.reducedMotion, "animations");
-  if (!reducedMotion)
-    return null;
-  return {
-    page: safeText(body.page),
-    interaction: safeText(body.interaction),
-    strip,
-    animations: Array.isArray(body.animations) ? body.animations.length : 0,
-    over50ms: typeof over === "number" && Number.isFinite(over) ? over : 0,
-    reducedMotion
-  };
-}
-function consoleStatus(path) {
-  const entries = path ? readBoundedJson(path) : undefined;
-  if (!Array.isArray(entries))
-    return "not captured";
-  const failing = entries.some((e) => isObject(e) && (e.type === "error" || e.type === "warning" || e.type === "warn"));
-  return failing ? "error" : "clean";
-}
-function imageWidths(capture, dark) {
-  const suffix = dark ? "-dark" : "";
-  return capture.widths.filter((w) => capture.files.some((f) => f.replace(/\.(png|jpe?g)$/i, "").endsWith(`@${w}${suffix}`)));
-}
-function emptyRow(page, state, criteria, declared) {
-  return {
-    page,
-    state,
-    criteria,
-    declared,
-    by: null,
-    captured: null,
-    console: "not captured",
-    axe: "not captured",
-    vitals: null,
-    reducedMotion: "not captured"
-  };
-}
-function measure(paths, id, plan) {
-  const dir = join29(reviewDir(paths, id), "ui");
-  const m = {
-    captures: listCaptures(paths, id),
-    rows: new Map,
-    interactions: [],
-    unreadable: [],
-    reducedOffences: [],
-    axeOffences: [],
-    clsOffences: [],
-    overflowOffences: [],
-    imageOffences: [],
-    hiddenOffences: [],
-    fontLines: [],
-    axeViolations: [],
-    axeReasons: [],
-    axeClean: 0,
-    clsMax: null,
-    lcpMax: null,
-    reducedSeen: false,
-    withoutStrip: 0
-  };
-  for (const screen of plan.screens) {
-    m.rows.set(`${screen.page}/${screen.state}`, emptyRow(screen.page, screen.state, [...screen.criteria], true));
-  }
-  measureCaptures(m, paths, id, dir);
-  measureSamples(m, dir);
-  return m;
-}
-function measureCaptures(m, paths, id, dir) {
-  for (const capture of m.captures) {
-    const key = `${capture.page}/${capture.state}`;
-    const label = `${capture.page}-${capture.state}`;
-    const row = m.rows.get(key) ?? emptyRow(capture.page, capture.state, [], false);
-    m.rows.set(key, row);
-    row.by = capture.by;
-    row.captured = {
-      light: imageWidths(capture, false),
-      dark: capture.dark ? imageWidths(capture, true) : []
-    };
-    row.console = consoleStatus(capture.console ? join29(workDir(paths, id), capture.console) : null);
-    const metaName = `${label}.json`;
-    if (!existsSync12(join29(dir, metaName)))
-      continue;
-    const body = readBounded(join29(dir, metaName));
-    const reading = body ? readMeta(dir, body, label) : null;
-    if (!reading) {
-      m.unreadable.push(metaName);
-      continue;
-    }
-    if (reading.axeUnreadable)
-      m.unreadable.push(reading.axeUnreadable);
-    row.axe = reading.axe.status;
-    row.vitals = reading.vitals;
-    row.reducedMotion = reading.reducedMotion.status;
-    if (reading.axe.status === "violations") {
-      for (const v of reading.axe.violations) {
-        m.axeViolations.push(`${v.id} on ${label}`);
-        if (v.impact && AXE_FAILING.has(v.impact)) {
-          m.axeOffences.push(`ui: axe ${v.impact} ${v.id} on ${label} (${v.nodes} nodes)`);
-        }
-      }
-    } else if (reading.axe.status === "clean")
-      m.axeClean += 1;
-    else if (reading.axe.reason)
-      m.axeReasons.push(reading.axe.reason);
-    if (reading.vitals) {
-      const where = basename7(capture.file).replace(/\.[^.]+$/, "");
-      const { cls, lcpMs } = reading.vitals;
-      if (cls !== null && (m.clsMax === null || cls > m.clsMax.value))
-        m.clsMax = { value: cls, where };
-      if (cls !== null && cls > CLS_LIMIT)
-        m.clsOffences.push(`ui: CLS ${cls} on ${where} (limit ${CLS_LIMIT})`);
-      if (lcpMs !== null && (m.lcpMax === null || lcpMs > m.lcpMax))
-        m.lcpMax = lcpMs;
-    }
-    if (reading.reducedMotion.status !== "not captured") {
-      m.reducedSeen = true;
-      m.reducedOffences.push(...reducedMotionOffences(reading.reducedMotion.entries, label));
-    }
-    row.measures = reading.page.measures;
-    pageOffences(m, reading.page, label);
-  }
-}
-function quotedStrings(value) {
-  if (!Array.isArray(value))
-    return null;
-  return value.filter((v) => typeof v === "string").slice(0, 10).map((v) => quotedText(v));
-}
-function nonNegative(value) {
-  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
-}
-function appMeasuresOf(value) {
-  if (!value || typeof value !== "object" || Array.isArray(value))
-    return null;
-  const a = value;
-  const width = nonNegative(a.width);
-  const numericCells = nonNegative(a.numericCells);
-  const rightAlignedShare = nonNegative(a.rightAlignedShare);
-  const tabularShare = nonNegative(a.tabularShare);
-  const sidebarShare = nonNegative(a.sidebarShare);
-  const hues = Array.isArray(a.chartHues) ? a.chartHues.map(nonNegative) : null;
-  if (width === null || numericCells === null || rightAlignedShare === null || tabularShare === null || sidebarShare === null || hues === null || hues.some((h) => h === null))
-    return null;
-  return {
-    width,
-    numericCells,
-    rightAlignedShare,
-    tabularShare,
-    chartHues: hues.slice(0, 20),
-    sidebarShare
-  };
-}
-function readPage(meta) {
-  const page = {
-    measures: {
-      overflow: "not captured",
-      images: "not captured",
-      fonts: "not captured",
-      hiddenText: "not captured"
-    },
-    overflow: [],
-    images: [],
-    fonts: [],
-    hidden: []
-  };
-  const viewports = Array.isArray(meta.viewports) ? meta.viewports : [];
-  const measured = viewports.filter((v) => isObject(v) && isObject(v.overflow));
-  if (measured.length)
-    page.measures.overflow = "clean";
-  for (const v of measured) {
-    const o = v.overflow;
-    const px = typeof o.overflowPx === "number" ? Math.round(o.overflowPx) : 0;
-    if (px <= 0)
-      continue;
-    page.measures.overflow = "overflow";
-    const first = Array.isArray(o.offenders) ? o.offenders[0] : undefined;
-    const offender = first && typeof first.target === "string" ? quotedText(first.target) : "unknown";
-    page.overflow.push({ width: Number(v.width) || 0, px, offender });
-  }
-  const images = quotedStrings(meta.images);
-  if (images) {
-    page.measures.images = images.length ? "broken" : "clean";
-    page.images = images;
-  }
-  const fonts = quotedStrings(meta.fonts);
-  if (fonts) {
-    page.measures.fonts = fonts.length ? "not loaded" : "loaded";
-    page.fonts = fonts;
-  }
-  const reduced = isObject(meta.reducedMotion) ? meta.reducedMotion : null;
-  if (reduced && Array.isArray(reduced.hidden)) {
-    const hidden = reduced.hidden.filter((h) => isObject(h) && typeof h.target === "string").slice(0, 10).map((h) => quotedText(h.target));
-    page.measures.hiddenText = hidden.length ? "hidden" : "clean";
-    page.hidden = hidden;
-  }
-  const app = appMeasuresOf(meta.app);
-  if (app)
-    page.measures.app = app;
-  return page;
-}
-function pageOffences(m, page, label) {
-  for (const o of page.overflow)
-    m.overflowOffences.push(`ui: horizontal overflow ${o.px}px on ${label}@${o.width} (${o.offender})`);
-  for (const src of page.images)
-    m.imageOffences.push(`ui: broken image ${src} on ${label}`);
-  if (page.fonts.length)
-    m.fontLines.push(`ui: fonts not loaded on ${label}: ${page.fonts.join(", ")}`);
-  for (const target of page.hidden)
-    m.hiddenOffences.push(`ui: text hidden under reduced motion: ${target} (${label})`);
-}
-function measureSamples(m, dir) {
-  const names = existsSync12(dir) ? readdirSync8(dir).sort() : [];
-  for (const name of names) {
-    if (!name.endsWith(".motion.json"))
-      continue;
-    const body = readBounded(join29(dir, name));
-    const sample = body ? readSample(dir, body) : null;
-    if (!sample) {
-      m.unreadable.push(name);
-      continue;
-    }
-    if (!sample.strip)
-      m.withoutStrip += 1;
-    m.interactions.push({
-      page: sample.page,
-      interaction: sample.interaction,
-      strip: sample.strip,
-      animations: sample.animations,
-      over50ms: sample.over50ms,
-      reducedMotion: sample.reducedMotion.status
-    });
-    if (sample.reducedMotion.status !== "not captured") {
-      m.reducedSeen = true;
-      m.reducedOffences.push(...reducedMotionOffences(sample.reducedMotion.entries, `${sample.page}-${sample.interaction}`));
-    }
-  }
-}
-function measurementLines(m, axe, reduced) {
-  const axeLine = axe === "violations" ? `axe: violations: ${safeList(m.axeViolations)}` : axe === "clean" ? `axe: clean (${m.axeClean} capture${m.axeClean === 1 ? "" : "s"})` : `axe: not captured (${safeText(m.axeReasons[0] ?? (m.captures.length ? "not measured" : "no capture"))})`;
-  const vitalsLine = m.clsMax ? `vitals: CLS max ${m.clsMax.value} (${m.clsMax.where})${m.lcpMax !== null ? `, LCP max ${m.lcpMax} ms` : ""}` : "vitals: not captured";
-  const reducedLine = reduced === "running" ? m.reducedOffences[0] ?? "reduced motion: running" : reduced === "clean" ? "reduced motion: clean" : "reduced motion: not captured";
-  const n = m.interactions.length;
-  const motionLine = n ? `motion: ${n} interaction${n === 1 ? "" : "s"} sampled${m.withoutStrip ? ` (${m.withoutStrip} without a strip)` : ""}` : "motion: none";
-  return [axeLine, vitalsLine, reducedLine, motionLine];
-}
-function gradeUi(paths, id, plan) {
-  const m = measure(paths, id, plan);
-  const missingScreens = plan.screens.filter((s) => !m.rows.get(`${s.page}/${s.state}`)?.captured);
-  const missing = missingScreens.map((s) => `${s.page}-${s.state}`);
-  const first = missingScreens[0];
-  const offence = (first ? `ui: screen ${first.page}-${first.state} declared by ${first.criteria.join(", ")} not captured` : null) ?? (m.unreadable.length ? `ui: unreadable ${safeText(m.unreadable[0])}` : null) ?? m.reducedOffences[0] ?? m.axeOffences[0] ?? m.overflowOffences[0] ?? m.imageOffences[0] ?? m.hiddenOffences[0] ?? m.clsOffences[0] ?? null;
-  const screens = [...m.rows.values()].sort((a, b) => a.page.localeCompare(b.page) || a.state.localeCompare(b.state));
-  const axeStatus = m.axeViolations.length ? "violations" : m.axeClean ? "clean" : "not captured";
-  const reducedStatus = m.reducedOffences.length ? "running" : m.reducedSeen ? "clean" : "not captured";
-  const measured = m.captures.length > 0 || plan.screens.length > 0;
-  const manifest = {
-    id,
-    at: nowIso(),
-    plan: {
-      viewports: plan.viewports.map((v) => ({ ...v })),
-      colorSchemes: [...plan.colorSchemes]
-    },
-    screens,
-    interactions: m.interactions,
-    unreadable: m.unreadable.map((n) => safeText(n)),
-    summary: {
-      captures: m.captures.length,
-      captured: plan.screens.length - missing.length,
-      expected: plan.screens.length,
-      missing,
-      extra: screens.filter((r) => !r.declared).map((r) => `${r.page}-${r.state}`),
-      offence
-    }
-  };
-  const artifacts = measured ? {
-    manifest: "review/ui-evidence.json",
-    captures: m.captures.length,
-    expected: plan.screens.length,
-    missing,
-    axe: axeStatus,
-    reducedMotion: reducedStatus,
-    motion: m.interactions.length
-  } : null;
-  return {
-    offence,
-    lines: measured ? [
-      ...measurementLines(m, axeStatus, reducedStatus),
-      ...[m.overflowOffences[0], m.imageOffences[0], m.hiddenOffences[0]].filter((l) => typeof l === "string"),
-      ...m.fontLines
-    ] : [],
-    manifest,
-    artifacts
-  };
-}
-function writeUiEvidence(paths, id, manifest) {
-  const file = uiEvidencePath(paths, id);
-  writeText(file, `${JSON.stringify(manifest, null, 2)}
-`);
-  return file;
-}
-var numbersOnly = (v) => Array.isArray(v) && v.every((n) => typeof n === "number");
-var stringsOnly = (v) => Array.isArray(v) && v.every((s) => typeof s === "string");
-function isScreenRow(raw) {
-  if (!isObject(raw))
-    return false;
-  if (typeof raw.page !== "string" || typeof raw.state !== "string" || !stringsOnly(raw.criteria))
-    return false;
-  if (typeof raw.declared !== "boolean")
-    return false;
-  if (raw.captured !== null && !(isObject(raw.captured) && numbersOnly(raw.captured.light) && numbersOnly(raw.captured.dark)))
-    return false;
-  if (typeof raw.console !== "string" || typeof raw.axe !== "string" || typeof raw.reducedMotion !== "string")
-    return false;
-  if (raw.vitals !== null && !(isObject(raw.vitals) && finiteOrNull(raw.vitals.cls ?? null)))
-    return false;
-  if (raw.measures !== undefined && !isPageMeasures(raw.measures))
-    return false;
-  return true;
-}
-function isPageMeasures(raw) {
-  if (!isObject(raw))
-    return false;
-  const statuses = [raw.overflow, raw.images, raw.fonts, raw.hiddenText];
-  if (!statuses.every((s) => typeof s === "string"))
-    return false;
-  return raw.app === undefined || appMeasuresOf(raw.app) !== null;
-}
-function isInteractionRow(raw) {
-  return isObject(raw) && typeof raw.page === "string" && typeof raw.interaction === "string" && typeof raw.strip === "boolean" && typeof raw.animations === "number" && typeof raw.over50ms === "number" && typeof raw.reducedMotion === "string";
-}
-function readUiEvidence(paths, id) {
-  const body = readBounded(uiEvidencePath(paths, id));
-  if (!body || typeof body.id !== "string" || !Array.isArray(body.screens) || !Array.isArray(body.interactions))
-    return null;
-  if (!body.screens.every(isScreenRow) || !body.interactions.every(isInteractionRow))
-    return null;
-  if (!stringsOnly(body.unreadable) || !isObject(body.summary))
-    return null;
-  const summary = body.summary;
-  if (!stringsOnly(summary.missing) || !stringsOnly(summary.extra))
-    return null;
-  if (typeof summary.captures !== "number" || typeof summary.expected !== "number")
-    return null;
-  if (body.audit !== undefined) {
-    const audit = body.audit;
-    if (!isObject(audit) || audit.status !== "captured" && audit.status !== "not captured" || audit.reason !== null && typeof audit.reason !== "string" || !stringsOnly(audit.pages))
-      return null;
-  }
-  return body;
-}
-function captureMetadata(paths, id) {
-  const bodies = [];
-  for (const capture of listCaptures(paths, id)) {
-    if (!capture.meta)
-      continue;
-    const body = readBounded(join29(workDir(paths, id), capture.meta));
-    if (body)
-      bodies.push(body);
-  }
-  return bodies;
-}
-function captureUrls(metadata) {
-  const seen = new Set;
-  const urls = [];
-  for (const body of metadata) {
-    if (typeof body.url !== "string")
-      continue;
-    const url = safeText(body.url);
-    if (!url || seen.has(url))
-      continue;
-    seen.add(url);
-    urls.push(url);
-  }
-  return urls;
-}
-function capturesMeasuredCls(metadata) {
-  return metadata.some((body) => {
-    const vitals = isObject(body.vitals) ? body.vitals : null;
-    return typeof vitals?.cls === "number" && Number.isFinite(vitals.cls);
-  });
 }
 
 // packages/engine/src/verify.ts
@@ -10371,7 +13608,7 @@ function emptyEvidence() {
   };
 }
 function evidencePath(paths, id) {
-  return join30(workDir(paths, id), "evidence.json");
+  return join40(workDir(paths, id), "evidence.json");
 }
 function loadEvidence(paths, id) {
   const read = readProtectedJson(paths, evidencePath(paths, id));
@@ -10454,11 +13691,18 @@ function computeVerdict(input) {
       unproven.push(`gate ${label} not run`);
     else if (run.fingerprint !== currentFingerprint && !stale)
       unproven.push(`gate ${label} not run on the current code`);
-    else if (run.status === "fail")
+    else if (run.status === "skipped") {
+      if (run.standing === undefined)
+        unproven.push(`gate ${label} skipped with no decision on record: run crew gate run ${work.id} again`);
+      else if (!("holds" in input.standing))
+        unproven.push(`gate ${label}: the standing e2e skip no longer holds (${standingWhy(input.standing)}): run crew gate run ${work.id} again`);
+    } else if (run.status === "fail")
       unproven.push(`gate ${label} failing`);
-    else if (run.status === "unavailable")
+    else if (run.status === "unavailable") {
       unproven.push(`gate ${label} unavailable: ${run.reason ?? "no command"}`);
-    else if (run.status === "pass" && !run.confirmed) {
+      if (gate === "e2e" && (run.reason === NO_ENVIRONMENT_REASON || run.reason === NO_E2E_REASON) && "eligible" in input.standing && input.standing.eligible)
+        unproven.push('gate e2e: this project has no e2e suite: skip it for the project with crew policy set standingE2eSkip --reason "<why>"');
+    } else if (run.status === "pass" && !run.confirmed) {
       unproven.push(`gate ${label} ran an unconfirmed command (crew profile confirm)`);
     }
   }
@@ -10796,7 +14040,8 @@ function renderReport(work, evidence, policy, options = {}) {
     const n = shared.paths.length;
     lines.push("", "## Checkout", "", `- started in a checkout shared with ${shared.with.join(", ")}: ${n} uncommitted file${n === 1 ? "" : "s"} at the start, listed in work.json (sharedCheckout.paths) (${shared.at})`);
   }
-  if (work.approvals.length || work.skips.length || removed.length || work.abandoned) {
+  const standingRun = evidence.runs.find((r) => r.gate === "e2e" && r.standing !== undefined && r.status === "skipped");
+  if (work.approvals.length || work.skips.length || removed.length || work.abandoned || standingRun) {
     lines.push("", "## Decisions", "");
     if (work.abandoned) {
       lines.push(`- abandoned ${decidedBy(work.abandoned.by)} (${work.abandoned.at}): ${work.abandoned.reason}`);
@@ -10807,6 +14052,8 @@ function renderReport(work, evidence, policy, options = {}) {
     for (const s of work.skips) {
       lines.push(`- \`${s.step}\` skipped ${decidedBy(s)}: ${s.reason} (${s.at})${countedNote(policy, s)}`);
     }
+    if (standingRun?.standing)
+      lines.push(`- \`gate:e2e\` skipped by the user (standing decision of ${standingRun.standing.slice(0, 10)}): ${standingRun.reason ?? ""}`);
     for (const r of removed)
       lines.push(`- ${r.id} (${r.kind}) removed (${r.at}): ${r.text}`);
   }
@@ -10840,1049 +14087,6 @@ function decisionMarks(d, policy) {
   return text ? ` · ${text}` : "";
 }
 
-// packages/engine/src/mail.ts
-import { createHash as createHash5 } from "node:crypto";
-import { accessSync, constants, existsSync as existsSync14 } from "node:fs";
-import { basename as basename8, isAbsolute as isAbsolute5, join as join32, resolve as resolve7 } from "node:path";
-
-// packages/engine/src/opened.ts
-import { existsSync as existsSync13, rmSync as rmSync4 } from "node:fs";
-import { join as join31 } from "node:path";
-function openedMarkerFile(userDir, root) {
-  return join31(userDir, "opened", `${sha256(canonical(root)).slice(0, 16)}.json`);
-}
-function openedMarkerPath(paths) {
-  return openedMarkerFile(paths.userDir, paths.root);
-}
-function writeOpenedMarker(paths, marker) {
-  writeJson(openedMarkerPath(paths), marker);
-}
-function dropOpenedMarker(userDir, root) {
-  rmSync4(openedMarkerFile(userDir, root), { force: true });
-}
-function readOpenedMarker(paths) {
-  const file = openedMarkerPath(paths);
-  if (!existsSync13(file))
-    return null;
-  const parsed = readJson(file);
-  if (!parsed || typeof parsed.mail !== "string" || !parsed.mail)
-    return null;
-  return {
-    mail: parsed.mail,
-    agent: typeof parsed.agent === "string" && parsed.agent ? parsed.agent : "session",
-    hops: typeof parsed.hops === "number" && Number.isInteger(parsed.hops) && parsed.hops >= 0 ? parsed.hops : 0
-  };
-}
-function modeOf(value) {
-  return value === "read-only" || value === "branch" ? value : null;
-}
-function resolveOpener(paths, env) {
-  const marker = readOpenedMarker(paths);
-  const headless = env.CLAUDE_CODE_SESSION_ATTENDED === "0";
-  const fromEnv = env.WIZARDINGCODE_CREW_MAIL_ID?.trim() || null;
-  const fromMarker = headless && marker ? marker : null;
-  const mail = fromEnv ?? fromMarker?.mail ?? null;
-  const envHops = Number(env.WIZARDINGCODE_CREW_MAIL_HOPS ?? "0");
-  const hops = Number.isInteger(envHops) && envHops >= 0 ? envHops : 0;
-  return {
-    mail,
-    agent: env.WIZARDINGCODE_CREW_MAIL_AGENT?.trim() || (mail ? fromMarker?.agent : null) || "session",
-    hops: mail ? Math.max(hops, fromMarker?.hops ?? 0) : hops,
-    mode: modeOf(env.WIZARDINGCODE_CREW_MAIL_MODE) ?? (fromEnv || !fromMarker ? null : "branch"),
-    branch: env.WIZARDINGCODE_CREW_MAIL_BRANCH?.trim() || null
-  };
-}
-
-// packages/engine/src/mail.ts
-var WORK_ID2 = /^\d{4}-\d{2}-\d{2}-\d{3}-[a-z0-9-]*$/;
-var REASONS_CHARS = 500;
-var BRANCH_NAME = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
-function threadParties(messages, root) {
-  const parties = [];
-  const key = (p) => p.agent && TASK_AGENT.test(p.agent) ? `${p.project}/${p.agent}` : p.project;
-  for (const m of messages) {
-    if (threadOf(m) !== root)
-      continue;
-    for (const p of [key(m.from), key(m.to)])
-      if (!parties.includes(p))
-        parties.push(p);
-  }
-  return parties.sort();
-}
-function heldMessages(ctx) {
-  const dir = mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project).dir;
-  const seen = new Set;
-  const held = [];
-  for (const which of ["inbox", "outbox"]) {
-    const read = readBox(dir, which);
-    if (read.tampered)
-      continue;
-    for (const m of read.box.messages) {
-      if (seen.has(m.id))
-        continue;
-      seen.add(m.id);
-      held.push(m);
-    }
-  }
-  return held;
-}
-function threadMessages(ctx, root) {
-  const held = heldMessages(ctx);
-  if (!MESSAGE_ID.test(root) || !held.some((m) => m.id === root))
-    return { refused: `no message ${root} in this project's mail` };
-  const messages = held.filter((m) => threadOf(m) === root).sort((a, b) => a.at.localeCompare(b.at));
-  return { messages, parties: threadParties(messages, root) };
-}
-function parseContract(text) {
-  const match = /^(openapi|types|schema|clause):([\s\S]*)$/.exec(text);
-  if (!match)
-    return {
-      refused: `a contract is openapi:<path>, types:<path>, schema:<path> or clause:<summary>, not ${text}`
-    };
-  const kind = match[1];
-  const rest = match[2] ?? "";
-  if (kind === "clause")
-    return { kind, path: null, summary: rest.trim() };
-  const colon = rest.indexOf(":");
-  const path = colon === -1 ? rest : rest.slice(0, colon);
-  const summary = colon === -1 ? "" : rest.slice(colon + 1).trim();
-  if (!insidePath(path))
-    return { refused: `contract ${kind}:${path} names a path outside the project` };
-  return { kind, path, summary };
-}
-function checkContracts(root, branch, base, contracts, body) {
-  let tip = "";
-  if (contracts.some((c) => c.path !== null)) {
-    if (!branch)
-      return { refused: "a contract needs --branch <b>: the file is checked at its tip" };
-    if (!BRANCH_NAME.test(branch) || branch.includes(".."))
-      return { refused: `--branch ${branch} is not a branch name` };
-    tip = branch;
-  }
-  const checked = [];
-  let changed = null;
-  for (const c of contracts) {
-    if (c.kind === "clause") {
-      if (!/^## Contracts\s*$/m.test(body))
-        return { refused: 'contract clause needs a "## Contracts" section in the reply' };
-      checked.push({ kind: c.kind, path: null, hash: null, summary: c.summary });
-      continue;
-    }
-    const path = c.path;
-    const content = gitShow(root, tip, path);
-    if (content === null)
-      return { refused: `contract ${c.kind}:${path} is not at the tip of ${tip}` };
-    const hash = createHash5("sha256").update(content).digest("hex");
-    if (c.kind === "openapi" || c.kind === "schema") {
-      const text = content.toString("utf8");
-      if (path.endsWith(".json")) {
-        try {
-          JSON.parse(text);
-        } catch {
-          return { refused: `contract ${c.kind}:${path} does not parse as JSON` };
-        }
-      } else if (!text.trim() || !/^(openapi|swagger|\$schema)\s*:/m.test(text)) {
-        return { refused: `contract ${c.kind}:${path} has no openapi, swagger or $schema line` };
-      }
-    } else {
-      if (!base)
-        return {
-          refused: `contract types:${path} cannot be checked: the child has no base commit`
-        };
-      if (changed === null) {
-        try {
-          changed = gitRun(root, "diff", "--name-only", "--end-of-options", base, tip).split(`
-`).filter(Boolean);
-        } catch (error) {
-          return {
-            refused: `contract types:${path} cannot be checked: git diff failed (${gitError(error)})`
-          };
-        }
-      }
-      if (!changed.includes(path))
-        return { refused: `contract types:${path} is not in the child's diff` };
-    }
-    checked.push({ kind: c.kind, path, hash, summary: c.summary });
-  }
-  return { contracts: checked };
-}
-function badPriority(value) {
-  return `priority is one of ${MAIL_PRIORITIES.join(", ")}, not ${String(value)}`;
-}
-var LIVE_MS = 10 * 60 * 1000;
-var INLINE_BODY_LIMIT = 2048;
-var PREVIEW_CHARS = 200;
-var SUBJECT_CHARS = 80;
-var ROLE_AGENT = rolePattern();
-var TASK_AGENT = /^T-\d+$/;
-var CRITICS = new Set(["devils-advocate", "fault-finder"]);
-function effectiveMailPolicy(root, policy, env) {
-  const main = worktreeMainRoot(root);
-  let mail = policy.mail;
-  if (main && (mail.name === null || mail.workspace === null)) {
-    const mainPaths = resolvePaths(main, env);
-    const theirs = mainPaths ? loadPolicy(mainPaths).policy.mail : null;
-    if (theirs)
-      mail = {
-        ...mail,
-        name: mail.name ?? theirs.name,
-        workspace: mail.workspace ?? theirs.workspace
-      };
-  }
-  return { mail, main };
-}
-function subjectQuoted(subject) {
-  return JSON.stringify(subject.replace(/\p{Cc}+/gu, " ").trim());
-}
-function mailSelf(paths, policy, env) {
-  const opener = resolveOpener(paths, env);
-  const { mail, main } = effectiveMailPolicy(paths.root, policy, env);
-  return {
-    workspace: mail.workspace,
-    project: mail.name ?? basename8(main ?? paths.root),
-    agent: opener.agent,
-    hops: opener.hops,
-    openedBy: opener.mail,
-    openedMode: opener.mode,
-    openedBranch: opener.branch
-  };
-}
-function mailContext(paths, policy, env) {
-  return { paths, policy, env, self: mailSelf(paths, policy, env) };
-}
-function loadRegistry(userDir) {
-  const raw = readJson(registryPath(userDir));
-  const projects = Array.isArray(raw?.projects) ? raw.projects.filter((p) => typeof p === "object" && p !== null && typeof p.root === "string" && typeof p.name === "string") : [];
-  return { version: 1, projects };
-}
-function saveRegistry(userDir, registry) {
-  writeJson(registryPath(userDir), registry);
-}
-function projectEntry(registry, workspace, name) {
-  const ws = workspace === "_alone" ? null : workspace;
-  return registry.projects.find((p) => p.name === name && p.workspace === ws && !p.worktreeOf);
-}
-function seenWithin(at, ms, now) {
-  const seen = at === undefined ? Number.NaN : Date.parse(at);
-  return Number.isFinite(seen) && now - seen <= ms;
-}
-function isLive(entry, now = Date.now()) {
-  return seenWithin(entry.lastHook, LIVE_MS, now);
-}
-function registerProject(ctx, sessionId, options = {}) {
-  const registry = loadRegistry(ctx.paths.userDir);
-  const existing = registry.projects.find((p) => p.root === ctx.paths.root);
-  const recent = (at) => options.minIntervalMs !== undefined && seenWithin(at, options.minIntervalMs, Date.now());
-  if (existing && recent(existing.lastSeen) && existing.sessionId === sessionId && (!options.hook || recent(existing.lastHook)))
-    return existing;
-  const main = worktreeMainRoot(ctx.paths.root);
-  const now = nowIso();
-  const lastHook = options.hook ? now : existing?.lastHook;
-  const entry = {
-    root: ctx.paths.root,
-    name: ctx.self.project,
-    workspace: ctx.self.workspace,
-    lastSeen: now,
-    sessionId,
-    ...lastHook ? { lastHook } : {},
-    ...main ? { worktreeOf: main } : {},
-    ...ctx.self.openedBy ? { mail: ctx.self.openedBy } : {}
-  };
-  registry.projects = [...registry.projects.filter((p) => p.root !== entry.root), entry];
-  saveRegistry(ctx.paths.userDir, registry);
-  return entry;
-}
-function pruneRegistry(userDir) {
-  const registry = loadRegistry(userDir);
-  const gone = registry.projects.filter((p) => !existsSync14(p.root)).map((p) => p.root);
-  if (gone.length) {
-    registry.projects = registry.projects.filter((p) => existsSync14(p.root));
-    saveRegistry(userDir, registry);
-  }
-  return gone;
-}
-function resolveProject(ctx, to) {
-  const registry = loadRegistry(ctx.paths.userDir);
-  const main = worktreeMainRoot(ctx.paths.root) ?? ctx.paths.root;
-  if (to === "." || to === ctx.self.project) {
-    const own = registry.projects.find((p) => p.root === main) ?? {
-      root: main,
-      name: ctx.self.project,
-      workspace: ctx.self.workspace,
-      lastSeen: nowIso(),
-      sessionId: ""
-    };
-    return { entry: own, toSelf: true };
-  }
-  if (ctx.self.workspace === null) {
-    return {
-      refused: "this project has no workspace (crew policy set mail.workspace <name>); it can only mail itself (--to .)"
-    };
-  }
-  const candidates = registry.projects.filter((p) => p.name === to && !p.worktreeOf);
-  const inWorkspace = candidates.filter((p) => p.workspace === ctx.self.workspace);
-  const alive = inWorkspace.filter((p) => existsSync14(p.root));
-  if (alive.length) {
-    alive.sort((a, b) => b.lastSeen.localeCompare(a.lastSeen));
-    const entry = alive[0];
-    return { entry, toSelf: entry.root === main };
-  }
-  const where = `in workspace ${ctx.self.workspace}`;
-  if (inWorkspace.length) {
-    return {
-      refused: `no project named ${to} ${where}; the registry knew one at ${inWorkspace[0]?.root}, which is gone`
-    };
-  }
-  const elsewhere = candidates.find((p) => p.workspace !== null);
-  if (elsewhere) {
-    return {
-      refused: `${to} is not in workspace ${ctx.self.workspace} (it is in ${elsewhere.workspace}); mail never leaves the workspace`
-    };
-  }
-  if (candidates.length) {
-    return {
-      refused: `${to} is not in workspace ${ctx.self.workspace} (it has no workspace); mail never leaves the workspace`
-    };
-  }
-  const known = [
-    ...new Set(registry.projects.filter((p) => p.workspace === ctx.self.workspace && !p.worktreeOf).map((p) => p.name))
-  ].sort();
-  return { refused: `no project named ${to} ${where} (known: ${known.join(", ") || "none"})` };
-}
-function mailbox(userDir, workspace, project) {
-  return { dir: mailboxDir(userDir, workspace, project) };
-}
-function boxFile(dir, name) {
-  return join32(dir, `${name}.json`);
-}
-function readBox(dir, which) {
-  const file = boxFile(dir, which);
-  if (existsSync14(file))
-    accessSync(file, constants.R_OK);
-  const read = readProtectedJsonAt(boxFile(dir, "integrity"), file);
-  const box = read.data && Array.isArray(read.data.messages) ? read.data : { version: 1, messages: [] };
-  return { box, tampered: read.tampered };
-}
-function writeBox(dir, which, box) {
-  writeProtectedJsonAt(boxFile(dir, "integrity"), boxFile(dir, which), box);
-}
-function withMailLock(dir, fn, options = {}) {
-  return withLock(dir, fn, { ...options, what: "mailbox" });
-}
-function acceptBox(ctx, which) {
-  const { mail } = effectiveMailPolicy(ctx.paths.root, ctx.policy, ctx.env);
-  if (mail.name === null && mail.workspace === null)
-    return {
-      refused: "this project has no mail identity (crew policy set mail.workspace <name>); it has no mailbox to accept"
-    };
-  const dir = mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project).dir;
-  const file = boxFile(dir, which);
-  try {
-    return withMailLock(dir, () => {
-      const text = readText(file);
-      if (text === null)
-        return { refused: `no ${which} at ${file} to accept` };
-      let parsed;
-      try {
-        parsed = JSON.parse(text);
-      } catch {
-        return { refused: `${which} not accepted: ${file} is not valid JSON` };
-      }
-      const messages = parsed?.messages;
-      if (!Array.isArray(messages))
-        return { refused: `${which} not accepted: ${file} is not a mailbox (no messages array)` };
-      recordIntegrityAt(boxFile(dir, "integrity"), file, text);
-      return { file, messages };
-    });
-  } catch (error) {
-    if (!(error instanceof LockBusy))
-      throw error;
-    return { refused: `${which} not accepted: ${error.message}` };
-  }
-}
-function newMessageId(outbox, project, at) {
-  const day = at.slice(0, 10);
-  const taken = outbox.messages.filter((m) => m.at.slice(0, 10) === day).map((m) => Number(/^M-\d{4}-\d{2}-\d{2}-(\d{3})-/.exec(m.id)?.[1])).filter(Number.isFinite);
-  const next = taken.length ? Math.max(...taken) + 1 : 1;
-  return `M-${day}-${String(next).padStart(3, "0")}-${project}`;
-}
-function itemMailPath(paths, id) {
-  return join32(workDir(paths, id), "mail.json");
-}
-function loadItemMail(paths, id) {
-  const read = readProtectedJson(paths, itemMailPath(paths, id));
-  return { box: read.data ?? { version: 1, messages: [] }, tampered: read.tampered };
-}
-function recordInItem(paths, id, message) {
-  if (!existsSync14(join32(workDir(paths, id), "work.json")))
-    return;
-  const { box, tampered } = loadItemMail(paths, id);
-  if (tampered)
-    return;
-  box.messages = [...box.messages.filter((m) => m.id !== message.id), message].sort((a, b) => a.at.localeCompare(b.at));
-  writeProtectedJson(paths, itemMailPath(paths, id), box);
-}
-function itemHome(ctx, registry, party, item, here) {
-  const root = projectEntry(registry, party.workspace, party.project)?.root;
-  const registered = root ? resolvePaths(root, ctx.env) : null;
-  for (const paths of [registered, here]) {
-    if (paths && existsSync14(join32(workDir(paths, item), "work.json")))
-      return paths;
-  }
-  return null;
-}
-function recordForParties(ctx, registry, m, here = ctx.paths) {
-  const copies = [
-    [m.from.item, m.from],
-    [m.to.item, m.to]
-  ];
-  for (const [item, party] of copies) {
-    if (!item)
-      continue;
-    const home = itemHome(ctx, registry, party, item, here);
-    if (home)
-      recordInItem(home, item, m);
-  }
-}
-function subjectOf(request) {
-  const given = request.subject?.replace(/\s+/g, " ").trim();
-  if (given)
-    return given.slice(0, SUBJECT_CHARS);
-  const first = request.text.split(`
-`).find((l) => l.trim()) ?? "";
-  return first.length > SUBJECT_CHARS - 3 ? `${first.slice(0, SUBJECT_CHARS - 3)}...` : first;
-}
-function destinationPolicy(entry, env) {
-  const paths = resolvePaths(entry.root, env);
-  return paths ? loadPolicy(paths) : null;
-}
-function openIn(userDir, workspace, project) {
-  const { box } = readBox(mailbox(userDir, workspace, project).dir, "inbox");
-  return box.messages.filter((m) => m.opened && !m.opened.endedAt).length;
-}
-function placeBody(dir, id, text) {
-  if (Buffer.byteLength(text, "utf8") <= INLINE_BODY_LIMIT)
-    return { body: text };
-  const file = join32(dir, `${id}.md`);
-  writeText(file, text);
-  return { body: `${text.slice(0, PREVIEW_CHARS)}...`, bodyFile: file };
-}
-function party(self, item) {
-  return { workspace: self.workspace ?? "_alone", project: self.project, item, agent: self.agent };
-}
-function attachFile(root, text, filePath) {
-  if (!filePath)
-    return { text };
-  const abs = isAbsolute5(filePath) ? filePath : resolve7(root, filePath);
-  const content = readText(abs);
-  if (content === null)
-    return { refused: `no file at ${abs}` };
-  return { text: text.trim() ? `${text.trim()}
-
-${content}` : content };
-}
-function tamperedBox(owner, which) {
-  return `${owner}'s ${which} changed outside the engine; files under the user's crew directory are written only by the crew command`;
-}
-function appendToBox(dir, which, owner, build, waitMs) {
-  return withMailLock(dir, () => {
-    const { box, tampered } = readBox(dir, which);
-    if (tampered)
-      return { refused: tamperedBox(owner, which) };
-    const message = build(box);
-    box.messages.push(message);
-    writeBox(dir, which, box);
-    return message;
-  }, { waitMs });
-}
-function outboxMessage(self, itemId, at, fields) {
-  return { at, from: party(self, itemId), hops: self.hops, opened: null, ...fields };
-}
-function agentRefusal(ctx, request, to) {
-  const { name, toSelf, itemId, work } = to;
-  const agent = request.agent;
-  if (!agent)
-    return null;
-  if (!toSelf)
-    return `--agent addresses a role or a task of this project; ${name} is another project`;
-  if (ROLE_AGENT.test(agent)) {
-    if (agent === "judge" && ctx.self.agent !== "session")
-      return `a message to the judge comes from the lead (session), not from ${ctx.self.agent}`;
-    if (CRITICS.has(agent)) {
-      const proposals = itemId ? `.crew/work/${itemId}/conclave/proposals.md` : null;
-      const given = request.filePath ? canonical(resolve7(ctx.paths.root, request.filePath)) : null;
-      if (!proposals || !given || given !== canonical(join32(ctx.paths.root, proposals)) || request.text.trim())
-        return `a message to ${agent} carries ${proposals ?? ".crew/work/<id>/conclave/proposals.md"} (--file) and nothing else`;
-    }
-    return null;
-  }
-  if (TASK_AGENT.test(agent)) {
-    if (!(work?.tasks ?? []).some((t) => t.task === agent))
-      return `${agent} is not a task of ${work?.id ?? "the active item"} (crew task <id> open ${agent} …)`;
-    return null;
-  }
-  if (agent !== "session")
-    return `--agent is session, a task (T-n) or a role, not ${agent}`;
-  return null;
-}
-function send(ctx, request, work) {
-  const at = nowIso();
-  const self = ctx.self;
-  const own = mailbox(ctx.paths.userDir, self.workspace, self.project);
-  const itemId = request.item ?? work?.id ?? null;
-  const attached = attachFile(ctx.paths.root, request.text, request.filePath);
-  if ("refused" in attached)
-    return { refused: attached.refused, message: null };
-  const text = attached.text;
-  if (!text.trim())
-    return { refused: "a message needs a text (or --file)", message: null };
-  if (request.priority !== undefined && !isMailPriority(request.priority))
-    return { refused: badPriority(request.priority), message: null };
-  const priority = request.priority ?? (request.type === "blocker" ? "blocker" : "normal");
-  let root = null;
-  if (request.thread !== undefined) {
-    if (request.agent && ROLE_AGENT.test(request.agent))
-      return { refused: "a thread joins projects and tasks, never roles", message: null };
-    const held = heldMessages(ctx);
-    root = MESSAGE_ID.test(request.thread) && held.find((m) => m.id === request.thread) || null;
-    if (!root)
-      return { refused: `no message ${request.thread} in this project's mail`, message: null };
-  }
-  const resolved = resolveProject(ctx, request.to);
-  const subject = subjectOf({
-    subject: request.subject ?? (root ? subjectQuoted(root.subject) : undefined),
-    text
-  });
-  const refuse = (reason, to) => {
-    const written = appendToBox(own.dir, "outbox", self.project, (box) => outboxMessage(self, itemId, at, {
-      id: newMessageId(box, self.project, at),
-      to,
-      type: request.type,
-      priority,
-      ...root ? { thread: root.id } : {},
-      subject,
-      body: text.slice(0, PREVIEW_CHARS),
-      replyTo: request.replyTo ?? null,
-      status: "refused",
-      reason
-    }), COMMAND_LOCK_WAIT_MS);
-    if ("refused" in written)
-      return { refused: written.refused, message: null };
-    if (itemId)
-      recordInItem(ctx.paths, itemId, written);
-    return { refused: reason, message: written };
-  };
-  const unknownTo = {
-    workspace: self.workspace ?? "_alone",
-    project: request.to,
-    item: null,
-    agent: request.agent ?? null
-  };
-  if ("refused" in resolved)
-    return refuse(resolved.refused, unknownTo);
-  const entry = resolved.entry;
-  if (root) {
-    const parties = threadParties(heldMessages(ctx), root.id);
-    const joining = request.agent && TASK_AGENT.test(request.agent) ? `${entry.name}/${request.agent}` : entry.name;
-    const cap = ctx.policy.mail.maxParties;
-    if (!parties.includes(joining) && parties.length >= cap)
-      return {
-        refused: `thread ${root.id} has ${parties.length} parties (mail.maxParties ${cap}); ${joining} cannot join`,
-        message: null
-      };
-  }
-  const toSelf = resolved.toSelf;
-  const to = {
-    workspace: self.workspace ?? "_alone",
-    project: entry.name,
-    item: null,
-    agent: request.agent ?? null
-  };
-  const agentRefused = agentRefusal(ctx, request, {
-    name: entry.name,
-    toSelf,
-    itemId,
-    work
-  });
-  if (agentRefused)
-    return refuse(agentRefused, to);
-  const relayed = request.agent !== undefined && ROLE_AGENT.test(request.agent);
-  const destination = destinationPolicy(entry, ctx.env);
-  if (!destination)
-    return refuse(`${entry.name} at ${entry.root} is not a crew project any more`, to);
-  if (destination.tampered)
-    return refuse(`${entry.name}'s policy changed outside the engine; its user accepts it with crew policy accept`, to);
-  const rules = destination.policy.mail;
-  if (!toSelf && !rules.accept.includes(request.type))
-    return refuse(`${entry.name} does not accept ${request.type} (its policy accepts ${rules.accept.join(", ")})`, to);
-  if (!request.replyTo && self.hops >= rules.maxHops && self.openedBy)
-    return refuse(`this session is ${self.hops} hops from the first message and ${entry.name} allows ${rules.maxHops} (mail.maxHops); only a reply may go out`, to);
-  const dest = mailbox(ctx.paths.userDir, entry.workspace, entry.name);
-  if (readBox(dest.dir, "inbox").tampered)
-    return refuse(tamperedBox(entry.name, "inbox"), to);
-  let delivery;
-  if (toSelf)
-    delivery = { kind: "self" };
-  else if (isLive(entry))
-    delivery = { kind: "live", entry };
-  else if (request.type === "notice")
-    delivery = { kind: "queued", reason: "a notice waits in the inbox" };
-  else if (request.type === "change-request" && rules.open !== "branch")
-    delivery = {
-      kind: "queued",
-      reason: `${entry.name} accepts change requests only with a person present (mail.open is read-only)`
-    };
-  else {
-    const mode = request.type === "question" ? "read-only" : rules.open;
-    const open = openIn(ctx.paths.userDir, entry.workspace, entry.name);
-    if (open >= rules.maxConcurrent)
-      return refuse(`${entry.name} has ${open} session${open === 1 ? "" : "s"} open (mail.maxConcurrent ${rules.maxConcurrent}); try again when one ends`, to);
-    delivery = { kind: "open", mode, entry };
-  }
-  const message = appendToBox(own.dir, "outbox", self.project, (outbox) => {
-    const id = newMessageId(outbox, self.project, at);
-    return outboxMessage(self, itemId, at, {
-      id,
-      to,
-      type: request.type,
-      priority,
-      ...root ? { thread: root.id } : {},
-      subject,
-      ...placeBody(dest.dir, id, text),
-      replyTo: request.replyTo ?? null,
-      status: "sent",
-      ...relayed ? { relayed: true } : {}
-    });
-  }, COMMAND_LOCK_WAIT_MS);
-  if ("refused" in message)
-    return { refused: message.refused, message: null };
-  const failed = deliver(ctx, dest.dir, entry.name, message, COMMAND_LOCK_WAIT_MS);
-  if (failed)
-    return {
-      refused: failed.refused,
-      message: { ...message, status: "refused", reason: failed.refused }
-    };
-  if (itemId)
-    recordInItem(ctx.paths, itemId, message);
-  return { message, delivery };
-}
-function deliver(ctx, dir, owner, message, waitMs) {
-  const delivered = appendToBox(dir, "inbox", owner, () => message, waitMs);
-  if (!("refused" in delivered))
-    return null;
-  const reason = delivered.refused;
-  const skipped = [];
-  updateEverywhere(ctx, message.id, (m) => ({ ...m, status: "refused", reason }), (w) => skipped.push(w));
-  return {
-    refused: skipped.length ? `${reason}; a copy was not marked: ${skipped.join(", ")}` : reason
-  };
-}
-function recordOpened(ctx, id, opened, skipped) {
-  const pass = recordEverywhere(ctx, id, (m) => ({ ...m, opened }), skipped);
-  if (pass.ownBusy)
-    throw new LockBusy(pass.ownBusy);
-  const result = pass.changed;
-  const own = readBox(mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project).dir, "outbox");
-  const copy = own.box.messages.find((m) => m.id === id);
-  return result && !own.tampered && copy?.opened?.pid === opened.pid ? result : null;
-}
-function updateEverywhere(ctx, id, change, skipped) {
-  return recordEverywhere(ctx, id, change, skipped).changed;
-}
-function recordEverywhere(ctx, id, change, skipped) {
-  let result = null;
-  let ownBusy = null;
-  const ownDir = mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project).dir;
-  const registry = loadRegistry(ctx.paths.userDir);
-  const boxes = new Set;
-  for (const p of registry.projects) {
-    if (!p.worktreeOf)
-      boxes.add(mailbox(ctx.paths.userDir, p.workspace, p.name).dir);
-  }
-  boxes.add(ownDir);
-  const holding = [];
-  for (const dir of boxes) {
-    for (const which of ["inbox", "outbox"]) {
-      if (!existsSync14(boxFile(dir, which)))
-        continue;
-      try {
-        if (readBox(dir, which).box.messages.some((m) => m.id === id))
-          holding.push([dir, which]);
-      } catch (error) {
-        skipped(`${boxFile(dir, which)} (${error.message.split(`
-`)[0]})`);
-      }
-    }
-  }
-  for (const [dir, which] of holding) {
-    try {
-      const changed = recordInBox(dir, which, id, change, skipped);
-      result = result ?? changed;
-    } catch (error) {
-      if (!(error instanceof LockBusy))
-        throw error;
-      skipped(`${boxFile(dir, which)} (${error.message})`);
-      if (dir === ownDir)
-        ownBusy = error.message;
-    }
-  }
-  if (result && !ownBusy)
-    recordForParties(ctx, registry, result);
-  return { changed: result, ownBusy };
-}
-function recordInBox(dir, which, id, change, skipped) {
-  return withMailLock(dir, () => {
-    let read;
-    try {
-      read = readBox(dir, which);
-    } catch (error) {
-      skipped(`${boxFile(dir, which)} (${error.message.split(`
-`)[0]})`);
-      return null;
-    }
-    const { box, tampered } = read;
-    if (tampered) {
-      skipped(`${boxFile(dir, which)} (changed outside the engine)`);
-      return null;
-    }
-    const index = box.messages.findIndex((m) => m.id === id);
-    if (index === -1)
-      return null;
-    const changed = change(box.messages[index]);
-    box.messages[index] = changed;
-    writeBox(dir, which, box);
-    return changed;
-  });
-}
-function ownInbox(ctx) {
-  const { box, tampered } = readBox(mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project).dir, "inbox");
-  const mine = box.messages.filter((m) => (m.to.agent ?? "session") === ctx.self.agent);
-  return {
-    messages: mine.sort((a, b) => priorityRank(decidedPriority(a)) - priorityRank(decidedPriority(b)) || a.at.localeCompare(b.at)),
-    tampered
-  };
-}
-function addressed(ctx, m) {
-  if (m.to.project !== ctx.self.project)
-    return `${m.id} is addressed to ${m.to.project}, not to ${ctx.self.project}`;
-  const agent = m.to.agent ?? "session";
-  if (agent !== ctx.self.agent && !(ctx.self.agent === "session" && ROLE_AGENT.test(agent)))
-    return `${m.id} is addressed to ${agent}, not to ${ctx.self.agent}`;
-  return null;
-}
-function ownMessage(ctx, id) {
-  const { messages, tampered } = ownInbox(ctx);
-  if (tampered)
-    return { refused: tamperedBox(ctx.self.project, "inbox") };
-  const found = messages.find((m) => m.id === id);
-  return found ? { found } : { refused: `no message ${id} in this inbox` };
-}
-function whyOwnCopyUnwritten(pass) {
-  return pass.ownBusy ? `its mailbox is busy (${pass.ownBusy})` : "its mailbox changed while it was being written";
-}
-function skippedLine(id) {
-  return (what) => `a copy of ${id} was not changed: ${what}`;
-}
-function readFirst(m, to, at) {
-  return mailStatus(m) === "sent" && to !== "read" ? { ...m, status: "read", readAt: m.readAt ?? at } : m;
-}
-function withoutReason(m) {
-  const copy = { ...m };
-  delete copy.reason;
-  return copy;
-}
-function applyMove(m, to, at, extra) {
-  const read = readFirst(m, to, at);
-  if (to === "blocked" && mailStatus(read) === "blocked")
-    return { ...read, ...extra };
-  return transition(to === "done" ? withoutReason(read) : read, to, extra);
-}
-function moveMail(ctx, id, to, extra, notes) {
-  const own = ownMessage(ctx, id);
-  if ("refused" in own)
-    return own;
-  const at = nowIso();
-  const check = applyMove(own.found, to, at, extra);
-  if ("refused" in check)
-    return check;
-  const pass = recordEverywhere(ctx, id, (m) => {
-    const moved = applyMove(m, to, at, extra);
-    return "refused" in moved ? m : moved;
-  }, (w) => notes.push(skippedLine(id)(w)));
-  if (!pass.changed || pass.ownBusy)
-    return { refused: `${id} could not be updated: ${whyOwnCopyUnwritten(pass)}` };
-  return pass.changed;
-}
-function markRead(ctx, id, notes) {
-  const own = ownMessage(ctx, id);
-  if ("refused" in own)
-    return own;
-  if (mailStatus(own.found) !== "sent")
-    return own.found;
-  return moveMail(ctx, id, own.found.type === "notice" ? "done" : "read", { readAt: nowIso() }, notes);
-}
-function refuseMail(ctx, id, reason, notes) {
-  const own = ownMessage(ctx, id);
-  if ("refused" in own)
-    return own;
-  const from = mailStatus(own.found);
-  if (!MAIL_TRANSITIONS[from].includes("refused"))
-    return { refused: `${id} is ${from}; nothing to refuse` };
-  if (!reason.trim())
-    return { refused: 'a refusal needs --reason "<why>"' };
-  return moveMail(ctx, id, "refused", { reason: reason.trim() }, notes);
-}
-function acceptMail(ctx, id, options, notes) {
-  const own = ownMessage(ctx, id);
-  if ("refused" in own)
-    return own;
-  const m = own.found;
-  if (m.type === "question")
-    return {
-      refused: "a question is done by its reply; accept applies to a change request or a blocker"
-    };
-  if (m.type === "notice")
-    return {
-      refused: "a notice is done when read; accept applies to a change request or a blocker"
-    };
-  const from = mailStatus(m);
-  if (from !== "sent" && from !== "read")
-    return { refused: `${id} is ${from}; accept applies to a request still sent or read` };
-  if (options.priority !== undefined && !isMailPriority(options.priority))
-    return { refused: badPriority(options.priority) };
-  const proposed = priorityOf(m);
-  const confirmed = options.priority ?? proposed;
-  if (priorityRank(confirmed) < priorityRank(proposed))
-    return {
-      refused: `${id} was proposed ${proposed}; the receiver confirms or lowers, never raises`
-    };
-  const reason = options.reason?.trim() ? oneLine(options.reason) : null;
-  if (priorityRank(confirmed) > priorityRank(proposed) && !reason)
-    return { refused: 'a lowering needs --reason "<why>"' };
-  const decision = { proposed, confirmed, by: options.by, reason, at: nowIso() };
-  const moved = moveMail(ctx, id, "accepted", { priorityDecision: decision }, notes);
-  return "refused" in moved ? moved : { message: moved };
-}
-function reply(ctx, id, text, options, notes) {
-  const ownDir = mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project).dir;
-  const inbox = readBox(ownDir, "inbox");
-  if (inbox.tampered)
-    return { refused: tamperedBox(ctx.self.project, "inbox") };
-  const original = inbox.box.messages.find((m) => m.id === id) ?? readBox(ownDir, "outbox").box.messages.find((m) => m.id === id);
-  if (!original)
-    return { refused: `no message ${id} in this inbox` };
-  const wrong = addressed(ctx, original);
-  if (wrong)
-    return { refused: wrong };
-  const standing = mailStatus(original);
-  if (standing === "done")
-    return { refused: `${id} is done; a second answer is a new message` };
-  if (standing === "refused")
-    return { refused: `${id} is refused; it has no answer` };
-  if (standing === "expired")
-    return { refused: `${id} is expired; its session is over` };
-  if (options.as !== undefined && !ROLE_AGENT.test(options.as))
-    return {
-      refused: "--as names a role: judge, researcher, expert-<n>, devils-advocate, fault-finder or review-<gate>"
-    };
-  if (options.as && (original.to.agent ?? "session") !== options.as)
-    return {
-      refused: `${id} is addressed to ${original.to.agent ?? "session"}, not to ${options.as}`
-    };
-  if (options.item !== undefined && (!WORK_ID2.test(options.item) || !loadWork(ctx.paths, options.item).work))
-    return { refused: `unknown work item: ${options.item}` };
-  const child = options.item ? loadEvidence(ctx.paths, options.item).evidence : undefined;
-  const verdict = child?.verdict;
-  const typed = [];
-  for (const text of options.contracts ?? []) {
-    const parsed = parseContract(text);
-    if ("refused" in parsed)
-      return parsed;
-    typed.push(parsed);
-  }
-  if (typed.length && !options.item)
-    return { refused: "a contract comes with the child item (--item)" };
-  const carried = options.item && child ? {
-    report: existsSync14(join32(workDir(ctx.paths, options.item), "report.md")) ? `.crew/work/${options.item}/report.md` : null,
-    fingerprint: child.fingerprint,
-    gatesPassed: [
-      ...new Set(child.runs.filter((r) => r.status === "pass").map((r) => r.gate))
-    ].filter((g) => GATE_NAMES.includes(g))
-  } : undefined;
-  const closing = original.type === "question" || original.type === "notice";
-  const to = closing || verdict === "proven" ? "done" : "blocked";
-  const reason = to === "done" ? undefined : options.item ? `unproven: ${(child?.unproven ?? []).map(oneLine).join("; ")}`.slice(0, REASONS_CHARS) : "the reply names no child item (--item)";
-  const attached = attachFile(ctx.paths.root, text, options.filePath);
-  if ("refused" in attached)
-    return { refused: attached.refused };
-  const body = attached.text;
-  if (!body.trim())
-    return { refused: "a reply needs a text (or --file)" };
-  const checked = checkContracts(ctx.paths.root, options.branch, options.item ? loadWork(ctx.paths, options.item).work?.baseCommit ?? null : null, typed, body);
-  if ("refused" in checked)
-    return checked;
-  const at = nowIso();
-  const own = mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project);
-  const dest = mailbox(ctx.paths.userDir, original.from.workspace === "_alone" ? null : original.from.workspace, original.from.project);
-  const from = options.as ? { ...party(ctx.self, original.to.item ?? original.from.item), agent: options.as } : party(ctx.self, original.to.item);
-  if (readBox(dest.dir, "inbox").tampered)
-    return { refused: tamperedBox(original.from.project, "inbox") };
-  const replyMessage = appendToBox(own.dir, "outbox", ctx.self.project, (outbox) => {
-    const replyId = newMessageId(outbox, ctx.self.project, at);
-    return outboxMessage(ctx.self, original.to.item, at, {
-      id: replyId,
-      from,
-      to: {
-        workspace: original.from.workspace,
-        project: original.from.project,
-        item: original.from.item,
-        agent: original.from.agent
-      },
-      type: original.type,
-      subject: original.subject.startsWith("Re: ") ? original.subject : `Re: ${original.subject}`,
-      ...placeBody(dest.dir, replyId, body),
-      replyTo: original.id,
-      status: "sent",
-      ...options.as || original.relayed ? { relayed: true } : {},
-      ...options.branch ? { branch: options.branch } : {},
-      ...options.item ? { item: options.item } : {},
-      ...verdict ? { verdict } : {},
-      thread: threadOf(original),
-      ...checked.contracts.length ? { contracts: checked.contracts } : {},
-      ...carried ? { evidence: carried } : {}
-    });
-  });
-  if ("refused" in replyMessage)
-    return { refused: replyMessage.refused };
-  const failed = deliver(ctx, dest.dir, original.from.project, replyMessage);
-  if (failed)
-    return failed;
-  const extra = {
-    answeredAt: at,
-    ...options.branch ? { branch: options.branch } : {},
-    ...options.item ? { item: options.item } : {},
-    ...verdict ? { verdict } : {},
-    ...reason !== undefined ? { reason } : {}
-  };
-  const answered = recordEverywhere(ctx, id, (m) => {
-    const moved = applyMove(m, to, at, extra);
-    return "refused" in moved ? m : moved;
-  }, (w) => notes.push(skippedLine(id)(w)));
-  if (!answered.changed || answered.ownBusy)
-    return {
-      refused: `${id} could not be marked answered: ${whyOwnCopyUnwritten(answered)}`,
-      delivered: replyMessage.id
-    };
-  withMailLock(ownDir, () => {
-    recordForParties(ctx, loadRegistry(ctx.paths.userDir), replyMessage);
-  });
-  return { reply: replyMessage, original: answered.changed };
-}
-function syncMail(ctx, paths) {
-  const own = mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project);
-  const registry = loadRegistry(ctx.paths.userDir);
-  return withMailLock(own.dir, () => {
-    let updated = 0;
-    const { box: outbox, tampered } = readBox(own.dir, "outbox");
-    const inboxes = new Map;
-    if (!tampered) {
-      for (const sent of outbox.messages) {
-        if (sent.status === "refused")
-          continue;
-        const entry = projectEntry(registry, sent.to.workspace, sent.to.project);
-        const theirsDir = entry ? mailbox(ctx.paths.userDir, entry.workspace, entry.name).dir : own.dir;
-        const inbox = inboxes.get(theirsDir) ?? readBox(theirsDir, "inbox");
-        inboxes.set(theirsDir, inbox);
-        if (inbox.tampered)
-          continue;
-        const theirs = inbox.box.messages.find((m) => m.id === sent.id);
-        if (theirs && JSON.stringify(theirs) !== JSON.stringify(sent)) {
-          Object.assign(sent, theirs);
-          updated += 1;
-          recordForParties(ctx, registry, sent, paths);
-        }
-      }
-      if (updated)
-        writeBox(own.dir, "outbox", outbox);
-    }
-    const inbox = ownInbox(ctx);
-    if (inbox.tampered)
-      return { newMail: [], updated, tampered: true };
-    const marker = join32(own.dir, `synced-${ctx.self.agent}.json`);
-    const seen = new Set(readJson(marker) ?? []);
-    const newMail = [];
-    for (const m of inbox.messages) {
-      recordForParties(ctx, registry, m, paths);
-      if (!seen.has(m.id))
-        newMail.push(m);
-      seen.add(m.id);
-    }
-    writeJson(marker, [...seen]);
-    return { newMail, updated, tampered: false };
-  });
-}
-function markNoticed(ctx, id, notes) {
-  updateEverywhere(ctx, id, (m) => ({ ...m, noticedAt: nowIso() }), (w) => notes.push(skippedLine(id)(w)));
-}
-function updateStatusEverywhere(ctx, id, status, reason, notes) {
-  updateEverywhere(ctx, id, (m) => ({
-    ...m,
-    status,
-    ...reason !== undefined ? { reason } : {}
-  }), (w) => notes.push(skippedLine(id)(w)));
-}
-function emptyInboxSummary() {
-  return {
-    messages: [],
-    unread: 0,
-    answered: 0,
-    waiting: 0,
-    blockers: [],
-    tampered: false,
-    line: null
-  };
-}
-function unanswered(m) {
-  return mailStatus(m) === "sent" && !m.replyTo;
-}
-function inboxSummary(ctx) {
-  const { messages, tampered } = ownInbox(ctx);
-  if (tampered)
-    return { ...emptyInboxSummary(), tampered, line: tamperedBox(ctx.self.project, "inbox") };
-  const unread = messages.filter(unanswered);
-  const answered = messages.filter((m) => m.replyTo && mailStatus(m) === "sent");
-  const waiting = messages.filter((m) => mailStatus(m) === "blocked");
-  const blockers = unread.filter((m) => m.type === "blocker");
-  if (!messages.length)
-    return emptyInboxSummary();
-  const byType = new Map;
-  for (const m of unread)
-    byType.set(m.type, (byType.get(m.type) ?? 0) + 1);
-  const senders = [...new Set(unread.map((m) => m.from.project))].join(", ");
-  const parts = [];
-  if (unread.length)
-    parts.push(`${unread.length} unread ${[...byType].map(([t, n]) => `${t}${n === 1 ? "" : "s"}`).join(" and ")} from ${senders}`);
-  if (answered.length)
-    parts.push(`${answered.length} answered`);
-  if (waiting.length)
-    parts.push(`${waiting.length} waiting for a person`);
-  const where = ctx.self.workspace ?? "alone";
-  return {
-    messages,
-    unread: unread.length,
-    answered: answered.length,
-    waiting: waiting.length,
-    blockers,
-    tampered,
-    line: parts.length ? `Mail (${where}): ${parts.join(", ")}` : null
-  };
-}
-function readOpenSessions(ctx) {
-  const { box, tampered } = readBox(mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project).dir, "outbox");
-  const open = box.messages.filter((m) => m.opened && !m.opened.endedAt);
-  return tampered ? { messages: [], tampered: tamperedBox(ctx.self.project, "outbox"), untrusted: open } : { messages: open, tampered: null, untrusted: [] };
-}
-
 // packages/engine/src/analysis.ts
 var LOG_DEPTH = 20;
 var WORK_ID3 = /^\d{4}-\d{2}-\d{2}-\d{3}-[a-z0-9][a-z0-9-]*$/;
@@ -11892,7 +14096,7 @@ function git(root, ...args) {
 }
 function checkPath(root, path) {
   const bad = `unknown path: ${path} (not in the repository)`;
-  if (!path.trim() || isAbsolute6(path) || /[\0\n\r]/.test(path))
+  if (!path.trim() || isAbsolute7(path) || /[\0\n\r]/.test(path))
     return bad;
   if (path.split(/[\\/]/).includes(".."))
     return bad;
@@ -11944,12 +14148,12 @@ function itemSummary(paths, id) {
   };
   const dir = workDir(paths, id);
   try {
-    if (!lstatSync4(dir).isDirectory())
+    if (!lstatSync5(dir).isDirectory())
       return empty;
   } catch {
     return empty;
   }
-  if (!existsSync15(join33(dir, "work.json")))
+  if (!existsSync20(join41(dir, "work.json")))
     return empty;
   const { work } = loadWork(paths, id);
   if (!work)
@@ -11998,16 +14202,16 @@ function analyseOrigin(paths, pathsToBlame) {
   return { at, paths: result, items };
 }
 function originPath(paths, id) {
-  return join33(workDir(paths, id), "analysis", "origin.json");
+  return join41(workDir(paths, id), "analysis", "origin.json");
 }
 function writeOrigin(paths, id, origin) {
   const file = originPath(paths, id);
-  mkdirSync5(dirname9(file), { recursive: true });
+  mkdirSync9(dirname11(file), { recursive: true });
   writeProtectedJson(paths, file, origin);
 }
 function readOrigin(paths, id) {
   const file = originPath(paths, id);
-  if (!existsSync15(file))
+  if (!existsSync20(file))
     return null;
   const read = readProtectedJson(paths, file);
   if (read.tampered)
@@ -12034,7 +14238,8 @@ var BOOLEAN_FLAGS = new Set([
   "not-run",
   "churn",
   "all",
-  "remove"
+  "remove",
+  "dry-run"
 ]);
 function commaList(value) {
   if (typeof value !== "string")
@@ -12068,12 +14273,12 @@ function parse(argv) {
 }
 
 // packages/engine/src/audit-report.ts
-import { existsSync as existsSync16, readFileSync as readFileSync7, realpathSync as realpathSync5, statSync as statSync8 } from "node:fs";
-import { isAbsolute as isAbsolute7, join as join35, relative as relative8 } from "node:path";
+import { existsSync as existsSync21, readFileSync as readFileSync9, realpathSync as realpathSync7, statSync as statSync9 } from "node:fs";
+import { isAbsolute as isAbsolute8, join as join43, relative as relative9 } from "node:path";
 
 // packages/engine/src/audit-state.ts
 import { createHash as createHash6 } from "node:crypto";
-import { join as join34 } from "node:path";
+import { join as join42 } from "node:path";
 var AUDIT_SECTIONS = [
   "business",
   "security",
@@ -12093,7 +14298,7 @@ var REPORT_INPUT_FILES = [
 function reportHash(auditDir) {
   const hash = createHash6("sha256");
   for (const name of REPORT_INPUT_FILES) {
-    const text = readText(join34(auditDir, name));
+    const text = readText(join42(auditDir, name));
     hash.update(`${name}
 ${text ?? "missing"}
 ---
@@ -12103,17 +14308,17 @@ ${text ?? "missing"}
 }
 var FINDING_LINE = /^- F-\d+ · (?:defect|advisory) · /gm;
 function auditState(paths, work) {
-  const dir = join34(workDir(paths, work.id), "audit");
-  const run = readJson(join34(dir, "runs.json"));
+  const dir = join42(workDir(paths, work.id), "audit");
+  const run = readJson(join42(dir, "runs.json"));
   const head = gitHead(paths.root);
   const runAtHead = run !== null && (run.head === null ? head === "none" : run.head === head);
   const filed = {};
   for (const section of AUDIT_SECTIONS) {
-    const text = readText(join34(dir, `${section}.findings.md`));
+    const text = readText(join42(dir, `${section}.findings.md`));
     if (text !== null)
       filed[section] = (text.match(FINDING_LINE) ?? []).length;
   }
-  const report = readJson(join34(dir, "report.json"));
+  const report = readJson(join42(dir, "report.json"));
   const reportCurrent = report !== null && report.hash === reportHash(dir);
   const signed = work.approvals.find((a) => a.what === "audit") ?? null;
   return { run, runAtHead, filed, report, reportCurrent, signed };
@@ -12198,16 +14403,16 @@ function parseRecommendations(text) {
   return rows.sort((a, b) => COST_ORDER[a.cost] - COST_ORDER[b.cost] || a.days - b.days);
 }
 function inside(base, path) {
-  const rel = relative8(base, path);
-  return rel !== "" && !rel.startsWith("..") && !isAbsolute7(rel);
+  const rel = relative9(base, path);
+  return rel !== "" && !rel.startsWith("..") && !isAbsolute8(rel);
 }
 function realInside(base, rel) {
-  const candidate = join35(base, rel);
-  if (!existsSync16(candidate))
+  const candidate = join43(base, rel);
+  if (!existsSync21(candidate))
     return null;
   try {
-    const real = realpathSync5(candidate);
-    return inside(realpathSync5(base), real) ? real : "";
+    const real = realpathSync7(candidate);
+    return inside(realpathSync7(base), real) ? real : "";
   } catch {
     return null;
   }
@@ -12241,7 +14446,7 @@ function checkProof(findings, root, logsDir, section) {
       out(f.id, `${f.path} is outside the root`);
       continue;
     }
-    const text = readFileSync7(real, "utf8");
+    const text = readFileSync9(real, "utf8");
     const lines = text.endsWith(`
 `) ? text.split(`
 `).length - 1 : text.split(`
@@ -12521,15 +14726,15 @@ function renderAuditHtml(inputs, brand) {
 var TAIL_LINES2 = 20;
 function assembleAuditReport(options) {
   const { auditDir, logsDir, root, id } = options;
-  const runs = readJson(join35(auditDir, "runs.json"));
+  const runs = readJson(join43(auditDir, "runs.json"));
   if (!runs)
     return { refused: `the audit run comes first (crew audit ${id} run)` };
-  const summary = readText(join35(auditDir, "summary.md"));
+  const summary = readText(join43(auditDir, "summary.md"));
   if (summary === null)
     return {
       refused: "the lead's summary comes before the report: audit/summary.md (references/audit.md)"
     };
-  const scope = readJson(join35(auditDir, "scope.json")) ?? {
+  const scope = readJson(join43(auditDir, "scope.json")) ?? {
     targets: [],
     files: 0,
     bytes: 0,
@@ -12539,7 +14744,7 @@ function assembleAuditReport(options) {
   const counts = {};
   const leftOut = [];
   for (const section of AUDIT_SECTIONS) {
-    const text = readText(join35(auditDir, `${section}.findings.md`));
+    const text = readText(join43(auditDir, `${section}.findings.md`));
     const parsed = text === null ? [] : parseFindingsFile(text);
     const checked = checkProof(parsed, root, logsDir, section);
     sections[section] = checked.kept;
@@ -12550,12 +14755,12 @@ function assembleAuditReport(options) {
     };
   }
   const logs = runs.runs.filter((r) => r.log !== null).map((r) => {
-    const file = join35(logsDir, r.log.startsWith("logs/") ? r.log.slice(5) : r.log);
+    const file = join43(logsDir, r.log.startsWith("logs/") ? r.log.slice(5) : r.log);
     let bytes = 0;
     let tail = [];
     try {
-      bytes = statSync8(file).size;
-      const lines = readFileSync7(file, "utf8").split(`
+      bytes = statSync9(file).size;
+      const lines = readFileSync9(file, "utf8").split(`
 `);
       if (lines.at(-1) === "")
         lines.pop();
@@ -12572,10 +14777,10 @@ function assembleAuditReport(options) {
     date: options.date,
     summary,
     sections,
-    dependencies: parseDependenciesTable(readText(join35(auditDir, "dependencies.findings.md")) ?? ""),
+    dependencies: parseDependenciesTable(readText(join43(auditDir, "dependencies.findings.md")) ?? ""),
     runs,
     scope,
-    recommendations: parseRecommendations(readText(join35(auditDir, "recommendations.md")) ?? ""),
+    recommendations: parseRecommendations(readText(join43(auditDir, "recommendations.md")) ?? ""),
     leftOut,
     verdict: auditVerdict(sections, secretsFound),
     signed: options.signed,
@@ -12679,8 +14884,8 @@ function parseAudit(tool, text) {
 }
 
 // packages/engine/src/design-lint.ts
-import { readFileSync as readFileSync8 } from "node:fs";
-import { join as join36 } from "node:path";
+import { readFileSync as readFileSync10 } from "node:fs";
+import { join as join44 } from "node:path";
 var LINT_RULES = [
   "motion/transition-all",
   "motion/scale-from-zero",
@@ -12796,7 +15001,7 @@ var RULE_DEVICE = {
   "craft/hairline": "hairline"
 };
 var DESIGN_LINT_FILE = "review/design-lint.json";
-var FILE_MAX = 1024 * 1024;
+var FILE_MAX2 = 1024 * 1024;
 var LAYOUT = /^(?:width|height|top|left|right|bottom|margin|padding)$|^(?:margin|padding)-/;
 var LAYOUT_DECLARATION = /(?<![\w-])(?:width|height|top|left|right|bottom|margin(?:-[a-z]+)?|padding(?:-[a-z]+)?)\s*:/;
 var DURATION_VALUE = /\b(?:transition|animation)(?:-duration)?\s*:\s*([^;}]*)/g;
@@ -12827,12 +15032,12 @@ function isSafeRelative(rel) {
 function readSafe(root, rel) {
   if (!isSafeRelative(rel))
     return null;
-  const size = regularFileSize(join36(root, rel));
-  if (size === null || size > FILE_MAX)
+  const size = regularFileSize(join44(root, rel));
+  if (size === null || size > FILE_MAX2)
     return null;
   let buffer;
   try {
-    buffer = readFileSync8(join36(root, rel));
+    buffer = readFileSync10(join44(root, rel));
   } catch {
     return null;
   }
@@ -13086,7 +15291,7 @@ function baseContractDevices(root, base) {
     return;
   const text = firstContract((path) => {
     const shown = gitShowFile(root, base, path);
-    return shown !== null && shown.length <= FILE_MAX ? shown : null;
+    return shown !== null && shown.length <= FILE_MAX2 ? shown : null;
   });
   return text === null ? [] : contractOf(text).devices;
 }
@@ -13153,7 +15358,7 @@ function writeDesignLint(paths, id, result) {
     inventory: result.inventory,
     disabled: result.disabled
   };
-  writeText(join36(workDir(paths, id), DESIGN_LINT_FILE), `${JSON.stringify(record, null, 2)}
+  writeText(join44(workDir(paths, id), DESIGN_LINT_FILE), `${JSON.stringify(record, null, 2)}
 `);
   return DESIGN_LINT_FILE;
 }
@@ -13200,2121 +15405,6 @@ function runDesignLint(options) {
     tail: verdict.tail,
     ...verdict.reason ? { reason: verdict.reason } : {},
     lint: lintCounts(result, file)
-  };
-}
-
-// packages/engine/src/e2e.ts
-import {
-  closeSync as closeSync4,
-  existsSync as existsSync21,
-  mkdirSync as mkdirSync9,
-  openSync as openSync4,
-  readSync as readSync2,
-  realpathSync as realpathSync7,
-  statSync as statSync9,
-  unlinkSync as unlinkSync5
-} from "node:fs";
-import { join as join44, relative as relative9, sep as sep6 } from "node:path";
-
-// packages/engine/src/console.ts
-import { existsSync as existsSync17, readFileSync as readFileSync9 } from "node:fs";
-import { join as join37 } from "node:path";
-function levelOf(type) {
-  return type === "warn" ? "warning" : type;
-}
-function entriesOf(parsed) {
-  const entries = [];
-  for (const raw of parsed) {
-    if (!raw || typeof raw !== "object")
-      continue;
-    const { page, type, text } = raw;
-    if (typeof type !== "string")
-      continue;
-    entries.push({
-      page: typeof page === "string" ? page : "",
-      type: levelOf(type),
-      text: typeof text === "string" ? text : ""
-    });
-  }
-  return entries;
-}
-function gradeConsole(dir) {
-  const array = join37(dir, "console.json");
-  const lines = join37(dir, "console.jsonl");
-  let parsed;
-  let file;
-  if (existsSync17(array)) {
-    file = array;
-    try {
-      const data = JSON.parse(readFileSync9(array, "utf8"));
-      if (!Array.isArray(data))
-        return { status: "invalid", file };
-      parsed = data;
-    } catch {
-      return { status: "invalid", file };
-    }
-  } else if (existsSync17(lines)) {
-    file = lines;
-    try {
-      parsed = readFileSync9(lines, "utf8").split(`
-`).filter((l) => l.trim()).map((l) => JSON.parse(l));
-    } catch {
-      return { status: "invalid", file };
-    }
-  } else
-    return { status: "none", file: null };
-  const first = entriesOf(parsed).find((e) => e.type === "error" || e.type === "warning");
-  return first ? { status: "failed", file, first } : { status: "clean", file };
-}
-var LEVEL_AT_START = /^\W*(?:\[?\d[\dT:\-./Z ]*\]?\s*)?\[?(error|warn|warning)\b/i;
-var LEVEL_FIELD = /"level"\s*:\s*"(error|warn|warning)"/i;
-var LEVEL_PAIR = /\blevel=(error|warn|warning)\b/i;
-function gradeLogs(text) {
-  for (const line of text.split(`
-`)) {
-    if (LEVEL_AT_START.test(line) || LEVEL_FIELD.test(line) || LEVEL_PAIR.test(line))
-      return { status: "failed", first: line.trim() };
-  }
-  return { status: "clean" };
-}
-
-// packages/engine/src/design-grade.ts
-import { existsSync as existsSync18, readdirSync as readdirSync9 } from "node:fs";
-import { join as join38 } from "node:path";
-var LIMITS = {
-  displayMaxPx: DISPLAY_MAX_PX,
-  displayMaxVw: DISPLAY_MAX_VW,
-  phoneDisplayMaxVw: PHONE_DISPLAY_MAX_VW,
-  ratioMin: 2.5,
-  ratioMax: 6,
-  titleBoxMax: 0.4,
-  bodyMin: 16,
-  bodyMax: 20,
-  controlMin: 36,
-  phoneControlMin: 44,
-  controlMax: 64,
-  iconMax: 64,
-  gapDesktop: [120, 240],
-  gapPhone: [72, 112],
-  navShareMax: 0.1,
-  picturesMin: 4,
-  movingMin: 8,
-  phoneWidth: 480
-};
-function sameRun(sections) {
-  let best = 0;
-  let run = 0;
-  let last = "";
-  for (const shape of sections.split(",")) {
-    run = shape && shape === last ? run + 1 : 1;
-    last = shape;
-    best = Math.max(best, run);
-  }
-  return best;
-}
-function readLimits(contract, answered) {
-  const front = /^---\n([\s\S]*?)\n---/.exec(contract)?.[1] ?? "";
-  const look = /^devices\s*:.*\bai-look\b/m.test(front);
-  const decision = /^proportion-decision:\s*(D-\d+)\s*$/m.exec(front)?.[1];
-  const declared = look ? { look } : {};
-  if (!decision || !answered.has(decision))
-    return declared;
-  const max = /^proportion-display-max-px:\s*(\d+)\s*$/m.exec(front)?.[1];
-  return max ? { ...declared, displayMaxPx: Number(max) } : declared;
-}
-var PAGE_LEVEL = new Set(["persuade", "experience"]);
-function gradeProbe(probe, surface, limits) {
-  if (!PAGE_LEVEL.has(surface))
-    return [];
-  const out = [];
-  const add = (id, text) => out.push({ id, text: `${id}: ${text} at ${probe.width}` });
-  const phone = probe.width <= LIMITS.phoneWidth;
-  const L = LIMITS;
-  const size = probe.title.sizePx || probe.displayPx;
-  const maxPx = phone ? L.phoneDisplayMaxVw * probe.width / 100 : limits.displayMaxPx ?? Math.min(L.displayMaxPx, L.displayMaxVw * probe.width / 100);
-  if (size > maxPx)
-    add("proportion/display-size", `display type ${size}px (limit ${Math.round(maxPx)}px)`);
-  if (probe.bodyPx > 0) {
-    const ratio = size / probe.bodyPx;
-    if (size > 0 && (ratio < L.ratioMin || ratio > L.ratioMax))
-      add("proportion/display-ratio", `display is ${ratio.toFixed(1)} times body (${L.ratioMin} to ${L.ratioMax})`);
-    if (probe.bodyPx < L.bodyMin || probe.bodyPx > L.bodyMax)
-      add("proportion/body-size", `body ${probe.bodyPx}px (${L.bodyMin} to ${L.bodyMax})`);
-  }
-  if (probe.title.boxShare > L.titleBoxMax)
-    add("proportion/title-box", `the title takes ${Math.round(probe.title.boxShare * 100)}% of the first screen (limit ${L.titleBoxMax * 100}%)`);
-  const minControl = phone ? L.phoneControlMin : L.controlMin;
-  const badControl = probe.controls.find((h) => h < minControl || h > L.controlMax);
-  if (badControl !== undefined)
-    add("proportion/control-height", `a control ${badControl}px high (${minControl} to ${L.controlMax})`);
-  const bigIcon = probe.icons.find((w) => w > L.iconMax);
-  if (bigIcon !== undefined)
-    add("proportion/icon-size", `an icon ${bigIcon}px wide (limit ${L.iconMax})`);
-  const maxGap = (phone ? L.gapPhone : L.gapDesktop)[1];
-  const bigGap = probe.sectionGaps.find((g) => g > maxGap);
-  if (bigGap !== undefined)
-    add("proportion/section-gap", `sections ${bigGap}px apart (limit ${maxGap})`);
-  if (probe.navShare > L.navShareMax)
-    add("proportion/nav-share", `navigation takes ${Math.round(probe.navShare * 100)}% of the first screen (limit 10%)`);
-  if (probe.title.count === 0)
-    add("page/no-title", "the page has no visible h1");
-  if (probe.title.lines > 2)
-    add("page/headline-lines", `the title runs to ${probe.title.lines} lines (limit 2)`);
-  if (probe.motion?.titleLate)
-    add("page/late-title", "the title is hidden 1.2 s after load");
-  if (probe.covered > 0)
-    add("page/covered-text", `${probe.covered} text blocks covered by another element`);
-  if (probe.clipped > 0)
-    add("page/clipped-text", `${probe.clipped} text blocks clipped`);
-  const diff = Math.abs(probe.margins.left - probe.margins.right);
-  if (diff >= Math.max(phone ? 14 : 40, 0.045 * probe.width) && Math.max(probe.margins.left, probe.margins.right) >= (phone ? 28 : 0.07 * probe.width))
-    add("frame/off-centre", `margins ${probe.margins.left} and ${probe.margins.right}`);
-  if (probe.lopsided >= 2)
-    add("frame/lopsided", `${probe.lopsided} sections huddle on one side`);
-  const gapLimit = 0.6 * probe.height;
-  const blank = probe.blankGaps.filter((g) => g >= gapLimit);
-  if (blank.length || probe.blankGaps.filter((g) => g >= 0.42 * probe.height).length >= 2)
-    add("frame/blank-gap", `a stretch of ${Math.max(...probe.blankGaps)}px holds nothing`);
-  if (probe.emptyScreens >= 2)
-    add("frame/empty-screens", `${probe.emptyScreens} screens nearly empty`);
-  if (probe.untitled >= 2)
-    add("frame/untitled-section", `${probe.untitled} sections with no heading`);
-  const run = sameRun(probe.fingerprint?.sections ?? "");
-  if (run >= 3)
-    add("frame/same-layout", `${run} sections in a row share one layout`);
-  if (probe.iconCards > 0)
-    add("craft/icon-cards", "a row of identical boxed cards, each with an icon");
-  if (probe.families > 3)
-    add("type/font-count", `${probe.families} font families (limit 3)`);
-  if (probe.sizes > 9)
-    add("type/size-count", `${probe.sizes} text sizes (limit 9)`);
-  if (probe.lowContrast > 0)
-    add("colour/contrast", `${probe.lowContrast} text blocks under 2.6:1`);
-  if (probe.aiLook && !limits.look)
-    add("colour/ai-look", `${probe.aiLook}: the look a generated page falls into`);
-  if (probe.eyebrows > 0)
-    add("label/eyebrow", `${probe.eyebrows} eyebrow labels above a heading`);
-  if (probe.microLabels >= 3)
-    add("label/micro", `${probe.microLabels} tiny uppercase tracked labels`);
-  if (!phone && probe.pictures < L.picturesMin)
-    add("picture/few", `${probe.pictures} pictures (a site carries at least ${L.picturesMin})`);
-  if (!phone && probe.motion && probe.motion.count < L.movingMin)
-    add("motion/still", `${probe.motion.count} moving elements (at least ${L.movingMin})`);
-  return out;
-}
-function probesOf(meta) {
-  const viewports = meta?.viewports;
-  if (!Array.isArray(viewports))
-    return [];
-  return viewports.map((v) => v.page).filter(validProbe);
-}
-function validProbe(p) {
-  if (!p || typeof p !== "object")
-    return false;
-  const r = p;
-  const number = (v) => typeof v === "number" && Number.isFinite(v);
-  const numbers = (v) => Array.isArray(v) && v.every(number);
-  const text = (v) => typeof v === "string";
-  return number(r.width) && number(r.height) && !!r.title && number(r.title.count) && number(r.title.sizePx) && number(r.title.lines) && number(r.title.boxShare) && number(r.displayPx) && number(r.bodyPx) && numbers(r.controls) && numbers(r.icons) && numbers(r.sectionGaps) && numbers(r.blankGaps) && !!r.margins && number(r.margins.left) && number(r.margins.right) && (r.motion === undefined || r.motion === null || number(r.motion.count) && Array.isArray(r.motion.kinds) && r.motion.kinds.every(text)) && (r.fingerprint === undefined || !!r.fingerprint && Object.values(r.fingerprint).length === 5 && Object.values(r.fingerprint).every(text)) && (r.compRegions === undefined || Array.isArray(r.compRegions));
-}
-function gradeDesign(paths, work) {
-  const record = readSurface(paths, work.id);
-  const none = { offences: [], lines: [], fingerprint: null };
-  if (!record || record.invention === "extend")
-    return none;
-  const contract = readRegularText(join38(paths.root, "DESIGN.md"), DESIGN_FILE_MAX) ?? "";
-  const answered = new Set((work.decisions ?? []).filter((d) => d.answer).map((d) => d.id));
-  const limits = readLimits(contract, answered);
-  const dir = join38(workDir(paths, work.id), "review", "ui");
-  const names = existsSync18(dir) ? readdirSync9(dir).filter((n) => /^[a-z0-9-]+-default\.json$/.test(n)) : [];
-  const offences = [];
-  let widest = null;
-  for (const name of names.sort()) {
-    const meta = readJsonQuiet(join38(dir, name));
-    for (const probe of probesOf(meta)) {
-      for (const o of gradeProbe(probe, record.surface, limits))
-        offences.push(`${o.text} (${name.replace(/-default\.json$/, "")})`);
-      if (!widest || probe.width > widest.width)
-        widest = probe;
-    }
-  }
-  const comp = readComp(paths, work.id);
-  if (comp && widest)
-    for (const o of gradeComp(comp.regions, widest.compRegions ?? []))
-      offences.push(o.text);
-  const lines = [
-    `design: ${names.length} page${names.length === 1 ? "" : "s"} measured, surface ${record.surface}, invention ${record.invention}`
-  ];
-  if (!widest?.fingerprint || !PAGE_LEVEL.has(record.surface))
-    return { offences, lines, fingerprint: null };
-  const print = {
-    ...widest.fingerprint,
-    motion: (widest.motion?.kinds ?? []).sort().join(",") || "none"
-  };
-  writeProtectedJson(paths, join38(designDir(paths, work.id), "fingerprint.json"), print);
-  const self = itemHash(`${paths.root}:${work.id}`);
-  const history = readHistory(paths.userDir);
-  if (history.warning)
-    lines.push(history.warning);
-  const alike = compareFingerprints(historyPrint(print), history.rows.filter((r) => r.item !== self));
-  if (alike)
-    offences.push(alike);
-  const earlier = history.rows.filter((r) => r.item !== self).slice(-RECENT_ROWS);
-  const repeat = earlier.find((r) => r.palette === print.palette);
-  if (repeat)
-    offences.push(`design/palette-repeat: palette ${print.palette} repeats ${repeat.item} (${repeat.at}); a site's palette differs from the last ${RECENT_ROWS}`);
-  const lastHero = earlier.slice(-2).find((r) => r.hero === print.hero);
-  if (lastHero)
-    offences.push(`design/hero-repeat: first screen ${print.hero} repeats ${lastHero.item} (${lastHero.at}); it differs from the last 2`);
-  lines.push(`fingerprint: ${print.display}, ${print.body}, ${print.palette}, ${print.hero}, ${print.sections}, ${print.motion}`);
-  return { offences, lines, fingerprint: print };
-}
-function recordDesignHistory(paths, work, print) {
-  try {
-    const deal = readDeal(paths, work.id);
-    const chosen = deal ? deal.options[deal.chosen ?? 0] : undefined;
-    addHistoryRow(paths.userDir, {
-      at: nowIso(),
-      item: `${paths.root}:${work.id}`,
-      fingerprint: print,
-      ...chosen ? { dealt: [chosen.direction, chosen.hero, chosen.type, chosen.palette] } : {}
-    });
-    return null;
-  } catch (error) {
-    return `design history: ${errorText(error)}`;
-  }
-}
-function readJsonQuiet(path) {
-  const text = readRegularText(path, 1024 * 1024);
-  if (text === null)
-    return null;
-  try {
-    return JSON.parse(text);
-  } catch {
-    return null;
-  }
-}
-
-// packages/engine/src/devtools.ts
-import {
-  existsSync as existsSync19,
-  lstatSync as lstatSync5,
-  mkdirSync as mkdirSync6,
-  readdirSync as readdirSync10,
-  renameSync as renameSync3,
-  unlinkSync as unlinkSync3,
-  writeFileSync as writeFileSync4
-} from "node:fs";
-import { join as join39 } from "node:path";
-var AUDIT_DIR = "review/ui/audit";
-var AUDIT_FILE = `${AUDIT_DIR}/audit.json`;
-var DEVTOOLS = {
-  start: ["start", "--headless", "--isolated", "--no-usage-statistics", "--no-performance-crux"],
-  newPage: "new_page",
-  lighthouse: ["lighthouse_audit", "--mode", "navigation", "--device", "mobile"],
-  trace: ["performance_start_trace", "--reload", "--autoStop"],
-  stop: "stop",
-  output: "--output-format=json"
-};
-var NO_DEVTOOLS_REASON = 'no chrome-devtools in the profile: npm i -g chrome-devtools-mcp, then crew detect, or crew profile set browser.devtools "<cmd>"';
-var PROPOSED_REASON = "chrome-devtools proposed; crew profile confirm browser";
-var NO_URL_REASON = "no environment.url";
-var E2E_FAILED_REASON = "e2e command failed";
-var DEFAULT_LIMITS = { commandMs: 60000, totalMs: 300000 };
-var PAGE_CAP = 5;
-var URL_MAX = 2048;
-var FILE_MAX2 = 1024 * 1024;
-var CLS_LIMIT2 = 0.1;
-var PAGE_ID = /^[A-Za-z0-9_-]{1,64}$/;
-var WIN32_UNSAFE = /[&|<>^%"\r\n]/;
-var ENGINE_FILES = /^(?:lighthouse-\d+\.json|trace-\d+\.json|insights-\d+\.txt)$/;
-function auditPages(environmentUrl, captureUrls) {
-  const seen = new Set;
-  const pages = [];
-  for (const raw of [environmentUrl ?? "", ...captureUrls]) {
-    const url = raw.trim();
-    if (!url || seen.has(url))
-      continue;
-    seen.add(url);
-    pages.push(url);
-    if (pages.length === PAGE_CAP)
-      break;
-  }
-  return pages;
-}
-function quoteFor(platform, word) {
-  if (platform === "win32")
-    return WIN32_UNSAFE.test(word) ? { ok: false } : { ok: true, text: `"${word}"` };
-  return word.includes("'") || /[\r\n]/.test(word) ? { ok: false } : { ok: true, text: shellWord(word) };
-}
-function validUrl(raw) {
-  let url;
-  try {
-    url = new URL(raw);
-  } catch {
-    return { reason: "url not http(s)" };
-  }
-  if (url.protocol !== "http:" && url.protocol !== "https:")
-    return { reason: "url not http(s)" };
-  if (url.href.length > URL_MAX)
-    return { reason: "url not shell-safe" };
-  return { href: url.href };
-}
-function jsonOf(text) {
-  if (text === null)
-    return null;
-  const parse = (s) => {
-    try {
-      const value = JSON.parse(s);
-      return value && typeof value === "object" && !Array.isArray(value) ? value : null;
-    } catch {
-      return null;
-    }
-  };
-  const whole = parse(text.trim());
-  if (whole)
-    return whole;
-  const from = text.indexOf("{");
-  const to = text.lastIndexOf("}");
-  return from >= 0 && to > from ? parse(text.slice(from, to + 1)) : null;
-}
-function pageIdOf(stdout) {
-  const json = jsonOf(stdout);
-  if (!json)
-    return null;
-  const page = json.page && typeof json.page === "object" ? json.page : null;
-  const id = json.pageId ?? json.id ?? page?.id;
-  return typeof id === "string" && PAGE_ID.test(id) ? id : null;
-}
-function numberNamed(value, name, depth = 0) {
-  if (!value || typeof value !== "object" || depth > 8)
-    return null;
-  for (const [key, inner] of Object.entries(value)) {
-    if (key.toLowerCase() === name && typeof inner === "number" && Number.isFinite(inner))
-      return inner;
-  }
-  for (const inner of Object.values(value)) {
-    const found = numberNamed(inner, name, depth + 1);
-    if (found !== null)
-      return found;
-  }
-  return null;
-}
-function metricsOf(stdout) {
-  const json = jsonOf(stdout);
-  const fromText = (name) => {
-    const match = new RegExp(`\\b${name}\\b[^0-9\\n]*([0-9]+(?:\\.[0-9]+)?)`, "i").exec(stdout ?? "");
-    return match ? Number(match[1]) : null;
-  };
-  return {
-    lcpMs: json ? numberNamed(json, "lcp") : fromText("LCP"),
-    cls: json ? numberNamed(json, "cls") : fromText("CLS"),
-    inpMs: json ? numberNamed(json, "inp") : fromText("INP")
-  };
-}
-var percent = (score) => typeof score === "number" && Number.isFinite(score) ? Math.round(score * 100) : null;
-function gradeReport(report, file, url) {
-  const categories = report.categories ?? {};
-  const audits = report.audits ?? {};
-  const refs = Array.isArray(categories.accessibility?.auditRefs) ? categories.accessibility?.auditRefs : [];
-  const failed = [];
-  const offences = [];
-  for (const ref of refs) {
-    const id = typeof ref?.id === "string" ? ref.id : null;
-    const audit = id ? audits[id] : undefined;
-    if (!id || !audit || audit.score !== 0)
-      continue;
-    const details = audit.details;
-    if (!Array.isArray(details?.items) || details.items.length === 0)
-      continue;
-    const safeId = safeText(id);
-    failed.push({ id: safeId, title: safeText(audit.title ?? id), score: 0 });
-    offences.push(`audit: accessibility ${safeId} scored 0 on ${url} (${details.items.length} items)`);
-  }
-  return {
-    lighthouse: {
-      file,
-      scores: {
-        performance: percent(categories.performance?.score),
-        accessibility: percent(categories.accessibility?.score),
-        bestPractices: percent(categories["best-practices"]?.score),
-        seo: percent(categories.seo?.score)
-      },
-      failed
-    },
-    offences
-  };
-}
-function takeReport(dir, before, stdout, n) {
-  const target = join39(dir, `lighthouse-${n}.json`);
-  let names = [];
-  try {
-    names = readdirSync10(dir).filter((name) => name.endsWith(".json") && !before.has(name)).sort();
-  } catch {
-    names = [];
-  }
-  for (const name of names) {
-    const body = jsonOf(readRegularText(join39(dir, name), FILE_MAX2));
-    if (body?.categories && typeof body.categories === "object") {
-      renameSync3(join39(dir, name), target);
-      return body;
-    }
-  }
-  const printed = jsonOf(stdout);
-  if (printed?.categories && typeof printed.categories === "object") {
-    writeText(target, `${JSON.stringify(printed, null, 2)}
-`);
-    return printed;
-  }
-  return null;
-}
-function writeInsights(path, stdout) {
-  const text = stripControl(stdout ?? "").slice(0, FILE_MAX2);
-  unlinkIfLink(path);
-  writeFileSync4(path, text.endsWith(`
-`) ? text : `${text}
-`);
-}
-function stripControl(text) {
-  let kept = "";
-  for (const c of text) {
-    const code = c.charCodeAt(0);
-    if (code < 32 && code !== 9 && code !== 10 || code === 127)
-      continue;
-    kept += c;
-  }
-  return kept;
-}
-function unlinkIfLink(path) {
-  try {
-    if (lstatSync5(path).isSymbolicLink())
-      unlinkSync3(path);
-  } catch {}
-}
-function failure(tool, url, result) {
-  return `${tool} failed on ${safeText(url)} (${result.timedOut ? "timed out" : `exit ${result.exit}`})`;
-}
-async function runDevtoolsAudit(options) {
-  try {
-    return await auditRun(options);
-  } catch (error) {
-    const reason = safeText(errorText(error));
-    try {
-      writeNotCaptured(options.paths, options.work.id, options.profile.browser?.devtools.command ?? null, reason);
-    } catch {}
-    return notCapturedResult(reason);
-  }
-}
-function notCapturedResult(reason) {
-  return {
-    status: "not captured",
-    reason,
-    offence: null,
-    lines: [`audit: not captured (${reason})`],
-    pages: []
-  };
-}
-function writeNotCaptured(paths, id, command, reason) {
-  writeAudit(paths, id, {
-    at: nowIso(),
-    command,
-    status: "not captured",
-    reason,
-    pages: [],
-    offences: [],
-    advisories: []
-  });
-}
-async function auditRun(options) {
-  const { paths, work, profile } = options;
-  const dir = join39(workDir(paths, work.id), AUDIT_DIR);
-  const block = profile.browser?.devtools;
-  const command = block?.command.trim() ?? "";
-  const notCaptured = (reason) => {
-    writeNotCaptured(paths, work.id, command || null, reason);
-    return notCapturedResult(reason);
-  };
-  sweepEngineFiles(dir);
-  if (!block)
-    return notCaptured(NO_DEVTOOLS_REASON);
-  if (block.source !== "confirmed" || !command)
-    return notCaptured(PROPOSED_REASON);
-  if (!profile.environment?.url)
-    return notCaptured(NO_URL_REASON);
-  if (options.e2eFailed)
-    return notCaptured(E2E_FAILED_REASON);
-  const platform = options.platform ?? process.platform;
-  const quotedDir = quoteFor(platform, dir);
-  if (!quotedDir.ok)
-    return notCaptured("path not shell-safe");
-  const limits = { ...DEFAULT_LIMITS, ...options.limits };
-  const env = { ...options.env, CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS: "1" };
-  const logBase = options.log.replace(/\.txt$/, "");
-  const logFor = (name) => join39(workDir(paths, work.id), `${logBase}-audit-${name}.txt`);
-  const run = async (name, args) => {
-    mkdirSync6(dir, { recursive: true });
-    const result = await runCommand(`${command} ${args.join(" ")}`, {
-      cwd: paths.root,
-      timeoutMs: limits.commandMs,
-      logPath: logFor(name),
-      env
-    });
-    return { ...result, stdout: readRegularText(logFor(name), FILE_MAX2) };
-  };
-  const context = { dir, quotedDir: quotedDir.text, platform, run };
-  const deadline = Date.now() + limits.totalMs;
-  const pages = [];
-  const offencesOfPage = [];
-  let reason = null;
-  try {
-    const start = await run("start", [...DEVTOOLS.start, DEVTOOLS.output]);
-    if (start.exit !== 0 || start.timedOut) {
-      reason = `start failed (${start.timedOut ? "timed out" : `exit ${start.exit}`})`;
-    } else {
-      for (const [index, raw] of options.pages.entries()) {
-        const page = {
-          url: safeText(raw),
-          id: null,
-          lighthouse: null,
-          trace: null,
-          reason: null
-        };
-        pages.push(page);
-        const overBudget = index > 0 && Date.now() > deadline;
-        offencesOfPage.push(await auditPage(context, page, raw, index + 1, overBudget));
-      }
-    }
-  } finally {
-    try {
-      await run("stop", [DEVTOOLS.stop]);
-    } catch {}
-  }
-  if (reason !== null)
-    return notCaptured(reason);
-  const { offences, advisories } = gradeAudit(pages, offencesOfPage, options.fixtureMeasuredCls);
-  writeAudit(paths, work.id, {
-    at: nowIso(),
-    command,
-    status: "captured",
-    reason: null,
-    pages,
-    offences,
-    advisories
-  });
-  const head = `audit: captured (${pages.length} page${pages.length === 1 ? "" : "s"}; ${AUDIT_FILE})`;
-  return {
-    status: "captured",
-    reason: null,
-    offence: offences[0] ?? null,
-    lines: [head, ...offences, ...advisories],
-    pages
-  };
-}
-async function auditPage(ctx, page, raw, n, overBudget) {
-  const valid = validUrl(raw);
-  if ("reason" in valid) {
-    page.reason = valid.reason;
-    return [];
-  }
-  const quotedUrl = quoteFor(ctx.platform, valid.href);
-  if (!quotedUrl.ok) {
-    page.reason = "url not shell-safe";
-    return [];
-  }
-  if (overBudget) {
-    page.reason = "time budget";
-    return [];
-  }
-  let step = DEVTOOLS.newPage;
-  let offences = [];
-  try {
-    const opened = await ctx.run(`new-page-${n}`, [
-      DEVTOOLS.newPage,
-      "--url",
-      quotedUrl.text,
-      DEVTOOLS.output
-    ]);
-    if (opened.exit !== 0 || opened.timedOut) {
-      page.reason = failure(DEVTOOLS.newPage, raw, opened);
-      return [];
-    }
-    const id = pageIdOf(opened.stdout);
-    if (!id) {
-      page.reason = "new_page gave no page id";
-      return [];
-    }
-    page.id = id;
-    step = DEVTOOLS.lighthouse[0];
-    let before;
-    try {
-      before = new Set(readdirSync10(ctx.dir));
-    } catch {
-      before = new Set;
-    }
-    const lighthouse = await ctx.run(`lighthouse-${n}`, [
-      DEVTOOLS.lighthouse[0],
-      id,
-      ...DEVTOOLS.lighthouse.slice(1),
-      "--outputDirPath",
-      ctx.quotedDir,
-      DEVTOOLS.output
-    ]);
-    if (lighthouse.exit !== 0 || lighthouse.timedOut) {
-      page.reason = failure(DEVTOOLS.lighthouse[0], raw, lighthouse);
-      return [];
-    }
-    step = `lighthouse-${n}.json`;
-    const report = takeReport(ctx.dir, before, lighthouse.stdout, n);
-    if (report) {
-      const graded = gradeReport(report, `lighthouse-${n}.json`, page.url);
-      page.lighthouse = graded.lighthouse;
-      offences = graded.offences;
-    } else
-      page.reason = "no Lighthouse report";
-    const traceFile = join39(ctx.dir, `trace-${n}.json`);
-    const quotedTrace = quoteFor(ctx.platform, traceFile);
-    if (!quotedTrace.ok) {
-      page.reason ??= "path not shell-safe";
-      return offences;
-    }
-    step = DEVTOOLS.trace[0];
-    const trace = await ctx.run(`trace-${n}`, [
-      DEVTOOLS.trace[0],
-      id,
-      ...DEVTOOLS.trace.slice(1),
-      "--filePath",
-      quotedTrace.text,
-      DEVTOOLS.output
-    ]);
-    if (trace.exit !== 0 || trace.timedOut) {
-      page.reason ??= failure(DEVTOOLS.trace[0], raw, trace);
-      return offences;
-    }
-    step = `insights-${n}.txt`;
-    writeInsights(join39(ctx.dir, `insights-${n}.txt`), trace.stdout);
-    page.trace = {
-      file: existsSync19(traceFile) ? `trace-${n}.json` : null,
-      ...metricsOf(trace.stdout)
-    };
-  } catch (error) {
-    page.reason ??= `${step}: ${safeText(errorText(error))}`;
-  }
-  return offences;
-}
-function gradeAudit(pages, offencesOfPage, fixtureMeasuredCls) {
-  const offences = [];
-  const advisories = [];
-  for (const [index, page] of pages.entries()) {
-    offences.push(...offencesOfPage[index] ?? []);
-    const cls = page.trace?.cls ?? null;
-    if (cls !== null && cls > CLS_LIMIT2 && !fixtureMeasuredCls)
-      offences.push(`audit: CLS ${cls} on ${page.url} (limit ${CLS_LIMIT2})`);
-    if (page.lighthouse) {
-      const s = page.lighthouse.scores;
-      const show = (v) => v === null ? "n/a" : String(v);
-      advisories.push(`audit: scores on ${page.url}: performance ${show(s.performance)}, accessibility ${show(s.accessibility)}, best practices ${show(s.bestPractices)}, seo ${show(s.seo)}`);
-    }
-    if (page.trace && (page.trace.lcpMs !== null || page.trace.inpMs !== null))
-      advisories.push(`audit: LCP ${page.trace.lcpMs ?? "n/a"} ms, INP ${page.trace.inpMs ?? "n/a"} ms on ${page.url}`);
-    if (page.reason)
-      advisories.push(`audit: not captured on ${page.url} (${page.reason})`);
-  }
-  return { offences, advisories };
-}
-function sweepEngineFiles(dir) {
-  let names;
-  try {
-    names = readdirSync10(dir);
-  } catch {
-    return;
-  }
-  for (const name of names) {
-    if (!ENGINE_FILES.test(name))
-      continue;
-    try {
-      unlinkSync3(join39(dir, name));
-    } catch {}
-  }
-}
-function writeAudit(paths, id, record) {
-  const path = join39(workDir(paths, id), AUDIT_FILE);
-  try {
-    mkdirSync6(join39(workDir(paths, id), AUDIT_DIR), { recursive: true });
-    unlinkIfLink(path);
-    writeText(path, `${JSON.stringify(record, null, 2)}
-`);
-  } catch (error) {
-    throw new Error(`audit.json: ${errorText(error)}`);
-  }
-}
-
-// packages/engine/src/environment.ts
-import { spawn as spawn3 } from "node:child_process";
-import { closeSync as closeSync3, mkdirSync as mkdirSync8, openSync as openSync3, unlinkSync as unlinkSync4 } from "node:fs";
-import { dirname as dirname11, join as join43 } from "node:path";
-
-// packages/engine/src/open.ts
-import { execFileSync as execFileSync5, spawn as spawn2 } from "node:child_process";
-import { closeSync as closeSync2, mkdirSync as mkdirSync7, openSync as openSync2 } from "node:fs";
-import { dirname as dirname10, join as join42 } from "node:path";
-
-// packages/engine/src/profile.ts
-import { join as join41 } from "node:path";
-
-// packages/engine/src/packs.ts
-import { existsSync as existsSync20, readdirSync as readdirSync11, readFileSync as readFileSync10, realpathSync as realpathSync6, rmSync as rmSync5 } from "node:fs";
-import { homedir as homedir2 } from "node:os";
-import { basename as basename9, isAbsolute as isAbsolute8, join as join40, sep as sep5 } from "node:path";
-
-// packages/engine/src/version.ts
-var VERSION = "0.19.0";
-
-// packages/engine/src/packs.ts
-var PACK_NAME = /^wizardingcode-pack-[a-z0-9][a-z0-9-]*$/;
-var SEMVER = /^\d+\.\d+\.\d+$/;
-var CORE_RANGE = /^>=(\d+)\.(\d+)\.(\d+)$/;
-var PACK_KINDS = ["stack", "domain", "team"];
-var TEMPLATE_KEYS = new Set(["template", "teams"]);
-var PROVENANCE_KEYS = ["source", "licence", "commit", "measuredBy"];
-function stateText(state) {
-  switch (state.kind) {
-    case "ok":
-      return "ok";
-    case "missing":
-      return "missing";
-    case "unreadable":
-      return `unreadable (${state.reason})`;
-    case "changed":
-      return `changed since registration (${state.files.join(", ")})`;
-  }
-}
-var isRecord3 = (v) => typeof v === "object" && v !== null && !Array.isArray(v);
-var isStringList = (v) => Array.isArray(v) && v.every((s) => typeof s === "string");
-var climbs = (p) => isAbsolute8(p) || p.split(/[\\/]/).some((segment) => segment === "..");
-function readManifest(root) {
-  let text;
-  try {
-    text = readText(join40(root, "pack.json"));
-  } catch (error) {
-    return { refused: `pack.json cannot be read: ${errorText(error)}` };
-  }
-  if (text === null)
-    return { refused: "pack.json names nothing: the file is missing" };
-  let data;
-  try {
-    data = JSON.parse(text);
-  } catch (error) {
-    return { refused: `pack.json: not JSON (${errorText(error)})` };
-  }
-  if (!isRecord3(data))
-    return { refused: "pack.json: not an object" };
-  const m = data;
-  const bad = (what) => ({ refused: `pack.json: ${what}` });
-  if (typeof m.name !== "string" || !PACK_NAME.test(m.name))
-    return bad("name is not wizardingcode-pack-<name> (lowercase letters, digits and dashes)");
-  if (typeof m.version !== "string" || !SEMVER.test(m.version))
-    return bad("version is not X.Y.Z");
-  if (!PACK_KINDS.includes(m.kind))
-    return bad("kind is not stack, domain or team");
-  if (typeof m.core !== "string" || !CORE_RANGE.test(m.core))
-    return bad("core is not of the form >=X.Y.Z");
-  if (!isRecord3(m.verifiedAgainst) || !Object.keys(m.verifiedAgainst).length || !Object.values(m.verifiedAgainst).every((v) => typeof v === "string"))
-    return bad("verifiedAgainst needs at least one technology with its version");
-  if (!Array.isArray(m.detectors))
-    return bad("detectors is not a list of rules");
-  const detectors = [];
-  for (const raw of m.detectors) {
-    if (!isRecord3(raw))
-      return bad("detectors is not a list of rules");
-    const stack = typeof raw.stack === "string" ? raw.stack : "?";
-    const rule = (what) => bad(`detector ${stack}: ${what}`);
-    if (typeof raw.stack !== "string" || !LOWERCASE_WORD.test(raw.stack))
-      return rule("stack is not a lowercase word");
-    if (raw.extends !== undefined && !CORE_STACKS.includes(raw.extends))
-      return rule(`extends ${String(raw.extends)} is not a core stack (${CORE_STACKS.join(", ")})`);
-    if (!isStringList(raw.markers) || !raw.markers.length)
-      return rule("markers is empty");
-    for (const marker of raw.markers) {
-      const names = braceExpand(marker);
-      if (names.length >= MAX_BRACE_WORDS)
-        return bad(`markers holds a brace expansion past the cap of ${MAX_BRACE_WORDS} words (${marker})`);
-      if (names.some((name) => name.includes("{")))
-        return bad(`markers holds a brace left unexpanded (${marker})`);
-      for (const name of names)
-        if (climbs(name))
-          return bad(`markers holds a path that is absolute or climbs (${name})`);
-    }
-    if (typeof raw.packageManager !== "string")
-      return rule("packageManager is not a string");
-    if (!raw.packageManager && raw.extends === undefined)
-      return rule("packageManager is empty on a rule without extends");
-    if (!isRecord3(raw.gates))
-      return rule("gates is not an object of gate name to command");
-    const gates = {};
-    for (const [gate, command] of Object.entries(raw.gates)) {
-      if (!GATE_NAMES.includes(gate))
-        return rule(`${gate} is not a gate name`);
-      if (typeof command !== "string" || !command.trim())
-        return rule(`the ${gate} gate has no command`);
-      gates[gate] = command;
-    }
-    if (raw.testScoped !== undefined && (typeof raw.testScoped !== "string" || !raw.testScoped.includes("{files}")))
-      return rule("testScoped has no {files}");
-    detectors.push({
-      stack: raw.stack,
-      ...raw.extends !== undefined ? { extends: raw.extends } : {},
-      markers: raw.markers,
-      packageManager: raw.packageManager,
-      gates,
-      ...typeof raw.testScoped === "string" ? { testScoped: raw.testScoped } : {}
-    });
-  }
-  if (!isStringList(m.checklists))
-    return bad("checklists is not a list of checklists/<name>.md paths");
-  for (const p of m.checklists)
-    if (climbs(p))
-      return bad(`checklists holds a path that is absolute or climbs (${p})`);
-  if (!m.checklists.every((p) => /^checklists\/[a-z0-9-]+\.md$/.test(p)))
-    return bad("checklists is not a list of checklists/<name>.md paths");
-  if (!isRecord3(m.knowledge) || !Object.values(m.knowledge).every((v) => typeof v === "string"))
-    return bad("knowledge is not an object of lowercase keys to knowledge/<name>.md paths");
-  for (const v of Object.values(m.knowledge))
-    if (climbs(v))
-      return bad(`knowledge holds a path that is absolute or climbs (${v})`);
-  if (!Object.entries(m.knowledge).every(([k, v]) => LOWERCASE_WORD.test(k) && /^knowledge\/[a-z0-9-]+\.md$/.test(v)))
-    return bad("knowledge is not an object of lowercase keys to knowledge/<name>.md paths");
-  let team = null;
-  if (m.team !== null) {
-    if (!isRecord3(m.team))
-      return bad("team is not null or a template");
-    const t = m.team;
-    if (typeof t.template !== "string" || !LOWERCASE_WORD.test(t.template))
-      return bad("template: template is not a lowercase word");
-    for (const key of Object.keys(t))
-      if (!TEMPLATE_KEYS.has(key))
-        return bad(`template: a template sets no cap, removes no team and seats nothing always (${key})`);
-    if (!isRecord3(t.teams))
-      return bad("template: teams is not an object");
-    const teams = {};
-    for (const [name, def] of Object.entries(t.teams)) {
-      const core = TEAMS[name];
-      if (!core)
-        return bad(`template: ${name} is not a team of the registry`);
-      if (core.mandatory.kind !== "paths")
-        return bad(`template: ${name} takes no globs (its rule is ${core.mandatory.kind})`);
-      const mandatory = isRecord3(def) && isRecord3(def.mandatory) ? def.mandatory : null;
-      if (mandatory?.kind !== "paths" || !isStringList(mandatory.globs))
-        return bad(`template: ${name}: mandatory is not { kind: "paths", globs }`);
-      if (!mandatory.globs.length)
-        return bad(`template: ${name}: globs is empty`);
-      for (const g of mandatory.globs)
-        if (climbs(g))
-          return bad(`globs holds a path that is absolute or climbs (${g})`);
-      teams[name] = { mandatory: { kind: "paths", globs: mandatory.globs } };
-    }
-    team = { template: t.template, teams };
-  }
-  if (!isStringList(m.evals))
-    return bad("evals is not a list of case names");
-  if (!Array.isArray(m.provenance))
-    return bad("provenance is not a list of { source, licence, commit, measuredBy }");
-  const provenance = [];
-  for (const p of m.provenance) {
-    if (!isRecord3(p) || !PROVENANCE_KEYS.every((k) => (k in p)) || typeof p.source !== "string" || typeof p.licence !== "string" || p.commit !== null && typeof p.commit !== "string" || typeof p.measuredBy !== "string")
-      return bad("provenance is not a list of { source, licence, commit, measuredBy }");
-    if (!/^https?:\/\//.test(p.source))
-      return bad(`provenance: source ${p.source} is not an http(s) URL`);
-    provenance.push({
-      source: p.source,
-      licence: p.licence,
-      commit: p.commit,
-      measuredBy: p.measuredBy
-    });
-  }
-  return {
-    manifest: {
-      name: m.name,
-      version: m.version,
-      kind: m.kind,
-      core: m.core,
-      verifiedAgainst: m.verifiedAgainst,
-      detectors,
-      checklists: m.checklists,
-      knowledge: m.knowledge,
-      team,
-      evals: m.evals,
-      provenance
-    }
-  };
-}
-function coreSatisfied(range, version) {
-  const want = CORE_RANGE.exec(range)?.slice(1).map(Number) ?? [0, 0, 0];
-  const have = version.split(".").map(Number);
-  for (let i = 0;i < 3; i++) {
-    if ((have[i] ?? 0) > (want[i] ?? 0))
-      return true;
-    if ((have[i] ?? 0) < (want[i] ?? 0))
-      return false;
-  }
-  return true;
-}
-function namedFiles(manifest) {
-  return ["pack.json", ...manifest.checklists, ...Object.values(manifest.knowledge)];
-}
-function readNamed(root, rel) {
-  try {
-    return { text: readFileSync10(join40(root, rel), "utf8") };
-  } catch (error) {
-    return { refused: `${rel} cannot be read (${errorText(error)})` };
-  }
-}
-function checkPack(root, manifest, engineVersion = VERSION) {
-  if (!coreSatisfied(manifest.core, engineVersion))
-    return `core ${manifest.core} needs an engine at or above ${manifest.core.slice(2)}; this is ${engineVersion}`;
-  let real;
-  try {
-    real = realpathSync6(root);
-  } catch (error) {
-    return `the pack's root cannot be read (${errorText(error)})`;
-  }
-  for (const rel of namedFiles(manifest)) {
-    let resolved;
-    try {
-      resolved = realpathSync6(join40(root, rel));
-    } catch {
-      return `pack.json names ${rel}, which is missing`;
-    }
-    if (resolved !== real && !resolved.startsWith(real + sep5))
-      return `pack.json names ${rel}, which is outside the pack's root`;
-  }
-  const scanned = [
-    ...namedFiles(manifest),
-    ...existsSync20(join40(root, "README.md")) ? ["README.md"] : []
-  ];
-  for (const rel of scanned) {
-    const read = readNamed(root, rel);
-    if ("refused" in read)
-      return read.refused;
-    const finding = scanText(read.text, rel)[0];
-    if (finding)
-      return `${rel} holds a secret (${finding.rule}) at line ${finding.line}`;
-  }
-  for (const rule of manifest.detectors)
-    if (CORE_STACKS.includes(rule.stack))
-      return `detector ${rule.stack}: a core stack is not a pack's`;
-  for (const p of manifest.provenance)
-    if (!manifest.evals.includes(p.measuredBy))
-      return `folded in without proof: ${p.source} names no case of this pack`;
-  return null;
-}
-function hashes(root, manifest) {
-  const out = {};
-  for (const rel of namedFiles(manifest))
-    out[rel] = `sha256:${sha256(readFileSync10(join40(root, rel)))}`;
-  return out;
-}
-function registerPack(userDir, root, by, key = null) {
-  const read = readManifest(root);
-  if ("refused" in read)
-    return read;
-  const refused = checkPack(root, read.manifest);
-  if (refused)
-    return { refused };
-  const manifest = read.manifest;
-  let real;
-  try {
-    real = realpathSync6(root);
-  } catch (error) {
-    return { refused: `${root} cannot be resolved: ${errorText(error)}` };
-  }
-  const dir = packsDir(userDir);
-  ensureDir(dir);
-  return withLock(dir, () => {
-    const earlier = readJson(packPath(userDir, manifest.name));
-    const latest = readdirSync11(dir).filter((n) => n.endsWith(".json")).map((n) => readJson(join40(dir, n))?.registeredAt ?? "").sort().at(-1);
-    const now = nowIso();
-    const registeredAt = earlier?.registeredAt ?? (latest && latest >= now ? new Date(Date.parse(latest) + 1).toISOString() : now);
-    const registration = {
-      name: manifest.name,
-      version: manifest.version,
-      root: real,
-      registeredAt,
-      by,
-      key,
-      files: hashes(root, manifest),
-      manifest
-    };
-    writeJson(packPath(userDir, manifest.name), registration);
-    return registration;
-  });
-}
-function removePack(userDir, name) {
-  if (!PACK_NAME.test(name))
-    return { refused: `${name} is not a pack name (wizardingcode-pack-<name>)` };
-  const dir = packsDir(userDir);
-  ensureDir(dir);
-  return withLock(dir, () => {
-    const file = packPath(userDir, name);
-    if (!existsSync20(file))
-      return { refused: `no pack ${name} is registered (crew pack list)` };
-    rmSync5(file);
-    return { removed: true };
-  });
-}
-function stateOf(registration, quick) {
-  try {
-    if (!existsSync20(registration.root) || !existsSync20(join40(registration.root, "pack.json")))
-      return { kind: "missing" };
-    const read = readManifest(registration.root);
-    if ("refused" in read)
-      return { kind: "unreadable", reason: read.refused };
-    if (quick)
-      return { kind: "ok" };
-    const refused = checkPack(registration.root, read.manifest);
-    if (refused)
-      return { kind: "unreadable", reason: refused };
-    const changed = [];
-    for (const [rel, hash] of Object.entries(registration.files)) {
-      const path = join40(registration.root, rel);
-      if (!existsSync20(path) || `sha256:${sha256(readFileSync10(path))}` !== hash)
-        changed.push(rel);
-    }
-    if (changed.length)
-      return { kind: "changed", files: changed };
-    return { kind: "ok" };
-  } catch (error) {
-    return { kind: "unreadable", reason: errorText(error) };
-  }
-}
-function listPacks(userDir, options = {}) {
-  const dir = packsDir(userDir);
-  let names;
-  try {
-    names = readdirSync11(dir).filter((n) => n.endsWith(".json"));
-  } catch {
-    return [];
-  }
-  const listed = [];
-  for (const file of names) {
-    const name = basename9(file, ".json");
-    const text = readTextQuietly(join40(dir, file)) ?? "";
-    let registration = null;
-    let reason = "";
-    try {
-      const data = JSON.parse(text);
-      if (isRecord3(data) && typeof data.name === "string" && typeof data.root === "string" && isRecord3(data.manifest) && isRecord3(data.files))
-        registration = data;
-      else
-        reason = "registration of another shape";
-    } catch (error) {
-      reason = errorText(error);
-    }
-    listed.push({
-      name: registration?.name ?? name,
-      registration,
-      state: registration ? stateOf(registration, options.quick ?? false) : { kind: "unreadable", reason }
-    });
-  }
-  const key = (p) => p.registration?.registeredAt ?? "~";
-  return listed.sort((a, b) => {
-    const [x, y] = [key(a), key(b)];
-    if (x !== y)
-      return x < y ? -1 : 1;
-    return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
-  });
-}
-function okPacks(userDir) {
-  return listPacks(userDir).filter((p) => p.state.kind === "ok" && p.registration !== null).map((p) => p.registration);
-}
-function packFiles(userDir, kind, key) {
-  const paths = [];
-  for (const pack of okPacks(userDir)) {
-    if (kind === "checklists") {
-      for (const rel of pack.manifest.checklists)
-        if (basename9(rel, ".md") === key)
-          paths.push(join40(pack.root, rel));
-    } else {
-      const rel = pack.manifest.knowledge[key];
-      if (rel)
-        paths.push(join40(pack.root, rel));
-    }
-  }
-  return paths;
-}
-function packRules(userDir) {
-  return okPacks(userDir).flatMap((p) => p.manifest.detectors.map((rule) => ({ pack: p.name, rule })));
-}
-function packTemplates(userDir) {
-  return okPacks(userDir).flatMap((p) => p.manifest.team ? [{ pack: p.name, template: p.manifest.team }] : []);
-}
-function packNamed(packs, name) {
-  return packs.find((p) => p.name === name || p.name === `wizardingcode-pack-${name}`);
-}
-function knowledgeFilesFor(userDir, profile, changed, policy) {
-  const packs = okPacks(userDir);
-  const holds = (targetPath, file) => targetPath === "." || file.startsWith(`${targetPath}/`);
-  const targets = changed.length ? profile.targets.filter((t) => changed.some((f) => holds(t.path, f))) : profile.targets;
-  const keys = [...new Set(targets.flatMap((t) => [t.stack, ...t.tags ?? []]))];
-  const paths = [];
-  const labels = [];
-  const served = new Set;
-  const add = (pack, rel) => {
-    const path = join40(pack.root, rel);
-    if (!paths.includes(path)) {
-      paths.push(path);
-      labels.push(`${pack.name}:${rel}`);
-    }
-    served.add(pack.name);
-  };
-  for (const pack of packs)
-    for (const key of keys) {
-      const rel = pack.manifest.knowledge[key];
-      if (rel)
-        add(pack, rel);
-    }
-  const skipped = [];
-  for (const entry of policy.team.specialists) {
-    const match = /^([a-z0-9-]+):([a-z0-9-]+)$/.exec(entry);
-    if (!match) {
-      skipped.push(`${entry}: not of the form <pack>:<key>`);
-      continue;
-    }
-    const [, name, key] = match;
-    const pack = packNamed(packs, name);
-    if (!pack) {
-      skipped.push(`${entry}: no pack ${name} is registered`);
-      continue;
-    }
-    const rel = pack.manifest.knowledge[key];
-    if (!rel) {
-      skipped.push(`${entry}: ${pack.name} has no knowledge file ${key}`);
-      continue;
-    }
-    add(pack, rel);
-  }
-  return {
-    paths,
-    labels,
-    packs: packs.filter((p) => served.has(p.name)).map((p) => p.name),
-    skipped
-  };
-}
-function coreChecklistKinds(pluginRoot) {
-  try {
-    return readdirSync11(join40(pluginRoot, "skills", "crew", "checklists")).filter((f) => f.endsWith(".md")).map((f) => f.slice(0, -3)).sort();
-  } catch {
-    return [];
-  }
-}
-function coreChecklist(pluginRoot, kind) {
-  const name = coreChecklistKinds(pluginRoot).find((k) => k === kind);
-  return name === undefined ? null : join40(pluginRoot, "skills", "crew", "checklists", `${name}.md`);
-}
-var CHECKLIST_REASON_MAX = 500;
-function recordChecklist(work, record) {
-  const list = work.checklists ?? [];
-  const at = list.findIndex((r) => r.kind === record.kind);
-  if (at === -1)
-    list.push(record);
-  else
-    list[at] = record;
-  work.checklists = list;
-}
-function recordPacks(work, labels) {
-  const packs = [...new Set([...work.packs ?? [], ...labels])];
-  if (packs.length)
-    work.packs = packs;
-}
-function recordPackUse(work, use) {
-  const { userDir, profile, changed, policy, registry } = use;
-  const served = knowledgeFilesFor(userDir, profile, changed, policy);
-  const seated = (work.seats ?? []).flatMap((s) => {
-    const rule = s.team ? registry[s.team].mandatory : null;
-    return s.role === "expert" && rule?.kind === "paths" && rule.pack ? [rule.pack] : [];
-  });
-  work.knowledgeFiles = served.paths;
-  work.knowledgeLabels = served.labels;
-  const names = [...served.packs, ...seated];
-  if (names.length) {
-    const listing = listPacks(userDir, { quick: true });
-    recordPacks(work, names.map((name) => packLabel(listing, name)));
-  }
-  return served;
-}
-function packLabel(listed, name) {
-  const pack = listed.find((p) => p.name === name)?.registration;
-  return pack ? `${pack.name} ${pack.version}` : name;
-}
-function pluginRegistryPath(env) {
-  const configDir = env.CLAUDE_CONFIG_DIR ?? join40(env.HOME ?? homedir2(), ".claude");
-  return join40(configDir, "plugins", "installed_plugins.json");
-}
-function discoverPacks(userDir, env) {
-  if (!env.CLAUDE_PLUGIN_ROOT)
-    return [];
-  const text = readTextQuietly(pluginRegistryPath(env));
-  if (text === null)
-    return [];
-  let data;
-  try {
-    data = JSON.parse(text);
-  } catch {
-    return [];
-  }
-  if (!isRecord3(data) || !isRecord3(data.plugins))
-    return [];
-  const plugins = data.plugins;
-  const lines = [];
-  const registered = listPacks(userDir, { quick: true });
-  const seenKeys = new Set;
-  const touched = new Set;
-  for (const [key, raw] of Object.entries(plugins)) {
-    const keyName = key.split("@")[0] ?? key;
-    if (!keyName.startsWith("wizardingcode-pack-"))
-      continue;
-    seenKeys.add(key);
-    const entries = (Array.isArray(raw) ? raw : [raw]).filter(isRecord3);
-    const root = entries.map((e) => typeof e.installPath === "string" ? e.installPath : null).find((p) => p !== null && existsSync20(join40(p, "pack.json")));
-    if (!root)
-      continue;
-    const read = readManifest(root);
-    if ("refused" in read) {
-      lines.push(`${key}: ${read.refused}`);
-      continue;
-    }
-    if (read.manifest.name !== keyName) {
-      lines.push(`${key}: pack.json names ${read.manifest.name}, not ${keyName}`);
-      continue;
-    }
-    const current = registered.find((p) => p.name === read.manifest.name)?.registration;
-    if (current?.by === "command") {
-      lines.push(`${read.manifest.name}: registered by hand, left as it is`);
-      continue;
-    }
-    let realRoot;
-    try {
-      realRoot = realpathSync6(root);
-    } catch (error) {
-      lines.push(`${key}: the pack's root cannot be read (${errorText(error)})`);
-      continue;
-    }
-    if (current && current.root === realRoot && current.version === read.manifest.version && current.key === key)
-      continue;
-    const out = registerPack(userDir, root, "discovery", key);
-    if ("refused" in out)
-      lines.push(`${key}: ${out.refused}`);
-    else {
-      touched.add(out.name);
-      lines.push(`${out.name} ${out.version} registered (${key})`);
-    }
-  }
-  for (const p of registered) {
-    const r = p.registration;
-    if (r?.by === "discovery" && r.key && !seenKeys.has(r.key) && !touched.has(r.name)) {
-      const gone = removePack(userDir, r.name);
-      lines.push("refused" in gone ? `${r.name}: ${gone.refused}` : `${r.name} removed: ${r.key} is no longer installed`);
-    }
-  }
-  return lines;
-}
-
-// packages/engine/src/profile.ts
-function profilePath(paths) {
-  return join41(paths.crewDir, "profile.json");
-}
-function loadProfile(paths) {
-  const read = readProtectedJson(paths, profilePath(paths));
-  if (read.data?.browser && !isBrowserBlock(read.data.browser))
-    delete read.data.browser;
-  return { profile: read.data, tampered: read.tampered };
-}
-function isBrowserBlock(value) {
-  const devtools = value?.devtools;
-  if (!devtools || typeof devtools !== "object")
-    return false;
-  const { command, source } = devtools;
-  return typeof command === "string" && command.trim() !== "" && (source === "detected" || source === "proposed" || source === "confirmed");
-}
-function saveProfile(paths, profile) {
-  writeProtectedJson(paths, profilePath(paths), profile);
-}
-function refreshProfile(paths, current, tampered = false) {
-  if (tampered)
-    return { profile: current, changed: [] };
-  const next = detectProfile(paths.root, current, packRules(paths.userDir));
-  const changed = profileChanges(current, next);
-  if (changed.length === 0)
-    return { profile: current, changed };
-  saveProfile(paths, next);
-  return { profile: next, changed };
-}
-function ensureProfile(paths) {
-  const existing = loadProfile(paths);
-  if (existing.profile)
-    return { profile: existing.profile, tampered: existing.tampered };
-  const profile = detectProfile(paths.root, null, packRules(paths.userDir));
-  if (existing.tampered)
-    return { profile, tampered: true };
-  saveProfile(paths, profile);
-  return { profile, tampered: false };
-}
-
-// packages/engine/src/open.ts
-var OPENER_STRIPS = [
-  "CLAUDECODE",
-  "CLAUDE_CODE_ENTRYPOINT",
-  "CLAUDE_CODE_CHILD_SESSION",
-  "CLAUDE_CODE_SESSION_ID",
-  "CLAUDE_CODE_SESSION_ATTENDED",
-  "CLAUDE_CODE_MESSAGING_SOCKET",
-  "CLAUDE_CODE_MESSAGING_TOKEN"
-];
-var READ_ONLY_FLAGS = [
-  "--allowedTools",
-  "Read",
-  "Glob",
-  "Grep",
-  "Bash(crew *)",
-  "--disallowedTools",
-  "Write",
-  "Edit",
-  "MultiEdit",
-  "NotebookEdit"
-];
-var BRANCH_FLAGS = [
-  "--allowedTools",
-  "Read",
-  "Glob",
-  "Grep",
-  "Write",
-  "Edit",
-  "MultiEdit",
-  "NotebookEdit",
-  "Skill",
-  "Agent",
-  "Bash(crew *)",
-  "Bash(git *)"
-];
-function commandGrants(profile) {
-  const words = [];
-  for (const target of profile?.targets ?? [])
-    for (const gate of Object.values(target.gates)) {
-      const word = gate?.command.trim().split(/\s+/).find((w) => !w.includes("="));
-      if (word && !words.includes(word))
-        words.push(word);
-    }
-  return words.map((w) => `Bash(${w} *)`);
-}
-function claudeBinary(env) {
-  return env.WIZARDINGCODE_CREW_CLAUDE?.trim() || "claude";
-}
-function pluginDirOf(env) {
-  return env.WIZARDINGCODE_CREW_PLUGIN_DIR?.trim() || null;
-}
-function openerArgs(request, options) {
-  const args = [
-    "--name",
-    `crew-${request.message.id}`,
-    "-p",
-    request.prompt,
-    "--permission-mode",
-    "dontAsk",
-    "--max-turns",
-    String(request.maxTurns),
-    "--output-format",
-    "json"
-  ];
-  if (options.pluginDir)
-    args.push("--plugin-dir", options.pluginDir);
-  if (request.mode === "read-only")
-    args.push(...READ_ONLY_FLAGS);
-  else
-    args.push(...BRANCH_FLAGS, ...commandGrants(options.profile));
-  return args;
-}
-function sessionLog(ctx, id) {
-  return join42(mailbox(ctx.paths.userDir, ctx.self.workspace, ctx.self.project).dir, "opened", `${id}.log`);
-}
-function openSession(ctx, request, notes = []) {
-  const env = { ...ctx.env };
-  for (const key of OPENER_STRIPS)
-    delete env[key];
-  env.WIZARDINGCODE_CREW_MAIL_ID = request.message.id;
-  env.WIZARDINGCODE_CREW_MAIL_AGENT = request.agent;
-  env.WIZARDINGCODE_CREW_MAIL_HOPS = String(request.hops);
-  env.WIZARDINGCODE_CREW_MAIL_MODE = request.mode;
-  if (request.branch)
-    env.WIZARDINGCODE_CREW_MAIL_BRANCH = request.branch;
-  else
-    delete env.WIZARDINGCODE_CREW_MAIL_BRANCH;
-  const paths = request.mode === "branch" ? resolvePaths(request.cwd, ctx.env) : null;
-  if (request.mode === "branch") {
-    if (!paths)
-      return { failed: `${request.cwd} is not a checkout the engine can read` };
-    try {
-      writeOpenedMarker(paths, {
-        mail: request.message.id,
-        agent: request.agent,
-        hops: request.hops
-      });
-    } catch (error) {
-      return {
-        failed: `could not record the opener of ${request.cwd}: ${error.message}`
-      };
-    }
-  }
-  const undone = (failed, stopped) => {
-    if (paths)
-      dropOpenedMarker(paths.userDir, paths.root);
-    return stopped ? { failed, stopped } : { failed };
-  };
-  let fd;
-  try {
-    mkdirSync7(dirname10(request.log), { recursive: true });
-    fd = openSync2(request.log, "a");
-  } catch (error) {
-    return undone(`could not open the log ${request.log}: ${error.message}`);
-  }
-  let child;
-  try {
-    const projectPaths = resolvePaths(worktreeMainRoot(request.cwd) ?? request.cwd, ctx.env);
-    const args = openerArgs(request, {
-      pluginDir: pluginDirOf(ctx.env),
-      profile: projectPaths ? loadProfile(projectPaths).profile : null
-    });
-    child = spawn2(claudeBinary(ctx.env), args, {
-      cwd: request.cwd,
-      env,
-      detached: true,
-      stdio: ["ignore", fd, fd]
-    });
-    child.on("error", () => {});
-    child.unref();
-  } catch (error) {
-    closeSync2(fd);
-    return undone(`could not start ${claudeBinary(ctx.env)}: ${error.message}`);
-  }
-  closeSync2(fd);
-  if (child.pid === undefined)
-    return undone("the session did not start (no pid)");
-  const opened = {
-    mode: request.mode,
-    cwd: request.cwd,
-    branch: request.branch,
-    pid: child.pid,
-    name: `crew-${request.message.id}`,
-    processStart: processStart(child.pid),
-    maxTurns: request.maxTurns,
-    maxMinutes: request.maxMinutes,
-    startedAt: nowIso(),
-    log: request.log
-  };
-  let cause = null;
-  try {
-    if (!recordOpened(ctx, request.message.id, opened, (what) => notes.push(`a copy of ${request.message.id} was not changed: ${what}`)))
-      cause = "a mailbox changed outside the engine";
-  } catch (error) {
-    cause = error.message;
-  }
-  if (cause) {
-    killGroup(child.pid);
-    const at = nowIso();
-    try {
-      updateEverywhere(ctx, request.message.id, (m) => ({
-        ...m,
-        reason: UNRECORDED,
-        opened: ended(opened, "stopped", at)
-      }), () => {});
-    } catch {}
-    return undone(`the session started but the outbox could not record it (${cause}), so it was stopped`, true);
-  }
-  return opened;
-}
-function ended(opened, outcome, at) {
-  return { ...opened, endedAt: at, outcome };
-}
-var UNRECORDED = "a session was started and stopped: the opener's outbox could not record it";
-var RULES2 = "Rules of a session opened by mail: you never merge, push to another branch, release or deploy; you never approve a full-route spec (crew await <id> user instead); you may send mail with crew mail send only within the hop limit; you end with the reply, nothing after it.";
-function questionPrompt(message, projectName) {
-  return [
-    `You are answering mail ${message.id} from ${message.from.project} in project ${projectName}, as its engineer, through the WizardingCode Developer Crew plugin.`,
-    `Read the message first: crew mail read ${message.id}. Read the code; change nothing. Answer the question from what the code and the documentation of this repository say, with file paths and lines where they help, and say plainly what you could not find.`,
-    `Then reply with crew mail reply ${message.id} "<your answer>" (or --file <path> for a long answer). ${RULES2}`
-  ].join(`
-
-`);
-}
-function changePrompt(message, projectName, branch) {
-  return [
-    `You are building mail ${message.id} from ${message.from.project} in project ${projectName}, on branch ${branch}, through the WizardingCode Developer Crew plugin and its crew skill.`,
-    `Read the message first: crew mail read ${message.id}. Then run the method: answer the nine typed questions and start a work item with crew start "<the request>" --answers '<json>' --origin ${message.id}; follow the route the engine gives (criteria, red, green, gates, the judgement gates); commit on this branch.`,
-    `End with crew mail reply ${message.id} --branch ${branch} --item <the work item id> "<what is proven and what is not>". ${RULES2}`
-  ].join(`
-
-`);
-}
-function taskPrompt(parent, task, message, briefText, branch) {
-  return [
-    `You are the implementer of task ${task.task} of work item ${parent.id} ("${parent.title}"), in a worktree on branch ${branch}, through the WizardingCode Developer Crew plugin and its crew skill. The lead opened this task as mail ${message.id}.`,
-    `The task: ${task.text}`,
-    `Its criteria, from the lead's item: ${task.criteria.join(", ")}. The lead's brief follows between the lines.
----
-${briefText?.trim() ?? "(no brief)"}
----`,
-    `Start with crew start "${task.task} of ${parent.id}: ${task.text.split(`
-`)[0]}" --answers '<json>' --origin ${message.id} and one --criterion per criterion the task covers, in the lead's words; follow the route the engine gives; commit on this branch; touch only the files the task names.`,
-    `A question to the lead: crew mail send --to . --agent session --type question "<question>" then crew await <id> mail <message id>. A question to another task: --agent T-n. A question only the user can answer: crew await <id> user.`,
-    `End with crew mail reply ${message.id} --branch ${branch} --item <your work item id> "<what is proven and what is not>". ${RULES2}`
-  ].join(`
-
-`);
-}
-function isAlive(pid) {
-  if (!pid)
-    return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-function psColumn(pid, column) {
-  try {
-    return execFileSync5("ps", ["-o", column, "-p", String(pid)], {
-      encoding: "utf8",
-      env: { ...process.env, LC_ALL: "C", TZ: "UTC" },
-      stdio: ["ignore", "pipe", "ignore"]
-    }).trim();
-  } catch {
-    return "";
-  }
-}
-function processStart(pid) {
-  return psColumn(pid, "lstart=");
-}
-function pidState(opened) {
-  if (opened.pid === null || processGone(opened.pid))
-    return "gone";
-  const start = processStart(opened.pid);
-  return !start || !opened.processStart || start === opened.processStart ? "session" : "another";
-}
-function isSession(opened) {
-  return pidState(opened) === "session";
-}
-function processGone(pid) {
-  return !isAlive(pid) || psColumn(pid, "stat=").startsWith("Z");
-}
-function readOutcome(log) {
-  const text = readText(log);
-  if (!text)
-    return { ended: false };
-  for (const line of text.trim().split(`
-`).reverse()) {
-    try {
-      const parsed = JSON.parse(line);
-      if (!("result" in parsed) && !("session_id" in parsed))
-        continue;
-      const failed = parsed.is_error === true || typeof parsed.subtype === "string" && parsed.subtype !== "success";
-      const reason = typeof parsed.subtype === "string" && parsed.subtype !== "success" ? parsed.subtype : typeof parsed.result === "string" && parsed.result.trim() ? parsed.result.trim().split(`
-`)[0] : "an error result";
-      return {
-        ended: true,
-        ...typeof parsed.num_turns === "number" ? { turns: parsed.num_turns } : {},
-        ...typeof parsed.total_cost_usd === "number" ? { costUsd: parsed.total_cost_usd } : {},
-        ...failed ? { error: reason } : {}
-      };
-    } catch {}
-  }
-  return { ended: false };
-}
-var KILL_WAIT_MS = 1000;
-var KILL_STEP_MS = 50;
-function killGroup(pid) {
-  const signal = (name) => {
-    try {
-      process.kill(-pid, name);
-    } catch {}
-  };
-  signal("SIGTERM");
-  const until = Date.now() + KILL_WAIT_MS;
-  while (!processGone(pid) && Date.now() < until)
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, KILL_STEP_MS);
-  signal("SIGKILL");
-}
-function minutesRun(opened, now = Date.now()) {
-  return (now - Date.parse(opened.startedAt)) / 60000;
-}
-function minutesText(minutes) {
-  return `${minutes} minute${minutes === 1 ? "" : "s"}`;
-}
-function unanswered2(status) {
-  return status === "sent" || status === "read";
-}
-function sweepOne(ctx, m, now, result) {
-  const opened = m.opened;
-  const at = new Date(now).toISOString();
-  const settle = (kind, end, reason, line) => {
-    const recorded = updateEverywhere(ctx, m.id, (x) => ({
-      ...x,
-      ...reason && unanswered2(mailStatus(x)) ? { status: "expired", reason } : {},
-      opened: { ...ended(opened, end.outcome, at), ...end }
-    }), (what) => result.lines.push(`the record of ${m.id} skipped a box it could not read: ${what}`));
-    if (recorded === null) {
-      result.lines.push(`the sweep could not record ${m.id}: no copy of the message was written`);
-      return;
-    }
-    if (opened.mode === "branch")
-      dropOpenedMarker(ctx.paths.userDir, opened.cwd);
-    result[kind].push(m.id);
-    result.lines.push(line);
-  };
-  const state = pidState(opened);
-  if (state === "session") {
-    if (minutesRun(opened, now) > opened.maxMinutes) {
-      killGroup(opened.pid);
-      const limit = minutesText(opened.maxMinutes);
-      settle("expired", { outcome: "expired" }, `the session ran past ${limit} (mail.maxMinutes) and was stopped`, `${m.id} ran past ${limit} and was stopped (expired)`);
-    }
-    return;
-  }
-  const outcome = readOutcome(opened.log);
-  const measured = {
-    ...outcome.turns !== undefined ? { turns: outcome.turns } : {},
-    ...outcome.costUsd !== undefined ? { costUsd: outcome.costUsd } : {}
-  };
-  if (outcome.ended && outcome.error) {
-    settle("expired", { ...measured, outcome: "failed" }, `the session ended with ${outcome.error}`, `${m.id} ended with ${outcome.error} (expired)`);
-    return;
-  }
-  if (outcome.ended) {
-    const replied = !unanswered2(mailStatus(m));
-    settle("ended", { ...measured, outcome: "ended" }, replied ? null : "the session ended without a reply", replied ? `${m.id} ended (${outcome.turns ?? "?"} turns, ${outcome.costUsd ?? "?"} USD)` : `${m.id} ended without a reply (expired)`);
-    return;
-  }
-  const remains = state === "another" ? "its pid is now another process's, and nothing of the session remains in its group" : `a member of its process group may remain (ps -g ${opened.pid})`;
-  settle("expired", { outcome: "failed" }, "the session ended without a reply", `${m.id} is gone without a reply (expired); ${remains}`);
-}
-function sweepOpened(ctx, now = Date.now()) {
-  const result = { ended: [], expired: [], lines: [] };
-  if (ctx.self.openedBy)
-    return result;
-  const { messages, tampered } = readOpenSessions(ctx);
-  if (tampered)
-    result.lines.push(tampered);
-  for (const m of messages) {
-    try {
-      sweepOne(ctx, m, now, result);
-    } catch (error) {
-      result.lines.push(`the sweep of ${m.id} failed: ${error.message.split(`
-`)[0]}`);
-    }
-  }
-  return result;
-}
-function sweepSafely(ctx, now = Date.now()) {
-  try {
-    return sweepOpened(ctx, now);
-  } catch (error) {
-    return {
-      ended: [],
-      expired: [],
-      lines: [`the sweep failed: ${error.message.split(`
-`)[0]}`]
-    };
-  }
-}
-function stopSession(ctx, id, notes) {
-  if (ctx.self.openedBy)
-    return { refused: `a session opened by mail (${ctx.self.openedBy}) stops no sessions` };
-  const { messages, tampered } = readOpenSessions(ctx);
-  if (tampered)
-    return { refused: tampered };
-  const m = messages.find((x) => x.id === id);
-  if (!m?.opened)
-    return { refused: `${id} has no session running` };
-  if (!isSession(m.opened)) {
-    const swept = { ended: [], expired: [], lines: [] };
-    try {
-      sweepOne(ctx, m, Date.now(), swept);
-    } catch (error) {
-      const failed = `the settle of ${id} failed: ${error.message.split(`
-`)[0]}`;
-      return {
-        refused: `${id} has no session running (${[...swept.lines, failed].join("; ")})`
-      };
-    }
-    return {
-      refused: `${id} has no session running: it ${readOutcome(m.opened.log).ended ? "ended" : "is gone"}${swept.lines.length ? ` (${swept.lines.join("; ")})` : ""}`
-    };
-  }
-  killGroup(m.opened.pid);
-  if (m.opened.mode === "branch")
-    dropOpenedMarker(ctx.paths.userDir, m.opened.cwd);
-  const at = nowIso();
-  return updateEverywhere(ctx, id, (x) => ({
-    ...x,
-    ...unanswered2(mailStatus(x)) ? { status: "refused", reason: "stopped by crew mail stop" } : {},
-    opened: ended(x.opened, "stopped", at)
-  }), (what) => notes.push(`a copy of ${id} was not changed: ${what}`)) ?? {
-    refused: `${id} was stopped but could not be updated: its mailbox changed while it was being written`
-  };
-}
-function openForMail(ctx, fallback, message, delivery) {
-  const dest = delivery.entry;
-  const limits = (destinationPolicy(dest, ctx.env)?.policy ?? fallback).mail;
-  let cwd = dest.root;
-  let branch = null;
-  let prompt = questionPrompt(message, dest.name);
-  if (delivery.mode === "branch") {
-    branch = `crew/mail/${message.id}`;
-    cwd = worktreePath(dest.root, limits.worktrees, `mail-${message.id}`);
-    const made = addWorktree(dest.root, branch, cwd);
-    if (made) {
-      dropBranch(dest.root, branch);
-      return `could not open a session: ${made.failed}; queued`;
-    }
-    prompt = changePrompt(message, dest.name, branch);
-  }
-  const notes = [];
-  const opened = openSession(ctx, {
-    message,
-    mode: delivery.mode,
-    cwd,
-    branch,
-    prompt,
-    maxTurns: limits.maxTurns,
-    maxMinutes: limits.maxMinutes,
-    hops: ctx.self.hops + 1,
-    agent: "session",
-    log: sessionLog(ctx, message.id)
-  }, notes);
-  const skipped = notes.length ? `; ${notes.join("; ")}` : "";
-  if ("failed" in opened) {
-    if (branch) {
-      const kept = removeWorktree(dest.root, cwd);
-      if (kept)
-        return `could not open a session: ${opened.failed}; queued; the worktree ${cwd} is kept, with its branch ${branch}: ${kept.kept.replace(/,?\s*use --force[^.]*\.?$/, "")}${skipped}`;
-      dropBranch(dest.root, branch);
-    }
-    return `could not open a session: ${opened.failed}; queued${skipped}`;
-  }
-  const bounds = `${opened.maxTurns} turns, ${minutesText(opened.maxMinutes)}`;
-  return delivery.mode === "read-only" ? `read-only session opened (${opened.name}, pid ${opened.pid}, ${bounds})${skipped}` : `session opened on branch ${branch} (${opened.name}, pid ${opened.pid}, ${bounds})${skipped}`;
-}
-
-// packages/engine/src/environment.ts
-var HEALTH_TIMEOUT_MS = 30000;
-var STOP_TIMEOUT_MS = 60000;
-var POLL_MS = 2000;
-function envRecordPath(paths) {
-  return join43(paths.localDir, "env.json");
-}
-function envLog(paths, name) {
-  return join43(paths.localDir, "env", name);
-}
-function stamp() {
-  return nowIso().replace(/[:.]/g, "-");
-}
-function readEnvRecord(paths) {
-  const raw = readJson(envRecordPath(paths));
-  if (!raw || typeof raw !== "object")
-    return null;
-  if (typeof raw.managed !== "boolean" || typeof raw.startedAt !== "string")
-    return null;
-  return {
-    pid: typeof raw.pid === "number" ? raw.pid : null,
-    processStart: typeof raw.processStart === "string" ? raw.processStart : null,
-    startedAt: raw.startedAt,
-    managed: raw.managed,
-    log: typeof raw.log === "string" ? raw.log : null,
-    command: typeof raw.command === "string" ? raw.command : ""
-  };
-}
-function removeRecord(paths) {
-  try {
-    unlinkSync4(envRecordPath(paths));
-  } catch {}
-}
-async function checkHealth(paths, environment) {
-  const result = await runCommand(environment.health.command, {
-    cwd: paths.root,
-    timeoutMs: HEALTH_TIMEOUT_MS,
-    logPath: envLog(paths, "health.txt")
-  });
-  return { up: result.exit === 0 && !result.timedOut, exit: result.exit, tail: result.tail };
-}
-function stillOurs(record) {
-  if (record.pid === null || !isAlive(record.pid))
-    return false;
-  return !!record.processStart && processStart(record.pid) === record.processStart;
-}
-async function startEnvironment(paths, environment, sleep = (ms) => new Promise((r) => setTimeout(r, ms))) {
-  const before = await checkHealth(paths, environment);
-  if (before.up) {
-    writeJson(envRecordPath(paths), {
-      pid: null,
-      processStart: null,
-      startedAt: nowIso(),
-      managed: false,
-      log: null,
-      command: environment.health.command
-    });
-    return { started: false, managed: false, pid: null, log: null };
-  }
-  const log = envLog(paths, `start-${stamp()}.txt`);
-  mkdirSync8(dirname11(log), { recursive: true });
-  const fd = openSync3(log, "a");
-  let pid;
-  try {
-    const child = spawn3(environment.start.command, {
-      cwd: paths.root,
-      shell: true,
-      detached: true,
-      stdio: ["ignore", fd, fd]
-    });
-    child.on("error", () => {});
-    child.unref();
-    pid = child.pid;
-  } finally {
-    closeSync3(fd);
-  }
-  if (pid === undefined)
-    return { refused: `the environment did not start (${environment.start.command})` };
-  const record = {
-    pid,
-    processStart: processStart(pid),
-    startedAt: nowIso(),
-    managed: true,
-    log,
-    command: environment.start.command
-  };
-  writeJson(envRecordPath(paths), record);
-  const until = Date.now() + environment.timeoutMs;
-  for (;; ) {
-    if ((await checkHealth(paths, environment)).up)
-      return { started: true, managed: true, pid, log };
-    const left = until - Date.now();
-    if (left <= 0)
-      break;
-    await sleep(Math.min(POLL_MS, left));
-  }
-  if (stillOurs(record))
-    killGroup(pid);
-  removeRecord(paths);
-  return {
-    refused: `the environment did not answer health in ${Math.round(environment.timeoutMs / 1000)} s (${environment.health.command})`
-  };
-}
-async function stopEnvironment(paths, environment) {
-  const record = readEnvRecord(paths);
-  if (!record)
-    return { refused: "nothing was started by the engine (crew env start)" };
-  if (!record.managed)
-    return {
-      refused: "the environment was up before crew env start: it is the user's, and the engine never stops it"
-    };
-  const ours = stillOurs(record);
-  if (!ours && !environment.stop) {
-    removeRecord(paths);
-    return {
-      refused: `the recorded process (pid ${record.pid}) is gone; the record was removed and nothing was signalled`
-    };
-  }
-  if (environment.stop) {
-    await runCommand(environment.stop.command, {
-      cwd: paths.root,
-      timeoutMs: STOP_TIMEOUT_MS,
-      logPath: envLog(paths, `stop-${stamp()}.txt`)
-    });
-  }
-  const signalled = ours && stillOurs(record);
-  if (signalled)
-    killGroup(record.pid);
-  removeRecord(paths);
-  return { stopped: true, pid: record.pid, signalled };
-}
-async function envStatus(paths, environment) {
-  const health = await checkHealth(paths, environment);
-  const record = readEnvRecord(paths);
-  return {
-    state: health.up ? "up" : "down",
-    managed: record ? record.managed : null,
-    pid: record?.pid ?? null,
-    since: record?.startedAt ?? null
-  };
-}
-
-// packages/engine/src/e2e.ts
-var LOGS_COMMAND_TIMEOUT_MS = 30000;
-var COMMAND_CHARS = /[\s;&|<>$`()*?[\]{}]/;
-var E2E_DIR = "review/e2e";
-var STALE = ["console.json", "console.jsonl", "logs.txt"];
-var NO_ENVIRONMENT_REASON = 'no environment in the profile (crew profile set environment.start "<cmd>")';
-var NO_E2E_REASON = 'no e2e command (crew profile set e2e "<cmd>")';
-function logsSource(root, logs) {
-  if (!logs?.trim())
-    return { kind: "none", note: null };
-  if (COMMAND_CHARS.test(logs))
-    return { kind: "command", value: logs, note: null };
-  const unread = { kind: "path", value: logs, file: null, sizeBefore: 0 };
-  const outside = `logs: ${logs} is outside the project; not read`;
-  const missing = `logs: ${logs} not found; not read`;
-  if (!insidePath(logs))
-    return { ...unread, note: outside };
-  const candidate = join44(root, logs);
-  if (!existsSync21(candidate))
-    return { ...unread, note: missing };
-  let real;
-  let rootReal;
-  try {
-    real = realpathSync7(candidate);
-    rootReal = realpathSync7(root);
-  } catch {
-    return { ...unread, note: missing };
-  }
-  const rel = relative9(rootReal, real);
-  if (rel === "" || rel.startsWith("..") || rel.startsWith(sep6) || !statSync9(real).isFile())
-    return { ...unread, note: outside };
-  return { kind: "path", value: logs, file: real, note: null, sizeBefore: statSync9(real).size };
-}
-function readSince(file, from) {
-  const size = statSync9(file).size;
-  const start = Math.min(from, size);
-  const length = size - start;
-  if (length <= 0)
-    return "";
-  const fd = openSync4(file, "r");
-  try {
-    const buffer = Buffer.alloc(length);
-    readSync2(fd, buffer, 0, length, start);
-    return buffer.toString("utf8");
-  } finally {
-    closeSync4(fd);
-  }
-}
-async function readLogs(paths, work, logs, logsFile, log) {
-  if (logs.kind === "path" && logs.file) {
-    const text = readSince(logs.file, logs.sizeBefore);
-    writeText(logsFile, text);
-    return text;
-  }
-  if (logs.kind === "command") {
-    await runCommand(logs.value, {
-      cwd: paths.root,
-      timeoutMs: LOGS_COMMAND_TIMEOUT_MS,
-      logPath: logsFile,
-      stderrLogPath: join44(workDir(paths, work.id), log.replace(/\.txt$/, "-logs-stderr.txt"))
-    });
-    return readTextQuietly(logsFile) ?? "";
-  }
-  return null;
-}
-async function runE2e(inputs) {
-  const { paths, work, profile, target, base, timeoutMs, log } = inputs;
-  const environment = profile.environment;
-  if (!environment)
-    return { ...base, reason: NO_ENVIRONMENT_REASON };
-  const command = target?.gates.e2e;
-  if (!target || !command)
-    return { ...base, reason: NO_E2E_REASON };
-  const dir = join44(workDir(paths, work.id), E2E_DIR);
-  mkdirSync9(dir, { recursive: true });
-  for (const name of STALE) {
-    try {
-      unlinkSync5(join44(dir, name));
-    } catch {}
-  }
-  const ui = join44(workDir(paths, work.id), "review", "ui");
-  mkdirSync9(ui, { recursive: true });
-  const sweep = sweepStaleFixtureFiles(ui);
-  const plan = writeUiPlan(paths, work, profile);
-  const started = await startEnvironment(paths, environment);
-  if ("refused" in started)
-    return { ...base, reason: started.refused };
-  const environmentLine = started.managed ? `environment: started by the engine (pid ${started.pid})` : "environment: the user's";
-  const logs = logsSource(paths.root, environment.logs);
-  const begun = Date.now();
-  let result;
-  let logsText = null;
-  let audit = null;
-  try {
-    result = await runCommand(command.command, {
-      cwd: join44(paths.root, target.path),
-      timeoutMs,
-      logPath: join44(workDir(paths, work.id), log),
-      env: {
-        ...process.env,
-        WIZARDINGCODE_CREW_E2E_DIR: dir,
-        WIZARDINGCODE_CREW_CONSOLE_FILE: join44(dir, "console.json"),
-        WIZARDINGCODE_CREW_UI_DIR: ui,
-        WIZARDINGCODE_CREW_UI_PLAN: plan.file
-      }
-    });
-    logsText = await readLogs(paths, work, logs, join44(dir, "logs.txt"), log);
-    const metadata = captureMetadata(paths, work.id);
-    audit = await runDevtoolsAudit({
-      paths,
-      work,
-      profile,
-      pages: auditPages(environment.url, captureUrls(metadata)),
-      env: process.env,
-      fixtureMeasuredCls: capturesMeasuredCls(metadata),
-      log,
-      e2eFailed: result.exit !== 0 || result.timedOut
-    });
-  } finally {
-    if (started.managed)
-      await stopEnvironment(paths, environment);
-  }
-  const consoleGrade = gradeConsole(dir);
-  const graded = logsText === null ? null : gradeLogs(logsText);
-  const uiGrade = gradeUi(paths, work.id, plan.plan);
-  if (audit)
-    uiGrade.manifest.audit = {
-      status: audit.status,
-      reason: audit.reason,
-      pages: audit.pages.map((p) => p.url)
-    };
-  writeUiEvidence(paths, work.id, uiGrade.manifest);
-  const consoleOffence = consoleGrade.status === "failed" ? `console ${consoleGrade.first.type} on ${consoleGrade.first.page}: ${consoleGrade.first.text}` : consoleGrade.status === "invalid" ? "console file does not parse" : null;
-  const logsOffence = graded?.status === "failed" ? `logs: ${graded.first}` : null;
-  const designGrade = gradeDesign(paths, work);
-  const offence = consoleOffence ?? logsOffence ?? uiGrade.offence ?? designGrade.offences[0] ?? audit?.offence ?? null;
-  const consoleLine = consoleOffence ?? (consoleGrade.status === "none" ? "console: not captured" : "console: clean");
-  const logsLine = logsOffence ?? (graded === null ? logs.note ?? "logs: none" : "logs: clean");
-  const passed = result.exit === 0 && !result.timedOut && offence === null;
-  const historyNote = passed && designGrade.fingerprint ? recordDesignHistory(paths, work, designGrade.fingerprint) : null;
-  return {
-    ...base,
-    command: command.command,
-    commandSource: command.source,
-    confirmed: command.source !== "proposed",
-    exit: result.exit,
-    status: passed ? "pass" : "fail",
-    durationMs: Date.now() - begun,
-    log,
-    tail: [
-      result.tail,
-      environmentLine,
-      consoleLine,
-      logsLine,
-      ...uiGrade.lines,
-      ...designGrade.lines,
-      ...designGrade.offences,
-      historyNote ?? "",
-      ...audit?.lines ?? [],
-      planLine(plan.plan) ?? "",
-      sweepLine(sweep.skipped) ?? ""
-    ].filter((l) => l !== "").join(`
-`),
-    ...result.timedOut ? { reason: "timed out" } : offence ? { reason: offence } : {},
-    artifacts: {
-      dir: E2E_DIR,
-      console: consoleGrade.file === null ? null : `${E2E_DIR}/${consoleGrade.file.endsWith(".jsonl") ? "console.jsonl" : "console.json"}`,
-      logs: logsText === null ? null : `${E2E_DIR}/logs.txt`,
-      ...uiGrade.artifacts ? { ui: { ...uiGrade.artifacts, ...audit ? { audit: audit.status } : {} } } : {}
-    }
   };
 }
 
@@ -15657,7 +15747,7 @@ function plannedGates(route, profile, policy, changed, root) {
   if (uncovered && !planned.some((g) => g.gate === "test" && g.target === "."))
     planned.push({ gate: "test", target: "." });
   if (wantsE2e(policy, changed)) {
-    const runner = profile.targets.find((t) => t.gates.e2e);
+    const runner = e2eTarget(profile);
     const shared = runner !== undefined && (atPath.get(runner.path) ?? 0) > 1;
     planned.push({
       gate: "e2e",
@@ -15910,13 +16000,17 @@ async function runGates(paths, work, profile, policy, options = {}) {
   const fingerprintBefore = computeFingerprint(paths.root, profile, base);
   let stamp = fingerprintBefore;
   const onlyGates = options.only?.filter((g) => GATE_NAMES.includes(g));
+  const standing = standingState(policy, profile);
+  const standingNotes = [];
   for (const one of planned) {
     const { gate, target } = one;
     if (onlyGates !== undefined && !onlyGates.includes(gate))
       continue;
+    const previousStanding = gate === "e2e" && evidence.runs.some((r) => r.gate === "e2e" && r.standing !== undefined);
     evidence.runs = evidence.runs.filter((r) => !superseded(r, one));
-    if (isSkipped(work, `gate:${gate}`, policy)) {
-      const skip = work.skips.find((s) => s.step === `gate:${gate}`);
+    const counted = work.skips.find((s) => s.step === `gate:${gate}` && decisionCounts(policy, s));
+    const byStanding = gate === "e2e" && !counted && "holds" in standing ? standing.holds : null;
+    if (isSkipped(work, `gate:${gate}`, policy) || byStanding) {
       evidence.runs.push({
         gate,
         target,
@@ -15930,11 +16024,14 @@ async function runGates(paths, work, profile, policy, options = {}) {
         at: nowIso(),
         log: null,
         tail: "",
-        reason: skip?.reason,
+        reason: counted?.reason ?? byStanding?.reason,
+        ...byStanding && !counted ? { standing: byStanding.at } : {},
         fingerprint: stamp
       });
       continue;
     }
+    if (gate === "e2e" && previousStanding)
+      standingNotes.push(`standing e2e skip no longer holds: ${standingWhy(standing)}`);
     const run = await runOneGate(paths, work, profile, one, stamp, changed, policy, undefined, undefined, options.env);
     if (gate === "build" && run.status === "pass") {
       const after = computeFingerprint(paths.root, profile, base, MAX_WATCHED_FILES, fingerprintMethod(fingerprintBefore));
@@ -15946,6 +16043,8 @@ async function runGates(paths, work, profile, policy, options = {}) {
       }
     }
     evidence.runs.push(run);
+    if (gate === "e2e" && target !== ".")
+      evidence.runs = evidence.runs.filter((r) => !(r.gate === "e2e" && r.target === "." && r.standing !== undefined));
   }
   if (stamp !== fingerprintBefore) {
     for (const r of evidence.runs)
@@ -15969,6 +16068,7 @@ async function runGates(paths, work, profile, policy, options = {}) {
   const ledger = loadLedger(paths, work.id).ledger;
   const verdictOf = (of) => computeVerdict({
     work,
+    standing,
     evidence: of,
     expected: planned,
     expectedJudgement: judgement,
@@ -16001,6 +16101,7 @@ async function runGates(paths, work, profile, policy, options = {}) {
     judgement,
     review: reviewInputs?.dir ?? null,
     reviewNote: reviewInputs?.note ?? null,
+    standingNotes,
     ..."refused" in saved ? { saveRefused: saved.refused } : {}
   };
 }
@@ -16028,6 +16129,7 @@ function assess(paths, work, profile, policy, tampered = false) {
     currentFingerprint,
     ledger: led.ledger,
     tampered: tampered || read.tampered || led.tampered,
+    standing: standingState(policy, profile),
     design: designReasons(readSurface(paths, work.id), readScore(paths, work.id), currentFingerprint),
     audit: {
       run: audit.run !== null,
@@ -16040,6 +16142,7 @@ function assess(paths, work, profile, policy, tampered = false) {
 function reassess(a, work, policy) {
   const verdict = computeVerdict({
     work,
+    standing: a.standing,
     evidence: a.evidence,
     expected: a.expected,
     expectedJudgement: a.judgement,
@@ -17833,13 +17936,14 @@ function userOnlyCommand(args) {
   const [verb, second, third] = parsed.positional;
   const presence = verb === "question" && third === "add";
   const unreadable = (word) => word !== undefined && UNREADABLE_VERB.test(word);
-  const userOnly = unreadable(verb) || (verb === "profile" || verb === "policy") && unreadable(second) || verb === "skip" || verb === "approve" || verb === "accept" || verb === "decide" || verb === "continue" || verb === "abandon" || verb === "objection" && (parsed.positional.includes("waive") || unreadable(third)) || verb === "journey" && (second === "start" || unreadable(second)) || verb === "spec-review" && (third === "accept" || third === "answer" || unreadable(third)) || verb === "profile" && (second === "confirm" || second === "set" || second === "unset") || verb === "policy" && (second === "accept" || second === "set") || verb === "workspace" && (unreadable(second) || second === "priorities" && (parsed.positional.includes("accept") || unreadable(third))) || verb === "question" && (third === "answer" || unreadable(third)) || verb === "config" && typeof second === "string" && second.startsWith("jev.") && third !== undefined || verb === "knowledge" && (second === "unmark" || unreadable(second)) || verb === "task" && (parsed.positional.includes("merge") && parsed.flags.force === true || parsed.positional.includes("drop") || unreadable(third));
+  const bulkPolicy = verb === "projects" && (parsed.positional.slice(1).some(unreadable) || second === "standingE2eSkip" && parsed.flags["dry-run"] !== true);
+  const userOnly = bulkPolicy || unreadable(verb) || (verb === "profile" || verb === "policy") && unreadable(second) || verb === "skip" || verb === "approve" || verb === "accept" || verb === "decide" || verb === "continue" || verb === "abandon" || verb === "objection" && (parsed.positional.includes("waive") || unreadable(third)) || verb === "journey" && (second === "start" || unreadable(second)) || verb === "spec-review" && (third === "accept" || third === "answer" || unreadable(third)) || verb === "profile" && (second === "confirm" || second === "set" || second === "unset") || verb === "policy" && (second === "accept" || second === "set") || verb === "workspace" && (unreadable(second) || second === "priorities" && (parsed.positional.includes("accept") || unreadable(third))) || verb === "question" && (third === "answer" || unreadable(third)) || verb === "config" && typeof second === "string" && second.startsWith("jev.") && third !== undefined || verb === "knowledge" && (second === "unmark" || unreadable(second)) || verb === "task" && (parsed.positional.includes("merge") && parsed.flags.force === true || parsed.positional.includes("drop") || unreadable(third));
   if (!userOnly && !presence)
     return null;
   return {
     presence,
     parsed,
-    policyCommand: unreadable(verb) || verb === "policy" || verb === "accept" && (second === "policy" || unreadable(second))
+    policyCommand: bulkPolicy || unreadable(verb) || verb === "policy" || verb === "accept" && (second === "policy" || unreadable(second))
   };
 }
 function resumeDecision(ctx, args) {
@@ -18101,6 +18205,11 @@ function userOnlyDecision(command, permissionMode, headless, policy, line) {
     const [verb, second] = parsed.positional;
     if (verb === "policy" && second === "set" && policy.unattendedPolicyChanges === "validator")
       return unattendedLowering({ parsed, policy, where, mode, flagged, line });
+    if (policyCommand && verb === "projects" && second === "standingE2eSkip")
+      return [
+        "deny",
+        `Crew: no person is watching this session (${where}) and crew projects standingE2eSkip writes the person's decision into every registered project: run it in a session a person watches`
+      ];
     if (policyCommand)
       return [
         "deny",
@@ -21561,7 +21670,8 @@ function workspaceStatus(paths, policy, env) {
 var KNOWN_FLAGS = {
   detect: ["refresh"],
   profile: ["target", "stack", "force", "timeout", "mode"],
-  policy: ["remove", "mode", "validator"],
+  policy: ["remove", "mode", "validator", "reason"],
+  projects: ["dry-run", "reason", "remove"],
   accept: [],
   start: [
     "answers",
@@ -21748,6 +21858,8 @@ function skipStep(work, raw) {
 }
 function skipRefusal(step) {
   const base = `the team policy does not allow skipping ${step}`;
+  if (step === "gate:ui-ux")
+    return `${base}: gates are mandatory. The ui-ux gate is ruled from the pages' captures: capture the changed pages with a browser the session drives and launch the reviewer (references/gate.md, "UI/UX needs evidence")`;
   if (step.startsWith("gate:"))
     return `${base}: gates are mandatory. Fix what fails, set the gate's command to the team's own flow (crew profile set ${step.slice(5)} "<cmd>"), or have a person list the gate in policy.json allowSkips.`;
   if (step.startsWith("tdd:"))
@@ -22548,6 +22660,190 @@ function lowerByValidator(env, parsed, key, value, remove) {
     ...change,
     mode
   });
+}
+function setStandingE2eSkip(env, parsed) {
+  if (parsed.flags.mode !== undefined || parsed.flags.validator !== undefined)
+    return refuse("a standing e2e skip is a person's decision: crew policy set standingE2eSkip takes no --mode or --validator");
+  const reason = typeof parsed.flags.reason === "string" ? parsed.flags.reason : null;
+  const plan = planStandingE2eSkip(env.paths, env.policy, reason, parsed.flags.remove === true);
+  if ("refused" in plan)
+    return refuse(plan.text);
+  const text = standingText(plan);
+  if (plan.action === "already set")
+    return ok(text, { action: plan.action, entry: plan.entry });
+  decide(env, "policy", { kind: "decision", text, by: "the user" });
+  try {
+    writeStandingE2eSkip(env.paths, plan);
+  } catch (error) {
+    const message = error.message;
+    decide(env, "policy", {
+      kind: "decision",
+      text: `standingE2eSkip not written, ${message}`,
+      by: "the user"
+    });
+    return refuse(message);
+  }
+  return ok(text, { action: plan.action, entry: plan.entry });
+}
+function isLink3(path) {
+  try {
+    return lstatSync9(path).isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+function scratchFolders(env) {
+  const folders = [];
+  for (const dir of [env.TMPDIR ?? tmpdir2(), "/tmp"]) {
+    try {
+      if (dir)
+        folders.push(realpathSync10(dir));
+    } catch {}
+  }
+  return [...new Set(folders)];
+}
+function projectLeftOut(raw, root, scratch) {
+  if (!existsSync29(raw))
+    return "gone";
+  if (scratch.some((dir) => root === dir || root.startsWith(`${dir}${sep7}`)))
+    return { reason: "a scratch checkout under the temporary folder" };
+  if (!existsSync29(join62(root, ".git")))
+    return { reason: "not a git checkout" };
+  const crewDir = join62(raw, ".crew");
+  if (!existsSync29(crewDir) && !isLink3(crewDir))
+    return { reason: "no .crew folder" };
+  if (isLink3(raw))
+    return { reason: "the root is a symbolic link" };
+  if (isLink3(crewDir))
+    return { reason: ".crew is a symbolic link" };
+  if (isLink3(join62(crewDir, "policy.json")))
+    return { reason: "policy.json is a symbolic link" };
+  if (!statSync13(crewDir).isDirectory())
+    return { reason: "no .crew folder" };
+  if (!existsSync29(join62(crewDir, "profile.json")))
+    return { reason: "no profile yet" };
+  return null;
+}
+function projectsStandingE2eSkip(env, parsed, args, io) {
+  const usage = 'usage: crew projects standingE2eSkip --reason "<why>" | --remove [--dry-run]';
+  if (args[0] !== "standingE2eSkip" || args.length > 1)
+    return refuse(usage);
+  const remove = parsed.flags.remove === true;
+  if (remove && parsed.flags.reason !== undefined)
+    return refuse("--reason goes with crew policy set standingE2eSkip");
+  const reason = typeof parsed.flags.reason === "string" ? parsed.flags.reason.trim() : "";
+  if (!remove && reason === "")
+    return refuse(`a standing e2e skip needs the person's reason (--reason "<their words>")`);
+  const dryRun = parsed.flags["dry-run"] === true;
+  const scratch = scratchFolders(io.env);
+  const entries = loadRegistry(env.paths.userDir).projects.filter((p) => p.worktreeOf === undefined).map((p) => ({ entry: p, root: canonical(p.root) })).sort((a, b) => a.entry.name.localeCompare(b.entry.name) || a.root.localeCompare(b.root));
+  const lines = [];
+  const touched = [];
+  for (const { entry, root } of entries) {
+    const line = (status, why) => lines.push({ name: entry.name, root, status, ...why ? { reason: why } : {} });
+    const out = projectLeftOut(entry.root, root, scratch);
+    if (out === "gone") {
+      line("gone");
+      continue;
+    }
+    if (out) {
+      line("left out", out.reason);
+      continue;
+    }
+    const paths = pathsFor(root, env.paths.userDir);
+    const loaded = loadProfile(paths);
+    if (!loaded.profile) {
+      line("left out", "no profile yet");
+      continue;
+    }
+    const { policy, tampered } = loadPolicy(paths);
+    const tamperedFile = tampered ? "policy.json" : loaded.tampered ? "profile.json" : registerTampered(paths) ? "decisions.json" : null;
+    if (tamperedFile) {
+      line("left out", `${tamperedFile} changed outside the engine`);
+      continue;
+    }
+    const held = policy.standingE2eSkip;
+    if (!remove) {
+      const why = standingEligible(policy, loaded.profile);
+      if (why) {
+        const command = e2eTarget(loaded.profile)?.gates.e2e?.command;
+        line("left out", why === "the profile has an e2e command" ? `${why} (${command})` : why);
+        continue;
+      }
+      if (held && held.reason !== reason) {
+        line("left out", `already holds a standing e2e skip (${held.reason})`);
+        continue;
+      }
+    } else if (!held) {
+      line("left out", "no standing e2e skip is held");
+      continue;
+    }
+    const plan = planStandingE2eSkip(paths, policy, remove ? null : reason, remove);
+    if ("refused" in plan) {
+      line("left out", plan.text);
+      continue;
+    }
+    if (plan.action === "already set") {
+      line("already set");
+      continue;
+    }
+    if (dryRun) {
+      line(remove ? "would remove" : "would write", remove ? held?.reason : undefined);
+      continue;
+    }
+    const again = planStandingE2eSkip(paths, loadPolicy(paths).policy, remove ? null : reason, remove);
+    if ("refused" in again || JSON.stringify(again.raw) !== JSON.stringify(plan.raw) || JSON.stringify(standingE2eSkipOf(again.raw.standingE2eSkip)) !== JSON.stringify(held)) {
+      line("left out", "policy.json changed since read");
+      continue;
+    }
+    const text = remove ? `standingE2eSkip removed from the session in ${env.paths.root}` : `standingE2eSkip added from the session in ${env.paths.root} (${reason})`;
+    try {
+      appendDecision(paths, {
+        at: nowIso(),
+        item: "policy",
+        kind: "decision",
+        text,
+        by: "the user"
+      });
+      writeStandingE2eSkip(paths, plan);
+      line(remove ? "removed" : "written");
+      touched.push(entry.name);
+    } catch (error) {
+      const message = error.message;
+      try {
+        appendDecision(paths, {
+          at: nowIso(),
+          item: "policy",
+          kind: "decision",
+          text: `standingE2eSkip not written, ${message}`,
+          by: "the user"
+        });
+      } catch {}
+      line("failed", message);
+    }
+  }
+  const count = (...statuses) => lines.filter((l) => statuses.includes(l.status)).length;
+  const counts = {
+    written: count("written", "would write"),
+    removed: count("removed", "would remove"),
+    alreadySet: count("already set"),
+    leftOut: count("left out"),
+    gone: count("gone"),
+    failed: count("failed")
+  };
+  const text = [
+    ...lines.map((l) => {
+      const why = !l.reason ? "" : l.status === "would remove" ? ` (${l.reason})` : `: ${l.reason}`;
+      return `${l.name} (${l.root}): ${l.status}${why}`;
+    }),
+    `${lines.length} projects: ${counts.written} written, ${counts.removed} removed, ${counts.alreadySet} already set, ${counts.leftOut} left out, ${counts.gone} gone, ${counts.failed} failed`,
+    ...touched.length ? [
+      `commit in each project: ${touched.map((n) => `${n}: .crew/policy.json .crew/decisions.json`).join("; ")}`
+    ] : []
+  ].join(`
+`);
+  const data = { projects: lines, counts };
+  return counts.failed ? { ...refuse(text), data } : ok(text, data);
 }
 function setScalarKey(env, key, value) {
   const result = setPolicyValue(env.paths, key, value);
@@ -24083,15 +24379,19 @@ async function dispatch(parsed, io) {
     }
     case "policy": {
       const unattended = parsed.flags.mode !== undefined || parsed.flags.validator !== undefined;
+      if (parsed.flags.reason !== undefined && (args[0] !== "set" || args[1] !== "standingE2eSkip" || parsed.flags.remove === true))
+        return refuse("--reason goes with crew policy set standingE2eSkip");
       if (args[0] === "accept") {
         if (unattended)
           return refuse("crew policy accept takes no --mode or --validator: a hand edit of the policy is accepted by a person");
         return accept(env, "policy");
       }
+      if (args[0] === "set" && args[1] === "standingE2eSkip")
+        return setStandingE2eSkip(env, parsed);
       if (args[0] === "set") {
         const [, key, value] = args;
         if (!key || value === undefined) {
-          return refuse(`usage: crew policy set <${Object.keys(SETTABLE_POLICY_KEYS).join("|")}> <value>`);
+          return refuse(`usage: crew policy set <${Object.keys(SETTABLE_POLICY_KEYS).join("|")}> <value> | crew policy set standingE2eSkip --reason "<why>" | --remove`);
         }
         const remove = parsed.flags.remove === true;
         const rule = SETTABLE_POLICY_KEYS[key];
@@ -24979,7 +25279,8 @@ ${said}` : "";
       return {
         code: outcome.verdict === "proven" ? 0 : 1,
         stdout: true,
-        text: picked + raised + gateSummary(opened.work, outcome.verdict, outcome.unproven, outcome.evidence.runs) + judgementNote + reviewLine + capturesNote + (outcome.saveRefused ? `
+        text: picked + raised + gateSummary(opened.work, outcome.verdict, outcome.unproven, outcome.evidence.runs) + outcome.standingNotes.map((n) => `
+${n}`).join("") + judgementNote + reviewLine + capturesNote + (outcome.saveRefused ? `
 ${outcome.saveRefused}` : "") + (workNotSaved ? `
 ${workNotSaved}` : ""),
         data: {
@@ -24991,7 +25292,8 @@ ${workNotSaved}` : ""),
           refreshed: refreshed.changed,
           judgement: outcome.judgement,
           review,
-          reviewNote: outcome.reviewNote
+          reviewNote: outcome.reviewNote,
+          standing: outcome.standingNotes
         }
       };
     }
@@ -25065,7 +25367,10 @@ ${workNotSaved}` : ""),
       const lines = records.flatMap((r) => {
         const outside = r.findings.filter((f) => f.outside).length;
         const detail = r.verdict === "not-run" ? `: ${r.reason}` : ` (${findingsText(r.findings.length)}${outside ? `, ${outside} outside the change` : ""})`;
-        return [`  ${r.gate}: ${verdictWord(r.verdict)}${detail}`, ...markLines(r)];
+        const capture = r.gate === "ui-ux" && r.verdict === "not-run" && listCaptures(env.paths, opened.work.id).length === 0 ? [
+          '  ui-ux: no captures: capture the changed pages with a browser the session drives and launch the reviewer (references/gate.md, "UI/UX needs evidence"); with no browser, the gate stays not run'
+        ] : [];
+        return [`  ${r.gate}: ${verdictWord(r.verdict)}${detail}`, ...capture, ...markLines(r)];
       });
       lines.push(result.verdict === "proven" ? `Proven: ${opened.work.id}` : `Not proven: ${result.unproven.join("; ")}`);
       const filedBySession = sessionFiledLine(before.evidence.roles ?? []);
@@ -25978,6 +26283,8 @@ inputs: ${inputs === null ? "none" : copy}`, { path: target, entry: added, input
         continued: opened.work.continued
       });
     }
+    case "projects":
+      return projectsStandingE2eSkip(env, parsed, args, io);
     case "workspace": {
       if (args[0] === "priorities") {
         const workspace = env.mail.self.workspace;
@@ -26136,6 +26443,7 @@ var HELP = `crew ${VERSION}
   env start | health | stop | status    start the environment (detached, recorded, health awaited), check it, stop what the engine started, say where it stands
   policy accept                         trust the current policy.json after a hand edit (asks the user)
   policy set <key> <value> [--remove]   attendedDecisions prompt|relay, unattendedDecisions wait|count|validator, mail.workspace|name|open|maxConcurrent|maxHops|maxTurns|maxMinutes|maxParties|worktrees, riskPathExclusions "<glob>" (one glob added; --remove takes it out) (asks the user)
+  policy set standingE2eSkip --reason "<why>" | --remove   the e2e gate skipped on every item while the project cannot run it (asks the user)
   accept <id|profile|policy>            trust state changed outside the engine (asks the user)
   start "<request>" --answers <json>    create a work item from the typed answers
       [--criterion "<text>"] [--preserve "<text>"] [--observed "<text>"]   criteria, repeatable; preserve: existing tests stay green; observed: no test can fail first (a plan, a document)
@@ -26173,6 +26481,7 @@ var HELP = `crew ${VERSION}
   mail accept <mid> [--priority <p>] [--reason "<why>"]   confirm a request's priority, or lower it with a reason (never raise)
   mail refuse <mid> --reason "<why>" | status | stop <mid>   this project's mail and the sessions it opened (status sweeps them; stop kills one)
   workspace status [--json]           every project of the workspace: live, open items, unread, open threads, unconfirmed priorities, environment (reads records, runs nothing)
+  projects standingE2eSkip --reason "<why>" | --remove [--dry-run]   the person's standing e2e skip written into, or removed from, every registered project; --remove undoes it the same way (asks the user)
   workspace priorities [accept [--file <path>]]   the workspace's signed business priorities (accept asks the user)
   task <id> open T-n --criteria AC-1,AC-2 [--text "<task text>"]   hand a task of the plan to an implementer: a message, a worktree, a branch, a session
   task <id> list | merge T-n [--force]   the tasks and their children; merge a proven child's branch (--force merges an unproven one: asks the user)

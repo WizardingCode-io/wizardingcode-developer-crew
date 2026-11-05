@@ -9,6 +9,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import type { Origin } from "../src/analysis.ts";
+import { NO_E2E_REASON, NO_ENVIRONMENT_REASON } from "../src/e2e.ts";
 import {
   computeVerdict,
   countedNote,
@@ -20,7 +21,7 @@ import {
 } from "../src/evidence.ts";
 import { addObjection, bindObjection, waiveObjection } from "../src/objections.ts";
 import { workDir } from "../src/paths.ts";
-import { DEFAULT_POLICY } from "../src/policy.ts";
+import { DEFAULT_POLICY, standingState } from "../src/policy.ts";
 import { addQuestion, answerQuestion } from "../src/questions.ts";
 import { strategyReport } from "../src/strategy.ts";
 import type {
@@ -29,6 +30,8 @@ import type {
   JudgementRecord,
   Message,
   ObjectionLedger,
+  Policy,
+  Profile,
   QuestionRecord,
   RunRecord,
   TaskRecord,
@@ -50,6 +53,9 @@ import {
 } from "../src/work.ts";
 import { makeRepo, repoPaths, testEnv } from "./helpers.ts";
 import { RESEARCH, STRATEGY } from "./strategy.test.ts";
+
+/** A standing e2e skip state that never holds, for verdict rows that are not about it (finding 223). */
+const NOT_STANDING = { eligible: false, why: "allowSkips does not list e2e" } as const;
 
 const run: RunRecord = {
   command: "npm run test",
@@ -131,6 +137,7 @@ test("SP2b: a planned judgement gate is named until a current ruling proves it, 
     runs: [gate("test", "pass")],
   };
   const input = {
+    standing: NOT_STANDING,
     work,
     evidence: base,
     expected: [{ gate: "test" as const, target: "." }],
@@ -239,6 +246,7 @@ test("the verdict names every reason the work is not proven", () => {
   };
   expect(
     computeVerdict({
+      standing: NOT_STANDING,
       work,
       evidence,
       expected,
@@ -276,6 +284,7 @@ test("skips, unconfirmed commands and a matching fingerprint", () => {
   };
   expect(
     computeVerdict({
+      standing: NOT_STANDING,
       work,
       evidence,
       expected,
@@ -291,6 +300,7 @@ test("skips, unconfirmed commands and a matching fingerprint", () => {
   };
   expect(
     computeVerdict({
+      standing: NOT_STANDING,
       work,
       evidence: confirmed,
       expected,
@@ -334,7 +344,14 @@ test("a gate skipped by the agent is still expected unless the policy counts una
     verdict: "unproven",
     unproven: [],
   };
-  const input = { work, evidence, expected, currentFingerprint: "f", tampered: false };
+  const input = {
+    work,
+    evidence,
+    expected,
+    currentFingerprint: "f",
+    tampered: false,
+    standing: NOT_STANDING,
+  };
   expect(computeVerdict({ ...input, policy: DEFAULT_POLICY }).unproven).toEqual([
     "gate test not run",
   ]);
@@ -489,6 +506,7 @@ test("SP2a: a blocking objection keeps the item unproven until resolved or waive
     runs: [gate("secrets", "pass"), gate("test", "pass")],
   };
   const input = {
+    standing: NOT_STANDING,
     work,
     evidence,
     expected: [
@@ -607,6 +625,7 @@ test("an item with no criteria is never proven, whatever the gates say", () => {
   };
   expect(
     computeVerdict({
+      standing: NOT_STANDING,
       work,
       evidence,
       expected,
@@ -636,7 +655,14 @@ test("finding 8: a gate expected for a stack is matched and named by that stack"
     verdict: "unproven",
     unproven: [],
   };
-  const input = { work, evidence, expected, currentFingerprint: "f", tampered: false };
+  const input = {
+    work,
+    evidence,
+    expected,
+    currentFingerprint: "f",
+    tampered: false,
+    standing: NOT_STANDING,
+  };
   expect(computeVerdict({ ...input, policy: DEFAULT_POLICY }).unproven).toEqual([
     "gate test (php) not run",
     "gate lint (apps/api, php) not run",
@@ -1084,6 +1110,7 @@ test("SP8-T5 AC-3: an audit's verdict is proven on the run at HEAD, a current re
     { kind: "audit", from: "work_type audit" },
   );
   const input = {
+    standing: NOT_STANDING,
     work,
     evidence: emptyEvidence(),
     expected: [],
@@ -1229,6 +1256,7 @@ test("AC-9 (finding 61): an item with parts gains a reason per part until its to
     runs: [gate("test", "pass")],
   };
   const input = {
+    standing: NOT_STANDING,
     work,
     evidence: base,
     expected: [{ gate: "test" as const, target: "." }],
@@ -1500,6 +1528,7 @@ test("F179 AC-1, AC-5: the Test-first cell says a preserve pair's counts, counts
   );
   expect(
     computeVerdict({
+      standing: NOT_STANDING,
       work,
       evidence: old,
       expected,
@@ -1561,4 +1590,98 @@ test("SP9-T13 AC-19 (finding 195): an uncounted decision's note names how it cou
     ),
   ).toBe(": counted by policy");
   expect(countedNote(DEFAULT_POLICY, { by: "user" })).toBe("");
+});
+
+test("2026-11-04-001 AC-38: a gate's run recorded skipped with no decision on record is unproven", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const work = createWork(paths, "fix");
+  const evidence = { ...emptyEvidence(), fingerprint: "f" };
+  evidence.runs.push({
+    gate: "lint",
+    target: ".",
+    command: null,
+    commandSource: null,
+    confirmed: true,
+    exit: null,
+    status: "skipped",
+    durationMs: 0,
+    at: "2026-11-04T18:00:00.000Z",
+    log: null,
+    tail: "",
+    fingerprint: "f",
+  });
+  const verdict = computeVerdict({
+    standing: NOT_STANDING,
+    work,
+    evidence,
+    expected: [{ gate: "lint", target: "." }],
+    currentFingerprint: "f",
+    tampered: false,
+    policy: DEFAULT_POLICY,
+  });
+  expect(verdict.unproven).toContain(
+    `gate lint skipped with no decision on record: run crew gate run ${work.id} again`,
+  );
+});
+
+test("2026-11-04-001 AC-44: an unavailable e2e gate gets its own line offering the standing decision, only where the project is eligible and holds none", () => {
+  const paths = repoPaths(makeRepo(), testEnv());
+  const work = createWork(paths, "fix");
+  const noE2e: Profile = { version: 1, detectedAt: "", targets: [], watch: { exclude: [] } };
+  const withE2e: Profile = {
+    ...noE2e,
+    targets: [
+      {
+        path: ".",
+        stack: "node",
+        manifests: [],
+        gates: { e2e: { command: "npx playwright test", source: "confirmed" } },
+      } as unknown as Profile["targets"][number],
+    ],
+  };
+  const line = (reason: string, policy: Policy, profile: Profile) => {
+    const evidence = { ...emptyEvidence(), fingerprint: "f" };
+    evidence.runs.push({
+      gate: "e2e",
+      target: ".",
+      command: null,
+      commandSource: null,
+      confirmed: true,
+      exit: null,
+      status: "unavailable",
+      durationMs: 0,
+      at: "2026-11-04T18:00:00.000Z",
+      log: null,
+      tail: "",
+      reason,
+      fingerprint: "f",
+    });
+    return computeVerdict({
+      standing: standingState(policy, profile),
+      work,
+      evidence,
+      expected: [{ gate: "e2e", target: "." }],
+      currentFingerprint: "f",
+      tampered: false,
+      policy,
+    }).unproven.filter((l) => l.startsWith("gate e2e"));
+  };
+  const offer =
+    'gate e2e: this project has no e2e suite: skip it for the project with crew policy set standingE2eSkip --reason "<why>"';
+  for (const reason of [NO_ENVIRONMENT_REASON, NO_E2E_REASON])
+    expect(line(reason, DEFAULT_POLICY, noE2e)).toEqual([`gate e2e unavailable: ${reason}`, offer]);
+  expect(line(NO_E2E_REASON, { ...DEFAULT_POLICY, allowSkips: [] }, noE2e)).toEqual([
+    `gate e2e unavailable: ${NO_E2E_REASON}`,
+  ]);
+  expect(line(NO_E2E_REASON, { ...DEFAULT_POLICY, requiredGates: ["e2e"] }, noE2e)).toEqual([
+    `gate e2e unavailable: ${NO_E2E_REASON}`,
+  ]);
+  expect(line(NO_ENVIRONMENT_REASON, DEFAULT_POLICY, withE2e)).toEqual([
+    `gate e2e unavailable: ${NO_ENVIRONMENT_REASON}`,
+  ]);
+  const held: Policy = {
+    ...DEFAULT_POLICY,
+    standingE2eSkip: { reason: "no suite", at: "2026-11-04T18:00:00.000Z", by: "user" },
+  };
+  expect(line(NO_E2E_REASON, held, noE2e)).toEqual([`gate e2e unavailable: ${NO_E2E_REASON}`]);
 });

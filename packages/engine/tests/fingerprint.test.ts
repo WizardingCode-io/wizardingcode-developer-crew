@@ -18,6 +18,9 @@ import type { WorkItem } from "../src/types.ts";
 import { addCriterion, addSkip } from "../src/work.ts";
 import { git, makeRepo, tempDir, write } from "./helpers.ts";
 
+/** A standing e2e skip state that never holds, for verdict rows that are not about it (finding 223). */
+const NOT_STANDING = { eligible: false, why: "allowSkips does not list e2e" } as const;
+
 test("SP2b: reviewPatch is the change of the named paths since the base: tracked as a diff, untracked as additions, nothing else", () => {
   const root = makeRepo({ "src/a.ts": "const a = 1;\n", "src/keep.ts": "keep\n" });
   const base = git(root, "rev-parse", "HEAD");
@@ -172,6 +175,7 @@ test("C3: above the file cap the fingerprint is unavailable and never proven", (
   const evidence = { ...emptyEvidence(), fingerprint: "unavailable" };
   expect(
     computeVerdict({
+      standing: NOT_STANDING,
       work,
       evidence,
       expected: [],

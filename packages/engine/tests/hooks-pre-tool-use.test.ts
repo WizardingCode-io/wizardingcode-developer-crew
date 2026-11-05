@@ -4949,3 +4949,24 @@ test("2026-10-30-001 AC-22: where nobody watches every form with a word the hook
   expect(reasonOf("crew knowledge unmark K-4")).not.toContain("write the id out");
   expect(decision(run("crew knowledge 2026-10-30-001-x lookup"))).toBeUndefined();
 });
+
+test("2026-11-04-001 AC-42: crew projects standingE2eSkip is a policy command: asked under relay, denied unwatched, its dry run free", () => {
+  const relay = setup(null);
+  const bash = (command: string, permission_mode?: string) =>
+    onPreToolUse(relay.ctx, { tool_name: "Bash", tool_input: { command }, permission_mode });
+  const write = "crew projects standingE2eSkip --reason x";
+  expect(decision(bash(write, "auto"))).toBe("ask");
+  expect(decision(bash(write, "default"))).toBe("ask");
+  for (const mode of ["bypassPermissions", "dontAsk"]) {
+    const denied = bash(write, mode);
+    expect(decision(denied)).toBe("deny");
+    expect(JSON.stringify(denied)).toContain(
+      "crew projects standingE2eSkip writes the person's decision into every registered project: run it in a session a person watches",
+    );
+  }
+  expect(decision(bash("crew projects $X", "default"))).toBe("ask");
+  expect(decision(bash("crew projects standingE2eSkip $FLAGS", "default"))).toBe("ask");
+  expect(bash("crew projects standingE2eSkip --reason x --dry-run", "default")).toEqual({});
+  // --dry-run is a boolean: the word after it is a positional, and the call is still a dry run.
+  expect(bash("crew projects standingE2eSkip --dry-run no --reason x", "default")).toEqual({});
+});

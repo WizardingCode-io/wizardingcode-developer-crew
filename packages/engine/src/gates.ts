@@ -30,6 +30,7 @@ import { loadLedger } from "./objections.ts";
 import { packTemplates, recordPackUse } from "./packs.ts";
 import { type CrewPaths, workDir } from "./paths.ts";
 import { isFrontendPath } from "./paths-kind.ts";
+import { decisionCounts, type StandingState, standingState, standingWhy } from "./policy.ts";
 import { namedFiles } from "./problems.ts";
 import { runProse } from "./prose.ts";
 import { reviewSignals } from "./review-signals.ts";
@@ -49,7 +50,7 @@ import type {
   Target,
   WorkItem,
 } from "./types.ts";
-import { GATE_NAMES, isBuiltInGate } from "./types.ts";
+import { e2eTarget, GATE_NAMES, isBuiltInGate } from "./types.ts";
 import { isSkipped, raiseRoute } from "./work.ts";
 
 const MANIFESTS = new Set([
@@ -359,7 +360,7 @@ export function plannedGates(
   // The e2e gate runs the whole application once per item, never per target: on the first target
   // with a command, else at the root, where the run says what is missing (SP7 §8.2).
   if (wantsE2e(policy, changed)) {
-    const runner = profile.targets.find((t) => t.gates.e2e);
+    const runner = e2eTarget(profile);
     const shared = runner !== undefined && (atPath.get(runner.path) ?? 0) > 1;
     planned.push({
       gate: "e2e",
@@ -656,6 +657,8 @@ export interface GateOutcome {
   review: string | null;
   /** What the review's patch lacks, when something could not be cut (review of SP2b, findings 9 and 10). */
   reviewNote: string | null;
+  /** Lines the run prints about the project's standing e2e skip (finding 223): why it no longer holds. */
+  standingNotes: string[];
   /** Set when the evidence could not be saved (edited outside the engine during the run, or the lock held): nothing recorded, the verdict unproven on the in-memory evidence (finding 81). */
   saveRefused?: string;
 }
@@ -759,12 +762,19 @@ export async function runGates(
   let stamp = fingerprintBefore;
   // `--only` with judgement names alone runs no deterministic gate: the inputs are rewritten and the plan stands.
   const onlyGates = options.only?.filter((g): g is GateName => GATE_NAMES.includes(g as GateName));
+  // The project's standing e2e skip, decided once for the run from the policy and the profile (finding 223).
+  const standing = standingState(policy, profile);
+  const standingNotes: string[] = [];
   for (const one of planned) {
     const { gate, target } = one;
     if (onlyGates !== undefined && !onlyGates.includes(gate)) continue;
+    // Read before the supersede filter drops it: whether the item's last e2e run was the standing one.
+    const previousStanding =
+      gate === "e2e" && evidence.runs.some((r) => r.gate === "e2e" && r.standing !== undefined);
     evidence.runs = evidence.runs.filter((r) => !superseded(r, one));
-    if (isSkipped(work, `gate:${gate}`, policy)) {
-      const skip = work.skips.find((s) => s.step === `gate:${gate}`);
+    const counted = work.skips.find((s) => s.step === `gate:${gate}` && decisionCounts(policy, s));
+    const byStanding = gate === "e2e" && !counted && "holds" in standing ? standing.holds : null;
+    if (isSkipped(work, `gate:${gate}`, policy) || byStanding) {
       evidence.runs.push({
         gate,
         target,
@@ -778,11 +788,14 @@ export async function runGates(
         at: nowIso(),
         log: null,
         tail: "",
-        reason: skip?.reason,
+        reason: counted?.reason ?? byStanding?.reason,
+        ...(byStanding && !counted ? { standing: byStanding.at } : {}),
         fingerprint: stamp,
       });
       continue;
     }
+    if (gate === "e2e" && previousStanding)
+      standingNotes.push(`standing e2e skip no longer holds: ${standingWhy(standing)}`);
     const run = await runOneGate(
       paths,
       work,
@@ -813,6 +826,11 @@ export async function runGates(
       }
     }
     evidence.runs.push(run);
+    // A real e2e run on another target ends the standing run at the root (finding 223).
+    if (gate === "e2e" && target !== ".")
+      evidence.runs = evidence.runs.filter(
+        (r) => !(r.gate === "e2e" && r.target === "." && r.standing !== undefined),
+      );
   }
   // Every run of this gate run carries the stamp; any other gate that edits files shows up as a change.
   if (stamp !== fingerprintBefore)
@@ -852,6 +870,7 @@ export async function runGates(
   const verdictOf = (of: Evidence) =>
     computeVerdict({
       work,
+      standing,
       evidence: of,
       expected: planned,
       expectedJudgement: judgement,
@@ -892,6 +911,7 @@ export async function runGates(
     judgement,
     review: reviewInputs?.dir ?? null,
     reviewNote: reviewInputs?.note ?? null,
+    standingNotes,
     ...("refused" in saved ? { saveRefused: saved.refused } : {}),
   };
 }
@@ -914,6 +934,8 @@ export interface Assessment {
   audit: { run: boolean; runAtHead: boolean; report: boolean; reportCurrent: boolean };
   /** Whether any engine-owned file of the item was changed outside the engine. */
   tampered: boolean;
+  /** The project's standing e2e skip as it stands (finding 223). */
+  standing: StandingState;
 }
 
 /**
@@ -971,6 +993,7 @@ export function assess(
       currentFingerprint,
       ledger: led.ledger,
       tampered: tampered || read.tampered || led.tampered,
+      standing: standingState(policy, profile),
       design: designReasons(
         readSurface(paths, work.id),
         readScore(paths, work.id),
@@ -999,6 +1022,7 @@ export type AssessmentInputs = Omit<Assessment, "verdict" | "unproven">;
 export function reassess(a: AssessmentInputs, work: WorkItem, policy: Policy): Assessment {
   const verdict = computeVerdict({
     work,
+    standing: a.standing,
     evidence: a.evidence,
     expected: a.expected,
     expectedJudgement: a.judgement,

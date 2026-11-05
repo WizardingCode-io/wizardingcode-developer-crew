@@ -1,4 +1,5 @@
-import { existsSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { analyseOrigin, originSummary, readOrigin, writeOrigin } from "./analysis.ts";
 import { commaList, type Parsed, parse } from "./argv.ts";
@@ -137,6 +138,7 @@ import {
   findingsText,
   judgementRows,
   keepRound,
+  listCaptures,
   notRunRecord,
   parseRulings,
   plannedNote,
@@ -246,6 +248,7 @@ import {
 } from "./packs.ts";
 import {
   type CrewPaths,
+  canonical,
   ctoDir,
   PROTECTED_WORK_FILES,
   pathsFor,
@@ -262,11 +265,16 @@ import {
   NAME_HINT,
   POLICY_CHANGE_RULE,
   planListChange,
+  planStandingE2eSkip,
   SETTABLE_POLICY_KEYS,
   setPolicyValue,
   skipAllowed,
+  standingE2eSkipOf,
+  standingEligible,
+  standingText,
   unattendedPolicyChange,
   writeListChange,
+  writeStandingE2eSkip,
 } from "./policy.ts";
 import {
   acceptPriorities,
@@ -417,6 +425,7 @@ import type {
   WorkItem,
 } from "./types.ts";
 import {
+  e2eTarget,
   GATE_NAMES,
   isBuiltInGate,
   isJudgementGateName,
@@ -520,7 +529,8 @@ export interface CliIo {
 const KNOWN_FLAGS: Record<string, readonly string[]> = {
   detect: ["refresh"],
   profile: ["target", "stack", "force", "timeout", "mode"],
-  policy: ["remove", "mode", "validator"],
+  policy: ["remove", "mode", "validator", "reason"],
+  projects: ["dry-run", "reason", "remove"],
   accept: [],
   start: [
     "answers",
@@ -767,6 +777,9 @@ function skipStep(work: WorkItem, raw: string): string | null {
 /** Why a step the team policy does not list is not skipped, by the kind of step: a gate is mandatory, a red is traced to its origin (finding 164, ADR 0014), anything else is the policy's word. */
 function skipRefusal(step: string): string {
   const base = `the team policy does not allow skipping ${step}`;
+  // The ui-ux gate is ruled from captures: the way out is to take them, not to loosen the policy (finding 224).
+  if (step === "gate:ui-ux")
+    return `${base}: gates are mandatory. The ui-ux gate is ruled from the pages' captures: capture the changed pages with a browser the session drives and launch the reviewer (references/gate.md, "UI/UX needs evidence")`;
   if (step.startsWith("gate:"))
     return `${base}: gates are mandatory. Fix what fails, set the gate's command to the team's own flow (crew profile set ${step.slice(5)} "<cmd>"), or have a person list the gate in policy.json allowSkips.`;
   if (step.startsWith("tdd:"))
@@ -2001,7 +2014,254 @@ function lowerByValidator(
   });
 }
 
-/** `crew policy set <scalar key> <value>`: written through the engine; the standing grant, the second loosening a policy may carry (SP7b decision 15), on record. */
+/**
+ * `crew policy set standingE2eSkip --reason "<why>" | --remove` (finding 223, ADR 0022): the
+ * person's standing decision to skip the e2e gate while the project cannot run it. Asked even under
+ * relay (PreToolUse), so recorded by the user with no relayed marker, as `setListKey` records; the
+ * register entry comes first, and a write that fails after it says so in a second entry.
+ */
+function setStandingE2eSkip(env: Env, parsed: Parsed): Outcome {
+  if (parsed.flags.mode !== undefined || parsed.flags.validator !== undefined)
+    return refuse(
+      "a standing e2e skip is a person's decision: crew policy set standingE2eSkip takes no --mode or --validator",
+    );
+  const reason = typeof parsed.flags.reason === "string" ? parsed.flags.reason : null;
+  const plan = planStandingE2eSkip(env.paths, env.policy, reason, parsed.flags.remove === true);
+  if ("refused" in plan) return refuse(plan.text);
+  const text = standingText(plan);
+  if (plan.action === "already set") return ok(text, { action: plan.action, entry: plan.entry });
+  decide(env, "policy", { kind: "decision", text, by: "the user" });
+  try {
+    writeStandingE2eSkip(env.paths, plan);
+  } catch (error) {
+    const message = (error as Error).message;
+    decide(env, "policy", {
+      kind: "decision",
+      text: `standingE2eSkip not written, ${message}`,
+      by: "the user",
+    });
+    return refuse(message);
+  }
+  return ok(text, { action: plan.action, entry: plan.entry });
+}
+
+/** One registered project's line in `crew projects standingE2eSkip` (finding 223). */
+type ProjectLine = {
+  name: string;
+  root: string;
+  status:
+    | "written"
+    | "removed"
+    | "would write"
+    | "would remove"
+    | "already set"
+    | "left out"
+    | "gone"
+    | "failed";
+  reason?: string;
+};
+
+/** Whether a path is a symbolic link; a path that is not there is none. */
+function isLink(path: string): boolean {
+  try {
+    return lstatSync(path).isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
+/** The machine's temporary folders, resolved: `TMPDIR` (else the system's) and `/tmp`, each when it resolves. */
+function scratchFolders(env: NodeJS.ProcessEnv): string[] {
+  const folders: string[] = [];
+  for (const dir of [env.TMPDIR ?? tmpdir(), "/tmp"]) {
+    try {
+      if (dir) folders.push(realpathSync(dir));
+    } catch {
+      // A folder that does not resolve is no scratch folder.
+    }
+  }
+  return [...new Set(folders)];
+}
+
+/**
+ * Why a registered project is left out of `crew projects standingE2eSkip`, or null when it is
+ * processed: the rules in the order the spec gives them (finding 223), the root as the registry
+ * holds it read before `canonical` resolves its links.
+ */
+function projectLeftOut(
+  raw: string,
+  root: string,
+  scratch: readonly string[],
+): "gone" | { reason: string } | null {
+  if (!existsSync(raw)) return "gone";
+  if (scratch.some((dir) => root === dir || root.startsWith(`${dir}${sep}`)))
+    return { reason: "a scratch checkout under the temporary folder" };
+  if (!existsSync(join(root, ".git"))) return { reason: "not a git checkout" };
+  const crewDir = join(raw, ".crew");
+  if (!existsSync(crewDir) && !isLink(crewDir)) return { reason: "no .crew folder" };
+  if (isLink(raw)) return { reason: "the root is a symbolic link" };
+  if (isLink(crewDir)) return { reason: ".crew is a symbolic link" };
+  if (isLink(join(crewDir, "policy.json"))) return { reason: "policy.json is a symbolic link" };
+  if (!statSync(crewDir).isDirectory()) return { reason: "no .crew folder" };
+  if (!existsSync(join(crewDir, "profile.json"))) return { reason: "no profile yet" };
+  return null;
+}
+
+/**
+ * `crew projects standingE2eSkip --reason "<why>" | --remove [--dry-run]` (finding 223, D-2, D-3):
+ * the person's standing e2e skip written into, or removed from, every registered project, from one
+ * yes at the permission prompt. A project is left out, with its reason, where the per-project
+ * command would not write or where the registry's root cannot be trusted; the policy is read again
+ * just before the write, and a project whose policy changed since the first read is left alone.
+ */
+function projectsStandingE2eSkip(env: Env, parsed: Parsed, args: string[], io: CliIo): Outcome {
+  const usage = 'usage: crew projects standingE2eSkip --reason "<why>" | --remove [--dry-run]';
+  if (args[0] !== "standingE2eSkip" || args.length > 1) return refuse(usage);
+  const remove = parsed.flags.remove === true;
+  if (remove && parsed.flags.reason !== undefined)
+    return refuse("--reason goes with crew policy set standingE2eSkip");
+  const reason = typeof parsed.flags.reason === "string" ? parsed.flags.reason.trim() : "";
+  if (!remove && reason === "")
+    return refuse(`a standing e2e skip needs the person's reason (--reason "<their words>")`);
+  const dryRun = parsed.flags["dry-run"] === true;
+  const scratch = scratchFolders(io.env);
+  const entries = loadRegistry(env.paths.userDir)
+    .projects.filter((p) => p.worktreeOf === undefined)
+    .map((p) => ({ entry: p, root: canonical(p.root) }))
+    .sort((a, b) => a.entry.name.localeCompare(b.entry.name) || a.root.localeCompare(b.root));
+  const lines: ProjectLine[] = [];
+  const touched: string[] = [];
+  for (const { entry, root } of entries) {
+    const line = (status: ProjectLine["status"], why?: string) =>
+      lines.push({ name: entry.name, root, status, ...(why ? { reason: why } : {}) });
+    const out = projectLeftOut(entry.root, root, scratch);
+    if (out === "gone") {
+      line("gone");
+      continue;
+    }
+    if (out) {
+      line("left out", out.reason);
+      continue;
+    }
+    const paths = pathsFor(root, env.paths.userDir);
+    const loaded = loadProfile(paths);
+    if (!loaded.profile) {
+      line("left out", "no profile yet");
+      continue;
+    }
+    const { policy, tampered } = loadPolicy(paths);
+    const tamperedFile = tampered
+      ? "policy.json"
+      : loaded.tampered
+        ? "profile.json"
+        : registerTampered(paths)
+          ? "decisions.json"
+          : null;
+    if (tamperedFile) {
+      line("left out", `${tamperedFile} changed outside the engine`);
+      continue;
+    }
+    const held = policy.standingE2eSkip;
+    if (!remove) {
+      const why = standingEligible(policy, loaded.profile);
+      if (why) {
+        const command = e2eTarget(loaded.profile)?.gates.e2e?.command;
+        line("left out", why === "the profile has an e2e command" ? `${why} (${command})` : why);
+        continue;
+      }
+      if (held && held.reason !== reason) {
+        line("left out", `already holds a standing e2e skip (${held.reason})`);
+        continue;
+      }
+    } else if (!held) {
+      line("left out", "no standing e2e skip is held");
+      continue;
+    }
+    const plan = planStandingE2eSkip(paths, policy, remove ? null : reason, remove);
+    if ("refused" in plan) {
+      line("left out", plan.text);
+      continue;
+    }
+    if (plan.action === "already set") {
+      line("already set");
+      continue;
+    }
+    if (dryRun) {
+      line(remove ? "would remove" : "would write", remove ? held?.reason : undefined);
+      continue;
+    }
+    // Read again just before the write: a policy changed since the first read is left alone.
+    const again = planStandingE2eSkip(
+      paths,
+      loadPolicy(paths).policy,
+      remove ? null : reason,
+      remove,
+    );
+    if (
+      "refused" in again ||
+      JSON.stringify(again.raw) !== JSON.stringify(plan.raw) ||
+      JSON.stringify(standingE2eSkipOf(again.raw.standingE2eSkip)) !== JSON.stringify(held)
+    ) {
+      line("left out", "policy.json changed since read");
+      continue;
+    }
+    const text = remove
+      ? `standingE2eSkip removed from the session in ${env.paths.root}`
+      : `standingE2eSkip added from the session in ${env.paths.root} (${reason})`;
+    try {
+      appendDecision(paths, {
+        at: nowIso(),
+        item: "policy",
+        kind: "decision",
+        text,
+        by: "the user",
+      });
+      writeStandingE2eSkip(paths, plan);
+      line(remove ? "removed" : "written");
+      touched.push(entry.name);
+    } catch (error) {
+      const message = (error as Error).message;
+      try {
+        appendDecision(paths, {
+          at: nowIso(),
+          item: "policy",
+          kind: "decision",
+          text: `standingE2eSkip not written, ${message}`,
+          by: "the user",
+        });
+      } catch {
+        // The register could not be written either; the line says the project failed.
+      }
+      line("failed", message);
+    }
+  }
+  const count = (...statuses: ProjectLine["status"][]) =>
+    lines.filter((l) => statuses.includes(l.status)).length;
+  const counts = {
+    written: count("written", "would write"),
+    removed: count("removed", "would remove"),
+    alreadySet: count("already set"),
+    leftOut: count("left out"),
+    gone: count("gone"),
+    failed: count("failed"),
+  };
+  const text = [
+    ...lines.map((l) => {
+      const why = !l.reason ? "" : l.status === "would remove" ? ` (${l.reason})` : `: ${l.reason}`;
+      return `${l.name} (${l.root}): ${l.status}${why}`;
+    }),
+    `${lines.length} projects: ${counts.written} written, ${counts.removed} removed, ${counts.alreadySet} already set, ${counts.leftOut} left out, ${counts.gone} gone, ${counts.failed} failed`,
+    ...(touched.length
+      ? [
+          `commit in each project: ${touched.map((n) => `${n}: .crew/policy.json .crew/decisions.json`).join("; ")}`,
+        ]
+      : []),
+  ].join("\n");
+  const data = { projects: lines, counts };
+  return counts.failed ? { ...refuse(text), data } : ok(text, data);
+}
+
+/** `crew policy set <scalar key> <value>`: written through the engine; the standing grant, one of the three loosenings a policy may carry (SP7b decision 15; ADR 0003, ADR 0022), on record. */
 function setScalarKey(env: Env, key: string, value: string): Outcome {
   const result = setPolicyValue(env.paths, key, value);
   if ("refused" in result) return refuse(result.refused);
@@ -3937,6 +4197,12 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
     }
     case "policy": {
       const unattended = parsed.flags.mode !== undefined || parsed.flags.validator !== undefined;
+      // --reason belongs to the standing e2e skip alone (finding 223): anywhere else it would pass in silence.
+      if (
+        parsed.flags.reason !== undefined &&
+        (args[0] !== "set" || args[1] !== "standingE2eSkip" || parsed.flags.remove === true)
+      )
+        return refuse("--reason goes with crew policy set standingE2eSkip");
       if (args[0] === "accept") {
         // Accepting a hand edit is a person's under every policy (ADR 0005, 0012).
         if (unattended)
@@ -3945,11 +4211,13 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           );
         return accept(env, "policy");
       }
+      if (args[0] === "set" && args[1] === "standingE2eSkip")
+        return setStandingE2eSkip(env, parsed);
       if (args[0] === "set") {
         const [, key, value] = args;
         if (!key || value === undefined) {
           return refuse(
-            `usage: crew policy set <${Object.keys(SETTABLE_POLICY_KEYS).join("|")}> <value>`,
+            `usage: crew policy set <${Object.keys(SETTABLE_POLICY_KEYS).join("|")}> <value> | crew policy set standingE2eSkip --reason "<why>" | --remove`,
           );
         }
         // Asked even under relay (PreToolUse): the policy that governs signatures is signed by a prompt.
@@ -5071,6 +5339,8 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           picked +
           raised +
           gateSummary(opened.work, outcome.verdict, outcome.unproven, outcome.evidence.runs) +
+          // Why the project's standing e2e skip no longer holds, said where the gate run is read (finding 223).
+          outcome.standingNotes.map((n) => `\n${n}`).join("") +
           judgementNote +
           reviewLine +
           capturesNote +
@@ -5086,6 +5356,7 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           judgement: outcome.judgement,
           review,
           reviewNote: outcome.reviewNote,
+          standing: outcome.standingNotes,
         },
       };
     }
@@ -5238,7 +5509,16 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
           r.verdict === "not-run"
             ? `: ${r.reason}`
             : ` (${findingsText(r.findings.length)}${outside ? `, ${outside} outside the change` : ""})`;
-        return [`  ${r.gate}: ${verdictWord(r.verdict)}${detail}`, ...markLines(r)];
+        // A ui-ux gate not run with no captures sends the session to take them, never to a skip (finding 224).
+        const capture =
+          r.gate === "ui-ux" &&
+          r.verdict === "not-run" &&
+          listCaptures(env.paths, opened.work.id).length === 0
+            ? [
+                '  ui-ux: no captures: capture the changed pages with a browser the session drives and launch the reviewer (references/gate.md, "UI/UX needs evidence"); with no browser, the gate stays not run',
+              ]
+            : [];
+        return [`  ${r.gate}: ${verdictWord(r.verdict)}${detail}`, ...capture, ...markLines(r)];
       });
       lines.push(
         result.verdict === "proven"
@@ -6331,6 +6611,8 @@ async function dispatch(parsed: Parsed, io: CliIo): Promise<Outcome> {
         continued: opened.work.continued,
       });
     }
+    case "projects":
+      return projectsStandingE2eSkip(env, parsed, args, io);
     case "workspace": {
       // The business priorities the user signs once (SP7 §10.2): their state, and the acceptance.
       if (args[0] === "priorities") {
@@ -6525,6 +6807,7 @@ const HELP = `crew ${VERSION}
   env start | health | stop | status    start the environment (detached, recorded, health awaited), check it, stop what the engine started, say where it stands
   policy accept                         trust the current policy.json after a hand edit (asks the user)
   policy set <key> <value> [--remove]   attendedDecisions prompt|relay, unattendedDecisions wait|count|validator, mail.workspace|name|open|maxConcurrent|maxHops|maxTurns|maxMinutes|maxParties|worktrees, riskPathExclusions "<glob>" (one glob added; --remove takes it out) (asks the user)
+  policy set standingE2eSkip --reason "<why>" | --remove   the e2e gate skipped on every item while the project cannot run it (asks the user)
   accept <id|profile|policy>            trust state changed outside the engine (asks the user)
   start "<request>" --answers <json>    create a work item from the typed answers
       [--criterion "<text>"] [--preserve "<text>"] [--observed "<text>"]   criteria, repeatable; preserve: existing tests stay green; observed: no test can fail first (a plan, a document)
@@ -6562,6 +6845,7 @@ const HELP = `crew ${VERSION}
   mail accept <mid> [--priority <p>] [--reason "<why>"]   confirm a request's priority, or lower it with a reason (never raise)
   mail refuse <mid> --reason "<why>" | status | stop <mid>   this project's mail and the sessions it opened (status sweeps them; stop kills one)
   workspace status [--json]           every project of the workspace: live, open items, unread, open threads, unconfirmed priorities, environment (reads records, runs nothing)
+  projects standingE2eSkip --reason "<why>" | --remove [--dry-run]   the person's standing e2e skip written into, or removed from, every registered project; --remove undoes it the same way (asks the user)
   workspace priorities [accept [--file <path>]]   the workspace's signed business priorities (accept asks the user)
   task <id> open T-n --criteria AC-1,AC-2 [--text "<task text>"]   hand a task of the plan to an implementer: a message, a worktree, a branch, a session
   task <id> list | merge T-n [--force]   the tasks and their children; merge a proven child's branch (--force merges an unproven one: asks the user)

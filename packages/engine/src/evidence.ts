@@ -1,13 +1,14 @@
 import { join } from "node:path";
 import { type Origin, type OriginItem, rolesAndTasks } from "./analysis.ts";
 import { designScoreLines, type ScoreRecord } from "./design.ts";
+import { NO_E2E_REASON, NO_ENVIRONMENT_REASON } from "./e2e.ts";
 import { UNAVAILABLE } from "./fingerprint.ts";
 import { two } from "./jev.ts";
 import { LockBusy, withLock } from "./lock.ts";
 import { decidedPriority, mailStatus, readContracts, threadOf } from "./mail-status.ts";
 import { blockingObjections, objectionStatus } from "./objections.ts";
 import { type CrewPaths, workDir } from "./paths.ts";
-import { decisionCounts } from "./policy.ts";
+import { decisionCounts, type StandingState, standingWhy } from "./policy.ts";
 import { triageSummary } from "./priorities.ts";
 import { questionChannelsCell } from "./questions.ts";
 import { guaranteeLines, runtimeOf } from "./runtimes.ts";
@@ -210,6 +211,11 @@ function gateLabel(planned: PlannedGate, multiTarget: boolean): string {
 
 export interface VerdictInput {
   work: WorkItem;
+  /**
+   * The project's standing e2e skip as its caller computed it from the policy and the profile
+   * (finding 223): a run recorded skipped by it counts only while it holds.
+   */
+  standing: StandingState;
   evidence: Evidence;
   expected: PlannedGate[];
   currentFingerprint: string;
@@ -290,10 +296,32 @@ export function computeVerdict(input: VerdictInput): {
     if (!run) unproven.push(`gate ${label} not run`);
     else if (run.fingerprint !== currentFingerprint && !stale)
       unproven.push(`gate ${label} not run on the current code`);
-    else if (run.status === "fail") unproven.push(`gate ${label} failing`);
-    else if (run.status === "unavailable")
+    else if (run.status === "skipped") {
+      // A skipped run counts through a decision that still holds: an item's own skip (passed over
+      // above) or the project's standing e2e skip; any other is no decision (finding 223, G-6).
+      if (run.standing === undefined)
+        unproven.push(
+          `gate ${label} skipped with no decision on record: run crew gate run ${work.id} again`,
+        );
+      else if (!("holds" in input.standing))
+        unproven.push(
+          `gate ${label}: the standing e2e skip no longer holds (${standingWhy(input.standing)}): run crew gate run ${work.id} again`,
+        );
+    } else if (run.status === "fail") unproven.push(`gate ${label} failing`);
+    else if (run.status === "unavailable") {
       unproven.push(`gate ${label} unavailable: ${run.reason ?? "no command"}`);
-    else if (run.status === "pass" && !run.confirmed) {
+      // An eligible project with no standing e2e skip is offered it on a line of its own, so the
+      // person decides once for the project instead of once per item (finding 223).
+      if (
+        gate === "e2e" &&
+        (run.reason === NO_ENVIRONMENT_REASON || run.reason === NO_E2E_REASON) &&
+        "eligible" in input.standing &&
+        input.standing.eligible
+      )
+        unproven.push(
+          'gate e2e: this project has no e2e suite: skip it for the project with crew policy set standingE2eSkip --reason "<why>"',
+        );
+    } else if (run.status === "pass" && !run.confirmed) {
       unproven.push(`gate ${label} ran an unconfirmed command (crew profile confirm)`);
     }
   }
@@ -939,7 +967,17 @@ export function renderReport(
       `- started in a checkout shared with ${shared.with.join(", ")}: ${n} uncommitted file${n === 1 ? "" : "s"} at the start, listed in work.json (sharedCheckout.paths) (${shared.at})`,
     );
   }
-  if (work.approvals.length || work.skips.length || removed.length || work.abandoned) {
+  // The project's standing e2e skip, shown where the run it decided is the item's (finding 223).
+  const standingRun = evidence.runs.find(
+    (r) => r.gate === "e2e" && r.standing !== undefined && r.status === "skipped",
+  );
+  if (
+    work.approvals.length ||
+    work.skips.length ||
+    removed.length ||
+    work.abandoned ||
+    standingRun
+  ) {
     lines.push("", "## Decisions", "");
     if (work.abandoned) {
       lines.push(
@@ -954,6 +992,10 @@ export function renderReport(
         `- \`${s.step}\` skipped ${decidedBy(s)}: ${s.reason} (${s.at})${countedNote(policy, s)}`,
       );
     }
+    if (standingRun?.standing)
+      lines.push(
+        `- \`gate:e2e\` skipped by the user (standing decision of ${standingRun.standing.slice(0, 10)}): ${standingRun.reason ?? ""}`,
+      );
     for (const r of removed) lines.push(`- ${r.id} (${r.kind}) removed (${r.at}): ${r.text}`);
   }
   // The turns that ended waiting while the work was not proven, by whom the session waited for

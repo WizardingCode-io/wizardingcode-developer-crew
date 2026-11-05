@@ -879,6 +879,18 @@ export interface TddRecord {
 
 export type GateStatus = "pass" | "fail" | "skipped" | "unavailable";
 
+/** A project's standing e2e skip (finding 223): the person's reason, when it was taken, by whom. */
+export interface StandingE2eSkip {
+  reason: string;
+  at: string;
+  by: "user";
+}
+
+/** The first target of the profile with an e2e command, where the e2e gate runs (`plannedGates`). */
+export function e2eTarget(profile: Profile): Target | undefined {
+  return profile.targets.find((t) => t.gates.e2e);
+}
+
 export interface GateRun {
   gate: GateName;
   target: string;
@@ -894,6 +906,8 @@ export interface GateRun {
   log: string | null;
   tail: string;
   reason?: string;
+  /** On an e2e run skipped by the project's standing decision: the decision's `at` (finding 223). */
+  standing?: string;
   /** The fingerprint of the code this run vouches for; a run on other code counts as not run. */
   fingerprint: string;
   /**
@@ -1045,6 +1059,11 @@ export interface Policy {
   minimumRoute: Route;
   /** Steps that may be skipped: `tdd` (the default) any test-first step, `*` any step, a gate by name. Gates are mandatory unless listed. */
   allowSkips: string[];
+  /**
+   * The project's standing decision to skip the e2e gate while it cannot run it (finding 223, ADR
+   * 0022): the person's, taken once, counted by the verdict only while the project is eligible.
+   */
+  standingE2eSkip: StandingE2eSkip | null;
   artifacts: "commit" | "local";
   /**
    * What a user-only decision taken with no person watching is worth: `wait` records it and the

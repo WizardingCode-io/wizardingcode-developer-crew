@@ -8,6 +8,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmdirSync,
   rmSync,
   statSync,
@@ -39,9 +40,9 @@ import {
 } from "../src/mail.ts";
 import { isAlive } from "../src/open.ts";
 import { coreChecklist } from "../src/packs.ts";
-import { isProtectedPath, knowledgePath } from "../src/paths.ts";
+import { canonical, isProtectedPath, knowledgePath, registryPath } from "../src/paths.ts";
 import { DEFAULT_POLICY, loadPolicy } from "../src/policy.ts";
-import { loadProfile, saveProfile } from "../src/profile.ts";
+import { ensureProfile, loadProfile, saveProfile } from "../src/profile.ts";
 import { guaranteeLines, pluginRoot, RUNTIMES } from "../src/runtimes.ts";
 import { SPEC_LENSES } from "../src/spec-review.ts";
 import { loadState, recordWorking } from "../src/state.ts";
@@ -1067,6 +1068,103 @@ test("detect --refresh never re-blesses a tampered policy; policy accept does", 
   expect((await c.run("policy", "accept")).code).toBe(0);
   expect(readProtectedJson(paths, file).tampered).toBe(false);
   expect((await c.run("policy", "other")).code).toBe(1);
+});
+
+test("2026-11-04-001 AC-34: crew policy set standingE2eSkip", async () => {
+  const root = makeRepo({ "package.json": JSON.stringify({ scripts: { test: "exit 0" } }) });
+  const c = io(root);
+  const paths = repoPaths(root, c.env);
+  const file = join(root, ".crew", "policy.json");
+  const lastEntry = () => listDecisions(paths).at(0)?.text ?? "";
+  const count = () => listDecisions(paths).length;
+  const held = () => JSON.parse(readFileSync(file, "utf8")).standingE2eSkip;
+  const added = await c.run("policy", "set", "standingE2eSkip", "--reason", "no suite");
+  expect(added.code).toBe(0);
+  expect(added.out).toContain(
+    "standingE2eSkip added (no suite): the e2e gate is skipped on every item while the project cannot run it",
+  );
+  expect(held()).toMatchObject({ reason: "no suite", by: "user" });
+  expect(held().relayed).toBeUndefined();
+  expect(Number.isNaN(Date.parse(held().at))).toBe(false);
+  expect(lastEntry()).toContain("standingE2eSkip added (no suite)");
+  expect(readProtectedJson(paths, file).tampered).toBe(false);
+  // The same reason again writes nothing; another replaces with a new date.
+  const before = readFileSync(file, "utf8");
+  const entries = count();
+  const again = await c.run("policy", "set", "standingE2eSkip", "--reason", "no suite");
+  expect(again.code).toBe(0);
+  expect(again.out).toContain("standingE2eSkip already set (no suite)");
+  expect(readFileSync(file, "utf8")).toBe(before);
+  expect(count()).toBe(entries);
+  const firstAt = held().at;
+  await new Promise((r) => setTimeout(r, 5));
+  const replaced = await c.run("policy", "set", "standingE2eSkip", "--reason", "still none");
+  expect(replaced.out).toContain("standingE2eSkip replaced (still none)");
+  expect(held().at).not.toBe(firstAt);
+  // Refusals write nothing and record nothing.
+  const refusals: [string[], string][] = [
+    [
+      ["policy", "set", "standingE2eSkip", "--reason", ""],
+      "a standing e2e skip needs the person's reason",
+    ],
+    [
+      ["policy", "set", "standingE2eSkip", "--reason"],
+      "a standing e2e skip needs the person's reason",
+    ],
+    [
+      ["policy", "set", "standingE2eSkip", "--remove", "--reason", "x"],
+      "--reason goes with crew policy set standingE2eSkip",
+    ],
+    [
+      ["policy", "set", "attendedDecisions", "relay", "--reason", "x"],
+      "--reason goes with crew policy set standingE2eSkip",
+    ],
+    [
+      ["policy", "set", "standingE2eSkip", "--reason", "x", "--mode", "auto"],
+      "a standing e2e skip is a person's decision",
+    ],
+    [
+      ["policy", "set", "standingE2eSkip", "--reason", "x", "--validator", "x"],
+      "a standing e2e skip is a person's decision",
+    ],
+  ];
+  for (const [argv, text] of refusals) {
+    const now = readFileSync(file, "utf8");
+    const n = count();
+    const r = await c.run(...argv);
+    expect(r.code).toBe(1);
+    expect(r.err).toContain(text);
+    expect(readFileSync(file, "utf8")).toBe(now);
+    expect(count()).toBe(n);
+  }
+  // Removing, then removing again.
+  const removed = await c.run("policy", "set", "standingE2eSkip", "--remove");
+  expect(removed.code).toBe(0);
+  expect(removed.out).toContain("standingE2eSkip removed: the e2e gate runs again on every item");
+  expect(held()).toBeUndefined();
+  const none = await c.run("policy", "set", "standingE2eSkip", "--remove");
+  expect(none.code).toBe(1);
+  expect(none.err).toContain("no standing e2e skip is held");
+  // allowSkips without e2e refuses adding; removing still works.
+  expect((await c.run("policy", "set", "standingE2eSkip", "--reason", "no suite")).code).toBe(0);
+  const raw = JSON.parse(readFileSync(file, "utf8"));
+  writeFileSync(file, JSON.stringify({ ...raw, allowSkips: [] }));
+  expect((await c.run("policy", "accept")).code).toBe(0);
+  const ineligible = await c.run("policy", "set", "standingE2eSkip", "--reason", "other");
+  expect(ineligible.code).toBe(1);
+  expect(ineligible.err).toContain("cannot take a standing e2e skip: allowSkips does not list e2e");
+  expect((await c.run("policy", "set", "standingE2eSkip", "--remove")).code).toBe(0);
+  // requiredGates listing e2e refuses adding.
+  const raw2 = JSON.parse(readFileSync(file, "utf8"));
+  writeFileSync(file, JSON.stringify({ ...raw2, allowSkips: ["e2e"], requiredGates: ["e2e"] }));
+  expect((await c.run("policy", "accept")).code).toBe(0);
+  const required = await c.run("policy", "set", "standingE2eSkip", "--reason", "x");
+  expect(required.err).toContain("cannot take a standing e2e skip: the policy requires e2e");
+  // A hand edit after an engine write is tampered: refused.
+  writeFileSync(file, JSON.stringify({ allowSkips: ["e2e"] }));
+  const tampered = await c.run("policy", "set", "standingE2eSkip", "--reason", "x");
+  expect(tampered.code).toBe(1);
+  expect(tampered.err).toContain("state changed outside the engine: .crew/policy.json");
 });
 
 test("ADR 0005: crew policy set writes the two decision keys through the engine and refuses the rest", async () => {
@@ -4180,6 +4278,225 @@ test("SP7b-T5 AC-2 (judgement), 2026-10-27-007 AC-1: under the standing grant th
   ).toBe(true);
   expect(loadWork(repoPaths(root, env), id).work?.rounds).toMatchObject({ judgement: 5 });
 }, 30_000);
+
+test("2026-11-04-001 AC-43: no ui-ux captures send the session to capture, never to a skip", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/App.vue": "<template/>",
+  });
+  const c = io(root);
+  const id = (await c.json("start", "A page", "--answers", answers, "--criterion", "a")).data
+    .id as string;
+  write(root, "src/App.vue", "<template>a page</template>");
+  await c.run("tdd", "red", id, "AC-1", "--", RED);
+  await c.run("tdd", "green", id, "AC-1", "--", GREEN);
+  await c.run("skip", id, "gate:e2e", "--reason", "no environment in the fixture");
+  await c.run("gate", "run", id);
+  const recorded = await c.run(
+    "judgement",
+    id,
+    "record",
+    "ui-ux",
+    "--not-run",
+    "--reason",
+    "no browser here",
+  );
+  const capture =
+    'ui-ux: no captures: capture the changed pages with a browser the session drives and launch the reviewer (references/gate.md, "UI/UX needs evidence"); with no browser, the gate stays not run';
+  expect(recorded.out + recorded.err).toContain(capture);
+  expect((await c.run("evidence", id)).out).toContain(
+    "judgement gate ui-ux not run: no browser here",
+  );
+  // With a capture saved, no capture line.
+  const ui = join(root, ".crew", "work", id, "review", "ui");
+  mkdirSync(ui, { recursive: true });
+  writeFileSync(join(ui, "home-default.png"), "png");
+  const again = await c.run("judgement", id, "record", "ui-ux", "--not-run", "--reason", "other");
+  expect(again.out + again.err).not.toContain(capture);
+  // A skip of the ui-ux gate the policy does not list names the capture path, not the policy.
+  const skip = await c.run("skip", id, "gate:ui-ux", "--reason", "x");
+  expect(skip.code).toBe(1);
+  expect(skip.err).toContain(
+    "the team policy does not allow skipping gate:ui-ux: gates are mandatory",
+  );
+  expect(skip.err).toContain(
+    'The ui-ux gate is ruled from the pages\' captures: capture the changed pages with a browser the session drives and launch the reviewer (references/gate.md, "UI/UX needs evidence")',
+  );
+  expect(skip.err).not.toContain("allowSkips");
+});
+
+test("2026-11-04-001 AC-41: crew projects standingE2eSkip writes the person's decision into every eligible project", async () => {
+  const env = testEnv();
+  const scratch = tempDir("crew-scratch-");
+  const runEnv = { ...env, TMPDIR: scratch };
+  const pkg = { "package.json": JSON.stringify({ scripts: { test: "exit 0" } }) };
+  // Each project initialised by a crew command, so its .crew files are the engine's and it registers.
+  const project = async (files = pkg) => {
+    const root = makeRepo(files);
+    await io(root, env).run("status");
+    return root;
+  };
+  const A = await project();
+  const B = await project();
+  const C = await project();
+  {
+    const paths = repoPaths(C, env);
+    const { profile } = ensureProfile(paths);
+    const t = profile.targets[0];
+    if (t) t.gates.e2e = { command: "npx playwright test", source: "confirmed" };
+    saveProfile(paths, profile);
+  }
+  const D = await project();
+  writeFileSync(join(D, ".crew", "policy.json"), JSON.stringify({ allowSkips: [] }));
+  const E = await project();
+  expect(
+    (await io(E, env).run("policy", "set", "standingE2eSkip", "--reason", "E's own")).code,
+  ).toBe(0);
+  const F = await project();
+  writeFileSync(join(F, ".crew", "policy.json"), JSON.stringify({ requiredGates: ["e2e"] }));
+  const T = await project();
+  expect((await io(T, env).run("policy", "set", "attendedDecisions", "relay")).code).toBe(0);
+  writeFileSync(join(T, ".crew", "policy.json"), JSON.stringify({ attendedDecisions: "prompt" }));
+  const R = await project();
+  expect((await io(R, env).run("policy", "set", "attendedDecisions", "relay")).code).toBe(0);
+  writeFileSync(join(R, ".crew", "decisions.json"), JSON.stringify({ version: 1, entries: [] }));
+  const noProfile = makeRepo(pkg);
+  mkdirSync(join(noProfile, ".crew"), { recursive: true });
+  const noGit = tempDir("crew-nogit-");
+  mkdirSync(join(noGit, ".crew"), { recursive: true });
+  const linkedCrew = makeRepo(pkg);
+  const elsewhere = tempDir("crew-elsewhere-");
+  symlinkSync(elsewhere, join(linkedCrew, ".crew"));
+  const linkedRoot = join(tempDir("crew-link-"), "to-b");
+  symlinkSync(B, linkedRoot);
+  const gone = await project();
+  const S = join(scratch, "scratch-project");
+  mkdirSync(join(S, ".crew"), { recursive: true });
+  git(S, "init", "-q");
+  // A scratch checkout under /tmp is a scratch checkout too, whatever TMPDIR says.
+  const S2 = mkdtempSync(join(realpathSync("/tmp"), "crew-scratch-"));
+  mkdirSync(join(S2, ".crew"), { recursive: true });
+  git(S2, "init", "-q");
+  writeFileSync(join(S2, ".crew", "profile.json"), "{}");
+  const userDir = repoPaths(A, env).userDir;
+  const file = registryPath(userDir);
+  const registry = JSON.parse(readFileSync(file, "utf8"));
+  const entry = (root: string, name: string, extra: Record<string, unknown> = {}) => ({
+    root,
+    name,
+    workspace: null,
+    lastSeen: "2026-11-04T18:00:00.000Z",
+    sessionId: "cli",
+    ...extra,
+  });
+  registry.projects.push(
+    entry(noProfile, "zz-no-profile"),
+    entry(noGit, "zz-no-git"),
+    entry(linkedCrew, "zz-linked-crew"),
+    entry(linkedRoot, "zz-linked-root"),
+    entry(S, "zz-scratch"),
+    entry(S2, "zz-scratch-tmp"),
+    entry(join(A, "wt"), "zz-worktree", { worktreeOf: A }),
+  );
+  writeFileSync(file, JSON.stringify(registry));
+  rmSync(gone, { recursive: true, force: true });
+  const lineOf = (out: string, root: string) =>
+    out.split("\n").find((l) => l.includes(`(${canonical(root)})`)) ?? "";
+  const hashes = () => {
+    const all: Record<string, string> = {};
+    for (const root of [A, B, C, D, E, F, T, R])
+      for (const name of readdirSync(join(root, ".crew")))
+        if (statSync(join(root, ".crew", name)).isFile())
+          all[`${root}/${name}`] = readFileSync(join(root, ".crew", name), "utf8");
+    return JSON.stringify(all);
+  };
+  const reason = "no e2e suite in this project; the gate runs once a command is set";
+  const c = io(A, runEnv);
+  // The dry run writes nothing and says what the real run would do.
+  const before = hashes();
+  const dry = await c.run("projects", "standingE2eSkip", "--reason", reason, "--dry-run");
+  expect(dry.code).toBe(0);
+  expect(hashes()).toBe(before);
+  expect(lineOf(dry.out, A)).toContain(": would write");
+  expect(lineOf(dry.out, B)).toContain(": would write");
+  // The real run.
+  const real = await c.run("projects", "standingE2eSkip", "--reason", reason);
+  expect(real.code).toBe(0);
+  for (const root of [A, B]) {
+    expect(lineOf(real.out, root)).toContain(": written");
+    const policy = JSON.parse(readFileSync(join(root, ".crew", "policy.json"), "utf8"));
+    expect(policy.standingE2eSkip).toMatchObject({ reason, by: "user" });
+    expect(
+      listDecisions(repoPaths(root, env)).some((d) =>
+        d.text.startsWith(`standingE2eSkip added from the session in ${canonical(A)}`),
+      ),
+    ).toBe(true);
+  }
+  expect(lineOf(real.out, C)).toContain(
+    "left out: the profile has an e2e command (npx playwright test)",
+  );
+  expect(lineOf(real.out, D)).toContain("left out: allowSkips does not list e2e");
+  expect(lineOf(real.out, E)).toContain("left out: already holds a standing e2e skip (E's own)");
+  expect(lineOf(real.out, F)).toContain("left out: the policy requires e2e");
+  expect(lineOf(real.out, T)).toContain("left out: policy.json changed outside the engine");
+  expect(lineOf(real.out, R)).toContain("left out: decisions.json changed outside the engine");
+  expect(lineOf(real.out, noProfile)).toContain("left out: no profile yet");
+  expect(lineOf(real.out, noGit)).toContain("left out: not a git checkout");
+  expect(lineOf(real.out, linkedCrew)).toContain("left out: .crew is a symbolic link");
+  expect(real.out).toContain("zz-linked-root");
+  expect(real.out.split("\n").find((l) => l.includes("zz-linked-root"))).toContain(
+    "left out: the root is a symbolic link",
+  );
+  expect(real.out.split("\n").find((l) => l.includes("zz-scratch"))).toContain(
+    "left out: a scratch checkout under the temporary folder",
+  );
+  expect(real.out.split("\n").find((l) => l.includes("zz-scratch-tmp"))).toContain(
+    "left out: a scratch checkout under the temporary folder",
+  );
+  expect(lineOf(real.out, gone)).toContain(": gone");
+  expect(real.out).not.toContain("zz-worktree");
+  expect(real.out).toMatch(
+    /\d+ projects: 2 written, 0 removed, 0 already set, \d+ left out, 1 gone, 0 failed/,
+  );
+  expect(real.out).toContain("commit in each project:");
+  // A second run: already set where it wrote.
+  const second = await c.run("projects", "standingE2eSkip", "--reason", reason);
+  expect(lineOf(second.out, A)).toContain(": already set");
+  // Removing: every held one, E's included, its reason shown first.
+  const dryRemove = await c.run("projects", "standingE2eSkip", "--remove", "--dry-run");
+  expect(lineOf(dryRemove.out, E)).toContain(": would remove (E's own)");
+  const removed = await c.run("projects", "standingE2eSkip", "--remove");
+  for (const root of [A, B, E]) expect(lineOf(removed.out, root)).toContain(": removed");
+  // Refusals before any project.
+  for (const argv of [
+    ["projects", "standingE2eSkip"],
+    ["projects", "standingE2eSkip", "--remove", "--reason", "x"],
+    ["projects", "standingE2eSkip", "--reason", "x", "--mode", "auto"],
+    ["projects"],
+  ]) {
+    const refused = await c.run(...argv);
+    expect(refused.code).toBe(1);
+  }
+}, 120_000);
+
+test("2026-11-04-001 AC-37: crew gate run prints why the standing e2e skip no longer holds", async () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/App.vue": "<template/>",
+  });
+  const c = io(root);
+  const id = (await c.json("start", "A page", "--answers", answers, "--criterion", "a")).data
+    .id as string;
+  write(root, "src/App.vue", "<template>a page</template>");
+  await c.run("tdd", "red", id, "AC-1", "--", RED);
+  await c.run("tdd", "green", id, "AC-1", "--", GREEN);
+  expect((await c.run("policy", "set", "standingE2eSkip", "--reason", "no suite")).code).toBe(0);
+  const first = await c.run("gate", "run", id);
+  expect(first.out).not.toContain("standing e2e skip no longer holds");
+  expect((await c.run("profile", "set", "e2e", "exit 1")).code).toBe(0);
+  const second = await c.run("gate", "run", id);
+  expect(second.out).toContain("standing e2e skip no longer holds: the profile has an e2e command");
+});
 
 test("SP7b-T5 AC-3: the engine keeps each judgement round's findings and ruling as round copies at the record, and a gate run's reset leaves them", async () => {
   const root = makeRepo({

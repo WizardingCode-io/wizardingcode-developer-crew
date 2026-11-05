@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { nowIso } from "./fs.ts";
 import { two } from "./jev.ts";
 import { journeyForRoot } from "./journey-record.ts";
 import type { CrewPaths } from "./paths.ts";
@@ -11,8 +12,10 @@ import type {
   MailPolicy,
   PermissionMode,
   Policy,
+  Profile,
   RiskArea,
   Route,
+  StandingE2eSkip,
   TeamName,
   TeamPolicy,
   UiPolicy,
@@ -21,6 +24,7 @@ import type {
 } from "./types.ts";
 import {
   DEFAULT_VERIFY_ASKS,
+  e2eTarget,
   GATE_NAMES,
   isJudgementGateName,
   isMailType,
@@ -102,6 +106,7 @@ export const DEFAULT_POLICY: Policy = {
   // the skip is the user's, recorded. A test-first step is not skipped by default either (finding
   // 164, ADR 0014): a red is traced to its origin; a team that wants the skip lists `tdd` by hand.
   allowSkips: ["e2e"],
+  standingE2eSkip: null,
   artifacts: "commit",
   unattendedDecisions: "wait",
   unattendedPolicyChanges: "never",
@@ -548,10 +553,12 @@ function loadTeamPolicy(raw: unknown): TeamPolicy {
 }
 
 /**
- * A policy can only tighten, with two exceptions: `riskPathExclusions` takes paths out of the risk
- * patterns (ADR 0003), and `team.continuations: granted` lets every round past a cap run as the
- * user's standing grant, each on record (SP7b decision 15, 2026-10-27-007). Anything it does not say
- * falls back to the default.
+ * A policy can only tighten, with three exceptions: `riskPathExclusions` takes paths out of the risk
+ * patterns (ADR 0003), `team.continuations: granted` lets every round past a cap run as the user's
+ * standing grant, each on record (SP7b decision 15, 2026-10-27-007), and `standingE2eSkip` skips the
+ * e2e gate while the project cannot run it, the person's decision, counted by the verdict only
+ * while the project is eligible (finding 223, ADR 0022). Anything it does not say falls back to the
+ * default.
  */
 export function loadPolicy(paths: CrewPaths): { policy: Policy; tampered: boolean } {
   const loaded = loadPolicyFile(paths);
@@ -593,6 +600,7 @@ function loadPolicyFile(paths: CrewPaths): { policy: Policy; tampered: boolean }
       riskPathExclusions: strings(raw.riskPathExclusions),
       minimumRoute,
       allowSkips,
+      standingE2eSkip: standingE2eSkipOf(raw.standingE2eSkip),
       artifacts: raw.artifacts === "local" ? "local" : "commit",
       unattendedDecisions:
         raw.unattendedDecisions === "count" || raw.unattendedDecisions === "validator"
@@ -635,4 +643,114 @@ export function disputedDefault(marks: DecisionMarks | undefined, policy: Policy
  */
 export function disputedDefaultText(conservative: number, what: string): string {
   return `disputed by jev: ${what} is not the conservative answer (conservative ${two(conservative)})`;
+}
+
+/** A standing e2e skip as the loader keeps it: a non-empty reason, a date, the person's; else none. */
+export function standingE2eSkipOf(raw: unknown): StandingE2eSkip | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const v = raw as Record<string, unknown>;
+  if (typeof v.reason !== "string" || v.reason.trim() === "") return null;
+  if (typeof v.at !== "string" || Number.isNaN(Date.parse(v.at))) return null;
+  if (v.by !== "user") return null;
+  return { reason: v.reason, at: v.at, by: "user" };
+}
+
+/** Why a project cannot hold a standing e2e skip, in the order checked (finding 223). */
+export type IneligibleReason =
+  | "allowSkips does not list e2e"
+  | "the policy requires e2e"
+  | "the profile has an e2e command";
+
+/** The policy's part of eligibility: allowSkips lists e2e and requiredGates does not. */
+function policyIneligible(policy: Policy): IneligibleReason | null {
+  if (!skipAllowed(policy, "gate:e2e")) return "allowSkips does not list e2e";
+  if (policy.requiredGates.includes("e2e")) return "the policy requires e2e";
+  return null;
+}
+
+/** Whether a standing e2e skip can apply here: null when it can, else the first reason it cannot. */
+export function standingEligible(policy: Policy, profile: Profile): IneligibleReason | null {
+  return policyIneligible(policy) ?? (e2eTarget(profile) ? "the profile has an e2e command" : null);
+}
+
+/** The standing e2e skip's state for a policy and a profile: held and eligible, eligible and not held, or why not. */
+export type StandingState =
+  | { holds: StandingE2eSkip }
+  | { eligible: true }
+  | { eligible: false; why: IneligibleReason };
+
+/** The standing e2e skip's state, decided from the policy and the profile: eligibility first, then whether one is held. */
+export function standingState(policy: Policy, profile: Profile): StandingState {
+  const why = standingEligible(policy, profile);
+  if (why) return { eligible: false, why };
+  return policy.standingE2eSkip ? { holds: policy.standingE2eSkip } : { eligible: true };
+}
+
+/** Why the standing e2e skip does not hold, in words; empty when it holds. */
+export function standingWhy(state: StandingState): string {
+  if ("holds" in state) return "";
+  return state.eligible ? "no standing e2e skip is held" : state.why;
+}
+
+/** One change of the standing e2e skip, decided before anything is recorded or written. */
+export type StandingChange = {
+  action: "added" | "replaced" | "removed" | "already set";
+  raw: Record<string, unknown>;
+  /** The entry the file will hold: the new one, the one already set, or null when removed. */
+  entry: StandingE2eSkip | null;
+};
+
+export type StandingRefusal = {
+  refused: "tampered" | "none held" | "ineligible" | "no reason";
+  text: string;
+};
+
+/**
+ * Reads the policy file and decides what `crew policy set standingE2eSkip` would do (finding 223):
+ * removing loosens nothing, so it works whatever allowSkips and requiredGates hold; adding needs
+ * the policy's part of eligibility and the person's reason. The caller records, then writes.
+ */
+export function planStandingE2eSkip(
+  paths: CrewPaths,
+  policy: Policy,
+  reason: string | null,
+  remove: boolean,
+): StandingChange | StandingRefusal {
+  const file = readPolicyFile(paths);
+  if ("refused" in file) return { refused: "tampered", text: file.refused };
+  const held = standingE2eSkipOf(file.raw.standingE2eSkip);
+  if (remove) {
+    if (!held) return { refused: "none held", text: "no standing e2e skip is held" };
+    return { action: "removed", raw: file.raw, entry: null };
+  }
+  const why = policyIneligible(policy);
+  if (why) return { refused: "ineligible", text: `cannot take a standing e2e skip: ${why}` };
+  const given = reason?.trim() ?? "";
+  if (given === "")
+    return {
+      refused: "no reason",
+      text: `a standing e2e skip needs the person's reason (--reason "<their words>")`,
+    };
+  if (held && held.reason === given) return { action: "already set", raw: file.raw, entry: held };
+  const entry: StandingE2eSkip = { reason: given, at: nowIso(), by: "user" };
+  return { action: held ? "replaced" : "added", raw: file.raw, entry };
+}
+
+/** Writes what `planStandingE2eSkip` decided, the rest of the file kept as written. */
+export function writeStandingE2eSkip(paths: CrewPaths, change: StandingChange): void {
+  if (change.action === "already set") return;
+  const { standingE2eSkip: _old, ...rest } = change.raw;
+  const data = change.action === "removed" ? rest : { ...rest, standingE2eSkip: change.entry };
+  writeProtectedJson(paths, policyPath(paths), data);
+}
+
+/** The register's and the output's text for a standing e2e skip change. */
+export function standingText(change: StandingChange): string {
+  const reason = change.entry?.reason ?? "";
+  const scope = "the e2e gate is skipped on every item while the project cannot run it";
+  if (change.action === "added") return `standingE2eSkip added (${reason}): ${scope}`;
+  if (change.action === "replaced") return `standingE2eSkip replaced (${reason}): ${scope}`;
+  if (change.action === "removed")
+    return "standingE2eSkip removed: the e2e gate runs again on every item";
+  return `standingE2eSkip already set (${reason})`;
 }

@@ -65,8 +65,10 @@ function openFindings(text: string): number[] {
 // pair's row failing once under the whole suite with its cause lost; the row now names the refusal and the
 // tail, for the next occurrence) and 221 (the advisories its judgement's round 3 left), for the next hardening item.
 // 222 (a task gate row failing once under the whole suite with its output lost) recorded by 2026-11-02-002.
+// 223 (every project asks about the e2e gate on every item) fixed in 2026-11-04-001.
+// 224 (no e2e suite, no ui-ux ruling; a hand edit of allowSkips asked): its texts fixed in 2026-11-04-001, the crew's own capture open.
 const OPEN = [
-  77, 114, 177, 178, 181, 182, 183, 206, 209, 210, 212, 213, 214, 215, 216, 220, 221, 222,
+  77, 114, 177, 178, 181, 182, 183, 206, 209, 210, 212, 213, 214, 215, 216, 220, 221, 222, 224,
 ];
 
 test("AC-9 (consolidation of 2026-10-24): the findings that read open are the named ones, and the thirteen closed by the consolidation read closed", () => {
