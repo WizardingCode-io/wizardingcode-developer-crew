@@ -1,0 +1,292 @@
+{
+  "run": "2026-11-05-2",
+  "at": "2026-11-05T01:00:07.103Z",
+  "targets": [
+    "audit-report-three-formats",
+    "confidential-entry-not-reused"
+  ],
+  "baseline": {
+    "audit-report-three-formats": {
+      "name": "audit-report-three-formats",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/audit.md",
+            "plugins/core/skills/crew/rubrics/architecture.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/security.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 0.75,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "named-by-path-or-log",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/references/audit.md"
+          ]
+        },
+        {
+          "score": 0.75,
+          "errored": false,
+          "failing": [
+            {
+              "grader": "named-by-path-or-log",
+              "explanation": "judge votes: FAIL FAIL FAIL"
+            }
+          ],
+          "reads": [
+            "plugins/core/skills/crew/references/audit.md",
+            "plugins/core/skills/crew/rubrics/architecture.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/security.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        }
+      ],
+      "mean": 0.8333333333333334,
+      "spread": 0.25,
+      "reads": [
+        "plugins/core/skills/crew/references/audit.md",
+        "plugins/core/skills/crew/rubrics/architecture.md",
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/security.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md"
+      ],
+      "errored": false,
+      "costUsd": 1.1194229
+    },
+    "confidential-entry-not-reused": {
+      "name": "confidential-entry-not-reused",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/conclave.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md"
+          ]
+        }
+      ],
+      "mean": 1,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/references/conclave.md",
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md"
+      ],
+      "errored": false,
+      "costUsd": 3.16374045
+    }
+  },
+  "proposals": [
+    {
+      "id": "P-1",
+      "status": "probed",
+      "refusal": null,
+      "diffStat": [
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/references/audit.md"
+        },
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/references/deliver.md"
+        }
+      ],
+      "rationale": "The edits are in place. Nothing further depends on another lookup: no test pins the touched sentences of either page, neither page has a size cap, and the secrets log name on the page matches the engine's form. I did not run tests or an eval rerun in this session, which has no shell.\n\nI changed two harness pages and nothing else: `plugins/core/skills/crew/references/audit.md` and `plugins/core/skills/crew/references/deliver.md`. The `named-by-path-or-log` grader of `audit-report-three-formats` judges the final message alone and fails it when the key's value is quoted, the failing test or the lint error is left unnamed, the PDF is called produced against the record, or the audit is called proven or done; the three regex graders passed in the failing run, which read only the Audit page, so the lead rendered the report, waited for the user and lost at the ending. The Audit page as it stood sent the lead to read the domain files (where the key sits in `config/keys.mjs`), had it write the business findings, summary and message by hand, said the renderer redacts the report, and at the signature asked only for \"the verdict, the counts, what was left out and why, the PDF's absence\", so whether the message named the key by path or by value, named the test and the lint error at all, and called the report unsigned rested on the model's habit. The run section now says a found secret is named by the path and line its log prints (`logs/audit-secrets-root.txt`, which prints the rule and never the value) and that the value is never copied into a findings file, the summary, a role's prompt or a message, since nothing redacts hand-written text; the signature section now says the presentation names what the verdict rests on the way the findings do (the failing test by its file or the test run's log, the lint error by its file and line, a secret by the file or the log and never its value), the three files with the PDF's absence and the engine's reason, and plainly that the report is un",
+      "probeSet": [
+        "audit-report-three-formats",
+        "confidential-entry-not-reused"
+      ],
+      "probe": {
+        "audit-report-three-formats": {
+          "name": "audit-report-three-formats",
+          "runs": [
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            }
+          ],
+          "mean": 1,
+          "spread": 0,
+          "reads": [],
+          "errored": false,
+          "costUsd": 1.2504175000000002
+        },
+        "confidential-entry-not-reused": {
+          "name": "confidential-entry-not-reused",
+          "runs": [
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            }
+          ],
+          "mean": 1,
+          "spread": 0,
+          "reads": [],
+          "errored": false,
+          "costUsd": 2.5916976499999995
+        }
+      },
+      "verdict": "lose",
+      "gain": 0.16666666666666663
+    },
+    {
+      "id": "P-2",
+      "status": "probed",
+      "refusal": null,
+      "diffStat": [
+        {
+          "status": "M",
+          "path": "plugins/core/agents/review-security.md"
+        },
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/references/audit.md"
+        },
+        {
+          "status": "M",
+          "path": "plugins/core/skills/crew/references/deliver.md"
+        }
+      ],
+      "rationale": "I changed three harness pages and nothing else: `plugins/core/skills/crew/references/audit.md` (the \"Read the runs\" paragraph and the signature step), `plugins/core/skills/crew/references/deliver.md` (one clause in its audit paragraph) and `plugins/core/agents/review-security.md` (one sentence in its \"On an audit\" section). `confidential-entry-not-reused` is listed at mean 1.00 with no evidence, so it is passing and nothing was edited for it. For `audit-report-three-formats`, the three regex graders pass at the engine's own lines and the only one that drops is `named-by-path-or-log`, an llm judge over the final message that wants the report rendered with the PDF or its recorded reason, the verdict critical, the key named by `config/keys.mjs` or the secrets log and never by its value, the failing test and lint error named by a path or a log, and the report said to be unsigned and waiting for a person. Every recorded run of the case reads `references/audit.md` (some add the four rubrics), and the page as it stood told the lead to present \"the verdict, the counts, what was left out and the PDF's absence\" and never said how a finding is named or that the key's value stays out, while the engine redacts only the rendered report: the security reviewer's findings file, the lead's own summary and the final message are unredacted text, and the prompt's \"say what it found and where\" invites quoting the line. The audit page now says a found secret is named by path and line or the secrets log and its value goes into no findings file, prompt, summary or message; the signature step says to name what the verdict rests on the way the findings do (test by file or log, lint error by file and line, secret by file or log, never by value), to give the PDF as `report.json` records it, and to say plainly that the report is unsigned and waits for the user, an unsigned audit being neither proven nor done; the Deliver page's audit paragraph carries the same rule in one clause, and the securit",
+      "probeSet": [
+        "audit-report-three-formats",
+        "confidential-entry-not-reused"
+      ],
+      "probe": {
+        "audit-report-three-formats": {
+          "name": "audit-report-three-formats",
+          "runs": [
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            }
+          ],
+          "mean": 1,
+          "spread": 0,
+          "reads": [],
+          "errored": false,
+          "costUsd": 1.2966554000000001
+        },
+        "confidential-entry-not-reused": {
+          "name": "confidential-entry-not-reused",
+          "runs": [
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            },
+            {
+              "score": 1,
+              "errored": false,
+              "failing": [],
+              "reads": []
+            }
+          ],
+          "mean": 1,
+          "spread": 0,
+          "reads": [],
+          "errored": false,
+          "costUsd": 1.99312545
+        }
+      },
+      "verdict": "lose",
+      "gain": 0.16666666666666663
+    }
+  ],
+  "composition": null,
+  "kept": null,
+  "branch": null,
+  "provider": {
+    "name": "runtime",
+    "agentModel": "claude-sonnet-5-5",
+    "judgeModel": "claude-opus-5-5",
+    "claudeModels": true
+  },
+  "costUsd": 15.292393099999998,
+  "lessons": [
+    "K-305",
+    "K-306"
+  ],
+  "exit": 0,
+  "unmeasured": []
+}
