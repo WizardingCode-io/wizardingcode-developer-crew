@@ -1,0 +1,135 @@
+{
+  "run": "2026-11-06-2",
+  "at": "2026-11-06T16:00:07.198Z",
+  "targets": [
+    "ui-audit-not-captured",
+    "ui-captures-by-fixture"
+  ],
+  "baseline": {
+    "ui-audit-not-captured": {
+      "name": "ui-audit-not-captured",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md",
+            "plugins/core/skills/crew/rubrics/ui-ux.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md",
+            "plugins/core/skills/crew/rubrics/ui-ux.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md",
+            "plugins/core/skills/crew/rubrics/ui-ux.md"
+          ]
+        }
+      ],
+      "mean": 1,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md",
+        "plugins/core/skills/crew/rubrics/ui-ux.md"
+      ],
+      "errored": false,
+      "costUsd": 4.526946349999999
+    },
+    "ui-captures-by-fixture": {
+      "name": "ui-captures-by-fixture",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md",
+            "plugins/core/skills/crew/rubrics/ui-ux.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md",
+            "plugins/core/skills/crew/rubrics/ui-ux.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md",
+            "plugins/core/skills/crew/rubrics/ui-ux.md"
+          ]
+        }
+      ],
+      "mean": 1,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md",
+        "plugins/core/skills/crew/rubrics/ui-ux.md"
+      ],
+      "errored": false,
+      "costUsd": 3.3366643
+    }
+  },
+  "proposals": [
+    {
+      "id": "P-1",
+      "status": "refused",
+      "refusal": "the editor changed nothing",
+      "diffStat": [],
+      "rationale": "Both graders in this run, `ui-audit-not-captured` and `ui-captures-by-fixture`, are listed at mean 1.00 with spread 0.00 and evidence `none`. They are passing in every recorded run, so there is nothing failing to fix and no evidence that would point an edit at the right cause. The last CTO plan is empty as well, and none of the harness lessons name either case, so I have no trace or reason to act on.\n\nI changed no file. Both graders named for this run are passing at a perfect mean with no spread and no evidence of a failing run, so any edit to `plugins/core/skills/crew/` or `plugins/core/agents/` would be a change made without a failing grader to justify it and could only risk the regexes, pinned sentences and byte cap that the skill tests and other cases depend on. The right move for a run whose graders already pass is to leave the harness exactly as it is.",
+      "probeSet": [],
+      "probe": {},
+      "verdict": null,
+      "gain": 0
+    },
+    {
+      "id": "P-2",
+      "status": "refused",
+      "refusal": "the editor changed nothing",
+      "diffStat": [],
+      "rationale": "Both listed graders, `ui-audit-not-captured` and `ui-captures-by-fixture`, sit at mean 1.00 with spread 0.00 and no evidence, so neither is failing and there is nothing to make pass. The last CTO plan is empty and no harness lesson names either case. Following the standing rule for this situation, I edited nothing.\n\nI changed no file. Both graders in the brief are passing in every recorded run, with no failing trace, no CTO plan and no lesson pointing at a page that misleads a lead, so any edit to `plugins/core/skills/crew/` or `plugins/core/agents/` would be a guess with no failure to correct and a risk of moving a page other cases depend on, which the improve record's own rule forbids for graders listed at a perfect score.",
+      "probeSet": [],
+      "probe": {},
+      "verdict": null,
+      "gain": 0
+    }
+  ],
+  "composition": null,
+  "kept": null,
+  "branch": null,
+  "provider": {
+    "name": "runtime",
+    "agentModel": "claude-sonnet-5-5",
+    "judgeModel": "claude-opus-5-5",
+    "claudeModels": true
+  },
+  "costUsd": 8.23153215,
+  "lessons": [],
+  "exit": 0,
+  "unmeasured": []
+}
