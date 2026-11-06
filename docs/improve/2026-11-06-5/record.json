@@ -1,0 +1,148 @@
+{
+  "run": "2026-11-06-5",
+  "at": "2026-11-06T22:00:06.871Z",
+  "targets": [
+    "ui-reduced-motion-fails",
+    "ui-ux-generic-tells"
+  ],
+  "baseline": {
+    "ui-reduced-motion-fails": {
+      "name": "ui-reduced-motion-fails",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/frontend.md",
+            "plugins/core/skills/crew/references/gate.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md",
+            "plugins/core/skills/crew/rubrics/ui-ux.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/checklists/screen.md",
+            "plugins/core/skills/crew/references/frontend.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md",
+            "plugins/core/skills/crew/rubrics/ui-ux.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/checklists/screen.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md",
+            "plugins/core/skills/crew/rubrics/ui-ux.md"
+          ]
+        }
+      ],
+      "mean": 1,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/checklists/screen.md",
+        "plugins/core/skills/crew/references/frontend.md",
+        "plugins/core/skills/crew/references/gate.md",
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md",
+        "plugins/core/skills/crew/rubrics/ui-ux.md"
+      ],
+      "errored": false,
+      "costUsd": 6.8005289
+    },
+    "ui-ux-generic-tells": {
+      "name": "ui-ux-generic-tells",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md",
+            "plugins/core/skills/crew/rubrics/ui-ux.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/checklists/screen.md",
+            "plugins/core/skills/crew/references/specify.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md",
+            "plugins/core/skills/crew/rubrics/ui-ux.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/checklists/screen.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md",
+            "plugins/core/skills/crew/rubrics/ui-ux.md"
+          ]
+        }
+      ],
+      "mean": 1,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/checklists/screen.md",
+        "plugins/core/skills/crew/references/specify.md",
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md",
+        "plugins/core/skills/crew/rubrics/ui-ux.md"
+      ],
+      "errored": false,
+      "costUsd": 5.0154156500000004
+    }
+  },
+  "proposals": [
+    {
+      "id": "P-1",
+      "status": "refused",
+      "refusal": "the editor changed nothing",
+      "diffStat": [],
+      "rationale": "Both graders listed, ui-reduced-motion-fails and ui-ux-generic-tells, sit at mean 1.00 with spread 0.00 and no evidence, so neither is failing. The last CTO plan is empty and no harness lesson names either case. A passing grader gives nothing to fix, and any edit to the skill page or a reference page would risk moving other cases without a reason to expect a gain here.\n\nI changed nothing. Both graders in this run are passing at a perfect mean with zero spread and no failing evidence, so there is no wrong behaviour in the harness text to correct, and the smallest change that keeps them passing for the right reason is no change at all.",
+      "probeSet": [],
+      "probe": {},
+      "verdict": null,
+      "gain": 0
+    },
+    {
+      "id": "P-2",
+      "status": "refused",
+      "refusal": "the editor changed nothing",
+      "diffStat": [],
+      "rationale": "Both graders are listed at mean 1.00 with spread 0.00 and no evidence, so neither is failing. I will change nothing.\n\nI changed no file. The two graders named in this run, `ui-reduced-motion-fails` and `ui-ux-generic-tells`, are both listed at mean 1.00, spread 0.00, with no evidence, which is a passing score across every run, so there is no failing grader to move and no trace to read a cause from. An edit to any page under the skill or agents folders would be a guess with no failure to explain, and could only disturb cases that already pass, including the byte-capped skill page. The right action under the instruction to make the smallest change that makes the failing graders pass is no change at all.",
+      "probeSet": [],
+      "probe": {},
+      "verdict": null,
+      "gain": 0
+    }
+  ],
+  "composition": null,
+  "kept": null,
+  "branch": null,
+  "provider": {
+    "name": "runtime",
+    "agentModel": "claude-sonnet-5-5",
+    "judgeModel": "claude-opus-5-5",
+    "claudeModels": true
+  },
+  "costUsd": 12.181198550000001,
+  "lessons": [],
+  "exit": 0,
+  "unmeasured": []
+}
