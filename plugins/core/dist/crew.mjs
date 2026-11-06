@@ -7176,8 +7176,15 @@ function learnedHolds(paths, profile) {
   return now !== UNAVAILABLE && now === learned.fingerprint;
 }
 function noItemTurnEnds(paths, profile, session, current) {
-  const changed = session.baseline !== null && current !== UNAVAILABLE ? current !== session.baseline : false;
+  const changed = session.baseline !== null && current !== UNAVAILABLE ? sinceBaseline(paths, profile, session, current) !== session.baseline : false;
   return !changed || learnedHolds(paths, profile);
+}
+function sinceBaseline(paths, profile, session, current) {
+  const baseCommit = session.baselineCommit;
+  if (!baseCommit || !isGitRepo(paths.root))
+    return current;
+  const since = computeFingerprint(paths.root, profile, { baseCommit });
+  return since === UNAVAILABLE ? current : since;
 }
 
 // packages/engine/src/judgement.ts
@@ -19768,9 +19775,15 @@ function onSessionStart(ctx, payload = {}) {
     const work = active?.work ?? null;
     const base = work;
     const inherited = work !== null && changedWatchedPaths(ctx.paths.root, ctx.profile, base).length > 0 && assess(ctx.paths, work, ctx.profile, ctx.policy, ctx.tampered || !!active?.tampered).verdict !== "proven";
+    const head = baseCommitOf(ctx.paths.root);
     const baseline = inherited ? null : computeFingerprint(ctx.paths.root, ctx.profile, base);
+    const baselineCommit = work === null && head !== null && baseline?.startsWith("sha256:") ? head : undefined;
     updateSession(ctx.paths, ctx.sessionId, (session) => {
       session.baseline = baseline;
+      if (baselineCommit)
+        session.baselineCommit = baselineCommit;
+      else
+        delete session.baselineCommit;
       session.stopBlocks = 0;
     });
   }

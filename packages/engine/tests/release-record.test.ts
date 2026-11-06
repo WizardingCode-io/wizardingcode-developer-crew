@@ -16,7 +16,7 @@ import { ensureProfile } from "../src/profile.ts";
 import { recordReleaseDone, recordReleaseStart } from "../src/release-record.ts";
 import { loadState, updateSession, updateState } from "../src/state.ts";
 import type { Profile } from "../src/types.ts";
-import { addCriterion, createWork, saveWork } from "../src/work.ts";
+import { addCriterion, createWork, noItemTurnEnds, saveWork } from "../src/work.ts";
 import {
   cliIo,
   git,
@@ -453,4 +453,25 @@ test("2026-11-01-003 AC-43: the hand run's deps carry the engine's records from 
     text: `release ${V}: no record: the profile changed outside the engine`,
   });
   expect(existsSync(spoiled.marker)).toBe(false);
+});
+
+test("finding 225 AC-2: the end record sets the baseline's commit to the HEAD it renewed the baseline at, and a later commit with no watched change leaves the rule free and the next start record recorded", () => {
+  const s = session();
+  expect(recordReleaseStart(s.paths, s.profile, "s", V).recorded).toBe(true);
+  commitTagged(s.root);
+  expect(recordReleaseDone(s.paths, s.profile, "s", V).recorded).toBe(true);
+  const head = git(s.root, "rev-parse", "HEAD");
+  const renewed = loadState(s.paths).sessions.s;
+  expect(renewed?.baselineCommit).toBe(head);
+  expect(renewed?.baseline).toBe(
+    fingerprint.computeFingerprint(s.root, s.profile, { baseCommit: head }),
+  );
+  write(s.root, "docs/improve/run.md", "the loop's record");
+  git(s.root, "add", "docs");
+  git(s.root, "commit", "-q", "-m", "Improvement run: nothing kept");
+  const state = loadState(s.paths).sessions.s;
+  if (!state) throw new Error("no session state");
+  const current = fingerprint.computeFingerprint(s.root, s.profile, null);
+  expect(noItemTurnEnds(s.paths, s.profile, state, current)).toBe(true);
+  expect(recordReleaseStart(s.paths, s.profile, "s", "1.2.4").recorded).toBe(true);
 });

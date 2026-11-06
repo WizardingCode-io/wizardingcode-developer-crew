@@ -10,6 +10,12 @@ import { gitRun, worktreeMainRoot } from "./worktree.ts";
 
 export interface SessionState {
   baseline: string | null;
+  /**
+   * The commit a no-item git baseline was measured from (finding 225): the no-item Stop rule
+   * compares the tree against it, so a commit that changes no watched path leaves the turn free.
+   * Absent for a baseline taken against an item, a null baseline, the walk, and states written before.
+   */
+  baselineCommit?: string;
   stopBlocks: number;
   /** What a hook could not say to the session's model in its own response, printed at the next chance (`hooks/notices.ts`). */
   notices?: string[];

@@ -13,7 +13,7 @@ import { acceptMail, mailbox, mailContext, readBox, reply, send } from "../src/m
 import { loadPolicy } from "../src/policy.ts";
 import { saveProfile } from "../src/profile.ts";
 import { addQuestion } from "../src/questions.ts";
-import { loadState } from "../src/state.ts";
+import { loadState, updateSession } from "../src/state.ts";
 import type { WorkItem } from "../src/types.ts";
 import {
   addCriterion,
@@ -21,6 +21,7 @@ import {
   applyClassification,
   createWork,
   loadWork,
+  noItemTurnEnds,
   saveWork,
 } from "../src/work.ts";
 import {
@@ -802,4 +803,90 @@ test("2026-10-29-001 AC-1 (finding 198): with an active item, the Stop rule coun
   }
   // The same item with the fingerprint back: nothing of its own changed, so the turn ends.
   expect(onStop(ctx).decision).toBeUndefined();
+});
+
+/** A commit of an unwatched path alone, the shape of the improvement loop's fast-forward (finding 225). */
+function commitUnwatched(root: string, text: string) {
+  write(root, "docs/improve/run.md", text);
+  git(root, "add", "docs");
+  git(root, "commit", "-q", "-m", "Improvement run: nothing kept");
+}
+
+test("finding 225 AC-1: with no item, a commit that changes no watched path after the session's baseline lets the turn end; a later commit of a watched change blocks it", () => {
+  const { root, ctx } = session();
+  commitUnwatched(root, "the loop's record");
+  expect(onStop(ctx).decision).toBeUndefined();
+  write(root, "src/a.ts", "a watched change");
+  git(root, "add", "src");
+  git(root, "commit", "-q", "-m", "a watched change");
+  expect(onStop(ctx).decision).toBe("block");
+});
+
+test("finding 225 AC-4: the comparison fails closed: a watched file dirty at the start and changed after an unwatched commit blocks, and a baseline commit git cannot read keeps a watched change held", () => {
+  const root = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  write(root, "src/b.ts", "dirty at the start");
+  const ctx = hookContext({ session_id: "s", cwd: root }, testEnv());
+  onSessionStart(ctx);
+  commitUnwatched(root, "the loop's record");
+  // Unchanged since the start: the unwatched commit alone lets the turn end.
+  expect(onStop(ctx).decision).toBeUndefined();
+  write(root, "src/b.ts", "changed after the start");
+  expect(onStop(ctx).decision).toBe("block");
+  write(root, "src/b.ts", "dirty at the start");
+  updateSession(ctx.paths, "s", (state) => {
+    state.baselineCommit = "0".repeat(40);
+    state.stopBlocks = 0;
+  });
+  const turnEnds = () => {
+    const state = loadState(ctx.paths).sessions.s;
+    if (!state) throw new Error("no session state");
+    const current = fingerprint.computeFingerprint(root, ctx.profile, null);
+    return noItemTurnEnds(ctx.paths, ctx.profile, state, current);
+  };
+  // The tree as it was at the start: a readable baseline commit would let the turn end; an
+  // unreadable one is measured by the walk, which differs from the baseline, so it is held.
+  expect(turnEnds()).toBe(false);
+  // With a watched change in the tree as well, it is held.
+  write(root, "src/b.ts", "changed again");
+  expect(turnEnds()).toBe(false);
+  expect(onStop(ctx).decision).toBe("block");
+});
+
+test("finding 225 AC-5: SessionStart records the baseline's commit only for a no-item git baseline: none with an item active, on inherited unproven changes or with no git", () => {
+  const { root, ctx, env } = session();
+  expect(loadState(ctx.paths).sessions.s?.baselineCommit).toBe(git(root, "rev-parse", "HEAD"));
+  const work = createWork(ctx.paths, "fix");
+  addCriterion(work, "x");
+  saveWork(ctx.paths, work);
+  onSessionStart(hookContext({ session_id: "s2", cwd: root }, env));
+  const withItem = loadState(ctx.paths).sessions.s2;
+  expect(withItem?.baseline).toMatch(/^sha256:/);
+  expect(withItem?.baselineCommit).toBeUndefined();
+  // The same session started again, now with an item active: the commit its first start recorded goes.
+  onSessionStart(hookContext({ session_id: "s", cwd: root }, env));
+  expect(loadState(ctx.paths).sessions.s?.baselineCommit).toBeUndefined();
+  write(root, "src/c.ts", "an unproven change of the item");
+  onSessionStart(hookContext({ session_id: "s3", cwd: root }, env));
+  const inherited = loadState(ctx.paths).sessions.s3;
+  expect(inherited?.baseline).toBeNull();
+  expect(inherited?.baselineCommit).toBeUndefined();
+  // No git to run (a PATH of one empty folder): the baseline is the walk and carries no commit.
+  const other = makeRepo({
+    "package.json": JSON.stringify({ scripts: { test: "exit 0" } }),
+    "src/a.ts": "x",
+  });
+  const plain = hookContext({ session_id: "p", cwd: other }, env);
+  const path = process.env.PATH;
+  process.env.PATH = tempDir("crew-nogit-");
+  try {
+    onSessionStart(plain);
+  } finally {
+    process.env.PATH = path;
+  }
+  const walked = loadState(plain.paths).sessions.p;
+  expect(walked?.baseline).toMatch(/^walk:/);
+  expect(walked?.baselineCommit).toBeUndefined();
 });

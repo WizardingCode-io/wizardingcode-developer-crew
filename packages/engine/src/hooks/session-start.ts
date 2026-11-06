@@ -4,7 +4,7 @@ import {
   isFormerWatchDefault,
   missingTestCommands,
 } from "../detect/index.ts";
-import { changedWatchedPaths, computeFingerprint } from "../fingerprint.ts";
+import { baseCommitOf, changedWatchedPaths, computeFingerprint } from "../fingerprint.ts";
 import { nowIso } from "../fs.ts";
 import { assess } from "../gates.ts";
 import { emptyInboxSummary, inboxSummary, subjectQuoted } from "../mail.ts";
@@ -75,10 +75,17 @@ export function onSessionStart(ctx: HookContext, payload: HookPayload = {}): Hoo
       changedWatchedPaths(ctx.paths.root, ctx.profile, base).length > 0 &&
       assess(ctx.paths, work, ctx.profile, ctx.policy, ctx.tampered || !!active?.tampered)
         .verdict !== "proven";
+    const head = baseCommitOf(ctx.paths.root);
     const baseline = inherited ? null : computeFingerprint(ctx.paths.root, ctx.profile, base);
+    // A no-item git baseline was measured from HEAD: the no-item Stop rule reads the change from
+    // that commit, so a commit that touches no watched path is no change (finding 225).
+    const baselineCommit =
+      work === null && head !== null && baseline?.startsWith("sha256:") ? head : undefined;
     // Under the lock every writer of the state takes (`updateSession`).
     updateSession(ctx.paths, ctx.sessionId, (session) => {
       session.baseline = baseline;
+      if (baselineCommit) session.baselineCommit = baselineCommit;
+      else delete session.baselineCommit;
       session.stopBlocks = 0;
     });
   }

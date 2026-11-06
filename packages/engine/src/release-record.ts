@@ -1,4 +1,5 @@
 import {
+  baseCommitOf,
   changedWatchedPaths,
   computeFingerprint,
   gitHead,
@@ -116,15 +117,21 @@ export function recordReleaseDone(
     );
   if (!gitTagsAt(paths.root).includes(`v${version}`))
     return no(`release ${version}: v${version} is not on HEAD`);
-  const current = computeFingerprint(paths.root, profile, null);
-  if (current === UNAVAILABLE) return no(`release ${version}: the tree could not be fingerprinted`);
+  // One read of HEAD for the baseline and its commit, so the two never name different commits (finding 225).
+  const head = baseCommitOf(paths.root);
+  const current = head
+    ? computeFingerprint(paths.root, profile, { baseCommit: head })
+    : UNAVAILABLE;
+  if (!head || current === UNAVAILABLE)
+    return no(`release ${version}: the tree could not be fingerprinted`);
   updateSession(paths, session, (state) => {
     state.baseline = current;
+    state.baselineCommit = head;
     state.stopBlocks = 0;
   });
   removeReleaseMarker(paths, marker.pid);
   return {
     recorded: true,
-    text: `release ${version} done: the session's baseline is now commit ${gitHead(paths.root).slice(0, 7)}`,
+    text: `release ${version} done: the session's baseline is now commit ${head.slice(0, 7)}`,
   };
 }

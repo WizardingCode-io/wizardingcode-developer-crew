@@ -7,6 +7,7 @@ import {
   baseCommitOf,
   computeFingerprint,
   fingerprintMethod,
+  isGitRepo,
   MAX_WATCHED_FILES,
   UNAVAILABLE,
 } from "./fingerprint.ts";
@@ -1081,6 +1082,25 @@ export function noItemTurnEnds(
   current: string,
 ): boolean {
   const changed =
-    session.baseline !== null && current !== UNAVAILABLE ? current !== session.baseline : false;
+    session.baseline !== null && current !== UNAVAILABLE
+      ? sinceBaseline(paths, profile, session, current) !== session.baseline
+      : false;
   return !changed || learnedHolds(paths, profile);
+}
+
+/**
+ * The tree's fingerprint measured from the session's baseline commit when it has one (finding
+ * 225), so a commit that changes no watched path reads as no change; otherwise `current`. A commit
+ * git cannot read falls to the walk, which differs from the baseline: the rule fails closed.
+ */
+function sinceBaseline(
+  paths: CrewPaths,
+  profile: Profile,
+  session: SessionState,
+  current: string,
+): string {
+  const baseCommit = session.baselineCommit;
+  if (!baseCommit || !isGitRepo(paths.root)) return current;
+  const since = computeFingerprint(paths.root, profile, { baseCommit });
+  return since === UNAVAILABLE ? current : since;
 }

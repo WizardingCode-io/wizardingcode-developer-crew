@@ -67,6 +67,7 @@ function openFindings(text: string): number[] {
 // 222 (a task gate row failing once under the whole suite with its output lost) recorded by 2026-11-02-002.
 // 223 (every project asks about the e2e gate on every item) fixed in 2026-11-04-001.
 // 224 (no e2e suite, no ui-ux ruling; a hand edit of allowSkips asked): its texts fixed in 2026-11-04-001, the crew's own capture open.
+// 225 (a commit with no watched change blocks a no-item turn) fixed in 2026-11-05-001.
 const OPEN = [
   77, 114, 177, 178, 181, 182, 183, 206, 209, 210, 212, 213, 214, 215, 216, 220, 221, 222, 224,
 ];
