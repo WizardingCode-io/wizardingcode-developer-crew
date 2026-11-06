@@ -1,0 +1,142 @@
+{
+  "run": "2026-11-06-3",
+  "at": "2026-11-06T19:00:07.571Z",
+  "targets": [
+    "ui-design-token-drift",
+    "ui-missing-screen-named"
+  ],
+  "baseline": {
+    "ui-design-token-drift": {
+      "name": "ui-design-token-drift",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/conclave.md",
+            "plugins/core/skills/crew/references/specify.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md",
+            "plugins/core/skills/crew/rubrics/ui-ux.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md",
+            "plugins/core/skills/crew/rubrics/ui-ux.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md",
+            "plugins/core/skills/crew/rubrics/ui-ux.md"
+          ]
+        }
+      ],
+      "mean": 1,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/references/conclave.md",
+        "plugins/core/skills/crew/references/specify.md",
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md",
+        "plugins/core/skills/crew/rubrics/ui-ux.md"
+      ],
+      "errored": false,
+      "costUsd": 6.64200885
+    },
+    "ui-missing-screen-named": {
+      "name": "ui-missing-screen-named",
+      "runs": [
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/specify.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md",
+            "plugins/core/skills/crew/rubrics/ui-ux.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/references/specify.md",
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md",
+            "plugins/core/skills/crew/rubrics/ui-ux.md"
+          ]
+        },
+        {
+          "score": 1,
+          "errored": false,
+          "failing": [],
+          "reads": [
+            "plugins/core/skills/crew/rubrics/code-quality.md",
+            "plugins/core/skills/crew/rubrics/test-quality.md",
+            "plugins/core/skills/crew/rubrics/ui-ux.md"
+          ]
+        }
+      ],
+      "mean": 1,
+      "spread": 0,
+      "reads": [
+        "plugins/core/skills/crew/references/specify.md",
+        "plugins/core/skills/crew/rubrics/code-quality.md",
+        "plugins/core/skills/crew/rubrics/test-quality.md",
+        "plugins/core/skills/crew/rubrics/ui-ux.md"
+      ],
+      "errored": false,
+      "costUsd": 6.615460749999999
+    }
+  },
+  "proposals": [
+    {
+      "id": "P-1",
+      "status": "refused",
+      "refusal": "the editor changed nothing",
+      "diffStat": [],
+      "rationale": "Both graders listed, `ui-design-token-drift` and `ui-missing-screen-named`, sit at mean 1.00 with spread 0.00 and no evidence. They are passing, not failing, so there is no failing run to diagnose and no cause a harness edit could address. The last CTO plan is empty and the harness lessons cite other cases only.\n\nI changed nothing. Both named graders already pass in every recorded run, so any edit to the Crew skill or the agent pages would be a change made without a failing trace to justify it, with a real chance of disturbing pages that other cases pin verbatim. Leaving the harness as it stands is the smallest change that keeps these graders passing for the right reason.",
+      "probeSet": [],
+      "probe": {},
+      "verdict": null,
+      "gain": 0
+    },
+    {
+      "id": "P-2",
+      "status": "refused",
+      "refusal": "the editor changed nothing",
+      "diffStat": [],
+      "rationale": "Both graders listed here, `ui-design-token-drift` and `ui-missing-screen-named`, are at mean 1.00 with spread 0.00 and no evidence, so they are passing and there is nothing to fix. I changed no file: the task asks for the smallest change that would make failing graders pass for the right reason, and a page edited against a passing grader would be guesswork with no trace to steer it and a real chance of breaking a pinned string or a byte cap elsewhere (the skill page sits at its cap). The right next step is a rerun of the eval kit on a run where either grader actually drops, with its trace and `reads` list attached, so an edit can target the page that run reads.",
+      "probeSet": [],
+      "probe": {},
+      "verdict": null,
+      "gain": 0
+    }
+  ],
+  "composition": null,
+  "kept": null,
+  "branch": null,
+  "provider": {
+    "name": "runtime",
+    "agentModel": "claude-sonnet-5-5",
+    "judgeModel": "claude-opus-5-5",
+    "claudeModels": true
+  },
+  "costUsd": 13.6198176,
+  "lessons": [],
+  "exit": 0,
+  "unmeasured": []
+}
