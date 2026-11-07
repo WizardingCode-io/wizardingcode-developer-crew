@@ -1,0 +1,23 @@
+{
+  "run": "2026-11-07-1",
+  "at": "2026-11-07T11:00:06.854Z",
+  "targets": [
+    "site-bakery",
+    "site-law"
+  ],
+  "baseline": {},
+  "proposals": [],
+  "composition": null,
+  "kept": null,
+  "branch": null,
+  "provider": {
+    "name": "runtime",
+    "agentModel": "claude-sonnet-5-5",
+    "judgeModel": "claude-opus-5-5",
+    "claudeModels": true
+  },
+  "costUsd": 24.472861299999998,
+  "lessons": [],
+  "exit": 2,
+  "unmeasured": []
+}
