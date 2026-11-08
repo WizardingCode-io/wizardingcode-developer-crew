@@ -802,3 +802,28 @@ test("2026-11-08-002 AC-11 (the judgement's code-quality advisory): a refused ad
   expect(after.appended).toBe(true);
   expect(register(f.paths)).toHaveLength(1);
 });
+
+test("2026-11-08-002 AC-13 (the judgement's round 4): a link refusal stands under a busy lock, and its entry waits", () => {
+  const f = fixture([RUNTIMES.copilot]);
+  const kept = tempDir("crew-outside-");
+  rmSync(join(f.project, ".agents", "skills", "crew-method", "references"), { recursive: true });
+  symlinkSync(kept, join(f.project, ".agents", "skills", "crew-method", "references"));
+  git(f.project, "add", "-A");
+  git(f.project, "commit", "-q", "-m", "linked");
+  const held: { refresh: Refresh | null } = { refresh: null };
+  withLock(
+    join(f.paths.localDir, "adapters"),
+    () => {
+      held.refresh = refreshAdapters(f.paths, options(f));
+    },
+    { what: "the test's hold" },
+  );
+  if (!held.refresh) throw new Error("no refresh");
+  expect(result(held.refresh, "copilot")?.status).toBe("refused");
+  expect(result(held.refresh, "copilot")?.why).toContain("references is a symbolic link");
+  expect(held.refresh.appended).toBe(false);
+  expect(register(f.paths)).toHaveLength(0);
+  const after = refreshAdapters(f.paths, options(f));
+  expect(result(after, "copilot")?.status).toBe("refused");
+  expect(after.appended).toBe(true);
+});

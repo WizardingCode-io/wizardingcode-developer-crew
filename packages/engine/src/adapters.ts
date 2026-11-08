@@ -386,12 +386,12 @@ export function refreshAdapters(paths: CrewPaths, o: RefreshOptions): Refresh {
   const problem = linkProblem(own, dirs);
   if (problem) {
     for (const a of own) set(a, "refused", problem);
+    // The refusal stands under a busy lock too: the lock guards the entry, which the next refresh appends.
     if (!o.dryRun) {
       try {
         withLock(lock, writeEntry, lockOptions);
       } catch (error) {
         if (!(error instanceof LockBusy)) throw error;
-        for (const a of own) set(a, "stale", "another session is updating");
       }
     }
     return finish();

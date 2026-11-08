@@ -712,16 +712,13 @@ export async function release(options: ReleaseOptions, deps: ReleaseDeps): Promi
         const count = r.stdout.split("\n").find((l) => /^\d+ updated, /.test(l));
         // The project lines come first, before the user scope's line: what a killed run printed.
         const userLine = r.stdout.indexOf("user scope: ");
-        const projectLines = (userLine >= 0 ? r.stdout.slice(0, userLine) : r.stdout)
+        const printed = (userLine >= 0 ? r.stdout.slice(0, userLine) : r.stdout)
           .split("\n")
-          .filter((l) => l.trim() !== "");
-        const printed = projectLines.length;
-        const updated = projectLines.filter((l) => / updated \(/.test(l)).length;
+          .filter((l) => l.trim() !== "").length;
+        // What a kill leaves is read in the log, line by line (the count line and the commit lines
+        // come last, so a killed run has neither): the notification says only what is certain.
         if (r.signal)
-          projectCounts =
-            userLine >= 0
-              ? `cut at the bound after every project (killed by ${r.signal}; ${printed} project lines, ${updated} updated)`
-              : `cut at the bound (killed by ${r.signal} after ${printed} project lines, ${updated} updated; the project under way is written in part, the rest not updated)`;
+          projectCounts = `cut at the bound (killed by ${r.signal} after ${printed} project lines, which the release's log keeps; a project may be written in part and the commit lines are lost; the rest not updated)`;
         else if (count) projectCounts = r.status === 0 ? count : `${count} (exit ${r.status})`;
         else if (r.status === 0) projectCounts = "done";
         else {
