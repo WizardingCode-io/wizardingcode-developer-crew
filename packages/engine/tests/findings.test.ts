@@ -70,8 +70,9 @@ function openFindings(text: string): number[] {
 // 225 (a commit with no watched change blocks a no-item turn) fixed in 2026-11-05-001.
 // 226 (a release never reaches the runtime adapters of a project) fixed in 2026-11-08-002.
 // 227 (the spec review runs to its cap and never converges) fixed in 2026-11-08-001.
+// 228 (a release fixture's clone fails once under the whole suite) recorded by 2026-11-08-002.
 const OPEN = [
-  77, 114, 177, 178, 181, 182, 183, 206, 209, 210, 212, 213, 214, 215, 216, 220, 221, 222, 224,
+  77, 114, 177, 178, 181, 182, 183, 206, 209, 210, 212, 213, 214, 215, 216, 220, 221, 222, 224, 228,
 ];
 
 test("AC-9 (consolidation of 2026-10-24): the findings that read open are the named ones, and the thirteen closed by the consolidation read closed", () => {
