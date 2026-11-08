@@ -11,7 +11,7 @@ import {
 import { join } from "node:path";
 import { Writable } from "node:stream";
 import { eventsPathOf, joinWords, runCommand, shellRefusal } from "../src/run.ts";
-import { newestEvents, tempDir, within } from "./helpers.ts";
+import { eventsReport, newestEvents, tempDir, within } from "./helpers.ts";
 
 test("captures exit code, tail and a log file", async () => {
   const dir = tempDir();
@@ -26,8 +26,11 @@ test("captures exit code, tail and a log file", async () => {
     20_000,
     eventsPathOf(log),
   );
-  expect(result.exit).toBe(3);
-  expect(result.timedOut).toBe(false);
+  // The child's events in the message (finding 220): a failure here names the spawn and the
+  // missing event's time, where the fixture folder and its events file do not outlive the run.
+  const events = eventsReport(eventsPathOf(log));
+  expect(result.exit, events).toBe(3);
+  expect(result.timedOut, events).toBe(false);
   expect(result.tail).toContain("two");
   expect(result.tail).toContain("err");
   expect(readFileSync(log, "utf8")).toContain("one");
