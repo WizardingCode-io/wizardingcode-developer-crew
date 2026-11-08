@@ -25,7 +25,8 @@ export interface DecisionEntry {
     | "supersede"
     | "accept"
     | "task"
-    | "screens";
+    | "screens"
+    | "adapters";
   id?: string;
   text: string;
   answer?: string;
@@ -61,6 +62,20 @@ export function appendDecision(paths: CrewPaths, entry: DecisionEntry): void {
 
 export function decisionsCount(paths: CrewPaths): number {
   return load(paths).register.entries.length;
+}
+
+/**
+ * The text of the register's last entry of a kind, or null when it has none: the one home of the
+ * "append only when the text differs from the last entry of this kind" rule the engine's own
+ * entries follow (the pack discovery, the adapters' refresh), so a state that stands is written once.
+ */
+export function lastEntryText(paths: CrewPaths, kind: DecisionEntry["kind"]): string | null {
+  const entries = load(paths).register.entries;
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i];
+    if (entry?.kind === kind) return entry.text;
+  }
+  return null;
 }
 
 /** Newest first; with `grep`, the entries whose id, text or answer carry it (case-insensitive). */
